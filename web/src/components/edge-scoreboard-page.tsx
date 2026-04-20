@@ -683,6 +683,15 @@ const SlotRaceNodeChart = memo(function SlotRaceNodeChart({
 
 const LIVE_BUFFER_SIZE = 200
 const MAX_BUFFER_SLOTS = 3500
+// When tail catches up to liveEdge (queue empty, no new data arriving), the view
+// rewinds by this many slots and replays forward — so the chart never visibly halts.
+// 750 slots ≈ 5 min at 2.5 slots/sec.
+const REWIND_SLOTS = 750
+// Minimum rewind depth. Below this, halt instead of rewinding. A shallow rewind
+// (e.g. to edge-1) is worse than a halt: tailAnchor alternates between edge and
+// edge-K every rollover, producing visible L-R oscillation as every rewind shifts
+// bars rightward on screen.
+const MIN_REWIND_SLOTS = 125
 
 // formatLag renders a millisecond duration as "Xm Ys" or "Ys" (no leading zeros).
 // Used by the scoreboard debug overlay so the queue/server lag read like "1m 5s".
@@ -774,6 +783,16 @@ function RecentSlotsChart({
   // scrollToLive both target the same value — eliminating the jump on transition.
   const [liveEdge, setLiveEdge] = useState<number>(0)
   const liveEdgeRef = useRef<number>(0)
+  // tailAnchor: the slot rendered at the right edge of the view in tail mode.
+  // Normally tracks liveEdge. When the queue runs dry and tailAnchor reaches
+  // liveEdge (nothing new to show), it snaps back by REWIND_SLOTS and replays
+  // forward through buffer history so the chart never visibly halts.
+  const [tailAnchor, setTailAnchor] = useState<number>(0)
+  const tailAnchorRef = useRef<number>(0)
+  // scrollOffRef mirrors the tick loop's local scroll offset so external events
+  // (seedBuffer, param changes) can reset it in sync with the React state, preventing
+  // a pre-seed scroll position from carrying over into the post-seed animation.
+  const scrollOffRef = useRef<number>(0)
   const [liveLeaders, setLiveLeaders] = useState<Record<string, EdgeScoreboardLeader> | undefined>(undefined)
   const slotBufferRef = useRef<EdgeScoreboardSlotRace[]>([])
   // viewEndSlot: the slot number anchoring the right edge of the visible window.
@@ -782,21 +801,24 @@ function RecentSlotsChart({
   const [viewEndSlot, setViewEndSlotRaw] = useState<number | null>(null)
   const viewEndSlotRef = useRef<number | null>(null)
   // liveTailStatus: what slot the chart is currently rendering and the derived wall-clock
-  // time that slot represents. Queue depth = wall-clock delta between the displayed slot and
-  // the server's latest. Wall-clock-as-of is reconstructed by subtracting that delta from now.
-  // Recomputed on liveEdge/bufferVersion changes, which track the drain/merge cycle.
+  // time that slot represents. Total lag = queue depth (undrained slots) + server lag
+  // (pipeline delay) + replay lag (slots we're behind liveEdge when rewound after catch-up).
+  // Wall-clock-as-of is reconstructed by subtracting that delta from now.
+  // Recomputed on tailAnchor/liveEdge/bufferVersion changes, which track the drain/merge cycle.
   const liveTailStatus = useMemo(() => {
     if (!live || viewEndSlot !== null) return null
     const queueLen = liveQueueRef.current.length
     const queueLagMs = queueLen * 400
     const serverLagMs = dataLagMs ?? 0
-    const totalLagMs = queueLagMs + serverLagMs
+    const replaySlots = tailAnchor > 0 && liveEdge > tailAnchor ? liveEdge - tailAnchor : 0
+    const replayLagMs = replaySlots * 400
+    const totalLagMs = queueLagMs + serverLagMs + replayLagMs
     const delayMin = totalLagMs >= 60_000 ? Math.round(totalLagMs / 60_000) : 0
     const asOf = new Date(Date.now() - totalLagMs)
     const timeLabel = asOf.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
-    return { queueLen, queueLagMs, serverLagMs, totalLagMs, delayMin, timeLabel, edge: liveEdge }
+    return { queueLen, queueLagMs, serverLagMs, totalLagMs, delayMin, timeLabel, edge: tailAnchor || liveEdge }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [live, viewEndSlot, liveEdge, bufferVersion, dataLagMs])
+  }, [live, viewEndSlot, liveEdge, tailAnchor, bufferVersion, dataLagMs])
   // Bubble the status to the parent so it can render the indicator in its own header
   // (when bare, this component's internal header isn't rendered).
   useEffect(() => { onLiveTailStatusChange?.(liveTailStatus) }, [liveTailStatus, onLiveTailStatusChange])
@@ -826,6 +848,8 @@ function RecentSlotsChart({
       liveQueueRef.current = []
       liveEdgeRef.current = 0
       setLiveEdge(0)
+      tailAnchorRef.current = 0
+      setTailAnchor(0)
       setLiveLeaders(undefined)
       viewEndSlotRef.current = null
       setViewEndSlot(null)
@@ -847,19 +871,17 @@ function RecentSlotsChart({
     }
 
     // Seed the live buffer from a set of slot races (initial load path).
-    // Puts the vast majority of slots into the immediate buffer (chart starts near live edge)
-    // and queues only a small tail so the animation is visually active right away.
-    // With a 4000-slot seed and 3750 slots in the queue, we get ~25 min of animation runway
-    // at 400ms/slot — enough to span the upstream MV's 5-min batch cadence many times over
-    // even if polls briefly hiccup. The immediate buffer (first 250 slots) gives the chart
-    // something to render instantly while the queue starts draining.
+    // Queue depth sets how far behind real-time the view starts; ~3750 slots ≈ 25 min at
+    // 2.5/s, enough to span the upstream MV's 5-min batch cadence many times over even if
+    // polls briefly hiccup.
     const INITIAL_QUEUE_SLOTS = 3750
     const seedBuffer = (races: EdgeScoreboardSlotRace[], leaders?: Record<string, EdgeScoreboardLeader>) => {
       const { map, nums } = bySlotOrdered(races)
-      liveMaxSlotRef.current = nums.at(-1) ?? 0
-      // Keep at least LIVE_BUFFER_SIZE slots in the immediate buffer so the chart always has
-      // data to render. Only the slots beyond that go to the queue for animation. If the fetch
-      // returned fewer slots than LIVE_BUFFER_SIZE, put them all in immediate (empty queue).
+      if (!nums.length) return
+      liveMaxSlotRef.current = Math.max(liveMaxSlotRef.current, nums.at(-1) ?? 0)
+      // Keep at least LIVE_BUFFER_SIZE slots in the immediate buffer so the chart has
+      // data to render. Only the tail goes to the queue; the queue drives the initial
+      // scroll animation.
       const minImmediate = Math.min(nums.length, LIVE_BUFFER_SIZE)
       const splitIdx = Math.max(minImmediate, nums.length - INITIAL_QUEUE_SLOTS)
       const immediate = nums.slice(0, splitIdx)
@@ -868,7 +890,11 @@ function RecentSlotsChart({
       slotBufferRef.current = immediate.flatMap(s => map.get(s)!)
       liveEdgeRef.current = immediateSlot
       setLiveEdge(immediateSlot)
+      tailAnchorRef.current = immediateSlot
+      setTailAnchor(immediateSlot)
       liveQueueRef.current = toQueue.map(s => map.get(s)!)
+      scrollOffRef.current = 0
+      setScrollOffset(0)
       if (leaders) setLiveLeaders(leaders)
     }
 
@@ -973,15 +999,20 @@ function RecentSlotsChart({
     const pollInterval = setInterval(poll, 5_000)
 
     // Single rAF loop drives both the scroll animation and the drain.
-    // scrollOffset advances at slotPx/400ms (constant velocity). When it rolls over
-    // slotPx, we pop the next slot from the queue and call setLiveEdge + setScrollOffset
-    // in the same rAF callback — React 18 auto-batches them into one render so the
-    // rollover is seamless: old slot exits at screen -slotPx, new slot appears at
-    // screen 199*slotPx (right mask fade zone), all positions continuous.
-    let scrollOff = 0
+    // scrollOffset advances at slotPx/400ms (constant velocity). At rollover we drain
+    // one slot from the queue (if any) to advance liveEdge, then step tailAnchor —
+    // the slot shown at the view's right edge — forward by one. Both updates fire in
+    // the same rAF callback so React 18 batches them into one seamless render.
+    //
+    // If tailAnchor catches up to liveEdge (queue empty, no new data arriving) we
+    // rewind it by REWIND_SLOTS and keep replaying forward through buffer history —
+    // the chart never visibly halts. The rewind is a one-frame content swap; motion
+    // on either side of it is continuous.
+    scrollOffRef.current = 0
     let drainTimer = 0
     let lastTime: number | null = null
     let drainRafId = 0
+    let prevInTail = viewEndSlotRef.current === null
     const tick = (now: number) => {
       if (cancelled) return
       // Cap dt to one slot interval so a long background-tab pause doesn't cause a
@@ -990,29 +1021,101 @@ function RecentSlotsChart({
       lastTime = now
       const slotPx = Math.max(1, ((chartRowsRef.current?.offsetWidth ?? 260) - 64) / viewSlotCountRef.current)
       const inTail = viewEndSlotRef.current === null
+      // Read scrollOff from the ref so external resets (seedBuffer, etc.) are visible.
+      let scrollOff = scrollOffRef.current
+      // On pause→tail transition, snap tailAnchor back to liveEdge so the view
+      // reflects the true head when tailing resumes (scrollToLive has already
+      // tweened viewEndSlot to liveEdge and then cleared it).
+      if (inTail && !prevInTail) {
+        if (liveEdgeRef.current > 0) {
+          tailAnchorRef.current = liveEdgeRef.current
+          setTailAnchor(liveEdgeRef.current)
+        }
+        scrollOff = 0
+      }
+      prevInTail = inTail
       if (inTail) {
-        // Only advance when there's something to drain — prevents scroll from oscillating
-        // back to 0 when the queue is empty (e.g. right after init or between polls).
-        if (liveQueueRef.current.length > 0) {
-          scrollOff += (slotPx / 400) * dt
-          if (scrollOff >= slotPx) {
-            const races = liveQueueRef.current.shift()
-            if (races) {
-              const newBuf = [...slotBufferRef.current, ...races]
-              const bufNums = [...new Set(newBuf.map(r => r.slot))].sort((a, b) => a - b)
-              const keepBuf = new Set(bufNums.slice(-MAX_BUFFER_SLOTS))
-              slotBufferRef.current = newBuf.filter(r => keepBuf.has(r.slot))
-              const slotNum = races[0]?.slot
-              scrollOff -= slotPx
-              // Guard: never allow liveEdge to go backward (defence against any stale
-              // duplicates that sneak into the queue despite the prevMax fix).
-              if (slotNum && slotNum >= liveEdgeRef.current) { liveEdgeRef.current = slotNum; setLiveEdge(slotNum) }
-            } else {
-              scrollOff = 0
-            }
+        // Only advance scrollOff when the next rollover can actually produce motion.
+        // Without this guard, a pre-seed (edge=0) or caught-up-with-shallow-buffer
+        // state would slide the view left for 400ms then snap back at rollover —
+        // visible as L-R flicker.
+        const preCurAnchor = tailAnchorRef.current
+        const preEdge = liveEdgeRef.current
+        let canProgress = false
+        if (preEdge > 0) {
+          if (liveQueueRef.current.length > 0 || preCurAnchor < preEdge) {
+            canProgress = true
+          } else {
+            // curAnchor === edge, queue empty — rewind is our only progress path.
+            // Must match the rollover branch exactly, or the two can disagree and
+            // produce flicker. Require MIN_REWIND_SLOTS of replay runway so we don't
+            // alternate-rewind every rollover (which reads as L-R oscillation).
+            let bufOldest = Infinity
+            for (const r of slotBufferRef.current) if (r.slot < bufOldest) bufOldest = r.slot
+            if (bufOldest === Infinity) bufOldest = preEdge
+            const minAnchor = bufOldest + viewSlotCountRef.current - 1
+            canProgress = (preEdge - MIN_REWIND_SLOTS) >= minAnchor
           }
-        } else if (scrollOff !== 0) {
-          scrollOff = 0
+        }
+        if (!canProgress) {
+          if (scrollOff !== 0) { scrollOff = 0; setScrollOffset(0) }
+          scrollOffRef.current = scrollOff
+          drainRafId = requestAnimationFrame(tick)
+          return
+        }
+        scrollOff += (slotPx / 400) * dt
+        if (scrollOff >= slotPx) {
+          // Drain one slot from the queue, if available — advances liveEdge.
+          const races = liveQueueRef.current.shift()
+          if (races) {
+            const newBuf = [...slotBufferRef.current, ...races]
+            const bufNums = [...new Set(newBuf.map(r => r.slot))].sort((a, b) => a - b)
+            const keepBuf = new Set(bufNums.slice(-MAX_BUFFER_SLOTS))
+            slotBufferRef.current = newBuf.filter(r => keepBuf.has(r.slot))
+            const slotNum = races[0]?.slot
+            // Guard: never allow liveEdge to go backward (defence against any stale
+            // duplicates that sneak into the queue despite the prevMax fix).
+            if (slotNum && slotNum >= liveEdgeRef.current) { liveEdgeRef.current = slotNum; setLiveEdge(slotNum) }
+          }
+          // Advance tailAnchor to the next buffered slot after curAnchor. The backend
+          // sometimes skips slot numbers (missing data), so +1 can land on a slot that
+          // isn't in the buffer — computeViewByEnd would then render the same view as
+          // curAnchor, and the scrollOff reset at rollover produces a visible rightward
+          // snap without content shift (reads as L-R oscillation). Skipping to the next
+          // buffered slot keeps each rollover advancing the rendered view by exactly
+          // one slot. If caught up (no slots > curAnchor), rewind instead of halting.
+          const curAnchor = tailAnchorRef.current
+          const edge = liveEdgeRef.current
+          let nextAnchor = curAnchor
+          if (curAnchor < edge) {
+            let next = Infinity
+            for (const r of slotBufferRef.current) {
+              if (r.slot > curAnchor && r.slot < next) next = r.slot
+            }
+            nextAnchor = next === Infinity ? curAnchor + 1 : next
+          } else if (edge > 0) {
+            // Caught up — rewind into buffer history. Prefer REWIND_SLOTS back;
+            // clamp to the deepest position the buffer can render from. Only
+            // rewind if we get at least MIN_REWIND_SLOTS of runway — smaller
+            // rewinds produce per-rollover L-R oscillation. Must mirror the
+            // canProgress check above.
+            let bufOldest = Infinity
+            for (const r of slotBufferRef.current) if (r.slot < bufOldest) bufOldest = r.slot
+            if (bufOldest === Infinity) bufOldest = edge
+            const minAnchor = bufOldest + viewSlotCountRef.current - 1
+            const desired = edge - REWIND_SLOTS
+            const candidate = Math.max(minAnchor, Math.min(edge - 1, desired))
+            if (candidate <= edge - MIN_REWIND_SLOTS) nextAnchor = candidate
+          }
+          if (nextAnchor !== curAnchor) {
+            tailAnchorRef.current = nextAnchor
+            setTailAnchor(nextAnchor)
+            scrollOff -= slotPx
+          } else {
+            // No advance and no rewind possible — hold scroll so the chart
+            // doesn't stutter back to translateX(0) with unchanged content.
+            scrollOff = 0
+          }
         }
         setScrollOffset(scrollOff)
       } else {
@@ -1033,6 +1136,7 @@ function RecentSlotsChart({
           }
         }
       }
+      scrollOffRef.current = scrollOff
       drainRafId = requestAnimationFrame(tick)
     }
     drainRafId = requestAnimationFrame(tick)
@@ -1046,30 +1150,9 @@ function RecentSlotsChart({
       liveQueueRef.current = []
       // Don't clear the buffer — non-live mode will overwrite it with slots next render.
       liveEdgeRef.current = 0
+      tailAnchorRef.current = 0
     }
   }, [live, window, leadersOnly])
-
-  // If React Query data arrives after the live effect started but the live effect's
-  // own fetch hasn't returned yet, seed the buffer now so the chart isn't blank.
-  const FALLBACK_QUEUE_SLOTS = 75
-  useEffect(() => {
-    if (!live || !slots.length || slotBufferRef.current.length > 0 || liveEdgeRef.current > 0) return
-    const map = new Map<number, EdgeScoreboardSlotRace[]>()
-    const nums: number[] = []
-    for (const r of slots) {
-      if (!map.has(r.slot)) { map.set(r.slot, []); nums.push(r.slot) }
-      map.get(r.slot)!.push(r)
-    }
-    nums.sort((a, b) => a - b)
-    liveMaxSlotRef.current = nums.at(-1) ?? 0
-    const splitIdx = Math.max(0, nums.length - FALLBACK_QUEUE_SLOTS)
-    slotBufferRef.current = nums.slice(0, splitIdx).flatMap(s => map.get(s)!)
-    const immediateSlot = nums[splitIdx - 1] ?? nums.at(-1) ?? 0
-    liveEdgeRef.current = immediateSlot
-    setLiveEdge(immediateSlot)
-    liveQueueRef.current = nums.slice(splitIdx).map(s => map.get(s)!)
-    if (slotLeaders) setLiveLeaders(slotLeaders)
-  }, [slots, live, slotLeaders])
 
   // In non-live per-slot mode, keep the buffer in sync with the query result so
   // the scroll system works the same way as live mode.
@@ -1179,10 +1262,16 @@ function RecentSlotsChart({
     // This gives us a concrete starting slot even when viewEndSlot is null (tailing state).
     const effectiveStart = viewEndSlotRef.current ?? slotNums.at(-1) ?? null
 
-    // Sync liveEdge state with ref before transitioning to tailing so activeSlots
-    // doesn't anchor to a stale state value (ref is kept current by non-tail drain).
+    // Sync liveEdge state and tailAnchor with the latest ref value before transitioning
+    // to tailing so activeSlots doesn't anchor to a stale state value (refs are kept
+    // current by non-tail drain). Also snap tailAnchor to liveEdge so we resume at
+    // the head, not wherever the previous tail session left off.
     const syncLiveEdge = () => {
-      if (liveEdgeRef.current > 0) setLiveEdge(liveEdgeRef.current)
+      if (liveEdgeRef.current > 0) {
+        setLiveEdge(liveEdgeRef.current)
+        tailAnchorRef.current = liveEdgeRef.current
+        setTailAnchor(liveEdgeRef.current)
+      }
     }
 
     if (effectiveStart === null) {
@@ -1282,8 +1371,11 @@ function RecentSlotsChart({
 
   const toggleLive = () => {
     if (live && viewEndSlot === null) {
-      viewEndSlotRef.current = liveEdgeRef.current
-      setViewEndSlot(liveEdgeRef.current)
+      // Pause at whatever slot the user was actually looking at (tailAnchor),
+      // which may be behind liveEdge if we're in rewind/replay.
+      const pauseAt = tailAnchorRef.current || liveEdgeRef.current
+      viewEndSlotRef.current = pauseAt
+      setViewEndSlot(pauseAt)
     } else {
       scrollToLive()
     }
@@ -1348,15 +1440,17 @@ function RecentSlotsChart({
     })
   }, [viewEndSlot, window, leadersOnly])
 
-  // Memoized on liveEdge/viewEndSlot/bufferVersion so 60fps scrollOffset re-renders
+  // Memoized on tailAnchor/viewEndSlot/bufferVersion so 60fps scrollOffset re-renders
   // don't recompute it. bufferVersion bumps on merge-in-place updates when a lagging
-  // host catches up and fills in cells for an already-admitted slot.
+  // host catches up and fills in cells for an already-admitted slot. tailAnchor
+  // replaces liveEdge as the anchor in tail mode — it tracks liveEdge when keeping
+  // up and rewinds backward when caught up so the view never visibly halts.
   const activeSlots = useMemo(() => {
     const buf = slotBufferRef.current
     if (!buf.length) return live ? [] : slots
-    return computeViewByEnd(buf, viewEndSlot, liveEdge, 0, viewSlotCount)
+    return computeViewByEnd(buf, viewEndSlot, tailAnchor || liveEdge, 0, viewSlotCount)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveEdge, viewEndSlot, live, slots, viewSlotCount, bufferVersion])
+  }, [tailAnchor, liveEdge, viewEndSlot, live, slots, viewSlotCount, bufferVersion])
 
   const chartData = useMemo(() => {
     if (!activeSlots.length || !nodes.length) return { nodeCharts: [], feeds: [] as string[], slotCount: 0 }
@@ -1386,11 +1480,22 @@ function RecentSlotsChart({
       row[k] = (row[k] ?? 0) + s.win_pct  // accumulate (handles merged feeds in simplified mode)
     }
 
-    // Use all slots from activeSlots as the shared x-axis so every node's data array
-    // has the same length as the canvas (LIVE_BUFFER_SIZE). Nodes with no data for a
-    // given slot get zeros, which draw no bars. This ensures uPlot cursor.idx always
-    // maps to a valid slotData entry, so hover/tooltip works across the full canvas.
-    const allSlotNumbers = [...new Set(activeSlots.map((s) => s.slot))].sort((a, b) => a - b)
+    // Use all slots from activeSlots as the shared x-axis. Pad on the left so every
+    // node's data array is always viewSlotCount long — bars stay right-aligned to the
+    // view anchor regardless of buffer depth. Without padding, a shallow buffer (e.g.
+    // during initial load) draws bars at positions 0..N-1 of the 200-slot uPlot scale,
+    // clustered on the left side of the canvas. Each rollover then *appends* a bar on
+    // the right rather than shifting the window left — visible as a rightward jump
+    // every 400ms (L-R oscillation). Padding empties on the left keeps the newest slot
+    // pinned at position viewSlotCount-1 so rollovers always shift smoothly leftward.
+    const rawSlotNumbers = [...new Set(activeSlots.map((s) => s.slot))].sort((a, b) => a - b)
+    const pad = Math.max(0, viewSlotCount - rawSlotNumbers.length)
+    const allSlotNumbers = pad > 0 && rawSlotNumbers.length > 0
+      ? [
+          ...Array.from({ length: pad }, (_, i) => rawSlotNumbers[0] - (pad - i)),
+          ...rawSlotNumbers,
+        ]
+      : rawSlotNumbers
     const sortedNodes = [...nodes].sort((a, b) => a.host.localeCompare(b.host))
 
     const nodeCharts = sortedNodes
@@ -1410,7 +1515,7 @@ function RecentSlotsChart({
     const slotNumbers = allSlotNumbers
 
     return { nodeCharts, feeds, slotCount: slotNumbers.length }
-  }, [activeSlots, nodes, granular])
+  }, [activeSlots, nodes, granular, viewSlotCount])
 
   const activeData = chartData
   const { nodeCharts, feeds } = activeData
@@ -1454,8 +1559,18 @@ function RecentSlotsChart({
   }, [activeSlots, feeds, slotLeaders, liveLeaders, live, granular, applyInfoBar])
 
 
-  // Don't show "no data" once the live buffer is seeded (liveEdge > 0) — the chart
-  // renders from slotBufferRef even when the page-cache prop is empty.
+  // Show a loading placeholder while the initial seed fetch is in flight so the chart
+  // doesn't flash an empty frame before it has data to render. Falls through to "no
+  // data" only when there's truly nothing to show (non-live mode with empty cache).
+  if (live && !liveEdge)
+    return (
+      <div className={bare ? undefined : "rounded-lg border border-border bg-card p-4"}>
+        {!bare && <h3 className="text-sm font-medium mb-4">Recent DZ Edge Leader Slots — Win Rate per Slot</h3>}
+        <div className="flex items-center justify-center py-12 text-muted-foreground">
+          <Loader2 size={16} className="animate-spin" />
+        </div>
+      </div>
+    )
   if (!slots.length && !liveEdge)
     return (
       <div className={bare ? undefined : "rounded-lg border border-border bg-card p-4"}>
@@ -1537,7 +1652,7 @@ function RecentSlotsChart({
             )}
             {debugEnabled && live && viewEndSlot === null && liveTailStatus && (
               <span className="text-[10px] font-mono uppercase tracking-wide text-muted-foreground/60 border border-border/50 rounded px-1.5 py-0.5">
-                queue={liveTailStatus.queueLen} · edge={liveEdge}
+                queue={liveTailStatus.queueLen} · edge={liveEdge}{tailAnchor > 0 && tailAnchor !== liveEdge ? ` · tail=${tailAnchor} (−${liveEdge - tailAnchor})` : ''}
               </span>
             )}
             {live && viewEndSlot !== null && (
@@ -1551,9 +1666,11 @@ function RecentSlotsChart({
             <button
               onClick={() => {
                 if (live && viewEndSlot === null) {
-                  // Currently live-tailing → pause
-                  viewEndSlotRef.current = liveEdgeRef.current
-                  setViewEndSlot(liveEdgeRef.current)
+                  // Currently live-tailing → pause at the visible slot (tailAnchor,
+                  // which may be behind liveEdge if the view has rewound).
+                  const pauseAt = tailAnchorRef.current || liveEdgeRef.current
+                  viewEndSlotRef.current = pauseAt
+                  setViewEndSlot(pauseAt)
                 } else {
                   // Not tailing (paused) → start/resume
                   scrollToLive()

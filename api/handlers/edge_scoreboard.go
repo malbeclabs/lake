@@ -1525,5 +1525,21 @@ func (a *API) FetchEdgeScoreboardLatest(ctx context.Context, leadersOnly bool, s
 	if lagSec > 0 {
 		resp.DataLagMs = uint64(lagSec * 1000)
 	}
+	// Align CurrentSlot with the actual tail of recent_slots. FetchEdgeScoreboardData
+	// sets CurrentSlot to the cursor anchor (maxSlot+1), but the strict host-coverage
+	// gate in query5 caps recent_slots well below that when any active host is lagging.
+	// Live-tail polls derive since_slot from the frontend's max(recent_slots); if the
+	// cached CurrentSlot is ahead of the served slots, filterSlotsSince strips the
+	// response empty even though the cache has data. Reporting the real tail keeps the
+	// two aligned so polls serve from cache instead of flipping to empty.
+	var tail uint64
+	for _, r := range resp.RecentSlots {
+		if r.Slot > tail {
+			tail = r.Slot
+		}
+	}
+	if tail > 0 {
+		resp.CurrentSlot = tail
+	}
 	return resp, nil
 }
