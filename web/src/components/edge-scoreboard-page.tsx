@@ -599,12 +599,15 @@ const SlotRaceNodeChart = memo(function SlotRaceNodeChart({
     const slotPx = Math.min(plot.valToPos(1, 'x', true) - plot.valToPos(0, 'x', true), 4)
     const duration = 350
     const startTime = performance.now()
-    animOffsetRef.current = slotPx
+    animOffsetRef.current = Math.round(slotPx)
 
     const tick = (now: number) => {
       const t = Math.min((now - startTime) / duration, 1)
       const eased = 1 - (1 - t) ** 3  // cubic ease-out
-      animOffsetRef.current = slotPx * (1 - eased)
+      // Snap to integer pixels. A fractional translate anti-aliases the fillRect
+      // edges, and at globalAlpha=0.8 those partial-coverage pixels read as thin
+      // dark borders around every bar. Whole-pixel shifts keep the edges clean.
+      animOffsetRef.current = Math.round(slotPx * (1 - eased))
       plot.redraw(false)
       if (t < 1) {
         rafRef.current = requestAnimationFrame(tick)
@@ -711,8 +714,9 @@ function computeViewByEnd(
   liveEdge?: number,
   extraLeft: number = 0,
   windowSize: number = LIVE_BUFFER_SIZE,
+  precomputedSlotNums?: number[],
 ): EdgeScoreboardSlotRace[] {
-  const slotNums = [...new Set(buffer.map(r => r.slot))].sort((a, b) => a - b)
+  const slotNums = precomputedSlotNums ?? [...new Set(buffer.map(r => r.slot))].sort((a, b) => a - b)
   if (!slotNums.length) return []
   // liveEdge=0 is treated as unset (use buffer newest).
   const anchor = endSlot ?? (liveEdge || null)
@@ -858,6 +862,17 @@ function RecentSlotsChart({
     }
 
     let cancelled = false
+
+    // Reset the paused view when the filter changes. The new filter's buffer may
+    // not cover the old anchor slot (leaders-only is sparse, windows can differ)
+    // so staying paused would leave the user on an empty chart. Snap to live
+    // instead — filter changes are a context reset.
+    const prev = prevLiveParamsRef.current
+    if (prev.leadersOnly !== undefined && (prev.leadersOnly !== leadersOnly || prev.window !== window)) {
+      viewEndSlotRef.current = null
+      setViewEndSlot(null)
+      prefetchedBoundariesRef.current = new Set()
+    }
 
     // Group races by slot, preserving order.
     const bySlotOrdered = (races: EdgeScoreboardSlotRace[]) => {
@@ -1127,10 +1142,11 @@ function RecentSlotsChart({
           drainTimer -= 400
           const races = liveQueueRef.current.shift()
           if (races) {
-            const newBuf = [...slotBufferRef.current, ...races]
-            const bufNums = [...new Set(newBuf.map(r => r.slot))].sort((a, b) => a - b)
-            const keepBuf = new Set(bufNums.slice(-MAX_BUFFER_SLOTS))
-            slotBufferRef.current = newBuf.filter(r => keepBuf.has(r.slot))
+            // Don't trim in paused mode — the infinite-scroll prefetch prepends older
+            // slots and a MAX_BUFFER_SLOTS trim would evict them before the user can
+            // scroll to them (and prefetchedBoundariesRef then blocks the re-fetch).
+            // The next tail-mode drain trims naturally when the user resumes live.
+            slotBufferRef.current = [...slotBufferRef.current, ...races]
             const slotNum = races[0]?.slot
             if (slotNum) { liveEdgeRef.current = slotNum }
           }
@@ -1242,7 +1258,28 @@ function RecentSlotsChart({
 
   const prefetchingRef = useRef(false)
   const [isPrefetching, setIsPrefetching] = useState(false)
+  // Bumped after each successful prefetch so the prefetch effect re-evaluates
+  // and can chain another fetch when the buffer still doesn't have enough
+  // runway ahead of the user's scroll position.
+  const [prefetchTick, setPrefetchTick] = useState(0)
   const prefetchedBoundariesRef = useRef(new Set<number>())
+
+  // Cached sorted unique slot numbers for the current buffer. The buffer can grow
+  // to 100k+ rows over a long paused session (many prefetches); re-running
+  // `[...new Set(buf.map(r => r.slot))].sort(...)` on every click causes visible
+  // lag that compounds as the user scrolls further back. Invalidated by buffer
+  // length — buffer only grows in paused mode, so length is a sufficient key.
+  const slotNumsCacheRef = useRef<{ len: number; nums: number[] }>({ len: -1, nums: [] })
+  const getSortedSlotNums = (): number[] => {
+    const buf = slotBufferRef.current
+    if (slotNumsCacheRef.current.len !== buf.length) {
+      slotNumsCacheRef.current = {
+        len: buf.length,
+        nums: [...new Set(buf.map(r => r.slot))].sort((a, b) => a - b),
+      }
+    }
+    return slotNumsCacheRef.current.nums
+  }
 
   // Animate smoothly to the live edge, then snap to tailing mode.
   // Handles two cases:
@@ -1385,21 +1422,40 @@ function RecentSlotsChart({
   if (scrollToLiveRef) scrollToLiveRef.current = scrollToLive
   if (toggleLiveRef) toggleLiveRef.current = toggleLive
 
-  // Step N slots forward (positive) or backward (negative).
+  // Step forward (+1) or backward (-1) by one page of data slots.
   const stepSlots = (direction: 1 | -1) => {
-    const nums = [...new Set(slotBufferRef.current.map(r => r.slot))].sort((a, b) => a - b)
-    const liveEdge = liveEdgeRef.current || (nums.at(-1) ?? 0)
-    const oldestSlot = nums[0] ?? 0
-    const minEnd = oldestSlot + viewSlotCount - 1
-    const current = viewEndSlotRef.current ?? liveEdge
-    const next = current + direction * viewSlotCount
-    if (direction > 0 && next >= liveEdge) {
-      scrollToLive()
+    const nums = getSortedSlotNums()
+    if (!nums.length) return
+    const liveEdge = liveEdgeRef.current || nums[nums.length - 1]
+    // In live mode, step from tailAnchor (the actual rendered right edge) rather
+    // than liveEdge. tailAnchor can trail liveEdge after a rewind on catch-up, so
+    // stepping from liveEdge would jump forward of the visible view.
+    const current = viewEndSlotRef.current ?? (tailAnchorRef.current || liveEdge)
+    // Step by viewSlotCount unique data slots rather than raw slot numbers so the
+    // chart shifts by a full page regardless of backend gaps. In leaders-only
+    // mode the server returns only DZ-leader slots, so 200 raw slots can map to
+    // far fewer data points — stepping by raw slots would land on a view with
+    // partial coverage and the chart would render empty padding on the left.
+    let curIdx = nums.length - 1
+    while (curIdx > 0 && nums[curIdx] > current) curIdx--
+    const rawNextIdx = curIdx + direction * viewSlotCount
+    if (direction > 0) {
+      const capped = Math.min(nums.length - 1, rawNextIdx)
+      if (capped >= nums.length - 1 || nums[capped] >= liveEdge) {
+        scrollToLive()
+        return
+      }
+      viewEndSlotRef.current = nums[capped]
+      setViewEndSlot(nums[capped])
       return
     }
-    const clamped = Math.max(minEnd, Math.min(liveEdge, next))
-    viewEndSlotRef.current = clamped
-    setViewEndSlot(clamped)
+    // Backward: clamp so the view has at least viewSlotCount slots to its left.
+    // If the buffer isn't deep enough, hold at the deepest anchor — the prefetch
+    // effect will extend the buffer and the next click can progress.
+    const minIdx = Math.min(nums.length - 1, viewSlotCount - 1)
+    const clampedIdx = Math.max(minIdx, rawNextIdx)
+    viewEndSlotRef.current = nums[clampedIdx]
+    setViewEndSlot(nums[clampedIdx])
   }
 
   // Prefetch older slots when user scrolls near the buffer start (infinite scroll backwards).
@@ -1407,38 +1463,40 @@ function RecentSlotsChart({
     if (prefetchingRef.current || viewEndSlot === null) return
     const buffer = slotBufferRef.current
     if (!buffer.length) return
-    const slotNums = [...new Set(buffer.map(r => r.slot))].sort((a, b) => a - b)
+    const slotNums = getSortedSlotNums()
     const oldestSlot = slotNums[0]
-    // Trigger when the left edge of the view is within 150 slots of the oldest data
-    if (viewEndSlot > oldestSlot + viewSlotCount + 150) return
+    // Trigger while there are fewer than PREFETCH_RUNWAY_SLOTS unique slots at or
+    // below viewEndSlot — i.e. several pages of runway left. We fetch eagerly so
+    // history is already loaded before the user reaches the edge, even during
+    // fast click-through. After each successful fetch, prefetchTick bumps to
+    // re-run this effect; the chain stops when runway is comfortable or the
+    // server returns no more history (oldestSlot is added to the dedup set).
+    const PREFETCH_RUNWAY_SLOTS = viewSlotCount * 4 + 150
+    let endIdx = slotNums.length - 1
+    while (endIdx > 0 && slotNums[endIdx] > viewEndSlot) endIdx--
+    if (endIdx > PREFETCH_RUNWAY_SLOTS) return
     if (prefetchedBoundariesRef.current.has(oldestSlot)) return
     prefetchingRef.current = true
     setIsPrefetching(true)
     prefetchedBoundariesRef.current.add(oldestSlot)
-    fetchEdgeScoreboard(window, leadersOnly, { beforeSlot: oldestSlot, limit: 500 }).then(data => {
+    fetchEdgeScoreboard(window, leadersOnly, { beforeSlot: oldestSlot, limit: 1000 }).then(data => {
       if (!data.recent_slots.length) return
       // Prepend older slots. viewEndSlot is an absolute slot number so the view
-      // is unaffected by buffer growth — no offset adjustment needed.
+      // is unaffected by buffer growth — no offset adjustment needed. The user's
+      // view stays pinned to the slot they clicked to; newly fetched slots sit
+      // below the view as runway that the next back-click can reveal.
       const existingSlots = new Set(slotBufferRef.current.map(r => r.slot))
       const newRaces = data.recent_slots.filter((r: EdgeScoreboardSlotRace) => !existingSlots.has(r.slot))
       if (!newRaces.length) return
       slotBufferRef.current = [...newRaces, ...slotBufferRef.current]
-      // If the user is still pinned at the old left edge, shift the view to the new
-      // left edge so the loaded history becomes immediately visible without another drag.
-      const oldMinEnd = oldestSlot + viewSlotCountRef.current - 1
-      if (viewEndSlotRef.current !== null && Math.abs(viewEndSlotRef.current - oldMinEnd) < 2) {
-        const newNums = [...new Set(slotBufferRef.current.map(r => r.slot))].sort((a, b) => a - b)
-        const newMinEnd = (newNums[0] ?? 0) + viewSlotCountRef.current - 1
-        viewEndSlotRef.current = newMinEnd
-        setViewEndSlot(newMinEnd)
-      }
     }).catch(() => {
       prefetchedBoundariesRef.current.delete(oldestSlot)
     }).finally(() => {
       prefetchingRef.current = false
       setIsPrefetching(false)
+      setPrefetchTick(v => v + 1)
     })
-  }, [viewEndSlot, window, leadersOnly])
+  }, [viewEndSlot, window, leadersOnly, prefetchTick])
 
   // Memoized on tailAnchor/viewEndSlot/bufferVersion so 60fps scrollOffset re-renders
   // don't recompute it. bufferVersion bumps on merge-in-place updates when a lagging
@@ -1448,12 +1506,12 @@ function RecentSlotsChart({
   const activeSlots = useMemo(() => {
     const buf = slotBufferRef.current
     if (!buf.length) return live ? [] : slots
-    return computeViewByEnd(buf, viewEndSlot, tailAnchor || liveEdge, 0, viewSlotCount)
+    return computeViewByEnd(buf, viewEndSlot, tailAnchor || liveEdge, 0, viewSlotCount, getSortedSlotNums())
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tailAnchor, liveEdge, viewEndSlot, live, slots, viewSlotCount, bufferVersion])
+  }, [tailAnchor, liveEdge, viewEndSlot, live, slots, viewSlotCount, bufferVersion, prefetchTick])
 
   const chartData = useMemo(() => {
-    if (!activeSlots.length || !nodes.length) return { nodeCharts: [], feeds: [] as string[], slotCount: 0 }
+    if (!activeSlots.length || !nodes.length) return { nodeCharts: [], feeds: [] as string[], slotCount: 0, padCount: 0 }
 
     const validNodeIds = new Set(nodes.map((n) => n.host))
     const filtered = activeSlots.filter((s) => validNodeIds.has(s.host))
@@ -1514,11 +1572,28 @@ function RecentSlotsChart({
       })
     const slotNumbers = allSlotNumbers
 
-    return { nodeCharts, feeds, slotCount: slotNumbers.length }
+    return { nodeCharts, feeds, slotCount: slotNumbers.length, padCount: pad }
   }, [activeSlots, nodes, granular, viewSlotCount])
 
   const activeData = chartData
   const { nodeCharts, feeds } = activeData
+  // True when the user is anchored at the deepest viable position in the buffer —
+  // one more back-click can't advance until the prefetch lands. We surface the
+  // rail in that case too, so a click that "does nothing" is visibly tied to the
+  // pending fetch rather than feeling broken.
+  const atBufferEdge = useMemo(() => {
+    if (viewEndSlot === null) return false
+    const nums = getSortedSlotNums()
+    if (!nums.length) return false
+    let idx = nums.length - 1
+    while (idx > 0 && nums[idx] > viewEndSlot) idx--
+    return idx <= viewSlotCount - 1
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewEndSlot, viewSlotCount, prefetchTick, bufferVersion])
+  // Surface the prefetch indicator when the user is actually waiting: either the
+  // chart has empty left-side padding, or they're at the buffer edge and a back
+  // click is blocked. Background chain-prefetches building runway stay silent.
+  const showPrefetchRail = isPrefetching && (activeData.padCount > 0 || atBufferEdge)
 
   // Keep defaultInfoRef up-to-date with the most-recent visible slot so the
   // info bar always shows live data even when nothing is hovered.
@@ -1599,7 +1674,7 @@ function RecentSlotsChart({
             Win Rate per Slot
             {live && (
               <span className="relative flex items-center">
-                {isPrefetching ? (
+                {showPrefetchRail ? (
                   <Loader2 size={12} className="animate-spin text-emerald-500/50" />
                 ) : viewEndSlot === null ? (
                   <>
@@ -1696,12 +1771,22 @@ function RecentSlotsChart({
       </div>}
       <div className="flex flex-col lg:flex-row gap-0">
         <div ref={chartRowsRef} className="relative flex-1 min-w-0">
-        {/* Left-edge indicator: shows while fetching older history */}
-        {isPrefetching && (
-          <div className="absolute left-[64px] inset-y-0 flex items-center pointer-events-none z-10">
-            <Loader2 size={14} className="animate-spin text-muted-foreground/60" />
-          </div>
-        )}
+        {/* Left-edge indicator: thin shimmer on the left margin while fetching older
+            history. Positioned just inside the node-label gutter so it never overlaps
+            the chart bars. The travelling highlight makes it read as "older data
+            flowing in from the left" rather than a generic spinner. */}
+        <div
+          className={cn(
+            "absolute left-[56px] w-[2px] pointer-events-none z-10 overflow-hidden rounded-full transition-opacity duration-300",
+            showPrefetchRail ? "opacity-100" : "opacity-0",
+          )}
+          style={{ top: 0, height: `${nodeCharts.length * NODE_ROW_HEIGHT}px` }}
+          aria-hidden={!showPrefetchRail}
+          aria-label={showPrefetchRail ? "Loading older slots" : undefined}
+        >
+          <div className="absolute inset-0 bg-emerald-500/15" />
+          <div className="absolute inset-x-0 h-1/3 bg-gradient-to-b from-transparent via-emerald-500 to-transparent animate-scoreboard-edge-load" />
+        </div>
         {nodeCharts.map((nc) => (
           <div key={nc.node.host} style={{ height: NODE_ROW_HEIGHT }} className="flex items-center">
             {/* Label stays fixed */}
