@@ -4981,6 +4981,30 @@ export async function fetchShredEscrowEvents(
   return res.json()
 }
 
+export interface ShredEpochRevenue {
+  epoch: number
+  total_usdc: number
+  total_dollars: number
+  payment_count: number
+}
+
+export async function fetchShredEpochRevenue(limit = 20): Promise<ShredEpochRevenue[]> {
+  const res = await fetchWithRetry(`/api/dz/shreds/epoch-revenue?limit=${limit}`)
+  if (!res.ok) throw new Error('Failed to fetch shred epoch revenue')
+  return res.json()
+}
+
+export interface ShredSubscriberHistory {
+  epoch: number
+  active_seats: number
+}
+
+export async function fetchShredSubscriberHistory(limit = 50): Promise<ShredSubscriberHistory[]> {
+  const res = await fetchWithRetry(`/api/dz/shreds/subscriber-history?limit=${limit}`)
+  if (!res.ok) throw new Error('Failed to fetch shred subscriber history')
+  return res.json()
+}
+
 // Publisher Check
 export interface PublisherCheckItem {
   publisher_ip: string
