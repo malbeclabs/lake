@@ -43,7 +43,7 @@ type EdgeScoreboardNode struct {
 	StakeSol      float64                             `json:"stake_sol"`
 	Validators    uint64                              `json:"validators"`
 	TotalSlots    uint64                              `json:"total_slots"`
-	SlotsObserved uint64                              `json:"slots_observed"`  // view-dependent: DZ-leader slots in leaders_only mode, DZ+dz_rebop in all-slots mode
+	SlotsObserved uint64                              `json:"slots_observed"`  // view-dependent: DZ-leader slots in leaders_only mode, DZ+retransmit in all-slots mode
 	DZLeaderSlots uint64                              `json:"dz_leader_slots"` // slots where the dz feed won shreds and slot was a DZ-leader slot (per-node, informational)
 	LastUpdated   time.Time                           `json:"last_updated"`
 	Name          string                              `json:"name,omitempty"`
@@ -133,11 +133,26 @@ type EdgeScoreboardResponse struct {
 // of headroom.
 const maxValidSlot = 1_000_000_000_000
 
+// retransmitFeeds lists the DZ retransmit feed names in slot_feed_race_summary_v2:
+// the per-validator local re-broadcast (dz_rebop) plus three regional retransmit feeds.
+const retransmitFeeds = `'dz_rebop', 'edge-solana-retrans-amer', 'edge-solana-retrans-eu', 'edge-solana-retrans-apac'`
+
+// dzFeeds combines the DZ leader feed with every retransmit variant.
+const dzFeeds = `'dz', ` + retransmitFeeds
+
 // scoreboardFeeds is the whitelist of feed names included in edge scoreboard results.
-const scoreboardFeeds = `'dz', 'dz_rebop', 'jito', 'turbine'`
+const scoreboardFeeds = dzFeeds + `, 'jito', 'turbine'`
 
 // scoreboardLoserFeeds is the whitelist of competitor feeds shown in lead-time comparisons.
 const scoreboardLoserFeeds = `'jito', 'turbine'`
+
+// retransmitRollup is a SQL CASE expression that aggregates every DZ retransmit variant
+// (dz_rebop + regional retransmits) into a single 'dz_retransmit' key, shrinking per-feed
+// result sets and keeping the scoreboard's retransmit column stable as the feed set evolves.
+// Callers alias this as something other than `feed` (e.g. `feed_key`) to avoid shadowing
+// the raw column — if an outer WHERE/GROUP BY also references `feed`, ClickHouse resolves
+// it back to the alias and silently filters/groups against the mapped value.
+const retransmitRollup = `CASE WHEN feed = 'dz_rebop' OR feed LIKE 'edge-solana-retrans-%' THEN 'dz_retransmit' ELSE feed END`
 
 // validWindows maps window parameter values to ClickHouse interval expressions.
 var validWindows = map[string]string{
@@ -391,14 +406,14 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 	} else {
 
 		// Query 1: Per-node slot counts from win-count rows (loser_feed = '').
-		// dz_slots counts all Edge feed slots (dz + dz_rebop) for use as SlotsObserved in
+		// dz_slots counts all Edge feed slots (dz + regional retransmit) for use as SlotsObserved in
 		// all-slots mode. In leaders-only mode, query1b overrides this with DZ-leader slots only.
 		// Includes feed count to filter out nodes that only record one feed (e.g. DZ-only nodes).
 		query1 := fmt.Sprintf(`
 		SELECT
 			host,
 			uniqExact(slot) AS total_slots,
-			uniqExactIf(slot, feed IN ('dz', 'dz_rebop')) AS dz_slots,
+			uniqExactIf(slot, feed IN (%s)) AS dz_slots,
 			max(epoch) AS max_epoch,
 			min(slot) AS min_slot,
 			max(slot) AS max_slot,
@@ -408,7 +423,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		WHERE feed_type = 'shred' AND loser_feed = '' %s
 		GROUP BY host
 	SETTINGS final=1
-`, shredderDB, rangeFilter)
+`, dzFeeds, shredderDB, rangeFilter)
 
 		start := time.Now()
 		rows1, err := a.envDB(ctx).Query(ctx, query1)
@@ -493,7 +508,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		// Query 1b: DZ-leader slot counts per node — always run regardless of leadersOnly.
 		// Counts slots where the dz feed was present (won shreds OR appeared as a pairwise loser),
 		// intersected with dz_leader_slots from publisher_shred_stats. Using OR loser_feed='dz'
-		// ensures nodes like tyo (where dz loses to dz_rebop every time) still count correctly.
+		// ensures nodes like tyo (where dz loses to retransmit every time) still count correctly.
 		// In leaders-only mode, also overrides info.dzSlots so SlotsObserved reflects leader slots.
 		{
 			query1b := fmt.Sprintf(`
@@ -691,24 +706,33 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		g.Go(func() error {
 			localFeedStats := make(map[feedKey]*EdgeScoreboardFeedStats)
 
-			// q2: per-host share-of-wins across the scoreboard feeds.
-			// denom = sum(shreds_won) across all scoreboard feeds for in-scope slots —
-			// only races one of the tracked feeds won first. Every feed's win_rate_pct is
-			// its share of those races, so dz + dz_rebop + jito + turbine sum to 100%
-			// and dz_edge (synthesized below from dz + dz_rebop) is additive.
-			// This excludes shreds won first by untracked feeds (regional retransmits,
-			// provider_one, etc.) so the scoreboard isn't diluted by new feeds we don't track.
+			// q2: per-observer share-of-wins across the scoreboard feeds. Each row is grouped
+			// by the race's observer host (the DZ edge box that saw the winning feed deliver
+			// first), so a validator's win rates reflect what it experiences as a receiver.
+			// denom = sum(shreds_won) across all scoreboard feeds for that observer in scope —
+			// so dz + dz_retransmit + jito + turbine sum to 100% and dz_edge (synthesized
+			// below from dz + dz_retransmit) is additive.
+			// This excludes shreds won first by untracked feeds (provider_one etc.) so the
+			// scoreboard isn't diluted by new feeds we don't yet track.
 			var q2 string
+			// Note: the rollup CASE aliases to feed_key (not feed) on purpose. ClickHouse
+			// resolves `feed` on the outer scope back to the alias when both exist, so
+			// `WHERE feed IN (...)` with the raw feed names would filter against the
+			// already-mapped 'dz_retransmit' value and silently drop every rolled-up row.
 			if leadersOnly {
 				q2 = fmt.Sprintf(`
 				WITH %[1]s,
 				feed_totals AS (
-					SELECT host, feed, sum(shreds_won) AS shreds_won
-					FROM %[2]s.slot_feed_race_summary_v2
-					WHERE feed_type = 'shred' AND loser_feed = '' AND feed IN (%[3]s)
-						AND slot IN (SELECT slot FROM dz_leader_slots)
-						%[4]s
-					GROUP BY host, feed
+					SELECT host, feed_key AS feed, sum(shreds_won) AS shreds_won
+					FROM (
+						SELECT host, %[5]s AS feed_key, shreds_won
+						FROM %[2]s.slot_feed_race_summary_v2
+						WHERE feed_type = 'shred' AND loser_feed = '' AND feed IN (%[3]s)
+							AND slot IN (SELECT slot FROM dz_leader_slots)
+							AND host != ''
+							%[4]s
+					)
+					GROUP BY host, feed_key
 				),
 				host_denom AS (
 					SELECT host, sum(shreds_won) AS denom
@@ -717,18 +741,23 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				)
 				SELECT
 					ft.host, ft.feed, ft.shreds_won, hd.denom AS total_shreds,
-					if(hd.denom > 0, round(ft.shreds_won / hd.denom * 100, 1), 0) AS win_rate_pct
+					if(hd.denom > 0, round(ft.shreds_won / hd.denom * 100, 2), 0) AS win_rate_pct
 				FROM feed_totals ft
 				INNER JOIN host_denom hd ON ft.host = hd.host
 			SETTINGS final=1
-`, dzLeaderCTE, shredderDB, scoreboardFeeds, rangeFilter)
+`, dzLeaderCTE, shredderDB, scoreboardFeeds, rangeFilter, retransmitRollup)
 			} else {
 				q2 = fmt.Sprintf(`
 				WITH feed_totals AS (
-					SELECT host, feed, sum(shreds_won) AS shreds_won
-					FROM %[1]s.slot_feed_race_summary_v2
-					WHERE feed_type = 'shred' AND loser_feed = '' AND feed IN (%[2]s) %[3]s
-					GROUP BY host, feed
+					SELECT host, feed_key AS feed, sum(shreds_won) AS shreds_won
+					FROM (
+						SELECT host, %[4]s AS feed_key, shreds_won
+						FROM %[1]s.slot_feed_race_summary_v2
+						WHERE feed_type = 'shred' AND loser_feed = '' AND feed IN (%[2]s)
+							AND host != ''
+							%[3]s
+					)
+					GROUP BY host, feed_key
 				),
 				host_denom AS (
 					SELECT host, sum(shreds_won) AS denom
@@ -737,11 +766,11 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				)
 				SELECT
 					ft.host, ft.feed, ft.shreds_won, hd.denom AS total_shreds,
-					if(hd.denom > 0, round(ft.shreds_won / hd.denom * 100, 1), 0) AS win_rate_pct
+					if(hd.denom > 0, round(ft.shreds_won / hd.denom * 100, 2), 0) AS win_rate_pct
 				FROM feed_totals ft
 				INNER JOIN host_denom hd ON ft.host = hd.host
 			SETTINGS final=1
-`, shredderDB, scoreboardFeeds, rangeFilter)
+`, shredderDB, scoreboardFeeds, rangeFilter, retransmitRollup)
 			}
 
 			t := time.Now()
@@ -768,17 +797,18 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				return fmt.Errorf("query2 rows: %w", err)
 			}
 
-			// Synthesize dz_edge = dz + dz_rebop on the shared per-host denominator.
-			// Because both dz and dz_rebop carry the same host_denom as TotalShreds,
-			// dz_edge.win_rate_pct == dz.win_rate_pct + dz_rebop.win_rate_pct exactly.
+			// Synthesize dz_edge = dz + dz_retransmit (dz_rebop plus regional retransmits) on
+			// the shared per-host denominator. All DZ feeds carry the same host_denom as
+			// TotalShreds, so summing ShredsWon and dividing by the shared denominator gives
+			// the correct combined win rate.
 			hosts := make(map[string]struct{})
 			for k := range localFeedStats {
 				hosts[k.nodeID] = struct{}{}
 			}
 			for nodeID := range hosts {
 				dz := localFeedStats[feedKey{nodeID, "dz"}]
-				rebop := localFeedStats[feedKey{nodeID, "dz_rebop"}]
-				if dz == nil && rebop == nil {
+				retrans := localFeedStats[feedKey{nodeID, "dz_retransmit"}]
+				if dz == nil && retrans == nil {
 					continue
 				}
 				var denom, won uint64
@@ -786,16 +816,16 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					denom = dz.TotalShreds
 					won += dz.ShredsWon
 				}
-				if rebop != nil {
+				if retrans != nil {
 					if denom == 0 {
-						denom = rebop.TotalShreds
+						denom = retrans.TotalShreds
 					}
-					won += rebop.ShredsWon
+					won += retrans.ShredsWon
 				}
-				var rate float64
-				if denom > 0 {
-					rate = float64(int(float64(won)/float64(denom)*1000+0.5)) / 10
+				if denom == 0 {
+					continue
 				}
+				rate := float64(int(float64(won)/float64(denom)*1000+0.5)) / 10
 				localFeedStats[feedKey{nodeID, "dz_edge"}] = &EdgeScoreboardFeedStats{
 					ShredsWon:   won,
 					TotalShreds: denom,
@@ -810,9 +840,9 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		// Group A2: pairwise lead times (q2b) for the synthetic dz_edge feed vs competitors.
 		// Runs in parallel with Group A so it is never starved by q2+q2c consuming
 		// the 45s budget, which caused intermittent empty lead-time columns.
-		// Leaders-only uses feed='dz' (leader path only). All-slots pools dz + dz_rebop
-		// so retransmit wins are represented — direct quantile over the combined rows
-		// (no per-slot argMin CTE, which was too expensive over the full table).
+		// Leaders-only uses feed='dz' (leader path only). All-slots pools dz + regional
+		// retransmit feeds so retransmit wins are represented — direct quantile over the
+		// combined rows (no per-slot argMin CTE, which was too expensive over the full table).
 		g.Go(func() error {
 			var q2b string
 			if leadersOnly {
@@ -839,12 +869,12 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					quantile(0.5)(lead_time_p50_ms) AS p50_ms,
 					quantile(0.95)(lead_time_p95_ms) AS p95_ms
 				FROM %s.slot_feed_race_summary_v2
-				WHERE feed_type = 'shred' AND feed IN ('dz', 'dz_rebop') AND loser_feed IN (%s)
+				WHERE feed_type = 'shred' AND feed IN (%s) AND loser_feed IN (%s)
 					AND lead_time_p50_ms <= 500
 					%s
 				GROUP BY host, loser_feed
 			SETTINGS final=1
-`, shredderDB, scoreboardLoserFeeds, rangeFilter)
+`, shredderDB, dzFeeds, scoreboardLoserFeeds, rangeFilter)
 			}
 			t := time.Now()
 			rows2b, err := a.envDB(gctx).Query(gctx, q2b)
@@ -1006,52 +1036,61 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		var query5 string
 		if leadersOnly {
 			query5 = fmt.Sprintf(`
-				WITH %s,
+				WITH %[1]s,
 				active_hosts AS (
 					SELECT host
-					FROM %s.slot_feed_race_summary_v2
+					FROM %[2]s.slot_feed_race_summary_v2
 					WHERE feed_type = 'shred' AND loser_feed = ''
-						AND slot BETWEEN %d AND %d
+						AND slot BETWEEN %[3]d AND %[4]d
 					GROUP BY host
 					HAVING uniqExact(feed) >= 2
 				),
 				dz_slots AS (
 					SELECT DISTINCT slot
 					FROM dz_leader_slots
-					WHERE slot BETWEEN %d AND %d
+					WHERE slot BETWEEN %[3]d AND %[4]d
 				),
 				common_slots AS (
 					SELECT slot
 					FROM (
 						SELECT DISTINCT host, slot
-						FROM %s.slot_feed_race_summary_v2
+						FROM %[2]s.slot_feed_race_summary_v2
 						WHERE feed_type = 'shred' AND loser_feed = ''
 							AND host IN (SELECT host FROM active_hosts)
 							AND slot IN (SELECT slot FROM dz_slots)
-							%s
+							%[5]s
 					)
 					GROUP BY slot
 					HAVING count(DISTINCT host) = (SELECT count(*) FROM active_hosts)
-					ORDER BY slot %s
-					LIMIT %d
+					ORDER BY slot %[6]s
+					LIMIT %[7]d
 				)
-				SELECT r.host, r.slot, r.feed, r.shreds_won,
-					round(r.shreds_won / greatest(r.total_shreds, 1) * 100, 1) AS win_pct
-				FROM %s.slot_feed_race_summary_v2 AS r
-				INNER JOIN common_slots cs ON r.slot = cs.slot
-				WHERE r.feed_type = 'shred' AND r.loser_feed = '' AND r.feed IN (%s)
-					AND r.slot BETWEEN %d AND %d
-					AND r.host IN (SELECT host FROM active_hosts)
-				ORDER BY r.host, r.slot, r.feed
+				SELECT host, slot, feed, shreds_won,
+					round(shreds_won / greatest(total_shreds, 1) * 100, 1) AS win_pct
+				FROM (
+					SELECT host, slot, feed_key AS feed,
+						sum(shreds_won) AS shreds_won,
+						max(total_shreds) AS total_shreds
+					FROM (
+						SELECT r.host, r.slot, %[9]s AS feed_key, r.shreds_won, r.total_shreds
+						FROM %[2]s.slot_feed_race_summary_v2 AS r
+						INNER JOIN common_slots cs ON r.slot = cs.slot
+						WHERE r.feed_type = 'shred' AND r.loser_feed = '' AND r.feed IN (%[8]s)
+							AND r.slot BETWEEN %[3]d AND %[4]d
+							AND r.host IN (SELECT host FROM active_hosts)
+					)
+					GROUP BY host, slot, feed_key
+				)
+				ORDER BY host, slot, feed
 			SETTINGS final=1
-`, dzLeaderCTEForRecent, shredderDB, slotWindowMin, slotWindowMax, slotWindowMin, slotWindowMax, shredderDB, slotFilter, orderDir, slotLimit, shredderDB, scoreboardFeeds, slotWindowMin, slotWindowMax)
+`, dzLeaderCTEForRecent, shredderDB, slotWindowMin, slotWindowMax, slotFilter, orderDir, slotLimit, scoreboardFeeds, retransmitRollup)
 		} else {
 			query5 = fmt.Sprintf(`
 				WITH active_hosts AS (
 					SELECT host
-					FROM %s.slot_feed_race_summary_v2
+					FROM %[1]s.slot_feed_race_summary_v2
 					WHERE feed_type = 'shred' AND loser_feed = ''
-						AND slot BETWEEN %d AND %d
+						AND slot BETWEEN %[2]d AND %[3]d
 					GROUP BY host
 					HAVING uniqExact(feed) >= 2
 				),
@@ -1059,27 +1098,36 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					SELECT slot
 					FROM (
 						SELECT DISTINCT host, slot
-						FROM %s.slot_feed_race_summary_v2
+						FROM %[1]s.slot_feed_race_summary_v2
 						WHERE feed_type = 'shred' AND loser_feed = ''
 							AND host IN (SELECT host FROM active_hosts)
-							AND slot BETWEEN %d AND %d
-							%s
+							AND slot BETWEEN %[2]d AND %[3]d
+							%[4]s
 					)
 					GROUP BY slot
 					HAVING count(DISTINCT host) = (SELECT count(*) FROM active_hosts)
-					ORDER BY slot %s
-					LIMIT %d
+					ORDER BY slot %[5]s
+					LIMIT %[6]d
 				)
-				SELECT r.host, r.slot, r.feed, r.shreds_won,
-					round(r.shreds_won / greatest(r.total_shreds, 1) * 100, 1) AS win_pct
-				FROM %s.slot_feed_race_summary_v2 AS r
-				INNER JOIN common_slots cs ON r.slot = cs.slot
-				WHERE r.feed_type = 'shred' AND r.loser_feed = '' AND r.feed IN (%s)
-					AND r.slot BETWEEN %d AND %d
-					AND r.host IN (SELECT host FROM active_hosts)
-				ORDER BY r.host, r.slot, r.feed
+				SELECT host, slot, feed, shreds_won,
+					round(shreds_won / greatest(total_shreds, 1) * 100, 1) AS win_pct
+				FROM (
+					SELECT host, slot, feed_key AS feed,
+						sum(shreds_won) AS shreds_won,
+						max(total_shreds) AS total_shreds
+					FROM (
+						SELECT r.host, r.slot, %[8]s AS feed_key, r.shreds_won, r.total_shreds
+						FROM %[1]s.slot_feed_race_summary_v2 AS r
+						INNER JOIN common_slots cs ON r.slot = cs.slot
+						WHERE r.feed_type = 'shred' AND r.loser_feed = '' AND r.feed IN (%[7]s)
+							AND r.slot BETWEEN %[2]d AND %[3]d
+							AND r.host IN (SELECT host FROM active_hosts)
+					)
+					GROUP BY host, slot, feed_key
+				)
+				ORDER BY host, slot, feed
 			SETTINGS final=1
-`, shredderDB, slotWindowMin, slotWindowMax, shredderDB, slotWindowMin, slotWindowMax, slotFilter, orderDir, slotLimit, shredderDB, scoreboardFeeds, slotWindowMin, slotWindowMax)
+`, shredderDB, slotWindowMin, slotWindowMax, slotFilter, orderDir, slotLimit, scoreboardFeeds, retransmitRollup)
 		}
 		t := time.Now()
 		rows5, err := a.envDB(gctx).Query(gctx, query5)
@@ -1266,20 +1314,23 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			var query7 string
 			if leadersOnly {
 				query7 = fmt.Sprintf(`
-				WITH %s,
+				WITH %[1]s,
 				per_feed AS (
-					SELECT
-						host,
-						intDiv(slot, %d) * %d AS slot_bucket,
-						feed,
-						sum(shreds_won) AS feed_won
-					FROM %s.slot_feed_race_summary_v2
-					WHERE feed_type = 'shred' AND loser_feed = '' AND feed IN (%s)
-						AND host IN (%s)
-						AND slot IN (SELECT slot FROM dz_leader_slots)
-						AND slot <= %d
-						%s
-					GROUP BY host, slot_bucket, feed
+					SELECT host, slot_bucket, feed_key AS feed, sum(shreds_won) AS feed_won
+					FROM (
+						SELECT
+							host,
+							intDiv(slot, %[2]d) * %[2]d AS slot_bucket,
+							%[9]s AS feed_key,
+							shreds_won
+						FROM %[3]s.slot_feed_race_summary_v2
+						WHERE feed_type = 'shred' AND loser_feed = '' AND feed IN (%[4]s)
+							AND host IN (%[5]s)
+							AND slot IN (SELECT slot FROM dz_leader_slots)
+							AND slot <= %[6]d
+							%[7]s
+					)
+					GROUP BY host, slot_bucket, feed_key
 				),
 				bucket_totals AS (
 					SELECT host, slot_bucket, sum(feed_won) AS bucket_total
@@ -1291,21 +1342,24 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				JOIN bucket_totals bt ON f.host = bt.host AND f.slot_bucket = bt.slot_bucket
 				ORDER BY f.host, f.slot_bucket, f.feed
 			SETTINGS final=1
-`, dzLeaderCTE, bucketSize, bucketSize, shredderDB, scoreboardFeeds, nodeList, slotWindowMax, rangeFilter)
+`, dzLeaderCTE, bucketSize, shredderDB, scoreboardFeeds, nodeList, slotWindowMax, rangeFilter, "" /* unused [8] */, retransmitRollup)
 			} else {
 				query7 = fmt.Sprintf(`
 				WITH per_feed AS (
-					SELECT
-						host,
-						intDiv(slot, %d) * %d AS slot_bucket,
-						feed,
-						sum(shreds_won) AS feed_won
-					FROM %s.slot_feed_race_summary_v2
-					WHERE feed_type = 'shred' AND loser_feed = '' AND feed IN (%s)
-						AND host IN (%s)
-						AND slot <= %d
-						%s
-					GROUP BY host, slot_bucket, feed
+					SELECT host, slot_bucket, feed_key AS feed, sum(shreds_won) AS feed_won
+					FROM (
+						SELECT
+							host,
+							intDiv(slot, %[1]d) * %[1]d AS slot_bucket,
+							%[7]s AS feed_key,
+							shreds_won
+						FROM %[2]s.slot_feed_race_summary_v2
+						WHERE feed_type = 'shred' AND loser_feed = '' AND feed IN (%[3]s)
+							AND host IN (%[4]s)
+							AND slot <= %[5]d
+							%[6]s
+					)
+					GROUP BY host, slot_bucket, feed_key
 				),
 				bucket_totals AS (
 					SELECT host, slot_bucket, sum(feed_won) AS bucket_total
@@ -1317,7 +1371,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				JOIN bucket_totals bt ON f.host = bt.host AND f.slot_bucket = bt.slot_bucket
 				ORDER BY f.host, f.slot_bucket, f.feed
 			SETTINGS final=1
-`, bucketSize, bucketSize, shredderDB, scoreboardFeeds, nodeList, slotWindowMax, rangeFilter)
+`, bucketSize, shredderDB, scoreboardFeeds, nodeList, slotWindowMax, rangeFilter, retransmitRollup)
 			}
 
 			t := time.Now()
