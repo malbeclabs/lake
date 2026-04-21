@@ -14,6 +14,7 @@ import (
 
 type GeolocExplorerResponse struct {
 	Devices []GeolocExplorerDevice `json:"devices"`
+	Probes  []GeolocExplorerProbe  `json:"probes"`
 	Targets []GeolocExplorerTarget `json:"targets"`
 }
 
@@ -23,6 +24,13 @@ type GeolocExplorerDevice struct {
 	Lat                 float64 `json:"lat"`
 	Lng                 float64 `json:"lng"`
 	MinRefMeasuredRttNs uint64  `json:"min_ref_measured_rtt_ns"`
+}
+
+type GeolocExplorerProbe struct {
+	PK   string  `json:"pk"`
+	Code string  `json:"code"`
+	Lat  float64 `json:"lat"`
+	Lng  float64 `json:"lng"`
 }
 
 type GeolocExplorerTarget struct {
@@ -59,10 +67,9 @@ func (a *API) GetGeolocExplorer(w http.ResponseWriter, r *http.Request) {
 			sender_pubkey,
 			any(lat) AS lat,
 			any(lng) AS lng,
-			min(ref_measured_rtt_ns[1]) AS min_ref_measured_rtt_ns
+			minIf(ref_measured_rtt_ns[1], length(ref_measured_rtt_ns) > 0) AS min_ref_measured_rtt_ns
 		FROM `+"`%s`"+`.location_offsets
 		WHERE received_at >= now() - INTERVAL %d HOUR
-		  AND length(ref_measured_rtt_ns) > 0
 		GROUP BY sender_pubkey
 	`, envDB, hours)
 
@@ -135,30 +142,55 @@ func (a *API) GetGeolocExplorer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Enrich devices with probe codes from the lake database via a separate query.
-	// geoloc_probes_current lives in the lake DB (a.DB), not behind remoteSecure().
-	if len(pubkeys) > 0 {
-		pks := make([]string, 0, len(pubkeys))
-		for pk := range pubkeys {
-			pks = append(pks, pk)
-		}
-		probeRows, err := a.DB.Query(ctx, "SELECT pk, code FROM geoloc_probes_current WHERE pk IN (?)", pks)
-		if err != nil {
-			logError("geoloc explorer probe query error", "error", err)
-			// Non-fatal: return devices without probe codes
-		} else {
-			defer probeRows.Close()
-			codeMap := make(map[string]string)
-			for probeRows.Next() {
-				var pk, code string
-				if err := probeRows.Scan(&pk, &code); err == nil {
-					codeMap[pk] = code
-				}
+	// Query 3: All geoprobes with metro coordinates from dimension tables.
+	// This ensures probes appear on the map even without recent measurements.
+	// Resolves coordinates via: probe → first parent device → metro.
+	// Falls back to matching the metro code prefix from the probe code.
+	var probes []GeolocExplorerProbe
+	probeRows, err := a.DB.Query(ctx, `
+		SELECT
+			gp.pk,
+			gp.code,
+			coalesce(
+				nullIf(m1.latitude, 0),
+				nullIf(m2.latitude, 0),
+				0
+			) AS lat,
+			coalesce(
+				nullIf(m1.longitude, 0),
+				nullIf(m2.longitude, 0),
+				0
+			) AS lng
+		FROM geoloc_probes_current gp
+		LEFT JOIN dz_devices_current d
+			ON d.pk = JSONExtractString(gp.parent_devices, 1)
+		LEFT JOIN dz_metros_current m1
+			ON m1.pk = d.metro_pk
+		LEFT JOIN dz_metros_current m2
+			ON m2.code = substring(gp.code, 1, 3)
+	`)
+	if err != nil {
+		logError("geoloc explorer probe location query error", "error", err)
+		// Non-fatal: proceed without probe locations
+	} else {
+		defer probeRows.Close()
+		for probeRows.Next() {
+			var p GeolocExplorerProbe
+			if err := probeRows.Scan(&p.PK, &p.Code, &p.Lat, &p.Lng); err == nil && p.Lat != 0 && p.Lng != 0 {
+				probes = append(probes, p)
 			}
-			for i := range devices {
-				if code, ok := codeMap[devices[i].SenderPubkey]; ok {
-					devices[i].ProbeCode = code
-				}
+		}
+	}
+
+	// Enrich devices with probe codes from the probes we already fetched.
+	if len(pubkeys) > 0 && len(probes) > 0 {
+		codeMap := make(map[string]string, len(probes))
+		for _, p := range probes {
+			codeMap[p.PK] = p.Code
+		}
+		for i := range devices {
+			if code, ok := codeMap[devices[i].SenderPubkey]; ok {
+				devices[i].ProbeCode = code
 			}
 		}
 	}
@@ -166,12 +198,19 @@ func (a *API) GetGeolocExplorer(w http.ResponseWriter, r *http.Request) {
 	if devices == nil {
 		devices = []GeolocExplorerDevice{}
 	}
+	if probes == nil {
+		probes = []GeolocExplorerProbe{}
+	}
 	if targets == nil {
 		targets = []GeolocExplorerTarget{}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(GeolocExplorerResponse{Devices: devices, Targets: targets}); err != nil {
+	if err := json.NewEncoder(w).Encode(GeolocExplorerResponse{
+		Devices: devices,
+		Probes:  probes,
+		Targets: targets,
+	}); err != nil {
 		logError("failed to encode response", "error", err)
 	}
 }

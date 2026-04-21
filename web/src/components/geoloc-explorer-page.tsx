@@ -102,10 +102,11 @@ export function GeolocExplorerPage() {
   })
 
   const devices = data?.devices ?? []
+  const probes = data?.probes ?? []
   const targets = data?.targets ?? []
   const mapStyle = useMemo(() => createMapStyle(isDark), [isDark])
 
-  // Device dots — one per sender_pubkey
+  // Device dots — one per sender_pubkey from location_offsets
   const devicePointsGeoJSON = useMemo(() => ({
     type: 'FeatureCollection' as const,
     features: devices.map((d) => ({
@@ -118,7 +119,25 @@ export function GeolocExplorerPage() {
     })),
   }), [devices])
 
-  // Geoprobe circles — one per device, radius from min ref_measured_rtt_ns
+  // Probe dots — all geoprobes at their metro coordinates.
+  // Probes that also appear as devices (with measurement data) are excluded
+  // to avoid duplicate dots at slightly different positions.
+  const probePointsGeoJSON = useMemo(() => {
+    const devicePKs = new Set(devices.map((d) => d.sender_pubkey))
+    return {
+      type: 'FeatureCollection' as const,
+      features: probes
+        .filter((p) => !devicePKs.has(p.pk))
+        .map((p) => ({
+          type: 'Feature' as const,
+          properties: { label: p.code, sender_pubkey: p.pk },
+          geometry: { type: 'Point' as const, coordinates: [p.lng, p.lat] },
+        })),
+    }
+  }, [probes, devices])
+
+  // Geoprobe circles — one per probe with measurement data,
+  // using the device's lat/lng and min ref_measured_rtt_ns for the radius.
   const geoProbeCirclesGeoJSON = useMemo(() => {
     const features: GeoJSON.Feature<GeoJSON.Polygon>[] = []
     for (const d of devices) {
@@ -221,7 +240,30 @@ export function GeolocExplorerPage() {
             paint={{ 'line-color': '#3b82f6', 'line-width': 1, 'line-opacity': 0.5 }} />
         </Source>
 
-        {/* Device point markers */}
+        {/* Probe point markers (probes without measurement data) */}
+        <Source id="probe-points" type="geojson" data={probePointsGeoJSON}>
+          <Layer id="probe-points-circle" type="circle"
+            paint={{
+              'circle-radius': 5,
+              'circle-color': '#22c55e',
+              'circle-stroke-width': 2,
+              'circle-stroke-color': isDark ? '#1a1a2e' : '#ffffff',
+            }} />
+          <Layer id="probe-points-label" type="symbol"
+            layout={{
+              'text-field': ['get', 'label'],
+              'text-size': 11,
+              'text-offset': [0, 1.5],
+              'text-anchor': 'top',
+            }}
+            paint={{
+              'text-color': isDark ? '#e2e8f0' : '#1e293b',
+              'text-halo-color': isDark ? '#0f172a' : '#ffffff',
+              'text-halo-width': 1,
+            }} />
+        </Source>
+
+        {/* Device point markers (devices with measurement data) */}
         <Source id="device-points" type="geojson" data={devicePointsGeoJSON}>
           <Layer id="device-points-circle" type="circle"
             paint={{
@@ -246,7 +288,7 @@ export function GeolocExplorerPage() {
       </MapGL>
 
       {/* Empty state overlay */}
-      {devices.length === 0 && targets.length === 0 && (
+      {devices.length === 0 && probes.length === 0 && targets.length === 0 && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="bg-card/90 backdrop-blur-sm border border-border rounded-lg px-6 py-4 text-center">
             <div className="text-sm text-muted-foreground">No location offset data available</div>

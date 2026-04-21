@@ -106,6 +106,7 @@ func TestGetGeolocExplorer(t *testing.T) {
 		err := json.Unmarshal(w.Body.Bytes(), &resp)
 		require.NoError(t, err)
 		assert.Empty(t, resp.Devices)
+		assert.Empty(t, resp.Probes)
 		assert.Empty(t, resp.Targets)
 	})
 

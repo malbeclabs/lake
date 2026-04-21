@@ -5825,6 +5825,13 @@ export interface GeolocExplorerDevice {
   min_ref_measured_rtt_ns: number
 }
 
+export interface GeolocExplorerProbe {
+  pk: string
+  code: string
+  lat: number
+  lng: number
+}
+
 export interface GeolocExplorerTarget {
   sender_pubkey: string
   target_ip: string
@@ -5835,6 +5842,7 @@ export interface GeolocExplorerTarget {
 
 export interface GeolocExplorerResponse {
   devices: GeolocExplorerDevice[]
+  probes: GeolocExplorerProbe[]
   targets: GeolocExplorerTarget[]
 }
 
