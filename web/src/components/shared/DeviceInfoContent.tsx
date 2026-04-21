@@ -197,13 +197,13 @@ export function DeviceInfoContent({
 
   const effUnicast = device.maxUnicastUsers > 0
     ? device.maxUnicastUsers
-    : Math.max(0, device.maxUsers - device.maxMulticastSubscribers - device.maxMulticastPublishers)
+    : Math.max(0, device.maxUsers - device.multicastSubscribersCount - device.multicastPublishersCount)
   const effSubs = device.maxMulticastSubscribers > 0
     ? device.maxMulticastSubscribers
-    : Math.max(0, device.maxUsers - device.maxUnicastUsers - device.maxMulticastPublishers)
+    : Math.max(0, device.maxUsers - device.unicastUsersCount - device.multicastPublishersCount)
   const effPubs = device.maxMulticastPublishers > 0
     ? device.maxMulticastPublishers
-    : Math.max(0, device.maxUsers - device.maxUnicastUsers - device.maxMulticastSubscribers)
+    : Math.max(0, device.maxUsers - device.unicastUsersCount - device.multicastSubscribersCount)
   const userCapacityCards = [
     { count: device.unicastUsersCount, rawMax: device.maxUnicastUsers, effectiveMax: effUnicast, label: 'Unicast Users' },
     { count: device.multicastSubscribersCount, rawMax: device.maxMulticastSubscribers, effectiveMax: effSubs, label: 'Subscribers' },
