@@ -37,7 +37,6 @@ func (a *API) GetConfig(w http.ResponseWriter, r *http.Request) {
 		"neo4j":  a.Neo4jClient != nil && env == EnvMainnet,
 		"solana": env == EnvMainnet,
 		"geoip":  env == EnvMainnet,
-		"geoloc": env == EnvMainnet,
 	}
 
 	config := PublicConfig{

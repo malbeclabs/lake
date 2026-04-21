@@ -24,7 +24,7 @@ const fieldPrefixes = [
   { prefix: 'code:', description: 'Filter by probe code' },
   { prefix: 'owner:', description: 'Filter by owner' },
   { prefix: 'ip:', description: 'Filter by public IP' },
-  { prefix: 'exchange:', description: 'Filter by exchange' },
+  { prefix: 'exchange:', description: 'Filter by metro' },
   { prefix: 'references:', description: 'Filter by reference count' },
   { prefix: 'updates:', description: 'Filter by update count' },
 ]
@@ -220,7 +220,7 @@ export function GeolocProbesPage() {
                   </th>
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('exchange')}>
                     <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('exchange')}>
-                      Exchange
+                      Metro
                       <SortIcon field="exchange" />
                     </button>
                   </th>
