@@ -35,20 +35,22 @@ import { SmallDropdown } from "./topology/TimeRangeSelector";
 
 function useMinVisibleDuration(active: boolean, minMs = 500): boolean {
   const [visible, setVisible] = useState(active);
-  const shownAt = useRef<number>(active ? Date.now() : 0);
+  const shownAt = useRef<number>(0);
   const hideTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
     if (active) {
       clearTimeout(hideTimer.current);
-      if (!visible) {
-        shownAt.current = Date.now();
-        setVisible(true);
-      }
+      if (shownAt.current === 0) shownAt.current = Date.now();
+      if (!visible) setVisible(true);
     } else if (visible) {
       const remaining = minMs - (Date.now() - shownAt.current);
-      if (remaining <= 0) setVisible(false);
-      else hideTimer.current = setTimeout(() => setVisible(false), remaining);
+      const finish = () => {
+        shownAt.current = 0;
+        setVisible(false);
+      };
+      if (remaining <= 0) finish();
+      else hideTimer.current = setTimeout(finish, remaining);
     }
   }, [active, visible, minMs]);
 
