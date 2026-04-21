@@ -312,10 +312,13 @@ type DeviceDetail struct {
 	OutBps                    float64                 `json:"out_bps"`
 	PeakInBps                 float64                 `json:"peak_in_bps"`
 	PeakOutBps                float64                 `json:"peak_out_bps"`
-	ValidatorCount            uint64                  `json:"validator_count"`
-	StakeSol                  float64                 `json:"stake_sol"`
-	StakeShare                float64                 `json:"stake_share"`
 	Interfaces                []DeviceDetailInterface `json:"interfaces"`
+}
+
+type DeviceValidatorStats struct {
+	ValidatorCount uint64  `json:"validator_count"`
+	StakeSol       float64 `json:"stake_sol"`
+	StakeShare     float64 `json:"stake_share"`
 }
 
 func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
@@ -365,23 +368,6 @@ func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
 				AND link_pk = ''
 				AND device_pk = ?
 			GROUP BY device_pk
-		),
-		validator_stats AS (
-			SELECT
-				u.device_pk,
-				count(DISTINCT v.vote_pubkey) as validator_count,
-				sum(v.activated_stake_lamports) / 1e9 as stake_sol
-			FROM dz_users_current u
-			JOIN solana_gossip_nodes_current g ON u.client_ip = g.gossip_ip
-			JOIN solana_vote_accounts_current v ON g.pubkey = v.node_pubkey
-			WHERE u.status = 'activated' AND u.client_ip != '' AND v.epoch_vote_account = 'true'
-				AND u.device_pk = ?
-			GROUP BY u.device_pk
-		),
-		total_stake AS (
-			SELECT COALESCE(SUM(activated_stake_lamports), 0) as total_lamports
-			FROM solana_vote_accounts_current
-			WHERE epoch_vote_account = 'true' AND activated_stake_lamports > 0
 		)
 		SELECT
 			d.pk,
@@ -409,28 +395,20 @@ func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
 			COALESCE(tr.out_bps, 0) as out_bps,
 			COALESCE(pr.peak_in_bps, 0) as peak_in_bps,
 			COALESCE(pr.peak_out_bps, 0) as peak_out_bps,
-			COALESCE(vs.validator_count, 0) as validator_count,
-			COALESCE(vs.stake_sol, 0) as stake_sol,
-			CASE
-				WHEN ts.total_lamports > 0 THEN COALESCE(vs.stake_sol, 0) * 1e9 / ts.total_lamports * 100
-				ELSE 0
-			END as stake_share,
 			COALESCE(d.interfaces, '[]') as interfaces
 		FROM dz_devices_current d
-		CROSS JOIN total_stake ts
 		LEFT JOIN dz_contributors_current c ON d.contributor_pk = c.pk
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 		LEFT JOIN unicast_counts ucu ON d.pk = ucu.device_pk
 		LEFT JOIN multicast_counts ucm ON d.pk = ucm.device_pk
 		LEFT JOIN traffic_rates tr ON d.pk = tr.device_pk
 		LEFT JOIN peak_rates pr ON d.pk = pr.device_pk
-		LEFT JOIN validator_stats vs ON d.pk = vs.device_pk
 		WHERE d.pk = ?
 	`
 
 	var device DeviceDetail
 	var interfacesJSON string
-	err := a.envDB(ctx).QueryRow(ctx, query, pk, pk, pk, pk, pk, pk).Scan(
+	err := a.envDB(ctx).QueryRow(ctx, query, pk, pk, pk, pk, pk).Scan(
 		&device.PK,
 		&device.Code,
 		&device.Status,
@@ -456,9 +434,6 @@ func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
 		&device.OutBps,
 		&device.PeakInBps,
 		&device.PeakOutBps,
-		&device.ValidatorCount,
-		&device.StakeSol,
-		&device.StakeShare,
 		&interfacesJSON,
 	)
 	duration := time.Since(start)
@@ -530,6 +505,64 @@ func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(device); err != nil {
+		logError("failed to encode response", "error", err)
+	}
+}
+
+func (a *API) GetDeviceValidatorStats(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	pk := chi.URLParam(r, "pk")
+	if pk == "" {
+		http.Error(w, "missing device pk", http.StatusBadRequest)
+		return
+	}
+
+	start := time.Now()
+	query := `
+		WITH validator_stats AS (
+			SELECT
+				count(DISTINCT v.vote_pubkey) as validator_count,
+				sum(v.activated_stake_lamports) / 1e9 as stake_sol
+			FROM dz_users_current u
+			JOIN solana_gossip_nodes_current g ON u.client_ip = g.gossip_ip
+			JOIN solana_vote_accounts_current v ON g.pubkey = v.node_pubkey
+			WHERE u.status = 'activated' AND u.client_ip != '' AND v.epoch_vote_account = 'true'
+				AND u.device_pk = ?
+		),
+		total_stake AS (
+			SELECT COALESCE(SUM(activated_stake_lamports), 0) as total_lamports
+			FROM solana_vote_accounts_current
+			WHERE epoch_vote_account = 'true' AND activated_stake_lamports > 0
+		)
+		SELECT
+			COALESCE(vs.validator_count, 0) as validator_count,
+			COALESCE(vs.stake_sol, 0) as stake_sol,
+			CASE
+				WHEN ts.total_lamports > 0 THEN COALESCE(vs.stake_sol, 0) * 1e9 / ts.total_lamports * 100
+				ELSE 0
+			END as stake_share
+		FROM validator_stats vs
+		CROSS JOIN total_stake ts
+	`
+
+	var stats DeviceValidatorStats
+	err := a.envDB(ctx).QueryRow(ctx, query, pk).Scan(
+		&stats.ValidatorCount,
+		&stats.StakeSol,
+		&stats.StakeShare,
+	)
+	metrics.RecordClickHouseQuery(time.Since(start), err)
+
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		logError("device validator stats query failed", "error", err, "pk", pk)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(stats); err != nil {
 		logError("failed to encode response", "error", err)
 	}
 }

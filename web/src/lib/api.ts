@@ -2889,9 +2889,6 @@ export async function fetchDevicesByContributor(contributorPk: string, limit = 5
 
 export interface DeviceDetail extends Device {
   metro_name: string
-  validator_count: number
-  stake_sol: number
-  stake_share: number
   interfaces: DeviceInterface[]
 }
 
@@ -2899,6 +2896,20 @@ export async function fetchDevice(pk: string): Promise<DeviceDetail> {
   const res = await fetchWithRetry(`/api/dz/devices/${encodeURIComponent(pk)}`)
   if (!res.ok) {
     throw new Error('Failed to fetch device')
+  }
+  return res.json()
+}
+
+export interface DeviceValidatorStats {
+  validator_count: number
+  stake_sol: number
+  stake_share: number
+}
+
+export async function fetchDeviceValidatorStats(pk: string): Promise<DeviceValidatorStats> {
+  const res = await fetchWithRetry(`/api/dz/devices/${encodeURIComponent(pk)}/validator-stats`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch device validator stats')
   }
   return res.json()
 }

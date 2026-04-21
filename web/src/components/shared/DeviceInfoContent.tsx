@@ -29,9 +29,9 @@ export interface DeviceInfoData {
   maxUnicastUsers: number
   maxMulticastSubscribers: number
   maxMulticastPublishers: number
-  validatorCount: number
-  stakeSol: number
-  stakeShare: number
+  validatorCount: number | null
+  stakeSol: number | null
+  stakeShare: number | null
   interfaces: DeviceInterface[]
 }
 
@@ -118,6 +118,10 @@ function formatStakeShare(share: number): string {
   return `${share.toFixed(2)}%`
 }
 
+function InlineSkeleton() {
+  return <span className="inline-block align-middle h-4 w-12 rounded bg-muted animate-pulse" />
+}
+
 /**
  * Shared component for displaying device information.
  * Used by both the topology panel and the device detail page.
@@ -191,9 +195,9 @@ export function DeviceInfoContent({
         }
       </span>
     ) }] : []),
-    { label: 'Validators', value: String(device.validatorCount) },
-    { label: 'Stake', value: formatStake(device.stakeSol) },
-    { label: 'Stake Share', value: formatStakeShare(device.stakeShare) },
+    { label: 'Validators', value: device.validatorCount === null ? <InlineSkeleton /> : String(device.validatorCount) },
+    { label: 'Stake', value: device.stakeSol === null ? <InlineSkeleton /> : formatStake(device.stakeSol) },
+    { label: 'Stake Share', value: device.stakeShare === null ? <InlineSkeleton /> : formatStakeShare(device.stakeShare) },
   ]
 
   const deviceAvailable = device.maxUsers > 0 ? Math.max(0, device.maxUsers - device.userCount) : 0
