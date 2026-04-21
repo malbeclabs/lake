@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"time"
 
+	"strings"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/malbeclabs/lake/api/metrics"
 )
@@ -194,6 +196,8 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 		LIMIT ? OFFSET ?
 	`
 
+	queryFallback := strings.ReplaceAll(query, "COALESCE(d.location_pk, '') as location_pk,", "'' as location_pk,")
+
 	var args []any
 	args = append(args, filterArgs...)
 	args = append(args, pkFilterArgs...)
@@ -202,6 +206,11 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.envDB(ctx).Query(ctx, query, args...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
+
+	if err != nil && isUnknownIdentifierError(err) {
+		rows, err = a.envDB(ctx).Query(ctx, queryFallback, args...)
+		metrics.RecordClickHouseQuery(time.Since(start), err)
+	}
 
 	if err != nil {
 		logError("devices query failed", "error", err)
