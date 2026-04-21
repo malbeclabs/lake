@@ -422,7 +422,7 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 	})
 
 	g.Go(func() error {
-		query := `SELECT COALESCE(SUM(max_users), 0) FROM dz_devices_current WHERE max_users > 0 AND device_type != 'transit'`
+		query := `SELECT toUInt64(COALESCE(SUM(max_users), 0)) FROM dz_devices_current WHERE max_users > 0 AND device_type != 'transit'`
 		row := a.envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Network.MaxUsers)
 	})
