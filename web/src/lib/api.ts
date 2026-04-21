@@ -1189,6 +1189,7 @@ export interface NetworkSummary {
   stake_share_pct: number
   stake_share_delta: number
   users: number
+  max_users: number
   devices: number
   links: number
   contributors: number
@@ -1611,6 +1612,12 @@ export interface TopologyDevice {
   contributor_pk: string
   contributor_code: string
   user_count: number
+  unicast_users_count: number
+  multicast_subscribers_count: number
+  multicast_publishers_count: number
+  max_unicast_users: number
+  max_multicast_subscribers: number
+  max_multicast_publishers: number
   validator_count: number
   stake_sol: number
   stake_share: number
@@ -2829,6 +2836,15 @@ export interface Device {
   public_ip: string
   max_users: number
   current_users: number
+  unicast_users: number
+  multicast_users: number
+  max_unicast_users: number
+  max_multicast_subscribers: number
+  max_multicast_publishers: number
+  unicast_users_count: number
+  multicast_subscribers_count: number
+  reserved_seats: number
+  multicast_publishers_count: number
   in_bps: number
   out_bps: number
   peak_in_bps: number
@@ -2849,6 +2865,22 @@ export async function fetchDevices(
   if (sortDir) params.set('sort_dir', sortDir)
   if (filters) filters.forEach(f => params.append('filters', f))
   const res = await fetchWithRetry(`/api/dz/devices?${params}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch devices')
+  }
+  return res.json()
+}
+
+export async function fetchDevicesByMetro(metroPk: string, limit = 500, offset = 0): Promise<PaginatedResponse<Device>> {
+  const res = await fetchWithRetry(`/api/dz/devices?metro_pk=${encodeURIComponent(metroPk)}&limit=${limit}&offset=${offset}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch devices')
+  }
+  return res.json()
+}
+
+export async function fetchDevicesByContributor(contributorPk: string, limit = 500, offset = 0): Promise<PaginatedResponse<Device>> {
+  const res = await fetchWithRetry(`/api/dz/devices?contributor_pk=${encodeURIComponent(contributorPk)}&limit=${limit}&offset=${offset}`)
   if (!res.ok) {
     throw new Error('Failed to fetch devices')
   }
@@ -2945,6 +2977,16 @@ export interface Metro {
   longitude: number
   device_count: number
   user_count: number
+  unicast_users_count: number
+  multicast_subscribers_count: number
+  multicast_publishers_count: number
+  max_users: number
+  max_unicast_users: number
+  max_multicast_subscribers: number
+  max_multicast_publishers: number
+  raw_max_unicast_users: number
+  raw_max_multicast_subscribers: number
+  raw_max_multicast_publishers: number
 }
 
 export async function fetchMetros(
@@ -2990,6 +3032,8 @@ export interface Contributor {
   side_a_devices: number
   side_z_devices: number
   link_count: number
+  user_count: number
+  max_users: number
 }
 
 export async function fetchContributors(
@@ -3014,6 +3058,16 @@ export async function fetchContributors(
 
 export interface ContributorDetail extends Contributor {
   user_count: number
+  unicast_users_count: number
+  multicast_subscribers_count: number
+  multicast_publishers_count: number
+  max_users: number
+  max_unicast_users: number
+  max_multicast_subscribers: number
+  max_multicast_publishers: number
+  raw_max_unicast_users: number
+  raw_max_multicast_subscribers: number
+  raw_max_multicast_publishers: number
   in_bps: number
   out_bps: number
 }

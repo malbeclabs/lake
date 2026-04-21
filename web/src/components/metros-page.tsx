@@ -11,7 +11,7 @@ import { CopyableText } from './copyable-text'
 
 const PAGE_SIZE = 100
 
-type SortField = 'code' | 'name' | 'latitude' | 'longitude' | 'devices' | 'users'
+type SortField = 'code' | 'name' | 'latitude' | 'longitude' | 'devices' | 'users' | 'unicast' | 'subscribers' | 'publishers'
 type SortDirection = 'asc' | 'desc'
 
 // Parse search filters from URL param
@@ -245,6 +245,24 @@ export function MetrosPage() {
                       <SortIcon field="users" />
                     </button>
                   </th>
+                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('unicast')}>
+                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('unicast')}>
+                      Unicast
+                      <SortIcon field="unicast" />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('subscribers')}>
+                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('subscribers')}>
+                      Subscribers
+                      <SortIcon field="subscribers" />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('publishers')}>
+                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('publishers')}>
+                      Publishers
+                      <SortIcon field="publishers" />
+                    </button>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -269,14 +287,40 @@ export function MetrosPage() {
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
                       {metro.device_count > 0 ? metro.device_count : <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right">
-                      {metro.user_count > 0 ? metro.user_count : <span className="text-muted-foreground">—</span>}
+                    <td className="px-4 py-3 text-sm tabular-nums text-right relative">
+                      {metro.max_users > 0 && <div className="absolute inset-y-0 left-0 right-0 pointer-events-none bg-muted/30 border-r border-muted-foreground/20" />}
+                      {(() => {
+                        const pct = metro.max_users > 0 ? Math.min(100, (metro.user_count / metro.max_users) * 100) : 0
+                        const fillColor = pct >= 90 ? 'bg-red-500/25' : pct >= 70 ? 'bg-amber-500/20' : 'bg-blue-500/15'
+                        return pct > 0 ? <div className={`absolute inset-y-0 left-0 pointer-events-none ${fillColor}`} style={{ width: `${pct}%` }} /> : null
+                      })()}
+                      <span className="relative">
+                        {metro.user_count > 0 || metro.max_users > 0 ? (
+                          <>{metro.user_count}{metro.max_users > 0 && <span className="text-muted-foreground">/{metro.max_users}</span>}</>
+                        ) : <span className="text-muted-foreground">—</span>}
+                      </span>
                     </td>
+                    {[
+                      { count: metro.unicast_users_count, effectiveMax: metro.max_unicast_users },
+                      { count: metro.multicast_subscribers_count, effectiveMax: metro.max_multicast_subscribers },
+                      { count: metro.multicast_publishers_count, effectiveMax: metro.max_multicast_publishers },
+                    ].map(({ count, effectiveMax }, i) => {
+                      const displayMax = Math.max(count, effectiveMax)
+                      const available = displayMax > count ? displayMax - count : 0
+                      return (
+                        <td key={i} className="px-4 py-3 text-sm tabular-nums text-right">
+                          {count === 0 && displayMax === 0
+                            ? <span className="text-muted-foreground">—</span>
+                            : <span>{available}</span>
+                          }
+                        </td>
+                      )
+                    })}
                   </tr>
                 ))}
                 {metros.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
                       No metros found
                     </td>
                   </tr>

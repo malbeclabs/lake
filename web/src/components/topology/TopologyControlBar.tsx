@@ -28,6 +28,7 @@ import {
   Radio,
   Play,
   Pause,
+  UserCheck,
 } from 'lucide-react'
 import { useTopology, type TopologyMode } from './TopologyContext'
 import { useEnv } from '@/contexts/EnvContext'
@@ -460,6 +461,17 @@ export function TopologyControlBar({
             activeColor="yellow"
             collapsed={collapsed}
           />
+
+          {view === 'map' && (
+            <NavItem
+              icon={<UserCheck className="h-3.5 w-3.5" />}
+              label="User counts"
+              onClick={() => handleToggleOverlay('userCounts')}
+              active={overlays.userCounts}
+              activeColor="blue"
+              collapsed={collapsed}
+            />
+          )}
 
           {/* Link Overlays */}
           <SectionHeader title="Link Overlays" collapsed={collapsed} />

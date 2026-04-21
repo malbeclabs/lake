@@ -59,6 +59,7 @@ type NetworkSummary struct {
 	StakeSharePct   float64 `json:"stake_share_pct"`
 	StakeShareDelta float64 `json:"stake_share_delta"` // Change from 24h ago (percentage points)
 	Users           uint64  `json:"users"`
+	MaxUsers        uint64  `json:"max_users"`
 	Devices         uint64  `json:"devices"`
 	Links           uint64  `json:"links"`
 	Contributors    uint64  `json:"contributors"`
@@ -418,6 +419,12 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 		query := `SELECT COUNT(*) FROM dz_users_current`
 		row := a.envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Network.Users)
+	})
+
+	g.Go(func() error {
+		query := `SELECT COALESCE(SUM(max_users), 0) FROM dz_devices_current WHERE max_users > 0 AND device_type != 'transit'`
+		row := a.envDB(ctx).QueryRow(ctx, query)
+		return row.Scan(&resp.Network.MaxUsers)
 	})
 
 	g.Go(func() error {
@@ -1119,6 +1126,8 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 				drainedPKs = append(drainedPKs, l.PK)
 			}
 		}
+		// Best-effort: if the incident query fails, links are returned without incident
+		// types rather than returning an error for the whole status page.
 		if len(drainedPKs) > 0 {
 			incidentRows, err := a.envDB(ctx).Query(ctx,
 				`SELECT entity_pk, groupArray(distinct incident_type) AS incident_types

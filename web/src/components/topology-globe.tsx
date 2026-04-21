@@ -80,6 +80,12 @@ interface GlobePointDevice {
   stakeSol: number
   stakeShare: number
   userCount: number
+  unicastUsersCount: number
+  multicastSubscribersCount: number
+  multicastPublishersCount: number
+  maxUnicastUsers: number
+  maxMulticastSubscribers: number
+  maxMulticastPublishers: number
   validatorCount: number
   interfaces: { name: string; ip: string; status: string }[]
 }
@@ -1198,7 +1204,14 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
             pk: device.pk, code: device.code, deviceType: device.device_type, status: device.status,
             metroPk: device.metro_pk, metroName: metro?.name || 'Unknown',
             contributorPk: device.contributor_pk, contributorCode: device.contributor_code,
-            userCount: device.user_count ?? 0, validatorCount: device.validator_count ?? 0,
+            userCount: device.user_count ?? 0,
+            unicastUsersCount: device.unicast_users_count ?? 0,
+            multicastSubscribersCount: device.multicast_subscribers_count ?? 0,
+            multicastPublishersCount: device.multicast_publishers_count ?? 0,
+            maxUnicastUsers: device.max_unicast_users ?? 0,
+            maxMulticastSubscribers: device.max_multicast_subscribers ?? 0,
+            maxMulticastPublishers: device.max_multicast_publishers ?? 0,
+            validatorCount: device.validator_count ?? 0,
             stakeSol: device.stake_sol ?? 0, stakeShare: device.stake_share ?? 0,
             interfaces: device.interfaces || [],
           },
@@ -1302,7 +1315,14 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
         metroName: metro?.name || 'Unknown',
         contributorPk: device.contributor_pk, contributorCode: device.contributor_code,
         stakeSol: device.stake_sol ?? 0, stakeShare: device.stake_share ?? 0,
-        userCount: device.user_count ?? 0, validatorCount: device.validator_count ?? 0,
+        userCount: device.user_count ?? 0,
+        unicastUsersCount: device.unicast_users_count ?? 0,
+        multicastSubscribersCount: device.multicast_subscribers_count ?? 0,
+        multicastPublishersCount: device.multicast_publishers_count ?? 0,
+        maxUnicastUsers: device.max_unicast_users ?? 0,
+        maxMulticastSubscribers: device.max_multicast_subscribers ?? 0,
+        maxMulticastPublishers: device.max_multicast_publishers ?? 0,
+        validatorCount: device.validator_count ?? 0,
         interfaces: device.interfaces || [],
       })
     }
@@ -1662,10 +1682,15 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     }
 
     const d = p as GlobePointDevice
+    const userParts: string[] = []
+    if (d.unicastUsersCount > 0) userParts.push(`<span style="color:#60a5fa">U${d.unicastUsersCount}</span>`)
+    if (d.multicastSubscribersCount > 0) userParts.push(`<span style="color:#2dd4bf">S${d.multicastSubscribersCount}</span>`)
+    if (d.multicastPublishersCount > 0) userParts.push(`<span style="color:#c084fc">P${d.multicastPublishersCount}</span>`)
     return `<div style="background:rgba(0,0,0,0.85);padding:6px 10px;border-radius:6px;font-size:12px;color:#fff">
       <div style="font-weight:600">${d.code}</div>
       <div style="color:#9ca3af">Type: <span style="color:#fff;text-transform:capitalize">${d.deviceType}</span></div>
       ${d.contributorCode ? `<div style="color:#9ca3af">Contributor: <span style="color:#fff">${d.contributorCode}</span></div>` : ''}
+      ${userParts.length > 0 ? `<div style="color:#9ca3af;margin-top:2px">Users: ${userParts.join('<span style="color:#4b5563"> · </span>')}</div>` : ''}
     </div>`
   }, [])
 
@@ -1928,7 +1953,14 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
         pk: d.pk, code: d.code, deviceType: d.deviceType, status: d.status,
         metroPk: d.metroPk, metroName: d.metroName,
         contributorPk: d.contributorPk, contributorCode: d.contributorCode,
-        userCount: d.userCount, validatorCount: d.validatorCount,
+        userCount: d.userCount,
+        unicastUsersCount: d.unicastUsersCount,
+        multicastSubscribersCount: d.multicastSubscribersCount,
+        multicastPublishersCount: d.multicastPublishersCount,
+        maxUnicastUsers: d.maxUnicastUsers,
+        maxMulticastSubscribers: d.maxMulticastSubscribers,
+        maxMulticastPublishers: d.maxMulticastPublishers,
+        validatorCount: d.validatorCount,
         stakeSol: d.stakeSol, stakeShare: d.stakeShare,
         interfaces: d.interfaces,
       },
