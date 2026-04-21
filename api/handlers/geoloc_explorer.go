@@ -47,29 +47,23 @@ func (a *API) GetGeolocExplorer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	envDB := string(EnvFromContext(r.Context()))
-	lakeDB := a.DatabaseForEnvFromContext(r.Context())
 
-	query := fmt.Sprintf(`
+	// Query location_offsets from the env-named database. This table is a
+	// remoteSecure() proxy, so the entire query is pushed to ClickHouse Cloud.
+	// We must NOT cross-database JOIN here because the local DB name ("default")
+	// doesn't exist on Cloud.
+	offsetQuery := fmt.Sprintf(`
 		SELECT
-			lo.sender_pubkey,
-			coalesce(gp.code, '') AS probe_code,
-			lo.lat,
-			lo.lng,
-			lo.rtt_ns,
-			lo.measured_rtt_ns,
-			lo.target_ip,
-			lo.num_references,
-			lo.ref_measured_rtt_ns,
-			lo.ref_rtt_ns
-		FROM `+"`%s`"+`.location_offsets lo
-		LEFT JOIN `+"`%s`"+`.geoloc_probes_current gp ON lo.sender_pubkey = gp.pk
-		WHERE lo.received_at >= now() - INTERVAL %d HOUR
-		ORDER BY lo.received_at DESC
+			sender_pubkey, lat, lng, rtt_ns, measured_rtt_ns, target_ip,
+			num_references, ref_measured_rtt_ns, ref_rtt_ns
+		FROM `+"`%s`"+`.location_offsets
+		WHERE received_at >= now() - INTERVAL %d HOUR
+		ORDER BY received_at DESC
 		LIMIT 10000
-	`, envDB, lakeDB, hours)
+	`, envDB, hours)
 
 	start := time.Now()
-	rows, err := a.envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, offsetQuery)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -81,11 +75,11 @@ func (a *API) GetGeolocExplorer(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	var offsets []GeolocExplorerOffset
+	pubkeys := make(map[string]struct{})
 	for rows.Next() {
 		var o GeolocExplorerOffset
 		if err := rows.Scan(
 			&o.SenderPubkey,
-			&o.ProbeCode,
 			&o.Lat,
 			&o.Lng,
 			&o.RttNs,
@@ -99,6 +93,7 @@ func (a *API) GetGeolocExplorer(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 			return
 		}
+		pubkeys[o.SenderPubkey] = struct{}{}
 		offsets = append(offsets, o)
 	}
 
@@ -106,6 +101,34 @@ func (a *API) GetGeolocExplorer(w http.ResponseWriter, r *http.Request) {
 		logError("geoloc explorer rows error", "error", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 		return
+	}
+
+	// Enrich with probe codes from the lake database via a separate query.
+	// geoloc_probes_current lives in the lake DB (a.DB), not behind remoteSecure().
+	if len(pubkeys) > 0 {
+		pks := make([]string, 0, len(pubkeys))
+		for pk := range pubkeys {
+			pks = append(pks, pk)
+		}
+		probeRows, err := a.DB.Query(ctx, "SELECT pk, code FROM geoloc_probes_current WHERE pk IN (?)", pks)
+		if err != nil {
+			logError("geoloc explorer probe query error", "error", err)
+			// Non-fatal: return offsets without probe codes
+		} else {
+			defer probeRows.Close()
+			codeMap := make(map[string]string)
+			for probeRows.Next() {
+				var pk, code string
+				if err := probeRows.Scan(&pk, &code); err == nil {
+					codeMap[pk] = code
+				}
+			}
+			for i := range offsets {
+				if code, ok := codeMap[offsets[i].SenderPubkey]; ok {
+					offsets[i].ProbeCode = code
+				}
+			}
+		}
 	}
 
 	// Return empty array instead of null
