@@ -50,6 +50,13 @@ func (s *DeviceSchema) PayloadColumns() []string {
 		"contributor_pk:VARCHAR",
 		"metro_pk:VARCHAR",
 		"max_users:INTEGER",
+		"max_unicast_users:INTEGER",
+		"max_multicast_subscribers:INTEGER",
+		"max_multicast_publishers:INTEGER",
+		"unicast_users_count:INTEGER",
+		"multicast_subscribers_count:INTEGER",
+		"reserved_seats:INTEGER",
+		"multicast_publishers_count:INTEGER",
 		"interfaces:VARCHAR",
 	}
 }
@@ -65,6 +72,13 @@ func (s *DeviceSchema) ToRow(d Device) []any {
 		d.ContributorPK,
 		d.MetroPK,
 		d.MaxUsers,
+		d.MaxUnicastUsers,
+		d.MaxMulticastSubscribers,
+		d.MaxMulticastPublishers,
+		d.UnicastUsersCount,
+		d.MulticastSubscribersCount,
+		d.ReservedSeats,
+		d.MulticastPublishersCount,
 		string(interfacesJSON),
 	}
 }

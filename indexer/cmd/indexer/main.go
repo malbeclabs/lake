@@ -640,6 +640,7 @@ func run() error {
 		}()
 	} else {
 		log.Info("dz ingest worker disabled (--no-dz-ingest)")
+		idx.Serviceability().Start(ctx)
 	}
 
 	// Start the embedded Solana ingest worker (Temporal-based raw data collection).
