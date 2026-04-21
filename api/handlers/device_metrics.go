@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/go-chi/chi/v5"
 	"github.com/malbeclabs/lake/api/health"
 	"golang.org/x/sync/errgroup"
@@ -207,6 +209,19 @@ func (a *API) GetDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 		params.UseRaw = isRawBucket(interval)
 	}
 
+	// For default 24h requests, serve device-level status+traffic from the
+	// bulk device metrics cache. The cache already contains the heavy
+	// device-grouped rollup scan for every device, so we only need to run
+	// the per-interface rollup and status-change queries on cache hit.
+	if singleDeviceMetricsCanUseBulkCache(r) && isMainnet(r.Context()) {
+		if resp, err := a.fetchDeviceMetricsFromBulkCache(ctx, devicePK, params, include); err == nil && resp != nil {
+			w.Header().Set("X-Cache", "HIT")
+			writeJSON(w, resp)
+			return
+		}
+	}
+	w.Header().Set("X-Cache", "MISS")
+
 	resp, err := a.fetchDeviceMetrics(ctx, devicePK, params, include)
 	if err != nil {
 		slog.Error("error fetching device metrics", "error", err, "device_pk", devicePK)
@@ -219,6 +234,227 @@ func (a *API) GetDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, resp)
+}
+
+// singleDeviceMetricsCanUseBulkCache reports whether a single-device metrics
+// request can be served from the bulk_device_metrics cache. Matches the set of
+// requests covered by bulkDeviceMetricsCacheKey (default 24h window, no custom
+// bucket, includes limited to status/traffic/status_changes).
+func singleDeviceMetricsCanUseBulkCache(r *http.Request) bool {
+	q := r.URL.Query()
+	inc := q.Get("include")
+	rng := q.Get("range")
+	incOK := inc == "" || inc == "all" || inc == "status,traffic" || inc == "status"
+	if !incOK || (rng != "" && rng != "24h") || q.Get("start_time") != "" || q.Get("end_time") != "" || q.Get("bucket") != "" {
+		return false
+	}
+	return true
+}
+
+// fetchDeviceMetricsFromBulkCache assembles a single-device response using
+// the cached bulk payload for status+traffic buckets, running only the
+// per-interface rollup and status-change queries as needed.
+func (a *API) fetchDeviceMetricsFromBulkCache(ctx context.Context, devicePK string, params bucketParams, include deviceMetricsInclude) (*DeviceMetricsResponse, error) {
+	data, err := a.readPageCache(ctx, "bulk_device_metrics")
+	if err != nil {
+		return nil, err
+	}
+	var bulk BulkDeviceMetricsResponse
+	if err := json.Unmarshal(data, &bulk); err != nil {
+		return nil, err
+	}
+	cached := bulk.Devices[devicePK]
+	if cached == nil {
+		return nil, nil
+	}
+
+	db := a.envDB(ctx)
+
+	// Align the per-interface query's time window to the cached bucket
+	// timestamps so bucket boundaries match even when the cache is a few
+	// seconds stale (e.g. across an hour boundary).
+	cacheAlignedParams := alignParamsToCachedBuckets(params, cached)
+
+	var (
+		perIntfRows   []interfaceRollupRow
+		statusChanges []EntityStatusChange
+	)
+	g, gctx := errgroup.WithContext(ctx)
+
+	if include.Traffic {
+		g.Go(func() error {
+			rows, err := queryInterfaceRollup(gctx, db, cacheAlignedParams, interfaceRollupOpts{
+				GroupBy:   groupByDeviceIntf,
+				DevicePKs: []string{devicePK},
+			})
+			if err != nil {
+				return fmt.Errorf("device per-interface rollup: %w", err)
+			}
+			perIntfRows = rows
+			return nil
+		})
+	}
+
+	if include.StatusChanges {
+		g.Go(func() error {
+			startTS, endTS := statusChangeTimeRange(cacheAlignedParams)
+			if endTS != "" {
+				statusChanges = fetchDeviceStatusChanges(gctx, db, devicePK, startTS, &endTS)
+			} else {
+				statusChanges = fetchDeviceStatusChanges(gctx, db, devicePK, startTS, nil)
+			}
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	linkCodes := resolveLinkCodes(ctx, db, perIntfRows)
+	cyoaTypes := resolveDeviceInterfaceCYOATypes(ctx, db, devicePK)
+
+	perIntfIndex := make(map[time.Time][]interfaceRollupRow)
+	for _, r := range perIntfRows {
+		perIntfIndex[r.BucketTS] = append(perIntfIndex[r.BucketTS], r)
+	}
+
+	buckets := make([]DeviceMetricsBucket, len(cached.Buckets))
+	for i, b := range cached.Buckets {
+		buckets[i] = b
+		if !include.Traffic {
+			buckets[i].Traffic = nil
+		}
+		if !include.Status {
+			buckets[i].Status = nil
+		}
+		if include.Traffic {
+			bucketStart, err := time.Parse(time.RFC3339, b.TS)
+			if err != nil {
+				continue
+			}
+			if rows := perIntfIndex[bucketStart]; len(rows) > 0 {
+				buckets[i].Interfaces = buildInterfaceTraffic(rows, linkCodes, cyoaTypes)
+			}
+		}
+	}
+
+	resp := *cached
+	resp.Buckets = buckets
+	if include.StatusChanges {
+		resp.StatusChanges = statusChanges
+	} else {
+		resp.StatusChanges = nil
+	}
+	return &resp, nil
+}
+
+func alignParamsToCachedBuckets(params bucketParams, cached *DeviceMetricsResponse) bucketParams {
+	if cached == nil || len(cached.Buckets) == 0 {
+		return params
+	}
+	aligned := params
+	if start, err := time.Parse(time.RFC3339, cached.Buckets[0].TS); err == nil {
+		aligned.StartTime = &start
+	}
+	if last, err := time.Parse(time.RFC3339, cached.Buckets[len(cached.Buckets)-1].TS); err == nil {
+		end := last.Add(time.Duration(cached.BucketSeconds) * time.Second)
+		aligned.EndTime = &end
+	}
+	return aligned
+}
+
+func statusChangeTimeRange(params bucketParams) (startTS, endTS string) {
+	if params.StartTime != nil {
+		startTS = params.StartTime.Format(time.RFC3339)
+	} else {
+		startTS = time.Now().UTC().Add(-time.Duration(params.TotalMinutes) * time.Minute).Format(time.RFC3339)
+	}
+	if params.EndTime != nil {
+		endTS = params.EndTime.Format(time.RFC3339)
+	}
+	return
+}
+
+func resolveLinkCodes(ctx context.Context, db driver.Conn, rows []interfaceRollupRow) map[string]string {
+	linkCodes := make(map[string]string)
+	if len(rows) == 0 {
+		return linkCodes
+	}
+	linkPKSet := make(map[string]struct{})
+	for _, r := range rows {
+		if r.LinkPK != "" {
+			linkPKSet[r.LinkPK] = struct{}{}
+		}
+	}
+	if len(linkPKSet) == 0 {
+		return linkCodes
+	}
+	pks := make([]string, 0, len(linkPKSet))
+	for pk := range linkPKSet {
+		pks = append(pks, pk)
+	}
+	result, err := db.Query(ctx, "SELECT pk, code FROM dz_links_current WHERE pk IN ($1)", pks)
+	if err != nil {
+		return linkCodes
+	}
+	defer result.Close()
+	for result.Next() {
+		var pk, code string
+		if err := result.Scan(&pk, &code); err == nil {
+			linkCodes[pk] = code
+		}
+	}
+	return linkCodes
+}
+
+func resolveDeviceInterfaceCYOATypes(ctx context.Context, db driver.Conn, devicePK string) map[string]string {
+	cyoaTypes := make(map[string]string)
+	rows, err := db.Query(ctx, "SELECT intf, cyoa_type FROM dz_device_interfaces_current WHERE device_pk = $1 AND cyoa_type != 'none'", devicePK)
+	if err != nil {
+		return cyoaTypes
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var intf, cyoaType string
+		if err := rows.Scan(&intf, &cyoaType); err == nil {
+			cyoaTypes[intf] = cyoaType
+		}
+	}
+	return cyoaTypes
+}
+
+func buildInterfaceTraffic(rows []interfaceRollupRow, linkCodes, cyoaTypes map[string]string) []DeviceInterfaceTraffic {
+	intfs := make([]DeviceInterfaceTraffic, 0, len(rows))
+	for _, ir := range rows {
+		intfs = append(intfs, DeviceInterfaceTraffic{
+			Intf:               ir.Intf,
+			LinkPK:             ir.LinkPK,
+			LinkCode:           linkCodes[ir.LinkPK],
+			LinkSide:           ir.LinkSide,
+			UserPK:             ir.UserPK,
+			CYOAType:           cyoaTypes[ir.Intf],
+			InBps:              ir.AvgInBps,
+			P50InBps:           ir.P50InBps,
+			P90InBps:           ir.P90InBps,
+			P95InBps:           ir.P95InBps,
+			P99InBps:           ir.P99InBps,
+			MaxInBps:           ir.MaxInBps,
+			OutBps:             ir.AvgOutBps,
+			P50OutBps:          ir.P50OutBps,
+			P90OutBps:          ir.P90OutBps,
+			P95OutBps:          ir.P95OutBps,
+			P99OutBps:          ir.P99OutBps,
+			MaxOutBps:          ir.MaxOutBps,
+			InErrors:           ir.InErrors,
+			OutErrors:          ir.OutErrors,
+			InFcsErrors:        ir.InFcsErrors,
+			InDiscards:         ir.InDiscards,
+			OutDiscards:        ir.OutDiscards,
+			CarrierTransitions: ir.CarrierTransitions,
+		})
+	}
+	return intfs
 }
 
 // fetchDeviceMetrics runs parallel queries and assembles the unified response.
