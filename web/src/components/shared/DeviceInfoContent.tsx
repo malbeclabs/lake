@@ -186,7 +186,7 @@ export function DeviceInfoContent({
         {device.userCount}
         {device.maxUsers > 0
           ? <span className="text-muted-foreground"> / {device.maxUsers}</span>
-          : <span className="text-muted-foreground"> / ∞</span>
+          : <span className="text-muted-foreground"> / 0</span>
         }
       </span>
     ) },
@@ -195,18 +195,15 @@ export function DeviceInfoContent({
     { label: 'Stake Share', value: formatStakeShare(device.stakeShare) },
   ]
 
-  const remaining = device.maxUsers > 0 ? Math.max(0, device.maxUsers - device.userCount) : 0
-  const effUnicast = device.maxUnicastUsers > 0
-    ? device.maxUnicastUsers
-    : device.unicastUsersCount + remaining
-  const effSubs = device.maxMulticastSubscribers > 0
-    ? device.maxMulticastSubscribers
-    : device.multicastSubscribersCount + remaining
-  const effPubs = device.maxMulticastPublishers > 0
-    ? device.maxMulticastPublishers
-    : device.multicastPublishersCount + remaining
+  const deviceAvailable = device.maxUsers > 0 ? Math.max(0, device.maxUsers - device.userCount) : 0
+  const derivedTooltip = device.maxUsers > 0
+    ? `max_users (${device.maxUsers}) − connected (${device.userCount}) = ${deviceAvailable}`
+    : ''
+  const effUnicast = device.maxUnicastUsers > 0 ? device.maxUnicastUsers : device.unicastUsersCount + deviceAvailable
+  const effSubs = device.maxMulticastSubscribers > 0 ? device.maxMulticastSubscribers : device.multicastSubscribersCount + deviceAvailable
+  const effPubs = device.maxMulticastPublishers > 0 ? device.maxMulticastPublishers : device.multicastPublishersCount + deviceAvailable
   const userCapacityCards = [
-    { count: device.unicastUsersCount, rawMax: device.maxUnicastUsers, effectiveMax: effUnicast, label: 'Unicast' },
+    { count: device.unicastUsersCount, rawMax: device.maxUnicastUsers, effectiveMax: effUnicast, label: 'Unicast Users' },
     { count: device.multicastSubscribersCount, rawMax: device.maxMulticastSubscribers, effectiveMax: effSubs, label: 'Subscribers' },
     { count: device.multicastPublishersCount, rawMax: device.maxMulticastPublishers, effectiveMax: effPubs, label: 'Publishers' },
   ].map(({ count, rawMax, effectiveMax, label }) => {
@@ -215,7 +212,7 @@ export function DeviceInfoContent({
     const available = displayMax > count ? displayMax - count : 0
     const pct = displayMax > 0 ? Math.min(100, (count / displayMax) * 100) : null
     const fillColor = pct !== null ? (pct >= 90 ? 'bg-red-500/50' : pct >= 70 ? 'bg-amber-500/40' : 'bg-blue-500/30') : ''
-    return { count, available, max: displayMax, isDerived, label, pct, fillColor }
+    return { count, available, max: displayMax, isDerived, label, pct, fillColor, derivedTooltip: isDerived ? derivedTooltip : '' }
   })
 
   // Sort interfaces: activated first, then by type (physical, loopback), then by name
@@ -257,16 +254,16 @@ export function DeviceInfoContent({
 
         {/* Unicast / Multicast cards */}
         <div className="grid grid-cols-3 gap-2">
-          {userCapacityCards.map(({ count, max, isDerived, label, pct, fillColor }) => (
+          {userCapacityCards.map(({ count, max, isDerived, label, pct, fillColor, derivedTooltip: tooltip }) => (
             <div key={label} className="overflow-hidden rounded-lg bg-muted/30">
               <div className="p-2 text-center">
                 <div className="text-sm font-medium tabular-nums">
                   {count}
                   {max > 0 ? (
                     isDerived
-                      ? <span className="text-muted-foreground/50 inline-flex items-center gap-0.5" title="Calculated from max_users">/{max}<Info className="h-2.5 w-2.5" /></span>
+                      ? <span className="text-muted-foreground/50 inline-flex items-center gap-0.5" title={tooltip}>/{max}<Info className="h-2.5 w-2.5" /></span>
                       : <span className="text-muted-foreground">/{max}</span>
-                  ) : <span className="text-muted-foreground">/∞</span>}
+                  ) : <span className="text-muted-foreground">/0</span>}
                 </div>
                 <div className="text-xs text-muted-foreground">{label}</div>
               </div>
@@ -363,15 +360,23 @@ export function DeviceInfoContent({
         })}
       </div>
 
-      {/* User capacity — Used row */}
+      {/* Unicast / Multicast cards — Used + Available as one split card per type */}
       <div className="grid grid-cols-3 gap-2">
-        {userCapacityCards.map(({ count, max, isDerived, label, pct, fillColor }) => (
-          <div key={label} className="overflow-hidden rounded-lg bg-muted/30">
-            <div className="p-3 text-center">
-              <div className="text-base font-medium tabular-nums">{count}</div>
-              <div className="text-xs text-muted-foreground">
-                {label} Used
-                {isDerived && max > 0 && <span title="Calculated from max_users"><Info className="inline h-2.5 w-2.5 ml-0.5 opacity-50" /></span>}
+        {userCapacityCards.map(({ count, available, max, isDerived, label, pct, fillColor, derivedTooltip: tooltip }) => (
+          <div key={label} className="overflow-hidden rounded-lg border border-border">
+            <div className="grid grid-cols-2 divide-x divide-border">
+              <div className="p-2.5 text-center bg-muted/30">
+                <div className="text-sm font-medium tabular-nums">{count}</div>
+                <div className="text-xs text-muted-foreground">{label}</div>
+              </div>
+              <div className="p-2.5 text-center bg-muted/10">
+                <div className="text-sm font-medium tabular-nums text-muted-foreground">
+                  {max > 0 ? available : 0}
+                </div>
+                <div className="text-xs text-muted-foreground/60 inline-flex items-center gap-0.5">
+                  Available
+                  {isDerived && max > 0 && <span title={tooltip}><Info className="h-2.5 w-2.5" /></span>}
+                </div>
               </div>
             </div>
             {pct !== null && (
@@ -379,19 +384,6 @@ export function DeviceInfoContent({
                 <div className={`absolute inset-y-0 left-0 ${fillColor}`} style={{ width: `${pct}%` }} />
               </div>
             )}
-          </div>
-        ))}
-      </div>
-      {/* User capacity — Available row */}
-      <div className="grid grid-cols-3 gap-2">
-        {userCapacityCards.map(({ available, max, label }) => (
-          <div key={label} className="overflow-hidden rounded-lg bg-muted/30">
-            <div className="p-3 text-center">
-              <div className="text-base font-medium tabular-nums text-muted-foreground">
-                {max > 0 ? available : '∞'}
-              </div>
-              <div className="text-xs text-muted-foreground">{label} Available</div>
-            </div>
           </div>
         ))}
       </div>

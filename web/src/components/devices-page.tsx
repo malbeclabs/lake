@@ -370,100 +370,40 @@ export function DevicesPage() {
                         )
                       })()}
                     </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-center relative">
+                    <td className="px-4 py-3 text-sm tabular-nums text-center">
                       {(() => {
                         const isDerived = device.max_unicast_users === 0
                         const remaining = device.max_users > 0 ? Math.max(0, device.max_users - device.current_users) : 0
                         const effectiveMax = Math.max(device.unicast_users, device.max_unicast_users > 0 ? device.max_unicast_users : device.unicast_users + remaining)
-                        const pct = effectiveMax > 0 ? Math.min(100, (device.unicast_users / effectiveMax) * 100) : 0
-                        const fillColor = pct >= 90 ? 'bg-red-500/25' : pct >= 70 ? 'bg-amber-500/20' : 'bg-blue-500/15'
-                        return (
-                          <>
-                            {effectiveMax > 0 && (
-                              <div className="absolute inset-y-0 left-0 right-0 pointer-events-none bg-muted/30 border-r border-muted-foreground/20" />
-                            )}
-                            {pct > 0 && (
-                              <div className={`absolute inset-y-0 left-0 pointer-events-none ${fillColor}`} style={{ width: `${pct}%` }} />
-                            )}
-                            <span className="relative">
-                              {device.unicast_users > 0 || effectiveMax > 0 ? (
-                                <>
-                                  {device.unicast_users}
-                                  {effectiveMax > 0 && (isDerived
-                                    ? <span className="text-muted-foreground/50 inline-flex items-center gap-0.5" title="Calculated from max_users">/{effectiveMax}<Info className="h-2.5 w-2.5" /></span>
-                                    : <span className="text-muted-foreground">/{effectiveMax}</span>
-                                  )}
-                                </>
-                              ) : (
-                                <span className="text-muted-foreground">—</span>
-                              )}
-                            </span>
-                          </>
-                        )
+                        const available = effectiveMax > device.unicast_users ? effectiveMax - device.unicast_users : 0
+                        if (effectiveMax === 0 && device.unicast_users === 0) return <span className="text-muted-foreground">—</span>
+                        return isDerived
+                          ? <span className="inline-flex items-center gap-0.5">{available}<Info className="h-2.5 w-2.5 text-muted-foreground/50" /></span>
+                          : <span>{available}</span>
                       })()}
                     </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-center relative">
+                    <td className="px-4 py-3 text-sm tabular-nums text-center">
                       {(() => {
                         const isDerived = device.max_multicast_subscribers === 0
                         const remaining = device.max_users > 0 ? Math.max(0, device.max_users - device.current_users) : 0
                         const effectiveMax = Math.max(device.multicast_subscribers_count, device.max_multicast_subscribers > 0 ? device.max_multicast_subscribers : device.multicast_subscribers_count + remaining)
-                        const pct = effectiveMax > 0 ? Math.min(100, (device.multicast_subscribers_count / effectiveMax) * 100) : 0
-                        const fillColor = pct >= 90 ? 'bg-red-500/25' : pct >= 70 ? 'bg-amber-500/20' : 'bg-blue-500/15'
-                        return (
-                          <>
-                            {effectiveMax > 0 && (
-                              <div className="absolute inset-y-0 left-0 right-0 pointer-events-none bg-muted/30 border-r border-muted-foreground/20" />
-                            )}
-                            {pct > 0 && (
-                              <div className={`absolute inset-y-0 left-0 pointer-events-none ${fillColor}`} style={{ width: `${pct}%` }} />
-                            )}
-                            <span className="relative">
-                              {device.multicast_subscribers_count > 0 || effectiveMax > 0 ? (
-                                <>
-                                  {device.multicast_subscribers_count}
-                                  {effectiveMax > 0 && (isDerived
-                                    ? <span className="text-muted-foreground/50 inline-flex items-center gap-0.5" title="Calculated from max_users">/{effectiveMax}<Info className="h-2.5 w-2.5" /></span>
-                                    : <span className="text-muted-foreground">/{effectiveMax}</span>
-                                  )}
-                                </>
-                              ) : (
-                                <span className="text-muted-foreground">—</span>
-                              )}
-                            </span>
-                          </>
-                        )
+                        const available = effectiveMax > device.multicast_subscribers_count ? effectiveMax - device.multicast_subscribers_count : 0
+                        if (effectiveMax === 0 && device.multicast_subscribers_count === 0) return <span className="text-muted-foreground">—</span>
+                        return isDerived
+                          ? <span className="inline-flex items-center gap-0.5">{available}<Info className="h-2.5 w-2.5 text-muted-foreground/50" /></span>
+                          : <span>{available}</span>
                       })()}
                     </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-center relative">
+                    <td className="px-4 py-3 text-sm tabular-nums text-center">
                       {(() => {
                         const isDerived = device.max_multicast_publishers === 0
                         const remaining = device.max_users > 0 ? Math.max(0, device.max_users - device.current_users) : 0
                         const effectiveMax = Math.max(device.multicast_publishers_count, device.max_multicast_publishers > 0 ? device.max_multicast_publishers : device.multicast_publishers_count + remaining)
-                        const pct = effectiveMax > 0 ? Math.min(100, (device.multicast_publishers_count / effectiveMax) * 100) : 0
-                        const fillColor = pct >= 90 ? 'bg-red-500/25' : pct >= 70 ? 'bg-amber-500/20' : 'bg-blue-500/15'
-                        return (
-                          <>
-                            {effectiveMax > 0 && (
-                              <div className="absolute inset-y-0 left-0 right-0 pointer-events-none bg-muted/30 border-r border-muted-foreground/20" />
-                            )}
-                            {pct > 0 && (
-                              <div className={`absolute inset-y-0 left-0 pointer-events-none ${fillColor}`} style={{ width: `${pct}%` }} />
-                            )}
-                            <span className="relative">
-                              {device.multicast_publishers_count > 0 || effectiveMax > 0 ? (
-                                <>
-                                  {device.multicast_publishers_count}
-                                  {effectiveMax > 0 && (isDerived
-                                    ? <span className="text-muted-foreground/50 inline-flex items-center gap-0.5" title="Calculated from max_users">/{effectiveMax}<Info className="h-2.5 w-2.5" /></span>
-                                    : <span className="text-muted-foreground">/{effectiveMax}</span>
-                                  )}
-                                </>
-                              ) : (
-                                <span className="text-muted-foreground">—</span>
-                              )}
-                            </span>
-                          </>
-                        )
+                        const available = effectiveMax > device.multicast_publishers_count ? effectiveMax - device.multicast_publishers_count : 0
+                        if (effectiveMax === 0 && device.multicast_publishers_count === 0) return <span className="text-muted-foreground">—</span>
+                        return isDerived
+                          ? <span className="inline-flex items-center gap-0.5">{available}<Info className="h-2.5 w-2.5 text-muted-foreground/50" /></span>
+                          : <span>{available}</span>
                       })()}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">

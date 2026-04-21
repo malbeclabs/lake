@@ -7,6 +7,7 @@ interface StatCardProps {
   format: 'number' | 'stake' | 'bandwidth' | 'percent'
   decimals?: number // Override default decimal places for the format
   delta?: number // Optional delta value to show change (percentage points for percent format)
+  max?: number // Optional maximum to display as "value / max"
   href?: string // Optional link to entity listing page
 }
 
@@ -88,7 +89,7 @@ function formatDelta(delta: number): string {
   return `${sign}${delta.toFixed(2)}%`
 }
 
-export function StatCard({ label, value, format, decimals, delta, href }: StatCardProps) {
+export function StatCard({ label, value, format, decimals, delta, max, href }: StatCardProps) {
   const animatedValue = useAnimatedNumber(value)
   const isLoading = value === undefined
   const [showSkeleton, setShowSkeleton] = useState(false)
@@ -116,7 +117,12 @@ export function StatCard({ label, value, format, decimals, delta, href }: StatCa
           )
         ) : (
           <span className="inline-flex items-baseline gap-2">
-            {formatValue(animatedValue, format, decimals)}
+            <span className="tabular-nums">
+              {formatValue(animatedValue, format, decimals)}
+              {max !== undefined && (
+                <span className="text-muted-foreground">/{formatValue(max, format, decimals)}</span>
+              )}
+            </span>
             {showDelta && (
               <span
                 className={`text-sm font-normal ${delta > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}

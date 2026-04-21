@@ -20,6 +20,8 @@ type ContributorListItem struct {
 	SideADevices uint64 `json:"side_a_devices"`
 	SideZDevices uint64 `json:"side_z_devices"`
 	LinkCount    uint64 `json:"link_count"`
+	UserCount    uint64 `json:"user_count"`
+	MaxUsers     int64  `json:"max_users"`
 }
 
 var contributorSortFields = map[string]string{
@@ -29,6 +31,7 @@ var contributorSortFields = map[string]string{
 	"sidea":   "side_a_devices",
 	"sidez":   "side_z_devices",
 	"links":   "link_count",
+	"users":   "users_no_data|users_util_frac;max_users DESC",
 }
 
 var contributorFilterFields = map[string]FilterFieldConfig{
@@ -83,6 +86,19 @@ func (a *API) GetContributors(w http.ResponseWriter, r *http.Request) {
 			WHERE contributor_pk IS NOT NULL
 			GROUP BY contributor_pk
 		),
+		user_counts AS (
+			SELECT d.contributor_pk, count(*) as cnt
+			FROM dz_users_current u
+			JOIN dz_devices_current d ON u.device_pk = d.pk
+			WHERE u.status = 'activated' AND d.contributor_pk IS NOT NULL
+			GROUP BY d.contributor_pk
+		),
+		max_users_agg AS (
+			SELECT contributor_pk, SUM(max_users) as total_max_users
+			FROM dz_devices_current
+			WHERE contributor_pk IS NOT NULL
+			GROUP BY contributor_pk
+		),
 		contributors_data AS (
 			SELECT
 				c.pk as pk,
@@ -91,15 +107,25 @@ func (a *API) GetContributors(w http.ResponseWriter, r *http.Request) {
 				COALESCE(dc.cnt, 0) as device_count,
 				COALESCE(sa.cnt, 0) as side_a_devices,
 				COALESCE(sz.cnt, 0) as side_z_devices,
-				COALESCE(lc.cnt, 0) as link_count
+				COALESCE(lc.cnt, 0) as link_count,
+				COALESCE(uc.cnt, 0) as user_count,
+				COALESCE(mu.total_max_users, 0) as max_users
 			FROM dz_contributors_current c
 			LEFT JOIN device_counts dc ON c.pk = dc.contributor_pk
 			LEFT JOIN side_a_counts sa ON c.pk = sa.cpk
 			LEFT JOIN side_z_counts sz ON c.pk = sz.cpk
 			LEFT JOIN link_counts lc ON c.pk = lc.contributor_pk
+			LEFT JOIN user_counts uc ON c.pk = uc.contributor_pk
+			LEFT JOIN max_users_agg mu ON c.pk = mu.contributor_pk
+		),
+		contributors_util AS (
+			SELECT *,
+				toUInt8(max_users = 0) as users_no_data,
+				if(max_users > 0, toFloat64(user_count) / toFloat64(max_users), 0.0) as users_util_frac
+			FROM contributors_data
 		)
-		SELECT pk, code, name, device_count, side_a_devices, side_z_devices, link_count, count() OVER () as _total
-		FROM contributors_data
+		SELECT pk, code, name, device_count, side_a_devices, side_z_devices, link_count, user_count, max_users, count() OVER () as _total
+		FROM contributors_util
 		WHERE 1=1` + whereFilter + " " + orderBy + `
 		LIMIT ? OFFSET ?
 	`
@@ -131,6 +157,8 @@ func (a *API) GetContributors(w http.ResponseWriter, r *http.Request) {
 			&c.SideADevices,
 			&c.SideZDevices,
 			&c.LinkCount,
+			&c.UserCount,
+			&c.MaxUsers,
 			&total,
 		); err != nil {
 			logError("contributors row scan failed", "error", err)

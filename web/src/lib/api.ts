@@ -1189,6 +1189,7 @@ export interface NetworkSummary {
   stake_share_pct: number
   stake_share_delta: number
   users: number
+  max_users: number
   devices: number
   links: number
   contributors: number
@@ -2878,6 +2879,14 @@ export async function fetchDevicesByMetro(metroPk: string, limit = 500, offset =
   return res.json()
 }
 
+export async function fetchDevicesByContributor(contributorPk: string, limit = 500, offset = 0): Promise<PaginatedResponse<Device>> {
+  const res = await fetchWithRetry(`/api/dz/devices?contributor_pk=${encodeURIComponent(contributorPk)}&limit=${limit}&offset=${offset}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch devices')
+  }
+  return res.json()
+}
+
 export interface DeviceDetail extends Device {
   metro_name: string
   validator_count: number
@@ -3023,6 +3032,8 @@ export interface Contributor {
   side_a_devices: number
   side_z_devices: number
   link_count: number
+  user_count: number
+  max_users: number
 }
 
 export async function fetchContributors(

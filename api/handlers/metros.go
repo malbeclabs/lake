@@ -39,10 +39,10 @@ var metroSortFields = map[string]string{
 	"latitude":    "latitude",
 	"longitude":   "longitude",
 	"devices":     "device_count",
-	"users":       "users_no_max|users_util_frac",
-	"unicast":     "unicast_no_max|unicast_util_frac",
-	"subscribers": "subscribers_no_max|subscribers_util_frac",
-	"publishers":  "publishers_no_max|publishers_util_frac",
+	"users":       "users_no_max|users_util_frac;max_users DESC",
+	"unicast":     "unicast_no_data|unicast_available",
+	"subscribers": "subscribers_no_data|subscribers_available",
+	"publishers":  "publishers_no_data|publishers_available",
 }
 
 var metroFilterFields = map[string]FilterFieldConfig{
@@ -142,12 +142,12 @@ func (a *API) GetMetros(w http.ResponseWriter, r *http.Request) {
 			SELECT *,
 				toUInt8(ifNull(max_users, 0) = 0) as users_no_max,
 				if(ifNull(max_users, 0) > 0, toFloat64(user_count) / toFloat64(ifNull(max_users, 1)), 0.0) as users_util_frac,
-				toUInt8(max_unicast_users = 0) as unicast_no_max,
-				if(max_unicast_users > 0, toFloat64(unicast_users_count) / toFloat64(max_unicast_users), 0.0) as unicast_util_frac,
-				toUInt8(max_multicast_subscribers = 0) as subscribers_no_max,
-				if(max_multicast_subscribers > 0, toFloat64(multicast_subscribers_count) / toFloat64(max_multicast_subscribers), 0.0) as subscribers_util_frac,
-				toUInt8(max_multicast_publishers = 0) as publishers_no_max,
-				if(max_multicast_publishers > 0, toFloat64(multicast_publishers_count) / toFloat64(max_multicast_publishers), 0.0) as publishers_util_frac
+				toUInt8(max_unicast_users = 0 AND unicast_users_count = 0) as unicast_no_data,
+				greatest(0, toInt64(max_unicast_users) - toInt64(unicast_users_count)) as unicast_available,
+				toUInt8(max_multicast_subscribers = 0 AND multicast_subscribers_count = 0) as subscribers_no_data,
+				greatest(0, toInt64(max_multicast_subscribers) - toInt64(multicast_subscribers_count)) as subscribers_available,
+				toUInt8(max_multicast_publishers = 0 AND multicast_publishers_count = 0) as publishers_no_data,
+				greatest(0, toInt64(max_multicast_publishers) - toInt64(multicast_publishers_count)) as publishers_available
 			FROM metros_data
 		)
 		SELECT pk, code, name, latitude, longitude, device_count, user_count, unicast_users_count, multicast_subscribers_count, multicast_publishers_count, max_users, max_unicast_users, max_multicast_subscribers, max_multicast_publishers, raw_max_unicast_users, raw_max_multicast_subscribers, raw_max_multicast_publishers, count() OVER () as _total

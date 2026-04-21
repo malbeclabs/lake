@@ -66,43 +66,36 @@ export function MetroDetailPage() {
         case 'contributor': cmp = (a.contributor_code || '').localeCompare(b.contributor_code || ''); break
         case 'status': cmp = a.status.localeCompare(b.status); break
         case 'users': {
-          if (!a.max_users && !b.max_users) break
-          if (!a.max_users) return 1
-          if (!b.max_users) return -1
-          cmp = a.current_users / a.max_users - b.current_users / b.max_users
-          break
+          const noA = !a.max_users, noB = !b.max_users
+          if (noA !== noB) return noA ? 1 : -1
+          if (noA && noB) break
+          const fracA = a.current_users / a.max_users
+          const fracB = b.current_users / b.max_users
+          if (fracA !== fracB) { cmp = fracA - fracB; break }
+          return b.max_users - a.max_users  // higher max wins, direction-independent
         }
         case 'unicast': {
-          const remA = a.max_users > 0 ? Math.max(0, a.max_users - a.current_users) : 0
-          const remB = b.max_users > 0 ? Math.max(0, b.max_users - b.current_users) : 0
-          const effA = a.max_unicast_users > 0 ? a.max_unicast_users : a.unicast_users + remA
-          const effB = b.max_unicast_users > 0 ? b.max_unicast_users : b.unicast_users + remB
-          if (!effA && !effB) break
-          if (!effA) return 1
-          if (!effB) return -1
-          cmp = a.unicast_users / effA - b.unicast_users / effB
+          const effA = a.max_unicast_users > 0 ? a.max_unicast_users : a.unicast_users + Math.max(0, a.max_users - a.current_users)
+          const effB = b.max_unicast_users > 0 ? b.max_unicast_users : b.unicast_users + Math.max(0, b.max_users - b.current_users)
+          const noA = effA === 0 && a.unicast_users === 0, noB = effB === 0 && b.unicast_users === 0
+          if (noA !== noB) return noA ? 1 : -1
+          cmp = Math.max(0, effA - a.unicast_users) - Math.max(0, effB - b.unicast_users)
           break
         }
         case 'subscribers': {
-          const remA = a.max_users > 0 ? Math.max(0, a.max_users - a.current_users) : 0
-          const remB = b.max_users > 0 ? Math.max(0, b.max_users - b.current_users) : 0
-          const effA = a.max_multicast_subscribers > 0 ? a.max_multicast_subscribers : a.multicast_subscribers_count + remA
-          const effB = b.max_multicast_subscribers > 0 ? b.max_multicast_subscribers : b.multicast_subscribers_count + remB
-          if (!effA && !effB) break
-          if (!effA) return 1
-          if (!effB) return -1
-          cmp = a.multicast_subscribers_count / effA - b.multicast_subscribers_count / effB
+          const effA = a.max_multicast_subscribers > 0 ? a.max_multicast_subscribers : a.multicast_subscribers_count + Math.max(0, a.max_users - a.current_users)
+          const effB = b.max_multicast_subscribers > 0 ? b.max_multicast_subscribers : b.multicast_subscribers_count + Math.max(0, b.max_users - b.current_users)
+          const noA = effA === 0 && a.multicast_subscribers_count === 0, noB = effB === 0 && b.multicast_subscribers_count === 0
+          if (noA !== noB) return noA ? 1 : -1
+          cmp = Math.max(0, effA - a.multicast_subscribers_count) - Math.max(0, effB - b.multicast_subscribers_count)
           break
         }
         case 'publishers': {
-          const remA = a.max_users > 0 ? Math.max(0, a.max_users - a.current_users) : 0
-          const remB = b.max_users > 0 ? Math.max(0, b.max_users - b.current_users) : 0
-          const effA = a.max_multicast_publishers > 0 ? a.max_multicast_publishers : a.multicast_publishers_count + remA
-          const effB = b.max_multicast_publishers > 0 ? b.max_multicast_publishers : b.multicast_publishers_count + remB
-          if (!effA && !effB) break
-          if (!effA) return 1
-          if (!effB) return -1
-          cmp = a.multicast_publishers_count / effA - b.multicast_publishers_count / effB
+          const effA = a.max_multicast_publishers > 0 ? a.max_multicast_publishers : a.multicast_publishers_count + Math.max(0, a.max_users - a.current_users)
+          const effB = b.max_multicast_publishers > 0 ? b.max_multicast_publishers : b.multicast_publishers_count + Math.max(0, b.max_users - b.current_users)
+          const noA = effA === 0 && a.multicast_publishers_count === 0, noB = effB === 0 && b.multicast_publishers_count === 0
+          if (noA !== noB) return noA ? 1 : -1
+          cmp = Math.max(0, effA - a.multicast_publishers_count) - Math.max(0, effB - b.multicast_publishers_count)
           break
         }
         case 'in': cmp = a.in_bps - b.in_bps; break
@@ -194,7 +187,10 @@ export function MetroDetailPage() {
               </div>
               <div className="flex justify-between">
                 <dt className="text-sm text-muted-foreground">Users</dt>
-                <dd className="text-sm">{metro.user_count}</dd>
+                <dd className="text-sm tabular-nums">
+                  {metro.user_count}
+                  <span className="text-muted-foreground">/{metro.max_users}</span>
+                </dd>
               </div>
               {(() => {
                 const effUnicast = Math.max(metro.unicast_users_count, metro.max_unicast_users)
@@ -346,20 +342,15 @@ export function MetroDetailPage() {
                             { count: device.multicast_publishers_count, effectiveMax: effPubs },
                           ].map(({ count, effectiveMax }, i) => {
                             const isDerived = derivedFlags[i]
-                            const pct = effectiveMax > 0 ? Math.min(100, (count / effectiveMax) * 100) : 0
-                            const fillColor = pct >= 90 ? 'bg-red-500/25' : pct >= 70 ? 'bg-amber-500/20' : 'bg-blue-500/15'
+                            const available = effectiveMax > count ? effectiveMax - count : 0
                             return (
-                              <td key={i} className="px-4 py-3 text-sm tabular-nums text-right relative">
-                                {effectiveMax > 0 && <div className="absolute inset-y-0 left-0 right-0 pointer-events-none bg-muted/30 border-r border-muted-foreground/20" />}
-                                {pct > 0 && <div className={`absolute inset-y-0 left-0 pointer-events-none ${fillColor}`} style={{ width: `${pct}%` }} />}
-                                <span className="relative">
-                                  {count > 0 || effectiveMax > 0 ? (
-                                    <>{count}{effectiveMax > 0 && (isDerived
-                                      ? <span className="text-muted-foreground/50 inline-flex items-center gap-0.5" title="Calculated from max_users">/{effectiveMax}<Info className="h-2.5 w-2.5" /></span>
-                                      : <span className="text-muted-foreground">/{effectiveMax}</span>
-                                    )}</>
-                                  ) : <span className="text-muted-foreground">—</span>}
-                                </span>
+                              <td key={i} className="px-4 py-3 text-sm tabular-nums text-right">
+                                {count === 0 && effectiveMax === 0
+                                  ? <span className="text-muted-foreground">—</span>
+                                  : isDerived
+                                    ? <span className="inline-flex items-center gap-0.5 justify-end">{available}<Info className="h-2.5 w-2.5 text-muted-foreground/50" /></span>
+                                    : <span>{available}</span>
+                                }
                               </td>
                             )
                           })}

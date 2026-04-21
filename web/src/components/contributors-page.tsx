@@ -11,7 +11,7 @@ import { CopyableText } from './copyable-text'
 
 const PAGE_SIZE = 100
 
-type SortField = 'code' | 'name' | 'devices' | 'sidea' | 'sidez' | 'links'
+type SortField = 'code' | 'name' | 'devices' | 'sidea' | 'sidez' | 'links' | 'users'
 type SortDirection = 'asc' | 'desc'
 
 // Parse search filters from URL param
@@ -247,6 +247,12 @@ export function ContributorsPage() {
                       <SortIcon field="links" />
                     </button>
                   </th>
+                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('users')}>
+                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('users')}>
+                      Users
+                      <SortIcon field="users" />
+                    </button>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -274,11 +280,28 @@ export function ContributorsPage() {
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
                       {contributor.link_count > 0 ? contributor.link_count : <span className="text-muted-foreground">—</span>}
                     </td>
+                    <td className="px-4 py-3 text-sm tabular-nums text-right relative">
+                      {(() => {
+                        const pct = contributor.max_users > 0 ? Math.min(100, (contributor.user_count / contributor.max_users) * 100) : 0
+                        const fillColor = pct >= 90 ? 'bg-red-500/25' : pct >= 70 ? 'bg-amber-500/20' : 'bg-blue-500/15'
+                        return (
+                          <>
+                            {contributor.max_users > 0 && <div className="absolute inset-y-0 left-0 right-0 pointer-events-none bg-muted/30 border-r border-muted-foreground/20" />}
+                            {pct > 0 && <div className={`absolute inset-y-0 left-0 pointer-events-none ${fillColor}`} style={{ width: `${pct}%` }} />}
+                            <span className="relative">
+                              {contributor.user_count > 0 || contributor.max_users > 0 ? (
+                                <>{contributor.user_count}{contributor.max_users > 0 && <span className="text-muted-foreground">/{contributor.max_users}</span>}</>
+                              ) : <span className="text-muted-foreground">—</span>}
+                            </span>
+                          </>
+                        )
+                      })()}
+                    </td>
                   </tr>
                 ))}
                 {contributors.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
                       No contributors found
                     </td>
                   </tr>

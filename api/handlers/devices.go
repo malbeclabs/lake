@@ -45,10 +45,10 @@ var deviceListSortFields = map[string]string{
 	"contributor": "contributor_code",
 	"metro":       "metro_code",
 	"status":      "status",
-	"users":       "users_util_frac",
-	"unicast":     "unicast_no_max|unicast_util_frac",
-	"subscribers": "subscribers_no_max|subscribers_util_frac",
-	"publishers":  "publishers_no_max|publishers_util_frac",
+	"users":       "users_no_data|users_util_frac;max_users DESC",
+	"unicast":     "unicast_no_data|unicast_available",
+	"subscribers": "subscribers_no_data|subscribers_available",
+	"publishers":  "publishers_no_data|publishers_available",
 	"in":          "in_bps",
 	"out":         "out_bps",
 	"peakin":      "peak_in_bps",
@@ -82,6 +82,17 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 	if filterClause != "" {
 		whereFilter = " AND " + filterClause
 	}
+
+	var pkFilterArgs []any
+	if metroPk := r.URL.Query().Get("metro_pk"); metroPk != "" {
+		whereFilter += " AND metro_pk = ?"
+		pkFilterArgs = append(pkFilterArgs, metroPk)
+	}
+	if contributorPk := r.URL.Query().Get("contributor_pk"); contributorPk != "" {
+		whereFilter += " AND contributor_pk = ?"
+		pkFilterArgs = append(pkFilterArgs, contributorPk)
+	}
+
 	orderBy := sort.OrderByClause(deviceListSortFields)
 
 	query := `
@@ -155,7 +166,6 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 		),
 		devices_eff AS (
 			SELECT *,
-				greatest(0, toInt64(max_users) - toInt64(current_users)) as remaining,
 				greatest(if(max_unicast_users > 0, toFloat64(max_unicast_users), toFloat64(unicast_users) + greatest(0, toInt64(max_users) - toInt64(current_users))), toFloat64(unicast_users)) as eff_max_unicast,
 				greatest(if(max_multicast_subscribers > 0, toFloat64(max_multicast_subscribers), toFloat64(multicast_subscribers_count) + greatest(0, toInt64(max_users) - toInt64(current_users))), toFloat64(multicast_subscribers_count)) as eff_max_subs,
 				greatest(if(max_multicast_publishers > 0, toFloat64(max_multicast_publishers), toFloat64(multicast_publishers_count) + greatest(0, toInt64(max_users) - toInt64(current_users))), toFloat64(multicast_publishers_count)) as eff_max_pubs
@@ -163,13 +173,14 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 		),
 		devices_util AS (
 			SELECT *,
+				toUInt8(max_users = 0) as users_no_data,
 				if(max_users > 0, toFloat64(current_users) / toFloat64(max_users), 0.0) as users_util_frac,
-				toUInt8(eff_max_unicast = 0) as unicast_no_max,
-				if(eff_max_unicast > 0, toFloat64(unicast_users) / eff_max_unicast, 0.0) as unicast_util_frac,
-				toUInt8(eff_max_subs = 0) as subscribers_no_max,
-				if(eff_max_subs > 0, toFloat64(multicast_subscribers_count) / eff_max_subs, 0.0) as subscribers_util_frac,
-				toUInt8(eff_max_pubs = 0) as publishers_no_max,
-				if(eff_max_pubs > 0, toFloat64(multicast_publishers_count) / eff_max_pubs, 0.0) as publishers_util_frac
+				toUInt8(eff_max_unicast = 0 AND unicast_users = 0) as unicast_no_data,
+				greatest(0, toInt64(eff_max_unicast) - toInt64(unicast_users)) as unicast_available,
+				toUInt8(eff_max_subs = 0 AND multicast_subscribers_count = 0) as subscribers_no_data,
+				greatest(0, toInt64(eff_max_subs) - toInt64(multicast_subscribers_count)) as subscribers_available,
+				toUInt8(eff_max_pubs = 0 AND multicast_publishers_count = 0) as publishers_no_data,
+				greatest(0, toInt64(eff_max_pubs) - toInt64(multicast_publishers_count)) as publishers_available
 			FROM devices_eff
 		)
 		SELECT
@@ -182,6 +193,7 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 
 	var args []any
 	args = append(args, filterArgs...)
+	args = append(args, pkFilterArgs...)
 	args = append(args, pagination.Limit, pagination.Offset)
 
 	rows, err := a.envDB(ctx).Query(ctx, query, args...)

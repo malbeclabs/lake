@@ -287,8 +287,18 @@ export function MetrosPage() {
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
                       {metro.device_count > 0 ? metro.device_count : <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right">
-                      {metro.user_count > 0 ? metro.user_count : <span className="text-muted-foreground">—</span>}
+                    <td className="px-4 py-3 text-sm tabular-nums text-right relative">
+                      {metro.max_users > 0 && <div className="absolute inset-y-0 left-0 right-0 pointer-events-none bg-muted/30 border-r border-muted-foreground/20" />}
+                      {(() => {
+                        const pct = metro.max_users > 0 ? Math.min(100, (metro.user_count / metro.max_users) * 100) : 0
+                        const fillColor = pct >= 90 ? 'bg-red-500/25' : pct >= 70 ? 'bg-amber-500/20' : 'bg-blue-500/15'
+                        return pct > 0 ? <div className={`absolute inset-y-0 left-0 pointer-events-none ${fillColor}`} style={{ width: `${pct}%` }} /> : null
+                      })()}
+                      <span className="relative">
+                        {metro.user_count > 0 || metro.max_users > 0 ? (
+                          <>{metro.user_count}{metro.max_users > 0 && <span className="text-muted-foreground">/{metro.max_users}</span>}</>
+                        ) : <span className="text-muted-foreground">—</span>}
+                      </span>
                     </td>
                     {[
                       { count: metro.unicast_users_count, effectiveMax: metro.max_unicast_users, rawOnChain: metro.raw_max_unicast_users },
@@ -297,29 +307,15 @@ export function MetrosPage() {
                     ].map(({ count, effectiveMax, rawOnChain }, i) => {
                       const displayMax = Math.max(count, effectiveMax)
                       const isDerived = rawOnChain === 0 && displayMax > 0
-                      const pct = displayMax > 0 ? Math.min(100, (count / displayMax) * 100) : 0
-                      const fillColor = pct >= 90 ? 'bg-red-500/25' : pct >= 70 ? 'bg-amber-500/20' : 'bg-blue-500/15'
+                      const available = displayMax > count ? displayMax - count : 0
                       return (
-                        <td key={i} className="px-4 py-3 text-sm tabular-nums text-right relative">
-                          {displayMax > 0 && (
-                            <div className="absolute inset-y-0 left-0 right-0 pointer-events-none bg-muted/30 border-r border-muted-foreground/20" />
-                          )}
-                          {pct > 0 && (
-                            <div className={`absolute inset-y-0 left-0 pointer-events-none ${fillColor}`} style={{ width: `${pct}%` }} />
-                          )}
-                          <span className="relative">
-                            {count > 0 || displayMax > 0 ? (
-                              <>
-                                {count}
-                                {displayMax > 0 && (isDerived
-                                  ? <span className="text-muted-foreground/50 inline-flex items-center gap-0.5" title="Calculated from max_users">/{displayMax}<Info className="h-2.5 w-2.5" /></span>
-                                  : <span className="text-muted-foreground">/{displayMax}</span>
-                                )}
-                              </>
-                            ) : (
-                              <span className="text-muted-foreground">—</span>
-                            )}
-                          </span>
+                        <td key={i} className="px-4 py-3 text-sm tabular-nums text-right">
+                          {count === 0 && displayMax === 0
+                            ? <span className="text-muted-foreground">—</span>
+                            : isDerived
+                              ? <span className="inline-flex items-center gap-0.5 justify-end">{available}<Info className="h-2.5 w-2.5 text-muted-foreground/50" /></span>
+                              : <span>{available}</span>
+                          }
                         </td>
                       )
                     })}
