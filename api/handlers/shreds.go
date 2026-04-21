@@ -851,10 +851,10 @@ func (a *API) GetShredSubscriberHistory(w http.ResponseWriter, r *http.Request) 
 
 // ShredEpochRevenueItem represents payment revenue aggregated per epoch.
 type ShredEpochRevenueItem struct {
-	Epoch          uint64  `json:"epoch"`
-	TotalUSDC      float64 `json:"total_usdc"`
-	TotalDollars   float64 `json:"total_dollars"`
-	PaymentCount   uint64  `json:"payment_count"`
+	Epoch        uint64  `json:"epoch"`
+	TotalUSDC    float64 `json:"total_usdc"`
+	TotalDollars float64 `json:"total_dollars"`
+	PaymentCount uint64  `json:"payment_count"`
 }
 
 func (a *API) GetShredEpochRevenue(w http.ResponseWriter, r *http.Request) {
