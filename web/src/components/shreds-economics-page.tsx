@@ -33,6 +33,54 @@ import { SmallDropdown } from "./topology/TimeRangeSelector";
 
 // Helpers
 
+function useDebouncedShimmer(
+  active: boolean,
+  delayMs = 250,
+  minMs = 500,
+): boolean {
+  const [visible, setVisible] = useState(false);
+  const shownAt = useRef<number>(0);
+  const showTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const hideTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  useEffect(() => {
+    if (active) {
+      clearTimeout(hideTimer.current);
+      if (!visible && !showTimer.current) {
+        showTimer.current = setTimeout(() => {
+          showTimer.current = undefined;
+          shownAt.current = Date.now();
+          setVisible(true);
+        }, delayMs);
+      }
+    } else {
+      if (showTimer.current) {
+        clearTimeout(showTimer.current);
+        showTimer.current = undefined;
+      }
+      if (visible) {
+        const remaining = minMs - (Date.now() - shownAt.current);
+        const finish = () => {
+          shownAt.current = 0;
+          setVisible(false);
+        };
+        if (remaining <= 0) finish();
+        else hideTimer.current = setTimeout(finish, remaining);
+      }
+    }
+  }, [active, visible, delayMs, minMs]);
+
+  useEffect(
+    () => () => {
+      clearTimeout(showTimer.current);
+      clearTimeout(hideTimer.current);
+    },
+    [],
+  );
+
+  return visible;
+}
+
 function useRefreshButton(
   refetch: () => void,
   isFetching: boolean,
@@ -437,6 +485,7 @@ export function ShredsEconomicsPage() {
   const [revenueRange, setRevenueRange] = useState<1 | 5 | 10 | "all">("all");
 
   const refresh = useRefreshButton(refetch, rawFetching);
+  const shimmerVisible = useDebouncedShimmer(rawFetching, 250, 800);
 
   const seats = seatsData?.items ?? [];
   const econ = useMemo(
@@ -489,11 +538,11 @@ export function ShredsEconomicsPage() {
           }
         />
 
-        {rawFetching && (
-          <div className="h-0.5 w-full overflow-hidden rounded-full mb-6">
-            <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
-          </div>
-        )}
+        <div className="h-0.5 w-full overflow-hidden rounded-full mb-6">
+          {shimmerVisible && (
+            <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_0.9s_ease-in-out_infinite] rounded-full" />
+          )}
+        </div>
 
         <div className="space-y-8">
           {/* Revenue Overview */}
@@ -1415,9 +1464,9 @@ export function ShredsEconomicsPage() {
           <section>
             <SectionTitle>Metro Breakdown</SectionTitle>
             <div className="relative border border-border rounded-lg overflow-hidden bg-card">
-              {rawFetching && seatsData && (
+              {shimmerVisible && seatsData && (
                 <div className="absolute inset-x-0 top-0 h-0.5 overflow-hidden z-10">
-                  <div className="h-full w-1/3 bg-primary/60 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
+                  <div className="h-full w-1/3 bg-primary/60 animate-[shimmer_0.9s_ease-in-out_infinite] rounded-full" />
                 </div>
               )}
               <div className="overflow-x-auto">
@@ -1625,9 +1674,9 @@ export function ShredsEconomicsPage() {
               )}
             </div>
             <div className="relative border border-border rounded-lg overflow-hidden bg-card">
-              {rawFetching && seatsData && (
+              {shimmerVisible && seatsData && (
                 <div className="absolute inset-x-0 top-0 h-0.5 overflow-hidden z-10">
-                  <div className="h-full w-1/3 bg-primary/60 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
+                  <div className="h-full w-1/3 bg-primary/60 animate-[shimmer_0.9s_ease-in-out_infinite] rounded-full" />
                 </div>
               )}
               <div className="overflow-x-auto">
