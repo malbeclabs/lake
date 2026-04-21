@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
@@ -77,11 +78,21 @@ func CreateDatabase(ctx context.Context, log *slog.Logger, uri, username, passwo
 
 	_, err = sess.Run(ctx, "CREATE DATABASE $name IF NOT EXISTS", map[string]any{"name": database})
 	if err != nil {
+		// Community Edition doesn't support CREATE DATABASE — the default "neo4j" database
+		// already exists, so this is safe to ignore.
+		if isUnsupportedAdminCommand(err) {
+			log.Warn("Neo4j CREATE DATABASE not supported (Community Edition?), assuming database exists", "database", database)
+			return nil
+		}
 		return fmt.Errorf("failed to create database %s: %w", database, err)
 	}
 
 	log.Info("Neo4j database created", "database", database)
 	return nil
+}
+
+func isUnsupportedAdminCommand(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "Neo.ClientError.Statement.UnsupportedAdministrationCommand")
 }
 
 // NewClient creates a new Neo4j client.
