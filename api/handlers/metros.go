@@ -40,9 +40,9 @@ var metroSortFields = map[string]string{
 	"longitude":   "longitude",
 	"devices":     "device_count",
 	"users":       "user_count",
-	"unicast":     "unicast_free_frac",
-	"subscribers": "subscribers_free_frac",
-	"publishers":  "publishers_free_frac",
+	"unicast":     "unicast_users_count",
+	"subscribers": "multicast_subscribers_count",
+	"publishers":  "multicast_publishers_count",
 }
 
 var metroFilterFields = map[string]FilterFieldConfig{
@@ -137,16 +137,9 @@ func (a *API) GetMetros(w http.ResponseWriter, r *http.Request) {
 			LEFT JOIN device_counts dc ON m.pk = dc.metro_pk
 			LEFT JOIN user_counts uc ON m.pk = uc.metro_pk
 			LEFT JOIN onchain_user_counts ouc ON m.pk = ouc.metro_pk
-		),
-		metros_util AS (
-			SELECT *,
-				if(max_unicast_users > 0, (toFloat64(max_unicast_users) - toFloat64(unicast_users_count)) / toFloat64(max_unicast_users), 2.0) as unicast_free_frac,
-				if(max_multicast_subscribers > 0, (toFloat64(max_multicast_subscribers) - toFloat64(multicast_subscribers_count)) / toFloat64(max_multicast_subscribers), 2.0) as subscribers_free_frac,
-				if(max_multicast_publishers > 0, (toFloat64(max_multicast_publishers) - toFloat64(multicast_publishers_count)) / toFloat64(max_multicast_publishers), 2.0) as publishers_free_frac
-			FROM metros_data
 		)
 		SELECT pk, code, name, latitude, longitude, device_count, user_count, unicast_users_count, multicast_subscribers_count, multicast_publishers_count, max_users, max_unicast_users, max_multicast_subscribers, max_multicast_publishers, raw_max_unicast_users, raw_max_multicast_subscribers, raw_max_multicast_publishers, count() OVER () as _total
-		FROM metros_util
+		FROM metros_data
 		WHERE 1=1` + whereFilter + " " + orderBy + `
 		LIMIT ? OFFSET ?
 	`
