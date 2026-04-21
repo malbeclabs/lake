@@ -4282,7 +4282,6 @@ export function StatusPage() {
             label="Users"
             value={status.network.users}
             format="number"
-            max={status.network.max_users > 0 ? status.network.max_users : undefined}
             href="/dz/users"
           />
           <StatCard
