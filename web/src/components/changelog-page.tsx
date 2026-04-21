@@ -12,10 +12,16 @@ const changelog: ChangelogEntry[] = [
   {
     date: 'April 21, 2026',
     changes: [
-      { type: 'feature', description: 'Unicast, subscriber, and publisher user counts shown on devices, metros, and contributor detail pages' },
-      { type: 'feature', description: 'Users column added to device listing with current/max fill bar' },
-      { type: 'feature', description: 'U/S/P badge overlays on topology map, globe, and graph when "User Counts" overlay is enabled' },
+      { type: 'feature', description: 'Shreds Economics page with revenue analytics, seat health, retention signals, and next-epoch forecast' },
+      { type: 'feature', description: 'Regional feeds on shreds scoreboard, with DZ retransmits moved under DZ Edge' },
+      { type: 'feature', description: 'Unicast, subscriber, and publisher user counts shown across device listings, detail pages, and topology overlays' },
       { type: 'improvement', description: 'Capacity sort keeps devices without a maximum below 0%-utilization devices' },
+    ],
+  },
+  {
+    date: 'April 20, 2026',
+    changes: [
+      { type: 'fix', description: 'Shreds scoreboard back navigation and live-tail stalls' },
     ],
   },
   {
