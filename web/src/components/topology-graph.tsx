@@ -115,6 +115,7 @@ export function TopologyGraph({
   const contributorLinksEnabled = overlays.contributorLinks
   const bandwidthEnabled = overlays.bandwidth
   const multicastTreesEnabled = overlays.multicastTrees
+  const showUserCounts = overlays.userCounts
 
   // Whether any overlay with panel content is active (bandwidth has no panel)
   const hasOverlayPanelContent = deviceTypeEnabled || linkTypeEnabled || stakeOverlayEnabled || linkHealthOverlayEnabled || trafficFlowEnabled || metroClusteringEnabled || contributorDevicesEnabled || contributorLinksEnabled || overlays.criticality || overlays.isisHealth || multicastTreesEnabled
@@ -194,6 +195,9 @@ export function TopologyGraph({
     systemId?: string
     degree: number
     contributorCode?: string
+    unicastUsersCount: number
+    multicastSubscribersCount: number
+    multicastPublishersCount: number
     x: number
     y: number
   } | null>(null)
@@ -228,6 +232,29 @@ export function TopologyGraph({
     avgMetric?: number | null
   } | null>(null)
 
+  const showUserCountsRef = useRef(showUserCounts)
+  useEffect(() => { showUserCountsRef.current = showUserCounts }, [showUserCounts])
+
+  const [userCountOverlays, setUserCountOverlays] = useState<Array<{
+    id: string; x: number; y: number; unicast: number; subscribers: number; publishers: number
+  }>>([])
+
+  const updateUserCountOverlays = useCallback(() => {
+    const cy = cyRef.current
+    if (!cy || !showUserCountsRef.current) { setUserCountOverlays([]); return }
+    const next: typeof userCountOverlays = []
+    cy.nodes().forEach((node) => {
+      const pk = node.data('id') as string
+      const info = deviceInfoMapRef.current.get(pk)
+      if (!info) return
+      const { unicastUsersCount, multicastSubscribersCount, multicastPublishersCount } = info
+      if (!unicastUsersCount && !multicastSubscribersCount && !multicastPublishersCount) return
+      const pos = node.renderedPosition()
+      const h = node.renderedHeight()
+      next.push({ id: pk, x: pos.x, y: pos.y + h / 2 + 3, unicast: unicastUsersCount, subscribers: multicastSubscribersCount, publishers: multicastPublishersCount })
+    })
+    setUserCountOverlays(next)
+  }, []) // stable – reads refs only
 
   const { data, isLoading, error, isFetching } = useQuery({
     queryKey: ['isis-topology'],
@@ -369,6 +396,12 @@ export function TopologyGraph({
         contributorPk: device.contributor_pk || '',
         contributorCode: device.contributor_code || '',
         userCount: device.user_count ?? 0,
+        unicastUsersCount: device.unicast_users_count ?? 0,
+        multicastSubscribersCount: device.multicast_subscribers_count ?? 0,
+        multicastPublishersCount: device.multicast_publishers_count ?? 0,
+        maxUnicastUsers: device.max_unicast_users ?? 0,
+        maxMulticastSubscribers: device.max_multicast_subscribers ?? 0,
+        maxMulticastPublishers: device.max_multicast_publishers ?? 0,
         validatorCount: device.validator_count ?? 0,
         stakeSol: device.stake_sol ? device.stake_sol / 1_000_000_000 : 0,
         stakeShare: device.stake_share ? device.stake_share * 100 : 0,
@@ -446,6 +479,12 @@ export function TopologyGraph({
   useEffect(() => {
     linkInfoMapRef.current = linkInfoMap
   }, [linkInfoMap])
+
+  // Refresh user count badge positions when overlay is toggled or data changes
+  useEffect(() => {
+    if (showUserCounts) updateUserCountOverlays()
+    else setUserCountOverlays([])
+  }, [showUserCounts, deviceInfoMap, updateUserCountOverlays])
   useEffect(() => {
     linkByDevicePairMapRef.current = linkByDevicePairMap
   }, [linkByDevicePairMap])
@@ -2856,6 +2895,9 @@ export function TopologyGraph({
           systemId: node.data('systemId'),
           degree: node.data('degree'),
           contributorCode: deviceInfo?.contributorCode,
+          unicastUsersCount: deviceInfo?.unicastUsersCount ?? 0,
+          multicastSubscribersCount: deviceInfo?.multicastSubscribersCount ?? 0,
+          multicastPublishersCount: deviceInfo?.multicastPublishersCount ?? 0,
           x: pos.x,
           y: pos.y,
         })
@@ -2864,6 +2906,9 @@ export function TopologyGraph({
       cy.on('mouseout', 'node', () => {
         setHoveredNode(null)
       })
+
+      // Update user count badge positions on pan/zoom/layout
+      cy.on('viewport layoutstop', () => { updateUserCountOverlays() })
 
       // Edge hover
       cy.on('mouseover', 'edge', (event) => {
@@ -3767,6 +3812,31 @@ export function TopologyGraph({
         </TopologyPanel>
       )}
 
+      {/* User count badges (shown when userCounts overlay is active) */}
+      {showUserCounts && userCountOverlays.map(ov => (
+        <div
+          key={ov.id}
+          className="absolute pointer-events-none flex items-center gap-0.5"
+          style={{ left: ov.x, top: ov.y, transform: 'translateX(-50%)' }}
+        >
+          {ov.unicast > 0 && (
+            <span className="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold leading-none text-white" style={{ background: '#3b82f6' }}>
+              U{ov.unicast}
+            </span>
+          )}
+          {ov.subscribers > 0 && (
+            <span className="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold leading-none text-white" style={{ background: '#14b8a6' }}>
+              S{ov.subscribers}
+            </span>
+          )}
+          {ov.publishers > 0 && (
+            <span className="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold leading-none text-white" style={{ background: '#a855f7' }}>
+              P{ov.publishers}
+            </span>
+          )}
+        </div>
+      ))}
+
       {/* Node tooltip */}
       {hoveredNode && (
         <div
@@ -3782,6 +3852,28 @@ export function TopologyGraph({
               <div>Type: <span className="text-foreground capitalize">{hoveredNode.deviceType}</span></div>
               {hoveredNode.contributorCode && (
                 <div>Contributor: <span className="text-foreground">{hoveredNode.contributorCode}</span></div>
+              )}
+              {(hoveredNode.unicastUsersCount > 0 || hoveredNode.multicastSubscribersCount > 0 || hoveredNode.multicastPublishersCount > 0) && (
+                <div className="flex items-center gap-1">
+                  <span>Users:</span>
+                  <div className="flex items-center gap-0.5">
+                    {hoveredNode.unicastUsersCount > 0 && (
+                      <span className="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold leading-none text-white" style={{ background: '#3b82f6' }}>
+                        U{hoveredNode.unicastUsersCount}
+                      </span>
+                    )}
+                    {hoveredNode.multicastSubscribersCount > 0 && (
+                      <span className="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold leading-none text-white" style={{ background: '#14b8a6' }}>
+                        S{hoveredNode.multicastSubscribersCount}
+                      </span>
+                    )}
+                    {hoveredNode.multicastPublishersCount > 0 && (
+                      <span className="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold leading-none text-white" style={{ background: '#a855f7' }}>
+                        P{hoveredNode.multicastPublishersCount}
+                      </span>
+                    )}
+                  </div>
+                </div>
               )}
             </div>
           </div>

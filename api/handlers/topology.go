@@ -29,18 +29,24 @@ type DeviceInterface struct {
 }
 
 type Device struct {
-	PK              string            `json:"pk"`
-	Code            string            `json:"code"`
-	Status          string            `json:"status"`
-	DeviceType      string            `json:"device_type"`
-	MetroPK         string            `json:"metro_pk"`
-	ContributorPK   string            `json:"contributor_pk"`
-	ContributorCode string            `json:"contributor_code"`
-	UserCount       uint64            `json:"user_count"`
-	ValidatorCount  uint64            `json:"validator_count"`
-	StakeSol        float64           `json:"stake_sol"`
-	StakeShare      float64           `json:"stake_share"`
-	Interfaces      []DeviceInterface `json:"interfaces"`
+	PK                        string            `json:"pk"`
+	Code                      string            `json:"code"`
+	Status                    string            `json:"status"`
+	DeviceType                string            `json:"device_type"`
+	MetroPK                   string            `json:"metro_pk"`
+	ContributorPK             string            `json:"contributor_pk"`
+	ContributorCode           string            `json:"contributor_code"`
+	UserCount                 uint64            `json:"user_count"`
+	UnicastUsersCount         uint16            `json:"unicast_users_count"`
+	MulticastSubscribersCount uint16            `json:"multicast_subscribers_count"`
+	MulticastPublishersCount  uint16            `json:"multicast_publishers_count"`
+	MaxUnicastUsers           uint16            `json:"max_unicast_users"`
+	MaxMulticastSubscribers   uint16            `json:"max_multicast_subscribers"`
+	MaxMulticastPublishers    uint16            `json:"max_multicast_publishers"`
+	ValidatorCount            uint64            `json:"validator_count"`
+	StakeSol                  float64           `json:"stake_sol"`
+	StakeShare                float64           `json:"stake_share"`
+	Interfaces                []DeviceInterface `json:"interfaces"`
 }
 
 type Link struct {
@@ -214,6 +220,12 @@ func (a *API) FetchTopologyData(ctx context.Context) (TopologyResponse, error) {
 				d.pk, d.code, d.status, d.device_type, d.metro_pk,
 				d.contributor_pk, c.code as contributor_code,
 				COALESCE(ds.user_count, 0) as user_count,
+				COALESCE(d.unicast_users_count, 0) as unicast_users_count,
+				COALESCE(d.multicast_subscribers_count, 0) as multicast_subscribers_count,
+				COALESCE(d.multicast_publishers_count, 0) as multicast_publishers_count,
+				COALESCE(d.max_unicast_users, 0) as max_unicast_users,
+				COALESCE(d.max_multicast_subscribers, 0) as max_multicast_subscribers,
+				COALESCE(d.max_multicast_publishers, 0) as max_multicast_publishers,
 				COALESCE(ds.validator_count, 0) as validator_count,
 				COALESCE(ds.stake_sol, 0) as stake_sol,
 				CASE
@@ -236,7 +248,7 @@ func (a *API) FetchTopologyData(ctx context.Context) (TopologyResponse, error) {
 		for rows.Next() {
 			var d Device
 			var interfacesJSON string
-			if err := rows.Scan(&d.PK, &d.Code, &d.Status, &d.DeviceType, &d.MetroPK, &d.ContributorPK, &d.ContributorCode, &d.UserCount, &d.ValidatorCount, &d.StakeSol, &d.StakeShare, &interfacesJSON); err != nil {
+			if err := rows.Scan(&d.PK, &d.Code, &d.Status, &d.DeviceType, &d.MetroPK, &d.ContributorPK, &d.ContributorCode, &d.UserCount, &d.UnicastUsersCount, &d.MulticastSubscribersCount, &d.MulticastPublishersCount, &d.MaxUnicastUsers, &d.MaxMulticastSubscribers, &d.MaxMulticastPublishers, &d.ValidatorCount, &d.StakeSol, &d.StakeShare, &interfacesJSON); err != nil {
 				return err
 			}
 			if err := json.Unmarshal([]byte(interfacesJSON), &d.Interfaces); err != nil {

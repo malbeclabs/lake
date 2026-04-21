@@ -195,6 +195,12 @@ interface HoveredDeviceInfo {
   contributorPk: string
   contributorCode: string
   userCount: number
+  unicastUsersCount: number
+  multicastSubscribersCount: number
+  multicastPublishersCount: number
+  maxUnicastUsers: number
+  maxMulticastSubscribers: number
+  maxMulticastPublishers: number
   validatorCount: number
   stakeSol: number
   stakeShare: number
@@ -364,6 +370,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const bandwidthMode = overlays.bandwidth
   const isisHealthMode = overlays.isisHealth
   const multicastTreesMode = overlays.multicastTrees
+  const showUserCounts = overlays.userCounts
 
   // Whether any overlay with panel content is active (bandwidth has no panel)
   const hasOverlayPanelContent = deviceTypeMode || linkTypeMode || stakeOverlayMode || linkHealthMode || trafficFlowMode || metroClusteringMode || contributorDevicesMode || contributorLinksMode || criticalityOverlayEnabled || isisHealthMode || showValidators || multicastTreesMode
@@ -2537,6 +2544,12 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
             contributorPk: device.contributor_pk,
             contributorCode: device.contributor_code,
             userCount: device.user_count ?? 0,
+            unicastUsersCount: device.unicast_users_count ?? 0,
+            multicastSubscribersCount: device.multicast_subscribers_count ?? 0,
+            multicastPublishersCount: device.multicast_publishers_count ?? 0,
+            maxUnicastUsers: device.max_unicast_users ?? 0,
+            maxMulticastSubscribers: device.max_multicast_subscribers ?? 0,
+            maxMulticastPublishers: device.max_multicast_publishers ?? 0,
             validatorCount: device.validator_count ?? 0,
             stakeSol: device.stake_sol ?? 0,
             stakeShare: device.stake_share ?? 0,
@@ -2936,6 +2949,12 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
             contributorPk: device.contributor_pk,
             contributorCode: device.contributor_code,
             userCount: device.user_count ?? 0,
+            unicastUsersCount: device.unicast_users_count ?? 0,
+            multicastSubscribersCount: device.multicast_subscribers_count ?? 0,
+            multicastPublishersCount: device.multicast_publishers_count ?? 0,
+            maxUnicastUsers: device.max_unicast_users ?? 0,
+            maxMulticastSubscribers: device.max_multicast_subscribers ?? 0,
+            maxMulticastPublishers: device.max_multicast_publishers ?? 0,
             validatorCount: device.validator_count ?? 0,
             stakeSol: device.stake_sol ?? 0,
             stakeShare: device.stake_share ?? 0,
@@ -3205,6 +3224,34 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
                     )}
                   </div>
                 )}
+                {/* User indicators: unicast / subscribers / publishers */}
+                {showUserCounts && !multicastTreesMode && (deviceInfo.unicastUsersCount > 0 || deviceInfo.multicastSubscribersCount > 0 || deviceInfo.multicastPublishersCount > 0) && (
+                  <div
+                    className="absolute flex items-center gap-0.5 pointer-events-none"
+                    style={{
+                      bottom: -(markerSize / 2 + 10),
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {deviceInfo.unicastUsersCount > 0 && (
+                      <span style={{ fontSize: 10, lineHeight: '15px', background: '#3b82f6', color: '#fff', borderRadius: 4, padding: '0 3px', fontWeight: 600 }}>
+                        U{deviceInfo.unicastUsersCount}
+                      </span>
+                    )}
+                    {deviceInfo.multicastSubscribersCount > 0 && (
+                      <span style={{ fontSize: 10, lineHeight: '15px', background: '#14b8a6', color: '#fff', borderRadius: 4, padding: '0 3px', fontWeight: 600 }}>
+                        S{deviceInfo.multicastSubscribersCount}
+                      </span>
+                    )}
+                    {deviceInfo.multicastPublishersCount > 0 && (
+                      <span style={{ fontSize: 10, lineHeight: '15px', background: '#a855f7', color: '#fff', borderRadius: 4, padding: '0 3px', fontWeight: 600 }}>
+                        P{deviceInfo.multicastPublishersCount}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             </Marker>
           )
@@ -3358,6 +3405,28 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
                 <div>Type: <span className="text-foreground capitalize">{hoveredDevice.deviceType}</span></div>
                 {hoveredDevice.contributorCode && (
                   <div>Contributor: <span className="text-foreground">{hoveredDevice.contributorCode}</span></div>
+                )}
+                {(hoveredDevice.unicastUsersCount > 0 || hoveredDevice.multicastSubscribersCount > 0 || hoveredDevice.multicastPublishersCount > 0) && (
+                  <div className="flex items-center gap-1">
+                    <span>Users:</span>
+                    <div className="flex items-center gap-0.5">
+                      {hoveredDevice.unicastUsersCount > 0 && (
+                        <span className="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold leading-none text-white" style={{ background: '#3b82f6' }}>
+                          U{hoveredDevice.unicastUsersCount}
+                        </span>
+                      )}
+                      {hoveredDevice.multicastSubscribersCount > 0 && (
+                        <span className="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold leading-none text-white" style={{ background: '#14b8a6' }}>
+                          S{hoveredDevice.multicastSubscribersCount}
+                        </span>
+                      )}
+                      {hoveredDevice.multicastPublishersCount > 0 && (
+                        <span className="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold leading-none text-white" style={{ background: '#a855f7' }}>
+                          P{hoveredDevice.multicastPublishersCount}
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 )}
               </div>
             </div>

@@ -97,6 +97,28 @@ function DeviceHoverContent({ device }: { device: DeviceInfo }) {
             {device.status}
           </span>
         </div>
+        {(device.unicastUsersCount > 0 || device.multicastSubscribersCount > 0 || device.multicastPublishersCount > 0) && (
+          <div className="flex justify-between gap-4">
+            <span>Users:</span>
+            <div className="flex items-center gap-0.5">
+              {device.unicastUsersCount > 0 && (
+                <span className="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold leading-none text-white" style={{ background: '#3b82f6' }}>
+                  U{device.unicastUsersCount}
+                </span>
+              )}
+              {device.multicastSubscribersCount > 0 && (
+                <span className="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold leading-none text-white" style={{ background: '#14b8a6' }}>
+                  S{device.multicastSubscribersCount}
+                </span>
+              )}
+              {device.multicastPublishersCount > 0 && (
+                <span className="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold leading-none text-white" style={{ background: '#a855f7' }}>
+                  P{device.multicastPublishersCount}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
         {device.validatorCount > 0 && (
           <div className="flex justify-between gap-4">
             <span>Validators:</span>
