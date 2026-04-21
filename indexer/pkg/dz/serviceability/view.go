@@ -73,6 +73,7 @@ type Device struct {
 	PublicIP                  string
 	ContributorPK             string
 	MetroPK                   string
+	LocationPK                string
 	MaxUsers                  uint16
 	MaxUnicastUsers           uint16
 	MaxMulticastSubscribers   uint16
@@ -145,6 +146,19 @@ type Tenant struct {
 	MetroRouting  bool
 	RouteLiveness bool
 	BillingRate   uint64
+}
+
+type Location struct {
+	PK             string
+	Owner          string
+	Lat            float64
+	Lng            float64
+	LocId          uint32
+	Status         string
+	Code           string
+	Name           string
+	Country        string
+	ReferenceCount uint32
 }
 
 type ServiceabilityRPC interface {
@@ -303,6 +317,7 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		"users", len(pd.Users),
 		"links", len(pd.Links),
 		"metros", len(pd.Exchanges),
+		"locations", len(pd.Locations),
 		"multicast_groups", len(pd.MulticastGroups),
 		"tenants", len(pd.Tenants))
 
@@ -327,6 +342,7 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	users := convertUsers(pd.Users)
 	links := convertLinks(pd.Links, pd.Devices)
 	metros := convertMetros(pd.Exchanges)
+	locations := convertLocations(pd.Locations)
 	multicastGroups := convertMulticastGroups(pd.MulticastGroups)
 	tenants := convertTenants(pd.Tenants)
 
@@ -352,6 +368,10 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		return result, fmt.Errorf("failed to replace metros: %w", err)
 	}
 
+	if err := v.store.ReplaceLocations(ctx, locations); err != nil {
+		return result, fmt.Errorf("failed to replace locations: %w", err)
+	}
+
 	if err := v.store.ReplaceLinks(ctx, links); err != nil {
 		return result, fmt.Errorf("failed to replace links: %w", err)
 	}
@@ -364,7 +384,7 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		return result, fmt.Errorf("failed to replace tenants: %w", err)
 	}
 
-	result.RowsAffected = int64(len(contributors) + len(devices) + len(deviceInterfaces) + len(users) + len(metros) + len(links) + len(multicastGroups) + len(tenants))
+	result.RowsAffected = int64(len(contributors) + len(devices) + len(deviceInterfaces) + len(users) + len(metros) + len(locations) + len(links) + len(multicastGroups) + len(tenants))
 	result.SourceMaxEventTS = &fetchedAt
 
 	v.fetchedAt = fetchedAt
@@ -416,6 +436,7 @@ func convertDevices(onchain []serviceability.Device) []Device {
 			PublicIP:                  net.IP(device.PublicIp[:]).String(),
 			ContributorPK:             solana.PublicKeyFromBytes(device.ContributorPubKey[:]).String(),
 			MetroPK:                   solana.PublicKeyFromBytes(device.ExchangePubKey[:]).String(),
+			LocationPK:                solana.PublicKeyFromBytes(device.LocationPubKey[:]).String(),
 			MaxUsers:                  device.MaxUsers,
 			MaxUnicastUsers:           device.MaxUnicastUsers,
 			MaxMulticastSubscribers:   device.MaxMulticastSubscribers,
@@ -568,6 +589,25 @@ func convertTenants(onchain []serviceability.Tenant) []Tenant {
 			MetroRouting:  t.MetroRouting,
 			RouteLiveness: t.RouteLiveness,
 			BillingRate:   t.BillingRate,
+		}
+	}
+	return result
+}
+
+func convertLocations(onchain []serviceability.Location) []Location {
+	result := make([]Location, len(onchain))
+	for i, loc := range onchain {
+		result[i] = Location{
+			PK:             solana.PublicKeyFromBytes(loc.PubKey[:]).String(),
+			Owner:          solana.PublicKeyFromBytes(loc.Owner[:]).String(),
+			Lat:            loc.Lat,
+			Lng:            loc.Lng,
+			LocId:          loc.LocId,
+			Status:         loc.Status.String(),
+			Code:           loc.Code,
+			Name:           loc.Name,
+			Country:        loc.Country,
+			ReferenceCount: loc.ReferenceCount,
 		}
 	}
 	return result

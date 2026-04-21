@@ -49,6 +49,7 @@ func (s *DeviceSchema) PayloadColumns() []string {
 		"public_ip:VARCHAR",
 		"contributor_pk:VARCHAR",
 		"metro_pk:VARCHAR",
+		"location_pk:VARCHAR",
 		"max_users:INTEGER",
 		"max_unicast_users:INTEGER",
 		"max_multicast_subscribers:INTEGER",
@@ -71,6 +72,7 @@ func (s *DeviceSchema) ToRow(d Device) []any {
 		d.PublicIP,
 		d.ContributorPK,
 		d.MetroPK,
+		d.LocationPK,
 		d.MaxUsers,
 		d.MaxUnicastUsers,
 		d.MaxMulticastSubscribers,
@@ -316,6 +318,50 @@ func (s *MulticastGroupSchema) GetPrimaryKey(m MulticastGroup) string {
 	return m.PK
 }
 
+// LocationSchema defines the schema for locations
+type LocationSchema struct{}
+
+func (s *LocationSchema) Name() string {
+	return "dz_locations"
+}
+
+func (s *LocationSchema) PrimaryKeyColumns() []string {
+	return []string{"pk:VARCHAR"}
+}
+
+func (s *LocationSchema) PayloadColumns() []string {
+	return []string{
+		"owner:VARCHAR",
+		"lat:DOUBLE",
+		"lng:DOUBLE",
+		"loc_id:INTEGER",
+		"status:VARCHAR",
+		"code:VARCHAR",
+		"name:VARCHAR",
+		"country:VARCHAR",
+		"reference_count:INTEGER",
+	}
+}
+
+func (s *LocationSchema) ToRow(l Location) []any {
+	return []any{
+		l.PK,
+		l.Owner,
+		l.Lat,
+		l.Lng,
+		l.LocId,
+		l.Status,
+		l.Code,
+		l.Name,
+		l.Country,
+		l.ReferenceCount,
+	}
+}
+
+func (s *LocationSchema) GetPrimaryKey(l Location) string {
+	return l.PK
+}
+
 // TenantSchema defines the schema for tenants
 type TenantSchema struct{}
 
@@ -362,6 +408,7 @@ var (
 	deviceInterfaceSchema = &DeviceInterfaceSchema{}
 	userSchema            = &UserSchema{}
 	metroSchema           = &MetroSchema{}
+	locationSchema        = &LocationSchema{}
 	linkSchema            = &LinkSchema{}
 	multicastGroupSchema  = &MulticastGroupSchema{}
 	tenantSchema          = &TenantSchema{}
@@ -385,6 +432,10 @@ func NewUserDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
 
 func NewMetroDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
 	return dataset.NewDimensionType2Dataset(log, metroSchema)
+}
+
+func NewLocationDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
+	return dataset.NewDimensionType2Dataset(log, locationSchema)
 }
 
 func NewLinkDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {

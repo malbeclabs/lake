@@ -21,6 +21,7 @@ type MetroListItem struct {
 	Longitude                  float64 `json:"longitude"`
 	DeviceCount                uint64  `json:"device_count"`
 	UserCount                  uint64  `json:"user_count"`
+	LocationCount              uint64  `json:"location_count"`
 	UnicastUsersCount          uint64  `json:"unicast_users_count"`
 	MulticastSubscribersCount  uint64  `json:"multicast_subscribers_count"`
 	MulticastPublishersCount   uint64  `json:"multicast_publishers_count"`
@@ -43,13 +44,15 @@ var metroSortFields = map[string]string{
 	"unicast":     "unicast_no_data|unicast_available",
 	"subscribers": "subscribers_no_data|subscribers_available",
 	"publishers":  "publishers_no_data|publishers_available",
+	"locations":   "location_count",
 }
 
 var metroFilterFields = map[string]FilterFieldConfig{
-	"code":    {Column: "code", Type: FieldTypeText},
-	"name":    {Column: "name", Type: FieldTypeText},
-	"devices": {Column: "device_count", Type: FieldTypeNumeric},
-	"users":   {Column: "user_count", Type: FieldTypeNumeric},
+	"code":      {Column: "code", Type: FieldTypeText},
+	"name":      {Column: "name", Type: FieldTypeText},
+	"devices":   {Column: "device_count", Type: FieldTypeNumeric},
+	"users":     {Column: "user_count", Type: FieldTypeNumeric},
+	"locations": {Column: "location_count", Type: FieldTypeNumeric},
 }
 
 func (a *API) GetMetros(w http.ResponseWriter, r *http.Request) {
@@ -68,20 +71,12 @@ func (a *API) GetMetros(w http.ResponseWriter, r *http.Request) {
 	}
 	orderBy := sort.OrderByClause(metroSortFields)
 
-	query := `
-		WITH device_counts AS (
-			SELECT metro_pk, count(*) as device_count
-			FROM dz_devices_current
-			WHERE metro_pk IS NOT NULL
-			GROUP BY metro_pk
-		),
-		user_counts AS (
-			SELECT d.metro_pk, count(*) as user_count
-			FROM dz_users_current u
-			JOIN dz_devices_current d ON u.device_pk = d.pk
-			WHERE u.status = 'activated' AND d.metro_pk IS NOT NULL
-			GROUP BY d.metro_pk
-		),
+	const metroSelect = `
+		SELECT pk, code, name, latitude, longitude, device_count, user_count, location_count, unicast_users_count, multicast_subscribers_count, multicast_publishers_count, max_users, max_unicast_users, max_multicast_subscribers, max_multicast_publishers, raw_max_unicast_users, raw_max_multicast_subscribers, raw_max_multicast_publishers, count() OVER () as _total
+		FROM metros_util
+		WHERE 1=1`
+
+	const onchainUserCountsCTE = `
 		-- NOTE: keep in sync with the identical CTE in GetMetro below
 		onchain_user_counts AS (
 			SELECT
@@ -113,7 +108,43 @@ func (a *API) GetMetros(w http.ResponseWriter, r *http.Request) {
 				WHERE metro_pk IS NOT NULL
 			)
 			GROUP BY metro_pk
+		),`
+
+	const metrosUtilCTE = `
+		metros_util AS (
+			SELECT *,
+				toUInt8(ifNull(max_users, 0) = 0) as users_no_max,
+				if(ifNull(max_users, 0) > 0, toFloat64(user_count) / toFloat64(ifNull(max_users, 1)), 0.0) as users_util_frac,
+				toUInt8(max_unicast_users = 0 AND unicast_users_count = 0) as unicast_no_data,
+				greatest(0, toInt64(max_unicast_users) - toInt64(unicast_users_count)) as unicast_available,
+				toUInt8(max_multicast_subscribers = 0 AND multicast_subscribers_count = 0) as subscribers_no_data,
+				greatest(0, toInt64(max_multicast_subscribers) - toInt64(multicast_subscribers_count)) as subscribers_available,
+				toUInt8(max_multicast_publishers = 0 AND multicast_publishers_count = 0) as publishers_no_data,
+				greatest(0, toInt64(max_multicast_publishers) - toInt64(multicast_publishers_count)) as publishers_available
+			FROM metros_data
+		)`
+
+	queryWithLocations := `
+		WITH device_counts AS (
+			SELECT metro_pk, count(*) as device_count
+			FROM dz_devices_current
+			WHERE metro_pk IS NOT NULL
+			GROUP BY metro_pk
 		),
+		user_counts AS (
+			SELECT d.metro_pk, count(*) as user_count
+			FROM dz_users_current u
+			JOIN dz_devices_current d ON u.device_pk = d.pk
+			WHERE u.status = 'activated' AND d.metro_pk IS NOT NULL
+			GROUP BY d.metro_pk
+		),
+		location_counts AS (
+			SELECT metro_pk, countDistinct(location_pk) as location_count
+			FROM dz_devices_current
+			WHERE metro_pk != '' AND location_pk != ''
+			GROUP BY metro_pk
+		),` +
+		onchainUserCountsCTE + `
 		metros_data AS (
 			SELECT
 				m.pk as pk,
@@ -123,6 +154,53 @@ func (a *API) GetMetros(w http.ResponseWriter, r *http.Request) {
 				COALESCE(m.longitude, 0) as longitude,
 				COALESCE(dc.device_count, 0) as device_count,
 				COALESCE(uc.user_count, 0) as user_count,
+				COALESCE(lc.location_count, 0) as location_count,
+				COALESCE(ouc.unicast_users_count, 0) as unicast_users_count,
+				COALESCE(ouc.multicast_subscribers_count, 0) as multicast_subscribers_count,
+				COALESCE(ouc.multicast_publishers_count, 0) as multicast_publishers_count,
+				COALESCE(ouc.max_users, 0) as max_users,
+				COALESCE(ouc.max_unicast_users, 0) as max_unicast_users,
+				COALESCE(ouc.max_multicast_subscribers, 0) as max_multicast_subscribers,
+				COALESCE(ouc.max_multicast_publishers, 0) as max_multicast_publishers,
+				COALESCE(ouc.raw_max_unicast_users, 0) as raw_max_unicast_users,
+				COALESCE(ouc.raw_max_multicast_subscribers, 0) as raw_max_multicast_subscribers,
+				COALESCE(ouc.raw_max_multicast_publishers, 0) as raw_max_multicast_publishers
+			FROM dz_metros_current m
+			LEFT JOIN device_counts dc ON m.pk = dc.metro_pk
+			LEFT JOIN user_counts uc ON m.pk = uc.metro_pk
+			LEFT JOIN location_counts lc ON m.pk = lc.metro_pk
+			LEFT JOIN onchain_user_counts ouc ON m.pk = ouc.metro_pk
+		),` +
+		metrosUtilCTE +
+		metroSelect + whereFilter + " " + orderBy + `
+		LIMIT ? OFFSET ?
+	`
+
+	queryWithoutLocations := `
+		WITH device_counts AS (
+			SELECT metro_pk, count(*) as device_count
+			FROM dz_devices_current
+			WHERE metro_pk IS NOT NULL
+			GROUP BY metro_pk
+		),
+		user_counts AS (
+			SELECT d.metro_pk, count(*) as user_count
+			FROM dz_users_current u
+			JOIN dz_devices_current d ON u.device_pk = d.pk
+			WHERE u.status = 'activated' AND d.metro_pk IS NOT NULL
+			GROUP BY d.metro_pk
+		),` +
+		onchainUserCountsCTE + `
+		metros_data AS (
+			SELECT
+				m.pk as pk,
+				m.code as code,
+				COALESCE(m.name, '') as name,
+				COALESCE(m.latitude, 0) as latitude,
+				COALESCE(m.longitude, 0) as longitude,
+				COALESCE(dc.device_count, 0) as device_count,
+				COALESCE(uc.user_count, 0) as user_count,
+				toUInt64(0) as location_count,
 				COALESCE(ouc.unicast_users_count, 0) as unicast_users_count,
 				COALESCE(ouc.multicast_subscribers_count, 0) as multicast_subscribers_count,
 				COALESCE(ouc.multicast_publishers_count, 0) as multicast_publishers_count,
@@ -137,22 +215,9 @@ func (a *API) GetMetros(w http.ResponseWriter, r *http.Request) {
 			LEFT JOIN device_counts dc ON m.pk = dc.metro_pk
 			LEFT JOIN user_counts uc ON m.pk = uc.metro_pk
 			LEFT JOIN onchain_user_counts ouc ON m.pk = ouc.metro_pk
-		),
-		metros_util AS (
-			SELECT *,
-				toUInt8(ifNull(max_users, 0) = 0) as users_no_max,
-				if(ifNull(max_users, 0) > 0, toFloat64(user_count) / toFloat64(ifNull(max_users, 1)), 0.0) as users_util_frac,
-				toUInt8(max_unicast_users = 0 AND unicast_users_count = 0) as unicast_no_data,
-				greatest(0, toInt64(max_unicast_users) - toInt64(unicast_users_count)) as unicast_available,
-				toUInt8(max_multicast_subscribers = 0 AND multicast_subscribers_count = 0) as subscribers_no_data,
-				greatest(0, toInt64(max_multicast_subscribers) - toInt64(multicast_subscribers_count)) as subscribers_available,
-				toUInt8(max_multicast_publishers = 0 AND multicast_publishers_count = 0) as publishers_no_data,
-				greatest(0, toInt64(max_multicast_publishers) - toInt64(multicast_publishers_count)) as publishers_available
-			FROM metros_data
-		)
-		SELECT pk, code, name, latitude, longitude, device_count, user_count, unicast_users_count, multicast_subscribers_count, multicast_publishers_count, max_users, max_unicast_users, max_multicast_subscribers, max_multicast_publishers, raw_max_unicast_users, raw_max_multicast_subscribers, raw_max_multicast_publishers, count() OVER () as _total
-		FROM metros_util
-		WHERE 1=1` + whereFilter + " " + orderBy + `
+		),` +
+		metrosUtilCTE +
+		metroSelect + whereFilter + " " + orderBy + `
 		LIMIT ? OFFSET ?
 	`
 
@@ -160,9 +225,14 @@ func (a *API) GetMetros(w http.ResponseWriter, r *http.Request) {
 	args = append(args, filterArgs...)
 	args = append(args, pagination.Limit, pagination.Offset)
 
-	rows, err := a.envDB(ctx).Query(ctx, query, args...)
+	rows, err := a.envDB(ctx).Query(ctx, queryWithLocations, args...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
+
+	if err != nil && isUnknownIdentifierError(err) {
+		rows, err = a.envDB(ctx).Query(ctx, queryWithoutLocations, args...)
+		metrics.RecordClickHouseQuery(time.Since(start), err)
+	}
 
 	if err != nil {
 		logError("metros query failed", "error", err)
@@ -183,6 +253,7 @@ func (a *API) GetMetros(w http.ResponseWriter, r *http.Request) {
 			&m.Longitude,
 			&m.DeviceCount,
 			&m.UserCount,
+			&m.LocationCount,
 			&m.UnicastUsersCount,
 			&m.MulticastSubscribersCount,
 			&m.MulticastPublishersCount,

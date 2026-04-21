@@ -21,6 +21,7 @@ type DeviceListItem struct {
 	ContributorCode           string  `json:"contributor_code"`
 	MetroPK                   string  `json:"metro_pk"`
 	MetroCode                 string  `json:"metro_code"`
+	LocationPK                string  `json:"location_pk"`
 	PublicIP                  string  `json:"public_ip"`
 	MaxUsers                  int32   `json:"max_users"`
 	CurrentUsers              uint64  `json:"current_users"`
@@ -60,6 +61,7 @@ var deviceListFilterFields = map[string]FilterFieldConfig{
 	"type":        {Column: "device_type", Type: FieldTypeText},
 	"contributor": {Column: "contributor_code", Type: FieldTypeText},
 	"metro":       {Column: "metro_code", Type: FieldTypeText},
+	"location_pk": {Column: "location_pk", Type: FieldTypeText},
 	"status":      {Column: "status", Type: FieldTypeText},
 	"users":       {Column: "current_users", Type: FieldTypeNumeric},
 	"in":          {Column: "in_bps", Type: FieldTypeBandwidth},
@@ -140,6 +142,7 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 				COALESCE(c.code, '') as contributor_code,
 				COALESCE(d.metro_pk, '') as metro_pk,
 				COALESCE(m.code, '') as metro_code,
+				COALESCE(d.location_pk, '') as location_pk,
 				COALESCE(d.public_ip, '') as public_ip,
 				COALESCE(d.max_users, 0) as max_users,
 				COALESCE(ucu.user_count, 0) + COALESCE(ucm.user_count, 0) as current_users,
@@ -184,7 +187,7 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 			FROM devices_eff
 		)
 		SELECT
-			pk, code, status, device_type, contributor_pk, contributor_code, metro_pk, metro_code, public_ip, max_users, current_users, unicast_users, multicast_users, max_unicast_users, max_multicast_subscribers, max_multicast_publishers, unicast_users_count, multicast_subscribers_count, reserved_seats, multicast_publishers_count, in_bps, out_bps, peak_in_bps, peak_out_bps,
+			pk, code, status, device_type, contributor_pk, contributor_code, metro_pk, metro_code, location_pk, public_ip, max_users, current_users, unicast_users, multicast_users, max_unicast_users, max_multicast_subscribers, max_multicast_publishers, unicast_users_count, multicast_subscribers_count, reserved_seats, multicast_publishers_count, in_bps, out_bps, peak_in_bps, peak_out_bps,
 			count() OVER () as _total
 		FROM devices_util
 		WHERE 1=1` + whereFilter + " " + orderBy + `
@@ -220,6 +223,7 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 			&d.ContributorCode,
 			&d.MetroPK,
 			&d.MetroCode,
+			&d.LocationPK,
 			&d.PublicIP,
 			&d.MaxUsers,
 			&d.CurrentUsers,

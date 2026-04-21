@@ -538,6 +538,8 @@ func main() {
 		r.Get("/api/dz/links-health", api.GetLinkHealth)
 		r.Get("/api/dz/metros", api.GetMetros)
 		r.Get("/api/dz/metros/{pk}", api.GetMetro)
+		r.Get("/api/dz/locations", api.GetLocations)
+		r.Get("/api/dz/locations/{pk}", api.GetLocation)
 		r.Get("/api/dz/contributors", api.GetContributors)
 		r.Get("/api/dz/contributors/{pk}", api.GetContributor)
 		r.Get("/api/dz/users", api.GetUsers)

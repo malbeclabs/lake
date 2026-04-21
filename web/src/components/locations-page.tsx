@@ -1,39 +1,36 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
-import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Loader2, MapPin, AlertCircle, ChevronDown, ChevronUp, X } from 'lucide-react'
-import { fetchMetros } from '@/lib/api'
-import { handleRowClick } from '@/lib/utils'
+import { useSearchParams, Link } from 'react-router-dom'
+import { Loader2, Building2, AlertCircle, ChevronDown, ChevronUp, X } from 'lucide-react'
+import { fetchLocations, fetchPeeringDBFacility } from '@/lib/api'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
 import { PageHeader } from './page-header'
-import { CopyableText } from './copyable-text'
 
 const PAGE_SIZE = 100
 
-type SortField = 'code' | 'name' | 'latitude' | 'longitude' | 'devices' | 'users' | 'unicast' | 'subscribers' | 'publishers' | 'locations'
+type SortField = 'code' | 'name' | 'country' | 'loc_id' | 'metro' | 'devices' | 'users'
 type SortDirection = 'asc' | 'desc'
 
-// Parse search filters from URL param
 function parseSearchFilters(searchParam: string): string[] {
   if (!searchParam) return []
   return searchParam.split(',').map(f => f.trim()).filter(Boolean)
 }
 
-// Valid filter fields for metros
-const validFilterFields = ['code', 'name', 'devices', 'users', 'locations']
+const validFilterFields = ['code', 'name', 'country', 'status', 'loc_id', 'metro', 'devices', 'users']
 
-// Field prefixes for inline filter
-const metroFieldPrefixes = [
-  { prefix: 'code:', description: 'Filter by metro code' },
-  { prefix: 'name:', description: 'Filter by metro name' },
-  { prefix: 'devices:', description: 'Filter by device count (e.g., >5)' },
-  { prefix: 'users:', description: 'Filter by user count (e.g., >10)' },
-  { prefix: 'locations:', description: 'Filter by location count (e.g., >1)' },
+const locationFieldPrefixes = [
+  { prefix: 'code:', description: 'Filter by location code' },
+  { prefix: 'name:', description: 'Filter by location name' },
+  { prefix: 'country:', description: 'Filter by country code (e.g., US)' },
+  { prefix: 'status:', description: 'Filter by status (activated, pending, suspended)' },
+  { prefix: 'loc_id:', description: 'Filter by PeeringDB facility ID' },
+  { prefix: 'metro:', description: 'Filter by metro code' },
+  { prefix: 'devices:', description: 'Filter by device count (e.g., >0)' },
+  { prefix: 'users:', description: 'Filter by user count' },
 ]
 
-// Fields that support autocomplete (none for metros)
-const metroAutocompleteFields: string[] = []
+const locationAutocompleteFields: string[] = []
 
 function toFilterParam(filter: string): string {
   const colonIndex = filter.indexOf(':')
@@ -47,12 +44,41 @@ function toFilterParam(filter: string): string {
   return `all:${filter}`
 }
 
-export function MetrosPage() {
-  const navigate = useNavigate()
+function PeeringDBCell({ locId }: { locId: number }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['peeringdb', locId],
+    queryFn: () => fetchPeeringDBFacility(locId),
+    staleTime: 1000 * 60 * 60,
+    enabled: locId > 0,
+  })
+
+  if (locId === 0) return <span className="text-muted-foreground">—</span>
+  if (isLoading) return <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+
+  return (
+    <div className="flex items-center gap-2">
+      {data?.logoUrl && (
+        <img
+          src={data.logoUrl}
+          alt=""
+          className="h-6 w-auto object-contain flex-shrink-0"
+          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+        />
+      )}
+      <div className="min-w-0">
+        <div className="text-sm truncate">{data?.orgName || '—'}</div>
+        {data?.aka && (
+          <div className="text-xs text-muted-foreground truncate">{data.aka}</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+export function LocationsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [liveFilter, setLiveFilter] = useState('')
 
-  // Derive pagination from URL
   const page = parseInt(searchParams.get('page') || '1')
   const offset = (page - 1) * PAGE_SIZE
   const setOffset = useCallback((newOffset: number) => {
@@ -64,18 +90,13 @@ export function MetrosPage() {
     })
   }, [setSearchParams])
 
-  // Get sort config from URL (default: code asc)
   const sortField = (searchParams.get('sort') || 'code') as SortField
   const sortDirection = (searchParams.get('dir') || 'asc') as SortDirection
 
-  // Get search filters from URL
   const searchParam = searchParams.get('search') || ''
   const searchFilters = parseSearchFilters(searchParam)
 
-  // Combine committed filters with live filter
-  const allFilters = liveFilter
-    ? [...searchFilters, liveFilter]
-    : searchFilters
+  const allFilters = liveFilter ? [...searchFilters, liveFilter] : searchFilters
 
   const removeFilter = useCallback((filterToRemove: string) => {
     const newFilters = searchFilters.filter(f => f !== filterToRemove)
@@ -102,12 +123,12 @@ export function MetrosPage() {
   const filterKey = filterParams.join(',')
 
   const { data: response, isLoading, error } = useQuery({
-    queryKey: ['metros', offset, sortField, sortDirection, filterKey],
-    queryFn: () => fetchMetros(PAGE_SIZE, offset, sortField, sortDirection, filterParams.length > 0 ? filterParams : undefined),
+    queryKey: ['locations', offset, sortField, sortDirection, filterKey],
+    queryFn: () => fetchLocations(PAGE_SIZE, offset, sortField, sortDirection, filterParams.length > 0 ? filterParams : undefined),
     refetchInterval: 30000,
     placeholderData: keepPreviousData,
   })
-  const metros = response?.items ?? []
+  const locations = response?.items ?? []
 
   const handleSort = (field: SortField) => {
     setSearchParams(prev => {
@@ -130,8 +151,8 @@ export function MetrosPage() {
   }
 
   const sortAria = (field: SortField) => {
-    if (sortField !== field) return 'none'
-    return sortDirection === 'asc' ? 'ascending' : 'descending'
+    if (sortField !== field) return 'none' as const
+    return sortDirection === 'asc' ? 'ascending' as const : 'descending' as const
   }
 
   const prevFilterRef = useRef(JSON.stringify(allFilters))
@@ -159,7 +180,7 @@ export function MetrosPage() {
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center">
           <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-          <div className="text-lg font-medium mb-2">Unable to load metros</div>
+          <div className="text-lg font-medium mb-2">Unable to load locations</div>
           <div className="text-sm text-muted-foreground">{error?.message || 'Unknown error'}</div>
         </div>
       </div>
@@ -170,8 +191,8 @@ export function MetrosPage() {
     <div className="flex-1 overflow-auto">
       <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
         <PageHeader
-          icon={MapPin}
-          title="Metros"
+          icon={Building2}
+          title="Locations"
           count={response?.total || 0}
           actions={
             <>
@@ -194,17 +215,16 @@ export function MetrosPage() {
                 </button>
               )}
               <InlineFilter
-                fieldPrefixes={metroFieldPrefixes}
-                entity="metros"
-                autocompleteFields={metroAutocompleteFields}
-                placeholder="Filter metros..."
+                fieldPrefixes={locationFieldPrefixes}
+                entity="locations"
+                autocompleteFields={locationAutocompleteFields}
+                placeholder="Filter locations..."
                 onLiveFilterChange={setLiveFilter}
               />
             </>
           }
         />
 
-        {/* Table */}
         <div className="border border-border rounded-lg overflow-hidden bg-card">
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -222,16 +242,16 @@ export function MetrosPage() {
                       <SortIcon field="name" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('latitude')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('latitude')}>
-                      Latitude
-                      <SortIcon field="latitude" />
+                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('country')}>
+                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('country')}>
+                      Country
+                      <SortIcon field="country" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('longitude')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('longitude')}>
-                      Longitude
-                      <SortIcon field="longitude" />
+                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('metro')}>
+                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('metro')}>
+                      Metro
+                      <SortIcon field="metro" />
                     </button>
                   </th>
                   <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('devices')}>
@@ -246,92 +266,47 @@ export function MetrosPage() {
                       <SortIcon field="users" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('unicast')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('unicast')}>
-                      Unicast
-                      <SortIcon field="unicast" />
-                    </button>
-                  </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('subscribers')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('subscribers')}>
-                      Subscribers
-                      <SortIcon field="subscribers" />
-                    </button>
-                  </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('publishers')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('publishers')}>
-                      Publishers
-                      <SortIcon field="publishers" />
-                    </button>
-                  </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('locations')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('locations')}>
-                      Locations
-                      <SortIcon field="locations" />
-                    </button>
-                  </th>
+                  <th className="px-4 py-3 font-medium">Organization</th>
                 </tr>
               </thead>
               <tbody>
-                {metros.map((metro) => (
+                {locations.map((location) => (
                   <tr
-                    key={metro.pk}
-                    className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
-                    onClick={(e) => handleRowClick(e, `/dz/metros/${metro.pk}`, navigate)}
+                    key={location.pk}
+                    className="border-b border-border last:border-b-0 hover:bg-muted transition-colors"
                   >
                     <td className="px-4 py-3 whitespace-nowrap">
-                      <CopyableText text={metro.code} className="font-mono text-sm" />
+                      <Link
+                        to={`/dz/locations/${encodeURIComponent(location.pk)}`}
+                        className="font-mono text-sm text-blue-600 dark:text-blue-400 hover:underline"
+                      >
+                        {location.code}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-3 text-sm max-w-xs truncate">
+                      {location.name || '—'}
                     </td>
                     <td className="px-4 py-3 text-sm">
-                      {metro.name || '—'}
+                      {location.country || '—'}
                     </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">
-                      {metro.latitude.toFixed(4)}
-                    </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">
-                      {metro.longitude.toFixed(4)}
+                    <td className="px-4 py-3 text-sm font-mono">
+                      {location.metro_code || <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
-                      {metro.device_count > 0 ? metro.device_count : <span className="text-muted-foreground">—</span>}
+                      {location.device_count > 0 ? location.device_count : <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right relative">
-                      {metro.max_users > 0 && <div className="absolute inset-y-0 left-0 right-0 pointer-events-none bg-muted/30 border-r border-muted-foreground/20" />}
-                      {(() => {
-                        const pct = metro.max_users > 0 ? Math.min(100, (metro.user_count / metro.max_users) * 100) : 0
-                        const fillColor = pct >= 90 ? 'bg-red-500/25' : pct >= 70 ? 'bg-amber-500/20' : 'bg-blue-500/15'
-                        return pct > 0 ? <div className={`absolute inset-y-0 left-0 pointer-events-none ${fillColor}`} style={{ width: `${pct}%` }} /> : null
-                      })()}
-                      <span className="relative">
-                        {metro.user_count > 0 || metro.max_users > 0 ? (
-                          <>{metro.user_count}{metro.max_users > 0 && <span className="text-muted-foreground">/{metro.max_users}</span>}</>
-                        ) : <span className="text-muted-foreground">—</span>}
-                      </span>
-                    </td>
-                    {[
-                      { count: metro.unicast_users_count, effectiveMax: metro.max_unicast_users },
-                      { count: metro.multicast_subscribers_count, effectiveMax: metro.max_multicast_subscribers },
-                      { count: metro.multicast_publishers_count, effectiveMax: metro.max_multicast_publishers },
-                    ].map(({ count, effectiveMax }, i) => {
-                      const displayMax = Math.max(count, effectiveMax)
-                      const available = displayMax > count ? displayMax - count : 0
-                      return (
-                        <td key={i} className="px-4 py-3 text-sm tabular-nums text-right">
-                          {count === 0 && displayMax === 0
-                            ? <span className="text-muted-foreground">—</span>
-                            : <span>{available}</span>
-                          }
-                        </td>
-                      )
-                    })}
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
-                      {metro.location_count > 0 ? metro.location_count : <span className="text-muted-foreground">—</span>}
+                      {location.user_count > 0 ? location.user_count : <span className="text-muted-foreground">—</span>}
+                    </td>
+                    <td className="px-4 py-3 max-w-sm">
+                      <PeeringDBCell locId={location.loc_id} />
                     </td>
                   </tr>
                 ))}
-                {metros.length === 0 && (
+                {locations.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">
-                      No metros found
+                    <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
+                      No locations found
                     </td>
                   </tr>
                 )}

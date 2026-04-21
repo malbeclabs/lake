@@ -2833,6 +2833,7 @@ export interface Device {
   contributor_code: string
   metro_pk: string
   metro_code: string
+  location_pk: string
   public_ip: string
   max_users: number
   current_users: number
@@ -2977,6 +2978,7 @@ export interface Metro {
   longitude: number
   device_count: number
   user_count: number
+  location_count: number
   unicast_users_count: number
   multicast_subscribers_count: number
   multicast_publishers_count: number
@@ -3022,6 +3024,79 @@ export async function fetchMetro(pk: string): Promise<MetroDetail> {
     throw new Error('Failed to fetch metro')
   }
   return res.json()
+}
+
+export interface Location {
+  pk: string
+  code: string
+  name: string
+  country: string
+  lat: number
+  lng: number
+  loc_id: number
+  metro_code: string
+  device_count: number
+  user_count: number
+}
+
+export interface LocationDetail {
+  pk: string
+  code: string
+  name: string
+  country: string
+  lat: number
+  lng: number
+  loc_id: number
+  status: string
+  metro_code: string
+  device_count: number
+  user_count: number
+}
+
+export async function fetchLocation(pk: string): Promise<LocationDetail> {
+  const res = await fetchWithRetry(`/api/dz/locations/${encodeURIComponent(pk)}`)
+  if (!res.ok) throw new Error('Failed to fetch location')
+  return res.json()
+}
+
+export async function fetchLocations(
+  limit = 100,
+  offset = 0,
+  sortBy?: string,
+  sortDir?: 'asc' | 'desc',
+  filters?: string[]
+): Promise<PaginatedResponse<Location>> {
+  const params = new URLSearchParams()
+  params.set('limit', String(limit))
+  params.set('offset', String(offset))
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
+  if (filters) filters.forEach(f => params.append('filters', f))
+  const res = await fetchWithRetry(`/api/dz/locations?${params}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch locations')
+  }
+  return res.json()
+}
+
+export interface PeeringDBFacility {
+  orgName: string
+  aka: string
+  logoUrl: string
+}
+
+export async function fetchPeeringDBFacility(locId: number): Promise<PeeringDBFacility> {
+  const res = await fetch(`https://www.peeringdb.com/api/fac/${locId}`)
+  if (!res.ok) {
+    throw new Error(`Failed to fetch PeeringDB facility ${locId}`)
+  }
+  const data = await res.json()
+  const fac = data?.data?.[0]
+  return {
+    orgName: fac?.org?.name ?? '',
+    aka: fac?.aka ?? '',
+    logoUrl: fac?.org?.logo ?? '',
+  }
 }
 
 export interface Contributor {
