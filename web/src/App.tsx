@@ -53,6 +53,8 @@ import { MetroDetailPage } from '@/components/metro-detail-page'
 import { ContributorDetailPage } from '@/components/contributor-detail-page'
 import { UserDetailPage } from '@/components/user-detail-page'
 import { MulticastGroupsPage } from '@/components/multicast-groups-page'
+import { GeolocProbesPage } from '@/components/geoloc-probes-page'
+import { GeolocUsersPage } from '@/components/geoloc-users-page'
 import { ShredsSeatsPage, ShredsFundersPage, ShredsDevicesPage, ShredsEscrowEventsPage } from '@/components/shreds-page'
 import { PublisherCheckPage } from './components/publisher-check-page'
 import { EdgeScoreboardPage } from './components/edge-scoreboard-page'
@@ -705,6 +707,10 @@ function AppContent() {
             <Route path="/dz/shreds/activity" element={<ShredsEscrowEventsPage />} />
             {/* Subscribe page hidden for now — see shreds-subscribe-page.tsx */}
             <Route path="/dz/edge/scoreboard" element={<Navigate to="/dz/shreds/scoreboard" replace />} />
+
+            {/* Geolocation routes */}
+            <Route path="/dz/geoloc/probes" element={<GeolocProbesPage />} />
+            <Route path="/dz/geoloc/users" element={<GeolocUsersPage />} />
 
             {/* Solana entity routes */}
             <Route path="/solana/overview" element={<SolanaOverviewPage />} />
