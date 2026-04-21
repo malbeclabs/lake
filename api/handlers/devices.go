@@ -13,21 +13,30 @@ import (
 )
 
 type DeviceListItem struct {
-	PK              string  `json:"pk"`
-	Code            string  `json:"code"`
-	Status          string  `json:"status"`
-	DeviceType      string  `json:"device_type"`
-	ContributorPK   string  `json:"contributor_pk"`
-	ContributorCode string  `json:"contributor_code"`
-	MetroPK         string  `json:"metro_pk"`
-	MetroCode       string  `json:"metro_code"`
-	PublicIP        string  `json:"public_ip"`
-	MaxUsers        int32   `json:"max_users"`
-	CurrentUsers    uint64  `json:"current_users"`
-	InBps           float64 `json:"in_bps"`
-	OutBps          float64 `json:"out_bps"`
-	PeakInBps       float64 `json:"peak_in_bps"`
-	PeakOutBps      float64 `json:"peak_out_bps"`
+	PK                        string  `json:"pk"`
+	Code                      string  `json:"code"`
+	Status                    string  `json:"status"`
+	DeviceType                string  `json:"device_type"`
+	ContributorPK             string  `json:"contributor_pk"`
+	ContributorCode           string  `json:"contributor_code"`
+	MetroPK                   string  `json:"metro_pk"`
+	MetroCode                 string  `json:"metro_code"`
+	PublicIP                  string  `json:"public_ip"`
+	MaxUsers                  int32   `json:"max_users"`
+	CurrentUsers              uint64  `json:"current_users"`
+	UnicastUsers              uint64  `json:"unicast_users"`
+	MulticastUsers            uint64  `json:"multicast_users"`
+	MaxUnicastUsers           uint16  `json:"max_unicast_users"`
+	MaxMulticastSubscribers   uint16  `json:"max_multicast_subscribers"`
+	MaxMulticastPublishers    uint16  `json:"max_multicast_publishers"`
+	UnicastUsersCount         uint16  `json:"unicast_users_count"`
+	MulticastSubscribersCount uint16  `json:"multicast_subscribers_count"`
+	ReservedSeats             uint16  `json:"reserved_seats"`
+	MulticastPublishersCount  uint16  `json:"multicast_publishers_count"`
+	InBps                     float64 `json:"in_bps"`
+	OutBps                    float64 `json:"out_bps"`
+	PeakInBps                 float64 `json:"peak_in_bps"`
+	PeakOutBps                float64 `json:"peak_out_bps"`
 }
 
 var deviceListSortFields = map[string]string{
@@ -36,7 +45,10 @@ var deviceListSortFields = map[string]string{
 	"contributor": "contributor_code",
 	"metro":       "metro_code",
 	"status":      "status",
-	"users":       "current_users",
+	"users":       "users_util_frac",
+	"unicast":     "unicast_no_max|unicast_util_frac",
+	"subscribers": "subscribers_no_max|subscribers_util_frac",
+	"publishers":  "publishers_no_max|publishers_util_frac",
 	"in":          "in_bps",
 	"out":         "out_bps",
 	"peakin":      "peak_in_bps",
@@ -73,10 +85,16 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 	orderBy := sort.OrderByClause(deviceListSortFields)
 
 	query := `
-		WITH user_counts AS (
+		WITH unicast_counts AS (
 			SELECT device_pk, count(*) as user_count
 			FROM dz_users_current
-			WHERE status = 'activated'
+			WHERE status = 'activated' AND kind IN ('ibrl', 'ibrl_with_allocated_ip')
+			GROUP BY device_pk
+		),
+		multicast_counts AS (
+			SELECT device_pk, count(*) as user_count
+			FROM dz_users_current
+			WHERE status = 'activated' AND kind = 'multicast'
 			GROUP BY device_pk
 		),
 		traffic_rates AS (
@@ -113,7 +131,16 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 				COALESCE(m.code, '') as metro_code,
 				COALESCE(d.public_ip, '') as public_ip,
 				COALESCE(d.max_users, 0) as max_users,
-				COALESCE(uc.user_count, 0) as current_users,
+				COALESCE(ucu.user_count, 0) + COALESCE(ucm.user_count, 0) as current_users,
+				COALESCE(ucu.user_count, 0) as unicast_users,
+				COALESCE(ucm.user_count, 0) as multicast_users,
+				COALESCE(d.max_unicast_users, 0) as max_unicast_users,
+				COALESCE(d.max_multicast_subscribers, 0) as max_multicast_subscribers,
+				COALESCE(d.max_multicast_publishers, 0) as max_multicast_publishers,
+				COALESCE(d.unicast_users_count, 0) as unicast_users_count,
+				COALESCE(d.multicast_subscribers_count, 0) as multicast_subscribers_count,
+				COALESCE(d.reserved_seats, 0) as reserved_seats,
+				COALESCE(d.multicast_publishers_count, 0) as multicast_publishers_count,
 				COALESCE(tr.in_bps, 0) as in_bps,
 				COALESCE(tr.out_bps, 0) as out_bps,
 				COALESCE(pr.peak_in_bps, 0) as peak_in_bps,
@@ -121,14 +148,33 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 			FROM dz_devices_current d
 			LEFT JOIN dz_contributors_current c ON d.contributor_pk = c.pk
 			LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
-			LEFT JOIN user_counts uc ON d.pk = uc.device_pk
+			LEFT JOIN unicast_counts ucu ON d.pk = ucu.device_pk
+			LEFT JOIN multicast_counts ucm ON d.pk = ucm.device_pk
 			LEFT JOIN traffic_rates tr ON d.pk = tr.device_pk
 			LEFT JOIN peak_rates pr ON d.pk = pr.device_pk
+		),
+		devices_eff AS (
+			SELECT *,
+				greatest(if(max_unicast_users > 0, toFloat64(max_unicast_users), toFloat64(greatest(0, max_users - max_multicast_subscribers - max_multicast_publishers))), toFloat64(unicast_users)) as eff_max_unicast,
+				greatest(if(max_multicast_subscribers > 0, toFloat64(max_multicast_subscribers), toFloat64(greatest(0, max_users - max_unicast_users - max_multicast_publishers))), toFloat64(multicast_subscribers_count)) as eff_max_subs,
+				greatest(if(max_multicast_publishers > 0, toFloat64(max_multicast_publishers), toFloat64(greatest(0, max_users - max_unicast_users - max_multicast_subscribers))), toFloat64(multicast_publishers_count)) as eff_max_pubs
+			FROM devices_data
+		),
+		devices_util AS (
+			SELECT *,
+				if(max_users > 0, toFloat64(current_users) / toFloat64(max_users), 0.0) as users_util_frac,
+				toUInt8(eff_max_unicast = 0) as unicast_no_max,
+				if(eff_max_unicast > 0, toFloat64(unicast_users) / eff_max_unicast, 0.0) as unicast_util_frac,
+				toUInt8(eff_max_subs = 0) as subscribers_no_max,
+				if(eff_max_subs > 0, toFloat64(multicast_subscribers_count) / eff_max_subs, 0.0) as subscribers_util_frac,
+				toUInt8(eff_max_pubs = 0) as publishers_no_max,
+				if(eff_max_pubs > 0, toFloat64(multicast_publishers_count) / eff_max_pubs, 0.0) as publishers_util_frac
+			FROM devices_eff
 		)
 		SELECT
-			pk, code, status, device_type, contributor_pk, contributor_code, metro_pk, metro_code, public_ip, max_users, current_users, in_bps, out_bps, peak_in_bps, peak_out_bps,
+			pk, code, status, device_type, contributor_pk, contributor_code, metro_pk, metro_code, public_ip, max_users, current_users, unicast_users, multicast_users, max_unicast_users, max_multicast_subscribers, max_multicast_publishers, unicast_users_count, multicast_subscribers_count, reserved_seats, multicast_publishers_count, in_bps, out_bps, peak_in_bps, peak_out_bps,
 			count() OVER () as _total
-		FROM devices_data
+		FROM devices_util
 		WHERE 1=1` + whereFilter + " " + orderBy + `
 		LIMIT ? OFFSET ?
 	`
@@ -164,6 +210,15 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 			&d.PublicIP,
 			&d.MaxUsers,
 			&d.CurrentUsers,
+			&d.UnicastUsers,
+			&d.MulticastUsers,
+			&d.MaxUnicastUsers,
+			&d.MaxMulticastSubscribers,
+			&d.MaxMulticastPublishers,
+			&d.UnicastUsersCount,
+			&d.MulticastSubscribersCount,
+			&d.ReservedSeats,
+			&d.MulticastPublishersCount,
 			&d.InBps,
 			&d.OutBps,
 			&d.PeakInBps,
@@ -219,26 +274,35 @@ type DeviceDetailInterface struct {
 }
 
 type DeviceDetail struct {
-	PK              string                  `json:"pk"`
-	Code            string                  `json:"code"`
-	Status          string                  `json:"status"`
-	DeviceType      string                  `json:"device_type"`
-	ContributorPK   string                  `json:"contributor_pk"`
-	ContributorCode string                  `json:"contributor_code"`
-	MetroPK         string                  `json:"metro_pk"`
-	MetroCode       string                  `json:"metro_code"`
-	MetroName       string                  `json:"metro_name"`
-	PublicIP        string                  `json:"public_ip"`
-	MaxUsers        int32                   `json:"max_users"`
-	CurrentUsers    uint64                  `json:"current_users"`
-	InBps           float64                 `json:"in_bps"`
-	OutBps          float64                 `json:"out_bps"`
-	PeakInBps       float64                 `json:"peak_in_bps"`
-	PeakOutBps      float64                 `json:"peak_out_bps"`
-	ValidatorCount  uint64                  `json:"validator_count"`
-	StakeSol        float64                 `json:"stake_sol"`
-	StakeShare      float64                 `json:"stake_share"`
-	Interfaces      []DeviceDetailInterface `json:"interfaces"`
+	PK                        string                  `json:"pk"`
+	Code                      string                  `json:"code"`
+	Status                    string                  `json:"status"`
+	DeviceType                string                  `json:"device_type"`
+	ContributorPK             string                  `json:"contributor_pk"`
+	ContributorCode           string                  `json:"contributor_code"`
+	MetroPK                   string                  `json:"metro_pk"`
+	MetroCode                 string                  `json:"metro_code"`
+	MetroName                 string                  `json:"metro_name"`
+	PublicIP                  string                  `json:"public_ip"`
+	MaxUsers                  int32                   `json:"max_users"`
+	CurrentUsers              uint64                  `json:"current_users"`
+	UnicastUsers              uint64                  `json:"unicast_users"`
+	MulticastUsers            uint64                  `json:"multicast_users"`
+	MaxUnicastUsers           uint16                  `json:"max_unicast_users"`
+	MaxMulticastSubscribers   uint16                  `json:"max_multicast_subscribers"`
+	MaxMulticastPublishers    uint16                  `json:"max_multicast_publishers"`
+	UnicastUsersCount         uint16                  `json:"unicast_users_count"`
+	MulticastSubscribersCount uint16                  `json:"multicast_subscribers_count"`
+	ReservedSeats             uint16                  `json:"reserved_seats"`
+	MulticastPublishersCount  uint16                  `json:"multicast_publishers_count"`
+	InBps                     float64                 `json:"in_bps"`
+	OutBps                    float64                 `json:"out_bps"`
+	PeakInBps                 float64                 `json:"peak_in_bps"`
+	PeakOutBps                float64                 `json:"peak_out_bps"`
+	ValidatorCount            uint64                  `json:"validator_count"`
+	StakeSol                  float64                 `json:"stake_sol"`
+	StakeShare                float64                 `json:"stake_share"`
+	Interfaces                []DeviceDetailInterface `json:"interfaces"`
 }
 
 func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
@@ -253,10 +317,16 @@ func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 	query := `
-		WITH user_counts AS (
+		WITH unicast_counts AS (
 			SELECT device_pk, count(*) as user_count
 			FROM dz_users_current
-			WHERE status = 'activated' AND device_pk = ?
+			WHERE status = 'activated' AND kind IN ('ibrl', 'ibrl_with_allocated_ip') AND device_pk = ?
+			GROUP BY device_pk
+		),
+		multicast_counts AS (
+			SELECT device_pk, count(*) as user_count
+			FROM dz_users_current
+			WHERE status = 'activated' AND kind = 'multicast' AND device_pk = ?
 			GROUP BY device_pk
 		),
 		traffic_rates AS (
@@ -312,7 +382,16 @@ func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
 			COALESCE(m.name, '') as metro_name,
 			COALESCE(d.public_ip, '') as public_ip,
 			COALESCE(d.max_users, 0) as max_users,
-			COALESCE(uc.user_count, 0) as current_users,
+			COALESCE(ucu.user_count, 0) + COALESCE(ucm.user_count, 0) as current_users,
+			COALESCE(ucu.user_count, 0) as unicast_users,
+			COALESCE(ucm.user_count, 0) as multicast_users,
+			COALESCE(d.max_unicast_users, 0) as max_unicast_users,
+			COALESCE(d.max_multicast_subscribers, 0) as max_multicast_subscribers,
+			COALESCE(d.max_multicast_publishers, 0) as max_multicast_publishers,
+			COALESCE(d.unicast_users_count, 0) as unicast_users_count,
+			COALESCE(d.multicast_subscribers_count, 0) as multicast_subscribers_count,
+			COALESCE(d.reserved_seats, 0) as reserved_seats,
+			COALESCE(d.multicast_publishers_count, 0) as multicast_publishers_count,
 			COALESCE(tr.in_bps, 0) as in_bps,
 			COALESCE(tr.out_bps, 0) as out_bps,
 			COALESCE(pr.peak_in_bps, 0) as peak_in_bps,
@@ -328,7 +407,8 @@ func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
 		CROSS JOIN total_stake ts
 		LEFT JOIN dz_contributors_current c ON d.contributor_pk = c.pk
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
-		LEFT JOIN user_counts uc ON d.pk = uc.device_pk
+		LEFT JOIN unicast_counts ucu ON d.pk = ucu.device_pk
+		LEFT JOIN multicast_counts ucm ON d.pk = ucm.device_pk
 		LEFT JOIN traffic_rates tr ON d.pk = tr.device_pk
 		LEFT JOIN peak_rates pr ON d.pk = pr.device_pk
 		LEFT JOIN validator_stats vs ON d.pk = vs.device_pk
@@ -337,7 +417,7 @@ func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
 
 	var device DeviceDetail
 	var interfacesJSON string
-	err := a.envDB(ctx).QueryRow(ctx, query, pk, pk, pk, pk, pk).Scan(
+	err := a.envDB(ctx).QueryRow(ctx, query, pk, pk, pk, pk, pk, pk).Scan(
 		&device.PK,
 		&device.Code,
 		&device.Status,
@@ -350,6 +430,15 @@ func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
 		&device.PublicIP,
 		&device.MaxUsers,
 		&device.CurrentUsers,
+		&device.UnicastUsers,
+		&device.MulticastUsers,
+		&device.MaxUnicastUsers,
+		&device.MaxMulticastSubscribers,
+		&device.MaxMulticastPublishers,
+		&device.UnicastUsersCount,
+		&device.MulticastSubscribersCount,
+		&device.ReservedSeats,
+		&device.MulticastPublishersCount,
 		&device.InBps,
 		&device.OutBps,
 		&device.PeakInBps,

@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react'
+import React, { useState, useMemo } from 'react'
+import { Info } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import type { DeviceInterface } from '@/lib/api'
@@ -21,6 +22,13 @@ export interface DeviceInfoData {
   contributorPk: string
   contributorCode: string
   userCount: number
+  maxUsers: number
+  unicastUsersCount: number
+  multicastSubscribersCount: number
+  multicastPublishersCount: number
+  maxUnicastUsers: number
+  maxMulticastSubscribers: number
+  maxMulticastPublishers: number
   validatorCount: number
   stakeSol: number
   stakeShare: number
@@ -143,8 +151,9 @@ export function DeviceInfoContent({
     enabled: !hideCharts,
   })
 
-  const cardClass = 'rounded-lg border border-border p-4'
-  const stats = [
+  const cardClass = "rounded-lg border border-border p-4"
+  const usersPct = device.maxUsers > 0 ? Math.min(100, (device.userCount / device.maxUsers) * 100) : null
+  const stats: { label: string; value: React.ReactNode; bar?: number | null }[] = [
     { label: 'Type', value: device.deviceType },
     {
       label: 'Contributor',
@@ -172,11 +181,40 @@ export function DeviceInfoContent({
         device.metroName || '—'
       ),
     },
-    { label: 'Users', value: String(device.userCount) },
+    { label: 'Users', bar: usersPct, value: (
+      <span className="tabular-nums">
+        {device.userCount}
+        {device.maxUsers > 0
+          ? <span className="text-muted-foreground"> / {device.maxUsers}</span>
+          : <span className="text-muted-foreground"> / ∞</span>
+        }
+      </span>
+    ) },
     { label: 'Validators', value: String(device.validatorCount) },
     { label: 'Stake', value: formatStake(device.stakeSol) },
     { label: 'Stake Share', value: formatStakeShare(device.stakeShare) },
   ]
+
+  const effUnicast = device.maxUnicastUsers > 0
+    ? device.maxUnicastUsers
+    : Math.max(0, device.maxUsers - device.maxMulticastSubscribers - device.maxMulticastPublishers)
+  const effSubs = device.maxMulticastSubscribers > 0
+    ? device.maxMulticastSubscribers
+    : Math.max(0, device.maxUsers - device.maxUnicastUsers - device.maxMulticastPublishers)
+  const effPubs = device.maxMulticastPublishers > 0
+    ? device.maxMulticastPublishers
+    : Math.max(0, device.maxUsers - device.maxUnicastUsers - device.maxMulticastSubscribers)
+  const userCapacityCards = [
+    { count: device.unicastUsersCount, rawMax: device.maxUnicastUsers, effectiveMax: effUnicast, label: 'Unicast Users' },
+    { count: device.multicastSubscribersCount, rawMax: device.maxMulticastSubscribers, effectiveMax: effSubs, label: 'Subscribers' },
+    { count: device.multicastPublishersCount, rawMax: device.maxMulticastPublishers, effectiveMax: effPubs, label: 'Publishers' },
+  ].map(({ count, rawMax, effectiveMax, label }) => {
+    const isDerived = rawMax === 0
+    const displayMax = Math.max(count, effectiveMax)
+    const pct = displayMax > 0 ? Math.min(100, (count / displayMax) * 100) : null
+    const fillColor = pct !== null ? (pct >= 90 ? 'bg-red-500/50' : pct >= 70 ? 'bg-amber-500/40' : 'bg-blue-500/30') : ''
+    return { count, max: displayMax, isDerived, label, pct, fillColor }
+  })
 
   // Sort interfaces: activated first, then by type (physical, loopback), then by name
   const sortedInterfaces = [...(device.interfaces || [])].sort((a, b) => {
@@ -196,10 +234,45 @@ export function DeviceInfoContent({
       <div className="space-y-4">
         {/* Stats grid - 2 columns for sidebar */}
         <div className="grid grid-cols-2 gap-2">
-          {stats.map((stat, i) => (
-            <div key={i} className="text-center p-2 bg-muted/30 rounded-lg">
-              <div className="text-base font-medium tabular-nums tracking-tight">{stat.value}</div>
-              <div className="text-xs text-muted-foreground">{stat.label}</div>
+          {stats.map((stat, i) => {
+            const pct = stat.bar ?? null
+            const fillColor = pct !== null ? (pct >= 90 ? 'bg-red-500/50' : pct >= 70 ? 'bg-amber-500/40' : 'bg-blue-500/30') : ''
+            return (
+              <div key={i} className="overflow-hidden rounded-lg bg-muted/30">
+                <div className="p-2 text-center">
+                  <div className="text-base font-medium tabular-nums tracking-tight">{stat.value}</div>
+                  <div className="text-xs text-muted-foreground">{stat.label}</div>
+                </div>
+                {pct !== null && (
+                  <div className="relative h-1 bg-muted/60">
+                    <div className={`absolute inset-y-0 left-0 ${fillColor}`} style={{ width: `${pct}%` }} />
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Unicast / Multicast cards */}
+        <div className="grid grid-cols-3 gap-2">
+          {userCapacityCards.map(({ count, max, isDerived, label, pct, fillColor }) => (
+            <div key={label} className="overflow-hidden rounded-lg bg-muted/30">
+              <div className="p-2 text-center">
+                <div className="text-sm font-medium tabular-nums">
+                  {count}
+                  {max > 0 ? (
+                    isDerived
+                      ? <span className="text-muted-foreground/50 inline-flex items-center gap-0.5" title="Calculated from max_users">/{max}<Info className="h-2.5 w-2.5" /></span>
+                      : <span className="text-muted-foreground">/{max}</span>
+                  ) : <span className="text-muted-foreground">/∞</span>}
+                </div>
+                <div className="text-xs text-muted-foreground">{label}</div>
+              </div>
+              {pct !== null && (
+                <div className="relative h-1 bg-muted/60">
+                  <div className={`absolute inset-y-0 left-0 ${fillColor}`} style={{ width: `${pct}%` }} />
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -268,11 +341,46 @@ export function DeviceInfoContent({
   return (
     <div className="space-y-6">
       {/* Stats grid - responsive columns */}
-      <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-7 gap-2">
-        {stats.map((stat, i) => (
-          <div key={i} className="text-center p-3 bg-muted/30 rounded-lg">
-            <div className="text-base font-medium tabular-nums tracking-tight">{stat.value}</div>
-            <div className="text-xs text-muted-foreground">{stat.label}</div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+        {stats.map((stat, i) => {
+          const pct = stat.bar ?? null
+          const fillColor = pct !== null ? (pct >= 90 ? 'bg-red-500/50' : pct >= 70 ? 'bg-amber-500/40' : 'bg-blue-500/30') : ''
+          return (
+            <div key={i} className="overflow-hidden rounded-lg bg-muted/30">
+              <div className="p-3 text-center">
+                <div className="text-base font-medium tabular-nums tracking-tight">{stat.value}</div>
+                <div className="text-xs text-muted-foreground">{stat.label}</div>
+              </div>
+              {pct !== null && (
+                <div className="relative h-1 bg-muted/60">
+                  <div className={`absolute inset-y-0 left-0 ${fillColor}`} style={{ width: `${pct}%` }} />
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Unicast / Multicast cards */}
+      <div className="grid grid-cols-3 gap-2">
+        {userCapacityCards.map(({ count, max, isDerived, label, pct, fillColor }) => (
+          <div key={label} className="overflow-hidden rounded-lg bg-muted/30">
+            <div className="p-3 text-center">
+              <div className="text-base font-medium tabular-nums">
+                {count}
+                {max > 0 ? (
+                  isDerived
+                    ? <span className="text-muted-foreground/50 inline-flex items-center gap-0.5" title="Calculated from max_users"> / {max} <Info className="h-2.5 w-2.5" /></span>
+                    : <span className="text-muted-foreground"> / {max}</span>
+                ) : <span className="text-muted-foreground"> / ∞</span>}
+              </div>
+              <div className="text-xs text-muted-foreground">{label}</div>
+            </div>
+            {pct !== null && (
+              <div className="relative h-1 bg-muted/60">
+                <div className={`absolute inset-y-0 left-0 ${fillColor}`} style={{ width: `${pct}%` }} />
+              </div>
+            )}
           </div>
         ))}
       </div>

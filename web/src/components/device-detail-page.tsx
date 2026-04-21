@@ -135,7 +135,7 @@ export function DeviceDetailPage() {
       {/* Device stats - constrained width */}
       <div className="max-w-[1200px] mx-auto px-4 sm:px-8 pb-6">
         {/* Device-specific info cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div className="grid grid-cols-2 gap-4 mb-6">
           <div className="text-center p-3 bg-muted/30 rounded-lg">
             <div className="text-base font-medium font-mono">{device.public_ip || '—'}</div>
             <div className="text-xs text-muted-foreground">Public IP</div>
@@ -148,18 +148,6 @@ export function DeviceDetailPage() {
               {formatBps(device.out_bps)}
             </div>
             <div className="text-xs text-muted-foreground">Current Traffic</div>
-          </div>
-          <div className="text-center p-3 bg-muted/30 rounded-lg">
-            <div className="text-base font-medium">
-              {device.current_users} / {device.max_users} users
-              {device.max_users > 0 && (
-                <span className="text-muted-foreground text-xs ml-1">
-                  ({((device.current_users / device.max_users) * 100).toFixed(0)}
-                  %)
-                </span>
-              )}
-            </div>
-            <div className="text-xs text-muted-foreground">Capacity</div>
           </div>
         </div>
 

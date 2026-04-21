@@ -1119,6 +1119,8 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 				drainedPKs = append(drainedPKs, l.PK)
 			}
 		}
+		// Best-effort: if the incident query fails, links are returned without incident
+		// types rather than returning an error for the whole status page.
 		if len(drainedPKs) > 0 {
 			incidentRows, err := a.envDB(ctx).Query(ctx,
 				`SELECT entity_pk, groupArray(distinct incident_type) AS incident_types

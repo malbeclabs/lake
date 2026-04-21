@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { Loader2, Server, AlertCircle, ChevronDown, ChevronUp, X } from 'lucide-react'
+import { Loader2, Server, AlertCircle, ChevronDown, ChevronUp, X, Info } from 'lucide-react'
 import { fetchDevices } from '@/lib/api'
 import { handleRowClick } from '@/lib/utils'
 import { Pagination } from './pagination'
@@ -36,6 +36,9 @@ type SortField =
   | 'metro'
   | 'status'
   | 'users'
+  | 'unicast'
+  | 'subscribers'
+  | 'publishers'
   | 'in'
   | 'out'
   | 'peakin'
@@ -274,10 +277,28 @@ export function DevicesPage() {
                       <SortIcon field="status" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('users')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('users')}>
+                  <th className="px-4 py-3 font-medium text-center" aria-sort={sortAria('users')}>
+                    <button className="inline-flex items-center gap-1 justify-center w-full" type="button" onClick={() => handleSort('users')}>
                       Users
                       <SortIcon field="users" />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3 font-medium text-center" aria-sort={sortAria('unicast')}>
+                    <button className="inline-flex items-center gap-1 justify-center w-full" type="button" onClick={() => handleSort('unicast')}>
+                      Unicast
+                      <SortIcon field="unicast" />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3 font-medium text-center" aria-sort={sortAria('subscribers')}>
+                    <button className="inline-flex items-center gap-1 justify-center w-full" type="button" onClick={() => handleSort('subscribers')}>
+                      Subscribers
+                      <SortIcon field="subscribers" />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3 font-medium text-center" aria-sort={sortAria('publishers')}>
+                    <button className="inline-flex items-center gap-1 justify-center w-full" type="button" onClick={() => handleSort('publishers')}>
+                      Publishers
+                      <SortIcon field="publishers" />
                     </button>
                   </th>
                   <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('in')}>
@@ -332,17 +353,115 @@ export function DevicesPage() {
                     <td className={`px-4 py-3 text-sm capitalize ${statusColors[device.status] || ''}`}>
                       {device.status}
                     </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right">
-                      {device.current_users > 0 ? (
-                        <span>
-                          {device.current_users}
-                          {device.max_users > 0 && (
-                            <span className="text-muted-foreground">/{device.max_users}</span>
-                          )}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
+                    <td className="px-4 py-3 text-sm tabular-nums text-center relative">
+                      {(() => {
+                        const pct = device.max_users > 0 ? Math.min(100, (device.current_users / device.max_users) * 100) : 0
+                        const fillColor = pct >= 90 ? 'bg-red-500/25' : pct >= 70 ? 'bg-amber-500/20' : 'bg-blue-500/15'
+                        return (
+                          <>
+                            {device.max_users > 0 && <div className="absolute inset-y-0 left-0 right-0 pointer-events-none bg-muted/30 border-r border-muted-foreground/20" />}
+                            {pct > 0 && <div className={`absolute inset-y-0 left-0 pointer-events-none ${fillColor}`} style={{ width: `${pct}%` }} />}
+                            <span className="relative">
+                              {device.current_users > 0 || device.max_users > 0 ? (
+                                <>{device.current_users}{device.max_users > 0 && <span className="text-muted-foreground">/{device.max_users}</span>}</>
+                              ) : <span className="text-muted-foreground">—</span>}
+                            </span>
+                          </>
+                        )
+                      })()}
+                    </td>
+                    <td className="px-4 py-3 text-sm tabular-nums text-center relative">
+                      {(() => {
+                        const isDerived = device.max_unicast_users === 0
+                        const effectiveMax = Math.max(device.unicast_users, device.max_unicast_users > 0 ? device.max_unicast_users : Math.max(0, device.max_users - device.max_multicast_subscribers - device.max_multicast_publishers))
+                        const pct = effectiveMax > 0 ? Math.min(100, (device.unicast_users / effectiveMax) * 100) : 0
+                        const fillColor = pct >= 90 ? 'bg-red-500/25' : pct >= 70 ? 'bg-amber-500/20' : 'bg-blue-500/15'
+                        return (
+                          <>
+                            {effectiveMax > 0 && (
+                              <div className="absolute inset-y-0 left-0 right-0 pointer-events-none bg-muted/30 border-r border-muted-foreground/20" />
+                            )}
+                            {pct > 0 && (
+                              <div className={`absolute inset-y-0 left-0 pointer-events-none ${fillColor}`} style={{ width: `${pct}%` }} />
+                            )}
+                            <span className="relative">
+                              {device.unicast_users > 0 || effectiveMax > 0 ? (
+                                <>
+                                  {device.unicast_users}
+                                  {effectiveMax > 0 && (isDerived
+                                    ? <span className="text-muted-foreground/50 inline-flex items-center gap-0.5" title="Calculated from max_users">/{effectiveMax}<Info className="h-2.5 w-2.5" /></span>
+                                    : <span className="text-muted-foreground">/{effectiveMax}</span>
+                                  )}
+                                </>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </span>
+                          </>
+                        )
+                      })()}
+                    </td>
+                    <td className="px-4 py-3 text-sm tabular-nums text-center relative">
+                      {(() => {
+                        const isDerived = device.max_multicast_subscribers === 0
+                        const effectiveMax = Math.max(device.multicast_subscribers_count, device.max_multicast_subscribers > 0 ? device.max_multicast_subscribers : Math.max(0, device.max_users - device.max_unicast_users - device.max_multicast_publishers))
+                        const pct = effectiveMax > 0 ? Math.min(100, (device.multicast_subscribers_count / effectiveMax) * 100) : 0
+                        const fillColor = pct >= 90 ? 'bg-red-500/25' : pct >= 70 ? 'bg-amber-500/20' : 'bg-blue-500/15'
+                        return (
+                          <>
+                            {effectiveMax > 0 && (
+                              <div className="absolute inset-y-0 left-0 right-0 pointer-events-none bg-muted/30 border-r border-muted-foreground/20" />
+                            )}
+                            {pct > 0 && (
+                              <div className={`absolute inset-y-0 left-0 pointer-events-none ${fillColor}`} style={{ width: `${pct}%` }} />
+                            )}
+                            <span className="relative">
+                              {device.multicast_subscribers_count > 0 || effectiveMax > 0 ? (
+                                <>
+                                  {device.multicast_subscribers_count}
+                                  {effectiveMax > 0 && (isDerived
+                                    ? <span className="text-muted-foreground/50 inline-flex items-center gap-0.5" title="Calculated from max_users">/{effectiveMax}<Info className="h-2.5 w-2.5" /></span>
+                                    : <span className="text-muted-foreground">/{effectiveMax}</span>
+                                  )}
+                                </>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </span>
+                          </>
+                        )
+                      })()}
+                    </td>
+                    <td className="px-4 py-3 text-sm tabular-nums text-center relative">
+                      {(() => {
+                        const isDerived = device.max_multicast_publishers === 0
+                        const effectiveMax = Math.max(device.multicast_publishers_count, device.max_multicast_publishers > 0 ? device.max_multicast_publishers : Math.max(0, device.max_users - device.max_unicast_users - device.max_multicast_subscribers))
+                        const pct = effectiveMax > 0 ? Math.min(100, (device.multicast_publishers_count / effectiveMax) * 100) : 0
+                        const fillColor = pct >= 90 ? 'bg-red-500/25' : pct >= 70 ? 'bg-amber-500/20' : 'bg-blue-500/15'
+                        return (
+                          <>
+                            {effectiveMax > 0 && (
+                              <div className="absolute inset-y-0 left-0 right-0 pointer-events-none bg-muted/30 border-r border-muted-foreground/20" />
+                            )}
+                            {pct > 0 && (
+                              <div className={`absolute inset-y-0 left-0 pointer-events-none ${fillColor}`} style={{ width: `${pct}%` }} />
+                            )}
+                            <span className="relative">
+                              {device.multicast_publishers_count > 0 || effectiveMax > 0 ? (
+                                <>
+                                  {device.multicast_publishers_count}
+                                  {effectiveMax > 0 && (isDerived
+                                    ? <span className="text-muted-foreground/50 inline-flex items-center gap-0.5" title="Calculated from max_users">/{effectiveMax}<Info className="h-2.5 w-2.5" /></span>
+                                    : <span className="text-muted-foreground">/{effectiveMax}</span>
+                                  )}
+                                </>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </span>
+                          </>
+                        )
+                      })()}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">
                       {formatBps(device.in_bps)}
@@ -360,7 +479,7 @@ export function DevicesPage() {
                 ))}
                 {devices.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={13} className="px-4 py-8 text-center text-muted-foreground">
                       No devices found
                     </td>
                   </tr>

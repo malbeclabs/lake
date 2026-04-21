@@ -83,6 +83,11 @@ func (s SortParams) OrderByClause(fieldMapping map[string]string) string {
 	if s.Direction == "asc" {
 		dir = "ASC"
 	}
+	// "prefix|column" syntax: prefix sorts ASC always (e.g. no_max flag),
+	// column sorts in the requested direction.
+	if i := strings.IndexByte(column, '|'); i >= 0 {
+		return "ORDER BY " + column[:i] + " ASC, " + column[i+1:] + " " + dir
+	}
 	return "ORDER BY " + column + " " + dir
 }
 
