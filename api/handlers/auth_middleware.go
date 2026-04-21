@@ -10,12 +10,28 @@ import (
 	"strings"
 )
 
-// InternalAuthDisabled is true when DISABLE_INTERNAL_AUTH=true is set in a
-// non-production environment. It bypasses RequireInternalDomain middleware and
-// internal-user field-value gating so internal-only pages can be tested in
-// staging/preview where Google Sign-In is unavailable.
-var InternalAuthDisabled = os.Getenv("DISABLE_INTERNAL_AUTH") == "true" &&
-	os.Getenv("SENTRY_ENVIRONMENT") != "production"
+// InternalAuthDisabled controls whether RequireInternalDomain middleware is
+// bypassed. Set from main() via SetInternalAuthDisabled after the build
+// version and environment are known.
+var InternalAuthDisabled bool
+
+// SetInternalAuthDisabled determines whether internal auth should be bypassed.
+// It is called from main() after the build version is known. Auth is bypassed
+// when DISABLE_INTERNAL_AUTH=true, or when the build version indicates a
+// non-release build (branch/PR deploys where OAuth redirects are not configured).
+func SetInternalAuthDisabled(buildVersion string) {
+	explicit := os.Getenv("DISABLE_INTERNAL_AUTH") == "true"
+	isRelease := buildVersion == "staging" ||
+		buildVersion == "main" ||
+		(len(buildVersion) > 0 && buildVersion[0] == 'v')
+	InternalAuthDisabled = explicit || !isRelease
+	slog.Info("internal auth bypass decision",
+		"disabled", InternalAuthDisabled,
+		"explicit", explicit,
+		"version", buildVersion,
+		"is_release", isRelease,
+	)
+}
 
 // Context keys for auth
 type contextKey string
