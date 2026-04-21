@@ -365,11 +365,14 @@ export function DeviceInfoContent({
 
       {/* User capacity — Used row */}
       <div className="grid grid-cols-3 gap-2">
-        {userCapacityCards.map(({ count, label, pct, fillColor }) => (
+        {userCapacityCards.map(({ count, max, isDerived, label, pct, fillColor }) => (
           <div key={label} className="overflow-hidden rounded-lg bg-muted/30">
             <div className="p-3 text-center">
               <div className="text-base font-medium tabular-nums">{count}</div>
-              <div className="text-xs text-muted-foreground">{label} Used</div>
+              <div className="text-xs text-muted-foreground">
+                {label} Used
+                {isDerived && max > 0 && <span title="Calculated from max_users"><Info className="inline h-2.5 w-2.5 ml-0.5 opacity-50" /></span>}
+              </div>
             </div>
             {pct !== null && (
               <div className="relative h-1 bg-muted/60">
@@ -381,16 +384,13 @@ export function DeviceInfoContent({
       </div>
       {/* User capacity — Available row */}
       <div className="grid grid-cols-3 gap-2">
-        {userCapacityCards.map(({ available, max, isDerived, label }) => (
+        {userCapacityCards.map(({ available, max, label }) => (
           <div key={label} className="overflow-hidden rounded-lg bg-muted/30">
             <div className="p-3 text-center">
               <div className="text-base font-medium tabular-nums text-muted-foreground">
                 {max > 0 ? available : '∞'}
               </div>
-              <div className="text-xs text-muted-foreground inline-flex items-center gap-0.5">
-                {label} Available
-                {isDerived && max > 0 && <span title="Calculated from max_users"><Info className="h-2.5 w-2.5 opacity-50" /></span>}
-              </div>
+              <div className="text-xs text-muted-foreground">{label} Available</div>
             </div>
           </div>
         ))}
