@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Loader2, RefreshCw, Server, AlertCircle, ArrowLeft } from 'lucide-react'
 import { CopyableText } from '@/components/copyable-text'
-import { fetchDevice, fetchDeviceMetrics } from '@/lib/api'
+import { fetchDevice, fetchDeviceMetrics, fetchDeviceValidatorStats } from '@/lib/api'
 import { DeviceInfoContent } from '@/components/shared/DeviceInfoContent'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useBackLink } from '@/hooks/use-back-link'
@@ -52,6 +52,12 @@ export function DeviceDetailPage() {
     enabled: !!pk,
   })
 
+  const { data: validatorStats } = useQuery({
+    queryKey: ['deviceValidatorStats', pk],
+    queryFn: () => fetchDeviceValidatorStats(pk!),
+    enabled: !!pk,
+  })
+
   const metricsParams = useMemo(() => toDeviceMetricsParams(timeRange), [timeRange])
 
   const {
@@ -91,7 +97,7 @@ export function DeviceDetailPage() {
     )
   }
 
-  const deviceInfo = deviceDetailToInfo(device)
+  const deviceInfo = deviceDetailToInfo(device, undefined, validatorStats)
 
   return (
     <div className="flex-1 overflow-auto">
