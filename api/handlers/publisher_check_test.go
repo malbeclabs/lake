@@ -44,10 +44,11 @@ func createPublisherShredStatsTable(t *testing.T, api *handlers.API) {
 			needs_repair Bool,
 			first_seen_ns Int64,
 			last_seen_ns Int64,
-			is_scheduled_leader Bool
+			is_scheduled_leader Bool,
+			feed String
 		) ENGINE = ReplacingMergeTree(ingested_at)
 		PARTITION BY toYYYYMM(event_ts)
-		ORDER BY (host, slot, publisher_ip)
+		ORDER BY (host, slot, publisher_ip, feed)
 	`, "`"+api.ShredderDB+"`"))
 	require.NoError(t, err)
 }
@@ -169,17 +170,17 @@ func insertPublisherCheckTestData(t *testing.T, api *handlers.API) {
 			(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
 			 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
 			 epoch, slot, total_packets, unique_shreds, data_shreds, coding_shreds,
-			 max_data_index, needs_repair, first_seen_ns, last_seen_ns, is_scheduled_leader)
+			 max_data_index, needs_repair, first_seen_ns, last_seen_ns, is_scheduled_leader, feed)
 		VALUES
 			(now(), now(), 'shredder-1', '10.0.0.1', '203.0.113.1', 'nodepub1',
 			 'votepub1', 50000000000, 'dzuser1', 'ams1', 'AMS',
-			 800, 1001, 100, 64, 32, 32, 31, false, 0, 0, true),
+			 800, 1001, 100, 64, 32, 32, 31, false, 0, 0, true, 'dz'),
 			(now(), now(), 'shredder-1', '10.0.0.1', '203.0.113.1', 'nodepub1',
 			 'votepub1', 50000000000, 'dzuser1', 'ams1', 'AMS',
-			 800, 1002, 100, 64, 32, 32, 31, true, 0, 0, false),
+			 800, 1002, 100, 64, 32, 32, 31, true, 0, 0, false, 'dz'),
 			(now(), now(), 'shredder-1', '10.0.0.2', '203.0.113.2', 'nodepub2',
 			 'votepub2', 10000000000, 'dzuser2', 'nyc1', 'NYC',
-			 800, 1001, 50, 32, 16, 16, 15, false, 0, 0, false)
+			 800, 1001, 50, 32, 16, 16, 15, false, 0, 0, false, 'dz')
 	`)
 	require.NoError(t, err)
 }
@@ -196,7 +197,7 @@ func insertBulkShredStats(t *testing.T, api *handlers.API, dzUserPubkey string, 
 		(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
 		 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
 		 epoch, slot, total_packets, unique_shreds, data_shreds, coding_shreds,
-		 max_data_index, needs_repair, first_seen_ns, last_seen_ns, is_scheduled_leader)
+		 max_data_index, needs_repair, first_seen_ns, last_seen_ns, is_scheduled_leader, feed)
 		VALUES `, table))
 
 	slot := startSlot
@@ -207,7 +208,7 @@ func insertBulkShredStats(t *testing.T, api *handlers.API, dzUserPubkey string, 
 		}
 		first = false
 		sb.WriteString(fmt.Sprintf(
-			"(now(), now(), 'shredder-1', '%s', '', '', '', 0, '%s', '', '', %d, %d, 100, 64, 32, 32, 31, false, 0, 0, %t)",
+			"(now(), now(), 'shredder-1', '%s', '', '', '', 0, '%s', '', '', %d, %d, 100, 64, 32, 32, 31, false, 0, 0, %t, 'dz')",
 			publisherIP, dzUserPubkey, epoch, slot, isLeader))
 		slot++
 	}
@@ -396,17 +397,17 @@ func TestGetPublisherCheck_MultiHost(t *testing.T) {
 			(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
 			 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
 			 epoch, slot, total_packets, unique_shreds, data_shreds, coding_shreds,
-			 max_data_index, needs_repair, first_seen_ns, last_seen_ns, is_scheduled_leader)
+			 max_data_index, needs_repair, first_seen_ns, last_seen_ns, is_scheduled_leader, feed)
 		VALUES
 			(now(), now(), 'shredder-2', '10.0.0.1', '203.0.113.1', 'nodepub1',
 			 'votepub1', 50000000000, 'dzuser1', 'ams1', 'AMS',
-			 800, 1001, 100, 64, 32, 32, 31, false, 0, 0, true),
+			 800, 1001, 100, 64, 32, 32, 31, false, 0, 0, true, 'dz'),
 			(now(), now(), 'shredder-2', '10.0.0.1', '203.0.113.1', 'nodepub1',
 			 'votepub1', 50000000000, 'dzuser1', 'ams1', 'AMS',
-			 800, 1002, 100, 64, 32, 32, 31, true, 0, 0, false),
+			 800, 1002, 100, 64, 32, 32, 31, true, 0, 0, false, 'dz'),
 			(now(), now(), 'shredder-2', '10.0.0.2', '203.0.113.2', 'nodepub2',
 			 'votepub2', 10000000000, 'dzuser2', 'nyc1', 'NYC',
-			 800, 1001, 50, 32, 16, 16, 15, false, 0, 0, false)
+			 800, 1001, 50, 32, 16, 16, 15, false, 0, 0, false, 'dz')
 	`)
 	require.NoError(t, err)
 
@@ -458,11 +459,11 @@ func TestGetPublisherCheck_SlotsParam(t *testing.T) {
 			(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
 			 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
 			 epoch, slot, total_packets, unique_shreds, data_shreds, coding_shreds,
-			 max_data_index, needs_repair, first_seen_ns, last_seen_ns, is_scheduled_leader)
+			 max_data_index, needs_repair, first_seen_ns, last_seen_ns, is_scheduled_leader, feed)
 		VALUES
 			(now(), now(), 'shredder-1', '10.0.0.2', '203.0.113.2', 'nodepub2',
 			 'votepub2', 10000000000, 'dzuser2', 'nyc1', 'NYC',
-			 799, 1, 50, 32, 16, 16, 15, false, 0, 0, true)
+			 799, 1, 50, 32, 16, 16, 15, false, 0, 0, true, 'dz')
 	`)
 	require.NoError(t, err)
 

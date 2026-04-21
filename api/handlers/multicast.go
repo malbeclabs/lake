@@ -1633,9 +1633,31 @@ func (a *API) GetMulticastGroupShredStats(w http.ResponseWriter, r *http.Request
 
 	shredStatsTable := fmt.Sprintf("`%s`.publisher_shred_stats", a.PublisherDB)
 
+	// Collapse the feed dimension first: publisher_shred_stats now has one row
+	// per (host, slot, publisher, feed). Summing counters across feeds within a
+	// single (bucket, host, slot, publisher) reconstructs the per-host-per-slot
+	// totals that existed before the feed column was added, so the outer
+	// aggregations (sum, count, countIf) behave the same as pre-ALTER.
 	query := fmt.Sprintf(`
+		WITH per_host_slot AS (
+			SELECT
+				toStartOfInterval(event_ts, INTERVAL %s) AS bucket,
+				host,
+				dz_user_pubkey,
+				slot,
+				sum(unique_shreds) AS unique_shreds,
+				sum(total_packets) AS total_packets,
+				sum(data_shreds) AS data_shreds,
+				sum(coding_shreds) AS coding_shreds,
+				max(is_scheduled_leader) AS is_scheduled_leader,
+				max(needs_repair) AS needs_repair
+			FROM %s
+			WHERE event_ts >= now() - INTERVAL %s
+				AND dz_user_pubkey IN (?)
+			GROUP BY bucket, host, dz_user_pubkey, slot
+		)
 		SELECT
-			toStartOfInterval(event_ts, INTERVAL %s) AS bucket,
+			bucket,
 			dz_user_pubkey,
 			sum(unique_shreds) AS unique_shreds,
 			sum(total_packets) AS total_packets,
@@ -1644,9 +1666,7 @@ func (a *API) GetMulticastGroupShredStats(w http.ResponseWriter, r *http.Request
 			count() AS slots,
 			countIf(is_scheduled_leader = true) AS leader_slots,
 			countIf(needs_repair = true) AS repair_slots
-		FROM %s
-		WHERE event_ts >= now() - INTERVAL %s
-			AND dz_user_pubkey IN (?)
+		FROM per_host_slot
 		GROUP BY bucket, dz_user_pubkey
 		ORDER BY bucket, dz_user_pubkey
 	`, bucketInterval, shredStatsTable, rangeInterval)

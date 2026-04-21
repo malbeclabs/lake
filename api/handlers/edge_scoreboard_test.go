@@ -67,10 +67,11 @@ func createShredderTables(t *testing.T, api *handlers.API) {
 			needs_repair Bool,
 			first_seen_ns Int64,
 			last_seen_ns Int64,
-			is_scheduled_leader Bool
+			is_scheduled_leader Bool,
+			feed String
 		) ENGINE = MergeTree
 		PARTITION BY toYYYYMM(event_ts)
-		ORDER BY (slot, node_pubkey)
+		ORDER BY (slot, node_pubkey, feed)
 	`, publisherDB))
 	require.NoError(t, err)
 }
@@ -104,12 +105,12 @@ func insertEdgeScoreboardTestData(t *testing.T, api *handlers.API) {
 			(event_ts, host, publisher_ip, client_ip, node_pubkey, vote_pubkey,
 			 activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
 			 epoch, slot, total_packets, unique_shreds, data_shreds, coding_shreds,
-			 max_data_index, needs_repair, first_seen_ns, last_seen_ns, is_scheduled_leader)
+			 max_data_index, needs_repair, first_seen_ns, last_seen_ns, is_scheduled_leader, feed)
 		VALUES
 			(now(), 'host-1', '1.2.3.4', '1.2.3.4', 'test-pubkey', 'test-vote',
 			 1000000000, 'dz-user-1', 'slc-qa-bm1', 'slc',
 			 %d, %d, 100, 80, 60, 20,
-			 79, false, 0, 1000000, true)
+			 79, false, 0, 1000000, true, 'dz')
 	`, "`"+api.PublisherDB+"`", epoch, slot1))
 	require.NoError(t, err)
 
