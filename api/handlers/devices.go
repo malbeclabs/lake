@@ -46,6 +46,9 @@ var deviceListSortFields = map[string]string{
 	"metro":       "metro_code",
 	"status":      "status",
 	"users":       "current_users",
+	"unicast":     "unicast_free_frac",
+	"subscribers": "subscribers_free_frac",
+	"publishers":  "publishers_free_frac",
 	"in":          "in_bps",
 	"out":         "out_bps",
 	"peakin":      "peak_in_bps",
@@ -149,11 +152,25 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 			LEFT JOIN multicast_counts ucm ON d.pk = ucm.device_pk
 			LEFT JOIN traffic_rates tr ON d.pk = tr.device_pk
 			LEFT JOIN peak_rates pr ON d.pk = pr.device_pk
+		),
+		devices_eff AS (
+			SELECT *,
+				if(max_unicast_users > 0, toFloat64(max_unicast_users), toFloat64(greatest(0, max_users - max_multicast_subscribers - max_multicast_publishers))) as eff_max_unicast,
+				if(max_multicast_subscribers > 0, toFloat64(max_multicast_subscribers), toFloat64(greatest(0, max_users - max_unicast_users - max_multicast_publishers))) as eff_max_subs,
+				if(max_multicast_publishers > 0, toFloat64(max_multicast_publishers), toFloat64(greatest(0, max_users - max_unicast_users - max_multicast_subscribers))) as eff_max_pubs
+			FROM devices_data
+		),
+		devices_util AS (
+			SELECT *,
+				if(eff_max_unicast > 0, (eff_max_unicast - unicast_users) / eff_max_unicast, 2.0) as unicast_free_frac,
+				if(eff_max_subs > 0, (eff_max_subs - multicast_subscribers_count) / eff_max_subs, 2.0) as subscribers_free_frac,
+				if(eff_max_pubs > 0, (eff_max_pubs - multicast_publishers_count) / eff_max_pubs, 2.0) as publishers_free_frac
+			FROM devices_eff
 		)
 		SELECT
 			pk, code, status, device_type, contributor_pk, contributor_code, metro_pk, metro_code, public_ip, max_users, current_users, unicast_users, multicast_users, max_unicast_users, max_multicast_subscribers, max_multicast_publishers, unicast_users_count, multicast_subscribers_count, reserved_seats, multicast_publishers_count, in_bps, out_bps, peak_in_bps, peak_out_bps,
 			count() OVER () as _total
-		FROM devices_data
+		FROM devices_util
 		WHERE 1=1` + whereFilter + " " + orderBy + `
 		LIMIT ? OFFSET ?
 	`
