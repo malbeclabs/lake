@@ -33,28 +33,51 @@ import { SmallDropdown } from "./topology/TimeRangeSelector";
 
 // Helpers
 
-function useMinVisibleDuration(active: boolean, minMs = 500): boolean {
-  const [visible, setVisible] = useState(active);
+function useDebouncedShimmer(
+  active: boolean,
+  delayMs = 250,
+  minMs = 500,
+): boolean {
+  const [visible, setVisible] = useState(false);
   const shownAt = useRef<number>(0);
+  const showTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const hideTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
     if (active) {
       clearTimeout(hideTimer.current);
-      if (shownAt.current === 0) shownAt.current = Date.now();
-      if (!visible) setVisible(true);
-    } else if (visible) {
-      const remaining = minMs - (Date.now() - shownAt.current);
-      const finish = () => {
-        shownAt.current = 0;
-        setVisible(false);
-      };
-      if (remaining <= 0) finish();
-      else hideTimer.current = setTimeout(finish, remaining);
+      if (!visible && !showTimer.current) {
+        showTimer.current = setTimeout(() => {
+          showTimer.current = undefined;
+          shownAt.current = Date.now();
+          setVisible(true);
+        }, delayMs);
+      }
+    } else {
+      if (showTimer.current) {
+        clearTimeout(showTimer.current);
+        showTimer.current = undefined;
+      }
+      if (visible) {
+        const remaining = minMs - (Date.now() - shownAt.current);
+        const finish = () => {
+          shownAt.current = 0;
+          setVisible(false);
+        };
+        if (remaining <= 0) finish();
+        else hideTimer.current = setTimeout(finish, remaining);
+      }
     }
-  }, [active, visible, minMs]);
+  }, [active, visible, delayMs, minMs]);
 
-  useEffect(() => () => clearTimeout(hideTimer.current), []);
+  useEffect(
+    () => () => {
+      clearTimeout(showTimer.current);
+      clearTimeout(hideTimer.current);
+    },
+    [],
+  );
+
   return visible;
 }
 
@@ -462,7 +485,7 @@ export function ShredsEconomicsPage() {
   const [revenueRange, setRevenueRange] = useState<1 | 5 | 10 | "all">("all");
 
   const refresh = useRefreshButton(refetch, rawFetching);
-  const shimmerVisible = useMinVisibleDuration(rawFetching, 800);
+  const shimmerVisible = useDebouncedShimmer(rawFetching, 250, 800);
 
   const seats = seatsData?.items ?? [];
   const econ = useMemo(
