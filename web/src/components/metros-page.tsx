@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Loader2, MapPin, AlertCircle, ChevronDown, ChevronUp, X, Info } from 'lucide-react'
+import { Loader2, MapPin, AlertCircle, ChevronDown, ChevronUp, X } from 'lucide-react'
 import { fetchMetros } from '@/lib/api'
 import { handleRowClick } from '@/lib/utils'
 import { Pagination } from './pagination'
@@ -301,20 +301,17 @@ export function MetrosPage() {
                       </span>
                     </td>
                     {[
-                      { count: metro.unicast_users_count, effectiveMax: metro.max_unicast_users, rawOnChain: metro.raw_max_unicast_users },
-                      { count: metro.multicast_subscribers_count, effectiveMax: metro.max_multicast_subscribers, rawOnChain: metro.raw_max_multicast_subscribers },
-                      { count: metro.multicast_publishers_count, effectiveMax: metro.max_multicast_publishers, rawOnChain: metro.raw_max_multicast_publishers },
-                    ].map(({ count, effectiveMax, rawOnChain }, i) => {
+                      { count: metro.unicast_users_count, effectiveMax: metro.max_unicast_users },
+                      { count: metro.multicast_subscribers_count, effectiveMax: metro.max_multicast_subscribers },
+                      { count: metro.multicast_publishers_count, effectiveMax: metro.max_multicast_publishers },
+                    ].map(({ count, effectiveMax }, i) => {
                       const displayMax = Math.max(count, effectiveMax)
-                      const isDerived = rawOnChain === 0 && displayMax > 0
                       const available = displayMax > count ? displayMax - count : 0
                       return (
                         <td key={i} className="px-4 py-3 text-sm tabular-nums text-right">
                           {count === 0 && displayMax === 0
                             ? <span className="text-muted-foreground">—</span>
-                            : isDerived
-                              ? <span className="inline-flex items-center gap-0.5 justify-end">{available}<Info className="h-2.5 w-2.5 text-muted-foreground/50" /></span>
-                              : <span>{available}</span>
+                            : <span>{available}</span>
                           }
                         </td>
                       )

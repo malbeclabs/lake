@@ -300,7 +300,6 @@ export function MetroDetailPage() {
                       const effUnicast = Math.max(device.unicast_users, device.max_unicast_users > 0 ? device.max_unicast_users : device.unicast_users + remaining)
                       const effSubs = Math.max(device.multicast_subscribers_count, device.max_multicast_subscribers > 0 ? device.max_multicast_subscribers : device.multicast_subscribers_count + remaining)
                       const effPubs = Math.max(device.multicast_publishers_count, device.max_multicast_publishers > 0 ? device.max_multicast_publishers : device.multicast_publishers_count + remaining)
-                      const derivedFlags = [device.max_unicast_users === 0, device.max_multicast_subscribers === 0, device.max_multicast_publishers === 0]
                       return (
                         <tr
                           key={device.pk}
@@ -341,15 +340,12 @@ export function MetroDetailPage() {
                             { count: device.multicast_subscribers_count, effectiveMax: effSubs },
                             { count: device.multicast_publishers_count, effectiveMax: effPubs },
                           ].map(({ count, effectiveMax }, i) => {
-                            const isDerived = derivedFlags[i]
                             const available = effectiveMax > count ? effectiveMax - count : 0
                             return (
                               <td key={i} className="px-4 py-3 text-sm tabular-nums text-right">
                                 {count === 0 && effectiveMax === 0
                                   ? <span className="text-muted-foreground">—</span>
-                                  : isDerived
-                                    ? <span className="inline-flex items-center gap-0.5 justify-end">{available}<Info className="h-2.5 w-2.5 text-muted-foreground/50" /></span>
-                                    : <span>{available}</span>
+                                  : <span>{available}</span>
                                 }
                               </td>
                             )

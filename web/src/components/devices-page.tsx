@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { Loader2, Server, AlertCircle, ChevronDown, ChevronUp, X, Info } from 'lucide-react'
+import { Loader2, Server, AlertCircle, ChevronDown, ChevronUp, X } from 'lucide-react'
 import { fetchDevices } from '@/lib/api'
 import { handleRowClick } from '@/lib/utils'
 import { Pagination } from './pagination'
@@ -372,38 +372,29 @@ export function DevicesPage() {
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-center">
                       {(() => {
-                        const isDerived = device.max_unicast_users === 0
                         const remaining = device.max_users > 0 ? Math.max(0, device.max_users - device.current_users) : 0
                         const effectiveMax = Math.max(device.unicast_users, device.max_unicast_users > 0 ? device.max_unicast_users : device.unicast_users + remaining)
                         const available = effectiveMax > device.unicast_users ? effectiveMax - device.unicast_users : 0
                         if (effectiveMax === 0 && device.unicast_users === 0) return <span className="text-muted-foreground">—</span>
-                        return isDerived
-                          ? <span className="inline-flex items-center gap-0.5">{available}<Info className="h-2.5 w-2.5 text-muted-foreground/50" /></span>
-                          : <span>{available}</span>
+                        return <span>{available}</span>
                       })()}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-center">
                       {(() => {
-                        const isDerived = device.max_multicast_subscribers === 0
                         const remaining = device.max_users > 0 ? Math.max(0, device.max_users - device.current_users) : 0
                         const effectiveMax = Math.max(device.multicast_subscribers_count, device.max_multicast_subscribers > 0 ? device.max_multicast_subscribers : device.multicast_subscribers_count + remaining)
                         const available = effectiveMax > device.multicast_subscribers_count ? effectiveMax - device.multicast_subscribers_count : 0
                         if (effectiveMax === 0 && device.multicast_subscribers_count === 0) return <span className="text-muted-foreground">—</span>
-                        return isDerived
-                          ? <span className="inline-flex items-center gap-0.5">{available}<Info className="h-2.5 w-2.5 text-muted-foreground/50" /></span>
-                          : <span>{available}</span>
+                        return <span>{available}</span>
                       })()}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-center">
                       {(() => {
-                        const isDerived = device.max_multicast_publishers === 0
                         const remaining = device.max_users > 0 ? Math.max(0, device.max_users - device.current_users) : 0
                         const effectiveMax = Math.max(device.multicast_publishers_count, device.max_multicast_publishers > 0 ? device.max_multicast_publishers : device.multicast_publishers_count + remaining)
                         const available = effectiveMax > device.multicast_publishers_count ? effectiveMax - device.multicast_publishers_count : 0
                         if (effectiveMax === 0 && device.multicast_publishers_count === 0) return <span className="text-muted-foreground">—</span>
-                        return isDerived
-                          ? <span className="inline-flex items-center gap-0.5">{available}<Info className="h-2.5 w-2.5 text-muted-foreground/50" /></span>
-                          : <span>{available}</span>
+                        return <span>{available}</span>
                       })()}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">

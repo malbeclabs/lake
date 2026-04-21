@@ -152,6 +152,7 @@ export function DeviceInfoContent({
   })
 
   const cardClass = "rounded-lg border border-border p-4"
+  const isTransit = device.deviceType === 'transit'
   const usersPct = device.maxUsers > 0 ? Math.min(100, (device.userCount / device.maxUsers) * 100) : null
   const stats: { label: string; value: React.ReactNode; bar?: number | null }[] = [
     { label: 'Type', value: device.deviceType },
@@ -181,7 +182,7 @@ export function DeviceInfoContent({
         device.metroName || '—'
       ),
     },
-    { label: 'Users', bar: usersPct, value: (
+    ...(!isTransit ? [{ label: 'Users', bar: usersPct, value: (
       <span className="tabular-nums">
         {device.userCount}
         {device.maxUsers > 0
@@ -189,7 +190,7 @@ export function DeviceInfoContent({
           : <span className="text-muted-foreground"> / 0</span>
         }
       </span>
-    ) },
+    ) }] : []),
     { label: 'Validators', value: String(device.validatorCount) },
     { label: 'Stake', value: formatStake(device.stakeSol) },
     { label: 'Stake Share', value: formatStakeShare(device.stakeShare) },
@@ -253,28 +254,30 @@ export function DeviceInfoContent({
         </div>
 
         {/* Unicast / Multicast cards */}
-        <div className="grid grid-cols-3 gap-2">
-          {userCapacityCards.map(({ count, max, isDerived, label, pct, fillColor, derivedTooltip: tooltip }) => (
-            <div key={label} className="overflow-hidden rounded-lg bg-muted/30">
-              <div className="p-2 text-center">
-                <div className="text-sm font-medium tabular-nums">
-                  {count}
-                  {max > 0 ? (
-                    isDerived
-                      ? <span className="text-muted-foreground/50 inline-flex items-center gap-0.5" title={tooltip}>/{max}<Info className="h-2.5 w-2.5" /></span>
-                      : <span className="text-muted-foreground">/{max}</span>
-                  ) : <span className="text-muted-foreground">/0</span>}
+        {!isTransit && (
+          <div className="grid grid-cols-3 gap-2">
+            {userCapacityCards.map(({ count, max, isDerived, label, pct, fillColor, derivedTooltip: tooltip }) => (
+              <div key={label} className="overflow-hidden rounded-lg bg-muted/30">
+                <div className="p-2 text-center">
+                  <div className="text-sm font-medium tabular-nums">
+                    {count}
+                    {max > 0 ? (
+                      isDerived
+                        ? <span className="text-muted-foreground/50 inline-flex items-center gap-0.5" title={tooltip}>/{max}<Info className="h-2.5 w-2.5" /></span>
+                        : <span className="text-muted-foreground">/{max}</span>
+                    ) : <span className="text-muted-foreground">/0</span>}
+                  </div>
+                  <div className="text-xs text-muted-foreground">{label}</div>
                 </div>
-                <div className="text-xs text-muted-foreground">{label}</div>
+                {pct !== null && (
+                  <div className="relative h-1 bg-muted/60">
+                    <div className={`absolute inset-y-0 left-0 ${fillColor}`} style={{ width: `${pct}%` }} />
+                  </div>
+                )}
               </div>
-              {pct !== null && (
-                <div className="relative h-1 bg-muted/60">
-                  <div className={`absolute inset-y-0 left-0 ${fillColor}`} style={{ width: `${pct}%` }} />
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
 
         {/* Interfaces */}
         {sortedInterfaces.length > 0 && (
@@ -361,32 +364,34 @@ export function DeviceInfoContent({
       </div>
 
       {/* Unicast / Multicast cards — Used + Available as one split card per type */}
-      <div className="grid grid-cols-3 gap-2">
-        {userCapacityCards.map(({ count, available, max, isDerived, label, pct, fillColor, derivedTooltip: tooltip }) => (
-          <div key={label} className="overflow-hidden rounded-lg border border-border">
-            <div className="grid grid-cols-2 divide-x divide-border">
-              <div className="p-2.5 text-center bg-muted/30">
-                <div className="text-sm font-medium tabular-nums">{count}</div>
-                <div className="text-xs text-muted-foreground">{label}</div>
-              </div>
-              <div className="p-2.5 text-center bg-muted/10">
-                <div className="text-sm font-medium tabular-nums text-muted-foreground">
-                  {max > 0 ? available : 0}
+      {!isTransit && (
+        <div className="grid grid-cols-3 gap-2">
+          {userCapacityCards.map(({ count, available, max, isDerived, label, pct, fillColor, derivedTooltip: tooltip }) => (
+            <div key={label} className="overflow-hidden rounded-lg border border-border">
+              <div className="grid grid-cols-2 divide-x divide-border">
+                <div className="p-2.5 text-center bg-muted/30">
+                  <div className="text-sm font-medium tabular-nums">{count}</div>
+                  <div className="text-xs text-muted-foreground">{label}</div>
                 </div>
-                <div className="text-xs text-muted-foreground/60 inline-flex items-center gap-0.5">
-                  Available
-                  {isDerived && max > 0 && <span title={tooltip}><Info className="h-2.5 w-2.5" /></span>}
+                <div className="p-2.5 text-center bg-muted/10">
+                  <div className="text-sm font-medium tabular-nums text-muted-foreground">
+                    {max > 0 ? available : 0}
+                  </div>
+                  <div className="text-xs text-muted-foreground/60 inline-flex items-center gap-0.5">
+                    Available
+                    {isDerived && max > 0 && <span title={tooltip}><Info className="h-2.5 w-2.5" /></span>}
+                  </div>
                 </div>
               </div>
+              {pct !== null && (
+                <div className="relative h-1 bg-muted/60">
+                  <div className={`absolute inset-y-0 left-0 ${fillColor}`} style={{ width: `${pct}%` }} />
+                </div>
+              )}
             </div>
-            {pct !== null && (
-              <div className="relative h-1 bg-muted/60">
-                <div className={`absolute inset-y-0 left-0 ${fillColor}`} style={{ width: `${pct}%` }} />
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
       {/* Interfaces - horizontal row below stats */}
       {sortedInterfaces.length > 0 && (
