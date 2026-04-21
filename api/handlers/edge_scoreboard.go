@@ -1065,17 +1065,22 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					ORDER BY slot %[6]s
 					LIMIT %[7]d
 				)
-				SELECT host, slot, feed_key AS feed, sum(shreds_won) AS shreds_won,
-					round(sum(shreds_won) / greatest(max(total_shreds), 1) * 100, 1) AS win_pct
+				SELECT host, slot, feed, shreds_won,
+					round(shreds_won / greatest(total_shreds, 1) * 100, 1) AS win_pct
 				FROM (
-					SELECT r.host, r.slot, %[9]s AS feed_key, r.shreds_won, r.total_shreds
-					FROM %[2]s.slot_feed_race_summary_v2 AS r
-					INNER JOIN common_slots cs ON r.slot = cs.slot
-					WHERE r.feed_type = 'shred' AND r.loser_feed = '' AND r.feed IN (%[8]s)
-						AND r.slot BETWEEN %[3]d AND %[4]d
-						AND r.host IN (SELECT host FROM active_hosts)
+					SELECT host, slot, feed_key AS feed,
+						sum(shreds_won) AS shreds_won,
+						max(total_shreds) AS total_shreds
+					FROM (
+						SELECT r.host, r.slot, %[9]s AS feed_key, r.shreds_won, r.total_shreds
+						FROM %[2]s.slot_feed_race_summary_v2 AS r
+						INNER JOIN common_slots cs ON r.slot = cs.slot
+						WHERE r.feed_type = 'shred' AND r.loser_feed = '' AND r.feed IN (%[8]s)
+							AND r.slot BETWEEN %[3]d AND %[4]d
+							AND r.host IN (SELECT host FROM active_hosts)
+					)
+					GROUP BY host, slot, feed_key
 				)
-				GROUP BY host, slot, feed_key
 				ORDER BY host, slot, feed
 			SETTINGS final=1
 `, dzLeaderCTEForRecent, shredderDB, slotWindowMin, slotWindowMax, slotFilter, orderDir, slotLimit, scoreboardFeeds, retransmitRollup)
@@ -1104,17 +1109,22 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					ORDER BY slot %[5]s
 					LIMIT %[6]d
 				)
-				SELECT host, slot, feed_key AS feed, sum(shreds_won) AS shreds_won,
-					round(sum(shreds_won) / greatest(max(total_shreds), 1) * 100, 1) AS win_pct
+				SELECT host, slot, feed, shreds_won,
+					round(shreds_won / greatest(total_shreds, 1) * 100, 1) AS win_pct
 				FROM (
-					SELECT r.host, r.slot, %[8]s AS feed_key, r.shreds_won, r.total_shreds
-					FROM %[1]s.slot_feed_race_summary_v2 AS r
-					INNER JOIN common_slots cs ON r.slot = cs.slot
-					WHERE r.feed_type = 'shred' AND r.loser_feed = '' AND r.feed IN (%[7]s)
-						AND r.slot BETWEEN %[2]d AND %[3]d
-						AND r.host IN (SELECT host FROM active_hosts)
+					SELECT host, slot, feed_key AS feed,
+						sum(shreds_won) AS shreds_won,
+						max(total_shreds) AS total_shreds
+					FROM (
+						SELECT r.host, r.slot, %[8]s AS feed_key, r.shreds_won, r.total_shreds
+						FROM %[1]s.slot_feed_race_summary_v2 AS r
+						INNER JOIN common_slots cs ON r.slot = cs.slot
+						WHERE r.feed_type = 'shred' AND r.loser_feed = '' AND r.feed IN (%[7]s)
+							AND r.slot BETWEEN %[2]d AND %[3]d
+							AND r.host IN (SELECT host FROM active_hosts)
+					)
+					GROUP BY host, slot, feed_key
 				)
-				GROUP BY host, slot, feed_key
 				ORDER BY host, slot, feed
 			SETTINGS final=1
 `, shredderDB, slotWindowMin, slotWindowMax, slotFilter, orderDir, slotLimit, scoreboardFeeds, retransmitRollup)
