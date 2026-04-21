@@ -59,7 +59,7 @@
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",
     "@types/react-syntax-highlighter": "^15.5.13",
-    "@types/three": "^0.183.1",
+    "@types/three": "^0.184.0",
     "@vitejs/plugin-basic-ssl": "^2.1.4",
     "@vitejs/plugin-react": "^6.0.1",
     "eslint": "^10.0.2",
