@@ -164,14 +164,19 @@ func (a *API) FetchPublisherCheckData(ctx context.Context, q string, epochsParam
 
 	shredStatsTable := fmt.Sprintf("`%s`.publisher_shred_stats", a.PublisherDB)
 
+	// Only the dz source has `publisher_stats: true` in the shredder configs,
+	// so filtering to it preserves pre-per-feed-column numbers exactly.
+	const leaderFeed = "dz"
+
 	var perSlotWhere string
 	var args []any
 	if slotsParam > 0 {
-		perSlotWhere = `WHERE epoch >= (SELECT epoch FROM current_epoch) - 1
-			AND slot >= (SELECT max(slot) FROM ` + shredStatsTable + ` WHERE epoch >= (SELECT epoch FROM current_epoch) - 1) - ?`
+		perSlotWhere = `WHERE feed = '` + leaderFeed + `'
+			AND epoch >= (SELECT epoch FROM current_epoch) - 1
+			AND slot >= (SELECT max(slot) FROM ` + shredStatsTable + ` WHERE feed = '` + leaderFeed + `' AND epoch >= (SELECT epoch FROM current_epoch) - 1) - ?`
 		args = []any{slotsParam, shredGroupPK}
 	} else {
-		perSlotWhere = `WHERE epoch >= (SELECT epoch FROM current_epoch) - ? + 1`
+		perSlotWhere = `WHERE feed = '` + leaderFeed + `' AND epoch >= (SELECT epoch FROM current_epoch) - ? + 1`
 		args = []any{epochsParam, shredGroupPK}
 	}
 
@@ -179,25 +184,6 @@ func (a *API) FetchPublisherCheckData(ctx context.Context, q string, epochsParam
 		WITH current_epoch AS (
 			SELECT max(epoch) AS epoch FROM %s
 		),
-		-- Collapse the feed dimension first: a single shredder host now writes one row
-		-- per (host, slot, publisher, feed), so summing unique_shreds across feeds
-		-- reconstructs the per-host total that existed before the feed column was added.
-		per_host_slot AS (
-			SELECT
-				host,
-				dz_user_pubkey,
-				slot,
-				max(activated_stake) AS activated_stake,
-				max(is_scheduled_leader) AS is_scheduled_leader,
-				sum(unique_shreds) AS unique_shreds,
-				max(needs_repair) AS needs_repair
-			FROM %s
-			%s
-			GROUP BY host, dz_user_pubkey, slot
-		),
-		-- Then collapse across shredder hosts the same way as before: a publisher
-		-- observed by multiple shredders should count as the best-observing host's
-		-- view, not inflate by host count.
 		per_slot AS (
 			SELECT
 				dz_user_pubkey,
@@ -206,7 +192,8 @@ func (a *API) FetchPublisherCheckData(ctx context.Context, q string, epochsParam
 				max(is_scheduled_leader) AS is_scheduled_leader,
 				max(unique_shreds) AS unique_shreds,
 				max(needs_repair) AS needs_repair
-			FROM per_host_slot
+			FROM %s
+			%s
 			GROUP BY dz_user_pubkey, slot
 		),
 		stats AS (
