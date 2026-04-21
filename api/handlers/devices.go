@@ -155,9 +155,10 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 		),
 		devices_eff AS (
 			SELECT *,
-				greatest(if(max_unicast_users > 0, toFloat64(max_unicast_users), toFloat64(greatest(0, max_users - multicast_subscribers_count - multicast_publishers_count))), toFloat64(unicast_users)) as eff_max_unicast,
-				greatest(if(max_multicast_subscribers > 0, toFloat64(max_multicast_subscribers), toFloat64(greatest(0, max_users - unicast_users - multicast_publishers_count))), toFloat64(multicast_subscribers_count)) as eff_max_subs,
-				greatest(if(max_multicast_publishers > 0, toFloat64(max_multicast_publishers), toFloat64(greatest(0, max_users - unicast_users - multicast_subscribers_count))), toFloat64(multicast_publishers_count)) as eff_max_pubs
+				greatest(0, toInt64(max_users) - toInt64(current_users)) as remaining,
+				greatest(if(max_unicast_users > 0, toFloat64(max_unicast_users), toFloat64(unicast_users) + greatest(0, toInt64(max_users) - toInt64(current_users))), toFloat64(unicast_users)) as eff_max_unicast,
+				greatest(if(max_multicast_subscribers > 0, toFloat64(max_multicast_subscribers), toFloat64(multicast_subscribers_count) + greatest(0, toInt64(max_users) - toInt64(current_users))), toFloat64(multicast_subscribers_count)) as eff_max_subs,
+				greatest(if(max_multicast_publishers > 0, toFloat64(max_multicast_publishers), toFloat64(multicast_publishers_count) + greatest(0, toInt64(max_users) - toInt64(current_users))), toFloat64(multicast_publishers_count)) as eff_max_pubs
 			FROM devices_data
 		),
 		devices_util AS (

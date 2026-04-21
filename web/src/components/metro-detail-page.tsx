@@ -73,8 +73,10 @@ export function MetroDetailPage() {
           break
         }
         case 'unicast': {
-          const effA = Math.max(a.unicast_users, a.max_unicast_users > 0 ? a.max_unicast_users : Math.max(0, a.max_users - a.multicast_subscribers_count - a.multicast_publishers_count))
-          const effB = Math.max(b.unicast_users, b.max_unicast_users > 0 ? b.max_unicast_users : Math.max(0, b.max_users - b.multicast_subscribers_count - b.multicast_publishers_count))
+          const remA = a.max_users > 0 ? Math.max(0, a.max_users - a.current_users) : 0
+          const remB = b.max_users > 0 ? Math.max(0, b.max_users - b.current_users) : 0
+          const effA = a.max_unicast_users > 0 ? a.max_unicast_users : a.unicast_users + remA
+          const effB = b.max_unicast_users > 0 ? b.max_unicast_users : b.unicast_users + remB
           if (!effA && !effB) break
           if (!effA) return 1
           if (!effB) return -1
@@ -82,8 +84,10 @@ export function MetroDetailPage() {
           break
         }
         case 'subscribers': {
-          const effA = Math.max(a.multicast_subscribers_count, a.max_multicast_subscribers > 0 ? a.max_multicast_subscribers : Math.max(0, a.max_users - a.unicast_users - a.multicast_publishers_count))
-          const effB = Math.max(b.multicast_subscribers_count, b.max_multicast_subscribers > 0 ? b.max_multicast_subscribers : Math.max(0, b.max_users - b.unicast_users - b.multicast_publishers_count))
+          const remA = a.max_users > 0 ? Math.max(0, a.max_users - a.current_users) : 0
+          const remB = b.max_users > 0 ? Math.max(0, b.max_users - b.current_users) : 0
+          const effA = a.max_multicast_subscribers > 0 ? a.max_multicast_subscribers : a.multicast_subscribers_count + remA
+          const effB = b.max_multicast_subscribers > 0 ? b.max_multicast_subscribers : b.multicast_subscribers_count + remB
           if (!effA && !effB) break
           if (!effA) return 1
           if (!effB) return -1
@@ -91,8 +95,10 @@ export function MetroDetailPage() {
           break
         }
         case 'publishers': {
-          const effA = Math.max(a.multicast_publishers_count, a.max_multicast_publishers > 0 ? a.max_multicast_publishers : Math.max(0, a.max_users - a.unicast_users - a.multicast_subscribers_count))
-          const effB = Math.max(b.multicast_publishers_count, b.max_multicast_publishers > 0 ? b.max_multicast_publishers : Math.max(0, b.max_users - b.unicast_users - b.multicast_subscribers_count))
+          const remA = a.max_users > 0 ? Math.max(0, a.max_users - a.current_users) : 0
+          const remB = b.max_users > 0 ? Math.max(0, b.max_users - b.current_users) : 0
+          const effA = a.max_multicast_publishers > 0 ? a.max_multicast_publishers : a.multicast_publishers_count + remA
+          const effB = b.max_multicast_publishers > 0 ? b.max_multicast_publishers : b.multicast_publishers_count + remB
           if (!effA && !effB) break
           if (!effA) return 1
           if (!effB) return -1
@@ -294,9 +300,10 @@ export function MetroDetailPage() {
                   </thead>
                   <tbody>
                     {devices.map((device) => {
-                      const effUnicast = Math.max(device.unicast_users, device.max_unicast_users > 0 ? device.max_unicast_users : Math.max(0, device.max_users - device.multicast_subscribers_count - device.multicast_publishers_count))
-                      const effSubs = Math.max(device.multicast_subscribers_count, device.max_multicast_subscribers > 0 ? device.max_multicast_subscribers : Math.max(0, device.max_users - device.unicast_users - device.multicast_publishers_count))
-                      const effPubs = Math.max(device.multicast_publishers_count, device.max_multicast_publishers > 0 ? device.max_multicast_publishers : Math.max(0, device.max_users - device.unicast_users - device.multicast_subscribers_count))
+                      const remaining = device.max_users > 0 ? Math.max(0, device.max_users - device.current_users) : 0
+                      const effUnicast = Math.max(device.unicast_users, device.max_unicast_users > 0 ? device.max_unicast_users : device.unicast_users + remaining)
+                      const effSubs = Math.max(device.multicast_subscribers_count, device.max_multicast_subscribers > 0 ? device.max_multicast_subscribers : device.multicast_subscribers_count + remaining)
+                      const effPubs = Math.max(device.multicast_publishers_count, device.max_multicast_publishers > 0 ? device.max_multicast_publishers : device.multicast_publishers_count + remaining)
                       const derivedFlags = [device.max_unicast_users === 0, device.max_multicast_subscribers === 0, device.max_multicast_publishers === 0]
                       return (
                         <tr

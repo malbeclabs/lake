@@ -373,7 +373,8 @@ export function DevicesPage() {
                     <td className="px-4 py-3 text-sm tabular-nums text-center relative">
                       {(() => {
                         const isDerived = device.max_unicast_users === 0
-                        const effectiveMax = Math.max(device.unicast_users, device.max_unicast_users > 0 ? device.max_unicast_users : Math.max(0, device.max_users - device.multicast_subscribers_count - device.multicast_publishers_count))
+                        const remaining = device.max_users > 0 ? Math.max(0, device.max_users - device.current_users) : 0
+                        const effectiveMax = Math.max(device.unicast_users, device.max_unicast_users > 0 ? device.max_unicast_users : device.unicast_users + remaining)
                         const pct = effectiveMax > 0 ? Math.min(100, (device.unicast_users / effectiveMax) * 100) : 0
                         const fillColor = pct >= 90 ? 'bg-red-500/25' : pct >= 70 ? 'bg-amber-500/20' : 'bg-blue-500/15'
                         return (
@@ -404,7 +405,8 @@ export function DevicesPage() {
                     <td className="px-4 py-3 text-sm tabular-nums text-center relative">
                       {(() => {
                         const isDerived = device.max_multicast_subscribers === 0
-                        const effectiveMax = Math.max(device.multicast_subscribers_count, device.max_multicast_subscribers > 0 ? device.max_multicast_subscribers : Math.max(0, device.max_users - device.unicast_users - device.multicast_publishers_count))
+                        const remaining = device.max_users > 0 ? Math.max(0, device.max_users - device.current_users) : 0
+                        const effectiveMax = Math.max(device.multicast_subscribers_count, device.max_multicast_subscribers > 0 ? device.max_multicast_subscribers : device.multicast_subscribers_count + remaining)
                         const pct = effectiveMax > 0 ? Math.min(100, (device.multicast_subscribers_count / effectiveMax) * 100) : 0
                         const fillColor = pct >= 90 ? 'bg-red-500/25' : pct >= 70 ? 'bg-amber-500/20' : 'bg-blue-500/15'
                         return (
@@ -435,7 +437,8 @@ export function DevicesPage() {
                     <td className="px-4 py-3 text-sm tabular-nums text-center relative">
                       {(() => {
                         const isDerived = device.max_multicast_publishers === 0
-                        const effectiveMax = Math.max(device.multicast_publishers_count, device.max_multicast_publishers > 0 ? device.max_multicast_publishers : Math.max(0, device.max_users - device.unicast_users - device.multicast_subscribers_count))
+                        const remaining = device.max_users > 0 ? Math.max(0, device.max_users - device.current_users) : 0
+                        const effectiveMax = Math.max(device.multicast_publishers_count, device.max_multicast_publishers > 0 ? device.max_multicast_publishers : device.multicast_publishers_count + remaining)
                         const pct = effectiveMax > 0 ? Math.min(100, (device.multicast_publishers_count / effectiveMax) * 100) : 0
                         const fillColor = pct >= 90 ? 'bg-red-500/25' : pct >= 70 ? 'bg-amber-500/20' : 'bg-blue-500/15'
                         return (
