@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Loader2, MapPin, AlertCircle, ChevronDown, ChevronUp, X } from 'lucide-react'
+import { Loader2, MapPin, AlertCircle, ChevronDown, ChevronUp, X, Info } from 'lucide-react'
 import { fetchMetros } from '@/lib/api'
 import { handleRowClick } from '@/lib/utils'
 import { Pagination } from './pagination'
@@ -11,7 +11,7 @@ import { CopyableText } from './copyable-text'
 
 const PAGE_SIZE = 100
 
-type SortField = 'code' | 'name' | 'latitude' | 'longitude' | 'devices' | 'users'
+type SortField = 'code' | 'name' | 'latitude' | 'longitude' | 'devices' | 'users' | 'unicast' | 'subscribers' | 'publishers'
 type SortDirection = 'asc' | 'desc'
 
 // Parse search filters from URL param
@@ -245,6 +245,24 @@ export function MetrosPage() {
                       <SortIcon field="users" />
                     </button>
                   </th>
+                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('unicast')}>
+                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('unicast')}>
+                      Unicast
+                      <SortIcon field="unicast" />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('subscribers')}>
+                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('subscribers')}>
+                      Subscribers
+                      <SortIcon field="subscribers" />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('publishers')}>
+                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('publishers')}>
+                      Publishers
+                      <SortIcon field="publishers" />
+                    </button>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -272,11 +290,44 @@ export function MetrosPage() {
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
                       {metro.user_count > 0 ? metro.user_count : <span className="text-muted-foreground">—</span>}
                     </td>
+                    {[
+                      { count: metro.unicast_users_count, effectiveMax: metro.max_unicast_users, rawOnChain: metro.raw_max_unicast_users },
+                      { count: metro.multicast_subscribers_count, effectiveMax: metro.max_multicast_subscribers, rawOnChain: metro.raw_max_multicast_subscribers },
+                      { count: metro.multicast_publishers_count, effectiveMax: metro.max_multicast_publishers, rawOnChain: metro.raw_max_multicast_publishers },
+                    ].map(({ count, effectiveMax, rawOnChain }, i) => {
+                      const displayMax = Math.max(count, effectiveMax)
+                      const isDerived = rawOnChain === 0 && displayMax > 0
+                      const pct = displayMax > 0 ? Math.min(100, (count / displayMax) * 100) : 0
+                      const fillColor = pct >= 90 ? 'bg-red-500/25' : pct >= 70 ? 'bg-amber-500/20' : 'bg-blue-500/15'
+                      return (
+                        <td key={i} className="px-4 py-3 text-sm tabular-nums text-right relative">
+                          {displayMax > 0 && (
+                            <div className="absolute inset-y-0 left-0 right-0 pointer-events-none bg-muted/30 border-r border-muted-foreground/20" />
+                          )}
+                          {pct > 0 && (
+                            <div className={`absolute inset-y-0 left-0 pointer-events-none ${fillColor}`} style={{ width: `${pct}%` }} />
+                          )}
+                          <span className="relative">
+                            {count > 0 || displayMax > 0 ? (
+                              <>
+                                {count}
+                                {displayMax > 0 && (isDerived
+                                  ? <span className="text-muted-foreground/50 inline-flex items-center gap-0.5" title="Calculated from max_users">/{displayMax}<Info className="h-2.5 w-2.5" /></span>
+                                  : <span className="text-muted-foreground">/{displayMax}</span>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </span>
+                        </td>
+                      )
+                    })}
                   </tr>
                 ))}
                 {metros.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
                       No metros found
                     </td>
                   </tr>

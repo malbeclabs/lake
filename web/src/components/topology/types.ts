@@ -59,6 +59,12 @@ export interface DeviceInfo {
   contributorPk: string
   contributorCode: string
   userCount: number
+  unicastUsersCount: number
+  multicastSubscribersCount: number
+  multicastPublishersCount: number
+  maxUnicastUsers: number
+  maxMulticastSubscribers: number
+  maxMulticastPublishers: number
   validatorCount: number
   stakeSol: number
   stakeShare: number

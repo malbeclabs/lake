@@ -1,6 +1,6 @@
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Loader2, Building2, AlertCircle, ArrowLeft } from 'lucide-react'
+import { Loader2, Building2, AlertCircle, ArrowLeft, Info } from 'lucide-react'
 import { fetchContributor } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useBackLink } from '@/hooks/use-back-link'
@@ -106,6 +106,45 @@ export function ContributorDetailPage() {
                 <dt className="text-sm text-muted-foreground">Users</dt>
                 <dd className="text-sm">{contributor.user_count}</dd>
               </div>
+              {(() => {
+                const effUnicast = Math.max(contributor.unicast_users_count, contributor.max_unicast_users)
+                const effSubs = Math.max(contributor.multicast_subscribers_count, contributor.max_multicast_subscribers)
+                const effPubs = Math.max(contributor.multicast_publishers_count, contributor.max_multicast_publishers)
+                const isDerivedUnicast = contributor.raw_max_unicast_users === 0 && effUnicast > 0
+                const isDerivedSubs = contributor.raw_max_multicast_subscribers === 0 && effSubs > 0
+                const isDerivedPubs = contributor.raw_max_multicast_publishers === 0 && effPubs > 0
+                return (
+                  <>
+                    <div className="flex justify-between">
+                      <dt className="text-sm text-muted-foreground">Unicast</dt>
+                      <dd className="text-sm tabular-nums">
+                        {contributor.unicast_users_count}{effUnicast > 0 && <> / {isDerivedUnicast
+                          ? <span className="text-muted-foreground/50 inline-flex items-center gap-0.5" title="Calculated from max_users">{effUnicast}<Info className="h-2.5 w-2.5" /></span>
+                          : <span className="text-muted-foreground">{effUnicast}</span>
+                        }</>}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between">
+                      <dt className="text-sm text-muted-foreground">Subscribers</dt>
+                      <dd className="text-sm tabular-nums">
+                        {contributor.multicast_subscribers_count}{effSubs > 0 && <> / {isDerivedSubs
+                          ? <span className="text-muted-foreground/50 inline-flex items-center gap-0.5" title="Calculated from max_users">{effSubs}<Info className="h-2.5 w-2.5" /></span>
+                          : <span className="text-muted-foreground">{effSubs}</span>
+                        }</>}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between">
+                      <dt className="text-sm text-muted-foreground">Publishers</dt>
+                      <dd className="text-sm tabular-nums">
+                        {contributor.multicast_publishers_count}{effPubs > 0 && <> / {isDerivedPubs
+                          ? <span className="text-muted-foreground/50 inline-flex items-center gap-0.5" title="Calculated from max_users">{effPubs}<Info className="h-2.5 w-2.5" /></span>
+                          : <span className="text-muted-foreground">{effPubs}</span>
+                        }</>}
+                      </dd>
+                    </div>
+                  </>
+                )
+              })()}
             </dl>
           </div>
 
