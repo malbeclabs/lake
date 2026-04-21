@@ -20,6 +20,9 @@ var InternalAuthDisabled bool
 // when DISABLE_INTERNAL_AUTH=true, or when the build version indicates a
 // non-release build (branch/PR deploys where OAuth redirects are not configured).
 func SetInternalAuthDisabled(buildVersion string) {
+	if override := os.Getenv("BUILD_VERSION"); override != "" {
+		buildVersion = override
+	}
 	explicit := os.Getenv("DISABLE_INTERNAL_AUTH") == "true"
 	isRelease := buildVersion == "staging" ||
 		buildVersion == "main" ||
