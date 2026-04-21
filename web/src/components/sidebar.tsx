@@ -582,6 +582,10 @@ const { resolvedTheme, setTheme } = useTheme()
               <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Geolocation</span>
             </div>
             <div className="space-y-1">
+              <Link to="/dz/geoloc/explorer" className={navItemClass(isGeolocExplorerRoute)}>
+                <Map className="h-4 w-4" />
+                Explorer
+              </Link>
               <Link to="/dz/geoloc/probes" className={navItemClass(isGeolocProbesRoute)}>
                 <MapPin className="h-4 w-4" />
                 Probes
@@ -589,10 +593,6 @@ const { resolvedTheme, setTheme } = useTheme()
               <Link to="/dz/geoloc/users" className={navItemClass(isGeolocUsersRoute)}>
                 <Users className="h-4 w-4" />
                 Users
-              </Link>
-              <Link to="/dz/geoloc/explorer" className={navItemClass(isGeolocExplorerRoute)}>
-                <Map className="h-4 w-4" />
-                Explorer
               </Link>
             </div>
           </div>

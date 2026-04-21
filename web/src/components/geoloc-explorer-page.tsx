@@ -7,7 +7,6 @@ import { useQuery } from '@tanstack/react-query'
 import { useTheme } from '@/hooks/use-theme'
 import { Loader2, AlertCircle } from 'lucide-react'
 import { fetchGeolocExplorer } from '@/lib/api'
-import type { GeolocExplorerOffset } from '@/lib/api'
 
 /* ------------------------------------------------------------------ */
 /*  Map style                                                         */
@@ -92,81 +91,72 @@ export function GeolocExplorerPage() {
   const isDark = resolvedTheme === 'dark'
 
   const [hoverInfo, setHoverInfo] = useState<{
-    x: number; y: number; probeCode: string
-    targetIP: string; rttNs: number; measuredRttNs: number
+    x: number; y: number; label: string
+    detail: string; rttNs: number
   } | null>(null)
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['geoloc-explorer'],
-    queryFn: () => fetchGeolocExplorer(),
+    queryFn: () => fetchGeolocExplorer(24),
     refetchInterval: 30_000,
   })
 
-  const offsets = data?.offsets ?? []
+  const devices = data?.devices ?? []
+  const targets = data?.targets ?? []
   const mapStyle = useMemo(() => createMapStyle(isDark), [isDark])
 
-  // Probe points (deduplicated by sender_pubkey)
-  const probePointsGeoJSON = useMemo(() => {
-    const seen = new Map<string, GeolocExplorerOffset>()
-    for (const o of offsets) {
-      if (!seen.has(o.sender_pubkey)) seen.set(o.sender_pubkey, o)
-    }
-    return {
-      type: 'FeatureCollection' as const,
-      features: Array.from(seen.values()).map((o) => ({
-        type: 'Feature' as const,
-        properties: {
-          probe_code: o.probe_code || o.sender_pubkey.slice(0, 8),
-          sender_pubkey: o.sender_pubkey,
-        },
-        geometry: { type: 'Point' as const, coordinates: [o.lng, o.lat] },
-      })),
-    }
-  }, [offsets])
+  // Device dots — one per sender_pubkey
+  const devicePointsGeoJSON = useMemo(() => ({
+    type: 'FeatureCollection' as const,
+    features: devices.map((d) => ({
+      type: 'Feature' as const,
+      properties: {
+        label: d.probe_code || d.sender_pubkey.slice(0, 8),
+        sender_pubkey: d.sender_pubkey,
+      },
+      geometry: { type: 'Point' as const, coordinates: [d.lng, d.lat] },
+    })),
+  }), [devices])
 
-  // Geoprobe RTT circles (from ref_measured_rtt_ns[0])
+  // Geoprobe circles — one per device, radius from min ref_measured_rtt_ns
   const geoProbeCirclesGeoJSON = useMemo(() => {
     const features: GeoJSON.Feature<GeoJSON.Polygon>[] = []
-    for (const o of offsets) {
-      if (o.ref_measured_rtt_ns && o.ref_measured_rtt_ns.length > 0) {
-        const radius = rttToRadiusMeters(o.ref_measured_rtt_ns[0])
+    for (const d of devices) {
+      if (d.min_ref_measured_rtt_ns > 0) {
+        const radius = rttToRadiusMeters(d.min_ref_measured_rtt_ns)
         if (radius > 0 && radius < 5_000_000) {
-          const circle = createCirclePolygon(o.lng, o.lat, radius)
+          const circle = createCirclePolygon(d.lng, d.lat, radius)
           circle.properties = {
-            probe_code: o.probe_code || o.sender_pubkey.slice(0, 8),
-            target_ip: o.target_ip,
-            rtt_ns: o.ref_measured_rtt_ns[0],
-            measured_rtt_ns: o.measured_rtt_ns,
-            type: 'geoprobe',
+            label: d.probe_code || d.sender_pubkey.slice(0, 8),
+            detail: 'geoprobe',
+            rtt_ns: d.min_ref_measured_rtt_ns,
           }
           features.push(circle)
         }
       }
     }
     return { type: 'FeatureCollection' as const, features }
-  }, [offsets])
+  }, [devices])
 
-  // Target RTT circles (from rtt_ns)
+  // Target circles — one per (device, target_ip), radius from min measured_rtt_ns
   const targetCirclesGeoJSON = useMemo(() => {
     const features: GeoJSON.Feature<GeoJSON.Polygon>[] = []
-    for (const o of offsets) {
-      if (o.rtt_ns > 0) {
-        const radius = rttToRadiusMeters(o.rtt_ns)
+    for (const t of targets) {
+      if (t.min_measured_rtt_ns > 0) {
+        const radius = rttToRadiusMeters(t.min_measured_rtt_ns)
         if (radius > 0 && radius < 5_000_000) {
-          const circle = createCirclePolygon(o.lng, o.lat, radius)
+          const circle = createCirclePolygon(t.lng, t.lat, radius)
           circle.properties = {
-            probe_code: o.probe_code || o.sender_pubkey.slice(0, 8),
-            target_ip: o.target_ip,
-            rtt_ns: o.rtt_ns,
-            measured_rtt_ns: o.measured_rtt_ns,
-            type: 'target',
+            label: t.target_ip,
+            detail: `from ${t.sender_pubkey.slice(0, 8)}`,
+            rtt_ns: t.min_measured_rtt_ns,
           }
           features.push(circle)
         }
       }
     }
     return { type: 'FeatureCollection' as const, features }
-  }, [offsets])
+  }, [targets])
 
   const onHover = useCallback((event: MapLayerMouseEvent) => {
     const feature = event.features?.[0]
@@ -174,10 +164,9 @@ export function GeolocExplorerPage() {
       setHoverInfo({
         x: event.point.x,
         y: event.point.y,
-        probeCode: (feature.properties?.probe_code as string) ?? '',
-        targetIP: (feature.properties?.target_ip as string) ?? '',
+        label: (feature.properties?.label as string) ?? '',
+        detail: (feature.properties?.detail as string) ?? '',
         rttNs: Number(feature.properties?.rtt_ns ?? 0),
-        measuredRttNs: Number(feature.properties?.measured_rtt_ns ?? 0),
       })
     } else {
       setHoverInfo(null)
@@ -232,18 +221,18 @@ export function GeolocExplorerPage() {
             paint={{ 'line-color': '#3b82f6', 'line-width': 1, 'line-opacity': 0.5 }} />
         </Source>
 
-        {/* Probe point markers */}
-        <Source id="probe-points" type="geojson" data={probePointsGeoJSON}>
-          <Layer id="probe-points-circle" type="circle"
+        {/* Device point markers */}
+        <Source id="device-points" type="geojson" data={devicePointsGeoJSON}>
+          <Layer id="device-points-circle" type="circle"
             paint={{
               'circle-radius': 5,
               'circle-color': '#22c55e',
               'circle-stroke-width': 2,
               'circle-stroke-color': isDark ? '#1a1a2e' : '#ffffff',
             }} />
-          <Layer id="probe-points-label" type="symbol"
+          <Layer id="device-points-label" type="symbol"
             layout={{
-              'text-field': ['get', 'probe_code'],
+              'text-field': ['get', 'label'],
               'text-size': 11,
               'text-offset': [0, 1.5],
               'text-anchor': 'top',
@@ -257,7 +246,7 @@ export function GeolocExplorerPage() {
       </MapGL>
 
       {/* Empty state overlay */}
-      {offsets.length === 0 && (
+      {devices.length === 0 && targets.length === 0 && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="bg-card/90 backdrop-blur-sm border border-border rounded-lg px-6 py-4 text-center">
             <div className="text-sm text-muted-foreground">No location offset data available</div>
@@ -271,15 +260,17 @@ export function GeolocExplorerPage() {
           className="absolute z-10 pointer-events-none bg-popover border border-border rounded-lg px-3 py-2 shadow-lg text-sm"
           style={{ left: hoverInfo.x + 12, top: hoverInfo.y - 12 }}
         >
-          <div className="font-medium">{hoverInfo.probeCode}</div>
-          {hoverInfo.targetIP && (
-            <div className="text-muted-foreground">Target: {hoverInfo.targetIP}</div>
+          <div className="font-medium">{hoverInfo.label}</div>
+          {hoverInfo.detail && (
+            <div className="text-muted-foreground">{hoverInfo.detail}</div>
           )}
-          <div className="text-muted-foreground">
-            RTT: {(hoverInfo.rttNs / 1000).toFixed(1)} us
-            {' · '}
-            Radius: {(rttToRadiusMeters(hoverInfo.rttNs) / 1000).toFixed(1)} km
-          </div>
+          {hoverInfo.rttNs > 0 && (
+            <div className="text-muted-foreground">
+              RTT: {(hoverInfo.rttNs / 1000).toFixed(1)} us
+              {' · '}
+              Radius: {(rttToRadiusMeters(hoverInfo.rttNs) / 1000).toFixed(1)} km
+            </div>
+          )}
         </div>
       )}
     </div>

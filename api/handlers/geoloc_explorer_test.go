@@ -63,7 +63,8 @@ func setupGeolocExplorerTestData(t *testing.T, api *handlers.API) {
 	`)
 	require.NoError(t, err)
 
-	// Insert location_offsets data in the env-named database
+	// Insert location_offsets data in the env-named database.
+	// Two rows for sender-pk-1 to test min aggregation.
 	err = api.DB.Exec(ctx, "INSERT INTO `mainnet-beta`.location_offsets"+`
 		(received_at, source_addr, authority_pubkey, sender_pubkey, measurement_slot,
 		 lat, lng, measured_rtt_ns, rtt_ns, target_ip, num_references,
@@ -71,11 +72,15 @@ func setupGeolocExplorerTestData(t *testing.T, api *handlers.API) {
 		 ref_authority_pubkeys, ref_sender_pubkeys, ref_measured_rtt_ns, ref_rtt_ns)
 		VALUES
 			(now(), '10.0.0.1', 'auth1', 'sender-pk-1', 100,
-			 52.37, 4.89, 5000000, 6000000, '8.8.8.8', 3,
+			 52.37, 4.89, 8000000, 6000000, '8.8.8.8', 3,
 			 true, '', '{}',
-			 ['auth-ref-1', 'auth-ref-2'], ['sender-ref-1', 'sender-ref-2'], [4000000, 4500000], [5000000, 5500000]),
-			(now(), '10.0.0.2', 'auth2', 'sender-pk-2', 101,
-			 40.71, -74.01, 8000000, 9000000, '1.1.1.1', 2,
+			 ['auth-ref-1'], ['sender-ref-1'], [5000000], [5500000]),
+			(now(), '10.0.0.1', 'auth1', 'sender-pk-1', 101,
+			 52.37, 4.89, 6000000, 5000000, '8.8.8.8', 3,
+			 true, '', '{}',
+			 ['auth-ref-1'], ['sender-ref-1'], [4000000], [4500000]),
+			(now(), '10.0.0.2', 'auth2', 'sender-pk-2', 102,
+			 40.71, -74.01, 9000000, 8000000, '1.1.1.1', 2,
 			 true, '', '{}',
 			 ['auth-ref-3'], ['sender-ref-3'], [7000000], [8000000])
 	`)
@@ -100,12 +105,13 @@ func TestGetGeolocExplorer(t *testing.T) {
 		var resp handlers.GeolocExplorerResponse
 		err := json.Unmarshal(w.Body.Bytes(), &resp)
 		require.NoError(t, err)
-		assert.Empty(t, resp.Offsets)
+		assert.Empty(t, resp.Devices)
+		assert.Empty(t, resp.Targets)
 	})
 
 	setupGeolocExplorerTestData(t, api)
 
-	t.Run("returns offsets with probe code", func(t *testing.T) {
+	t.Run("returns aggregated devices and targets", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/dz/geoloc/explorer", nil)
 		w := httptest.NewRecorder()
 		api.GetGeolocExplorer(w, req)
@@ -113,29 +119,48 @@ func TestGetGeolocExplorer(t *testing.T) {
 		var resp handlers.GeolocExplorerResponse
 		err := json.Unmarshal(w.Body.Bytes(), &resp)
 		require.NoError(t, err)
-		assert.NotEmpty(t, resp.Offsets)
-		found := false
-		for _, o := range resp.Offsets {
-			if o.SenderPubkey == "sender-pk-1" {
-				found = true
-				assert.Equal(t, "probe-ams", o.ProbeCode)
-				assert.InDelta(t, 52.37, o.Lat, 0.01)
-				assert.InDelta(t, 4.89, o.Lng, 0.01)
-				assert.NotEmpty(t, o.RefMeasuredRttNs)
-				assert.NotEmpty(t, o.RefRttNs)
+
+		// Should have 2 devices (sender-pk-1 and sender-pk-2)
+		assert.Len(t, resp.Devices, 2)
+
+		// Find sender-pk-1 and verify aggregation
+		var dev1 *handlers.GeolocExplorerDevice
+		for i := range resp.Devices {
+			if resp.Devices[i].SenderPubkey == "sender-pk-1" {
+				dev1 = &resp.Devices[i]
 			}
 		}
-		assert.True(t, found, "expected to find offset with sender-pk-1")
+		require.NotNil(t, dev1, "expected to find device with sender-pk-1")
+		assert.Equal(t, "probe-ams", dev1.ProbeCode)
+		assert.InDelta(t, 52.37, dev1.Lat, 0.01)
+		assert.InDelta(t, 4.89, dev1.Lng, 0.01)
+		// min of 5000000 and 4000000 = 4000000
+		assert.Equal(t, uint64(4000000), dev1.MinRefMeasuredRttNs)
+
+		// Should have 2 targets (sender-pk-1/8.8.8.8 and sender-pk-2/1.1.1.1)
+		assert.Len(t, resp.Targets, 2)
+
+		// Find the target for sender-pk-1
+		var tgt1 *handlers.GeolocExplorerTarget
+		for i := range resp.Targets {
+			if resp.Targets[i].SenderPubkey == "sender-pk-1" {
+				tgt1 = &resp.Targets[i]
+			}
+		}
+		require.NotNil(t, tgt1, "expected to find target for sender-pk-1")
+		assert.Equal(t, "8.8.8.8", tgt1.TargetIP)
+		// min of 8000000 and 6000000 = 6000000
+		assert.Equal(t, uint64(6000000), tgt1.MinMeasuredRttNs)
 	})
 
 	t.Run("custom hours param", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/dz/geoloc/explorer?hours=24", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/dz/geoloc/explorer?hours=1", nil)
 		w := httptest.NewRecorder()
 		api.GetGeolocExplorer(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
 		var resp handlers.GeolocExplorerResponse
 		err := json.Unmarshal(w.Body.Bytes(), &resp)
 		require.NoError(t, err)
-		assert.NotEmpty(t, resp.Offsets)
+		assert.NotEmpty(t, resp.Devices)
 	})
 }

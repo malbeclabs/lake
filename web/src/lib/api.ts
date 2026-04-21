@@ -5817,21 +5817,25 @@ export async function fetchGeolocUsers(
   return res.json()
 }
 
-export interface GeolocExplorerOffset {
+export interface GeolocExplorerDevice {
   sender_pubkey: string
   probe_code: string
   lat: number
   lng: number
-  rtt_ns: number
-  measured_rtt_ns: number
+  min_ref_measured_rtt_ns: number
+}
+
+export interface GeolocExplorerTarget {
+  sender_pubkey: string
   target_ip: string
-  num_references: number
-  ref_measured_rtt_ns: number[]
-  ref_rtt_ns: number[]
+  lat: number
+  lng: number
+  min_measured_rtt_ns: number
 }
 
 export interface GeolocExplorerResponse {
-  offsets: GeolocExplorerOffset[]
+  devices: GeolocExplorerDevice[]
+  targets: GeolocExplorerTarget[]
 }
 
 export async function fetchGeolocExplorer(hours?: number): Promise<GeolocExplorerResponse> {
