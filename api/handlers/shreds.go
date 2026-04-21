@@ -784,3 +784,137 @@ func (a *API) GetShredEscrowEvents(w http.ResponseWriter, r *http.Request) {
 		logError("failed to encode response", "error", err)
 	}
 }
+
+// ShredSubscriberHistoryItem represents active subscriber count per epoch.
+type ShredSubscriberHistoryItem struct {
+	Epoch       uint64 `json:"epoch"`
+	ActiveSeats uint64 `json:"active_seats"`
+}
+
+func (a *API) GetShredSubscriberHistory(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	limitStr := r.URL.Query().Get("limit")
+	limit := 50
+	if n, err := strconv.Atoi(limitStr); err == nil && n > 0 && n <= 200 {
+		limit = n
+	}
+
+	start := time.Now()
+	query := `
+		SELECT
+			active_epoch,
+			count(DISTINCT pk) AS active_seats
+		FROM dim_dz_shred_client_seats_history
+		WHERE is_deleted = 0
+		  AND active_epoch > 0
+		GROUP BY active_epoch
+		ORDER BY active_epoch DESC
+		LIMIT ?
+	`
+
+	rows, err := a.envDB(ctx).Query(ctx, query, limit)
+	duration := time.Since(start)
+	metrics.RecordClickHouseQuery(duration, err)
+
+	if err != nil {
+		logError("shred subscriber history query failed", "error", err)
+		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var items []ShredSubscriberHistoryItem
+	for rows.Next() {
+		var item ShredSubscriberHistoryItem
+		if err := rows.Scan(&item.Epoch, &item.ActiveSeats); err != nil {
+			logError("shred subscriber history row scan", "error", err)
+			http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
+			return
+		}
+		items = append(items, item)
+	}
+	if items == nil {
+		items = []ShredSubscriberHistoryItem{}
+	}
+
+	for i, j := 0, len(items)-1; i < j; i, j = i+1, j-1 {
+		items[i], items[j] = items[j], items[i]
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(items); err != nil {
+		logError("failed to encode response", "error", err)
+	}
+}
+
+// ShredEpochRevenueItem represents payment revenue aggregated per epoch.
+type ShredEpochRevenueItem struct {
+	Epoch        uint64  `json:"epoch"`
+	TotalUSDC    float64 `json:"total_usdc"`
+	TotalDollars float64 `json:"total_dollars"`
+	PaymentCount uint64  `json:"payment_count"`
+}
+
+func (a *API) GetShredEpochRevenue(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	limitStr := r.URL.Query().Get("limit")
+	limit := 20
+	if n, err := strconv.Atoi(limitStr); err == nil && n > 0 && n <= 100 {
+		limit = n
+	}
+
+	start := time.Now()
+	query := `
+		SELECT
+			epoch,
+			sum(amount_usdc) / 1000000 AS total_usdc,
+			sum(amount_usdc) / 1000000 AS total_dollars,
+			count() AS payment_count
+		FROM fact_dz_shred_escrow_events FINAL
+		WHERE event_type IN ('payment', 'batch_allocate')
+		  AND epoch IS NOT NULL
+		  AND amount_usdc IS NOT NULL
+		GROUP BY epoch
+		ORDER BY epoch DESC
+		LIMIT ?
+	`
+
+	rows, err := a.envDB(ctx).Query(ctx, query, limit)
+	duration := time.Since(start)
+	metrics.RecordClickHouseQuery(duration, err)
+
+	if err != nil {
+		logError("shred epoch revenue query failed", "error", err)
+		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var items []ShredEpochRevenueItem
+	for rows.Next() {
+		var item ShredEpochRevenueItem
+		if err := rows.Scan(&item.Epoch, &item.TotalUSDC, &item.TotalDollars, &item.PaymentCount); err != nil {
+			logError("shred epoch revenue row scan failed", "error", err)
+			http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
+			return
+		}
+		items = append(items, item)
+	}
+	if items == nil {
+		items = []ShredEpochRevenueItem{}
+	}
+
+	// Reverse to ascending order for charting
+	for i, j := 0, len(items)-1; i < j; i, j = i+1, j-1 {
+		items[i], items[j] = items[j], items[i]
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(items); err != nil {
+		logError("failed to encode response", "error", err)
+	}
+}
