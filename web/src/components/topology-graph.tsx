@@ -194,6 +194,9 @@ export function TopologyGraph({
     systemId?: string
     degree: number
     contributorCode?: string
+    unicastUsersCount: number
+    multicastSubscribersCount: number
+    multicastPublishersCount: number
     x: number
     y: number
   } | null>(null)
@@ -369,6 +372,12 @@ export function TopologyGraph({
         contributorPk: device.contributor_pk || '',
         contributorCode: device.contributor_code || '',
         userCount: device.user_count ?? 0,
+        unicastUsersCount: device.unicast_users_count ?? 0,
+        multicastSubscribersCount: device.multicast_subscribers_count ?? 0,
+        multicastPublishersCount: device.multicast_publishers_count ?? 0,
+        maxUnicastUsers: device.max_unicast_users ?? 0,
+        maxMulticastSubscribers: device.max_multicast_subscribers ?? 0,
+        maxMulticastPublishers: device.max_multicast_publishers ?? 0,
         validatorCount: device.validator_count ?? 0,
         stakeSol: device.stake_sol ? device.stake_sol / 1_000_000_000 : 0,
         stakeShare: device.stake_share ? device.stake_share * 100 : 0,
@@ -2856,6 +2865,9 @@ export function TopologyGraph({
           systemId: node.data('systemId'),
           degree: node.data('degree'),
           contributorCode: deviceInfo?.contributorCode,
+          unicastUsersCount: deviceInfo?.unicastUsersCount ?? 0,
+          multicastSubscribersCount: deviceInfo?.multicastSubscribersCount ?? 0,
+          multicastPublishersCount: deviceInfo?.multicastPublishersCount ?? 0,
           x: pos.x,
           y: pos.y,
         })
@@ -3782,6 +3794,28 @@ export function TopologyGraph({
               <div>Type: <span className="text-foreground capitalize">{hoveredNode.deviceType}</span></div>
               {hoveredNode.contributorCode && (
                 <div>Contributor: <span className="text-foreground">{hoveredNode.contributorCode}</span></div>
+              )}
+              {(hoveredNode.unicastUsersCount > 0 || hoveredNode.multicastSubscribersCount > 0 || hoveredNode.multicastPublishersCount > 0) && (
+                <div className="flex items-center gap-1">
+                  <span>Users:</span>
+                  <div className="flex items-center gap-0.5">
+                    {hoveredNode.unicastUsersCount > 0 && (
+                      <span className="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold leading-none text-white" style={{ background: '#3b82f6' }}>
+                        U{hoveredNode.unicastUsersCount}
+                      </span>
+                    )}
+                    {hoveredNode.multicastSubscribersCount > 0 && (
+                      <span className="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold leading-none text-white" style={{ background: '#14b8a6' }}>
+                        S{hoveredNode.multicastSubscribersCount}
+                      </span>
+                    )}
+                    {hoveredNode.multicastPublishersCount > 0 && (
+                      <span className="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold leading-none text-white" style={{ background: '#a855f7' }}>
+                        P{hoveredNode.multicastPublishersCount}
+                      </span>
+                    )}
+                  </div>
+                </div>
               )}
             </div>
           </div>

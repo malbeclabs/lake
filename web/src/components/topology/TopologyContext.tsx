@@ -45,6 +45,7 @@ export interface OverlayState {
   isisHealth: boolean          // ISIS overlay - color by health, thickness by metric
   // Independent overlays
   multicastTrees: boolean      // Multicast tree visualization
+  userCounts: boolean          // Show U/S/P user count badges on devices (map only)
 }
 
 // Context value type
@@ -112,6 +113,7 @@ function parseOverlaysFromUrl(param: string | null, view: 'map' | 'graph' | 'glo
     criticality: false,
     isisHealth: false,
     multicastTrees: false,
+    userCounts: false,
   }
   if (!param) return defaultState
 
@@ -130,6 +132,7 @@ function parseOverlaysFromUrl(param: string | null, view: 'map' | 'graph' | 'glo
     criticality: false,
     isisHealth: false,
     multicastTrees: false,
+    userCounts: false,
   }
   const activeOverlays = param.split(',').filter(Boolean)
   for (const overlay of activeOverlays) {
