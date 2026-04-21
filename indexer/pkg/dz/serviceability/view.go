@@ -66,15 +66,22 @@ type DeviceInterface struct {
 }
 
 type Device struct {
-	PK            string
-	Status        string
-	DeviceType    string
-	Code          string
-	PublicIP      string
-	ContributorPK string
-	MetroPK       string
-	MaxUsers      uint16
-	Interfaces    []Interface
+	PK                        string
+	Status                    string
+	DeviceType                string
+	Code                      string
+	PublicIP                  string
+	ContributorPK             string
+	MetroPK                   string
+	MaxUsers                  uint16
+	MaxUnicastUsers           uint16
+	MaxMulticastSubscribers   uint16
+	MaxMulticastPublishers    uint16
+	UnicastUsersCount         uint16
+	MulticastSubscribersCount uint16
+	ReservedSeats             uint16
+	MulticastPublishersCount  uint16
+	Interfaces                []Interface
 }
 
 type Metro struct {
@@ -402,15 +409,22 @@ func convertDevices(onchain []serviceability.Device) []Device {
 		}
 
 		result[i] = Device{
-			PK:            solana.PublicKeyFromBytes(device.PubKey[:]).String(),
-			Status:        device.Status.String(),
-			DeviceType:    device.DeviceType.String(),
-			Code:          device.Code,
-			PublicIP:      net.IP(device.PublicIp[:]).String(),
-			ContributorPK: solana.PublicKeyFromBytes(device.ContributorPubKey[:]).String(),
-			MetroPK:       solana.PublicKeyFromBytes(device.ExchangePubKey[:]).String(),
-			MaxUsers:      device.MaxUsers,
-			Interfaces:    interfaces,
+			PK:                        solana.PublicKeyFromBytes(device.PubKey[:]).String(),
+			Status:                    device.Status.String(),
+			DeviceType:                device.DeviceType.String(),
+			Code:                      device.Code,
+			PublicIP:                  net.IP(device.PublicIp[:]).String(),
+			ContributorPK:             solana.PublicKeyFromBytes(device.ContributorPubKey[:]).String(),
+			MetroPK:                   solana.PublicKeyFromBytes(device.ExchangePubKey[:]).String(),
+			MaxUsers:                  device.MaxUsers,
+			MaxUnicastUsers:           device.MaxUnicastUsers,
+			MaxMulticastSubscribers:   device.MaxMulticastSubscribers,
+			MaxMulticastPublishers:    device.MaxMulticastPublishers,
+			UnicastUsersCount:         device.UnicastUsersCount,
+			MulticastSubscribersCount: device.MulticastSubscribersCount,
+			ReservedSeats:             device.ReservedSeats,
+			MulticastPublishersCount:  device.MulticastPublishersCount,
+			Interfaces:                interfaces,
 		}
 	}
 	return result

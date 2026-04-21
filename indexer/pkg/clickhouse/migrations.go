@@ -42,7 +42,9 @@ func newProvider(db *sql.DB) (*goose.Provider, error) {
 		return nil, fmt.Errorf("failed to create migrations sub-filesystem: %w", err)
 	}
 
-	provider, err := goose.NewProvider(goose.DialectClickHouse, db, migrationsFS)
+	provider, err := goose.NewProvider(goose.DialectClickHouse, db, migrationsFS,
+		goose.WithAllowOutofOrder(true),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create goose provider: %w", err)
 	}
