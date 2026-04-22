@@ -11,7 +11,7 @@ import { CopyableText } from './copyable-text'
 
 const PAGE_SIZE = 100
 
-type SortField = 'code' | 'name' | 'devices' | 'sidea' | 'sidez' | 'links' | 'users'
+type SortField = 'code' | 'name' | 'metros' | 'locations' | 'devices' | 'sidea' | 'sidez' | 'links' | 'users'
 type SortDirection = 'asc' | 'desc'
 
 // Parse search filters from URL param
@@ -21,12 +21,14 @@ function parseSearchFilters(searchParam: string): string[] {
 }
 
 // Valid filter fields for contributors
-const validFilterFields = ['code', 'name', 'devices', 'sidea', 'sidez', 'links']
+const validFilterFields = ['code', 'name', 'metros', 'locations', 'devices', 'sidea', 'sidez', 'links']
 
 // Field prefixes for inline filter
 const contributorFieldPrefixes = [
   { prefix: 'code:', description: 'Filter by contributor code' },
   { prefix: 'name:', description: 'Filter by contributor name' },
+  { prefix: 'metros:', description: 'Filter by metro count (e.g., >1)' },
+  { prefix: 'locations:', description: 'Filter by facility count (e.g., >1)' },
   { prefix: 'devices:', description: 'Filter by device count (e.g., >5)' },
   { prefix: 'sidea:', description: 'Filter by side A device count (e.g., >5)' },
   { prefix: 'sidez:', description: 'Filter by side Z device count (e.g., >5)' },
@@ -223,6 +225,18 @@ export function ContributorsPage() {
                       <SortIcon field="name" />
                     </button>
                   </th>
+                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('metros')}>
+                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('metros')}>
+                      Metros
+                      <SortIcon field="metros" />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('locations')}>
+                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('locations')}>
+                      Facilities
+                      <SortIcon field="locations" />
+                    </button>
+                  </th>
                   <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('devices')}>
                     <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('devices')}>
                       Devices
@@ -269,6 +283,12 @@ export function ContributorsPage() {
                       {contributor.name || '—'}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
+                      {contributor.metro_count > 0 ? contributor.metro_count : <span className="text-muted-foreground">—</span>}
+                    </td>
+                    <td className="px-4 py-3 text-sm tabular-nums text-right">
+                      {contributor.location_count > 0 ? contributor.location_count : <span className="text-muted-foreground">—</span>}
+                    </td>
+                    <td className="px-4 py-3 text-sm tabular-nums text-right">
                       {contributor.device_count > 0 ? contributor.device_count : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">
@@ -301,7 +321,7 @@ export function ContributorsPage() {
                 ))}
                 {contributors.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
                       No contributors found
                     </td>
                   </tr>
