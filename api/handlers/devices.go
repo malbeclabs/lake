@@ -24,6 +24,7 @@ type DeviceListItem struct {
 	MetroPK                   string  `json:"metro_pk"`
 	MetroCode                 string  `json:"metro_code"`
 	LocationPK                string  `json:"location_pk"`
+	LocationCode              string  `json:"location_code"`
 	PublicIP                  string  `json:"public_ip"`
 	MaxUsers                  int32   `json:"max_users"`
 	CurrentUsers              uint64  `json:"current_users"`
@@ -47,6 +48,7 @@ var deviceListSortFields = map[string]string{
 	"type":        "device_type",
 	"contributor": "contributor_code",
 	"metro":       "metro_code",
+	"location":    "location_code",
 	"status":      "status",
 	"users":       "users_no_data|users_util_frac;max_users DESC",
 	"unicast":     "unicast_no_data|unicast_available",
@@ -63,6 +65,7 @@ var deviceListFilterFields = map[string]FilterFieldConfig{
 	"type":        {Column: "device_type", Type: FieldTypeText},
 	"contributor": {Column: "contributor_code", Type: FieldTypeText},
 	"metro":       {Column: "metro_code", Type: FieldTypeText},
+	"location":    {Column: "location_code", Type: FieldTypeText},
 	"location_pk": {Column: "location_pk", Type: FieldTypeText},
 	"status":      {Column: "status", Type: FieldTypeText},
 	"users":       {Column: "current_users", Type: FieldTypeNumeric},
@@ -145,6 +148,7 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 				COALESCE(d.metro_pk, '') as metro_pk,
 				COALESCE(m.code, '') as metro_code,
 				COALESCE(d.location_pk, '') as location_pk,
+				COALESCE(l.code, '') as location_code,
 				COALESCE(d.public_ip, '') as public_ip,
 				COALESCE(d.max_users, 0) as max_users,
 				COALESCE(ucu.user_count, 0) + COALESCE(ucm.user_count, 0) as current_users,
@@ -164,6 +168,7 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 			FROM dz_devices_current d
 			LEFT JOIN dz_contributors_current c ON d.contributor_pk = c.pk
 			LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
+			LEFT JOIN dz_locations_current l ON d.location_pk = l.pk
 			LEFT JOIN unicast_counts ucu ON d.pk = ucu.device_pk
 			LEFT JOIN multicast_counts ucm ON d.pk = ucm.device_pk
 			LEFT JOIN traffic_rates tr ON d.pk = tr.device_pk
@@ -189,14 +194,15 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 			FROM devices_eff
 		)
 		SELECT
-			pk, code, status, device_type, contributor_pk, contributor_code, metro_pk, metro_code, location_pk, public_ip, max_users, current_users, unicast_users, multicast_users, max_unicast_users, max_multicast_subscribers, max_multicast_publishers, unicast_users_count, multicast_subscribers_count, reserved_seats, multicast_publishers_count, in_bps, out_bps, peak_in_bps, peak_out_bps,
+			pk, code, status, device_type, contributor_pk, contributor_code, metro_pk, metro_code, location_pk, location_code, public_ip, max_users, current_users, unicast_users, multicast_users, max_unicast_users, max_multicast_subscribers, max_multicast_publishers, unicast_users_count, multicast_subscribers_count, reserved_seats, multicast_publishers_count, in_bps, out_bps, peak_in_bps, peak_out_bps,
 			count() OVER () as _total
 		FROM devices_util
 		WHERE 1=1` + whereFilter + " " + orderBy + `
 		LIMIT ? OFFSET ?
 	`
 
-	queryFallback := strings.ReplaceAll(query, "COALESCE(d.location_pk, '') as location_pk,", "'' as location_pk,")
+	queryFallback := strings.ReplaceAll(query, "COALESCE(d.location_pk, '') as location_pk,\n\t\t\t\tCOALESCE(l.code, '') as location_code,", "'' as location_pk,\n\t\t\t\t'' as location_code,")
+	queryFallback = strings.ReplaceAll(queryFallback, "\t\t\tLEFT JOIN dz_locations_current l ON d.location_pk = l.pk\n", "")
 
 	var args []any
 	args = append(args, filterArgs...)
@@ -233,6 +239,7 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 			&d.MetroPK,
 			&d.MetroCode,
 			&d.LocationPK,
+			&d.LocationCode,
 			&d.PublicIP,
 			&d.MaxUsers,
 			&d.CurrentUsers,
