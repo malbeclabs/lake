@@ -2,12 +2,13 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useState, useMemo } from 'react'
 import { Loader2, Building2, AlertCircle, ArrowLeft, Info, ChevronUp, ChevronDown } from 'lucide-react'
-import { fetchContributor, fetchDevicesByContributor } from '@/lib/api'
+import { fetchContributor, fetchDevicesByContributor, fetchLinksByContributor } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useBackLink } from '@/hooks/use-back-link'
 import { handleRowClick } from '@/lib/utils'
 
 type DeviceSortField = 'code' | 'type' | 'metro' | 'location' | 'status' | 'users' | 'unicast' | 'subscribers' | 'publishers' | 'in' | 'out'
+type LinkSortField = 'code' | 'type' | 'side_a' | 'side_z' | 'status' | 'bandwidth' | 'in' | 'out' | 'latency'
 type SortDir = 'asc' | 'desc'
 
 function formatBps(bps: number): string {
@@ -37,6 +38,8 @@ export function ContributorDetailPage() {
   const back = useBackLink({ to: '/dz/contributors', label: 'contributors' })
   const [sortField, setSortField] = useState<DeviceSortField>('code')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
+  const [linkSortField, setLinkSortField] = useState<LinkSortField>('code')
+  const [linkSortDir, setLinkSortDir] = useState<SortDir>('asc')
 
   const { data: contributor, isLoading, error } = useQuery({
     queryKey: ['contributor', pk],
@@ -47,6 +50,12 @@ export function ContributorDetailPage() {
   const { data: devicesData } = useQuery({
     queryKey: ['contributor-devices', pk],
     queryFn: () => fetchDevicesByContributor(pk!),
+    enabled: !!pk,
+  })
+
+  const { data: linksData } = useQuery({
+    queryKey: ['contributor-links', pk],
+    queryFn: () => fetchLinksByContributor(pk!),
     enabled: !!pk,
   })
 
@@ -109,6 +118,34 @@ export function ContributorDetailPage() {
   const SortIcon = ({ field }: { field: DeviceSortField }) => {
     if (sortField !== field) return null
     return sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
+  }
+
+  const rawLinks = linksData?.items ?? []
+  const links = useMemo(() => {
+    return [...rawLinks].sort((a, b) => {
+      let cmp = 0
+      switch (linkSortField) {
+        case 'code': cmp = a.code.localeCompare(b.code); break
+        case 'type': cmp = a.link_type.localeCompare(b.link_type); break
+        case 'side_a': cmp = a.side_a_code.localeCompare(b.side_a_code); break
+        case 'side_z': cmp = a.side_z_code.localeCompare(b.side_z_code); break
+        case 'status': cmp = a.status.localeCompare(b.status); break
+        case 'bandwidth': cmp = a.bandwidth_bps - b.bandwidth_bps; break
+        case 'in': cmp = a.in_bps - b.in_bps; break
+        case 'out': cmp = a.out_bps - b.out_bps; break
+        case 'latency': cmp = a.latency_us - b.latency_us; break
+      }
+      return linkSortDir === 'asc' ? cmp : -cmp
+    })
+  }, [rawLinks, linkSortField, linkSortDir])
+
+  const handleLinkSort = (field: LinkSortField) => {
+    if (linkSortField === field) setLinkSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setLinkSortField(field); setLinkSortDir('asc') }
+  }
+  const LinkSortIcon = ({ field }: { field: LinkSortField }) => {
+    if (linkSortField !== field) return null
+    return linkSortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
   }
 
   if (isLoading) {
@@ -247,6 +284,92 @@ export function ContributorDetailPage() {
             </dl>
           </div>
         </div>
+
+        {/* Links table */}
+        {links.length > 0 && (
+          <div className="mb-8">
+            <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
+              Links ({links.length}{linksData && linksData.total > rawLinks.length ? ` of ${linksData.total}` : ''})
+            </h2>
+            <div className="border border-border rounded-lg overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/30 text-xs text-muted-foreground uppercase tracking-wider">
+                      {([
+                        { field: 'code', label: 'Code' },
+                        { field: 'type', label: 'Type' },
+                        { field: 'status', label: 'Status' },
+                        { field: 'side_a', label: 'Side A' },
+                        { field: 'side_z', label: 'Side Z' },
+                      ] as { field: LinkSortField; label: string }[]).map(({ field, label }) => (
+                        <th key={field} className="px-4 py-3 font-medium text-left">
+                          <button className="inline-flex items-center gap-1" type="button" onClick={() => handleLinkSort(field)}>
+                            {label}
+                            <LinkSortIcon field={field} />
+                          </button>
+                        </th>
+                      ))}
+                      {([
+                        { field: 'bandwidth', label: 'Bandwidth' },
+                        { field: 'in', label: 'In' },
+                        { field: 'out', label: 'Out' },
+                        { field: 'latency', label: 'Latency' },
+                      ] as { field: LinkSortField; label: string }[]).map(({ field, label }) => (
+                        <th key={field} className="px-4 py-3 font-medium text-right">
+                          <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleLinkSort(field)}>
+                            {label}
+                            <LinkSortIcon field={field} />
+                          </button>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {links.map((link) => (
+                      <tr
+                        key={link.pk}
+                        className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
+                        onClick={(e) => handleRowClick(e, `/dz/links/${link.pk}`, navigate)}
+                      >
+                        <td className="px-4 py-3 font-mono text-sm whitespace-nowrap">{link.code}</td>
+                        <td className="px-4 py-3 text-sm text-muted-foreground">{link.link_type}</td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={`inline-block h-2.5 w-2.5 rounded-full ${statusDotColor[link.status] ?? 'bg-muted-foreground'}`}
+                            title={link.status}
+                          />
+                        </td>
+                        <td className="px-4 py-3 text-sm whitespace-nowrap">
+                          {link.side_a_pk
+                            ? <Link to={`/dz/devices/${link.side_a_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.side_a_code}</Link>
+                            : <span className="text-muted-foreground">—</span>}
+                          {link.side_a_metro && <span className="text-xs text-muted-foreground ml-1">
+                            (<Link to={`/dz/metros/${link.side_a_metro_pk}`} className="hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.side_a_metro}</Link>)
+                          </span>}
+                        </td>
+                        <td className="px-4 py-3 text-sm whitespace-nowrap">
+                          {link.side_z_pk
+                            ? <Link to={`/dz/devices/${link.side_z_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.side_z_code}</Link>
+                            : <span className="text-muted-foreground">—</span>}
+                          {link.side_z_metro && <span className="text-xs text-muted-foreground ml-1">
+                            (<Link to={`/dz/metros/${link.side_z_metro_pk}`} className="hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.side_z_metro}</Link>)
+                          </span>}
+                        </td>
+                        <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">{formatBps(link.bandwidth_bps)}</td>
+                        <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">{formatBps(link.in_bps)}</td>
+                        <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">{formatBps(link.out_bps)}</td>
+                        <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">
+                          {link.latency_us > 0 ? `${(link.latency_us / 1000).toFixed(1)} ms` : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Devices table */}
         {devices.length > 0 && (

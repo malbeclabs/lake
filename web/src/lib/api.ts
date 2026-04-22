@@ -2959,6 +2959,12 @@ export async function fetchLinks(
   return res.json()
 }
 
+export async function fetchLinksByContributor(contributorPk: string, limit = 500, offset = 0): Promise<PaginatedResponse<Link>> {
+  const res = await fetchWithRetry(`/api/dz/links?contributor_pk=${encodeURIComponent(contributorPk)}&limit=${limit}&offset=${offset}&sort_by=code&sort_dir=asc`)
+  if (!res.ok) throw new Error('Failed to fetch links')
+  return res.json()
+}
+
 export interface LinkDetail extends Link {
   peak_in_bps: number
   peak_out_bps: number

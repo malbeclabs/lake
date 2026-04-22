@@ -86,6 +86,10 @@ func (a *API) GetLinks(w http.ResponseWriter, r *http.Request) {
 	if filterClause != "" {
 		whereFilter = " AND " + filterClause
 	}
+	if contributorPk := r.URL.Query().Get("contributor_pk"); contributorPk != "" {
+		whereFilter += " AND contributor_pk = ?"
+		filterArgs = append(filterArgs, contributorPk)
+	}
 	orderBy := sort.OrderByClause(linkSortFields)
 
 	query := `
