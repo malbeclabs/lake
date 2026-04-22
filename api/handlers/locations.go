@@ -34,18 +34,25 @@ type LocationListItem struct {
 }
 
 type LocationDetail struct {
-	PK          string  `json:"pk"`
-	Code        string  `json:"code"`
-	Name        string  `json:"name"`
-	Country     string  `json:"country"`
-	Lat         float64 `json:"lat"`
-	Lng         float64 `json:"lng"`
-	LocId       uint32  `json:"loc_id"`
-	Status      string  `json:"status"`
-	MetroPK     string  `json:"metro_pk"`
-	MetroCode   string  `json:"metro_code"`
-	DeviceCount uint32  `json:"device_count"`
-	UserCount   uint32  `json:"user_count"`
+	PK                        string  `json:"pk"`
+	Code                      string  `json:"code"`
+	Name                      string  `json:"name"`
+	Country                   string  `json:"country"`
+	Lat                       float64 `json:"lat"`
+	Lng                       float64 `json:"lng"`
+	LocId                     uint32  `json:"loc_id"`
+	Status                    string  `json:"status"`
+	MetroPK                   string  `json:"metro_pk"`
+	MetroCode                 string  `json:"metro_code"`
+	DeviceCount               uint32  `json:"device_count"`
+	UserCount                 uint32  `json:"user_count"`
+	MaxUsers                  uint64  `json:"max_users"`
+	UnicastUsersCount         uint64  `json:"unicast_users_count"`
+	MulticastSubscribersCount uint64  `json:"multicast_subscribers_count"`
+	MulticastPublishersCount  uint64  `json:"multicast_publishers_count"`
+	MaxUnicastUsers           uint64  `json:"max_unicast_users"`
+	MaxMulticastSubscribers   uint64  `json:"max_multicast_subscribers"`
+	MaxMulticastPublishers    uint64  `json:"max_multicast_publishers"`
 }
 
 var locationSortFields = map[string]string{
@@ -278,7 +285,9 @@ func (a *API) GetLocation(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
 	detailSuffix := `
-		SELECT pk, code, name, country, lat, lng, loc_id, status, metro_pk, metro_code, device_count, user_count
+		SELECT pk, code, name, country, lat, lng, loc_id, status, metro_pk, metro_code, device_count, user_count,
+			max_users, unicast_users_count, multicast_subscribers_count, multicast_publishers_count,
+			max_unicast_users, max_multicast_subscribers, max_multicast_publishers
 		FROM enriched
 		WHERE pk = ?
 		LIMIT 1
@@ -319,6 +328,13 @@ func (a *API) GetLocation(w http.ResponseWriter, r *http.Request) {
 		&l.MetroCode,
 		&l.DeviceCount,
 		&l.UserCount,
+		&l.MaxUsers,
+		&l.UnicastUsersCount,
+		&l.MulticastSubscribersCount,
+		&l.MulticastPublishersCount,
+		&l.MaxUnicastUsers,
+		&l.MaxMulticastSubscribers,
+		&l.MaxMulticastPublishers,
 	); err != nil {
 		logError("location row scan failed", "error", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)

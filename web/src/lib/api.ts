@@ -3071,6 +3071,13 @@ export interface LocationDetail {
   metro_code: string
   device_count: number
   user_count: number
+  max_users: number
+  unicast_users_count: number
+  multicast_subscribers_count: number
+  multicast_publishers_count: number
+  max_unicast_users: number
+  max_multicast_subscribers: number
+  max_multicast_publishers: number
 }
 
 export async function fetchLocation(pk: string): Promise<LocationDetail> {

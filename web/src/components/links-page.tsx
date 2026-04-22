@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react'
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { Loader2, Link2, AlertCircle, ChevronDown, ChevronUp, X, CheckCircle2, Ban, Clock, RefreshCw } from 'lucide-react'
+import { Loader2, Link2, AlertCircle, ChevronDown, ChevronUp, X } from 'lucide-react'
 import { fetchLinks } from '@/lib/api'
 import { handleRowClick } from '@/lib/utils'
 import { Pagination } from './pagination'
@@ -11,34 +11,16 @@ import { CopyableText } from './copyable-text'
 
 const PAGE_SIZE = 100
 
-type StatusIcon = { icon: React.ElementType; className: string }
-const statusIcons: Record<string, StatusIcon> = {
-  activated:    { icon: CheckCircle2, className: 'text-green-500' },
-  provisioning: { icon: RefreshCw,    className: 'text-blue-500' },
-  suspended:    { icon: Ban,          className: 'text-red-500' },
-  pending:      { icon: Clock,        className: 'text-amber-500' },
-}
-
-function StatusBadge({ status }: { status: string }) {
-  if (status === 'soft-drained') {
-    return (
-      <span title={status} className="inline-flex items-center justify-center h-4 w-4 rounded-full border-2 border-amber-500 text-amber-500 text-[9px] font-bold leading-none select-none">
-        S
-      </span>
-    )
-  }
-  if (status === 'drained') {
-    return (
-      <span title={status} className="inline-flex items-center justify-center h-4 w-4 rounded-full border-2 border-amber-500 text-amber-500 text-[9px] font-bold leading-none select-none">
-        H
-      </span>
-    )
-  }
-  const entry = statusIcons[status]
-  const Icon = entry?.icon
-  return Icon
-    ? <Icon className={`h-4 w-4 ${entry.className}`} title={status} />
-    : <span className="text-xs text-muted-foreground capitalize">{status}</span>
+const statusDotColor: Record<string, string> = {
+  activated:    'bg-green-500',
+  active:       'bg-green-500',
+  provisioning: 'bg-blue-500',
+  'soft-drained': 'bg-amber-500',
+  drained:      'bg-amber-500',
+  suspended:    'bg-red-500',
+  pending:      'bg-amber-500',
+  inactive:     'bg-muted-foreground',
+  deactivated:  'bg-muted-foreground',
 }
 
 function formatBps(bps: number): string {
@@ -409,7 +391,10 @@ export function LinksPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <StatusBadge status={link.status} />
+                      <span
+                        className={`inline-block h-2.5 w-2.5 rounded-full ${statusDotColor[link.status] ?? 'bg-muted-foreground'}`}
+                        title={link.status}
+                      />
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground whitespace-nowrap">
                       {formatBps(link.bandwidth_bps)}

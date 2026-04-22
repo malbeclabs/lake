@@ -317,10 +317,11 @@ export function LocationsPage() {
                       { count: location.multicast_subscribers_count, max: location.max_multicast_subscribers },
                       { count: location.multicast_publishers_count, max: location.max_multicast_publishers },
                     ].map(({ count, max }, i) => {
-                      const available = max > count ? max - count : 0
+                      const effectiveMax = max > 0 ? max : location.max_users
+                      const available = effectiveMax > count ? effectiveMax - count : 0
                       return (
                         <td key={i} className="px-4 py-3 text-sm tabular-nums text-right">
-                          {count === 0 && max === 0
+                          {count === 0 && effectiveMax === 0
                             ? <span className="text-muted-foreground">—</span>
                             : <span>{available}</span>
                           }

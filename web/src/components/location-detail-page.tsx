@@ -236,9 +236,48 @@ export function LocationDetailPage() {
                 <dd className="text-sm">{location.device_count}</dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-sm text-muted-foreground">Active Users</dt>
-                <dd className="text-sm">{location.user_count}</dd>
+                <dt className="text-sm text-muted-foreground">Users</dt>
+                <dd className="text-sm tabular-nums">
+                  {location.user_count}
+                  {location.max_users > 0 && <span className="text-muted-foreground">/{location.max_users}</span>}
+                </dd>
               </div>
+              {(() => {
+                const effUnicastMax = location.max_unicast_users > 0 ? location.max_unicast_users : location.max_users
+                const effSubsMax = location.max_multicast_subscribers > 0 ? location.max_multicast_subscribers : location.max_users
+                const effPubsMax = location.max_multicast_publishers > 0 ? location.max_multicast_publishers : location.max_users
+                return (
+                  <>
+                    {(location.unicast_users_count > 0 || effUnicastMax > 0) && (
+                      <div className="flex justify-between">
+                        <dt className="text-sm text-muted-foreground pl-3">Unicast</dt>
+                        <dd className="text-sm tabular-nums">
+                          {location.unicast_users_count}
+                          {effUnicastMax > 0 && <span className="text-muted-foreground">/{effUnicastMax}</span>}
+                        </dd>
+                      </div>
+                    )}
+                    {(location.multicast_subscribers_count > 0 || effSubsMax > 0) && (
+                      <div className="flex justify-between">
+                        <dt className="text-sm text-muted-foreground pl-3">Subscribers</dt>
+                        <dd className="text-sm tabular-nums">
+                          {location.multicast_subscribers_count}
+                          {effSubsMax > 0 && <span className="text-muted-foreground">/{effSubsMax}</span>}
+                        </dd>
+                      </div>
+                    )}
+                    {(location.multicast_publishers_count > 0 || effPubsMax > 0) && (
+                      <div className="flex justify-between">
+                        <dt className="text-sm text-muted-foreground pl-3">Publishers</dt>
+                        <dd className="text-sm tabular-nums">
+                          {location.multicast_publishers_count}
+                          {effPubsMax > 0 && <span className="text-muted-foreground">/{effPubsMax}</span>}
+                        </dd>
+                      </div>
+                    )}
+                  </>
+                )
+              })()}
             </dl>
           </div>
 
