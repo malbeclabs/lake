@@ -16,6 +16,11 @@ import type { DeviceMetricsResponse } from '@/lib/api'
 import { DeviceHealthTimeline } from '@/components/device-charts/DeviceHealthTimeline'
 import { DeviceInterfaceIssuesChart } from '@/components/device-charts/DeviceInterfaceIssuesChart'
 import { useDelayedLoading } from '@/hooks/use-delayed-loading'
+import { useActiveOpsTickets, useTicketsForEntity } from '@/hooks/use-ops-tickets'
+import { useIsOpsUser } from '@/hooks/use-is-ops-user'
+import { useAuth } from '@/contexts/AuthContext'
+import { IncidentBadge } from '@/components/ops/IncidentBadge'
+import { CreateIncidentModal } from '@/components/ops/CreateIncidentModal'
 
 function Skeleton({ className }: { className?: string }) {
   return <div className={`animate-pulse bg-muted rounded ${className || ''}`} />
@@ -260,15 +265,15 @@ interface DeviceRowProps {
   devicesWithIssues?: Map<string, string[]>
   initiallyExpanded?: boolean
   timeRange?: string
+  isOpsUser: boolean
+  onCreateIncident: (devicePk: string, deviceCode: string, contributorCode: string, contributorPk: string, issueReasons: string[]) => void
+  showIncidentOverlays: boolean
+  showMaintenanceOverlays: boolean
 }
 
-function DeviceRow({
-  deviceMetrics,
-  derivedInfo,
-  devicesWithIssues,
-  initiallyExpanded = false,
-  timeRange = '24h',
-}: DeviceRowProps) {
+function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExpanded = false, timeRange = '24h', isOpsUser, onCreateIncident, showIncidentOverlays, showMaintenanceOverlays }: DeviceRowProps) {
+  const tickets = useTicketsForEntity(derivedInfo.pk)
+  const { user } = useAuth()
   const [expanded, setExpanded] = useState(initiallyExpanded)
   const [hoveredTimeRange, setHoveredTimeRange] = useState<{
     start: number
@@ -492,6 +497,17 @@ function DeviceRow({
                     ISIS Unreachable
                   </span>
                 )}
+                {/* Maintenance badge — visible to all users */}
+                {tickets.some(t => t.type === 'maintenance') && (
+                  <span className="text-[10px] px-1.5 py-0.5 font-medium bg-blue-500/20 text-blue-300">
+                    Maintenance
+                  </span>
+                )}
+                {/* Incident badge — visible to all authenticated users */}
+                {!!user && tickets
+                  .filter(t => t.type === 'incident')
+                  .map(t => <IncidentBadge key={t.id} ticket={t} />)
+                }
               </div>
             )}
           </div>
@@ -503,7 +519,43 @@ function DeviceRow({
               hideBadges
               onBarHover={setHoveredTimeRange}
               highlightedTime={chartHoveredTime}
+              maintenanceWindows={showMaintenanceOverlays ? tickets
+                .filter(t => t.type === 'maintenance' && t.start_at)
+                .map(t => ({
+                  startAt: t.start_at!,
+                  endAt: t.end_at,
+                  type: 'maintenance' as const,
+                  id: t.id,
+                  humanReadableId: t.human_readable_id,
+                  title: t.title,
+                  status: t.status,
+                  entityName: derivedInfo.code,
+                  slackUrl: t.slack_message_url,
+                })) : []}
+              incidentWindows={showIncidentOverlays ? tickets
+                .filter(t => t.type === 'incident')
+                .map(t => ({
+                  startAt: t.start_at ?? new Date().toISOString(),
+                  endAt: t.end_at,
+                  type: 'incident' as const,
+                  id: t.id,
+                  humanReadableId: t.human_readable_id,
+                  title: t.title,
+                  status: t.status,
+                  entityName: derivedInfo.code,
+                  slackUrl: t.slack_message_url,
+                })) : []}
             />
+            {isOpsUser && issueReasons.length > 0 && !tickets.some(t => t.type === 'incident') && (
+              <div className="flex justify-end mt-1">
+                <button
+                  className="text-[10px] font-medium px-2 py-0.5 border border-gray-400/40 text-muted-foreground hover:text-foreground hover:border-gray-400/70 transition-colors"
+                  onClick={(e) => { e.stopPropagation(); onCreateIncident(derivedInfo.pk, derivedInfo.code, derivedInfo.contributor, deviceMetrics.contributor_pk, issueReasons) }}
+                >
+                  Create incident
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -560,6 +612,19 @@ export function DeviceStatusTimelines({
     staleTime: 30_000,
     placeholderData: keepPreviousData,
   })
+
+  // Pre-fetch active tickets once for all rows — filtered client-side per device
+  useActiveOpsTickets()
+  const isOpsUser = useIsOpsUser()
+  const [createIncidentFor, setCreateIncidentFor] = useState<{
+    devicePk: string
+    deviceCode: string
+    contributorCode: string
+    contributorPk: string
+    issueReasons: string[]
+  } | null>(null)
+  const [showIncidentOverlays, setShowIncidentOverlays] = useState(true)
+  const [showMaintenanceOverlays, setShowMaintenanceOverlays] = useState(true)
 
   // Convert the Record<string, DeviceMetricsResponse> into an array with derived info
   const devicesArray = useMemo(() => {
@@ -743,13 +808,37 @@ export function DeviceStatusTimelines({
             {filteredDevices.length !== 1 ? 's' : ''})
           </div>
         </div>
-        {onTimeRangeChange && (
-          <SmallDropdown
-            value={timeRange}
-            options={timeRangeOptions}
-            onChange={(v) => onTimeRangeChange(v as TimeRange)}
-          />
-        )}
+        <div className="flex items-center gap-2 flex-wrap">
+          {onTimeRangeChange && (
+            <SmallDropdown
+              value={timeRange}
+              options={timeRangeOptions}
+              onChange={(v) => onTimeRangeChange(v as TimeRange)}
+            />
+          )}
+          <button
+            type="button"
+            onClick={() => setShowIncidentOverlays(v => !v)}
+            className={`text-[10px] font-medium px-2 py-0.5 border transition-colors ${
+              showIncidentOverlays
+                ? 'border-red-800/60 bg-red-900/20 text-red-300'
+                : 'border-border text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            Incidents
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowMaintenanceOverlays(v => !v)}
+            className={`text-[10px] font-medium px-2 py-0.5 border transition-colors ${
+              showMaintenanceOverlays
+                ? 'border-blue-700/60 bg-blue-900/20 text-blue-300'
+                : 'border-border text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            Maintenance
+          </button>
+        </div>
       </div>
 
       {/* Legend */}
@@ -785,8 +874,24 @@ export function DeviceStatusTimelines({
             devicesWithIssues={devicesWithIssues}
             initiallyExpanded={derived.pk === expandedDevicePk}
             timeRange={timeRange}
+            isOpsUser={isOpsUser}
+            onCreateIncident={(pk, code, contributor, contributorPk, reasons) => setCreateIncidentFor({ devicePk: pk, deviceCode: code, contributorCode: contributor, contributorPk, issueReasons: reasons })}
+            showIncidentOverlays={showIncidentOverlays}
+            showMaintenanceOverlays={showMaintenanceOverlays}
           />
         ))}
+        {createIncidentFor && (
+          <CreateIncidentModal
+            entityCode={createIncidentFor.deviceCode}
+            entityType="device"
+            entityPk={createIncidentFor.devicePk}
+            contributorCode={createIncidentFor.contributorCode}
+            contributorPk={createIncidentFor.contributorPk}
+            issueReasons={createIncidentFor.issueReasons}
+            onClose={() => setCreateIncidentFor(null)}
+            onSuccess={() => setCreateIncidentFor(null)}
+          />
+        )}
       </div>
     </div>
   )

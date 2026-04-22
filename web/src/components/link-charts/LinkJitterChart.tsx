@@ -10,6 +10,8 @@ import { type ChartLegendSeries } from '@/components/topology/ChartLegend'
 import { ChartLegendTable } from '@/components/topology/ChartLegendTable'
 import { formatHoveredTime } from '@/components/topology/utils'
 import type { LinkMetricsResponse } from '@/lib/api'
+import { TicketChartBands } from '@/components/ops/TicketChartBands'
+import type { OpsTicket } from '@/lib/ops-api'
 
 interface LinkJitterChartProps {
   data: LinkMetricsResponse
@@ -17,6 +19,9 @@ interface LinkJitterChartProps {
   loading?: boolean
   highlightTimeRange?: { start: number; end: number } | null
   onCursorTime?: (time: number | null) => void
+  tickets?: OpsTicket[]
+  showIncidents?: boolean
+  showMaintenance?: boolean
 }
 
 type AggMode = 'avg' | 'p50' | 'p90' | 'p95' | 'p99' | 'min' | 'max'
@@ -42,6 +47,9 @@ export function LinkJitterChart({
   loading,
   highlightTimeRange,
   onCursorTime,
+  tickets,
+  showIncidents,
+  showMaintenance,
 }: LinkJitterChartProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
@@ -178,7 +186,7 @@ export function LinkJitterChart({
     [],
   )
 
-  const { plotRef } = useUPlotChart({
+  const { plotRef, plotVersion } = useUPlotChart({
     containerRef: chartRef,
     data: uPlotData,
     series: uPlotSeries,
@@ -271,7 +279,19 @@ export function LinkJitterChart({
           <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
         )}
       </div>
-      <div ref={chartRef} className="h-36" />
+      <div className="relative overflow-hidden">
+        <div ref={chartRef} className="h-36" />
+        {tickets && tickets.length > 0 && (
+          <TicketChartBands
+            containerRef={chartRef}
+            plotRef={plotRef}
+            plotVersion={plotVersion}
+            tickets={tickets}
+            showIncidents={showIncidents ?? true}
+            showMaintenance={showMaintenance ?? true}
+          />
+        )}
+      </div>
       <ChartLegendTable
         series={legendSeries}
         legend={legend}

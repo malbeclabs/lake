@@ -22,6 +22,7 @@ type LinkMetricsResponse struct {
 	LinkCode           string               `json:"link_code"`
 	LinkType           string               `json:"link_type"`
 	ContributorCode    string               `json:"contributor_code"`
+	ContributorPK      string               `json:"contributor_pk"`
 	SideAMetro         string               `json:"side_a_metro"`
 	SideZMetro         string               `json:"side_z_metro"`
 	SideADevice        string               `json:"side_a_device"`
@@ -524,6 +525,7 @@ func (a *API) fetchLinkMetrics(ctx context.Context, linkPK string, params bucket
 		LinkCode:           meta.Code,
 		LinkType:           meta.LinkType,
 		ContributorCode:    meta.Contributor,
+		ContributorPK:      meta.ContributorPK,
 		SideAMetro:         meta.SideAMetro,
 		SideZMetro:         meta.SideZMetro,
 		SideADevice:        meta.SideADevice,
@@ -1290,6 +1292,7 @@ func (a *API) fetchBulkLinkMetrics(ctx context.Context, params bucketParams, inc
 			LinkCode:           meta.Code,
 			LinkType:           meta.LinkType,
 			ContributorCode:    meta.Contributor,
+			ContributorPK:      meta.ContributorPK,
 			SideAMetro:         meta.SideAMetro,
 			SideZMetro:         meta.SideZMetro,
 			SideADevice:        meta.SideADevice,

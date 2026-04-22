@@ -5520,6 +5520,7 @@ export interface LinkMetricsResponse {
   link_code: string
   link_type: string
   contributor_code: string
+  contributor_pk: string
   side_a_metro: string
   side_z_metro: string
   side_a_device: string
@@ -5662,6 +5663,7 @@ export interface DeviceMetricsResponse {
   device_code: string
   device_type: string
   contributor_code: string
+  contributor_pk: string
   metro: string
   max_users: number
   time_range: string

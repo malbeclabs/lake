@@ -8,6 +8,8 @@ import { useUPlotChart } from '@/hooks/use-uplot-chart'
 import { useUPlotLegendSync } from '@/hooks/use-uplot-legend-sync'
 import { formatHoveredTime } from '@/components/topology/utils'
 import type { DeviceMetricsResponse, DeviceInterfaceTraffic } from '@/lib/api'
+import { TicketChartBands } from '@/components/ops/TicketChartBands'
+import type { OpsTicket } from '@/lib/ops-api'
 
 interface DeviceTrafficChartProps {
   data: DeviceMetricsResponse
@@ -15,6 +17,9 @@ interface DeviceTrafficChartProps {
   loading?: boolean
   highlightTimeRange?: { start: number; end: number } | null
   onCursorTime?: (time: number | null) => void
+  tickets?: OpsTicket[]
+  showIncidents?: boolean
+  showMaintenance?: boolean
 }
 
 type AggMode = 'avg' | 'p50' | 'p90' | 'p95' | 'p99' | 'max'
@@ -81,6 +86,9 @@ interface CategoryChartProps {
   bucketSeconds: number
   highlightTimeRange?: { start: number; end: number } | null
   onCursorTime?: (time: number | null) => void
+  tickets?: OpsTicket[]
+  showIncidents?: boolean
+  showMaintenance?: boolean
 }
 
 function CategoryChart({
@@ -97,6 +105,9 @@ function CategoryChart({
   bucketSeconds,
   highlightTimeRange,
   onCursorTime,
+  tickets,
+  showIncidents,
+  showMaintenance,
 }: CategoryChartProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
@@ -212,7 +223,7 @@ function CategoryChart({
     [],
   )
 
-  const { plotRef } = useUPlotChart({
+  const { plotRef, plotVersion } = useUPlotChart({
     containerRef: chartRef,
     data: uPlotData,
     series: uPlotSeries,
@@ -284,7 +295,19 @@ function CategoryChart({
           <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
         )}
       </div>
-      <div ref={chartRef} className="h-36" />
+      <div className="relative overflow-hidden">
+        <div ref={chartRef} className="h-36" />
+        {tickets && tickets.length > 0 && (
+          <TicketChartBands
+            containerRef={chartRef}
+            plotRef={plotRef}
+            plotVersion={plotVersion}
+            tickets={tickets}
+            showIncidents={showIncidents ?? true}
+            showMaintenance={showMaintenance ?? true}
+          />
+        )}
+      </div>
       {/* Per-interface legend */}
       <div className="flex flex-col text-xs px-2 pt-1 pb-2">
         <div className="flex items-center px-1 mb-1">
@@ -413,6 +436,9 @@ export function DeviceTrafficChart({
   loading,
   highlightTimeRange,
   onCursorTime,
+  tickets,
+  showIncidents,
+  showMaintenance,
 }: DeviceTrafficChartProps) {
   const [aggMode, setAggMode] = useState<AggMode>('avg')
   const [bidirectional, setBidirectional] = useState(true)
@@ -525,6 +551,9 @@ export function DeviceTrafficChart({
           bucketSeconds={data.bucket_seconds}
           highlightTimeRange={highlightTimeRange}
           onCursorTime={onCursorTime}
+          tickets={tickets}
+          showIncidents={showIncidents}
+          showMaintenance={showMaintenance}
         />
       ))}
     </div>

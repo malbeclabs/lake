@@ -1102,6 +1102,7 @@ type statusLinkMeta struct {
 	Code              string
 	LinkType          string
 	Contributor       string
+	ContributorPK     string
 	SideAMetro        string
 	SideZMetro        string
 	SideADevice       string
@@ -1133,6 +1134,7 @@ func queryStatusLinkMeta(ctx context.Context, db driver.Conn, linkPKs ...string)
 			l.code,
 			l.link_type,
 			COALESCE(c.code, '') as contributor,
+			COALESCE(l.contributor_pk, '') as contributor_pk,
 			ma.code as side_a_metro,
 			mz.code as side_z_metro,
 			da.code as side_a_device,
@@ -1165,7 +1167,7 @@ func queryStatusLinkMeta(ctx context.Context, db driver.Conn, linkPKs ...string)
 	for rows.Next() {
 		var m statusLinkMeta
 		if err := rows.Scan(
-			&m.PK, &m.Code, &m.LinkType, &m.Contributor,
+			&m.PK, &m.Code, &m.LinkType, &m.Contributor, &m.ContributorPK,
 			&m.SideAMetro, &m.SideZMetro, &m.SideADevice, &m.SideZDevice,
 			&m.SideADevicePK, &m.SideZDevicePK,
 			&m.SideAIfaceName, &m.SideZIfaceName,
@@ -1232,13 +1234,14 @@ func queryCurrentISISDown(ctx context.Context, db driver.Conn, linkPKs ...string
 
 // statusDeviceMeta holds static device metadata from dimension tables for status pages.
 type statusDeviceMeta struct {
-	PK          string
-	Code        string
-	DeviceType  string
-	Contributor string
-	Metro       string
-	MaxUsers    int32
-	Status      string
+	PK            string
+	Code          string
+	DeviceType    string
+	Contributor   string
+	ContributorPK string
+	Metro         string
+	MaxUsers      int32
+	Status        string
 }
 
 // queryStatusDeviceMeta fetches metadata for active devices.
@@ -1257,6 +1260,7 @@ func queryStatusDeviceMeta(ctx context.Context, db driver.Conn, devicePKs ...str
 			d.code,
 			d.device_type,
 			COALESCE(c.code, '') as contributor,
+			COALESCE(d.contributor_pk, '') as contributor_pk,
 			COALESCE(m.code, '') as metro,
 			d.max_users,
 			d.status
@@ -1275,7 +1279,7 @@ func queryStatusDeviceMeta(ctx context.Context, db driver.Conn, devicePKs ...str
 	result := make(map[string]*statusDeviceMeta)
 	for rows.Next() {
 		var m statusDeviceMeta
-		if err := rows.Scan(&m.PK, &m.Code, &m.DeviceType, &m.Contributor, &m.Metro, &m.MaxUsers, &m.Status); err != nil {
+		if err := rows.Scan(&m.PK, &m.Code, &m.DeviceType, &m.Contributor, &m.ContributorPK, &m.Metro, &m.MaxUsers, &m.Status); err != nil {
 			return nil, fmt.Errorf("device metadata scan: %w", err)
 		}
 		result[m.PK] = &m

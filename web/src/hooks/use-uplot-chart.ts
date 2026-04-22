@@ -1,4 +1,4 @@
-import { useEffect, useRef, type MutableRefObject, type RefObject } from 'react'
+import { useEffect, useRef, useState, type MutableRefObject, type RefObject } from 'react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import { useTheme } from '@/hooks/use-theme'
@@ -25,8 +25,9 @@ export function useUPlotChart({
   onCursorIdx,
   onFocusSeries,
   drawHooks,
-}: UseUPlotChartOptions): { plotRef: MutableRefObject<uPlot | null> } {
+}: UseUPlotChartOptions): { plotRef: MutableRefObject<uPlot | null>; plotVersion: number } {
   const plotRef = useRef<uPlot | null>(null)
+  const [plotVersion, setPlotVersion] = useState(0)
   const { resolvedTheme } = useTheme()
   const onCursorIdxRef = useRef(onCursorIdx)
   onCursorIdxRef.current = onCursorIdx
@@ -123,6 +124,7 @@ export function useUPlotChart({
     }
 
     plotRef.current = new uPlot(opts, data, container)
+    setPlotVersion(v => v + 1)
 
     const resizeObserver = new ResizeObserver((entries) => {
       const width = entries[0]?.contentRect.width
@@ -141,5 +143,5 @@ export function useUPlotChart({
     }
   }, [containerRef, data, series, height, axes, scales, resolvedTheme])
 
-  return { plotRef }
+  return { plotRef, plotVersion }
 }

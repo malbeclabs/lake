@@ -18,6 +18,10 @@ import { LinkInterfaceIssuesChart } from '@/components/link-charts/LinkInterface
 import { LinkLatencyChart } from '@/components/link-charts/LinkLatencyChart'
 import { LinkHealthTimeline } from '@/components/link-charts/LinkHealthTimeline'
 import { useDelayedLoading } from '@/hooks/use-delayed-loading'
+import { useActiveOpsTickets, useTicketsForEntity } from '@/hooks/use-ops-tickets'
+import { useIsOpsUser } from '@/hooks/use-is-ops-user'
+import { IncidentBadge } from '@/components/ops/IncidentBadge'
+import { CreateIncidentModal } from '@/components/ops/CreateIncidentModal'
 
 function Skeleton({ className }: { className?: string }) {
   return <div className={`animate-pulse bg-muted rounded ${className || ''}`} />
@@ -338,21 +342,53 @@ function addBucketIssues(b: LinkMetricsBucket, issues: Set<string>) {
 
 const cardClass = 'rounded-lg border border-border p-4'
 
+// Find when the most recent contiguous issue period started in the loaded buckets.
+// Anchors on the last bucket with issues, then walks backward to the start of that run.
+function computeIssueSince(buckets: LinkMetricsBucket[]): string | undefined {
+  if (buckets.length === 0) return undefined
+  const sorted = [...buckets].sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime())
+
+  // Find the most recent bucket that has issues
+  let anchorIdx = -1
+  for (let i = sorted.length - 1; i >= 0; i--) {
+    const issues = new Set<string>()
+    addBucketIssues(sorted[i], issues)
+    if (issues.size > 0 || sorted[i].status?.isis_down) {
+      anchorIdx = i
+      break
+    }
+  }
+  if (anchorIdx === -1) return undefined
+
+  // Walk backward from anchor to find where this contiguous run started
+  let issueStartMs = new Date(sorted[anchorIdx].ts).getTime()
+  for (let i = anchorIdx - 1; i >= 0; i--) {
+    const issues = new Set<string>()
+    addBucketIssues(sorted[i], issues)
+    if (issues.size > 0 || sorted[i].status?.isis_down) {
+      issueStartMs = new Date(sorted[i].ts).getTime()
+    } else {
+      break
+    }
+  }
+
+  return new Date(issueStartMs).toISOString()
+}
+
 interface LinkRowProps {
   linkMetrics: LinkMetricsResponse
   derivedInfo: DerivedLinkInfo
   linksWithIssues?: Map<string, string[]>
   criticalityMap?: Map<string, 'critical' | 'important' | 'redundant'>
   metricsTimeRange: string
+  isOpsUser: boolean
+  onCreateIncident: (linkPk: string, linkCode: string, contributorCode: string, contributorPk: string, issueReasons: string[], issueSince?: string) => void
+  showIncidentOverlays: boolean
+  showMaintenanceOverlays: boolean
 }
 
-function LinkRow({
-  linkMetrics,
-  derivedInfo,
-  linksWithIssues,
-  criticalityMap,
-  metricsTimeRange,
-}: LinkRowProps) {
+function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, metricsTimeRange, isOpsUser, onCreateIncident, showIncidentOverlays, showMaintenanceOverlays }: LinkRowProps) {
+  const tickets = useTicketsForEntity(derivedInfo.pk)
   const [expanded, setExpanded] = useState(false)
   const [hoveredTimeRange, setHoveredTimeRange] = useState<{
     start: number
@@ -625,6 +661,17 @@ function LinkRow({
                       ISIS Down
                     </span>
                   )}
+                  {/* Maintenance badge — visible to all users */}
+                  {tickets.some(t => t.type === 'maintenance') && (
+                    <span className="text-[10px] px-1.5 py-0.5 font-medium bg-blue-500/20 text-blue-300">
+                      Maintenance
+                    </span>
+                  )}
+                  {/* Incident badge with tooltip — ops users only */}
+                  {isOpsUser && tickets
+                    .filter(t => t.type === 'incident')
+                    .map(t => <IncidentBadge key={t.id} ticket={t} />)
+                  }
                 </div>
               )}
             </div>
@@ -645,7 +692,43 @@ function LinkRow({
               hideBadges
               onBarHover={setHoveredTimeRange}
               highlightedTime={chartHoveredTime}
+              maintenanceWindows={showMaintenanceOverlays ? tickets
+                .filter(t => t.type === 'maintenance' && t.start_at)
+                .map(t => ({
+                  startAt: t.start_at!,
+                  endAt: t.end_at,
+                  type: 'maintenance' as const,
+                  id: t.id,
+                  humanReadableId: t.human_readable_id,
+                  title: t.title,
+                  status: t.status,
+                  entityName: derivedInfo.code,
+                  slackUrl: t.slack_message_url,
+                })) : []}
+              incidentWindows={showIncidentOverlays ? tickets
+                .filter(t => t.type === 'incident')
+                .map(t => ({
+                  startAt: t.start_at ?? new Date().toISOString(),
+                  endAt: t.end_at,
+                  type: 'incident' as const,
+                  id: t.id,
+                  humanReadableId: t.human_readable_id,
+                  title: t.title,
+                  status: t.status,
+                  entityName: derivedInfo.code,
+                  slackUrl: t.slack_message_url,
+                })) : []}
             />
+            {isOpsUser && issueReasons.length > 0 && !tickets.some(t => t.type === 'incident') && (
+              <div className="flex justify-end mt-1">
+                <button
+                  className="text-[10px] font-medium px-2 py-0.5 border border-gray-400/40 text-muted-foreground hover:text-foreground hover:border-gray-400/70 transition-colors"
+                  onClick={(e) => { e.stopPropagation(); onCreateIncident(derivedInfo.pk, derivedInfo.code, derivedInfo.contributor, linkMetrics.contributor_pk, issueReasons, computeIssueSince(linkMetrics.buckets)) }}
+                >
+                  Create incident
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -671,6 +754,9 @@ function LinkRow({
                       className={cardClass}
                       highlightTimeRange={hoveredTimeRange}
                       onCursorTime={setChartHoveredTime}
+                      tickets={tickets}
+                      showIncidents={showIncidentOverlays}
+                      showMaintenance={showMaintenanceOverlays}
                     />
                   )}
                   {hasLoss && (
@@ -680,6 +766,9 @@ function LinkRow({
                       className={cardClass}
                       highlightTimeRange={hoveredTimeRange}
                       onCursorTime={setChartHoveredTime}
+                      tickets={tickets}
+                      showIncidents={showIncidentOverlays}
+                      showMaintenance={showMaintenanceOverlays}
                     />
                   )}
                 </>
@@ -710,6 +799,9 @@ function LinkRow({
                 className={cardClass}
                 highlightTimeRange={hoveredTimeRange}
                 onCursorTime={setChartHoveredTime}
+                tickets={tickets}
+                showIncidents={showIncidentOverlays}
+                showMaintenance={showMaintenanceOverlays}
               />
             ) : null
           })()}
@@ -767,6 +859,20 @@ export function LinkStatusTimelines({
     staleTime: 30_000,
     placeholderData: keepPreviousData,
   })
+
+  // Pre-fetch active tickets once for all rows — filtered client-side per link
+  useActiveOpsTickets()
+  const isOpsUser = useIsOpsUser()
+  const [createIncidentFor, setCreateIncidentFor] = useState<{
+    linkPk: string
+    linkCode: string
+    contributorCode: string
+    contributorPk: string
+    issueReasons: string[]
+    downSince?: string
+  } | null>(null)
+  const [showIncidentOverlays, setShowIncidentOverlays] = useState(true)
+  const [showMaintenanceOverlays, setShowMaintenanceOverlays] = useState(true)
 
   // Convert the Record<string, LinkMetricsResponse> into an array with derived info
   const linksArray = useMemo(() => {
@@ -1050,6 +1156,28 @@ export function LinkStatusTimelines({
               onChange={(v) => onTimeRangeChange(v as TimeRange)}
             />
           )}
+          <button
+            type="button"
+            onClick={() => setShowIncidentOverlays(v => !v)}
+            className={`text-[10px] font-medium px-2 py-0.5 border transition-colors ${
+              showIncidentOverlays
+                ? 'border-red-800/60 bg-red-900/20 text-red-300'
+                : 'border-border text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            Incidents
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowMaintenanceOverlays(v => !v)}
+            className={`text-[10px] font-medium px-2 py-0.5 border transition-colors ${
+              showMaintenanceOverlays
+                ? 'border-blue-700/60 bg-blue-900/20 text-blue-300'
+                : 'border-border text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            Maintenance
+          </button>
         </div>
       </div>
 
@@ -1092,8 +1220,25 @@ export function LinkStatusTimelines({
             linksWithIssues={linksWithIssues}
             criticalityMap={criticalityMap}
             metricsTimeRange={timeRange}
+            isOpsUser={isOpsUser}
+            onCreateIncident={(pk, code, contributor, contributorPk, reasons, issueSince) => setCreateIncidentFor({ linkPk: pk, linkCode: code, contributorCode: contributor, contributorPk, issueReasons: reasons, downSince: issueSince })}
+            showIncidentOverlays={showIncidentOverlays}
+            showMaintenanceOverlays={showMaintenanceOverlays}
           />
         ))}
+        {createIncidentFor && (
+          <CreateIncidentModal
+            entityCode={createIncidentFor.linkCode}
+            entityType="link"
+            entityPk={createIncidentFor.linkPk}
+            contributorCode={createIncidentFor.contributorCode}
+            contributorPk={createIncidentFor.contributorPk}
+            issueReasons={createIncidentFor.issueReasons}
+            downSince={createIncidentFor.downSince}
+            onClose={() => setCreateIncidentFor(null)}
+            onSuccess={() => setCreateIncidentFor(null)}
+          />
+        )}
       </div>
     </div>
   )

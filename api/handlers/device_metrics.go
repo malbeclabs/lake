@@ -24,6 +24,7 @@ type DeviceMetricsResponse struct {
 	DeviceCode      string                `json:"device_code"`
 	DeviceType      string                `json:"device_type"`
 	ContributorCode string                `json:"contributor_code"`
+	ContributorPK   string                `json:"contributor_pk"`
 	Metro           string                `json:"metro"`
 	MaxUsers        int32                 `json:"max_users"`
 	TimeRange       string                `json:"time_range"`
@@ -743,6 +744,7 @@ func (a *API) fetchDeviceMetrics(ctx context.Context, devicePK string, params bu
 		DeviceCode:      meta.Code,
 		DeviceType:      meta.DeviceType,
 		ContributorCode: meta.Contributor,
+		ContributorPK:   meta.ContributorPK,
 		Metro:           meta.Metro,
 		MaxUsers:        meta.MaxUsers,
 		TimeRange:       params.TimeRange,
@@ -1052,6 +1054,7 @@ func (a *API) fetchBulkDeviceMetrics(ctx context.Context, params bucketParams, i
 			DeviceCode:      meta.Code,
 			DeviceType:      meta.DeviceType,
 			ContributorCode: meta.Contributor,
+			ContributorPK:   meta.ContributorPK,
 			Metro:           meta.Metro,
 			MaxUsers:        meta.MaxUsers,
 			TimeRange:       params.TimeRange,
