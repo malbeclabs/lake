@@ -106,22 +106,26 @@ export function GeolocExplorerPage() {
   const targets = data?.targets ?? []
   const mapStyle = useMemo(() => createMapStyle(isDark), [isDark])
 
-  // Device dots — one per sender_pubkey from location_offsets
+  // Set of probe PKs for distinguishing devices from geoprobes
+  const probePKs = useMemo(() => new Set(probes.map((p) => p.pk)), [probes])
+
+  // Device dots (green) — only non-probe devices
   const devicePointsGeoJSON = useMemo(() => ({
     type: 'FeatureCollection' as const,
-    features: devices.map((d) => ({
-      type: 'Feature' as const,
-      properties: {
-        label: d.probe_code || d.sender_pubkey.slice(0, 8),
-        sender_pubkey: d.sender_pubkey,
-      },
-      geometry: { type: 'Point' as const, coordinates: [d.lng, d.lat] },
-    })),
-  }), [devices])
+    features: devices
+      .filter((d) => !probePKs.has(d.sender_pubkey))
+      .map((d) => ({
+        type: 'Feature' as const,
+        properties: {
+          label: d.probe_code || d.sender_pubkey.slice(0, 8),
+          sender_pubkey: d.sender_pubkey,
+        },
+        geometry: { type: 'Point' as const, coordinates: [d.lng, d.lat] },
+      })),
+  }), [devices, probePKs])
 
-  // Probe dots — all geoprobes at their metro coordinates.
-  // Probes that also appear as devices (with measurement data) are excluded
-  // to avoid duplicate dots at slightly different positions.
+  // Geoprobe dots (blue) — probes without measurement data, at metro coordinates.
+  // Probes WITH measurement data get a blue circle instead (below).
   const probePointsGeoJSON = useMemo(() => {
     const devicePKs = new Set(devices.map((d) => d.sender_pubkey))
     return {
@@ -136,11 +140,12 @@ export function GeolocExplorerPage() {
     }
   }, [probes, devices])
 
-  // Geoprobe circles — one per probe with measurement data,
+  // Geoprobe circles (blue) — probes with measurement data,
   // using the device's lat/lng and min ref_measured_rtt_ns for the radius.
   const geoProbeCirclesGeoJSON = useMemo(() => {
     const features: GeoJSON.Feature<GeoJSON.Polygon>[] = []
     for (const d of devices) {
+      if (!probePKs.has(d.sender_pubkey)) continue
       if (d.min_ref_measured_rtt_ns > 0) {
         const radius = rttToRadiusMeters(d.min_ref_measured_rtt_ns)
         if (radius > 0 && radius < 5_000_000) {
@@ -155,7 +160,7 @@ export function GeolocExplorerPage() {
       }
     }
     return { type: 'FeatureCollection' as const, features }
-  }, [devices])
+  }, [devices, probePKs])
 
   // Target circles — one per (device, target_ip), radius from min measured_rtt_ns
   const targetCirclesGeoJSON = useMemo(() => {
@@ -245,7 +250,7 @@ export function GeolocExplorerPage() {
           <Layer id="probe-points-circle" type="circle"
             paint={{
               'circle-radius': 5,
-              'circle-color': '#22c55e',
+              'circle-color': '#3b82f6',
               'circle-stroke-width': 2,
               'circle-stroke-color': isDark ? '#1a1a2e' : '#ffffff',
             }} />
