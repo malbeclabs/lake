@@ -42,6 +42,7 @@ type SortField =
   | 'clientip'
   | 'device'
   | 'metro'
+  | 'facility'
   | 'tenant'
   | 'status'
   | 'in'
@@ -56,6 +57,7 @@ const validFilterFields = [
   'clientip',
   'device',
   'metro',
+  'facility',
   'tenant',
   'status',
   'in',
@@ -69,6 +71,7 @@ const userFieldPrefixes = [
   { prefix: 'dzip:', description: 'Filter by DZ IP' },
   { prefix: 'device:', description: 'Filter by device code' },
   { prefix: 'metro:', description: 'Filter by metro' },
+  { prefix: 'facility:', description: 'Filter by facility' },
   { prefix: 'tenant:', description: 'Filter by tenant code' },
   { prefix: 'status:', description: 'Filter by status' },
   { prefix: 'in:', description: 'Filter by inbound traffic (e.g., >1gbps)' },
@@ -368,6 +371,16 @@ export function UsersPage() {
                       <SortIcon field="metro" />
                     </button>
                   </th>
+                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('facility')}>
+                    <button
+                      className="inline-flex items-center gap-1"
+                      type="button"
+                      onClick={() => handleSort('facility')}
+                    >
+                      Facility
+                      <SortIcon field="facility" />
+                    </button>
+                  </th>
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('tenant')}>
                     <button
                       className="inline-flex items-center gap-1"
@@ -454,10 +467,23 @@ export function UsersPage() {
                       {user.metro_pk ? (
                         <Link
                           to={`/dz/metros/${user.metro_pk}`}
-                          className="text-foreground/85 hover:text-foreground hover:underline"
+                          className="font-mono text-foreground/85 hover:text-foreground hover:underline"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          {user.metro_name || user.metro_code}
+                          {user.metro_code}
+                        </Link>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-sm">
+                      {user.location_pk ? (
+                        <Link
+                          to={`/dz/locations/${encodeURIComponent(user.location_pk)}`}
+                          className="font-mono text-foreground/85 hover:text-foreground hover:underline"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {user.location_code}
                         </Link>
                       ) : (
                         <span className="text-muted-foreground">—</span>
@@ -497,7 +523,7 @@ export function UsersPage() {
                 ))}
                 {users.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={11} className="px-4 py-8 text-center text-muted-foreground">
                       No users found
                     </td>
                   </tr>

@@ -11,13 +11,13 @@ import { CopyableText } from './copyable-text'
 
 const PAGE_SIZE = 100
 
-const statusColors: Record<string, string> = {
-  activated: 'text-muted-foreground',
-  provisioning: 'text-blue-600 dark:text-blue-400',
-  'soft-drained': 'text-amber-600 dark:text-amber-400',
-  drained: 'text-amber-600 dark:text-amber-400',
-  suspended: 'text-red-600 dark:text-red-400',
-  pending: 'text-amber-600 dark:text-amber-400',
+const statusDotColor: Record<string, string> = {
+  activated: 'bg-green-500',
+  provisioning: 'bg-blue-500',
+  'soft-drained': 'bg-amber-500',
+  drained: 'bg-amber-500',
+  suspended: 'bg-red-500',
+  pending: 'bg-amber-500',
 }
 
 function formatBps(bps: number): string {
@@ -34,6 +34,7 @@ type SortField =
   | 'type'
   | 'contributor'
   | 'metro'
+  | 'facility'
   | 'status'
   | 'users'
   | 'unicast'
@@ -53,7 +54,7 @@ function parseSearchFilters(searchParam: string): string[] {
 }
 
 // Valid filter fields for devices
-const validFilterFields = ['code', 'type', 'contributor', 'metro', 'status', 'users', 'in', 'out', 'peakin', 'peakout']
+const validFilterFields = ['code', 'type', 'contributor', 'metro', 'facility', 'status', 'users', 'in', 'out', 'peakin', 'peakout']
 
 // Field prefixes for inline filter
 const deviceFieldPrefixes = [
@@ -61,6 +62,7 @@ const deviceFieldPrefixes = [
   { prefix: 'type:', description: 'Filter by device type' },
   { prefix: 'contributor:', description: 'Filter by contributor' },
   { prefix: 'metro:', description: 'Filter by metro' },
+  { prefix: 'facility:', description: 'Filter by facility' },
   { prefix: 'status:', description: 'Filter by status' },
   { prefix: 'users:', description: 'Filter by user count (e.g., >10)' },
   { prefix: 'in:', description: 'Filter by inbound traffic (e.g., >1gbps)' },
@@ -271,6 +273,12 @@ export function DevicesPage() {
                       <SortIcon field="metro" />
                     </button>
                   </th>
+                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('facility')}>
+                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('facility')}>
+                      Facility
+                      <SortIcon field="facility" />
+                    </button>
+                  </th>
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('status')}>
                     <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('status')}>
                       Status
@@ -350,8 +358,16 @@ export function DevicesPage() {
                         ? <Link to={`/dz/metros/${device.metro_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{device.metro_code}</Link>
                         : <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td className={`px-4 py-3 text-sm capitalize ${statusColors[device.status] || ''}`}>
-                      {device.status}
+                    <td className="px-4 py-3 text-sm">
+                      {device.location_pk
+                        ? <Link to={`/dz/facilities/${encodeURIComponent(device.location_pk)}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{device.location_code}</Link>
+                        : <span className="text-muted-foreground">—</span>}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-block h-2.5 w-2.5 rounded-full ${statusDotColor[device.status] ?? 'bg-muted-foreground'}`}
+                        title={device.status}
+                      />
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-center relative">
                       {(() => {
@@ -413,7 +429,7 @@ export function DevicesPage() {
                 ))}
                 {devices.length === 0 && (
                   <tr>
-                    <td colSpan={13} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={14} className="px-4 py-8 text-center text-muted-foreground">
                       No devices found
                     </td>
                   </tr>

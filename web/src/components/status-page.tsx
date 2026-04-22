@@ -4265,6 +4265,7 @@ export function StatusPage() {
             value={status.network.metros}
             format="number"
             href="/dz/metros"
+            peer={{ label: "Facilities", value: status.network.facilities, href: "/dz/facilities" }}
           />
           <StatCard
             label="Devices"

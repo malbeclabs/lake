@@ -1194,6 +1194,7 @@ export interface NetworkSummary {
   links: number
   contributors: number
   metros: number
+  facilities: number
   bandwidth_bps: number
   user_inbound_bps: number
   devices_by_status: Record<string, number>
@@ -2833,6 +2834,8 @@ export interface Device {
   contributor_code: string
   metro_pk: string
   metro_code: string
+  location_pk: string
+  location_code: string
   public_ip: string
   max_users: number
   current_users: number
@@ -2922,11 +2925,13 @@ export interface Link {
   bandwidth_bps: number
   side_a_pk: string
   side_a_code: string
+  side_a_metro_pk: string
   side_a_metro: string
   side_a_iface_name: string
   side_a_ip: string
   side_z_pk: string
   side_z_code: string
+  side_z_metro_pk: string
   side_z_metro: string
   side_z_iface_name: string
   side_z_ip: string
@@ -2965,6 +2970,12 @@ export async function fetchLinks(
   return res.json()
 }
 
+export async function fetchLinksByContributor(contributorPk: string, limit = 500, offset = 0): Promise<PaginatedResponse<Link>> {
+  const res = await fetchWithRetry(`/api/dz/links?contributor_pk=${encodeURIComponent(contributorPk)}&limit=${limit}&offset=${offset}&sort_by=code&sort_dir=asc`)
+  if (!res.ok) throw new Error('Failed to fetch links')
+  return res.json()
+}
+
 export interface LinkDetail extends Link {
   peak_in_bps: number
   peak_out_bps: number
@@ -2984,10 +2995,12 @@ export interface Metro {
   pk: string
   code: string
   name: string
+  country: string
   latitude: number
   longitude: number
   device_count: number
   user_count: number
+  facility_count: number
   unicast_users_count: number
   multicast_subscribers_count: number
   multicast_publishers_count: number
@@ -3035,10 +3048,107 @@ export async function fetchMetro(pk: string): Promise<MetroDetail> {
   return res.json()
 }
 
+export interface Location {
+  pk: string
+  code: string
+  name: string
+  country: string
+  lat: number
+  lng: number
+  loc_id: number
+  metro_pk: string
+  metro_code: string
+  device_count: number
+  user_count: number
+  max_users: number
+  unicast_users_count: number
+  multicast_subscribers_count: number
+  multicast_publishers_count: number
+  max_unicast_users: number
+  max_multicast_subscribers: number
+  max_multicast_publishers: number
+}
+
+export interface FacilityDetail {
+  pk: string
+  code: string
+  name: string
+  country: string
+  lat: number
+  lng: number
+  loc_id: number
+  status: string
+  metro_pk: string
+  metro_code: string
+  device_count: number
+  user_count: number
+  max_users: number
+  unicast_users_count: number
+  multicast_subscribers_count: number
+  multicast_publishers_count: number
+  max_unicast_users: number
+  max_multicast_subscribers: number
+  max_multicast_publishers: number
+}
+
+export async function fetchFacility(pk: string): Promise<FacilityDetail> {
+  const res = await fetchWithRetry(`/api/dz/facilities/${encodeURIComponent(pk)}`)
+  if (!res.ok) throw new Error('Failed to fetch facility')
+  return res.json()
+}
+
+export async function fetchFacilities(
+  limit = 100,
+  offset = 0,
+  sortBy?: string,
+  sortDir?: 'asc' | 'desc',
+  filters?: string[]
+): Promise<PaginatedResponse<Location>> {
+  const params = new URLSearchParams()
+  params.set('limit', String(limit))
+  params.set('offset', String(offset))
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
+  if (filters) filters.forEach(f => params.append('filters', f))
+  const res = await fetchWithRetry(`/api/dz/facilities?${params}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch facilities')
+  }
+  return res.json()
+}
+
+export async function fetchFacilitiesByMetro(metroPk: string, limit = 500, offset = 0): Promise<PaginatedResponse<Location>> {
+  const params = new URLSearchParams()
+  params.set('limit', String(limit))
+  params.set('offset', String(offset))
+  params.set('sort_by', 'code')
+  params.set('sort_dir', 'asc')
+  params.append('filters', `metro_pk:${metroPk}`)
+  const res = await fetchWithRetry(`/api/dz/facilities?${params}`)
+  if (!res.ok) throw new Error('Failed to fetch facilities')
+  return res.json()
+}
+
+export interface PeeringDBFacility {
+  orgName: string
+  aka: string
+  logoUrl: string
+}
+
+export async function fetchPeeringDBFacility(locId: number): Promise<PeeringDBFacility> {
+  const res = await fetchWithRetry(`/api/peeringdb/fac/${locId}`)
+  if (!res.ok) {
+    throw new Error(`Failed to fetch PeeringDB facility ${locId}`)
+  }
+  return res.json()
+}
+
 export interface Contributor {
   pk: string
   code: string
   name: string
+  metro_count: number
+  facility_count: number
   device_count: number
   side_a_devices: number
   side_z_devices: number
@@ -3103,6 +3213,8 @@ export interface User {
   metro_pk: string
   metro_code: string
   metro_name: string
+  location_pk: string
+  location_code: string
   tenant_pk: string
   tenant_code: string
   in_bps: number
@@ -3136,6 +3248,7 @@ export interface UserDetail extends User {
   client_ip: string
   tunnel_id: number
   metro_pk: string
+  facility_loc_id: number
   contributor_pk: string
   contributor_code: string
   is_validator: boolean

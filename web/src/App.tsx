@@ -41,6 +41,8 @@ import { StatusAppendix } from '@/components/status-appendix'
 import { DevicesPage } from '@/components/devices-page'
 import { LinksPage } from '@/components/links-page'
 import { MetrosPage } from '@/components/metros-page'
+import { FacilitiesPage } from '@/components/facilities-page'
+import { FacilityDetailPage } from '@/components/facility-detail-page'
 import { ContributorsPage } from '@/components/contributors-page'
 import { TenantsPage } from '@/components/tenants-page'
 import { TenantDetailPage } from '@/components/tenant-detail-page'
@@ -689,6 +691,8 @@ function AppContent() {
             <Route path="/dz/links/:pk" element={<LinkDetailPage />} />
             <Route path="/dz/metros" element={<MetrosPage />} />
             <Route path="/dz/metros/:pk" element={<MetroDetailPage />} />
+            <Route path="/dz/facilities" element={<FacilitiesPage />} />
+            <Route path="/dz/facilities/:pk" element={<FacilityDetailPage />} />
             <Route path="/dz/contributors" element={<ContributorsPage />} />
             <Route path="/dz/contributors/:pk" element={<ContributorDetailPage />} />
             <Route path="/dz/tenants" element={<TenantsPage />} />

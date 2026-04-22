@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Loader2, Building2, AlertCircle, ChevronDown, ChevronUp, X } from 'lucide-react'
-import { fetchContributors } from '@/lib/api'
+import { fetchFacilities, fetchPeeringDBFacility } from '@/lib/api'
 import { handleRowClick } from '@/lib/utils'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
@@ -11,32 +11,28 @@ import { CopyableText } from './copyable-text'
 
 const PAGE_SIZE = 100
 
-type SortField = 'code' | 'name' | 'metros' | 'locations' | 'devices' | 'sidea' | 'sidez' | 'links' | 'users'
+type SortField = 'code' | 'name' | 'country' | 'loc_id' | 'metro' | 'devices' | 'users'
 type SortDirection = 'asc' | 'desc'
 
-// Parse search filters from URL param
 function parseSearchFilters(searchParam: string): string[] {
   if (!searchParam) return []
   return searchParam.split(',').map(f => f.trim()).filter(Boolean)
 }
 
-// Valid filter fields for contributors
-const validFilterFields = ['code', 'name', 'metros', 'locations', 'devices', 'sidea', 'sidez', 'links']
+const validFilterFields = ['code', 'name', 'country', 'status', 'loc_id', 'metro', 'devices', 'users']
 
-// Field prefixes for inline filter
-const contributorFieldPrefixes = [
-  { prefix: 'code:', description: 'Filter by contributor code' },
-  { prefix: 'name:', description: 'Filter by contributor name' },
-  { prefix: 'metros:', description: 'Filter by metro count (e.g., >1)' },
-  { prefix: 'locations:', description: 'Filter by location count (e.g., >1)' },
-  { prefix: 'devices:', description: 'Filter by device count (e.g., >5)' },
-  { prefix: 'sidea:', description: 'Filter by side A device count (e.g., >5)' },
-  { prefix: 'sidez:', description: 'Filter by side Z device count (e.g., >5)' },
-  { prefix: 'links:', description: 'Filter by link count (e.g., >10)' },
+const facilityFieldPrefixes = [
+  { prefix: 'code:', description: 'Filter by facility code' },
+  { prefix: 'name:', description: 'Filter by facility name' },
+  { prefix: 'country:', description: 'Filter by country code (e.g., US)' },
+  { prefix: 'status:', description: 'Filter by status (activated, pending, suspended)' },
+  { prefix: 'loc_id:', description: 'Filter by PeeringDB location ID' },
+  { prefix: 'metro:', description: 'Filter by metro code' },
+  { prefix: 'devices:', description: 'Filter by device count (e.g., >0)' },
+  { prefix: 'users:', description: 'Filter by user count' },
 ]
 
-// Fields that support autocomplete (none for contributors)
-const contributorAutocompleteFields: string[] = []
+const facilityAutocompleteFields: string[] = []
 
 function toFilterParam(filter: string): string {
   const colonIndex = filter.indexOf(':')
@@ -50,12 +46,42 @@ function toFilterParam(filter: string): string {
   return `all:${filter}`
 }
 
-export function ContributorsPage() {
+function PeeringDBCell({ locId }: { locId: number }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['peeringdb', locId],
+    queryFn: () => fetchPeeringDBFacility(locId),
+    staleTime: 1000 * 60 * 60,
+    enabled: locId > 0,
+  })
+
+  if (locId === 0) return <span className="text-muted-foreground">—</span>
+  if (isLoading) return <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+
+  return (
+    <div className="flex items-center gap-2">
+      {data?.logoUrl && (
+        <img
+          src={data.logoUrl}
+          alt=""
+          className="h-6 w-auto object-contain flex-shrink-0"
+          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+        />
+      )}
+      <div className="min-w-0">
+        <div className="text-sm truncate">{data?.orgName || '—'}</div>
+        {data?.aka && (
+          <div className="text-xs text-muted-foreground truncate">{data.aka}</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+export function FacilitiesPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const [liveFilter, setLiveFilter] = useState('')
 
-  // Derive pagination from URL
   const page = parseInt(searchParams.get('page') || '1')
   const offset = (page - 1) * PAGE_SIZE
   const setOffset = useCallback((newOffset: number) => {
@@ -67,18 +93,13 @@ export function ContributorsPage() {
     })
   }, [setSearchParams])
 
-  // Get sort config from URL (default: code asc)
   const sortField = (searchParams.get('sort') || 'code') as SortField
   const sortDirection = (searchParams.get('dir') || 'asc') as SortDirection
 
-  // Get search filters from URL
   const searchParam = searchParams.get('search') || ''
   const searchFilters = parseSearchFilters(searchParam)
 
-  // Combine committed filters with live filter
-  const allFilters = liveFilter
-    ? [...searchFilters, liveFilter]
-    : searchFilters
+  const allFilters = liveFilter ? [...searchFilters, liveFilter] : searchFilters
 
   const removeFilter = useCallback((filterToRemove: string) => {
     const newFilters = searchFilters.filter(f => f !== filterToRemove)
@@ -105,12 +126,12 @@ export function ContributorsPage() {
   const filterKey = filterParams.join(',')
 
   const { data: response, isLoading, error } = useQuery({
-    queryKey: ['contributors', offset, sortField, sortDirection, filterKey],
-    queryFn: () => fetchContributors(PAGE_SIZE, offset, sortField, sortDirection, filterParams.length > 0 ? filterParams : undefined),
+    queryKey: ['facilities', offset, sortField, sortDirection, filterKey],
+    queryFn: () => fetchFacilities(PAGE_SIZE, offset, sortField, sortDirection, filterParams.length > 0 ? filterParams : undefined),
     refetchInterval: 30000,
     placeholderData: keepPreviousData,
   })
-  const contributors = response?.items ?? []
+  const facilities = response?.items ?? []
 
   const handleSort = (field: SortField) => {
     setSearchParams(prev => {
@@ -133,8 +154,8 @@ export function ContributorsPage() {
   }
 
   const sortAria = (field: SortField) => {
-    if (sortField !== field) return 'none'
-    return sortDirection === 'asc' ? 'ascending' : 'descending'
+    if (sortField !== field) return 'none' as const
+    return sortDirection === 'asc' ? 'ascending' as const : 'descending' as const
   }
 
   const prevFilterRef = useRef(JSON.stringify(allFilters))
@@ -162,7 +183,7 @@ export function ContributorsPage() {
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center">
           <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-          <div className="text-lg font-medium mb-2">Unable to load contributors</div>
+          <div className="text-lg font-medium mb-2">Unable to load facilities</div>
           <div className="text-sm text-muted-foreground">{error?.message || 'Unknown error'}</div>
         </div>
       </div>
@@ -174,7 +195,7 @@ export function ContributorsPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
         <PageHeader
           icon={Building2}
-          title="Contributors"
+          title="Facilities"
           count={response?.total || 0}
           actions={
             <>
@@ -197,17 +218,16 @@ export function ContributorsPage() {
                 </button>
               )}
               <InlineFilter
-                fieldPrefixes={contributorFieldPrefixes}
-                entity="contributors"
-                autocompleteFields={contributorAutocompleteFields}
-                placeholder="Filter contributors..."
+                fieldPrefixes={facilityFieldPrefixes}
+                entity="facilities"
+                autocompleteFields={facilityAutocompleteFields}
+                placeholder="Filter facilities..."
                 onLiveFilterChange={setLiveFilter}
               />
             </>
           }
         />
 
-        {/* Table */}
         <div className="border border-border rounded-lg overflow-hidden bg-card">
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -225,16 +245,16 @@ export function ContributorsPage() {
                       <SortIcon field="name" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('metros')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('metros')}>
-                      Metros
-                      <SortIcon field="metros" />
+                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('country')}>
+                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('country')}>
+                      Country
+                      <SortIcon field="country" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('locations')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('locations')}>
-                      Facilities
-                      <SortIcon field="locations" />
+                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('metro')}>
+                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('metro')}>
+                      Metro
+                      <SortIcon field="metro" />
                     </button>
                   </th>
                   <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('devices')}>
@@ -243,86 +263,90 @@ export function ContributorsPage() {
                       <SortIcon field="devices" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('sidea')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('sidea')}>
-                      Side A
-                      <SortIcon field="sidea" />
-                    </button>
-                  </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('sidez')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('sidez')}>
-                      Side Z
-                      <SortIcon field="sidez" />
-                    </button>
-                  </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('links')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('links')}>
-                      Links
-                      <SortIcon field="links" />
-                    </button>
-                  </th>
                   <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('users')}>
                     <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('users')}>
                       Users
                       <SortIcon field="users" />
                     </button>
                   </th>
+                  <th className="px-4 py-3 font-medium text-right">Unicast Avail.</th>
+                  <th className="px-4 py-3 font-medium text-right">Subs. Avail.</th>
+                  <th className="px-4 py-3 font-medium text-right">Pubs. Avail.</th>
+                  <th className="px-4 py-3 font-medium">Organization</th>
                 </tr>
               </thead>
               <tbody>
-                {contributors.map((contributor) => (
+                {facilities.map((facility) => (
                   <tr
-                    key={contributor.pk}
+                    key={facility.pk}
                     className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
-                    onClick={(e) => handleRowClick(e, `/dz/contributors/${contributor.pk}`, navigate)}
+                    onClick={(e) => handleRowClick(e, `/dz/facilities/${encodeURIComponent(facility.pk)}`, navigate)}
                   >
                     <td className="px-4 py-3 whitespace-nowrap">
-                      <CopyableText text={contributor.code} className="font-mono text-sm" />
+                      <CopyableText text={facility.code} className="font-mono text-sm" />
+                    </td>
+                    <td className="px-4 py-3 text-sm max-w-xs truncate">
+                      {facility.name || '—'}
                     </td>
                     <td className="px-4 py-3 text-sm">
-                      {contributor.name || '—'}
+                      {facility.country || <span className="text-muted-foreground">—</span>}
+                    </td>
+                    <td className="px-4 py-3 text-sm">
+                      {facility.metro_pk
+                        ? <Link to={`/dz/metros/${facility.metro_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{facility.metro_code}</Link>
+                        : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
-                      {contributor.metro_count > 0 ? contributor.metro_count : <span className="text-muted-foreground">—</span>}
-                    </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right">
-                      {contributor.facility_count > 0 ? contributor.facility_count : <span className="text-muted-foreground">—</span>}
-                    </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right">
-                      {contributor.device_count > 0 ? contributor.device_count : <span className="text-muted-foreground">—</span>}
-                    </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">
-                      {contributor.side_a_devices > 0 ? contributor.side_a_devices : '—'}
-                    </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">
-                      {contributor.side_z_devices > 0 ? contributor.side_z_devices : '—'}
-                    </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right">
-                      {contributor.link_count > 0 ? contributor.link_count : <span className="text-muted-foreground">—</span>}
+                      {facility.device_count > 0 ? facility.device_count : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right relative">
                       {(() => {
-                        const pct = contributor.max_users > 0 ? Math.min(100, (contributor.user_count / contributor.max_users) * 100) : 0
+                        const userAvail = facility.max_users > 0 ? Math.max(0, facility.max_users - facility.user_count) : Infinity
+                        const unicastAvail = facility.max_unicast_users > 0 ? Math.max(0, facility.max_unicast_users - facility.unicast_users_count) : Infinity
+                        const subsAvail = facility.max_multicast_subscribers > 0 ? Math.max(0, facility.max_multicast_subscribers - facility.multicast_subscribers_count) : Infinity
+                        const pubsAvail = facility.max_multicast_publishers > 0 ? Math.max(0, facility.max_multicast_publishers - facility.multicast_publishers_count) : Infinity
+                        const effectiveAvail = Math.min(userAvail, unicastAvail, subsAvail, pubsAvail)
+                        const effectiveMax = effectiveAvail === Infinity ? 0 : facility.user_count + effectiveAvail
+                        const pct = effectiveMax > 0 ? Math.min(100, (facility.user_count / effectiveMax) * 100) : 0
                         const fillColor = pct >= 90 ? 'bg-red-500/25' : pct >= 70 ? 'bg-amber-500/20' : 'bg-blue-500/15'
                         return (
                           <>
-                            {contributor.max_users > 0 && <div className="absolute inset-y-0 left-0 right-0 pointer-events-none bg-muted/30 border-r border-muted-foreground/20" />}
+                            {effectiveMax > 0 && <div className="absolute inset-y-0 left-0 right-0 pointer-events-none bg-muted/30 border-r border-muted-foreground/20" />}
                             {pct > 0 && <div className={`absolute inset-y-0 left-0 pointer-events-none ${fillColor}`} style={{ width: `${pct}%` }} />}
                             <span className="relative">
-                              {contributor.user_count > 0 || contributor.max_users > 0 ? (
-                                <>{contributor.user_count}{contributor.max_users > 0 && <span className="text-muted-foreground">/{contributor.max_users}</span>}</>
+                              {facility.user_count > 0 || effectiveMax > 0 ? (
+                                <>{facility.user_count}{effectiveMax > 0 && <span className="text-muted-foreground">/{effectiveMax}</span>}</>
                               ) : <span className="text-muted-foreground">—</span>}
                             </span>
                           </>
                         )
                       })()}
                     </td>
+                    {[
+                      { count: facility.unicast_users_count, max: facility.max_unicast_users },
+                      { count: facility.multicast_subscribers_count, max: facility.max_multicast_subscribers },
+                      { count: facility.multicast_publishers_count, max: facility.max_multicast_publishers },
+                    ].map(({ count, max }, i) => {
+                      const effectiveMax = max > 0 ? max : facility.max_users
+                      const available = effectiveMax > count ? effectiveMax - count : 0
+                      return (
+                        <td key={i} className="px-4 py-3 text-sm tabular-nums text-right">
+                          {count === 0 && effectiveMax === 0
+                            ? <span className="text-muted-foreground">—</span>
+                            : <span>{available}</span>
+                          }
+                        </td>
+                      )
+                    })}
+                    <td className="px-4 py-3 max-w-sm" onClick={e => e.stopPropagation()}>
+                      <PeeringDBCell locId={facility.loc_id} />
+                    </td>
                   </tr>
                 ))}
-                {contributors.length === 0 && (
+                {facilities.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
-                      No contributors found
+                    <td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">
+                      No facilities found
                     </td>
                   </tr>
                 )}

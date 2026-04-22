@@ -215,6 +215,58 @@ func QueryCurrentMetros(ctx context.Context, log *slog.Logger, db clickhouse.Cli
 	return metros, nil
 }
 
+// locationRow is an intermediate struct for reading from ClickHouse
+type locationRow struct {
+	PK             string  `ch:"pk"`
+	Owner          string  `ch:"owner"`
+	Lat            float64 `ch:"lat"`
+	Lng            float64 `ch:"lng"`
+	LocId          uint32  `ch:"loc_id"`
+	Status         string  `ch:"status"`
+	Code           string  `ch:"code"`
+	Name           string  `ch:"name"`
+	Country        string  `ch:"country"`
+	ReferenceCount uint32  `ch:"reference_count"`
+}
+
+// QueryCurrentLocations queries all current (non-deleted) locations from ClickHouse
+func QueryCurrentLocations(ctx context.Context, log *slog.Logger, db clickhouse.Client) ([]Location, error) {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get connection: %w", err)
+	}
+	defer conn.Close()
+
+	d, err := NewLocationDataset(log)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create dataset: %w", err)
+	}
+
+	typed := dataset.NewTypedDimensionType2Dataset[locationRow](d)
+	rows, err := typed.GetCurrentRows(ctx, conn, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query locations: %w", err)
+	}
+
+	locations := make([]Location, len(rows))
+	for i, row := range rows {
+		locations[i] = Location{
+			PK:             row.PK,
+			Owner:          row.Owner,
+			Lat:            row.Lat,
+			Lng:            row.Lng,
+			LocId:          row.LocId,
+			Status:         row.Status,
+			Code:           row.Code,
+			Name:           row.Name,
+			Country:        row.Country,
+			ReferenceCount: row.ReferenceCount,
+		}
+	}
+
+	return locations, nil
+}
+
 // QueryCurrentUsers queries all current (non-deleted) users from ClickHouse
 // Uses history table with deterministic "latest row per entity" definition
 func QueryCurrentUsers(ctx context.Context, log *slog.Logger, db clickhouse.Client) ([]User, error) {

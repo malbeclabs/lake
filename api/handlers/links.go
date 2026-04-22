@@ -21,9 +21,11 @@ type LinkListItem struct {
 	BandwidthBps    int64   `json:"bandwidth_bps"`
 	SideAPK         string  `json:"side_a_pk"`
 	SideACode       string  `json:"side_a_code"`
+	SideAMetroPK    string  `json:"side_a_metro_pk"`
 	SideAMetro      string  `json:"side_a_metro"`
 	SideZPK         string  `json:"side_z_pk"`
 	SideZCode       string  `json:"side_z_code"`
+	SideZMetroPK    string  `json:"side_z_metro_pk"`
 	SideZMetro      string  `json:"side_z_metro"`
 	ContributorPK   string  `json:"contributor_pk"`
 	ContributorCode string  `json:"contributor_code"`
@@ -84,6 +86,10 @@ func (a *API) GetLinks(w http.ResponseWriter, r *http.Request) {
 	if filterClause != "" {
 		whereFilter = " AND " + filterClause
 	}
+	if contributorPk := r.URL.Query().Get("contributor_pk"); contributorPk != "" {
+		whereFilter += " AND contributor_pk = ?"
+		filterArgs = append(filterArgs, contributorPk)
+	}
 	orderBy := sort.OrderByClause(linkSortFields)
 
 	query := `
@@ -116,9 +122,11 @@ func (a *API) GetLinks(w http.ResponseWriter, r *http.Request) {
 				COALESCE(l.bandwidth_bps, 0) as bandwidth_bps,
 				COALESCE(l.side_a_pk, '') as side_a_pk,
 				COALESCE(da.code, '') as side_a_code,
+				COALESCE(ma.pk, '') as side_a_metro_pk,
 				COALESCE(ma.code, '') as side_a_metro,
 				COALESCE(l.side_z_pk, '') as side_z_pk,
 				COALESCE(dz.code, '') as side_z_code,
+				COALESCE(mz.pk, '') as side_z_metro_pk,
 				COALESCE(mz.code, '') as side_z_metro,
 				COALESCE(l.contributor_pk, '') as contributor_pk,
 				COALESCE(c.code, '') as contributor_code,
@@ -139,7 +147,7 @@ func (a *API) GetLinks(w http.ResponseWriter, r *http.Request) {
 			LEFT JOIN latency_stats ls ON l.pk = ls.link_pk
 		)
 		SELECT
-			pk, code, status, link_type, bandwidth_bps, side_a_pk, side_a_code, side_a_metro, side_z_pk, side_z_code, side_z_metro, contributor_pk, contributor_code, in_bps, out_bps, utilization_in, utilization_out, latency_us, jitter_us, loss_percent,
+			pk, code, status, link_type, bandwidth_bps, side_a_pk, side_a_code, side_a_metro_pk, side_a_metro, side_z_pk, side_z_code, side_z_metro_pk, side_z_metro, contributor_pk, contributor_code, in_bps, out_bps, utilization_in, utilization_out, latency_us, jitter_us, loss_percent,
 			count() OVER () as _total
 		FROM links_data
 		WHERE 1=1` + whereFilter + " " + orderBy + `
@@ -173,9 +181,11 @@ func (a *API) GetLinks(w http.ResponseWriter, r *http.Request) {
 			&l.BandwidthBps,
 			&l.SideAPK,
 			&l.SideACode,
+			&l.SideAMetroPK,
 			&l.SideAMetro,
 			&l.SideZPK,
 			&l.SideZCode,
+			&l.SideZMetroPK,
 			&l.SideZMetro,
 			&l.ContributorPK,
 			&l.ContributorCode,

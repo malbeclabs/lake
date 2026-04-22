@@ -174,6 +174,31 @@ func (s *Store) ReplaceMetros(ctx context.Context, metros []Metro) error {
 	return nil
 }
 
+func (s *Store) ReplaceLocations(ctx context.Context, locations []Location) error {
+	s.log.Debug("serviceability/store: replacing locations", "count", len(locations))
+
+	d, err := NewLocationDataset(s.log)
+	if err != nil {
+		return fmt.Errorf("failed to create dimension dataset: %w", err)
+	}
+
+	conn, err := s.cfg.ClickHouse.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get ClickHouse connection: %w", err)
+	}
+	defer conn.Close()
+
+	if err := d.WriteBatch(ctx, conn, len(locations), func(i int) ([]any, error) {
+		return locationSchema.ToRow(locations[i]), nil
+	}, &dataset.DimensionType2DatasetWriteConfig{
+		MissingMeansDeleted: true,
+	}); err != nil {
+		return fmt.Errorf("failed to write locations to ClickHouse: %w", err)
+	}
+
+	return nil
+}
+
 func (s *Store) ReplaceLinks(ctx context.Context, links []Link) error {
 	s.log.Debug("serviceability/store: replacing links", "count", len(links))
 

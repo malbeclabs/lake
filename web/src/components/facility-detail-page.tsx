@@ -1,15 +1,15 @@
 import { useParams, useNavigate, Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import { Loader2, MapPin, AlertCircle, ArrowLeft, Info, ChevronUp, ChevronDown } from 'lucide-react'
-import { fetchMetro, fetchDevicesByMetro, fetchFacilitiesByMetro } from '@/lib/api'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
+import { useState, useMemo } from 'react'
+import { Loader2, Building2, AlertCircle, ArrowLeft, ChevronUp, ChevronDown } from 'lucide-react'
+import { fetchFacility, fetchDevices, fetchPeeringDBFacility } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useBackLink } from '@/hooks/use-back-link'
 import { handleRowClick } from '@/lib/utils'
-import { useState, useMemo } from 'react'
 import { MiniMap } from '@/components/mini-map'
+import { CopyableText } from '@/components/copyable-text'
 
-type DeviceSortField = 'code' | 'type' | 'contributor' | 'facility' | 'status' | 'users' | 'unicast' | 'subscribers' | 'publishers' | 'in' | 'out'
-type FacilitySortField = 'code' | 'name' | 'country' | 'devices' | 'users'
+type DeviceSortField = 'code' | 'type' | 'contributor' | 'metro' | 'status' | 'users' | 'unicast' | 'subscribers' | 'publishers' | 'in' | 'out'
 type SortDir = 'asc' | 'desc'
 
 function formatBps(bps: number): string {
@@ -19,13 +19,6 @@ function formatBps(bps: number): string {
   if (bps >= 1e6) return `${(bps / 1e6).toFixed(1)} Mbps`
   if (bps >= 1e3) return `${(bps / 1e3).toFixed(1)} Kbps`
   return `${bps.toFixed(0)} bps`
-}
-
-function formatStake(sol: number): string {
-  if (sol === 0) return '—'
-  if (sol >= 1e6) return `${(sol / 1e6).toFixed(2)}M SOL`
-  if (sol >= 1e3) return `${(sol / 1e3).toFixed(1)}K SOL`
-  return `${sol.toFixed(0)} SOL`
 }
 
 const statusDotColor: Record<string, string> = {
@@ -40,36 +33,50 @@ const statusDotColor: Record<string, string> = {
   deactivated: 'bg-muted-foreground',
 }
 
-export function MetroDetailPage() {
+function statusPill(status: string) {
+  const colors: Record<string, string> = {
+    activated: 'bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20',
+    pending: 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border-yellow-500/20',
+    suspended: 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20',
+  }
+  const cls = colors[status] ?? 'bg-muted text-muted-foreground border-border'
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium border ${cls}`}>
+      {status}
+    </span>
+  )
+}
+
+export function FacilityDetailPage() {
   const { pk } = useParams<{ pk: string }>()
   const navigate = useNavigate()
-  const back = useBackLink({ to: '/dz/metros', label: 'metros' })
+  const back = useBackLink({ to: '/dz/facilities', label: 'facilities' })
   const [sortField, setSortField] = useState<DeviceSortField>('code')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
-  const [locSortField, setLocSortField] = useState<FacilitySortField>('code')
-  const [locSortDir, setLocSortDir] = useState<SortDir>('asc')
 
-  const { data: metro, isLoading, error } = useQuery({
-    queryKey: ['metro', pk],
-    queryFn: () => fetchMetro(pk!),
+  const { data: facility, isLoading, error } = useQuery({
+    queryKey: ['facility', pk],
+    queryFn: () => fetchFacility(pk!),
     enabled: !!pk,
   })
 
-  const { data: devicesData } = useQuery({
-    queryKey: ['metro-devices', pk],
-    queryFn: () => fetchDevicesByMetro(pk!),
+  const { data: devicesResponse } = useQuery({
+    queryKey: ['devices', 'facility', pk],
+    queryFn: () => fetchDevices(100, 0, 'code', 'asc', [`location_pk:${pk}`]),
     enabled: !!pk,
+    placeholderData: keepPreviousData,
   })
 
-  const { data: locationsData } = useQuery({
-    queryKey: ['metro-facilities', pk],
-    queryFn: () => fetchFacilitiesByMetro(pk!),
-    enabled: !!pk,
+  const { data: peeringdb } = useQuery({
+    queryKey: ['peeringdb', facility?.loc_id],
+    queryFn: () => fetchPeeringDBFacility(facility!.loc_id),
+    enabled: !!facility && facility.loc_id > 0,
+    staleTime: 1000 * 60 * 60,
   })
 
-  useDocumentTitle(metro?.code || metro?.name || 'Metro')
+  useDocumentTitle(facility?.code || 'Facility')
 
-  const rawDevices = devicesData?.items ?? []
+  const rawDevices = devicesResponse?.items ?? []
   const devices = useMemo(() => {
     return [...rawDevices].sort((a, b) => {
       let cmp = 0
@@ -77,7 +84,7 @@ export function MetroDetailPage() {
         case 'code': cmp = a.code.localeCompare(b.code); break
         case 'type': cmp = (a.device_type || '').localeCompare(b.device_type || ''); break
         case 'contributor': cmp = (a.contributor_code || '').localeCompare(b.contributor_code || ''); break
-        case 'facility': cmp = (a.location_code || '').localeCompare(b.location_code || ''); break
+        case 'metro': cmp = (a.metro_code || '').localeCompare(b.metro_code || ''); break
         case 'status': cmp = a.status.localeCompare(b.status); break
         case 'users': {
           const noA = !a.max_users, noB = !b.max_users
@@ -86,7 +93,7 @@ export function MetroDetailPage() {
           const fracA = a.current_users / a.max_users
           const fracB = b.current_users / b.max_users
           if (fracA !== fracB) { cmp = fracA - fracB; break }
-          return b.max_users - a.max_users  // higher max wins, direction-independent
+          return b.max_users - a.max_users
         }
         case 'unicast': {
           const effA = a.max_unicast_users > 0 ? a.max_unicast_users : a.unicast_users + Math.max(0, a.max_users - a.current_users)
@@ -128,30 +135,6 @@ export function MetroDetailPage() {
     return sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
   }
 
-  const rawFacilities = locationsData?.items ?? []
-  const facilities = useMemo(() => {
-    return [...rawFacilities].sort((a, b) => {
-      let cmp = 0
-      switch (locSortField) {
-        case 'code': cmp = a.code.localeCompare(b.code); break
-        case 'name': cmp = (a.name || '').localeCompare(b.name || ''); break
-        case 'country': cmp = (a.country || '').localeCompare(b.country || ''); break
-        case 'devices': cmp = a.device_count - b.device_count; break
-        case 'users': cmp = a.user_count - b.user_count; break
-      }
-      return locSortDir === 'asc' ? cmp : -cmp
-    })
-  }, [rawFacilities, locSortField, locSortDir])
-
-  const handleLocSort = (field: FacilitySortField) => {
-    if (locSortField === field) setLocSortDir(d => d === 'asc' ? 'desc' : 'asc')
-    else { setLocSortField(field); setLocSortDir('asc') }
-  }
-  const LocSortIcon = ({ field }: { field: FacilitySortField }) => {
-    if (locSortField !== field) return null
-    return locSortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
-  }
-
   if (isLoading) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -160,12 +143,12 @@ export function MetroDetailPage() {
     )
   }
 
-  if (error || !metro) {
+  if (error || !facility) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center">
           <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-          <div className="text-lg font-medium mb-2">Metro not found</div>
+          <div className="text-lg font-medium mb-2">Facility not found</div>
           <button
             onClick={() => navigate(back.to)}
             className="text-sm text-muted-foreground hover:text-foreground"
@@ -180,7 +163,6 @@ export function MetroDetailPage() {
   return (
     <div className="flex-1 overflow-auto">
       <div className="max-w-[1200px] mx-auto px-4 sm:px-8 py-8">
-        {/* Back button */}
         <button
           onClick={() => navigate(back.to)}
           className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-6"
@@ -190,125 +172,156 @@ export function MetroDetailPage() {
         </button>
 
         {/* Header */}
-        <div className="flex items-center gap-3 mb-8">
-          <MapPin className="h-8 w-8 text-muted-foreground" />
+        <div className="flex items-start gap-4 mb-8">
+          {peeringdb?.logoUrl ? (
+            <img
+              src={peeringdb.logoUrl}
+              alt=""
+              className="h-12 w-auto object-contain flex-shrink-0"
+              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+            />
+          ) : (
+            <Building2 className="h-8 w-8 text-muted-foreground mt-1 flex-shrink-0" />
+          )}
           <div>
-            <h1 className="text-2xl font-medium">{metro.name || metro.code}</h1>
-            <div className="text-sm text-muted-foreground font-mono">{metro.code}</div>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-medium">{facility.name || facility.code}</h1>
+              {statusPill(facility.status)}
+            </div>
+            <div className="text-sm text-muted-foreground font-mono mt-0.5">{facility.code}</div>
+            {peeringdb?.orgName && (
+              <div className="text-sm text-muted-foreground mt-1">{peeringdb.orgName}</div>
+            )}
           </div>
         </div>
 
         {/* Info grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
-          {/* Infrastructure */}
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <h3 className="text-sm font-medium text-muted-foreground mb-3">Details</h3>
+            <dl className="space-y-2">
+              <div className="flex justify-between">
+                <dt className="text-sm text-muted-foreground">Country</dt>
+                <dd className="text-sm">{facility.country || '—'}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-sm text-muted-foreground">Metro</dt>
+                <dd className="text-sm font-mono">
+                  {facility.metro_pk
+                    ? <Link to={`/dz/metros/${facility.metro_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline">{facility.metro_code}</Link>
+                    : (facility.metro_code || '—')}
+                </dd>
+              </div>
+              <div className="flex justify-between items-center">
+                <dt className="text-sm text-muted-foreground">Pubkey</dt>
+                <dd className="text-sm font-mono">
+                  <CopyableText text={facility.pk} className="font-mono text-sm">
+                    {facility.pk.slice(0, 4)}...{facility.pk.slice(-4)}
+                  </CopyableText>
+                </dd>
+              </div>
+              <div className="flex justify-between items-center">
+                <dt className="text-sm text-muted-foreground">Code</dt>
+                <dd className="text-sm font-mono">
+                  <CopyableText text={facility.code} className="font-mono text-sm" />
+                </dd>
+              </div>
+              {facility.loc_id > 0 && (
+                <div className="flex justify-between">
+                  <dt className="text-sm text-muted-foreground">PeeringDB ID</dt>
+                  <dd className="text-sm font-mono">
+                    <a
+                      href={`https://www.peeringdb.com/fac/${facility.loc_id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-600 dark:text-blue-400 hover:underline"
+                    >
+                      {facility.loc_id}
+                    </a>
+                  </dd>
+                </div>
+              )}
+            </dl>
+          </div>
+
           <div className="border border-border rounded-lg p-4 bg-card">
             <h3 className="text-sm font-medium text-muted-foreground mb-3">Infrastructure</h3>
             <dl className="space-y-2">
               <div className="flex justify-between">
                 <dt className="text-sm text-muted-foreground">Devices</dt>
-                <dd className="text-sm">{metro.device_count}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-sm text-muted-foreground">Facilities</dt>
-                <dd className="text-sm">{metro.facility_count}</dd>
+                <dd className="text-sm">{facility.device_count}</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-sm text-muted-foreground">Users</dt>
                 <dd className="text-sm tabular-nums">
-                  {metro.user_count}
-                  <span className="text-muted-foreground">/{metro.max_users}</span>
+                  {facility.user_count}
+                  {facility.max_users > 0 && <span className="text-muted-foreground">/{facility.max_users}</span>}
                 </dd>
               </div>
               {(() => {
-                const effUnicast = Math.max(metro.unicast_users_count, metro.max_unicast_users)
-                const effSubs = Math.max(metro.multicast_subscribers_count, metro.max_multicast_subscribers)
-                const effPubs = Math.max(metro.multicast_publishers_count, metro.max_multicast_publishers)
-                const isDerivedUnicast = metro.raw_max_unicast_users === 0 && effUnicast > 0
-                const isDerivedSubs = metro.raw_max_multicast_subscribers === 0 && effSubs > 0
-                const isDerivedPubs = metro.raw_max_multicast_publishers === 0 && effPubs > 0
+                const effUnicastMax = facility.max_unicast_users > 0 ? facility.max_unicast_users : facility.max_users
+                const effSubsMax = facility.max_multicast_subscribers > 0 ? facility.max_multicast_subscribers : facility.max_users
+                const effPubsMax = facility.max_multicast_publishers > 0 ? facility.max_multicast_publishers : facility.max_users
                 return (
                   <>
-                    <div className="flex justify-between">
-                      <dt className="text-sm text-muted-foreground">Unicast</dt>
-                      <dd className="text-sm tabular-nums">
-                        {metro.unicast_users_count}{effUnicast > 0 && <> / {isDerivedUnicast
-                          ? <span className="text-muted-foreground/50 inline-flex items-center gap-0.5" title="Calculated from max_users">{effUnicast}<Info className="h-2.5 w-2.5" /></span>
-                          : <span className="text-muted-foreground">{effUnicast}</span>
-                        }</>}
-                      </dd>
-                    </div>
-                    <div className="flex justify-between">
-                      <dt className="text-sm text-muted-foreground">Subscribers</dt>
-                      <dd className="text-sm tabular-nums">
-                        {metro.multicast_subscribers_count}{effSubs > 0 && <> / {isDerivedSubs
-                          ? <span className="text-muted-foreground/50 inline-flex items-center gap-0.5" title="Calculated from max_users">{effSubs}<Info className="h-2.5 w-2.5" /></span>
-                          : <span className="text-muted-foreground">{effSubs}</span>
-                        }</>}
-                      </dd>
-                    </div>
-                    <div className="flex justify-between">
-                      <dt className="text-sm text-muted-foreground">Publishers</dt>
-                      <dd className="text-sm tabular-nums">
-                        {metro.multicast_publishers_count}{effPubs > 0 && <> / {isDerivedPubs
-                          ? <span className="text-muted-foreground/50 inline-flex items-center gap-0.5" title="Calculated from max_users">{effPubs}<Info className="h-2.5 w-2.5" /></span>
-                          : <span className="text-muted-foreground">{effPubs}</span>
-                        }</>}
-                      </dd>
-                    </div>
+                    {(facility.unicast_users_count > 0 || effUnicastMax > 0) && (
+                      <div className="flex justify-between">
+                        <dt className="text-sm text-muted-foreground pl-3">Unicast</dt>
+                        <dd className="text-sm tabular-nums">
+                          {facility.unicast_users_count}
+                          {effUnicastMax > 0 && <span className="text-muted-foreground">/{effUnicastMax}</span>}
+                        </dd>
+                      </div>
+                    )}
+                    {(facility.multicast_subscribers_count > 0 || effSubsMax > 0) && (
+                      <div className="flex justify-between">
+                        <dt className="text-sm text-muted-foreground pl-3">Subscribers</dt>
+                        <dd className="text-sm tabular-nums">
+                          {facility.multicast_subscribers_count}
+                          {effSubsMax > 0 && <span className="text-muted-foreground">/{effSubsMax}</span>}
+                        </dd>
+                      </div>
+                    )}
+                    {(facility.multicast_publishers_count > 0 || effPubsMax > 0) && (
+                      <div className="flex justify-between">
+                        <dt className="text-sm text-muted-foreground pl-3">Publishers</dt>
+                        <dd className="text-sm tabular-nums">
+                          {facility.multicast_publishers_count}
+                          {effPubsMax > 0 && <span className="text-muted-foreground">/{effPubsMax}</span>}
+                        </dd>
+                      </div>
+                    )}
                   </>
                 )
               })()}
             </dl>
           </div>
 
-          {/* Traffic + Validators */}
-          <div className="border border-border rounded-lg p-4 bg-card">
-            <h3 className="text-sm font-medium text-muted-foreground mb-3">Traffic</h3>
-            <dl className="space-y-2">
-              <div className="flex justify-between">
-                <dt className="text-sm text-muted-foreground">Inbound</dt>
-                <dd className="text-sm">{formatBps(metro.in_bps)}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-sm text-muted-foreground">Outbound</dt>
-                <dd className="text-sm">{formatBps(metro.out_bps)}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-sm text-muted-foreground">Validators</dt>
-                <dd className="text-sm">{metro.validator_count}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-sm text-muted-foreground">Total Stake</dt>
-                <dd className="text-sm">{formatStake(metro.stake_sol)}</dd>
-              </div>
-            </dl>
-          </div>
-
-          {/* Map */}
-          <div className="border border-border rounded-lg overflow-hidden bg-card min-h-40">
-            <MiniMap
-              lat={metro.latitude}
-              lng={metro.longitude}
-              googleMapsHref={`https://www.google.com/maps?q=${metro.latitude},${metro.longitude}`}
-            />
-          </div>
+          {facility.lat !== 0 && facility.lng !== 0 ? (
+            <div className="border border-border rounded-lg overflow-hidden bg-card" style={{ height: '160px' }}>
+              <MiniMap
+                lat={facility.lat}
+                lng={facility.lng}
+                googleMapsHref={`https://www.google.com/maps?q=${facility.lat},${facility.lng}`}
+              />
+            </div>
+          ) : null}
         </div>
 
         {/* Devices table */}
-        {devices.length > 0 && (
-          <div>
+        <div>
             <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
-              Devices ({devices.length}{devicesData && devicesData.total > rawDevices.length ? ` of ${devicesData.total}` : ''})
+              Devices ({devices.length}{devicesResponse && devicesResponse.total > rawDevices.length ? ` of ${devicesResponse.total}` : ''})
             </h2>
             <div className="border border-border rounded-lg overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/30 text-xs text-muted-foreground uppercase tracking-wider">
-                      {(['code', 'type', 'contributor', 'facility', 'status'] as DeviceSortField[]).map(f => (
+                      {(['code', 'type', 'contributor', 'metro', 'status'] as DeviceSortField[]).map(f => (
                         <th key={f} className="px-4 py-3 font-medium text-left">
                           <button className="inline-flex items-center gap-1" type="button" onClick={() => handleDeviceSort(f)}>
-                            {f === 'facility' ? 'Facility' : f.charAt(0).toUpperCase() + f.slice(1)}
+                            {f.charAt(0).toUpperCase() + f.slice(1)}
                             <SortIcon field={f} />
                           </button>
                         </th>
@@ -341,12 +354,14 @@ export function MetroDetailPage() {
                           <td className="px-4 py-3 text-sm text-muted-foreground capitalize">
                             {device.device_type?.replace(/_/g, ' ')}
                           </td>
-                          <td className="px-4 py-3 text-sm text-muted-foreground">
-                            {device.contributor_code || '—'}
+                          <td className="px-4 py-3 text-sm">
+                            {device.contributor_pk
+                              ? <Link to={`/dz/contributors/${device.contributor_pk}`} className="text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{device.contributor_code}</Link>
+                              : <span className="text-muted-foreground">—</span>}
                           </td>
                           <td className="px-4 py-3 text-sm">
-                            {device.location_pk
-                              ? <Link to={`/dz/facilities/${encodeURIComponent(device.location_pk)}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{device.location_code}</Link>
+                            {device.metro_pk
+                              ? <Link to={`/dz/metros/${device.metro_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{device.metro_code}</Link>
                               : <span className="text-muted-foreground">—</span>}
                           </td>
                           <td className="px-4 py-3">
@@ -396,72 +411,18 @@ export function MetroDetailPage() {
                         </tr>
                       )
                     })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Facilities table */}
-        {facilities.length > 0 && (
-          <div className="mt-8">
-            <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
-              Facilities ({facilities.length}{locationsData && locationsData.total > rawFacilities.length ? ` of ${locationsData.total}` : ''})
-            </h2>
-            <div className="border border-border rounded-lg overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border bg-muted/30 text-xs text-muted-foreground uppercase tracking-wider">
-                      {(['code', 'name', 'country'] as FacilitySortField[]).map(f => (
-                        <th key={f} className="px-4 py-3 font-medium text-left">
-                          <button className="inline-flex items-center gap-1" type="button" onClick={() => handleLocSort(f)}>
-                            {f.charAt(0).toUpperCase() + f.slice(1)}
-                            <LocSortIcon field={f} />
-                          </button>
-                        </th>
-                      ))}
-                      {(['devices', 'users'] as FacilitySortField[]).map(f => (
-                        <th key={f} className="px-4 py-3 font-medium text-right">
-                          <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleLocSort(f)}>
-                            {f.charAt(0).toUpperCase() + f.slice(1)}
-                            <LocSortIcon field={f} />
-                          </button>
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {facilities.map((loc) => (
-                      <tr
-                        key={loc.pk}
-                        className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
-                        onClick={(e) => handleRowClick(e, `/dz/facilities/${encodeURIComponent(loc.pk)}`, navigate)}
-                      >
-                        <td className="px-4 py-3">
-                          <span className="font-mono text-sm">{loc.code}</span>
-                        </td>
-                        <td className="px-4 py-3 text-sm text-muted-foreground">
-                          {loc.name || '—'}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-muted-foreground">
-                          {loc.country || '—'}
-                        </td>
-                        <td className="px-4 py-3 text-sm tabular-nums text-right">
-                          {loc.device_count > 0 ? loc.device_count : <span className="text-muted-foreground">—</span>}
-                        </td>
-                        <td className="px-4 py-3 text-sm tabular-nums text-right">
-                          {loc.user_count > 0 ? loc.user_count : <span className="text-muted-foreground">—</span>}
+                    {devices.length === 0 && (
+                      <tr>
+                        <td colSpan={11} className="px-4 py-8 text-center text-muted-foreground text-sm">
+                          No devices
                         </td>
                       </tr>
-                    ))}
+                    )}
                   </tbody>
                 </table>
               </div>
             </div>
           </div>
-        )}
       </div>
     </div>
   )

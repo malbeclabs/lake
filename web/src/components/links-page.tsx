@@ -11,13 +11,16 @@ import { CopyableText } from './copyable-text'
 
 const PAGE_SIZE = 100
 
-const statusColors: Record<string, string> = {
-  activated: 'text-muted-foreground',
-  provisioning: 'text-blue-600 dark:text-blue-400',
-  'soft-drained': 'text-amber-600 dark:text-amber-400',
-  drained: 'text-amber-600 dark:text-amber-400',
-  suspended: 'text-red-600 dark:text-red-400',
-  pending: 'text-amber-600 dark:text-amber-400',
+const statusDotColor: Record<string, string> = {
+  activated:    'bg-green-500',
+  active:       'bg-green-500',
+  provisioning: 'bg-blue-500',
+  'soft-drained': 'bg-amber-500',
+  drained:      'bg-amber-500',
+  suspended:    'bg-red-500',
+  pending:      'bg-amber-500',
+  inactive:     'bg-muted-foreground',
+  deactivated:  'bg-muted-foreground',
 }
 
 function formatBps(bps: number): string {
@@ -285,17 +288,18 @@ export function LinksPage() {
                       <SortIcon field="contributor" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('sidea')}>
-                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('sidea')}>
-                      Side A
-                      <SortIcon field="sidea" />
-                    </button>
-                  </th>
-                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('sidez')}>
-                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('sidez')}>
-                      Side Z
-                      <SortIcon field="sidez" />
-                    </button>
+                  <th className="px-4 py-3 font-medium whitespace-nowrap text-center">
+                    <span className="inline-flex items-center gap-1.5 justify-center w-full">
+                      <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('sidea')}>
+                        Side A
+                        <SortIcon field="sidea" />
+                      </button>
+                      <span className="text-muted-foreground select-none">⟺</span>
+                      <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('sidez')}>
+                        Side Z
+                        <SortIcon field="sidez" />
+                      </button>
+                    </span>
                   </th>
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('status')}>
                     <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('status')}>
@@ -303,7 +307,7 @@ export function LinksPage() {
                       <SortIcon field="status" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('bandwidth')}>
+                  <th className="px-4 py-3 font-medium text-right whitespace-nowrap" aria-sort={sortAria('bandwidth')}>
                     <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('bandwidth')}>
                       Bandwidth
                       <SortIcon field="bandwidth" />
@@ -333,13 +337,13 @@ export function LinksPage() {
                       <SortIcon field="utilout" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('latency')}>
+                  <th className="px-4 py-3 font-medium text-right whitespace-nowrap" aria-sort={sortAria('latency')}>
                     <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('latency')}>
                       Latency
                       <SortIcon field="latency" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('jitter')}>
+                  <th className="px-4 py-3 font-medium text-right whitespace-nowrap" aria-sort={sortAria('jitter')}>
                     <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('jitter')}>
                       Jitter
                       <SortIcon field="jitter" />
@@ -371,20 +375,28 @@ export function LinksPage() {
                         ? <Link to={`/dz/contributors/${link.contributor_pk}`} className="text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.contributor_code}</Link>
                         : <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-sm whitespace-nowrap">
-                      {link.side_a_code
-                        ? <><Link to={`/dz/devices/${link.side_a_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.side_a_code}</Link>{link.side_a_metro && <span className="ml-1 text-xs text-muted-foreground">({link.side_a_metro})</span>}</>
-                        : <span className="font-mono text-muted-foreground">—</span>}
+                    <td className="px-4 py-3 text-sm whitespace-nowrap text-center" onClick={e => e.stopPropagation()}>
+                      <span className="inline-flex items-center gap-2 justify-center">
+                        <span>
+                          {link.side_a_code
+                            ? <><Link to={`/dz/devices/${link.side_a_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline">{link.side_a_code}</Link>{link.side_a_metro && <>{' '}<Link to={`/dz/metros/${link.side_a_metro_pk}`} className="text-xs text-muted-foreground hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>({link.side_a_metro})</Link></>}</>
+                            : <span className="font-mono text-muted-foreground">—</span>}
+                        </span>
+                        <span className="text-muted-foreground select-none">⟺</span>
+                        <span>
+                          {link.side_z_code
+                            ? <><Link to={`/dz/devices/${link.side_z_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline">{link.side_z_code}</Link>{link.side_z_metro && <>{' '}<Link to={`/dz/metros/${link.side_z_metro_pk}`} className="text-xs text-muted-foreground hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>({link.side_z_metro})</Link></>}</>
+                            : <span className="font-mono text-muted-foreground">—</span>}
+                        </span>
+                      </span>
                     </td>
-                    <td className="px-4 py-3 text-sm whitespace-nowrap">
-                      {link.side_z_code
-                        ? <><Link to={`/dz/devices/${link.side_z_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.side_z_code}</Link>{link.side_z_metro && <span className="ml-1 text-xs text-muted-foreground">({link.side_z_metro})</span>}</>
-                        : <span className="font-mono text-muted-foreground">—</span>}
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-block h-2.5 w-2.5 rounded-full ${statusDotColor[link.status] ?? 'bg-muted-foreground'}`}
+                        title={link.status}
+                      />
                     </td>
-                    <td className={`px-4 py-3 text-sm capitalize ${statusColors[link.status] || ''}`}>
-                      {link.status}
-                    </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">
+                    <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground whitespace-nowrap">
                       {formatBps(link.bandwidth_bps)}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">
@@ -399,10 +411,10 @@ export function LinksPage() {
                     <td className={`px-4 py-3 text-sm tabular-nums text-right ${getUtilizationColor(link.utilization_out)}`}>
                       {formatPercent(link.utilization_out)}
                     </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">
+                    <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground whitespace-nowrap">
                       {formatLatency(link.latency_us)}
                     </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">
+                    <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground whitespace-nowrap">
                       {formatLatency(link.jitter_us)}
                     </td>
                     <td className={`px-4 py-3 text-sm tabular-nums text-right ${link.loss_percent > 0 ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground'}`}>
@@ -412,7 +424,7 @@ export function LinksPage() {
                 ))}
                 {links.length === 0 && (
                   <tr>
-                    <td colSpan={14} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={13} className="px-4 py-8 text-center text-muted-foreground">
                       No links found
                     </td>
                   </tr>
