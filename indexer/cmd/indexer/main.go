@@ -363,7 +363,6 @@ func run() error {
 				RemoteUser:     remoteUser,
 				RemotePassword: remotePassword,
 				RemoteDatabase: remoteDatabase,
-				Force:          true,
 			}); err != nil {
 				return fmt.Errorf("failed to set up remote tables: %w", err)
 			}

@@ -62,7 +62,7 @@ var facilitySortFields = map[string]string{
 	"loc_id":  "loc_id",
 	"metro":   "metro_code",
 	"devices": "device_count",
-	"users": "if(user_count = 0 AND max_users = 0 AND max_unicast_users = 0 AND max_multicast_subscribers = 0 AND max_multicast_publishers = 0, 1, 0)|toFloat64(user_count) / toFloat64(greatest(1, user_count + least(if(max_users > 0, greatest(0, toInt64(max_users) - toInt64(user_count)), toInt64(999999999)), if(max_unicast_users > 0, greatest(0, toInt64(max_unicast_users) - toInt64(unicast_users_count)), toInt64(999999999)), if(max_multicast_subscribers > 0, greatest(0, toInt64(max_multicast_subscribers) - toInt64(multicast_subscribers_count)), toInt64(999999999)), if(max_multicast_publishers > 0, greatest(0, toInt64(max_multicast_publishers) - toInt64(multicast_publishers_count)), toInt64(999999999)))))",
+	"users":   "if(user_count = 0 AND max_users = 0 AND max_unicast_users = 0 AND max_multicast_subscribers = 0 AND max_multicast_publishers = 0, 1, 0)|toFloat64(user_count) / toFloat64(greatest(1, user_count + least(if(max_users > 0, greatest(0, toInt64(max_users) - toInt64(user_count)), toInt64(999999999)), if(max_unicast_users > 0, greatest(0, toInt64(max_unicast_users) - toInt64(unicast_users_count)), toInt64(999999999)), if(max_multicast_subscribers > 0, greatest(0, toInt64(max_multicast_subscribers) - toInt64(multicast_subscribers_count)), toInt64(999999999)), if(max_multicast_publishers > 0, greatest(0, toInt64(max_multicast_publishers) - toInt64(multicast_publishers_count)), toInt64(999999999)))))",
 }
 
 var facilityFilterFields = map[string]FilterFieldConfig{

@@ -144,7 +144,6 @@ func run() error {
 	remoteClickhouseUserFlag := flag.String("remote-clickhouse-user", "", "Remote ClickHouse user (or set REMOTE_CH_USER env var)")
 	remoteClickhousePasswordFlag := flag.String("remote-clickhouse-password", "", "Remote ClickHouse password (or set REMOTE_CH_PASSWORD env var)")
 	remoteClickhouseDatabaseFlag := flag.String("remote-clickhouse-database", "", "Remote ClickHouse database to discover tables from (or set REMOTE_CH_DATABASE env var, default: lake)")
-	forceFlag := flag.Bool("force", false, "Force overwrite existing non-proxy tables when setting up remote tables")
 
 	flag.Parse()
 
@@ -520,7 +519,6 @@ func run() error {
 			RemoteUser:     *remoteClickhouseUserFlag,
 			RemotePassword: *remoteClickhousePasswordFlag,
 			RemoteDatabase: *remoteClickhouseDatabaseFlag,
-			Force:          *forceFlag,
 		})
 	}
 

@@ -19,22 +19,11 @@ set -euo pipefail
 #
 # Usage:
 #   ./scripts/setup-remote-tables.sh            # Create proxies in lake database
-#   ./scripts/setup-remote-tables.sh --force     # Overwrite existing non-proxy tables
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
 cd "$ROOT_DIR"
-
-# ─── Parse flags ─────────────────────────────────────────────────────────────
-
-FORCE=""
-for arg in "$@"; do
-  case "$arg" in
-    --force) FORCE="--force" ;;
-    *) echo "Unknown flag: $arg" >&2; exit 1 ;;
-  esac
-done
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 
@@ -110,13 +99,7 @@ should_skip_table() {
     return 1
   fi
 
-  # Real data table exists
-  if [[ -n "$FORCE" ]]; then
-    echo "  WARNING: overwriting existing non-proxy table ${db}.${table} (engine: ${engine})"
-    return 1
-  fi
-
-  echo "  SKIP: ${db}.${table} exists with engine ${engine} (use --force to overwrite)"
+  echo "  SKIP: ${db}.${table} exists with engine ${engine}"
   return 0
 }
 
