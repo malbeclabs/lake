@@ -6,6 +6,7 @@ import { fetchFacility, fetchDevices, fetchPeeringDBFacility } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useBackLink } from '@/hooks/use-back-link'
 import { handleRowClick } from '@/lib/utils'
+import { MiniMap } from '@/components/mini-map'
 
 type DeviceSortField = 'code' | 'type' | 'contributor' | 'metro' | 'status' | 'users' | 'unicast' | 'subscribers' | 'publishers' | 'in' | 'out'
 type SortDir = 'asc' | 'desc'
@@ -283,22 +284,11 @@ export function FacilityDetailPage() {
 
           {facility.lat !== 0 && facility.lng !== 0 ? (
             <div className="border border-border rounded-lg overflow-hidden bg-card" style={{ height: '160px' }}>
-              <div className="relative w-full h-full">
-                <iframe
-                  src={`https://www.openstreetmap.org/export/embed.html?bbox=${facility.lng - 2},${facility.lat - 2},${facility.lng + 2},${facility.lat + 2}&layer=mapnik&marker=${facility.lat},${facility.lng}`}
-                  className="absolute top-0 left-0 w-full border-0"
-                  style={{ height: 'calc(100% + 30px)', pointerEvents: 'none' }}
-                  loading="lazy"
-                  title="Map"
-                />
-                <a
-                  href={`https://www.google.com/maps?q=${facility.lat},${facility.lng}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="absolute inset-0"
-                  aria-label="Open in Google Maps"
-                />
-              </div>
+              <MiniMap
+                lat={facility.lat}
+                lng={facility.lng}
+                googleMapsHref={`https://www.google.com/maps?q=${facility.lat},${facility.lng}`}
+              />
             </div>
           ) : null}
         </div>

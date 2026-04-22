@@ -6,6 +6,7 @@ import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useBackLink } from '@/hooks/use-back-link'
 import { handleRowClick } from '@/lib/utils'
 import { useState, useMemo } from 'react'
+import { MiniMap } from '@/components/mini-map'
 
 type DeviceSortField = 'code' | 'type' | 'contributor' | 'facility' | 'status' | 'users' | 'unicast' | 'subscribers' | 'publishers' | 'in' | 'out'
 type FacilitySortField = 'code' | 'name' | 'country' | 'devices' | 'users'
@@ -285,22 +286,11 @@ export function MetroDetailPage() {
 
           {/* Map */}
           <div className="border border-border rounded-lg overflow-hidden bg-card" style={{ height: '160px' }}>
-            <div className="relative w-full h-full">
-              <iframe
-                src={`https://www.openstreetmap.org/export/embed.html?bbox=${metro.longitude - 2},${metro.latitude - 2},${metro.longitude + 2},${metro.latitude + 2}&layer=mapnik&marker=${metro.latitude},${metro.longitude}`}
-                className="absolute top-0 left-0 w-full border-0"
-                style={{ height: 'calc(100% + 30px)', pointerEvents: 'none' }}
-                loading="lazy"
-                title="Map"
-              />
-              <a
-                href={`https://www.google.com/maps?q=${metro.latitude},${metro.longitude}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="absolute inset-0"
-                aria-label="Open in Google Maps"
-              />
-            </div>
+            <MiniMap
+              lat={metro.latitude}
+              lng={metro.longitude}
+              googleMapsHref={`https://www.google.com/maps?q=${metro.latitude},${metro.longitude}`}
+            />
           </div>
         </div>
 
