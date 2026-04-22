@@ -62,7 +62,7 @@ var locationSortFields = map[string]string{
 	"loc_id":  "loc_id",
 	"metro":   "metro_code",
 	"devices": "device_count",
-	"users":   "user_count",
+	"users":   "if(max_users = 0, 1, 0)|if(max_users > 0, toFloat64(user_count) / toFloat64(max_users), 0)",
 }
 
 var locationFilterFields = map[string]FilterFieldConfig{
