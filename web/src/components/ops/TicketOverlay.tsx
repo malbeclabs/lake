@@ -21,16 +21,15 @@ interface TicketOverlayProps {
   minWidthMs?: number   // minimum strip width; use visual bar span (bar.spanSeconds * 1000)
 }
 
-// Fully opaque — no alpha blending with health bar colors underneath
 const COLORS = {
   incident: {
-    bg: 'rgb(153,27,27)',
-    border: 'rgb(120,20,20)',
+    bg: 'rgba(153,27,27,0.50)',
+    border: 'rgba(153,27,27,0.80)',
     fg: 'rgb(255,255,255)',
   },
   maintenance: {
-    bg: 'rgb(29,78,216)',
-    border: 'rgb(20,55,180)',
+    bg: 'rgba(29,78,216,0.45)',
+    border: 'rgba(29,78,216,0.75)',
     fg: 'rgb(255,255,255)',
   },
 }
@@ -127,7 +126,7 @@ function ClusterStrip({ cluster, leftPct, widthPct, zIndex }: ClusterStripProps)
         ref={stripRef}
         className="absolute"
         style={{
-          left: 0, right: 0, bottom: '1px', height: '13px',
+          left: 0, right: 0, bottom: 0, height: '13px',
           borderRadius: '2px', overflow: 'hidden',
           background: colors.bg,
           border: `1px solid ${colors.border}`,

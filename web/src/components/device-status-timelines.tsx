@@ -21,6 +21,7 @@ import { useIsOpsUser } from '@/hooks/use-is-ops-user'
 import { useAuth } from '@/contexts/AuthContext'
 import { IncidentBadge } from '@/components/ops/IncidentBadge'
 import { CreateIncidentModal } from '@/components/ops/CreateIncidentModal'
+import { isTicketClosed } from '@/lib/ops-api'
 
 function Skeleton({ className }: { className?: string }) {
   return <div className={`animate-pulse bg-muted rounded ${className || ''}`} />
@@ -504,10 +505,10 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
                   </span>
                 )}
                 {/* Incident badge — visible to all authenticated users */}
-                {!!user && tickets
-                  .filter(t => t.type === 'incident')
-                  .map(t => <IncidentBadge key={t.id} ticket={t} />)
-                }
+                {!!user && (() => {
+                  const open = tickets.filter(t => t.type === 'incident' && !isTicketClosed(t.status))
+                  return open.length > 0 ? <IncidentBadge tickets={open} /> : null
+                })()}
               </div>
             )}
           </div>
@@ -546,7 +547,7 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
                   slackUrl: t.slack_message_url,
                 })) : []}
             />
-            {isOpsUser && issueReasons.length > 0 && !tickets.some(t => t.type === 'incident') && (
+            {isOpsUser && issueReasons.length > 0 && !tickets.some(t => t.type === 'incident' && !isTicketClosed(t.status)) && (
               <div className="flex justify-end mt-1">
                 <button
                   className="text-[10px] font-medium px-2 py-0.5 border border-gray-400/40 text-muted-foreground hover:text-foreground hover:border-gray-400/70 transition-colors opacity-0 group-hover:opacity-100"
@@ -614,7 +615,7 @@ export function DeviceStatusTimelines({
   })
 
   // Pre-fetch active tickets once for all rows — filtered client-side per device
-  useActiveOpsTickets()
+  const { data: activeTicketsData } = useActiveOpsTickets()
   const isOpsUser = useIsOpsUser()
   const [createIncidentFor, setCreateIncidentFor] = useState<{
     devicePk: string
@@ -754,6 +755,22 @@ export function DeviceStatusTimelines({
     devicesWithHealth,
   ])
 
+  const incidentCount = useMemo(() => {
+    const tickets = activeTicketsData?.tickets ?? []
+    return devicesArray.filter(({ derived }) =>
+      tickets.some(t => t.type === 'incident' &&
+        (t.device_pubkey.includes(derived.pk) || (t.affected_devices?.some(d => d.pubkey === derived.pk) ?? false)))
+    ).length
+  }, [activeTicketsData, devicesArray])
+
+  const maintenanceCount = useMemo(() => {
+    const tickets = activeTicketsData?.tickets ?? []
+    return devicesArray.filter(({ derived }) =>
+      tickets.some(t => t.type === 'maintenance' &&
+        (t.device_pubkey.includes(derived.pk) || (t.affected_devices?.some(d => d.pubkey === derived.pk) ?? false)))
+    ).length
+  }, [activeTicketsData, devicesArray])
+
   const showSkeleton = useDelayedLoading(isLoading && !data)
 
   if (isLoading && !data) {
@@ -809,31 +826,31 @@ export function DeviceStatusTimelines({
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {isOpsUser && (
-            <>
-              <button
-                type="button"
-                onClick={() => setShowIncidentOverlays(v => !v)}
-                className={`text-xs font-medium px-2.5 py-1.5 rounded-md border transition-colors ${
-                  showIncidentOverlays
-                    ? 'border-red-600/60 bg-red-500/10 text-red-700 dark:border-red-800/60 dark:bg-red-900/20 dark:text-red-300'
-                    : 'border-border text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                Incidents
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowMaintenanceOverlays(v => !v)}
-                className={`text-xs font-medium px-2.5 py-1.5 rounded-md border transition-colors ${
-                  showMaintenanceOverlays
-                    ? 'border-blue-600/60 bg-blue-500/10 text-blue-700 dark:border-blue-700/60 dark:bg-blue-900/20 dark:text-blue-300'
-                    : 'border-border text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                Maintenance
-              </button>
-            </>
+          {isOpsUser && incidentCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowIncidentOverlays(v => !v)}
+              className={`text-xs font-medium px-2.5 py-1.5 rounded-md border transition-colors ${
+                showIncidentOverlays
+                  ? 'border-red-600/60 bg-red-500/10 text-red-700 dark:border-red-800/60 dark:bg-red-900/20 dark:text-red-300'
+                  : 'border-border text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Incidents ({incidentCount})
+            </button>
+          )}
+          {isOpsUser && maintenanceCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowMaintenanceOverlays(v => !v)}
+              className={`text-xs font-medium px-2.5 py-1.5 rounded-md border transition-colors ${
+                showMaintenanceOverlays
+                  ? 'border-blue-600/60 bg-blue-500/10 text-blue-700 dark:border-blue-700/60 dark:bg-blue-900/20 dark:text-blue-300'
+                  : 'border-border text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Maintenance ({maintenanceCount})
+            </button>
           )}
           {onTimeRangeChange && (
             <SmallDropdown

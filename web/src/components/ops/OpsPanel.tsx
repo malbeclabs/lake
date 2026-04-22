@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { useTicketsForEntity, useOpsTicketHistory } from '@/hooks/use-ops-tickets'
 import { useIsOpsUser } from '@/hooks/use-is-ops-user'
-import { opsTicketUrl, type OpsTicket, type OpsTicketType } from '@/lib/ops-api'
+import { opsTicketUrl, isTicketClosed, type OpsTicket, type OpsTicketType } from '@/lib/ops-api'
 
 interface OpsPanelProps {
   entityPk: string
@@ -24,8 +24,16 @@ function daysAgo(isoStr: string): string {
   return Math.floor((Date.now() - new Date(isoStr).getTime()) / 86_400_000) + 'd ago'
 }
 
-function minutesAgo(isoStr: string): string {
-  return Math.floor((Date.now() - new Date(isoStr).getTime()) / 60_000) + 'm ago'
+function timeAgo(isoStr: string): string {
+  const diffMs = Date.now() - new Date(isoStr).getTime()
+  const mins = Math.floor(diffMs / 60_000)
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ${mins % 60}m ago`
+  const days = Math.floor(hrs / 24)
+  if (days < 30) return `${days}d ago`
+  const months = Math.floor(days / 30)
+  return `${months}mo ago`
 }
 
 function HistoryRow({ ticket }: { ticket: OpsTicket }) {
@@ -71,14 +79,17 @@ function HistoryRow({ ticket }: { ticket: OpsTicket }) {
 
 function HistoryPanel({ entityPk, entityType }: { entityPk: string; entityType: 'link' | 'device' }) {
   const [tab, setTab] = useState<OpsTicketType>('incident')
-  const { data } = useOpsTicketHistory(entityPk, tab, entityType)
-  const tickets = data?.tickets ?? []
+  const { data: incidentData } = useOpsTicketHistory(entityPk, 'incident', entityType)
+  const { data: maintenanceData } = useOpsTicketHistory(entityPk, 'maintenance', entityType)
+  const tickets = (tab === 'incident' ? incidentData?.tickets : maintenanceData?.tickets) ?? []
+  const incidentCount = incidentData?.tickets?.length ?? 0
+  const maintenanceCount = maintenanceData?.tickets?.length ?? 0
 
   const tabClass = (t: OpsTicketType) =>
     `text-[11px] uppercase tracking-wide px-3.5 py-1.5 border-none cursor-pointer font-sans transition-colors ${
       tab === t
-        ? 'bg-muted/30 text-foreground'
-        : 'bg-transparent text-muted-foreground hover:text-foreground'
+        ? 'bg-muted text-foreground'
+        : 'bg-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50'
     }`
 
   const viewAllLabel = tab === 'incident'
@@ -95,8 +106,12 @@ function HistoryPanel({ entityPk, entityType }: { entityPk: string; entityType: 
           </span>
         </span>
         <div className="flex border-l border-border">
-          <button className={tabClass('incident')} onClick={() => setTab('incident')}>Incidents</button>
-          <button className={tabClass('maintenance')} onClick={() => setTab('maintenance')}>Maintenance</button>
+          <button className={tabClass('incident')} onClick={() => setTab('incident')}>
+            Incidents{incidentCount > 0 ? ` (${incidentCount})` : ''}
+          </button>
+          <button className={tabClass('maintenance')} onClick={() => setTab('maintenance')}>
+            Maintenance{maintenanceCount > 0 ? ` (${maintenanceCount})` : ''}
+          </button>
         </div>
       </div>
 
@@ -126,7 +141,7 @@ export function OpsPanel({
   const tickets = useTicketsForEntity(entityPk)
 
   const activeTickets = tickets // already filtered to active by the hook
-  const hasActiveIncident = activeTickets.some(t => t.type === 'incident')
+  const hasActiveIncident = activeTickets.some(t => t.type === 'incident' && !isTicketClosed(t.status))
 
   // Nothing to show for non-ops users
   if (!isOpsUser) return null
@@ -167,10 +182,10 @@ export function OpsPanel({
                       {ticket.status}
                     </span>
                     {ticket.start_at && (
-                      <span>· Started {minutesAgo(ticket.start_at)}</span>
+                      <span>· Started {timeAgo(ticket.start_at)}</span>
                     )}
                     {!ticket.start_at && ticket.created_at && (
-                      <span>· {minutesAgo(ticket.created_at)}</span>
+                      <span>· {timeAgo(ticket.created_at)}</span>
                     )}
                   </div>
                 </div>

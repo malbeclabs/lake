@@ -181,31 +181,31 @@ export function LinkDetailPage() {
             effectiveBucketLabel={effectiveBucketLabel}
           />
           <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
-          {isOpsUser && (
-            <>
-              <button
-                type="button"
-                onClick={() => setShowIncidents(v => !v)}
-                className={`text-[11px] font-medium px-2 py-1 border transition-colors ${
-                  showIncidents
-                    ? 'border-red-600/60 bg-red-500/10 text-red-700 dark:border-red-800/60 dark:bg-red-900/20 dark:text-red-300'
-                    : 'border-border text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                Incidents
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowMaintenance(v => !v)}
-                className={`text-[11px] font-medium px-2 py-1 border transition-colors ${
-                  showMaintenance
-                    ? 'border-blue-600/60 bg-blue-500/10 text-blue-700 dark:border-blue-700/60 dark:bg-blue-900/20 dark:text-blue-300'
-                    : 'border-border text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                Maintenance
-              </button>
-            </>
+          {isOpsUser && tickets.some(t => t.type === 'incident') && (
+            <button
+              type="button"
+              onClick={() => setShowIncidents(v => !v)}
+              className={`text-[11px] font-medium px-2 py-1 border transition-colors ${
+                showIncidents
+                  ? 'border-red-600/60 bg-red-500/10 text-red-700 dark:border-red-800/60 dark:bg-red-900/20 dark:text-red-300'
+                  : 'border-border text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Incidents
+            </button>
+          )}
+          {isOpsUser && tickets.some(t => t.type === 'maintenance') && (
+            <button
+              type="button"
+              onClick={() => setShowMaintenance(v => !v)}
+              className={`text-[11px] font-medium px-2 py-1 border transition-colors ${
+                showMaintenance
+                  ? 'border-blue-600/60 bg-blue-500/10 text-blue-700 dark:border-blue-700/60 dark:bg-blue-900/20 dark:text-blue-300'
+                  : 'border-border text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Maintenance
+            </button>
           )}
         </div>
 

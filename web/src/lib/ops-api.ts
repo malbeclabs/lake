@@ -10,6 +10,10 @@ export type OpsTicketStatus =
 
 export type OpsTicketSeverity = 'sev1' | 'sev2' | 'sev3'
 
+export function isTicketClosed(status: OpsTicketStatus): boolean {
+  return status === 'resolved' || status === 'closed' || status === 'completed'
+}
+
 export interface OpsTicket {
   id: string                         // UUID
   human_readable_id: string          // e.g. "I20250413-a7b2"
