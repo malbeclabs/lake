@@ -285,95 +285,9 @@ export function ContributorDetailPage() {
           </div>
         </div>
 
-        {/* Links table */}
-        {links.length > 0 && (
-          <div className="mb-8">
-            <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
-              Links ({links.length}{linksData && linksData.total > rawLinks.length ? ` of ${linksData.total}` : ''})
-            </h2>
-            <div className="border border-border rounded-lg overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border bg-muted/30 text-xs text-muted-foreground uppercase tracking-wider">
-                      {([
-                        { field: 'code', label: 'Code' },
-                        { field: 'type', label: 'Type' },
-                        { field: 'status', label: 'Status' },
-                        { field: 'side_a', label: 'Side A' },
-                        { field: 'side_z', label: 'Side Z' },
-                      ] as { field: LinkSortField; label: string }[]).map(({ field, label }) => (
-                        <th key={field} className="px-4 py-3 font-medium text-left">
-                          <button className="inline-flex items-center gap-1" type="button" onClick={() => handleLinkSort(field)}>
-                            {label}
-                            <LinkSortIcon field={field} />
-                          </button>
-                        </th>
-                      ))}
-                      {([
-                        { field: 'bandwidth', label: 'Bandwidth' },
-                        { field: 'in', label: 'In' },
-                        { field: 'out', label: 'Out' },
-                        { field: 'latency', label: 'Latency' },
-                      ] as { field: LinkSortField; label: string }[]).map(({ field, label }) => (
-                        <th key={field} className="px-4 py-3 font-medium text-right">
-                          <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleLinkSort(field)}>
-                            {label}
-                            <LinkSortIcon field={field} />
-                          </button>
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {links.map((link) => (
-                      <tr
-                        key={link.pk}
-                        className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
-                        onClick={(e) => handleRowClick(e, `/dz/links/${link.pk}`, navigate)}
-                      >
-                        <td className="px-4 py-3 font-mono text-sm whitespace-nowrap">{link.code}</td>
-                        <td className="px-4 py-3 text-sm text-muted-foreground">{link.link_type}</td>
-                        <td className="px-4 py-3">
-                          <span
-                            className={`inline-block h-2.5 w-2.5 rounded-full ${statusDotColor[link.status] ?? 'bg-muted-foreground'}`}
-                            title={link.status}
-                          />
-                        </td>
-                        <td className="px-4 py-3 text-sm whitespace-nowrap">
-                          {link.side_a_pk
-                            ? <Link to={`/dz/devices/${link.side_a_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.side_a_code}</Link>
-                            : <span className="text-muted-foreground">—</span>}
-                          {link.side_a_metro && <span className="text-xs text-muted-foreground ml-1">
-                            (<Link to={`/dz/metros/${link.side_a_metro_pk}`} className="hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.side_a_metro}</Link>)
-                          </span>}
-                        </td>
-                        <td className="px-4 py-3 text-sm whitespace-nowrap">
-                          {link.side_z_pk
-                            ? <Link to={`/dz/devices/${link.side_z_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.side_z_code}</Link>
-                            : <span className="text-muted-foreground">—</span>}
-                          {link.side_z_metro && <span className="text-xs text-muted-foreground ml-1">
-                            (<Link to={`/dz/metros/${link.side_z_metro_pk}`} className="hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.side_z_metro}</Link>)
-                          </span>}
-                        </td>
-                        <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">{formatBps(link.bandwidth_bps)}</td>
-                        <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">{formatBps(link.in_bps)}</td>
-                        <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">{formatBps(link.out_bps)}</td>
-                        <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">
-                          {link.latency_us > 0 ? `${(link.latency_us / 1000).toFixed(1)} ms` : '—'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Devices table */}
         {devices.length > 0 && (
-          <div>
+          <div className="mb-8">
             <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
               Devices ({devices.length}{devicesData && devicesData.total > rawDevices.length ? ` of ${devicesData.total}` : ''})
             </h2>
@@ -475,6 +389,92 @@ export function ContributorDetailPage() {
                         </tr>
                       )
                     })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Links table */}
+        {links.length > 0 && (
+          <div>
+            <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
+              Links ({links.length}{linksData && linksData.total > rawLinks.length ? ` of ${linksData.total}` : ''})
+            </h2>
+            <div className="border border-border rounded-lg overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/30 text-xs text-muted-foreground uppercase tracking-wider">
+                      {([
+                        { field: 'code', label: 'Code' },
+                        { field: 'type', label: 'Type' },
+                        { field: 'status', label: 'Status' },
+                        { field: 'side_a', label: 'Side A' },
+                        { field: 'side_z', label: 'Side Z' },
+                      ] as { field: LinkSortField; label: string }[]).map(({ field, label }) => (
+                        <th key={field} className="px-4 py-3 font-medium text-left">
+                          <button className="inline-flex items-center gap-1" type="button" onClick={() => handleLinkSort(field)}>
+                            {label}
+                            <LinkSortIcon field={field} />
+                          </button>
+                        </th>
+                      ))}
+                      {([
+                        { field: 'bandwidth', label: 'Bandwidth' },
+                        { field: 'in', label: 'In' },
+                        { field: 'out', label: 'Out' },
+                        { field: 'latency', label: 'Latency' },
+                      ] as { field: LinkSortField; label: string }[]).map(({ field, label }) => (
+                        <th key={field} className="px-4 py-3 font-medium text-right">
+                          <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleLinkSort(field)}>
+                            {label}
+                            <LinkSortIcon field={field} />
+                          </button>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {links.map((link) => (
+                      <tr
+                        key={link.pk}
+                        className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
+                        onClick={(e) => handleRowClick(e, `/dz/links/${link.pk}`, navigate)}
+                      >
+                        <td className="px-4 py-3 font-mono text-sm whitespace-nowrap">{link.code}</td>
+                        <td className="px-4 py-3 text-sm text-muted-foreground">{link.link_type}</td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={`inline-block h-2.5 w-2.5 rounded-full ${statusDotColor[link.status] ?? 'bg-muted-foreground'}`}
+                            title={link.status}
+                          />
+                        </td>
+                        <td className="px-4 py-3 text-sm whitespace-nowrap">
+                          {link.side_a_pk
+                            ? <Link to={`/dz/devices/${link.side_a_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.side_a_code}</Link>
+                            : <span className="text-muted-foreground">—</span>}
+                          {link.side_a_metro && <span className="text-xs text-muted-foreground ml-1">
+                            (<Link to={`/dz/metros/${link.side_a_metro_pk}`} className="hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.side_a_metro}</Link>)
+                          </span>}
+                        </td>
+                        <td className="px-4 py-3 text-sm whitespace-nowrap">
+                          {link.side_z_pk
+                            ? <Link to={`/dz/devices/${link.side_z_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.side_z_code}</Link>
+                            : <span className="text-muted-foreground">—</span>}
+                          {link.side_z_metro && <span className="text-xs text-muted-foreground ml-1">
+                            (<Link to={`/dz/metros/${link.side_z_metro_pk}`} className="hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.side_z_metro}</Link>)
+                          </span>}
+                        </td>
+                        <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">{formatBps(link.bandwidth_bps)}</td>
+                        <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">{formatBps(link.in_bps)}</td>
+                        <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">{formatBps(link.out_bps)}</td>
+                        <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">
+                          {link.latency_us > 0 ? `${(link.latency_us / 1000).toFixed(1)} ms` : '—'}
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
