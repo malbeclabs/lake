@@ -34,7 +34,7 @@ type SortField =
   | 'type'
   | 'contributor'
   | 'metro'
-  | 'location'
+  | 'facility'
   | 'status'
   | 'users'
   | 'unicast'
@@ -54,7 +54,7 @@ function parseSearchFilters(searchParam: string): string[] {
 }
 
 // Valid filter fields for devices
-const validFilterFields = ['code', 'type', 'contributor', 'metro', 'location', 'status', 'users', 'in', 'out', 'peakin', 'peakout']
+const validFilterFields = ['code', 'type', 'contributor', 'metro', 'facility', 'status', 'users', 'in', 'out', 'peakin', 'peakout']
 
 // Field prefixes for inline filter
 const deviceFieldPrefixes = [
@@ -62,7 +62,7 @@ const deviceFieldPrefixes = [
   { prefix: 'type:', description: 'Filter by device type' },
   { prefix: 'contributor:', description: 'Filter by contributor' },
   { prefix: 'metro:', description: 'Filter by metro' },
-  { prefix: 'location:', description: 'Filter by location' },
+  { prefix: 'facility:', description: 'Filter by facility' },
   { prefix: 'status:', description: 'Filter by status' },
   { prefix: 'users:', description: 'Filter by user count (e.g., >10)' },
   { prefix: 'in:', description: 'Filter by inbound traffic (e.g., >1gbps)' },
@@ -273,10 +273,10 @@ export function DevicesPage() {
                       <SortIcon field="metro" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('location')}>
-                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('location')}>
-                      Location
-                      <SortIcon field="location" />
+                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('facility')}>
+                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('facility')}>
+                      Facility
+                      <SortIcon field="facility" />
                     </button>
                   </th>
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('status')}>
@@ -360,7 +360,7 @@ export function DevicesPage() {
                     </td>
                     <td className="px-4 py-3 text-sm">
                       {device.location_pk
-                        ? <Link to={`/dz/locations/${encodeURIComponent(device.location_pk)}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{device.location_code}</Link>
+                        ? <Link to={`/dz/facilities/${encodeURIComponent(device.location_pk)}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{device.location_code}</Link>
                         : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="px-4 py-3">

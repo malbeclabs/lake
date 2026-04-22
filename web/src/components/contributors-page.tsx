@@ -233,7 +233,7 @@ export function ContributorsPage() {
                   </th>
                   <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('locations')}>
                     <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('locations')}>
-                      Locations
+                      Facilities
                       <SortIcon field="locations" />
                     </button>
                   </th>
@@ -286,7 +286,7 @@ export function ContributorsPage() {
                       {contributor.metro_count > 0 ? contributor.metro_count : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
-                      {contributor.location_count > 0 ? contributor.location_count : <span className="text-muted-foreground">—</span>}
+                      {contributor.facility_count > 0 ? contributor.facility_count : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
                       {contributor.device_count > 0 ? contributor.device_count : <span className="text-muted-foreground">—</span>}

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Loader2, Building2, AlertCircle, ChevronDown, ChevronUp, X } from 'lucide-react'
-import { fetchLocations, fetchPeeringDBFacility } from '@/lib/api'
+import { fetchFacilities, fetchPeeringDBFacility } from '@/lib/api'
 import { handleRowClick } from '@/lib/utils'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
@@ -21,9 +21,9 @@ function parseSearchFilters(searchParam: string): string[] {
 
 const validFilterFields = ['code', 'name', 'country', 'status', 'loc_id', 'metro', 'devices', 'users']
 
-const locationFieldPrefixes = [
-  { prefix: 'code:', description: 'Filter by location code' },
-  { prefix: 'name:', description: 'Filter by location name' },
+const facilityFieldPrefixes = [
+  { prefix: 'code:', description: 'Filter by facility code' },
+  { prefix: 'name:', description: 'Filter by facility name' },
   { prefix: 'country:', description: 'Filter by country code (e.g., US)' },
   { prefix: 'status:', description: 'Filter by status (activated, pending, suspended)' },
   { prefix: 'loc_id:', description: 'Filter by PeeringDB location ID' },
@@ -32,7 +32,7 @@ const locationFieldPrefixes = [
   { prefix: 'users:', description: 'Filter by user count' },
 ]
 
-const locationAutocompleteFields: string[] = []
+const facilityAutocompleteFields: string[] = []
 
 function toFilterParam(filter: string): string {
   const colonIndex = filter.indexOf(':')
@@ -77,7 +77,7 @@ function PeeringDBCell({ locId }: { locId: number }) {
   )
 }
 
-export function LocationsPage() {
+export function FacilitiesPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const [liveFilter, setLiveFilter] = useState('')
@@ -126,12 +126,12 @@ export function LocationsPage() {
   const filterKey = filterParams.join(',')
 
   const { data: response, isLoading, error } = useQuery({
-    queryKey: ['locations', offset, sortField, sortDirection, filterKey],
-    queryFn: () => fetchLocations(PAGE_SIZE, offset, sortField, sortDirection, filterParams.length > 0 ? filterParams : undefined),
+    queryKey: ['facilities', offset, sortField, sortDirection, filterKey],
+    queryFn: () => fetchFacilities(PAGE_SIZE, offset, sortField, sortDirection, filterParams.length > 0 ? filterParams : undefined),
     refetchInterval: 30000,
     placeholderData: keepPreviousData,
   })
-  const locations = response?.items ?? []
+  const facilities = response?.items ?? []
 
   const handleSort = (field: SortField) => {
     setSearchParams(prev => {
@@ -183,7 +183,7 @@ export function LocationsPage() {
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center">
           <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-          <div className="text-lg font-medium mb-2">Unable to load locations</div>
+          <div className="text-lg font-medium mb-2">Unable to load facilities</div>
           <div className="text-sm text-muted-foreground">{error?.message || 'Unknown error'}</div>
         </div>
       </div>
@@ -195,7 +195,7 @@ export function LocationsPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
         <PageHeader
           icon={Building2}
-          title="Locations"
+          title="Facilities"
           count={response?.total || 0}
           actions={
             <>
@@ -218,10 +218,10 @@ export function LocationsPage() {
                 </button>
               )}
               <InlineFilter
-                fieldPrefixes={locationFieldPrefixes}
-                entity="locations"
-                autocompleteFields={locationAutocompleteFields}
-                placeholder="Filter locations..."
+                fieldPrefixes={facilityFieldPrefixes}
+                entity="facilities"
+                autocompleteFields={facilityAutocompleteFields}
+                placeholder="Filter facilities..."
                 onLiveFilterChange={setLiveFilter}
               />
             </>
@@ -276,48 +276,48 @@ export function LocationsPage() {
                 </tr>
               </thead>
               <tbody>
-                {locations.map((location) => (
+                {facilities.map((facility) => (
                   <tr
-                    key={location.pk}
+                    key={facility.pk}
                     className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
-                    onClick={(e) => handleRowClick(e, `/dz/locations/${encodeURIComponent(location.pk)}`, navigate)}
+                    onClick={(e) => handleRowClick(e, `/dz/facilities/${encodeURIComponent(facility.pk)}`, navigate)}
                   >
                     <td className="px-4 py-3 whitespace-nowrap">
-                      <CopyableText text={location.code} className="font-mono text-sm" />
+                      <CopyableText text={facility.code} className="font-mono text-sm" />
                     </td>
                     <td className="px-4 py-3 text-sm max-w-xs truncate">
-                      {location.name || '—'}
+                      {facility.name || '—'}
                     </td>
                     <td className="px-4 py-3 text-sm">
-                      {location.country || <span className="text-muted-foreground">—</span>}
+                      {facility.country || <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="px-4 py-3 text-sm">
-                      {location.metro_pk
-                        ? <Link to={`/dz/metros/${location.metro_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{location.metro_code}</Link>
+                      {facility.metro_pk
+                        ? <Link to={`/dz/metros/${facility.metro_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{facility.metro_code}</Link>
                         : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
-                      {location.device_count > 0 ? location.device_count : <span className="text-muted-foreground">—</span>}
+                      {facility.device_count > 0 ? facility.device_count : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right relative">
-                      {location.max_users > 0 && <div className="absolute inset-y-0 left-0 right-0 pointer-events-none bg-muted/30 border-r border-muted-foreground/20" />}
+                      {facility.max_users > 0 && <div className="absolute inset-y-0 left-0 right-0 pointer-events-none bg-muted/30 border-r border-muted-foreground/20" />}
                       {(() => {
-                        const pct = location.max_users > 0 ? Math.min(100, (location.user_count / location.max_users) * 100) : 0
+                        const pct = facility.max_users > 0 ? Math.min(100, (facility.user_count / facility.max_users) * 100) : 0
                         const fillColor = pct >= 90 ? 'bg-red-500/25' : pct >= 70 ? 'bg-amber-500/20' : 'bg-blue-500/15'
                         return pct > 0 ? <div className={`absolute inset-y-0 left-0 pointer-events-none ${fillColor}`} style={{ width: `${pct}%` }} /> : null
                       })()}
                       <span className="relative">
-                        {location.user_count > 0 || location.max_users > 0 ? (
-                          <>{location.user_count}{location.max_users > 0 && <span className="text-muted-foreground">/{location.max_users}</span>}</>
+                        {facility.user_count > 0 || facility.max_users > 0 ? (
+                          <>{facility.user_count}{facility.max_users > 0 && <span className="text-muted-foreground">/{facility.max_users}</span>}</>
                         ) : <span className="text-muted-foreground">—</span>}
                       </span>
                     </td>
                     {[
-                      { count: location.unicast_users_count, max: location.max_unicast_users },
-                      { count: location.multicast_subscribers_count, max: location.max_multicast_subscribers },
-                      { count: location.multicast_publishers_count, max: location.max_multicast_publishers },
+                      { count: facility.unicast_users_count, max: facility.max_unicast_users },
+                      { count: facility.multicast_subscribers_count, max: facility.max_multicast_subscribers },
+                      { count: facility.multicast_publishers_count, max: facility.max_multicast_publishers },
                     ].map(({ count, max }, i) => {
-                      const effectiveMax = max > 0 ? max : location.max_users
+                      const effectiveMax = max > 0 ? max : facility.max_users
                       const available = effectiveMax > count ? effectiveMax - count : 0
                       return (
                         <td key={i} className="px-4 py-3 text-sm tabular-nums text-right">
@@ -329,14 +329,14 @@ export function LocationsPage() {
                       )
                     })}
                     <td className="px-4 py-3 max-w-sm" onClick={e => e.stopPropagation()}>
-                      <PeeringDBCell locId={location.loc_id} />
+                      <PeeringDBCell locId={facility.loc_id} />
                     </td>
                   </tr>
                 ))}
-                {locations.length === 0 && (
+                {facilities.length === 0 && (
                   <tr>
                     <td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">
-                      No locations found
+                      No facilities found
                     </td>
                   </tr>
                 )}

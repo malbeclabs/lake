@@ -2,7 +2,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useState, useMemo } from 'react'
 import { Loader2, Building2, AlertCircle, ArrowLeft, ChevronUp, ChevronDown } from 'lucide-react'
-import { fetchLocation, fetchDevices, fetchPeeringDBFacility } from '@/lib/api'
+import { fetchFacility, fetchDevices, fetchPeeringDBFacility } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useBackLink } from '@/hooks/use-back-link'
 import { handleRowClick } from '@/lib/utils'
@@ -45,34 +45,34 @@ function statusPill(status: string) {
   )
 }
 
-export function LocationDetailPage() {
+export function FacilityDetailPage() {
   const { pk } = useParams<{ pk: string }>()
   const navigate = useNavigate()
-  const back = useBackLink({ to: '/dz/locations', label: 'locations' })
+  const back = useBackLink({ to: '/dz/facilities', label: 'facilities' })
   const [sortField, setSortField] = useState<DeviceSortField>('code')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
 
-  const { data: location, isLoading, error } = useQuery({
-    queryKey: ['location', pk],
-    queryFn: () => fetchLocation(pk!),
+  const { data: facility, isLoading, error } = useQuery({
+    queryKey: ['facility', pk],
+    queryFn: () => fetchFacility(pk!),
     enabled: !!pk,
   })
 
   const { data: devicesResponse } = useQuery({
-    queryKey: ['devices', 'location', pk],
+    queryKey: ['devices', 'facility', pk],
     queryFn: () => fetchDevices(100, 0, 'code', 'asc', [`location_pk:${pk}`]),
     enabled: !!pk,
     placeholderData: keepPreviousData,
   })
 
   const { data: peeringdb } = useQuery({
-    queryKey: ['peeringdb', location?.loc_id],
-    queryFn: () => fetchPeeringDBFacility(location!.loc_id),
-    enabled: !!location && location.loc_id > 0,
+    queryKey: ['peeringdb', facility?.loc_id],
+    queryFn: () => fetchPeeringDBFacility(facility!.loc_id),
+    enabled: !!facility && facility.loc_id > 0,
     staleTime: 1000 * 60 * 60,
   })
 
-  useDocumentTitle(location?.code || 'Location')
+  useDocumentTitle(facility?.code || 'Facility')
 
   const rawDevices = devicesResponse?.items ?? []
   const devices = useMemo(() => {
@@ -141,12 +141,12 @@ export function LocationDetailPage() {
     )
   }
 
-  if (error || !location) {
+  if (error || !facility) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center">
           <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-          <div className="text-lg font-medium mb-2">Location not found</div>
+          <div className="text-lg font-medium mb-2">Facility not found</div>
           <button
             onClick={() => navigate(back.to)}
             className="text-sm text-muted-foreground hover:text-foreground"
@@ -183,10 +183,10 @@ export function LocationDetailPage() {
           )}
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-medium">{location.name || location.code}</h1>
-              {statusPill(location.status)}
+              <h1 className="text-2xl font-medium">{facility.name || facility.code}</h1>
+              {statusPill(facility.status)}
             </div>
-            <div className="text-sm text-muted-foreground font-mono mt-0.5">{location.code}</div>
+            <div className="text-sm text-muted-foreground font-mono mt-0.5">{facility.code}</div>
             {peeringdb?.orgName && (
               <div className="text-sm text-muted-foreground mt-1">{peeringdb.orgName}</div>
             )}
@@ -200,27 +200,27 @@ export function LocationDetailPage() {
             <dl className="space-y-2">
               <div className="flex justify-between">
                 <dt className="text-sm text-muted-foreground">Country</dt>
-                <dd className="text-sm">{location.country || '—'}</dd>
+                <dd className="text-sm">{facility.country || '—'}</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-sm text-muted-foreground">Metro</dt>
                 <dd className="text-sm font-mono">
-                  {location.metro_pk
-                    ? <Link to={`/dz/metros/${location.metro_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline">{location.metro_code}</Link>
-                    : (location.metro_code || '—')}
+                  {facility.metro_pk
+                    ? <Link to={`/dz/metros/${facility.metro_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline">{facility.metro_code}</Link>
+                    : (facility.metro_code || '—')}
                 </dd>
               </div>
-              {location.loc_id > 0 && (
+              {facility.loc_id > 0 && (
                 <div className="flex justify-between">
                   <dt className="text-sm text-muted-foreground">PeeringDB ID</dt>
                   <dd className="text-sm font-mono">
                     <a
-                      href={`https://www.peeringdb.com/fac/${location.loc_id}`}
+                      href={`https://www.peeringdb.com/fac/${facility.loc_id}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-blue-600 dark:text-blue-400 hover:underline"
                     >
-                      {location.loc_id}
+                      {facility.loc_id}
                     </a>
                   </dd>
                 </div>
@@ -233,44 +233,44 @@ export function LocationDetailPage() {
             <dl className="space-y-2">
               <div className="flex justify-between">
                 <dt className="text-sm text-muted-foreground">Devices</dt>
-                <dd className="text-sm">{location.device_count}</dd>
+                <dd className="text-sm">{facility.device_count}</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-sm text-muted-foreground">Users</dt>
                 <dd className="text-sm tabular-nums">
-                  {location.user_count}
-                  {location.max_users > 0 && <span className="text-muted-foreground">/{location.max_users}</span>}
+                  {facility.user_count}
+                  {facility.max_users > 0 && <span className="text-muted-foreground">/{facility.max_users}</span>}
                 </dd>
               </div>
               {(() => {
-                const effUnicastMax = location.max_unicast_users > 0 ? location.max_unicast_users : location.max_users
-                const effSubsMax = location.max_multicast_subscribers > 0 ? location.max_multicast_subscribers : location.max_users
-                const effPubsMax = location.max_multicast_publishers > 0 ? location.max_multicast_publishers : location.max_users
+                const effUnicastMax = facility.max_unicast_users > 0 ? facility.max_unicast_users : facility.max_users
+                const effSubsMax = facility.max_multicast_subscribers > 0 ? facility.max_multicast_subscribers : facility.max_users
+                const effPubsMax = facility.max_multicast_publishers > 0 ? facility.max_multicast_publishers : facility.max_users
                 return (
                   <>
-                    {(location.unicast_users_count > 0 || effUnicastMax > 0) && (
+                    {(facility.unicast_users_count > 0 || effUnicastMax > 0) && (
                       <div className="flex justify-between">
                         <dt className="text-sm text-muted-foreground pl-3">Unicast</dt>
                         <dd className="text-sm tabular-nums">
-                          {location.unicast_users_count}
+                          {facility.unicast_users_count}
                           {effUnicastMax > 0 && <span className="text-muted-foreground">/{effUnicastMax}</span>}
                         </dd>
                       </div>
                     )}
-                    {(location.multicast_subscribers_count > 0 || effSubsMax > 0) && (
+                    {(facility.multicast_subscribers_count > 0 || effSubsMax > 0) && (
                       <div className="flex justify-between">
                         <dt className="text-sm text-muted-foreground pl-3">Subscribers</dt>
                         <dd className="text-sm tabular-nums">
-                          {location.multicast_subscribers_count}
+                          {facility.multicast_subscribers_count}
                           {effSubsMax > 0 && <span className="text-muted-foreground">/{effSubsMax}</span>}
                         </dd>
                       </div>
                     )}
-                    {(location.multicast_publishers_count > 0 || effPubsMax > 0) && (
+                    {(facility.multicast_publishers_count > 0 || effPubsMax > 0) && (
                       <div className="flex justify-between">
                         <dt className="text-sm text-muted-foreground pl-3">Publishers</dt>
                         <dd className="text-sm tabular-nums">
-                          {location.multicast_publishers_count}
+                          {facility.multicast_publishers_count}
                           {effPubsMax > 0 && <span className="text-muted-foreground">/{effPubsMax}</span>}
                         </dd>
                       </div>
@@ -281,18 +281,18 @@ export function LocationDetailPage() {
             </dl>
           </div>
 
-          {location.lat !== 0 && location.lng !== 0 ? (
+          {facility.lat !== 0 && facility.lng !== 0 ? (
             <div className="border border-border rounded-lg overflow-hidden bg-card" style={{ height: '160px' }}>
               <div className="relative w-full h-full">
                 <iframe
-                  src={`https://www.openstreetmap.org/export/embed.html?bbox=${location.lng - 2},${location.lat - 2},${location.lng + 2},${location.lat + 2}&layer=mapnik&marker=${location.lat},${location.lng}`}
+                  src={`https://www.openstreetmap.org/export/embed.html?bbox=${facility.lng - 2},${facility.lat - 2},${facility.lng + 2},${facility.lat + 2}&layer=mapnik&marker=${facility.lat},${facility.lng}`}
                   className="absolute top-0 left-0 w-full border-0"
                   style={{ height: 'calc(100% + 30px)', pointerEvents: 'none' }}
                   loading="lazy"
                   title="Map"
                 />
                 <a
-                  href={`https://www.google.com/maps?q=${location.lat},${location.lng}`}
+                  href={`https://www.google.com/maps?q=${facility.lat},${facility.lng}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="absolute inset-0"

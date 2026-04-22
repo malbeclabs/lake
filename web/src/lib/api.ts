@@ -2989,7 +2989,7 @@ export interface Metro {
   longitude: number
   device_count: number
   user_count: number
-  location_count: number
+  facility_count: number
   unicast_users_count: number
   multicast_subscribers_count: number
   multicast_publishers_count: number
@@ -3058,7 +3058,7 @@ export interface Location {
   max_multicast_publishers: number
 }
 
-export interface LocationDetail {
+export interface FacilityDetail {
   pk: string
   code: string
   name: string
@@ -3080,13 +3080,13 @@ export interface LocationDetail {
   max_multicast_publishers: number
 }
 
-export async function fetchLocation(pk: string): Promise<LocationDetail> {
-  const res = await fetchWithRetry(`/api/dz/locations/${encodeURIComponent(pk)}`)
-  if (!res.ok) throw new Error('Failed to fetch location')
+export async function fetchFacility(pk: string): Promise<FacilityDetail> {
+  const res = await fetchWithRetry(`/api/dz/facilities/${encodeURIComponent(pk)}`)
+  if (!res.ok) throw new Error('Failed to fetch facility')
   return res.json()
 }
 
-export async function fetchLocations(
+export async function fetchFacilities(
   limit = 100,
   offset = 0,
   sortBy?: string,
@@ -3099,22 +3099,22 @@ export async function fetchLocations(
   if (sortBy) params.set('sort_by', sortBy)
   if (sortDir) params.set('sort_dir', sortDir)
   if (filters) filters.forEach(f => params.append('filters', f))
-  const res = await fetchWithRetry(`/api/dz/locations?${params}`)
+  const res = await fetchWithRetry(`/api/dz/facilities?${params}`)
   if (!res.ok) {
-    throw new Error('Failed to fetch locations')
+    throw new Error('Failed to fetch facilities')
   }
   return res.json()
 }
 
-export async function fetchLocationsByMetro(metroPk: string, limit = 500, offset = 0): Promise<PaginatedResponse<Location>> {
+export async function fetchFacilitiesByMetro(metroPk: string, limit = 500, offset = 0): Promise<PaginatedResponse<Location>> {
   const params = new URLSearchParams()
   params.set('limit', String(limit))
   params.set('offset', String(offset))
   params.set('sort_by', 'code')
   params.set('sort_dir', 'asc')
   params.append('filters', `metro_pk:${metroPk}`)
-  const res = await fetchWithRetry(`/api/dz/locations?${params}`)
-  if (!res.ok) throw new Error('Failed to fetch locations')
+  const res = await fetchWithRetry(`/api/dz/facilities?${params}`)
+  if (!res.ok) throw new Error('Failed to fetch facilities')
   return res.json()
 }
 
@@ -3137,7 +3137,7 @@ export interface Contributor {
   code: string
   name: string
   metro_count: number
-  location_count: number
+  facility_count: number
   device_count: number
   side_a_devices: number
   side_z_devices: number
@@ -3237,7 +3237,7 @@ export interface UserDetail extends User {
   client_ip: string
   tunnel_id: number
   metro_pk: string
-  location_loc_id: number
+  facility_loc_id: number
   contributor_pk: string
   contributor_code: string
   is_validator: boolean

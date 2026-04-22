@@ -17,7 +17,7 @@ type ContributorListItem struct {
 	Code          string `json:"code"`
 	Name          string `json:"name"`
 	MetroCount    uint64 `json:"metro_count"`
-	LocationCount uint64 `json:"location_count"`
+	FacilityCount uint64 `json:"facility_count"`
 	DeviceCount   uint64 `json:"device_count"`
 	SideADevices  uint64 `json:"side_a_devices"`
 	SideZDevices  uint64 `json:"side_z_devices"`
@@ -30,7 +30,7 @@ var contributorSortFields = map[string]string{
 	"code":      "code",
 	"name":      "name",
 	"metros":    "metro_count",
-	"locations": "location_count",
+	"locations": "facility_count",
 	"devices":   "device_count",
 	"sidea":     "side_a_devices",
 	"sidez":     "side_z_devices",
@@ -42,7 +42,7 @@ var contributorFilterFields = map[string]FilterFieldConfig{
 	"code":      {Column: "code", Type: FieldTypeText},
 	"name":      {Column: "name", Type: FieldTypeText},
 	"metros":    {Column: "metro_count", Type: FieldTypeNumeric},
-	"locations": {Column: "location_count", Type: FieldTypeNumeric},
+	"locations": {Column: "facility_count", Type: FieldTypeNumeric},
 	"devices":   {Column: "device_count", Type: FieldTypeNumeric},
 	"sidea":     {Column: "side_a_devices", Type: FieldTypeNumeric},
 	"sidez":     {Column: "side_z_devices", Type: FieldTypeNumeric},
@@ -72,7 +72,7 @@ func (a *API) GetContributors(w http.ResponseWriter, r *http.Request) {
 			WHERE d.contributor_pk IS NOT NULL AND d.metro_pk IS NOT NULL
 			GROUP BY d.contributor_pk
 		),
-		location_counts AS (
+		facility_counts AS (
 			SELECT d.contributor_pk, count(DISTINCT d.location_pk) as cnt
 			FROM dz_devices_current d
 			WHERE d.contributor_pk IS NOT NULL AND d.location_pk IS NOT NULL
@@ -123,7 +123,7 @@ func (a *API) GetContributors(w http.ResponseWriter, r *http.Request) {
 				c.code as code,
 				COALESCE(c.name, '') as name,
 				COALESCE(mc.cnt, 0) as metro_count,
-				COALESCE(loc.cnt, 0) as location_count,
+				COALESCE(loc.cnt, 0) as facility_count,
 				COALESCE(dc.cnt, 0) as device_count,
 				COALESCE(sa.cnt, 0) as side_a_devices,
 				COALESCE(sz.cnt, 0) as side_z_devices,
@@ -132,7 +132,7 @@ func (a *API) GetContributors(w http.ResponseWriter, r *http.Request) {
 				COALESCE(mu.total_max_users, 0) as max_users
 			FROM dz_contributors_current c
 			LEFT JOIN metro_counts mc ON c.pk = mc.contributor_pk
-			LEFT JOIN location_counts loc ON c.pk = loc.contributor_pk
+			LEFT JOIN facility_counts loc ON c.pk = loc.contributor_pk
 			LEFT JOIN device_counts dc ON c.pk = dc.contributor_pk
 			LEFT JOIN side_a_counts sa ON c.pk = sa.cpk
 			LEFT JOIN side_z_counts sz ON c.pk = sz.cpk
@@ -146,7 +146,7 @@ func (a *API) GetContributors(w http.ResponseWriter, r *http.Request) {
 				if(max_users > 0, toFloat64(user_count) / toFloat64(max_users), 0.0) as users_util_frac
 			FROM contributors_data
 		)
-		SELECT pk, code, name, metro_count, location_count, device_count, side_a_devices, side_z_devices, link_count, user_count, max_users, count() OVER () as _total
+		SELECT pk, code, name, metro_count, facility_count, device_count, side_a_devices, side_z_devices, link_count, user_count, max_users, count() OVER () as _total
 		FROM contributors_util
 		WHERE 1=1` + whereFilter + " " + orderBy + `
 		LIMIT ? OFFSET ?
@@ -176,7 +176,7 @@ func (a *API) GetContributors(w http.ResponseWriter, r *http.Request) {
 			&c.Code,
 			&c.Name,
 			&c.MetroCount,
-			&c.LocationCount,
+			&c.FacilityCount,
 			&c.DeviceCount,
 			&c.SideADevices,
 			&c.SideZDevices,

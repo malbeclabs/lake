@@ -7,7 +7,7 @@ import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useBackLink } from '@/hooks/use-back-link'
 import { handleRowClick } from '@/lib/utils'
 
-type DeviceSortField = 'code' | 'type' | 'metro' | 'location' | 'status' | 'users' | 'unicast' | 'subscribers' | 'publishers' | 'in' | 'out'
+type DeviceSortField = 'code' | 'type' | 'metro' | 'facility' | 'status' | 'users' | 'unicast' | 'subscribers' | 'publishers' | 'in' | 'out'
 type LinkSortField = 'code' | 'type' | 'side_a' | 'side_z' | 'status' | 'bandwidth' | 'in' | 'out' | 'latency'
 type SortDir = 'asc' | 'desc'
 
@@ -69,7 +69,7 @@ export function ContributorDetailPage() {
         case 'code': cmp = a.code.localeCompare(b.code); break
         case 'type': cmp = (a.device_type || '').localeCompare(b.device_type || ''); break
         case 'metro': cmp = (a.metro_code || '').localeCompare(b.metro_code || ''); break
-        case 'location': cmp = (a.location_code || '').localeCompare(b.location_code || ''); break
+        case 'facility': cmp = (a.location_code || '').localeCompare(b.location_code || ''); break
         case 'status': cmp = a.status.localeCompare(b.status); break
         case 'users': {
           const noA = !a.max_users, noB = !b.max_users
@@ -296,10 +296,10 @@ export function ContributorDetailPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/30 text-xs text-muted-foreground uppercase tracking-wider">
-                      {(['code', 'type', 'metro', 'location', 'status'] as DeviceSortField[]).map(f => (
+                      {(['code', 'type', 'metro', 'facility', 'status'] as DeviceSortField[]).map(f => (
                         <th key={f} className="px-4 py-3 font-medium text-left">
                           <button className="inline-flex items-center gap-1" type="button" onClick={() => handleDeviceSort(f)}>
-                            {f === 'location' ? 'Location' : f.charAt(0).toUpperCase() + f.slice(1)}
+                            {f === 'facility' ? 'Facility' : f.charAt(0).toUpperCase() + f.slice(1)}
                             <SortIcon field={f} />
                           </button>
                         </th>

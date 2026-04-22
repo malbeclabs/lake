@@ -86,7 +86,7 @@ const { resolvedTheme, setTheme } = useTheme()
   const isDevicesRoute = location.pathname.startsWith('/dz/devices')
   const isLinksRoute = location.pathname.startsWith('/dz/links')
   const isMetrosRoute = location.pathname.startsWith('/dz/metros')
-  const isLocationsRoute = location.pathname.startsWith('/dz/locations')
+  const isFacilitiesRoute = location.pathname.startsWith('/dz/facilities')
   const isContributorsRoute = location.pathname.startsWith('/dz/contributors')
   const isTenantsRoute = location.pathname.startsWith('/dz/tenants')
   const isUsersRoute = location.pathname.startsWith('/dz/users')
@@ -551,9 +551,9 @@ const { resolvedTheme, setTheme } = useTheme()
               <MapPin className="h-4 w-4" />
               Metros
             </Link>
-            <Link to="/dz/locations" className={navItemClass(isLocationsRoute)}>
+            <Link to="/dz/facilities" className={navItemClass(isFacilitiesRoute)}>
               <Warehouse className="h-4 w-4" />
-              Locations
+              Facilities
             </Link>
             <Link to="/dz/contributors" className={navItemClass(isContributorsRoute)}>
               <Building2 className="h-4 w-4" />

@@ -231,7 +231,7 @@ export function MetrosPage() {
                   </th>
                   <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('locations')}>
                     <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('locations')}>
-                      Locations
+                      Facilities
                       <SortIcon field="locations" />
                     </button>
                   </th>
@@ -284,7 +284,7 @@ export function MetrosPage() {
                       {metro.country || <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
-                      {metro.location_count > 0 ? metro.location_count : <span className="text-muted-foreground">—</span>}
+                      {metro.facility_count > 0 ? metro.facility_count : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
                       {metro.device_count > 0 ? metro.device_count : <span className="text-muted-foreground">—</span>}

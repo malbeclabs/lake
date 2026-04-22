@@ -42,7 +42,7 @@ type SortField =
   | 'clientip'
   | 'device'
   | 'metro'
-  | 'location'
+  | 'facility'
   | 'tenant'
   | 'status'
   | 'in'
@@ -57,7 +57,7 @@ const validFilterFields = [
   'clientip',
   'device',
   'metro',
-  'location',
+  'facility',
   'tenant',
   'status',
   'in',
@@ -71,7 +71,7 @@ const userFieldPrefixes = [
   { prefix: 'dzip:', description: 'Filter by DZ IP' },
   { prefix: 'device:', description: 'Filter by device code' },
   { prefix: 'metro:', description: 'Filter by metro' },
-  { prefix: 'location:', description: 'Filter by location' },
+  { prefix: 'facility:', description: 'Filter by facility' },
   { prefix: 'tenant:', description: 'Filter by tenant code' },
   { prefix: 'status:', description: 'Filter by status' },
   { prefix: 'in:', description: 'Filter by inbound traffic (e.g., >1gbps)' },
@@ -371,14 +371,14 @@ export function UsersPage() {
                       <SortIcon field="metro" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('location')}>
+                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('facility')}>
                     <button
                       className="inline-flex items-center gap-1"
                       type="button"
-                      onClick={() => handleSort('location')}
+                      onClick={() => handleSort('facility')}
                     >
-                      Location
-                      <SortIcon field="location" />
+                      Facility
+                      <SortIcon field="facility" />
                     </button>
                   </th>
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('tenant')}>

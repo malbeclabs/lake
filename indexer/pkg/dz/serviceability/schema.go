@@ -322,7 +322,7 @@ func (s *MulticastGroupSchema) GetPrimaryKey(m MulticastGroup) string {
 type LocationSchema struct{}
 
 func (s *LocationSchema) Name() string {
-	return "dz_locations"
+	return "dz_facilities"
 }
 
 func (s *LocationSchema) PrimaryKeyColumns() []string {

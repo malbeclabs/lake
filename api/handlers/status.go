@@ -453,7 +453,7 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 	})
 
 	g.Go(func() error {
-		query := `SELECT COUNT(DISTINCT pk) FROM dz_locations_current`
+		query := `SELECT COUNT(DISTINCT pk) FROM dz_facilities_current`
 		row := a.envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Network.Facilities)
 	})

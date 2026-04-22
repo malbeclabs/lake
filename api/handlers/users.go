@@ -41,7 +41,7 @@ var userSortFields = map[string]string{
 	"clientip": "client_ip",
 	"device":   "device_code",
 	"metro":    "metro_name",
-	"location": "location_code",
+	"facility": "location_code",
 	"tenant":   "tenant_code",
 	"status":   "display_status",
 	"in":       "in_bps",
@@ -55,7 +55,7 @@ var userFilterFields = map[string]FilterFieldConfig{
 	"clientip": {Column: "client_ip", Type: FieldTypeText},
 	"device":   {Column: "device_code", Type: FieldTypeText},
 	"metro":    {Column: "metro_name", Type: FieldTypeText},
-	"location": {Column: "location_code", Type: FieldTypeText},
+	"facility": {Column: "location_code", Type: FieldTypeText},
 	"tenant":   {Column: "tenant_code", Type: FieldTypeText},
 	"status":   {Column: "status", Type: FieldTypeText},
 	"in":       {Column: "in_bps", Type: FieldTypeBandwidth},
@@ -149,7 +149,7 @@ func (a *API) GetUsers(w http.ResponseWriter, r *http.Request) {
 			FROM ` + fromTable + ` u
 			LEFT JOIN dz_devices_current d ON u.device_pk = d.pk
 			LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
-			LEFT JOIN dz_locations_current l ON d.location_pk = l.pk
+			LEFT JOIN dz_facilities_current l ON d.location_pk = l.pk
 			LEFT JOIN dz_tenants_current t ON u.tenant_pk = t.pk
 			LEFT JOIN traffic_rates tr ON u.pk = tr.user_pk
 		)
@@ -245,7 +245,7 @@ type UserDetail struct {
 	MetroName       string  `json:"metro_name"`
 	LocationPK      string  `json:"location_pk"`
 	LocationCode    string  `json:"location_code"`
-	LocationLocId   uint32  `json:"location_loc_id"`
+	FacilityLocId   uint32  `json:"facility_loc_id"`
 	ContributorPK   string  `json:"contributor_pk"`
 	ContributorCode string  `json:"contributor_code"`
 	TenantPK        string  `json:"tenant_pk"`
@@ -329,7 +329,7 @@ func (a *API) GetUser(w http.ResponseWriter, r *http.Request) {
 			COALESCE(m.name, '') as metro_name,
 			COALESCE(d.location_pk, '') as location_pk,
 			COALESCE(l.code, '') as location_code,
-			COALESCE(l.loc_id, 0) as location_loc_id,
+			COALESCE(l.loc_id, 0) as facility_loc_id,
 			COALESCE(d.contributor_pk, '') as contributor_pk,
 			COALESCE(c.code, '') as contributor_code,
 			COALESCE(u.tenant_pk, '') as tenant_pk,
@@ -345,7 +345,7 @@ func (a *API) GetUser(w http.ResponseWriter, r *http.Request) {
 		FROM latest_user u
 		LEFT JOIN dz_devices_current d ON u.device_pk = d.pk
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
-		LEFT JOIN dz_locations_current l ON d.location_pk = l.pk
+		LEFT JOIN dz_facilities_current l ON d.location_pk = l.pk
 		LEFT JOIN dz_contributors_current c ON d.contributor_pk = c.pk
 		LEFT JOIN dz_tenants_current t ON u.tenant_pk = t.pk
 		LEFT JOIN traffic_rates tr ON u.pk = tr.user_pk
@@ -369,7 +369,7 @@ func (a *API) GetUser(w http.ResponseWriter, r *http.Request) {
 		&user.MetroName,
 		&user.LocationPK,
 		&user.LocationCode,
-		&user.LocationLocId,
+		&user.FacilityLocId,
 		&user.ContributorPK,
 		&user.ContributorCode,
 		&user.TenantPK,

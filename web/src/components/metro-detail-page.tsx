@@ -1,14 +1,14 @@
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, MapPin, AlertCircle, ArrowLeft, Info, ChevronUp, ChevronDown } from 'lucide-react'
-import { fetchMetro, fetchDevicesByMetro, fetchLocationsByMetro } from '@/lib/api'
+import { fetchMetro, fetchDevicesByMetro, fetchFacilitiesByMetro } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useBackLink } from '@/hooks/use-back-link'
 import { handleRowClick } from '@/lib/utils'
 import { useState, useMemo } from 'react'
 
-type DeviceSortField = 'code' | 'type' | 'contributor' | 'location' | 'status' | 'users' | 'unicast' | 'subscribers' | 'publishers' | 'in' | 'out'
-type LocationSortField = 'code' | 'name' | 'country' | 'devices' | 'users'
+type DeviceSortField = 'code' | 'type' | 'contributor' | 'facility' | 'status' | 'users' | 'unicast' | 'subscribers' | 'publishers' | 'in' | 'out'
+type FacilitySortField = 'code' | 'name' | 'country' | 'devices' | 'users'
 type SortDir = 'asc' | 'desc'
 
 function formatBps(bps: number): string {
@@ -45,7 +45,7 @@ export function MetroDetailPage() {
   const back = useBackLink({ to: '/dz/metros', label: 'metros' })
   const [sortField, setSortField] = useState<DeviceSortField>('code')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
-  const [locSortField, setLocSortField] = useState<LocationSortField>('code')
+  const [locSortField, setLocSortField] = useState<FacilitySortField>('code')
   const [locSortDir, setLocSortDir] = useState<SortDir>('asc')
 
   const { data: metro, isLoading, error } = useQuery({
@@ -61,8 +61,8 @@ export function MetroDetailPage() {
   })
 
   const { data: locationsData } = useQuery({
-    queryKey: ['metro-locations', pk],
-    queryFn: () => fetchLocationsByMetro(pk!),
+    queryKey: ['metro-facilities', pk],
+    queryFn: () => fetchFacilitiesByMetro(pk!),
     enabled: !!pk,
   })
 
@@ -76,7 +76,7 @@ export function MetroDetailPage() {
         case 'code': cmp = a.code.localeCompare(b.code); break
         case 'type': cmp = (a.device_type || '').localeCompare(b.device_type || ''); break
         case 'contributor': cmp = (a.contributor_code || '').localeCompare(b.contributor_code || ''); break
-        case 'location': cmp = (a.location_code || '').localeCompare(b.location_code || ''); break
+        case 'facility': cmp = (a.location_code || '').localeCompare(b.location_code || ''); break
         case 'status': cmp = a.status.localeCompare(b.status); break
         case 'users': {
           const noA = !a.max_users, noB = !b.max_users
@@ -127,9 +127,9 @@ export function MetroDetailPage() {
     return sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
   }
 
-  const rawLocations = locationsData?.items ?? []
-  const locations = useMemo(() => {
-    return [...rawLocations].sort((a, b) => {
+  const rawFacilities = locationsData?.items ?? []
+  const facilities = useMemo(() => {
+    return [...rawFacilities].sort((a, b) => {
       let cmp = 0
       switch (locSortField) {
         case 'code': cmp = a.code.localeCompare(b.code); break
@@ -140,13 +140,13 @@ export function MetroDetailPage() {
       }
       return locSortDir === 'asc' ? cmp : -cmp
     })
-  }, [rawLocations, locSortField, locSortDir])
+  }, [rawFacilities, locSortField, locSortDir])
 
-  const handleLocSort = (field: LocationSortField) => {
+  const handleLocSort = (field: FacilitySortField) => {
     if (locSortField === field) setLocSortDir(d => d === 'asc' ? 'desc' : 'asc')
     else { setLocSortField(field); setLocSortDir('asc') }
   }
-  const LocSortIcon = ({ field }: { field: LocationSortField }) => {
+  const LocSortIcon = ({ field }: { field: FacilitySortField }) => {
     if (locSortField !== field) return null
     return locSortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
   }
@@ -208,8 +208,8 @@ export function MetroDetailPage() {
                 <dd className="text-sm">{metro.device_count}</dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-sm text-muted-foreground">Locations</dt>
-                <dd className="text-sm">{metro.location_count}</dd>
+                <dt className="text-sm text-muted-foreground">Facilities</dt>
+                <dd className="text-sm">{metro.facility_count}</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-sm text-muted-foreground">Users</dt>
@@ -315,10 +315,10 @@ export function MetroDetailPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/30 text-xs text-muted-foreground uppercase tracking-wider">
-                      {(['code', 'type', 'contributor', 'location', 'status'] as DeviceSortField[]).map(f => (
+                      {(['code', 'type', 'contributor', 'facility', 'status'] as DeviceSortField[]).map(f => (
                         <th key={f} className="px-4 py-3 font-medium text-left">
                           <button className="inline-flex items-center gap-1" type="button" onClick={() => handleDeviceSort(f)}>
-                            {f === 'location' ? 'Location' : f.charAt(0).toUpperCase() + f.slice(1)}
+                            {f === 'facility' ? 'Facility' : f.charAt(0).toUpperCase() + f.slice(1)}
                             <SortIcon field={f} />
                           </button>
                         </th>
@@ -356,7 +356,7 @@ export function MetroDetailPage() {
                           </td>
                           <td className="px-4 py-3 text-sm">
                             {device.location_pk
-                              ? <Link to={`/dz/locations/${encodeURIComponent(device.location_pk)}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{device.location_code}</Link>
+                              ? <Link to={`/dz/facilities/${encodeURIComponent(device.location_pk)}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{device.location_code}</Link>
                               : <span className="text-muted-foreground">—</span>}
                           </td>
                           <td className="px-4 py-3">
@@ -413,18 +413,18 @@ export function MetroDetailPage() {
           </div>
         )}
 
-        {/* Locations table */}
-        {locations.length > 0 && (
+        {/* Facilities table */}
+        {facilities.length > 0 && (
           <div className="mt-8">
             <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
-              Locations ({locations.length}{locationsData && locationsData.total > rawLocations.length ? ` of ${locationsData.total}` : ''})
+              Facilities ({facilities.length}{locationsData && locationsData.total > rawFacilities.length ? ` of ${locationsData.total}` : ''})
             </h2>
             <div className="border border-border rounded-lg overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/30 text-xs text-muted-foreground uppercase tracking-wider">
-                      {(['code', 'name', 'country'] as LocationSortField[]).map(f => (
+                      {(['code', 'name', 'country'] as FacilitySortField[]).map(f => (
                         <th key={f} className="px-4 py-3 font-medium text-left">
                           <button className="inline-flex items-center gap-1" type="button" onClick={() => handleLocSort(f)}>
                             {f.charAt(0).toUpperCase() + f.slice(1)}
@@ -432,7 +432,7 @@ export function MetroDetailPage() {
                           </button>
                         </th>
                       ))}
-                      {(['devices', 'users'] as LocationSortField[]).map(f => (
+                      {(['devices', 'users'] as FacilitySortField[]).map(f => (
                         <th key={f} className="px-4 py-3 font-medium text-right">
                           <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleLocSort(f)}>
                             {f.charAt(0).toUpperCase() + f.slice(1)}
@@ -443,11 +443,11 @@ export function MetroDetailPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {locations.map((loc) => (
+                    {facilities.map((loc) => (
                       <tr
                         key={loc.pk}
                         className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
-                        onClick={(e) => handleRowClick(e, `/dz/locations/${encodeURIComponent(loc.pk)}`, navigate)}
+                        onClick={(e) => handleRowClick(e, `/dz/facilities/${encodeURIComponent(loc.pk)}`, navigate)}
                       >
                         <td className="px-4 py-3">
                           <span className="font-mono text-sm">{loc.code}</span>

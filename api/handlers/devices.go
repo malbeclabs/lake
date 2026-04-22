@@ -48,7 +48,7 @@ var deviceListSortFields = map[string]string{
 	"type":        "device_type",
 	"contributor": "contributor_code",
 	"metro":       "metro_code",
-	"location":    "location_code",
+	"facility":    "location_code",
 	"status":      "status",
 	"users":       "users_no_data|users_util_frac;max_users DESC",
 	"unicast":     "unicast_no_data|unicast_available",
@@ -65,7 +65,7 @@ var deviceListFilterFields = map[string]FilterFieldConfig{
 	"type":        {Column: "device_type", Type: FieldTypeText},
 	"contributor": {Column: "contributor_code", Type: FieldTypeText},
 	"metro":       {Column: "metro_code", Type: FieldTypeText},
-	"location":    {Column: "location_code", Type: FieldTypeText},
+	"facility":    {Column: "location_code", Type: FieldTypeText},
 	"location_pk": {Column: "location_pk", Type: FieldTypeText},
 	"status":      {Column: "status", Type: FieldTypeText},
 	"users":       {Column: "current_users", Type: FieldTypeNumeric},
@@ -168,7 +168,7 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 			FROM dz_devices_current d
 			LEFT JOIN dz_contributors_current c ON d.contributor_pk = c.pk
 			LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
-			LEFT JOIN dz_locations_current l ON d.location_pk = l.pk
+			LEFT JOIN dz_facilities_current l ON d.location_pk = l.pk
 			LEFT JOIN unicast_counts ucu ON d.pk = ucu.device_pk
 			LEFT JOIN multicast_counts ucm ON d.pk = ucm.device_pk
 			LEFT JOIN traffic_rates tr ON d.pk = tr.device_pk
@@ -202,7 +202,7 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 	`
 
 	queryFallback := strings.ReplaceAll(query, "COALESCE(d.location_pk, '') as location_pk,\n\t\t\t\tCOALESCE(l.code, '') as location_code,", "'' as location_pk,\n\t\t\t\t'' as location_code,")
-	queryFallback = strings.ReplaceAll(queryFallback, "\t\t\tLEFT JOIN dz_locations_current l ON d.location_pk = l.pk\n", "")
+	queryFallback = strings.ReplaceAll(queryFallback, "\t\t\tLEFT JOIN dz_facilities_current l ON d.location_pk = l.pk\n", "")
 
 	var args []any
 	args = append(args, filterArgs...)

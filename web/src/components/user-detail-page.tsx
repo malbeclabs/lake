@@ -450,9 +450,9 @@ export function UserDetailPage() {
   })
 
   const { data: peeringdb } = useQuery({
-    queryKey: ['peeringdb', user?.location_loc_id],
-    queryFn: () => fetchPeeringDBFacility(user!.location_loc_id),
-    enabled: !!user && user.location_loc_id > 0,
+    queryKey: ['peeringdb', user?.facility_loc_id],
+    queryFn: () => fetchPeeringDBFacility(user!.facility_loc_id),
+    enabled: !!user && user.facility_loc_id > 0,
     staleTime: 1000 * 60 * 60,
   })
 
@@ -599,11 +599,11 @@ export function UserDetailPage() {
                 </dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-sm text-muted-foreground">Location</dt>
+                <dt className="text-sm text-muted-foreground">Facility</dt>
                 <dd className="text-sm">
                   {user.location_pk ? (
                     <Link
-                      to={`/dz/locations/${encodeURIComponent(user.location_pk)}`}
+                      to={`/dz/facilities/${encodeURIComponent(user.location_pk)}`}
                       className="text-blue-600 dark:text-blue-400 hover:underline font-mono"
                     >
                       {user.location_code}

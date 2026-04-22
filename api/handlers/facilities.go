@@ -12,7 +12,7 @@ import (
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
-type LocationListItem struct {
+type FacilityListItem struct {
 	PK                        string  `json:"pk"`
 	Code                      string  `json:"code"`
 	Name                      string  `json:"name"`
@@ -33,7 +33,7 @@ type LocationListItem struct {
 	MaxMulticastPublishers    uint64  `json:"max_multicast_publishers"`
 }
 
-type LocationDetail struct {
+type FacilityDetail struct {
 	PK                        string  `json:"pk"`
 	Code                      string  `json:"code"`
 	Name                      string  `json:"name"`
@@ -55,7 +55,7 @@ type LocationDetail struct {
 	MaxMulticastPublishers    uint64  `json:"max_multicast_publishers"`
 }
 
-var locationSortFields = map[string]string{
+var facilitySortFields = map[string]string{
 	"code":    "code",
 	"name":    "name",
 	"country": "country",
@@ -65,7 +65,7 @@ var locationSortFields = map[string]string{
 	"users":   "if(max_users = 0, 1, 0)|if(max_users > 0, toFloat64(user_count) / toFloat64(max_users), 0)",
 }
 
-var locationFilterFields = map[string]FilterFieldConfig{
+var facilityFilterFields = map[string]FilterFieldConfig{
 	"code":     {Column: "code", Type: FieldTypeText},
 	"name":     {Column: "name", Type: FieldTypeText},
 	"country":  {Column: "country", Type: FieldTypeText},
@@ -77,10 +77,10 @@ var locationFilterFields = map[string]FilterFieldConfig{
 	"users":    {Column: "user_count", Type: FieldTypeNumeric},
 }
 
-// locationsEnrichedCTE joins locations with devices (via location_pk), metros, and users.
+// facilitiesEnrichedCTE joins facilities with devices (via location_pk), metros, and users.
 // Requires migration 20260421000002 to add location_pk to dz_devices_current.
-const locationsEnrichedCTE = `
-	WITH location_device_stats AS (
+const facilitiesEnrichedCTE = `
+	WITH facility_device_stats AS (
 		SELECT
 			location_pk,
 			toUInt32(countDistinct(pk)) AS device_count,
@@ -90,19 +90,19 @@ const locationsEnrichedCTE = `
 			SUM(max_users)                   AS max_users,
 			SUM(max_unicast_users)           AS max_unicast_users,
 			SUM(max_multicast_subscribers)   AS max_multicast_subscribers,
-			SUM(max_multicast_publishers)    AS max_multicast_publishers
+		SUM(max_multicast_publishers)    AS max_multicast_publishers
 		FROM dz_devices_current
 		WHERE location_pk != ''
 		GROUP BY location_pk
 	),
-	location_user_counts AS (
+	facility_user_counts AS (
 		SELECT d.location_pk, toUInt32(countDistinct(u.pk)) AS user_count
 		FROM dz_users_current u
 		JOIN dz_devices_current d ON u.device_pk = d.pk
 		WHERE u.status = 'activated' AND d.location_pk != ''
 		GROUP BY d.location_pk
 	),
-	location_metro AS (
+	facility_metro AS (
 		SELECT d.location_pk, any(d.metro_pk) AS metro_pk, any(m.code) AS metro_code
 		FROM dz_devices_current d
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
@@ -119,27 +119,27 @@ const locationsEnrichedCTE = `
 			COALESCE(l.lng, 0)      AS lng,
 			COALESCE(l.loc_id, 0)   AS loc_id,
 			COALESCE(l.status, '')  AS status,
-			COALESCE(lm.metro_pk, '')   AS metro_pk,
-			COALESCE(lm.metro_code, '') AS metro_code,
-			toUInt32(COALESCE(lds.device_count, 0))               AS device_count,
-			toUInt32(COALESCE(luc.user_count, 0))                 AS user_count,
-			toUInt64(COALESCE(lds.max_users, 0))                  AS max_users,
-			toUInt64(COALESCE(lds.unicast_users_count, 0))        AS unicast_users_count,
-			toUInt64(COALESCE(lds.multicast_subscribers_count, 0)) AS multicast_subscribers_count,
-			toUInt64(COALESCE(lds.multicast_publishers_count, 0))  AS multicast_publishers_count,
-			toUInt64(COALESCE(lds.max_unicast_users, 0))          AS max_unicast_users,
-			toUInt64(COALESCE(lds.max_multicast_subscribers, 0))  AS max_multicast_subscribers,
-			toUInt64(COALESCE(lds.max_multicast_publishers, 0))   AS max_multicast_publishers
-		FROM dz_locations_current l
-		LEFT JOIN location_device_stats lds ON l.pk = lds.location_pk
-		LEFT JOIN location_user_counts luc ON l.pk = luc.location_pk
-		LEFT JOIN location_metro lm ON l.pk = lm.location_pk
+			COALESCE(fm.metro_pk, '')   AS metro_pk,
+			COALESCE(fm.metro_code, '') AS metro_code,
+			toUInt32(COALESCE(fds.device_count, 0))               AS device_count,
+			toUInt32(COALESCE(fuc.user_count, 0))                 AS user_count,
+			toUInt64(COALESCE(fds.max_users, 0))                  AS max_users,
+			toUInt64(COALESCE(fds.unicast_users_count, 0))        AS unicast_users_count,
+			toUInt64(COALESCE(fds.multicast_subscribers_count, 0)) AS multicast_subscribers_count,
+			toUInt64(COALESCE(fds.multicast_publishers_count, 0))  AS multicast_publishers_count,
+			toUInt64(COALESCE(fds.max_unicast_users, 0))          AS max_unicast_users,
+			toUInt64(COALESCE(fds.max_multicast_subscribers, 0))  AS max_multicast_subscribers,
+			toUInt64(COALESCE(fds.max_multicast_publishers, 0))   AS max_multicast_publishers
+		FROM dz_facilities_current l
+		LEFT JOIN facility_device_stats fds ON l.pk = fds.location_pk
+		LEFT JOIN facility_user_counts fuc ON l.pk = fuc.location_pk
+		LEFT JOIN facility_metro fm ON l.pk = fm.location_pk
 	)
 `
 
-// locationsSimpleCTE is used as a fallback when dz_devices_current lacks location_pk
+// facilitiesSimpleCTE is used as a fallback when dz_devices_current lacks location_pk
 // (i.e. before migration 20260421000002 has been applied).
-const locationsSimpleCTE = `
+const facilitiesSimpleCTE = `
 	WITH enriched AS (
 		SELECT
 			l.pk AS pk,
@@ -155,77 +155,67 @@ const locationsSimpleCTE = `
 			toUInt32(0) AS device_count,
 			toUInt32(0) AS user_count,
 			toUInt64(0) AS max_users,
-			toUInt64(0) AS unicast_users_count,
-			toUInt64(0) AS multicast_subscribers_count,
-			toUInt64(0) AS multicast_publishers_count,
-			toUInt64(0) AS max_unicast_users,
-			toUInt64(0) AS max_multicast_subscribers,
-			toUInt64(0) AS max_multicast_publishers
-		FROM dz_locations_current l
+		toUInt64(0) AS unicast_users_count,
+		toUInt64(0) AS multicast_subscribers_count,
+		toUInt64(0) AS multicast_publishers_count,
+		toUInt64(0) AS max_unicast_users,
+		toUInt64(0) AS max_multicast_subscribers,
+		toUInt64(0) AS max_multicast_publishers
+		FROM dz_facilities_current l
 	)
 `
 
-// isUnknownIdentifierError returns true for ClickHouse error code 47 (UNKNOWN_IDENTIFIER),
-// which fires when a column referenced in a query does not exist in the table.
-func isUnknownIdentifierError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "code: 47") || strings.Contains(msg, "cannot be resolved")
-}
-
-func (a *API) GetLocations(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetFacilities(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
 	pagination := ParsePagination(r, 100)
-	sort := ParseSort(r, "code", locationSortFields)
+	sort := ParseSort(r, "code", facilitySortFields)
 	filters := ParseFilters(r)
 	start := time.Now()
 
-	filterClause, filterArgs := filters.BuildFilterClause(locationFilterFields)
+	filterClause, filterArgs := filters.BuildFilterClause(facilityFilterFields)
 	whereFilter := ""
 	if filterClause != "" {
 		whereFilter = " AND " + filterClause
 	}
-	orderBy := sort.OrderByClause(locationSortFields)
+	orderBy := sort.OrderByClause(facilitySortFields)
 
 	listSuffix := `
-		SELECT pk, code, name, country, lat, lng, loc_id, metro_pk, metro_code, device_count, user_count,
-			max_users, unicast_users_count, multicast_subscribers_count, multicast_publishers_count,
-			max_unicast_users, max_multicast_subscribers, max_multicast_publishers,
-			count() OVER () AS _total
-		FROM enriched
-		WHERE 1=1` + whereFilter + " " + orderBy + `
-		LIMIT ? OFFSET ?
+	SELECT pk, code, name, country, lat, lng, loc_id, metro_pk, metro_code, device_count, user_count,
+		max_users, unicast_users_count, multicast_subscribers_count, multicast_publishers_count,
+		max_unicast_users, max_multicast_subscribers, max_multicast_publishers,
+		count() OVER () AS _total
+	FROM enriched
+	WHERE 1=1` + whereFilter + " " + orderBy + `
+	LIMIT ? OFFSET ?
 	`
 
 	var args []any
 	args = append(args, filterArgs...)
 	args = append(args, pagination.Limit, pagination.Offset)
 
-	rows, err := a.envDB(ctx).Query(ctx, locationsEnrichedCTE+listSuffix, args...)
+	rows, err := a.envDB(ctx).Query(ctx, facilitiesEnrichedCTE+listSuffix, args...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil && isUnknownIdentifierError(err) {
 		// location_pk not yet in dz_devices_current — fall back to simple query without join
-		rows, err = a.envDB(ctx).Query(ctx, locationsSimpleCTE+listSuffix, args...)
+		rows, err = a.envDB(ctx).Query(ctx, facilitiesSimpleCTE+listSuffix, args...)
 		metrics.RecordClickHouseQuery(time.Since(start), err)
 	}
 
 	if err != nil {
-		logError("locations query failed", "error", err)
+		logError("facilities query failed", "error", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
 
-	var locations []LocationListItem
+	var facilities []FacilityListItem
 	var total uint64
 	for rows.Next() {
-		var l LocationListItem
+		var l FacilityListItem
 		if err := rows.Scan(
 			&l.PK,
 			&l.Code,
@@ -247,25 +237,25 @@ func (a *API) GetLocations(w http.ResponseWriter, r *http.Request) {
 			&l.MaxMulticastPublishers,
 			&total,
 		); err != nil {
-			logError("locations row scan failed", "error", err)
+			logError("facilities row scan failed", "error", err)
 			http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 			return
 		}
-		locations = append(locations, l)
+		facilities = append(facilities, l)
 	}
 
 	if err := rows.Err(); err != nil {
-		logError("locations rows iteration failed", "error", err)
+		logError("facilities rows iteration failed", "error", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 		return
 	}
 
-	if locations == nil {
-		locations = []LocationListItem{}
+	if facilities == nil {
+		facilities = []FacilityListItem{}
 	}
 
-	response := PaginatedResponse[LocationListItem]{
-		Items:  locations,
+	response := PaginatedResponse[FacilityListItem]{
+		Items:  facilities,
 		Total:  int(total),
 		Limit:  pagination.Limit,
 		Offset: pagination.Offset,
@@ -277,7 +267,7 @@ func (a *API) GetLocations(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (a *API) GetLocation(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetFacility(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -285,36 +275,36 @@ func (a *API) GetLocation(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
 	detailSuffix := `
-		SELECT pk, code, name, country, lat, lng, loc_id, status, metro_pk, metro_code, device_count, user_count,
-			max_users, unicast_users_count, multicast_subscribers_count, multicast_publishers_count,
-			max_unicast_users, max_multicast_subscribers, max_multicast_publishers
-		FROM enriched
-		WHERE pk = ?
-		LIMIT 1
+	SELECT pk, code, name, country, lat, lng, loc_id, status, metro_pk, metro_code, device_count, user_count,
+		max_users, unicast_users_count, multicast_subscribers_count, multicast_publishers_count,
+		max_unicast_users, max_multicast_subscribers, max_multicast_publishers
+	FROM enriched
+	WHERE pk = ?
+	LIMIT 1
 	`
 
-	rows, err := a.envDB(ctx).Query(ctx, locationsEnrichedCTE+detailSuffix, pk)
+	rows, err := a.envDB(ctx).Query(ctx, facilitiesEnrichedCTE+detailSuffix, pk)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil && isUnknownIdentifierError(err) {
-		rows, err = a.envDB(ctx).Query(ctx, locationsSimpleCTE+detailSuffix, pk)
+		rows, err = a.envDB(ctx).Query(ctx, facilitiesSimpleCTE+detailSuffix, pk)
 		metrics.RecordClickHouseQuery(time.Since(start), err)
 	}
 
 	if err != nil {
-		logError("location query failed", "error", err)
+		logError("facility query failed", "error", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
 
 	if !rows.Next() {
-		http.Error(w, "location not found", http.StatusNotFound)
+		http.Error(w, "facility not found", http.StatusNotFound)
 		return
 	}
 
-	var l LocationDetail
+	var l FacilityDetail
 	if err := rows.Scan(
 		&l.PK,
 		&l.Code,
@@ -336,7 +326,7 @@ func (a *API) GetLocation(w http.ResponseWriter, r *http.Request) {
 		&l.MaxMulticastSubscribers,
 		&l.MaxMulticastPublishers,
 	); err != nil {
-		logError("location row scan failed", "error", err)
+		logError("facility row scan failed", "error", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 		return
 	}
@@ -345,4 +335,14 @@ func (a *API) GetLocation(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(l); err != nil {
 		logError("failed to encode response", "error", err)
 	}
+}
+
+// isUnknownIdentifierError returns true for ClickHouse error code 47 (UNKNOWN_IDENTIFIER),
+// which fires when a column referenced in a query does not exist in the table.
+func isUnknownIdentifierError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "code: 47") || strings.Contains(msg, "cannot be resolved")
 }
