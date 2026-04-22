@@ -1203,12 +1203,14 @@ export function IncidentsPage() {
             {/* Active view */}
             {view === 'active' && (
               <>
-                <OpsIncidentsSection
-                  tickets={opsTickets}
-                  scope={scope}
-                  isOpsUser={isOpsUser}
-                  onCreateIncident={() => setShowCreateIncident(true)}
-                />
+                {isOpsUser && (
+                  <OpsIncidentsSection
+                    tickets={opsTickets}
+                    scope={scope}
+                    isOpsUser={isOpsUser}
+                    onCreateIncident={() => setShowCreateIncident(true)}
+                  />
+                )}
                 {(() => {
                   const isEmpty =
                     scope === 'links'

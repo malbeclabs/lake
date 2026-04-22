@@ -21,6 +21,7 @@ import { useBackLink } from '@/hooks/use-back-link'
 import { OpsPanel } from '@/components/ops/OpsPanel'
 import { CreateIncidentModal } from '@/components/ops/CreateIncidentModal'
 import { useActiveOpsTickets, useOpsTicketHistory } from '@/hooks/use-ops-tickets'
+import { useIsOpsUser } from '@/hooks/use-is-ops-user'
 import type { OpsTicket } from '@/lib/ops-api'
 import type { TicketWindow } from '@/components/ops/TicketOverlay'
 
@@ -36,6 +37,7 @@ export function LinkDetailPage() {
   } | null>(null)
   const [chartHoveredTime, setChartHoveredTime] = useState<number | null>(null)
   const [showCreateIncident, setShowCreateIncident] = useState(false)
+  const isOpsUser = useIsOpsUser()
   const [showIncidents, setShowIncidents] = useState(true)
   const [showMaintenance, setShowMaintenance] = useState(true)
 
@@ -179,28 +181,32 @@ export function LinkDetailPage() {
             effectiveBucketLabel={effectiveBucketLabel}
           />
           <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
-          <button
-            type="button"
-            onClick={() => setShowIncidents(v => !v)}
-            className={`text-[11px] font-medium px-2 py-1 border transition-colors ${
-              showIncidents
-                ? 'border-red-800/60 bg-red-900/20 text-red-300'
-                : 'border-border text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Incidents
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowMaintenance(v => !v)}
-            className={`text-[11px] font-medium px-2 py-1 border transition-colors ${
-              showMaintenance
-                ? 'border-blue-700/60 bg-blue-900/20 text-blue-300'
-                : 'border-border text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Maintenance
-          </button>
+          {isOpsUser && (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowIncidents(v => !v)}
+                className={`text-[11px] font-medium px-2 py-1 border transition-colors ${
+                  showIncidents
+                    ? 'border-red-800/60 bg-red-900/20 text-red-300'
+                    : 'border-border text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                Incidents
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowMaintenance(v => !v)}
+                className={`text-[11px] font-medium px-2 py-1 border transition-colors ${
+                  showMaintenance
+                    ? 'border-blue-700/60 bg-blue-900/20 text-blue-300'
+                    : 'border-border text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                Maintenance
+              </button>
+            </>
+          )}
         </div>
 
         {metricsLoading && (
