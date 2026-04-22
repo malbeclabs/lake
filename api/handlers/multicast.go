@@ -1647,7 +1647,7 @@ func (a *API) GetMulticastGroupShredStats(w http.ResponseWriter, r *http.Request
 			countIf(is_scheduled_leader = true) AS leader_slots,
 			countIf(needs_repair = true) AS repair_slots
 		FROM %s
-		WHERE feed = 'dz'
+		WHERE feed IN ('', 'dz')
 			AND event_ts >= now() - INTERVAL %s
 			AND dz_user_pubkey IN (?)
 		GROUP BY bucket, dz_user_pubkey
