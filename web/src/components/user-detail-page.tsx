@@ -5,7 +5,7 @@ import { Loader2, Users, AlertCircle, ArrowLeft, RefreshCw } from 'lucide-react'
 import { CopyableText } from '@/components/copyable-text'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
-import { fetchUser, fetchUserTraffic, fetchUserMulticastGroups } from '@/lib/api'
+import { fetchUser, fetchUserTraffic, fetchUserMulticastGroups, fetchPeeringDBFacility } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useBackLink } from '@/hooks/use-back-link'
 import { useTheme } from '@/hooks/use-theme'
@@ -449,6 +449,13 @@ export function UserDetailPage() {
     enabled: !!pk,
   })
 
+  const { data: peeringdb } = useQuery({
+    queryKey: ['peeringdb', user?.location_loc_id],
+    queryFn: () => fetchPeeringDBFacility(user!.location_loc_id),
+    enabled: !!user && user.location_loc_id > 0,
+    staleTime: 1000 * 60 * 60,
+  })
+
   useDocumentTitle(user?.pk ? `${user.pk.slice(0, 8)}...${user.pk.slice(-4)}` : 'User')
 
   if (isLoading) {
@@ -554,28 +561,12 @@ export function UserDetailPage() {
                   )}
                 </dd>
               </div>
-              <div className="flex justify-between">
-                <dt className="text-sm text-muted-foreground">DZ IP</dt>
-                <dd className="text-sm">
-                  {user.dz_ip ? (
-                    <CopyableText text={user.dz_ip} className="font-mono" iconPosition="left" />
-                  ) : (
-                    '—'
-                  )}
-                </dd>
-              </div>
-              {user.tunnel_id > 0 && (
-                <div className="flex justify-between">
-                  <dt className="text-sm text-muted-foreground">Tunnel ID</dt>
-                  <dd className="text-sm font-mono">{user.tunnel_id}</dd>
-                </div>
-              )}
             </dl>
           </div>
 
-          {/* Location */}
+          {/* DZD Connected */}
           <div className="border border-border rounded-lg p-4 bg-card">
-            <h3 className="text-sm font-medium text-muted-foreground mb-3">Location</h3>
+            <h3 className="text-sm font-medium text-muted-foreground mb-3">DZD Connected</h3>
             <dl className="space-y-2">
               <div className="flex justify-between">
                 <dt className="text-sm text-muted-foreground">Device</dt>
@@ -598,15 +589,52 @@ export function UserDetailPage() {
                   {user.metro_pk ? (
                     <Link
                       to={`/dz/metros/${user.metro_pk}`}
-                      className="text-blue-600 dark:text-blue-400 hover:underline"
+                      className="text-blue-600 dark:text-blue-400 hover:underline font-mono"
                     >
-                      {user.metro_name || user.metro_code}
+                      {user.metro_code}
                     </Link>
                   ) : (
                     '—'
                   )}
                 </dd>
               </div>
+              <div className="flex justify-between">
+                <dt className="text-sm text-muted-foreground">Facility</dt>
+                <dd className="text-sm">
+                  {user.location_pk ? (
+                    <Link
+                      to={`/dz/locations/${encodeURIComponent(user.location_pk)}`}
+                      className="text-blue-600 dark:text-blue-400 hover:underline font-mono"
+                    >
+                      {user.location_code}
+                    </Link>
+                  ) : (
+                    '—'
+                  )}
+                </dd>
+              </div>
+              {peeringdb?.orgName && (
+                <div className="flex justify-between">
+                  <dt className="text-sm text-muted-foreground">Organization</dt>
+                  <dd className="text-sm text-right">{peeringdb.orgName}</dd>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <dt className="text-sm text-muted-foreground">DZ IP</dt>
+                <dd className="text-sm">
+                  {user.dz_ip ? (
+                    <CopyableText text={user.dz_ip} className="font-mono" iconPosition="left" />
+                  ) : (
+                    '—'
+                  )}
+                </dd>
+              </div>
+              {user.tunnel_id > 0 && (
+                <div className="flex justify-between">
+                  <dt className="text-sm text-muted-foreground">Tunnel ID</dt>
+                  <dd className="text-sm font-mono">{user.tunnel_id}</dd>
+                </div>
+              )}
               <div className="flex justify-between">
                 <dt className="text-sm text-muted-foreground">Contributor</dt>
                 <dd className="text-sm">
