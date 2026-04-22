@@ -147,6 +147,7 @@ func (a *API) GetGeolocExplorer(w http.ResponseWriter, r *http.Request) {
 	// Resolves coordinates via: probe → first parent device → metro.
 	// Falls back to matching the metro code prefix from the probe code.
 	var probes []GeolocExplorerProbe
+	codeMap := make(map[string]string)
 	probeRows, err := a.DB.Query(ctx, `
 		SELECT
 			gp.pk,
@@ -176,22 +177,19 @@ func (a *API) GetGeolocExplorer(w http.ResponseWriter, r *http.Request) {
 		defer probeRows.Close()
 		for probeRows.Next() {
 			var p GeolocExplorerProbe
-			if err := probeRows.Scan(&p.PK, &p.Code, &p.Lat, &p.Lng); err == nil && p.Lat != 0 && p.Lng != 0 {
-				probes = append(probes, p)
+			if err := probeRows.Scan(&p.PK, &p.Code, &p.Lat, &p.Lng); err == nil {
+				codeMap[p.PK] = p.Code
+				if p.Lat != 0 && p.Lng != 0 {
+					probes = append(probes, p)
+				}
 			}
 		}
 	}
 
-	// Enrich devices with probe codes from the probes we already fetched.
-	if len(pubkeys) > 0 && len(probes) > 0 {
-		codeMap := make(map[string]string, len(probes))
-		for _, p := range probes {
-			codeMap[p.PK] = p.Code
-		}
-		for i := range devices {
-			if code, ok := codeMap[devices[i].SenderPubkey]; ok {
-				devices[i].ProbeCode = code
-			}
+	// Enrich devices with probe codes from all probes (including those without coordinates).
+	for i := range devices {
+		if code, ok := codeMap[devices[i].SenderPubkey]; ok {
+			devices[i].ProbeCode = code
 		}
 	}
 
