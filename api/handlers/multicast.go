@@ -1633,6 +1633,8 @@ func (a *API) GetMulticastGroupShredStats(w http.ResponseWriter, r *http.Request
 
 	shredStatsTable := fmt.Sprintf("`%s`.publisher_shred_stats", a.PublisherDB)
 
+	// Only the dz source has `publisher_stats: true` in the shredder configs,
+	// so filtering to it preserves pre-per-feed-column numbers exactly.
 	query := fmt.Sprintf(`
 		SELECT
 			toStartOfInterval(event_ts, INTERVAL %s) AS bucket,
@@ -1645,7 +1647,8 @@ func (a *API) GetMulticastGroupShredStats(w http.ResponseWriter, r *http.Request
 			countIf(is_scheduled_leader = true) AS leader_slots,
 			countIf(needs_repair = true) AS repair_slots
 		FROM %s
-		WHERE event_ts >= now() - INTERVAL %s
+		WHERE feed IN ('', 'dz')
+			AND event_ts >= now() - INTERVAL %s
 			AND dz_user_pubkey IN (?)
 		GROUP BY bucket, dz_user_pubkey
 		ORDER BY bucket, dz_user_pubkey
