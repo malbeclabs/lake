@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 
+interface StatCardPeer {
+  label: string
+  value: number | undefined
+  href?: string
+}
+
 interface StatCardProps {
   label: string
   value: number | undefined
@@ -9,6 +15,7 @@ interface StatCardProps {
   delta?: number // Optional delta value to show change (percentage points for percent format)
   max?: number // Optional maximum to display as "value / max"
   href?: string // Optional link to entity listing page
+  peer?: StatCardPeer // Optional second stat shown side-by-side in the same card
 }
 
 function useAnimatedNumber(target: number | undefined, duration = 500) {
@@ -89,12 +96,18 @@ function formatDelta(delta: number): string {
   return `${sign}${delta.toFixed(2)}%`
 }
 
-export function StatCard({ label, value, format, decimals, delta, max, href }: StatCardProps) {
+function StatCardContent({
+  label,
+  value,
+  format,
+  decimals,
+  delta,
+  max,
+}: Pick<StatCardProps, 'label' | 'value' | 'format' | 'decimals' | 'delta' | 'max'>) {
   const animatedValue = useAnimatedNumber(value)
   const isLoading = value === undefined
   const [showSkeleton, setShowSkeleton] = useState(false)
 
-  // Only show skeleton after a delay - avoids flash for fast loads
   useEffect(() => {
     if (isLoading) {
       const timer = setTimeout(() => setShowSkeleton(true), 150)
@@ -106,14 +119,14 @@ export function StatCard({ label, value, format, decimals, delta, max, href }: S
 
   const showDelta = delta !== undefined && delta !== 0
 
-  const content = (
+  return (
     <>
-      <div className="text-2xl lg:text-3xl font-medium tabular-nums tracking-tight mb-1 ">
+      <div className="text-2xl lg:text-3xl font-medium tabular-nums tracking-tight mb-1">
         {isLoading ? (
           showSkeleton ? (
             <span className="inline-block h-10 w-16 rounded bg-muted animate-pulse" />
           ) : (
-            <span className="inline-block h-10 w-16" /> // Invisible placeholder
+            <span className="inline-block h-10 w-16" />
           )
         ) : (
           <span className="inline-flex items-baseline gap-2">
@@ -135,6 +148,37 @@ export function StatCard({ label, value, format, decimals, delta, max, href }: S
       </div>
       <div className="text-sm text-muted-foreground">{label}</div>
     </>
+  )
+}
+
+export function StatCard({ label, value, format, decimals, delta, max, href, peer }: StatCardProps) {
+  if (peer) {
+    return (
+      <div className="rounded-[0.3rem] bg-muted/50 p-2 lg:p-4 flex items-stretch divide-x divide-border">
+        <div className="flex-1 text-center pr-2 lg:pr-4">
+          {href ? (
+            <Link to={href} className="block hover:text-foreground transition-colors">
+              <StatCardContent label={label} value={value} format={format} decimals={decimals} delta={delta} max={max} />
+            </Link>
+          ) : (
+            <StatCardContent label={label} value={value} format={format} decimals={decimals} delta={delta} max={max} />
+          )}
+        </div>
+        <div className="flex-1 text-center pl-2 lg:pl-4">
+          {peer.href ? (
+            <Link to={peer.href} className="block hover:text-foreground transition-colors">
+              <StatCardContent label={peer.label} value={peer.value} format={format} />
+            </Link>
+          ) : (
+            <StatCardContent label={peer.label} value={peer.value} format={format} />
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  const content = (
+    <StatCardContent label={label} value={value} format={format} decimals={decimals} delta={delta} max={max} />
   )
 
   if (href) {

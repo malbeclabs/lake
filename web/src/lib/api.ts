@@ -1194,6 +1194,7 @@ export interface NetworkSummary {
   links: number
   contributors: number
   metros: number
+  facilities: number
   bandwidth_bps: number
   user_inbound_bps: number
   devices_by_status: Record<string, number>
@@ -3042,6 +3043,13 @@ export interface Location {
   metro_code: string
   device_count: number
   user_count: number
+  max_users: number
+  unicast_users_count: number
+  multicast_subscribers_count: number
+  multicast_publishers_count: number
+  max_unicast_users: number
+  max_multicast_subscribers: number
+  max_multicast_publishers: number
 }
 
 export interface LocationDetail {

@@ -13,17 +13,24 @@ import (
 )
 
 type LocationListItem struct {
-	PK          string  `json:"pk"`
-	Code        string  `json:"code"`
-	Name        string  `json:"name"`
-	Country     string  `json:"country"`
-	Lat         float64 `json:"lat"`
-	Lng         float64 `json:"lng"`
-	LocId       uint32  `json:"loc_id"`
-	MetroPK     string  `json:"metro_pk"`
-	MetroCode   string  `json:"metro_code"`
-	DeviceCount uint32  `json:"device_count"`
-	UserCount   uint32  `json:"user_count"`
+	PK                        string  `json:"pk"`
+	Code                      string  `json:"code"`
+	Name                      string  `json:"name"`
+	Country                   string  `json:"country"`
+	Lat                       float64 `json:"lat"`
+	Lng                       float64 `json:"lng"`
+	LocId                     uint32  `json:"loc_id"`
+	MetroPK                   string  `json:"metro_pk"`
+	MetroCode                 string  `json:"metro_code"`
+	DeviceCount               uint32  `json:"device_count"`
+	UserCount                 uint32  `json:"user_count"`
+	MaxUsers                  uint64  `json:"max_users"`
+	UnicastUsersCount         uint64  `json:"unicast_users_count"`
+	MulticastSubscribersCount uint64  `json:"multicast_subscribers_count"`
+	MulticastPublishersCount  uint64  `json:"multicast_publishers_count"`
+	MaxUnicastUsers           uint64  `json:"max_unicast_users"`
+	MaxMulticastSubscribers   uint64  `json:"max_multicast_subscribers"`
+	MaxMulticastPublishers    uint64  `json:"max_multicast_publishers"`
 }
 
 type LocationDetail struct {
@@ -66,25 +73,60 @@ var locationFilterFields = map[string]FilterFieldConfig{
 // locationsEnrichedCTE joins locations with devices (via location_pk), metros, and users.
 // Requires migration 20260421000002 to add location_pk to dz_devices_current.
 const locationsEnrichedCTE = `
-	WITH enriched AS (
+	WITH location_device_stats AS (
+		SELECT
+			location_pk,
+			countDistinct(pk) AS device_count,
+			SUM(unicast_users_count)         AS unicast_users_count,
+			SUM(multicast_subscribers_count) AS multicast_subscribers_count,
+			SUM(multicast_publishers_count)  AS multicast_publishers_count,
+			SUM(max_users)                   AS max_users,
+			SUM(max_unicast_users)           AS max_unicast_users,
+			SUM(max_multicast_subscribers)   AS max_multicast_subscribers,
+			SUM(max_multicast_publishers)    AS max_multicast_publishers
+		FROM dz_devices_current
+		WHERE location_pk != ''
+		GROUP BY location_pk
+	),
+	location_user_counts AS (
+		SELECT d.location_pk, toUInt32(countDistinct(u.pk)) AS user_count
+		FROM dz_users_current u
+		JOIN dz_devices_current d ON u.device_pk = d.pk
+		WHERE u.status = 'activated' AND d.location_pk != ''
+		GROUP BY d.location_pk
+	),
+	location_metro AS (
+		SELECT d.location_pk, any(d.metro_pk) AS metro_pk, any(m.code) AS metro_code
+		FROM dz_devices_current d
+		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
+		WHERE d.location_pk != ''
+		GROUP BY d.location_pk
+	),
+	enriched AS (
 		SELECT
 			l.pk AS pk,
 			l.code AS code,
-			COALESCE(l.name, '') AS name,
+			COALESCE(l.name, '')    AS name,
 			COALESCE(l.country, '') AS country,
-			COALESCE(l.lat, 0) AS lat,
-			COALESCE(l.lng, 0) AS lng,
-			COALESCE(l.loc_id, 0) AS loc_id,
-			COALESCE(l.status, '') AS status,
-			COALESCE(any(m.pk), '') AS metro_pk,
-			COALESCE(any(m.code), '') AS metro_code,
-			toUInt32(countDistinctIf(d.pk, d.pk != '')) AS device_count,
-			toUInt32(countDistinctIf(u.pk, u.pk != '')) AS user_count
+			COALESCE(l.lat, 0)      AS lat,
+			COALESCE(l.lng, 0)      AS lng,
+			COALESCE(l.loc_id, 0)   AS loc_id,
+			COALESCE(l.status, '')  AS status,
+			COALESCE(lm.metro_pk, '')   AS metro_pk,
+			COALESCE(lm.metro_code, '') AS metro_code,
+			COALESCE(lds.device_count, 0)               AS device_count,
+			COALESCE(luc.user_count, 0)                 AS user_count,
+			COALESCE(lds.max_users, 0)                  AS max_users,
+			COALESCE(lds.unicast_users_count, 0)        AS unicast_users_count,
+			COALESCE(lds.multicast_subscribers_count, 0) AS multicast_subscribers_count,
+			COALESCE(lds.multicast_publishers_count, 0)  AS multicast_publishers_count,
+			COALESCE(lds.max_unicast_users, 0)          AS max_unicast_users,
+			COALESCE(lds.max_multicast_subscribers, 0)  AS max_multicast_subscribers,
+			COALESCE(lds.max_multicast_publishers, 0)   AS max_multicast_publishers
 		FROM dz_locations_current l
-		LEFT JOIN dz_devices_current d ON d.location_pk = l.pk
-		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
-		LEFT JOIN dz_users_current u ON u.device_pk = d.pk AND u.status = 'activated'
-		GROUP BY l.pk, l.code, l.name, l.country, l.lat, l.lng, l.loc_id, l.status
+		LEFT JOIN location_device_stats lds ON l.pk = lds.location_pk
+		LEFT JOIN location_user_counts luc ON l.pk = luc.location_pk
+		LEFT JOIN location_metro lm ON l.pk = lm.location_pk
 	)
 `
 
@@ -95,16 +137,23 @@ const locationsSimpleCTE = `
 		SELECT
 			l.pk AS pk,
 			l.code AS code,
-			COALESCE(l.name, '') AS name,
+			COALESCE(l.name, '')    AS name,
 			COALESCE(l.country, '') AS country,
-			COALESCE(l.lat, 0) AS lat,
-			COALESCE(l.lng, 0) AS lng,
-			COALESCE(l.loc_id, 0) AS loc_id,
-			COALESCE(l.status, '') AS status,
+			COALESCE(l.lat, 0)      AS lat,
+			COALESCE(l.lng, 0)      AS lng,
+			COALESCE(l.loc_id, 0)   AS loc_id,
+			COALESCE(l.status, '')  AS status,
 			'' AS metro_pk,
 			'' AS metro_code,
 			toUInt32(0) AS device_count,
-			toUInt32(0) AS user_count
+			toUInt32(0) AS user_count,
+			toUInt64(0) AS max_users,
+			toUInt64(0) AS unicast_users_count,
+			toUInt64(0) AS multicast_subscribers_count,
+			toUInt64(0) AS multicast_publishers_count,
+			toUInt64(0) AS max_unicast_users,
+			toUInt64(0) AS max_multicast_subscribers,
+			toUInt64(0) AS max_multicast_publishers
 		FROM dz_locations_current l
 	)
 `
@@ -137,6 +186,8 @@ func (a *API) GetLocations(w http.ResponseWriter, r *http.Request) {
 
 	listSuffix := `
 		SELECT pk, code, name, country, lat, lng, loc_id, metro_pk, metro_code, device_count, user_count,
+			max_users, unicast_users_count, multicast_subscribers_count, multicast_publishers_count,
+			max_unicast_users, max_multicast_subscribers, max_multicast_publishers,
 			count() OVER () AS _total
 		FROM enriched
 		WHERE 1=1` + whereFilter + " " + orderBy + `
@@ -180,6 +231,13 @@ func (a *API) GetLocations(w http.ResponseWriter, r *http.Request) {
 			&l.MetroCode,
 			&l.DeviceCount,
 			&l.UserCount,
+			&l.MaxUsers,
+			&l.UnicastUsersCount,
+			&l.MulticastSubscribersCount,
+			&l.MulticastPublishersCount,
+			&l.MaxUnicastUsers,
+			&l.MaxMulticastSubscribers,
+			&l.MaxMulticastPublishers,
 			&total,
 		); err != nil {
 			logError("locations row scan failed", "error", err)

@@ -64,6 +64,7 @@ type NetworkSummary struct {
 	Links           uint64  `json:"links"`
 	Contributors    uint64  `json:"contributors"`
 	Metros          uint64  `json:"metros"`
+	Facilities      uint64  `json:"facilities"`
 	BandwidthBps    int64   `json:"bandwidth_bps"`
 	UserInboundBps  float64 `json:"user_inbound_bps"`
 
@@ -449,6 +450,12 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 		query := `SELECT COUNT(DISTINCT pk) FROM dz_metros_current`
 		row := a.envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Network.Metros)
+	})
+
+	g.Go(func() error {
+		query := `SELECT COUNT(DISTINCT pk) FROM dz_locations_current`
+		row := a.envDB(ctx).QueryRow(ctx, query)
+		return row.Scan(&resp.Network.Facilities)
 	})
 
 	// Sum total bandwidth for all links

@@ -269,6 +269,9 @@ export function LocationsPage() {
                       <SortIcon field="users" />
                     </button>
                   </th>
+                  <th className="px-4 py-3 font-medium text-right">Unicast Avail.</th>
+                  <th className="px-4 py-3 font-medium text-right">Subs. Avail.</th>
+                  <th className="px-4 py-3 font-medium text-right">Pubs. Avail.</th>
                   <th className="px-4 py-3 font-medium">Organization</th>
                 </tr>
               </thead>
@@ -296,9 +299,34 @@ export function LocationsPage() {
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
                       {location.device_count > 0 ? location.device_count : <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right">
-                      {location.user_count > 0 ? location.user_count : <span className="text-muted-foreground">—</span>}
+                    <td className="px-4 py-3 text-sm tabular-nums text-right relative">
+                      {location.max_users > 0 && <div className="absolute inset-y-0 left-0 right-0 pointer-events-none bg-muted/30 border-r border-muted-foreground/20" />}
+                      {(() => {
+                        const pct = location.max_users > 0 ? Math.min(100, (location.user_count / location.max_users) * 100) : 0
+                        const fillColor = pct >= 90 ? 'bg-red-500/25' : pct >= 70 ? 'bg-amber-500/20' : 'bg-blue-500/15'
+                        return pct > 0 ? <div className={`absolute inset-y-0 left-0 pointer-events-none ${fillColor}`} style={{ width: `${pct}%` }} /> : null
+                      })()}
+                      <span className="relative">
+                        {location.user_count > 0 || location.max_users > 0 ? (
+                          <>{location.user_count}{location.max_users > 0 && <span className="text-muted-foreground">/{location.max_users}</span>}</>
+                        ) : <span className="text-muted-foreground">—</span>}
+                      </span>
                     </td>
+                    {[
+                      { count: location.unicast_users_count, max: location.max_unicast_users },
+                      { count: location.multicast_subscribers_count, max: location.max_multicast_subscribers },
+                      { count: location.multicast_publishers_count, max: location.max_multicast_publishers },
+                    ].map(({ count, max }, i) => {
+                      const available = max > count ? max - count : 0
+                      return (
+                        <td key={i} className="px-4 py-3 text-sm tabular-nums text-right">
+                          {count === 0 && max === 0
+                            ? <span className="text-muted-foreground">—</span>
+                            : <span>{available}</span>
+                          }
+                        </td>
+                      )
+                    })}
                     <td className="px-4 py-3 max-w-sm" onClick={e => e.stopPropagation()}>
                       <PeeringDBCell locId={location.loc_id} />
                     </td>
@@ -306,7 +334,7 @@ export function LocationsPage() {
                 ))}
                 {locations.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">
                       No facilities found
                     </td>
                   </tr>

@@ -249,19 +249,19 @@ export function MetrosPage() {
                   </th>
                   <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('unicast')}>
                     <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('unicast')}>
-                      Unicast
+                      Unicast Avail.
                       <SortIcon field="unicast" />
                     </button>
                   </th>
                   <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('subscribers')}>
                     <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('subscribers')}>
-                      Subscribers
+                      Subs. Avail.
                       <SortIcon field="subscribers" />
                     </button>
                   </th>
                   <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('publishers')}>
                     <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('publishers')}>
-                      Publishers
+                      Pubs. Avail.
                       <SortIcon field="publishers" />
                     </button>
                   </th>
