@@ -11,7 +11,7 @@ import { CopyableText } from './copyable-text'
 
 const PAGE_SIZE = 100
 
-type SortField = 'code' | 'name' | 'latitude' | 'longitude' | 'devices' | 'users' | 'unicast' | 'subscribers' | 'publishers' | 'locations'
+type SortField = 'code' | 'name' | 'country' | 'devices' | 'users' | 'unicast' | 'subscribers' | 'publishers' | 'locations'
 type SortDirection = 'asc' | 'desc'
 
 // Parse search filters from URL param
@@ -21,15 +21,16 @@ function parseSearchFilters(searchParam: string): string[] {
 }
 
 // Valid filter fields for metros
-const validFilterFields = ['code', 'name', 'devices', 'users', 'locations']
+const validFilterFields = ['code', 'name', 'country', 'devices', 'users', 'locations']
 
 // Field prefixes for inline filter
 const metroFieldPrefixes = [
   { prefix: 'code:', description: 'Filter by metro code' },
   { prefix: 'name:', description: 'Filter by metro name' },
+  { prefix: 'country:', description: 'Filter by country code (e.g., US)' },
   { prefix: 'devices:', description: 'Filter by device count (e.g., >5)' },
   { prefix: 'users:', description: 'Filter by user count (e.g., >10)' },
-  { prefix: 'locations:', description: 'Filter by location count (e.g., >1)' },
+  { prefix: 'locations:', description: 'Filter by facility count (e.g., >1)' },
 ]
 
 // Fields that support autocomplete (none for metros)
@@ -222,16 +223,16 @@ export function MetrosPage() {
                       <SortIcon field="name" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('latitude')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('latitude')}>
-                      Latitude
-                      <SortIcon field="latitude" />
+                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('country')}>
+                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('country')}>
+                      Country
+                      <SortIcon field="country" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('longitude')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('longitude')}>
-                      Longitude
-                      <SortIcon field="longitude" />
+                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('locations')}>
+                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('locations')}>
+                      Facilities
+                      <SortIcon field="locations" />
                     </button>
                   </th>
                   <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('devices')}>
@@ -264,12 +265,6 @@ export function MetrosPage() {
                       <SortIcon field="publishers" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('locations')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('locations')}>
-                      Locations
-                      <SortIcon field="locations" />
-                    </button>
-                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -285,11 +280,11 @@ export function MetrosPage() {
                     <td className="px-4 py-3 text-sm">
                       {metro.name || '—'}
                     </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">
-                      {metro.latitude.toFixed(4)}
+                    <td className="px-4 py-3 text-sm">
+                      {metro.country || <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">
-                      {metro.longitude.toFixed(4)}
+                    <td className="px-4 py-3 text-sm tabular-nums text-right">
+                      {metro.location_count > 0 ? metro.location_count : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
                       {metro.device_count > 0 ? metro.device_count : <span className="text-muted-foreground">—</span>}
@@ -323,14 +318,11 @@ export function MetrosPage() {
                         </td>
                       )
                     })}
-                    <td className="px-4 py-3 text-sm tabular-nums text-right">
-                      {metro.location_count > 0 ? metro.location_count : <span className="text-muted-foreground">—</span>}
-                    </td>
                   </tr>
                 ))}
                 {metros.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
                       No metros found
                     </td>
                   </tr>
