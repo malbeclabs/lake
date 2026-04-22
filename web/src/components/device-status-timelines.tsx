@@ -386,7 +386,7 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
   return (
     <div
       id={`device-row-${derivedInfo.pk}`}
-      className={`border-b border-border last:border-b-0 border-l-2 ${leftBorderColor}`}
+      className={`border-b border-border last:border-b-0 border-l-2 group ${leftBorderColor}`}
     >
       <div
         className={`px-4 py-3 transition-colors ${hasExpandableContent ? 'cursor-pointer hover:bg-muted/30' : ''}`}
@@ -549,7 +549,7 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
             {isOpsUser && issueReasons.length > 0 && !tickets.some(t => t.type === 'incident') && (
               <div className="flex justify-end mt-1">
                 <button
-                  className="text-[10px] font-medium px-2 py-0.5 border border-gray-400/40 text-muted-foreground hover:text-foreground hover:border-gray-400/70 transition-colors"
+                  className="text-[10px] font-medium px-2 py-0.5 border border-gray-400/40 text-muted-foreground hover:text-foreground hover:border-gray-400/70 transition-colors opacity-0 group-hover:opacity-100"
                   onClick={(e) => { e.stopPropagation(); onCreateIncident(derivedInfo.pk, derivedInfo.code, derivedInfo.contributor, deviceMetrics.contributor_pk, issueReasons) }}
                 >
                   Create incident
@@ -809,19 +809,12 @@ export function DeviceStatusTimelines({
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {onTimeRangeChange && (
-            <SmallDropdown
-              value={timeRange}
-              options={timeRangeOptions}
-              onChange={(v) => onTimeRangeChange(v as TimeRange)}
-            />
-          )}
           {isOpsUser && (
             <>
               <button
                 type="button"
                 onClick={() => setShowIncidentOverlays(v => !v)}
-                className={`text-[10px] font-medium px-2 py-0.5 border transition-colors ${
+                className={`text-xs font-medium px-2.5 py-1.5 rounded-md border transition-colors ${
                   showIncidentOverlays
                     ? 'border-red-600/60 bg-red-500/10 text-red-700 dark:border-red-800/60 dark:bg-red-900/20 dark:text-red-300'
                     : 'border-border text-muted-foreground hover:text-foreground'
@@ -832,7 +825,7 @@ export function DeviceStatusTimelines({
               <button
                 type="button"
                 onClick={() => setShowMaintenanceOverlays(v => !v)}
-                className={`text-[10px] font-medium px-2 py-0.5 border transition-colors ${
+                className={`text-xs font-medium px-2.5 py-1.5 rounded-md border transition-colors ${
                   showMaintenanceOverlays
                     ? 'border-blue-600/60 bg-blue-500/10 text-blue-700 dark:border-blue-700/60 dark:bg-blue-900/20 dark:text-blue-300'
                     : 'border-border text-muted-foreground hover:text-foreground'
@@ -841,6 +834,13 @@ export function DeviceStatusTimelines({
                 Maintenance
               </button>
             </>
+          )}
+          {onTimeRangeChange && (
+            <SmallDropdown
+              value={timeRange}
+              options={timeRangeOptions}
+              onChange={(v) => onTimeRangeChange(v as TimeRange)}
+            />
           )}
         </div>
       </div>

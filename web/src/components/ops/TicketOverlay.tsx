@@ -162,7 +162,7 @@ function ClusterStrip({ cluster, leftPct, widthPct, zIndex }: ClusterStripProps)
         >
           {isSingle ? (
             <>
-              <div className="font-mono text-[11px] text-blue-300 mb-1">{first.humanReadableId}</div>
+              <div className="font-mono text-[11px] text-blue-600 dark:text-blue-300 mb-1">{first.humanReadableId}</div>
               <div className="text-foreground font-medium mb-1 leading-tight">{first.title}</div>
               <div className="text-muted-foreground space-y-0.5">
                 <div>Type: <span className="text-foreground capitalize">{first.type}</span></div>
@@ -174,7 +174,7 @@ function ClusterStrip({ cluster, leftPct, widthPct, zIndex }: ClusterStripProps)
                 href={opsTicketUrl(first.id)}
                 target="_blank"
                 rel="noreferrer"
-                className="block mt-2 text-blue-300 hover:underline"
+                className="block mt-2 text-blue-600 dark:text-blue-300 hover:underline"
               >
                 View in ops management →
               </a>
@@ -199,16 +199,16 @@ function ClusterStrip({ cluster, leftPct, widthPct, zIndex }: ClusterStripProps)
                   <div key={t.id} className={`py-1.5 ${ti > 0 ? 'border-t border-border/30' : ''}`}>
                     <div className="flex items-center gap-1.5">
                       <span className={`text-[9px] font-bold px-1 py-0.5 rounded shrink-0 ${
-                        t.type === 'incident' ? 'bg-red-900/60 text-red-200' : 'bg-blue-900/60 text-blue-200'
+                        t.type === 'incident' ? 'bg-red-500/15 text-red-700 dark:bg-red-900/60 dark:text-red-200' : 'bg-blue-500/15 text-blue-700 dark:bg-blue-900/60 dark:text-blue-200'
                       }`}>
                         {t.type === 'incident' ? 'I' : 'M'}
                       </span>
-                      <span className="font-mono text-[10px] text-blue-300 shrink-0">{t.humanReadableId}</span>
+                      <span className="font-mono text-[10px] text-blue-600 dark:text-blue-300 shrink-0">{t.humanReadableId}</span>
                       <a
                         href={opsTicketUrl(t.id)}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-blue-300 hover:underline text-[10px] ml-auto shrink-0"
+                        className="text-blue-600 dark:text-blue-300 hover:underline text-[10px] ml-auto shrink-0"
                         title="Open in ops management"
                       >
                         ↗
