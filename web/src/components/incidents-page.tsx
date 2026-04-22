@@ -297,7 +297,7 @@ function OpsIncidentsSection({
         <span className="px-1.5 py-0.5 text-xs rounded-full bg-muted-foreground/10 text-muted-foreground tabular-nums">
           {relevant.length}
         </span>
-        <span className="text-xs text-muted-foreground flex-1">Incidents registered in Ops Management</span>
+        <span className="text-xs text-muted-foreground flex-1">Incidents registered in <a href="https://doublezero.xyz/ops-management" target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">Ops Management</a></span>
         {isOpsUser && (
           <button
             onClick={onCreateIncident}
