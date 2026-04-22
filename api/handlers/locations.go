@@ -20,6 +20,7 @@ type LocationListItem struct {
 	Lat         float64 `json:"lat"`
 	Lng         float64 `json:"lng"`
 	LocId       uint32  `json:"loc_id"`
+	MetroPK     string  `json:"metro_pk"`
 	MetroCode   string  `json:"metro_code"`
 	DeviceCount uint32  `json:"device_count"`
 	UserCount   uint32  `json:"user_count"`
@@ -34,6 +35,7 @@ type LocationDetail struct {
 	Lng         float64 `json:"lng"`
 	LocId       uint32  `json:"loc_id"`
 	Status      string  `json:"status"`
+	MetroPK     string  `json:"metro_pk"`
 	MetroCode   string  `json:"metro_code"`
 	DeviceCount uint32  `json:"device_count"`
 	UserCount   uint32  `json:"user_count"`
@@ -50,14 +52,15 @@ var locationSortFields = map[string]string{
 }
 
 var locationFilterFields = map[string]FilterFieldConfig{
-	"code":    {Column: "code", Type: FieldTypeText},
-	"name":    {Column: "name", Type: FieldTypeText},
-	"country": {Column: "country", Type: FieldTypeText},
-	"status":  {Column: "status", Type: FieldTypeText},
-	"loc_id":  {Column: "loc_id", Type: FieldTypeNumeric},
-	"metro":   {Column: "metro_code", Type: FieldTypeText},
-	"devices": {Column: "device_count", Type: FieldTypeNumeric},
-	"users":   {Column: "user_count", Type: FieldTypeNumeric},
+	"code":     {Column: "code", Type: FieldTypeText},
+	"name":     {Column: "name", Type: FieldTypeText},
+	"country":  {Column: "country", Type: FieldTypeText},
+	"status":   {Column: "status", Type: FieldTypeText},
+	"loc_id":   {Column: "loc_id", Type: FieldTypeNumeric},
+	"metro":    {Column: "metro_code", Type: FieldTypeText},
+	"metro_pk": {Column: "metro_pk", Type: FieldTypeText},
+	"devices":  {Column: "device_count", Type: FieldTypeNumeric},
+	"users":    {Column: "user_count", Type: FieldTypeNumeric},
 }
 
 // locationsEnrichedCTE joins locations with devices (via location_pk), metros, and users.
@@ -65,14 +68,15 @@ var locationFilterFields = map[string]FilterFieldConfig{
 const locationsEnrichedCTE = `
 	WITH enriched AS (
 		SELECT
-			l.pk,
-			l.code,
+			l.pk AS pk,
+			l.code AS code,
 			COALESCE(l.name, '') AS name,
 			COALESCE(l.country, '') AS country,
 			COALESCE(l.lat, 0) AS lat,
 			COALESCE(l.lng, 0) AS lng,
 			COALESCE(l.loc_id, 0) AS loc_id,
 			COALESCE(l.status, '') AS status,
+			COALESCE(any(m.pk), '') AS metro_pk,
 			COALESCE(any(m.code), '') AS metro_code,
 			toUInt32(countDistinctIf(d.pk, d.pk != '')) AS device_count,
 			toUInt32(countDistinctIf(u.pk, u.pk != '')) AS user_count
@@ -89,14 +93,15 @@ const locationsEnrichedCTE = `
 const locationsSimpleCTE = `
 	WITH enriched AS (
 		SELECT
-			l.pk,
-			l.code,
+			l.pk AS pk,
+			l.code AS code,
 			COALESCE(l.name, '') AS name,
 			COALESCE(l.country, '') AS country,
 			COALESCE(l.lat, 0) AS lat,
 			COALESCE(l.lng, 0) AS lng,
 			COALESCE(l.loc_id, 0) AS loc_id,
 			COALESCE(l.status, '') AS status,
+			'' AS metro_pk,
 			'' AS metro_code,
 			toUInt32(0) AS device_count,
 			toUInt32(0) AS user_count
@@ -131,7 +136,7 @@ func (a *API) GetLocations(w http.ResponseWriter, r *http.Request) {
 	orderBy := sort.OrderByClause(locationSortFields)
 
 	listSuffix := `
-		SELECT pk, code, name, country, lat, lng, loc_id, metro_code, device_count, user_count,
+		SELECT pk, code, name, country, lat, lng, loc_id, metro_pk, metro_code, device_count, user_count,
 			count() OVER () AS _total
 		FROM enriched
 		WHERE 1=1` + whereFilter + " " + orderBy + `
@@ -171,6 +176,7 @@ func (a *API) GetLocations(w http.ResponseWriter, r *http.Request) {
 			&l.Lat,
 			&l.Lng,
 			&l.LocId,
+			&l.MetroPK,
 			&l.MetroCode,
 			&l.DeviceCount,
 			&l.UserCount,
@@ -214,7 +220,7 @@ func (a *API) GetLocation(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
 	detailSuffix := `
-		SELECT pk, code, name, country, lat, lng, loc_id, status, metro_code, device_count, user_count
+		SELECT pk, code, name, country, lat, lng, loc_id, status, metro_pk, metro_code, device_count, user_count
 		FROM enriched
 		WHERE pk = ?
 		LIMIT 1
@@ -251,6 +257,7 @@ func (a *API) GetLocation(w http.ResponseWriter, r *http.Request) {
 		&l.Lng,
 		&l.LocId,
 		&l.Status,
+		&l.MetroPK,
 		&l.MetroCode,
 		&l.DeviceCount,
 		&l.UserCount,
