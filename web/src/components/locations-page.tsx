@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
-import { useSearchParams, Link } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Loader2, Building2, AlertCircle, ChevronDown, ChevronUp, X } from 'lucide-react'
 import { fetchLocations, fetchPeeringDBFacility } from '@/lib/api'
+import { handleRowClick } from '@/lib/utils'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
 import { PageHeader } from './page-header'
+import { CopyableText } from './copyable-text'
 
 const PAGE_SIZE = 100
 
@@ -20,8 +22,8 @@ function parseSearchFilters(searchParam: string): string[] {
 const validFilterFields = ['code', 'name', 'country', 'status', 'loc_id', 'metro', 'devices', 'users']
 
 const locationFieldPrefixes = [
-  { prefix: 'code:', description: 'Filter by location code' },
-  { prefix: 'name:', description: 'Filter by location name' },
+  { prefix: 'code:', description: 'Filter by facility code' },
+  { prefix: 'name:', description: 'Filter by facility name' },
   { prefix: 'country:', description: 'Filter by country code (e.g., US)' },
   { prefix: 'status:', description: 'Filter by status (activated, pending, suspended)' },
   { prefix: 'loc_id:', description: 'Filter by PeeringDB facility ID' },
@@ -76,6 +78,7 @@ function PeeringDBCell({ locId }: { locId: number }) {
 }
 
 export function LocationsPage() {
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const [liveFilter, setLiveFilter] = useState('')
 
@@ -180,7 +183,7 @@ export function LocationsPage() {
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center">
           <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-          <div className="text-lg font-medium mb-2">Unable to load locations</div>
+          <div className="text-lg font-medium mb-2">Unable to load facilities</div>
           <div className="text-sm text-muted-foreground">{error?.message || 'Unknown error'}</div>
         </div>
       </div>
@@ -192,7 +195,7 @@ export function LocationsPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
         <PageHeader
           icon={Building2}
-          title="Locations"
+          title="Facilities"
           count={response?.total || 0}
           actions={
             <>
@@ -218,7 +221,7 @@ export function LocationsPage() {
                 fieldPrefixes={locationFieldPrefixes}
                 entity="locations"
                 autocompleteFields={locationAutocompleteFields}
-                placeholder="Filter locations..."
+                placeholder="Filter facilities..."
                 onLiveFilterChange={setLiveFilter}
               />
             </>
@@ -273,24 +276,22 @@ export function LocationsPage() {
                 {locations.map((location) => (
                   <tr
                     key={location.pk}
-                    className="border-b border-border last:border-b-0 hover:bg-muted transition-colors"
+                    className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
+                    onClick={(e) => handleRowClick(e, `/dz/locations/${encodeURIComponent(location.pk)}`, navigate)}
                   >
                     <td className="px-4 py-3 whitespace-nowrap">
-                      <Link
-                        to={`/dz/locations/${encodeURIComponent(location.pk)}`}
-                        className="font-mono text-sm text-blue-600 dark:text-blue-400 hover:underline"
-                      >
-                        {location.code}
-                      </Link>
+                      <CopyableText text={location.code} className="font-mono text-sm" />
                     </td>
                     <td className="px-4 py-3 text-sm max-w-xs truncate">
                       {location.name || '—'}
                     </td>
                     <td className="px-4 py-3 text-sm">
-                      {location.country || '—'}
+                      {location.country || <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-sm font-mono">
-                      {location.metro_code || <span className="text-muted-foreground">—</span>}
+                    <td className="px-4 py-3 text-sm">
+                      {location.metro_pk
+                        ? <Link to={`/dz/metros/${location.metro_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{location.metro_code}</Link>
+                        : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
                       {location.device_count > 0 ? location.device_count : <span className="text-muted-foreground">—</span>}
@@ -298,7 +299,7 @@ export function LocationsPage() {
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
                       {location.user_count > 0 ? location.user_count : <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td className="px-4 py-3 max-w-sm">
+                    <td className="px-4 py-3 max-w-sm" onClick={e => e.stopPropagation()}>
                       <PeeringDBCell locId={location.loc_id} />
                     </td>
                   </tr>
@@ -306,7 +307,7 @@ export function LocationsPage() {
                 {locations.length === 0 && (
                   <tr>
                     <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
-                      No locations found
+                      No facilities found
                     </td>
                   </tr>
                 )}
