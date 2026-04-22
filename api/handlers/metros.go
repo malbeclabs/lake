@@ -17,6 +17,7 @@ type MetroListItem struct {
 	PK                         string  `json:"pk"`
 	Code                       string  `json:"code"`
 	Name                       string  `json:"name"`
+	Country                    string  `json:"country"`
 	Latitude                   float64 `json:"latitude"`
 	Longitude                  float64 `json:"longitude"`
 	DeviceCount                uint64  `json:"device_count"`
@@ -37,6 +38,7 @@ type MetroListItem struct {
 var metroSortFields = map[string]string{
 	"code":        "code",
 	"name":        "name",
+	"country":     "country",
 	"latitude":    "latitude",
 	"longitude":   "longitude",
 	"devices":     "device_count",
@@ -50,6 +52,7 @@ var metroSortFields = map[string]string{
 var metroFilterFields = map[string]FilterFieldConfig{
 	"code":      {Column: "code", Type: FieldTypeText},
 	"name":      {Column: "name", Type: FieldTypeText},
+	"country":   {Column: "country", Type: FieldTypeText},
 	"devices":   {Column: "device_count", Type: FieldTypeNumeric},
 	"users":     {Column: "user_count", Type: FieldTypeNumeric},
 	"locations": {Column: "location_count", Type: FieldTypeNumeric},
@@ -72,7 +75,7 @@ func (a *API) GetMetros(w http.ResponseWriter, r *http.Request) {
 	orderBy := sort.OrderByClause(metroSortFields)
 
 	const metroSelect = `
-		SELECT pk, code, name, latitude, longitude, device_count, user_count, location_count, unicast_users_count, multicast_subscribers_count, multicast_publishers_count, max_users, max_unicast_users, max_multicast_subscribers, max_multicast_publishers, raw_max_unicast_users, raw_max_multicast_subscribers, raw_max_multicast_publishers, count() OVER () as _total
+		SELECT pk, code, name, country, latitude, longitude, device_count, user_count, location_count, unicast_users_count, multicast_subscribers_count, multicast_publishers_count, max_users, max_unicast_users, max_multicast_subscribers, max_multicast_publishers, raw_max_unicast_users, raw_max_multicast_subscribers, raw_max_multicast_publishers, count() OVER () as _total
 		FROM metros_util
 		WHERE 1=1`
 
@@ -143,6 +146,13 @@ func (a *API) GetMetros(w http.ResponseWriter, r *http.Request) {
 			FROM dz_devices_current
 			WHERE metro_pk != '' AND location_pk != ''
 			GROUP BY metro_pk
+		),
+		country_info AS (
+			SELECT d.metro_pk, any(l.country) as country
+			FROM dz_devices_current d
+			JOIN dz_locations_current l ON l.pk = d.location_pk
+			WHERE d.metro_pk != '' AND d.location_pk != ''
+			GROUP BY d.metro_pk
 		),` +
 		onchainUserCountsCTE + `
 		metros_data AS (
@@ -150,6 +160,7 @@ func (a *API) GetMetros(w http.ResponseWriter, r *http.Request) {
 				m.pk as pk,
 				m.code as code,
 				COALESCE(m.name, '') as name,
+				COALESCE(ci.country, '') as country,
 				COALESCE(m.latitude, 0) as latitude,
 				COALESCE(m.longitude, 0) as longitude,
 				COALESCE(dc.device_count, 0) as device_count,
@@ -169,6 +180,7 @@ func (a *API) GetMetros(w http.ResponseWriter, r *http.Request) {
 			LEFT JOIN device_counts dc ON m.pk = dc.metro_pk
 			LEFT JOIN user_counts uc ON m.pk = uc.metro_pk
 			LEFT JOIN location_counts lc ON m.pk = lc.metro_pk
+			LEFT JOIN country_info ci ON m.pk = ci.metro_pk
 			LEFT JOIN onchain_user_counts ouc ON m.pk = ouc.metro_pk
 		),` +
 		metrosUtilCTE +
@@ -196,6 +208,7 @@ func (a *API) GetMetros(w http.ResponseWriter, r *http.Request) {
 				m.pk as pk,
 				m.code as code,
 				COALESCE(m.name, '') as name,
+				'' as country,
 				COALESCE(m.latitude, 0) as latitude,
 				COALESCE(m.longitude, 0) as longitude,
 				COALESCE(dc.device_count, 0) as device_count,
@@ -249,6 +262,7 @@ func (a *API) GetMetros(w http.ResponseWriter, r *http.Request) {
 			&m.PK,
 			&m.Code,
 			&m.Name,
+			&m.Country,
 			&m.Latitude,
 			&m.Longitude,
 			&m.DeviceCount,
@@ -301,10 +315,12 @@ type MetroDetail struct {
 	PK                         string  `json:"pk"`
 	Code                       string  `json:"code"`
 	Name                       string  `json:"name"`
+	Country                    string  `json:"country"`
 	Latitude                   float64 `json:"latitude"`
 	Longitude                  float64 `json:"longitude"`
 	DeviceCount                uint64  `json:"device_count"`
 	UserCount                  uint64  `json:"user_count"`
+	LocationCount              uint64  `json:"location_count"`
 	UnicastUsersCount          uint64  `json:"unicast_users_count"`
 	MulticastSubscribersCount  uint64  `json:"multicast_subscribers_count"`
 	MulticastPublishersCount   uint64  `json:"multicast_publishers_count"`
@@ -378,6 +394,19 @@ func (a *API) GetMetro(w http.ResponseWriter, r *http.Request) {
 			)
 			GROUP BY metro_pk
 		),
+		country_info AS (
+			SELECT d.metro_pk, any(l.country) as country
+			FROM dz_devices_current d
+			JOIN dz_locations_current l ON l.pk = d.location_pk
+			WHERE d.metro_pk = ? AND d.location_pk != ''
+			GROUP BY d.metro_pk
+		),
+		location_counts AS (
+			SELECT metro_pk, countDistinct(location_pk) as location_count
+			FROM dz_devices_current
+			WHERE metro_pk = ? AND location_pk != ''
+			GROUP BY metro_pk
+		),
 		validator_stats AS (
 			SELECT
 				d.metro_pk,
@@ -408,10 +437,12 @@ func (a *API) GetMetro(w http.ResponseWriter, r *http.Request) {
 			m.pk,
 			m.code,
 			COALESCE(m.name, '') as name,
+			COALESCE(ci.country, '') as country,
 			COALESCE(m.latitude, 0) as latitude,
 			COALESCE(m.longitude, 0) as longitude,
 			COALESCE(dc.device_count, 0) as device_count,
 			COALESCE(uc.user_count, 0) as user_count,
+			COALESCE(lc.location_count, 0) as location_count,
 			COALESCE(ouc.unicast_users_count, 0) as unicast_users_count,
 			COALESCE(ouc.multicast_subscribers_count, 0) as multicast_subscribers_count,
 			COALESCE(ouc.multicast_publishers_count, 0) as multicast_publishers_count,
@@ -430,20 +461,24 @@ func (a *API) GetMetro(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN device_counts dc ON m.pk = dc.metro_pk
 		LEFT JOIN user_counts uc ON m.pk = uc.metro_pk
 		LEFT JOIN onchain_user_counts ouc ON m.pk = ouc.metro_pk
+		LEFT JOIN country_info ci ON m.pk = ci.metro_pk
+		LEFT JOIN location_counts lc ON m.pk = lc.metro_pk
 		LEFT JOIN validator_stats vs ON m.pk = vs.metro_pk
 		LEFT JOIN traffic_rates tr ON m.pk = tr.metro_pk
 		WHERE m.pk = ?
 	`
 
 	var metro MetroDetail
-	err := a.envDB(ctx).QueryRow(ctx, query, pk, pk, pk, pk, pk).Scan(
+	err := a.envDB(ctx).QueryRow(ctx, query, pk, pk, pk, pk, pk, pk, pk).Scan(
 		&metro.PK,
 		&metro.Code,
 		&metro.Name,
+		&metro.Country,
 		&metro.Latitude,
 		&metro.Longitude,
 		&metro.DeviceCount,
 		&metro.UserCount,
+		&metro.LocationCount,
 		&metro.UnicastUsersCount,
 		&metro.MulticastSubscribersCount,
 		&metro.MulticastPublishersCount,
