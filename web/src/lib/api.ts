@@ -3104,17 +3104,11 @@ export interface PeeringDBFacility {
 }
 
 export async function fetchPeeringDBFacility(locId: number): Promise<PeeringDBFacility> {
-  const res = await fetch(`https://www.peeringdb.com/api/fac/${locId}`)
+  const res = await fetchWithRetry(`/api/peeringdb/fac/${locId}`)
   if (!res.ok) {
     throw new Error(`Failed to fetch PeeringDB facility ${locId}`)
   }
-  const data = await res.json()
-  const fac = data?.data?.[0]
-  return {
-    orgName: fac?.org?.name ?? '',
-    aka: fac?.aka ?? '',
-    logoUrl: fac?.org?.logo ?? '',
-  }
+  return res.json()
 }
 
 export interface Contributor {
