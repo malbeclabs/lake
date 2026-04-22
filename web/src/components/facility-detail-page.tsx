@@ -309,8 +309,7 @@ export function FacilityDetailPage() {
         </div>
 
         {/* Devices table */}
-        {devices.length > 0 && (
-          <div>
+        <div>
             <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
               Devices ({devices.length}{devicesResponse && devicesResponse.total > rawDevices.length ? ` of ${devicesResponse.total}` : ''})
             </h2>
@@ -412,12 +411,18 @@ export function FacilityDetailPage() {
                         </tr>
                       )
                     })}
+                    {devices.length === 0 && (
+                      <tr>
+                        <td colSpan={11} className="px-4 py-8 text-center text-muted-foreground text-sm">
+                          No devices
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
             </div>
           </div>
-        )}
       </div>
     </div>
   )

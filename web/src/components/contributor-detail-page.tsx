@@ -286,8 +286,7 @@ export function ContributorDetailPage() {
         </div>
 
         {/* Devices table */}
-        {devices.length > 0 && (
-          <div className="mb-8">
+        <div className="mb-8">
             <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
               Devices ({devices.length}{devicesData && devicesData.total > rawDevices.length ? ` of ${devicesData.total}` : ''})
             </h2>
@@ -389,12 +388,18 @@ export function ContributorDetailPage() {
                         </tr>
                       )
                     })}
+                    {devices.length === 0 && (
+                      <tr>
+                        <td colSpan={11} className="px-4 py-8 text-center text-muted-foreground text-sm">
+                          No devices
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
             </div>
           </div>
-        )}
 
         {/* Links table */}
         {links.length > 0 && (

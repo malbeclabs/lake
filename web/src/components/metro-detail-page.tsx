@@ -285,7 +285,7 @@ export function MetroDetailPage() {
           </div>
 
           {/* Map */}
-          <div className="border border-border rounded-lg overflow-hidden bg-card" style={{ height: '160px' }}>
+          <div className="border border-border rounded-lg overflow-hidden bg-card min-h-40">
             <MiniMap
               lat={metro.latitude}
               lng={metro.longitude}

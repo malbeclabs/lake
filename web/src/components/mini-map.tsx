@@ -29,7 +29,7 @@ interface MiniMapProps {
   googleMapsHref?: string
 }
 
-export function MiniMap({ lat, lng, zoom = 10, googleMapsHref }: MiniMapProps) {
+export function MiniMap({ lat, lng, zoom = 7, googleMapsHref }: MiniMapProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
   const mapStyle = useMemo(() => createMapStyle(isDark), [isDark])
