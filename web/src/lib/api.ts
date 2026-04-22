@@ -2834,6 +2834,7 @@ export interface Device {
   metro_pk: string
   metro_code: string
   location_pk: string
+  location_code: string
   public_ip: string
   max_users: number
   current_users: number
@@ -2912,11 +2913,13 @@ export interface Link {
   bandwidth_bps: number
   side_a_pk: string
   side_a_code: string
+  side_a_metro_pk: string
   side_a_metro: string
   side_a_iface_name: string
   side_a_ip: string
   side_z_pk: string
   side_z_code: string
+  side_z_metro_pk: string
   side_z_metro: string
   side_z_iface_name: string
   side_z_ip: string
@@ -2974,6 +2977,7 @@ export interface Metro {
   pk: string
   code: string
   name: string
+  country: string
   latitude: number
   longitude: number
   device_count: number
@@ -3034,6 +3038,7 @@ export interface Location {
   lat: number
   lng: number
   loc_id: number
+  metro_pk: string
   metro_code: string
   device_count: number
   user_count: number
@@ -3048,6 +3053,7 @@ export interface LocationDetail {
   lng: number
   loc_id: number
   status: string
+  metro_pk: string
   metro_code: string
   device_count: number
   user_count: number
@@ -3079,6 +3085,18 @@ export async function fetchLocations(
   return res.json()
 }
 
+export async function fetchLocationsByMetro(metroPk: string, limit = 500, offset = 0): Promise<PaginatedResponse<Location>> {
+  const params = new URLSearchParams()
+  params.set('limit', String(limit))
+  params.set('offset', String(offset))
+  params.set('sort_by', 'code')
+  params.set('sort_dir', 'asc')
+  params.append('filters', `metro_pk:${metroPk}`)
+  const res = await fetchWithRetry(`/api/dz/locations?${params}`)
+  if (!res.ok) throw new Error('Failed to fetch locations')
+  return res.json()
+}
+
 export interface PeeringDBFacility {
   orgName: string
   aka: string
@@ -3103,6 +3121,8 @@ export interface Contributor {
   pk: string
   code: string
   name: string
+  metro_count: number
+  location_count: number
   device_count: number
   side_a_devices: number
   side_z_devices: number
@@ -3167,6 +3187,8 @@ export interface User {
   metro_pk: string
   metro_code: string
   metro_name: string
+  location_pk: string
+  location_code: string
   tenant_pk: string
   tenant_code: string
   in_bps: number
@@ -3200,6 +3222,7 @@ export interface UserDetail extends User {
   client_ip: string
   tunnel_id: number
   metro_pk: string
+  location_loc_id: number
   contributor_pk: string
   contributor_code: string
   is_validator: boolean
