@@ -7,6 +7,7 @@ import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useBackLink } from '@/hooks/use-back-link'
 import { handleRowClick } from '@/lib/utils'
 import { MiniMap } from '@/components/mini-map'
+import { CopyableText } from '@/components/copyable-text'
 
 type DeviceSortField = 'code' | 'type' | 'contributor' | 'metro' | 'status' | 'users' | 'unicast' | 'subscribers' | 'publishers' | 'in' | 'out'
 type SortDir = 'asc' | 'desc'
@@ -209,6 +210,20 @@ export function FacilityDetailPage() {
                   {facility.metro_pk
                     ? <Link to={`/dz/metros/${facility.metro_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline">{facility.metro_code}</Link>
                     : (facility.metro_code || '—')}
+                </dd>
+              </div>
+              <div className="flex justify-between items-center">
+                <dt className="text-sm text-muted-foreground">Pubkey</dt>
+                <dd className="text-sm font-mono">
+                  <CopyableText text={facility.pk} className="font-mono text-sm">
+                    {facility.pk.slice(0, 4)}...{facility.pk.slice(-4)}
+                  </CopyableText>
+                </dd>
+              </div>
+              <div className="flex justify-between items-center">
+                <dt className="text-sm text-muted-foreground">Code</dt>
+                <dd className="text-sm font-mono">
+                  <CopyableText text={facility.code} className="font-mono text-sm" />
                 </dd>
               </div>
               {facility.loc_id > 0 && (

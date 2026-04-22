@@ -300,17 +300,27 @@ export function FacilitiesPage() {
                       {facility.device_count > 0 ? facility.device_count : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right relative">
-                      {facility.max_users > 0 && <div className="absolute inset-y-0 left-0 right-0 pointer-events-none bg-muted/30 border-r border-muted-foreground/20" />}
                       {(() => {
-                        const pct = facility.max_users > 0 ? Math.min(100, (facility.user_count / facility.max_users) * 100) : 0
+                        const userAvail = facility.max_users > 0 ? Math.max(0, facility.max_users - facility.user_count) : Infinity
+                        const unicastAvail = facility.max_unicast_users > 0 ? Math.max(0, facility.max_unicast_users - facility.unicast_users_count) : Infinity
+                        const subsAvail = facility.max_multicast_subscribers > 0 ? Math.max(0, facility.max_multicast_subscribers - facility.multicast_subscribers_count) : Infinity
+                        const pubsAvail = facility.max_multicast_publishers > 0 ? Math.max(0, facility.max_multicast_publishers - facility.multicast_publishers_count) : Infinity
+                        const effectiveAvail = Math.min(userAvail, unicastAvail, subsAvail, pubsAvail)
+                        const effectiveMax = effectiveAvail === Infinity ? 0 : facility.user_count + effectiveAvail
+                        const pct = effectiveMax > 0 ? Math.min(100, (facility.user_count / effectiveMax) * 100) : 0
                         const fillColor = pct >= 90 ? 'bg-red-500/25' : pct >= 70 ? 'bg-amber-500/20' : 'bg-blue-500/15'
-                        return pct > 0 ? <div className={`absolute inset-y-0 left-0 pointer-events-none ${fillColor}`} style={{ width: `${pct}%` }} /> : null
+                        return (
+                          <>
+                            {effectiveMax > 0 && <div className="absolute inset-y-0 left-0 right-0 pointer-events-none bg-muted/30 border-r border-muted-foreground/20" />}
+                            {pct > 0 && <div className={`absolute inset-y-0 left-0 pointer-events-none ${fillColor}`} style={{ width: `${pct}%` }} />}
+                            <span className="relative">
+                              {facility.user_count > 0 || effectiveMax > 0 ? (
+                                <>{facility.user_count}{effectiveMax > 0 && <span className="text-muted-foreground">/{effectiveMax}</span>}</>
+                              ) : <span className="text-muted-foreground">—</span>}
+                            </span>
+                          </>
+                        )
                       })()}
-                      <span className="relative">
-                        {facility.user_count > 0 || facility.max_users > 0 ? (
-                          <>{facility.user_count}{facility.max_users > 0 && <span className="text-muted-foreground">/{facility.max_users}</span>}</>
-                        ) : <span className="text-muted-foreground">—</span>}
-                      </span>
                     </td>
                     {[
                       { count: facility.unicast_users_count, max: facility.max_unicast_users },
