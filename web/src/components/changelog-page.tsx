@@ -10,6 +10,16 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    date: 'April 22, 2026',
+    changes: [
+      { type: 'feature', description: 'Locations listing page with device count, user capacity bar, and available unicast/subscriber/publisher slots per location' },
+      { type: 'feature', description: 'Status page Metros card now shows Metros and Locations counts side-by-side' },
+      { type: 'improvement', description: 'Metros list: Unicast, Subscribers, Publishers column headers clarified as "Avail." to reflect available capacity' },
+      { type: 'improvement', description: 'PeeringDB lookups proxied through the API with 24-hour in-memory cache, eliminating repeated browser requests and CSP violations' },
+      { type: 'fix', description: 'Content Security Policy updated to allow OpenStreetMap embeds and PeeringDB organization logos' },
+    ],
+  },
+  {
     date: 'April 21, 2026',
     changes: [
       { type: 'feature', description: 'Shreds Economics page with revenue analytics, seat health, retention signals, and next-epoch forecast' },
