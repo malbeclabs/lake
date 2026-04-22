@@ -1,13 +1,14 @@
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, MapPin, AlertCircle, ArrowLeft, Info, ChevronUp, ChevronDown } from 'lucide-react'
-import { fetchMetro, fetchDevicesByMetro } from '@/lib/api'
+import { fetchMetro, fetchDevicesByMetro, fetchLocationsByMetro } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useBackLink } from '@/hooks/use-back-link'
 import { handleRowClick } from '@/lib/utils'
 import { useState, useMemo } from 'react'
 
-type DeviceSortField = 'code' | 'type' | 'contributor' | 'status' | 'users' | 'unicast' | 'subscribers' | 'publishers' | 'in' | 'out'
+type DeviceSortField = 'code' | 'type' | 'contributor' | 'location' | 'status' | 'users' | 'unicast' | 'subscribers' | 'publishers' | 'in' | 'out'
+type LocationSortField = 'code' | 'name' | 'country' | 'devices' | 'users'
 type SortDir = 'asc' | 'desc'
 
 function formatBps(bps: number): string {
@@ -26,13 +27,16 @@ function formatStake(sol: number): string {
   return `${sol.toFixed(0)} SOL`
 }
 
-const statusColors: Record<string, string> = {
-  active: 'text-green-600 dark:text-green-400',
-  activated: 'text-green-600 dark:text-green-400',
-  drained: 'text-amber-500',
-  'soft-drained': 'text-amber-600 dark:text-amber-400',
-  inactive: 'text-muted-foreground',
-  deactivated: 'text-muted-foreground',
+const statusDotColor: Record<string, string> = {
+  activated: 'bg-green-500',
+  active: 'bg-green-500',
+  provisioning: 'bg-blue-500',
+  'soft-drained': 'bg-amber-500',
+  drained: 'bg-amber-500',
+  suspended: 'bg-red-500',
+  pending: 'bg-amber-500',
+  inactive: 'bg-muted-foreground',
+  deactivated: 'bg-muted-foreground',
 }
 
 export function MetroDetailPage() {
@@ -41,6 +45,8 @@ export function MetroDetailPage() {
   const back = useBackLink({ to: '/dz/metros', label: 'metros' })
   const [sortField, setSortField] = useState<DeviceSortField>('code')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
+  const [locSortField, setLocSortField] = useState<LocationSortField>('code')
+  const [locSortDir, setLocSortDir] = useState<SortDir>('asc')
 
   const { data: metro, isLoading, error } = useQuery({
     queryKey: ['metro', pk],
@@ -54,6 +60,12 @@ export function MetroDetailPage() {
     enabled: !!pk,
   })
 
+  const { data: locationsData } = useQuery({
+    queryKey: ['metro-locations', pk],
+    queryFn: () => fetchLocationsByMetro(pk!),
+    enabled: !!pk,
+  })
+
   useDocumentTitle(metro?.code || metro?.name || 'Metro')
 
   const rawDevices = devicesData?.items ?? []
@@ -64,6 +76,7 @@ export function MetroDetailPage() {
         case 'code': cmp = a.code.localeCompare(b.code); break
         case 'type': cmp = (a.device_type || '').localeCompare(b.device_type || ''); break
         case 'contributor': cmp = (a.contributor_code || '').localeCompare(b.contributor_code || ''); break
+        case 'location': cmp = (a.location_code || '').localeCompare(b.location_code || ''); break
         case 'status': cmp = a.status.localeCompare(b.status); break
         case 'users': {
           const noA = !a.max_users, noB = !b.max_users
@@ -114,6 +127,30 @@ export function MetroDetailPage() {
     return sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
   }
 
+  const rawLocations = locationsData?.items ?? []
+  const locations = useMemo(() => {
+    return [...rawLocations].sort((a, b) => {
+      let cmp = 0
+      switch (locSortField) {
+        case 'code': cmp = a.code.localeCompare(b.code); break
+        case 'name': cmp = (a.name || '').localeCompare(b.name || ''); break
+        case 'country': cmp = (a.country || '').localeCompare(b.country || ''); break
+        case 'devices': cmp = a.device_count - b.device_count; break
+        case 'users': cmp = a.user_count - b.user_count; break
+      }
+      return locSortDir === 'asc' ? cmp : -cmp
+    })
+  }, [rawLocations, locSortField, locSortDir])
+
+  const handleLocSort = (field: LocationSortField) => {
+    if (locSortField === field) setLocSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setLocSortField(field); setLocSortDir('asc') }
+  }
+  const LocSortIcon = ({ field }: { field: LocationSortField }) => {
+    if (locSortField !== field) return null
+    return locSortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
+  }
+
   if (isLoading) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -162,21 +199,6 @@ export function MetroDetailPage() {
 
         {/* Info grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
-          {/* Location */}
-          <div className="border border-border rounded-lg p-4 bg-card">
-            <h3 className="text-sm font-medium text-muted-foreground mb-3">Location</h3>
-            <dl className="space-y-2">
-              <div className="flex justify-between">
-                <dt className="text-sm text-muted-foreground">Latitude</dt>
-                <dd className="text-sm font-mono">{metro.latitude.toFixed(4)}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-sm text-muted-foreground">Longitude</dt>
-                <dd className="text-sm font-mono">{metro.longitude.toFixed(4)}</dd>
-              </div>
-            </dl>
-          </div>
-
           {/* Infrastructure */}
           <div className="border border-border rounded-lg p-4 bg-card">
             <h3 className="text-sm font-medium text-muted-foreground mb-3">Infrastructure</h3>
@@ -184,6 +206,10 @@ export function MetroDetailPage() {
               <div className="flex justify-between">
                 <dt className="text-sm text-muted-foreground">Devices</dt>
                 <dd className="text-sm">{metro.device_count}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-sm text-muted-foreground">Facilities</dt>
+                <dd className="text-sm">{metro.location_count}</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-sm text-muted-foreground">Users</dt>
@@ -234,7 +260,7 @@ export function MetroDetailPage() {
             </dl>
           </div>
 
-          {/* Traffic */}
+          {/* Traffic + Validators */}
           <div className="border border-border rounded-lg p-4 bg-card">
             <h3 className="text-sm font-medium text-muted-foreground mb-3">Traffic</h3>
             <dl className="space-y-2">
@@ -246,15 +272,8 @@ export function MetroDetailPage() {
                 <dt className="text-sm text-muted-foreground">Outbound</dt>
                 <dd className="text-sm">{formatBps(metro.out_bps)}</dd>
               </div>
-            </dl>
-          </div>
-
-          {/* Validators */}
-          <div className="border border-border rounded-lg p-4 bg-card">
-            <h3 className="text-sm font-medium text-muted-foreground mb-3">Validators</h3>
-            <dl className="space-y-2">
               <div className="flex justify-between">
-                <dt className="text-sm text-muted-foreground">Count</dt>
+                <dt className="text-sm text-muted-foreground">Validators</dt>
                 <dd className="text-sm">{metro.validator_count}</dd>
               </div>
               <div className="flex justify-between">
@@ -262,6 +281,26 @@ export function MetroDetailPage() {
                 <dd className="text-sm">{formatStake(metro.stake_sol)}</dd>
               </div>
             </dl>
+          </div>
+
+          {/* Map */}
+          <div className="border border-border rounded-lg overflow-hidden bg-card" style={{ height: '160px' }}>
+            <div className="relative w-full h-full">
+              <iframe
+                src={`https://www.openstreetmap.org/export/embed.html?bbox=${metro.longitude - 2},${metro.latitude - 2},${metro.longitude + 2},${metro.latitude + 2}&layer=mapnik&marker=${metro.latitude},${metro.longitude}`}
+                className="absolute top-0 left-0 w-full border-0"
+                style={{ height: 'calc(100% + 30px)', pointerEvents: 'none' }}
+                loading="lazy"
+                title="Map"
+              />
+              <a
+                href={`https://www.google.com/maps?q=${metro.latitude},${metro.longitude}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="absolute inset-0"
+                aria-label="Open in Google Maps"
+              />
+            </div>
           </div>
         </div>
 
@@ -276,10 +315,10 @@ export function MetroDetailPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/30 text-xs text-muted-foreground uppercase tracking-wider">
-                      {(['code', 'type', 'contributor', 'status'] as DeviceSortField[]).map(f => (
+                      {(['code', 'type', 'contributor', 'location', 'status'] as DeviceSortField[]).map(f => (
                         <th key={f} className="px-4 py-3 font-medium text-left">
                           <button className="inline-flex items-center gap-1" type="button" onClick={() => handleDeviceSort(f)}>
-                            {f.charAt(0).toUpperCase() + f.slice(1)}
+                            {f === 'location' ? 'Facility' : f.charAt(0).toUpperCase() + f.slice(1)}
                             <SortIcon field={f} />
                           </button>
                         </th>
@@ -315,8 +354,16 @@ export function MetroDetailPage() {
                           <td className="px-4 py-3 text-sm text-muted-foreground">
                             {device.contributor_code || '—'}
                           </td>
-                          <td className={`px-4 py-3 text-sm capitalize ${statusColors[device.status] || ''}`}>
-                            {device.status}
+                          <td className="px-4 py-3 text-sm">
+                            {device.location_pk
+                              ? <Link to={`/dz/locations/${encodeURIComponent(device.location_pk)}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{device.location_code}</Link>
+                              : <span className="text-muted-foreground">—</span>}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span
+                              className={`inline-block h-2.5 w-2.5 rounded-full ${statusDotColor[device.status] ?? 'bg-muted-foreground'}`}
+                              title={device.status}
+                            />
                           </td>
                           <td className="px-4 py-3 text-sm tabular-nums text-right relative">
                             {(() => {
@@ -359,6 +406,66 @@ export function MetroDetailPage() {
                         </tr>
                       )
                     })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Facilities table */}
+        {locations.length > 0 && (
+          <div className="mt-8">
+            <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
+              Facilities ({locations.length}{locationsData && locationsData.total > rawLocations.length ? ` of ${locationsData.total}` : ''})
+            </h2>
+            <div className="border border-border rounded-lg overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/30 text-xs text-muted-foreground uppercase tracking-wider">
+                      {(['code', 'name', 'country'] as LocationSortField[]).map(f => (
+                        <th key={f} className="px-4 py-3 font-medium text-left">
+                          <button className="inline-flex items-center gap-1" type="button" onClick={() => handleLocSort(f)}>
+                            {f.charAt(0).toUpperCase() + f.slice(1)}
+                            <LocSortIcon field={f} />
+                          </button>
+                        </th>
+                      ))}
+                      {(['devices', 'users'] as LocationSortField[]).map(f => (
+                        <th key={f} className="px-4 py-3 font-medium text-right">
+                          <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleLocSort(f)}>
+                            {f.charAt(0).toUpperCase() + f.slice(1)}
+                            <LocSortIcon field={f} />
+                          </button>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {locations.map((loc) => (
+                      <tr
+                        key={loc.pk}
+                        className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
+                        onClick={(e) => handleRowClick(e, `/dz/locations/${encodeURIComponent(loc.pk)}`, navigate)}
+                      >
+                        <td className="px-4 py-3">
+                          <span className="font-mono text-sm">{loc.code}</span>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-muted-foreground">
+                          {loc.name || '—'}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-muted-foreground">
+                          {loc.country || '—'}
+                        </td>
+                        <td className="px-4 py-3 text-sm tabular-nums text-right">
+                          {loc.device_count > 0 ? loc.device_count : <span className="text-muted-foreground">—</span>}
+                        </td>
+                        <td className="px-4 py-3 text-sm tabular-nums text-right">
+                          {loc.user_count > 0 ? loc.user_count : <span className="text-muted-foreground">—</span>}
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
