@@ -53,9 +53,6 @@ type Config struct {
 	// ClickHouse pushes multi-table queries to the remote where the database
 	// name must match.
 	RemoteDatabase string
-
-	// Force overwrites existing non-proxy tables.
-	Force bool
 }
 
 // Setup creates remoteSecure() proxy tables in local ClickHouse
@@ -109,23 +106,19 @@ func Setup(log *slog.Logger, cfg Config) error {
 	}
 	defer rows.Close()
 
-	created, existing, skipped := 0, 0, 0
+	created, skipped := 0, 0
 	for rows.Next() {
 		var tableName string
 		if err := rows.Scan(&tableName); err != nil {
 			return fmt.Errorf("failed to scan table name: %w", err)
 		}
 
-		result, err := checkTable(ctx, localConn, cfg.RemoteDatabase, tableName, cfg.Force, log)
+		result, err := checkTable(ctx, localConn, cfg.RemoteDatabase, tableName, log)
 		if err != nil {
 			return err
 		}
 		if result == tableSkipped {
 			skipped++
-			continue
-		}
-		if result == tableExisting {
-			existing++
 			continue
 		}
 
@@ -139,38 +132,27 @@ func Setup(log *slog.Logger, cfg Config) error {
 		log.Info("created proxy table", "table", fmt.Sprintf("%s.%s", cfg.RemoteDatabase, tableName))
 		created++
 	}
-	if created == 0 && existing > 0 && skipped == 0 {
-		fmt.Printf("All %d proxy tables in %s already exist (from remote %s database)\n", existing, cfg.RemoteDatabase, cfg.RemoteDatabase)
-	} else {
-		fmt.Printf("Created %d proxy tables in %s (from remote %s database", created, cfg.RemoteDatabase, cfg.RemoteDatabase)
-		if existing > 0 {
-			fmt.Printf(", %d already existed", existing)
-		}
-		if skipped > 0 {
-			fmt.Printf(", skipped %d non-proxy tables", skipped)
-		}
-		fmt.Println(")")
+	fmt.Printf("Created %d proxy tables in %s (from remote %s database", created, cfg.RemoteDatabase, cfg.RemoteDatabase)
+	if skipped > 0 {
+		fmt.Printf(", skipped %d non-proxy tables", skipped)
 	}
+	fmt.Println(")")
 
 	// Create external table proxies in their original databases
 	// (e.g., shredder.publisher_shred_stats) since the API references them
 	// with fully qualified names.
-	extCreated, extExisting, extSkipped := 0, 0, 0
+	extCreated, extSkipped := 0, 0
 	for _, t := range externalRemoteTables {
 		if err := localConn.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", t.RemoteDB)); err != nil {
 			return fmt.Errorf("failed to create database %s: %w", t.RemoteDB, err)
 		}
 
-		result, err := checkTable(ctx, localConn, t.RemoteDB, t.RemoteTable, cfg.Force, log)
+		result, err := checkTable(ctx, localConn, t.RemoteDB, t.RemoteTable, log)
 		if err != nil {
 			return err
 		}
 		if result == tableSkipped {
 			extSkipped++
-			continue
-		}
-		if result == tableExisting {
-			extExisting++
 			continue
 		}
 
@@ -184,18 +166,11 @@ func Setup(log *slog.Logger, cfg Config) error {
 		log.Info("created external proxy table", "table", fmt.Sprintf("%s.%s", t.RemoteDB, t.RemoteTable))
 		extCreated++
 	}
-	if extCreated == 0 && extExisting > 0 && extSkipped == 0 {
-		fmt.Printf("All %d external proxy tables already exist\n", extExisting)
-	} else {
-		fmt.Printf("Created %d external proxy tables", extCreated)
-		if extExisting > 0 {
-			fmt.Printf(" (%d already existed)", extExisting)
-		}
-		if extSkipped > 0 {
-			fmt.Printf(" (skipped %d non-proxy tables)", extSkipped)
-		}
-		fmt.Println()
+	fmt.Printf("Created %d external proxy tables", extCreated)
+	if extSkipped > 0 {
+		fmt.Printf(" (skipped %d non-proxy tables)", extSkipped)
 	}
+	fmt.Println()
 
 	return nil
 }
@@ -203,14 +178,12 @@ func Setup(log *slog.Logger, cfg Config) error {
 type tableCheckResult int
 
 const (
-	tableNew      tableCheckResult = iota // table doesn't exist, create it
-	tableExisting                         // proxy already exists, skip it
-	tableSkipped                          // non-proxy table exists, skip unless --force
-	tableForced                           // non-proxy table exists but --force was set
+	tableNew     tableCheckResult = iota // table doesn't exist or is a proxy, (re)create it
+	tableSkipped                         // non-proxy table exists, leave it alone
 )
 
 // checkTable checks whether a table already exists and what action to take.
-func checkTable(ctx context.Context, conn clickhouse.Connection, database, table string, force bool, log *slog.Logger) (tableCheckResult, error) {
+func checkTable(ctx context.Context, conn clickhouse.Connection, database, table string, log *slog.Logger) (tableCheckResult, error) {
 	rows, err := conn.Query(ctx,
 		"SELECT engine FROM system.tables WHERE database = ? AND name = ?",
 		database, table,
@@ -230,18 +203,9 @@ func checkTable(ctx context.Context, conn clickhouse.Connection, database, table
 	}
 
 	if engine == "StorageProxy" {
-		if force {
-			return tableNew, nil
-		}
-		return tableExisting, nil
+		return tableNew, nil
 	}
 
-	fqn := fmt.Sprintf("%s.%s", database, table)
-	if force {
-		log.Warn("overwriting existing non-proxy table (--force)", "table", fqn, "engine", engine)
-		return tableForced, nil
-	}
-
-	log.Warn("skipping existing non-proxy table (use --force to overwrite)", "table", fqn, "engine", engine)
+	log.Warn("skipping existing non-proxy table", "table", fmt.Sprintf("%s.%s", database, table), "engine", engine)
 	return tableSkipped, nil
 }
