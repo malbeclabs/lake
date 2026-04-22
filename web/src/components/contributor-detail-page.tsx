@@ -1,4 +1,4 @@
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useState, useMemo } from 'react'
 import { Loader2, Building2, AlertCircle, ArrowLeft, Info, ChevronUp, ChevronDown } from 'lucide-react'
@@ -7,7 +7,7 @@ import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useBackLink } from '@/hooks/use-back-link'
 import { handleRowClick } from '@/lib/utils'
 
-type DeviceSortField = 'code' | 'type' | 'status' | 'users' | 'unicast' | 'subscribers' | 'publishers' | 'in' | 'out'
+type DeviceSortField = 'code' | 'type' | 'metro' | 'location' | 'status' | 'users' | 'unicast' | 'subscribers' | 'publishers' | 'in' | 'out'
 type SortDir = 'asc' | 'desc'
 
 function formatBps(bps: number): string {
@@ -19,13 +19,16 @@ function formatBps(bps: number): string {
   return `${bps.toFixed(0)} bps`
 }
 
-const statusColors: Record<string, string> = {
-  active: 'text-green-600 dark:text-green-400',
-  activated: 'text-green-600 dark:text-green-400',
-  drained: 'text-amber-500',
-  'soft-drained': 'text-amber-600 dark:text-amber-400',
-  inactive: 'text-muted-foreground',
-  deactivated: 'text-muted-foreground',
+const statusDotColor: Record<string, string> = {
+  activated: 'bg-green-500',
+  active: 'bg-green-500',
+  provisioning: 'bg-blue-500',
+  'soft-drained': 'bg-amber-500',
+  drained: 'bg-amber-500',
+  suspended: 'bg-red-500',
+  pending: 'bg-amber-500',
+  inactive: 'bg-muted-foreground',
+  deactivated: 'bg-muted-foreground',
 }
 
 export function ContributorDetailPage() {
@@ -56,6 +59,8 @@ export function ContributorDetailPage() {
       switch (sortField) {
         case 'code': cmp = a.code.localeCompare(b.code); break
         case 'type': cmp = (a.device_type || '').localeCompare(b.device_type || ''); break
+        case 'metro': cmp = (a.metro_code || '').localeCompare(b.metro_code || ''); break
+        case 'location': cmp = (a.location_code || '').localeCompare(b.location_code || ''); break
         case 'status': cmp = a.status.localeCompare(b.status); break
         case 'users': {
           const noA = !a.max_users, noB = !b.max_users
@@ -254,10 +259,10 @@ export function ContributorDetailPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/30 text-xs text-muted-foreground uppercase tracking-wider">
-                      {(['code', 'type', 'status'] as DeviceSortField[]).map(f => (
+                      {(['code', 'type', 'metro', 'location', 'status'] as DeviceSortField[]).map(f => (
                         <th key={f} className="px-4 py-3 font-medium text-left">
                           <button className="inline-flex items-center gap-1" type="button" onClick={() => handleDeviceSort(f)}>
-                            {f.charAt(0).toUpperCase() + f.slice(1)}
+                            {f === 'location' ? 'Facility' : f.charAt(0).toUpperCase() + f.slice(1)}
                             <SortIcon field={f} />
                           </button>
                         </th>
@@ -290,8 +295,21 @@ export function ContributorDetailPage() {
                           <td className="px-4 py-3 text-sm text-muted-foreground capitalize">
                             {device.device_type?.replace(/_/g, ' ')}
                           </td>
-                          <td className={`px-4 py-3 text-sm capitalize ${statusColors[device.status] || ''}`}>
-                            {device.status}
+                          <td className="px-4 py-3 text-sm">
+                            {device.metro_pk
+                              ? <Link to={`/dz/metros/${device.metro_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{device.metro_code}</Link>
+                              : <span className="text-muted-foreground">—</span>}
+                          </td>
+                          <td className="px-4 py-3 text-sm">
+                            {device.location_pk
+                              ? <Link to={`/dz/locations/${encodeURIComponent(device.location_pk)}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{device.location_code}</Link>
+                              : <span className="text-muted-foreground">—</span>}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span
+                              className={`inline-block h-2.5 w-2.5 rounded-full ${statusDotColor[device.status] ?? 'bg-muted-foreground'}`}
+                              title={device.status}
+                            />
                           </td>
                           <td className="px-4 py-3 text-sm tabular-nums text-right relative">
                             {(() => {
