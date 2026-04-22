@@ -76,7 +76,7 @@ const locationsEnrichedCTE = `
 	WITH location_device_stats AS (
 		SELECT
 			location_pk,
-			countDistinct(pk) AS device_count,
+			toUInt32(countDistinct(pk)) AS device_count,
 			SUM(unicast_users_count)         AS unicast_users_count,
 			SUM(multicast_subscribers_count) AS multicast_subscribers_count,
 			SUM(multicast_publishers_count)  AS multicast_publishers_count,
@@ -114,15 +114,15 @@ const locationsEnrichedCTE = `
 			COALESCE(l.status, '')  AS status,
 			COALESCE(lm.metro_pk, '')   AS metro_pk,
 			COALESCE(lm.metro_code, '') AS metro_code,
-			COALESCE(lds.device_count, 0)               AS device_count,
-			COALESCE(luc.user_count, 0)                 AS user_count,
-			COALESCE(lds.max_users, 0)                  AS max_users,
-			COALESCE(lds.unicast_users_count, 0)        AS unicast_users_count,
-			COALESCE(lds.multicast_subscribers_count, 0) AS multicast_subscribers_count,
-			COALESCE(lds.multicast_publishers_count, 0)  AS multicast_publishers_count,
-			COALESCE(lds.max_unicast_users, 0)          AS max_unicast_users,
-			COALESCE(lds.max_multicast_subscribers, 0)  AS max_multicast_subscribers,
-			COALESCE(lds.max_multicast_publishers, 0)   AS max_multicast_publishers
+			toUInt32(COALESCE(lds.device_count, 0))               AS device_count,
+			toUInt32(COALESCE(luc.user_count, 0))                 AS user_count,
+			toUInt64(COALESCE(lds.max_users, 0))                  AS max_users,
+			toUInt64(COALESCE(lds.unicast_users_count, 0))        AS unicast_users_count,
+			toUInt64(COALESCE(lds.multicast_subscribers_count, 0)) AS multicast_subscribers_count,
+			toUInt64(COALESCE(lds.multicast_publishers_count, 0))  AS multicast_publishers_count,
+			toUInt64(COALESCE(lds.max_unicast_users, 0))          AS max_unicast_users,
+			toUInt64(COALESCE(lds.max_multicast_subscribers, 0))  AS max_multicast_subscribers,
+			toUInt64(COALESCE(lds.max_multicast_publishers, 0))   AS max_multicast_publishers
 		FROM dz_locations_current l
 		LEFT JOIN location_device_stats lds ON l.pk = lds.location_pk
 		LEFT JOIN location_user_counts luc ON l.pk = luc.location_pk
