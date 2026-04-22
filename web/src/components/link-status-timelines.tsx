@@ -1163,7 +1163,7 @@ export function LinkStatusTimelines({
                 onClick={() => setShowIncidentOverlays(v => !v)}
                 className={`text-[10px] font-medium px-2 py-0.5 border transition-colors ${
                   showIncidentOverlays
-                    ? 'border-red-800/60 bg-red-900/20 text-red-300'
+                    ? 'border-red-600/60 bg-red-500/10 text-red-700 dark:border-red-800/60 dark:bg-red-900/20 dark:text-red-300'
                     : 'border-border text-muted-foreground hover:text-foreground'
                 }`}
               >
@@ -1174,7 +1174,7 @@ export function LinkStatusTimelines({
                 onClick={() => setShowMaintenanceOverlays(v => !v)}
                 className={`text-[10px] font-medium px-2 py-0.5 border transition-colors ${
                   showMaintenanceOverlays
-                    ? 'border-blue-700/60 bg-blue-900/20 text-blue-300'
+                    ? 'border-blue-600/60 bg-blue-500/10 text-blue-700 dark:border-blue-700/60 dark:bg-blue-900/20 dark:text-blue-300'
                     : 'border-border text-muted-foreground hover:text-foreground'
                 }`}
               >

@@ -188,7 +188,7 @@ export function LinkDetailPage() {
                 onClick={() => setShowIncidents(v => !v)}
                 className={`text-[11px] font-medium px-2 py-1 border transition-colors ${
                   showIncidents
-                    ? 'border-red-800/60 bg-red-900/20 text-red-300'
+                    ? 'border-red-600/60 bg-red-500/10 text-red-700 dark:border-red-800/60 dark:bg-red-900/20 dark:text-red-300'
                     : 'border-border text-muted-foreground hover:text-foreground'
                 }`}
               >
@@ -199,7 +199,7 @@ export function LinkDetailPage() {
                 onClick={() => setShowMaintenance(v => !v)}
                 className={`text-[11px] font-medium px-2 py-1 border transition-colors ${
                   showMaintenance
-                    ? 'border-blue-700/60 bg-blue-900/20 text-blue-300'
+                    ? 'border-blue-600/60 bg-blue-500/10 text-blue-700 dark:border-blue-700/60 dark:bg-blue-900/20 dark:text-blue-300'
                     : 'border-border text-muted-foreground hover:text-foreground'
                 }`}
               >
