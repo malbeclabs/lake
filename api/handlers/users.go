@@ -14,21 +14,24 @@ import (
 )
 
 type UserListItem struct {
-	PK          string  `json:"pk"`
-	OwnerPubkey string  `json:"owner_pubkey"`
-	Status      string  `json:"status"`
-	Kind        string  `json:"kind"`
-	DzIP        string  `json:"dz_ip"`
-	ClientIP    string  `json:"client_ip"`
-	DevicePK    string  `json:"device_pk"`
-	DeviceCode  string  `json:"device_code"`
-	MetroCode   string  `json:"metro_code"`
-	MetroName   string  `json:"metro_name"`
-	TenantPK    string  `json:"tenant_pk"`
-	TenantCode  string  `json:"tenant_code"`
-	InBps       float64 `json:"in_bps"`
-	OutBps      float64 `json:"out_bps"`
-	IsDeleted   bool    `json:"is_deleted"`
+	PK           string  `json:"pk"`
+	OwnerPubkey  string  `json:"owner_pubkey"`
+	Status       string  `json:"status"`
+	Kind         string  `json:"kind"`
+	DzIP         string  `json:"dz_ip"`
+	ClientIP     string  `json:"client_ip"`
+	DevicePK     string  `json:"device_pk"`
+	DeviceCode   string  `json:"device_code"`
+	MetroPK      string  `json:"metro_pk"`
+	MetroCode    string  `json:"metro_code"`
+	MetroName    string  `json:"metro_name"`
+	LocationPK   string  `json:"location_pk"`
+	LocationCode string  `json:"location_code"`
+	TenantPK     string  `json:"tenant_pk"`
+	TenantCode   string  `json:"tenant_code"`
+	InBps        float64 `json:"in_bps"`
+	OutBps       float64 `json:"out_bps"`
+	IsDeleted    bool    `json:"is_deleted"`
 }
 
 var userSortFields = map[string]string{
@@ -38,6 +41,7 @@ var userSortFields = map[string]string{
 	"clientip": "client_ip",
 	"device":   "device_code",
 	"metro":    "metro_name",
+	"location": "location_code",
 	"tenant":   "tenant_code",
 	"status":   "display_status",
 	"in":       "in_bps",
@@ -51,6 +55,7 @@ var userFilterFields = map[string]FilterFieldConfig{
 	"clientip": {Column: "client_ip", Type: FieldTypeText},
 	"device":   {Column: "device_code", Type: FieldTypeText},
 	"metro":    {Column: "metro_name", Type: FieldTypeText},
+	"location": {Column: "location_code", Type: FieldTypeText},
 	"tenant":   {Column: "tenant_code", Type: FieldTypeText},
 	"status":   {Column: "status", Type: FieldTypeText},
 	"in":       {Column: "in_bps", Type: FieldTypeBandwidth},
@@ -130,8 +135,11 @@ func (a *API) GetUsers(w http.ResponseWriter, r *http.Request) {
 				COALESCE(u.client_ip, '') as client_ip,
 				COALESCE(u.device_pk, '') as device_pk,
 				COALESCE(d.code, '') as device_code,
+				COALESCE(m.pk, '') as metro_pk,
 				COALESCE(m.code, '') as metro_code,
 				COALESCE(m.name, '') as metro_name,
+				COALESCE(d.location_pk, '') as location_pk,
+				COALESCE(l.code, '') as location_code,
 				COALESCE(u.tenant_pk, '') as tenant_pk,
 				COALESCE(t.code, '') as tenant_code,
 				COALESCE(tr.in_bps, 0) as in_bps,
@@ -141,13 +149,14 @@ func (a *API) GetUsers(w http.ResponseWriter, r *http.Request) {
 			FROM ` + fromTable + ` u
 			LEFT JOIN dz_devices_current d ON u.device_pk = d.pk
 			LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
+			LEFT JOIN dz_locations_current l ON d.location_pk = l.pk
 			LEFT JOIN dz_tenants_current t ON u.tenant_pk = t.pk
 			LEFT JOIN traffic_rates tr ON u.pk = tr.user_pk
 		)
 		SELECT
 			pk, owner_pubkey, status, kind, dz_ip, client_ip, device_pk,
-			device_code, metro_code, metro_name, tenant_pk, tenant_code,
-			in_bps, out_bps, is_deleted,
+			device_code, metro_pk, metro_code, metro_name, location_pk, location_code,
+			tenant_pk, tenant_code, in_bps, out_bps, is_deleted,
 			count() OVER () as _total
 		FROM users_data
 		WHERE 1=1` + whereFilter + `
@@ -179,8 +188,11 @@ func (a *API) GetUsers(w http.ResponseWriter, r *http.Request) {
 			&u.ClientIP,
 			&u.DevicePK,
 			&u.DeviceCode,
+			&u.MetroPK,
 			&u.MetroCode,
 			&u.MetroName,
+			&u.LocationPK,
+			&u.LocationCode,
 			&u.TenantPK,
 			&u.TenantCode,
 			&u.InBps,
@@ -231,6 +243,9 @@ type UserDetail struct {
 	MetroPK         string  `json:"metro_pk"`
 	MetroCode       string  `json:"metro_code"`
 	MetroName       string  `json:"metro_name"`
+	LocationPK      string  `json:"location_pk"`
+	LocationCode    string  `json:"location_code"`
+	LocationLocId   uint32  `json:"location_loc_id"`
 	ContributorPK   string  `json:"contributor_pk"`
 	ContributorCode string  `json:"contributor_code"`
 	TenantPK        string  `json:"tenant_pk"`
@@ -312,6 +327,9 @@ func (a *API) GetUser(w http.ResponseWriter, r *http.Request) {
 			COALESCE(d.metro_pk, '') as metro_pk,
 			COALESCE(m.code, '') as metro_code,
 			COALESCE(m.name, '') as metro_name,
+			COALESCE(d.location_pk, '') as location_pk,
+			COALESCE(l.code, '') as location_code,
+			COALESCE(l.loc_id, 0) as location_loc_id,
 			COALESCE(d.contributor_pk, '') as contributor_pk,
 			COALESCE(c.code, '') as contributor_code,
 			COALESCE(u.tenant_pk, '') as tenant_pk,
@@ -327,6 +345,7 @@ func (a *API) GetUser(w http.ResponseWriter, r *http.Request) {
 		FROM latest_user u
 		LEFT JOIN dz_devices_current d ON u.device_pk = d.pk
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
+		LEFT JOIN dz_locations_current l ON d.location_pk = l.pk
 		LEFT JOIN dz_contributors_current c ON d.contributor_pk = c.pk
 		LEFT JOIN dz_tenants_current t ON u.tenant_pk = t.pk
 		LEFT JOIN traffic_rates tr ON u.pk = tr.user_pk
@@ -348,6 +367,9 @@ func (a *API) GetUser(w http.ResponseWriter, r *http.Request) {
 		&user.MetroPK,
 		&user.MetroCode,
 		&user.MetroName,
+		&user.LocationPK,
+		&user.LocationCode,
+		&user.LocationLocId,
 		&user.ContributorPK,
 		&user.ContributorCode,
 		&user.TenantPK,
