@@ -1,5 +1,5 @@
 // web/src/components/ops/OpsPanel.tsx
-import { useState, useMemo } from 'react'
+import { useState } from 'react'
 import { useTicketsForEntity, useOpsTicketHistory } from '@/hooks/use-ops-tickets'
 import { useIsOpsUser } from '@/hooks/use-is-ops-user'
 import { opsTicketUrl, type OpsTicket, type OpsTicketType } from '@/lib/ops-api'
@@ -20,11 +20,16 @@ const severityClass: Record<string, string> = {
   sev3: 'bg-gray-400/20 text-gray-300',
 }
 
+function daysAgo(isoStr: string): string {
+  return Math.floor((Date.now() - new Date(isoStr).getTime()) / 86_400_000) + 'd ago'
+}
+
+function minutesAgo(isoStr: string): string {
+  return Math.floor((Date.now() - new Date(isoStr).getTime()) / 60_000) + 'm ago'
+}
+
 function HistoryRow({ ticket }: { ticket: OpsTicket }) {
-  const now = useMemo(() => Date.now(), [])
-  const age = ticket.updated_at
-    ? Math.floor((now - new Date(ticket.updated_at).getTime()) / 86_400_000) + 'd ago'
-    : '—'
+  const age = ticket.updated_at ? daysAgo(ticket.updated_at) : '—'
 
   const borderColor =
     ticket.type === 'maintenance'
@@ -119,7 +124,6 @@ export function OpsPanel({
 }: OpsPanelProps) {
   const isOpsUser = useIsOpsUser()
   const tickets = useTicketsForEntity(entityPk)
-  const now = useMemo(() => Date.now(), [])
 
   const activeTickets = tickets // already filtered to active by the hook
   const hasActiveIncident = activeTickets.some(t => t.type === 'incident')
@@ -163,10 +167,10 @@ export function OpsPanel({
                       {ticket.status}
                     </span>
                     {ticket.start_at && (
-                      <span>· Started {Math.floor((now - new Date(ticket.start_at).getTime()) / 60_000)}m ago</span>
+                      <span>· Started {minutesAgo(ticket.start_at)}</span>
                     )}
                     {!ticket.start_at && ticket.created_at && (
-                      <span>· {Math.floor((now - new Date(ticket.created_at).getTime()) / 60_000)}m ago</span>
+                      <span>· {minutesAgo(ticket.created_at)}</span>
                     )}
                   </div>
                 </div>
