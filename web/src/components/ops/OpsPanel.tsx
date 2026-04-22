@@ -15,9 +15,9 @@ interface OpsPanelProps {
 }
 
 const severityClass: Record<string, string> = {
-  sev1: 'bg-red-500/20 text-red-300',
-  sev2: 'bg-orange-500/20 text-orange-300',
-  sev3: 'bg-gray-400/20 text-gray-300',
+  sev1: 'bg-red-500/15 text-red-700 dark:text-red-300',
+  sev2: 'bg-orange-500/15 text-orange-700 dark:text-orange-300',
+  sev3: 'bg-gray-400/15 text-gray-600 dark:text-gray-300',
 }
 
 function daysAgo(isoStr: string): string {
@@ -46,7 +46,7 @@ function HistoryRow({ ticket }: { ticket: OpsTicket }) {
         href={opsTicketUrl(ticket.id)}
         target="_blank"
         rel="noreferrer"
-        className="font-mono text-[11px] text-blue-300 hover:underline shrink-0"
+        className="font-mono text-[11px] text-blue-600 dark:text-blue-300 hover:underline shrink-0"
       >
         {ticket.human_readable_id} ↗
       </a>
@@ -58,7 +58,7 @@ function HistoryRow({ ticket }: { ticket: OpsTicket }) {
           </span>
         )}
         {ticket.type === 'maintenance' && (
-          <span className="text-[10px] px-1.5 py-0.5 font-medium bg-blue-500/20 text-blue-300">Maintenance</span>
+          <span className="text-[10px] px-1.5 py-0.5 font-medium bg-blue-500/15 text-blue-700 dark:text-blue-300">Maintenance</span>
         )}
         <span className="text-[10px] px-1.5 py-0.5 font-medium bg-gray-400/15 text-gray-400">
           {ticket.status}
@@ -109,7 +109,7 @@ function HistoryPanel({ entityPk, entityType }: { entityPk: string; entityType: 
             href="https://doublezero.xyz/ops-management"
             target="_blank"
             rel="noreferrer"
-            className="block text-right px-3.5 py-1.5 text-[11px] text-blue-300 hover:underline border-t border-border"
+            className="block text-right px-3.5 py-1.5 text-[11px] text-blue-600 dark:text-blue-300 hover:underline border-t border-border"
           >
             {viewAllLabel}
           </a>
@@ -154,7 +154,7 @@ export function OpsPanel({
                       href={opsTicketUrl(ticket.id)}
                       target="_blank"
                       rel="noreferrer"
-                      className="font-mono text-[11px] text-blue-300 hover:underline"
+                      className="font-mono text-[11px] text-blue-600 dark:text-blue-300 hover:underline"
                     >
                       {ticket.human_readable_id} ↗
                     </a>
@@ -163,7 +163,7 @@ export function OpsPanel({
                         {ticket.severity}
                       </span>
                     )}
-                    <span className="text-[10px] px-1.5 py-0.5 font-medium bg-blue-500/20 text-blue-300">
+                    <span className="text-[10px] px-1.5 py-0.5 font-medium bg-blue-500/15 text-blue-700 dark:text-blue-300">
                       {ticket.status}
                     </span>
                     {ticket.start_at && (
@@ -179,7 +179,7 @@ export function OpsPanel({
                     href={ticket.slack_message_url}
                     target="_blank"
                     rel="noreferrer"
-                    className="text-[11px] text-blue-300 hover:underline shrink-0"
+                    className="text-[11px] text-blue-600 dark:text-blue-300 hover:underline shrink-0"
                   >
                     Slack ↗
                   </a>

@@ -573,7 +573,7 @@ export function CreateIncidentModal({
             <button
               type="submit"
               disabled={isPending}
-              className="text-xs font-medium px-3.5 py-1.5 border border-red-500/50 bg-red-500/12 text-red-300 hover:bg-red-500/20 hover:border-red-500/75 transition-colors disabled:opacity-50"
+              className="text-xs font-medium px-3.5 py-1.5 border border-red-600/50 bg-red-500/10 text-red-700 dark:border-red-500/50 dark:bg-red-500/12 dark:text-red-300 hover:bg-red-500/20 hover:border-red-600/75 dark:hover:border-red-500/75 transition-colors disabled:opacity-50"
             >
               {isPending
                 ? (isBlankMode ? 'Creating…' : 'Opening…')

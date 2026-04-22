@@ -6,12 +6,12 @@ interface IncidentBadgeProps {
 }
 
 const severityClass: Record<string, string> = {
-  sev1: 'bg-red-500/20 text-red-300',
-  sev2: 'bg-orange-500/20 text-orange-300',
-  sev3: 'bg-gray-400/20 text-gray-300',
+  sev1: 'bg-red-500/15 text-red-700 dark:text-red-300',
+  sev2: 'bg-orange-500/15 text-orange-700 dark:text-orange-300',
+  sev3: 'bg-gray-400/15 text-gray-600 dark:text-gray-300',
 }
 
-const statusClass = 'bg-blue-500/20 text-blue-300'
+const statusClass = 'bg-blue-500/15 text-blue-700 dark:text-blue-300'
 
 function timeAgo(isoStr: string): string {
   const diffMs = Date.now() - new Date(isoStr).getTime()
@@ -30,7 +30,7 @@ function timeAgo(isoStr: string): string {
 export function IncidentBadge({ ticket }: IncidentBadgeProps) {
   return (
     <span
-      className="relative inline-block text-[10px] px-1.5 py-0.5 font-medium cursor-default bg-red-500/15 text-red-300 [&:hover_.incident-tip]:block"
+      className="relative inline-block text-[10px] px-1.5 py-0.5 font-medium cursor-default bg-red-500/15 text-red-700 dark:text-red-300 [&:hover_.incident-tip]:block"
       style={{ zIndex: 1 }}
     >
       Incident
@@ -43,7 +43,7 @@ export function IncidentBadge({ ticket }: IncidentBadgeProps) {
           href={opsTicketUrl(ticket.id)}
           target="_blank"
           rel="noreferrer"
-          className="font-mono text-[11px] text-blue-300 hover:underline block mb-1"
+          className="font-mono text-[11px] text-blue-600 dark:text-blue-300 hover:underline block mb-1"
           onClick={(e) => e.stopPropagation()}
         >
           {ticket.human_readable_id} ↗
@@ -66,7 +66,7 @@ export function IncidentBadge({ ticket }: IncidentBadgeProps) {
               href={ticket.slack_message_url}
               target="_blank"
               rel="noreferrer"
-              className="text-blue-300 hover:underline block mt-1"
+              className="text-blue-600 dark:text-blue-300 hover:underline block mt-1"
               onClick={(e) => e.stopPropagation()}
             >
               Slack ↗

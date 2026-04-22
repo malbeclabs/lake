@@ -663,7 +663,7 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
                   )}
                   {/* Maintenance badge — visible to all users */}
                   {tickets.some(t => t.type === 'maintenance') && (
-                    <span className="text-[10px] px-1.5 py-0.5 font-medium bg-blue-500/20 text-blue-300">
+                    <span className="text-[10px] px-1.5 py-0.5 font-medium bg-blue-500/15 text-blue-700 dark:text-blue-300">
                       Maintenance
                     </span>
                   )}
