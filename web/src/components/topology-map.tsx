@@ -3428,14 +3428,14 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
                 <div className="mt-1.5 pt-1.5 border-t border-border/50 space-y-0.5">
                   {hoveredLinkTickets.map(t => (
                     <div key={t.id} className="flex items-center gap-1.5">
-                      <span className={`text-[9px] font-semibold ${t.type === 'incident' ? 'text-red-400' : 'text-blue-400'}`}>
+                      <span className={`text-[9px] font-semibold ${t.type === 'incident' ? 'text-red-600 dark:text-red-400' : 'text-blue-600 dark:text-blue-400'}`}>
                         {t.type === 'incident' ? '⚠' : '🔧'}
                       </span>
                       <a
                         href={opsTicketUrl(t.id)}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-[11px] font-mono text-blue-300 hover:underline"
+                        className="text-[11px] font-mono text-blue-600 dark:text-blue-300 hover:underline"
                       >
                         {t.human_readable_id}
                       </a>
