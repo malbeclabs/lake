@@ -553,7 +553,7 @@ const { resolvedTheme, setTheme } = useTheme()
             </Link>
             <Link to="/dz/locations" className={navItemClass(isLocationsRoute)}>
               <Warehouse className="h-4 w-4" />
-              Facilities
+              Locations
             </Link>
             <Link to="/dz/contributors" className={navItemClass(isContributorsRoute)}>
               <Building2 className="h-4 w-4" />

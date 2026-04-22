@@ -262,7 +262,7 @@ export function ContributorDetailPage() {
                       {(['code', 'type', 'metro', 'location', 'status'] as DeviceSortField[]).map(f => (
                         <th key={f} className="px-4 py-3 font-medium text-left">
                           <button className="inline-flex items-center gap-1" type="button" onClick={() => handleDeviceSort(f)}>
-                            {f === 'location' ? 'Facility' : f.charAt(0).toUpperCase() + f.slice(1)}
+                            {f === 'location' ? 'Location' : f.charAt(0).toUpperCase() + f.slice(1)}
                             <SortIcon field={f} />
                           </button>
                         </th>

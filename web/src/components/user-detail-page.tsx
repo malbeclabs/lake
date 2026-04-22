@@ -599,7 +599,7 @@ export function UserDetailPage() {
                 </dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-sm text-muted-foreground">Facility</dt>
+                <dt className="text-sm text-muted-foreground">Location</dt>
                 <dd className="text-sm">
                   {user.location_pk ? (
                     <Link

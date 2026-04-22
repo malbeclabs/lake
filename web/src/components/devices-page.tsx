@@ -62,7 +62,7 @@ const deviceFieldPrefixes = [
   { prefix: 'type:', description: 'Filter by device type' },
   { prefix: 'contributor:', description: 'Filter by contributor' },
   { prefix: 'metro:', description: 'Filter by metro' },
-  { prefix: 'location:', description: 'Filter by facility' },
+  { prefix: 'location:', description: 'Filter by location' },
   { prefix: 'status:', description: 'Filter by status' },
   { prefix: 'users:', description: 'Filter by user count (e.g., >10)' },
   { prefix: 'in:', description: 'Filter by inbound traffic (e.g., >1gbps)' },
@@ -275,7 +275,7 @@ export function DevicesPage() {
                   </th>
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('location')}>
                     <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('location')}>
-                      Facility
+                      Location
                       <SortIcon field="location" />
                     </button>
                   </th>

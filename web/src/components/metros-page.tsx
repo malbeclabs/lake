@@ -30,7 +30,7 @@ const metroFieldPrefixes = [
   { prefix: 'country:', description: 'Filter by country code (e.g., US)' },
   { prefix: 'devices:', description: 'Filter by device count (e.g., >5)' },
   { prefix: 'users:', description: 'Filter by user count (e.g., >10)' },
-  { prefix: 'locations:', description: 'Filter by facility count (e.g., >1)' },
+  { prefix: 'locations:', description: 'Filter by location count (e.g., >1)' },
 ]
 
 // Fields that support autocomplete (none for metros)
@@ -231,7 +231,7 @@ export function MetrosPage() {
                   </th>
                   <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('locations')}>
                     <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('locations')}>
-                      Facilities
+                      Locations
                       <SortIcon field="locations" />
                     </button>
                   </th>

@@ -28,7 +28,7 @@ const contributorFieldPrefixes = [
   { prefix: 'code:', description: 'Filter by contributor code' },
   { prefix: 'name:', description: 'Filter by contributor name' },
   { prefix: 'metros:', description: 'Filter by metro count (e.g., >1)' },
-  { prefix: 'locations:', description: 'Filter by facility count (e.g., >1)' },
+  { prefix: 'locations:', description: 'Filter by location count (e.g., >1)' },
   { prefix: 'devices:', description: 'Filter by device count (e.g., >5)' },
   { prefix: 'sidea:', description: 'Filter by side A device count (e.g., >5)' },
   { prefix: 'sidez:', description: 'Filter by side Z device count (e.g., >5)' },
@@ -233,7 +233,7 @@ export function ContributorsPage() {
                   </th>
                   <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('locations')}>
                     <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('locations')}>
-                      Facilities
+                      Locations
                       <SortIcon field="locations" />
                     </button>
                   </th>

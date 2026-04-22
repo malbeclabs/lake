@@ -71,7 +71,7 @@ const userFieldPrefixes = [
   { prefix: 'dzip:', description: 'Filter by DZ IP' },
   { prefix: 'device:', description: 'Filter by device code' },
   { prefix: 'metro:', description: 'Filter by metro' },
-  { prefix: 'location:', description: 'Filter by facility' },
+  { prefix: 'location:', description: 'Filter by location' },
   { prefix: 'tenant:', description: 'Filter by tenant code' },
   { prefix: 'status:', description: 'Filter by status' },
   { prefix: 'in:', description: 'Filter by inbound traffic (e.g., >1gbps)' },
@@ -377,7 +377,7 @@ export function UsersPage() {
                       type="button"
                       onClick={() => handleSort('location')}
                     >
-                      Facility
+                      Location
                       <SortIcon field="location" />
                     </button>
                   </th>

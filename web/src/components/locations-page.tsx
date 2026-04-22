@@ -22,11 +22,11 @@ function parseSearchFilters(searchParam: string): string[] {
 const validFilterFields = ['code', 'name', 'country', 'status', 'loc_id', 'metro', 'devices', 'users']
 
 const locationFieldPrefixes = [
-  { prefix: 'code:', description: 'Filter by facility code' },
-  { prefix: 'name:', description: 'Filter by facility name' },
+  { prefix: 'code:', description: 'Filter by location code' },
+  { prefix: 'name:', description: 'Filter by location name' },
   { prefix: 'country:', description: 'Filter by country code (e.g., US)' },
   { prefix: 'status:', description: 'Filter by status (activated, pending, suspended)' },
-  { prefix: 'loc_id:', description: 'Filter by PeeringDB facility ID' },
+  { prefix: 'loc_id:', description: 'Filter by PeeringDB location ID' },
   { prefix: 'metro:', description: 'Filter by metro code' },
   { prefix: 'devices:', description: 'Filter by device count (e.g., >0)' },
   { prefix: 'users:', description: 'Filter by user count' },
@@ -183,7 +183,7 @@ export function LocationsPage() {
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center">
           <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-          <div className="text-lg font-medium mb-2">Unable to load facilities</div>
+          <div className="text-lg font-medium mb-2">Unable to load locations</div>
           <div className="text-sm text-muted-foreground">{error?.message || 'Unknown error'}</div>
         </div>
       </div>
@@ -195,7 +195,7 @@ export function LocationsPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
         <PageHeader
           icon={Building2}
-          title="Facilities"
+          title="Locations"
           count={response?.total || 0}
           actions={
             <>
@@ -221,7 +221,7 @@ export function LocationsPage() {
                 fieldPrefixes={locationFieldPrefixes}
                 entity="locations"
                 autocompleteFields={locationAutocompleteFields}
-                placeholder="Filter facilities..."
+                placeholder="Filter locations..."
                 onLiveFilterChange={setLiveFilter}
               />
             </>
@@ -335,7 +335,7 @@ export function LocationsPage() {
                 {locations.length === 0 && (
                   <tr>
                     <td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">
-                      No facilities found
+                      No locations found
                     </td>
                   </tr>
                 )}

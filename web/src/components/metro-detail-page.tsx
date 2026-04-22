@@ -208,7 +208,7 @@ export function MetroDetailPage() {
                 <dd className="text-sm">{metro.device_count}</dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-sm text-muted-foreground">Facilities</dt>
+                <dt className="text-sm text-muted-foreground">Locations</dt>
                 <dd className="text-sm">{metro.location_count}</dd>
               </div>
               <div className="flex justify-between">
@@ -318,7 +318,7 @@ export function MetroDetailPage() {
                       {(['code', 'type', 'contributor', 'location', 'status'] as DeviceSortField[]).map(f => (
                         <th key={f} className="px-4 py-3 font-medium text-left">
                           <button className="inline-flex items-center gap-1" type="button" onClick={() => handleDeviceSort(f)}>
-                            {f === 'location' ? 'Facility' : f.charAt(0).toUpperCase() + f.slice(1)}
+                            {f === 'location' ? 'Location' : f.charAt(0).toUpperCase() + f.slice(1)}
                             <SortIcon field={f} />
                           </button>
                         </th>
@@ -413,11 +413,11 @@ export function MetroDetailPage() {
           </div>
         )}
 
-        {/* Facilities table */}
+        {/* Locations table */}
         {locations.length > 0 && (
           <div className="mt-8">
             <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
-              Facilities ({locations.length}{locationsData && locationsData.total > rawLocations.length ? ` of ${locationsData.total}` : ''})
+              Locations ({locations.length}{locationsData && locationsData.total > rawLocations.length ? ` of ${locationsData.total}` : ''})
             </h2>
             <div className="border border-border rounded-lg overflow-hidden">
               <div className="overflow-x-auto">

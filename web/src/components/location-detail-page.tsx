@@ -48,7 +48,7 @@ function statusPill(status: string) {
 export function LocationDetailPage() {
   const { pk } = useParams<{ pk: string }>()
   const navigate = useNavigate()
-  const back = useBackLink({ to: '/dz/locations', label: 'facilities' })
+  const back = useBackLink({ to: '/dz/locations', label: 'locations' })
   const [sortField, setSortField] = useState<DeviceSortField>('code')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
 
@@ -72,7 +72,7 @@ export function LocationDetailPage() {
     staleTime: 1000 * 60 * 60,
   })
 
-  useDocumentTitle(location?.code || 'Facility')
+  useDocumentTitle(location?.code || 'Location')
 
   const rawDevices = devicesResponse?.items ?? []
   const devices = useMemo(() => {
@@ -146,7 +146,7 @@ export function LocationDetailPage() {
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center">
           <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-          <div className="text-lg font-medium mb-2">Facility not found</div>
+          <div className="text-lg font-medium mb-2">Location not found</div>
           <button
             onClick={() => navigate(back.to)}
             className="text-sm text-muted-foreground hover:text-foreground"
