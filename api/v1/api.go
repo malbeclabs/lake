@@ -81,7 +81,7 @@ func Mount(r chi.Router, api *handlers.API) huma.API {
 			"img-src 'self' data:",
 			"form-action 'none'",
 			"frame-ancestors 'none'",
-			"sandbox allow-same-origin allow-scripts allow-popups allow-popups-to-escape-sandbox",
+			"sandbox allow-same-origin allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads",
 			"script-src 'unsafe-eval' " + scalarBundleURL,
 			"style-src 'unsafe-inline'",
 		}, "; ")
