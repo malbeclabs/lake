@@ -66,7 +66,6 @@ import { ValidatorDetailPage } from '@/components/validator-detail-page'
 import { GossipNodeDetailPage } from '@/components/gossip-node-detail-page'
 
 import { DZLedgerPage, SolanaOverviewPage } from '@/components/ledger-page'
-import { StakePage } from '@/components/stake-page'
 import { RewardsPage } from '@/components/rewards-page'
 import { SettingsPage } from '@/components/settings-page'
 import { ChangelogPage } from '@/components/changelog-page'

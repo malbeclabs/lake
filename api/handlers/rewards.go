@@ -161,7 +161,7 @@ func GetRewardsLiveNetwork(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	start := time.Now()
-	liveNet, err := rewards.FetchLiveNetwork(ctx, envDB(ctx))
+	liveNet, err := rewards.FetchLiveNetwork(ctx, rewardsCache.DB())
 	metrics.RecordClickHouseQuery(time.Since(start), err)
 	if err != nil {
 		log.Printf("rewards: fetch live network: %v", err)

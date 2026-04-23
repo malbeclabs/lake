@@ -386,10 +386,6 @@ func main() {
 	handlers.SetRewardsCache(rc)
 	rc.Start()
 
-	// Initialize status cache for fast page loads
-	handlers.InitStatusCache()
-	// Note: StopStatusCache() is called explicitly before server shutdown, not deferred
-
 	// Start metrics server
 	var metricsServer *http.Server
 	if *metricsAddrFlag != "" {
@@ -825,7 +821,6 @@ func main() {
 	workerCancel()
 	// Stop background cache goroutines (they may be blocking on DB queries)
 	rc.Stop()
-	handlers.StopStatusCache()
 
 	// Give existing connections a short time to complete after context cancellation
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

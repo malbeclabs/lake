@@ -77,6 +77,11 @@ func (c *RewardsCache) IsReady() bool {
 }
 
 // GetSimulation returns cached Shapley results, total value, computation time, and epoch.
+// DB returns the ClickHouse connection held by the cache.
+func (c *RewardsCache) DB() driver.Conn {
+	return c.db
+}
+
 func (c *RewardsCache) GetSimulation() ([]OperatorValue, float64, time.Time, int64) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
