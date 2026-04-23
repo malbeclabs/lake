@@ -574,6 +574,7 @@ func main() {
 		r.Get("/api/dz/shreds/devices", api.GetShredDevices)
 		r.Get("/api/dz/shreds/epoch-revenue", api.GetShredEpochRevenue)
 		r.Get("/api/dz/shreds/subscriber-history", api.GetShredSubscriberHistory)
+		r.Get("/api/dz/swap-rate", api.GetSwapRate)
 		r.Get("/api/dz/field-values", api.GetFieldValues)
 		r.Get("/api/dz/ledger", api.GetDZLedger)
 
