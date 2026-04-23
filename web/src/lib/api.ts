@@ -5816,3 +5816,43 @@ export async function fetchGeolocUsers(
   }
   return res.json()
 }
+
+export interface GeolocExplorerDevice {
+  sender_pubkey: string
+  probe_code: string
+  lat: number
+  lng: number
+  min_ref_measured_rtt_ns: number
+}
+
+export interface GeolocExplorerProbe {
+  pk: string
+  code: string
+  lat: number
+  lng: number
+}
+
+export interface GeolocExplorerTarget {
+  sender_pubkey: string
+  target_ip: string
+  lat: number
+  lng: number
+  min_measured_rtt_ns: number
+}
+
+export interface GeolocExplorerResponse {
+  devices: GeolocExplorerDevice[]
+  probes: GeolocExplorerProbe[]
+  targets: GeolocExplorerTarget[]
+}
+
+export async function fetchGeolocExplorer(hours?: number): Promise<GeolocExplorerResponse> {
+  const params = new URLSearchParams()
+  if (hours) params.set('hours', String(hours))
+  const query = params.toString()
+  const res = await apiFetch(`/api/dz/geoloc/explorer${query ? `?${query}` : ''}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch geolocation explorer data')
+  }
+  return res.json()
+}
