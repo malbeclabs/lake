@@ -14,7 +14,7 @@ import (
 )
 
 // v1ShredsSubscribersContractFields is the authoritative JSON keys for the
-// /api/v1/shreds/subscribers response. A mismatch means the public contract
+// /api/v1/edge/shreds/subscribers response. A mismatch means the public contract
 // has changed — bump the API version.
 var v1ShredsSubscribersContractFields = struct {
 	top        []string
@@ -44,7 +44,7 @@ func TestV1ShredsSubscribers_Empty(t *testing.T) {
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	r := newV1Router(t, api)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/shreds/subscribers", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/edge/shreds/subscribers", nil)
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 
@@ -63,7 +63,7 @@ func TestV1ShredsSubscribers_Contract(t *testing.T) {
 	insertShredsTestData(t, api)
 
 	r := newV1Router(t, api)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/shreds/subscribers", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/edge/shreds/subscribers", nil)
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 
@@ -94,7 +94,7 @@ func TestV1ShredsSubscribers_AllSubscribers(t *testing.T) {
 	insertShredsTestData(t, api)
 
 	r := newV1Router(t, api)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/shreds/subscribers", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/edge/shreds/subscribers", nil)
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 
@@ -125,7 +125,7 @@ func TestV1ShredsSubscribers_FilterByFunder(t *testing.T) {
 	insertShredsTestData(t, api)
 
 	r := newV1Router(t, api)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/shreds/subscribers?funder=funder-1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/edge/shreds/subscribers?funder=funder-1", nil)
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 
@@ -150,7 +150,7 @@ func TestV1ShredsSubscribers_FilterByFunder_ExactMatchNotSubstring(t *testing.T)
 	// because the v1 filter is exact match. Guards against regressions
 	// where someone swaps to ILIKE/startsWith.
 	r := newV1Router(t, api)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/shreds/subscribers?funder=funder", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/edge/shreds/subscribers?funder=funder", nil)
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 
@@ -168,7 +168,7 @@ func TestV1ShredsSubscribers_Pagination(t *testing.T) {
 	insertShredsTestData(t, api)
 
 	r := newV1Router(t, api)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/shreds/subscribers?limit=2&offset=0", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/edge/shreds/subscribers?limit=2&offset=0", nil)
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 
@@ -181,7 +181,7 @@ func TestV1ShredsSubscribers_Pagination(t *testing.T) {
 	assert.Equal(t, 0, resp.Offset)
 	require.Len(t, resp.Items, 2)
 
-	req = httptest.NewRequest(http.MethodGet, "/api/v1/shreds/subscribers?limit=2&offset=2", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/edge/shreds/subscribers?limit=2&offset=2", nil)
 	rr = httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 

@@ -58,11 +58,11 @@ type ShredsPublishersOutput struct {
 
 func registerShredsPublishers(humaAPI huma.API, api *handlers.API) {
 	huma.Register(humaAPI, huma.Operation{
-		OperationID: "list-shreds-leader-publishers",
+		OperationID: "list-edge-shreds-leader-publishers",
 		Method:      "GET",
-		Path:        "/shreds/publishers/leaders",
+		Path:        "/edge/shreds/publishers/leaders",
 		Summary:     "List shreds leader publishers",
-		Description: "Returns the status of every DoubleZero validator-publisher in the shred multicast group for a recent window (epochs or slots). Includes activated stake, leader/retransmit activity, and validator client/version info. A broader publishers endpoint (covering non-validator publishers) may be introduced later at /shreds/publishers.",
+		Description: "Returns the status of every DoubleZero validator-publisher in the shred multicast group for a recent window (epochs or slots). Includes activated stake, leader/retransmit activity, and validator client/version info. A broader publishers endpoint (covering non-validator publishers) may be introduced later at /edge/shreds/publishers.",
 		Tags:        []string{"shreds"},
 	}, func(ctx context.Context, input *ShredsPublishersInput) (*ShredsPublishersOutput, error) {
 		resp, err := api.FetchPublisherCheckData(ctx, input.Q, input.Epochs, input.Slots)

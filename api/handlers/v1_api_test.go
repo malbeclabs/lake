@@ -40,8 +40,8 @@ func TestV1OpenAPI_Spec(t *testing.T) {
 	assert.Equal(t, "/api/v1", spec.Servers[0].URL)
 
 	expected := []string{
-		"/shreds/publishers/leaders",
-		"/shreds/subscribers",
+		"/edge/shreds/publishers/leaders",
+		"/edge/shreds/subscribers",
 		"/solana/validators-metadata",
 	}
 	for _, p := range expected {

@@ -23,7 +23,7 @@ func newV1Router(t *testing.T, api *handlers.API) *chi.Mux {
 }
 
 // v1ShredsPublishersContractFields is the authoritative list of JSON keys
-// in the public /api/v1/shreds/publishers/leaders response. A mismatch means the
+// in the public /api/v1/edge/shreds/publishers/leaders response. A mismatch means the
 // public contract has changed — bump the API version instead of renaming.
 var v1ShredsPublishersContractFields = struct {
 	top       []string
@@ -79,7 +79,7 @@ func TestV1ShredsPublishers_Empty(t *testing.T) {
 	require.NoError(t, err)
 
 	r := newV1Router(t, api)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/shreds/publishers/leaders", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/edge/shreds/publishers/leaders", nil)
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 
@@ -99,7 +99,7 @@ func TestV1ShredsPublishers_Contract(t *testing.T) {
 	insertPublisherCheckTestData(t, api)
 
 	r := newV1Router(t, api)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/shreds/publishers/leaders", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/edge/shreds/publishers/leaders", nil)
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 
@@ -125,7 +125,7 @@ func TestV1ShredsPublishers_AllPublishers(t *testing.T) {
 	insertPublisherCheckTestData(t, api)
 
 	r := newV1Router(t, api)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/shreds/publishers/leaders", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/edge/shreds/publishers/leaders", nil)
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 
@@ -155,7 +155,7 @@ func TestV1ShredsPublishers_FilterByDZID(t *testing.T) {
 	insertPublisherCheckTestData(t, api)
 
 	r := newV1Router(t, api)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/shreds/publishers/leaders?q=dzuser1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/edge/shreds/publishers/leaders?q=dzuser1", nil)
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 
@@ -173,7 +173,7 @@ func TestV1ShredsPublishers_FilterByIP(t *testing.T) {
 	insertPublisherCheckTestData(t, api)
 
 	r := newV1Router(t, api)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/shreds/publishers/leaders?q=10.0.0.1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/edge/shreds/publishers/leaders?q=10.0.0.1", nil)
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 
@@ -195,14 +195,14 @@ func TestV1ShredsPublishers_EpochsAndSlotsParams(t *testing.T) {
 		url        string
 		wantStatus int
 	}{
-		{"default", "/api/v1/shreds/publishers/leaders", http.StatusOK},
-		{"epochs=1", "/api/v1/shreds/publishers/leaders?epochs=1", http.StatusOK},
-		{"slots=500", "/api/v1/shreds/publishers/leaders?slots=500", http.StatusOK},
-		{"slots with epochs (slots takes precedence)", "/api/v1/shreds/publishers/leaders?slots=500&epochs=5", http.StatusOK},
+		{"default", "/api/v1/edge/shreds/publishers/leaders", http.StatusOK},
+		{"epochs=1", "/api/v1/edge/shreds/publishers/leaders?epochs=1", http.StatusOK},
+		{"slots=500", "/api/v1/edge/shreds/publishers/leaders?slots=500", http.StatusOK},
+		{"slots with epochs (slots takes precedence)", "/api/v1/edge/shreds/publishers/leaders?slots=500&epochs=5", http.StatusOK},
 		// huma validates input — invalid values return 422 (part of the v1 error contract).
-		{"non-numeric epochs is rejected", "/api/v1/shreds/publishers/leaders?epochs=abc", http.StatusUnprocessableEntity},
-		{"out-of-range epochs is rejected", "/api/v1/shreds/publishers/leaders?epochs=99", http.StatusUnprocessableEntity},
-		{"out-of-range slots is rejected", "/api/v1/shreds/publishers/leaders?slots=9999", http.StatusUnprocessableEntity},
+		{"non-numeric epochs is rejected", "/api/v1/edge/shreds/publishers/leaders?epochs=abc", http.StatusUnprocessableEntity},
+		{"out-of-range epochs is rejected", "/api/v1/edge/shreds/publishers/leaders?epochs=99", http.StatusUnprocessableEntity},
+		{"out-of-range slots is rejected", "/api/v1/edge/shreds/publishers/leaders?slots=9999", http.StatusUnprocessableEntity},
 	}
 
 	r := newV1Router(t, api)

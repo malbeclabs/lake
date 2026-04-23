@@ -65,9 +65,9 @@ type ShredsSubscribersOutput struct {
 
 func registerShredsSubscribers(humaAPI huma.API, api *handlers.API) {
 	huma.Register(humaAPI, huma.Operation{
-		OperationID: "list-shreds-subscribers",
+		OperationID: "list-edge-shreds-subscribers",
 		Method:      "GET",
-		Path:        "/shreds/subscribers",
+		Path:        "/edge/shreds/subscribers",
 		Summary:     "List shreds subscribers",
 		Description: "Returns a paginated list of shreds subscribers (client seats in the DoubleZero shred subscription program). Optionally filter by funder pubkey.",
 		Tags:        []string{"shreds"},
