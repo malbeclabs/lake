@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react'
+import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
 import { getEnv, setEnv as setEnvStorage, type AppConfig } from '@/lib/api'
 
 interface EnvContextType {
@@ -21,7 +21,22 @@ export function useEnv() {
 }
 
 export function EnvProvider({ config, children }: { config: AppConfig; children: ReactNode }) {
-  const [env, setEnvState] = useState(getEnv)
+  // Consume ?env= synchronously on first render so it survives downstream
+  // redirects (e.g. `/` → `/status`) that strip the query string.
+  const [env, setEnvState] = useState(() => {
+    const params = new URLSearchParams(window.location.search)
+    const envParam = params.get('env')
+    if (envParam) {
+      setEnvStorage(envParam)
+      params.delete('env')
+      const newUrl = params.toString()
+        ? `${window.location.pathname}?${params.toString()}`
+        : window.location.pathname
+      window.history.replaceState({}, '', newUrl)
+      return envParam
+    }
+    return getEnv()
+  })
 
   const setEnv = useCallback((newEnv: string) => {
     setEnvStorage(newEnv)
@@ -29,24 +44,6 @@ export function EnvProvider({ config, children }: { config: AppConfig; children:
     // Reload the page to re-fetch all data with new env
     window.location.reload()
   }, [])
-
-  // Handle ?env= query param on mount
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const envParam = params.get('env')
-    if (envParam && envParam !== env) {
-      setEnvStorage(envParam)
-      setEnvState(envParam)
-      // Remove the param from URL
-      params.delete('env')
-      const newUrl = params.toString()
-        ? `${window.location.pathname}?${params.toString()}`
-        : window.location.pathname
-      window.history.replaceState({}, '', newUrl)
-      // Reload to apply
-      window.location.reload()
-    }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <EnvContext.Provider
