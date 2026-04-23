@@ -1,0 +1,48 @@
+# DoubleZero Data
+
+> Analytics platform for the DoubleZero network. Query network telemetry and Solana validator data via SQL or Cypher, explore topology, and inspect network health and performance.
+
+The primary agent interface is the MCP server described below. The human-facing web app at <https://data.malbeclabs.com> provides the same data interactively.
+
+## MCP Server
+
+- Endpoint: `https://data.malbeclabs.com/api/mcp`
+- Transport: streamable-http (stateless)
+- Discovery: [/.well-known/mcp/server-card.json](https://data.malbeclabs.com/.well-known/mcp/server-card.json)
+- Docs: [/docs/mcp](https://data.malbeclabs.com/docs/mcp)
+
+All tools are read-only and can be called concurrently. Always call `get_schema` before writing SQL or Cypher — do not assume table or column names.
+
+### Tools
+
+- **execute_sql** — Run a read-only SQL query against the DoubleZero ClickHouse analytics database. Accepts `SELECT`, `WITH`, `SHOW`, `DESCRIBE`, `EXPLAIN`. Returns columns, rows, row count, and elapsed ms.
+- **execute_cypher** — Run a read-only Cypher query against the DoubleZero Neo4j topology graph. Good for path-finding, reachability, and metro-to-metro latency (SQL only has directly-connected pairs). Available on mainnet-beta only.
+- **get_schema** — Return the live ClickHouse schema (tables, columns, types, view definitions) for the current environment.
+- **read_docs** — Fetch a DoubleZero documentation page by slug (e.g. `index`, `architecture`, `setup`, `troubleshooting`, `connect`, `connect-multicast`, `contribute`, `paying-fees`).
+
+### Resources
+
+- `doublezero://schema` — Live ClickHouse schema for the active environment.
+- `doublezero://sql-context` — SQL patterns, business rules, and ClickHouse-specific guidance.
+- `doublezero://cypher-context` — Cypher patterns and Neo4j guidance (mainnet-beta only).
+
+### Prompts
+
+- **analyze_data** — Ask a natural-language question about the DoubleZero network. Composes the right resource reads and tool calls to answer data questions.
+
+## Web app sections
+
+- [Status](https://data.malbeclabs.com/status) — Network, link, device, and metro status.
+- [Topology](https://data.malbeclabs.com/topology/map) — Map, graph, and globe views; path calculator; redundancy.
+- [Performance](https://data.malbeclabs.com/performance/dz-vs-internet) — DZ vs. internet latency, link latency, path latency.
+- [Traffic](https://data.malbeclabs.com/traffic/overview) — Traffic dashboards and per-interface views.
+- [Incidents](https://data.malbeclabs.com/incidents/links) — Link and device incidents.
+- [DZ entities](https://data.malbeclabs.com/dz/devices) — Devices, links, metros, contributors, tenants, users, multicast groups.
+- [Shreds](https://data.malbeclabs.com/dz/shreds/scoreboard) — Scoreboard, publishers, subscribers, funders, devices, activity, economics.
+- [Solana](https://data.malbeclabs.com/solana/overview) — Validators and gossip nodes.
+- [Changelog](https://data.malbeclabs.com/changelog) — Platform changes.
+
+## External
+
+- DoubleZero docs: <https://docs.malbeclabs.com>
+- DoubleZero website: <https://malbeclabs.com>

@@ -1,0 +1,16 @@
+{
+  "serverInfo": {
+    "name": "doublezero",
+    "version": "1.0.0"
+  },
+  "description": "DoubleZero Data MCP server. Query the DoubleZero network's ClickHouse analytics database via SQL, explore network topology via Cypher (mainnet-beta only), fetch the live database schema, and read DoubleZero documentation.",
+  "url": "https://data.malbeclabs.com/api/mcp",
+  "transport": {
+    "type": "streamable-http"
+  },
+  "capabilities": {
+    "tools": true,
+    "resources": true,
+    "prompts": true
+  }
+}

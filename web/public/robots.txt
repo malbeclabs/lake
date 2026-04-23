@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /query/
+Disallow: /chat/
+Disallow: /settings
+
+Sitemap: https://data.malbeclabs.com/sitemap.xml
