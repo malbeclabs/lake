@@ -27,6 +27,7 @@ import (
 	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
 	"github.com/malbeclabs/lake/api/metrics"
+	v1 "github.com/malbeclabs/lake/api/v1"
 	"github.com/malbeclabs/lake/api/worker"
 	slackbot "github.com/malbeclabs/lake/slack/bot"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -584,7 +585,8 @@ func main() {
 		r.Get("/api/solana/gossip-nodes/{pubkey}", api.GetGossipNode)
 		r.Get("/api/solana/ledger", api.GetSolanaLedger)
 		r.Get("/api/solana/validator-performance", api.GetValidatorPerformance)
-		r.Get("/api/v1/validators-metadata", api.GetValidatorsMetadata)
+		// Public v1 API (huma-generated OpenAPI at /api/v1/openapi.json, docs at /api/v1/docs).
+		v1.Mount(r, api)
 
 		// Stake analytics routes
 		r.Get("/api/stake/overview", api.GetStakeOverview)
