@@ -25,6 +25,7 @@ import {
   fetchShredsOverview,
   fetchShredEpochRevenue,
   fetchShredSubscriberHistory,
+  fetchSwapRate,
   type ShredClientSeat,
 } from "@/lib/api";
 import { PageHeader } from "./page-header";
@@ -106,6 +107,19 @@ function formatUSDC(n: number, compact = false): string {
   return `${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDC`;
 }
 
+function format2Z(n: number, compact = false): string {
+  if (compact) {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M 2Z`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K 2Z`;
+  }
+  return `${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} 2Z`;
+}
+
+function usdcTo2Z(usdc: number, twoZPriceUSD: number | undefined): number | null {
+  if (!twoZPriceUSD || twoZPriceUSD <= 0) return null;
+  return usdc / twoZPriceUSD;
+}
+
 function truncatePK(pk: string, head = 6, tail = 4): string {
   if (pk.length <= head + tail + 3) return pk;
   return `${pk.slice(0, head)}...${pk.slice(-tail)}`;
@@ -136,6 +150,24 @@ function SectionTitle({
       className={`text-xs font-medium text-muted-foreground/70 uppercase tracking-widest ${className}`}
     >
       {children}
+    </div>
+  );
+}
+
+function TwoZHint({
+  usdc,
+  twoZPriceUSD,
+  compact = false,
+}: {
+  usdc: number;
+  twoZPriceUSD: number | undefined;
+  compact?: boolean;
+}) {
+  const twoZ = usdcTo2Z(usdc, twoZPriceUSD);
+  if (twoZ == null) return null;
+  return (
+    <div className="text-xs font-normal text-muted-foreground/50 tabular-nums mt-0.5">
+      ≈ {format2Z(twoZ, compact)}
     </div>
   );
 }
@@ -479,6 +511,14 @@ export function ShredsEconomicsPage() {
     refetchInterval: 60_000,
   });
 
+  const { data: swapRate } = useQuery({
+    queryKey: ["swap-rate"],
+    queryFn: fetchSwapRate,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+  const twoZPriceUSD = swapRate?.twoz_price_usd;
+
   const [subscriberRange, setSubscriberRange] = useState<1 | 5 | 10 | "all">(
     "all",
   );
@@ -554,25 +594,53 @@ export function ShredsEconomicsPage() {
               stats={[
                 {
                   label: "Epoch Revenue",
-                  value: econ ? formatUSDC(econ.epochRevenue) : <Skeleton />,
+                  value: econ ? (
+                    <>
+                      {formatUSDC(econ.epochRevenue)}
+                      <TwoZHint usdc={econ.epochRevenue} twoZPriceUSD={twoZPriceUSD} />
+                    </>
+                  ) : (
+                    <Skeleton />
+                  ),
                   sub: "current epoch",
                   accent: "blue",
                 },
                 {
                   label: "MRR",
-                  value: econ ? formatUSDC(econ.mrr) : <Skeleton />,
+                  value: econ ? (
+                    <>
+                      {formatUSDC(econ.mrr)}
+                      <TwoZHint usdc={econ.mrr} twoZPriceUSD={twoZPriceUSD} />
+                    </>
+                  ) : (
+                    <Skeleton />
+                  ),
                   sub: `${EPOCHS_PER_MONTH} epochs/mo`,
                   accent: "green",
                 },
                 {
                   label: "ARR",
-                  value: econ ? formatUSDC(econ.arr, true) : <Skeleton />,
+                  value: econ ? (
+                    <>
+                      {formatUSDC(econ.arr, true)}
+                      <TwoZHint usdc={econ.arr} twoZPriceUSD={twoZPriceUSD} compact />
+                    </>
+                  ) : (
+                    <Skeleton />
+                  ),
                   sub: "annualized",
                   accent: "green",
                 },
                 {
                   label: "Total Escrow",
-                  value: econ ? formatUSDC(econ.totalEscrow) : <Skeleton />,
+                  value: econ ? (
+                    <>
+                      {formatUSDC(econ.totalEscrow)}
+                      <TwoZHint usdc={econ.totalEscrow} twoZPriceUSD={twoZPriceUSD} />
+                    </>
+                  ) : (
+                    <Skeleton />
+                  ),
                   sub: "locked balance",
                 },
               ]}
@@ -586,7 +654,14 @@ export function ShredsEconomicsPage() {
               stats={[
                 {
                   label: "Predicted Revenue",
-                  value: econ ? formatUSDC(econ.nextEpochRevenue) : <Skeleton />,
+                  value: econ ? (
+                    <>
+                      {formatUSDC(econ.nextEpochRevenue)}
+                      <TwoZHint usdc={econ.nextEpochRevenue} twoZPriceUSD={twoZPriceUSD} />
+                    </>
+                  ) : (
+                    <Skeleton />
+                  ),
                   sub: "seats with sufficient balance",
                   accent: "green",
                 },
@@ -613,7 +688,14 @@ export function ShredsEconomicsPage() {
                 },
                 {
                   label: "Revenue at Risk",
-                  value: econ ? formatUSDC(econ.revenueAtRisk) : <Skeleton />,
+                  value: econ ? (
+                    <>
+                      {formatUSDC(econ.revenueAtRisk)}
+                      <TwoZHint usdc={econ.revenueAtRisk} twoZPriceUSD={twoZPriceUSD} />
+                    </>
+                  ) : (
+                    <Skeleton />
+                  ),
                   sub: "may not renew",
                   accent: econ && econ.revenueAtRisk > 0 ? "amber" : undefined,
                 },
@@ -727,10 +809,19 @@ export function ShredsEconomicsPage() {
                           className={`h-3.5 w-3.5 mt-0.5 ${riskColor.icon}`}
                         />
                       </div>
-                      <div className="flex items-baseline gap-1 mb-4">
+                      <div className="flex flex-col gap-0.5 mb-4">
                         <span className="text-4xl font-bold tabular-nums tracking-tight">
                           {formatUSDC(econ.revenueAtRisk, true)}
                         </span>
+                        {(() => {
+                          const twoZ = usdcTo2Z(econ.revenueAtRisk, twoZPriceUSD);
+                          if (twoZ == null) return null;
+                          return (
+                            <span className="text-xs text-muted-foreground/50 tabular-nums">
+                              ≈ {format2Z(twoZ, true)}
+                            </span>
+                          );
+                        })()}
                       </div>
                       <div className="h-0.5 rounded-full bg-muted/40 overflow-hidden mb-3">
                         <div
