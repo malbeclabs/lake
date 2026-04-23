@@ -37,6 +37,9 @@ var v1EdgeShredsPublishersContractFields = struct {
 		"total_publishers",
 		"total_publisher_stake",
 		"publishers",
+		"total",
+		"limit",
+		"offset",
 	},
 	publisher: []string{
 		"publisher_ip",
@@ -183,6 +186,71 @@ func TestV1EdgeShredsPublishers_FilterByIP(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 	require.Len(t, resp.Publishers, 1)
 	assert.Equal(t, "10.0.0.1", resp.Publishers[0].PublisherIP)
+}
+
+func TestV1EdgeShredsPublishers_Pagination(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertPublisherCheckTestData(t, api)
+
+	r := newV1Router(t, api)
+
+	// Default: returns all 3 publishers, total reflects matched set.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/edge/shreds/publishers/leaders", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+	var resp v1.EdgeShredsPublishersResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+	assert.Equal(t, 3, resp.Total)
+	assert.Equal(t, 100, resp.Limit)
+	assert.Equal(t, 0, resp.Offset)
+	require.Len(t, resp.Publishers, 3)
+
+	// limit=1 returns the first publisher only; total still reflects the full match count.
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/edge/shreds/publishers/leaders?limit=1", nil)
+	rr = httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+	assert.Equal(t, 3, resp.Total)
+	assert.Equal(t, 1, resp.Limit)
+	assert.Equal(t, 0, resp.Offset)
+	require.Len(t, resp.Publishers, 1)
+	first := resp.Publishers[0]
+
+	// offset=1&limit=1 returns the second publisher.
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/edge/shreds/publishers/leaders?limit=1&offset=1", nil)
+	rr = httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+	assert.Equal(t, 3, resp.Total)
+	assert.Equal(t, 1, resp.Offset)
+	require.Len(t, resp.Publishers, 1)
+	assert.NotEqual(t, first.DZUserPubkey, resp.Publishers[0].DZUserPubkey)
+
+	// offset past the end returns an empty page with total still set.
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/edge/shreds/publishers/leaders?offset=100", nil)
+	rr = httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+	assert.Equal(t, 3, resp.Total)
+	assert.Empty(t, resp.Publishers)
+
+	// Invalid bounds are rejected by huma.
+	for _, url := range []string{
+		"/api/v1/edge/shreds/publishers/leaders?limit=0",
+		"/api/v1/edge/shreds/publishers/leaders?limit=9999",
+		"/api/v1/edge/shreds/publishers/leaders?offset=-1",
+	} {
+		req = httptest.NewRequest(http.MethodGet, url, nil)
+		rr = httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+		require.Equal(t, http.StatusUnprocessableEntity, rr.Code, "url=%s body=%s", url, rr.Body.String())
+	}
 }
 
 func TestV1EdgeShredsPublishers_EpochsAndSlotsParams(t *testing.T) {
