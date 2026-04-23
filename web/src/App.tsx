@@ -70,6 +70,7 @@ import { SettingsPage } from '@/components/settings-page'
 import { ChangelogPage } from '@/components/changelog-page'
 import { TermsPage } from '@/components/terms-page'
 import { MCPDocsPage } from '@/components/mcp-docs-page'
+import { DocsIndexPage } from '@/components/docs-index-page'
 import { ConnectionError } from '@/components/ConnectionError'
 import { EnvBanner } from '@/components/env-banner'
 import { EnvProvider } from '@/contexts/EnvContext'
@@ -681,6 +682,7 @@ function AppContent() {
             <Route path="/terms" element={<TermsPage />} />
 
             {/* Docs */}
+            <Route path="/docs" element={<DocsIndexPage />} />
             <Route path="/docs/mcp" element={<MCPDocsPage />} />
 
             {/* DZ entity routes */}
