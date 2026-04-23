@@ -101,10 +101,10 @@ function useRefreshButton(
 
 function formatUSDC(n: number, compact = false): string {
   if (compact) {
-    if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
-    if (n >= 1_000) return `$${(n / 1_000).toFixed(1)}K`;
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M USDC`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K USDC`;
   }
-  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDC`;
 }
 
 function format2Z(n: number, compact = false): string {
@@ -141,27 +141,18 @@ function Skeleton({ className = "w-20" }: { className?: string }) {
 function SectionTitle({
   children,
   className = "mb-4",
-  hint,
 }: {
   children: React.ReactNode;
   className?: string;
-  hint?: React.ReactNode;
 }) {
   return (
     <div
       className={`text-xs font-medium text-muted-foreground/70 uppercase tracking-widest ${className}`}
     >
       {children}
-      {hint && (
-        <span className="ml-2 normal-case tracking-normal text-muted-foreground/50 font-normal">
-          {hint}
-        </span>
-      )}
     </div>
   );
 }
-
-const USDC_HINT = "($ = USDC)";
 
 function TwoZHint({
   usdc,
@@ -598,7 +589,7 @@ export function ShredsEconomicsPage() {
         <div className="space-y-8">
           {/* Revenue Overview */}
           <section>
-            <SectionTitle hint={USDC_HINT}>Revenue Overview</SectionTitle>
+            <SectionTitle>Revenue Overview</SectionTitle>
             <StatGroup
               stats={[
                 {
@@ -658,7 +649,7 @@ export function ShredsEconomicsPage() {
 
           {/* Next Epoch Forecast */}
           <section>
-            <SectionTitle hint={USDC_HINT}>Next Epoch Forecast</SectionTitle>
+            <SectionTitle>Next Epoch Forecast</SectionTitle>
             <StatGroup
               stats={[
                 {
@@ -771,7 +762,7 @@ export function ShredsEconomicsPage() {
                       };
               return (
                 <section>
-                  <SectionTitle hint={USDC_HINT}>Retention Signal</SectionTitle>
+                  <SectionTitle>Retention Signal</SectionTitle>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     {/* Seats Funded */}
                     <div className="relative rounded-lg bg-card border border-border overflow-hidden p-5">
@@ -889,8 +880,8 @@ export function ShredsEconomicsPage() {
             {/* Revenue per Epoch */}
             <section>
               <div className="flex items-center justify-between mb-4">
-                <SectionTitle className="" hint={USDC_HINT}>
-                  Revenue per Epoch
+                <SectionTitle className="">
+                  Revenue per Epoch — USDC
                 </SectionTitle>
                 <div>
                   <SmallDropdown
@@ -932,7 +923,7 @@ export function ShredsEconomicsPage() {
                         <div className="flex items-center gap-4 px-2 mb-3">
                           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                             <span className="inline-block h-2 w-2 rounded-sm bg-blue-400/80" />
-                            $ collected
+                            USDC collected
                           </span>
                         </div>
                         <ResponsiveContainer width="100%" height={192}>
@@ -985,7 +976,7 @@ export function ShredsEconomicsPage() {
                                 fontSize: 11,
                                 fill: "var(--muted-foreground)",
                               }}
-                              tickFormatter={(v: number) => `$${v}`}
+                              tickFormatter={(v: number) => `${v}`}
                               width={52}
                             />
                             <Tooltip
@@ -1028,7 +1019,7 @@ export function ShredsEconomicsPage() {
                           </AreaChart>
                         </ResponsiveContainer>
                         <p className="text-xs text-muted-foreground px-2 pt-2">
-                          Historical revenue collected per epoch.
+                          Historical USDC collected per epoch.
                         </p>
                       </>
                     );
@@ -1209,8 +1200,8 @@ export function ShredsEconomicsPage() {
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
             {/* Predicted Revenue */}
             <section>
-              <SectionTitle hint={USDC_HINT}>
-                Predicted Revenue — Next{" "}
+              <SectionTitle>
+                Predicted Revenue (USDC) — Next{" "}
                 {econ ? econ.revenueProjection.length : 0} Epochs
               </SectionTitle>
               <div className="border border-border rounded-lg bg-card px-2 pt-5 pb-2">
@@ -1485,10 +1476,10 @@ export function ShredsEconomicsPage() {
                         Metro
                       </th>
                       <th className="px-4 py-3 text-right font-medium uppercase tracking-wider">
-                        Price / Epoch (USDC)
+                        Price / Epoch
                       </th>
                       <th className="px-4 py-3 text-right font-medium uppercase tracking-wider">
-                        Monthly Equiv (USDC)
+                        Monthly Equiv
                       </th>
                       <th className="px-4 py-3 text-right font-medium uppercase tracking-wider">
                         Devices
@@ -1585,10 +1576,10 @@ export function ShredsEconomicsPage() {
                         USDC/Epoch
                       </th>
                       <th className="px-4 py-3 text-right font-medium uppercase tracking-wider">
-                        MRR (USDC)
+                        MRR
                       </th>
                       <th className="px-4 py-3 text-right font-medium uppercase tracking-wider">
-                        Escrow (USDC)
+                        Escrow
                       </th>
                       <th className="px-4 py-3 text-right font-medium uppercase tracking-wider">
                         % Rev
@@ -1671,19 +1662,19 @@ export function ShredsEconomicsPage() {
                     <thead>
                       <tr className="text-xs text-muted-foreground border-b border-border bg-muted/30">
                         <th className="px-4 py-3 text-left font-medium uppercase tracking-wider">
-                          Price / Epoch (USDC)
+                          Price / Epoch
                         </th>
                         <th className="px-4 py-3 text-right font-medium uppercase tracking-wider">
                           Seats
                         </th>
                         <th className="px-4 py-3 text-right font-medium uppercase tracking-wider">
-                          Epoch Rev (USDC)
+                          Epoch Rev
                         </th>
                         <th className="px-4 py-3 text-right font-medium uppercase tracking-wider">
-                          Monthly (USDC)
+                          Monthly
                         </th>
                         <th className="px-4 py-3 text-right font-medium uppercase tracking-wider">
-                          Annual (USDC)
+                          Annual
                         </th>
                       </tr>
                     </thead>
@@ -1795,10 +1786,10 @@ export function ShredsEconomicsPage() {
                         USDC/Epoch
                       </th>
                       <th className="px-4 py-3 text-right font-medium uppercase tracking-wider">
-                        MRR (USDC)
+                        MRR
                       </th>
                       <th className="px-4 py-3 text-right font-medium uppercase tracking-wider">
-                        Escrow (USDC)
+                        Escrow
                       </th>
                       <th className="px-4 py-3 text-right font-medium uppercase tracking-wider">
                         Min Runway
