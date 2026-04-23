@@ -164,7 +164,9 @@ func Setup(log *slog.Logger, cfg Config) error {
 			t.RemoteDB, t.RemoteTable, remoteAddr, t.RemoteDB, t.RemoteTable, cfg.RemoteUser, cfg.RemotePassword,
 		)
 		if err := localConn.Exec(ctx, query); err != nil {
-			return fmt.Errorf("failed to create proxy for %s.%s: %w", t.RemoteDB, t.RemoteTable, err)
+			log.Warn("skipping external proxy table (remote table may not exist)", "table", fmt.Sprintf("%s.%s", t.RemoteDB, t.RemoteTable), "error", err)
+			extSkipped++
+			continue
 		}
 		log.Info("created external proxy table", "table", fmt.Sprintf("%s.%s", t.RemoteDB, t.RemoteTable))
 		extCreated++
