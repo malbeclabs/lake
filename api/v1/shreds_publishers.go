@@ -42,6 +42,9 @@ type EdgeShredsPublishersResponse struct {
 	TotalPublishers     uint64                `json:"total_publishers" doc:"Count of activated DZ publishers with a matched vote account"`
 	TotalPublisherStake int64                 `json:"total_publisher_stake" doc:"Total activated stake across all DZ publishers (lamports)"`
 	Publishers          []EdgeShredsPublisher `json:"publishers"`
+	Total               int                   `json:"total" doc:"Total publishers matching the q filter (ignores limit/offset)"`
+	Limit               int                   `json:"limit"`
+	Offset              int                   `json:"offset"`
 }
 
 // EdgeShredsPublishersInput is the request for the shreds publishers endpoint.
@@ -49,6 +52,8 @@ type EdgeShredsPublishersInput struct {
 	Q      string `query:"q" doc:"Optional filter: DZ user pubkey, publisher IP, or client IP"`
 	Epochs int    `query:"epochs" minimum:"1" maximum:"10" default:"2" doc:"Number of recent epochs to include (ignored if slots > 0)"`
 	Slots  int    `query:"slots" minimum:"0" maximum:"5000" default:"0" doc:"If > 0, restrict the window to this many most-recent slots instead of epochs. Recommended values: 100, 500, 1000, 5000."`
+	Limit  int    `query:"limit" minimum:"1" maximum:"1000" default:"100" doc:"Maximum publishers to return"`
+	Offset int    `query:"offset" minimum:"0" default:"0" doc:"Offset into the result set"`
 }
 
 // EdgeShredsPublishersOutput wraps the response body for huma.
@@ -69,13 +74,24 @@ func registerEdgeShredsPublishers(humaAPI huma.API, api *handlers.API) {
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to fetch shreds publishers", err)
 		}
-		return &EdgeShredsPublishersOutput{Body: toEdgeShredsPublishersResponse(resp)}, nil
+		return &EdgeShredsPublishersOutput{Body: toEdgeShredsPublishersResponse(resp, input.Limit, input.Offset)}, nil
 	})
 }
 
-func toEdgeShredsPublishersResponse(r *handlers.PublisherCheckResponse) EdgeShredsPublishersResponse {
-	publishers := make([]EdgeShredsPublisher, len(r.Publishers))
-	for i, p := range r.Publishers {
+func toEdgeShredsPublishersResponse(r *handlers.PublisherCheckResponse, limit, offset int) EdgeShredsPublishersResponse {
+	total := len(r.Publishers)
+	start := offset
+	if start > total {
+		start = total
+	}
+	end := start + limit
+	if end > total {
+		end = total
+	}
+	pageRows := r.Publishers[start:end]
+
+	publishers := make([]EdgeShredsPublisher, len(pageRows))
+	for i, p := range pageRows {
 		publishers[i] = EdgeShredsPublisher{
 			PublisherIP:             p.PublisherIP,
 			ClientIP:                p.ClientIP,
@@ -106,5 +122,8 @@ func toEdgeShredsPublishersResponse(r *handlers.PublisherCheckResponse) EdgeShre
 		TotalPublishers:     r.TotalPublishers,
 		TotalPublisherStake: r.TotalPublisherStake,
 		Publishers:          publishers,
+		Total:               total,
+		Limit:               limit,
+		Offset:              offset,
 	}
 }
