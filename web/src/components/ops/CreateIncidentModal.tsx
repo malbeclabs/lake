@@ -210,7 +210,7 @@ export function CreateIncidentModal({
           affected_link_pubkey: linkPks,
           device_pubkey: devicePks,
           contributor_pubkey: selectedAssignee?.pubkey ?? null,
-          ...(ticketType === 'maintenance' && startAt ? { start_at: utcDatetimeLocalToISO(startAt) } : {}),
+          ...(startAt ? { start_at: utcDatetimeLocalToISO(startAt) } : {}),
           ...(ticketType === 'maintenance' && endAt ? { end_at: utcDatetimeLocalToISO(endAt) } : {}),
         },
         { onSuccess: () => { onSuccess(); onClose() } }
@@ -288,6 +288,7 @@ export function CreateIncidentModal({
                   required
                 >
                   <option value="">Select contributor…</option>
+                  <option value="__dz__">DZ / Malbec Labs</option>
                   {assignees.map(a => (
                     <option key={a.value} value={a.value}>{a.label}</option>
                   ))}
@@ -322,6 +323,7 @@ export function CreateIncidentModal({
                   required
                 >
                   <option value="">Select contributor…</option>
+                  <option value="__dz__">DZ / Malbec Labs</option>
                   {assignees.map(a => (
                     <option key={a.value} value={a.value}>{a.label}</option>
                   ))}
@@ -517,33 +519,38 @@ export function CreateIncidentModal({
             </div>
           </div>
 
-          {/* Maintenance time fields — blank mode only */}
-          {isBlankMode && ticketType === 'maintenance' && (
+          {/* Time fields — blank mode only */}
+          {isBlankMode && (
             <div className="flex gap-3 mb-3.5">
               <div className="flex-1">
                 <label className="block text-[11px] uppercase tracking-wide text-muted-foreground mb-1.5">
-                  Start time <span className="normal-case tracking-normal">(UTC)</span>
+                  {ticketType === 'maintenance' ? 'Start time' : 'Started at'}{' '}
+                  <span className="normal-case tracking-normal text-muted-foreground/60">
+                    {ticketType === 'maintenance' ? '(UTC)' : '(UTC, optional)'}
+                  </span>
                 </label>
                 <input
                   type="datetime-local"
                   value={startAt}
                   onChange={e => setStartAt(e.target.value)}
                   className="w-full text-[13px] px-2.5 py-1.5 bg-muted/30 border border-border/60 text-foreground outline-none focus:border-border"
-                  required
+                  required={ticketType === 'maintenance'}
                 />
               </div>
-              <div className="flex-1">
-                <label className="block text-[11px] uppercase tracking-wide text-muted-foreground mb-1.5">
-                  End time{' '}
-                  <span className="normal-case tracking-normal text-muted-foreground/60">(UTC, optional)</span>
-                </label>
-                <input
-                  type="datetime-local"
-                  value={endAt}
-                  onChange={e => setEndAt(e.target.value)}
-                  className="w-full text-[13px] px-2.5 py-1.5 bg-muted/30 border border-border/60 text-foreground outline-none focus:border-border"
-                />
-              </div>
+              {ticketType === 'maintenance' && (
+                <div className="flex-1">
+                  <label className="block text-[11px] uppercase tracking-wide text-muted-foreground mb-1.5">
+                    End time{' '}
+                    <span className="normal-case tracking-normal text-muted-foreground/60">(UTC, optional)</span>
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={endAt}
+                    onChange={e => setEndAt(e.target.value)}
+                    className="w-full text-[13px] px-2.5 py-1.5 bg-muted/30 border border-border/60 text-foreground outline-none focus:border-border"
+                  />
+                </div>
+              )}
             </div>
           )}
 

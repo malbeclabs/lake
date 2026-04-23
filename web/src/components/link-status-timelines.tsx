@@ -18,7 +18,7 @@ import { LinkInterfaceIssuesChart } from '@/components/link-charts/LinkInterface
 import { LinkLatencyChart } from '@/components/link-charts/LinkLatencyChart'
 import { LinkHealthTimeline } from '@/components/link-charts/LinkHealthTimeline'
 import { useDelayedLoading } from '@/hooks/use-delayed-loading'
-import { useActiveOpsTickets, useTicketsForEntity } from '@/hooks/use-ops-tickets'
+import { useTicketsForEntity } from '@/hooks/use-ops-tickets'
 import { useIsOpsUser } from '@/hooks/use-is-ops-user'
 import { IncidentBadge } from '@/components/ops/IncidentBadge'
 import { CreateIncidentModal } from '@/components/ops/CreateIncidentModal'
@@ -384,11 +384,9 @@ interface LinkRowProps {
   metricsTimeRange: string
   isOpsUser: boolean
   onCreateIncident: (linkPk: string, linkCode: string, contributorCode: string, contributorPk: string, issueReasons: string[], issueSince?: string) => void
-  showIncidentOverlays: boolean
-  showMaintenanceOverlays: boolean
 }
 
-function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, metricsTimeRange, isOpsUser, onCreateIncident, showIncidentOverlays, showMaintenanceOverlays }: LinkRowProps) {
+function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, metricsTimeRange, isOpsUser, onCreateIncident }: LinkRowProps) {
   const tickets = useTicketsForEntity(derivedInfo.pk)
   const [expanded, setExpanded] = useState(false)
   const [hoveredTimeRange, setHoveredTimeRange] = useState<{
@@ -693,7 +691,7 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
               hideBadges
               onBarHover={setHoveredTimeRange}
               highlightedTime={chartHoveredTime}
-              maintenanceWindows={showMaintenanceOverlays ? tickets
+              maintenanceWindows={tickets
                 .filter(t => t.type === 'maintenance' && t.start_at)
                 .map(t => ({
                   startAt: t.start_at!,
@@ -705,8 +703,8 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
                   status: t.status,
                   entityName: derivedInfo.code,
                   slackUrl: t.slack_message_url,
-                })) : []}
-              incidentWindows={showIncidentOverlays ? tickets
+                }))}
+              incidentWindows={tickets
                 .filter(t => t.type === 'incident')
                 .map(t => ({
                   startAt: t.start_at ?? new Date().toISOString(),
@@ -718,7 +716,7 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
                   status: t.status,
                   entityName: derivedInfo.code,
                   slackUrl: t.slack_message_url,
-                })) : []}
+                }))}
             />
             {isOpsUser && issueReasons.length > 0 && !tickets.some(t => t.type === 'incident' && !isTicketClosed(t.status)) && (
               <div className="flex justify-end mt-1">
@@ -756,8 +754,8 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
                       highlightTimeRange={hoveredTimeRange}
                       onCursorTime={setChartHoveredTime}
                       tickets={tickets}
-                      showIncidents={showIncidentOverlays}
-                      showMaintenance={showMaintenanceOverlays}
+                      showIncidents={true}
+                      showMaintenance={true}
                     />
                   )}
                   {hasLoss && (
@@ -768,8 +766,8 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
                       highlightTimeRange={hoveredTimeRange}
                       onCursorTime={setChartHoveredTime}
                       tickets={tickets}
-                      showIncidents={showIncidentOverlays}
-                      showMaintenance={showMaintenanceOverlays}
+                      showIncidents={true}
+                      showMaintenance={true}
                     />
                   )}
                 </>
@@ -801,8 +799,8 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
                 highlightTimeRange={hoveredTimeRange}
                 onCursorTime={setChartHoveredTime}
                 tickets={tickets}
-                showIncidents={showIncidentOverlays}
-                showMaintenance={showMaintenanceOverlays}
+                showIncidents={true}
+                showMaintenance={true}
               />
             ) : null
           })()}
@@ -861,8 +859,6 @@ export function LinkStatusTimelines({
     placeholderData: keepPreviousData,
   })
 
-  // Pre-fetch active tickets once for all rows — filtered client-side per link
-  const { data: activeTicketsData } = useActiveOpsTickets()
   const isOpsUser = useIsOpsUser()
   const [createIncidentFor, setCreateIncidentFor] = useState<{
     linkPk: string
@@ -872,9 +868,6 @@ export function LinkStatusTimelines({
     issueReasons: string[]
     downSince?: string
   } | null>(null)
-  const [showIncidentOverlays, setShowIncidentOverlays] = useState(true)
-  const [showMaintenanceOverlays, setShowMaintenanceOverlays] = useState(true)
-
   // Convert the Record<string, LinkMetricsResponse> into an array with derived info
   const linksArray = useMemo(() => {
     if (!data?.links) return []
@@ -1045,22 +1038,6 @@ export function LinkStatusTimelines({
     return linksArray.filter(({ derived }) => derived.provisioning).length
   }, [linksArray])
 
-  const incidentCount = useMemo(() => {
-    const tickets = activeTicketsData?.tickets ?? []
-    return linksArray.filter(({ derived }) =>
-      tickets.some(t => t.type === 'incident' &&
-        (t.affected_link_pubkey.includes(derived.pk) || (t.affected_links?.some(l => l.pubkey === derived.pk) ?? false)))
-    ).length
-  }, [activeTicketsData, linksArray])
-
-  const maintenanceCount = useMemo(() => {
-    const tickets = activeTicketsData?.tickets ?? []
-    return linksArray.filter(({ derived }) =>
-      tickets.some(t => t.type === 'maintenance' &&
-        (t.affected_link_pubkey.includes(derived.pk) || (t.affected_links?.some(l => l.pubkey === derived.pk) ?? false)))
-    ).length
-  }, [activeTicketsData, linksArray])
-
   const showSkeleton = useDelayedLoading(isLoading && !data)
 
   if (isLoading && !data) {
@@ -1166,32 +1143,6 @@ export function LinkStatusTimelines({
               </span>
             </button>
           )}
-          {isOpsUser && incidentCount > 0 && (
-            <button
-              type="button"
-              onClick={() => setShowIncidentOverlays(v => !v)}
-              className={`text-xs font-medium px-2.5 py-1.5 rounded-md border transition-colors ${
-                showIncidentOverlays
-                  ? 'border-red-600/60 bg-red-500/10 text-red-700 dark:border-red-800/60 dark:bg-red-900/20 dark:text-red-300'
-                  : 'border-border text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Incidents ({incidentCount})
-            </button>
-          )}
-          {isOpsUser && maintenanceCount > 0 && (
-            <button
-              type="button"
-              onClick={() => setShowMaintenanceOverlays(v => !v)}
-              className={`text-xs font-medium px-2.5 py-1.5 rounded-md border transition-colors ${
-                showMaintenanceOverlays
-                  ? 'border-blue-600/60 bg-blue-500/10 text-blue-700 dark:border-blue-700/60 dark:bg-blue-900/20 dark:text-blue-300'
-                  : 'border-border text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Maintenance ({maintenanceCount})
-            </button>
-          )}
           {onTimeRangeChange && (
             <SmallDropdown
               value={timeRange}
@@ -1243,8 +1194,6 @@ export function LinkStatusTimelines({
             metricsTimeRange={timeRange}
             isOpsUser={isOpsUser}
             onCreateIncident={(pk, code, contributor, contributorPk, reasons, issueSince) => setCreateIncidentFor({ linkPk: pk, linkCode: code, contributorCode: contributor, contributorPk, issueReasons: reasons, downSince: issueSince })}
-            showIncidentOverlays={showIncidentOverlays}
-            showMaintenanceOverlays={showMaintenanceOverlays}
           />
         ))}
         {createIncidentFor && (

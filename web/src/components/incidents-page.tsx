@@ -282,6 +282,7 @@ function OpsIncidentsSection({
   isOpsUser: boolean
   onCreateIncident: () => void
 }) {
+  const [open, setOpen] = useState(true)
   const relevant = tickets.filter(t =>
     t.type === 'incident' && (
       scope === 'links'
@@ -292,27 +293,38 @@ function OpsIncidentsSection({
 
   return (
     <div className="border border-border rounded-lg bg-card mb-3">
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
-        <h2 className="text-sm font-semibold">Ops Incidents</h2>
-        <span className="px-1.5 py-0.5 text-xs rounded-full bg-muted-foreground/10 text-muted-foreground tabular-nums">
-          {relevant.length}
-        </span>
-        <span className="text-xs text-muted-foreground flex-1">Incidents registered in <a href="https://doublezero.xyz/ops-management" target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">Ops Management</a></span>
+      <div className={`flex items-center gap-3 px-4 py-3 ${open ? 'border-b border-border' : ''}`}>
+        <button
+          onClick={() => setOpen(!open)}
+          className="flex items-center gap-3 flex-1 text-left hover:bg-muted/30 transition-colors -mx-4 -my-3 px-4 py-3 rounded-t-lg"
+        >
+          <ChevronDown
+            className={cn(
+              'h-4 w-4 shrink-0 text-muted-foreground transition-transform',
+              !open && '-rotate-90',
+            )}
+          />
+          <h2 className="text-sm font-semibold">Registered</h2>
+          <span className="px-1.5 py-0.5 text-xs rounded-full bg-muted-foreground/10 text-muted-foreground tabular-nums">
+            {relevant.length}
+          </span>
+          <span className="text-xs text-muted-foreground">Incidents registered in <a href="https://doublezero.xyz/ops-management" target="_blank" rel="noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline" onClick={e => e.stopPropagation()}>Ops Management</a></span>
+        </button>
         {isOpsUser && (
           <button
             onClick={onCreateIncident}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium border border-border rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium border border-border rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground shrink-0"
           >
             <Plus className="h-3 w-3" />
             New incident
           </button>
         )}
       </div>
-      {relevant.length === 0 ? (
+      {open && relevant.length === 0 ? (
         <div className="px-4 py-4 text-sm text-muted-foreground">
           No active ops management incidents for {scope === 'links' ? 'links' : 'devices'}.
         </div>
-      ) : (
+      ) : open ? (
         <div className="overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-muted/50">
@@ -407,7 +419,7 @@ function OpsIncidentsSection({
             </tbody>
           </table>
         </div>
-      )}
+      ) : null}
     </div>
   )
 }
@@ -1641,7 +1653,7 @@ function ActiveIncidentsTable({
                   <Link
                     to={`/dz/links/${encodeURIComponent(group.link_pk)}`}
                     state={{ backLabel: 'incidents' }}
-                    className="text-primary hover:underline inline-flex items-center gap-1"
+                    className="text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1"
                   >
                     {group.link_code}
                     <ExternalLink className="h-3 w-3" />
@@ -1757,7 +1769,7 @@ function DrainedLinksTable({ drainedLinks }: { drainedLinks: DrainedLinkInfo[] }
                 <Link
                   to={`/dz/links/${encodeURIComponent(dl.link_pk)}`}
                   state={{ backLabel: 'incidents' }}
-                  className="text-primary hover:underline inline-flex items-center gap-1 max-w-full"
+                  className="text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1 max-w-full"
                   title={dl.link_code}
                 >
                   <span className="truncate">{dl.link_code}</span>
@@ -1947,7 +1959,7 @@ function ActiveDeviceIncidentsTable({
               <td className="px-4 py-3">
                 <Link
                   to={`/dz/devices/${encodeURIComponent(group.device_pk)}`}
-                  className="text-primary hover:underline inline-flex items-center gap-1"
+                  className="text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1"
                 >
                   {group.device_code}
                   <ExternalLink className="h-3 w-3" />
@@ -2056,7 +2068,7 @@ function DrainedDevicesTable({ drainedDevices }: { drainedDevices: DrainedDevice
               <td className="px-4 py-3 truncate">
                 <Link
                   to={`/dz/devices/${encodeURIComponent(dd.device_pk)}`}
-                  className="text-primary hover:underline inline-flex items-center gap-1 max-w-full"
+                  className="text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1 max-w-full"
                   title={dd.device_code}
                 >
                   <span className="truncate">{dd.device_code}</span>
