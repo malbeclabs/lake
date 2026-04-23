@@ -88,10 +88,7 @@ function formatBandwidth(bps: number): string {
 }
 
 function formatBandwidthShort(bps: number): string {
-  if (bps >= 1_000_000_000) return `${(bps / 1_000_000_000).toFixed(0)}G`
-  if (bps >= 1_000_000) return `${(bps / 1_000_000).toFixed(0)}M`
-  if (bps >= 1_000) return `${(bps / 1_000).toFixed(0)}K`
-  return `${bps}`
+  return `${(bps / 1e9).toFixed(0)}G`
 }
 
 interface DerivedLinkInfo {

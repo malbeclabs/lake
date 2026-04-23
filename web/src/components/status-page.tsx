@@ -1653,10 +1653,7 @@ function formatBandwidth(bps: number): string {
 }
 
 function formatBandwidthShort(bps: number): string {
-  if (bps >= 1e9) return `${(bps / 1e9).toFixed(0)}G`;
-  if (bps >= 1e6) return `${(bps / 1e6).toFixed(0)}M`;
-  if (bps >= 1e3) return `${(bps / 1e3).toFixed(0)}K`;
-  return `${bps}`;
+  return `${(bps / 1e9).toFixed(0)}G`;
 }
 
 function TopLinkUtilization({
