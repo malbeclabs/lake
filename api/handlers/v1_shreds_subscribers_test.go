@@ -13,10 +13,10 @@ import (
 	v1 "github.com/malbeclabs/lake/api/v1"
 )
 
-// v1ShredsSubscribersContractFields is the authoritative JSON keys for the
+// v1EdgeShredsSubscribersContractFields is the authoritative JSON keys for the
 // /api/v1/edge/shreds/subscribers response. A mismatch means the public contract
 // has changed — bump the API version.
-var v1ShredsSubscribersContractFields = struct {
+var v1EdgeShredsSubscribersContractFields = struct {
 	top        []string
 	subscriber []string
 }{
@@ -39,7 +39,7 @@ var v1ShredsSubscribersContractFields = struct {
 	},
 }
 
-func TestV1ShredsSubscribers_Empty(t *testing.T) {
+func TestV1EdgeShredsSubscribers_Empty(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
@@ -51,13 +51,13 @@ func TestV1ShredsSubscribers_Empty(t *testing.T) {
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 	assert.Contains(t, rr.Header().Get("Content-Type"), "application/json")
 
-	var resp v1.ShredsSubscribersResponse
+	var resp v1.EdgeShredsSubscribersResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 	assert.Empty(t, resp.Items)
 	assert.Equal(t, 0, resp.Total)
 }
 
-func TestV1ShredsSubscribers_Contract(t *testing.T) {
+func TestV1EdgeShredsSubscribers_Contract(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertShredsTestData(t, api)
@@ -72,7 +72,7 @@ func TestV1ShredsSubscribers_Contract(t *testing.T) {
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &raw))
 	// $schema is added by huma for spec-linkage; acceptable in the public contract.
-	assertJSONKeys(t, raw, v1ShredsSubscribersContractFields.top, "response")
+	assertJSONKeys(t, raw, v1EdgeShredsSubscribersContractFields.top, "response")
 
 	items, ok := raw["items"].([]any)
 	require.True(t, ok, "items must be a JSON array")
@@ -80,7 +80,7 @@ func TestV1ShredsSubscribers_Contract(t *testing.T) {
 	for i, it := range items {
 		obj, ok := it.(map[string]any)
 		require.True(t, ok, "items[%d] must be a JSON object", i)
-		assertJSONKeys(t, obj, v1ShredsSubscribersContractFields.subscriber, "items[i]")
+		assertJSONKeys(t, obj, v1EdgeShredsSubscribersContractFields.subscriber, "items[i]")
 
 		// client_ip must NOT be exposed in the v1 contract.
 		_, hasIP := obj["client_ip"]
@@ -88,7 +88,7 @@ func TestV1ShredsSubscribers_Contract(t *testing.T) {
 	}
 }
 
-func TestV1ShredsSubscribers_AllSubscribers(t *testing.T) {
+func TestV1EdgeShredsSubscribers_AllSubscribers(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertShredsTestData(t, api)
@@ -100,7 +100,7 @@ func TestV1ShredsSubscribers_AllSubscribers(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
-	var resp v1.ShredsSubscribersResponse
+	var resp v1.EdgeShredsSubscribersResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 	assert.Equal(t, 3, resp.Total)
 	require.Len(t, resp.Items, 3)
@@ -119,7 +119,7 @@ func TestV1ShredsSubscribers_AllSubscribers(t *testing.T) {
 	assert.Equal(t, "seat-3", resp.Items[2].SeatPK)
 }
 
-func TestV1ShredsSubscribers_FilterByFunder(t *testing.T) {
+func TestV1EdgeShredsSubscribers_FilterByFunder(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertShredsTestData(t, api)
@@ -131,7 +131,7 @@ func TestV1ShredsSubscribers_FilterByFunder(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
-	var resp v1.ShredsSubscribersResponse
+	var resp v1.EdgeShredsSubscribersResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 	assert.Equal(t, 2, resp.Total, "funder-1 owns 2 seats")
 	require.Len(t, resp.Items, 2)
@@ -141,7 +141,7 @@ func TestV1ShredsSubscribers_FilterByFunder(t *testing.T) {
 	assert.ElementsMatch(t, []string{"seat-1", "seat-3"}, []string{resp.Items[0].SeatPK, resp.Items[1].SeatPK})
 }
 
-func TestV1ShredsSubscribers_FilterByFunder_ExactMatchNotSubstring(t *testing.T) {
+func TestV1EdgeShredsSubscribers_FilterByFunder_ExactMatchNotSubstring(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertShredsTestData(t, api)
@@ -156,13 +156,13 @@ func TestV1ShredsSubscribers_FilterByFunder_ExactMatchNotSubstring(t *testing.T)
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
-	var resp v1.ShredsSubscribersResponse
+	var resp v1.EdgeShredsSubscribersResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 	assert.Equal(t, 0, resp.Total)
 	assert.Empty(t, resp.Items)
 }
 
-func TestV1ShredsSubscribers_Pagination(t *testing.T) {
+func TestV1EdgeShredsSubscribers_Pagination(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertShredsTestData(t, api)
@@ -174,7 +174,7 @@ func TestV1ShredsSubscribers_Pagination(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
-	var resp v1.ShredsSubscribersResponse
+	var resp v1.EdgeShredsSubscribersResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 	assert.Equal(t, 3, resp.Total)
 	assert.Equal(t, 2, resp.Limit)

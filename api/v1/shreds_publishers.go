@@ -8,10 +8,10 @@ import (
 	"github.com/malbeclabs/lake/api/handlers"
 )
 
-// ShredsPublisher is a stable public shape for a single shreds publisher.
+// EdgeShredsPublisher is a stable public shape for a single shreds publisher.
 // It is intentionally decoupled from internal/UI types so the v1 contract
 // can evolve independently.
-type ShredsPublisher struct {
+type EdgeShredsPublisher struct {
 	PublisherIP             string `json:"publisher_ip" doc:"DoubleZero-assigned IP of the publisher"`
 	ClientIP                string `json:"client_ip" doc:"Validator gossip IP advertised to Solana"`
 	NodePubkey              string `json:"node_pubkey" doc:"Solana node identity pubkey"`
@@ -34,29 +34,29 @@ type ShredsPublisher struct {
 	IsBackup                bool   `json:"is_backup" doc:"Whether this gossip node lacks an active vote account (hot-spare)"`
 }
 
-// ShredsPublishersResponse is the body returned by the shreds publishers endpoint.
-type ShredsPublishersResponse struct {
+// EdgeShredsPublishersResponse is the body returned by the shreds publishers endpoint.
+type EdgeShredsPublishersResponse struct {
 	Epoch               uint64            `json:"epoch" doc:"Current Solana epoch at query time"`
 	MaxSlot             uint64            `json:"max_slot" doc:"Highest slot observed in the query window"`
 	TotalNetworkStake   int64             `json:"total_network_stake" doc:"Total active stake across all Solana validators (lamports)"`
 	TotalPublishers     uint64            `json:"total_publishers" doc:"Count of activated DZ publishers with a matched vote account"`
 	TotalPublisherStake int64             `json:"total_publisher_stake" doc:"Total activated stake across all DZ publishers (lamports)"`
-	Publishers          []ShredsPublisher `json:"publishers"`
+	Publishers          []EdgeShredsPublisher `json:"publishers"`
 }
 
-// ShredsPublishersInput is the request for the shreds publishers endpoint.
-type ShredsPublishersInput struct {
+// EdgeShredsPublishersInput is the request for the shreds publishers endpoint.
+type EdgeShredsPublishersInput struct {
 	Q      string `query:"q" doc:"Optional filter: DZ user pubkey, publisher IP, or client IP"`
 	Epochs int    `query:"epochs" minimum:"1" maximum:"10" default:"2" doc:"Number of recent epochs to include (ignored if slots > 0)"`
 	Slots  int    `query:"slots" minimum:"0" maximum:"5000" default:"0" doc:"If > 0, restrict the window to this many most-recent slots instead of epochs. Recommended values: 100, 500, 1000, 5000."`
 }
 
-// ShredsPublishersOutput wraps the response body for huma.
-type ShredsPublishersOutput struct {
-	Body ShredsPublishersResponse
+// EdgeShredsPublishersOutput wraps the response body for huma.
+type EdgeShredsPublishersOutput struct {
+	Body EdgeShredsPublishersResponse
 }
 
-func registerShredsPublishers(humaAPI huma.API, api *handlers.API) {
+func registerEdgeShredsPublishers(humaAPI huma.API, api *handlers.API) {
 	huma.Register(humaAPI, huma.Operation{
 		OperationID: "list-edge-shreds-leader-publishers",
 		Method:      "GET",
@@ -64,19 +64,19 @@ func registerShredsPublishers(humaAPI huma.API, api *handlers.API) {
 		Summary:     "List shreds leader publishers",
 		Description: "Returns the status of every DoubleZero validator-publisher in the shred multicast group for a recent window (epochs or slots). Includes activated stake, leader/retransmit activity, and validator client/version info. A broader publishers endpoint (covering non-validator publishers) may be introduced later at /edge/shreds/publishers.",
 		Tags:        []string{"edge/shreds"},
-	}, func(ctx context.Context, input *ShredsPublishersInput) (*ShredsPublishersOutput, error) {
+	}, func(ctx context.Context, input *EdgeShredsPublishersInput) (*EdgeShredsPublishersOutput, error) {
 		resp, err := api.FetchPublisherCheckData(ctx, input.Q, input.Epochs, input.Slots)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to fetch shreds publishers", err)
 		}
-		return &ShredsPublishersOutput{Body: toShredsPublishersResponse(resp)}, nil
+		return &EdgeShredsPublishersOutput{Body: toEdgeShredsPublishersResponse(resp)}, nil
 	})
 }
 
-func toShredsPublishersResponse(r *handlers.PublisherCheckResponse) ShredsPublishersResponse {
-	publishers := make([]ShredsPublisher, len(r.Publishers))
+func toEdgeShredsPublishersResponse(r *handlers.PublisherCheckResponse) EdgeShredsPublishersResponse {
+	publishers := make([]EdgeShredsPublisher, len(r.Publishers))
 	for i, p := range r.Publishers {
-		publishers[i] = ShredsPublisher{
+		publishers[i] = EdgeShredsPublisher{
 			PublisherIP:             p.PublisherIP,
 			ClientIP:                p.ClientIP,
 			NodePubkey:              p.NodePubkey,
@@ -99,7 +99,7 @@ func toShredsPublishersResponse(r *handlers.PublisherCheckResponse) ShredsPublis
 			IsBackup:                p.IsBackup,
 		}
 	}
-	return ShredsPublishersResponse{
+	return EdgeShredsPublishersResponse{
 		Epoch:               r.Epoch,
 		MaxSlot:             r.MaxSlot,
 		TotalNetworkStake:   r.TotalNetworkStake,

@@ -22,11 +22,11 @@ func formatUSDC(microUSDC uint64) string {
 	return fmt.Sprintf("%d.%06d", whole, frac)
 }
 
-// ShredsSubscriber is a stable public shape for a single shreds subscriber
+// EdgeShredsSubscriber is a stable public shape for a single shreds subscriber
 // (a client seat in the shred subscription program). client_ip is
 // intentionally omitted: v1 is unauthed and the internal handler redacts it
 // for non-internal callers.
-type ShredsSubscriber struct {
+type EdgeShredsSubscriber struct {
 	SeatPK               string `json:"seat_pk" doc:"Client seat pubkey"`
 	DeviceKey            string `json:"device_key" doc:"DoubleZero edge device pubkey"`
 	DeviceCode           string `json:"device_code" doc:"DoubleZero edge device code"`
@@ -43,27 +43,27 @@ type ShredsSubscriber struct {
 	LastActivity         string `json:"last_activity" doc:"RFC3339 timestamp of the last escrow event for this seat, if any" example:"2026-04-23T12:34:56Z"`
 }
 
-// ShredsSubscribersResponse is the paginated response body.
-type ShredsSubscribersResponse struct {
-	Items  []ShredsSubscriber `json:"items"`
+// EdgeShredsSubscribersResponse is the paginated response body.
+type EdgeShredsSubscribersResponse struct {
+	Items  []EdgeShredsSubscriber `json:"items"`
 	Total  int                `json:"total" doc:"Total matching subscribers (ignores limit/offset)"`
 	Limit  int                `json:"limit"`
 	Offset int                `json:"offset"`
 }
 
-// ShredsSubscribersInput is the request for the subscribers endpoint.
-type ShredsSubscribersInput struct {
+// EdgeShredsSubscribersInput is the request for the subscribers endpoint.
+type EdgeShredsSubscribersInput struct {
 	Funder string `query:"funder" doc:"Filter by funder pubkey (funding_authority_key, exact match)" example:""`
 	Limit  int    `query:"limit" minimum:"1" maximum:"1000" default:"100" doc:"Maximum items to return"`
 	Offset int    `query:"offset" minimum:"0" default:"0" doc:"Offset into the result set"`
 }
 
-// ShredsSubscribersOutput wraps the response body for huma.
-type ShredsSubscribersOutput struct {
-	Body ShredsSubscribersResponse
+// EdgeShredsSubscribersOutput wraps the response body for huma.
+type EdgeShredsSubscribersOutput struct {
+	Body EdgeShredsSubscribersResponse
 }
 
-func registerShredsSubscribers(humaAPI huma.API, api *handlers.API) {
+func registerEdgeShredsSubscribers(humaAPI huma.API, api *handlers.API) {
 	huma.Register(humaAPI, huma.Operation{
 		OperationID: "list-edge-shreds-subscribers",
 		Method:      "GET",
@@ -71,15 +71,15 @@ func registerShredsSubscribers(humaAPI huma.API, api *handlers.API) {
 		Summary:     "List shreds subscribers",
 		Description: "Returns a paginated list of shreds subscribers (client seats in the DoubleZero shred subscription program). Optionally filter by funder pubkey.",
 		Tags:        []string{"edge/shreds"},
-	}, func(ctx context.Context, input *ShredsSubscribersInput) (*ShredsSubscribersOutput, error) {
+	}, func(ctx context.Context, input *EdgeShredsSubscribersInput) (*EdgeShredsSubscribersOutput, error) {
 		rows, total, err := api.FetchShredSubscribers(ctx, input.Funder, input.Limit, input.Offset)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to fetch shreds subscribers", err)
 		}
 
-		items := make([]ShredsSubscriber, len(rows))
+		items := make([]EdgeShredsSubscriber, len(rows))
 		for i, r := range rows {
-			items[i] = ShredsSubscriber{
+			items[i] = EdgeShredsSubscriber{
 				SeatPK:               r.PK,
 				DeviceKey:            r.DeviceKey,
 				DeviceCode:           r.DeviceCode,
@@ -99,7 +99,7 @@ func registerShredsSubscribers(humaAPI huma.API, api *handlers.API) {
 			}
 		}
 
-		return &ShredsSubscribersOutput{Body: ShredsSubscribersResponse{
+		return &EdgeShredsSubscribersOutput{Body: EdgeShredsSubscribersResponse{
 			Items:  items,
 			Total:  int(total),
 			Limit:  input.Limit,

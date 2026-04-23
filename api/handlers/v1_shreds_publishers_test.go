@@ -22,10 +22,10 @@ func newV1Router(t *testing.T, api *handlers.API) *chi.Mux {
 	return r
 }
 
-// v1ShredsPublishersContractFields is the authoritative list of JSON keys
+// v1EdgeShredsPublishersContractFields is the authoritative list of JSON keys
 // in the public /api/v1/edge/shreds/publishers/leaders response. A mismatch means the
 // public contract has changed — bump the API version instead of renaming.
-var v1ShredsPublishersContractFields = struct {
+var v1EdgeShredsPublishersContractFields = struct {
 	top       []string
 	publisher []string
 }{
@@ -62,7 +62,7 @@ var v1ShredsPublishersContractFields = struct {
 	},
 }
 
-func TestV1ShredsPublishers_Empty(t *testing.T) {
+func TestV1EdgeShredsPublishers_Empty(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	createPublisherShredStatsTable(t, api)
@@ -85,15 +85,15 @@ func TestV1ShredsPublishers_Empty(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
-	var resp v1.ShredsPublishersResponse
+	var resp v1.EdgeShredsPublishersResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 	assert.Empty(t, resp.Publishers)
 }
 
-// TestV1ShredsPublishers_Contract locks down the public JSON shape of the
+// TestV1EdgeShredsPublishers_Contract locks down the public JSON shape of the
 // shreds publishers endpoint. If a field is renamed or removed, downstream
 // consumers break — bump the API version instead of changing a field.
-func TestV1ShredsPublishers_Contract(t *testing.T) {
+func TestV1EdgeShredsPublishers_Contract(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertPublisherCheckTestData(t, api)
@@ -107,7 +107,7 @@ func TestV1ShredsPublishers_Contract(t *testing.T) {
 
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &raw))
-	assertJSONKeys(t, raw, v1ShredsPublishersContractFields.top, "response")
+	assertJSONKeys(t, raw, v1EdgeShredsPublishersContractFields.top, "response")
 
 	publishers, ok := raw["publishers"].([]any)
 	require.True(t, ok, "publishers must be a JSON array")
@@ -115,11 +115,11 @@ func TestV1ShredsPublishers_Contract(t *testing.T) {
 	for i, p := range publishers {
 		obj, ok := p.(map[string]any)
 		require.True(t, ok, "publishers[%d] must be a JSON object", i)
-		assertJSONKeys(t, obj, v1ShredsPublishersContractFields.publisher, "publishers[i]")
+		assertJSONKeys(t, obj, v1EdgeShredsPublishersContractFields.publisher, "publishers[i]")
 	}
 }
 
-func TestV1ShredsPublishers_AllPublishers(t *testing.T) {
+func TestV1EdgeShredsPublishers_AllPublishers(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertPublisherCheckTestData(t, api)
@@ -131,7 +131,7 @@ func TestV1ShredsPublishers_AllPublishers(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
-	var resp v1.ShredsPublishersResponse
+	var resp v1.EdgeShredsPublishersResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 	assert.Equal(t, uint64(800), resp.Epoch)
 	require.Len(t, resp.Publishers, 3)
@@ -149,7 +149,7 @@ func TestV1ShredsPublishers_AllPublishers(t *testing.T) {
 	assert.True(t, pub1.ValidatorVersionOk)
 }
 
-func TestV1ShredsPublishers_FilterByDZID(t *testing.T) {
+func TestV1EdgeShredsPublishers_FilterByDZID(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertPublisherCheckTestData(t, api)
@@ -161,13 +161,13 @@ func TestV1ShredsPublishers_FilterByDZID(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
-	var resp v1.ShredsPublishersResponse
+	var resp v1.EdgeShredsPublishersResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 	require.Len(t, resp.Publishers, 1)
 	assert.Equal(t, "dzuser1", resp.Publishers[0].DZUserPubkey)
 }
 
-func TestV1ShredsPublishers_FilterByIP(t *testing.T) {
+func TestV1EdgeShredsPublishers_FilterByIP(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertPublisherCheckTestData(t, api)
@@ -179,13 +179,13 @@ func TestV1ShredsPublishers_FilterByIP(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
-	var resp v1.ShredsPublishersResponse
+	var resp v1.EdgeShredsPublishersResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 	require.Len(t, resp.Publishers, 1)
 	assert.Equal(t, "10.0.0.1", resp.Publishers[0].PublisherIP)
 }
 
-func TestV1ShredsPublishers_EpochsAndSlotsParams(t *testing.T) {
+func TestV1EdgeShredsPublishers_EpochsAndSlotsParams(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertPublisherCheckTestData(t, api)

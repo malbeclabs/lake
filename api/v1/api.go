@@ -46,8 +46,8 @@ func Mount(r chi.Router, api *handlers.API) huma.API {
 
 		humaAPI = humachi.New(r, config)
 
-		registerShredsPublishers(humaAPI, api)
-		registerShredsSubscribers(humaAPI, api)
+		registerEdgeShredsPublishers(humaAPI, api)
+		registerEdgeShredsSubscribers(humaAPI, api)
 		registerValidatorsMetadata(humaAPI, api)
 
 		// Register 308 redirects from deprecated paths to their current
