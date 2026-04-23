@@ -3033,17 +3033,27 @@ export async function fetchMetros(
   return res.json()
 }
 
-export interface MetroDetail extends Metro {
+export interface MetroDetail extends Metro {}
+
+export async function fetchMetro(pk: string): Promise<MetroDetail> {
+  const res = await fetchWithRetry(`/api/dz/metros/${encodeURIComponent(pk)}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch metro')
+  }
+  return res.json()
+}
+
+export interface MetroStats {
   validator_count: number
   stake_sol: number
   in_bps: number
   out_bps: number
 }
 
-export async function fetchMetro(pk: string): Promise<MetroDetail> {
-  const res = await fetchWithRetry(`/api/dz/metros/${encodeURIComponent(pk)}`)
+export async function fetchMetroStats(pk: string): Promise<MetroStats> {
+  const res = await fetchWithRetry(`/api/dz/metros/${encodeURIComponent(pk)}/stats`)
   if (!res.ok) {
-    throw new Error('Failed to fetch metro')
+    throw new Error('Failed to fetch metro stats')
   }
   return res.json()
 }

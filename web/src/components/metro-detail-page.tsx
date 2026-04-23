@@ -1,7 +1,7 @@
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, MapPin, AlertCircle, ArrowLeft, ChevronUp, ChevronDown } from 'lucide-react'
-import { fetchMetro, fetchDevicesByMetro, fetchFacilitiesByMetro } from '@/lib/api'
+import { fetchMetro, fetchMetroStats, fetchDevicesByMetro, fetchFacilitiesByMetro } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useBackLink } from '@/hooks/use-back-link'
 import { handleRowClick } from '@/lib/utils'
@@ -52,6 +52,12 @@ export function MetroDetailPage() {
   const { data: metro, isLoading, error } = useQuery({
     queryKey: ['metro', pk],
     queryFn: () => fetchMetro(pk!),
+    enabled: !!pk,
+  })
+
+  const { data: stats } = useQuery({
+    queryKey: ['metro-stats', pk],
+    queryFn: () => fetchMetroStats(pk!),
     enabled: !!pk,
   })
 
@@ -220,7 +226,7 @@ export function MetroDetailPage() {
             <div className="text-xs text-muted-foreground">Users</div>
           </div>
           <div className="bg-muted/30 rounded-lg px-2 py-2.5 text-center">
-            <div className="text-sm font-medium">{metro.validator_count}</div>
+            <div className="text-sm font-medium">{stats ? stats.validator_count : '—'}</div>
             <div className="text-xs text-muted-foreground">Validators</div>
           </div>
           {/* Map — spans both rows */}
@@ -233,15 +239,15 @@ export function MetroDetailPage() {
           </div>
           {/* Row 2 */}
           <div className="bg-muted/30 rounded-lg px-2 py-2.5 text-center">
-            <div className="text-sm font-medium">{formatBps(metro.in_bps)}</div>
+            <div className="text-sm font-medium">{stats ? formatBps(stats.in_bps) : '—'}</div>
             <div className="text-xs text-muted-foreground">Inbound</div>
           </div>
           <div className="bg-muted/30 rounded-lg px-2 py-2.5 text-center">
-            <div className="text-sm font-medium">{formatBps(metro.out_bps)}</div>
+            <div className="text-sm font-medium">{stats ? formatBps(stats.out_bps) : '—'}</div>
             <div className="text-xs text-muted-foreground">Outbound</div>
           </div>
           <div className="bg-muted/30 rounded-lg px-2 py-2.5 text-center" style={{ gridColumn: 'span 2' }}>
-            <div className="text-sm font-medium">{formatStake(metro.stake_sol)}</div>
+            <div className="text-sm font-medium">{stats ? formatStake(stats.stake_sol) : '—'}</div>
             <div className="text-xs text-muted-foreground">Total Stake</div>
           </div>
         </div>
