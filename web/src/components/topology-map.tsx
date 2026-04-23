@@ -3445,7 +3445,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
                           href={t.slack_message_url}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-[10px] text-[#4A9CC7] hover:underline ml-auto"
+                          className="text-[10px] text-blue-600 dark:text-blue-300 hover:underline ml-auto"
                           onClick={(e) => e.stopPropagation()}
                         >
                           Slack ↗

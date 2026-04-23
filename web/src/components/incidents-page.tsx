@@ -365,7 +365,7 @@ function OpsIncidentsSection({
                             href={ticket.slack_message_url}
                             target="_blank"
                             rel="noreferrer"
-                            className="text-[10px] text-[#4A9CC7] hover:underline shrink-0"
+                            className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline shrink-0"
                             title="View Slack thread"
                           >
                             Slack ↗

@@ -182,7 +182,7 @@ function ClusterStrip({ cluster, leftPct, widthPct, zIndex }: ClusterStripProps)
                   href={first.slackUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="block mt-1 text-[#4A9CC7] hover:underline"
+                  className="block mt-1 text-blue-600 dark:text-blue-300 hover:underline"
                 >
                   View Slack thread →
                 </a>
@@ -217,7 +217,7 @@ function ClusterStrip({ cluster, leftPct, widthPct, zIndex }: ClusterStripProps)
                           href={t.slackUrl}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-[#4A9CC7] hover:underline text-[10px] shrink-0"
+                          className="text-blue-600 dark:text-blue-300 hover:underline text-[10px] shrink-0"
                           title="Open Slack thread"
                         >
                           #
