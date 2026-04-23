@@ -1212,6 +1212,7 @@ export interface LinkIssue {
   side_z_metro: string
   since: string
   is_down: boolean
+  bandwidth_bps: number
 }
 
 export interface LinkMetric {
@@ -1300,6 +1301,7 @@ export interface NonActivatedLink {
   status: string
   since: string
   active_incident_types?: string[]
+  bandwidth_bps: number
 }
 
 export interface ISISDeviceIssue {

@@ -87,6 +87,13 @@ function formatBandwidth(bps: number): string {
   return `${bps} bps`
 }
 
+function formatBandwidthShort(bps: number): string {
+  if (bps >= 1_000_000_000) return `${(bps / 1_000_000_000).toFixed(0)}G`
+  if (bps >= 1_000_000) return `${(bps / 1_000_000).toFixed(0)}M`
+  if (bps >= 1_000) return `${(bps / 1_000).toFixed(0)}K`
+  return `${bps}`
+}
+
 interface DerivedLinkInfo {
   pk: string
   code: string
@@ -477,6 +484,7 @@ function LinkRow({
                 {derivedInfo.linkType}
                 {derivedInfo.contributor && ` · ${derivedInfo.contributor}`} ·{' '}
                 {derivedInfo.sideAMetro} ↔ {derivedInfo.sideZMetro}
+                {derivedInfo.bandwidthBps > 0 && ` · ${formatBandwidthShort(derivedInfo.bandwidthBps)}`}
               </div>
               {(derivedInfo.isDown ||
                 derivedInfo.drainStatus ||
