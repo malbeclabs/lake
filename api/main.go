@@ -501,6 +501,11 @@ func main() {
 	r.Get("/api/config", api.GetConfig)
 	r.Get("/api/version", api.GetVersion)
 
+	// /api/docs redirects to the current default API version docs.
+	r.Get("/api/docs", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/api/v1/docs", http.StatusTemporaryRedirect)
+	})
+
 	// Database query endpoints (rate limited)
 	r.Group(func(r chi.Router) {
 		r.Use(handlers.QueryRateLimitMiddleware)
