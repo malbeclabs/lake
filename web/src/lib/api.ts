@@ -3033,7 +3033,7 @@ export async function fetchMetros(
   return res.json()
 }
 
-export interface MetroDetail extends Metro {}
+export type MetroDetail = Metro
 
 export async function fetchMetro(pk: string): Promise<MetroDetail> {
   const res = await fetchWithRetry(`/api/dz/metros/${encodeURIComponent(pk)}`)
