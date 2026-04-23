@@ -75,6 +75,13 @@ func (a *Activities) entries() []cacheEntry {
 		{"link history", "link_history:24h:72", func(ctx context.Context) (any, error) {
 			return api.FetchLinkHistoryData(ctx, "24h", 72)
 		}},
+		{"critical links", "critical_links", func(ctx context.Context) (any, error) {
+			resp := api.FetchCriticalLinksData(ctx)
+			if resp.Error != "" {
+				return nil, &refreshError{resp.Error}
+			}
+			return resp, nil
+		}},
 		{"device history", "device_history:24h:72", func(ctx context.Context) (any, error) {
 			return api.FetchDeviceHistoryData(ctx, "24h", 72)
 		}},

@@ -1079,15 +1079,32 @@ type CriticalLinksResponse struct {
 // GetCriticalLinks returns links that are critical for network connectivity
 // Critical links are identified based on node degrees and connectivity patterns
 func (a *API) GetCriticalLinks(w http.ResponseWriter, r *http.Request) {
+	if isMainnet(r.Context()) {
+		if data, err := a.readPageCache(r.Context(), "critical_links"); err == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Cache", "HIT")
+			_, _ = w.Write(data)
+			return
+		}
+	}
+
+	w.Header().Set("X-Cache", "MISS")
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
+	response := a.FetchCriticalLinksData(ctx)
+	writeJSON(w, response)
+}
+
+// FetchCriticalLinksData runs the Neo4j query that backs GetCriticalLinks. It
+// always returns a non-nil response; query errors are surfaced via response.Error.
+func (a *API) FetchCriticalLinksData(ctx context.Context) *CriticalLinksResponse {
 	start := time.Now()
 
 	session := a.neo4jSession(ctx)
 	defer session.Close(ctx)
 
-	response := CriticalLinksResponse{
+	response := &CriticalLinksResponse{
 		Links: []CriticalLink{},
 	}
 
@@ -1126,16 +1143,14 @@ func (a *API) GetCriticalLinks(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		logError("critical links query error", "error", err)
 		response.Error = err.Error()
-		writeJSON(w, response)
-		return
+		return response
 	}
 
 	records, err := result.Collect(ctx)
 	if err != nil {
 		logError("critical links collect error", "error", err)
 		response.Error = err.Error()
-		writeJSON(w, response)
-		return
+		return response
 	}
 
 	for _, record := range records {
@@ -1188,7 +1203,7 @@ func (a *API) GetCriticalLinks(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("critical links query completed", "links", len(response.Links), "critical", criticalCount, "important", importantCount, "duration", duration)
 
-	writeJSON(w, response)
+	return response
 }
 
 // RedundancyIssue represents a single redundancy issue in the network
