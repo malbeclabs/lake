@@ -27,6 +27,7 @@ import (
 	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
 	"github.com/malbeclabs/lake/api/metrics"
+	v1 "github.com/malbeclabs/lake/api/v1"
 	"github.com/malbeclabs/lake/api/worker"
 	slackbot "github.com/malbeclabs/lake/slack/bot"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -500,6 +501,11 @@ func main() {
 	r.Get("/api/config", api.GetConfig)
 	r.Get("/api/version", api.GetVersion)
 
+	// /api/docs redirects to the current default API version docs.
+	r.Get("/api/docs", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/api/v1/docs", http.StatusTemporaryRedirect)
+	})
+
 	// Database query endpoints (rate limited)
 	r.Group(func(r chi.Router) {
 		r.Use(handlers.QueryRateLimitMiddleware)
@@ -584,7 +590,8 @@ func main() {
 		r.Get("/api/solana/gossip-nodes/{pubkey}", api.GetGossipNode)
 		r.Get("/api/solana/ledger", api.GetSolanaLedger)
 		r.Get("/api/solana/validator-performance", api.GetValidatorPerformance)
-		r.Get("/api/v1/validators-metadata", api.GetValidatorsMetadata)
+		// Public v1 API (huma-generated OpenAPI at /api/v1/openapi.json, docs at /api/v1/docs).
+		v1.Mount(r, api)
 
 		// Stake analytics routes
 		r.Get("/api/stake/overview", api.GetStakeOverview)
