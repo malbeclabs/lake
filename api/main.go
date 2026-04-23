@@ -199,6 +199,14 @@ func spaHandler(staticDir, assetBucketURL string) http.HandlerFunc {
 				return
 			}
 
+			// /.well-known/* are agent/bot discovery endpoints (RFC 8615), never
+			// SPA routes — 404 when missing instead of returning the SPA shell.
+			if strings.HasPrefix(r.URL.Path, "/.well-known/") {
+				setNoCacheHeaders(w)
+				http.NotFound(w, r)
+				return
+			}
+
 			// Fallback to root index.html for SPA routing
 			setNoCacheHeaders(w)
 			http.ServeFile(w, r, filepath.Join(staticDir, "index.html"))
