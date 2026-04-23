@@ -545,6 +545,7 @@ func main() {
 		r.Get("/api/dz/links-health", api.GetLinkHealth)
 		r.Get("/api/dz/metros", api.GetMetros)
 		r.Get("/api/dz/metros/{pk}", api.GetMetro)
+		r.Get("/api/dz/metros/{pk}/stats", api.GetMetroStats)
 		r.Get("/api/dz/facilities", api.GetFacilities)
 		r.Get("/api/dz/facilities/{pk}", api.GetFacility)
 		r.Get("/api/peeringdb/fac/{loc_id}", api.GetPeeringDBFacility)

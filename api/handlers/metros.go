@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/malbeclabs/lake/api/handlers/dberror"
 	"github.com/malbeclabs/lake/api/metrics"
+	"golang.org/x/sync/errgroup"
 )
 
 type MetroListItem struct {
@@ -331,10 +332,13 @@ type MetroDetail struct {
 	RawMaxUnicastUsers         uint64  `json:"raw_max_unicast_users"`
 	RawMaxMulticastSubscribers uint64  `json:"raw_max_multicast_subscribers"`
 	RawMaxMulticastPublishers  uint64  `json:"raw_max_multicast_publishers"`
-	ValidatorCount             uint64  `json:"validator_count"`
-	StakeSol                   float64 `json:"stake_sol"`
-	InBps                      float64 `json:"in_bps"`
-	OutBps                     float64 `json:"out_bps"`
+}
+
+type MetroStats struct {
+	ValidatorCount uint64  `json:"validator_count"`
+	StakeSol       float64 `json:"stake_sol"`
+	InBps          float64 `json:"in_bps"`
+	OutBps         float64 `json:"out_bps"`
 }
 
 func (a *API) GetMetro(w http.ResponseWriter, r *http.Request) {
@@ -406,32 +410,6 @@ func (a *API) GetMetro(w http.ResponseWriter, r *http.Request) {
 			FROM dz_devices_current
 			WHERE metro_pk = ? AND location_pk != ''
 			GROUP BY metro_pk
-		),
-		validator_stats AS (
-			SELECT
-				d.metro_pk,
-				count(DISTINCT v.vote_pubkey) as validator_count,
-				sum(v.activated_stake_lamports) / 1e9 as stake_sol
-			FROM dz_users_current u
-			JOIN dz_devices_current d ON u.device_pk = d.pk
-			JOIN solana_gossip_nodes_current g ON u.client_ip = g.gossip_ip
-			JOIN solana_vote_accounts_current v ON g.pubkey = v.node_pubkey
-			WHERE u.status = 'activated' AND u.client_ip != '' AND v.epoch_vote_account = 'true'
-				AND d.metro_pk = ?
-			GROUP BY d.metro_pk
-		),
-		traffic_rates AS (
-			SELECT
-				d.metro_pk,
-				SUM(f.avg_in_bps) as in_bps,
-				SUM(f.avg_out_bps) as out_bps
-			FROM device_interface_rollup_5m f
-			JOIN dz_devices_current d ON f.device_pk = d.pk
-			WHERE f.bucket_ts >= now() - INTERVAL 15 MINUTE
-				AND f.user_tunnel_id IS NULL
-				AND f.link_pk = ''
-				AND d.metro_pk = ?
-			GROUP BY d.metro_pk
 		)
 		SELECT
 			m.pk,
@@ -452,24 +430,18 @@ func (a *API) GetMetro(w http.ResponseWriter, r *http.Request) {
 			COALESCE(ouc.max_multicast_publishers, 0) as max_multicast_publishers,
 			COALESCE(ouc.raw_max_unicast_users, 0) as raw_max_unicast_users,
 			COALESCE(ouc.raw_max_multicast_subscribers, 0) as raw_max_multicast_subscribers,
-			COALESCE(ouc.raw_max_multicast_publishers, 0) as raw_max_multicast_publishers,
-			COALESCE(vs.validator_count, 0) as validator_count,
-			COALESCE(vs.stake_sol, 0) as stake_sol,
-			COALESCE(tr.in_bps, 0) as in_bps,
-			COALESCE(tr.out_bps, 0) as out_bps
+			COALESCE(ouc.raw_max_multicast_publishers, 0) as raw_max_multicast_publishers
 		FROM dz_metros_current m
 		LEFT JOIN device_counts dc ON m.pk = dc.metro_pk
 		LEFT JOIN user_counts uc ON m.pk = uc.metro_pk
 		LEFT JOIN onchain_user_counts ouc ON m.pk = ouc.metro_pk
 		LEFT JOIN country_info ci ON m.pk = ci.metro_pk
 		LEFT JOIN facility_counts lc ON m.pk = lc.metro_pk
-		LEFT JOIN validator_stats vs ON m.pk = vs.metro_pk
-		LEFT JOIN traffic_rates tr ON m.pk = tr.metro_pk
 		WHERE m.pk = ?
 	`
 
 	var metro MetroDetail
-	err := a.envDB(ctx).QueryRow(ctx, query, pk, pk, pk, pk, pk, pk, pk).Scan(
+	err := a.envDB(ctx).QueryRow(ctx, query, pk, pk, pk, pk, pk).Scan(
 		&metro.PK,
 		&metro.Code,
 		&metro.Name,
@@ -489,10 +461,6 @@ func (a *API) GetMetro(w http.ResponseWriter, r *http.Request) {
 		&metro.RawMaxUnicastUsers,
 		&metro.RawMaxMulticastSubscribers,
 		&metro.RawMaxMulticastPublishers,
-		&metro.ValidatorCount,
-		&metro.StakeSol,
-		&metro.InBps,
-		&metro.OutBps,
 	)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
@@ -509,6 +477,74 @@ func (a *API) GetMetro(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(metro); err != nil {
+		logError("failed to encode response", "error", err)
+	}
+}
+
+func (a *API) GetMetroStats(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	pk := chi.URLParam(r, "pk")
+	if pk == "" {
+		http.Error(w, "missing metro pk", http.StatusBadRequest)
+		return
+	}
+
+	start := time.Now()
+	db := a.envDB(ctx)
+
+	var stats MetroStats
+	g, gctx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		const query = `
+			SELECT
+				count(DISTINCT v.vote_pubkey) as validator_count,
+				COALESCE(sum(v.activated_stake_lamports) / 1e9, 0) as stake_sol
+			FROM dz_users_current u
+			JOIN dz_devices_current d ON u.device_pk = d.pk
+			JOIN solana_gossip_nodes_current g ON u.client_ip = g.gossip_ip
+			JOIN solana_vote_accounts_current v ON g.pubkey = v.node_pubkey
+			WHERE u.status = 'activated' AND u.client_ip != '' AND v.epoch_vote_account = 'true'
+				AND d.metro_pk = ?
+		`
+		err := db.QueryRow(gctx, query, pk).Scan(&stats.ValidatorCount, &stats.StakeSol)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		return nil
+	})
+
+	g.Go(func() error {
+		const query = `
+			SELECT
+				COALESCE(SUM(f.avg_in_bps), 0) as in_bps,
+				COALESCE(SUM(f.avg_out_bps), 0) as out_bps
+			FROM device_interface_rollup_5m f
+			JOIN dz_devices_current d ON f.device_pk = d.pk
+			WHERE f.bucket_ts >= now() - INTERVAL 15 MINUTE
+				AND f.user_tunnel_id IS NULL
+				AND f.link_pk = ''
+				AND d.metro_pk = ?
+		`
+		err := db.QueryRow(gctx, query, pk).Scan(&stats.InBps, &stats.OutBps)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		return nil
+	})
+
+	err := g.Wait()
+	metrics.RecordClickHouseQuery(time.Since(start), err)
+	if err != nil {
+		logError("metro stats query failed", "error", err, "pk", pk)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(stats); err != nil {
 		logError("failed to encode response", "error", err)
 	}
 }
