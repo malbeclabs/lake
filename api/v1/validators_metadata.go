@@ -30,7 +30,7 @@ func registerValidatorsMetadata(humaAPI huma.API, api *handlers.API) {
 		Path:        "/solana/validators-metadata",
 		Summary:     "List Solana validator metadata",
 		Description: "Returns client name/version/stake metadata for every active Solana validator, ordered by active stake descending.",
-		Tags:        []string{"solana"},
+		Tags:        []string{"Solana"},
 	}, func(ctx context.Context, _ *struct{}) (*ValidatorsMetadataOutput, error) {
 		rows, err := api.FetchValidatorsMetadata(ctx)
 		if err != nil {
