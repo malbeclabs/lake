@@ -456,6 +456,12 @@ function TrafficPageContent() {
     refetchInterval: dashboardState.refetchInterval,
   })
 
+  const rangeEnd = useMemo(() => {
+    if (customEnd) return customEnd
+    return Math.floor(Date.now() / 1000)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customEnd, allTrafficData])
+
   // Build a lookup from series metadata to classify each device+intf pair
   const intfCategoryMap = useMemo(() => {
     const map = new Map<string, IntfCategory>()
@@ -759,6 +765,7 @@ function TrafficPageContent() {
               metric="counters"
               loading={countersFetching}
               timeRangeSeconds={timeRangeSeconds}
+              rangeEnd={rangeEnd}
             />
           </LazyChart>
         </div>
@@ -816,6 +823,7 @@ function TrafficPageContent() {
               metric={metric}
               loading={fetching}
               timeRangeSeconds={timeRangeSeconds}
+              rangeEnd={rangeEnd}
               legendHeader={
                 catAggregated ? `Summary of ${originalIntfCount} interfaces` : undefined
               }
