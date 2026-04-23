@@ -196,117 +196,136 @@ export function FacilityDetailPage() {
         </div>
 
         {/* Info grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
-          <div className="border border-border rounded-lg p-4 bg-card">
-            <h3 className="text-sm font-medium text-muted-foreground mb-3">Details</h3>
-            <dl className="space-y-2">
-              <div className="flex justify-between">
-                <dt className="text-sm text-muted-foreground">Country</dt>
-                <dd className="text-sm">{facility.country || '—'}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-sm text-muted-foreground">Metro</dt>
-                <dd className="text-sm font-mono">
-                  {facility.metro_pk
-                    ? <Link to={`/dz/metros/${facility.metro_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline">{facility.metro_code}</Link>
-                    : (facility.metro_code || '—')}
-                </dd>
-              </div>
-              <div className="flex justify-between items-center">
-                <dt className="text-sm text-muted-foreground">Pubkey</dt>
-                <dd className="text-sm font-mono">
-                  <CopyableText text={facility.pk} className="font-mono text-sm">
-                    {facility.pk.slice(0, 4)}...{facility.pk.slice(-4)}
-                  </CopyableText>
-                </dd>
-              </div>
-              <div className="flex justify-between items-center">
-                <dt className="text-sm text-muted-foreground">Code</dt>
-                <dd className="text-sm font-mono">
-                  <CopyableText text={facility.code} className="font-mono text-sm" />
-                </dd>
-              </div>
-              {facility.loc_id > 0 && (
-                <div className="flex justify-between">
-                  <dt className="text-sm text-muted-foreground">PeeringDB ID</dt>
-                  <dd className="text-sm font-mono">
-                    <a
-                      href={`https://www.peeringdb.com/fac/${facility.loc_id}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-600 dark:text-blue-400 hover:underline"
-                    >
-                      {facility.loc_id}
-                    </a>
-                  </dd>
-                </div>
-              )}
-            </dl>
+        <div
+          className="grid gap-1.5 mb-6"
+          style={{ gridTemplateColumns: '1fr 1fr 1fr 1fr 1.8fr', gridTemplateRows: 'auto auto' }}
+        >
+          {/* Row 1 */}
+          <div className="bg-muted/30 rounded-lg px-2 py-2.5 text-center">
+            <div className="text-sm font-medium">{facility.country || '—'}</div>
+            <div className="text-xs text-muted-foreground">Country</div>
           </div>
-
-          <div className="border border-border rounded-lg p-4 bg-card">
-            <h3 className="text-sm font-medium text-muted-foreground mb-3">Infrastructure</h3>
-            <dl className="space-y-2">
-              <div className="flex justify-between">
-                <dt className="text-sm text-muted-foreground">Devices</dt>
-                <dd className="text-sm">{facility.device_count}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-sm text-muted-foreground">Users</dt>
-                <dd className="text-sm tabular-nums">
-                  {facility.user_count}
-                  {facility.max_users > 0 && <span className="text-muted-foreground">/{facility.max_users}</span>}
-                </dd>
-              </div>
-              {(() => {
-                const effUnicastMax = facility.max_unicast_users > 0 ? facility.max_unicast_users : facility.max_users
-                const effSubsMax = facility.max_multicast_subscribers > 0 ? facility.max_multicast_subscribers : facility.max_users
-                const effPubsMax = facility.max_multicast_publishers > 0 ? facility.max_multicast_publishers : facility.max_users
-                return (
-                  <>
-                    {(facility.unicast_users_count > 0 || effUnicastMax > 0) && (
-                      <div className="flex justify-between">
-                        <dt className="text-sm text-muted-foreground pl-3">Unicast</dt>
-                        <dd className="text-sm tabular-nums">
-                          {facility.unicast_users_count}
-                          {effUnicastMax > 0 && <span className="text-muted-foreground">/{effUnicastMax}</span>}
-                        </dd>
-                      </div>
-                    )}
-                    {(facility.multicast_subscribers_count > 0 || effSubsMax > 0) && (
-                      <div className="flex justify-between">
-                        <dt className="text-sm text-muted-foreground pl-3">Subscribers</dt>
-                        <dd className="text-sm tabular-nums">
-                          {facility.multicast_subscribers_count}
-                          {effSubsMax > 0 && <span className="text-muted-foreground">/{effSubsMax}</span>}
-                        </dd>
-                      </div>
-                    )}
-                    {(facility.multicast_publishers_count > 0 || effPubsMax > 0) && (
-                      <div className="flex justify-between">
-                        <dt className="text-sm text-muted-foreground pl-3">Publishers</dt>
-                        <dd className="text-sm tabular-nums">
-                          {facility.multicast_publishers_count}
-                          {effPubsMax > 0 && <span className="text-muted-foreground">/{effPubsMax}</span>}
-                        </dd>
-                      </div>
-                    )}
-                  </>
-                )
-              })()}
-            </dl>
+          <div className="bg-muted/30 rounded-lg px-2 py-2.5 text-center">
+            <div className="text-sm font-medium font-mono">
+              {facility.metro_pk
+                ? <Link to={`/dz/metros/${facility.metro_pk}`} className="text-foreground/85 hover:text-foreground hover:underline">{facility.metro_code}</Link>
+                : (facility.metro_code || '—')}
+            </div>
+            <div className="text-xs text-muted-foreground">Metro</div>
           </div>
-
+          <div className="bg-muted/30 rounded-lg px-2 py-2.5 text-center">
+            <div className="text-sm font-medium tabular-nums">
+              {facility.user_count}
+              {facility.max_users > 0 && <span className="text-muted-foreground">/{facility.max_users}</span>}
+            </div>
+            <div className="text-xs text-muted-foreground">Users</div>
+          </div>
+          <div className="bg-muted/30 rounded-lg px-2 py-2.5 text-center">
+            <div className="text-sm font-medium">{facility.device_count}</div>
+            <div className="text-xs text-muted-foreground">Devices</div>
+          </div>
+          {/* Map — spans both rows */}
           {facility.lat !== 0 && facility.lng !== 0 ? (
-            <div className="border border-border rounded-lg overflow-hidden bg-card" style={{ height: '160px' }}>
+            <div className="rounded-lg overflow-hidden border border-border" style={{ gridRow: 'span 2' }}>
               <MiniMap
                 lat={facility.lat}
                 lng={facility.lng}
                 googleMapsHref={`https://www.google.com/maps?q=${facility.lat},${facility.lng}`}
               />
             </div>
-          ) : null}
+          ) : (
+            <div style={{ gridRow: 'span 2' }} />
+          )}
+          {/* Row 2 */}
+          <div className="bg-muted/30 rounded-lg px-2 py-2.5 text-center" style={{ gridColumn: 'span 2' }}>
+            <div className="text-sm font-medium font-mono">
+              <CopyableText text={facility.pk} className="font-mono text-sm">
+                {facility.pk.slice(0, 4)}...{facility.pk.slice(-4)}
+              </CopyableText>
+            </div>
+            <div className="text-xs text-muted-foreground">Pubkey</div>
+          </div>
+          <div className="bg-muted/30 rounded-lg px-2 py-2.5 text-center">
+            <div className="text-sm font-medium font-mono">
+              <CopyableText text={facility.code} className="font-mono text-sm" />
+            </div>
+            <div className="text-xs text-muted-foreground">Code</div>
+          </div>
+          {facility.loc_id > 0 ? (
+            <div className="bg-muted/30 rounded-lg px-2 py-2.5 text-center">
+              <div className="text-sm font-medium font-mono">
+                <a
+                  href={`https://www.peeringdb.com/fac/${facility.loc_id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-foreground/85 hover:text-foreground hover:underline"
+                >
+                  {facility.loc_id}
+                </a>
+              </div>
+              <div className="text-xs text-muted-foreground">PeeringDB</div>
+            </div>
+          ) : (
+            <div />
+          )}
         </div>
+
+        {/* Capacity cards */}
+        {(() => {
+          const effUnicastMax = rawDevices.length > 0
+            ? rawDevices.reduce((sum, d) => {
+                const rem = d.max_users > 0 ? Math.max(0, d.max_users - d.current_users) : 0
+                return sum + Math.max(d.unicast_users, d.max_unicast_users > 0 ? d.max_unicast_users : d.unicast_users + rem)
+              }, 0)
+            : (facility.max_unicast_users > 0 ? facility.max_unicast_users : facility.max_users)
+          const effSubsMax = rawDevices.length > 0
+            ? rawDevices.reduce((sum, d) => {
+                const rem = d.max_users > 0 ? Math.max(0, d.max_users - d.current_users) : 0
+                return sum + Math.max(d.multicast_subscribers_count, d.max_multicast_subscribers > 0 ? d.max_multicast_subscribers : d.multicast_subscribers_count + rem)
+              }, 0)
+            : (facility.max_multicast_subscribers > 0 ? facility.max_multicast_subscribers : facility.max_users)
+          const effPubsMax = rawDevices.length > 0
+            ? rawDevices.reduce((sum, d) => {
+                const rem = d.max_users > 0 ? Math.max(0, d.max_users - d.current_users) : 0
+                return sum + Math.max(d.multicast_publishers_count, d.max_multicast_publishers > 0 ? d.max_multicast_publishers : d.multicast_publishers_count + rem)
+              }, 0)
+            : (facility.max_multicast_publishers > 0 ? facility.max_multicast_publishers : facility.max_users)
+          const hasCapacity = effUnicastMax > 0 || effSubsMax > 0 || effPubsMax > 0
+            || facility.unicast_users_count > 0 || facility.multicast_subscribers_count > 0 || facility.multicast_publishers_count > 0
+          if (!hasCapacity) return null
+          return (
+            <div className="grid grid-cols-3 gap-1.5 mb-6">
+              {[
+                { label: 'Unicast', used: facility.unicast_users_count, max: effUnicastMax },
+                { label: 'Subscribers', used: facility.multicast_subscribers_count, max: effSubsMax },
+                { label: 'Publishers', used: facility.multicast_publishers_count, max: effPubsMax },
+              ].map(({ label, used, max }) => {
+                const available = max > used ? max - used : 0
+                const pct = max > 0 ? Math.min(100, (used / max) * 100) : 0
+                const fillColor = pct >= 90 ? 'bg-red-500/50' : pct >= 70 ? 'bg-amber-500/40' : 'bg-blue-500/30'
+                return (
+                  <div key={label} className="border border-border rounded-lg overflow-hidden">
+                    <div className="grid grid-cols-2 divide-x divide-border">
+                      <div className="p-2.5 text-center bg-muted/30">
+                        <div className="text-sm font-medium tabular-nums">{used}</div>
+                        <div className="text-xs text-muted-foreground">{label}</div>
+                      </div>
+                      <div className="p-2.5 text-center bg-muted/10">
+                        <div className="text-sm font-medium tabular-nums text-muted-foreground">{available}</div>
+                        <div className="text-xs text-muted-foreground/60">Available</div>
+                      </div>
+                    </div>
+                    {pct > 0 && (
+                      <div className="relative h-[3px] bg-muted/60">
+                        <div className={`absolute inset-y-0 left-0 ${fillColor}`} style={{ width: `${pct}%` }} />
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )
+        })()}
 
         {/* Devices table */}
         <div>
