@@ -70,7 +70,7 @@ func registerShredsSubscribers(humaAPI huma.API, api *handlers.API) {
 		Path:        "/edge/shreds/subscribers",
 		Summary:     "List shreds subscribers",
 		Description: "Returns a paginated list of shreds subscribers (client seats in the DoubleZero shred subscription program). Optionally filter by funder pubkey.",
-		Tags:        []string{"edge", "shreds"},
+		Tags:        []string{"edge/shreds"},
 	}, func(ctx context.Context, input *ShredsSubscribersInput) (*ShredsSubscribersOutput, error) {
 		rows, total, err := api.FetchShredSubscribers(ctx, input.Funder, input.Limit, input.Offset)
 		if err != nil {
