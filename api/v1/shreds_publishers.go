@@ -36,11 +36,11 @@ type EdgeShredsPublisher struct {
 
 // EdgeShredsPublishersResponse is the body returned by the shreds publishers endpoint.
 type EdgeShredsPublishersResponse struct {
-	Epoch               uint64            `json:"epoch" doc:"Current Solana epoch at query time"`
-	MaxSlot             uint64            `json:"max_slot" doc:"Highest slot observed in the query window"`
-	TotalNetworkStake   int64             `json:"total_network_stake" doc:"Total active stake across all Solana validators (lamports)"`
-	TotalPublishers     uint64            `json:"total_publishers" doc:"Count of activated DZ publishers with a matched vote account"`
-	TotalPublisherStake int64             `json:"total_publisher_stake" doc:"Total activated stake across all DZ publishers (lamports)"`
+	Epoch               uint64                `json:"epoch" doc:"Current Solana epoch at query time"`
+	MaxSlot             uint64                `json:"max_slot" doc:"Highest slot observed in the query window"`
+	TotalNetworkStake   int64                 `json:"total_network_stake" doc:"Total active stake across all Solana validators (lamports)"`
+	TotalPublishers     uint64                `json:"total_publishers" doc:"Count of activated DZ publishers with a matched vote account"`
+	TotalPublisherStake int64                 `json:"total_publisher_stake" doc:"Total activated stake across all DZ publishers (lamports)"`
 	Publishers          []EdgeShredsPublisher `json:"publishers"`
 }
 

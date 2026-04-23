@@ -46,9 +46,9 @@ type EdgeShredsSubscriber struct {
 // EdgeShredsSubscribersResponse is the paginated response body.
 type EdgeShredsSubscribersResponse struct {
 	Items  []EdgeShredsSubscriber `json:"items"`
-	Total  int                `json:"total" doc:"Total matching subscribers (ignores limit/offset)"`
-	Limit  int                `json:"limit"`
-	Offset int                `json:"offset"`
+	Total  int                    `json:"total" doc:"Total matching subscribers (ignores limit/offset)"`
+	Limit  int                    `json:"limit"`
+	Offset int                    `json:"offset"`
 }
 
 // EdgeShredsSubscribersInput is the request for the subscribers endpoint.
