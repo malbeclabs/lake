@@ -37,7 +37,7 @@ func Mount(r chi.Router, api *handlers.API) huma.API {
 	var humaAPI huma.API
 	r.Route(BasePath, func(r chi.Router) {
 		config := huma.DefaultConfig("DoubleZero Data API", Version)
-		config.Info.Description = "Public API for DoubleZero network telemetry and the shred subscription program."
+		config.Info.Description = "Public API for DoubleZero Data — the analytics platform for the DoubleZero network. Exposes data on network telemetry, Solana validators, and the shred subscription program."
 		config.OpenAPIPath = "/openapi"
 		config.DocsPath = "/docs"
 		config.SchemasPath = "/schemas"
