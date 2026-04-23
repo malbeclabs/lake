@@ -61,7 +61,11 @@ func Mount(r chi.Router, api *handlers.API) huma.API {
 	var humaAPI huma.API
 	r.Route(BasePath, func(r chi.Router) {
 		config := huma.DefaultConfig("DoubleZero Data API", Version)
-		config.Info.Description = "Public API for DoubleZero Data — the analytics platform for the DoubleZero network. Exposes data on network telemetry, Solana validators, and the shred subscription program.\n\n## Rate Limits\n\nRequests are rate limited to 100 per minute per IP. On `429 Too Many Requests` responses, honor the `Retry-After` header."
+		config.Info.Description = "Public API for DoubleZero Data — the analytics platform for the DoubleZero network. Exposes data on network telemetry, Solana validators, and the shred subscription program."
+		config.Tags = append(config.Tags, &huma.Tag{
+			Name:        "Rate Limits",
+			Description: "Requests are rate limited to 50 per minute per IP. On `429 Too Many Requests` responses, honor the `Retry-After` header.",
+		})
 		config.OpenAPIPath = "/openapi"
 		config.SchemasPath = "/schemas"
 		// DocsPath is empty so huma doesn't register its built-in docs route —
