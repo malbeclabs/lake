@@ -98,12 +98,12 @@ function useRefreshButton(
   return { spinning: spinning || isFetching, onClick };
 }
 
-function formatUSD(n: number, compact = false): string {
+function formatUSDC(n: number, compact = false): string {
   if (compact) {
-    if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
-    if (n >= 1_000) return `$${(n / 1_000).toFixed(1)}K`;
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M USDC`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K USDC`;
   }
-  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDC`;
 }
 
 function truncatePK(pk: string, head = 6, tail = 4): string {
@@ -521,6 +521,8 @@ export function ShredsEconomicsPage() {
           subtitle={
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               {currentEpoch != null && <span>Epoch {currentEpoch}</span>}
+              {currentEpoch != null && <span className="text-muted-foreground/40">·</span>}
+              <span>Fees are in USDC, protocol revenue in 2Z</span>
             </div>
           }
           actions={
@@ -552,26 +554,26 @@ export function ShredsEconomicsPage() {
               stats={[
                 {
                   label: "Epoch Revenue",
-                  value: econ ? formatUSD(econ.epochRevenue) : <Skeleton />,
+                  value: econ ? formatUSDC(econ.epochRevenue) : <Skeleton />,
                   sub: "current epoch",
                   accent: "blue",
                 },
                 {
                   label: "MRR",
-                  value: econ ? formatUSD(econ.mrr) : <Skeleton />,
+                  value: econ ? formatUSDC(econ.mrr) : <Skeleton />,
                   sub: `${EPOCHS_PER_MONTH} epochs/mo`,
                   accent: "green",
                 },
                 {
                   label: "ARR",
-                  value: econ ? formatUSD(econ.arr, true) : <Skeleton />,
+                  value: econ ? formatUSDC(econ.arr, true) : <Skeleton />,
                   sub: "annualized",
                   accent: "green",
                 },
                 {
                   label: "Total Escrow",
-                  value: econ ? formatUSD(econ.totalEscrow) : <Skeleton />,
-                  sub: "USDC locked",
+                  value: econ ? formatUSDC(econ.totalEscrow) : <Skeleton />,
+                  sub: "locked balance",
                 },
               ]}
             />
@@ -584,7 +586,7 @@ export function ShredsEconomicsPage() {
               stats={[
                 {
                   label: "Predicted Revenue",
-                  value: econ ? formatUSD(econ.nextEpochRevenue) : <Skeleton />,
+                  value: econ ? formatUSDC(econ.nextEpochRevenue) : <Skeleton />,
                   sub: "seats with sufficient balance",
                   accent: "green",
                 },
@@ -611,7 +613,7 @@ export function ShredsEconomicsPage() {
                 },
                 {
                   label: "Revenue at Risk",
-                  value: econ ? formatUSD(econ.revenueAtRisk) : <Skeleton />,
+                  value: econ ? formatUSDC(econ.revenueAtRisk) : <Skeleton />,
                   sub: "may not renew",
                   accent: econ && econ.revenueAtRisk > 0 ? "amber" : undefined,
                 },
@@ -727,7 +729,7 @@ export function ShredsEconomicsPage() {
                       </div>
                       <div className="flex items-baseline gap-1 mb-4">
                         <span className="text-4xl font-bold tabular-nums tracking-tight">
-                          {formatUSD(econ.revenueAtRisk, true)}
+                          {formatUSDC(econ.revenueAtRisk, true)}
                         </span>
                       </div>
                       <div className="h-0.5 rounded-full bg-muted/40 overflow-hidden mb-3">
@@ -883,7 +885,7 @@ export function ShredsEconomicsPage() {
                                 fontSize: 11,
                                 fill: "var(--muted-foreground)",
                               }}
-                              tickFormatter={(v: number) => `$${v}`}
+                              tickFormatter={(v: number) => `${v}`}
                               width={52}
                             />
                             <Tooltip
@@ -904,7 +906,7 @@ export function ShredsEconomicsPage() {
                                       Epoch {label}
                                     </div>
                                     <div className="font-semibold text-foreground">
-                                      {formatUSD(Number(payload[0].value))}
+                                      {formatUSDC(Number(payload[0].value))}
                                     </div>
                                   </div>
                                 );
@@ -1108,7 +1110,7 @@ export function ShredsEconomicsPage() {
             {/* Predicted Revenue */}
             <section>
               <SectionTitle>
-                Predicted Revenue — Next{" "}
+                Predicted Revenue (USDC) — Next{" "}
                 {econ ? econ.revenueProjection.length : 0} Epochs
               </SectionTitle>
               <div className="border border-border rounded-lg bg-card px-2 pt-5 pb-2">
@@ -1224,7 +1226,7 @@ export function ShredsEconomicsPage() {
                                       Confirmed
                                     </span>
                                     <span className="ml-auto font-semibold">
-                                      {formatUSD(Number(confirmed.value))}
+                                      {formatUSDC(Number(confirmed.value))}
                                     </span>
                                   </div>
                                 )}
@@ -1235,7 +1237,7 @@ export function ShredsEconomicsPage() {
                                       At-risk
                                     </span>
                                     <span className="ml-auto font-semibold">
-                                      {formatUSD(Number(atRisk.value))}
+                                      {formatUSDC(Number(atRisk.value))}
                                     </span>
                                   </div>
                                 )}
@@ -1414,10 +1416,10 @@ export function ShredsEconomicsPage() {
                                 {m.metro}
                               </td>
                               <td className="px-4 py-3 tabular-nums text-right">
-                                {formatUSD(m.price)} USDC
+                                {formatUSDC(m.price)}
                               </td>
                               <td className="px-4 py-3 tabular-nums text-right text-muted-foreground">
-                                ~{formatUSD(m.monthlyEquiv)}
+                                ~{formatUSDC(m.monthlyEquiv)}
                               </td>
                               <td className="px-4 py-3 tabular-nums text-right">
                                 {m.devices}
@@ -1480,7 +1482,7 @@ export function ShredsEconomicsPage() {
                         Seats
                       </th>
                       <th className="px-4 py-3 text-right font-medium uppercase tracking-wider">
-                        $/Epoch
+                        USDC/Epoch
                       </th>
                       <th className="px-4 py-3 text-right font-medium uppercase tracking-wider">
                         MRR
@@ -1510,13 +1512,13 @@ export function ShredsEconomicsPage() {
                               {m.seats}
                             </td>
                             <td className="px-4 py-3 tabular-nums text-right">
-                              {formatUSD(m.epochRevenue)}
+                              {formatUSDC(m.epochRevenue)}
                             </td>
                             <td className="px-4 py-3 tabular-nums text-right">
-                              {formatUSD(m.mrr)}
+                              {formatUSDC(m.mrr)}
                             </td>
                             <td className="px-4 py-3 tabular-nums text-right">
-                              {formatUSD(m.escrow)}
+                              {formatUSDC(m.escrow)}
                             </td>
                             <td className="px-4 py-3 tabular-nums text-right text-muted-foreground">
                               {m.revenuePct.toFixed(1)}%
@@ -1593,7 +1595,7 @@ export function ShredsEconomicsPage() {
                               className={`border-b border-border last:border-0 ${i % 2 === 0 ? "" : "bg-muted/10"}`}
                             >
                               <td className="px-4 py-3 font-medium tabular-nums">
-                                {formatUSD(t.price)}
+                                {formatUSDC(t.price)}
                                 <span className="text-xs text-muted-foreground font-normal ml-1.5">
                                   ({t.seatsPct.toFixed(0)}%)
                                 </span>
@@ -1602,13 +1604,13 @@ export function ShredsEconomicsPage() {
                                 {t.seats}
                               </td>
                               <td className="px-4 py-3 tabular-nums text-right">
-                                {formatUSD(t.epochRevenue)}
+                                {formatUSDC(t.epochRevenue)}
                               </td>
                               <td className="px-4 py-3 tabular-nums text-right">
-                                {formatUSD(t.monthlyRevenue)}
+                                {formatUSDC(t.monthlyRevenue)}
                               </td>
                               <td className="px-4 py-3 tabular-nums text-right text-muted-foreground">
-                                {formatUSD(t.monthlyRevenue * 12, true)}
+                                {formatUSDC(t.monthlyRevenue * 12, true)}
                               </td>
                             </tr>
                           ))
@@ -1645,13 +1647,13 @@ export function ShredsEconomicsPage() {
                             {econ.totalSeats}
                           </td>
                           <td className="px-4 py-3 tabular-nums text-right">
-                            {formatUSD(econ.epochRevenue)}
+                            {formatUSDC(econ.epochRevenue)}
                           </td>
                           <td className="px-4 py-3 tabular-nums text-right">
-                            {formatUSD(econ.mrr)}
+                            {formatUSDC(econ.mrr)}
                           </td>
                           <td className="px-4 py-3 tabular-nums text-right">
-                            {formatUSD(econ.arr, true)}
+                            {formatUSDC(econ.arr, true)}
                           </td>
                         </tr>
                       </tfoot>
@@ -1690,7 +1692,7 @@ export function ShredsEconomicsPage() {
                         Seats
                       </th>
                       <th className="px-4 py-3 text-right font-medium uppercase tracking-wider">
-                        $/Epoch
+                        USDC/Epoch
                       </th>
                       <th className="px-4 py-3 text-right font-medium uppercase tracking-wider">
                         MRR
@@ -1726,13 +1728,13 @@ export function ShredsEconomicsPage() {
                                 {f.seats}
                               </td>
                               <td className="px-4 py-3 tabular-nums text-right">
-                                {formatUSD(f.epochRevenue)}
+                                {formatUSDC(f.epochRevenue)}
                               </td>
                               <td className="px-4 py-3 tabular-nums text-right">
-                                {formatUSD(f.epochRevenue * EPOCHS_PER_MONTH)}
+                                {formatUSDC(f.epochRevenue * EPOCHS_PER_MONTH)}
                               </td>
                               <td className="px-4 py-3 tabular-nums text-right">
-                                {formatUSD(f.escrow)}
+                                {formatUSDC(f.escrow)}
                               </td>
                               <td
                                 className={`px-4 py-3 tabular-nums text-right font-medium ${runwayColor}`}
