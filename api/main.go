@@ -427,6 +427,7 @@ func main() {
 	}
 
 	r.Use(middleware.Recoverer)
+	r.Use(middleware.Compress(5))
 	r.Use(metrics.Middleware)
 
 	// CORS configuration - origins from env or allow all
