@@ -85,16 +85,17 @@ type LinkHealth struct {
 }
 
 type LinkIssue struct {
-	Code        string  `json:"code"`
-	LinkType    string  `json:"link_type"`
-	Contributor string  `json:"contributor"`
-	Issue       string  `json:"issue"`     // "packet_loss", "high_latency", "down"
-	Value       float64 `json:"value"`     // The problematic value
-	Threshold   float64 `json:"threshold"` // The threshold exceeded
-	SideAMetro  string  `json:"side_a_metro"`
-	SideZMetro  string  `json:"side_z_metro"`
-	Since       string  `json:"since"`   // ISO timestamp when issue started
-	IsDown      bool    `json:"is_down"` // 100% loss in last 5 minutes
+	Code         string  `json:"code"`
+	LinkType     string  `json:"link_type"`
+	Contributor  string  `json:"contributor"`
+	Issue        string  `json:"issue"`     // "packet_loss", "high_latency", "down"
+	Value        float64 `json:"value"`     // The problematic value
+	Threshold    float64 `json:"threshold"` // The threshold exceeded
+	SideAMetro   string  `json:"side_a_metro"`
+	SideZMetro   string  `json:"side_z_metro"`
+	Since        string  `json:"since"`   // ISO timestamp when issue started
+	IsDown       bool    `json:"is_down"` // 100% loss in last 5 minutes
+	BandwidthBps int64   `json:"bandwidth_bps"`
 }
 
 type LinkMetric struct {
@@ -185,6 +186,7 @@ type NonActivatedLink struct {
 	Status              string   `json:"status"`
 	Since               string   `json:"since"` // ISO timestamp when entered this status
 	ActiveIncidentTypes []string `json:"active_incident_types,omitempty"`
+	BandwidthBps        int64    `json:"bandwidth_bps"`
 }
 
 type ISISDeviceIssue struct {
@@ -635,27 +637,29 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 			// Track issues (top 10)
 			if lossPct >= LossWarningPct && len(issues) < 10 {
 				issues = append(issues, LinkIssue{
-					Code:        code,
-					LinkType:    linkType,
-					Contributor: contributor,
-					Issue:       "packet_loss",
-					Value:       lossPct,
-					Threshold:   LossWarningPct,
-					SideAMetro:  sideAMetro,
-					SideZMetro:  sideZMetro,
-					IsDown:      isDown,
+					Code:         code,
+					LinkType:     linkType,
+					Contributor:  contributor,
+					Issue:        "packet_loss",
+					Value:        lossPct,
+					Threshold:    LossWarningPct,
+					SideAMetro:   sideAMetro,
+					SideZMetro:   sideZMetro,
+					IsDown:       isDown,
+					BandwidthBps: bandwidthBps,
 				})
 			}
 			if isInterMetroWAN && latencyOveragePct >= LatencyWarningPct && len(issues) < 10 {
 				issues = append(issues, LinkIssue{
-					Code:        code,
-					LinkType:    linkType,
-					Contributor: contributor,
-					Issue:       "high_latency",
-					Value:       latencyOveragePct, // Now shows % over committed
-					Threshold:   LatencyWarningPct,
-					SideAMetro:  sideAMetro,
-					SideZMetro:  sideZMetro,
+					Code:         code,
+					LinkType:     linkType,
+					Contributor:  contributor,
+					Issue:        "high_latency",
+					Value:        latencyOveragePct, // Now shows % over committed
+					Threshold:    LatencyWarningPct,
+					SideAMetro:   sideAMetro,
+					SideZMetro:   sideZMetro,
+					BandwidthBps: bandwidthBps,
 				})
 			}
 
@@ -858,7 +862,8 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 				COALESCE(c.code, '') as contributor,
 				COALESCE(ma.code, '') as side_a_metro,
 				COALESCE(mz.code, '') as side_z_metro,
-				lls.last_seen
+				lls.last_seen,
+				l.bandwidth_bps
 			FROM link_last_seen lls
 			JOIN dz_links_current l ON lls.link_pk = l.pk
 			LEFT JOIN dz_contributors_current c ON l.contributor_pk = c.pk
@@ -879,19 +884,21 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 			for noDataRows.Next() {
 				var code, linkType, contributor, sideAMetro, sideZMetro string
 				var lastSeen time.Time
-				if err := noDataRows.Scan(&code, &linkType, &contributor, &sideAMetro, &sideZMetro, &lastSeen); err == nil {
+				var bwBps int64
+				if err := noDataRows.Scan(&code, &linkType, &contributor, &sideAMetro, &sideZMetro, &lastSeen, &bwBps); err == nil {
 					// The outage started when we last saw data (plus 5 min buffer for expected interval)
 					since := lastSeen.Add(5 * time.Minute)
 					issues = append(issues, LinkIssue{
-						Code:        code,
-						LinkType:    linkType,
-						Contributor: contributor,
-						Issue:       "no_data",
-						Value:       0,
-						Threshold:   0,
-						SideAMetro:  sideAMetro,
-						SideZMetro:  sideZMetro,
-						Since:       since.UTC().Format(time.RFC3339),
+						Code:         code,
+						LinkType:     linkType,
+						Contributor:  contributor,
+						Issue:        "no_data",
+						Value:        0,
+						Threshold:    0,
+						SideAMetro:   sideAMetro,
+						SideZMetro:   sideZMetro,
+						Since:        since.UTC().Format(time.RFC3339),
+						BandwidthBps: bwBps,
 					})
 				}
 			}
@@ -1097,7 +1104,8 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 				ma.code as side_a_metro,
 				mz.code as side_z_metro,
 				CASE WHEN l.committed_rtt_ns = ? THEN 'provisioning' ELSE l.status END as effective_status,
-				formatDateTime(l.snapshot_ts, '%Y-%m-%dT%H:%i:%sZ', 'UTC') as since
+				formatDateTime(l.snapshot_ts, '%Y-%m-%dT%H:%i:%sZ', 'UTC') as since,
+				l.bandwidth_bps
 			FROM dz_links_current l
 			JOIN dz_devices_current da ON l.side_a_pk = da.pk
 			JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
@@ -1117,7 +1125,7 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 		var links []NonActivatedLink
 		for rows.Next() {
 			var link NonActivatedLink
-			if err := rows.Scan(&link.PK, &link.Code, &link.LinkType, &link.SideAMetro, &link.SideZMetro, &link.Status, &link.Since); err != nil {
+			if err := rows.Scan(&link.PK, &link.Code, &link.LinkType, &link.SideAMetro, &link.SideZMetro, &link.Status, &link.Since, &link.BandwidthBps); err != nil {
 				return err
 			}
 			links = append(links, link)
@@ -1220,7 +1228,8 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 				COALESCE(c.code, '') as contributor,
 				COALESCE(ma.code, '') as side_a_metro,
 				COALESCE(mz.code, '') as side_z_metro,
-				l.pk as link_pk
+				l.pk as link_pk,
+				l.bandwidth_bps
 			FROM dz_links_current l
 			LEFT JOIN dz_contributors_current c ON l.contributor_pk = c.pk
 			LEFT JOIN dz_devices_current da ON l.side_a_pk = da.pk
@@ -1253,11 +1262,12 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 
 		type missingAdj struct {
 			code, linkType, contributor, sideAMetro, sideZMetro, linkPK string
+			bandwidthBps                                                int64
 		}
 		var missing []missingAdj
 		for rows.Next() {
 			var m missingAdj
-			if err := rows.Scan(&m.code, &m.linkType, &m.contributor, &m.sideAMetro, &m.sideZMetro, &m.linkPK); err != nil {
+			if err := rows.Scan(&m.code, &m.linkType, &m.contributor, &m.sideAMetro, &m.sideZMetro, &m.linkPK, &m.bandwidthBps); err != nil {
 				return err
 			}
 			missing = append(missing, m)
@@ -1297,14 +1307,15 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 
 		for _, m := range missing {
 			missingAdjIssues = append(missingAdjIssues, LinkIssue{
-				Code:        m.code,
-				LinkType:    m.linkType,
-				Contributor: m.contributor,
-				Issue:       "missing_adjacency",
-				SideAMetro:  m.sideAMetro,
-				SideZMetro:  m.sideZMetro,
-				Since:       lastSeen[m.linkPK],
-				IsDown:      true,
+				Code:         m.code,
+				LinkType:     m.linkType,
+				Contributor:  m.contributor,
+				Issue:        "missing_adjacency",
+				SideAMetro:   m.sideAMetro,
+				SideZMetro:   m.sideZMetro,
+				Since:        lastSeen[m.linkPK],
+				IsDown:       true,
+				BandwidthBps: m.bandwidthBps,
 			})
 		}
 		return nil

@@ -92,6 +92,10 @@ function formatBandwidth(bps: number): string {
   return `${bps} bps`
 }
 
+function formatBandwidthShort(bps: number): string {
+  return `${(bps / 1e9).toFixed(0)}G`
+}
+
 interface DerivedLinkInfo {
   pk: string
   code: string
@@ -512,6 +516,7 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
                 {derivedInfo.linkType}
                 {derivedInfo.contributor && ` · ${derivedInfo.contributor}`} ·{' '}
                 {derivedInfo.sideAMetro} ↔ {derivedInfo.sideZMetro}
+                {derivedInfo.bandwidthBps > 0 && ` · ${formatBandwidthShort(derivedInfo.bandwidthBps)}`}
               </div>
               {(derivedInfo.isDown ||
                 derivedInfo.drainStatus ||

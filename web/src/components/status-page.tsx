@@ -506,6 +506,7 @@ function IssueDetails({
                         {first.side_a_metro} → {first.side_z_metro} ·{" "}
                         {first.link_type}
                         {first.contributor && ` · ${first.contributor}`}
+                        {first.bandwidth_bps > 0 && ` · ${formatBandwidthShort(first.bandwidth_bps)}`}
                         {mostRecentSince && (
                           <span
                             className="text-muted-foreground font-normal"
@@ -526,6 +527,7 @@ function IssueDetails({
                           {first.side_a_metro} → {first.side_z_metro} ·{" "}
                           {first.link_type}
                           {first.contributor && ` · ${first.contributor}`}
+                          {first.bandwidth_bps > 0 && ` · ${formatBandwidthShort(first.bandwidth_bps)}`}
                         </div>
                       </div>
                     </div>
@@ -713,6 +715,7 @@ function IssueDetails({
                   </div>
                   <div className="text-xs text-muted-foreground">
                     {link.side_a_metro} → {link.side_z_metro} · {link.link_type}
+                    {link.bandwidth_bps > 0 && ` · ${formatBandwidthShort(link.bandwidth_bps)}`}
                     <span className="hidden xs:inline"> · </span>
                     <span className="block xs:inline">
                       <span className="capitalize text-slate-600 dark:text-slate-400 font-bold">
@@ -735,6 +738,7 @@ function IssueDetails({
                     <div className="text-xs text-muted-foreground">
                       {link.side_a_metro} → {link.side_z_metro} ·{" "}
                       {link.link_type}
+                      {link.bandwidth_bps > 0 && ` · ${formatBandwidthShort(link.bandwidth_bps)}`}
                     </div>
                     {link.status !== "provisioning" && (
                       <div className="flex flex-wrap gap-1 mt-1">
@@ -1646,6 +1650,10 @@ function formatBandwidth(bps: number): string {
     return `${(bps / 1e3).toFixed(1)} Kbps`;
   }
   return `${bps.toFixed(0)} bps`;
+}
+
+function formatBandwidthShort(bps: number): string {
+  return `${(bps / 1e9).toFixed(0)}G`;
 }
 
 function TopLinkUtilization({
