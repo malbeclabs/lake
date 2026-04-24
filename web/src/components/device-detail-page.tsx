@@ -157,6 +157,33 @@ export function DeviceDetailPage() {
           </div>
         </div>
 
+        {/* Agent versions */}
+        {(device.telemetry_agent_version || device.config_agent_version || device.controller_version) && (
+          <div className="grid grid-cols-3 gap-4 mb-6">
+            <div className="text-center p-3 bg-muted/30 rounded-lg">
+              <div className="text-sm font-medium font-mono">{device.telemetry_agent_version || '—'}</div>
+              {device.telemetry_agent_commit && (
+                <div className="text-xs text-muted-foreground font-mono">{device.telemetry_agent_commit.slice(0, 7)}</div>
+              )}
+              <div className="text-xs text-muted-foreground mt-1">Telemetry Agent</div>
+            </div>
+            <div className="text-center p-3 bg-muted/30 rounded-lg">
+              <div className="text-sm font-medium font-mono">{device.config_agent_version || '—'}</div>
+              {device.config_agent_commit && (
+                <div className="text-xs text-muted-foreground font-mono">{device.config_agent_commit.slice(0, 7)}</div>
+              )}
+              <div className="text-xs text-muted-foreground mt-1">Config Agent</div>
+            </div>
+            <div className="text-center p-3 bg-muted/30 rounded-lg">
+              <div className="text-sm font-medium font-mono">{device.controller_version || '—'}</div>
+              {device.controller_commit && (
+                <div className="text-xs text-muted-foreground font-mono">{device.controller_commit.slice(0, 7)}</div>
+              )}
+              <div className="text-xs text-muted-foreground mt-1">Controller</div>
+            </div>
+          </div>
+        )}
+
         {/* Shared device info (stats grid + interfaces) */}
         <DeviceInfoContent device={deviceInfo} hideStatusRow hideCharts />
       </div>
