@@ -18,6 +18,11 @@ import { LinkInterfaceIssuesChart } from '@/components/link-charts/LinkInterface
 import { LinkLatencyChart } from '@/components/link-charts/LinkLatencyChart'
 import { LinkHealthTimeline } from '@/components/link-charts/LinkHealthTimeline'
 import { useDelayedLoading } from '@/hooks/use-delayed-loading'
+import { useTicketsForEntity } from '@/hooks/use-ops-tickets'
+import { useIsOpsUser } from '@/hooks/use-is-ops-user'
+import { IncidentBadge } from '@/components/ops/IncidentBadge'
+import { CreateIncidentModal } from '@/components/ops/CreateIncidentModal'
+import { isTicketClosed } from '@/lib/ops-api'
 
 function Skeleton({ className }: { className?: string }) {
   return <div className={`animate-pulse bg-muted rounded ${className || ''}`} />
@@ -338,21 +343,51 @@ function addBucketIssues(b: LinkMetricsBucket, issues: Set<string>) {
 
 const cardClass = 'rounded-lg border border-border p-4'
 
+// Find when the most recent contiguous issue period started in the loaded buckets.
+// Anchors on the last bucket with issues, then walks backward to the start of that run.
+function computeIssueSince(buckets: LinkMetricsBucket[]): string | undefined {
+  if (buckets.length === 0) return undefined
+  const sorted = [...buckets].sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime())
+
+  // Find the most recent bucket that has issues
+  let anchorIdx = -1
+  for (let i = sorted.length - 1; i >= 0; i--) {
+    const issues = new Set<string>()
+    addBucketIssues(sorted[i], issues)
+    if (issues.size > 0 || sorted[i].status?.isis_down) {
+      anchorIdx = i
+      break
+    }
+  }
+  if (anchorIdx === -1) return undefined
+
+  // Walk backward from anchor to find where this contiguous run started
+  let issueStartMs = new Date(sorted[anchorIdx].ts).getTime()
+  for (let i = anchorIdx - 1; i >= 0; i--) {
+    const issues = new Set<string>()
+    addBucketIssues(sorted[i], issues)
+    if (issues.size > 0 || sorted[i].status?.isis_down) {
+      issueStartMs = new Date(sorted[i].ts).getTime()
+    } else {
+      break
+    }
+  }
+
+  return new Date(issueStartMs).toISOString()
+}
+
 interface LinkRowProps {
   linkMetrics: LinkMetricsResponse
   derivedInfo: DerivedLinkInfo
   linksWithIssues?: Map<string, string[]>
   criticalityMap?: Map<string, 'critical' | 'important' | 'redundant'>
   metricsTimeRange: string
+  isOpsUser: boolean
+  onCreateIncident: (linkPk: string, linkCode: string, contributorCode: string, contributorPk: string, issueReasons: string[], issueSince?: string) => void
 }
 
-function LinkRow({
-  linkMetrics,
-  derivedInfo,
-  linksWithIssues,
-  criticalityMap,
-  metricsTimeRange,
-}: LinkRowProps) {
+function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, metricsTimeRange, isOpsUser, onCreateIncident }: LinkRowProps) {
+  const tickets = useTicketsForEntity(derivedInfo.pk)
   const [expanded, setExpanded] = useState(false)
   const [hoveredTimeRange, setHoveredTimeRange] = useState<{
     start: number
@@ -448,7 +483,7 @@ function LinkRow({
   return (
     <div
       id={`link-row-${derivedInfo.code}`}
-      className={`border-b border-border last:border-b-0 border-l-2 ${leftBorderColor}`}
+      className={`border-b border-border last:border-b-0 border-l-2 group ${leftBorderColor}`}
     >
       <div
         className={`px-4 py-3 transition-colors ${hasExpandableContent ? 'cursor-pointer hover:bg-muted/30' : ''}`}
@@ -625,6 +660,17 @@ function LinkRow({
                       ISIS Down
                     </span>
                   )}
+                  {/* Maintenance badge — visible to all users */}
+                  {tickets.some(t => t.type === 'maintenance') && (
+                    <span className="text-[10px] px-1.5 py-0.5 font-medium bg-blue-500/15 text-blue-700 dark:text-blue-300">
+                      Maintenance
+                    </span>
+                  )}
+                  {/* Incident badge with tooltip — ops users only */}
+                  {isOpsUser && (() => {
+                    const open = tickets.filter(t => t.type === 'incident' && !isTicketClosed(t.status))
+                    return open.length > 0 ? <IncidentBadge tickets={open} /> : null
+                  })()}
                 </div>
               )}
             </div>
@@ -645,7 +691,43 @@ function LinkRow({
               hideBadges
               onBarHover={setHoveredTimeRange}
               highlightedTime={chartHoveredTime}
+              maintenanceWindows={tickets
+                .filter(t => t.type === 'maintenance' && t.start_at)
+                .map(t => ({
+                  startAt: t.start_at!,
+                  endAt: t.end_at,
+                  type: 'maintenance' as const,
+                  id: t.id,
+                  humanReadableId: t.human_readable_id,
+                  title: t.title,
+                  status: t.status,
+                  entityName: derivedInfo.code,
+                  slackUrl: t.slack_message_url,
+                }))}
+              incidentWindows={tickets
+                .filter(t => t.type === 'incident')
+                .map(t => ({
+                  startAt: t.start_at ?? new Date().toISOString(),
+                  endAt: t.end_at,
+                  type: 'incident' as const,
+                  id: t.id,
+                  humanReadableId: t.human_readable_id,
+                  title: t.title,
+                  status: t.status,
+                  entityName: derivedInfo.code,
+                  slackUrl: t.slack_message_url,
+                }))}
             />
+            {isOpsUser && issueReasons.length > 0 && !tickets.some(t => t.type === 'incident' && !isTicketClosed(t.status)) && (
+              <div className="flex justify-end mt-1">
+                <button
+                  className="text-[10px] font-medium px-2 py-0.5 border border-gray-400/40 text-muted-foreground hover:text-foreground hover:border-gray-400/70 transition-colors opacity-0 group-hover:opacity-100"
+                  onClick={(e) => { e.stopPropagation(); onCreateIncident(derivedInfo.pk, derivedInfo.code, derivedInfo.contributor, linkMetrics.contributor_pk, issueReasons, computeIssueSince(linkMetrics.buckets)) }}
+                >
+                  Create incident
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -671,6 +753,9 @@ function LinkRow({
                       className={cardClass}
                       highlightTimeRange={hoveredTimeRange}
                       onCursorTime={setChartHoveredTime}
+                      tickets={tickets}
+                      showIncidents={true}
+                      showMaintenance={true}
                     />
                   )}
                   {hasLoss && (
@@ -680,6 +765,9 @@ function LinkRow({
                       className={cardClass}
                       highlightTimeRange={hoveredTimeRange}
                       onCursorTime={setChartHoveredTime}
+                      tickets={tickets}
+                      showIncidents={true}
+                      showMaintenance={true}
                     />
                   )}
                 </>
@@ -710,6 +798,9 @@ function LinkRow({
                 className={cardClass}
                 highlightTimeRange={hoveredTimeRange}
                 onCursorTime={setChartHoveredTime}
+                tickets={tickets}
+                showIncidents={true}
+                showMaintenance={true}
               />
             ) : null
           })()}
@@ -768,6 +859,15 @@ export function LinkStatusTimelines({
     placeholderData: keepPreviousData,
   })
 
+  const isOpsUser = useIsOpsUser()
+  const [createIncidentFor, setCreateIncidentFor] = useState<{
+    linkPk: string
+    linkCode: string
+    contributorCode: string
+    contributorPk: string
+    issueReasons: string[]
+    downSince?: string
+  } | null>(null)
   // Convert the Record<string, LinkMetricsResponse> into an array with derived info
   const linksArray = useMemo(() => {
     if (!data?.links) return []
@@ -994,7 +1094,7 @@ export function LinkStatusTimelines({
           {onShowDrainedChange && (
             <button
               onClick={() => onShowDrainedChange(!showDrained)}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-md border border-border bg-background/50 transition-colors hover:bg-muted/50"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-md border border-border bg-background/50 transition-colors hover:bg-muted/50"
             >
               <div
                 className={`w-3 h-3 rounded-sm transition-colors ${showDrained ? 'bg-primary' : 'bg-muted-foreground/20 border border-muted-foreground/30'}`}
@@ -1020,7 +1120,7 @@ export function LinkStatusTimelines({
           {onShowProvisioningChange && (
             <button
               onClick={() => onShowProvisioningChange(!showProvisioning)}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-md border border-border bg-background/50 transition-colors hover:bg-muted/50"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-md border border-border bg-background/50 transition-colors hover:bg-muted/50"
             >
               <div
                 className={`w-3 h-3 rounded-sm transition-colors ${showProvisioning ? 'bg-primary' : 'bg-muted-foreground/20 border border-muted-foreground/30'}`}
@@ -1092,8 +1192,23 @@ export function LinkStatusTimelines({
             linksWithIssues={linksWithIssues}
             criticalityMap={criticalityMap}
             metricsTimeRange={timeRange}
+            isOpsUser={isOpsUser}
+            onCreateIncident={(pk, code, contributor, contributorPk, reasons, issueSince) => setCreateIncidentFor({ linkPk: pk, linkCode: code, contributorCode: contributor, contributorPk, issueReasons: reasons, downSince: issueSince })}
           />
         ))}
+        {createIncidentFor && (
+          <CreateIncidentModal
+            entityCode={createIncidentFor.linkCode}
+            entityType="link"
+            entityPk={createIncidentFor.linkPk}
+            contributorCode={createIncidentFor.contributorCode}
+            contributorPk={createIncidentFor.contributorPk}
+            issueReasons={createIncidentFor.issueReasons}
+            downSince={createIncidentFor.downSince}
+            onClose={() => setCreateIncidentFor(null)}
+            onSuccess={() => setCreateIncidentFor(null)}
+          />
+        )}
       </div>
     </div>
   )

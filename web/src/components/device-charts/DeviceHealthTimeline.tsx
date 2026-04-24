@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, useLayoutEffect } from 'react'
 import type { DeviceMetricsResponse, DeviceMetricsBucket } from '@/lib/api'
+import { TicketOverlay, type TicketWindow } from '@/components/ops/TicketOverlay'
 
 interface DeviceHealthTimelineProps {
   data: DeviceMetricsResponse
@@ -7,6 +8,8 @@ interface DeviceHealthTimelineProps {
   hideBadges?: boolean
   onBarHover?: (range: { start: number; end: number } | null) => void
   highlightedTime?: number | null  // unix seconds
+  incidentWindows?: TicketWindow[]
+  maintenanceWindows?: TicketWindow[]
 }
 
 const healthColors: Record<string, string> = {
@@ -198,7 +201,7 @@ function useContainerBars() {
   return { containerRef, maxBars }
 }
 
-export function DeviceHealthTimeline({ data, className, hideBadges, onBarHover, highlightedTime }: DeviceHealthTimelineProps) {
+export function DeviceHealthTimeline({ data, className, hideBadges, onBarHover, highlightedTime, incidentWindows, maintenanceWindows }: DeviceHealthTimelineProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
   const { containerRef, maxBars } = useContainerBars()
 
@@ -207,6 +210,17 @@ export function DeviceHealthTimeline({ data, className, hideBadges, onBarHover, 
     markTrailingCollecting(merged)
     return merged
   }, [data.buckets, data.bucket_seconds, maxBars])
+
+  const rangeStartMs = useMemo(() => {
+    if (!data.buckets.length) return 0
+    return new Date(data.buckets[0].ts).getTime()
+  }, [data.buckets])
+
+  const rangeEndMs = useMemo(() => {
+    if (!data.buckets.length) return 0
+    const last = data.buckets[data.buckets.length - 1]
+    return new Date(last.ts).getTime() + data.bucket_seconds * 1000
+  }, [data.buckets, data.bucket_seconds])
 
   const highlightedBarIndex = useMemo(() => {
     if (highlightedTime == null) return -1
@@ -386,6 +400,16 @@ export function DeviceHealthTimeline({ data, className, hideBadges, onBarHover, 
             )
           })}
         </div>
+
+        {/* Ticket overlays — incidents and maintenance combined so overlapping windows cluster */}
+        {((incidentWindows?.length ?? 0) + (maintenanceWindows?.length ?? 0)) > 0 && (
+          <TicketOverlay
+            windows={[...(maintenanceWindows ?? []), ...(incidentWindows ?? [])]}
+            rangeStartMs={rangeStartMs}
+            rangeEndMs={rangeEndMs}
+            minWidthMs={bars[0] ? bars[0].spanSeconds * 1000 : data.bucket_seconds * 1000}
+          />
+        )}
 
         <div className="flex justify-between mt-1 text-[10px] text-muted-foreground">
           <span>{startLabel}</span>

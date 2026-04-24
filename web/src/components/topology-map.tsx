@@ -9,6 +9,9 @@ import { useTheme } from '@/hooks/use-theme'
 import type { TopologyMetro, TopologyDevice, TopologyLink, TopologyValidator, MultiPathResponse, SimulateLinkRemovalResponse, SimulateLinkAdditionResponse, WhatIfRemovalResponse, MetroDevicePathsResponse } from '@/lib/api'
 import { fetchISISPaths, fetchISISTopology, fetchCriticalLinks, fetchSimulateLinkRemoval, fetchSimulateLinkAddition, fetchWhatIfRemoval, fetchLinkHealth, fetchTopologyCompare, fetchMetroDevicePaths } from '@/lib/api'
 import { useTopology, useMulticastState, TopologyControlBar, TopologyPanel, DeviceDetails, LinkDetails, MetroDetails, ValidatorDetails, EntityLink as TopologyEntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, ValidatorsOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, LINK_TYPE_COLORS, MULTICAST_PUBLISHER_COLORS, type DeviceOption, type MetroOption } from '@/components/topology'
+import { useActiveOpsTickets } from '@/hooks/use-ops-tickets'
+import { opsTicketUrl } from '@/lib/ops-api'
+import type { OpsTicket } from '@/lib/ops-api'
 
 // Path colors for multi-path visualization
 const PATH_COLORS = [
@@ -342,10 +345,13 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const [hoveredMetro, setHoveredMetro] = useState<HoveredMetroInfo | null>(null)
   const [hoveredValidator, setHoveredValidator] = useState<HoveredValidatorInfo | null>(null)
   const [mousePos, setMousePos] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
+  const mousePosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
+  const [pinnedTooltipPos, setPinnedTooltipPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
   const [selectedItem, setSelectedItemState] = useState<SelectedItem | null>(null)
   const mapRef = useRef<MapRef>(null)
   const [mapReady, setMapReady] = useState(false)
   const markerClickedRef = useRef(false)
+  const linkHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Get unified topology context
   const { mode, setMode, overlays, toggleOverlay, panel, openPanel, closePanel, selection, impactDevices, toggleImpactDevice, clearImpactDevices, hoveredDiscrepancyKey } = useTopology()
@@ -392,6 +398,18 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     restoreFromParams: restoreMulticastParams, getSelectionParams: getMulticastSelectionParams,
   } = mc
   const [linkAnimating, setLinkAnimating] = useState(true)
+
+  const { data: activeTicketsData } = useActiveOpsTickets()
+
+  const hoveredLinkTickets = useMemo((): OpsTicket[] => {
+    if (!hoveredLink || !activeTicketsData) return []
+    const pk = hoveredLink.pk
+    return activeTicketsData.tickets.filter(
+      t =>
+        t.affected_link_pubkey.includes(pk) ||
+        (t.affected_links?.some(l => l.pubkey === pk) ?? false)
+    )
+  }, [hoveredLink, activeTicketsData])
 
   // Auto-disable link animation when entering analysis mode (overlays, modes, selection).
   // User can re-enable via the toggle even while in analysis mode.
@@ -2660,6 +2678,9 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
 
       const props = e.features[0].properties
 
+      // Pin tooltip position at hover start so it stays reachable as user moves toward it
+      setPinnedTooltipPos(mousePosRef.current)
+
       // Handle inter-metro links
       if (pk?.startsWith('inter-metro-') && props?.isInterMetro) {
         setHoveredLink({
@@ -2705,11 +2726,12 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   }, [linkMap, buildLinkInfo, multicastTreesMode, dimOtherLinks, multicastTreeLinkPKs])
 
   const handleLinkMouseLeave = useCallback(() => {
-    setHoveredLink(null)
+    linkHideTimerRef.current = setTimeout(() => setHoveredLink(null), 400)
   }, [])
 
   // Track mouse position for cursor-following popover
   const handleMouseMove = useCallback((e: maplibregl.MapMouseEvent) => {
+    mousePosRef.current = { x: e.point.x, y: e.point.y }
     setMousePos({ x: e.point.x, y: e.point.y })
   }, [])
 
@@ -3364,11 +3386,17 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       {/* Hover tooltip - cursor-following */}
       {(hoveredLink || hoveredDevice || hoveredMetro || hoveredValidator) && (
         <div
-          className="absolute z-[1000] bg-[var(--card)]/95 backdrop-blur border border-[var(--border)] rounded-md shadow-lg px-3 py-2 pointer-events-none"
+          className={`absolute z-[1000] bg-[var(--card)]/95 backdrop-blur border border-[var(--border)] rounded-md shadow-lg px-3 py-2 ${
+            hoveredLinkTickets.length > 0 ? '' : 'pointer-events-none'
+          }`}
           style={{
-            left: mousePos.x + 16,
-            top: mousePos.y + 16,
+            left: (hoveredLink ? pinnedTooltipPos.x : mousePos.x) + 16,
+            top: (hoveredLink ? pinnedTooltipPos.y : mousePos.y) + 16,
           }}
+          onMouseEnter={() => {
+            if (linkHideTimerRef.current) clearTimeout(linkHideTimerRef.current)
+          }}
+          onMouseLeave={() => setHoveredLink(null)}
         >
           {hoveredLink && (
             <div className="space-y-1">
@@ -3396,6 +3424,37 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
                   </>
                 )}
               </div>
+              {hoveredLinkTickets.length > 0 && (
+                <div className="mt-1.5 pt-1.5 border-t border-border/50 space-y-0.5">
+                  {hoveredLinkTickets.map(t => (
+                    <div key={t.id} className="flex items-center gap-1.5">
+                      <span className={`text-[9px] font-semibold ${t.type === 'incident' ? 'text-red-600 dark:text-red-400' : 'text-blue-600 dark:text-blue-400'}`}>
+                        {t.type === 'incident' ? '⚠' : '🔧'}
+                      </span>
+                      <a
+                        href={opsTicketUrl(t.id)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[11px] font-mono text-blue-600 dark:text-blue-300 hover:underline"
+                      >
+                        {t.human_readable_id}
+                      </a>
+                      <span className="text-[10px] text-muted-foreground">{t.status}</span>
+                      {t.slack_message_url && (
+                        <a
+                          href={t.slack_message_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[10px] text-blue-600 dark:text-blue-300 hover:underline ml-auto"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          Slack ↗
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
           {hoveredDevice && !hoveredLink && (

@@ -532,6 +532,12 @@ func main() {
 		r.Get("/api/incidents/devices", api.GetDeviceIncidents)
 		r.Get("/api/incidents/devices/csv", api.GetDeviceIncidentsCSV)
 
+		// Ops Management tickets proxy (auth required — tickets contain reporter PII)
+		r.With(api.RequireAuth).Get("/api/ops-tickets", api.GetOpsTickets)
+		r.With(api.RequireAuth).Get("/api/ops-tickets/history", api.GetOpsTicketHistory)
+		r.With(api.RequireAuth).Get("/api/ops-tickets/assignees", api.GetOpsAssignees)
+		r.With(handlers.RequireInternalDomain).Post("/api/ops-tickets", api.CreateOpsTicket)
+
 		// Search routes
 		r.Get("/api/search", api.Search)
 		r.Get("/api/search/autocomplete", api.SearchAutocomplete)
