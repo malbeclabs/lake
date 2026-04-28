@@ -125,9 +125,12 @@ func TestComputeLinkRollup_WithData(t *testing.T) {
 		"link-entity-1", now, now, "00000000-0000-0000-0000-000000000001", uint8(0), "link-1", "activated", "device-a", "device-z", int64(10_000_000_000), int64(500_000))
 	require.NoError(t, err)
 
-	// Seed ISIS adjacency (link has adjacency = not ISIS down)
+	// Seed ISIS adjacencies for both sides of the link (both sides must be UP for isis_down=false)
 	err = conn.Exec(ctx, `INSERT INTO dim_isis_adjacencies_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, link_pk, device_pk, system_id, neighbor_system_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		"isis-adj-1", now, now, "00000000-0000-0000-0000-000000000002", uint8(0), "link-1", "device-a", "sys-1", "sys-2")
+	require.NoError(t, err)
+	err = conn.Exec(ctx, `INSERT INTO dim_isis_adjacencies_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, link_pk, device_pk, system_id, neighbor_system_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		"isis-adj-2", now, now, "00000000-0000-0000-0000-000000000003", uint8(0), "link-1", "device-z", "sys-2", "sys-1")
 	require.NoError(t, err)
 
 	// Seed latency samples for both sides within the same 5m bucket

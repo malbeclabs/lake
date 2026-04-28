@@ -355,10 +355,18 @@ func (a *Activities) resolveLinkState(ctx context.Context, linkPKs map[string]st
 // resolveISISAdjacency queries dim_isis_adjacencies_history to determine if each
 // (link, bucket) pair has an ISIS adjacency. For each bucket, it finds the latest
 // adjacency state as of the bucket's end time (bucket + 5min).
+//
+// A link is UP only when both sides independently confirm the adjacency is healthy
+// (activeCount >= 2). This guards against false positives from hostname renames,
+// where the old entity gets is_deleted=1 alongside a new is_deleted=0 entity for
+// the same link_pk at the same snapshot_ts. Because ClickHouse row ordering for
+// same-timestamp entries is nondeterministic, a single carry-forward variable could
+// flip to "deleted" and never recover. Per-entity tracking and evaluating state
+// after each timestamp group (not after each individual row) avoids this.
 func (a *Activities) resolveISISAdjacency(ctx context.Context, linkPKs map[string]struct{}, bucketTimes map[time.Time]struct{}, _, windowEnd time.Time, sourceDB string) (map[bucketKey]bool, error) {
-	// Query all adjacency entries up to windowEnd
+	// Include entity_id so we can carry forward state per entity independently.
 	query := `
-		SELECT link_pk, snapshot_ts, is_deleted
+		SELECT link_pk, entity_id, snapshot_ts, is_deleted
 		FROM ` + tableRef(sourceDB, "dim_isis_adjacencies_history") + `
 		WHERE snapshot_ts <= $1 AND link_pk != ''
 		ORDER BY link_pk, snapshot_ts
@@ -370,19 +378,21 @@ func (a *Activities) resolveISISAdjacency(ctx context.Context, linkPKs map[strin
 	defer rows.Close()
 
 	type entry struct {
+		entityID  string
 		ts        time.Time
 		isDeleted bool
 	}
 	entriesByLink := make(map[string][]entry)
 	for rows.Next() {
-		var linkPK string
+		var linkPK, entityID string
 		var ts time.Time
 		var isDeleted uint8
-		if err := rows.Scan(&linkPK, &ts, &isDeleted); err != nil {
+		if err := rows.Scan(&linkPK, &entityID, &ts, &isDeleted); err != nil {
 			return nil, fmt.Errorf("ISIS adjacency scan: %w", err)
 		}
 		if _, ok := linkPKs[linkPK]; ok {
 			entriesByLink[linkPK] = append(entriesByLink[linkPK], entry{
+				entityID:  entityID,
 				ts:        ts.UTC(),
 				isDeleted: isDeleted == 1,
 			})
@@ -392,12 +402,38 @@ func (a *Activities) resolveISISAdjacency(ctx context.Context, linkPKs map[strin
 		return nil, fmt.Errorf("ISIS adjacency rows: %w", err)
 	}
 
-	// For each (link, bucket), check if ISIS was down at any point during the
-	// bucket. A bucket is marked isis_down=true if the carry-forward state
-	// entering the bucket is deleted, OR if any snapshot within the bucket
-	// window [bucket_start, bucket_end] has is_deleted=1. Historical entries
-	// from before the bucket only contribute via the carry-forward state
-	// (the latest value), not by marking the bucket as "was down".
+	// consumeGroup advances entryIdx past all entries sharing the same timestamp,
+	// applying each to entityState. Returns true if any entries were consumed.
+	activeCount := func(entityState map[string]bool) int {
+		n := 0
+		for _, deleted := range entityState {
+			if !deleted {
+				n++
+			}
+		}
+		return n
+	}
+	consumeGroup := func(entries []entry, entryIdx *int, entityState map[string]bool, until func(time.Time) bool) bool {
+		if *entryIdx >= len(entries) || !until(entries[*entryIdx].ts) {
+			return false
+		}
+		consumed := false
+		for *entryIdx < len(entries) && until(entries[*entryIdx].ts) {
+			ts := entries[*entryIdx].ts
+			for *entryIdx < len(entries) && entries[*entryIdx].ts.Equal(ts) {
+				entityState[entries[*entryIdx].entityID] = entries[*entryIdx].isDeleted
+				*entryIdx++
+			}
+			consumed = true
+		}
+		return consumed
+	}
+
+	// For each (link, bucket), determine isis_down using per-entity carry-forward.
+	// Each entity (one per side of the link) tracks its own is_deleted independently.
+	// A link is UP only when at least 2 entities are active (both sides confirm UP).
+	// State is evaluated after each full same-timestamp group so that a rename's
+	// simultaneous delete+create doesn't cause a momentary false down.
 	const bucketWidth = 5 * time.Minute
 	result := make(map[bucketKey]bool)
 	sortedBuckets := sortedTimes(bucketTimes)
@@ -406,26 +442,29 @@ func (a *Activities) resolveISISAdjacency(ctx context.Context, linkPKs map[strin
 		if len(entries) == 0 {
 			continue // not an ISIS link
 		}
+		entityState := make(map[string]bool) // entity_id → isDeleted
 		entryIdx := 0
 		seenEntry := false
-		current := false // carry-forward state at bucket boundary
+
 		for _, bt := range sortedBuckets {
 			bucketEnd := bt.Add(bucketWidth)
-			// Consume entries before this bucket — they update the carry-forward state.
-			for entryIdx < len(entries) && entries[entryIdx].ts.Before(bt) {
-				current = entries[entryIdx].isDeleted
+			// Consume timestamp groups before this bucket to update carry-forward.
+			if consumeGroup(entries, &entryIdx, entityState, func(ts time.Time) bool { return ts.Before(bt) }) {
 				seenEntry = true
-				entryIdx++
 			}
-			wasDown := current // carry-forward: was down entering this bucket
-			// Consume entries within the bucket window [bt, bucketEnd].
+			// Initial wasDown from carry-forward. If no entities seen yet, default UP.
+			wasDown := len(entityState) > 0 && activeCount(entityState) < 2
+			// Consume timestamp groups within [bt, bucketEnd], checking after each group.
 			for entryIdx < len(entries) && !entries[entryIdx].ts.After(bucketEnd) {
-				current = entries[entryIdx].isDeleted
-				if current {
-					wasDown = true // went down during this bucket
+				ts := entries[entryIdx].ts
+				for entryIdx < len(entries) && entries[entryIdx].ts.Equal(ts) {
+					entityState[entries[entryIdx].entityID] = entries[entryIdx].isDeleted
+					entryIdx++
+				}
+				if activeCount(entityState) < 2 {
+					wasDown = true
 				}
 				seenEntry = true
-				entryIdx++
 			}
 			if seenEntry {
 				result[bucketKey{linkPK: pk, bucket: bt}] = wasDown
