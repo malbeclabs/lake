@@ -1205,6 +1205,7 @@ export interface LinkIssue {
   code: string
   link_type: string
   contributor: string
+  side_z_contributor: string
   issue: string
   value: number
   threshold: number
@@ -1220,6 +1221,7 @@ export interface LinkMetric {
   code: string
   link_type: string
   contributor: string
+  side_z_contributor: string
   bandwidth_bps: number
   in_bps: number
   out_bps: number
@@ -1643,6 +1645,10 @@ export interface TopologyLink {
   side_z_ip: string
   contributor_pk: string
   contributor_code: string
+  side_a_contributor_pk: string
+  side_a_contributor_code: string
+  side_z_contributor_pk: string
+  side_z_contributor_code: string
   latency_us: number
   jitter_us: number
   latency_a_to_z_us: number
@@ -2939,6 +2945,10 @@ export interface Link {
   side_z_ip: string
   contributor_pk: string
   contributor_code: string
+  side_a_contributor_pk: string
+  side_a_contributor_code: string
+  side_z_contributor_pk: string
+  side_z_contributor_code: string
   in_bps: number
   out_bps: number
   utilization_in: number

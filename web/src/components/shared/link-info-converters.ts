@@ -23,6 +23,10 @@ export function linkDetailToInfo(link: LinkDetail): LinkInfoData {
     sideZIP: link.side_z_ip,
     contributorPk: link.contributor_pk,
     contributorCode: link.contributor_code,
+    sideAContributorPk: link.side_a_contributor_pk,
+    sideAContributorCode: link.side_a_contributor_code,
+    sideZContributorPk: link.side_z_contributor_pk,
+    sideZContributorCode: link.side_z_contributor_code,
     inBps: link.in_bps,
     outBps: link.out_bps,
     utilizationIn: link.utilization_in,
@@ -69,6 +73,10 @@ export function topologyLinkToInfo(link: {
   interfaceZIP: string
   contributorPk: string
   contributorCode: string
+  sideAContributorPk: string
+  sideAContributorCode: string
+  sideZContributorPk: string
+  sideZContributorCode: string
   committedRttNs: number
   isisDelayOverrideNs: number
 }): LinkInfoData {
@@ -90,6 +98,10 @@ export function topologyLinkToInfo(link: {
     sideZIP: link.interfaceZIP,
     contributorPk: link.contributorPk,
     contributorCode: link.contributorCode,
+    sideAContributorPk: link.sideAContributorPk,
+    sideAContributorCode: link.sideAContributorCode,
+    sideZContributorPk: link.sideZContributorPk,
+    sideZContributorCode: link.sideZContributorCode,
     inBps: link.inBps,
     outBps: link.outBps,
     utilizationIn: link.bandwidthBps > 0 ? (link.inBps / link.bandwidthBps) * 100 : 0,

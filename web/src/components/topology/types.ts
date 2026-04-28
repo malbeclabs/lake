@@ -26,6 +26,10 @@ export interface LinkInfo {
   interfaceZIP: string
   contributorPk: string
   contributorCode: string
+  sideAContributorPk: string
+  sideAContributorCode: string
+  sideZContributorPk: string
+  sideZContributorCode: string
   sampleCount: number
   committedRttNs: number
   isisDelayOverrideNs: number
