@@ -1116,6 +1116,7 @@ type statusLinkMeta struct {
 	CommittedRttNs    int64
 	CommittedJitterUs float64
 	Status            string
+	SideZContributor  string
 }
 
 // queryStatusLinkMeta fetches metadata for active links (activated, soft-drained, hard-drained).
@@ -1147,13 +1148,15 @@ func queryStatusLinkMeta(ctx context.Context, db driver.Conn, linkPKs ...string)
 			l.committed_rtt_ns / 1000.0 as committed_rtt_us,
 			l.committed_rtt_ns,
 			COALESCE(l.committed_jitter_ns, 0) / 1000.0 as committed_jitter_us,
-			l.status
+			l.status,
+			COALESCE(cz.code, '') as side_z_contributor
 		FROM dz_links_current l
 		JOIN dz_devices_current da ON l.side_a_pk = da.pk
 		JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
 		JOIN dz_metros_current ma ON da.metro_pk = ma.pk
 		JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
 		LEFT JOIN dz_contributors_current c ON l.contributor_pk = c.pk
+		LEFT JOIN dz_contributors_current cz ON dz.contributor_pk = cz.pk
 		WHERE l.status IN ('activated', 'soft-drained', 'hard-drained')%s
 	`, filterClause)
 
@@ -1171,7 +1174,7 @@ func queryStatusLinkMeta(ctx context.Context, db driver.Conn, linkPKs ...string)
 			&m.SideAMetro, &m.SideZMetro, &m.SideADevice, &m.SideZDevice,
 			&m.SideADevicePK, &m.SideZDevicePK,
 			&m.SideAIfaceName, &m.SideZIfaceName,
-			&m.BandwidthBps, &m.CommittedRttUs, &m.CommittedRttNs, &m.CommittedJitterUs, &m.Status,
+			&m.BandwidthBps, &m.CommittedRttUs, &m.CommittedRttNs, &m.CommittedJitterUs, &m.Status, &m.SideZContributor,
 		); err != nil {
 			return nil, fmt.Errorf("link metadata scan: %w", err)
 		}

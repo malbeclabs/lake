@@ -172,6 +172,10 @@ interface HoveredLinkInfo {
   interfaceZIP: string
   contributorPk: string
   contributorCode: string
+  sideAContributorPk: string
+  sideAContributorCode: string
+  sideZContributorPk: string
+  sideZContributorCode: string
   sampleCount: number
   committedRttNs: number
   isisDelayOverrideNs: number
@@ -2191,6 +2195,10 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       interfaceZIP: link.side_z_ip || '',
       contributorPk: link.contributor_pk,
       contributorCode: link.contributor_code,
+      sideAContributorPk: link.side_a_contributor_pk || '',
+      sideAContributorCode: link.side_a_contributor_code || '',
+      sideZContributorPk: link.side_z_contributor_pk || '',
+      sideZContributorCode: link.side_z_contributor_code || '',
       sampleCount: link.sample_count ?? 0,
       committedRttNs: link.committed_rtt_ns,
       isisDelayOverrideNs: link.isis_delay_override_ns,
@@ -2708,6 +2716,10 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           interfaceZIP: '',
           contributorPk: '',
           contributorCode: '',
+          sideAContributorPk: '',
+          sideAContributorCode: '',
+          sideZContributorPk: '',
+          sideZContributorCode: '',
           sampleCount: 0,
           committedRttNs: 0,
           isisDelayOverrideNs: 0,
@@ -3409,8 +3421,8 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
                   <div>Z-Side: <span className="text-foreground">{hoveredLink.deviceZCode}</span>{hoveredLink.interfaceZName && <span className="text-foreground font-mono"> ({hoveredLink.interfaceZName}{hoveredLink.interfaceZIP && ` ${hoveredLink.interfaceZIP}`})</span>}</div>
                 )}
                 <div>Type: <span className="text-foreground">{hoveredLink.isInterMetro ? 'Inter-Metro' : hoveredLink.linkType}</span></div>
-                {hoveredLink.contributorCode && (
-                  <div>Contributor: <span className="text-foreground">{hoveredLink.contributorCode}</span></div>
+                {(hoveredLink.contributorCode || hoveredLink.sideAContributorCode) && (
+                  <div>Contributor: <span className="text-foreground">{hoveredLink.sideAContributorCode && hoveredLink.sideZContributorCode && hoveredLink.sideAContributorCode !== hoveredLink.sideZContributorCode ? `${hoveredLink.sideAContributorCode} / ${hoveredLink.sideZContributorCode}` : hoveredLink.contributorCode}</span></div>
                 )}
                 {hoveredLink.isInterMetro ? (
                   <>

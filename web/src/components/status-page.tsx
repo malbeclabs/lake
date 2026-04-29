@@ -3271,9 +3271,12 @@ function linkMatchesSearchFilters(
         );
       case "contributor":
         return (
-          link.contributor
+          (link.contributor
             ?.toLowerCase()
-            .includes(filter.value.toLowerCase()) ?? false
+            .includes(filter.value.toLowerCase()) ||
+          link.side_z_contributor
+            ?.toLowerCase()
+            .includes(filter.value.toLowerCase())) ?? false
         );
       default:
         return false;
@@ -3297,9 +3300,12 @@ function linkMetricMatchesSearchFilters(
         );
       case "contributor":
         return (
-          link.contributor
+          (link.contributor
             ?.toLowerCase()
-            .includes(filter.value.toLowerCase()) ?? false
+            .includes(filter.value.toLowerCase()) ||
+          link.side_z_contributor
+            ?.toLowerCase()
+            .includes(filter.value.toLowerCase())) ?? false
         );
       default:
         return false;

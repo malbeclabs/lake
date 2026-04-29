@@ -1403,21 +1403,22 @@ type LinkHourStatus struct {
 }
 
 type LinkHistory struct {
-	PK             string           `json:"pk"`
-	Code           string           `json:"code"`
-	LinkType       string           `json:"link_type"`
-	Contributor    string           `json:"contributor"`
-	SideAMetro     string           `json:"side_a_metro"`
-	SideZMetro     string           `json:"side_z_metro"`
-	SideADevice    string           `json:"side_a_device"`
-	SideZDevice    string           `json:"side_z_device"`
-	BandwidthBps   int64            `json:"bandwidth_bps"`
-	CommittedRttUs float64          `json:"committed_rtt_us"`
-	IsDown         bool             `json:"is_down"`
-	DrainStatus    string           `json:"drain_status,omitempty"`
-	Provisioning   bool             `json:"provisioning,omitempty"`
-	Hours          []LinkHourStatus `json:"hours"`
-	IssueReasons   []string         `json:"issue_reasons"` // "packet_loss", "high_latency", "no_data", "missing_adjacency", "interface_errors", "discards", "carrier_transitions", "high_utilization"
+	PK               string           `json:"pk"`
+	Code             string           `json:"code"`
+	LinkType         string           `json:"link_type"`
+	Contributor      string           `json:"contributor"`
+	SideZContributor string           `json:"side_z_contributor"`
+	SideAMetro       string           `json:"side_a_metro"`
+	SideZMetro       string           `json:"side_z_metro"`
+	SideADevice      string           `json:"side_a_device"`
+	SideZDevice      string           `json:"side_z_device"`
+	BandwidthBps     int64            `json:"bandwidth_bps"`
+	CommittedRttUs   float64          `json:"committed_rtt_us"`
+	IsDown           bool             `json:"is_down"`
+	DrainStatus      string           `json:"drain_status,omitempty"`
+	Provisioning     bool             `json:"provisioning,omitempty"`
+	Hours            []LinkHourStatus `json:"hours"`
+	IssueReasons     []string         `json:"issue_reasons"` // "packet_loss", "high_latency", "no_data", "missing_adjacency", "interface_errors", "discards", "carrier_transitions", "high_utilization"
 }
 
 type LinkHistoryResponse struct {

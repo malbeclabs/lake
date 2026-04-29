@@ -1395,6 +1395,7 @@ export interface LinkHistory {
   code: string
   link_type: string
   contributor: string
+  side_z_contributor: string
   side_a_metro: string
   side_z_metro: string
   side_a_device: string
@@ -5556,6 +5557,7 @@ export interface LinkMetricsResponse {
   link_type: string
   contributor_code: string
   contributor_pk: string
+  side_z_contributor_code: string
   side_a_metro: string
   side_z_metro: string
   side_a_device: string

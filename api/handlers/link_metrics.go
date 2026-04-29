@@ -18,12 +18,13 @@ import (
 
 // LinkMetricsResponse is the top-level response for GET /api/link-metrics/{pk}.
 type LinkMetricsResponse struct {
-	LinkPK             string               `json:"link_pk"`
-	LinkCode           string               `json:"link_code"`
-	LinkType           string               `json:"link_type"`
-	ContributorCode    string               `json:"contributor_code"`
-	ContributorPK      string               `json:"contributor_pk"`
-	SideAMetro         string               `json:"side_a_metro"`
+	LinkPK                 string               `json:"link_pk"`
+	LinkCode               string               `json:"link_code"`
+	LinkType               string               `json:"link_type"`
+	ContributorCode        string               `json:"contributor_code"`
+	ContributorPK          string               `json:"contributor_pk"`
+	SideZContributorCode   string               `json:"side_z_contributor_code"`
+	SideAMetro             string               `json:"side_a_metro"`
 	SideZMetro         string               `json:"side_z_metro"`
 	SideADevice        string               `json:"side_a_device"`
 	SideZDevice        string               `json:"side_z_device"`
@@ -521,22 +522,23 @@ func (a *API) fetchLinkMetrics(ctx context.Context, linkPK string, params bucket
 	}
 
 	return &LinkMetricsResponse{
-		LinkPK:             meta.PK,
-		LinkCode:           meta.Code,
-		LinkType:           meta.LinkType,
-		ContributorCode:    meta.Contributor,
-		ContributorPK:      meta.ContributorPK,
-		SideAMetro:         meta.SideAMetro,
-		SideZMetro:         meta.SideZMetro,
-		SideADevice:        meta.SideADevice,
-		SideZDevice:        meta.SideZDevice,
-		SideAIfaceName:     meta.SideAIfaceName,
-		SideZIfaceName:     meta.SideZIfaceName,
-		CommittedRttUs:     committedRtt,
-		CommittedJitterUs:  meta.CommittedJitterUs,
-		BandwidthBps:       meta.BandwidthBps,
-		CurrentDrainStatus: currentDrainStatus,
-		TimeRange:          params.TimeRange,
+		LinkPK:               meta.PK,
+		LinkCode:             meta.Code,
+		LinkType:             meta.LinkType,
+		ContributorCode:      meta.Contributor,
+		ContributorPK:        meta.ContributorPK,
+		SideZContributorCode: meta.SideZContributor,
+		SideAMetro:           meta.SideAMetro,
+		SideZMetro:           meta.SideZMetro,
+		SideADevice:          meta.SideADevice,
+		SideZDevice:          meta.SideZDevice,
+		SideAIfaceName:       meta.SideAIfaceName,
+		SideZIfaceName:       meta.SideZIfaceName,
+		CommittedRttUs:       committedRtt,
+		CommittedJitterUs:    meta.CommittedJitterUs,
+		BandwidthBps:         meta.BandwidthBps,
+		CurrentDrainStatus:   currentDrainStatus,
+		TimeRange:            params.TimeRange,
 		BucketSeconds:      bucketSecs,
 		BucketCount:        params.BucketCount,
 		Buckets:            buckets,
@@ -1288,22 +1290,23 @@ func (a *API) fetchBulkLinkMetrics(ctx context.Context, params bucketParams, inc
 		}
 
 		links[linkPK] = &LinkMetricsResponse{
-			LinkPK:             meta.PK,
-			LinkCode:           meta.Code,
-			LinkType:           meta.LinkType,
-			ContributorCode:    meta.Contributor,
-			ContributorPK:      meta.ContributorPK,
-			SideAMetro:         meta.SideAMetro,
-			SideZMetro:         meta.SideZMetro,
-			SideADevice:        meta.SideADevice,
-			SideZDevice:        meta.SideZDevice,
-			SideAIfaceName:     meta.SideAIfaceName,
-			SideZIfaceName:     meta.SideZIfaceName,
-			CommittedRttUs:     committedRtt,
-			CommittedJitterUs:  meta.CommittedJitterUs,
-			BandwidthBps:       meta.BandwidthBps,
-			CurrentDrainStatus: currentDrainStatus,
-			TimeRange:          params.TimeRange,
+			LinkPK:               meta.PK,
+			LinkCode:             meta.Code,
+			LinkType:             meta.LinkType,
+			ContributorCode:      meta.Contributor,
+			ContributorPK:        meta.ContributorPK,
+			SideZContributorCode: meta.SideZContributor,
+			SideAMetro:           meta.SideAMetro,
+			SideZMetro:           meta.SideZMetro,
+			SideADevice:          meta.SideADevice,
+			SideZDevice:          meta.SideZDevice,
+			SideAIfaceName:       meta.SideAIfaceName,
+			SideZIfaceName:       meta.SideZIfaceName,
+			CommittedRttUs:       committedRtt,
+			CommittedJitterUs:    meta.CommittedJitterUs,
+			BandwidthBps:         meta.BandwidthBps,
+			CurrentDrainStatus:   currentDrainStatus,
+			TimeRange:            params.TimeRange,
 			BucketSeconds:      bucketSecs,
 			BucketCount:        params.BucketCount,
 			Buckets:            buckets,
