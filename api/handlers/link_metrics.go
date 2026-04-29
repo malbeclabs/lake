@@ -18,27 +18,27 @@ import (
 
 // LinkMetricsResponse is the top-level response for GET /api/link-metrics/{pk}.
 type LinkMetricsResponse struct {
-	LinkPK                 string               `json:"link_pk"`
-	LinkCode               string               `json:"link_code"`
-	LinkType               string               `json:"link_type"`
-	ContributorCode        string               `json:"contributor_code"`
-	ContributorPK          string               `json:"contributor_pk"`
-	SideZContributorCode   string               `json:"side_z_contributor_code"`
-	SideAMetro             string               `json:"side_a_metro"`
-	SideZMetro         string               `json:"side_z_metro"`
-	SideADevice        string               `json:"side_a_device"`
-	SideZDevice        string               `json:"side_z_device"`
-	SideAIfaceName     string               `json:"side_a_iface_name"`
-	SideZIfaceName     string               `json:"side_z_iface_name"`
-	CommittedRttUs     float64              `json:"committed_rtt_us"`
-	CommittedJitterUs  float64              `json:"committed_jitter_us"`
-	BandwidthBps       int64                `json:"bandwidth_bps"`
-	CurrentDrainStatus string               `json:"current_drain_status"`
-	TimeRange          string               `json:"time_range"`
-	BucketSeconds      int                  `json:"bucket_seconds"`
-	BucketCount        int                  `json:"bucket_count"`
-	Buckets            []LinkMetricsBucket  `json:"buckets"`
-	StatusChanges      []EntityStatusChange `json:"status_changes,omitempty"`
+	LinkPK               string               `json:"link_pk"`
+	LinkCode             string               `json:"link_code"`
+	LinkType             string               `json:"link_type"`
+	ContributorCode      string               `json:"contributor_code"`
+	ContributorPK        string               `json:"contributor_pk"`
+	SideZContributorCode string               `json:"side_z_contributor_code"`
+	SideAMetro           string               `json:"side_a_metro"`
+	SideZMetro           string               `json:"side_z_metro"`
+	SideADevice          string               `json:"side_a_device"`
+	SideZDevice          string               `json:"side_z_device"`
+	SideAIfaceName       string               `json:"side_a_iface_name"`
+	SideZIfaceName       string               `json:"side_z_iface_name"`
+	CommittedRttUs       float64              `json:"committed_rtt_us"`
+	CommittedJitterUs    float64              `json:"committed_jitter_us"`
+	BandwidthBps         int64                `json:"bandwidth_bps"`
+	CurrentDrainStatus   string               `json:"current_drain_status"`
+	TimeRange            string               `json:"time_range"`
+	BucketSeconds        int                  `json:"bucket_seconds"`
+	BucketCount          int                  `json:"bucket_count"`
+	Buckets              []LinkMetricsBucket  `json:"buckets"`
+	StatusChanges        []EntityStatusChange `json:"status_changes,omitempty"`
 }
 
 // LinkMetricsBucket holds all metric categories for a single time bucket.
@@ -539,10 +539,10 @@ func (a *API) fetchLinkMetrics(ctx context.Context, linkPK string, params bucket
 		BandwidthBps:         meta.BandwidthBps,
 		CurrentDrainStatus:   currentDrainStatus,
 		TimeRange:            params.TimeRange,
-		BucketSeconds:      bucketSecs,
-		BucketCount:        params.BucketCount,
-		Buckets:            buckets,
-		StatusChanges:      statusChanges,
+		BucketSeconds:        bucketSecs,
+		BucketCount:          params.BucketCount,
+		Buckets:              buckets,
+		StatusChanges:        statusChanges,
 	}, nil
 }
 
@@ -1307,9 +1307,9 @@ func (a *API) fetchBulkLinkMetrics(ctx context.Context, params bucketParams, inc
 			BandwidthBps:         meta.BandwidthBps,
 			CurrentDrainStatus:   currentDrainStatus,
 			TimeRange:            params.TimeRange,
-			BucketSeconds:      bucketSecs,
-			BucketCount:        params.BucketCount,
-			Buckets:            buckets,
+			BucketSeconds:        bucketSecs,
+			BucketCount:          params.BucketCount,
+			Buckets:              buckets,
 		}
 	}
 
