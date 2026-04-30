@@ -371,7 +371,13 @@ export function LinksPage() {
                       {link.link_type}
                     </td>
                     <td className="px-4 py-3 text-sm">
-                      {link.contributor_pk
+                      {link.side_a_contributor_pk && link.side_z_contributor_pk && link.side_a_contributor_code !== link.side_z_contributor_code ? (
+                        <>
+                          <Link to={`/dz/contributors/${link.side_a_contributor_pk}`} className="text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.side_a_contributor_code}</Link>
+                          <span className="text-muted-foreground"> ↔ </span>
+                          <Link to={`/dz/contributors/${link.side_z_contributor_pk}`} className="text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.side_z_contributor_code}</Link>
+                        </>
+                      ) : link.contributor_pk
                         ? <Link to={`/dz/contributors/${link.contributor_pk}`} className="text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.contributor_code}</Link>
                         : <span className="text-muted-foreground">—</span>}
                     </td>

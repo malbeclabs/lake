@@ -210,6 +210,10 @@ export function TopologyGraph({
     code?: string
     linkType?: string
     contributorCode?: string
+    sideAContributorPk?: string
+    sideAContributorCode?: string
+    sideZContributorPk?: string
+    sideZContributorCode?: string
     bandwidth?: string
     latencyMs?: string
     deviceACode?: string
@@ -441,6 +445,10 @@ export function TopologyGraph({
         interfaceZIP: link.side_z_ip || '',
         contributorPk: link.contributor_pk || '',
         contributorCode: link.contributor_code || '',
+        sideAContributorPk: link.side_a_contributor_pk || '',
+        sideAContributorCode: link.side_a_contributor_code || '',
+        sideZContributorPk: link.side_z_contributor_pk || '',
+        sideZContributorCode: link.side_z_contributor_code || '',
         sampleCount: link.sample_count ?? 0,
         committedRttNs: link.committed_rtt_ns ?? 0,
         isisDelayOverrideNs: link.isis_delay_override_ns ?? 0,
@@ -2933,6 +2941,10 @@ export function TopologyGraph({
           code: linkInfo?.code,
           linkType: linkInfo?.linkType,
           contributorCode: linkInfo?.contributorCode,
+          sideAContributorPk: linkInfo?.sideAContributorPk,
+          sideAContributorCode: linkInfo?.sideAContributorCode,
+          sideZContributorPk: linkInfo?.sideZContributorPk,
+          sideZContributorCode: linkInfo?.sideZContributorCode,
           bandwidth: linkInfo?.bandwidthBps ? formatBps(linkInfo.bandwidthBps) : undefined,
           latencyMs: linkInfo?.latencyUs ? `${(linkInfo.latencyUs / 1000).toFixed(2)}ms` : undefined,
           deviceACode: linkInfo?.deviceACode,
@@ -3913,7 +3925,11 @@ export function TopologyGraph({
                 )}
                 <div>Type: <span className="text-foreground">{hoveredEdge.linkType || 'unknown'}</span></div>
                 {hoveredEdge.contributorCode && (
-                  <div>Contributor: <span className="text-foreground">{hoveredEdge.contributorCode}</span></div>
+                  <div>Contributor: <span className="text-foreground">
+                    {hoveredEdge.sideAContributorCode && hoveredEdge.sideZContributorCode && hoveredEdge.sideAContributorCode !== hoveredEdge.sideZContributorCode
+                      ? `${hoveredEdge.sideAContributorCode} ↔ ${hoveredEdge.sideZContributorCode}`
+                      : hoveredEdge.contributorCode}
+                  </span></div>
                 )}
                 <div>Latency: <span className="text-foreground">{hoveredEdge.latencyMs || 'N/A'}</span></div>
                 <div>Bandwidth: <span className="text-foreground">{hoveredEdge.bandwidth || 'N/A'}</span></div>

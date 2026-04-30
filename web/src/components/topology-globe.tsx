@@ -796,6 +796,8 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       deviceZPk: link.side_z_pk, deviceZCode: link.side_z_code || 'Unknown',
       interfaceZName: link.side_z_iface_name || '', interfaceZIP: link.side_z_ip || '',
       contributorPk: link.contributor_pk, contributorCode: link.contributor_code,
+      sideAContributorPk: link.side_a_contributor_pk || '', sideAContributorCode: link.side_a_contributor_code || '',
+      sideZContributorPk: link.side_z_contributor_pk || '', sideZContributorCode: link.side_z_contributor_code || '',
       sampleCount: link.sample_count ?? 0, committedRttNs: link.committed_rtt_ns,
       isisDelayOverrideNs: link.isis_delay_override_ns,
       health: healthInfo ? { status: healthInfo.status, committedRttNs: healthInfo.committedRttNs, slaRatio: healthInfo.slaRatio, lossPct: healthInfo.lossPct } : undefined,

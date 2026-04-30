@@ -50,33 +50,37 @@ type Device struct {
 }
 
 type Link struct {
-	PK                  string  `json:"pk"`
-	Code                string  `json:"code"`
-	Status              string  `json:"status"`
-	LinkType            string  `json:"link_type"`
-	BandwidthBps        int64   `json:"bandwidth_bps"`
-	SideAPK             string  `json:"side_a_pk"`
-	SideACode           string  `json:"side_a_code"`
-	SideAIfaceName      string  `json:"side_a_iface_name"`
-	SideAIP             string  `json:"side_a_ip"`
-	SideZPK             string  `json:"side_z_pk"`
-	SideZCode           string  `json:"side_z_code"`
-	SideZIfaceName      string  `json:"side_z_iface_name"`
-	SideZIP             string  `json:"side_z_ip"`
-	ContributorPK       string  `json:"contributor_pk"`
-	ContributorCode     string  `json:"contributor_code"`
-	LatencyUs           float64 `json:"latency_us"`
-	JitterUs            float64 `json:"jitter_us"`
-	LatencyAtoZUs       float64 `json:"latency_a_to_z_us"`
-	JitterAtoZUs        float64 `json:"jitter_a_to_z_us"`
-	LatencyZtoAUs       float64 `json:"latency_z_to_a_us"`
-	JitterZtoAUs        float64 `json:"jitter_z_to_a_us"`
-	LossPercent         float64 `json:"loss_percent"`
-	SampleCount         uint64  `json:"sample_count"`
-	InBps               float64 `json:"in_bps"`
-	OutBps              float64 `json:"out_bps"`
-	CommittedRttNs      int64   `json:"committed_rtt_ns"`
-	ISISDelayOverrideNs int64   `json:"isis_delay_override_ns"`
+	PK                   string  `json:"pk"`
+	Code                 string  `json:"code"`
+	Status               string  `json:"status"`
+	LinkType             string  `json:"link_type"`
+	BandwidthBps         int64   `json:"bandwidth_bps"`
+	SideAPK              string  `json:"side_a_pk"`
+	SideACode            string  `json:"side_a_code"`
+	SideAIfaceName       string  `json:"side_a_iface_name"`
+	SideAIP              string  `json:"side_a_ip"`
+	SideZPK              string  `json:"side_z_pk"`
+	SideZCode            string  `json:"side_z_code"`
+	SideZIfaceName       string  `json:"side_z_iface_name"`
+	SideZIP              string  `json:"side_z_ip"`
+	ContributorPK        string  `json:"contributor_pk"`
+	ContributorCode      string  `json:"contributor_code"`
+	SideAContributorPK   string  `json:"side_a_contributor_pk"`
+	SideAContributorCode string  `json:"side_a_contributor_code"`
+	SideZContributorPK   string  `json:"side_z_contributor_pk"`
+	SideZContributorCode string  `json:"side_z_contributor_code"`
+	LatencyUs            float64 `json:"latency_us"`
+	JitterUs             float64 `json:"jitter_us"`
+	LatencyAtoZUs        float64 `json:"latency_a_to_z_us"`
+	JitterAtoZUs         float64 `json:"jitter_a_to_z_us"`
+	LatencyZtoAUs        float64 `json:"latency_z_to_a_us"`
+	JitterZtoAUs         float64 `json:"jitter_z_to_a_us"`
+	LossPercent          float64 `json:"loss_percent"`
+	SampleCount          uint64  `json:"sample_count"`
+	InBps                float64 `json:"in_bps"`
+	OutBps               float64 `json:"out_bps"`
+	CommittedRttNs       int64   `json:"committed_rtt_ns"`
+	ISISDelayOverrideNs  int64   `json:"isis_delay_override_ns"`
 }
 
 type Validator struct {
@@ -268,12 +272,16 @@ func (a *API) FetchTopologyData(ctx context.Context) (TopologyResponse, error) {
 				l.side_a_pk, COALESCE(da.code, '') as side_a_code, COALESCE(l.side_a_iface_name, '') as side_a_iface_name, COALESCE(l.side_a_ip, '') as side_a_ip,
 				l.side_z_pk, COALESCE(dz.code, '') as side_z_code, COALESCE(l.side_z_iface_name, '') as side_z_iface_name, COALESCE(l.side_z_ip, '') as side_z_ip,
 				l.contributor_pk, COALESCE(c.code, '') as contributor_code,
+				COALESCE(da.contributor_pk, '') as side_a_contributor_pk, COALESCE(ca.code, '') as side_a_contributor_code,
+				COALESCE(dz.contributor_pk, '') as side_z_contributor_pk, COALESCE(cz.code, '') as side_z_contributor_code,
 				COALESCE(l.committed_rtt_ns, 0) as committed_rtt_ns,
 				COALESCE(l.isis_delay_override_ns, 0) as isis_delay_override_ns
 			FROM dz_links_current l
 			LEFT JOIN dz_devices_current da ON l.side_a_pk = da.pk
 			LEFT JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
 			LEFT JOIN dz_contributors_current c ON l.contributor_pk = c.pk
+			LEFT JOIN dz_contributors_current ca ON da.contributor_pk = ca.pk
+			LEFT JOIN dz_contributors_current cz ON dz.contributor_pk = cz.pk
 			WHERE l.status IN ('activated', 'soft-drained', 'hard-drained')
 		`
 		rows, err := a.envDB(ctx).Query(ctx, query)
@@ -284,7 +292,7 @@ func (a *API) FetchTopologyData(ctx context.Context) (TopologyResponse, error) {
 
 		for rows.Next() {
 			var l Link
-			if err := rows.Scan(&l.PK, &l.Code, &l.Status, &l.LinkType, &l.BandwidthBps, &l.SideAPK, &l.SideACode, &l.SideAIfaceName, &l.SideAIP, &l.SideZPK, &l.SideZCode, &l.SideZIfaceName, &l.SideZIP, &l.ContributorPK, &l.ContributorCode, &l.CommittedRttNs, &l.ISISDelayOverrideNs); err != nil {
+			if err := rows.Scan(&l.PK, &l.Code, &l.Status, &l.LinkType, &l.BandwidthBps, &l.SideAPK, &l.SideACode, &l.SideAIfaceName, &l.SideAIP, &l.SideZPK, &l.SideZCode, &l.SideZIfaceName, &l.SideZIP, &l.ContributorPK, &l.ContributorCode, &l.SideAContributorPK, &l.SideAContributorCode, &l.SideZContributorPK, &l.SideZContributorCode, &l.CommittedRttNs, &l.ISISDelayOverrideNs); err != nil {
 				return err
 			}
 			links = append(links, l)

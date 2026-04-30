@@ -505,7 +505,7 @@ function IssueDetails({
                       <div className="text-xs text-muted-foreground">
                         {first.side_a_metro} → {first.side_z_metro} ·{" "}
                         {first.link_type}
-                        {first.contributor && ` · ${first.contributor}`}
+                        {first.contributor && ` · ${first.contributor}${first.side_z_contributor && first.side_z_contributor !== first.contributor ? ` / ${first.side_z_contributor}` : ''}`}
                         {first.bandwidth_bps > 0 && ` · ${formatBandwidthShort(first.bandwidth_bps)}`}
                         {mostRecentSince && (
                           <span
@@ -526,7 +526,7 @@ function IssueDetails({
                         <div className="text-xs text-muted-foreground">
                           {first.side_a_metro} → {first.side_z_metro} ·{" "}
                           {first.link_type}
-                          {first.contributor && ` · ${first.contributor}`}
+                          {first.contributor && ` · ${first.contributor}${first.side_z_contributor && first.side_z_contributor !== first.contributor ? ` / ${first.side_z_contributor}` : ''}`}
                           {first.bandwidth_bps > 0 && ` · ${formatBandwidthShort(first.bandwidth_bps)}`}
                         </div>
                       </div>
@@ -3271,9 +3271,12 @@ function linkMatchesSearchFilters(
         );
       case "contributor":
         return (
-          link.contributor
+          (link.contributor
             ?.toLowerCase()
-            .includes(filter.value.toLowerCase()) ?? false
+            .includes(filter.value.toLowerCase()) ||
+          link.side_z_contributor
+            ?.toLowerCase()
+            .includes(filter.value.toLowerCase())) ?? false
         );
       default:
         return false;
@@ -3297,9 +3300,12 @@ function linkMetricMatchesSearchFilters(
         );
       case "contributor":
         return (
-          link.contributor
+          (link.contributor
             ?.toLowerCase()
-            .includes(filter.value.toLowerCase()) ?? false
+            .includes(filter.value.toLowerCase()) ||
+          link.side_z_contributor
+            ?.toLowerCase()
+            .includes(filter.value.toLowerCase())) ?? false
         );
       default:
         return false;

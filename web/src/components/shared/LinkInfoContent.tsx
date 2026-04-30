@@ -32,6 +32,10 @@ export interface LinkInfoData {
   sideZIP: string
   contributorPk: string
   contributorCode: string
+  sideAContributorPk: string
+  sideAContributorCode: string
+  sideZContributorPk: string
+  sideZContributorCode: string
   inBps: number
   outBps: number
   utilizationIn: number
@@ -294,7 +298,23 @@ export function LinkInfoContent({
           </div>
           <div className="text-center p-2 bg-muted/30 rounded-lg col-span-2">
             <div className="text-base font-medium tabular-nums tracking-tight">
-              {link.contributorPk ? (
+              {link.sideAContributorPk && link.sideZContributorPk && link.sideAContributorCode !== link.sideZContributorCode ? (
+                <>
+                  <Link
+                    to={`/dz/contributors/${link.sideAContributorPk}`}
+                    className="text-blue-600 dark:text-blue-400 hover:underline"
+                  >
+                    {link.sideAContributorCode}
+                  </Link>
+                  {' ↔ '}
+                  <Link
+                    to={`/dz/contributors/${link.sideZContributorPk}`}
+                    className="text-blue-600 dark:text-blue-400 hover:underline"
+                  >
+                    {link.sideZContributorCode}
+                  </Link>
+                </>
+              ) : link.contributorPk ? (
                 <Link
                   to={`/dz/contributors/${link.contributorPk}`}
                   className="text-blue-600 dark:text-blue-400 hover:underline"
@@ -542,7 +562,23 @@ export function LinkInfoContent({
         </div>
         <div className="text-center p-3 bg-muted/30 rounded-lg">
           <div className="text-base font-medium">
-            {link.contributorPk ? (
+            {link.sideAContributorPk && link.sideZContributorPk && link.sideAContributorCode !== link.sideZContributorCode ? (
+              <>
+                <Link
+                  to={`/dz/contributors/${link.sideAContributorPk}`}
+                  className="text-blue-600 dark:text-blue-400 hover:underline"
+                >
+                  {link.sideAContributorCode}
+                </Link>
+                {' ↔ '}
+                <Link
+                  to={`/dz/contributors/${link.sideZContributorPk}`}
+                  className="text-blue-600 dark:text-blue-400 hover:underline"
+                >
+                  {link.sideZContributorCode}
+                </Link>
+              </>
+            ) : link.contributorPk ? (
               <Link
                 to={`/dz/contributors/${link.contributorPk}`}
                 className="text-blue-600 dark:text-blue-400 hover:underline"

@@ -101,6 +101,7 @@ interface DerivedLinkInfo {
   code: string
   linkType: string
   contributor: string
+  sideZContributor: string
   sideAMetro: string
   sideZMetro: string
   bandwidthBps: number
@@ -213,6 +214,7 @@ function deriveLinkInfo(metrics: LinkMetricsResponse): DerivedLinkInfo {
     code: metrics.link_code,
     linkType: metrics.link_type,
     contributor: metrics.contributor_code,
+    sideZContributor: metrics.side_z_contributor_code || '',
     sideAMetro: metrics.side_a_metro,
     sideZMetro: metrics.side_z_metro,
     bandwidthBps: metrics.bandwidth_bps,
@@ -514,7 +516,7 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
               </div>
               <div className="text-xs text-muted-foreground">
                 {derivedInfo.linkType}
-                {derivedInfo.contributor && ` · ${derivedInfo.contributor}`} ·{' '}
+                {derivedInfo.contributor && ` · ${derivedInfo.contributor}${derivedInfo.sideZContributor && derivedInfo.sideZContributor !== derivedInfo.contributor ? ` ↔ ${derivedInfo.sideZContributor}` : ''}`} ·{' '}
                 {derivedInfo.sideAMetro} ↔ {derivedInfo.sideZMetro}
                 {derivedInfo.bandwidthBps > 0 && ` · ${formatBandwidthShort(derivedInfo.bandwidthBps)}`}
               </div>
