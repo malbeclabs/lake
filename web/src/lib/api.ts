@@ -5883,3 +5883,100 @@ export async function fetchGeolocExplorer(hours?: number): Promise<GeolocExplore
   }
   return res.json()
 }
+
+// Access Passes
+
+export interface AccessPass {
+  pk: string
+  owner_pubkey: string
+  type_tag: string
+  status: string
+  client_ip: string
+  connection_count: number
+  associated_pubkey: string
+  first_pub_code: string
+  first_sub_code: string
+}
+
+export interface MulticastGroupRef {
+  pk: string
+  code: string
+  multicast_ip: string
+  status: string
+}
+
+export interface AccessPassShredsSeat {
+  pk: string
+  device_key: string
+  device_code: string
+  metro_pk: string
+  metro_code: string
+  tenure_epochs: number
+  funded_epoch: number
+  active_epoch: number
+  escrow_count: number
+  total_usdc_balance: number
+  price_per_epoch_dollars: number
+  funding_authority_key: string
+}
+
+export interface AccessPassDetail extends AccessPass {
+  user_payer: string
+  others_type_name: string
+  others_key: string
+  last_access_epoch: number
+  flags: number
+  mgroup_pub_allowlist: MulticastGroupRef[]
+  mgroup_sub_allowlist: MulticastGroupRef[]
+  validator_vote_pubkey?: string
+  validator_node_pubkey?: string
+  shreds_seat?: AccessPassShredsSeat
+}
+
+export async function fetchAccessPasses(
+  limit = 100,
+  offset = 0,
+  sortBy?: string,
+  sortDir?: 'asc' | 'desc',
+  filters?: string[]
+): Promise<PaginatedResponse<AccessPass>> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
+  if (filters) {
+    for (const f of filters) params.append('filters', f)
+  }
+  const res = await apiFetch(`/api/dz/access-passes?${params}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch access passes')
+  }
+  return res.json()
+}
+
+export async function fetchAccessPass(pk: string): Promise<AccessPassDetail> {
+  const res = await apiFetch(`/api/dz/access-passes/${encodeURIComponent(pk)}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch access pass')
+  }
+  return res.json()
+}
+
+export interface AccessPassConnection {
+  pk: string
+  owner_pubkey: string
+  status: string
+  kind: string
+  dz_ip: string
+  client_ip: string
+  device_code: string
+  metro_code: string
+  tenant_code: string
+}
+
+export async function fetchAccessPassConnections(pk: string): Promise<AccessPassConnection[]> {
+  const res = await apiFetch(`/api/dz/access-passes/${encodeURIComponent(pk)}/connections`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch access pass connections')
+  }
+  return res.json()
+}

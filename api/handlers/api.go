@@ -15,6 +15,11 @@ var errNoPgPool = errors.New("postgres not configured")
 // ShredGroupPK is the multicast group PK for edge-solana-shreds (formerly "bebop").
 const ShredGroupPK = "31fdXyG3x8k5Ache7jKNQsuwaMf44oqYQndoBsT1JfVj"
 
+// ShredsInternalUserPayer is the UserPayer used by the Shreds product when creating
+// access passes on behalf of clients. Passes with this payer are product-managed and
+// should not be grouped as "same payer" matches with each other.
+const ShredsInternalUserPayer = "331ov6bjNUTLTATEUC4m7wxdHfAE5KxWwA6ng1Y1VZh8"
+
 // API holds all dependencies for HTTP handlers. It is constructed once at
 // startup and passed through to every handler and middleware, replacing the
 // former package-level globals in api/config.
