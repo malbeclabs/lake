@@ -3927,7 +3927,7 @@ export function TopologyGraph({
                 {hoveredEdge.contributorCode && (
                   <div>Contributor: <span className="text-foreground">
                     {hoveredEdge.sideAContributorCode && hoveredEdge.sideZContributorCode && hoveredEdge.sideAContributorCode !== hoveredEdge.sideZContributorCode
-                      ? `${hoveredEdge.sideAContributorCode} / ${hoveredEdge.sideZContributorCode}`
+                      ? `${hoveredEdge.sideAContributorCode} ↔ ${hoveredEdge.sideZContributorCode}`
                       : hoveredEdge.contributorCode}
                   </span></div>
                 )}

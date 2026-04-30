@@ -306,7 +306,7 @@ export function LinkInfoContent({
                   >
                     {link.sideAContributorCode}
                   </Link>
-                  {' / '}
+                  {' ↔ '}
                   <Link
                     to={`/dz/contributors/${link.sideZContributorPk}`}
                     className="text-blue-600 dark:text-blue-400 hover:underline"
@@ -570,7 +570,7 @@ export function LinkInfoContent({
                 >
                   {link.sideAContributorCode}
                 </Link>
-                {' / '}
+                {' ↔ '}
                 <Link
                   to={`/dz/contributors/${link.sideZContributorPk}`}
                   className="text-blue-600 dark:text-blue-400 hover:underline"

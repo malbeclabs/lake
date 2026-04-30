@@ -374,7 +374,7 @@ export function LinksPage() {
                       {link.side_a_contributor_pk && link.side_z_contributor_pk && link.side_a_contributor_code !== link.side_z_contributor_code ? (
                         <>
                           <Link to={`/dz/contributors/${link.side_a_contributor_pk}`} className="text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.side_a_contributor_code}</Link>
-                          <span className="text-muted-foreground"> / </span>
+                          <span className="text-muted-foreground"> ↔ </span>
                           <Link to={`/dz/contributors/${link.side_z_contributor_pk}`} className="text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.side_z_contributor_code}</Link>
                         </>
                       ) : link.contributor_pk

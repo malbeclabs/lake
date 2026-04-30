@@ -516,7 +516,7 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
               </div>
               <div className="text-xs text-muted-foreground">
                 {derivedInfo.linkType}
-                {derivedInfo.contributor && ` · ${derivedInfo.contributor}${derivedInfo.sideZContributor && derivedInfo.sideZContributor !== derivedInfo.contributor ? ` / ${derivedInfo.sideZContributor}` : ''}`} ·{' '}
+                {derivedInfo.contributor && ` · ${derivedInfo.contributor}${derivedInfo.sideZContributor && derivedInfo.sideZContributor !== derivedInfo.contributor ? ` ↔ ${derivedInfo.sideZContributor}` : ''}`} ·{' '}
                 {derivedInfo.sideAMetro} ↔ {derivedInfo.sideZMetro}
                 {derivedInfo.bandwidthBps > 0 && ` · ${formatBandwidthShort(derivedInfo.bandwidthBps)}`}
               </div>

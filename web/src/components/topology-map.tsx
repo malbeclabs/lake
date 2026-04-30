@@ -3422,7 +3422,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
                 )}
                 <div>Type: <span className="text-foreground">{hoveredLink.isInterMetro ? 'Inter-Metro' : hoveredLink.linkType}</span></div>
                 {(hoveredLink.contributorCode || hoveredLink.sideAContributorCode) && (
-                  <div>Contributor: <span className="text-foreground">{hoveredLink.sideAContributorCode && hoveredLink.sideZContributorCode && hoveredLink.sideAContributorCode !== hoveredLink.sideZContributorCode ? `${hoveredLink.sideAContributorCode} / ${hoveredLink.sideZContributorCode}` : hoveredLink.contributorCode}</span></div>
+                  <div>Contributor: <span className="text-foreground">{hoveredLink.sideAContributorCode && hoveredLink.sideZContributorCode && hoveredLink.sideAContributorCode !== hoveredLink.sideZContributorCode ? `${hoveredLink.sideAContributorCode} ↔ ${hoveredLink.sideZContributorCode}` : hoveredLink.contributorCode}</span></div>
                 )}
                 {hoveredLink.isInterMetro ? (
                   <>
