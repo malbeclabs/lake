@@ -89,14 +89,55 @@ func (a *API) GetAccessPasses(w http.ResponseWriter, r *http.Request) {
 
 	pagination := ParsePagination(r, 100)
 	sort := ParseSort(r, "type", accessPassSortFields)
-	filters := ParseFilters(r)
+	allFilters := ParseFilters(r)
+
+	// Separate pub_group / sub_group filters — they need JSON-array subqueries
+	// and cannot be handled by BuildFilterClause.
+	var pubGroupVals, subGroupVals []string
+	var stdFilters []FilterParams
+	for _, f := range allFilters.Filters {
+		switch f.Field {
+		case "pub_group":
+			pubGroupVals = append(pubGroupVals, f.Value)
+		case "sub_group":
+			subGroupVals = append(subGroupVals, f.Value)
+		default:
+			stdFilters = append(stdFilters, f)
+		}
+	}
+	allFilters.Filters = stdFilters
+
 	start := time.Now()
 
-	filterClause, filterArgs := filters.BuildFilterClause(accessPassFilterFields)
+	filterClause, filterArgs := allFilters.BuildFilterClause(accessPassFilterFields)
 	whereFilter := ""
 	if filterClause != "" {
 		whereFilter = " AND " + filterClause
 	}
+
+	// Build subquery conditions for pub/sub group filters. Each value is matched
+	// against both group code (case-insensitive substring) and exact group PK.
+	var args []any
+	args = append(args, filterArgs...)
+	for _, v := range pubGroupVals {
+		whereFilter += ` AND ap.pk IN (
+			SELECT DISTINCT a.pk FROM dz_access_passes_current a
+			ANY INNER JOIN dz_multicast_groups_current g
+				ON positionCaseInsensitive(a.mgroup_pub_allowlist, g.pk) > 0
+			WHERE positionCaseInsensitive(g.code, ?) > 0 OR g.pk = ?
+		)`
+		args = append(args, v, v)
+	}
+	for _, v := range subGroupVals {
+		whereFilter += ` AND ap.pk IN (
+			SELECT DISTINCT a.pk FROM dz_access_passes_current a
+			ANY INNER JOIN dz_multicast_groups_current g
+				ON positionCaseInsensitive(a.mgroup_sub_allowlist, g.pk) > 0
+			WHERE positionCaseInsensitive(g.code, ?) > 0 OR g.pk = ?
+		)`
+		args = append(args, v, v)
+	}
+
 	orderBy := sort.OrderByClause(accessPassSortFields)
 
 	query := `
@@ -126,8 +167,6 @@ func (a *API) GetAccessPasses(w http.ResponseWriter, r *http.Request) {
 		LIMIT ? OFFSET ?
 	`
 
-	var args []any
-	args = append(args, filterArgs...)
 	args = append(args, pagination.Limit, pagination.Offset)
 
 	rows, err := a.envDB(ctx).Query(ctx, query, args...)
@@ -247,7 +286,7 @@ func (a *API) GetAccessPass(w http.ResponseWriter, r *http.Request) {
 
 	// If this access pass is managed by the Shreds product, attach the associated
 	// client seat (linked by client_ip) so the UI can display subscription details.
-	if ap.UserPayer == ShredsInternalUserPayer && ap.ClientIP != "" {
+	if isShredsInternalPayer(ap.UserPayer) && ap.ClientIP != "" {
 		seat, seatErr := a.fetchShredSeatByClientIP(ctx, ap.ClientIP)
 		if seatErr != nil {
 			logError("failed to fetch shreds seat for access pass", "pk", pk, "error", seatErr)
@@ -351,8 +390,10 @@ func (a *API) GetAccessPassConnections(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
-	// Build OR conditions: match users by owner_pubkey (owner or payer) or client_ip
-	rows, err := a.envDB(ctx).Query(ctx, `
+	// For Shreds product passes, owner_pubkey and user_payer both belong to the
+	// internal Shreds account — matching against them would return connections for
+	// the entire product. Only match by client_ip in that case.
+	connQuery := `
 		SELECT
 			u.pk,
 			COALESCE(u.owner_pubkey, '') as owner_pubkey,
@@ -370,7 +411,32 @@ func (a *API) GetAccessPassConnections(w http.ResponseWriter, r *http.Request) {
 		WHERE u.owner_pubkey IN (?, ?) OR (? != '' AND u.client_ip = ?)
 		ORDER BY u.status ASC, u.kind ASC
 		LIMIT 200
-	`, ownerPubkey, userPayer, clientIP, clientIP)
+	`
+	connArgs := []any{ownerPubkey, userPayer, clientIP, clientIP}
+	if isShredsInternalPayer(userPayer) {
+		connQuery = `
+			SELECT
+				u.pk,
+				COALESCE(u.owner_pubkey, '') as owner_pubkey,
+				u.status,
+				COALESCE(u.kind, '') as kind,
+				COALESCE(u.dz_ip, '') as dz_ip,
+				COALESCE(u.client_ip, '') as client_ip,
+				COALESCE(d.code, '') as device_code,
+				COALESCE(m.code, '') as metro_code,
+				COALESCE(t.code, '') as tenant_code
+			FROM dz_users_current u
+			LEFT JOIN dz_devices_current d ON u.device_pk = d.pk
+			LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
+			LEFT JOIN dz_tenants_current t ON u.tenant_pk = t.pk
+			WHERE ? != '' AND u.client_ip = ?
+			ORDER BY u.status ASC, u.kind ASC
+			LIMIT 200
+		`
+		connArgs = []any{clientIP, clientIP}
+	}
+
+	rows, err := a.envDB(ctx).Query(ctx, connQuery, connArgs...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 

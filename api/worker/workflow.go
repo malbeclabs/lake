@@ -21,6 +21,7 @@ const (
 	fastRefreshInterval    = 3 * time.Second
 	continueAsNewThreshold = 60 // ~30 min at 30s intervals
 	errorAfterFailures     = 3  // log WARN for transient failures, ERROR after this many consecutive failures
+	silenceAfterFailures   = 10 // demote to Debug after this many consecutive failures (suppresses log spam for permanent errors)
 )
 
 // cacheEntry defines a single cache key to refresh.
@@ -209,9 +210,12 @@ func (a *Activities) refresh(parentCtx context.Context, name, key string, fn fun
 				continue
 			}
 			n := a.incFailures(key)
-			if n >= errorAfterFailures {
+			switch {
+			case n >= silenceAfterFailures:
+				a.Log.Debug("cache refresh failed (silenced)", "cache", name, "consecutive_failures", n, "error", err)
+			case n >= errorAfterFailures:
 				a.Log.Error("cache refresh failed", "cache", name, "consecutive_failures", n, "error", err)
-			} else {
+			default:
 				a.Log.Warn("cache refresh failed", "cache", name, "consecutive_failures", n, "error", err)
 			}
 			return

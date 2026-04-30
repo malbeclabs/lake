@@ -63,6 +63,8 @@ import { ShredsEconomicsPage } from '@/components/shreds-economics-page'
 import { PublisherCheckPage } from './components/publisher-check-page'
 import { EdgeScoreboardPage } from './components/edge-scoreboard-page'
 import { MulticastGroupDetailPage } from '@/components/multicast-group-detail-page'
+import { AccessPassesPage } from '@/components/access-passes-page'
+import { AccessPassDetailPage } from '@/components/access-pass-detail-page'
 import { ValidatorDetailPage } from '@/components/validator-detail-page'
 import { GossipNodeDetailPage } from '@/components/gossip-node-detail-page'
 
@@ -704,6 +706,8 @@ function AppContent() {
             <Route path="/dz/users/:pk" element={<UserDetailPage />} />
             <Route path="/dz/multicast-groups" element={<MulticastGroupsPage />} />
             <Route path="/dz/multicast-groups/:pk" element={<MulticastGroupDetailPage />} />
+            <Route path="/dz/access-passes" element={<AccessPassesPage />} />
+            <Route path="/dz/access-passes/:pk" element={<AccessPassDetailPage />} />
             <Route path="/dz/shreds" element={<Navigate to="/dz/shreds/scoreboard" replace />} />
             <Route path="/dz/shreds/scoreboard" element={<EdgeScoreboardPage />} />
             <Route path="/dz/shreds/publishers" element={<PublisherCheckPage />} />

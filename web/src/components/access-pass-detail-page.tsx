@@ -1,15 +1,19 @@
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { useMemo } from 'react'
-import { AlertCircle, ArrowLeft, KeyRound, Loader2 } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { AlertCircle, ArrowLeft, ChevronLeft, ChevronRight, KeyRound, Loader2 } from 'lucide-react'
 import { fetchAccessPass, fetchAccessPasses, fetchAccessPassConnections } from '@/lib/api'
 import type { AccessPass, AccessPassConnection, AccessPassShredsSeat, MulticastGroupRef } from '@/lib/api'
-
-const SHREDS_INTERNAL_USER_PAYER = '331ov6bjNUTLTATEUC4m7wxdHfAE5KxWwA6ng1Y1VZh8'
 import { CopyableText } from '@/components/copyable-text'
 import { useBackLink } from '@/hooks/use-back-link'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { handleRowClick } from '@/lib/utils'
+
+const SHREDS_INTERNAL_USER_PAYERS = new Set([
+  '331ov6bjNUTLTATEUC4m7wxdHfAE5KxWwA6ng1Y1VZh8',
+  '3b2Ze7VYUvhwQBfx5oCMCmsc2xvyZ74s2Lata5vmQeeN',
+])
+const PAGE_SIZE = 10
 
 const TYPE_TAG_COLORS: Record<string, string> = {
   prepaid: 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400 border-zinc-500/20',
@@ -104,6 +108,8 @@ function RelatedPassesTable({ byIpPasses, byPayerPasses, currentPk, navigate }: 
   currentPk: string
   navigate: ReturnType<typeof useNavigate>
 }) {
+  const [page, setPage] = useState(0)
+
   const rows = useMemo(() => {
     const ipSet = new Set(byIpPasses.filter(p => p.pk !== currentPk).map(p => p.pk))
     const payerSet = new Set(byPayerPasses.filter(p => p.pk !== currentPk).map(p => p.pk))
@@ -120,6 +126,10 @@ function RelatedPassesTable({ byIpPasses, byPayerPasses, currentPk, navigate }: 
   }, [byIpPasses, byPayerPasses, currentPk])
 
   if (rows.length === 0) return null
+
+  const totalPages = Math.ceil(rows.length / PAGE_SIZE)
+  const pageRows = rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+
   return (
     <div>
       <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
@@ -139,7 +149,7 @@ function RelatedPassesTable({ byIpPasses, byPayerPasses, currentPk, navigate }: 
               </tr>
             </thead>
             <tbody>
-              {rows.map(({ pass: p, sameIp, samePayer }) => (
+              {pageRows.map(({ pass: p, sameIp, samePayer }) => (
                 <tr
                   key={p.pk}
                   className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
@@ -177,6 +187,28 @@ function RelatedPassesTable({ byIpPasses, byPayerPasses, currentPk, navigate }: 
             </tbody>
           </table>
         </div>
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between px-4 py-2 border-t border-border bg-muted/20 text-xs text-muted-foreground">
+            <span>{page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, rows.length)} of {rows.length}</span>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setPage(p => p - 1)}
+                disabled={page === 0}
+                className="p-1 rounded hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </button>
+              <span>{page + 1} / {totalPages}</span>
+              <button
+                onClick={() => setPage(p => p + 1)}
+                disabled={page === totalPages - 1}
+                className="p-1 rounded hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -245,7 +277,13 @@ function ConnectionsTable({ connections, navigate }: {
   connections: AccessPassConnection[]
   navigate: ReturnType<typeof useNavigate>
 }) {
+  const [page, setPage] = useState(0)
+
   if (connections.length === 0) return null
+
+  const totalPages = Math.ceil(connections.length / PAGE_SIZE)
+  const pageRows = connections.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+
   return (
     <div>
       <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
@@ -266,7 +304,7 @@ function ConnectionsTable({ connections, navigate }: {
               </tr>
             </thead>
             <tbody>
-              {connections.map((c) => (
+              {pageRows.map((c) => (
                 <tr
                   key={c.pk}
                   className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
@@ -292,6 +330,28 @@ function ConnectionsTable({ connections, navigate }: {
             </tbody>
           </table>
         </div>
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between px-4 py-2 border-t border-border bg-muted/20 text-xs text-muted-foreground">
+            <span>{page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, connections.length)} of {connections.length}</span>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setPage(p => p - 1)}
+                disabled={page === 0}
+                className="p-1 rounded hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </button>
+              <span>{page + 1} / {totalPages}</span>
+              <button
+                onClick={() => setPage(p => p + 1)}
+                disabled={page === totalPages - 1}
+                className="p-1 rounded hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -308,13 +368,13 @@ export function AccessPassDetailPage() {
     enabled: !!pk,
   })
 
+  const isShredsProductPayer = !!ap?.user_payer && SHREDS_INTERNAL_USER_PAYERS.has(ap.user_payer)
+
   const { data: byIpData } = useQuery({
     queryKey: ['access-passes-by-ip', ap?.client_ip],
     queryFn: () => fetchAccessPasses(50, 0, 'type', 'asc', [`client_ip:${ap!.client_ip}`]),
     enabled: !!ap?.client_ip,
   })
-
-  const isShredsProductPayer = ap?.user_payer === SHREDS_INTERNAL_USER_PAYER
 
   const { data: byPayerData } = useQuery({
     queryKey: ['access-passes-by-payer', ap?.user_payer],

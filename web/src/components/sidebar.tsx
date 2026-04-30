@@ -34,6 +34,7 @@ import {
   ArrowRightLeft,
   Puzzle,
   Warehouse,
+  KeyRound,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/use-theme'
@@ -91,6 +92,7 @@ const { resolvedTheme, setTheme } = useTheme()
   const isTenantsRoute = location.pathname.startsWith('/dz/tenants')
   const isUsersRoute = location.pathname.startsWith('/dz/users')
   const isMulticastGroupsRoute = location.pathname.startsWith('/dz/multicast-groups')
+  const isAccessPassesRoute = location.pathname.startsWith('/dz/access-passes')
   const isScoreboardRoute = location.pathname === '/dz/shreds/scoreboard'
   const isShredsPublishersRoute = location.pathname === '/dz/shreds/publishers' || location.pathname === '/dz/publisher-check'
   const isShredsSeatsRoute = location.pathname === '/dz/shreds/subscribers'
@@ -571,6 +573,10 @@ const { resolvedTheme, setTheme } = useTheme()
             <Link to="/dz/multicast-groups" className={navItemClass(isMulticastGroupsRoute)}>
               <Radio className="h-4 w-4" />
               Multicast
+            </Link>
+            <Link to="/dz/access-passes" className={navItemClass(isAccessPassesRoute)}>
+              <KeyRound className="h-4 w-4" />
+              Access Passes
             </Link>
           </div>
         </div>
