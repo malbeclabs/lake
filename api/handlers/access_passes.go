@@ -34,18 +34,18 @@ type MulticastGroupRef struct {
 // AccessPassShredsSeat is embedded in AccessPassDetail when the access pass
 // belongs to the Shreds product (user_payer == ShredsInternalUserPayer).
 type AccessPassShredsSeat struct {
-	PK                  string `json:"pk"`
-	DeviceKey           string `json:"device_key"`
-	DeviceCode          string `json:"device_code"`
-	MetroPK             string `json:"metro_pk"`
-	MetroCode           string `json:"metro_code"`
-	TenureEpochs        uint16 `json:"tenure_epochs"`
-	FundedEpoch         uint64 `json:"funded_epoch"`
-	ActiveEpoch         uint64 `json:"active_epoch"`
-	EscrowCount         uint32 `json:"escrow_count"`
-	TotalUSDCBalance    uint64 `json:"total_usdc_balance"`
-	PricePerEpochDollars int64 `json:"price_per_epoch_dollars"`
-	FundingAuthorityKey string `json:"funding_authority_key"`
+	PK                   string `json:"pk"`
+	DeviceKey            string `json:"device_key"`
+	DeviceCode           string `json:"device_code"`
+	MetroPK              string `json:"metro_pk"`
+	MetroCode            string `json:"metro_code"`
+	TenureEpochs         uint16 `json:"tenure_epochs"`
+	FundedEpoch          uint64 `json:"funded_epoch"`
+	ActiveEpoch          uint64 `json:"active_epoch"`
+	EscrowCount          uint32 `json:"escrow_count"`
+	TotalUSDCBalance     uint64 `json:"total_usdc_balance"`
+	PricePerEpochDollars int64  `json:"price_per_epoch_dollars"`
+	FundingAuthorityKey  string `json:"funding_authority_key"`
 }
 
 type AccessPassDetail struct {
