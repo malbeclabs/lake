@@ -95,7 +95,7 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 				ls.lat AS dzdp_lat,
 				ls.lng AS dzdp_lng,
 				gn.pubkey AS node_pubkey
-			FROM dzdp.location_state FINAL ls
+			FROM (SELECT * FROM dzdp.location_state FINAL) AS ls
 			JOIN solana_gossip_nodes_current gn ON ls.target_ip = gn.gossip_ip
 			WHERE ls.state = 'decided'
 		),
