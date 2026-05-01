@@ -868,18 +868,22 @@ func (a *API) GetShredEpochRevenue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
+	// Sum fund inflows bucketed by the on-chain Solana epoch when the deposit
+	// landed (slot / 432000). The stored epoch column on batch_allocate events
+	// is the tenure's active_epoch, so summing by it attributes prepaid USDC
+	// to a future tenure and understates what users actually paid this epoch.
 	query := `
 		SELECT
-			epoch,
+			toUInt64(intDiv(slot, 432000)) AS tx_epoch,
 			sum(amount_usdc) / 1000000 AS total_usdc,
 			sum(amount_usdc) / 1000000 AS total_dollars,
 			count() AS payment_count
 		FROM fact_dz_shred_escrow_events FINAL
-		WHERE event_type IN ('payment', 'batch_allocate')
-		  AND epoch IS NOT NULL
+		WHERE event_type = 'fund'
 		  AND amount_usdc IS NOT NULL
-		GROUP BY epoch
-		ORDER BY epoch DESC
+		  AND status = 'ok'
+		GROUP BY tx_epoch
+		ORDER BY tx_epoch DESC
 		LIMIT ?
 	`
 
