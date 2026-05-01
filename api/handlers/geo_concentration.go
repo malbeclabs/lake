@@ -82,7 +82,7 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 	query := `
 		WITH geolocated AS (
 			SELECT
-				ls.target_ip,
+				ls.target_ip AS target_ip,
 				ls.lat AS dzdp_lat,
 				ls.lng AS dzdp_lng,
 				gn.pubkey AS node_pubkey
@@ -92,10 +92,10 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 		),
 		enriched AS (
 			SELECT
-				gv.target_ip,
-				gv.dzdp_lat,
-				gv.dzdp_lng,
-				va.vote_pubkey,
+				gv.target_ip AS target_ip,
+				gv.dzdp_lat AS dzdp_lat,
+				gv.dzdp_lng AS dzdp_lng,
+				va.vote_pubkey AS vote_pubkey,
 				va.activated_stake_lamports / 1e9 AS stake_sol,
 				coalesce(geo.asn, 0) AS asn,
 				coalesce(geo.asn_org, '') AS asn_org,
@@ -108,12 +108,12 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 		),
 		nearest_metro AS (
 			SELECT
-				e.vote_pubkey,
-				e.stake_sol,
-				e.asn,
-				e.asn_org,
-				e.country_code,
-				e.country_name,
+				e.vote_pubkey AS vote_pubkey,
+				e.stake_sol AS stake_sol,
+				e.asn AS asn,
+				e.asn_org AS asn_org,
+				e.country_code AS country_code,
+				e.country_name AS country_name,
 				arrayElement(
 					arraySort(
 						(x, y) -> y,
@@ -123,7 +123,7 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 				) AS metro_code
 			FROM enriched e
 			CROSS JOIN dz_metros_current m
-			GROUP BY e.vote_pubkey, e.stake_sol, e.asn, e.asn_org, e.country_code, e.country_name
+			GROUP BY vote_pubkey, stake_sol, asn, asn_org, country_code, country_name
 		),
 		deduped AS (
 			SELECT
@@ -147,7 +147,6 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	// Collect per-validator rows and aggregate in Go
 	type validatorRow struct {
@@ -164,13 +163,16 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 	for rows.Next() {
 		var v validatorRow
 		if err := rows.Scan(&v.votePubkey, &v.stakeSol, &v.metroCode, &v.asn, &v.asnOrg, &v.countryCode, &v.countryName); err != nil {
+			rows.Close()
 			return nil, err
 		}
 		validators = append(validators, v)
 	}
 	if err := rows.Err(); err != nil {
+		rows.Close()
 		return nil, err
 	}
+	rows.Close()
 
 	// Compute total stake
 	var totalStake float64

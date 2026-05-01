@@ -91,7 +91,7 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 	query := `
 		WITH geolocated AS (
 			SELECT
-				ls.target_ip,
+				ls.target_ip AS target_ip,
 				ls.lat AS dzdp_lat,
 				ls.lng AS dzdp_lng,
 				gn.pubkey AS node_pubkey
@@ -101,11 +101,11 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 		),
 		enriched AS (
 			SELECT
-				gv.target_ip,
-				gv.dzdp_lat,
-				gv.dzdp_lng,
-				gv.node_pubkey,
-				va.vote_pubkey,
+				gv.target_ip AS target_ip,
+				gv.dzdp_lat AS dzdp_lat,
+				gv.dzdp_lng AS dzdp_lng,
+				gv.node_pubkey AS node_pubkey,
+				va.vote_pubkey AS vote_pubkey,
 				va.activated_stake_lamports / 1e9 AS stake_sol,
 				va.commission_percentage AS commission,
 				coalesce(geo.asn, 0) AS asn,
@@ -122,18 +122,18 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 		),
 		nearest_metro AS (
 			SELECT
-				e.vote_pubkey,
-				e.node_pubkey,
-				e.stake_sol,
-				e.commission,
-				e.asn,
-				e.asn_org,
-				e.country_code,
-				e.vname,
-				e.datacenter,
-				e.is_dz,
-				e.dzdp_lat,
-				e.dzdp_lng,
+				e.vote_pubkey AS vote_pubkey,
+				e.node_pubkey AS node_pubkey,
+				e.stake_sol AS stake_sol,
+				e.commission AS commission,
+				e.asn AS asn,
+				e.asn_org AS asn_org,
+				e.country_code AS country_code,
+				e.vname AS vname,
+				e.datacenter AS datacenter,
+				e.is_dz AS is_dz,
+				e.dzdp_lat AS dzdp_lat,
+				e.dzdp_lng AS dzdp_lng,
 				arrayElement(
 					arraySort(
 						(x, y) -> y,
@@ -143,9 +143,9 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 				) AS metro_code
 			FROM enriched e
 			CROSS JOIN dz_metros_current m
-			GROUP BY e.vote_pubkey, e.node_pubkey, e.stake_sol, e.commission,
-				e.asn, e.asn_org, e.country_code, e.vname, e.datacenter, e.is_dz,
-				e.dzdp_lat, e.dzdp_lng
+			GROUP BY vote_pubkey, node_pubkey, stake_sol, commission,
+				asn, asn_org, country_code, vname, datacenter, is_dz,
+				dzdp_lat, dzdp_lng
 		),
 		deduped AS (
 			SELECT
