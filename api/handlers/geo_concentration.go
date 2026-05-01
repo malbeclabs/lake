@@ -254,7 +254,9 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 	// Count anchor points (distinct DZ metros)
 	var anchorPoints int
 	anchorRows, err := a.DB.Query(ctx, "SELECT count() FROM dz_metros_current")
-	if err == nil {
+	if err != nil {
+		logError("geo concentration anchor points query error", "error", err)
+	} else {
 		defer anchorRows.Close()
 		if anchorRows.Next() {
 			_ = anchorRows.Scan(&anchorPoints)
