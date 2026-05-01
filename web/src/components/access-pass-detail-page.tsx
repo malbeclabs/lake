@@ -229,7 +229,7 @@ function ShredsSubscriptionCard({ seat }: { seat: AccessPassShredsSeat }) {
           <dt className="text-sm text-muted-foreground shrink-0">Seat</dt>
           <dd className="text-sm font-mono min-w-0">
             <Link
-              to={`/dz/shreds/subscribers`}
+              to={`/dz/shreds/subscribers?search=seat%3A${seat.pk}`}
               className="text-blue-600 dark:text-blue-400 hover:underline"
             >
               {seat.pk.slice(0, 6)}…{seat.pk.slice(-4)}
@@ -259,10 +259,7 @@ function ShredsSubscriptionCard({ seat }: { seat: AccessPassShredsSeat }) {
           <dt className="text-sm text-muted-foreground shrink-0">Escrow Balance</dt>
           <dd className="text-sm tabular-nums">${balanceDollars.toFixed(2)}</dd>
         </div>
-        <div className="flex justify-between gap-4">
-          <dt className="text-sm text-muted-foreground shrink-0">Funded Epoch</dt>
-          <dd className="text-sm tabular-nums">{seat.funded_epoch.toLocaleString()}</dd>
-        </div>
+
       </dl>
     </div>
   )
@@ -466,10 +463,7 @@ export function AccessPassDetailPage() {
                     : <span className="text-muted-foreground">—</span>}
                 </dd>
               </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-sm text-muted-foreground shrink-0">Flags</dt>
-                <dd className="text-sm tabular-nums">{ap.flags}</dd>
-              </div>
+
             </dl>
           </div>
 
@@ -485,12 +479,7 @@ export function AccessPassDetailPage() {
                 <dt className="text-sm text-muted-foreground shrink-0">Connections</dt>
                 <dd className="text-sm tabular-nums">{ap.connection_count}</dd>
               </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-sm text-muted-foreground shrink-0">Last Epoch</dt>
-                <dd className="text-sm tabular-nums">
-                  {ap.last_access_epoch > 0 ? ap.last_access_epoch.toLocaleString() : <span className="text-muted-foreground">—</span>}
-                </dd>
-              </div>
+
             </dl>
           </div>
 
@@ -498,7 +487,7 @@ export function AccessPassDetailPage() {
           {ap.shreds_seat && <ShredsSubscriptionCard seat={ap.shreds_seat} />}
 
           {/* Association */}
-          <div className="border border-border rounded-lg p-4 bg-card">
+          {!ap.shreds_seat && <div className="border border-border rounded-lg p-4 bg-card">
             <h3 className="text-sm font-medium text-muted-foreground mb-3">Association</h3>
             <dl className="space-y-2">
               {ap.type_tag === 'solana_validator' && (
@@ -572,7 +561,7 @@ export function AccessPassDetailPage() {
                 <div className="text-sm text-muted-foreground">No association</div>
               )}
             </dl>
-          </div>
+          </div>}
         </div>
 
         <div className="space-y-8">

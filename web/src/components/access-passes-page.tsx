@@ -26,7 +26,7 @@ function TypeTagBadge({ tag }: { tag: string }) {
   const colors = TYPE_TAG_COLORS[tag] ?? 'bg-muted text-muted-foreground border-border'
   const label = tag.replace(/_/g, ' ')
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium border ${colors}`}>
+    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${colors}`}>
       {label}
     </span>
   )
@@ -279,14 +279,18 @@ export function AccessPassesPage() {
                         <span className="text-muted-foreground text-sm">—</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
+                    <td className="px-4 py-3">
                       {ap.first_pub_code || ap.first_sub_code ? (
                         <span className="inline-flex items-center gap-1 flex-wrap">
                           {ap.first_pub_code && (
-                            <span className="font-mono text-xs text-green-600 dark:text-green-400">P:{ap.first_pub_code}</span>
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded border font-mono text-xs bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20">
+                              P:{ap.first_pub_code}
+                            </span>
                           )}
                           {ap.first_sub_code && (
-                            <span className="font-mono text-xs text-orange-600 dark:text-orange-400">S:{ap.first_sub_code}</span>
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded border font-mono text-xs bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20">
+                              S:{ap.first_sub_code}
+                            </span>
                           )}
                         </span>
                       ) : (
