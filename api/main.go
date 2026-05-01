@@ -594,6 +594,8 @@ func main() {
 			r.Get("/api/dz/geoloc/probes", api.GetGeolocProbes)
 			r.Get("/api/dz/geoloc/users", api.GetGeolocUsers)
 			r.Get("/api/dz/geoloc/explorer", api.GetGeolocExplorer)
+			r.Get("/api/geo/concentration", api.GetGeoConcentration)
+			r.Get("/api/geo/validators", api.GetGeoValidators)
 		})
 
 		// Solana entity routes

@@ -30,6 +30,9 @@ var externalRemoteTables = []struct {
 	{"mainnet-beta", "location_offsets"},
 	{"devnet", "location_offsets"},
 	{"testnet", "location_offsets"},
+	{"dzdp", "offsets"},
+	{"dzdp", "location_decisions"},
+	{"dzdp", "location_state"},
 }
 
 // Config holds configuration for creating remote proxy tables.
