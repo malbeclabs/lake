@@ -128,7 +128,7 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 		deduped AS (
 			SELECT
 				vote_pubkey,
-				max(stake_sol) AS stake_sol,
+				max(stake_sol) AS max_stake,
 				argMax(metro_code, stake_sol) AS metro_code,
 				argMax(asn, stake_sol) AS asn,
 				argMax(asn_org, stake_sol) AS asn_org,
@@ -137,7 +137,7 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 			FROM nearest_metro
 			GROUP BY vote_pubkey
 		)
-		SELECT vote_pubkey, stake_sol, metro_code, asn, asn_org, country_code, country_name
+		SELECT vote_pubkey, max_stake AS stake_sol, metro_code, asn, asn_org, country_code, country_name
 		FROM deduped
 	`
 

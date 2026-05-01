@@ -151,7 +151,7 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 			SELECT
 				vote_pubkey,
 				argMax(node_pubkey, stake_sol) AS node_pubkey,
-				max(stake_sol) AS stake_sol,
+				max(stake_sol) AS max_stake,
 				argMax(commission, stake_sol) AS commission,
 				argMax(metro_code, stake_sol) AS metro_code,
 				argMax(asn, stake_sol) AS asn,
@@ -165,10 +165,10 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 			FROM nearest_metro
 			GROUP BY vote_pubkey
 		)
-		SELECT vote_pubkey, node_pubkey, stake_sol, commission, metro_code, asn, asn_org,
+		SELECT vote_pubkey, node_pubkey, max_stake AS stake_sol, commission, metro_code, asn, asn_org,
 			country_code, vname, datacenter, is_dz, dzdp_lat, dzdp_lng
 		FROM deduped
-		ORDER BY stake_sol DESC
+		ORDER BY max_stake DESC
 	`
 
 	start := time.Now()
