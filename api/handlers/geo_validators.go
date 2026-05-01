@@ -19,7 +19,7 @@ type GeoValidatorItem struct {
 	Name        string  `json:"name"`
 	StakeSol    float64 `json:"stake_sol"`
 	StakePct    float64 `json:"stake_pct"`
-	Commission  int     `json:"commission"`
+	Commission  int64   `json:"commission"`
 	MetroCode   string  `json:"metro_code"`
 	CountryCode string  `json:"country_code"`
 	ASN         int64   `json:"asn"`

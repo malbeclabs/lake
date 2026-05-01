@@ -254,15 +254,15 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 	}
 
 	// Count anchor points (distinct DZ metros)
-	var anchorPoints int
+	var anchorPoints uint64
 	anchorRows, err := a.DB.Query(ctx, "SELECT count() FROM dz_metros_current")
 	if err != nil {
 		logError("geo concentration anchor points query error", "error", err)
 	} else {
-		defer anchorRows.Close()
 		if anchorRows.Next() {
 			_ = anchorRows.Scan(&anchorPoints)
 		}
+		anchorRows.Close()
 	}
 
 	var maxASNPct float64
@@ -288,7 +288,7 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 		HeroStats: GeoConcentrationHeroStats{
 			ValidatorsMeasured:   len(validators),
 			StakeTopTwoMetrosPct: stakeTopTwo,
-			AnchorPoints:         anchorPoints,
+			AnchorPoints:         int(anchorPoints),
 			StakeMaxASNPct:       maxASNPct,
 		},
 		Metros:    metros,
