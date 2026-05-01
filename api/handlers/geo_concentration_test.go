@@ -29,7 +29,8 @@ func createDZDPLocationStateTable(t *testing.T, api *handlers.API) {
 			best_rtt_ns UInt64,
 			state LowCardinality(String),
 			decided_at DateTime64(9)
-		) ENGINE = Memory
+		) ENGINE = ReplacingMergeTree(snapshot_at)
+		ORDER BY target_ip
 	`)
 	require.NoError(t, err)
 }
