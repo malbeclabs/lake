@@ -270,6 +270,16 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 	stakeTopTwo = math.Round(stakeTopTwo*100) / 100
 	maxASNPct = math.Round(maxASNPct*100) / 100
 
+	if metros == nil {
+		metros = []GeoConcentrationMetro{}
+	}
+	if countries == nil {
+		countries = []GeoConcentrationCountry{}
+	}
+	if asns == nil {
+		asns = []GeoConcentrationASN{}
+	}
+
 	resp := &GeoConcentrationResponse{
 		HeroStats: GeoConcentrationHeroStats{
 			ValidatorsMeasured:   len(validators),
