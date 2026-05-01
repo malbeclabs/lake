@@ -97,7 +97,7 @@ func FormatValue(v any) string {
 	// Handle pointer types by dereferencing them
 	// This is critical for ClickHouse Decimal types which scan as pointers
 	rv := reflect.ValueOf(v)
-	if rv.Kind() == reflect.Ptr {
+	if rv.Kind() == reflect.Pointer {
 		if rv.IsNil() {
 			return ""
 		}

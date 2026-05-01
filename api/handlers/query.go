@@ -64,7 +64,7 @@ func toJSONSafe(v any) any {
 	default:
 		// For pointer types, dereference to get actual value
 		rv := reflect.ValueOf(v)
-		if rv.Kind() == reflect.Ptr {
+		if rv.Kind() == reflect.Pointer {
 			if rv.IsNil() {
 				return nil
 			}
