@@ -151,7 +151,7 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 			SELECT
 				vote_pubkey,
 				argMax(node_pubkey, stake_sol) AS node_pubkey,
-				argMax(stake_sol, stake_sol) AS stake_sol,
+				max(stake_sol) AS stake_sol,
 				argMax(commission, stake_sol) AS commission,
 				argMax(metro_code, stake_sol) AS metro_code,
 				argMax(asn, stake_sol) AS asn,

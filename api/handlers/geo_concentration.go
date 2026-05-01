@@ -128,7 +128,7 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 		deduped AS (
 			SELECT
 				vote_pubkey,
-				argMax(stake_sol, stake_sol) AS stake_sol,
+				max(stake_sol) AS stake_sol,
 				argMax(metro_code, stake_sol) AS metro_code,
 				argMax(asn, stake_sol) AS asn,
 				argMax(asn_org, stake_sol) AS asn_org,
