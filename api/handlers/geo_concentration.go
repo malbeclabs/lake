@@ -192,7 +192,7 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 	metros := make([]GeoConcentrationMetro, 0, len(metroMap))
 	for _, m := range metroMap {
 		if totalStake > 0 {
-			m.StakePct = m.StakeSol / totalStake * 100
+			m.StakePct = math.Round(m.StakeSol/totalStake*10000) / 100
 		}
 		metros = append(metros, *m)
 	}
@@ -214,7 +214,7 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 	countries := make([]GeoConcentrationCountry, 0, len(countryMap))
 	for _, c := range countryMap {
 		if totalStake > 0 {
-			c.StakePct = c.StakeSol / totalStake * 100
+			c.StakePct = math.Round(c.StakeSol/totalStake*10000) / 100
 		}
 		countries = append(countries, *c)
 	}
@@ -239,7 +239,7 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 	asns := make([]GeoConcentrationASN, 0, len(asnMap))
 	for _, entry := range asnMap {
 		if totalStake > 0 {
-			entry.StakePct = entry.StakeSol / totalStake * 100
+			entry.StakePct = math.Round(entry.StakeSol/totalStake*10000) / 100
 		}
 		asns = append(asns, *entry)
 	}
