@@ -2,9 +2,11 @@ package handlers_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/malbeclabs/lake/api/handlers"
 	apitesting "github.com/malbeclabs/lake/api/testing"
@@ -416,20 +418,29 @@ func TestGetShredFunders_WithData(t *testing.T) {
 	assert.Len(t, funders, 2)
 }
 
-func insertEscrowEventsTestData(t *testing.T, api *handlers.API) {
+// insertEscrowEventsTestData seeds 4 events anchored to the returned base time:
+// base+0h (tx-1 fund), base+2h (tx-2 allocate_seat), base+24h (tx-3 fund),
+// base+48h (tx-4 close). Base is 4 days ago so events stay inside the default 30d range.
+func insertEscrowEventsTestData(t *testing.T, api *handlers.API) time.Time {
 	ctx := t.Context()
 
-	err := api.DB.Exec(ctx, `
+	base := time.Now().UTC().Add(-4 * 24 * time.Hour).Truncate(time.Hour)
+	ts := func(d time.Duration) string {
+		return base.Add(d).Format("2006-01-02 15:04:05")
+	}
+
+	err := api.DB.Exec(ctx, fmt.Sprintf(`
 		INSERT INTO fact_dz_shred_escrow_events
 		(event_ts, ingested_at, escrow_pk, client_seat_pk, tx_signature, slot,
 		 event_type, amount_usdc, balance_after_usdc, epoch, status, signer)
 		VALUES
-		('2026-04-01 10:00:00', now(), 'escrow-1', 'seat-1', 'tx-1', 100, 'fund', 50000000, 50000000, 950, 'ok', 'signer-1'),
-		('2026-04-01 12:00:00', now(), 'escrow-1', 'seat-1', 'tx-2', 200, 'allocate_seat', NULL, 40000000, 950, 'ok', 'signer-1'),
-		('2026-04-02 10:00:00', now(), 'escrow-2', 'seat-2', 'tx-3', 300, 'fund', 100000000, 100000000, 950, 'ok', 'DZfHfcCXTLwgZeCRKQ1FL1UuwAwFAZM93g86NMYpfYan'),
-		('2026-04-03 10:00:00', now(), 'escrow-1', 'seat-1', 'tx-4', 400, 'close', 40000000, 0, 950, 'ok', 'signer-1')
-	`)
+		('%s', now(), 'escrow-1', 'seat-1', 'tx-1', 100, 'fund', 50000000, 50000000, 950, 'ok', 'signer-1'),
+		('%s', now(), 'escrow-1', 'seat-1', 'tx-2', 200, 'allocate_seat', NULL, 40000000, 950, 'ok', 'signer-1'),
+		('%s', now(), 'escrow-2', 'seat-2', 'tx-3', 300, 'fund', 100000000, 100000000, 950, 'ok', 'DZfHfcCXTLwgZeCRKQ1FL1UuwAwFAZM93g86NMYpfYan'),
+		('%s', now(), 'escrow-1', 'seat-1', 'tx-4', 400, 'close', 40000000, 0, 950, 'ok', 'signer-1')
+	`, ts(0), ts(2*time.Hour), ts(24*time.Hour), ts(48*time.Hour)))
 	require.NoError(t, err)
+	return base
 }
 
 func TestGetShredEscrowEvents_WithData(t *testing.T) {
@@ -526,10 +537,13 @@ func TestGetShredEscrowEvents_IncludeInternal(t *testing.T) {
 func TestGetShredEscrowEvents_TimeRange(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
-	insertEscrowEventsTestData(t, api)
+	base := insertEscrowEventsTestData(t, api)
 
-	// Custom range covering only April 1 2026
-	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/escrow-events?start_time=1775016000&end_time=1775102399&include_internal=true", nil)
+	// Window covers only base+0h (tx-1) and base+2h (tx-2), excluding tx-3 (+24h) and tx-4 (+48h).
+	start := base.Add(-1 * time.Hour).Unix()
+	end := base.Add(12 * time.Hour).Unix()
+	url := fmt.Sprintf("/api/dz/shreds/escrow-events?start_time=%d&end_time=%d&include_internal=true", start, end)
+	req := httptest.NewRequest(http.MethodGet, url, nil)
 	rr := httptest.NewRecorder()
 	api.GetShredEscrowEvents(rr, req)
 
@@ -538,7 +552,7 @@ func TestGetShredEscrowEvents_TimeRange(t *testing.T) {
 	var response handlers.PaginatedResponse[handlers.ShredEscrowEventItem]
 	err := json.NewDecoder(rr.Body).Decode(&response)
 	require.NoError(t, err)
-	assert.Equal(t, 2, response.Total) // Only tx-1 and tx-2 from April 1
+	assert.Equal(t, 2, response.Total) // tx-1 and tx-2
 }
 
 func TestGetShredEscrowEvents_Filter(t *testing.T) {
