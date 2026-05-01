@@ -868,16 +868,64 @@ func (a *API) GetShredEpochRevenue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
+	// Revenue per epoch is the sum of per-seat prices for every seat allocated
+	// for that active_epoch. Summing batch_allocate.amount_usdc directly misses
+	// seats that get allocated via instant `allocate_seat` (no Charged log) and
+	// pre-new-style `batch_allocate` events (parser doesn't extract amount).
+	// Joining seats history with metro/device price history at each
+	// active_epoch reconstructs the charge using the same price formula the
+	// list endpoint uses (override, else metro_price + device_premium).
 	query := `
+		WITH seat_per_epoch AS (
+			SELECT
+				pk,
+				active_epoch,
+				argMax(device_key, snapshot_ts) AS device_key,
+				argMax(has_price_override, snapshot_ts) AS has_override,
+				argMax(override_usdc_price_dollars, snapshot_ts) AS override_price
+			FROM dim_dz_shred_client_seats_history
+			WHERE is_deleted = 0 AND active_epoch > 0
+			GROUP BY pk, active_epoch
+		),
+		device_per_epoch AS (
+			SELECT
+				device_key,
+				current_epoch AS epoch,
+				argMax(metro_exchange_key, snapshot_ts) AS metro_key,
+				argMax(current_usdc_metro_premium_dollars, snapshot_ts) AS premium
+			FROM dim_dz_shred_device_histories_history
+			WHERE is_deleted = 0
+			GROUP BY device_key, current_epoch
+		),
+		metro_per_epoch AS (
+			SELECT
+				exchange_key,
+				current_epoch AS epoch,
+				argMax(current_usdc_price_dollars, snapshot_ts) AS price
+			FROM dim_dz_shred_metro_histories_history
+			WHERE is_deleted = 0
+			GROUP BY exchange_key, current_epoch
+		)
 		SELECT
-			epoch,
-			sum(amount_usdc) / 1000000 AS total_usdc,
-			sum(amount_usdc) / 1000000 AS total_dollars,
-			count() AS payment_count
-		FROM fact_dz_shred_escrow_events FINAL
-		WHERE event_type IN ('payment', 'batch_allocate')
-		  AND epoch IS NOT NULL
-		  AND amount_usdc IS NOT NULL
+			s.active_epoch AS epoch,
+			toFloat64(sum(
+				CASE
+					WHEN s.has_override = 1 THEN toInt64(s.override_price)
+					ELSE toInt64(coalesce(m.price, 0)) + toInt64(coalesce(d.premium, 0))
+				END
+			)) AS total_usdc,
+			toFloat64(sum(
+				CASE
+					WHEN s.has_override = 1 THEN toInt64(s.override_price)
+					ELSE toInt64(coalesce(m.price, 0)) + toInt64(coalesce(d.premium, 0))
+				END
+			)) AS total_dollars,
+			toUInt64(count()) AS payment_count
+		FROM seat_per_epoch s
+		LEFT JOIN device_per_epoch d
+			ON s.device_key = d.device_key AND d.epoch = s.active_epoch
+		LEFT JOIN metro_per_epoch m
+			ON d.metro_key = m.exchange_key AND m.epoch = s.active_epoch
 		GROUP BY epoch
 		ORDER BY epoch DESC
 		LIMIT ?
