@@ -7,6 +7,69 @@ import (
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
+// fetchShredSeatByClientIP returns the Shreds client seat for a given client IP,
+// or nil if none exists. Used to link access passes managed by the Shreds product to
+// their corresponding subscription seat.
+func (a *API) fetchShredSeatByClientIP(ctx context.Context, clientIP string) (*ShredSubscriberRow, error) {
+	if clientIP == "" {
+		return nil, nil
+	}
+
+	start := time.Now()
+	rows, err := a.envDB(ctx).Query(ctx, `
+		WITH escrow_balances AS (
+			SELECT client_seat_key, sum(usdc_balance) as total_usdc_balance
+			FROM dim_dz_shred_payment_escrows_current
+			GROUP BY client_seat_key
+		)
+		SELECT
+			s.pk, s.device_key, COALESCE(d.code, '') as device_code,
+			COALESCE(d.metro_pk, '') as metro_pk, COALESCE(m.code, '') as metro_code,
+			s.client_ip, s.tenure_epochs, s.funded_epoch, s.active_epoch,
+			s.has_price_override, s.override_usdc_price_dollars, s.escrow_count,
+			COALESCE(eb.total_usdc_balance, 0) as total_usdc_balance,
+			CASE
+				WHEN s.has_price_override = 1 THEN toInt64(s.override_usdc_price_dollars)
+				ELSE toInt64(COALESCE(mh.current_usdc_price_dollars, 0)) + toInt64(COALESCE(dh.current_usdc_metro_premium_dollars, 0))
+			END as price_per_epoch_dollars,
+			s.funding_authority_key,
+			COALESCE(u.pk, '') as user_pk,
+			COALESCE(u.owner_pubkey, '') as user_owner_pubkey,
+			COALESCE(u.status, '') as user_status,
+			NULL as last_activity
+		FROM dim_dz_shred_client_seats_current s
+		LEFT JOIN dz_devices_current d ON s.device_key = d.pk
+		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
+		LEFT JOIN dim_dz_shred_metro_histories_current mh ON mh.exchange_key = d.metro_pk
+		LEFT JOIN dim_dz_shred_device_histories_current dh ON dh.device_key = s.device_key
+		ANY LEFT JOIN dz_users_current u ON u.device_pk = s.device_key AND u.client_ip = s.client_ip
+		LEFT JOIN escrow_balances eb ON eb.client_seat_key = s.pk
+		WHERE s.client_ip = ?
+		LIMIT 1
+	`, clientIP)
+	metrics.RecordClickHouseQuery(time.Since(start), err)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+
+	var s ShredSubscriberRow
+	if err := rows.Scan(
+		&s.PK, &s.DeviceKey, &s.DeviceCode, &s.MetroPK, &s.MetroCode,
+		&s.ClientIP, &s.TenureEpochs, &s.FundedEpoch, &s.ActiveEpoch,
+		&s.HasPriceOverride, &s.OverrideUSDCPriceDollars, &s.EscrowCount, &s.TotalUSDCBalance,
+		&s.PricePerEpochDollars, &s.FundingAuthorityKey,
+		&s.UserPK, &s.UserOwnerPubkey, &s.UserStatus, &s.LastActivity,
+	); err != nil {
+		return nil, err
+	}
+	return &s, rows.Err()
+}
+
 // ShredSubscriberRow is the raw, internal shape of a shred subscriber (client seat)
 // returned by FetchShredSubscribers. Consumers (including the v1 API) map this
 // to their own public shapes.
