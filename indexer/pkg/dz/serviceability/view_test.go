@@ -390,6 +390,466 @@ func TestLake_Serviceability_View_ConvertLinks(t *testing.T) {
 	})
 }
 
+func TestLake_Serviceability_View_ConvertDeviceInterfaces(t *testing.T) {
+	t.Parallel()
+
+	t.Run("1-interface V1 device", func(t *testing.T) {
+		t.Parallel()
+
+		devicePK := [32]byte{1, 2, 3, 4}
+		onchain := []serviceability.Device{
+			{
+				PubKey: devicePK,
+				Interfaces: []serviceability.Interface{
+					{
+						Version:       0,
+						Name:          "Loopback0",
+						Status:        serviceability.InterfaceStatusInvalid,
+						InterfaceType: serviceability.InterfaceTypeInvalid,
+						IpNet:         [5]uint8{10, 0, 0, 1, 32},
+						// V2+ fields left at zero values
+					},
+				},
+			},
+		}
+
+		result := convertDeviceInterfaces(onchain)
+
+		require.Len(t, result, 1)
+		require.Equal(t, solana.PublicKeyFromBytes(devicePK[:]).String(), result[0].DevicePK)
+		require.Equal(t, "Loopback0", result[0].Intf)
+		require.Equal(t, "invalid", result[0].Status)
+		require.Equal(t, "invalid", result[0].InterfaceType)
+		// V1 zero-value enum outputs
+		require.Equal(t, "none", result[0].CYOAType)
+		require.Equal(t, "none", result[0].DIAType)
+		require.Equal(t, "none", result[0].LoopbackType)
+		require.Equal(t, "static", result[0].RoutingMode)
+		require.Equal(t, uint64(0), result[0].Bandwidth)
+		require.Equal(t, uint64(0), result[0].Cir)
+		require.Equal(t, uint16(0), result[0].Mtu)
+		require.Equal(t, uint16(0), result[0].VlanID)
+		require.Equal(t, uint16(0), result[0].NodeSegmentIdx)
+		require.False(t, result[0].UserTunnelEndpoint)
+	})
+
+	t.Run("2-interface V1 device", func(t *testing.T) {
+		t.Parallel()
+
+		devicePK := [32]byte{2, 3, 4, 5}
+		onchain := []serviceability.Device{
+			{
+				PubKey: devicePK,
+				Interfaces: []serviceability.Interface{
+					{
+						Version: 0,
+						Name:    "Loopback0",
+						Status:  serviceability.InterfaceStatusActivated,
+						IpNet:   [5]uint8{10, 0, 0, 1, 32},
+					},
+					{
+						Version: 0,
+						Name:    "Ethernet1/1",
+						Status:  serviceability.InterfaceStatusActivated,
+						IpNet:   [5]uint8{172, 16, 0, 1, 31},
+					},
+				},
+			},
+		}
+
+		result := convertDeviceInterfaces(onchain)
+
+		require.Len(t, result, 2)
+		expectedPK := solana.PublicKeyFromBytes(devicePK[:]).String()
+		require.Equal(t, expectedPK, result[0].DevicePK)
+		require.Equal(t, expectedPK, result[1].DevicePK)
+		require.Equal(t, "Loopback0", result[0].Intf)
+		require.Equal(t, "Ethernet1/1", result[1].Intf)
+	})
+
+	t.Run("1-interface V2 device", func(t *testing.T) {
+		t.Parallel()
+
+		devicePK := [32]byte{3, 4, 5, 6}
+		onchain := []serviceability.Device{
+			{
+				PubKey: devicePK,
+				Interfaces: []serviceability.Interface{
+					{
+						Version:            1,
+						Name:               "Port-Channel1000.2029",
+						Status:             serviceability.InterfaceStatusActivated,
+						InterfaceType:      serviceability.InterfaceTypePhysical,
+						InterfaceCYOA:      serviceability.InterfaceCYOAGREOverDIA,
+						InterfaceDIA:       serviceability.InterfaceDIADIA,
+						LoopbackType:       serviceability.LoopbackTypeVpnv4,
+						RoutingMode:        serviceability.RoutingModeBGP,
+						Bandwidth:          10_000_000_000,
+						Cir:                5_000_000_000,
+						Mtu:                9000,
+						VlanId:             100,
+						IpNet:              [5]uint8{172, 16, 0, 225, 31},
+						NodeSegmentIdx:     42,
+						UserTunnelEndpoint: true,
+					},
+				},
+			},
+		}
+
+		result := convertDeviceInterfaces(onchain)
+
+		require.Len(t, result, 1)
+		require.Equal(t, solana.PublicKeyFromBytes(devicePK[:]).String(), result[0].DevicePK)
+		require.Equal(t, "Port-Channel1000.2029", result[0].Intf)
+		require.Equal(t, "activated", result[0].Status)
+		require.Equal(t, "physical", result[0].InterfaceType)
+		require.Equal(t, "gre_over_dia", result[0].CYOAType)
+		require.Equal(t, "dia", result[0].DIAType)
+		require.Equal(t, "vpnv4", result[0].LoopbackType)
+		require.Equal(t, "bgp", result[0].RoutingMode)
+		require.Equal(t, uint64(10_000_000_000), result[0].Bandwidth)
+		require.Equal(t, uint64(5_000_000_000), result[0].Cir)
+		require.Equal(t, uint16(9000), result[0].Mtu)
+		require.Equal(t, uint16(100), result[0].VlanID)
+		require.Equal(t, uint16(42), result[0].NodeSegmentIdx)
+		require.True(t, result[0].UserTunnelEndpoint)
+	})
+
+	t.Run("2-interface V2 device", func(t *testing.T) {
+		t.Parallel()
+
+		devicePK := [32]byte{4, 5, 6, 7}
+		onchain := []serviceability.Device{
+			{
+				PubKey: devicePK,
+				Interfaces: []serviceability.Interface{
+					{
+						Version:       1,
+						Name:          "Loopback255",
+						Status:        serviceability.InterfaceStatusActivated,
+						InterfaceType: serviceability.InterfaceTypeLoopback,
+						LoopbackType:  serviceability.LoopbackTypeIpv4,
+						RoutingMode:   serviceability.RoutingModeStatic,
+						IpNet:         [5]uint8{172, 16, 0, 79, 32},
+					},
+					{
+						Version:       1,
+						Name:          "Ethernet10/1",
+						Status:        serviceability.InterfaceStatusActivated,
+						InterfaceType: serviceability.InterfaceTypePhysical,
+						RoutingMode:   serviceability.RoutingModeBGP,
+						Bandwidth:     1_000_000_000,
+						Cir:           500_000_000,
+						Mtu:           1500,
+						VlanId:        200,
+						IpNet:         [5]uint8{172, 16, 1, 32, 31},
+					},
+				},
+			},
+		}
+
+		result := convertDeviceInterfaces(onchain)
+
+		require.Len(t, result, 2)
+		expectedPK := solana.PublicKeyFromBytes(devicePK[:]).String()
+		require.Equal(t, expectedPK, result[0].DevicePK)
+		require.Equal(t, expectedPK, result[1].DevicePK)
+		require.Equal(t, "Loopback255", result[0].Intf)
+		require.Equal(t, "loopback", result[0].InterfaceType)
+		require.Equal(t, "ipv4", result[0].LoopbackType)
+		require.Equal(t, "static", result[0].RoutingMode)
+		require.Equal(t, "Ethernet10/1", result[1].Intf)
+		require.Equal(t, "physical", result[1].InterfaceType)
+		require.Equal(t, "bgp", result[1].RoutingMode)
+		require.Equal(t, uint64(1_000_000_000), result[1].Bandwidth)
+		require.Equal(t, uint16(1500), result[1].Mtu)
+		require.Equal(t, uint16(200), result[1].VlanID)
+	})
+
+	t.Run("1-interface V3 device with empty FlexAlgoNodeSegments", func(t *testing.T) {
+		t.Parallel()
+
+		devicePK := [32]byte{5, 6, 7, 8}
+		onchain := []serviceability.Device{
+			{
+				PubKey: devicePK,
+				Interfaces: []serviceability.Interface{
+					{
+						Version:              3,
+						Name:                 "Ethernet1/1",
+						Status:               serviceability.InterfaceStatusActivated,
+						InterfaceType:        serviceability.InterfaceTypePhysical,
+						InterfaceCYOA:        serviceability.InterfaceCYOANone,
+						InterfaceDIA:         serviceability.InterfaceDIANone,
+						RoutingMode:          serviceability.RoutingModeBGP,
+						Bandwidth:            100_000_000_000,
+						Cir:                  50_000_000_000,
+						Mtu:                  9216,
+						IpNet:                [5]uint8{10, 1, 0, 1, 30},
+						NodeSegmentIdx:       100,
+						UserTunnelEndpoint:   true,
+						FlexAlgoNodeSegments: []serviceability.FlexAlgoNodeSegment{},
+					},
+				},
+			},
+		}
+
+		result := convertDeviceInterfaces(onchain)
+
+		require.Len(t, result, 1)
+		require.Equal(t, solana.PublicKeyFromBytes(devicePK[:]).String(), result[0].DevicePK)
+		require.Equal(t, "Ethernet1/1", result[0].Intf)
+		require.Equal(t, "activated", result[0].Status)
+		require.Equal(t, "physical", result[0].InterfaceType)
+		require.Equal(t, "none", result[0].CYOAType)
+		require.Equal(t, "none", result[0].DIAType)
+		require.Equal(t, "bgp", result[0].RoutingMode)
+		require.Equal(t, uint64(100_000_000_000), result[0].Bandwidth)
+		require.Equal(t, uint64(50_000_000_000), result[0].Cir)
+		require.Equal(t, uint16(9216), result[0].Mtu)
+		require.Equal(t, uint16(100), result[0].NodeSegmentIdx)
+		require.True(t, result[0].UserTunnelEndpoint)
+	})
+
+	t.Run("1-interface V3 device with non-empty FlexAlgoNodeSegments", func(t *testing.T) {
+		t.Parallel()
+
+		devicePK := [32]byte{6, 7, 8, 9}
+		topologyPK := [32]byte{0xAA, 0xBB, 0xCC, 0xDD}
+		onchain := []serviceability.Device{
+			{
+				PubKey: devicePK,
+				Interfaces: []serviceability.Interface{
+					{
+						Version:            3,
+						Name:               "Ethernet2/1",
+						Status:             serviceability.InterfaceStatusActivated,
+						InterfaceType:      serviceability.InterfaceTypePhysical,
+						RoutingMode:        serviceability.RoutingModeBGP,
+						Bandwidth:          100_000_000_000,
+						Mtu:                9216,
+						NodeSegmentIdx:     200,
+						UserTunnelEndpoint: false,
+						FlexAlgoNodeSegments: []serviceability.FlexAlgoNodeSegment{
+							{Topology: topologyPK, NodeSegmentIdx: 300},
+						},
+					},
+				},
+			},
+		}
+
+		result := convertDeviceInterfaces(onchain)
+
+		// FlexAlgoNodeSegments is not consumed by convertDeviceInterfaces;
+		// the conversion should still succeed with the standard fields.
+		require.Len(t, result, 1)
+		require.Equal(t, solana.PublicKeyFromBytes(devicePK[:]).String(), result[0].DevicePK)
+		require.Equal(t, "Ethernet2/1", result[0].Intf)
+		require.Equal(t, "activated", result[0].Status)
+		require.Equal(t, uint64(100_000_000_000), result[0].Bandwidth)
+		require.Equal(t, uint16(9216), result[0].Mtu)
+		require.Equal(t, uint16(200), result[0].NodeSegmentIdx)
+		require.False(t, result[0].UserTunnelEndpoint)
+	})
+
+	t.Run("2-interface V3 device", func(t *testing.T) {
+		t.Parallel()
+
+		// This is the case that broke production: multi-interface devices with V3 layout
+		// deserialized at wrong offsets starting from the second interface when using
+		// an SDK that didn't know the V3 Interface layout.
+		devicePK := [32]byte{7, 8, 9, 10}
+		topologyPK := [32]byte{0xDE, 0xAD, 0xBE, 0xEF}
+		onchain := []serviceability.Device{
+			{
+				PubKey: devicePK,
+				Interfaces: []serviceability.Interface{
+					{
+						Version:            3,
+						Name:               "Loopback255",
+						Status:             serviceability.InterfaceStatusActivated,
+						InterfaceType:      serviceability.InterfaceTypeLoopback,
+						LoopbackType:       serviceability.LoopbackTypeVpnv4,
+						RoutingMode:        serviceability.RoutingModeStatic,
+						IpNet:              [5]uint8{172, 16, 0, 1, 32},
+						NodeSegmentIdx:     10,
+						UserTunnelEndpoint: false,
+						FlexAlgoNodeSegments: []serviceability.FlexAlgoNodeSegment{
+							{Topology: topologyPK, NodeSegmentIdx: 110},
+						},
+					},
+					{
+						Version:            3,
+						Name:               "Ethernet50/1",
+						Status:             serviceability.InterfaceStatusActivated,
+						InterfaceType:      serviceability.InterfaceTypePhysical,
+						InterfaceCYOA:      serviceability.InterfaceCYOAGREOverFabric,
+						InterfaceDIA:       serviceability.InterfaceDIANone,
+						RoutingMode:        serviceability.RoutingModeBGP,
+						Bandwidth:          400_000_000_000,
+						Cir:                200_000_000_000,
+						Mtu:                9216,
+						VlanId:             500,
+						IpNet:              [5]uint8{10, 0, 0, 1, 31},
+						NodeSegmentIdx:     20,
+						UserTunnelEndpoint: true,
+						FlexAlgoNodeSegments: []serviceability.FlexAlgoNodeSegment{
+							{Topology: topologyPK, NodeSegmentIdx: 120},
+						},
+					},
+				},
+			},
+		}
+
+		result := convertDeviceInterfaces(onchain)
+
+		require.Len(t, result, 2)
+		expectedPK := solana.PublicKeyFromBytes(devicePK[:]).String()
+		// First interface
+		require.Equal(t, expectedPK, result[0].DevicePK)
+		require.Equal(t, "Loopback255", result[0].Intf)
+		require.Equal(t, "activated", result[0].Status)
+		require.Equal(t, "loopback", result[0].InterfaceType)
+		require.Equal(t, "vpnv4", result[0].LoopbackType)
+		require.Equal(t, "static", result[0].RoutingMode)
+		require.Equal(t, uint16(10), result[0].NodeSegmentIdx)
+		require.False(t, result[0].UserTunnelEndpoint)
+		// Second interface — the one that broke in production
+		require.Equal(t, expectedPK, result[1].DevicePK)
+		require.Equal(t, "Ethernet50/1", result[1].Intf)
+		require.Equal(t, "activated", result[1].Status)
+		require.Equal(t, "physical", result[1].InterfaceType)
+		require.Equal(t, "gre_over_fabric", result[1].CYOAType)
+		require.Equal(t, "none", result[1].DIAType)
+		require.Equal(t, "bgp", result[1].RoutingMode)
+		require.Equal(t, uint64(400_000_000_000), result[1].Bandwidth)
+		require.Equal(t, uint64(200_000_000_000), result[1].Cir)
+		require.Equal(t, uint16(9216), result[1].Mtu)
+		require.Equal(t, uint16(500), result[1].VlanID)
+		require.Equal(t, uint16(20), result[1].NodeSegmentIdx)
+		require.True(t, result[1].UserTunnelEndpoint)
+	})
+
+	t.Run("empty device slice", func(t *testing.T) {
+		t.Parallel()
+
+		result := convertDeviceInterfaces([]serviceability.Device{})
+		require.Empty(t, result)
+	})
+
+	t.Run("multiple devices with mixed versions", func(t *testing.T) {
+		t.Parallel()
+
+		devicePK1 := [32]byte{11, 12, 13, 14}
+		devicePK2 := [32]byte{15, 16, 17, 18}
+		devicePK3 := [32]byte{19, 20, 21, 22}
+		topologyPK := [32]byte{0xCA, 0xFE}
+
+		onchain := []serviceability.Device{
+			{
+				// V1 device with 1 interface
+				PubKey: devicePK1,
+				Interfaces: []serviceability.Interface{
+					{
+						Version: 0,
+						Name:    "Loopback0",
+						Status:  serviceability.InterfaceStatusActivated,
+						IpNet:   [5]uint8{10, 0, 0, 1, 32},
+					},
+				},
+			},
+			{
+				// V2 device with 2 interfaces
+				PubKey: devicePK2,
+				Interfaces: []serviceability.Interface{
+					{
+						Version:       1,
+						Name:          "Loopback255",
+						Status:        serviceability.InterfaceStatusActivated,
+						InterfaceType: serviceability.InterfaceTypeLoopback,
+						LoopbackType:  serviceability.LoopbackTypeIpv4,
+						IpNet:         [5]uint8{172, 16, 0, 50, 32},
+					},
+					{
+						Version:       1,
+						Name:          "Ethernet1/1",
+						Status:        serviceability.InterfaceStatusActivated,
+						InterfaceType: serviceability.InterfaceTypePhysical,
+						Bandwidth:     10_000_000_000,
+						Mtu:           9000,
+						IpNet:         [5]uint8{172, 16, 1, 1, 31},
+					},
+				},
+			},
+			{
+				// V3 device with 2 interfaces
+				PubKey: devicePK3,
+				Interfaces: []serviceability.Interface{
+					{
+						Version:       3,
+						Name:          "Loopback255",
+						Status:        serviceability.InterfaceStatusActivated,
+						InterfaceType: serviceability.InterfaceTypeLoopback,
+						LoopbackType:  serviceability.LoopbackTypeVpnv4,
+						IpNet:         [5]uint8{172, 16, 0, 99, 32},
+						FlexAlgoNodeSegments: []serviceability.FlexAlgoNodeSegment{
+							{Topology: topologyPK, NodeSegmentIdx: 500},
+						},
+					},
+					{
+						Version:            3,
+						Name:               "Ethernet50/1",
+						Status:             serviceability.InterfaceStatusActivated,
+						InterfaceType:      serviceability.InterfaceTypePhysical,
+						RoutingMode:        serviceability.RoutingModeBGP,
+						Bandwidth:          100_000_000_000,
+						Mtu:                9216,
+						NodeSegmentIdx:     77,
+						UserTunnelEndpoint: true,
+						FlexAlgoNodeSegments: []serviceability.FlexAlgoNodeSegment{
+							{Topology: topologyPK, NodeSegmentIdx: 600},
+						},
+					},
+				},
+			},
+		}
+
+		result := convertDeviceInterfaces(onchain)
+
+		// 1 + 2 + 2 = 5 total interfaces flattened across 3 devices
+		require.Len(t, result, 5)
+
+		expectedPK1 := solana.PublicKeyFromBytes(devicePK1[:]).String()
+		expectedPK2 := solana.PublicKeyFromBytes(devicePK2[:]).String()
+		expectedPK3 := solana.PublicKeyFromBytes(devicePK3[:]).String()
+
+		// Device 1 (V1): 1 interface
+		require.Equal(t, expectedPK1, result[0].DevicePK)
+		require.Equal(t, "Loopback0", result[0].Intf)
+		require.Equal(t, "static", result[0].RoutingMode) // V1 zero-value
+
+		// Device 2 (V2): 2 interfaces
+		require.Equal(t, expectedPK2, result[1].DevicePK)
+		require.Equal(t, "Loopback255", result[1].Intf)
+		require.Equal(t, "ipv4", result[1].LoopbackType)
+		require.Equal(t, expectedPK2, result[2].DevicePK)
+		require.Equal(t, "Ethernet1/1", result[2].Intf)
+		require.Equal(t, uint64(10_000_000_000), result[2].Bandwidth)
+		require.Equal(t, uint16(9000), result[2].Mtu)
+
+		// Device 3 (V3): 2 interfaces
+		require.Equal(t, expectedPK3, result[3].DevicePK)
+		require.Equal(t, "Loopback255", result[3].Intf)
+		require.Equal(t, "vpnv4", result[3].LoopbackType)
+		require.Equal(t, expectedPK3, result[4].DevicePK)
+		require.Equal(t, "Ethernet50/1", result[4].Intf)
+		require.Equal(t, "bgp", result[4].RoutingMode)
+		require.Equal(t, uint64(100_000_000_000), result[4].Bandwidth)
+		require.Equal(t, uint16(77), result[4].NodeSegmentIdx)
+		require.True(t, result[4].UserTunnelEndpoint)
+	})
+}
+
 // testPubkey generates a deterministic test public key from a seed byte
 func testPubkey(seed byte) solana.PublicKey {
 	var pk [32]byte
