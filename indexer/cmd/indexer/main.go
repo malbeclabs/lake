@@ -318,7 +318,7 @@ func run() error {
 	if solanaEnabled {
 		solanaRPCClient := rpc.NewWithRetries(solanaNetworkConfig.RPCURL, nil)
 		defer solanaRPCClient.Close()
-		solanaRPC = solanaRPCClient
+		solanaRPC = sol.NewTolerantClient(solanaRPCClient)
 	}
 
 	// Initialize ClickHouse client (required)
