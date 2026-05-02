@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"sort"
@@ -81,14 +82,16 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	query := `
+	dzdpDB := fmt.Sprintf("`%s`", a.DZDPDB)
+
+	query := fmt.Sprintf(`
 		WITH geolocated AS (
 			SELECT
 				ls.target_ip AS target_ip,
 				ls.lat AS dzdp_lat,
 				ls.lng AS dzdp_lng,
 				gn.pubkey AS node_pubkey
-			FROM (SELECT * FROM dzdp.location_state FINAL) AS ls
+			FROM (SELECT * FROM %s.location_state FINAL) AS ls
 			JOIN solana_gossip_nodes_current gn ON ls.target_ip = gn.gossip_ip
 			WHERE ls.state = 'decided'
 		),
@@ -141,7 +144,7 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 		)
 		SELECT vote_pubkey, max_stake AS stake_sol, metro_code, asn, asn_org, country_code, country_name
 		FROM deduped
-	`
+	`, dzdpDB)
 
 	start := time.Now()
 	rows, err := a.DB.Query(ctx, query)

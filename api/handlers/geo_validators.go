@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"sort"
@@ -90,14 +91,16 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	query := `
+	dzdpDB := fmt.Sprintf("`%s`", a.DZDPDB)
+
+	query := fmt.Sprintf(`
 		WITH geolocated AS (
 			SELECT
 				ls.target_ip AS target_ip,
 				ls.lat AS dzdp_lat,
 				ls.lng AS dzdp_lng,
 				gn.pubkey AS node_pubkey
-			FROM (SELECT * FROM dzdp.location_state FINAL) AS ls
+			FROM (SELECT * FROM %s.location_state FINAL) AS ls
 			JOIN solana_gossip_nodes_current gn ON ls.target_ip = gn.gossip_ip
 			WHERE ls.state = 'decided'
 		),
@@ -171,7 +174,7 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 			country_code, vname, datacenter, is_dz, dzdp_lat, dzdp_lng
 		FROM deduped
 		ORDER BY max_stake DESC
-	`
+	`, dzdpDB)
 
 	start := time.Now()
 	rows, err := a.DB.Query(ctx, query)
