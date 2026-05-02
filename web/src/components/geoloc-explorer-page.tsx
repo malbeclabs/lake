@@ -1,4 +1,5 @@
 import { useMemo, useState, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import MapGL, { Source, Layer } from 'react-map-gl/maplibre'
 import type { MapLayerMouseEvent } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
@@ -7,6 +8,7 @@ import { useTheme } from '@/hooks/use-theme'
 import { Loader2, AlertCircle } from 'lucide-react'
 import { fetchGeolocExplorer } from '@/lib/api'
 import { createBasemapStyle } from '@/lib/basemap'
+import { DzdpConcentrationView } from './dzdp-concentration-view'
 
 /* ------------------------------------------------------------------ */
 /*  RTT helpers                                                       */
@@ -61,7 +63,68 @@ function createCirclePolygon(
 /*  Component                                                         */
 /* ------------------------------------------------------------------ */
 
+type ViewTab = 'explorer' | 'concentration' | 'validators'
+
+const VIEW_TABS: { key: ViewTab; label: string }[] = [
+  { key: 'explorer', label: 'QA Explorer' },
+  { key: 'concentration', label: 'DZDP Concentration' },
+  { key: 'validators', label: 'DZDP Validators' },
+]
+
 export function GeolocExplorerPage() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const rawView = searchParams.get('view')
+  const view: ViewTab = VIEW_TABS.some((t) => t.key === rawView) ? (rawView as ViewTab) : 'explorer'
+
+  const setView = (v: ViewTab) => {
+    const next = new URLSearchParams(searchParams)
+    if (v === 'explorer') {
+      next.delete('view')
+    } else {
+      next.set('view', v)
+    }
+    setSearchParams(next)
+  }
+
+  return (
+    <div className="flex-1 flex flex-col">
+      {/* View switcher */}
+      <div className="flex items-center gap-1 bg-muted rounded-md p-1 w-fit m-4 mb-0">
+        {VIEW_TABS.map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setView(tab.key)}
+            className={`px-4 py-1.5 text-sm rounded transition-colors ${
+              view === tab.key
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Active view */}
+      {view === 'explorer' && <QAExplorerView />}
+      {view === 'concentration' && <DzdpConcentrationView />}
+      {view === 'validators' && (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <div className="text-lg font-medium mb-2">DZDP Validators</div>
+            <div className="text-sm text-muted-foreground">Coming soon</div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/*  QA Explorer View (original map)                                   */
+/* ------------------------------------------------------------------ */
+
+function QAExplorerView() {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
 
