@@ -6136,7 +6136,7 @@ export interface GeoConcentrationResponse {
 }
 
 export async function fetchGeoConcentration(): Promise<GeoConcentrationResponse> {
-  const res = await apiFetch('/api/geo/concentration')
+  const res = await fetchWithRetry('/api/geo/concentration')
   if (!res.ok) {
     throw new Error('Failed to fetch geo concentration data')
   }

@@ -101,7 +101,7 @@ export function GeolocExplorerPage() {
   const rawView = searchParams.get('view')
   const view: ViewTab = VIEW_TABS.some((t) => t.key === rawView) ? (rawView as ViewTab) : 'explorer'
 
-  const setView = (v: ViewTab) => {
+  const setView = useCallback((v: ViewTab) => {
     const next = new URLSearchParams(searchParams)
     if (v === 'explorer') {
       next.delete('view')
@@ -109,7 +109,7 @@ export function GeolocExplorerPage() {
       next.set('view', v)
     }
     setSearchParams(next)
-  }
+  }, [searchParams, setSearchParams])
 
   return (
     <div className="flex-1 flex flex-col">
