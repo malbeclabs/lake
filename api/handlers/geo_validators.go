@@ -3,12 +3,14 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/proto"
 	"github.com/malbeclabs/lake/api/handlers/dberror"
 	"github.com/malbeclabs/lake/api/metrics"
 )
@@ -175,6 +177,15 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 	rows, err := a.DB.Query(ctx, query)
 	metrics.RecordClickHouseQuery(time.Since(start), err)
 	if err != nil {
+		// Return empty response when DZDP tables aren't available
+		var chErr *proto.Exception
+		if errors.As(err, &chErr) && chErr.Code == 60 {
+			return &GeoValidatorsResponse{
+				Validators:       []GeoValidatorItem{},
+				TierDistribution: []GeoTierDistribution{},
+				MetroBreakdown:   []GeoMetroBreakdown{},
+			}, nil
+		}
 		return nil, err
 	}
 	defer rows.Close()
