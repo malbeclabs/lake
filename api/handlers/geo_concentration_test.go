@@ -146,11 +146,11 @@ func seedGeoTestData(t *testing.T, api *handlers.API) {
 			 best_rtt_ns, state, decided_at)
 		VALUES
 			(now64(9), '10.0.0.1', 'probe-1', 52.37, 4.89,
-			 1000000, 'decided', now64(9)),
+			 1000000, 'honed', now64(9)),
 			(now64(9), '10.0.0.2', 'probe-2', 40.71, -74.01,
-			 2000000, 'decided', now64(9)),
+			 2000000, 'honed', now64(9)),
 			(now64(9), '10.0.0.3', 'probe-3', 52.37, 4.89,
-			 1500000, 'decided', now64(9))
+			 1500000, 'honed', now64(9))
 	`)
 	require.NoError(t, err)
 }

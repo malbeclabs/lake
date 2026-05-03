@@ -93,7 +93,7 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 				gn.pubkey AS node_pubkey
 			FROM (SELECT * FROM %s.location_state FINAL) AS ls
 			JOIN solana_gossip_nodes_current gn ON ls.target_ip = gn.gossip_ip
-			WHERE ls.state = 'decided'
+			WHERE ls.state = 'honed'
 		),
 		enriched AS (
 			SELECT
