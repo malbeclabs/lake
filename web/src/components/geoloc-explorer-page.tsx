@@ -9,6 +9,7 @@ import { useTheme } from '@/hooks/use-theme'
 import { Loader2, AlertCircle } from 'lucide-react'
 import { fetchGeolocExplorer } from '@/lib/api'
 import { DzdpConcentrationView } from './dzdp-concentration-view'
+import { DzdpValidatorView } from './dzdp-validator-view'
 
 /* ------------------------------------------------------------------ */
 /*  Map style                                                         */
@@ -133,14 +134,7 @@ export function GeolocExplorerPage() {
       {/* Active view */}
       {view === 'explorer' && <QAExplorerView />}
       {view === 'concentration' && <DzdpConcentrationView />}
-      {view === 'validators' && (
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center">
-            <div className="text-lg font-medium mb-2">DZDP Validators</div>
-            <div className="text-sm text-muted-foreground">Coming soon</div>
-          </div>
-        </div>
-      )}
+      {view === 'validators' && <DzdpValidatorView />}
     </div>
   )
 }
