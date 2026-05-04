@@ -2902,6 +2902,12 @@ export async function fetchDevicesByContributor(contributorPk: string, limit = 5
 export interface DeviceDetail extends Device {
   metro_name: string
   interfaces: DeviceInterface[]
+  telemetry_agent_version?: string
+  telemetry_agent_commit?: string
+  config_agent_version?: string
+  config_agent_commit?: string
+  controller_version?: string
+  controller_commit?: string
 }
 
 export async function fetchDevice(pk: string): Promise<DeviceDetail> {

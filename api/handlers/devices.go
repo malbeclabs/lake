@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -333,6 +334,12 @@ type DeviceDetail struct {
 	PeakInBps                 float64                 `json:"peak_in_bps"`
 	PeakOutBps                float64                 `json:"peak_out_bps"`
 	Interfaces                []DeviceDetailInterface `json:"interfaces"`
+	TelemetryAgentVersion     string                  `json:"telemetry_agent_version,omitempty"`
+	TelemetryAgentCommit      string                  `json:"telemetry_agent_commit,omitempty"`
+	ConfigAgentVersion        string                  `json:"config_agent_version,omitempty"`
+	ConfigAgentCommit         string                  `json:"config_agent_commit,omitempty"`
+	ControllerVersion         string                  `json:"controller_version,omitempty"`
+	ControllerCommit          string                  `json:"controller_commit,omitempty"`
 }
 
 type DeviceValidatorStats struct {
@@ -522,6 +529,35 @@ func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+
+	// Fetch telemetry agent version from latency sample headers
+	telemetryQuery := `
+		SELECT
+			argMax(agent_version, written_at),
+			argMax(agent_commit, written_at)
+		FROM fact_dz_device_link_latency_sample_header
+		WHERE origin_device_pk = ? AND agent_version != ''
+	`
+	_ = a.envDB(ctx).QueryRow(ctx, telemetryQuery, pk).Scan(
+		&device.TelemetryAgentVersion,
+		&device.TelemetryAgentCommit,
+	)
+
+	// Fetch config agent + controller version from controller_agent_versions proxy table
+	envDB := string(EnvFromContext(r.Context()))
+	configQuery := fmt.Sprintf(`
+		SELECT
+			agent_version, agent_commit,
+			controller_version, controller_commit
+		FROM `+"`%s`"+`.controller_agent_versions FINAL
+		WHERE device_pubkey = ?
+	`, envDB)
+	_ = a.envDB(ctx).QueryRow(ctx, configQuery, pk).Scan(
+		&device.ConfigAgentVersion,
+		&device.ConfigAgentCommit,
+		&device.ControllerVersion,
+		&device.ControllerCommit,
+	)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(device); err != nil {
