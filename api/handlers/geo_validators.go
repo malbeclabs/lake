@@ -97,8 +97,8 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 		WITH geolocated AS (
 			SELECT
 				ls.target_ip AS target_ip,
-				ls.lat AS dzdp_lat,
-				ls.lng AS dzdp_lng,
+				coalesce(ls.lat, 0) AS dzdp_lat,
+				coalesce(ls.lng, 0) AS dzdp_lng,
 				gn.pubkey AS node_pubkey
 			FROM (SELECT * FROM %s.location_state FINAL) AS ls
 			JOIN solana_gossip_nodes_current gn ON ls.target_ip = gn.gossip_ip
@@ -180,9 +180,9 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 	rows, err := a.DB.Query(ctx, query)
 	metrics.RecordClickHouseQuery(time.Since(start), err)
 	if err != nil {
-		// Return empty response when DZDP tables aren't available
+		// Return empty response when DZDP tables aren't available or accessible
 		var chErr *proto.Exception
-		if errors.As(err, &chErr) && chErr.Code == 60 {
+		if errors.As(err, &chErr) && (chErr.Code == 60 || chErr.Code == 497) {
 			return &GeoValidatorsResponse{
 				Validators:       []GeoValidatorItem{},
 				TierDistribution: []GeoTierDistribution{},
