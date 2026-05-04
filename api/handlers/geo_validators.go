@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"net/http"
 	"sort"
@@ -181,9 +182,12 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 	rows, err := a.DB.Query(ctx, query)
 	metrics.RecordClickHouseQuery(time.Since(start), err)
 	if err != nil {
-		// Return empty response when DZDP tables aren't available or accessible
+		// Return empty response when DZDP tables aren't available or accessible.
+		// Code 60 = UNKNOWN_TABLE, Code 81 = UNKNOWN_DATABASE, Code 497 = NOT_ENOUGH_PRIVILEGES.
 		var chErr *proto.Exception
-		if errors.As(err, &chErr) && (chErr.Code == 60 || chErr.Code == 497) {
+		if errors.As(err, &chErr) && (chErr.Code == 60 || chErr.Code == 81 || chErr.Code == 497) {
+			slog.Warn("geo validators: DZDP tables not available, returning empty response",
+				"dzdp_db", dzdpDB, "ch_error_code", chErr.Code, "error", err)
 			return &GeoValidatorsResponse{
 				Validators:       []GeoValidatorItem{},
 				TierDistribution: []GeoTierDistribution{},
