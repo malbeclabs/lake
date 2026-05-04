@@ -33,6 +33,7 @@ function formatSol(v: number): string {
   return v.toFixed(0)
 }
 
+// Deterministic sub-degree offset to visually separate validators at the same metro
 function hashOffset(pubkey: string): [number, number] {
   let h = 0
   for (let i = 0; i < 8; i++) h = (h * 31 + pubkey.charCodeAt(i)) | 0
@@ -332,6 +333,10 @@ export function DzdpValidatorView() {
     return map
   }, [metrosData])
 
+  // Tier filtering is client-side because the API returns tier_distribution aggregates
+  // but not a per-validator tier field. We recompute tiers using the same cumulative-stake
+  // logic the server uses (top 33% = super, 33-66% = high, bottom 34% = mid).
+  // metro/dz filters are server-side via query params.
   const filtered = useMemo(() => {
     if (!data) return []
     let list = data.validators
