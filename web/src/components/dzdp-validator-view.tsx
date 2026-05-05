@@ -71,7 +71,7 @@ function getSortValue(v: GeoValidatorItem, key: SortKey): string | number | bool
 }
 
 function FreshnessIndicator({ dataUpdatedAt }: { dataUpdatedAt: number }) {
-  const [now, setNow] = useState(Date.now())
+  const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 30_000)
