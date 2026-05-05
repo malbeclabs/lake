@@ -5936,7 +5936,7 @@ export interface GeoConcentrationResponse {
 }
 
 export async function fetchGeoConcentration(): Promise<GeoConcentrationResponse> {
-  const res = await apiFetch('/api/geo/concentration')
+  const res = await apiFetch('/api/dz/geoloc/concentration')
   if (!res.ok) {
     throw new Error('Failed to fetch geo concentration data')
   }
@@ -5958,6 +5958,7 @@ export interface GeoValidatorItem {
   asn_org: string
   datacenter: string
   is_dz: boolean
+  tier: string
   dzdp_lat: number
   dzdp_lng: number
 }
@@ -5991,7 +5992,7 @@ export async function fetchGeoValidators(
   if (metro) params.set('metro', metro)
   if (dzFilter) params.set('dz_filter', dzFilter)
   const query = params.toString()
-  const res = await apiFetch(`/api/geo/validators${query ? `?${query}` : ''}`)
+  const res = await apiFetch(`/api/dz/geoloc/validators${query ? `?${query}` : ''}`)
   if (!res.ok) {
     throw new Error('Failed to fetch geo validators data')
   }

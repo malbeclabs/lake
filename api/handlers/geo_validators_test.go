@@ -22,7 +22,7 @@ func TestGetGeoValidators(t *testing.T) {
 	createDZDPLocationStateTable(t, api)
 
 	t.Run("empty response", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/dz/geo/validators", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/dz/geoloc/validators", nil)
 		w := httptest.NewRecorder()
 		api.GetGeoValidators(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -38,7 +38,7 @@ func TestGetGeoValidators(t *testing.T) {
 	seedGeoTestData(t, api)
 
 	t.Run("returns all validators", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/dz/geo/validators", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/dz/geoloc/validators", nil)
 		w := httptest.NewRecorder()
 		api.GetGeoValidators(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -84,7 +84,7 @@ func TestGetGeoValidators(t *testing.T) {
 	})
 
 	t.Run("filter by metro", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/dz/geo/validators?metro=ams", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/dz/geoloc/validators?metro=ams", nil)
 		w := httptest.NewRecorder()
 		api.GetGeoValidators(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -106,7 +106,7 @@ func TestGetGeoValidators(t *testing.T) {
 	})
 
 	t.Run("filter by dz_filter on", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/dz/geo/validators?dz_filter=on", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/dz/geoloc/validators?dz_filter=on", nil)
 		w := httptest.NewRecorder()
 		api.GetGeoValidators(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -129,7 +129,7 @@ func TestGetGeoValidators(t *testing.T) {
 	})
 
 	t.Run("filter by dz_filter off", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/dz/geo/validators?dz_filter=off", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/dz/geoloc/validators?dz_filter=off", nil)
 		w := httptest.NewRecorder()
 		api.GetGeoValidators(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)

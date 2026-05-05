@@ -29,6 +29,7 @@ type GeoValidatorItem struct {
 	ASNOrg      string  `json:"asn_org"`
 	Datacenter  string  `json:"datacenter"`
 	IsDZ        bool    `json:"is_dz"`
+	Tier        string  `json:"tier"`
 	DZDPLat     float64 `json:"dzdp_lat"`
 	DZDPLng     float64 `json:"dzdp_lng"`
 }
@@ -143,7 +144,7 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 					arraySort(
 						(x, y) -> y,
 						groupArray(m.code),
-						groupArray(sqrt(pow(e.dzdp_lat - m.latitude, 2) + pow(e.dzdp_lng - m.longitude, 2)))
+						groupArray(geoDistance(e.dzdp_lng, e.dzdp_lat, m.longitude, m.latitude))
 					), 1
 				) AS metro_code
 			FROM enriched e
@@ -207,6 +208,25 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 		return nil, err
 	}
 
+	// Assign tiers globally (before filtering) so a validator's tier reflects
+	// its position among all validators, not just the filtered subset.
+	// Validators are already sorted by stake DESC from the query.
+	var globalStake float64
+	for _, v := range allValidators {
+		globalStake += v.StakeSol
+	}
+	var cumStake float64
+	for i := range allValidators {
+		if globalStake > 0 && cumStake/globalStake < 0.333 {
+			allValidators[i].Tier = "super"
+		} else if globalStake > 0 && cumStake/globalStake < 0.666 {
+			allValidators[i].Tier = "high"
+		} else {
+			allValidators[i].Tier = "mid"
+		}
+		cumStake += allValidators[i].StakeSol
+	}
+
 	// Apply filters
 	filtered := make([]GeoValidatorItem, 0, len(allValidators))
 	for _, v := range allValidators {
@@ -222,38 +242,25 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 		filtered = append(filtered, v)
 	}
 
-	// Compute totals from all filtered validators
+	// Compute totals from filtered validators
 	var totalStake float64
 	for _, v := range filtered {
 		totalStake += v.StakeSol
 	}
 
-	// Compute stake_pct for each validator
+	// Compute stake_pct for each validator relative to filtered total
 	for i := range filtered {
 		if totalStake > 0 {
 			filtered[i].StakePct = math.Round(filtered[i].StakeSol/totalStake*10000) / 100
 		}
 	}
 
-	// Tier distribution: validators are already sorted by stake DESC from the query.
-	// "super" = cumulative stake before this validator < 33.3%
-	// "high"  = cumulative stake before this validator < 66.6%
-	// "mid"   = rest
+	// Tier distribution from filtered set using globally-assigned tiers
 	tierStake := map[string]float64{}
 	tierCount := map[string]int{}
-	var cumStake float64
 	for _, v := range filtered {
-		var tier string
-		if totalStake > 0 && cumStake/totalStake < 0.333 {
-			tier = "super"
-		} else if totalStake > 0 && cumStake/totalStake < 0.666 {
-			tier = "high"
-		} else {
-			tier = "mid"
-		}
-		cumStake += v.StakeSol
-		tierStake[tier] += v.StakeSol
-		tierCount[tier]++
+		tierStake[v.Tier] += v.StakeSol
+		tierCount[v.Tier]++
 	}
 	tierDist := make([]GeoTierDistribution, 0, 3)
 	for _, tier := range []string{"super", "high", "mid"} {

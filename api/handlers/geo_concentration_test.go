@@ -165,7 +165,7 @@ func TestGetGeoConcentration(t *testing.T) {
 	createDZDPLocationStateTable(t, api)
 
 	t.Run("empty response", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/dz/geo/concentration", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/dz/geoloc/concentration", nil)
 		w := httptest.NewRecorder()
 		api.GetGeoConcentration(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -182,7 +182,7 @@ func TestGetGeoConcentration(t *testing.T) {
 	seedGeoTestData(t, api)
 
 	t.Run("returns aggregated data", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/dz/geo/concentration", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/dz/geoloc/concentration", nil)
 		w := httptest.NewRecorder()
 		api.GetGeoConcentration(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)

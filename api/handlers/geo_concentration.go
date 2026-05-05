@@ -123,7 +123,7 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 					arraySort(
 						(x, y) -> y,
 						groupArray(m.code),
-						groupArray(sqrt(pow(e.dzdp_lat - m.latitude, 2) + pow(e.dzdp_lng - m.longitude, 2)))
+						groupArray(geoDistance(e.dzdp_lng, e.dzdp_lat, m.longitude, m.latitude))
 					), 1
 				) AS metro_code
 			FROM enriched e
