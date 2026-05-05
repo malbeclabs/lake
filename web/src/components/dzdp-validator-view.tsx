@@ -231,7 +231,6 @@ function StakeTierBreakdown({ data, metroCoords, donutMode, setDonutMode }: {
   const topMetros = useMemo(() =>
     [...data.metro_breakdown]
       .sort((a, b) => b.stake_sol - a.stake_sol)
-      .slice(0, 10)
       .map(m => ({
         ...m,
         name: metroCoords.get(m.metro_code)?.name || m.metro_code,
@@ -280,11 +279,11 @@ function StakeTierBreakdown({ data, metroCoords, donutMode, setDonutMode }: {
         )}
       </div>
 
-      <div className="rounded-lg border border-border bg-card overflow-hidden">
-        <div className="px-5 py-3 border-b border-border">
-          <h3 className="text-sm font-medium">Top Metros by Stake</h3>
+      <div className="rounded-lg border border-border bg-card overflow-hidden flex flex-col max-h-[500px]">
+        <div className="px-5 py-3 border-b border-border flex-shrink-0">
+          <h3 className="text-sm font-medium">Metros by Stake</h3>
         </div>
-        <div className="px-5 py-4">
+        <div className="px-5 py-4 overflow-y-auto">
           {topMetros.length > 0 ? (
             <ResponsiveContainer width="100%" height={topMetros.length * 28 + 20}>
               <BarChart data={topMetros} layout="vertical" margin={{ top: 0, right: 40, left: 0, bottom: 0 }}>
