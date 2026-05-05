@@ -354,6 +354,7 @@ func main() {
 		Database:      config.Database(),
 		ShredderDB:    config.GetShredderDB(),
 		PublisherDB:   config.GetPublisherDB(),
+		DZDPDB:        config.GetDZDPDB(),
 		PgPool:        config.PgPool,
 		Neo4jClient:   config.Neo4jClient,
 		Neo4jDatabase: config.Neo4jDatabase,
@@ -594,6 +595,8 @@ func main() {
 			r.Get("/api/dz/geoloc/probes", api.GetGeolocProbes)
 			r.Get("/api/dz/geoloc/users", api.GetGeolocUsers)
 			r.Get("/api/dz/geoloc/explorer", api.GetGeolocExplorer)
+			r.Get("/api/dz/geoloc/concentration", api.GetGeoConcentration)
+			r.Get("/api/dz/geoloc/validators", api.GetGeoValidators)
 		})
 
 		// Solana entity routes

@@ -114,6 +114,12 @@ func (a *Activities) entries() []cacheEntry {
 		{"bulk device metrics (issues)", "bulk_device_metrics_issues", func(ctx context.Context) (any, error) {
 			return api.FetchBulkDeviceMetricsIssuesData(ctx)
 		}},
+		{"geo concentration", "geo_concentration", func(ctx context.Context) (any, error) {
+			return api.FetchGeoConcentrationData(ctx)
+		}},
+		{"geo validators", "geo_validators", func(ctx context.Context) (any, error) {
+			return api.FetchGeoValidatorsData(ctx, "", "")
+		}},
 	}
 }
 

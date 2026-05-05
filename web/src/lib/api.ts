@@ -5896,6 +5896,109 @@ export async function fetchGeolocExplorer(hours?: number): Promise<GeolocExplore
   return res.json()
 }
 
+// Geo Concentration (DZDP)
+
+export interface GeoConcentrationHeroStats {
+  validators_measured: number
+  stake_top_two_metros_pct: number
+  anchor_points: number
+  stake_max_asn_pct: number
+}
+
+export interface GeoConcentrationMetro {
+  metro_code: string
+  validators: number
+  stake_sol: number
+  stake_pct: number
+}
+
+export interface GeoConcentrationCountry {
+  country_code: string
+  country_name: string
+  validators: number
+  stake_sol: number
+  stake_pct: number
+}
+
+export interface GeoConcentrationASN {
+  asn: number
+  asn_org: string
+  validators: number
+  stake_sol: number
+  stake_pct: number
+}
+
+export interface GeoConcentrationResponse {
+  hero_stats: GeoConcentrationHeroStats
+  metros: GeoConcentrationMetro[]
+  countries: GeoConcentrationCountry[]
+  asns: GeoConcentrationASN[]
+}
+
+export async function fetchGeoConcentration(): Promise<GeoConcentrationResponse> {
+  const res = await apiFetch('/api/dz/geoloc/concentration')
+  if (!res.ok) {
+    throw new Error('Failed to fetch geo concentration data')
+  }
+  return res.json()
+}
+
+// Geo Validators (DZDP)
+
+export interface GeoValidatorItem {
+  vote_pubkey: string
+  node_pubkey: string
+  name: string
+  stake_sol: number
+  stake_pct: number
+  commission: number
+  metro_code: string
+  country_code: string
+  asn: number
+  asn_org: string
+  datacenter: string
+  is_dz: boolean
+  tier: string
+  dzdp_lat: number
+  dzdp_lng: number
+}
+
+export interface GeoTierDistribution {
+  tier: string
+  validators: number
+  stake_pct: number
+}
+
+export interface GeoMetroBreakdown {
+  metro_code: string
+  validators: number
+  stake_sol: number
+  stake_pct: number
+}
+
+export interface GeoValidatorsResponse {
+  total_validators: number
+  total_stake_sol: number
+  validators: GeoValidatorItem[]
+  tier_distribution: GeoTierDistribution[]
+  metro_breakdown: GeoMetroBreakdown[]
+}
+
+export async function fetchGeoValidators(
+  metro?: string,
+  dzFilter?: 'on' | 'off'
+): Promise<GeoValidatorsResponse> {
+  const params = new URLSearchParams()
+  if (metro) params.set('metro', metro)
+  if (dzFilter) params.set('dz_filter', dzFilter)
+  const query = params.toString()
+  const res = await apiFetch(`/api/dz/geoloc/validators${query ? `?${query}` : ''}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch geo validators data')
+  }
+  return res.json()
+}
+
 // Access Passes
 
 export interface AccessPass {
