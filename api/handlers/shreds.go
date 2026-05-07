@@ -868,13 +868,28 @@ func (a *API) GetShredEpochRevenue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
-	// Revenue per epoch is the sum of per-seat prices for every seat allocated
-	// for that active_epoch. Summing batch_allocate.amount_usdc directly misses
-	// seats that get allocated via instant `allocate_seat` (no Charged log) and
-	// pre-new-style `batch_allocate` events (parser doesn't extract amount).
-	// Joining seats history with metro/device price history at each
-	// active_epoch reconstructs the charge using the same price formula the
-	// list endpoint uses (override, else metro_price + device_premium).
+	// Revenue per epoch is the sum of per-seat USDC actually charged. The
+	// on-chain protocol prorates instant-allocated seats by remaining slots in
+	// the epoch (eab207d/onchain: compute prorated service), so
+	// `last_usdc_price_dollars` and `subscription_start_slot` on ClientSeat are
+	// the authoritative inputs for the charged amount:
+	//
+	//     charged = last_price_dollars * (epoch_end_slot - start_slot) / SLOTS_PER_EPOCH
+	//
+	// where epoch_end_slot = (active_epoch + 1) * SLOTS_PER_EPOCH. For
+	// batch-allocated seats, start_slot = epoch_start, so this collapses to the
+	// full epoch price; for instant-allocated seats it captures the actual
+	// prorated charge.
+	//
+	// Pre-upgrade seats (or post-deactivation snapshots) have last_price = 0
+	// and start_slot = 0; we fall back to the legacy
+	// override-or-metro+device-premium formula, which matches what those seats
+	// were actually charged before the on-chain proration upgrade.
+	//
+	// Note: max() over snapshots for a given (pk, active_epoch) selects the
+	// allocation-time values rather than the deactivation snapshot (which
+	// zeroes both fields).
+	const slotsPerEpoch = 432000
 	query := `
 		WITH seat_per_epoch AS (
 			SELECT
@@ -882,7 +897,9 @@ func (a *API) GetShredEpochRevenue(w http.ResponseWriter, r *http.Request) {
 				active_epoch,
 				argMax(device_key, snapshot_ts) AS device_key,
 				argMax(has_price_override, snapshot_ts) AS has_override,
-				argMax(override_usdc_price_dollars, snapshot_ts) AS override_price
+				argMax(override_usdc_price_dollars, snapshot_ts) AS override_price,
+				max(subscription_start_slot) AS start_slot,
+				max(last_usdc_price_dollars) AS last_price
 			FROM dim_dz_shred_client_seats_history
 			WHERE is_deleted = 0 AND active_epoch > 0
 			GROUP BY pk, active_epoch
@@ -905,33 +922,42 @@ func (a *API) GetShredEpochRevenue(w http.ResponseWriter, r *http.Request) {
 			FROM dim_dz_shred_metro_histories_history
 			WHERE is_deleted = 0
 			GROUP BY exchange_key, current_epoch
+		),
+		seat_charges AS (
+			SELECT
+				s.active_epoch AS epoch,
+				CASE
+					-- Prorated path: stored on-chain price scaled by slots active.
+					WHEN s.last_price > 0 AND s.start_slot > 0 THEN
+						toFloat64(s.last_price) * greatest(
+							least(
+								toInt64((s.active_epoch + 1) * ?) - toInt64(s.start_slot),
+								toInt64(?)
+							),
+							toInt64(0)
+						) / ?
+					-- Legacy fallback: full epoch price.
+					WHEN s.has_override = 1 THEN toFloat64(s.override_price)
+					ELSE toFloat64(coalesce(m.price, 0)) + toFloat64(coalesce(d.premium, 0))
+				END AS charged_dollars
+			FROM seat_per_epoch s
+			LEFT JOIN device_per_epoch d
+				ON s.device_key = d.device_key AND d.epoch = s.active_epoch
+			LEFT JOIN metro_per_epoch m
+				ON d.metro_key = m.exchange_key AND m.epoch = s.active_epoch
 		)
 		SELECT
-			s.active_epoch AS epoch,
-			toFloat64(sum(
-				CASE
-					WHEN s.has_override = 1 THEN toInt64(s.override_price)
-					ELSE toInt64(coalesce(m.price, 0)) + toInt64(coalesce(d.premium, 0))
-				END
-			)) AS total_usdc,
-			toFloat64(sum(
-				CASE
-					WHEN s.has_override = 1 THEN toInt64(s.override_price)
-					ELSE toInt64(coalesce(m.price, 0)) + toInt64(coalesce(d.premium, 0))
-				END
-			)) AS total_dollars,
+			epoch,
+			sum(charged_dollars) AS total_usdc,
+			sum(charged_dollars) AS total_dollars,
 			toUInt64(count()) AS payment_count
-		FROM seat_per_epoch s
-		LEFT JOIN device_per_epoch d
-			ON s.device_key = d.device_key AND d.epoch = s.active_epoch
-		LEFT JOIN metro_per_epoch m
-			ON d.metro_key = m.exchange_key AND m.epoch = s.active_epoch
+		FROM seat_charges
 		GROUP BY epoch
 		ORDER BY epoch DESC
 		LIMIT ?
 	`
 
-	rows, err := a.envDB(ctx).Query(ctx, query, limit)
+	rows, err := a.envDB(ctx).Query(ctx, query, slotsPerEpoch, slotsPerEpoch, slotsPerEpoch, limit)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 

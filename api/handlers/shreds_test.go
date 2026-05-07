@@ -602,3 +602,121 @@ func findSeat(items []handlers.ShredClientSeatItem, pk string) *handlers.ShredCl
 	}
 	return nil
 }
+
+func TestGetShredEpochRevenue_Prorated(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	ctx := t.Context()
+
+	// Devices and metros for the legacy-fallback path.
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_metro_histories_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, exchange_key, is_current_price_finalized, total_initialized_devices,
+		 current_epoch, current_usdc_price_dollars)
+		VALUES
+		('mh-100', now(), now(), generateUUIDv4(), 0, 1,
+		 'mh-100', 'metro-x', 1, 1, 100, 10)
+	`))
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_device_histories_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, device_key, is_enabled, has_settled_seats, metro_exchange_key,
+		 active_granted_seats, active_total_available_seats,
+		 current_epoch, current_requested_seat_count, current_granted_seat_count,
+		 current_total_available_seats, current_usdc_metro_premium_dollars)
+		VALUES
+		('dh-100', now(), now(), generateUUIDv4(), 0, 1,
+		 'dh-100', 'dev-x', 1, 1, 'metro-x',
+		 4, 10, 100, 4, 4, 10, -2)
+	`))
+
+	// Four seats in active_epoch 100 with slots_per_epoch = 432000 (epoch start
+	// at 43_200_000, epoch end at 43_632_000):
+	//   batch:    start = epoch_start, last_price=15  → charged = 15.0  (full epoch)
+	//   instant:  start = epoch_start+216000, last_price=20 → charged = 10.0 (half epoch)
+	//   legacy:   start=0, last_price=0, no override     → charged = 10 + (-2) = 8.0
+	//   override: start=0, last_price=0, override=25      → charged = 25.0
+	// Expected total: 58.0, payment_count = 4.
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_client_seats_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, device_key, client_ip, tenure_epochs, funded_epoch, active_epoch,
+		 has_price_override, override_usdc_price_dollars, escrow_count, funding_authority_key,
+		 subscription_start_slot, last_usdc_price_dollars)
+		VALUES
+		('seat-batch', now(), now(), generateUUIDv4(), 0, 1,
+		 'seat-batch', 'dev-x', '10.0.0.1', 1, 99, 100,
+		 0, 0, 1, 'funder-1',
+		 43200000, 15),
+		('seat-instant', now(), now(), generateUUIDv4(), 0, 2,
+		 'seat-instant', 'dev-x', '10.0.0.2', 1, 100, 100,
+		 0, 0, 1, 'funder-2',
+		 43416000, 20),
+		('seat-legacy', now(), now(), generateUUIDv4(), 0, 3,
+		 'seat-legacy', 'dev-x', '10.0.0.3', 1, 100, 100,
+		 0, 0, 1, 'funder-3',
+		 0, 0),
+		('seat-override', now(), now(), generateUUIDv4(), 0, 4,
+		 'seat-override', 'dev-x', '10.0.0.4', 1, 100, 100,
+		 1, 25, 1, 'funder-4',
+		 0, 0)
+	`))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/epoch-revenue", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredEpochRevenue(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var items []handlers.ShredEpochRevenueItem
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&items))
+	require.Len(t, items, 1)
+	assert.Equal(t, uint64(100), items[0].Epoch)
+	assert.InDelta(t, 58.0, items[0].TotalDollars, 1e-6)
+	assert.InDelta(t, 58.0, items[0].TotalUSDC, 1e-6)
+	assert.Equal(t, uint64(4), items[0].PaymentCount)
+}
+
+// Sanity-check that a seat which deactivated mid-epoch (last_price/start_slot
+// zeroed in its latest snapshot) still contributes the original prorated
+// charge — max() over snapshots picks the allocation-time values, not the
+// post-deactivation zeros.
+func TestGetShredEpochRevenue_DeactivatedSeatChargeRetained(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	ctx := t.Context()
+
+	// Seat allocated at epoch start (full price), then deactivated. Two
+	// snapshots: allocation-time with values, then a later snapshot with
+	// zeros. Both rows have active_epoch=200 and is_deleted=0.
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_client_seats_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, device_key, client_ip, tenure_epochs, funded_epoch, active_epoch,
+		 has_price_override, override_usdc_price_dollars, escrow_count, funding_authority_key,
+		 subscription_start_slot, last_usdc_price_dollars)
+		VALUES
+		('seat-cycled', toDateTime('2026-01-01 00:00:00'), now(), generateUUIDv4(), 0, 1,
+		 'seat-cycled', 'dev-x', '10.0.0.5', 1, 199, 200,
+		 0, 0, 1, 'funder-5',
+		 86400000, 30),
+		('seat-cycled', toDateTime('2026-01-02 00:00:00'), now(), generateUUIDv4(), 0, 2,
+		 'seat-cycled', 'dev-x', '10.0.0.5', 1, 199, 200,
+		 0, 0, 1, 'funder-5',
+		 0, 0)
+	`))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/epoch-revenue", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredEpochRevenue(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var items []handlers.ShredEpochRevenueItem
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&items))
+	require.Len(t, items, 1)
+	assert.Equal(t, uint64(200), items[0].Epoch)
+	// Allocated at epoch_start=200*432000=86400000, full epoch → 30.0.
+	assert.InDelta(t, 30.0, items[0].TotalDollars, 1e-6)
+}
