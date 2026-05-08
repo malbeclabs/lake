@@ -30,6 +30,7 @@ import (
 	v1 "github.com/malbeclabs/lake/api/v1"
 	"github.com/malbeclabs/lake/api/worker"
 	slackbot "github.com/malbeclabs/lake/slack/bot"
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/slack-go/slack/socketmode"
 )
@@ -221,7 +222,12 @@ func main() {
 	noWorkerFlag := flag.Bool("no-worker", false, "Disable embedded page cache worker (for prod where it runs standalone)")
 	noDevnetFlag := flag.Bool("no-devnet", false, "Disable devnet database connection")
 	noTestnetFlag := flag.Bool("no-testnet", false, "Disable testnet database connection")
+	verboseFlag := flag.Bool("v", false, "Verbose logging (debug level)")
 	flag.Parse()
+
+	// Install the shared logger as the slog default. The handler redacts
+	// credentials embedded in URLs so api logs match indexer/admin behavior.
+	slog.SetDefault(logger.New(*verboseFlag))
 
 	// Set env vars so config.Load() picks them up (flags take precedence over env)
 	if *useRemoteFlag {
