@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/malbeclabs/lake/api/solana"
+	"github.com/malbeclabs/lake/utils/pkg/redact"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -203,7 +204,7 @@ func (a *API) GetDZLedger(w http.ResponseWriter, r *http.Request) {
 		logError("DZ ledger RPC request failed", "error", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		_ = json.NewEncoder(w).Encode(LedgerResponse{Error: err.Error()})
+		_ = json.NewEncoder(w).Encode(LedgerResponse{Error: redact.Error(err)})
 		return
 	}
 
@@ -227,7 +228,7 @@ func (a *API) GetSolanaLedger(w http.ResponseWriter, r *http.Request) {
 		logError("Solana ledger RPC request failed", "error", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		_ = json.NewEncoder(w).Encode(LedgerResponse{Error: err.Error()})
+		_ = json.NewEncoder(w).Encode(LedgerResponse{Error: redact.Error(err)})
 		return
 	}
 
@@ -319,7 +320,7 @@ func (a *API) GetValidatorPerformance(w http.ResponseWriter, r *http.Request) {
 		logError("validator performance query failed", "error", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(ValidatorPerfResponse{Error: err.Error()})
+		_ = json.NewEncoder(w).Encode(ValidatorPerfResponse{Error: redact.Error(err)})
 		return
 	}
 
