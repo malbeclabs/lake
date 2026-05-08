@@ -325,7 +325,10 @@ function addBucketIssues(b: LinkMetricsBucket, issues: Set<string>) {
       if (r.includes('interface error')) issues.add('interface_errors')
       if (r.includes('discard')) issues.add('discards')
       if (r.includes('carrier')) issues.add('carrier_transitions')
-      if (r.includes('One-sided')) issues.add('no_data')
+      // Skip one-sided on the collecting bucket: side reporters write probes
+      // independently and being a few seconds out of sync at the bucket
+      // boundary is normal, not an outage signal.
+      if (r.includes('One-sided') && !b.status.collecting) issues.add('no_data')
     }
   }
   // Also check traffic data directly (for FCS errors and utilization not in reasons)
