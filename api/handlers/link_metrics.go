@@ -841,7 +841,7 @@ func (a *API) GetBulkLinkMetrics(w http.ResponseWriter, r *http.Request) {
 	issuesOnly := q.Get("has_issues") == "true"
 	resp, err := a.fetchBulkLinkMetrics(ctx, params, include, issuesOnly)
 	if err != nil {
-		slog.Error("error fetching bulk link metrics", "error", err)
+		logError("error fetching bulk link metrics", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
