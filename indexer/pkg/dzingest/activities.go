@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 
 	dzgeoloc "github.com/malbeclabs/lake/indexer/pkg/dz/geolocation"
 	dzgraph "github.com/malbeclabs/lake/indexer/pkg/dz/graph"
@@ -14,10 +15,16 @@ import (
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
-	"go.temporal.io/sdk/temporal"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+// telemUsageErrorAfterFailures is the number of consecutive failed telemetry
+// usage refreshes after which we escalate the log to ERROR. Below the
+// threshold, transient failures (InfluxDB rate limits, per-query memory
+// exhaustion) are logged at WARN. Cadence is ~60s per workflow iteration, so
+// 3 means ~3 minutes of sustained failure before we page anyone.
+const telemUsageErrorAfterFailures = 3
 
 // Activities holds dependencies for DZ ingest activities.
 type Activities struct {
@@ -33,6 +40,8 @@ type Activities struct {
 	GraphStore     *dzgraph.Store     // nil when Neo4j is not configured
 	ISISSource     isis.Source        // nil when ISIS is not enabled
 	ISISStore      *isis.Store        // nil when ISIS is not enabled
+
+	telemUsageFailures atomic.Int32
 }
 
 // RefreshServiceability fetches the latest DZ serviceability state from RPC
@@ -93,30 +102,42 @@ func (a *Activities) RefreshTelemetryLatency(ctx context.Context) error {
 
 // RefreshTelemetryUsage fetches device interface counters from InfluxDB
 // and writes them to ClickHouse fact tables. No-op if InfluxDB is not configured.
+//
+// Always returns nil to Temporal. Transient InfluxDB failures (rate limits,
+// per-query memory exhaustion) don't benefit from immediate retries — the next
+// workflow iteration (~60s) is the natural retry cadence. Failures are
+// recorded to the ingestion log and tracked via telemUsageFailures: WARN
+// below the threshold, ERROR after telemUsageErrorAfterFailures consecutive
+// failures so a sustained outage still surfaces.
 func (a *Activities) RefreshTelemetryUsage(ctx context.Context) error {
 	if a.TelemUsage == nil {
 		a.IngestionLog.WrapSkipped(ctx, "dzingest", "RefreshTelemetryUsage", a.Network)
 		return nil
 	}
-	return a.IngestionLog.Wrap(ctx, "dzingest", "RefreshTelemetryUsage", a.Network, func() (ingestionlog.RefreshResult, error) {
+	err := a.IngestionLog.Wrap(ctx, "dzingest", "RefreshTelemetryUsage", a.Network, func() (ingestionlog.RefreshResult, error) {
 		result, err := a.TelemUsage.Refresh(ctx)
 		if err != nil {
-			// InfluxDB enforces a rate limit: total query duration in the last 30s cannot
-			// exceed 25 minutes. When this is hit, retrying immediately makes things worse
-			// by consuming more of the rate limit budget. Return non-retryable so Temporal
-			// skips retries and waits for the next natural workflow cycle instead.
-			if status.Code(err) == codes.ResourceExhausted {
-				a.Log.Warn("influxdb rate limit hit, skipping retries until next cycle", "error", err)
-				return result, temporal.NewNonRetryableApplicationError(
-					fmt.Sprintf("telemetry usage refresh: %v", err),
-					"InfluxResourceExhausted",
-					err,
-				)
-			}
 			return result, fmt.Errorf("telemetry usage refresh: %w", err)
 		}
 		return result, nil
 	})
+	if err != nil {
+		n := a.telemUsageFailures.Add(1)
+		args := []any{"consecutive_failures", n, "error", err}
+		// InfluxDB rate limit: total query duration in the last 30s cannot exceed
+		// 25 minutes. Note it explicitly so the cause is obvious in logs.
+		if status.Code(err) == codes.ResourceExhausted {
+			args = append(args, "cause", "influxdb_rate_limit")
+		}
+		if n >= telemUsageErrorAfterFailures {
+			a.Log.Error("telemetry usage refresh failed", args...)
+		} else {
+			a.Log.Warn("telemetry usage refresh failed", args...)
+		}
+		return nil
+	}
+	a.telemUsageFailures.Store(0)
+	return nil
 }
 
 // SyncGraph syncs the Neo4j topology graph from ClickHouse state.
