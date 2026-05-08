@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -225,7 +224,7 @@ func (a *API) GetDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := a.fetchDeviceMetrics(ctx, devicePK, params, include)
 	if err != nil {
-		slog.Error("error fetching device metrics", "error", err, "device_pk", devicePK)
+		logError("error fetching device metrics", "error", err, "device_pk", devicePK)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -815,7 +814,7 @@ func (a *API) GetBulkDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := a.fetchBulkDeviceMetrics(ctx, params, include)
 	if err != nil {
-		slog.Error("error fetching bulk device metrics", "error", err)
+		logError("error fetching bulk device metrics", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
