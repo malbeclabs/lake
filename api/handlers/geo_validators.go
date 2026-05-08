@@ -90,7 +90,7 @@ func isDefaultGeoValidatorsRequest(r *http.Request) bool {
 }
 
 func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string) (*GeoValidatorsResponse, error) {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	dzdpDB := fmt.Sprintf("`%s`", a.DZDPDB)

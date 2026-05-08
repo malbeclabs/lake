@@ -80,7 +80,7 @@ func (a *API) GetGeoConcentration(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationResponse, error) {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	dzdpDB := fmt.Sprintf("`%s`", a.DZDPDB)
