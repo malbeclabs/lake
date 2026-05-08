@@ -53,9 +53,10 @@ function StatCard({ label, value, warning }: { label: string; value: React.React
   )
 }
 
-function AnchorPointMap({ data, metroCoords }: {
+function AnchorPointMap({ data, metroCoords, isLoadingMetros }: {
   data: GeoConcentrationResponse
   metroCoords: Map<string, { lat: number; lng: number; name: string }>
+  isLoadingMetros: boolean
 }) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
@@ -105,7 +106,7 @@ function AnchorPointMap({ data, metroCoords }: {
       <div className="px-5 py-3 border-b border-border">
         <h3 className="text-sm font-medium">Anchor Point Distribution</h3>
       </div>
-      <div className="relative h-[400px]">
+      <div className="relative h-[clamp(250px,40vh,500px)]">
         <MapGL
           initialViewState={{ longitude: 0, latitude: 20, zoom: 1.5 }}
           style={{ width: '100%', height: '100%' }}
@@ -131,7 +132,14 @@ function AnchorPointMap({ data, metroCoords }: {
         {pointsGeoJSON.features.length === 0 && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div className="bg-card/90 backdrop-blur-sm border border-border rounded-lg px-6 py-4 text-center">
-              <div className="text-sm text-muted-foreground">No metro coordinate data available</div>
+              {isLoadingMetros ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Loading metro coordinate data…</span>
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground">No metro coordinate data available</div>
+              )}
             </div>
           </div>
         )}
@@ -195,7 +203,7 @@ function AsnList({ data }: { data: GeoConcentrationResponse }) {
       <div className="px-5 py-3 border-b border-border">
         <h3 className="text-sm font-medium">ASN Concentration</h3>
       </div>
-      <div className="divide-y divide-border">
+      <div className="divide-y divide-border overflow-y-auto max-h-[50vh]">
         {sorted.map((asn) => {
           const concentrated = asn.stake_pct > WARN_ASN_PCT
           return (
@@ -254,7 +262,7 @@ export function DzdpConcentrationView() {
     refetchInterval: 60_000,
   })
 
-  const { data: metrosData } = useQuery({
+  const { data: metrosData, isLoading: isLoadingMetros } = useQuery({
     queryKey: ['metros-for-concentration'],
     queryFn: () => fetchMetros(500),
   })
@@ -292,7 +300,7 @@ export function DzdpConcentrationView() {
   if (!data) return null
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 space-y-4">
+    <div className="flex-1 overflow-y-auto min-h-0 p-4 space-y-4">
       <div className="grid grid-cols-1 xs:grid-cols-2 xl:grid-cols-4 gap-3">
         <StatCard label="Validators Measured" value={data.hero_stats.validators_measured.toLocaleString()} />
         <StatCard label="Top 2 Metros Stake" value={formatPct(data.hero_stats.stake_top_two_metros_pct)}
@@ -302,7 +310,7 @@ export function DzdpConcentrationView() {
           warning={data.hero_stats.stake_max_asn_pct > WARN_MAX_ASN_PCT ? `Exceeds ${WARN_MAX_ASN_PCT}% threshold` : undefined} />
       </div>
 
-      <AnchorPointMap data={data} metroCoords={metroCoords} />
+      <AnchorPointMap data={data} metroCoords={metroCoords} isLoadingMetros={isLoadingMetros} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <CountryBarChart data={data} />
