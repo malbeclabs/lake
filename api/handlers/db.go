@@ -42,7 +42,7 @@ func (q *DBQuerier) Query(ctx context.Context, sql string) (workflow.QueryResult
 	rows, err := q.db.Query(ctx, sql)
 	duration := time.Since(start)
 	if err != nil {
-		metrics.RecordClickHouseQuery(duration, err)
+		metrics.RecordClickHouseQuery("db", duration, err)
 		return workflow.QueryResult{SQL: sql, Error: err.Error()}, nil
 	}
 	defer rows.Close()
@@ -64,7 +64,7 @@ func (q *DBQuerier) Query(ctx context.Context, sql string) (workflow.QueryResult
 		}
 
 		if err := rows.Scan(values...); err != nil {
-			metrics.RecordClickHouseQuery(duration, err)
+			metrics.RecordClickHouseQuery("db", duration, err)
 			return workflow.QueryResult{SQL: sql, Error: fmt.Sprintf("scan error: %v", err)}, nil
 		}
 
@@ -77,11 +77,11 @@ func (q *DBQuerier) Query(ctx context.Context, sql string) (workflow.QueryResult
 	}
 
 	if err := rows.Err(); err != nil {
-		metrics.RecordClickHouseQuery(duration, err)
+		metrics.RecordClickHouseQuery("db", duration, err)
 		return workflow.QueryResult{SQL: sql, Error: err.Error()}, nil
 	}
 
-	metrics.RecordClickHouseQuery(duration, nil)
+	metrics.RecordClickHouseQuery("db", duration, nil)
 
 	// Sanitize rows to replace NaN/Inf values with nil (JSON-safe)
 	workflow.SanitizeRows(resultRows)
@@ -171,11 +171,11 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 	`, f.database)
 	duration := time.Since(start)
 	if err != nil {
-		metrics.RecordClickHouseQuery(duration, err)
+		metrics.RecordClickHouseQuery("db", duration, err)
 		return "", fmt.Errorf("failed to fetch columns: %w", err)
 	}
 	defer rows.Close()
-	metrics.RecordClickHouseQuery(duration, nil)
+	metrics.RecordClickHouseQuery("db", duration, nil)
 
 	type columnInfo struct {
 		Table string
@@ -203,11 +203,11 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 	`, f.database)
 	duration = time.Since(start)
 	if err != nil {
-		metrics.RecordClickHouseQuery(duration, err)
+		metrics.RecordClickHouseQuery("db", duration, err)
 		return "", fmt.Errorf("failed to fetch views: %w", err)
 	}
 	defer viewRows.Close()
-	metrics.RecordClickHouseQuery(duration, nil)
+	metrics.RecordClickHouseQuery("db", duration, nil)
 
 	views := make(map[string]bool)
 	for viewRows.Next() {

@@ -254,7 +254,7 @@ func (a *API) FetchPublisherCheckData(ctx context.Context, q string, epochsParam
 
 	rows, err := a.envDB(ctx).Query(ctx, query, args...)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("publisher_check", duration, err)
 
 	if err != nil {
 		return nil, err

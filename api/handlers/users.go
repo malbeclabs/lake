@@ -166,7 +166,7 @@ func (a *API) GetUsers(w http.ResponseWriter, r *http.Request) {
 	queryArgs := append(filterArgs, pagination.Limit, pagination.Offset)
 	rows, err := a.envDB(ctx).Query(ctx, query, queryArgs...)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("users", duration, err)
 
 	if err != nil {
 		logError("users query failed", "error", err)
@@ -384,7 +384,7 @@ func (a *API) GetUser(w http.ResponseWriter, r *http.Request) {
 		&user.IsDeleted,
 	)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("users", duration, err)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -532,7 +532,7 @@ func (a *API) GetUserTraffic(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query, pk)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("users", duration, err)
 
 	if err != nil {
 		logError("user traffic query failed", "error", err, "pk", pk)
@@ -647,7 +647,7 @@ func (a *API) GetUserMulticastGroups(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query, pk, pk)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("users", duration, err)
 
 	if err != nil {
 		logError("user multicast groups query failed", "error", err, "pk", pk)

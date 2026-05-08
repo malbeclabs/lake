@@ -637,7 +637,7 @@ func (a *API) SearchAutocomplete(w http.ResponseWriter, r *http.Request) {
 		allSuggestions = allSuggestions[:limit]
 	}
 
-	metrics.RecordClickHouseQuery(time.Since(start), nil)
+	metrics.RecordClickHouseQuery("search", time.Since(start), nil)
 
 	w.Header().Set("Content-Type", "application/json")
 	if allSuggestions == nil {
@@ -751,7 +751,7 @@ func (a *API) Search(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	metrics.RecordClickHouseQuery(time.Since(start), nil)
+	metrics.RecordClickHouseQuery("search", time.Since(start), nil)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(SearchResponse{Query: q, Results: results})

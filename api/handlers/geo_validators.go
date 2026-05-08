@@ -179,7 +179,7 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 
 	start := time.Now()
 	rows, err := a.DB.Query(ctx, query)
-	metrics.RecordClickHouseQuery(time.Since(start), err)
+	metrics.RecordClickHouseQuery("geo_validators", time.Since(start), err)
 	if err != nil {
 		// Return empty response when DZDP tables aren't available or accessible
 		var chErr *proto.Exception

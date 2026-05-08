@@ -1354,7 +1354,7 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 	}
 	resp.Links.Issues = append(resp.Links.Issues, missingAdjIssues...)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("status", duration, err)
 
 	if err != nil {
 		resp.Error = err.Error()

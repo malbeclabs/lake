@@ -1147,7 +1147,7 @@ func (a *API) GetTrafficDashboardHealth(w http.ResponseWriter, r *http.Request) 
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("traffic_dashboard", duration, err)
 
 	if err != nil {
 		if ctx.Err() != nil {
@@ -1239,7 +1239,7 @@ func (a *API) GetTrafficDashboardStress(w http.ResponseWriter, r *http.Request) 
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("traffic_dashboard", duration, err)
 
 	if err != nil {
 		if ctx.Err() != nil {
@@ -1435,7 +1435,7 @@ func (a *API) GetTrafficDashboardTop(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("traffic_dashboard", duration, err)
 
 	if err != nil {
 		if ctx.Err() != nil {
@@ -1524,7 +1524,7 @@ func (a *API) GetTrafficDashboardDrilldown(w http.ResponseWriter, r *http.Reques
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("traffic_dashboard", duration, err)
 
 	if err != nil {
 		if ctx.Err() != nil {
@@ -1686,7 +1686,7 @@ func (a *API) GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Reque
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("traffic_dashboard", duration, err)
 
 	if err != nil {
 		if ctx.Err() != nil {

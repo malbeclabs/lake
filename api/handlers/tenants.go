@@ -74,7 +74,7 @@ func (a *API) GetTenants(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query, args...)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("tenants", duration, err)
 
 	if err != nil {
 		logError("tenants query failed", "error", err)
@@ -165,7 +165,7 @@ func (a *API) GetTenant(w http.ResponseWriter, r *http.Request) {
 		&t.BillingRate,
 	)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("tenants", duration, err)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
