@@ -121,12 +121,6 @@ function AnchorPointMap({ data, metroCoords, isLoadingMetros }: {
               'circle-opacity': 0.7, 'circle-stroke-width': 1.5,
               'circle-stroke-color': isDark ? '#1e3a5f' : '#93c5fd',
             }} />
-            <Layer id="metro-labels" type="symbol"
-              layout={{ 'text-field': ['get', 'code'], 'text-size': 10, 'text-offset': [0, 1.8], 'text-anchor': 'top' }}
-              paint={{
-                'text-color': isDark ? '#e2e8f0' : '#1e293b',
-                'text-halo-color': isDark ? '#0f172a' : '#ffffff', 'text-halo-width': 1,
-              }} />
           </Source>
         </MapGL>
         {pointsGeoJSON.features.length === 0 && (
