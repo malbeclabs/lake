@@ -211,11 +211,11 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query, args...)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("devices", duration, err)
 
 	if err != nil && isUnknownIdentifierError(err) {
 		rows, err = a.envDB(ctx).Query(ctx, queryFallback, args...)
-		metrics.RecordClickHouseQuery(time.Since(start), err)
+		metrics.RecordClickHouseQuery("devices", time.Since(start), err)
 	}
 
 	if err != nil {
@@ -457,7 +457,7 @@ func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
 		&interfacesJSON,
 	)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("devices", duration, err)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -573,7 +573,7 @@ func (a *API) GetDeviceValidatorStats(w http.ResponseWriter, r *http.Request) {
 		&stats.StakeSol,
 		&stats.StakeShare,
 	)
-	metrics.RecordClickHouseQuery(time.Since(start), err)
+	metrics.RecordClickHouseQuery("devices", time.Since(start), err)
 
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		logError("device validator stats query failed", "error", err, "pk", pk)

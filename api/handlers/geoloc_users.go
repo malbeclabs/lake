@@ -69,7 +69,7 @@ func (a *API) GetGeolocUsers(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query, args...)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("geoloc_users", duration, err)
 
 	if err != nil {
 		logError("geoloc users query error", "error", err)

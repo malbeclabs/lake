@@ -933,7 +933,7 @@ func (a *API) GetTimeline(w http.ResponseWriter, r *http.Request) {
 	histogram := computeHistogram(allEvents, params.StartTime, params.EndTime)
 
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, nil)
+	metrics.RecordClickHouseQuery("timeline", duration, nil)
 
 	resp := TimelineResponse{
 		Events: paginatedEvents,
@@ -1038,7 +1038,7 @@ func (a *API) queryEntityChanges(ctx context.Context, startTime, endTime time.Ti
 		return nil, err
 	}
 	defer rows.Close()
-	metrics.RecordClickHouseQuery(time.Since(start), err)
+	metrics.RecordClickHouseQuery("timeline", time.Since(start), err)
 
 	var result []entityChangeRow
 	for rows.Next() {
@@ -1106,7 +1106,7 @@ func (a *API) fetchDeviceChangeDetails(ctx context.Context, rows []entityChangeR
 		return nil, err
 	}
 	defer dbRows.Close()
-	metrics.RecordClickHouseQuery(time.Since(start), err)
+	metrics.RecordClickHouseQuery("timeline", time.Since(start), err)
 
 	// Build a set of requested (entityID, snapshotTS) for fast lookup
 	type rowKey struct {
@@ -1261,7 +1261,7 @@ func (a *API) fetchLinkChangeDetails(ctx context.Context, rows []entityChangeRow
 		return nil, err
 	}
 	defer dbRows.Close()
-	metrics.RecordClickHouseQuery(time.Since(start), err)
+	metrics.RecordClickHouseQuery("timeline", time.Since(start), err)
 
 	type rowKey struct {
 		entityID   string
@@ -1432,7 +1432,7 @@ func (a *API) fetchMetroChangeDetails(ctx context.Context, rows []entityChangeRo
 		return nil, err
 	}
 	defer dbRows.Close()
-	metrics.RecordClickHouseQuery(time.Since(start), err)
+	metrics.RecordClickHouseQuery("timeline", time.Since(start), err)
 
 	type rowKey struct {
 		entityID   string
@@ -1536,7 +1536,7 @@ func (a *API) fetchContributorChangeDetails(ctx context.Context, rows []entityCh
 		return nil, err
 	}
 	defer dbRows.Close()
-	metrics.RecordClickHouseQuery(time.Since(start), err)
+	metrics.RecordClickHouseQuery("timeline", time.Since(start), err)
 
 	type rowKey struct {
 		entityID   string
@@ -1642,7 +1642,7 @@ func (a *API) fetchUserChangeDetails(ctx context.Context, rows []entityChangeRow
 		return nil, err
 	}
 	defer dbRows.Close()
-	metrics.RecordClickHouseQuery(time.Since(start), err)
+	metrics.RecordClickHouseQuery("timeline", time.Since(start), err)
 
 	type rowKey struct {
 		entityID   string
@@ -2010,7 +2010,7 @@ func (a *API) queryIncidentEvents(ctx context.Context, startTime, endTime time.T
 		return nil, err
 	}
 	defer rows.Close()
-	metrics.RecordClickHouseQuery(time.Since(start), err)
+	metrics.RecordClickHouseQuery("timeline", time.Since(start), err)
 
 	var events []TimelineEvent
 	for rows.Next() {
@@ -2255,7 +2255,7 @@ func (a *API) queryValidatorEvents(ctx context.Context, startTime, endTime time.
 		return nil, err
 	}
 	defer rows.Close()
-	metrics.RecordClickHouseQuery(time.Since(start), err)
+	metrics.RecordClickHouseQuery("timeline", time.Since(start), err)
 
 	var events []TimelineEvent
 	for rows.Next() {
@@ -2418,7 +2418,7 @@ func (a *API) queryGossipNetworkChanges(ctx context.Context, startTime, endTime 
 		return nil, err
 	}
 	defer rows.Close()
-	metrics.RecordClickHouseQuery(time.Since(start), err)
+	metrics.RecordClickHouseQuery("timeline", time.Since(start), err)
 
 	var events []TimelineEvent
 	for rows.Next() {
@@ -2598,7 +2598,7 @@ func (a *API) queryVoteAccountChanges(ctx context.Context, startTime, endTime ti
 		return nil, err
 	}
 	defer rows.Close()
-	metrics.RecordClickHouseQuery(time.Since(start), err)
+	metrics.RecordClickHouseQuery("timeline", time.Since(start), err)
 
 	var events []TimelineEvent
 	for rows.Next() {
@@ -2746,7 +2746,7 @@ func (a *API) queryStakeChanges(ctx context.Context, startTime, endTime time.Tim
 		return nil, err
 	}
 	defer rows.Close()
-	metrics.RecordClickHouseQuery(time.Since(start), err)
+	metrics.RecordClickHouseQuery("timeline", time.Since(start), err)
 
 	var events []TimelineEvent
 	for rows.Next() {
@@ -2883,7 +2883,7 @@ func (a *API) queryDZStakeAttribution(ctx context.Context, startTime, endTime ti
 		return nil, err
 	}
 	defer snapRows.Close()
-	metrics.RecordClickHouseQuery(time.Since(start), err)
+	metrics.RecordClickHouseQuery("timeline", time.Since(start), err)
 
 	type snapshotPair struct {
 		currTS         time.Time
@@ -2948,7 +2948,7 @@ func (a *API) queryDZStakeAttribution(ctx context.Context, startTime, endTime ti
 		return nil, err
 	}
 	defer valRows.Close()
-	metrics.RecordClickHouseQuery(time.Since(start2), err)
+	metrics.RecordClickHouseQuery("timeline", time.Since(start2), err)
 
 	// Index validators by (snapshot_ts, vote_pubkey)
 	type valData struct {

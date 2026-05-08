@@ -149,7 +149,7 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 
 	start := time.Now()
 	rows, err := a.DB.Query(ctx, query)
-	metrics.RecordClickHouseQuery(time.Since(start), err)
+	metrics.RecordClickHouseQuery("geo_concentration", time.Since(start), err)
 	if err != nil {
 		// Return empty response when DZDP tables aren't available or accessible.
 		// Code 60 = UNKNOWN_TABLE, Code 81 = UNKNOWN_DATABASE, Code 497 = NOT_ENOUGH_PRIVILEGES.

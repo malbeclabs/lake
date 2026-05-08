@@ -355,7 +355,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			`SELECT max(slot), toFloat64(toUnixTimestamp(now()) - toUnixTimestamp(max(event_ts))) FROM %s.slot_feed_race_summary_v2 WHERE slot < %d`,
 			shredderDB, maxValidSlot,
 		)).Scan(&maxSlot, &lagSec)
-		metrics.RecordClickHouseQuery(time.Since(start), err)
+		metrics.RecordClickHouseQuery("edge_scoreboard:max_slot", time.Since(start), err)
 		if err != nil {
 			return nil, fmt.Errorf("max slot: %w", err)
 		}
@@ -428,7 +428,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		start := time.Now()
 		rows1, err := a.envDB(ctx).Query(ctx, query1)
 		duration := time.Since(start)
-		metrics.RecordClickHouseQuery(duration, err)
+		metrics.RecordClickHouseQuery("edge_scoreboard:q1", duration, err)
 		if err != nil {
 			return nil, fmt.Errorf("query1: %w", err)
 		}
@@ -525,7 +525,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			start = time.Now()
 			rows1b, err := a.envDB(ctx).Query(ctx, query1b)
 			duration = time.Since(start)
-			metrics.RecordClickHouseQuery(duration, err)
+			metrics.RecordClickHouseQuery("edge_scoreboard:q1b", duration, err)
 			if err != nil {
 				return nil, fmt.Errorf("query1b: %w", err)
 			}
@@ -574,7 +574,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			start = time.Now()
 			rows1c, err := a.envDB(ctx).Query(ctx, query1c)
 			duration = time.Since(start)
-			metrics.RecordClickHouseQuery(duration, err)
+			metrics.RecordClickHouseQuery("edge_scoreboard:q1c", duration, err)
 			if err != nil {
 				return nil, fmt.Errorf("query1c: %w", err)
 			}
@@ -587,47 +587,6 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			rows1c.Close()
 			if err := rows1c.Err(); err != nil {
 				return nil, fmt.Errorf("query1c rows: %w", err)
-			}
-		}
-
-		// Query 1d: Publisher stats using the same method as the publisher check page.
-		// publisher_count = activated DZ users with publishers and matched gossip+stake (same as total_publishers).
-		// publishing_count / publishing_stake_pct = subset with leader_slots > 0 (same as "Publishing Shreds").
-		{
-			shredStatsTable := fmt.Sprintf("`%s`.publisher_shred_stats", a.PublisherDB)
-			start = time.Now()
-			err = a.envDB(ctx).QueryRow(ctx, fmt.Sprintf(`
-			WITH current_epoch AS (
-				SELECT max(epoch) AS epoch FROM %s
-			),
-			leader_pubkeys AS (
-				SELECT DISTINCT dz_user_pubkey
-				FROM %s
-				WHERE epoch >= (SELECT epoch FROM current_epoch) - 1
-				  AND is_scheduled_leader = true
-			),
-			total_network_stake AS (
-				SELECT sum(activated_stake_lamports) AS stake
-				FROM solana_vote_accounts_current
-				WHERE epoch_vote_account = 'true' AND activated_stake_lamports > 0
-			)
-			SELECT
-				countIf(v.vote_pubkey != '' AND g.pubkey != '') AS publisher_count,
-				countIf(v.vote_pubkey != '' AND g.pubkey != '' AND l.dz_user_pubkey != '') AS publishing_count,
-				COALESCE(sumIf(v.activated_stake_lamports, v.vote_pubkey != '' AND g.pubkey != '' AND l.dz_user_pubkey != ''), 0)
-					/ greatest(COALESCE((SELECT stake FROM total_network_stake), 0), 1) * 100 AS publishing_stake_pct
-			FROM dz_users_current u
-			LEFT JOIN solana_gossip_nodes_current g ON u.client_ip = g.gossip_ip AND u.client_ip != ''
-			LEFT JOIN solana_vote_accounts_current v ON g.pubkey = v.node_pubkey AND v.epoch_vote_account = 'true'
-			LEFT JOIN leader_pubkeys l ON u.pk = l.dz_user_pubkey
-			WHERE u.status = 'activated'
-			  AND JSONLength(u.publishers) > 0
-		`, shredStatsTable, shredStatsTable),
-			).Scan(&publisherCount, &publishingCount, &publishingStakePct)
-			duration = time.Since(start)
-			metrics.RecordClickHouseQuery(duration, err)
-			if err != nil {
-				log.Printf("EdgeScoreboard query1d error: %v", err)
 			}
 		}
 
@@ -702,6 +661,39 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 	// only needs recent_slots and those queries are expensive.
 	if !cursorMode {
 
+		// Group P: publisher / publishing-shred / stake-% headline numbers.
+		// Reads the publisher_check page-cache entry (refreshed by the worker every 30s)
+		// and derives the three values from it. The previous in-place query (q1d) ran
+		// sequentially before this errgroup and consumed most of the deadline budget in
+		// prod, surfacing as "context deadline exceeded" on q1d / q8 in the worker.
+		g.Go(func() error {
+			data, err := a.readPageCache(gctx, "publisher_check")
+			if err != nil {
+				log.Printf("EdgeScoreboard publisher_check cache read error: %v", err)
+				return nil
+			}
+			var pc PublisherCheckResponse
+			if err := json.Unmarshal(data, &pc); err != nil {
+				log.Printf("EdgeScoreboard publisher_check unmarshal error: %v", err)
+				return nil
+			}
+			if pc.TotalNetworkStake <= 0 {
+				return nil
+			}
+			publisherCount = pc.TotalPublishers
+			var publishingStake int64
+			var pubCount uint64
+			for _, p := range pc.Publishers {
+				if p.LeaderSlots > 0 && p.VotePubkey != "" && p.NodePubkey != "" {
+					pubCount++
+					publishingStake += int64(p.ActivatedStake)
+				}
+			}
+			publishingCount = pubCount
+			publishingStakePct = float64(publishingStake) / float64(pc.TotalNetworkStake) * 100
+			return nil
+		})
+
 		// Group A: feed win rates → lead times
 		g.Go(func() error {
 			localFeedStats := make(map[feedKey]*EdgeScoreboardFeedStats)
@@ -775,7 +767,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 
 			t := time.Now()
 			rows, err := a.envDB(gctx).Query(gctx, q2)
-			metrics.RecordClickHouseQuery(time.Since(t), err)
+			metrics.RecordClickHouseQuery("edge_scoreboard:q2", time.Since(t), err)
 			if err != nil {
 				return fmt.Errorf("query2: %w", err)
 			}
@@ -878,7 +870,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			}
 			t := time.Now()
 			rows2b, err := a.envDB(gctx).Query(gctx, q2b)
-			metrics.RecordClickHouseQuery(time.Since(t), err)
+			metrics.RecordClickHouseQuery("edge_scoreboard:q2b", time.Since(t), err)
 			if err != nil {
 				return fmt.Errorf("query2b: %w", err)
 			}
@@ -917,7 +909,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			}
 			t := time.Now()
 			rows, err := a.envDB(gctx).Query(gctx, `SELECT code, name, latitude, longitude FROM dz_metros_current WHERE code IN (?)`, codes)
-			metrics.RecordClickHouseQuery(time.Since(t), err)
+			metrics.RecordClickHouseQuery("edge_scoreboard:q3", time.Since(t), err)
 			if err != nil {
 				return fmt.Errorf("query3: %w", err)
 			}
@@ -974,7 +966,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			GROUP BY metro_code`
 			t := time.Now()
 			rows, err := a.envDB(gctx).Query(gctx, query4)
-			metrics.RecordClickHouseQuery(time.Since(t), err)
+			metrics.RecordClickHouseQuery("edge_scoreboard:q4", time.Since(t), err)
 			if err != nil && gctx.Err() == nil {
 				log.Printf("EdgeScoreboard query4 error: %v", err)
 				return nil
@@ -1131,7 +1123,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		}
 		t := time.Now()
 		rows5, err := a.envDB(gctx).Query(gctx, query5)
-		metrics.RecordClickHouseQuery(time.Since(t), err)
+		metrics.RecordClickHouseQuery("edge_scoreboard:q5", time.Since(t), err)
 		if err != nil {
 			if gctx.Err() != nil {
 				return nil
@@ -1187,7 +1179,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 
 				t = time.Now()
 				rows6a, err := a.envDB(gctx).Query(gctx, query6a, relSlots)
-				metrics.RecordClickHouseQuery(time.Since(t), err)
+				metrics.RecordClickHouseQuery("edge_scoreboard:q6a", time.Since(t), err)
 				if err != nil {
 					if gctx.Err() != nil {
 						return nil
@@ -1231,7 +1223,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				`
 				t = time.Now()
 				rows6b, err := a.envDB(gctx).Query(gctx, query6b, pubkeys)
-				metrics.RecordClickHouseQuery(time.Since(t), err)
+				metrics.RecordClickHouseQuery("edge_scoreboard:q6b", time.Since(t), err)
 				if err != nil {
 					if gctx.Err() != nil {
 						return nil
@@ -1376,7 +1368,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 
 			t := time.Now()
 			rows7, err := a.envDB(gctx).Query(gctx, query7)
-			metrics.RecordClickHouseQuery(time.Since(t), err)
+			metrics.RecordClickHouseQuery("edge_scoreboard:q7", time.Since(t), err)
 			if err != nil && gctx.Err() == nil {
 				log.Printf("EdgeScoreboard query7 error: %v", err)
 				return nil
@@ -1564,7 +1556,7 @@ func (a *API) FetchEdgeScoreboardLatest(ctx context.Context, leadersOnly bool, s
 		`SELECT max(slot), toFloat64(toUnixTimestamp(now()) - toUnixTimestamp(max(event_ts))) FROM %s.slot_feed_race_summary_v2 WHERE slot < %d`,
 		shredderDB, maxValidSlot,
 	)).Scan(&maxSlot, &lagSec)
-	metrics.RecordClickHouseQuery(time.Since(start), err)
+	metrics.RecordClickHouseQuery("edge_scoreboard:max_slot", time.Since(start), err)
 	if err != nil {
 		return nil, fmt.Errorf("max slot: %w", err)
 	}

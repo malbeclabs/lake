@@ -76,7 +76,7 @@ func (a *API) GetGeolocExplorer(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	deviceRows, err := a.envDB(ctx).Query(ctx, deviceQuery)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("geoloc_explorer", duration, err)
 	if err != nil {
 		logError("geoloc explorer device query error", "error", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
@@ -118,7 +118,7 @@ func (a *API) GetGeolocExplorer(w http.ResponseWriter, r *http.Request) {
 	start = time.Now()
 	targetRows, err := a.envDB(ctx).Query(ctx, targetQuery)
 	duration = time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("geoloc_explorer", duration, err)
 	if err != nil {
 		logError("geoloc explorer target query error", "error", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)

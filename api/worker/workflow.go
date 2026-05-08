@@ -138,7 +138,7 @@ func (a *Activities) RefreshCaches(ctx context.Context) error {
 	// effectively refresh only once every few minutes. Fully parallel execution
 	// means the activity completes in max(entry_times) rather than sum/2, so the
 	// 30s sleep actually achieves a ~30s refresh cycle. Each entry has its own
-	// 45s timeout, so failures remain bounded.
+	// 60s timeout, so failures remain bounded.
 	g, gctx := errgroup.WithContext(ctx)
 
 	for _, entry := range a.entries() {
@@ -199,7 +199,7 @@ func (a *Activities) refresh(parentCtx context.Context, name, key string, fn fun
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(parentCtx, 45*time.Second)
+		ctx, cancel := context.WithTimeout(parentCtx, 60*time.Second)
 		result, err := fn(ctx)
 		cancel()
 
@@ -256,7 +256,7 @@ func (a *Activities) incFailures(key string) int {
 // workflow history bounded.
 func PageCacheWorkflow(ctx temporalworkflow.Context, iteration int) error {
 	actOpts := temporalworkflow.ActivityOptions{
-		StartToCloseTimeout: 2 * time.Minute,
+		StartToCloseTimeout: 3 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
 			MaximumAttempts: 1,
 		},

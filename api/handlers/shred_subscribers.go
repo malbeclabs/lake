@@ -47,7 +47,7 @@ func (a *API) fetchShredSeatByClientIP(ctx context.Context, clientIP string) (*S
 		WHERE s.client_ip = ?
 		LIMIT 1
 	`, clientIP)
-	metrics.RecordClickHouseQuery(time.Since(start), err)
+	metrics.RecordClickHouseQuery("shred_subscribers", time.Since(start), err)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +115,7 @@ func (a *API) FetchShredSubscribers(ctx context.Context, funder string, limit, o
 
 	var total uint64
 	if err := a.envDB(ctx).QueryRow(ctx, countQuery, whereArgs...).Scan(&total); err != nil {
-		metrics.RecordClickHouseQuery(time.Since(start), err)
+		metrics.RecordClickHouseQuery("shred_subscribers", time.Since(start), err)
 		return nil, 0, err
 	}
 
@@ -158,7 +158,7 @@ func (a *API) FetchShredSubscribers(ctx context.Context, funder string, limit, o
 	queryArgs := append(whereArgs, limit, offset)
 
 	rows, err := a.envDB(ctx).Query(ctx, query, queryArgs...)
-	metrics.RecordClickHouseQuery(time.Since(start), err)
+	metrics.RecordClickHouseQuery("shred_subscribers", time.Since(start), err)
 	if err != nil {
 		return nil, 0, err
 	}

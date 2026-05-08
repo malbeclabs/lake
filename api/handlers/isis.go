@@ -160,7 +160,7 @@ func (a *API) GetISISTopology(w http.ResponseWriter, r *http.Request) {
 	}
 
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, nil)
+	metrics.RecordClickHouseQuery("isis", duration, nil)
 
 	writeJSON(w, response)
 }
@@ -292,7 +292,7 @@ func (a *API) GetISISPath(w http.ResponseWriter, r *http.Request) {
 	path := parsePathHops(devicesVal)
 
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, nil)
+	metrics.RecordClickHouseQuery("isis", duration, nil)
 
 	writeJSON(w, PathResponse{
 		Path:        path,
@@ -557,7 +557,7 @@ func (a *API) GetTopologyCompare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, nil)
+	metrics.RecordClickHouseQuery("isis", duration, nil)
 
 	writeJSON(w, response)
 }
@@ -867,7 +867,7 @@ func (a *API) GetFailureImpact(w http.ResponseWriter, r *http.Request) {
 	response.AffectedPathCount = len(response.AffectedPaths)
 
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, nil)
+	metrics.RecordClickHouseQuery("isis", duration, nil)
 
 	slog.Info("failure impact", "device", response.DeviceCode, "unreachable", response.UnreachableCount, "affected_paths", response.AffectedPathCount, "metros_impacted", len(response.MetroImpact), "duration", duration)
 
@@ -966,7 +966,7 @@ func (a *API) GetISISPaths(w http.ResponseWriter, r *http.Request) {
 	}
 
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, nil)
+	metrics.RecordClickHouseQuery("isis", duration, nil)
 	slog.Info("ISIS KSP completed", "paths", len(response.Paths), "duration", duration)
 
 	writeJSON(w, response)
@@ -1175,7 +1175,7 @@ func (a *API) GetCriticalLinks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, nil)
+	metrics.RecordClickHouseQuery("isis", duration, nil)
 
 	criticalCount := 0
 	importantCount := 0
@@ -1441,7 +1441,7 @@ func (a *API) GetRedundancyReport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, nil)
+	metrics.RecordClickHouseQuery("isis", duration, nil)
 
 	slog.Info("redundancy report completed", "issues", len(response.Issues), "critical", criticalCount, "warning", warningCount, "info", infoCount, "duration", duration)
 
@@ -1672,7 +1672,7 @@ func (a *API) GetMetroConnectivity(w http.ResponseWriter, r *http.Request) {
 	response.Metros = filtered
 
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, nil) // Reuse existing metric for now
+	metrics.RecordClickHouseQuery("isis", duration, nil) // Reuse existing metric for now
 
 	slog.Info("metro connectivity completed", "metros", len(response.Metros), "connections", len(response.Connectivity), "duration", duration)
 
@@ -1988,7 +1988,7 @@ func (a *API) GetMetroPathDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, nil)
+	metrics.RecordClickHouseQuery("isis", duration, nil)
 
 	writeJSON(w, response)
 }
@@ -2277,7 +2277,7 @@ func (a *API) PostMaintenanceImpact(w http.ResponseWriter, r *http.Request) {
 	response.AffectedMetros = computeAffectedMetrosFast(ctx, session, offlineDevicePKs)
 
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, nil)
+	metrics.RecordClickHouseQuery("isis", duration, nil)
 
 	slog.Info("maintenance impact analyzed", "devices", len(req.Devices), "links", len(req.Links), "duration", duration)
 
@@ -3158,7 +3158,7 @@ func (a *API) GetMetroDevicePaths(w http.ResponseWriter, r *http.Request) {
 	})
 
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, nil)
+	metrics.RecordClickHouseQuery("isis", duration, nil)
 
 	slog.Info("GetMetroDevicePaths completed", "from", response.FromMetroCode, "to", response.ToMetroCode, "pairs", response.TotalPairs, "duration", duration)
 

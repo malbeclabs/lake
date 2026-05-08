@@ -96,7 +96,7 @@ func (a *API) GetShredDevices(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query, queryArgs...)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("shreds_devices", duration, err)
 
 	if err != nil {
 		logError("shred devices query failed", "error", err)

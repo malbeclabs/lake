@@ -170,7 +170,7 @@ func (a *API) GetLinks(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query, args...)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("links", duration, err)
 
 	if err != nil {
 		logError("links query failed", "error", err)
@@ -351,7 +351,7 @@ func (a *API) GetLinkHealth(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query, committedRttProvisioningNs)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("links", duration, err)
 
 	if err != nil {
 		logError("link health query failed", "error", err)
@@ -514,7 +514,7 @@ func (a *API) GetLink(w http.ResponseWriter, r *http.Request) {
 		&link.ISISDelayOverrideNs,
 	)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("links", duration, err)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

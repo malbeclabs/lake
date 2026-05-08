@@ -319,7 +319,7 @@ func (a *API) GetFieldValues(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("field_values", duration, err)
 
 	if err != nil {
 		logError("field values query failed", "error", err, "query", query)

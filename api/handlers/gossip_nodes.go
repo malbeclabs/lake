@@ -131,7 +131,7 @@ func (a *API) GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 	queryArgs := append(filterArgs, pagination.Limit, pagination.Offset)
 	rows, err := a.envDB(ctx).Query(ctx, query, queryArgs...)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("gossip_nodes", duration, err)
 
 	if err != nil {
 		logError("gossip nodes query failed", "error", err)
@@ -295,7 +295,7 @@ func (a *API) GetGossipNode(w http.ResponseWriter, r *http.Request) {
 		&node.VotePubkey,
 	)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("gossip_nodes", duration, err)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

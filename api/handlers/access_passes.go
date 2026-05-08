@@ -171,7 +171,7 @@ func (a *API) GetAccessPasses(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query, args...)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("access_passes", duration, err)
 
 	if err != nil {
 		logError("access passes query error", "error", err)
@@ -264,7 +264,7 @@ func (a *API) GetAccessPass(w http.ResponseWriter, r *http.Request) {
 		&subAllowlistJSON,
 	)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("access_passes", duration, err)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -438,7 +438,7 @@ func (a *API) GetAccessPassConnections(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, connQuery, connArgs...)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("access_passes", duration, err)
 
 	if err != nil {
 		logError("access pass connections query error", "error", err)

@@ -226,7 +226,7 @@ func (a *API) GetValidators(w http.ResponseWriter, r *http.Request) {
 	queryArgs := append(filterArgs, pagination.Limit, pagination.Offset)
 	rows, err := a.envDB(ctx).Query(ctx, query, queryArgs...)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("validators", duration, err)
 
 	if err != nil {
 		logError("validators query failed", "error", err)
@@ -315,7 +315,7 @@ func (a *API) FetchValidatorsMetadata(ctx context.Context) ([]ValidatorMetadataR
 	`
 
 	rows, err := a.envDB(ctx).Query(ctx, query)
-	metrics.RecordClickHouseQuery(time.Since(start), err)
+	metrics.RecordClickHouseQuery("validators", time.Since(start), err)
 	if err != nil {
 		return nil, err
 	}
@@ -486,7 +486,7 @@ func (a *API) GetValidator(w http.ResponseWriter, r *http.Request) {
 		&validator.SoftwareVersion,
 	)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("validators", duration, err)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
