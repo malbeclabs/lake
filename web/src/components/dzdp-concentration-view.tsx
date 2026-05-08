@@ -150,31 +150,31 @@ function AnchorPointMap({ data, metroCoords }: {
 }
 
 function CountryBarChart({ data }: { data: GeoConcentrationResponse }) {
-  const top15 = useMemo(
-    () => [...data.countries].sort((a, b) => b.stake_pct - a.stake_pct).slice(0, 15)
+  const sorted = useMemo(
+    () => [...data.countries].sort((a, b) => b.stake_pct - a.stake_pct)
       .map((c) => ({ ...c, fill: c.stake_pct > WARN_COUNTRY_PCT ? '#f59e0b' : '#3b82f6' })),
     [data.countries],
   )
 
-  if (top15.length === 0) {
+  if (sorted.length === 0) {
     return <div className="rounded-lg border border-border bg-card px-5 py-8 text-center text-sm text-muted-foreground">No country data available</div>
   }
 
   return (
-    <div className="rounded-lg border border-border bg-card overflow-hidden">
-      <div className="px-5 py-3 border-b border-border flex items-center justify-between">
+    <div className="rounded-lg border border-border bg-card overflow-hidden flex flex-col max-h-[500px]">
+      <div className="px-5 py-3 border-b border-border flex items-center justify-between flex-shrink-0">
         <h3 className="text-sm font-medium">Stake by Country</h3>
         <span className="text-[11px] text-muted-foreground">Warning threshold: {WARN_COUNTRY_PCT}%</span>
       </div>
-      <div className="px-5 py-4">
-        <ResponsiveContainer width="100%" height={top15.length * 28 + 20}>
-          <BarChart data={top15} layout="vertical" margin={{ top: 0, right: 40, left: 0, bottom: 0 }}>
+      <div className="px-5 py-4 overflow-y-auto">
+        <ResponsiveContainer width="100%" height={sorted.length * 28 + 20}>
+          <BarChart data={sorted} layout="vertical" margin={{ top: 0, right: 40, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
             <XAxis type="number" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} tickFormatter={(v: number) => `${v}%`} />
             <YAxis dataKey="country_name" type="category" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} width={50} />
             <Tooltip cursor={{ fill: 'var(--muted)', opacity: 0.4 }} formatter={(value) => [`${Number(value).toFixed(1)}%`, 'Stake']} />
             <Bar dataKey="stake_pct" radius={[0, 3, 3, 0]}>
-              {top15.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
+              {sorted.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
             </Bar>
           </BarChart>
         </ResponsiveContainer>
@@ -191,11 +191,11 @@ function AsnList({ data }: { data: GeoConcentrationResponse }) {
   }
 
   return (
-    <div className="rounded-lg border border-border bg-card overflow-hidden">
-      <div className="px-5 py-3 border-b border-border">
+    <div className="rounded-lg border border-border bg-card overflow-hidden flex flex-col max-h-[500px]">
+      <div className="px-5 py-3 border-b border-border flex-shrink-0">
         <h3 className="text-sm font-medium">ASN Concentration</h3>
       </div>
-      <div className="divide-y divide-border">
+      <div className="divide-y divide-border overflow-y-auto">
         {sorted.map((asn) => {
           const concentrated = asn.stake_pct > WARN_ASN_PCT
           return (
