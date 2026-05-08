@@ -97,6 +97,55 @@ func TestParseInstantWithdrawEvent(t *testing.T) {
 	}
 }
 
+func TestParseProratedInstantWithdrawEvent(t *testing.T) {
+	logs := []string{
+		"Program " + testProgramID + " invoke [1]",
+		"Program log: Request prorated instant seat withdrawal",
+		"Program log: Refunded 7500000 USDC",
+		"Program log: Withdraw seat request created for client seat " + testClientSeatPK,
+		"Program " + testProgramID + " success",
+	}
+
+	events := ParseTransactionLogs(nil, testEscrowPK, testClientSeatPK, testTxSig, 350, testBlockTime, logs, false, testProgramID, testSigner)
+
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+
+	e := events[0]
+	if e.EventType != EventTypeWithdrawSeat {
+		t.Errorf("expected event type %q, got %q", EventTypeWithdrawSeat, e.EventType)
+	}
+	if e.AmountUSDC == nil || *e.AmountUSDC != 7500000 {
+		t.Errorf("expected amount 7500000, got %v", e.AmountUSDC)
+	}
+}
+
+func TestParseProratedInstantWithdrawEvent_NoRefund(t *testing.T) {
+	// When prorated service is disabled on-chain, refund_amount is 0 but the
+	// log line is still emitted.
+	logs := []string{
+		"Program " + testProgramID + " invoke [1]",
+		"Program log: Request prorated instant seat withdrawal",
+		"Program log: Refunded 0 USDC",
+		"Program " + testProgramID + " success",
+	}
+
+	events := ParseTransactionLogs(nil, testEscrowPK, testClientSeatPK, testTxSig, 360, testBlockTime, logs, false, testProgramID, testSigner)
+
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+
+	e := events[0]
+	if e.EventType != EventTypeWithdrawSeat {
+		t.Errorf("expected event type %q, got %q", EventTypeWithdrawSeat, e.EventType)
+	}
+	if e.AmountUSDC == nil || *e.AmountUSDC != 0 {
+		t.Errorf("expected amount 0, got %v", e.AmountUSDC)
+	}
+}
+
 func TestParseCloseEvent(t *testing.T) {
 	logs := []string{
 		"Program " + testProgramID + " invoke [1]",

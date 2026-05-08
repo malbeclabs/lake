@@ -868,18 +868,27 @@ func (a *API) GetShredEpochRevenue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
-	// Revenue per epoch is the sum of per-seat USDC actually charged. The
-	// on-chain protocol prorates instant-allocated seats by remaining slots in
-	// the epoch (eab207d/onchain: compute prorated service), so
-	// `last_usdc_price_dollars` and `subscription_start_slot` on ClientSeat are
-	// the authoritative inputs for the charged amount:
+	// Revenue per epoch is the sum of per-seat USDC actually charged, net of
+	// prorated refunds. The on-chain protocol prorates instant-allocated seats
+	// by remaining slots in the epoch (doublezero-shreds#243) and refunds the
+	// unused portion when withdrawn via RequestProratedInstantSeatWithdrawal,
+	// so `last_usdc_price_dollars` and `subscription_start_slot` on ClientSeat
+	// are the inputs for the gross charge:
 	//
 	//     charged = last_price_dollars * (epoch_end_slot - start_slot) / SLOTS_PER_EPOCH
 	//
 	// where epoch_end_slot = (active_epoch + 1) * SLOTS_PER_EPOCH. For
-	// batch-allocated seats, start_slot = epoch_start, so this collapses to the
+	// batch-allocated seats start_slot = epoch_start, so this collapses to the
 	// full epoch price; for instant-allocated seats it captures the actual
 	// prorated charge.
+	//
+	// Refunds are subtracted from the gross charge per (seat, active_epoch).
+	// The prorated withdrawal log emits "Refunded N USDC" (in micro-USDC) and
+	// the parser stores N in fact_dz_shred_escrow_events.amount_usdc on the
+	// withdraw_seat row; the non-prorated withdrawal variant leaves amount_usdc
+	// null, so `event_type='withdraw_seat' AND amount_usdc IS NOT NULL` selects
+	// only refunds. The active_epoch the refund applies to is derived from the
+	// withdrawal slot via slot/SLOTS_PER_EPOCH.
 	//
 	// Pre-upgrade seats (or post-deactivation snapshots) have last_price = 0
 	// and start_slot = 0; we fall back to the legacy
@@ -890,6 +899,7 @@ func (a *API) GetShredEpochRevenue(w http.ResponseWriter, r *http.Request) {
 	// allocation-time values rather than the deactivation snapshot (which
 	// zeroes both fields).
 	const slotsPerEpoch = 432000
+	const usdcMicroPerDollar = 1_000_000
 	query := `
 		WITH seat_per_epoch AS (
 			SELECT
@@ -923,6 +933,17 @@ func (a *API) GetShredEpochRevenue(w http.ResponseWriter, r *http.Request) {
 			WHERE is_deleted = 0
 			GROUP BY exchange_key, current_epoch
 		),
+		seat_refunds AS (
+			SELECT
+				client_seat_pk AS pk,
+				intDiv(slot, ?) AS active_epoch,
+				sum(coalesce(amount_usdc, 0)) / ? AS refund_dollars
+			FROM fact_dz_shred_escrow_events
+			WHERE event_type = 'withdraw_seat'
+			  AND amount_usdc IS NOT NULL
+			  AND status = 'ok'
+			GROUP BY pk, active_epoch
+		),
 		seat_charges AS (
 			SELECT
 				s.active_epoch AS epoch,
@@ -939,12 +960,14 @@ func (a *API) GetShredEpochRevenue(w http.ResponseWriter, r *http.Request) {
 					-- Legacy fallback: full epoch price.
 					WHEN s.has_override = 1 THEN toFloat64(s.override_price)
 					ELSE toFloat64(coalesce(m.price, 0)) + toFloat64(coalesce(d.premium, 0))
-				END AS charged_dollars
+				END - coalesce(r.refund_dollars, 0) AS charged_dollars
 			FROM seat_per_epoch s
 			LEFT JOIN device_per_epoch d
 				ON s.device_key = d.device_key AND d.epoch = s.active_epoch
 			LEFT JOIN metro_per_epoch m
 				ON d.metro_key = m.exchange_key AND m.epoch = s.active_epoch
+			LEFT JOIN seat_refunds r
+				ON r.pk = s.pk AND r.active_epoch = s.active_epoch
 		)
 		SELECT
 			epoch,
@@ -957,7 +980,11 @@ func (a *API) GetShredEpochRevenue(w http.ResponseWriter, r *http.Request) {
 		LIMIT ?
 	`
 
-	rows, err := a.envDB(ctx).Query(ctx, query, slotsPerEpoch, slotsPerEpoch, slotsPerEpoch, limit)
+	rows, err := a.envDB(ctx).Query(ctx, query,
+		slotsPerEpoch, usdcMicroPerDollar, // seat_refunds
+		slotsPerEpoch, slotsPerEpoch, slotsPerEpoch, // seat_charges
+		limit,
+	)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 

@@ -678,6 +678,66 @@ func TestGetShredEpochRevenue_Prorated(t *testing.T) {
 	assert.Equal(t, uint64(4), items[0].PaymentCount)
 }
 
+// A seat that withdrew mid-epoch via the prorated instruction emits
+// "Refunded N USDC", which the parser stores in
+// fact_dz_shred_escrow_events.amount_usdc on the withdraw_seat row. The
+// revenue query subtracts those refunds from the gross charge per
+// (seat, active_epoch). Non-prorated withdrawals leave amount_usdc null and
+// are ignored.
+func TestGetShredEpochRevenue_NetsOutProratedRefund(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	ctx := t.Context()
+
+	// active_epoch=300: epoch_start=129_600_000, epoch_end=130_032_000.
+	//   seat-refund: batch-allocated at epoch_start, last_price=40 → gross=40.
+	//                Prorated withdrawal at slot 129_816_000 (halfway through),
+	//                refund=20 USDC = 20_000_000 micro. Net=20.
+	//   seat-old-withdraw: identical allocation, but withdrawn via the old
+	//                non-prorated instruction (amount_usdc NULL) → no refund
+	//                applied, full 40 charged.
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_client_seats_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, device_key, client_ip, tenure_epochs, funded_epoch, active_epoch,
+		 has_price_override, override_usdc_price_dollars, escrow_count, funding_authority_key,
+		 subscription_start_slot, last_usdc_price_dollars)
+		VALUES
+		('seat-refund', now(), now(), generateUUIDv4(), 0, 1,
+		 'seat-refund', 'dev-x', '10.0.0.6', 1, 299, 300,
+		 0, 0, 1, 'funder-6',
+		 129600000, 40),
+		('seat-old-withdraw', now(), now(), generateUUIDv4(), 0, 2,
+		 'seat-old-withdraw', 'dev-x', '10.0.0.7', 1, 299, 300,
+		 0, 0, 1, 'funder-7',
+		 129600000, 40)
+	`))
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO fact_dz_shred_escrow_events
+		(event_ts, ingested_at, escrow_pk, client_seat_pk, tx_signature, slot,
+		 event_type, amount_usdc, balance_after_usdc, epoch, status, signer)
+		VALUES
+		(now(), now(), 'esc-refund', 'seat-refund', 'tx-refund', 129816000,
+		 'withdraw_seat', 20000000, NULL, NULL, 'ok', 'signer-1'),
+		(now(), now(), 'esc-old',    'seat-old-withdraw', 'tx-old', 129816000,
+		 'withdraw_seat', NULL, NULL, NULL, 'ok', 'signer-1')
+	`))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/epoch-revenue", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredEpochRevenue(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var items []handlers.ShredEpochRevenueItem
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&items))
+	require.Len(t, items, 1)
+	assert.Equal(t, uint64(300), items[0].Epoch)
+	// 40 (seat-refund gross) - 20 (refund) + 40 (seat-old-withdraw, no refund) = 60.
+	assert.InDelta(t, 60.0, items[0].TotalDollars, 1e-6)
+	assert.Equal(t, uint64(2), items[0].PaymentCount)
+}
+
 // Sanity-check that a seat which deactivated mid-epoch (last_price/start_slot
 // zeroed in its latest snapshot) still contributes the original prorated
 // charge — max() over snapshots picks the allocation-time values, not the
