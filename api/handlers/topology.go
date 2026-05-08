@@ -302,7 +302,7 @@ func (a *API) FetchTopologyData(ctx context.Context) (TopologyResponse, error) {
 
 	err := g.Wait()
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("topology", duration, err)
 
 	return TopologyResponse{
 		Metros:  metros,
@@ -467,7 +467,7 @@ func (a *API) fetchTopologyLinkMetrics(ctx context.Context) (TopologyLinkMetrics
 
 	err := g.Wait()
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("topology", duration, err)
 
 	result := make(map[string]TopologyLinkMetricsEntry, len(latencyRows))
 	for _, r := range latencyRows {
@@ -597,7 +597,7 @@ func (a *API) fetchTopologyValidators(ctx context.Context) (TopologyValidatorsRe
 	rows, err := a.envDB(ctx).Query(ctx, query)
 	if err != nil {
 		duration := time.Since(start)
-		metrics.RecordClickHouseQuery(duration, err)
+		metrics.RecordClickHouseQuery("topology", duration, err)
 		return TopologyValidatorsResponse{}, err
 	}
 	defer rows.Close()
@@ -615,7 +615,7 @@ func (a *API) fetchTopologyValidators(ctx context.Context) (TopologyValidatorsRe
 	}
 
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("topology", duration, err)
 
 	return TopologyValidatorsResponse{Validators: validators}, nil
 }
@@ -853,7 +853,7 @@ func (a *API) GetEntityTraffic(w http.ResponseWriter, r *http.Request) {
 	}
 
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, nil)
+	metrics.RecordClickHouseQuery("topology", duration, nil)
 
 	if points == nil {
 		points = []TrafficDataPoint{}
@@ -1011,7 +1011,7 @@ func (a *API) GetLatencyComparison(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("topology", duration, err)
 
 	if err != nil {
 		logError("latency comparison query error", "error", err)
@@ -1124,7 +1124,7 @@ func (a *API) FetchLatencyComparisonData(ctx context.Context) (*LatencyCompariso
 
 	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("topology", duration, err)
 
 	if err != nil {
 		return nil, err
@@ -1301,7 +1301,7 @@ func (a *API) GetLatencyHistory(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query, metro1, metro2)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("topology", duration, err)
 
 	if err != nil {
 		logError("latency history query error", "error", err)

@@ -241,11 +241,11 @@ func (a *API) GetMetros(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, queryWithLocations, args...)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("metros", duration, err)
 
 	if err != nil && isUnknownIdentifierError(err) {
 		rows, err = a.envDB(ctx).Query(ctx, queryWithoutLocations, args...)
-		metrics.RecordClickHouseQuery(time.Since(start), err)
+		metrics.RecordClickHouseQuery("metros", time.Since(start), err)
 	}
 
 	if err != nil {
@@ -463,7 +463,7 @@ func (a *API) GetMetro(w http.ResponseWriter, r *http.Request) {
 		&metro.RawMaxMulticastPublishers,
 	)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("metros", duration, err)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -536,7 +536,7 @@ func (a *API) GetMetroStats(w http.ResponseWriter, r *http.Request) {
 	})
 
 	err := g.Wait()
-	metrics.RecordClickHouseQuery(time.Since(start), err)
+	metrics.RecordClickHouseQuery("metros", time.Since(start), err)
 	if err != nil {
 		logError("metro stats query failed", "error", err, "pk", pk)
 		http.Error(w, "internal error", http.StatusInternalServerError)

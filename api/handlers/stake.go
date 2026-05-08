@@ -211,7 +211,7 @@ func (a *API) FetchStakeOverviewData(ctx context.Context) (*StakeOverview, error
 
 	err := g.Wait()
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("stake", duration, err)
 
 	if err != nil {
 		return nil, err
@@ -329,7 +329,7 @@ func (a *API) GetStakeHistory(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("stake", duration, err)
 
 	if err != nil {
 		logError("stake history query error", "error", err)
@@ -564,7 +564,7 @@ func (a *API) GetStakeChanges(w http.ResponseWriter, r *http.Request) {
 
 	err := g.Wait()
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("stake", duration, err)
 
 	if err != nil {
 		logError("stake changes query error", "error", err)
@@ -752,7 +752,7 @@ func (a *API) GetStakeValidators(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("stake", duration, err)
 
 	if err != nil {
 		logError("stake validators query error", "error", err)

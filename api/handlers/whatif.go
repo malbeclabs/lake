@@ -248,7 +248,7 @@ func (a *API) GetSimulateLinkRemoval(w http.ResponseWriter, r *http.Request) {
 	response.AffectedPathCount = len(response.AffectedPaths)
 
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, nil)
+	metrics.RecordClickHouseQuery("whatif", duration, nil)
 
 	slog.Debug("simulate link removal complete",
 		"source", response.SourceCode, "target", response.TargetCode,
@@ -535,7 +535,7 @@ func (a *API) GetSimulateLinkAddition(w http.ResponseWriter, r *http.Request) {
 	response.ImprovedPathCount = len(response.ImprovedPaths)
 
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, nil)
+	metrics.RecordClickHouseQuery("whatif", duration, nil)
 
 	slog.Debug("simulate link addition complete",
 		"source", response.SourceCode, "target", response.TargetCode, "metric", metric,
@@ -639,7 +639,7 @@ func (a *API) PostWhatIfRemoval(w http.ResponseWriter, r *http.Request) {
 	}
 
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, nil)
+	metrics.RecordClickHouseQuery("whatif", duration, nil)
 
 	slog.Debug("what-if removal complete",
 		"devices", len(req.Devices), "links", len(req.Links),

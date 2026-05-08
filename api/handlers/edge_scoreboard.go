@@ -355,7 +355,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			`SELECT max(slot), toFloat64(toUnixTimestamp(now()) - toUnixTimestamp(max(event_ts))) FROM %s.slot_feed_race_summary_v2 WHERE slot < %d`,
 			shredderDB, maxValidSlot,
 		)).Scan(&maxSlot, &lagSec)
-		metrics.RecordClickHouseQuery(time.Since(start), err)
+		metrics.RecordClickHouseQuery("edge_scoreboard:max_slot", time.Since(start), err)
 		if err != nil {
 			return nil, fmt.Errorf("max slot: %w", err)
 		}
@@ -428,7 +428,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		start := time.Now()
 		rows1, err := a.envDB(ctx).Query(ctx, query1)
 		duration := time.Since(start)
-		metrics.RecordClickHouseQuery(duration, err)
+		metrics.RecordClickHouseQuery("edge_scoreboard:q1", duration, err)
 		if err != nil {
 			return nil, fmt.Errorf("query1: %w", err)
 		}
@@ -525,7 +525,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			start = time.Now()
 			rows1b, err := a.envDB(ctx).Query(ctx, query1b)
 			duration = time.Since(start)
-			metrics.RecordClickHouseQuery(duration, err)
+			metrics.RecordClickHouseQuery("edge_scoreboard:q1b", duration, err)
 			if err != nil {
 				return nil, fmt.Errorf("query1b: %w", err)
 			}
@@ -574,7 +574,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			start = time.Now()
 			rows1c, err := a.envDB(ctx).Query(ctx, query1c)
 			duration = time.Since(start)
-			metrics.RecordClickHouseQuery(duration, err)
+			metrics.RecordClickHouseQuery("edge_scoreboard:q1c", duration, err)
 			if err != nil {
 				return nil, fmt.Errorf("query1c: %w", err)
 			}
@@ -767,7 +767,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 
 			t := time.Now()
 			rows, err := a.envDB(gctx).Query(gctx, q2)
-			metrics.RecordClickHouseQuery(time.Since(t), err)
+			metrics.RecordClickHouseQuery("edge_scoreboard:q2", time.Since(t), err)
 			if err != nil {
 				return fmt.Errorf("query2: %w", err)
 			}
@@ -870,7 +870,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			}
 			t := time.Now()
 			rows2b, err := a.envDB(gctx).Query(gctx, q2b)
-			metrics.RecordClickHouseQuery(time.Since(t), err)
+			metrics.RecordClickHouseQuery("edge_scoreboard:q2b", time.Since(t), err)
 			if err != nil {
 				return fmt.Errorf("query2b: %w", err)
 			}
@@ -909,7 +909,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			}
 			t := time.Now()
 			rows, err := a.envDB(gctx).Query(gctx, `SELECT code, name, latitude, longitude FROM dz_metros_current WHERE code IN (?)`, codes)
-			metrics.RecordClickHouseQuery(time.Since(t), err)
+			metrics.RecordClickHouseQuery("edge_scoreboard:q3", time.Since(t), err)
 			if err != nil {
 				return fmt.Errorf("query3: %w", err)
 			}
@@ -966,7 +966,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			GROUP BY metro_code`
 			t := time.Now()
 			rows, err := a.envDB(gctx).Query(gctx, query4)
-			metrics.RecordClickHouseQuery(time.Since(t), err)
+			metrics.RecordClickHouseQuery("edge_scoreboard:q4", time.Since(t), err)
 			if err != nil && gctx.Err() == nil {
 				log.Printf("EdgeScoreboard query4 error: %v", err)
 				return nil
@@ -1123,7 +1123,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		}
 		t := time.Now()
 		rows5, err := a.envDB(gctx).Query(gctx, query5)
-		metrics.RecordClickHouseQuery(time.Since(t), err)
+		metrics.RecordClickHouseQuery("edge_scoreboard:q5", time.Since(t), err)
 		if err != nil {
 			if gctx.Err() != nil {
 				return nil
@@ -1179,7 +1179,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 
 				t = time.Now()
 				rows6a, err := a.envDB(gctx).Query(gctx, query6a, relSlots)
-				metrics.RecordClickHouseQuery(time.Since(t), err)
+				metrics.RecordClickHouseQuery("edge_scoreboard:q6a", time.Since(t), err)
 				if err != nil {
 					if gctx.Err() != nil {
 						return nil
@@ -1223,7 +1223,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				`
 				t = time.Now()
 				rows6b, err := a.envDB(gctx).Query(gctx, query6b, pubkeys)
-				metrics.RecordClickHouseQuery(time.Since(t), err)
+				metrics.RecordClickHouseQuery("edge_scoreboard:q6b", time.Since(t), err)
 				if err != nil {
 					if gctx.Err() != nil {
 						return nil
@@ -1368,7 +1368,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 
 			t := time.Now()
 			rows7, err := a.envDB(gctx).Query(gctx, query7)
-			metrics.RecordClickHouseQuery(time.Since(t), err)
+			metrics.RecordClickHouseQuery("edge_scoreboard:q7", time.Since(t), err)
 			if err != nil && gctx.Err() == nil {
 				log.Printf("EdgeScoreboard query7 error: %v", err)
 				return nil
@@ -1556,7 +1556,7 @@ func (a *API) FetchEdgeScoreboardLatest(ctx context.Context, leadersOnly bool, s
 		`SELECT max(slot), toFloat64(toUnixTimestamp(now()) - toUnixTimestamp(max(event_ts))) FROM %s.slot_feed_race_summary_v2 WHERE slot < %d`,
 		shredderDB, maxValidSlot,
 	)).Scan(&maxSlot, &lagSec)
-	metrics.RecordClickHouseQuery(time.Since(start), err)
+	metrics.RecordClickHouseQuery("edge_scoreboard:max_slot", time.Since(start), err)
 	if err != nil {
 		return nil, fmt.Errorf("max slot: %w", err)
 	}

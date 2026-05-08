@@ -361,7 +361,7 @@ func (a *API) GetTrafficData(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("traffic", duration, err)
 
 	if err != nil {
 		if ctx.Err() != nil {
@@ -375,7 +375,7 @@ func (a *API) GetTrafficData(w http.ResponseWriter, r *http.Request) {
 
 	meanRows, err := a.envDB(ctx).Query(ctx, meanQuery)
 	meanDuration := time.Since(start) - duration
-	metrics.RecordClickHouseQuery(meanDuration, err)
+	metrics.RecordClickHouseQuery("traffic", meanDuration, err)
 	if err != nil {
 		if ctx.Err() != nil {
 			return
@@ -606,7 +606,7 @@ func (a *API) GetDiscardsData(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("traffic", duration, err)
 
 	if err != nil {
 		if ctx.Err() != nil {

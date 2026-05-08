@@ -290,7 +290,7 @@ func (a *API) GetLinkLatencyData(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("link_latency", duration, err)
 
 	if err != nil {
 		logError("link latency query error", "error", err, "duration", duration)
@@ -446,7 +446,7 @@ func (a *API) GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request)
 
 		rows, err := a.envDB(ctx).Query(ctx, query)
 		duration := time.Since(start)
-		metrics.RecordClickHouseQuery(duration, err)
+		metrics.RecordClickHouseQuery("link_latency", duration, err)
 
 		if err != nil {
 			logError("aggregate latency query error", "error", err, "duration", duration)
@@ -578,7 +578,7 @@ func (a *API) GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request)
 
 	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("link_latency", duration, err)
 
 	if err != nil {
 		logError("multi-link latency query error", "error", err, "duration", duration)

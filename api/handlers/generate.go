@@ -353,7 +353,7 @@ func (a *API) validateQuery(sql string) string {
 	rows, err := a.DB.Query(ctx, explainQuery)
 	duration := time.Since(start)
 	if err != nil {
-		metrics.RecordClickHouseQuery(duration, err)
+		metrics.RecordClickHouseQuery("generate", duration, err)
 		// ClickHouse error messages are safe to show and useful for LLM retry
 		errMsg := err.Error()
 		if len(errMsg) > 500 {
@@ -362,7 +362,7 @@ func (a *API) validateQuery(sql string) string {
 		return errMsg
 	}
 	rows.Close()
-	metrics.RecordClickHouseQuery(duration, nil)
+	metrics.RecordClickHouseQuery("generate", duration, nil)
 
 	return "" // Valid query
 }

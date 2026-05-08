@@ -68,7 +68,7 @@ func (a *API) GetShredsOverview(w http.ResponseWriter, r *http.Request) {
 		&overview.NextSeatFundingIndex,
 	)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("shreds", duration, err)
 
 	if err != nil {
 		// If no execution controller exists yet, return empty overview.
@@ -316,7 +316,7 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query, queryArgs...)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("shreds", duration, err)
 
 	if err != nil {
 		logError("shred client seats query failed", "error", err)
@@ -409,7 +409,7 @@ func (a *API) GetShredDeviceHistories(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("shreds", duration, err)
 
 	if err != nil {
 		logError("shred device histories query failed", "error", err)
@@ -485,7 +485,7 @@ func (a *API) GetShredMetroHistories(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("shreds", duration, err)
 
 	if err != nil {
 		logError("shred metro histories query failed", "error", err)
@@ -557,7 +557,7 @@ func (a *API) GetShredFunders(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("shreds", duration, err)
 
 	if err != nil {
 		logError("shred funders query failed", "error", err)
@@ -744,7 +744,7 @@ func (a *API) GetShredEscrowEvents(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query, queryArgs...)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("shreds", duration, err)
 
 	if err != nil {
 		logError("shred escrow events query failed", "error", err)
@@ -816,7 +816,7 @@ func (a *API) GetShredSubscriberHistory(w http.ResponseWriter, r *http.Request) 
 
 	rows, err := a.envDB(ctx).Query(ctx, query, limit)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("shreds", duration, err)
 
 	if err != nil {
 		logError("shred subscriber history query failed", "error", err)
@@ -933,7 +933,7 @@ func (a *API) GetShredEpochRevenue(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query, limit)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("shreds", duration, err)
 
 	if err != nil {
 		logError("shred epoch revenue query failed", "error", err)

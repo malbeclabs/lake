@@ -77,15 +77,19 @@ var (
 			Name: "doublezero_lake_api_clickhouse_queries_total",
 			Help: "Total number of ClickHouse queries",
 		},
-		[]string{"status"}, // "success", "error", "timeout", "cancelled"
+		[]string{"name", "status"}, // status: "success", "error", "timeout", "cancelled"
 	)
 
-	ClickHouseQueryDuration = promauto.NewHistogram(
+	// Bucket boundaries are aligned to our deadline budgets (30s handler default,
+	// 45s page-cache worker, 60s edge_scoreboard handler) so p95/p99 against the
+	// deadline is readable in Grafana.
+	ClickHouseQueryDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "doublezero_lake_api_clickhouse_query_duration_seconds",
 			Help:    "Duration of ClickHouse queries in seconds",
-			Buckets: prometheus.ExponentialBuckets(0.01, 2, 12), // 10ms to ~41s
+			Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 15, 30, 45, 60, 90},
 		},
+		[]string{"name"},
 	)
 
 	// Anthropic API metrics
@@ -217,8 +221,10 @@ func Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// RecordClickHouseQuery records metrics for a ClickHouse query.
-func RecordClickHouseQuery(duration time.Duration, err error) {
+// RecordClickHouseQuery records metrics for a ClickHouse query. The name should
+// be a stable, low-cardinality identifier for the query (e.g. "edge_scoreboard:q1d",
+// "publisher_check:totals") so per-query latency and error rate are visible in Grafana.
+func RecordClickHouseQuery(name string, duration time.Duration, err error) {
 	status := "success"
 	if err != nil {
 		switch {
@@ -230,8 +236,8 @@ func RecordClickHouseQuery(duration time.Duration, err error) {
 			status = "error"
 		}
 	}
-	ClickHouseQueriesTotal.WithLabelValues(status).Inc()
-	ClickHouseQueryDuration.Observe(duration.Seconds())
+	ClickHouseQueriesTotal.WithLabelValues(name, status).Inc()
+	ClickHouseQueryDuration.WithLabelValues(name).Observe(duration.Seconds())
 }
 
 func isDeadlineExceeded(err error) bool {
