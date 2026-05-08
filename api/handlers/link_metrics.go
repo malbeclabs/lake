@@ -604,13 +604,11 @@ func buildLinkMetricsStatus(
 	statusStr := health.ClassifyLinkStatus(avgLatency, lossPct, committedRtt)
 
 	// One-sided reporting — one side sends probes, the other doesn't.
-	// Don't upgrade to unhealthy; transient one-sided is common at bucket
-	// boundaries. Keep whatever status the latency/loss classification gave.
-	if drainStatus != "hard-drained" && (rollup.ASamples == 0) != (rollup.ZSamples == 0) {
-		if isCollecting {
-			statusStr = "no_data"
-		}
-	}
+	// Don't upgrade to unhealthy or no_data; transient one-sided is common at
+	// bucket boundaries (especially the collecting bucket, where one reporter
+	// may simply be a few seconds behind the other). Keep whatever status the
+	// latency/loss classification gave; the "One-sided reporting" reason
+	// below preserves the signal for tooltips and details.
 
 	// Upgrade status based on interface issues (same thresholds as status_rollup_handlers)
 	const interfaceUnhealthyThreshold = uint64(100)
