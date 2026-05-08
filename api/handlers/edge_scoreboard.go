@@ -590,47 +590,6 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			}
 		}
 
-		// Query 1d: Publisher stats using the same method as the publisher check page.
-		// publisher_count = activated DZ users with publishers and matched gossip+stake (same as total_publishers).
-		// publishing_count / publishing_stake_pct = subset with leader_slots > 0 (same as "Publishing Shreds").
-		{
-			shredStatsTable := fmt.Sprintf("`%s`.publisher_shred_stats", a.PublisherDB)
-			start = time.Now()
-			err = a.envDB(ctx).QueryRow(ctx, fmt.Sprintf(`
-			WITH current_epoch AS (
-				SELECT max(epoch) AS epoch FROM %s
-			),
-			leader_pubkeys AS (
-				SELECT DISTINCT dz_user_pubkey
-				FROM %s
-				WHERE epoch >= (SELECT epoch FROM current_epoch) - 1
-				  AND is_scheduled_leader = true
-			),
-			total_network_stake AS (
-				SELECT sum(activated_stake_lamports) AS stake
-				FROM solana_vote_accounts_current
-				WHERE epoch_vote_account = 'true' AND activated_stake_lamports > 0
-			)
-			SELECT
-				countIf(v.vote_pubkey != '' AND g.pubkey != '') AS publisher_count,
-				countIf(v.vote_pubkey != '' AND g.pubkey != '' AND l.dz_user_pubkey != '') AS publishing_count,
-				COALESCE(sumIf(v.activated_stake_lamports, v.vote_pubkey != '' AND g.pubkey != '' AND l.dz_user_pubkey != ''), 0)
-					/ greatest(COALESCE((SELECT stake FROM total_network_stake), 0), 1) * 100 AS publishing_stake_pct
-			FROM dz_users_current u
-			LEFT JOIN solana_gossip_nodes_current g ON u.client_ip = g.gossip_ip AND u.client_ip != ''
-			LEFT JOIN solana_vote_accounts_current v ON g.pubkey = v.node_pubkey AND v.epoch_vote_account = 'true'
-			LEFT JOIN leader_pubkeys l ON u.pk = l.dz_user_pubkey
-			WHERE u.status = 'activated'
-			  AND JSONLength(u.publishers) > 0
-		`, shredStatsTable, shredStatsTable),
-			).Scan(&publisherCount, &publishingCount, &publishingStakePct)
-			duration = time.Since(start)
-			metrics.RecordClickHouseQuery(duration, err)
-			if err != nil {
-				log.Printf("EdgeScoreboard query1d error: %v", err)
-			}
-		}
-
 	} // end !cursorMode aggregate queries
 
 	// Build node ID list and location codes for parallel queries below.
@@ -701,6 +660,39 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 	// Groups A–C and E–F are skipped in cursor mode (sinceSlot > 0 or beforeSlot > 0) since the caller
 	// only needs recent_slots and those queries are expensive.
 	if !cursorMode {
+
+		// Group P: publisher / publishing-shred / stake-% headline numbers.
+		// Reads the publisher_check page-cache entry (refreshed by the worker every 30s)
+		// and derives the three values from it. The previous in-place query (q1d) ran
+		// sequentially before this errgroup and consumed most of the deadline budget in
+		// prod, surfacing as "context deadline exceeded" on q1d / q8 in the worker.
+		g.Go(func() error {
+			data, err := a.readPageCache(gctx, "publisher_check")
+			if err != nil {
+				log.Printf("EdgeScoreboard publisher_check cache read error: %v", err)
+				return nil
+			}
+			var pc PublisherCheckResponse
+			if err := json.Unmarshal(data, &pc); err != nil {
+				log.Printf("EdgeScoreboard publisher_check unmarshal error: %v", err)
+				return nil
+			}
+			if pc.TotalNetworkStake <= 0 {
+				return nil
+			}
+			publisherCount = pc.TotalPublishers
+			var publishingStake int64
+			var pubCount uint64
+			for _, p := range pc.Publishers {
+				if p.LeaderSlots > 0 && p.VotePubkey != "" && p.NodePubkey != "" {
+					pubCount++
+					publishingStake += int64(p.ActivatedStake)
+				}
+			}
+			publishingCount = pubCount
+			publishingStakePct = float64(publishingStake) / float64(pc.TotalNetworkStake) * 100
+			return nil
+		})
 
 		// Group A: feed win rates → lead times
 		g.Go(func() error {
