@@ -56,6 +56,10 @@ type API struct {
 	BuildCommit  string
 	BuildDate    string
 
+	// GeoValCache holds the full validator dataset in memory so filtered
+	// requests (metro, dz_filter) can skip the expensive ClickHouse query.
+	GeoValCache GeoValidatorCache
+
 	// Workflow manager (manages background workflow execution)
 	Manager *WorkflowManager
 

@@ -10,12 +10,45 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/proto"
 	"github.com/malbeclabs/lake/api/handlers/dberror"
 	"github.com/malbeclabs/lake/api/metrics"
 )
+
+// GeoValidatorCache caches the full validator list (with tiers assigned) in
+// memory so that filtered requests (metro, dz_filter) avoid the expensive
+// ClickHouse CROSS JOIN query. The background page-cache refresh populates
+// this every ~30s.
+type GeoValidatorCache struct {
+	mu         sync.RWMutex
+	validators []GeoValidatorItem
+	updatedAt  time.Time
+}
+
+const geoValCacheMaxAge = 2 * time.Minute
+
+func (c *GeoValidatorCache) store(validators []GeoValidatorItem) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cp := make([]GeoValidatorItem, len(validators))
+	copy(cp, validators)
+	c.validators = cp
+	c.updatedAt = time.Now()
+}
+
+func (c *GeoValidatorCache) load() ([]GeoValidatorItem, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.validators == nil || time.Since(c.updatedAt) > geoValCacheMaxAge {
+		return nil, false
+	}
+	cp := make([]GeoValidatorItem, len(c.validators))
+	copy(cp, c.validators)
+	return cp, true
+}
 
 type GeoValidatorItem struct {
 	VotePubkey  string  `json:"vote_pubkey"`
@@ -90,6 +123,32 @@ func isDefaultGeoValidatorsRequest(r *http.Request) bool {
 }
 
 func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string) (*GeoValidatorsResponse, error) {
+	hasFilters := metro != "" || dzFilter != ""
+
+	// For filtered requests, try the in-memory cache first to avoid
+	// the expensive ClickHouse CROSS JOIN query.
+	if hasFilters {
+		if cached, ok := a.GeoValCache.load(); ok {
+			return buildGeoValidatorsResponse(cached, metro, dzFilter), nil
+		}
+	}
+
+	allValidators, err := a.queryGeoValidators(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	assignValidatorTiers(allValidators)
+
+	// Populate the in-memory cache so subsequent filtered requests are instant.
+	a.GeoValCache.store(allValidators)
+
+	return buildGeoValidatorsResponse(allValidators, metro, dzFilter), nil
+}
+
+// queryGeoValidators runs the expensive ClickHouse query that joins DZDP
+// location data with gossip nodes, vote accounts, and metros.
+func (a *API) queryGeoValidators(ctx context.Context) ([]GeoValidatorItem, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
@@ -182,23 +241,19 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 	rows, err := a.DB.Query(ctx, query)
 	metrics.RecordClickHouseQuery(time.Since(start), err)
 	if err != nil {
-		// Return empty response when DZDP tables aren't available or accessible.
+		// Return empty result when DZDP tables aren't available or accessible.
 		// Code 60 = UNKNOWN_TABLE, Code 81 = UNKNOWN_DATABASE, Code 497 = NOT_ENOUGH_PRIVILEGES.
 		var chErr *proto.Exception
 		if errors.As(err, &chErr) && (chErr.Code == 60 || chErr.Code == 81 || chErr.Code == 497) {
 			slog.Warn("geo validators: DZDP tables not available, returning empty response",
 				"dzdp_db", dzdpDB, "ch_error_code", chErr.Code, "error", err)
-			return &GeoValidatorsResponse{
-				Validators:       []GeoValidatorItem{},
-				TierDistribution: []GeoTierDistribution{},
-				MetroBreakdown:   []GeoMetroBreakdown{},
-			}, nil
+			return nil, nil
 		}
 		return nil, err
 	}
 	defer rows.Close()
 
-	var allValidators []GeoValidatorItem
+	var validators []GeoValidatorItem
 	for rows.Next() {
 		var v GeoValidatorItem
 		if err := rows.Scan(&v.VotePubkey, &v.NodePubkey, &v.StakeSol, &v.Commission,
@@ -206,29 +261,44 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 			&v.IsDZ, &v.DZDPLat, &v.DZDPLng); err != nil {
 			return nil, err
 		}
-		allValidators = append(allValidators, v)
+		validators = append(validators, v)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
-	// Assign tiers globally (before filtering) so a validator's tier reflects
-	// its position among all validators, not just the filtered subset.
-	// Validators are already sorted by stake DESC from the query.
+	return validators, nil
+}
+
+// assignValidatorTiers assigns tier labels based on cumulative stake.
+// Validators must be sorted by stake DESC.
+func assignValidatorTiers(validators []GeoValidatorItem) {
 	var globalStake float64
-	for _, v := range allValidators {
+	for _, v := range validators {
 		globalStake += v.StakeSol
 	}
 	var cumStake float64
-	for i := range allValidators {
+	for i := range validators {
 		if globalStake > 0 && cumStake/globalStake < 0.333 {
-			allValidators[i].Tier = "super"
+			validators[i].Tier = "super"
 		} else if globalStake > 0 && cumStake/globalStake < 0.666 {
-			allValidators[i].Tier = "high"
+			validators[i].Tier = "high"
 		} else {
-			allValidators[i].Tier = "mid"
+			validators[i].Tier = "mid"
 		}
-		cumStake += allValidators[i].StakeSol
+		cumStake += validators[i].StakeSol
+	}
+}
+
+// buildGeoValidatorsResponse applies filters and computes aggregates from the
+// full validator list (which must already have tiers assigned).
+func buildGeoValidatorsResponse(allValidators []GeoValidatorItem, metro, dzFilter string) *GeoValidatorsResponse {
+	if allValidators == nil {
+		return &GeoValidatorsResponse{
+			Validators:       []GeoValidatorItem{},
+			TierDistribution: []GeoTierDistribution{},
+			MetroBreakdown:   []GeoMetroBreakdown{},
+		}
 	}
 
 	// Apply filters
@@ -321,5 +391,5 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 		resp.MetroBreakdown = []GeoMetroBreakdown{}
 	}
 
-	return resp, nil
+	return resp
 }
