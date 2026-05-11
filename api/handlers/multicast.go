@@ -493,12 +493,12 @@ func (a *API) GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery("multicast", duration, cr.err)
 
 	if cr.err != nil {
-		slog.Warn("multicast group members count query failed", "error", cr.err)
+		logWarn("multicast group members count query failed", "error", cr.err)
 		http.Error(w, cr.err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if dr.err != nil {
-		slog.Warn("multicast group members data query failed", "error", dr.err)
+		logWarn("multicast group members data query failed", "error", dr.err)
 		http.Error(w, dr.err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -649,7 +649,7 @@ func (a *API) GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 		lr := <-leaderCh
 
 		if tr.err != nil {
-			slog.Warn("multicast group members traffic query error", "error", tr.err)
+			logWarn("multicast group members traffic query error", "error", tr.err)
 		} else {
 			for key, vals := range tr.data {
 				if indices, ok := tunnelToMembers[key]; ok {
@@ -667,7 +667,7 @@ func (a *API) GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if lr.err != nil {
-			slog.Warn("multicast group members leader query error", "error", lr.err)
+			logWarn("multicast group members leader query error", "error", lr.err)
 		} else {
 			for clientIP, vals := range lr.data {
 				if indices, ok := clientIPToMembers[clientIP]; ok {

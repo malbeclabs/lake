@@ -21,6 +21,12 @@ const (
 	fastRefreshInterval    = 3 * time.Second
 	continueAsNewThreshold = 60 // ~30 min at 30s intervals
 	errorAfterFailures     = 3  // log WARN for transient failures, ERROR after this many consecutive failures
+
+	// slowRefreshThreshold surfaces per-entry duration at INFO when a single
+	// cache refresh (query + write) takes at least this long. Normal entries
+	// finish in well under a second; anything above this is worth flagging
+	// when the activity is running close to its StartToCloseTimeout budget.
+	slowRefreshThreshold = 10 * time.Second
 )
 
 // cacheEntry defines a single cache key to refresh.
@@ -192,6 +198,9 @@ func (a *Activities) RefreshLatestCaches(ctx context.Context) error {
 }
 
 func (a *Activities) refresh(parentCtx context.Context, name, key string, fn func(context.Context) (any, error)) {
+	start := time.Now()
+	var queryDuration, writeDuration time.Duration
+
 	const maxAttempts = 2
 	for attempt := range maxAttempts {
 		if parentCtx.Err() != nil {
@@ -200,7 +209,9 @@ func (a *Activities) refresh(parentCtx context.Context, name, key string, fn fun
 		}
 
 		ctx, cancel := context.WithTimeout(parentCtx, 60*time.Second)
+		queryStart := time.Now()
 		result, err := fn(ctx)
+		queryDuration = time.Since(queryStart)
 		cancel()
 
 		if err != nil {
@@ -225,9 +236,11 @@ func (a *Activities) refresh(parentCtx context.Context, name, key string, fn fun
 
 		a.failures.Delete(key)
 
+		writeStart := time.Now()
 		a.writeMu.Lock()
 		err = a.API.WritePageCache(parentCtx, key, result)
 		a.writeMu.Unlock()
+		writeDuration = time.Since(writeStart)
 		if err != nil {
 			if parentCtx.Err() != nil {
 				return
@@ -236,7 +249,21 @@ func (a *Activities) refresh(parentCtx context.Context, name, key string, fn fun
 			return
 		}
 
-		a.Log.Debug("cache refreshed", "cache", name)
+		// Surface slow entries at INFO so we can spot the outlier that's
+		// eating the activity's StartToCloseTimeout budget. Normal entries
+		// log at DEBUG (suppressed in prod).
+		total := time.Since(start)
+		args := []any{
+			"cache", name,
+			"duration", total.Round(time.Millisecond),
+			"query_duration", queryDuration.Round(time.Millisecond),
+			"write_duration", writeDuration.Round(time.Millisecond),
+		}
+		if total >= slowRefreshThreshold {
+			a.Log.Info("slow cache refresh", args...)
+		} else {
+			a.Log.Debug("cache refreshed", args...)
+		}
 		return
 	}
 }
@@ -263,8 +290,13 @@ func PageCacheWorkflow(ctx temporalworkflow.Context, iteration int) error {
 	}
 	ctx = temporalworkflow.WithActivityOptions(ctx, actOpts)
 
+	// RefreshLatestCaches runs every 3s and only hits edge_scoreboard:latest
+	// queries, but those occasionally take >30s under ClickHouse contention
+	// from the heavier RefreshCaches queries running in parallel. A 60s
+	// budget absorbs that variance without being wide enough to mask a real
+	// regression.
 	fastActOpts := temporalworkflow.ActivityOptions{
-		StartToCloseTimeout: 30 * time.Second,
+		StartToCloseTimeout: 60 * time.Second,
 		RetryPolicy: &temporal.RetryPolicy{
 			MaximumAttempts: 1,
 		},

@@ -34,15 +34,31 @@ func isClientDisconnect(err error) bool {
 
 // logError logs at ERROR level, silently skipping client disconnects.
 func logError(msg string, args ...any) {
-	// Extract the error from args to check for client disconnect.
+	if hasClientDisconnect(args) {
+		return
+	}
+	slog.Error(msg, args...)
+}
+
+// logWarn logs at WARN level, silently skipping client disconnects.
+func logWarn(msg string, args ...any) {
+	if hasClientDisconnect(args) {
+		return
+	}
+	slog.Warn(msg, args...)
+}
+
+// hasClientDisconnect reports whether args contains an "error" key whose
+// value is a client-disconnect error (context cancellation, broken pipe, etc.).
+func hasClientDisconnect(args []any) bool {
 	for i := 0; i+1 < len(args); i += 2 {
 		if args[i] == "error" {
 			if err, ok := args[i+1].(error); ok && isClientDisconnect(err) {
-				return
+				return true
 			}
 		}
 	}
-	slog.Error(msg, args...)
+	return false
 }
 
 // internalError logs the full error internally and returns a user-safe message.

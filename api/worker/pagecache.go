@@ -95,7 +95,20 @@ func newTemporalLogger(log *slog.Logger) *temporalLogger {
 }
 
 func (l *temporalLogger) Debug(msg string, keyvals ...any) {} // suppress to avoid noisy workflow logs
-func (l *temporalLogger) Info(msg string, keyvals ...any)  { l.log.Info(msg, keyvals...) }
+func (l *temporalLogger) Info(msg string, keyvals ...any) {
+	// Temporal logs this at INFO when an activity's StartToCloseTimeout
+	// expires before the activity returns. Our activities handle ctx
+	// cancellation cleanly and always return nil, so the message is
+	// non-actionable in steady state. The Error= keyval also trips
+	// cloud-log heuristics that promote the line to ERROR severity.
+	// Demote to Debug so it stays suppressed in prod but is recoverable
+	// by flipping verbose logging on during an incident.
+	if msg == "Task processing failed with client side error" {
+		l.log.Debug(msg, keyvals...)
+		return
+	}
+	l.log.Info(msg, keyvals...)
+}
 func (l *temporalLogger) Warn(msg string, keyvals ...any)  { l.log.Warn(msg, keyvals...) }
 func (l *temporalLogger) Error(msg string, keyvals ...any) { l.log.Error(msg, keyvals...) }
 
