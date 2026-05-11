@@ -96,14 +96,17 @@ func newTemporalLogger(log *slog.Logger) *temporalLogger {
 
 func (l *temporalLogger) Debug(msg string, keyvals ...any) {} // suppress to avoid noisy workflow logs
 func (l *temporalLogger) Info(msg string, keyvals ...any) {
-	// Temporal logs this at INFO when an activity's StartToCloseTimeout
-	// expires before the activity returns. Our activities handle ctx
-	// cancellation cleanly and always return nil, so the message is
-	// non-actionable in steady state. The Error= keyval also trips
-	// cloud-log heuristics that promote the line to ERROR severity.
-	// Demote to Debug so it stays suppressed in prod but is recoverable
-	// by flipping verbose logging on during an incident.
+	// Temporal logs these at INFO during normal lifecycle events
+	// (StartToCloseTimeout expiry; activity reporting back to a workflow
+	// that already completed/continued-as-new during a deploy). The Error=
+	// keyval trips cloud-log heuristics that promote the line to ERROR
+	// severity. Demote to Debug so it stays suppressed in prod but is
+	// recoverable by flipping verbose logging on during an incident.
 	if msg == "Task processing failed with client side error" {
+		l.log.Debug(msg, keyvals...)
+		return
+	}
+	if msg == "Task processing failed with error" && hasBenignTaskProcessingError(keyvals) {
 		l.log.Debug(msg, keyvals...)
 		return
 	}
@@ -111,6 +114,24 @@ func (l *temporalLogger) Info(msg string, keyvals ...any) {
 }
 func (l *temporalLogger) Warn(msg string, keyvals ...any)  { l.log.Warn(msg, keyvals...) }
 func (l *temporalLogger) Error(msg string, keyvals ...any) { l.log.Error(msg, keyvals...) }
+
+// hasBenignTaskProcessingError reports whether Temporal's "Task processing
+// failed with error" keyvals carry an error that's expected during deploys
+// (activity completes after the workflow has already finished or been
+// continue-as-newed).
+func hasBenignTaskProcessingError(keyvals []any) bool {
+	for i := 0; i+1 < len(keyvals); i += 2 {
+		if keyvals[i] != "Error" {
+			continue
+		}
+		if err, ok := keyvals[i+1].(error); ok {
+			if strings.Contains(err.Error(), "workflow execution already completed") {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 func isWorkflowTerminated(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "terminated")
