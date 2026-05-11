@@ -272,7 +272,6 @@ var multicastMemberFilterFields = map[string]FilterFieldConfig{
 	"device": {Column: "device_code", Type: FieldTypeText},
 	"metro":  {Column: "metro_name", Type: FieldTypeText},
 	"owner":  {Column: "owner_pubkey", Type: FieldTypeText},
-	"all":    {Column: "", Type: FieldTypeText}, // handled specially in BuildFilterClause
 }
 
 func (a *API) GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
