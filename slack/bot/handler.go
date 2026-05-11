@@ -430,7 +430,9 @@ func (h *EventHandler) HandleSocketMode(ctx context.Context, client *socketmode.
 					if alreadyProcessed {
 						h.log.Info("skipping duplicate event", "envelope_id", envelopeID, "retry_attempt", retryAttempt, "retry_reason", retryReason)
 						EventsDuplicateTotal.Inc()
-						client.Ack(*evt.Request)
+						if err := client.Ack(*evt.Request); err != nil {
+							h.log.Warn("failed to ack duplicate event", "envelope_id", envelopeID, "error", err)
+						}
 						continue
 					}
 
@@ -444,7 +446,9 @@ func (h *EventHandler) HandleSocketMode(ctx context.Context, client *socketmode.
 					}
 				}
 
-				client.Ack(*evt.Request)
+				if err := client.Ack(*evt.Request); err != nil {
+					h.log.Warn("failed to ack event", "envelope_id", envelopeID, "error", err)
+				}
 				// Use background context so shutdown cancellation doesn't interrupt in-flight operations
 				// The WaitGroup handles graceful shutdown coordination.
 				// Note: Socket mode is single-tenant only, so TeamID from event is used for routing.
