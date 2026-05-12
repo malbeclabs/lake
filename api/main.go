@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/andybalholm/brotli"
 	"github.com/getsentry/sentry-go"
 	sentryhttp "github.com/getsentry/sentry-go/http"
 	"github.com/go-chi/chi/v5"
@@ -434,7 +435,11 @@ func main() {
 	}
 
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Compress(5))
+	compressor := middleware.NewCompressor(5)
+	compressor.SetEncoder("br", func(w io.Writer, level int) io.Writer {
+		return brotli.NewWriterLevel(w, level)
+	})
+	r.Use(compressor.Handler)
 	r.Use(metrics.Middleware)
 
 	// CORS configuration - origins from env or allow all
