@@ -1,12 +1,28 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState, lazy, Suspense } from 'react'
 import MapGL, { Marker, NavigationControl } from 'react-map-gl/maplibre'
 import type { StyleSpecification } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
-import { Check, Copy, Zap, X, ChevronDown, ChevronUp } from 'lucide-react'
+import { Check, Copy, Loader2, Zap, X, ChevronDown, ChevronUp } from 'lucide-react'
 import type { Metro, ShredDevice } from '@/lib/api'
 import { useTheme } from '@/hooks/use-theme'
 import { DevicePicker } from './device-picker'
 import type { DeviceLatency, LatencyEntry } from './types'
+import type { PickerGlobeMetro } from './picker-globe'
+
+// Lazy-load the picker globe to keep three.js out of the main bundle for
+// users on list view or browsers without WebGL.
+const PickerGlobe = lazy(() =>
+  import('./picker-globe').then(m => ({ default: m.PickerGlobe })),
+)
+
+function isWebGLAvailable(): boolean {
+  try {
+    const canvas = document.createElement('canvas')
+    return !!(canvas.getContext('webgl2') || canvas.getContext('webgl'))
+  } catch {
+    return false
+  }
+}
 
 function createMapStyle(isDark: boolean): StyleSpecification {
   const tileUrl = isDark
@@ -157,6 +173,10 @@ export function MapLanding({
   const [copied, setCopied] = useState(false)
   const [latencyOpen, setLatencyOpen] = useState(false)
 
+  // Compute WebGL support once per mount. If absent, fall back to the 2D
+  // MapLibre map below — the picker still works without three.js.
+  const webGLOk = useMemo(() => isWebGLAvailable(), [])
+
   const latencyMap = useMemo<Map<string, DeviceLatency> | undefined>(() => {
     if (!latencyResults) return undefined
     return new Map(latencyResults.map(r => [r.device_pk, r]))
@@ -194,6 +214,18 @@ export function MapLanding({
 
   const metroSummaries = useMemo(() => summarizeByMetro(devices, metros, latencyMap), [devices, metros, latencyMap])
 
+  // Metros for the picker globe — one prominent pin per shred-eligible metro.
+  const pickerMetros = useMemo<PickerGlobeMetro[]>(
+    () => metroSummaries.map(m => ({
+      code: m.code,
+      name: m.name,
+      latitude: m.latitude,
+      longitude: m.longitude,
+      seatsFree: m.seatsFree,
+    })),
+    [metroSummaries],
+  )
+
   const openedMetro = selectedMetro
     ? metroSummaries.find(m => m.code === selectedMetro) ?? null
     : null
@@ -224,74 +256,102 @@ export function MapLanding({
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4 items-start">
           {/* Map */}
-          <div className="border border-border rounded-lg overflow-hidden bg-card">
-            <div className="relative w-full h-[60vh] min-h-[420px]">
-              <MapGL
-                initialViewState={{ longitude: 10, latitude: 30, zoom: 1.4 }}
-                mapStyle={mapStyle}
-                style={{ width: '100%', height: '100%' }}
-                attributionControl={false}
-              >
-                <NavigationControl position="top-right" showCompass={false} />
-                {metroSummaries.map(m => {
-                  const isSelected = m.code === selectedMetro
-                  const hasSeats = m.seatsFree > 0
-                  return (
-                    <Marker
-                      key={m.code}
-                      longitude={m.longitude}
-                      latitude={m.latitude}
-                      anchor="center"
-                      onClick={e => {
-                        e.originalEvent.stopPropagation()
-                        onSelectMetro(m.code)
-                      }}
-                    >
-                      <button
-                        type="button"
-                        title={`${m.code} · ${m.devices.length} device${m.devices.length !== 1 ? 's' : ''} · from $${m.minPrice}/ep · ${m.seatsFree} seat${m.seatsFree !== 1 ? 's' : ''} free`}
-                        className="relative -translate-x-1/2 -translate-y-1/2 cursor-pointer"
-                      >
-                        <span
-                          className={`block rounded-full border-2 transition-all ${
-                            isSelected
-                              ? 'h-4 w-4 border-foreground'
-                              : 'h-3 w-3 border-background'
-                          } ${hasSeats ? 'bg-accent-orange-100' : 'bg-muted'}`}
-                          style={{
-                            boxShadow: isSelected ? '0 0 0 3px rgba(0,0,0,0.15)' : '0 1px 2px rgba(0,0,0,0.25)',
-                          }}
-                        />
-                        {m.hasRecommended && (
-                          <Zap
-                            className="absolute -top-1 -right-1 h-3 w-3 text-foreground"
-                            fill="currentColor"
-                          />
-                        )}
-                      </button>
-                    </Marker>
-                  )
-                })}
-              </MapGL>
-            </div>
-            {/* Legend */}
-            <div className="flex flex-wrap items-center gap-4 px-4 py-2 text-xs text-muted-foreground border-t border-border">
-              <div className="flex items-center gap-1.5">
-                <span className="inline-block h-2.5 w-2.5 rounded-full bg-accent-orange-100" />
-                Seats free
+          {webGLOk ? (
+            <div className="border border-border rounded-lg overflow-hidden bg-card">
+              <div className="relative w-full h-[60vh] min-h-[420px]">
+                <Suspense fallback={<GlobeLoader />}>
+                  <PickerGlobe
+                    metros={pickerMetros}
+                    selectedMetro={selectedMetro}
+                    onSelectMetro={onSelectMetro}
+                  />
+                </Suspense>
               </div>
-              <div className="flex items-center gap-1.5">
-                <span className="inline-block h-2.5 w-2.5 rounded-full bg-muted border border-border" />
-                Full
-              </div>
-              {latencyMap && (
+              <div className="flex flex-wrap items-center gap-4 px-4 py-2 text-xs text-muted-foreground border-t border-border">
                 <div className="flex items-center gap-1.5">
-                  <Zap className="h-3 w-3" fill="currentColor" />
-                  Recommended (closest to your server)
+                  <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: '#f97316' }} />
+                  Seats free
                 </div>
-              )}
+                <div className="flex items-center gap-1.5">
+                  <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: '#6b7280' }} />
+                  Full
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: '#3b82f6' }} />
+                  Selected
+                </div>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="border border-border rounded-lg overflow-hidden bg-card">
+              <div className="relative w-full h-[60vh] min-h-[420px]">
+                <MapGL
+                  initialViewState={{ longitude: 10, latitude: 30, zoom: 1.4 }}
+                  mapStyle={mapStyle}
+                  style={{ width: '100%', height: '100%' }}
+                  attributionControl={false}
+                >
+                  <NavigationControl position="top-right" showCompass={false} />
+                  {metroSummaries.map(m => {
+                    const isSelected = m.code === selectedMetro
+                    const hasSeats = m.seatsFree > 0
+                    return (
+                      <Marker
+                        key={m.code}
+                        longitude={m.longitude}
+                        latitude={m.latitude}
+                        anchor="center"
+                        onClick={e => {
+                          e.originalEvent.stopPropagation()
+                          onSelectMetro(m.code)
+                        }}
+                      >
+                        <button
+                          type="button"
+                          title={`${m.code} · ${m.devices.length} device${m.devices.length !== 1 ? 's' : ''} · from $${m.minPrice}/ep · ${m.seatsFree} seat${m.seatsFree !== 1 ? 's' : ''} free`}
+                          className="relative -translate-x-1/2 -translate-y-1/2 cursor-pointer"
+                        >
+                          <span
+                            className={`block rounded-full border-2 transition-all ${
+                              isSelected
+                                ? 'h-4 w-4 border-foreground'
+                                : 'h-3 w-3 border-background'
+                            } ${hasSeats ? 'bg-accent-orange-100' : 'bg-muted'}`}
+                            style={{
+                              boxShadow: isSelected ? '0 0 0 3px rgba(0,0,0,0.15)' : '0 1px 2px rgba(0,0,0,0.25)',
+                            }}
+                          />
+                          {m.hasRecommended && (
+                            <Zap
+                              className="absolute -top-1 -right-1 h-3 w-3 text-foreground"
+                              fill="currentColor"
+                            />
+                          )}
+                        </button>
+                      </Marker>
+                    )
+                  })}
+                </MapGL>
+              </div>
+              {/* Legend */}
+              <div className="flex flex-wrap items-center gap-4 px-4 py-2 text-xs text-muted-foreground border-t border-border">
+                <div className="flex items-center gap-1.5">
+                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-accent-orange-100" />
+                  Seats free
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-muted border border-border" />
+                  Full
+                </div>
+                {latencyMap && (
+                  <div className="flex items-center gap-1.5">
+                    <Zap className="h-3 w-3" fill="currentColor" />
+                    Recommended (closest to your server)
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Drawer */}
           <aside className="sticky top-4 border border-border rounded-lg bg-card">
@@ -498,6 +558,14 @@ function LatencyExpander({
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+function GlobeLoader() {
+  return (
+    <div className="absolute inset-0 flex items-center justify-center bg-background">
+      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
     </div>
   )
 }

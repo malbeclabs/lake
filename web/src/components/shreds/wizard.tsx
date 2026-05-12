@@ -136,7 +136,7 @@ export function Wizard(props: WizardProps) {
       {/* Step bar */}
       <StepBar steps={steps} />
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
         <div className="space-y-6 min-w-0">
           {/* Step 1: Device */}
           <Section title="1 · Device">
