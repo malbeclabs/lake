@@ -18,20 +18,28 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/metrics"
 )
 
-// InfluxDBClient is an interface for querying InfluxDB 3 with SQL
+// InfluxDBClient is an interface for querying InfluxDB interface counter data.
 type InfluxDBClient interface {
-	// QuerySQL executes a SQL query and returns results as a slice of maps
-	QuerySQL(ctx context.Context, sqlQuery string) ([]map[string]any, error)
-	// Close closes the client and releases resources
+	// QueryIntfCounters fetches interface counter rows for [start, end).
+	// Returned rows contain: time (RFC3339Nano string), dzd_pubkey, host, intf,
+	// model_name, serial_number, and all counter field names
+	// (e.g. "in-octets", "out-octets", "in-errors", etc.)
+	QueryIntfCounters(ctx context.Context, start, end time.Time) ([]map[string]any, error)
+	// QueryBaselineCounter fetches the last non-null value of field for each
+	// (dzd_pubkey, intf) pair in the window [lookbackStart, windowStart).
+	// Returned rows contain: dzd_pubkey, intf, value.
+	QueryBaselineCounter(ctx context.Context, field string, lookbackStart, windowStart time.Time) ([]map[string]any, error)
+	// Close closes the client and releases resources.
 	Close() error
 }
 
-// SDKInfluxDBClient implements InfluxDBClient using the official InfluxDB 3 Go SDK
+// SDKInfluxDBClient implements InfluxDBClient using the official InfluxDB 3 Go SDK (Flight SQL).
+// It is kept for compatibility; prefer FluxInfluxDBClient for production use.
 type SDKInfluxDBClient struct {
 	client *influxdb3.Client
 }
 
-// NewSDKInfluxDBClient creates a new SDK-based InfluxDB client
+// NewSDKInfluxDBClient creates a new SDK-based InfluxDB client using Flight SQL.
 func NewSDKInfluxDBClient(host, token, database string) (*SDKInfluxDBClient, error) {
 	client, err := influxdb3.New(influxdb3.ClientConfig{
 		Host:     host,
@@ -44,7 +52,58 @@ func NewSDKInfluxDBClient(host, token, database string) (*SDKInfluxDBClient, err
 	return &SDKInfluxDBClient{client: client}, nil
 }
 
-func (c *SDKInfluxDBClient) QuerySQL(ctx context.Context, sqlQuery string) ([]map[string]any, error) {
+func (c *SDKInfluxDBClient) QueryIntfCounters(ctx context.Context, start, end time.Time) ([]map[string]any, error) {
+	sqlQuery := fmt.Sprintf(`
+		SELECT
+			time,
+			dzd_pubkey,
+			host,
+			intf,
+			model_name,
+			serial_number,
+			"carrier-transitions",
+			"in-broadcast-pkts",
+			"in-discards",
+			"in-errors",
+			"in-fcs-errors",
+			"in-multicast-pkts",
+			"in-octets",
+			"in-pkts",
+			"in-unicast-pkts",
+			"out-broadcast-pkts",
+			"out-discards",
+			"out-errors",
+			"out-multicast-pkts",
+			"out-octets",
+			"out-pkts",
+			"out-unicast-pkts"
+		FROM "intfCounters"
+		WHERE time >= '%s' AND time < '%s'
+	`, start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano))
+	return c.querySQL(ctx, sqlQuery)
+}
+
+func (c *SDKInfluxDBClient) QueryBaselineCounter(ctx context.Context, field string, lookbackStart, windowStart time.Time) ([]map[string]any, error) {
+	sqlQuery := fmt.Sprintf(`
+		SELECT
+			dzd_pubkey,
+			intf,
+			"%s" as value
+		FROM (
+			SELECT
+				dzd_pubkey,
+				intf,
+				"%s",
+				ROW_NUMBER() OVER (PARTITION BY dzd_pubkey, intf ORDER BY time DESC) as rn
+			FROM "intfCounters"
+			WHERE time >= '%s' AND time < '%s' AND "%s" IS NOT NULL
+		) ranked
+		WHERE rn = 1
+	`, field, field, lookbackStart.Format(time.RFC3339Nano), windowStart.Format(time.RFC3339Nano), field)
+	return c.querySQL(ctx, sqlQuery)
+}
+
+func (c *SDKInfluxDBClient) querySQL(ctx context.Context, sqlQuery string) ([]map[string]any, error) {
 	iterator, err := c.client.Query(ctx, sqlQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)
@@ -95,6 +154,7 @@ type ViewConfig struct {
 	ClickHouse      clickhouse.Client
 	RefreshInterval time.Duration
 	QueryWindow     time.Duration // How far back to query from InfluxDB
+	DZEnv           string        // DZ network environment (e.g. "mainnet-beta", "testnet", "devnet")
 }
 
 func (cfg *ViewConfig) Validate() error {
@@ -122,6 +182,12 @@ func (cfg *ViewConfig) Validate() error {
 	return nil
 }
 
+// baselineCacheTTL is the staleness threshold for the baseline cache.
+// During normal operation the cache is updated after every refresh cycle (~60 s),
+// so this threshold is only hit on startup or after the indexer has been paused
+// longer than 5 minutes, triggering a ClickHouse re-query.
+const baselineCacheTTL = 5 * time.Minute
+
 type View struct {
 	log       *slog.Logger
 	cfg       ViewConfig
@@ -129,6 +195,11 @@ type View struct {
 	readyOnce sync.Once
 	readyCh   chan struct{}
 	refreshMu sync.Mutex // prevents concurrent refreshes
+
+	// baselineCache caches the result of queryBaselineCountersFromClickHouse.
+	// refreshMu already serialises refreshes, so no additional lock is needed.
+	baselineCache     *CounterBaselines
+	baselineCacheTime time.Time
 }
 
 func NewView(cfg ViewConfig) (*View, error) {
@@ -263,12 +334,13 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 			v.log.Info("telemetry/usage: queried baselines from clickhouse", "unique_keys", totalKeys, "duration", chDuration.String())
 			baselines = chBaselines
 		} else {
-			v.log.Debug("telemetry/usage: no baseline data in clickhouse (0 rows), will query influxdb", "duration", chDuration.String())
+			v.log.Warn("telemetry/usage: no baseline data in clickhouse (0 rows), will query influxdb — this triggers expensive 1-year scans", "duration", chDuration.String())
 		}
 	}
 
 	if baselines == nil {
-		v.log.Debug("telemetry/usage: querying baselines from influxdb (clickhouse returned 0 baselines)")
+		metrics.InfluxBaselineFallbackTotal.WithLabelValues(v.cfg.DZEnv).Inc()
+		v.log.Warn("telemetry/usage: querying baselines from influxdb (clickhouse returned 0 baselines)")
 		baselineCtx, baselineCancel := context.WithTimeout(ctx, 120*time.Second)
 		defer baselineCancel()
 
@@ -326,13 +398,19 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	// Convert times to UTC for InfluxDB query (InfluxDB stores times in UTC)
 	queryStartUTC := queryStart.UTC()
 	nowUTC := now.UTC()
-	usage, err := v.queryInfluxDB(ctx, queryStartUTC, nowUTC, baselines, alreadyWritten)
+	usage, endBaselines, err := v.queryInfluxDB(ctx, queryStartUTC, nowUTC, baselines, alreadyWritten)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return result, err
 		}
 		metrics.ViewRefreshTotal.WithLabelValues("telemetry-usage", "error").Inc()
 		return result, fmt.Errorf("failed to query influxdb: %w", err)
+	}
+	// Update the baseline cache with the end-of-window values so the next cycle
+	// uses what was actually processed rather than re-querying ClickHouse.
+	if endBaselines != nil {
+		v.baselineCache = endBaselines
+		v.baselineCacheTime = now
 	}
 
 	v.log.Info("telemetry/usage: queried influxdb", "rows", len(usage), "from", queryStart, "to", now)
@@ -385,47 +463,21 @@ type CounterBaselines struct {
 	OutErrors   map[string]*int64
 }
 
-func (v *View) queryInfluxDB(ctx context.Context, startTime, endTime time.Time, baselines *CounterBaselines, alreadyWritten MaxTimestampsByKey) ([]InterfaceUsage, error) {
+func (v *View) queryInfluxDB(ctx context.Context, startTime, endTime time.Time, baselines *CounterBaselines, alreadyWritten MaxTimestampsByKey) ([]InterfaceUsage, *CounterBaselines, error) {
 	// InfluxDB uses dzd_pubkey as a tag, which we extract and map to device_pk.
 	v.log.Debug("telemetry/usage: executing main influxdb query", "from", startTime.UTC(), "to", endTime.UTC())
 	queryStart := time.Now()
-	sqlQuery := fmt.Sprintf(`
-		SELECT
-			time,
-			dzd_pubkey,
-			host,
-			intf,
-			model_name,
-			serial_number,
-			"carrier-transitions",
-			"in-broadcast-pkts",
-			"in-discards",
-			"in-errors",
-			"in-fcs-errors",
-			"in-multicast-pkts",
-			"in-octets",
-			"in-pkts",
-			"in-unicast-pkts",
-			"out-broadcast-pkts",
-			"out-discards",
-			"out-errors",
-			"out-multicast-pkts",
-			"out-octets",
-			"out-pkts",
-			"out-unicast-pkts"
-		FROM "intfCounters"
-		WHERE time >= '%s' AND time < '%s'
-	`, startTime.UTC().Format(time.RFC3339Nano), endTime.UTC().Format(time.RFC3339Nano))
 
-	rows, err := v.cfg.InfluxDB.QuerySQL(ctx, sqlQuery)
+	rows, err := v.cfg.InfluxDB.QueryIntfCounters(ctx, startTime, endTime)
 	queryDuration := time.Since(queryStart)
+	metrics.RecordInfluxQuery(v.cfg.DZEnv, "interface_usage", queryDuration, len(rows), err)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			return nil, err
+			return nil, nil, err
 		}
-		return nil, fmt.Errorf("failed to execute SQL query: %w", err)
+		return nil, nil, fmt.Errorf("failed to execute SQL query: %w", err)
 	}
-	v.log.Debug("telemetry/usage: main influxdb query completed", "rows", len(rows), "duration", queryDuration.String())
+	v.log.Info("telemetry/usage: main influxdb query completed", "rows", len(rows), "duration", queryDuration.String())
 
 	// Baselines are already provided from Refresh() - use them as-is
 
@@ -462,14 +514,14 @@ func (v *View) queryInfluxDB(ctx context.Context, startTime, endTime time.Time, 
 	// Convert rows to InterfaceUsage, tracking last known values per device/interface
 	// We need to process in time order to properly forward-fill nulls
 	convertStart := time.Now()
-	usage, err := v.convertRowsToUsage(rows, baselines, linkLookup, alreadyWritten)
+	usage, endBaselines, err := v.convertRowsToUsage(rows, baselines, linkLookup, alreadyWritten)
 	convertDuration := time.Since(convertStart)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert rows: %w", err)
+		return nil, nil, fmt.Errorf("failed to convert rows: %w", err)
 	}
 	v.log.Debug("telemetry/usage: converted rows to usage data", "usage_records", len(usage), "duration", convertDuration.String())
 
-	return usage, nil
+	return usage, endBaselines, nil
 }
 
 // buildLinkLookup builds a map from "device_pk:intf" to LinkInfo by querying the dz_links_history table
@@ -534,10 +586,13 @@ func (v *View) buildLinkLookup(ctx context.Context) (map[string]LinkInfo, error)
 }
 
 // convertRowsToUsage converts rows to InterfaceUsage, using baselines only for the first null
-// and forward-filling with the last known value for subsequent nulls
-// For non-sparse counters, the first row per device/interface is used as baseline and not stored
+// and forward-filling with the last known value for subsequent nulls.
+// For non-sparse counters, the first row per device/interface is used as baseline and not stored.
+// The second return value is the end-of-window sparse counter baselines (last seen values of
+// in_discards, in_errors, in_fcs_errors, out_discards, out_errors per device/intf key).
+// The caller should store these as the baseline for the next refresh cycle.
 // If alreadyWritten is provided, rows with timestamps <= the max already written for that key are skipped
-func (v *View) convertRowsToUsage(rows []map[string]any, baselines *CounterBaselines, linkLookup map[string]LinkInfo, alreadyWritten MaxTimestampsByKey) ([]InterfaceUsage, error) {
+func (v *View) convertRowsToUsage(rows []map[string]any, baselines *CounterBaselines, linkLookup map[string]LinkInfo, alreadyWritten MaxTimestampsByKey) ([]InterfaceUsage, *CounterBaselines, error) {
 	// Track last known values per device/interface for each counter
 	// Key: "device_pk:intf", Value: map of counter name to last value
 	lastKnownValues := make(map[string]map[string]*int64)
@@ -686,35 +741,39 @@ func (v *View) convertRowsToUsage(rows []map[string]any, baselines *CounterBasel
 		isFirstRow := key != "" && !firstRowSeen[key]
 
 		// For all counter fields: use value if present, otherwise forward-fill with last known
-		// Sparse counters (errors/discards) have baselines from 10-year query
-		// Non-sparse counters: first row is used as baseline, not stored
+		// Sparse counters (errors/discards) have baselines from 1-year query
+		// Non-sparse counters: first row is used as baseline, not stored.
+		// isRate marks counters whose deltas are divided by delta_duration to
+		// produce per-second rates (bps, pps). Only rows carrying at least one
+		// real isRate value should advance lastTime (see #388).
 		allCounterFields := []struct {
 			field     string
 			dest      **int64
 			deltaDest **int64
 			baseline  map[string]*int64
 			isSparse  bool
+			isRate    bool
 		}{
-			{"carrier-transitions", &u.CarrierTransitions, &u.CarrierTransitionsDelta, nil, false},
-			{"in-broadcast-pkts", &u.InBroadcastPkts, &u.InBroadcastPktsDelta, nil, false},
-			{"in-discards", &u.InDiscards, &u.InDiscardsDelta, baselines.InDiscards, true},
-			{"in-errors", &u.InErrors, &u.InErrorsDelta, baselines.InErrors, true},
-			{"in-fcs-errors", &u.InFCSErrors, &u.InFCSErrorsDelta, baselines.InFCSErrors, true},
-			{"in-multicast-pkts", &u.InMulticastPkts, &u.InMulticastPktsDelta, nil, false},
-			{"in-octets", &u.InOctets, &u.InOctetsDelta, nil, false},
-			{"in-pkts", &u.InPkts, &u.InPktsDelta, nil, false},
-			{"in-unicast-pkts", &u.InUnicastPkts, &u.InUnicastPktsDelta, nil, false},
-			{"out-broadcast-pkts", &u.OutBroadcastPkts, &u.OutBroadcastPktsDelta, nil, false},
-			{"out-discards", &u.OutDiscards, &u.OutDiscardsDelta, baselines.OutDiscards, true},
-			{"out-errors", &u.OutErrors, &u.OutErrorsDelta, baselines.OutErrors, true},
-			{"out-multicast-pkts", &u.OutMulticastPkts, &u.OutMulticastPktsDelta, nil, false},
-			{"out-octets", &u.OutOctets, &u.OutOctetsDelta, nil, false},
-			{"out-pkts", &u.OutPkts, &u.OutPktsDelta, nil, false},
-			{"out-unicast-pkts", &u.OutUnicastPkts, &u.OutUnicastPktsDelta, nil, false},
+			{"carrier-transitions", &u.CarrierTransitions, &u.CarrierTransitionsDelta, nil, false, false},
+			{"in-broadcast-pkts", &u.InBroadcastPkts, &u.InBroadcastPktsDelta, nil, false, true},
+			{"in-discards", &u.InDiscards, &u.InDiscardsDelta, baselines.InDiscards, true, false},
+			{"in-errors", &u.InErrors, &u.InErrorsDelta, baselines.InErrors, true, false},
+			{"in-fcs-errors", &u.InFCSErrors, &u.InFCSErrorsDelta, baselines.InFCSErrors, true, false},
+			{"in-multicast-pkts", &u.InMulticastPkts, &u.InMulticastPktsDelta, nil, false, true},
+			{"in-octets", &u.InOctets, &u.InOctetsDelta, nil, false, true},
+			{"in-pkts", &u.InPkts, &u.InPktsDelta, nil, false, true},
+			{"in-unicast-pkts", &u.InUnicastPkts, &u.InUnicastPktsDelta, nil, false, true},
+			{"out-broadcast-pkts", &u.OutBroadcastPkts, &u.OutBroadcastPktsDelta, nil, false, true},
+			{"out-discards", &u.OutDiscards, &u.OutDiscardsDelta, baselines.OutDiscards, true, false},
+			{"out-errors", &u.OutErrors, &u.OutErrorsDelta, baselines.OutErrors, true, false},
+			{"out-multicast-pkts", &u.OutMulticastPkts, &u.OutMulticastPktsDelta, nil, false, true},
+			{"out-octets", &u.OutOctets, &u.OutOctetsDelta, nil, false, true},
+			{"out-pkts", &u.OutPkts, &u.OutPktsDelta, nil, false, true},
+			{"out-unicast-pkts", &u.OutUnicastPkts, &u.OutUnicastPktsDelta, nil, false, true},
 		}
 
 		// For non-sparse counters on first row: extract values and use as baseline, skip storing the row
-		// For sparse counters, we still process and store the first row (they have baselines from 10-year query)
+		// For sparse counters, we still process and store the first row (they have baselines from 1-year query)
 		if isFirstRow {
 			// Check if we have any non-sparse counter values
 			hasNonSparseValues := false
@@ -744,12 +803,18 @@ func (v *View) convertRowsToUsage(rows []map[string]any, baselines *CounterBasel
 			firstRowSeen[key] = true
 		}
 
-		// Process all counters
+		// Process all counters. Track whether any non-sparse counter had a
+		// real (non-forward-filled) value in this row so we know whether to
+		// advance lastTime below.
+		hasRateCounter := false
 		for _, cf := range allCounterFields {
 			var currentValue *int64
 			value := extractInt64FromRow(row, cf.field)
 			if value != nil {
 				currentValue = value
+				if cf.isRate {
+					hasRateCounter = true
+				}
 			} else if key != "" {
 				// Forward-fill with last known value (includes pre-populated baselines)
 				if lastKnown, ok := lastKnownValues[key][cf.field]; ok && lastKnown != nil {
@@ -771,29 +836,84 @@ func (v *View) convertRowsToUsage(rows []map[string]any, baselines *CounterBasel
 					*cf.deltaDest = &delta
 				}
 
-				lastKnownValues[key][cf.field] = currentValue
+				// For rate (monotonic) counters, only advance the baseline when the
+				// counter moves forward. If the source sends a stale or replayed
+				// reading (counter regresses), keep the previous high-water mark so
+				// the next row's delta is computed against the last valid value
+				// rather than the stale one — preventing inflated bps spikes.
+				if !cf.isRate || previousValue == nil || *currentValue >= *previousValue {
+					lastKnownValues[key][cf.field] = currentValue
+				}
 			}
 		}
 
-		// Compute delta_duration: time difference from previous measurement
+		// Compute delta_duration: time difference from previous measurement.
+		// Only advance lastTime when the row carried real non-sparse counter
+		// values (octets, pkts, etc.). Rows that only contain sparse counters
+		// (e.g. a carrier-transition event) still get a delta_duration from the
+		// previous row, but must not advance the clock — otherwise the next
+		// real-counter row inherits a tiny duration for a full counter delta,
+		// producing wildly inflated rates (see #388).
 		if key != "" {
 			if lastT, ok := lastTime[key]; ok {
 				duration := t.Sub(lastT).Seconds()
 				u.DeltaDuration = &duration
 			}
-			// Update last time for next iteration
-			lastTime[key] = t
+			if hasRateCounter {
+				lastTime[key] = t
+			}
 		}
 
 		usage = append(usage, *u)
 	}
 
-	return usage, nil
+	// Build end-of-window sparse baselines from lastKnownValues so the caller can
+	// carry them forward as the baseline for the next cycle, avoiding a ClickHouse re-query.
+	endBaselines := &CounterBaselines{
+		InDiscards:  make(map[string]*int64),
+		InErrors:    make(map[string]*int64),
+		InFCSErrors: make(map[string]*int64),
+		OutDiscards: make(map[string]*int64),
+		OutErrors:   make(map[string]*int64),
+	}
+	for key, fields := range lastKnownValues {
+		if v := fields["in-discards"]; v != nil {
+			endBaselines.InDiscards[key] = v
+		}
+		if v := fields["in-errors"]; v != nil {
+			endBaselines.InErrors[key] = v
+		}
+		if v := fields["in-fcs-errors"]; v != nil {
+			endBaselines.InFCSErrors[key] = v
+		}
+		if v := fields["out-discards"]; v != nil {
+			endBaselines.OutDiscards[key] = v
+		}
+		if v := fields["out-errors"]; v != nil {
+			endBaselines.OutErrors[key] = v
+		}
+	}
+
+	return usage, endBaselines, nil
 }
 
 // queryBaselineCountersFromClickHouse queries ClickHouse for the last non-null counter values before the window start
 // for each device/interface combination. Returns error if ClickHouse doesn't have data or query fails.
+//
+// During steady-state operation the cache is populated after each successful refresh cycle with the
+// end-of-window values from convertRowsToUsage, so this query runs only on startup or after a gap
+// longer than baselineCacheTTL (5 minutes). The backfill path calls this with historical
+// windowStart values and bypasses the cache entirely.
 func (v *View) queryBaselineCountersFromClickHouse(ctx context.Context, windowStart time.Time) (*CounterBaselines, error) {
+	// Use the cache only for near-real-time refreshes (windowStart within 2× baselineCacheTTL of now).
+	// Backfill calls with historical windowStart values bypass the cache.
+	now := v.cfg.Clock.Now()
+	isRealtime := now.Sub(windowStart) < 2*baselineCacheTTL
+	if isRealtime && v.baselineCache != nil && now.Before(v.baselineCacheTime.Add(baselineCacheTTL)) {
+		v.log.Debug("telemetry/usage: using cached baselines", "age", now.Sub(v.baselineCacheTime).Round(time.Second))
+		return v.baselineCache, nil
+	}
+
 	// Query recent data before the window start to find the last non-null values.
 	// Use a 7-day lookback — the indexer writes every few minutes, so the last
 	// non-null value for any sparse counter should be well within this window.
@@ -880,7 +1000,7 @@ func (v *View) queryBaselineCountersFromClickHouse(ctx context.Context, windowSt
 }
 
 // queryBaselineCounters queries InfluxDB for the last non-null counter values before the window start
-// for sparse counters (errors/discards) using a 10-year lookback window.
+// for sparse counters (errors/discards) using a 1-year lookback window.
 func (v *View) queryBaselineCounters(ctx context.Context, windowStart time.Time) (*CounterBaselines, error) {
 	baselines := &CounterBaselines{
 		InDiscards:  make(map[string]*int64),
@@ -903,74 +1023,48 @@ func (v *View) queryBaselineCounters(ctx context.Context, windowStart time.Time)
 		{"out-errors", baselines.OutErrors},
 	}
 
-	v.log.Debug("telemetry/usage: querying baseline counters from influxdb", "counters", len(counterFields))
-	var wg sync.WaitGroup
-	errCh := make(chan error, len(counterFields))
+	// For sparse counters, use a 1-year window directly (they're sparse, so rows are rare).
+	// NOTE: These queries are expensive on InfluxDB — run sequentially to avoid saturating
+	// the InfluxDB query budget (25m total in 30s). This path only runs when ClickHouse
+	// has no baseline data, which should be rare in steady state.
+	lookbackStart := windowStart.Add(-365 * 24 * time.Hour)
+	v.log.Warn("telemetry/usage: querying baseline counters from influxdb (sequential to avoid rate limits)",
+		"counters", len(counterFields),
+		"from", lookbackStart.UTC(),
+		"to", windowStart.UTC(),
+		"lookback", "1y",
+	)
 
-	for _, cf := range counterFields {
-		wg.Add(1)
-		go func(cf struct {
-			field    string
-			baseline map[string]*int64
-		}) {
-			defer wg.Done()
-			counterStart := time.Now()
-
-			// For sparse counters, just use 10-year window directly (they're sparse, so it's fast)
-			lookbackStart := windowStart.Add(-10 * 365 * 24 * time.Hour)
-			sqlQuery := fmt.Sprintf(`
-				SELECT
-					dzd_pubkey,
-					intf,
-					"%s" as value
-				FROM (
-					SELECT
-						dzd_pubkey,
-						intf,
-						"%s",
-						ROW_NUMBER() OVER (PARTITION BY dzd_pubkey, intf ORDER BY time DESC) as rn
-					FROM "intfCounters"
-					WHERE time >= '%s' AND time < '%s' AND "%s" IS NOT NULL
-				) ranked
-				WHERE rn = 1
-			`, cf.field, cf.field, lookbackStart.Format(time.RFC3339Nano), windowStart.Format(time.RFC3339Nano), cf.field)
-
-			rows, err := v.cfg.InfluxDB.QuerySQL(ctx, sqlQuery)
-			counterDuration := time.Since(counterStart)
-			if err != nil {
-				v.log.Warn("telemetry/usage: failed to query baseline counter", "counter", cf.field, "error", err, "duration", counterDuration.String())
-				errCh <- fmt.Errorf("failed to query baseline for %s: %w", cf.field, err)
-				return
-			}
-
-			baselineCount := 0
-			for _, row := range rows {
-				devicePK := extractStringFromRow(row, "dzd_pubkey")
-				intf := extractStringFromRow(row, "intf")
-				if devicePK == nil || intf == nil {
-					continue
-				}
-				key := fmt.Sprintf("%s:%s", *devicePK, *intf)
-				value := extractInt64FromRow(row, "value")
-				if value != nil {
-					cf.baseline[key] = value
-					baselineCount++
-				}
-			}
-			v.log.Debug("telemetry/usage: completed baseline counter query", "counter", cf.field, "baselines", baselineCount, "duration", counterDuration.String())
-		}(cf)
-	}
-
-	wg.Wait()
-	close(errCh)
-
-	// Check for errors
 	hasErrors := false
-	for err := range errCh {
+	for _, cf := range counterFields {
+		counterStart := time.Now()
+
+		v.log.Info("telemetry/usage: executing influxdb baseline counter query", "counter", cf.field, "from", lookbackStart.UTC(), "to", windowStart.UTC())
+		rows, err := v.cfg.InfluxDB.QueryBaselineCounter(ctx, cf.field, lookbackStart, windowStart)
+		counterDuration := time.Since(counterStart)
+		queryType := "baseline_" + strings.ReplaceAll(cf.field, "-", "_")
+		metrics.RecordInfluxQuery(v.cfg.DZEnv, queryType, counterDuration, len(rows), err)
 		if err != nil {
+			v.log.Warn("telemetry/usage: failed to query baseline counter", "counter", cf.field, "error", err, "duration", counterDuration.String())
 			hasErrors = true
-			v.log.Warn("telemetry/usage: baseline counter query error", "error", err)
+			continue
 		}
+
+		baselineCount := 0
+		for _, row := range rows {
+			devicePK := extractStringFromRow(row, "dzd_pubkey")
+			intf := extractStringFromRow(row, "intf")
+			if devicePK == nil || intf == nil {
+				continue
+			}
+			key := fmt.Sprintf("%s:%s", *devicePK, *intf)
+			value := extractInt64FromRow(row, "value")
+			if value != nil {
+				cf.baseline[key] = value
+				baselineCount++
+			}
+		}
+		v.log.Info("telemetry/usage: completed baseline counter query", "counter", cf.field, "baselines", baselineCount, "duration", counterDuration.String())
 	}
 
 	if hasErrors {

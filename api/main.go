@@ -27,8 +27,10 @@ import (
 	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
 	"github.com/malbeclabs/lake/api/metrics"
+	v1 "github.com/malbeclabs/lake/api/v1"
 	"github.com/malbeclabs/lake/api/worker"
 	slackbot "github.com/malbeclabs/lake/slack/bot"
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/slack-go/slack/socketmode"
 )
@@ -220,7 +222,12 @@ func main() {
 	noWorkerFlag := flag.Bool("no-worker", false, "Disable embedded page cache worker (for prod where it runs standalone)")
 	noDevnetFlag := flag.Bool("no-devnet", false, "Disable devnet database connection")
 	noTestnetFlag := flag.Bool("no-testnet", false, "Disable testnet database connection")
+	verboseFlag := flag.Bool("v", false, "Verbose logging (debug level)")
 	flag.Parse()
+
+	// Install the shared logger as the slog default. The handler redacts
+	// credentials embedded in URLs so api logs match indexer/admin behavior.
+	slog.SetDefault(logger.New(*verboseFlag))
 
 	// Set env vars so config.Load() picks them up (flags take precedence over env)
 	if *useRemoteFlag {
@@ -347,10 +354,13 @@ func main() {
 	api := &handlers.API{
 		DB:            config.DB,
 		HealthDB:      config.HealthDB,
+		PublicQueryDB: config.PublicQueryDB,
 		EnvDBs:        config.EnvDBs,
 		EnvDatabases:  config.EnvDatabases,
 		Database:      config.Database(),
 		ShredderDB:    config.GetShredderDB(),
+		PublisherDB:   config.GetPublisherDB(),
+		DZDPDB:        config.GetDZDPDB(),
 		PgPool:        config.PgPool,
 		Neo4jClient:   config.Neo4jClient,
 		Neo4jDatabase: config.Neo4jDatabase,
@@ -424,6 +434,7 @@ func main() {
 	}
 
 	r.Use(middleware.Recoverer)
+	r.Use(middleware.Compress(5))
 	r.Use(metrics.Middleware)
 
 	// CORS configuration - origins from env or allow all
@@ -448,11 +459,11 @@ func main() {
 				"default-src 'self'",
 				"script-src 'self' 'unsafe-inline' https://accounts.google.com https://static.cloudflareinsights.com",
 				"worker-src 'self' blob:",
-				"frame-src https://accounts.google.com https://accounts.googleusercontent.com",
+				"frame-src https://accounts.google.com https://accounts.googleusercontent.com https://www.openstreetmap.org",
 				"connect-src 'self' https://accounts.google.com https://cloudflareinsights.com https://*.basemaps.cartocdn.com https://*.ingest.us.sentry.io",
 				"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com",
 				"font-src 'self' https://fonts.gstatic.com",
-				"img-src 'self' data: blob: https://lh3.googleusercontent.com https://*.basemaps.cartocdn.com",
+				"img-src 'self' data: blob: https://lh3.googleusercontent.com https://*.basemaps.cartocdn.com https:",
 			}, "; ")
 			w.Header().Set("Content-Security-Policy", csp)
 
@@ -498,6 +509,11 @@ func main() {
 	r.Get("/api/config", api.GetConfig)
 	r.Get("/api/version", api.GetVersion)
 
+	// /api/docs redirects to the current default API version docs.
+	r.Get("/api/docs", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/api/v1/docs", http.StatusTemporaryRedirect)
+	})
+
 	// Database query endpoints (rate limited)
 	r.Group(func(r chi.Router) {
 		r.Use(handlers.QueryRateLimitMiddleware)
@@ -524,6 +540,12 @@ func main() {
 		r.Get("/api/incidents/devices", api.GetDeviceIncidents)
 		r.Get("/api/incidents/devices/csv", api.GetDeviceIncidentsCSV)
 
+		// Ops Management tickets proxy (auth required — tickets contain reporter PII)
+		r.With(api.RequireAuth).Get("/api/ops-tickets", api.GetOpsTickets)
+		r.With(api.RequireAuth).Get("/api/ops-tickets/history", api.GetOpsTicketHistory)
+		r.With(api.RequireAuth).Get("/api/ops-tickets/assignees", api.GetOpsAssignees)
+		r.With(handlers.RequireInternalDomain).Post("/api/ops-tickets", api.CreateOpsTicket)
+
 		// Search routes
 		r.Get("/api/search", api.Search)
 		r.Get("/api/search/autocomplete", api.SearchAutocomplete)
@@ -531,11 +553,16 @@ func main() {
 		// DZ entity routes
 		r.Get("/api/dz/devices", api.GetDevices)
 		r.Get("/api/dz/devices/{pk}", api.GetDevice)
+		r.Get("/api/dz/devices/{pk}/validator-stats", api.GetDeviceValidatorStats)
 		r.Get("/api/dz/links", api.GetLinks)
 		r.Get("/api/dz/links/{pk}", api.GetLink)
 		r.Get("/api/dz/links-health", api.GetLinkHealth)
 		r.Get("/api/dz/metros", api.GetMetros)
 		r.Get("/api/dz/metros/{pk}", api.GetMetro)
+		r.Get("/api/dz/metros/{pk}/stats", api.GetMetroStats)
+		r.Get("/api/dz/facilities", api.GetFacilities)
+		r.Get("/api/dz/facilities/{pk}", api.GetFacility)
+		r.Get("/api/peeringdb/fac/{loc_id}", api.GetPeeringDBFacility)
 		r.Get("/api/dz/contributors", api.GetContributors)
 		r.Get("/api/dz/contributors/{pk}", api.GetContributor)
 		r.Get("/api/dz/users", api.GetUsers)
@@ -550,8 +577,11 @@ func main() {
 		r.Get("/api/dz/multicast-groups/{pk}/traffic", api.GetMulticastGroupTraffic)
 		r.Get("/api/dz/multicast-groups/{pk}/member-counts", api.GetMulticastGroupMemberCounts)
 		r.Get("/api/dz/multicast-groups/{pk}/shred-stats", api.GetMulticastGroupShredStats)
+		r.Get("/api/dz/access-passes", api.GetAccessPasses)
+		r.Get("/api/dz/access-passes/{pk}", api.GetAccessPass)
+		r.Get("/api/dz/access-passes/{pk}/connections", api.GetAccessPassConnections)
 		r.Get("/api/dz/publisher-check", api.GetPublisherCheck)
-		r.With(handlers.RequireInternalDomain).Get("/api/dz/edge/scoreboard", api.GetEdgeScoreboard)
+		r.Get("/api/dz/edge/scoreboard", api.GetEdgeScoreboard)
 		r.Get("/api/dz/tenants", api.GetTenants)
 		r.Get("/api/dz/tenants/{pk}", api.GetTenant)
 		r.Get("/api/dz/shreds/overview", api.GetShredsOverview)
@@ -559,8 +589,21 @@ func main() {
 		r.Get("/api/dz/shreds/funders", api.GetShredFunders)
 		r.Get("/api/dz/shreds/escrow-events", api.GetShredEscrowEvents)
 		r.Get("/api/dz/shreds/devices", api.GetShredDevices)
+		r.Get("/api/dz/shreds/epoch-revenue", api.GetShredEpochRevenue)
+		r.Get("/api/dz/shreds/subscriber-history", api.GetShredSubscriberHistory)
+		r.Get("/api/dz/swap-rate", api.GetSwapRate)
 		r.Get("/api/dz/field-values", api.GetFieldValues)
 		r.Get("/api/dz/ledger", api.GetDZLedger)
+
+		// Geolocation routes (internal only)
+		r.Group(func(r chi.Router) {
+			r.Use(handlers.RequireInternalDomain)
+			r.Get("/api/dz/geoloc/probes", api.GetGeolocProbes)
+			r.Get("/api/dz/geoloc/users", api.GetGeolocUsers)
+			r.Get("/api/dz/geoloc/explorer", api.GetGeolocExplorer)
+			r.Get("/api/dz/geoloc/concentration", api.GetGeoConcentration)
+			r.Get("/api/dz/geoloc/validators", api.GetGeoValidators)
+		})
 
 		// Solana entity routes
 		r.Get("/api/solana/validators", api.GetValidators)
@@ -569,7 +612,8 @@ func main() {
 		r.Get("/api/solana/gossip-nodes/{pubkey}", api.GetGossipNode)
 		r.Get("/api/solana/ledger", api.GetSolanaLedger)
 		r.Get("/api/solana/validator-performance", api.GetValidatorPerformance)
-		r.Get("/api/v1/validators-metadata", api.GetValidatorsMetadata)
+		// Public v1 API (huma-generated OpenAPI at /api/v1/openapi.json, docs at /api/v1/docs).
+		v1.Mount(r, api)
 
 		// Stake analytics routes
 		r.Get("/api/stake/overview", api.GetStakeOverview)
@@ -594,8 +638,9 @@ func main() {
 
 		// Topology endpoints (ClickHouse only)
 		r.Get("/api/topology", api.GetTopology)
+		r.Get("/api/topology/link-metrics", api.GetTopologyLinkMetrics)
+		r.Get("/api/topology/validators", api.GetTopologyValidators)
 		r.Get("/api/traffic/entity", api.GetEntityTraffic)
-		r.Get("/api/topology/link-latency", api.GetLinkLatencyHistory)
 		r.Get("/api/topology/latency-comparison", api.GetLatencyComparison)
 		r.Get("/api/topology/latency-history/{origin}/{target}", api.GetLatencyHistory)
 

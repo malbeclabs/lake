@@ -20,6 +20,7 @@ func (panicRows) ScanStruct(dest any) error        { panic("ScanStruct called on
 func (panicRows) Totals(dest ...any) error         { panic("Totals called on bad rows") }
 func (panicRows) Close() error                     { panic("Close called on bad rows") }
 func (panicRows) Err() error                       { panic("Err called on bad rows") }
+func (panicRows) HasData() bool                    { panic("HasData called on bad rows") }
 
 // mockConn implements the minimal driver.Conn interface needed for Query.
 type mockConn struct {

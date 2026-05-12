@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Loader2, Radio, AlertCircle, ChevronDown, ChevronUp, X } from 'lucide-react'
 import { fetchMulticastGroups } from '@/lib/api'
@@ -7,40 +7,12 @@ import { handleRowClick } from '@/lib/utils'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
 import { PageHeader } from './page-header'
+import { CopyableText } from './copyable-text'
 
 const PAGE_SIZE = 100
 
-type SortField = 'code' | 'multicast_ip' | 'status' | 'publishers' | 'subscribers'
+type SortField = 'code' | 'ip' | 'status' | 'publishers' | 'subscribers'
 type SortDirection = 'asc' | 'desc'
-
-type NumericFilter = {
-  op: '>' | '>=' | '<' | '<=' | '='
-  value: number
-}
-
-const numericSearchFields: SortField[] = ['publishers', 'subscribers']
-
-function parseNumericFilter(input: string): NumericFilter | null {
-  const match = input.trim().match(/^(>=|<=|>|<|==|=)\s*(-?\d+(?:\.\d+)?)$/)
-  if (!match) return null
-  const op = match[1] === '==' ? '=' : (match[1] as NumericFilter['op'])
-  return { op, value: Number(match[2]) }
-}
-
-function matchesNumericFilter(value: number, filter: NumericFilter): boolean {
-  switch (filter.op) {
-    case '>':
-      return value > filter.value
-    case '>=':
-      return value >= filter.value
-    case '<':
-      return value < filter.value
-    case '<=':
-      return value <= filter.value
-    case '=':
-      return value === filter.value
-  }
-}
 
 function parseSearchFilters(searchParam: string): string[] {
   if (!searchParam) return []
@@ -59,16 +31,16 @@ const fieldPrefixes = [
 
 const autocompleteFields = ['status']
 
-function parseFilter(filter: string): { field: string; value: string } {
+function toFilterParam(filter: string): string {
   const colonIndex = filter.indexOf(':')
   if (colonIndex > 0) {
     const field = filter.slice(0, colonIndex).toLowerCase()
     const value = filter.slice(colonIndex + 1)
     if (validFilterFields.includes(field) && value) {
-      return { field, value }
+      return `${field}:${value}`
     }
   }
-  return { field: 'all', value: filter }
+  return `all:${filter}`
 }
 
 export function MulticastGroupsPage() {
@@ -93,7 +65,9 @@ export function MulticastGroupsPage() {
   const searchParam = searchParams.get('search') || ''
   const searchFilters = parseSearchFilters(searchParam)
 
-  const activeFilterRaw = liveFilter || searchFilters[0] || ''
+  const allFilters = liveFilter
+    ? [...searchFilters, liveFilter]
+    : searchFilters
 
   const removeFilter = useCallback((filterToRemove: string) => {
     const newFilters = searchFilters.filter(f => f !== filterToRemove)
@@ -116,95 +90,16 @@ export function MulticastGroupsPage() {
     })
   }, [setSearchParams])
 
-  const { data: groups, isLoading, error } = useQuery({
-    queryKey: ['multicast-groups'],
-    queryFn: () => fetchMulticastGroups(),
+  const filterParams = useMemo(() => allFilters.map(toFilterParam), [allFilters])
+  const filterKey = filterParams.join(',')
+
+  const { data: response, isLoading, error } = useQuery({
+    queryKey: ['multicast-groups', offset, sortField, sortDirection, filterKey],
+    queryFn: () => fetchMulticastGroups(PAGE_SIZE, offset, sortField, sortDirection, filterParams.length > 0 ? filterParams : undefined),
     refetchInterval: 30000,
+    placeholderData: keepPreviousData,
   })
-
-  const filteredGroups = useMemo(() => {
-    if (!groups) return []
-    if (!activeFilterRaw) return groups
-
-    const filter = parseFilter(activeFilterRaw)
-    const searchField = filter.field as SortField | 'all' | 'ip'
-    const needle = filter.value.trim().toLowerCase()
-    if (!needle) return groups
-
-    const numericFilter = parseNumericFilter(filter.value)
-    if (searchField !== 'all' && numericFilter && numericSearchFields.includes(searchField as SortField)) {
-      const getNumericValue = (group: typeof groups[number]) => {
-        switch (searchField) {
-          case 'publishers':
-            return group.publisher_count
-          case 'subscribers':
-            return group.subscriber_count
-          default:
-            return 0
-        }
-      }
-      return groups.filter(group => matchesNumericFilter(getNumericValue(group), numericFilter))
-    }
-
-    const getSearchValue = (group: typeof groups[number], field: string) => {
-      switch (field) {
-        case 'code':
-          return group.code
-        case 'ip':
-          return group.multicast_ip
-        case 'status':
-          return group.status
-        default:
-          return ''
-      }
-    }
-
-    if (searchField === 'all') {
-      return groups.filter(group => {
-        const textFields = ['code', 'ip', 'status']
-        return textFields.some(field => getSearchValue(group, field).toLowerCase().includes(needle))
-      })
-    }
-
-    return groups.filter(group => getSearchValue(group, searchField).toLowerCase().includes(needle))
-  }, [groups, activeFilterRaw])
-
-  const sortedGroups = useMemo(() => {
-    if (!filteredGroups) return []
-    const seen = new Set<string>()
-    const unique = filteredGroups.filter(g => {
-      if (seen.has(g.pk)) return false
-      seen.add(g.pk)
-      return true
-    })
-    const sorted = [...unique].sort((a, b) => {
-      let cmp = 0
-      switch (sortField) {
-        case 'code':
-          cmp = a.code.localeCompare(b.code)
-          break
-        case 'multicast_ip':
-          cmp = a.multicast_ip.localeCompare(b.multicast_ip)
-          break
-        case 'status':
-          cmp = a.status.localeCompare(b.status)
-          break
-        case 'publishers':
-          cmp = a.publisher_count - b.publisher_count
-          break
-        case 'subscribers':
-          cmp = a.subscriber_count - b.subscriber_count
-          break
-      }
-      return sortDirection === 'asc' ? cmp : -cmp
-    })
-    return sorted
-  }, [filteredGroups, sortField, sortDirection])
-
-  const pagedGroups = useMemo(
-    () => sortedGroups.slice(offset, offset + PAGE_SIZE),
-    [sortedGroups, offset]
-  )
+  const groups = response?.items ?? []
 
   const handleSort = (field: SortField) => {
     setSearchParams(prev => {
@@ -231,16 +126,17 @@ export function MulticastGroupsPage() {
     return sortDirection === 'asc' ? 'ascending' : 'descending'
   }
 
-  const prevFilterRef = useRef(activeFilterRaw)
+  const prevFilterRef = useRef(JSON.stringify(allFilters))
   useEffect(() => {
-    if (prevFilterRef.current === activeFilterRaw) return
-    prevFilterRef.current = activeFilterRaw
+    const key = JSON.stringify(allFilters)
+    if (prevFilterRef.current === key) return
+    prevFilterRef.current = key
     setSearchParams(prev => {
       const newParams = new URLSearchParams(prev)
       newParams.delete('page')
       return newParams
     })
-  }, [activeFilterRaw, setSearchParams])
+  }, [allFilters, setSearchParams])
 
   if (isLoading) {
     return (
@@ -268,7 +164,7 @@ export function MulticastGroupsPage() {
         <PageHeader
           icon={Radio}
           title="Multicast Groups"
-          count={groups?.length || 0}
+          count={response?.total || 0}
           actions={
             <>
               {searchFilters.map((filter, idx) => (
@@ -311,10 +207,10 @@ export function MulticastGroupsPage() {
                       <SortIcon field="code" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('multicast_ip')}>
-                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('multicast_ip')}>
+                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('ip')}>
+                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('ip')}>
                       Multicast IP
-                      <SortIcon field="multicast_ip" />
+                      <SortIcon field="ip" />
                     </button>
                   </th>
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('status')}>
@@ -338,17 +234,17 @@ export function MulticastGroupsPage() {
                 </tr>
               </thead>
               <tbody>
-                {pagedGroups.map((group) => (
+                {groups.map((group) => (
                   <tr
                     key={group.pk}
                     className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
                     onClick={(e) => handleRowClick(e, `/dz/multicast-groups/${group.pk}`, navigate)}
                   >
-                    <td className="px-4 py-3">
-                      <span className="font-mono text-sm">{group.code}</span>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <CopyableText text={group.code} className="font-mono text-sm" />
                     </td>
-                    <td className="px-4 py-3 text-sm font-mono text-muted-foreground">
-                      {group.multicast_ip}
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <CopyableText text={group.multicast_ip} className="text-sm font-mono text-muted-foreground" />
                     </td>
                     <td className="px-4 py-3 text-sm capitalize">
                       {group.status}
@@ -361,7 +257,7 @@ export function MulticastGroupsPage() {
                     </td>
                   </tr>
                 ))}
-                {sortedGroups.length === 0 && (
+                {groups.length === 0 && (
                   <tr>
                     <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
                       No multicast groups found
@@ -371,9 +267,9 @@ export function MulticastGroupsPage() {
               </tbody>
             </table>
           </div>
-          {groups && (
+          {response && (
             <Pagination
-              total={sortedGroups.length}
+              total={response.total ?? 0}
               limit={PAGE_SIZE}
               offset={offset}
               onOffsetChange={setOffset}

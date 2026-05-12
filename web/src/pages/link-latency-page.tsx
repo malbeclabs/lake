@@ -3,8 +3,15 @@ import { useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, ChevronUp, ArrowRightLeft, X, ArrowUpToLine, Loader2 } from 'lucide-react'
 import { fetchLinkLatencySummary, type LinkLatencySummary } from '@/lib/api'
-import { DashboardProvider, useDashboard, dashboardFilterParams } from '@/components/traffic-dashboard/dashboard-context'
-import { DashboardFilters, DashboardFilterBadges } from '@/components/traffic-dashboard/dashboard-filters'
+import {
+  DashboardProvider,
+  useDashboard,
+  dashboardFilterParams,
+} from '@/components/traffic-dashboard/dashboard-context'
+import {
+  DashboardFilters,
+  DashboardFilterBadges,
+} from '@/components/traffic-dashboard/dashboard-filters'
 import { PageHeader } from '@/components/page-header'
 import { InlineFilter } from '@/components/inline-filter'
 import { MultiLinkLatencyCharts } from '@/components/multi-link-latency-charts'
@@ -14,13 +21,13 @@ import { useTheme } from '@/hooks/use-theme'
 type AggMethod = 'max' | 'avg' | 'min' | 'p50' | 'p90' | 'p95' | 'p99'
 
 const aggLabels: Record<AggMethod, string> = {
-  'max': 'Max',
-  'p99': 'P99',
-  'p95': 'P95',
-  'p90': 'P90',
-  'p50': 'P50',
-  'avg': 'Average',
-  'min': 'Min',
+  max: 'Max',
+  p99: 'P99',
+  p95: 'P95',
+  p90: 'P90',
+  p50: 'P50',
+  avg: 'Average',
+  min: 'Min',
 }
 
 const COMMITTED_RTT_PROVISIONING_MS = 1000
@@ -73,7 +80,8 @@ function AggSelector({
 // Color based on ratio to committed value. No committed = no color.
 function ratioColor(measured: number, committed: number | undefined): string {
   if (measured <= 0) return 'text-muted-foreground'
-  if (!committed || committed <= 0 || committed >= COMMITTED_RTT_PROVISIONING_MS) return 'text-foreground'
+  if (!committed || committed <= 0 || committed >= COMMITTED_RTT_PROVISIONING_MS)
+    return 'text-foreground'
   const ratio = measured / committed
   if (ratio <= 1.0) return 'text-emerald-600 dark:text-emerald-400/80'
   if (ratio <= 1.2) return 'text-amber-600 dark:text-amber-400/80'
@@ -93,10 +101,29 @@ function fmt(v: number | undefined, decimals = 2): string {
   return v.toFixed(decimals)
 }
 
-type SortField = 'link_code' | 'link_type' | 'contributor_code' | 'side_a_code' | 'side_z_code' | 'committed_rtt_ms' | 'committed_jitter_ms' | 'rtt_a_to_z_ms' | 'rtt_z_to_a_ms' | 'jitter_a_to_z_ms' | 'jitter_z_to_a_ms' | 'loss_a_pct' | 'loss_z_pct'
+type SortField =
+  | 'link_code'
+  | 'link_type'
+  | 'contributor_code'
+  | 'side_a_code'
+  | 'side_z_code'
+  | 'committed_rtt_ms'
+  | 'committed_jitter_ms'
+  | 'rtt_a_to_z_ms'
+  | 'rtt_z_to_a_ms'
+  | 'jitter_a_to_z_ms'
+  | 'jitter_z_to_a_ms'
+  | 'loss_a_pct'
+  | 'loss_z_pct'
 type SortDir = 'asc' | 'desc'
 
-const textFields: SortField[] = ['link_code', 'link_type', 'contributor_code', 'side_a_code', 'side_z_code']
+const textFields: SortField[] = [
+  'link_code',
+  'link_type',
+  'contributor_code',
+  'side_a_code',
+  'side_z_code',
+]
 
 // InlineFilter config
 const filterFieldPrefixes = [
@@ -135,19 +162,26 @@ function matchesFilter(link: LinkLatencySummary, filterRaw: string): boolean {
 
   const getField = (f: string) => {
     switch (f) {
-      case 'code': return link.link_code
-      case 'type': return link.link_type
-      case 'contributor': return link.contributor_code
-      case 'sideA': return link.side_a_code
-      case 'sideZ': return link.side_z_code
-      case 'status': return link.link_status
-      default: return ''
+      case 'code':
+        return link.link_code
+      case 'type':
+        return link.link_type
+      case 'contributor':
+        return link.contributor_code
+      case 'sideA':
+        return link.side_a_code
+      case 'sideZ':
+        return link.side_z_code
+      case 'status':
+        return link.link_status
+      default:
+        return ''
     }
   }
 
   if (field === 'all') {
-    return ['code', 'type', 'contributor', 'sideA', 'sideZ'].some(f =>
-      getField(f).toLowerCase().includes(needle)
+    return ['code', 'type', 'contributor', 'sideA', 'sideZ'].some((f) =>
+      getField(f).toLowerCase().includes(needle),
     )
   }
   return getField(field).toLowerCase().includes(needle)
@@ -169,12 +203,27 @@ const columns: { field: SortField; label: string; align?: 'right' }[] = [
   { field: 'loss_z_pct', label: 'Loss Z%', align: 'right' },
 ]
 
-
 const EXCLUDED_CATEGORIES = [
-  { key: 'isis-down', label: 'ISIS Down', color: 'bg-red-500/10 text-red-600 dark:text-red-400' },
-  { key: 'soft-drained', label: 'Soft Drained', color: 'bg-amber-500/10 text-amber-600 dark:text-amber-400' },
-  { key: 'hard-drained', label: 'Hard Drained', color: 'bg-amber-500/10 text-amber-600 dark:text-amber-400' },
-  { key: 'provisioning', label: 'Provisioning', color: 'bg-blue-500/10 text-blue-600 dark:text-blue-400' },
+  {
+    key: 'isis-down',
+    label: 'ISIS Down',
+    color: 'bg-red-500/10 text-red-600 dark:text-red-400',
+  },
+  {
+    key: 'soft-drained',
+    label: 'Soft Drained',
+    color: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
+  },
+  {
+    key: 'hard-drained',
+    label: 'Hard Drained',
+    color: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
+  },
+  {
+    key: 'provisioning',
+    label: 'Provisioning',
+    color: 'bg-blue-500/10 text-blue-600 dark:text-blue-400',
+  },
 ]
 
 function StatusFilterDropdown({
@@ -205,18 +254,28 @@ function StatusFilterDropdown({
         <>
           <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
           <div className="absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-md shadow-lg py-1 min-w-[180px]">
-            {EXCLUDED_CATEGORIES.map(cat => (
+            {EXCLUDED_CATEGORIES.map((cat) => (
               <button
                 key={cat.key}
                 onClick={() => onToggle(cat.key)}
                 className="w-full px-3 py-1.5 text-left text-sm flex items-center gap-2 hover:bg-muted/50 transition-colors"
               >
-                <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center ${
-                  showCategories.has(cat.key) ? 'border-foreground bg-foreground' : 'border-muted-foreground'
-                }`}>
-                  {showCategories.has(cat.key) && <span className="text-[10px] text-background">&#10003;</span>}
+                <span
+                  className={`w-3.5 h-3.5 rounded border flex items-center justify-center ${
+                    showCategories.has(cat.key)
+                      ? 'border-foreground bg-foreground'
+                      : 'border-muted-foreground'
+                  }`}
+                >
+                  {showCategories.has(cat.key) && (
+                    <span className="text-[10px] text-background">&#10003;</span>
+                  )}
                 </span>
-                <span className={showCategories.has(cat.key) ? 'text-foreground' : 'text-muted-foreground'}>
+                <span
+                  className={
+                    showCategories.has(cat.key) ? 'text-foreground' : 'text-muted-foreground'
+                  }
+                >
                   {cat.label}
                 </span>
               </button>
@@ -228,8 +287,17 @@ function StatusFilterDropdown({
   )
 }
 
-function SortIcon({ field, sortField, sortDir }: { field: SortField; sortField: SortField; sortDir: SortDir }) {
-  if (field !== sortField) return <ChevronDown className="h-3 w-3 opacity-0 group-hover/th:opacity-40" />
+function SortIcon({
+  field,
+  sortField,
+  sortDir,
+}: {
+  field: SortField
+  sortField: SortField
+  sortDir: SortDir
+}) {
+  if (field !== sortField)
+    return <ChevronDown className="h-3 w-3 opacity-0 group-hover/th:opacity-40" />
   return sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
 }
 
@@ -244,20 +312,25 @@ function LinkLatencyPageContent() {
   const [, startTransition] = useTransition()
   const setSearchParams = useCallback(
     (updater: (prev: URLSearchParams) => URLSearchParams) => {
-      startTransition(() => { setSearchParamsRaw(updater) })
+      startTransition(() => {
+        setSearchParamsRaw(updater)
+      })
     },
-    [setSearchParamsRaw, startTransition]
+    [setSearchParamsRaw, startTransition],
   )
 
   // URL-backed state helpers
-  const setUrlParam = useCallback((key: string, value: string, defaultValue: string) => {
-    setSearchParams(prev => {
-      const next = new URLSearchParams(prev)
-      if (value === defaultValue) next.delete(key)
-      else next.set(key, value)
-      return next
-    })
-  }, [setSearchParams])
+  const setUrlParam = useCallback(
+    (key: string, value: string, defaultValue: string) => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev)
+        if (value === defaultValue) next.delete(key)
+        else next.set(key, value)
+        return next
+      })
+    },
+    [setSearchParams],
+  )
 
   // Read state from URL with defaults
   const aggMethod = (searchParams.get('agg') || 'avg') as AggMethod
@@ -268,21 +341,32 @@ function LinkLatencyPageContent() {
 
   // Filter state: committed filters in URL, live filter in local state
   const [liveFilter, setLiveFilter] = useState('')
-  const searchFilters = useMemo(() => parseSearchFilters(searchParams.get('search') || ''), [searchParams])
-  const allFilters = useMemo(() => liveFilter ? [...searchFilters, liveFilter] : searchFilters, [searchFilters, liveFilter])
+  const searchFilters = useMemo(
+    () => parseSearchFilters(searchParams.get('search') || ''),
+    [searchParams],
+  )
+  const allFilters = useMemo(
+    () => (liveFilter ? [...searchFilters, liveFilter] : searchFilters),
+    [searchFilters, liveFilter],
+  )
 
-  const removeFilter = useCallback((filterToRemove: string) => {
-    setSearchParams(prev => {
-      const next = new URLSearchParams(prev)
-      const filters = parseSearchFilters(prev.get('search') || '').filter(f => f !== filterToRemove)
-      if (filters.length === 0) next.delete('search')
-      else next.set('search', filters.join(','))
-      return next
-    })
-  }, [setSearchParams])
+  const removeFilter = useCallback(
+    (filterToRemove: string) => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev)
+        const filters = parseSearchFilters(prev.get('search') || '').filter(
+          (f) => f !== filterToRemove,
+        )
+        if (filters.length === 0) next.delete('search')
+        else next.set('search', filters.join(','))
+        return next
+      })
+    },
+    [setSearchParams],
+  )
 
   const clearAllFilters = useCallback(() => {
-    setSearchParams(prev => {
+    setSearchParams((prev) => {
       const next = new URLSearchParams(prev)
       next.delete('search')
       return next
@@ -290,16 +374,22 @@ function LinkLatencyPageContent() {
   }, [setSearchParams])
 
   const tableCollapsed = searchParams.get('table') === 'collapsed'
-  const setTableCollapsed = useCallback((fn: (prev: boolean) => boolean) => {
-    const next = fn(searchParams.get('table') === 'collapsed')
-    setUrlParam('table', next ? 'collapsed' : '', '')
-  }, [setUrlParam, searchParams])
+  const setTableCollapsed = useCallback(
+    (fn: (prev: boolean) => boolean) => {
+      const next = fn(searchParams.get('table') === 'collapsed')
+      setUrlParam('table', next ? 'collapsed' : '', '')
+    },
+    [setUrlParam, searchParams],
+  )
 
   const selectedToTop = searchParams.get('top') === '1'
-  const setSelectedToTop = useCallback((fn: (prev: boolean) => boolean) => {
-    const next = fn(searchParams.get('top') === '1')
-    setUrlParam('top', next ? '1' : '', '')
-  }, [setUrlParam, searchParams])
+  const setSelectedToTop = useCallback(
+    (fn: (prev: boolean) => boolean) => {
+      const next = fn(searchParams.get('top') === '1')
+      setUrlParam('top', next ? '1' : '', '')
+    },
+    [setUrlParam, searchParams],
+  )
 
   // Which excluded categories to show (empty = hide all excluded)
   const showCategories = useMemo(() => {
@@ -308,17 +398,20 @@ function LinkLatencyPageContent() {
     return new Set(raw.split(',').filter(Boolean))
   }, [searchParams])
 
-  const toggleShowCategory = useCallback((category: string) => {
-    setSearchParams(prev => {
-      const next = new URLSearchParams(prev)
-      const current = new Set((prev.get('show') || '').split(',').filter(Boolean))
-      if (current.has(category)) current.delete(category)
-      else current.add(category)
-      if (current.size === 0) next.delete('show')
-      else next.set('show', [...current].join(','))
-      return next
-    })
-  }, [setSearchParams])
+  const toggleShowCategory = useCallback(
+    (category: string) => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev)
+        const current = new Set((prev.get('show') || '').split(',').filter(Boolean))
+        if (current.has(category)) current.delete(category)
+        else current.add(category)
+        if (current.size === 0) next.delete('show')
+        else next.set('show', [...current].join(','))
+        return next
+      })
+    },
+    [setSearchParams],
+  )
 
   // Fetch all links when any excluded category is shown
   const showExcluded = showCategories.size > 0
@@ -330,14 +423,17 @@ function LinkLatencyPageContent() {
     return new Set(raw.split(',').filter(Boolean))
   }, [searchParams])
 
-  const setSelectedLinkPks = useCallback((next: Set<string>) => {
-    setSearchParams(prev => {
-      const p = new URLSearchParams(prev)
-      if (next.size === 0) p.delete('sel')
-      else p.set('sel', [...next].join(','))
-      return p
-    })
-  }, [setSearchParams])
+  const setSelectedLinkPks = useCallback(
+    (next: Set<string>) => {
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        if (next.size === 0) p.delete('sel')
+        else p.set('sel', [...next].join(','))
+        return p
+      })
+    },
+    [setSearchParams],
+  )
 
   const filterParams = useMemo(() => dashboardFilterParams(dashboardState), [dashboardState])
 
@@ -373,7 +469,7 @@ function LinkLatencyPageContent() {
 
     // Filter out excluded categories unless toggled on
     if (showExcluded) {
-      result = result.filter(l => {
+      result = result.filter((l) => {
         if (l.isis_down) return showCategories.has('isis-down')
         if (l.provisioning) return showCategories.has('provisioning')
         if (l.link_status === 'soft-drained') return showCategories.has('soft-drained')
@@ -392,10 +488,8 @@ function LinkLatencyPageContent() {
         existing.push(f)
         grouped.set(field, existing)
       }
-      result = result.filter(l =>
-        [...grouped.values()].every(group =>
-          group.some(f => matchesFilter(l, f))
-        )
+      result = result.filter((l) =>
+        [...grouped.values()].every((group) => group.some((f) => matchesFilter(l, f))),
       )
     }
 
@@ -407,38 +501,54 @@ function LinkLatencyPageContent() {
       }
       const av = a[sortField] as string | number
       const bv = b[sortField] as string | number
-      const cmp = typeof av === 'string' ? av.localeCompare(bv as string) : (av as number) - (bv as number)
+      const cmp =
+        typeof av === 'string' ? av.localeCompare(bv as string) : (av as number) - (bv as number)
       return sortDir === 'asc' ? cmp : -cmp
     })
-  }, [links, allFilters, sortField, sortDir, selectedToTop, selectedLinkPks, showExcluded, showCategories])
+  }, [
+    links,
+    allFilters,
+    sortField,
+    sortDir,
+    selectedToTop,
+    selectedLinkPks,
+    showExcluded,
+    showCategories,
+  ])
 
-  const handleSort = useCallback((field: SortField) => {
-    setSearchParams(prev => {
-      const next = new URLSearchParams(prev)
-      if (prev.get('sort') === field || (!prev.get('sort') && field === 'rtt_a_to_z_ms')) {
-        // Toggle direction
-        const curDir = prev.get('sort_dir') || 'desc'
-        const newDir = curDir === 'asc' ? 'desc' : 'asc'
-        if (newDir === 'desc') next.delete('sort_dir')
-        else next.set('sort_dir', 'asc')
-      } else {
-        // New field
-        if (field === 'rtt_a_to_z_ms') next.delete('sort')
-        else next.set('sort', field)
-        const defaultDir = textFields.includes(field) ? 'asc' : 'desc'
-        if (defaultDir === 'desc') next.delete('sort_dir')
-        else next.set('sort_dir', defaultDir)
-      }
-      return next
-    })
-  }, [setSearchParams])
+  const handleSort = useCallback(
+    (field: SortField) => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev)
+        if (prev.get('sort') === field || (!prev.get('sort') && field === 'rtt_a_to_z_ms')) {
+          // Toggle direction
+          const curDir = prev.get('sort_dir') || 'desc'
+          const newDir = curDir === 'asc' ? 'desc' : 'asc'
+          if (newDir === 'desc') next.delete('sort_dir')
+          else next.set('sort_dir', 'asc')
+        } else {
+          // New field
+          if (field === 'rtt_a_to_z_ms') next.delete('sort')
+          else next.set('sort', field)
+          const defaultDir = textFields.includes(field) ? 'asc' : 'desc'
+          if (defaultDir === 'desc') next.delete('sort_dir')
+          else next.set('sort_dir', defaultDir)
+        }
+        return next
+      })
+    },
+    [setSearchParams],
+  )
 
-  const toggleSelect = useCallback((pk: string) => {
-    const next = new Set(selectedLinkPks)
-    if (next.has(pk)) next.delete(pk)
-    else next.add(pk)
-    setSelectedLinkPks(next)
-  }, [selectedLinkPks, setSelectedLinkPks])
+  const toggleSelect = useCallback(
+    (pk: string) => {
+      const next = new Set(selectedLinkPks)
+      if (next.has(pk)) next.delete(pk)
+      else next.add(pk)
+      setSelectedLinkPks(next)
+    },
+    [selectedLinkPks, setSelectedLinkPks],
+  )
 
   // Build chart filter params — same filters as the table query so charts match
   const chartFilters = useMemo(() => {
@@ -487,21 +597,52 @@ function LinkLatencyPageContent() {
   }, [customStart, customEnd, filterParams, allFilters])
 
   const deltaBadge = (measured: number, committed: number | undefined) => {
-    if (!committed || committed <= 0 || committed >= COMMITTED_RTT_PROVISIONING_MS || measured <= 0) return null
+    if (!committed || committed <= 0 || committed >= COMMITTED_RTT_PROVISIONING_MS || measured <= 0)
+      return null
     const pct = ((measured - committed) / committed) * 100
     const rounded = Math.round(pct)
     if (rounded === 0) return <span className="ml-1.5 text-[10px] text-muted-foreground">0%</span>
     const sign = rounded > 0 ? '+' : ''
     const color = ratioColor(measured, committed)
-    return <span className={`ml-1.5 text-[10px] ${color}`}>{sign}{rounded}%</span>
+    return (
+      <span className={`ml-1.5 text-[10px] ${color}`}>
+        {sign}
+        {rounded}%
+      </span>
+    )
   }
 
   const statusBadge = (link: LinkLatencySummary) => {
-    if (link.isis_down) return <span className="ml-1.5 text-[10px] px-1 py-0.5 rounded bg-red-500/10 text-red-600 dark:text-red-400">isis down</span>
-    if (link.provisioning) return <span className="ml-1.5 text-[10px] px-1 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400">provisioning</span>
-    if (link.link_status === 'soft-drained') return <span className="ml-1.5 text-[10px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400">soft-drained</span>
-    if (link.link_status === 'hard-drained') return <span className="ml-1.5 text-[10px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400">hard-drained</span>
-    if (link.link_status === 'suspended') return <span className="ml-1.5 text-[10px] px-1 py-0.5 rounded bg-red-500/10 text-red-600 dark:text-red-400">suspended</span>
+    if (link.isis_down)
+      return (
+        <span className="ml-1.5 text-[10px] px-1 py-0.5 rounded bg-red-500/10 text-red-600 dark:text-red-400">
+          isis down
+        </span>
+      )
+    if (link.provisioning)
+      return (
+        <span className="ml-1.5 text-[10px] px-1 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400">
+          provisioning
+        </span>
+      )
+    if (link.link_status === 'soft-drained')
+      return (
+        <span className="ml-1.5 text-[10px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400">
+          soft-drained
+        </span>
+      )
+    if (link.link_status === 'hard-drained')
+      return (
+        <span className="ml-1.5 text-[10px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400">
+          hard-drained
+        </span>
+      )
+    if (link.link_status === 'suspended')
+      return (
+        <span className="ml-1.5 text-[10px] px-1 py-0.5 rounded bg-red-500/10 text-red-600 dark:text-red-400">
+          suspended
+        </span>
+      )
     return null
   }
 
@@ -509,13 +650,19 @@ function LinkLatencyPageContent() {
     const v = link[field]
     if (typeof v === 'string') {
       if (field === 'link_code') {
-        return <span className="text-foreground">{v || '—'}{statusBadge(link)}</span>
+        return (
+          <span className="text-foreground">
+            {v || '—'}
+            {statusBadge(link)}
+          </span>
+        )
       }
       return <span className="text-foreground">{v || '—'}</span>
     }
     const n = v ?? 0
     if (field === 'committed_rtt_ms' || field === 'committed_jitter_ms') {
-      if (n <= 0 || n >= COMMITTED_RTT_PROVISIONING_MS) return <span className="text-muted-foreground">—</span>
+      if (n <= 0 || n >= COMMITTED_RTT_PROVISIONING_MS)
+        return <span className="text-muted-foreground">—</span>
       return <span className="text-muted-foreground">{fmt(n)} ms</span>
     }
     if (field.startsWith('rtt_')) {
@@ -540,53 +687,54 @@ function LinkLatencyPageContent() {
   const [maxTableHeight, setMaxTableHeight] = useState(320)
   const dragRef = useRef<{ startY: number; startHeight: number } | null>(null)
 
-  const handleDragStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault()
-    dragRef.current = { startY: e.clientY, startHeight: maxTableHeight }
+  const handleDragStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      dragRef.current = { startY: e.clientY, startHeight: maxTableHeight }
 
-    const handleDragMove = (ev: MouseEvent) => {
-      if (!dragRef.current) return
-      const delta = ev.clientY - dragRef.current.startY
-      setMaxTableHeight(Math.max(120, Math.min(800, dragRef.current.startHeight + delta)))
-    }
-    const handleDragEnd = () => {
-      dragRef.current = null
-      document.removeEventListener('mousemove', handleDragMove)
-      document.removeEventListener('mouseup', handleDragEnd)
-    }
-    document.addEventListener('mousemove', handleDragMove)
-    document.addEventListener('mouseup', handleDragEnd)
-  }, [maxTableHeight])
+      const handleDragMove = (ev: MouseEvent) => {
+        if (!dragRef.current) return
+        const delta = ev.clientY - dragRef.current.startY
+        setMaxTableHeight(Math.max(120, Math.min(800, dragRef.current.startHeight + delta)))
+      }
+      const handleDragEnd = () => {
+        dragRef.current = null
+        document.removeEventListener('mousemove', handleDragMove)
+        document.removeEventListener('mouseup', handleDragEnd)
+      }
+      document.addEventListener('mousemove', handleDragMove)
+      document.addEventListener('mouseup', handleDragEnd)
+    },
+    [maxTableHeight],
+  )
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Sticky header */}
       <div className="flex-none bg-background border-b border-border px-4 sm:px-8 pt-6 pb-4 z-10">
-        <div className="[&>div]:mb-0">
-          <PageHeader
-            icon={ArrowRightLeft}
-            title="Link Latency"
-            actions={<DashboardFilters hideMetric hideIntfType hideSearch />}
-          />
-        </div>
-        <div className="flex items-center gap-2 mt-3 flex-wrap">
-          <div className="flex items-center gap-2 ml-auto">
-            <DashboardFilterBadges />
-            {searchFilters.map((filter, idx) => (
-              <button
-                key={`${filter}-${idx}`}
-                onClick={() => removeFilter(filter)}
-                className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors"
-              >
-                {filter}
-                <X className="h-3 w-3" />
-              </button>
-            ))}
-            {searchFilters.length > 1 && (
-              <button onClick={clearAllFilters} className="text-xs text-muted-foreground hover:text-foreground transition-colors">
-                Clear all
-              </button>
-            )}
+        <PageHeader icon={ArrowRightLeft} title="Link Latency" />
+        <div className="flex 2xl:items-center gap-2 mt-3 w-full flex-col 2xl:flex-row justify-between">
+          <DashboardFilters hideMetric hideIntfType hideSearch />
+          <DashboardFilterBadges />
+          {searchFilters.map((filter, idx) => (
+            <button
+              key={`${filter}-${idx}`}
+              onClick={() => removeFilter(filter)}
+              className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors"
+            >
+              {filter}
+              <X className="h-3 w-3" />
+            </button>
+          ))}
+          {searchFilters.length > 1 && (
+            <button
+              onClick={clearAllFilters}
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Clear all
+            </button>
+          )}
+          <div className="flex items-center gap-2 flex-wrap ">
             <InlineFilter
               fieldPrefixes={filterFieldPrefixes}
               entity="links"
@@ -603,15 +751,20 @@ function LinkLatencyPageContent() {
       {/* Scrollable content */}
       <div className="flex-1 overflow-auto px-4 sm:px-8 py-6 space-y-6">
         {/* Link Table — collapsible, resizable with internal scroll */}
-        <div className="border border-border rounded-lg overflow-hidden flex flex-col" style={tableCollapsed ? undefined : { maxHeight: maxTableHeight }}>
+        <div
+          className="border border-border rounded-lg overflow-hidden flex flex-col"
+          style={tableCollapsed ? undefined : { maxHeight: maxTableHeight }}
+        >
           {/* Table header */}
           <div className="flex-none px-3 py-2 flex items-center gap-2 border-b border-border">
             <button
-              onClick={() => setTableCollapsed(c => !c)}
+              onClick={() => setTableCollapsed((c) => !c)}
               className="text-muted-foreground hover:text-foreground transition-colors"
               title={tableCollapsed ? 'Show table' : 'Hide table'}
             >
-              <ChevronDown className={`h-4 w-4 transition-transform ${tableCollapsed ? '-rotate-90' : ''}`} />
+              <ChevronDown
+                className={`h-4 w-4 transition-transform ${tableCollapsed ? '-rotate-90' : ''}`}
+              />
             </button>
             <span className="text-xs text-muted-foreground">{filteredLinks.length} links</span>
             {isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
@@ -619,7 +772,7 @@ function LinkLatencyPageContent() {
             {selectedLinkPks.size > 0 && (
               <>
                 <button
-                  onClick={() => setSelectedToTop(p => !p)}
+                  onClick={() => setSelectedToTop((p) => !p)}
                   className={`px-1.5 py-0.5 rounded transition-colors ${selectedToTop ? 'text-foreground bg-muted' : 'text-muted-foreground hover:text-foreground'}`}
                   title={selectedToTop ? 'Stop sorting selected to top' : 'Sort selected to top'}
                 >
@@ -636,7 +789,11 @@ function LinkLatencyPageContent() {
           </div>
           {/* Shimmer loading bar - overlays below header, no layout shift */}
           <div className="flex-none h-0 w-full relative z-[2]">
-            {isFetching && <div className="absolute top-0 left-0 right-0 h-0.5 overflow-hidden"><div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" /></div>}
+            {isFetching && (
+              <div className="absolute top-0 left-0 right-0 h-0.5 overflow-hidden">
+                <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
+              </div>
+            )}
           </div>
           {!tableCollapsed && (
             <>
@@ -654,7 +811,7 @@ function LinkLatencyPageContent() {
                     <thead className="sticky top-0 z-[1] bg-muted/80 backdrop-blur-sm">
                       <tr className="border-b border-border">
                         <th className="w-1 px-0" />
-                        {columns.map(col => (
+                        {columns.map((col) => (
                           <th
                             key={col.field}
                             className={`px-3 py-2 font-medium text-muted-foreground cursor-pointer select-none group/th whitespace-nowrap ${
@@ -671,9 +828,11 @@ function LinkLatencyPageContent() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredLinks.map(link => {
+                      {filteredLinks.map((link) => {
                         const isSelected = selectedLinkPks.has(link.link_pk)
-                        const selectColor = isSelected ? selectedColorMap.get(link.link_pk) : undefined
+                        const selectColor = isSelected
+                          ? selectedColorMap.get(link.link_pk)
+                          : undefined
                         return (
                           <tr
                             key={link.link_pk}
@@ -682,10 +841,13 @@ function LinkLatencyPageContent() {
                           >
                             <td className="w-1 px-0">
                               {selectColor && (
-                                <div className="w-1 h-full min-h-[32px] rounded-r-sm" style={{ backgroundColor: selectColor }} />
+                                <div
+                                  className="w-1 h-full min-h-[32px] rounded-r-sm"
+                                  style={{ backgroundColor: selectColor }}
+                                />
                               )}
                             </td>
-                            {columns.map(col => (
+                            {columns.map((col) => (
                               <td
                                 key={col.field}
                                 className={`px-3 py-1.5 whitespace-nowrap ${col.align === 'right' ? 'text-right tabular-nums' : ''}`}

@@ -41,6 +41,8 @@ import { StatusAppendix } from '@/components/status-appendix'
 import { DevicesPage } from '@/components/devices-page'
 import { LinksPage } from '@/components/links-page'
 import { MetrosPage } from '@/components/metros-page'
+import { FacilitiesPage } from '@/components/facilities-page'
+import { FacilityDetailPage } from '@/components/facility-detail-page'
 import { ContributorsPage } from '@/components/contributors-page'
 import { TenantsPage } from '@/components/tenants-page'
 import { TenantDetailPage } from '@/components/tenant-detail-page'
@@ -53,11 +55,17 @@ import { MetroDetailPage } from '@/components/metro-detail-page'
 import { ContributorDetailPage } from '@/components/contributor-detail-page'
 import { UserDetailPage } from '@/components/user-detail-page'
 import { MulticastGroupsPage } from '@/components/multicast-groups-page'
+import { GeolocProbesPage } from '@/components/geoloc-probes-page'
+import { GeolocUsersPage } from '@/components/geoloc-users-page'
+import { GeolocExplorerPage } from '@/components/geoloc-explorer-page'
 import { ShredsSeatsPage, ShredsFundersPage, ShredsDevicesPage, ShredsEscrowEventsPage } from '@/components/shreds-page'
 import { ShredsSubscribePage } from '@/components/shreds-subscribe-page'
+import { ShredsEconomicsPage } from '@/components/shreds-economics-page'
 import { PublisherCheckPage } from './components/publisher-check-page'
 import { EdgeScoreboardPage } from './components/edge-scoreboard-page'
 import { MulticastGroupDetailPage } from '@/components/multicast-group-detail-page'
+import { AccessPassesPage } from '@/components/access-passes-page'
+import { AccessPassDetailPage } from '@/components/access-pass-detail-page'
 import { ValidatorDetailPage } from '@/components/validator-detail-page'
 import { GossipNodeDetailPage } from '@/components/gossip-node-detail-page'
 
@@ -66,6 +74,7 @@ import { SettingsPage } from '@/components/settings-page'
 import { ChangelogPage } from '@/components/changelog-page'
 import { TermsPage } from '@/components/terms-page'
 import { MCPDocsPage } from '@/components/mcp-docs-page'
+import { DocsIndexPage } from '@/components/docs-index-page'
 import { ConnectionError } from '@/components/ConnectionError'
 import { EnvBanner } from '@/components/env-banner'
 import { EnvProvider } from '@/contexts/EnvContext'
@@ -93,14 +102,6 @@ const queryClient = new QueryClient({
     },
   },
 })
-
-// Redirect to latest or new query session
-function InternalOnly({ children }: { children: React.ReactNode }) {
-  const { user, isLoading } = useAuth()
-  if (isLoading) return null
-  if (!user?.is_internal_user) return <Navigate to="/" replace />
-  return <>{children}</>
-}
 
 function QueryRedirect() {
   const navigate = useNavigate()
@@ -685,6 +686,7 @@ function AppContent() {
             <Route path="/terms" element={<TermsPage />} />
 
             {/* Docs */}
+            <Route path="/docs" element={<DocsIndexPage />} />
             <Route path="/docs/mcp" element={<MCPDocsPage />} />
 
             {/* DZ entity routes */}
@@ -695,6 +697,8 @@ function AppContent() {
             <Route path="/dz/links/:pk" element={<LinkDetailPage />} />
             <Route path="/dz/metros" element={<MetrosPage />} />
             <Route path="/dz/metros/:pk" element={<MetroDetailPage />} />
+            <Route path="/dz/facilities" element={<FacilitiesPage />} />
+            <Route path="/dz/facilities/:pk" element={<FacilityDetailPage />} />
             <Route path="/dz/contributors" element={<ContributorsPage />} />
             <Route path="/dz/contributors/:pk" element={<ContributorDetailPage />} />
             <Route path="/dz/tenants" element={<TenantsPage />} />
@@ -703,16 +707,25 @@ function AppContent() {
             <Route path="/dz/users/:pk" element={<UserDetailPage />} />
             <Route path="/dz/multicast-groups" element={<MulticastGroupsPage />} />
             <Route path="/dz/multicast-groups/:pk" element={<MulticastGroupDetailPage />} />
-            <Route path="/dz/shreds" element={<Navigate to="/dz/shreds/subscribers" replace />} />
+            <Route path="/dz/access-passes" element={<AccessPassesPage />} />
+            <Route path="/dz/access-passes/:pk" element={<AccessPassDetailPage />} />
+            <Route path="/dz/shreds" element={<Navigate to="/dz/shreds/scoreboard" replace />} />
+            <Route path="/dz/shreds/scoreboard" element={<EdgeScoreboardPage />} />
+            <Route path="/dz/shreds/publishers" element={<PublisherCheckPage />} />
+            <Route path="/dz/publisher-check" element={<Navigate to="/dz/shreds/publishers" replace />} />
             <Route path="/dz/shreds/subscribers" element={<ShredsSeatsPage />} />
             <Route path="/dz/shreds/seats" element={<Navigate to="/dz/shreds/subscribers" replace />} />
             <Route path="/dz/shreds/funders" element={<ShredsFundersPage />} />
             <Route path="/dz/shreds/devices" element={<ShredsDevicesPage />} />
             <Route path="/dz/shreds/activity" element={<ShredsEscrowEventsPage />} />
             <Route path="/dz/shreds/pay" element={<ShredsSubscribePage />} />
-            <Route path="/dz/publisher-check" element={<PublisherCheckPage />} />
-            <Route path="/dz/shreds/scoreboard" element={<InternalOnly><EdgeScoreboardPage /></InternalOnly>} />
+            <Route path="/dz/shreds/economics" element={<ShredsEconomicsPage />} />
             <Route path="/dz/edge/scoreboard" element={<Navigate to="/dz/shreds/scoreboard" replace />} />
+
+            {/* Geolocation routes */}
+            <Route path="/dz/geoloc/probes" element={<GeolocProbesPage />} />
+            <Route path="/dz/geoloc/users" element={<GeolocUsersPage />} />
+            <Route path="/dz/geoloc/explorer" element={<GeolocExplorerPage />} />
 
             {/* Solana entity routes */}
             <Route path="/solana/overview" element={<SolanaOverviewPage />} />

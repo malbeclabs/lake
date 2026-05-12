@@ -16,11 +16,14 @@ func NewTestAPIBare(t *testing.T, chDB *ClickHouseDB) *handlers.API {
 	t.Helper()
 	conn, dbName := SetupClickHouseForTest(t, chDB)
 	api := &handlers.API{
-		DB:           conn,
-		EnvDBs:       map[string]driver.Conn{},
-		EnvDatabases: map[string]string{},
-		Database:     dbName,
-		ShredderDB:   dbName,
+		DB:            conn,
+		PublicQueryDB: conn,
+		EnvDBs:        map[string]driver.Conn{},
+		EnvDatabases:  map[string]string{},
+		Database:      dbName,
+		ShredderDB:    dbName,
+		PublisherDB:   dbName,
+		DZDPDB:        "dzdp",
 	}
 	api.Manager = handlers.NewWorkflowManager(api)
 	return api
@@ -33,11 +36,14 @@ func NewTestAPI(t *testing.T, chDB *ClickHouseDB) *handlers.API {
 	t.Helper()
 	conn, dbName := SetupClickHouseWithMigrationsForTest(t, chDB)
 	api := &handlers.API{
-		DB:           conn,
-		EnvDBs:       map[string]driver.Conn{},
-		EnvDatabases: map[string]string{},
-		Database:     dbName,
-		ShredderDB:   dbName,
+		DB:            conn,
+		PublicQueryDB: conn,
+		EnvDBs:        map[string]driver.Conn{},
+		EnvDatabases:  map[string]string{},
+		Database:      dbName,
+		ShredderDB:    dbName,
+		PublisherDB:   dbName,
+		DZDPDB:        "dzdp",
 	}
 	api.Manager = handlers.NewWorkflowManager(api)
 	return api
@@ -70,8 +76,10 @@ func NewTestAPIAll(t *testing.T, chDB *ClickHouseDB, pgDB *DB, neo4jDB *Neo4jDB,
 	if chDB != nil {
 		conn, dbName := SetupClickHouseWithMigrationsForTest(t, chDB)
 		api.DB = conn
+		api.PublicQueryDB = conn
 		api.Database = dbName
 		api.ShredderDB = dbName
+		api.DZDPDB = "dzdp"
 	}
 
 	if pgDB != nil {

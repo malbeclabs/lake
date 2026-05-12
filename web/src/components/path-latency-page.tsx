@@ -1,19 +1,46 @@
 import { useMemo, useCallback, useState, useRef, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
-import { Loader2, Route, Download, ArrowRight, ChevronDown, X, Search, MapPin, Filter, Zap, Globe, TrendingUp, Activity } from 'lucide-react'
-import { fetchMetroConnectivity, fetchMetroPathLatency, fetchMetroPathDetail, fetchFieldValues } from '@/lib/api'
-import type { MetroPathLatency, MetroPathDetailResponse, MetroPathDetailHop, PathOptimizeMode } from '@/lib/api'
+import {
+  Loader2,
+  Route,
+  Download,
+  ArrowRight,
+  X,
+  Search,
+  MapPin,
+  Filter,
+  Zap,
+  Globe,
+  TrendingUp,
+  Activity,
+} from 'lucide-react'
+import {
+  fetchMetroConnectivity,
+  fetchMetroPathLatency,
+  fetchMetroPathDetail,
+  fetchFieldValues,
+} from '@/lib/api'
+import type {
+  MetroPathLatency,
+  MetroPathDetailResponse,
+  MetroPathDetailHop,
+  PathOptimizeMode,
+} from '@/lib/api'
 import { ErrorState } from '@/components/ui/error-state'
 import { useDelayedLoading } from '@/hooks/use-delayed-loading'
 import { PageHeader } from '@/components/page-header'
 import { cn } from '@/lib/utils'
+import { SmallDropdown } from '@/components/topology/TimeRangeSelector'
 
 const DEBOUNCE_MS = 150
 
 function parseMetroFilters(searchParam: string): string[] {
   if (!searchParam) return []
-  return searchParam.split(',').map(f => f.trim()).filter(Boolean)
+  return searchParam
+    .split(',')
+    .map((f) => f.trim())
+    .filter(Boolean)
 }
 
 function MetroInlineFilter({ onCommit }: { onCommit: (metro: string) => void }) {
@@ -38,7 +65,7 @@ function MetroInlineFilter({ onCommit }: { onCommit: (metro: string) => void }) 
   const filteredValues = useMemo(() => {
     if (!metroValues) return []
     if (!query) return metroValues
-    return metroValues.filter(v => v.toLowerCase().includes(query.toLowerCase()))
+    return metroValues.filter((v) => v.toLowerCase().includes(query.toLowerCase()))
   }, [metroValues, query])
 
   const items = isFocused ? filteredValues : []
@@ -47,38 +74,51 @@ function MetroInlineFilter({ onCommit }: { onCommit: (metro: string) => void }) 
     setSelectedIndex(-1)
   }, [debouncedQuery])
 
-  const commit = useCallback((value: string) => {
-    onCommit(value)
-    setQuery('')
-    inputRef.current?.focus()
-  }, [onCommit])
+  const commit = useCallback(
+    (value: string) => {
+      onCommit(value)
+      setQuery('')
+      inputRef.current?.focus()
+    },
+    [onCommit],
+  )
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    const isDropdownOpen = isFocused && items.length > 0
-    switch (e.key) {
-      case 'ArrowDown':
-        if (isDropdownOpen) { e.preventDefault(); setSelectedIndex(prev => Math.min(prev + 1, items.length - 1)) }
-        break
-      case 'ArrowUp':
-        if (isDropdownOpen) { e.preventDefault(); setSelectedIndex(prev => Math.max(prev - 1, -1)) }
-        break
-      case 'Enter': {
-        e.preventDefault()
-        const idx = selectedIndex >= 0 ? selectedIndex : 0
-        if (idx < items.length) commit(items[idx])
-        break
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      const isDropdownOpen = isFocused && items.length > 0
+      switch (e.key) {
+        case 'ArrowDown':
+          if (isDropdownOpen) {
+            e.preventDefault()
+            setSelectedIndex((prev) => Math.min(prev + 1, items.length - 1))
+          }
+          break
+        case 'ArrowUp':
+          if (isDropdownOpen) {
+            e.preventDefault()
+            setSelectedIndex((prev) => Math.max(prev - 1, -1))
+          }
+          break
+        case 'Enter': {
+          e.preventDefault()
+          const idx = selectedIndex >= 0 ? selectedIndex : 0
+          if (idx < items.length) commit(items[idx])
+          break
+        }
+        case 'Escape':
+          e.preventDefault()
+          setQuery('')
+          inputRef.current?.blur()
+          break
       }
-      case 'Escape':
-        e.preventDefault()
-        setQuery('')
-        inputRef.current?.blur()
-        break
-    }
-  }, [items, selectedIndex, commit, isFocused])
+    },
+    [items, selectedIndex, commit, isFocused],
+  )
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setIsFocused(false)
+      if (containerRef.current && !containerRef.current.contains(e.target as Node))
+        setIsFocused(false)
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
@@ -88,7 +128,7 @@ function MetroInlineFilter({ onCommit }: { onCommit: (metro: string) => void }) 
 
   return (
     <div ref={containerRef} className="relative">
-      <div className="flex items-center gap-1.5 px-2 py-1 text-xs border border-border rounded-md bg-background hover:bg-muted/50 focus-within:ring-1 focus-within:ring-ring transition-colors">
+      <div className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-border rounded-md bg-background hover:bg-muted/50 focus-within:ring-1 focus-within:ring-ring transition-colors">
         <Search className="h-3 w-3 text-muted-foreground flex-shrink-0" />
         <input
           ref={inputRef}
@@ -98,7 +138,7 @@ function MetroInlineFilter({ onCommit }: { onCommit: (metro: string) => void }) 
           onKeyDown={handleKeyDown}
           onFocus={() => setIsFocused(true)}
           placeholder="Filter by metro..."
-          className="w-28 bg-transparent border-0 focus:outline-none placeholder:text-muted-foreground text-xs"
+          className="w-42 bg-transparent border-0 focus:outline-none placeholder:text-muted-foreground text-xs"
         />
         {isLoading && <Loader2 className="h-3 w-3 text-muted-foreground animate-spin" />}
       </div>
@@ -117,7 +157,7 @@ function MetroInlineFilter({ onCommit }: { onCommit: (metro: string) => void }) 
               onClick={() => commit(value)}
               className={cn(
                 'w-full flex items-center gap-2 px-3 py-2 text-left text-xs hover:bg-muted transition-colors',
-                index === selectedIndex && 'bg-muted'
+                index === selectedIndex && 'bg-muted',
               )}
             >
               <MapPin className="h-3 w-3 text-muted-foreground flex-shrink-0" />
@@ -193,14 +233,20 @@ function PathLatencyCell({
       className={cn(
         'w-full h-full flex flex-col items-center justify-center gap-0.5 px-1 transition-colors cursor-pointer',
         TIER_CELL[tier],
-        isSelected && 'ring-2 ring-primary ring-inset'
+        isSelected && 'ring-2 ring-primary ring-inset',
       )}
       title={`${pathLatency.fromMetroCode} → ${pathLatency.toMetroCode}: ${pathLatency.pathLatencyMs.toFixed(1)}ms (${pathLatency.hopCount} hops)${hasInternet ? ` vs Internet ${pathLatency.internetLatencyMs.toFixed(1)}ms` : ''}`}
     >
       {hasInternet && pct !== null ? (
         <>
-          <span className={cn('text-[11px] font-semibold leading-none tabular-nums', TIER_PCT_TEXT[tier])}>
-            {pct > 0 ? '+' : ''}{pct.toFixed(0)}%
+          <span
+            className={cn(
+              'text-[11px] font-semibold leading-none tabular-nums',
+              TIER_PCT_TEXT[tier],
+            )}
+          >
+            {pct > 0 ? '+' : ''}
+            {pct.toFixed(0)}%
           </span>
           <span className="text-[10px] text-muted-foreground leading-none tabular-nums">
             {pathLatency.pathLatencyMs.toFixed(0)}ms
@@ -232,13 +278,13 @@ function PathStepper({ hops }: { hops: MetroPathDetailHop[] }) {
           <div key={idx} className="flex items-stretch gap-3">
             {/* Timeline rail */}
             <div className="flex flex-col items-center w-5 flex-shrink-0">
-              <div className={cn(
-                'w-2.5 h-2.5 rounded-full flex-shrink-0 ring-2 ring-background mt-1',
-                idx === 0 ? 'bg-primary' : isLast ? 'bg-primary' : 'bg-muted-foreground/60'
-              )} />
-              {!isLast && (
-                <div className="w-px flex-1 bg-border min-h-[32px]" />
-              )}
+              <div
+                className={cn(
+                  'w-2.5 h-2.5 rounded-full flex-shrink-0 ring-2 ring-background mt-1',
+                  idx === 0 ? 'bg-primary' : isLast ? 'bg-primary' : 'bg-muted-foreground/60',
+                )}
+              />
+              {!isLast && <div className="w-px flex-1 bg-border min-h-[32px]" />}
             </div>
 
             {/* Content */}
@@ -270,7 +316,17 @@ function PathStepper({ hops }: { hops: MetroPathDetailHop[] }) {
 }
 
 // Latency comparison bar
-function LatencyBar({ label, ms, maxMs, color }: { label: string; ms: number; maxMs: number; color: string }) {
+function LatencyBar({
+  label,
+  ms,
+  maxMs,
+  color,
+}: {
+  label: string
+  ms: number
+  maxMs: number
+  color: string
+}) {
   const pct = Math.max(5, (ms / maxMs) * 100)
   return (
     <div className="space-y-1">
@@ -337,11 +393,14 @@ function PathLatencyDetail({
             <div className="flex items-center justify-between">
               <span className="text-xs text-muted-foreground">DZ vs Internet</span>
               <span className={cn('text-xl font-bold tabular-nums', TIER_PCT_TEXT[tier])}>
-                {pct > 0 ? '+' : ''}{pct.toFixed(1)}%
+                {pct > 0 ? '+' : ''}
+                {pct.toFixed(1)}%
               </span>
             </div>
             <div className={cn('text-xs mt-0.5', TIER_PCT_TEXT[tier])}>
-              {pct > 0 ? `${pct.toFixed(1)}% faster than internet` : `${Math.abs(pct).toFixed(1)}% slower than internet`}
+              {pct > 0
+                ? `${pct.toFixed(1)}% faster than internet`
+                : `${Math.abs(pct).toFixed(1)}% slower than internet`}
             </div>
           </div>
         )}
@@ -349,26 +408,45 @@ function PathLatencyDetail({
         {/* Stats grid */}
         <div className="grid grid-cols-3 gap-2 px-4 mt-3">
           <div className="bg-muted/50 rounded-lg p-2.5">
-            <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">DZ Latency</div>
-            <div className="text-lg font-bold tabular-nums">{pathLatency.pathLatencyMs.toFixed(1)}<span className="text-xs font-normal ml-0.5">ms</span></div>
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">
+              DZ Latency
+            </div>
+            <div className="text-lg font-bold tabular-nums">
+              {pathLatency.pathLatencyMs.toFixed(1)}
+              <span className="text-xs font-normal ml-0.5">ms</span>
+            </div>
           </div>
           <div className="bg-muted/50 rounded-lg p-2.5">
-            <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Hops</div>
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">
+              Hops
+            </div>
             <div className="text-lg font-bold tabular-nums">{pathLatency.hopCount}</div>
           </div>
           {pathLatency.bottleneckBwGbps > 0 ? (
             <div className="bg-muted/50 rounded-lg p-2.5">
-              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Bottleneck</div>
-              <div className="text-lg font-bold tabular-nums">{pathLatency.bottleneckBwGbps.toFixed(0)}<span className="text-xs font-normal ml-0.5">Gbps</span></div>
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">
+                Bottleneck
+              </div>
+              <div className="text-lg font-bold tabular-nums">
+                {pathLatency.bottleneckBwGbps.toFixed(0)}
+                <span className="text-xs font-normal ml-0.5">Gbps</span>
+              </div>
             </div>
           ) : hasInternet ? (
             <div className="bg-muted/50 rounded-lg p-2.5">
-              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Internet</div>
-              <div className="text-lg font-bold tabular-nums">{pathLatency.internetLatencyMs.toFixed(1)}<span className="text-xs font-normal ml-0.5">ms</span></div>
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">
+                Internet
+              </div>
+              <div className="text-lg font-bold tabular-nums">
+                {pathLatency.internetLatencyMs.toFixed(1)}
+                <span className="text-xs font-normal ml-0.5">ms</span>
+              </div>
             </div>
           ) : (
             <div className="bg-muted/50 rounded-lg p-2.5 opacity-40">
-              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Internet</div>
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">
+                Internet
+              </div>
               <div className="text-sm text-muted-foreground">—</div>
             </div>
           )}
@@ -377,15 +455,29 @@ function PathLatencyDetail({
         {/* Latency comparison bars */}
         {hasInternet && (
           <div className="px-4 mt-4 space-y-2.5">
-            <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Latency Comparison</div>
-            <LatencyBar label="DZ Network" ms={pathLatency.pathLatencyMs} maxMs={maxMs} color="bg-blue-500" />
-            <LatencyBar label="Internet" ms={pathLatency.internetLatencyMs} maxMs={maxMs} color="bg-muted-foreground/40" />
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">
+              Latency Comparison
+            </div>
+            <LatencyBar
+              label="DZ Network"
+              ms={pathLatency.pathLatencyMs}
+              maxMs={maxMs}
+              color="bg-blue-500"
+            />
+            <LatencyBar
+              label="Internet"
+              ms={pathLatency.internetLatencyMs}
+              maxMs={maxMs}
+              color="bg-muted-foreground/40"
+            />
           </div>
         )}
 
         {/* Path breakdown */}
         <div className="px-4 mt-4 mb-4">
-          <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium mb-3">Path Breakdown</div>
+          <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium mb-3">
+            Path Breakdown
+          </div>
           {isLoadingDetail ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -420,8 +512,12 @@ function SummaryCard({
         <Icon className="h-3.5 w-3.5 text-muted-foreground" />
       </div>
       <div className="min-w-0">
-        <div className="text-[10px] text-muted-foreground uppercase tracking-wider leading-none mb-1">{label}</div>
-        <div className={cn('text-base font-semibold tabular-nums leading-none', className)}>{value}</div>
+        <div className="text-[10px] text-muted-foreground uppercase tracking-wider leading-none mb-1">
+          {label}
+        </div>
+        <div className={cn('text-base font-semibold tabular-nums leading-none', className)}>
+          {value}
+        </div>
       </div>
     </div>
   )
@@ -443,31 +539,37 @@ export function PathLatencyPage() {
     return parseMetroFilters(searchParams.get('metros') || '')
   }, [searchParams])
 
-  const addMetroFilter = useCallback((metro: string) => {
-    setSearchParams(prev => {
-      const current = parseMetroFilters(prev.get('metros') || '')
-      if (!current.includes(metro)) {
-        prev.set('metros', [...current, metro].join(','))
-      }
-      return prev
-    })
-  }, [setSearchParams])
+  const addMetroFilter = useCallback(
+    (metro: string) => {
+      setSearchParams((prev) => {
+        const current = parseMetroFilters(prev.get('metros') || '')
+        if (!current.includes(metro)) {
+          prev.set('metros', [...current, metro].join(','))
+        }
+        return prev
+      })
+    },
+    [setSearchParams],
+  )
 
-  const removeMetroFilter = useCallback((metro: string) => {
-    setSearchParams(prev => {
-      const current = parseMetroFilters(prev.get('metros') || '')
-      const newFilters = current.filter(m => m !== metro)
-      if (newFilters.length === 0) {
-        prev.delete('metros')
-      } else {
-        prev.set('metros', newFilters.join(','))
-      }
-      return prev
-    })
-  }, [setSearchParams])
+  const removeMetroFilter = useCallback(
+    (metro: string) => {
+      setSearchParams((prev) => {
+        const current = parseMetroFilters(prev.get('metros') || '')
+        const newFilters = current.filter((m) => m !== metro)
+        if (newFilters.length === 0) {
+          prev.delete('metros')
+        } else {
+          prev.set('metros', newFilters.join(','))
+        }
+        return prev
+      })
+    },
+    [setSearchParams],
+  )
 
   const clearAllFilters = useCallback(() => {
-    setSearchParams(prev => {
+    setSearchParams((prev) => {
       prev.delete('metros')
       return prev
     })
@@ -475,7 +577,12 @@ export function PathLatencyPage() {
 
   const queryClient = useQueryClient()
 
-  const { data: connectivityData, isLoading: connectivityLoading, error: connectivityError, isFetching: connectivityFetching } = useQuery({
+  const {
+    data: connectivityData,
+    isLoading: connectivityLoading,
+    error: connectivityError,
+    isFetching: connectivityFetching,
+  } = useQuery({
     queryKey: ['metro-connectivity'],
     queryFn: fetchMetroConnectivity,
     staleTime: 60000,
@@ -486,25 +593,28 @@ export function PathLatencyPage() {
     if (!fromCodeParam || !toCodeParam || !connectivityData) return null
     const fromUpper = fromCodeParam.toUpperCase()
     const toUpper = toCodeParam.toUpperCase()
-    const fromMetro = connectivityData.metros.find(m => m.code.toUpperCase() === fromUpper)
-    const toMetro = connectivityData.metros.find(m => m.code.toUpperCase() === toUpper)
+    const fromMetro = connectivityData.metros.find((m) => m.code.toUpperCase() === fromUpper)
+    const toMetro = connectivityData.metros.find((m) => m.code.toUpperCase() === toUpper)
     if (!fromMetro || !toMetro) return null
     return { from: fromMetro.pk, to: toMetro.pk }
   }, [fromCodeParam, toCodeParam, connectivityData])
 
-  const setSelectedCell = useCallback((cell: { from: string; to: string } | null, fromCode?: string, toCode?: string) => {
-    setSearchParams(prev => {
-      const next = new URLSearchParams(prev)
-      if (cell && fromCode && toCode) {
-        next.set('from', fromCode.toUpperCase())
-        next.set('to', toCode.toUpperCase())
-      } else {
-        next.delete('from')
-        next.delete('to')
-      }
-      return next
-    })
-  }, [setSearchParams])
+  const setSelectedCell = useCallback(
+    (cell: { from: string; to: string } | null, fromCode?: string, toCode?: string) => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev)
+        if (cell && fromCode && toCode) {
+          next.set('from', fromCode.toUpperCase())
+          next.set('to', toCode.toUpperCase())
+        } else {
+          next.delete('from')
+          next.delete('to')
+        }
+        return next
+      })
+    },
+    [setSearchParams],
+  )
 
   const showLoading = useDelayedLoading(connectivityLoading)
 
@@ -513,32 +623,38 @@ export function PathLatencyPage() {
   const dragStartX = useRef(0)
   const dragStartWidth = useRef(0)
 
-  const handleResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault()
-    isDragging.current = true
-    dragStartX.current = e.clientX
-    dragStartWidth.current = panelWidth
+  const handleResizeStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      isDragging.current = true
+      dragStartX.current = e.clientX
+      dragStartWidth.current = panelWidth
 
-    const onMove = (ev: MouseEvent) => {
-      if (!isDragging.current) return
-      const delta = dragStartX.current - ev.clientX
-      const newWidth = Math.min(PANEL_MAX_WIDTH, Math.max(PANEL_MIN_WIDTH, dragStartWidth.current + delta))
-      setPanelWidth(newWidth)
-    }
+      const onMove = (ev: MouseEvent) => {
+        if (!isDragging.current) return
+        const delta = dragStartX.current - ev.clientX
+        const newWidth = Math.min(
+          PANEL_MAX_WIDTH,
+          Math.max(PANEL_MIN_WIDTH, dragStartWidth.current + delta),
+        )
+        setPanelWidth(newWidth)
+      }
 
-    const onUp = () => {
-      isDragging.current = false
-      document.removeEventListener('mousemove', onMove)
-      document.removeEventListener('mouseup', onUp)
-      document.body.style.cursor = ''
-      document.body.style.userSelect = ''
-    }
+      const onUp = () => {
+        isDragging.current = false
+        document.removeEventListener('mousemove', onMove)
+        document.removeEventListener('mouseup', onUp)
+        document.body.style.cursor = ''
+        document.body.style.userSelect = ''
+      }
 
-    document.addEventListener('mousemove', onMove)
-    document.addEventListener('mouseup', onUp)
-    document.body.style.cursor = 'col-resize'
-    document.body.style.userSelect = 'none'
-  }, [panelWidth])
+      document.addEventListener('mousemove', onMove)
+      document.addEventListener('mouseup', onUp)
+      document.body.style.cursor = 'col-resize'
+      document.body.style.userSelect = 'none'
+    },
+    [panelWidth],
+  )
 
   const { data: pathLatencyData, isLoading: pathLatencyLoading } = useQuery({
     queryKey: ['metro-path-latency', optimizeMode],
@@ -561,10 +677,19 @@ export function PathLatencyPage() {
   }, [selectedCell, pathLatencyMap])
 
   const { data: pathDetailData, isLoading: pathDetailLoading } = useQuery({
-    queryKey: ['metro-path-detail', selectedPathLatency?.fromMetroCode, selectedPathLatency?.toMetroCode, optimizeMode],
+    queryKey: [
+      'metro-path-detail',
+      selectedPathLatency?.fromMetroCode,
+      selectedPathLatency?.toMetroCode,
+      optimizeMode,
+    ],
     queryFn: () => {
       if (!selectedPathLatency) return Promise.resolve(null)
-      return fetchMetroPathDetail(selectedPathLatency.fromMetroCode, selectedPathLatency.toMetroCode, optimizeMode)
+      return fetchMetroPathDetail(
+        selectedPathLatency.fromMetroCode,
+        selectedPathLatency.toMetroCode,
+        optimizeMode,
+      )
     },
     staleTime: 60000,
     enabled: selectedPathLatency !== null,
@@ -573,16 +698,24 @@ export function PathLatencyPage() {
   const metros = useMemo(() => {
     if (!connectivityData) return []
     if (metroFilters.length === 0) return connectivityData.metros
-    return connectivityData.metros.filter(m =>
-      metroFilters.some(f => m.code.toLowerCase() === f.toLowerCase())
+    return connectivityData.metros.filter((m) =>
+      metroFilters.some((f) => m.code.toLowerCase() === f.toLowerCase()),
     )
   }, [connectivityData, metroFilters])
 
   const handleExport = () => {
     if (!pathLatencyData) return
 
-    const headers = ['From Metro', 'To Metro', 'Path Latency (ms)', 'Hop Count', 'Internet Latency (ms)', 'Improvement (%)', 'Bottleneck BW (Gbps)']
-    const rows = pathLatencyData.paths.map(pl => [
+    const headers = [
+      'From Metro',
+      'To Metro',
+      'Path Latency (ms)',
+      'Hop Count',
+      'Internet Latency (ms)',
+      'Improvement (%)',
+      'Bottleneck BW (Gbps)',
+    ]
+    const rows = pathLatencyData.paths.map((pl) => [
       pl.fromMetroCode,
       pl.toMetroCode,
       pl.pathLatencyMs.toFixed(1),
@@ -592,7 +725,7 @@ export function PathLatencyPage() {
       pl.bottleneckBwGbps > 0 ? pl.bottleneckBwGbps.toFixed(1) : '-',
     ])
 
-    const csv = [headers.join(','), ...rows.map(row => row.join(','))].join('\n')
+    const csv = [headers.join(','), ...rows.map((row) => row.join(','))].join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -611,7 +744,9 @@ export function PathLatencyPage() {
   }
 
   if (connectivityError || connectivityData?.error) {
-    const errorMessage = connectivityData?.error || (connectivityError instanceof Error ? connectivityError.message : 'Unknown error')
+    const errorMessage =
+      connectivityData?.error ||
+      (connectivityError instanceof Error ? connectivityError.message : 'Unknown error')
     return (
       <div className="flex-1 flex items-center justify-center bg-background">
         <ErrorState
@@ -645,27 +780,21 @@ export function PathLatencyPage() {
           icon={Route}
           title="Path Latency"
           actions={
-            <div className="flex items-center gap-3">
-              <div className="relative">
-                <select
-                  value={optimizeMode}
-                  onChange={(e) => {
-                    const newMode = e.target.value as PathOptimizeMode
-                    setSearchParams({ optimize: newMode })
-                  }}
-                  className="appearance-none border border-border bg-background hover:bg-muted/50 rounded-md px-3 py-1.5 pr-8 text-sm cursor-pointer transition-colors"
-                >
-                  <option value="latency">Optimize: Latency</option>
-                  <option value="hops">Optimize: Hops</option>
-                  <option value="bandwidth">Optimize: Bandwidth</option>
-                </select>
-                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-              </div>
+            <div className="flex flex-col xs:flex-row xs:items-center gap-3">
+              <SmallDropdown
+                value={optimizeMode}
+                options={[
+                  { value: 'latency', label: 'Optimize: Latency' },
+                  { value: 'hops', label: 'Optimize: Hops' },
+                  { value: 'bandwidth', label: 'Optimize: Bandwidth' },
+                ]}
+                onChange={(v) => setSearchParams({ optimize: v })}
+              />
               <button
                 onClick={handleExport}
-                className="flex items-center gap-2 px-3 py-1.5 text-sm border border-border bg-background hover:bg-muted/50 rounded-md transition-colors"
+                className="flex items-center justify-center gap-2 px-3 py-1.5 text-xs border border-border bg-background hover:bg-muted/50 rounded-md transition-colors"
               >
-                <Download className="h-4 w-4" />
+                <Download className="h-3 w-3" />
                 Export CSV
               </button>
             </div>
@@ -678,14 +807,26 @@ export function PathLatencyPage() {
 
         {/* Summary cards */}
         {summary ? (
-          <div className="grid grid-cols-4 gap-2 mt-4">
-            <SummaryCard icon={Activity} label="Metro Pairs" value={summary.totalPairs.toString()} />
-            <SummaryCard icon={Globe} label="With Internet" value={summary.pairsWithInternet.toString()} />
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 mt-4">
+            <SummaryCard
+              icon={Activity}
+              label="Metro Pairs"
+              value={summary.totalPairs.toString()}
+            />
+            <SummaryCard
+              icon={Globe}
+              label="With Internet"
+              value={summary.pairsWithInternet.toString()}
+            />
             <SummaryCard
               icon={TrendingUp}
               label="Avg Improvement"
-              value={`+${summary.avgImprovementPct.toFixed(1)}%`}
-              className="text-green-600 dark:text-green-400"
+              value={`${summary.avgImprovementPct >= 0 ? '+' : ''}${summary.avgImprovementPct.toFixed(1)}%`}
+              className={
+                summary.avgImprovementPct >= 0
+                  ? 'text-green-600 dark:text-green-400'
+                  : 'text-red-600 dark:text-red-400'
+              }
             />
             <SummaryCard
               icon={Zap}
@@ -696,8 +837,11 @@ export function PathLatencyPage() {
           </div>
         ) : pathLatencyLoading ? (
           <div className="grid grid-cols-4 gap-2 mt-4">
-            {[0, 1, 2, 3].map(i => (
-              <div key={i} className="bg-card border border-border rounded-lg px-3 py-2.5 h-[56px] animate-pulse" />
+            {[0, 1, 2, 3].map((i) => (
+              <div
+                key={i}
+                className="bg-card border border-border rounded-lg px-3 py-2.5 h-[56px] animate-pulse"
+              />
             ))}
           </div>
         ) : null}
@@ -730,7 +874,7 @@ export function PathLatencyPage() {
       </div>
 
       {/* Matrix + detail panel */}
-      <div className="flex-1 flex gap-0 min-h-0 border-t border-border">
+      <div className="flex-1 flex gap-0 min-h-0 border-t border-border relative">
         {/* Scrollable matrix */}
         <div className="flex-1 overflow-auto min-w-0 p-4">
           <table className="border-separate border-spacing-0">
@@ -739,7 +883,7 @@ export function PathLatencyPage() {
                 {/* Top-left corner */}
                 <th className="relative bg-muted sticky top-0 left-0 z-30 min-w-[52px] shadow-[inset_0_0_0_1px_hsl(var(--border))] before:absolute before:-top-1 before:left-0 before:right-0 before:h-1 before:bg-muted [backface-visibility:hidden] [transform:translateZ(0)]" />
 
-                {metros.map(metro => (
+                {metros.map((metro) => (
                   <th
                     key={`col-${metro.pk}`}
                     className="relative bg-muted px-1 py-2 text-xs font-medium text-center sticky top-0 z-20 min-w-[52px] max-w-[64px] shadow-[inset_0_0_0_1px_hsl(var(--border))] before:absolute before:-top-1 before:left-0 before:right-0 before:h-1 before:bg-muted [backface-visibility:hidden] [transform:translateZ(0)]"
@@ -753,7 +897,7 @@ export function PathLatencyPage() {
               </tr>
             </thead>
             <tbody>
-              {metros.map(fromMetro => (
+              {metros.map((fromMetro) => (
                 <tr key={`row-${fromMetro.pk}`}>
                   <th
                     className="bg-muted px-2 py-1 text-[11px] font-medium text-right sticky left-0 z-10 whitespace-nowrap shadow-[inset_0_0_0_1px_hsl(var(--border))] [backface-visibility:hidden] [transform:translateZ(0)]"
@@ -762,10 +906,13 @@ export function PathLatencyPage() {
                     {fromMetro.code}
                   </th>
 
-                  {metros.map(toMetro => {
+                  {metros.map((toMetro) => {
                     const isSame = fromMetro.pk === toMetro.pk
-                    const pathLatency = isSame ? null : pathLatencyMap.get(`${fromMetro.pk}:${toMetro.pk}`) ?? null
-                    const isSelected = selectedCell?.from === fromMetro.pk && selectedCell?.to === toMetro.pk
+                    const pathLatency = isSame
+                      ? null
+                      : (pathLatencyMap.get(`${fromMetro.pk}:${toMetro.pk}`) ?? null)
+                    const isSelected =
+                      selectedCell?.from === fromMetro.pk && selectedCell?.to === toMetro.pk
 
                     return (
                       <td
@@ -779,7 +926,11 @@ export function PathLatencyPage() {
                               if (isSelected) {
                                 setSelectedCell(null)
                               } else {
-                                setSelectedCell({ from: fromMetro.pk, to: toMetro.pk }, fromMetro.code, toMetro.code)
+                                setSelectedCell(
+                                  { from: fromMetro.pk, to: toMetro.pk },
+                                  fromMetro.code,
+                                  toMetro.code,
+                                )
                               }
                             }
                           }}
@@ -797,17 +948,22 @@ export function PathLatencyPage() {
         {/* Detail panel */}
         {selectedPathLatency && selectedCell && (
           <>
-            {/* Drag handle */}
+            {/* Mobile backdrop */}
+            <div
+              className="fixed inset-0 z-40 bg-black/50 md:hidden"
+              onClick={() => setSelectedCell(null)}
+            />
+            {/* Drag handle — desktop only */}
             <div
               onMouseDown={handleResizeStart}
-              className="w-1 flex-shrink-0 cursor-col-resize bg-border hover:bg-primary/40 transition-colors group relative"
+              className="hidden md:block w-1 shrink-0 cursor-col-resize bg-border hover:bg-primary/40 transition-colors group relative"
               title="Drag to resize"
             >
               <div className="absolute inset-y-0 -left-1 -right-1" />
             </div>
             <div
-              className="flex-shrink-0 border-l border-border bg-card flex flex-col overflow-hidden"
-              style={{ width: panelWidth }}
+              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[calc(100%-2rem)] max-h-[85vh] rounded-xl overflow-y-auto md:static md:top-auto md:left-auto md:translate-x-0 md:translate-y-0 md:z-auto md:w-auto md:max-h-none md:rounded-none md:overflow-hidden md:shrink-0 border-l border-border bg-card flex flex-col"
+              style={window.innerWidth >= 768 ? { width: panelWidth } : undefined}
             >
               <PathLatencyDetail
                 fromCode={selectedPathLatency.fromMetroCode}
@@ -823,31 +979,35 @@ export function PathLatencyPage() {
       </div>
 
       {/* Legend */}
-      <div className="px-6 py-3 border-t border-border bg-muted/20 flex-shrink-0">
-        <div className="flex items-center gap-6 text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">DZ vs Internet:</span>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-sm bg-red-100 dark:bg-red-950/60 border border-red-200 dark:border-red-900" />
-            <span>Slower (&lt;-10%)</span>
+      <div className="px-4 py-2 border-t border-border bg-muted/20 md:sticky md:bottom-0 md:z-10">
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">DZ vs Internet:</span>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-sm bg-red-100 dark:bg-red-950/60 border border-red-200 dark:border-red-900" />
+              <span>Slower (&lt;-10%)</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-sm bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900" />
+              <span>Similar (0 to -10%)</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-sm bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900" />
+              <span>Faster (0 to +20%)</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-sm bg-green-100 dark:bg-green-950/60 border border-green-200 dark:border-green-900" />
+              <span>Much faster (&gt;+20%)</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-sm bg-muted/40 border border-border" />
+              <span>No internet data</span>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-sm bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900" />
-            <span>Similar (0 to -10%)</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-sm bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900" />
-            <span>Faster (0 to +20%)</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-sm bg-green-100 dark:bg-green-950/60 border border-green-200 dark:border-green-900" />
-            <span>Much faster (&gt;+20%)</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-sm bg-muted/40 border border-border" />
-            <span>No internet data</span>
-          </div>
-          <div className="ml-auto text-[10px]">
-            Primary: improvement % — Secondary: latency ms
+          <div>
+            <div className="ml-auto text-[10px]">
+              Primary: improvement % — Secondary: latency ms
+            </div>
           </div>
         </div>
       </div>

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"hash/fnv"
 	"log/slog"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -69,28 +68,21 @@ func NewMockInfluxDBClient(cfg MockInfluxDBClientConfig) *MockInfluxDBClient {
 	}
 }
 
-// QuerySQL implements InfluxDBClient.QuerySQL by generating mock counter data
-func (c *MockInfluxDBClient) QuerySQL(ctx context.Context, sqlQuery string) ([]map[string]any, error) {
-	// Detect baseline queries (contain ROW_NUMBER) and return empty results
-	// Mock data has no historical data before the query window
-	if strings.Contains(sqlQuery, "ROW_NUMBER") {
-		c.log.Debug("mock influxdb: baseline query detected, returning empty results")
-		return []map[string]any{}, nil
-	}
-
-	// Parse time range from SQL query
-	startTime, endTime, err := parseTimeRange(sqlQuery)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse time range: %w", err)
-	}
-
+// QueryIntfCounters implements InfluxDBClient.QueryIntfCounters by generating mock counter data.
+func (c *MockInfluxDBClient) QueryIntfCounters(ctx context.Context, start, end time.Time) ([]map[string]any, error) {
 	// Refresh topology if needed (cache for 1 minute)
 	if err := c.refreshTopologyIfNeeded(ctx); err != nil {
 		return nil, fmt.Errorf("failed to refresh topology: %w", err)
 	}
 
-	// Generate mock data
-	return c.generateMockData(startTime, endTime)
+	return c.generateMockData(start, end)
+}
+
+// QueryBaselineCounter implements InfluxDBClient.QueryBaselineCounter.
+// The mock has no historical data before the query window, so it always returns empty results.
+func (c *MockInfluxDBClient) QueryBaselineCounter(_ context.Context, _ string, _, _ time.Time) ([]map[string]any, error) {
+	c.log.Debug("mock influxdb: baseline counter query, returning empty results (no historical data)")
+	return []map[string]any{}, nil
 }
 
 // Close implements InfluxDBClient.Close
@@ -392,7 +384,7 @@ func (c *MockInfluxDBClient) generateCounterRow(device *mockDevice, iface mockIn
 	outBroadcastPkts := outPkts * broadcastPct / 100
 
 	row := map[string]any{
-		"time":                t.UTC().Format("2006-01-02 15:04:05.999999999 +0000 UTC"),
+		"time":                t.UTC().Format(time.RFC3339Nano),
 		"dzd_pubkey":          device.pk,
 		"host":                device.code,
 		"intf":                iface.name,
@@ -507,49 +499,6 @@ func (c *MockInfluxDBClient) getAvgPacketSize(ifaceName string) int64 {
 		// (mix of small ACKs and larger data packets)
 		return 800
 	}
-}
-
-// parseTimeRange extracts start and end times from an InfluxDB SQL query
-func parseTimeRange(sqlQuery string) (time.Time, time.Time, error) {
-	// Match patterns like: time >= '2024-01-01T00:00:00Z' AND time < '2024-01-01T01:00:00Z'
-	timePattern := regexp.MustCompile(`time\s*>=\s*'([^']+)'\s+AND\s+time\s*<\s*'([^']+)'`)
-	matches := timePattern.FindStringSubmatch(sqlQuery)
-
-	if len(matches) != 3 {
-		// Default to last hour if we can't parse
-		now := time.Now().UTC()
-		return now.Add(-time.Hour), now, nil
-	}
-
-	startTime, err := parseInfluxTime(matches[1])
-	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("failed to parse start time: %w", err)
-	}
-
-	endTime, err := parseInfluxTime(matches[2])
-	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("failed to parse end time: %w", err)
-	}
-
-	return startTime, endTime, nil
-}
-
-// parseInfluxTime parses a time string in various formats
-func parseInfluxTime(s string) (time.Time, error) {
-	formats := []string{
-		time.RFC3339Nano,
-		time.RFC3339,
-		"2006-01-02T15:04:05Z",
-		"2006-01-02 15:04:05",
-	}
-
-	for _, format := range formats {
-		if t, err := time.Parse(format, s); err == nil {
-			return t, nil
-		}
-	}
-
-	return time.Time{}, fmt.Errorf("unable to parse time: %s", s)
 }
 
 // hashSeed creates a deterministic hash from device PK and interface name

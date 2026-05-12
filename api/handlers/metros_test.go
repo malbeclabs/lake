@@ -73,7 +73,7 @@ func TestGetMetros_ReturnsAllMetros(t *testing.T) {
 
 	insertMetrosTestData(t, api)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/dz/metros", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/metros?sort_by=code&sort_dir=asc", nil)
 	rr := httptest.NewRecorder()
 	api.GetMetros(rr, req)
 
@@ -85,7 +85,7 @@ func TestGetMetros_ReturnsAllMetros(t *testing.T) {
 	assert.Equal(t, 3, response.Total)
 	assert.Len(t, response.Items, 3)
 
-	// Verify order (should be by code)
+	// Verify order (ascending by code)
 	assert.Equal(t, "CHI", response.Items[0].Code)
 	assert.Equal(t, "LAX", response.Items[1].Code)
 	assert.Equal(t, "NYC", response.Items[2].Code)

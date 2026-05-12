@@ -68,7 +68,7 @@ func (a *API) GetShredsOverview(w http.ResponseWriter, r *http.Request) {
 		&overview.NextSeatFundingIndex,
 	)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("shreds", duration, err)
 
 	if err != nil {
 		// If no execution controller exists yet, return empty overview.
@@ -158,8 +158,32 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	// Client IPs are only exposed to internal (domain-authenticated) users.
+	// For everyone else, drop the ip-based sort/filter fields so the column
+	// can't be sorted, filtered, or substring-searched via the "all" filter.
+	acc := GetAccountFromContext(ctx)
+	canSeeClientIP := acc != nil && acc.IsInternalUser
+	sortFields := seatSortFields
+	filterFields := seatFilterFields
+	if !canSeeClientIP {
+		sortFields = make(map[string]string, len(seatSortFields)-1)
+		for k, v := range seatSortFields {
+			if k == "ip" {
+				continue
+			}
+			sortFields[k] = v
+		}
+		filterFields = make(map[string]FilterFieldConfig, len(seatFilterFields)-1)
+		for k, v := range seatFilterFields {
+			if k == "ip" {
+				continue
+			}
+			filterFields[k] = v
+		}
+	}
+
 	pagination := ParsePagination(r, 100)
-	sort := ParseSort(r, "active_epoch", seatSortFields)
+	sort := ParseSort(r, "active_epoch", sortFields)
 	filters := ParseFilters(r)
 
 	// Status filter: active, inactive, closed (comma-separated).
@@ -171,7 +195,7 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 	var whereClauses []string
 	var whereArgs []any
 
-	filterClause, filterArgs := filters.BuildFilterClause(seatFilterFields)
+	filterClause, filterArgs := filters.BuildFilterClause(filterFields)
 	if filterClause != "" {
 		whereClauses = append(whereClauses, filterClause)
 		whereArgs = append(whereArgs, filterArgs...)
@@ -196,13 +220,13 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 
 		var statusOr []string
 		if statuses["active"] {
-			// Active but NOT expiring (prepaid >= 2).
-			statusOr = append(statusOr, "(s.active_epoch >= ? AND s.escrow_count > 0 AND "+prepaidExpr+" >= 2)")
+			// Active but NOT expiring (prepaid >= 1).
+			statusOr = append(statusOr, "(s.active_epoch >= ? AND s.escrow_count > 0 AND "+prepaidExpr+" >= 1)")
 			whereArgs = append(whereArgs, solanaEpoch)
 		}
 		if statuses["expiring"] {
-			// Active but expiring soon (prepaid < 2).
-			statusOr = append(statusOr, "(s.active_epoch >= ? AND s.escrow_count > 0 AND "+prepaidExpr+" < 2)")
+			// Active but expiring soon (prepaid < 1).
+			statusOr = append(statusOr, "(s.active_epoch >= ? AND s.escrow_count > 0 AND "+prepaidExpr+" < 1)")
 			whereArgs = append(whereArgs, solanaEpoch)
 		}
 		if statuses["pending"] {
@@ -252,7 +276,7 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Data query.
-	orderBy := sort.OrderByClause(seatSortFields)
+	orderBy := sort.OrderByClause(sortFields)
 	query := `
 		WITH escrow_balances AS (
 			SELECT client_seat_key, sum(usdc_balance) as total_usdc_balance
@@ -292,7 +316,7 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query, queryArgs...)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("shreds", duration, err)
 
 	if err != nil {
 		logError("shred client seats query failed", "error", err)
@@ -318,6 +342,9 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 		}
 		if lastActivity != nil && !lastActivity.IsZero() {
 			s.LastActivity = lastActivity.UTC().Format(time.RFC3339)
+		}
+		if !canSeeClientIP {
+			s.ClientIP = ""
 		}
 		items = append(items, s)
 	}
@@ -382,7 +409,7 @@ func (a *API) GetShredDeviceHistories(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("shreds", duration, err)
 
 	if err != nil {
 		logError("shred device histories query failed", "error", err)
@@ -458,7 +485,7 @@ func (a *API) GetShredMetroHistories(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("shreds", duration, err)
 
 	if err != nil {
 		logError("shred metro histories query failed", "error", err)
@@ -530,7 +557,7 @@ func (a *API) GetShredFunders(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("shreds", duration, err)
 
 	if err != nil {
 		logError("shred funders query failed", "error", err)
@@ -642,6 +669,10 @@ func (a *API) GetShredEscrowEvents(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	// Client IPs are only exposed to internal (domain-authenticated) users.
+	acc := GetAccountFromContext(ctx)
+	canSeeClientIP := acc != nil && acc.IsInternalUser
+
 	pagination := ParsePagination(r, 100)
 	sort := ParseSort(r, "time", escrowEventSortFields)
 	filters := ParseFilters(r)
@@ -713,7 +744,7 @@ func (a *API) GetShredEscrowEvents(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query, queryArgs...)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("shreds", duration, err)
 
 	if err != nil {
 		logError("shred escrow events query failed", "error", err)
@@ -737,6 +768,9 @@ func (a *API) GetShredEscrowEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		e.EventTS = eventTS.UTC().Format(time.RFC3339)
 		e.SolscanURL = "https://solscan.io/tx/" + e.TxSignature
+		if !canSeeClientIP {
+			e.ClientIP = ""
+		}
 		items = append(items, e)
 	}
 	if items == nil {
@@ -747,6 +781,241 @@ func (a *API) GetShredEscrowEvents(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(PaginatedResponse[ShredEscrowEventItem]{
 		Items: items, Total: int(total), Limit: pagination.Limit, Offset: pagination.Offset,
 	}); err != nil {
+		logError("failed to encode response", "error", err)
+	}
+}
+
+// ShredSubscriberHistoryItem represents active subscriber count per epoch.
+type ShredSubscriberHistoryItem struct {
+	Epoch       uint64 `json:"epoch"`
+	ActiveSeats uint64 `json:"active_seats"`
+}
+
+func (a *API) GetShredSubscriberHistory(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	limitStr := r.URL.Query().Get("limit")
+	limit := 50
+	if n, err := strconv.Atoi(limitStr); err == nil && n > 0 && n <= 200 {
+		limit = n
+	}
+
+	start := time.Now()
+	query := `
+		SELECT
+			active_epoch,
+			count(DISTINCT pk) AS active_seats
+		FROM dim_dz_shred_client_seats_history
+		WHERE is_deleted = 0
+		  AND active_epoch > 0
+		GROUP BY active_epoch
+		ORDER BY active_epoch DESC
+		LIMIT ?
+	`
+
+	rows, err := a.envDB(ctx).Query(ctx, query, limit)
+	duration := time.Since(start)
+	metrics.RecordClickHouseQuery("shreds", duration, err)
+
+	if err != nil {
+		logError("shred subscriber history query failed", "error", err)
+		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var items []ShredSubscriberHistoryItem
+	for rows.Next() {
+		var item ShredSubscriberHistoryItem
+		if err := rows.Scan(&item.Epoch, &item.ActiveSeats); err != nil {
+			logError("shred subscriber history row scan", "error", err)
+			http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
+			return
+		}
+		items = append(items, item)
+	}
+	if items == nil {
+		items = []ShredSubscriberHistoryItem{}
+	}
+
+	for i, j := 0, len(items)-1; i < j; i, j = i+1, j-1 {
+		items[i], items[j] = items[j], items[i]
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(items); err != nil {
+		logError("failed to encode response", "error", err)
+	}
+}
+
+// ShredEpochRevenueItem represents payment revenue aggregated per epoch.
+type ShredEpochRevenueItem struct {
+	Epoch        uint64  `json:"epoch"`
+	TotalUSDC    float64 `json:"total_usdc"`
+	TotalDollars float64 `json:"total_dollars"`
+	PaymentCount uint64  `json:"payment_count"`
+}
+
+func (a *API) GetShredEpochRevenue(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	limitStr := r.URL.Query().Get("limit")
+	limit := 20
+	if n, err := strconv.Atoi(limitStr); err == nil && n > 0 && n <= 100 {
+		limit = n
+	}
+
+	start := time.Now()
+	// Revenue per epoch is the sum of per-seat USDC actually charged, net of
+	// prorated refunds. The on-chain protocol prorates instant-allocated seats
+	// by remaining slots in the epoch (doublezero-shreds#243) and refunds the
+	// unused portion when withdrawn via RequestProratedInstantSeatWithdrawal,
+	// so `last_usdc_price_dollars` and `subscription_start_slot` on ClientSeat
+	// are the inputs for the gross charge:
+	//
+	//     charged = last_price_dollars * (epoch_end_slot - start_slot) / SLOTS_PER_EPOCH
+	//
+	// where epoch_end_slot = (active_epoch + 1) * SLOTS_PER_EPOCH. For
+	// batch-allocated seats start_slot = epoch_start, so this collapses to the
+	// full epoch price; for instant-allocated seats it captures the actual
+	// prorated charge.
+	//
+	// Refunds are subtracted from the gross charge per (seat, active_epoch).
+	// The prorated withdrawal log emits "Refunded N USDC" (in micro-USDC) and
+	// the parser stores N in fact_dz_shred_escrow_events.amount_usdc on the
+	// withdraw_seat row; the non-prorated withdrawal variant leaves amount_usdc
+	// null, so `event_type='withdraw_seat' AND amount_usdc IS NOT NULL` selects
+	// only refunds. The active_epoch the refund applies to is derived from the
+	// withdrawal slot via slot/SLOTS_PER_EPOCH.
+	//
+	// Pre-upgrade seats (or post-deactivation snapshots) have last_price = 0
+	// and start_slot = 0; we fall back to the legacy
+	// override-or-metro+device-premium formula, which matches what those seats
+	// were actually charged before the on-chain proration upgrade.
+	//
+	// Note: max() over snapshots for a given (pk, active_epoch) selects the
+	// allocation-time values rather than the deactivation snapshot (which
+	// zeroes both fields).
+	const slotsPerEpoch = 432000
+	const usdcMicroPerDollar = 1_000_000
+	query := `
+		WITH seat_per_epoch AS (
+			SELECT
+				pk,
+				active_epoch,
+				argMax(device_key, snapshot_ts) AS device_key,
+				argMax(has_price_override, snapshot_ts) AS has_override,
+				argMax(override_usdc_price_dollars, snapshot_ts) AS override_price,
+				max(subscription_start_slot) AS start_slot,
+				max(last_usdc_price_dollars) AS last_price
+			FROM dim_dz_shred_client_seats_history
+			WHERE is_deleted = 0 AND active_epoch > 0
+			GROUP BY pk, active_epoch
+		),
+		device_per_epoch AS (
+			SELECT
+				device_key,
+				current_epoch AS epoch,
+				argMax(metro_exchange_key, snapshot_ts) AS metro_key,
+				argMax(current_usdc_metro_premium_dollars, snapshot_ts) AS premium
+			FROM dim_dz_shred_device_histories_history
+			WHERE is_deleted = 0
+			GROUP BY device_key, current_epoch
+		),
+		metro_per_epoch AS (
+			SELECT
+				exchange_key,
+				current_epoch AS epoch,
+				argMax(current_usdc_price_dollars, snapshot_ts) AS price
+			FROM dim_dz_shred_metro_histories_history
+			WHERE is_deleted = 0
+			GROUP BY exchange_key, current_epoch
+		),
+		seat_refunds AS (
+			SELECT
+				client_seat_pk AS pk,
+				intDiv(slot, ?) AS active_epoch,
+				sum(coalesce(amount_usdc, 0)) / ? AS refund_dollars
+			FROM fact_dz_shred_escrow_events
+			WHERE event_type = 'withdraw_seat'
+			  AND amount_usdc IS NOT NULL
+			  AND status = 'ok'
+			GROUP BY pk, active_epoch
+		),
+		seat_charges AS (
+			SELECT
+				s.active_epoch AS epoch,
+				CASE
+					-- Prorated path: stored on-chain price scaled by slots active.
+					WHEN s.last_price > 0 AND s.start_slot > 0 THEN
+						toFloat64(s.last_price) * greatest(
+							least(
+								toInt64((s.active_epoch + 1) * ?) - toInt64(s.start_slot),
+								toInt64(?)
+							),
+							toInt64(0)
+						) / ?
+					-- Legacy fallback: full epoch price.
+					WHEN s.has_override = 1 THEN toFloat64(s.override_price)
+					ELSE toFloat64(coalesce(m.price, 0)) + toFloat64(coalesce(d.premium, 0))
+				END - coalesce(r.refund_dollars, 0) AS charged_dollars
+			FROM seat_per_epoch s
+			LEFT JOIN device_per_epoch d
+				ON s.device_key = d.device_key AND d.epoch = s.active_epoch
+			LEFT JOIN metro_per_epoch m
+				ON d.metro_key = m.exchange_key AND m.epoch = s.active_epoch
+			LEFT JOIN seat_refunds r
+				ON r.pk = s.pk AND r.active_epoch = s.active_epoch
+		)
+		SELECT
+			epoch,
+			sum(charged_dollars) AS total_usdc,
+			sum(charged_dollars) AS total_dollars,
+			toUInt64(count()) AS payment_count
+		FROM seat_charges
+		GROUP BY epoch
+		ORDER BY epoch DESC
+		LIMIT ?
+	`
+
+	rows, err := a.envDB(ctx).Query(ctx, query,
+		slotsPerEpoch, usdcMicroPerDollar, // seat_refunds
+		slotsPerEpoch, slotsPerEpoch, slotsPerEpoch, // seat_charges
+		limit,
+	)
+	duration := time.Since(start)
+	metrics.RecordClickHouseQuery("shreds", duration, err)
+
+	if err != nil {
+		logError("shred epoch revenue query failed", "error", err)
+		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var items []ShredEpochRevenueItem
+	for rows.Next() {
+		var item ShredEpochRevenueItem
+		if err := rows.Scan(&item.Epoch, &item.TotalUSDC, &item.TotalDollars, &item.PaymentCount); err != nil {
+			logError("shred epoch revenue row scan failed", "error", err)
+			http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
+			return
+		}
+		items = append(items, item)
+	}
+	if items == nil {
+		items = []ShredEpochRevenueItem{}
+	}
+
+	// Reverse to ascending order for charting
+	for i, j := 0, len(items)-1; i < j; i, j = i+1, j-1 {
+		items[i], items[j] = items[j], items[i]
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(items); err != nil {
 		logError("failed to encode response", "error", err)
 	}
 }

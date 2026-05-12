@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Loader2, Layers, AlertCircle, ChevronDown, ChevronUp, X } from 'lucide-react'
-import { fetchAllPaginated, fetchTenants } from '@/lib/api'
+import { fetchTenants } from '@/lib/api'
 import { handleRowClick } from '@/lib/utils'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
 import { PageHeader } from './page-header'
+import { CopyableText } from './copyable-text'
 
 const PAGE_SIZE = 100
 
@@ -18,24 +19,25 @@ function parseSearchFilters(searchParam: string): string[] {
   return searchParam.split(',').map(f => f.trim()).filter(Boolean)
 }
 
-const validFilterFields = ['code']
+const validFilterFields = ['code', 'owner']
 
 const tenantFieldPrefixes = [
   { prefix: 'code:', description: 'Filter by tenant code' },
+  { prefix: 'owner:', description: 'Filter by owner pubkey' },
 ]
 
 const tenantAutocompleteFields: string[] = []
 
-function parseFilter(filter: string): { field: string; value: string } {
+function toFilterParam(filter: string): string {
   const colonIndex = filter.indexOf(':')
   if (colonIndex > 0) {
     const field = filter.slice(0, colonIndex).toLowerCase()
     const value = filter.slice(colonIndex + 1)
     if (validFilterFields.includes(field) && value) {
-      return { field, value }
+      return `${field}:${value}`
     }
   }
-  return { field: 'all', value: filter }
+  return `all:${filter}`
 }
 
 function BoolBadge({ value }: { value: boolean }) {
@@ -75,7 +77,10 @@ export function TenantsPage() {
   const sortDirection = (searchParams.get('dir') || 'asc') as SortDirection
   const searchParam = searchParams.get('search') || ''
   const searchFilters = parseSearchFilters(searchParam)
-  const activeFilterRaw = liveFilter || searchFilters[0] || ''
+
+  const allFilters = liveFilter
+    ? [...searchFilters, liveFilter]
+    : searchFilters
 
   const removeFilter = useCallback((filterToRemove: string) => {
     const newFilters = searchFilters.filter(f => f !== filterToRemove)
@@ -94,58 +99,17 @@ export function TenantsPage() {
     })
   }, [setSearchParams])
 
+  const filterParams = useMemo(() => allFilters.map(toFilterParam), [allFilters])
+  const filterKey = filterParams.join(',')
+
   const { data: response, isLoading, error } = useQuery({
-    queryKey: ['tenants', 'all'],
-    queryFn: () => fetchAllPaginated(fetchTenants, PAGE_SIZE),
+    queryKey: ['tenants', offset, sortField, sortDirection, filterKey],
+    queryFn: () => fetchTenants(PAGE_SIZE, offset, sortField, sortDirection, filterParams.length > 0 ? filterParams : undefined),
     refetchInterval: 30000,
+    placeholderData: keepPreviousData,
   })
 
-  const tenants = response?.items
-
-  const filteredTenants = useMemo(() => {
-    if (!tenants) return []
-    if (!activeFilterRaw) return tenants
-
-    const filter = parseFilter(activeFilterRaw)
-    const needle = filter.value.trim().toLowerCase()
-    if (!needle) return tenants
-
-    if (filter.field === 'code') {
-      return tenants.filter(t => t.code.toLowerCase().includes(needle))
-    }
-    // all fields
-    return tenants.filter(t =>
-      t.code.toLowerCase().includes(needle) ||
-      t.pk.toLowerCase().includes(needle)
-    )
-  }, [tenants, activeFilterRaw])
-
-  const sortedTenants = useMemo(() => {
-    if (!filteredTenants) return []
-    const seen = new Set<string>()
-    const unique = filteredTenants.filter(t => {
-      if (seen.has(t.pk)) return false
-      seen.add(t.pk)
-      return true
-    })
-    return [...unique].sort((a, b) => {
-      let cmp = 0
-      switch (sortField) {
-        case 'code':
-          cmp = a.code.localeCompare(b.code)
-          break
-        case 'vrf_id':
-          cmp = a.vrf_id - b.vrf_id
-          break
-      }
-      return sortDirection === 'asc' ? cmp : -cmp
-    })
-  }, [filteredTenants, sortField, sortDirection])
-
-  const pagedTenants = useMemo(
-    () => sortedTenants.slice(offset, offset + PAGE_SIZE),
-    [sortedTenants, offset]
-  )
+  const tenants = response?.items ?? []
 
   const handleSort = (field: SortField) => {
     setSearchParams(prev => {
@@ -172,16 +136,17 @@ export function TenantsPage() {
     return sortDirection === 'asc' ? 'ascending' : 'descending'
   }
 
-  const prevFilterRef = useRef(activeFilterRaw)
+  const prevFilterRef = useRef(JSON.stringify(allFilters))
   useEffect(() => {
-    if (prevFilterRef.current === activeFilterRaw) return
-    prevFilterRef.current = activeFilterRaw
+    const key = JSON.stringify(allFilters)
+    if (prevFilterRef.current === key) return
+    prevFilterRef.current = key
     setSearchParams(prev => {
       const newParams = new URLSearchParams(prev)
       newParams.delete('page')
       return newParams
     })
-  }, [activeFilterRaw, setSearchParams])
+  }, [allFilters, setSearchParams])
 
   if (isLoading) {
     return (
@@ -265,14 +230,14 @@ export function TenantsPage() {
                 </tr>
               </thead>
               <tbody>
-                {pagedTenants.map((tenant) => (
+                {tenants.map((tenant) => (
                   <tr
                     key={tenant.pk}
                     className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
                     onClick={(e) => handleRowClick(e, `/dz/tenants/${tenant.pk}`, navigate)}
                   >
-                    <td className="px-4 py-3">
-                      <span className="font-mono text-sm">{tenant.code || '—'}</span>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      {tenant.code ? <CopyableText text={tenant.code} className="font-mono text-sm" /> : <span className="font-mono text-sm text-muted-foreground">—</span>}
                     </td>
                     <td className="px-4 py-3">
                       <span className="font-mono text-xs text-muted-foreground" title={tenant.pk}>
@@ -295,7 +260,7 @@ export function TenantsPage() {
                     </td>
                   </tr>
                 ))}
-                {sortedTenants.length === 0 && (
+                {tenants.length === 0 && (
                   <tr>
                     <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
                       No tenants found
@@ -307,7 +272,7 @@ export function TenantsPage() {
           </div>
           {response && (
             <Pagination
-              total={sortedTenants.length}
+              total={response.total}
               limit={PAGE_SIZE}
               offset={offset}
               onOffsetChange={setOffset}

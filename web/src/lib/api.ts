@@ -1189,10 +1189,12 @@ export interface NetworkSummary {
   stake_share_pct: number
   stake_share_delta: number
   users: number
+  max_users: number
   devices: number
   links: number
   contributors: number
   metros: number
+  facilities: number
   bandwidth_bps: number
   user_inbound_bps: number
   devices_by_status: Record<string, number>
@@ -1203,6 +1205,7 @@ export interface LinkIssue {
   code: string
   link_type: string
   contributor: string
+  side_z_contributor: string
   issue: string
   value: number
   threshold: number
@@ -1210,6 +1213,7 @@ export interface LinkIssue {
   side_z_metro: string
   since: string
   is_down: boolean
+  bandwidth_bps: number
 }
 
 export interface LinkMetric {
@@ -1217,6 +1221,7 @@ export interface LinkMetric {
   code: string
   link_type: string
   contributor: string
+  side_z_contributor: string
   bandwidth_bps: number
   in_bps: number
   out_bps: number
@@ -1297,6 +1302,8 @@ export interface NonActivatedLink {
   side_z_metro: string
   status: string
   since: string
+  active_incident_types?: string[]
+  bandwidth_bps: number
 }
 
 export interface ISISDeviceIssue {
@@ -1388,6 +1395,7 @@ export interface LinkHistory {
   code: string
   link_type: string
   contributor: string
+  side_z_contributor: string
   side_a_metro: string
   side_z_metro: string
   side_a_device: string
@@ -1610,6 +1618,12 @@ export interface TopologyDevice {
   contributor_pk: string
   contributor_code: string
   user_count: number
+  unicast_users_count: number
+  multicast_subscribers_count: number
+  multicast_publishers_count: number
+  max_unicast_users: number
+  max_multicast_subscribers: number
+  max_multicast_publishers: number
   validator_count: number
   stake_sol: number
   stake_share: number
@@ -1632,6 +1646,10 @@ export interface TopologyLink {
   side_z_ip: string
   contributor_pk: string
   contributor_code: string
+  side_a_contributor_pk: string
+  side_a_contributor_code: string
+  side_z_contributor_pk: string
+  side_z_contributor_code: string
   latency_us: number
   jitter_us: number
   latency_a_to_z_us: number
@@ -1679,6 +1697,45 @@ export async function fetchTopology(): Promise<TopologyResponse> {
   const res = await fetchWithRetry('/api/topology')
   if (!res.ok) {
     throw new Error('Failed to fetch topology')
+  }
+  return res.json()
+}
+
+export interface TopologyLinkMetricsEntry {
+  latency_us: number
+  jitter_us: number
+  latency_a_to_z_us: number
+  jitter_a_to_z_us: number
+  latency_z_to_a_us: number
+  jitter_z_to_a_us: number
+  loss_percent: number
+  sample_count: number
+  in_bps: number
+  out_bps: number
+}
+
+export interface TopologyLinkMetricsResponse {
+  metrics: Record<string, TopologyLinkMetricsEntry>
+  error?: string
+}
+
+export async function fetchTopologyLinkMetrics(): Promise<TopologyLinkMetricsResponse> {
+  const res = await fetchWithRetry('/api/topology/link-metrics')
+  if (!res.ok) {
+    throw new Error('Failed to fetch topology link metrics')
+  }
+  return res.json()
+}
+
+export interface TopologyValidatorsResponse {
+  validators: TopologyValidator[]
+  error?: string
+}
+
+export async function fetchTopologyValidators(): Promise<TopologyValidatorsResponse> {
+  const res = await fetchWithRetry('/api/topology/validators')
+  if (!res.ok) {
+    throw new Error('Failed to fetch topology validators')
   }
   return res.json()
 }
@@ -1875,8 +1932,20 @@ export interface MulticastMembersResponse extends PaginatedResponse<MulticastMem
   subscriber_count: number
 }
 
-export async function fetchMulticastGroups(): Promise<MulticastGroupListItem[]> {
-  const res = await apiFetch('/api/dz/multicast-groups')
+export async function fetchMulticastGroups(
+  limit = 100,
+  offset = 0,
+  sortBy?: string,
+  sortDir?: 'asc' | 'desc',
+  filters?: string[]
+): Promise<PaginatedResponse<MulticastGroupListItem>> {
+  const params = new URLSearchParams()
+  params.set('limit', String(limit))
+  params.set('offset', String(offset))
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
+  if (filters) filters.forEach(f => params.append('filters', f))
+  const res = await apiFetch(`/api/dz/multicast-groups?${params}`)
   if (!res.ok) {
     throw new Error('Failed to fetch multicast groups')
   }
@@ -2774,17 +2843,56 @@ export interface Device {
   contributor_code: string
   metro_pk: string
   metro_code: string
+  location_pk: string
+  location_code: string
   public_ip: string
   max_users: number
   current_users: number
+  unicast_users: number
+  multicast_users: number
+  max_unicast_users: number
+  max_multicast_subscribers: number
+  max_multicast_publishers: number
+  unicast_users_count: number
+  multicast_subscribers_count: number
+  reserved_seats: number
+  multicast_publishers_count: number
   in_bps: number
   out_bps: number
   peak_in_bps: number
   peak_out_bps: number
 }
 
-export async function fetchDevices(limit = 100, offset = 0): Promise<PaginatedResponse<Device>> {
-  const res = await fetchWithRetry(`/api/dz/devices?limit=${limit}&offset=${offset}`)
+export async function fetchDevices(
+  limit = 100,
+  offset = 0,
+  sortBy?: string,
+  sortDir?: 'asc' | 'desc',
+  filters?: string[]
+): Promise<PaginatedResponse<Device>> {
+  const params = new URLSearchParams()
+  params.set('limit', String(limit))
+  params.set('offset', String(offset))
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
+  if (filters) filters.forEach(f => params.append('filters', f))
+  const res = await fetchWithRetry(`/api/dz/devices?${params}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch devices')
+  }
+  return res.json()
+}
+
+export async function fetchDevicesByMetro(metroPk: string, limit = 500, offset = 0): Promise<PaginatedResponse<Device>> {
+  const res = await fetchWithRetry(`/api/dz/devices?metro_pk=${encodeURIComponent(metroPk)}&limit=${limit}&offset=${offset}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch devices')
+  }
+  return res.json()
+}
+
+export async function fetchDevicesByContributor(contributorPk: string, limit = 500, offset = 0): Promise<PaginatedResponse<Device>> {
+  const res = await fetchWithRetry(`/api/dz/devices?contributor_pk=${encodeURIComponent(contributorPk)}&limit=${limit}&offset=${offset}`)
   if (!res.ok) {
     throw new Error('Failed to fetch devices')
   }
@@ -2793,9 +2901,6 @@ export async function fetchDevices(limit = 100, offset = 0): Promise<PaginatedRe
 
 export interface DeviceDetail extends Device {
   metro_name: string
-  validator_count: number
-  stake_sol: number
-  stake_share: number
   interfaces: DeviceInterface[]
 }
 
@@ -2803,6 +2908,20 @@ export async function fetchDevice(pk: string): Promise<DeviceDetail> {
   const res = await fetchWithRetry(`/api/dz/devices/${encodeURIComponent(pk)}`)
   if (!res.ok) {
     throw new Error('Failed to fetch device')
+  }
+  return res.json()
+}
+
+export interface DeviceValidatorStats {
+  validator_count: number
+  stake_sol: number
+  stake_share: number
+}
+
+export async function fetchDeviceValidatorStats(pk: string): Promise<DeviceValidatorStats> {
+  const res = await fetchWithRetry(`/api/dz/devices/${encodeURIComponent(pk)}/validator-stats`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch device validator stats')
   }
   return res.json()
 }
@@ -2815,16 +2934,22 @@ export interface Link {
   bandwidth_bps: number
   side_a_pk: string
   side_a_code: string
+  side_a_metro_pk: string
   side_a_metro: string
   side_a_iface_name: string
   side_a_ip: string
   side_z_pk: string
   side_z_code: string
+  side_z_metro_pk: string
   side_z_metro: string
   side_z_iface_name: string
   side_z_ip: string
   contributor_pk: string
   contributor_code: string
+  side_a_contributor_pk: string
+  side_a_contributor_code: string
+  side_z_contributor_pk: string
+  side_z_contributor_code: string
   in_bps: number
   out_bps: number
   utilization_in: number
@@ -2838,11 +2963,29 @@ export interface Link {
   loss_percent: number
 }
 
-export async function fetchLinks(limit = 100, offset = 0): Promise<PaginatedResponse<Link>> {
-  const res = await fetchWithRetry(`/api/dz/links?limit=${limit}&offset=${offset}`)
+export async function fetchLinks(
+  limit = 100,
+  offset = 0,
+  sortBy?: string,
+  sortDir?: 'asc' | 'desc',
+  filters?: string[]
+): Promise<PaginatedResponse<Link>> {
+  const params = new URLSearchParams()
+  params.set('limit', String(limit))
+  params.set('offset', String(offset))
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
+  if (filters) filters.forEach(f => params.append('filters', f))
+  const res = await fetchWithRetry(`/api/dz/links?${params}`)
   if (!res.ok) {
     throw new Error('Failed to fetch links')
   }
+  return res.json()
+}
+
+export async function fetchLinksByContributor(contributorPk: string, limit = 500, offset = 0): Promise<PaginatedResponse<Link>> {
+  const res = await fetchWithRetry(`/api/dz/links?contributor_pk=${encodeURIComponent(contributorPk)}&limit=${limit}&offset=${offset}&sort_by=code&sort_dir=asc`)
+  if (!res.ok) throw new Error('Failed to fetch links')
   return res.json()
 }
 
@@ -2865,26 +3008,45 @@ export interface Metro {
   pk: string
   code: string
   name: string
+  country: string
   latitude: number
   longitude: number
   device_count: number
   user_count: number
+  facility_count: number
+  unicast_users_count: number
+  multicast_subscribers_count: number
+  multicast_publishers_count: number
+  max_users: number
+  max_unicast_users: number
+  max_multicast_subscribers: number
+  max_multicast_publishers: number
+  raw_max_unicast_users: number
+  raw_max_multicast_subscribers: number
+  raw_max_multicast_publishers: number
 }
 
-export async function fetchMetros(limit = 100, offset = 0): Promise<PaginatedResponse<Metro>> {
-  const res = await fetchWithRetry(`/api/dz/metros?limit=${limit}&offset=${offset}`)
+export async function fetchMetros(
+  limit = 100,
+  offset = 0,
+  sortBy?: string,
+  sortDir?: 'asc' | 'desc',
+  filters?: string[]
+): Promise<PaginatedResponse<Metro>> {
+  const params = new URLSearchParams()
+  params.set('limit', String(limit))
+  params.set('offset', String(offset))
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
+  if (filters) filters.forEach(f => params.append('filters', f))
+  const res = await fetchWithRetry(`/api/dz/metros?${params}`)
   if (!res.ok) {
     throw new Error('Failed to fetch metros')
   }
   return res.json()
 }
 
-export interface MetroDetail extends Metro {
-  validator_count: number
-  stake_sol: number
-  in_bps: number
-  out_bps: number
-}
+export type MetroDetail = Metro
 
 export async function fetchMetro(pk: string): Promise<MetroDetail> {
   const res = await fetchWithRetry(`/api/dz/metros/${encodeURIComponent(pk)}`)
@@ -2894,18 +3056,144 @@ export async function fetchMetro(pk: string): Promise<MetroDetail> {
   return res.json()
 }
 
+export interface MetroStats {
+  validator_count: number
+  stake_sol: number
+  in_bps: number
+  out_bps: number
+}
+
+export async function fetchMetroStats(pk: string): Promise<MetroStats> {
+  const res = await fetchWithRetry(`/api/dz/metros/${encodeURIComponent(pk)}/stats`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch metro stats')
+  }
+  return res.json()
+}
+
+export interface Location {
+  pk: string
+  code: string
+  name: string
+  country: string
+  lat: number
+  lng: number
+  loc_id: number
+  metro_pk: string
+  metro_code: string
+  device_count: number
+  user_count: number
+  max_users: number
+  unicast_users_count: number
+  multicast_subscribers_count: number
+  multicast_publishers_count: number
+  max_unicast_users: number
+  max_multicast_subscribers: number
+  max_multicast_publishers: number
+}
+
+export interface FacilityDetail {
+  pk: string
+  code: string
+  name: string
+  country: string
+  lat: number
+  lng: number
+  loc_id: number
+  status: string
+  metro_pk: string
+  metro_code: string
+  device_count: number
+  user_count: number
+  max_users: number
+  unicast_users_count: number
+  multicast_subscribers_count: number
+  multicast_publishers_count: number
+  max_unicast_users: number
+  max_multicast_subscribers: number
+  max_multicast_publishers: number
+}
+
+export async function fetchFacility(pk: string): Promise<FacilityDetail> {
+  const res = await fetchWithRetry(`/api/dz/facilities/${encodeURIComponent(pk)}`)
+  if (!res.ok) throw new Error('Failed to fetch facility')
+  return res.json()
+}
+
+export async function fetchFacilities(
+  limit = 100,
+  offset = 0,
+  sortBy?: string,
+  sortDir?: 'asc' | 'desc',
+  filters?: string[]
+): Promise<PaginatedResponse<Location>> {
+  const params = new URLSearchParams()
+  params.set('limit', String(limit))
+  params.set('offset', String(offset))
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
+  if (filters) filters.forEach(f => params.append('filters', f))
+  const res = await fetchWithRetry(`/api/dz/facilities?${params}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch facilities')
+  }
+  return res.json()
+}
+
+export async function fetchFacilitiesByMetro(metroPk: string, limit = 500, offset = 0): Promise<PaginatedResponse<Location>> {
+  const params = new URLSearchParams()
+  params.set('limit', String(limit))
+  params.set('offset', String(offset))
+  params.set('sort_by', 'code')
+  params.set('sort_dir', 'asc')
+  params.append('filters', `metro_pk:${metroPk}`)
+  const res = await fetchWithRetry(`/api/dz/facilities?${params}`)
+  if (!res.ok) throw new Error('Failed to fetch facilities')
+  return res.json()
+}
+
+export interface PeeringDBFacility {
+  orgName: string
+  aka: string
+  logoUrl: string
+}
+
+export async function fetchPeeringDBFacility(locId: number): Promise<PeeringDBFacility> {
+  const res = await fetchWithRetry(`/api/peeringdb/fac/${locId}`)
+  if (!res.ok) {
+    throw new Error(`Failed to fetch PeeringDB facility ${locId}`)
+  }
+  return res.json()
+}
+
 export interface Contributor {
   pk: string
   code: string
   name: string
+  metro_count: number
+  facility_count: number
   device_count: number
   side_a_devices: number
   side_z_devices: number
   link_count: number
+  user_count: number
+  max_users: number
 }
 
-export async function fetchContributors(limit = 100, offset = 0): Promise<PaginatedResponse<Contributor>> {
-  const res = await fetchWithRetry(`/api/dz/contributors?limit=${limit}&offset=${offset}`)
+export async function fetchContributors(
+  limit = 100,
+  offset = 0,
+  sortBy?: string,
+  sortDir?: 'asc' | 'desc',
+  filters?: string[]
+): Promise<PaginatedResponse<Contributor>> {
+  const params = new URLSearchParams()
+  params.set('limit', String(limit))
+  params.set('offset', String(offset))
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
+  if (filters) filters.forEach(f => params.append('filters', f))
+  const res = await fetchWithRetry(`/api/dz/contributors?${params}`)
   if (!res.ok) {
     throw new Error('Failed to fetch contributors')
   }
@@ -2914,6 +3202,16 @@ export async function fetchContributors(limit = 100, offset = 0): Promise<Pagina
 
 export interface ContributorDetail extends Contributor {
   user_count: number
+  unicast_users_count: number
+  multicast_subscribers_count: number
+  multicast_publishers_count: number
+  max_users: number
+  max_unicast_users: number
+  max_multicast_subscribers: number
+  max_multicast_publishers: number
+  raw_max_unicast_users: number
+  raw_max_multicast_subscribers: number
+  raw_max_multicast_publishers: number
   in_bps: number
   out_bps: number
 }
@@ -2935,16 +3233,34 @@ export interface User {
   client_ip: string
   device_pk: string
   device_code: string
+  metro_pk: string
   metro_code: string
   metro_name: string
+  location_pk: string
+  location_code: string
   tenant_pk: string
   tenant_code: string
   in_bps: number
   out_bps: number
+  is_deleted: boolean
 }
 
-export async function fetchUsers(limit = 100, offset = 0): Promise<PaginatedResponse<User>> {
-  const res = await fetchWithRetry(`/api/dz/users?limit=${limit}&offset=${offset}`)
+export async function fetchUsers(
+  limit = 100,
+  offset = 0,
+  sortBy?: string,
+  sortDir?: 'asc' | 'desc',
+  filters?: string[],
+  includeDeleted = false
+): Promise<PaginatedResponse<User>> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
+  if (filters) {
+    for (const f of filters) params.append('filters', f)
+  }
+  if (includeDeleted) params.set('include_deleted', 'true')
+  const res = await fetchWithRetry(`/api/dz/users?${params}`)
   if (!res.ok) {
     throw new Error('Failed to fetch users')
   }
@@ -2955,6 +3271,7 @@ export interface UserDetail extends User {
   client_ip: string
   tunnel_id: number
   metro_pk: string
+  facility_loc_id: number
   contributor_pk: string
   contributor_code: string
   is_validator: boolean
@@ -2962,6 +3279,7 @@ export interface UserDetail extends User {
   vote_pubkey: string
   stake_sol: number
   stake_weight_pct: number
+  is_deleted: boolean
 }
 
 export async function fetchUser(pk: string): Promise<UserDetail> {
@@ -4686,8 +5004,20 @@ export interface Tenant {
   billing_rate: number
 }
 
-export async function fetchTenants(limit = 100, offset = 0): Promise<PaginatedResponse<Tenant>> {
-  const res = await fetchWithRetry(`/api/dz/tenants?limit=${limit}&offset=${offset}`)
+export async function fetchTenants(
+  limit = 100,
+  offset = 0,
+  sortBy?: string,
+  sortDir?: 'asc' | 'desc',
+  filters?: string[]
+): Promise<PaginatedResponse<Tenant>> {
+  const params = new URLSearchParams()
+  params.set('limit', String(limit))
+  params.set('offset', String(offset))
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
+  if (filters) filters.forEach(f => params.append('filters', f))
+  const res = await fetchWithRetry(`/api/dz/tenants?${params}`)
   if (!res.ok) {
     throw new Error('Failed to fetch tenants')
   }
@@ -4852,6 +5182,43 @@ export async function fetchShredEscrowEvents(
   return res.json()
 }
 
+export interface ShredEpochRevenue {
+  epoch: number
+  total_usdc: number
+  total_dollars: number
+  payment_count: number
+}
+
+export async function fetchShredEpochRevenue(limit = 20): Promise<ShredEpochRevenue[]> {
+  const res = await fetchWithRetry(`/api/dz/shreds/epoch-revenue?limit=${limit}`)
+  if (!res.ok) throw new Error('Failed to fetch shred epoch revenue')
+  return res.json()
+}
+
+export interface ShredSubscriberHistory {
+  epoch: number
+  active_seats: number
+}
+
+export async function fetchShredSubscriberHistory(limit = 50): Promise<ShredSubscriberHistory[]> {
+  const res = await fetchWithRetry(`/api/dz/shreds/subscriber-history?limit=${limit}`)
+  if (!res.ok) throw new Error('Failed to fetch shred subscriber history')
+  return res.json()
+}
+
+export interface SwapRate {
+  sol_price_usd: number
+  twoz_price_usd: number
+  swap_rate: number
+  fetched_at: number
+}
+
+export async function fetchSwapRate(): Promise<SwapRate> {
+  const res = await fetchWithRetry('/api/dz/swap-rate')
+  if (!res.ok) throw new Error('Failed to fetch swap rate')
+  return res.json()
+}
+
 // Publisher Check
 export interface PublisherCheckItem {
   publisher_ip: string
@@ -4974,7 +5341,7 @@ export interface EdgeScoreboardFeedStats {
 }
 
 export interface EdgeScoreboardNode {
-  node_id: string
+  host: string
   location: string
   metro_name: string
   latitude: number
@@ -4984,7 +5351,9 @@ export interface EdgeScoreboardNode {
   validators: number
   total_slots: number
   slots_observed: number
+  dz_leader_slots: number
   last_updated: string
+  name?: string
   gossip_pubkey?: string
   gossip_ip?: string
   asn?: number
@@ -4995,15 +5364,24 @@ export interface EdgeScoreboardNode {
 
 export interface EdgeScoreboardResponse {
   window: string
+  leaders_only: boolean
   generated_at: string
   current_epoch: number
   current_slot: number
   total_slots: number
+  global_total_slots: number
   dz_slots: number
+  total_dz_leader_slots: number
   completeness_pct: number
+  publisher_count: number
+  publishing_count: number
+  publishing_stake_pct: number
   nodes: EdgeScoreboardNode[]
   recent_slots: EdgeScoreboardSlotRace[]
+  slot_buckets?: EdgeScoreboardSlotBucket[]
+  slot_bucket_size?: number
   slot_leaders?: Record<string, EdgeScoreboardLeader>
+  data_lag_ms?: number
 }
 
 export interface EdgeScoreboardLeader {
@@ -5016,18 +5394,33 @@ export interface EdgeScoreboardLeader {
 }
 
 export interface EdgeScoreboardSlotRace {
-  node_id: string
+  host: string
   slot: number
   feed: string
   shreds_won: number
   win_pct: number
 }
 
-export async function fetchEdgeScoreboard(window: string = '1h'): Promise<EdgeScoreboardResponse> {
+export interface EdgeScoreboardSlotBucket {
+  host: string
+  slot_bucket: number
+  feed: string
+  feed_won: number    // sum of shreds_won for this feed in bucket (integer)
+  bucket_total: number // sum of shreds_won across all feeds in bucket (integer)
+}
+
+export async function fetchEdgeScoreboard(
+  window: string = '1h',
+  leadersOnly: boolean = true,
+  opts?: { sinceSlot?: number; limit?: number; beforeSlot?: number }
+): Promise<EdgeScoreboardResponse> {
   const params = new URLSearchParams()
-  if (window !== '1h') params.set('window', window)
-  const qs = params.toString()
-  const res = await apiFetch(`/api/dz/edge/scoreboard${qs ? `?${qs}` : ''}`)
+  params.set('window', window)
+  params.set('leaders_only', leadersOnly ? 'true' : 'false')
+  if (opts?.sinceSlot) params.set('since_slot', String(opts.sinceSlot))
+  if (opts?.beforeSlot) params.set('before_slot', String(opts.beforeSlot))
+  if (opts?.limit) params.set('limit', String(opts.limit))
+  const res = await apiFetch(`/api/dz/edge/scoreboard?${params}`)
   if (!res.ok) {
     throw new Error('Failed to fetch edge scoreboard')
   }
@@ -5088,20 +5481,52 @@ export interface LinkMetricsLatency {
 
 export interface LinkMetricsTraffic {
   side_a_in_bps: number
-  side_a_out_bps: number
-  side_z_in_bps: number
-  side_z_out_bps: number
+  side_a_p50_in_bps: number
+  side_a_p90_in_bps: number
+  side_a_p95_in_bps: number
+  side_a_p99_in_bps: number
   side_a_max_in_bps: number
+  side_a_out_bps: number
+  side_a_p50_out_bps: number
+  side_a_p90_out_bps: number
+  side_a_p95_out_bps: number
+  side_a_p99_out_bps: number
   side_a_max_out_bps: number
+  side_z_in_bps: number
+  side_z_p50_in_bps: number
+  side_z_p90_in_bps: number
+  side_z_p95_in_bps: number
+  side_z_p99_in_bps: number
   side_z_max_in_bps: number
+  side_z_out_bps: number
+  side_z_p50_out_bps: number
+  side_z_p90_out_bps: number
+  side_z_p95_out_bps: number
+  side_z_p99_out_bps: number
   side_z_max_out_bps: number
   side_a_in_pps: number
-  side_a_out_pps: number
-  side_z_in_pps: number
-  side_z_out_pps: number
+  side_a_p50_in_pps: number
+  side_a_p90_in_pps: number
+  side_a_p95_in_pps: number
+  side_a_p99_in_pps: number
   side_a_max_in_pps: number
+  side_a_out_pps: number
+  side_a_p50_out_pps: number
+  side_a_p90_out_pps: number
+  side_a_p95_out_pps: number
+  side_a_p99_out_pps: number
   side_a_max_out_pps: number
+  side_z_in_pps: number
+  side_z_p50_in_pps: number
+  side_z_p90_in_pps: number
+  side_z_p95_in_pps: number
+  side_z_p99_in_pps: number
   side_z_max_in_pps: number
+  side_z_out_pps: number
+  side_z_p50_out_pps: number
+  side_z_p90_out_pps: number
+  side_z_p95_out_pps: number
+  side_z_p99_out_pps: number
   side_z_max_out_pps: number
   side_a_in_errors: number
   side_a_out_errors: number
@@ -5131,6 +5556,8 @@ export interface LinkMetricsResponse {
   link_code: string
   link_type: string
   contributor_code: string
+  contributor_pk: string
+  side_z_contributor_code: string
   side_a_metro: string
   side_z_metro: string
   side_a_device: string
@@ -5140,6 +5567,7 @@ export interface LinkMetricsResponse {
   committed_rtt_us: number
   committed_jitter_us: number
   bandwidth_bps: number
+  current_drain_status: string
   time_range: string
   bucket_seconds: number
   bucket_count: number
@@ -5201,12 +5629,28 @@ export interface DeviceMetricsStatus {
 
 export interface DeviceMetricsTraffic {
   in_bps: number
-  out_bps: number
+  p50_in_bps: number
+  p90_in_bps: number
+  p95_in_bps: number
+  p99_in_bps: number
   max_in_bps: number
+  out_bps: number
+  p50_out_bps: number
+  p90_out_bps: number
+  p95_out_bps: number
+  p99_out_bps: number
   max_out_bps: number
   in_pps: number
-  out_pps: number
+  p50_in_pps: number
+  p90_in_pps: number
+  p95_in_pps: number
+  p99_in_pps: number
   max_in_pps: number
+  out_pps: number
+  p50_out_pps: number
+  p90_out_pps: number
+  p95_out_pps: number
+  p99_out_pps: number
   max_out_pps: number
   in_errors: number
   out_errors: number
@@ -5224,8 +5668,16 @@ export interface DeviceInterfaceTraffic {
   user_pk?: string
   cyoa_type?: string
   in_bps: number
-  out_bps: number
+  p50_in_bps: number
+  p90_in_bps: number
+  p95_in_bps: number
+  p99_in_bps: number
   max_in_bps: number
+  out_bps: number
+  p50_out_bps: number
+  p90_out_bps: number
+  p95_out_bps: number
+  p99_out_bps: number
   max_out_bps: number
   in_errors: number
   out_errors: number
@@ -5248,6 +5700,7 @@ export interface DeviceMetricsResponse {
   device_code: string
   device_type: string
   contributor_code: string
+  contributor_pk: string
   metro: string
   max_users: number
   time_range: string
@@ -5333,6 +5786,312 @@ export async function fetchShredDevices(params: {
   const res = await fetchWithRetry(`/api/dz/shreds/devices?${qs.toString()}`)
   if (!res.ok) {
     throw new Error('Failed to fetch shred devices')
+  }
+  return res.json()
+}
+
+// Geolocation types
+export interface GeolocProbe {
+  pk: string
+  owner: string
+  exchange_pk: string
+  public_ip: string
+  location_offset_port: number
+  metrics_publisher_pk: string
+  reference_count: number
+  code: string
+  parent_devices: string
+  target_update_count: number
+}
+
+export async function fetchGeolocProbes(
+  limit = 100,
+  offset = 0,
+  sortBy?: string,
+  sortDir?: 'asc' | 'desc',
+  filters?: string[]
+): Promise<PaginatedResponse<GeolocProbe>> {
+  const params = new URLSearchParams()
+  params.set('limit', String(limit))
+  params.set('offset', String(offset))
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
+  if (filters) filters.forEach(f => params.append('filters', f))
+  const res = await apiFetch(`/api/dz/geoloc/probes?${params}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch geolocation probes')
+  }
+  return res.json()
+}
+
+export interface GeolocUser {
+  pk: string
+  owner: string
+  code: string
+  token_account: string
+  payment_status: string
+  status: string
+  target_count: number
+  billing_rate: number
+  last_deduction_dz_epoch: number
+}
+
+export async function fetchGeolocUsers(
+  limit = 100,
+  offset = 0,
+  sortBy?: string,
+  sortDir?: 'asc' | 'desc',
+  filters?: string[]
+): Promise<PaginatedResponse<GeolocUser>> {
+  const params = new URLSearchParams()
+  params.set('limit', String(limit))
+  params.set('offset', String(offset))
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
+  if (filters) filters.forEach(f => params.append('filters', f))
+  const res = await apiFetch(`/api/dz/geoloc/users?${params}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch geolocation users')
+  }
+  return res.json()
+}
+
+export interface GeolocExplorerDevice {
+  sender_pubkey: string
+  probe_code: string
+  lat: number
+  lng: number
+  min_ref_measured_rtt_ns: number
+}
+
+export interface GeolocExplorerProbe {
+  pk: string
+  code: string
+  lat: number
+  lng: number
+}
+
+export interface GeolocExplorerTarget {
+  sender_pubkey: string
+  target_ip: string
+  lat: number
+  lng: number
+  min_measured_rtt_ns: number
+}
+
+export interface GeolocExplorerResponse {
+  devices: GeolocExplorerDevice[]
+  probes: GeolocExplorerProbe[]
+  targets: GeolocExplorerTarget[]
+}
+
+export async function fetchGeolocExplorer(hours?: number): Promise<GeolocExplorerResponse> {
+  const params = new URLSearchParams()
+  if (hours) params.set('hours', String(hours))
+  const query = params.toString()
+  const res = await apiFetch(`/api/dz/geoloc/explorer${query ? `?${query}` : ''}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch geolocation explorer data')
+  }
+  return res.json()
+}
+
+// Geo Concentration (DZDP)
+
+export interface GeoConcentrationHeroStats {
+  validators_measured: number
+  stake_top_two_metros_pct: number
+  anchor_points: number
+  stake_max_asn_pct: number
+}
+
+export interface GeoConcentrationMetro {
+  metro_code: string
+  validators: number
+  stake_sol: number
+  stake_pct: number
+}
+
+export interface GeoConcentrationCountry {
+  country_code: string
+  country_name: string
+  validators: number
+  stake_sol: number
+  stake_pct: number
+}
+
+export interface GeoConcentrationASN {
+  asn: number
+  asn_org: string
+  validators: number
+  stake_sol: number
+  stake_pct: number
+}
+
+export interface GeoConcentrationResponse {
+  hero_stats: GeoConcentrationHeroStats
+  metros: GeoConcentrationMetro[]
+  countries: GeoConcentrationCountry[]
+  asns: GeoConcentrationASN[]
+}
+
+export async function fetchGeoConcentration(): Promise<GeoConcentrationResponse> {
+  const res = await apiFetch('/api/dz/geoloc/concentration')
+  if (!res.ok) {
+    throw new Error('Failed to fetch geo concentration data')
+  }
+  return res.json()
+}
+
+// Geo Validators (DZDP)
+
+export interface GeoValidatorItem {
+  vote_pubkey: string
+  node_pubkey: string
+  name: string
+  stake_sol: number
+  stake_pct: number
+  commission: number
+  metro_code: string
+  country_code: string
+  asn: number
+  asn_org: string
+  datacenter: string
+  is_dz: boolean
+  tier: string
+  dzdp_lat: number
+  dzdp_lng: number
+}
+
+export interface GeoTierDistribution {
+  tier: string
+  validators: number
+  stake_pct: number
+}
+
+export interface GeoMetroBreakdown {
+  metro_code: string
+  validators: number
+  stake_sol: number
+  stake_pct: number
+}
+
+export interface GeoValidatorsResponse {
+  total_validators: number
+  total_stake_sol: number
+  validators: GeoValidatorItem[]
+  tier_distribution: GeoTierDistribution[]
+  metro_breakdown: GeoMetroBreakdown[]
+}
+
+export async function fetchGeoValidators(
+  metro?: string,
+  dzFilter?: 'on' | 'off'
+): Promise<GeoValidatorsResponse> {
+  const params = new URLSearchParams()
+  if (metro) params.set('metro', metro)
+  if (dzFilter) params.set('dz_filter', dzFilter)
+  const query = params.toString()
+  const res = await apiFetch(`/api/dz/geoloc/validators${query ? `?${query}` : ''}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch geo validators data')
+  }
+  return res.json()
+}
+
+// Access Passes
+
+export interface AccessPass {
+  pk: string
+  owner_pubkey: string
+  type_tag: string
+  status: string
+  client_ip: string
+  connection_count: number
+  associated_pubkey: string
+  first_pub_code: string
+  first_sub_code: string
+}
+
+export interface MulticastGroupRef {
+  pk: string
+  code: string
+  multicast_ip: string
+  status: string
+}
+
+export interface AccessPassShredsSeat {
+  pk: string
+  device_key: string
+  device_code: string
+  metro_pk: string
+  metro_code: string
+  tenure_epochs: number
+  funded_epoch: number
+  active_epoch: number
+  escrow_count: number
+  total_usdc_balance: number
+  price_per_epoch_dollars: number
+  funding_authority_key: string
+}
+
+export interface AccessPassDetail extends AccessPass {
+  user_payer: string
+  others_type_name: string
+  others_key: string
+  last_access_epoch: number
+  flags: number
+  mgroup_pub_allowlist: MulticastGroupRef[]
+  mgroup_sub_allowlist: MulticastGroupRef[]
+  validator_vote_pubkey?: string
+  validator_node_pubkey?: string
+  shreds_seat?: AccessPassShredsSeat
+}
+
+export async function fetchAccessPasses(
+  limit = 100,
+  offset = 0,
+  sortBy?: string,
+  sortDir?: 'asc' | 'desc',
+  filters?: string[]
+): Promise<PaginatedResponse<AccessPass>> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
+  if (filters) {
+    for (const f of filters) params.append('filters', f)
+  }
+  const res = await apiFetch(`/api/dz/access-passes?${params}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch access passes')
+  }
+  return res.json()
+}
+
+export async function fetchAccessPass(pk: string): Promise<AccessPassDetail> {
+  const res = await apiFetch(`/api/dz/access-passes/${encodeURIComponent(pk)}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch access pass')
+  }
+  return res.json()
+}
+
+export interface AccessPassConnection {
+  pk: string
+  owner_pubkey: string
+  status: string
+  kind: string
+  dz_ip: string
+  client_ip: string
+  device_code: string
+  metro_code: string
+  tenant_code: string
+}
+
+export async function fetchAccessPassConnections(pk: string): Promise<AccessPassConnection[]> {
+  const res = await apiFetch(`/api/dz/access-passes/${encodeURIComponent(pk)}/connections`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch access pass connections')
   }
   return res.json()
 }

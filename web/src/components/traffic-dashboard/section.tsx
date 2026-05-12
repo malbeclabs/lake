@@ -7,21 +7,26 @@ export function Section({
   description,
   defaultOpen = true,
   loading = false,
+  progress,
+  action,
   children,
 }: {
   title: string
   description?: string
   defaultOpen?: boolean
   loading?: boolean
+  progress?: number
+  action?: React.ReactNode
   children: React.ReactNode
 }) {
   const [open, setOpen] = useState(defaultOpen)
 
   return (
     <div className="border border-border rounded-lg bg-card overflow-hidden">
+      <div className="flex items-center">
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-muted/30 transition-colors"
+        className="flex-1 flex items-start gap-3 px-4 py-3 text-left hover:bg-muted/30 transition-colors"
       >
         <ChevronDown
           className={cn(
@@ -30,15 +35,27 @@ export function Section({
           )}
         />
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h2 className="text-sm font-semibold">{title}</h2>
-            {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold">{title}</h2>
+              {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+            </div>
+            {progress !== undefined && (
+              <span className="text-sm tabular-nums text-muted-foreground">{progress.toFixed(1)}%</span>
+            )}
           </div>
           {description && (
             <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
           )}
+          {progress !== undefined && (
+            <div className="h-1.5 rounded-full bg-muted-foreground/25 overflow-hidden mt-2">
+              <div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${Math.min(100, progress)}%` }} />
+            </div>
+          )}
         </div>
       </button>
+      {action && <div className="pr-4 shrink-0">{action}</div>}
+      </div>
       <div className="h-0.5 w-full overflow-hidden">
         {loading && (
           <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />

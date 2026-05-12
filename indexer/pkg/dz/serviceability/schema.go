@@ -49,7 +49,15 @@ func (s *DeviceSchema) PayloadColumns() []string {
 		"public_ip:VARCHAR",
 		"contributor_pk:VARCHAR",
 		"metro_pk:VARCHAR",
+		"location_pk:VARCHAR",
 		"max_users:INTEGER",
+		"max_unicast_users:INTEGER",
+		"max_multicast_subscribers:INTEGER",
+		"max_multicast_publishers:INTEGER",
+		"unicast_users_count:INTEGER",
+		"multicast_subscribers_count:INTEGER",
+		"reserved_seats:INTEGER",
+		"multicast_publishers_count:INTEGER",
 		"interfaces:VARCHAR",
 	}
 }
@@ -64,7 +72,15 @@ func (s *DeviceSchema) ToRow(d Device) []any {
 		d.PublicIP,
 		d.ContributorPK,
 		d.MetroPK,
+		d.LocationPK,
 		d.MaxUsers,
+		d.MaxUnicastUsers,
+		d.MaxMulticastSubscribers,
+		d.MaxMulticastPublishers,
+		d.UnicastUsersCount,
+		d.MulticastSubscribersCount,
+		d.ReservedSeats,
+		d.MulticastPublishersCount,
 		string(interfacesJSON),
 	}
 }
@@ -302,6 +318,50 @@ func (s *MulticastGroupSchema) GetPrimaryKey(m MulticastGroup) string {
 	return m.PK
 }
 
+// LocationSchema defines the schema for locations
+type LocationSchema struct{}
+
+func (s *LocationSchema) Name() string {
+	return "dz_facilities"
+}
+
+func (s *LocationSchema) PrimaryKeyColumns() []string {
+	return []string{"pk:VARCHAR"}
+}
+
+func (s *LocationSchema) PayloadColumns() []string {
+	return []string{
+		"owner:VARCHAR",
+		"lat:DOUBLE",
+		"lng:DOUBLE",
+		"loc_id:INTEGER",
+		"status:VARCHAR",
+		"code:VARCHAR",
+		"name:VARCHAR",
+		"country:VARCHAR",
+		"reference_count:INTEGER",
+	}
+}
+
+func (s *LocationSchema) ToRow(l Location) []any {
+	return []any{
+		l.PK,
+		l.Owner,
+		l.Lat,
+		l.Lng,
+		l.LocId,
+		l.Status,
+		l.Code,
+		l.Name,
+		l.Country,
+		l.ReferenceCount,
+	}
+}
+
+func (s *LocationSchema) GetPrimaryKey(l Location) string {
+	return l.PK
+}
+
 // TenantSchema defines the schema for tenants
 type TenantSchema struct{}
 
@@ -342,15 +402,71 @@ func (s *TenantSchema) GetPrimaryKey(t Tenant) string {
 	return t.PK
 }
 
+// AccessPassSchema defines the schema for access passes
+type AccessPassSchema struct{}
+
+func (s *AccessPassSchema) Name() string {
+	return "dz_access_passes"
+}
+
+func (s *AccessPassSchema) PrimaryKeyColumns() []string {
+	return []string{"pk:VARCHAR"}
+}
+
+func (s *AccessPassSchema) PayloadColumns() []string {
+	return []string{
+		"owner_pubkey:VARCHAR",
+		"type_tag:VARCHAR",
+		"associated_pubkey:VARCHAR",
+		"others_type_name:VARCHAR",
+		"others_key:VARCHAR",
+		"client_ip:VARCHAR",
+		"user_payer:VARCHAR",
+		"last_access_epoch:BIGINT",
+		"connection_count:INTEGER",
+		"status:VARCHAR",
+		"mgroup_pub_allowlist:VARCHAR",
+		"mgroup_sub_allowlist:VARCHAR",
+		"flags:INTEGER",
+	}
+}
+
+func (s *AccessPassSchema) ToRow(ap AccessPass) []any {
+	pubAllowlistJSON, _ := json.Marshal(ap.MGroupPubAllowlist)
+	subAllowlistJSON, _ := json.Marshal(ap.MGroupSubAllowlist)
+	return []any{
+		ap.PK,
+		ap.OwnerPubkey,
+		ap.TypeTag,
+		ap.AssociatedPubkey,
+		ap.OthersTypeName,
+		ap.OthersKey,
+		ap.ClientIP.String(),
+		ap.UserPayer,
+		ap.LastAccessEpoch,
+		ap.ConnectionCount,
+		ap.Status,
+		string(pubAllowlistJSON),
+		string(subAllowlistJSON),
+		ap.Flags,
+	}
+}
+
+func (s *AccessPassSchema) GetPrimaryKey(ap AccessPass) string {
+	return ap.PK
+}
+
 var (
 	contributorSchema     = &ContributorSchema{}
 	deviceSchema          = &DeviceSchema{}
 	deviceInterfaceSchema = &DeviceInterfaceSchema{}
 	userSchema            = &UserSchema{}
 	metroSchema           = &MetroSchema{}
+	locationSchema        = &LocationSchema{}
 	linkSchema            = &LinkSchema{}
 	multicastGroupSchema  = &MulticastGroupSchema{}
 	tenantSchema          = &TenantSchema{}
+	accessPassSchema      = &AccessPassSchema{}
 )
 
 func NewContributorDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
@@ -373,6 +489,10 @@ func NewMetroDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
 	return dataset.NewDimensionType2Dataset(log, metroSchema)
 }
 
+func NewLocationDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
+	return dataset.NewDimensionType2Dataset(log, locationSchema)
+}
+
 func NewLinkDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
 	return dataset.NewDimensionType2Dataset(log, linkSchema)
 }
@@ -383,4 +503,8 @@ func NewMulticastGroupDataset(log *slog.Logger) (*dataset.DimensionType2Dataset,
 
 func NewTenantDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
 	return dataset.NewDimensionType2Dataset(log, tenantSchema)
+}
+
+func NewAccessPassDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
+	return dataset.NewDimensionType2Dataset(log, accessPassSchema)
 }

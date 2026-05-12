@@ -80,6 +80,7 @@ func run() error {
 	// InfluxDB configuration (for usage backfill)
 	influxURLFlag := flag.String("influx-url", "", "InfluxDB URL (or set INFLUX_URL env var)")
 	influxTokenFlag := flag.String("influx-token", "", "InfluxDB token (or set INFLUX_TOKEN env var)")
+	influxOrgFlag := flag.String("influx-org", "", "InfluxDB organization name or ID (optional; uses token's default org if empty)")
 	influxBucketFlag := flag.String("influx-bucket", "", "InfluxDB bucket (or set INFLUX_BUCKET env var)")
 
 	// Commands
@@ -143,7 +144,6 @@ func run() error {
 	remoteClickhouseUserFlag := flag.String("remote-clickhouse-user", "", "Remote ClickHouse user (or set REMOTE_CH_USER env var)")
 	remoteClickhousePasswordFlag := flag.String("remote-clickhouse-password", "", "Remote ClickHouse password (or set REMOTE_CH_PASSWORD env var)")
 	remoteClickhouseDatabaseFlag := flag.String("remote-clickhouse-database", "", "Remote ClickHouse database to discover tables from (or set REMOTE_CH_DATABASE env var, default: lake)")
-	forceFlag := flag.Bool("force", false, "Force overwrite existing non-proxy tables when setting up remote tables")
 
 	flag.Parse()
 
@@ -385,7 +385,7 @@ func run() error {
 			log,
 			*clickhouseAddrFlag, *clickhouseDatabaseFlag, *clickhouseUsernameFlag, *clickhousePasswordFlag,
 			*clickhouseSecureFlag,
-			*influxURLFlag, *influxTokenFlag, *influxBucketFlag,
+			*influxURLFlag, *influxTokenFlag, *influxOrgFlag, *influxBucketFlag,
 			admin.BackfillDeviceInterfaceCountersConfig{
 				StartTime:     startTime,
 				EndTime:       endTime,
@@ -519,7 +519,6 @@ func run() error {
 			RemoteUser:     *remoteClickhouseUserFlag,
 			RemotePassword: *remoteClickhousePasswordFlag,
 			RemoteDatabase: *remoteClickhouseDatabaseFlag,
-			Force:          *forceFlag,
 		})
 	}
 

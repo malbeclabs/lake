@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/malbeclabs/lake/indexer/pkg/metrics"
 )
 
 // BackfillResult contains the results of a backfill operation
@@ -48,40 +50,15 @@ func (v *View) BackfillForTimeRange(ctx context.Context, startTime, endTime time
 
 	v.log.Info("telemetry/usage: querying influxdb for backfill", "from", startTimeUTC, "to", endTimeUTC)
 
-	sqlQuery := fmt.Sprintf(`
-		SELECT
-			time,
-			dzd_pubkey,
-			host,
-			intf,
-			model_name,
-			serial_number,
-			"carrier-transitions",
-			"in-broadcast-pkts",
-			"in-discards",
-			"in-errors",
-			"in-fcs-errors",
-			"in-multicast-pkts",
-			"in-octets",
-			"in-pkts",
-			"in-unicast-pkts",
-			"out-broadcast-pkts",
-			"out-discards",
-			"out-errors",
-			"out-multicast-pkts",
-			"out-octets",
-			"out-pkts",
-			"out-unicast-pkts"
-		FROM "intfCounters"
-		WHERE time >= '%s' AND time < '%s'
-	`, startTimeUTC.Format(time.RFC3339Nano), endTimeUTC.Format(time.RFC3339Nano))
-
-	rows, err := v.cfg.InfluxDB.QuerySQL(ctx, sqlQuery)
+	queryStart := time.Now()
+	rows, err := v.cfg.InfluxDB.QueryIntfCounters(ctx, startTimeUTC, endTimeUTC)
+	queryDuration := time.Since(queryStart)
+	metrics.RecordInfluxQuery(v.cfg.DZEnv, "backfill", queryDuration, len(rows), err)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query influxdb for backfill: %w", err)
 	}
 
-	v.log.Info("telemetry/usage: backfill queried influxdb", "rows", len(rows))
+	v.log.Info("telemetry/usage: backfill queried influxdb", "rows", len(rows), "duration", queryDuration.String())
 
 	if len(rows) == 0 {
 		return &BackfillResult{
@@ -94,7 +71,7 @@ func (v *View) BackfillForTimeRange(ctx context.Context, startTime, endTime time
 
 	// Convert rows to InterfaceUsage
 	// Pass nil for alreadyWritten - backfill relies on ReplacingMergeTree for deduplication
-	usage, err := v.convertRowsToUsage(rows, baselines, linkLookup, nil)
+	usage, _, err := v.convertRowsToUsage(rows, baselines, linkLookup, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert rows for backfill: %w", err)
 	}

@@ -73,11 +73,12 @@ func (a *API) loadTopologyGraph(ctx context.Context) (*kspGraph, error) {
 		LEFT JOIN dz_metros_current ma ON da.metro_pk = ma.pk
 		LEFT JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
 		WHERE l.status = 'activated'
+			  AND l.committed_rtt_ns != 1000000000
 	`
 
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query)
-	metrics.RecordClickHouseQuery(time.Since(start), err)
+	metrics.RecordClickHouseQuery("isis_ksp", time.Since(start), err)
 	if err != nil {
 		return nil, fmt.Errorf("loading topology graph: %w", err)
 	}

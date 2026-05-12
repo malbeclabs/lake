@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -117,8 +118,17 @@ func Start(ctx context.Context, cfg Config) error {
 
 	// Watch the workflow in the background so failures surface in logs.
 	go func() {
-		if err := run.Get(ctx, nil); err != nil && ctx.Err() == nil {
-			log.Error("rollup: workflow failed", "id", wfID, "error", err)
+		current := run
+		for {
+			if err := current.Get(ctx, nil); err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				log.Error("rollup: workflow interrupted, reattaching", "id", wfID, "error", err)
+				current = tc.GetWorkflow(ctx, wfID, "")
+			} else {
+				return
+			}
 		}
 	}()
 
@@ -146,14 +156,41 @@ func newTemporalLogger(log *slog.Logger) *temporalLogger {
 }
 
 func (l *temporalLogger) Debug(msg string, keyvals ...any) {} // no-op to avoid blocking workflow goroutine
-func (l *temporalLogger) Info(msg string, keyvals ...any)  { l.log.Info(msg, keyvals...) }
-func (l *temporalLogger) Warn(msg string, keyvals ...any)  { l.log.Warn(msg, keyvals...) }
+func (l *temporalLogger) Info(msg string, keyvals ...any) {
+	// Temporal logs "Task processing failed with error" at INFO when an
+	// activity reports back to a workflow that's already completed or
+	// continued-as-new (typical during deploys). The Error= keyval trips
+	// cloud-log heuristics that promote the line to ERROR severity, so
+	// demote to Debug to keep prod logs quiet.
+	if msg == "Task processing failed with error" && hasBenignTaskProcessingError(keyvals) {
+		l.log.Debug(msg, keyvals...)
+		return
+	}
+	l.log.Info(msg, keyvals...)
+}
+func (l *temporalLogger) Warn(msg string, keyvals ...any) { l.log.Warn(msg, keyvals...) }
 func (l *temporalLogger) Error(msg string, keyvals ...any) {
 	if isContextCancellation(keyvals) {
 		l.log.Warn(msg, keyvals...)
 		return
 	}
 	l.log.Error(msg, keyvals...)
+}
+
+// hasBenignTaskProcessingError reports whether Temporal's "Task processing
+// failed with error" keyvals carry an error that's expected during deploys.
+func hasBenignTaskProcessingError(keyvals []any) bool {
+	for i := 0; i+1 < len(keyvals); i += 2 {
+		if keyvals[i] != "Error" {
+			continue
+		}
+		if err, ok := keyvals[i+1].(error); ok {
+			if strings.Contains(err.Error(), "workflow execution already completed") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // isContextCancellation checks Temporal's key-value log pairs for errors

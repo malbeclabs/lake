@@ -23,6 +23,7 @@ import (
 	solanarpc "github.com/gagliardetto/solana-go/rpc"
 	"github.com/malbeclabs/doublezero/config"
 	telemetryconfig "github.com/malbeclabs/doublezero/controlplane/telemetry/pkg/config"
+	geolocsdk "github.com/malbeclabs/doublezero/sdk/geolocation/go"
 	shreds "github.com/malbeclabs/doublezero/sdk/shreds/go"
 	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/serviceability"
 	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/telemetry"
@@ -296,6 +297,7 @@ func run() error {
 	defer dzRPCClient.Close()
 	serviceabilityClient := serviceability.New(dzRPCClient, networkConfig.ServiceabilityProgramID)
 	telemetryClient := telemetry.New(log, dzRPCClient, nil, networkConfig.TelemetryProgramID)
+	geolocationClient := geolocsdk.New(log, dzRPCClient, networkConfig.GeolocationProgramID)
 
 	// Shreds subscription client (mainnet-beta and testnet only, not devnet).
 	// Mainnet uses Solana proper RPC; testnet uses the DZ ledger RPC.
@@ -316,7 +318,7 @@ func run() error {
 	if solanaEnabled {
 		solanaRPCClient := rpc.NewWithRetries(solanaNetworkConfig.RPCURL, nil)
 		defer solanaRPCClient.Close()
-		solanaRPC = solanaRPCClient
+		solanaRPC = sol.NewTolerantClient(solanaRPCClient)
 	}
 
 	// Initialize ClickHouse client (required)
@@ -361,7 +363,6 @@ func run() error {
 				RemoteUser:     remoteUser,
 				RemotePassword: remotePassword,
 				RemoteDatabase: remoteDatabase,
-				Force:          true,
 			}); err != nil {
 				return fmt.Errorf("failed to set up remote tables: %w", err)
 			}
@@ -439,6 +440,7 @@ func run() error {
 	influxURL := os.Getenv("INFLUX_URL")
 	influxToken := os.Getenv("INFLUX_TOKEN")
 	influxBucket := os.Getenv("INFLUX_BUCKET")
+	influxOrg := os.Getenv("INFLUX_ORG") // optional; empty string uses the token's default org
 	var deviceUsageQueryWindow time.Duration
 	if *deviceUsageQueryWindowFlag == 0 {
 		deviceUsageQueryWindow = defaultDeviceUsageInfluxQueryWindow
@@ -455,7 +457,7 @@ func run() error {
 		})
 		influxBucket = "mock-bucket"
 	} else if influxURL != "" && influxToken != "" && influxBucket != "" {
-		influxDBClient, err = dztelemusage.NewSDKInfluxDBClient(influxURL, influxToken, influxBucket)
+		influxDBClient, err = dztelemusage.NewFluxInfluxDBClient(influxURL, influxToken, influxOrg, influxBucket)
 		if err != nil {
 			return fmt.Errorf("failed to create InfluxDB client: %w", err)
 		}
@@ -529,6 +531,9 @@ func run() error {
 
 		// Serviceability configuration
 		ServiceabilityRPC: serviceabilityClient,
+
+		// Geolocation configuration
+		GeolocationRPC: geolocationClient,
 
 		// Telemetry configuration
 		TelemetryRPC:           telemetryClient,
@@ -619,6 +624,7 @@ func run() error {
 				IngestionLog:   ingestionLogWriter,
 				Network:        *dzEnvFlag,
 				Serviceability: idx.Serviceability(),
+				Geolocation:    idx.Geolocation(),
 				Shreds:         idx.Shreds(),
 				EscrowEvents:   idx.EscrowEvents(),
 				TelemLatency:   idx.TelemLatency(),
@@ -633,6 +639,7 @@ func run() error {
 		}()
 	} else {
 		log.Info("dz ingest worker disabled (--no-dz-ingest)")
+		idx.Serviceability().Start(ctx)
 	}
 
 	// Start the embedded Solana ingest worker (Temporal-based raw data collection).
@@ -734,6 +741,7 @@ func run() error {
 				isisS3Region:               *isisS3RegionFlag,
 				influxURL:                  secondaryInfluxURL,
 				influxToken:                secondaryInfluxToken,
+				influxOrg:                  influxOrg,
 				influxBucket:               secondaryInfluxBucket,
 				deviceUsageRefreshInterval: *deviceUsageRefreshIntervalFlag,
 				deviceUsageQueryWindow:     deviceUsageQueryWindow,
@@ -811,6 +819,7 @@ type secondaryNetworkConfig struct {
 	// InfluxDB configuration (optional).
 	influxURL                  string
 	influxToken                string
+	influxOrg                  string
 	influxBucket               string
 	deviceUsageRefreshInterval time.Duration
 	deviceUsageQueryWindow     time.Duration
@@ -866,6 +875,7 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 	defer dzRPCClient.Close()
 	serviceabilityClient := serviceability.New(dzRPCClient, networkConfig.ServiceabilityProgramID)
 	telemetryClient := telemetry.New(log, dzRPCClient, nil, networkConfig.TelemetryProgramID)
+	geolocationClient := geolocsdk.New(log, dzRPCClient, networkConfig.GeolocationProgramID)
 
 	// Shreds subscription client (testnet only, not devnet).
 	var shredsClient *shreds.Client
@@ -879,7 +889,7 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 	// Initialize InfluxDB client for device usage (optional).
 	var influxDBClient dztelemusage.InfluxDBClient
 	if cfg.influxURL != "" && cfg.influxToken != "" && cfg.influxBucket != "" {
-		influxDBClient, err = dztelemusage.NewSDKInfluxDBClient(cfg.influxURL, cfg.influxToken, cfg.influxBucket)
+		influxDBClient, err = dztelemusage.NewFluxInfluxDBClient(cfg.influxURL, cfg.influxToken, cfg.influxOrg, cfg.influxBucket)
 		if err != nil {
 			return fmt.Errorf("failed to create InfluxDB client for %s: %w", env, err)
 		}
@@ -903,6 +913,7 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 		RefreshInterval:        cfg.refreshInterval,
 		MaxConcurrency:         cfg.maxConcurrency,
 		ServiceabilityRPC:      serviceabilityClient,
+		GeolocationRPC:         geolocationClient,
 		TelemetryRPC:           telemetryClient,
 		DZEpochRPC:             dzRPCClient,
 		InternetLatencyAgentPK: networkConfig.InternetLatencyCollectorPK,
@@ -952,6 +963,7 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 		IngestionLog:   secondaryIngestionLog,
 		Network:        env,
 		Serviceability: idx.Serviceability(),
+		Geolocation:    idx.Geolocation(),
 		Shreds:         idx.Shreds(),
 		EscrowEvents:   idx.EscrowEvents(),
 		TelemLatency:   idx.TelemLatency(),

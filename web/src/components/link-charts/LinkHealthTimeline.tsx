@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, useLayoutEffect } from 'react'
 import type { LinkMetricsResponse, LinkMetricsBucket } from '@/lib/api'
+import { TicketOverlay, type TicketWindow } from '@/components/ops/TicketOverlay'
 
 interface LinkHealthTimelineProps {
   data: LinkMetricsResponse
@@ -7,6 +8,8 @@ interface LinkHealthTimelineProps {
   hideBadges?: boolean
   onBarHover?: (range: { start: number; end: number } | null) => void
   highlightedTime?: number | null  // unix seconds
+  incidentWindows?: TicketWindow[]
+  maintenanceWindows?: TicketWindow[]
 }
 
 // Hard-drained: dark stripes over health color
@@ -187,7 +190,12 @@ function markTrailingCollecting(bars: MergedBar[]): void {
   const now = Date.now()
   for (let i = bars.length - 1; i >= 0; i--) {
     const barEnd = new Date(bars[i].ts).getTime() + bars[i].spanSeconds * 1000
-    if (now - barEnd > 10 * 60 * 1000) break
+    if (now - barEnd > 10 * 60 * 1000) {
+      // Clear stale collecting flags from cached API responses — if this bar's
+      // window closed more than 10 minutes ago it's definitely not in progress.
+      bars[i].collecting = false
+      break
+    }
     // Suppress missing-data flags in the lag window
     bars[i].missingLatency = false
     bars[i].missingTraffic = false
@@ -270,7 +278,7 @@ function useContainerBars() {
   return { containerRef, maxBars }
 }
 
-export function LinkHealthTimeline({ data, className, hideBadges, onBarHover, highlightedTime }: LinkHealthTimelineProps) {
+export function LinkHealthTimeline({ data, className, hideBadges, onBarHover, highlightedTime, incidentWindows, maintenanceWindows }: LinkHealthTimelineProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
   const { containerRef, maxBars } = useContainerBars()
 
@@ -279,6 +287,17 @@ export function LinkHealthTimeline({ data, className, hideBadges, onBarHover, hi
     markTrailingCollecting(merged)
     return merged
   }, [data.buckets, data.bucket_seconds, maxBars])
+
+  const rangeStartMs = useMemo(() => {
+    if (!data.buckets.length) return 0
+    return new Date(data.buckets[0].ts).getTime()
+  }, [data.buckets])
+
+  const rangeEndMs = useMemo(() => {
+    if (!data.buckets.length) return 0
+    const last = data.buckets[data.buckets.length - 1]
+    return new Date(last.ts).getTime() + data.bucket_seconds * 1000
+  }, [data.buckets, data.bucket_seconds])
 
   const highlightedBarIndex = useMemo(() => {
     if (highlightedTime == null) return -1
@@ -442,7 +461,11 @@ export function LinkHealthTimeline({ data, className, hideBadges, onBarHover, hi
                         ? (prevHealth && prevHealth !== 'no_data' ? healthColors[prevHealth] : 'bg-transparent border border-gray-200/40 dark:border-gray-700/40')
                         : (healthColors[displayHealth] ?? healthColors['no_data'])
                     }`}
-                    style={getDrainStripeStyle(bar.drainStatus)}
+                    style={getDrainStripeStyle(
+                      bar.collecting && displayHealth === 'no_data'
+                        ? (prevBar?.drainStatus ?? bar.drainStatus)
+                        : bar.drainStatus
+                    )}
                   />
                   {bar.collecting && (displayHealth !== 'no_data' || (prevHealth && prevHealth !== 'no_data')) && (
                     <div className="absolute inset-0 bg-gradient-to-r from-transparent via-transparent to-background" />
@@ -487,6 +510,16 @@ export function LinkHealthTimeline({ data, className, hideBadges, onBarHover, hi
             )
           })}
         </div>
+
+        {/* Ticket overlays — incidents and maintenance combined so overlapping windows cluster */}
+        {((incidentWindows?.length ?? 0) + (maintenanceWindows?.length ?? 0)) > 0 && (
+          <TicketOverlay
+            windows={[...(maintenanceWindows ?? []), ...(incidentWindows ?? [])]}
+            rangeStartMs={rangeStartMs}
+            rangeEndMs={rangeEndMs}
+            minWidthMs={bars[0] ? bars[0].spanSeconds * 1000 : data.bucket_seconds * 1000}
+          />
+        )}
 
         {/* Time labels */}
         <div className="flex justify-between mt-1 text-[10px] text-muted-foreground">

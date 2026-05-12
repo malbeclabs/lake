@@ -50,6 +50,8 @@ type ClientSeatRow struct {
 	OverrideUSDCPriceDollars uint16
 	EscrowCount              uint32
 	FundingAuthorityKey      string
+	SubscriptionStartSlot    uint64
+	LastUSDCPriceDollars     uint16
 }
 
 type PaymentEscrowRow struct {
@@ -424,6 +426,8 @@ func convertClientSeats(seats []shreds.KeyedClientSeat) []ClientSeatRow {
 			OverrideUSDCPriceDollars: s.OverrideUSDCPriceDollars,
 			EscrowCount:              s.EscrowCount,
 			FundingAuthorityKey:      s.FundingAuthorityKey.String(),
+			SubscriptionStartSlot:    s.SubscriptionStartSlot,
+			LastUSDCPriceDollars:     s.LastUSDCPriceDollars,
 		}
 	}
 	return rows

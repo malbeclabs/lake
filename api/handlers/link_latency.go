@@ -290,7 +290,7 @@ func (a *API) GetLinkLatencyData(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("link_latency", duration, err)
 
 	if err != nil {
 		logError("link latency query error", "error", err, "duration", duration)
@@ -446,7 +446,7 @@ func (a *API) GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request)
 
 		rows, err := a.envDB(ctx).Query(ctx, query)
 		duration := time.Since(start)
-		metrics.RecordClickHouseQuery(duration, err)
+		metrics.RecordClickHouseQuery("link_latency", duration, err)
 
 		if err != nil {
 			logError("aggregate latency query error", "error", err, "duration", duration)
@@ -523,10 +523,10 @@ func (a *API) GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request)
 					formatDateTime(toStartOfInterval(f.event_ts, INTERVAL %s), '%%Y-%%m-%%dT%%H:%%i:%%SZ') AS time_bucket,
 					f.link_pk,
 					l.code AS link_code,
-					%sIf(f.rtt_us, f.origin_device_pk = l.side_a_pk) / 1000.0 AS rtt_a_to_z_ms,
-					%sIf(f.rtt_us, f.origin_device_pk != l.side_a_pk) / 1000.0 AS rtt_z_to_a_ms,
-					%sIf(abs(f.ipdv_us), f.origin_device_pk = l.side_a_pk) / 1000.0 AS jitter_a_to_z_ms,
-					%sIf(abs(f.ipdv_us), f.origin_device_pk != l.side_a_pk) / 1000.0 AS jitter_z_to_a_ms,
+					%s(f.rtt_us, f.origin_device_pk = l.side_a_pk) / 1000.0 AS rtt_a_to_z_ms,
+					%s(f.rtt_us, f.origin_device_pk != l.side_a_pk) / 1000.0 AS rtt_z_to_a_ms,
+					%s(abs(f.ipdv_us), f.origin_device_pk = l.side_a_pk) / 1000.0 AS jitter_a_to_z_ms,
+					%s(abs(f.ipdv_us), f.origin_device_pk != l.side_a_pk) / 1000.0 AS jitter_z_to_a_ms,
 					countIf(f.loss = true OR f.rtt_us = 0) * 100.0 / greatest(count(*), 1) AS loss_pct
 				FROM fact_dz_device_link_latency f
 				JOIN dz_links_current l ON f.link_pk = l.pk
@@ -578,7 +578,7 @@ func (a *API) GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request)
 
 	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("link_latency", duration, err)
 
 	if err != nil {
 		logError("multi-link latency query error", "error", err, "duration", duration)

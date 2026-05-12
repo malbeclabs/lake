@@ -473,7 +473,7 @@ func setFieldValue(fieldValue reflect.Value, fieldType reflect.Type, val any) er
 	}
 
 	// Handle pointer types
-	if fieldType.Kind() == reflect.Ptr {
+	if fieldType.Kind() == reflect.Pointer {
 		if valType.AssignableTo(fieldType.Elem()) {
 			ptr := reflect.New(fieldType.Elem())
 			ptr.Elem().Set(valValue)
@@ -489,7 +489,7 @@ func setFieldValue(fieldValue reflect.Value, fieldType reflect.Type, val any) er
 	}
 
 	// Handle pointer to pointer
-	if fieldType.Kind() == reflect.Ptr && valType.ConvertibleTo(fieldType.Elem()) {
+	if fieldType.Kind() == reflect.Pointer && valType.ConvertibleTo(fieldType.Elem()) {
 		ptr := reflect.New(fieldType.Elem())
 		ptr.Elem().Set(valValue.Convert(fieldType.Elem()))
 		fieldValue.Set(ptr)

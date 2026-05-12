@@ -135,12 +135,12 @@ func (a *API) registerExecuteSQLTool(server *mcp.Server, r *http.Request) {
 		queryCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
 
-		db := a.envDB(ctx)
+		db := a.PublicQueryDB
 
 		rows, err := db.Query(queryCtx, query)
 		duration := time.Since(start)
 		if err != nil {
-			metrics.RecordClickHouseQuery(duration, err)
+			metrics.RecordClickHouseQuery("mcp", duration, err)
 			return nil, ExecuteSQLOutput{}, fmt.Errorf("query failed: %w", err)
 		}
 		defer rows.Close()
@@ -161,7 +161,7 @@ func (a *API) registerExecuteSQLTool(server *mcp.Server, r *http.Request) {
 			}
 
 			if err := rows.Scan(values...); err != nil {
-				metrics.RecordClickHouseQuery(duration, err)
+				metrics.RecordClickHouseQuery("mcp", duration, err)
 				return nil, ExecuteSQLOutput{}, fmt.Errorf("scan failed: %w", err)
 			}
 
@@ -173,11 +173,11 @@ func (a *API) registerExecuteSQLTool(server *mcp.Server, r *http.Request) {
 		}
 
 		if err := rows.Err(); err != nil {
-			metrics.RecordClickHouseQuery(duration, err)
+			metrics.RecordClickHouseQuery("mcp", duration, err)
 			return nil, ExecuteSQLOutput{}, fmt.Errorf("rows error: %w", err)
 		}
 
-		metrics.RecordClickHouseQuery(duration, nil)
+		metrics.RecordClickHouseQuery("mcp", duration, nil)
 
 		// Convert to JSON-safe values
 		safeRows := make([][]any, len(resultRows))

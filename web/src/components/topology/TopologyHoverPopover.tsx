@@ -97,6 +97,28 @@ function DeviceHoverContent({ device }: { device: DeviceInfo }) {
             {device.status}
           </span>
         </div>
+        {(device.unicastUsersCount > 0 || device.multicastSubscribersCount > 0 || device.multicastPublishersCount > 0) && (
+          <div className="flex justify-between gap-4">
+            <span>Users:</span>
+            <div className="flex items-center gap-0.5">
+              {device.unicastUsersCount > 0 && (
+                <span className="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold leading-none text-white" style={{ background: '#3b82f6' }}>
+                  U{device.unicastUsersCount}
+                </span>
+              )}
+              {device.multicastSubscribersCount > 0 && (
+                <span className="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold leading-none text-white" style={{ background: '#14b8a6' }}>
+                  S{device.multicastSubscribersCount}
+                </span>
+              )}
+              {device.multicastPublishersCount > 0 && (
+                <span className="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold leading-none text-white" style={{ background: '#a855f7' }}>
+                  P{device.multicastPublishersCount}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
         {device.validatorCount > 0 && (
           <div className="flex justify-between gap-4">
             <span>Validators:</span>
@@ -121,7 +143,14 @@ function LinkHoverContent({ link }: { link: LinkInfo }) {
 
   return (
     <div className="space-y-1">
-      <div className="font-medium">{link.code}</div>
+      <div className="font-medium flex items-center gap-1.5">
+        {link.code}
+        {(link.status === 'hard-drained' || link.status === 'soft-drained') && (
+          <span className="text-[10px] font-normal px-1 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400">
+            {link.status}
+          </span>
+        )}
+      </div>
       <div className="text-[10px] text-muted-foreground">
         {link.deviceACode}{link.interfaceAName && <span className="font-mono"> ({link.interfaceAName})</span>}
         {' ↔ '}

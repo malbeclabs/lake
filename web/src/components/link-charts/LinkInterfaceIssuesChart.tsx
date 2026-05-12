@@ -7,6 +7,8 @@ import { useUPlotChart } from '@/hooks/use-uplot-chart'
 import { useUPlotLegendSync } from '@/hooks/use-uplot-legend-sync'
 import { formatHoveredTime } from '@/components/topology/utils'
 import type { LinkMetricsResponse } from '@/lib/api'
+import { TicketChartBands } from '@/components/ops/TicketChartBands'
+import type { OpsTicket } from '@/lib/ops-api'
 
 interface LinkInterfaceIssuesChartProps {
   data: LinkMetricsResponse
@@ -14,6 +16,9 @@ interface LinkInterfaceIssuesChartProps {
   loading?: boolean
   highlightTimeRange?: { start: number; end: number } | null
   onCursorTime?: (time: number | null) => void
+  tickets?: OpsTicket[]
+  showIncidents?: boolean
+  showMaintenance?: boolean
 }
 
 function formatCount(value: number): string {
@@ -33,7 +38,7 @@ interface SideSeries {
   extract: (b: LinkMetricsResponse['buckets'][number]) => number | null
 }
 
-export function LinkInterfaceIssuesChart({ data, className, loading, highlightTimeRange, onCursorTime }: LinkInterfaceIssuesChartProps) {
+export function LinkInterfaceIssuesChart({ data, className, loading, highlightTimeRange, onCursorTime, tickets, showIncidents, showMaintenance }: LinkInterfaceIssuesChartProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
 
@@ -150,7 +155,7 @@ export function LinkInterfaceIssuesChart({ data, className, loading, highlightTi
     ctx.restore()
   }], [])
 
-  const { plotRef } = useUPlotChart({
+  const { plotRef, plotVersion } = useUPlotChart({
     containerRef: chartRef,
     data: uPlotData,
     series: uPlotSeries,
@@ -228,7 +233,19 @@ export function LinkInterfaceIssuesChart({ data, className, loading, highlightTi
           <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
         )}
       </div>
-      <div ref={chartRef} className="h-36" />
+      <div className="relative overflow-hidden">
+        <div ref={chartRef} className="h-36" />
+        {tickets && tickets.length > 0 && (
+          <TicketChartBands
+            containerRef={chartRef}
+            plotRef={plotRef}
+            plotVersion={plotVersion}
+            tickets={tickets}
+            showIncidents={showIncidents ?? true}
+            showMaintenance={showMaintenance ?? true}
+          />
+        )}
+      </div>
       {/* Per-series legend */}
       <div className="flex flex-col text-xs px-2 pt-1 pb-2">
         <div className="flex items-center px-1 mb-1">

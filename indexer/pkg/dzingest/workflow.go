@@ -17,8 +17,9 @@ const (
 	continueAsNewThreshold = 60
 
 	// telemUsageEveryN controls how often telemetry usage refreshes run.
-	// At 60s base interval, 5 iterations = ~5 minutes.
-	telemUsageEveryN = 5
+	// At 60s base interval, 1 iteration = ~1 minute. Source data is reported
+	// at ~2s resolution so indexing every minute keeps data reasonably fresh.
+	telemUsageEveryN = 1
 )
 
 // RegisterWorkflows registers all DZ ingest workflows with the given worker.
@@ -53,8 +54,9 @@ func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 			logger.Error("serviceability refresh failed", "error", err)
 		}
 
-		// Run telemetry latency, shreds, escrow events, ISIS sync, and graph sync in parallel.
+		// Run telemetry latency, geolocation, shreds, escrow events, ISIS sync, and graph sync in parallel.
 		telemLatencyFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshTelemetryLatency)
+		geolocationFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshGeolocation)
 		shredsFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshShreds)
 		escrowEventsFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshShredEscrowEvents)
 		isisSyncFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).SyncISIS)
@@ -71,6 +73,12 @@ func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 				return ctx.Err()
 			}
 			logger.Error("telemetry latency refresh failed", "error", err)
+		}
+		if err := geolocationFuture.Get(ctx, nil); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			logger.Error("geolocation refresh failed", "error", err)
 		}
 		if err := shredsFuture.Get(ctx, nil); err != nil {
 			if ctx.Err() != nil {

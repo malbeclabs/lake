@@ -14,20 +14,52 @@ import (
 )
 
 type UserListItem struct {
-	PK          string  `json:"pk"`
-	OwnerPubkey string  `json:"owner_pubkey"`
-	Status      string  `json:"status"`
-	Kind        string  `json:"kind"`
-	DzIP        string  `json:"dz_ip"`
-	ClientIP    string  `json:"client_ip"`
-	DevicePK    string  `json:"device_pk"`
-	DeviceCode  string  `json:"device_code"`
-	MetroCode   string  `json:"metro_code"`
-	MetroName   string  `json:"metro_name"`
-	TenantPK    string  `json:"tenant_pk"`
-	TenantCode  string  `json:"tenant_code"`
-	InBps       float64 `json:"in_bps"`
-	OutBps      float64 `json:"out_bps"`
+	PK           string  `json:"pk"`
+	OwnerPubkey  string  `json:"owner_pubkey"`
+	Status       string  `json:"status"`
+	Kind         string  `json:"kind"`
+	DzIP         string  `json:"dz_ip"`
+	ClientIP     string  `json:"client_ip"`
+	DevicePK     string  `json:"device_pk"`
+	DeviceCode   string  `json:"device_code"`
+	MetroPK      string  `json:"metro_pk"`
+	MetroCode    string  `json:"metro_code"`
+	MetroName    string  `json:"metro_name"`
+	LocationPK   string  `json:"location_pk"`
+	LocationCode string  `json:"location_code"`
+	TenantPK     string  `json:"tenant_pk"`
+	TenantCode   string  `json:"tenant_code"`
+	InBps        float64 `json:"in_bps"`
+	OutBps       float64 `json:"out_bps"`
+	IsDeleted    bool    `json:"is_deleted"`
+}
+
+var userSortFields = map[string]string{
+	"owner":    "owner_pubkey",
+	"kind":     "kind",
+	"dzip":     "dz_ip",
+	"clientip": "client_ip",
+	"device":   "device_code",
+	"metro":    "metro_name",
+	"facility": "location_code",
+	"tenant":   "tenant_code",
+	"status":   "display_status",
+	"in":       "in_bps",
+	"out":      "out_bps",
+}
+
+var userFilterFields = map[string]FilterFieldConfig{
+	"owner":    {Column: "owner_pubkey", Type: FieldTypeText},
+	"kind":     {Column: "kind", Type: FieldTypeText},
+	"dzip":     {Column: "dz_ip", Type: FieldTypeText},
+	"clientip": {Column: "client_ip", Type: FieldTypeText},
+	"device":   {Column: "device_code", Type: FieldTypeText},
+	"metro":    {Column: "metro_name", Type: FieldTypeText},
+	"facility": {Column: "location_code", Type: FieldTypeText},
+	"tenant":   {Column: "tenant_code", Type: FieldTypeText},
+	"status":   {Column: "status", Type: FieldTypeText},
+	"in":       {Column: "in_bps", Type: FieldTypeBandwidth},
+	"out":      {Column: "out_bps", Type: FieldTypeBandwidth},
 }
 
 func (a *API) GetUsers(w http.ResponseWriter, r *http.Request) {
@@ -35,19 +67,55 @@ func (a *API) GetUsers(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	pagination := ParsePagination(r, 100)
+	sort := ParseSort(r, "owner", userSortFields)
+	filters := ParseFilters(r)
+	includeDeleted := r.URL.Query().Get("include_deleted") == "true"
 	start := time.Now()
 
-	// Get total count
-	countQuery := `SELECT count(*) FROM dz_users_current`
-	var total uint64
-	if err := a.envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
-		logError("users count query failed", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	filterClause, filterArgs := filters.BuildFilterClause(userFilterFields)
+	whereFilter := ""
+	if filterClause != "" {
+		whereFilter = " AND " + filterClause
+	}
+
+	orderBy := sort.OrderByClause(userSortFields)
+	if orderBy == "" {
+		orderBy = "ORDER BY owner_pubkey ASC"
+	}
+
+	var sourceCTE string
+	var isDeletedExpr string
+	var isDeletedCond string
+	var fromTable string
+	if includeDeleted {
+		sourceCTE = `all_users AS (
+			SELECT
+				argMax(pk, (snapshot_ts, ingested_at, op_id)) as pk,
+				argMax(owner_pubkey, (snapshot_ts, ingested_at, op_id)) as owner_pubkey,
+				argMax(status, (snapshot_ts, ingested_at, op_id)) as status,
+				argMax(kind, (snapshot_ts, ingested_at, op_id)) as kind,
+				argMax(dz_ip, (snapshot_ts, ingested_at, op_id)) as dz_ip,
+				argMax(client_ip, (snapshot_ts, ingested_at, op_id)) as client_ip,
+				argMax(device_pk, (snapshot_ts, ingested_at, op_id)) as device_pk,
+				argMax(tenant_pk, (snapshot_ts, ingested_at, op_id)) as tenant_pk,
+				argMax(is_deleted, (snapshot_ts, ingested_at, op_id)) as is_deleted
+			FROM dim_dz_users_history
+			GROUP BY entity_id
+			HAVING pk != ''
+		),`
+		isDeletedCond = "u.is_deleted = 1"
+		isDeletedExpr = isDeletedCond + " as is_deleted"
+		fromTable = "all_users"
+	} else {
+		sourceCTE = ""
+		isDeletedCond = "false"
+		isDeletedExpr = isDeletedCond + " as is_deleted"
+		fromTable = "dz_users_current"
 	}
 
 	query := `
-		WITH traffic_rates AS (
+		WITH ` + sourceCTE + `
+		traffic_rates AS (
 			SELECT
 				user_pk,
 				SUM(avg_in_bps) as in_bps,
@@ -56,34 +124,49 @@ func (a *API) GetUsers(w http.ResponseWriter, r *http.Request) {
 			WHERE bucket_ts = (SELECT max(bucket_ts) FROM device_interface_rollup_5m)
 				AND user_pk != ''
 			GROUP BY user_pk
+		),
+		users_data AS (
+			SELECT
+				u.pk as pk,
+				COALESCE(u.owner_pubkey, '') as owner_pubkey,
+				u.status as status,
+				COALESCE(u.kind, '') as kind,
+				COALESCE(u.dz_ip, '') as dz_ip,
+				COALESCE(u.client_ip, '') as client_ip,
+				COALESCE(u.device_pk, '') as device_pk,
+				COALESCE(d.code, '') as device_code,
+				COALESCE(m.pk, '') as metro_pk,
+				COALESCE(m.code, '') as metro_code,
+				COALESCE(m.name, '') as metro_name,
+				COALESCE(d.location_pk, '') as location_pk,
+				COALESCE(l.code, '') as location_code,
+				COALESCE(u.tenant_pk, '') as tenant_pk,
+				COALESCE(t.code, '') as tenant_code,
+				COALESCE(tr.in_bps, 0) as in_bps,
+				COALESCE(tr.out_bps, 0) as out_bps,
+				` + isDeletedExpr + `,
+				CASE WHEN ` + isDeletedCond + ` THEN 'deleted' ELSE u.status END as display_status
+			FROM ` + fromTable + ` u
+			LEFT JOIN dz_devices_current d ON u.device_pk = d.pk
+			LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
+			LEFT JOIN dz_facilities_current l ON d.location_pk = l.pk
+			LEFT JOIN dz_tenants_current t ON u.tenant_pk = t.pk
+			LEFT JOIN traffic_rates tr ON u.pk = tr.user_pk
 		)
 		SELECT
-			u.pk,
-			COALESCE(u.owner_pubkey, '') as owner_pubkey,
-			u.status,
-			COALESCE(u.kind, '') as kind,
-			COALESCE(u.dz_ip, '') as dz_ip,
-			COALESCE(u.client_ip, '') as client_ip,
-			COALESCE(u.device_pk, '') as device_pk,
-			COALESCE(d.code, '') as device_code,
-			COALESCE(m.code, '') as metro_code,
-			COALESCE(m.name, '') as metro_name,
-			COALESCE(u.tenant_pk, '') as tenant_pk,
-			COALESCE(t.code, '') as tenant_code,
-			COALESCE(tr.in_bps, 0) as in_bps,
-			COALESCE(tr.out_bps, 0) as out_bps
-		FROM dz_users_current u
-		LEFT JOIN dz_devices_current d ON u.device_pk = d.pk
-		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
-		LEFT JOIN dz_tenants_current t ON u.tenant_pk = t.pk
-		LEFT JOIN traffic_rates tr ON u.pk = tr.user_pk
-		ORDER BY u.owner_pubkey
-		LIMIT ? OFFSET ?
-	`
+			pk, owner_pubkey, status, kind, dz_ip, client_ip, device_pk,
+			device_code, metro_pk, metro_code, metro_name, location_pk, location_code,
+			tenant_pk, tenant_code, in_bps, out_bps, is_deleted,
+			count() OVER () as _total
+		FROM users_data
+		WHERE 1=1` + whereFilter + `
+		` + orderBy + `
+		LIMIT ? OFFSET ?`
 
-	rows, err := a.envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
+	queryArgs := append(filterArgs, pagination.Limit, pagination.Offset)
+	rows, err := a.envDB(ctx).Query(ctx, query, queryArgs...)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("users", duration, err)
 
 	if err != nil {
 		logError("users query failed", "error", err)
@@ -93,6 +176,7 @@ func (a *API) GetUsers(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	var users []UserListItem
+	var total uint64
 	for rows.Next() {
 		var u UserListItem
 		if err := rows.Scan(
@@ -104,12 +188,17 @@ func (a *API) GetUsers(w http.ResponseWriter, r *http.Request) {
 			&u.ClientIP,
 			&u.DevicePK,
 			&u.DeviceCode,
+			&u.MetroPK,
 			&u.MetroCode,
 			&u.MetroName,
+			&u.LocationPK,
+			&u.LocationCode,
 			&u.TenantPK,
 			&u.TenantCode,
 			&u.InBps,
 			&u.OutBps,
+			&u.IsDeleted,
+			&total,
 		); err != nil {
 			logError("users row scan failed", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -124,7 +213,6 @@ func (a *API) GetUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return empty array instead of null
 	if users == nil {
 		users = []UserListItem{}
 	}
@@ -155,6 +243,9 @@ type UserDetail struct {
 	MetroPK         string  `json:"metro_pk"`
 	MetroCode       string  `json:"metro_code"`
 	MetroName       string  `json:"metro_name"`
+	LocationPK      string  `json:"location_pk"`
+	LocationCode    string  `json:"location_code"`
+	FacilityLocId   uint32  `json:"facility_loc_id"`
 	ContributorPK   string  `json:"contributor_pk"`
 	ContributorCode string  `json:"contributor_code"`
 	TenantPK        string  `json:"tenant_pk"`
@@ -166,6 +257,7 @@ type UserDetail struct {
 	VotePubkey      string  `json:"vote_pubkey"`
 	StakeSol        float64 `json:"stake_sol"`
 	StakeWeightPct  float64 `json:"stake_weight_pct"`
+	IsDeleted       bool    `json:"is_deleted"`
 }
 
 func (a *API) GetUser(w http.ResponseWriter, r *http.Request) {
@@ -180,7 +272,24 @@ func (a *API) GetUser(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 	query := `
-		WITH traffic_rates AS (
+		WITH latest_user AS (
+			SELECT
+				argMax(pk, (snapshot_ts, ingested_at, op_id)) as pk,
+				argMax(owner_pubkey, (snapshot_ts, ingested_at, op_id)) as owner_pubkey,
+				argMax(status, (snapshot_ts, ingested_at, op_id)) as status,
+				argMax(kind, (snapshot_ts, ingested_at, op_id)) as kind,
+				argMax(dz_ip, (snapshot_ts, ingested_at, op_id)) as dz_ip,
+				argMax(client_ip, (snapshot_ts, ingested_at, op_id)) as client_ip,
+				argMax(tunnel_id, (snapshot_ts, ingested_at, op_id)) as tunnel_id,
+				argMax(device_pk, (snapshot_ts, ingested_at, op_id)) as device_pk,
+				argMax(tenant_pk, (snapshot_ts, ingested_at, op_id)) as tenant_pk,
+				argMax(is_deleted, (snapshot_ts, ingested_at, op_id)) as is_deleted
+			FROM (SELECT * FROM dim_dz_users_history WHERE pk = ?)
+			GROUP BY entity_id
+			HAVING pk != ''
+			LIMIT 1
+		),
+		traffic_rates AS (
 			SELECT
 				user_pk,
 				SUM(avg_in_bps) as in_bps,
@@ -218,6 +327,9 @@ func (a *API) GetUser(w http.ResponseWriter, r *http.Request) {
 			COALESCE(d.metro_pk, '') as metro_pk,
 			COALESCE(m.code, '') as metro_code,
 			COALESCE(m.name, '') as metro_name,
+			COALESCE(d.location_pk, '') as location_pk,
+			COALESCE(l.code, '') as location_code,
+			COALESCE(l.loc_id, 0) as facility_loc_id,
 			COALESCE(d.contributor_pk, '') as contributor_pk,
 			COALESCE(c.code, '') as contributor_code,
 			COALESCE(u.tenant_pk, '') as tenant_pk,
@@ -228,16 +340,17 @@ func (a *API) GetUser(w http.ResponseWriter, r *http.Request) {
 			COALESCE(si.node_pubkey, '') as node_pubkey,
 			COALESCE(si.vote_pubkey, '') as vote_pubkey,
 			COALESCE(si.stake_sol, 0) as stake_sol,
-			CASE WHEN ts.total_lamports > 0 THEN si.stake_lamports * 100.0 / ts.total_lamports ELSE 0 END as stake_weight_pct
-		FROM dz_users_current u
+			CASE WHEN ts.total_lamports > 0 THEN si.stake_lamports * 100.0 / ts.total_lamports ELSE 0 END as stake_weight_pct,
+			u.is_deleted = 1 as is_deleted
+		FROM latest_user u
 		LEFT JOIN dz_devices_current d ON u.device_pk = d.pk
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
+		LEFT JOIN dz_facilities_current l ON d.location_pk = l.pk
 		LEFT JOIN dz_contributors_current c ON d.contributor_pk = c.pk
 		LEFT JOIN dz_tenants_current t ON u.tenant_pk = t.pk
 		LEFT JOIN traffic_rates tr ON u.pk = tr.user_pk
 		LEFT JOIN solana_info si ON u.client_ip = si.gossip_ip
 		CROSS JOIN total_stake ts
-		WHERE u.pk = ?
 	`
 
 	var user UserDetail
@@ -254,6 +367,9 @@ func (a *API) GetUser(w http.ResponseWriter, r *http.Request) {
 		&user.MetroPK,
 		&user.MetroCode,
 		&user.MetroName,
+		&user.LocationPK,
+		&user.LocationCode,
+		&user.FacilityLocId,
 		&user.ContributorPK,
 		&user.ContributorCode,
 		&user.TenantPK,
@@ -265,9 +381,10 @@ func (a *API) GetUser(w http.ResponseWriter, r *http.Request) {
 		&user.VotePubkey,
 		&user.StakeSol,
 		&user.StakeWeightPct,
+		&user.IsDeleted,
 	)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("users", duration, err)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -415,7 +532,7 @@ func (a *API) GetUserTraffic(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query, pk)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("users", duration, err)
 
 	if err != nil {
 		logError("user traffic query failed", "error", err, "pk", pk)
@@ -511,6 +628,7 @@ func (a *API) GetUserMulticastGroups(w http.ResponseWriter, r *http.Request) {
 				FROM dz_users_current u
 				WHERE u.status = 'activated' AND u.kind = 'multicast' AND JSONLength(u.subscribers) > 0
 			)
+			WHERE group_pk IN (SELECT group_pk FROM user_groups)
 			GROUP BY group_pk
 		)
 		SELECT
@@ -529,7 +647,7 @@ func (a *API) GetUserMulticastGroups(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query, pk, pk)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("users", duration, err)
 
 	if err != nil {
 		logError("user multicast groups query failed", "error", err, "pk", pk)

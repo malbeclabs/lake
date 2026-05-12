@@ -162,16 +162,23 @@ func (a *API) FetchPublisherCheckData(ctx context.Context, q string, epochsParam
 
 	shredGroupPK := ShredGroupPK
 
-	shredStatsTable := fmt.Sprintf("`%s`.publisher_shred_stats", a.ShredderDB)
+	shredStatsTable := fmt.Sprintf("`%s`.publisher_shred_stats", a.PublisherDB)
+
+	// Only the dz source has `publisher_stats: true` in the shredder configs,
+	// so filtering to it preserves pre-per-feed-column numbers exactly. Pre-migration
+	// rows have feed='' (the ALTER added the column without a default), so include
+	// both to keep history continuous across the cutover.
+	const leaderFeedFilter = "feed IN ('', 'dz')"
 
 	var perSlotWhere string
 	var args []any
 	if slotsParam > 0 {
-		perSlotWhere = `WHERE epoch >= (SELECT epoch FROM current_epoch) - 1
-			AND slot >= (SELECT max(slot) FROM ` + shredStatsTable + ` WHERE epoch >= (SELECT epoch FROM current_epoch) - 1) - ?`
+		perSlotWhere = `WHERE ` + leaderFeedFilter + `
+			AND epoch >= (SELECT epoch FROM current_epoch) - 1
+			AND slot >= (SELECT max(slot) FROM ` + shredStatsTable + ` WHERE ` + leaderFeedFilter + ` AND epoch >= (SELECT epoch FROM current_epoch) - 1) - ?`
 		args = []any{slotsParam, shredGroupPK}
 	} else {
-		perSlotWhere = `WHERE epoch >= (SELECT epoch FROM current_epoch) - ? + 1`
+		perSlotWhere = `WHERE ` + leaderFeedFilter + ` AND epoch >= (SELECT epoch FROM current_epoch) - ? + 1`
 		args = []any{epochsParam, shredGroupPK}
 	}
 
@@ -247,7 +254,7 @@ func (a *API) FetchPublisherCheckData(ctx context.Context, q string, epochsParam
 
 	rows, err := a.envDB(ctx).Query(ctx, query, args...)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("publisher_check", duration, err)
 
 	if err != nil {
 		return nil, err

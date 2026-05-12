@@ -163,8 +163,11 @@ func parseBucketParamsCustom(startTime, endTime time.Time, requestedBuckets int)
 	bucketDuration := time.Duration(bucketSecs) * time.Second
 	startTime = startTime.Truncate(bucketDuration)
 
+	// Use ceiling division so the current in-progress bucket is always included.
+	// Floor division would stop at the last fully-elapsed bucket, leaving the
+	// current partial bucket (which may have rollup data) out of the response.
 	totalSecs := int(endTime.Sub(startTime).Seconds())
-	bucketCount := totalSecs / bucketSecs
+	bucketCount := (totalSecs + bucketSecs - 1) / bucketSecs
 	if bucketCount < 1 {
 		bucketCount = 1
 	}
@@ -695,12 +698,28 @@ type interfaceRollupRow struct {
 
 	// Traffic rates (sample-weighted avg across sub-buckets)
 	AvgInBps  float64
+	P50InBps  float64
+	P90InBps  float64
+	P95InBps  float64
+	P99InBps  float64
 	MaxInBps  float64
 	AvgOutBps float64
+	P50OutBps float64
+	P90OutBps float64
+	P95OutBps float64
+	P99OutBps float64
 	MaxOutBps float64
 	AvgInPps  float64
+	P50InPps  float64
+	P90InPps  float64
+	P95InPps  float64
+	P99InPps  float64
 	MaxInPps  float64
 	AvgOutPps float64
+	P50OutPps float64
+	P90OutPps float64
+	P95OutPps float64
+	P99OutPps float64
 	MaxOutPps float64
 
 	// Entity state
@@ -792,14 +811,30 @@ func queryInterfaceRollup(ctx context.Context, db driver.Conn, params bucketPara
 			sum(in_discards) as total_in_discards,
 			sum(out_discards) as total_out_discards,
 			sum(carrier_transitions) as total_carrier_transitions,
-			-- Traffic rates: avg and max
+			-- Traffic rates: avg, percentiles, and max
 			avg(avg_in_bps) as avg_in_bps,
+			max(p50_in_bps) as p50_in_bps,
+			max(p90_in_bps) as p90_in_bps,
+			max(p95_in_bps) as p95_in_bps,
+			max(p99_in_bps) as p99_in_bps,
 			max(max_in_bps) as max_in_bps,
 			avg(avg_out_bps) as avg_out_bps,
+			max(p50_out_bps) as p50_out_bps,
+			max(p90_out_bps) as p90_out_bps,
+			max(p95_out_bps) as p95_out_bps,
+			max(p99_out_bps) as p99_out_bps,
 			max(max_out_bps) as max_out_bps,
 			avg(avg_in_pps) as avg_in_pps,
+			max(p50_in_pps) as p50_in_pps,
+			max(p90_in_pps) as p90_in_pps,
+			max(p95_in_pps) as p95_in_pps,
+			max(p99_in_pps) as p99_in_pps,
 			max(max_in_pps) as max_in_pps,
 			avg(avg_out_pps) as avg_out_pps,
+			max(p50_out_pps) as p50_out_pps,
+			max(p90_out_pps) as p90_out_pps,
+			max(p95_out_pps) as p95_out_pps,
+			max(p99_out_pps) as p99_out_pps,
 			max(max_out_pps) as max_out_pps,
 			-- Entity state
 			argMax(status, bucket_ts) as agg_status,
@@ -852,8 +887,10 @@ func queryInterfaceRollup(ctx context.Context, db driver.Conn, params bucketPara
 			&r.BucketTS,
 			&r.LinkPK, &r.LinkSide, &r.DevicePK, &r.Intf,
 			&r.InErrors, &r.OutErrors, &r.InFcsErrors, &r.InDiscards, &r.OutDiscards, &r.CarrierTransitions,
-			&r.AvgInBps, &r.MaxInBps, &r.AvgOutBps, &r.MaxOutBps,
-			&r.AvgInPps, &r.MaxInPps, &r.AvgOutPps, &r.MaxOutPps,
+			&r.AvgInBps, &r.P50InBps, &r.P90InBps, &r.P95InBps, &r.P99InBps, &r.MaxInBps,
+			&r.AvgOutBps, &r.P50OutBps, &r.P90OutBps, &r.P95OutBps, &r.P99OutBps, &r.MaxOutBps,
+			&r.AvgInPps, &r.P50InPps, &r.P90InPps, &r.P95InPps, &r.P99InPps, &r.MaxInPps,
+			&r.AvgOutPps, &r.P50OutPps, &r.P90OutPps, &r.P95OutPps, &r.P99OutPps, &r.MaxOutPps,
 			&r.Status, &r.ISISOverload, &r.ISISUnreachable, &r.WasDrained,
 			&r.UserPK,
 		); err != nil {
@@ -867,6 +904,118 @@ func queryInterfaceRollup(ctx context.Context, db driver.Conn, params bucketPara
 	}
 
 	return result, nil
+}
+
+// --- Issue link detection (first-pass queries) ---
+
+// linkRollupSummary holds per-link aggregate indicators from a lightweight
+// rollup scan used to identify links that may have issues.
+type linkRollupSummary struct {
+	LinkPK       string
+	BucketCount  uint64
+	AnyISISDown  bool
+	MaxALossPct  float64
+	MaxZLossPct  float64
+	AnyDrained   bool
+	MaxAAvgRttUs float64
+	MaxZAvgRttUs float64
+}
+
+// queryLinkRollupSummary runs a lightweight scan of link_rollup_5m to get
+// per-link issue indicators. Skips FINAL for speed since false positives
+// (from unmerged rows) are acceptable — the caller uses this to identify
+// candidate issue links, not for display.
+func queryLinkRollupSummary(ctx context.Context, db driver.Conn, params bucketParams) (map[string]*linkRollupSummary, error) {
+	var args []any
+	if params.StartTime != nil {
+		args = append(args, *params.StartTime)
+	} else {
+		args = append(args, time.Now().UTC().Add(-time.Duration(params.TotalMinutes)*time.Minute))
+	}
+
+	var endClause string
+	if params.EndTime != nil {
+		args = append(args, *params.EndTime)
+		endClause = fmt.Sprintf(" AND bucket_ts < $%d", len(args))
+	}
+
+	query := fmt.Sprintf(`
+		SELECT
+			link_pk,
+			countDistinct(bucket_ts) as bucket_count,
+			max(isis_down) > 0 as any_isis_down,
+			max(a_loss_pct) as max_a_loss_pct,
+			max(z_loss_pct) as max_z_loss_pct,
+			max(status IN ('soft-drained', 'hard-drained')) as any_drained,
+			max(a_avg_rtt_us) as max_a_avg_rtt_us,
+			max(z_avg_rtt_us) as max_z_avg_rtt_us
+		FROM link_rollup_5m
+		WHERE bucket_ts >= $1%s
+		GROUP BY link_pk
+	`, endClause)
+
+	rows, err := db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("link rollup summary query: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]*linkRollupSummary)
+	for rows.Next() {
+		var s linkRollupSummary
+		if err := rows.Scan(
+			&s.LinkPK, &s.BucketCount,
+			&s.AnyISISDown, &s.MaxALossPct, &s.MaxZLossPct,
+			&s.AnyDrained, &s.MaxAAvgRttUs, &s.MaxZAvgRttUs,
+		); err != nil {
+			return nil, fmt.Errorf("link rollup summary scan: %w", err)
+		}
+		result[s.LinkPK] = &s
+	}
+	return result, rows.Err()
+}
+
+// queryInterfaceIssueLinkPKs returns distinct link PKs that have any interface
+// errors, discards, or carrier transitions in the time range. Skips FINAL for
+// speed since false positives are acceptable for issue detection.
+func queryInterfaceIssueLinkPKs(ctx context.Context, db driver.Conn, params bucketParams) (map[string]bool, error) {
+	var args []any
+	if params.StartTime != nil {
+		args = append(args, *params.StartTime)
+	} else {
+		args = append(args, time.Now().UTC().Add(-time.Duration(params.TotalMinutes)*time.Minute))
+	}
+
+	var endClause string
+	if params.EndTime != nil {
+		args = append(args, *params.EndTime)
+		endClause = fmt.Sprintf(" AND bucket_ts < $%d", len(args))
+	}
+
+	query := fmt.Sprintf(`
+		SELECT DISTINCT link_pk
+		FROM device_interface_rollup_5m
+		WHERE bucket_ts >= $1%s
+		  AND link_pk != ''
+		  AND (in_errors > 0 OR out_errors > 0 OR in_fcs_errors > 0
+		       OR in_discards > 0 OR out_discards > 0 OR carrier_transitions > 0)
+	`, endClause)
+
+	rows, err := db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("interface issue link PKs query: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]bool)
+	for rows.Next() {
+		var pk string
+		if err := rows.Scan(&pk); err != nil {
+			return nil, fmt.Errorf("interface issue link PKs scan: %w", err)
+		}
+		result[pk] = true
+	}
+	return result, rows.Err()
 }
 
 // --- Helpers ---
@@ -953,6 +1102,7 @@ type statusLinkMeta struct {
 	Code              string
 	LinkType          string
 	Contributor       string
+	ContributorPK     string
 	SideAMetro        string
 	SideZMetro        string
 	SideADevice       string
@@ -966,6 +1116,7 @@ type statusLinkMeta struct {
 	CommittedRttNs    int64
 	CommittedJitterUs float64
 	Status            string
+	SideZContributor  string
 }
 
 // queryStatusLinkMeta fetches metadata for active links (activated, soft-drained, hard-drained).
@@ -984,6 +1135,7 @@ func queryStatusLinkMeta(ctx context.Context, db driver.Conn, linkPKs ...string)
 			l.code,
 			l.link_type,
 			COALESCE(c.code, '') as contributor,
+			COALESCE(l.contributor_pk, '') as contributor_pk,
 			ma.code as side_a_metro,
 			mz.code as side_z_metro,
 			da.code as side_a_device,
@@ -996,13 +1148,15 @@ func queryStatusLinkMeta(ctx context.Context, db driver.Conn, linkPKs ...string)
 			l.committed_rtt_ns / 1000.0 as committed_rtt_us,
 			l.committed_rtt_ns,
 			COALESCE(l.committed_jitter_ns, 0) / 1000.0 as committed_jitter_us,
-			l.status
+			l.status,
+			COALESCE(cz.code, '') as side_z_contributor
 		FROM dz_links_current l
 		JOIN dz_devices_current da ON l.side_a_pk = da.pk
 		JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
 		JOIN dz_metros_current ma ON da.metro_pk = ma.pk
 		JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
 		LEFT JOIN dz_contributors_current c ON l.contributor_pk = c.pk
+		LEFT JOIN dz_contributors_current cz ON dz.contributor_pk = cz.pk
 		WHERE l.status IN ('activated', 'soft-drained', 'hard-drained')%s
 	`, filterClause)
 
@@ -1016,11 +1170,11 @@ func queryStatusLinkMeta(ctx context.Context, db driver.Conn, linkPKs ...string)
 	for rows.Next() {
 		var m statusLinkMeta
 		if err := rows.Scan(
-			&m.PK, &m.Code, &m.LinkType, &m.Contributor,
+			&m.PK, &m.Code, &m.LinkType, &m.Contributor, &m.ContributorPK,
 			&m.SideAMetro, &m.SideZMetro, &m.SideADevice, &m.SideZDevice,
 			&m.SideADevicePK, &m.SideZDevicePK,
 			&m.SideAIfaceName, &m.SideZIfaceName,
-			&m.BandwidthBps, &m.CommittedRttUs, &m.CommittedRttNs, &m.CommittedJitterUs, &m.Status,
+			&m.BandwidthBps, &m.CommittedRttUs, &m.CommittedRttNs, &m.CommittedJitterUs, &m.Status, &m.SideZContributor,
 		); err != nil {
 			return nil, fmt.Errorf("link metadata scan: %w", err)
 		}
@@ -1083,13 +1237,14 @@ func queryCurrentISISDown(ctx context.Context, db driver.Conn, linkPKs ...string
 
 // statusDeviceMeta holds static device metadata from dimension tables for status pages.
 type statusDeviceMeta struct {
-	PK          string
-	Code        string
-	DeviceType  string
-	Contributor string
-	Metro       string
-	MaxUsers    int32
-	Status      string
+	PK            string
+	Code          string
+	DeviceType    string
+	Contributor   string
+	ContributorPK string
+	Metro         string
+	MaxUsers      int32
+	Status        string
 }
 
 // queryStatusDeviceMeta fetches metadata for active devices.
@@ -1108,6 +1263,7 @@ func queryStatusDeviceMeta(ctx context.Context, db driver.Conn, devicePKs ...str
 			d.code,
 			d.device_type,
 			COALESCE(c.code, '') as contributor,
+			COALESCE(d.contributor_pk, '') as contributor_pk,
 			COALESCE(m.code, '') as metro,
 			d.max_users,
 			d.status
@@ -1126,7 +1282,7 @@ func queryStatusDeviceMeta(ctx context.Context, db driver.Conn, devicePKs ...str
 	result := make(map[string]*statusDeviceMeta)
 	for rows.Next() {
 		var m statusDeviceMeta
-		if err := rows.Scan(&m.PK, &m.Code, &m.DeviceType, &m.Contributor, &m.Metro, &m.MaxUsers, &m.Status); err != nil {
+		if err := rows.Scan(&m.PK, &m.Code, &m.DeviceType, &m.Contributor, &m.ContributorPK, &m.Metro, &m.MaxUsers, &m.Status); err != nil {
 			return nil, fmt.Errorf("device metadata scan: %w", err)
 		}
 		result[m.PK] = &m

@@ -22,10 +22,15 @@ export function LinkDetailsHeader({ link }: LinkDetailsProps) {
       <div className="text-xs text-muted-foreground uppercase tracking-wider">
         link
       </div>
-      <div className="text-sm font-medium min-w-0 flex-1">
+      <div className="text-sm font-medium min-w-0 flex-1 flex items-center gap-1.5">
         <EntityLink to={`/dz/links/${link.pk}`} state={{ backLabel: 'topology' }}>
           {link.code}
         </EntityLink>
+        {(link.status === 'hard-drained' || link.status === 'soft-drained') && (
+          <span className="text-[10px] font-normal px-1 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400">
+            {link.status}
+          </span>
+        )}
       </div>
       <div className="text-xs text-muted-foreground mt-0.5">
         <EntityLink to={`/dz/devices/${link.deviceAPk}`}>{link.deviceACode}</EntityLink>

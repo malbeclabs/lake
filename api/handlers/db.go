@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -28,7 +29,7 @@ type DBQuerier struct {
 
 // NewDBQuerier creates a new DBQuerier.
 func (a *API) NewDBQuerier() *DBQuerier {
-	return &DBQuerier{db: a.DB}
+	return &DBQuerier{db: a.PublicQueryDB}
 }
 
 // Query executes a SQL query and returns the result.
@@ -41,7 +42,7 @@ func (q *DBQuerier) Query(ctx context.Context, sql string) (workflow.QueryResult
 	rows, err := q.db.Query(ctx, sql)
 	duration := time.Since(start)
 	if err != nil {
-		metrics.RecordClickHouseQuery(duration, err)
+		metrics.RecordClickHouseQuery("db", duration, err)
 		return workflow.QueryResult{SQL: sql, Error: err.Error()}, nil
 	}
 	defer rows.Close()
@@ -63,7 +64,7 @@ func (q *DBQuerier) Query(ctx context.Context, sql string) (workflow.QueryResult
 		}
 
 		if err := rows.Scan(values...); err != nil {
-			metrics.RecordClickHouseQuery(duration, err)
+			metrics.RecordClickHouseQuery("db", duration, err)
 			return workflow.QueryResult{SQL: sql, Error: fmt.Sprintf("scan error: %v", err)}, nil
 		}
 
@@ -76,11 +77,11 @@ func (q *DBQuerier) Query(ctx context.Context, sql string) (workflow.QueryResult
 	}
 
 	if err := rows.Err(); err != nil {
-		metrics.RecordClickHouseQuery(duration, err)
+		metrics.RecordClickHouseQuery("db", duration, err)
 		return workflow.QueryResult{SQL: sql, Error: err.Error()}, nil
 	}
 
-	metrics.RecordClickHouseQuery(duration, nil)
+	metrics.RecordClickHouseQuery("db", duration, nil)
 
 	// Sanitize rows to replace NaN/Inf values with nil (JSON-safe)
 	workflow.SanitizeRows(resultRows)
@@ -139,7 +140,7 @@ type DBSchemaFetcher struct {
 
 // NewDBSchemaFetcher creates a new DBSchemaFetcher.
 func (a *API) NewDBSchemaFetcher() *DBSchemaFetcher {
-	return &DBSchemaFetcher{db: a.DB, database: a.Database}
+	return &DBSchemaFetcher{db: a.PublicQueryDB, database: a.Database}
 }
 
 // FetchSchema retrieves table columns and view definitions from ClickHouse.
@@ -170,11 +171,11 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 	`, f.database)
 	duration := time.Since(start)
 	if err != nil {
-		metrics.RecordClickHouseQuery(duration, err)
+		metrics.RecordClickHouseQuery("db", duration, err)
 		return "", fmt.Errorf("failed to fetch columns: %w", err)
 	}
 	defer rows.Close()
-	metrics.RecordClickHouseQuery(duration, nil)
+	metrics.RecordClickHouseQuery("db", duration, nil)
 
 	type columnInfo struct {
 		Table string
@@ -190,12 +191,10 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 		columns = append(columns, c)
 	}
 
-	// Fetch view definitions from mainnet database
+	// Fetch view names to label them in the output
 	start = time.Now()
 	viewRows, err := f.db.Query(ctx, `
-		SELECT
-			name,
-			as_select
+		SELECT name
 		FROM system.tables
 		WHERE database = $1
 		  AND engine = 'View'
@@ -204,20 +203,19 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 	`, f.database)
 	duration = time.Since(start)
 	if err != nil {
-		metrics.RecordClickHouseQuery(duration, err)
+		metrics.RecordClickHouseQuery("db", duration, err)
 		return "", fmt.Errorf("failed to fetch views: %w", err)
 	}
 	defer viewRows.Close()
-	metrics.RecordClickHouseQuery(duration, nil)
+	metrics.RecordClickHouseQuery("db", duration, nil)
 
-	// Build view definitions map
-	viewDefs := make(map[string]string)
+	views := make(map[string]bool)
 	for viewRows.Next() {
-		var name, asSelect string
-		if err := viewRows.Scan(&name, &asSelect); err != nil {
+		var name string
+		if err := viewRows.Scan(&name); err != nil {
 			return "", err
 		}
-		viewDefs[name] = asSelect
+		views[name] = true
 	}
 
 	// Format schema as readable text
@@ -226,22 +224,16 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 	for _, col := range columns {
 		if col.Table != currentTable {
 			if currentTable != "" {
-				if def, ok := viewDefs[currentTable]; ok {
-					sb.WriteString("  Definition: " + def + "\n")
-				}
 				sb.WriteString("\n")
 			}
 			currentTable = col.Table
-			if _, isView := viewDefs[col.Table]; isView {
+			if views[col.Table] {
 				sb.WriteString(col.Table + " (VIEW):\n")
 			} else {
 				sb.WriteString(col.Table + ":\n")
 			}
 		}
-		sb.WriteString("  - " + col.Name + " (" + col.Type + ")\n")
-	}
-	if def, ok := viewDefs[currentTable]; ok {
-		sb.WriteString("  Definition: " + def + "\n")
+		sb.WriteString("  - " + col.Name + " (" + compactType(col.Type) + ")\n")
 	}
 
 	result := sb.String()
@@ -253,4 +245,20 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 	schemaCacheMu.Unlock()
 
 	return result, nil
+}
+
+// compactType simplifies ClickHouse type names for readability.
+// e.g. "Nullable(String)" → "String", "LowCardinality(Nullable(String))" → "String",
+// "DateTime64(3)" → "DateTime64", "Array(Nullable(UInt64))" → "Array(UInt64)"
+var reTypeWrapper = regexp.MustCompile(`(?:Nullable|LowCardinality)\(([^()]*(?:\([^()]*\))?[^()]*)\)`)
+
+func compactType(t string) string {
+	// Strip Nullable and LowCardinality wrappers (may be nested)
+	for reTypeWrapper.MatchString(t) {
+		t = reTypeWrapper.ReplaceAllString(t, "$1")
+	}
+	// Remove precision from DateTime64(N)
+	t = strings.Replace(t, "DateTime64(3)", "DateTime64", 1)
+	t = strings.Replace(t, "DateTime64(9)", "DateTime64", 1)
+	return t
 }

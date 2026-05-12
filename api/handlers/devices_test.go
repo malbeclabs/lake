@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/malbeclabs/lake/api/handlers"
@@ -44,14 +45,15 @@ func insertDevicesTestData(t *testing.T, api *handlers.API) {
 	`)
 	require.NoError(t, err)
 
-	// Insert users
+	// Insert users: 2 unicast (ibrl) + 1 multicast on dev-1, 1 pending unicast (not counted), 1 unicast on dev-3
 	err = api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_users_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, status, device_pk, kind, owner_pubkey, client_ip, dz_ip, tunnel_id) VALUES
-		('user-1', now(), now(), generateUUIDv4(), 0, 1, 'user-1', 'activated', 'dev-1', 'validator', 'pubkey1', '192.168.1.1', '192.168.1.1', 0),
-		('user-2', now(), now(), generateUUIDv4(), 0, 2, 'user-2', 'activated', 'dev-1', 'validator', 'pubkey2', '192.168.1.2', '192.168.1.2', 0),
-		('user-3', now(), now(), generateUUIDv4(), 0, 3, 'user-3', 'pending', 'dev-1', 'validator', 'pubkey3', '192.168.1.3', '192.168.1.3', 0),
-		('user-4', now(), now(), generateUUIDv4(), 0, 4, 'user-4', 'activated', 'dev-3', 'validator', 'pubkey4', '192.168.2.1', '192.168.2.1', 0)
+		('user-1', now(), now(), generateUUIDv4(), 0, 1, 'user-1', 'activated', 'dev-1', 'ibrl', 'pubkey1', '192.168.1.1', '192.168.1.1', 0),
+		('user-2', now(), now(), generateUUIDv4(), 0, 2, 'user-2', 'activated', 'dev-1', 'ibrl', 'pubkey2', '192.168.1.2', '192.168.1.2', 0),
+		('user-3', now(), now(), generateUUIDv4(), 0, 3, 'user-3', 'pending',   'dev-1', 'ibrl', 'pubkey3', '192.168.1.3', '192.168.1.3', 0),
+		('user-5', now(), now(), generateUUIDv4(), 0, 5, 'user-5', 'activated', 'dev-1', 'multicast', 'pubkey5', '192.168.1.5', '192.168.1.5', 0),
+		('user-4', now(), now(), generateUUIDv4(), 0, 4, 'user-4', 'activated', 'dev-3', 'ibrl', 'pubkey4', '192.168.2.1', '192.168.2.1', 0)
 	`)
 	require.NoError(t, err)
 }
@@ -147,7 +149,9 @@ func TestGetDevices_IncludesUserCounts(t *testing.T) {
 		}
 	}
 	require.NotNil(t, nycDevice)
-	assert.Equal(t, uint64(2), nycDevice.CurrentUsers) // Only activated users
+	assert.Equal(t, uint64(3), nycDevice.CurrentUsers)   // 2 unicast + 1 multicast activated
+	assert.Equal(t, uint64(2), nycDevice.UnicastUsers)   // Only ibrl activated
+	assert.Equal(t, uint64(1), nycDevice.MulticastUsers) // Only multicast activated
 }
 
 func TestGetDevices_Pagination(t *testing.T) {
@@ -189,7 +193,7 @@ func TestGetDevices_OrderedByCode(t *testing.T) {
 
 	insertDevicesTestData(t, api)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices?sort_by=code&sort_dir=asc", nil)
 	rr := httptest.NewRecorder()
 	api.GetDevices(rr, req)
 
@@ -199,7 +203,7 @@ func TestGetDevices_OrderedByCode(t *testing.T) {
 	err := json.NewDecoder(rr.Body).Decode(&response)
 	require.NoError(t, err)
 
-	// Verify sorted by code
+	// Verify sorted by code ascending
 	assert.Equal(t, "LAX-CORE-01", response.Items[0].Code)
 	assert.Equal(t, "NYC-CORE-01", response.Items[1].Code)
 	assert.Equal(t, "NYC-EDGE-01", response.Items[2].Code)
@@ -266,7 +270,9 @@ func TestGetDevice_ReturnsDetails(t *testing.T) {
 	assert.Equal(t, "New York", device.MetroName)
 	assert.Equal(t, "CONTRIB1", device.ContributorCode)
 	assert.Equal(t, int32(100), device.MaxUsers)
-	assert.Equal(t, uint64(2), device.CurrentUsers) // Only activated users
+	assert.Equal(t, uint64(3), device.CurrentUsers)   // 2 unicast + 1 multicast activated
+	assert.Equal(t, uint64(2), device.UnicastUsers)   // Only ibrl activated
+	assert.Equal(t, uint64(1), device.MulticastUsers) // Only multicast activated
 }
 
 func TestGetDevice_IncludesContributorInfo(t *testing.T) {
@@ -291,6 +297,66 @@ func TestGetDevice_IncludesContributorInfo(t *testing.T) {
 
 	assert.Equal(t, "contrib-1", device.ContributorPK)
 	assert.Equal(t, "CONTRIB1", device.ContributorCode)
+}
+
+func TestGetDevice_IncludesTrafficRates(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertDevicesTestData(t, api)
+
+	// Seed device-level interface rollup (link_pk = '' means device-level traffic, not a link interface)
+	now := time.Now()
+	seedInterfaceRollup(t, api, now.Add(-5*time.Minute), "dev-1", "eth0", "", "", 0, 0, 1000.0, "up")
+	seedInterfaceRollup(t, api, now.Add(-5*time.Minute), "dev-1", "eth1", "", "", 0, 0, 3000.0, "up")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices/dev-1", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("pk", "dev-1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rr := httptest.NewRecorder()
+	api.GetDevice(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var device handlers.DeviceDetail
+	err := json.NewDecoder(rr.Body).Decode(&device)
+	require.NoError(t, err)
+
+	// avg(avg_in_bps) over two interfaces: (1000 + 3000) / 2 = 2000
+	assert.InDelta(t, 2000.0, device.InBps, 1.0)
+	// avg_out_bps = avg_in_bps * 0.5, so (500 + 1500) / 2 = 1000
+	assert.InDelta(t, 1000.0, device.OutBps, 1.0)
+	// max(max_in_bps): max_in_bps = avg_in_bps * 2.0, so max(2000, 6000) = 6000
+	assert.InDelta(t, 6000.0, device.PeakInBps, 1.0)
+}
+
+func TestGetDevice_TrafficIsolatedByDevice(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertDevicesTestData(t, api)
+
+	// Seed rollup for two different devices with very different rates
+	now := time.Now()
+	seedInterfaceRollup(t, api, now.Add(-5*time.Minute), "dev-1", "eth0", "", "", 0, 0, 1000.0, "up")
+	seedInterfaceRollup(t, api, now.Add(-5*time.Minute), "dev-2", "eth0", "", "", 0, 0, 9000.0, "up")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices/dev-1", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("pk", "dev-1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rr := httptest.NewRecorder()
+	api.GetDevice(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var device handlers.DeviceDetail
+	err := json.NewDecoder(rr.Body).Decode(&device)
+	require.NoError(t, err)
+
+	// Should see dev-1's rate (1000), not dev-2's (9000) or an average of both (5000)
+	assert.InDelta(t, 1000.0, device.InBps, 1.0)
 }
 
 func TestGetDevice_HandlesNullContributor(t *testing.T) {

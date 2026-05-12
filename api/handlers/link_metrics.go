@@ -18,24 +18,27 @@ import (
 
 // LinkMetricsResponse is the top-level response for GET /api/link-metrics/{pk}.
 type LinkMetricsResponse struct {
-	LinkPK            string               `json:"link_pk"`
-	LinkCode          string               `json:"link_code"`
-	LinkType          string               `json:"link_type"`
-	ContributorCode   string               `json:"contributor_code"`
-	SideAMetro        string               `json:"side_a_metro"`
-	SideZMetro        string               `json:"side_z_metro"`
-	SideADevice       string               `json:"side_a_device"`
-	SideZDevice       string               `json:"side_z_device"`
-	SideAIfaceName    string               `json:"side_a_iface_name"`
-	SideZIfaceName    string               `json:"side_z_iface_name"`
-	CommittedRttUs    float64              `json:"committed_rtt_us"`
-	CommittedJitterUs float64              `json:"committed_jitter_us"`
-	BandwidthBps      int64                `json:"bandwidth_bps"`
-	TimeRange         string               `json:"time_range"`
-	BucketSeconds     int                  `json:"bucket_seconds"`
-	BucketCount       int                  `json:"bucket_count"`
-	Buckets           []LinkMetricsBucket  `json:"buckets"`
-	StatusChanges     []EntityStatusChange `json:"status_changes,omitempty"`
+	LinkPK               string               `json:"link_pk"`
+	LinkCode             string               `json:"link_code"`
+	LinkType             string               `json:"link_type"`
+	ContributorCode      string               `json:"contributor_code"`
+	ContributorPK        string               `json:"contributor_pk"`
+	SideZContributorCode string               `json:"side_z_contributor_code"`
+	SideAMetro           string               `json:"side_a_metro"`
+	SideZMetro           string               `json:"side_z_metro"`
+	SideADevice          string               `json:"side_a_device"`
+	SideZDevice          string               `json:"side_z_device"`
+	SideAIfaceName       string               `json:"side_a_iface_name"`
+	SideZIfaceName       string               `json:"side_z_iface_name"`
+	CommittedRttUs       float64              `json:"committed_rtt_us"`
+	CommittedJitterUs    float64              `json:"committed_jitter_us"`
+	BandwidthBps         int64                `json:"bandwidth_bps"`
+	CurrentDrainStatus   string               `json:"current_drain_status"`
+	TimeRange            string               `json:"time_range"`
+	BucketSeconds        int                  `json:"bucket_seconds"`
+	BucketCount          int                  `json:"bucket_count"`
+	Buckets              []LinkMetricsBucket  `json:"buckets"`
+	StatusChanges        []EntityStatusChange `json:"status_changes,omitempty"`
 }
 
 // LinkMetricsBucket holds all metric categories for a single time bucket.
@@ -96,20 +99,52 @@ type LinkMetricsLatency struct {
 // LinkMetricsTraffic holds per-side throughput and interface counters plus utilization.
 type LinkMetricsTraffic struct {
 	SideAInBps              float64 `json:"side_a_in_bps"`
-	SideAOutBps             float64 `json:"side_a_out_bps"`
-	SideZInBps              float64 `json:"side_z_in_bps"`
-	SideZOutBps             float64 `json:"side_z_out_bps"`
+	SideAP50InBps           float64 `json:"side_a_p50_in_bps"`
+	SideAP90InBps           float64 `json:"side_a_p90_in_bps"`
+	SideAP95InBps           float64 `json:"side_a_p95_in_bps"`
+	SideAP99InBps           float64 `json:"side_a_p99_in_bps"`
 	SideAMaxInBps           float64 `json:"side_a_max_in_bps"`
+	SideAOutBps             float64 `json:"side_a_out_bps"`
+	SideAP50OutBps          float64 `json:"side_a_p50_out_bps"`
+	SideAP90OutBps          float64 `json:"side_a_p90_out_bps"`
+	SideAP95OutBps          float64 `json:"side_a_p95_out_bps"`
+	SideAP99OutBps          float64 `json:"side_a_p99_out_bps"`
 	SideAMaxOutBps          float64 `json:"side_a_max_out_bps"`
+	SideZInBps              float64 `json:"side_z_in_bps"`
+	SideZP50InBps           float64 `json:"side_z_p50_in_bps"`
+	SideZP90InBps           float64 `json:"side_z_p90_in_bps"`
+	SideZP95InBps           float64 `json:"side_z_p95_in_bps"`
+	SideZP99InBps           float64 `json:"side_z_p99_in_bps"`
 	SideZMaxInBps           float64 `json:"side_z_max_in_bps"`
+	SideZOutBps             float64 `json:"side_z_out_bps"`
+	SideZP50OutBps          float64 `json:"side_z_p50_out_bps"`
+	SideZP90OutBps          float64 `json:"side_z_p90_out_bps"`
+	SideZP95OutBps          float64 `json:"side_z_p95_out_bps"`
+	SideZP99OutBps          float64 `json:"side_z_p99_out_bps"`
 	SideZMaxOutBps          float64 `json:"side_z_max_out_bps"`
 	SideAInPps              float64 `json:"side_a_in_pps"`
-	SideAOutPps             float64 `json:"side_a_out_pps"`
-	SideZInPps              float64 `json:"side_z_in_pps"`
-	SideZOutPps             float64 `json:"side_z_out_pps"`
+	SideAP50InPps           float64 `json:"side_a_p50_in_pps"`
+	SideAP90InPps           float64 `json:"side_a_p90_in_pps"`
+	SideAP95InPps           float64 `json:"side_a_p95_in_pps"`
+	SideAP99InPps           float64 `json:"side_a_p99_in_pps"`
 	SideAMaxInPps           float64 `json:"side_a_max_in_pps"`
+	SideAOutPps             float64 `json:"side_a_out_pps"`
+	SideAP50OutPps          float64 `json:"side_a_p50_out_pps"`
+	SideAP90OutPps          float64 `json:"side_a_p90_out_pps"`
+	SideAP95OutPps          float64 `json:"side_a_p95_out_pps"`
+	SideAP99OutPps          float64 `json:"side_a_p99_out_pps"`
 	SideAMaxOutPps          float64 `json:"side_a_max_out_pps"`
+	SideZInPps              float64 `json:"side_z_in_pps"`
+	SideZP50InPps           float64 `json:"side_z_p50_in_pps"`
+	SideZP90InPps           float64 `json:"side_z_p90_in_pps"`
+	SideZP95InPps           float64 `json:"side_z_p95_in_pps"`
+	SideZP99InPps           float64 `json:"side_z_p99_in_pps"`
 	SideZMaxInPps           float64 `json:"side_z_max_in_pps"`
+	SideZOutPps             float64 `json:"side_z_out_pps"`
+	SideZP50OutPps          float64 `json:"side_z_p50_out_pps"`
+	SideZP90OutPps          float64 `json:"side_z_p90_out_pps"`
+	SideZP95OutPps          float64 `json:"side_z_p95_out_pps"`
+	SideZP99OutPps          float64 `json:"side_z_p99_out_pps"`
 	SideZMaxOutPps          float64 `json:"side_z_max_out_pps"`
 	SideAInErrors           uint64  `json:"side_a_in_errors"`
 	SideAOutErrors          uint64  `json:"side_a_out_errors"`
@@ -272,7 +307,7 @@ func (a *API) GetLinkMetrics(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := a.fetchLinkMetrics(ctx, linkPK, params, include)
 	if err != nil {
-		slog.Error("error fetching link metrics", "error", err, "link_pk", linkPK)
+		logError("error fetching link metrics", "error", err, "link_pk", linkPK)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -481,25 +516,33 @@ func (a *API) fetchLinkMetrics(ctx context.Context, linkPK string, params bucket
 		bucketSecs = params.BucketMinutes * 60
 	}
 
+	currentDrainStatus := ""
+	if health.IsDrainedStatus(meta.Status) {
+		currentDrainStatus = meta.Status
+	}
+
 	return &LinkMetricsResponse{
-		LinkPK:            meta.PK,
-		LinkCode:          meta.Code,
-		LinkType:          meta.LinkType,
-		ContributorCode:   meta.Contributor,
-		SideAMetro:        meta.SideAMetro,
-		SideZMetro:        meta.SideZMetro,
-		SideADevice:       meta.SideADevice,
-		SideZDevice:       meta.SideZDevice,
-		SideAIfaceName:    meta.SideAIfaceName,
-		SideZIfaceName:    meta.SideZIfaceName,
-		CommittedRttUs:    committedRtt,
-		CommittedJitterUs: meta.CommittedJitterUs,
-		BandwidthBps:      meta.BandwidthBps,
-		TimeRange:         params.TimeRange,
-		BucketSeconds:     bucketSecs,
-		BucketCount:       params.BucketCount,
-		Buckets:           buckets,
-		StatusChanges:     statusChanges,
+		LinkPK:               meta.PK,
+		LinkCode:             meta.Code,
+		LinkType:             meta.LinkType,
+		ContributorCode:      meta.Contributor,
+		ContributorPK:        meta.ContributorPK,
+		SideZContributorCode: meta.SideZContributor,
+		SideAMetro:           meta.SideAMetro,
+		SideZMetro:           meta.SideZMetro,
+		SideADevice:          meta.SideADevice,
+		SideZDevice:          meta.SideZDevice,
+		SideAIfaceName:       meta.SideAIfaceName,
+		SideZIfaceName:       meta.SideZIfaceName,
+		CommittedRttUs:       committedRtt,
+		CommittedJitterUs:    meta.CommittedJitterUs,
+		BandwidthBps:         meta.BandwidthBps,
+		CurrentDrainStatus:   currentDrainStatus,
+		TimeRange:            params.TimeRange,
+		BucketSeconds:        bucketSecs,
+		BucketCount:          params.BucketCount,
+		Buckets:              buckets,
+		StatusChanges:        statusChanges,
 	}, nil
 }
 
@@ -561,13 +604,11 @@ func buildLinkMetricsStatus(
 	statusStr := health.ClassifyLinkStatus(avgLatency, lossPct, committedRtt)
 
 	// One-sided reporting — one side sends probes, the other doesn't.
-	// Don't upgrade to unhealthy; transient one-sided is common at bucket
-	// boundaries. Keep whatever status the latency/loss classification gave.
-	if drainStatus != "hard-drained" && (rollup.ASamples == 0) != (rollup.ZSamples == 0) {
-		if isCollecting {
-			statusStr = "no_data"
-		}
-	}
+	// Don't upgrade to unhealthy or no_data; transient one-sided is common at
+	// bucket boundaries (especially the collecting bucket, where one reporter
+	// may simply be a few seconds behind the other). Keep whatever status the
+	// latency/loss classification gave; the "One-sided reporting" reason
+	// below preserves the signal for tooltips and details.
 
 	// Upgrade status based on interface issues (same thresholds as status_rollup_handlers)
 	const interfaceUnhealthyThreshold = uint64(100)
@@ -665,12 +706,28 @@ func buildLinkMetricsTraffic(
 	t := &LinkMetricsTraffic{}
 	if hasA {
 		t.SideAInBps = a.AvgInBps
-		t.SideAOutBps = a.AvgOutBps
+		t.SideAP50InBps = a.P50InBps
+		t.SideAP90InBps = a.P90InBps
+		t.SideAP95InBps = a.P95InBps
+		t.SideAP99InBps = a.P99InBps
 		t.SideAMaxInBps = a.MaxInBps
+		t.SideAOutBps = a.AvgOutBps
+		t.SideAP50OutBps = a.P50OutBps
+		t.SideAP90OutBps = a.P90OutBps
+		t.SideAP95OutBps = a.P95OutBps
+		t.SideAP99OutBps = a.P99OutBps
 		t.SideAMaxOutBps = a.MaxOutBps
 		t.SideAInPps = a.AvgInPps
-		t.SideAOutPps = a.AvgOutPps
+		t.SideAP50InPps = a.P50InPps
+		t.SideAP90InPps = a.P90InPps
+		t.SideAP95InPps = a.P95InPps
+		t.SideAP99InPps = a.P99InPps
 		t.SideAMaxInPps = a.MaxInPps
+		t.SideAOutPps = a.AvgOutPps
+		t.SideAP50OutPps = a.P50OutPps
+		t.SideAP90OutPps = a.P90OutPps
+		t.SideAP95OutPps = a.P95OutPps
+		t.SideAP99OutPps = a.P99OutPps
 		t.SideAMaxOutPps = a.MaxOutPps
 		t.SideAInErrors = a.InErrors
 		t.SideAOutErrors = a.OutErrors
@@ -681,12 +738,28 @@ func buildLinkMetricsTraffic(
 	}
 	if hasZ {
 		t.SideZInBps = z.AvgInBps
-		t.SideZOutBps = z.AvgOutBps
+		t.SideZP50InBps = z.P50InBps
+		t.SideZP90InBps = z.P90InBps
+		t.SideZP95InBps = z.P95InBps
+		t.SideZP99InBps = z.P99InBps
 		t.SideZMaxInBps = z.MaxInBps
+		t.SideZOutBps = z.AvgOutBps
+		t.SideZP50OutBps = z.P50OutBps
+		t.SideZP90OutBps = z.P90OutBps
+		t.SideZP95OutBps = z.P95OutBps
+		t.SideZP99OutBps = z.P99OutBps
 		t.SideZMaxOutBps = z.MaxOutBps
 		t.SideZInPps = z.AvgInPps
-		t.SideZOutPps = z.AvgOutPps
+		t.SideZP50InPps = z.P50InPps
+		t.SideZP90InPps = z.P90InPps
+		t.SideZP95InPps = z.P95InPps
+		t.SideZP99InPps = z.P99InPps
 		t.SideZMaxInPps = z.MaxInPps
+		t.SideZOutPps = z.AvgOutPps
+		t.SideZP50OutPps = z.P50OutPps
+		t.SideZP90OutPps = z.P90OutPps
+		t.SideZP95OutPps = z.P95OutPps
+		t.SideZP99OutPps = z.P99OutPps
 		t.SideZMaxOutPps = z.MaxOutPps
 		t.SideZInErrors = z.InErrors
 		t.SideZOutErrors = z.OutErrors
@@ -765,14 +838,17 @@ func (a *API) GetBulkLinkMetrics(w http.ResponseWriter, r *http.Request) {
 	params = parseBucketParamsCustom(startTime, now, 24)
 	params.TimeRange = timeRange
 
-	resp, err := a.fetchBulkLinkMetrics(ctx, params, include)
+	issuesOnly := q.Get("has_issues") == "true"
+	resp, err := a.fetchBulkLinkMetrics(ctx, params, include, issuesOnly)
 	if err != nil {
-		slog.Error("error fetching bulk link metrics", "error", err)
+		logError("error fetching bulk link metrics", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	if q.Get("has_issues") == "true" {
+	// Final safety filter: the first-pass is intentionally over-inclusive,
+	// so apply the exact Go-level filter to remove any false positives.
+	if issuesOnly {
 		filterBulkLinkMetricsIssuesOnly(resp)
 	}
 
@@ -781,28 +857,50 @@ func (a *API) GetBulkLinkMetrics(w http.ResponseWriter, r *http.Request) {
 
 // filterBulkLinkMetricsIssuesOnly removes links that have no issues from the response.
 // Keeps links with non-healthy buckets, or that are currently drained/provisioning.
+// Links whose only issue is no_data (e.g., a transient rollup gap) are excluded
+// unless they also have degraded/unhealthy buckets — matching the frontend's default filter.
 func filterBulkLinkMetricsIssuesOnly(resp *BulkLinkMetricsResponse) {
 	for pk, link := range resp.Links {
-		keep := false
+		hasRealIssue := false
+		hasNoData := false
 		for _, b := range link.Buckets {
 			if b.Status == nil {
 				continue
 			}
 			if b.Status.DrainStatus != "" || b.Status.Provisioning {
-				keep = true
+				hasRealIssue = true
 				break
 			}
 			if b.Status.ISISDown {
-				keep = true
+				hasRealIssue = true
 				break
 			}
 			if !b.Status.Collecting && b.Status.Health != "healthy" && b.Status.Health != "" {
-				keep = true
-				break
+				if b.Status.Health == "no_data" {
+					hasNoData = true
+				} else {
+					hasRealIssue = true
+					break
+				}
 			}
 		}
-		if !keep {
+		if !hasRealIssue && !hasNoData {
 			delete(resp.Links, pk)
+			continue
+		}
+		// Links with only no_data: keep only if they also have degraded/unhealthy buckets
+		if !hasRealIssue && hasNoData {
+			hasSevere := false
+			for _, b := range link.Buckets {
+				if b.Status != nil && !b.Status.Collecting &&
+					(b.Status.Health == "unhealthy" || b.Status.Health == "degraded") {
+					hasSevere = true
+					break
+				}
+			}
+			if !hasSevere {
+				delete(resp.Links, pk)
+			}
 		}
 	}
 }
@@ -815,10 +913,12 @@ func (a *API) FetchBulkLinkMetricsData(ctx context.Context) (*BulkLinkMetricsRes
 	params := parseBucketParamsCustom(startTime, now, 24)
 	params.TimeRange = "24h"
 	include := parseLinkMetricsInclude("status,traffic")
-	return a.fetchBulkLinkMetrics(ctx, params, include)
+	return a.fetchBulkLinkMetrics(ctx, params, include, false)
 }
 
 // FetchBulkLinkMetricsIssuesData is the page cache variant that only includes links with issues.
+// It reuses FetchBulkLinkMetricsData (which fetches all links in a single pass) and post-filters,
+// since the page cache worker amortizes the cost and both cache entries share the same query work.
 func (a *API) FetchBulkLinkMetricsIssuesData(ctx context.Context) (*BulkLinkMetricsResponse, error) {
 	resp, err := a.FetchBulkLinkMetricsData(ctx)
 	if err != nil {
@@ -828,8 +928,68 @@ func (a *API) FetchBulkLinkMetricsIssuesData(ctx context.Context) (*BulkLinkMetr
 	return resp, nil
 }
 
-// fetchBulkLinkMetrics runs parallel queries for ALL links and assembles the bulk response.
-func (a *API) fetchBulkLinkMetrics(ctx context.Context, params bucketParams, include linkMetricsInclude) (*BulkLinkMetricsResponse, error) {
+// determineIssueLinkPKs identifies which links likely have issues based on
+// lightweight first-pass data. Intentionally over-inclusive (false positives OK)
+// to avoid missing any true issue links. The caller applies the exact Go-level
+// filter afterward.
+func determineIssueLinkPKs(
+	metaMap map[string]*statusLinkMeta,
+	rollupSummary map[string]*linkRollupSummary,
+	intfIssuePKs map[string]bool,
+	currentISISDown map[string]bool,
+	params bucketParams,
+) map[string]bool {
+	result := make(map[string]bool)
+
+	for pk, meta := range metaMap {
+		// Drained or provisioning links always count as having issues.
+		if health.IsDrainedStatus(meta.Status) || meta.CommittedRttNs == committedRttProvisioningNs {
+			result[pk] = true
+			continue
+		}
+
+		// Current ISIS down.
+		if currentISISDown[pk] {
+			result[pk] = true
+			continue
+		}
+
+		summary, inRollup := rollupSummary[pk]
+
+		// Any issue indicator from the rollup.
+		if inRollup && (summary.AnyISISDown || summary.AnyDrained) {
+			result[pk] = true
+			continue
+		}
+		if inRollup && (summary.MaxALossPct > 0 || summary.MaxZLossPct > 0) {
+			result[pk] = true
+			continue
+		}
+
+		// Latency overage check (over-inclusive: skips inter-metro WAN filter).
+		if inRollup {
+			committedRttUs := meta.CommittedRttUs
+			if committedRttUs > 0 {
+				if summary.MaxAAvgRttUs > committedRttUs*1.2 || summary.MaxZAvgRttUs > committedRttUs*1.2 {
+					result[pk] = true
+					continue
+				}
+			}
+		}
+	}
+
+	// Interface errors/discards/carrier transitions.
+	for pk := range intfIssuePKs {
+		result[pk] = true
+	}
+
+	return result
+}
+
+// fetchBulkLinkMetrics runs parallel queries and assembles the bulk response.
+// When issuesOnly is true, it runs a lightweight first pass to identify links
+// with issues, then fetches detailed data only for those links.
+func (a *API) fetchBulkLinkMetrics(ctx context.Context, params bucketParams, include linkMetricsInclude, issuesOnly bool) (*BulkLinkMetricsResponse, error) {
 	db := a.envDB(ctx)
 
 	var bucketDuration time.Duration
@@ -850,32 +1010,44 @@ func (a *API) fetchBulkLinkMetrics(ctx context.Context, params bucketParams, inc
 		currentISISDown map[string]bool
 	)
 
-	g, gctx := errgroup.WithContext(ctx)
+	// When issuesOnly, run lightweight first-pass queries to identify which
+	// links have issues, then run the expensive rollup queries only for those.
+	var issuePKSet map[string]bool
+	if issuesOnly {
+		var (
+			rollupSummary  map[string]*linkRollupSummary
+			intfIssuePKSet map[string]bool
+		)
 
-	// Fetch all link metadata (no PK filter)
-	g.Go(func() error {
-		var err error
-		metaMap, err = queryStatusLinkMeta(gctx, db)
-		if err != nil {
-			return fmt.Errorf("bulk link metadata: %w", err)
-		}
-		return nil
-	})
+		g, gctx := errgroup.WithContext(ctx)
 
-	// Latency/status rollup for all links (no PK filter)
-	if include.Latency || include.Status {
 		g.Go(func() error {
 			var err error
-			linkRollupMap, err = queryLinkRollup(gctx, db, params)
+			metaMap, err = queryStatusLinkMeta(gctx, db)
 			if err != nil {
-				return fmt.Errorf("bulk link rollup: %w", err)
+				return fmt.Errorf("bulk link metadata: %w", err)
 			}
 			return nil
 		})
-	}
 
-	// Real-time ISIS adjacency state for collecting bucket
-	if include.Status {
+		g.Go(func() error {
+			var err error
+			rollupSummary, err = queryLinkRollupSummary(gctx, db, params)
+			if err != nil {
+				return fmt.Errorf("link rollup summary: %w", err)
+			}
+			return nil
+		})
+
+		g.Go(func() error {
+			var err error
+			intfIssuePKSet, err = queryInterfaceIssueLinkPKs(gctx, db, params)
+			if err != nil {
+				return fmt.Errorf("interface issue link PKs: %w", err)
+			}
+			return nil
+		})
+
 		g.Go(func() error {
 			var err error
 			currentISISDown, err = queryCurrentISISDown(gctx, db)
@@ -885,24 +1057,115 @@ func (a *API) fetchBulkLinkMetrics(ctx context.Context, params bucketParams, inc
 			}
 			return nil
 		})
-	}
 
-	// Traffic (interface rollup) for all links (no PK filter)
-	if include.Traffic {
+		if err := g.Wait(); err != nil {
+			return nil, err
+		}
+
+		// Determine which links have issues.
+		issuePKSet = determineIssueLinkPKs(metaMap, rollupSummary, intfIssuePKSet, currentISISDown, params)
+
+		if len(issuePKSet) == 0 {
+			bucketSecs := params.BucketSeconds
+			if bucketSecs == 0 {
+				bucketSecs = params.BucketMinutes * 60
+			}
+			return &BulkLinkMetricsResponse{
+				TimeRange:     params.TimeRange,
+				BucketSeconds: bucketSecs,
+				BucketCount:   params.BucketCount,
+				Links:         make(map[string]*LinkMetricsResponse),
+			}, nil
+		}
+
+		issuePKSlice := make([]string, 0, len(issuePKSet))
+		for pk := range issuePKSet {
+			issuePKSlice = append(issuePKSlice, pk)
+		}
+
+		// Phase 2: run full rollup queries filtered to issue links only.
+		g2, gctx2 := errgroup.WithContext(ctx)
+
+		if include.Latency || include.Status {
+			g2.Go(func() error {
+				var err error
+				linkRollupMap, err = queryLinkRollup(gctx2, db, params, issuePKSlice...)
+				if err != nil {
+					return fmt.Errorf("bulk link rollup: %w", err)
+				}
+				return nil
+			})
+		}
+
+		if include.Traffic {
+			g2.Go(func() error {
+				var err error
+				intfRows, err = queryInterfaceRollup(gctx2, db, params, interfaceRollupOpts{
+					GroupBy: groupByLinkSide,
+					LinkPKs: issuePKSlice,
+				})
+				if err != nil {
+					return fmt.Errorf("bulk interface rollup: %w", err)
+				}
+				return nil
+			})
+		}
+
+		if err := g2.Wait(); err != nil {
+			return nil, err
+		}
+	} else {
+		// Original path: fetch everything for all links.
+		g, gctx := errgroup.WithContext(ctx)
+
 		g.Go(func() error {
 			var err error
-			intfRows, err = queryInterfaceRollup(gctx, db, params, interfaceRollupOpts{
-				GroupBy: groupByLinkSide,
-			})
+			metaMap, err = queryStatusLinkMeta(gctx, db)
 			if err != nil {
-				return fmt.Errorf("bulk interface rollup: %w", err)
+				return fmt.Errorf("bulk link metadata: %w", err)
 			}
 			return nil
 		})
-	}
 
-	if err := g.Wait(); err != nil {
-		return nil, err
+		if include.Latency || include.Status {
+			g.Go(func() error {
+				var err error
+				linkRollupMap, err = queryLinkRollup(gctx, db, params)
+				if err != nil {
+					return fmt.Errorf("bulk link rollup: %w", err)
+				}
+				return nil
+			})
+		}
+
+		if include.Status {
+			g.Go(func() error {
+				var err error
+				currentISISDown, err = queryCurrentISISDown(gctx, db)
+				if err != nil {
+					slog.Warn("failed to query current ISIS state for bulk", "error", err)
+					currentISISDown = nil
+				}
+				return nil
+			})
+		}
+
+		if include.Traffic {
+			g.Go(func() error {
+				var err error
+				intfRows, err = queryInterfaceRollup(gctx, db, params, interfaceRollupOpts{
+					GroupBy: groupByLinkSide,
+				})
+				if err != nil {
+					return fmt.Errorf("bulk interface rollup: %w", err)
+				}
+				return nil
+			})
+		}
+
+		if err := g.Wait(); err != nil {
+			return nil, err
+		}
 	}
 
 	// Index interface rows by (link_pk, bucket, side)
@@ -921,9 +1184,17 @@ func (a *API) fetchBulkLinkMetrics(ctx context.Context, params bucketParams, inc
 		bucketSecs = params.BucketMinutes * 60
 	}
 
-	// Build per-link responses
-	links := make(map[string]*LinkMetricsResponse, len(metaMap))
+	// Build per-link responses. When issuesOnly, only assemble links in the
+	// issue set; other links were not fetched in the rollup queries.
+	linkCount := len(metaMap)
+	if len(issuePKSet) > 0 {
+		linkCount = len(issuePKSet)
+	}
+	links := make(map[string]*LinkMetricsResponse, linkCount)
 	for linkPK, meta := range metaMap {
+		if len(issuePKSet) > 0 && !issuePKSet[linkPK] {
+			continue
+		}
 		committedRtt := meta.CommittedRttUs
 
 		// For health classification, only consider latency on inter-metro WAN links
@@ -1011,24 +1282,32 @@ func (a *API) fetchBulkLinkMetrics(ctx context.Context, params bucketParams, inc
 			buckets = append(buckets, bucket)
 		}
 
+		currentDrainStatus := ""
+		if health.IsDrainedStatus(meta.Status) {
+			currentDrainStatus = meta.Status
+		}
+
 		links[linkPK] = &LinkMetricsResponse{
-			LinkPK:            meta.PK,
-			LinkCode:          meta.Code,
-			LinkType:          meta.LinkType,
-			ContributorCode:   meta.Contributor,
-			SideAMetro:        meta.SideAMetro,
-			SideZMetro:        meta.SideZMetro,
-			SideADevice:       meta.SideADevice,
-			SideZDevice:       meta.SideZDevice,
-			SideAIfaceName:    meta.SideAIfaceName,
-			SideZIfaceName:    meta.SideZIfaceName,
-			CommittedRttUs:    committedRtt,
-			CommittedJitterUs: meta.CommittedJitterUs,
-			BandwidthBps:      meta.BandwidthBps,
-			TimeRange:         params.TimeRange,
-			BucketSeconds:     bucketSecs,
-			BucketCount:       params.BucketCount,
-			Buckets:           buckets,
+			LinkPK:               meta.PK,
+			LinkCode:             meta.Code,
+			LinkType:             meta.LinkType,
+			ContributorCode:      meta.Contributor,
+			ContributorPK:        meta.ContributorPK,
+			SideZContributorCode: meta.SideZContributor,
+			SideAMetro:           meta.SideAMetro,
+			SideZMetro:           meta.SideZMetro,
+			SideADevice:          meta.SideADevice,
+			SideZDevice:          meta.SideZDevice,
+			SideAIfaceName:       meta.SideAIfaceName,
+			SideZIfaceName:       meta.SideZIfaceName,
+			CommittedRttUs:       committedRtt,
+			CommittedJitterUs:    meta.CommittedJitterUs,
+			BandwidthBps:         meta.BandwidthBps,
+			CurrentDrainStatus:   currentDrainStatus,
+			TimeRange:            params.TimeRange,
+			BucketSeconds:        bucketSecs,
+			BucketCount:          params.BucketCount,
+			Buckets:              buckets,
 		}
 	}
 

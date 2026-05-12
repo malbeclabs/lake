@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useLocation, Link, useNavigate } from 'react-router-dom'
 import { useEnv } from '@/contexts/EnvContext'
+import { useAuth } from '@/contexts/AuthContext'
 import {
   PanelLeftClose,
   PanelLeftOpen,
@@ -20,23 +21,24 @@ import {
   Map,
   Network,
   Shield,
-  ShieldCheck,
   Wrench,
   ShieldAlert,
   Gauge,
   BarChart3,
   Zap,
+  Trophy,
   Sun,
   Moon,
   Layers,
   BookOpen,
   ArrowRightLeft,
   Puzzle,
+  Warehouse,
+  KeyRound,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/use-theme'
 import { useVersionCheck } from '@/hooks/use-version-check'
-import { useAuth } from '@/contexts/AuthContext'
 import { UserPopover } from './auth/UserPopover'
 
 export function Sidebar() {
@@ -44,10 +46,11 @@ export function Sidebar() {
   const navigate = useNavigate()
   const { features } = useEnv()
   const { user } = useAuth()
+  const shredsDefaultPath = '/dz/shreds/scoreboard'
   const hasNeo4j = features.neo4j !== false
   const hasSolana = features.solana !== false
-  const isInternalUser = !!user?.is_internal_user
-  const { resolvedTheme, setTheme } = useTheme()
+  const showGeoloc = user?.is_internal_user === true
+const { resolvedTheme, setTheme } = useTheme()
   const { updateAvailable, reload } = useVersionCheck()
 
   // Route detection
@@ -84,20 +87,32 @@ export function Sidebar() {
   const isDevicesRoute = location.pathname.startsWith('/dz/devices')
   const isLinksRoute = location.pathname.startsWith('/dz/links')
   const isMetrosRoute = location.pathname.startsWith('/dz/metros')
+  const isFacilitiesRoute = location.pathname.startsWith('/dz/facilities')
   const isContributorsRoute = location.pathname.startsWith('/dz/contributors')
   const isTenantsRoute = location.pathname.startsWith('/dz/tenants')
   const isUsersRoute = location.pathname.startsWith('/dz/users')
   const isMulticastGroupsRoute = location.pathname.startsWith('/dz/multicast-groups')
-  const isShredsRoute = location.pathname.startsWith('/dz/shreds')
+  const isAccessPassesRoute = location.pathname.startsWith('/dz/access-passes')
+  const isScoreboardRoute = location.pathname === '/dz/shreds/scoreboard'
+  const isShredsPublishersRoute = location.pathname === '/dz/shreds/publishers' || location.pathname === '/dz/publisher-check'
   const isShredsSeatsRoute = location.pathname === '/dz/shreds/subscribers'
   const isShredsDevicesRoute = location.pathname === '/dz/shreds/devices'
   const isShredsEscrowEventsRoute = location.pathname === '/dz/shreds/activity'
-  const isPublisherCheckRoute = location.pathname === '/dz/publisher-check'
-  const isScoreboardRoute = location.pathname === '/dz/shreds/scoreboard'
+  const isShredsEconomicsRoute = location.pathname === '/dz/shreds/economics'
   const isShredsPayRoute = location.pathname === '/dz/shreds/pay'
+  const isShredsRoute = location.pathname.startsWith('/dz/shreds') || isShredsPublishersRoute
+  const isEdgeRoute = isShredsRoute
+  const isGeolocRoute = location.pathname.startsWith('/dz/geoloc/')
+  const isGeolocProbesRoute = location.pathname.startsWith('/dz/geoloc/probes')
+  const isGeolocUsersRoute = location.pathname.startsWith('/dz/geoloc/users')
+  const isGeolocExplorerRoute = location.pathname === '/dz/geoloc/explorer'
   const isValidatorsRoute = location.pathname.startsWith('/solana/validators')
   const isGossipNodesRoute = location.pathname.startsWith('/solana/gossip-nodes')
   const isSolanaOverviewRoute = location.pathname === '/solana/overview'
+
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth < 1024,
+  )
 
   const [isCollapsed, setIsCollapsed] = useState(() => {
     const userPref = localStorage.getItem('sidebar-user-collapsed')
@@ -122,6 +137,7 @@ export function Sidebar() {
   useEffect(() => {
     const checkWidth = () => {
       const isSmall = window.innerWidth < 1024
+      setIsMobile(isSmall)
       if (isSmall) {
         setIsCollapsed(true)
       } else if (userCollapsed === null) {
@@ -134,14 +150,23 @@ export function Sidebar() {
     return () => window.removeEventListener('resize', checkWidth)
   }, [userCollapsed])
 
+  // Auto-collapse on route change on mobile
+  useEffect(() => {
+    if (isMobile) {
+      setIsCollapsed(true)
+    }
+  }, [location.pathname]) // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     localStorage.setItem('sidebar-collapsed', String(isCollapsed))
   }, [isCollapsed])
 
   const handleSetCollapsed = (collapsed: boolean) => {
     setIsCollapsed(collapsed)
-    setUserCollapsed(collapsed)
-    localStorage.setItem('sidebar-user-collapsed', String(collapsed))
+    if (!isMobile) {
+      setUserCollapsed(collapsed)
+      localStorage.setItem('sidebar-user-collapsed', String(collapsed))
+    }
   }
 
   // Active state classes for nav items
@@ -177,7 +202,15 @@ export function Sidebar() {
   // ─── Collapsed sidebar ───────────────────────────────────────────────
   if (isCollapsed) {
     return (
-      <div className="w-12 border-r bg-[var(--sidebar)] flex flex-col items-center relative z-10">
+      <>
+        {isMobile && <div className="w-12 shrink-0" />}
+        <div
+          className={
+            isMobile
+              ? 'fixed inset-y-0 left-0 z-50 w-12 border-r bg-(--sidebar) flex flex-col items-center'
+              : 'w-12 border-r bg-(--sidebar) flex flex-col items-center relative z-10'
+          }
+        >
         {/* Logo icon - matches expanded header height */}
         <div className="w-full h-12 flex items-center justify-center border-b border-border/50 shrink-0">
           <button
@@ -235,9 +268,17 @@ export function Sidebar() {
           <div className="w-6 border-t border-border/50 my-2" />
 
           {/* Entity sections */}
-          <Link to="/dz/devices" className={collapsedIconClass(isDZRoute)} title="DoubleZero">
+          <Link to={shredsDefaultPath} className={collapsedIconClass(isEdgeRoute)} title="Edge">
+            <Trophy className="h-4 w-4" />
+          </Link>
+          <Link to="/dz/devices" className={collapsedIconClass(isDZRoute && !isEdgeRoute)} title="DoubleZero">
             <Server className="h-4 w-4" />
           </Link>
+          {showGeoloc && (
+            <Link to="/dz/geoloc/probes" className={collapsedIconClass(isGeolocRoute)} title="Geolocation">
+              <MapPin className="h-4 w-4" />
+            </Link>
+          )}
           {hasSolana && (
             <Link to="/solana/validators" className={collapsedIconClass(isSolanaRoute)} title="Solana">
               <Landmark className="h-4 w-4" />
@@ -273,12 +314,24 @@ export function Sidebar() {
           </button>
         </div>
       </div>
+      </>
     )
   }
 
   // ─── Expanded sidebar ────────────────────────────────────────────────
   return (
-    <div className="w-64 border-r bg-[var(--sidebar)] flex flex-col relative z-10">
+    <>
+      {isMobile && <div className="w-12 shrink-0" />}
+      {isMobile && (
+        <div className="fixed inset-0 z-40 bg-black/50" onClick={() => handleSetCollapsed(true)} />
+      )}
+      <div
+        className={
+          isMobile
+            ? 'fixed inset-y-0 left-0 z-50 w-64 border-r bg-(--sidebar) flex flex-col'
+            : 'w-64 border-r bg-(--sidebar) flex flex-col relative z-10'
+        }
+      >
       {/* Header with logo and collapse */}
       <div className="px-3 h-12 flex items-center justify-between border-b border-border/50 shrink-0">
         <Link
@@ -449,6 +502,44 @@ export function Sidebar() {
           </div>
         </div>
 
+        {/* Edge section */}
+        <div className="px-3 pt-4">
+          <div className="px-3 mb-2">
+            <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Edge</span>
+          </div>
+          <div className="space-y-1">
+            <Link to={shredsDefaultPath} className={isShredsRoute ? navItemExpandedClass : navItemClass(false)}>
+              <Puzzle className="h-4 w-4" />
+              Shreds
+            </Link>
+            {isShredsRoute && (
+              <>
+                <Link to="/dz/shreds/scoreboard" className={subNavItemClass(isScoreboardRoute)}>
+                  Scoreboard
+                </Link>
+                <Link to="/dz/shreds/publishers" className={subNavItemClass(isShredsPublishersRoute)}>
+                  Publishers
+                </Link>
+                <Link to="/dz/shreds/subscribers" className={subNavItemClass(isShredsSeatsRoute)}>
+                  Subscribers
+                </Link>
+                <Link to="/dz/shreds/devices" className={subNavItemClass(isShredsDevicesRoute)}>
+                  Devices
+                </Link>
+                <Link to="/dz/shreds/activity" className={subNavItemClass(isShredsEscrowEventsRoute)}>
+                  Activity
+                </Link>
+                <Link to="/dz/shreds/economics" className={subNavItemClass(isShredsEconomicsRoute)}>
+                  Economics
+                </Link>
+                <Link to="/dz/shreds/pay" className={subNavItemClass(isShredsPayRoute)}>
+                  Subscribe to Edge Shreds
+                </Link>
+              </>
+            )}
+          </div>
+        </div>
+
         {/* DoubleZero section - always visible */}
         <div className="px-3 pt-4">
           <div className="px-3 mb-2">
@@ -467,6 +558,10 @@ export function Sidebar() {
               <MapPin className="h-4 w-4" />
               Metros
             </Link>
+            <Link to="/dz/facilities" className={navItemClass(isFacilitiesRoute)}>
+              <Warehouse className="h-4 w-4" />
+              Facilities
+            </Link>
             <Link to="/dz/contributors" className={navItemClass(isContributorsRoute)}>
               <Building2 className="h-4 w-4" />
               Contributors
@@ -483,37 +578,35 @@ export function Sidebar() {
               <Radio className="h-4 w-4" />
               Multicast
             </Link>
-            <Link to="/dz/publisher-check" className={navItemClass(isPublisherCheckRoute)}>
-              <ShieldCheck className="h-4 w-4" />
-              Publisher Check
+            <Link to="/dz/access-passes" className={navItemClass(isAccessPassesRoute)}>
+              <KeyRound className="h-4 w-4" />
+              Access Passes
             </Link>
-            <Link to="/dz/shreds/subscribers" className={isShredsRoute ? navItemExpandedClass : navItemClass(false)}>
-              <Puzzle className="h-4 w-4" />
-              Shreds
-            </Link>
-            {isShredsRoute && (
-              <>
-                <Link to="/dz/shreds/subscribers" className={subNavItemClass(isShredsSeatsRoute)}>
-                  Subscribers
-                </Link>
-                <Link to="/dz/shreds/devices" className={subNavItemClass(isShredsDevicesRoute)}>
-                  Devices
-                </Link>
-                <Link to="/dz/shreds/activity" className={subNavItemClass(isShredsEscrowEventsRoute)}>
-                  Activity
-                </Link>
-                <Link to="/dz/shreds/pay" className={subNavItemClass(isShredsPayRoute)}>
-                  Subscribe to Edge Shreds
-                </Link>
-                {isInternalUser && (
-                  <Link to="/dz/shreds/scoreboard" className={subNavItemClass(isScoreboardRoute)}>
-                    Scoreboard
-                  </Link>
-                )}
-              </>
-            )}
           </div>
         </div>
+
+        {/* Geolocation section - internal users only */}
+        {showGeoloc && (
+          <div className="px-3 pt-4">
+            <div className="px-3 mb-2">
+              <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Geolocation</span>
+            </div>
+            <div className="space-y-1">
+              <Link to="/dz/geoloc/explorer" className={navItemClass(isGeolocExplorerRoute)}>
+                <Map className="h-4 w-4" />
+                Explorer
+              </Link>
+              <Link to="/dz/geoloc/probes" className={navItemClass(isGeolocProbesRoute)}>
+                <MapPin className="h-4 w-4" />
+                Probes
+              </Link>
+              <Link to="/dz/geoloc/users" className={navItemClass(isGeolocUsersRoute)}>
+                <Users className="h-4 w-4" />
+                Users
+              </Link>
+            </div>
+          </div>
+        )}
 
         {/* Solana section - always visible when feature-gated */}
         {hasSolana && (
@@ -583,5 +676,6 @@ export function Sidebar() {
         </div>
       </div>
     </div>
+    </>
   )
 }

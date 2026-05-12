@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState, useCallback, useEffect } from 'react'
+import { SmallDropdown } from '@/components/topology/TimeRangeSelector'
 import uPlot from 'uplot'
 import { Loader2 } from 'lucide-react'
 import { useTheme } from '@/hooks/use-theme'
@@ -7,6 +8,8 @@ import { useUPlotChart } from '@/hooks/use-uplot-chart'
 import { useUPlotLegendSync } from '@/hooks/use-uplot-legend-sync'
 import { formatHoveredTime } from '@/components/topology/utils'
 import type { DeviceMetricsResponse, DeviceInterfaceTraffic } from '@/lib/api'
+import { TicketChartBands } from '@/components/ops/TicketChartBands'
+import type { OpsTicket } from '@/lib/ops-api'
 
 interface DeviceTrafficChartProps {
   data: DeviceMetricsResponse
@@ -14,11 +17,23 @@ interface DeviceTrafficChartProps {
   loading?: boolean
   highlightTimeRange?: { start: number; end: number } | null
   onCursorTime?: (time: number | null) => void
+  tickets?: OpsTicket[]
+  showIncidents?: boolean
+  showMaintenance?: boolean
 }
 
-type AggMode = 'avg' | 'peak'
+type AggMode = 'avg' | 'p50' | 'p90' | 'p95' | 'p99' | 'max'
 
-const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316']
+const COLORS = [
+  '#3b82f6',
+  '#10b981',
+  '#f59e0b',
+  '#ef4444',
+  '#8b5cf6',
+  '#ec4899',
+  '#06b6d4',
+  '#f97316',
+]
 
 function formatBps(value: number): string {
   const abs = Math.abs(value)
@@ -65,42 +80,76 @@ interface CategoryChartProps {
   /** Interface type metadata for badges */
   interfaceTypes?: Map<string, { cyoa_type?: string; link_pk?: string }>
   aggMode: AggMode
+  bidirectional: boolean
   loading?: boolean
   className?: string
   bucketSeconds: number
   highlightTimeRange?: { start: number; end: number } | null
   onCursorTime?: (time: number | null) => void
+  tickets?: OpsTicket[]
+  showIncidents?: boolean
+  showMaintenance?: boolean
 }
 
-function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interfaceLabels, interfaceTypes, aggMode, loading, className, bucketSeconds, highlightTimeRange, onCursorTime }: CategoryChartProps) {
+function CategoryChart({
+  title,
+  interfaces,
+  bucketTimestamps,
+  dataMap,
+  interfaceLabels,
+  interfaceTypes,
+  aggMode,
+  bidirectional,
+  loading,
+  className,
+  bucketSeconds,
+  highlightTimeRange,
+  onCursorTime,
+  tickets,
+  showIncidents,
+  showMaintenance,
+}: CategoryChartProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
   const chartRef = useRef<HTMLDivElement>(null)
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const uPlotDataRef = useRef<uPlot.AlignedData>([[]])
-  const handleCursorIdx = useCallback((idx: number | null) => {
-    setHoveredIdx(idx)
-    if (onCursorTime) {
-      const ts = idx != null ? (uPlotDataRef.current[0] as number[])?.[idx] ?? null : null
-      onCursorTime(ts)
-    }
-  }, [onCursorTime])
+  const handleCursorIdx = useCallback(
+    (idx: number | null) => {
+      setHoveredIdx(idx)
+      if (onCursorTime) {
+        const ts = idx != null ? ((uPlotDataRef.current[0] as number[])?.[idx] ?? null) : null
+        onCursorTime(ts)
+      }
+    },
+    [onCursorTime],
+  )
 
   const legend = useChartLegend()
 
-  const scales = useMemo((): uPlot.Scales => ({
-    x: { time: true },
-    y: { auto: true },
-  }), [])
+  const scales = useMemo(
+    (): uPlot.Scales => ({
+      x: { time: true },
+      y: { auto: true },
+    }),
+    [],
+  )
 
-  const axes = useMemo((): uPlot.Axis[] => [
-    {},
-    { values: (_u: uPlot, vals: number[]) => vals.map((v) => formatBpsAxis(v)) },
-  ], [])
+  const axes = useMemo(
+    (): uPlot.Axis[] => [
+      {},
+      { values: (_u: uPlot, vals: number[]) => vals.map((v) => formatBpsAxis(v)) },
+    ],
+    [],
+  )
 
   const { uPlotData, uPlotSeries, seriesKeys } = useMemo(() => {
     if (bucketTimestamps.length === 0 || interfaces.length === 0) {
-      return { uPlotData: [[]] as uPlot.AlignedData, uPlotSeries: [] as uPlot.Series[], seriesKeys: [] as string[] }
+      return {
+        uPlotData: [[]] as uPlot.AlignedData,
+        uPlotSeries: [] as uPlot.Series[],
+        seriesKeys: [] as string[],
+      }
     }
 
     const arrays: (number | null)[][] = [bucketTimestamps as unknown as (number | null)[]]
@@ -117,10 +166,14 @@ function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interface
         const key = `${intf}:${ts}`
         const d = dataMap.get(key)
         if (d) {
-          const inVal = aggMode === 'peak' ? d.max_in_bps : d.in_bps
-          const outVal = aggMode === 'peak' ? d.max_out_bps : d.out_bps
+          const inKey =
+            aggMode === 'max' ? 'max_in_bps' : aggMode === 'avg' ? 'in_bps' : `${aggMode}_in_bps`
+          const outKey =
+            aggMode === 'max' ? 'max_out_bps' : aggMode === 'avg' ? 'out_bps' : `${aggMode}_out_bps`
+          const inVal = (d as unknown as Record<string, number>)[inKey]
+          const outVal = (d as unknown as Record<string, number>)[outKey]
           inVals.push(inVal || null)
-          outVals.push(outVal ? -outVal : null)
+          outVals.push(outVal ? (bidirectional ? -outVal : outVal) : null)
         } else {
           inVals.push(null)
           outVals.push(null)
@@ -130,12 +183,18 @@ function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interface
       arrays.push(inVals)
       arrays.push(outVals)
       series.push({ label: `${intf}:in`, stroke: color, width: 1.5, points: { show: false } })
-      series.push({ label: `${intf}:out`, stroke: color, width: 1.5, dash: [4, 2], points: { show: false } })
+      series.push({
+        label: `${intf}:out`,
+        stroke: color,
+        width: 1.5,
+        dash: [4, 2],
+        points: { show: false },
+      })
       keys.push(intf, intf) // both in/out map to same legend key
     }
 
     return { uPlotData: arrays as uPlot.AlignedData, uPlotSeries: series, seriesKeys: keys }
-  }, [bucketTimestamps, interfaces, dataMap, aggMode])
+  }, [bucketTimestamps, interfaces, dataMap, aggMode, bidirectional])
 
   uPlotDataRef.current = uPlotData
 
@@ -144,22 +203,27 @@ function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interface
   const isDarkRef = useRef(isDark)
   isDarkRef.current = isDark
 
-  const drawHooks = useMemo(() => [(u: uPlot) => {
-    const range = highlightTimeRangeRef.current
-    if (!range) return
-    const ctx = u.ctx
-    const left = u.valToPos(range.start, 'x', true)
-    const right = u.valToPos(range.end, 'x', true)
-    if (left == null || right == null) return
-    const top = u.bbox.top
-    const height = u.bbox.height
-    ctx.save()
-    ctx.fillStyle = isDarkRef.current ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'
-    ctx.fillRect(left, top, right - left, height)
-    ctx.restore()
-  }], [])
+  const drawHooks = useMemo(
+    () => [
+      (u: uPlot) => {
+        const range = highlightTimeRangeRef.current
+        if (!range) return
+        const ctx = u.ctx
+        const left = u.valToPos(range.start, 'x', true)
+        const right = u.valToPos(range.end, 'x', true)
+        if (left == null || right == null) return
+        const top = u.bbox.top
+        const height = u.bbox.height
+        ctx.save()
+        ctx.fillStyle = isDarkRef.current ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'
+        ctx.fillRect(left, top, right - left, height)
+        ctx.restore()
+      },
+    ],
+    [],
+  )
 
-  const { plotRef } = useUPlotChart({
+  const { plotRef, plotVersion } = useUPlotChart({
     containerRef: chartRef,
     data: uPlotData,
     series: uPlotSeries,
@@ -187,19 +251,21 @@ function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interface
     return new Set(interfaces)
   }, [legend.selectedSeries, interfaces])
 
-  const hoveredTime = useMemo(() =>
-    formatHoveredTime(uPlotData[0] as ArrayLike<number>, hoveredIdx, bucketSeconds < 60),
-    [uPlotData, hoveredIdx, bucketSeconds])
+  const hoveredTime = useMemo(
+    () => formatHoveredTime(uPlotData[0] as ArrayLike<number>, hoveredIdx, bucketSeconds < 60),
+    [uPlotData, hoveredIdx, bucketSeconds],
+  )
 
-  const hasAnyData = uPlotData[0].length > 0 && uPlotData.slice(1).some(
-    (s) => (s as (number | null)[]).some((v) => v != null))
+  const hasAnyData =
+    uPlotData[0].length > 0 &&
+    uPlotData.slice(1).some((s) => (s as (number | null)[]).some((v) => v != null))
 
   // Active interfaces: those with any non-null in or out data
   const activeInterfaces = useMemo(() => {
     return interfaces.filter((_, i) => {
       const inSeries = uPlotData[i * 2 + 1] as (number | null)[]
       const outSeries = uPlotData[i * 2 + 2] as (number | null)[]
-      return (inSeries?.some((v) => v != null) || outSeries?.some((v) => v != null))
+      return inSeries?.some((v) => v != null) || outSeries?.some((v) => v != null)
     })
   }, [interfaces, uPlotData])
 
@@ -209,7 +275,9 @@ function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interface
         <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider mb-1">
           <span>{title}</span>
         </div>
-        <div className="text-xs text-muted-foreground/60 pt-3 pb-6 text-center">No data for this time range</div>
+        <div className="text-xs text-muted-foreground/60 pt-3 pb-6 text-center">
+          No data for this time range
+        </div>
       </div>
     )
   }
@@ -227,13 +295,29 @@ function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interface
           <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
         )}
       </div>
-      <div ref={chartRef} className="h-36" />
+      <div className="relative overflow-hidden">
+        <div ref={chartRef} className="h-36" />
+        {tickets && tickets.length > 0 && (
+          <TicketChartBands
+            containerRef={chartRef}
+            plotRef={plotRef}
+            plotVersion={plotVersion}
+            tickets={tickets}
+            showIncidents={showIncidents ?? true}
+            showMaintenance={showMaintenance ?? true}
+          />
+        )}
+      </div>
       {/* Per-interface legend */}
       <div className="flex flex-col text-xs px-2 pt-1 pb-2">
         <div className="flex items-center px-1 mb-1">
           <span className="text-xs text-muted-foreground flex-1 min-w-0">Interface</span>
-          <span className="text-xs text-muted-foreground w-24 text-right whitespace-nowrap">Max</span>
-          <span className="text-xs text-muted-foreground w-24 text-right whitespace-nowrap">{hoveredTime ?? 'Value'}</span>
+          <span className="text-xs text-muted-foreground w-24 text-right whitespace-nowrap">
+            Max
+          </span>
+          <span className="text-xs text-muted-foreground w-24 text-right whitespace-nowrap">
+            {hoveredTime ?? 'Value'}
+          </span>
         </div>
         <div className="max-h-32 overflow-y-auto space-y-0.5">
           {activeInterfaces.map((intf) => {
@@ -242,16 +326,21 @@ function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interface
             const isVisible = visibleSeries.has(intf)
 
             // Current value (hovered or latest)
-            const idx = hoveredIdx != null && hoveredIdx < bucketTimestamps.length ? hoveredIdx : bucketTimestamps.length - 1
+            const idx =
+              hoveredIdx != null && hoveredIdx < bucketTimestamps.length
+                ? hoveredIdx
+                : bucketTimestamps.length - 1
             const inVal = (uPlotData[i * 2 + 1] as (number | null)[])?.[idx]
             const outVal = (uPlotData[i * 2 + 2] as (number | null)[])?.[idx]
 
             // Max value across range
-            let maxIn = 0, maxOut = 0
+            let maxIn = 0,
+              maxOut = 0
             const inS = uPlotData[i * 2 + 1] as (number | null)[]
             const outS = uPlotData[i * 2 + 2] as (number | null)[]
             if (inS) for (const v of inS) if (v != null && v > maxIn) maxIn = v
-            if (outS) for (const v of outS) if (v != null && Math.abs(v) > maxOut) maxOut = Math.abs(v)
+            if (outS)
+              for (const v of outS) if (v != null && Math.abs(v) > maxOut) maxOut = Math.abs(v)
 
             return (
               <div key={intf}>
@@ -262,22 +351,38 @@ function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interface
                   onMouseLeave={legend.handleMouseLeave}
                 >
                   <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                    <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: color }} />
-                    <span className="font-mono text-foreground truncate">{interfaceLabels?.get(intf) ?? intf} Rx</span>
+                    <span
+                      className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
+                      style={{ backgroundColor: color }}
+                    />
+                    <span className="font-mono text-foreground truncate">
+                      {interfaceLabels?.get(intf) ?? intf} Rx
+                    </span>
                     {(() => {
                       const t = interfaceTypes?.get(intf)
                       if (!t) return null
-                      return <>
-                        {t.cyoa_type && t.cyoa_type !== 'none' && t.cyoa_type !== '' && (
-                          <span className="px-1 py-0.5 rounded text-[9px] leading-none bg-amber-500/15 text-amber-400 flex-shrink-0">CYOA</span>
-                        )}
-                        {(!t.cyoa_type || t.cyoa_type === 'none' || t.cyoa_type === '') && t.link_pk && (
-                          <span className="px-1 py-0.5 rounded text-[9px] leading-none bg-blue-500/15 text-blue-400 flex-shrink-0">link</span>
-                        )}
-                        {(!t.cyoa_type || t.cyoa_type === 'none' || t.cyoa_type === '') && !t.link_pk && intf.startsWith('Loopback') && (
-                          <span className="px-1 py-0.5 rounded text-[9px] leading-none bg-purple-500/15 text-purple-400 flex-shrink-0">lo</span>
-                        )}
-                      </>
+                      return (
+                        <>
+                          {t.cyoa_type && t.cyoa_type !== 'none' && t.cyoa_type !== '' && (
+                            <span className="px-1 py-0.5 rounded text-[9px] leading-none bg-amber-500/15 text-amber-400 flex-shrink-0">
+                              CYOA
+                            </span>
+                          )}
+                          {(!t.cyoa_type || t.cyoa_type === 'none' || t.cyoa_type === '') &&
+                            t.link_pk && (
+                              <span className="px-1 py-0.5 rounded text-[9px] leading-none bg-blue-500/15 text-blue-400 flex-shrink-0">
+                                link
+                              </span>
+                            )}
+                          {(!t.cyoa_type || t.cyoa_type === 'none' || t.cyoa_type === '') &&
+                            !t.link_pk &&
+                            intf.startsWith('Loopback') && (
+                              <span className="px-1 py-0.5 rounded text-[9px] leading-none bg-purple-500/15 text-purple-400 flex-shrink-0">
+                                lo
+                              </span>
+                            )}
+                        </>
+                      )
                     })()}
                   </div>
                   <span className="text-muted-foreground font-mono tabular-nums whitespace-nowrap w-24 text-right">
@@ -295,9 +400,19 @@ function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interface
                 >
                   <div className="flex items-center gap-1.5 min-w-0 flex-1">
                     <svg className="w-2.5 h-2.5 flex-shrink-0" viewBox="0 0 10 10">
-                      <line x1="0" y1="5" x2="10" y2="5" stroke={color} strokeWidth="3" strokeDasharray="3 2" />
+                      <line
+                        x1="0"
+                        y1="5"
+                        x2="10"
+                        y2="5"
+                        stroke={color}
+                        strokeWidth="3"
+                        strokeDasharray="3 2"
+                      />
                     </svg>
-                    <span className="font-mono text-foreground truncate">{interfaceLabels?.get(intf) ?? intf} Tx</span>
+                    <span className="font-mono text-foreground truncate">
+                      {interfaceLabels?.get(intf) ?? intf} Tx
+                    </span>
                   </div>
                   <span className="text-muted-foreground font-mono tabular-nums whitespace-nowrap w-24 text-right">
                     {formatBps(maxOut)}
@@ -315,8 +430,18 @@ function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interface
   )
 }
 
-export function DeviceTrafficChart({ data, className, loading, highlightTimeRange, onCursorTime }: DeviceTrafficChartProps) {
+export function DeviceTrafficChart({
+  data,
+  className,
+  loading,
+  highlightTimeRange,
+  onCursorTime,
+  tickets,
+  showIncidents,
+  showMaintenance,
+}: DeviceTrafficChartProps) {
   const [aggMode, setAggMode] = useState<AggMode>('avg')
+  const [bidirectional, setBidirectional] = useState(true)
 
   // Collect all interface data across buckets, classify, and build lookup
   const { categories, bucketTimestamps, dataMap, interfaceLabels, interfaceTypes } = useMemo(() => {
@@ -362,7 +487,13 @@ export function DeviceTrafficChart({ data, className, loading, highlightTimeRang
         interfaces: Array.from(catIntfs[c]).sort(),
       }))
 
-    return { categories: cats, bucketTimestamps: timestamps, dataMap: map, interfaceLabels: labels, interfaceTypes: types }
+    return {
+      categories: cats,
+      bucketTimestamps: timestamps,
+      dataMap: map,
+      interfaceLabels: labels,
+      interfaceTypes: types,
+    }
   }, [data])
 
   if (categories.length === 0) {
@@ -371,29 +502,39 @@ export function DeviceTrafficChart({ data, className, loading, highlightTimeRang
         <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider mb-1">
           <span>Traffic</span>
         </div>
-        <div className="text-xs text-muted-foreground/60 pt-3 pb-6 text-center">No data for this time range</div>
+        <div className="text-xs text-muted-foreground/60 pt-3 pb-6 text-center">
+          No data for this time range
+        </div>
       </div>
     )
   }
 
   const filters = (
     <div className="flex items-center gap-1.5">
-      <select
+      <SmallDropdown
         value={aggMode}
-        onChange={e => setAggMode(e.target.value as AggMode)}
-        className="text-xs bg-transparent border border-border rounded px-1.5 py-0.5 text-foreground cursor-pointer"
+        options={[
+          { value: 'avg', label: 'Avg' },
+          { value: 'p50', label: 'P50' },
+          { value: 'p90', label: 'P90' },
+          { value: 'p95', label: 'P95' },
+          { value: 'p99', label: 'P99' },
+          { value: 'max', label: 'Max' },
+        ]}
+        onChange={(v) => setAggMode(v as AggMode)}
+      />
+      <button
+        onClick={() => setBidirectional(!bidirectional)}
+        className="text-[10px] text-muted-foreground hover:text-foreground border border-border rounded px-1.5 py-0.5 transition-colors"
       >
-        <option value="avg">Avg</option>
-        <option value="peak">Peak</option>
-      </select>
+        {bidirectional ? 'Rx / Tx' : 'Rx+Tx'}
+      </button>
     </div>
   )
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-end">
-        {filters}
-      </div>
+      <div className="flex items-center justify-end">{filters}</div>
       {categories.map((cat) => (
         <CategoryChart
           key={cat.key}
@@ -404,11 +545,15 @@ export function DeviceTrafficChart({ data, className, loading, highlightTimeRang
           interfaceLabels={interfaceLabels}
           interfaceTypes={interfaceTypes}
           aggMode={aggMode}
+          bidirectional={bidirectional}
           loading={loading}
           className={className}
           bucketSeconds={data.bucket_seconds}
           highlightTimeRange={highlightTimeRange}
           onCursorTime={onCursorTime}
+          tickets={tickets}
+          showIncidents={showIncidents}
+          showMaintenance={showMaintenance}
         />
       ))}
     </div>

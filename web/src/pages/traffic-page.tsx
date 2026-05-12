@@ -4,8 +4,16 @@ import { useSearchParams } from 'react-router-dom'
 import { ChevronDown, Network, Sigma } from 'lucide-react'
 import { fetchTrafficData, fetchTopology, type TrafficPoint, type SeriesInfo } from '@/lib/api'
 import { TrafficChart } from '@/components/traffic-chart-uplot'
-import { DashboardProvider, useDashboard, dashboardFilterParams, resolveAutoBucket } from '@/components/traffic-dashboard/dashboard-context'
-import { DashboardFilters, DashboardFilterBadges } from '@/components/traffic-dashboard/dashboard-filters'
+import {
+  DashboardProvider,
+  useDashboard,
+  dashboardFilterParams,
+  resolveAutoBucket,
+} from '@/components/traffic-dashboard/dashboard-context'
+import {
+  DashboardFilters,
+  DashboardFilterBadges,
+} from '@/components/traffic-dashboard/dashboard-filters'
 import { PageHeader } from '@/components/page-header'
 
 export interface LinkLookupInfo {
@@ -31,7 +39,7 @@ function LazyChart({ children, height = 600 }: { children: React.ReactNode; heig
           observer.disconnect()
         }
       },
-      { rootMargin: '100px' } // Start loading 100px before visible
+      { rootMargin: '100px' }, // Start loading 100px before visible
     )
 
     if (ref.current) {
@@ -43,9 +51,7 @@ function LazyChart({ children, height = 600 }: { children: React.ReactNode; heig
 
   return (
     <div ref={ref} style={{ minHeight: height }}>
-      {isVisible ? children : (
-        <div className="animate-pulse bg-muted rounded h-full" />
-      )}
+      {isVisible ? children : <div className="animate-pulse bg-muted rounded h-full" />}
     </div>
   )
 }
@@ -53,26 +59,49 @@ function LazyChart({ children, height = 600 }: { children: React.ReactNode; heig
 type AggMethod = 'max' | 'avg' | 'min' | 'p50' | 'p90' | 'p95' | 'p99'
 
 const aggLabels: Record<AggMethod, string> = {
-  'max': 'Max',
-  'p99': 'P99',
-  'p95': 'P95',
-  'p90': 'P90',
-  'p50': 'P50',
-  'avg': 'Average',
-  'min': 'Min',
+  max: 'Max',
+  p99: 'P99',
+  p95: 'P95',
+  p90: 'P90',
+  p50: 'P50',
+  avg: 'Average',
+  min: 'Min',
 }
 
-type ChartSection = 'tunnel-stacked' | 'tunnel' | 'link-stacked' | 'link' | 'cyoa-stacked' | 'cyoa' | 'other-stacked' | 'other' | 'discards'
+type ChartSection =
+  | 'tunnel-stacked'
+  | 'tunnel'
+  | 'link-stacked'
+  | 'link'
+  | 'cyoa-stacked'
+  | 'cyoa'
+  | 'other-stacked'
+  | 'other'
+  | 'discards'
 
-const ALL_KNOWN_SECTIONS: ChartSection[] = ['tunnel-stacked', 'tunnel', 'link-stacked', 'link', 'cyoa-stacked', 'cyoa', 'other-stacked', 'other', 'discards']
+const ALL_KNOWN_SECTIONS: ChartSection[] = [
+  'tunnel-stacked',
+  'tunnel',
+  'link-stacked',
+  'link',
+  'cyoa-stacked',
+  'cyoa',
+  'other-stacked',
+  'other',
+  'discards',
+]
 
 type IntfCategory = 'tunnel' | 'link' | 'cyoa' | 'other'
 
 const SECTION_CATEGORY: Partial<Record<ChartSection, IntfCategory>> = {
-  'tunnel-stacked': 'tunnel', 'tunnel': 'tunnel',
-  'link-stacked': 'link', 'link': 'link',
-  'cyoa-stacked': 'cyoa', 'cyoa': 'cyoa',
-  'other-stacked': 'other', 'other': 'other',
+  'tunnel-stacked': 'tunnel',
+  tunnel: 'tunnel',
+  'link-stacked': 'link',
+  link: 'link',
+  'cyoa-stacked': 'cyoa',
+  cyoa: 'cyoa',
+  'other-stacked': 'other',
+  other: 'other',
 }
 
 type Layout = '1x4' | '2x2'
@@ -81,8 +110,6 @@ const layoutLabels: Record<Layout, string> = {
   '1x4': '1',
   '2x2': '2',
 }
-
-
 
 function AggSelector({
   value,
@@ -129,13 +156,7 @@ function AggSelector({
   )
 }
 
-function LayoutSelector({
-  value,
-  onChange,
-}: {
-  value: Layout
-  onChange: (value: Layout) => void
-}) {
+function LayoutSelector({ value, onChange }: { value: Layout; onChange: (value: Layout) => void }) {
   const [isOpen, setIsOpen] = useState(false)
 
   return (
@@ -217,7 +238,10 @@ function aggregateTrafficData(
     const computed = {
       P50: { in: percentile(sortedIn, 50), out: percentile(sortedOut, 50) },
       P95: { in: percentile(sortedIn, 95), out: percentile(sortedOut, 95) },
-      Max: { in: sortedIn[sortedIn.length - 1] ?? 0, out: sortedOut[sortedOut.length - 1] ?? 0 },
+      Max: {
+        in: sortedIn[sortedIn.length - 1] ?? 0,
+        out: sortedOut[sortedOut.length - 1] ?? 0,
+      },
     }
 
     for (const stat of stats) {
@@ -228,13 +252,17 @@ function aggregateTrafficData(
         intf: '',
         in_bps: computed[stat].in,
         out_bps: computed[stat].out,
-        in_discards: 0, out_discards: 0, in_errors: 0, out_errors: 0,
-        in_fcs_errors: 0, carrier_transitions: 0,
+        in_discards: 0,
+        out_discards: 0,
+        in_errors: 0,
+        out_errors: 0,
+        in_fcs_errors: 0,
+        carrier_transitions: 0,
       })
     }
   }
 
-  const aggSeries: SeriesInfo[] = stats.flatMap(stat => [
+  const aggSeries: SeriesInfo[] = stats.flatMap((stat) => [
     { key: `${stat} (in)`, device: stat, intf: '', direction: 'in', mean: 0 },
     { key: `${stat} (out)`, device: stat, intf: '', direction: 'out', mean: 0 },
   ])
@@ -271,14 +299,24 @@ function aggregateTrafficDataTotal(
       intf: '',
       in_bps: inSum,
       out_bps: outSum,
-      in_discards: 0, out_discards: 0, in_errors: 0, out_errors: 0,
-      in_fcs_errors: 0, carrier_transitions: 0,
+      in_discards: 0,
+      out_discards: 0,
+      in_errors: 0,
+      out_errors: 0,
+      in_fcs_errors: 0,
+      carrier_transitions: 0,
     })
   }
 
   const aggSeries: SeriesInfo[] = [
     { key: 'Total (in)', device: 'Total', intf: '', direction: 'in', mean: 0 },
-    { key: 'Total (out)', device: 'Total', intf: '', direction: 'out', mean: 0 },
+    {
+      key: 'Total (out)',
+      device: 'Total',
+      intf: '',
+      direction: 'out',
+      mean: 0,
+    },
   ]
 
   return { points: aggPoints, series: aggSeries }
@@ -291,8 +329,15 @@ function TrafficPageContent() {
   const timeRangeSeconds = useMemo(() => {
     if (customStart && customEnd) return customEnd - customStart
     const map: Record<string, number> = {
-      '1h': 3600, '3h': 10800, '6h': 21600, '12h': 43200, '24h': 86400,
-      '3d': 259200, '7d': 604800, '14d': 1209600, '30d': 2592000,
+      '1h': 3600,
+      '3h': 10800,
+      '6h': 21600,
+      '12h': 43200,
+      '24h': 86400,
+      '3d': 259200,
+      '7d': 604800,
+      '14d': 1209600,
+      '30d': 2592000,
     }
     return map[timeRange] || 86400
   }, [timeRange, customStart, customEnd])
@@ -305,12 +350,19 @@ function TrafficPageContent() {
     return 'max'
   }, [searchParams])
 
-  const setAggMethod = useCallback((m: AggMethod) => {
-    setSearchParams(prev => {
-      if (m === 'max') { prev.delete('agg') } else { prev.set('agg', m) }
-      return prev
-    })
-  }, [setSearchParams])
+  const setAggMethod = useCallback(
+    (m: AggMethod) => {
+      setSearchParams((prev) => {
+        if (m === 'max') {
+          prev.delete('agg')
+        } else {
+          prev.set('agg', m)
+        }
+        return prev
+      })
+    },
+    [setSearchParams],
+  )
 
   // aggregate param: absent = auto, 'on' = force all on, 'off' = force all off
   const aggregateOverride = useMemo<boolean | null>(() => {
@@ -320,13 +372,19 @@ function TrafficPageContent() {
     return null
   }, [searchParams])
 
-  const setAggregateOverride = useCallback((v: boolean | null) => {
-    setSearchParams(prev => {
-      if (v === null) { prev.delete('aggregate') }
-      else { prev.set('aggregate', v ? 'on' : 'off') }
-      return prev
-    })
-  }, [setSearchParams])
+  const setAggregateOverride = useCallback(
+    (v: boolean | null) => {
+      setSearchParams((prev) => {
+        if (v === null) {
+          prev.delete('aggregate')
+        } else {
+          prev.set('aggregate', v ? 'on' : 'off')
+        }
+        return prev
+      })
+    },
+    [setSearchParams],
+  )
 
   const [aggregateProcessing, setAggregateProcessing] = useState(false)
 
@@ -366,7 +424,6 @@ function TrafficPageContent() {
     return dashboardState.bucket
   }, [dashboardState.bucket, timeRange])
 
-
   // Determine which chart categories to show based on intf type filter
   const showCategory: Record<IntfCategory, boolean> = {
     tunnel: intfType === 'all' || intfType === 'tunnel',
@@ -393,10 +450,17 @@ function TrafficPageContent() {
     error: trafficError,
   } = useQuery({
     queryKey: ['traffic-intf', timeRange, actualBucketSize, aggMethod, filterParams, metric],
-    queryFn: () => fetchTrafficData(timeRange, null, actualBucketSize, aggMethod, filterParams, metric),
+    queryFn: () =>
+      fetchTrafficData(timeRange, null, actualBucketSize, aggMethod, filterParams, metric),
     staleTime: 30000,
     refetchInterval: dashboardState.refetchInterval,
   })
+
+  const rangeEnd = useMemo(() => {
+    if (customEnd) return customEnd
+    return Math.floor(Date.now() / 1000)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customEnd, allTrafficData])
 
   // Build a lookup from series metadata to classify each device+intf pair
   const intfCategoryMap = useMemo(() => {
@@ -420,7 +484,12 @@ function TrafficPageContent() {
 
   // Per-category interface counts for auto-detect
   const categoryCounts = useMemo(() => {
-    const counts: Record<IntfCategory, number> = { tunnel: 0, link: 0, cyoa: 0, other: 0 }
+    const counts: Record<IntfCategory, number> = {
+      tunnel: 0,
+      link: 0,
+      cyoa: 0,
+      other: 0,
+    }
     for (const cat of intfCategoryMap.values()) {
       counts[cat]++
     }
@@ -431,37 +500,51 @@ function TrafficPageContent() {
   const totalCount = intfCategoryMap.size
   const prevTotalCount = useRef(totalCount)
   useEffect(() => {
-    if (prevTotalCount.current !== 0 && totalCount !== prevTotalCount.current && aggregateOverride !== null) {
+    if (
+      prevTotalCount.current !== 0 &&
+      totalCount !== prevTotalCount.current &&
+      aggregateOverride !== null
+    ) {
       setAggregateOverride(null)
     }
     prevTotalCount.current = totalCount
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalCount])
 
   // Resolve whether a given category should be aggregated
-  const shouldAggregate = useCallback((cat: IntfCategory): boolean => {
-    if (aggregateOverride !== null) return aggregateOverride
-    const count = intfType !== 'all' ? intfCategoryMap.size : categoryCounts[cat]
-    return count > 10
-  }, [aggregateOverride, intfType, intfCategoryMap.size, categoryCounts])
+  const shouldAggregate = useCallback(
+    (cat: IntfCategory): boolean => {
+      if (aggregateOverride !== null) return aggregateOverride
+      const count = intfType !== 'all' ? intfCategoryMap.size : categoryCounts[cat]
+      return count > 10
+    },
+    [aggregateOverride, intfType, intfCategoryMap.size, categoryCounts],
+  )
 
   // For the sigma button display: true = forced on, false = forced off, null = auto
-  const anyAutoAggregate = useMemo(() =>
-    Object.values(categoryCounts).some(c => c > 10),
-  [categoryCounts])
+  const anyAutoAggregate = useMemo(
+    () => Object.values(categoryCounts).some((c) => c > 10),
+    [categoryCounts],
+  )
 
   // Split data by interface category client-side
   const categoryData = useMemo(() => {
     if (!allTrafficData || intfType !== 'all') {
-      return { tunnel: allTrafficData, link: allTrafficData, cyoa: allTrafficData, other: allTrafficData }
+      return {
+        tunnel: allTrafficData,
+        link: allTrafficData,
+        cyoa: allTrafficData,
+        other: allTrafficData,
+      }
     }
     const filterByCategory = (cat: IntfCategory) => {
-      const match = (device: string, intf: string) => (intfCategoryMap.get(`${device}:${intf}`) ?? 'other') === cat
+      const match = (device: string, intf: string) =>
+        (intfCategoryMap.get(`${device}:${intf}`) ?? 'other') === cat
       return {
         ...allTrafficData,
-        points: allTrafficData.points.filter(p => match(p.device, p.intf)),
-        series: allTrafficData.series.filter(s => match(s.device, s.intf)),
-        discards_series: allTrafficData.discards_series.filter(s => match(s.device, s.intf)),
+        points: allTrafficData.points.filter((p) => match(p.device, p.intf)),
+        series: allTrafficData.series.filter((s) => match(s.device, s.intf)),
+        discards_series: allTrafficData.discards_series.filter((s) => match(s.device, s.intf)),
       }
     }
     return {
@@ -483,13 +566,25 @@ function TrafficPageContent() {
   const aggregatedCategoryData = useMemo(() => {
     const maybeAgg = (cat: IntfCategory) =>
       shouldAggregate(cat) ? aggHelper(categoryData[cat], aggregateTrafficData) : categoryData[cat]
-    return { tunnel: maybeAgg('tunnel'), link: maybeAgg('link'), cyoa: maybeAgg('cyoa'), other: maybeAgg('other') }
+    return {
+      tunnel: maybeAgg('tunnel'),
+      link: maybeAgg('link'),
+      cyoa: maybeAgg('cyoa'),
+      other: maybeAgg('other'),
+    }
   }, [categoryData, shouldAggregate, aggHelper])
 
   const aggregatedCategoryDataStacked = useMemo(() => {
     const maybeAgg = (cat: IntfCategory) =>
-      shouldAggregate(cat) ? aggHelper(categoryData[cat], aggregateTrafficDataTotal) : categoryData[cat]
-    return { tunnel: maybeAgg('tunnel'), link: maybeAgg('link'), cyoa: maybeAgg('cyoa'), other: maybeAgg('other') }
+      shouldAggregate(cat)
+        ? aggHelper(categoryData[cat], aggregateTrafficDataTotal)
+        : categoryData[cat]
+    return {
+      tunnel: maybeAgg('tunnel'),
+      link: maybeAgg('link'),
+      cyoa: maybeAgg('cyoa'),
+      other: maybeAgg('other'),
+    }
   }, [categoryData, shouldAggregate, aggHelper])
 
   // Keep processing indicator visible until the browser is idle (charts done painting)
@@ -506,9 +601,7 @@ function TrafficPageContent() {
   }, [aggregateProcessing])
 
   // Fetch topology data for link metadata
-  const {
-    data: topologyData,
-  } = useQuery({
+  const { data: topologyData } = useQuery({
     queryKey: ['topology'],
     queryFn: () => fetchTopology(),
     staleTime: 60000,
@@ -520,16 +613,30 @@ function TrafficPageContent() {
   const countersData = useMemo(() => {
     if (!allTrafficData) return null
     // Sum all counter types per interface to find which interfaces have any events
-    const intfTotals = new Map<string, { device: string; devicePk: string; intf: string; total: number }>()
+    const intfTotals = new Map<
+      string,
+      { device: string; devicePk: string; intf: string; total: number }
+    >()
     for (const p of allTrafficData.points) {
-      const total = p.in_discards + p.out_discards + p.in_errors + p.out_errors + p.in_fcs_errors + p.carrier_transitions
+      const total =
+        p.in_discards +
+        p.out_discards +
+        p.in_errors +
+        p.out_errors +
+        p.in_fcs_errors +
+        p.carrier_transitions
       if (total === 0) continue
       const key = `${p.device}-${p.intf}`
       const existing = intfTotals.get(key)
       if (existing) {
         existing.total += total
       } else {
-        intfTotals.set(key, { device: p.device, devicePk: p.device_pk, intf: p.intf, total })
+        intfTotals.set(key, {
+          device: p.device,
+          devicePk: p.device_pk,
+          intf: p.intf,
+          total,
+        })
       }
     }
     if (intfTotals.size === 0) return null
@@ -538,11 +645,17 @@ function TrafficPageContent() {
     // in = in_discards + in_errors + in_fcs_errors + carrier_transitions
     // out = out_discards + out_errors (negated for bidirectional)
     const points = allTrafficData.points
-      .filter(p => {
-        const total = p.in_discards + p.out_discards + p.in_errors + p.out_errors + p.in_fcs_errors + p.carrier_transitions
+      .filter((p) => {
+        const total =
+          p.in_discards +
+          p.out_discards +
+          p.in_errors +
+          p.out_errors +
+          p.in_fcs_errors +
+          p.carrier_transitions
         return total > 0
       })
-      .map(p => ({
+      .map((p) => ({
         ...p,
         in_bps: p.in_discards + p.in_errors + p.in_fcs_errors + p.carrier_transitions,
         out_bps: p.out_discards + p.out_errors,
@@ -552,7 +665,10 @@ function TrafficPageContent() {
     const seriesMeta = new Map<string, { link_pk?: string; cyoa_type?: string }>()
     for (const s of allTrafficData.series) {
       if (s.direction === 'in') {
-        seriesMeta.set(`${s.device}-${s.intf}`, { link_pk: s.link_pk, cyoa_type: s.cyoa_type })
+        seriesMeta.set(`${s.device}-${s.intf}`, {
+          link_pk: s.link_pk,
+          cyoa_type: s.cyoa_type,
+        })
       }
     }
 
@@ -561,8 +677,24 @@ function TrafficPageContent() {
     const series = sorted.flatMap(([, info]) => {
       const meta = seriesMeta.get(`${info.device}-${info.intf}`)
       return [
-        { key: `${info.device}-${info.intf} (in)`, device: info.device, intf: info.intf, direction: 'in' as const, mean: 0, link_pk: meta?.link_pk, cyoa_type: meta?.cyoa_type },
-        { key: `${info.device}-${info.intf} (out)`, device: info.device, intf: info.intf, direction: 'out' as const, mean: 0, link_pk: meta?.link_pk, cyoa_type: meta?.cyoa_type },
+        {
+          key: `${info.device}-${info.intf} (in)`,
+          device: info.device,
+          intf: info.intf,
+          direction: 'in' as const,
+          mean: 0,
+          link_pk: meta?.link_pk,
+          cyoa_type: meta?.cyoa_type,
+        },
+        {
+          key: `${info.device}-${info.intf} (out)`,
+          device: info.device,
+          intf: info.intf,
+          direction: 'out' as const,
+          mean: 0,
+          link_pk: meta?.link_pk,
+          cyoa_type: meta?.cyoa_type,
+        },
       ]
     })
 
@@ -611,8 +743,13 @@ function TrafficPageContent() {
     if (section === 'discards') {
       if (!countersData && !countersLoading) {
         return (
-          <div key={section} className="border border-border rounded-lg p-4 flex items-center justify-center h-[400px]">
-            <p className="text-sm text-muted-foreground">No errors or discards in the selected time range</p>
+          <div
+            key={section}
+            className="border border-border rounded-lg p-4 flex items-center justify-center h-[400px]"
+          >
+            <p className="text-sm text-muted-foreground">
+              No errors or discards in the selected time range
+            </p>
           </div>
         )
       }
@@ -628,6 +765,7 @@ function TrafficPageContent() {
               metric="counters"
               loading={countersFetching}
               timeRangeSeconds={timeRangeSeconds}
+              rangeEnd={rangeEnd}
             />
           </LazyChart>
         </div>
@@ -657,7 +795,7 @@ function TrafficPageContent() {
 
     // Count original interfaces for this category (in-direction series = one per interface)
     const rawSeries = categoryData[cat]?.series
-    const originalIntfCount = rawSeries ? rawSeries.filter(s => s.direction === 'in').length : 0
+    const originalIntfCount = rawSeries ? rawSeries.filter((s) => s.direction === 'in').length : 0
 
     return (
       <div key={section} className="border border-border rounded-lg p-4">
@@ -668,7 +806,9 @@ function TrafficPageContent() {
                 <h3 className="text-lg font-semibold">{title}</h3>
               </div>
               <div className="border border-border rounded-lg p-8 flex items-center justify-center h-[400px]">
-                <p className="text-muted-foreground">Error: {(error as Error).message || String(error)}</p>
+                <p className="text-muted-foreground">
+                  Error: {(error as Error).message || String(error)}
+                </p>
               </div>
             </div>
           ) : (
@@ -683,7 +823,10 @@ function TrafficPageContent() {
               metric={metric}
               loading={fetching}
               timeRangeSeconds={timeRangeSeconds}
-              legendHeader={catAggregated ? `Summary of ${originalIntfCount} interfaces` : undefined}
+              rangeEnd={rangeEnd}
+              legendHeader={
+                catAggregated ? `Summary of ${originalIntfCount} interfaces` : undefined
+              }
             />
           )}
         </LazyChart>
@@ -697,16 +840,11 @@ function TrafficPageContent() {
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Sticky header */}
       <div className="flex-none bg-background border-b border-border px-4 sm:px-8 pt-6 pb-4 z-10">
-        <div className="[&>div]:mb-0">
-          <PageHeader
-            icon={Network}
-            title="Interfaces"
-            actions={<DashboardFilters excludeMetrics={['utilization']} />}
-          />
-        </div>
-        <div className="flex items-center gap-3 mt-3">
-          <div className="flex items-center gap-3 flex-shrink-0 ml-auto">
-            <DashboardFilterBadges />
+        <PageHeader icon={Network} title="Interfaces" />
+        <div className="flex items-center gap-3 mt-3 w-full flex-wrap justify-between">
+          <DashboardFilters excludeMetrics={['utilization']} />
+          <DashboardFilterBadges />
+          <div className="flex items-center gap-3 flex-wrap">
             <button
               onClick={toggleAggregate}
               className={`px-2 border rounded-md transition-colors inline-flex items-center justify-center h-[34px] gap-1 ${
@@ -724,8 +862,12 @@ function TrafficPageContent() {
                     : 'Auto: charts with >10 interfaces are aggregated. Click to show all per-interface.'
               }
             >
-              <Sigma className={`h-4 w-4 transition-opacity ${aggregateProcessing ? 'opacity-30 animate-pulse' : ''}`} />
-              {aggregateOverride === null && <span className="text-[9px] leading-none opacity-60">A</span>}
+              <Sigma
+                className={`h-4 w-4 transition-opacity ${aggregateProcessing ? 'opacity-30 animate-pulse' : ''}`}
+              />
+              {aggregateOverride === null && (
+                <span className="text-[9px] leading-none opacity-60">A</span>
+              )}
             </button>
             <button
               onClick={() => setBidirectional(!bidirectional)}
@@ -734,7 +876,11 @@ function TrafficPageContent() {
                   ? 'border-foreground/30 text-foreground bg-muted'
                   : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
               }`}
-              title={bidirectional ? 'Rx and Tx are shown separately (Rx up, Tx down). Click to combine into a single line per interface.' : 'Rx and Tx are combined into a single line per interface. Click to split into separate Rx (up) and Tx (down).'}
+              title={
+                bidirectional
+                  ? 'Rx and Tx are shown separately (Rx up, Tx down). Click to combine into a single line per interface.'
+                  : 'Rx and Tx are combined into a single line per interface. Click to split into separate Rx (up) and Tx (down).'
+              }
             >
               {bidirectional ? 'Rx / Tx' : 'Rx+Tx'}
             </button>
@@ -749,13 +895,14 @@ function TrafficPageContent() {
         {/* Truncation warning */}
         {(allTrafficData?.truncated || allTrafficData?.truncated) && (
           <div className="mb-4 px-4 py-3 bg-yellow-500/10 border border-yellow-500/30 rounded-md text-sm text-yellow-700 dark:text-yellow-200">
-            Results were truncated due to data volume. Try a larger bucket size or shorter time range to see all data.
+            Results were truncated due to data volume. Try a larger bucket size or shorter time
+            range to see all data.
           </div>
         )}
 
         {/* Charts */}
         <div className={gridClass}>
-          {ALL_KNOWN_SECTIONS.map(section => renderChartSection(section))}
+          {ALL_KNOWN_SECTIONS.map((section) => renderChartSection(section))}
         </div>
       </div>
     </div>

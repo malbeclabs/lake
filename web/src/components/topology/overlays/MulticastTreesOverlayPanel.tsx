@@ -1,11 +1,25 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
-import { Radio, X, ChevronDown, ChevronRight, Settings2, User, Server, BarChart3, Info, Search, Loader2, RefreshCw } from 'lucide-react'
+import {
+  Radio,
+  X,
+  ChevronDown,
+  ChevronRight,
+  Settings2,
+  User,
+  Server,
+  BarChart3,
+  Info,
+  Search,
+  Loader2,
+  RefreshCw,
+} from 'lucide-react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import { useTopology } from '../TopologyContext'
 import { EntityLink } from '../EntityLink'
 import { formatBandwidth } from '../utils'
+import { SmallDropdown } from '../TimeRangeSelector'
 import {
   fetchMulticastGroups,
   fetchMulticastGroupTraffic,
@@ -18,24 +32,24 @@ import {
 // Colors for multicast publishers — exported so map/globe/graph views use the same palette
 // eslint-disable-next-line react-refresh/only-export-components
 export const MULTICAST_PUBLISHER_COLORS = [
-  { light: '#7c5cbf', dark: '#a78bda' },  // soft purple
-  { light: '#4a8fe7', dark: '#6ba8f2' },  // soft blue
-  { light: '#3dad6f', dark: '#5ec98d' },  // soft green
-  { light: '#d4854a', dark: '#e8a06e' },  // soft orange
-  { light: '#2ba3a8', dark: '#4fc5ca' },  // soft teal
-  { light: '#d46a7e', dark: '#e88d9e' },  // soft rose
-  { light: '#c4a23d', dark: '#dbbe5c' },  // soft gold
-  { light: '#c45fa0', dark: '#da82b8' },  // soft magenta
+  { light: '#7c5cbf', dark: '#a78bda' }, // soft purple
+  { light: '#4a8fe7', dark: '#6ba8f2' }, // soft blue
+  { light: '#3dad6f', dark: '#5ec98d' }, // soft green
+  { light: '#d4854a', dark: '#e8a06e' }, // soft orange
+  { light: '#2ba3a8', dark: '#4fc5ca' }, // soft teal
+  { light: '#d46a7e', dark: '#e88d9e' }, // soft rose
+  { light: '#c4a23d', dark: '#dbbe5c' }, // soft gold
+  { light: '#c45fa0', dark: '#da82b8' }, // soft magenta
 ]
 
 interface MulticastTreesOverlayPanelProps {
   isDark: boolean
-  selectedGroup: string | null  // Single selected group code
+  selectedGroup: string | null // Single selected group code
   onSelectGroup: (code: string | null) => void
-  groupDetails: Map<string, MulticastGroupDetail>  // Cached group details
+  groupDetails: Map<string, MulticastGroupDetail> // Cached group details
   // Publisher/subscriber filtering
-  enabledPublishers: Set<string>  // user PKs of enabled publishers
-  enabledSubscribers: Set<string>  // user PKs of enabled subscribers
+  enabledPublishers: Set<string> // user PKs of enabled publishers
+  enabledSubscribers: Set<string> // user PKs of enabled subscribers
   onSetEnabledPublishers: (updater: Set<string> | ((prev: Set<string>) => Set<string>)) => void
   onSetEnabledSubscribers: (updater: Set<string> | ((prev: Set<string>) => Set<string>)) => void
   // Publisher color map for consistent colors
@@ -80,9 +94,15 @@ function SelectionHint() {
       <Info className="h-3 w-3 text-muted-foreground/50 group-hover:text-muted-foreground cursor-help" />
       <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block z-50 pointer-events-none">
         <div className="bg-[var(--popover)] text-[var(--popover-foreground)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[10px] leading-relaxed whitespace-nowrap shadow-md">
-          <div><strong>Click</strong> — solo select</div>
-          <div><strong>{navigator.platform.includes('Mac') ? 'Cmd' : 'Ctrl'}+click</strong> — toggle</div>
-          <div><strong>Shift+click</strong> — range select</div>
+          <div>
+            <strong>Click</strong> — solo select
+          </div>
+          <div>
+            <strong>{navigator.platform.includes('Mac') ? 'Cmd' : 'Ctrl'}+click</strong> — toggle
+          </div>
+          <div>
+            <strong>Shift+click</strong> — range select
+          </div>
         </div>
       </div>
     </div>
@@ -93,7 +113,6 @@ function shortenPubkey(pk: string, chars = 6): string {
   if (pk.length <= chars * 2 + 2) return pk
   return `${pk.slice(0, chars)}..${pk.slice(-chars)}`
 }
-
 
 function formatStake(sol: number): string {
   if (sol >= 1e6) return `${(sol / 1e6).toFixed(1)}M SOL`
@@ -131,7 +150,15 @@ interface MemberRowProps {
   accentColor: string
 }
 
-function MemberRow({ member, isEnabled, isHovered, onClick, onMouseEnter, onMouseLeave, accentColor }: MemberRowProps) {
+function MemberRow({
+  member,
+  isEnabled,
+  isHovered,
+  onClick,
+  onMouseEnter,
+  onMouseLeave,
+  accentColor,
+}: MemberRowProps) {
   const isValidator = !!member.node_pubkey
   return (
     <div
@@ -168,16 +195,16 @@ function MemberRow({ member, isEnabled, isHovered, onClick, onMouseEnter, onMous
               LEADER
             </span>
           )}
-          {member.stake_sol > 0 && (
-            <span>{formatStake(member.stake_sol)}</span>
-          )}
+          {member.stake_sol > 0 && <span>{formatStake(member.stake_sol)}</span>}
         </div>
       </div>
       {(member.device_code || member.is_leader || leaderTimingText(member)) && (
         <div className="flex items-center gap-1.5 ml-4.5 mt-0.5 text-[10px] text-muted-foreground">
           {(() => {
             const timing = leaderTimingText(member)
-            return timing ? <span className={member.is_leader ? 'text-amber-500' : ''}>{timing}</span> : null
+            return timing ? (
+              <span className={member.is_leader ? 'text-amber-500' : ''}>{timing}</span>
+            ) : null
           })()}
           {member.device_code && (
             <EntityLink
@@ -237,8 +264,8 @@ export function MulticastTreesOverlayPanel({
   useEffect(() => {
     setError(null)
     fetchMulticastGroups()
-      .then(setGroups)
-      .catch(err => {
+      .then((res) => setGroups(res.items))
+      .catch((err) => {
         console.error('Failed to fetch multicast groups:', err)
         setError('Failed to load multicast groups. The database table may not exist yet.')
       })
@@ -249,33 +276,32 @@ export function MulticastTreesOverlayPanel({
   const getMemberCounts = (group: MulticastGroupListItem) => {
     const detail = groupDetails.get(group.code)
     if (detail?.members) {
-      const pubs = detail.members.filter(m => m.mode === 'P' || m.mode === 'P+S').length
-      const subs = detail.members.filter(m => m.mode === 'S' || m.mode === 'P+S').length
+      const pubs = detail.members.filter((m) => m.mode === 'P' || m.mode === 'P+S').length
+      const subs = detail.members.filter((m) => m.mode === 'S' || m.mode === 'P+S').length
       return { pubs, subs }
     }
     return { pubs: group.publisher_count, subs: group.subscriber_count }
   }
 
-
   // Get selected group detail and split members
   const selectedDetail = selectedGroup ? groupDetails.get(selectedGroup) : null
-  const selectedGroupItem = selectedGroup ? groups.find(g => g.code === selectedGroup) : null
+  const selectedGroupItem = selectedGroup ? groups.find((g) => g.code === selectedGroup) : null
 
-  const publishers = useMemo(() =>
-    selectedDetail?.members.filter(m => m.mode === 'P' || m.mode === 'P+S') ?? [],
-    [selectedDetail]
+  const publishers = useMemo(
+    () => selectedDetail?.members.filter((m) => m.mode === 'P' || m.mode === 'P+S') ?? [],
+    [selectedDetail],
   )
 
-  const subscribers = useMemo(() =>
-    selectedDetail?.members.filter(m => m.mode === 'S' || m.mode === 'P+S') ?? [],
-    [selectedDetail]
+  const subscribers = useMemo(
+    () => selectedDetail?.members.filter((m) => m.mode === 'S' || m.mode === 'P+S') ?? [],
+    [selectedDetail],
   )
 
   // Filter members by search query (matches shortened pubkey, device_code, metro_code)
   const filterMembers = useCallback((members: MulticastMember[], query: string) => {
     if (!query) return members
     const q = query.toLowerCase()
-    return members.filter(m => {
+    return members.filter((m) => {
       const shortKey = shortenPubkey(m.user_pk).toLowerCase()
       const fullKey = m.user_pk.toLowerCase()
       const device = (m.device_code || '').toLowerCase()
@@ -296,17 +322,23 @@ export function MulticastTreesOverlayPanel({
     return [...map.entries()].sort((a, b) => b[1].length - a[1].length)
   }
 
-  const publishersByMetro = useMemo(() => groupByMetro(filterMembers(publishers, publisherSearch)), [publishers, publisherSearch, filterMembers])
-  const subscribersByMetro = useMemo(() => groupByMetro(filterMembers(subscribers, subscriberSearch)), [subscribers, subscriberSearch, filterMembers])
+  const publishersByMetro = useMemo(
+    () => groupByMetro(filterMembers(publishers, publisherSearch)),
+    [publishers, publisherSearch, filterMembers],
+  )
+  const subscribersByMetro = useMemo(
+    () => groupByMetro(filterMembers(subscribers, subscriberSearch)),
+    [subscribers, subscriberSearch, filterMembers],
+  )
 
   // Build ordered user_pk arrays from metro-grouped render order (for shift-click range selection)
-  const orderedPublisherUserPKs = useMemo(() =>
-    publishersByMetro.flatMap(([, members]) => members.map(m => m.user_pk)),
-    [publishersByMetro]
+  const orderedPublisherUserPKs = useMemo(
+    () => publishersByMetro.flatMap(([, members]) => members.map((m) => m.user_pk)),
+    [publishersByMetro],
   )
-  const orderedSubscriberUserPKs = useMemo(() =>
-    subscribersByMetro.flatMap(([, members]) => members.map(m => m.user_pk)),
-    [subscribersByMetro]
+  const orderedSubscriberUserPKs = useMemo(
+    () => subscribersByMetro.flatMap(([, members]) => members.map((m) => m.user_pk)),
+    [subscribersByMetro],
   )
 
   // Build userPK -> devicePK lookup
@@ -333,70 +365,90 @@ export function MulticastTreesOverlayPanel({
   // Derive tunnelId from hoveredUserPK for traffic chart coordination
   const hoveredTunnelId = useMemo(() => {
     if (!hoveredUserPK || !selectedDetail?.members) return null
-    const member = selectedDetail.members.find(m => m.user_pk === hoveredUserPK && m.tunnel_id > 0)
+    const member = selectedDetail.members.find(
+      (m) => m.user_pk === hoveredUserPK && m.tunnel_id > 0,
+    )
     return member?.tunnel_id ?? null
   }, [hoveredUserPK, selectedDetail])
 
   // Solo/cmd/shift click handler for publishers
-  const handlePublisherClick = useCallback((userPK: string, index: number, event: React.MouseEvent) => {
-    if (event.shiftKey && lastClickedPubIndex !== null) {
-      const start = Math.min(lastClickedPubIndex, index)
-      const end = Math.max(lastClickedPubIndex, index)
-      onSetEnabledPublishers(prev => {
-        const next = new Set(prev)
-        for (let i = start; i <= end; i++) {
-          next.add(orderedPublisherUserPKs[i])
-        }
-        return next
-      })
-    } else if (event.ctrlKey || event.metaKey) {
-      onSetEnabledPublishers(prev => {
-        const next = new Set(prev)
-        if (next.has(userPK)) next.delete(userPK)
-        else next.add(userPK)
-        return next
-      })
-    } else {
-      // Solo click: if already solo-selected, show all; otherwise solo-select
-      const isSolo = enabledPublishers.size === 1 && enabledPublishers.has(userPK)
-      if (isSolo) {
-        onSetEnabledPublishers(new Set(publishers.map(m => m.user_pk)))
+  const handlePublisherClick = useCallback(
+    (userPK: string, index: number, event: React.MouseEvent) => {
+      if (event.shiftKey && lastClickedPubIndex !== null) {
+        const start = Math.min(lastClickedPubIndex, index)
+        const end = Math.max(lastClickedPubIndex, index)
+        onSetEnabledPublishers((prev) => {
+          const next = new Set(prev)
+          for (let i = start; i <= end; i++) {
+            next.add(orderedPublisherUserPKs[i])
+          }
+          return next
+        })
+      } else if (event.ctrlKey || event.metaKey) {
+        onSetEnabledPublishers((prev) => {
+          const next = new Set(prev)
+          if (next.has(userPK)) next.delete(userPK)
+          else next.add(userPK)
+          return next
+        })
       } else {
-        onSetEnabledPublishers(new Set([userPK]))
+        // Solo click: if already solo-selected, show all; otherwise solo-select
+        const isSolo = enabledPublishers.size === 1 && enabledPublishers.has(userPK)
+        if (isSolo) {
+          onSetEnabledPublishers(new Set(publishers.map((m) => m.user_pk)))
+        } else {
+          onSetEnabledPublishers(new Set([userPK]))
+        }
       }
-    }
-    setLastClickedPubIndex(index)
-  }, [lastClickedPubIndex, orderedPublisherUserPKs, enabledPublishers, publishers, onSetEnabledPublishers])
+      setLastClickedPubIndex(index)
+    },
+    [
+      lastClickedPubIndex,
+      orderedPublisherUserPKs,
+      enabledPublishers,
+      publishers,
+      onSetEnabledPublishers,
+    ],
+  )
 
   // Solo/cmd/shift click handler for subscribers
-  const handleSubscriberClick = useCallback((userPK: string, index: number, event: React.MouseEvent) => {
-    if (event.shiftKey && lastClickedSubIndex !== null) {
-      const start = Math.min(lastClickedSubIndex, index)
-      const end = Math.max(lastClickedSubIndex, index)
-      onSetEnabledSubscribers(prev => {
-        const next = new Set(prev)
-        for (let i = start; i <= end; i++) {
-          next.add(orderedSubscriberUserPKs[i])
-        }
-        return next
-      })
-    } else if (event.ctrlKey || event.metaKey) {
-      onSetEnabledSubscribers(prev => {
-        const next = new Set(prev)
-        if (next.has(userPK)) next.delete(userPK)
-        else next.add(userPK)
-        return next
-      })
-    } else {
-      const isSolo = enabledSubscribers.size === 1 && enabledSubscribers.has(userPK)
-      if (isSolo) {
-        onSetEnabledSubscribers(new Set(subscribers.map(m => m.user_pk)))
+  const handleSubscriberClick = useCallback(
+    (userPK: string, index: number, event: React.MouseEvent) => {
+      if (event.shiftKey && lastClickedSubIndex !== null) {
+        const start = Math.min(lastClickedSubIndex, index)
+        const end = Math.max(lastClickedSubIndex, index)
+        onSetEnabledSubscribers((prev) => {
+          const next = new Set(prev)
+          for (let i = start; i <= end; i++) {
+            next.add(orderedSubscriberUserPKs[i])
+          }
+          return next
+        })
+      } else if (event.ctrlKey || event.metaKey) {
+        onSetEnabledSubscribers((prev) => {
+          const next = new Set(prev)
+          if (next.has(userPK)) next.delete(userPK)
+          else next.add(userPK)
+          return next
+        })
       } else {
-        onSetEnabledSubscribers(new Set([userPK]))
+        const isSolo = enabledSubscribers.size === 1 && enabledSubscribers.has(userPK)
+        if (isSolo) {
+          onSetEnabledSubscribers(new Set(subscribers.map((m) => m.user_pk)))
+        } else {
+          onSetEnabledSubscribers(new Set([userPK]))
+        }
       }
-    }
-    setLastClickedSubIndex(index)
-  }, [lastClickedSubIndex, orderedSubscriberUserPKs, enabledSubscribers, subscribers, onSetEnabledSubscribers])
+      setLastClickedSubIndex(index)
+    },
+    [
+      lastClickedSubIndex,
+      orderedSubscriberUserPKs,
+      enabledSubscribers,
+      subscribers,
+      onSetEnabledSubscribers,
+    ],
+  )
 
   // Callback for traffic chart legend hover -> set hoveredUserPK
   const handleTrafficChartHoverUserPK = useCallback((userPK: string | null) => {
@@ -420,13 +472,9 @@ export function MulticastTreesOverlayPanel({
         </button>
       </div>
 
-      {loading && (
-        <div className="text-muted-foreground">Loading groups...</div>
-      )}
+      {loading && <div className="text-muted-foreground">Loading groups...</div>}
 
-      {!loading && error && (
-        <div className="text-red-500 text-xs">{error}</div>
-      )}
+      {!loading && error && <div className="text-red-500 text-xs">{error}</div>}
 
       {!loading && !error && groups.length === 0 && (
         <div className="text-muted-foreground">No multicast groups found</div>
@@ -437,12 +485,16 @@ export function MulticastTreesOverlayPanel({
           {/* Groups list — collapsible */}
           <div>
             <button
-              onClick={() => setGroupsOpen(o => !o)}
+              onClick={() => setGroupsOpen((o) => !o)}
               className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase tracking-wider w-full hover:text-foreground transition-colors mb-1.5"
             >
               <Radio className="h-3 w-3" />
               Groups
-              {groupsOpen ? <ChevronDown className="h-3 w-3 ml-auto" /> : <ChevronRight className="h-3 w-3 ml-auto" />}
+              {groupsOpen ? (
+                <ChevronDown className="h-3 w-3 ml-auto" />
+              ) : (
+                <ChevronRight className="h-3 w-3 ml-auto" />
+              )}
             </button>
             {groupsOpen && (
               <div className="space-y-0.5">
@@ -464,9 +516,11 @@ export function MulticastTreesOverlayPanel({
                         isSelected ? 'bg-purple-500/20 text-purple-500' : 'hover:bg-[var(--muted)]'
                       }`}
                     >
-                      <div className={`w-3 h-3 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${
-                        isSelected ? 'border-purple-500' : 'border-[var(--border)]'
-                      }`}>
+                      <div
+                        className={`w-3 h-3 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${
+                          isSelected ? 'border-purple-500' : 'border-[var(--border)]'
+                        }`}
+                      >
                         {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-purple-500" />}
                       </div>
                       <span className="font-medium">{group.code}</span>
@@ -498,19 +552,27 @@ export function MulticastTreesOverlayPanel({
                   {/* Collapsible members section */}
                   <div className="border-t border-[var(--border)] pt-2">
                     <button
-                      onClick={() => setMembersOpen(o => !o)}
+                      onClick={() => setMembersOpen((o) => !o)}
                       className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase tracking-wider w-full hover:text-foreground transition-colors"
                     >
                       <User className="h-3 w-3" />
                       Members
-                      {membersOpen ? <ChevronDown className="h-3 w-3 ml-auto" /> : <ChevronRight className="h-3 w-3 ml-auto" />}
+                      {membersOpen ? (
+                        <ChevronDown className="h-3 w-3 ml-auto" />
+                      ) : (
+                        <ChevronRight className="h-3 w-3 ml-auto" />
+                      )}
                     </button>
                     {membersOpen && (
                       <div className="mt-2">
                         {/* Tabs */}
                         <div className="flex border-b border-[var(--border)] mb-2">
                           <button
-                            onClick={() => { setActiveTab('publishers'); setPublisherSearch(''); setSubscriberSearch('') }}
+                            onClick={() => {
+                              setActiveTab('publishers')
+                              setPublisherSearch('')
+                              setSubscriberSearch('')
+                            }}
                             className={`px-3 py-1.5 text-xs font-medium border-b-2 transition-colors -mb-px ${
                               activeTab === 'publishers'
                                 ? 'border-purple-500 text-purple-500'
@@ -520,7 +582,11 @@ export function MulticastTreesOverlayPanel({
                             Publishers ({publishers.length})
                           </button>
                           <button
-                            onClick={() => { setActiveTab('subscribers'); setPublisherSearch(''); setSubscriberSearch('') }}
+                            onClick={() => {
+                              setActiveTab('subscribers')
+                              setPublisherSearch('')
+                              setSubscriberSearch('')
+                            }}
                             className={`px-3 py-1.5 text-xs font-medium border-b-2 transition-colors -mb-px ${
                               activeTab === 'subscribers'
                                 ? 'border-purple-500 text-purple-500'
@@ -540,7 +606,7 @@ export function MulticastTreesOverlayPanel({
                                 <input
                                   type="text"
                                   value={publisherSearch}
-                                  onChange={e => setPublisherSearch(e.target.value)}
+                                  onChange={(e) => setPublisherSearch(e.target.value)}
                                   placeholder="Search publishers..."
                                   className="w-full text-[10px] bg-[var(--muted)] border border-[var(--border)] rounded-md pl-6 pr-6 py-1 text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-purple-500/50"
                                 />
@@ -557,7 +623,11 @@ export function MulticastTreesOverlayPanel({
                             {publishers.length > 1 && (
                               <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
                                 <button
-                                  onClick={() => onSetEnabledPublishers(new Set(publishers.map(m => m.user_pk)))}
+                                  onClick={() =>
+                                    onSetEnabledPublishers(
+                                      new Set(publishers.map((m) => m.user_pk)),
+                                    )
+                                  }
                                   className="hover:text-foreground transition-colors"
                                 >
                                   all
@@ -573,7 +643,9 @@ export function MulticastTreesOverlayPanel({
                               </div>
                             )}
                             {publishers.length === 0 && (
-                              <div className="text-muted-foreground text-[10px] py-2">No publishers</div>
+                              <div className="text-muted-foreground text-[10px] py-2">
+                                No publishers
+                              </div>
                             )}
                             <div className="max-h-[300px] overflow-y-auto space-y-2">
                               {publishersByMetro.map(([metro, members]) => (
@@ -581,18 +653,18 @@ export function MulticastTreesOverlayPanel({
                                   key={metro}
                                   metro={metro}
                                   members={members}
-
                                   enabledMembers={enabledPublishers}
                                   onMemberClick={handlePublisherClick}
                                   orderedUserPKs={orderedPublisherUserPKs}
-
                                   hoveredUserPK={hoveredUserPK}
                                   onHoverUserPK={setHoveredUserPK}
-
                                   keySuffix="-pub"
                                   accentColorForMember={(m) => {
                                     const pubColorIndex = publisherColorMap.get(m.device_pk) ?? 0
-                                    const pubColor = MULTICAST_PUBLISHER_COLORS[pubColorIndex % MULTICAST_PUBLISHER_COLORS.length]
+                                    const pubColor =
+                                      MULTICAST_PUBLISHER_COLORS[
+                                        pubColorIndex % MULTICAST_PUBLISHER_COLORS.length
+                                      ]
                                     return isDark ? pubColor.dark : pubColor.light
                                   }}
                                 />
@@ -610,7 +682,7 @@ export function MulticastTreesOverlayPanel({
                                 <input
                                   type="text"
                                   value={subscriberSearch}
-                                  onChange={e => setSubscriberSearch(e.target.value)}
+                                  onChange={(e) => setSubscriberSearch(e.target.value)}
                                   placeholder="Search subscribers..."
                                   className="w-full text-[10px] bg-[var(--muted)] border border-[var(--border)] rounded-md pl-6 pr-6 py-1 text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-purple-500/50"
                                 />
@@ -627,7 +699,11 @@ export function MulticastTreesOverlayPanel({
                             {subscribers.length > 1 && (
                               <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
                                 <button
-                                  onClick={() => onSetEnabledSubscribers(new Set(subscribers.map(m => m.user_pk)))}
+                                  onClick={() =>
+                                    onSetEnabledSubscribers(
+                                      new Set(subscribers.map((m) => m.user_pk)),
+                                    )
+                                  }
                                   className="hover:text-foreground transition-colors"
                                 >
                                   all
@@ -643,7 +719,9 @@ export function MulticastTreesOverlayPanel({
                               </div>
                             )}
                             {subscribers.length === 0 && (
-                              <div className="text-muted-foreground text-[10px] py-2">No subscribers</div>
+                              <div className="text-muted-foreground text-[10px] py-2">
+                                No subscribers
+                              </div>
                             )}
                             <div className="max-h-[300px] overflow-y-auto space-y-2">
                               {subscribersByMetro.map(([metro, members]) => (
@@ -651,14 +729,11 @@ export function MulticastTreesOverlayPanel({
                                   key={metro}
                                   metro={metro}
                                   members={members}
-
                                   enabledMembers={enabledSubscribers}
                                   onMemberClick={handleSubscriberClick}
                                   orderedUserPKs={orderedSubscriberUserPKs}
-
                                   hoveredUserPK={hoveredUserPK}
                                   onHoverUserPK={setHoveredUserPK}
-
                                   keySuffix="-sub"
                                   accentColorForMember={() => '#14b8a6'}
                                 />
@@ -693,12 +768,16 @@ export function MulticastTreesOverlayPanel({
           {/* Options — collapsible */}
           <div className="border-t border-[var(--border)] pt-2">
             <button
-              onClick={() => setOptionsOpen(o => !o)}
+              onClick={() => setOptionsOpen((o) => !o)}
               className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase tracking-wider w-full hover:text-foreground transition-colors"
             >
               <Settings2 className="h-3 w-3" />
               Options
-              {optionsOpen ? <ChevronDown className="h-3 w-3 ml-auto" /> : <ChevronRight className="h-3 w-3 ml-auto" />}
+              {optionsOpen ? (
+                <ChevronDown className="h-3 w-3 ml-auto" />
+              ) : (
+                <ChevronRight className="h-3 w-3 ml-auto" />
+              )}
             </button>
             {optionsOpen && (
               <div className="mt-2 space-y-2">
@@ -728,21 +807,48 @@ export function MulticastTreesOverlayPanel({
 }
 
 const TRAFFIC_TIME_RANGES = ['1h', '3h', '6h', '12h', '24h', '3d', '7d', '14d', '30d'] as const
-const BUCKET_OPTIONS = ['auto', '10 SECOND', '30 SECOND', '1 MINUTE', '5 MINUTE', '10 MINUTE', '15 MINUTE', '30 MINUTE', '1 HOUR', '4 HOUR'] as const
+const BUCKET_OPTIONS = [
+  'auto',
+  '10 SECOND',
+  '30 SECOND',
+  '1 MINUTE',
+  '5 MINUTE',
+  '10 MINUTE',
+  '15 MINUTE',
+  '30 MINUTE',
+  '1 HOUR',
+  '4 HOUR',
+] as const
 const BUCKET_LABELS: Record<string, string> = {
-  'auto': 'Auto', '10 SECOND': '10s', '30 SECOND': '30s', '1 MINUTE': '1m', '5 MINUTE': '5m',
-  '10 MINUTE': '10m', '15 MINUTE': '15m', '30 MINUTE': '30m', '1 HOUR': '1h', '4 HOUR': '4h',
+  auto: 'Auto',
+  '10 SECOND': '10s',
+  '30 SECOND': '30s',
+  '1 MINUTE': '1m',
+  '5 MINUTE': '5m',
+  '10 MINUTE': '10m',
+  '15 MINUTE': '15m',
+  '30 MINUTE': '30m',
+  '1 HOUR': '1h',
+  '4 HOUR': '4h',
 }
 function resolveOverlayAutoBucket(timeRange: string): string {
   switch (timeRange) {
-    case '1h': return '10 SECOND'
-    case '3h': return '30 SECOND'
-    case '6h': return '1 MINUTE'
-    case '12h': return '10 MINUTE'
-    case '24h': return '15 MINUTE'
-    case '3d': return '30 MINUTE'
-    case '7d': return '4 HOUR'
-    default: return '5 MINUTE'
+    case '1h':
+      return '10 SECOND'
+    case '3h':
+      return '30 SECOND'
+    case '6h':
+      return '1 MINUTE'
+    case '12h':
+      return '10 MINUTE'
+    case '24h':
+      return '15 MINUTE'
+    case '3d':
+      return '30 MINUTE'
+    case '7d':
+      return '4 HOUR'
+    default:
+      return '5 MINUTE'
   }
 }
 
@@ -838,7 +944,8 @@ function MulticastTrafficChartSection({
   // Device out_bps = user inbound (positive), device in_bps = user outbound (negative).
   // Filtered by active tab (publishers or subscribers).
   const { chartData, tunnelIds } = useMemo(() => {
-    if (!trafficData || trafficData.length === 0) return { chartData: [], tunnelIds: [] as number[] }
+    if (!trafficData || trafficData.length === 0)
+      return { chartData: [], tunnelIds: [] as number[] }
 
     const showPubs = activeTab === 'publishers'
     const tunnels = new Set<number>()
@@ -873,9 +980,7 @@ function MulticastTrafficChartSection({
       }
     }
 
-    const data = [...timeMap.values()].sort((a, b) =>
-      String(a.time).localeCompare(String(b.time))
-    )
+    const data = [...timeMap.values()].sort((a, b) => String(a.time).localeCompare(String(b.time)))
     return { chartData: data, tunnelIds: [...tunnels].sort((a, b) => a - b) }
   }, [trafficData, activeTab, metric])
 
@@ -904,13 +1009,13 @@ function MulticastTrafficChartSection({
     return visible
   }, [tunnelIds, tunnelInfo, enabledMembers])
 
-
   // Values to display in the legend: hovered point or latest
   const displayValues = useMemo(() => {
     if (chartData.length === 0) return new Map<number, { inBps: number; outBps: number }>()
-    const row = hoveredIdx !== null && hoveredIdx < chartData.length
-      ? chartData[hoveredIdx]
-      : chartData[chartData.length - 1]
+    const row =
+      hoveredIdx !== null && hoveredIdx < chartData.length
+        ? chartData[hoveredIdx]
+        : chartData[chartData.length - 1]
     const map = new Map<number, { inBps: number; outBps: number }>()
     for (const tid of tunnelIds) {
       map.set(tid, {
@@ -924,10 +1029,14 @@ function MulticastTrafficChartSection({
   // Build uPlot columnar data from chartData
   const { uplotData, uplotSeries, serisTidMap } = useMemo(() => {
     if (chartData.length === 0 || tunnelIds.length === 0) {
-      return { uplotData: [[]] as uPlot.AlignedData, uplotSeries: [] as uPlot.Series[], serisTidMap: [] as number[] }
+      return {
+        uplotData: [[]] as uPlot.AlignedData,
+        uplotSeries: [] as uPlot.Series[],
+        serisTidMap: [] as number[],
+      }
     }
 
-    const timestamps = chartData.map(row => new Date(row.time as string).getTime() / 1000)
+    const timestamps = chartData.map((row) => new Date(row.time as string).getTime() / 1000)
     const splinePaths = uPlot.paths.spline?.()
     const dataArrays: (number | null)[][] = [timestamps]
     const series: uPlot.Series[] = [{}]
@@ -936,7 +1045,7 @@ function MulticastTrafficChartSection({
     for (const tid of tunnelIds) {
       const color = getTunnelColor(tid)
 
-      dataArrays.push(chartData.map(row => (row[`t${tid}_in`] as number) ?? null))
+      dataArrays.push(chartData.map((row) => (row[`t${tid}_in`] as number) ?? null))
       series.push({
         label: `t${tid}_in`,
         stroke: color,
@@ -947,7 +1056,7 @@ function MulticastTrafficChartSection({
       } as uPlot.Series)
       tidMap.push(tid)
 
-      dataArrays.push(chartData.map(row => (row[`t${tid}_out`] as number) ?? null))
+      dataArrays.push(chartData.map((row) => (row[`t${tid}_out`] as number) ?? null))
       series.push({
         label: `t${tid}_out`,
         stroke: color,
@@ -983,9 +1092,10 @@ function MulticastTrafficChartSection({
         {
           stroke: 'rgba(128,128,128,0.4)',
           grid: { stroke: 'rgba(128,128,128,0.06)' },
-          values: (_: uPlot, vals: number[]) => vals.map(v =>
-            metric === 'throughput' ? formatAxisBps(Math.abs(v)) : formatAxisPps(Math.abs(v))
-          ),
+          values: (_: uPlot, vals: number[]) =>
+            vals.map((v) =>
+              metric === 'throughput' ? formatAxisBps(Math.abs(v)) : formatAxisPps(Math.abs(v)),
+            ),
           size: 45,
         },
       ],
@@ -993,16 +1103,18 @@ function MulticastTrafficChartSection({
         points: { size: 10, width: 2 },
       },
       hooks: {
-        setCursor: [(u: uPlot) => {
-          setHoveredIdx(u.cursor.idx ?? null)
-        }],
+        setCursor: [
+          (u: uPlot) => {
+            setHoveredIdx(u.cursor.idx ?? null)
+          },
+        ],
       },
       legend: { show: false },
     }
 
     plotRef.current = new uPlot(opts, uplotData, chartRef.current)
 
-    const ro = new ResizeObserver(entries => {
+    const ro = new ResizeObserver((entries) => {
       for (const entry of entries) {
         plotRef.current?.setSize({ width: entry.contentRect.width, height: 176 })
       }
@@ -1025,54 +1137,49 @@ function MulticastTrafficChartSection({
     <div className="border-t border-[var(--border)] pt-2">
       <div className="flex items-center gap-1.5">
         <button
-          onClick={() => setOpen(o => !o)}
+          onClick={() => setOpen((o) => !o)}
           className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors"
         >
           <BarChart3 className="h-3 w-3" />
           Traffic ({activeTab})
           {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
         </button>
-        {open && (
-          isFetching ? (
+        {open &&
+          (isFetching ? (
             <Loader2 className="h-3 w-3 animate-spin text-muted-foreground ml-1" />
           ) : (
             <button
-              onClick={(e) => { e.stopPropagation(); queryClient.invalidateQueries({ queryKey: ['multicast-traffic', groupCode] }) }}
+              onClick={(e) => {
+                e.stopPropagation()
+                queryClient.invalidateQueries({ queryKey: ['multicast-traffic', groupCode] })
+              }}
               className="opacity-0 group-hover/chart:opacity-100 transition-opacity text-muted-foreground hover:text-foreground ml-1"
               title="Refresh"
             >
               <RefreshCw className="h-3 w-3" />
             </button>
-          )
-        )}
+          ))}
         {open && (
-          <div className="flex gap-1 ml-auto" onClick={e => e.stopPropagation()}>
-            <select
+          <div className="flex gap-1 ml-auto" onClick={(e) => e.stopPropagation()}>
+            <SmallDropdown
               value={metric}
-              onChange={e => setMetric(e.target.value as 'throughput' | 'packets')}
-              className="text-[10px] bg-transparent border border-border rounded px-1 py-0.5 text-foreground cursor-pointer"
-            >
-              <option value="throughput">bps</option>
-              <option value="packets">pps</option>
-            </select>
-            <select
+              options={[
+                { value: 'throughput', label: 'bps' },
+                { value: 'packets', label: 'pps' },
+              ]}
+              onChange={(v) => setMetric(v as 'throughput' | 'packets')}
+            />
+            <SmallDropdown
               value={bucket}
-              onChange={e => setBucket(e.target.value)}
-              className="text-[10px] bg-transparent border border-border rounded px-1 py-0.5 text-foreground cursor-pointer"
-            >
-              {BUCKET_OPTIONS.map(b => (
-                <option key={b} value={b}>{b === 'auto' ? `Auto (${autoBucketLabel})` : BUCKET_LABELS[b] || b}</option>
-              ))}
-            </select>
-            <select
+              displayLabel={bucket === 'auto' ? `Auto (${autoBucketLabel})` : undefined}
+              options={BUCKET_OPTIONS.map((b) => ({ value: b, label: BUCKET_LABELS[b] || b }))}
+              onChange={(v) => setBucket(v)}
+            />
+            <SmallDropdown
               value={timeRange}
-              onChange={e => setTimeRange(e.target.value)}
-              className="text-[10px] bg-transparent border border-border rounded px-1 py-0.5 text-foreground cursor-pointer"
-            >
-              {TRAFFIC_TIME_RANGES.map(r => (
-                <option key={r} value={r}>{r}</option>
-              ))}
-            </select>
+              options={TRAFFIC_TIME_RANGES.map((r) => ({ value: r, label: r }))}
+              onChange={(v) => setTimeRange(v)}
+            />
           </div>
         )}
       </div>
@@ -1085,15 +1192,21 @@ function MulticastTrafficChartSection({
           </div>
 
           {!trafficData && !isFetching && (
-            <div className="text-[10px] text-muted-foreground py-4 text-center">No traffic data</div>
+            <div className="text-[10px] text-muted-foreground py-4 text-center">
+              No traffic data
+            </div>
           )}
 
           {(trafficData || isFetching) && (
             <div>
               {/* Chart */}
               <div className="relative" style={{ minHeight: 176 }}>
-                <span className="absolute top-0.5 right-1 text-[8px] text-muted-foreground/50 pointer-events-none z-10">▲ In</span>
-                <span className="absolute bottom-4 right-1 text-[8px] text-muted-foreground/50 pointer-events-none z-10">▼ Out</span>
+                <span className="absolute top-0.5 right-1 text-[8px] text-muted-foreground/50 pointer-events-none z-10">
+                  ▲ In
+                </span>
+                <span className="absolute bottom-4 right-1 text-[8px] text-muted-foreground/50 pointer-events-none z-10">
+                  ▼ Out
+                </span>
                 <div ref={chartRef} className="w-full" />
               </div>
 
@@ -1106,43 +1219,64 @@ function MulticastTrafficChartSection({
                   <div className="text-right">↑ Out</div>
                 </div>
                 <div className="max-h-[200px] overflow-y-auto">
-                {tunnelIds.map((tid) => {
-                  const info = tunnelInfo.get(tid)
-                  const vals = displayValues.get(tid)
-                  const isVisible = visibleSeries.has(tid)
-                  const isHighlighted = hoveredTunnelId === tid
-                  return (
-                    <div
-                      key={tid}
-                      className={`flex items-center gap-2 px-1 py-0.5 rounded select-none transition-colors ${
-                        isHighlighted ? 'bg-muted/80' : 'hover:bg-muted/60'
-                      } ${!isVisible ? 'opacity-55' : ''}`}
-                      onMouseEnter={() => {
-                        if (isVisible) {
-                          setLocalHoveredSeries(tid)
-                          // Coordinate back to member list
-                          if (info?.userPk) onHoverUserPK(info.userPk)
-                        }
-                      }}
-                      onMouseLeave={() => {
-                        setLocalHoveredSeries(null)
-                        onHoverUserPK(null)
-                      }}
-                    >
-                      <div className="w-2 h-2 rounded-sm flex-shrink-0" style={{ backgroundColor: !isVisible ? 'var(--muted-foreground)' : getTunnelColor(tid) }} />
-                      <div className="flex-1 min-w-0 text-foreground truncate font-mono">
-                        {info?.code ?? `t${tid}`} <span className="text-muted-foreground">t{tid}</span>
-                        {info?.userPk && <span className="text-muted-foreground"> · {shortenPubkey(info.userPk, 4)}</span>}
+                  {tunnelIds.map((tid) => {
+                    const info = tunnelInfo.get(tid)
+                    const vals = displayValues.get(tid)
+                    const isVisible = visibleSeries.has(tid)
+                    const isHighlighted = hoveredTunnelId === tid
+                    return (
+                      <div
+                        key={tid}
+                        className={`flex items-center gap-2 px-1 py-0.5 rounded select-none transition-colors ${
+                          isHighlighted ? 'bg-muted/80' : 'hover:bg-muted/60'
+                        } ${!isVisible ? 'opacity-55' : ''}`}
+                        onMouseEnter={() => {
+                          if (isVisible) {
+                            setLocalHoveredSeries(tid)
+                            // Coordinate back to member list
+                            if (info?.userPk) onHoverUserPK(info.userPk)
+                          }
+                        }}
+                        onMouseLeave={() => {
+                          setLocalHoveredSeries(null)
+                          onHoverUserPK(null)
+                        }}
+                      >
+                        <div
+                          className="w-2 h-2 rounded-sm flex-shrink-0"
+                          style={{
+                            backgroundColor: !isVisible
+                              ? 'var(--muted-foreground)'
+                              : getTunnelColor(tid),
+                          }}
+                        />
+                        <div className="flex-1 min-w-0 text-foreground truncate font-mono">
+                          {info?.code ?? `t${tid}`}{' '}
+                          <span className="text-muted-foreground">t{tid}</span>
+                          {info?.userPk && (
+                            <span className="text-muted-foreground">
+                              {' '}
+                              · {shortenPubkey(info.userPk, 4)}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-right font-mono tabular-nums text-foreground">
+                          {vals && isVisible
+                            ? metric === 'throughput'
+                              ? formatBandwidth(vals.inBps)
+                              : formatPps(vals.inBps)
+                            : '—'}
+                        </div>
+                        <div className="text-right font-mono tabular-nums text-muted-foreground">
+                          {vals && isVisible
+                            ? metric === 'throughput'
+                              ? formatBandwidth(vals.outBps)
+                              : formatPps(vals.outBps)
+                            : '—'}
+                        </div>
                       </div>
-                      <div className="text-right font-mono tabular-nums text-foreground">
-                        {vals && isVisible ? (metric === 'throughput' ? formatBandwidth(vals.inBps) : formatPps(vals.inBps)) : '—'}
-                      </div>
-                      <div className="text-right font-mono tabular-nums text-muted-foreground">
-                        {vals && isVisible ? (metric === 'throughput' ? formatBandwidth(vals.outBps) : formatPps(vals.outBps)) : '—'}
-                      </div>
-                    </div>
-                  )
-                })}
+                    )
+                  })}
                 </div>
               </div>
             </div>
@@ -1180,7 +1314,7 @@ function MetroGroup({
   return (
     <div>
       <button
-        onClick={() => setOpen(o => !o)}
+        onClick={() => setOpen((o) => !o)}
         className="flex items-center gap-1.5 text-[10px] text-muted-foreground w-full hover:text-foreground transition-colors py-0.5"
       >
         {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
@@ -1189,7 +1323,7 @@ function MetroGroup({
       </button>
       {open && (
         <div className="space-y-1 mt-1 ml-1">
-          {members.map(m => {
+          {members.map((m) => {
             const orderedIndex = orderedUserPKs.indexOf(m.user_pk)
             return (
               <MemberRow

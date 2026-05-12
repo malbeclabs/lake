@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import { useNavigate, useLocation, Link } from 'react-router-dom'
 import { Loader2, CheckCircle2, History, Info, AlertTriangle } from 'lucide-react'
 import type { LinkHistory, CriticalLinksResponse } from '@/lib/api'
+import { SmallDropdown } from '@/components/topology/TimeRangeSelector'
 
 type TimeRange = '3h' | '6h' | '12h' | '24h' | '3d' | '7d'
 type MetroHealthFilter = 'healthy' | 'degraded' | 'unhealthy'
@@ -73,7 +74,13 @@ const statusLabels: Record<string, string> = {
 // - Healthy: >= 80% of active links are working
 // - Degraded: 20-80% of active links are working
 // - Unhealthy: < 20% of active links are working
-function getMetroStatus(breakdown: { healthy: number; degraded: number; unhealthy: number; disabled: number; no_data: number }): 'healthy' | 'degraded' | 'unhealthy' {
+function getMetroStatus(breakdown: {
+  healthy: number
+  degraded: number
+  unhealthy: number
+  disabled: number
+  no_data: number
+}): 'healthy' | 'degraded' | 'unhealthy' {
   // Only count links that are actively in service (exclude disabled and no_data)
   const activeLinks = breakdown.healthy + breakdown.degraded + breakdown.unhealthy
   if (activeLinks === 0) return 'healthy'
@@ -105,21 +112,31 @@ function MetroInfoPopover({ metro }: { metro: MetroData }) {
 
   const spofStatusColor = (status: string) => {
     switch (status) {
-      case 'healthy': return 'text-green-500'
-      case 'degraded': return 'text-amber-500'
-      case 'unhealthy': return 'text-red-500'
-      case 'disabled': return 'text-gray-500'
-      default: return 'text-muted-foreground'
+      case 'healthy':
+        return 'text-green-500'
+      case 'degraded':
+        return 'text-amber-500'
+      case 'unhealthy':
+        return 'text-red-500'
+      case 'disabled':
+        return 'text-gray-500'
+      default:
+        return 'text-muted-foreground'
     }
   }
 
   const spofStatusDot = (status: string) => {
     switch (status) {
-      case 'healthy': return 'bg-green-500'
-      case 'degraded': return 'bg-amber-500'
-      case 'unhealthy': return 'bg-red-500'
-      case 'disabled': return 'bg-gray-500'
-      default: return 'bg-gray-400'
+      case 'healthy':
+        return 'bg-green-500'
+      case 'degraded':
+        return 'bg-amber-500'
+      case 'unhealthy':
+        return 'bg-red-500'
+      case 'disabled':
+        return 'bg-gray-500'
+      default:
+        return 'bg-gray-400'
     }
   }
 
@@ -164,11 +181,15 @@ function MetroInfoPopover({ metro }: { metro: MetroData }) {
             )}
             <div>
               <div className="text-muted-foreground">Current Status</div>
-              <div className={`font-medium ${
-                metro.currentHealth === 'healthy' ? 'text-green-500' :
-                metro.currentHealth === 'degraded' ? 'text-amber-500' :
-                'text-red-500'
-              }`}>
+              <div
+                className={`font-medium ${
+                  metro.currentHealth === 'healthy'
+                    ? 'text-green-500'
+                    : metro.currentHealth === 'degraded'
+                      ? 'text-amber-500'
+                      : 'text-red-500'
+                }`}
+              >
                 {metro.currentHealth.charAt(0).toUpperCase() + metro.currentHealth.slice(1)}
               </div>
             </div>
@@ -179,13 +200,7 @@ function MetroInfoPopover({ metro }: { metro: MetroData }) {
   )
 }
 
-function MetroTimeline({
-  metro,
-  bucketMinutes,
-}: {
-  metro: MetroData
-  bucketMinutes: number
-}) {
+function MetroTimeline({ metro, bucketMinutes }: { metro: MetroData; bucketMinutes: number }) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
 
   return (
@@ -209,12 +224,17 @@ function MetroTimeline({
                   <div className="font-medium mb-1">
                     {formatTimeRange(bucket.hour, bucketMinutes)}
                   </div>
-                  <div className={`text-xs mb-2 ${
-                    bucket.status === 'healthy' ? 'text-green-600 dark:text-green-400' :
-                    bucket.status === 'degraded' ? 'text-amber-600 dark:text-amber-400' :
-                    bucket.status === 'unhealthy' ? 'text-red-600 dark:text-red-400' :
-                    'text-muted-foreground'
-                  }`}>
+                  <div
+                    className={`text-xs mb-2 ${
+                      bucket.status === 'healthy'
+                        ? 'text-green-600 dark:text-green-400'
+                        : bucket.status === 'degraded'
+                          ? 'text-amber-600 dark:text-amber-400'
+                          : bucket.status === 'unhealthy'
+                            ? 'text-red-600 dark:text-red-400'
+                            : 'text-muted-foreground'
+                    }`}
+                  >
                     {statusLabels[bucket.status]}
                   </div>
                   <div className="space-y-1 text-muted-foreground text-xs">
@@ -224,7 +244,10 @@ function MetroTimeline({
                           <div className="w-2 h-2 rounded-full bg-green-500" />
                           <span>Healthy</span>
                         </div>
-                        <span className="font-medium">{bucket.breakdown.healthy} {bucket.breakdown.healthy === 1 ? 'link' : 'links'}</span>
+                        <span className="font-medium">
+                          {bucket.breakdown.healthy}{' '}
+                          {bucket.breakdown.healthy === 1 ? 'link' : 'links'}
+                        </span>
                       </div>
                     )}
                     {bucket.breakdown.degraded > 0 && (
@@ -233,7 +256,10 @@ function MetroTimeline({
                           <div className="w-2 h-2 rounded-full bg-amber-500" />
                           <span>Degraded</span>
                         </div>
-                        <span className="font-medium">{bucket.breakdown.degraded} {bucket.breakdown.degraded === 1 ? 'link' : 'links'}</span>
+                        <span className="font-medium">
+                          {bucket.breakdown.degraded}{' '}
+                          {bucket.breakdown.degraded === 1 ? 'link' : 'links'}
+                        </span>
                       </div>
                     )}
                     {bucket.breakdown.unhealthy > 0 && (
@@ -242,7 +268,10 @@ function MetroTimeline({
                           <div className="w-2 h-2 rounded-full bg-red-500" />
                           <span>Unhealthy</span>
                         </div>
-                        <span className="font-medium">{bucket.breakdown.unhealthy} {bucket.breakdown.unhealthy === 1 ? 'link' : 'links'}</span>
+                        <span className="font-medium">
+                          {bucket.breakdown.unhealthy}{' '}
+                          {bucket.breakdown.unhealthy === 1 ? 'link' : 'links'}
+                        </span>
                       </div>
                     )}
                     {bucket.breakdown.disabled > 0 && (
@@ -251,7 +280,10 @@ function MetroTimeline({
                           <div className="w-2 h-2 rounded-full bg-gray-500" />
                           <span>Disabled</span>
                         </div>
-                        <span className="font-medium">{bucket.breakdown.disabled} {bucket.breakdown.disabled === 1 ? 'link' : 'links'}</span>
+                        <span className="font-medium">
+                          {bucket.breakdown.disabled}{' '}
+                          {bucket.breakdown.disabled === 1 ? 'link' : 'links'}
+                        </span>
                       </div>
                     )}
                     {bucket.breakdown.no_data > 0 && (
@@ -260,7 +292,10 @@ function MetroTimeline({
                           <div className="w-2 h-2 rounded-full border border-gray-400" />
                           <span>No Data</span>
                         </div>
-                        <span className="font-medium">{bucket.breakdown.no_data} {bucket.breakdown.no_data === 1 ? 'link' : 'links'}</span>
+                        <span className="font-medium">
+                          {bucket.breakdown.no_data}{' '}
+                          {bucket.breakdown.no_data === 1 ? 'link' : 'links'}
+                        </span>
                       </div>
                     )}
                   </div>
@@ -331,12 +366,15 @@ export function MetroStatusTimelines({
 
     const bucketCount = firstLink.hours.length
 
-    const metroMap = new Map<string, {
-      linkCount: number
-      healthyLinkCount: number
-      spofLinks: SpofLink[]
-      buckets: Map<number, { statuses: string[]; hour: string }>
-    }>()
+    const metroMap = new Map<
+      string,
+      {
+        linkCount: number
+        healthyLinkCount: number
+        spofLinks: SpofLink[]
+        buckets: Map<number, { statuses: string[]; hour: string }>
+      }
+    >()
 
     const initMetro = (code: string) => {
       if (!metroMap.has(code)) {
@@ -358,9 +396,10 @@ export function MetroStatusTimelines({
       // If last bucket is no_data (still collecting), use the previous bucket
       const lastBucket = link.hours[link.hours.length - 1]
       const prevBucket = link.hours.length > 1 ? link.hours[link.hours.length - 2] : null
-      const currentStatus = (lastBucket?.status === 'no_data' && prevBucket)
-        ? (prevBucket.status || 'healthy')
-        : (lastBucket?.status || 'healthy') as SpofLink['status']
+      const currentStatus =
+        lastBucket?.status === 'no_data' && prevBucket
+          ? prevBucket.status || 'healthy'
+          : ((lastBucket?.status || 'healthy') as SpofLink['status'])
       const isCurrentlyHealthy = currentStatus === 'healthy' || currentStatus === 'degraded'
 
       for (const metroCode of [link.side_a_metro, link.side_z_metro]) {
@@ -371,7 +410,7 @@ export function MetroStatusTimelines({
         if (isCurrentlyHealthy) metro.healthyLinkCount++
         if (isSpof) {
           // Only add if not already in the list (link touches both metros)
-          if (!metro.spofLinks.some(s => s.code === link.code)) {
+          if (!metro.spofLinks.some((s) => s.code === link.code)) {
             metro.spofLinks.push({
               code: link.code,
               pk: link.pk,
@@ -406,7 +445,12 @@ export function MetroStatusTimelines({
         // For the last bucket (most recent, still collecting), if ALL links have no_data
         // show it as no_data. Otherwise calculate from the links that do have data.
         const isLastBucket = i === bucketCount - 1
-        const totalLinks = breakdown.healthy + breakdown.degraded + breakdown.unhealthy + breakdown.disabled + breakdown.no_data
+        const totalLinks =
+          breakdown.healthy +
+          breakdown.degraded +
+          breakdown.unhealthy +
+          breakdown.disabled +
+          breakdown.no_data
         const allNoData = breakdown.no_data === totalLinks
         let bucketStatus: 'healthy' | 'degraded' | 'unhealthy' | 'no_data'
         if (isLastBucket && allNoData) {
@@ -426,7 +470,7 @@ export function MetroStatusTimelines({
       // Current health from last bucket (or previous if last is no_data)
       const lastBucket = buckets[buckets.length - 1]
       const prevBucket = buckets.length > 1 ? buckets[buckets.length - 2] : null
-      const healthBucket = (lastBucket.status === 'no_data' && prevBucket) ? prevBucket : lastBucket
+      const healthBucket = lastBucket.status === 'no_data' && prevBucket ? prevBucket : lastBucket
       let currentHealth: 'healthy' | 'degraded' | 'unhealthy' = 'healthy'
       if (healthBucket.status === 'unhealthy') {
         currentHealth = 'unhealthy'
@@ -436,8 +480,8 @@ export function MetroStatusTimelines({
 
       // Factor in SPOF status: if any SPOF is unhealthy, metro is unhealthy
       // If any SPOF is degraded, metro is at least degraded
-      const hasUnhealthySpof = data.spofLinks.some(s => s.status === 'unhealthy')
-      const hasDegradedSpof = data.spofLinks.some(s => s.status === 'degraded')
+      const hasUnhealthySpof = data.spofLinks.some((s) => s.status === 'unhealthy')
+      const hasDegradedSpof = data.spofLinks.some((s) => s.status === 'degraded')
       if (hasUnhealthySpof) {
         currentHealth = 'unhealthy'
         hasAnyIssues = true
@@ -486,7 +530,7 @@ export function MetroStatusTimelines({
 
   // Apply filters
   const filteredMetros = useMemo(() => {
-    return metroData.filter(metro => {
+    return metroData.filter((metro) => {
       // Health filter
       const matchesHealth = healthFilters.includes(metro.currentHealth)
 
@@ -494,7 +538,8 @@ export function MetroStatusTimelines({
       let matchesIssue = false
       if (issueFilters.includes('has_spof') && metro.spofLinks.length > 0) matchesIssue = true
       if (issueFilters.includes('has_issues') && metro.hasIssues) matchesIssue = true
-      if (issueFilters.includes('no_issues') && !metro.hasIssues && metro.spofLinks.length === 0) matchesIssue = true
+      if (issueFilters.includes('no_issues') && !metro.hasIssues && metro.spofLinks.length === 0)
+        matchesIssue = true
 
       return matchesHealth && matchesIssue
     })
@@ -520,9 +565,7 @@ export function MetroStatusTimelines({
       <div className="border border-border rounded-lg p-6 text-center">
         <CheckCircle2 className="h-8 w-8 text-green-500 mx-auto mb-2" />
         <div className="text-sm text-muted-foreground">
-          {metroData.length === 0
-            ? 'No metros available'
-            : 'No metros match the selected filters'}
+          {metroData.length === 0 ? 'No metros available' : 'No metros match the selected filters'}
         </div>
       </div>
     )
@@ -530,35 +573,32 @@ export function MetroStatusTimelines({
 
   return (
     <div className="border border-border rounded-lg">
-      <div className="px-4 py-2.5 bg-muted/50 border-b border-border flex items-center gap-2 rounded-t-lg">
-        <History className="h-4 w-4 text-muted-foreground" />
-        <h3 className="font-medium">
-          Metro Status History
-          <span className="text-sm text-muted-foreground font-normal ml-1">
-            ({filteredMetros.length} metro{filteredMetros.length !== 1 ? 's' : ''})
-          </span>
-        </h3>
-        {onTimeRangeChange && (
-          <div className="inline-flex rounded-lg border border-border bg-background/50 p-0.5 ml-auto">
-            {timeRangeOptions.map((opt) => (
-              <button
-                key={opt.value}
-                onClick={() => onTimeRangeChange(opt.value)}
-                className={`px-2.5 py-0.5 text-xs rounded-md transition-colors ${
-                  timeRange === opt.value
-                    ? 'bg-background text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
+      <div className="px-4 py-2.5 bg-muted/50 border-b border-border rounded-t-lg flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-2">
+        <div className="flex flex-col">
+          <div className="flex items-center gap-2">
+            <History className="h-4 w-4 text-muted-foreground shrink-0" />
+            <h3 className="font-medium">
+              Metro Status History
+              <span className="hidden xss:inline text-sm text-muted-foreground font-normal ml-1">
+                ({filteredMetros.length} metro{filteredMetros.length !== 1 ? 's' : ''})
+              </span>
+            </h3>
           </div>
+          <div className="xss:hidden text-sm text-muted-foreground">
+            ({filteredMetros.length} metro{filteredMetros.length !== 1 ? 's' : ''})
+          </div>
+        </div>
+        {onTimeRangeChange && (
+          <SmallDropdown
+            value={timeRange}
+            options={timeRangeOptions}
+            onChange={(v) => onTimeRangeChange(v as TimeRange)}
+          />
         )}
       </div>
 
       {/* Legend */}
-      <div className="px-4 py-2 border-b border-border bg-muted/30 flex items-center gap-4 text-xs text-muted-foreground">
+      <div className="px-4 py-2 border-b border-border bg-muted/30 flex items-center gap-4 flex-wrap text-xs text-muted-foreground">
         <div className="flex items-center gap-1.5">
           <div className="w-2.5 h-2.5 rounded-sm bg-green-500" />
           <span>Healthy</span>
@@ -586,7 +626,7 @@ export function MetroStatusTimelines({
           <div key={metro.code} className="px-4 py-3 hover:bg-muted/30 transition-colors">
             <div className="flex items-start gap-4">
               {/* Metro info */}
-              <div className="flex-shrink-0 w-44">
+              <div className="shrink-0 w-44">
                 <div className="flex items-center gap-1.5">
                   <button
                     onClick={() => handleMetroClick(metro.code)}
@@ -600,29 +640,33 @@ export function MetroStatusTimelines({
                 <div className="text-xs text-muted-foreground">
                   <span className="font-mono">{metro.code}</span>
                   <span className="mx-1">·</span>
-                  <span>{metro.linkCount} {metro.linkCount === 1 ? 'link' : 'links'}</span>
+                  <span>
+                    {metro.linkCount} {metro.linkCount === 1 ? 'link' : 'links'}
+                  </span>
                 </div>
-                {metro.spofLinks.length > 0 && (() => {
-                  const hasAtRiskSpof = metro.spofLinks.some(s => s.status === 'unhealthy' || s.status === 'degraded')
-                  return (
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium mt-1 inline-flex items-center gap-1 ${
-                      hasAtRiskSpof
-                        ? 'bg-red-500/20 text-red-600 dark:text-red-400'
-                        : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                    }`}>
-                      {hasAtRiskSpof && <AlertTriangle className="h-3 w-3" />}
-                      {metro.spofLinks.length} SPOF
-                    </span>
-                  )
-                })()}
+                {metro.spofLinks.length > 0 &&
+                  (() => {
+                    const hasAtRiskSpof = metro.spofLinks.some(
+                      (s) => s.status === 'unhealthy' || s.status === 'degraded',
+                    )
+                    return (
+                      <span
+                        className={`text-[10px] px-1.5 py-0.5 rounded font-medium mt-1 inline-flex items-center gap-1 ${
+                          hasAtRiskSpof
+                            ? 'bg-red-500/20 text-red-600 dark:text-red-400'
+                            : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                        }`}
+                      >
+                        {hasAtRiskSpof && <AlertTriangle className="h-3 w-3" />}
+                        {metro.spofLinks.length} SPOF
+                      </span>
+                    )
+                  })()}
               </div>
 
               {/* Timeline */}
               <div className="flex-1 min-w-0">
-                <MetroTimeline
-                  metro={metro}
-                  bucketMinutes={linkHistory?.bucket_minutes || 20}
-                />
+                <MetroTimeline metro={metro} bucketMinutes={linkHistory?.bucket_minutes || 20} />
                 <div className="flex justify-between mt-1 text-[10px] text-muted-foreground">
                   <span>{timeLabels[timeRange]}</span>
                   <span>Now</span>

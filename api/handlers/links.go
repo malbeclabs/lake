@@ -14,26 +14,66 @@ import (
 )
 
 type LinkListItem struct {
-	PK              string  `json:"pk"`
-	Code            string  `json:"code"`
-	Status          string  `json:"status"`
-	LinkType        string  `json:"link_type"`
-	BandwidthBps    int64   `json:"bandwidth_bps"`
-	SideAPK         string  `json:"side_a_pk"`
-	SideACode       string  `json:"side_a_code"`
-	SideAMetro      string  `json:"side_a_metro"`
-	SideZPK         string  `json:"side_z_pk"`
-	SideZCode       string  `json:"side_z_code"`
-	SideZMetro      string  `json:"side_z_metro"`
-	ContributorPK   string  `json:"contributor_pk"`
-	ContributorCode string  `json:"contributor_code"`
-	InBps           float64 `json:"in_bps"`
-	OutBps          float64 `json:"out_bps"`
-	UtilizationIn   float64 `json:"utilization_in"`
-	UtilizationOut  float64 `json:"utilization_out"`
-	LatencyUs       float64 `json:"latency_us"`
-	JitterUs        float64 `json:"jitter_us"`
-	LossPercent     float64 `json:"loss_percent"`
+	PK                   string  `json:"pk"`
+	Code                 string  `json:"code"`
+	Status               string  `json:"status"`
+	LinkType             string  `json:"link_type"`
+	BandwidthBps         int64   `json:"bandwidth_bps"`
+	SideAPK              string  `json:"side_a_pk"`
+	SideACode            string  `json:"side_a_code"`
+	SideAMetroPK         string  `json:"side_a_metro_pk"`
+	SideAMetro           string  `json:"side_a_metro"`
+	SideZPK              string  `json:"side_z_pk"`
+	SideZCode            string  `json:"side_z_code"`
+	SideZMetroPK         string  `json:"side_z_metro_pk"`
+	SideZMetro           string  `json:"side_z_metro"`
+	ContributorPK        string  `json:"contributor_pk"`
+	ContributorCode      string  `json:"contributor_code"`
+	SideAContributorPK   string  `json:"side_a_contributor_pk"`
+	SideAContributorCode string  `json:"side_a_contributor_code"`
+	SideZContributorPK   string  `json:"side_z_contributor_pk"`
+	SideZContributorCode string  `json:"side_z_contributor_code"`
+	InBps                float64 `json:"in_bps"`
+	OutBps               float64 `json:"out_bps"`
+	UtilizationIn        float64 `json:"utilization_in"`
+	UtilizationOut       float64 `json:"utilization_out"`
+	LatencyUs            float64 `json:"latency_us"`
+	JitterUs             float64 `json:"jitter_us"`
+	LossPercent          float64 `json:"loss_percent"`
+}
+
+var linkSortFields = map[string]string{
+	"code":        "code",
+	"type":        "link_type",
+	"contributor": "contributor_code",
+	"sidea":       "side_a_code",
+	"sidez":       "side_z_code",
+	"status":      "status",
+	"bandwidth":   "bandwidth_bps",
+	"in":          "in_bps",
+	"out":         "out_bps",
+	"utilin":      "utilization_in",
+	"utilout":     "utilization_out",
+	"latency":     "latency_us",
+	"jitter":      "jitter_us",
+	"loss":        "loss_percent",
+}
+
+var linkFilterFields = map[string]FilterFieldConfig{
+	"code":        {Column: "code", Type: FieldTypeText},
+	"type":        {Column: "link_type", Type: FieldTypeText},
+	"contributor": {Column: "contributor_code", Type: FieldTypeText},
+	"sidea":       {Column: "side_a_code", Type: FieldTypeText},
+	"sidez":       {Column: "side_z_code", Type: FieldTypeText},
+	"status":      {Column: "status", Type: FieldTypeText},
+	"bandwidth":   {Column: "bandwidth_bps", Type: FieldTypeBandwidth},
+	"in":          {Column: "in_bps", Type: FieldTypeBandwidth},
+	"out":         {Column: "out_bps", Type: FieldTypeBandwidth},
+	"utilin":      {Column: "utilization_in", Type: FieldTypeNumeric},
+	"utilout":     {Column: "utilization_out", Type: FieldTypeNumeric},
+	"latency":     {Column: "latency_us", Type: FieldTypeNumeric},
+	"jitter":      {Column: "jitter_us", Type: FieldTypeNumeric},
+	"loss":        {Column: "loss_percent", Type: FieldTypeNumeric},
 }
 
 func (a *API) GetLinks(w http.ResponseWriter, r *http.Request) {
@@ -41,16 +81,20 @@ func (a *API) GetLinks(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	pagination := ParsePagination(r, 100)
+	sort := ParseSort(r, "code", linkSortFields)
+	filters := ParseFilters(r)
 	start := time.Now()
 
-	// Get total count
-	countQuery := `SELECT count(*) FROM dz_links_current`
-	var total uint64
-	if err := a.envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
-		logError("links count query failed", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	filterClause, filterArgs := filters.BuildFilterClause(linkFilterFields)
+	whereFilter := ""
+	if filterClause != "" {
+		whereFilter = " AND " + filterClause
 	}
+	if contributorPk := r.URL.Query().Get("contributor_pk"); contributorPk != "" {
+		whereFilter += " AND contributor_pk = ?"
+		filterArgs = append(filterArgs, contributorPk)
+	}
+	orderBy := sort.OrderByClause(linkSortFields)
 
 	query := `
 		WITH traffic_rates AS (
@@ -72,43 +116,61 @@ func (a *API) GetLinks(w http.ResponseWriter, r *http.Request) {
 			FROM link_rollup_5m FINAL
 			WHERE bucket_ts >= now() - INTERVAL 3 HOUR
 			GROUP BY link_pk
+		),
+		links_data AS (
+			SELECT
+				l.pk as pk,
+				l.code as code,
+				l.status as status,
+				l.link_type as link_type,
+				COALESCE(l.bandwidth_bps, 0) as bandwidth_bps,
+				COALESCE(l.side_a_pk, '') as side_a_pk,
+				COALESCE(da.code, '') as side_a_code,
+				COALESCE(ma.pk, '') as side_a_metro_pk,
+				COALESCE(ma.code, '') as side_a_metro,
+				COALESCE(l.side_z_pk, '') as side_z_pk,
+				COALESCE(dz.code, '') as side_z_code,
+				COALESCE(mz.pk, '') as side_z_metro_pk,
+				COALESCE(mz.code, '') as side_z_metro,
+				COALESCE(l.contributor_pk, '') as contributor_pk,
+				COALESCE(c.code, '') as contributor_code,
+				COALESCE(ca.pk, '') as side_a_contributor_pk,
+				COALESCE(ca.code, '') as side_a_contributor_code,
+				COALESCE(cz.pk, '') as side_z_contributor_pk,
+				COALESCE(cz.code, '') as side_z_contributor_code,
+				COALESCE(tr.in_bps, 0) as in_bps,
+				COALESCE(tr.out_bps, 0) as out_bps,
+				CASE WHEN l.bandwidth_bps > 0 THEN COALESCE(tr.in_bps, 0) * 100.0 / l.bandwidth_bps ELSE 0 END as utilization_in,
+				CASE WHEN l.bandwidth_bps > 0 THEN COALESCE(tr.out_bps, 0) * 100.0 / l.bandwidth_bps ELSE 0 END as utilization_out,
+				COALESCE(ls.avg_rtt_us, 0) as latency_us,
+				COALESCE(ls.avg_jitter_us, 0) as jitter_us,
+				COALESCE(ls.loss_percent, 0) as loss_percent
+			FROM dz_links_current l
+			LEFT JOIN dz_devices_current da ON l.side_a_pk = da.pk
+			LEFT JOIN dz_metros_current ma ON da.metro_pk = ma.pk
+			LEFT JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
+			LEFT JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
+			LEFT JOIN dz_contributors_current c ON l.contributor_pk = c.pk
+			LEFT JOIN dz_contributors_current ca ON da.contributor_pk = ca.pk
+			LEFT JOIN dz_contributors_current cz ON dz.contributor_pk = cz.pk
+			LEFT JOIN traffic_rates tr ON l.pk = tr.link_pk
+			LEFT JOIN latency_stats ls ON l.pk = ls.link_pk
 		)
 		SELECT
-			l.pk,
-			l.code,
-			l.status,
-			l.link_type,
-			COALESCE(l.bandwidth_bps, 0) as bandwidth_bps,
-			COALESCE(l.side_a_pk, '') as side_a_pk,
-			COALESCE(da.code, '') as side_a_code,
-			COALESCE(ma.code, '') as side_a_metro,
-			COALESCE(l.side_z_pk, '') as side_z_pk,
-			COALESCE(dz.code, '') as side_z_code,
-			COALESCE(mz.code, '') as side_z_metro,
-			COALESCE(l.contributor_pk, '') as contributor_pk,
-			COALESCE(c.code, '') as contributor_code,
-			COALESCE(tr.in_bps, 0) as in_bps,
-			COALESCE(tr.out_bps, 0) as out_bps,
-			CASE WHEN l.bandwidth_bps > 0 THEN COALESCE(tr.in_bps, 0) * 100.0 / l.bandwidth_bps ELSE 0 END as utilization_in,
-			CASE WHEN l.bandwidth_bps > 0 THEN COALESCE(tr.out_bps, 0) * 100.0 / l.bandwidth_bps ELSE 0 END as utilization_out,
-			COALESCE(ls.avg_rtt_us, 0) as latency_us,
-			COALESCE(ls.avg_jitter_us, 0) as jitter_us,
-			COALESCE(ls.loss_percent, 0) as loss_percent
-		FROM dz_links_current l
-		LEFT JOIN dz_devices_current da ON l.side_a_pk = da.pk
-		LEFT JOIN dz_metros_current ma ON da.metro_pk = ma.pk
-		LEFT JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
-		LEFT JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
-		LEFT JOIN dz_contributors_current c ON l.contributor_pk = c.pk
-		LEFT JOIN traffic_rates tr ON l.pk = tr.link_pk
-		LEFT JOIN latency_stats ls ON l.pk = ls.link_pk
-		ORDER BY l.code
+			pk, code, status, link_type, bandwidth_bps, side_a_pk, side_a_code, side_a_metro_pk, side_a_metro, side_z_pk, side_z_code, side_z_metro_pk, side_z_metro, contributor_pk, contributor_code, side_a_contributor_pk, side_a_contributor_code, side_z_contributor_pk, side_z_contributor_code, in_bps, out_bps, utilization_in, utilization_out, latency_us, jitter_us, loss_percent,
+			count() OVER () as _total
+		FROM links_data
+		WHERE 1=1` + whereFilter + " " + orderBy + `
 		LIMIT ? OFFSET ?
 	`
 
-	rows, err := a.envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
+	var args []any
+	args = append(args, filterArgs...)
+	args = append(args, pagination.Limit, pagination.Offset)
+
+	rows, err := a.envDB(ctx).Query(ctx, query, args...)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("links", duration, err)
 
 	if err != nil {
 		logError("links query failed", "error", err)
@@ -118,6 +180,7 @@ func (a *API) GetLinks(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	var links []LinkListItem
+	var total uint64
 	for rows.Next() {
 		var l LinkListItem
 		if err := rows.Scan(
@@ -128,12 +191,18 @@ func (a *API) GetLinks(w http.ResponseWriter, r *http.Request) {
 			&l.BandwidthBps,
 			&l.SideAPK,
 			&l.SideACode,
+			&l.SideAMetroPK,
 			&l.SideAMetro,
 			&l.SideZPK,
 			&l.SideZCode,
+			&l.SideZMetroPK,
 			&l.SideZMetro,
 			&l.ContributorPK,
 			&l.ContributorCode,
+			&l.SideAContributorPK,
+			&l.SideAContributorCode,
+			&l.SideZContributorPK,
+			&l.SideZContributorCode,
 			&l.InBps,
 			&l.OutBps,
 			&l.UtilizationIn,
@@ -141,6 +210,7 @@ func (a *API) GetLinks(w http.ResponseWriter, r *http.Request) {
 			&l.LatencyUs,
 			&l.JitterUs,
 			&l.LossPercent,
+			&total,
 		); err != nil {
 			logError("links row scan failed", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -174,38 +244,42 @@ func (a *API) GetLinks(w http.ResponseWriter, r *http.Request) {
 }
 
 type LinkDetail struct {
-	PK                  string  `json:"pk"`
-	Code                string  `json:"code"`
-	Status              string  `json:"status"`
-	LinkType            string  `json:"link_type"`
-	BandwidthBps        int64   `json:"bandwidth_bps"`
-	SideAPK             string  `json:"side_a_pk"`
-	SideACode           string  `json:"side_a_code"`
-	SideAMetro          string  `json:"side_a_metro"`
-	SideAIfaceName      string  `json:"side_a_iface_name"`
-	SideAIP             string  `json:"side_a_ip"`
-	SideZPK             string  `json:"side_z_pk"`
-	SideZCode           string  `json:"side_z_code"`
-	SideZMetro          string  `json:"side_z_metro"`
-	SideZIfaceName      string  `json:"side_z_iface_name"`
-	SideZIP             string  `json:"side_z_ip"`
-	ContributorPK       string  `json:"contributor_pk"`
-	ContributorCode     string  `json:"contributor_code"`
-	InBps               float64 `json:"in_bps"`
-	OutBps              float64 `json:"out_bps"`
-	UtilizationIn       float64 `json:"utilization_in"`
-	UtilizationOut      float64 `json:"utilization_out"`
-	LatencyUs           float64 `json:"latency_us"`
-	JitterUs            float64 `json:"jitter_us"`
-	LatencyAtoZUs       float64 `json:"latency_a_to_z_us"`
-	JitterAtoZUs        float64 `json:"jitter_a_to_z_us"`
-	LatencyZtoAUs       float64 `json:"latency_z_to_a_us"`
-	JitterZtoAUs        float64 `json:"jitter_z_to_a_us"`
-	LossPercent         float64 `json:"loss_percent"`
-	PeakInBps           float64 `json:"peak_in_bps"`
-	PeakOutBps          float64 `json:"peak_out_bps"`
-	CommittedRttNs      int64   `json:"committed_rtt_ns"`
-	ISISDelayOverrideNs int64   `json:"isis_delay_override_ns"`
+	PK                   string  `json:"pk"`
+	Code                 string  `json:"code"`
+	Status               string  `json:"status"`
+	LinkType             string  `json:"link_type"`
+	BandwidthBps         int64   `json:"bandwidth_bps"`
+	SideAPK              string  `json:"side_a_pk"`
+	SideACode            string  `json:"side_a_code"`
+	SideAMetro           string  `json:"side_a_metro"`
+	SideAIfaceName       string  `json:"side_a_iface_name"`
+	SideAIP              string  `json:"side_a_ip"`
+	SideZPK              string  `json:"side_z_pk"`
+	SideZCode            string  `json:"side_z_code"`
+	SideZMetro           string  `json:"side_z_metro"`
+	SideZIfaceName       string  `json:"side_z_iface_name"`
+	SideZIP              string  `json:"side_z_ip"`
+	ContributorPK        string  `json:"contributor_pk"`
+	ContributorCode      string  `json:"contributor_code"`
+	SideAContributorPK   string  `json:"side_a_contributor_pk"`
+	SideAContributorCode string  `json:"side_a_contributor_code"`
+	SideZContributorPK   string  `json:"side_z_contributor_pk"`
+	SideZContributorCode string  `json:"side_z_contributor_code"`
+	InBps                float64 `json:"in_bps"`
+	OutBps               float64 `json:"out_bps"`
+	UtilizationIn        float64 `json:"utilization_in"`
+	UtilizationOut       float64 `json:"utilization_out"`
+	LatencyUs            float64 `json:"latency_us"`
+	JitterUs             float64 `json:"jitter_us"`
+	LatencyAtoZUs        float64 `json:"latency_a_to_z_us"`
+	JitterAtoZUs         float64 `json:"jitter_a_to_z_us"`
+	LatencyZtoAUs        float64 `json:"latency_z_to_a_us"`
+	JitterZtoAUs         float64 `json:"jitter_z_to_a_us"`
+	LossPercent          float64 `json:"loss_percent"`
+	PeakInBps            float64 `json:"peak_in_bps"`
+	PeakOutBps           float64 `json:"peak_out_bps"`
+	CommittedRttNs       int64   `json:"committed_rtt_ns"`
+	ISISDelayOverrideNs  int64   `json:"isis_delay_override_ns"`
 }
 
 // TopologyLinkHealth represents the SLO health status of a link for topology overlay
@@ -277,7 +351,7 @@ func (a *API) GetLinkHealth(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query, committedRttProvisioningNs)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("links", duration, err)
 
 	if err != nil {
 		logError("link health query failed", "error", err)
@@ -401,7 +475,7 @@ func (a *API) GetLink(w http.ResponseWriter, r *http.Request) {
 	query := linkDetailQuery()
 
 	var link LinkDetail
-	err := a.envDB(ctx).QueryRow(ctx, query, pk).Scan(
+	err := a.envDB(ctx).QueryRow(ctx, query, pk, pk, pk, pk, pk).Scan(
 		&link.PK,
 		&link.Code,
 		&link.Status,
@@ -419,6 +493,10 @@ func (a *API) GetLink(w http.ResponseWriter, r *http.Request) {
 		&link.SideZIP,
 		&link.ContributorPK,
 		&link.ContributorCode,
+		&link.SideAContributorPK,
+		&link.SideAContributorCode,
+		&link.SideZContributorPK,
+		&link.SideZContributorCode,
 		&link.InBps,
 		&link.OutBps,
 		&link.UtilizationIn,
@@ -436,7 +514,7 @@ func (a *API) GetLink(w http.ResponseWriter, r *http.Request) {
 		&link.ISISDelayOverrideNs,
 	)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("links", duration, err)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -464,7 +542,7 @@ func linkDetailQuery() string {
 				avg(avg_out_bps) as out_bps
 			FROM device_interface_rollup_5m
 			WHERE bucket_ts >= now() - INTERVAL 15 MINUTE
-				AND link_pk != ''
+				AND link_pk = ?
 			GROUP BY link_pk
 		),
 		peak_rates AS (
@@ -474,7 +552,7 @@ func linkDetailQuery() string {
 				max(max_out_bps) as peak_out_bps
 			FROM device_interface_rollup_5m
 			WHERE bucket_ts >= now() - INTERVAL 1 HOUR
-				AND link_pk != ''
+				AND link_pk = ?
 			GROUP BY link_pk
 		),
 		latency_stats AS (
@@ -485,6 +563,7 @@ func linkDetailQuery() string {
 				sum(a_loss_pct * a_samples + z_loss_pct * z_samples) / greatest(sum(a_samples + z_samples), 1) as loss_percent
 			FROM link_rollup_5m FINAL
 			WHERE bucket_ts >= now() - INTERVAL 3 HOUR
+				AND link_pk = ?
 			GROUP BY link_pk
 		),
 		latency_per_direction AS (
@@ -496,6 +575,7 @@ func linkDetailQuery() string {
 				ifNotFinite(sum(z_avg_jitter_us * z_samples) / greatest(sum(z_samples), 1), 0) as avg_jitter_z_to_a
 			FROM link_rollup_5m FINAL
 			WHERE bucket_ts >= now() - INTERVAL 3 HOUR
+				AND link_pk = ?
 			GROUP BY link_pk
 		)
 		SELECT
@@ -516,6 +596,10 @@ func linkDetailQuery() string {
 			COALESCE(l.side_z_ip, '') as side_z_ip,
 			COALESCE(l.contributor_pk, '') as contributor_pk,
 			COALESCE(c.code, '') as contributor_code,
+			COALESCE(ca.pk, '') as side_a_contributor_pk,
+			COALESCE(ca.code, '') as side_a_contributor_code,
+			COALESCE(cz.pk, '') as side_z_contributor_pk,
+			COALESCE(cz.code, '') as side_z_contributor_code,
 			COALESCE(tr.in_bps, 0) as in_bps,
 			COALESCE(tr.out_bps, 0) as out_bps,
 			CASE WHEN l.bandwidth_bps > 0 THEN COALESCE(tr.in_bps, 0) * 100.0 / l.bandwidth_bps ELSE 0 END as utilization_in,
@@ -537,6 +621,8 @@ func linkDetailQuery() string {
 		LEFT JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
 		LEFT JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
 		LEFT JOIN dz_contributors_current c ON l.contributor_pk = c.pk
+		LEFT JOIN dz_contributors_current ca ON da.contributor_pk = ca.pk
+		LEFT JOIN dz_contributors_current cz ON dz.contributor_pk = cz.pk
 		LEFT JOIN traffic_rates tr ON l.pk = tr.link_pk
 		LEFT JOIN peak_rates pr ON l.pk = pr.link_pk
 		LEFT JOIN latency_stats ls ON l.pk = ls.link_pk

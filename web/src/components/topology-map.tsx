@@ -9,6 +9,9 @@ import { useTheme } from '@/hooks/use-theme'
 import type { TopologyMetro, TopologyDevice, TopologyLink, TopologyValidator, MultiPathResponse, SimulateLinkRemovalResponse, SimulateLinkAdditionResponse, WhatIfRemovalResponse, MetroDevicePathsResponse } from '@/lib/api'
 import { fetchISISPaths, fetchISISTopology, fetchCriticalLinks, fetchSimulateLinkRemoval, fetchSimulateLinkAddition, fetchWhatIfRemoval, fetchLinkHealth, fetchTopologyCompare, fetchMetroDevicePaths } from '@/lib/api'
 import { useTopology, useMulticastState, TopologyControlBar, TopologyPanel, DeviceDetails, LinkDetails, MetroDetails, ValidatorDetails, EntityLink as TopologyEntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, ValidatorsOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, LINK_TYPE_COLORS, MULTICAST_PUBLISHER_COLORS, type DeviceOption, type MetroOption } from '@/components/topology'
+import { useActiveOpsTickets } from '@/hooks/use-ops-tickets'
+import { opsTicketUrl } from '@/lib/ops-api'
+import type { OpsTicket } from '@/lib/ops-api'
 
 // Path colors for multi-path visualization
 const PATH_COLORS = [
@@ -147,6 +150,7 @@ function getStakeColor(stakeShare: number): string {
 interface HoveredLinkInfo {
   pk: string
   code: string
+  status: string
   linkType: string
   bandwidthBps: number
   latencyUs: number
@@ -168,6 +172,10 @@ interface HoveredLinkInfo {
   interfaceZIP: string
   contributorPk: string
   contributorCode: string
+  sideAContributorPk: string
+  sideAContributorCode: string
+  sideZContributorPk: string
+  sideZContributorCode: string
   sampleCount: number
   committedRttNs: number
   isisDelayOverrideNs: number
@@ -194,6 +202,12 @@ interface HoveredDeviceInfo {
   contributorPk: string
   contributorCode: string
   userCount: number
+  unicastUsersCount: number
+  multicastSubscribersCount: number
+  multicastPublishersCount: number
+  maxUnicastUsers: number
+  maxMulticastSubscribers: number
+  maxMulticastPublishers: number
   validatorCount: number
   stakeSol: number
   stakeShare: number
@@ -335,10 +349,13 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const [hoveredMetro, setHoveredMetro] = useState<HoveredMetroInfo | null>(null)
   const [hoveredValidator, setHoveredValidator] = useState<HoveredValidatorInfo | null>(null)
   const [mousePos, setMousePos] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
+  const mousePosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
+  const [pinnedTooltipPos, setPinnedTooltipPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
   const [selectedItem, setSelectedItemState] = useState<SelectedItem | null>(null)
   const mapRef = useRef<MapRef>(null)
   const [mapReady, setMapReady] = useState(false)
   const markerClickedRef = useRef(false)
+  const linkHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Get unified topology context
   const { mode, setMode, overlays, toggleOverlay, panel, openPanel, closePanel, selection, impactDevices, toggleImpactDevice, clearImpactDevices, hoveredDiscrepancyKey } = useTopology()
@@ -363,6 +380,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const bandwidthMode = overlays.bandwidth
   const isisHealthMode = overlays.isisHealth
   const multicastTreesMode = overlays.multicastTrees
+  const showUserCounts = overlays.userCounts
 
   // Whether any overlay with panel content is active (bandwidth has no panel)
   const hasOverlayPanelContent = deviceTypeMode || linkTypeMode || stakeOverlayMode || linkHealthMode || trafficFlowMode || metroClusteringMode || contributorDevicesMode || contributorLinksMode || criticalityOverlayEnabled || isisHealthMode || showValidators || multicastTreesMode
@@ -384,6 +402,18 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     restoreFromParams: restoreMulticastParams, getSelectionParams: getMulticastSelectionParams,
   } = mc
   const [linkAnimating, setLinkAnimating] = useState(true)
+
+  const { data: activeTicketsData } = useActiveOpsTickets()
+
+  const hoveredLinkTickets = useMemo((): OpsTicket[] => {
+    if (!hoveredLink || !activeTicketsData) return []
+    const pk = hoveredLink.pk
+    return activeTicketsData.tickets.filter(
+      t =>
+        t.affected_link_pubkey.includes(pk) ||
+        (t.affected_links?.some(l => l.pubkey === pk) ?? false)
+    )
+  }, [hoveredLink, activeTicketsData])
 
   // Auto-disable link animation when entering analysis mode (overlays, modes, selection).
   // User can re-enable via the toggle even while in analysis mode.
@@ -1669,6 +1699,12 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         displayOpacity = 1
       }
 
+      // Drained/soft-drained links: always show dashed with reduced opacity
+      if (link.status === 'hard-drained' || link.status === 'soft-drained') {
+        useDash = true
+        displayOpacity = Math.min(displayOpacity, 0.4)
+      }
+
       // Dim all base links when multicast overlay is active (tree segments render on separate layer)
       if (multicastTreesMode && dimOtherLinks && !isSelected && !isHovered) {
         displayOpacity = 0.08
@@ -2137,6 +2173,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     return {
       pk: link.pk,
       code: link.code,
+      status: link.status,
       linkType: link.link_type,
       bandwidthBps: link.bandwidth_bps,
       latencyUs: link.latency_us,
@@ -2158,6 +2195,10 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       interfaceZIP: link.side_z_ip || '',
       contributorPk: link.contributor_pk,
       contributorCode: link.contributor_code,
+      sideAContributorPk: link.side_a_contributor_pk || '',
+      sideAContributorCode: link.side_a_contributor_code || '',
+      sideZContributorPk: link.side_z_contributor_pk || '',
+      sideZContributorCode: link.side_z_contributor_code || '',
       sampleCount: link.sample_count ?? 0,
       committedRttNs: link.committed_rtt_ns,
       isisDelayOverrideNs: link.isis_delay_override_ns,
@@ -2529,6 +2570,12 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
             contributorPk: device.contributor_pk,
             contributorCode: device.contributor_code,
             userCount: device.user_count ?? 0,
+            unicastUsersCount: device.unicast_users_count ?? 0,
+            multicastSubscribersCount: device.multicast_subscribers_count ?? 0,
+            multicastPublishersCount: device.multicast_publishers_count ?? 0,
+            maxUnicastUsers: device.max_unicast_users ?? 0,
+            maxMulticastSubscribers: device.max_multicast_subscribers ?? 0,
+            maxMulticastPublishers: device.max_multicast_publishers ?? 0,
             validatorCount: device.validator_count ?? 0,
             stakeSol: device.stake_sol ?? 0,
             stakeShare: device.stake_share ?? 0,
@@ -2639,11 +2686,15 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
 
       const props = e.features[0].properties
 
+      // Pin tooltip position at hover start so it stays reachable as user moves toward it
+      setPinnedTooltipPos(mousePosRef.current)
+
       // Handle inter-metro links
       if (pk?.startsWith('inter-metro-') && props?.isInterMetro) {
         setHoveredLink({
           pk,
           code: props.code || '',
+          status: 'activated',
           linkType: 'Inter-Metro',
           bandwidthBps: 0,
           latencyUs: props.avgLatencyUs || 0,
@@ -2665,6 +2716,10 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           interfaceZIP: '',
           contributorPk: '',
           contributorCode: '',
+          sideAContributorPk: '',
+          sideAContributorCode: '',
+          sideZContributorPk: '',
+          sideZContributorCode: '',
           sampleCount: 0,
           committedRttNs: 0,
           isisDelayOverrideNs: 0,
@@ -2683,11 +2738,12 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   }, [linkMap, buildLinkInfo, multicastTreesMode, dimOtherLinks, multicastTreeLinkPKs])
 
   const handleLinkMouseLeave = useCallback(() => {
-    setHoveredLink(null)
+    linkHideTimerRef.current = setTimeout(() => setHoveredLink(null), 400)
   }, [])
 
   // Track mouse position for cursor-following popover
   const handleMouseMove = useCallback((e: maplibregl.MapMouseEvent) => {
+    mousePosRef.current = { x: e.point.x, y: e.point.y }
     setMousePos({ x: e.point.x, y: e.point.y })
   }, [])
 
@@ -2927,6 +2983,12 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
             contributorPk: device.contributor_pk,
             contributorCode: device.contributor_code,
             userCount: device.user_count ?? 0,
+            unicastUsersCount: device.unicast_users_count ?? 0,
+            multicastSubscribersCount: device.multicast_subscribers_count ?? 0,
+            multicastPublishersCount: device.multicast_publishers_count ?? 0,
+            maxUnicastUsers: device.max_unicast_users ?? 0,
+            maxMulticastSubscribers: device.max_multicast_subscribers ?? 0,
+            maxMulticastPublishers: device.max_multicast_publishers ?? 0,
             validatorCount: device.validator_count ?? 0,
             stakeSol: device.stake_sol ?? 0,
             stakeShare: device.stake_share ?? 0,
@@ -3196,6 +3258,34 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
                     )}
                   </div>
                 )}
+                {/* User indicators: unicast / subscribers / publishers */}
+                {showUserCounts && !multicastTreesMode && (deviceInfo.unicastUsersCount > 0 || deviceInfo.multicastSubscribersCount > 0 || deviceInfo.multicastPublishersCount > 0) && (
+                  <div
+                    className="absolute flex items-center gap-0.5 pointer-events-none"
+                    style={{
+                      bottom: -(markerSize / 2 + 10),
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {deviceInfo.unicastUsersCount > 0 && (
+                      <span style={{ fontSize: 10, lineHeight: '15px', background: '#3b82f6', color: '#fff', borderRadius: 4, padding: '0 3px', fontWeight: 600 }}>
+                        U{deviceInfo.unicastUsersCount}
+                      </span>
+                    )}
+                    {deviceInfo.multicastSubscribersCount > 0 && (
+                      <span style={{ fontSize: 10, lineHeight: '15px', background: '#14b8a6', color: '#fff', borderRadius: 4, padding: '0 3px', fontWeight: 600 }}>
+                        S{deviceInfo.multicastSubscribersCount}
+                      </span>
+                    )}
+                    {deviceInfo.multicastPublishersCount > 0 && (
+                      <span style={{ fontSize: 10, lineHeight: '15px', background: '#a855f7', color: '#fff', borderRadius: 4, padding: '0 3px', fontWeight: 600 }}>
+                        P{deviceInfo.multicastPublishersCount}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             </Marker>
           )
@@ -3308,11 +3398,17 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       {/* Hover tooltip - cursor-following */}
       {(hoveredLink || hoveredDevice || hoveredMetro || hoveredValidator) && (
         <div
-          className="absolute z-[1000] bg-[var(--card)]/95 backdrop-blur border border-[var(--border)] rounded-md shadow-lg px-3 py-2 pointer-events-none"
+          className={`absolute z-[1000] bg-[var(--card)]/95 backdrop-blur border border-[var(--border)] rounded-md shadow-lg px-3 py-2 ${
+            hoveredLinkTickets.length > 0 ? '' : 'pointer-events-none'
+          }`}
           style={{
-            left: mousePos.x + 16,
-            top: mousePos.y + 16,
+            left: (hoveredLink ? pinnedTooltipPos.x : mousePos.x) + 16,
+            top: (hoveredLink ? pinnedTooltipPos.y : mousePos.y) + 16,
           }}
+          onMouseEnter={() => {
+            if (linkHideTimerRef.current) clearTimeout(linkHideTimerRef.current)
+          }}
+          onMouseLeave={() => setHoveredLink(null)}
         >
           {hoveredLink && (
             <div className="space-y-1">
@@ -3325,8 +3421,8 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
                   <div>Z-Side: <span className="text-foreground">{hoveredLink.deviceZCode}</span>{hoveredLink.interfaceZName && <span className="text-foreground font-mono"> ({hoveredLink.interfaceZName}{hoveredLink.interfaceZIP && ` ${hoveredLink.interfaceZIP}`})</span>}</div>
                 )}
                 <div>Type: <span className="text-foreground">{hoveredLink.isInterMetro ? 'Inter-Metro' : hoveredLink.linkType}</span></div>
-                {hoveredLink.contributorCode && (
-                  <div>Contributor: <span className="text-foreground">{hoveredLink.contributorCode}</span></div>
+                {(hoveredLink.contributorCode || hoveredLink.sideAContributorCode) && (
+                  <div>Contributor: <span className="text-foreground">{hoveredLink.sideAContributorCode && hoveredLink.sideZContributorCode && hoveredLink.sideAContributorCode !== hoveredLink.sideZContributorCode ? `${hoveredLink.sideAContributorCode} ↔ ${hoveredLink.sideZContributorCode}` : hoveredLink.contributorCode}</span></div>
                 )}
                 {hoveredLink.isInterMetro ? (
                   <>
@@ -3340,6 +3436,37 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
                   </>
                 )}
               </div>
+              {hoveredLinkTickets.length > 0 && (
+                <div className="mt-1.5 pt-1.5 border-t border-border/50 space-y-0.5">
+                  {hoveredLinkTickets.map(t => (
+                    <div key={t.id} className="flex items-center gap-1.5">
+                      <span className={`text-[9px] font-semibold ${t.type === 'incident' ? 'text-red-600 dark:text-red-400' : 'text-blue-600 dark:text-blue-400'}`}>
+                        {t.type === 'incident' ? '⚠' : '🔧'}
+                      </span>
+                      <a
+                        href={opsTicketUrl(t.id)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[11px] font-mono text-blue-600 dark:text-blue-300 hover:underline"
+                      >
+                        {t.human_readable_id}
+                      </a>
+                      <span className="text-[10px] text-muted-foreground">{t.status}</span>
+                      {t.slack_message_url && (
+                        <a
+                          href={t.slack_message_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[10px] text-blue-600 dark:text-blue-300 hover:underline ml-auto"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          Slack ↗
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
           {hoveredDevice && !hoveredLink && (
@@ -3349,6 +3476,28 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
                 <div>Type: <span className="text-foreground capitalize">{hoveredDevice.deviceType}</span></div>
                 {hoveredDevice.contributorCode && (
                   <div>Contributor: <span className="text-foreground">{hoveredDevice.contributorCode}</span></div>
+                )}
+                {(hoveredDevice.unicastUsersCount > 0 || hoveredDevice.multicastSubscribersCount > 0 || hoveredDevice.multicastPublishersCount > 0) && (
+                  <div className="flex items-center gap-1">
+                    <span>Users:</span>
+                    <div className="flex items-center gap-0.5">
+                      {hoveredDevice.unicastUsersCount > 0 && (
+                        <span className="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold leading-none text-white" style={{ background: '#3b82f6' }}>
+                          U{hoveredDevice.unicastUsersCount}
+                        </span>
+                      )}
+                      {hoveredDevice.multicastSubscribersCount > 0 && (
+                        <span className="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold leading-none text-white" style={{ background: '#14b8a6' }}>
+                          S{hoveredDevice.multicastSubscribersCount}
+                        </span>
+                      )}
+                      {hoveredDevice.multicastPublishersCount > 0 && (
+                        <span className="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold leading-none text-white" style={{ background: '#a855f7' }}>
+                          P{hoveredDevice.multicastPublishersCount}
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 )}
               </div>
             </div>

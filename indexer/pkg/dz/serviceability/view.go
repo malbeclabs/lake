@@ -66,15 +66,23 @@ type DeviceInterface struct {
 }
 
 type Device struct {
-	PK            string
-	Status        string
-	DeviceType    string
-	Code          string
-	PublicIP      string
-	ContributorPK string
-	MetroPK       string
-	MaxUsers      uint16
-	Interfaces    []Interface
+	PK                        string
+	Status                    string
+	DeviceType                string
+	Code                      string
+	PublicIP                  string
+	ContributorPK             string
+	MetroPK                   string
+	LocationPK                string
+	MaxUsers                  uint16
+	MaxUnicastUsers           uint16
+	MaxMulticastSubscribers   uint16
+	MaxMulticastPublishers    uint16
+	UnicastUsersCount         uint16
+	MulticastSubscribersCount uint16
+	ReservedSeats             uint16
+	MulticastPublishersCount  uint16
+	Interfaces                []Interface
 }
 
 type Metro struct {
@@ -138,6 +146,36 @@ type Tenant struct {
 	MetroRouting  bool
 	RouteLiveness bool
 	BillingRate   uint64
+}
+
+type AccessPass struct {
+	PK                 string
+	OwnerPubkey        string
+	TypeTag            string
+	AssociatedPubkey   string
+	OthersTypeName     string
+	OthersKey          string
+	ClientIP           net.IP
+	UserPayer          string
+	LastAccessEpoch    uint64
+	ConnectionCount    uint16
+	Status             string
+	MGroupPubAllowlist []string
+	MGroupSubAllowlist []string
+	Flags              uint8
+}
+
+type Location struct {
+	PK             string
+	Owner          string
+	Lat            float64
+	Lng            float64
+	LocId          uint32
+	Status         string
+	Code           string
+	Name           string
+	Country        string
+	ReferenceCount uint32
 }
 
 type ServiceabilityRPC interface {
@@ -296,8 +334,10 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		"users", len(pd.Users),
 		"links", len(pd.Links),
 		"metros", len(pd.Exchanges),
+		"locations", len(pd.Locations),
 		"multicast_groups", len(pd.MulticastGroups),
-		"tenants", len(pd.Tenants))
+		"tenants", len(pd.Tenants),
+		"access_passes", len(pd.AccessPasses))
 
 	// Validate that we received data for each entity type - empty responses would tombstone all existing entities.
 	// Check each independently since they're written separately with MissingMeansDeleted=true.
@@ -320,8 +360,10 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	users := convertUsers(pd.Users)
 	links := convertLinks(pd.Links, pd.Devices)
 	metros := convertMetros(pd.Exchanges)
+	locations := convertLocations(pd.Locations)
 	multicastGroups := convertMulticastGroups(pd.MulticastGroups)
 	tenants := convertTenants(pd.Tenants)
+	accessPasses := convertAccessPasses(pd.AccessPasses)
 
 	fetchedAt := time.Now().UTC()
 
@@ -345,6 +387,10 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		return result, fmt.Errorf("failed to replace metros: %w", err)
 	}
 
+	if err := v.store.ReplaceLocations(ctx, locations); err != nil {
+		return result, fmt.Errorf("failed to replace locations: %w", err)
+	}
+
 	if err := v.store.ReplaceLinks(ctx, links); err != nil {
 		return result, fmt.Errorf("failed to replace links: %w", err)
 	}
@@ -357,7 +403,11 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		return result, fmt.Errorf("failed to replace tenants: %w", err)
 	}
 
-	result.RowsAffected = int64(len(contributors) + len(devices) + len(deviceInterfaces) + len(users) + len(metros) + len(links) + len(multicastGroups) + len(tenants))
+	if err := v.store.ReplaceAccessPasses(ctx, accessPasses); err != nil {
+		return result, fmt.Errorf("failed to replace access passes: %w", err)
+	}
+
+	result.RowsAffected = int64(len(contributors) + len(devices) + len(deviceInterfaces) + len(users) + len(metros) + len(locations) + len(links) + len(multicastGroups) + len(tenants) + len(accessPasses))
 	result.SourceMaxEventTS = &fetchedAt
 
 	v.fetchedAt = fetchedAt
@@ -402,15 +452,23 @@ func convertDevices(onchain []serviceability.Device) []Device {
 		}
 
 		result[i] = Device{
-			PK:            solana.PublicKeyFromBytes(device.PubKey[:]).String(),
-			Status:        device.Status.String(),
-			DeviceType:    device.DeviceType.String(),
-			Code:          device.Code,
-			PublicIP:      net.IP(device.PublicIp[:]).String(),
-			ContributorPK: solana.PublicKeyFromBytes(device.ContributorPubKey[:]).String(),
-			MetroPK:       solana.PublicKeyFromBytes(device.ExchangePubKey[:]).String(),
-			MaxUsers:      device.MaxUsers,
-			Interfaces:    interfaces,
+			PK:                        solana.PublicKeyFromBytes(device.PubKey[:]).String(),
+			Status:                    device.Status.String(),
+			DeviceType:                device.DeviceType.String(),
+			Code:                      device.Code,
+			PublicIP:                  net.IP(device.PublicIp[:]).String(),
+			ContributorPK:             solana.PublicKeyFromBytes(device.ContributorPubKey[:]).String(),
+			MetroPK:                   solana.PublicKeyFromBytes(device.ExchangePubKey[:]).String(),
+			LocationPK:                solana.PublicKeyFromBytes(device.LocationPubKey[:]).String(),
+			MaxUsers:                  device.MaxUsers,
+			MaxUnicastUsers:           device.MaxUnicastUsers,
+			MaxMulticastSubscribers:   device.MaxMulticastSubscribers,
+			MaxMulticastPublishers:    device.MaxMulticastPublishers,
+			UnicastUsersCount:         device.UnicastUsersCount,
+			MulticastSubscribersCount: device.MulticastSubscribersCount,
+			ReservedSeats:             device.ReservedSeats,
+			MulticastPublishersCount:  device.MulticastPublishersCount,
+			Interfaces:                interfaces,
 		}
 	}
 	return result
@@ -559,6 +617,25 @@ func convertTenants(onchain []serviceability.Tenant) []Tenant {
 	return result
 }
 
+func convertLocations(onchain []serviceability.Location) []Location {
+	result := make([]Location, len(onchain))
+	for i, loc := range onchain {
+		result[i] = Location{
+			PK:             solana.PublicKeyFromBytes(loc.PubKey[:]).String(),
+			Owner:          solana.PublicKeyFromBytes(loc.Owner[:]).String(),
+			Lat:            loc.Lat,
+			Lng:            loc.Lng,
+			LocId:          loc.LocId,
+			Status:         loc.Status.String(),
+			Code:           loc.Code,
+			Name:           loc.Name,
+			Country:        loc.Country,
+			ReferenceCount: loc.ReferenceCount,
+		}
+	}
+	return result
+}
+
 func convertMulticastGroups(onchain []serviceability.MulticastGroup) []MulticastGroup {
 	result := make([]MulticastGroup, len(onchain))
 	for i, group := range onchain {
@@ -584,6 +661,62 @@ func convertMulticastGroups(onchain []serviceability.MulticastGroup) []Multicast
 			Status:          status,
 			PublisherCount:  group.PublisherCount,
 			SubscriberCount: group.SubscriberCount,
+		}
+	}
+	return result
+}
+
+func accessPassTypeTagString(t serviceability.AccessPassTypeTag) string {
+	switch t {
+	case serviceability.AccessPassTypePrepaid:
+		return "prepaid"
+	case serviceability.AccessPassTypeSolanaValidator:
+		return "solana_validator"
+	case serviceability.AccessPassTypeSolanaRPC:
+		return "solana_rpc"
+	case serviceability.AccessPassTypeSolanaMulticastPub:
+		return "solana_multicast_pub"
+	case serviceability.AccessPassTypeSolanaMulticastSub:
+		return "solana_multicast_sub"
+	case serviceability.AccessPassTypeOthers:
+		return "others"
+	default:
+		return "unknown"
+	}
+}
+
+func convertAccessPasses(onchain []serviceability.AccessPass) []AccessPass {
+	result := make([]AccessPass, len(onchain))
+	for i, ap := range onchain {
+		var associatedPubkey string
+		if ap.AccessPassTypeTag >= 1 && ap.AccessPassTypeTag <= 4 {
+			associatedPubkey = solana.PublicKeyFromBytes(ap.AssociatedPubkey[:]).String()
+		}
+
+		pubAllowlist := make([]string, len(ap.MGroupPubAllowlist))
+		for j, pk := range ap.MGroupPubAllowlist {
+			pubAllowlist[j] = solana.PublicKeyFromBytes(pk[:]).String()
+		}
+		subAllowlist := make([]string, len(ap.MGroupSubAllowlist))
+		for j, pk := range ap.MGroupSubAllowlist {
+			subAllowlist[j] = solana.PublicKeyFromBytes(pk[:]).String()
+		}
+
+		result[i] = AccessPass{
+			PK:                 solana.PublicKeyFromBytes(ap.PubKey[:]).String(),
+			OwnerPubkey:        solana.PublicKeyFromBytes(ap.Owner[:]).String(),
+			TypeTag:            accessPassTypeTagString(ap.AccessPassTypeTag),
+			AssociatedPubkey:   associatedPubkey,
+			OthersTypeName:     ap.OthersTypeName,
+			OthersKey:          ap.OthersKey,
+			ClientIP:           net.IP(ap.ClientIp[:]),
+			UserPayer:          solana.PublicKeyFromBytes(ap.UserPayer[:]).String(),
+			LastAccessEpoch:    ap.LastAccessEpoch,
+			ConnectionCount:    ap.ConnectionCount,
+			Status:             ap.Status.String(),
+			MGroupPubAllowlist: pubAllowlist,
+			MGroupSubAllowlist: subAllowlist,
+			Flags:              ap.Flags,
 		}
 	}
 	return result

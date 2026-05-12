@@ -14,13 +14,21 @@ import (
 )
 
 type mockInfluxDBClient struct {
-	querySQLFunc func(ctx context.Context, sqlQuery string) ([]map[string]any, error)
-	closeFunc    func() error
+	queryIntfCountersFunc    func(ctx context.Context, start, end time.Time) ([]map[string]any, error)
+	queryBaselineCounterFunc func(ctx context.Context, field string, lookbackStart, windowStart time.Time) ([]map[string]any, error)
+	closeFunc                func() error
 }
 
-func (m *mockInfluxDBClient) QuerySQL(ctx context.Context, sqlQuery string) ([]map[string]any, error) {
-	if m.querySQLFunc != nil {
-		return m.querySQLFunc(ctx, sqlQuery)
+func (m *mockInfluxDBClient) QueryIntfCounters(ctx context.Context, start, end time.Time) ([]map[string]any, error) {
+	if m.queryIntfCountersFunc != nil {
+		return m.queryIntfCountersFunc(ctx, start, end)
+	}
+	return []map[string]any{}, nil
+}
+
+func (m *mockInfluxDBClient) QueryBaselineCounter(ctx context.Context, field string, lookbackStart, windowStart time.Time) ([]map[string]any, error) {
+	if m.queryBaselineCounterFunc != nil {
+		return m.queryBaselineCounterFunc(ctx, field, lookbackStart, windowStart)
 	}
 	return []map[string]any{}, nil
 }
@@ -370,12 +378,7 @@ func TestLake_TelemetryUsage_View_Ready(t *testing.T) {
 
 		clock := clockwork.NewFakeClock()
 
-		mockInflux := &mockInfluxDBClient{
-			querySQLFunc: func(ctx context.Context, sqlQuery string) ([]map[string]any, error) {
-				// Return empty result for baseline queries and main query
-				return []map[string]any{}, nil
-			},
-		}
+		mockInflux := &mockInfluxDBClient{}
 
 		view, err := NewView(ViewConfig{
 			Logger:          laketesting.NewLogger(),
@@ -407,11 +410,7 @@ func TestLake_TelemetryUsage_View_WaitReady(t *testing.T) {
 		// With mock, we can't create tables - they're created via migrations
 
 		clock := clockwork.NewFakeClock()
-		mockInflux := &mockInfluxDBClient{
-			querySQLFunc: func(ctx context.Context, sqlQuery string) ([]map[string]any, error) {
-				return []map[string]any{}, nil
-			},
-		}
+		mockInflux := &mockInfluxDBClient{}
 
 		view, err := NewView(ViewConfig{
 			Logger:          laketesting.NewLogger(),
@@ -522,7 +521,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			"device1:Tunnel501": {LinkPK: "link1", LinkSide: "A"},
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, linkLookup, nil)
+		usage, _, err := view.convertRowsToUsage(rows, baselines, linkLookup, nil)
 		require.NoError(t, err)
 		require.Len(t, usage, 2)
 
@@ -577,7 +576,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			OutErrors:   make(map[string]*int64),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
+		usage, _, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
 		require.NoError(t, err)
 		// First row should be skipped (used as baseline), so only second row should be stored
 		require.Len(t, usage, 1)
@@ -605,13 +604,19 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 				"time":       now.Format(time.RFC3339Nano),
 				"dzd_pubkey": "device1",
 				"intf":       "eth0",
-				"in-errors":  int64(1), // Sparse counter, so first row is stored
+				"in-octets":  int64(1000), // Non-sparse counter: first row used as baseline
+			},
+			{
+				"time":       now.Add(30 * time.Second).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(2000),
 			},
 			{
 				"time":       now.Add(60 * time.Second).Format(time.RFC3339Nano),
 				"dzd_pubkey": "device1",
 				"intf":       "eth0",
-				"in-errors":  int64(2),
+				"in-octets":  int64(3000),
 			},
 		}
 
@@ -619,16 +624,87 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			InErrors: make(map[string]*int64),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
+		usage, _, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
 		require.NoError(t, err)
-		require.Len(t, usage, 2)
+		require.Len(t, usage, 2) // first row is baseline, not stored
 
-		// First row should not have delta_duration
-		require.Nil(t, usage[0].DeltaDuration)
+		// First stored row should have delta_duration of 30 seconds (from baseline)
+		require.NotNil(t, usage[0].DeltaDuration)
+		require.InDelta(t, 30.0, *usage[0].DeltaDuration, 0.01)
 
-		// Second row should have delta_duration of 60 seconds
+		// Second stored row should have delta_duration of 30 seconds
 		require.NotNil(t, usage[1].DeltaDuration)
-		require.InDelta(t, 60.0, *usage[1].DeltaDuration, 0.01)
+		require.InDelta(t, 30.0, *usage[1].DeltaDuration, 0.01)
+	})
+
+	t.Run("carrier transition row does not advance lastTime", func(t *testing.T) {
+		t.Parallel()
+		mockDB := testClient(t)
+
+		view, err := NewView(ViewConfig{
+			Logger:          laketesting.NewLogger(),
+			ClickHouse:      mockDB,
+			InfluxDB:        &mockInfluxDBClient{},
+			Bucket:          "test-bucket",
+			RefreshInterval: time.Second,
+			QueryWindow:     time.Hour,
+		})
+		require.NoError(t, err)
+
+		// Reproduce the pattern from #388: normal octets rows every ~2s,
+		// with a carrier-transition-only row arriving between them ~7ms
+		// before the next octets row.
+		now := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+		rows := []map[string]any{
+			{ // baseline row (skipped)
+				"time":       now.Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(1000),
+			},
+			{ // normal octets row at +2s
+				"time":       now.Add(2 * time.Second).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(2000),
+			},
+			{ // carrier transition only at +3.993s (no octets)
+				"time":                now.Add(3993 * time.Millisecond).Format(time.RFC3339Nano),
+				"dzd_pubkey":          "device1",
+				"intf":                "eth0",
+				"carrier-transitions": int64(777),
+			},
+			{ // next octets row at +4s (7ms after carrier event)
+				"time":       now.Add(4 * time.Second).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(3000),
+			},
+		}
+
+		baselines := &CounterBaselines{}
+
+		usage, _, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
+		require.NoError(t, err)
+		require.Len(t, usage, 3) // baseline skipped, 3 rows stored
+
+		// Row 0: normal octets at +2s, delta_duration = 2s from baseline
+		require.NotNil(t, usage[0].DeltaDuration)
+		require.InDelta(t, 2.0, *usage[0].DeltaDuration, 0.01)
+		require.NotNil(t, usage[0].InOctetsDelta)
+		require.Equal(t, int64(1000), *usage[0].InOctetsDelta)
+
+		// Row 1: carrier-transition-only at +3.993s, delta_duration = 1.993s from
+		// last octets row (not from itself since it has no non-sparse counters)
+		require.NotNil(t, usage[1].DeltaDuration)
+		require.InDelta(t, 1.993, *usage[1].DeltaDuration, 0.01)
+
+		// Row 2: octets at +4s — delta_duration should be ~2s from the +2s row,
+		// NOT 7ms from the carrier event. This is the bug from #388.
+		require.NotNil(t, usage[2].DeltaDuration)
+		require.InDelta(t, 2.0, *usage[2].DeltaDuration, 0.01)
+		require.NotNil(t, usage[2].InOctetsDelta)
+		require.Equal(t, int64(1000), *usage[2].InOctetsDelta)
 	})
 
 	t.Run("skips already-written rows", func(t *testing.T) {
@@ -676,7 +752,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			"device1:eth0": now,
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
+		usage, _, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
 		require.NoError(t, err)
 		// First row should be skipped (already written), so only rows 2 and 3 should be stored
 		require.Len(t, usage, 2)
@@ -731,7 +807,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			"device1:eth0": now.Add(time.Minute),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
+		usage, _, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
 		require.NoError(t, err)
 		// First two rows should be skipped (at or before already-written timestamp), only third row stored
 		require.Len(t, usage, 1)
@@ -792,7 +868,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			"device1:eth0": now.Add(time.Minute),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
+		usage, _, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
 		require.NoError(t, err)
 		require.Len(t, usage, 1)
 
@@ -849,7 +925,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			OutErrors:   make(map[string]*int64),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
+		usage, _, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
 		require.NoError(t, err)
 		// First row is skipped (baseline for non-sparse), only second row stored
 		require.Len(t, usage, 1)
@@ -968,7 +1044,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			"device1:eth0": now.Add(2 * time.Minute),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
+		usage, _, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
 		require.NoError(t, err)
 		require.Len(t, usage, 1)
 
@@ -1046,7 +1122,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			"device1:eth0": now.Add(time.Minute),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
+		usage, _, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
 		require.NoError(t, err)
 		require.Len(t, usage, 2)
 
@@ -1133,7 +1209,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			"device1:eth0": now.Add(time.Minute),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
+		usage, _, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
 		require.NoError(t, err)
 		require.Len(t, usage, 2)
 
@@ -1208,7 +1284,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 		// No alreadyWritten entries for this key (global maxTime is ahead)
 		alreadyWritten := MaxTimestampsByKey{}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
+		usage, _, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
 		require.NoError(t, err)
 		// First row is consumed as baseline, so we get 2 rows
 		require.Len(t, usage, 2)
@@ -1276,7 +1352,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			OutErrors:   make(map[string]*int64),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
+		usage, _, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
 		require.NoError(t, err)
 		// First row skipped (baseline), rows 2 and 3 stored
 		require.Len(t, usage, 2)
@@ -1292,5 +1368,84 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 		require.Equal(t, int64(8), *usage[1].InErrors)
 		require.NotNil(t, usage[1].InErrorsDelta)
 		require.Equal(t, int64(3), *usage[1].InErrorsDelta)
+	})
+
+	t.Run("stale replayed row does not inflate subsequent delta", func(t *testing.T) {
+		t.Parallel()
+		mockDB := testClient(t)
+
+		view, err := NewView(ViewConfig{
+			Logger:          laketesting.NewLogger(),
+			ClickHouse:      mockDB,
+			InfluxDB:        &mockInfluxDBClient{},
+			Bucket:          "test-bucket",
+			RefreshInterval: time.Second,
+			QueryWindow:     time.Hour,
+		})
+		require.NoError(t, err)
+
+		now := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+
+		// Simulate the real-world scenario where the device sends a stale/replayed
+		// reading with a lower octets value (counter regression), followed by a
+		// real reading. Without the high-water mark fix, the next row's delta would
+		// be computed against the stale low value, inflating the bps by ~200x.
+		rows := []map[string]any{
+			{
+				// Baseline row (first row, consumed as baseline, not stored)
+				"time":       now.Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(1000000),
+			},
+			{
+				// Normal row: +100 bytes over 2s
+				"time":       now.Add(2 * time.Second).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(1000100),
+			},
+			{
+				// Stale/replayed row: octets regresses back to an old value (lower than previous)
+				"time":       now.Add(4 * time.Second).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(500000), // way lower than 1000100
+			},
+			{
+				// Real row after the stale row: should be computed against the
+				// high-water mark (1000100), not the stale value (500000).
+				"time":       now.Add(6 * time.Second).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(1000200),
+			},
+		}
+
+		baselines := &CounterBaselines{
+			InDiscards:  make(map[string]*int64),
+			InErrors:    make(map[string]*int64),
+			InFCSErrors: make(map[string]*int64),
+			OutDiscards: make(map[string]*int64),
+			OutErrors:   make(map[string]*int64),
+		}
+
+		usage, _, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
+		require.NoError(t, err)
+		// Row 0 (baseline) consumed, rows 1-3 stored = 3 output rows
+		require.Len(t, usage, 3)
+
+		// Row 1: normal delta = 1000100 - 1000000 = 100
+		require.NotNil(t, usage[0].InOctetsDelta)
+		require.Equal(t, int64(100), *usage[0].InOctetsDelta)
+
+		// Row 2 (stale): delta is negative (regression), baseline NOT updated
+		require.NotNil(t, usage[1].InOctetsDelta)
+		require.Equal(t, int64(500000-1000100), *usage[1].InOctetsDelta) // negative, stored as-is
+
+		// Row 3 (real): delta must be computed against the high-water mark (1000100),
+		// NOT the stale value (500000). Without the fix this would be 1000200-500000=500200.
+		require.NotNil(t, usage[2].InOctetsDelta)
+		require.Equal(t, int64(1000200-1000100), *usage[2].InOctetsDelta) // 100, not 500200
 	})
 }

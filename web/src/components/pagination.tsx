@@ -1,4 +1,5 @@
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react'
+import { SmallDropdown } from '@/components/topology/TimeRangeSelector'
 
 interface PaginationProps {
   total: number
@@ -9,7 +10,14 @@ interface PaginationProps {
   onPageSizeChange?: (size: number) => void
 }
 
-export function Pagination({ total, limit, offset, onOffsetChange, pageSizeOptions, onPageSizeChange }: PaginationProps) {
+export function Pagination({
+  total,
+  limit,
+  offset,
+  onOffsetChange,
+  pageSizeOptions,
+  onPageSizeChange,
+}: PaginationProps) {
   const currentPage = Math.floor(offset / limit) + 1
   const totalPages = Math.ceil(total / limit)
   const startItem = offset + 1
@@ -27,19 +35,21 @@ export function Pagination({ total, limit, offset, onOffsetChange, pageSizeOptio
   if (totalPages <= 1 && !hasPageSizeSelector) return null
 
   return (
-    <div className="flex items-center justify-between px-4 py-3 border-t border-border">
+    <div className="flex flex-col sm:flex-row items-center justify-between px-4 py-3 border-t border-border">
       <div className="flex items-center gap-3 text-sm text-muted-foreground">
-        <span>Showing {startItem.toLocaleString()} - {endItem.toLocaleString()} of {total.toLocaleString()}</span>
+        <span>
+          Showing {startItem.toLocaleString()} - {endItem.toLocaleString()} of{' '}
+          {total.toLocaleString()}
+        </span>
         {hasPageSizeSelector && (
-          <select
-            value={limit}
-            onChange={(e) => onPageSizeChange(Number(e.target.value))}
-            className="bg-background border border-border rounded px-1.5 py-0.5 text-sm text-foreground"
-          >
-            {pageSizeOptions.map(size => (
-              <option key={size} value={size}>{size} / page</option>
-            ))}
-          </select>
+          <SmallDropdown
+            value={String(limit)}
+            options={pageSizeOptions.map((size) => ({
+              value: String(size),
+              label: `${size} / page`,
+            }))}
+            onChange={(v) => onPageSizeChange(Number(v))}
+          />
         )}
       </div>
       {totalPages > 1 && (

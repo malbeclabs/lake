@@ -17,20 +17,40 @@ import { TimeRangeSelector, TrafficFilters } from '@/components/topology/TimeRan
 import type { TimeRange, BucketSize } from '@/components/topology/utils'
 import { bucketLabels, resolveAutoBucket, type TimeRangePreset } from '@/components/topology/utils'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useBackLink } from '@/hooks/use-back-link'
+import { OpsPanel } from '@/components/ops/OpsPanel'
+import { CreateIncidentModal } from '@/components/ops/CreateIncidentModal'
+import { useActiveOpsTickets, useOpsTicketHistory } from '@/hooks/use-ops-tickets'
+import { useIsOpsUser } from '@/hooks/use-is-ops-user'
+import type { OpsTicket } from '@/lib/ops-api'
+import type { TicketWindow } from '@/components/ops/TicketOverlay'
 
 export function LinkDetailPage() {
   const { pk } = useParams<{ pk: string }>()
+  const back = useBackLink({ to: '/dz/links', label: 'links' })
   const queryClient = useQueryClient()
   const [timeRange, setTimeRange] = useState<TimeRange>({ preset: '24h' })
   const [bucket, setBucket] = useState<BucketSize>('auto')
-  const [hoveredTimeRange, setHoveredTimeRange] = useState<{ start: number; end: number } | null>(null)
+  const [hoveredTimeRange, setHoveredTimeRange] = useState<{
+    start: number
+    end: number
+  } | null>(null)
   const [chartHoveredTime, setChartHoveredTime] = useState<number | null>(null)
+  const [showCreateIncident, setShowCreateIncident] = useState(false)
+  const isOpsUser = useIsOpsUser()
+  const [showIncidents, setShowIncidents] = useState(true)
+  const [showMaintenance, setShowMaintenance] = useState(true)
 
-  const effectiveBucketLabel = bucket === 'auto'
-    ? bucketLabels[resolveAutoBucket(timeRange.preset as TimeRangePreset)]
-    : undefined
+  const effectiveBucketLabel =
+    bucket === 'auto'
+      ? bucketLabels[resolveAutoBucket(timeRange.preset as TimeRangePreset)]
+      : undefined
 
-  const { data: link, isLoading, error } = useQuery({
+  const {
+    data: link,
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ['link', pk],
     queryFn: () => fetchLink(pk!),
     enabled: !!pk,
@@ -38,11 +58,25 @@ export function LinkDetailPage() {
 
   const metricsParams = useMemo(() => toLinkMetricsParams(timeRange, bucket), [timeRange, bucket])
 
-  const { data: metrics, isLoading: metricsLoading, isFetching: metricsFetching } = useQuery({
+  const {
+    data: metrics,
+    isLoading: metricsLoading,
+    isFetching: metricsFetching,
+  } = useQuery({
     queryKey: ['linkMetrics', pk, metricsParams],
     queryFn: () => fetchLinkMetrics(pk!, metricsParams),
     enabled: !!pk,
   })
+
+  const { data: activeTicketsData } = useActiveOpsTickets()
+  const { data: ticketHistoryData } = useOpsTicketHistory(pk ?? '', undefined, 'link')
+  // Combine active tickets for this link + recently closed history
+  const tickets: OpsTicket[] = [
+    ...(activeTicketsData?.tickets ?? []).filter(
+      t => pk && (t.affected_link_pubkey.includes(pk) || (t.affected_links?.some(l => l.pubkey === pk) ?? false))
+    ),
+    ...(ticketHistoryData?.tickets ?? []),
+  ]
 
   useDocumentTitle(link?.code || 'Link')
 
@@ -61,10 +95,10 @@ export function LinkDetailPage() {
           <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
           <div className="text-lg font-medium mb-2">Link not found</div>
           <Link
-            to="/dz/links"
+            to={back.to}
             className="text-sm text-muted-foreground hover:text-foreground"
           >
-            Back to links
+            Back to {back.label}
           </Link>
         </div>
       </div>
@@ -77,22 +111,24 @@ export function LinkDetailPage() {
       <div className="max-w-[1200px] mx-auto px-4 sm:px-8 pt-8">
         {/* Back button */}
         <Link
-          to="/dz/links"
+          to={back.to}
           className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-6"
         >
           <ArrowLeft className="h-4 w-4" />
-          Back to links
+          Back to {back.label}
         </Link>
 
         {/* Header */}
         <div className="flex items-center gap-3 mb-8">
-          <Cable className="h-8 w-8 text-muted-foreground" />
-          <div>
-            <h1 className="text-2xl font-medium font-mono">
-              <CopyableText text={link.code} />
-            </h1>
-            <div className="text-sm text-muted-foreground font-mono">
-              <CopyableText text={link.pk} />
+          <Cable className="hidden sm:block h-8 w-8 text-muted-foreground shrink-0" />
+          <div className="min-w-0">
+            <CopyableText text={link.code} className="w-full cursor-pointer">
+              <h1 className="text-2xl font-medium font-mono break-all">{link.code}</h1>
+            </CopyableText>
+            <div className="text-sm text-muted-foreground font-mono mt-0.5">
+              <CopyableText text={link.pk} className="flex-wrap">
+                <span className="break-all">{link.pk}</span>
+              </CopyableText>
             </div>
           </div>
         </div>
@@ -101,6 +137,27 @@ export function LinkDetailPage() {
       {/* Link stats - constrained width, hide status row and charts */}
       <div className="max-w-[1200px] mx-auto px-4 sm:px-8 pb-6">
         <LinkInfoContent link={linkDetailToInfo(link)} hideStatusRow hideCharts />
+        <div className="mt-6">
+          <OpsPanel
+            entityPk={link.pk}
+            entityCode={link.code}
+            entityType="link"
+            contributorCode={link.contributor_code}
+            isDown={link.status === 'down'}
+            onCreateIncident={() => setShowCreateIncident(true)}
+          />
+        </div>
+        {showCreateIncident && (
+          <CreateIncidentModal
+            entityCode={link.code}
+            entityType="link"
+            entityPk={link.pk}
+            contributorCode={link.contributor_code}
+            contributorPk={link.contributor_pk}
+            onClose={() => setShowCreateIncident(false)}
+            onSuccess={() => setShowCreateIncident(false)}
+          />
+        )}
       </div>
 
       {/* Filters + charts */}
@@ -112,7 +169,11 @@ export function LinkDetailPage() {
             className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
             title="Refresh"
           >
-            {metricsFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            {metricsFetching ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
           </button>
           <TrafficFilters
             bucket={bucket}
@@ -120,6 +181,32 @@ export function LinkDetailPage() {
             effectiveBucketLabel={effectiveBucketLabel}
           />
           <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
+          {isOpsUser && tickets.some(t => t.type === 'incident') && (
+            <button
+              type="button"
+              onClick={() => setShowIncidents(v => !v)}
+              className={`text-[11px] font-medium px-2 py-1 border transition-colors ${
+                showIncidents
+                  ? 'border-red-600/60 bg-red-500/10 text-red-700 dark:border-red-800/60 dark:bg-red-900/20 dark:text-red-300'
+                  : 'border-border text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Incidents
+            </button>
+          )}
+          {isOpsUser && tickets.some(t => t.type === 'maintenance') && (
+            <button
+              type="button"
+              onClick={() => setShowMaintenance(v => !v)}
+              className={`text-[11px] font-medium px-2 py-1 border transition-colors ${
+                showMaintenance
+                  ? 'border-blue-600/60 bg-blue-500/10 text-blue-700 dark:border-blue-700/60 dark:bg-blue-900/20 dark:text-blue-300'
+                  : 'border-border text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Maintenance
+            </button>
+          )}
         </div>
 
         {metricsLoading && (
@@ -135,12 +222,85 @@ export function LinkDetailPage() {
         )}
         {metrics && (
           <div className="space-y-4">
-            <LinkHealthTimeline data={metrics} onBarHover={setHoveredTimeRange} highlightedTime={chartHoveredTime} />
-            <LinkPacketLossChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
-            <LinkInterfaceIssuesChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
-            <LinkTrafficChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
-            <LinkLatencyChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
-            <LinkJitterChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
+            <LinkHealthTimeline
+              data={metrics}
+              onBarHover={setHoveredTimeRange}
+              highlightedTime={chartHoveredTime}
+              incidentWindows={showIncidents ? tickets
+                .filter(t => t.type === 'incident')
+                .map(t => ({
+                  startAt: t.start_at ?? new Date().toISOString(),
+                  endAt: t.end_at,
+                  type: 'incident' as const,
+                  id: t.id,
+                  humanReadableId: t.human_readable_id,
+                  title: t.title,
+                  status: t.status,
+                  slackUrl: t.slack_message_url,
+                } as TicketWindow)) : []}
+              maintenanceWindows={showMaintenance ? tickets
+                .filter(t => t.type === 'maintenance' && t.start_at)
+                .map(t => ({
+                  startAt: t.start_at!,
+                  endAt: t.end_at,
+                  type: 'maintenance' as const,
+                  id: t.id,
+                  humanReadableId: t.human_readable_id,
+                  title: t.title,
+                  status: t.status,
+                  slackUrl: t.slack_message_url,
+                } as TicketWindow)) : []}
+            />
+            <LinkPacketLossChart
+              data={metrics}
+              loading={metricsFetching}
+              className="rounded-lg border border-border p-4"
+              highlightTimeRange={hoveredTimeRange}
+              onCursorTime={setChartHoveredTime}
+              tickets={tickets}
+              showIncidents={showIncidents}
+              showMaintenance={showMaintenance}
+            />
+            <LinkInterfaceIssuesChart
+              data={metrics}
+              loading={metricsFetching}
+              className="rounded-lg border border-border p-4"
+              highlightTimeRange={hoveredTimeRange}
+              onCursorTime={setChartHoveredTime}
+              tickets={tickets}
+              showIncidents={showIncidents}
+              showMaintenance={showMaintenance}
+            />
+            <LinkTrafficChart
+              data={metrics}
+              loading={metricsFetching}
+              className="rounded-lg border border-border p-4"
+              highlightTimeRange={hoveredTimeRange}
+              onCursorTime={setChartHoveredTime}
+              tickets={tickets}
+              showIncidents={showIncidents}
+              showMaintenance={showMaintenance}
+            />
+            <LinkLatencyChart
+              data={metrics}
+              loading={metricsFetching}
+              className="rounded-lg border border-border p-4"
+              highlightTimeRange={hoveredTimeRange}
+              onCursorTime={setChartHoveredTime}
+              tickets={tickets}
+              showIncidents={showIncidents}
+              showMaintenance={showMaintenance}
+            />
+            <LinkJitterChart
+              data={metrics}
+              loading={metricsFetching}
+              className="rounded-lg border border-border p-4"
+              highlightTimeRange={hoveredTimeRange}
+              onCursorTime={setChartHoveredTime}
+              tickets={tickets}
+              showIncidents={showIncidents}
+              showMaintenance={showMaintenance}
+            />
           </div>
         )}
       </div>

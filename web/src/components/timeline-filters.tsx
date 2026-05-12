@@ -43,6 +43,7 @@ import {
   DEFAULT_ENTITY_TYPES,
   presets,
 } from './timeline-constants'
+import { SmallDropdown } from '@/components/topology/TimeRangeSelector'
 
 const minStakeOptions: { value: MinStakeOption; label: string }[] = [
   { value: '0', label: 'Any' },
@@ -134,9 +135,9 @@ function FilterDropdown<T extends string>({
     }
   }, [open])
 
-  const allSelected = allValues.every(v => selected.has(v))
-  const noneSelected = allValues.every(v => !selected.has(v))
-  const selectedCount = allValues.filter(v => selected.has(v)).length
+  const allSelected = allValues.every((v) => selected.has(v))
+  const noneSelected = allValues.every((v) => !selected.has(v))
+  const selectedCount = allValues.filter((v) => selected.has(v)).length
 
   return (
     <div className="relative" ref={dropdownRef}>
@@ -146,7 +147,7 @@ function FilterDropdown<T extends string>({
           'flex items-center gap-1.5 px-2 py-1 text-xs rounded-md border transition-colors',
           open || (!allSelected && !noneSelected)
             ? 'bg-background border-border text-foreground'
-            : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50'
+            : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50',
         )}
       >
         <span className="uppercase tracking-wide">{label}</span>
@@ -160,7 +161,7 @@ function FilterDropdown<T extends string>({
 
       {open && (
         <div className="absolute top-full left-0 mt-1 z-50 min-w-[160px] bg-popover border border-border rounded-md shadow-lg py-1 whitespace-nowrap">
-          {options.map(option => {
+          {options.map((option) => {
             const Icon = option.icon
             const isSelected = selected.has(option.value)
             return (
@@ -169,14 +170,18 @@ function FilterDropdown<T extends string>({
                 onClick={() => onToggle(option.value)}
                 className="w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted transition-colors"
               >
-                <div className={cn(
-                  'w-3.5 h-3.5 rounded border flex items-center justify-center',
-                  isSelected ? 'bg-primary border-primary' : 'border-muted-foreground/30'
-                )}>
+                <div
+                  className={cn(
+                    'w-3.5 h-3.5 rounded border flex items-center justify-center',
+                    isSelected ? 'bg-primary border-primary' : 'border-muted-foreground/30',
+                  )}
+                >
                   {isSelected && <CheckCircle2 className="h-2.5 w-2.5 text-primary-foreground" />}
                 </div>
                 {Icon && <Icon className="h-3 w-3 text-muted-foreground" />}
-                <span className={isSelected ? 'text-foreground' : 'text-muted-foreground'}>{option.label}</span>
+                <span className={isSelected ? 'text-foreground' : 'text-muted-foreground'}>
+                  {option.label}
+                </span>
               </button>
             )
           })}
@@ -193,7 +198,7 @@ function PresetsDropdown({
   onResetAll,
 }: {
   searchParams: URLSearchParams
-  onApplyPreset: (preset: typeof presets[0]) => void
+  onApplyPreset: (preset: (typeof presets)[0]) => void
   onResetAll: () => void
 }) {
   const [open, setOpen] = useState(false)
@@ -211,9 +216,12 @@ function PresetsDropdown({
     }
   }, [open])
 
-  const activePreset = presets.find(preset =>
-    Object.entries(preset.params).every(([k, v]) => searchParams.get(k) === v) &&
-    [...searchParams.keys()].filter(k => k !== 'search' && k !== 'internal' && k !== 'start' && k !== 'end').every(k => k in preset.params)
+  const activePreset = presets.find(
+    (preset) =>
+      Object.entries(preset.params).every(([k, v]) => searchParams.get(k) === v) &&
+      [...searchParams.keys()]
+        .filter((k) => k !== 'search' && k !== 'internal' && k !== 'start' && k !== 'end')
+        .every((k) => k in preset.params),
   )
 
   return (
@@ -224,7 +232,7 @@ function PresetsDropdown({
           'flex items-center gap-1.5 px-2.5 py-1 text-sm rounded-md border transition-colors',
           activePreset
             ? 'bg-primary text-primary-foreground border-primary'
-            : 'border-border text-muted-foreground hover:text-foreground bg-background'
+            : 'border-border text-muted-foreground hover:text-foreground bg-background',
         )}
       >
         <span>{activePreset ? activePreset.label : 'Presets'}</span>
@@ -232,7 +240,7 @@ function PresetsDropdown({
       </button>
       {open && (
         <div className="absolute top-full left-0 mt-1 z-50 min-w-[200px] bg-popover border border-border rounded-md shadow-lg py-1 whitespace-nowrap">
-          {presets.map(preset => {
+          {presets.map((preset) => {
             const isActive = preset === activePreset
             return (
               <button
@@ -247,7 +255,7 @@ function PresetsDropdown({
                 }}
                 className={cn(
                   'w-full flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-muted transition-colors',
-                  isActive ? 'text-foreground font-medium' : 'text-muted-foreground'
+                  isActive ? 'text-foreground font-medium' : 'text-muted-foreground',
                 )}
               >
                 {isActive && <Check className="h-3.5 w-3.5 text-primary" />}
@@ -282,7 +290,11 @@ function countActiveAdvancedFilters({
   if (selectedCategories.size !== ALL_CATEGORIES.length) count++
   if (selectedActions.size !== ALL_ACTIONS.length) count++
   const defaultEntitySet = new Set(DEFAULT_ENTITY_TYPES)
-  if (selectedEntityTypes.size !== defaultEntitySet.size || !DEFAULT_ENTITY_TYPES.every(e => selectedEntityTypes.has(e))) count++
+  if (
+    selectedEntityTypes.size !== defaultEntitySet.size ||
+    !DEFAULT_ENTITY_TYPES.every((e) => selectedEntityTypes.has(e))
+  )
+    count++
   if (dzFilter !== 'on_dz') count++
   if (minStake !== '0') count++
   if (includeInternal) count++
@@ -300,7 +312,10 @@ const searchFieldPrefixes = [
   { prefix: 'user:', description: 'Filter by user pubkey' },
 ]
 
-const searchAutocompleteConfig: Record<string, { entity: string; field: string; minChars: number }> = {
+const searchAutocompleteConfig: Record<
+  string,
+  { entity: string; field: string; minChars: number }
+> = {
   device: { entity: 'devices', field: 'code', minChars: 2 },
   link: { entity: 'links', field: 'code', minChars: 2 },
   metro: { entity: 'devices', field: 'metro', minChars: 0 },
@@ -332,7 +347,8 @@ function TimelineSearchInput({ onCommit }: { onCommit: (filter: string) => void 
     return { field, value, entity: config.entity, acField: config.field, minChars: config.minChars }
   }, [query])
 
-  const meetsMinChars = fieldValueMatch != null && (fieldValueMatch.value.length >= fieldValueMatch.minChars)
+  const meetsMinChars =
+    fieldValueMatch != null && fieldValueMatch.value.length >= fieldValueMatch.minChars
 
   const { data: fieldValuesData, isLoading: fieldValuesLoading } = useQuery({
     queryKey: ['field-values', fieldValueMatch?.entity, fieldValueMatch?.acField],
@@ -345,14 +361,12 @@ function TimelineSearchInput({ onCommit }: { onCommit: (filter: string) => void 
     if (!fieldValueMatch || !fieldValuesData) return []
     const needle = fieldValueMatch.value
     if (!needle) return fieldValuesData
-    return fieldValuesData.filter(v => v.toLowerCase().includes(needle))
+    return fieldValuesData.filter((v) => v.toLowerCase().includes(needle))
   }, [fieldValueMatch, fieldValuesData])
 
   const matchingPrefixes = useMemo(() => {
     if (query.length === 0 || query.includes(':')) return []
-    return searchFieldPrefixes.filter(p =>
-      p.prefix.toLowerCase().startsWith(query.toLowerCase())
-    )
+    return searchFieldPrefixes.filter((p) => p.prefix.toLowerCase().startsWith(query.toLowerCase()))
   }, [query])
 
   const showAllPrefixes = query.length === 0 && isFocused
@@ -370,79 +384,108 @@ function TimelineSearchInput({ onCommit }: { onCommit: (filter: string) => void 
     }
 
     if (filteredFieldValues.length > 0 && fieldValueMatch) {
-      result.push(...filteredFieldValues.map(v => ({
-        type: 'field-value' as const,
-        field: fieldValueMatch.field,
-        value: v,
-      })))
+      result.push(
+        ...filteredFieldValues.map((v) => ({
+          type: 'field-value' as const,
+          field: fieldValueMatch.field,
+          value: v,
+        })),
+      )
     }
 
     if (showAllPrefixes) {
-      result.push(...searchFieldPrefixes.map(p => ({
-        type: 'prefix' as const,
-        prefix: p.prefix,
-        description: p.description,
-      })))
+      result.push(
+        ...searchFieldPrefixes.map((p) => ({
+          type: 'prefix' as const,
+          prefix: p.prefix,
+          description: p.description,
+        })),
+      )
     } else if (matchingPrefixes.length > 0 && filteredFieldValues.length === 0) {
-      result.push(...matchingPrefixes.map(p => ({
-        type: 'prefix' as const,
-        prefix: p.prefix,
-        description: p.description,
-      })))
+      result.push(
+        ...matchingPrefixes.map((p) => ({
+          type: 'prefix' as const,
+          prefix: p.prefix,
+          description: p.description,
+        })),
+      )
     }
 
     return result
-  }, [query, filteredFieldValues, fieldValueMatch, showAllPrefixes, matchingPrefixes, meetsMinChars])
+  }, [
+    query,
+    filteredFieldValues,
+    fieldValueMatch,
+    showAllPrefixes,
+    matchingPrefixes,
+    meetsMinChars,
+  ])
 
   useEffect(() => {
     setSelectedIndex(-1)
   }, [debouncedQuery, matchingPrefixes.length, showAllPrefixes])
 
-  const commitFilter = useCallback((value: string) => {
-    onCommit(value)
-    setQuery('')
-    inputRef.current?.focus()
-  }, [onCommit])
+  const commitFilter = useCallback(
+    (value: string) => {
+      onCommit(value)
+      setQuery('')
+      inputRef.current?.focus()
+    },
+    [onCommit],
+  )
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    const isDropdownOpen = isFocused && items.length > 0
-    switch (e.key) {
-      case 'ArrowDown':
-        if (isDropdownOpen) { e.preventDefault(); setSelectedIndex(prev => Math.min(prev + 1, items.length - 1)) }
-        break
-      case 'ArrowUp':
-        if (isDropdownOpen) { e.preventDefault(); setSelectedIndex(prev => Math.max(prev - 1, -1)) }
-        break
-      case 'Enter': {
-        e.preventDefault()
-        const idx = selectedIndex >= 0 ? selectedIndex : 0
-        if (idx < items.length) {
-          const item = items[idx]
-          if (item.type === 'prefix') {
-            setQuery(item.prefix)
-          } else if (item.type === 'field-value') {
-            commitFilter(`${item.field}:${item.value}`)
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      const isDropdownOpen = isFocused && items.length > 0
+      switch (e.key) {
+        case 'ArrowDown':
+          if (isDropdownOpen) {
+            e.preventDefault()
+            setSelectedIndex((prev) => Math.min(prev + 1, items.length - 1))
           }
+          break
+        case 'ArrowUp':
+          if (isDropdownOpen) {
+            e.preventDefault()
+            setSelectedIndex((prev) => Math.max(prev - 1, -1))
+          }
+          break
+        case 'Enter': {
+          e.preventDefault()
+          const idx = selectedIndex >= 0 ? selectedIndex : 0
+          if (idx < items.length) {
+            const item = items[idx]
+            if (item.type === 'prefix') {
+              setQuery(item.prefix)
+            } else if (item.type === 'field-value') {
+              commitFilter(`${item.field}:${item.value}`)
+            }
+          }
+          break
         }
-        break
+        case 'Tab':
+          if (selectedIndex >= 0 && selectedIndex < items.length) {
+            const item = items[selectedIndex]
+            if (item.type === 'prefix') {
+              e.preventDefault()
+              setQuery(item.prefix)
+            }
+          }
+          break
+        case 'Escape':
+          e.preventDefault()
+          setQuery('')
+          inputRef.current?.blur()
+          break
       }
-      case 'Tab':
-        if (selectedIndex >= 0 && selectedIndex < items.length) {
-          const item = items[selectedIndex]
-          if (item.type === 'prefix') { e.preventDefault(); setQuery(item.prefix) }
-        }
-        break
-      case 'Escape':
-        e.preventDefault()
-        setQuery('')
-        inputRef.current?.blur()
-        break
-    }
-  }, [items, selectedIndex, query, commitFilter, isFocused])
+    },
+    [items, selectedIndex, query, commitFilter, isFocused],
+  )
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setIsFocused(false)
+      if (containerRef.current && !containerRef.current.contains(e.target as Node))
+        setIsFocused(false)
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
@@ -464,7 +507,9 @@ function TimelineSearchInput({ onCommit }: { onCommit: (filter: string) => void 
           placeholder="Search..."
           className="w-28 bg-transparent border-0 focus:outline-none placeholder:text-muted-foreground text-sm"
         />
-        {fieldValuesLoading && <Loader2 className="h-3.5 w-3.5 text-muted-foreground animate-spin" />}
+        {fieldValuesLoading && (
+          <Loader2 className="h-3.5 w-3.5 text-muted-foreground animate-spin" />
+        )}
       </div>
 
       {showDropdown && (
@@ -492,11 +537,13 @@ function TimelineSearchInput({ onCommit }: { onCommit: (filter: string) => void 
                   onClick={() => commitFilter(`${item.field}:${item.value}`)}
                   className={cn(
                     'w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted transition-colors',
-                    index === selectedIndex && 'bg-muted'
+                    index === selectedIndex && 'bg-muted',
                   )}
                 >
                   <span className="flex-1 truncate">{item.value}</span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{item.field}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                    {item.field}
+                  </span>
                 </button>
               )
             }
@@ -505,15 +552,20 @@ function TimelineSearchInput({ onCommit }: { onCommit: (filter: string) => void 
               return (
                 <button
                   key={item.prefix}
-                  onClick={() => { setQuery(item.prefix); inputRef.current?.focus() }}
+                  onClick={() => {
+                    setQuery(item.prefix)
+                    inputRef.current?.focus()
+                  }}
                   className={cn(
                     'w-full flex flex-col gap-0.5 px-3 py-2 text-left text-sm hover:bg-muted transition-colors',
-                    index === selectedIndex && 'bg-muted'
+                    index === selectedIndex && 'bg-muted',
                   )}
                 >
                   <div className="flex items-center gap-2">
                     <span className="font-medium">{item.prefix.slice(0, -1)}</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">filter</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                      filter
+                    </span>
                   </div>
                   <span className="text-xs text-muted-foreground">{item.description}</span>
                 </button>
@@ -552,7 +604,7 @@ export interface TimelineFiltersProps {
   onCustomEndChange: (value: string) => void
   onRefetch: () => void
   onResetAll: () => void
-  onApplyPreset: (preset: typeof presets[0]) => void
+  onApplyPreset: (preset: (typeof presets)[0]) => void
   searchFilters: string[]
   onAddSearchFilter: (filter: string) => void
   onRemoveSearchFilter: (filter: string) => void
@@ -591,7 +643,7 @@ export function TimelineFilters({
 }: TimelineFiltersProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false)
 
-  const hasSolanaEntities = ALL_SOLANA_ENTITIES.some(e => selectedEntityTypes.has(e))
+  const hasSolanaEntities = ALL_SOLANA_ENTITIES.some((e) => selectedEntityTypes.has(e))
   const maxDate = new Date().toISOString().slice(0, 16)
 
   const activeAdvancedCount = countActiveAdvancedFilters({
@@ -616,7 +668,7 @@ export function TimelineFilters({
       <div className="flex items-center gap-3">
         {/* Time range segmented control */}
         <div className="inline-flex rounded-md border border-border bg-background p-0.5">
-          {timeRangeOptions.map(option => (
+          {timeRangeOptions.map((option) => (
             <button
               key={option.value}
               onClick={() => onTimeRangeChange(option.value)}
@@ -624,7 +676,7 @@ export function TimelineFilters({
                 'px-2.5 py-1 text-sm rounded transition-colors',
                 timeRange === option.value
                   ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:text-foreground'
+                  : 'text-muted-foreground hover:text-foreground',
               )}
             >
               {option.label}
@@ -657,7 +709,11 @@ export function TimelineFilters({
         <div className="flex-1" />
 
         {/* Presets dropdown */}
-        <PresetsDropdown searchParams={searchParams} onApplyPreset={onApplyPreset} onResetAll={onResetAll} />
+        <PresetsDropdown
+          searchParams={searchParams}
+          onApplyPreset={onApplyPreset}
+          onResetAll={onResetAll}
+        />
 
         {/* Inline search */}
         <TimelineSearchInput onCommit={onAddSearchFilter} />
@@ -680,7 +736,14 @@ export function TimelineFilters({
             const colonIdx = filter.indexOf(':')
             const field = colonIdx > 0 ? filter.slice(0, colonIdx).toLowerCase() : ''
             const value = colonIdx > 0 ? filter.slice(colonIdx + 1) : filter
-            const fieldIcons: Record<string, React.ElementType> = { device: Server, link: Link2, metro: MapPin, contributor: Building2, validator: Landmark, user: Users }
+            const fieldIcons: Record<string, React.ElementType> = {
+              device: Server,
+              link: Link2,
+              metro: MapPin,
+              contributor: Building2,
+              validator: Landmark,
+              user: Users,
+            }
             const Icon = fieldIcons[field] || Search
             return (
               <button
@@ -724,7 +787,9 @@ export function TimelineFilters({
         <div
           className={cn(
             'transition-[max-height,opacity] duration-200',
-            advancedOpen ? 'max-h-[200px] opacity-100 mt-2 overflow-visible' : 'max-h-0 opacity-0 overflow-hidden'
+            advancedOpen
+              ? 'max-h-[200px] opacity-100 mt-2 overflow-visible'
+              : 'max-h-0 opacity-0 overflow-hidden',
           )}
         >
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-border bg-muted/20 p-3">
@@ -764,7 +829,7 @@ export function TimelineFilters({
 
             {hasSolanaEntities && (
               <div className="inline-flex rounded-md border border-border bg-background p-0.5 gap-0.5">
-                {dzFilterOptions.map(option => (
+                {dzFilterOptions.map((option) => (
                   <button
                     key={option.value}
                     onClick={() => onDzFilterChange(option.value)}
@@ -772,7 +837,7 @@ export function TimelineFilters({
                       'px-2 py-0.5 text-xs rounded transition-colors',
                       dzFilter === option.value
                         ? 'bg-primary text-primary-foreground'
-                        : 'text-muted-foreground hover:text-foreground'
+                        : 'text-muted-foreground hover:text-foreground',
                     )}
                   >
                     {option.label}
@@ -783,16 +848,14 @@ export function TimelineFilters({
 
             {hasSolanaEntities && (
               <div className="flex items-center gap-1.5">
-                <span className="text-xs text-muted-foreground uppercase tracking-wide">DZ Stake Change</span>
-                <select
+                <span className="text-xs text-muted-foreground uppercase tracking-wide">
+                  DZ Stake Change
+                </span>
+                <SmallDropdown
                   value={minStake}
-                  onChange={(e) => onMinStakeChange(e.target.value as MinStakeOption)}
-                  className="px-2 py-0.5 text-xs rounded-md border border-border bg-background text-foreground cursor-pointer"
-                >
-                  {minStakeOptions.map(option => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
+                  options={minStakeOptions}
+                  onChange={(v) => onMinStakeChange(v as MinStakeOption)}
+                />
               </div>
             )}
 
@@ -803,14 +866,18 @@ export function TimelineFilters({
               className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
               <span>Internal users</span>
-              <div className={cn(
-                'relative w-7 h-4 rounded-full transition-colors',
-                includeInternal ? 'bg-primary' : 'bg-muted-foreground/30'
-              )}>
-                <div className={cn(
-                  'absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform',
-                  includeInternal ? 'translate-x-3.5' : 'translate-x-0.5'
-                )} />
+              <div
+                className={cn(
+                  'relative w-7 h-4 rounded-full transition-colors',
+                  includeInternal ? 'bg-primary' : 'bg-muted-foreground/30',
+                )}
+              >
+                <div
+                  className={cn(
+                    'absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform',
+                    includeInternal ? 'translate-x-3.5' : 'translate-x-0.5',
+                  )}
+                />
               </div>
             </button>
 
@@ -821,7 +888,7 @@ export function TimelineFilters({
                 'inline-flex items-center gap-1 text-xs transition-colors',
                 hasActiveFilters
                   ? 'text-muted-foreground hover:text-foreground cursor-pointer'
-                  : 'text-muted-foreground/40 cursor-not-allowed'
+                  : 'text-muted-foreground/40 cursor-not-allowed',
               )}
             >
               <RotateCw className="h-3 w-3" />

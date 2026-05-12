@@ -4,6 +4,7 @@ import { ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
 import { fetchDashboardBurstiness, type DashboardBurstinessEntity } from '@/lib/api'
 import { useDashboard, dashboardFilterParams } from './dashboard-context'
 import { cn } from '@/lib/utils'
+import { SmallDropdown } from '@/components/topology/TimeRangeSelector'
 
 function formatRate(val: number): string {
   if (val >= 1e12) return (val / 1e12).toFixed(1) + ' Tbps'
@@ -65,22 +66,20 @@ function SpikeTable({
 }) {
   const SortIcon = ({ field }: { field: SortField }) => {
     if (sortField !== field) return null
-    return sortDir === 'asc'
-      ? <ChevronUp className="h-3 w-3" />
-      : <ChevronDown className="h-3 w-3" />
+    return sortDir === 'asc' ? (
+      <ChevronUp className="h-3 w-3" />
+    ) : (
+      <ChevronDown className="h-3 w-3" />
+    )
   }
 
   const sortAria = (field: SortField) => {
     if (sortField !== field) return 'none' as const
-    return sortDir === 'asc' ? 'ascending' as const : 'descending' as const
+    return sortDir === 'asc' ? ('ascending' as const) : ('descending' as const)
   }
 
   if (entities.length === 0) {
-    return (
-      <div className="py-4 text-center text-sm text-muted-foreground">
-        No spikes detected
-      </div>
-    )
+    return <div className="py-4 text-center text-sm text-muted-foreground">No spikes detected</div>
   }
 
   return (
@@ -91,23 +90,47 @@ function SpikeTable({
             <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Interface</th>
             <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Metro</th>
             <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Contributor</th>
-            <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('spike_count')}>
-              <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('spike_count')}>
+            <th
+              className="text-right py-1.5 px-2 font-medium text-muted-foreground"
+              aria-sort={sortAria('spike_count')}
+            >
+              <button
+                className="inline-flex items-center gap-0.5"
+                onClick={() => handleSort('spike_count')}
+              >
                 Spikes <SortIcon field="spike_count" />
               </button>
             </th>
-            <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('max_spike_ratio')}>
-              <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('max_spike_ratio')}>
+            <th
+              className="text-right py-1.5 px-2 font-medium text-muted-foreground"
+              aria-sort={sortAria('max_spike_ratio')}
+            >
+              <button
+                className="inline-flex items-center gap-0.5"
+                onClick={() => handleSort('max_spike_ratio')}
+              >
                 Worst Spike <SortIcon field="max_spike_ratio" />
               </button>
             </th>
-            <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('p50_bps')}>
-              <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('p50_bps')}>
+            <th
+              className="text-right py-1.5 px-2 font-medium text-muted-foreground"
+              aria-sort={sortAria('p50_bps')}
+            >
+              <button
+                className="inline-flex items-center gap-0.5"
+                onClick={() => handleSort('p50_bps')}
+              >
                 Baseline (P50) <SortIcon field="p50_bps" />
               </button>
             </th>
-            <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('max_spike_bps')}>
-              <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('max_spike_bps')}>
+            <th
+              className="text-right py-1.5 px-2 font-medium text-muted-foreground"
+              aria-sort={sortAria('max_spike_bps')}
+            >
+              <button
+                className="inline-flex items-center gap-0.5"
+                onClick={() => handleSort('max_spike_bps')}
+              >
                 Peak Spike <SortIcon field="max_spike_bps" />
               </button>
             </th>
@@ -116,7 +139,8 @@ function SpikeTable({
         </thead>
         <tbody>
           {entities.map((e, i) => {
-            const isSelected = state.selectedEntity?.devicePk === e.device_pk &&
+            const isSelected =
+              state.selectedEntity?.devicePk === e.device_pk &&
               state.selectedEntity?.intf === e.intf
             return (
               <tr
@@ -140,30 +164,35 @@ function SpikeTable({
                 }}
                 className={cn(
                   'border-b border-border/50 cursor-pointer transition-colors',
-                  isSelected ? 'bg-blue-500/10 ring-1 ring-blue-500/30' : 'hover:bg-muted/50'
+                  isSelected ? 'bg-blue-500/10 ring-1 ring-blue-500/30' : 'hover:bg-muted/50',
                 )}
               >
                 <td className="py-1.5 px-2 font-mono">
                   {e.device_code} <span className="text-muted-foreground">{e.intf}</span>
-                  <span className="text-[10px] text-muted-foreground ml-1">{e.peak_direction === 'rx' ? 'Rx' : 'Tx'}</span>
+                  <span className="text-[10px] text-muted-foreground ml-1">
+                    {e.peak_direction === 'rx' ? 'Rx' : 'Tx'}
+                  </span>
                 </td>
                 <td className="py-1.5 px-2">{e.metro_code}</td>
                 <td className="py-1.5 px-2">{e.contributor_code}</td>
                 <td className="py-1.5 px-2 text-right font-mono">
                   {e.spike_count}
-                  <span className="text-[10px] text-muted-foreground ml-1">/ {e.total_buckets}</span>
+                  <span className="text-[10px] text-muted-foreground ml-1">
+                    / {e.total_buckets}
+                  </span>
                 </td>
                 <td className="py-1.5 px-2 text-right">
-                  <span className={cn('px-1.5 py-0.5 rounded text-xs border', spikeColor(e.max_spike_ratio))}>
+                  <span
+                    className={cn(
+                      'px-1.5 py-0.5 rounded text-xs border',
+                      spikeColor(e.max_spike_ratio),
+                    )}
+                  >
                     {formatRatio(e.max_spike_ratio)}
                   </span>
                 </td>
-                <td className="py-1.5 px-2 text-right font-mono">
-                  {formatRate(e.p50_bps)}
-                </td>
-                <td className="py-1.5 px-2 text-right font-mono">
-                  {formatRate(e.max_spike_bps)}
-                </td>
+                <td className="py-1.5 px-2 text-right font-mono">{formatRate(e.p50_bps)}</td>
+                <td className="py-1.5 px-2 text-right font-mono">{formatRate(e.max_spike_bps)}</td>
                 <td className="py-1.5 px-2 text-right text-muted-foreground">
                   {e.last_spike_time ? formatTimeAgo(e.last_spike_time) : '\u2014'}
                 </td>
@@ -183,14 +212,14 @@ export function BurstinessPanel() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [minBps, setMinBps] = useState(10_000_000)
   const [minPeakBps, setMinPeakBps] = useState(0)
-  const [activeTab, setActiveTab] = useState<'link' | 'tunnel' | 'other'>('link')
+  const [activeTab, setActiveTab] = useState<'link' | 'tunnel' | 'cyoa' | 'other'>('link')
   const [page, setPage] = useState(0)
 
   const isAllMode = state.intfType === 'all'
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
-      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
     } else {
       setSortField(field)
       setSortDir('desc')
@@ -198,15 +227,18 @@ export function BurstinessPanel() {
     setPage(0)
   }
 
-  const baseParams = useMemo(() => ({
-    ...dashboardFilterParams(state),
-    sort: sortField,
-    dir: sortDir,
-    limit,
-    offset: page * limit,
-    min_bps: minBps,
-    min_peak_bps: minPeakBps,
-  }), [state, sortField, sortDir, limit, page, minBps, minPeakBps])
+  const baseParams = useMemo(
+    () => ({
+      ...dashboardFilterParams(state),
+      sort: sortField,
+      dir: sortDir,
+      limit,
+      offset: page * limit,
+      min_bps: minBps,
+      min_peak_bps: minPeakBps,
+    }),
+    [state, sortField, sortDir, limit, page, minBps, minPeakBps],
+  )
 
   // Single query for when a specific type is selected
   const singleQuery = useQuery({
@@ -237,6 +269,15 @@ export function BurstinessPanel() {
     enabled: isAllMode,
   })
 
+  const cyoaQuery = useQuery({
+    queryKey: ['dashboard-burstiness', { ...baseParams, intf_type: 'cyoa' }],
+    queryFn: () => fetchDashboardBurstiness({ ...baseParams, intf_type: 'cyoa' }),
+    staleTime: 30_000,
+    refetchInterval: state.refetchInterval,
+    placeholderData: keepPreviousData,
+    enabled: isAllMode,
+  })
+
   const otherQuery = useQuery({
     queryKey: ['dashboard-burstiness', { ...baseParams, intf_type: 'other' }],
     queryFn: () => fetchDashboardBurstiness({ ...baseParams, intf_type: 'other' }),
@@ -255,16 +296,24 @@ export function BurstinessPanel() {
       return [
         ...(linkQuery.data?.entities ?? []),
         ...(tunnelQuery.data?.entities ?? []),
+        ...(cyoaQuery.data?.entities ?? []),
         ...(otherQuery.data?.entities ?? []),
       ]
     }
     return singleQuery.data?.entities ?? []
-  }, [isAllMode, linkQuery.data, tunnelQuery.data, otherQuery.data, singleQuery.data])
+  }, [
+    isAllMode,
+    linkQuery.data,
+    tunnelQuery.data,
+    cyoaQuery.data,
+    otherQuery.data,
+    singleQuery.data,
+  ])
 
   useEffect(() => {
     if (!selectedEntity || state.referenceLines.size > 0) return
     const match = allEntities.find(
-      e => e.device_pk === selectedEntity.devicePk && e.intf === selectedEntity.intf
+      (e) => e.device_pk === selectedEntity.devicePk && e.intf === selectedEntity.intf,
     )
     if (match) {
       state.setReferenceLines(match.device_pk, match.intf, {
@@ -276,7 +325,7 @@ export function BurstinessPanel() {
   }, [selectedEntity, allEntities, state.referenceLines.size, state.setReferenceLines])
 
   const isLoading = isAllMode
-    ? linkQuery.isLoading || tunnelQuery.isLoading || otherQuery.isLoading
+    ? linkQuery.isLoading || tunnelQuery.isLoading || cyoaQuery.isLoading || otherQuery.isLoading
     : singleQuery.isLoading
 
   const renderControls = (total: number) => {
@@ -288,23 +337,33 @@ export function BurstinessPanel() {
       <div className="flex items-center justify-between mt-2">
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           {total > 0 ? (
-            <span>{start}{'\u2013'}{end} of {total}</span>
+            <span>
+              {start}
+              {'\u2013'}
+              {end} of {total}
+            </span>
           ) : (
             <span>No results</span>
           )}
           {totalPages > 1 && (
             <div className="flex items-center gap-1">
               <button
-                onClick={() => setPage(p => Math.max(0, p - 1))}
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
                 disabled={page === 0}
-                className={cn('px-1.5 py-0.5 rounded transition-colors', page === 0 ? 'opacity-30' : 'hover:bg-muted/50')}
+                className={cn(
+                  'px-1.5 py-0.5 rounded transition-colors',
+                  page === 0 ? 'opacity-30' : 'hover:bg-muted/50',
+                )}
               >
                 {'\u2039'}
               </button>
               <button
-                onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+                onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
                 disabled={page >= totalPages - 1}
-                className={cn('px-1.5 py-0.5 rounded transition-colors', page >= totalPages - 1 ? 'opacity-30' : 'hover:bg-muted/50')}
+                className={cn(
+                  'px-1.5 py-0.5 rounded transition-colors',
+                  page >= totalPages - 1 ? 'opacity-30' : 'hover:bg-muted/50',
+                )}
               >
                 {'\u203A'}
               </button>
@@ -312,42 +371,33 @@ export function BurstinessPanel() {
           )}
         </div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <label className="flex items-center gap-1">
-            <span className="text-foreground/60">Baseline</span>
-            <select
-              value={minBps}
-              onChange={e => { setMinBps(Number(e.target.value)); setPage(0) }}
-              className="bg-muted border-none rounded px-1.5 py-0.5 text-xs text-foreground cursor-pointer"
-            >
-              {bpsFilterOptions.map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
-          </label>
-          <label className="flex items-center gap-1">
-            <span className="text-foreground/60">Peak</span>
-            <select
-              value={minPeakBps}
-              onChange={e => { setMinPeakBps(Number(e.target.value)); setPage(0) }}
-              className="bg-muted border-none rounded px-1.5 py-0.5 text-xs text-foreground cursor-pointer"
-            >
-              {bpsFilterOptions.map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
-          </label>
-          <label className="flex items-center gap-1">
-            <span className="text-foreground/60">Show</span>
-            <select
-              value={limit}
-              onChange={e => { setLimit(Number(e.target.value)); setPage(0) }}
-              className="bg-muted border-none rounded px-1.5 py-0.5 text-xs text-foreground cursor-pointer"
-            >
-              {pageSizeOptions.map(n => (
-                <option key={n} value={n}>{n}</option>
-              ))}
-            </select>
-          </label>
+          <span className="text-foreground/60">Baseline</span>
+          <SmallDropdown
+            value={String(minBps)}
+            options={bpsFilterOptions.map((o) => ({ value: String(o.value), label: o.label }))}
+            onChange={(v) => {
+              setMinBps(Number(v))
+              setPage(0)
+            }}
+          />
+          <span className="text-foreground/60">Peak</span>
+          <SmallDropdown
+            value={String(minPeakBps)}
+            options={bpsFilterOptions.map((o) => ({ value: String(o.value), label: o.label }))}
+            onChange={(v) => {
+              setMinPeakBps(Number(v))
+              setPage(0)
+            }}
+          />
+          <span className="text-foreground/60">Show</span>
+          <SmallDropdown
+            value={String(limit)}
+            options={pageSizeOptions.map((n) => ({ value: String(n), label: String(n) }))}
+            onChange={(v) => {
+              setLimit(Number(v))
+              setPage(0)
+            }}
+          />
         </div>
       </div>
     )
@@ -390,10 +440,13 @@ export function BurstinessPanel() {
   const tabs = [
     { key: 'link' as const, label: 'Links', query: linkQuery },
     { key: 'tunnel' as const, label: 'User Tunnels', query: tunnelQuery },
+    { key: 'cyoa' as const, label: 'CYOA', query: cyoaQuery },
     { key: 'other' as const, label: 'Other', query: otherQuery },
   ]
 
-  const allEmpty = tabs.every(t => (t.query.data?.total ?? 0) === 0 && (t.query.data?.entities ?? []).length === 0)
+  const allEmpty = tabs.every(
+    (t) => (t.query.data?.total ?? 0) === 0 && (t.query.data?.entities ?? []).length === 0,
+  )
   if (allEmpty && page === 0) {
     return (
       <div className="h-[200px] flex items-center justify-center text-sm text-muted-foreground">
@@ -402,7 +455,7 @@ export function BurstinessPanel() {
     )
   }
 
-  const activeQuery = tabs.find(t => t.key === activeTab)?.query
+  const activeQuery = tabs.find((t) => t.key === activeTab)?.query
   const activeEntities = activeQuery?.data?.entities ?? []
   const activeTotal = activeQuery?.data?.total ?? 0
   const activePlaceholder = activeQuery?.isPlaceholderData ?? false
@@ -415,20 +468,25 @@ export function BurstinessPanel() {
           return (
             <button
               key={key}
-              onClick={() => { setActiveTab(key); setPage(0) }}
+              onClick={() => {
+                setActiveTab(key)
+                setPage(0)
+              }}
               className={cn(
                 'px-3 py-1.5 text-xs font-medium transition-colors relative -mb-px',
                 activeTab === key
                   ? 'text-foreground border-b-2 border-foreground'
-                  : 'text-muted-foreground hover:text-foreground/70'
+                  : 'text-muted-foreground hover:text-foreground/70',
               )}
             >
               {label}
               {total > 0 && (
-                <span className={cn(
-                  'ml-1.5 text-[10px]',
-                  activeTab === key ? 'text-muted-foreground' : 'text-muted-foreground/60'
-                )}>
+                <span
+                  className={cn(
+                    'ml-1.5 text-[10px]',
+                    activeTab === key ? 'text-muted-foreground' : 'text-muted-foreground/60',
+                  )}
+                >
                   {total}
                 </span>
               )}

@@ -10,6 +10,193 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    date: 'April 22, 2026',
+    changes: [
+      { type: 'feature', description: 'Locations listing page with device count, user capacity bar, and available unicast/subscriber/publisher slots per location' },
+      { type: 'feature', description: 'Status page Metros card now shows Metros and Locations counts side-by-side' },
+      { type: 'improvement', description: 'Metros list: Unicast, Subscribers, Publishers column headers clarified as "Avail." to reflect available capacity' },
+      { type: 'improvement', description: 'PeeringDB lookups proxied through the API with 24-hour in-memory cache, eliminating repeated browser requests and CSP violations' },
+      { type: 'fix', description: 'Content Security Policy updated to allow OpenStreetMap embeds and PeeringDB organization logos' },
+    ],
+  },
+  {
+    date: 'April 21, 2026',
+    changes: [
+      { type: 'feature', description: 'Shreds Economics page with revenue analytics, seat health, retention signals, and next-epoch forecast' },
+      { type: 'feature', description: 'Regional feeds on shreds scoreboard, with DZ retransmits moved under DZ Edge' },
+      { type: 'feature', description: 'Unicast, subscriber, and publisher user counts shown across device listings, detail pages, and topology overlays' },
+      { type: 'improvement', description: 'Capacity sort keeps devices without a maximum below 0%-utilization devices' },
+    ],
+  },
+  {
+    date: 'April 20, 2026',
+    changes: [
+      { type: 'fix', description: 'Shreds scoreboard back navigation and live-tail stalls' },
+    ],
+  },
+  {
+    date: 'April 17, 2026',
+    changes: [
+      { type: 'improvement', description: 'Shreds scoreboard optimized for mobile' },
+      { type: 'improvement', description: 'Edge scoreboard migrated to v2 slot feed race data' },
+      { type: 'fix', description: 'Expiring seat threshold aligned between API and UI' },
+    ],
+  },
+  {
+    date: 'April 16, 2026',
+    changes: [
+      { type: 'improvement', description: 'UI polish and responsiveness improvements across components' },
+      { type: 'improvement', description: 'Shreds scoreboard accessible without authentication' },
+      { type: 'improvement', description: 'Scoreboard win rate computed as share of tracked-feed wins' },
+      { type: 'improvement', description: 'Faster detail page queries via primary key filtering' },
+      { type: 'fix', description: 'Partial-host gaps hidden in scoreboard live view' },
+    ],
+  },
+  {
+    date: 'April 15, 2026',
+    changes: [
+      { type: 'improvement', description: 'Edge scoreboard renamed to "Shreds Scoreboard" with smarter back link' },
+      { type: 'improvement', description: 'Subscribe Now CTA on edge scoreboard' },
+      { type: 'improvement', description: 'Live tail runway extended to ~25 minutes with deep seed anchoring' },
+    ],
+  },
+  {
+    date: 'April 14, 2026',
+    changes: [
+      { type: 'improvement', description: 'Edge scoreboard live tail reworked with faster cache refresh' },
+      { type: 'improvement', description: 'Arrow navigation replaces drag scroll on edge scoreboard' },
+      { type: 'improvement', description: 'Hover tooltips on publisher stats in scoreboard hero' },
+      { type: 'improvement', description: 'Rx/Tx toggle on device drill-down traffic charts' },
+      { type: 'fix', description: 'Live slot streaming stoppage from concurrent poll race' },
+      { type: 'fix', description: 'Scoreboard cache refresh error handling and sinceSlot cursor' },
+    ],
+  },
+  {
+    date: 'April 12, 2026',
+    changes: [
+      { type: 'feature', description: 'P50/P90/P95/P99 percentile modes in traffic charts' },
+      { type: 'feature', description: 'Drained links shown on topology map' },
+      { type: 'improvement', description: 'Server-side filtering, sorting, and pagination on all listing pages' },
+      { type: 'improvement', description: 'Deleted users supported in listings and detail pages' },
+      { type: 'improvement', description: 'Active incident types shown on drained links' },
+      { type: 'improvement', description: 'Faster topology initial map load' },
+      { type: 'fix', description: 'Burstiness query crash when filtering by contributor or metro' },
+      { type: 'fix', description: 'has_issues filter no longer over-matches no_data' },
+    ],
+  },
+  {
+    date: 'April 10, 2026',
+    changes: [
+      { type: 'feature', description: 'Edge scoreboard reworked with live slot tailing, drag-to-scroll, and hover tooltips' },
+      { type: 'improvement', description: 'Stake share delta removed from status page' },
+      { type: 'fix', description: 'Path latency average improvement calculation' },
+      { type: 'fix', description: 'Counter regression inflating bps after stale telemetry' },
+    ],
+  },
+  {
+    date: 'April 8, 2026',
+    changes: [
+      { type: 'feature', description: 'CYOA tab in spike detection' },
+      { type: 'improvement', description: 'Bucketed win rate view in edge scoreboard slot chart' },
+      { type: 'improvement', description: 'Expiring seat threshold tightened to less than one prepaid epoch' },
+      { type: 'improvement', description: 'USDC label on shreds device price column' },
+    ],
+  },
+  {
+    date: 'April 7, 2026',
+    changes: [
+      { type: 'feature', description: 'Sigma aggregate toggle in traffic dashboards' },
+      { type: 'improvement', description: 'Aggregate toggle state persisted in URL' },
+      { type: 'improvement', description: 'Client and version filters on publisher check' },
+      { type: 'improvement', description: 'Compact MCP get_schema output' },
+      { type: 'fix', description: 'Re-activated links no longer hidden behind drained toggle in health timeline' },
+      { type: 'fix', description: 'Inflated rates from interleaved event-only rows' },
+    ],
+  },
+  {
+    date: 'April 6, 2026',
+    changes: [
+      { type: 'feature', description: 'Device interface types integrated across dashboards' },
+      { type: 'improvement', description: 'Real-time ISIS state used for timeline collecting bucket' },
+      { type: 'fix', description: 'ISIS down false positives and carryforward propagation issues' },
+    ],
+  },
+  {
+    date: 'April 5, 2026',
+    changes: [
+      { type: 'feature', description: 'Shreds pages overhauled with status lifecycle, devices endpoint, and nav reorganization' },
+      { type: 'improvement', description: 'SLA renamed to SLO across UI and API' },
+      { type: 'improvement', description: 'Read-only query validation enforced on MCP and query endpoints' },
+      { type: 'improvement', description: 'Sub-5m buckets supported on link latency charts' },
+      { type: 'improvement', description: 'RTT chart on status page for high latency links' },
+      { type: 'fix', description: 'Escrow event balance showing $0 for null values' },
+    ],
+  },
+  {
+    date: 'April 4, 2026',
+    changes: [
+      { type: 'feature', description: 'Shred payment escrow activity page' },
+      { type: 'improvement', description: 'Last activity column and clickable rows on seats page' },
+      { type: 'improvement', description: 'Copy icons and dollar formatting on seats and activity pages' },
+      { type: 'improvement', description: 'Collecting bucket data shown in detail charts' },
+    ],
+  },
+  {
+    date: 'April 2, 2026',
+    changes: [
+      { type: 'feature', description: 'Shred subscription program indexing and pages' },
+      { type: 'feature', description: 'Unified link and device metrics endpoints with detail page charts' },
+      { type: 'improvement', description: 'Delay override used in path computation with committed latency display' },
+      { type: 'improvement', description: 'Committed RTT shown for all configured links' },
+      { type: 'improvement', description: 'UI polish for charts, sidebar, and latency toggles' },
+    ],
+  },
+  {
+    date: 'April 1, 2026',
+    changes: [
+      { type: 'improvement', description: 'Landing page replaced with status redirect and MCP CTA added to chat' },
+    ],
+  },
+  {
+    date: 'March 30, 2026',
+    changes: [
+      { type: 'feature', description: 'Shred stats chart on multicast group detail page' },
+      { type: 'improvement', description: 'Info tooltip on traffic chart on multicast group page' },
+      { type: 'fix', description: 'Publisher check includes non-publishing validators in totals' },
+      { type: 'fix', description: 'Traffic chart x-axis gap when data ingestion lags' },
+      { type: 'fix', description: 'Status banner no longer escalates when all links are individually healthy' },
+    ],
+  },
+  {
+    date: 'March 29, 2026',
+    changes: [
+      { type: 'feature', description: 'Devnet and testnet database connections enabled by default' },
+      { type: 'improvement', description: 'Aggregate packet loss removed from status banner' },
+      { type: 'improvement', description: 'Row deselection in spike detection table' },
+      { type: 'fix', description: 'Link latency chart x-axis spans full time range' },
+      { type: 'fix', description: 'ISIS adjacencies disambiguated on duplicate tunnel nets' },
+    ],
+  },
+  {
+    date: 'March 27, 2026',
+    changes: [
+      { type: 'improvement', description: 'Remaining queries migrated to rollup tables for faster loads' },
+      { type: 'fix', description: 'Spurious No Data badge on detail pages during collection' },
+    ],
+  },
+  {
+    date: 'March 25, 2026',
+    changes: [
+      { type: 'feature', description: 'Link latency dashboard page' },
+      { type: 'improvement', description: 'Device and user detail pages modernized with uPlot charts' },
+      { type: 'improvement', description: 'Spike detection redesigned with anomaly-based detection' },
+      { type: 'improvement', description: 'Timeline histogram migrated off recharts' },
+      { type: 'improvement', description: 'Legend interactions added to link latency chart' },
+      { type: 'fix', description: 'User detail chart not showing data' },
+      { type: 'fix', description: 'Publisher check and multicast traffic for renamed shred group' },
+    ],
+  },
+  {
     date: 'March 24, 2026',
     changes: [
       { type: 'improvement', description: 'Replace recharts with uPlot on status page charts' },

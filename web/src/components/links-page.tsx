@@ -1,22 +1,26 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Loader2, Link2, AlertCircle, ChevronDown, ChevronUp, X } from 'lucide-react'
-import { fetchAllPaginated, fetchLinks } from '@/lib/api'
+import { fetchLinks } from '@/lib/api'
 import { handleRowClick } from '@/lib/utils'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
 import { PageHeader } from './page-header'
+import { CopyableText } from './copyable-text'
 
 const PAGE_SIZE = 100
 
-const statusColors: Record<string, string> = {
-  activated: 'text-muted-foreground',
-  provisioning: 'text-blue-600 dark:text-blue-400',
-  'soft-drained': 'text-amber-600 dark:text-amber-400',
-  drained: 'text-amber-600 dark:text-amber-400',
-  suspended: 'text-red-600 dark:text-red-400',
-  pending: 'text-amber-600 dark:text-amber-400',
+const statusDotColor: Record<string, string> = {
+  activated:    'bg-green-500',
+  active:       'bg-green-500',
+  provisioning: 'bg-blue-500',
+  'soft-drained': 'bg-amber-500',
+  drained:      'bg-amber-500',
+  suspended:    'bg-red-500',
+  pending:      'bg-amber-500',
+  inactive:     'bg-muted-foreground',
+  deactivated:  'bg-muted-foreground',
 }
 
 function formatBps(bps: number): string {
@@ -50,74 +54,19 @@ type SortField =
   | 'code'
   | 'type'
   | 'contributor'
-  | 'sideA'
-  | 'sideZ'
+  | 'sidea'
+  | 'sidez'
   | 'status'
   | 'bandwidth'
   | 'in'
   | 'out'
-  | 'utilIn'
-  | 'utilOut'
+  | 'utilin'
+  | 'utilout'
   | 'latency'
   | 'jitter'
   | 'loss'
 
 type SortDirection = 'asc' | 'desc'
-
-type NumericFilter = {
-  op: '>' | '>=' | '<' | '<=' | '='
-  value: number
-}
-
-type UnitMap = Record<string, number>
-
-const numericSearchFields: SortField[] = [
-  'bandwidth',
-  'in',
-  'out',
-  'utilIn',
-  'utilOut',
-  'latency',
-  'jitter',
-  'loss',
-]
-
-function parseNumericFilter(input: string): NumericFilter | null {
-  const match = input.trim().match(/^(>=|<=|>|<|==|=)\s*(-?\d+(?:\.\d+)?)$/)
-  if (!match) return null
-  const op = match[1] === '==' ? '=' : (match[1] as NumericFilter['op'])
-  return { op, value: Number(match[2]) }
-}
-
-function parseNumericFilterWithUnits(
-  input: string,
-  unitMap: UnitMap,
-  defaultUnit: string
-): NumericFilter | null {
-  const match = input.trim().match(/^(>=|<=|>|<|==|=)\s*(-?\d+(?:\.\d+)?)([a-zA-Z]+)?$/)
-  if (!match) return null
-  const op = match[1] === '==' ? '=' : (match[1] as NumericFilter['op'])
-  const unitRaw = match[3]?.toLowerCase()
-  const unit = unitRaw ?? defaultUnit
-  const multiplier = unitMap[unit]
-  if (!multiplier) return null
-  return { op, value: Number(match[2]) * multiplier }
-}
-
-function matchesNumericFilter(value: number, filter: NumericFilter): boolean {
-  switch (filter.op) {
-    case '>':
-      return value > filter.value
-    case '>=':
-      return value >= filter.value
-    case '<':
-      return value < filter.value
-    case '<=':
-      return value <= filter.value
-    case '=':
-      return value === filter.value
-  }
-}
 
 // Parse search filters from URL param
 function parseSearchFilters(searchParam: string): string[] {
@@ -126,39 +75,36 @@ function parseSearchFilters(searchParam: string): string[] {
 }
 
 // Valid filter fields for links
-const validFilterFields = ['code', 'type', 'contributor', 'sideA', 'sideZ', 'status', 'bandwidth', 'in', 'out', 'utilIn', 'utilOut', 'latency', 'jitter', 'loss']
+const validFilterFields = ['code', 'type', 'contributor', 'sidea', 'sidez', 'status', 'bandwidth', 'in', 'out', 'utilin', 'utilout', 'latency', 'jitter', 'loss']
 
 // Field prefixes for inline filter
 const linkFieldPrefixes = [
   { prefix: 'code:', description: 'Filter by link code' },
   { prefix: 'type:', description: 'Filter by link type' },
   { prefix: 'contributor:', description: 'Filter by contributor' },
-  { prefix: 'sideA:', description: 'Filter by side A device' },
-  { prefix: 'sideZ:', description: 'Filter by side Z device' },
+  { prefix: 'sidea:', description: 'Filter by side A device' },
+  { prefix: 'sidez:', description: 'Filter by side Z device' },
   { prefix: 'status:', description: 'Filter by status' },
   { prefix: 'bandwidth:', description: 'Filter by bandwidth (e.g., >10gbps)' },
   { prefix: 'in:', description: 'Filter by inbound traffic (e.g., >1gbps)' },
   { prefix: 'out:', description: 'Filter by outbound traffic (e.g., >1gbps)' },
-  { prefix: 'utilIn:', description: 'Filter by inbound utilization % (e.g., >50)' },
-  { prefix: 'utilOut:', description: 'Filter by outbound utilization % (e.g., >50)' },
+  { prefix: 'utilin:', description: 'Filter by inbound utilization % (e.g., >50)' },
+  { prefix: 'utilout:', description: 'Filter by outbound utilization % (e.g., >50)' },
 ]
 
 // Fields that support autocomplete
 const linkAutocompleteFields = ['status', 'type', 'contributor', 'sidea', 'sidez']
 
-// Parse a filter string into field and value
-function parseFilter(filter: string): { field: string; value: string } {
+function toFilterParam(filter: string): string {
   const colonIndex = filter.indexOf(':')
   if (colonIndex > 0) {
     const field = filter.slice(0, colonIndex).toLowerCase()
     const value = filter.slice(colonIndex + 1)
-    // Handle camelCase fields
-    const normalizedField = field === 'sidea' ? 'sideA' : field === 'sidez' ? 'sideZ' : field === 'utilin' ? 'utilIn' : field === 'utilout' ? 'utilOut' : field
-    if (validFilterFields.includes(normalizedField) && value) {
-      return { field: normalizedField, value }
+    if (validFilterFields.includes(field) && value) {
+      return `${field}:${value}`
     }
   }
-  return { field: 'all', value: filter }
+  return `all:${filter}`
 }
 
 export function LinksPage() {
@@ -187,7 +133,6 @@ export function LinksPage() {
   const searchFilters = parseSearchFilters(searchParam)
 
   // Combine committed filters with live filter
-  // Live filter is combined with committed filters (all must match)
   const allFilters = liveFilter
     ? [...searchFilters, liveFilter]
     : searchFilters
@@ -213,172 +158,16 @@ export function LinksPage() {
     })
   }, [setSearchParams])
 
+  const filterParams = useMemo(() => allFilters.map(toFilterParam), [allFilters])
+  const filterKey = filterParams.join(',')
+
   const { data: response, isLoading, error } = useQuery({
-    queryKey: ['links', 'all'],
-    queryFn: () => fetchAllPaginated(fetchLinks, PAGE_SIZE),
+    queryKey: ['links', offset, sortField, sortDirection, filterKey],
+    queryFn: () => fetchLinks(PAGE_SIZE, offset, sortField, sortDirection, filterParams.length > 0 ? filterParams : undefined),
     refetchInterval: 30000,
+    placeholderData: keepPreviousData,
   })
-  const links = response?.items
-  const filteredLinks = useMemo(() => {
-    if (!links) return []
-    if (allFilters.length === 0) return links
-
-    // Helper to get numeric value for a link field
-    const getNumericValue = (link: typeof links[number], field: string) => {
-      switch (field) {
-        case 'bandwidth':
-          return link.bandwidth_bps
-        case 'in':
-          return link.in_bps
-        case 'out':
-          return link.out_bps
-        case 'utilIn':
-          return link.utilization_in
-        case 'utilOut':
-          return link.utilization_out
-        case 'latency':
-          return link.latency_us
-        case 'jitter':
-          return link.jitter_us
-        case 'loss':
-          return link.loss_percent
-        default:
-          return 0
-      }
-    }
-
-    // Helper to get text value for a link field
-    const getSearchValue = (link: typeof links[number], field: string) => {
-      switch (field) {
-        case 'code':
-          return link.code
-        case 'type':
-          return link.link_type
-        case 'contributor':
-          return link.contributor_code || ''
-        case 'sideA':
-          return `${link.side_a_code || ''} ${link.side_a_metro || ''}`.trim()
-        case 'sideZ':
-          return `${link.side_z_code || ''} ${link.side_z_metro || ''}`.trim()
-        case 'status':
-          return link.status
-        default:
-          return ''
-      }
-    }
-
-    // Check if a link matches a single filter
-    const matchesSingleFilter = (link: typeof links[number], filterRaw: string): boolean => {
-      const filter = parseFilter(filterRaw)
-      const searchField = filter.field as SortField | 'all'
-      const needle = filter.value.trim().toLowerCase()
-      if (!needle) return true
-
-      // Handle numeric filters
-      if (searchField !== 'all' && numericSearchFields.includes(searchField as SortField)) {
-        const numericFilter = parseNumericFilter(filter.value)
-        const unitFilter =
-          (searchField === 'bandwidth' || searchField === 'in' || searchField === 'out')
-            ? parseNumericFilterWithUnits(
-                filter.value,
-                { gbps: 1e9, mbps: 1e6, bps: 1 },
-                'gbps'
-              )
-            : (searchField === 'latency' || searchField === 'jitter')
-                ? parseNumericFilterWithUnits(filter.value, { ms: 1000, us: 1 }, 'ms')
-                : null
-        const effectiveFilter = unitFilter ?? numericFilter
-        if (!effectiveFilter) return true
-        return matchesNumericFilter(getNumericValue(link, searchField), effectiveFilter)
-      }
-
-      // Handle text filters
-      if (searchField === 'all') {
-        const textFields = ['code', 'type', 'contributor', 'sideA', 'sideZ', 'status']
-        return textFields.some(field => getSearchValue(link, field).toLowerCase().includes(needle))
-      }
-
-      return getSearchValue(link, searchField).toLowerCase().includes(needle)
-    }
-
-    // Group filters by field, then OR within same field, AND across different fields
-    const grouped = new Map<string, string[]>()
-    for (const f of allFilters) {
-      const { field } = parseFilter(f)
-      const existing = grouped.get(field) ?? []
-      existing.push(f)
-      grouped.set(field, existing)
-    }
-    return links.filter(link =>
-      Array.from(grouped.values()).every(group =>
-        group.some(f => matchesSingleFilter(link, f))
-      )
-    )
-  }, [links, allFilters])
-  const sortedLinks = useMemo(() => {
-    if (!filteredLinks) return []
-    // Deduplicate by pk to prevent any possible duplicate rows
-    const seen = new Set<string>()
-    const unique = filteredLinks.filter(l => {
-      if (seen.has(l.pk)) return false
-      seen.add(l.pk)
-      return true
-    })
-    const sorted = [...unique].sort((a, b) => {
-      let cmp = 0
-      switch (sortField) {
-        case 'code':
-          cmp = a.code.localeCompare(b.code)
-          break
-        case 'type':
-          cmp = a.link_type.localeCompare(b.link_type)
-          break
-        case 'contributor':
-          cmp = (a.contributor_code || '').localeCompare(b.contributor_code || '')
-          break
-        case 'sideA':
-          cmp = (a.side_a_code || '').localeCompare(b.side_a_code || '')
-          break
-        case 'sideZ':
-          cmp = (a.side_z_code || '').localeCompare(b.side_z_code || '')
-          break
-        case 'status':
-          cmp = a.status.localeCompare(b.status)
-          break
-        case 'bandwidth':
-          cmp = a.bandwidth_bps - b.bandwidth_bps
-          break
-        case 'in':
-          cmp = a.in_bps - b.in_bps
-          break
-        case 'out':
-          cmp = a.out_bps - b.out_bps
-          break
-        case 'utilIn':
-          cmp = a.utilization_in - b.utilization_in
-          break
-        case 'utilOut':
-          cmp = a.utilization_out - b.utilization_out
-          break
-        case 'latency':
-          cmp = a.latency_us - b.latency_us
-          break
-        case 'jitter':
-          cmp = a.jitter_us - b.jitter_us
-          break
-        case 'loss':
-          cmp = a.loss_percent - b.loss_percent
-          break
-      }
-      return sortDirection === 'asc' ? cmp : -cmp
-    })
-
-    return sorted
-  }, [filteredLinks, sortField, sortDirection])
-  const pagedLinks = useMemo(
-    () => sortedLinks.slice(offset, offset + PAGE_SIZE),
-    [sortedLinks, offset]
-  )
+  const links = response?.items ?? []
 
   const handleSort = (field: SortField) => {
     setSearchParams(prev => {
@@ -499,17 +288,18 @@ export function LinksPage() {
                       <SortIcon field="contributor" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('sideA')}>
-                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('sideA')}>
-                      Side A
-                      <SortIcon field="sideA" />
-                    </button>
-                  </th>
-                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('sideZ')}>
-                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('sideZ')}>
-                      Side Z
-                      <SortIcon field="sideZ" />
-                    </button>
+                  <th className="px-4 py-3 font-medium whitespace-nowrap text-center">
+                    <span className="inline-flex items-center gap-1.5 justify-center w-full">
+                      <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('sidea')}>
+                        Side A
+                        <SortIcon field="sidea" />
+                      </button>
+                      <span className="text-muted-foreground select-none">⟺</span>
+                      <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('sidez')}>
+                        Side Z
+                        <SortIcon field="sidez" />
+                      </button>
+                    </span>
                   </th>
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('status')}>
                     <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('status')}>
@@ -517,7 +307,7 @@ export function LinksPage() {
                       <SortIcon field="status" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('bandwidth')}>
+                  <th className="px-4 py-3 font-medium text-right whitespace-nowrap" aria-sort={sortAria('bandwidth')}>
                     <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('bandwidth')}>
                       Bandwidth
                       <SortIcon field="bandwidth" />
@@ -535,25 +325,25 @@ export function LinksPage() {
                       <SortIcon field="out" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('utilIn')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('utilIn')}>
+                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('utilin')}>
+                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('utilin')}>
                       Util In
-                      <SortIcon field="utilIn" />
+                      <SortIcon field="utilin" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('utilOut')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('utilOut')}>
+                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('utilout')}>
+                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('utilout')}>
                       Util Out
-                      <SortIcon field="utilOut" />
+                      <SortIcon field="utilout" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('latency')}>
+                  <th className="px-4 py-3 font-medium text-right whitespace-nowrap" aria-sort={sortAria('latency')}>
                     <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('latency')}>
                       Latency
                       <SortIcon field="latency" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('jitter')}>
+                  <th className="px-4 py-3 font-medium text-right whitespace-nowrap" aria-sort={sortAria('jitter')}>
                     <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('jitter')}>
                       Jitter
                       <SortIcon field="jitter" />
@@ -568,37 +358,51 @@ export function LinksPage() {
                 </tr>
               </thead>
               <tbody>
-                {pagedLinks.map((link) => (
+                {links.map((link) => (
                   <tr
                     key={link.pk}
                     className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
                     onClick={(e) => handleRowClick(e, `/dz/links/${link.pk}`, navigate)}
                   >
-                    <td className="px-4 py-3">
-                      <span className="font-mono text-sm">{link.code}</span>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <CopyableText text={link.code} className="font-mono text-sm" />
                     </td>
                     <td className="px-4 py-3 text-sm text-muted-foreground">
                       {link.link_type}
                     </td>
-                    <td className="px-4 py-3 text-sm text-muted-foreground">
-                      {link.contributor_code || '—'}
+                    <td className="px-4 py-3 text-sm">
+                      {link.side_a_contributor_pk && link.side_z_contributor_pk && link.side_a_contributor_code !== link.side_z_contributor_code ? (
+                        <>
+                          <Link to={`/dz/contributors/${link.side_a_contributor_pk}`} className="text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.side_a_contributor_code}</Link>
+                          <span className="text-muted-foreground"> ↔ </span>
+                          <Link to={`/dz/contributors/${link.side_z_contributor_pk}`} className="text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.side_z_contributor_code}</Link>
+                        </>
+                      ) : link.contributor_pk
+                        ? <Link to={`/dz/contributors/${link.contributor_pk}`} className="text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.contributor_code}</Link>
+                        : <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-sm text-muted-foreground">
-                      <span className="font-mono">{link.side_a_code || '—'}</span>
-                      {link.side_a_metro && (
-                        <span className="ml-1 text-xs">({link.side_a_metro})</span>
-                      )}
+                    <td className="px-4 py-3 text-sm whitespace-nowrap text-center" onClick={e => e.stopPropagation()}>
+                      <span className="inline-flex items-center gap-2 justify-center">
+                        <span>
+                          {link.side_a_code
+                            ? <><Link to={`/dz/devices/${link.side_a_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline">{link.side_a_code}</Link>{link.side_a_metro && <>{' '}<Link to={`/dz/metros/${link.side_a_metro_pk}`} className="text-xs text-muted-foreground hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>({link.side_a_metro})</Link></>}</>
+                            : <span className="font-mono text-muted-foreground">—</span>}
+                        </span>
+                        <span className="text-muted-foreground select-none">⟺</span>
+                        <span>
+                          {link.side_z_code
+                            ? <><Link to={`/dz/devices/${link.side_z_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline">{link.side_z_code}</Link>{link.side_z_metro && <>{' '}<Link to={`/dz/metros/${link.side_z_metro_pk}`} className="text-xs text-muted-foreground hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>({link.side_z_metro})</Link></>}</>
+                            : <span className="font-mono text-muted-foreground">—</span>}
+                        </span>
+                      </span>
                     </td>
-                    <td className="px-4 py-3 text-sm text-muted-foreground">
-                      <span className="font-mono">{link.side_z_code || '—'}</span>
-                      {link.side_z_metro && (
-                        <span className="ml-1 text-xs">({link.side_z_metro})</span>
-                      )}
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-block h-2.5 w-2.5 rounded-full ${statusDotColor[link.status] ?? 'bg-muted-foreground'}`}
+                        title={link.status}
+                      />
                     </td>
-                    <td className={`px-4 py-3 text-sm capitalize ${statusColors[link.status] || ''}`}>
-                      {link.status}
-                    </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">
+                    <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground whitespace-nowrap">
                       {formatBps(link.bandwidth_bps)}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">
@@ -613,10 +417,10 @@ export function LinksPage() {
                     <td className={`px-4 py-3 text-sm tabular-nums text-right ${getUtilizationColor(link.utilization_out)}`}>
                       {formatPercent(link.utilization_out)}
                     </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">
+                    <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground whitespace-nowrap">
                       {formatLatency(link.latency_us)}
                     </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">
+                    <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground whitespace-nowrap">
                       {formatLatency(link.jitter_us)}
                     </td>
                     <td className={`px-4 py-3 text-sm tabular-nums text-right ${link.loss_percent > 0 ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground'}`}>
@@ -624,9 +428,9 @@ export function LinksPage() {
                     </td>
                   </tr>
                 ))}
-                {sortedLinks.length === 0 && (
+                {links.length === 0 && (
                   <tr>
-                    <td colSpan={14} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={13} className="px-4 py-8 text-center text-muted-foreground">
                       No links found
                     </td>
                   </tr>
@@ -636,7 +440,7 @@ export function LinksPage() {
           </div>
           {response && (
             <Pagination
-              total={sortedLinks.length}
+              total={response.total}
               limit={PAGE_SIZE}
               offset={offset}
               onOffsetChange={setOffset}

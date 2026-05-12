@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
@@ -11,6 +12,7 @@ import (
 type ExportLinkRollupRow = linkRollupRow
 type ExportLinkBucketKey = linkBucketKey
 type ExportInterfaceRollupRow = interfaceRollupRow
+type ExportLinkRollupSummary = linkRollupSummary
 
 type ExportInterfaceRollupOpts struct {
 	GroupBy    int
@@ -42,4 +44,16 @@ func ExportQueryInterfaceRollup(ctx context.Context, db driver.Conn, params buck
 		UserOnly:   opts.UserOnly,
 		ErrorsOnly: opts.ErrorsOnly,
 	})
+}
+
+func ExportParseBucketParamsCustom(startTime, endTime time.Time, requestedBuckets int) bucketParams {
+	return parseBucketParamsCustom(startTime, endTime, requestedBuckets)
+}
+
+func ExportQueryLinkRollupSummary(ctx context.Context, db driver.Conn, params bucketParams) (map[string]*linkRollupSummary, error) {
+	return queryLinkRollupSummary(ctx, db, params)
+}
+
+func ExportQueryInterfaceIssueLinkPKs(ctx context.Context, db driver.Conn, params bucketParams) (map[string]bool, error) {
+	return queryInterfaceIssueLinkPKs(ctx, db, params)
 }

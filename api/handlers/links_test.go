@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/malbeclabs/lake/api/handlers"
@@ -162,7 +163,7 @@ func TestGetLinks_OrderedByCode(t *testing.T) {
 
 	insertLinksTestData(t, api)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/dz/links", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/links?sort_by=code&sort_dir=asc", nil)
 	rr := httptest.NewRecorder()
 	api.GetLinks(rr, req)
 
@@ -172,7 +173,7 @@ func TestGetLinks_OrderedByCode(t *testing.T) {
 	err := json.NewDecoder(rr.Body).Decode(&response)
 	require.NoError(t, err)
 
-	// Verify sorted by code
+	// Verify sorted by code ascending
 	assert.Equal(t, "LAX-INTERNAL", response.Items[0].Code)
 	assert.Equal(t, "NYC-EDGE-001", response.Items[1].Code)
 	assert.Equal(t, "NYC-LAX-001", response.Items[2].Code)
@@ -237,6 +238,127 @@ func TestGetLink_ReturnsDetails(t *testing.T) {
 	assert.Equal(t, int64(10000000000), link.BandwidthBps)
 	assert.Equal(t, "NYC-CORE-01", link.SideACode)
 	assert.Equal(t, "LAX-CORE-01", link.SideZCode)
+}
+
+func TestGetLink_IncludesTrafficRates(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertLinksTestData(t, api)
+
+	// Seed interface rollup with link_pk set (link-level traffic)
+	now := time.Now()
+	seedInterfaceRollup(t, api, now.Add(-5*time.Minute), "dev-nyc-1", "eth0", "link-1", "a", 0, 0, 2000.0, "up")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/links/link-1", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("pk", "link-1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rr := httptest.NewRecorder()
+	api.GetLink(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var link handlers.LinkDetail
+	err := json.NewDecoder(rr.Body).Decode(&link)
+	require.NoError(t, err)
+
+	assert.InDelta(t, 2000.0, link.InBps, 1.0)
+	// avg_out_bps = avg_in_bps * 0.5 = 1000
+	assert.InDelta(t, 1000.0, link.OutBps, 1.0)
+	// peak_in_bps = max_in_bps = avg_in_bps * 2.0 = 4000
+	assert.InDelta(t, 4000.0, link.PeakInBps, 1.0)
+}
+
+func TestGetLink_IncludesLatencyData(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertLinksTestData(t, api)
+
+	now := time.Now()
+	// a_avg=1500, z_avg=2000, a_loss=0.5, z_loss=0.3, 100 samples each
+	seedLinkRollup(t, api, now.Add(-5*time.Minute), "link-1", 1500.0, 2000.0, 0.5, 0.3, 100, 100, "up", false, false)
+	require.NoError(t, api.DB.Exec(t.Context(), `OPTIMIZE TABLE link_rollup_5m FINAL`))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/links/link-1", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("pk", "link-1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rr := httptest.NewRecorder()
+	api.GetLink(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var link handlers.LinkDetail
+	err := json.NewDecoder(rr.Body).Decode(&link)
+	require.NoError(t, err)
+
+	// avg_rtt = (1500*100 + 2000*100) / (100+100) = 1750
+	assert.InDelta(t, 1750.0, link.LatencyUs, 1.0)
+	// a_to_z = 1500*100 / 100 = 1500
+	assert.InDelta(t, 1500.0, link.LatencyAtoZUs, 1.0)
+	// z_to_a = 2000*100 / 100 = 2000
+	assert.InDelta(t, 2000.0, link.LatencyZtoAUs, 1.0)
+	// loss = (0.5*100 + 0.3*100) / (100+100) = 0.4
+	assert.InDelta(t, 0.4, link.LossPercent, 0.01)
+}
+
+func TestGetLink_TrafficIsolatedByLink(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertLinksTestData(t, api)
+
+	// Seed rollup for two links with very different rates
+	now := time.Now()
+	seedInterfaceRollup(t, api, now.Add(-5*time.Minute), "dev-nyc-1", "eth0", "link-1", "a", 0, 0, 1000.0, "up")
+	seedInterfaceRollup(t, api, now.Add(-5*time.Minute), "dev-nyc-1", "eth1", "link-2", "a", 0, 0, 9000.0, "up")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/links/link-1", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("pk", "link-1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rr := httptest.NewRecorder()
+	api.GetLink(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var link handlers.LinkDetail
+	err := json.NewDecoder(rr.Body).Decode(&link)
+	require.NoError(t, err)
+
+	// Should see link-1's rate (1000), not link-2's (9000) or an average of both (5000)
+	assert.InDelta(t, 1000.0, link.InBps, 1.0)
+}
+
+func TestGetLink_LatencyIsolatedByLink(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertLinksTestData(t, api)
+
+	// Seed latency for two links with very different values
+	now := time.Now()
+	seedLinkRollup(t, api, now.Add(-5*time.Minute), "link-1", 500.0, 500.0, 0.0, 0.0, 100, 100, "up", false, false)
+	seedLinkRollup(t, api, now.Add(-6*time.Minute), "link-2", 9000.0, 9000.0, 0.0, 0.0, 100, 100, "up", false, false)
+	require.NoError(t, api.DB.Exec(t.Context(), `OPTIMIZE TABLE link_rollup_5m FINAL`))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/links/link-1", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("pk", "link-1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rr := httptest.NewRecorder()
+	api.GetLink(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var link handlers.LinkDetail
+	err := json.NewDecoder(rr.Body).Decode(&link)
+	require.NoError(t, err)
+
+	// Should see link-1's latency (500), not link-2's (9000)
+	assert.InDelta(t, 500.0, link.LatencyUs, 1.0)
 }
 
 func setupLinkHealthData(t *testing.T, api *handlers.API) {

@@ -24,10 +24,11 @@ CREATE TABLE IF NOT EXISTS publisher_shred_stats (
     needs_repair Bool,
     first_seen_ns Int64,
     last_seen_ns Int64,
-    is_scheduled_leader Bool
+    is_scheduled_leader Bool,
+    feed String
 ) ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY toYYYYMM(event_ts)
-ORDER BY (host, slot, publisher_ip);
+ORDER BY (host, slot, publisher_ip, feed);
 
 -- Sample publishers: mix of healthy and unhealthy configurations.
 -- Epoch 800, ~10 publishers with varying states:

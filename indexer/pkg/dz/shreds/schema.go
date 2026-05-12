@@ -76,6 +76,8 @@ func (s *ClientSeatSchema) PayloadColumns() []string {
 		"override_usdc_price_dollars:INTEGER",
 		"escrow_count:INTEGER",
 		"funding_authority_key:VARCHAR",
+		"subscription_start_slot:BIGINT",
+		"last_usdc_price_dollars:INTEGER",
 	}
 }
 
@@ -91,6 +93,8 @@ func (s *ClientSeatSchema) ToRow(c ClientSeatRow) []any {
 		c.OverrideUSDCPriceDollars,
 		c.EscrowCount,
 		c.FundingAuthorityKey,
+		c.SubscriptionStartSlot,
+		c.LastUSDCPriceDollars,
 	}
 }
 

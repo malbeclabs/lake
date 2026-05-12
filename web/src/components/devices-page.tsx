@@ -1,22 +1,23 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Loader2, Server, AlertCircle, ChevronDown, ChevronUp, X } from 'lucide-react'
-import { fetchAllPaginated, fetchDevices } from '@/lib/api'
+import { fetchDevices } from '@/lib/api'
 import { handleRowClick } from '@/lib/utils'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
 import { PageHeader } from './page-header'
+import { CopyableText } from './copyable-text'
 
 const PAGE_SIZE = 100
 
-const statusColors: Record<string, string> = {
-  activated: 'text-muted-foreground',
-  provisioning: 'text-blue-600 dark:text-blue-400',
-  'soft-drained': 'text-amber-600 dark:text-amber-400',
-  drained: 'text-amber-600 dark:text-amber-400',
-  suspended: 'text-red-600 dark:text-red-400',
-  pending: 'text-amber-600 dark:text-amber-400',
+const statusDotColor: Record<string, string> = {
+  activated: 'bg-green-500',
+  provisioning: 'bg-blue-500',
+  'soft-drained': 'bg-amber-500',
+  drained: 'bg-amber-500',
+  suspended: 'bg-red-500',
+  pending: 'bg-amber-500',
 }
 
 function formatBps(bps: number): string {
@@ -33,66 +34,18 @@ type SortField =
   | 'type'
   | 'contributor'
   | 'metro'
+  | 'facility'
   | 'status'
   | 'users'
+  | 'unicast'
+  | 'subscribers'
+  | 'publishers'
   | 'in'
   | 'out'
-  | 'peakIn'
-  | 'peakOut'
+  | 'peakin'
+  | 'peakout'
 
 type SortDirection = 'asc' | 'desc'
-
-type NumericFilter = {
-  op: '>' | '>=' | '<' | '<=' | '='
-  value: number
-}
-
-type UnitMap = Record<string, number>
-
-const numericSearchFields: SortField[] = [
-  'users',
-  'in',
-  'out',
-  'peakIn',
-  'peakOut',
-]
-
-function parseNumericFilter(input: string): NumericFilter | null {
-  const match = input.trim().match(/^(>=|<=|>|<|==|=)\s*(-?\d+(?:\.\d+)?)$/)
-  if (!match) return null
-  const op = match[1] === '==' ? '=' : (match[1] as NumericFilter['op'])
-  return { op, value: Number(match[2]) }
-}
-
-function parseNumericFilterWithUnits(
-  input: string,
-  unitMap: UnitMap,
-  defaultUnit: string
-): NumericFilter | null {
-  const match = input.trim().match(/^(>=|<=|>|<|==|=)\s*(-?\d+(?:\.\d+)?)([a-zA-Z]+)?$/)
-  if (!match) return null
-  const op = match[1] === '==' ? '=' : (match[1] as NumericFilter['op'])
-  const unitRaw = match[3]?.toLowerCase()
-  const unit = unitRaw ?? defaultUnit
-  const multiplier = unitMap[unit]
-  if (!multiplier) return null
-  return { op, value: Number(match[2]) * multiplier }
-}
-
-function matchesNumericFilter(value: number, filter: NumericFilter): boolean {
-  switch (filter.op) {
-    case '>':
-      return value > filter.value
-    case '>=':
-      return value >= filter.value
-    case '<':
-      return value < filter.value
-    case '<=':
-      return value <= filter.value
-    case '=':
-      return value === filter.value
-  }
-}
 
 // Parse search filters from URL param
 function parseSearchFilters(searchParam: string): string[] {
@@ -101,7 +54,7 @@ function parseSearchFilters(searchParam: string): string[] {
 }
 
 // Valid filter fields for devices
-const validFilterFields = ['code', 'type', 'contributor', 'metro', 'status', 'users', 'in', 'out', 'peakIn', 'peakOut']
+const validFilterFields = ['code', 'type', 'contributor', 'metro', 'facility', 'status', 'users', 'in', 'out', 'peakin', 'peakout']
 
 // Field prefixes for inline filter
 const deviceFieldPrefixes = [
@@ -109,26 +62,28 @@ const deviceFieldPrefixes = [
   { prefix: 'type:', description: 'Filter by device type' },
   { prefix: 'contributor:', description: 'Filter by contributor' },
   { prefix: 'metro:', description: 'Filter by metro' },
+  { prefix: 'facility:', description: 'Filter by facility' },
   { prefix: 'status:', description: 'Filter by status' },
   { prefix: 'users:', description: 'Filter by user count (e.g., >10)' },
   { prefix: 'in:', description: 'Filter by inbound traffic (e.g., >1gbps)' },
   { prefix: 'out:', description: 'Filter by outbound traffic (e.g., >1gbps)' },
+  { prefix: 'peakin:', description: 'Filter by peak inbound traffic (e.g., >1gbps)' },
+  { prefix: 'peakout:', description: 'Filter by peak outbound traffic (e.g., >1gbps)' },
 ]
 
 // Fields that support autocomplete
 const deviceAutocompleteFields = ['status', 'type', 'metro', 'contributor']
 
-// Parse a filter string into field and value
-function parseFilter(filter: string): { field: string; value: string } {
+function toFilterParam(filter: string): string {
   const colonIndex = filter.indexOf(':')
   if (colonIndex > 0) {
     const field = filter.slice(0, colonIndex).toLowerCase()
     const value = filter.slice(colonIndex + 1)
     if (validFilterFields.includes(field) && value) {
-      return { field, value }
+      return `${field}:${value}`
     }
   }
-  return { field: 'all', value: filter }
+  return `all:${filter}`
 }
 
 export function DevicesPage() {
@@ -157,7 +112,6 @@ export function DevicesPage() {
   const searchFilters = parseSearchFilters(searchParam)
 
   // Combine committed filters with live filter
-  // Live filter is combined with committed filters (all must match)
   const allFilters = liveFilter
     ? [...searchFilters, liveFilter]
     : searchFilters
@@ -183,153 +137,16 @@ export function DevicesPage() {
     })
   }, [setSearchParams])
 
+  const filterParams = useMemo(() => allFilters.map(toFilterParam), [allFilters])
+  const filterKey = filterParams.join(',')
+
   const { data: response, isLoading, error } = useQuery({
-    queryKey: ['devices', 'all'],
-    queryFn: () => fetchAllPaginated(fetchDevices, PAGE_SIZE),
+    queryKey: ['devices', offset, sortField, sortDirection, filterKey],
+    queryFn: () => fetchDevices(PAGE_SIZE, offset, sortField, sortDirection, filterParams.length > 0 ? filterParams : undefined),
     refetchInterval: 30000,
+    placeholderData: keepPreviousData,
   })
-  const devices = response?.items
-  const filteredDevices = useMemo(() => {
-    if (!devices) return []
-    if (allFilters.length === 0) return devices
-
-    // Helper to get numeric value for a device field
-    const getNumericValue = (device: typeof devices[number], field: string) => {
-      switch (field) {
-        case 'users':
-          return device.current_users
-        case 'in':
-          return device.in_bps
-        case 'out':
-          return device.out_bps
-        case 'peakIn':
-          return device.peak_in_bps
-        case 'peakOut':
-          return device.peak_out_bps
-        default:
-          return 0
-      }
-    }
-
-    // Helper to get text value for a device field
-    const getSearchValue = (device: typeof devices[number], field: string) => {
-      switch (field) {
-        case 'code':
-          return device.code
-        case 'type': {
-          const type = device.device_type || ''
-          return `${type} ${type.replace(/_/g, ' ')}`.trim()
-        }
-        case 'contributor':
-          return device.contributor_code || ''
-        case 'metro':
-          return device.metro_code || ''
-        case 'status':
-          return device.status
-        case 'users':
-          return `${device.current_users} ${device.max_users}`
-        default:
-          return ''
-      }
-    }
-
-    // Check if a device matches a single filter
-    const matchesSingleFilter = (device: typeof devices[number], filterRaw: string): boolean => {
-      const filter = parseFilter(filterRaw)
-      const searchField = filter.field as SortField | 'all'
-      const needle = filter.value.trim().toLowerCase()
-      if (!needle) return true
-
-      // Handle numeric filters
-      if (searchField !== 'all' && numericSearchFields.includes(searchField as SortField)) {
-        const numericFilter = parseNumericFilter(filter.value)
-        const unitFilter =
-          (searchField === 'in' || searchField === 'out' || searchField === 'peakIn' || searchField === 'peakOut')
-            ? parseNumericFilterWithUnits(
-                filter.value,
-                { gbps: 1e9, mbps: 1e6, bps: 1 },
-                'gbps'
-              )
-            : null
-        const effectiveFilter = unitFilter ?? numericFilter
-        if (!effectiveFilter) return true
-        return matchesNumericFilter(getNumericValue(device, searchField), effectiveFilter)
-      }
-
-      // Handle text filters
-      if (searchField === 'all') {
-        const textFields = ['code', 'type', 'contributor', 'metro', 'status']
-        return textFields.some(field => getSearchValue(device, field).toLowerCase().includes(needle))
-      }
-
-      return getSearchValue(device, searchField).toLowerCase().includes(needle)
-    }
-
-    // Group filters by field, then OR within same field, AND across different fields
-    const grouped = new Map<string, string[]>()
-    for (const f of allFilters) {
-      const { field } = parseFilter(f)
-      const existing = grouped.get(field) ?? []
-      existing.push(f)
-      grouped.set(field, existing)
-    }
-    return devices.filter(device =>
-      Array.from(grouped.values()).every(group =>
-        group.some(f => matchesSingleFilter(device, f))
-      )
-    )
-  }, [devices, allFilters])
-  const sortedDevices = useMemo(() => {
-    if (!filteredDevices) return []
-    // Deduplicate by pk to prevent any possible duplicate rows
-    const seen = new Set<string>()
-    const unique = filteredDevices.filter(d => {
-      if (seen.has(d.pk)) return false
-      seen.add(d.pk)
-      return true
-    })
-    const sorted = [...unique].sort((a, b) => {
-      let cmp = 0
-      switch (sortField) {
-        case 'code':
-          cmp = a.code.localeCompare(b.code)
-          break
-        case 'type':
-          cmp = (a.device_type || '').localeCompare(b.device_type || '')
-          break
-        case 'contributor':
-          cmp = (a.contributor_code || '').localeCompare(b.contributor_code || '')
-          break
-        case 'metro':
-          cmp = (a.metro_code || '').localeCompare(b.metro_code || '')
-          break
-        case 'status':
-          cmp = a.status.localeCompare(b.status)
-          break
-        case 'users':
-          cmp = a.current_users - b.current_users
-          break
-        case 'in':
-          cmp = a.in_bps - b.in_bps
-          break
-        case 'out':
-          cmp = a.out_bps - b.out_bps
-          break
-        case 'peakIn':
-          cmp = a.peak_in_bps - b.peak_in_bps
-          break
-        case 'peakOut':
-          cmp = a.peak_out_bps - b.peak_out_bps
-          break
-      }
-      return sortDirection === 'asc' ? cmp : -cmp
-    })
-    return sorted
-  }, [filteredDevices, sortField, sortDirection])
-  const pagedDevices = useMemo(
-    () => sortedDevices.slice(offset, offset + PAGE_SIZE),
-    [sortedDevices, offset]
-  )
+  const devices = response?.items ?? []
 
   const handleSort = (field: SortField) => {
     setSearchParams(prev => {
@@ -456,16 +273,40 @@ export function DevicesPage() {
                       <SortIcon field="metro" />
                     </button>
                   </th>
+                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('facility')}>
+                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('facility')}>
+                      Facility
+                      <SortIcon field="facility" />
+                    </button>
+                  </th>
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('status')}>
                     <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('status')}>
                       Status
                       <SortIcon field="status" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('users')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('users')}>
+                  <th className="px-4 py-3 font-medium text-center" aria-sort={sortAria('users')}>
+                    <button className="inline-flex items-center gap-1 justify-center w-full" type="button" onClick={() => handleSort('users')}>
                       Users
                       <SortIcon field="users" />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3 font-medium text-center" aria-sort={sortAria('unicast')}>
+                    <button className="inline-flex items-center gap-1 justify-center w-full" type="button" onClick={() => handleSort('unicast')}>
+                      Unicast
+                      <SortIcon field="unicast" />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3 font-medium text-center" aria-sort={sortAria('subscribers')}>
+                    <button className="inline-flex items-center gap-1 justify-center w-full" type="button" onClick={() => handleSort('subscribers')}>
+                      Subscribers
+                      <SortIcon field="subscribers" />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3 font-medium text-center" aria-sort={sortAria('publishers')}>
+                    <button className="inline-flex items-center gap-1 justify-center w-full" type="button" onClick={() => handleSort('publishers')}>
+                      Publishers
+                      <SortIcon field="publishers" />
                     </button>
                   </th>
                   <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('in')}>
@@ -480,53 +321,97 @@ export function DevicesPage() {
                       <SortIcon field="out" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('peakIn')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('peakIn')}>
+                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('peakin')}>
+                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('peakin')}>
                       Peak In
-                      <SortIcon field="peakIn" />
+                      <SortIcon field="peakin" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('peakOut')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('peakOut')}>
+                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('peakout')}>
+                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('peakout')}>
                       Peak Out
-                      <SortIcon field="peakOut" />
+                      <SortIcon field="peakout" />
                     </button>
                   </th>
                 </tr>
               </thead>
               <tbody>
-                {pagedDevices.map((device) => (
+                {devices.map((device) => (
                   <tr
                     key={device.pk}
                     className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
                     onClick={(e) => handleRowClick(e, `/dz/shreds/pay?device=${device.code}`, navigate)}
                   >
-                    <td className="px-4 py-3">
-                      <span className="font-mono text-sm">{device.code}</span>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <CopyableText text={device.code} className="font-mono text-sm" />
                     </td>
                     <td className="px-4 py-3 text-sm text-muted-foreground capitalize">
                       {device.device_type?.replace(/_/g, ' ')}
                     </td>
-                    <td className="px-4 py-3 text-sm text-muted-foreground">
-                      {device.contributor_code || '—'}
+                    <td className="px-4 py-3 text-sm">
+                      {device.contributor_pk
+                        ? <Link to={`/dz/contributors/${device.contributor_pk}`} className="text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{device.contributor_code}</Link>
+                        : <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-sm text-muted-foreground">
-                      {device.metro_code || '—'}
+                    <td className="px-4 py-3 text-sm">
+                      {device.metro_pk
+                        ? <Link to={`/dz/metros/${device.metro_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{device.metro_code}</Link>
+                        : <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td className={`px-4 py-3 text-sm capitalize ${statusColors[device.status] || ''}`}>
-                      {device.status}
+                    <td className="px-4 py-3 text-sm">
+                      {device.location_pk
+                        ? <Link to={`/dz/facilities/${encodeURIComponent(device.location_pk)}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{device.location_code}</Link>
+                        : <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right">
-                      {device.current_users > 0 ? (
-                        <span>
-                          {device.current_users}
-                          {device.max_users > 0 && (
-                            <span className="text-muted-foreground">/{device.max_users}</span>
-                          )}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-block h-2.5 w-2.5 rounded-full ${statusDotColor[device.status] ?? 'bg-muted-foreground'}`}
+                        title={device.status}
+                      />
+                    </td>
+                    <td className="px-4 py-3 text-sm tabular-nums text-center relative">
+                      {(() => {
+                        const pct = device.max_users > 0 ? Math.min(100, (device.current_users / device.max_users) * 100) : 0
+                        const fillColor = pct >= 90 ? 'bg-red-500/25' : pct >= 70 ? 'bg-amber-500/20' : 'bg-blue-500/15'
+                        return (
+                          <>
+                            {device.max_users > 0 && <div className="absolute inset-y-0 left-0 right-0 pointer-events-none bg-muted/30 border-r border-muted-foreground/20" />}
+                            {pct > 0 && <div className={`absolute inset-y-0 left-0 pointer-events-none ${fillColor}`} style={{ width: `${pct}%` }} />}
+                            <span className="relative">
+                              {device.current_users > 0 || device.max_users > 0 ? (
+                                <>{device.current_users}{device.max_users > 0 && <span className="text-muted-foreground">/{device.max_users}</span>}</>
+                              ) : <span className="text-muted-foreground">—</span>}
+                            </span>
+                          </>
+                        )
+                      })()}
+                    </td>
+                    <td className="px-4 py-3 text-sm tabular-nums text-center">
+                      {(() => {
+                        const remaining = device.max_users > 0 ? Math.max(0, device.max_users - device.current_users) : 0
+                        const effectiveMax = Math.max(device.unicast_users, device.max_unicast_users > 0 ? device.max_unicast_users : device.unicast_users + remaining)
+                        const available = effectiveMax > device.unicast_users ? effectiveMax - device.unicast_users : 0
+                        if (effectiveMax === 0 && device.unicast_users === 0) return <span className="text-muted-foreground">—</span>
+                        return <span>{available}</span>
+                      })()}
+                    </td>
+                    <td className="px-4 py-3 text-sm tabular-nums text-center">
+                      {(() => {
+                        const remaining = device.max_users > 0 ? Math.max(0, device.max_users - device.current_users) : 0
+                        const effectiveMax = Math.max(device.multicast_subscribers_count, device.max_multicast_subscribers > 0 ? device.max_multicast_subscribers : device.multicast_subscribers_count + remaining)
+                        const available = effectiveMax > device.multicast_subscribers_count ? effectiveMax - device.multicast_subscribers_count : 0
+                        if (effectiveMax === 0 && device.multicast_subscribers_count === 0) return <span className="text-muted-foreground">—</span>
+                        return <span>{available}</span>
+                      })()}
+                    </td>
+                    <td className="px-4 py-3 text-sm tabular-nums text-center">
+                      {(() => {
+                        const remaining = device.max_users > 0 ? Math.max(0, device.max_users - device.current_users) : 0
+                        const effectiveMax = Math.max(device.multicast_publishers_count, device.max_multicast_publishers > 0 ? device.max_multicast_publishers : device.multicast_publishers_count + remaining)
+                        const available = effectiveMax > device.multicast_publishers_count ? effectiveMax - device.multicast_publishers_count : 0
+                        if (effectiveMax === 0 && device.multicast_publishers_count === 0) return <span className="text-muted-foreground">—</span>
+                        return <span>{available}</span>
+                      })()}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">
                       {formatBps(device.in_bps)}
@@ -542,9 +427,9 @@ export function DevicesPage() {
                     </td>
                   </tr>
                 ))}
-                {sortedDevices.length === 0 && (
+                {devices.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={14} className="px-4 py-8 text-center text-muted-foreground">
                       No devices found
                     </td>
                   </tr>
@@ -554,7 +439,7 @@ export function DevicesPage() {
           </div>
           {response && (
             <Pagination
-              total={sortedDevices.length}
+              total={response.total}
               limit={PAGE_SIZE}
               offset={offset}
               onOffsetChange={setOffset}

@@ -80,6 +80,12 @@ interface GlobePointDevice {
   stakeSol: number
   stakeShare: number
   userCount: number
+  unicastUsersCount: number
+  multicastSubscribersCount: number
+  multicastPublishersCount: number
+  maxUnicastUsers: number
+  maxMulticastSubscribers: number
+  maxMulticastPublishers: number
   validatorCount: number
   interfaces: { name: string; ip: string; status: string }[]
 }
@@ -126,6 +132,7 @@ interface GlobeArcLink {
   entityType: 'link'
   pk: string
   code: string
+  status: string
   linkType: string
   startLat: number
   startLng: number
@@ -778,7 +785,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   const buildLinkInfo = useCallback((link: TopologyLink): LinkInfo => {
     const healthInfo = linkSlaStatus.get(link.pk)
     return {
-      pk: link.pk, code: link.code, linkType: link.link_type,
+      pk: link.pk, code: link.code, status: link.status, linkType: link.link_type,
       bandwidthBps: link.bandwidth_bps, latencyUs: link.latency_us,
       jitterUs: link.jitter_us ?? 0, latencyAtoZUs: link.latency_a_to_z_us,
       jitterAtoZUs: link.jitter_a_to_z_us ?? 0, latencyZtoAUs: link.latency_z_to_a_us,
@@ -789,6 +796,8 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       deviceZPk: link.side_z_pk, deviceZCode: link.side_z_code || 'Unknown',
       interfaceZName: link.side_z_iface_name || '', interfaceZIP: link.side_z_ip || '',
       contributorPk: link.contributor_pk, contributorCode: link.contributor_code,
+      sideAContributorPk: link.side_a_contributor_pk || '', sideAContributorCode: link.side_a_contributor_code || '',
+      sideZContributorPk: link.side_z_contributor_pk || '', sideZContributorCode: link.side_z_contributor_code || '',
       sampleCount: link.sample_count ?? 0, committedRttNs: link.committed_rtt_ns,
       isisDelayOverrideNs: link.isis_delay_override_ns,
       health: healthInfo ? { status: healthInfo.status, committedRttNs: healthInfo.committedRttNs, slaRatio: healthInfo.slaRatio, lossPct: healthInfo.lossPct } : undefined,
@@ -1197,7 +1206,14 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
             pk: device.pk, code: device.code, deviceType: device.device_type, status: device.status,
             metroPk: device.metro_pk, metroName: metro?.name || 'Unknown',
             contributorPk: device.contributor_pk, contributorCode: device.contributor_code,
-            userCount: device.user_count ?? 0, validatorCount: device.validator_count ?? 0,
+            userCount: device.user_count ?? 0,
+            unicastUsersCount: device.unicast_users_count ?? 0,
+            multicastSubscribersCount: device.multicast_subscribers_count ?? 0,
+            multicastPublishersCount: device.multicast_publishers_count ?? 0,
+            maxUnicastUsers: device.max_unicast_users ?? 0,
+            maxMulticastSubscribers: device.max_multicast_subscribers ?? 0,
+            maxMulticastPublishers: device.max_multicast_publishers ?? 0,
+            validatorCount: device.validator_count ?? 0,
             stakeSol: device.stake_sol ?? 0, stakeShare: device.stake_share ?? 0,
             interfaces: device.interfaces || [],
           },
@@ -1301,7 +1317,14 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
         metroName: metro?.name || 'Unknown',
         contributorPk: device.contributor_pk, contributorCode: device.contributor_code,
         stakeSol: device.stake_sol ?? 0, stakeShare: device.stake_share ?? 0,
-        userCount: device.user_count ?? 0, validatorCount: device.validator_count ?? 0,
+        userCount: device.user_count ?? 0,
+        unicastUsersCount: device.unicast_users_count ?? 0,
+        multicastSubscribersCount: device.multicast_subscribers_count ?? 0,
+        multicastPublishersCount: device.multicast_publishers_count ?? 0,
+        maxUnicastUsers: device.max_unicast_users ?? 0,
+        maxMulticastSubscribers: device.max_multicast_subscribers ?? 0,
+        maxMulticastPublishers: device.max_multicast_publishers ?? 0,
+        validatorCount: device.validator_count ?? 0,
         interfaces: device.interfaces || [],
       })
     }
@@ -1401,7 +1424,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
 
       arcs.push({
         entityType: 'link',
-        pk: link.pk, code: link.code, linkType: link.link_type,
+        pk: link.pk, code: link.code, status: link.status, linkType: link.link_type,
         startLat: startPos.lat, startLng: startPos.lng,
         endLat: endPos.lat, endLng: endPos.lng,
         bandwidthBps: link.bandwidth_bps, latencyUs: link.latency_us,
@@ -1661,10 +1684,15 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     }
 
     const d = p as GlobePointDevice
+    const userParts: string[] = []
+    if (d.unicastUsersCount > 0) userParts.push(`<span style="color:#60a5fa">U${d.unicastUsersCount}</span>`)
+    if (d.multicastSubscribersCount > 0) userParts.push(`<span style="color:#2dd4bf">S${d.multicastSubscribersCount}</span>`)
+    if (d.multicastPublishersCount > 0) userParts.push(`<span style="color:#c084fc">P${d.multicastPublishersCount}</span>`)
     return `<div style="background:rgba(0,0,0,0.85);padding:6px 10px;border-radius:6px;font-size:12px;color:#fff">
       <div style="font-weight:600">${d.code}</div>
       <div style="color:#9ca3af">Type: <span style="color:#fff;text-transform:capitalize">${d.deviceType}</span></div>
       ${d.contributorCode ? `<div style="color:#9ca3af">Contributor: <span style="color:#fff">${d.contributorCode}</span></div>` : ''}
+      ${userParts.length > 0 ? `<div style="color:#9ca3af;margin-top:2px">Users: ${userParts.join('<span style="color:#4b5563"> · </span>')}</div>` : ''}
     </div>`
   }, [])
 
@@ -1759,6 +1787,11 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     // (multicast-tree arcs handle per-publisher rendering separately)
     if (multicastTreesMode && dimOtherLinks) return 'rgba(100,100,100,0.08)'
 
+    // Drained/soft-drained: dim to signal inactive status
+    if (l.status === 'hard-drained' || l.status === 'soft-drained') {
+      return 'rgba(107,114,128,0.4)'
+    }
+
     // Vibrant default gradient for the "living demo" aesthetic
     return ['rgba(0,255,204,0.6)', 'rgba(59,130,246,0.6)']
   }, [selectedItem, linkPathMap, selectedPathIndex, metroLinkPathMap, metroPathSelectedPairs, linkCriticalityMap, removalLink, whatifRemovalMode, linkHealthMode, linkSlaStatus, trafficFlowMode, linkMap, contributorLinksMode, contributorIndexMap, linkTypeMode, criticalityOverlayEnabled, criticalityColors, isisHealthMode, edgeHealthStatus, metroPathModeEnabled, multicastTreesMode, metroClusteringMode, metroIndexMap, dimOtherLinks, isDark, multicastDeviceRoleColorMap, hoveredHighlightPublisherPKs, hoveredDiscrepancyKey])
@@ -1801,6 +1834,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
         const criticality = linkCriticalityMap.get(l.pk)
         if (whatifRemovalMode && isRemovedLink) return 0.3
         if (criticalityOverlayEnabled && criticality) return 0.3
+        if (l.status === 'hard-drained' || l.status === 'soft-drained') return 0.3
       }
       return 0
     }
@@ -1819,6 +1853,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
         const criticality = linkCriticalityMap.get(l.pk)
         if (whatifRemovalMode && isRemovedLink) return 0.2
         if (criticalityOverlayEnabled && criticality) return 0.2
+        if (l.status === 'hard-drained' || l.status === 'soft-drained') return 0.2
       }
       return 0
     }
@@ -1920,7 +1955,14 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
         pk: d.pk, code: d.code, deviceType: d.deviceType, status: d.status,
         metroPk: d.metroPk, metroName: d.metroName,
         contributorPk: d.contributorPk, contributorCode: d.contributorCode,
-        userCount: d.userCount, validatorCount: d.validatorCount,
+        userCount: d.userCount,
+        unicastUsersCount: d.unicastUsersCount,
+        multicastSubscribersCount: d.multicastSubscribersCount,
+        multicastPublishersCount: d.multicastPublishersCount,
+        maxUnicastUsers: d.maxUnicastUsers,
+        maxMulticastSubscribers: d.maxMulticastSubscribers,
+        maxMulticastPublishers: d.maxMulticastPublishers,
+        validatorCount: d.validatorCount,
         stakeSol: d.stakeSol, stakeShare: d.stakeShare,
         interfaces: d.interfaces,
       },
