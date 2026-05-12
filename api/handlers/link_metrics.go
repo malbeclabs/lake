@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -903,6 +904,250 @@ func filterBulkLinkMetricsIssuesOnly(resp *BulkLinkMetricsResponse) {
 			}
 		}
 	}
+}
+
+// LinkLatencyFilter narrows the set of links returned by FetchLinkLatency.
+// Values within a category are OR'd; non-empty categories are AND'd together.
+// All string comparisons are case-insensitive exact matches. Contributor and
+// metro filters match either side of the link.
+type LinkLatencyFilter struct {
+	LinkPKs          []string
+	LinkCodes        []string
+	ContributorCodes []string
+	MetroCodes       []string
+}
+
+// LinkLatencyOptions configures FetchLinkLatency: time window, bucket
+// granularity, and which links to include.
+type LinkLatencyOptions struct {
+	// TimeRange is a preset like "24h" or "7d". Used when StartTime/EndTime are nil.
+	// Empty defaults to "24h".
+	TimeRange string
+	// StartTime/EndTime, if both set, override TimeRange.
+	StartTime *time.Time
+	EndTime   *time.Time
+	// Bucket is one of "auto", "10s", "30s", "1m", "5m", "10m", "15m", "30m",
+	// "1h", "4h", "12h", "1d". Empty or "auto" picks based on the window.
+	Bucket string
+	// Filter narrows the set of links returned. Empty Filter returns all
+	// active links.
+	Filter LinkLatencyFilter
+}
+
+// LinkLatencyResult is the response from FetchLinkLatency.
+type LinkLatencyResult struct {
+	TimeRange     string
+	BucketSeconds int
+	BucketCount   int
+	// Links is sorted by link code. status/traffic fields on each bucket
+	// are nil — only latency is populated.
+	Links []*LinkMetricsResponse
+}
+
+// FetchLinkLatency returns latency time-series for all active links matching
+// the filter. An empty filter returns every active link.
+func (a *API) FetchLinkLatency(ctx context.Context, opts LinkLatencyOptions) (*LinkLatencyResult, error) {
+	params, err := resolveLinkLatencyParams(opts)
+	if err != nil {
+		return nil, err
+	}
+
+	db := a.envDB(ctx)
+	metaMap, err := queryStatusLinkMeta(ctx, db)
+	if err != nil {
+		return nil, fmt.Errorf("link latency metadata: %w", err)
+	}
+
+	filtered := filterLinkMeta(metaMap, opts.Filter)
+
+	bucketSecs := params.BucketSeconds
+	if bucketSecs == 0 {
+		bucketSecs = params.BucketMinutes * 60
+	}
+
+	if len(filtered) == 0 {
+		return &LinkLatencyResult{
+			TimeRange:     params.TimeRange,
+			BucketSeconds: bucketSecs,
+			BucketCount:   params.BucketCount,
+			Links:         []*LinkMetricsResponse{},
+		}, nil
+	}
+
+	pks := make([]string, 0, len(filtered))
+	for pk := range filtered {
+		pks = append(pks, pk)
+	}
+	rollupMap, err := queryLinkRollup(ctx, db, params, pks...)
+	if err != nil {
+		return nil, fmt.Errorf("link latency rollup: %w", err)
+	}
+
+	bucketDuration := time.Duration(bucketSecs) * time.Second
+	now := time.Now().UTC()
+	if params.EndTime != nil {
+		now = *params.EndTime
+	}
+
+	links := make([]*LinkMetricsResponse, 0, len(filtered))
+	for pk, meta := range filtered {
+		buckets := make([]LinkMetricsBucket, 0, params.BucketCount)
+		for i := params.BucketCount - 1; i >= 0; i-- {
+			var bucketStart time.Time
+			if params.StartTime != nil {
+				bucketStart = params.StartTime.Truncate(bucketDuration).Add(time.Duration(params.BucketCount-1-i) * bucketDuration)
+			} else {
+				bucketStart = now.Truncate(bucketDuration).Add(-time.Duration(i) * bucketDuration)
+			}
+			bk := linkBucketKey{LinkPK: pk, BucketTS: bucketStart}
+			rollup := rollupMap[bk]
+			bucket := LinkMetricsBucket{TS: bucketStart.Format(time.RFC3339)}
+			if rollup != nil && (rollup.ASamples > 0 || rollup.ZSamples > 0) {
+				bucket.Latency = &LinkMetricsLatency{
+					AAvgRttUs: rollup.AAvgRttUs, AMinRttUs: rollup.AMinRttUs,
+					AP50RttUs: rollup.AP50RttUs, AP90RttUs: rollup.AP90RttUs,
+					AP95RttUs: rollup.AP95RttUs, AP99RttUs: rollup.AP99RttUs,
+					AMaxRttUs: rollup.AMaxRttUs, ALossPct: rollup.ALossPct, ASamples: rollup.ASamples,
+					ZAvgRttUs: rollup.ZAvgRttUs, ZMinRttUs: rollup.ZMinRttUs,
+					ZP50RttUs: rollup.ZP50RttUs, ZP90RttUs: rollup.ZP90RttUs,
+					ZP95RttUs: rollup.ZP95RttUs, ZP99RttUs: rollup.ZP99RttUs,
+					ZMaxRttUs: rollup.ZMaxRttUs, ZLossPct: rollup.ZLossPct, ZSamples: rollup.ZSamples,
+					AAvgJitterUs: rollup.AAvgJitterUs, AMinJitterUs: rollup.AMinJitterUs,
+					AP50JitterUs: rollup.AP50JitterUs, AP90JitterUs: rollup.AP90JitterUs,
+					AP95JitterUs: rollup.AP95JitterUs, AP99JitterUs: rollup.AP99JitterUs,
+					AMaxJitterUs: rollup.AMaxJitterUs,
+					ZAvgJitterUs: rollup.ZAvgJitterUs, ZMinJitterUs: rollup.ZMinJitterUs,
+					ZP50JitterUs: rollup.ZP50JitterUs, ZP90JitterUs: rollup.ZP90JitterUs,
+					ZP95JitterUs: rollup.ZP95JitterUs, ZP99JitterUs: rollup.ZP99JitterUs,
+					ZMaxJitterUs: rollup.ZMaxJitterUs,
+				}
+			}
+			buckets = append(buckets, bucket)
+		}
+		links = append(links, &LinkMetricsResponse{
+			LinkPK:               meta.PK,
+			LinkCode:             meta.Code,
+			LinkType:             meta.LinkType,
+			ContributorCode:      meta.Contributor,
+			ContributorPK:        meta.ContributorPK,
+			SideZContributorCode: meta.SideZContributor,
+			SideAMetro:           meta.SideAMetro,
+			SideZMetro:           meta.SideZMetro,
+			SideADevice:          meta.SideADevice,
+			SideZDevice:          meta.SideZDevice,
+			SideAIfaceName:       meta.SideAIfaceName,
+			SideZIfaceName:       meta.SideZIfaceName,
+			CommittedRttUs:       meta.CommittedRttUs,
+			CommittedJitterUs:    meta.CommittedJitterUs,
+			BandwidthBps:         meta.BandwidthBps,
+			TimeRange:            params.TimeRange,
+			BucketSeconds:        bucketSecs,
+			BucketCount:          params.BucketCount,
+			Buckets:              buckets,
+		})
+	}
+
+	sort.Slice(links, func(i, j int) bool { return links[i].LinkCode < links[j].LinkCode })
+
+	return &LinkLatencyResult{
+		TimeRange:     params.TimeRange,
+		BucketSeconds: bucketSecs,
+		BucketCount:   params.BucketCount,
+		Links:         links,
+	}, nil
+}
+
+// resolveLinkLatencyParams turns LinkLatencyOptions into bucketParams,
+// applying defaults and validating the bucket spec.
+func resolveLinkLatencyParams(opts LinkLatencyOptions) (bucketParams, error) {
+	timeRange := opts.TimeRange
+	if timeRange == "" {
+		timeRange = "24h"
+	}
+
+	var params bucketParams
+	if opts.StartTime != nil && opts.EndTime != nil {
+		params = parseBucketParamsCustom(*opts.StartTime, *opts.EndTime, 24)
+	} else {
+		now := time.Now().UTC()
+		duration := presetToDuration(timeRange)
+		startTime := now.Add(-duration)
+		params = parseBucketParamsCustom(startTime, now, 24)
+		params.TimeRange = timeRange
+	}
+
+	if opts.Bucket != "" && opts.Bucket != "auto" {
+		interval, ok := parseBucketString(opts.Bucket)
+		if !ok {
+			return params, fmt.Errorf("invalid bucket %q", opts.Bucket)
+		}
+		secs := intervalToSeconds(interval)
+		var totalSecs int
+		if params.StartTime != nil && params.EndTime != nil {
+			totalSecs = int(params.EndTime.Sub(*params.StartTime).Seconds())
+		} else {
+			totalSecs = params.TotalMinutes * 60
+		}
+		count := totalSecs / secs
+		if count < 1 {
+			count = 1
+		}
+		params.BucketSeconds = secs
+		params.BucketMinutes = secs / 60
+		params.BucketInterval = interval
+		params.BucketCount = count
+		params.UseRaw = isRawBucket(interval)
+	}
+
+	return params, nil
+}
+
+// filterLinkMeta applies LinkLatencyFilter to a metadata map. An empty filter
+// returns the input unchanged.
+func filterLinkMeta(metaMap map[string]*statusLinkMeta, f LinkLatencyFilter) map[string]*statusLinkMeta {
+	if len(f.LinkPKs) == 0 && len(f.LinkCodes) == 0 && len(f.ContributorCodes) == 0 && len(f.MetroCodes) == 0 {
+		return metaMap
+	}
+	pkSet := lowerSet(f.LinkPKs)
+	codeSet := lowerSet(f.LinkCodes)
+	contribSet := lowerSet(f.ContributorCodes)
+	metroSet := lowerSet(f.MetroCodes)
+
+	result := make(map[string]*statusLinkMeta)
+	for pk, m := range metaMap {
+		if len(pkSet) > 0 && !pkSet[strings.ToLower(pk)] {
+			continue
+		}
+		if len(codeSet) > 0 && !codeSet[strings.ToLower(m.Code)] {
+			continue
+		}
+		if len(contribSet) > 0 {
+			if !contribSet[strings.ToLower(m.Contributor)] && !contribSet[strings.ToLower(m.SideZContributor)] {
+				continue
+			}
+		}
+		if len(metroSet) > 0 {
+			if !metroSet[strings.ToLower(m.SideAMetro)] && !metroSet[strings.ToLower(m.SideZMetro)] {
+				continue
+			}
+		}
+		result[pk] = m
+	}
+	return result
+}
+
+func lowerSet(values []string) map[string]bool {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(values))
+	for _, v := range values {
+		if v == "" {
+			continue
+		}
+		out[strings.ToLower(v)] = true
+	}
+	return out
 }
 
 // FetchBulkLinkMetricsData is the exported entry point for the page cache worker.
