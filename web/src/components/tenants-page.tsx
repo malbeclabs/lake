@@ -115,6 +115,7 @@ export function TenantsPage() {
     staleTime: 60_000,
   })
   const hasTopologies = (topologiesData?.topologies?.length ?? 0) > 0
+  const defaultTopology = topologiesData?.topologies?.[0]
 
   const tenants = response?.items ?? []
 
@@ -268,21 +269,22 @@ export function TenantsPage() {
                     <td className="px-4 py-3 text-center">
                       <BoolBadge value={tenant.route_liveness} />
                     </td>
-                    {hasTopologies && (
-                      <td className="px-4 py-3 text-sm">
-                        {tenant.include_topologies && tenant.include_topologies.length > 0 ? (
+                    {hasTopologies && (() => {
+                      const topos = tenant.include_topologies?.length > 0
+                        ? tenant.include_topologies
+                        : defaultTopology ? [defaultTopology.name] : []
+                      return (
+                        <td className="px-4 py-3 text-sm">
                           <span className="inline-flex flex-wrap gap-1">
-                            {tenant.include_topologies.map((name: string) => (
+                            {topos.map((name: string) => (
                               <span key={name} className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-500/15 text-green-600 dark:text-green-400">
                                 {name}
                               </span>
                             ))}
                           </span>
-                        ) : (
-                          <span className="text-muted-foreground">default</span>
-                        )}
-                      </td>
-                    )}
+                        </td>
+                      )
+                    })()}
                   </tr>
                 ))}
                 {tenants.length === 0 && (

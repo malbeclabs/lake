@@ -177,6 +177,8 @@ export function UsersPage() {
     staleTime: 60_000,
   })
   const hasTopologies = (topologiesData?.topologies?.length ?? 0) > 0
+  const defaultTopology = topologiesData?.topologies?.[0]
+  const topologyColorMap = new Map(topologiesData?.topologies?.map(t => [t.name, t.color]) ?? [])
 
   const users = response?.items ?? []
 
@@ -401,6 +403,9 @@ export function UsersPage() {
                   {hasTopologies && (
                     <th className="px-4 py-3 font-medium">Topology</th>
                   )}
+                  {hasTopologies && (
+                    <th className="px-4 py-3 font-medium">Color</th>
+                  )}
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('status')}>
                     <button
                       className="inline-flex items-center gap-1"
@@ -512,21 +517,28 @@ export function UsersPage() {
                         <span className="text-muted-foreground">—</span>
                       )}
                     </td>
-                    {hasTopologies && (
-                      <td className="px-4 py-3 text-sm">
-                        {user.include_topologies && user.include_topologies.length > 0 ? (
-                          <span className="inline-flex flex-wrap gap-1">
-                            {user.include_topologies.map((name: string) => (
-                              <span key={name} className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-500/15 text-green-600 dark:text-green-400">
-                                {name}
-                              </span>
-                            ))}
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground">default</span>
-                        )}
-                      </td>
-                    )}
+                    {hasTopologies && (() => {
+                      const topos = user.include_topologies?.length > 0
+                        ? user.include_topologies
+                        : defaultTopology ? [defaultTopology.name] : []
+                      const color = topos.length > 0 ? topologyColorMap.get(topos[0]) ?? '' : ''
+                      return (
+                        <>
+                          <td className="px-4 py-3 text-sm">
+                            <span className="inline-flex flex-wrap gap-1">
+                              {topos.map((name: string) => (
+                                <span key={name} className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-500/15 text-green-600 dark:text-green-400">
+                                  {name}
+                                </span>
+                              ))}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-sm tabular-nums text-muted-foreground">
+                            {color}
+                          </td>
+                        </>
+                      )
+                    })()}
                     <td className="px-4 py-3 text-sm">
                       {user.is_deleted ? (
                         <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-gray-500/15 text-gray-500">
@@ -548,7 +560,7 @@ export function UsersPage() {
                 ))}
                 {users.length === 0 && (
                   <tr>
-                    <td colSpan={hasTopologies ? 12 : 11} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={hasTopologies ? 13 : 11} className="px-4 py-8 text-center text-muted-foreground">
                       No users found
                     </td>
                   </tr>
