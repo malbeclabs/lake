@@ -63,7 +63,7 @@ export function FlexAlgoOverlayPanel({ isDark }: FlexAlgoOverlayPanelProps) {
             onChange={() => setFlexAlgoTopology(null)}
             className="accent-purple-500"
           />
-          <span>All links</span>
+          <span>default topology</span>
           <span className="text-muted-foreground ml-auto">{totalLinkCount}</span>
         </label>
 
@@ -76,7 +76,7 @@ export function FlexAlgoOverlayPanel({ isDark }: FlexAlgoOverlayPanelProps) {
               onChange={() => setFlexAlgoTopology(t.name)}
               className="accent-green-500"
             />
-            <span>{t.name}</span>
+            <span>{t.name} topology</span>
             <span className="text-muted-foreground ml-auto">{t.link_count}</span>
           </label>
         ))}
@@ -97,7 +97,7 @@ export function FlexAlgoOverlayPanel({ isDark }: FlexAlgoOverlayPanelProps) {
             onChange={(e) => setFlexAlgoFilterDefault(e.target.checked)}
             className="accent-cyan-500"
           />
-          <span>Only default links</span>
+          <span>default topology only links</span>
           <span className="text-muted-foreground ml-auto">{untaggedLinkCount}</span>
         </label>
 
@@ -108,7 +108,7 @@ export function FlexAlgoOverlayPanel({ isDark }: FlexAlgoOverlayPanelProps) {
             onChange={(e) => setFlexAlgoFilterDrained(e.target.checked)}
             className="accent-amber-500"
           />
-          <span className="text-amber-500">Only drained links</span>
+          <span className="text-amber-500">unicast drained links</span>
           <span className="text-muted-foreground ml-auto">{drainedLinkCount}</span>
         </label>
       </div>
