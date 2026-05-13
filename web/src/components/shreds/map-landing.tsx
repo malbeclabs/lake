@@ -1,8 +1,8 @@
-import { useCallback, useMemo, useState, lazy, Suspense } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react'
 import MapGL, { Marker, NavigationControl } from 'react-map-gl/maplibre'
 import type { StyleSpecification } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
-import { Check, Copy, Loader2, Zap, X, ChevronDown, ChevronUp } from 'lucide-react'
+import { Check, Copy, Loader2, Search, Zap, X, ChevronDown, ChevronUp } from 'lucide-react'
 import type { Metro, ShredDevice } from '@/lib/api'
 import { useTheme } from '@/hooks/use-theme'
 import { DevicePicker } from './device-picker'
@@ -236,10 +236,14 @@ export function MapLanding({
 
   return (
     <div className="space-y-4">
-      {/* Subtitle + Map/List toggle */}
+      {/* Subtitle + search + Map/List toggle */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <p className="text-sm text-muted-foreground">Pick a metro near your target server.</p>
         <div className="flex items-center gap-2">
+          <MetroSearch
+            metros={metroSummaries}
+            onSelect={code => onSelectMetro(code)}
+          />
           <ViewToggle value={viewMode} onChange={setViewMode} />
         </div>
       </div>
@@ -566,6 +570,120 @@ function GlobeLoader() {
   return (
     <div className="absolute inset-0 flex items-center justify-center bg-background">
       <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+    </div>
+  )
+}
+
+interface MetroSearchProps {
+  metros: MetroSummary[]
+  onSelect: (code: string) => void
+}
+
+function MetroSearch({ metros, onSelect }: MetroSearchProps) {
+  const [query, setQuery] = useState('')
+  const [open, setOpen] = useState(false)
+  const [activeIdx, setActiveIdx] = useState(0)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const results = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    const list = q
+      ? metros.filter(m => m.code.toLowerCase().includes(q) || m.name.toLowerCase().includes(q))
+      : metros.slice()
+    return list
+      .sort((a, b) => b.seatsFree - a.seatsFree || a.name.localeCompare(b.name))
+      .slice(0, 8)
+  }, [metros, query])
+
+  // Reset highlight when the result list changes.
+  useEffect(() => { setActiveIdx(0) }, [query])
+
+  // Close on outside click.
+  useEffect(() => {
+    if (!open) return
+    function onDown(e: MouseEvent) {
+      if (!containerRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [open])
+
+  const pick = useCallback((code: string) => {
+    onSelect(code)
+    setQuery('')
+    setOpen(false)
+  }, [onSelect])
+
+  return (
+    <div ref={containerRef} className="relative">
+      <div className="flex items-center gap-1.5 px-2.5 py-1.5 border border-border rounded-lg bg-background text-sm w-56 focus-within:ring-2 focus-within:ring-primary/40">
+        <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+        <input
+          type="text"
+          value={query}
+          onChange={e => { setQuery(e.target.value); setOpen(true) }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={e => {
+            if (e.key === 'ArrowDown') {
+              e.preventDefault()
+              setOpen(true)
+              setActiveIdx(i => Math.min(i + 1, results.length - 1))
+            } else if (e.key === 'ArrowUp') {
+              e.preventDefault()
+              setActiveIdx(i => Math.max(i - 1, 0))
+            } else if (e.key === 'Enter') {
+              e.preventDefault()
+              const r = results[activeIdx]
+              if (r) pick(r.code)
+            } else if (e.key === 'Escape') {
+              setOpen(false)
+            }
+          }}
+          placeholder="Search metro (code or name)…"
+          className="flex-1 bg-transparent outline-none placeholder:text-muted-foreground/70 min-w-0"
+        />
+        {query && (
+          <button
+            type="button"
+            onClick={() => { setQuery(''); setOpen(false) }}
+            className="text-muted-foreground hover:text-foreground"
+            title="Clear"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+      {open && results.length > 0 && (
+        <div className="absolute right-0 mt-1 w-72 max-h-80 overflow-y-auto rounded-lg border border-border bg-popover shadow-lg z-20">
+          {results.map((m, i) => {
+            const isActive = i === activeIdx
+            return (
+              <button
+                key={m.code}
+                type="button"
+                onMouseDown={e => e.preventDefault()}
+                onClick={() => pick(m.code)}
+                onMouseEnter={() => setActiveIdx(i)}
+                className={`flex items-center justify-between w-full px-3 py-2 text-left text-sm transition-colors ${isActive ? 'bg-muted' : 'hover:bg-muted/60'}`}
+              >
+                <div className="min-w-0">
+                  <div className="font-medium truncate">{m.name}</div>
+                  <div className="text-xs text-muted-foreground font-mono">{m.code}</div>
+                </div>
+                <div className="text-xs text-muted-foreground tabular-nums shrink-0 ml-3 text-right">
+                  <div>{m.devices.length} device{m.devices.length !== 1 ? 's' : ''}</div>
+                  <div>{m.seatsFree} seat{m.seatsFree !== 1 ? 's' : ''} free</div>
+                </div>
+              </button>
+            )
+          })}
+        </div>
+      )}
+      {open && query && results.length === 0 && (
+        <div className="absolute right-0 mt-1 w-72 px-3 py-2 rounded-lg border border-border bg-popover shadow-lg z-20 text-xs text-muted-foreground">
+          No metros match "{query}".
+        </div>
+      )}
     </div>
   )
 }
