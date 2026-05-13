@@ -167,14 +167,19 @@ func (l *temporalLogger) Error(msg string, keyvals ...any) {
 }
 
 // hasBenignTaskProcessingError reports whether Temporal's "Task processing
-// failed with error" keyvals carry an error that's expected during deploys.
+// failed with error" keyvals carry an error that's expected during deploys
+// (activity reports back after the workflow has already finished or been
+// continue-as-newed; in-flight RPC observes the gRPC client connection
+// closing as the pod shuts down).
 func hasBenignTaskProcessingError(keyvals []any) bool {
 	for i := 0; i+1 < len(keyvals); i += 2 {
 		if keyvals[i] != "Error" {
 			continue
 		}
 		if err, ok := keyvals[i+1].(error); ok {
-			if strings.Contains(err.Error(), "workflow execution already completed") {
+			msg := err.Error()
+			if strings.Contains(msg, "workflow execution already completed") ||
+				strings.Contains(msg, "grpc: the client connection is closing") {
 				return true
 			}
 		}
