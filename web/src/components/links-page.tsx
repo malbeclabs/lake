@@ -389,9 +389,9 @@ export function LinksPage() {
                         {link.link_topologies && link.link_topologies.length > 0 ? (
                           <span className="inline-flex flex-wrap gap-1">
                             {link.link_topologies.map((name: string) => (
-                              <span key={name} className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-500/15 text-green-600 dark:text-green-400">
+                              <Link key={name} to={`/dz/links/topologies/${encodeURIComponent(name)}`} onClick={e => e.stopPropagation()} className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-500/15 text-green-600 dark:text-green-400 hover:bg-green-500/25">
                                 {name}
-                              </span>
+                              </Link>
                             ))}
                             {link.unicast_drained && (
                               <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-500/15 text-amber-600 dark:text-amber-400">
