@@ -8,7 +8,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTheme } from '@/hooks/use-theme'
 import type { TopologyMetro, TopologyDevice, TopologyLink, TopologyValidator, MultiPathResponse, SimulateLinkRemovalResponse, SimulateLinkAdditionResponse, WhatIfRemovalResponse, MetroDevicePathsResponse } from '@/lib/api'
 import { fetchISISPaths, fetchISISTopology, fetchCriticalLinks, fetchSimulateLinkRemoval, fetchSimulateLinkAddition, fetchWhatIfRemoval, fetchLinkHealth, fetchTopologyCompare, fetchMetroDevicePaths } from '@/lib/api'
-import { useTopology, useMulticastState, TopologyControlBar, TopologyPanel, DeviceDetails, LinkDetails, MetroDetails, ValidatorDetails, EntityLink as TopologyEntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, ValidatorsOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, LINK_TYPE_COLORS, MULTICAST_PUBLISHER_COLORS, type DeviceOption, type MetroOption } from '@/components/topology'
+import { useTopology, useMulticastState, TopologyControlBar, TopologyPanel, DeviceDetails, LinkDetails, MetroDetails, ValidatorDetails, EntityLink as TopologyEntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, ValidatorsOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, FlexAlgoOverlayPanel, LINK_TYPE_COLORS, MULTICAST_PUBLISHER_COLORS, type DeviceOption, type MetroOption } from '@/components/topology'
 import { useActiveOpsTickets } from '@/hooks/use-ops-tickets'
 import { opsTicketUrl } from '@/lib/ops-api'
 import type { OpsTicket } from '@/lib/ops-api'
@@ -358,7 +358,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const linkHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Get unified topology context
-  const { mode, setMode, overlays, toggleOverlay, panel, openPanel, closePanel, selection, impactDevices, toggleImpactDevice, clearImpactDevices, hoveredDiscrepancyKey } = useTopology()
+  const { mode, setMode, overlays, toggleOverlay, panel, openPanel, closePanel, selection, impactDevices, toggleImpactDevice, clearImpactDevices, hoveredDiscrepancyKey, selectedFlexAlgoTopology } = useTopology()
 
   // Derive mode states from context
   const pathModeEnabled = mode === 'path'
@@ -379,11 +379,12 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const contributorLinksMode = overlays.contributorLinks
   const bandwidthMode = overlays.bandwidth
   const isisHealthMode = overlays.isisHealth
+  const flexAlgoMode = overlays.flexAlgo
   const multicastTreesMode = overlays.multicastTrees
   const showUserCounts = overlays.userCounts
 
   // Whether any overlay with panel content is active (bandwidth has no panel)
-  const hasOverlayPanelContent = deviceTypeMode || linkTypeMode || stakeOverlayMode || linkHealthMode || trafficFlowMode || metroClusteringMode || contributorDevicesMode || contributorLinksMode || criticalityOverlayEnabled || isisHealthMode || showValidators || multicastTreesMode
+  const hasOverlayPanelContent = deviceTypeMode || linkTypeMode || stakeOverlayMode || linkHealthMode || trafficFlowMode || metroClusteringMode || contributorDevicesMode || contributorLinksMode || criticalityOverlayEnabled || isisHealthMode || flexAlgoMode || showValidators || multicastTreesMode
 
   // Multicast trees operational state (shared hook)
   const mc = useMulticastState({ enabled: multicastTreesMode, isDark })
@@ -1666,6 +1667,23 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         // Boost hovered link
         if (isHoveredDiscrepancy) {
           displayWeight = Math.max(displayWeight, 4)
+        }
+      } else if (flexAlgoMode && selectedFlexAlgoTopology) {
+        // Flex-Algo overlay: highlight links in the selected topology
+        const inTopology = link.link_topologies?.includes(selectedFlexAlgoTopology)
+        if (inTopology && link.unicast_drained) {
+          displayColor = '#f59e0b' // amber — drained
+          useDash = true
+          displayOpacity = 0.9
+          displayWeight = defaultWeight + 1
+        } else if (inTopology) {
+          displayColor = '#22c55e' // green — in topology
+          displayOpacity = 1.0
+          displayWeight = defaultWeight + 1
+        } else {
+          displayColor = isDark ? '#4b5563' : '#9ca3af' // gray — excluded
+          displayOpacity = 0.25
+          displayWeight = defaultWeight - 1
         }
       } else if (isInSelectedPath && linkPathIndices) {
         // Use the selected path's color
@@ -3682,6 +3700,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
             linkTypeMode ? 'Link Types' :
             stakeOverlayMode ? 'Stake' :
             isisHealthMode ? 'ISIS' :
+            flexAlgoMode ? 'Flex-Algo' :
             linkHealthMode ? 'Health' :
             trafficFlowMode ? 'Traffic' :
             criticalityOverlayEnabled ? 'Link Criticality' :
@@ -3695,6 +3714,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
             linkTypeMode ? 'Links colored by type (fiber, wavelength, etc.).' :
             stakeOverlayMode ? 'Devices sized by validator stake.' :
             isisHealthMode ? 'Compare current topology to baseline.' :
+            flexAlgoMode ? 'Filter links by flex-algo topology membership.' :
             linkHealthMode ? 'Links colored by latency, jitter, and loss.' :
             trafficFlowMode ? 'Links sized by traffic volume.' :
             criticalityOverlayEnabled ? 'Links ranked by impact if removed.' :
@@ -3786,6 +3806,9 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
               totalLinkCount={links.length}
               isLoading={devices.length === 0}
             />
+          )}
+          {flexAlgoMode && (
+            <FlexAlgoOverlayPanel isDark={isDark} />
           )}
           {multicastTreesMode && (
             <MulticastTreesOverlayPanel

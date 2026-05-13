@@ -548,6 +548,15 @@ export function TopologyControlBar({
             collapsed={collapsed}
           />
 
+          <NavItem
+            icon={<Network className="h-3.5 w-3.5" />}
+            label="Flex-Algo"
+            onClick={() => handleToggleOverlay('flexAlgo')}
+            active={overlays.flexAlgo}
+            activeColor="purple"
+            collapsed={collapsed}
+          />
+
           {/* Multicast */}
           <SectionHeader title="Multicast" collapsed={collapsed} />
 
