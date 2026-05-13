@@ -53,6 +53,17 @@ type linkRow struct {
 	CommittedJitterNs   int64  `ch:"committed_jitter_ns"`
 	Bandwidth           int64  `ch:"bandwidth_bps"`
 	ISISDelayOverrideNs int64  `ch:"isis_delay_override_ns"`
+	LinkTopologies      string `ch:"link_topologies"`
+	UnicastDrained      bool   `ch:"unicast_drained"`
+}
+
+type topologyRow struct {
+	PK             string `ch:"pk"`
+	Name           string `ch:"name"`
+	AdminGroupBit  uint8  `ch:"admin_group_bit"`
+	FlexAlgoNumber uint8  `ch:"flex_algo_number"`
+	Color          uint8  `ch:"color"`
+	Constraint     string `ch:"topo_constraint"`
 }
 
 // metroRow is an intermediate struct for reading from ClickHouse
@@ -176,6 +187,8 @@ func QueryCurrentLinks(ctx context.Context, log *slog.Logger, db clickhouse.Clie
 			CommittedJitterNs:   uint64(row.CommittedJitterNs),
 			Bandwidth:           uint64(row.Bandwidth),
 			ISISDelayOverrideNs: uint64(row.ISISDelayOverrideNs),
+			LinkTopologies:      row.LinkTopologies,
+			UnicastDrained:      row.UnicastDrained,
 		}
 	}
 
@@ -306,4 +319,38 @@ func QueryCurrentUsers(ctx context.Context, log *slog.Logger, db clickhouse.Clie
 	}
 
 	return users, nil
+}
+
+// QueryCurrentTopologies queries all current (non-deleted) topologies from ClickHouse
+func QueryCurrentTopologies(ctx context.Context, log *slog.Logger, db clickhouse.Client) ([]Topology, error) {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get connection: %w", err)
+	}
+	defer conn.Close()
+
+	d, err := NewTopologyDataset(log)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create dataset: %w", err)
+	}
+
+	typed := dataset.NewTypedDimensionType2Dataset[topologyRow](d)
+	rows, err := typed.GetCurrentRows(ctx, conn, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query topologies: %w", err)
+	}
+
+	topologies := make([]Topology, len(rows))
+	for i, row := range rows {
+		topologies[i] = Topology{
+			PK:             row.PK,
+			Name:           row.Name,
+			AdminGroupBit:  row.AdminGroupBit,
+			FlexAlgoNumber: row.FlexAlgoNumber,
+			Color:          row.Color,
+			Constraint:     row.Constraint,
+		}
+	}
+
+	return topologies, nil
 }

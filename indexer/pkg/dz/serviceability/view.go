@@ -2,6 +2,7 @@ package dzsvc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -110,6 +111,17 @@ type Link struct {
 	CommittedJitterNs   uint64
 	Bandwidth           uint64
 	ISISDelayOverrideNs uint64
+	LinkTopologies      string // JSON array of topology names
+	UnicastDrained      bool
+}
+
+type Topology struct {
+	PK             string
+	Name           string
+	AdminGroupBit  uint8
+	FlexAlgoNumber uint8
+	Color          uint8
+	Constraint     string
 }
 
 type User struct {
@@ -337,7 +349,8 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		"locations", len(pd.Locations),
 		"multicast_groups", len(pd.MulticastGroups),
 		"tenants", len(pd.Tenants),
-		"access_passes", len(pd.AccessPasses))
+		"access_passes", len(pd.AccessPasses),
+		"topologies", len(pd.Topologies))
 
 	// Validate that we received data for each entity type - empty responses would tombstone all existing entities.
 	// Check each independently since they're written separately with MissingMeansDeleted=true.
@@ -358,7 +371,8 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	devices := convertDevices(pd.Devices)
 	deviceInterfaces := convertDeviceInterfaces(pd.Devices)
 	users := convertUsers(pd.Users)
-	links := convertLinks(pd.Links, pd.Devices)
+	links := convertLinks(pd.Links, pd.Devices, pd.Topologies)
+	topologies := convertTopologies(pd.Topologies)
 	metros := convertMetros(pd.Exchanges)
 	locations := convertLocations(pd.Locations)
 	multicastGroups := convertMulticastGroups(pd.MulticastGroups)
@@ -395,6 +409,10 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		return result, fmt.Errorf("failed to replace links: %w", err)
 	}
 
+	if err := v.store.ReplaceTopologies(ctx, topologies); err != nil {
+		return result, fmt.Errorf("failed to replace topologies: %w", err)
+	}
+
 	if err := v.store.ReplaceMulticastGroups(ctx, multicastGroups); err != nil {
 		return result, fmt.Errorf("failed to replace multicast groups: %w", err)
 	}
@@ -407,7 +425,7 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		return result, fmt.Errorf("failed to replace access passes: %w", err)
 	}
 
-	result.RowsAffected = int64(len(contributors) + len(devices) + len(deviceInterfaces) + len(users) + len(metros) + len(locations) + len(links) + len(multicastGroups) + len(tenants) + len(accessPasses))
+	result.RowsAffected = int64(len(contributors) + len(devices) + len(deviceInterfaces) + len(users) + len(metros) + len(locations) + len(links) + len(topologies) + len(multicastGroups) + len(tenants) + len(accessPasses))
 	result.SourceMaxEventTS = &fetchedAt
 
 	v.fetchedAt = fetchedAt
@@ -531,7 +549,13 @@ func convertUsers(onchain []serviceability.User) []User {
 	return result
 }
 
-func convertLinks(onchain []serviceability.Link, devices []serviceability.Device) []Link {
+func convertLinks(onchain []serviceability.Link, devices []serviceability.Device, topologies []serviceability.TopologyInfo) []Link {
+	// Build a map of topology pubkey -> name for quick lookup
+	topologyNames := make(map[[32]byte]string, len(topologies))
+	for _, t := range topologies {
+		topologyNames[t.PubKey] = t.Name
+	}
+
 	// Build a map of device pubkey -> interface name -> IP for quick lookup
 	deviceIfaceIPs := make(map[string]map[string]string)
 	for _, device := range devices {
@@ -564,6 +588,14 @@ func convertLinks(onchain []serviceability.Link, devices []serviceability.Device
 			sideZIP = ifaceMap[link.SideZIfaceName]
 		}
 
+		names := make([]string, 0, len(link.LinkTopologies))
+		for _, pk := range link.LinkTopologies {
+			if name, ok := topologyNames[pk]; ok {
+				names = append(names, name)
+			}
+		}
+		topologiesJSON, _ := json.Marshal(names)
+
 		result[i] = Link{
 			PK:                  solana.PublicKeyFromBytes(link.PubKey[:]).String(),
 			Status:              link.Status.String(),
@@ -581,6 +613,23 @@ func convertLinks(onchain []serviceability.Link, devices []serviceability.Device
 			CommittedJitterNs:   link.JitterNs,
 			Bandwidth:           link.Bandwidth,
 			ISISDelayOverrideNs: link.DelayOverrideNs,
+			LinkTopologies:      string(topologiesJSON),
+			UnicastDrained:      link.LinkFlags&serviceability.LinkFlagUnicastDrained != 0,
+		}
+	}
+	return result
+}
+
+func convertTopologies(onchain []serviceability.TopologyInfo) []Topology {
+	result := make([]Topology, len(onchain))
+	for i, t := range onchain {
+		result[i] = Topology{
+			PK:             solana.PublicKeyFromBytes(t.PubKey[:]).String(),
+			Name:           t.Name,
+			AdminGroupBit:  t.AdminGroupBit,
+			FlexAlgoNumber: t.FlexAlgoNumber,
+			Color:          t.AdminGroupBit + 1,
+			Constraint:     t.Constraint.String(),
 		}
 	}
 	return result

@@ -250,6 +250,8 @@ func (s *LinkSchema) PayloadColumns() []string {
 		"committed_jitter_ns:BIGINT",
 		"bandwidth_bps:BIGINT",
 		"isis_delay_override_ns:BIGINT",
+		"link_topologies:VARCHAR",
+		"unicast_drained:Boolean",
 	}
 }
 
@@ -271,11 +273,49 @@ func (s *LinkSchema) ToRow(l Link) []any {
 		l.CommittedJitterNs,
 		l.Bandwidth,
 		l.ISISDelayOverrideNs,
+		l.LinkTopologies,
+		l.UnicastDrained,
 	}
 }
 
 func (s *LinkSchema) GetPrimaryKey(l Link) string {
 	return l.PK
+}
+
+// TopologySchema defines the schema for topologies
+type TopologySchema struct{}
+
+func (s *TopologySchema) Name() string {
+	return "dz_topologies"
+}
+
+func (s *TopologySchema) PrimaryKeyColumns() []string {
+	return []string{"pk:VARCHAR"}
+}
+
+func (s *TopologySchema) PayloadColumns() []string {
+	return []string{
+		"name:VARCHAR",
+		"admin_group_bit:UInt8",
+		"flex_algo_number:UInt8",
+		"color:UInt8",
+		"topo_constraint:VARCHAR",
+	}
+}
+
+func (s *TopologySchema) ToRow(t Topology) []any {
+	return []any{
+		t.PK,
+		t.Name,
+		t.AdminGroupBit,
+		t.FlexAlgoNumber,
+		t.Color,
+		t.Constraint,
+	}
+}
+
+func (s *TopologySchema) GetPrimaryKey(t Topology) string {
+	return t.PK
 }
 
 // MulticastGroupSchema defines the schema for multicast groups
@@ -467,6 +507,7 @@ var (
 	multicastGroupSchema  = &MulticastGroupSchema{}
 	tenantSchema          = &TenantSchema{}
 	accessPassSchema      = &AccessPassSchema{}
+	topologySchema        = &TopologySchema{}
 )
 
 func NewContributorDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
@@ -507,4 +548,8 @@ func NewTenantDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) 
 
 func NewAccessPassDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
 	return dataset.NewDimensionType2Dataset(log, accessPassSchema)
+}
+
+func NewTopologyDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
+	return dataset.NewDimensionType2Dataset(log, topologySchema)
 }
