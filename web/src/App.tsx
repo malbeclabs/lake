@@ -51,6 +51,7 @@ import { ValidatorsPage } from '@/components/validators-page'
 import { GossipNodesPage } from '@/components/gossip-nodes-page'
 import { DeviceDetailPage } from '@/components/device-detail-page'
 import { LinkDetailPage } from '@/components/link-detail-page'
+import { TopologiesPage } from '@/components/topologies-page'
 import { TopologyDetailPage } from '@/components/topology-detail-page'
 import { MetroDetailPage } from '@/components/metro-detail-page'
 import { ContributorDetailPage } from '@/components/contributor-detail-page'
@@ -694,6 +695,7 @@ function AppContent() {
             <Route path="/dz/devices" element={<DevicesPage />} />
             <Route path="/dz/devices/:pk" element={<DeviceDetailPage />} />
             <Route path="/dz/links" element={<LinksPage />} />
+            <Route path="/dz/links/topologies" element={<TopologiesPage />} />
             <Route path="/dz/links/topologies/:name" element={<TopologyDetailPage />} />
             <Route path="/dz/links/:pk" element={<LinkDetailPage />} />
             <Route path="/dz/metros" element={<MetrosPage />} />

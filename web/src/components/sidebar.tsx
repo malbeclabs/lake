@@ -559,14 +559,10 @@ const { resolvedTheme, setTheme } = useTheme()
               Links
             </Link>
             {isLinksRoute && hasTopologies && (
-              <>
-                {topologiesData!.topologies.map((t) => (
-                  <Link key={t.pk} to={`/dz/links/topologies/${encodeURIComponent(t.name)}`} className={subNavItemClass(location.pathname === `/dz/links/topologies/${t.name}`)}>
-                    <Network className="h-4 w-4" />
-                    {t.name}
-                  </Link>
-                ))}
-              </>
+              <Link to="/dz/links/topologies" className={subNavItemClass(location.pathname.startsWith('/dz/links/topologies'))}>
+                <Network className="h-4 w-4" />
+                Topologies
+              </Link>
             )}
             <Link to="/dz/metros" className={navItemClass(isMetrosRoute)}>
               <MapPin className="h-4 w-4" />
