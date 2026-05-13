@@ -22,6 +22,7 @@ import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useAuth } from '@/contexts/AuthContext'
 import { MapLanding } from './shreds/map-landing'
 import { Wizard } from './shreds/wizard'
+import { WithdrawWizard } from './shreds/withdraw-wizard'
 import { UserPopover } from './auth/UserPopover'
 
 export function ShredsSubscribePage() {
@@ -30,8 +31,18 @@ export function ShredsSubscribePage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const deviceParam = searchParams.get('device') || ''
   const metroParam = searchParams.get('metro')
+  const modeParam = searchParams.get('mode') === 'withdraw' ? 'withdraw' : 'subscribe'
   const { publicKey: wallet, connected } = useWallet()
   const { isAuthenticated, user } = useAuth()
+
+  const handleSelectMode = useCallback((next: 'subscribe' | 'withdraw') => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev)
+      if (next === 'subscribe') p.delete('mode')
+      else p.set('mode', next)
+      return p
+    })
+  }, [setSearchParams])
 
   // ---- Data fetching ------------------------------------------------------
 
@@ -255,7 +266,11 @@ export function ShredsSubscribePage() {
           </div>
         </div>
 
-        {selectedDevice ? (
+        <ModeTabs mode={modeParam} onChange={handleSelectMode} />
+
+        {modeParam === 'withdraw' ? (
+          <WithdrawWizard />
+        ) : selectedDevice ? (
           <>
             {laneBanner}
             <Wizard
@@ -303,6 +318,35 @@ export function ShredsSubscribePage() {
           />
         )}
       </div>
+    </div>
+  )
+}
+
+function ModeTabs({
+  mode,
+  onChange,
+}: {
+  mode: 'subscribe' | 'withdraw'
+  onChange: (m: 'subscribe' | 'withdraw') => void
+}) {
+  return (
+    <div className="inline-flex rounded-lg border border-border overflow-hidden text-sm">
+      <button
+        onClick={() => onChange('subscribe')}
+        className={`px-4 py-1.5 transition-colors ${
+          mode === 'subscribe' ? 'bg-foreground text-background' : 'bg-background text-muted-foreground hover:bg-muted'
+        }`}
+      >
+        Subscribe
+      </button>
+      <button
+        onClick={() => onChange('withdraw')}
+        className={`px-4 py-1.5 transition-colors border-l border-border ${
+          mode === 'withdraw' ? 'bg-foreground text-background' : 'bg-background text-muted-foreground hover:bg-muted'
+        }`}
+      >
+        Withdraw
+      </button>
     </div>
   )
 }

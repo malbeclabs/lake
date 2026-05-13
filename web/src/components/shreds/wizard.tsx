@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
 import type { PublicKey } from '@solana/web3.js'
 import {
@@ -17,6 +17,7 @@ import { TransactionProgress } from './transaction-progress'
 import { EpochProgress, EpochWarning } from './epoch-progress'
 import { DisabledFeatureCard } from './disabled-feature-card'
 import { ReceiptPanel } from './receipt-panel'
+import { Section, StepBar } from './wizard-shared'
 
 const EPOCH_PRESETS = [1, 4, 15, 90]
 const DEFAULT_PRESET = 4
@@ -95,6 +96,15 @@ export function Wizard(props: WizardProps) {
     isAuthenticated,
     userEmail,
   } = props
+
+  const [, setSearchParams] = useSearchParams()
+  const handleSwitchToWithdraw = () => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev)
+      p.set('mode', 'withdraw')
+      return p
+    })
+  }
 
   const ipDone = ipValid && clientIp !== ''
   const fundDone = amountValid && !amountBelowMin
@@ -280,13 +290,21 @@ export function Wizard(props: WizardProps) {
 
               {/* On-chain state info */}
               {shredState.seatExists && (
-                <div className="flex items-center gap-2 text-sm px-3 py-2 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-600 dark:text-blue-400">
-                  <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                <div className="flex items-start gap-2 text-sm px-3 py-2 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-600 dark:text-blue-400">
+                  <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
                   <span>
                     A seat already exists for this device + IP.
                     {shredState.seatActive
                       ? ' This will add funds to the existing subscription.'
                       : ' This will re-activate the seat and add funds.'}
+                    {' '}
+                    <button
+                      type="button"
+                      onClick={handleSwitchToWithdraw}
+                      className="underline underline-offset-2 hover:text-blue-700 dark:hover:text-blue-300"
+                    >
+                      Withdraw it instead?
+                    </button>
                   </span>
                 </div>
               )}
@@ -304,24 +322,6 @@ export function Wizard(props: WizardProps) {
               {overview && overview.current_solana_epoch > 0 && !shredState.seatActive && (
                 <EpochWarning currentEpoch={overview.current_solana_epoch} />
               )}
-
-              {/* Auto-renew placeholder */}
-              <DisabledFeatureCard reason="Coming with Login flow">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-sm font-medium">Auto-renew</div>
-                    <div className="text-xs text-muted-foreground">Top up when escrow runs low.</div>
-                  </div>
-                  <div
-                    role="switch"
-                    aria-checked={false}
-                    className="h-5 w-9 rounded-full bg-muted border border-border relative"
-                    tabIndex={-1}
-                  >
-                    <div className="absolute top-0.5 left-0.5 h-3.5 w-3.5 rounded-full bg-background border border-border" />
-                  </div>
-                </div>
-              </DisabledFeatureCard>
 
               {/* Payment method placeholder */}
               <div>
@@ -486,45 +486,3 @@ export function Wizard(props: WizardProps) {
   )
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section>
-      <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">{title}</h2>
-      {children}
-    </section>
-  )
-}
-
-function StepBar({ steps }: { steps: { label: string; status: 'done' | 'current' | 'pending' }[] }) {
-  return (
-    <div className="flex flex-wrap items-center gap-2 text-sm">
-      {steps.map((step, i) => (
-        <div key={step.label} className="flex items-center gap-2">
-          <div
-            className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full border transition-colors ${
-              step.status === 'done'
-                ? 'bg-primary text-primary-foreground border-primary'
-                : step.status === 'current'
-                  ? 'bg-primary/10 text-foreground border-primary border-2 py-[5px]'
-                  : 'bg-background text-muted-foreground border-border'
-            }`}
-          >
-            <span
-              className={`inline-flex items-center justify-center h-5 w-5 rounded-full text-xs tabular-nums ${
-                step.status === 'done'
-                  ? 'bg-primary-foreground/20'
-                  : step.status === 'current'
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-muted'
-              }`}
-            >
-              {step.status === 'done' ? <Check className="h-3 w-3" /> : i + 1}
-            </span>
-            <span className="font-medium text-xs uppercase tracking-wider">{step.label}</span>
-          </div>
-          {i < steps.length - 1 && <div className="h-px w-4 bg-border" />}
-        </div>
-      ))}
-    </div>
-  )
-}
