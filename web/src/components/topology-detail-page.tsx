@@ -1,4 +1,4 @@
-import { useParams, useNavigate, Link } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { Loader2, Network, AlertCircle, ArrowLeft } from 'lucide-react'
 import { fetchTopologies, fetchLinks } from '@/lib/api'
