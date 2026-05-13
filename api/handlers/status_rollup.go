@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -1117,6 +1118,8 @@ type statusLinkMeta struct {
 	CommittedJitterUs float64
 	Status            string
 	SideZContributor  string
+	LinkTopologies    []string
+	UnicastDrained    bool
 }
 
 // queryStatusLinkMeta fetches metadata for active links (activated, soft-drained, hard-drained).
@@ -1149,7 +1152,9 @@ func queryStatusLinkMeta(ctx context.Context, db driver.Conn, linkPKs ...string)
 			l.committed_rtt_ns,
 			COALESCE(l.committed_jitter_ns, 0) / 1000.0 as committed_jitter_us,
 			l.status,
-			COALESCE(cz.code, '') as side_z_contributor
+			COALESCE(cz.code, '') as side_z_contributor,
+			COALESCE(l.link_topologies, '[]') as link_topologies,
+			COALESCE(l.unicast_drained, false) as unicast_drained
 		FROM dz_links_current l
 		JOIN dz_devices_current da ON l.side_a_pk = da.pk
 		JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
@@ -1169,14 +1174,20 @@ func queryStatusLinkMeta(ctx context.Context, db driver.Conn, linkPKs ...string)
 	result := make(map[string]*statusLinkMeta)
 	for rows.Next() {
 		var m statusLinkMeta
+		var linkTopologiesJSON string
 		if err := rows.Scan(
 			&m.PK, &m.Code, &m.LinkType, &m.Contributor, &m.ContributorPK,
 			&m.SideAMetro, &m.SideZMetro, &m.SideADevice, &m.SideZDevice,
 			&m.SideADevicePK, &m.SideZDevicePK,
 			&m.SideAIfaceName, &m.SideZIfaceName,
 			&m.BandwidthBps, &m.CommittedRttUs, &m.CommittedRttNs, &m.CommittedJitterUs, &m.Status, &m.SideZContributor,
+			&linkTopologiesJSON, &m.UnicastDrained,
 		); err != nil {
 			return nil, fmt.Errorf("link metadata scan: %w", err)
+		}
+		json.Unmarshal([]byte(linkTopologiesJSON), &m.LinkTopologies)
+		if m.LinkTopologies == nil {
+			m.LinkTopologies = []string{}
 		}
 		result[m.PK] = &m
 	}

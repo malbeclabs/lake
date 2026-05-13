@@ -297,6 +297,19 @@ function LinkInfoPopover({
                 </div>
               </div>
             )}
+            {linkMetrics.link_topologies && (
+              <div>
+                <div className="text-muted-foreground">Topology</div>
+                <div className="font-medium">
+                  {linkMetrics.link_topologies.length > 0
+                    ? linkMetrics.link_topologies.join(', ')
+                    : <span className="text-cyan-500">multicast only</span>}
+                  {linkMetrics.unicast_drained && (
+                    <span className="ml-1 text-amber-500">(drained)</span>
+                  )}
+                </div>
+              </div>
+            )}
             {criticality && (
               <div className="pt-2 mt-2 border-t border-border">
                 <div className="text-muted-foreground">Redundancy</div>

@@ -1229,6 +1229,8 @@ export interface LinkMetric {
   utilization_out: number
   side_a_metro: string
   side_z_metro: string
+  link_topologies: string[]
+  unicast_drained: boolean
 }
 
 export interface LinkHealth {
@@ -1304,6 +1306,8 @@ export interface NonActivatedLink {
   since: string
   active_incident_types?: string[]
   bandwidth_bps: number
+  link_topologies: string[]
+  unicast_drained: boolean
 }
 
 export interface ISISDeviceIssue {
@@ -5595,6 +5599,8 @@ export interface LinkMetricsResponse {
   committed_jitter_us: number
   bandwidth_bps: number
   current_drain_status: string
+  link_topologies: string[]
+  unicast_drained: boolean
   time_range: string
   bucket_seconds: number
   bucket_count: number
