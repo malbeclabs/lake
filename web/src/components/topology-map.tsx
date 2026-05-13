@@ -1497,6 +1497,17 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     // When metro clustering mode with collapsed metros, track inter-metro edges
     const interMetroEdges = new Map<string, { count: number; totalLatency: number; latencyCount: number }>()
 
+    // Build parallel link index: for links sharing the same device pair, assign
+    // each an index so their curves can be offset to avoid overlap.
+    const pairCountMap = new Map<string, number>()
+    const linkPairIndex = new Map<string, number>()
+    for (const link of links) {
+      const pairKey = [link.side_a_pk, link.side_z_pk].sort().join('|')
+      const idx = pairCountMap.get(pairKey) ?? 0
+      linkPairIndex.set(link.pk, idx)
+      pairCountMap.set(pairKey, idx + 1)
+    }
+
     const features = links.map(link => {
       const deviceA = deviceMap.get(link.side_a_pk)
       const deviceZ = deviceMap.get(link.side_z_pk)
@@ -1742,7 +1753,17 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         },
         geometry: {
           type: 'LineString' as const,
-          coordinates: calculateCurvedPath(startPos, endPos),
+          coordinates: (() => {
+            const pairKey = [link.side_a_pk, link.side_z_pk].sort().join('|')
+            const total = pairCountMap.get(pairKey) ?? 1
+            const idx = linkPairIndex.get(link.pk) ?? 0
+            if (total <= 1) return calculateCurvedPath(startPos, endPos)
+            // Spread parallel links with different curve offsets
+            const baseOffset = 0.15
+            const spread = 0.12
+            const offset = baseOffset + (idx - (total - 1) / 2) * spread
+            return calculateCurvedPath(startPos, endPos, offset)
+          })(),
         },
       }
     }).filter((f): f is NonNullable<typeof f> => f !== null)
