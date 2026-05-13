@@ -81,12 +81,12 @@ func (a *API) GetTopologies(w http.ResponseWriter, r *http.Request) {
 		defer countRows.Close()
 		for countRows.Next() {
 			var name string
-			var count int
+			var count uint64
 			if err := countRows.Scan(&name, &count); err != nil {
 				slog.Warn("topology link count scan failed (non-fatal)", "error", err)
 				break
 			}
-			linkCounts[name] = count
+			linkCounts[name] = int(count)
 		}
 	}
 
