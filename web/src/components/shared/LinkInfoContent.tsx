@@ -329,29 +329,31 @@ export function LinkInfoContent({
             </div>
             <div className="text-xs text-muted-foreground">Contributor</div>
           </div>
-          {/* Topology membership */}
-          <div className="text-center p-2 bg-muted/30 rounded-lg col-span-2">
-            <div className="flex flex-wrap gap-1 justify-center">
-              {link.linkTopologies && link.linkTopologies.length > 0 ? (
-                link.linkTopologies.map((name) => (
-                  <span
-                    key={name}
-                    className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-500/15 text-green-600 dark:text-green-400"
-                  >
-                    {name.toUpperCase()}
+          {/* Topology membership — only show when flex-algo is active (linkTopologies defined) */}
+          {link.linkTopologies !== undefined && (
+            <div className="text-center p-2 bg-muted/30 rounded-lg col-span-2">
+              <div className="flex flex-wrap gap-1 justify-center">
+                {link.linkTopologies.length > 0 ? (
+                  link.linkTopologies.map((name) => (
+                    <span
+                      key={name}
+                      className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-500/15 text-green-600 dark:text-green-400"
+                    >
+                      {name.toUpperCase()}
+                    </span>
+                  ))
+                ) : (
+                  <span className="text-muted-foreground">untagged</span>
+                )}
+                {link.unicastDrained && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                    UNICAST DRAINED
                   </span>
-                ))
-              ) : (
-                <span className="text-muted-foreground">untagged</span>
-              )}
-              {link.unicastDrained && (
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-600 dark:text-amber-400">
-                  UNICAST DRAINED
-                </span>
-              )}
+                )}
+              </div>
+              <div className="text-xs text-muted-foreground mt-1">Topology</div>
             </div>
-            <div className="text-xs text-muted-foreground mt-1">Topology</div>
-          </div>
+          )}
         </div>
 
         {/* Time range and bucket selectors */}
@@ -616,29 +618,31 @@ export function LinkInfoContent({
           </div>
           <div className="text-xs text-muted-foreground">Contributor</div>
         </div>
-        {/* Topology membership */}
-        <div className="text-center p-3 bg-muted/30 rounded-lg">
-          <div className="flex flex-wrap gap-1 justify-center">
-            {link.linkTopologies && link.linkTopologies.length > 0 ? (
-              link.linkTopologies.map((name) => (
-                <span
-                  key={name}
-                  className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-500/15 text-green-600 dark:text-green-400"
-                >
-                  {name.toUpperCase()}
+        {/* Topology membership — only show when flex-algo is active */}
+        {link.linkTopologies !== undefined && (
+          <div className="text-center p-3 bg-muted/30 rounded-lg">
+            <div className="flex flex-wrap gap-1 justify-center">
+              {link.linkTopologies.length > 0 ? (
+                link.linkTopologies.map((name) => (
+                  <span
+                    key={name}
+                    className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-500/15 text-green-600 dark:text-green-400"
+                  >
+                    {name.toUpperCase()}
+                  </span>
+                ))
+              ) : (
+                <span className="text-muted-foreground">untagged</span>
+              )}
+              {link.unicastDrained && (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                  UNICAST DRAINED
                 </span>
-              ))
-            ) : (
-              <span className="text-muted-foreground">untagged</span>
-            )}
-            {link.unicastDrained && (
-              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-600 dark:text-amber-400">
-                UNICAST DRAINED
-              </span>
-            )}
+              )}
+            </div>
+            <div className="text-xs text-muted-foreground mt-1">Topology</div>
           </div>
-          <div className="text-xs text-muted-foreground mt-1">Topology</div>
-        </div>
+        )}
       </div>
 
       {/* Charts section */}

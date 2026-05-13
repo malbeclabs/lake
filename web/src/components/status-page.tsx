@@ -1719,9 +1719,11 @@ function TopLinkUtilization({
                 <div className="text-[10px] text-muted-foreground">
                   {link.side_a_metro} - {link.side_z_metro} ·{" "}
                   {formatBandwidth(peakBps)}
-                  {link.link_topologies?.length > 0
-                    ? <> · <span className="text-green-600 dark:text-green-400">{link.link_topologies.join(', ')}</span></>
-                    : <> · <span className="text-cyan-600 dark:text-cyan-400">multicast only</span></>}
+                  {link.link_topologies !== undefined && (
+                    link.link_topologies.length > 0
+                      ? <> · <span className="text-green-600 dark:text-green-400">{link.link_topologies.join(', ')}</span></>
+                      : <> · <span className="text-cyan-600 dark:text-cyan-400">multicast only</span></>
+                  )}
                 </div>
                 <div className="h-1.5 bg-muted rounded-full overflow-hidden">
                   <div
@@ -1742,9 +1744,11 @@ function TopLinkUtilization({
                 </Link>
                 <div className="text-[10px] text-muted-foreground">
                   {link.side_a_metro} - {link.side_z_metro}
-                  {link.link_topologies?.length > 0
-                    ? <> · <span className="text-green-600 dark:text-green-400">{link.link_topologies.join(', ')}</span></>
-                    : <> · <span className="text-cyan-600 dark:text-cyan-400">multicast only</span></>}
+                  {link.link_topologies !== undefined && (
+                    link.link_topologies.length > 0
+                      ? <> · <span className="text-green-600 dark:text-green-400">{link.link_topologies.join(', ')}</span></>
+                      : <> · <span className="text-cyan-600 dark:text-cyan-400">multicast only</span></>
+                  )}
                 </div>
               </div>
               <div className="hidden sm:block text-xs text-muted-foreground tabular-nums w-16 text-right">
@@ -1915,6 +1919,8 @@ function DisabledLinksTable({
 
   if (allLinks.length === 0) return null;
 
+  const showTopology = allLinks.some(l => l.link_topologies !== undefined);
+
   const reasonColors: Record<string, string> = {
     provisioning: "text-blue-600 dark:text-blue-400",
     "soft drained": "text-amber-600 dark:text-amber-400",
@@ -1939,7 +1945,7 @@ function DisabledLinksTable({
             <tr className="text-left text-sm text-muted-foreground border-b border-border">
               <th className="px-4 py-2 font-medium">Link</th>
               <th className="px-4 py-2 font-medium">Route</th>
-              <th className="px-4 py-2 font-medium">Topology</th>
+              {showTopology && <th className="px-4 py-2 font-medium">Topology</th>}
               <th className="px-4 py-2 font-medium">Reason</th>
             </tr>
           </thead>
@@ -1965,11 +1971,13 @@ function DisabledLinksTable({
                 <td className="px-4 py-2.5 text-sm text-muted-foreground whitespace-nowrap">
                   {link.side_a_metro} - {link.side_z_metro}
                 </td>
-                <td className="px-4 py-2.5 text-sm whitespace-nowrap">
-                  {link.link_topologies && link.link_topologies.length > 0
-                    ? <span className="text-green-600 dark:text-green-400">{link.link_topologies.join(', ')}</span>
-                    : <span className="text-cyan-600 dark:text-cyan-400">multicast only</span>}
-                </td>
+                {showTopology && (
+                  <td className="px-4 py-2.5 text-sm whitespace-nowrap">
+                    {link.link_topologies && link.link_topologies.length > 0
+                      ? <span className="text-green-600 dark:text-green-400">{link.link_topologies.join(', ')}</span>
+                      : <span className="text-cyan-600 dark:text-cyan-400">multicast only</span>}
+                  </td>
+                )}
                 <td
                   className={`px-4 py-2.5 text-sm capitalize whitespace-nowrap ${reasonColors[link.reason] || ""}`}
                 >

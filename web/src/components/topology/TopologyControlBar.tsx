@@ -30,8 +30,10 @@ import {
   Pause,
   UserCheck,
 } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
 import { useTopology, type TopologyMode } from './TopologyContext'
 import { useEnv } from '@/contexts/EnvContext'
+import { fetchTopologies } from '@/lib/api'
 
 interface TopologyControlBarProps {
   // Zoom controls (view-specific)
@@ -129,6 +131,12 @@ export function TopologyControlBar({
   const { mode, setMode, overlays, toggleOverlay, view, panel, openPanel, closePanel } = useTopology()
   const { features } = useEnv()
   const hasNeo4j = features.neo4j
+  const { data: topologiesData } = useQuery({
+    queryKey: ['topologies'],
+    queryFn: fetchTopologies,
+    staleTime: 60_000,
+  })
+  const hasTopologies = (topologiesData?.topologies?.length ?? 0) > 0
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
 
@@ -548,14 +556,16 @@ export function TopologyControlBar({
             collapsed={collapsed}
           />
 
-          <NavItem
-            icon={<Network className="h-3.5 w-3.5" />}
-            label="Flex-Algo"
-            onClick={() => handleToggleOverlay('flexAlgo')}
-            active={overlays.flexAlgo}
-            activeColor="purple"
-            collapsed={collapsed}
-          />
+          {hasTopologies && (
+            <NavItem
+              icon={<Network className="h-3.5 w-3.5" />}
+              label="Flex-Algo"
+              onClick={() => handleToggleOverlay('flexAlgo')}
+              active={overlays.flexAlgo}
+              activeColor="purple"
+              collapsed={collapsed}
+            />
+          )}
 
           {/* Multicast */}
           <SectionHeader title="Multicast" collapsed={collapsed} />
