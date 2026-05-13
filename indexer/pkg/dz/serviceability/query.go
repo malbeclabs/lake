@@ -54,7 +54,7 @@ type linkRow struct {
 	Bandwidth           int64  `ch:"bandwidth_bps"`
 	ISISDelayOverrideNs int64  `ch:"isis_delay_override_ns"`
 	LinkTopologies      string `ch:"link_topologies"`
-	UnicastDrained      bool   `ch:"unicast_drained"`
+	UnicastDrained      uint8  `ch:"unicast_drained"`
 }
 
 type topologyRow struct {
@@ -188,7 +188,7 @@ func QueryCurrentLinks(ctx context.Context, log *slog.Logger, db clickhouse.Clie
 			Bandwidth:           uint64(row.Bandwidth),
 			ISISDelayOverrideNs: uint64(row.ISISDelayOverrideNs),
 			LinkTopologies:      row.LinkTopologies,
-			UnicastDrained:      row.UnicastDrained,
+			UnicastDrained:      row.UnicastDrained != 0,
 		}
 	}
 
