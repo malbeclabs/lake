@@ -64,6 +64,7 @@ var linkSortFields = map[string]string{
 var linkFilterFields = map[string]FilterFieldConfig{
 	"code":        {Column: "code", Type: FieldTypeText},
 	"type":        {Column: "link_type", Type: FieldTypeText},
+	"topology":    {Column: "link_topologies", Type: FieldTypeJSONArray},
 	"contributor": {Column: "contributor_code", Type: FieldTypeText},
 	"sidea":       {Column: "side_a_code", Type: FieldTypeText},
 	"sidez":       {Column: "side_z_code", Type: FieldTypeText},

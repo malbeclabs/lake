@@ -65,9 +65,21 @@ export function FlexAlgoOverlayPanel({ isDark }: FlexAlgoOverlayPanelProps) {
             <span className="text-muted-foreground ml-auto">{t.link_count}</span>
           </label>
         ))}
+
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="radio"
+            name="flexAlgoTopology"
+            checked={selectedFlexAlgoTopology === '__multicast_only__'}
+            onChange={() => setSelectedFlexAlgoTopology('__multicast_only__')}
+            className="accent-cyan-500"
+          />
+          <span>Multicast only</span>
+          <span className="text-muted-foreground ml-auto">{totalLinkCount - (topologies?.reduce((sum, t) => sum + t.link_count, 0) ?? 0)}</span>
+        </label>
       </div>
 
-      {selectedFlexAlgoTopology && (
+      {selectedFlexAlgoTopology && selectedFlexAlgoTopology !== '__multicast_only__' && (
         <>
           <hr className="border-[var(--border)] my-2" />
           <div className="space-y-1">
@@ -82,6 +94,22 @@ export function FlexAlgoOverlayPanel({ isDark }: FlexAlgoOverlayPanelProps) {
             <div className="flex items-center gap-2">
               <div className="w-5 h-0.5 bg-gray-400 rounded opacity-30" />
               <span className="text-muted-foreground opacity-50">excluded</span>
+            </div>
+          </div>
+        </>
+      )}
+
+      {selectedFlexAlgoTopology === '__multicast_only__' && (
+        <>
+          <hr className="border-[var(--border)] my-2" />
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-0.5 bg-cyan-500 rounded" />
+              <span>multicast only</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-0.5 bg-gray-400 rounded opacity-30" />
+              <span className="text-muted-foreground opacity-50">has unicast topology</span>
             </div>
           </div>
         </>

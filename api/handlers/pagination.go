@@ -214,6 +214,7 @@ const (
 	FieldTypeBoolean
 	FieldTypeBandwidth // numeric with gbps/mbps units
 	FieldTypeStake     // numeric with k/m units
+	FieldTypeJSONArray // JSON string array — "multicast-only" matches empty, others match contains
 )
 
 // FilterFieldConfig describes how to filter a field
@@ -344,6 +345,14 @@ func (f FilterParams) BuildFilterClause(fields map[string]FilterFieldConfig) (st
 			return "", nil
 		}
 		return config.Column + " " + numOp.Op + " ?", []any{numOp.Value}
+
+	case FieldTypeJSONArray:
+		val := strings.ToLower(strings.TrimSpace(f.Value))
+		if val == "multicast-only" || val == "multicast only" || val == "none" {
+			return "(" + config.Column + " = '[]' OR " + config.Column + " = '')", nil
+		}
+		// Match links containing a specific topology name
+		return "has(JSONExtract(" + config.Column + ", 'Array(String)'), ?)", []any{strings.ToUpper(f.Value)}
 	}
 
 	return "", nil

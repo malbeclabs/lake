@@ -53,6 +53,7 @@ function getUtilizationColor(pct: number): string {
 type SortField =
   | 'code'
   | 'type'
+  | 'topology'
   | 'contributor'
   | 'sidea'
   | 'sidez'
@@ -75,12 +76,13 @@ function parseSearchFilters(searchParam: string): string[] {
 }
 
 // Valid filter fields for links
-const validFilterFields = ['code', 'type', 'contributor', 'sidea', 'sidez', 'status', 'bandwidth', 'in', 'out', 'utilin', 'utilout', 'latency', 'jitter', 'loss']
+const validFilterFields = ['code', 'type', 'topology', 'contributor', 'sidea', 'sidez', 'status', 'bandwidth', 'in', 'out', 'utilin', 'utilout', 'latency', 'jitter', 'loss']
 
 // Field prefixes for inline filter
 const linkFieldPrefixes = [
   { prefix: 'code:', description: 'Filter by link code' },
   { prefix: 'type:', description: 'Filter by link type' },
+  { prefix: 'topology:', description: 'Filter by topology (e.g., unicast-default, multicast-only)' },
   { prefix: 'contributor:', description: 'Filter by contributor' },
   { prefix: 'sidea:', description: 'Filter by side A device' },
   { prefix: 'sidez:', description: 'Filter by side Z device' },
@@ -282,6 +284,9 @@ export function LinksPage() {
                       <SortIcon field="type" />
                     </button>
                   </th>
+                  <th className="px-4 py-3 font-medium">
+                    Topology
+                  </th>
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('contributor')}>
                     <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('contributor')}>
                       Contributor
@@ -371,6 +376,24 @@ export function LinksPage() {
                       {link.link_type}
                     </td>
                     <td className="px-4 py-3 text-sm">
+                      {link.link_topologies && link.link_topologies.length > 0 ? (
+                        <span className="inline-flex flex-wrap gap-1">
+                          {link.link_topologies.map((name: string) => (
+                            <span key={name} className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-500/15 text-green-600 dark:text-green-400">
+                              {name}
+                            </span>
+                          ))}
+                          {link.unicast_drained && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                              DRAINED
+                            </span>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="text-cyan-600 dark:text-cyan-400 text-xs">multicast only</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-sm">
                       {link.side_a_contributor_pk && link.side_z_contributor_pk && link.side_a_contributor_code !== link.side_z_contributor_code ? (
                         <>
                           <Link to={`/dz/contributors/${link.side_a_contributor_pk}`} className="text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.side_a_contributor_code}</Link>
@@ -430,7 +453,7 @@ export function LinksPage() {
                 ))}
                 {links.length === 0 && (
                   <tr>
-                    <td colSpan={13} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={14} className="px-4 py-8 text-center text-muted-foreground">
                       No links found
                     </td>
                   </tr>

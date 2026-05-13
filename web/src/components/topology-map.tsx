@@ -1679,6 +1679,18 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         if (isHoveredDiscrepancy) {
           displayWeight = Math.max(displayWeight, 4)
         }
+      } else if (flexAlgoMode && selectedFlexAlgoTopology === '__multicast_only__') {
+        // Flex-Algo overlay: multicast-only mode — highlight untagged links
+        const isMulticastOnly = !link.link_topologies || link.link_topologies.length === 0
+        if (isMulticastOnly) {
+          displayColor = '#06b6d4' // cyan — multicast only
+          displayOpacity = 1.0
+          displayWeight = defaultWeight + 2
+        } else {
+          displayColor = isDark ? '#4b5563' : '#9ca3af' // gray — has unicast topology
+          displayOpacity = 0.25
+          displayWeight = defaultWeight - 1
+        }
       } else if (flexAlgoMode && selectedFlexAlgoTopology) {
         // Flex-Algo overlay: highlight links in the selected topology
         const inTopology = link.link_topologies?.includes(selectedFlexAlgoTopology)
