@@ -1713,7 +1713,12 @@ export interface TopologyInfo {
   link_count: number
 }
 
-export async function fetchTopologies(): Promise<TopologyInfo[]> {
+export interface TopologiesResponse {
+  topologies: TopologyInfo[]
+  total_link_count: number
+}
+
+export async function fetchTopologies(): Promise<TopologiesResponse> {
   const res = await fetchWithRetry('/api/topologies')
   if (!res.ok) {
     throw new Error('Failed to fetch topologies')

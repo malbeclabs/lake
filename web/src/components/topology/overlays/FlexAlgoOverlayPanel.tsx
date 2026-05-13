@@ -11,11 +11,13 @@ export function FlexAlgoOverlayPanel({ isDark }: FlexAlgoOverlayPanelProps) {
   void isDark // reserved for future theming
   const { toggleOverlay, selectedFlexAlgoTopology, setSelectedFlexAlgoTopology } = useTopology()
 
-  const { data: topologies } = useQuery({
+  const { data } = useQuery({
     queryKey: ['topologies'],
     queryFn: fetchTopologies,
     staleTime: 60_000,
   })
+  const topologies = data?.topologies
+  const totalLinkCount = data?.total_link_count ?? 0
 
   return (
     <div className="p-3 text-xs">
@@ -47,7 +49,7 @@ export function FlexAlgoOverlayPanel({ isDark }: FlexAlgoOverlayPanelProps) {
             className="accent-purple-500"
           />
           <span>All links (algo 0)</span>
-          <span className="text-muted-foreground ml-auto">{topologies?.reduce((sum, t) => sum + t.link_count, 0) ?? 0}</span>
+          <span className="text-muted-foreground ml-auto">{totalLinkCount}</span>
         </label>
 
         {topologies?.map((t) => (

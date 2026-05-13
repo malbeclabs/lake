@@ -99,8 +99,23 @@ func (a *API) GetTopologies(w http.ResponseWriter, r *http.Request) {
 		topologies = []TopologyItem{}
 	}
 
+	// Query total link count
+	var totalLinks uint64
+	totalRow := a.envDB(ctx).QueryRow(ctx, `SELECT count() FROM dz_links_current`)
+	if err := totalRow.Scan(&totalLinks); err != nil {
+		slog.Warn("topology total link count query failed (non-fatal)", "error", err)
+	}
+
+	resp := struct {
+		Topologies     []TopologyItem `json:"topologies"`
+		TotalLinkCount int            `json:"total_link_count"`
+	}{
+		Topologies:     topologies,
+		TotalLinkCount: int(totalLinks),
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(topologies); err != nil {
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		logError("failed to encode topologies response", "error", err)
 	}
 }
