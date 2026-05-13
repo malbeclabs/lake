@@ -18,6 +18,7 @@ export function FlexAlgoOverlayPanel({ isDark }: FlexAlgoOverlayPanelProps) {
   })
   const topologies = data?.topologies
   const totalLinkCount = data?.total_link_count ?? 0
+  const drainedLinkCount = data?.drained_link_count ?? 0
 
   return (
     <div className="p-3 text-xs">
@@ -77,6 +78,18 @@ export function FlexAlgoOverlayPanel({ isDark }: FlexAlgoOverlayPanelProps) {
           <span>Multicast only</span>
           <span className="text-muted-foreground ml-auto">{totalLinkCount - (topologies?.reduce((sum, t) => sum + t.link_count, 0) ?? 0)}</span>
         </label>
+
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="radio"
+            name="flexAlgoTopology"
+            checked={selectedFlexAlgoTopology === '__unicast_drained__'}
+            onChange={() => setSelectedFlexAlgoTopology('__unicast_drained__')}
+            className="accent-amber-500"
+          />
+          <span className="text-amber-500">Unicast drained</span>
+          <span className="text-muted-foreground ml-auto">{drainedLinkCount}</span>
+        </label>
       </div>
 
       {selectedFlexAlgoTopology && selectedFlexAlgoTopology !== '__multicast_only__' && (
@@ -94,6 +107,22 @@ export function FlexAlgoOverlayPanel({ isDark }: FlexAlgoOverlayPanelProps) {
             <div className="flex items-center gap-2">
               <div className="w-5 h-0.5 bg-gray-400 rounded opacity-30" />
               <span className="text-muted-foreground opacity-50">excluded</span>
+            </div>
+          </div>
+        </>
+      )}
+
+      {selectedFlexAlgoTopology === '__unicast_drained__' && (
+        <>
+          <hr className="border-[var(--border)] my-2" />
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-0.5 rounded" style={{ borderBottom: '2px dashed #f59e0b' }} />
+              <span className="text-amber-500">drained</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-0.5 bg-gray-400 rounded opacity-30" />
+              <span className="text-muted-foreground opacity-50">not drained</span>
             </div>
           </div>
         </>

@@ -1720,6 +1720,7 @@ export interface TopologyInfo {
 export interface TopologiesResponse {
   topologies: TopologyInfo[]
   total_link_count: number
+  drained_link_count: number
 }
 
 export async function fetchTopologies(): Promise<TopologiesResponse> {

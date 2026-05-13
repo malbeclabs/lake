@@ -99,19 +99,25 @@ func (a *API) GetTopologies(w http.ResponseWriter, r *http.Request) {
 		topologies = []TopologyItem{}
 	}
 
-	// Query total link count
-	var totalLinks uint64
+	// Query total link count and drained count
+	var totalLinks, drainedLinks uint64
 	totalRow := a.envDB(ctx).QueryRow(ctx, `SELECT count() FROM dz_links_current`)
 	if err := totalRow.Scan(&totalLinks); err != nil {
 		slog.Warn("topology total link count query failed (non-fatal)", "error", err)
 	}
+	drainedRow := a.envDB(ctx).QueryRow(ctx, `SELECT count() FROM dz_links_current WHERE unicast_drained = 1`)
+	if err := drainedRow.Scan(&drainedLinks); err != nil {
+		slog.Warn("topology drained link count query failed (non-fatal)", "error", err)
+	}
 
 	resp := struct {
-		Topologies     []TopologyItem `json:"topologies"`
-		TotalLinkCount int            `json:"total_link_count"`
+		Topologies       []TopologyItem `json:"topologies"`
+		TotalLinkCount   int            `json:"total_link_count"`
+		DrainedLinkCount int            `json:"drained_link_count"`
 	}{
-		Topologies:     topologies,
-		TotalLinkCount: int(totalLinks),
+		Topologies:       topologies,
+		TotalLinkCount:   int(totalLinks),
+		DrainedLinkCount: int(drainedLinks),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
