@@ -92,7 +92,7 @@ export function FlexAlgoOverlayPanel({ isDark }: FlexAlgoOverlayPanelProps) {
         </label>
       </div>
 
-      {selectedFlexAlgoTopology && selectedFlexAlgoTopology !== '__multicast_only__' && (
+      {selectedFlexAlgoTopology && selectedFlexAlgoTopology !== '__multicast_only__' && selectedFlexAlgoTopology !== '__unicast_drained__' && (
         <>
           <hr className="border-[var(--border)] my-2" />
           <div className="space-y-1">
