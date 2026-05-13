@@ -422,6 +422,7 @@ func (s *TenantSchema) PayloadColumns() []string {
 		"metro_routing:BOOLEAN",
 		"route_liveness:BOOLEAN",
 		"billing_rate:BIGINT",
+		"include_topologies:VARCHAR",
 	}
 }
 
@@ -435,6 +436,7 @@ func (s *TenantSchema) ToRow(t Tenant) []any {
 		t.MetroRouting,
 		t.RouteLiveness,
 		t.BillingRate,
+		t.IncludeTopologies,
 	}
 }
 

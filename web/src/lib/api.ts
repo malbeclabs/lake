@@ -3271,6 +3271,7 @@ export interface User {
   location_code: string
   tenant_pk: string
   tenant_code: string
+  include_topologies: string[]
   in_bps: number
   out_bps: number
   is_deleted: boolean
@@ -5033,6 +5034,7 @@ export interface Tenant {
   metro_routing: boolean
   route_liveness: boolean
   billing_rate: number
+  include_topologies: string[]
 }
 
 export async function fetchTenants(

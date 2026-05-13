@@ -3,7 +3,7 @@ import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Loader2, Users, AlertCircle, ChevronDown, ChevronUp, X } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { fetchUsers } from '@/lib/api'
+import { fetchUsers, fetchTopologies } from '@/lib/api'
 import { handleRowClick } from '@/lib/utils'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
@@ -170,6 +170,13 @@ export function UsersPage() {
     refetchInterval: 30000,
     placeholderData: keepPreviousData,
   })
+
+  const { data: topologiesData } = useQuery({
+    queryKey: ['topologies'],
+    queryFn: fetchTopologies,
+    staleTime: 60_000,
+  })
+  const hasTopologies = (topologiesData?.topologies?.length ?? 0) > 0
 
   const users = response?.items ?? []
 
@@ -391,6 +398,9 @@ export function UsersPage() {
                       <SortIcon field="tenant" />
                     </button>
                   </th>
+                  {hasTopologies && (
+                    <th className="px-4 py-3 font-medium">Topology</th>
+                  )}
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('status')}>
                     <button
                       className="inline-flex items-center gap-1"
@@ -502,6 +512,21 @@ export function UsersPage() {
                         <span className="text-muted-foreground">—</span>
                       )}
                     </td>
+                    {hasTopologies && (
+                      <td className="px-4 py-3 text-sm">
+                        {user.include_topologies && user.include_topologies.length > 0 ? (
+                          <span className="inline-flex flex-wrap gap-1">
+                            {user.include_topologies.map((name: string) => (
+                              <span key={name} className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-500/15 text-green-600 dark:text-green-400">
+                                {name}
+                              </span>
+                            ))}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">default</span>
+                        )}
+                      </td>
+                    )}
                     <td className="px-4 py-3 text-sm">
                       {user.is_deleted ? (
                         <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-gray-500/15 text-gray-500">
@@ -523,7 +548,7 @@ export function UsersPage() {
                 ))}
                 {users.length === 0 && (
                   <tr>
-                    <td colSpan={11} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={hasTopologies ? 12 : 11} className="px-4 py-8 text-center text-muted-foreground">
                       No users found
                     </td>
                   </tr>

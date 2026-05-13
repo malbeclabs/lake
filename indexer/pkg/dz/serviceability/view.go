@@ -150,14 +150,15 @@ type MulticastGroup struct {
 }
 
 type Tenant struct {
-	PK            string
-	OwnerPubkey   string
-	Code          string
-	PaymentStatus string
-	VrfID         uint16
-	MetroRouting  bool
-	RouteLiveness bool
-	BillingRate   uint64
+	PK                string
+	OwnerPubkey       string
+	Code              string
+	PaymentStatus     string
+	VrfID             uint16
+	MetroRouting      bool
+	RouteLiveness     bool
+	BillingRate       uint64
+	IncludeTopologies string // JSON array of topology names
 }
 
 type AccessPass struct {
@@ -376,7 +377,7 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	metros := convertMetros(pd.Exchanges)
 	locations := convertLocations(pd.Locations)
 	multicastGroups := convertMulticastGroups(pd.MulticastGroups)
-	tenants := convertTenants(pd.Tenants)
+	tenants := convertTenants(pd.Tenants, pd.Topologies)
 	accessPasses := convertAccessPasses(pd.AccessPasses)
 
 	fetchedAt := time.Now().UTC()
@@ -649,18 +650,33 @@ func convertMetros(onchain []serviceability.Exchange) []Metro {
 	return result
 }
 
-func convertTenants(onchain []serviceability.Tenant) []Tenant {
+func convertTenants(onchain []serviceability.Tenant, topologies []serviceability.TopologyInfo) []Tenant {
+	// Build a map of topology pubkey -> name for quick lookup
+	topologyNames := make(map[[32]byte]string, len(topologies))
+	for _, topo := range topologies {
+		topologyNames[topo.PubKey] = topo.Name
+	}
+
 	result := make([]Tenant, len(onchain))
 	for i, t := range onchain {
+		names := make([]string, 0, len(t.IncludeTopologies))
+		for _, pk := range t.IncludeTopologies {
+			if name, ok := topologyNames[pk]; ok {
+				names = append(names, name)
+			}
+		}
+		topologiesJSON, _ := json.Marshal(names)
+
 		result[i] = Tenant{
-			PK:            solana.PublicKeyFromBytes(t.PubKey[:]).String(),
-			OwnerPubkey:   solana.PublicKeyFromBytes(t.Owner[:]).String(),
-			Code:          t.Code,
-			PaymentStatus: t.PaymentStatus.String(),
-			VrfID:         t.VrfId,
-			MetroRouting:  t.MetroRouting,
-			RouteLiveness: t.RouteLiveness,
-			BillingRate:   t.BillingRate,
+			PK:                solana.PublicKeyFromBytes(t.PubKey[:]).String(),
+			OwnerPubkey:       solana.PublicKeyFromBytes(t.Owner[:]).String(),
+			Code:              t.Code,
+			PaymentStatus:     t.PaymentStatus.String(),
+			VrfID:             t.VrfId,
+			MetroRouting:      t.MetroRouting,
+			RouteLiveness:     t.RouteLiveness,
+			BillingRate:       t.BillingRate,
+			IncludeTopologies: string(topologiesJSON),
 		}
 	}
 	return result
