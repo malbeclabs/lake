@@ -1680,10 +1680,10 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           displayWeight = Math.max(displayWeight, 4)
         }
       } else if (flexAlgoMode && selectedFlexAlgoTopology === '__multicast_only__') {
-        // Flex-Algo overlay: multicast-only mode — highlight untagged links
+        // Flex-Algo overlay: algo-0 mode — highlight untagged links
         const isMulticastOnly = !link.link_topologies || link.link_topologies.length === 0
         if (isMulticastOnly) {
-          displayColor = '#06b6d4' // cyan — multicast only
+          displayColor = '#06b6d4' // cyan — algo 0
           displayOpacity = 1.0
           displayWeight = defaultWeight + 2
         } else {

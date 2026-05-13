@@ -75,7 +75,7 @@ export function FlexAlgoOverlayPanel({ isDark }: FlexAlgoOverlayPanelProps) {
             onChange={() => setSelectedFlexAlgoTopology('__multicast_only__')}
             className="accent-cyan-500"
           />
-          <span>Multicast only</span>
+          <span>Algo 0</span>
           <span className="text-muted-foreground ml-auto">{totalLinkCount - (topologies?.reduce((sum, t) => sum + t.link_count, 0) ?? 0)}</span>
         </label>
 
@@ -134,7 +134,7 @@ export function FlexAlgoOverlayPanel({ isDark }: FlexAlgoOverlayPanelProps) {
           <div className="space-y-1">
             <div className="flex items-center gap-2">
               <div className="w-5 h-0.5 bg-cyan-500 rounded" />
-              <span>multicast only</span>
+              <span>algo 0</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-5 h-0.5 bg-gray-400 rounded opacity-30" />

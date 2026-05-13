@@ -82,7 +82,7 @@ const validFilterFields = ['code', 'type', 'topology', 'contributor', 'sidea', '
 const linkFieldPrefixes = [
   { prefix: 'code:', description: 'Filter by link code' },
   { prefix: 'type:', description: 'Filter by link type' },
-  { prefix: 'topology:', description: 'Filter by topology (e.g., unicast-default, multicast-only)' },
+  { prefix: 'topology:', description: 'Filter by topology (e.g., unicast-default, algo-0)' },
   { prefix: 'contributor:', description: 'Filter by contributor' },
   { prefix: 'sidea:', description: 'Filter by side A device' },
   { prefix: 'sidez:', description: 'Filter by side Z device' },
@@ -400,7 +400,7 @@ export function LinksPage() {
                             )}
                           </span>
                         ) : (
-                          <span className="text-cyan-600 dark:text-cyan-400 text-xs">multicast only</span>
+                          <span className="text-cyan-600 dark:text-cyan-400 text-xs">algo 0</span>
                         )}
                       </td>
                     )}

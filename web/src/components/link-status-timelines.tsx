@@ -303,7 +303,7 @@ function LinkInfoPopover({
                 <div className="font-medium">
                   {linkMetrics.link_topologies.length > 0
                     ? linkMetrics.link_topologies.join(', ')
-                    : <span className="text-cyan-500">multicast only</span>}
+                    : <span className="text-cyan-500">algo 0</span>}
                   {linkMetrics.unicast_drained && (
                     <span className="ml-1 text-amber-500">(drained)</span>
                   )}
