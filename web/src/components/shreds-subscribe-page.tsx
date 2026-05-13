@@ -2,8 +2,9 @@ import { useState, useMemo, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { PublicKey } from '@solana/web3.js'
-import { useSearchParams } from 'react-router-dom'
-import { Loader2, AlertCircle, Zap } from 'lucide-react'
+import { useSearchParams, Link } from 'react-router-dom'
+import { Loader2, AlertCircle, Zap, LogIn } from 'lucide-react'
+import { LoginModal } from './auth/LoginModal'
 import {
   fetchShredDevices,
   fetchShredsOverview,
@@ -71,6 +72,7 @@ export function ShredsSubscribePage() {
 
   const [clientIp, setClientIp] = useState('')
   const [amountStr, setAmountStr] = useState('')
+  const [showLoginModal, setShowLoginModal] = useState(false)
   const ipValid = clientIp === '' || isValidIpv4(clientIp)
   const amount = parseFloat(amountStr)
   const amountValid = !isNaN(amount) && amount > 0
@@ -236,7 +238,7 @@ export function ShredsSubscribePage() {
 
   const userEmail = user?.email ?? null
   const laneBanner = (
-    <div className="px-4 py-2 rounded-lg border border-border bg-card text-sm">
+    <div className="px-4 py-2 rounded-lg border border-border bg-card text-sm flex flex-wrap items-center gap-3">
       {isAuthenticated ? (
         <span>
           <span className="text-muted-foreground">Signed in as </span>
@@ -244,10 +246,19 @@ export function ShredsSubscribePage() {
           <span className="text-muted-foreground"> · Your wallet still signs the on-chain transaction.</span>
         </span>
       ) : (
-        <span className="text-muted-foreground">
-          You're checking out as <span className="font-medium text-foreground">guest</span>.{' '}
-          Sign in for receipt history & team seats <span className="italic">(coming soon)</span>.
-        </span>
+        <>
+          <span className="text-muted-foreground flex-1">
+            You're checking out as <span className="font-medium text-foreground">guest</span>.{' '}
+            Sign in to manage subscriptions and view receipt history.
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowLoginModal(true)}
+            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+          >
+            <LogIn className="h-3 w-3" /> Sign in
+          </button>
+        </>
       )}
     </div>
   )
@@ -266,10 +277,13 @@ export function ShredsSubscribePage() {
           </div>
         </div>
 
-        <ModeTabs mode={modeParam} onChange={handleSelectMode} />
+        <ModeTabs mode={modeParam} onChange={handleSelectMode} isAuthenticated={isAuthenticated} />
 
         {modeParam === 'withdraw' ? (
-          <WithdrawWizard />
+          <>
+            {laneBanner}
+            <WithdrawWizard />
+          </>
         ) : selectedDevice ? (
           <>
             {laneBanner}
@@ -318,6 +332,7 @@ export function ShredsSubscribePage() {
           />
         )}
       </div>
+      <LoginModal isOpen={showLoginModal} onClose={() => setShowLoginModal(false)} />
     </div>
   )
 }
@@ -325,9 +340,11 @@ export function ShredsSubscribePage() {
 function ModeTabs({
   mode,
   onChange,
+  isAuthenticated,
 }: {
   mode: 'subscribe' | 'withdraw'
   onChange: (m: 'subscribe' | 'withdraw') => void
+  isAuthenticated: boolean
 }) {
   return (
     <div className="inline-flex rounded-lg border border-border overflow-hidden text-sm">
@@ -347,6 +364,14 @@ function ModeTabs({
       >
         Withdraw
       </button>
+      {isAuthenticated && (
+        <Link
+          to="/account/subscriptions"
+          className="px-4 py-1.5 transition-colors border-l border-border bg-background text-muted-foreground hover:bg-muted"
+        >
+          Manage
+        </Link>
+      )}
     </div>
   )
 }
