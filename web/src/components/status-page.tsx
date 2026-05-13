@@ -1721,7 +1721,7 @@ function TopLinkUtilization({
                   {formatBandwidth(peakBps)}
                   {link.link_topologies !== undefined && (
                     link.link_topologies.length > 0
-                      ? <> · <span className="text-green-600 dark:text-green-400">{link.link_topologies.join(', ')}</span></>
+                      ? <> · <span className="text-green-600 dark:text-green-400">{link.link_topologies.join(', ')}</span>{link.unicast_drained && <span className="text-amber-500"> (drained)</span>}</>
                       : <> · <span className="text-cyan-600 dark:text-cyan-400">multicast only</span></>
                   )}
                 </div>
@@ -1746,7 +1746,7 @@ function TopLinkUtilization({
                   {link.side_a_metro} - {link.side_z_metro}
                   {link.link_topologies !== undefined && (
                     link.link_topologies.length > 0
-                      ? <> · <span className="text-green-600 dark:text-green-400">{link.link_topologies.join(', ')}</span></>
+                      ? <> · <span className="text-green-600 dark:text-green-400">{link.link_topologies.join(', ')}</span>{link.unicast_drained && <span className="text-amber-500"> (drained)</span>}</>
                       : <> · <span className="text-cyan-600 dark:text-cyan-400">multicast only</span></>
                   )}
                 </div>
@@ -1974,7 +1974,7 @@ function DisabledLinksTable({
                 {showTopology && (
                   <td className="px-4 py-2.5 text-sm whitespace-nowrap">
                     {link.link_topologies && link.link_topologies.length > 0
-                      ? <span className="text-green-600 dark:text-green-400">{link.link_topologies.join(', ')}</span>
+                      ? <><span className="text-green-600 dark:text-green-400">{link.link_topologies.join(', ')}</span>{link.unicast_drained && <span className="text-amber-500 ml-1">(drained)</span>}</>
                       : <span className="text-cyan-600 dark:text-cyan-400">multicast only</span>}
                   </td>
                 )}
