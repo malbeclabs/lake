@@ -1185,7 +1185,7 @@ func queryStatusLinkMeta(ctx context.Context, db driver.Conn, linkPKs ...string)
 		); err != nil {
 			return nil, fmt.Errorf("link metadata scan: %w", err)
 		}
-		json.Unmarshal([]byte(linkTopologiesJSON), &m.LinkTopologies)
+		_ = json.Unmarshal([]byte(linkTopologiesJSON), &m.LinkTopologies)
 		if m.LinkTopologies == nil {
 			m.LinkTopologies = []string{}
 		}

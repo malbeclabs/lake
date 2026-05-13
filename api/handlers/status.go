@@ -100,16 +100,16 @@ type LinkIssue struct {
 }
 
 type LinkMetric struct {
-	PK               string  `json:"pk"`
-	Code             string  `json:"code"`
-	LinkType         string  `json:"link_type"`
-	Contributor      string  `json:"contributor"`
-	SideZContributor string  `json:"side_z_contributor"`
-	BandwidthBps     int64   `json:"bandwidth_bps"`
-	InBps            float64 `json:"in_bps"`
-	OutBps           float64 `json:"out_bps"`
-	UtilizationIn    float64 `json:"utilization_in"`
-	UtilizationOut   float64 `json:"utilization_out"`
+	PK               string   `json:"pk"`
+	Code             string   `json:"code"`
+	LinkType         string   `json:"link_type"`
+	Contributor      string   `json:"contributor"`
+	SideZContributor string   `json:"side_z_contributor"`
+	BandwidthBps     int64    `json:"bandwidth_bps"`
+	InBps            float64  `json:"in_bps"`
+	OutBps           float64  `json:"out_bps"`
+	UtilizationIn    float64  `json:"utilization_in"`
+	UtilizationOut   float64  `json:"utilization_out"`
 	SideAMetro       string   `json:"side_a_metro"`
 	SideZMetro       string   `json:"side_z_metro"`
 	LinkTopologies   []string `json:"link_topologies"`
@@ -189,7 +189,7 @@ type NonActivatedLink struct {
 	SideZMetro          string   `json:"side_z_metro"`
 	Status              string   `json:"status"`
 	Since               string   `json:"since"` // ISO timestamp when entered this status
-	ActiveIncidentTypes []string  `json:"active_incident_types,omitempty"`
+	ActiveIncidentTypes []string `json:"active_incident_types,omitempty"`
 	BandwidthBps        int64    `json:"bandwidth_bps"`
 	LinkTopologies      []string `json:"link_topologies"`
 	UnicastDrained      bool     `json:"unicast_drained"`
@@ -678,7 +678,7 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 			}
 
 			var linkTopologies []string
-			json.Unmarshal([]byte(linkTopologiesJSON), &linkTopologies)
+			_ = json.Unmarshal([]byte(linkTopologiesJSON), &linkTopologies)
 			if linkTopologies == nil {
 				linkTopologies = []string{}
 			}
@@ -1157,7 +1157,7 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 			if err := rows.Scan(&link.PK, &link.Code, &link.LinkType, &link.SideAMetro, &link.SideZMetro, &link.Status, &link.Since, &link.BandwidthBps, &linkTopologiesJSON, &link.UnicastDrained); err != nil {
 				return err
 			}
-			json.Unmarshal([]byte(linkTopologiesJSON), &link.LinkTopologies)
+			_ = json.Unmarshal([]byte(linkTopologiesJSON), &link.LinkTopologies)
 			if link.LinkTopologies == nil {
 				link.LinkTopologies = []string{}
 			}
