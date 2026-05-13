@@ -42,6 +42,8 @@ export function linkDetailToInfo(link: LinkDetail): LinkInfoData {
     peakOutBps: link.peak_out_bps,
     committedRttNs: link.committed_rtt_ns,
     isisDelayOverrideNs: link.isis_delay_override_ns,
+    linkTopologies: link.link_topologies ?? [],
+    unicastDrained: link.unicast_drained ?? false,
   }
 }
 
@@ -79,6 +81,8 @@ export function topologyLinkToInfo(link: {
   sideZContributorCode: string
   committedRttNs: number
   isisDelayOverrideNs: number
+  linkTopologies?: string[]
+  unicastDrained?: boolean
 }): LinkInfoData {
   return {
     pk: link.pk,
@@ -115,5 +119,7 @@ export function topologyLinkToInfo(link: {
     lossPercent: link.lossPercent,
     committedRttNs: link.committedRttNs,
     isisDelayOverrideNs: link.isisDelayOverrideNs,
+    linkTopologies: link.linkTopologies ?? [],
+    unicastDrained: link.unicastDrained ?? false,
   }
 }

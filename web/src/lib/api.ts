@@ -1662,6 +1662,8 @@ export interface TopologyLink {
   out_bps: number
   committed_rtt_ns: number
   isis_delay_override_ns: number
+  link_topologies?: string[]
+  unicast_drained?: boolean
 }
 
 export interface TopologyValidator {
@@ -1697,6 +1699,24 @@ export async function fetchTopology(): Promise<TopologyResponse> {
   const res = await fetchWithRetry('/api/topology')
   if (!res.ok) {
     throw new Error('Failed to fetch topology')
+  }
+  return res.json()
+}
+
+export interface TopologyInfo {
+  pk: string
+  name: string
+  admin_group_bit: number
+  flex_algo_number: number
+  color: number
+  constraint: string
+  link_count: number
+}
+
+export async function fetchTopologies(): Promise<TopologyInfo[]> {
+  const res = await fetchWithRetry('/api/topologies')
+  if (!res.ok) {
+    throw new Error('Failed to fetch topologies')
   }
   return res.json()
 }
@@ -2961,6 +2981,8 @@ export interface Link {
   latency_z_to_a_us: number
   jitter_z_to_a_us: number
   loss_percent: number
+  link_topologies?: string[]
+  unicast_drained?: boolean
 }
 
 export async function fetchLinks(
