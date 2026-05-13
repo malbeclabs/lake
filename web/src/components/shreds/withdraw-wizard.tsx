@@ -21,11 +21,8 @@ import {
   deriveShredAccounts,
 } from '@/lib/shred-transactions'
 import { useShredAccounts } from '@/hooks/use-shred-accounts'
-import {
-  useShredTransaction,
-  type TransactionStatus,
-  type UseShredTransactionResult,
-} from '@/hooks/use-shred-transaction'
+import { useShredTransaction } from '@/hooks/use-shred-transaction'
+import { useMockedShredTransaction } from '@/lib/mocked-shred-transaction'
 import { useAuth } from '@/contexts/AuthContext'
 import { Section, StepBar } from './wizard-shared'
 import { TransactionProgress } from './transaction-progress'
@@ -78,37 +75,6 @@ const PREVIEW_SEATS: ShredClientSeat[] = [
     last_activity: new Date().toISOString(),
   },
 ]
-
-// Drives the same status sequence as a real withdraw, with no wallet or RPC calls.
-function useMockedWithdrawTx(): UseShredTransactionResult {
-  const [status, setStatus] = useState<TransactionStatus>('idle')
-  const [txSignature, setTxSignature] = useState<string | null>(null)
-
-  const reset = useCallback(() => {
-    setStatus('idle')
-    setTxSignature(null)
-  }, [])
-
-  const execute = useCallback(async (): Promise<string | null> => {
-    const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
-    setTxSignature(null)
-    setStatus('building');   await sleep(300)
-    setStatus('signing');    await sleep(600)
-    setStatus('sending');    await sleep(500)
-    const sig = 'PreviewTx_NotReal_' + Date.now()
-    setTxSignature(sig)
-    setStatus('confirming'); await sleep(800)
-    setStatus('confirmed')
-    return sig
-  }, [])
-
-  // simulate is unused in preview but kept to match the result shape.
-  const simulate = useCallback(async () => {
-    setStatus('simulated')
-  }, [])
-
-  return { status, txSignature, error: null, execute, simulate, reset }
-}
 
 export function WithdrawWizard() {
   const { publicKey: wallet, connected } = useWallet()
@@ -175,7 +141,7 @@ export function WithdrawWizard() {
   // Call both hooks unconditionally to satisfy the rules of hooks; pick the
   // result we render from based on `preview`.
   const realTx = useShredTransaction()
-  const mockTx = useMockedWithdrawTx()
+  const mockTx = useMockedShredTransaction()
   const { status: txStatus, txSignature, error: txError, execute, simulate, reset: resetTx } = preview ? mockTx : realTx
 
   const canSubmit = Boolean(

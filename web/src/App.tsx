@@ -71,6 +71,7 @@ import { GossipNodeDetailPage } from '@/components/gossip-node-detail-page'
 
 import { DZLedgerPage, SolanaOverviewPage } from '@/components/ledger-page'
 import { SettingsPage } from '@/components/settings-page'
+import { SubscriptionsConsolePage } from '@/components/console/subscriptions-console-page'
 import { ChangelogPage } from '@/components/changelog-page'
 import { TermsPage } from '@/components/terms-page'
 import { MCPDocsPage } from '@/components/mcp-docs-page'
@@ -678,6 +679,9 @@ function AppContent() {
 
             {/* Settings */}
             <Route path="/settings" element={<SettingsPage />} />
+
+            {/* Account */}
+            <Route path="/account/subscriptions" element={<SubscriptionsConsolePage />} />
 
             {/* Changelog */}
             <Route path="/changelog" element={<ChangelogPage />} />

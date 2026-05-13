@@ -9,15 +9,19 @@ import { ipv4ToU32 } from '@/lib/shred-program'
 import { deriveShredAccounts, buildUnsubscribeInstructions } from '@/lib/shred-transactions'
 import { useShredAccounts } from '@/hooks/use-shred-accounts'
 import { useShredTransaction } from '@/hooks/use-shred-transaction'
+import { useMockedShredTransaction } from '@/lib/mocked-shred-transaction'
 
 interface ShredWithdrawModalProps {
   seat: ShredClientSeat
   onClose: () => void
+  preview?: boolean
 }
 
-export function ShredWithdrawModal({ seat, onClose }: ShredWithdrawModalProps) {
+export function ShredWithdrawModal({ seat, onClose, preview = false }: ShredWithdrawModalProps) {
   const { publicKey: wallet, connected } = useWallet()
-  const { status, txSignature, error, execute, reset } = useShredTransaction()
+  const realTx = useShredTransaction()
+  const mockTx = useMockedShredTransaction()
+  const { status, txSignature, error, execute, reset } = preview ? mockTx : realTx
   const queryClient = useQueryClient()
 
   const currentBalance = seat.total_usdc_balance / 1e6
@@ -33,10 +37,15 @@ export function ShredWithdrawModal({ seat, onClose }: ShredWithdrawModalProps) {
   // Fetch on-chain state to know if escrow exists
   const shredState = useShredAccounts(devicePubkey, seat.client_ip)
 
-  const canSubmit = connected && status === 'idle'
+  const canSubmit = (preview || connected) && status === 'idle'
 
   const handleWithdraw = useCallback(async () => {
-    if (!canSubmit || !wallet || !devicePubkey || !metroPubkey) return
+    if (!canSubmit) return
+    if (preview) {
+      await execute([])
+      return
+    }
+    if (!wallet || !devicePubkey || !metroPubkey) return
 
     const clientIpBits = ipv4ToU32(seat.client_ip)
     const accounts = deriveShredAccounts({
@@ -56,7 +65,7 @@ export function ShredWithdrawModal({ seat, onClose }: ShredWithdrawModalProps) {
     if (sig) {
       queryClient.invalidateQueries({ queryKey: ['shred-client-seats'] })
     }
-  }, [canSubmit, wallet, devicePubkey, metroPubkey, seat.client_ip, shredState.escrowExists, execute, queryClient])
+  }, [canSubmit, preview, wallet, devicePubkey, metroPubkey, seat.client_ip, shredState.escrowExists, execute, queryClient])
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -141,7 +150,7 @@ export function ShredWithdrawModal({ seat, onClose }: ShredWithdrawModalProps) {
               {status === 'confirming' && 'Confirming on-chain...'}
             </span>
           </div>
-        ) : !connected ? (
+        ) : !connected && !preview ? (
           <div className="flex flex-col items-center gap-3 py-2">
             <p className="text-sm text-muted-foreground">Connect your wallet to unsubscribe</p>
             <WalletMultiButton />
