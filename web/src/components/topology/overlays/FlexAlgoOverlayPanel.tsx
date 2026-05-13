@@ -47,6 +47,7 @@ export function FlexAlgoOverlayPanel({ isDark }: FlexAlgoOverlayPanelProps) {
             className="accent-purple-500"
           />
           <span>All links (algo 0)</span>
+          <span className="text-muted-foreground ml-auto">{topologies?.reduce((sum, t) => sum + t.link_count, 0) ?? 0}</span>
         </label>
 
         {topologies?.map((t) => (
