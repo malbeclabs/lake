@@ -518,23 +518,30 @@ export function UsersPage() {
                       )}
                     </td>
                     {hasTopologies && (() => {
-                      const topos = user.include_topologies?.length > 0
-                        ? user.include_topologies
-                        : defaultTopology ? [defaultTopology.name] : []
+                      const isMulticast = user.kind === 'multicast'
+                      const topos = isMulticast
+                        ? []
+                        : user.include_topologies?.length > 0
+                          ? user.include_topologies
+                          : defaultTopology ? [defaultTopology.name] : []
                       const color = topos.length > 0 ? topologyColorMap.get(topos[0]) ?? '' : ''
                       return (
                         <>
                           <td className="px-4 py-3 text-sm">
-                            <span className="inline-flex flex-wrap gap-1">
-                              {topos.map((name: string) => (
-                                <span key={name} className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-500/15 text-green-600 dark:text-green-400">
-                                  {name}
-                                </span>
-                              ))}
-                            </span>
+                            {isMulticast ? (
+                              <span className="text-cyan-600 dark:text-cyan-400 text-xs">algo 0</span>
+                            ) : (
+                              <span className="inline-flex flex-wrap gap-1">
+                                {topos.map((name: string) => (
+                                  <span key={name} className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-500/15 text-green-600 dark:text-green-400">
+                                    {name}
+                                  </span>
+                                ))}
+                              </span>
+                            )}
                           </td>
                           <td className="px-4 py-3 text-sm tabular-nums text-muted-foreground">
-                            {color}
+                            {isMulticast ? '—' : color}
                           </td>
                         </>
                       )
