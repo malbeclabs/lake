@@ -348,7 +348,7 @@ func (f FilterParams) BuildFilterClause(fields map[string]FilterFieldConfig) (st
 
 	case FieldTypeJSONArray:
 		val := strings.ToLower(strings.TrimSpace(f.Value))
-		if val == "algo-0" || val == "algo 0" || val == "multicast-only" || val == "multicast only" || val == "none" {
+		if val == "default" || val == "algo-0" || val == "algo 0" || val == "multicast-only" || val == "multicast only" || val == "none" {
 			return "(" + config.Column + " = '[]' OR " + config.Column + " = '')", nil
 		}
 		// Match links containing a specific topology name

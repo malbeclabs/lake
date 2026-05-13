@@ -177,7 +177,6 @@ export function UsersPage() {
     staleTime: 60_000,
   })
   const hasTopologies = (topologiesData?.topologies?.length ?? 0) > 0
-  const defaultTopology = topologiesData?.topologies?.[0]
   const topologyColorMap = new Map(topologiesData?.topologies?.map(t => [t.name, t.color]) ?? [])
 
   const users = response?.items ?? []
@@ -523,14 +522,14 @@ export function UsersPage() {
                         ? []
                         : user.include_topologies?.length > 0
                           ? user.include_topologies
-                          : defaultTopology ? [defaultTopology.name] : []
+                          : []
                       const color = topos.length > 0 ? topologyColorMap.get(topos[0]) ?? '' : ''
                       return (
                         <>
                           <td className="px-4 py-3 text-sm">
                             {isMulticast ? (
-                              <span className="text-cyan-600 dark:text-cyan-400 text-xs">algo 0</span>
-                            ) : (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-cyan-500/15 text-cyan-600 dark:text-cyan-400">default</span>
+                            ) : topos.length > 0 ? (
                               <span className="inline-flex flex-wrap gap-1">
                                 {topos.map((name: string) => (
                                   <span key={name} className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-500/15 text-green-600 dark:text-green-400">
@@ -538,10 +537,12 @@ export function UsersPage() {
                                   </span>
                                 ))}
                               </span>
+                            ) : (
+                              <span className="text-sm text-muted-foreground">default</span>
                             )}
                           </td>
                           <td className="px-4 py-3 text-sm tabular-nums text-muted-foreground">
-                            {isMulticast ? '—' : color}
+                            {(isMulticast || topos.length === 0) ? '—' : color}
                           </td>
                         </>
                       )

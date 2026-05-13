@@ -358,7 +358,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const linkHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Get unified topology context
-  const { mode, setMode, overlays, toggleOverlay, panel, openPanel, closePanel, selection, impactDevices, toggleImpactDevice, clearImpactDevices, hoveredDiscrepancyKey, selectedFlexAlgoTopology } = useTopology()
+  const { mode, setMode, overlays, toggleOverlay, panel, openPanel, closePanel, selection, impactDevices, toggleImpactDevice, clearImpactDevices, hoveredDiscrepancyKey, flexAlgoTopology, flexAlgoFilterDefault, flexAlgoFilterDrained } = useTopology()
 
   // Derive mode states from context
   const pathModeEnabled = mode === 'path'
@@ -1679,46 +1679,99 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         if (isHoveredDiscrepancy) {
           displayWeight = Math.max(displayWeight, 4)
         }
-      } else if (flexAlgoMode && selectedFlexAlgoTopology === '__multicast_only__') {
-        // Flex-Algo overlay: algo-0 mode — highlight untagged links
-        const isMulticastOnly = !link.link_topologies || link.link_topologies.length === 0
-        if (isMulticastOnly) {
-          displayColor = '#06b6d4' // cyan — algo 0
-          displayOpacity = 1.0
-          displayWeight = defaultWeight + 2
-        } else {
-          displayColor = isDark ? '#4b5563' : '#9ca3af' // gray — has unicast topology
-          displayOpacity = 0.25
-          displayWeight = defaultWeight - 1
-        }
-      } else if (flexAlgoMode && selectedFlexAlgoTopology === '__unicast_drained__') {
-        // Flex-Algo overlay: unicast drained mode — highlight drained links
-        if (link.unicast_drained) {
-          displayColor = '#f59e0b' // amber — drained
-          useDash = true
-          displayOpacity = 1.0
-          displayWeight = defaultWeight + 2
-        } else {
-          displayColor = isDark ? '#4b5563' : '#9ca3af'
-          displayOpacity = 0.25
-          displayWeight = defaultWeight - 1
-        }
-      } else if (flexAlgoMode && selectedFlexAlgoTopology) {
-        // Flex-Algo overlay: highlight links in the selected topology
-        const inTopology = link.link_topologies?.includes(selectedFlexAlgoTopology)
-        if (inTopology && link.unicast_drained) {
-          displayColor = '#f59e0b' // amber — drained
-          useDash = true
-          displayOpacity = 0.9
-          displayWeight = defaultWeight + 1
-        } else if (inTopology) {
-          displayColor = '#22c55e' // green — in topology
-          displayOpacity = 1.0
-          displayWeight = defaultWeight + 1
-        } else {
-          displayColor = isDark ? '#4b5563' : '#9ca3af' // gray — excluded
-          displayOpacity = 0.25
-          displayWeight = defaultWeight - 1
+      } else if (flexAlgoMode) {
+        // Flex-Algo overlay: structured topology view + filter checkboxes
+        const isDefault = !link.link_topologies || link.link_topologies.length === 0
+        const isDrained = !!link.unicast_drained
+        const inTopology = flexAlgoTopology ? link.link_topologies?.includes(flexAlgoTopology) : false
+        const hasFilter = flexAlgoFilterDefault || flexAlgoFilterDrained
+
+        if (flexAlgoTopology === null && !hasFilter) {
+          // All links, no filters: default rendering (no change — fall through)
+        } else if (flexAlgoTopology === null && flexAlgoFilterDefault && !flexAlgoFilterDrained) {
+          // All links + only default filter: highlight untagged cyan, dim others
+          if (isDefault) {
+            displayColor = '#06b6d4' // cyan
+            displayOpacity = 1.0
+            displayWeight = defaultWeight + 2
+          } else {
+            displayColor = isDark ? '#4b5563' : '#9ca3af'
+            displayOpacity = 0.25
+            displayWeight = defaultWeight - 1
+          }
+        } else if (flexAlgoTopology === null && !flexAlgoFilterDefault && flexAlgoFilterDrained) {
+          // All links + only drained filter: highlight drained amber dashed, dim others
+          if (isDrained) {
+            displayColor = '#f59e0b' // amber
+            useDash = true
+            displayOpacity = 1.0
+            displayWeight = defaultWeight + 2
+          } else {
+            displayColor = isDark ? '#4b5563' : '#9ca3af'
+            displayOpacity = 0.25
+            displayWeight = defaultWeight - 1
+          }
+        } else if (flexAlgoTopology === null && flexAlgoFilterDefault && flexAlgoFilterDrained) {
+          // All links + both filters (union): highlight default OR drained
+          if (isDefault) {
+            displayColor = '#06b6d4' // cyan
+            displayOpacity = 1.0
+            displayWeight = defaultWeight + 2
+          } else if (isDrained) {
+            displayColor = '#f59e0b' // amber
+            useDash = true
+            displayOpacity = 1.0
+            displayWeight = defaultWeight + 2
+          } else {
+            displayColor = isDark ? '#4b5563' : '#9ca3af'
+            displayOpacity = 0.25
+            displayWeight = defaultWeight - 1
+          }
+        } else if (flexAlgoTopology !== null && !hasFilter) {
+          // Named topology, no filters: highlight members green, drained amber dashed, dim rest
+          if (inTopology && isDrained) {
+            displayColor = '#f59e0b' // amber — drained member
+            useDash = true
+            displayOpacity = 0.9
+            displayWeight = defaultWeight + 1
+          } else if (inTopology) {
+            displayColor = '#22c55e' // green — in topology
+            displayOpacity = 1.0
+            displayWeight = defaultWeight + 1
+          } else {
+            displayColor = isDark ? '#4b5563' : '#9ca3af'
+            displayOpacity = 0.25
+            displayWeight = defaultWeight - 1
+          }
+        } else if (flexAlgoTopology !== null && flexAlgoFilterDrained) {
+          // Named topology + drained filter: only highlight drained members
+          if (inTopology && isDrained) {
+            displayColor = '#f59e0b' // amber — drained member
+            useDash = true
+            displayOpacity = 1.0
+            displayWeight = defaultWeight + 2
+          } else {
+            displayColor = isDark ? '#4b5563' : '#9ca3af'
+            displayOpacity = 0.25
+            displayWeight = defaultWeight - 1
+          }
+        } else if (flexAlgoTopology !== null && flexAlgoFilterDefault) {
+          // Named topology + default filter: doesn't make sense (default links aren't in named topologies)
+          // Treat as no additional filter — show topology members
+          if (inTopology && isDrained) {
+            displayColor = '#f59e0b'
+            useDash = true
+            displayOpacity = 0.9
+            displayWeight = defaultWeight + 1
+          } else if (inTopology) {
+            displayColor = '#22c55e'
+            displayOpacity = 1.0
+            displayWeight = defaultWeight + 1
+          } else {
+            displayColor = isDark ? '#4b5563' : '#9ca3af'
+            displayOpacity = 0.25
+            displayWeight = defaultWeight - 1
+          }
         }
       } else if (isInSelectedPath && linkPathIndices) {
         // Use the selected path's color
@@ -1837,7 +1890,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       features,
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [links, devicePositions, isDark, hoveredLink, selectedItem, hoverHighlight, linkPathMap, selectedPathIndex, criticalityOverlayEnabled, linkCriticalityMap, whatifRemovalMode, removalLink, linkHealthMode, linkSlaStatus, trafficFlowMode, getTrafficColor, metroClusteringMode, collapsedMetros, deviceMap, metroMap, contributorLinksMode, contributorIndexMap, bandwidthMode, isisHealthMode, edgeHealthStatus, linkTypeMode, metroPathModeEnabled, metroLinkPathMap, metroPathSelectedPairs, multicastTreesMode, dimOtherLinks, hoveredDiscrepancyKey, flexAlgoMode, selectedFlexAlgoTopology])
+  }, [links, devicePositions, isDark, hoveredLink, selectedItem, hoverHighlight, linkPathMap, selectedPathIndex, criticalityOverlayEnabled, linkCriticalityMap, whatifRemovalMode, removalLink, linkHealthMode, linkSlaStatus, trafficFlowMode, getTrafficColor, metroClusteringMode, collapsedMetros, deviceMap, metroMap, contributorLinksMode, contributorIndexMap, bandwidthMode, isisHealthMode, edgeHealthStatus, linkTypeMode, metroPathModeEnabled, metroLinkPathMap, metroPathSelectedPairs, multicastTreesMode, dimOtherLinks, hoveredDiscrepancyKey, flexAlgoMode, flexAlgoTopology, flexAlgoFilterDefault, flexAlgoFilterDrained])
 
   // GeoJSON for validator links (connecting lines)
   const validatorLinksGeoJson = useMemo(() => {

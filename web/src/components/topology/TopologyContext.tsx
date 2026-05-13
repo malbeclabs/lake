@@ -85,9 +85,14 @@ export interface TopologyContextValue {
   hoveredDiscrepancyKey: string | null
   setHoveredDiscrepancyKey: (key: string | null) => void
 
-  // Flex-Algo overlay: selected topology name (null = all links / algo 0)
-  selectedFlexAlgoTopology: string | null
-  setSelectedFlexAlgoTopology: (name: string | null) => void
+  // Flex-Algo overlay: topology view (null = all links, string = named topology)
+  flexAlgoTopology: string | null
+  setFlexAlgoTopology: (name: string | null) => void
+  // Flex-Algo overlay: filter checkboxes (orthogonal to topology view)
+  flexAlgoFilterDefault: boolean
+  setFlexAlgoFilterDefault: (on: boolean) => void
+  flexAlgoFilterDrained: boolean
+  setFlexAlgoFilterDrained: (on: boolean) => void
 }
 
 const TopologyContext = createContext<TopologyContextValue | null>(null)
@@ -201,8 +206,10 @@ export function TopologyProvider({ children, view }: TopologyProviderProps) {
   // Hovered discrepancy key for ISIS overlay highlight
   const [hoveredDiscrepancyKey, setHoveredDiscrepancyKey] = useState<string | null>(null)
 
-  // Flex-Algo topology selection
-  const [selectedFlexAlgoTopology, setSelectedFlexAlgoTopology] = useState<string | null>(null)
+  // Flex-Algo topology view + filter checkboxes
+  const [flexAlgoTopology, setFlexAlgoTopology] = useState<string | null>(null)
+  const [flexAlgoFilterDefault, setFlexAlgoFilterDefault] = useState(false)
+  const [flexAlgoFilterDrained, setFlexAlgoFilterDrained] = useState(false)
 
   // Impact mode multi-select state
   const [impactDevices, setImpactDevices] = useState<string[]>([])
@@ -398,8 +405,12 @@ export function TopologyProvider({ children, view }: TopologyProviderProps) {
     setHoveredEntity,
     hoveredDiscrepancyKey,
     setHoveredDiscrepancyKey,
-    selectedFlexAlgoTopology,
-    setSelectedFlexAlgoTopology,
+    flexAlgoTopology,
+    setFlexAlgoTopology,
+    flexAlgoFilterDefault,
+    setFlexAlgoFilterDefault,
+    flexAlgoFilterDrained,
+    setFlexAlgoFilterDrained,
   }
 
   return (

@@ -32,6 +32,7 @@ func (a *API) GetTopologies(w http.ResponseWriter, r *http.Request) {
 	topoQuery := `
 		SELECT pk, name, admin_group_bit, flex_algo_number, color, topo_constraint
 		FROM dz_topologies_current
+		ORDER BY name
 	`
 	topoRows, err := a.envDB(ctx).Query(ctx, topoQuery)
 	duration := time.Since(start)
@@ -99,8 +100,8 @@ func (a *API) GetTopologies(w http.ResponseWriter, r *http.Request) {
 		topologies = []TopologyItem{}
 	}
 
-	// Query total link count and drained count
-	var totalLinks, drainedLinks uint64
+	// Query total link count, drained count, and untagged count
+	var totalLinks, drainedLinks, untaggedLinks uint64
 	totalRow := a.envDB(ctx).QueryRow(ctx, `SELECT count() FROM dz_links_current`)
 	if err := totalRow.Scan(&totalLinks); err != nil {
 		slog.Warn("topology total link count query failed (non-fatal)", "error", err)
@@ -109,15 +110,21 @@ func (a *API) GetTopologies(w http.ResponseWriter, r *http.Request) {
 	if err := drainedRow.Scan(&drainedLinks); err != nil {
 		slog.Warn("topology drained link count query failed (non-fatal)", "error", err)
 	}
+	untaggedRow := a.envDB(ctx).QueryRow(ctx, `SELECT count() FROM dz_links_current WHERE link_topologies = '[]' OR link_topologies = ''`)
+	if err := untaggedRow.Scan(&untaggedLinks); err != nil {
+		slog.Warn("topology untagged link count query failed (non-fatal)", "error", err)
+	}
 
 	resp := struct {
-		Topologies       []TopologyItem `json:"topologies"`
-		TotalLinkCount   int            `json:"total_link_count"`
-		DrainedLinkCount int            `json:"drained_link_count"`
+		Topologies        []TopologyItem `json:"topologies"`
+		TotalLinkCount    int            `json:"total_link_count"`
+		DrainedLinkCount  int            `json:"drained_link_count"`
+		UntaggedLinkCount int            `json:"untagged_link_count"`
 	}{
-		Topologies:       topologies,
-		TotalLinkCount:   int(totalLinks),
-		DrainedLinkCount: int(drainedLinks),
+		Topologies:        topologies,
+		TotalLinkCount:    int(totalLinks),
+		DrainedLinkCount:  int(drainedLinks),
+		UntaggedLinkCount: int(untaggedLinks),
 	}
 
 	w.Header().Set("Content-Type", "application/json")

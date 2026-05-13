@@ -9,7 +9,12 @@ interface FlexAlgoOverlayPanelProps {
 
 export function FlexAlgoOverlayPanel({ isDark }: FlexAlgoOverlayPanelProps) {
   void isDark // reserved for future theming
-  const { toggleOverlay, selectedFlexAlgoTopology, setSelectedFlexAlgoTopology } = useTopology()
+  const {
+    toggleOverlay,
+    flexAlgoTopology, setFlexAlgoTopology,
+    flexAlgoFilterDefault, setFlexAlgoFilterDefault,
+    flexAlgoFilterDrained, setFlexAlgoFilterDrained,
+  } = useTopology()
 
   const { data } = useQuery({
     queryKey: ['topologies'],
@@ -18,7 +23,15 @@ export function FlexAlgoOverlayPanel({ isDark }: FlexAlgoOverlayPanelProps) {
   })
   const topologies = data?.topologies
   const totalLinkCount = data?.total_link_count ?? 0
+  const untaggedLinkCount = data?.untagged_link_count ?? 0
   const drainedLinkCount = data?.drained_link_count ?? 0
+
+  // Determine what legend to show based on current state
+  const showTopologyLegend = flexAlgoTopology !== null && !flexAlgoFilterDefault && !flexAlgoFilterDrained
+  const showDefaultFilterLegend = flexAlgoTopology === null && flexAlgoFilterDefault && !flexAlgoFilterDrained
+  const showDrainedFilterLegend = flexAlgoTopology === null && !flexAlgoFilterDefault && flexAlgoFilterDrained
+  const showUnionFilterLegend = flexAlgoTopology === null && flexAlgoFilterDefault && flexAlgoFilterDrained
+  const showTopologyDrainedLegend = flexAlgoTopology !== null && flexAlgoFilterDrained
 
   return (
     <div className="p-3 text-xs">
@@ -36,8 +49,9 @@ export function FlexAlgoOverlayPanel({ isDark }: FlexAlgoOverlayPanelProps) {
         </button>
       </div>
 
-      <div className="text-muted-foreground mb-3">
-        Filter links by topology membership. Non-member links are dimmed.
+      {/* Section 1 — Topology view (radio buttons) */}
+      <div className="text-muted-foreground mb-2">
+        Topology view
       </div>
 
       <div className="space-y-1.5">
@@ -45,11 +59,11 @@ export function FlexAlgoOverlayPanel({ isDark }: FlexAlgoOverlayPanelProps) {
           <input
             type="radio"
             name="flexAlgoTopology"
-            checked={selectedFlexAlgoTopology === null}
-            onChange={() => setSelectedFlexAlgoTopology(null)}
+            checked={flexAlgoTopology === null}
+            onChange={() => setFlexAlgoTopology(null)}
             className="accent-purple-500"
           />
-          <span>All links (algo 0)</span>
+          <span>All links</span>
           <span className="text-muted-foreground ml-auto">{totalLinkCount}</span>
         </label>
 
@@ -58,88 +72,120 @@ export function FlexAlgoOverlayPanel({ isDark }: FlexAlgoOverlayPanelProps) {
             <input
               type="radio"
               name="flexAlgoTopology"
-              checked={selectedFlexAlgoTopology === t.name}
-              onChange={() => setSelectedFlexAlgoTopology(t.name)}
+              checked={flexAlgoTopology === t.name}
+              onChange={() => setFlexAlgoTopology(t.name)}
               className="accent-green-500"
             />
             <span>{t.name}</span>
             <span className="text-muted-foreground ml-auto">{t.link_count}</span>
           </label>
         ))}
+      </div>
 
+      {/* Section 2 — Filters (checkboxes) */}
+      <hr className="border-[var(--border)] my-3" />
+
+      <div className="text-muted-foreground mb-2">
+        Filters
+      </div>
+
+      <div className="space-y-1.5">
         <label className="flex items-center gap-2 cursor-pointer">
           <input
-            type="radio"
-            name="flexAlgoTopology"
-            checked={selectedFlexAlgoTopology === '__multicast_only__'}
-            onChange={() => setSelectedFlexAlgoTopology('__multicast_only__')}
+            type="checkbox"
+            checked={flexAlgoFilterDefault}
+            onChange={(e) => setFlexAlgoFilterDefault(e.target.checked)}
             className="accent-cyan-500"
           />
-          <span>Algo 0</span>
-          <span className="text-muted-foreground ml-auto">{totalLinkCount - (topologies?.reduce((sum, t) => sum + t.link_count, 0) ?? 0)}</span>
+          <span>Only default links</span>
+          <span className="text-muted-foreground ml-auto">{untaggedLinkCount}</span>
         </label>
 
         <label className="flex items-center gap-2 cursor-pointer">
           <input
-            type="radio"
-            name="flexAlgoTopology"
-            checked={selectedFlexAlgoTopology === '__unicast_drained__'}
-            onChange={() => setSelectedFlexAlgoTopology('__unicast_drained__')}
+            type="checkbox"
+            checked={flexAlgoFilterDrained}
+            onChange={(e) => setFlexAlgoFilterDrained(e.target.checked)}
             className="accent-amber-500"
           />
-          <span className="text-amber-500">Unicast drained</span>
+          <span className="text-amber-500">Only drained links</span>
           <span className="text-muted-foreground ml-auto">{drainedLinkCount}</span>
         </label>
       </div>
 
-      {selectedFlexAlgoTopology && selectedFlexAlgoTopology !== '__multicast_only__' && selectedFlexAlgoTopology !== '__unicast_drained__' && (
+      {/* Dynamic legend */}
+      {(showTopologyLegend || showDefaultFilterLegend || showDrainedFilterLegend || showUnionFilterLegend || showTopologyDrainedLegend) && (
         <>
           <hr className="border-[var(--border)] my-2" />
           <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <div className="w-5 h-0.5 bg-green-500 rounded" />
-              <span>in topology</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-5 h-0.5 rounded" style={{ borderBottom: '2px dashed #f59e0b' }} />
-              <span className="text-amber-500">drained</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-5 h-0.5 bg-gray-400 rounded opacity-30" />
-              <span className="text-muted-foreground opacity-50">excluded</span>
-            </div>
-          </div>
-        </>
-      )}
-
-      {selectedFlexAlgoTopology === '__unicast_drained__' && (
-        <>
-          <hr className="border-[var(--border)] my-2" />
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <div className="w-5 h-0.5 rounded" style={{ borderBottom: '2px dashed #f59e0b' }} />
-              <span className="text-amber-500">drained</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-5 h-0.5 bg-gray-400 rounded opacity-30" />
-              <span className="text-muted-foreground opacity-50">not drained</span>
-            </div>
-          </div>
-        </>
-      )}
-
-      {selectedFlexAlgoTopology === '__multicast_only__' && (
-        <>
-          <hr className="border-[var(--border)] my-2" />
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <div className="w-5 h-0.5 bg-cyan-500 rounded" />
-              <span>algo 0</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-5 h-0.5 bg-gray-400 rounded opacity-30" />
-              <span className="text-muted-foreground opacity-50">has unicast topology</span>
-            </div>
+            {showTopologyLegend && (
+              <>
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-0.5 bg-green-500 rounded" />
+                  <span>in topology</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-0.5 rounded" style={{ borderBottom: '2px dashed #f59e0b' }} />
+                  <span className="text-amber-500">drained</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-0.5 bg-gray-400 rounded opacity-30" />
+                  <span className="text-muted-foreground opacity-50">excluded</span>
+                </div>
+              </>
+            )}
+            {showDefaultFilterLegend && (
+              <>
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-0.5 bg-cyan-500 rounded" />
+                  <span>default</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-0.5 bg-gray-400 rounded opacity-30" />
+                  <span className="text-muted-foreground opacity-50">has named topology</span>
+                </div>
+              </>
+            )}
+            {showDrainedFilterLegend && (
+              <>
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-0.5 rounded" style={{ borderBottom: '2px dashed #f59e0b' }} />
+                  <span className="text-amber-500">drained</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-0.5 bg-gray-400 rounded opacity-30" />
+                  <span className="text-muted-foreground opacity-50">not drained</span>
+                </div>
+              </>
+            )}
+            {showUnionFilterLegend && (
+              <>
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-0.5 bg-cyan-500 rounded" />
+                  <span>default</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-0.5 rounded" style={{ borderBottom: '2px dashed #f59e0b' }} />
+                  <span className="text-amber-500">drained</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-0.5 bg-gray-400 rounded opacity-30" />
+                  <span className="text-muted-foreground opacity-50">other</span>
+                </div>
+              </>
+            )}
+            {showTopologyDrainedLegend && (
+              <>
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-0.5 rounded" style={{ borderBottom: '2px dashed #f59e0b' }} />
+                  <span className="text-amber-500">drained member</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-0.5 bg-gray-400 rounded opacity-30" />
+                  <span className="text-muted-foreground opacity-50">other</span>
+                </div>
+              </>
+            )}
           </div>
         </>
       )}

@@ -343,7 +343,7 @@ export function LinkInfoContent({
                     </span>
                   ))
                 ) : (
-                  <span className="text-muted-foreground">untagged</span>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-cyan-500/15 text-cyan-600 dark:text-cyan-400">default</span>
                 )}
                 {link.unicastDrained && (
                   <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-600 dark:text-amber-400">
@@ -632,7 +632,7 @@ export function LinkInfoContent({
                   </span>
                 ))
               ) : (
-                <span className="text-muted-foreground">untagged</span>
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-cyan-500/15 text-cyan-600 dark:text-cyan-400">default</span>
               )}
               {link.unicastDrained && (
                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-600 dark:text-amber-400">
