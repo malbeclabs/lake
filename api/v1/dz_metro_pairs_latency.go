@@ -47,6 +47,12 @@ type DZMetroPairLatencyBucket struct {
 	InternetP95JitterUs float64 `json:"internet_p95_jitter_us" doc:"Internet p95 jitter, microseconds"`
 	InternetP99JitterUs float64 `json:"internet_p99_jitter_us" doc:"Internet p99 jitter, microseconds"`
 	InternetMaxJitterUs float64 `json:"internet_max_jitter_us" doc:"Internet max jitter, microseconds"`
+
+	// Computed per-bucket from the avg values. Positive = DZ is faster.
+	// 0 when either side has no samples in this bucket (check *_samples to
+	// disambiguate from a true 0% improvement).
+	AvgRttImprovementPct    float64 `json:"avg_rtt_improvement_pct" doc:"(internet_avg_rtt_us - dz_avg_rtt_us) / internet_avg_rtt_us * 100. 0 when either side is empty in this bucket."`
+	AvgJitterImprovementPct float64 `json:"avg_jitter_improvement_pct" doc:"(internet_avg_jitter_us - dz_avg_jitter_us) / internet_avg_jitter_us * 100. 0 when either side is empty in this bucket."`
 }
 
 // DZMetroPairLatency is the per-pair entry in the listing response. Direction
@@ -200,6 +206,9 @@ func toDZMetroPairLatency(p *handlers.MetroPair) DZMetroPairLatency {
 			InternetP95JitterUs: b.InternetP95JitterUs,
 			InternetP99JitterUs: b.InternetP99JitterUs,
 			InternetMaxJitterUs: b.InternetMaxJitterUs,
+
+			AvgRttImprovementPct:    b.AvgRttImprovementPct,
+			AvgJitterImprovementPct: b.AvgJitterImprovementPct,
 		}
 	}
 
