@@ -51,8 +51,8 @@ type DZMetroPairLatencyBucket struct {
 	// Computed per-bucket from the avg values. Positive = DZ is faster.
 	// 0 when either side has no samples in this bucket (check *_samples to
 	// disambiguate from a true 0% improvement).
-	AvgRttImprovementPct    float64 `json:"avg_rtt_improvement_pct" doc:"(internet_avg_rtt_us - dz_avg_rtt_us) / internet_avg_rtt_us * 100. 0 when either side is empty in this bucket."`
-	AvgJitterImprovementPct float64 `json:"avg_jitter_improvement_pct" doc:"(internet_avg_jitter_us - dz_avg_jitter_us) / internet_avg_jitter_us * 100. 0 when either side is empty in this bucket."`
+	DZAvgRttImprovementPct    float64 `json:"dz_avg_rtt_improvement_pct" doc:"(internet_avg_rtt_us - dz_avg_rtt_us) / internet_avg_rtt_us * 100. 0 when either side is empty in this bucket."`
+	DZAvgJitterImprovementPct float64 `json:"dz_avg_jitter_improvement_pct" doc:"(internet_avg_jitter_us - dz_avg_jitter_us) / internet_avg_jitter_us * 100. 0 when either side is empty in this bucket."`
 }
 
 // DZMetroPairLatency is the per-pair entry in the listing response. Direction
@@ -207,8 +207,8 @@ func toDZMetroPairLatency(p *handlers.MetroPair) DZMetroPairLatency {
 			InternetP99JitterUs: b.InternetP99JitterUs,
 			InternetMaxJitterUs: b.InternetMaxJitterUs,
 
-			AvgRttImprovementPct:    b.AvgRttImprovementPct,
-			AvgJitterImprovementPct: b.AvgJitterImprovementPct,
+			DZAvgRttImprovementPct:    b.DZAvgRttImprovementPct,
+			DZAvgJitterImprovementPct: b.DZAvgJitterImprovementPct,
 		}
 	}
 

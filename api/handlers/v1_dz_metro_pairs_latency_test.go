@@ -47,7 +47,7 @@ var v1DZMetroPairLatencyContractFields = struct {
 		"internet_samples",
 		"internet_avg_rtt_us", "internet_min_rtt_us", "internet_p50_rtt_us", "internet_p90_rtt_us", "internet_p95_rtt_us", "internet_p99_rtt_us", "internet_max_rtt_us",
 		"internet_avg_jitter_us", "internet_min_jitter_us", "internet_p50_jitter_us", "internet_p90_jitter_us", "internet_p95_jitter_us", "internet_p99_jitter_us", "internet_max_jitter_us",
-		"avg_rtt_improvement_pct", "avg_jitter_improvement_pct",
+		"dz_avg_rtt_improvement_pct", "dz_avg_jitter_improvement_pct",
 	},
 }
 
@@ -177,7 +177,7 @@ func TestV1DZMetroPairLatency_AllPairs(t *testing.T) {
 	// Internet RTT is a mix of 80_000 and 90_000 with equal weight → 85_000 avg.
 	assert.InDelta(t, 85_000.0, withBoth.InternetAvgRttUs, 1.0)
 	// Improvement: (85_000 - 50_500) / 85_000 * 100 ≈ 40.59%.
-	assert.InDelta(t, 40.588, withBoth.AvgRttImprovementPct, 0.05)
+	assert.InDelta(t, 40.588, withBoth.DZAvgRttImprovementPct, 0.05)
 
 	// FRA-NYC is DZ-only: at least one bucket has DZ samples but no internet.
 	fraNyc := resp.Pairs[0]
@@ -191,7 +191,7 @@ func TestV1DZMetroPairLatency_AllPairs(t *testing.T) {
 	require.NotNil(t, dzOnly, "expected a DZ-populated bucket on FRA-NYC")
 	assert.Equal(t, uint64(0), dzOnly.InternetSamples)
 	// No internet samples in this bucket → improvement is 0 (indeterminate).
-	assert.Equal(t, 0.0, dzOnly.AvgRttImprovementPct)
+	assert.Equal(t, 0.0, dzOnly.DZAvgRttImprovementPct)
 
 	// LAX-FRA has internet samples but no DZ link — must be excluded.
 	for _, p := range resp.Pairs {
