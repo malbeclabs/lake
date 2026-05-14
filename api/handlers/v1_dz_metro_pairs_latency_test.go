@@ -47,6 +47,7 @@ var v1DZMetroPairLatencyContractFields = struct {
 		"internet_samples",
 		"internet_avg_rtt_us", "internet_min_rtt_us", "internet_p50_rtt_us", "internet_p90_rtt_us", "internet_p95_rtt_us", "internet_p99_rtt_us", "internet_max_rtt_us",
 		"internet_avg_jitter_us", "internet_min_jitter_us", "internet_p50_jitter_us", "internet_p90_jitter_us", "internet_p95_jitter_us", "internet_p99_jitter_us", "internet_max_jitter_us",
+		"avg_rtt_improvement_pct", "avg_jitter_improvement_pct",
 	},
 }
 
@@ -83,14 +84,19 @@ func seedDzVsInternetFixture(t *testing.T, api *handlers.API) time.Time {
 	seedLinkRollup(t, api, now.Add(-time.Hour), "link-nyc-lax", 50_000, 51_000, 0.5, 0.25, 3600, 3600, "activated", false, false)
 	seedLinkRollup(t, api, now.Add(-time.Hour), "link-nyc-fra", 70_000, 71_000, 0, 0, 3600, 3600, "activated", false, false)
 
-	// Internet samples for NYC↔LAX only (so NYC↔FRA is DZ-only). Seed at the
-	// same wall-clock time as the DZ rollup so both align into a single 10m
-	// bucket. Multiple providers so we can test data_provider filtering.
+	// Internet samples for NYC↔LAX. Seed at the same wall-clock time as the
+	// DZ rollup so both align into a single 10m bucket. Multiple providers so
+	// we can test data_provider filtering.
 	for i := int32(0); i < 4; i++ {
 		seedInternetMetroLatency(t, api, now.Add(-time.Hour), "metro-nyc", "metro-lax", "ripe-atlas", 80_000, 1_500, i)
 	}
 	for i := int32(0); i < 4; i++ {
 		seedInternetMetroLatency(t, api, now.Add(-time.Hour), "metro-nyc", "metro-lax", "wheresitup", 90_000, 2_000, i+10)
+	}
+	// Internet-only samples for LAX↔FRA — there is no DZ link between these
+	// metros, so this pair must NOT appear in the response (DZ-coverage filter).
+	for i := int32(0); i < 4; i++ {
+		seedInternetMetroLatency(t, api, now.Add(-time.Hour), "metro-lax", "metro-fra", "ripe-atlas", 120_000, 3_000, i+20)
 	}
 	return now
 }
@@ -170,6 +176,8 @@ func TestV1DZMetroPairLatency_AllPairs(t *testing.T) {
 	assert.InDelta(t, 50_500.0, withBoth.DZAvgRttUs, 1.0)
 	// Internet RTT is a mix of 80_000 and 90_000 with equal weight → 85_000 avg.
 	assert.InDelta(t, 85_000.0, withBoth.InternetAvgRttUs, 1.0)
+	// Improvement: (85_000 - 50_500) / 85_000 * 100 ≈ 40.59%.
+	assert.InDelta(t, 40.588, withBoth.AvgRttImprovementPct, 0.05)
 
 	// FRA-NYC is DZ-only: at least one bucket has DZ samples but no internet.
 	fraNyc := resp.Pairs[0]
@@ -182,6 +190,14 @@ func TestV1DZMetroPairLatency_AllPairs(t *testing.T) {
 	}
 	require.NotNil(t, dzOnly, "expected a DZ-populated bucket on FRA-NYC")
 	assert.Equal(t, uint64(0), dzOnly.InternetSamples)
+	// No internet samples in this bucket → improvement is 0 (indeterminate).
+	assert.Equal(t, 0.0, dzOnly.AvgRttImprovementPct)
+
+	// LAX-FRA has internet samples but no DZ link — must be excluded.
+	for _, p := range resp.Pairs {
+		assert.False(t, p.MetroACode == "FRA" && p.MetroBCode == "LAX",
+			"internet-only pair FRA-LAX must not appear in the response")
+	}
 }
 
 func TestV1DZMetroPairLatency_FilterByMetro(t *testing.T) {
