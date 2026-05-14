@@ -99,6 +99,7 @@ func Mount(r chi.Router, api *handlers.API) huma.API {
 		registerEdgeShredsSubscribers(humaAPI, api)
 		registerValidatorsMetadata(humaAPI, api)
 		registerDZLinksLatency(humaAPI, api)
+		registerDZMetroPairsLatency(humaAPI, api)
 
 		// Register 308 redirects from deprecated paths to their current
 		// canonical paths. These keep existing consumers working while the
