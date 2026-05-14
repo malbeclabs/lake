@@ -33,10 +33,10 @@ var v1DZMetroPairLatencyContractFields = struct {
 		"pairs",
 	},
 	pair: []string{
-		"metro1_code",
-		"metro1_name",
-		"metro2_code",
-		"metro2_name",
+		"metro_a_code",
+		"metro_a_name",
+		"metro_b_code",
+		"metro_b_name",
 		"buckets",
 	},
 	bucket: []string{
@@ -144,13 +144,13 @@ func TestV1DZMetroPairLatency_AllPairs(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
 	// Two pairs in fixture: FRA-NYC (DZ-only), LAX-NYC (DZ+internet).
-	// Sorted by (metro1_code, metro2_code) — normalized so FRA<NYC, LAX<NYC.
+	// Sorted by (metro_a_code, metro_b_code) — normalized so FRA<NYC, LAX<NYC.
 	assert.Equal(t, 2, resp.TotalPairs)
 	require.Len(t, resp.Pairs, 2)
-	assert.Equal(t, "FRA", resp.Pairs[0].Metro1Code)
-	assert.Equal(t, "NYC", resp.Pairs[0].Metro2Code)
-	assert.Equal(t, "LAX", resp.Pairs[1].Metro1Code)
-	assert.Equal(t, "NYC", resp.Pairs[1].Metro2Code)
+	assert.Equal(t, "FRA", resp.Pairs[0].MetroACode)
+	assert.Equal(t, "NYC", resp.Pairs[0].MetroBCode)
+	assert.Equal(t, "LAX", resp.Pairs[1].MetroACode)
+	assert.Equal(t, "NYC", resp.Pairs[1].MetroBCode)
 
 	// LAX-NYC should have both DZ and internet samples in some bucket.
 	laxNyc := resp.Pairs[1]
@@ -199,8 +199,8 @@ func TestV1DZMetroPairLatency_FilterByMetro(t *testing.T) {
 	var resp v1.DZMetroPairLatencyResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 	require.Len(t, resp.Pairs, 1)
-	assert.Equal(t, "FRA", resp.Pairs[0].Metro1Code)
-	assert.Equal(t, "NYC", resp.Pairs[0].Metro2Code)
+	assert.Equal(t, "FRA", resp.Pairs[0].MetroACode)
+	assert.Equal(t, "NYC", resp.Pairs[0].MetroBCode)
 }
 
 func TestV1DZMetroPairLatency_FilterMultipleMetros(t *testing.T) {
@@ -240,7 +240,7 @@ func TestV1DZMetroPairLatency_FilterByDataProvider(t *testing.T) {
 	// 4 wheresitup ones). Internet avg = 80_000 us.
 	var laxNyc *v1.DZMetroPairLatency
 	for i := range resp.Pairs {
-		if resp.Pairs[i].Metro1Code == "LAX" && resp.Pairs[i].Metro2Code == "NYC" {
+		if resp.Pairs[i].MetroACode == "LAX" && resp.Pairs[i].MetroBCode == "NYC" {
 			laxNyc = &resp.Pairs[i]
 			break
 		}
@@ -291,7 +291,7 @@ func TestV1DZMetroPairLatency_Pagination(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 	assert.Equal(t, 2, resp.TotalPairs)
 	require.Len(t, resp.Pairs, 1)
-	first := resp.Pairs[0].Metro1Code + "-" + resp.Pairs[0].Metro2Code
+	first := resp.Pairs[0].MetroACode + "-" + resp.Pairs[0].MetroBCode
 
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/dz/metro-pairs/latency?pair_limit=1&pair_offset=1", nil)
 	rr = httptest.NewRecorder()
@@ -299,7 +299,7 @@ func TestV1DZMetroPairLatency_Pagination(t *testing.T) {
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 	require.Len(t, resp.Pairs, 1)
-	second := resp.Pairs[0].Metro1Code + "-" + resp.Pairs[0].Metro2Code
+	second := resp.Pairs[0].MetroACode + "-" + resp.Pairs[0].MetroBCode
 	assert.NotEqual(t, first, second)
 
 	// Offset past total: empty page, total unchanged.

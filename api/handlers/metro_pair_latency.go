@@ -72,13 +72,13 @@ type MetroPairLatencyBucket struct {
 }
 
 // MetroPair is the per-pair entry in the listing. Direction is normalized:
-// Metro1Code < Metro2Code lexicographically (via least/greatest), matching the
-// existing dz_vs_internet_latency_comparison view.
+// MetroACode < MetroBCode lexicographically (via least/greatest). A/B are
+// labels, not directions — the underlying samples are bidirectional.
 type MetroPair struct {
-	Metro1Code string
-	Metro1Name string
-	Metro2Code string
-	Metro2Name string
+	MetroACode string
+	MetroAName string
+	MetroBCode string
+	MetroBName string
 	Buckets    []MetroPairLatencyBucket
 }
 
@@ -129,8 +129,8 @@ func (a *API) FetchMetroPairLatency(ctx context.Context, opts MetroPairLatencyOp
 
 	for rows.Next() {
 		var (
-			metro1, metro2         string
-			metro1Name, metro2Name string
+			metroA, metroB         string
+			metroAName, metroBName string
 			bucketTS               time.Time
 
 			dzSamples uint64
@@ -168,7 +168,7 @@ func (a *API) FetchMetroPairLatency(ctx context.Context, opts MetroPairLatencyOp
 		)
 
 		if err := rows.Scan(
-			&metro1, &metro2, &metro1Name, &metro2Name, &bucketTS,
+			&metroA, &metroB, &metroAName, &metroBName, &bucketTS,
 			&dzSamples, &dzAvg, &dzMin, &dzP50, &dzP90, &dzP95, &dzP99, &dzMax,
 			&dzAvgJ, &dzMinJ, &dzP50J, &dzP90J, &dzP95J, &dzP99J, &dzMaxJ, &dzLoss,
 			&inetSamples, &inetAvg, &inetMin, &inetP50, &inetP90, &inetP95, &inetP99, &inetMax,
@@ -177,24 +177,24 @@ func (a *API) FetchMetroPairLatency(ctx context.Context, opts MetroPairLatencyOp
 			return nil, fmt.Errorf("metro pair latency scan: %w", err)
 		}
 
-		key := pairKey{metro1, metro2}
+		key := pairKey{metroA, metroB}
 		p, ok := pairs[key]
 		if !ok {
 			p = &MetroPair{
-				Metro1Code: metro1,
-				Metro1Name: metro1Name,
-				Metro2Code: metro2,
-				Metro2Name: metro2Name,
+				MetroACode: metroA,
+				MetroAName: metroAName,
+				MetroBCode: metroB,
+				MetroBName: metroBName,
 			}
 			pairs[key] = p
 			bucketsByPair[key] = make(map[time.Time]*MetroPairLatencyBucket)
 		}
 		// Carry forward metro names if a later row has a populated name we missed.
-		if p.Metro1Name == "" && metro1Name != "" {
-			p.Metro1Name = metro1Name
+		if p.MetroAName == "" && metroAName != "" {
+			p.MetroAName = metroAName
 		}
-		if p.Metro2Name == "" && metro2Name != "" {
-			p.Metro2Name = metro2Name
+		if p.MetroBName == "" && metroBName != "" {
+			p.MetroBName = metroBName
 		}
 
 		b := &MetroPairLatencyBucket{
@@ -269,10 +269,10 @@ func (a *API) FetchMetroPairLatency(ctx context.Context, opts MetroPairLatencyOp
 	}
 
 	sort.Slice(result.Pairs, func(i, j int) bool {
-		if result.Pairs[i].Metro1Code != result.Pairs[j].Metro1Code {
-			return result.Pairs[i].Metro1Code < result.Pairs[j].Metro1Code
+		if result.Pairs[i].MetroACode != result.Pairs[j].MetroACode {
+			return result.Pairs[i].MetroACode < result.Pairs[j].MetroACode
 		}
-		return result.Pairs[i].Metro2Code < result.Pairs[j].Metro2Code
+		return result.Pairs[i].MetroBCode < result.Pairs[j].MetroBCode
 	})
 
 	return result, nil
@@ -399,10 +399,10 @@ func queryMetroPairLatency(ctx context.Context, db driver.Conn, params bucketPar
 		dzCTE = fmt.Sprintf(`
 		dz_data AS (
 			SELECT
-				least(ma.code, mz.code) AS metro1,
-				greatest(ma.code, mz.code) AS metro2,
-				if(ma.code < mz.code, ma.name, mz.name) AS metro1_name,
-				if(ma.code < mz.code, mz.name, ma.name) AS metro2_name,
+				least(ma.code, mz.code) AS metro_a,
+				greatest(ma.code, mz.code) AS metro_b,
+				if(ma.code < mz.code, ma.name, mz.name) AS metro_a_name,
+				if(ma.code < mz.code, mz.name, ma.name) AS metro_b_name,
 				%s AS bucket_ts,
 				toUInt64(count()) AS samples,
 				avg(f.rtt_us) AS avg_rtt_us,
@@ -429,14 +429,14 @@ func queryMetroPairLatency(ctx context.Context, db driver.Conn, params bucketPar
 			WHERE f.event_ts >= $1 AND f.event_ts < $2
 			  AND f.link_pk != ''
 			  AND ma.code != mz.code%s
-			GROUP BY metro1, metro2, metro1_name, metro2_name, bucket_ts
+			GROUP BY metro_a, metro_b, metro_a_name, metro_b_name, bucket_ts
 		)`, dzBucketExpr, dzSource, metroFilterSQL)
 	} else {
 		// Rollup path: sample-weighted re-aggregation of percentiles.
 		dzCTE = fmt.Sprintf(`
 		dz_data AS (
 			SELECT
-				metro1, metro2, metro1_name, metro2_name, bucket_ts,
+				metro_a, metro_b, metro_a_name, metro_b_name, bucket_ts,
 				toUInt64(samples_total) AS samples,
 				if(samples_total > 0, w_avg / samples_total, NULL) AS avg_rtt_us,
 				if(samples_total > 0, min_rtt_us, NULL) AS min_rtt_us,
@@ -455,10 +455,10 @@ func queryMetroPairLatency(ctx context.Context, db driver.Conn, params bucketPar
 				loss_pct
 			FROM (
 				SELECT
-					least(ma.code, mz.code) AS metro1,
-					greatest(ma.code, mz.code) AS metro2,
-					if(ma.code < mz.code, ma.name, mz.name) AS metro1_name,
-					if(ma.code < mz.code, mz.name, ma.name) AS metro2_name,
+					least(ma.code, mz.code) AS metro_a,
+					greatest(ma.code, mz.code) AS metro_b,
+					if(ma.code < mz.code, ma.name, mz.name) AS metro_a_name,
+					if(ma.code < mz.code, mz.name, ma.name) AS metro_b_name,
 					%s AS bucket_ts,
 					sum(r.a_samples + r.z_samples) AS samples_total,
 					sumIf(r.a_avg_rtt_us * r.a_samples, r.a_samples > 0)
@@ -495,7 +495,7 @@ func queryMetroPairLatency(ctx context.Context, db driver.Conn, params bucketPar
 				WHERE r.bucket_ts >= $1 AND r.bucket_ts < $2
 				  AND r.link_pk != ''
 				  AND ma.code != mz.code%s
-				GROUP BY metro1, metro2, metro1_name, metro2_name, bucket_ts
+				GROUP BY metro_a, metro_b, metro_a_name, metro_b_name, bucket_ts
 			)
 		)`, dzBucketExpr, metroFilterSQL)
 	}
@@ -503,10 +503,10 @@ func queryMetroPairLatency(ctx context.Context, db driver.Conn, params bucketPar
 	inetCTE := fmt.Sprintf(`
 		inet_data AS (
 			SELECT
-				least(ma.code, mz.code) AS metro1,
-				greatest(ma.code, mz.code) AS metro2,
-				if(ma.code < mz.code, ma.name, mz.name) AS metro1_name,
-				if(ma.code < mz.code, mz.name, ma.name) AS metro2_name,
+				least(ma.code, mz.code) AS metro_a,
+				greatest(ma.code, mz.code) AS metro_b,
+				if(ma.code < mz.code, ma.name, mz.name) AS metro_a_name,
+				if(ma.code < mz.code, mz.name, ma.name) AS metro_b_name,
 				%s AS bucket_ts,
 				toUInt64(count()) AS samples,
 				avg(f.rtt_us) AS avg_rtt_us,
@@ -528,20 +528,20 @@ func queryMetroPairLatency(ctx context.Context, db driver.Conn, params bucketPar
 			JOIN dz_metros_current mz ON f.target_metro_pk = mz.pk
 			WHERE f.event_ts >= $1 AND f.event_ts < $2
 			  AND ma.code != mz.code%s%s
-			GROUP BY metro1, metro2, metro1_name, metro2_name, bucket_ts
+			GROUP BY metro_a, metro_b, metro_a_name, metro_b_name, bucket_ts
 		)`, inetBucketExpr, metroFilterSQL, inetProviderSQL)
 
 	// FULL OUTER JOIN ... USING is required here. ClickHouse's multi-column
 	// ON-clause variant does not propagate the join-key column values from the
 	// unmatched side, so rows that only exist in one CTE come back with empty
-	// metro1/metro2/bucket_ts. USING merges the join keys into a single value
+	// metro_a/metro_b/bucket_ts. USING merges the join keys into a single value
 	// per row, which is the behavior we want.
 	query := fmt.Sprintf(`
 		WITH%s,%s
 		SELECT
-			metro1, metro2,
-			COALESCE(d.metro1_name, i.metro1_name, '') AS metro1_name,
-			COALESCE(d.metro2_name, i.metro2_name, '') AS metro2_name,
+			metro_a, metro_b,
+			COALESCE(d.metro_a_name, i.metro_a_name, '') AS metro_a_name,
+			COALESCE(d.metro_b_name, i.metro_b_name, '') AS metro_b_name,
 			bucket_ts,
 			COALESCE(d.samples, toUInt64(0)) AS dz_samples,
 			d.avg_rtt_us AS dz_avg_rtt_us,
@@ -575,8 +575,8 @@ func queryMetroPairLatency(ctx context.Context, db driver.Conn, params bucketPar
 			i.p99_jitter_us AS inet_p99_jitter_us,
 			i.max_jitter_us AS inet_max_jitter_us
 		FROM dz_data d
-		FULL OUTER JOIN inet_data i USING (metro1, metro2, bucket_ts)
-		ORDER BY metro1, metro2, bucket_ts
+		FULL OUTER JOIN inet_data i USING (metro_a, metro_b, bucket_ts)
+		ORDER BY metro_a, metro_b, bucket_ts
 	`, dzCTE, inetCTE)
 
 	rows, err := db.Query(ctx, query, args...)

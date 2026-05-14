@@ -50,14 +50,14 @@ type DZMetroPairLatencyBucket struct {
 }
 
 // DZMetroPairLatency is the per-pair entry in the listing response. Direction
-// is normalized so each pair appears once: metro1_code < metro2_code
-// lexicographically (least/greatest), matching the existing
-// dz_vs_internet_latency_comparison view.
+// is normalized so each pair appears once: metro_a_code < metro_b_code
+// lexicographically (least/greatest). A/B are labels, not directions — the
+// underlying samples are bidirectional.
 type DZMetroPairLatency struct {
-	Metro1Code string                     `json:"metro1_code" doc:"Lower-codepoint metro code in the normalized pair"`
-	Metro1Name string                     `json:"metro1_name" doc:"Display name for metro1"`
-	Metro2Code string                     `json:"metro2_code" doc:"Higher-codepoint metro code in the normalized pair"`
-	Metro2Name string                     `json:"metro2_name" doc:"Display name for metro2"`
+	MetroACode string                     `json:"metro_a_code" doc:"Lower-codepoint metro code in the normalized pair"`
+	MetroAName string                     `json:"metro_a_name" doc:"Display name for metro_a"`
+	MetroBCode string                     `json:"metro_b_code" doc:"Higher-codepoint metro code in the normalized pair"`
+	MetroBName string                     `json:"metro_b_name" doc:"Display name for metro_b"`
 	Buckets    []DZMetroPairLatencyBucket `json:"buckets" doc:"Time-ordered buckets (oldest first)"`
 }
 
@@ -99,7 +99,7 @@ func registerDZMetroPairsLatency(humaAPI huma.API, api *handlers.API) {
 		Method:      "GET",
 		Path:        "/dz/metro-pairs/latency",
 		Summary:     "List DZ vs public-internet latency time-series for metro pairs",
-		Description: "Returns per-bucket DZ and internet RTT/jitter percentiles and sample counts for each metro pair with samples in the window. Direction is normalized (one row per pair, least/greatest by metro code). Use the filter query params to narrow to specific metros or internet data providers — within a filter values are OR'd; across filters AND'd. The metro filter matches either side of the pair; data_provider only affects the internet side.",
+		Description: "Returns per-bucket DZ and internet RTT/jitter percentiles and sample counts for each metro pair with samples in the window. Direction is normalized (one row per pair, sorted lexicographically so metro_a_code < metro_b_code; A/B are labels, not directions). Use the filter query params to narrow to specific metros or internet data providers — within a filter values are OR'd; across filters AND'd. The metro filter matches either side of the pair; data_provider only affects the internet side.",
 		Tags:        []string{"DZ/Metro Pairs"},
 	}, func(ctx context.Context, input *DZMetroPairLatencyInput) (*DZMetroPairLatencyOutput, error) {
 		opts := handlers.MetroPairLatencyOptions{
@@ -204,10 +204,10 @@ func toDZMetroPairLatency(p *handlers.MetroPair) DZMetroPairLatency {
 	}
 
 	return DZMetroPairLatency{
-		Metro1Code: p.Metro1Code,
-		Metro1Name: p.Metro1Name,
-		Metro2Code: p.Metro2Code,
-		Metro2Name: p.Metro2Name,
+		MetroACode: p.MetroACode,
+		MetroAName: p.MetroAName,
+		MetroBCode: p.MetroBCode,
+		MetroBName: p.MetroBName,
 		Buckets:    buckets,
 	}
 }
