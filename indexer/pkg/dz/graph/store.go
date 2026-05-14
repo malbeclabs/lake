@@ -643,6 +643,8 @@ func batchCreateLinks(ctx context.Context, tx neo4j.Transaction, links []dzsvc.L
 			"side_z_pk":              l.SideZPK,
 			"side_a_iface_name":      l.SideAIfaceName,
 			"side_z_iface_name":      l.SideZIfaceName,
+			"link_topologies":        l.LinkTopologies,
+			"unicast_drained":        l.UnicastDrained,
 		}
 	}
 
@@ -658,7 +660,9 @@ func batchCreateLinks(ctx context.Context, tx neo4j.Transaction, links []dzsvc.L
 			committed_rtt_ns: item.committed_rtt_ns,
 			committed_jitter_ns: item.committed_jitter_ns,
 			bandwidth: item.bandwidth,
-			isis_delay_override_ns: item.isis_delay_override_ns
+			isis_delay_override_ns: item.isis_delay_override_ns,
+			link_topologies: item.link_topologies,
+			unicast_drained: item.unicast_drained
 		})
 	`
 	res, err := tx.Run(ctx, cypherNodes, map[string]any{"items": items})

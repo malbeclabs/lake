@@ -275,6 +275,31 @@ func (s *Store) ReplaceAccessPasses(ctx context.Context, accessPasses []AccessPa
 	return nil
 }
 
+func (s *Store) ReplaceTopologies(ctx context.Context, topologies []Topology) error {
+	s.log.Debug("serviceability/store: replacing topologies", "count", len(topologies))
+
+	d, err := NewTopologyDataset(s.log)
+	if err != nil {
+		return fmt.Errorf("failed to create dataset: %w", err)
+	}
+
+	conn, err := s.cfg.ClickHouse.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get ClickHouse connection: %w", err)
+	}
+	defer conn.Close()
+
+	if err := d.WriteBatch(ctx, conn, len(topologies), func(i int) ([]any, error) {
+		return topologySchema.ToRow(topologies[i]), nil
+	}, &dataset.DimensionType2DatasetWriteConfig{
+		MissingMeansDeleted: true,
+	}); err != nil {
+		return fmt.Errorf("failed to write topologies to ClickHouse: %w", err)
+	}
+
+	return nil
+}
+
 func (s *Store) ReplaceMulticastGroups(ctx context.Context, groups []MulticastGroup) error {
 	s.log.Debug("serviceability/store: replacing multicast groups", "count", len(groups))
 

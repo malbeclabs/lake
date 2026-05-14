@@ -301,7 +301,7 @@ func TestLake_Serviceability_View_ConvertLinks(t *testing.T) {
 			},
 		}
 
-		result := convertLinks(onchain, nil)
+		result := convertLinks(onchain, nil, nil)
 
 		require.Len(t, result, 1)
 		require.Equal(t, solana.PublicKeyFromBytes(pk[:]).String(), result[0].PK)
@@ -323,7 +323,7 @@ func TestLake_Serviceability_View_ConvertLinks(t *testing.T) {
 	t.Run("handles empty slice", func(t *testing.T) {
 		t.Parallel()
 
-		result := convertLinks([]serviceability.Link{}, nil)
+		result := convertLinks([]serviceability.Link{}, nil, nil)
 		require.Empty(t, result)
 	})
 
@@ -382,7 +382,7 @@ func TestLake_Serviceability_View_ConvertLinks(t *testing.T) {
 			},
 		}
 
-		result := convertLinks(links, devices)
+		result := convertLinks(links, devices, nil)
 
 		require.Len(t, result, 1)
 		require.Equal(t, "172.16.0.225", result[0].SideAIP)

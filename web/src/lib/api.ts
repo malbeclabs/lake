@@ -1229,6 +1229,8 @@ export interface LinkMetric {
   utilization_out: number
   side_a_metro: string
   side_z_metro: string
+  link_topologies: string[]
+  unicast_drained: boolean
 }
 
 export interface LinkHealth {
@@ -1304,6 +1306,8 @@ export interface NonActivatedLink {
   since: string
   active_incident_types?: string[]
   bandwidth_bps: number
+  link_topologies: string[]
+  unicast_drained: boolean
 }
 
 export interface ISISDeviceIssue {
@@ -1662,6 +1666,8 @@ export interface TopologyLink {
   out_bps: number
   committed_rtt_ns: number
   isis_delay_override_ns: number
+  link_topologies?: string[]
+  unicast_drained?: boolean
 }
 
 export interface TopologyValidator {
@@ -1697,6 +1703,31 @@ export async function fetchTopology(): Promise<TopologyResponse> {
   const res = await fetchWithRetry('/api/topology')
   if (!res.ok) {
     throw new Error('Failed to fetch topology')
+  }
+  return res.json()
+}
+
+export interface TopologyInfo {
+  pk: string
+  name: string
+  admin_group_bit: number
+  flex_algo_number: number
+  color: number
+  constraint: string
+  link_count: number
+}
+
+export interface TopologiesResponse {
+  topologies: TopologyInfo[]
+  total_link_count: number
+  drained_link_count: number
+  untagged_link_count: number
+}
+
+export async function fetchTopologies(): Promise<TopologiesResponse> {
+  const res = await fetchWithRetry('/api/topologies')
+  if (!res.ok) {
+    throw new Error('Failed to fetch topologies')
   }
   return res.json()
 }
@@ -2961,6 +2992,8 @@ export interface Link {
   latency_z_to_a_us: number
   jitter_z_to_a_us: number
   loss_percent: number
+  link_topologies?: string[]
+  unicast_drained?: boolean
 }
 
 export async function fetchLinks(
@@ -3240,6 +3273,7 @@ export interface User {
   location_code: string
   tenant_pk: string
   tenant_code: string
+  include_topologies: string[]
   in_bps: number
   out_bps: number
   is_deleted: boolean
@@ -5002,6 +5036,7 @@ export interface Tenant {
   metro_routing: boolean
   route_liveness: boolean
   billing_rate: number
+  include_topologies: string[]
 }
 
 export async function fetchTenants(
@@ -5568,6 +5603,8 @@ export interface LinkMetricsResponse {
   committed_jitter_us: number
   bandwidth_bps: number
   current_drain_status: string
+  link_topologies: string[]
+  unicast_drained: boolean
   time_range: string
   bucket_seconds: number
   bucket_count: number

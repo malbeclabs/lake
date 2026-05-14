@@ -35,6 +35,8 @@ type LinkMetricsResponse struct {
 	CommittedJitterUs    float64              `json:"committed_jitter_us"`
 	BandwidthBps         int64                `json:"bandwidth_bps"`
 	CurrentDrainStatus   string               `json:"current_drain_status"`
+	LinkTopologies       []string             `json:"link_topologies"`
+	UnicastDrained       bool                 `json:"unicast_drained"`
 	TimeRange            string               `json:"time_range"`
 	BucketSeconds        int                  `json:"bucket_seconds"`
 	BucketCount          int                  `json:"bucket_count"`
@@ -539,6 +541,8 @@ func (a *API) fetchLinkMetrics(ctx context.Context, linkPK string, params bucket
 		CommittedJitterUs:    meta.CommittedJitterUs,
 		BandwidthBps:         meta.BandwidthBps,
 		CurrentDrainStatus:   currentDrainStatus,
+		LinkTopologies:       meta.LinkTopologies,
+		UnicastDrained:       meta.UnicastDrained,
 		TimeRange:            params.TimeRange,
 		BucketSeconds:        bucketSecs,
 		BucketCount:          params.BucketCount,
@@ -1549,6 +1553,8 @@ func (a *API) fetchBulkLinkMetrics(ctx context.Context, params bucketParams, inc
 			CommittedJitterUs:    meta.CommittedJitterUs,
 			BandwidthBps:         meta.BandwidthBps,
 			CurrentDrainStatus:   currentDrainStatus,
+			LinkTopologies:       meta.LinkTopologies,
+			UnicastDrained:       meta.UnicastDrained,
 			TimeRange:            params.TimeRange,
 			BucketSeconds:        bucketSecs,
 			BucketCount:          params.BucketCount,

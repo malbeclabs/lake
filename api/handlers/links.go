@@ -14,32 +14,34 @@ import (
 )
 
 type LinkListItem struct {
-	PK                   string  `json:"pk"`
-	Code                 string  `json:"code"`
-	Status               string  `json:"status"`
-	LinkType             string  `json:"link_type"`
-	BandwidthBps         int64   `json:"bandwidth_bps"`
-	SideAPK              string  `json:"side_a_pk"`
-	SideACode            string  `json:"side_a_code"`
-	SideAMetroPK         string  `json:"side_a_metro_pk"`
-	SideAMetro           string  `json:"side_a_metro"`
-	SideZPK              string  `json:"side_z_pk"`
-	SideZCode            string  `json:"side_z_code"`
-	SideZMetroPK         string  `json:"side_z_metro_pk"`
-	SideZMetro           string  `json:"side_z_metro"`
-	ContributorPK        string  `json:"contributor_pk"`
-	ContributorCode      string  `json:"contributor_code"`
-	SideAContributorPK   string  `json:"side_a_contributor_pk"`
-	SideAContributorCode string  `json:"side_a_contributor_code"`
-	SideZContributorPK   string  `json:"side_z_contributor_pk"`
-	SideZContributorCode string  `json:"side_z_contributor_code"`
-	InBps                float64 `json:"in_bps"`
-	OutBps               float64 `json:"out_bps"`
-	UtilizationIn        float64 `json:"utilization_in"`
-	UtilizationOut       float64 `json:"utilization_out"`
-	LatencyUs            float64 `json:"latency_us"`
-	JitterUs             float64 `json:"jitter_us"`
-	LossPercent          float64 `json:"loss_percent"`
+	PK                   string   `json:"pk"`
+	Code                 string   `json:"code"`
+	Status               string   `json:"status"`
+	LinkType             string   `json:"link_type"`
+	BandwidthBps         int64    `json:"bandwidth_bps"`
+	SideAPK              string   `json:"side_a_pk"`
+	SideACode            string   `json:"side_a_code"`
+	SideAMetroPK         string   `json:"side_a_metro_pk"`
+	SideAMetro           string   `json:"side_a_metro"`
+	SideZPK              string   `json:"side_z_pk"`
+	SideZCode            string   `json:"side_z_code"`
+	SideZMetroPK         string   `json:"side_z_metro_pk"`
+	SideZMetro           string   `json:"side_z_metro"`
+	ContributorPK        string   `json:"contributor_pk"`
+	ContributorCode      string   `json:"contributor_code"`
+	SideAContributorPK   string   `json:"side_a_contributor_pk"`
+	SideAContributorCode string   `json:"side_a_contributor_code"`
+	SideZContributorPK   string   `json:"side_z_contributor_pk"`
+	SideZContributorCode string   `json:"side_z_contributor_code"`
+	InBps                float64  `json:"in_bps"`
+	OutBps               float64  `json:"out_bps"`
+	UtilizationIn        float64  `json:"utilization_in"`
+	UtilizationOut       float64  `json:"utilization_out"`
+	LatencyUs            float64  `json:"latency_us"`
+	JitterUs             float64  `json:"jitter_us"`
+	LossPercent          float64  `json:"loss_percent"`
+	LinkTopologies       []string `json:"link_topologies"`
+	UnicastDrained       bool     `json:"unicast_drained"`
 }
 
 var linkSortFields = map[string]string{
@@ -62,6 +64,7 @@ var linkSortFields = map[string]string{
 var linkFilterFields = map[string]FilterFieldConfig{
 	"code":        {Column: "code", Type: FieldTypeText},
 	"type":        {Column: "link_type", Type: FieldTypeText},
+	"topology":    {Column: "link_topologies", Type: FieldTypeJSONArray},
 	"contributor": {Column: "contributor_code", Type: FieldTypeText},
 	"sidea":       {Column: "side_a_code", Type: FieldTypeText},
 	"sidez":       {Column: "side_z_code", Type: FieldTypeText},
@@ -144,7 +147,9 @@ func (a *API) GetLinks(w http.ResponseWriter, r *http.Request) {
 				CASE WHEN l.bandwidth_bps > 0 THEN COALESCE(tr.out_bps, 0) * 100.0 / l.bandwidth_bps ELSE 0 END as utilization_out,
 				COALESCE(ls.avg_rtt_us, 0) as latency_us,
 				COALESCE(ls.avg_jitter_us, 0) as jitter_us,
-				COALESCE(ls.loss_percent, 0) as loss_percent
+				COALESCE(ls.loss_percent, 0) as loss_percent,
+				COALESCE(l.link_topologies, '[]') as link_topologies,
+				COALESCE(l.unicast_drained, false) as unicast_drained
 			FROM dz_links_current l
 			LEFT JOIN dz_devices_current da ON l.side_a_pk = da.pk
 			LEFT JOIN dz_metros_current ma ON da.metro_pk = ma.pk
@@ -157,7 +162,7 @@ func (a *API) GetLinks(w http.ResponseWriter, r *http.Request) {
 			LEFT JOIN latency_stats ls ON l.pk = ls.link_pk
 		)
 		SELECT
-			pk, code, status, link_type, bandwidth_bps, side_a_pk, side_a_code, side_a_metro_pk, side_a_metro, side_z_pk, side_z_code, side_z_metro_pk, side_z_metro, contributor_pk, contributor_code, side_a_contributor_pk, side_a_contributor_code, side_z_contributor_pk, side_z_contributor_code, in_bps, out_bps, utilization_in, utilization_out, latency_us, jitter_us, loss_percent,
+			pk, code, status, link_type, bandwidth_bps, side_a_pk, side_a_code, side_a_metro_pk, side_a_metro, side_z_pk, side_z_code, side_z_metro_pk, side_z_metro, contributor_pk, contributor_code, side_a_contributor_pk, side_a_contributor_code, side_z_contributor_pk, side_z_contributor_code, in_bps, out_bps, utilization_in, utilization_out, latency_us, jitter_us, loss_percent, link_topologies, unicast_drained,
 			count() OVER () as _total
 		FROM links_data
 		WHERE 1=1` + whereFilter + " " + orderBy + `
@@ -183,6 +188,7 @@ func (a *API) GetLinks(w http.ResponseWriter, r *http.Request) {
 	var total uint64
 	for rows.Next() {
 		var l LinkListItem
+		var linkTopologiesJSON string
 		if err := rows.Scan(
 			&l.PK,
 			&l.Code,
@@ -210,11 +216,19 @@ func (a *API) GetLinks(w http.ResponseWriter, r *http.Request) {
 			&l.LatencyUs,
 			&l.JitterUs,
 			&l.LossPercent,
+			&linkTopologiesJSON,
+			&l.UnicastDrained,
 			&total,
 		); err != nil {
 			logError("links row scan failed", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
+		}
+		if err := json.Unmarshal([]byte(linkTopologiesJSON), &l.LinkTopologies); err != nil {
+			l.LinkTopologies = []string{}
+		}
+		if l.LinkTopologies == nil {
+			l.LinkTopologies = []string{}
 		}
 		links = append(links, l)
 	}
@@ -244,42 +258,44 @@ func (a *API) GetLinks(w http.ResponseWriter, r *http.Request) {
 }
 
 type LinkDetail struct {
-	PK                   string  `json:"pk"`
-	Code                 string  `json:"code"`
-	Status               string  `json:"status"`
-	LinkType             string  `json:"link_type"`
-	BandwidthBps         int64   `json:"bandwidth_bps"`
-	SideAPK              string  `json:"side_a_pk"`
-	SideACode            string  `json:"side_a_code"`
-	SideAMetro           string  `json:"side_a_metro"`
-	SideAIfaceName       string  `json:"side_a_iface_name"`
-	SideAIP              string  `json:"side_a_ip"`
-	SideZPK              string  `json:"side_z_pk"`
-	SideZCode            string  `json:"side_z_code"`
-	SideZMetro           string  `json:"side_z_metro"`
-	SideZIfaceName       string  `json:"side_z_iface_name"`
-	SideZIP              string  `json:"side_z_ip"`
-	ContributorPK        string  `json:"contributor_pk"`
-	ContributorCode      string  `json:"contributor_code"`
-	SideAContributorPK   string  `json:"side_a_contributor_pk"`
-	SideAContributorCode string  `json:"side_a_contributor_code"`
-	SideZContributorPK   string  `json:"side_z_contributor_pk"`
-	SideZContributorCode string  `json:"side_z_contributor_code"`
-	InBps                float64 `json:"in_bps"`
-	OutBps               float64 `json:"out_bps"`
-	UtilizationIn        float64 `json:"utilization_in"`
-	UtilizationOut       float64 `json:"utilization_out"`
-	LatencyUs            float64 `json:"latency_us"`
-	JitterUs             float64 `json:"jitter_us"`
-	LatencyAtoZUs        float64 `json:"latency_a_to_z_us"`
-	JitterAtoZUs         float64 `json:"jitter_a_to_z_us"`
-	LatencyZtoAUs        float64 `json:"latency_z_to_a_us"`
-	JitterZtoAUs         float64 `json:"jitter_z_to_a_us"`
-	LossPercent          float64 `json:"loss_percent"`
-	PeakInBps            float64 `json:"peak_in_bps"`
-	PeakOutBps           float64 `json:"peak_out_bps"`
-	CommittedRttNs       int64   `json:"committed_rtt_ns"`
-	ISISDelayOverrideNs  int64   `json:"isis_delay_override_ns"`
+	PK                   string   `json:"pk"`
+	Code                 string   `json:"code"`
+	Status               string   `json:"status"`
+	LinkType             string   `json:"link_type"`
+	BandwidthBps         int64    `json:"bandwidth_bps"`
+	SideAPK              string   `json:"side_a_pk"`
+	SideACode            string   `json:"side_a_code"`
+	SideAMetro           string   `json:"side_a_metro"`
+	SideAIfaceName       string   `json:"side_a_iface_name"`
+	SideAIP              string   `json:"side_a_ip"`
+	SideZPK              string   `json:"side_z_pk"`
+	SideZCode            string   `json:"side_z_code"`
+	SideZMetro           string   `json:"side_z_metro"`
+	SideZIfaceName       string   `json:"side_z_iface_name"`
+	SideZIP              string   `json:"side_z_ip"`
+	ContributorPK        string   `json:"contributor_pk"`
+	ContributorCode      string   `json:"contributor_code"`
+	SideAContributorPK   string   `json:"side_a_contributor_pk"`
+	SideAContributorCode string   `json:"side_a_contributor_code"`
+	SideZContributorPK   string   `json:"side_z_contributor_pk"`
+	SideZContributorCode string   `json:"side_z_contributor_code"`
+	InBps                float64  `json:"in_bps"`
+	OutBps               float64  `json:"out_bps"`
+	UtilizationIn        float64  `json:"utilization_in"`
+	UtilizationOut       float64  `json:"utilization_out"`
+	LatencyUs            float64  `json:"latency_us"`
+	JitterUs             float64  `json:"jitter_us"`
+	LatencyAtoZUs        float64  `json:"latency_a_to_z_us"`
+	JitterAtoZUs         float64  `json:"jitter_a_to_z_us"`
+	LatencyZtoAUs        float64  `json:"latency_z_to_a_us"`
+	JitterZtoAUs         float64  `json:"jitter_z_to_a_us"`
+	LossPercent          float64  `json:"loss_percent"`
+	PeakInBps            float64  `json:"peak_in_bps"`
+	PeakOutBps           float64  `json:"peak_out_bps"`
+	CommittedRttNs       int64    `json:"committed_rtt_ns"`
+	ISISDelayOverrideNs  int64    `json:"isis_delay_override_ns"`
+	LinkTopologies       []string `json:"link_topologies"`
+	UnicastDrained       bool     `json:"unicast_drained"`
 }
 
 // TopologyLinkHealth represents the SLO health status of a link for topology overlay
@@ -475,6 +491,7 @@ func (a *API) GetLink(w http.ResponseWriter, r *http.Request) {
 	query := linkDetailQuery()
 
 	var link LinkDetail
+	var linkTopologiesJSON string
 	err := a.envDB(ctx).QueryRow(ctx, query, pk, pk, pk, pk, pk).Scan(
 		&link.PK,
 		&link.Code,
@@ -512,7 +529,17 @@ func (a *API) GetLink(w http.ResponseWriter, r *http.Request) {
 		&link.PeakOutBps,
 		&link.CommittedRttNs,
 		&link.ISISDelayOverrideNs,
+		&linkTopologiesJSON,
+		&link.UnicastDrained,
 	)
+	if err == nil {
+		if jsonErr := json.Unmarshal([]byte(linkTopologiesJSON), &link.LinkTopologies); jsonErr != nil {
+			link.LinkTopologies = []string{}
+		}
+		if link.LinkTopologies == nil {
+			link.LinkTopologies = []string{}
+		}
+	}
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery("links", duration, err)
 
@@ -614,7 +641,9 @@ func linkDetailQuery() string {
 			COALESCE(pr.peak_in_bps, 0) as peak_in_bps,
 			COALESCE(pr.peak_out_bps, 0) as peak_out_bps,
 			COALESCE(l.committed_rtt_ns, 0) as committed_rtt_ns,
-			COALESCE(l.isis_delay_override_ns, 0) as isis_delay_override_ns
+			COALESCE(l.isis_delay_override_ns, 0) as isis_delay_override_ns,
+			COALESCE(l.link_topologies, '[]') as link_topologies,
+			COALESCE(l.unicast_drained, false) as unicast_drained
 		FROM dz_links_current l
 		LEFT JOIN dz_devices_current da ON l.side_a_pk = da.pk
 		LEFT JOIN dz_metros_current ma ON da.metro_pk = ma.pk

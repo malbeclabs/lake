@@ -33,6 +33,8 @@ export interface LinkInfo {
   sampleCount: number
   committedRttNs: number
   isisDelayOverrideNs: number
+  linkTopologies?: string[]
+  unicastDrained?: boolean
   health?: {
     status: string
     committedRttNs: number

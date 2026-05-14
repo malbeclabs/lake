@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useLocation, Link, useNavigate } from 'react-router-dom'
+import { fetchTopologies } from '@/lib/api'
 import { useEnv } from '@/contexts/EnvContext'
 import { useAuth } from '@/contexts/AuthContext'
 import {
@@ -49,6 +51,12 @@ export function Sidebar() {
   const shredsDefaultPath = '/dz/shreds/scoreboard'
   const hasNeo4j = features.neo4j !== false
   const hasSolana = features.solana !== false
+  const { data: topologiesData } = useQuery({
+    queryKey: ['topologies'],
+    queryFn: fetchTopologies,
+    staleTime: 60_000,
+  })
+  const hasTopologies = (topologiesData?.topologies?.length ?? 0) > 0
   const showGeoloc = user?.is_internal_user === true
 const { resolvedTheme, setTheme } = useTheme()
   const { updateAvailable, reload } = useVersionCheck()
@@ -550,6 +558,12 @@ const { resolvedTheme, setTheme } = useTheme()
               <Link2 className="h-4 w-4" />
               Links
             </Link>
+            {isLinksRoute && hasTopologies && (
+              <Link to="/dz/links/topologies" className={subNavItemClass(location.pathname.startsWith('/dz/links/topologies'))}>
+                <Network className="h-4 w-4" />
+                Topologies
+              </Link>
+            )}
             <Link to="/dz/metros" className={navItemClass(isMetrosRoute)}>
               <MapPin className="h-4 w-4" />
               Metros
