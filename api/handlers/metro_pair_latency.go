@@ -73,8 +73,8 @@ type MetroPairLatencyBucket struct {
 	// Improvement vs internet, computed per-bucket from the avg values.
 	// Positive = DZ is faster; 0 when either side has no samples or the
 	// internet avg is zero (indeterminate).
-	AvgRttImprovementPct    float64
-	AvgJitterImprovementPct float64
+	DZAvgRttImprovementPct    float64
+	DZAvgJitterImprovementPct float64
 }
 
 // MetroPair is the per-pair entry in the listing. Direction is normalized:
@@ -240,8 +240,8 @@ func (a *API) FetchMetroPairLatency(ctx context.Context, opts MetroPairLatencyOp
 		applyFloat(&b.InternetP95JitterUs, inetP95J)
 		applyFloat(&b.InternetP99JitterUs, inetP99J)
 		applyFloat(&b.InternetMaxJitterUs, inetMaxJ)
-		applyFloat(&b.AvgRttImprovementPct, rttImprovement)
-		applyFloat(&b.AvgJitterImprovementPct, jitterImprovement)
+		applyFloat(&b.DZAvgRttImprovementPct, rttImprovement)
+		applyFloat(&b.DZAvgJitterImprovementPct, jitterImprovement)
 		bucketsByPair[key][bucketTS.UTC()] = b
 	}
 	if err := rows.Err(); err != nil {
@@ -588,10 +588,10 @@ func queryMetroPairLatency(ctx context.Context, db driver.Conn, params bucketPar
 			i.max_jitter_us AS inet_max_jitter_us,
 			if(d.avg_rtt_us > 0 AND i.avg_rtt_us > 0,
 				(i.avg_rtt_us - d.avg_rtt_us) / i.avg_rtt_us * 100,
-				NULL) AS avg_rtt_improvement_pct,
+				NULL) AS dz_avg_rtt_improvement_pct,
 			if(d.avg_jitter_us > 0 AND i.avg_jitter_us > 0,
 				(i.avg_jitter_us - d.avg_jitter_us) / i.avg_jitter_us * 100,
-				NULL) AS avg_jitter_improvement_pct
+				NULL) AS dz_avg_jitter_improvement_pct
 		FROM dz_data d
 		FULL OUTER JOIN inet_data i USING (metro_a, metro_b, bucket_ts)
 		WHERE (metro_a, metro_b) IN (
