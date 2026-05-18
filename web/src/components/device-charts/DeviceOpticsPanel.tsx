@@ -1,6 +1,6 @@
 import { Fragment, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Loader2, AlertCircle, ChevronDown, ChevronRight } from 'lucide-react'
+import { ChevronDown, ChevronRight } from 'lucide-react'
 import { fetchDeviceOptics, type OpticsLane, type OpticsSeverity } from '@/lib/api'
 import { DeviceOpticsChart } from './DeviceOpticsChart'
 
@@ -38,46 +38,13 @@ function laneKey(lane: OpticsLane): string {
 export function DeviceOpticsPanel({ devicePk, className }: DeviceOpticsPanelProps) {
   const [expanded, setExpanded] = useState<string | null>(null)
 
-  const { data, isLoading, error } = useQuery({
+  const { data } = useQuery({
     queryKey: ['deviceOptics', devicePk],
     queryFn: () => fetchDeviceOptics(devicePk),
   })
 
-  if (isLoading) {
-    return (
-      <div className={className}>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider mb-2">
-          <span>Optics</span>
-          <Loader2 className="h-3 w-3 animate-spin" />
-        </div>
-        <div className="animate-pulse bg-muted rounded h-20 w-full" />
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className={className}>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider mb-2">
-          <span>Optics</span>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <AlertCircle className="h-3.5 w-3.5" />
-          Failed to load optics
-        </div>
-      </div>
-    )
-  }
-
   if (!data || !data.lanes || data.lanes.length === 0) {
-    return (
-      <div className={className}>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider mb-2">
-          <span>Optics</span>
-        </div>
-        <div className="text-xs text-muted-foreground/60">No transceiver telemetry for this device</div>
-      </div>
-    )
+    return null
   }
 
   const { lanes, summary } = data
