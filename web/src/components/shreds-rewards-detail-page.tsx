@@ -6,7 +6,7 @@ import { fetchShredsRewardsDetail } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { PageHeader } from './page-header'
 import { CopyableText } from './copyable-text'
-import { format2Z } from './shreds-rewards-page'
+import { format2Z } from './shreds-rewards-format'
 
 function truncatePK(pk: string): string {
   if (!pk) return ''

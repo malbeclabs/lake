@@ -18,6 +18,7 @@ import {
 import { cn, handleRowClick } from '@/lib/utils'
 import { PageHeader } from './page-header'
 import { Pagination } from './pagination'
+import { format2Z } from './shreds-rewards-format'
 
 const PAGE_SIZE = 100
 
@@ -54,14 +55,6 @@ function formatStakeExact(lamports: number): string {
   return `${(lamports / 1e9).toLocaleString(undefined, { maximumFractionDigits: 2 })} SOL`
 }
 
-export function format2Z(amount: number): string {
-  if (!Number.isFinite(amount) || amount <= 0) return '—'
-  if (amount >= 1_000_000)
-    return `${(amount / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 2 })}M 2Z`
-  if (amount >= 10_000)
-    return `${(amount / 1_000).toLocaleString(undefined, { maximumFractionDigits: 1 })}K 2Z`
-  return `${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} 2Z`
-}
 
 function parseSearchFilters(searchParam: string): string[] {
   if (!searchParam) return []

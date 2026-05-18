@@ -18,14 +18,15 @@ import (
 // insertShredsRewardsTestData seeds two validators (node-A, node-B) across
 // three subscription epochs (100, 101, 102) so that the earnings math is exact:
 //
-//   distributed_validator_2z_amount = 10000 per epoch (associated_dz_epoch=10/11/12).
-//   leader_slots: A=60, B=40 per epoch → total_leader_slots=100.
-//   client_proportion = 3500 (35% to client), so 65% to validator (10000-3500=6500).
-//   earned_2z(A) per epoch = 10000 * 60 * 6500 / (100 * 10000) = 3900.
-//   earned_2z(B) per epoch = 10000 * 40 * 6500 / (100 * 10000) = 2600.
+//	distributed_validator_2z_amount = 10000 per epoch (associated_dz_epoch=10/11/12).
+//	leader_slots: A=60, B=40 per epoch → total_leader_slots=100.
+//	client_proportion = 3500 (35% to client), so 65% to validator (10000-3500=6500).
+//	earned_2z(A) per epoch = 10000 * 60 * 6500 / (100 * 10000) = 3900.
+//	earned_2z(B) per epoch = 10000 * 40 * 6500 / (100 * 10000) = 2600.
 //
 // Across three epochs:
-//   total(A) = 3*3900 = 11700, total(B) = 3*2600 = 7800.
+//
+//	total(A) = 3*3900 = 11700, total(B) = 3*2600 = 7800.
 //
 // is_claimable=1 is only set for epoch=102 (newest) for both validators, so
 // the per-epoch claimable amount is 3900 / 2600 respectively (the rest is

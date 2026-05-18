@@ -77,15 +77,15 @@ var JournalDiscriminator = [8]byte{0x2c, 0x00, 0x81, 0x59, 0x1d, 0x13, 0x66, 0x9
 // changes in the upstream Rust struct (e.g., a new field inserted) update
 // in one place and are visibly diffable.
 const (
-	offSubscriptionEpoch                       = 8
-	offMintKey                                 = 16
-	offRewardMintKey                           = 48
-	offPublisherAccumulationBitmapStartIndex   = 104
-	offPublisherAccumulationBitmapEndIndex     = 108
-	offClientAccumulationBitmapStartIndex      = 112
-	offClientAccumulationBitmapEndIndex        = 116
-	offAccumulatedPublisherLeafCount           = 152
-	offDistributedPublisherLeafCount           = 156
+	offSubscriptionEpoch                     = 8
+	offMintKey                               = 16
+	offRewardMintKey                         = 48
+	offPublisherAccumulationBitmapStartIndex = 104
+	offPublisherAccumulationBitmapEndIndex   = 108
+	offClientAccumulationBitmapStartIndex    = 112
+	offClientAccumulationBitmapEndIndex      = 116
+	offAccumulatedPublisherLeafCount         = 152
+	offDistributedPublisherLeafCount         = 156
 )
 
 // JournalView captures the subset of ShredDistributionJournal state we
