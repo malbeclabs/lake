@@ -174,12 +174,6 @@ function TwoZHint({
 
 // Metrics computation
 
-interface EpochProjection {
-  epoch: number;
-  confirmed: number;
-  atRisk: number;
-}
-
 interface MetroPricingStat {
   metro: string;
   price: number;
@@ -204,7 +198,6 @@ interface Economics {
   uniqueFunders: number;
   avgSeatsPerFunder: number;
   topFunders: TopFunder[];
-  revenueProjection: EpochProjection[];
   metroPricing: MetroPricingStat[];
 }
 
@@ -366,32 +359,6 @@ function computeEconomics(seats: ShredClientSeat[]): Economics {
     .sort((a, b) => b.seats - a.seats)
     .slice(0, 10);
 
-  const seatRunways = seats.map((s) => ({
-    revenue: s.price_per_epoch_dollars,
-    runway:
-      s.price_per_epoch_dollars > 0
-        ? Math.floor(
-            s.total_usdc_balance / USDC_SCALE / s.price_per_epoch_dollars,
-          )
-        : 999,
-  }));
-  const maxEpochs = Math.min(
-    Math.max(...seatRunways.map((s) => s.runway), 0),
-    9,
-  );
-  const revenueProjection: EpochProjection[] = Array.from(
-    { length: maxEpochs + 1 },
-    (_, i) => ({
-      epoch: i,
-      confirmed: seatRunways
-        .filter((s) => s.runway > i)
-        .reduce((sum, s) => sum + s.revenue, 0),
-      atRisk: seatRunways
-        .filter((s) => s.runway === i)
-        .reduce((sum, s) => sum + s.revenue, 0),
-    }),
-  );
-
   // Metro pricing: unique price per metro, count devices
   const metroPriceMap = new Map<string, { price: number; devices: number }>();
   for (const s of seats) {
@@ -431,7 +398,6 @@ function computeEconomics(seats: ShredClientSeat[]): Economics {
     uniqueFunders,
     avgSeatsPerFunder,
     topFunders,
-    revenueProjection,
     metroPricing,
   };
 }
@@ -1196,172 +1162,8 @@ export function ShredsEconomicsPage() {
             </section>
           </div>
 
-          {/* Bar charts: Predicted Revenue + Balance Runway */}
+          {/* Balance Runway */}
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-            {/* Predicted Revenue */}
-            <section>
-              <SectionTitle>
-                Predicted Revenue (USDC) — Next{" "}
-                {econ ? econ.revenueProjection.length : 0} Epochs
-              </SectionTitle>
-              <div className="border border-border rounded-lg bg-card px-2 pt-5 pb-2">
-                {econ ? (
-                  <>
-                    <div className="flex items-center gap-x-3 gap-y-1.5 flex-wrap px-2 mb-3">
-                      <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground whitespace-nowrap">
-                        <span className="inline-block h-2 w-2 rounded-sm bg-emerald-500/80 shrink-0" />
-                        Confirmed
-                      </span>
-                      <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground whitespace-nowrap">
-                        <span className="inline-block h-2 w-2 rounded-sm bg-amber-400/80 shrink-0" />
-                        At-risk
-                      </span>
-                    </div>
-                    <ResponsiveContainer width="100%" height={192}>
-                      <BarChart
-                        data={econ.revenueProjection}
-                        barCategoryGap="20%"
-                        margin={{ top: 0, right: 12, left: 0, bottom: 0 }}
-                      >
-                        <defs>
-                          <linearGradient
-                            id="greenBar"
-                            x1="0"
-                            y1="0"
-                            x2="0"
-                            y2="1"
-                          >
-                            <stop
-                              offset="0%"
-                              stopColor="#22c55e"
-                              stopOpacity={0.95}
-                            />
-                            <stop
-                              offset="100%"
-                              stopColor="#22c55e"
-                              stopOpacity={0.65}
-                            />
-                          </linearGradient>
-                          <linearGradient
-                            id="amberBar"
-                            x1="0"
-                            y1="0"
-                            x2="0"
-                            y2="1"
-                          >
-                            <stop
-                              offset="0%"
-                              stopColor="#eab308"
-                              stopOpacity={0.95}
-                            />
-                            <stop
-                              offset="100%"
-                              stopColor="#eab308"
-                              stopOpacity={0.65}
-                            />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid
-                          strokeDasharray="3 3"
-                          stroke="var(--border)"
-                          vertical={false}
-                        />
-                        <XAxis
-                          dataKey="epoch"
-                          tickLine={false}
-                          axisLine={false}
-                          tick={{
-                            fontSize: 11,
-                            fill: "var(--muted-foreground)",
-                          }}
-                          dy={6}
-                          tickFormatter={(v: number) =>
-                            currentEpoch != null
-                              ? String(currentEpoch + v)
-                              : `+${v}`
-                          }
-                        />
-                        <YAxis
-                          tickLine={false}
-                          axisLine={false}
-                          tick={{
-                            fontSize: 11,
-                            fill: "var(--muted-foreground)",
-                          }}
-                          tickFormatter={(v: number) => `$${v}`}
-                          width={52}
-                        />
-                        <Tooltip
-                          cursor={{ fill: "var(--muted)", opacity: 0.4 }}
-                          content={({ active, payload, label }) => {
-                            if (!active || !payload?.length) return null;
-                            const epochLabel =
-                              currentEpoch != null
-                                ? `Epoch ${currentEpoch + Number(label)}`
-                                : `+${label} epochs`;
-                            const confirmed = payload.find(
-                              (p) => p.dataKey === "confirmed",
-                            );
-                            const atRisk = payload.find(
-                              (p) => p.dataKey === "atRisk",
-                            );
-                            return (
-                              <div className="bg-card border border-border rounded-lg px-3 py-2.5 text-xs shadow-xl space-y-1.5">
-                                <div className="text-muted-foreground font-medium">
-                                  {epochLabel}
-                                </div>
-                                {confirmed && Number(confirmed.value) > 0 && (
-                                  <div className="flex items-center gap-2">
-                                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                                    <span className="text-muted-foreground">
-                                      Confirmed
-                                    </span>
-                                    <span className="ml-auto font-semibold">
-                                      {formatUSDC(Number(confirmed.value))}
-                                    </span>
-                                  </div>
-                                )}
-                                {atRisk && Number(atRisk.value) > 0 && (
-                                  <div className="flex items-center gap-2">
-                                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400" />
-                                    <span className="text-muted-foreground">
-                                      At-risk
-                                    </span>
-                                    <span className="ml-auto font-semibold">
-                                      {formatUSDC(Number(atRisk.value))}
-                                    </span>
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          }}
-                        />
-                        <Bar
-                          dataKey="confirmed"
-                          stackId="a"
-                          fill="url(#greenBar)"
-                          radius={[0, 0, 0, 0]}
-                        />
-                        <Bar
-                          dataKey="atRisk"
-                          stackId="a"
-                          fill="url(#amberBar)"
-                          radius={[3, 3, 0, 0]}
-                        />
-                      </BarChart>
-                    </ResponsiveContainer>
-                    <p className="text-xs text-muted-foreground px-2 pt-2">
-                      Assumes no new deposits. At-risk = seats on their last
-                      funded epoch.
-                    </p>
-                  </>
-                ) : (
-                  <div className="h-56 rounded bg-muted animate-pulse" />
-                )}
-              </div>
-            </section>
-
-            {/* Balance Runway */}
             <section>
               <SectionTitle>Balance Runway Distribution</SectionTitle>
               <div className="border border-border rounded-lg bg-card px-2 pt-5 pb-2">
