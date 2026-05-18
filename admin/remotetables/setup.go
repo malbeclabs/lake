@@ -35,6 +35,20 @@ var externalRemoteTables = []struct {
 	{"dzdp", "location_state"},
 }
 
+// externalRemoteDatabases lists remote databases to mirror in full, discovering
+// tables dynamically. Migration-tracking tables (goose_db_version) are skipped.
+var externalRemoteDatabases = []string{
+	"telemetry_devnet",
+	"telemetry_testnet",
+	"telemetry_mainnet_beta",
+}
+
+// skippedExternalTables are table names excluded when mirroring an entire
+// external database (e.g., goose migration tracking).
+var skippedExternalTables = map[string]bool{
+	"goose_db_version": true,
+}
+
 // Config holds configuration for creating remote proxy tables.
 type Config struct {
 	// LocalAddr is the local ClickHouse address (host:port).
@@ -180,7 +194,70 @@ func Setup(log *slog.Logger, cfg Config) error {
 	}
 	fmt.Println()
 
+	// Mirror entire external databases by discovering tables on the remote.
+	for _, db := range externalRemoteDatabases {
+		dbCreated, dbSkipped, err := mirrorRemoteDatabase(ctx, log, localConn, remoteConn, remoteAddr, db, cfg.RemoteUser, cfg.RemotePassword)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Created %d proxy tables in %s", dbCreated, db)
+		if dbSkipped > 0 {
+			fmt.Printf(" (skipped %d tables)", dbSkipped)
+		}
+		fmt.Println()
+	}
+
 	return nil
+}
+
+// mirrorRemoteDatabase discovers all tables in the given remote database and
+// creates remoteSecure proxies for each in a local database of the same name,
+// skipping migration-tracking tables.
+func mirrorRemoteDatabase(ctx context.Context, log *slog.Logger, localConn, remoteConn clickhouse.Connection, remoteAddr, database, remoteUser, remotePassword string) (created, skipped int, err error) {
+	if err := localConn.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", database)); err != nil {
+		return 0, 0, fmt.Errorf("failed to create database %s: %w", database, err)
+	}
+
+	rows, err := remoteConn.Query(ctx, "SELECT name FROM system.tables WHERE database = ? ORDER BY name", database)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to query remote tables for %s: %w", database, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var tableName string
+		if err := rows.Scan(&tableName); err != nil {
+			return 0, 0, fmt.Errorf("failed to scan table name: %w", err)
+		}
+
+		if skippedExternalTables[tableName] {
+			log.Info("skipping excluded table", "table", fmt.Sprintf("%s.%s", database, tableName))
+			skipped++
+			continue
+		}
+
+		result, err := checkTable(ctx, localConn, database, tableName, log)
+		if err != nil {
+			return 0, 0, err
+		}
+		if result == tableSkipped {
+			skipped++
+			continue
+		}
+
+		query := fmt.Sprintf(
+			"CREATE OR REPLACE TABLE `%s`.`%s` AS remoteSecure('%s', '%s.%s', '%s', '%s')",
+			database, tableName, remoteAddr, database, tableName, remoteUser, remotePassword,
+		)
+		if err := localConn.Exec(ctx, query); err != nil {
+			log.Warn("skipping proxy table (remote table may not exist)", "table", fmt.Sprintf("%s.%s", database, tableName), "error", err)
+			skipped++
+			continue
+		}
+		log.Info("created proxy table", "table", fmt.Sprintf("%s.%s", database, tableName))
+		created++
+	}
+	return created, skipped, nil
 }
 
 type tableCheckResult int
