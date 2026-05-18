@@ -14,6 +14,7 @@ import { toDeviceMetricsParams } from '@/components/shared/metrics-params'
 import { DeviceHealthTimeline } from '@/components/device-charts/DeviceHealthTimeline'
 import { DeviceInterfaceIssuesChart } from '@/components/device-charts/DeviceInterfaceIssuesChart'
 import { DeviceTrafficChart } from '@/components/device-charts/DeviceTrafficChart'
+import { DeviceOpticsPanel } from '@/components/device-charts/DeviceOpticsPanel'
 import { TimeRangeSelector } from '@/components/topology/TimeRangeSelector'
 import type { TimeRange } from '@/components/topology/utils'
 import { useActiveOpsTickets, useOpsTicketHistory } from '@/hooks/use-ops-tickets'
@@ -308,6 +309,7 @@ export function DeviceDetailPage() {
               showIncidents={showIncidents}
               showMaintenance={showMaintenance}
             />
+            <DeviceOpticsPanel devicePk={device.pk} className="rounded-lg border border-border p-4" />
           </div>
         )}
       </div>
