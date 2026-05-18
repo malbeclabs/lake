@@ -89,6 +89,13 @@ func (s *Store) ReplaceShredDistributions(ctx context.Context, rows []ShredDistr
 	})
 }
 
+func (s *Store) ReplaceDistributionClientProportions(ctx context.Context, rows []DistributionClientProportionRow) error {
+	s.log.Debug("shreds/store: replacing distribution client proportions", "count", len(rows))
+	return s.writeDimension(ctx, len(rows), NewDistributionClientProportionDataset, func(i int) ([]any, error) {
+		return distributionClientProportionSchema.ToRow(rows[i]), nil
+	})
+}
+
 func (s *Store) writeDimension(
 	ctx context.Context,
 	count int,

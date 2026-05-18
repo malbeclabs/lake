@@ -6132,3 +6132,70 @@ export async function fetchAccessPassConnections(pk: string): Promise<AccessPass
   }
   return res.json()
 }
+
+// Shreds — Edge Rewards (per-epoch validator earnings)
+
+export interface ShredsRewardsRow {
+  node_id: string
+  vote_pubkey: string
+  validator_name: string
+  activated_stake: number
+  dz_user_ip: string
+  total_earned_2z: number
+  immediately_claimable_2z: number
+  epoch_earnings: Record<string, number>
+}
+
+export interface ShredsRewardsResponse {
+  current_solana_epoch: number
+  latest_finalized_epoch: number
+  epoch_columns: number[]
+  validators: ShredsRewardsRow[]
+}
+
+export interface ShredsRewardsParams {
+  search?: string
+  sort?: 'validator_name' | 'activated_stake' | 'total_earned_2z' | 'immediately_claimable_2z'
+  order?: 'asc' | 'desc'
+  limit?: number
+  offset?: number
+}
+
+export async function fetchShredsRewards(
+  params: ShredsRewardsParams = {},
+): Promise<ShredsRewardsResponse> {
+  const q = new URLSearchParams()
+  if (params.search) q.set('search', params.search)
+  if (params.sort) q.set('sort', params.sort)
+  if (params.order) q.set('order', params.order)
+  if (params.limit != null) q.set('limit', String(params.limit))
+  if (params.offset != null) q.set('offset', String(params.offset))
+  const qs = q.toString()
+  const res = await apiFetch(`/api/dz/shreds/rewards${qs ? `?${qs}` : ''}`)
+  if (!res.ok) throw new Error('Failed to fetch shreds rewards')
+  return res.json()
+}
+
+export interface ShredsRewardsEpochDetail {
+  solana_epoch: number
+  subscription_epoch: number
+  leader_slots: number
+  client_id: number
+  earned_2z: number
+  is_claimable?: boolean | null
+}
+
+export interface ShredsRewardsDetail {
+  node_id: string
+  vote_pubkey: string
+  validator_name: string
+  activated_stake: number
+  dz_user_ip: string
+  epochs: ShredsRewardsEpochDetail[]
+}
+
+export async function fetchShredsRewardsDetail(nodeId: string): Promise<ShredsRewardsDetail> {
+  const res = await apiFetch(`/api/dz/shreds/rewards/${encodeURIComponent(nodeId)}`)
+  if (!res.ok) throw new Error('Failed to fetch shreds rewards detail')
+  return res.json()
+}

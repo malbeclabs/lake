@@ -102,6 +102,9 @@ func (a *Activities) entries() []cacheEntry {
 		{"publisher check", "publisher_check", func(ctx context.Context) (any, error) {
 			return api.FetchPublisherCheckData(ctx, "", 2, 0)
 		}},
+		{"shreds rewards", "shreds_rewards", func(ctx context.Context) (any, error) {
+			return api.FetchShredsRewardsData(ctx)
+		}},
 		{"edge scoreboard", "edge_scoreboard", func(ctx context.Context) (any, error) {
 			return api.FetchEdgeScoreboardData(ctx, "24h", false, 0, 0, 1000)
 		}},
