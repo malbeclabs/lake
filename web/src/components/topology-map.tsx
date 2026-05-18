@@ -2623,9 +2623,10 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
 
     const flyToLocation = (lng: number, lat: number, zoom = 3, usePanelOffset = false) => {
       if (mapRef.current) {
+        const currentZoom = mapRef.current.getZoom()
         mapRef.current.flyTo({
           center: [lng, lat],
-          zoom,
+          zoom: Math.max(currentZoom, zoom),
           duration: 1000,
           offset: usePanelOffset ? [getPanelOffsetX(), 0] : [0, 0],
         })
@@ -2800,6 +2801,13 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         return
       }
 
+      // Cancel any pending hide timer so re-entering (e.g., when MapLibre fires
+      // a brief mouseleave between adjacent features) doesn't drop the hover state
+      if (linkHideTimerRef.current) {
+        clearTimeout(linkHideTimerRef.current)
+        linkHideTimerRef.current = null
+      }
+
       const props = e.features[0].properties
 
       // Pin tooltip position at hover start so it stays reachable as user moves toward it
@@ -2854,6 +2862,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   }, [linkMap, buildLinkInfo, multicastTreesMode, dimOtherLinks, multicastTreeLinkPKs])
 
   const handleLinkMouseLeave = useCallback(() => {
+    if (linkHideTimerRef.current) clearTimeout(linkHideTimerRef.current)
     linkHideTimerRef.current = setTimeout(() => setHoveredLink(null), 400)
   }, [])
 
