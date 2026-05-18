@@ -2,10 +2,12 @@ import { Fragment, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { fetchDeviceOptics, type OpticsLane, type OpticsSeverity } from '@/lib/api'
+import type { TimeRange } from '@/components/topology/utils'
 import { DeviceOpticsChart } from './DeviceOpticsChart'
 
 interface DeviceOpticsPanelProps {
   devicePk: string
+  timeRange: TimeRange
   className?: string
 }
 
@@ -35,7 +37,7 @@ function laneKey(lane: OpticsLane): string {
   return `${lane.interface_name}:${lane.channel_index}`
 }
 
-export function DeviceOpticsPanel({ devicePk, className }: DeviceOpticsPanelProps) {
+export function DeviceOpticsPanel({ devicePk, timeRange, className }: DeviceOpticsPanelProps) {
   const [expanded, setExpanded] = useState<string | null>(null)
 
   const { data } = useQuery({
@@ -137,6 +139,7 @@ export function DeviceOpticsPanel({ devicePk, className }: DeviceOpticsPanelProp
                           devicePk={devicePk}
                           interfaceName={lane.interface_name}
                           channelIndex={lane.channel_index}
+                          timeRange={timeRange}
                         />
                         {lane.thresholds && (
                           <div className="mt-3 grid grid-cols-3 gap-3 text-[11px] text-muted-foreground">

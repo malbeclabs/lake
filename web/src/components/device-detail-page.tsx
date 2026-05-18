@@ -309,7 +309,11 @@ export function DeviceDetailPage() {
               showIncidents={showIncidents}
               showMaintenance={showMaintenance}
             />
-            <DeviceOpticsPanel devicePk={device.pk} className="rounded-lg border border-border p-4" />
+            <DeviceOpticsPanel
+              devicePk={device.pk}
+              timeRange={timeRange}
+              className="rounded-lg border border-border p-4"
+            />
           </div>
         )}
       </div>

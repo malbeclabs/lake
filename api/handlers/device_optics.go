@@ -353,38 +353,56 @@ func (a *API) GetDeviceOpticsHistory(w http.ResponseWriter, r *http.Request) {
 		channelPtr = &ch
 	}
 
-	// Window. Default 24h, max 30d.
-	hours := 24
-	if hStr := q.Get("hours"); hStr != "" {
-		v, err := strconv.Atoi(hStr)
-		if err != nil || v < 1 {
-			http.Error(w, "invalid hours", http.StatusBadRequest)
+	// Time range / custom window, matching the device-metrics endpoint shape.
+	timeRange := q.Get("range")
+	if timeRange == "" {
+		timeRange = "24h"
+	}
+	startTimeStr := q.Get("start_time")
+	endTimeStr := q.Get("end_time")
+	bucketStr := q.Get("bucket")
+
+	var params bucketParams
+	if startTimeStr != "" && endTimeStr != "" {
+		startUnix, err1 := strconv.ParseInt(startTimeStr, 10, 64)
+		endUnix, err2 := strconv.ParseInt(endTimeStr, 10, 64)
+		if err1 != nil || err2 != nil {
+			http.Error(w, "invalid start_time or end_time", http.StatusBadRequest)
 			return
 		}
-		hours = v
-	}
-	if hours > 30*24 {
-		hours = 30 * 24
+		startT := time.Unix(startUnix, 0).UTC()
+		endT := time.Unix(endUnix, 0).UTC()
+		params = parseBucketParamsCustom(startT, endT, 24)
+	} else {
+		now := time.Now().UTC()
+		duration := presetToDuration(timeRange)
+		startT := now.Add(-duration)
+		params = parseBucketParamsCustom(startT, now, 24)
+		params.TimeRange = timeRange
 	}
 
-	// Bucket size scales with the window so we keep ~300-720 points.
-	var bucketSec int
-	switch {
-	case hours <= 6:
-		bucketSec = 60
-	case hours <= 24:
+	if bucketStr != "" && bucketStr != "auto" {
+		interval, ok := parseBucketString(bucketStr)
+		if !ok {
+			http.Error(w, "invalid bucket value", http.StatusBadRequest)
+			return
+		}
+		secs := intervalToSeconds(interval)
+		params.BucketSeconds = secs
+		params.BucketMinutes = secs / 60
+		params.BucketInterval = interval
+	}
+
+	bucketSec := params.BucketSeconds
+	if bucketSec <= 0 {
 		bucketSec = 300
-	case hours <= 7*24:
-		bucketSec = 900
-	default:
-		bucketSec = 3600
 	}
 
 	conn := a.envDB(ctx)
 	tdb := TelemetryDatabaseForEnv(EnvFromContext(ctx))
 
 	channelClause := ""
-	args := []any{pk, ifname}
+	args := []any{*params.StartTime, *params.EndTime, pk, ifname}
 	if channelPtr != nil {
 		channelClause = " AND channel_index = ?"
 		args = append(args, *channelPtr)
@@ -402,12 +420,13 @@ func (a *API) GetDeviceOpticsHistory(w http.ResponseWriter, r *http.Request) {
 			max(output_power)       AS max_out,
 			avg(laser_bias_current) AS avg_bias
 		FROM %[1]s.transceiver_state
-		WHERE timestamp >= now() - INTERVAL %[3]d HOUR
+		WHERE timestamp >= ?
+		  AND timestamp < ?
 		  AND device_pubkey = ?
-		  AND interface_name = ?%[4]s
+		  AND interface_name = ?%[3]s
 		GROUP BY bucket_ts, channel_index
 		ORDER BY bucket_ts, channel_index
-	`, "`"+tdb+"`", bucketSec, hours, channelClause)
+	`, "`"+tdb+"`", bucketSec, channelClause)
 
 	start := time.Now()
 	rows, err := conn.Query(ctx, query, args...)
@@ -456,14 +475,13 @@ func (a *API) GetDeviceOpticsHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now().UTC()
 	resp := DeviceOpticsHistoryResponse{
 		DevicePK:      pk,
 		InterfaceName: ifname,
 		ChannelIndex:  channelPtr,
 		BucketSeconds: bucketSec,
-		From:          now.Add(-time.Duration(hours) * time.Hour).Format(time.RFC3339),
-		To:            now.Format(time.RFC3339),
+		From:          params.StartTime.UTC().Format(time.RFC3339),
+		To:            params.EndTime.UTC().Format(time.RFC3339),
 		Buckets:       buckets,
 	}
 	w.Header().Set("Content-Type", "application/json")

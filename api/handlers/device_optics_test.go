@@ -208,7 +208,7 @@ func TestGetDeviceOpticsHistory_BucketsSamples(t *testing.T) {
 	`, "`telemetry_mainnet_beta`"))
 	require.NoError(t, err)
 
-	req := withDevicePK(httptest.NewRequest(http.MethodGet, "/api/dz/devices/dev-optics/optics/history?interface=Ethernet1&hours=6", nil), "dev-optics")
+	req := withDevicePK(httptest.NewRequest(http.MethodGet, "/api/dz/devices/dev-optics/optics/history?interface=Ethernet1&range=6h", nil), "dev-optics")
 	rr := httptest.NewRecorder()
 	api.GetDeviceOpticsHistory(rr, req)
 	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())

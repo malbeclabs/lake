@@ -3034,13 +3034,25 @@ export interface DeviceOpticsHistoryResponse {
   buckets: DeviceOpticsHistoryPoint[]
 }
 
+export interface FetchDeviceOpticsHistoryParams {
+  interface: string
+  channel?: number
+  range?: string
+  startTime?: number
+  endTime?: number
+  bucket?: string
+}
+
 export async function fetchDeviceOpticsHistory(
   pk: string,
-  params: { interface: string; channel?: number; hours?: number }
+  params: FetchDeviceOpticsHistoryParams
 ): Promise<DeviceOpticsHistoryResponse> {
   const search = new URLSearchParams({ interface: params.interface })
   if (params.channel !== undefined) search.set('channel', String(params.channel))
-  if (params.hours !== undefined) search.set('hours', String(params.hours))
+  if (params.range) search.set('range', params.range)
+  if (params.startTime !== undefined) search.set('start_time', String(params.startTime))
+  if (params.endTime !== undefined) search.set('end_time', String(params.endTime))
+  if (params.bucket) search.set('bucket', params.bucket)
   const res = await fetchWithRetry(
     `/api/dz/devices/${encodeURIComponent(pk)}/optics/history?${search.toString()}`
   )
