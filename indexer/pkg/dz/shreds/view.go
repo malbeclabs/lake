@@ -395,9 +395,17 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	}
 
 	// Fetch and persist the per-epoch validator-rewards merkle leaves from the
-	// off-chain S3 export for every on-chain distribution that has a finalized
-	// merkle root. A missing or mismatched export is logged but does not fail
-	// the refresh — the next refresh will retry.
+	// off-chain S3 export.
+	//
+	// Two paths run per distribution:
+	//   - If `ValidatorRewardsMerkleRoot` is non-zero (the oracle has posted
+	//     the on-chain root): fetch, verify, persist as verified. Replaces
+	//     any previously-indexed unverified rows for the epoch.
+	//   - If the root is still zero (the chain hasn't caught up yet): fetch
+	//     the S3 export without verification and persist with
+	//     IsVerified=false. Lets the rewards page surface publishing
+	//     validators with their leader slots immediately; the verified pass
+	//     overwrites these rows once the root lands.
 	//
 	// The S3 export is keyed by Solana epoch. The shred-subscription program's
 	// `subscription_epoch` counter equals the Solana epoch (the program
@@ -410,19 +418,45 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	for _, kd := range allAccounts.ShredDistributions {
 		d := kd.ShredDistribution
 		expectedRoot := d.ValidatorRewardsMerkleRoot
-		if expectedRoot == zeroRoot {
-			continue
-		}
-		// Skip epochs we've already verified at this root — leaves are
-		// immutable per (subscription_epoch, node_id), so re-fetching the S3
-		// export every refresh would be wasteful.
-		if already, err := v.leafStore.HasLeavesForEpoch(ctx, d.SubscriptionEpoch); err != nil {
-			v.log.Warn("shreds: leaf existence check failed",
-				"solana_epoch", d.SubscriptionEpoch, "error", err)
-		} else if already {
-			continue
-		}
 		solanaEpoch := d.SubscriptionEpoch
+
+		status, err := v.leafStore.LeavesStatusForEpoch(ctx, solanaEpoch)
+		if err != nil {
+			v.log.Warn("shreds: leaves status check failed",
+				"solana_epoch", solanaEpoch, "error", err)
+			continue
+		}
+
+		if expectedRoot == zeroRoot {
+			// Chain hasn't posted a root yet. Index unverified once; subsequent
+			// refreshes skip until the root lands.
+			if status.HasVerified || status.HasUnverified {
+				continue
+			}
+			leaves, ok, fErr := validatorrewards.FetchForEpoch(ctx, v.s3Client, solanaEpoch)
+			switch {
+			case fErr != nil:
+				v.log.Warn("shreds: leaf fetch failed",
+					"solana_epoch", solanaEpoch, "error", fErr)
+			case ok:
+				if err := v.leafStore.ReplaceLeaves(ctx, d.SubscriptionEpoch, uint64(d.AssociatedDZEpoch), leaves); err != nil {
+					return result, fmt.Errorf("failed to replace unverified leaves: %w", err)
+				}
+				leafCount += int(leaves.TotalPublishingValidators)
+			default:
+				// 404 — S3 export not yet published for this epoch.
+				v.log.Debug("shreds: leaf export not yet available",
+					"solana_epoch", solanaEpoch, "verified", false)
+			}
+			continue
+		}
+
+		// Root is posted. Skip if we already have verified leaves (root is
+		// immutable). Otherwise fetch+verify and persist; this overwrites
+		// any prior unverified entries because PK is the same per-leaf.
+		if status.HasVerified {
+			continue
+		}
 		verified, ok, vErr := validatorrewards.FetchAndVerifyForEpoch(ctx, v.s3Client, solanaEpoch, expectedRoot)
 		switch {
 		case vErr != nil:
@@ -437,7 +471,8 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 			leafCount += int(verified.TotalPublishingValidators)
 		default:
 			// 404 — S3 export not yet published for this epoch. Will retry next refresh.
-			v.log.Debug("shreds: leaf export not yet available", "solana_epoch", solanaEpoch)
+			v.log.Debug("shreds: leaf export not yet available",
+				"solana_epoch", solanaEpoch, "verified", true)
 		}
 	}
 

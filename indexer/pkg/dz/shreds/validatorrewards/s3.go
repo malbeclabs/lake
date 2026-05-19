@@ -90,15 +90,19 @@ func (c *S3Client) FetchLeaderSlotData(ctx context.Context, solanaEpoch uint64) 
 	return entries, true, nil
 }
 
-// VerifiedLeaves is the output of FetchAndVerifyForEpoch: the sorted leaf
-// set with parallel base58 node-id strings and the aggregate counts that
-// the caller will later persist alongside the merkle root.
+// VerifiedLeaves is the output of FetchAndVerifyForEpoch and FetchForEpoch:
+// the sorted leaf set with parallel base58 node-id strings and the
+// aggregate counts that the caller will later persist alongside the merkle
+// root. IsVerified is true only when the leaves were confirmed against the
+// on-chain ShredDistribution.validator_rewards_merkle_root; FetchForEpoch
+// returns IsVerified=false for indexing-before-finalization scenarios.
 type VerifiedLeaves struct {
 	SolanaEpoch               uint64
 	Leaves                    []LeafBytes
 	NodeIDStrings             []string // base58 strings, parallel to Leaves
 	TotalPublishingValidators uint32
 	TotalPublishedLeaderSlots uint32
+	IsVerified                bool
 }
 
 // fetchVerifyLogger is the package-level logger used for debug-logging
@@ -182,6 +186,77 @@ func FetchAndVerifyForEpoch(
 		NodeIDStrings:             sortedNodeIDs,
 		TotalPublishingValidators: uint32(len(sorted)),
 		TotalPublishedLeaderSlots: uint32(totalSlots),
+		IsVerified:                true,
+	}, true, nil
+}
+
+// FetchForEpoch fetches the S3 JSON for a Solana epoch and returns the
+// sorted leaf set WITHOUT verifying against an on-chain merkle root.
+// Intended for indexing leaves before the chain has posted a root — the
+// returned IsVerified flag is false. Once the on-chain root is posted, the
+// caller should re-fetch via FetchAndVerifyForEpoch and overwrite these
+// entries.
+//
+// Returns:
+//   - On HTTP 200: (*VerifiedLeaves with IsVerified=false, true, nil).
+//   - On HTTP 404: (nil, false, nil) — the export is not yet available.
+//   - On transport/decode errors: (nil, false, err).
+//
+// Malformed rows are skipped silently with a debug log, matching
+// FetchAndVerifyForEpoch.
+func FetchForEpoch(
+	ctx context.Context,
+	s3 *S3Client,
+	solanaEpoch uint64,
+) (*VerifiedLeaves, bool, error) {
+	entries, ok, err := s3.FetchLeaderSlotData(ctx, solanaEpoch)
+	if err != nil {
+		return nil, false, err
+	}
+	if !ok {
+		return nil, false, nil
+	}
+
+	leaves := make([]LeafBytes, 0, len(entries))
+	nodeIDStrings := make([]string, 0, len(entries))
+	var totalSlots uint64
+
+	for _, e := range entries {
+		pk, err := solana.PublicKeyFromBase58(e.NodeIdentity)
+		if err != nil {
+			fetchVerifyLogger.Debug("validatorrewards/s3: skipping malformed node_identity",
+				"epoch", solanaEpoch,
+				"node_identity", e.NodeIdentity,
+				"err", err,
+			)
+			continue
+		}
+
+		var nid [32]byte
+		copy(nid[:], pk[:])
+
+		leaves = append(leaves, LeafBytes{
+			NodeID:      nid,
+			LeaderSlots: e.NumberOfLeaderSlots,
+			ClientID:    e.ClientID,
+		})
+		nodeIDStrings = append(nodeIDStrings, e.NodeIdentity)
+		totalSlots += uint64(e.NumberOfLeaderSlots)
+	}
+
+	sorted, sortedNodeIDs := sortLeavesWithNodeIDs(leaves, nodeIDStrings)
+
+	if totalSlots > uint64(^uint32(0)) {
+		return nil, false, fmt.Errorf("total published leader slots overflow uint32 for epoch %d: %d", solanaEpoch, totalSlots)
+	}
+
+	return &VerifiedLeaves{
+		SolanaEpoch:               solanaEpoch,
+		Leaves:                    sorted,
+		NodeIDStrings:             sortedNodeIDs,
+		TotalPublishingValidators: uint32(len(sorted)),
+		TotalPublishedLeaderSlots: uint32(totalSlots),
+		IsVerified:                false,
 	}, true, nil
 }
 

@@ -16,6 +16,12 @@ type LeafRow struct {
 	LeaderSlots       uint32
 	ClientID          uint16
 	LeafIndex         uint32
+	// IsVerified is 1 when the row's leaf set was confirmed against the
+	// on-chain ShredDistribution.validator_rewards_merkle_root, 0 when it was
+	// indexed from S3 before the chain had a non-zero root posted. The
+	// indexer re-fetches and verifies unverified rows on subsequent
+	// refreshes once the root lands.
+	IsVerified uint8
 }
 
 type leafSchema struct{}
@@ -34,6 +40,7 @@ func (s *leafSchema) PayloadColumns() []string {
 		"leader_slots:INTEGER",
 		"client_id:INTEGER",
 		"leaf_index:INTEGER",
+		"is_verified:INTEGER",
 	}
 }
 
@@ -46,6 +53,7 @@ func (s *leafSchema) ToRow(r LeafRow) []any {
 		r.LeaderSlots,
 		r.ClientID,
 		r.LeafIndex,
+		r.IsVerified,
 	}
 }
 

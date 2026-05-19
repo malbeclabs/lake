@@ -76,32 +76,51 @@ func (s *Store) HighestIndexedEpoch(ctx context.Context) (uint64, error) {
 	return epoch, nil
 }
 
-// HasLeavesForEpoch reports whether any leaves are already indexed for the
-// given subscription_epoch. Used by the view refresh loop to skip re-fetching
-// and re-verifying epochs whose leaves we've already persisted (the on-chain
-// merkle root is immutable once posted, so an existing leaf set for that
-// epoch is already verified).
-func (s *Store) HasLeavesForEpoch(ctx context.Context, subscriptionEpoch uint64) (bool, error) {
+// LeavesStatus reports what kind of leaves are already indexed for the given
+// subscription_epoch. The two flags are independent: an epoch may have only
+// unverified rows (indexed before the on-chain root posted), only verified
+// rows (the normal path once the root is up), or be empty.
+type LeavesStatus struct {
+	HasVerified   bool
+	HasUnverified bool
+}
+
+// LeavesStatusForEpoch returns the verification status of any leaves indexed
+// for the given subscription_epoch. The view refresh loop uses this to:
+//   - Skip epochs that are already verified (the on-chain root is immutable).
+//   - Skip epochs with unverified rows when the root is still zero (we already
+//     have a snapshot; next refresh will retry once the root posts).
+//   - Replace unverified rows with verified ones the first time we see a
+//     non-zero root for the epoch.
+func (s *Store) LeavesStatusForEpoch(ctx context.Context, subscriptionEpoch uint64) (LeavesStatus, error) {
+	var status LeavesStatus
 	conn, err := s.cfg.ClickHouse.Conn(ctx)
 	if err != nil {
-		return false, fmt.Errorf("failed to get ClickHouse connection: %w", err)
+		return status, fmt.Errorf("failed to get ClickHouse connection: %w", err)
 	}
 	defer conn.Close()
 
-	const q = `SELECT count() > 0 FROM dim_dz_shred_validator_rewards_leaves_current WHERE subscription_epoch = ?`
+	const q = `
+		SELECT
+			countIf(is_verified = 1) > 0,
+			countIf(is_verified = 0) > 0
+		FROM dim_dz_shred_validator_rewards_leaves_current
+		WHERE subscription_epoch = ?`
 	rows, err := conn.Query(ctx, q, subscriptionEpoch)
 	if err != nil {
-		return false, fmt.Errorf("query has leaves for epoch: %w", err)
+		return status, fmt.Errorf("query leaves status for epoch: %w", err)
 	}
 	defer rows.Close()
 	if !rows.Next() {
-		return false, nil
+		return status, nil
 	}
-	var has uint8
-	if err := rows.Scan(&has); err != nil {
-		return false, fmt.Errorf("scan has leaves for epoch: %w", err)
+	var hasVerified, hasUnverified uint8
+	if err := rows.Scan(&hasVerified, &hasUnverified); err != nil {
+		return status, fmt.Errorf("scan leaves status for epoch: %w", err)
 	}
-	return has != 0, nil
+	status.HasVerified = hasVerified != 0
+	status.HasUnverified = hasUnverified != 0
+	return status, nil
 }
 
 // LeafIndexToNodeID returns the leaf_index → node_id mapping for the given
@@ -182,6 +201,11 @@ func (s *Store) ReplaceLeaves(
 	}
 	defer conn.Close()
 
+	var verifiedFlag uint8
+	if v.IsVerified {
+		verifiedFlag = 1
+	}
+
 	toRow := func(i int) ([]any, error) {
 		nodeID := v.NodeIDStrings[i]
 		row := LeafRow{
@@ -192,6 +216,7 @@ func (s *Store) ReplaceLeaves(
 			LeaderSlots:       v.Leaves[i].LeaderSlots,
 			ClientID:          v.Leaves[i].ClientID,
 			LeafIndex:         uint32(i),
+			IsVerified:        verifiedFlag,
 		}
 		return schema.ToRow(row), nil
 	}
