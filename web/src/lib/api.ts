@@ -2957,6 +2957,111 @@ export async function fetchDeviceValidatorStats(pk: string): Promise<DeviceValid
   return res.json()
 }
 
+export type OpticsSeverity = 'ok' | 'warning' | 'critical' | 'unknown'
+
+export interface OpticsThresholds {
+  input_warning_lower?: number
+  input_warning_upper?: number
+  input_critical_lower?: number
+  input_critical_upper?: number
+  output_warning_lower?: number
+  output_warning_upper?: number
+  output_critical_lower?: number
+  output_critical_upper?: number
+  bias_warning_lower?: number
+  bias_warning_upper?: number
+  bias_critical_lower?: number
+  bias_critical_upper?: number
+}
+
+export interface OpticsLane {
+  interface_name: string
+  channel_index: number
+  timestamp: string
+  input_power: number
+  output_power: number
+  laser_bias_current: number
+  input_severity: OpticsSeverity
+  output_severity: OpticsSeverity
+  bias_severity: OpticsSeverity
+  overall_severity: OpticsSeverity
+  thresholds?: OpticsThresholds
+}
+
+export interface OpticsSummary {
+  ok: number
+  warning: number
+  critical: number
+  unknown: number
+  total: number
+}
+
+export interface DeviceOpticsResponse {
+  device_pk: string
+  device_code: string
+  lanes: OpticsLane[]
+  summary: OpticsSummary
+  fetched_at: string
+}
+
+export async function fetchDeviceOptics(pk: string): Promise<DeviceOpticsResponse> {
+  const res = await fetchWithRetry(`/api/dz/devices/${encodeURIComponent(pk)}/optics`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch device optics')
+  }
+  return res.json()
+}
+
+export interface DeviceOpticsHistoryPoint {
+  ts: string
+  channel_index: number
+  avg_input_power: number
+  min_input_power: number
+  max_input_power: number
+  avg_output_power: number
+  min_output_power: number
+  max_output_power: number
+  avg_laser_bias_current: number
+}
+
+export interface DeviceOpticsHistoryResponse {
+  device_pk: string
+  interface_name: string
+  channel_index?: number
+  bucket_seconds: number
+  from: string
+  to: string
+  buckets: DeviceOpticsHistoryPoint[]
+}
+
+export interface FetchDeviceOpticsHistoryParams {
+  interface: string
+  channel?: number
+  range?: string
+  startTime?: number
+  endTime?: number
+  bucket?: string
+}
+
+export async function fetchDeviceOpticsHistory(
+  pk: string,
+  params: FetchDeviceOpticsHistoryParams
+): Promise<DeviceOpticsHistoryResponse> {
+  const search = new URLSearchParams({ interface: params.interface })
+  if (params.channel !== undefined) search.set('channel', String(params.channel))
+  if (params.range) search.set('range', params.range)
+  if (params.startTime !== undefined) search.set('start_time', String(params.startTime))
+  if (params.endTime !== undefined) search.set('end_time', String(params.endTime))
+  if (params.bucket) search.set('bucket', params.bucket)
+  const res = await fetchWithRetry(
+    `/api/dz/devices/${encodeURIComponent(pk)}/optics/history?${search.toString()}`
+  )
+  if (!res.ok) {
+    throw new Error('Failed to fetch device optics history')
+  }
+  return res.json()
+}
+
 export interface Link {
   pk: string
   code: string
