@@ -76,6 +76,34 @@ func (s *Store) HighestIndexedEpoch(ctx context.Context) (uint64, error) {
 	return epoch, nil
 }
 
+// HasLeavesForEpoch reports whether any leaves are already indexed for the
+// given subscription_epoch. Used by the view refresh loop to skip re-fetching
+// and re-verifying epochs whose leaves we've already persisted (the on-chain
+// merkle root is immutable once posted, so an existing leaf set for that
+// epoch is already verified).
+func (s *Store) HasLeavesForEpoch(ctx context.Context, subscriptionEpoch uint64) (bool, error) {
+	conn, err := s.cfg.ClickHouse.Conn(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to get ClickHouse connection: %w", err)
+	}
+	defer conn.Close()
+
+	const q = `SELECT count() > 0 FROM dim_dz_shred_validator_rewards_leaves_current WHERE subscription_epoch = ?`
+	rows, err := conn.Query(ctx, q, subscriptionEpoch)
+	if err != nil {
+		return false, fmt.Errorf("query has leaves for epoch: %w", err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return false, nil
+	}
+	var has uint8
+	if err := rows.Scan(&has); err != nil {
+		return false, fmt.Errorf("scan has leaves for epoch: %w", err)
+	}
+	return has != 0, nil
+}
+
 // LeafIndexToNodeID returns the leaf_index → node_id mapping for the given
 // subscription_epoch from the leaves _current view. Returns an empty (non-nil)
 // map when there are no leaves for that epoch (e.g., S3 verifier hasn't run

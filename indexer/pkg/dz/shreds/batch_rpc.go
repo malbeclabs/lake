@@ -21,15 +21,27 @@ type KeyedJournal struct {
 	View   *validatorrewards.JournalView
 }
 
+// KeyedShredDistribution pairs a ShredDistribution account's pubkey with its
+// decoded value. The SDK doesn't ship a Keyed wrapper for this account, so we
+// declare one locally. Demuxing distributions here lets the view loop see
+// every epoch's distribution in one RPC call rather than fetching just the
+// current epoch individually — important because past epochs' merkle roots
+// land asynchronously and we'd otherwise miss them.
+type KeyedShredDistribution struct {
+	Pubkey            solana.PublicKey
+	ShredDistribution shreds.ShredDistribution
+}
+
 // AllProgramAccounts holds the result of a single getProgramAccounts call,
 // split by discriminator into typed slices.
 type AllProgramAccounts struct {
-	ClientSeats      []shreds.KeyedClientSeat
-	PaymentEscrows   []shreds.KeyedPaymentEscrow
-	MetroHistories   []shreds.KeyedMetroHistory
-	DeviceHistories  []shreds.KeyedDeviceHistory
-	ValidatorRewards []shreds.KeyedValidatorClientRewards
-	Journals         []KeyedJournal
+	ClientSeats        []shreds.KeyedClientSeat
+	PaymentEscrows     []shreds.KeyedPaymentEscrow
+	MetroHistories     []shreds.KeyedMetroHistory
+	DeviceHistories    []shreds.KeyedDeviceHistory
+	ValidatorRewards   []shreds.KeyedValidatorClientRewards
+	Journals           []KeyedJournal
+	ShredDistributions []KeyedShredDistribution
 }
 
 // FetchAllProgramAccounts performs a single getProgramAccounts RPC call for the
@@ -104,9 +116,18 @@ func FetchAllProgramAccounts(ctx context.Context, rpcClient ShredsRawRPC, progra
 				return nil, fmt.Errorf("decoding shred distribution journal %s: %w", acct.Pubkey, err)
 			}
 			result.Journals = append(result.Journals, KeyedJournal{Pubkey: acct.Pubkey, View: view})
+		case shreds.DiscriminatorShredDistribution:
+			item, err := deserializeAccount[shreds.ShredDistribution](data, disc)
+			if err != nil {
+				return nil, fmt.Errorf("deserializing shred distribution %s: %w", acct.Pubkey, err)
+			}
+			result.ShredDistributions = append(result.ShredDistributions, KeyedShredDistribution{
+				Pubkey:            acct.Pubkey,
+				ShredDistribution: *item,
+			})
 		default:
 			// Skip unknown account types (e.g. ExecutionController, ProgramConfig,
-			// ShredDistribution, ephemeral requests) — these are fetched individually.
+			// ephemeral requests) — these are fetched individually.
 		}
 	}
 

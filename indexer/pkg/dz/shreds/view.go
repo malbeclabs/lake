@@ -18,7 +18,6 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/validatorrewards"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 	"github.com/malbeclabs/lake/indexer/pkg/metrics"
-	"golang.org/x/sync/errgroup"
 )
 
 // Row types for ClickHouse dimension tables.
@@ -291,44 +290,18 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		return result, fmt.Errorf("fetch execution controller: %w", err)
 	}
 
-	// Fetch all program accounts in a single RPC call and optionally fetch the
-	// current distribution in parallel.
-	var (
-		allAccounts       *AllProgramAccounts
-		dist              *shreds.ShredDistribution
-		distributions     []ShredDistributionRow
-		clientProportions []DistributionClientProportionRow
-	)
-
-	g, gctx := errgroup.WithContext(ctx)
-	g.Go(func() error {
-		var err error
-		allAccounts, err = FetchAllProgramAccounts(gctx, v.cfg.ShredsRawRPC, v.cfg.ProgramID)
-		if err != nil {
-			return fmt.Errorf("fetch all program accounts: %w", err)
-		}
-		return nil
-	})
-	g.Go(func() error {
-		if ec.CurrentSubscriptionEpoch == 0 {
-			return nil
-		}
-		fetched, err := v.cfg.ShredsRPC.FetchShredDistribution(gctx, ec.CurrentSubscriptionEpoch)
-		if err != nil {
-			// Distribution may not exist yet for the current epoch; log and continue.
-			v.log.Warn("shreds: failed to fetch current distribution, skipping",
-				"epoch", ec.CurrentSubscriptionEpoch, "error", err)
-			return nil
-		}
-		dist = fetched
-		distributions = []ShredDistributionRow{convertShredDistribution(fetched)}
-		clientProportions = convertDistributionClientProportions(fetched)
-		return nil
-	})
-
-	if err := g.Wait(); err != nil {
+	// Fetch all program accounts in a single RPC call. ShredDistribution
+	// accounts are demuxed alongside the other dim types, so we get every
+	// epoch's distribution in one shot rather than fetching only the current
+	// epoch — important because past epochs' merkle roots land asynchronously
+	// (after the oracle posts PostValidatorRewardsData) and we'd otherwise
+	// miss the window where a past epoch is finalized.
+	var allAccounts *AllProgramAccounts
+	if a, err := FetchAllProgramAccounts(ctx, v.cfg.ShredsRawRPC, v.cfg.ProgramID); err != nil {
 		metrics.ViewRefreshTotal.WithLabelValues("shreds", "error").Inc()
 		return result, fmt.Errorf("fetch shreds accounts: %w", err)
+	} else {
+		allAccounts = a
 	}
 
 	clientSeats := allAccounts.ClientSeats
@@ -336,6 +309,17 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	metroHistories := allAccounts.MetroHistories
 	deviceHistories := allAccounts.DeviceHistories
 	validatorRewards := allAccounts.ValidatorRewards
+
+	// Convert every on-chain ShredDistribution into both the dim row and the
+	// per-epoch client-proportions snapshot. Sort by subscription_epoch
+	// ascending so log lines and downstream iteration are deterministic.
+	distributions := make([]ShredDistributionRow, 0, len(allAccounts.ShredDistributions))
+	clientProportions := make([]DistributionClientProportionRow, 0)
+	for _, kd := range allAccounts.ShredDistributions {
+		d := kd.ShredDistribution
+		distributions = append(distributions, convertShredDistribution(&d))
+		clientProportions = append(clientProportions, convertDistributionClientProportions(&d)...)
+	}
 
 	v.log.Debug("shreds: fetched program data",
 		"client_seats", len(clientSeats),
@@ -411,36 +395,49 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	}
 
 	// Fetch and persist the per-epoch validator-rewards merkle leaves from the
-	// off-chain S3 export. The on-chain root is the source of truth; a missing
-	// or mismatched export is logged but does not fail the refresh.
+	// off-chain S3 export for every on-chain distribution that has a finalized
+	// merkle root. A missing or mismatched export is logged but does not fail
+	// the refresh — the next refresh will retry.
+	//
+	// The S3 export is keyed by Solana epoch. The shred-subscription program's
+	// `subscription_epoch` counter equals the Solana epoch (the program
+	// creates one distribution per Solana epoch starting from its launch
+	// epoch). `associated_dz_epoch` is the parent revenue-distribution
+	// program's epoch counter — a slower, independent counter — and must NOT
+	// be used as the Solana epoch.
 	var leafCount int
-	if dist != nil {
-		expectedRoot := dist.ValidatorRewardsMerkleRoot
-		var zeroRoot [32]byte
-		if expectedRoot != zeroRoot {
-			// The S3 export is keyed by Solana epoch. The shred-subscription
-			// program's `subscription_epoch` counter equals the Solana epoch
-			// (the program creates one distribution per Solana epoch starting
-			// from its launch epoch). `associated_dz_epoch` is the parent
-			// revenue-distribution program's epoch counter — a slower,
-			// independent counter — and must NOT be used as the Solana epoch.
-			solanaEpoch := dist.SubscriptionEpoch
-			verified, ok, vErr := validatorrewards.FetchAndVerifyForEpoch(ctx, v.s3Client, solanaEpoch, expectedRoot)
-			switch {
-			case vErr != nil:
-				v.log.Warn("shreds: leaf verify failed",
-					"solana_epoch", solanaEpoch,
-					"associated_dz_epoch", dist.AssociatedDZEpoch,
-					"error", vErr)
-			case ok:
-				if err := v.leafStore.ReplaceLeaves(ctx, dist.SubscriptionEpoch, uint64(dist.AssociatedDZEpoch), verified); err != nil {
-					return result, fmt.Errorf("failed to replace validator rewards leaves: %w", err)
-				}
-				leafCount = int(verified.TotalPublishingValidators)
-			default:
-				// 404 — S3 export not yet published for this epoch. Will retry next refresh.
-				v.log.Debug("shreds: leaf export not yet available", "solana_epoch", solanaEpoch)
+	var zeroRoot [32]byte
+	for _, kd := range allAccounts.ShredDistributions {
+		d := kd.ShredDistribution
+		expectedRoot := d.ValidatorRewardsMerkleRoot
+		if expectedRoot == zeroRoot {
+			continue
+		}
+		// Skip epochs we've already verified at this root — leaves are
+		// immutable per (subscription_epoch, node_id), so re-fetching the S3
+		// export every refresh would be wasteful.
+		if already, err := v.leafStore.HasLeavesForEpoch(ctx, d.SubscriptionEpoch); err != nil {
+			v.log.Warn("shreds: leaf existence check failed",
+				"solana_epoch", d.SubscriptionEpoch, "error", err)
+		} else if already {
+			continue
+		}
+		solanaEpoch := d.SubscriptionEpoch
+		verified, ok, vErr := validatorrewards.FetchAndVerifyForEpoch(ctx, v.s3Client, solanaEpoch, expectedRoot)
+		switch {
+		case vErr != nil:
+			v.log.Warn("shreds: leaf verify failed",
+				"solana_epoch", solanaEpoch,
+				"associated_dz_epoch", d.AssociatedDZEpoch,
+				"error", vErr)
+		case ok:
+			if err := v.leafStore.ReplaceLeaves(ctx, d.SubscriptionEpoch, uint64(d.AssociatedDZEpoch), verified); err != nil {
+				return result, fmt.Errorf("failed to replace validator rewards leaves: %w", err)
 			}
+			leafCount += int(verified.TotalPublishingValidators)
+		default:
+			// 404 — S3 export not yet published for this epoch. Will retry next refresh.
+			v.log.Debug("shreds: leaf export not yet available", "solana_epoch", solanaEpoch)
 		}
 	}
 
