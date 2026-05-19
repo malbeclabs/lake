@@ -418,22 +418,28 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		expectedRoot := dist.ValidatorRewardsMerkleRoot
 		var zeroRoot [32]byte
 		if expectedRoot != zeroRoot {
-			solanaEpoch := uint64(dist.AssociatedDZEpoch)
+			// The S3 export is keyed by Solana epoch. The shred-subscription
+			// program's `subscription_epoch` counter equals the Solana epoch
+			// (the program creates one distribution per Solana epoch starting
+			// from its launch epoch). `associated_dz_epoch` is the parent
+			// revenue-distribution program's epoch counter — a slower,
+			// independent counter — and must NOT be used as the Solana epoch.
+			solanaEpoch := dist.SubscriptionEpoch
 			verified, ok, vErr := validatorrewards.FetchAndVerifyForEpoch(ctx, v.s3Client, solanaEpoch, expectedRoot)
 			switch {
 			case vErr != nil:
 				v.log.Warn("shreds: leaf verify failed",
-					"epoch", solanaEpoch,
-					"subscription_epoch", dist.SubscriptionEpoch,
+					"solana_epoch", solanaEpoch,
+					"associated_dz_epoch", dist.AssociatedDZEpoch,
 					"error", vErr)
 			case ok:
-				if err := v.leafStore.ReplaceLeaves(ctx, dist.SubscriptionEpoch, solanaEpoch, verified); err != nil {
+				if err := v.leafStore.ReplaceLeaves(ctx, dist.SubscriptionEpoch, uint64(dist.AssociatedDZEpoch), verified); err != nil {
 					return result, fmt.Errorf("failed to replace validator rewards leaves: %w", err)
 				}
 				leafCount = int(verified.TotalPublishingValidators)
 			default:
 				// 404 — S3 export not yet published for this epoch. Will retry next refresh.
-				v.log.Debug("shreds: leaf export not yet available", "epoch", solanaEpoch)
+				v.log.Debug("shreds: leaf export not yet available", "solana_epoch", solanaEpoch)
 			}
 		}
 	}

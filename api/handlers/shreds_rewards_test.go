@@ -169,9 +169,11 @@ func TestGetShredsRewards_GoldenPath(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
 	resp := decodeShredsRewards(t, rr.Body.Bytes())
 
-	// EpochColumns is the 10 newest DZ epochs (we only have 3), newest first.
-	assert.Equal(t, []uint64{12, 11, 10}, resp.EpochColumns)
-	assert.Equal(t, uint64(12), resp.LatestFinalizedEpoch)
+	// EpochColumns is the 10 newest Solana epochs (we only have 3), newest first.
+	// subscription_epoch == Solana epoch (the program creates one ShredDistribution
+	// per Solana epoch from its launch).
+	assert.Equal(t, []uint64{102, 101, 100}, resp.EpochColumns)
+	assert.Equal(t, uint64(102), resp.LatestFinalizedEpoch)
 	assert.Equal(t, uint64(12), resp.CurrentSolanaEpoch)
 
 	require.Len(t, resp.Validators, 2)
@@ -193,9 +195,9 @@ func TestGetShredsRewards_GoldenPath(t *testing.T) {
 	assert.InDelta(t, 7800.0, b.TotalEarned2Z, 1e-6)
 	assert.InDelta(t, 2600.0, b.ImmediatelyClaimable2Z, 1e-6)
 
-	// Per-epoch earnings map covers all 3 epochs.
+	// Per-epoch earnings map covers all 3 Solana epochs (== subscription_epochs).
 	require.Len(t, a.EpochEarnings, 3)
-	for _, e := range []uint64{10, 11, 12} {
+	for _, e := range []uint64{100, 101, 102} {
 		assert.InDelta(t, 3900.0, a.EpochEarnings[e], 1e-6, "node-A epoch %d", e)
 		assert.InDelta(t, 2600.0, b.EpochEarnings[e], 1e-6, "node-B epoch %d", e)
 	}
@@ -330,13 +332,13 @@ func TestGetShredsRewardsDetail_FullHistory(t *testing.T) {
 	assert.Equal(t, uint64(5000000000), resp.ActivatedStake)
 	assert.Equal(t, "203.0.113.10", resp.DZUserIP)
 
-	// Fixture seeds three epochs: associated_dz_epoch 10, 11, 12.
+	// Fixture seeds three epochs: subscription_epoch (== Solana epoch) 100, 101, 102.
 	require.Len(t, resp.Epochs, 3)
 
 	// Newest epoch first.
-	assert.Equal(t, uint64(12), resp.Epochs[0].SolanaEpoch)
-	assert.Equal(t, uint64(11), resp.Epochs[1].SolanaEpoch)
-	assert.Equal(t, uint64(10), resp.Epochs[2].SolanaEpoch)
+	assert.Equal(t, uint64(102), resp.Epochs[0].SolanaEpoch)
+	assert.Equal(t, uint64(101), resp.Epochs[1].SolanaEpoch)
+	assert.Equal(t, uint64(100), resp.Epochs[2].SolanaEpoch)
 
 	// Per-row fields use the shared earnings formula: 3900 per epoch for node-A.
 	for i, e := range resp.Epochs {
@@ -346,16 +348,15 @@ func TestGetShredsRewardsDetail_FullHistory(t *testing.T) {
 	}
 
 	// All three epochs have status rows in the fixture, so IsClaimable is non-nil.
-	// is_claimable=1 only for epoch=12; the older two are 0/false.
+	// is_claimable=1 only for the newest epoch (102); the older two are 0/false.
 	require.NotNil(t, resp.Epochs[0].IsClaimable)
 	require.NotNil(t, resp.Epochs[1].IsClaimable)
 	require.NotNil(t, resp.Epochs[2].IsClaimable)
-	assert.True(t, *resp.Epochs[0].IsClaimable, "epoch 12 is claimable")
-	assert.False(t, *resp.Epochs[1].IsClaimable, "epoch 11 is not claimable")
-	assert.False(t, *resp.Epochs[2].IsClaimable, "epoch 10 is not claimable")
+	assert.True(t, *resp.Epochs[0].IsClaimable, "epoch 102 is claimable")
+	assert.False(t, *resp.Epochs[1].IsClaimable, "epoch 101 is not claimable")
+	assert.False(t, *resp.Epochs[2].IsClaimable, "epoch 100 is not claimable")
 
-	// subscription_epoch should mirror associated_dz_epoch via the fixture mapping
-	// (100→10, 101→11, 102→12).
+	// SolanaEpoch equals SubscriptionEpoch by construction.
 	assert.Equal(t, uint64(102), resp.Epochs[0].SubscriptionEpoch)
 	assert.Equal(t, uint64(101), resp.Epochs[1].SubscriptionEpoch)
 	assert.Equal(t, uint64(100), resp.Epochs[2].SubscriptionEpoch)
@@ -433,19 +434,19 @@ func TestGetShredsRewardsDetail_IncludesEpochsOutsideRecentWindow(t *testing.T) 
 	assert.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
 	resp := decodeShredsRewardsDetail(t, rr.Body.Bytes())
 
-	// All four epochs (9, 10, 11, 12) are returned, newest first.
+	// All four Solana epochs (99, 100, 101, 102) are returned, newest first.
 	require.Len(t, resp.Epochs, 4)
-	assert.Equal(t, uint64(12), resp.Epochs[0].SolanaEpoch)
-	assert.Equal(t, uint64(11), resp.Epochs[1].SolanaEpoch)
-	assert.Equal(t, uint64(10), resp.Epochs[2].SolanaEpoch)
-	assert.Equal(t, uint64(9), resp.Epochs[3].SolanaEpoch)
+	assert.Equal(t, uint64(102), resp.Epochs[0].SolanaEpoch)
+	assert.Equal(t, uint64(101), resp.Epochs[1].SolanaEpoch)
+	assert.Equal(t, uint64(100), resp.Epochs[2].SolanaEpoch)
+	assert.Equal(t, uint64(99), resp.Epochs[3].SolanaEpoch)
 
-	// The oldest epoch (9) has no status row → IsClaimable must be nil.
+	// The oldest epoch (99) has no status row → IsClaimable must be nil.
 	assert.Nil(t, resp.Epochs[3].IsClaimable, "epoch outside the tracking window has nil is_claimable")
 	// The other three epochs do have status rows.
-	assert.NotNil(t, resp.Epochs[0].IsClaimable, "epoch 12 has a status row")
-	assert.NotNil(t, resp.Epochs[1].IsClaimable, "epoch 11 has a status row")
-	assert.NotNil(t, resp.Epochs[2].IsClaimable, "epoch 10 has a status row")
+	assert.NotNil(t, resp.Epochs[0].IsClaimable, "epoch 102 has a status row")
+	assert.NotNil(t, resp.Epochs[1].IsClaimable, "epoch 101 has a status row")
+	assert.NotNil(t, resp.Epochs[2].IsClaimable, "epoch 100 has a status row")
 
 	// And the earnings math still works for the older epoch.
 	assert.InDelta(t, 3900.0, resp.Epochs[3].Earned2Z, 1e-6)

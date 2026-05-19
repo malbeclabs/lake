@@ -156,15 +156,19 @@ func (a *API) GetShredsRewards(w http.ResponseWriter, r *http.Request) {
 	whereClause, args := buildShredsRewardsSearch(search)
 	sortSQL := buildShredsRewardsSort(sortField, order)
 
-	// Fetch epoch columns: the up-to-10 newest DZ epochs in
-	// dim_dz_shred_distributions_current with non-zero distributed amount,
-	// sorted newest first.
+	// Fetch epoch columns: the up-to-10 newest Solana epochs that have a
+	// finalized distribution (non-zero distributed_validator_2z_amount).
+	// `subscription_epoch` numerically equals the Solana epoch — the
+	// shred-subscription program creates one ShredDistribution per Solana
+	// epoch starting from its launch epoch. `associated_dz_epoch` is the
+	// parent revenue-distribution program's epoch counter (different,
+	// slower) and is NOT the Solana epoch.
 	start := time.Now()
 	epochRows, err := a.envDB(ctx).Query(ctx, `
-		SELECT associated_dz_epoch
+		SELECT subscription_epoch
 		FROM dim_dz_shred_distributions_current
 		WHERE distributed_validator_2z_amount > 0
-		ORDER BY associated_dz_epoch DESC
+		ORDER BY subscription_epoch DESC
 		LIMIT 10
 	`)
 	metrics.RecordClickHouseQuery("shreds_rewards:epochs", time.Since(start), err)
@@ -214,24 +218,23 @@ func (a *API) GetShredsRewards(w http.ResponseWriter, r *http.Request) {
 			GROUP BY subscription_epoch
 		),
 		recent_epochs AS (
-			SELECT associated_dz_epoch AS dz_epoch
+			SELECT subscription_epoch AS solana_epoch
 			FROM dim_dz_shred_distributions_current
 			WHERE distributed_validator_2z_amount > 0
-			ORDER BY associated_dz_epoch DESC
+			ORDER BY subscription_epoch DESC
 			LIMIT 10
 		),
 		earnings AS (
 			SELECT
 				L.node_id AS node_id,
 				L.subscription_epoch AS subscription_epoch,
-				L.associated_dz_epoch AS associated_dz_epoch,
 				toFloat64(D.distributed_validator_2z_amount)
 				  * toFloat64(L.leader_slots)
 				  * toFloat64(10000 - coalesce(C.proportion, C.default_proportion, 3500))
 				  / nullIf(toFloat64(T.total_leader_slots) * toFloat64(10000), 0)
 				  AS earned_2z,
 				coalesce(S.is_claimable, 0) AS is_claimable,
-				if(R.dz_epoch IS NULL, 0, 1) AS is_recent
+				if(R.solana_epoch IS NULL, 0, 1) AS is_recent
 			FROM dim_dz_shred_validator_rewards_leaves_current L
 			INNER JOIN dim_dz_shred_distributions_current D
 				ON D.subscription_epoch = L.subscription_epoch
@@ -244,14 +247,14 @@ func (a *API) GetShredsRewards(w http.ResponseWriter, r *http.Request) {
 				ON S.subscription_epoch = L.subscription_epoch
 			   AND S.node_id = L.node_id
 			LEFT JOIN recent_epochs R
-				ON R.dz_epoch = L.associated_dz_epoch
+				ON R.solana_epoch = L.subscription_epoch
 		),
 		per_validator AS (
 			SELECT
 				node_id AS pv_node_id,
 				sum(coalesce(earned_2z, 0)) AS total_earned_2z,
 				sumIf(coalesce(earned_2z, 0), is_claimable = 1 AND is_recent = 1) AS immediately_claimable_2z,
-				groupArrayIf(associated_dz_epoch, is_recent = 1) AS recent_dz_epochs,
+				groupArrayIf(subscription_epoch, is_recent = 1) AS recent_dz_epochs,
 				groupArrayIf(coalesce(earned_2z, 0), is_recent = 1) AS recent_dz_earnings
 			FROM earnings
 			GROUP BY node_id
@@ -438,7 +441,12 @@ func (a *API) GetShredsRewardsDetail(w http.ResponseWriter, r *http.Request) {
 			GROUP BY subscription_epoch
 		)
 		SELECT
-			L.associated_dz_epoch,
+			-- subscription_epoch numerically equals the Solana epoch (the
+			-- shred-subscription program creates one ShredDistribution per
+			-- Solana epoch starting from its launch epoch). We return both
+			-- the same value as the Solana epoch and the actual stored
+			-- subscription_epoch column for clarity.
+			L.subscription_epoch AS solana_epoch,
 			L.subscription_epoch,
 			L.leader_slots,
 			L.client_id,
@@ -463,7 +471,7 @@ func (a *API) GetShredsRewardsDetail(w http.ResponseWriter, r *http.Request) {
 			ON S.subscription_epoch = L.subscription_epoch
 		   AND S.node_id = L.node_id
 		WHERE L.node_id = ?
-		ORDER BY L.associated_dz_epoch DESC
+		ORDER BY L.subscription_epoch DESC
 	`
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, detailQuery, nodeID)
