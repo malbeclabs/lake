@@ -843,7 +843,7 @@ function TrafficPageContent() {
         <div className="[&>div]:mb-0">
           <PageHeader icon={Network} title="Interfaces" />
         </div>
-        <p className="text-sm text-muted-foreground mt-3 max-w-4xl">
+        <p className="text-sm text-muted-foreground mt-3">
           This dashboard provides visibility into how much traffic is entering and leaving interfaces, overall link utilization, interface health, and whether physical or logical network connections are experiencing congestion, errors, or instability.
         </p>
         <div className="flex items-center gap-3 mt-3 w-full flex-wrap justify-between">
