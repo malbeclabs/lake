@@ -34,6 +34,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTopology, type TopologyMode } from './TopologyContext'
 import { useEnv } from '@/contexts/EnvContext'
 import { fetchTopologies } from '@/lib/api'
+import { Tooltip } from '@/components/ui/tooltip'
 
 interface TopologyControlBarProps {
   // Zoom controls (view-specific)
@@ -81,7 +82,7 @@ function NavItem({ icon, label, shortcut, onClick, active = false, disabled = fa
     yellow: 'text-yellow-500',
   }
 
-  return (
+  const button = (
     <button
       onClick={onClick}
       disabled={disabled}
@@ -90,7 +91,7 @@ function NavItem({ icon, label, shortcut, onClick, active = false, disabled = fa
           ? colorClasses[activeColor]
           : 'hover:bg-[var(--muted)] text-muted-foreground hover:text-foreground'
       } ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
-      title={tooltip ?? (collapsed ? `${label}${shortcut ? ` (${shortcut})` : ''}` : undefined)}
+      title={tooltip ? undefined : collapsed ? `${label}${shortcut ? ` (${shortcut})` : ''}` : undefined}
     >
       <span className={`flex-shrink-0 ${active ? activeTextClasses[activeColor] : ''}`}>
         {icon}
@@ -106,6 +107,14 @@ function NavItem({ icon, label, shortcut, onClick, active = false, disabled = fa
         </>
       )}
     </button>
+  )
+
+  if (!tooltip) return button
+
+  return (
+    <Tooltip content={tooltip} side="right">
+      {button}
+    </Tooltip>
   )
 }
 

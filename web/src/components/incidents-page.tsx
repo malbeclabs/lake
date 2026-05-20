@@ -14,6 +14,7 @@ import {
 } from '@/lib/api'
 import { StatusFilters, useStatusFilters } from '@/components/status-search-bar'
 import { PageHeader } from '@/components/page-header'
+import { Tooltip } from '@/components/ui/tooltip'
 import { useActiveOpsTickets } from '@/hooks/use-ops-tickets'
 import { useIsOpsUser } from '@/hooks/use-is-ops-user'
 import { opsTicketUrl, type OpsTicket } from '@/lib/ops-api'
@@ -1165,19 +1166,19 @@ export function IncidentsPage() {
                 const count = filteredByType.byType[key] || 0
                 const isSelected = selectedTypes.has(key)
                 return (
-                  <button
-                    key={key}
-                    onClick={() => toggleType(key)}
-                    title={tooltip}
-                    className={`text-center p-3 rounded-lg border transition-colors ${
-                      isSelected
-                        ? 'border-primary bg-primary/5 ring-1 ring-primary'
-                        : 'border-border hover:border-muted-foreground/30'
-                    }`}
-                  >
-                    <div className="text-2xl font-medium tabular-nums tracking-tight">{count}</div>
-                    <div className="text-xs text-muted-foreground">{label}</div>
-                  </button>
+                  <Tooltip key={key} content={tooltip}>
+                    <button
+                      onClick={() => toggleType(key)}
+                      className={`text-center p-3 rounded-lg border transition-colors ${
+                        isSelected
+                          ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                          : 'border-border hover:border-muted-foreground/30'
+                      }`}
+                    >
+                      <div className="text-2xl font-medium tabular-nums tracking-tight">{count}</div>
+                      <div className="text-xs text-muted-foreground">{label}</div>
+                    </button>
+                  </Tooltip>
                 )
               })}
             </div>

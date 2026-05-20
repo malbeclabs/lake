@@ -1,5 +1,6 @@
 import { Monitor, X } from 'lucide-react'
 import { useTopology } from '../TopologyContext'
+import { Tooltip } from '@/components/ui/tooltip'
 
 // Device type colors (must match topology-graph.tsx and topology-map.tsx)
 // Avoid green/red (status colors) and blue/purple (link colors)
@@ -47,24 +48,22 @@ export function DeviceTypeOverlayPanel({ isDark, deviceCounts }: DeviceTypeOverl
           const colors = DEVICE_TYPE_COLORS[type] || DEVICE_TYPE_COLORS.default
           const count = deviceCounts?.[type] ?? 0
           return (
-            <div
-              key={type}
-              className="flex items-center justify-between"
-              title={DEVICE_TYPE_TOOLTIPS[type]}
-            >
-              <div className="flex items-center gap-2">
-                <div
-                  className="w-4 h-4 rounded-full"
-                  style={{
-                    backgroundColor: isDark ? colors.dark : colors.light,
-                  }}
-                />
-                <span className="capitalize">{type}</span>
+            <Tooltip key={type} content={DEVICE_TYPE_TOOLTIPS[type]} side="left">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div
+                    className="w-4 h-4 rounded-full"
+                    style={{
+                      backgroundColor: isDark ? colors.dark : colors.light,
+                    }}
+                  />
+                  <span className="capitalize">{type}</span>
+                </div>
+                {deviceCounts && (
+                  <span className="text-muted-foreground">{count}</span>
+                )}
               </div>
-              {deviceCounts && (
-                <span className="text-muted-foreground">{count}</span>
-              )}
-            </div>
+            </Tooltip>
           )
         })}
       </div>
