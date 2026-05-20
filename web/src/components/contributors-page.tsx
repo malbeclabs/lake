@@ -243,13 +243,13 @@ export function ContributorsPage() {
                       <SortIcon field="devices" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('sidea')}>
+                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('sidea')} title="The originating or source side of a network link or transport path within the topology.">
                     <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('sidea')}>
                       Side A
                       <SortIcon field="sidea" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('sidez')}>
+                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('sidez')} title="The destination or terminating side of a network link or transport path within the topology.">
                     <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('sidez')}>
                       Side Z
                       <SortIcon field="sidez" />
@@ -261,7 +261,7 @@ export function ContributorsPage() {
                       <SortIcon field="links" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('users')}>
+                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('users')} title="Active users over total available capacity.">
                     <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('users')}>
                       Users
                       <SortIcon field="users" />

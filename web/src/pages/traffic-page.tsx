@@ -840,7 +840,12 @@ function TrafficPageContent() {
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Sticky header */}
       <div className="flex-none bg-background border-b border-border px-4 sm:px-8 pt-6 pb-4 z-10">
-        <PageHeader icon={Network} title="Interfaces" />
+        <div className="[&>div]:mb-0">
+          <PageHeader icon={Network} title="Interfaces" />
+        </div>
+        <p className="text-sm text-muted-foreground mt-3 max-w-4xl">
+          This dashboard provides visibility into how much traffic is entering and leaving interfaces, overall link utilization, interface health, and whether physical or logical network connections are experiencing congestion, errors, or instability.
+        </p>
         <div className="flex items-center gap-3 mt-3 w-full flex-wrap justify-between">
           <DashboardFilters excludeMetrics={['utilization']} />
           <DashboardFilterBadges />

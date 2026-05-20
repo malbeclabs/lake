@@ -12,6 +12,12 @@ const DEVICE_TYPE_COLORS: Record<string, { light: string; dark: string }> = {
 
 const DEVICE_TYPES = ['hybrid', 'transit', 'edge']
 
+const DEVICE_TYPE_TOOLTIPS: Record<string, string> = {
+  hybrid: 'Device that handles both inter-metro transit and edge connections (validators, users) on the same router.',
+  transit: 'Device that only forwards traffic between metros. It does not terminate validator or user connections directly.',
+  edge: 'Device at the network edge where validators and users connect into DoubleZero.',
+}
+
 interface DeviceTypeOverlayPanelProps {
   isDark: boolean
   deviceCounts?: Record<string, number>
@@ -41,7 +47,11 @@ export function DeviceTypeOverlayPanel({ isDark, deviceCounts }: DeviceTypeOverl
           const colors = DEVICE_TYPE_COLORS[type] || DEVICE_TYPE_COLORS.default
           const count = deviceCounts?.[type] ?? 0
           return (
-            <div key={type} className="flex items-center justify-between">
+            <div
+              key={type}
+              className="flex items-center justify-between"
+              title={DEVICE_TYPE_TOOLTIPS[type]}
+            >
               <div className="flex items-center gap-2">
                 <div
                   className="w-4 h-4 rounded-full"

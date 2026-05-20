@@ -2213,7 +2213,7 @@ export function EdgeScoreboardPage() {
               <div className="flex flex-wrap items-center gap-1.5 text-xs">
                 {([
                   [false, 'All Slots', 'Shred arrival rates across all observed slots.'] as const,
-                  [true, 'DZ Edge Leaders', 'Scoped to slots where the scheduled leader was publishing shreds via DZ Edge.'] as const,
+                  [true, 'DZ Edge Leaders', 'Scoped to slots where the scheduled leader is publishing shreds via DZ Edge.'] as const,
                 ]).map(([v, label, tooltip]) => (
                   <div key={String(v)} className="relative group">
                     <button
