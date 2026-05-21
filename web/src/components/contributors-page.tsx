@@ -8,6 +8,7 @@ import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
 import { PageHeader } from './page-header'
 import { CopyableText } from './copyable-text'
+import { Tooltip } from './ui/tooltip'
 
 const PAGE_SIZE = 100
 
@@ -243,30 +244,36 @@ export function ContributorsPage() {
                       <SortIcon field="devices" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('sidea')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('sidea')}>
-                      Side A
-                      <SortIcon field="sidea" />
-                    </button>
-                  </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('sidez')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('sidez')}>
-                      Side Z
-                      <SortIcon field="sidez" />
-                    </button>
-                  </th>
+                  <Tooltip content="The originating or source side of a network link or transport path within the topology.">
+                    <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('sidea')}>
+                      <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('sidea')}>
+                        Side A
+                        <SortIcon field="sidea" />
+                      </button>
+                    </th>
+                  </Tooltip>
+                  <Tooltip content="The destination or terminating side of a network link or transport path within the topology.">
+                    <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('sidez')}>
+                      <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('sidez')}>
+                        Side Z
+                        <SortIcon field="sidez" />
+                      </button>
+                    </th>
+                  </Tooltip>
                   <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('links')}>
                     <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('links')}>
                       Links
                       <SortIcon field="links" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('users')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('users')}>
-                      Users
-                      <SortIcon field="users" />
-                    </button>
-                  </th>
+                  <Tooltip content="Active users over total available capacity.">
+                    <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('users')}>
+                      <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('users')}>
+                        Users
+                        <SortIcon field="users" />
+                      </button>
+                    </th>
+                  </Tooltip>
                 </tr>
               </thead>
               <tbody>

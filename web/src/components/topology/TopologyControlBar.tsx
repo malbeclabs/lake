@@ -34,6 +34,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTopology, type TopologyMode } from './TopologyContext'
 import { useEnv } from '@/contexts/EnvContext'
 import { fetchTopologies } from '@/lib/api'
+import { Tooltip } from '@/components/ui/tooltip'
 
 interface TopologyControlBarProps {
   // Zoom controls (view-specific)
@@ -57,9 +58,10 @@ interface NavItemProps {
   disabled?: boolean
   activeColor?: 'amber' | 'red' | 'green' | 'purple' | 'blue' | 'cyan' | 'yellow'
   collapsed?: boolean
+  tooltip?: string
 }
 
-function NavItem({ icon, label, shortcut, onClick, active = false, disabled = false, activeColor = 'blue', collapsed = false }: NavItemProps) {
+function NavItem({ icon, label, shortcut, onClick, active = false, disabled = false, activeColor = 'blue', collapsed = false, tooltip }: NavItemProps) {
   const colorClasses: Record<string, string> = {
     amber: 'bg-amber-500/20 text-amber-500',
     red: 'bg-red-500/20 text-red-500',
@@ -80,7 +82,7 @@ function NavItem({ icon, label, shortcut, onClick, active = false, disabled = fa
     yellow: 'text-yellow-500',
   }
 
-  return (
+  const button = (
     <button
       onClick={onClick}
       disabled={disabled}
@@ -89,7 +91,7 @@ function NavItem({ icon, label, shortcut, onClick, active = false, disabled = fa
           ? colorClasses[activeColor]
           : 'hover:bg-[var(--muted)] text-muted-foreground hover:text-foreground'
       } ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
-      title={collapsed ? `${label}${shortcut ? ` (${shortcut})` : ''}` : undefined}
+      title={tooltip ? undefined : collapsed ? `${label}${shortcut ? ` (${shortcut})` : ''}` : undefined}
     >
       <span className={`flex-shrink-0 ${active ? activeTextClasses[activeColor] : ''}`}>
         {icon}
@@ -105,6 +107,14 @@ function NavItem({ icon, label, shortcut, onClick, active = false, disabled = fa
         </>
       )}
     </button>
+  )
+
+  if (!tooltip) return button
+
+  return (
+    <Tooltip content={tooltip} side="right">
+      {button}
+    </Tooltip>
   )
 }
 
@@ -298,6 +308,7 @@ export function TopologyControlBar({
             active={view === 'globe'}
             activeColor="blue"
             collapsed={collapsed}
+            tooltip="3D view of the DoubleZero network on a globe. Shows the same metros, devices, and links as the map view in a spherical projection."
           />
 
           {onZoomIn && (
@@ -538,7 +549,7 @@ export function TopologyControlBar({
           {hasNeo4j && (
             <NavItem
               icon={<GitCompare className="h-3.5 w-3.5" />}
-              label="ISIS"
+              label="IS-IS"
               onClick={() => handleToggleOverlay('isisHealth')}
               active={overlays.isisHealth}
               activeColor="green"
@@ -554,6 +565,7 @@ export function TopologyControlBar({
             active={overlays.trafficFlow}
             activeColor="cyan"
             collapsed={collapsed}
+            tooltip="Color and size links by current utilization (traffic over capacity). Highlights links approaching saturation."
           />
 
           {hasTopologies && (

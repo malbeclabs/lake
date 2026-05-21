@@ -431,3 +431,21 @@ table {
 .animate-scoreboard-edge-load {
   animation: scoreboardEdgeLoad 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
+
+/* Radix tooltip fade-in (no animate plugin in use) */
+@keyframes tooltipIn {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+[data-tooltip-content][data-state='delayed-open'],
+[data-tooltip-content][data-state='instant-open'] {
+  transform-origin: var(--radix-tooltip-content-transform-origin);
+  animation: tooltipIn 120ms ease-out;
+}

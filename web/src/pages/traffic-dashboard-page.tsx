@@ -37,6 +37,9 @@ function DashboardContent() {
         <div className="[&>div]:mb-0">
           <PageHeader icon={BarChart3} title="Traffic Overview" actions={<DashboardFilters />} />
         </div>
+        <p className="text-sm text-muted-foreground mt-3">
+          This dashboard compares total traffic measured via throughput, packets, or overall utilization across different network groupings, such as contributors, metros, device types, or transport categories.
+        </p>
         <div className="flex items-center mt-3">
           <div className="flex items-center gap-3 ml-auto">
             <DashboardFilterBadges />
