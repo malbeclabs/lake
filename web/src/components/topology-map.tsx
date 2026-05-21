@@ -8,7 +8,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTheme } from '@/hooks/use-theme'
 import type { TopologyMetro, TopologyDevice, TopologyLink, TopologyValidator, MultiPathResponse, SimulateLinkRemovalResponse, SimulateLinkAdditionResponse, WhatIfRemovalResponse, MetroDevicePathsResponse } from '@/lib/api'
 import { fetchISISPaths, fetchISISTopology, fetchCriticalLinks, fetchSimulateLinkRemoval, fetchSimulateLinkAddition, fetchWhatIfRemoval, fetchLinkHealth, fetchTopologyCompare, fetchMetroDevicePaths } from '@/lib/api'
-import { useTopology, useMulticastState, TopologyControlBar, TopologyPanel, DeviceDetails, LinkDetails, MetroDetails, ValidatorDetails, EntityLink as TopologyEntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, ValidatorsOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, LINK_TYPE_COLORS, MULTICAST_PUBLISHER_COLORS, type DeviceOption, type MetroOption } from '@/components/topology'
+import { useTopology, useMulticastState, TopologyControlBar, TopologyPanel, DeviceDetails, LinkDetails, MetroDetails, ValidatorDetails, EntityLink as TopologyEntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, ValidatorsOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, FlexAlgoOverlayPanel, LINK_TYPE_COLORS, MULTICAST_PUBLISHER_COLORS, type DeviceOption, type MetroOption } from '@/components/topology'
 import { useActiveOpsTickets } from '@/hooks/use-ops-tickets'
 import { opsTicketUrl } from '@/lib/ops-api'
 import type { OpsTicket } from '@/lib/ops-api'
@@ -358,7 +358,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const linkHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Get unified topology context
-  const { mode, setMode, overlays, toggleOverlay, panel, openPanel, closePanel, selection, impactDevices, toggleImpactDevice, clearImpactDevices, hoveredDiscrepancyKey } = useTopology()
+  const { mode, setMode, overlays, toggleOverlay, panel, openPanel, closePanel, selection, impactDevices, toggleImpactDevice, clearImpactDevices, hoveredDiscrepancyKey, flexAlgoTopology, flexAlgoFilterDefault, flexAlgoFilterDrained } = useTopology()
 
   // Derive mode states from context
   const pathModeEnabled = mode === 'path'
@@ -379,11 +379,12 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const contributorLinksMode = overlays.contributorLinks
   const bandwidthMode = overlays.bandwidth
   const isisHealthMode = overlays.isisHealth
+  const flexAlgoMode = overlays.flexAlgo
   const multicastTreesMode = overlays.multicastTrees
   const showUserCounts = overlays.userCounts
 
   // Whether any overlay with panel content is active (bandwidth has no panel)
-  const hasOverlayPanelContent = deviceTypeMode || linkTypeMode || stakeOverlayMode || linkHealthMode || trafficFlowMode || metroClusteringMode || contributorDevicesMode || contributorLinksMode || criticalityOverlayEnabled || isisHealthMode || showValidators || multicastTreesMode
+  const hasOverlayPanelContent = deviceTypeMode || linkTypeMode || stakeOverlayMode || linkHealthMode || trafficFlowMode || metroClusteringMode || contributorDevicesMode || contributorLinksMode || criticalityOverlayEnabled || isisHealthMode || flexAlgoMode || showValidators || multicastTreesMode
 
   // Multicast trees operational state (shared hook)
   const mc = useMulticastState({ enabled: multicastTreesMode, isDark })
@@ -1496,6 +1497,17 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     // When metro clustering mode with collapsed metros, track inter-metro edges
     const interMetroEdges = new Map<string, { count: number; totalLatency: number; latencyCount: number }>()
 
+    // Build parallel link index: for links sharing the same device pair, assign
+    // each an index so their curves can be offset to avoid overlap.
+    const pairCountMap = new Map<string, number>()
+    const linkPairIndex = new Map<string, number>()
+    for (const link of links) {
+      const pairKey = [link.side_a_pk, link.side_z_pk].sort().join('|')
+      const idx = pairCountMap.get(pairKey) ?? 0
+      linkPairIndex.set(link.pk, idx)
+      pairCountMap.set(pairKey, idx + 1)
+    }
+
     const features = links.map(link => {
       const deviceA = deviceMap.get(link.side_a_pk)
       const deviceZ = deviceMap.get(link.side_z_pk)
@@ -1667,6 +1679,100 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         if (isHoveredDiscrepancy) {
           displayWeight = Math.max(displayWeight, 4)
         }
+      } else if (flexAlgoMode) {
+        // Flex-Algo overlay: structured topology view + filter checkboxes
+        const isDefault = !link.link_topologies || link.link_topologies.length === 0
+        const isDrained = !!link.unicast_drained
+        const inTopology = flexAlgoTopology ? link.link_topologies?.includes(flexAlgoTopology) : false
+        const hasFilter = flexAlgoFilterDefault || flexAlgoFilterDrained
+
+        if (flexAlgoTopology === null && !hasFilter) {
+          // All links, no filters: default rendering (no change — fall through)
+        } else if (flexAlgoTopology === null && flexAlgoFilterDefault && !flexAlgoFilterDrained) {
+          // All links + only default filter: highlight untagged cyan, dim others
+          if (isDefault) {
+            displayColor = '#06b6d4' // cyan
+            displayOpacity = 1.0
+            displayWeight = defaultWeight + 2
+          } else {
+            displayColor = isDark ? '#4b5563' : '#9ca3af'
+            displayOpacity = 0.25
+            displayWeight = defaultWeight - 1
+          }
+        } else if (flexAlgoTopology === null && !flexAlgoFilterDefault && flexAlgoFilterDrained) {
+          // All links + only drained filter: highlight drained amber dashed, dim others
+          if (isDrained) {
+            displayColor = '#f59e0b' // amber
+            useDash = true
+            displayOpacity = 1.0
+            displayWeight = defaultWeight + 2
+          } else {
+            displayColor = isDark ? '#4b5563' : '#9ca3af'
+            displayOpacity = 0.25
+            displayWeight = defaultWeight - 1
+          }
+        } else if (flexAlgoTopology === null && flexAlgoFilterDefault && flexAlgoFilterDrained) {
+          // All links + both filters (union): highlight default OR drained
+          if (isDefault) {
+            displayColor = '#06b6d4' // cyan
+            displayOpacity = 1.0
+            displayWeight = defaultWeight + 2
+          } else if (isDrained) {
+            displayColor = '#f59e0b' // amber
+            useDash = true
+            displayOpacity = 1.0
+            displayWeight = defaultWeight + 2
+          } else {
+            displayColor = isDark ? '#4b5563' : '#9ca3af'
+            displayOpacity = 0.25
+            displayWeight = defaultWeight - 1
+          }
+        } else if (flexAlgoTopology !== null && !hasFilter) {
+          // Named topology, no filters: highlight members green, drained amber dashed, dim rest
+          if (inTopology && isDrained) {
+            displayColor = '#f59e0b' // amber — drained member
+            useDash = true
+            displayOpacity = 0.9
+            displayWeight = defaultWeight + 1
+          } else if (inTopology) {
+            displayColor = '#22c55e' // green — in topology
+            displayOpacity = 1.0
+            displayWeight = defaultWeight + 1
+          } else {
+            displayColor = isDark ? '#4b5563' : '#9ca3af'
+            displayOpacity = 0.25
+            displayWeight = defaultWeight - 1
+          }
+        } else if (flexAlgoTopology !== null && flexAlgoFilterDrained) {
+          // Named topology + drained filter: only highlight drained members
+          if (inTopology && isDrained) {
+            displayColor = '#f59e0b' // amber — drained member
+            useDash = true
+            displayOpacity = 1.0
+            displayWeight = defaultWeight + 2
+          } else {
+            displayColor = isDark ? '#4b5563' : '#9ca3af'
+            displayOpacity = 0.25
+            displayWeight = defaultWeight - 1
+          }
+        } else if (flexAlgoTopology !== null && flexAlgoFilterDefault) {
+          // Named topology + default filter: doesn't make sense (default links aren't in named topologies)
+          // Treat as no additional filter — show topology members
+          if (inTopology && isDrained) {
+            displayColor = '#f59e0b'
+            useDash = true
+            displayOpacity = 0.9
+            displayWeight = defaultWeight + 1
+          } else if (inTopology) {
+            displayColor = '#22c55e'
+            displayOpacity = 1.0
+            displayWeight = defaultWeight + 1
+          } else {
+            displayColor = isDark ? '#4b5563' : '#9ca3af'
+            displayOpacity = 0.25
+            displayWeight = defaultWeight - 1
+          }
+        }
       } else if (isInSelectedPath && linkPathIndices) {
         // Use the selected path's color
         displayColor = PATH_COLORS[selectedPathIndex % PATH_COLORS.length]
@@ -1724,7 +1830,17 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         },
         geometry: {
           type: 'LineString' as const,
-          coordinates: calculateCurvedPath(startPos, endPos),
+          coordinates: (() => {
+            const pairKey = [link.side_a_pk, link.side_z_pk].sort().join('|')
+            const total = pairCountMap.get(pairKey) ?? 1
+            const idx = linkPairIndex.get(link.pk) ?? 0
+            if (total <= 1) return calculateCurvedPath(startPos, endPos)
+            // Spread parallel links with different curve offsets
+            const baseOffset = 0.15
+            const spread = 0.12
+            const offset = baseOffset + (idx - (total - 1) / 2) * spread
+            return calculateCurvedPath(startPos, endPos, offset)
+          })(),
         },
       }
     }).filter((f): f is NonNullable<typeof f> => f !== null)
@@ -1774,7 +1890,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       features,
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [links, devicePositions, isDark, hoveredLink, selectedItem, hoverHighlight, linkPathMap, selectedPathIndex, criticalityOverlayEnabled, linkCriticalityMap, whatifRemovalMode, removalLink, linkHealthMode, linkSlaStatus, trafficFlowMode, getTrafficColor, metroClusteringMode, collapsedMetros, deviceMap, metroMap, contributorLinksMode, contributorIndexMap, bandwidthMode, isisHealthMode, edgeHealthStatus, linkTypeMode, metroPathModeEnabled, metroLinkPathMap, metroPathSelectedPairs, multicastTreesMode, dimOtherLinks, hoveredDiscrepancyKey])
+  }, [links, devicePositions, isDark, hoveredLink, selectedItem, hoverHighlight, linkPathMap, selectedPathIndex, criticalityOverlayEnabled, linkCriticalityMap, whatifRemovalMode, removalLink, linkHealthMode, linkSlaStatus, trafficFlowMode, getTrafficColor, metroClusteringMode, collapsedMetros, deviceMap, metroMap, contributorLinksMode, contributorIndexMap, bandwidthMode, isisHealthMode, edgeHealthStatus, linkTypeMode, metroPathModeEnabled, metroLinkPathMap, metroPathSelectedPairs, multicastTreesMode, dimOtherLinks, hoveredDiscrepancyKey, flexAlgoMode, flexAlgoTopology, flexAlgoFilterDefault, flexAlgoFilterDrained])
 
   // GeoJSON for validator links (connecting lines)
   const validatorLinksGeoJson = useMemo(() => {
@@ -2507,9 +2623,10 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
 
     const flyToLocation = (lng: number, lat: number, zoom = 3, usePanelOffset = false) => {
       if (mapRef.current) {
+        const currentZoom = mapRef.current.getZoom()
         mapRef.current.flyTo({
           center: [lng, lat],
-          zoom,
+          zoom: Math.max(currentZoom, zoom),
           duration: 1000,
           offset: usePanelOffset ? [getPanelOffsetX(), 0] : [0, 0],
         })
@@ -2684,6 +2801,13 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         return
       }
 
+      // Cancel any pending hide timer so re-entering (e.g., when MapLibre fires
+      // a brief mouseleave between adjacent features) doesn't drop the hover state
+      if (linkHideTimerRef.current) {
+        clearTimeout(linkHideTimerRef.current)
+        linkHideTimerRef.current = null
+      }
+
       const props = e.features[0].properties
 
       // Pin tooltip position at hover start so it stays reachable as user moves toward it
@@ -2738,6 +2862,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   }, [linkMap, buildLinkInfo, multicastTreesMode, dimOtherLinks, multicastTreeLinkPKs])
 
   const handleLinkMouseLeave = useCallback(() => {
+    if (linkHideTimerRef.current) clearTimeout(linkHideTimerRef.current)
     linkHideTimerRef.current = setTimeout(() => setHoveredLink(null), 400)
   }, [])
 
@@ -3682,6 +3807,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
             linkTypeMode ? 'Link Types' :
             stakeOverlayMode ? 'Stake' :
             isisHealthMode ? 'ISIS' :
+            flexAlgoMode ? 'Flex-Algo' :
             linkHealthMode ? 'Health' :
             trafficFlowMode ? 'Traffic' :
             criticalityOverlayEnabled ? 'Link Criticality' :
@@ -3695,6 +3821,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
             linkTypeMode ? 'Links colored by type (fiber, wavelength, etc.).' :
             stakeOverlayMode ? 'Devices sized by validator stake.' :
             isisHealthMode ? 'Compare current topology to baseline.' :
+            flexAlgoMode ? 'Filter links by flex-algo topology membership.' :
             linkHealthMode ? 'Links colored by latency, jitter, and loss.' :
             trafficFlowMode ? 'Links sized by traffic volume.' :
             criticalityOverlayEnabled ? 'Links ranked by impact if removed.' :
@@ -3786,6 +3913,9 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
               totalLinkCount={links.length}
               isLoading={devices.length === 0}
             />
+          )}
+          {flexAlgoMode && (
+            <FlexAlgoOverlayPanel isDark={isDark} />
           )}
           {multicastTreesMode && (
             <MulticastTreesOverlayPanel

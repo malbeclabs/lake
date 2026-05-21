@@ -9,6 +9,8 @@ import (
 	"syscall"
 
 	"github.com/getsentry/sentry-go"
+
+	"github.com/malbeclabs/lake/utils/pkg/redact"
 )
 
 // isClientDisconnect returns true if the error is caused by the client
@@ -32,15 +34,31 @@ func isClientDisconnect(err error) bool {
 
 // logError logs at ERROR level, silently skipping client disconnects.
 func logError(msg string, args ...any) {
-	// Extract the error from args to check for client disconnect.
+	if hasClientDisconnect(args) {
+		return
+	}
+	slog.Error(msg, args...)
+}
+
+// logWarn logs at WARN level, silently skipping client disconnects.
+func logWarn(msg string, args ...any) {
+	if hasClientDisconnect(args) {
+		return
+	}
+	slog.Warn(msg, args...)
+}
+
+// hasClientDisconnect reports whether args contains an "error" key whose
+// value is a client-disconnect error (context cancellation, broken pipe, etc.).
+func hasClientDisconnect(args []any) bool {
 	for i := 0; i+1 < len(args); i += 2 {
 		if args[i] == "error" {
 			if err, ok := args[i+1].(error); ok && isClientDisconnect(err) {
-				return
+				return true
 			}
 		}
 	}
-	slog.Error(msg, args...)
+	return false
 }
 
 // internalError logs the full error internally and returns a user-safe message.
@@ -64,39 +82,9 @@ func internalError(operation string, err error) string {
 	return operation
 }
 
-// SanitizeError removes sensitive information from error messages.
-// Use this when you need to include some error context but want to
-// strip credentials and internal details.
+// SanitizeError removes sensitive information from error messages by
+// redacting basic-auth credentials, sensitive query-param values, and
+// token-shaped path segments in any URLs the message contains.
 func SanitizeError(err error) string {
-	if err == nil {
-		return ""
-	}
-
-	msg := err.Error()
-
-	// Remove anything that looks like credentials in URLs
-	// Pattern: protocol://user:pass@host or protocol://user@host
-	if idx := strings.Index(msg, "://"); idx != -1 {
-		// Find the @ symbol that separates credentials from host
-		atIdx := strings.Index(msg[idx:], "@")
-		if atIdx != -1 {
-			// Replace credentials with ***
-			endOfProto := idx + 3 // len("://")
-			msg = msg[:endOfProto] + "***@" + msg[idx+atIdx+1:]
-		}
-	}
-
-	// Remove query parameters which may contain SQL
-	if idx := strings.Index(msg, "?"); idx != -1 {
-		// Find the end of the URL (next space or quote)
-		endIdx := len(msg)
-		for _, delim := range []string{" ", "'", "\""} {
-			if i := strings.Index(msg[idx:], delim); i != -1 && idx+i < endIdx {
-				endIdx = idx + i
-			}
-		}
-		msg = msg[:idx] + "?..." + msg[endIdx:]
-	}
-
-	return msg
+	return redact.Error(err)
 }

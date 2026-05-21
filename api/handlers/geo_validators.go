@@ -71,7 +71,10 @@ func (a *API) GetGeoValidators(w http.ResponseWriter, r *http.Request) {
 	metro := strings.TrimSpace(r.URL.Query().Get("metro"))
 	dzFilter := strings.TrimSpace(r.URL.Query().Get("dz_filter"))
 
-	resp, err := a.FetchGeoValidatorsData(r.Context(), metro, dzFilter)
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	resp, err := a.FetchGeoValidatorsData(ctx, metro, dzFilter)
 	if err != nil {
 		logError("geo validators query error", "error", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
@@ -90,9 +93,6 @@ func isDefaultGeoValidatorsRequest(r *http.Request) bool {
 }
 
 func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string) (*GeoValidatorsResponse, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
 	dzdpDB := fmt.Sprintf("`%s`", a.DZDPDB)
 
 	// Fetch enriched validators with lat/lng — nearest-metro assignment and

@@ -14,6 +14,7 @@ import {
 } from '@/lib/api'
 import { StatusFilters, useStatusFilters } from '@/components/status-search-bar'
 import { PageHeader } from '@/components/page-header'
+import { Tooltip } from '@/components/ui/tooltip'
 import { useActiveOpsTickets } from '@/hooks/use-ops-tickets'
 import { useIsOpsUser } from '@/hooks/use-is-ops-user'
 import { opsTicketUrl, type OpsTicket } from '@/lib/ops-api'
@@ -874,6 +875,9 @@ export function IncidentsPage() {
             </div>
           }
         />
+        <p className="text-sm text-muted-foreground -mt-4 mb-6 max-w-4xl">
+          This dashboard tracks network outages, degradations, and fluctuations across the network.
+        </p>
         {showCreateIncident && (
           <CreateIncidentModal
             onClose={() => setShowCreateIncident(false)}
@@ -1144,36 +1148,37 @@ export function IncidentsPage() {
             >
               {(
                 [
-                  ...(scope === 'links' ? [{ key: 'packet_loss', label: 'Packet Loss' }] : []),
-                  { key: 'errors', label: 'Errors' },
-                  { key: 'fcs', label: 'FCS Errors' },
-                  { key: 'discards', label: 'Discards' },
-                  { key: 'carrier', label: 'Carrier' },
-                  { key: 'no_data', label: 'No Data' },
-                  ...(scope === 'links' ? [{ key: 'isis_down', label: 'ISIS Down' }] : []),
+                  ...(scope === 'links' ? [{ key: 'packet_loss', label: 'Packet Loss', tooltip: 'Packets that failed to arrive at their destination.' }] : []),
+                  { key: 'errors', label: 'Errors', tooltip: 'Packets or frames that were received or transmitted incorrectly.' },
+                  { key: 'fcs', label: 'FCS Errors', tooltip: 'Frame Check Sequence (FCS) integrity check.' },
+                  { key: 'discards', label: 'Discards', tooltip: 'Packets intentionally dropped by a device.' },
+                  { key: 'carrier', label: 'Carrier', tooltip: 'The physical link status between network devices.' },
+                  { key: 'no_data', label: 'No Data', tooltip: 'No telemetry was received from the device or interface during the window.' },
+                  ...(scope === 'links' ? [{ key: 'isis_down', label: 'IS-IS Down', tooltip: 'IS-IS routing session between devices is unavailable.' }] : []),
                   ...(scope === 'devices'
                     ? [
-                        { key: 'isis_overload', label: 'ISIS Overload' },
-                        { key: 'isis_unreachable', label: 'ISIS Unreachable' },
+                        { key: 'isis_overload', label: 'IS-IS Overload', tooltip: 'Device is signaling IS-IS overload, so traffic is being steered away from it.' },
+                        { key: 'isis_unreachable', label: 'IS-IS Unreachable', tooltip: 'Device is not reachable via IS-IS from its expected neighbors.' },
                       ]
                     : []),
-                ] as { key: string; label: string }[]
-              ).map(({ key, label }) => {
+                ] as { key: string; label: string; tooltip: string }[]
+              ).map(({ key, label, tooltip }) => {
                 const count = filteredByType.byType[key] || 0
                 const isSelected = selectedTypes.has(key)
                 return (
-                  <button
-                    key={key}
-                    onClick={() => toggleType(key)}
-                    className={`text-center p-3 rounded-lg border transition-colors ${
-                      isSelected
-                        ? 'border-primary bg-primary/5 ring-1 ring-primary'
-                        : 'border-border hover:border-muted-foreground/30'
-                    }`}
-                  >
-                    <div className="text-2xl font-medium tabular-nums tracking-tight">{count}</div>
-                    <div className="text-xs text-muted-foreground">{label}</div>
-                  </button>
+                  <Tooltip key={key} content={tooltip}>
+                    <button
+                      onClick={() => toggleType(key)}
+                      className={`text-center p-3 rounded-lg border transition-colors ${
+                        isSelected
+                          ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                          : 'border-border hover:border-muted-foreground/30'
+                      }`}
+                    >
+                      <div className="text-2xl font-medium tabular-nums tracking-tight">{count}</div>
+                      <div className="text-xs text-muted-foreground">{label}</div>
+                    </button>
+                  </Tooltip>
                 )
               })}
             </div>

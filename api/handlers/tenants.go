@@ -13,14 +13,15 @@ import (
 )
 
 type TenantListItem struct {
-	PK            string `json:"pk"`
-	OwnerPubkey   string `json:"owner_pubkey"`
-	Code          string `json:"code"`
-	PaymentStatus string `json:"payment_status"`
-	VrfID         uint16 `json:"vrf_id"`
-	MetroRouting  bool   `json:"metro_routing"`
-	RouteLiveness bool   `json:"route_liveness"`
-	BillingRate   uint64 `json:"billing_rate"`
+	PK                string   `json:"pk"`
+	OwnerPubkey       string   `json:"owner_pubkey"`
+	Code              string   `json:"code"`
+	PaymentStatus     string   `json:"payment_status"`
+	VrfID             uint16   `json:"vrf_id"`
+	MetroRouting      bool     `json:"metro_routing"`
+	RouteLiveness     bool     `json:"route_liveness"`
+	BillingRate       uint64   `json:"billing_rate"`
+	IncludeTopologies []string `json:"include_topologies"`
 }
 
 var tenantSortFields = map[string]string{
@@ -59,10 +60,11 @@ func (a *API) GetTenants(w http.ResponseWriter, r *http.Request) {
 				vrf_id as vrf_id,
 				metro_routing as metro_routing,
 				route_liveness as route_liveness,
-				billing_rate as billing_rate
+				billing_rate as billing_rate,
+				COALESCE(include_topologies, '[]') as include_topologies
 			FROM dz_tenants_current
 		)
-		SELECT pk, owner_pubkey, code, payment_status, vrf_id, metro_routing, route_liveness, billing_rate, count() OVER () as _total
+		SELECT pk, owner_pubkey, code, payment_status, vrf_id, metro_routing, route_liveness, billing_rate, include_topologies, count() OVER () as _total
 		FROM tenants_data
 		WHERE 1=1` + whereFilter + " " + orderBy + `
 		LIMIT ? OFFSET ?
@@ -87,6 +89,7 @@ func (a *API) GetTenants(w http.ResponseWriter, r *http.Request) {
 	var total uint64
 	for rows.Next() {
 		var t TenantListItem
+		var includeTopologiesJSON string
 		if err := rows.Scan(
 			&t.PK,
 			&t.OwnerPubkey,
@@ -96,11 +99,16 @@ func (a *API) GetTenants(w http.ResponseWriter, r *http.Request) {
 			&t.MetroRouting,
 			&t.RouteLiveness,
 			&t.BillingRate,
+			&includeTopologiesJSON,
 			&total,
 		); err != nil {
 			logError("tenants scan failed", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
+		}
+		_ = json.Unmarshal([]byte(includeTopologiesJSON), &t.IncludeTopologies)
+		if t.IncludeTopologies == nil {
+			t.IncludeTopologies = []string{}
 		}
 		tenants = append(tenants, t)
 	}
@@ -148,12 +156,14 @@ func (a *API) GetTenant(w http.ResponseWriter, r *http.Request) {
 			vrf_id,
 			metro_routing,
 			route_liveness,
-			billing_rate
+			billing_rate,
+			COALESCE(include_topologies, '[]') as include_topologies
 		FROM dz_tenants_current
 		WHERE pk = ?
 	`
 
 	var t TenantListItem
+	var includeTopologiesJSON string
 	err := a.envDB(ctx).QueryRow(ctx, query, pk).Scan(
 		&t.PK,
 		&t.OwnerPubkey,
@@ -163,7 +173,12 @@ func (a *API) GetTenant(w http.ResponseWriter, r *http.Request) {
 		&t.MetroRouting,
 		&t.RouteLiveness,
 		&t.BillingRate,
+		&includeTopologiesJSON,
 	)
+	_ = json.Unmarshal([]byte(includeTopologiesJSON), &t.IncludeTopologies)
+	if t.IncludeTopologies == nil {
+		t.IncludeTopologies = []string{}
+	}
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery("tenants", duration, err)
 

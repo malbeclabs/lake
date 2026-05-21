@@ -100,18 +100,20 @@ type LinkIssue struct {
 }
 
 type LinkMetric struct {
-	PK               string  `json:"pk"`
-	Code             string  `json:"code"`
-	LinkType         string  `json:"link_type"`
-	Contributor      string  `json:"contributor"`
-	SideZContributor string  `json:"side_z_contributor"`
-	BandwidthBps     int64   `json:"bandwidth_bps"`
-	InBps            float64 `json:"in_bps"`
-	OutBps           float64 `json:"out_bps"`
-	UtilizationIn    float64 `json:"utilization_in"`
-	UtilizationOut   float64 `json:"utilization_out"`
-	SideAMetro       string  `json:"side_a_metro"`
-	SideZMetro       string  `json:"side_z_metro"`
+	PK               string   `json:"pk"`
+	Code             string   `json:"code"`
+	LinkType         string   `json:"link_type"`
+	Contributor      string   `json:"contributor"`
+	SideZContributor string   `json:"side_z_contributor"`
+	BandwidthBps     int64    `json:"bandwidth_bps"`
+	InBps            float64  `json:"in_bps"`
+	OutBps           float64  `json:"out_bps"`
+	UtilizationIn    float64  `json:"utilization_in"`
+	UtilizationOut   float64  `json:"utilization_out"`
+	SideAMetro       string   `json:"side_a_metro"`
+	SideZMetro       string   `json:"side_z_metro"`
+	LinkTopologies   []string `json:"link_topologies"`
+	UnicastDrained   bool     `json:"unicast_drained"`
 }
 
 type DeviceUtilization struct {
@@ -189,6 +191,8 @@ type NonActivatedLink struct {
 	Since               string   `json:"since"` // ISO timestamp when entered this status
 	ActiveIncidentTypes []string `json:"active_incident_types,omitempty"`
 	BandwidthBps        int64    `json:"bandwidth_bps"`
+	LinkTopologies      []string `json:"link_topologies"`
+	UnicastDrained      bool     `json:"unicast_drained"`
 }
 
 type ISISDeviceIssue struct {
@@ -547,7 +551,9 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 				-- Use direct link traffic if available, otherwise use parent interface traffic
 				COALESCE(traffic_direct.in_bps, traffic_parent.in_bps, 0) as in_bps,
 				COALESCE(traffic_direct.out_bps, traffic_parent.out_bps, 0) as out_bps,
-				COALESCE(h.is_down, false) as is_down
+				COALESCE(h.is_down, false) as is_down,
+				COALESCE(l.link_topologies, '[]') as link_topologies,
+				COALESCE(l.unicast_drained, false) as unicast_drained
 			FROM dz_links_current l
 			JOIN dz_devices_current da ON l.side_a_pk = da.pk
 			JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
@@ -611,8 +617,10 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 			var bandwidthBps int64
 			var committedRttUs, latencyUs, lossPct, inBps, outBps float64
 			var isDown bool
+			var linkTopologiesJSON string
+			var unicastDrained bool
 
-			if err := rows.Scan(&pk, &code, &linkType, &contributor, &sideZContributor, &bandwidthBps, &committedRttUs, &sideAMetro, &sideZMetro, &latencyUs, &lossPct, &inBps, &outBps, &isDown); err != nil {
+			if err := rows.Scan(&pk, &code, &linkType, &contributor, &sideZContributor, &bandwidthBps, &committedRttUs, &sideAMetro, &sideZMetro, &latencyUs, &lossPct, &inBps, &outBps, &isDown, &linkTopologiesJSON, &unicastDrained); err != nil {
 				return err
 			}
 
@@ -669,6 +677,12 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 				})
 			}
 
+			var linkTopologies []string
+			_ = json.Unmarshal([]byte(linkTopologiesJSON), &linkTopologies)
+			if linkTopologies == nil {
+				linkTopologies = []string{}
+			}
+
 			// Track utilization links
 			if bandwidthBps > 0 {
 				utilIn := (inBps / float64(bandwidthBps)) * 100
@@ -686,6 +700,8 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 					UtilizationOut:   utilOut,
 					SideAMetro:       sideAMetro,
 					SideZMetro:       sideZMetro,
+					LinkTopologies:   linkTopologies,
+					UnicastDrained:   unicastDrained,
 				}
 				// Track all for top utilization list
 				allUtilLinks = append(allUtilLinks, metric)
@@ -1115,7 +1131,9 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 				mz.code as side_z_metro,
 				CASE WHEN l.committed_rtt_ns = ? THEN 'provisioning' ELSE l.status END as effective_status,
 				formatDateTime(l.snapshot_ts, '%Y-%m-%dT%H:%i:%sZ', 'UTC') as since,
-				l.bandwidth_bps
+				l.bandwidth_bps,
+				COALESCE(l.link_topologies, '[]') as link_topologies,
+				COALESCE(l.unicast_drained, false) as unicast_drained
 			FROM dz_links_current l
 			JOIN dz_devices_current da ON l.side_a_pk = da.pk
 			JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
@@ -1135,8 +1153,13 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 		var links []NonActivatedLink
 		for rows.Next() {
 			var link NonActivatedLink
-			if err := rows.Scan(&link.PK, &link.Code, &link.LinkType, &link.SideAMetro, &link.SideZMetro, &link.Status, &link.Since, &link.BandwidthBps); err != nil {
+			var linkTopologiesJSON string
+			if err := rows.Scan(&link.PK, &link.Code, &link.LinkType, &link.SideAMetro, &link.SideZMetro, &link.Status, &link.Since, &link.BandwidthBps, &linkTopologiesJSON, &link.UnicastDrained); err != nil {
 				return err
+			}
+			_ = json.Unmarshal([]byte(linkTopologiesJSON), &link.LinkTopologies)
+			if link.LinkTopologies == nil {
+				link.LinkTopologies = []string{}
 			}
 			links = append(links, link)
 		}

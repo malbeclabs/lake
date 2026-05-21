@@ -312,7 +312,7 @@ func (a *API) GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := a.FetchEdgeScoreboardData(ctx, window, leadersOnly, sinceSlot, beforeSlot, slotLimit)
 	if err != nil {
-		log.Printf("EdgeScoreboard error: %v", err)
+		logError("EdgeScoreboard error", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

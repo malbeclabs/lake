@@ -12,7 +12,6 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/docker/go-connections/nat"
 	"github.com/google/uuid"
 	chmigrations "github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	"github.com/stretchr/testify/require"
@@ -135,7 +134,7 @@ func NewClickHouseDB(ctx context.Context, log *slog.Logger, cfg *ClickHouseDBCon
 		return nil, fmt.Errorf("failed to get ClickHouse container host: %w", err)
 	}
 
-	port := nat.Port(fmt.Sprintf("%s/tcp", cfg.Port))
+	port := fmt.Sprintf("%s/tcp", cfg.Port)
 	mappedPort, err := container.MappedPort(ctx, port)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ClickHouse container mapped port: %w", err)
@@ -144,7 +143,7 @@ func NewClickHouseDB(ctx context.Context, log *slog.Logger, cfg *ClickHouseDBCon
 	addr := fmt.Sprintf("%s:%s", host, mappedPort.Port())
 
 	// Get HTTP port for schema fetching
-	httpPort := nat.Port("8123/tcp")
+	httpPort := "8123/tcp"
 	mappedHTTPPort, err := container.MappedPort(ctx, httpPort)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ClickHouse container HTTP port: %w", err)

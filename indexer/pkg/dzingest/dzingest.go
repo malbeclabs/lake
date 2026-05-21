@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	temporalclient "go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
@@ -144,14 +145,46 @@ func newTemporalLogger(log *slog.Logger) *temporalLogger {
 }
 
 func (l *temporalLogger) Debug(msg string, keyvals ...any) {} // suppress noisy debug logs
-func (l *temporalLogger) Info(msg string, keyvals ...any)  { l.log.Info(msg, keyvals...) }
-func (l *temporalLogger) Warn(msg string, keyvals ...any)  { l.log.Warn(msg, keyvals...) }
+func (l *temporalLogger) Info(msg string, keyvals ...any) {
+	// Temporal logs "Task processing failed with error" at INFO when an
+	// activity reports back to a workflow that's already completed or
+	// continued-as-new (typical during deploys). The Error= keyval trips
+	// cloud-log heuristics that promote the line to ERROR severity, so
+	// demote to Debug to keep prod logs quiet.
+	if msg == "Task processing failed with error" && hasBenignTaskProcessingError(keyvals) {
+		l.log.Debug(msg, keyvals...)
+		return
+	}
+	l.log.Info(msg, keyvals...)
+}
+func (l *temporalLogger) Warn(msg string, keyvals ...any) { l.log.Warn(msg, keyvals...) }
 func (l *temporalLogger) Error(msg string, keyvals ...any) {
 	if isContextCancellation(keyvals) {
 		l.log.Warn(msg, keyvals...)
 		return
 	}
 	l.log.Error(msg, keyvals...)
+}
+
+// hasBenignTaskProcessingError reports whether Temporal's "Task processing
+// failed with error" keyvals carry an error that's expected during deploys
+// (activity reports back after the workflow has already finished or been
+// continue-as-newed; in-flight RPC observes the gRPC client connection
+// closing as the pod shuts down).
+func hasBenignTaskProcessingError(keyvals []any) bool {
+	for i := 0; i+1 < len(keyvals); i += 2 {
+		if keyvals[i] != "Error" {
+			continue
+		}
+		if err, ok := keyvals[i+1].(error); ok {
+			msg := err.Error()
+			if strings.Contains(msg, "workflow execution already completed") ||
+				strings.Contains(msg, "grpc: the client connection is closing") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // isContextCancellation checks Temporal's key-value log pairs for errors

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/andybalholm/brotli"
 	"github.com/getsentry/sentry-go"
 	sentryhttp "github.com/getsentry/sentry-go/http"
 	"github.com/go-chi/chi/v5"
@@ -30,6 +31,7 @@ import (
 	v1 "github.com/malbeclabs/lake/api/v1"
 	"github.com/malbeclabs/lake/api/worker"
 	slackbot "github.com/malbeclabs/lake/slack/bot"
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/slack-go/slack/socketmode"
 )
@@ -221,7 +223,12 @@ func main() {
 	noWorkerFlag := flag.Bool("no-worker", false, "Disable embedded page cache worker (for prod where it runs standalone)")
 	noDevnetFlag := flag.Bool("no-devnet", false, "Disable devnet database connection")
 	noTestnetFlag := flag.Bool("no-testnet", false, "Disable testnet database connection")
+	verboseFlag := flag.Bool("v", false, "Verbose logging (debug level)")
 	flag.Parse()
+
+	// Install the shared logger as the slog default. The handler redacts
+	// credentials embedded in URLs so api logs match indexer/admin behavior.
+	slog.SetDefault(logger.New(*verboseFlag))
 
 	// Set env vars so config.Load() picks them up (flags take precedence over env)
 	if *useRemoteFlag {
@@ -428,7 +435,11 @@ func main() {
 	}
 
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Compress(5))
+	compressor := middleware.NewCompressor(5)
+	compressor.SetEncoder("br", func(w io.Writer, level int) io.Writer {
+		return brotli.NewWriterLevel(w, level)
+	})
+	r.Use(compressor.Handler)
 	r.Use(metrics.Middleware)
 
 	// CORS configuration - origins from env or allow all
@@ -548,6 +559,8 @@ func main() {
 		r.Get("/api/dz/devices", api.GetDevices)
 		r.Get("/api/dz/devices/{pk}", api.GetDevice)
 		r.Get("/api/dz/devices/{pk}/validator-stats", api.GetDeviceValidatorStats)
+		r.Get("/api/dz/devices/{pk}/optics", api.GetDeviceOptics)
+		r.Get("/api/dz/devices/{pk}/optics/history", api.GetDeviceOpticsHistory)
 		r.Get("/api/dz/links", api.GetLinks)
 		r.Get("/api/dz/links/{pk}", api.GetLink)
 		r.Get("/api/dz/links-health", api.GetLinkHealth)
@@ -631,6 +644,7 @@ func main() {
 		r.Get("/api/performance/link-latency/history", api.GetMultiLinkLatencyHistory)
 
 		// Topology endpoints (ClickHouse only)
+		r.Get("/api/topologies", api.GetTopologies)
 		r.Get("/api/topology", api.GetTopology)
 		r.Get("/api/topology/link-metrics", api.GetTopologyLinkMetrics)
 		r.Get("/api/topology/validators", api.GetTopologyValidators)

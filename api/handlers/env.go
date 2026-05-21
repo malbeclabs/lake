@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 // DZEnv represents a DoubleZero network environment.
@@ -14,6 +15,14 @@ const (
 	EnvDevnet  DZEnv = "devnet"
 	EnvTestnet DZEnv = "testnet"
 )
+
+// TelemetryDatabaseForEnv returns the ClickHouse database that mirrors the
+// dz/telemetry tables for the given environment (e.g. "mainnet-beta" →
+// "telemetry_mainnet_beta"). These databases are created by the admin
+// `setup-remote-tables` command and proxy the remote telemetry cluster.
+func TelemetryDatabaseForEnv(env DZEnv) string {
+	return "telemetry_" + strings.ReplaceAll(string(env), "-", "_")
+}
 
 // ValidEnvs contains all recognized environment values.
 var ValidEnvs = map[DZEnv]bool{

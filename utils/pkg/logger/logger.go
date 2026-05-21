@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/lmittmann/tint"
+
+	"github.com/malbeclabs/lake/utils/pkg/redact"
 )
 
 func New(verbose bool) *slog.Logger {
@@ -20,9 +22,24 @@ func New(verbose bool) *slog.Logger {
 			if a.Key == slog.TimeKey {
 				t := a.Value.Time().UTC()
 				a.Value = slog.StringValue(formatRFC3339Millis(t))
+				return a
 			}
-			if s, ok := a.Value.Any().(string); ok && s == "" {
-				return slog.Attr{}
+			// Redact credentials embedded in URLs from string and error values.
+			// Catches both direct URL fields (logger.Info("...", "url", rpcURL))
+			// and URLs that bubble up inside *url.Error / wrapped error messages.
+			switch a.Value.Kind() {
+			case slog.KindString:
+				s := a.Value.String()
+				if s == "" {
+					return slog.Attr{}
+				}
+				if r := redact.String(s); r != s {
+					a.Value = slog.StringValue(r)
+				}
+			case slog.KindAny:
+				if err, ok := a.Value.Any().(error); ok && err != nil {
+					a.Value = slog.StringValue(redact.Error(err))
+				}
 			}
 			return a
 		},

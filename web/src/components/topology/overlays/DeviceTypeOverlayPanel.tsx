@@ -1,5 +1,6 @@
 import { Monitor, X } from 'lucide-react'
 import { useTopology } from '../TopologyContext'
+import { Tooltip } from '@/components/ui/tooltip'
 
 // Device type colors (must match topology-graph.tsx and topology-map.tsx)
 // Avoid green/red (status colors) and blue/purple (link colors)
@@ -11,6 +12,12 @@ const DEVICE_TYPE_COLORS: Record<string, { light: string; dark: string }> = {
 }
 
 const DEVICE_TYPES = ['hybrid', 'transit', 'edge']
+
+const DEVICE_TYPE_TOOLTIPS: Record<string, string> = {
+  hybrid: 'A DZD that combines both edge and transit functionality, providing both user connectivity and backbone routing.',
+  transit: 'A DZD that provides backbone connectivity within the DoubleZero network. Transit devices move traffic between DZDs but do not terminate user connections directly.',
+  edge: 'A DZD that provides user connectivity to the DoubleZero network. Edge devices leverage CYOA interfaces to terminate users (validators, RPC operators) and connect them to the network.',
+}
 
 interface DeviceTypeOverlayPanelProps {
   isDark: boolean
@@ -41,20 +48,22 @@ export function DeviceTypeOverlayPanel({ isDark, deviceCounts }: DeviceTypeOverl
           const colors = DEVICE_TYPE_COLORS[type] || DEVICE_TYPE_COLORS.default
           const count = deviceCounts?.[type] ?? 0
           return (
-            <div key={type} className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div
-                  className="w-4 h-4 rounded-full"
-                  style={{
-                    backgroundColor: isDark ? colors.dark : colors.light,
-                  }}
-                />
-                <span className="capitalize">{type}</span>
+            <Tooltip key={type} content={DEVICE_TYPE_TOOLTIPS[type]} side="left">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div
+                    className="w-4 h-4 rounded-full"
+                    style={{
+                      backgroundColor: isDark ? colors.dark : colors.light,
+                    }}
+                  />
+                  <span className="capitalize">{type}</span>
+                </div>
+                {deviceCounts && (
+                  <span className="text-muted-foreground">{count}</span>
+                )}
               </div>
-              {deviceCounts && (
-                <span className="text-muted-foreground">{count}</span>
-              )}
-            </div>
+            </Tooltip>
           )
         })}
       </div>

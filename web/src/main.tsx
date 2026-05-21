@@ -6,6 +6,7 @@ import * as Sentry from '@sentry/react'
 import './index.css'
 import App from './App.tsx'
 import { ThemeProvider } from '@/hooks/use-theme'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { fetchConfig } from '@/lib/api'
 
 // Handle chunk loading failures (stale tabs after deploys) by reloading the page
@@ -76,11 +77,13 @@ async function init() {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       <ThemeProvider>
-        <BrowserRouter>
-          <Sentry.ErrorBoundary fallback={<ErrorFallback />}>
-            <App />
-          </Sentry.ErrorBoundary>
-        </BrowserRouter>
+        <TooltipProvider delayDuration={200} skipDelayDuration={300}>
+          <BrowserRouter>
+            <Sentry.ErrorBoundary fallback={<ErrorFallback />}>
+              <App />
+            </Sentry.ErrorBoundary>
+          </BrowserRouter>
+        </TooltipProvider>
       </ThemeProvider>
     </StrictMode>,
   )

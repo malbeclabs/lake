@@ -1,5 +1,6 @@
 // web/src/hooks/use-ops-tickets.ts
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useAuth } from '@/contexts/AuthContext'
 import {
   fetchActiveOpsTickets,
   fetchOpsTicketHistory,
@@ -13,12 +14,14 @@ import {
 const STALE_TIME = 5 * 60 * 1000 // 5 minutes
 
 // Fetch all active tickets once; filter client-side per entity.
-// Returns undefined data (empty state) for unauthenticated users — no error shown.
+// Skipped entirely for unauthenticated users so the 401 never fires.
 export function useActiveOpsTickets() {
+  const { user } = useAuth()
   return useQuery({
     queryKey: ['ops-tickets', 'active'],
     queryFn: fetchActiveOpsTickets,
     staleTime: STALE_TIME,
+    enabled: !!user,
     retry: false,
     throwOnError: false,
   })
@@ -40,12 +43,16 @@ export function useTicketsForEntity(entityPk: string): OpsTicket[] {
 }
 
 // Fetch 5 most recent closed tickets for a specific entity (detail page only).
+// Skipped for unauthenticated users so the 401 never fires.
 export function useOpsTicketHistory(entityPk: string, ticketType?: OpsTicketType, entityType?: 'link' | 'device') {
+  const { user } = useAuth()
   return useQuery({
     queryKey: ['ops-tickets', 'history', entityPk, ticketType, entityType],
     queryFn: () => fetchOpsTicketHistory(entityPk, ticketType, entityType),
     staleTime: STALE_TIME,
-    enabled: !!entityPk,
+    enabled: !!entityPk && !!user,
+    retry: false,
+    throwOnError: false,
   })
 }
 
@@ -61,11 +68,14 @@ export function useCreateOpsTicket() {
 }
 
 // Fetch the list of valid assignees. Cached for 5 minutes.
+// Skipped for unauthenticated users so the 401 never fires.
 export function useOpsAssignees() {
+  const { user } = useAuth()
   return useQuery({
     queryKey: ['ops-assignees'],
     queryFn: fetchOpsAssignees,
     staleTime: STALE_TIME,
+    enabled: !!user,
     retry: false,
     throwOnError: false,
   })
