@@ -112,9 +112,9 @@ export function GeolocExplorerPage() {
   }, [searchParams, setSearchParams])
 
   return (
-    <div className="flex-1 flex flex-col">
+    <div className="flex-1 flex flex-col min-h-0">
       {/* View switcher */}
-      <div className="flex items-center gap-1 bg-muted rounded-md p-1 w-fit m-4 mb-0">
+      <div className="flex items-center gap-1 bg-muted rounded-md p-1 w-fit m-4 mb-0 flex-shrink-0">
         {VIEW_TABS.map((tab) => (
           <button
             key={tab.key}
