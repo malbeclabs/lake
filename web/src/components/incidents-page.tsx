@@ -1150,9 +1150,9 @@ export function IncidentsPage() {
                 [
                   ...(scope === 'links' ? [{ key: 'packet_loss', label: 'Packet Loss', tooltip: 'Packets that failed to arrive at their destination.' }] : []),
                   { key: 'errors', label: 'Errors', tooltip: 'Packets or frames that were received or transmitted incorrectly.' },
-                  { key: 'fcs', label: 'FCS Errors', tooltip: 'Frames that failed the Frame Check Sequence (FCS) integrity check.' },
+                  { key: 'fcs', label: 'FCS Errors', tooltip: 'Frame Check Sequence (FCS) integrity check.' },
                   { key: 'discards', label: 'Discards', tooltip: 'Packets intentionally dropped by a device.' },
-                  { key: 'carrier', label: 'Carrier', tooltip: 'Transitions on the physical link status between network devices.' },
+                  { key: 'carrier', label: 'Carrier', tooltip: 'The physical link status between network devices.' },
                   { key: 'no_data', label: 'No Data', tooltip: 'No telemetry was received from the device or interface during the window.' },
                   ...(scope === 'links' ? [{ key: 'isis_down', label: 'IS-IS Down', tooltip: 'IS-IS routing session between devices is unavailable.' }] : []),
                   ...(scope === 'devices'

@@ -14,9 +14,9 @@ const DEVICE_TYPE_COLORS: Record<string, { light: string; dark: string }> = {
 const DEVICE_TYPES = ['hybrid', 'transit', 'edge']
 
 const DEVICE_TYPE_TOOLTIPS: Record<string, string> = {
-  hybrid: 'Device that handles both inter-metro transit and edge connections (validators, users) on the same router.',
-  transit: 'Device that only forwards traffic between metros. It does not terminate validator or user connections directly.',
-  edge: 'Device at the network edge where validators and users connect into DoubleZero.',
+  hybrid: 'A DZD that combines both edge and transit functionality, providing both user connectivity and backbone routing.',
+  transit: 'A DZD that provides backbone connectivity within the DoubleZero network. Transit devices move traffic between DZDs but do not terminate user connections directly.',
+  edge: 'A DZD that provides user connectivity to the DoubleZero network. Edge devices leverage CYOA interfaces to terminate users (validators, RPC operators) and connect them to the network.',
 }
 
 interface DeviceTypeOverlayPanelProps {
