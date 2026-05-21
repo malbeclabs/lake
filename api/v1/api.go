@@ -95,6 +95,9 @@ func Mount(r chi.Router, api *handlers.API) huma.API {
 			_, _ = w.Write([]byte(docsHTML))
 		})
 
+		registerEdgeShredsOverview(humaAPI, api)
+		registerEdgeShredsDevices(humaAPI, api)
+		registerEdgeShredsClientSeats(humaAPI, api)
 		registerEdgeShredsPublishers(humaAPI, api)
 		registerEdgeShredsSubscribers(humaAPI, api)
 		registerValidatorsMetadata(humaAPI, api)
