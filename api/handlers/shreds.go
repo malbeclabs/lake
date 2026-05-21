@@ -35,10 +35,11 @@ type ShredsOverview struct {
 	ValidatorClientRewardCount uint64 `json:"validator_client_reward_count"`
 }
 
-func (a *API) GetShredsOverview(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
+// FetchShredsOverview returns the program-state overview for the env in ctx.
+// Errors are swallowed: missing execution controller / count tables resolve to
+// zero values rather than propagating up, matching the legacy HTTP handler's
+// behavior so v1 and the internal handler stay in lockstep.
+func (a *API) FetchShredsOverview(ctx context.Context) ShredsOverview {
 	start := time.Now()
 
 	// Fetch execution controller singleton.
@@ -67,15 +68,13 @@ func (a *API) GetShredsOverview(w http.ResponseWriter, r *http.Request) {
 		&overview.SettledClientSeatsCount,
 		&overview.NextSeatFundingIndex,
 	)
-	duration := time.Since(start)
-	metrics.RecordClickHouseQuery("shreds", duration, err)
+	metrics.RecordClickHouseQuery("shreds", time.Since(start), err)
 
 	if err != nil {
 		// If no execution controller exists yet, return empty overview.
 		overview = ShredsOverview{}
 	}
 
-	// Fetch aggregate counts in parallel-ish (sequential but fast).
 	// Fetch current Solana epoch.
 	var solanaEpoch int64
 	if err := a.envDB(ctx).QueryRow(ctx, `SELECT max(epoch) FROM solana_vote_accounts_current`).Scan(&solanaEpoch); err != nil {
@@ -83,6 +82,7 @@ func (a *API) GetShredsOverview(w http.ResponseWriter, r *http.Request) {
 	}
 	overview.CurrentSolanaEpoch = uint64(solanaEpoch)
 
+	// Aggregate counts. Tables may not exist yet on a fresh env; treat as zero.
 	countQueries := []struct {
 		query string
 		dest  *uint64
@@ -96,10 +96,18 @@ func (a *API) GetShredsOverview(w http.ResponseWriter, r *http.Request) {
 
 	for _, cq := range countQueries {
 		if err := a.envDB(ctx).QueryRow(ctx, cq.query).Scan(cq.dest); err != nil {
-			// Tables may not exist yet; treat as zero.
 			*cq.dest = 0
 		}
 	}
+
+	return overview
+}
+
+func (a *API) GetShredsOverview(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	overview := a.FetchShredsOverview(ctx)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(overview); err != nil {
