@@ -9,6 +9,8 @@ import { type ChartLegendSeries } from '@/components/topology/ChartLegend'
 import { ChartLegendTable } from '@/components/topology/ChartLegendTable'
 import { formatHoveredTime } from '@/components/topology/utils'
 import type { DeviceMetricsResponse, DeviceInterfaceTraffic } from '@/lib/api'
+import { TicketChartBands } from '@/components/ops/TicketChartBands'
+import type { OpsTicket } from '@/lib/ops-api'
 
 interface DeviceInterfaceIssuesChartProps {
   data: DeviceMetricsResponse
@@ -16,6 +18,9 @@ interface DeviceInterfaceIssuesChartProps {
   loading?: boolean
   highlightTimeRange?: { start: number; end: number } | null
   onCursorTime?: (time: number | null) => void
+  tickets?: OpsTicket[]
+  showIncidents?: boolean
+  showMaintenance?: boolean
 }
 
 function formatCount(value: number): string {
@@ -98,7 +103,7 @@ function AggregateLegend({ seriesKeys, uPlotData, legend, hoveredIdx, hoveredTim
   return <ChartLegendTable series={legendSeries} legend={legend} values={displayValues} maxValues={maxValues} hoveredTime={hoveredTime ?? undefined} />
 }
 
-export function DeviceInterfaceIssuesChart({ data, className, loading, highlightTimeRange, onCursorTime }: DeviceInterfaceIssuesChartProps) {
+export function DeviceInterfaceIssuesChart({ data, className, loading, highlightTimeRange, onCursorTime, tickets, showIncidents, showMaintenance }: DeviceInterfaceIssuesChartProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
 
@@ -284,7 +289,7 @@ export function DeviceInterfaceIssuesChart({ data, className, loading, highlight
     ctx.restore()
   }], [])
 
-  const { plotRef } = useUPlotChart({
+  const { plotRef, plotVersion } = useUPlotChart({
     containerRef: chartRef,
     data: uPlotData,
     series: uPlotSeries,
@@ -342,7 +347,19 @@ export function DeviceInterfaceIssuesChart({ data, className, loading, highlight
           <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
         )}
       </div>
-      <div ref={chartRef} className="h-36" />
+      <div className="relative overflow-hidden">
+        <div ref={chartRef} className="h-36" />
+        {tickets && tickets.length > 0 && (
+          <TicketChartBands
+            containerRef={chartRef}
+            plotRef={plotRef}
+            plotVersion={plotVersion}
+            tickets={tickets}
+            showIncidents={showIncidents ?? true}
+            showMaintenance={showMaintenance ?? true}
+          />
+        )}
+      </div>
       {!hasPerIntfData && <AggregateLegend seriesKeys={seriesKeys} uPlotData={uPlotData} legend={legend} hoveredIdx={hoveredIdx} hoveredTime={hoveredTime} errorColor={errorColor} fcsColor={fcsColor} discardColor={discardColor} carrierColor={carrierColor} data={data} />}
       {hasPerIntfData && <div className="flex flex-col text-xs px-2 pt-1 pb-2">
         <div className="flex items-center px-1 mb-1">

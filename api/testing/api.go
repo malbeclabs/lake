@@ -23,6 +23,7 @@ func NewTestAPIBare(t *testing.T, chDB *ClickHouseDB) *handlers.API {
 		Database:      dbName,
 		ShredderDB:    dbName,
 		PublisherDB:   dbName,
+		DZDPDB:        "dzdp",
 	}
 	api.Manager = handlers.NewWorkflowManager(api)
 	return api
@@ -42,6 +43,7 @@ func NewTestAPI(t *testing.T, chDB *ClickHouseDB) *handlers.API {
 		Database:      dbName,
 		ShredderDB:    dbName,
 		PublisherDB:   dbName,
+		DZDPDB:        "dzdp",
 	}
 	api.Manager = handlers.NewWorkflowManager(api)
 	return api
@@ -77,6 +79,7 @@ func NewTestAPIAll(t *testing.T, chDB *ClickHouseDB, pgDB *DB, neo4jDB *Neo4jDB,
 		api.PublicQueryDB = conn
 		api.Database = dbName
 		api.ShredderDB = dbName
+		api.DZDPDB = "dzdp"
 	}
 
 	if pgDB != nil {

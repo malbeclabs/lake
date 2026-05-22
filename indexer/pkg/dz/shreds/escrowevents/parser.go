@@ -124,6 +124,8 @@ func parseInstructionGroup(action string, details []string, clientSeatPK string)
 		return parseInstantAllocate(details)
 	case "Request instant seat withdrawal":
 		return &parsedEvent{EventType: EventTypeWithdrawSeat}
+	case "Request prorated instant seat withdrawal":
+		return parseProratedWithdraw(details)
 	case "Close payment escrow":
 		return parseClose(details)
 	case "Batch allocate seats":
@@ -197,6 +199,27 @@ func parseClose(details []string) *parsedEvent {
 			parts := strings.SplitN(after, " ", 2)
 			if n, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
 				pe.Amount = &n
+			}
+		}
+	}
+
+	return pe
+}
+
+// parseProratedWithdraw parses logs from RequestProratedInstantSeatWithdrawal.
+// We keep EventType=withdraw_seat so the unique key matches the older
+// non-prorated variant (dedup replaces on re-ingest); the discriminator at
+// query time is amount_usdc IS NOT NULL, which only the prorated path sets.
+// The prorated variant emits "Refunded {N} USDC" — N is in micro-USDC.
+func parseProratedWithdraw(details []string) *parsedEvent {
+	pe := &parsedEvent{EventType: EventTypeWithdrawSeat}
+
+	for _, d := range details {
+		if after, ok := strings.CutPrefix(d, "Refunded "); ok {
+			if before, ok := strings.CutSuffix(after, " USDC"); ok {
+				if n, err := strconv.ParseInt(before, 10, 64); err == nil {
+					pe.Amount = &n
+				}
 			}
 		}
 	}

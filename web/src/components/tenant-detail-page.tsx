@@ -1,7 +1,7 @@
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, Layers, AlertCircle, ArrowLeft } from 'lucide-react'
-import { fetchTenant } from '@/lib/api'
+import { fetchTenant, fetchTopologies } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useBackLink } from '@/hooks/use-back-link'
 
@@ -15,6 +15,13 @@ export function TenantDetailPage() {
     queryFn: () => fetchTenant(pk!),
     enabled: !!pk,
   })
+
+  const { data: topologiesData } = useQuery({
+    queryKey: ['topologies'],
+    queryFn: fetchTopologies,
+    staleTime: 60_000,
+  })
+  const hasTopologies = (topologiesData?.topologies?.length ?? 0) > 0
 
   useDocumentTitle(tenant?.code || 'Tenant')
 
@@ -104,6 +111,24 @@ export function TenantDetailPage() {
                 <dt className="text-sm text-muted-foreground shrink-0">Route Liveness</dt>
                 <dd className="text-sm">{tenant.route_liveness ? 'enabled' : 'disabled'}</dd>
               </div>
+              {hasTopologies && (
+                <div className="flex justify-between gap-4">
+                  <dt className="text-sm text-muted-foreground shrink-0">Topology</dt>
+                  <dd className="text-sm">
+                    {tenant.include_topologies && tenant.include_topologies.length > 0 ? (
+                      <span className="inline-flex flex-wrap gap-1">
+                        {tenant.include_topologies.map((name: string) => (
+                          <span key={name} className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-500/15 text-green-600 dark:text-green-400">
+                            {name}
+                          </span>
+                        ))}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">default</span>
+                    )}
+                  </dd>
+                </div>
+              )}
             </dl>
           </div>
         </div>

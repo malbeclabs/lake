@@ -51,17 +51,22 @@ import { ValidatorsPage } from '@/components/validators-page'
 import { GossipNodesPage } from '@/components/gossip-nodes-page'
 import { DeviceDetailPage } from '@/components/device-detail-page'
 import { LinkDetailPage } from '@/components/link-detail-page'
+import { TopologiesPage } from '@/components/topologies-page'
+import { TopologyDetailPage } from '@/components/topology-detail-page'
 import { MetroDetailPage } from '@/components/metro-detail-page'
 import { ContributorDetailPage } from '@/components/contributor-detail-page'
 import { UserDetailPage } from '@/components/user-detail-page'
 import { MulticastGroupsPage } from '@/components/multicast-groups-page'
 import { GeolocProbesPage } from '@/components/geoloc-probes-page'
 import { GeolocUsersPage } from '@/components/geoloc-users-page'
+import { GeolocExplorerPage } from '@/components/geoloc-explorer-page'
 import { ShredsSeatsPage, ShredsFundersPage, ShredsDevicesPage, ShredsEscrowEventsPage } from '@/components/shreds-page'
 import { ShredsEconomicsPage } from '@/components/shreds-economics-page'
 import { PublisherCheckPage } from './components/publisher-check-page'
 import { EdgeScoreboardPage } from './components/edge-scoreboard-page'
 import { MulticastGroupDetailPage } from '@/components/multicast-group-detail-page'
+import { AccessPassesPage } from '@/components/access-passes-page'
+import { AccessPassDetailPage } from '@/components/access-pass-detail-page'
 import { ValidatorDetailPage } from '@/components/validator-detail-page'
 import { GossipNodeDetailPage } from '@/components/gossip-node-detail-page'
 
@@ -71,6 +76,7 @@ import { SettingsPage } from '@/components/settings-page'
 import { ChangelogPage } from '@/components/changelog-page'
 import { TermsPage } from '@/components/terms-page'
 import { MCPDocsPage } from '@/components/mcp-docs-page'
+import { DocsIndexPage } from '@/components/docs-index-page'
 import { ConnectionError } from '@/components/ConnectionError'
 import { EnvBanner } from '@/components/env-banner'
 import { EnvProvider } from '@/contexts/EnvContext'
@@ -686,6 +692,7 @@ function AppContent() {
             <Route path="/terms" element={<TermsPage />} />
 
             {/* Docs */}
+            <Route path="/docs" element={<DocsIndexPage />} />
             <Route path="/docs/mcp" element={<MCPDocsPage />} />
 
             {/* DZ entity routes */}
@@ -693,6 +700,8 @@ function AppContent() {
             <Route path="/dz/devices" element={<DevicesPage />} />
             <Route path="/dz/devices/:pk" element={<DeviceDetailPage />} />
             <Route path="/dz/links" element={<LinksPage />} />
+            <Route path="/dz/links/topologies" element={<TopologiesPage />} />
+            <Route path="/dz/links/topologies/:name" element={<TopologyDetailPage />} />
             <Route path="/dz/links/:pk" element={<LinkDetailPage />} />
             <Route path="/dz/metros" element={<MetrosPage />} />
             <Route path="/dz/metros/:pk" element={<MetroDetailPage />} />
@@ -706,6 +715,8 @@ function AppContent() {
             <Route path="/dz/users/:pk" element={<UserDetailPage />} />
             <Route path="/dz/multicast-groups" element={<MulticastGroupsPage />} />
             <Route path="/dz/multicast-groups/:pk" element={<MulticastGroupDetailPage />} />
+            <Route path="/dz/access-passes" element={<AccessPassesPage />} />
+            <Route path="/dz/access-passes/:pk" element={<AccessPassDetailPage />} />
             <Route path="/dz/shreds" element={<Navigate to="/dz/shreds/scoreboard" replace />} />
             <Route path="/dz/shreds/scoreboard" element={<EdgeScoreboardPage />} />
             <Route path="/dz/shreds/publishers" element={<PublisherCheckPage />} />
@@ -722,6 +733,7 @@ function AppContent() {
             {/* Geolocation routes */}
             <Route path="/dz/geoloc/probes" element={<GeolocProbesPage />} />
             <Route path="/dz/geoloc/users" element={<GeolocUsersPage />} />
+            <Route path="/dz/geoloc/explorer" element={<GeolocExplorerPage />} />
 
             {/* Solana entity routes */}
             <Route path="/solana/overview" element={<SolanaOverviewPage />} />

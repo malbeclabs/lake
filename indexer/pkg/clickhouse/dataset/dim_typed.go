@@ -210,7 +210,7 @@ func extractFieldValue(fieldValue reflect.Value) any {
 	}
 
 	// Handle pointers
-	if fieldValue.Kind() == reflect.Ptr {
+	if fieldValue.Kind() == reflect.Pointer {
 		if fieldValue.IsNil() {
 			return nil
 		}

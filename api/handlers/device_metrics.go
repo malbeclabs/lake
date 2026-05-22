@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -24,6 +23,7 @@ type DeviceMetricsResponse struct {
 	DeviceCode      string                `json:"device_code"`
 	DeviceType      string                `json:"device_type"`
 	ContributorCode string                `json:"contributor_code"`
+	ContributorPK   string                `json:"contributor_pk"`
 	Metro           string                `json:"metro"`
 	MaxUsers        int32                 `json:"max_users"`
 	TimeRange       string                `json:"time_range"`
@@ -224,7 +224,7 @@ func (a *API) GetDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := a.fetchDeviceMetrics(ctx, devicePK, params, include)
 	if err != nil {
-		slog.Error("error fetching device metrics", "error", err, "device_pk", devicePK)
+		logError("error fetching device metrics", "error", err, "device_pk", devicePK)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -743,6 +743,7 @@ func (a *API) fetchDeviceMetrics(ctx context.Context, devicePK string, params bu
 		DeviceCode:      meta.Code,
 		DeviceType:      meta.DeviceType,
 		ContributorCode: meta.Contributor,
+		ContributorPK:   meta.ContributorPK,
 		Metro:           meta.Metro,
 		MaxUsers:        meta.MaxUsers,
 		TimeRange:       params.TimeRange,
@@ -813,7 +814,7 @@ func (a *API) GetBulkDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := a.fetchBulkDeviceMetrics(ctx, params, include)
 	if err != nil {
-		slog.Error("error fetching bulk device metrics", "error", err)
+		logError("error fetching bulk device metrics", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -1052,6 +1053,7 @@ func (a *API) fetchBulkDeviceMetrics(ctx context.Context, params bucketParams, i
 			DeviceCode:      meta.Code,
 			DeviceType:      meta.DeviceType,
 			ContributorCode: meta.Contributor,
+			ContributorPK:   meta.ContributorPK,
 			Metro:           meta.Metro,
 			MaxUsers:        meta.MaxUsers,
 			TimeRange:       params.TimeRange,

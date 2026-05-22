@@ -70,7 +70,7 @@ func (a *API) GetGeolocProbes(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query, args...)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("geoloc_probes", duration, err)
 
 	if err != nil {
 		logError("geoloc probes query error", "error", err)

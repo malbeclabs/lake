@@ -14,24 +14,25 @@ import (
 )
 
 type UserListItem struct {
-	PK           string  `json:"pk"`
-	OwnerPubkey  string  `json:"owner_pubkey"`
-	Status       string  `json:"status"`
-	Kind         string  `json:"kind"`
-	DzIP         string  `json:"dz_ip"`
-	ClientIP     string  `json:"client_ip"`
-	DevicePK     string  `json:"device_pk"`
-	DeviceCode   string  `json:"device_code"`
-	MetroPK      string  `json:"metro_pk"`
-	MetroCode    string  `json:"metro_code"`
-	MetroName    string  `json:"metro_name"`
-	LocationPK   string  `json:"location_pk"`
-	LocationCode string  `json:"location_code"`
-	TenantPK     string  `json:"tenant_pk"`
-	TenantCode   string  `json:"tenant_code"`
-	InBps        float64 `json:"in_bps"`
-	OutBps       float64 `json:"out_bps"`
-	IsDeleted    bool    `json:"is_deleted"`
+	PK                string   `json:"pk"`
+	OwnerPubkey       string   `json:"owner_pubkey"`
+	Status            string   `json:"status"`
+	Kind              string   `json:"kind"`
+	DzIP              string   `json:"dz_ip"`
+	ClientIP          string   `json:"client_ip"`
+	DevicePK          string   `json:"device_pk"`
+	DeviceCode        string   `json:"device_code"`
+	MetroPK           string   `json:"metro_pk"`
+	MetroCode         string   `json:"metro_code"`
+	MetroName         string   `json:"metro_name"`
+	LocationPK        string   `json:"location_pk"`
+	LocationCode      string   `json:"location_code"`
+	TenantPK          string   `json:"tenant_pk"`
+	TenantCode        string   `json:"tenant_code"`
+	IncludeTopologies []string `json:"include_topologies"`
+	InBps             float64  `json:"in_bps"`
+	OutBps            float64  `json:"out_bps"`
+	IsDeleted         bool     `json:"is_deleted"`
 }
 
 var userSortFields = map[string]string{
@@ -142,6 +143,7 @@ func (a *API) GetUsers(w http.ResponseWriter, r *http.Request) {
 				COALESCE(l.code, '') as location_code,
 				COALESCE(u.tenant_pk, '') as tenant_pk,
 				COALESCE(t.code, '') as tenant_code,
+				COALESCE(t.include_topologies, '[]') as include_topologies,
 				COALESCE(tr.in_bps, 0) as in_bps,
 				COALESCE(tr.out_bps, 0) as out_bps,
 				` + isDeletedExpr + `,
@@ -156,7 +158,7 @@ func (a *API) GetUsers(w http.ResponseWriter, r *http.Request) {
 		SELECT
 			pk, owner_pubkey, status, kind, dz_ip, client_ip, device_pk,
 			device_code, metro_pk, metro_code, metro_name, location_pk, location_code,
-			tenant_pk, tenant_code, in_bps, out_bps, is_deleted,
+			tenant_pk, tenant_code, include_topologies, in_bps, out_bps, is_deleted,
 			count() OVER () as _total
 		FROM users_data
 		WHERE 1=1` + whereFilter + `
@@ -166,7 +168,7 @@ func (a *API) GetUsers(w http.ResponseWriter, r *http.Request) {
 	queryArgs := append(filterArgs, pagination.Limit, pagination.Offset)
 	rows, err := a.envDB(ctx).Query(ctx, query, queryArgs...)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("users", duration, err)
 
 	if err != nil {
 		logError("users query failed", "error", err)
@@ -179,6 +181,7 @@ func (a *API) GetUsers(w http.ResponseWriter, r *http.Request) {
 	var total uint64
 	for rows.Next() {
 		var u UserListItem
+		var includeTopologiesJSON string
 		if err := rows.Scan(
 			&u.PK,
 			&u.OwnerPubkey,
@@ -195,6 +198,7 @@ func (a *API) GetUsers(w http.ResponseWriter, r *http.Request) {
 			&u.LocationCode,
 			&u.TenantPK,
 			&u.TenantCode,
+			&includeTopologiesJSON,
 			&u.InBps,
 			&u.OutBps,
 			&u.IsDeleted,
@@ -203,6 +207,10 @@ func (a *API) GetUsers(w http.ResponseWriter, r *http.Request) {
 			logError("users row scan failed", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
+		}
+		_ = json.Unmarshal([]byte(includeTopologiesJSON), &u.IncludeTopologies)
+		if u.IncludeTopologies == nil {
+			u.IncludeTopologies = []string{}
 		}
 		users = append(users, u)
 	}
@@ -231,33 +239,34 @@ func (a *API) GetUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 type UserDetail struct {
-	PK              string  `json:"pk"`
-	OwnerPubkey     string  `json:"owner_pubkey"`
-	Status          string  `json:"status"`
-	Kind            string  `json:"kind"`
-	DzIP            string  `json:"dz_ip"`
-	ClientIP        string  `json:"client_ip"`
-	TunnelID        int32   `json:"tunnel_id"`
-	DevicePK        string  `json:"device_pk"`
-	DeviceCode      string  `json:"device_code"`
-	MetroPK         string  `json:"metro_pk"`
-	MetroCode       string  `json:"metro_code"`
-	MetroName       string  `json:"metro_name"`
-	LocationPK      string  `json:"location_pk"`
-	LocationCode    string  `json:"location_code"`
-	FacilityLocId   uint32  `json:"facility_loc_id"`
-	ContributorPK   string  `json:"contributor_pk"`
-	ContributorCode string  `json:"contributor_code"`
-	TenantPK        string  `json:"tenant_pk"`
-	TenantCode      string  `json:"tenant_code"`
-	InBps           float64 `json:"in_bps"`
-	OutBps          float64 `json:"out_bps"`
-	IsValidator     bool    `json:"is_validator"`
-	NodePubkey      string  `json:"node_pubkey"`
-	VotePubkey      string  `json:"vote_pubkey"`
-	StakeSol        float64 `json:"stake_sol"`
-	StakeWeightPct  float64 `json:"stake_weight_pct"`
-	IsDeleted       bool    `json:"is_deleted"`
+	PK                string   `json:"pk"`
+	OwnerPubkey       string   `json:"owner_pubkey"`
+	Status            string   `json:"status"`
+	Kind              string   `json:"kind"`
+	DzIP              string   `json:"dz_ip"`
+	ClientIP          string   `json:"client_ip"`
+	TunnelID          int32    `json:"tunnel_id"`
+	DevicePK          string   `json:"device_pk"`
+	DeviceCode        string   `json:"device_code"`
+	MetroPK           string   `json:"metro_pk"`
+	MetroCode         string   `json:"metro_code"`
+	MetroName         string   `json:"metro_name"`
+	LocationPK        string   `json:"location_pk"`
+	LocationCode      string   `json:"location_code"`
+	FacilityLocId     uint32   `json:"facility_loc_id"`
+	ContributorPK     string   `json:"contributor_pk"`
+	ContributorCode   string   `json:"contributor_code"`
+	TenantPK          string   `json:"tenant_pk"`
+	TenantCode        string   `json:"tenant_code"`
+	IncludeTopologies []string `json:"include_topologies"`
+	InBps             float64  `json:"in_bps"`
+	OutBps            float64  `json:"out_bps"`
+	IsValidator       bool     `json:"is_validator"`
+	NodePubkey        string   `json:"node_pubkey"`
+	VotePubkey        string   `json:"vote_pubkey"`
+	StakeSol          float64  `json:"stake_sol"`
+	StakeWeightPct    float64  `json:"stake_weight_pct"`
+	IsDeleted         bool     `json:"is_deleted"`
 }
 
 func (a *API) GetUser(w http.ResponseWriter, r *http.Request) {
@@ -334,6 +343,7 @@ func (a *API) GetUser(w http.ResponseWriter, r *http.Request) {
 			COALESCE(c.code, '') as contributor_code,
 			COALESCE(u.tenant_pk, '') as tenant_pk,
 			COALESCE(t.code, '') as tenant_code,
+			COALESCE(t.include_topologies, '[]') as include_topologies,
 			COALESCE(tr.in_bps, 0) as in_bps,
 			COALESCE(tr.out_bps, 0) as out_bps,
 			si.vote_pubkey IS NOT NULL AND si.vote_pubkey != '' as is_validator,
@@ -354,6 +364,7 @@ func (a *API) GetUser(w http.ResponseWriter, r *http.Request) {
 	`
 
 	var user UserDetail
+	var includeTopologiesJSON string
 	err := a.envDB(ctx).QueryRow(ctx, query, pk).Scan(
 		&user.PK,
 		&user.OwnerPubkey,
@@ -374,6 +385,7 @@ func (a *API) GetUser(w http.ResponseWriter, r *http.Request) {
 		&user.ContributorCode,
 		&user.TenantPK,
 		&user.TenantCode,
+		&includeTopologiesJSON,
 		&user.InBps,
 		&user.OutBps,
 		&user.IsValidator,
@@ -383,8 +395,12 @@ func (a *API) GetUser(w http.ResponseWriter, r *http.Request) {
 		&user.StakeWeightPct,
 		&user.IsDeleted,
 	)
+	_ = json.Unmarshal([]byte(includeTopologiesJSON), &user.IncludeTopologies)
+	if user.IncludeTopologies == nil {
+		user.IncludeTopologies = []string{}
+	}
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("users", duration, err)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -532,7 +548,7 @@ func (a *API) GetUserTraffic(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query, pk)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("users", duration, err)
 
 	if err != nil {
 		logError("user traffic query failed", "error", err, "pk", pk)
@@ -647,7 +663,7 @@ func (a *API) GetUserMulticastGroups(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query, pk, pk)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("users", duration, err)
 
 	if err != nil {
 		logError("user multicast groups query failed", "error", err, "pk", pk)

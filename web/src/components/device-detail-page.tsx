@@ -7,13 +7,20 @@ import { fetchDevice, fetchDeviceMetrics, fetchDeviceValidatorStats } from '@/li
 import { DeviceInfoContent } from '@/components/shared/DeviceInfoContent'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useBackLink } from '@/hooks/use-back-link'
+import { OpsPanel } from '@/components/ops/OpsPanel'
+import { CreateIncidentModal } from '@/components/ops/CreateIncidentModal'
 import { deviceDetailToInfo } from '@/components/shared/device-info-converters'
 import { toDeviceMetricsParams } from '@/components/shared/metrics-params'
 import { DeviceHealthTimeline } from '@/components/device-charts/DeviceHealthTimeline'
 import { DeviceInterfaceIssuesChart } from '@/components/device-charts/DeviceInterfaceIssuesChart'
 import { DeviceTrafficChart } from '@/components/device-charts/DeviceTrafficChart'
+import { DeviceOpticsPanel } from '@/components/device-charts/DeviceOpticsPanel'
 import { TimeRangeSelector } from '@/components/topology/TimeRangeSelector'
 import type { TimeRange } from '@/components/topology/utils'
+import { useActiveOpsTickets, useOpsTicketHistory } from '@/hooks/use-ops-tickets'
+import { useIsOpsUser } from '@/hooks/use-is-ops-user'
+import type { OpsTicket } from '@/lib/ops-api'
+import type { TicketWindow } from '@/components/ops/TicketOverlay'
 
 function formatBps(bps: number): string {
   if (bps === 0) return '—'
@@ -41,6 +48,10 @@ export function DeviceDetailPage() {
     end: number
   } | null>(null)
   const [chartHoveredTime, setChartHoveredTime] = useState<number | null>(null)
+  const [showCreateIncident, setShowCreateIncident] = useState(false)
+  const isOpsUser = useIsOpsUser()
+  const [showIncidents, setShowIncidents] = useState(true)
+  const [showMaintenance, setShowMaintenance] = useState(true)
 
   const {
     data: device,
@@ -69,6 +80,16 @@ export function DeviceDetailPage() {
     queryFn: () => fetchDeviceMetrics(pk!, metricsParams),
     enabled: !!pk,
   })
+
+  const { data: activeTicketsData } = useActiveOpsTickets()
+  const { data: ticketHistoryData } = useOpsTicketHistory(pk ?? '', undefined, 'device')
+  // Combine active tickets for this device + recently closed history
+  const tickets: OpsTicket[] = [
+    ...(activeTicketsData?.tickets ?? []).filter(
+      t => pk && (t.device_pubkey.includes(pk) || (t.affected_devices?.some(d => d.pubkey === pk) ?? false))
+    ),
+    ...(ticketHistoryData?.tickets ?? []),
+  ]
 
   useDocumentTitle(device?.code || 'Device')
 
@@ -159,6 +180,27 @@ export function DeviceDetailPage() {
 
         {/* Shared device info (stats grid + interfaces) */}
         <DeviceInfoContent device={deviceInfo} hideStatusRow hideCharts />
+        <div className="mt-6">
+          <OpsPanel
+            entityPk={device.pk}
+            entityCode={device.code}
+            entityType="device"
+            contributorCode={device.contributor_code}
+            isDown={device.status === 'down'}
+            onCreateIncident={() => setShowCreateIncident(true)}
+          />
+        </div>
+        {showCreateIncident && (
+          <CreateIncidentModal
+            entityCode={device.code}
+            entityType="device"
+            entityPk={device.pk}
+            contributorCode={device.contributor_code}
+            contributorPk={device.contributor_pk}
+            onClose={() => setShowCreateIncident(false)}
+            onSuccess={() => setShowCreateIncident(false)}
+          />
+        )}
       </div>
 
       {/* Filters + charts */}
@@ -177,6 +219,32 @@ export function DeviceDetailPage() {
             )}
           </button>
           <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
+          {isOpsUser && tickets.some(t => t.type === 'incident') && (
+            <button
+              type="button"
+              onClick={() => setShowIncidents(v => !v)}
+              className={`text-[11px] font-medium px-2 py-1 border transition-colors ${
+                showIncidents
+                  ? 'border-red-600/60 bg-red-500/10 text-red-700 dark:border-red-800/60 dark:bg-red-900/20 dark:text-red-300'
+                  : 'border-border text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Incidents
+            </button>
+          )}
+          {isOpsUser && tickets.some(t => t.type === 'maintenance') && (
+            <button
+              type="button"
+              onClick={() => setShowMaintenance(v => !v)}
+              className={`text-[11px] font-medium px-2 py-1 border transition-colors ${
+                showMaintenance
+                  ? 'border-blue-600/60 bg-blue-500/10 text-blue-700 dark:border-blue-700/60 dark:bg-blue-900/20 dark:text-blue-300'
+                  : 'border-border text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Maintenance
+            </button>
+          )}
         </div>
 
         {metricsLoading && (
@@ -196,6 +264,30 @@ export function DeviceDetailPage() {
               data={metrics}
               onBarHover={setHoveredTimeRange}
               highlightedTime={chartHoveredTime}
+              incidentWindows={showIncidents ? tickets
+                .filter(t => t.type === 'incident')
+                .map(t => ({
+                  startAt: t.start_at ?? new Date().toISOString(),
+                  endAt: t.end_at,
+                  type: 'incident' as const,
+                  id: t.id,
+                  humanReadableId: t.human_readable_id,
+                  title: t.title,
+                  status: t.status,
+                  slackUrl: t.slack_message_url,
+                } as TicketWindow)) : []}
+              maintenanceWindows={showMaintenance ? tickets
+                .filter(t => t.type === 'maintenance' && t.start_at)
+                .map(t => ({
+                  startAt: t.start_at!,
+                  endAt: t.end_at,
+                  type: 'maintenance' as const,
+                  id: t.id,
+                  humanReadableId: t.human_readable_id,
+                  title: t.title,
+                  status: t.status,
+                  slackUrl: t.slack_message_url,
+                } as TicketWindow)) : []}
             />
             <DeviceInterfaceIssuesChart
               data={metrics}
@@ -203,6 +295,9 @@ export function DeviceDetailPage() {
               className="rounded-lg border border-border p-4"
               highlightTimeRange={hoveredTimeRange}
               onCursorTime={setChartHoveredTime}
+              tickets={tickets}
+              showIncidents={showIncidents}
+              showMaintenance={showMaintenance}
             />
             <DeviceTrafficChart
               data={metrics}
@@ -210,6 +305,14 @@ export function DeviceDetailPage() {
               className="rounded-lg border border-border p-4"
               highlightTimeRange={hoveredTimeRange}
               onCursorTime={setChartHoveredTime}
+              tickets={tickets}
+              showIncidents={showIncidents}
+              showMaintenance={showMaintenance}
+            />
+            <DeviceOpticsPanel
+              devicePk={device.pk}
+              timeRange={timeRange}
+              className="rounded-lg border border-border p-4"
             />
           </div>
         )}

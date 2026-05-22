@@ -179,7 +179,7 @@ func (a *API) GetStats(w http.ResponseWriter, r *http.Request) {
 
 	err := g.Wait()
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("stats", duration, err)
 
 	if err != nil {
 		logError("stats query failed", "error", err)

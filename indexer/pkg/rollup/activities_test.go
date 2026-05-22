@@ -125,9 +125,12 @@ func TestComputeLinkRollup_WithData(t *testing.T) {
 		"link-entity-1", now, now, "00000000-0000-0000-0000-000000000001", uint8(0), "link-1", "activated", "device-a", "device-z", int64(10_000_000_000), int64(500_000))
 	require.NoError(t, err)
 
-	// Seed ISIS adjacency (link has adjacency = not ISIS down)
+	// Seed ISIS adjacencies for both sides of the link (both sides must be UP for isis_down=false)
 	err = conn.Exec(ctx, `INSERT INTO dim_isis_adjacencies_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, link_pk, device_pk, system_id, neighbor_system_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		"isis-adj-1", now, now, "00000000-0000-0000-0000-000000000002", uint8(0), "link-1", "device-a", "sys-1", "sys-2")
+	require.NoError(t, err)
+	err = conn.Exec(ctx, `INSERT INTO dim_isis_adjacencies_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, link_pk, device_pk, system_id, neighbor_system_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		"isis-adj-2", now, now, "00000000-0000-0000-0000-000000000003", uint8(0), "link-1", "device-z", "sys-2", "sys-1")
 	require.NoError(t, err)
 
 	// Seed latency samples for both sides within the same 5m bucket
@@ -241,6 +244,55 @@ func TestComputeLinkRollup_ISISDown(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, buckets, 1)
 	// Link with no ISIS adjacency history is not an ISIS link — ISISDown should be false
+	assert.False(t, buckets[0].ISISDown)
+}
+
+// TestComputeLinkRollup_ISISHostnameRename verifies that a device hostname rename —
+// which emits a simultaneous is_deleted=1 (old entity) and is_deleted=0 (new entity)
+// at the same snapshot_ts — does not cause a false isis_down=true.
+func TestComputeLinkRollup_ISISHostnameRename(t *testing.T) {
+	t.Parallel()
+	conn := setupTestDB(t)
+	ctx := context.Background()
+
+	now := time.Now().Truncate(5 * time.Minute)
+	bucketStart := now.Add(-5 * time.Minute)
+	initialTS := now.Add(-20 * time.Minute)
+	renameTS := now.Add(-15 * time.Minute) // before window start, processed as carry-forward
+
+	err := conn.Exec(ctx, `INSERT INTO dim_dz_links_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, pk, status, side_a_pk, side_z_pk, bandwidth_bps, committed_rtt_ns) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		"link-entity-rename", now, now, "00000000-0000-0000-0000-000000000020", uint8(0), "link-rename", "activated", "device-a", "device-z", int64(10_000_000_000), int64(500_000))
+	require.NoError(t, err)
+
+	// Initial state: both sides active
+	err = conn.Exec(ctx, `INSERT INTO dim_isis_adjacencies_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, link_pk, device_pk, system_id, neighbor_system_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		"isis-adj-a-old", initialTS, initialTS, "00000000-0000-0000-0000-000000000021", uint8(0), "link-rename", "device-a", "sys-a", "sys-z")
+	require.NoError(t, err)
+	err = conn.Exec(ctx, `INSERT INTO dim_isis_adjacencies_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, link_pk, device_pk, system_id, neighbor_system_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		"isis-adj-z", initialTS, initialTS, "00000000-0000-0000-0000-000000000022", uint8(0), "link-rename", "device-z", "sys-z", "sys-a")
+	require.NoError(t, err)
+
+	// Hostname rename: delete old entity AND create new entity at the same snapshot_ts.
+	// Nondeterministic row ordering in ClickHouse previously caused this to mark the link down.
+	err = conn.Exec(ctx, `INSERT INTO dim_isis_adjacencies_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, link_pk, device_pk, system_id, neighbor_system_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		"isis-adj-a-old", renameTS, renameTS, "00000000-0000-0000-0000-000000000023", uint8(1), "link-rename", "device-a", "sys-a", "sys-z")
+	require.NoError(t, err)
+	err = conn.Exec(ctx, `INSERT INTO dim_isis_adjacencies_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, link_pk, device_pk, system_id, neighbor_system_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		"isis-adj-a-new", renameTS, renameTS, "00000000-0000-0000-0000-000000000024", uint8(0), "link-rename", "device-a-renamed", "sys-a-new", "sys-z")
+	require.NoError(t, err)
+
+	err = conn.Exec(ctx, `INSERT INTO fact_dz_device_link_latency (event_ts, ingested_at, epoch, sample_index, origin_device_pk, target_device_pk, link_pk, rtt_us, loss) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		bucketStart, bucketStart, int64(1), int32(0), "device-a", "device-z", "link-rename", int64(100), false)
+	require.NoError(t, err)
+
+	a := &Activities{ClickHouse: conn, Log: laketesting.NewLogger()}
+	buckets, err := a.ComputeLinkRollup(ctx, BackfillChunkInput{
+		WindowStart: now.Add(-10 * time.Minute),
+		WindowEnd:   now.Add(5 * time.Minute),
+	})
+	require.NoError(t, err)
+	require.Len(t, buckets, 1)
+	// After rename, old entity is deleted but new entity is active alongside the Z side — link is UP.
 	assert.False(t, buckets[0].ISISDown)
 }
 

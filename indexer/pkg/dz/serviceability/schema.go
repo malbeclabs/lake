@@ -250,6 +250,8 @@ func (s *LinkSchema) PayloadColumns() []string {
 		"committed_jitter_ns:BIGINT",
 		"bandwidth_bps:BIGINT",
 		"isis_delay_override_ns:BIGINT",
+		"link_topologies:VARCHAR",
+		"unicast_drained:Boolean",
 	}
 }
 
@@ -271,11 +273,49 @@ func (s *LinkSchema) ToRow(l Link) []any {
 		l.CommittedJitterNs,
 		l.Bandwidth,
 		l.ISISDelayOverrideNs,
+		l.LinkTopologies,
+		l.UnicastDrained,
 	}
 }
 
 func (s *LinkSchema) GetPrimaryKey(l Link) string {
 	return l.PK
+}
+
+// TopologySchema defines the schema for topologies
+type TopologySchema struct{}
+
+func (s *TopologySchema) Name() string {
+	return "dz_topologies"
+}
+
+func (s *TopologySchema) PrimaryKeyColumns() []string {
+	return []string{"pk:VARCHAR"}
+}
+
+func (s *TopologySchema) PayloadColumns() []string {
+	return []string{
+		"name:VARCHAR",
+		"admin_group_bit:UInt8",
+		"flex_algo_number:UInt8",
+		"color:UInt8",
+		"topo_constraint:VARCHAR",
+	}
+}
+
+func (s *TopologySchema) ToRow(t Topology) []any {
+	return []any{
+		t.PK,
+		t.Name,
+		t.AdminGroupBit,
+		t.FlexAlgoNumber,
+		t.Color,
+		t.Constraint,
+	}
+}
+
+func (s *TopologySchema) GetPrimaryKey(t Topology) string {
+	return t.PK
 }
 
 // MulticastGroupSchema defines the schema for multicast groups
@@ -382,6 +422,7 @@ func (s *TenantSchema) PayloadColumns() []string {
 		"metro_routing:BOOLEAN",
 		"route_liveness:BOOLEAN",
 		"billing_rate:BIGINT",
+		"include_topologies:VARCHAR",
 	}
 }
 
@@ -395,11 +436,66 @@ func (s *TenantSchema) ToRow(t Tenant) []any {
 		t.MetroRouting,
 		t.RouteLiveness,
 		t.BillingRate,
+		t.IncludeTopologies,
 	}
 }
 
 func (s *TenantSchema) GetPrimaryKey(t Tenant) string {
 	return t.PK
+}
+
+// AccessPassSchema defines the schema for access passes
+type AccessPassSchema struct{}
+
+func (s *AccessPassSchema) Name() string {
+	return "dz_access_passes"
+}
+
+func (s *AccessPassSchema) PrimaryKeyColumns() []string {
+	return []string{"pk:VARCHAR"}
+}
+
+func (s *AccessPassSchema) PayloadColumns() []string {
+	return []string{
+		"owner_pubkey:VARCHAR",
+		"type_tag:VARCHAR",
+		"associated_pubkey:VARCHAR",
+		"others_type_name:VARCHAR",
+		"others_key:VARCHAR",
+		"client_ip:VARCHAR",
+		"user_payer:VARCHAR",
+		"last_access_epoch:BIGINT",
+		"connection_count:INTEGER",
+		"status:VARCHAR",
+		"mgroup_pub_allowlist:VARCHAR",
+		"mgroup_sub_allowlist:VARCHAR",
+		"flags:INTEGER",
+	}
+}
+
+func (s *AccessPassSchema) ToRow(ap AccessPass) []any {
+	pubAllowlistJSON, _ := json.Marshal(ap.MGroupPubAllowlist)
+	subAllowlistJSON, _ := json.Marshal(ap.MGroupSubAllowlist)
+	return []any{
+		ap.PK,
+		ap.OwnerPubkey,
+		ap.TypeTag,
+		ap.AssociatedPubkey,
+		ap.OthersTypeName,
+		ap.OthersKey,
+		ap.ClientIP.String(),
+		ap.UserPayer,
+		ap.LastAccessEpoch,
+		ap.ConnectionCount,
+		ap.Status,
+		string(pubAllowlistJSON),
+		string(subAllowlistJSON),
+		ap.Flags,
+	}
+}
+
+func (s *AccessPassSchema) GetPrimaryKey(ap AccessPass) string {
+	return ap.PK
 }
 
 var (
@@ -412,6 +508,8 @@ var (
 	linkSchema            = &LinkSchema{}
 	multicastGroupSchema  = &MulticastGroupSchema{}
 	tenantSchema          = &TenantSchema{}
+	accessPassSchema      = &AccessPassSchema{}
+	topologySchema        = &TopologySchema{}
 )
 
 func NewContributorDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
@@ -448,4 +546,12 @@ func NewMulticastGroupDataset(log *slog.Logger) (*dataset.DimensionType2Dataset,
 
 func NewTenantDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
 	return dataset.NewDimensionType2Dataset(log, tenantSchema)
+}
+
+func NewAccessPassDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
+	return dataset.NewDimensionType2Dataset(log, accessPassSchema)
+}
+
+func NewTopologyDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
+	return dataset.NewDimensionType2Dataset(log, topologySchema)
 }

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Loader2, Link2, AlertCircle, ChevronDown, ChevronUp, X } from 'lucide-react'
-import { fetchLinks } from '@/lib/api'
+import { fetchLinks, fetchTopologies } from '@/lib/api'
 import { handleRowClick } from '@/lib/utils'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
@@ -53,6 +53,7 @@ function getUtilizationColor(pct: number): string {
 type SortField =
   | 'code'
   | 'type'
+  | 'topology'
   | 'contributor'
   | 'sidea'
   | 'sidez'
@@ -75,12 +76,13 @@ function parseSearchFilters(searchParam: string): string[] {
 }
 
 // Valid filter fields for links
-const validFilterFields = ['code', 'type', 'contributor', 'sidea', 'sidez', 'status', 'bandwidth', 'in', 'out', 'utilin', 'utilout', 'latency', 'jitter', 'loss']
+const validFilterFields = ['code', 'type', 'topology', 'contributor', 'sidea', 'sidez', 'status', 'bandwidth', 'in', 'out', 'utilin', 'utilout', 'latency', 'jitter', 'loss']
 
 // Field prefixes for inline filter
 const linkFieldPrefixes = [
   { prefix: 'code:', description: 'Filter by link code' },
   { prefix: 'type:', description: 'Filter by link type' },
+  { prefix: 'topology:', description: 'Filter by topology (e.g., unicast-default, default)' },
   { prefix: 'contributor:', description: 'Filter by contributor' },
   { prefix: 'sidea:', description: 'Filter by side A device' },
   { prefix: 'sidez:', description: 'Filter by side Z device' },
@@ -111,6 +113,13 @@ export function LinksPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const [liveFilter, setLiveFilter] = useState('')
+
+  const { data: topologiesData } = useQuery({
+    queryKey: ['topologies'],
+    queryFn: fetchTopologies,
+    staleTime: 60_000,
+  })
+  const hasTopologies = (topologiesData?.topologies?.length ?? 0) > 0
 
   // Derive pagination from URL
   const page = parseInt(searchParams.get('page') || '1')
@@ -282,6 +291,11 @@ export function LinksPage() {
                       <SortIcon field="type" />
                     </button>
                   </th>
+                  {hasTopologies && (
+                    <th className="px-4 py-3 font-medium">
+                      Topology
+                    </th>
+                  )}
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('contributor')}>
                     <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('contributor')}>
                       Contributor
@@ -370,8 +384,34 @@ export function LinksPage() {
                     <td className="px-4 py-3 text-sm text-muted-foreground">
                       {link.link_type}
                     </td>
+                    {hasTopologies && (
+                      <td className="px-4 py-3 text-sm">
+                        {link.link_topologies && link.link_topologies.length > 0 ? (
+                          <span className="inline-flex flex-wrap gap-1">
+                            {link.link_topologies.map((name: string) => (
+                              <Link key={name} to={`/dz/links/topologies/${encodeURIComponent(name)}`} onClick={e => e.stopPropagation()} className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-500/15 text-green-600 dark:text-green-400 hover:bg-green-500/25">
+                                {name}
+                              </Link>
+                            ))}
+                            {link.unicast_drained && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                                DRAINED
+                              </span>
+                            )}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-cyan-500/15 text-cyan-600 dark:text-cyan-400">default</span>
+                        )}
+                      </td>
+                    )}
                     <td className="px-4 py-3 text-sm">
-                      {link.contributor_pk
+                      {link.side_a_contributor_pk && link.side_z_contributor_pk && link.side_a_contributor_code !== link.side_z_contributor_code ? (
+                        <>
+                          <Link to={`/dz/contributors/${link.side_a_contributor_pk}`} className="text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.side_a_contributor_code}</Link>
+                          <span className="text-muted-foreground"> ↔ </span>
+                          <Link to={`/dz/contributors/${link.side_z_contributor_pk}`} className="text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.side_z_contributor_code}</Link>
+                        </>
+                      ) : link.contributor_pk
                         ? <Link to={`/dz/contributors/${link.contributor_pk}`} className="text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.contributor_code}</Link>
                         : <span className="text-muted-foreground">—</span>}
                     </td>
@@ -424,7 +464,7 @@ export function LinksPage() {
                 ))}
                 {links.length === 0 && (
                   <tr>
-                    <td colSpan={13} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={14} className="px-4 py-8 text-center text-muted-foreground">
                       No links found
                     </td>
                   </tr>

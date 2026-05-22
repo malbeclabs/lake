@@ -23,6 +23,10 @@ export function linkDetailToInfo(link: LinkDetail): LinkInfoData {
     sideZIP: link.side_z_ip,
     contributorPk: link.contributor_pk,
     contributorCode: link.contributor_code,
+    sideAContributorPk: link.side_a_contributor_pk,
+    sideAContributorCode: link.side_a_contributor_code,
+    sideZContributorPk: link.side_z_contributor_pk,
+    sideZContributorCode: link.side_z_contributor_code,
     inBps: link.in_bps,
     outBps: link.out_bps,
     utilizationIn: link.utilization_in,
@@ -38,6 +42,8 @@ export function linkDetailToInfo(link: LinkDetail): LinkInfoData {
     peakOutBps: link.peak_out_bps,
     committedRttNs: link.committed_rtt_ns,
     isisDelayOverrideNs: link.isis_delay_override_ns,
+    linkTopologies: link.link_topologies ?? [],
+    unicastDrained: link.unicast_drained ?? false,
   }
 }
 
@@ -69,8 +75,14 @@ export function topologyLinkToInfo(link: {
   interfaceZIP: string
   contributorPk: string
   contributorCode: string
+  sideAContributorPk: string
+  sideAContributorCode: string
+  sideZContributorPk: string
+  sideZContributorCode: string
   committedRttNs: number
   isisDelayOverrideNs: number
+  linkTopologies?: string[]
+  unicastDrained?: boolean
 }): LinkInfoData {
   return {
     pk: link.pk,
@@ -90,6 +102,10 @@ export function topologyLinkToInfo(link: {
     sideZIP: link.interfaceZIP,
     contributorPk: link.contributorPk,
     contributorCode: link.contributorCode,
+    sideAContributorPk: link.sideAContributorPk,
+    sideAContributorCode: link.sideAContributorCode,
+    sideZContributorPk: link.sideZContributorPk,
+    sideZContributorCode: link.sideZContributorCode,
     inBps: link.inBps,
     outBps: link.outBps,
     utilizationIn: link.bandwidthBps > 0 ? (link.inBps / link.bandwidthBps) * 100 : 0,
@@ -103,5 +119,7 @@ export function topologyLinkToInfo(link: {
     lossPercent: link.lossPercent,
     committedRttNs: link.committedRttNs,
     isisDelayOverrideNs: link.isisDelayOverrideNs,
+    linkTopologies: link.linkTopologies ?? [],
+    unicastDrained: link.unicastDrained ?? false,
   }
 }

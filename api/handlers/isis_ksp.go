@@ -78,7 +78,7 @@ func (a *API) loadTopologyGraph(ctx context.Context) (*kspGraph, error) {
 
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query)
-	metrics.RecordClickHouseQuery(time.Since(start), err)
+	metrics.RecordClickHouseQuery("isis_ksp", time.Since(start), err)
 	if err != nil {
 		return nil, fmt.Errorf("loading topology graph: %w", err)
 	}

@@ -162,7 +162,7 @@ func GetRewardsLiveNetwork(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 	liveNet, err := rewards.FetchLiveNetwork(ctx, rewardsCache.DB())
-	metrics.RecordClickHouseQuery(time.Since(start), err)
+	metrics.RecordClickHouseQuery("rewards_live_network", time.Since(start), err)
 	if err != nil {
 		log.Printf("rewards: fetch live network: %v", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)

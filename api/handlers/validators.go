@@ -226,7 +226,7 @@ func (a *API) GetValidators(w http.ResponseWriter, r *http.Request) {
 	queryArgs := append(filterArgs, pagination.Limit, pagination.Offset)
 	rows, err := a.envDB(ctx).Query(ctx, query, queryArgs...)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("validators", duration, err)
 
 	if err != nil {
 		logError("validators query failed", "error", err)
@@ -290,18 +290,17 @@ func (a *API) GetValidators(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-type ValidatorMetadataItem struct {
-	IP              string `json:"ip"`
-	ActiveStake     int64  `json:"active_stake"`
-	VoteAccount     string `json:"vote_account"`
-	SoftwareClient  string `json:"software_client"`
-	SoftwareVersion string `json:"software_version"`
+type ValidatorMetadataRow struct {
+	IP              string
+	ActiveStake     int64
+	VoteAccount     string
+	SoftwareClient  string
+	SoftwareVersion string
 }
 
-func (a *API) GetValidatorsMetadata(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
+// FetchValidatorsMetadata returns active validator metadata ordered by
+// active_stake DESC.
+func (a *API) FetchValidatorsMetadata(ctx context.Context) ([]ValidatorMetadataRow, error) {
 	start := time.Now()
 	query := `
 		SELECT
@@ -316,41 +315,24 @@ func (a *API) GetValidatorsMetadata(w http.ResponseWriter, r *http.Request) {
 	`
 
 	rows, err := a.envDB(ctx).Query(ctx, query)
-	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
-
+	metrics.RecordClickHouseQuery("validators", time.Since(start), err)
 	if err != nil {
-		logError("validators metadata query failed", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, err
 	}
 	defer rows.Close()
 
-	var items []ValidatorMetadataItem
+	var items []ValidatorMetadataRow
 	for rows.Next() {
-		var item ValidatorMetadataItem
+		var item ValidatorMetadataRow
 		if err := rows.Scan(&item.IP, &item.ActiveStake, &item.VoteAccount, &item.SoftwareClient, &item.SoftwareVersion); err != nil {
-			logError("validators metadata row scan failed", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			return nil, err
 		}
 		items = append(items, item)
 	}
-
 	if err := rows.Err(); err != nil {
-		logError("validators metadata rows iteration failed", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, err
 	}
-
-	if items == nil {
-		items = []ValidatorMetadataItem{}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(items); err != nil {
-		logError("failed to encode response", "error", err)
-	}
+	return items, nil
 }
 
 type ValidatorDetail struct {
@@ -504,7 +486,7 @@ func (a *API) GetValidator(w http.ResponseWriter, r *http.Request) {
 		&validator.SoftwareVersion,
 	)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("validators", duration, err)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

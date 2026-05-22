@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -1102,6 +1103,7 @@ type statusLinkMeta struct {
 	Code              string
 	LinkType          string
 	Contributor       string
+	ContributorPK     string
 	SideAMetro        string
 	SideZMetro        string
 	SideADevice       string
@@ -1115,6 +1117,9 @@ type statusLinkMeta struct {
 	CommittedRttNs    int64
 	CommittedJitterUs float64
 	Status            string
+	SideZContributor  string
+	LinkTopologies    []string
+	UnicastDrained    bool
 }
 
 // queryStatusLinkMeta fetches metadata for active links (activated, soft-drained, hard-drained).
@@ -1133,6 +1138,7 @@ func queryStatusLinkMeta(ctx context.Context, db driver.Conn, linkPKs ...string)
 			l.code,
 			l.link_type,
 			COALESCE(c.code, '') as contributor,
+			COALESCE(l.contributor_pk, '') as contributor_pk,
 			ma.code as side_a_metro,
 			mz.code as side_z_metro,
 			da.code as side_a_device,
@@ -1145,13 +1151,17 @@ func queryStatusLinkMeta(ctx context.Context, db driver.Conn, linkPKs ...string)
 			l.committed_rtt_ns / 1000.0 as committed_rtt_us,
 			l.committed_rtt_ns,
 			COALESCE(l.committed_jitter_ns, 0) / 1000.0 as committed_jitter_us,
-			l.status
+			l.status,
+			COALESCE(cz.code, '') as side_z_contributor,
+			COALESCE(l.link_topologies, '[]') as link_topologies,
+			COALESCE(l.unicast_drained, false) as unicast_drained
 		FROM dz_links_current l
 		JOIN dz_devices_current da ON l.side_a_pk = da.pk
 		JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
 		JOIN dz_metros_current ma ON da.metro_pk = ma.pk
 		JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
 		LEFT JOIN dz_contributors_current c ON l.contributor_pk = c.pk
+		LEFT JOIN dz_contributors_current cz ON dz.contributor_pk = cz.pk
 		WHERE l.status IN ('activated', 'soft-drained', 'hard-drained')%s
 	`, filterClause)
 
@@ -1164,14 +1174,20 @@ func queryStatusLinkMeta(ctx context.Context, db driver.Conn, linkPKs ...string)
 	result := make(map[string]*statusLinkMeta)
 	for rows.Next() {
 		var m statusLinkMeta
+		var linkTopologiesJSON string
 		if err := rows.Scan(
-			&m.PK, &m.Code, &m.LinkType, &m.Contributor,
+			&m.PK, &m.Code, &m.LinkType, &m.Contributor, &m.ContributorPK,
 			&m.SideAMetro, &m.SideZMetro, &m.SideADevice, &m.SideZDevice,
 			&m.SideADevicePK, &m.SideZDevicePK,
 			&m.SideAIfaceName, &m.SideZIfaceName,
-			&m.BandwidthBps, &m.CommittedRttUs, &m.CommittedRttNs, &m.CommittedJitterUs, &m.Status,
+			&m.BandwidthBps, &m.CommittedRttUs, &m.CommittedRttNs, &m.CommittedJitterUs, &m.Status, &m.SideZContributor,
+			&linkTopologiesJSON, &m.UnicastDrained,
 		); err != nil {
 			return nil, fmt.Errorf("link metadata scan: %w", err)
+		}
+		_ = json.Unmarshal([]byte(linkTopologiesJSON), &m.LinkTopologies)
+		if m.LinkTopologies == nil {
+			m.LinkTopologies = []string{}
 		}
 		result[m.PK] = &m
 	}
@@ -1232,13 +1248,14 @@ func queryCurrentISISDown(ctx context.Context, db driver.Conn, linkPKs ...string
 
 // statusDeviceMeta holds static device metadata from dimension tables for status pages.
 type statusDeviceMeta struct {
-	PK          string
-	Code        string
-	DeviceType  string
-	Contributor string
-	Metro       string
-	MaxUsers    int32
-	Status      string
+	PK            string
+	Code          string
+	DeviceType    string
+	Contributor   string
+	ContributorPK string
+	Metro         string
+	MaxUsers      int32
+	Status        string
 }
 
 // queryStatusDeviceMeta fetches metadata for active devices.
@@ -1257,6 +1274,7 @@ func queryStatusDeviceMeta(ctx context.Context, db driver.Conn, devicePKs ...str
 			d.code,
 			d.device_type,
 			COALESCE(c.code, '') as contributor,
+			COALESCE(d.contributor_pk, '') as contributor_pk,
 			COALESCE(m.code, '') as metro,
 			d.max_users,
 			d.status
@@ -1275,7 +1293,7 @@ func queryStatusDeviceMeta(ctx context.Context, db driver.Conn, devicePKs ...str
 	result := make(map[string]*statusDeviceMeta)
 	for rows.Next() {
 		var m statusDeviceMeta
-		if err := rows.Scan(&m.PK, &m.Code, &m.DeviceType, &m.Contributor, &m.Metro, &m.MaxUsers, &m.Status); err != nil {
+		if err := rows.Scan(&m.PK, &m.Code, &m.DeviceType, &m.Contributor, &m.ContributorPK, &m.Metro, &m.MaxUsers, &m.Status); err != nil {
 			return nil, fmt.Errorf("device metadata scan: %w", err)
 		}
 		result[m.PK] = &m

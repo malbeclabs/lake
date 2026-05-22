@@ -197,12 +197,12 @@ func (a *API) GetFacilities(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, facilitiesEnrichedCTE+listSuffix, args...)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("facilities", duration, err)
 
 	if err != nil && isUnknownIdentifierError(err) {
 		// location_pk not yet in dz_devices_current — fall back to simple query without join
 		rows, err = a.envDB(ctx).Query(ctx, facilitiesSimpleCTE+listSuffix, args...)
-		metrics.RecordClickHouseQuery(time.Since(start), err)
+		metrics.RecordClickHouseQuery("facilities", time.Since(start), err)
 	}
 
 	if err != nil {
@@ -285,11 +285,11 @@ func (a *API) GetFacility(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, facilitiesEnrichedCTE+detailSuffix, pk)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("facilities", duration, err)
 
 	if err != nil && isUnknownIdentifierError(err) {
 		rows, err = a.envDB(ctx).Query(ctx, facilitiesSimpleCTE+detailSuffix, pk)
-		metrics.RecordClickHouseQuery(time.Since(start), err)
+		metrics.RecordClickHouseQuery("facilities", time.Since(start), err)
 	}
 
 	if err != nil {

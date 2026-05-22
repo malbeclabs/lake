@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useLocation, Link, useNavigate } from 'react-router-dom'
+import { fetchTopologies } from '@/lib/api'
 import { useEnv } from '@/contexts/EnvContext'
 import { useAuth } from '@/contexts/AuthContext'
 import {
@@ -35,6 +37,7 @@ import {
   Puzzle,
   Warehouse,
   Coins,
+  KeyRound,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/use-theme'
@@ -49,6 +52,12 @@ export function Sidebar() {
   const shredsDefaultPath = '/dz/shreds/scoreboard'
   const hasNeo4j = features.neo4j !== false
   const hasSolana = features.solana !== false
+  const { data: topologiesData } = useQuery({
+    queryKey: ['topologies'],
+    queryFn: fetchTopologies,
+    staleTime: 60_000,
+  })
+  const hasTopologies = (topologiesData?.topologies?.length ?? 0) > 0
   const showGeoloc = user?.is_internal_user === true
 const { resolvedTheme, setTheme } = useTheme()
   const { updateAvailable, reload } = useVersionCheck()
@@ -93,6 +102,7 @@ const { resolvedTheme, setTheme } = useTheme()
   const isTenantsRoute = location.pathname.startsWith('/dz/tenants')
   const isUsersRoute = location.pathname.startsWith('/dz/users')
   const isMulticastGroupsRoute = location.pathname.startsWith('/dz/multicast-groups')
+  const isAccessPassesRoute = location.pathname.startsWith('/dz/access-passes')
   const isScoreboardRoute = location.pathname === '/dz/shreds/scoreboard'
   const isShredsPublishersRoute = location.pathname === '/dz/shreds/publishers' || location.pathname === '/dz/publisher-check'
   const isShredsSeatsRoute = location.pathname === '/dz/shreds/subscribers'
@@ -104,6 +114,7 @@ const { resolvedTheme, setTheme } = useTheme()
   const isGeolocRoute = location.pathname.startsWith('/dz/geoloc/')
   const isGeolocProbesRoute = location.pathname.startsWith('/dz/geoloc/probes')
   const isGeolocUsersRoute = location.pathname.startsWith('/dz/geoloc/users')
+  const isGeolocExplorerRoute = location.pathname === '/dz/geoloc/explorer'
   const isValidatorsRoute = location.pathname.startsWith('/solana/validators')
   const isGossipNodesRoute = location.pathname.startsWith('/solana/gossip-nodes')
   const isSolanaOverviewRoute = location.pathname === '/solana/overview'
@@ -556,6 +567,12 @@ const { resolvedTheme, setTheme } = useTheme()
               <Link2 className="h-4 w-4" />
               Links
             </Link>
+            {isLinksRoute && hasTopologies && (
+              <Link to="/dz/links/topologies" className={subNavItemClass(location.pathname.startsWith('/dz/links/topologies'))}>
+                <Network className="h-4 w-4" />
+                Topologies
+              </Link>
+            )}
             <Link to="/dz/metros" className={navItemClass(isMetrosRoute)}>
               <MapPin className="h-4 w-4" />
               Metros
@@ -580,6 +597,10 @@ const { resolvedTheme, setTheme } = useTheme()
               <Radio className="h-4 w-4" />
               Multicast
             </Link>
+            <Link to="/dz/access-passes" className={navItemClass(isAccessPassesRoute)}>
+              <KeyRound className="h-4 w-4" />
+              Access Passes
+            </Link>
           </div>
         </div>
 
@@ -590,6 +611,10 @@ const { resolvedTheme, setTheme } = useTheme()
               <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Geolocation</span>
             </div>
             <div className="space-y-1">
+              <Link to="/dz/geoloc/explorer" className={navItemClass(isGeolocExplorerRoute)}>
+                <Map className="h-4 w-4" />
+                Explorer
+              </Link>
               <Link to="/dz/geoloc/probes" className={navItemClass(isGeolocProbesRoute)}>
                 <MapPin className="h-4 w-4" />
                 Probes

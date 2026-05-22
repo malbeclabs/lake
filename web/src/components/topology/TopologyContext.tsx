@@ -43,6 +43,7 @@ export interface OverlayState {
   contributorLinks: boolean    // Color links by contributor
   criticality: boolean         // Link criticality analysis
   isisHealth: boolean          // ISIS overlay - color by health, thickness by metric
+  flexAlgo: boolean            // Flex-Algo topology overlay - filter links by topology membership
   // Independent overlays
   multicastTrees: boolean      // Multicast tree visualization
   userCounts: boolean          // Show U/S/P user count badges on devices
@@ -83,6 +84,15 @@ export interface TopologyContextValue {
   // Hovered discrepancy key (deviceAPK|deviceBPK) for highlight-on-hover in ISIS overlay
   hoveredDiscrepancyKey: string | null
   setHoveredDiscrepancyKey: (key: string | null) => void
+
+  // Flex-Algo overlay: topology view (null = all links, string = named topology)
+  flexAlgoTopology: string | null
+  setFlexAlgoTopology: (name: string | null) => void
+  // Flex-Algo overlay: filter checkboxes (orthogonal to topology view)
+  flexAlgoFilterDefault: boolean
+  setFlexAlgoFilterDefault: (on: boolean) => void
+  flexAlgoFilterDrained: boolean
+  setFlexAlgoFilterDrained: (on: boolean) => void
 }
 
 const TopologyContext = createContext<TopologyContextValue | null>(null)
@@ -112,6 +122,7 @@ function parseOverlaysFromUrl(param: string | null, view: 'map' | 'graph' | 'glo
     contributorLinks: false,
     criticality: false,
     isisHealth: false,
+    flexAlgo: false,
     multicastTrees: false,
     userCounts: false,
   }
@@ -131,6 +142,7 @@ function parseOverlaysFromUrl(param: string | null, view: 'map' | 'graph' | 'glo
     contributorLinks: false,
     criticality: false,
     isisHealth: false,
+    flexAlgo: false,
     multicastTrees: false,
     userCounts: false,
   }
@@ -194,6 +206,11 @@ export function TopologyProvider({ children, view }: TopologyProviderProps) {
   // Hovered discrepancy key for ISIS overlay highlight
   const [hoveredDiscrepancyKey, setHoveredDiscrepancyKey] = useState<string | null>(null)
 
+  // Flex-Algo topology view + filter checkboxes
+  const [flexAlgoTopology, setFlexAlgoTopology] = useState<string | null>(null)
+  const [flexAlgoFilterDefault, setFlexAlgoFilterDefault] = useState(false)
+  const [flexAlgoFilterDrained, setFlexAlgoFilterDrained] = useState(false)
+
   // Impact mode multi-select state
   const [impactDevices, setImpactDevices] = useState<string[]>([])
 
@@ -224,7 +241,7 @@ export function TopologyProvider({ children, view }: TopologyProviderProps) {
   // Path-related modes that style edges (mutually exclusive with link overlays)
   const edgeStylingModes: TopologyMode[] = ['path', 'metro-path', 'whatif-removal', 'whatif-addition']
   // Link overlays (defined here for use in setMode); bandwidth is independent (always-on sizing)
-  const linkOverlayKeys: (keyof OverlayState)[] = ['linkType', 'linkHealth', 'trafficFlow', 'contributorLinks', 'criticality', 'isisHealth']
+  const linkOverlayKeys: (keyof OverlayState)[] = ['linkType', 'linkHealth', 'trafficFlow', 'contributorLinks', 'criticality', 'isisHealth', 'flexAlgo']
 
   // Set mode with side effects
   const setMode = useCallback((newMode: TopologyMode) => {
@@ -299,7 +316,7 @@ export function TopologyProvider({ children, view }: TopologyProviderProps) {
   // Device overlays (mutually exclusive within group)
   const deviceOverlays: (keyof OverlayState)[] = ['deviceType', 'stake', 'metroClustering', 'contributorDevices']
   // Link overlays (mutually exclusive within group); bandwidth is independent (always-on sizing)
-  const linkOverlays: (keyof OverlayState)[] = ['linkType', 'linkHealth', 'trafficFlow', 'contributorLinks', 'criticality', 'isisHealth']
+  const linkOverlays: (keyof OverlayState)[] = ['linkType', 'linkHealth', 'trafficFlow', 'contributorLinks', 'criticality', 'isisHealth', 'flexAlgo']
 
   // Overlay toggle - one device overlay + one link overlay allowed (validators independent)
   // Enabling a link overlay exits edge-styling modes (path, whatif)
@@ -388,6 +405,12 @@ export function TopologyProvider({ children, view }: TopologyProviderProps) {
     setHoveredEntity,
     hoveredDiscrepancyKey,
     setHoveredDiscrepancyKey,
+    flexAlgoTopology,
+    setFlexAlgoTopology,
+    flexAlgoFilterDefault,
+    setFlexAlgoFilterDefault,
+    flexAlgoFilterDrained,
+    setFlexAlgoFilterDrained,
   }
 
   return (

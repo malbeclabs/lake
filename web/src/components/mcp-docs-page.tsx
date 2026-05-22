@@ -145,6 +145,14 @@ export function MCPDocsPage() {
             </a>.
           </p>
         </section>
+
+        {/* Rate Limits */}
+        <section className="mb-10">
+          <h2 className="text-lg font-medium mb-3">Rate Limits</h2>
+          <p className="text-muted-foreground">
+            Tool calls are rate limited to 100 requests per minute per IP. If you hit the limit, calls return an error — wait a moment and retry.
+          </p>
+        </section>
       </div>
     </div>
   )

@@ -505,7 +505,8 @@ function IssueDetails({
                       <div className="text-xs text-muted-foreground">
                         {first.side_a_metro} → {first.side_z_metro} ·{" "}
                         {first.link_type}
-                        {first.contributor && ` · ${first.contributor}`}
+                        {first.contributor && ` · ${first.contributor}${first.side_z_contributor && first.side_z_contributor !== first.contributor ? ` / ${first.side_z_contributor}` : ''}`}
+                        {first.bandwidth_bps > 0 && ` · ${formatBandwidthShort(first.bandwidth_bps)}`}
                         {mostRecentSince && (
                           <span
                             className="text-muted-foreground font-normal"
@@ -525,7 +526,8 @@ function IssueDetails({
                         <div className="text-xs text-muted-foreground">
                           {first.side_a_metro} → {first.side_z_metro} ·{" "}
                           {first.link_type}
-                          {first.contributor && ` · ${first.contributor}`}
+                          {first.contributor && ` · ${first.contributor}${first.side_z_contributor && first.side_z_contributor !== first.contributor ? ` / ${first.side_z_contributor}` : ''}`}
+                          {first.bandwidth_bps > 0 && ` · ${formatBandwidthShort(first.bandwidth_bps)}`}
                         </div>
                       </div>
                     </div>
@@ -713,6 +715,7 @@ function IssueDetails({
                   </div>
                   <div className="text-xs text-muted-foreground">
                     {link.side_a_metro} → {link.side_z_metro} · {link.link_type}
+                    {link.bandwidth_bps > 0 && ` · ${formatBandwidthShort(link.bandwidth_bps)}`}
                     <span className="hidden xs:inline"> · </span>
                     <span className="block xs:inline">
                       <span className="capitalize text-slate-600 dark:text-slate-400 font-bold">
@@ -735,6 +738,7 @@ function IssueDetails({
                     <div className="text-xs text-muted-foreground">
                       {link.side_a_metro} → {link.side_z_metro} ·{" "}
                       {link.link_type}
+                      {link.bandwidth_bps > 0 && ` · ${formatBandwidthShort(link.bandwidth_bps)}`}
                     </div>
                     {link.status !== "provisioning" && (
                       <div className="flex flex-wrap gap-1 mt-1">
@@ -1648,6 +1652,10 @@ function formatBandwidth(bps: number): string {
   return `${bps.toFixed(0)} bps`;
 }
 
+function formatBandwidthShort(bps: number): string {
+  return `${(bps / 1e9).toFixed(0)}G`;
+}
+
 function TopLinkUtilization({
   links,
 }: {
@@ -1711,6 +1719,11 @@ function TopLinkUtilization({
                 <div className="text-[10px] text-muted-foreground">
                   {link.side_a_metro} - {link.side_z_metro} ·{" "}
                   {formatBandwidth(peakBps)}
+                  {link.link_topologies !== undefined && (
+                    link.link_topologies.length > 0
+                      ? <> · <span className="text-green-600 dark:text-green-400">{link.link_topologies.join(', ')}</span>{link.unicast_drained && <span className="text-amber-500"> (drained)</span>}</>
+                      : <> · <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-cyan-500/15 text-cyan-600 dark:text-cyan-400">default</span></>
+                  )}
                 </div>
                 <div className="h-1.5 bg-muted rounded-full overflow-hidden">
                   <div
@@ -1731,6 +1744,11 @@ function TopLinkUtilization({
                 </Link>
                 <div className="text-[10px] text-muted-foreground">
                   {link.side_a_metro} - {link.side_z_metro}
+                  {link.link_topologies !== undefined && (
+                    link.link_topologies.length > 0
+                      ? <> · <span className="text-green-600 dark:text-green-400">{link.link_topologies.join(', ')}</span>{link.unicast_drained && <span className="text-amber-500"> (drained)</span>}</>
+                      : <> · <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-cyan-500/15 text-cyan-600 dark:text-cyan-400">default</span></>
+                  )}
                 </div>
               </div>
               <div className="hidden sm:block text-xs text-muted-foreground tabular-nums w-16 text-right">
@@ -1857,6 +1875,8 @@ interface DisabledLinkRow {
   side_a_metro: string;
   side_z_metro: string;
   reason: string;
+  link_topologies?: string[];
+  unicast_drained?: boolean;
 }
 
 function DisabledLinksTable({
@@ -1883,6 +1903,8 @@ function DisabledLinksTable({
         side_a_metro: link.side_a_metro,
         side_z_metro: link.side_z_metro,
         reason,
+        link_topologies: link.link_topologies,
+        unicast_drained: link.unicast_drained,
       });
     }
 
@@ -1896,6 +1918,8 @@ function DisabledLinksTable({
   }, [drainedLinks, packetLossLinks]);
 
   if (allLinks.length === 0) return null;
+
+  const showTopology = allLinks.some(l => l.link_topologies !== undefined);
 
   const reasonColors: Record<string, string> = {
     provisioning: "text-blue-600 dark:text-blue-400",
@@ -1921,6 +1945,7 @@ function DisabledLinksTable({
             <tr className="text-left text-sm text-muted-foreground border-b border-border">
               <th className="px-4 py-2 font-medium">Link</th>
               <th className="px-4 py-2 font-medium">Route</th>
+              {showTopology && <th className="px-4 py-2 font-medium">Topology</th>}
               <th className="px-4 py-2 font-medium">Reason</th>
             </tr>
           </thead>
@@ -1946,6 +1971,13 @@ function DisabledLinksTable({
                 <td className="px-4 py-2.5 text-sm text-muted-foreground whitespace-nowrap">
                   {link.side_a_metro} - {link.side_z_metro}
                 </td>
+                {showTopology && (
+                  <td className="px-4 py-2.5 text-sm whitespace-nowrap">
+                    {link.link_topologies && link.link_topologies.length > 0
+                      ? <><span className="text-green-600 dark:text-green-400">{link.link_topologies.join(', ')}</span>{link.unicast_drained && <span className="text-amber-500 ml-1">(drained)</span>}</>
+                      : <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-cyan-500/15 text-cyan-600 dark:text-cyan-400">default</span>}
+                  </td>
+                )}
                 <td
                   className={`px-4 py-2.5 text-sm capitalize whitespace-nowrap ${reasonColors[link.reason] || ""}`}
                 >
@@ -3263,9 +3295,12 @@ function linkMatchesSearchFilters(
         );
       case "contributor":
         return (
-          link.contributor
+          (link.contributor
             ?.toLowerCase()
-            .includes(filter.value.toLowerCase()) ?? false
+            .includes(filter.value.toLowerCase()) ||
+          link.side_z_contributor
+            ?.toLowerCase()
+            .includes(filter.value.toLowerCase())) ?? false
         );
       default:
         return false;
@@ -3289,9 +3324,12 @@ function linkMetricMatchesSearchFilters(
         );
       case "contributor":
         return (
-          link.contributor
+          (link.contributor
             ?.toLowerCase()
-            .includes(filter.value.toLowerCase()) ?? false
+            .includes(filter.value.toLowerCase()) ||
+          link.side_z_contributor
+            ?.toLowerCase()
+            .includes(filter.value.toLowerCase())) ?? false
         );
       default:
         return false;

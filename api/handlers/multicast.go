@@ -99,7 +99,7 @@ func (a *API) GetMulticastGroups(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, query, args...)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("multicast", duration, err)
 
 	if err != nil {
 		logError("multicast groups query error", "error", err)
@@ -227,7 +227,7 @@ func (a *API) GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 		&group.SubscriberCount,
 	)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("multicast", duration, err)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -272,7 +272,6 @@ var multicastMemberFilterFields = map[string]FilterFieldConfig{
 	"device": {Column: "device_code", Type: FieldTypeText},
 	"metro":  {Column: "metro_name", Type: FieldTypeText},
 	"owner":  {Column: "owner_pubkey", Type: FieldTypeText},
-	"all":    {Column: "", Type: FieldTypeText}, // handled specially in BuildFilterClause
 }
 
 func (a *API) GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
@@ -490,15 +489,15 @@ func (a *API) GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 	cr := <-countCh
 	dr := <-dataCh
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, cr.err)
+	metrics.RecordClickHouseQuery("multicast", duration, cr.err)
 
 	if cr.err != nil {
-		slog.Warn("multicast group members count query failed", "error", cr.err)
+		logWarn("multicast group members count query failed", "error", cr.err)
 		http.Error(w, cr.err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if dr.err != nil {
-		slog.Warn("multicast group members data query failed", "error", dr.err)
+		logWarn("multicast group members data query failed", "error", dr.err)
 		http.Error(w, dr.err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -649,7 +648,7 @@ func (a *API) GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 		lr := <-leaderCh
 
 		if tr.err != nil {
-			slog.Warn("multicast group members traffic query error", "error", tr.err)
+			logWarn("multicast group members traffic query error", "error", tr.err)
 		} else {
 			for key, vals := range tr.data {
 				if indices, ok := tunnelToMembers[key]; ok {
@@ -667,7 +666,7 @@ func (a *API) GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if lr.err != nil {
-			slog.Warn("multicast group members leader query error", "error", lr.err)
+			logWarn("multicast group members leader query error", "error", lr.err)
 		} else {
 			for clientIP, vals := range lr.data {
 				if indices, ok := clientIPToMembers[clientIP]; ok {
@@ -865,7 +864,7 @@ func (a *API) GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 	}
 	trafficRows, err := a.envDB(ctx).Query(ctx, trafficQuery, filterIDs, devicePKs)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("multicast", duration, err)
 
 	if err != nil {
 		logError("multicast group traffic query error", "error", err)
@@ -1037,7 +1036,7 @@ func (a *API) GetMulticastGroupMemberCounts(w http.ResponseWriter, r *http.Reque
 
 	rows, err := a.envDB(ctx).Query(ctx, query, groupPK, groupPK, groupPK, groupPK)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("multicast", duration, err)
 
 	if err != nil {
 		logError("multicast group member counts query error", "error", err)
@@ -1194,7 +1193,7 @@ func (a *API) GetMulticastTreePaths(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, membersQuery, response.GroupPK, response.GroupPK, response.GroupPK, response.GroupPK, response.GroupPK)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("multicast", duration, err)
 
 	if err != nil {
 		logError("multicast tree paths members query error", "error", err)
@@ -1413,7 +1412,7 @@ func (a *API) GetMulticastTreeSegments(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.envDB(ctx).Query(ctx, membersQuery, response.GroupPK, response.GroupPK, response.GroupPK, response.GroupPK, response.GroupPK)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("multicast", duration, err)
 
 	if err != nil {
 		logError("multicast tree segments members query error", "error", err)
@@ -1656,7 +1655,7 @@ func (a *API) GetMulticastGroupShredStats(w http.ResponseWriter, r *http.Request
 
 	rows, err := a.envDB(ctx).Query(ctx, query, userPKs)
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
+	metrics.RecordClickHouseQuery("multicast", duration, err)
 
 	if err != nil {
 		logError("multicast group shred stats query error", "error", err, "duration", duration)

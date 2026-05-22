@@ -45,7 +45,7 @@ func (a *API) GetCatalog(w http.ResponseWriter, r *http.Request) {
 
 	duration := time.Since(start)
 	if err != nil {
-		metrics.RecordClickHouseQuery(duration, err)
+		metrics.RecordClickHouseQuery("catalog", duration, err)
 		http.Error(w, internalError("Failed to query database", err), http.StatusInternalServerError)
 		return
 	}
@@ -55,7 +55,7 @@ func (a *API) GetCatalog(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var t TableInfo
 		if err := rows.Scan(&t.Name, &t.Database, &t.Engine, &t.Type); err != nil {
-			metrics.RecordClickHouseQuery(duration, err)
+			metrics.RecordClickHouseQuery("catalog", duration, err)
 			http.Error(w, internalError("Failed to scan row", err), http.StatusInternalServerError)
 			return
 		}
@@ -63,12 +63,12 @@ func (a *API) GetCatalog(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		metrics.RecordClickHouseQuery(duration, err)
+		metrics.RecordClickHouseQuery("catalog", duration, err)
 		http.Error(w, internalError("Failed to read rows", err), http.StatusInternalServerError)
 		return
 	}
 
-	metrics.RecordClickHouseQuery(duration, nil)
+	metrics.RecordClickHouseQuery("catalog", duration, nil)
 
 	// Fetch columns for each table
 	colStart := time.Now()
@@ -81,7 +81,7 @@ func (a *API) GetCatalog(w http.ResponseWriter, r *http.Request) {
 
 	colDuration := time.Since(colStart)
 	if err != nil {
-		metrics.RecordClickHouseQuery(colDuration, err)
+		metrics.RecordClickHouseQuery("catalog", colDuration, err)
 		// Non-fatal: return tables without columns
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(CatalogResponse{Tables: tables})
@@ -94,18 +94,18 @@ func (a *API) GetCatalog(w http.ResponseWriter, r *http.Request) {
 	for colRows.Next() {
 		var tableName, colName string
 		if err := colRows.Scan(&tableName, &colName); err != nil {
-			metrics.RecordClickHouseQuery(colDuration, err)
+			metrics.RecordClickHouseQuery("catalog", colDuration, err)
 			http.Error(w, internalError("Failed to scan column row", err), http.StatusInternalServerError)
 			return
 		}
 		tableColumns[tableName] = append(tableColumns[tableName], colName)
 	}
 	if err := colRows.Err(); err != nil {
-		metrics.RecordClickHouseQuery(colDuration, err)
+		metrics.RecordClickHouseQuery("catalog", colDuration, err)
 		http.Error(w, internalError("Failed to iterate column rows", err), http.StatusInternalServerError)
 		return
 	}
-	metrics.RecordClickHouseQuery(colDuration, nil)
+	metrics.RecordClickHouseQuery("catalog", colDuration, nil)
 
 	// Attach columns to tables
 	for i := range tables {

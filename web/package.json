@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@codemirror/lang-sql": "^6.10.0",
+    "@radix-ui/react-tooltip": "^1.2.8",
     "@sentry/react": "^10.36.0",
     "@solana/spl-token": "^0.4.14",
     "@solana/wallet-adapter-base": "^0.9.23",
@@ -33,7 +34,7 @@
     "globe.gl": "^2.45.0",
     "lucide-react": "^1.0.1",
     "maplibre-gl": "^5.16.0",
-    "marked": "18.0.0",
+    "marked": "18.0.3",
     "popmotion": "^11.0.5",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
@@ -47,7 +48,7 @@
     "sql-formatter": "^15.7.0",
     "tailwind-merge": "^3.4.0",
     "tailwindcss": "^4.1.18",
-    "three": "^0.183.1",
+    "three": "^0.184.0",
     "uplot": "^1.6.32"
   },
   "devDependencies": {
@@ -59,7 +60,7 @@
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",
     "@types/react-syntax-highlighter": "^15.5.13",
-    "@types/three": "^0.183.1",
+    "@types/three": "^0.184.0",
     "@vitejs/plugin-basic-ssl": "^2.1.4",
     "@vitejs/plugin-react": "^6.0.1",
     "eslint": "^10.0.2",

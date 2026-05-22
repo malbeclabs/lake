@@ -64,7 +64,7 @@ func toJSONSafe(v any) any {
 	default:
 		// For pointer types, dereference to get actual value
 		rv := reflect.ValueOf(v)
-		if rv.Kind() == reflect.Ptr {
+		if rv.Kind() == reflect.Pointer {
 			if rv.IsNil() {
 				return nil
 			}
@@ -116,7 +116,7 @@ func (a *API) ExecuteQuery(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.PublicQueryDB.Query(ctx, query)
 	duration := time.Since(start)
 	if err != nil {
-		metrics.RecordClickHouseQuery(duration, err)
+		metrics.RecordClickHouseQuery("query", duration, err)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(QueryResponse{
 			Error:     err.Error(),
@@ -143,7 +143,7 @@ func (a *API) ExecuteQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err := rows.Scan(values...); err != nil {
-			metrics.RecordClickHouseQuery(duration, err)
+			metrics.RecordClickHouseQuery("query", duration, err)
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(QueryResponse{
 				Error:     err.Error(),
@@ -161,7 +161,7 @@ func (a *API) ExecuteQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		metrics.RecordClickHouseQuery(duration, err)
+		metrics.RecordClickHouseQuery("query", duration, err)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(QueryResponse{
 			Error:     err.Error(),
@@ -170,7 +170,7 @@ func (a *API) ExecuteQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	metrics.RecordClickHouseQuery(duration, nil)
+	metrics.RecordClickHouseQuery("query", duration, nil)
 
 	// Convert rows to JSON-safe values
 	safeRows := make([][]any, len(resultRows))

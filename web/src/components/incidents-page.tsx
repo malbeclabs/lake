@@ -1,15 +1,7 @@
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useState, useMemo, useEffect } from 'react'
 import { useSearchParams, useNavigate, useLocation, Link } from 'react-router-dom'
-import {
-  ShieldAlert,
-  Settings,
-  ExternalLink,
-  Info,
-  Download,
-  ChevronDown,
-  RefreshCw,
-} from 'lucide-react'
+import { ShieldAlert, Settings, ExternalLink, Info, Download, ChevronDown, RefreshCw, Plus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   fetchLinkIncidents,
@@ -22,6 +14,11 @@ import {
 } from '@/lib/api'
 import { StatusFilters, useStatusFilters } from '@/components/status-search-bar'
 import { PageHeader } from '@/components/page-header'
+import { Tooltip } from '@/components/ui/tooltip'
+import { useActiveOpsTickets } from '@/hooks/use-ops-tickets'
+import { useIsOpsUser } from '@/hooks/use-is-ops-user'
+import { opsTicketUrl, type OpsTicket } from '@/lib/ops-api'
+import { CreateIncidentModal } from '@/components/ops/CreateIncidentModal'
 
 const timeRanges: { value: IncidentTimeRange; label: string }[] = [
   { value: '3h', label: '3h' },
@@ -254,6 +251,180 @@ function dedupeIncidentTypes(incidents: { incident_type: string }[]): string[] {
   return result
 }
 
+const severityClass: Record<string, string> = {
+  sev1: 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300',
+  sev2: 'bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300',
+  sev3: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
+}
+
+function OpsIncidentsBadge({ ticket }: { ticket: OpsTicket }) {
+  return (
+    <a
+      href={opsTicketUrl(ticket.id)}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300 hover:underline"
+      title={ticket.title}
+    >
+      {ticket.human_readable_id}
+      <ExternalLink className="h-2.5 w-2.5" />
+    </a>
+  )
+}
+
+function OpsIncidentsSection({
+  tickets,
+  scope,
+  isOpsUser,
+  onCreateIncident,
+}: {
+  tickets: OpsTicket[]
+  scope: IncidentScope
+  isOpsUser: boolean
+  onCreateIncident: () => void
+}) {
+  const [open, setOpen] = useState(true)
+  const relevant = tickets.filter(t =>
+    t.type === 'incident' && (
+      scope === 'links'
+        ? (t.affected_link_pubkey.length > 0 || (t.affected_links && t.affected_links.length > 0))
+        : (t.device_pubkey.length > 0 || (t.affected_devices && t.affected_devices.length > 0))
+    )
+  )
+
+  return (
+    <div className="border border-border rounded-lg bg-card mb-3">
+      <div className={`flex items-center gap-3 px-4 py-3 ${open ? 'border-b border-border' : ''}`}>
+        <button
+          onClick={() => setOpen(!open)}
+          className="flex items-center gap-3 flex-1 text-left hover:bg-muted/30 transition-colors -mx-4 -my-3 px-4 py-3 rounded-t-lg"
+        >
+          <ChevronDown
+            className={cn(
+              'h-4 w-4 shrink-0 text-muted-foreground transition-transform',
+              !open && '-rotate-90',
+            )}
+          />
+          <h2 className="text-sm font-semibold">Registered</h2>
+          <span className="px-1.5 py-0.5 text-xs rounded-full bg-muted-foreground/10 text-muted-foreground tabular-nums">
+            {relevant.length}
+          </span>
+          <span className="text-xs text-muted-foreground">Incidents registered in <a href="https://doublezero.xyz/ops-management" target="_blank" rel="noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline" onClick={e => e.stopPropagation()}>Ops Management</a></span>
+        </button>
+        {isOpsUser && (
+          <button
+            onClick={onCreateIncident}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium border border-border rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground shrink-0"
+          >
+            <Plus className="h-3 w-3" />
+            New incident
+          </button>
+        )}
+      </div>
+      {open && relevant.length === 0 ? (
+        <div className="px-4 py-4 text-sm text-muted-foreground">
+          No active ops management incidents for {scope === 'links' ? 'links' : 'devices'}.
+        </div>
+      ) : open ? (
+        <div className="overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/50">
+              <tr>
+                <th className="text-left px-4 py-2.5 font-medium text-xs">ID</th>
+                <th className="text-left px-4 py-2.5 font-medium text-xs">Title</th>
+                <th className="text-left px-4 py-2.5 font-medium text-xs">Severity</th>
+                <th className="text-left px-4 py-2.5 font-medium text-xs">Status</th>
+                <th className="text-left px-4 py-2.5 font-medium text-xs">
+                  {scope === 'links' ? 'Affected links' : 'Affected devices'}
+                </th>
+                <th className="text-left px-4 py-2.5 font-medium text-xs">Started</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {relevant.map(ticket => {
+                const entities: { code: string; pk: string }[] = scope === 'links'
+                  ? (ticket.affected_links?.map(l => ({ code: l.code, pk: l.pubkey }))
+                     ?? ticket.affected_link_pubkey.map(pk => ({ code: pk, pk })))
+                  : (ticket.affected_devices?.map(d => ({ code: d.code, pk: d.pubkey }))
+                     ?? ticket.device_pubkey.map(pk => ({ code: pk, pk })))
+                const detailPath = scope === 'links' ? '/dz/links/' : '/dz/devices/'
+                return (
+                  <tr key={ticket.id} className="hover:bg-muted/30">
+                    <td className="px-4 py-2.5 whitespace-nowrap">
+                      <div className="flex items-center gap-2">
+                        <a
+                          href={opsTicketUrl(ticket.id)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="font-mono text-xs text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1"
+                        >
+                          {ticket.human_readable_id}
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                        {ticket.slack_message_url && (
+                          <a
+                            href={ticket.slack_message_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline shrink-0"
+                            title="View Slack thread"
+                          >
+                            Slack ↗
+                          </a>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-2.5 max-w-[280px]">
+                      <span className="line-clamp-2">{ticket.title}</span>
+                      {ticket.contributor_name && (
+                        <div className="text-xs text-muted-foreground">{ticket.contributor_name}</div>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 whitespace-nowrap">
+                      {ticket.severity ? (
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${severityClass[ticket.severity] ?? ''}`}>
+                          {ticket.severity}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 whitespace-nowrap">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-muted text-muted-foreground capitalize">
+                        {ticket.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex flex-wrap gap-1">
+                        {entities.slice(0, 3).map((e, i) => (
+                          <Link
+                            key={i}
+                            to={`${detailPath}${e.pk}`}
+                            className="font-mono text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                          >
+                            {e.code}
+                          </Link>
+                        ))}
+                        {entities.length > 3 && (
+                          <span className="text-xs text-muted-foreground">+{entities.length - 3} more</span>
+                        )}
+                        {entities.length === 0 && <span className="text-muted-foreground">—</span>}
+                      </div>
+                    </td>
+                    <td className="px-4 py-2.5 whitespace-nowrap text-xs text-muted-foreground">
+                      {ticket.start_at ? formatTimeAgo(ticket.start_at) : formatTimeAgo(ticket.created_at)}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 export function IncidentsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
@@ -281,6 +452,19 @@ export function IncidentsPage() {
   const showLinkInterfaces = searchParams.get('link_interfaces') === 'true'
 
   const [showSettings, setShowSettings] = useState(false)
+  const [showCreateIncident, setShowCreateIncident] = useState(false)
+  const [createIncidentFor, setCreateIncidentFor] = useState<{
+    entityCode: string
+    entityType: 'link' | 'device'
+    entityPk: string
+    contributorCode: string
+    contributorPk: string
+    issueReasons: string[]
+    downSince?: string
+  } | null>(null)
+  const isOpsUser = useIsOpsUser()
+  const { data: opsTicketsData } = useActiveOpsTickets()
+  const opsTickets = opsTicketsData?.tickets ?? []
 
   // Local settings state — only applied on "Apply"
   const [localSettings, setLocalSettings] = useState({
@@ -671,15 +855,48 @@ export function IncidentsPage() {
           icon={ShieldAlert}
           title="Incidents"
           actions={
-            <a
-              href={exportUrl}
-              className="inline-flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground border border-border rounded-md hover:bg-muted transition-colors"
-            >
-              <Download className="h-3 w-3" />
-              Export CSV
-            </a>
+            <div className="flex items-center gap-2">
+              {isOpsUser && (
+                <button
+                  onClick={() => setShowCreateIncident(true)}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground border border-border rounded-md hover:bg-muted transition-colors"
+                >
+                  <Plus className="h-4 w-4" />
+                  New incident
+                </button>
+              )}
+              <a
+                href={exportUrl}
+                className="inline-flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground border border-border rounded-md hover:bg-muted transition-colors"
+              >
+                <Download className="h-4 w-4" />
+                Export CSV
+              </a>
+            </div>
           }
         />
+        <p className="text-sm text-muted-foreground -mt-4 mb-6 max-w-4xl">
+          This dashboard tracks network outages, degradations, and fluctuations across the network.
+        </p>
+        {showCreateIncident && (
+          <CreateIncidentModal
+            onClose={() => setShowCreateIncident(false)}
+            onSuccess={() => setShowCreateIncident(false)}
+          />
+        )}
+        {createIncidentFor && (
+          <CreateIncidentModal
+            entityCode={createIncidentFor.entityCode}
+            entityType={createIncidentFor.entityType}
+            entityPk={createIncidentFor.entityPk}
+            contributorCode={createIncidentFor.contributorCode}
+            contributorPk={createIncidentFor.contributorPk}
+            issueReasons={createIncidentFor.issueReasons}
+            downSince={createIncidentFor.downSince}
+            onClose={() => setCreateIncidentFor(null)}
+            onSuccess={() => setCreateIncidentFor(null)}
+          />
+        )}
 
         {/* Scope toggle */}
         <div className="flex items-center gap-2 mb-4">
@@ -931,36 +1148,37 @@ export function IncidentsPage() {
             >
               {(
                 [
-                  ...(scope === 'links' ? [{ key: 'packet_loss', label: 'Packet Loss' }] : []),
-                  { key: 'errors', label: 'Errors' },
-                  { key: 'fcs', label: 'FCS Errors' },
-                  { key: 'discards', label: 'Discards' },
-                  { key: 'carrier', label: 'Carrier' },
-                  { key: 'no_data', label: 'No Data' },
-                  ...(scope === 'links' ? [{ key: 'isis_down', label: 'ISIS Down' }] : []),
+                  ...(scope === 'links' ? [{ key: 'packet_loss', label: 'Packet Loss', tooltip: 'Packets that failed to arrive at their destination.' }] : []),
+                  { key: 'errors', label: 'Errors', tooltip: 'Packets or frames that were received or transmitted incorrectly.' },
+                  { key: 'fcs', label: 'FCS Errors', tooltip: 'Frame Check Sequence (FCS) integrity check.' },
+                  { key: 'discards', label: 'Discards', tooltip: 'Packets intentionally dropped by a device.' },
+                  { key: 'carrier', label: 'Carrier', tooltip: 'The physical link status between network devices.' },
+                  { key: 'no_data', label: 'No Data', tooltip: 'No telemetry was received from the device or interface during the window.' },
+                  ...(scope === 'links' ? [{ key: 'isis_down', label: 'IS-IS Down', tooltip: 'IS-IS routing session between devices is unavailable.' }] : []),
                   ...(scope === 'devices'
                     ? [
-                        { key: 'isis_overload', label: 'ISIS Overload' },
-                        { key: 'isis_unreachable', label: 'ISIS Unreachable' },
+                        { key: 'isis_overload', label: 'IS-IS Overload', tooltip: 'Device is signaling IS-IS overload, so traffic is being steered away from it.' },
+                        { key: 'isis_unreachable', label: 'IS-IS Unreachable', tooltip: 'Device is not reachable via IS-IS from its expected neighbors.' },
                       ]
                     : []),
-                ] as { key: string; label: string }[]
-              ).map(({ key, label }) => {
+                ] as { key: string; label: string; tooltip: string }[]
+              ).map(({ key, label, tooltip }) => {
                 const count = filteredByType.byType[key] || 0
                 const isSelected = selectedTypes.has(key)
                 return (
-                  <button
-                    key={key}
-                    onClick={() => toggleType(key)}
-                    className={`text-center p-3 rounded-lg border transition-colors ${
-                      isSelected
-                        ? 'border-primary bg-primary/5 ring-1 ring-primary'
-                        : 'border-border hover:border-muted-foreground/30'
-                    }`}
-                  >
-                    <div className="text-2xl font-medium tabular-nums tracking-tight">{count}</div>
-                    <div className="text-xs text-muted-foreground">{label}</div>
-                  </button>
+                  <Tooltip key={key} content={tooltip}>
+                    <button
+                      onClick={() => toggleType(key)}
+                      className={`text-center p-3 rounded-lg border transition-colors ${
+                        isSelected
+                          ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                          : 'border-border hover:border-muted-foreground/30'
+                      }`}
+                    >
+                      <div className="text-2xl font-medium tabular-nums tracking-tight">{count}</div>
+                      <div className="text-xs text-muted-foreground">{label}</div>
+                    </button>
+                  </Tooltip>
                 )
               })}
             </div>
@@ -1002,6 +1220,14 @@ export function IncidentsPage() {
             {/* Active view */}
             {view === 'active' && (
               <>
+                {isOpsUser && (
+                  <OpsIncidentsSection
+                    tickets={opsTickets}
+                    scope={scope}
+                    isOpsUser={isOpsUser}
+                    onCreateIncident={() => setShowCreateIncident(true)}
+                  />
+                )}
                 {(() => {
                   const isEmpty =
                     scope === 'links'
@@ -1120,7 +1346,11 @@ export function IncidentsPage() {
                                   toggleSort={toggleSort}
                                   coalesceGapMinutes={coalesceGap}
                                   typeFilter={selectedTypes}
-                                />
+                                  opsTickets={opsTickets}
+                                sectionKey={key}
+                                onCreateIncident={isOpsUser ? (pk, code, contributorCode, contributorPk, issueReasons, issueSince) =>
+                                  setCreateIncidentFor({ entityCode: code, entityType: 'link', entityPk: pk, contributorCode, contributorPk, issueReasons, downSince: issueSince }) : undefined}
+                              />
                               ) : (
                                 <ActiveDeviceIncidentsTable
                                   incidents={sectionIncidents as DeviceIncident[]}
@@ -1128,10 +1358,15 @@ export function IncidentsPage() {
                                   sortDir={sortDir}
                                   toggleSort={toggleSort}
                                   typeFilter={selectedTypes}
-                                />
+                                  opsTickets={opsTickets}
+                                sectionKey={key}
+                                onCreateIncident={isOpsUser ? (pk, code, contributorCode, contributorPk, issueReasons, issueSince) =>
+                                  setCreateIncidentFor({ entityCode: code, entityType: 'device', entityPk: pk, contributorCode, contributorPk, issueReasons, downSince: issueSince }) : undefined}
+                              />
                               )}
                             </IncidentSection>
                           ),
+
                         )}
                       </div>
                     </>
@@ -1182,6 +1417,7 @@ type GroupedLinkIncident = {
   side_a_metro: string
   side_z_metro: string
   contributor_code: string
+  contributor_pk: string
   is_drained: boolean
   started_at: string
   is_ongoing: boolean
@@ -1251,6 +1487,7 @@ function groupIncidentsByLink(
         side_a_metro: earliest.side_a_metro,
         side_z_metro: earliest.side_z_metro,
         contributor_code: earliest.contributor_code,
+        contributor_pk: '',
         is_drained: cluster.some((i) => i.is_drained),
         started_at: earliest.started_at,
         is_ongoing: anyOngoing,
@@ -1268,6 +1505,7 @@ type GroupedDeviceIncident = {
   device_type: string
   metro: string
   contributor_code: string
+  contributor_pk: string
   is_drained: boolean
   started_at: string
   is_ongoing: boolean
@@ -1297,6 +1535,7 @@ function groupIncidentsByDevice(incidents: DeviceIncident[]): GroupedDeviceIncid
       device_type: earliest.device_type,
       metro: earliest.metro,
       contributor_code: earliest.contributor_code,
+      contributor_pk: '',
       is_drained: incs.some((i) => i.is_drained),
       started_at: earliest.started_at,
       is_ongoing: anyOngoing,
@@ -1314,6 +1553,9 @@ function ActiveIncidentsTable({
   toggleSort,
   coalesceGapMinutes = 180,
   typeFilter,
+  opsTickets = [],
+  sectionKey,
+  onCreateIncident,
 }: {
   incidents: LinkIncident[]
   sortField: string
@@ -1321,6 +1563,9 @@ function ActiveIncidentsTable({
   toggleSort: (field: 'started_at' | 'ended_at' | 'duration') => void
   coalesceGapMinutes?: number
   typeFilter?: Set<string>
+  opsTickets?: OpsTicket[]
+  sectionKey?: string
+  onCreateIncident?: (pk: string, code: string, contributorCode: string, contributorPk: string, issueReasons: string[], issueSince?: string) => void
 }) {
   // Stable timestamp for computing ongoing durations — avoids calling Date.now() during render
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1404,13 +1649,16 @@ function ActiveIncidentsTable({
               }
             }
             const interfaces = Array.from(allInterfaces)
+            const correlated = opsTickets.filter(t =>
+              t.type === 'incident' && t.affected_link_pubkey.includes(group.link_pk)
+            )
             return (
               <tr key={`${group.link_pk}-${group.started_at}`} className="hover:bg-muted/30">
                 <td className="px-4 py-3 whitespace-nowrap">
                   <Link
                     to={`/dz/links/${encodeURIComponent(group.link_pk)}`}
                     state={{ backLabel: 'incidents' }}
-                    className="text-primary hover:underline inline-flex items-center gap-1"
+                    className="text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1"
                   >
                     {group.link_code}
                     <ExternalLink className="h-3 w-3" />
@@ -1422,6 +1670,21 @@ function ActiveIncidentsTable({
                       {group.side_a_metro} &rarr; {group.side_z_metro}
                     </span>
                   </div>
+                  {sectionKey !== 'resolved' && onCreateIncident && correlated.length === 0 && (
+                    <button
+                      onClick={() => onCreateIncident(
+                        group.link_pk,
+                        group.link_code,
+                        group.contributor_code,
+                        group.contributor_pk,
+                        [...new Set(group.incidents.map(i => i.incident_type))],
+                        group.started_at,
+                      )}
+                      className="mt-1 text-[11px] text-muted-foreground hover:text-foreground border border-border/50 hover:border-border px-1.5 py-0.5 transition-colors"
+                    >
+                      + Create incident
+                    </button>
+                  )}
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap">
                   <div className="flex items-center gap-1.5 flex-wrap">
@@ -1439,6 +1702,7 @@ function ActiveIncidentsTable({
                       </span>
                     ))}
                     {group.is_drained && <DrainedBadge />}
+                    {correlated.map(t => <OpsIncidentsBadge key={t.id} ticket={t} />)}
                   </div>
                   {interfaces.length > 0 && (
                     <div className="text-xs text-muted-foreground mt-0.5 font-mono">
@@ -1510,7 +1774,7 @@ function DrainedLinksTable({ drainedLinks }: { drainedLinks: DrainedLinkInfo[] }
                 <Link
                   to={`/dz/links/${encodeURIComponent(dl.link_pk)}`}
                   state={{ backLabel: 'incidents' }}
-                  className="text-primary hover:underline inline-flex items-center gap-1 max-w-full"
+                  className="text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1 max-w-full"
                   title={dl.link_code}
                 >
                   <span className="truncate">{dl.link_code}</span>
@@ -1603,12 +1867,18 @@ function ActiveDeviceIncidentsTable({
   sortDir,
   toggleSort,
   typeFilter,
+  opsTickets = [],
+  sectionKey,
+  onCreateIncident,
 }: {
   incidents: DeviceIncident[]
   sortField: string
   sortDir: string
   toggleSort: (field: 'started_at' | 'ended_at' | 'duration') => void
   typeFilter?: Set<string>
+  opsTickets?: OpsTicket[]
+  sectionKey?: string
+  onCreateIncident?: (pk: string, code: string, contributorCode: string, contributorPk: string, issueReasons: string[], issueSince?: string) => void
 }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const renderTimestamp = useMemo(() => Date.now(), [incidents])
@@ -1686,44 +1956,60 @@ function ActiveDeviceIncidentsTable({
               }
             }
             const interfaces = Array.from(allInterfaces)
+            const correlated = opsTickets.filter(t =>
+              t.type === 'incident' && t.device_pubkey.includes(group.device_pk)
+            )
             return (
-              <tr key={group.device_pk + group.started_at} className="hover:bg-muted/30">
-                <td className="px-4 py-3 whitespace-nowrap">
-                  <Link
-                    to={`/dz/devices/${encodeURIComponent(group.device_pk)}`}
-                    className="text-primary hover:underline inline-flex items-center gap-1"
-                  >
-                    {group.device_code}
-                    <ExternalLink className="h-3 w-3" />
-                  </Link>
-                  <div className="text-xs text-muted-foreground">
-                    {group.contributor_code} · {group.device_type}
-                    {group.metro && (
-                      <>
-                        <span className="mx-1">·</span>
-                        <span className="font-mono">{group.metro}</span>
-                      </>
+            <tr key={group.device_pk + group.started_at} className="hover:bg-muted/30">
+              <td className="px-4 py-3">
+                <Link
+                  to={`/dz/devices/${encodeURIComponent(group.device_pk)}`}
+                  className="text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1"
+                >
+                  {group.device_code}
+                  <ExternalLink className="h-3 w-3" />
+                </Link>
+                <div className="text-xs text-muted-foreground">
+                  {group.contributor_code} · {group.device_type}
+                  {group.metro && <><span className="mx-1">·</span><span className="font-mono">{group.metro}</span></>}
+                </div>
+                {sectionKey !== 'resolved' && onCreateIncident && correlated.length === 0 && (
+                  <button
+                    onClick={() => onCreateIncident(
+                      group.device_pk,
+                      group.device_code,
+                      group.contributor_code,
+                      group.contributor_pk,
+                      [...new Set(group.incidents.map(i => i.incident_type))],
+                      group.started_at,
                     )}
+                    className="mt-1 text-[11px] text-muted-foreground hover:text-foreground border border-border/50 hover:border-border px-1.5 py-0.5 transition-colors"
+                  >
+                    + Create incident
+                  </button>
+                )}
+              </td>
+              <td className="px-4 py-3">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {Array.from(byType.entries()).map(([type, agg]) => (
+                    <span key={type} className="inline-flex items-center gap-1">
+                      <IncidentTypeBadge type={type} />
+                      {agg.peakCount != null && (
+                        <span className="text-xs text-muted-foreground">
+                          ({agg.peakCount})
+                        </span>
+                      )}
+                    </span>
+                  ))}
+                  {group.is_drained && <DrainedBadge />}
+                  {correlated.map(t => <OpsIncidentsBadge key={t.id} ticket={t} />)}
+                </div>
+                {interfaces.length > 0 && (
+                  <div className="text-xs text-muted-foreground mt-0.5 font-mono">
+                    {interfaces.join(', ')}
                   </div>
-                </td>
-                <td className="px-4 py-3 whitespace-nowrap">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {Array.from(byType.entries()).map(([type, agg]) => (
-                      <span key={type} className="inline-flex items-center gap-1">
-                        <IncidentTypeBadge type={type} />
-                        {agg.peakCount != null && (
-                          <span className="text-xs text-muted-foreground">({agg.peakCount})</span>
-                        )}
-                      </span>
-                    ))}
-                    {group.is_drained && <DrainedBadge />}
-                  </div>
-                  {interfaces.length > 0 && (
-                    <div className="text-xs text-muted-foreground mt-0.5 font-mono">
-                      {interfaces.join(', ')}
-                    </div>
-                  )}
-                </td>
+                )}
+              </td>
                 <td className="px-4 py-3 whitespace-nowrap">
                   <div>{formatTimeAgo(group.started_at)}</div>
                   <div className="text-xs text-muted-foreground">
@@ -1787,7 +2073,7 @@ function DrainedDevicesTable({ drainedDevices }: { drainedDevices: DrainedDevice
               <td className="px-4 py-3 truncate">
                 <Link
                   to={`/dz/devices/${encodeURIComponent(dd.device_pk)}`}
-                  className="text-primary hover:underline inline-flex items-center gap-1 max-w-full"
+                  className="text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1 max-w-full"
                   title={dd.device_code}
                 >
                   <span className="truncate">{dd.device_code}</span>

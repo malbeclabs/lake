@@ -456,6 +456,12 @@ function TrafficPageContent() {
     refetchInterval: dashboardState.refetchInterval,
   })
 
+  const rangeEnd = useMemo(() => {
+    if (customEnd) return customEnd
+    return Math.floor(Date.now() / 1000)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customEnd, allTrafficData])
+
   // Build a lookup from series metadata to classify each device+intf pair
   const intfCategoryMap = useMemo(() => {
     const map = new Map<string, IntfCategory>()
@@ -759,6 +765,7 @@ function TrafficPageContent() {
               metric="counters"
               loading={countersFetching}
               timeRangeSeconds={timeRangeSeconds}
+              rangeEnd={rangeEnd}
             />
           </LazyChart>
         </div>
@@ -816,6 +823,7 @@ function TrafficPageContent() {
               metric={metric}
               loading={fetching}
               timeRangeSeconds={timeRangeSeconds}
+              rangeEnd={rangeEnd}
               legendHeader={
                 catAggregated ? `Summary of ${originalIntfCount} interfaces` : undefined
               }
@@ -832,7 +840,12 @@ function TrafficPageContent() {
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Sticky header */}
       <div className="flex-none bg-background border-b border-border px-4 sm:px-8 pt-6 pb-4 z-10">
-        <PageHeader icon={Network} title="Interfaces" />
+        <div className="[&>div]:mb-0">
+          <PageHeader icon={Network} title="Interfaces" />
+        </div>
+        <p className="text-sm text-muted-foreground mt-3">
+          This dashboard provides visibility into how much traffic is entering and leaving interfaces, overall link utilization, interface health, and whether physical or logical network connections are experiencing congestion, errors, or instability.
+        </p>
         <div className="flex items-center gap-3 mt-3 w-full flex-wrap justify-between">
           <DashboardFilters excludeMetrics={['utilization']} />
           <DashboardFilterBadges />

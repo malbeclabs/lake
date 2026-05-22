@@ -26,9 +26,15 @@ export interface LinkInfo {
   interfaceZIP: string
   contributorPk: string
   contributorCode: string
+  sideAContributorPk: string
+  sideAContributorCode: string
+  sideZContributorPk: string
+  sideZContributorCode: string
   sampleCount: number
   committedRttNs: number
   isisDelayOverrideNs: number
+  linkTopologies?: string[]
+  unicastDrained?: boolean
   health?: {
     status: string
     committedRttNs: number

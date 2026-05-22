@@ -12,6 +12,7 @@ import {
   type EdgeScoreboardLeader,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { Tooltip } from '@/components/ui/tooltip'
 import { PageHeader } from './page-header'
 
 function useAnimatedNumber(target: number | undefined, duration = 500) {
@@ -2213,9 +2214,9 @@ export function EdgeScoreboardPage() {
               <div className="flex flex-wrap items-center gap-1.5 text-xs">
                 {([
                   [false, 'All Slots', 'Shred arrival rates across all observed slots.'] as const,
-                  [true, 'DZ Edge Leaders', 'Scoped to slots where the scheduled leader was publishing shreds via DZ Edge.'] as const,
+                  [true, 'DZ Edge Leaders', 'Scoped to slots where the scheduled leader is publishing shreds via DZ Edge.'] as const,
                 ]).map(([v, label, tooltip]) => (
-                  <div key={String(v)} className="relative group">
+                  <Tooltip key={String(v)} content={tooltip}>
                     <button
                       type="button"
                       onClick={() => setLeadersOnly(v)}
@@ -2228,10 +2229,7 @@ export function EdgeScoreboardPage() {
                     >
                       {label}
                     </button>
-                    <span className="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-2 z-30 w-64 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal opacity-0 group-hover:opacity-100 transition-opacity">
-                      {tooltip}
-                    </span>
-                  </div>
+                  </Tooltip>
                 ))}
               </div>
               <a
@@ -2344,7 +2342,10 @@ export function EdgeScoreboardPage() {
                       queue={liveTailStatus.queueLen} ({formatLag(liveTailStatus.queueLagMs)}) · server={formatLag(liveTailStatus.serverLagMs)} · slot={liveTailStatus.edge}
                     </span>
                   )}
-                  <div className="relative group">
+                  <Tooltip
+                    content={granular ? 'Showing DZ Edge, Jito, and Turbine separately — click to collapse to DZ vs Other' : 'Break out DZ Edge leaders and regional retransmits alongside Jito and Turbine'}
+                    align="end"
+                  >
                     <button
                       type="button"
                       onClick={() => setGranular(!granular)}
@@ -2357,10 +2358,7 @@ export function EdgeScoreboardPage() {
                     >
                       <Layers size={15} />
                     </button>
-                    <span className="pointer-events-none absolute top-full right-0 mt-2 z-30 w-48 rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal opacity-0 group-hover:opacity-100 transition-opacity">
-                      {granular ? 'Showing DZ Edge, Jito, and Turbine separately — click to collapse to DZ vs Other' : 'Break out DZ Edge leaders and regional retransmits alongside Jito and Turbine'}
-                    </span>
-                  </div>
+                  </Tooltip>
                   <button
                     onClick={() => toggleLiveRef.current?.()}
                     className={cn(

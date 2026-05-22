@@ -30,6 +30,8 @@ interface TrafficChartProps {
   loading?: boolean
   /** Time range in seconds — extends x-axis to show full range even with sparse data */
   timeRangeSeconds?: number
+  /** Right edge of the requested window (unix seconds). Anchors the x-axis when data is sparse. */
+  rangeEnd?: number
   /** Custom labels for bidirectional directions (default: { in: 'Rx', out: 'Tx' }) */
   directionLabels?: { in: string; out: string }
   /** Override legend header text (e.g. "Summary of 42 interfaces") */
@@ -116,7 +118,7 @@ function formatPctAxis(pct: number): string {
   return pct.toFixed(1) + '%'
 }
 
-function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bidirectional = false, onTimeRangeSelect, metric = 'throughput', loading = false, timeRangeSeconds, directionLabels: dirLabels, legendHeader }: TrafficChartProps) {
+function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bidirectional = false, onTimeRangeSelect, metric = 'throughput', loading = false, timeRangeSeconds, rangeEnd, directionLabels: dirLabels, legendHeader }: TrafficChartProps) {
   const inLabel = dirLabels?.in ?? 'Rx'
   const outLabel = dirLabels?.out ?? 'Tx'
   const { resolvedTheme } = useTheme()
@@ -582,10 +584,18 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
       scales: {
         x: {
           time: true,
+          auto: !timeRangeSeconds,
+          // uPlot pads single-point data by ~1000 days in the x direction, so we can't trust
+          // the dataMin/dataMax it hands us. Anchor the window to rangeEnd (or dataMax when no
+          // explicit rangeEnd), and extend backward only if real data precedes the window.
           range: timeRangeSeconds
             ? (_u: uPlot, dataMin: number, dataMax: number) => {
-                const rangeMin = dataMax - timeRangeSeconds
-                return [Math.min(dataMin, rangeMin), dataMax]
+                const end = rangeEnd != null ? rangeEnd : (Number.isFinite(dataMax) ? dataMax : 0)
+                const start = end - timeRangeSeconds
+                const leftEdge = Number.isFinite(dataMin) && dataMin < start && rangeEnd == null
+                  ? dataMin
+                  : start
+                return [leftEdge, end]
               }
             : undefined,
         },

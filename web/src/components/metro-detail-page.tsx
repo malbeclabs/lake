@@ -1,7 +1,7 @@
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Loader2, MapPin, AlertCircle, ArrowLeft, Info, ChevronUp, ChevronDown } from 'lucide-react'
-import { fetchMetro, fetchDevicesByMetro, fetchFacilitiesByMetro } from '@/lib/api'
+import { Loader2, MapPin, AlertCircle, ArrowLeft, ChevronUp, ChevronDown } from 'lucide-react'
+import { fetchMetro, fetchMetroStats, fetchDevicesByMetro, fetchFacilitiesByMetro } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useBackLink } from '@/hooks/use-back-link'
 import { handleRowClick } from '@/lib/utils'
@@ -52,6 +52,12 @@ export function MetroDetailPage() {
   const { data: metro, isLoading, error } = useQuery({
     queryKey: ['metro', pk],
     queryFn: () => fetchMetro(pk!),
+    enabled: !!pk,
+  })
+
+  const { data: stats } = useQuery({
+    queryKey: ['metro-stats', pk],
+    queryFn: () => fetchMetroStats(pk!),
     enabled: !!pk,
   })
 
@@ -199,100 +205,93 @@ export function MetroDetailPage() {
         </div>
 
         {/* Info grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
-          {/* Infrastructure */}
-          <div className="border border-border rounded-lg p-4 bg-card">
-            <h3 className="text-sm font-medium text-muted-foreground mb-3">Infrastructure</h3>
-            <dl className="space-y-2">
-              <div className="flex justify-between">
-                <dt className="text-sm text-muted-foreground">Devices</dt>
-                <dd className="text-sm">{metro.device_count}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-sm text-muted-foreground">Facilities</dt>
-                <dd className="text-sm">{metro.facility_count}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-sm text-muted-foreground">Users</dt>
-                <dd className="text-sm tabular-nums">
-                  {metro.user_count}
-                  <span className="text-muted-foreground">/{metro.max_users}</span>
-                </dd>
-              </div>
-              {(() => {
-                const effUnicast = Math.max(metro.unicast_users_count, metro.max_unicast_users)
-                const effSubs = Math.max(metro.multicast_subscribers_count, metro.max_multicast_subscribers)
-                const effPubs = Math.max(metro.multicast_publishers_count, metro.max_multicast_publishers)
-                const isDerivedUnicast = metro.raw_max_unicast_users === 0 && effUnicast > 0
-                const isDerivedSubs = metro.raw_max_multicast_subscribers === 0 && effSubs > 0
-                const isDerivedPubs = metro.raw_max_multicast_publishers === 0 && effPubs > 0
-                return (
-                  <>
-                    <div className="flex justify-between">
-                      <dt className="text-sm text-muted-foreground">Unicast</dt>
-                      <dd className="text-sm tabular-nums">
-                        {metro.unicast_users_count}{effUnicast > 0 && <> / {isDerivedUnicast
-                          ? <span className="text-muted-foreground/50 inline-flex items-center gap-0.5" title="Calculated from max_users">{effUnicast}<Info className="h-2.5 w-2.5" /></span>
-                          : <span className="text-muted-foreground">{effUnicast}</span>
-                        }</>}
-                      </dd>
-                    </div>
-                    <div className="flex justify-between">
-                      <dt className="text-sm text-muted-foreground">Subscribers</dt>
-                      <dd className="text-sm tabular-nums">
-                        {metro.multicast_subscribers_count}{effSubs > 0 && <> / {isDerivedSubs
-                          ? <span className="text-muted-foreground/50 inline-flex items-center gap-0.5" title="Calculated from max_users">{effSubs}<Info className="h-2.5 w-2.5" /></span>
-                          : <span className="text-muted-foreground">{effSubs}</span>
-                        }</>}
-                      </dd>
-                    </div>
-                    <div className="flex justify-between">
-                      <dt className="text-sm text-muted-foreground">Publishers</dt>
-                      <dd className="text-sm tabular-nums">
-                        {metro.multicast_publishers_count}{effPubs > 0 && <> / {isDerivedPubs
-                          ? <span className="text-muted-foreground/50 inline-flex items-center gap-0.5" title="Calculated from max_users">{effPubs}<Info className="h-2.5 w-2.5" /></span>
-                          : <span className="text-muted-foreground">{effPubs}</span>
-                        }</>}
-                      </dd>
-                    </div>
-                  </>
-                )
-              })()}
-            </dl>
+        <div
+          className="grid gap-1.5 mb-6"
+          style={{ gridTemplateColumns: '1fr 1fr 1fr 1fr 1.8fr', gridTemplateRows: 'auto auto' }}
+        >
+          {/* Row 1 */}
+          <div className="bg-muted/30 rounded-lg px-2 py-2.5 text-center">
+            <div className="text-sm font-medium">{metro.device_count}</div>
+            <div className="text-xs text-muted-foreground">Devices</div>
           </div>
-
-          {/* Traffic + Validators */}
-          <div className="border border-border rounded-lg p-4 bg-card">
-            <h3 className="text-sm font-medium text-muted-foreground mb-3">Traffic</h3>
-            <dl className="space-y-2">
-              <div className="flex justify-between">
-                <dt className="text-sm text-muted-foreground">Inbound</dt>
-                <dd className="text-sm">{formatBps(metro.in_bps)}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-sm text-muted-foreground">Outbound</dt>
-                <dd className="text-sm">{formatBps(metro.out_bps)}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-sm text-muted-foreground">Validators</dt>
-                <dd className="text-sm">{metro.validator_count}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-sm text-muted-foreground">Total Stake</dt>
-                <dd className="text-sm">{formatStake(metro.stake_sol)}</dd>
-              </div>
-            </dl>
+          <div className="bg-muted/30 rounded-lg px-2 py-2.5 text-center">
+            <div className="text-sm font-medium">{metro.facility_count}</div>
+            <div className="text-xs text-muted-foreground">Facilities</div>
           </div>
-
-          {/* Map */}
-          <div className="border border-border rounded-lg overflow-hidden bg-card min-h-40">
+          <div className="bg-muted/30 rounded-lg px-2 py-2.5 text-center">
+            <div className="text-sm font-medium tabular-nums">
+              {metro.user_count}
+              {metro.max_users > 0 && <span className="text-muted-foreground">/{metro.max_users}</span>}
+            </div>
+            <div className="text-xs text-muted-foreground">Users</div>
+          </div>
+          <div className="bg-muted/30 rounded-lg px-2 py-2.5 text-center">
+            <div className="text-sm font-medium">{stats ? stats.validator_count : '—'}</div>
+            <div className="text-xs text-muted-foreground">Validators</div>
+          </div>
+          {/* Map — spans both rows */}
+          <div className="rounded-lg overflow-hidden border border-border" style={{ gridRow: 'span 2' }}>
             <MiniMap
               lat={metro.latitude}
               lng={metro.longitude}
               googleMapsHref={`https://www.google.com/maps?q=${metro.latitude},${metro.longitude}`}
             />
           </div>
+          {/* Row 2 */}
+          <div className="bg-muted/30 rounded-lg px-2 py-2.5 text-center">
+            <div className="text-sm font-medium">{stats ? formatBps(stats.in_bps) : '—'}</div>
+            <div className="text-xs text-muted-foreground">Inbound</div>
+          </div>
+          <div className="bg-muted/30 rounded-lg px-2 py-2.5 text-center">
+            <div className="text-sm font-medium">{stats ? formatBps(stats.out_bps) : '—'}</div>
+            <div className="text-xs text-muted-foreground">Outbound</div>
+          </div>
+          <div className="bg-muted/30 rounded-lg px-2 py-2.5 text-center" style={{ gridColumn: 'span 2' }}>
+            <div className="text-sm font-medium">{stats ? formatStake(stats.stake_sol) : '—'}</div>
+            <div className="text-xs text-muted-foreground">Total Stake</div>
+          </div>
         </div>
+
+        {/* Capacity cards */}
+        {(() => {
+          const effUnicast = Math.max(metro.unicast_users_count, metro.max_unicast_users)
+          const effSubs = Math.max(metro.multicast_subscribers_count, metro.max_multicast_subscribers)
+          const effPubs = Math.max(metro.multicast_publishers_count, metro.max_multicast_publishers)
+          const hasCapacity = effUnicast > 0 || effSubs > 0 || effPubs > 0
+          if (!hasCapacity) return null
+          return (
+            <div className="grid grid-cols-3 gap-1.5 mb-10">
+              {[
+                { label: 'Unicast', used: metro.unicast_users_count, max: effUnicast },
+                { label: 'Subscribers', used: metro.multicast_subscribers_count, max: effSubs },
+                { label: 'Publishers', used: metro.multicast_publishers_count, max: effPubs },
+              ].map(({ label, used, max }) => {
+                const available = max > used ? max - used : 0
+                const pct = max > 0 ? Math.min(100, (used / max) * 100) : 0
+                const fillColor = pct >= 90 ? 'bg-red-500/50' : pct >= 70 ? 'bg-amber-500/40' : 'bg-blue-500/30'
+                return (
+                  <div key={label} className="border border-border rounded-lg overflow-hidden">
+                    <div className="grid grid-cols-2 divide-x divide-border">
+                      <div className="p-2.5 text-center bg-muted/30">
+                        <div className="text-sm font-medium tabular-nums">{used}</div>
+                        <div className="text-xs text-muted-foreground">{label}</div>
+                      </div>
+                      <div className="p-2.5 text-center bg-muted/10">
+                        <div className="text-sm font-medium tabular-nums text-muted-foreground">{available}</div>
+                        <div className="text-xs text-muted-foreground/60">Available</div>
+                      </div>
+                    </div>
+                    {pct > 0 && (
+                      <div className="relative h-[3px] bg-muted/60">
+                        <div className={`absolute inset-y-0 left-0 ${fillColor}`} style={{ width: `${pct}%` }} />
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )
+        })()}
 
         {/* Devices table */}
         {devices.length > 0 && (
