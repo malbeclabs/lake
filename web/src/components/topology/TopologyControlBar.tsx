@@ -308,7 +308,6 @@ export function TopologyControlBar({
             active={view === 'globe'}
             activeColor="blue"
             collapsed={collapsed}
-            tooltip="3D view of the DoubleZero network on a globe. Shows the same metros, devices, and links as the map view in a spherical projection."
           />
 
           {onZoomIn && (
