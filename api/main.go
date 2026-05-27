@@ -561,6 +561,7 @@ func main() {
 		r.Get("/api/dz/devices/{pk}/validator-stats", api.GetDeviceValidatorStats)
 		r.Get("/api/dz/devices/{pk}/optics", api.GetDeviceOptics)
 		r.Get("/api/dz/devices/{pk}/optics/history", api.GetDeviceOpticsHistory)
+		r.Get("/api/dz/network-state", api.GetNetworkState)
 		r.Get("/api/dz/links", api.GetLinks)
 		r.Get("/api/dz/links/{pk}", api.GetLink)
 		r.Get("/api/dz/links-health", api.GetLinkHealth)
