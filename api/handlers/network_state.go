@@ -165,36 +165,56 @@ func (a *API) GetNetworkState(w http.ResponseWriter, r *http.Request) {
 }
 
 func queryNetworkFreshness(ctx context.Context, conn driver.Conn, tdb string) ([]TelemetryFreshness, error) {
-	freshness := make([]TelemetryFreshness, 0, len(networkStateFreshnessTables))
-	for _, table := range networkStateFreshnessTables {
-		query := fmt.Sprintf(`
+	parts := make([]string, 0, len(networkStateFreshnessTables))
+	for i, table := range networkStateFreshnessTables {
+		parts = append(parts, fmt.Sprintf(`
 			SELECT
+				%[1]d AS table_order,
+				'%[2]s' AS table_name,
 				count() AS rows,
 				uniqExact(device_pubkey) AS devices,
 				if(count() = 0, toDateTime64(0, 9), max(timestamp)) AS last_seen,
 				if(count() = 0, -1, dateDiff('second', max(timestamp), now())) AS seconds_stale
-			FROM %[1]s.%[2]s
-		`, tdb, quoteClickHouseIdent(table))
+			FROM %[3]s.%[4]s
+		`, i, table, tdb, quoteClickHouseIdent(table)))
+	}
 
+	query := `
+		SELECT table_name, rows, devices, last_seen, seconds_stale
+		FROM (` + strings.Join(parts, ` UNION ALL `) + `)
+		ORDER BY table_order
+	`
+
+	start := time.Now()
+	resultRows, err := conn.Query(ctx, query)
+	metrics.RecordClickHouseQuery("network_state:freshness", time.Since(start), err)
+	if err != nil {
+		return nil, fmt.Errorf("freshness: %w", err)
+	}
+	defer resultRows.Close()
+
+	freshness := make([]TelemetryFreshness, 0, len(networkStateFreshnessTables))
+	for resultRows.Next() {
 		var (
-			rows         uint64
+			tableName    string
+			rowCount     uint64
 			devices      uint64
 			lastSeen     time.Time
 			secondsStale int64
 		)
-		start := time.Now()
-		err := conn.QueryRow(ctx, query).Scan(&rows, &devices, &lastSeen, &secondsStale)
-		metrics.RecordClickHouseQuery("network_state:freshness", time.Since(start), err)
-		if err != nil {
-			return nil, fmt.Errorf("freshness %s: %w", table, err)
+		if err := resultRows.Scan(&tableName, &rowCount, &devices, &lastSeen, &secondsStale); err != nil {
+			return nil, fmt.Errorf("freshness scan: %w", err)
 		}
 
-		item := TelemetryFreshness{Table: table, Rows: rows, Devices: devices}
-		if rows > 0 {
+		item := TelemetryFreshness{Table: tableName, Rows: rowCount, Devices: devices}
+		if rowCount > 0 {
 			item.LastSeen = lastSeen.UTC().Format(time.RFC3339)
 			item.SecondsStale = &secondsStale
 		}
 		freshness = append(freshness, item)
+	}
+	if err := resultRows.Err(); err != nil {
+		return nil, fmt.Errorf("freshness rows: %w", err)
 	}
 	return freshness, nil
 }
