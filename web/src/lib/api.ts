@@ -1356,6 +1356,71 @@ export async function fetchStatus(): Promise<StatusResponse> {
   return res.json()
 }
 
+export interface TelemetryFreshness {
+  table: string
+  rows: number
+  devices: number
+  last_seen?: string
+  seconds_stale?: number
+}
+
+export interface InterfaceFamilySummary {
+  family: string
+  interfaces: number
+  devices: number
+  admin_up: number
+  admin_down: number
+  oper_up: number
+  oper_down: number
+  oper_unknown: number
+}
+
+export interface BGPStateSummary {
+  state: string
+  neighbors: number
+  devices: number
+  internal_neighbors: number
+  external_neighbors: number
+}
+
+export interface ISISStateSummary {
+  state: string
+  adjacencies: number
+  devices: number
+  systems: number
+}
+
+export interface NetworkOpticsSummary {
+  lanes: number
+  devices: number
+  interfaces: number
+  threshold_rows: number
+  devices_with_thresholds: number
+  interfaces_with_thresholds: number
+}
+
+export interface NetworkStateResponse {
+  env: string
+  fetched_at: string
+  freshness: TelemetryFreshness[]
+  interfaces: { families: InterfaceFamilySummary[] }
+  bgp: { states: BGPStateSummary[] }
+  isis: { states: ISISStateSummary[] }
+  optics: NetworkOpticsSummary
+  known_gaps: string[]
+  cache_status?: string
+}
+
+export async function fetchNetworkState(): Promise<NetworkStateResponse> {
+  const res = await fetchWithRetry('/api/dz/network-state')
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || 'Failed to fetch network state')
+  }
+  const data = await res.json()
+  return { ...data, cache_status: res.headers.get('X-Cache') || undefined }
+}
+
 // Link history types for status timeline
 export interface LinkHourStatus {
   hour: string

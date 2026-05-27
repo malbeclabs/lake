@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
+	"golang.org/x/sync/singleflight"
 )
 
 var errNoPgPool = errors.New("postgres not configured")
@@ -61,6 +63,10 @@ type API struct {
 
 	// OnSlackInstallationChange is called when a Slack installation changes.
 	OnSlackInstallationChange func(teamID string)
+
+	networkStateCacheMu sync.RWMutex
+	networkStateCache   map[DZEnv]networkStateCacheEntry
+	networkStateGroup   singleflight.Group
 }
 
 // envDB returns the ClickHouse connection for the environment in the context.

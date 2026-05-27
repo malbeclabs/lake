@@ -94,6 +94,7 @@ const { resolvedTheme, setTheme } = useTheme()
   // Entity routes
   const isDevicesRoute = location.pathname.startsWith('/dz/devices')
   const isLinksRoute = location.pathname.startsWith('/dz/links')
+  const isNetworkStateRoute = location.pathname === '/dz/network-state'
   const isMetrosRoute = location.pathname.startsWith('/dz/metros')
   const isFacilitiesRoute = location.pathname.startsWith('/dz/facilities')
   const isContributorsRoute = location.pathname.startsWith('/dz/contributors')
@@ -564,6 +565,10 @@ const { resolvedTheme, setTheme } = useTheme()
                 Topologies
               </Link>
             )}
+            <Link to="/dz/network-state" className={navItemClass(isNetworkStateRoute)}>
+              <Activity className="h-4 w-4" />
+              Network State
+            </Link>
             <Link to="/dz/metros" className={navItemClass(isMetrosRoute)}>
               <MapPin className="h-4 w-4" />
               Metros

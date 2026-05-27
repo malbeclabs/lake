@@ -205,6 +205,61 @@ func TestGetNetworkState_MissingTelemetryTablesReturnsUsefulError(t *testing.T) 
 	assert.Contains(t, rr.Body.String(), "Telemetry schema unavailable or outdated")
 }
 
+func TestGetNetworkState_CachesPerEnv(t *testing.T) {
+	api := apitesting.NewTestAPI(t, testChDB)
+	api.EnvDatabases["mainnet-beta"] = api.Database
+	api.EnvDBs["mainnet-beta"] = api.DB
+	api.EnvDatabases["devnet"] = api.Database
+	api.EnvDBs["devnet"] = api.DB
+	createTelemetryNetworkStateTables(t, api, handlers.EnvMainnet)
+	createTelemetryNetworkStateTables(t, api, handlers.EnvDevnet)
+	ctx := t.Context()
+
+	mainnetRows := `
+		(timestamp, device_pubkey, interface_name, admin_status, oper_status) VALUES
+		(now64(9) - INTERVAL 2 SECOND, 'mainnet-dev-a', 'Ethernet1', 'UP', 'UP')
+	`
+	require.NoError(t, api.DB.Exec(ctx, fmt.Sprintf("INSERT INTO `telemetry_mainnet_beta`.interface_state %s", mainnetRows)))
+	require.NoError(t, api.DB.Exec(ctx, fmt.Sprintf("INSERT INTO `telemetry_mainnet_beta`.interface_state_latest %s", mainnetRows)))
+
+	devnetRows := `
+		(timestamp, device_pubkey, interface_name, admin_status, oper_status) VALUES
+		(now64(9) - INTERVAL 2 SECOND, 'devnet-dev-a', 'Ethernet1', 'UP', 'UP'),
+		(now64(9) - INTERVAL 2 SECOND, 'devnet-dev-b', 'Switch1/11/2', 'UP', 'DOWN')
+	`
+	require.NoError(t, api.DB.Exec(ctx, fmt.Sprintf("INSERT INTO `telemetry_devnet`.interface_state %s", devnetRows)))
+	require.NoError(t, api.DB.Exec(ctx, fmt.Sprintf("INSERT INTO `telemetry_devnet`.interface_state_latest %s", devnetRows)))
+
+	mainnetRR := httptest.NewRecorder()
+	api.GetNetworkState(mainnetRR, networkStateRequest(handlers.EnvMainnet))
+	require.Equal(t, http.StatusOK, mainnetRR.Code, mainnetRR.Body.String())
+	assert.Equal(t, "MISS", mainnetRR.Header().Get("X-Cache"))
+	mainnetResp := decodeNetworkStateResponse(t, mainnetRR)
+	assert.Equal(t, uint64(1), mainnetResp.Freshness[0].Rows)
+
+	devnetRR := httptest.NewRecorder()
+	api.GetNetworkState(devnetRR, networkStateRequest(handlers.EnvDevnet))
+	require.Equal(t, http.StatusOK, devnetRR.Code, devnetRR.Body.String())
+	assert.Equal(t, "MISS", devnetRR.Header().Get("X-Cache"))
+	devnetResp := decodeNetworkStateResponse(t, devnetRR)
+	assert.Equal(t, uint64(2), devnetResp.Freshness[0].Rows)
+
+	moreMainnetRows := `
+		(timestamp, device_pubkey, interface_name, admin_status, oper_status) VALUES
+		(now64(9) - INTERVAL 2 SECOND, 'mainnet-dev-b', 'Switch1/11/2', 'UP', 'UP')
+	`
+	require.NoError(t, api.DB.Exec(ctx, fmt.Sprintf("INSERT INTO `telemetry_mainnet_beta`.interface_state %s", moreMainnetRows)))
+	require.NoError(t, api.DB.Exec(ctx, fmt.Sprintf("INSERT INTO `telemetry_mainnet_beta`.interface_state_latest %s", moreMainnetRows)))
+
+	cachedRR := httptest.NewRecorder()
+	api.GetNetworkState(cachedRR, networkStateRequest(handlers.EnvMainnet))
+	require.Equal(t, http.StatusOK, cachedRR.Code, cachedRR.Body.String())
+	assert.Equal(t, "HIT", cachedRR.Header().Get("X-Cache"))
+	cachedResp := decodeNetworkStateResponse(t, cachedRR)
+	assert.Equal(t, uint64(1), cachedResp.Freshness[0].Rows)
+	assert.Equal(t, mainnetResp.FetchedAt, cachedResp.FetchedAt)
+}
+
 func TestGetNetworkState_SummarizesTelemetry(t *testing.T) {
 	api := apitesting.NewTestAPI(t, testChDB)
 	api.EnvDatabases["mainnet-beta"] = api.Database

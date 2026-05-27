@@ -101,53 +101,143 @@ var networkStateFreshnessTables = []string{
 	"transceiver_thresholds",
 }
 
+const (
+	networkStateCacheTTL       = 60 * time.Second
+	networkStateRequestTimeout = 20 * time.Second
+)
+
+type networkStateCacheEntry struct {
+	Response NetworkStateResponse
+	CachedAt time.Time
+	Stale    bool
+}
+
+type networkStateCacheResult struct {
+	Response    NetworkStateResponse
+	CacheStatus string
+}
+
 // GetNetworkState returns a read-only overview of the existing gNMI telemetry
 // for the selected DoubleZero environment. It reports raw observed telemetry
 // state only; callers should not treat these aggregates as incident status.
 func (a *API) GetNetworkState(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), networkStateRequestTimeout)
 	defer cancel()
 
 	env := EnvFromContext(ctx)
+	resp, cacheStatus, err := a.cachedNetworkState(ctx, env)
+	if err != nil {
+		logError("network state query failed", "error", err, "env", env)
+		http.Error(w, networkStateUserMessage(err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Cache", cacheStatus)
+	w.Header().Add("Vary", "X-DZ-Env")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		logError("network state: failed to encode response", "error", err)
+	}
+}
+
+func (a *API) cachedNetworkState(ctx context.Context, env DZEnv) (NetworkStateResponse, string, error) {
+	if entry, ok := a.freshNetworkStateCacheEntry(env, time.Now()); ok {
+		return entry.Response, entry.cacheStatus(), nil
+	}
+
+	value, err, _ := a.networkStateGroup.Do(string(env), func() (any, error) {
+		if entry, ok := a.freshNetworkStateCacheEntry(env, time.Now()); ok {
+			return networkStateCacheResult{Response: entry.Response, CacheStatus: entry.cacheStatus()}, nil
+		}
+
+		resp, err := a.FetchNetworkStateData(ctx, env)
+		if err != nil {
+			if entry, ok := a.networkStateCacheEntry(env); ok {
+				logError("network state refresh failed, serving stale cache", "error", err, "env", env)
+				a.storeNetworkStateCacheEntry(env, entry.Response, true)
+				return networkStateCacheResult{Response: entry.Response, CacheStatus: "STALE"}, nil
+			}
+			return nil, err
+		}
+
+		a.storeNetworkStateCacheEntry(env, resp, false)
+		return networkStateCacheResult{Response: resp, CacheStatus: "MISS"}, nil
+	})
+	if err != nil {
+		return NetworkStateResponse{}, "", err
+	}
+
+	result, ok := value.(networkStateCacheResult)
+	if !ok {
+		return NetworkStateResponse{}, "", fmt.Errorf("network state cache returned unexpected type %T", value)
+	}
+	return result.Response, result.CacheStatus, nil
+}
+
+func (a *API) freshNetworkStateCacheEntry(env DZEnv, now time.Time) (networkStateCacheEntry, bool) {
+	entry, ok := a.networkStateCacheEntry(env)
+	if !ok || now.Sub(entry.CachedAt) >= networkStateCacheTTL {
+		return networkStateCacheEntry{}, false
+	}
+	return entry, true
+}
+
+func (a *API) networkStateCacheEntry(env DZEnv) (networkStateCacheEntry, bool) {
+	a.networkStateCacheMu.RLock()
+	defer a.networkStateCacheMu.RUnlock()
+	entry, ok := a.networkStateCache[env]
+	return entry, ok
+}
+
+func (entry networkStateCacheEntry) cacheStatus() string {
+	if entry.Stale {
+		return "STALE"
+	}
+	return "HIT"
+}
+
+func (a *API) storeNetworkStateCacheEntry(env DZEnv, resp NetworkStateResponse, stale bool) {
+	a.networkStateCacheMu.Lock()
+	defer a.networkStateCacheMu.Unlock()
+	if a.networkStateCache == nil {
+		a.networkStateCache = make(map[DZEnv]networkStateCacheEntry)
+	}
+	a.networkStateCache[env] = networkStateCacheEntry{Response: resp, CachedAt: time.Now(), Stale: stale}
+}
+
+// FetchNetworkStateData queries ClickHouse for the current network-state
+// overview without consulting the request cache.
+func (a *API) FetchNetworkStateData(ctx context.Context, env DZEnv) (NetworkStateResponse, error) {
+	ctx = ContextWithEnv(ctx, env)
 	conn := a.envDB(ctx)
 	tdb := quoteClickHouseIdent(TelemetryDatabaseForEnv(env))
 
 	freshness, err := queryNetworkFreshness(ctx, conn, tdb)
 	if err != nil {
-		logError("network state freshness query failed", "error", err, "env", env)
-		http.Error(w, networkStateUserMessage(err), http.StatusInternalServerError)
-		return
+		return NetworkStateResponse{}, fmt.Errorf("freshness query failed: %w", err)
 	}
 
 	families, err := queryNetworkInterfaceFamilies(ctx, conn, tdb)
 	if err != nil {
-		logError("network state interface summary query failed", "error", err, "env", env)
-		http.Error(w, networkStateUserMessage(err), http.StatusInternalServerError)
-		return
+		return NetworkStateResponse{}, fmt.Errorf("interface summary query failed: %w", err)
 	}
 
 	bgpStates, err := queryNetworkBGPStates(ctx, conn, tdb)
 	if err != nil {
-		logError("network state bgp summary query failed", "error", err, "env", env)
-		http.Error(w, networkStateUserMessage(err), http.StatusInternalServerError)
-		return
+		return NetworkStateResponse{}, fmt.Errorf("bgp summary query failed: %w", err)
 	}
 
 	isisStates, err := queryNetworkISISStates(ctx, conn, tdb)
 	if err != nil {
-		logError("network state isis summary query failed", "error", err, "env", env)
-		http.Error(w, networkStateUserMessage(err), http.StatusInternalServerError)
-		return
+		return NetworkStateResponse{}, fmt.Errorf("isis summary query failed: %w", err)
 	}
 
 	optics, err := queryNetworkOptics(ctx, conn, tdb)
 	if err != nil {
-		logError("network state optics summary query failed", "error", err, "env", env)
-		http.Error(w, networkStateUserMessage(err), http.StatusInternalServerError)
-		return
+		return NetworkStateResponse{}, fmt.Errorf("optics summary query failed: %w", err)
 	}
 
-	resp := NetworkStateResponse{
+	return NetworkStateResponse{
 		Env:        string(env),
 		FetchedAt:  time.Now().UTC().Format(time.RFC3339),
 		Freshness:  freshness,
@@ -156,12 +246,7 @@ func (a *API) GetNetworkState(w http.ResponseWriter, r *http.Request) {
 		ISIS:       NetworkISISSummary{States: isisStates},
 		Optics:     optics,
 		KnownGaps:  networkStateKnownGaps(env, freshness),
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		logError("network state: failed to encode response", "error", err)
-	}
+	}, nil
 }
 
 func queryNetworkFreshness(ctx context.Context, conn driver.Conn, tdb string) ([]TelemetryFreshness, error) {
