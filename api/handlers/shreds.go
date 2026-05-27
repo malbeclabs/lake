@@ -730,7 +730,7 @@ func (a *API) GetShredEscrowEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Count query.
-	countQuery := `SELECT count(*) FROM fact_dz_shred_escrow_events AS e FINAL` + whereClause
+	countQuery := `SELECT count(*) FROM (SELECT * FROM fact_dz_shred_escrow_events FINAL) AS e` + whereClause
 	var total uint64
 	if err := a.envDB(ctx).QueryRow(ctx, countQuery, whereArgs...).Scan(&total); err != nil {
 		logError("shred escrow events count failed", "error", err)
@@ -745,7 +745,7 @@ func (a *API) GetShredEscrowEvents(w http.ResponseWriter, r *http.Request) {
 			e.event_ts, e.escrow_pk, e.client_seat_pk, e.tx_signature, e.slot,
 			e.event_type, e.amount_usdc, e.balance_after_usdc, e.epoch, e.status, e.signer,
 			COALESCE(s.client_ip, '') as client_ip
-		FROM fact_dz_shred_escrow_events AS e FINAL
+		FROM (SELECT * FROM fact_dz_shred_escrow_events FINAL) AS e
 		LEFT JOIN dim_dz_shred_client_seats_current s ON e.client_seat_pk = s.pk
 	` + whereClause + ` ` + orderBy + ` LIMIT ? OFFSET ?`
 	queryArgs := append(whereArgs, pagination.Limit, pagination.Offset)
