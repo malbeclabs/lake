@@ -18,6 +18,7 @@ import (
 	dzgeoloc "github.com/malbeclabs/lake/indexer/pkg/dz/geolocation"
 	dzgraph "github.com/malbeclabs/lake/indexer/pkg/dz/graph"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/isis"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/mroute"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/escrowevents"
@@ -45,6 +46,8 @@ type Config struct {
 	GraphStore     *dzgraph.Store     // optional
 	ISISSource     isis.Source        // optional
 	ISISStore      *isis.Store        // optional
+	MrouteSource   mroute.Source      // optional
+	MrouteStore    *mroute.Store      // optional
 }
 
 // TaskQueue returns the Temporal task queue name for the given network.
@@ -90,6 +93,8 @@ func Start(ctx context.Context, cfg Config) error {
 		GraphStore:     cfg.GraphStore,
 		ISISSource:     cfg.ISISSource,
 		ISISStore:      cfg.ISISStore,
+		MrouteSource:   cfg.MrouteSource,
+		MrouteStore:    cfg.MrouteStore,
 	}
 
 	w := worker.New(tc, tq, worker.Options{})

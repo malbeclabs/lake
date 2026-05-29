@@ -76,6 +76,16 @@ type Config struct {
 	ISISS3EndpointURL   string        // Custom S3 endpoint URL (for testing)
 	ISISRefreshInterval time.Duration // Refresh interval for IS-IS sync (default: 30s)
 
+	// Mroute (state-collect) configuration (optional).
+	// When enabled, periodically pulls `show ip mroute | json` snapshots that
+	// doublezero-telemetry uploads to S3 and writes the parsed entries to
+	// ClickHouse as a type-2 dimension.
+	MrouteEnabled       bool
+	MrouteS3Bucket      string // S3 bucket the state-ingest server writes to
+	MrouteS3Region      string // AWS region (default: us-east-1)
+	MrouteS3KeyPrefix   string // Optional matching state-ingest BucketPathPrefix
+	MrouteS3EndpointURL string // Custom S3 endpoint URL (for testing)
+
 	// validators.app configuration (optional, mainnet-beta only).
 	ValidatorsAppClient          validatorsapp.Client
 	ValidatorsAppRefreshInterval time.Duration

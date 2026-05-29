@@ -10,6 +10,7 @@ import (
 	dzgeoloc "github.com/malbeclabs/lake/indexer/pkg/dz/geolocation"
 	dzgraph "github.com/malbeclabs/lake/indexer/pkg/dz/graph"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/isis"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/mroute"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/escrowevents"
@@ -41,6 +42,8 @@ type Activities struct {
 	GraphStore     *dzgraph.Store     // nil when Neo4j is not configured
 	ISISSource     isis.Source        // nil when ISIS is not enabled
 	ISISStore      *isis.Store        // nil when ISIS is not enabled
+	MrouteSource   mroute.Source      // nil when mroute ingest is not enabled
+	MrouteStore    *mroute.Store      // nil when mroute ingest is not enabled
 
 	// failures tracks consecutive-failure counts per activity name.
 	// map[string]*atomic.Int32; populated lazily.
@@ -208,6 +211,25 @@ func (a *Activities) RefreshShredEscrowEvents(ctx context.Context) error {
 			return result, fmt.Errorf("escrow events refresh: %w", err)
 		}
 		return result, nil
+	})
+}
+
+// SyncIPMroute fetches per-device `show ip mroute` snapshots from S3 (uploaded
+// by doublezero-telemetry --state-collect-enable) and replaces the
+// dz_ip_mroute_entries dimension in ClickHouse. No-op if mroute ingest is not
+// configured.
+func (a *Activities) SyncIPMroute(ctx context.Context) error {
+	if a.MrouteSource == nil || a.MrouteStore == nil {
+		a.IngestionLog.WrapSkipped(ctx, "dzingest", "SyncIPMroute", a.Network)
+		return nil
+	}
+	return a.refresh(ctx, "SyncIPMroute", func() (ingestionlog.RefreshResult, error) {
+		var result ingestionlog.RefreshResult
+		dumps, err := a.MrouteSource.FetchLatest(ctx)
+		if err != nil {
+			return result, fmt.Errorf("mroute fetch: %w", err)
+		}
+		return result, a.MrouteStore.Sync(ctx, dumps)
 	})
 }
 

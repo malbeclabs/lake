@@ -116,6 +116,12 @@ func run() error {
 	isisS3RegionFlag := flag.String("isis-s3-region", "us-east-1", "AWS region for IS-IS S3 bucket (or set ISIS_S3_REGION env var)")
 	isisRefreshIntervalFlag := flag.Duration("isis-refresh-interval", 30*time.Second, "Refresh interval for IS-IS sync (or set ISIS_REFRESH_INTERVAL env var)")
 
+	// Mroute (state-collect) configuration
+	mrouteEnabledFlag := flag.Bool("mroute-enabled", false, "Enable mroute state-collect sync from S3 (or set MROUTE_ENABLED env var)")
+	mrouteS3BucketFlag := flag.String("mroute-s3-bucket", "", "S3 bucket the state-ingest server writes to (or set MROUTE_S3_BUCKET env var)")
+	mrouteS3RegionFlag := flag.String("mroute-s3-region", "us-east-1", "AWS region for mroute S3 bucket (or set MROUTE_S3_REGION env var)")
+	mrouteS3KeyPrefixFlag := flag.String("mroute-s3-key-prefix", "", "Optional key prefix matching state-ingest BucketPathPrefix (or set MROUTE_S3_KEY_PREFIX env var)")
+
 	// validators.app configuration
 	validatorsAppAPIKeyFlag := flag.String("validatorsapp-api-key", "", "validators.app API key (or set VALIDATORSAPP_API_KEY env var)")
 	validatorsAppRefreshIntervalFlag := flag.Duration("validatorsapp-refresh-interval", 5*time.Minute, "validators.app refresh interval (or set VALIDATORSAPP_REFRESH_INTERVAL env var)")
@@ -192,6 +198,20 @@ func run() error {
 		if d, err := time.ParseDuration(envISISRefreshInterval); err == nil {
 			*isisRefreshIntervalFlag = d
 		}
+	}
+
+	// Override mroute flags with environment variables if set
+	if envMrouteEnabled := os.Getenv("MROUTE_ENABLED"); envMrouteEnabled != "" {
+		*mrouteEnabledFlag = envMrouteEnabled == "true"
+	}
+	if envMrouteBucket := os.Getenv("MROUTE_S3_BUCKET"); envMrouteBucket != "" {
+		*mrouteS3BucketFlag = envMrouteBucket
+	}
+	if envMrouteRegion := os.Getenv("MROUTE_S3_REGION"); envMrouteRegion != "" {
+		*mrouteS3RegionFlag = envMrouteRegion
+	}
+	if envMroutePrefix := os.Getenv("MROUTE_S3_KEY_PREFIX"); envMroutePrefix != "" {
+		*mrouteS3KeyPrefixFlag = envMroutePrefix
 	}
 
 	// Override validators.app flags with environment variables
@@ -566,6 +586,12 @@ func run() error {
 		ISISS3Region:        *isisS3RegionFlag,
 		ISISRefreshInterval: *isisRefreshIntervalFlag,
 
+		// Mroute (state-collect) configuration
+		MrouteEnabled:     *mrouteEnabledFlag,
+		MrouteS3Bucket:    *mrouteS3BucketFlag,
+		MrouteS3Region:    *mrouteS3RegionFlag,
+		MrouteS3KeyPrefix: *mrouteS3KeyPrefixFlag,
+
 		// validators.app configuration
 		ValidatorsAppClient:          validatorsAppClient,
 		ValidatorsAppRefreshInterval: *validatorsAppRefreshIntervalFlag,
@@ -632,6 +658,8 @@ func run() error {
 				GraphStore:     idx.GraphStore(),
 				ISISSource:     idx.ISISSource(),
 				ISISStore:      idx.ISISStore(),
+				MrouteSource:   idx.MrouteSource(),
+				MrouteStore:    idx.MrouteStore(),
 			})
 			if err != nil {
 				dzIngestErrCh <- err
