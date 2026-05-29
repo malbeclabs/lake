@@ -10,6 +10,7 @@ import (
 	dzgeoloc "github.com/malbeclabs/lake/indexer/pkg/dz/geolocation"
 	dzgraph "github.com/malbeclabs/lake/indexer/pkg/dz/graph"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/isis"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/mroute"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/escrowevents"
@@ -36,6 +37,8 @@ type Indexer struct {
 	geoip         *mcpgeoip.View
 	isisSource    isis.Source
 	isisStore     *isis.Store
+	mrouteSource  mroute.Source
+	mrouteStore   *mroute.Store
 	validatorsApp *validatorsapp.View
 }
 
@@ -247,6 +250,32 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 			"region", cfg.ISISS3Region)
 	}
 
+	// Initialize mroute source and store if enabled
+	var mrouteSource mroute.Source
+	var mrouteStore *mroute.Store
+	if cfg.MrouteEnabled {
+		mrouteSource, err = mroute.NewS3Source(ctx, mroute.S3SourceConfig{
+			Bucket:      cfg.MrouteS3Bucket,
+			Region:      cfg.MrouteS3Region,
+			KeyPrefix:   cfg.MrouteS3KeyPrefix,
+			EndpointURL: cfg.MrouteS3EndpointURL,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create mroute S3 source: %w", err)
+		}
+		mrouteStore, err = mroute.NewStore(mroute.StoreConfig{
+			Logger:     cfg.Logger,
+			ClickHouse: cfg.ClickHouse,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create mroute store: %w", err)
+		}
+		cfg.Logger.Info("mroute state-collect source initialized",
+			"bucket", cfg.MrouteS3Bucket,
+			"region", cfg.MrouteS3Region,
+			"key_prefix", cfg.MrouteS3KeyPrefix)
+	}
+
 	// Initialize validators.app view (optional)
 	var validatorsAppView *validatorsapp.View
 	if cfg.ValidatorsAppClient != nil {
@@ -277,6 +306,8 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 		geoip:         geoipView,
 		isisSource:    isisSource,
 		isisStore:     isisStore,
+		mrouteSource:  mrouteSource,
+		mrouteStore:   mrouteStore,
 		validatorsApp: validatorsAppView,
 	}
 
@@ -302,6 +333,12 @@ func (i *Indexer) Close() error {
 		if err := i.isisSource.Close(); err != nil {
 			i.log.Warn("failed to close ISIS source", "error", err)
 			errs = append(errs, fmt.Errorf("failed to close ISIS source: %w", err))
+		}
+	}
+	if i.mrouteSource != nil {
+		if err := i.mrouteSource.Close(); err != nil {
+			i.log.Warn("failed to close mroute source", "error", err)
+			errs = append(errs, fmt.Errorf("failed to close mroute source: %w", err))
 		}
 	}
 	if len(errs) > 0 {
@@ -350,6 +387,16 @@ func (i *Indexer) ISISSource() isis.Source {
 // ISISStore returns the ISIS ClickHouse store, or nil if not configured.
 func (i *Indexer) ISISStore() *isis.Store {
 	return i.isisStore
+}
+
+// MrouteSource returns the state-collect mroute data source, or nil if not configured.
+func (i *Indexer) MrouteSource() mroute.Source {
+	return i.mrouteSource
+}
+
+// MrouteStore returns the mroute ClickHouse store, or nil if not configured.
+func (i *Indexer) MrouteStore() *mroute.Store {
+	return i.mrouteStore
 }
 
 // Geolocation returns the geolocation view, or nil if not configured.

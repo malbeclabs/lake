@@ -383,6 +383,8 @@ github.com/testcontainers/testcontainers-go v0.42.0 h1:He3IhTzTZOygSXLJPMX7n44Xt
 github.com/testcontainers/testcontainers-go v0.42.0/go.mod h1:vZjdY1YmUA1qEForxOIOazfsrdyORJAbhi0bp8plN30=
 github.com/testcontainers/testcontainers-go/modules/clickhouse v0.42.0 h1:SwtkmOTGr0P2+XA2WuDYYNMv2rx7XdIZLZcqJGHB4yA=
 github.com/testcontainers/testcontainers-go/modules/clickhouse v0.42.0/go.mod h1:J3Fm+fPJvXcuS2hu3hTEDJ0NEiEDhOqB1gocXre1FVc=
+github.com/testcontainers/testcontainers-go/modules/minio v0.42.0 h1:8yTWNv8ALG7JQHYvm1n9PegH0uJT7dRtWNHf6eQeTRs=
+github.com/testcontainers/testcontainers-go/modules/minio v0.42.0/go.mod h1:bcjonmVMA/aEzxFFIh/FRwSkeZ+fnxwvkGN/Z4EiW28=
 github.com/testcontainers/testcontainers-go/modules/neo4j v0.42.0 h1:F0AwRqPoxGVIHBG4sP/JOpRd47vM3wcxZABPtiQNnFk=
 github.com/testcontainers/testcontainers-go/modules/neo4j v0.42.0/go.mod h1:/hhq15EFU9OdNRXe7y3dQa/FrqFANyJxqBXDfwEGaVY=
 github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0 h1:GCbb1ndrF7OTDiIvxXyItaDab4qkzTFJ48LKFdM7EIo=

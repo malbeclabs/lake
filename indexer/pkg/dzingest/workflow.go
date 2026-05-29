@@ -60,6 +60,7 @@ func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 		shredsFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshShreds)
 		escrowEventsFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshShredEscrowEvents)
 		isisSyncFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).SyncISIS)
+		mrouteSyncFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).SyncIPMroute)
 		graphSyncFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).SyncGraph)
 
 		// Telemetry usage runs less frequently (~5 minutes).
@@ -97,6 +98,12 @@ func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 				return ctx.Err()
 			}
 			logger.Error("isis sync failed", "error", err)
+		}
+		if err := mrouteSyncFuture.Get(ctx, nil); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			logger.Error("mroute sync failed", "error", err)
 		}
 		if err := graphSyncFuture.Get(ctx, nil); err != nil {
 			if ctx.Err() != nil {
