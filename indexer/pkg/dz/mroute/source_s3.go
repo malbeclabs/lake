@@ -2,6 +2,7 @@ package mroute
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -10,6 +11,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+
+	"github.com/malbeclabs/lake/indexer/pkg/dz/statecollect"
 )
 
 // SnapshotKind is the state-collect kind name for mroute dumps. It matches the
@@ -87,7 +90,9 @@ func (s *S3Source) snapshotsPrefix() string {
 }
 
 // FetchLatest enumerates device subprefixes under the snapshots/ip-mroute/
-// path and returns the most recent dump per device within the lookback window.
+// path and returns the most recent dump per device within the lookback
+// window. Each S3 object is a statecollect.Envelope; this method unwraps
+// it so callers receive only the inner Arista JSON in Dump.RawJSON.
 func (s *S3Source) FetchLatest(ctx context.Context) ([]*Dump, error) {
 	devices, err := s.listDevicePubkeys(ctx)
 	if err != nil {
@@ -97,7 +102,7 @@ func (s *S3Source) FetchLatest(ctx context.Context) ([]*Dump, error) {
 	now := time.Now().UTC()
 	var dumps []*Dump
 	for _, pubkey := range devices {
-		key, snapTS, err := s.latestKeyForDevice(ctx, pubkey, now)
+		key, keyTS, err := s.latestKeyForDevice(ctx, pubkey, now)
 		if err != nil {
 			return nil, err
 		}
@@ -108,11 +113,34 @@ func (s *S3Source) FetchLatest(ctx context.Context) ([]*Dump, error) {
 		if err != nil {
 			return nil, err
 		}
+
+		var env statecollect.Envelope
+		if err := json.Unmarshal(body, &env); err != nil {
+			return nil, fmt.Errorf("mroute: decode envelope %s: %w", key, err)
+		}
+		if env.Metadata.Kind != "" && env.Metadata.Kind != SnapshotKind {
+			return nil, fmt.Errorf("mroute: envelope kind mismatch in %s: got %q, want %q",
+				key, env.Metadata.Kind, SnapshotKind)
+		}
+
+		// Prefer the envelope's authoritative metadata; fall back to what
+		// we parsed out of the S3 key when the envelope is missing fields.
+		devicePK := pubkey
+		if env.Metadata.Device != "" {
+			devicePK = env.Metadata.Device
+		}
+		snapTS := keyTS
+		if env.Metadata.Timestamp != "" {
+			if parsed, err := time.Parse(time.RFC3339, env.Metadata.Timestamp); err == nil {
+				snapTS = parsed.UTC()
+			}
+		}
+
 		dumps = append(dumps, &Dump{
 			FetchedAt:    time.Now().UTC(),
 			SnapshotTS:   snapTS,
-			DevicePubkey: pubkey,
-			RawJSON:      body,
+			DevicePubkey: devicePK,
+			RawJSON:      env.Data,
 			FileName:     key,
 		})
 	}

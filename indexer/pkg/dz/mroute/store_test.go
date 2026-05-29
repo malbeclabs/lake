@@ -108,6 +108,58 @@ func TestStore_SCD2_RoundTrip(t *testing.T) {
 	})
 }
 
+// TestStore_Sync_FailsFastOnParseError locks in the fail-fast contract:
+// when any dump in a batch is unparseable, Sync must return an error and
+// write nothing — including not tombstoning prior state for the
+// well-formed devices in the same batch.
+func TestStore_Sync_FailsFastOnParseError(t *testing.T) {
+	info := laketesting.NewClientWithInfo(t, sharedDB)
+	store, err := NewStore(StoreConfig{
+		Logger:     laketesting.NewLogger(),
+		ClickHouse: info.Client,
+	})
+	require.NoError(t, err)
+
+	const devicePK = "DzPkFailFast111111111111111111111111111111111"
+
+	// Seed one row so we can check it survives the failed sync.
+	seedRow := EntryToRow(devicePK, Entry{
+		VRF:           "default",
+		Mode:          ModeSparse,
+		GroupAddress:  "233.84.178.1",
+		SourceAddress: "10.0.0.99",
+		RouteFlags:    "SMP",
+		RpfInterface:  "Port-Channel1000",
+		OifList:       []string{"Port-Channel3000"},
+		CreationTime:  time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC),
+	})
+	require.NoError(t, store.ReplaceEntries(t.Context(), []Row{seedRow}))
+	require.Len(t, queryCurrent(t, info.Client, devicePK), 1, "seed should be visible")
+
+	// Now run a Sync with one good dump + one corrupt dump. Whether
+	// the good dump's device exists in seed state or not, Sync must
+	// refuse to write.
+	goodDump := &Dump{
+		DevicePubkey: devicePK,
+		FileName:     "good.json",
+		RawJSON:      []byte(`{"vrfs":{"default":{"sparseMode":{"groups":{}},"bidirectional":{"groups":{}}}}}`),
+	}
+	corruptDump := &Dump{
+		DevicePubkey: "DzPkBad22222222222222222222222222222222222222",
+		FileName:     "corrupt.json",
+		RawJSON:      []byte(`{"vrfs": "not-an-object"`), // truncated + wrong shape
+	}
+
+	err = store.Sync(t.Context(), []*Dump{goodDump, corruptDump})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "refusing to write")
+
+	// The seed must still be visible — the failed sync didn't tombstone it.
+	got := queryCurrent(t, info.Client, devicePK)
+	require.Len(t, got, 1, "seeded row must survive a sync that failed before write")
+	assert.Equal(t, "10.0.0.99", got[0].SourceAddress)
+}
+
 type currentRow struct {
 	DevicePubkey  string
 	GroupAddress  string

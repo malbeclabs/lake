@@ -1,8 +1,9 @@
 package mroute
 
 import (
+	"bytes"
 	"context"
-	"strings"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	tcminio "github.com/testcontainers/testcontainers-go/modules/minio"
+
+	"github.com/malbeclabs/lake/indexer/pkg/dz/statecollect"
 )
 
 // TestS3Source_FetchLatest_MinIO is layer C: round-trip the source against a
@@ -64,7 +67,9 @@ func TestS3Source_FetchLatest_MinIO(t *testing.T) {
 	yesterday := now.AddDate(0, 0, -1)
 
 	// devA has two snapshots today (later one should win) and one yesterday.
-	// devB has a single snapshot today.
+	// devB has a single snapshot today. Body is the raw Arista JSON; the
+	// fixture wraps it in the StateSnapshot envelope before upload, matching
+	// what controlplane/telemetry/internal/state/collector.go writes.
 	type fixture struct {
 		pubkey string
 		ts     time.Time
@@ -83,10 +88,19 @@ func TestS3Source_FetchLatest_MinIO(t *testing.T) {
 
 	for _, f := range fixtures {
 		key := buildStateIngestKey(f.pubkey, f.ts)
-		_, err := rawS3.PutObject(ctx, &s3.PutObjectInput{
+		body, err := json.Marshal(statecollect.Envelope{
+			Metadata: statecollect.Metadata{
+				Kind:      SnapshotKind,
+				Timestamp: f.ts.UTC().Format(time.RFC3339),
+				Device:    f.pubkey,
+			},
+			Data: json.RawMessage(f.body),
+		})
+		require.NoError(t, err)
+		_, err = rawS3.PutObject(ctx, &s3.PutObjectInput{
 			Bucket: aws.String(bucket),
 			Key:    aws.String(key),
-			Body:   strings.NewReader(f.body),
+			Body:   bytes.NewReader(body),
 		})
 		require.NoError(t, err, "put %s", key)
 	}
