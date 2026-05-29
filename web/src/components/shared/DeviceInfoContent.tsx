@@ -3,10 +3,11 @@ import { Info } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import type { DeviceInterface } from '@/lib/api'
-import { fetchDeviceMetrics } from '@/lib/api'
+import { fetchDeviceControllerCalls, fetchDeviceMetrics } from '@/lib/api'
 import { DeviceHealthTimeline } from '@/components/device-charts/DeviceHealthTimeline'
 import { DeviceTrafficChart } from '@/components/device-charts/DeviceTrafficChart'
 import { DeviceInterfaceIssuesChart } from '@/components/device-charts/DeviceInterfaceIssuesChart'
+import { DeviceControllerCallsChart } from '@/components/device-charts/DeviceControllerCallsChart'
 import { toDeviceMetricsParams } from '@/components/shared/metrics-params'
 import { TimeRangeSelector } from '@/components/topology/TimeRangeSelector'
 import type { TimeRange } from '@/components/topology/utils'
@@ -152,6 +153,12 @@ export function DeviceInfoContent({
   const { data: metrics, isFetching: metricsFetching } = useQuery({
     queryKey: ['deviceMetrics', device.pk, metricsParams],
     queryFn: () => fetchDeviceMetrics(device.pk, metricsParams),
+    enabled: !hideCharts,
+  })
+
+  const { data: controllerCalls, isFetching: controllerCallsFetching } = useQuery({
+    queryKey: ['deviceControllerCalls', device.pk, metricsParams],
+    queryFn: () => fetchDeviceControllerCalls(device.pk, metricsParams),
     enabled: !hideCharts,
   })
 
@@ -316,6 +323,14 @@ export function DeviceInfoContent({
         {/* Charts from unified metrics endpoint */}
         {!hideCharts && metrics && (
           <div className="space-y-4">
+            <DeviceControllerCallsChart
+              data={controllerCalls}
+              loading={controllerCallsFetching}
+              className={cardClass}
+              compact={compact}
+              onBarHover={setHoveredTimeRange}
+              highlightedTime={chartHoveredTime}
+            />
             {!hideStatusRow && (
               <DeviceHealthTimeline
                 data={metrics}
@@ -428,6 +443,13 @@ export function DeviceInfoContent({
 
       {!hideCharts && metrics && (
         <div className="space-y-4">
+          <DeviceControllerCallsChart
+            data={controllerCalls}
+            loading={controllerCallsFetching}
+            className={cardClass}
+            onBarHover={setHoveredTimeRange}
+            highlightedTime={chartHoveredTime}
+          />
           {!hideStatusRow && (
             <DeviceHealthTimeline
               data={metrics}

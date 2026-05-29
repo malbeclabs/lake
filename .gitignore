@@ -1,5 +1,8 @@
 .DS_STORE
 .env
+.env.*
+!.env.example
+!*/.env.example
 .idea
 .private
 .vscode

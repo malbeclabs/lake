@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Loader2, RefreshCw, Server, AlertCircle, ArrowLeft } from 'lucide-react'
 import { CopyableText } from '@/components/copyable-text'
-import { fetchDevice, fetchDeviceMetrics, fetchDeviceValidatorStats } from '@/lib/api'
+import { fetchDevice, fetchDeviceControllerCalls, fetchDeviceMetrics, fetchDeviceValidatorStats } from '@/lib/api'
 import { DeviceInfoContent } from '@/components/shared/DeviceInfoContent'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useBackLink } from '@/hooks/use-back-link'
@@ -14,6 +14,7 @@ import { toDeviceMetricsParams } from '@/components/shared/metrics-params'
 import { DeviceHealthTimeline } from '@/components/device-charts/DeviceHealthTimeline'
 import { DeviceInterfaceIssuesChart } from '@/components/device-charts/DeviceInterfaceIssuesChart'
 import { DeviceTrafficChart } from '@/components/device-charts/DeviceTrafficChart'
+import { DeviceControllerCallsChart } from '@/components/device-charts/DeviceControllerCallsChart'
 import { DeviceOpticsPanel } from '@/components/device-charts/DeviceOpticsPanel'
 import { TimeRangeSelector } from '@/components/topology/TimeRangeSelector'
 import type { TimeRange } from '@/components/topology/utils'
@@ -78,6 +79,16 @@ export function DeviceDetailPage() {
   } = useQuery({
     queryKey: ['deviceMetrics', pk, metricsParams],
     queryFn: () => fetchDeviceMetrics(pk!, metricsParams),
+    enabled: !!pk,
+  })
+
+  const {
+    data: controllerCalls,
+    isLoading: controllerCallsLoading,
+    isFetching: controllerCallsFetching,
+  } = useQuery({
+    queryKey: ['deviceControllerCalls', pk, metricsParams],
+    queryFn: () => fetchDeviceControllerCalls(pk!, metricsParams),
     enabled: !!pk,
   })
 
@@ -207,12 +218,15 @@ export function DeviceDetailPage() {
       <div className="max-w-[1200px] mx-auto px-4 sm:px-8 pb-8 space-y-6">
         <div className="flex justify-end gap-2 items-center">
           <button
-            onClick={() => queryClient.invalidateQueries({ queryKey: ['deviceMetrics'] })}
-            disabled={metricsFetching}
+            onClick={() => {
+              queryClient.invalidateQueries({ queryKey: ['deviceMetrics'] })
+              queryClient.invalidateQueries({ queryKey: ['deviceControllerCalls'] })
+            }}
+            disabled={metricsFetching || controllerCallsFetching}
             className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
             title="Refresh"
           >
-            {metricsFetching ? (
+            {metricsFetching || controllerCallsFetching ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <RefreshCw className="h-4 w-4" />
@@ -260,6 +274,13 @@ export function DeviceDetailPage() {
         )}
         {metrics && (
           <div className="space-y-4">
+            <DeviceControllerCallsChart
+              data={controllerCalls}
+              loading={controllerCallsLoading || controllerCallsFetching}
+              className="rounded-lg border border-border p-4"
+              onBarHover={setHoveredTimeRange}
+              highlightedTime={chartHoveredTime}
+            />
             <DeviceHealthTimeline
               data={metrics}
               onBarHover={setHoveredTimeRange}

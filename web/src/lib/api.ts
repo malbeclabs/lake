@@ -2957,6 +2957,58 @@ export async function fetchDeviceValidatorStats(pk: string): Promise<DeviceValid
   return res.json()
 }
 
+export type DeviceControllerCallStatus = 'calling' | 'stopped' | 'recovered' | 'no_data' | 'not_expected'
+
+export interface DeviceControllerCallsBucket {
+  ts: string
+  calls: number
+  minutes_with_calls: number
+  status: DeviceControllerCallStatus
+  gap_seconds?: number
+}
+
+export interface DeviceControllerCallsResponse {
+  device_pk: string
+  device_code: string
+  device_status: string
+  time_range: string
+  bucket_seconds: number
+  bucket_count: number
+  from: string
+  to: string
+  source_available: boolean
+  last_call_at?: string
+  current_gap_seconds?: number
+  last_status: DeviceControllerCallStatus
+  total_calls: number
+  minutes_with_calls: number
+  alert_threshold_minutes: number
+  history_window_hours: number
+  prior_history_minimum: number
+  buckets: DeviceControllerCallsBucket[]
+}
+
+export interface FetchDeviceControllerCallsParams {
+  range?: string
+  startTime?: number
+  endTime?: number
+  bucket?: string
+}
+
+export async function fetchDeviceControllerCalls(
+  pk: string,
+  params: FetchDeviceControllerCallsParams = {}
+): Promise<DeviceControllerCallsResponse> {
+  const qs = new URLSearchParams()
+  if (params.range) qs.set('range', params.range)
+  if (params.startTime) qs.set('start_time', params.startTime.toString())
+  if (params.endTime) qs.set('end_time', params.endTime.toString())
+  if (params.bucket) qs.set('bucket', params.bucket)
+  const res = await apiFetch(`/api/dz/devices/${encodeURIComponent(pk)}/controller-calls${qs.toString() ? '?' + qs.toString() : ''}`)
+  if (!res.ok) throw new Error('Failed to fetch device controller calls')
+  return res.json()
+}
+
 export type OpticsSeverity = 'ok' | 'warning' | 'critical' | 'unknown'
 
 export interface OpticsThresholds {
