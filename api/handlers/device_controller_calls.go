@@ -106,8 +106,7 @@ func (a *API) GetDeviceControllerCalls(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sourceDB := string(EnvFromContext(ctx))
-	sourceAvailable, err := controllerCallsSourceAvailable(ctx, conn, sourceDB)
+	sourceDB, sourceAvailable, err := resolveControllerCallsSourceDB(ctx, conn, EnvFromContext(ctx))
 	if err != nil {
 		logError("device controller calls: source check failed", "error", err, "pk", pk, "database", sourceDB)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
@@ -218,6 +217,20 @@ func queryDeviceControllerCallMeta(ctx context.Context, conn driver.Conn, pk str
 	err := conn.QueryRow(ctx, query, pk).Scan(&meta.Code, &meta.Status)
 	metrics.RecordClickHouseQuery("device_controller_calls_device", time.Since(start), err)
 	return meta, err
+}
+
+func resolveControllerCallsSourceDB(ctx context.Context, conn driver.Conn, env DZEnv) (string, bool, error) {
+	candidates := []string{TelemetryDatabaseForEnv(env), string(env)}
+	for _, database := range candidates {
+		available, err := controllerCallsSourceAvailable(ctx, conn, database)
+		if err != nil {
+			return database, false, err
+		}
+		if available {
+			return database, true, nil
+		}
+	}
+	return candidates[0], false, nil
 }
 
 func controllerCallsSourceAvailable(ctx context.Context, conn driver.Conn, database string) (bool, error) {
@@ -377,9 +390,11 @@ func buildDeviceControllerCallsResponse(
 			recentCalls := sumControllerCalls(prefixTimes, prefixCalls, bucketEnd.Add(-controllerCallAlertThreshold), bucketEnd)
 			if recentCalls > 0 {
 				status = ControllerCallStatusCalling
-			} else if stoppedOpen || sumControllerCalls(prefixTimes, prefixCalls, bucketEnd.Add(-controllerCallHistoryWindow), bucketEnd) > controllerCallPriorHistoryMinimum {
+			} else if sumControllerCalls(prefixTimes, prefixCalls, bucketEnd.Add(-controllerCallHistoryWindow), bucketEnd) > controllerCallPriorHistoryMinimum {
 				status = ControllerCallStatusStopped
 				stoppedOpen = true
+			} else {
+				stoppedOpen = false
 			}
 		}
 
@@ -449,11 +464,14 @@ func sumControllerCalls(times []time.Time, prefix []uint64, start, end time.Time
 
 func latestControllerCallAt(times, latestTimes []time.Time, before time.Time) *time.Time {
 	idx := sortSearchTimes(times, before) - 1
-	if idx < 0 || idx >= len(times) {
-		return nil
+	for idx >= 0 && idx < len(times) {
+		ts := latestTimes[idx]
+		if ts.Before(before) {
+			return &ts
+		}
+		idx--
 	}
-	ts := latestTimes[idx]
-	return &ts
+	return nil
 }
 
 func sortSearchTimes(times []time.Time, target time.Time) int {
