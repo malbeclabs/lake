@@ -106,7 +106,8 @@ func (a *API) GetDeviceControllerCalls(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sourceDB, sourceAvailable, err := resolveControllerCallsSourceDB(ctx, conn, EnvFromContext(ctx))
+	sourceDB := TelemetryDatabaseForEnv(EnvFromContext(ctx))
+	sourceAvailable, err := controllerCallsSourceAvailable(ctx, conn, sourceDB)
 	if err != nil {
 		logError("device controller calls: source check failed", "error", err, "pk", pk, "database", sourceDB)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
@@ -217,20 +218,6 @@ func queryDeviceControllerCallMeta(ctx context.Context, conn driver.Conn, pk str
 	err := conn.QueryRow(ctx, query, pk).Scan(&meta.Code, &meta.Status)
 	metrics.RecordClickHouseQuery("device_controller_calls_device", time.Since(start), err)
 	return meta, err
-}
-
-func resolveControllerCallsSourceDB(ctx context.Context, conn driver.Conn, env DZEnv) (string, bool, error) {
-	candidates := []string{TelemetryDatabaseForEnv(env), string(env)}
-	for _, database := range candidates {
-		available, err := controllerCallsSourceAvailable(ctx, conn, database)
-		if err != nil {
-			return database, false, err
-		}
-		if available {
-			return database, true, nil
-		}
-	}
-	return candidates[0], false, nil
 }
 
 func controllerCallsSourceAvailable(ctx context.Context, conn driver.Conn, database string) (bool, error) {

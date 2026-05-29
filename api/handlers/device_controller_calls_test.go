@@ -134,7 +134,7 @@ func TestGetDeviceControllerCalls_PrefersTelemetrySourceDB(t *testing.T) {
 	assert.Equal(t, start.Add(20*time.Minute).Format(time.RFC3339), *resp.LastCallAt)
 }
 
-func TestGetDeviceControllerCalls_FallsBackToEnvSourceDB(t *testing.T) {
+func TestGetDeviceControllerCalls_DoesNotFallbackToEnvSourceDB(t *testing.T) {
 	api := apitesting.NewTestAPI(t, testChDB)
 	api.EnvDatabases["testnet"] = api.Database
 	api.EnvDBs["testnet"] = api.DB
@@ -155,10 +155,14 @@ func TestGetDeviceControllerCalls_FallsBackToEnvSourceDB(t *testing.T) {
 
 	var resp handlers.DeviceControllerCallsResponse
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
-	assert.True(t, resp.SourceAvailable)
-	assert.Equal(t, uint64(1), resp.TotalCalls)
-	require.NotNil(t, resp.LastCallAt)
-	assert.Equal(t, start.Add(15*time.Minute).Format(time.RFC3339), *resp.LastCallAt)
+	assert.False(t, resp.SourceAvailable)
+	assert.Equal(t, uint64(0), resp.TotalCalls)
+	assert.Nil(t, resp.LastCallAt)
+	require.Len(t, resp.Buckets, 2)
+	for _, bucket := range resp.Buckets {
+		assert.Equal(t, handlers.ControllerCallStatusNoData, bucket.Status)
+		assert.Zero(t, bucket.Calls)
+	}
 }
 
 func TestGetDeviceControllerCalls_StoppedUnlatchesAfterHistoryWindow(t *testing.T) {
@@ -226,7 +230,7 @@ func TestGetDeviceControllerCalls_ClassifiesStoppedAndRecovered(t *testing.T) {
 	api.EnvDatabases["mainnet-beta"] = api.Database
 	api.EnvDBs["mainnet-beta"] = api.DB
 	insertControllerCallTestDevice(t, api, "dev-controller-recovered", "NYC-CONTROLLER-01")
-	createControllerCallsTable(t, api, "mainnet-beta")
+	createControllerCallsTable(t, api, "telemetry_mainnet_beta")
 
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	end := start.Add(2 * time.Hour)
@@ -234,7 +238,7 @@ func TestGetDeviceControllerCalls_ClassifiesStoppedAndRecovered(t *testing.T) {
 	recoveredTS := start.Add(70 * time.Minute).Format("2006-01-02 15:04:05")
 	callingTS := start.Add(100 * time.Minute).Format("2006-01-02 15:04:05")
 
-	quotedDB := "`mainnet-beta`"
+	quotedDB := "`telemetry_mainnet_beta`"
 	require.NoError(t, api.DB.Exec(t.Context(), fmt.Sprintf(`
 		INSERT INTO %[1]s.controller_grpc_getconfig_success
 		SELECT toDateTime64('%[2]s', 3), 'dev-controller-recovered'
