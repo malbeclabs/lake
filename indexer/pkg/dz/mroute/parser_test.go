@@ -188,6 +188,61 @@ func TestParse_Empty(t *testing.T) {
 	assert.Empty(t, entries)
 }
 
+// TestParse_FlatShape verifies the parser handles the shape Arista actually
+// emits from `show ip mroute | json` — flat (no `vrfs` wrapper). The wrapped
+// form only appears when the device is queried with `vrf all`. Real S3
+// envelopes use the flat form; the parser must treat it as VRF "default".
+func TestParse_FlatShape(t *testing.T) {
+	const flat = `{
+	  "bidirectional": {
+	    "groups": {
+	      "239.1.1.1": {
+	        "groupSources": {
+	          "10.0.0.1": {
+	            "sourceAddress": "10.0.0.1",
+	            "creationTime": 1779894656.0,
+	            "routeFlags": "B",
+	            "registerInOifList": false,
+	            "rpfInterface": "Null0",
+	            "oifList": []
+	          }
+	        }
+	      }
+	    }
+	  },
+	  "sparseMode": {
+	    "groups": {
+	      "233.84.178.6": {
+	        "groupSources": {
+	          "148.51.120.0": {
+	            "sourceAddress": "148.51.120.0",
+	            "creationTime": 1779894656.0,
+	            "routeFlags": "MPE",
+	            "registerInOifList": false,
+	            "rpfInterface": "Null0",
+	            "oifList": []
+	          }
+	        }
+	      }
+	    }
+	  }
+	}`
+	entries, err := Parse([]byte(flat))
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+
+	byKey := indexByKey(entries)
+	sparse := byKey["default|sparse|233.84.178.6|148.51.120.0"]
+	require.NotNil(t, sparse)
+	assert.Equal(t, "default", sparse.VRF)
+	assert.Equal(t, ModeSparse, sparse.Mode)
+
+	bidir := byKey["default|bidirectional|239.1.1.1|10.0.0.1"]
+	require.NotNil(t, bidir)
+	assert.Equal(t, "default", bidir.VRF)
+	assert.Equal(t, ModeBidirectional, bidir.Mode)
+}
+
 func TestParse_InvalidJSON(t *testing.T) {
 	_, err := Parse([]byte("not json"))
 	assert.Error(t, err)
