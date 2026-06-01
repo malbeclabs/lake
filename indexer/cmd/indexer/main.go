@@ -726,6 +726,7 @@ func run() error {
 		dzLedgerRPCURL string
 		noInflux       bool
 		mrouteS3Bucket string // empty = mroute ingest disabled for this env
+		msdpS3Bucket   string // empty = MSDP ingest disabled for this env
 	}
 	secondaryEnvs := map[string]secondaryEnvConfig{
 		"devnet":  {database: "lake_devnet"},
@@ -761,9 +762,10 @@ func run() error {
 		cfg.noInflux = true
 		secondaryEnvs["testnet"] = cfg
 	}
-	// Mroute ingest is per-env; the bucket the state-ingest server writes to
-	// differs between devnet/testnet/mainnet. Setting the env-specific bucket
-	// enables mroute ingest for that secondary network.
+	// Mroute / MSDP ingest are per-env; setting the env-specific bucket
+	// enables the relevant ingest for that secondary network. Region and
+	// key-prefix reuse the global --{mroute,msdp}-s3-{region,key-prefix}
+	// flags.
 	if b := os.Getenv("MROUTE_S3_BUCKET_DEVNET"); b != "" {
 		cfg := secondaryEnvs["devnet"]
 		cfg.mrouteS3Bucket = b
@@ -772,6 +774,16 @@ func run() error {
 	if b := os.Getenv("MROUTE_S3_BUCKET_TESTNET"); b != "" {
 		cfg := secondaryEnvs["testnet"]
 		cfg.mrouteS3Bucket = b
+		secondaryEnvs["testnet"] = cfg
+	}
+	if b := os.Getenv("MSDP_S3_BUCKET_DEVNET"); b != "" {
+		cfg := secondaryEnvs["devnet"]
+		cfg.msdpS3Bucket = b
+		secondaryEnvs["devnet"] = cfg
+	}
+	if b := os.Getenv("MSDP_S3_BUCKET_TESTNET"); b != "" {
+		cfg := secondaryEnvs["testnet"]
+		cfg.msdpS3Bucket = b
 		secondaryEnvs["testnet"] = cfg
 	}
 	if *noDevnetFlag {
@@ -810,6 +822,9 @@ func run() error {
 				mrouteS3Bucket:             envCfg.mrouteS3Bucket,
 				mrouteS3Region:             *mrouteS3RegionFlag,
 				mrouteS3KeyPrefix:          *mrouteS3KeyPrefixFlag,
+				msdpS3Bucket:               envCfg.msdpS3Bucket,
+				msdpS3Region:               *msdpS3RegionFlag,
+				msdpS3KeyPrefix:            *msdpS3KeyPrefixFlag,
 				influxURL:                  secondaryInfluxURL,
 				influxToken:                secondaryInfluxToken,
 				influxOrg:                  influxOrg,
@@ -892,6 +907,12 @@ type secondaryNetworkConfig struct {
 	mrouteS3Bucket    string
 	mrouteS3Region    string
 	mrouteS3KeyPrefix string
+
+	// MSDP (state-collect) configuration (optional, per-env).
+	// msdpS3Bucket="" means MSDP ingest is disabled for this network.
+	msdpS3Bucket    string
+	msdpS3Region    string
+	msdpS3KeyPrefix string
 
 	// InfluxDB configuration (optional).
 	influxURL                  string
@@ -1014,6 +1035,13 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 		MrouteS3Bucket:    cfg.mrouteS3Bucket,
 		MrouteS3Region:    cfg.mrouteS3Region,
 		MrouteS3KeyPrefix: cfg.mrouteS3KeyPrefix,
+
+		// MSDP (state-collect) configuration. Enabled iff a per-env
+		// bucket was provided via MSDP_S3_BUCKET_<ENV>.
+		MSDPEnabled:     cfg.msdpS3Bucket != "",
+		MSDPS3Bucket:    cfg.msdpS3Bucket,
+		MSDPS3Region:    cfg.msdpS3Region,
+		MSDPS3KeyPrefix: cfg.msdpS3KeyPrefix,
 	}
 	if shredsClient != nil {
 		secondaryIdxCfg.ShredsRPC = shredsClient
