@@ -1029,6 +1029,8 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 		GraphStore:     idx.GraphStore(),
 		ISISSource:     idx.ISISSource(),
 		ISISStore:      idx.ISISStore(),
+		MrouteSource:   idx.MrouteSource(),
+		MrouteStore:    idx.MrouteStore(),
 	})
 
 	select {
