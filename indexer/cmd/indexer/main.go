@@ -699,6 +699,7 @@ func run() error {
 		database       string
 		dzLedgerRPCURL string
 		noInflux       bool
+		mrouteS3Bucket string // empty = mroute ingest disabled for this env
 	}
 	secondaryEnvs := map[string]secondaryEnvConfig{
 		"devnet":  {database: "lake_devnet"},
@@ -734,6 +735,19 @@ func run() error {
 		cfg.noInflux = true
 		secondaryEnvs["testnet"] = cfg
 	}
+	// Mroute ingest is per-env; the bucket the state-ingest server writes to
+	// differs between devnet/testnet/mainnet. Setting the env-specific bucket
+	// enables mroute ingest for that secondary network.
+	if b := os.Getenv("MROUTE_S3_BUCKET_DEVNET"); b != "" {
+		cfg := secondaryEnvs["devnet"]
+		cfg.mrouteS3Bucket = b
+		secondaryEnvs["devnet"] = cfg
+	}
+	if b := os.Getenv("MROUTE_S3_BUCKET_TESTNET"); b != "" {
+		cfg := secondaryEnvs["testnet"]
+		cfg.mrouteS3Bucket = b
+		secondaryEnvs["testnet"] = cfg
+	}
 	if *noDevnetFlag {
 		delete(secondaryEnvs, "devnet")
 	}
@@ -767,6 +781,9 @@ func run() error {
 				skipReadyWait:              *skipReadyWaitFlag,
 				isisS3Bucket:               "doublezero-" + env + "-isis-db",
 				isisS3Region:               *isisS3RegionFlag,
+				mrouteS3Bucket:             envCfg.mrouteS3Bucket,
+				mrouteS3Region:             *mrouteS3RegionFlag,
+				mrouteS3KeyPrefix:          *mrouteS3KeyPrefixFlag,
 				influxURL:                  secondaryInfluxURL,
 				influxToken:                secondaryInfluxToken,
 				influxOrg:                  influxOrg,
@@ -843,6 +860,12 @@ type secondaryNetworkConfig struct {
 	// ISIS configuration (optional).
 	isisS3Bucket string
 	isisS3Region string
+
+	// Mroute (state-collect) configuration (optional, per-env).
+	// mrouteS3Bucket="" means mroute ingest is disabled for this network.
+	mrouteS3Bucket    string
+	mrouteS3Region    string
+	mrouteS3KeyPrefix string
 
 	// InfluxDB configuration (optional).
 	influxURL                  string
@@ -958,6 +981,13 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 		ISISEnabled:  cfg.isisS3Bucket != "",
 		ISISS3Bucket: cfg.isisS3Bucket,
 		ISISS3Region: cfg.isisS3Region,
+
+		// Mroute (state-collect) configuration. Enabled iff a per-env
+		// bucket was provided via MROUTE_S3_BUCKET_<ENV>.
+		MrouteEnabled:     cfg.mrouteS3Bucket != "",
+		MrouteS3Bucket:    cfg.mrouteS3Bucket,
+		MrouteS3Region:    cfg.mrouteS3Region,
+		MrouteS3KeyPrefix: cfg.mrouteS3KeyPrefix,
 	}
 	if shredsClient != nil {
 		secondaryIdxCfg.ShredsRPC = shredsClient
@@ -999,6 +1029,8 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 		GraphStore:     idx.GraphStore(),
 		ISISSource:     idx.ISISSource(),
 		ISISStore:      idx.ISISStore(),
+		MrouteSource:   idx.MrouteSource(),
+		MrouteStore:    idx.MrouteStore(),
 	})
 
 	select {
