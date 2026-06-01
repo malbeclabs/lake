@@ -8,8 +8,13 @@ import (
 )
 
 // rawDump matches the top-level shape of `show ip mroute | json` on Arista EOS.
+// Arista emits two shapes:
+//   - Wrapped (used by `show ip mroute vrf all | json`): {"vrfs": {<name>: rawVRF}}
+//   - Flat   (used by `show ip mroute | json`):          rawVRF at top level, default VRF
 type rawDump struct {
-	VRFs map[string]rawVRF `json:"vrfs"`
+	VRFs          map[string]rawVRF `json:"vrfs"`
+	SparseMode    *rawModeGroups    `json:"sparseMode,omitempty"`
+	Bidirectional *rawModeGroups    `json:"bidirectional,omitempty"`
 }
 
 type rawVRF struct {
@@ -56,9 +61,18 @@ func Parse(raw []byte) ([]Entry, error) {
 	}
 
 	var out []Entry
-	for vrfName, vrf := range d.VRFs {
-		out = appendEntries(out, vrfName, ModeSparse, vrf.SparseMode)
-		out = appendEntries(out, vrfName, ModeBidirectional, vrf.Bidirectional)
+	if len(d.VRFs) > 0 {
+		for vrfName, vrf := range d.VRFs {
+			out = appendEntries(out, vrfName, ModeSparse, vrf.SparseMode)
+			out = appendEntries(out, vrfName, ModeBidirectional, vrf.Bidirectional)
+		}
+		return out, nil
+	}
+	if d.SparseMode != nil {
+		out = appendEntries(out, "default", ModeSparse, *d.SparseMode)
+	}
+	if d.Bidirectional != nil {
+		out = appendEntries(out, "default", ModeBidirectional, *d.Bidirectional)
 	}
 	return out, nil
 }

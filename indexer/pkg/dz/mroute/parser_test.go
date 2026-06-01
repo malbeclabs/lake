@@ -188,6 +188,39 @@ func TestParse_Empty(t *testing.T) {
 	assert.Empty(t, entries)
 }
 
+// TestParse_FlatShape verifies the parser handles the shape Arista actually
+// emits from `show ip mroute | json` — flat (no `vrfs` wrapper). The wrapped
+// form only appears when the device is queried with `vrf all`. Real S3
+// envelopes use the flat form; the parser must treat it as VRF "default".
+func TestParse_FlatShape(t *testing.T) {
+	const flat = `{
+	  "bidirectional": { "groups": {} },
+	  "sparseMode": {
+	    "groups": {
+	      "233.84.178.6": {
+	        "groupSources": {
+	          "148.51.120.0": {
+	            "sourceAddress": "148.51.120.0",
+	            "creationTime": 1779894656.0,
+	            "routeFlags": "MPE",
+	            "registerInOifList": false,
+	            "rpfInterface": "Null0",
+	            "oifList": []
+	          }
+	        }
+	      }
+	    }
+	  }
+	}`
+	entries, err := Parse([]byte(flat))
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "default", entries[0].VRF)
+	assert.Equal(t, ModeSparse, entries[0].Mode)
+	assert.Equal(t, "233.84.178.6", entries[0].GroupAddress)
+	assert.Equal(t, "148.51.120.0", entries[0].SourceAddress)
+}
+
 func TestParse_InvalidJSON(t *testing.T) {
 	_, err := Parse([]byte("not json"))
 	assert.Error(t, err)
