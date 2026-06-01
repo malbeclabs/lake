@@ -122,6 +122,12 @@ func run() error {
 	mrouteS3RegionFlag := flag.String("mroute-s3-region", "us-east-1", "AWS region for mroute S3 bucket (or set MROUTE_S3_REGION env var)")
 	mrouteS3KeyPrefixFlag := flag.String("mroute-s3-key-prefix", "", "Optional key prefix matching state-ingest BucketPathPrefix (or set MROUTE_S3_KEY_PREFIX env var)")
 
+	// MSDP (state-collect) configuration
+	msdpEnabledFlag := flag.Bool("msdp-enabled", false, "Enable MSDP state-collect sync from S3 (or set MSDP_ENABLED env var)")
+	msdpS3BucketFlag := flag.String("msdp-s3-bucket", "", "S3 bucket the state-ingest server writes to (or set MSDP_S3_BUCKET env var)")
+	msdpS3RegionFlag := flag.String("msdp-s3-region", "us-east-1", "AWS region for MSDP S3 bucket (or set MSDP_S3_REGION env var)")
+	msdpS3KeyPrefixFlag := flag.String("msdp-s3-key-prefix", "", "Optional key prefix matching state-ingest BucketPathPrefix (or set MSDP_S3_KEY_PREFIX env var)")
+
 	// validators.app configuration
 	validatorsAppAPIKeyFlag := flag.String("validatorsapp-api-key", "", "validators.app API key (or set VALIDATORSAPP_API_KEY env var)")
 	validatorsAppRefreshIntervalFlag := flag.Duration("validatorsapp-refresh-interval", 5*time.Minute, "validators.app refresh interval (or set VALIDATORSAPP_REFRESH_INTERVAL env var)")
@@ -212,6 +218,20 @@ func run() error {
 	}
 	if envMroutePrefix := os.Getenv("MROUTE_S3_KEY_PREFIX"); envMroutePrefix != "" {
 		*mrouteS3KeyPrefixFlag = envMroutePrefix
+	}
+
+	// Override MSDP flags with environment variables if set
+	if envMSDPEnabled := os.Getenv("MSDP_ENABLED"); envMSDPEnabled != "" {
+		*msdpEnabledFlag = envMSDPEnabled == "true"
+	}
+	if envMSDPBucket := os.Getenv("MSDP_S3_BUCKET"); envMSDPBucket != "" {
+		*msdpS3BucketFlag = envMSDPBucket
+	}
+	if envMSDPRegion := os.Getenv("MSDP_S3_REGION"); envMSDPRegion != "" {
+		*msdpS3RegionFlag = envMSDPRegion
+	}
+	if envMSDPPrefix := os.Getenv("MSDP_S3_KEY_PREFIX"); envMSDPPrefix != "" {
+		*msdpS3KeyPrefixFlag = envMSDPPrefix
 	}
 
 	// Override validators.app flags with environment variables
@@ -591,6 +611,12 @@ func run() error {
 		MrouteS3Bucket:    *mrouteS3BucketFlag,
 		MrouteS3Region:    *mrouteS3RegionFlag,
 		MrouteS3KeyPrefix: *mrouteS3KeyPrefixFlag,
+
+		// MSDP (state-collect) configuration
+		MSDPEnabled:     *msdpEnabledFlag,
+		MSDPS3Bucket:    *msdpS3BucketFlag,
+		MSDPS3Region:    *msdpS3RegionFlag,
+		MSDPS3KeyPrefix: *msdpS3KeyPrefixFlag,
 
 		// validators.app configuration
 		ValidatorsAppClient:          validatorsAppClient,

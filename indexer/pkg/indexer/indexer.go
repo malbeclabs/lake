@@ -11,6 +11,7 @@ import (
 	dzgraph "github.com/malbeclabs/lake/indexer/pkg/dz/graph"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/isis"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/mroute"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/msdp"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/escrowevents"
@@ -39,6 +40,8 @@ type Indexer struct {
 	isisStore     *isis.Store
 	mrouteSource  mroute.Source
 	mrouteStore   *mroute.Store
+	msdpSource    msdp.Source
+	msdpStore     *msdp.Store
 	validatorsApp *validatorsapp.View
 }
 
@@ -276,6 +279,32 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 			"key_prefix", cfg.MrouteS3KeyPrefix)
 	}
 
+	// Initialize MSDP source and store if enabled
+	var msdpSource msdp.Source
+	var msdpStore *msdp.Store
+	if cfg.MSDPEnabled {
+		msdpSource, err = msdp.NewS3Source(ctx, msdp.S3SourceConfig{
+			Bucket:      cfg.MSDPS3Bucket,
+			Region:      cfg.MSDPS3Region,
+			KeyPrefix:   cfg.MSDPS3KeyPrefix,
+			EndpointURL: cfg.MSDPS3EndpointURL,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create MSDP S3 source: %w", err)
+		}
+		msdpStore, err = msdp.NewStore(msdp.StoreConfig{
+			Logger:     cfg.Logger,
+			ClickHouse: cfg.ClickHouse,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create MSDP store: %w", err)
+		}
+		cfg.Logger.Info("MSDP state-collect source initialized",
+			"bucket", cfg.MSDPS3Bucket,
+			"region", cfg.MSDPS3Region,
+			"key_prefix", cfg.MSDPS3KeyPrefix)
+	}
+
 	// Initialize validators.app view (optional)
 	var validatorsAppView *validatorsapp.View
 	if cfg.ValidatorsAppClient != nil {
@@ -308,6 +337,8 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 		isisStore:     isisStore,
 		mrouteSource:  mrouteSource,
 		mrouteStore:   mrouteStore,
+		msdpSource:    msdpSource,
+		msdpStore:     msdpStore,
 		validatorsApp: validatorsAppView,
 	}
 
@@ -339,6 +370,12 @@ func (i *Indexer) Close() error {
 		if err := i.mrouteSource.Close(); err != nil {
 			i.log.Warn("failed to close mroute source", "error", err)
 			errs = append(errs, fmt.Errorf("failed to close mroute source: %w", err))
+		}
+	}
+	if i.msdpSource != nil {
+		if err := i.msdpSource.Close(); err != nil {
+			i.log.Warn("failed to close MSDP source", "error", err)
+			errs = append(errs, fmt.Errorf("failed to close MSDP source: %w", err))
 		}
 	}
 	if len(errs) > 0 {
@@ -397,6 +434,16 @@ func (i *Indexer) MrouteSource() mroute.Source {
 // MrouteStore returns the mroute ClickHouse store, or nil if not configured.
 func (i *Indexer) MrouteStore() *mroute.Store {
 	return i.mrouteStore
+}
+
+// MSDPSource returns the state-collect MSDP data source, or nil if not configured.
+func (i *Indexer) MSDPSource() msdp.Source {
+	return i.msdpSource
+}
+
+// MSDPStore returns the MSDP ClickHouse store, or nil if not configured.
+func (i *Indexer) MSDPStore() *msdp.Store {
+	return i.msdpStore
 }
 
 // Geolocation returns the geolocation view, or nil if not configured.
