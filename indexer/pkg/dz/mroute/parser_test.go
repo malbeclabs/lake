@@ -194,7 +194,22 @@ func TestParse_Empty(t *testing.T) {
 // envelopes use the flat form; the parser must treat it as VRF "default".
 func TestParse_FlatShape(t *testing.T) {
 	const flat = `{
-	  "bidirectional": { "groups": {} },
+	  "bidirectional": {
+	    "groups": {
+	      "239.1.1.1": {
+	        "groupSources": {
+	          "10.0.0.1": {
+	            "sourceAddress": "10.0.0.1",
+	            "creationTime": 1779894656.0,
+	            "routeFlags": "B",
+	            "registerInOifList": false,
+	            "rpfInterface": "Null0",
+	            "oifList": []
+	          }
+	        }
+	      }
+	    }
+	  },
 	  "sparseMode": {
 	    "groups": {
 	      "233.84.178.6": {
@@ -214,11 +229,18 @@ func TestParse_FlatShape(t *testing.T) {
 	}`
 	entries, err := Parse([]byte(flat))
 	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	assert.Equal(t, "default", entries[0].VRF)
-	assert.Equal(t, ModeSparse, entries[0].Mode)
-	assert.Equal(t, "233.84.178.6", entries[0].GroupAddress)
-	assert.Equal(t, "148.51.120.0", entries[0].SourceAddress)
+	require.Len(t, entries, 2)
+
+	byKey := indexByKey(entries)
+	sparse := byKey["default|sparse|233.84.178.6|148.51.120.0"]
+	require.NotNil(t, sparse)
+	assert.Equal(t, "default", sparse.VRF)
+	assert.Equal(t, ModeSparse, sparse.Mode)
+
+	bidir := byKey["default|bidirectional|239.1.1.1|10.0.0.1"]
+	require.NotNil(t, bidir)
+	assert.Equal(t, "default", bidir.VRF)
+	assert.Equal(t, ModeBidirectional, bidir.Mode)
 }
 
 func TestParse_InvalidJSON(t *testing.T) {
