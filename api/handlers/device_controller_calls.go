@@ -106,7 +106,7 @@ func (a *API) GetDeviceControllerCalls(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sourceDB := TelemetryDatabaseForEnv(EnvFromContext(ctx))
+	sourceDB := ControllerCallsDatabaseForEnv(EnvFromContext(ctx))
 	sourceAvailable, err := controllerCallsSourceAvailable(ctx, conn, sourceDB)
 	if err != nil {
 		logError("device controller calls: source check failed", "error", err, "pk", pk, "database", sourceDB)

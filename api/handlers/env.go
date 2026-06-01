@@ -16,6 +16,12 @@ const (
 	EnvTestnet DZEnv = "testnet"
 )
 
+// ControllerCallsDatabaseForEnv returns the ClickHouse database used by the
+// controller service for GetConfig call history.
+func ControllerCallsDatabaseForEnv(env DZEnv) string {
+	return string(env)
+}
+
 // TelemetryDatabaseForEnv returns the ClickHouse database that mirrors the
 // dz/telemetry tables for the given environment (e.g. "mainnet-beta" →
 // "telemetry_mainnet_beta"). These databases are created by the admin
