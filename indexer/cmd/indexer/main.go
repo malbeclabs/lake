@@ -686,6 +686,8 @@ func run() error {
 				ISISStore:      idx.ISISStore(),
 				MrouteSource:   idx.MrouteSource(),
 				MrouteStore:    idx.MrouteStore(),
+				MSDPSource:     idx.MSDPSource(),
+				MSDPStore:      idx.MSDPStore(),
 			})
 			if err != nil {
 				dzIngestErrCh <- err
@@ -1085,6 +1087,8 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 		ISISStore:      idx.ISISStore(),
 		MrouteSource:   idx.MrouteSource(),
 		MrouteStore:    idx.MrouteStore(),
+		MSDPSource:     idx.MSDPSource(),
+		MSDPStore:      idx.MSDPStore(),
 	})
 
 	select {
