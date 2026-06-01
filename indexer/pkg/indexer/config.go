@@ -86,6 +86,16 @@ type Config struct {
 	MrouteS3KeyPrefix   string // Optional matching state-ingest BucketPathPrefix
 	MrouteS3EndpointURL string // Custom S3 endpoint URL (for testing)
 
+	// MSDP (state-collect) configuration (optional).
+	// When enabled, periodically pulls `show ip msdp ...` snapshots for
+	// summary, pim sa-cache, and sa-cache-rejected kinds and writes the
+	// parsed entries to ClickHouse as three type-2 dimensions.
+	MSDPEnabled       bool
+	MSDPS3Bucket      string // Same state-collect bucket as MrouteS3Bucket in practice
+	MSDPS3Region      string // AWS region (default: us-east-1)
+	MSDPS3KeyPrefix   string // Optional matching state-ingest BucketPathPrefix
+	MSDPS3EndpointURL string // Custom S3 endpoint URL (for testing)
+
 	// validators.app configuration (optional, mainnet-beta only).
 	ValidatorsAppClient          validatorsapp.Client
 	ValidatorsAppRefreshInterval time.Duration

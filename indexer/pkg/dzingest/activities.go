@@ -11,6 +11,7 @@ import (
 	dzgraph "github.com/malbeclabs/lake/indexer/pkg/dz/graph"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/isis"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/mroute"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/msdp"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/escrowevents"
@@ -44,6 +45,8 @@ type Activities struct {
 	ISISStore      *isis.Store        // nil when ISIS is not enabled
 	MrouteSource   mroute.Source      // nil when mroute ingest is not enabled
 	MrouteStore    *mroute.Store      // nil when mroute ingest is not enabled
+	MSDPSource     msdp.Source        // nil when MSDP ingest is not enabled
+	MSDPStore      *msdp.Store        // nil when MSDP ingest is not enabled
 
 	// failures tracks consecutive-failure counts per activity name.
 	// map[string]*atomic.Int32; populated lazily.
@@ -230,6 +233,25 @@ func (a *Activities) SyncIPMroute(ctx context.Context) error {
 			return result, fmt.Errorf("mroute fetch: %w", err)
 		}
 		return result, a.MrouteStore.Sync(ctx, dumps)
+	})
+}
+
+// SyncMSDP fetches per-device `show ip msdp ...` snapshots from S3
+// (uploaded by doublezero-telemetry --state-collect-enable) for all
+// three MSDP kinds and replaces the dz_ip_msdp_* dimensions in
+// ClickHouse. No-op if MSDP ingest is not configured.
+func (a *Activities) SyncMSDP(ctx context.Context) error {
+	if a.MSDPSource == nil || a.MSDPStore == nil {
+		a.IngestionLog.WrapSkipped(ctx, "dzingest", "SyncMSDP", a.Network)
+		return nil
+	}
+	return a.refresh(ctx, "SyncMSDP", func() (ingestionlog.RefreshResult, error) {
+		var result ingestionlog.RefreshResult
+		dumps, err := a.MSDPSource.FetchLatest(ctx)
+		if err != nil {
+			return result, fmt.Errorf("msdp fetch: %w", err)
+		}
+		return result, a.MSDPStore.Sync(ctx, dumps)
 	})
 }
 

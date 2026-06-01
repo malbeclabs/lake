@@ -122,6 +122,12 @@ func run() error {
 	mrouteS3RegionFlag := flag.String("mroute-s3-region", "us-east-1", "AWS region for mroute S3 bucket (or set MROUTE_S3_REGION env var)")
 	mrouteS3KeyPrefixFlag := flag.String("mroute-s3-key-prefix", "", "Optional key prefix matching state-ingest BucketPathPrefix (or set MROUTE_S3_KEY_PREFIX env var)")
 
+	// MSDP (state-collect) configuration
+	msdpEnabledFlag := flag.Bool("msdp-enabled", false, "Enable MSDP state-collect sync from S3 (or set MSDP_ENABLED env var)")
+	msdpS3BucketFlag := flag.String("msdp-s3-bucket", "", "S3 bucket the state-ingest server writes to (or set MSDP_S3_BUCKET env var)")
+	msdpS3RegionFlag := flag.String("msdp-s3-region", "us-east-1", "AWS region for MSDP S3 bucket (or set MSDP_S3_REGION env var)")
+	msdpS3KeyPrefixFlag := flag.String("msdp-s3-key-prefix", "", "Optional key prefix matching state-ingest BucketPathPrefix (or set MSDP_S3_KEY_PREFIX env var)")
+
 	// validators.app configuration
 	validatorsAppAPIKeyFlag := flag.String("validatorsapp-api-key", "", "validators.app API key (or set VALIDATORSAPP_API_KEY env var)")
 	validatorsAppRefreshIntervalFlag := flag.Duration("validatorsapp-refresh-interval", 5*time.Minute, "validators.app refresh interval (or set VALIDATORSAPP_REFRESH_INTERVAL env var)")
@@ -212,6 +218,20 @@ func run() error {
 	}
 	if envMroutePrefix := os.Getenv("MROUTE_S3_KEY_PREFIX"); envMroutePrefix != "" {
 		*mrouteS3KeyPrefixFlag = envMroutePrefix
+	}
+
+	// Override MSDP flags with environment variables if set
+	if envMSDPEnabled := os.Getenv("MSDP_ENABLED"); envMSDPEnabled != "" {
+		*msdpEnabledFlag = envMSDPEnabled == "true"
+	}
+	if envMSDPBucket := os.Getenv("MSDP_S3_BUCKET"); envMSDPBucket != "" {
+		*msdpS3BucketFlag = envMSDPBucket
+	}
+	if envMSDPRegion := os.Getenv("MSDP_S3_REGION"); envMSDPRegion != "" {
+		*msdpS3RegionFlag = envMSDPRegion
+	}
+	if envMSDPPrefix := os.Getenv("MSDP_S3_KEY_PREFIX"); envMSDPPrefix != "" {
+		*msdpS3KeyPrefixFlag = envMSDPPrefix
 	}
 
 	// Override validators.app flags with environment variables
@@ -592,6 +612,12 @@ func run() error {
 		MrouteS3Region:    *mrouteS3RegionFlag,
 		MrouteS3KeyPrefix: *mrouteS3KeyPrefixFlag,
 
+		// MSDP (state-collect) configuration
+		MSDPEnabled:     *msdpEnabledFlag,
+		MSDPS3Bucket:    *msdpS3BucketFlag,
+		MSDPS3Region:    *msdpS3RegionFlag,
+		MSDPS3KeyPrefix: *msdpS3KeyPrefixFlag,
+
 		// validators.app configuration
 		ValidatorsAppClient:          validatorsAppClient,
 		ValidatorsAppRefreshInterval: *validatorsAppRefreshIntervalFlag,
@@ -660,6 +686,8 @@ func run() error {
 				ISISStore:      idx.ISISStore(),
 				MrouteSource:   idx.MrouteSource(),
 				MrouteStore:    idx.MrouteStore(),
+				MSDPSource:     idx.MSDPSource(),
+				MSDPStore:      idx.MSDPStore(),
 			})
 			if err != nil {
 				dzIngestErrCh <- err
@@ -700,6 +728,7 @@ func run() error {
 		dzLedgerRPCURL string
 		noInflux       bool
 		mrouteS3Bucket string // empty = mroute ingest disabled for this env
+		msdpS3Bucket   string // empty = MSDP ingest disabled for this env
 	}
 	secondaryEnvs := map[string]secondaryEnvConfig{
 		"devnet":  {database: "lake_devnet"},
@@ -735,9 +764,10 @@ func run() error {
 		cfg.noInflux = true
 		secondaryEnvs["testnet"] = cfg
 	}
-	// Mroute ingest is per-env; the bucket the state-ingest server writes to
-	// differs between devnet/testnet/mainnet. Setting the env-specific bucket
-	// enables mroute ingest for that secondary network.
+	// Mroute / MSDP ingest are per-env; setting the env-specific bucket
+	// enables the relevant ingest for that secondary network. Region and
+	// key-prefix reuse the global --{mroute,msdp}-s3-{region,key-prefix}
+	// flags.
 	if b := os.Getenv("MROUTE_S3_BUCKET_DEVNET"); b != "" {
 		cfg := secondaryEnvs["devnet"]
 		cfg.mrouteS3Bucket = b
@@ -746,6 +776,16 @@ func run() error {
 	if b := os.Getenv("MROUTE_S3_BUCKET_TESTNET"); b != "" {
 		cfg := secondaryEnvs["testnet"]
 		cfg.mrouteS3Bucket = b
+		secondaryEnvs["testnet"] = cfg
+	}
+	if b := os.Getenv("MSDP_S3_BUCKET_DEVNET"); b != "" {
+		cfg := secondaryEnvs["devnet"]
+		cfg.msdpS3Bucket = b
+		secondaryEnvs["devnet"] = cfg
+	}
+	if b := os.Getenv("MSDP_S3_BUCKET_TESTNET"); b != "" {
+		cfg := secondaryEnvs["testnet"]
+		cfg.msdpS3Bucket = b
 		secondaryEnvs["testnet"] = cfg
 	}
 	if *noDevnetFlag {
@@ -784,6 +824,9 @@ func run() error {
 				mrouteS3Bucket:             envCfg.mrouteS3Bucket,
 				mrouteS3Region:             *mrouteS3RegionFlag,
 				mrouteS3KeyPrefix:          *mrouteS3KeyPrefixFlag,
+				msdpS3Bucket:               envCfg.msdpS3Bucket,
+				msdpS3Region:               *msdpS3RegionFlag,
+				msdpS3KeyPrefix:            *msdpS3KeyPrefixFlag,
 				influxURL:                  secondaryInfluxURL,
 				influxToken:                secondaryInfluxToken,
 				influxOrg:                  influxOrg,
@@ -866,6 +909,12 @@ type secondaryNetworkConfig struct {
 	mrouteS3Bucket    string
 	mrouteS3Region    string
 	mrouteS3KeyPrefix string
+
+	// MSDP (state-collect) configuration (optional, per-env).
+	// msdpS3Bucket="" means MSDP ingest is disabled for this network.
+	msdpS3Bucket    string
+	msdpS3Region    string
+	msdpS3KeyPrefix string
 
 	// InfluxDB configuration (optional).
 	influxURL                  string
@@ -988,6 +1037,13 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 		MrouteS3Bucket:    cfg.mrouteS3Bucket,
 		MrouteS3Region:    cfg.mrouteS3Region,
 		MrouteS3KeyPrefix: cfg.mrouteS3KeyPrefix,
+
+		// MSDP (state-collect) configuration. Enabled iff a per-env
+		// bucket was provided via MSDP_S3_BUCKET_<ENV>.
+		MSDPEnabled:     cfg.msdpS3Bucket != "",
+		MSDPS3Bucket:    cfg.msdpS3Bucket,
+		MSDPS3Region:    cfg.msdpS3Region,
+		MSDPS3KeyPrefix: cfg.msdpS3KeyPrefix,
 	}
 	if shredsClient != nil {
 		secondaryIdxCfg.ShredsRPC = shredsClient
@@ -1031,6 +1087,8 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 		ISISStore:      idx.ISISStore(),
 		MrouteSource:   idx.MrouteSource(),
 		MrouteStore:    idx.MrouteStore(),
+		MSDPSource:     idx.MSDPSource(),
+		MSDPStore:      idx.MSDPStore(),
 	})
 
 	select {
