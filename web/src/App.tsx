@@ -37,6 +37,7 @@ import { MaintenancePlannerPage } from '@/components/maintenance-planner-page'
 import { StatusPage } from '@/components/status-page'
 import { TimelinePage } from '@/components/timeline-page'
 import { IncidentsPage } from '@/components/incidents-page'
+import { MaintenanceCalendarPage } from '@/components/maintenance-calendar-page'
 import { StatusAppendix } from '@/components/status-appendix'
 import { DevicesPage } from '@/components/devices-page'
 import { LinksPage } from '@/components/links-page'
@@ -671,10 +672,16 @@ function AppContent() {
             {/* Timeline route */}
             <Route path="/timeline" element={<TimelinePage />} />
 
-            {/* Incidents routes */}
-            <Route path="/incidents" element={<Navigate to="/incidents/links" replace />} />
-            <Route path="/incidents/links" element={<IncidentsPage />} />
-            <Route path="/incidents/devices" element={<IncidentsPage />} />
+            {/* Incidents redirects — keep old URLs working */}
+            <Route path="/incidents" element={<Navigate to="/ops/incidents/links" replace />} />
+            <Route path="/incidents/links" element={<Navigate to="/ops/incidents/links" replace />} />
+            <Route path="/incidents/devices" element={<Navigate to="/ops/incidents/devices" replace />} />
+
+            {/* Ops routes */}
+            <Route path="/ops/incidents" element={<Navigate to="/ops/incidents/links" replace />} />
+            <Route path="/ops/incidents/links" element={<IncidentsPage />} />
+            <Route path="/ops/incidents/devices" element={<IncidentsPage />} />
+            <Route path="/ops/maintenance" element={<MaintenanceCalendarPage />} />
 
 
             {/* Settings */}

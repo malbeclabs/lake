@@ -546,6 +546,7 @@ func main() {
 		r.Get("/api/incidents/devices/csv", api.GetDeviceIncidentsCSV)
 
 		// Ops Management tickets proxy (auth required — tickets contain reporter PII)
+		r.Get("/api/ops-tickets/maintenance", api.GetMaintenanceCalendar)
 		r.With(api.RequireAuth).Get("/api/ops-tickets", api.GetOpsTickets)
 		r.With(api.RequireAuth).Get("/api/ops-tickets/history", api.GetOpsTicketHistory)
 		r.With(api.RequireAuth).Get("/api/ops-tickets/assignees", api.GetOpsAssignees)
