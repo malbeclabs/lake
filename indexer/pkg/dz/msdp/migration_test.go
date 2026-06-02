@@ -33,6 +33,10 @@ func TestMigration_Applies(t *testing.T) {
 		{"dim_dz_ip_msdp_sa_cache_history", "table"},
 		{"stg_dim_dz_ip_msdp_sa_cache_snapshot", "table"},
 		{"dz_ip_msdp_sa_cache_current", "view"},
+		// Enriched MSDP views
+		{"enriched_ip_msdp_peers", "view"},
+		{"enriched_ip_msdp_pim_sa_cache", "view"},
+		{"enriched_ip_msdp_sa_cache", "view"},
 	}
 
 	for _, c := range cases {
