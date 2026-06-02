@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
 import { cn } from '@/lib/utils'
+import { useTheme } from '@/hooks/use-theme'
 import { evBg, evBorderColor, evText } from './colors'
 import { isSameDay, startOfDay, formatHour } from './date-utils'
 import { EventTooltipPanel } from './event-tooltip'
@@ -48,6 +49,8 @@ function fmtTime(d: Date): string {
 }
 
 export function DayView({ events, anchor }: DayViewProps) {
+  const { resolvedTheme } = useTheme()
+  const isDark = resolvedTheme === 'dark'
   const anchorDay = startOfDay(anchor)
   const today = startOfDay(new Date())
   const isToday = isSameDay(anchor, today)
@@ -138,9 +141,9 @@ export function DayView({ events, anchor }: DayViewProps) {
                       ev.status === 'in-progress' ? 'border-dashed' : ''
                     )}
                     style={{
-                      background: evBg(ev.hue, 30),
-                      borderLeftColor: evBorderColor(ev.hue, 90),
-                      color: evText(ev.hue),
+                      background: isDark ? evBg(ev.hue, 30) : evBg(ev.hue, 55),
+                      borderLeftColor: isDark ? evBorderColor(ev.hue, 90) : evBorderColor(ev.hue, 100),
+                      color: isDark ? evText(ev.hue) : evText(ev.hue, true),
                     }}
                     onMouseEnter={(e) => showTooltip(ev, e)}
                     onMouseLeave={startHide}
@@ -232,9 +235,9 @@ export function DayView({ events, anchor }: DayViewProps) {
                       height: heightPx,
                       left: `calc(${leftPct}% + 8px)`,
                       width: `calc(${widthPct}% - 12px)`,
-                      background: evBg(ev.hue, 30),
-                      borderLeftColor: evBorderColor(ev.hue, 90),
-                      color: evText(ev.hue),
+                      background: isDark ? evBg(ev.hue, 30) : evBg(ev.hue, 55),
+                      borderLeftColor: isDark ? evBorderColor(ev.hue, 90) : evBorderColor(ev.hue, 100),
+                      color: isDark ? evText(ev.hue) : evText(ev.hue, true),
                     }}
                     onMouseEnter={(e) => showTooltip(ev, e)}
                     onMouseLeave={startHide}

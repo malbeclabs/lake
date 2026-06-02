@@ -1,5 +1,6 @@
 import { Fragment, useState, useRef, useCallback } from 'react'
 import { cn } from '@/lib/utils'
+import { useTheme } from '@/hooks/use-theme'
 import { evBg, evBorderColor, evText, dotColor } from './colors'
 import {
   startOfDay,
@@ -42,6 +43,8 @@ interface GanttViewProps {
 }
 
 export function GanttView({ events, view, anchor }: GanttViewProps) {
+  const { resolvedTheme } = useTheme()
+  const isDark = resolvedTheme === 'dark'
   const today = startOfDay(new Date())
   const days = getDays(view, anchor)
   const DAY_W = view === 'month' ? DAY_W_MONTH : DAY_W_NORMAL
@@ -106,7 +109,7 @@ export function GanttView({ events, view, anchor }: GanttViewProps) {
                       isToday
                         ? 'bg-[oklch(0.55_0.06_250/6%)] text-[oklch(0.7_0.12_250)]'
                         : weekend
-                        ? 'bg-[oklch(0_0_0/40%)] text-muted-foreground/60'
+                        ? 'bg-muted/60 dark:bg-[oklch(0_0_0/40%)] text-muted-foreground/60'
                         : 'text-muted-foreground'
                     )}
                   >
@@ -134,8 +137,8 @@ export function GanttView({ events, view, anchor }: GanttViewProps) {
               groups.map(({ contributorName, hue, events: groupEvents }) => (
                 <Fragment key={contributorName}>
                   {/* Contributor header row */}
-                  <tr className="bg-[oklch(0.17_0.003_285.823)]">
-                    <td className="sticky left-0 z-10 border-b border-r border-border bg-[oklch(0.17_0.003_285.823)] h-8">
+                  <tr className="bg-muted dark:bg-[oklch(0.17_0.003_285.823)]">
+                    <td className="sticky left-0 z-10 border-b border-r border-border bg-muted dark:bg-[oklch(0.17_0.003_285.823)] h-8">
                       <div className="flex items-center gap-2 px-4 h-full text-sm font-medium text-foreground">
                         <span
                           className="inline-block w-2 h-2 rounded-full flex-shrink-0"
@@ -155,7 +158,7 @@ export function GanttView({ events, view, anchor }: GanttViewProps) {
                           isSameDay(day, today)
                             ? 'bg-[oklch(0.55_0.06_250/8%)]'
                             : isWeekend(day)
-                            ? 'bg-[oklch(0_0_0/40%)]'
+                            ? 'bg-muted/60 dark:bg-[oklch(0_0_0/40%)]'
                             : ''
                         )}
                       />
@@ -187,7 +190,7 @@ export function GanttView({ events, view, anchor }: GanttViewProps) {
                                 isSameDay(day, today)
                                   ? 'bg-[oklch(0.55_0.06_250/6%)]'
                                   : isWeekend(day)
-                                  ? 'bg-[oklch(0_0_0/40%)]'
+                                  ? 'bg-muted/60 dark:bg-[oklch(0_0_0/40%)]'
                                   : ''
                               )}
                             >
@@ -202,9 +205,9 @@ export function GanttView({ events, view, anchor }: GanttViewProps) {
                                   style={{
                                     left: 0,
                                     width: barWidth,
-                                    background: evBg(hue),
-                                    borderLeftColor: evBorderColor(hue),
-                                    color: evText(hue),
+                                    background: isDark ? evBg(hue) : evBg(hue, 55),
+                                    borderLeftColor: isDark ? evBorderColor(hue) : evBorderColor(hue, 100),
+                                    color: isDark ? evText(hue) : evText(hue, true),
                                   }}
                                   onMouseEnter={(e) => showTooltip(ev, e)}
                                   onMouseLeave={startHide}
