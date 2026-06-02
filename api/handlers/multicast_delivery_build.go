@@ -306,26 +306,6 @@ func buildMulticastDeliveryAnomalies(group MulticastDeliveryGroup, mroutes []Mul
 	return anomalies
 }
 
-func classifyMulticastOIF(oif MulticastDeliveryOIF) (string, string) {
-	name := strings.ToLower(oif.OIFName)
-	if oif.LinkPK != "" {
-		return "underlay_link", "toward_network"
-	}
-	if oif.SubscriberUserPK != "" {
-		return "subscriber_tunnel", "toward_subscriber"
-	}
-	if oif.InterfaceType != "" || oif.RoutingMode != "" {
-		return "local_interface", "unclassified"
-	}
-	if strings.HasPrefix(name, "register") {
-		return "register", "local_register"
-	}
-	if strings.HasPrefix(name, "null") {
-		return "null", "unclassified"
-	}
-	return "unknown", "unclassified"
-}
-
 func multicastFreshnessStatus(age int) string {
 	if age <= multicastDeliveryFreshSeconds {
 		return "fresh"
