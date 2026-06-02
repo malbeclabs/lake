@@ -7,8 +7,8 @@ import (
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
-func (a *API) queryMulticastDeliveryMSDPPeers(ctx context.Context, params MulticastDeliveryParams, routes []MulticastDeliveryRoute) ([]MulticastDeliveryMSDPPeer, []time.Time, error) {
-	devicePKs := uniqueRouteDevices(routes)
+func (a *API) queryMulticastDeliveryMSDPPeers(ctx context.Context, params MulticastDeliveryParams, mroutes []MulticastDeliveryMroute) ([]MulticastDeliveryMSDPPeer, []time.Time, error) {
+	devicePKs := uniqueMrouteDevices(mroutes)
 	if len(devicePKs) == 0 {
 		return []MulticastDeliveryMSDPPeer{}, nil, nil
 	}

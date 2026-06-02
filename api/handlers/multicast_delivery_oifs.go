@@ -165,7 +165,7 @@ func (a *API) queryMulticastDeliveryOIFs(ctx context.Context, group MulticastDel
 		); err != nil {
 			return nil, nil, err
 		}
-		s.OIF.RouteID = multicastRouteID(s.OIF.DevicePK, vrf, routeMode, s.OIF.GroupAddress, s.OIF.SourceAddress)
+		s.OIF.MrouteID = multicastMrouteID(s.OIF.DevicePK, vrf, routeMode, s.OIF.GroupAddress, s.OIF.SourceAddress)
 		s.OIF.SnapshotTS = formatMulticastTime(s.snapshotTS)
 		s.OIF.AgeSeconds = ageSeconds(s.snapshotTS)
 		s.OIF.FreshnessStatus = multicastFreshnessStatus(s.OIF.AgeSeconds)

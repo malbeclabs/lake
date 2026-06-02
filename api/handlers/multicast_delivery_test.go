@@ -14,20 +14,42 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func deliveryStateRequest(api *handlers.API, group string) (*httptest.ResponseRecorder, handlers.MulticastDeliveryStateResponse) {
-	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/"+group+"/delivery-state", nil)
+type multicastDeliveryHandler func(http.ResponseWriter, *http.Request)
+
+func multicastDeliveryRequest[T any](api *handlers.API, group, path, query string, handler multicastDeliveryHandler) (*httptest.ResponseRecorder, T) {
+	url := "/api/dz/multicast-groups/" + group + path
+	if query != "" {
+		url += "?" + query
+	}
+	req := httptest.NewRequest(http.MethodGet, url, nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("pk", group)
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	api.GetMulticastDeliveryState(rr, req)
+	handler(rr, req)
 
-	var resp handlers.MulticastDeliveryStateResponse
+	var resp T
 	if rr.Code == http.StatusOK {
 		_ = json.NewDecoder(rr.Body).Decode(&resp)
 	}
 	return rr, resp
+}
+
+func mroutesRequest(api *handlers.API, group, query string) (*httptest.ResponseRecorder, handlers.MulticastDeliveryMroutesResponse) {
+	return multicastDeliveryRequest[handlers.MulticastDeliveryMroutesResponse](api, group, "/mroutes", query, api.GetMulticastGroupMroutes)
+}
+
+func oifsRequest(api *handlers.API, group, query string) (*httptest.ResponseRecorder, handlers.MulticastDeliveryOIFsResponse) {
+	return multicastDeliveryRequest[handlers.MulticastDeliveryOIFsResponse](api, group, "/oifs", query, api.GetMulticastGroupOIFs)
+}
+
+func msdpRequest(api *handlers.API, group, query string) (*httptest.ResponseRecorder, handlers.MulticastDeliveryMSDPResponse) {
+	return multicastDeliveryRequest[handlers.MulticastDeliveryMSDPResponse](api, group, "/msdp", query, api.GetMulticastGroupMSDP)
+}
+
+func deliveryTreeRequest(api *handlers.API, group, query string) (*httptest.ResponseRecorder, handlers.MulticastDeliveryTreeResponse) {
+	return multicastDeliveryRequest[handlers.MulticastDeliveryTreeResponse](api, group, "/delivery-tree", query, api.GetMulticastGroupDeliveryTree)
 }
 
 func insertMulticastDeliveryLink(t *testing.T, api *handlers.API) {
@@ -49,7 +71,7 @@ func insertMulticastDeliveryLink(t *testing.T, api *handlers.API) {
 	require.NoError(t, err)
 }
 
-func insertMulticastDeliveryRoute(t *testing.T, api *handlers.API, entityID, devicePK, sourceAddress, oifList, snapshotExpr string) {
+func insertMulticastDeliveryMroute(t *testing.T, api *handlers.API, entityID, devicePK, sourceAddress, oifList, snapshotExpr string) {
 	t.Helper()
 	err := api.DB.Exec(t.Context(), `
 		INSERT INTO dim_dz_ip_mroute_entries_history
@@ -103,51 +125,61 @@ func insertMulticastDeliveryMSDP(t *testing.T, api *handlers.API) {
 	require.NoError(t, err)
 }
 
-func TestGetMulticastDeliveryState_NotFound(t *testing.T) {
+func TestGetMulticastGroupMroutes_NotFound(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
-	rr, _ := deliveryStateRequest(api, "missing-group")
+	rr, _ := mroutesRequest(api, "missing-group", "")
 
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 }
 
-func TestGetMulticastDeliveryState_NoMrouteState(t *testing.T) {
+func TestMulticastDeliverySplitEndpoints_NoMrouteState(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertMulticastTestData(t, api)
 
-	rr, resp := deliveryStateRequest(api, "test-group")
-
+	rr, mroutes := mroutesRequest(api, "test-group", "")
 	require.Equal(t, http.StatusOK, rr.Code)
-	assert.True(t, resp.SourceAvailable)
-	assert.Equal(t, "missing", resp.Freshness.Mroute.Status)
-	assert.Empty(t, resp.Routes)
-	assert.Empty(t, resp.OIFs)
-	require.NotEmpty(t, resp.Anomalies)
-	assert.Equal(t, "no_mroute_state", resp.Anomalies[0].Kind)
+	assert.True(t, mroutes.SourceAvailable)
+	assert.Equal(t, "missing", mroutes.Freshness.Mroute.Status)
+	assert.Empty(t, mroutes.Items)
+	assert.Zero(t, mroutes.Total)
+
+	rr, tree := deliveryTreeRequest(api, "test-group", "")
+	require.Equal(t, http.StatusOK, rr.Code)
+	require.NotEmpty(t, tree.Anomalies)
+	assert.Equal(t, "no_mroute_state", tree.Anomalies[0].Kind)
 }
 
-func TestGetMulticastDeliveryState_ResolvesObservedState(t *testing.T) {
+func TestMulticastDeliverySplitEndpoints_ResolveObservedState(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertMulticastTestData(t, api)
 	insertMulticastDeliveryLink(t, api)
-	insertMulticastDeliveryRoute(t, api, "mroute-link", "dev-ams1", "10.0.0.1", `["Ethernet1","Weird0"]`, "now()")
-	insertMulticastDeliveryRoute(t, api, "mroute-tunnel", "dev-nyc1", "10.0.0.1", `["Tunnel502"]`, "now()")
+	insertMulticastDeliveryMroute(t, api, "mroute-link", "dev-ams1", "10.0.0.1", `["Ethernet1","Weird0"]`, "now()")
+	insertMulticastDeliveryMroute(t, api, "mroute-tunnel", "dev-nyc1", "10.0.0.1", `["Tunnel502"]`, "now()")
 	insertMulticastDeliveryMSDP(t, api)
 
-	rr, resp := deliveryStateRequest(api, "test-group")
-
+	rr, mroutes := mroutesRequest(api, "test-group", "")
 	require.Equal(t, http.StatusOK, rr.Code)
-	assert.True(t, resp.SourceAvailable)
-	assert.Equal(t, "fresh", resp.Freshness.Mroute.Status)
-	require.Len(t, resp.Routes, 2)
-	assert.Equal(t, "publisher_matched", resp.Routes[0].SourceMatchStatus)
-	assert.Len(t, resp.OIFs, 3)
+	assert.True(t, mroutes.SourceAvailable)
+	assert.Equal(t, "fresh", mroutes.Freshness.Mroute.Status)
+	require.Len(t, mroutes.Items, 2)
+	assert.Equal(t, "publisher_matched", mroutes.Items[0].SourceMatchStatus)
+	assert.NotEmpty(t, mroutes.Items[0].MrouteID)
+
+	rr, pagedMroutes := mroutesRequest(api, "test-group", "limit=1")
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.Equal(t, 2, pagedMroutes.Total)
+	assert.Len(t, pagedMroutes.Items, 1)
+
+	rr, oifs := oifsRequest(api, "test-group", "")
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.Len(t, oifs.Items, 3)
 
 	kinds := map[string]handlers.MulticastDeliveryOIF{}
-	for _, oif := range resp.OIFs {
+	for _, oif := range oifs.Items {
 		kinds[oif.OIFName] = oif
 	}
 	require.Contains(t, kinds, "Ethernet1")
@@ -162,41 +194,54 @@ func TestGetMulticastDeliveryState_ResolvesObservedState(t *testing.T) {
 	require.Contains(t, kinds, "Weird0")
 	assert.Equal(t, "unknown", kinds["Weird0"].OIFKind)
 
-	assert.NotEmpty(t, resp.ObservedSegments)
-	assert.NotEmpty(t, resp.ExpectedSegments)
-	assert.Len(t, resp.MSDP.Peers, 1)
-	assert.Len(t, resp.MSDP.PimSACache, 1)
-	assert.Len(t, resp.MSDP.SACache, 1)
-	assert.False(t, resp.Freshness.PIMNeighbors.Available)
+	rr, msdp := msdpRequest(api, "test-group", "kind=all")
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.Equal(t, "all", msdp.Kind)
+	assert.Equal(t, 3, msdp.Total)
+	assert.Len(t, msdp.Items, 3)
+	seenMSDPKinds := map[string]bool{}
+	for _, item := range msdp.Items {
+		seenMSDPKinds[item.Kind] = true
+	}
+	assert.True(t, seenMSDPKinds["peers"])
+	assert.True(t, seenMSDPKinds["pim_sa_cache"])
+	assert.True(t, seenMSDPKinds["sa_cache"])
+
+	rr, tree := deliveryTreeRequest(api, "test-group", "")
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.NotEmpty(t, tree.ObservedSegments)
+	assert.NotEmpty(t, tree.ExpectedSegments)
+	assert.False(t, tree.Freshness.PIMNeighbors.Available)
 
 	var unknownOIF bool
-	for _, anomaly := range resp.Anomalies {
+	for _, anomaly := range tree.Anomalies {
 		if anomaly.Kind == "unknown_oif" {
 			unknownOIF = true
+			assert.Contains(t, anomaly.ObjectIDs, "mroute_id")
 		}
 	}
 	assert.True(t, unknownOIF)
 }
 
-func TestGetMulticastDeliveryState_StaleState(t *testing.T) {
+func TestGetMulticastGroupMroutes_StaleState(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertMulticastTestData(t, api)
-	insertMulticastDeliveryRoute(t, api, "mroute-stale", "dev-ams1", "10.0.0.1", `["Register0"]`, "now() - INTERVAL 10 MINUTE")
+	insertMulticastDeliveryMroute(t, api, "mroute-stale", "dev-ams1", "10.0.0.1", `["Register0"]`, "now() - INTERVAL 10 MINUTE")
 
-	rr, resp := deliveryStateRequest(api, "test-group")
+	rr, resp := mroutesRequest(api, "test-group", "")
 
 	require.Equal(t, http.StatusOK, rr.Code)
-	require.Len(t, resp.Routes, 1)
-	assert.Equal(t, "stale", resp.Routes[0].FreshnessStatus)
+	require.Len(t, resp.Items, 1)
+	assert.Equal(t, "stale", resp.Items[0].FreshnessStatus)
 	assert.Equal(t, "stale", resp.Freshness.Mroute.Status)
 }
 
-func TestGetMulticastDeliveryState_UsesSourceIngestionFreshness(t *testing.T) {
+func TestGetMulticastGroupMroutes_UsesSourceIngestionFreshness(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertMulticastTestData(t, api)
-	insertMulticastDeliveryRoute(t, api, "mroute-unchanged", "dev-ams1", "10.0.0.1", `["Register0"]`, "now() - INTERVAL 2 HOUR")
+	insertMulticastDeliveryMroute(t, api, "mroute-unchanged", "dev-ams1", "10.0.0.1", `["Register0"]`, "now() - INTERVAL 2 HOUR")
 
 	err := api.DB.Exec(t.Context(), `
 		INSERT INTO log_ingestion_runs
@@ -206,12 +251,12 @@ func TestGetMulticastDeliveryState_UsesSourceIngestionFreshness(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	rr, resp := deliveryStateRequest(api, "test-group")
+	rr, resp := mroutesRequest(api, "test-group", "")
 
 	require.Equal(t, http.StatusOK, rr.Code)
-	require.Len(t, resp.Routes, 1)
+	require.Len(t, resp.Items, 1)
 	assert.Equal(t, "fresh", resp.Freshness.Mroute.Status)
-	assert.Equal(t, "fresh", resp.Routes[0].FreshnessStatus)
+	assert.Equal(t, "fresh", resp.Items[0].FreshnessStatus)
 	assert.NotNil(t, resp.Freshness.Mroute.LatestSnapshotTS)
 	assert.NotNil(t, resp.Freshness.Mroute.LatestIngestedAt)
 }

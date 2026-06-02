@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -73,7 +74,7 @@ func splitMulticastDeliveryMembers(members []MulticastDeliveryMember, params Mul
 		if (m.Mode == "P" || m.Mode == "P+S") && multicastDeliveryMemberMatchesPublisher(m, params) {
 			publishers = append(publishers, m)
 		}
-		if (m.Mode == "S" || m.Mode == "P+S") && multicastDeliveryMemberMatchesDevice(m.DevicePK, m.DeviceCode, params) {
+		if (m.Mode == "S" || m.Mode == "P+S") && multicastDeliveryMemberMatchesSubscriber(m, params) {
 			subscribers = append(subscribers, m)
 		}
 	}
@@ -135,15 +136,7 @@ func freshnessForTimes(now time.Time, available bool, sourceTime time.Time, time
 	return f
 }
 
-func applyMulticastFreshnessToRows(resp *MulticastDeliveryStateResponse) {
-	applyRouteFreshness(resp.Freshness.Mroute, resp.Routes)
-	applyOIFFreshness(resp.Freshness.Mroute, resp.OIFs)
-	applyMSDPPeerFreshness(resp.Freshness.MSDPPeers, resp.MSDP.Peers)
-	applyMSDPSAFreshness(resp.Freshness.MSDPPimSACache, resp.MSDP.PimSACache)
-	applyMSDPSAFreshness(resp.Freshness.MSDPSACache, resp.MSDP.SACache)
-}
-
-func applyRouteFreshness(f MulticastDeliverySourceFreshness, rows []MulticastDeliveryRoute) {
+func applyMrouteFreshness(f MulticastDeliverySourceFreshness, rows []MulticastDeliveryMroute) {
 	if f.AgeSeconds == nil {
 		return
 	}
@@ -267,9 +260,9 @@ func buildMulticastSubscriberOutcomes(subscribers []MulticastDeliveryMember, obs
 	return outcomes
 }
 
-func buildMulticastDeliveryAnomalies(group MulticastDeliveryGroup, routes []MulticastDeliveryRoute, oifs []MulticastDeliveryOIF, freshness MulticastDeliveryFreshness, outcomes []MulticastDeliverySubscriberState) []MulticastDeliveryAnomaly {
+func buildMulticastDeliveryAnomalies(group MulticastDeliveryGroup, mroutes []MulticastDeliveryMroute, oifs []MulticastDeliveryOIF, freshness MulticastDeliveryFreshness, outcomes []MulticastDeliverySubscriberState) []MulticastDeliveryAnomaly {
 	anomalies := []MulticastDeliveryAnomaly{}
-	if len(routes) == 0 {
+	if len(mroutes) == 0 {
 		anomalies = append(anomalies, multicastAnomaly(
 			"no-mroute-state", "info", "no_mroute_state", "group",
 			map[string]string{"group_pk": group.PK},
@@ -283,11 +276,11 @@ func buildMulticastDeliveryAnomalies(group MulticastDeliveryGroup, routes []Mult
 			"latest mroute snapshot is stale",
 		))
 	}
-	for _, route := range routes {
-		if route.SourceMatchStatus == "unknown_source" {
+	for _, mroute := range mroutes {
+		if mroute.SourceMatchStatus == "unknown_source" {
 			anomalies = append(anomalies, multicastAnomaly(
-				"unknown-source-"+route.RouteID, "warning", "unknown_source", "route",
-				map[string]string{"group_pk": group.PK, "route_id": route.RouteID, "source_address": route.SourceAddress},
+				"unknown-source-"+mroute.MrouteID, "warning", "unknown_source", "mroute",
+				map[string]string{"group_pk": group.PK, "mroute_id": mroute.MrouteID, "source_address": mroute.SourceAddress},
 				"mroute source did not match an activated multicast publisher for this group",
 			))
 		}
@@ -295,8 +288,8 @@ func buildMulticastDeliveryAnomalies(group MulticastDeliveryGroup, routes []Mult
 	for _, oif := range oifs {
 		if oif.OIFKind == "unknown" {
 			anomalies = append(anomalies, multicastAnomaly(
-				"unknown-oif-"+oif.RouteID+"-"+oif.OIFName, "warning", "unknown_oif", "route",
-				map[string]string{"group_pk": group.PK, "route_id": oif.RouteID, "oif_name": oif.OIFName},
+				"unknown-oif-"+oif.MrouteID+"-"+oif.OIFName, "warning", "unknown_oif", "mroute",
+				map[string]string{"group_pk": group.PK, "mroute_id": oif.MrouteID, "oif_name": oif.OIFName},
 				"mroute OIF could not be resolved to a link, interface, subscriber tunnel, or special interface",
 			))
 		}
@@ -355,7 +348,7 @@ func formatMulticastTime(ts time.Time) string {
 	return ts.UTC().Format(time.RFC3339Nano)
 }
 
-func multicastRouteID(devicePK, vrf, mode, groupAddress, sourceAddress string) string {
+func multicastMrouteID(devicePK, vrf, mode, groupAddress, sourceAddress string) string {
 	return strings.Join([]string{devicePK, vrf, mode, groupAddress, sourceAddress}, "|")
 }
 
@@ -370,11 +363,11 @@ func multicastAnomaly(id, severity, kind, scope string, objectIDs map[string]str
 	}
 }
 
-func multicastDeliveryRouteMatches(route MulticastDeliveryRoute, params MulticastDeliveryParams) bool {
-	if !csvContainsOrEmpty(params.Publishers, route.PublisherUserPK) && !csvContainsOrEmpty(params.Publishers, route.PublisherDevicePK) {
+func multicastDeliveryMrouteMatches(mroute MulticastDeliveryMroute, params MulticastDeliveryParams) bool {
+	if !csvContainsOrEmpty(params.Publishers, mroute.PublisherUserPK) && !csvContainsOrEmpty(params.Publishers, mroute.PublisherDevicePK) {
 		return false
 	}
-	return multicastDeliveryMemberMatchesDevice(route.DevicePK, route.DeviceCode, params)
+	return multicastDeliveryMemberMatchesDevice(mroute.DevicePK, mroute.DeviceCode, params)
 }
 
 func multicastDeliveryOIFMatches(oif MulticastDeliveryOIF, params MulticastDeliveryParams) bool {
@@ -385,6 +378,12 @@ func multicastDeliveryOIFMatches(oif MulticastDeliveryOIF, params MulticastDeliv
 		return false
 	}
 	if !csvContainsOrEmpty(params.Links, oif.LinkPK) && !csvContainsOrEmpty(params.Links, oif.LinkCode) {
+		return false
+	}
+	if !csvContainsOrEmpty(params.OIFKinds, oif.OIFKind) {
+		return false
+	}
+	if !multicastDeliveryOIFMatchesSubscriber(oif, params) {
 		return false
 	}
 	return true
@@ -407,21 +406,88 @@ func multicastDeliveryMemberMatchesPublisher(member MulticastDeliveryMember, par
 	return multicastDeliveryMemberMatchesDevice(member.DevicePK, member.DeviceCode, params)
 }
 
+func multicastDeliveryMemberMatchesSubscriber(member MulticastDeliveryMember, params MulticastDeliveryParams) bool {
+	if !csvContainsOrEmpty(params.Subscribers, member.UserPK) &&
+		!csvContainsOrEmpty(params.Subscribers, member.DevicePK) &&
+		!csvContainsOrEmpty(params.Subscribers, member.DeviceCode) &&
+		!csvContainsOrEmpty(params.Subscribers, strconv.Itoa(int(member.TunnelID))) {
+		return false
+	}
+	return multicastDeliveryMemberMatchesDevice(member.DevicePK, member.DeviceCode, params)
+}
+
 func multicastDeliveryMemberMatchesDevice(devicePK, deviceCode string, params MulticastDeliveryParams) bool {
 	return csvContainsOrEmpty(params.Devices, devicePK) || csvContainsOrEmpty(params.Devices, deviceCode)
 }
 
-func uniqueRouteDevices(routes []MulticastDeliveryRoute) []string {
+func multicastDeliveryOIFMatchesSubscriber(oif MulticastDeliveryOIF, params MulticastDeliveryParams) bool {
+	if len(params.Subscribers) == 0 {
+		return true
+	}
+	return csvContainsOrEmpty(params.Subscribers, oif.SubscriberUserPK) ||
+		csvContainsOrEmpty(params.Subscribers, oif.SubscriberDevicePK) ||
+		csvContainsOrEmpty(params.Subscribers, oif.SubscriberDeviceCode) ||
+		csvContainsOrEmpty(params.Subscribers, strconv.Itoa(int(oif.SubscriberTunnelID)))
+}
+
+func uniqueMrouteDevices(mroutes []MulticastDeliveryMroute) []string {
 	seen := map[string]bool{}
 	devices := []string{}
-	for _, route := range routes {
-		if route.DevicePK == "" || seen[route.DevicePK] {
+	for _, mroute := range mroutes {
+		if mroute.DevicePK == "" || seen[mroute.DevicePK] {
 			continue
 		}
-		seen[route.DevicePK] = true
-		devices = append(devices, route.DevicePK)
+		seen[mroute.DevicePK] = true
+		devices = append(devices, mroute.DevicePK)
 	}
 	return devices
+}
+
+func shouldQueryMSDPPeers(kind string) bool {
+	return kind == "all" || kind == "peers"
+}
+
+func shouldQueryMSDPPimSACache(kind string) bool {
+	return kind == "all" || kind == "pim_sa_cache"
+}
+
+func shouldQueryMSDPSACache(kind string) bool {
+	return kind == "all" || kind == "sa_cache"
+}
+
+func buildMulticastMSDPItems(kind string, peers []MulticastDeliveryMSDPPeer, pimSAs, saCache []MulticastDeliveryMSDPSA) []MulticastDeliveryMSDPItem {
+	items := []MulticastDeliveryMSDPItem{}
+	if shouldQueryMSDPPeers(kind) {
+		for i := range peers {
+			peer := peers[i]
+			items = append(items, MulticastDeliveryMSDPItem{Kind: "peers", Peer: &peer})
+		}
+	}
+	if shouldQueryMSDPPimSACache(kind) {
+		for i := range pimSAs {
+			sa := pimSAs[i]
+			items = append(items, MulticastDeliveryMSDPItem{Kind: "pim_sa_cache", SA: &sa})
+		}
+	}
+	if shouldQueryMSDPSACache(kind) {
+		for i := range saCache {
+			sa := saCache[i]
+			items = append(items, MulticastDeliveryMSDPItem{Kind: "sa_cache", SA: &sa})
+		}
+	}
+	return items
+}
+
+func paginateMulticastDeliveryItems[T any](items []T, params MulticastDeliveryParams) ([]T, int) {
+	total := len(items)
+	if params.Offset >= total {
+		return []T{}, total
+	}
+	end := params.Offset + params.Limit
+	if end > total {
+		end = total
+	}
+	return items[params.Offset:end], total
 }
 
 func sqlInFilter(column string, values []string) (string, []any) {

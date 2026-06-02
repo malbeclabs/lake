@@ -14,8 +14,15 @@ import (
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
-// GetMulticastDeliveryState returns observed multicast forwarding state plus semantic enrichment.
-func (a *API) GetMulticastDeliveryState(w http.ResponseWriter, r *http.Request) {
+type multicastDeliveryRequestContext struct {
+	Now         time.Time
+	Group       MulticastDeliveryGroup
+	Available   map[string]bool
+	SourceTimes map[string]time.Time
+}
+
+// GetMulticastGroupMroutes returns paginated enriched PIM mroute rows for a multicast group.
+func (a *API) GetMulticastGroupMroutes(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -31,136 +38,328 @@ func (a *API) GetMulticastDeliveryState(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	resp, err := a.FetchMulticastDeliveryStateData(ctx, pkOrCode, params)
+	data, err := a.loadMulticastDeliveryRequestContext(ctx, pkOrCode)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			http.Error(w, "multicast group not found", http.StatusNotFound)
-			return
-		}
-		logError("multicast delivery-state query error", "error", err, "pk", pkOrCode)
-		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
+		writeMulticastDeliveryError(w, err, "multicast mroutes query error", pkOrCode)
 		return
 	}
 
-	writeJSON(w, resp)
+	mroutes := []MulticastDeliveryMroute{}
+	var mrouteTimes []time.Time
+	if data.Available["dz_ip_mroute_entries_current"] {
+		mroutes, mrouteTimes, err = a.queryMulticastDeliveryMroutes(ctx, data.Group, params)
+		if err != nil {
+			if !multicastDeliverySourceErr(err) {
+				writeMulticastDeliveryError(w, err, "multicast mroutes query error", pkOrCode)
+				return
+			}
+			data.Available["dz_ip_mroute_entries_current"] = false
+			mroutes = []MulticastDeliveryMroute{}
+			mrouteTimes = nil
+		}
+	}
+
+	freshness := buildMulticastFreshness(data.Now, data.Available, data.SourceTimes, mrouteTimes, nil, nil, nil)
+	applyMrouteFreshness(freshness.Mroute, mroutes)
+	items, total := paginateMulticastDeliveryItems(mroutes, params)
+
+	writeJSON(w, MulticastDeliveryMroutesResponse{
+		Group:           data.Group,
+		SourceAvailable: data.Available["dz_ip_mroute_entries_current"],
+		GeneratedAt:     formatMulticastTime(data.Now),
+		Freshness:       freshness,
+		Items:           items,
+		Total:           total,
+		Limit:           params.Limit,
+		Offset:          params.Offset,
+	})
 }
 
-func (a *API) FetchMulticastDeliveryStateData(ctx context.Context, pkOrCode string, params MulticastDeliveryParams) (*MulticastDeliveryStateResponse, error) {
+// GetMulticastGroupOIFs returns paginated enriched mroute OIF rows for a multicast group.
+func (a *API) GetMulticastGroupOIFs(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	pkOrCode := chi.URLParam(r, "pk")
+	if pkOrCode == "" {
+		http.Error(w, "missing multicast group pk", http.StatusBadRequest)
+		return
+	}
+
+	params, err := parseMulticastDeliveryParams(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	data, err := a.loadMulticastDeliveryRequestContext(ctx, pkOrCode)
+	if err != nil {
+		writeMulticastDeliveryError(w, err, "multicast oifs query error", pkOrCode)
+		return
+	}
+
+	oifs := []MulticastDeliveryOIF{}
+	var oifTimes []time.Time
+	if data.Available["dz_ip_mroute_entries_current"] {
+		oifs, oifTimes, err = a.queryMulticastDeliveryOIFs(ctx, data.Group, params)
+		if err != nil {
+			if !multicastDeliverySourceErr(err) {
+				writeMulticastDeliveryError(w, err, "multicast oifs query error", pkOrCode)
+				return
+			}
+			data.Available["dz_ip_mroute_entries_current"] = false
+			oifs = []MulticastDeliveryOIF{}
+			oifTimes = nil
+		}
+	}
+
+	freshness := buildMulticastFreshness(data.Now, data.Available, data.SourceTimes, oifTimes, nil, nil, nil)
+	applyOIFFreshness(freshness.Mroute, oifs)
+	items, total := paginateMulticastDeliveryItems(oifs, params)
+
+	writeJSON(w, MulticastDeliveryOIFsResponse{
+		Group:           data.Group,
+		SourceAvailable: data.Available["dz_ip_mroute_entries_current"],
+		GeneratedAt:     formatMulticastTime(data.Now),
+		Freshness:       freshness,
+		Items:           items,
+		Total:           total,
+		Limit:           params.Limit,
+		Offset:          params.Offset,
+	})
+}
+
+// GetMulticastGroupMSDP returns paginated MSDP rows related to a multicast group.
+func (a *API) GetMulticastGroupMSDP(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	pkOrCode := chi.URLParam(r, "pk")
+	if pkOrCode == "" {
+		http.Error(w, "missing multicast group pk", http.StatusBadRequest)
+		return
+	}
+
+	params, err := parseMulticastDeliveryParams(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	data, err := a.loadMulticastDeliveryRequestContext(ctx, pkOrCode)
+	if err != nil {
+		writeMulticastDeliveryError(w, err, "multicast msdp query error", pkOrCode)
+		return
+	}
+
+	var mroutes []MulticastDeliveryMroute
+	var mrouteTimes, peerTimes, pimSATimes, saTimes []time.Time
+	if shouldQueryMSDPPeers(params.MSDPKind) && data.Available["dz_ip_mroute_entries_current"] {
+		mroutes, mrouteTimes, err = a.queryMulticastDeliveryMroutes(ctx, data.Group, params)
+		if err != nil {
+			if !multicastDeliverySourceErr(err) {
+				writeMulticastDeliveryError(w, err, "multicast msdp mroute query error", pkOrCode)
+				return
+			}
+			data.Available["dz_ip_mroute_entries_current"] = false
+			mroutes = nil
+			mrouteTimes = nil
+		}
+	}
+
+	peers := []MulticastDeliveryMSDPPeer{}
+	if shouldQueryMSDPPeers(params.MSDPKind) && data.Available["dz_ip_msdp_peers_current"] {
+		peers, peerTimes, err = a.queryMulticastDeliveryMSDPPeers(ctx, params, mroutes)
+		if err != nil {
+			if !multicastDeliverySourceErr(err) {
+				writeMulticastDeliveryError(w, err, "multicast msdp peers query error", pkOrCode)
+				return
+			}
+			data.Available["dz_ip_msdp_peers_current"] = false
+			peers = []MulticastDeliveryMSDPPeer{}
+			peerTimes = nil
+		}
+	}
+
+	pimSAs := []MulticastDeliveryMSDPSA{}
+	if shouldQueryMSDPPimSACache(params.MSDPKind) && data.Available["dz_ip_msdp_pim_sa_cache_current"] {
+		pimSAs, pimSATimes, err = a.queryMulticastDeliveryPimSACache(ctx, data.Group, params)
+		if err != nil {
+			if !multicastDeliverySourceErr(err) {
+				writeMulticastDeliveryError(w, err, "multicast msdp pim-sa query error", pkOrCode)
+				return
+			}
+			data.Available["dz_ip_msdp_pim_sa_cache_current"] = false
+			pimSAs = []MulticastDeliveryMSDPSA{}
+			pimSATimes = nil
+		}
+	}
+
+	saCache := []MulticastDeliveryMSDPSA{}
+	if shouldQueryMSDPSACache(params.MSDPKind) && data.Available["dz_ip_msdp_sa_cache_current"] {
+		saCache, saTimes, err = a.queryMulticastDeliverySACache(ctx, data.Group, params)
+		if err != nil {
+			if !multicastDeliverySourceErr(err) {
+				writeMulticastDeliveryError(w, err, "multicast msdp sa query error", pkOrCode)
+				return
+			}
+			data.Available["dz_ip_msdp_sa_cache_current"] = false
+			saCache = []MulticastDeliveryMSDPSA{}
+			saTimes = nil
+		}
+	}
+
+	freshness := buildMulticastFreshness(data.Now, data.Available, data.SourceTimes, mrouteTimes, peerTimes, pimSATimes, saTimes)
+	applyMrouteFreshness(freshness.Mroute, mroutes)
+	applyMSDPPeerFreshness(freshness.MSDPPeers, peers)
+	applyMSDPSAFreshness(freshness.MSDPPimSACache, pimSAs)
+	applyMSDPSAFreshness(freshness.MSDPSACache, saCache)
+
+	msdpItems := buildMulticastMSDPItems(params.MSDPKind, peers, pimSAs, saCache)
+	items, total := paginateMulticastDeliveryItems(msdpItems, params)
+
+	writeJSON(w, MulticastDeliveryMSDPResponse{
+		Group:       data.Group,
+		GeneratedAt: formatMulticastTime(data.Now),
+		Kind:        params.MSDPKind,
+		Freshness:   freshness,
+		Items:       items,
+		Total:       total,
+		Limit:       params.Limit,
+		Offset:      params.Offset,
+	})
+}
+
+// GetMulticastGroupDeliveryTree returns semantic observed/expected delivery-tree state without raw rows.
+func (a *API) GetMulticastGroupDeliveryTree(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	pkOrCode := chi.URLParam(r, "pk")
+	if pkOrCode == "" {
+		http.Error(w, "missing multicast group pk", http.StatusBadRequest)
+		return
+	}
+
+	params, err := parseMulticastDeliveryParams(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	data, err := a.loadMulticastDeliveryRequestContext(ctx, pkOrCode)
+	if err != nil {
+		writeMulticastDeliveryError(w, err, "multicast delivery-tree query error", pkOrCode)
+		return
+	}
+
+	members, err := a.queryMulticastDeliveryMembers(ctx, data.Group.PK)
+	if err != nil {
+		writeMulticastDeliveryError(w, err, "multicast delivery-tree members query error", pkOrCode)
+		return
+	}
+	_, subscribers := splitMulticastDeliveryMembers(members, params)
+
+	mroutes := []MulticastDeliveryMroute{}
+	oifs := []MulticastDeliveryOIF{}
+	var mrouteTimes []time.Time
+	anomalies := []MulticastDeliveryAnomaly{}
+
+	if !data.Available["dz_ip_mroute_entries_current"] {
+		anomalies = append(anomalies, multicastAnomaly(
+			"mroute-source-unavailable", "warning", "source_unavailable", "group",
+			map[string]string{"group_pk": data.Group.PK},
+			"mroute forwarding state source is unavailable for this environment",
+		))
+	} else {
+		mroutes, mrouteTimes, err = a.queryMulticastDeliveryMroutes(ctx, data.Group, params)
+		if err != nil {
+			if !multicastDeliverySourceErr(err) {
+				writeMulticastDeliveryError(w, err, "multicast delivery-tree mroutes query error", pkOrCode)
+				return
+			}
+			data.Available["dz_ip_mroute_entries_current"] = false
+			anomalies = append(anomalies, multicastAnomaly(
+				"mroute-source-unavailable", "warning", "source_unavailable", "group",
+				map[string]string{"group_pk": data.Group.PK},
+				"mroute forwarding state source is unavailable for this environment",
+			))
+		} else {
+			oifs, _, err = a.queryMulticastDeliveryOIFs(ctx, data.Group, params)
+			if err != nil {
+				if !multicastDeliverySourceErr(err) {
+					writeMulticastDeliveryError(w, err, "multicast delivery-tree oifs query error", pkOrCode)
+					return
+				}
+				data.Available["dz_ip_mroute_entries_current"] = false
+				mroutes = []MulticastDeliveryMroute{}
+				oifs = []MulticastDeliveryOIF{}
+				mrouteTimes = nil
+				anomalies = append(anomalies, multicastAnomaly(
+					"mroute-source-unavailable", "warning", "source_unavailable", "group",
+					map[string]string{"group_pk": data.Group.PK},
+					"mroute forwarding state source is unavailable for this environment",
+				))
+			}
+		}
+	}
+
+	freshness := buildMulticastFreshness(data.Now, data.Available, data.SourceTimes, mrouteTimes, nil, nil, nil)
+	applyMrouteFreshness(freshness.Mroute, mroutes)
+	applyOIFFreshness(freshness.Mroute, oifs)
+
+	observed := buildObservedMulticastSegments(oifs)
+	expected := []MulticastDeliverySegment{}
+	if params.Mode == "expected" || params.Mode == "diff" || params.Mode == "all" {
+		expected, _ = a.buildExpectedMulticastDeliverySegments(ctx, data.Group.PK, params)
+	}
+	outcomes := buildMulticastSubscriberOutcomes(subscribers, observed, expected)
+	anomalies = append(anomalies, buildMulticastDeliveryAnomalies(data.Group, mroutes, oifs, freshness, outcomes)...)
+
+	writeJSON(w, MulticastDeliveryTreeResponse{
+		Group:              data.Group,
+		SourceAvailable:    data.Available["dz_ip_mroute_entries_current"],
+		GeneratedAt:        formatMulticastTime(data.Now),
+		Mode:               params.Mode,
+		Freshness:          freshness,
+		ObservedSegments:   observed,
+		ExpectedSegments:   expected,
+		SubscriberOutcomes: outcomes,
+		Anomalies:          anomalies,
+	})
+}
+
+func (a *API) loadMulticastDeliveryRequestContext(ctx context.Context, pkOrCode string) (multicastDeliveryRequestContext, error) {
 	now := time.Now().UTC()
 	group, err := a.queryMulticastDeliveryGroup(ctx, pkOrCode)
 	if err != nil {
-		return nil, err
+		return multicastDeliveryRequestContext{}, err
 	}
 
 	available, err := a.queryMulticastDeliverySources(ctx)
 	if err != nil {
-		return nil, err
+		return multicastDeliveryRequestContext{}, err
 	}
 	sourceTimes, err := a.queryMulticastDeliverySourceIngestTimes(ctx)
 	if err != nil {
-		return nil, err
+		return multicastDeliveryRequestContext{}, err
 	}
 
-	resp := &MulticastDeliveryStateResponse{
-		Group:              group,
-		SourceAvailable:    available["dz_ip_mroute_entries_current"],
-		GeneratedAt:        formatMulticastTime(now),
-		Mode:               params.Mode,
-		Publishers:         []MulticastDeliveryMember{},
-		Subscribers:        []MulticastDeliveryMember{},
-		Routes:             []MulticastDeliveryRoute{},
-		OIFs:               []MulticastDeliveryOIF{},
-		ObservedSegments:   []MulticastDeliverySegment{},
-		ExpectedSegments:   []MulticastDeliverySegment{},
-		SubscriberOutcomes: []MulticastDeliverySubscriberState{},
-		Anomalies:          []MulticastDeliveryAnomaly{},
-		MSDP: MulticastDeliveryMSDP{
-			Peers:        []MulticastDeliveryMSDPPeer{},
-			PimSACache:   []MulticastDeliveryMSDPSA{},
-			SACache:      []MulticastDeliveryMSDPSA{},
-			PIMNeighbors: []MulticastDeliveryPIMNeighbor{},
-		},
-	}
+	return multicastDeliveryRequestContext{
+		Now:         now,
+		Group:       group,
+		Available:   available,
+		SourceTimes: sourceTimes,
+	}, nil
+}
 
-	members, err := a.queryMulticastDeliveryMembers(ctx, group.PK)
-	if err != nil {
-		return nil, err
+func writeMulticastDeliveryError(w http.ResponseWriter, err error, msg, pkOrCode string) {
+	if errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, "multicast group not found", http.StatusNotFound)
+		return
 	}
-	resp.Publishers, resp.Subscribers = splitMulticastDeliveryMembers(members, params)
-
-	if !available["dz_ip_mroute_entries_current"] {
-		resp.Freshness = buildMulticastFreshness(now, available, sourceTimes, nil, nil, nil, nil)
-		resp.Anomalies = append(resp.Anomalies, multicastAnomaly(
-			"mroute-source-unavailable", "warning", "source_unavailable", "group",
-			map[string]string{"group_pk": group.PK},
-			"mroute forwarding state source is unavailable for this environment",
-		))
-		return resp, nil
-	}
-
-	routes, routeTimes, err := a.queryMulticastDeliveryRoutes(ctx, group, params)
-	if err != nil {
-		if multicastDeliverySourceErr(err) {
-			available["dz_ip_mroute_entries_current"] = false
-			resp.SourceAvailable = false
-			resp.Freshness = buildMulticastFreshness(now, available, sourceTimes, nil, nil, nil, nil)
-			return resp, nil
-		}
-		return nil, err
-	}
-	resp.Routes = routes
-
-	oifs, _, err := a.queryMulticastDeliveryOIFs(ctx, group, params)
-	if err != nil {
-		if multicastDeliverySourceErr(err) {
-			available["dz_ip_mroute_entries_current"] = false
-			resp.SourceAvailable = false
-			resp.Freshness = buildMulticastFreshness(now, available, sourceTimes, nil, nil, nil, nil)
-			return resp, nil
-		}
-		return nil, err
-	}
-	resp.OIFs = oifs
-
-	var msdpPeerTimes, pimSATimes, saTimes []time.Time
-	if available["dz_ip_msdp_peers_current"] {
-		resp.MSDP.Peers, msdpPeerTimes, err = a.queryMulticastDeliveryMSDPPeers(ctx, params, routes)
-		if err != nil {
-			if !multicastDeliverySourceErr(err) {
-				return nil, err
-			}
-			available["dz_ip_msdp_peers_current"] = false
-		}
-	}
-	if available["dz_ip_msdp_pim_sa_cache_current"] {
-		resp.MSDP.PimSACache, pimSATimes, err = a.queryMulticastDeliveryPimSACache(ctx, group, params)
-		if err != nil {
-			if !multicastDeliverySourceErr(err) {
-				return nil, err
-			}
-			available["dz_ip_msdp_pim_sa_cache_current"] = false
-		}
-	}
-	if available["dz_ip_msdp_sa_cache_current"] {
-		resp.MSDP.SACache, saTimes, err = a.queryMulticastDeliverySACache(ctx, group, params)
-		if err != nil {
-			if !multicastDeliverySourceErr(err) {
-				return nil, err
-			}
-			available["dz_ip_msdp_sa_cache_current"] = false
-		}
-	}
-
-	resp.Freshness = buildMulticastFreshness(now, available, sourceTimes, routeTimes, msdpPeerTimes, pimSATimes, saTimes)
-	applyMulticastFreshnessToRows(resp)
-	resp.ObservedSegments = buildObservedMulticastSegments(oifs)
-	if params.Mode == "expected" || params.Mode == "diff" || params.Mode == "all" {
-		resp.ExpectedSegments, _ = a.buildExpectedMulticastDeliverySegments(ctx, group.PK, params)
-	}
-	resp.SubscriberOutcomes = buildMulticastSubscriberOutcomes(resp.Subscribers, resp.ObservedSegments, resp.ExpectedSegments)
-	resp.Anomalies = buildMulticastDeliveryAnomalies(group, routes, oifs, resp.Freshness, resp.SubscriberOutcomes)
-
-	return resp, nil
+	logError(msg, "error", err, "pk", pkOrCode)
+	http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 }
 
 func parseMulticastDeliveryParams(r *http.Request) (MulticastDeliveryParams, error) {
@@ -172,13 +371,28 @@ func parseMulticastDeliveryParams(r *http.Request) (MulticastDeliveryParams, err
 	if mode != "observed" && mode != "expected" && mode != "diff" && mode != "all" {
 		return MulticastDeliveryParams{}, fmt.Errorf("invalid mode")
 	}
+
+	msdpKind := strings.TrimSpace(q.Get("kind"))
+	if msdpKind == "" {
+		msdpKind = "all"
+	}
+	if msdpKind != "all" && msdpKind != "peers" && msdpKind != "pim_sa_cache" && msdpKind != "sa_cache" {
+		return MulticastDeliveryParams{}, fmt.Errorf("invalid kind")
+	}
+
+	pagination := ParsePagination(r, 100)
 	return MulticastDeliveryParams{
-		Mode:       mode,
-		Sources:    splitCSVParam(q.Get("source")),
-		Publishers: splitCSVParam(firstNonEmpty(q.Get("publisher"), q.Get("publishers"))),
-		Devices:    splitCSVParam(q.Get("device")),
-		Links:      splitCSVParam(q.Get("link")),
-		Includes:   csvSet(q.Get("include")),
+		Mode:        mode,
+		Sources:     splitCSVParam(q.Get("source")),
+		Publishers:  splitCSVParam(firstNonEmpty(q.Get("publisher"), q.Get("publishers"))),
+		Subscribers: splitCSVParam(firstNonEmpty(q.Get("subscriber"), q.Get("subscribers"))),
+		Devices:     splitCSVParam(q.Get("device")),
+		Links:       splitCSVParam(q.Get("link")),
+		OIFKinds:    splitCSVParam(q.Get("oif_kind")),
+		MSDPKind:    msdpKind,
+		Includes:    csvSet(q.Get("include")),
+		Limit:       pagination.Limit,
+		Offset:      pagination.Offset,
 	}, nil
 }
 
