@@ -7,7 +7,7 @@ import (
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
-func (a *API) queryMulticastDeliveryRoutes(ctx context.Context, group MulticastDeliveryGroup, params MulticastDeliveryParams) ([]MulticastDeliveryRoute, []time.Time, error) {
+func (a *API) queryMulticastDeliveryMroutes(ctx context.Context, group MulticastDeliveryGroup, params MulticastDeliveryParams) ([]MulticastDeliveryMroute, []time.Time, error) {
 	sourceFilter, sourceArgs := sqlInFilter("r.source_address", params.Sources)
 	query := `
 		WITH routes_filtered AS (
@@ -78,72 +78,72 @@ func (a *API) queryMulticastDeliveryRoutes(ctx context.Context, group MulticastD
 	`
 	args := []any{group.MulticastIP}
 	args = append(args, sourceArgs...)
-	args = append(args, group.PK, multicastDeliveryMaxRouteRows)
+	args = append(args, group.PK, multicastDeliveryMaxMrouteRows)
 
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query, args...)
-	metrics.RecordClickHouseQuery("multicast_delivery_routes", time.Since(start), err)
+	metrics.RecordClickHouseQuery("multicast_delivery_mroutes", time.Since(start), err)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer rows.Close()
 
-	routes := []MulticastDeliveryRoute{}
+	mroutes := []MulticastDeliveryMroute{}
 	times := []time.Time{}
 	for rows.Next() {
-		var s multicastRouteScan
+		var s multicastMrouteScan
 		if err := rows.Scan(
-			&s.Route.EntityID,
+			&s.Mroute.EntityID,
 			&s.snapshotTS,
 			&s.ingestedAt,
-			&s.Route.DevicePK,
-			&s.Route.DeviceCode,
-			&s.Route.DeviceStatus,
-			&s.Route.DeviceType,
-			&s.Route.MetroCode,
-			&s.Route.ContributorCode,
-			&s.Route.VRF,
-			&s.Route.Mode,
-			&s.Route.GroupAddress,
-			&s.Route.SourceAddress,
-			&s.Route.RouteFlags,
+			&s.Mroute.DevicePK,
+			&s.Mroute.DeviceCode,
+			&s.Mroute.DeviceStatus,
+			&s.Mroute.DeviceType,
+			&s.Mroute.MetroCode,
+			&s.Mroute.ContributorCode,
+			&s.Mroute.VRF,
+			&s.Mroute.Mode,
+			&s.Mroute.GroupAddress,
+			&s.Mroute.SourceAddress,
+			&s.Mroute.RouteFlags,
 			&s.registerInOIFList,
-			&s.Route.RPFInterface,
-			&s.Route.RPFRIB,
-			&s.Route.RPFPrefix,
-			&s.Route.RPFPreference,
-			&s.Route.RPFMetric,
-			&s.Route.RPFNeighbor,
+			&s.Mroute.RPFInterface,
+			&s.Mroute.RPFRIB,
+			&s.Mroute.RPFPrefix,
+			&s.Mroute.RPFPreference,
+			&s.Mroute.RPFMetric,
+			&s.Mroute.RPFNeighbor,
 			&s.rpfAttached,
 			&s.rpfHasBlock,
-			&s.Route.OIFList,
-			&s.Route.OIFCount,
+			&s.Mroute.OIFList,
+			&s.Mroute.OIFCount,
 			&s.creationTime,
-			&s.Route.PublisherUserPK,
-			&s.Route.PublisherDevicePK,
-			&s.Route.PublisherDeviceCode,
-			&s.Route.PublisherMetroCode,
-			&s.Route.PublisherContributorCode,
-			&s.Route.PublisherTunnelID,
-			&s.Route.PublisherOwnerPubkey,
-			&s.Route.PublisherDZIP,
-			&s.Route.SourceMatchStatus,
+			&s.Mroute.PublisherUserPK,
+			&s.Mroute.PublisherDevicePK,
+			&s.Mroute.PublisherDeviceCode,
+			&s.Mroute.PublisherMetroCode,
+			&s.Mroute.PublisherContributorCode,
+			&s.Mroute.PublisherTunnelID,
+			&s.Mroute.PublisherOwnerPubkey,
+			&s.Mroute.PublisherDZIP,
+			&s.Mroute.SourceMatchStatus,
 		); err != nil {
 			return nil, nil, err
 		}
-		s.Route.SnapshotTS = formatMulticastTime(s.snapshotTS)
-		s.Route.IngestedAt = formatMulticastTime(s.ingestedAt)
-		s.Route.CreationTime = formatMulticastTime(s.creationTime)
-		s.Route.AgeSeconds = ageSeconds(s.snapshotTS)
-		s.Route.FreshnessStatus = multicastFreshnessStatus(s.Route.AgeSeconds)
-		s.Route.RegisterInOIFList = s.registerInOIFList != 0
-		s.Route.RPFAttached = s.rpfAttached != 0
-		s.Route.RPFHasBlock = s.rpfHasBlock != 0
-		s.Route.RouteID = multicastRouteID(s.Route.DevicePK, s.Route.VRF, s.Route.Mode, s.Route.GroupAddress, s.Route.SourceAddress)
-		if multicastDeliveryRouteMatches(s.Route, params) {
-			routes = append(routes, s.Route)
+		s.Mroute.SnapshotTS = formatMulticastTime(s.snapshotTS)
+		s.Mroute.IngestedAt = formatMulticastTime(s.ingestedAt)
+		s.Mroute.CreationTime = formatMulticastTime(s.creationTime)
+		s.Mroute.AgeSeconds = ageSeconds(s.snapshotTS)
+		s.Mroute.FreshnessStatus = multicastFreshnessStatus(s.Mroute.AgeSeconds)
+		s.Mroute.RegisterInOIFList = s.registerInOIFList != 0
+		s.Mroute.RPFAttached = s.rpfAttached != 0
+		s.Mroute.RPFHasBlock = s.rpfHasBlock != 0
+		s.Mroute.MrouteID = multicastMrouteID(s.Mroute.DevicePK, s.Mroute.VRF, s.Mroute.Mode, s.Mroute.GroupAddress, s.Mroute.SourceAddress)
+		if multicastDeliveryMrouteMatches(s.Mroute, params) {
+			mroutes = append(mroutes, s.Mroute)
 			times = append(times, s.snapshotTS)
 		}
 	}
-	return routes, times, rows.Err()
+	return mroutes, times, rows.Err()
 }

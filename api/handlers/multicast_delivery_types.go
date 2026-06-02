@@ -5,32 +5,64 @@ import "time"
 const (
 	multicastDeliveryFreshSeconds  = 5 * 60
 	multicastDeliveryStaleSeconds  = 30 * 60
-	multicastDeliveryMaxRouteRows  = 5000
+	multicastDeliveryMaxMrouteRows = 5000
 	multicastDeliveryMaxOIFRows    = 20000
 	multicastDeliveryMaxMemberRows = 10000
 )
 
 type MulticastDeliveryParams struct {
-	Mode       string
-	Sources    []string
-	Publishers []string
-	Devices    []string
-	Links      []string
-	Includes   map[string]bool
+	Mode        string
+	Sources     []string
+	Publishers  []string
+	Subscribers []string
+	Devices     []string
+	Links       []string
+	OIFKinds    []string
+	MSDPKind    string
+	Includes    map[string]bool
+	Limit       int
+	Offset      int
 }
 
-// MulticastDeliveryStateResponse is the semantic delivery-state response for a multicast group.
-type MulticastDeliveryStateResponse struct {
+type MulticastDeliveryMroutesResponse struct {
+	Group           MulticastDeliveryGroup     `json:"group"`
+	SourceAvailable bool                       `json:"source_available"`
+	GeneratedAt     string                     `json:"generated_at"`
+	Freshness       MulticastDeliveryFreshness `json:"freshness"`
+	Items           []MulticastDeliveryMroute  `json:"items"`
+	Total           int                        `json:"total"`
+	Limit           int                        `json:"limit"`
+	Offset          int                        `json:"offset"`
+}
+
+type MulticastDeliveryOIFsResponse struct {
+	Group           MulticastDeliveryGroup     `json:"group"`
+	SourceAvailable bool                       `json:"source_available"`
+	GeneratedAt     string                     `json:"generated_at"`
+	Freshness       MulticastDeliveryFreshness `json:"freshness"`
+	Items           []MulticastDeliveryOIF     `json:"items"`
+	Total           int                        `json:"total"`
+	Limit           int                        `json:"limit"`
+	Offset          int                        `json:"offset"`
+}
+
+type MulticastDeliveryMSDPResponse struct {
+	Group       MulticastDeliveryGroup      `json:"group"`
+	GeneratedAt string                      `json:"generated_at"`
+	Kind        string                      `json:"kind"`
+	Freshness   MulticastDeliveryFreshness  `json:"freshness"`
+	Items       []MulticastDeliveryMSDPItem `json:"items"`
+	Total       int                         `json:"total"`
+	Limit       int                         `json:"limit"`
+	Offset      int                         `json:"offset"`
+}
+
+type MulticastDeliveryTreeResponse struct {
 	Group              MulticastDeliveryGroup             `json:"group"`
 	SourceAvailable    bool                               `json:"source_available"`
 	GeneratedAt        string                             `json:"generated_at"`
 	Mode               string                             `json:"mode"`
 	Freshness          MulticastDeliveryFreshness         `json:"freshness"`
-	Publishers         []MulticastDeliveryMember          `json:"publishers"`
-	Subscribers        []MulticastDeliveryMember          `json:"subscribers"`
-	Routes             []MulticastDeliveryRoute           `json:"routes"`
-	OIFs               []MulticastDeliveryOIF             `json:"oifs"`
-	MSDP               MulticastDeliveryMSDP              `json:"msdp"`
 	ObservedSegments   []MulticastDeliverySegment         `json:"observed_segments"`
 	ExpectedSegments   []MulticastDeliverySegment         `json:"expected_segments"`
 	SubscriberOutcomes []MulticastDeliverySubscriberState `json:"subscriber_outcomes"`
@@ -78,8 +110,8 @@ type MulticastDeliveryMember struct {
 	TunnelID    int32  `json:"tunnel_id"`
 }
 
-type MulticastDeliveryRoute struct {
-	RouteID                  string `json:"route_id"`
+type MulticastDeliveryMroute struct {
+	MrouteID                 string `json:"mroute_id"`
 	EntityID                 string `json:"entity_id"`
 	SnapshotTS               string `json:"snapshot_ts"`
 	IngestedAt               string `json:"ingested_at"`
@@ -120,7 +152,7 @@ type MulticastDeliveryRoute struct {
 }
 
 type MulticastDeliveryOIF struct {
-	RouteID               string `json:"route_id"`
+	MrouteID              string `json:"mroute_id"`
 	EntityID              string `json:"entity_id"`
 	SnapshotTS            string `json:"snapshot_ts"`
 	AgeSeconds            int    `json:"age_seconds"`
@@ -158,11 +190,10 @@ type MulticastDeliveryOIF struct {
 	SubscriberClientIP    string `json:"subscriber_client_ip,omitempty"`
 }
 
-type MulticastDeliveryMSDP struct {
-	Peers        []MulticastDeliveryMSDPPeer    `json:"peers"`
-	PimSACache   []MulticastDeliveryMSDPSA      `json:"pim_sa_cache"`
-	SACache      []MulticastDeliveryMSDPSA      `json:"sa_cache"`
-	PIMNeighbors []MulticastDeliveryPIMNeighbor `json:"pim_neighbors"`
+type MulticastDeliveryMSDPItem struct {
+	Kind string                     `json:"kind"`
+	Peer *MulticastDeliveryMSDPPeer `json:"peer,omitempty"`
+	SA   *MulticastDeliveryMSDPSA   `json:"sa,omitempty"`
 }
 
 type MulticastDeliveryMSDPPeer struct {
@@ -195,8 +226,6 @@ type MulticastDeliveryMSDPSA struct {
 	RPAddress         string `json:"rp_address"`
 	SourceMatchStatus string `json:"source_match_status"`
 }
-
-type MulticastDeliveryPIMNeighbor struct{}
 
 type MulticastDeliverySegment struct {
 	Source              string   `json:"source"`
@@ -231,8 +260,8 @@ type MulticastDeliveryAnomaly struct {
 	Message   string            `json:"message"`
 }
 
-type multicastRouteScan struct {
-	Route             MulticastDeliveryRoute
+type multicastMrouteScan struct {
+	Mroute            MulticastDeliveryMroute
 	snapshotTS        time.Time
 	ingestedAt        time.Time
 	creationTime      time.Time
