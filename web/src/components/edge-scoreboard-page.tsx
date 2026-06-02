@@ -134,6 +134,7 @@ function WinRateGauge({ feedRates, labelPct }: { feedRates: Record<string, numbe
 
 const FEED_COLORS: Record<string, string> = {
   dz_edge: '#34d399',       // emerald-400 — primary DZ
+  dz_root: '#10b981',       // emerald-500 — turbine-root publish (between Leaders and Retransmits)
   dz: '#34d399',            // emerald-400
   dz_retransmit: '#059669', // emerald-600 — rolled up regional retransmit feeds
   jito: '#fbbf24',          // amber-400 — brighter
@@ -144,6 +145,7 @@ const FEED_COLORS: Record<string, string> = {
 
 const FEED_LABELS: Record<string, string> = {
   dz_edge: 'DZ Edge',
+  dz_root: 'DZ Edge turbine-root',
   dz: 'DZ Edge Leaders',
   dz_retransmit: 'DZ Edge Retransmits',
   jito: 'Jito Shredstream',
@@ -175,18 +177,19 @@ function StackedBar({ segments, children, popoverSide = 'top', dzTotalPct }: { s
         const dzSegs = segments.filter(s => DZ_FEED_KEYS.has(s.key))
         const otherSegs = segments.filter(s => !DZ_FEED_KEYS.has(s.key))
         const dzBySubKey = new Map(dzSegs.map(s => [s.key, s]))
-        // Granular-DZ mode: we're breaking DZ into Leaders/Retransmits. Always show both,
-        // synthesizing a 0% entry for whichever is missing so the layout stays stable
-        // across rows (e.g. a node with no retransmit feed still shows "Retransmits 0.00%").
-        const hasGranularDz = dzBySubKey.has('dz') || dzBySubKey.has('dz_retransmit')
+        // Granular-DZ mode: we're breaking DZ into Leaders/Root/Retransmits (delivery order).
+        // Always show all three, synthesizing a 0% entry for whichever is missing so the layout
+        // stays stable across rows (e.g. a node with no retransmit feed still shows "Retransmits 0.00%").
+        const hasGranularDz = dzBySubKey.has('dz_root') || dzBySubKey.has('dz') || dzBySubKey.has('dz_retransmit')
         const groupDz = hasGranularDz || dzSegs.length > 1
         const dzDisplaySegs: FeedSegment[] = hasGranularDz
           ? [
               dzBySubKey.get('dz') ?? { key: 'dz', pct: 0, rawPct: 0, color: FEED_COLORS.dz },
+              dzBySubKey.get('dz_root') ?? { key: 'dz_root', pct: 0, rawPct: 0, color: FEED_COLORS.dz_root },
               dzBySubKey.get('dz_retransmit') ?? { key: 'dz_retransmit', pct: 0, rawPct: 0, color: FEED_COLORS.dz_retransmit },
             ]
           : dzSegs
-        const dzSubLabels: Record<string, string> = { dz_edge: 'Edge', dz: 'Leaders', dz_retransmit: 'Retransmits' }
+        const dzSubLabels: Record<string, string> = { dz_edge: 'Edge', dz_root: 'turbine-root', dz: 'Leaders', dz_retransmit: 'Retransmits' }
         const flatSegs = groupDz ? otherSegs : segments
         return (
           <div className={cn('absolute z-30 bg-popover border border-border rounded-lg shadow-lg px-3 py-2 text-xs whitespace-nowrap', popoverClass)}>
@@ -221,7 +224,7 @@ function StackedBar({ segments, children, popoverSide = 'top', dzTotalPct }: { s
 }
 
 // Feeds considered "DZ" for simplified view grouping.
-const DZ_FEED_KEYS = new Set(['dz_edge', 'dz', 'dz_retransmit'])
+const DZ_FEED_KEYS = new Set(['dz_edge', 'dz_root', 'dz', 'dz_retransmit'])
 
 // Map a raw feed name to the key used in the chart/bar data.
 // The API returns 'dz_edge' (server-computed aggregate of dz + retransmit), 'dz' (Leaders),
@@ -242,6 +245,7 @@ function feedKeyForMode(feed: string, granular: boolean): string | null {
 function feedSortPriority(f: string): number {
   if (f === 'dz_edge') return 0
   if (f === 'dz') return 1
+  if (f === 'dz_root') return 1.5
   if (f === 'dz_retransmit') return 2
   if (f === 'jito') return 5
   if (f === 'turbine') return 6
@@ -1200,6 +1204,7 @@ function RecentSlotsChart({
   const infoFeedBarFillRefs = useRef<Map<string, HTMLDivElement>>(new Map())
   const infoFeedLegendItemRefs = useRef<Map<string, HTMLDivElement>>(new Map())
   const infoDzEdgeTotalRef = useRef<HTMLSpanElement>(null)
+  const infoDzRootBarRef = useRef<HTMLDivElement>(null)
   const infoDzLeaderBarRef = useRef<HTMLDivElement>(null)
   const infoDzRetransBarRef = useRef<HTMLDivElement>(null)
   const defaultInfoRef = useRef<SlotHoverInfo | null>(null)
@@ -1230,19 +1235,21 @@ function RecentSlotsChart({
     }
     for (const [f, span] of infoFeedValueRefs.current) { const v = info.feedData[f] ?? 0; span.textContent = v >= 100 ? '100%' : `${v.toFixed(1)}%` }
     for (const [f, bar] of infoFeedBarFillRefs.current) { bar.style.width = `${Math.min(100, info.feedData[f] ?? 0)}%` }
-    // Update combined DZ Edge split bar (granular mode)
+    // Update combined DZ Edge split bar (granular mode): root + leader + retransmit
+    const dzRootPct = info.feedData['dz_root'] ?? 0
     const dzLeaderPct = info.feedData['dz'] ?? 0
     const dzRetransPct = info.feedData['dz_retransmit'] ?? 0
-    const dzTotal = dzLeaderPct + dzRetransPct
+    const dzTotal = dzRootPct + dzLeaderPct + dzRetransPct
     if (infoDzEdgeTotalRef.current) infoDzEdgeTotalRef.current.textContent = dzTotal >= 100 ? '100%' : `${dzTotal.toFixed(1)}%`
+    if (infoDzRootBarRef.current) infoDzRootBarRef.current.style.width = `${dzRootPct}%`
     if (infoDzLeaderBarRef.current) infoDzLeaderBarRef.current.style.width = `${dzLeaderPct}%`
     if (infoDzRetransBarRef.current) infoDzRetransBarRef.current.style.width = `${dzRetransPct}%`
     // Winner highlighting — group DZ sub-feeds as one unit so the DZ group
-    // competes against jito/turbine rather than leaders vs retransmit.
+    // competes against jito/turbine rather than root vs leaders vs retransmit.
     const grouped: Record<string, number> = {}
     for (const [f, v] of Object.entries(info.feedData)) {
       if (v == null) continue
-      if (f === 'dz' || f === 'dz_retransmit') { grouped['_dz_group'] = (grouped['_dz_group'] ?? 0) + v }
+      if (f === 'dz_root' || f === 'dz' || f === 'dz_retransmit') { grouped['_dz_group'] = (grouped['_dz_group'] ?? 0) + v }
       else { grouped[f] = v }
     }
     const winnerKey = Object.entries(grouped).reduce<string | null>(
@@ -1860,11 +1867,11 @@ function RecentSlotsChart({
           <span ref={infoSlotRef} className="text-xs font-medium tabular-nums mb-4" />
           <div className="flex flex-col gap-3">
             {(() => {
-              const isDzSub = (f: string) => f === 'dz' || f === 'dz_retransmit'
+              const isDzSub = (f: string) => f === 'dz_root' || f === 'dz' || f === 'dz_retransmit'
               const dzSubs = feeds.filter(isDzSub)
               const showGroup = dzSubs.length > 1
               const topFeeds = showGroup ? feeds.filter(f => !isDzSub(f)) : feeds
-              const dzSubLabels: Record<string, string> = { dz: 'Leaders', dz_retransmit: 'Retransmits' }
+              const dzSubLabels: Record<string, string> = { dz_root: 'turbine-root', dz: 'Leaders', dz_retransmit: 'Retransmits' }
               return (
                 <>
                   {showGroup && (
@@ -1877,6 +1884,7 @@ function RecentSlotsChart({
                       <div className="h-1 rounded-full bg-muted-foreground/20 overflow-hidden">
                         <div className="flex h-full">
                           <div ref={infoDzLeaderBarRef} className="h-full transition-all duration-150" style={{ backgroundColor: FEED_COLORS.dz, width: '0%' }} />
+                          <div ref={infoDzRootBarRef} className="h-full transition-all duration-150" style={{ backgroundColor: FEED_COLORS.dz_root, width: '0%' }} />
                           <div ref={infoDzRetransBarRef} className="h-full transition-all duration-150" style={{ backgroundColor: FEED_COLORS.dz_retransmit, width: '0%' }} />
                         </div>
                       </div>
