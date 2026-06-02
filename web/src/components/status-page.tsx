@@ -740,23 +740,16 @@ function IssueDetails({
                       {link.link_type}
                       {link.bandwidth_bps > 0 && ` · ${formatBandwidthShort(link.bandwidth_bps)}`}
                     </div>
-                    {link.status !== "provisioning" && (
+                    {link.status !== "provisioning" && link.active_incident_types && link.active_incident_types.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-1">
-                        {link.active_incident_types &&
-                        link.active_incident_types.length > 0 ? (
-                          link.active_incident_types.map((t) => (
-                            <span
-                              key={t}
-                              className={`text-xs rounded-full px-2 py-0.5 font-medium ${drainIncidentColor(t)}`}
-                            >
-                              {drainIncidentLabel(t)}
-                            </span>
-                          ))
-                        ) : (
-                          <span className="text-xs rounded-full px-2 py-0.5 font-medium bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                            Planned Maintenance
+                        {link.active_incident_types.map((t) => (
+                          <span
+                            key={t}
+                            className={`text-xs rounded-full px-2 py-0.5 font-medium ${drainIncidentColor(t)}`}
+                          >
+                            {drainIncidentLabel(t)}
                           </span>
-                        )}
+                        ))}
                       </div>
                     )}
                   </div>

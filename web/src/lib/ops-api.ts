@@ -33,6 +33,8 @@ export interface OpsTicket {
   start_at?: string                  // ISO timestamp
   end_at?: string                    // ISO timestamp
   slack_message_url?: string
+  metro_codes?: string[]             // injected by our API from ClickHouse
+  enriched_device_codes?: string[]  // link-side device codes from ClickHouse
   created_at: string
   updated_at: string
 }
@@ -60,6 +62,23 @@ export interface CreateOpsTicketInput {
 export async function fetchActiveOpsTickets(): Promise<OpsTicketsListResponse> {
   const res = await apiFetch('/api/ops-tickets?status=active')
   if (!res.ok) throw new Error(`Failed to fetch ops tickets: ${res.status}`)
+  const json = await res.json()
+  return json.data ?? json
+}
+
+// Fetch all completed/closed tickets — used by the maintenance calendar to show past windows.
+export async function fetchCompletedOpsTickets(): Promise<OpsTicketsListResponse> {
+  const res = await apiFetch('/api/ops-tickets?status=not_active')
+  if (!res.ok) throw new Error(`Failed to fetch completed ops tickets: ${res.status}`)
+  const json = await res.json()
+  return json.data ?? json
+}
+
+// Fetch maintenance tickets by status — public endpoint, no auth required.
+// Uses /api/ops-tickets/maintenance which filters to type=maintenance and strips PII.
+export async function fetchMaintenanceTickets(status: 'active' | 'not_active'): Promise<OpsTicketsListResponse> {
+  const res = await apiFetch(`/api/ops-tickets/maintenance?status=${status}`)
+  if (!res.ok) throw new Error(`Failed to fetch maintenance tickets (${status}): ${res.status}`)
   const json = await res.json()
   return json.data ?? json
 }
