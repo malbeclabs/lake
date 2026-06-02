@@ -25,6 +25,7 @@ func TestMigration_Applies(t *testing.T) {
 		{"dim_dz_ip_mroute_entries_history", "table"},
 		{"stg_dim_dz_ip_mroute_entries_snapshot", "table"},
 		{"dz_ip_mroute_entries_current", "view"},
+		{"enriched_ip_mroute_oifs", "view"},
 	}
 
 	for _, c := range cases {
