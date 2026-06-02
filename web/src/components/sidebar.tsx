@@ -25,6 +25,7 @@ import {
   Shield,
   Wrench,
   ShieldAlert,
+  CalendarClock,
   Gauge,
   BarChart3,
   Zap,
@@ -63,7 +64,11 @@ const { resolvedTheme, setTheme } = useTheme()
 
   // Route detection
   const isStatusRoute = location.pathname.startsWith('/status')
-  const isIncidentsRoute = location.pathname.startsWith('/incidents')
+  const isOpsRoute = location.pathname.startsWith('/ops')
+  const isOpsIncidentsRoute = location.pathname.startsWith('/ops/incidents')
+  const isOpsIncidentsLinksRoute = location.pathname === '/ops/incidents/links'
+  const isOpsIncidentsDevicesRoute = location.pathname === '/ops/incidents/devices'
+  const isOpsMaintenanceRoute = location.pathname === '/ops/maintenance'
   const isChatRoute = location.pathname.startsWith('/chat')
   const isChatSessions = location.pathname === '/chat/sessions'
   const isTopologyRoute = location.pathname === '/topology' || location.pathname.startsWith('/topology/')
@@ -253,7 +258,7 @@ const { resolvedTheme, setTheme } = useTheme()
           <Link to="/performance/dz-vs-internet" className={collapsedIconClass(isPerformanceRoute)} title="Performance">
             <Gauge className="h-4 w-4" />
           </Link>
-          <Link to="/incidents/links" className={collapsedIconClass(isIncidentsRoute)} title="Incidents">
+          <Link to="/ops/incidents/links" className={collapsedIconClass(isOpsRoute)} title="Ops">
             <ShieldAlert className="h-4 w-4" />
           </Link>
           <button
@@ -458,10 +463,7 @@ const { resolvedTheme, setTheme } = useTheme()
                 )}
               </>
             )}
-            <Link to="/incidents/links" className={navItemClass(isIncidentsRoute)}>
-              <ShieldAlert className="h-4 w-4" />
-              Incidents
-            </Link>
+
             {/* Chat with inline sub-items */}
             <button
               onClick={(e) => {
@@ -506,6 +508,38 @@ const { resolvedTheme, setTheme } = useTheme()
               <span className="flex-1 text-left">Search</span>
               <kbd className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">⌘K</kbd>
             </button>
+          </div>
+        </div>
+
+        {/* Ops section */}
+        <div className="px-3 pt-4">
+          <div className="px-3 mb-2">
+            <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Ops</span>
+          </div>
+          <div className="space-y-1">
+            <Link
+              to="/ops/incidents/links"
+              className={isOpsIncidentsRoute ? navItemExpandedClass : navItemClass(false)}
+            >
+              <ShieldAlert className="h-4 w-4" />
+              Incidents
+            </Link>
+            {isOpsIncidentsRoute && (
+              <>
+                <Link to="/ops/incidents/links" className={subNavItemClass(isOpsIncidentsLinksRoute)}>
+                  <Link2 className="h-4 w-4" />
+                  Links
+                </Link>
+                <Link to="/ops/incidents/devices" className={subNavItemClass(isOpsIncidentsDevicesRoute)}>
+                  <Server className="h-4 w-4" />
+                  Devices
+                </Link>
+              </>
+            )}
+            <Link to="/ops/maintenance" className={navItemClass(isOpsMaintenanceRoute)}>
+              <CalendarClock className="h-4 w-4" />
+              Maintenance
+            </Link>
           </div>
         </div>
 
