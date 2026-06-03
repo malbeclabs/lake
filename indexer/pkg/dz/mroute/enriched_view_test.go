@@ -29,6 +29,11 @@ func TestEnrichedView_DeviceInterfaceIPs(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
+	// dz_device_interface_ips is a refreshable MV (60s cadence in prod).
+	// Force a sync refresh so the just-inserted device row is visible.
+	require.NoError(t, conn.Exec(t.Context(), `SYSTEM REFRESH VIEW dz_device_interface_ips`))
+	require.NoError(t, conn.Exec(t.Context(), `SYSTEM WAIT VIEW dz_device_interface_ips`))
+
 	rows, err := conn.Query(t.Context(), `
 		SELECT device_pk, device_code, interface_name, ip_address
 		FROM dz_device_interface_ips

@@ -48,6 +48,11 @@ func TestEnrichedView_MSDPPeers(t *testing.T) {
 			 '[{"name":"Loopback255","ip":"172.16.0.28/32","status":"activated"}]')
 	`))
 
+	// Force a sync refresh of the dz_device_interface_ips MV so the peer
+	// address resolution finds dev-nyc's loopback.
+	require.NoError(t, conn.Exec(ctx, `SYSTEM REFRESH VIEW dz_device_interface_ips`))
+	require.NoError(t, conn.Exec(ctx, `SYSTEM WAIT VIEW dz_device_interface_ips`))
+
 	require.NoError(t, conn.Exec(ctx, `
 		INSERT INTO dim_dz_ip_msdp_peers_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
@@ -121,6 +126,12 @@ func TestEnrichedView_MSDPSACache(t *testing.T) {
 			 'dev-nyc', 'activated', 'edge', 'nyc001-dz001', '', 'contrib-jump', 'metro-nyc', 0,
 			 '[{"name":"Loopback255","ip":"172.16.1.195/32","status":"activated"}]')
 	`))
+
+	// Force a sync refresh of the dz_device_interface_ips MV so the SA
+	// remote_address resolution finds dev-nyc's loopback.
+	require.NoError(t, conn.Exec(ctx, `SYSTEM REFRESH VIEW dz_device_interface_ips`))
+	require.NoError(t, conn.Exec(ctx, `SYSTEM WAIT VIEW dz_device_interface_ips`))
+
 	require.NoError(t, conn.Exec(ctx, `
 		INSERT INTO dim_dz_multicast_groups_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
