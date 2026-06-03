@@ -28,6 +28,8 @@ func TestMigration_Applies(t *testing.T) {
 		{"dz_device_interface_ips", "mv"},
 		{"enriched_ip_mroute", "view"},
 		{"enriched_ip_mroute_oifs", "view"},
+		{"health_mroute", "view"},
+		{"health_missing_sg", "view"},
 	}
 
 	for _, c := range cases {
