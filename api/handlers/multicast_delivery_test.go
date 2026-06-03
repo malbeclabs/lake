@@ -52,6 +52,15 @@ func deliveryTreeRequest(api *handlers.API, group, query string) (*httptest.Resp
 	return multicastDeliveryRequest[handlers.MulticastDeliveryTreeResponse](api, group, "/delivery-tree", query, api.GetMulticastGroupDeliveryTree)
 }
 
+func refreshDeviceInterfaceIPSMV(t *testing.T, api *handlers.API) {
+	t.Helper()
+
+	// dz_device_interface_ips is a refreshable MV. Force a sync refresh so
+	// tests that resolve MSDP peer/remote addresses see just-inserted devices.
+	require.NoError(t, api.DB.Exec(t.Context(), `SYSTEM REFRESH VIEW dz_device_interface_ips`))
+	require.NoError(t, api.DB.Exec(t.Context(), `SYSTEM WAIT VIEW dz_device_interface_ips`))
+}
+
 func insertMulticastDeliveryLink(t *testing.T, api *handlers.API) {
 	t.Helper()
 	err := api.DB.Exec(t.Context(), `
@@ -156,6 +165,7 @@ func TestMulticastDeliverySplitEndpoints_ResolveObservedState(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertMulticastTestData(t, api)
+	refreshDeviceInterfaceIPSMV(t, api)
 	insertMulticastDeliveryLink(t, api)
 	insertMulticastDeliveryMroute(t, api, "mroute-link", "dev-ams1", "10.0.0.1", `["Ethernet1","Weird0"]`, "now()")
 	insertMulticastDeliveryMroute(t, api, "mroute-tunnel", "dev-nyc1", "10.0.0.1", `["Tunnel502"]`, "now()")
