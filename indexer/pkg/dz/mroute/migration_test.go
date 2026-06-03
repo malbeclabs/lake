@@ -31,6 +31,7 @@ func TestMigration_Applies(t *testing.T) {
 		{"health_mroute", "view"},
 		{"health_missing_sg", "view"},
 		{"health_multicast_user", "view"},
+		{"health_publisher_subscriber_path", "view"},
 	}
 
 	for _, c := range cases {
