@@ -1,6 +1,7 @@
 package msdp
 
 import (
+	"fmt"
 	"testing"
 
 	laketesting "github.com/malbeclabs/lake/utils/pkg/testing"
@@ -185,4 +186,69 @@ func TestEnrichedView_MSDPSACache(t *testing.T) {
 	assert.Equal(t, "sea001-dz001", publisherDeviceCode)
 	assert.Equal(t, "accepted", acceptStatus)
 	assert.Equal(t, "publisher_matched", sourceMatch)
+}
+
+// TestEnrichedView_MSDPJoinDoesNotExplode is the regression guard for
+// the dz_device_interface_ips → materialized view conversion. With the
+// previous plain VIEW definition, ClickHouse's optimizer allocated
+// max-int hash tables when JOINing the IP-to-device lookup against MSDP
+// peer/SA cache rows; selecting peer_device_pk / remote_device_pk would
+// OOM with a 128 TiB allocation. Running the same JOIN under a tight
+// max_memory_usage cap surfaces a regression to the plain-VIEW shape:
+// the buggy plan trips the cap immediately, the MV-backed plan stays
+// well under it.
+func TestEnrichedView_MSDPJoinDoesNotExplode(t *testing.T) {
+	info := laketesting.NewClientWithInfo(t, sharedDB)
+	conn, err := info.Client.Conn(t.Context())
+	require.NoError(t, err)
+	defer conn.Close()
+	ctx := t.Context()
+
+	// A handful of devices, one peer per device, all addresses resolvable.
+	for i := 0; i < 10; i++ {
+		require.NoError(t, conn.Exec(ctx, `
+			INSERT INTO dim_dz_devices_history
+				(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+				 pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users, interfaces)
+			VALUES
+				(?, now(), now(), generateUUIDv4(), 0, ?,
+				 ?, 'activated', 'edge', ?, '', '', '', 0,
+				 ?)
+		`,
+			fmt.Sprintf("dev-%d", i), uint64(i+1),
+			fmt.Sprintf("dev-%d", i), fmt.Sprintf("d%d-dz001", i),
+			fmt.Sprintf(`[{"name":"Loopback255","ip":"172.16.0.%d/32","status":"activated"}]`, i+1),
+		))
+		require.NoError(t, conn.Exec(ctx, `
+			INSERT INTO dim_dz_ip_msdp_peers_history
+				(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+				 device_pubkey, peer_address, state, session_start_time, sa_count, reset_count)
+			VALUES
+				(?, now(), now(), generateUUIDv4(), 0, ?,
+				 ?, ?, 'established', now(), 0, 0)
+		`,
+			fmt.Sprintf("peer-%d", i), uint64(i+1),
+			fmt.Sprintf("dev-%d", i),
+			fmt.Sprintf("172.16.0.%d", ((i+1)%10)+1), // each peer points at the next device's loopback
+		))
+	}
+
+	require.NoError(t, conn.Exec(ctx, `SYSTEM REFRESH VIEW dz_device_interface_ips`))
+	require.NoError(t, conn.Exec(ctx, `SYSTEM WAIT VIEW dz_device_interface_ips`))
+
+	// 256 MB is generous for 10 devices × 10 peers. The plain-VIEW shape
+	// would attempt a 128 TiB allocation and trip this cap immediately;
+	// the MV-backed shape stays well under it.
+	rows, err := conn.Query(ctx, `
+		SELECT count(), sum(if(peer_device_pk != '', 1, 0)) AS resolved
+		FROM enriched_ip_msdp_peers
+		SETTINGS max_memory_usage = 268435456
+	`)
+	require.NoError(t, err)
+	defer rows.Close()
+	require.True(t, rows.Next())
+	var total, resolved uint64
+	require.NoError(t, rows.Scan(&total, &resolved))
+	assert.EqualValues(t, 10, total)
+	assert.EqualValues(t, 10, resolved, "expected every peer_address to resolve to a peer_device_pk")
 }

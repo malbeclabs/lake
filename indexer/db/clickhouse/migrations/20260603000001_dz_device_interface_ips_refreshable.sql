@@ -23,7 +23,7 @@ DROP VIEW IF EXISTS dz_device_interface_ips;
 CREATE MATERIALIZED VIEW dz_device_interface_ips
 REFRESH EVERY 1 MINUTE
 ENGINE = MergeTree()
-ORDER BY (device_pk, interface_name)
+ORDER BY (ip_address, device_pk, interface_name)
 AS SELECT
     d.pk AS device_pk,
     d.code AS device_code,
