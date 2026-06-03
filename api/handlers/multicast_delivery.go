@@ -1,3 +1,8 @@
+// The health_mroute and health_missing_sg views (migration 20260603000002)
+// back future per-group and per-user health endpoints (infra#1501 Track 2).
+// They classify mroute rows and surface (active_publisher, group, device)
+// gaps without requiring this package to recompute the joins.
+
 package handlers
 
 import (
