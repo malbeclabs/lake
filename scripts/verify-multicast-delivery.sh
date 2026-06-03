@@ -287,6 +287,7 @@ choose_group() {
   local fallback_code=""
   local fallback_ip=""
   local fallback_total="0"
+  local fallback_oifs_total="0"
   local fallback_source="false"
   groups_file=$(mktemp_tracked)
   candidate_file=$(mktemp_tracked)
@@ -300,39 +301,50 @@ choose_group() {
     exit 1
   fi
 
-  echo "Trying up to $count group(s); preferring one with mroute rows ..."
+  echo "Trying up to $count group(s); preferring one with mroute and OIF rows ..."
   while IFS=$'\t' read -r pk code multicast_ip; do
     [[ -z "$pk" ]] && continue
-    local encoded_pk path source_available total
+    local encoded_pk path source_available total oifs_total
     encoded_pk=$(urlencode "$pk")
     path="/api/dz/multicast-groups/$encoded_pk/mroutes?limit=1"
 
     if ! http_code=$(raw_get "$path" "$candidate_file"); then
-      echo "  skip ${code:-$pk}: curl failed"
+      echo "  skip ${code:-$pk}: mroutes curl failed"
       continue
     fi
     if [[ ! "$http_code" =~ ^2 ]]; then
-      echo "  skip ${code:-$pk}: HTTP $http_code"
+      echo "  skip ${code:-$pk}: mroutes HTTP $http_code"
       continue
     fi
     if ! jq -e . "$candidate_file" >/dev/null 2>&1; then
-      echo "  skip ${code:-$pk}: non-JSON response"
+      echo "  skip ${code:-$pk}: mroutes non-JSON response"
       continue
     fi
 
     source_available=$(jq -r '.source_available // false' "$candidate_file")
     total=$(jq -r '.total // 0' "$candidate_file")
-    echo "  ${code:-$pk} ($pk): source_available=$source_available mroutes_total=$total multicast_ip=$multicast_ip"
+    oifs_total="0"
+    if [[ "$source_available" == "true" && "$total" -gt 0 ]]; then
+      path="/api/dz/multicast-groups/$encoded_pk/oifs?limit=1"
+      if http_code=$(raw_get "$path" "$candidate_file") && [[ "$http_code" =~ ^2 ]] && jq -e . "$candidate_file" >/dev/null 2>&1; then
+        oifs_total=$(jq -r '.total // 0' "$candidate_file")
+      else
+        echo "  ${code:-$pk} ($pk): source_available=$source_available mroutes_total=$total oifs_total=<unavailable> multicast_ip=$multicast_ip"
+        continue
+      fi
+    fi
+    echo "  ${code:-$pk} ($pk): source_available=$source_available mroutes_total=$total oifs_total=$oifs_total multicast_ip=$multicast_ip"
 
-    if [[ -z "$fallback_pk" || "$source_available" == "true" ]]; then
+    if [[ -z "$fallback_pk" ]] || [[ "$source_available" == "true" && "$fallback_source" != "true" ]] || (( total > fallback_total )); then
       fallback_pk="$pk"
       fallback_code="$code"
       fallback_ip="$multicast_ip"
       fallback_total="$total"
+      fallback_oifs_total="$oifs_total"
       fallback_source="$source_available"
     fi
 
-    if [[ "$source_available" == "true" && "$total" -gt 0 ]]; then
+    if [[ "$source_available" == "true" && "$total" -gt 0 && "$oifs_total" -gt 0 ]]; then
       selected_group="$pk"
       selected_group_code="$code"
       selected_group_ip="$multicast_ip"
@@ -344,14 +356,14 @@ choose_group() {
     selected_group="$fallback_pk"
     selected_group_code="$fallback_code"
     selected_group_ip="$fallback_ip"
-    echo "No group with mroute rows found; falling back to ${fallback_code:-$fallback_pk} (source_available=$fallback_source total=$fallback_total)."
+    echo "No group with mroute and OIF rows found; falling back to ${fallback_code:-$fallback_pk} (source_available=$fallback_source mroutes_total=$fallback_total oifs_total=$fallback_oifs_total)."
     return
   fi
 
   diagnose_multicast_schema >&2
   echo >&2
-  echo "FAIL: no discovered multicast group had mroute rows." >&2
-  echo "This usually means the local API is pointed at an empty/mismapped database, or the enriched multicast views are missing in that database." >&2
+  echo "FAIL: no discovered multicast group had both mroute and OIF rows." >&2
+  echo "This usually means the local API is pointed at an empty/mismapped database, the enriched multicast views are missing in that database, or the sampled groups legitimately have no observed OIF state." >&2
   echo "For remote-table local smoke, start API with something like:" >&2
   echo "  CLICKHOUSE_DATABASE=lake CLICKHOUSE_DATABASE_DEVNET=lake_devnet CLICKHOUSE_DATABASE_TESTNET=lake_testnet go run ./api/main.go --use-remote" >&2
   echo "Or rerun this script with --allow-empty to only check endpoint shape." >&2
