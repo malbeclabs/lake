@@ -197,34 +197,40 @@ type MulticastDeliveryMSDPItem struct {
 }
 
 type MulticastDeliveryMSDPPeer struct {
-	EntityID         string `json:"entity_id"`
-	SnapshotTS       string `json:"snapshot_ts"`
-	AgeSeconds       int    `json:"age_seconds"`
-	FreshnessStatus  string `json:"freshness_status"`
-	DevicePK         string `json:"device_pk"`
-	DeviceCode       string `json:"device_code"`
-	PeerAddress      string `json:"peer_address"`
-	State            string `json:"state"`
-	SessionStartTime string `json:"session_start_time"`
-	SACount          int64  `json:"sa_count"`
-	ResetCount       int64  `json:"reset_count"`
-}
-
-type MulticastDeliveryMSDPSA struct {
 	EntityID          string `json:"entity_id"`
 	SnapshotTS        string `json:"snapshot_ts"`
 	AgeSeconds        int    `json:"age_seconds"`
 	FreshnessStatus   string `json:"freshness_status"`
 	DevicePK          string `json:"device_pk"`
 	DeviceCode        string `json:"device_code"`
-	GroupAddress      string `json:"group_address"`
-	SourceAddress     string `json:"source_address"`
-	PublisherUserPK   string `json:"publisher_user_pk"`
-	PublisherDevicePK string `json:"publisher_device_pk"`
-	RemoteAddress     string `json:"remote_address,omitempty"`
-	Status            string `json:"status,omitempty"`
-	RPAddress         string `json:"rp_address"`
-	SourceMatchStatus string `json:"source_match_status"`
+	PeerAddress       string `json:"peer_address"`
+	PeerDevicePK      string `json:"peer_device_pk,omitempty"`
+	PeerDeviceCode    string `json:"peer_device_code,omitempty"`
+	PeerInterfaceName string `json:"peer_interface_name,omitempty"`
+	State             string `json:"state"`
+	SessionStartTime  string `json:"session_start_time"`
+	SACount           int64  `json:"sa_count"`
+	ResetCount        int64  `json:"reset_count"`
+}
+
+type MulticastDeliveryMSDPSA struct {
+	EntityID            string `json:"entity_id"`
+	SnapshotTS          string `json:"snapshot_ts"`
+	AgeSeconds          int    `json:"age_seconds"`
+	FreshnessStatus     string `json:"freshness_status"`
+	DevicePK            string `json:"device_pk"`
+	DeviceCode          string `json:"device_code"`
+	GroupAddress        string `json:"group_address"`
+	SourceAddress       string `json:"source_address"`
+	PublisherUserPK     string `json:"publisher_user_pk"`
+	PublisherDevicePK   string `json:"publisher_device_pk"`
+	RemoteAddress       string `json:"remote_address,omitempty"`
+	RemoteDevicePK      string `json:"remote_device_pk,omitempty"`
+	RemoteDeviceCode    string `json:"remote_device_code,omitempty"`
+	RemoteInterfaceName string `json:"remote_interface_name,omitempty"`
+	AcceptStatus        string `json:"accept_status,omitempty"`
+	RPAddress           string `json:"rp_address"`
+	SourceMatchStatus   string `json:"source_match_status"`
 }
 
 type MulticastDeliverySegment struct {

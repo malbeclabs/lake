@@ -202,6 +202,16 @@ func TestMulticastDeliverySplitEndpoints_ResolveObservedState(t *testing.T) {
 	seenMSDPKinds := map[string]bool{}
 	for _, item := range msdp.Items {
 		seenMSDPKinds[item.Kind] = true
+		switch item.Kind {
+		case "peers":
+			require.NotNil(t, item.Peer)
+			assert.Equal(t, "dev-nyc1", item.Peer.PeerDevicePK)
+			assert.Equal(t, "nyc001-dz001", item.Peer.PeerDeviceCode)
+		case "sa_cache":
+			require.NotNil(t, item.SA)
+			assert.Equal(t, "accepted", item.SA.AcceptStatus)
+			assert.Equal(t, "dev-nyc1", item.SA.RemoteDevicePK)
+		}
 	}
 	assert.True(t, seenMSDPKinds["peers"])
 	assert.True(t, seenMSDPKinds["pim_sa_cache"])

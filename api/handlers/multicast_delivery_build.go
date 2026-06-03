@@ -83,12 +83,20 @@ func splitMulticastDeliveryMembers(members []MulticastDeliveryMember, params Mul
 
 func buildMulticastFreshness(now time.Time, available map[string]bool, sourceTimes map[string]time.Time, mrouteTimes, msdpPeerTimes, pimSATimes, saTimes []time.Time) MulticastDeliveryFreshness {
 	return MulticastDeliveryFreshness{
-		Mroute:         freshnessForTimes(now, available["dz_ip_mroute_entries_current"], sourceTimes["dz_ip_mroute_entries_current"], mrouteTimes, ""),
-		MSDPPeers:      freshnessForTimes(now, available["dz_ip_msdp_peers_current"], sourceTimes["dz_ip_msdp_peers_current"], msdpPeerTimes, ""),
-		MSDPPimSACache: freshnessForTimes(now, available["dz_ip_msdp_pim_sa_cache_current"], sourceTimes["dz_ip_msdp_pim_sa_cache_current"], pimSATimes, ""),
-		MSDPSACache:    freshnessForTimes(now, available["dz_ip_msdp_sa_cache_current"], sourceTimes["dz_ip_msdp_sa_cache_current"], saTimes, ""),
+		Mroute:         freshnessForTimes(now, available[multicastDeliveryMrouteView], sourceTimes[multicastDeliveryMrouteSource], mrouteTimes, ""),
+		MSDPPeers:      freshnessForTimes(now, available[multicastDeliveryMSDPPeersView], sourceTimes[multicastDeliveryMSDPPeersSource], msdpPeerTimes, ""),
+		MSDPPimSACache: freshnessForTimes(now, available[multicastDeliveryMSDPPimSAView], sourceTimes[multicastDeliveryMSDPPimSASource], pimSATimes, ""),
+		MSDPSACache:    freshnessForTimes(now, available[multicastDeliveryMSDPSAView], sourceTimes[multicastDeliveryMSDPSASource], saTimes, ""),
 		PIMNeighbors:   freshnessForTimes(now, false, time.Time{}, nil, "PIM neighbor adjacency source is not implemented; MSDP PIM SA cache is exposed separately"),
 	}
+}
+
+func copyMulticastDeliveryAvailability(available map[string]bool) map[string]bool {
+	out := make(map[string]bool, len(available))
+	for key, value := range available {
+		out[key] = value
+	}
+	return out
 }
 
 func freshnessForTimes(now time.Time, available bool, sourceTime time.Time, times []time.Time, note string) MulticastDeliverySourceFreshness {
@@ -306,26 +314,6 @@ func buildMulticastDeliveryAnomalies(group MulticastDeliveryGroup, mroutes []Mul
 	return anomalies
 }
 
-func classifyMulticastOIF(oif MulticastDeliveryOIF) (string, string) {
-	name := strings.ToLower(oif.OIFName)
-	if oif.LinkPK != "" {
-		return "underlay_link", "toward_network"
-	}
-	if oif.SubscriberUserPK != "" {
-		return "subscriber_tunnel", "toward_subscriber"
-	}
-	if oif.InterfaceType != "" || oif.RoutingMode != "" {
-		return "local_interface", "unclassified"
-	}
-	if strings.HasPrefix(name, "register") {
-		return "register", "local_register"
-	}
-	if strings.HasPrefix(name, "null") {
-		return "null", "unclassified"
-	}
-	return "unknown", "unclassified"
-}
-
 func multicastFreshnessStatus(age int) string {
 	if age <= multicastDeliveryFreshSeconds {
 		return "fresh"
@@ -346,10 +334,6 @@ func formatMulticastTime(ts time.Time) string {
 		return ""
 	}
 	return ts.UTC().Format(time.RFC3339Nano)
-}
-
-func multicastMrouteID(devicePK, vrf, mode, groupAddress, sourceAddress string) string {
-	return strings.Join([]string{devicePK, vrf, mode, groupAddress, sourceAddress}, "|")
 }
 
 func multicastAnomaly(id, severity, kind, scope string, objectIDs map[string]string, message string) MulticastDeliveryAnomaly {

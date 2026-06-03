@@ -31,10 +31,10 @@ func insertMulticastTestData(t *testing.T, api *handlers.API) {
 	err = api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_devices_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
-			 pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users)
+			 pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users, interfaces)
 		VALUES
-			('dev-ams1', now(), now(), generateUUIDv4(), 0, 1, 'dev-ams1', 'up', 'edge', 'ams001-dz001', '', '', 'metro-ams', 0),
-			('dev-nyc1', now(), now(), generateUUIDv4(), 0, 2, 'dev-nyc1', 'up', 'edge', 'nyc001-dz001', '', '', 'metro-nyc', 0)
+			('dev-ams1', now(), now(), generateUUIDv4(), 0, 1, 'dev-ams1', 'activated', 'edge', 'ams001-dz001', '', '', 'metro-ams', 0, '[{"name":"Loopback0","status":"up","ip":"10.0.0.253/32"}]'),
+			('dev-nyc1', now(), now(), generateUUIDv4(), 0, 2, 'dev-nyc1', 'activated', 'edge', 'nyc001-dz001', '', '', 'metro-nyc', 0, '[{"name":"Loopback0","status":"up","ip":"10.0.0.254/32"},{"name":"Loopback1","status":"up","ip":"10.0.0.2/32"}]')
 	`)
 	require.NoError(t, err)
 

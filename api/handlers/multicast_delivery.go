@@ -14,6 +14,18 @@ import (
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
+const (
+	multicastDeliveryMrouteSource    = "dz_ip_mroute_entries_current"
+	multicastDeliveryMSDPPeersSource = "dz_ip_msdp_peers_current"
+	multicastDeliveryMSDPPimSASource = "dz_ip_msdp_pim_sa_cache_current"
+	multicastDeliveryMSDPSASource    = "dz_ip_msdp_sa_cache_current"
+	multicastDeliveryMrouteView      = "enriched_ip_mroute"
+	multicastDeliveryOIFView         = "enriched_ip_mroute_oifs"
+	multicastDeliveryMSDPPeersView   = "enriched_ip_msdp_peers"
+	multicastDeliveryMSDPPimSAView   = "enriched_ip_msdp_pim_sa_cache"
+	multicastDeliveryMSDPSAView      = "enriched_ip_msdp_sa_cache"
+)
+
 type multicastDeliveryRequestContext struct {
 	Now         time.Time
 	Group       MulticastDeliveryGroup
@@ -46,14 +58,14 @@ func (a *API) GetMulticastGroupMroutes(w http.ResponseWriter, r *http.Request) {
 
 	mroutes := []MulticastDeliveryMroute{}
 	var mrouteTimes []time.Time
-	if data.Available["dz_ip_mroute_entries_current"] {
+	if data.Available[multicastDeliveryMrouteView] {
 		mroutes, mrouteTimes, err = a.queryMulticastDeliveryMroutes(ctx, data.Group, params)
 		if err != nil {
 			if !multicastDeliverySourceErr(err) {
 				writeMulticastDeliveryError(w, err, "multicast mroutes query error", pkOrCode)
 				return
 			}
-			data.Available["dz_ip_mroute_entries_current"] = false
+			data.Available[multicastDeliveryMrouteView] = false
 			mroutes = []MulticastDeliveryMroute{}
 			mrouteTimes = nil
 		}
@@ -65,7 +77,7 @@ func (a *API) GetMulticastGroupMroutes(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, MulticastDeliveryMroutesResponse{
 		Group:           data.Group,
-		SourceAvailable: data.Available["dz_ip_mroute_entries_current"],
+		SourceAvailable: data.Available[multicastDeliveryMrouteView],
 		GeneratedAt:     formatMulticastTime(data.Now),
 		Freshness:       freshness,
 		Items:           items,
@@ -100,26 +112,31 @@ func (a *API) GetMulticastGroupOIFs(w http.ResponseWriter, r *http.Request) {
 
 	oifs := []MulticastDeliveryOIF{}
 	var oifTimes []time.Time
-	if data.Available["dz_ip_mroute_entries_current"] {
+	if data.Available[multicastDeliveryOIFView] {
 		oifs, oifTimes, err = a.queryMulticastDeliveryOIFs(ctx, data.Group, params)
 		if err != nil {
 			if !multicastDeliverySourceErr(err) {
 				writeMulticastDeliveryError(w, err, "multicast oifs query error", pkOrCode)
 				return
 			}
-			data.Available["dz_ip_mroute_entries_current"] = false
+			data.Available[multicastDeliveryOIFView] = false
 			oifs = []MulticastDeliveryOIF{}
 			oifTimes = nil
 		}
 	}
 
-	freshness := buildMulticastFreshness(data.Now, data.Available, data.SourceTimes, oifTimes, nil, nil, nil)
+	freshnessAvailable := data.Available
+	if !data.Available[multicastDeliveryOIFView] {
+		freshnessAvailable = copyMulticastDeliveryAvailability(data.Available)
+		freshnessAvailable[multicastDeliveryMrouteView] = false
+	}
+	freshness := buildMulticastFreshness(data.Now, freshnessAvailable, data.SourceTimes, oifTimes, nil, nil, nil)
 	applyOIFFreshness(freshness.Mroute, oifs)
 	items, total := paginateMulticastDeliveryItems(oifs, params)
 
 	writeJSON(w, MulticastDeliveryOIFsResponse{
 		Group:           data.Group,
-		SourceAvailable: data.Available["dz_ip_mroute_entries_current"],
+		SourceAvailable: data.Available[multicastDeliveryOIFView],
 		GeneratedAt:     formatMulticastTime(data.Now),
 		Freshness:       freshness,
 		Items:           items,
@@ -154,56 +171,56 @@ func (a *API) GetMulticastGroupMSDP(w http.ResponseWriter, r *http.Request) {
 
 	var mroutes []MulticastDeliveryMroute
 	var mrouteTimes, peerTimes, pimSATimes, saTimes []time.Time
-	if shouldQueryMSDPPeers(params.MSDPKind) && data.Available["dz_ip_mroute_entries_current"] {
+	if shouldQueryMSDPPeers(params.MSDPKind) && data.Available[multicastDeliveryMrouteView] {
 		mroutes, mrouteTimes, err = a.queryMulticastDeliveryMroutes(ctx, data.Group, params)
 		if err != nil {
 			if !multicastDeliverySourceErr(err) {
 				writeMulticastDeliveryError(w, err, "multicast msdp mroute query error", pkOrCode)
 				return
 			}
-			data.Available["dz_ip_mroute_entries_current"] = false
+			data.Available[multicastDeliveryMrouteView] = false
 			mroutes = nil
 			mrouteTimes = nil
 		}
 	}
 
 	peers := []MulticastDeliveryMSDPPeer{}
-	if shouldQueryMSDPPeers(params.MSDPKind) && data.Available["dz_ip_msdp_peers_current"] {
+	if shouldQueryMSDPPeers(params.MSDPKind) && data.Available[multicastDeliveryMSDPPeersView] {
 		peers, peerTimes, err = a.queryMulticastDeliveryMSDPPeers(ctx, params, mroutes)
 		if err != nil {
 			if !multicastDeliverySourceErr(err) {
 				writeMulticastDeliveryError(w, err, "multicast msdp peers query error", pkOrCode)
 				return
 			}
-			data.Available["dz_ip_msdp_peers_current"] = false
+			data.Available[multicastDeliveryMSDPPeersView] = false
 			peers = []MulticastDeliveryMSDPPeer{}
 			peerTimes = nil
 		}
 	}
 
 	pimSAs := []MulticastDeliveryMSDPSA{}
-	if shouldQueryMSDPPimSACache(params.MSDPKind) && data.Available["dz_ip_msdp_pim_sa_cache_current"] {
+	if shouldQueryMSDPPimSACache(params.MSDPKind) && data.Available[multicastDeliveryMSDPPimSAView] {
 		pimSAs, pimSATimes, err = a.queryMulticastDeliveryPimSACache(ctx, data.Group, params)
 		if err != nil {
 			if !multicastDeliverySourceErr(err) {
 				writeMulticastDeliveryError(w, err, "multicast msdp pim-sa query error", pkOrCode)
 				return
 			}
-			data.Available["dz_ip_msdp_pim_sa_cache_current"] = false
+			data.Available[multicastDeliveryMSDPPimSAView] = false
 			pimSAs = []MulticastDeliveryMSDPSA{}
 			pimSATimes = nil
 		}
 	}
 
 	saCache := []MulticastDeliveryMSDPSA{}
-	if shouldQueryMSDPSACache(params.MSDPKind) && data.Available["dz_ip_msdp_sa_cache_current"] {
+	if shouldQueryMSDPSACache(params.MSDPKind) && data.Available[multicastDeliveryMSDPSAView] {
 		saCache, saTimes, err = a.queryMulticastDeliverySACache(ctx, data.Group, params)
 		if err != nil {
 			if !multicastDeliverySourceErr(err) {
 				writeMulticastDeliveryError(w, err, "multicast msdp sa query error", pkOrCode)
 				return
 			}
-			data.Available["dz_ip_msdp_sa_cache_current"] = false
+			data.Available[multicastDeliveryMSDPSAView] = false
 			saCache = []MulticastDeliveryMSDPSA{}
 			saTimes = nil
 		}
@@ -265,7 +282,7 @@ func (a *API) GetMulticastGroupDeliveryTree(w http.ResponseWriter, r *http.Reque
 	var mrouteTimes []time.Time
 	anomalies := []MulticastDeliveryAnomaly{}
 
-	if !data.Available["dz_ip_mroute_entries_current"] {
+	if !data.Available[multicastDeliveryMrouteView] || !data.Available[multicastDeliveryOIFView] {
 		anomalies = append(anomalies, multicastAnomaly(
 			"mroute-source-unavailable", "warning", "source_unavailable", "group",
 			map[string]string{"group_pk": data.Group.PK},
@@ -278,7 +295,7 @@ func (a *API) GetMulticastGroupDeliveryTree(w http.ResponseWriter, r *http.Reque
 				writeMulticastDeliveryError(w, err, "multicast delivery-tree mroutes query error", pkOrCode)
 				return
 			}
-			data.Available["dz_ip_mroute_entries_current"] = false
+			data.Available[multicastDeliveryMrouteView] = false
 			anomalies = append(anomalies, multicastAnomaly(
 				"mroute-source-unavailable", "warning", "source_unavailable", "group",
 				map[string]string{"group_pk": data.Group.PK},
@@ -291,7 +308,7 @@ func (a *API) GetMulticastGroupDeliveryTree(w http.ResponseWriter, r *http.Reque
 					writeMulticastDeliveryError(w, err, "multicast delivery-tree oifs query error", pkOrCode)
 					return
 				}
-				data.Available["dz_ip_mroute_entries_current"] = false
+				data.Available[multicastDeliveryOIFView] = false
 				mroutes = []MulticastDeliveryMroute{}
 				oifs = []MulticastDeliveryOIF{}
 				mrouteTimes = nil
@@ -304,7 +321,12 @@ func (a *API) GetMulticastGroupDeliveryTree(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	freshness := buildMulticastFreshness(data.Now, data.Available, data.SourceTimes, mrouteTimes, nil, nil, nil)
+	freshnessAvailable := data.Available
+	if !data.Available[multicastDeliveryMrouteView] || !data.Available[multicastDeliveryOIFView] {
+		freshnessAvailable = copyMulticastDeliveryAvailability(data.Available)
+		freshnessAvailable[multicastDeliveryMrouteView] = false
+	}
+	freshness := buildMulticastFreshness(data.Now, freshnessAvailable, data.SourceTimes, mrouteTimes, nil, nil, nil)
 	applyMrouteFreshness(freshness.Mroute, mroutes)
 	applyOIFFreshness(freshness.Mroute, oifs)
 
@@ -318,7 +340,7 @@ func (a *API) GetMulticastGroupDeliveryTree(w http.ResponseWriter, r *http.Reque
 
 	writeJSON(w, MulticastDeliveryTreeResponse{
 		Group:              data.Group,
-		SourceAvailable:    data.Available["dz_ip_mroute_entries_current"],
+		SourceAvailable:    data.Available[multicastDeliveryMrouteView] && data.Available[multicastDeliveryOIFView],
 		GeneratedAt:        formatMulticastTime(data.Now),
 		Mode:               params.Mode,
 		Freshness:          freshness,
@@ -428,10 +450,11 @@ func (a *API) queryMulticastDeliveryGroup(ctx context.Context, pkOrCode string) 
 
 func (a *API) queryMulticastDeliverySources(ctx context.Context) (map[string]bool, error) {
 	names := []string{
-		"dz_ip_mroute_entries_current",
-		"dz_ip_msdp_peers_current",
-		"dz_ip_msdp_pim_sa_cache_current",
-		"dz_ip_msdp_sa_cache_current",
+		multicastDeliveryMrouteView,
+		multicastDeliveryOIFView,
+		multicastDeliveryMSDPPeersView,
+		multicastDeliveryMSDPPimSAView,
+		multicastDeliveryMSDPSAView,
 	}
 	available := make(map[string]bool, len(names))
 	query := `
@@ -488,11 +511,11 @@ func (a *API) queryMulticastDeliverySourceIngestTimes(ctx context.Context) (map[
 		}
 		switch activity {
 		case "SyncIPMroute":
-			sourceTimes["dz_ip_mroute_entries_current"] = latest
+			sourceTimes[multicastDeliveryMrouteSource] = latest
 		case "SyncMSDP":
-			sourceTimes["dz_ip_msdp_peers_current"] = latest
-			sourceTimes["dz_ip_msdp_pim_sa_cache_current"] = latest
-			sourceTimes["dz_ip_msdp_sa_cache_current"] = latest
+			sourceTimes[multicastDeliveryMSDPPeersSource] = latest
+			sourceTimes[multicastDeliveryMSDPPimSASource] = latest
+			sourceTimes[multicastDeliveryMSDPSASource] = latest
 		}
 	}
 	return sourceTimes, rows.Err()

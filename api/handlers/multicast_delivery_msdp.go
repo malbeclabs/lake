@@ -7,6 +7,10 @@ import (
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
+// queryMulticastDeliveryMSDPPeers reads pre-enriched MSDP peer sessions from
+// enriched_ip_msdp_peers. The view resolves peer_address back to a peer device
+// through dz_device_interface_ips when the peer address is present in device
+// interface metadata.
 func (a *API) queryMulticastDeliveryMSDPPeers(ctx context.Context, params MulticastDeliveryParams, mroutes []MulticastDeliveryMroute) ([]MulticastDeliveryMSDPPeer, []time.Time, error) {
 	devicePKs := uniqueMrouteDevices(mroutes)
 	if len(devicePKs) == 0 {
@@ -14,23 +18,22 @@ func (a *API) queryMulticastDeliveryMSDPPeers(ctx context.Context, params Multic
 	}
 	query := `
 		SELECT
-			p.entity_id,
-			p.snapshot_ts,
-			p.device_pubkey,
-			d.code AS device_code,
-			p.peer_address,
-			p.state,
-			p.session_start_time,
-			p.sa_count,
-			p.reset_count
-		FROM dz_ip_msdp_peers_current p
-		LEFT ANY JOIN dz_devices_current d ON p.device_pubkey = d.pk
-		WHERE p.device_pubkey IN (?)
-		ORDER BY p.device_pubkey, p.peer_address
-		LIMIT 1000
-		SETTINGS max_execution_time = 10,
-			max_result_rows = 1000,
-			result_overflow_mode = 'break',
+			msdp_peer_entity_id,
+			"p.snapshot_ts" AS snapshot_ts,
+			device_pk,
+			device_code,
+			peer_address,
+			peer_device_pk,
+			peer_device_code,
+			peer_interface_name,
+			state,
+			session_start_time,
+			sa_count,
+			reset_count
+		FROM enriched_ip_msdp_peers
+		WHERE device_pk IN (?)
+		ORDER BY device_pk, peer_address
+		SETTINGS max_execution_time = 30,
 			timeout_before_checking_execution_speed = 0
 	`
 	start := time.Now()
@@ -50,6 +53,9 @@ func (a *API) queryMulticastDeliveryMSDPPeers(ctx context.Context, params Multic
 			&s.Peer.DevicePK,
 			&s.Peer.DeviceCode,
 			&s.Peer.PeerAddress,
+			&s.Peer.PeerDevicePK,
+			&s.Peer.PeerDeviceCode,
+			&s.Peer.PeerInterfaceName,
 			&s.Peer.State,
 			&s.sessionStartTime,
 			&s.Peer.SACount,
@@ -70,60 +76,44 @@ func (a *API) queryMulticastDeliveryMSDPPeers(ctx context.Context, params Multic
 }
 
 func (a *API) queryMulticastDeliveryPimSACache(ctx context.Context, group MulticastDeliveryGroup, params MulticastDeliveryParams) ([]MulticastDeliveryMSDPSA, []time.Time, error) {
-	return a.queryMulticastDeliverySA(ctx, "dz_ip_msdp_pim_sa_cache_current", group, params, false)
+	return a.queryEnrichedMSDPSA(ctx, "enriched_ip_msdp_pim_sa_cache", "msdp_pim_sa_entity_id", group, params, false)
 }
 
 func (a *API) queryMulticastDeliverySACache(ctx context.Context, group MulticastDeliveryGroup, params MulticastDeliveryParams) ([]MulticastDeliveryMSDPSA, []time.Time, error) {
-	return a.queryMulticastDeliverySA(ctx, "dz_ip_msdp_sa_cache_current", group, params, true)
+	return a.queryEnrichedMSDPSA(ctx, "enriched_ip_msdp_sa_cache", "msdp_sa_entity_id", group, params, true)
 }
 
-func (a *API) queryMulticastDeliverySA(ctx context.Context, table string, group MulticastDeliveryGroup, params MulticastDeliveryParams, includeStatus bool) ([]MulticastDeliveryMSDPSA, []time.Time, error) {
-	sourceFilter, sourceArgs := sqlInFilter("sa.source_address", params.Sources)
-	selectExtra := "'' AS remote_address, '' AS status,"
-	if includeStatus {
-		selectExtra = "sa.remote_address AS remote_address, sa.status AS status,"
+// queryEnrichedMSDPSA reads from one of the two MSDP SA-cache enriched views.
+// The PIM SA-cache view does not carry remote_address or accept_status; the
+// includeRemote flag swaps those SELECT columns out for empty literals to keep
+// the scan shape shared.
+func (a *API) queryEnrichedMSDPSA(ctx context.Context, viewName, entityCol string, group MulticastDeliveryGroup, params MulticastDeliveryParams, includeRemote bool) ([]MulticastDeliveryMSDPSA, []time.Time, error) {
+	sourceFilter, sourceArgs := sqlInFilter("source_address", params.Sources)
+	remoteCols := "'' AS remote_address, '' AS remote_device_pk, '' AS remote_device_code, '' AS remote_interface_name, '' AS accept_status,"
+	if includeRemote {
+		remoteCols = "remote_address, remote_device_pk, remote_device_code, remote_interface_name, accept_status,"
 	}
 	query := `
-		WITH sa_filtered AS (
-			SELECT *
-			FROM ` + table + ` sa
-			WHERE sa.group_address = ?` + sourceFilter + `
-		)
 		SELECT
-			sa.entity_id,
-			sa.snapshot_ts,
-			sa.device_pubkey,
-			d.code AS device_code,
-			sa.group_address,
-			sa.source_address,
-			pub.pk AS publisher_user_pk,
-			pub.device_pk AS publisher_device_pk,
-			` + selectExtra + `
-			sa.rp_address,
-			CASE
-				WHEN pub.pk != '' THEN 'publisher_matched'
-				WHEN sa.source_address = '' OR sa.source_address = '*' THEN 'group_only'
-				ELSE 'unknown_source'
-			END AS source_match_status
-		FROM sa_filtered sa
-		LEFT ANY JOIN dz_devices_current d ON sa.device_pubkey = d.pk
-		LEFT ANY JOIN (
-			SELECT pk, dz_ip, device_pk
-			FROM dz_users_current
-			WHERE status = 'activated'
-				AND kind = 'multicast'
-				AND has(JSONExtract(publishers, 'Array(String)'), ?)
-		) pub ON sa.source_address = pub.dz_ip
-		ORDER BY sa.source_address, sa.device_pubkey
-		LIMIT 5000
-		SETTINGS max_execution_time = 10,
-			max_result_rows = 5000,
-			result_overflow_mode = 'break',
+			` + entityCol + ` AS entity_id,
+			"sa.snapshot_ts" AS snapshot_ts,
+			device_pk,
+			device_code,
+			group_address,
+			source_address,
+			publisher_user_pk,
+			publisher_device_pk,
+			` + remoteCols + `
+			rp_address,
+			source_match_status
+		FROM ` + viewName + `
+		WHERE multicast_group_pk = ?` + sourceFilter + `
+		ORDER BY source_address, device_pk
+		SETTINGS max_execution_time = 30,
 			timeout_before_checking_execution_speed = 0
 	`
-	args := []any{group.MulticastIP}
+	args := []any{group.PK}
 	args = append(args, sourceArgs...)
-	args = append(args, group.PK)
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query, args...)
 	metrics.RecordClickHouseQuery("multicast_delivery_msdp_sa", time.Since(start), err)
@@ -145,7 +135,10 @@ func (a *API) queryMulticastDeliverySA(ctx context.Context, table string, group 
 			&s.SA.PublisherUserPK,
 			&s.SA.PublisherDevicePK,
 			&s.SA.RemoteAddress,
-			&s.SA.Status,
+			&s.SA.RemoteDevicePK,
+			&s.SA.RemoteDeviceCode,
+			&s.SA.RemoteInterfaceName,
+			&s.SA.AcceptStatus,
 			&s.SA.RPAddress,
 			&s.SA.SourceMatchStatus,
 		); err != nil {
