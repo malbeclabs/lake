@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { LoginModal } from './LoginModal'
-import { User, LogOut, LogIn, Wallet, Settings, MessageSquare, ChevronUp, FileText } from 'lucide-react'
+import { User, LogOut, LogIn, Wallet, Settings, MessageSquare, ChevronUp, FileText, Layers } from 'lucide-react'
 
 interface UserPopoverProps {
   collapsed?: boolean
@@ -235,6 +235,16 @@ function PopoverContent({
           </div>
         </Link>
       )}
+
+      {/* My Subscriptions link */}
+      <Link
+        to="/account/subscriptions"
+        onClick={onClose}
+        className="flex w-full items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+      >
+        <Layers size={16} />
+        My Subscriptions
+      </Link>
 
       {/* Settings link */}
       <Link

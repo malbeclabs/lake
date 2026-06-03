@@ -9,29 +9,33 @@ import { ipv4ToU32 } from '@/lib/shred-program'
 import { deriveShredAccounts, buildFundInstructions } from '@/lib/shred-transactions'
 import { useUsdcBalance } from '@/hooks/use-shred-accounts'
 import { useShredTransaction } from '@/hooks/use-shred-transaction'
+import { useMockedShredTransaction } from '@/lib/mocked-shred-transaction'
 
 interface ShredFundModalProps {
   seat: ShredClientSeat
   onClose: () => void
+  preview?: boolean
 }
 
-export function ShredFundModal({ seat, onClose }: ShredFundModalProps) {
+export function ShredFundModal({ seat, onClose, preview = false }: ShredFundModalProps) {
   const { publicKey: wallet, connected } = useWallet()
   const { balance: usdcBalance } = useUsdcBalance()
-  const { status, txSignature, error, execute, reset } = useShredTransaction()
+  const realTx = useShredTransaction()
+  const mockTx = useMockedShredTransaction()
+  const { status, txSignature, error, execute, reset } = preview ? mockTx : realTx
   const queryClient = useQueryClient()
 
   const [amountStr, setAmountStr] = useState('')
   const amount = parseFloat(amountStr)
   const amountValid = !isNaN(amount) && amount > 0
   const amountMicro = amountValid ? BigInt(Math.floor(amount * 1_000_000)) : 0n
-  const insufficientBalance = amountValid && amountMicro > usdcBalance
+  const insufficientBalance = !preview && amountValid && amountMicro > usdcBalance
 
   const pricePerEpoch = seat.price_per_epoch_dollars
   const prepaidEpochs = pricePerEpoch > 0 && amountValid ? Math.floor(amount / pricePerEpoch) : 0
   const currentBalance = seat.total_usdc_balance / 1e6
 
-  const canSubmit = connected && amountValid && !insufficientBalance && status === 'idle'
+  const canSubmit = (preview || connected) && amountValid && !insufficientBalance && status === 'idle'
 
   const devicePubkey = useMemo(() => {
     try { return new PublicKey(seat.device_key) } catch { return null }
@@ -42,7 +46,12 @@ export function ShredFundModal({ seat, onClose }: ShredFundModalProps) {
   }, [seat.metro_pk])
 
   const handleFund = useCallback(async () => {
-    if (!canSubmit || !wallet || !devicePubkey || !metroPubkey) return
+    if (!canSubmit) return
+    if (preview) {
+      await execute([])
+      return
+    }
+    if (!wallet || !devicePubkey || !metroPubkey) return
 
     const clientIpBits = ipv4ToU32(seat.client_ip)
     const accounts = deriveShredAccounts({
@@ -63,7 +72,7 @@ export function ShredFundModal({ seat, onClose }: ShredFundModalProps) {
       // Refresh seats data
       queryClient.invalidateQueries({ queryKey: ['shred-client-seats'] })
     }
-  }, [canSubmit, wallet, devicePubkey, metroPubkey, seat.client_ip, amountMicro, execute, queryClient])
+  }, [canSubmit, preview, wallet, devicePubkey, metroPubkey, seat.client_ip, amountMicro, execute, queryClient])
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -149,7 +158,7 @@ export function ShredFundModal({ seat, onClose }: ShredFundModalProps) {
               {status === 'confirming' && 'Confirming on-chain...'}
             </span>
           </div>
-        ) : !connected ? (
+        ) : !connected && !preview ? (
           <div className="flex flex-col items-center gap-3 py-2">
             <p className="text-sm text-muted-foreground">Connect your wallet to fund this seat</p>
             <WalletMultiButton />
@@ -182,6 +191,30 @@ export function ShredFundModal({ seat, onClose }: ShredFundModalProps) {
                 <p className="text-xs text-muted-foreground mt-1">
                   Adds ~{prepaidEpochs} epoch{prepaidEpochs !== 1 ? 's' : ''} at ${pricePerEpoch}/epoch
                 </p>
+              )}
+              {pricePerEpoch > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {[1, 4, 15, 90].map((epochs) => {
+                    const amt = pricePerEpoch * epochs
+                    const isOn = amountValid && Math.abs(amount - amt) < 0.001
+                    const monthLabel = epochs === 15 ? ' · ≈1 mo' : epochs === 90 ? ' · ≈6 mo' : ''
+                    return (
+                      <button
+                        key={epochs}
+                        type="button"
+                        onClick={() => { setAmountStr(amt.toFixed(2)); reset() }}
+                        className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${
+                          isOn
+                            ? 'border-primary bg-primary/10 text-primary'
+                            : 'border-border bg-background text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground'
+                        }`}
+                      >
+                        ${amt.toLocaleString()}{' '}
+                        <span className="opacity-70">{epochs} ep{monthLabel}</span>
+                      </button>
+                    )
+                  })}
+                </div>
               )}
             </div>
 

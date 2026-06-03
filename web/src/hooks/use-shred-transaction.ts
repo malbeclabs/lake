@@ -9,6 +9,8 @@ export type TransactionStatus =
   | 'sending'
   | 'confirming'
   | 'confirmed'
+  | 'simulating'
+  | 'simulated'
   | 'error'
 
 export interface UseShredTransactionResult {
@@ -16,6 +18,7 @@ export interface UseShredTransactionResult {
   txSignature: string | null
   error: string | null
   execute: (instructions: TransactionInstruction[]) => Promise<string | null>
+  simulate: (instructions: TransactionInstruction[]) => Promise<void>
   reset: () => void
 }
 
@@ -107,5 +110,55 @@ export function useShredTransaction(): UseShredTransactionResult {
     [wallet, signTransaction, connection],
   )
 
-  return { status, txSignature, error, execute, reset }
+  const simulate = useCallback(
+    async (instructions: TransactionInstruction[]): Promise<void> => {
+      if (!wallet) {
+        setError('Wallet not connected')
+        setStatus('error')
+        return
+      }
+
+      try {
+        setStatus('simulating')
+        setError(null)
+        setTxSignature(null)
+
+        const tx = new Transaction()
+        tx.add(...instructions)
+        tx.feePayer = wallet
+        // recentBlockhash intentionally omitted — simulateTransaction fetches it automatically
+        // when no signers are passed, which also sets sigVerify: false on the RPC call
+
+        const result = await connection.simulateTransaction(tx)
+
+        if (result.value.err) {
+          // Surface the most useful log line (last "Program log: Error" or the raw error)
+          const logs = result.value.logs ?? []
+          console.error('[simulate] err:', result.value.err)
+          console.error('[simulate] logs:', logs)
+          // Prefer "Program log: <msg>" lines — they contain the actual program error text.
+          // Fall back to any line with Error/failed, then the raw RPC error object.
+          const programLogErr = logs
+            .filter((l: string) => l.startsWith('Program log:'))
+            .reverse()
+            .find((l: string) => /error|invalid|failed|closed/i.test(l))
+          const fallbackErr = [...logs].reverse().find((l: string) => /Error|failed/.test(l))
+          const errMsg = programLogErr
+            ? programLogErr.replace(/^Program log:\s*/, '')
+            : (fallbackErr ?? JSON.stringify(result.value.err))
+          setError(errMsg)
+          setStatus('error')
+          return
+        }
+
+        setStatus('simulated')
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : 'Simulation error')
+        setStatus('error')
+      }
+    },
+    [wallet, connection],
+  )
+
+  return { status, txSignature, error, execute, simulate, reset }
 }

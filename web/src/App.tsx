@@ -62,6 +62,7 @@ import { GeolocProbesPage } from '@/components/geoloc-probes-page'
 import { GeolocUsersPage } from '@/components/geoloc-users-page'
 import { GeolocExplorerPage } from '@/components/geoloc-explorer-page'
 import { ShredsSeatsPage, ShredsFundersPage, ShredsDevicesPage, ShredsEscrowEventsPage } from '@/components/shreds-page'
+import { ShredsSubscribePage } from '@/components/shreds-subscribe-page'
 import { ShredsEconomicsPage } from '@/components/shreds-economics-page'
 import { PublisherCheckPage } from './components/publisher-check-page'
 import { EdgeScoreboardPage } from './components/edge-scoreboard-page'
@@ -73,6 +74,7 @@ import { GossipNodeDetailPage } from '@/components/gossip-node-detail-page'
 
 import { DZLedgerPage, SolanaOverviewPage } from '@/components/ledger-page'
 import { SettingsPage } from '@/components/settings-page'
+import { SubscriptionsConsolePage } from '@/components/console/subscriptions-console-page'
 import { ChangelogPage } from '@/components/changelog-page'
 import { TermsPage } from '@/components/terms-page'
 import { MCPDocsPage } from '@/components/mcp-docs-page'
@@ -687,6 +689,9 @@ function AppContent() {
             {/* Settings */}
             <Route path="/settings" element={<SettingsPage />} />
 
+            {/* Account */}
+            <Route path="/account/subscriptions" element={<SubscriptionsConsolePage />} />
+
             {/* Changelog */}
             <Route path="/changelog" element={<ChangelogPage />} />
 
@@ -728,8 +733,8 @@ function AppContent() {
             <Route path="/dz/shreds/funders" element={<ShredsFundersPage />} />
             <Route path="/dz/shreds/devices" element={<ShredsDevicesPage />} />
             <Route path="/dz/shreds/activity" element={<ShredsEscrowEventsPage />} />
+            <Route path="/dz/shreds/pay" element={<ShredsSubscribePage />} />
             <Route path="/dz/shreds/economics" element={<ShredsEconomicsPage />} />
-            {/* Subscribe page hidden for now — see shreds-subscribe-page.tsx */}
             <Route path="/dz/edge/scoreboard" element={<Navigate to="/dz/shreds/scoreboard" replace />} />
 
             {/* Geolocation routes */}

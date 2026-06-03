@@ -340,7 +340,7 @@ export function DevicesPage() {
                   <tr
                     key={device.pk}
                     className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
-                    onClick={(e) => handleRowClick(e, `/dz/devices/${device.pk}`, navigate)}
+                    onClick={(e) => handleRowClick(e, `/dz/shreds/pay?device=${device.code}`, navigate)}
                   >
                     <td className="px-4 py-3 whitespace-nowrap">
                       <CopyableText text={device.code} className="font-mono text-sm" />
