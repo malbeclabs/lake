@@ -116,7 +116,8 @@ func addStatusCount(bucket *MulticastHealthStatusCounts, status string, n uint64
 }
 
 // parseLimitOffset extracts optional pagination params. Both default to 0,
-// which means "stream all rows" (no slicing in the handler).
+// which means "stream all rows" for handlers that don't set a bounded
+// default before querying.
 func parseLimitOffset(r *http.Request) (limit, offset int) {
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -131,22 +132,21 @@ func parseLimitOffset(r *http.Request) (limit, offset int) {
 	return
 }
 
-// applyPagination slices items per requested limit/offset. limit=0 means
-// return all rows; offset is applied before limit. Returns the original
-// total before pagination so callers can include it in the response.
-func applyPagination[T any](items []T, limit, offset int) (page []T, total int) {
-	total = len(items)
-	if offset < 0 {
-		offset = 0
+func (a *API) queryMulticastHealthTotal(ctx context.Context, table, whereClause string, args []any, metricName string) (int, error) {
+	query := `
+		SELECT count()
+		FROM ` + table + `
+		WHERE ` + whereClause + `
+		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0
+	`
+	var total uint64
+	start := time.Now()
+	err := a.envDB(ctx).QueryRow(ctx, query, args...).Scan(&total)
+	metrics.RecordClickHouseQuery(metricName, time.Since(start), err)
+	if err != nil {
+		return 0, err
 	}
-	if offset > total {
-		offset = total
-	}
-	items = items[offset:]
-	if limit > 0 && limit < len(items) {
-		items = items[:limit]
-	}
-	return items, total
+	return int(total), nil
 }
 
 // Lower-cased helper for the per-(pk-or-code) pattern, mirroring the existing

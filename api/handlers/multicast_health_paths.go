@@ -34,27 +34,43 @@ func (a *API) GetMulticastGroupHealthPaths(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	items, err := a.queryMulticastHealthPaths(ctx, group.PK)
+	limit, offset := parseLimitOffset(r)
+	items, total, err := a.queryMulticastHealthPaths(ctx, group.PK, limit, offset)
 	if err != nil {
 		logError("multicast group health/paths query error", "error", err, "pk", group.PK)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 		return
 	}
 
-	limit, offset := parseLimitOffset(r)
-	page, total := applyPagination(items, limit, offset)
-
 	writeJSON(w, MulticastHealthGroupPathsResponse{
 		Group:       group,
 		GeneratedAt: formatMulticastTime(time.Now().UTC()),
-		Items:       page,
+		Items:       items,
 		Total:       total,
 		Limit:       limit,
 		Offset:      offset,
 	})
 }
 
-func (a *API) queryMulticastHealthPaths(ctx context.Context, groupPK string) ([]MulticastHealthPathItem, error) {
+func (a *API) queryMulticastHealthPaths(ctx context.Context, groupPK string, limit, offset int) ([]MulticastHealthPathItem, int, error) {
+	whereClause := "multicast_group_pk = ?"
+	args := []any{groupPK}
+	total := 0
+	if limit > 0 {
+		var err error
+		total, err = a.queryMulticastHealthTotal(ctx, "health_publisher_subscriber_path", whereClause, args, "multicast_health_paths_count")
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+
+	limitClause := ""
+	queryArgs := append([]any{}, args...)
+	if limit > 0 {
+		limitClause = "\n\t\tLIMIT ? OFFSET ?"
+		queryArgs = append(queryArgs, limit, offset)
+	}
+
 	query := `
 		SELECT
 			multicast_group_pk,
@@ -79,23 +95,22 @@ func (a *API) queryMulticastHealthPaths(ctx context.Context, groupPK string) ([]
 			verification_method,
 			missing_endpoint_reasons
 		FROM health_publisher_subscriber_path
-		WHERE multicast_group_pk = ?
-		-- Stream every (publisher, subscriber) pair; sort actionable rows
-		-- first so any consumer truncating lands on the unhealthy/degraded
-		-- pairs first.
+		WHERE ` + whereClause + `
+		-- Sort actionable rows first so paginated consumers land on the
+		-- unhealthy/degraded pairs first.
 		ORDER BY
 			multiIf(health_status = 'unhealthy', 0,
 			        health_status = 'degraded',  1,
 			        health_status = 'unknown',   2,
 			                                     3),
-			publisher_dz_ip, subscriber_device_code, subscriber_user_pk
+			publisher_dz_ip, subscriber_device_code, subscriber_user_pk` + limitClause + `
 		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0
 	`
 	start := time.Now()
-	rows, err := a.envDB(ctx).Query(ctx, query, groupPK)
+	rows, err := a.envDB(ctx).Query(ctx, query, queryArgs...)
 	metrics.RecordClickHouseQuery("multicast_health_paths", time.Since(start), err)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -125,9 +140,15 @@ func (a *API) queryMulticastHealthPaths(ctx context.Context, groupPK string) ([]
 			&it.VerificationMethod,
 			&it.MissingEndpointReasons,
 		); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		items = append(items, it)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	if limit == 0 {
+		total = len(items)
+	}
+	return items, total, nil
 }

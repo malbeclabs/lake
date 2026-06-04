@@ -1675,15 +1675,15 @@ export function MulticastGroupDetailPage() {
         activeTab,
         filterParams.length > 0 ? filterParams : undefined,
       ),
-    enabled: !!pk,
+    enabled: !!pk && activeTab !== 'health',
     refetchInterval: 30000,
     placeholderData: keepPreviousData,
   })
 
   useDocumentTitle(group?.code || 'Multicast Group')
 
-  const publisherCount = membersResponse?.publisher_count ?? 0
-  const subscriberCount = membersResponse?.subscriber_count ?? 0
+  const publisherCount = membersResponse?.publisher_count ?? group?.publisher_count ?? 0
+  const subscriberCount = membersResponse?.subscriber_count ?? group?.subscriber_count ?? 0
 
   const activeMembers = membersResponse?.items ?? []
 

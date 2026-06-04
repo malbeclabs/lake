@@ -1,7 +1,9 @@
-import { useQuery } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { Loader2, AlertCircle, Info, ChevronRight } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
+import { Pagination } from '@/components/pagination'
 import {
   fetchMulticastGroupHealth,
   fetchMulticastGroupHealthUsers,
@@ -38,6 +40,8 @@ const RATE_REASON_HUMAN: Record<MulticastRateStatusReason, string> = {
   group_idle: 'all publishers transmitting 0 — nothing to verify against',
   multi_group_ambiguity: "tunnel shared across multiple multicast groups — per-group rate can't be attributed",
 }
+
+const HEALTH_PAGE_SIZE = 100
 
 const STATUS_BADGE: Record<MulticastHealthStatus, string> = {
   healthy: 'bg-emerald-500/15 text-emerald-500',
@@ -288,6 +292,14 @@ function TableStateRow({
 }
 
 export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: string }) {
+  const [usersOffset, setUsersOffset] = useState(0)
+  const [pathsOffset, setPathsOffset] = useState(0)
+
+  useEffect(() => {
+    setUsersOffset(0)
+    setPathsOffset(0)
+  }, [groupPkOrCode])
+
   const summaryQuery = useQuery({
     queryKey: ['multicast-group-health-summary', groupPkOrCode],
     queryFn: () => fetchMulticastGroupHealth(groupPkOrCode),
@@ -296,17 +308,19 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
   })
 
   const usersQuery = useQuery({
-    queryKey: ['multicast-group-health-users', groupPkOrCode],
-    queryFn: () => fetchMulticastGroupHealthUsers(groupPkOrCode),
+    queryKey: ['multicast-group-health-users', groupPkOrCode, HEALTH_PAGE_SIZE, usersOffset],
+    queryFn: () => fetchMulticastGroupHealthUsers(groupPkOrCode, HEALTH_PAGE_SIZE, usersOffset),
     enabled: !!groupPkOrCode,
     refetchInterval: 60_000,
+    placeholderData: keepPreviousData,
   })
 
   const pathsQuery = useQuery({
-    queryKey: ['multicast-group-health-paths', groupPkOrCode],
-    queryFn: () => fetchMulticastGroupHealthPaths(groupPkOrCode),
+    queryKey: ['multicast-group-health-paths', groupPkOrCode, HEALTH_PAGE_SIZE, pathsOffset],
+    queryFn: () => fetchMulticastGroupHealthPaths(groupPkOrCode, HEALTH_PAGE_SIZE, pathsOffset),
     enabled: !!groupPkOrCode,
     refetchInterval: 60_000,
+    placeholderData: keepPreviousData,
   })
 
   if (summaryQuery.isLoading) {
@@ -420,6 +434,14 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
             </tbody>
           </table>
         </div>
+        {usersQuery.data && (
+          <Pagination
+            total={usersQuery.data.total}
+            limit={HEALTH_PAGE_SIZE}
+            offset={usersOffset}
+            onOffsetChange={setUsersOffset}
+          />
+        )}
       </div>
 
       {/* Per-path reconciliation */}
@@ -537,6 +559,14 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
             </tbody>
           </table>
         </div>
+        {pathsQuery.data && (
+          <Pagination
+            total={pathsQuery.data.total}
+            limit={HEALTH_PAGE_SIZE}
+            offset={pathsOffset}
+            onOffsetChange={setPathsOffset}
+          />
+        )}
       </div>
     </div>
   )

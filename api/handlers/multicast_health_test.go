@@ -70,12 +70,12 @@ func makeGroupHealthRequest(api *handlers.API, group string, path string) (*http
 
 func executeRequest(api *handlers.API, req *http.Request, path string) (*httptest.ResponseRecorder, []byte) {
 	rr := httptest.NewRecorder()
-	switch path {
-	case "/health":
+	switch req.URL.Path {
+	case "/api/dz/multicast-groups/" + chi.URLParam(req, "pk") + "/health":
 		api.GetMulticastGroupHealth(rr, req)
-	case "/health/users":
+	case "/api/dz/multicast-groups/" + chi.URLParam(req, "pk") + "/health/users":
 		api.GetMulticastGroupHealthUsers(rr, req)
-	case "/health/paths":
+	case "/api/dz/multicast-groups/" + chi.URLParam(req, "pk") + "/health/paths":
 		api.GetMulticastGroupHealthPaths(rr, req)
 	case "/user-health":
 		api.GetUserHealth(rr, req)
@@ -162,18 +162,38 @@ func TestGetMulticastGroupHealth_Users(t *testing.T) {
 	assert.InDelta(t, 10_000_000, *sub.ObservedBps5m, 1)
 }
 
+func TestGetMulticastGroupHealth_UsersPagination(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertMulticastTestData(t, api)
+	insertMulticastHealthFixtures(t, api)
+
+	rr, body := makeGroupHealthRequest(api, "test-group", "/health/users?limit=1&offset=1")
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", string(body))
+
+	var resp handlers.MulticastHealthGroupUsersResponse
+	require.NoError(t, json.Unmarshal(body, &resp))
+	assert.EqualValues(t, 2, resp.Total)
+	assert.EqualValues(t, 1, resp.Limit)
+	assert.EqualValues(t, 1, resp.Offset)
+	require.Len(t, resp.Items, 1)
+}
+
 func TestGetMulticastGroupHealth_Paths(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertMulticastTestData(t, api)
 	insertMulticastHealthFixtures(t, api)
 
-	rr, body := makeGroupHealthRequest(api, "test-group", "/health/paths")
+	rr, body := makeGroupHealthRequest(api, "test-group", "/health/paths?limit=1&offset=0")
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", string(body))
 
 	var resp handlers.MulticastHealthGroupPathsResponse
 	require.NoError(t, json.Unmarshal(body, &resp))
 	assert.Equal(t, "test-group", resp.Group.Code)
+	assert.EqualValues(t, 1, resp.Total)
+	assert.EqualValues(t, 1, resp.Limit)
+	assert.EqualValues(t, 0, resp.Offset)
 	require.Len(t, resp.Items, 1)
 	assert.Equal(t, "user-pub", resp.Items[0].PublisherUserPK)
 	assert.Equal(t, "user-sub", resp.Items[0].SubscriberUserPK)
