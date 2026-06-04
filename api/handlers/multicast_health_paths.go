@@ -57,6 +57,9 @@ func (a *API) GetMulticastGroupHealthPaths(w http.ResponseWriter, r *http.Reques
 func (a *API) queryMulticastHealthPaths(ctx context.Context, groupPK string) ([]MulticastHealthPathItem, error) {
 	query := `
 		SELECT
+			multicast_group_pk,
+			multicast_group_code,
+			group_address,
 			publisher_user_pk,
 			publisher_owner_pubkey,
 			publisher_dz_ip,
@@ -100,6 +103,9 @@ func (a *API) queryMulticastHealthPaths(ctx context.Context, groupPK string) ([]
 	for rows.Next() {
 		var it MulticastHealthPathItem
 		if err := rows.Scan(
+			&it.MulticastGroupPK,
+			&it.MulticastGroupCode,
+			&it.GroupAddress,
 			&it.PublisherUserPK,
 			&it.PublisherOwnerPubkey,
 			&it.PublisherDZIP,

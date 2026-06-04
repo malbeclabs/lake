@@ -69,6 +69,145 @@ type MulticastDeliveryTreeResponse struct {
 	Anomalies          []MulticastDeliveryAnomaly         `json:"anomalies"`
 }
 
+type MulticastDeliveryDeviceResponse struct {
+	Device              MulticastDeliveryDevice        `json:"device"`
+	SourceAvailable     bool                           `json:"source_available"`
+	GeneratedAt         string                         `json:"generated_at"`
+	Freshness           MulticastDeliveryFreshness     `json:"freshness"`
+	CoverageNote        string                         `json:"coverage_note"`
+	HealthContextNote   string                         `json:"health_context_note"`
+	Summary             MulticastDeliveryDeviceSummary `json:"summary"`
+	Groups              []MulticastDeliveryEntityGroup `json:"groups"`
+	Roles               []MulticastDeliveryDeviceRole  `json:"roles"`
+	HealthUsers         []MulticastHealthUserItem      `json:"health_users"`
+	HealthUserTotal     int                            `json:"health_user_total"`
+	EndpointHealthItems []MulticastHealthPathItem      `json:"endpoint_health_items"`
+	EndpointHealthTotal int                            `json:"endpoint_health_total"`
+	EndpointLimit       int                            `json:"endpoint_limit"`
+	EndpointOffset      int                            `json:"endpoint_offset"`
+	Routes              []MulticastDeliveryMroute      `json:"routes"`
+	OIFs                []MulticastDeliveryOIF         `json:"oifs"`
+	MSDPPeers           []MulticastDeliveryMSDPPeer    `json:"msdp_peers"`
+	MSDPSAs             []MulticastDeliveryMSDPSA      `json:"msdp_sas"`
+	RouteTotal          int                            `json:"route_total"`
+	OIFTotal            int                            `json:"oif_total"`
+	Limit               int                            `json:"limit"`
+	Offset              int                            `json:"offset"`
+	Anomalies           []MulticastDeliveryAnomaly     `json:"anomalies"`
+}
+
+type MulticastDeliveryLinkResponse struct {
+	Link              MulticastDeliveryLink          `json:"link"`
+	SourceAvailable   bool                           `json:"source_available"`
+	GeneratedAt       string                         `json:"generated_at"`
+	Freshness         MulticastDeliveryFreshness     `json:"freshness"`
+	CoverageNote      string                         `json:"coverage_note"`
+	HealthContextNote string                         `json:"health_context_note"`
+	Summary           MulticastDeliveryLinkSummary   `json:"summary"`
+	Groups            []MulticastDeliveryEntityGroup `json:"groups"`
+	Branches          []MulticastDeliveryLinkBranch  `json:"branches"`
+	Directions        []MulticastDeliveryDirection   `json:"directions"`
+	BranchTotal       int                            `json:"branch_total"`
+	Limit             int                            `json:"limit"`
+	Offset            int                            `json:"offset"`
+	Anomalies         []MulticastDeliveryAnomaly     `json:"anomalies"`
+}
+
+type MulticastDeliveryDevice struct {
+	PK              string `json:"pk"`
+	Code            string `json:"code"`
+	Status          string `json:"status"`
+	DeviceType      string `json:"device_type"`
+	ContributorPK   string `json:"contributor_pk"`
+	ContributorCode string `json:"contributor_code"`
+	MetroPK         string `json:"metro_pk"`
+	MetroCode       string `json:"metro_code"`
+}
+
+type MulticastDeliveryLink struct {
+	PK              string `json:"pk"`
+	Code            string `json:"code"`
+	Status          string `json:"status"`
+	LinkType        string `json:"link_type"`
+	SideAPK         string `json:"side_a_pk"`
+	SideACode       string `json:"side_a_code"`
+	SideAIfaceName  string `json:"side_a_iface_name"`
+	SideZPK         string `json:"side_z_pk"`
+	SideZCode       string `json:"side_z_code"`
+	SideZIfaceName  string `json:"side_z_iface_name"`
+	ContributorPK   string `json:"contributor_pk"`
+	ContributorCode string `json:"contributor_code"`
+}
+
+type MulticastEntityHealthStatusCounts struct {
+	Healthy   uint64 `json:"healthy"`
+	Degraded  uint64 `json:"degraded"`
+	Unhealthy uint64 `json:"unhealthy"`
+	Unknown   uint64 `json:"unknown"`
+	Total     uint64 `json:"total"`
+}
+
+type MulticastDeliveryDeviceSummary struct {
+	GroupCount               int                               `json:"group_count"`
+	SourceCount              int                               `json:"source_count"`
+	MrouteCount              int                               `json:"mroute_count"`
+	RoutesWithOIFs           int                               `json:"routes_with_oifs"`
+	OIFCount                 int                               `json:"oif_count"`
+	UnderlayOIFCount         int                               `json:"underlay_oif_count"`
+	SubscriberTunnelOIFCount int                               `json:"subscriber_tunnel_oif_count"`
+	MSDPPeerCount            int                               `json:"msdp_peer_count"`
+	MSDPSACount              int                               `json:"msdp_sa_count"`
+	UserHealthCounts         MulticastEntityHealthStatusCounts `json:"user_health_counts"`
+	EndpointHealthCounts     MulticastEntityHealthStatusCounts `json:"endpoint_health_counts"`
+	AnomalyCount             int                               `json:"anomaly_count"`
+}
+
+type MulticastDeliveryLinkSummary struct {
+	GroupCount               int                               `json:"group_count"`
+	SourceCount              int                               `json:"source_count"`
+	BranchCount              int                               `json:"branch_count"`
+	AToZCount                int                               `json:"a_to_z_count"`
+	ZToACount                int                               `json:"z_to_a_count"`
+	UnknownDirectionCount    int                               `json:"unknown_direction_count"`
+	ReportingDeviceCount     int                               `json:"reporting_device_count"`
+	RelatedGroupHealthCounts MulticastEntityHealthStatusCounts `json:"related_group_health_counts"`
+	AnomalyCount             int                               `json:"anomaly_count"`
+}
+
+type MulticastDeliveryEntityGroup struct {
+	GroupPK      string                            `json:"group_pk"`
+	GroupCode    string                            `json:"group_code"`
+	GroupAddress string                            `json:"group_address"`
+	SourceCount  int                               `json:"source_count"`
+	MrouteCount  int                               `json:"mroute_count"`
+	OIFCount     int                               `json:"oif_count"`
+	HealthCounts MulticastEntityHealthStatusCounts `json:"health_counts"`
+}
+
+type MulticastDeliveryDeviceRole struct {
+	Role        string                            `json:"role"`
+	Label       string                            `json:"label"`
+	Description string                            `json:"description"`
+	GroupCount  int                               `json:"group_count"`
+	SourceCount int                               `json:"source_count"`
+	MrouteCount int                               `json:"mroute_count"`
+	OIFCount    int                               `json:"oif_count"`
+	Health      MulticastEntityHealthStatusCounts `json:"health_counts"`
+}
+
+type MulticastDeliveryDirection struct {
+	Direction   string `json:"direction"`
+	Label       string `json:"label"`
+	GroupCount  int    `json:"group_count"`
+	SourceCount int    `json:"source_count"`
+	BranchCount int    `json:"branch_count"`
+}
+
+type MulticastDeliveryLinkBranch struct {
+	MulticastDeliveryOIF
+	Direction string `json:"direction"`
+}
+
 type MulticastDeliveryGroup struct {
 	PK              string `json:"pk"`
 	Code            string `json:"code"`
@@ -126,6 +265,8 @@ type MulticastDeliveryMroute struct {
 	VRF                      string `json:"vrf"`
 	Mode                     string `json:"mode"`
 	GroupAddress             string `json:"group_address"`
+	MulticastGroupPK         string `json:"multicast_group_pk,omitempty"`
+	MulticastGroupCode       string `json:"multicast_group_code,omitempty"`
 	SourceAddress            string `json:"source_address"`
 	RouteFlags               string `json:"route_flags"`
 	RegisterInOIFList        bool   `json:"register_in_oif_list"`
@@ -160,9 +301,12 @@ type MulticastDeliveryOIF struct {
 	DevicePK              string `json:"device_pk"`
 	DeviceCode            string `json:"device_code"`
 	GroupAddress          string `json:"group_address"`
+	MulticastGroupPK      string `json:"multicast_group_pk,omitempty"`
+	MulticastGroupCode    string `json:"multicast_group_code,omitempty"`
 	SourceAddress         string `json:"source_address"`
 	PublisherUserPK       string `json:"publisher_user_pk"`
 	PublisherDevicePK     string `json:"publisher_device_pk"`
+	PublisherDeviceCode   string `json:"publisher_device_code,omitempty"`
 	OIFName               string `json:"oif_name"`
 	OIFKind               string `json:"oif_kind"`
 	ObservedDeliveryRole  string `json:"observed_delivery_role"`
