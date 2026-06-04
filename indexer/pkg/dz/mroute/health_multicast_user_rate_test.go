@@ -372,13 +372,15 @@ func TestHealthMulticastUserRate_TunnelReuse(t *testing.T) {
 	assert.InDelta(t, 99000000, observed["u-B"], 1, "u-B keeps its own 99 Mbps")
 }
 
-// TestHealthMulticastUserRate_MultiGroupAmbiguity verifies that when one
-// (device, tunnel, user) tuple subscribes to multiple multicast groups —
-// so its per-tunnel rate is a cross-group aggregate that cannot be
-// attributed per-group — every rate row for that user is marked
-// rate_status='unknown' with reason 'multi_group_ambiguity', not
-// silently reconciled or mismatched.
-func TestHealthMulticastUserRate_MultiGroupAmbiguity(t *testing.T) {
+// TestHealthMulticastUserRate_MultiGroupSubscriberFlaggedDegraded verifies
+// that when one (device, tunnel, user) tuple subscribes to multiple multicast
+// groups — so its per-tunnel TX is a cross-group aggregate — every rate row
+// for that user gets the standard tolerance check applied. The TX includes
+// other groups' traffic, so observed (10 Mbps) exceeds expected (5 Mbps
+// per-group) beyond tolerance and the view flags mismatch → degraded.
+// Operators read this as "user tunnel deviates, investigate" rather than
+// the previous silent fall-through to unknown.
+func TestHealthMulticastUserRate_MultiGroupSubscriberFlaggedDegraded(t *testing.T) {
 	info := laketesting.NewClientWithInfo(t, sharedDB)
 	conn, err := info.Client.Conn(t.Context())
 	require.NoError(t, err)
@@ -439,7 +441,7 @@ func TestHealthMulticastUserRate_MultiGroupAmbiguity(t *testing.T) {
 	require.NoError(t, conn.Exec(ctx, `SYSTEM WAIT VIEW dz_device_interface_ips`))
 
 	rows, err := conn.Query(ctx, `
-		SELECT multicast_group_pk, rate_status, rate_status_reason, expected_bps_5m
+		SELECT multicast_group_pk, rate_status, rate_status_reason, observed_bps_5m, expected_bps_5m, health_status
 		FROM health_multicast_user_rate
 		WHERE user_pk = 'u-mga-sub'
 		ORDER BY multicast_group_pk`)
@@ -447,32 +449,39 @@ func TestHealthMulticastUserRate_MultiGroupAmbiguity(t *testing.T) {
 	defer rows.Close()
 
 	type r struct {
-		group, rate, reason string
-		expected            *float64
+		group, rate, reason, combined string
+		observed, expected            *float64
 	}
 	got := []r{}
 	for rows.Next() {
 		var x r
-		require.NoError(t, rows.Scan(&x.group, &x.rate, &x.reason, &x.expected))
+		require.NoError(t, rows.Scan(&x.group, &x.rate, &x.reason, &x.observed, &x.expected, &x.combined))
 		got = append(got, x)
 	}
 	require.NoError(t, rows.Err())
 	require.Len(t, got, 2, "subscriber should produce one row per group")
 
 	for _, row := range got {
-		assert.Equal(t, "unknown", row.rate, "multi-group subscriber rate must not reconcile (group=%s)", row.group)
-		assert.Equal(t, "multi_group_ambiguity", row.reason, "group=%s", row.group)
-		assert.Nil(t, row.expected, "no per-group expected when ambiguous (group=%s)", row.group)
+		// Observed = subscriber tunnel TX (10 Mbps, cross-group aggregate).
+		// Expected = single-group publisher RX (5 Mbps). |10M - 5M| = 5M > 1M tolerance.
+		assert.Equal(t, "mismatch", row.rate, "TX/expected divergence must surface as mismatch (group=%s)", row.group)
+		assert.Equal(t, "mismatch", row.reason, "group=%s", row.group)
+		require.NotNil(t, row.observed)
+		require.NotNil(t, row.expected)
+		assert.InDelta(t, 10000000, *row.observed, 1)
+		assert.InDelta(t, 5000000, *row.expected, 1)
+		assert.Equal(t, "degraded", row.combined, "CP healthy + rate mismatch → combined degraded (group=%s)", row.group)
 	}
 }
 
-// TestHealthMulticastUserRate_AmbiguousPublisherPropagates verifies that
-// when a multicast group's publisher is multi-group (its per-tunnel RX is
-// a cross-group aggregate), the contamination propagates to every
-// subscriber in that group — even subscribers whose own tunnels are
-// single-group — since gpt_total_publisher_rx_bps cannot be cleanly
-// derived for that group's expected.
-func TestHealthMulticastUserRate_AmbiguousPublisherPropagates(t *testing.T) {
+// TestHealthMulticastUserRate_AmbiguousPublisherFlaggedDegraded verifies
+// that when a group's publisher is multi-group (its per-tunnel RX is a
+// cross-group aggregate that inflates gpt_total_publisher_rx_bps), every
+// single-group subscriber in that group sees observed (their honest
+// per-group TX) < expected (the inflated total) and the standard
+// tolerance check flags mismatch → degraded. This replaces the previous
+// silent fall-through to unknown.
+func TestHealthMulticastUserRate_AmbiguousPublisherFlaggedDegraded(t *testing.T) {
 	info := laketesting.NewClientWithInfo(t, sharedDB)
 	conn, err := info.Client.Conn(t.Context())
 	require.NoError(t, err)
@@ -531,19 +540,124 @@ func TestHealthMulticastUserRate_AmbiguousPublisherPropagates(t *testing.T) {
 	require.NoError(t, conn.Exec(ctx, `SYSTEM WAIT VIEW dz_device_interface_ips`))
 
 	rows2, err := conn.Query(ctx, `
-		SELECT rate_status, rate_status_reason, expected_bps_5m
+		SELECT rate_status, rate_status_reason, observed_bps_5m, expected_bps_5m, health_status
 		FROM health_multicast_user_rate
 		WHERE user_pk = 'u-ap-sub' AND multicast_group_pk = 'grp-ap-X'`)
 	require.NoError(t, err)
 	defer rows2.Close()
 	require.True(t, rows2.Next(), "expected one row for u-ap-sub on grp-ap-X")
 
-	var rate, reason string
-	var expected *float64
-	require.NoError(t, rows2.Scan(&rate, &reason, &expected))
+	var rate, reason, combined string
+	var observed, expected *float64
+	require.NoError(t, rows2.Scan(&rate, &reason, &observed, &expected, &combined))
 	require.NoError(t, rows2.Err())
-	assert.Equal(t, "unknown", rate,
-		"single-group subscriber must not reconcile when group's publisher is multi-group")
-	assert.Equal(t, "multi_group_ambiguity", reason)
-	assert.Nil(t, expected, "expected must be NULL — gpt_total is contaminated")
+	// Observed = honest single-group subscriber TX (5 Mbps).
+	// Expected = publisher's contaminated cross-group RX (10 Mbps). |5M - 10M| = 5M > 1M tolerance.
+	assert.Equal(t, "mismatch", rate, "TX/expected divergence must surface as mismatch")
+	assert.Equal(t, "mismatch", reason)
+	require.NotNil(t, observed)
+	require.NotNil(t, expected)
+	assert.InDelta(t, 5000000, *observed, 1)
+	assert.InDelta(t, 10000000, *expected, 1)
+	assert.Equal(t, "degraded", combined, "CP healthy + rate mismatch → combined degraded")
+}
+
+// TestHealthMulticastUserRate_RollupDedup guards against the
+// ReplacingMergeTree fan-out bug: device_interface_rollup_5m can hold
+// multiple part-row copies of the same logical row between merges, and
+// without dedup in the rate view those duplicates fan out into multiple
+// view rows per (user, group, mode) AND inflate gpt_total_publisher_rx_bps,
+// causing false 'mismatch' verdicts on subscribers.
+func TestHealthMulticastUserRate_RollupDedup(t *testing.T) {
+	info := laketesting.NewClientWithInfo(t, sharedDB)
+	conn, err := info.Client.Conn(t.Context())
+	require.NoError(t, err)
+	defer conn.Close()
+	ctx := t.Context()
+
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_devices_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users, interfaces)
+		VALUES
+			('d-dd-fhr', now(), now(), generateUUIDv4(), 0, 1, 'd-dd-fhr', 'activated', 'edge', 'dd-fhr-dz1', '', '', '', 0, '[]'),
+			('d-dd-lhr', now(), now(), generateUUIDv4(), 0, 2, 'd-dd-lhr', 'activated', 'edge', 'dd-lhr-dz1', '', '', '', 0, '[]')`))
+
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_multicast_groups_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
+		VALUES ('grp-dd', now(), now(), generateUUIDv4(), 0, 1, 'grp-dd', 'o', 'rate-dd', '233.99.6.1', 100000000, 'activated', 1, 1)`))
+
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_users_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tenant_pk, tunnel_id, publishers, subscribers)
+		VALUES
+			('u-dd-pub', now(), now(), generateUUIDv4(), 0, 1, 'u-dd-pub', 'o', 'activated', 'multicast', '203.0.118.1', '10.99.6.1', 'd-dd-fhr', 't1', 970, '["grp-dd"]', '[]'),
+			('u-dd-sub', now(), now(), generateUUIDv4(), 0, 2, 'u-dd-sub', 'o', 'activated', 'multicast', '203.0.118.2', '10.99.6.2', 'd-dd-lhr', 't1', 971, '[]', '["grp-dd"]')`))
+
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_ip_mroute_entries_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 device_pubkey, vrf, mode, group_address, source_address,
+			 route_flags, register_in_oif_list, rpf_interface, rpf_rib, rpf_prefix,
+			 rpf_preference, rpf_metric, rpf_neighbor, rpf_attached, rpf_has_block,
+			 oif_list, oif_count, creation_time)
+		VALUES
+			('mr-dd-fhr', now(), now(), generateUUIDv4(), 0, 1, 'd-dd-fhr', 'default', 'sparse', '233.99.6.1', '10.99.6.1', 'SBNP', 0, 'Tunnel970', '', '', 0, 0, '', 0, 0, '', 0, now()),
+			('mr-dd-lhr', now(), now(), generateUUIDv4(), 0, 2, 'd-dd-lhr', 'default', 'sparse', '233.99.6.1', '10.99.6.1', 'SMP',  0, 'Port-Channel1', '', '', 0, 0, '', 0, 0, '["Tunnel971"]', 1, now())`))
+
+	// Insert THREE identical part-row copies for each rollup bucket — emulates
+	// what ReplacingMergeTree leaves on disk before background merges run.
+	// Without dedup in the view, the publisher fan-out would multiply
+	// gpt_total_publisher_rx_bps by 3 (30 Mbps), and the subscriber's
+	// observed (10 Mbps) would be flagged mismatch against the inflated
+	// expected. With dedup, expected == observed == 10 Mbps → reconciled.
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO device_interface_rollup_5m
+			(bucket_ts, device_pk, intf, user_tunnel_id, user_pk, max_in_bps, max_out_bps, ingested_at)
+		VALUES
+			(now() - INTERVAL 1 MINUTE, 'd-dd-fhr', 'Tunnel970', 970, 'u-dd-pub', 10000000, 0,        now()),
+			(now() - INTERVAL 1 MINUTE, 'd-dd-fhr', 'Tunnel970', 970, 'u-dd-pub', 10000000, 0,        now()),
+			(now() - INTERVAL 1 MINUTE, 'd-dd-fhr', 'Tunnel970', 970, 'u-dd-pub', 10000000, 0,        now()),
+			(now() - INTERVAL 1 MINUTE, 'd-dd-lhr', 'Tunnel971', 971, 'u-dd-sub', 0,        10000000, now()),
+			(now() - INTERVAL 1 MINUTE, 'd-dd-lhr', 'Tunnel971', 971, 'u-dd-sub', 0,        10000000, now()),
+			(now() - INTERVAL 1 MINUTE, 'd-dd-lhr', 'Tunnel971', 971, 'u-dd-sub', 0,        10000000, now())`))
+
+	require.NoError(t, conn.Exec(ctx, `SYSTEM REFRESH VIEW dz_device_interface_ips`))
+	require.NoError(t, conn.Exec(ctx, `SYSTEM WAIT VIEW dz_device_interface_ips`))
+
+	// 1. View must emit exactly one row per (user, group, mode) — no fan-out.
+	countRows, err := conn.Query(ctx,
+		`SELECT count() FROM health_multicast_user_rate WHERE multicast_group_pk = 'grp-dd'`)
+	require.NoError(t, err)
+	require.True(t, countRows.Next())
+	var rowCount uint64
+	require.NoError(t, countRows.Scan(&rowCount))
+	countRows.Close()
+	assert.Equal(t, uint64(2), rowCount,
+		"expected 2 rows (publisher + subscriber); got %d means part-row duplicates fanned out", rowCount)
+
+	// 2. Subscriber's expected_bps_5m must reflect the deduped publisher RX
+	//    (10 Mbps), not the inflated 30 Mbps — so the verdict is healthy,
+	//    not the spurious 'mismatch' the original bug would produce.
+	rows, err := conn.Query(ctx, `
+		SELECT mode, observed_bps_5m, expected_bps_5m, rate_status, health_status
+		FROM health_multicast_user_rate
+		WHERE multicast_group_pk = 'grp-dd' AND user_pk = 'u-dd-sub'`)
+	require.NoError(t, err)
+	defer rows.Close()
+	require.True(t, rows.Next())
+	var mode, rate, combined string
+	var observed, expected *float64
+	require.NoError(t, rows.Scan(&mode, &observed, &expected, &rate, &combined))
+	require.NoError(t, rows.Err())
+	assert.Equal(t, "S", mode)
+	require.NotNil(t, observed)
+	require.NotNil(t, expected)
+	assert.InDelta(t, 10000000, *observed, 1)
+	assert.InDelta(t, 10000000, *expected, 1, "expected must equal deduped publisher RX, not 3× inflated")
+	assert.Equal(t, "reconciled", rate)
+	assert.Equal(t, "healthy", combined)
 }

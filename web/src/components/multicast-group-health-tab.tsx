@@ -38,7 +38,6 @@ const RATE_REASON_HUMAN: Record<MulticastRateStatusReason, string> = {
   mismatch: 'TX deviates from sum of publishers',
   monitoring_gap: 'a publisher in this group has no counter data',
   group_idle: 'all publishers transmitting 0 — nothing to verify against',
-  multi_group_ambiguity: "tunnel shared across multiple multicast groups — per-group rate can't be attributed",
 }
 
 const HEALTH_PAGE_SIZE = 100
@@ -141,7 +140,6 @@ const DIM_BADGE_CLASS: Record<string, string> = {
   no_data: 'bg-muted text-muted-foreground',
   monitoring_gap: 'bg-muted text-muted-foreground',
   group_idle: 'bg-muted text-muted-foreground',
-  multi_group_ambiguity: 'bg-muted text-muted-foreground',
 }
 
 function DimBadge({ value }: { value: string }) {
@@ -430,7 +428,17 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
                     <RateCell item={u} />
                   </td>
                   <td className="px-4 py-3 text-sm">
-                    <UserCombinedHealthBadge item={u} />
+                    <div className="flex flex-col gap-1">
+                      <UserCombinedHealthBadge item={u} />
+                      {/* Inline dimension breakdown so operators can scan
+                          CP × Rate without needing to hover every row. */}
+                      <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                        <span>CP</span>
+                        <DimBadge value={u.control_plane_status} />
+                        <span className="ml-1">Rate</span>
+                        <DimBadge value={u.rate_status} />
+                      </div>
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-sm text-muted-foreground">{rowReason(u)}</td>
                 </tr>
