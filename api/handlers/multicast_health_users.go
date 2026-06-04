@@ -1,0 +1,159 @@
+package handlers
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"net/http"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/malbeclabs/lake/api/handlers/dberror"
+	"github.com/malbeclabs/lake/api/metrics"
+)
+
+// GetMulticastGroupHealthUsers returns per-user reconciliation rows from
+// health_multicast_user filtered to one group.
+func (a *API) GetMulticastGroupHealthUsers(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	pkOrCode := chi.URLParam(r, "pk")
+	if pkOrCode == "" {
+		http.Error(w, "missing multicast group pk", http.StatusBadRequest)
+		return
+	}
+	group, err := a.queryMulticastDeliveryGroup(ctx, pkOrCode)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "multicast group not found", http.StatusNotFound)
+			return
+		}
+		logError("multicast group health/users group query error", "error", err, "pk", pkOrCode)
+		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
+		return
+	}
+
+	items, err := a.queryMulticastHealthUsers(ctx, "multicast_group_pk = ?", group.PK)
+	if err != nil {
+		logError("multicast group health/users query error", "error", err, "pk", group.PK)
+		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
+		return
+	}
+
+	limit, offset := parseLimitOffset(r)
+	page, total := applyPagination(items, limit, offset)
+
+	writeJSON(w, MulticastHealthGroupUsersResponse{
+		Group:       group,
+		GeneratedAt: formatMulticastTime(time.Now().UTC()),
+		Items:       page,
+		Total:       total,
+		Limit:       limit,
+		Offset:      offset,
+	})
+}
+
+// GetUserHealth returns per-group reconciliation rows for one multicast user.
+func (a *API) GetUserHealth(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	userPK := chi.URLParam(r, "pk")
+	if userPK == "" {
+		http.Error(w, "missing user pk", http.StatusBadRequest)
+		return
+	}
+
+	items, err := a.queryMulticastHealthUsers(ctx, "user_pk = ?", userPK)
+	if err != nil {
+		logError("user health query error", "error", err, "user_pk", userPK)
+		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
+		return
+	}
+	if len(items) == 0 {
+		// The user may exist but have no multicast memberships, or may not
+		// exist as a multicast user at all. We return an empty Items list
+		// rather than 404 because "no health rows" is a valid steady state.
+		writeJSON(w, MulticastHealthUserResponse{
+			UserPK:      userPK,
+			GeneratedAt: formatMulticastTime(time.Now().UTC()),
+			Items:       []MulticastHealthUserItem{},
+		})
+		return
+	}
+
+	first := items[0]
+	writeJSON(w, MulticastHealthUserResponse{
+		UserPK:          first.UserPK,
+		UserOwnerPubkey: first.UserOwnerPubkey,
+		UserDZIP:        first.UserDZIP,
+		UserTunnelID:    first.UserTunnelID,
+		UserDevicePK:    first.UserDevicePK,
+		UserDeviceCode:  first.UserDeviceCode,
+		GeneratedAt:     formatMulticastTime(time.Now().UTC()),
+		Items:           items,
+	})
+}
+
+// queryMulticastHealthUsers reads from health_multicast_user with a single
+// WHERE clause filter (either "multicast_group_pk = ?" or "user_pk = ?").
+func (a *API) queryMulticastHealthUsers(ctx context.Context, whereClause string, arg any) ([]MulticastHealthUserItem, error) {
+	query := `
+		SELECT
+			user_pk,
+			user_owner_pubkey,
+			user_dz_ip,
+			user_tunnel_id,
+			user_device_pk,
+			user_device_code,
+			multicast_group_pk,
+			multicast_group_code,
+			group_address,
+			mode,
+			expected_tunnel_position,
+			publisher_iif_observed,
+			subscriber_oif_observed,
+			reconciled,
+			health_status,
+			mismatch_reason
+		FROM health_multicast_user
+		WHERE ` + whereClause + `
+		ORDER BY multicast_group_code, user_pk
+		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0
+	`
+	start := time.Now()
+	rows, err := a.envDB(ctx).Query(ctx, query, arg)
+	metrics.RecordClickHouseQuery("multicast_health_users", time.Since(start), err)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := []MulticastHealthUserItem{}
+	for rows.Next() {
+		var it MulticastHealthUserItem
+		if err := rows.Scan(
+			&it.UserPK,
+			&it.UserOwnerPubkey,
+			&it.UserDZIP,
+			&it.UserTunnelID,
+			&it.UserDevicePK,
+			&it.UserDeviceCode,
+			&it.MulticastGroupPK,
+			&it.MulticastGroupCode,
+			&it.GroupAddress,
+			&it.Mode,
+			&it.ExpectedTunnelPos,
+			&it.PublisherIIFObserved,
+			&it.SubscriberOIFObserved,
+			&it.Reconciled,
+			&it.HealthStatus,
+			&it.MismatchReason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, it)
+	}
+	return items, rows.Err()
+}
