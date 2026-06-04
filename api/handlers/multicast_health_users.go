@@ -119,7 +119,15 @@ func (a *API) queryMulticastHealthUsers(ctx context.Context, whereClause string,
 			mismatch_reason
 		FROM health_multicast_user
 		WHERE ` + whereClause + `
-		ORDER BY multicast_group_code, user_pk
+		-- Stream every row in this group/user; sort actionable rows first
+		-- (unhealthy → degraded → unknown → healthy) so any consumer that
+		-- truncates lands on the rows operators most need to see.
+		ORDER BY
+			multiIf(health_status = 'unhealthy', 0,
+			        health_status = 'degraded',  1,
+			        health_status = 'unknown',   2,
+			                                     3),
+			multicast_group_code, user_pk
 		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0
 	`
 	start := time.Now()

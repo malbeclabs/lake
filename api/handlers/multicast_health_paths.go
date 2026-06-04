@@ -77,7 +77,15 @@ func (a *API) queryMulticastHealthPaths(ctx context.Context, groupPK string) ([]
 			missing_endpoint_reasons
 		FROM health_publisher_subscriber_path
 		WHERE multicast_group_pk = ?
-		ORDER BY publisher_dz_ip, subscriber_device_code, subscriber_user_pk
+		-- Stream every (publisher, subscriber) pair; sort actionable rows
+		-- first so any consumer truncating lands on the unhealthy/degraded
+		-- pairs first.
+		ORDER BY
+			multiIf(health_status = 'unhealthy', 0,
+			        health_status = 'degraded',  1,
+			        health_status = 'unknown',   2,
+			                                     3),
+			publisher_dz_ip, subscriber_device_code, subscriber_user_pk
 		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0
 	`
 	start := time.Now()
