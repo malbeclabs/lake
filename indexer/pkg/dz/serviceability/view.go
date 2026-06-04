@@ -38,7 +38,7 @@ var (
 		"rox":      "RockawayX",
 		"s3v":      "S3V",
 		"stakefac": "Staking Facilities",
-		"tsw":      "Terraswitch",
+		"tsw":      "Teraswitch",
 		"velia":    "Velia",
 	}
 )
