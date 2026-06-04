@@ -30,6 +30,7 @@ func TestMigration_Applies(t *testing.T) {
 		{"enriched_ip_mroute_oifs", "view"},
 		{"health_mroute", "view"},
 		{"health_missing_sg", "view"},
+		{"health_multicast_user", "view"},
 	}
 
 	for _, c := range cases {
