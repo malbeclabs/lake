@@ -36,6 +36,7 @@ const RATE_REASON_HUMAN: Record<MulticastRateStatusReason, string> = {
   mismatch: 'TX deviates from sum of publishers',
   monitoring_gap: 'a publisher in this group has no counter data',
   group_idle: 'all publishers transmitting 0 — nothing to verify against',
+  multi_group_ambiguity: "tunnel shared across multiple multicast groups — per-group rate can't be attributed",
 }
 
 const STATUS_BADGE: Record<MulticastHealthStatus, string> = {
@@ -66,7 +67,8 @@ const SECTION_HELP = {
     'Each row pairs one onchain user with the mroute and 5-min rate observed at their device. ' +
     'Publishers expect their Tunnel<N> as the IIF of (S,G) and to be transmitting; ' +
     'subscribers expect their Tunnel<N> in the OIF list and to receive at the same rate publishers send. ' +
-    'A user in P+S mode contributes two rows.',
+    'A user in P+S mode contributes one row (mode = "P+S") that reconciles subscriber-side ' +
+    'against (sum of publishers − self).',
   paths:
     'Each row is a (publisher, subscriber) pair belonging to the group. ' +
     'Endpoints-only verification: both endpoints must be reconciled. ' +
@@ -102,7 +104,6 @@ function RateCell({ item }: { item: MulticastHealthUserItem }) {
     <Tooltip content={tooltip}>
       <span
         tabIndex={0}
-        role="button"
         aria-label={`Rate ${item.rate_status}: ${item.rate_status_reason}`}
         className="inline-flex items-center gap-1.5 cursor-help focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 rounded-full"
       >
@@ -136,6 +137,7 @@ const DIM_BADGE_CLASS: Record<string, string> = {
   no_data: 'bg-muted text-muted-foreground',
   monitoring_gap: 'bg-muted text-muted-foreground',
   group_idle: 'bg-muted text-muted-foreground',
+  multi_group_ambiguity: 'bg-muted text-muted-foreground',
 }
 
 function DimBadge({ value }: { value: string }) {
@@ -175,7 +177,6 @@ function UserCombinedHealthBadge({ item }: { item: MulticastHealthUserItem }) {
     <Tooltip content={tooltip} delayDuration={120}>
       <span
         tabIndex={0}
-        role="button"
         aria-label={`Combined health ${item.health_status}: CP ${item.control_plane_status}, Rate ${item.rate_status}`}
         className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium cursor-help focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 ${cls}`}
       >
@@ -291,21 +292,21 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
     queryKey: ['multicast-group-health-summary', groupPkOrCode],
     queryFn: () => fetchMulticastGroupHealth(groupPkOrCode),
     enabled: !!groupPkOrCode,
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
   })
 
   const usersQuery = useQuery({
     queryKey: ['multicast-group-health-users', groupPkOrCode],
     queryFn: () => fetchMulticastGroupHealthUsers(groupPkOrCode),
     enabled: !!groupPkOrCode,
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
   })
 
   const pathsQuery = useQuery({
     queryKey: ['multicast-group-health-paths', groupPkOrCode],
     queryFn: () => fetchMulticastGroupHealthPaths(groupPkOrCode),
     enabled: !!groupPkOrCode,
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
   })
 
   if (summaryQuery.isLoading) {

@@ -42,6 +42,20 @@
 -- it, a tunnel reassigned from user A to user B could pull B's rate for
 -- A's row.
 --
+-- Multi-group ambiguity: device_interface_rollup_5m is keyed by
+-- (device_pk, user_tunnel_id, user_pk) — it does NOT split rate by
+-- multicast group. When a single (device, tunnel, user) participates in
+-- more than one multicast group, the observed rate is a per-tunnel
+-- aggregate that cannot be cleanly attributed to any one group, so this
+-- view refuses to reconcile it: rate_status_reason becomes
+-- 'multi_group_ambiguity' and rate_status becomes 'unknown'. The
+-- 'multi_group_ambiguity' verdict only kicks in for rows whose mode
+-- requires reading the observed rate (P with active/idle distinction
+-- and S / P+S which reconcile against an expected). Pure 'idle' / 'no_data'
+-- semantics still hold even with one shared tunnel, so we don't mask them.
+-- A future schema split (per-group counters) would let this view drop the
+-- guard.
+--
 -- Track B1 of malbeclabs/infra#1501 (rate reconciliation).
 CREATE OR REPLACE VIEW health_multicast_user_rate
 AS
@@ -79,6 +93,19 @@ user_rates AS (
        AND r.user_pk = rb.rb_user_pk
        AND r.bucket_ts = rb.rb_bucket_ts
 ),
+-- Count distinct multicast groups per (device, tunnel, user). A count > 1
+-- means the rollup row's bps is shared across groups and per-group
+-- attribution is ambiguous (see view header). count() suffices because
+-- health_multicast_user holds one row per (user, group, mode).
+user_group_counts AS (
+    SELECT
+        h.user_device_pk AS ugc_device_pk,
+        h.user_tunnel_id AS ugc_user_tunnel_id,
+        h.user_pk        AS ugc_user_pk,
+        countDistinct(h.multicast_group_pk) AS ugc_group_count
+    FROM health_multicast_user h
+    GROUP BY ugc_device_pk, ugc_user_tunnel_id, ugc_user_pk
+),
 -- Per-publisher RX so P+S subscriber expected can subtract self's contribution.
 group_publisher_total AS (
     SELECT
@@ -109,6 +136,9 @@ with_rate AS (
             NULL
         ) AS observed_bps_5m,
         multiIf(
+            -- Multi-group ambiguity: there is no per-group expected for a
+            -- tunnel shared across groups.
+            ugc.ugc_group_count > 1, NULL,
             -- S: expected is the full group_total (only set when no missing publishers).
             h.mode = 'S' AND gpt.gpt_missing_publisher_count = 0,
                 toNullable(gpt.gpt_total_publisher_rx_bps),
@@ -118,13 +148,23 @@ with_rate AS (
             NULL
         ) AS expected_bps_5m,
         multiIf(
+            -- no_data wins over multi_group_ambiguity: if the rollup has
+            -- nothing for this tunnel, we don't know any of it anyway.
+            ur.ur_present = 0, 'no_data',
+
+            -- Multi-group ambiguity: a single (device, tunnel, user) shared
+            -- across N>1 groups has a per-tunnel aggregate rate that can't
+            -- be cleanly attributed to any one group. Refuse to reconcile.
+            -- Exempt: pure 'idle' (max_in_bps = 0) on a publisher still
+            -- means "publishing nothing" per-group, which is correct.
+            ugc.ugc_group_count > 1 AND h.mode = 'P' AND ur.ur_max_in_bps = 0, 'idle',
+            ugc.ugc_group_count > 1, 'multi_group_ambiguity',
+
             -- Pure publisher: just observe activity.
-            h.mode = 'P' AND ur.ur_present = 0, 'no_data',
             h.mode = 'P' AND ur.ur_max_in_bps > 0, 'active',
             h.mode = 'P', 'idle',
 
             -- Subscriber-side reconciliation (S and P+S).
-            h.mode IN ('S', 'P+S') AND ur.ur_present = 0, 'no_data',
             h.mode IN ('S', 'P+S') AND gpt.gpt_missing_publisher_count > 0, 'monitoring_gap',
 
             -- Expected for P+S excludes self; for S it's the full group total.
@@ -145,6 +185,10 @@ with_rate AS (
         ON ur.ur_device_pk = h.user_device_pk
        AND ur.ur_user_tunnel_id = h.user_tunnel_id
        AND ur.ur_user_pk = h.user_pk
+    LEFT JOIN user_group_counts ugc
+        ON ugc.ugc_device_pk = h.user_device_pk
+       AND ugc.ugc_user_tunnel_id = h.user_tunnel_id
+       AND ugc.ugc_user_pk = h.user_pk
     LEFT JOIN group_publisher_total gpt
         ON gpt.gpt_multicast_group_pk = h.multicast_group_pk
 )

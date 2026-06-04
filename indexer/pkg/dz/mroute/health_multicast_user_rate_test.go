@@ -371,3 +371,97 @@ func TestHealthMulticastUserRate_TunnelReuse(t *testing.T) {
 	assert.InDelta(t, 1000000, observed["u-A"], 1, "u-A keeps its own 1 Mbps")
 	assert.InDelta(t, 99000000, observed["u-B"], 1, "u-B keeps its own 99 Mbps")
 }
+
+// TestHealthMulticastUserRate_MultiGroupAmbiguity verifies that when one
+// (device, tunnel, user) tuple subscribes to multiple multicast groups —
+// so its per-tunnel rate is a cross-group aggregate that cannot be
+// attributed per-group — every rate row for that user is marked
+// rate_status='unknown' with reason 'multi_group_ambiguity', not
+// silently reconciled or mismatched.
+func TestHealthMulticastUserRate_MultiGroupAmbiguity(t *testing.T) {
+	info := laketesting.NewClientWithInfo(t, sharedDB)
+	conn, err := info.Client.Conn(t.Context())
+	require.NoError(t, err)
+	defer conn.Close()
+	ctx := t.Context()
+
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_devices_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users, interfaces)
+		VALUES
+			('d-mga-fhr', now(), now(), generateUUIDv4(), 0, 1, 'd-mga-fhr', 'activated', 'edge', 'mga-fhr-dz1', '', '', '', 0, '[]'),
+			('d-mga-lhr', now(), now(), generateUUIDv4(), 0, 2, 'd-mga-lhr', 'activated', 'edge', 'mga-lhr-dz1', '', '', '', 0, '[]')`))
+
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_multicast_groups_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
+		VALUES
+			('grp-mga-A', now(), now(), generateUUIDv4(), 0, 1, 'grp-mga-A', 'o', 'mga-A', '233.99.4.1', 100000000, 'activated', 1, 1),
+			('grp-mga-B', now(), now(), generateUUIDv4(), 0, 2, 'grp-mga-B', 'o', 'mga-B', '233.99.4.2', 100000000, 'activated', 1, 1)`))
+
+	// u-mga-sub subscribes to BOTH grp-mga-A and grp-mga-B via the same tunnel.
+	// Each group has its own publisher contributing 5 Mbps.
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_users_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tenant_pk, tunnel_id, publishers, subscribers)
+		VALUES
+			('u-mga-pub-A', now(), now(), generateUUIDv4(), 0, 1, 'u-mga-pub-A', 'o', 'activated', 'multicast', '203.0.116.1', '10.99.4.1', 'd-mga-fhr', 't1', 950, '["grp-mga-A"]', '[]'),
+			('u-mga-pub-B', now(), now(), generateUUIDv4(), 0, 2, 'u-mga-pub-B', 'o', 'activated', 'multicast', '203.0.116.2', '10.99.4.2', 'd-mga-fhr', 't1', 951, '["grp-mga-B"]', '[]'),
+			('u-mga-sub',   now(), now(), generateUUIDv4(), 0, 3, 'u-mga-sub',   'o', 'activated', 'multicast', '203.0.116.3', '10.99.4.3', 'd-mga-lhr', 't1', 952, '[]', '["grp-mga-A","grp-mga-B"]')`))
+
+	// CP healthy for both groups for the shared subscriber.
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_ip_mroute_entries_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 device_pubkey, vrf, mode, group_address, source_address,
+			 route_flags, register_in_oif_list, rpf_interface, rpf_rib, rpf_prefix,
+			 rpf_preference, rpf_metric, rpf_neighbor, rpf_attached, rpf_has_block,
+			 oif_list, oif_count, creation_time)
+		VALUES
+			('mr-mga-fhr-A', now(), now(), generateUUIDv4(), 0, 1, 'd-mga-fhr', 'default', 'sparse', '233.99.4.1', '10.99.4.1', 'SBNP', 0, 'Tunnel950', '', '', 0, 0, '', 0, 0, '', 0, now()),
+			('mr-mga-fhr-B', now(), now(), generateUUIDv4(), 0, 2, 'd-mga-fhr', 'default', 'sparse', '233.99.4.2', '10.99.4.2', 'SBNP', 0, 'Tunnel951', '', '', 0, 0, '', 0, 0, '', 0, now()),
+			('mr-mga-lhr-A', now(), now(), generateUUIDv4(), 0, 3, 'd-mga-lhr', 'default', 'sparse', '233.99.4.1', '10.99.4.1', 'SMP',  0, 'Port-Channel1', '', '', 0, 0, '', 0, 0, '["Tunnel952"]', 1, now()),
+			('mr-mga-lhr-B', now(), now(), generateUUIDv4(), 0, 4, 'd-mga-lhr', 'default', 'sparse', '233.99.4.2', '10.99.4.2', 'SMP',  0, 'Port-Channel1', '', '', 0, 0, '', 0, 0, '["Tunnel952"]', 1, now())`))
+
+	// Subscriber's tunnel reports 10 Mbps total (aggregate of both groups).
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO device_interface_rollup_5m
+			(bucket_ts, device_pk, intf, user_tunnel_id, user_pk, max_in_bps, max_out_bps, ingested_at)
+		VALUES
+			(now() - INTERVAL 1 MINUTE, 'd-mga-fhr', 'Tunnel950', 950, 'u-mga-pub-A', 5000000, 0,        now()),
+			(now() - INTERVAL 1 MINUTE, 'd-mga-fhr', 'Tunnel951', 951, 'u-mga-pub-B', 5000000, 0,        now()),
+			(now() - INTERVAL 1 MINUTE, 'd-mga-lhr', 'Tunnel952', 952, 'u-mga-sub',   0,       10000000, now())`))
+
+	require.NoError(t, conn.Exec(ctx, `SYSTEM REFRESH VIEW dz_device_interface_ips`))
+	require.NoError(t, conn.Exec(ctx, `SYSTEM WAIT VIEW dz_device_interface_ips`))
+
+	rows, err := conn.Query(ctx, `
+		SELECT multicast_group_pk, rate_status, rate_status_reason, expected_bps_5m
+		FROM health_multicast_user_rate
+		WHERE user_pk = 'u-mga-sub'
+		ORDER BY multicast_group_pk`)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	type r struct {
+		group, rate, reason string
+		expected            *float64
+	}
+	got := []r{}
+	for rows.Next() {
+		var x r
+		require.NoError(t, rows.Scan(&x.group, &x.rate, &x.reason, &x.expected))
+		got = append(got, x)
+	}
+	require.NoError(t, rows.Err())
+	require.Len(t, got, 2, "subscriber should produce one row per group")
+
+	for _, row := range got {
+		assert.Equal(t, "unknown", row.rate, "multi-group subscriber rate must not reconcile (group=%s)", row.group)
+		assert.Equal(t, "multi_group_ambiguity", row.reason, "group=%s", row.group)
+		assert.Nil(t, row.expected, "no per-group expected when ambiguous (group=%s)", row.group)
+	}
+}
