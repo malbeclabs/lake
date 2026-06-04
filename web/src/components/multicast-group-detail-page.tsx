@@ -18,8 +18,9 @@ import { useUPlotChart } from '@/hooks/use-uplot-chart'
 import { useUPlotLegendSync } from '@/hooks/use-uplot-legend-sync'
 import { formatChartAxisRate, formatChartAxisPps } from '@/components/topology/utils'
 import {
-  fetchMulticastGroup,
+  fetchMulticastGroupMemberSnapshot,
   fetchMulticastGroupMembers,
+  fetchMulticastGroupMetadata,
   fetchMulticastGroupTraffic,
   fetchMulticastGroupMemberCounts,
   fetchMulticastGroupShredStats,
@@ -1637,15 +1638,25 @@ export function MulticastGroupDetailPage() {
     })
   }, [filterKey, setSearchParams])
 
-  // Group metadata query
+  // Group metadata query. Keep this metadata-only so the Health tab does
+  // not preload large publisher/subscriber member snapshots it never renders.
   const {
     data: group,
     isLoading: groupLoading,
     error: groupError,
   } = useQuery({
     queryKey: ['multicast-group', pk],
-    queryFn: () => fetchMulticastGroup(pk!),
+    queryFn: () => fetchMulticastGroupMetadata(pk!),
     enabled: !!pk,
+    refetchInterval: 30000,
+  })
+
+  // Full member snapshot for chart labels and selected-series surfacing.
+  // This intentionally stays disabled on Health, where charts are hidden.
+  const { data: chartMembers = [] } = useQuery({
+    queryKey: ['multicast-group-member-snapshot', pk],
+    queryFn: () => fetchMulticastGroupMemberSnapshot(pk!),
+    enabled: !!pk && activeTab !== 'health',
     refetchInterval: 30000,
   })
 
@@ -1689,17 +1700,17 @@ export function MulticastGroupDetailPage() {
 
   // Selected members not on current page — surfaced at top of table
   const surfacedMembers = useMemo(() => {
-    if (selectedSeriesKeys.size === 0 || !group) return []
+    if (selectedSeriesKeys.size === 0) return []
     const activeKeys = new Set(activeMembers.map((m) => `${m.device_pk}_${m.tunnel_id}`))
     const modeFilter = activeTab === 'publishers' ? 'P' : 'S'
-    return group.members.filter((m) => {
+    return chartMembers.filter((m) => {
       const key = `${m.device_pk}_${m.tunnel_id}`
       if (!selectedSeriesKeys.has(key)) return false
       if (activeKeys.has(key)) return false
       // Only surface members matching the active tab
       return m.mode === modeFilter || m.mode === 'P+S'
     })
-  }, [selectedSeriesKeys, group, activeMembers, activeTab])
+  }, [selectedSeriesKeys, chartMembers, activeMembers, activeTab])
 
   // Scroll to first selected row when selection changes
   const selectedRowRef = useRef<HTMLTableRowElement>(null)
@@ -2082,20 +2093,20 @@ export function MulticastGroupDetailPage() {
             group &&
             group.has_shred_stats &&
             activeTab === 'publishers' &&
-            group.members.length > 0 && (
+            chartMembers.length > 0 && (
               <ShredStatsChart
                 groupCode={pk}
-                members={group.members}
+                members={chartMembers}
                 onHoverMember={setHoveredSeriesKey}
                 onSelectMember={setSelectedSeriesKeys}
               />
             )}
 
           {/* Traffic chart — uses all members (not just current page) for series labels */}
-          {pk && group && group.members.length > 0 && (
+          {pk && chartMembers.length > 0 && (
             <MulticastTrafficChart
               groupCode={pk}
-              members={group.members}
+              members={chartMembers}
               activeTab={activeTab === 'subscribers' ? 'subscribers' : 'publishers'}
               onHoverMember={setHoveredSeriesKey}
               onSelectMember={setSelectedSeriesKeys}

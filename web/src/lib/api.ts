@@ -1953,9 +1953,12 @@ export interface MulticastMember {
   current_slot: number
 }
 
-export interface MulticastGroupDetail extends MulticastGroupListItem {
-  members: MulticastMember[]
+export interface MulticastGroupMetadata extends MulticastGroupListItem {
   has_shred_stats: boolean
+}
+
+export interface MulticastGroupDetail extends MulticastGroupMetadata {
+  members: MulticastMember[]
 }
 
 export interface MulticastMembersResponse extends PaginatedResponse<MulticastMember> {
@@ -1983,17 +1986,24 @@ export async function fetchMulticastGroups(
   return res.json()
 }
 
-export async function fetchMulticastGroup(pkOrCode: string): Promise<MulticastGroupDetail> {
-  const encoded = encodeURIComponent(pkOrCode)
-  const [groupRes, pubRes, subRes] = await Promise.all([
-    apiFetch(`/api/dz/multicast-groups/${encoded}`),
-    apiFetch(`/api/dz/multicast-groups/${encoded}/members?tab=publishers&limit=1000`),
-    apiFetch(`/api/dz/multicast-groups/${encoded}/members?tab=subscribers&limit=1000`),
-  ])
-  if (!groupRes.ok) {
+export async function fetchMulticastGroupMetadata(pkOrCode: string): Promise<MulticastGroupMetadata> {
+  const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}`)
+  if (!res.ok) {
     throw new Error('Failed to fetch multicast group')
   }
-  const group = await groupRes.json() as MulticastGroupListItem & { has_shred_stats?: boolean }
+  const group = await res.json() as MulticastGroupListItem & { has_shred_stats?: boolean }
+  return { ...group, has_shred_stats: group.has_shred_stats ?? false }
+}
+
+export async function fetchMulticastGroupMemberSnapshot(
+  pkOrCode: string,
+  limit = 1000,
+): Promise<MulticastMember[]> {
+  const encoded = encodeURIComponent(pkOrCode)
+  const [pubRes, subRes] = await Promise.all([
+    apiFetch(`/api/dz/multicast-groups/${encoded}/members?tab=publishers&limit=${limit}`),
+    apiFetch(`/api/dz/multicast-groups/${encoded}/members?tab=subscribers&limit=${limit}`),
+  ])
   let members: MulticastMember[] = []
   if (pubRes.ok) {
     const pubData = await pubRes.json() as MulticastMembersResponse
@@ -2009,7 +2019,15 @@ export async function fetchMulticastGroup(pkOrCode: string): Promise<MulticastGr
       }
     }
   }
-  return { ...group, members, has_shred_stats: group.has_shred_stats ?? false }
+  return members
+}
+
+export async function fetchMulticastGroup(pkOrCode: string): Promise<MulticastGroupDetail> {
+  const [group, members] = await Promise.all([
+    fetchMulticastGroupMetadata(pkOrCode),
+    fetchMulticastGroupMemberSnapshot(pkOrCode),
+  ])
+  return { ...group, members }
 }
 
 export async function fetchMulticastGroupMembers(

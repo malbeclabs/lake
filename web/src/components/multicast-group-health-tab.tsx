@@ -294,10 +294,12 @@ function TableStateRow({
 export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: string }) {
   const [usersOffset, setUsersOffset] = useState(0)
   const [pathsOffset, setPathsOffset] = useState(0)
+  const [showPathDetails, setShowPathDetails] = useState(false)
 
   useEffect(() => {
     setUsersOffset(0)
     setPathsOffset(0)
+    setShowPathDetails(false)
   }, [groupPkOrCode])
 
   const summaryQuery = useQuery({
@@ -318,7 +320,7 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
   const pathsQuery = useQuery({
     queryKey: ['multicast-group-health-paths', groupPkOrCode, HEALTH_PAGE_SIZE, pathsOffset],
     queryFn: () => fetchMulticastGroupHealthPaths(groupPkOrCode, HEALTH_PAGE_SIZE, pathsOffset),
-    enabled: !!groupPkOrCode,
+    enabled: !!groupPkOrCode && showPathDetails,
     refetchInterval: 60_000,
     placeholderData: keepPreviousData,
   })
@@ -342,6 +344,8 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
 
   const summary = summaryQuery.data
   if (!summary) return null
+
+  const pathCount = summary.counts.paths.total
 
   return (
     <div className="p-4 space-y-6">
@@ -451,121 +455,153 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
             <h3 className="text-sm font-medium">Per-path reconciliation (publisher → subscriber)</h3>
             <HelpIcon content={SECTION_HELP.paths} />
           </div>
-          {pathsQuery.isFetching && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+          <div className="flex items-center gap-2">
+            {showPathDetails && pathsQuery.isFetching && (
+              <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+            )}
+            <button
+              type="button"
+              onClick={() => setShowPathDetails((v) => !v)}
+              className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+            >
+              {showPathDetails ? 'Hide details' : 'Show details'}
+            </button>
+          </div>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="text-sm text-left text-muted-foreground border-b border-border">
-                <th className="px-4 py-3 font-medium">Publisher</th>
-                <th className="px-4 py-3 font-medium">FHR device</th>
-                <th className="px-4 py-3 font-medium">Subscriber</th>
-                <th className="px-4 py-3 font-medium">LHR device</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3 font-medium">Verified</th>
-              </tr>
-            </thead>
-            <tbody>
-              <TableStateRow
-                isLoading={pathsQuery.isLoading}
-                error={pathsQuery.error}
-                isEmpty={(pathsQuery.data?.items ?? []).length === 0}
-                emptyText="No (publisher, subscriber) pairs"
-                colSpan={6}
-              />
-              {(pathsQuery.data?.items ?? []).map((p) => (
-                <tr
-                  key={`${p.publisher_user_pk}-${p.subscriber_user_pk}`}
-                  className="border-b border-border last:border-b-0 hover:bg-muted"
-                >
-                  <td className="px-4 py-3 text-sm font-mono">
-                    <Link
-                      to={`/dz/users/${p.publisher_user_pk}`}
-                      className="group text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center"
+        {!showPathDetails ? (
+          <div className="px-4 py-6 text-sm text-muted-foreground flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <div className="text-foreground font-medium">Path details are collapsed by default.</div>
+              <div>
+                This group has {pathCount.toLocaleString()} publisher → subscriber pairs. Load details only when
+                you need row-level endpoint reconciliation.
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowPathDetails(true)}
+              className="self-start sm:self-auto px-3 py-1.5 rounded-md border border-border text-xs text-foreground hover:bg-muted transition-colors"
+            >
+              Load path details
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="text-sm text-left text-muted-foreground border-b border-border">
+                    <th className="px-4 py-3 font-medium">Publisher</th>
+                    <th className="px-4 py-3 font-medium">FHR device</th>
+                    <th className="px-4 py-3 font-medium">Subscriber</th>
+                    <th className="px-4 py-3 font-medium">LHR device</th>
+                    <th className="px-4 py-3 font-medium">Status</th>
+                    <th className="px-4 py-3 font-medium">Verified</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <TableStateRow
+                    isLoading={pathsQuery.isLoading}
+                    error={pathsQuery.error}
+                    isEmpty={(pathsQuery.data?.items ?? []).length === 0}
+                    emptyText="No (publisher, subscriber) pairs"
+                    colSpan={6}
+                  />
+                  {(pathsQuery.data?.items ?? []).map((p) => (
+                    <tr
+                      key={`${p.publisher_user_pk}-${p.subscriber_user_pk}`}
+                      className="border-b border-border last:border-b-0 hover:bg-muted"
                     >
-                      {p.publisher_owner_pubkey?.slice(0, 8) || p.publisher_user_pk.slice(0, 8)}
-                      <NavLinkArrow />
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3 text-sm font-mono">
-                    {p.publisher_device_pk ? (
-                      <Link
-                        to={`/dz/devices/${p.publisher_device_pk}`}
-                        className="group text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center"
-                      >
-                        {p.publisher_device_code || p.publisher_device_pk.slice(0, 8)}
-                        <NavLinkArrow />
-                      </Link>
-                    ) : (
-                      '—'
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-sm font-mono">
-                    <Link
-                      to={`/dz/users/${p.subscriber_user_pk}`}
-                      className="group text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center"
-                    >
-                      {p.subscriber_owner_pubkey?.slice(0, 8) || p.subscriber_user_pk.slice(0, 8)}
-                      <NavLinkArrow />
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3 text-sm font-mono">
-                    {p.subscriber_device_pk ? (
-                      <Link
-                        to={`/dz/devices/${p.subscriber_device_pk}`}
-                        className="group text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center"
-                      >
-                        {p.subscriber_device_code || p.subscriber_device_pk.slice(0, 8)}
-                        <NavLinkArrow />
-                      </Link>
-                    ) : (
-                      '—'
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-sm">
-                    {p.missing_endpoint_reasons && p.missing_endpoint_reasons.length > 0 ? (
-                      <Tooltip
-                        content={
-                          <div className="space-y-1 min-w-[220px]">
-                            <div className="text-xs font-medium">Missing endpoints</div>
-                            <ul className="space-y-0.5 text-xs">
-                              {p.missing_endpoint_reasons.map((r) => (
-                                <li key={r} className="text-muted-foreground">
-                                  • {r}
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        }
-                        delayDuration={120}
-                      >
-                        <span
-                          tabIndex={0}
-                          aria-label={`Status ${p.health_status}: ${p.missing_endpoint_reasons.join(', ')}`}
-                          className="inline-flex items-center cursor-help focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 rounded-full"
+                      <td className="px-4 py-3 text-sm font-mono">
+                        <Link
+                          to={`/dz/users/${p.publisher_user_pk}`}
+                          className="group text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center"
                         >
+                          {p.publisher_owner_pubkey?.slice(0, 8) || p.publisher_user_pk.slice(0, 8)}
+                          <NavLinkArrow />
+                        </Link>
+                      </td>
+                      <td className="px-4 py-3 text-sm font-mono">
+                        {p.publisher_device_pk ? (
+                          <Link
+                            to={`/dz/devices/${p.publisher_device_pk}`}
+                            className="group text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center"
+                          >
+                            {p.publisher_device_code || p.publisher_device_pk.slice(0, 8)}
+                            <NavLinkArrow />
+                          </Link>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm font-mono">
+                        <Link
+                          to={`/dz/users/${p.subscriber_user_pk}`}
+                          className="group text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center"
+                        >
+                          {p.subscriber_owner_pubkey?.slice(0, 8) || p.subscriber_user_pk.slice(0, 8)}
+                          <NavLinkArrow />
+                        </Link>
+                      </td>
+                      <td className="px-4 py-3 text-sm font-mono">
+                        {p.subscriber_device_pk ? (
+                          <Link
+                            to={`/dz/devices/${p.subscriber_device_pk}`}
+                            className="group text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center"
+                          >
+                            {p.subscriber_device_code || p.subscriber_device_pk.slice(0, 8)}
+                            <NavLinkArrow />
+                          </Link>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        {p.missing_endpoint_reasons && p.missing_endpoint_reasons.length > 0 ? (
+                          <Tooltip
+                            content={
+                              <div className="space-y-1 min-w-[220px]">
+                                <div className="text-xs font-medium">Missing endpoints</div>
+                                <ul className="space-y-0.5 text-xs">
+                                  {p.missing_endpoint_reasons.map((r) => (
+                                    <li key={r} className="text-muted-foreground">
+                                      • {r}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            }
+                            delayDuration={120}
+                          >
+                            <span
+                              tabIndex={0}
+                              aria-label={`Status ${p.health_status}: ${p.missing_endpoint_reasons.join(', ')}`}
+                              className="inline-flex items-center cursor-help focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 rounded-full"
+                            >
+                              <HealthBadge status={p.health_status} />
+                            </span>
+                          </Tooltip>
+                        ) : (
                           <HealthBadge status={p.health_status} />
-                        </span>
-                      </Tooltip>
-                    ) : (
-                      <HealthBadge status={p.health_status} />
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-xs text-muted-foreground">
-                    {p.verification_method === 'endpoints_only' ? 'endpoints only' : p.verification_method}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {pathsQuery.data && (
-          <Pagination
-            total={pathsQuery.data.total}
-            limit={HEALTH_PAGE_SIZE}
-            offset={pathsOffset}
-            onOffsetChange={setPathsOffset}
-          />
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground">
+                        {p.verification_method === 'endpoints_only' ? 'endpoints only' : p.verification_method}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {pathsQuery.data && (
+              <Pagination
+                total={pathsQuery.data.total}
+                limit={HEALTH_PAGE_SIZE}
+                offset={pathsOffset}
+                onOffsetChange={setPathsOffset}
+              />
+            )}
+          </>
         )}
       </div>
     </div>
