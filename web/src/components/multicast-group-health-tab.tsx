@@ -117,6 +117,66 @@ function rowReason(item: MulticastHealthUserItem): string {
   return RATE_REASON_HUMAN[item.rate_status_reason] ?? '—'
 }
 
+// DIM_BADGE_CLASS covers both health-status and rate-status values used in
+// the combined-verdict hover-card on the Status column.
+const DIM_BADGE_CLASS: Record<string, string> = {
+  healthy: 'bg-emerald-500/15 text-emerald-500',
+  reconciled: 'bg-emerald-500/15 text-emerald-500',
+  active: 'bg-emerald-500/15 text-emerald-500',
+  degraded: 'bg-amber-500/15 text-amber-500',
+  mismatch: 'bg-red-500/15 text-red-500',
+  unhealthy: 'bg-red-500/15 text-red-500',
+  unknown: 'bg-muted text-muted-foreground',
+  idle: 'bg-muted text-muted-foreground',
+  no_data: 'bg-muted text-muted-foreground',
+  monitoring_gap: 'bg-muted text-muted-foreground',
+  group_idle: 'bg-muted text-muted-foreground',
+}
+
+function DimBadge({ value }: { value: string }) {
+  const cls = DIM_BADGE_CLASS[value] ?? DIM_BADGE_CLASS.unknown
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${cls}`}>
+      {value}
+    </span>
+  )
+}
+
+function UserCombinedHealthBadge({ item }: { item: MulticastHealthUserItem }) {
+  const cls = STATUS_BADGE[item.health_status] ?? STATUS_BADGE.unknown
+  const tooltip = (
+    <div className="space-y-2 min-w-[260px]">
+      <div className="text-xs font-medium">
+        {item.mode === 'P' ? 'Publisher' : item.mode === 'S' ? 'Subscriber' : 'Publisher + Subscriber'} —{' '}
+        <span className="capitalize">{item.health_status}</span>
+      </div>
+      <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-xs">
+        <span className="text-muted-foreground">Control plane</span>
+        <span className="flex items-center gap-2">
+          <DimBadge value={item.control_plane_status} />
+          {item.mismatch_reason && (
+            <span className="text-muted-foreground text-[11px]">{item.mismatch_reason}</span>
+          )}
+        </span>
+        <span className="text-muted-foreground">Rate</span>
+        <span className="flex items-center gap-2">
+          <DimBadge value={item.rate_status} />
+          <span className="text-muted-foreground text-[11px]">{item.rate_status_reason}</span>
+        </span>
+      </div>
+    </div>
+  )
+  return (
+    <Tooltip content={tooltip} delayDuration={120}>
+      <span
+        className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium cursor-help ${cls}`}
+      >
+        {item.health_status}
+      </span>
+    </Tooltip>
+  )
+}
+
 function HelpIcon({ content }: { content: string }) {
   return (
     <Tooltip content={content}>
@@ -295,7 +355,7 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
                     <RateCell item={u} />
                   </td>
                   <td className="px-4 py-3 text-sm">
-                    <HealthBadge status={u.health_status} />
+                    <UserCombinedHealthBadge item={u} />
                   </td>
                   <td className="px-4 py-3 text-sm text-muted-foreground">{rowReason(u)}</td>
                 </tr>
