@@ -48,13 +48,22 @@
 -- more than one multicast group, the observed rate is a per-tunnel
 -- aggregate that cannot be cleanly attributed to any one group, so this
 -- view refuses to reconcile it: rate_status_reason becomes
--- 'multi_group_ambiguity' and rate_status becomes 'unknown'. The
--- 'multi_group_ambiguity' verdict only kicks in for rows whose mode
--- requires reading the observed rate (P with active/idle distinction
--- and S / P+S which reconcile against an expected). Pure 'idle' / 'no_data'
--- semantics still hold even with one shared tunnel, so we don't mask them.
--- A future schema split (per-group counters) would let this view drop the
--- guard.
+-- 'multi_group_ambiguity' and rate_status becomes 'unknown'.
+--
+-- Ambiguity propagates two ways:
+--
+--   1. Per-row: the user's own (device, tunnel, user) participates in
+--      multiple groups → that user's row in this view is ambiguous.
+--
+--   2. Per-group: at least one publisher in the user's group is itself
+--      multi-group → gpt_total_publisher_rx_bps is contaminated by
+--      cross-group traffic, so every subscriber/P+S row in the group is
+--      ambiguous regardless of whether they themselves are single- or
+--      multi-group.
+--
+-- Pure 'idle' / 'no_data' semantics still hold even with shared tunnels,
+-- so we don't mask them. A future schema split (per-group counters)
+-- would let this view drop the guard.
 --
 -- Track B1 of malbeclabs/infra#1501 (rate reconciliation).
 CREATE OR REPLACE VIEW health_multicast_user_rate
@@ -107,17 +116,27 @@ user_group_counts AS (
     GROUP BY ugc_device_pk, ugc_user_tunnel_id, ugc_user_pk
 ),
 -- Per-publisher RX so P+S subscriber expected can subtract self's contribution.
+-- gpt_ambiguous_publisher_count tracks publishers whose (device, tunnel, user)
+-- participates in more than one multicast group — their RX is a cross-group
+-- aggregate that contaminates the group_total. If any publisher is ambiguous,
+-- every subscriber in this group is downgraded to multi_group_ambiguity since
+-- their expected can't be cleanly derived.
 group_publisher_total AS (
     SELECT
         h.multicast_group_pk AS gpt_multicast_group_pk,
         sumIf(ur.ur_max_in_bps, ur.ur_present = 1) AS gpt_total_publisher_rx_bps,
         countIf(ur.ur_present = 0) AS gpt_missing_publisher_count,
+        countIf(ur.ur_present = 1 AND ugc.ugc_group_count > 1) AS gpt_ambiguous_publisher_count,
         count() AS gpt_publisher_count
     FROM health_multicast_user h
     LEFT JOIN user_rates ur
         ON ur.ur_device_pk = h.user_device_pk
        AND ur.ur_user_tunnel_id = h.user_tunnel_id
        AND ur.ur_user_pk = h.user_pk
+    LEFT JOIN user_group_counts ugc
+        ON ugc.ugc_device_pk = h.user_device_pk
+       AND ugc.ugc_user_tunnel_id = h.user_tunnel_id
+       AND ugc.ugc_user_pk = h.user_pk
     WHERE h.mode IN ('P', 'P+S')
     GROUP BY gpt_multicast_group_pk
 ),
@@ -136,9 +155,11 @@ with_rate AS (
             NULL
         ) AS observed_bps_5m,
         multiIf(
-            -- Multi-group ambiguity: there is no per-group expected for a
-            -- tunnel shared across groups.
+            -- Multi-group ambiguity: either this user's own tunnel is shared
+            -- across groups, OR any publisher contributing to the group sum
+            -- is multi-group (which contaminates gpt_total_publisher_rx_bps).
             ugc.ugc_group_count > 1, NULL,
+            gpt.gpt_ambiguous_publisher_count > 0, NULL,
             -- S: expected is the full group_total (only set when no missing publishers).
             h.mode = 'S' AND gpt.gpt_missing_publisher_count = 0,
                 toNullable(gpt.gpt_total_publisher_rx_bps),
@@ -152,13 +173,21 @@ with_rate AS (
             -- nothing for this tunnel, we don't know any of it anyway.
             ur.ur_present = 0, 'no_data',
 
-            -- Multi-group ambiguity: a single (device, tunnel, user) shared
-            -- across N>1 groups has a per-tunnel aggregate rate that can't
-            -- be cleanly attributed to any one group. Refuse to reconcile.
-            -- Exempt: pure 'idle' (max_in_bps = 0) on a publisher still
-            -- means "publishing nothing" per-group, which is correct.
+            -- Multi-group ambiguity, this user's own tunnel: a single
+            -- (device, tunnel, user) shared across N>1 groups has a per-
+            -- tunnel aggregate rate that can't be cleanly attributed to any
+            -- one group. Refuse to reconcile. Exempt: pure 'idle' (max_in_bps
+            -- = 0) on a publisher still means "publishing nothing" per-group,
+            -- which is correct.
             ugc.ugc_group_count > 1 AND h.mode = 'P' AND ur.ur_max_in_bps = 0, 'idle',
             ugc.ugc_group_count > 1, 'multi_group_ambiguity',
+
+            -- Multi-group ambiguity, propagated: if any publisher in this
+            -- group is multi-group, gpt_total_publisher_rx_bps is a
+            -- cross-group aggregate. Every subscriber/P+S in the group
+            -- must fall through to multi_group_ambiguity; we can't say
+            -- whether their TX matches a contaminated expected.
+            h.mode IN ('S', 'P+S') AND gpt.gpt_ambiguous_publisher_count > 0, 'multi_group_ambiguity',
 
             -- Pure publisher: just observe activity.
             h.mode = 'P' AND ur.ur_max_in_bps > 0, 'active',

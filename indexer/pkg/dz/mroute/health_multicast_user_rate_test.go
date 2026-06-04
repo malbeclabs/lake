@@ -465,3 +465,85 @@ func TestHealthMulticastUserRate_MultiGroupAmbiguity(t *testing.T) {
 		assert.Nil(t, row.expected, "no per-group expected when ambiguous (group=%s)", row.group)
 	}
 }
+
+// TestHealthMulticastUserRate_AmbiguousPublisherPropagates verifies that
+// when a multicast group's publisher is multi-group (its per-tunnel RX is
+// a cross-group aggregate), the contamination propagates to every
+// subscriber in that group — even subscribers whose own tunnels are
+// single-group — since gpt_total_publisher_rx_bps cannot be cleanly
+// derived for that group's expected.
+func TestHealthMulticastUserRate_AmbiguousPublisherPropagates(t *testing.T) {
+	info := laketesting.NewClientWithInfo(t, sharedDB)
+	conn, err := info.Client.Conn(t.Context())
+	require.NoError(t, err)
+	defer conn.Close()
+	ctx := t.Context()
+
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_devices_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users, interfaces)
+		VALUES
+			('d-ap-fhr', now(), now(), generateUUIDv4(), 0, 1, 'd-ap-fhr', 'activated', 'edge', 'ap-fhr-dz1', '', '', '', 0, '[]'),
+			('d-ap-lhr', now(), now(), generateUUIDv4(), 0, 2, 'd-ap-lhr', 'activated', 'edge', 'ap-lhr-dz1', '', '', '', 0, '[]')`))
+
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_multicast_groups_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
+		VALUES
+			('grp-ap-X', now(), now(), generateUUIDv4(), 0, 1, 'grp-ap-X', 'o', 'ap-X', '233.99.5.1', 100000000, 'activated', 1, 1),
+			('grp-ap-Y', now(), now(), generateUUIDv4(), 0, 2, 'grp-ap-Y', 'o', 'ap-Y', '233.99.5.2', 100000000, 'activated', 1, 0)`))
+
+	// u-ap-pub publishes to BOTH grp-ap-X and grp-ap-Y over the same tunnel
+	// — its RX is a cross-group aggregate. u-ap-sub is a single-group
+	// subscriber on grp-ap-X only.
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_users_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tenant_pk, tunnel_id, publishers, subscribers)
+		VALUES
+			('u-ap-pub', now(), now(), generateUUIDv4(), 0, 1, 'u-ap-pub', 'o', 'activated', 'multicast', '203.0.117.1', '10.99.5.1', 'd-ap-fhr', 't1', 960, '["grp-ap-X","grp-ap-Y"]', '[]'),
+			('u-ap-sub', now(), now(), generateUUIDv4(), 0, 2, 'u-ap-sub', 'o', 'activated', 'multicast', '203.0.117.2', '10.99.5.2', 'd-ap-lhr', 't1', 961, '[]', '["grp-ap-X"]')`))
+
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_ip_mroute_entries_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 device_pubkey, vrf, mode, group_address, source_address,
+			 route_flags, register_in_oif_list, rpf_interface, rpf_rib, rpf_prefix,
+			 rpf_preference, rpf_metric, rpf_neighbor, rpf_attached, rpf_has_block,
+			 oif_list, oif_count, creation_time)
+		VALUES
+			('mr-ap-fhr-X', now(), now(), generateUUIDv4(), 0, 1, 'd-ap-fhr', 'default', 'sparse', '233.99.5.1', '10.99.5.1', 'SBNP', 0, 'Tunnel960', '', '', 0, 0, '', 0, 0, '', 0, now()),
+			('mr-ap-fhr-Y', now(), now(), generateUUIDv4(), 0, 2, 'd-ap-fhr', 'default', 'sparse', '233.99.5.2', '10.99.5.1', 'SBNP', 0, 'Tunnel960', '', '', 0, 0, '', 0, 0, '', 0, now()),
+			('mr-ap-lhr-X', now(), now(), generateUUIDv4(), 0, 3, 'd-ap-lhr', 'default', 'sparse', '233.99.5.1', '10.99.5.1', 'SMP',  0, 'Port-Channel1', '', '', 0, 0, '', 0, 0, '["Tunnel961"]', 1, now())`))
+
+	// Publisher's tunnel reports 10 Mbps (aggregate of X+Y).
+	// Single-group subscriber tunnel reports 5 Mbps.
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO device_interface_rollup_5m
+			(bucket_ts, device_pk, intf, user_tunnel_id, user_pk, max_in_bps, max_out_bps, ingested_at)
+		VALUES
+			(now() - INTERVAL 1 MINUTE, 'd-ap-fhr', 'Tunnel960', 960, 'u-ap-pub', 10000000, 0,       now()),
+			(now() - INTERVAL 1 MINUTE, 'd-ap-lhr', 'Tunnel961', 961, 'u-ap-sub', 0,        5000000, now())`))
+
+	require.NoError(t, conn.Exec(ctx, `SYSTEM REFRESH VIEW dz_device_interface_ips`))
+	require.NoError(t, conn.Exec(ctx, `SYSTEM WAIT VIEW dz_device_interface_ips`))
+
+	rows2, err := conn.Query(ctx, `
+		SELECT rate_status, rate_status_reason, expected_bps_5m
+		FROM health_multicast_user_rate
+		WHERE user_pk = 'u-ap-sub' AND multicast_group_pk = 'grp-ap-X'`)
+	require.NoError(t, err)
+	defer rows2.Close()
+	require.True(t, rows2.Next(), "expected one row for u-ap-sub on grp-ap-X")
+
+	var rate, reason string
+	var expected *float64
+	require.NoError(t, rows2.Scan(&rate, &reason, &expected))
+	require.NoError(t, rows2.Err())
+	assert.Equal(t, "unknown", rate,
+		"single-group subscriber must not reconcile when group's publisher is multi-group")
+	assert.Equal(t, "multi_group_ambiguity", reason)
+	assert.Nil(t, expected, "expected must be NULL — gpt_total is contaminated")
+}
