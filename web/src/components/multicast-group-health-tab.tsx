@@ -501,7 +501,33 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
                     )}
                   </td>
                   <td className="px-4 py-3 text-sm">
-                    <HealthBadge status={p.health_status} />
+                    {p.missing_endpoint_reasons && p.missing_endpoint_reasons.length > 0 ? (
+                      <Tooltip
+                        content={
+                          <div className="space-y-1 min-w-[220px]">
+                            <div className="text-xs font-medium">Missing endpoints</div>
+                            <ul className="space-y-0.5 text-xs">
+                              {p.missing_endpoint_reasons.map((r) => (
+                                <li key={r} className="text-muted-foreground">
+                                  • {r}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        }
+                        delayDuration={120}
+                      >
+                        <span
+                          tabIndex={0}
+                          aria-label={`Status ${p.health_status}: ${p.missing_endpoint_reasons.join(', ')}`}
+                          className="inline-flex items-center cursor-help focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 rounded-full"
+                        >
+                          <HealthBadge status={p.health_status} />
+                        </span>
+                      </Tooltip>
+                    ) : (
+                      <HealthBadge status={p.health_status} />
+                    )}
                   </td>
                   <td className="px-4 py-3 text-xs text-muted-foreground">
                     {p.verification_method === 'endpoints_only' ? 'endpoints only' : p.verification_method}
