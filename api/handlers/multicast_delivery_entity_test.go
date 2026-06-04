@@ -111,6 +111,11 @@ func TestDeviceMulticastDelivery_ObservedStateAndPagination(t *testing.T) {
 	assert.Len(t, resp.Routes, 1)
 	assert.Len(t, resp.OIFs, 1)
 	assert.Equal(t, "test-group", resp.Groups[0].GroupCode)
+	assert.Equal(t, 1, resp.Summary.MSDPPeerCount)
+	assert.Equal(t, 2, resp.Summary.MSDPSACount)
+	require.Len(t, resp.MSDPPeers, 1)
+	assert.Equal(t, "Established", resp.MSDPPeers[0].State)
+	require.Len(t, resp.MSDPSAs, 2)
 
 	roles := map[string]handlers.MulticastDeliveryDeviceRole{}
 	for _, role := range resp.Roles {
@@ -129,6 +134,36 @@ func TestDeviceMulticastDelivery_ObservedStateAndPagination(t *testing.T) {
 	assert.True(t, unknownOIF)
 }
 
+func TestDeviceMulticastDelivery_HealthFiltersUseHealthSemantics(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertMulticastTestData(t, api)
+	insertMulticastHealthFixtures(t, api)
+
+	rr, resp := deviceMulticastDeliveryRequest(api, "dev-nyc1", "source=10.0.0.1&health=healthy&limit=10&endpoint_limit=10")
+
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+	assert.Equal(t, 1, resp.RouteTotal)
+	require.Len(t, resp.Routes, 1)
+	assert.Equal(t, "10.0.0.1", resp.Routes[0].SourceAddress)
+	assert.Equal(t, 1, resp.HealthUserTotal, "source filters forwarding state; health rows remain device/group health context")
+	require.Len(t, resp.HealthUsers, 1)
+	assert.Equal(t, "user-sub", resp.HealthUsers[0].UserPK)
+	assert.EqualValues(t, 1, resp.Summary.UserHealthCounts.Healthy)
+	assert.Equal(t, 1, resp.EndpointHealthTotal)
+	assert.EqualValues(t, 1, resp.Summary.EndpointHealthCounts.Healthy)
+
+	rr, endpointFiltered := deviceMulticastDeliveryRequest(api, "dev-ams1", "endpoint_ip=10.0.0.1&health=healthy&limit=10&endpoint_limit=10")
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+	assert.Equal(t, 1, endpointFiltered.HealthUserTotal)
+	require.Len(t, endpointFiltered.HealthUsers, 1)
+	assert.Equal(t, "user-pub", endpointFiltered.HealthUsers[0].UserPK)
+	assert.Equal(t, 1, endpointFiltered.EndpointHealthTotal)
+
+	rr, _ = deviceMulticastDeliveryRequest(api, "dev-nyc1", "health=broken")
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
 func TestLinkMulticastDelivery_ObservedStateAndDirectionFilter(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
@@ -136,6 +171,7 @@ func TestLinkMulticastDelivery_ObservedStateAndDirectionFilter(t *testing.T) {
 	refreshDeviceInterfaceIPSMV(t, api)
 	insertMulticastDeliveryLink(t, api)
 	insertMulticastDeliveryMroute(t, api, "mroute-link", "dev-ams1", "10.0.0.1", `["Ethernet1","Weird0"]`, "now()")
+	insertMulticastHealthFixtures(t, api)
 
 	rr, resp := linkMulticastDeliveryRequest(api, "link-ams-nyc", "")
 
@@ -150,6 +186,8 @@ func TestLinkMulticastDelivery_ObservedStateAndDirectionFilter(t *testing.T) {
 	assert.Equal(t, "a_to_z", resp.Branches[0].Direction)
 	assert.Equal(t, "underlay_link", resp.Branches[0].OIFKind)
 	assert.Equal(t, "test-group", resp.Groups[0].GroupCode)
+	assert.Greater(t, resp.Groups[0].HealthCounts.Total, uint64(0))
+	assert.Greater(t, resp.Summary.RelatedGroupHealthCounts.Total, uint64(0))
 
 	rr, filtered := linkMulticastDeliveryRequest(api, "link-ams-nyc", "direction=z_to_a")
 	require.Equal(t, http.StatusOK, rr.Code)

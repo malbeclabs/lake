@@ -9,9 +9,9 @@ import (
 
 func (a *API) queryDeviceMulticastHealthUsers(ctx context.Context, device MulticastDeliveryDevice, params multicastDeliveryEntityParams) ([]MulticastHealthUserItem, int, MulticastEntityHealthStatusCounts, error) {
 	groupFilter, groupArgs := sqlMulticastGroupFilter(params.Groups)
-	sourceFilter, sourceArgs := sqlInFilter("user_dz_ip", params.Sources)
+	endpointFilter, endpointArgs := sqlInFilter("user_dz_ip", params.EndpointIPs)
 	healthFilter, healthArgs := sqlInFilter("health_status", params.Health)
-	counts, err := a.queryEntityHealthCounts(ctx, "health_multicast_user_rate", "user_device_pk = ?"+groupFilter+sourceFilter+healthFilter, append(append(append([]any{device.PK}, groupArgs...), sourceArgs...), healthArgs...), "multicast_device_health_user_counts")
+	counts, err := a.queryEntityHealthCounts(ctx, "health_multicast_user_rate", "user_device_pk = ?"+groupFilter+endpointFilter+healthFilter, append(append(append([]any{device.PK}, groupArgs...), endpointArgs...), healthArgs...), "multicast_device_health_user_counts")
 	if err != nil {
 		return nil, 0, MulticastEntityHealthStatusCounts{}, err
 	}
@@ -40,14 +40,14 @@ func (a *API) queryDeviceMulticastHealthUsers(ctx context.Context, device Multic
 			rate_status_reason,
 			health_status
 		FROM health_multicast_user_rate
-		WHERE user_device_pk = ?` + groupFilter + sourceFilter + healthFilter + `
+		WHERE user_device_pk = ?` + groupFilter + endpointFilter + healthFilter + `
 		ORDER BY multiIf(health_status = 'unhealthy', 0, health_status = 'degraded', 1, health_status = 'unknown', 2, 3), multicast_group_code, user_pk
 		LIMIT ? OFFSET ?
 		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0
 	`
 	args := []any{device.PK}
 	args = append(args, groupArgs...)
-	args = append(args, sourceArgs...)
+	args = append(args, endpointArgs...)
 	args = append(args, healthArgs...)
 	args = append(args, params.Limit, params.Offset)
 	start := time.Now()
@@ -93,12 +93,12 @@ func (a *API) queryDeviceMulticastHealthUsers(ctx context.Context, device Multic
 
 func (a *API) queryDeviceMulticastEndpointHealth(ctx context.Context, device MulticastDeliveryDevice, params multicastDeliveryEntityParams) ([]MulticastHealthPathItem, int, MulticastEntityHealthStatusCounts, error) {
 	groupFilter, groupArgs := sqlMulticastGroupFilter(params.Groups)
-	sourceFilter, sourceArgs := sqlInFilter("publisher_dz_ip", params.Sources)
+	endpointFilter, endpointArgs := sqlEndpointIPFilter(params.EndpointIPs)
 	healthFilter, healthArgs := sqlInFilter("health_status", params.Health)
-	where := "(publisher_device_pk = ? OR subscriber_device_pk = ?)" + groupFilter + sourceFilter + healthFilter
+	where := "(publisher_device_pk = ? OR subscriber_device_pk = ?)" + groupFilter + endpointFilter + healthFilter
 	baseArgs := []any{device.PK, device.PK}
 	baseArgs = append(baseArgs, groupArgs...)
-	baseArgs = append(baseArgs, sourceArgs...)
+	baseArgs = append(baseArgs, endpointArgs...)
 	baseArgs = append(baseArgs, healthArgs...)
 	counts, err := a.queryEntityHealthCounts(ctx, "health_publisher_subscriber_path", where, baseArgs, "multicast_device_endpoint_health_counts")
 	if err != nil {
@@ -186,14 +186,14 @@ func (a *API) queryLinkRelatedGroupHealth(ctx context.Context, groups []Multicas
 		return groups, MulticastEntityHealthStatusCounts{}, nil
 	}
 	query := `
-		SELECT multicast_group_pk, multicast_group_code, any(group_address), health_status, count() AS n FROM (
-			SELECT multicast_group_pk, multicast_group_code, group_address, health_status FROM health_mroute WHERE multicast_group_pk IN (?)
+		SELECT multicast_group_pk, health_status, count() AS n FROM (
+			SELECT multicast_group_pk, health_status FROM health_mroute WHERE multicast_group_pk IN (?)
 			UNION ALL
-			SELECT multicast_group_pk, multicast_group_code, group_address, health_status FROM health_multicast_user_rate WHERE multicast_group_pk IN (?)
+			SELECT multicast_group_pk, health_status FROM health_multicast_user_rate WHERE multicast_group_pk IN (?)
 			UNION ALL
-			SELECT multicast_group_pk, multicast_group_code, group_address, health_status FROM health_publisher_subscriber_path WHERE multicast_group_pk IN (?)
+			SELECT multicast_group_pk, health_status FROM health_publisher_subscriber_path WHERE multicast_group_pk IN (?)
 		)
-		GROUP BY multicast_group_pk, multicast_group_code, health_status
+		GROUP BY multicast_group_pk, health_status
 		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0
 	`
 	start := time.Now()
@@ -206,17 +206,15 @@ func (a *API) queryLinkRelatedGroupHealth(ctx context.Context, groups []Multicas
 	byGroup := map[string]MulticastEntityHealthStatusCounts{}
 	total := MulticastEntityHealthStatusCounts{}
 	for rows.Next() {
-		var groupPK, groupCode, groupAddress, status string
+		var groupPK, status string
 		var n uint64
-		if err := rows.Scan(&groupPK, &groupCode, &groupAddress, &status, &n); err != nil {
+		if err := rows.Scan(&groupPK, &status, &n); err != nil {
 			return nil, MulticastEntityHealthStatusCounts{}, err
 		}
 		counts := byGroup[groupPK]
 		addEntityStatusCount(&counts, status, n)
 		byGroup[groupPK] = counts
 		addEntityStatusCount(&total, status, n)
-		_ = groupCode
-		_ = groupAddress
 	}
 	if err := rows.Err(); err != nil {
 		return nil, MulticastEntityHealthStatusCounts{}, err
@@ -227,6 +225,13 @@ func (a *API) queryLinkRelatedGroupHealth(ctx context.Context, groups []Multicas
 		}
 	}
 	return groups, total, nil
+}
+
+func sqlEndpointIPFilter(values []string) (string, []any) {
+	if len(values) == 0 {
+		return "", nil
+	}
+	return " AND (publisher_dz_ip IN (?) OR subscriber_dz_ip IN (?))", []any{values, values}
 }
 
 func (a *API) queryEntityHealthCounts(ctx context.Context, table, whereClause string, args []any, metricName string) (MulticastEntityHealthStatusCounts, error) {

@@ -19,6 +19,7 @@ const multicastDeliveryEntityCoverageNote = "Current observed route state is lim
 type multicastDeliveryEntityParams struct {
 	Groups         []string
 	Sources        []string
+	EndpointIPs    []string
 	OIFKinds       []string
 	Roles          []string
 	Health         []string
@@ -337,6 +338,7 @@ func parseMulticastDeliveryEntityParams(r *http.Request) (multicastDeliveryEntit
 	return multicastDeliveryEntityParams{
 		Groups:         splitCSVParam(firstNonEmpty(q.Get("group"), q.Get("groups"))),
 		Sources:        splitCSVParam(q.Get("source")),
+		EndpointIPs:    splitCSVParam(q.Get("endpoint_ip")),
 		OIFKinds:       splitCSVParam(q.Get("oif_kind")),
 		Roles:          splitCSVParam(q.Get("role")),
 		Health:         health,

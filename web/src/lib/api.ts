@@ -2575,6 +2575,7 @@ export interface FetchMulticastDeliveryParams {
   endpointOffset?: number
   group?: string
   source?: string
+  endpointIp?: string
   health?: MulticastHealthStatus
   oifKind?: string
   role?: string
@@ -2589,6 +2590,7 @@ function multicastDeliverySearchParams(params: FetchMulticastDeliveryParams = {}
   if (params.endpointOffset !== undefined) search.set('endpoint_offset', String(params.endpointOffset))
   if (params.group) search.set('group', params.group)
   if (params.source) search.set('source', params.source)
+  if (params.endpointIp) search.set('endpoint_ip', params.endpointIp)
   if (params.health) search.set('health', params.health)
   if (params.oifKind) search.set('oif_kind', params.oifKind)
   if (params.role) search.set('role', params.role)
