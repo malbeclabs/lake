@@ -120,3 +120,104 @@ func TestHealthMulticastUser_Reconciliation(t *testing.T) {
 	assert.True(t, got[2].reconciled)
 	assert.Equal(t, "healthy", got[2].healthStatus)
 }
+
+// TestHealthMulticastUser_PartialDelivery covers the multi-publisher case:
+// a subscriber whose Tunnel<N> is in the OIF list of one publisher's (S, G)
+// mroute but missing from another publisher's (S, G) mroute. The aggregated
+// view would have called this "reconciled"; the per-source view degrades it.
+//
+// Setup at d-lhr:
+//   - (S=10.99.5.10, G=233.99.99.5) → OIF includes Tunnel610  ← subscriber present
+//   - (S=10.99.5.20, G=233.99.99.5) → OIF does NOT include Tunnel610  ← gap
+//
+// Expected result for u-sub-partial:
+//   subscriber_total_sources       = 2
+//   subscriber_oif_present_sources = 1
+//   health_status                  = degraded
+//   mismatch_reason contains "1 of 2"
+func TestHealthMulticastUser_PartialDelivery(t *testing.T) {
+	info := laketesting.NewClientWithInfo(t, sharedDB)
+	conn, err := info.Client.Conn(t.Context())
+	require.NoError(t, err)
+	defer conn.Close()
+	ctx := t.Context()
+
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_devices_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users, interfaces)
+		VALUES ('d-lhr-pd', now(), now(), generateUUIDv4(), 0, 1,
+			'd-lhr-pd', 'activated', 'edge', 'lhr-pd-dz1', '', '', '', 0, '[]')`))
+
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_multicast_groups_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
+		VALUES ('grp-pd', now(), now(), generateUUIDv4(), 0, 1,
+			'grp-pd', 'o', 'partial-delivery', '233.99.99.5', 100000000, 'activated', 2, 1)`))
+
+	// Two publishers and a subscriber on the LHR. Publishers don't need to
+	// be onchain users at d-lhr — what matters is their source_address
+	// appearing in the mroute table on d-lhr's perspective.
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_users_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tenant_pk, tunnel_id, publishers, subscribers)
+		VALUES ('u-sub-partial', now(), now(), generateUUIDv4(), 0, 1,
+			'u-sub-partial', 'o', 'activated', 'multicast', '203.0.113.50', '10.99.5.50', 'd-lhr-pd', 't1', 610, '[]', '["grp-pd"]')`))
+
+	// (S=10.99.5.10, G=233.99.99.5) — subscriber's tunnel IS in OIF
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_ip_mroute_entries_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 device_pubkey, vrf, mode, group_address, source_address,
+			 route_flags, register_in_oif_list, rpf_interface, rpf_rib, rpf_prefix,
+			 rpf_preference, rpf_metric, rpf_neighbor, rpf_attached, rpf_has_block,
+			 oif_list, oif_count, creation_time)
+		VALUES ('mr-pd-1', now(), now(), generateUUIDv4(), 0, 1,
+			'd-lhr-pd', 'default', 'sparse', '233.99.99.5', '10.99.5.10',
+			'SMP', 0, 'Port-Channel1', '', '', 0, 0, '', 0, 0, '["Tunnel610"]', 1, now())`))
+
+	// (S=10.99.5.20, G=233.99.99.5) — subscriber's tunnel is NOT in OIF
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_ip_mroute_entries_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 device_pubkey, vrf, mode, group_address, source_address,
+			 route_flags, register_in_oif_list, rpf_interface, rpf_rib, rpf_prefix,
+			 rpf_preference, rpf_metric, rpf_neighbor, rpf_attached, rpf_has_block,
+			 oif_list, oif_count, creation_time)
+		VALUES ('mr-pd-2', now(), now(), generateUUIDv4(), 0, 2,
+			'd-lhr-pd', 'default', 'sparse', '233.99.99.5', '10.99.5.20',
+			'SMP', 0, 'Port-Channel1', '', '', 0, 0, '', 0, 0, '[]', 0, now())`))
+
+	require.NoError(t, conn.Exec(ctx, `SYSTEM REFRESH VIEW dz_device_interface_ips`))
+	require.NoError(t, conn.Exec(ctx, `SYSTEM WAIT VIEW dz_device_interface_ips`))
+
+	rows, err := conn.Query(ctx, `
+		SELECT
+			subscriber_total_sources,
+			subscriber_oif_present_sources,
+			subscriber_oif_observed,
+			reconciled,
+			health_status,
+			mismatch_reason
+		FROM health_multicast_user
+		WHERE user_pk = 'u-sub-partial' AND multicast_group_pk = 'grp-pd'`)
+	require.NoError(t, err)
+	defer rows.Close()
+	require.True(t, rows.Next(), "expected one row for u-sub-partial")
+
+	var totalSources uint64
+	var oifPresent uint32
+	var oifObserved, reconciled bool
+	var healthStatus, mismatchReason string
+	require.NoError(t, rows.Scan(&totalSources, &oifPresent, &oifObserved, &reconciled, &healthStatus, &mismatchReason))
+
+	assert.EqualValues(t, 2, totalSources, "two (S, G) mroutes on device")
+	assert.EqualValues(t, 1, oifPresent, "tunnel present for one of the two sources")
+	assert.False(t, oifObserved, "partial coverage is NOT 'oif observed'")
+	assert.False(t, reconciled, "partial coverage is NOT reconciled")
+	assert.Equal(t, "degraded", healthStatus, "partial coverage → degraded, not unhealthy or healthy")
+	assert.Contains(t, mismatchReason, "1 of 2", "reason should call out the partial coverage count")
+	assert.Contains(t, mismatchReason, "Tunnel610")
+}
