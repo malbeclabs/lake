@@ -789,12 +789,22 @@ export function UserDetailPage() {
           {/* Multicast Groups */}
           {multicastGroups && multicastGroups.length > 0 && (
             <div className="border border-border rounded-lg p-4 bg-card">
-              <h3 className="text-sm font-medium text-muted-foreground mb-3">Multicast Groups</h3>
+              <h3 className="text-sm font-medium text-muted-foreground mb-1">Multicast Groups</h3>
+              <p className="text-xs text-muted-foreground mb-3">
+                Healthy = control plane reconciled with onchain expectation AND data-plane rate matches expected. Hover a badge for the CP × Rate breakdown.
+              </p>
               <div className="space-y-2">
                 {multicastGroups.map((g) => {
-                  const healthItems = (userHealth?.items ?? []).filter(
-                    (it) => it.multicast_group_pk === g.group_pk,
-                  )
+                  // Filter to this group, then dedupe by mode as a safety net
+                  // against any future duplicate rows from the rate view.
+                  const seenModes = new Set<string>()
+                  const healthItems = (userHealth?.items ?? [])
+                    .filter((it) => it.multicast_group_pk === g.group_pk)
+                    .filter((it) => {
+                      if (seenModes.has(it.mode)) return false
+                      seenModes.add(it.mode)
+                      return true
+                    })
                   return (
                   <div key={g.group_pk} className="flex items-center justify-between text-sm">
                     <div className="flex items-center gap-2">

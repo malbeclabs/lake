@@ -48,7 +48,6 @@ const RATE_REASON_HUMAN: Record<MulticastRateStatusReason, string> = {
   mismatch: 'TX deviates from sum of publishers',
   monitoring_gap: 'a publisher in this group has no counter data',
   group_idle: 'all publishers are idle, nothing to verify',
-  multi_group_ambiguity: "tunnel shared across multiple multicast groups — per-group rate can't be attributed",
 }
 
 function compactNumber(value: number): string {

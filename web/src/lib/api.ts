@@ -2232,7 +2232,6 @@ export type MulticastRateStatusReason =
   | 'mismatch'
   | 'monitoring_gap'
   | 'group_idle'
-  | 'multi_group_ambiguity'
 
 export interface MulticastHealthUserItem {
   user_pk: string
