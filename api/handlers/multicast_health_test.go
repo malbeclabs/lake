@@ -46,6 +46,16 @@ func insertMulticastHealthFixtures(t *testing.T, api *handlers.API) {
 			'dev-nyc1', 'default', 'sparse', '233.0.0.1', '10.0.0.1',
 			'SMP', 0, 'Port-Channel1', '', '', 0, 0, '', 0, 0, '["Tunnel502"]', 1, now())`))
 
+	// Rate fixtures — publisher RX = 10 Mbps; subscriber TX = 10 Mbps → reconciled.
+	// Without these the rate dimension would collapse health_status to 'unknown'
+	// via 'no_data' for both endpoints.
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO device_interface_rollup_5m
+			(bucket_ts, device_pk, intf, user_tunnel_id, user_pk, max_in_bps, max_out_bps, ingested_at)
+		VALUES
+			(now() - INTERVAL 1 MINUTE, 'dev-ams1', 'Tunnel501', 501, 'user-pub', 10000000, 0, now()),
+			(now() - INTERVAL 1 MINUTE, 'dev-nyc1', 'Tunnel502', 502, 'user-sub', 0, 10000000, now())`))
+
 	require.NoError(t, api.DB.Exec(ctx, `SYSTEM REFRESH VIEW dz_device_interface_ips`))
 	require.NoError(t, api.DB.Exec(ctx, `SYSTEM WAIT VIEW dz_device_interface_ips`))
 }
@@ -124,11 +134,32 @@ func TestGetMulticastGroupHealth_Users(t *testing.T) {
 	require.Len(t, resp.Items, 2)
 	assert.EqualValues(t, 2, resp.Total)
 
-	// Both items should be reconciled and healthy.
-	for _, it := range resp.Items {
+	// Both items should be reconciled on both dimensions.
+	var pub, sub *handlers.MulticastHealthUserItem
+	for i := range resp.Items {
+		it := &resp.Items[i]
 		assert.True(t, it.Reconciled, "user %s expected reconciled", it.UserPK)
-		assert.Equal(t, "healthy", it.HealthStatus)
+		assert.Equal(t, "healthy", it.ControlPlaneStatus, "user %s expected CP healthy", it.UserPK)
+		assert.Equal(t, "reconciled", it.RateStatus, "user %s expected rate reconciled", it.UserPK)
+		assert.Equal(t, "healthy", it.HealthStatus, "user %s expected combined healthy", it.UserPK)
+		assert.NotNil(t, it.ObservedBps5m, "user %s missing observed rate", it.UserPK)
+		assert.NotNil(t, it.RateBucketTS, "user %s missing rate bucket ts", it.UserPK)
+		switch it.Mode {
+		case "P":
+			pub = it
+		case "S":
+			sub = it
+		}
 	}
+	// Publisher's rate reason is 'active' (transmitting). Subscriber's is 'reconciled'
+	// (TX matches sum of publishers).
+	require.NotNil(t, pub)
+	require.NotNil(t, sub)
+	assert.Equal(t, "active", pub.RateStatusReason)
+	assert.Equal(t, "reconciled", sub.RateStatusReason)
+	require.NotNil(t, sub.ExpectedBps5m)
+	assert.InDelta(t, 10_000_000, *sub.ExpectedBps5m, 1)
+	assert.InDelta(t, 10_000_000, *sub.ObservedBps5m, 1)
 }
 
 func TestGetMulticastGroupHealth_Paths(t *testing.T) {
