@@ -25,6 +25,7 @@ type MulticastHealthStatusCounts struct {
 	Healthy   uint64 `json:"healthy"`
 	Degraded  uint64 `json:"degraded"`
 	Unhealthy uint64 `json:"unhealthy"`
+	Unknown   uint64 `json:"unknown"`
 	Total     uint64 `json:"total"`
 }
 

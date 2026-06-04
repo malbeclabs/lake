@@ -2178,6 +2178,7 @@ export interface MulticastHealthStatusCounts {
   healthy: number
   degraded: number
   unhealthy: number
+  unknown: number
   total: number
 }
 

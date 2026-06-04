@@ -100,7 +100,12 @@ function RateCell({ item }: { item: MulticastHealthUserItem }) {
   )
   return (
     <Tooltip content={tooltip}>
-      <span className="inline-flex items-center gap-1.5 cursor-help">
+      <span
+        tabIndex={0}
+        role="button"
+        aria-label={`Rate ${item.rate_status}: ${item.rate_status_reason}`}
+        className="inline-flex items-center gap-1.5 cursor-help focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 rounded-full"
+      >
         <span className="tabular-nums font-mono text-xs">{formatBps(item.observed_bps_5m)}</span>
         <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${cls}`}>
           {item.rate_status}
@@ -169,7 +174,10 @@ function UserCombinedHealthBadge({ item }: { item: MulticastHealthUserItem }) {
   return (
     <Tooltip content={tooltip} delayDuration={120}>
       <span
-        className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium cursor-help ${cls}`}
+        tabIndex={0}
+        role="button"
+        aria-label={`Combined health ${item.health_status}: CP ${item.control_plane_status}, Rate ${item.rate_status}`}
+        className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium cursor-help focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 ${cls}`}
       >
         {item.health_status}
       </span>
@@ -220,6 +228,7 @@ function CountsRow({
         <span className="text-emerald-500">{counts.healthy} healthy</span>
         <span className="text-amber-500">{counts.degraded} degraded</span>
         <span className="text-red-500">{counts.unhealthy} unhealthy</span>
+        <span className="text-muted-foreground">{counts.unknown} unknown</span>
         <span className="text-muted-foreground">/ {counts.total}</span>
       </div>
     </div>
@@ -228,6 +237,53 @@ function CountsRow({
 
 function NavLinkArrow() {
   return <ChevronRight className="inline h-3 w-3 ml-0.5 opacity-60 group-hover:opacity-100 transition-opacity" />
+}
+
+// TableStateRow renders a single placeholder row covering loading / error /
+// empty states so the surrounding table doesn't fall into a misleading
+// "empty" state while the query is still in flight or has failed.
+function TableStateRow({
+  isLoading,
+  error,
+  isEmpty,
+  emptyText,
+  colSpan,
+}: {
+  isLoading: boolean
+  error: unknown
+  isEmpty: boolean
+  emptyText: string
+  colSpan: number
+}) {
+  if (isLoading) {
+    return (
+      <tr>
+        <td colSpan={colSpan} className="px-4 py-8 text-center text-muted-foreground">
+          <Loader2 className="inline h-3 w-3 animate-spin mr-2" />
+          Loading…
+        </td>
+      </tr>
+    )
+  }
+  if (error) {
+    return (
+      <tr>
+        <td colSpan={colSpan} className="px-4 py-8 text-center text-red-500">
+          Failed to load: {(error as Error).message}
+        </td>
+      </tr>
+    )
+  }
+  if (isEmpty) {
+    return (
+      <tr>
+        <td colSpan={colSpan} className="px-4 py-8 text-center text-muted-foreground">
+          {emptyText}
+        </td>
+      </tr>
+    )
+  }
+  return null
 }
 
 export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: string }) {
@@ -314,13 +370,13 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
               </tr>
             </thead>
             <tbody>
-              {(usersQuery.data?.items ?? []).length === 0 && (
-                <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
-                    No multicast users
-                  </td>
-                </tr>
-              )}
+              <TableStateRow
+                isLoading={usersQuery.isLoading}
+                error={usersQuery.error}
+                isEmpty={(usersQuery.data?.items ?? []).length === 0}
+                emptyText="No multicast users"
+                colSpan={7}
+              />
               {(usersQuery.data?.items ?? []).map((u) => (
                 <tr key={`${u.user_pk}-${u.mode}`} className="border-b border-border last:border-b-0 hover:bg-muted">
                   <td className="px-4 py-3 text-sm">
@@ -387,13 +443,13 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
               </tr>
             </thead>
             <tbody>
-              {(pathsQuery.data?.items ?? []).length === 0 && (
-                <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
-                    No (publisher, subscriber) pairs
-                  </td>
-                </tr>
-              )}
+              <TableStateRow
+                isLoading={pathsQuery.isLoading}
+                error={pathsQuery.error}
+                isEmpty={(pathsQuery.data?.items ?? []).length === 0}
+                emptyText="No (publisher, subscriber) pairs"
+                colSpan={6}
+              />
               {(pathsQuery.data?.items ?? []).map((p) => (
                 <tr
                   key={`${p.publisher_user_pk}-${p.subscriber_user_pk}`}

@@ -77,7 +77,10 @@ function UserHealthBadge({ item }: { item: MulticastHealthUserItem }) {
   return (
     <Tooltip content={tooltipContent} delayDuration={120}>
       <span
-        className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium cursor-help ${cls}`}
+        tabIndex={0}
+        role="button"
+        aria-label={`Health ${item.health_status}: CP ${item.control_plane_status}, Rate ${item.rate_status}`}
+        className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium cursor-help focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 ${cls}`}
       >
         {item.health_status}
       </span>
@@ -524,7 +527,11 @@ export function UserDetailPage() {
   })
 
   const hasMulticast = !!multicastGroups && multicastGroups.length > 0
-  const { data: userHealth } = useQuery({
+  const {
+    data: userHealth,
+    isLoading: userHealthLoading,
+    error: userHealthError,
+  } = useQuery({
     queryKey: ['user-health', pk],
     queryFn: () => fetchUserHealth(pk!),
     enabled: !!pk && hasMulticast,
@@ -815,6 +822,19 @@ export function UserDetailPage() {
                           item={it}
                         />
                       ))}
+                      {healthItems.length === 0 && userHealthLoading && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-muted text-muted-foreground">
+                          loading…
+                        </span>
+                      )}
+                      {healthItems.length === 0 && !!userHealthError && (
+                        <span
+                          className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-red-500/15 text-red-500"
+                          title={(userHealthError as Error).message}
+                        >
+                          health unavailable
+                        </span>
+                      )}
                     </div>
                     <span className="text-xs text-muted-foreground font-mono">
                       {g.multicast_ip}
