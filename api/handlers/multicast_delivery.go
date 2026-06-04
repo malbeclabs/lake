@@ -2,6 +2,11 @@
 // back future per-group and per-user health endpoints (infra#1501 Track 2).
 // They classify mroute rows and surface (active_publisher, group, device)
 // gaps without requiring this package to recompute the joins.
+//
+// The health_multicast_user_rate view (migration 20260604000001) extends
+// the per-user health classification with a 5-min rate dimension, layering
+// data-plane reconciliation on top of the control-plane verdict (Track B1
+// of infra#1501). Endpoints reading from it are added in a follow-up.
 
 package handlers
 
