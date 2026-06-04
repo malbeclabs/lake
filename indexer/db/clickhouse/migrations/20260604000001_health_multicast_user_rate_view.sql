@@ -8,15 +8,19 @@
 -- the onchain expectation. This view adds:
 --
 --   1. observed_bps_5m — the 5-min max rate measured at the user's tunnel.
---      For publishers: max_in_bps (device's RX from the publisher).
---      For subscribers: max_out_bps (device's TX toward the subscriber).
+--      For publishers (P):       max_in_bps (device's RX from the publisher).
+--      For subscribers (S):      max_out_bps (device's TX toward the subscriber).
+--      For dual-role users (P+S): max_out_bps — the side reconciled.
 --
---   2. expected_bps_5m — only defined for subscribers: the sum of every
---      publisher's RX rate in the same multicast group. A subscriber's TX
---      should equal this sum.
+--   2. expected_bps_5m — only defined for the reconciled side.
+--      For S:   sum of every publisher's RX in the same multicast group.
+--      For P+S: sum of every OTHER publisher's RX in the same group
+--               (i.e., gpt_total - self.max_in_bps). Excluding self matches
+--               PIM-SM behaviour where a source does not receive its own
+--               multicast back via the tree.
+--      Tolerance: |observed - expected| <= max(5%, 1 Mbps).
 --
 --   3. rate_status — reconciled | mismatch | unknown.
---      Tolerance: |observed - expected| <= max(5%, 1 Mbps).
 --
 --   4. rate_status_reason — a more specific cause behind rate_status.
 --      Distinguishes "no_data" (monitoring gap), "idle" (registered but
@@ -30,23 +34,30 @@
 -- Strict idle handling: if any publisher in the group has no counter row
 -- in the last 15 minutes, every subscriber's rate_status collapses to
 -- unknown with reason 'monitoring_gap'. We refuse to reconcile against a
--- deflated expected. If all publishers are idle (sum = 0), subscribers go
--- unknown with reason 'group_idle'.
+-- deflated expected. If all publishers are idle (sum = 0, or for P+S the
+-- subtracted sum = 0), subscribers go unknown with reason 'group_idle'.
+--
+-- Join keys: (device_pk, user_tunnel_id, user_pk). Including user_pk
+-- defends against tunnel-ID reuse within the freshness window — without
+-- it, a tunnel reassigned from user A to user B could pull B's rate for
+-- A's row.
 --
 -- Track B1 of malbeclabs/infra#1501 (rate reconciliation).
 CREATE OR REPLACE VIEW health_multicast_user_rate
 AS
 WITH
--- Latest 5-min bucket per (device, tunnel) within the freshness window.
+-- Latest 5-min bucket per (device, tunnel, user) within the freshness window.
 recent_bucket AS (
     SELECT
         device_pk AS rb_device_pk,
         user_tunnel_id AS rb_user_tunnel_id,
+        user_pk AS rb_user_pk,
         max(bucket_ts) AS rb_bucket_ts
     FROM device_interface_rollup_5m
     WHERE bucket_ts >= now() - INTERVAL 15 MINUTE
       AND user_tunnel_id IS NOT NULL
-    GROUP BY rb_device_pk, rb_user_tunnel_id
+      AND user_pk != ''
+    GROUP BY rb_device_pk, rb_user_tunnel_id, rb_user_pk
 ),
 user_rates AS (
     -- ur_present = 1 lets the outer LEFT JOIN distinguish "no row" (0) from
@@ -56,6 +67,7 @@ user_rates AS (
     SELECT
         r.device_pk AS ur_device_pk,
         r.user_tunnel_id AS ur_user_tunnel_id,
+        r.user_pk AS ur_user_pk,
         r.bucket_ts AS ur_bucket_ts,
         r.max_in_bps AS ur_max_in_bps,
         r.max_out_bps AS ur_max_out_bps,
@@ -64,8 +76,10 @@ user_rates AS (
     INNER JOIN recent_bucket rb
         ON r.device_pk = rb.rb_device_pk
        AND r.user_tunnel_id = rb.rb_user_tunnel_id
+       AND r.user_pk = rb.rb_user_pk
        AND r.bucket_ts = rb.rb_bucket_ts
 ),
+-- Per-publisher RX so P+S subscriber expected can subtract self's contribution.
 group_publisher_total AS (
     SELECT
         h.multicast_group_pk AS gpt_multicast_group_pk,
@@ -76,6 +90,7 @@ group_publisher_total AS (
     LEFT JOIN user_rates ur
         ON ur.ur_device_pk = h.user_device_pk
        AND ur.ur_user_tunnel_id = h.user_tunnel_id
+       AND ur.ur_user_pk = h.user_pk
     WHERE h.mode IN ('P', 'P+S')
     GROUP BY gpt_multicast_group_pk
 ),
@@ -88,32 +103,48 @@ with_rate AS (
         if(ur.ur_present = 1, ur.ur_bucket_ts, NULL) AS rate_bucket_ts,
         multiIf(
             ur.ur_present = 0, NULL,
-            h.mode IN ('P', 'P+S'), toNullable(ur.ur_max_in_bps),
-            h.mode = 'S',          toNullable(ur.ur_max_out_bps),
+            h.mode = 'P',   toNullable(ur.ur_max_in_bps),
+            h.mode = 'S',   toNullable(ur.ur_max_out_bps),
+            h.mode = 'P+S', toNullable(ur.ur_max_out_bps),
             NULL
         ) AS observed_bps_5m,
         multiIf(
+            -- S: expected is the full group_total (only set when no missing publishers).
             h.mode = 'S' AND gpt.gpt_missing_publisher_count = 0,
                 toNullable(gpt.gpt_total_publisher_rx_bps),
+            -- P+S: expected excludes self's contribution.
+            h.mode = 'P+S' AND ur.ur_present = 1 AND gpt.gpt_missing_publisher_count = 0,
+                toNullable(gpt.gpt_total_publisher_rx_bps - ur.ur_max_in_bps),
             NULL
         ) AS expected_bps_5m,
         multiIf(
-            h.mode IN ('P', 'P+S') AND ur.ur_present = 0, 'no_data',
-            h.mode IN ('P', 'P+S') AND ur.ur_max_in_bps > 0, 'active',
-            h.mode IN ('P', 'P+S'), 'idle',
-            h.mode = 'S' AND ur.ur_present = 0, 'no_data',
-            h.mode = 'S' AND gpt.gpt_missing_publisher_count > 0, 'monitoring_gap',
-            h.mode = 'S' AND gpt.gpt_total_publisher_rx_bps = 0, 'group_idle',
-            h.mode = 'S' AND abs(ur.ur_max_out_bps - gpt.gpt_total_publisher_rx_bps)
-                             <= greatest(0.05 * gpt.gpt_total_publisher_rx_bps, 1000000.0),
+            -- Pure publisher: just observe activity.
+            h.mode = 'P' AND ur.ur_present = 0, 'no_data',
+            h.mode = 'P' AND ur.ur_max_in_bps > 0, 'active',
+            h.mode = 'P', 'idle',
+
+            -- Subscriber-side reconciliation (S and P+S).
+            h.mode IN ('S', 'P+S') AND ur.ur_present = 0, 'no_data',
+            h.mode IN ('S', 'P+S') AND gpt.gpt_missing_publisher_count > 0, 'monitoring_gap',
+
+            -- Expected for P+S excludes self; for S it's the full group total.
+            h.mode = 'P+S' AND (gpt.gpt_total_publisher_rx_bps - ur.ur_max_in_bps) = 0, 'group_idle',
+            h.mode = 'S'   AND gpt.gpt_total_publisher_rx_bps = 0, 'group_idle',
+
+            h.mode = 'P+S' AND abs(ur.ur_max_out_bps - (gpt.gpt_total_publisher_rx_bps - ur.ur_max_in_bps))
+                                <= greatest(0.05 * (gpt.gpt_total_publisher_rx_bps - ur.ur_max_in_bps), 1000000.0),
                 'reconciled',
-            h.mode = 'S', 'mismatch',
+            h.mode = 'S'   AND abs(ur.ur_max_out_bps - gpt.gpt_total_publisher_rx_bps)
+                                <= greatest(0.05 * gpt.gpt_total_publisher_rx_bps, 1000000.0),
+                'reconciled',
+            h.mode IN ('S', 'P+S'), 'mismatch',
             'no_data'
         ) AS rate_status_reason
     FROM health_multicast_user h
     LEFT JOIN user_rates ur
         ON ur.ur_device_pk = h.user_device_pk
        AND ur.ur_user_tunnel_id = h.user_tunnel_id
+       AND ur.ur_user_pk = h.user_pk
     LEFT JOIN group_publisher_total gpt
         ON gpt.gpt_multicast_group_pk = h.multicast_group_pk
 )
