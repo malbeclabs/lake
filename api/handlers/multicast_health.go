@@ -61,7 +61,7 @@ func (a *API) queryMulticastHealthCounts(ctx context.Context, groupPK string) (M
 		SELECT source, health_status, count() AS n FROM (
 			SELECT 'mroutes' AS source, health_status FROM health_mroute WHERE multicast_group_pk = ?
 			UNION ALL
-			SELECT 'users' AS source, health_status FROM health_multicast_user WHERE multicast_group_pk = ?
+			SELECT 'users' AS source, health_status FROM health_multicast_user_rate WHERE multicast_group_pk = ?
 			UNION ALL
 			SELECT 'paths' AS source, health_status FROM health_publisher_subscriber_path WHERE multicast_group_pk = ?
 		)
@@ -109,6 +109,8 @@ func addStatusCount(bucket *MulticastHealthStatusCounts, status string, n uint64
 		bucket.Degraded += n
 	case "unhealthy":
 		bucket.Unhealthy += n
+	case "unknown":
+		bucket.Unknown += n
 	}
 	bucket.Total += n
 }

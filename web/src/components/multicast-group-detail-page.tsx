@@ -31,6 +31,7 @@ import { useChartLegend } from '@/hooks/use-chart-legend'
 import { SmallDropdown } from '@/components/topology/TimeRangeSelector'
 import { InlineFilter } from '@/components/inline-filter'
 import { Pagination } from '@/components/pagination'
+import { MulticastGroupHealthTab } from '@/components/multicast-group-health-tab'
 
 function formatBps(bps: number): string {
   if (bps === 0) return '—'
@@ -1481,9 +1482,14 @@ export function MulticastGroupDetailPage() {
   const navigate = useNavigate()
   const back = useBackLink({ to: '/dz/multicast-groups', label: 'multicast groups' })
   const [searchParams, setSearchParams] = useSearchParams()
-  const activeTab = (searchParams.get('tab') === 'subscribers' ? 'subscribers' : 'publishers') as
-    | 'publishers'
-    | 'subscribers'
+  const tabParam = searchParams.get('tab')
+  const activeTab = (
+    tabParam === 'subscribers'
+      ? 'subscribers'
+      : tabParam === 'health'
+        ? 'health'
+        : 'publishers'
+  ) as 'publishers' | 'subscribers' | 'health'
   const sortField = (searchParams.get('sort') || 'stake_sol') as MemberSortField
   const sortDirection = (searchParams.get('dir') || 'desc') as SortDirection
   const page = parseInt(searchParams.get('page') || '1')
@@ -1495,7 +1501,7 @@ export function MulticastGroupDetailPage() {
   const [selectedSeriesKeys, setSelectedSeriesKeys] = useState<Set<string>>(new Set())
 
   const setActiveTab = useCallback(
-    (tab: 'publishers' | 'subscribers') => {
+    (tab: 'publishers' | 'subscribers' | 'health') => {
       setSearchParams((prev) => {
         const p = new URLSearchParams(prev)
         if (tab === 'publishers') {
@@ -1842,35 +1848,40 @@ export function MulticastGroupDetailPage() {
           </div>
         </div>
 
-        {/* Members filter + tabs */}
-        <div className="flex items-center gap-2 mb-3">
-          <InlineFilter
-            fieldPrefixes={memberFieldPrefixes}
-            entity="multicast-members"
-            autocompleteFields={memberAutocompleteFields}
-            placeholder="Filter members..."
-            onLiveFilterChange={setLiveFilter}
-            filterParams={pk ? { group: pk } : undefined}
-          />
-          {searchFilters.map((filter, idx) => (
-            <button
-              key={`${filter}-${idx}`}
-              onClick={() => removeFilter(filter)}
-              className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors"
-            >
-              {filter}
-              <X className="h-3 w-3" />
-            </button>
-          ))}
-          {searchFilters.length > 1 && (
-            <button
-              onClick={clearAllFilters}
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Clear all
-            </button>
-          )}
-        </div>
+        {/* Members filter + tabs. The Health tab is a reconciliation view
+            that always reports across the full group, so the member filter
+            bar would only mislead operators into thinking it scopes the
+            health queries (it doesn't). Hide it while Health is active. */}
+        {activeTab !== 'health' && (
+          <div className="flex items-center gap-2 mb-3">
+            <InlineFilter
+              fieldPrefixes={memberFieldPrefixes}
+              entity="multicast-members"
+              autocompleteFields={memberAutocompleteFields}
+              placeholder="Filter members..."
+              onLiveFilterChange={setLiveFilter}
+              filterParams={pk ? { group: pk } : undefined}
+            />
+            {searchFilters.map((filter, idx) => (
+              <button
+                key={`${filter}-${idx}`}
+                onClick={() => removeFilter(filter)}
+                className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors"
+              >
+                {filter}
+                <X className="h-3 w-3" />
+              </button>
+            ))}
+            {searchFilters.length > 1 && (
+              <button
+                onClick={clearAllFilters}
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Clear all
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Members table */}
         <div className="border border-border rounded-lg bg-card mb-6">
@@ -1895,12 +1906,27 @@ export function MulticastGroupDetailPage() {
             >
               Subscribers ({subscriberCount})
             </button>
-            {membersFetching && (
+            <button
+              onClick={() => setActiveTab('health')}
+              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px ${
+                activeTab === 'health'
+                  ? 'border-purple-500 text-purple-500'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Health
+            </button>
+            {membersFetching && activeTab !== 'health' && (
               <div className="flex items-center ml-2">
                 <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
               </div>
             )}
           </div>
+          {activeTab === 'health' && pk && (
+            <MulticastGroupHealthTab groupPkOrCode={pk} />
+          )}
+          {activeTab !== 'health' && (
+          <>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
@@ -2045,8 +2071,11 @@ export function MulticastGroupDetailPage() {
               onPageSizeChange={setPageSize}
             />
           )}
+          </>
+          )}
         </div>
 
+        {activeTab !== 'health' && (
         <div className="space-y-6">
           {/* Shred stats chart — only for groups with shred stats */}
           {pk &&
@@ -2067,7 +2096,7 @@ export function MulticastGroupDetailPage() {
             <MulticastTrafficChart
               groupCode={pk}
               members={group.members}
-              activeTab={activeTab}
+              activeTab={activeTab === 'subscribers' ? 'subscribers' : 'publishers'}
               onHoverMember={setHoveredSeriesKey}
               onSelectMember={setSelectedSeriesKeys}
             />
@@ -2076,6 +2105,7 @@ export function MulticastGroupDetailPage() {
           {/* Member count chart */}
           {pk && <MemberCountChart groupCode={pk} />}
         </div>
+        )}
       </div>
     </div>
   )

@@ -2170,6 +2170,177 @@ export async function fetchMulticastGroupShredStats(pkOrCode: string, timeRange?
   return res.json()
 }
 
+// Multicast health (onchain ↔ dataplane reconciliation) types
+
+export type MulticastHealthStatus = 'healthy' | 'degraded' | 'unhealthy' | 'unknown'
+
+export interface MulticastHealthStatusCounts {
+  healthy: number
+  degraded: number
+  unhealthy: number
+  unknown: number
+  total: number
+}
+
+export interface MulticastHealthCounts {
+  mroutes: MulticastHealthStatusCounts
+  users: MulticastHealthStatusCounts
+  paths: MulticastHealthStatusCounts
+}
+
+export interface MulticastHealthGroupRef {
+  pk: string
+  code: string
+  multicast_ip: string
+  status: string
+  publisher_count: number
+  subscriber_count: number
+}
+
+export interface MulticastHealthGroupSummary {
+  group: MulticastHealthGroupRef
+  source_available: boolean
+  generated_at: string
+  counts: MulticastHealthCounts
+}
+
+export type MulticastRateStatus = 'reconciled' | 'mismatch' | 'unknown'
+
+export type MulticastRateStatusReason =
+  | 'active'
+  | 'idle'
+  | 'no_data'
+  | 'reconciled'
+  | 'mismatch'
+  | 'monitoring_gap'
+  | 'group_idle'
+  | 'multi_group_ambiguity'
+
+export interface MulticastHealthUserItem {
+  user_pk: string
+  user_owner_pubkey: string
+  user_dz_ip: string
+  user_tunnel_id: number
+  user_device_pk: string
+  user_device_code: string
+  multicast_group_pk: string
+  multicast_group_code: string
+  group_address: string
+  mode: 'P' | 'S' | 'P+S' | string
+  expected_tunnel_position: string
+  publisher_iif_observed: boolean
+  subscriber_oif_observed: boolean
+  reconciled: boolean
+  // Combined (CP × rate) verdict. The CP-only verdict lives on
+  // control_plane_status, the rate-only verdict on rate_status.
+  health_status: MulticastHealthStatus
+  control_plane_status: MulticastHealthStatus
+  rate_status: MulticastRateStatus
+  rate_status_reason: MulticastRateStatusReason
+  rate_bucket_ts?: string
+  observed_bps_5m?: number
+  expected_bps_5m?: number
+  mismatch_reason?: string
+}
+
+export interface MulticastHealthGroupUsersResponse {
+  group: MulticastHealthGroupRef
+  generated_at: string
+  items: MulticastHealthUserItem[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface MulticastHealthUserResponse {
+  user_pk: string
+  user_owner_pubkey: string
+  user_dz_ip: string
+  user_tunnel_id: number
+  user_device_pk: string
+  user_device_code: string
+  generated_at: string
+  items: MulticastHealthUserItem[]
+}
+
+export interface MulticastHealthPathItem {
+  publisher_user_pk: string
+  publisher_owner_pubkey: string
+  publisher_dz_ip: string
+  publisher_tunnel_id: number
+  publisher_device_pk: string
+  publisher_device_code: string
+  subscriber_user_pk: string
+  subscriber_owner_pubkey: string
+  subscriber_dz_ip: string
+  subscriber_tunnel_id: number
+  subscriber_device_pk: string
+  subscriber_device_code: string
+  publisher_endpoint_observed: boolean
+  subscriber_endpoint_observed: boolean
+  endpoints_reconciled: boolean
+  health_status: MulticastHealthStatus
+  verification_method: 'endpoints_only' | 'full_path' | string
+  missing_endpoint_reasons?: string[]
+}
+
+export interface MulticastHealthGroupPathsResponse {
+  group: MulticastHealthGroupRef
+  generated_at: string
+  items: MulticastHealthPathItem[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export async function fetchMulticastGroupHealth(pkOrCode: string): Promise<MulticastHealthGroupSummary> {
+  const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}/health`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch multicast group health')
+  }
+  return res.json()
+}
+
+export async function fetchMulticastGroupHealthUsers(
+  pkOrCode: string,
+  limit?: number,
+  offset?: number,
+): Promise<MulticastHealthGroupUsersResponse> {
+  const params = new URLSearchParams()
+  if (limit !== undefined) params.set('limit', String(limit))
+  if (offset !== undefined) params.set('offset', String(offset))
+  const qs = params.toString()
+  const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}/health/users${qs ? `?${qs}` : ''}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch multicast group health users')
+  }
+  return res.json()
+}
+
+export async function fetchMulticastGroupHealthPaths(
+  pkOrCode: string,
+  limit?: number,
+  offset?: number,
+): Promise<MulticastHealthGroupPathsResponse> {
+  const params = new URLSearchParams()
+  if (limit !== undefined) params.set('limit', String(limit))
+  if (offset !== undefined) params.set('offset', String(offset))
+  const qs = params.toString()
+  const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}/health/paths${qs ? `?${qs}` : ''}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch multicast group health paths')
+  }
+  return res.json()
+}
+
+export async function fetchUserHealth(pk: string): Promise<MulticastHealthUserResponse> {
+  const res = await apiFetch(`/api/dz/users/${encodeURIComponent(pk)}/health`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch user health')
+  }
+  return res.json()
+}
+
 // Critical links types
 export interface CriticalLink {
   sourcePK: string
