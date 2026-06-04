@@ -12,6 +12,7 @@ import {
   fetchPeeringDBFacility,
   fetchUserHealth,
   type MulticastHealthStatus,
+  type MulticastHealthUserItem,
 } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useBackLink } from '@/hooks/use-back-link'
@@ -25,23 +26,22 @@ const HEALTH_BADGE_CLASS: Record<MulticastHealthStatus, string> = {
   unknown: 'bg-muted text-muted-foreground',
 }
 
-function UserHealthBadge({
-  status,
-  mode,
-  reason,
-}: {
-  status: MulticastHealthStatus
-  mode: string
-  reason?: string
-}) {
-  const cls = HEALTH_BADGE_CLASS[status] ?? HEALTH_BADGE_CLASS.unknown
-  const title = reason ? `${mode}: ${status} — ${reason}` : `${mode}: ${status}`
+function UserHealthBadge({ item }: { item: MulticastHealthUserItem }) {
+  const cls = HEALTH_BADGE_CLASS[item.health_status] ?? HEALTH_BADGE_CLASS.unknown
+  const parts: string[] = [`${item.mode}: ${item.health_status}`]
+  if (item.mismatch_reason) {
+    parts.push(`CP — ${item.mismatch_reason}`)
+  }
+  if (item.rate_status_reason && item.rate_status_reason !== 'active' && item.rate_status_reason !== 'reconciled') {
+    parts.push(`rate — ${item.rate_status_reason}`)
+  }
+  const title = parts.join('\n')
   return (
     <span
       className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${cls}`}
       title={title}
     >
-      {status}
+      {item.health_status}
     </span>
   )
 }
@@ -773,9 +773,7 @@ export function UserDetailPage() {
                       {healthItems.map((it) => (
                         <UserHealthBadge
                           key={`${it.multicast_group_pk}-${it.mode}`}
-                          status={it.health_status}
-                          mode={it.mode}
-                          reason={it.mismatch_reason}
+                          item={it}
                         />
                       ))}
                     </div>

@@ -2203,6 +2203,17 @@ export interface MulticastHealthGroupSummary {
   counts: MulticastHealthCounts
 }
 
+export type MulticastRateStatus = 'reconciled' | 'mismatch' | 'unknown'
+
+export type MulticastRateStatusReason =
+  | 'active'
+  | 'idle'
+  | 'no_data'
+  | 'reconciled'
+  | 'mismatch'
+  | 'monitoring_gap'
+  | 'group_idle'
+
 export interface MulticastHealthUserItem {
   user_pk: string
   user_owner_pubkey: string
@@ -2218,7 +2229,15 @@ export interface MulticastHealthUserItem {
   publisher_iif_observed: boolean
   subscriber_oif_observed: boolean
   reconciled: boolean
+  // Combined (CP × rate) verdict. The CP-only verdict lives on
+  // control_plane_status, the rate-only verdict on rate_status.
   health_status: MulticastHealthStatus
+  control_plane_status: MulticastHealthStatus
+  rate_status: MulticastRateStatus
+  rate_status_reason: MulticastRateStatusReason
+  rate_bucket_ts?: string
+  observed_bps_5m?: number
+  expected_bps_5m?: number
   mismatch_reason?: string
 }
 

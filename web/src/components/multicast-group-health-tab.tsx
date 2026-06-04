@@ -8,7 +8,35 @@ import {
   fetchMulticastGroupHealthPaths,
   type MulticastHealthStatus,
   type MulticastHealthStatusCounts,
+  type MulticastHealthUserItem,
+  type MulticastRateStatus,
+  type MulticastRateStatusReason,
 } from '@/lib/api'
+
+function formatBps(bps?: number): string {
+  if (bps === undefined || bps === null) return '—'
+  if (bps === 0) return '0'
+  if (bps >= 1e9) return `${(bps / 1e9).toFixed(2)} Gbps`
+  if (bps >= 1e6) return `${(bps / 1e6).toFixed(2)} Mbps`
+  if (bps >= 1e3) return `${(bps / 1e3).toFixed(2)} Kbps`
+  return `${bps.toFixed(0)} bps`
+}
+
+const RATE_STATUS_BADGE: Record<MulticastRateStatus, string> = {
+  reconciled: 'bg-emerald-500/15 text-emerald-500',
+  mismatch: 'bg-red-500/15 text-red-500',
+  unknown: 'bg-muted text-muted-foreground',
+}
+
+const RATE_REASON_HUMAN: Record<MulticastRateStatusReason, string> = {
+  active: 'transmitting',
+  idle: 'idle (registered, transmitting 0)',
+  no_data: 'no counter data in 15 min',
+  reconciled: 'TX matches sum of publishers',
+  mismatch: 'TX deviates from sum of publishers',
+  monitoring_gap: 'a publisher in this group has no counter data',
+  group_idle: 'all publishers transmitting 0 — nothing to verify against',
+}
 
 const STATUS_BADGE: Record<MulticastHealthStatus, string> = {
   healthy: 'bg-emerald-500/15 text-emerald-500',
@@ -25,18 +53,19 @@ const STATUS_DOT: Record<MulticastHealthStatus, string> = {
 }
 
 const STATUS_DEFINITIONS: Array<{ status: MulticastHealthStatus; short: string }> = [
-  { status: 'healthy', short: '(S,G) present, SPT bit set, expected tunnel in IIF/OIF' },
-  { status: 'degraded', short: '(S,G) present but flags or tunnel position wrong' },
-  { status: 'unhealthy', short: 'no (S,G) — only (*,G), or expected tunnel missing' },
-  { status: 'unknown', short: 'state-collect has not reported for this device yet' },
+  { status: 'healthy', short: 'control plane reconciles AND subscriber TX matches sum of publishers (±5% / 1 Mbps)' },
+  { status: 'degraded', short: 'control plane reconciles but rates diverge, or partial control plane reconciliation' },
+  { status: 'unhealthy', short: 'no (S,G) mroute, or rates diverge under a degraded control plane' },
+  { status: 'unknown', short: 'no counter data, or no traffic flowing in the 5-min window' },
 ]
 
 const SECTION_HELP = {
   summary:
-    'Per-status totals across three view granularities. A row is rolled up into "healthy" only if reconciliation passes on every dimension.',
+    'Per-status totals across three view granularities. The combined verdict requires control-plane reconciliation (mroute matches onchain) AND data-plane reconciliation (subscriber TX matches sum of publishers within tolerance).',
   users:
-    'Each row pairs one onchain user with the mroute observed at their device. ' +
-    'Publishers expect their Tunnel<N> as the IIF of (S,G); subscribers expect their Tunnel<N> in the OIF list. ' +
+    'Each row pairs one onchain user with the mroute and 5-min rate observed at their device. ' +
+    'Publishers expect their Tunnel<N> as the IIF of (S,G) and to be transmitting; ' +
+    'subscribers expect their Tunnel<N> in the OIF list and to receive at the same rate publishers send. ' +
     'A user in P+S mode contributes two rows.',
   paths:
     'Each row is a (publisher, subscriber) pair belonging to the group. ' +
@@ -51,6 +80,41 @@ function HealthBadge({ status }: { status: MulticastHealthStatus }) {
       {status}
     </span>
   )
+}
+
+function RateCell({ item }: { item: MulticastHealthUserItem }) {
+  const cls = RATE_STATUS_BADGE[item.rate_status] ?? RATE_STATUS_BADGE.unknown
+  const tooltip = (
+    <div className="space-y-1">
+      <div>
+        <span className="font-medium">{item.rate_status_reason}</span> — {RATE_REASON_HUMAN[item.rate_status_reason] ?? ''}
+      </div>
+      <div className="text-muted-foreground">Observed: {formatBps(item.observed_bps_5m)}</div>
+      {item.expected_bps_5m !== undefined && item.expected_bps_5m !== null && (
+        <div className="text-muted-foreground">Expected: {formatBps(item.expected_bps_5m)} (sum of publishers' RX)</div>
+      )}
+      {item.rate_bucket_ts && (
+        <div className="text-muted-foreground">5-min bucket: {new Date(item.rate_bucket_ts).toLocaleTimeString()}</div>
+      )}
+    </div>
+  )
+  return (
+    <Tooltip content={tooltip}>
+      <span className="inline-flex items-center gap-1.5 cursor-help">
+        <span className="tabular-nums font-mono text-xs">{formatBps(item.observed_bps_5m)}</span>
+        <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${cls}`}>
+          {item.rate_status}
+        </span>
+      </span>
+    </Tooltip>
+  )
+}
+
+function rowReason(item: MulticastHealthUserItem): string {
+  if (item.mismatch_reason) return item.mismatch_reason
+  // No CP reason → surface the rate reason (or nothing if rate is healthy/active/reconciled).
+  if (['active', 'reconciled'].includes(item.rate_status_reason)) return '—'
+  return RATE_REASON_HUMAN[item.rate_status_reason] ?? '—'
 }
 
 function HelpIcon({ content }: { content: string }) {
@@ -184,19 +248,20 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
                 <th className="px-4 py-3 font-medium">Mode</th>
                 <th className="px-4 py-3 font-medium">Device</th>
                 <th className="px-4 py-3 font-medium text-right">Tunnel</th>
+                <th className="px-4 py-3 font-medium">Rate (5m)</th>
                 <th className="px-4 py-3 font-medium">Status</th>
                 <th className="px-4 py-3 font-medium">Reason</th>
               </tr>
             </thead>
             <tbody>
-              {usersQuery.data?.items.length === 0 && (
+              {(usersQuery.data?.items ?? []).length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                  <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
                     No multicast users
                   </td>
                 </tr>
               )}
-              {usersQuery.data?.items.map((u) => (
+              {(usersQuery.data?.items ?? []).map((u) => (
                 <tr key={`${u.user_pk}-${u.mode}`} className="border-b border-border last:border-b-0 hover:bg-muted">
                   <td className="px-4 py-3 text-sm">
                     <Link
@@ -227,9 +292,12 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
                     {u.user_tunnel_id > 0 ? u.user_tunnel_id : '—'}
                   </td>
                   <td className="px-4 py-3 text-sm">
+                    <RateCell item={u} />
+                  </td>
+                  <td className="px-4 py-3 text-sm">
                     <HealthBadge status={u.health_status} />
                   </td>
-                  <td className="px-4 py-3 text-sm text-muted-foreground">{u.mismatch_reason || '—'}</td>
+                  <td className="px-4 py-3 text-sm text-muted-foreground">{rowReason(u)}</td>
                 </tr>
               ))}
             </tbody>
@@ -259,14 +327,14 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
               </tr>
             </thead>
             <tbody>
-              {pathsQuery.data?.items.length === 0 && (
+              {(pathsQuery.data?.items ?? []).length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
                     No (publisher, subscriber) pairs
                   </td>
                 </tr>
               )}
-              {pathsQuery.data?.items.map((p) => (
+              {(pathsQuery.data?.items ?? []).map((p) => (
                 <tr
                   key={`${p.publisher_user_pk}-${p.subscriber_user_pk}`}
                   className="border-b border-border last:border-b-0 hover:bg-muted"
