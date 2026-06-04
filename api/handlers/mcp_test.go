@@ -95,6 +95,7 @@ func TestMCPHandler_Initialize(t *testing.T) {
 	serverInfo, ok := result["serverInfo"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "doublezero", serverInfo["name"])
+	assert.Equal(t, "DoubleZero Data", serverInfo["title"])
 	assert.Equal(t, "1.0.0", serverInfo["version"])
 }
 

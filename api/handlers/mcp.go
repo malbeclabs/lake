@@ -33,6 +33,7 @@ func (a *API) InitMCP() http.Handler {
 func (a *API) createMCPServer(r *http.Request) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "doublezero",
+		Title:   "DoubleZero Data",
 		Version: "1.0.0",
 	}, &mcp.ServerOptions{
 		Instructions: "IMPORTANT: Always call get_schema before writing SQL or Cypher queries to understand the available tables, columns, and their types. Do not assume table or column names. All tools are read-only and can be called concurrently.",
