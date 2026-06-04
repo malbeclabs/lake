@@ -13,12 +13,12 @@ import (
 // subscriber reasons (reconciled / mismatch / monitoring_gap / group_idle).
 // Three groups are set up:
 //
-//   grp-rate-clean — full counter data; one active publisher, one matched
-//     subscriber, one mismatched subscriber.
-//   grp-rate-gap — publisher has no counter row in the freshness window;
-//     subscriber's rate goes to unknown via monitoring_gap.
-//   grp-rate-idle — publisher transmits zero; subscriber's rate goes to
-//     unknown via group_idle.
+//	grp-rate-clean — full counter data; one active publisher, one matched
+//	  subscriber, one mismatched subscriber.
+//	grp-rate-gap — publisher has no counter row in the freshness window;
+//	  subscriber's rate goes to unknown via monitoring_gap.
+//	grp-rate-idle — publisher transmits zero; subscriber's rate goes to
+//	  unknown via group_idle.
 //
 // The combined health_status column is verified against the rollup matrix.
 func TestHealthMulticastUserRate(t *testing.T) {
@@ -124,9 +124,9 @@ func TestHealthMulticastUserRate(t *testing.T) {
 	defer rows.Close()
 
 	type row struct {
-		userPK, mode, group              string
-		cp, rate, reason, combined       string
-		observedBps, expectedBps         *float64
+		userPK, mode, group        string
+		cp, rate, reason, combined string
+		observedBps, expectedBps   *float64
 	}
 	got := []row{}
 	for rows.Next() {
@@ -368,6 +368,6 @@ func TestHealthMulticastUserRate_TunnelReuse(t *testing.T) {
 	require.NoError(t, rows.Err())
 
 	// Each user attributed only to their own rollup row, not to each other's.
-	assert.InDelta(t, 1000000,  observed["u-A"], 1, "u-A keeps its own 1 Mbps")
+	assert.InDelta(t, 1000000, observed["u-A"], 1, "u-A keeps its own 1 Mbps")
 	assert.InDelta(t, 99000000, observed["u-B"], 1, "u-B keeps its own 99 Mbps")
 }
