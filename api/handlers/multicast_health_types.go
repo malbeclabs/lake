@@ -12,6 +12,11 @@ type MulticastHealthGroupSummaryResponse struct {
 	Counts          MulticastHealthCounts  `json:"counts"`
 }
 
+type MulticastHealthSummariesCache struct {
+	GeneratedAt string                                `json:"generated_at"`
+	Summaries   []MulticastHealthGroupSummaryResponse `json:"summaries"`
+}
+
 // MulticastHealthCounts breaks the per-status totals down across the three
 // view granularities for a group. A consumer can read this to render a
 // per-group health dashboard summary without fetching the full row sets.
