@@ -16,6 +16,7 @@ import { DeviceInterfaceIssuesChart } from '@/components/device-charts/DeviceInt
 import { DeviceTrafficChart } from '@/components/device-charts/DeviceTrafficChart'
 import { DeviceControllerCallsChart } from '@/components/device-charts/DeviceControllerCallsChart'
 import { DeviceOpticsPanel } from '@/components/device-charts/DeviceOpticsPanel'
+import { DeviceMulticastDeliveryPanel } from '@/components/multicast-delivery-panel'
 import { TimeRangeSelector } from '@/components/topology/TimeRangeSelector'
 import type { TimeRange } from '@/components/topology/utils'
 import { useActiveOpsTickets, useOpsTicketHistory } from '@/hooks/use-ops-tickets'
@@ -212,6 +213,9 @@ export function DeviceDetailPage() {
             onSuccess={() => setShowCreateIncident(false)}
           />
         )}
+        <div className="mt-6">
+          <DeviceMulticastDeliveryPanel devicePk={device.pk} />
+        </div>
       </div>
 
       {/* Filters + charts */}

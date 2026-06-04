@@ -2264,6 +2264,9 @@ export interface MulticastHealthUserResponse {
 }
 
 export interface MulticastHealthPathItem {
+  multicast_group_pk?: string
+  multicast_group_code?: string
+  group_address?: string
   publisher_user_pk: string
   publisher_owner_pubkey: string
   publisher_dz_ip: string
@@ -2337,6 +2340,286 @@ export async function fetchUserHealth(pk: string): Promise<MulticastHealthUserRe
   const res = await apiFetch(`/api/dz/users/${encodeURIComponent(pk)}/health`)
   if (!res.ok) {
     throw new Error('Failed to fetch user health')
+  }
+  return res.json()
+}
+
+export type MulticastDeliveryFreshnessStatus = 'fresh' | 'stale' | 'missing' | 'unavailable'
+
+export interface MulticastDeliverySourceFreshness {
+  available: boolean
+  status: MulticastDeliveryFreshnessStatus | string
+  row_count: number
+  latest_snapshot_ts?: string
+  latest_ingested_at?: string
+  age_seconds?: number
+  note?: string
+}
+
+export interface MulticastDeliveryFreshness {
+  mroute: MulticastDeliverySourceFreshness
+  msdp_peers: MulticastDeliverySourceFreshness
+  msdp_pim_sa_cache: MulticastDeliverySourceFreshness
+  msdp_sa_cache: MulticastDeliverySourceFreshness
+  pim_neighbors: MulticastDeliverySourceFreshness
+}
+
+export interface MulticastEntityHealthStatusCounts {
+  healthy: number
+  degraded: number
+  unhealthy: number
+  unknown: number
+  total: number
+}
+
+export interface MulticastDeliveryEntityGroup {
+  group_pk: string
+  group_code: string
+  group_address: string
+  source_count: number
+  mroute_count: number
+  oif_count: number
+  health_counts: MulticastEntityHealthStatusCounts
+}
+
+export interface MulticastDeliveryRole {
+  role: string
+  label: string
+  description: string
+  group_count: number
+  source_count: number
+  mroute_count: number
+  oif_count: number
+  health_counts: MulticastEntityHealthStatusCounts
+}
+
+export interface MulticastDeliveryDirection {
+  direction: 'a_to_z' | 'z_to_a' | 'unknown' | string
+  label: string
+  group_count: number
+  source_count: number
+  branch_count: number
+}
+
+export interface MulticastDeliveryMroute {
+  mroute_id: string
+  entity_id: string
+  snapshot_ts: string
+  ingested_at: string
+  age_seconds: number
+  freshness_status: string
+  device_pk: string
+  device_code: string
+  device_status: string
+  device_type: string
+  metro_code: string
+  contributor_code: string
+  vrf: string
+  mode: string
+  group_address: string
+  multicast_group_pk?: string
+  multicast_group_code?: string
+  source_address: string
+  route_flags: string
+  register_in_oif_list: boolean
+  rpf_interface: string
+  rpf_rib: string
+  rpf_prefix: string
+  rpf_preference: number
+  rpf_metric: number
+  rpf_neighbor: string
+  rpf_attached: boolean
+  rpf_has_block: boolean
+  oif_list: string
+  oif_count: number
+  creation_time: string
+  publisher_user_pk: string
+  publisher_device_pk: string
+  publisher_device_code: string
+  publisher_metro_code: string
+  publisher_contributor_code: string
+  publisher_tunnel_id: number
+  publisher_owner_pubkey: string
+  publisher_dz_ip: string
+  source_match_status: string
+}
+
+export interface MulticastDeliveryOIF {
+  mroute_id: string
+  entity_id: string
+  snapshot_ts: string
+  age_seconds: number
+  freshness_status: string
+  device_pk: string
+  device_code: string
+  group_address: string
+  multicast_group_pk?: string
+  multicast_group_code?: string
+  source_address: string
+  publisher_user_pk: string
+  publisher_device_pk: string
+  publisher_device_code?: string
+  oif_name: string
+  oif_kind: string
+  observed_delivery_role: string
+  link_pk?: string
+  link_code?: string
+  link_side?: string
+  peer_device_pk?: string
+  peer_device_code?: string
+  peer_interface_name?: string
+  link_type?: string
+  bandwidth_bps?: number
+  link_topologies?: string
+  unicast_drained?: boolean
+  interface_type?: string
+  routing_mode?: string
+  interface_bandwidth?: number
+  interface_mtu?: number
+  user_tunnel_endpoint?: boolean
+  subscriber_user_pk?: string
+  subscriber_device_pk?: string
+  subscriber_device_code?: string
+  subscriber_tunnel_id?: number
+  subscriber_owner_pubkey?: string
+  subscriber_dz_ip?: string
+  subscriber_client_ip?: string
+}
+
+export interface MulticastDeliveryLinkBranch extends MulticastDeliveryOIF {
+  direction: 'a_to_z' | 'z_to_a' | 'unknown' | string
+}
+
+export interface MulticastDeliveryAnomaly {
+  id: string
+  severity: string
+  kind: string
+  scope: string
+  object_ids: Record<string, string>
+  message: string
+}
+
+export interface DeviceMulticastDeliverySummary {
+  group_count: number
+  source_count: number
+  mroute_count: number
+  routes_with_oifs: number
+  oif_count: number
+  underlay_oif_count: number
+  subscriber_tunnel_oif_count: number
+  msdp_peer_count: number
+  msdp_sa_count: number
+  user_health_counts: MulticastEntityHealthStatusCounts
+  endpoint_health_counts: MulticastEntityHealthStatusCounts
+  anomaly_count: number
+}
+
+export interface LinkMulticastDeliverySummary {
+  group_count: number
+  source_count: number
+  branch_count: number
+  a_to_z_count: number
+  z_to_a_count: number
+  unknown_direction_count: number
+  reporting_device_count: number
+  related_group_health_counts: MulticastEntityHealthStatusCounts
+  anomaly_count: number
+}
+
+export interface DeviceMulticastDeliveryResponse {
+  device: Pick<Device, 'pk' | 'code' | 'status' | 'device_type' | 'contributor_pk' | 'contributor_code' | 'metro_pk' | 'metro_code'>
+  source_available: boolean
+  generated_at: string
+  freshness: MulticastDeliveryFreshness
+  coverage_note: string
+  health_context_note: string
+  summary: DeviceMulticastDeliverySummary
+  groups: MulticastDeliveryEntityGroup[]
+  roles: MulticastDeliveryRole[]
+  health_users: MulticastHealthUserItem[]
+  health_user_total: number
+  endpoint_health_items: MulticastHealthPathItem[]
+  endpoint_health_total: number
+  endpoint_limit: number
+  endpoint_offset: number
+  routes: MulticastDeliveryMroute[]
+  oifs: MulticastDeliveryOIF[]
+  route_total: number
+  oif_total: number
+  limit: number
+  offset: number
+  anomalies: MulticastDeliveryAnomaly[]
+}
+
+export interface LinkMulticastDeliveryResponse {
+  link: Pick<Link, 'pk' | 'code' | 'status' | 'link_type' | 'side_a_pk' | 'side_a_code' | 'side_a_iface_name' | 'side_z_pk' | 'side_z_code' | 'side_z_iface_name' | 'contributor_pk' | 'contributor_code'>
+  source_available: boolean
+  generated_at: string
+  freshness: MulticastDeliveryFreshness
+  coverage_note: string
+  health_context_note: string
+  summary: LinkMulticastDeliverySummary
+  groups: MulticastDeliveryEntityGroup[]
+  branches: MulticastDeliveryLinkBranch[]
+  directions: MulticastDeliveryDirection[]
+  branch_total: number
+  limit: number
+  offset: number
+  anomalies: MulticastDeliveryAnomaly[]
+}
+
+export interface FetchMulticastDeliveryParams {
+  limit?: number
+  offset?: number
+  endpointLimit?: number
+  endpointOffset?: number
+  group?: string
+  source?: string
+  endpointIp?: string
+  health?: MulticastHealthStatus
+  oifKind?: string
+  role?: string
+  direction?: 'a_to_z' | 'z_to_a' | 'unknown'
+}
+
+function multicastDeliverySearchParams(params: FetchMulticastDeliveryParams = {}): URLSearchParams {
+  const search = new URLSearchParams()
+  if (params.limit !== undefined) search.set('limit', String(params.limit))
+  if (params.offset !== undefined) search.set('offset', String(params.offset))
+  if (params.endpointLimit !== undefined) search.set('endpoint_limit', String(params.endpointLimit))
+  if (params.endpointOffset !== undefined) search.set('endpoint_offset', String(params.endpointOffset))
+  if (params.group) search.set('group', params.group)
+  if (params.source) search.set('source', params.source)
+  if (params.endpointIp) search.set('endpoint_ip', params.endpointIp)
+  if (params.health) search.set('health', params.health)
+  if (params.oifKind) search.set('oif_kind', params.oifKind)
+  if (params.role) search.set('role', params.role)
+  if (params.direction) search.set('direction', params.direction)
+  return search
+}
+
+export async function fetchDeviceMulticastDelivery(
+  pk: string,
+  params: FetchMulticastDeliveryParams = {},
+): Promise<DeviceMulticastDeliveryResponse> {
+  const search = multicastDeliverySearchParams(params)
+  const qs = search.toString()
+  const res = await apiFetch(`/api/dz/devices/${encodeURIComponent(pk)}/multicast-delivery${qs ? `?${qs}` : ''}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch device multicast delivery')
+  }
+  return res.json()
+}
+
+export async function fetchLinkMulticastDelivery(
+  pk: string,
+  params: FetchMulticastDeliveryParams = {},
+): Promise<LinkMulticastDeliveryResponse> {
+  const search = multicastDeliverySearchParams(params)
+  const qs = search.toString()
+  const res = await apiFetch(`/api/dz/links/${encodeURIComponent(pk)}/multicast-delivery${qs ? `?${qs}` : ''}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch link multicast delivery')
   }
   return res.json()
 }

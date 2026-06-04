@@ -79,6 +79,9 @@ type MulticastHealthUserResponse struct {
 
 // MulticastHealthPathItem matches one row of health_publisher_subscriber_path.
 type MulticastHealthPathItem struct {
+	MulticastGroupPK           string   `json:"multicast_group_pk,omitempty"`
+	MulticastGroupCode         string   `json:"multicast_group_code,omitempty"`
+	GroupAddress               string   `json:"group_address,omitempty"`
 	PublisherUserPK            string   `json:"publisher_user_pk"`
 	PublisherOwnerPubkey       string   `json:"publisher_owner_pubkey"`
 	PublisherDZIP              string   `json:"publisher_dz_ip"`
