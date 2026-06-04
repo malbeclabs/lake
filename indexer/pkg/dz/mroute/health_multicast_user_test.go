@@ -131,10 +131,11 @@ func TestHealthMulticastUser_Reconciliation(t *testing.T) {
 //   - (S=10.99.5.20, G=233.99.99.5) → OIF does NOT include Tunnel610  ← gap
 //
 // Expected result for u-sub-partial:
-//   subscriber_total_sources       = 2
-//   subscriber_oif_present_sources = 1
-//   health_status                  = degraded
-//   mismatch_reason contains "1 of 2"
+//
+//	subscriber_total_sources       = 2
+//	subscriber_oif_present_sources = 1
+//	health_status                  = degraded
+//	mismatch_reason contains "1 of 2"
 func TestHealthMulticastUser_PartialDelivery(t *testing.T) {
 	info := laketesting.NewClientWithInfo(t, sharedDB)
 	conn, err := info.Client.Conn(t.Context())
