@@ -1,5 +1,7 @@
 package handlers
 
+import "time"
+
 // Response shapes for the multicast health endpoints (infra#1501 Track 2).
 // Each is a thin packaging around the underlying health_* ClickHouse views.
 
@@ -26,24 +28,32 @@ type MulticastHealthStatusCounts struct {
 	Total     uint64 `json:"total"`
 }
 
-// MulticastHealthUserItem matches one row of health_multicast_user.
+// MulticastHealthUserItem matches one row of health_multicast_user_rate.
+// HealthStatus is the combined CP × rate verdict; ControlPlaneStatus and
+// RateStatus carry the per-dimension verdicts so callers can drill in.
 type MulticastHealthUserItem struct {
-	UserPK                string `json:"user_pk"`
-	UserOwnerPubkey       string `json:"user_owner_pubkey"`
-	UserDZIP              string `json:"user_dz_ip"`
-	UserTunnelID          int32  `json:"user_tunnel_id"`
-	UserDevicePK          string `json:"user_device_pk"`
-	UserDeviceCode        string `json:"user_device_code"`
-	MulticastGroupPK      string `json:"multicast_group_pk"`
-	MulticastGroupCode    string `json:"multicast_group_code"`
-	GroupAddress          string `json:"group_address"`
-	Mode                  string `json:"mode"`
-	ExpectedTunnelPos     string `json:"expected_tunnel_position"`
-	PublisherIIFObserved  bool   `json:"publisher_iif_observed"`
-	SubscriberOIFObserved bool   `json:"subscriber_oif_observed"`
-	Reconciled            bool   `json:"reconciled"`
-	HealthStatus          string `json:"health_status"`
-	MismatchReason        string `json:"mismatch_reason,omitempty"`
+	UserPK                string     `json:"user_pk"`
+	UserOwnerPubkey       string     `json:"user_owner_pubkey"`
+	UserDZIP              string     `json:"user_dz_ip"`
+	UserTunnelID          int32      `json:"user_tunnel_id"`
+	UserDevicePK          string     `json:"user_device_pk"`
+	UserDeviceCode        string     `json:"user_device_code"`
+	MulticastGroupPK      string     `json:"multicast_group_pk"`
+	MulticastGroupCode    string     `json:"multicast_group_code"`
+	GroupAddress          string     `json:"group_address"`
+	Mode                  string     `json:"mode"`
+	ExpectedTunnelPos     string     `json:"expected_tunnel_position"`
+	PublisherIIFObserved  bool       `json:"publisher_iif_observed"`
+	SubscriberOIFObserved bool       `json:"subscriber_oif_observed"`
+	Reconciled            bool       `json:"reconciled"`
+	ControlPlaneStatus    string     `json:"control_plane_status"`
+	MismatchReason        string     `json:"mismatch_reason,omitempty"`
+	RateBucketTS          *time.Time `json:"rate_bucket_ts,omitempty"`
+	ObservedBps5m         *float64   `json:"observed_bps_5m,omitempty"`
+	ExpectedBps5m         *float64   `json:"expected_bps_5m,omitempty"`
+	RateStatus            string     `json:"rate_status"`
+	RateStatusReason      string     `json:"rate_status_reason"`
+	HealthStatus          string     `json:"health_status"`
 }
 
 type MulticastHealthGroupUsersResponse struct {

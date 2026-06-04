@@ -96,8 +96,11 @@ func (a *API) GetUserHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// queryMulticastHealthUsers reads from health_multicast_user with a single
-// WHERE clause filter (either "multicast_group_pk = ?" or "user_pk = ?").
+// queryMulticastHealthUsers reads from health_multicast_user_rate with a
+// single WHERE clause filter (either "multicast_group_pk = ?" or
+// "user_pk = ?"). The view exposes both the CP-only verdict
+// (control_plane_status) and the combined verdict (health_status); we
+// surface both so consumers can drill in.
 func (a *API) queryMulticastHealthUsers(ctx context.Context, whereClause string, arg any) ([]MulticastHealthUserItem, error) {
 	query := `
 		SELECT
@@ -115,9 +118,15 @@ func (a *API) queryMulticastHealthUsers(ctx context.Context, whereClause string,
 			publisher_iif_observed,
 			subscriber_oif_observed,
 			reconciled,
-			health_status,
-			mismatch_reason
-		FROM health_multicast_user
+			control_plane_status,
+			mismatch_reason,
+			rate_bucket_ts,
+			observed_bps_5m,
+			expected_bps_5m,
+			rate_status,
+			rate_status_reason,
+			health_status
+		FROM health_multicast_user_rate
 		WHERE ` + whereClause + `
 		ORDER BY multicast_group_code, user_pk
 		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0
@@ -148,8 +157,14 @@ func (a *API) queryMulticastHealthUsers(ctx context.Context, whereClause string,
 			&it.PublisherIIFObserved,
 			&it.SubscriberOIFObserved,
 			&it.Reconciled,
-			&it.HealthStatus,
+			&it.ControlPlaneStatus,
 			&it.MismatchReason,
+			&it.RateBucketTS,
+			&it.ObservedBps5m,
+			&it.ExpectedBps5m,
+			&it.RateStatus,
+			&it.RateStatusReason,
+			&it.HealthStatus,
 		); err != nil {
 			return nil, err
 		}
