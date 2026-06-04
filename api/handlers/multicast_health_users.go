@@ -34,20 +34,18 @@ func (a *API) GetMulticastGroupHealthUsers(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	items, err := a.queryMulticastHealthUsers(ctx, "multicast_group_pk = ?", group.PK)
+	limit, offset := parseLimitOffset(r)
+	items, total, err := a.queryMulticastHealthUsers(ctx, "multicast_group_pk = ?", []any{group.PK}, limit, offset)
 	if err != nil {
 		logError("multicast group health/users query error", "error", err, "pk", group.PK)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 		return
 	}
 
-	limit, offset := parseLimitOffset(r)
-	page, total := applyPagination(items, limit, offset)
-
 	writeJSON(w, MulticastHealthGroupUsersResponse{
 		Group:       group,
 		GeneratedAt: formatMulticastTime(time.Now().UTC()),
-		Items:       page,
+		Items:       items,
 		Total:       total,
 		Limit:       limit,
 		Offset:      offset,
@@ -65,7 +63,7 @@ func (a *API) GetUserHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items, err := a.queryMulticastHealthUsers(ctx, "user_pk = ?", userPK)
+	items, _, err := a.queryMulticastHealthUsers(ctx, "user_pk = ?", []any{userPK}, 0, 0)
 	if err != nil {
 		logError("user health query error", "error", err, "user_pk", userPK)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
@@ -101,7 +99,23 @@ func (a *API) GetUserHealth(w http.ResponseWriter, r *http.Request) {
 // "user_pk = ?"). The view exposes both the CP-only verdict
 // (control_plane_status) and the combined verdict (health_status); we
 // surface both so consumers can drill in.
-func (a *API) queryMulticastHealthUsers(ctx context.Context, whereClause string, arg any) ([]MulticastHealthUserItem, error) {
+func (a *API) queryMulticastHealthUsers(ctx context.Context, whereClause string, args []any, limit, offset int) ([]MulticastHealthUserItem, int, error) {
+	total := 0
+	if limit > 0 {
+		var err error
+		total, err = a.queryMulticastHealthTotal(ctx, "health_multicast_user_rate", whereClause, args, "multicast_health_users_count")
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+
+	limitClause := ""
+	queryArgs := append([]any{}, args...)
+	if limit > 0 {
+		limitClause = "\n\t\tLIMIT ? OFFSET ?"
+		queryArgs = append(queryArgs, limit, offset)
+	}
+
 	query := `
 		SELECT
 			user_pk,
@@ -128,22 +142,21 @@ func (a *API) queryMulticastHealthUsers(ctx context.Context, whereClause string,
 			health_status
 		FROM health_multicast_user_rate
 		WHERE ` + whereClause + `
-		-- Stream every row in this group/user; sort actionable rows first
-		-- (unhealthy → degraded → unknown → healthy) so any consumer that
-		-- truncates lands on the rows operators most need to see.
+		-- Sort actionable rows first (unhealthy → degraded → unknown → healthy)
+		-- so paginated consumers land on the rows operators most need to see.
 		ORDER BY
 			multiIf(health_status = 'unhealthy', 0,
 			        health_status = 'degraded',  1,
 			        health_status = 'unknown',   2,
 			                                     3),
-			multicast_group_code, user_pk
+			multicast_group_code, user_pk` + limitClause + `
 		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0
 	`
 	start := time.Now()
-	rows, err := a.envDB(ctx).Query(ctx, query, arg)
+	rows, err := a.envDB(ctx).Query(ctx, query, queryArgs...)
 	metrics.RecordClickHouseQuery("multicast_health_users", time.Since(start), err)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -174,9 +187,15 @@ func (a *API) queryMulticastHealthUsers(ctx context.Context, whereClause string,
 			&it.RateStatusReason,
 			&it.HealthStatus,
 		); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		items = append(items, it)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	if limit == 0 {
+		total = len(items)
+	}
+	return items, total, nil
 }

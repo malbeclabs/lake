@@ -126,6 +126,9 @@ func (a *Activities) entries() []cacheEntry {
 		{"geo validators", "geo_validators", func(ctx context.Context) (any, error) {
 			return api.FetchGeoValidatorsData(ctx, "", "")
 		}},
+		{"multicast health summaries", handlers.MulticastHealthSummariesCacheKey, func(ctx context.Context) (any, error) {
+			return api.FetchMulticastHealthSummariesData(ctx, handlers.ShredGroupPK)
+		}},
 	}
 }
 

@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -14,9 +15,13 @@ import (
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
+// MulticastHealthSummariesCacheKey is the page-cache key for hot multicast
+// group health summaries.
+const MulticastHealthSummariesCacheKey = "multicast_health_summaries"
+
 // GetMulticastGroupHealth returns per-group health counts across mroutes,
 // multicast users, and publisher↔subscriber paths. Reads from the three
-// health_* views.
+// health_* views, or from the page cache for mainnet requests when available.
 func (a *API) GetMulticastGroupHealth(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
@@ -27,7 +32,16 @@ func (a *API) GetMulticastGroupHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	group, err := a.queryMulticastDeliveryGroup(ctx, pkOrCode)
+	if isMainnet(r.Context()) {
+		if cached, ok := a.readMulticastHealthSummaryCache(ctx, pkOrCode); ok {
+			w.Header().Set("X-Cache", "HIT")
+			writeJSON(w, cached)
+			return
+		}
+	}
+	w.Header().Set("X-Cache", "MISS")
+
+	resp, err := a.FetchMulticastGroupHealthData(ctx, pkOrCode)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			http.Error(w, "multicast group not found", http.StatusNotFound)
@@ -38,19 +52,80 @@ func (a *API) GetMulticastGroupHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	counts, err := a.queryMulticastHealthCounts(ctx, group.PK)
+	writeJSON(w, resp)
+}
+
+func (a *API) readMulticastHealthSummaryCache(ctx context.Context, pkOrCode string) (*MulticastHealthGroupSummaryResponse, bool) {
+	data, err := a.readPageCache(ctx, MulticastHealthSummariesCacheKey)
 	if err != nil {
-		logError("multicast health counts error", "error", err, "pk", group.PK)
-		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
-		return
+		return nil, false
 	}
 
-	writeJSON(w, MulticastHealthGroupSummaryResponse{
+	var cached MulticastHealthSummariesCache
+	if err := json.Unmarshal(data, &cached); err != nil {
+		return nil, false
+	}
+
+	for i := range cached.Summaries {
+		summary := cached.Summaries[i]
+		if summary.Group.PK == pkOrCode || summary.Group.Code == pkOrCode {
+			return &summary, true
+		}
+	}
+	return nil, false
+}
+
+// FetchMulticastGroupHealthData performs the live per-group summary query.
+func (a *API) FetchMulticastGroupHealthData(ctx context.Context, pkOrCode string) (*MulticastHealthGroupSummaryResponse, error) {
+	group, err := a.queryMulticastDeliveryGroup(ctx, pkOrCode)
+	if err != nil {
+		return nil, err
+	}
+
+	counts, err := a.queryMulticastHealthCounts(ctx, group.PK)
+	if err != nil {
+		return nil, err
+	}
+
+	return &MulticastHealthGroupSummaryResponse{
 		Group:           group,
 		SourceAvailable: true,
 		GeneratedAt:     formatMulticastTime(time.Now().UTC()),
 		Counts:          counts,
-	})
+	}, nil
+}
+
+// FetchMulticastHealthSummariesData builds the page-cache payload for hot
+// multicast group health summaries. With no explicit groups it caches the
+// large edge-solana-shreds group, which is the high-cardinality Health tab.
+func (a *API) FetchMulticastHealthSummariesData(ctx context.Context, pkOrCodes ...string) (*MulticastHealthSummariesCache, error) {
+	if len(pkOrCodes) == 0 {
+		pkOrCodes = []string{ShredGroupPK}
+	}
+
+	generatedAt := formatMulticastTime(time.Now().UTC())
+	cache := &MulticastHealthSummariesCache{
+		GeneratedAt: generatedAt,
+		Summaries:   []MulticastHealthGroupSummaryResponse{},
+	}
+	seen := map[string]bool{}
+	for _, pkOrCode := range pkOrCodes {
+		if pkOrCode == "" || seen[pkOrCode] {
+			continue
+		}
+		seen[pkOrCode] = true
+
+		summary, err := a.FetchMulticastGroupHealthData(ctx, pkOrCode)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			return nil, err
+		}
+		summary.GeneratedAt = generatedAt
+		cache.Summaries = append(cache.Summaries, *summary)
+	}
+	return cache, nil
 }
 
 // queryMulticastHealthCounts rolls up per-status totals across the three
@@ -116,7 +191,8 @@ func addStatusCount(bucket *MulticastHealthStatusCounts, status string, n uint64
 }
 
 // parseLimitOffset extracts optional pagination params. Both default to 0,
-// which means "stream all rows" (no slicing in the handler).
+// which means "stream all rows" for handlers that don't set a bounded
+// default before querying.
 func parseLimitOffset(r *http.Request) (limit, offset int) {
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -131,22 +207,21 @@ func parseLimitOffset(r *http.Request) (limit, offset int) {
 	return
 }
 
-// applyPagination slices items per requested limit/offset. limit=0 means
-// return all rows; offset is applied before limit. Returns the original
-// total before pagination so callers can include it in the response.
-func applyPagination[T any](items []T, limit, offset int) (page []T, total int) {
-	total = len(items)
-	if offset < 0 {
-		offset = 0
+func (a *API) queryMulticastHealthTotal(ctx context.Context, table, whereClause string, args []any, metricName string) (int, error) {
+	query := `
+		SELECT count()
+		FROM ` + table + `
+		WHERE ` + whereClause + `
+		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0
+	`
+	var total uint64
+	start := time.Now()
+	err := a.envDB(ctx).QueryRow(ctx, query, args...).Scan(&total)
+	metrics.RecordClickHouseQuery(metricName, time.Since(start), err)
+	if err != nil {
+		return 0, err
 	}
-	if offset > total {
-		offset = total
-	}
-	items = items[offset:]
-	if limit > 0 && limit < len(items) {
-		items = items[:limit]
-	}
-	return items, total
+	return int(total), nil
 }
 
 // Lower-cased helper for the per-(pk-or-code) pattern, mirroring the existing

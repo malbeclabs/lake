@@ -70,12 +70,12 @@ func makeGroupHealthRequest(api *handlers.API, group string, path string) (*http
 
 func executeRequest(api *handlers.API, req *http.Request, path string) (*httptest.ResponseRecorder, []byte) {
 	rr := httptest.NewRecorder()
-	switch path {
-	case "/health":
+	switch req.URL.Path {
+	case "/api/dz/multicast-groups/" + chi.URLParam(req, "pk") + "/health":
 		api.GetMulticastGroupHealth(rr, req)
-	case "/health/users":
+	case "/api/dz/multicast-groups/" + chi.URLParam(req, "pk") + "/health/users":
 		api.GetMulticastGroupHealthUsers(rr, req)
-	case "/health/paths":
+	case "/api/dz/multicast-groups/" + chi.URLParam(req, "pk") + "/health/paths":
 		api.GetMulticastGroupHealthPaths(rr, req)
 	case "/user-health":
 		api.GetUserHealth(rr, req)
@@ -91,6 +91,7 @@ func TestGetMulticastGroupHealth_Summary(t *testing.T) {
 
 	rr, body := makeGroupHealthRequest(api, "test-group", "/health")
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", string(body))
+	assert.Equal(t, "MISS", rr.Header().Get("X-Cache"))
 
 	var resp handlers.MulticastHealthGroupSummaryResponse
 	require.NoError(t, json.Unmarshal(body, &resp))
@@ -109,6 +110,60 @@ func TestGetMulticastGroupHealth_Summary(t *testing.T) {
 	// 2 mroute rows (FHR + LHR), both healthy.
 	assert.EqualValues(t, 2, resp.Counts.Mroutes.Total)
 	assert.EqualValues(t, 2, resp.Counts.Mroutes.Healthy)
+}
+
+func TestFetchMulticastHealthSummariesData(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertMulticastTestData(t, api)
+	insertMulticastHealthFixtures(t, api)
+
+	cache, err := api.FetchMulticastHealthSummariesData(t.Context(), "test-group")
+	require.NoError(t, err)
+
+	var summary *handlers.MulticastHealthGroupSummaryResponse
+	for i := range cache.Summaries {
+		if cache.Summaries[i].Group.Code == "test-group" {
+			summary = &cache.Summaries[i]
+			break
+		}
+	}
+	require.NotNil(t, summary)
+	assert.True(t, summary.SourceAvailable)
+	assert.EqualValues(t, 2, summary.Counts.Users.Total)
+	assert.EqualValues(t, 1, summary.Counts.Paths.Total)
+	assert.EqualValues(t, 2, summary.Counts.Mroutes.Total)
+}
+
+func TestGetMulticastGroupHealth_UsesPageCache(t *testing.T) {
+	api := apitesting.NewTestAPIPg(t, testPgDB)
+	cached := handlers.MulticastHealthGroupSummaryResponse{
+		Group: handlers.MulticastDeliveryGroup{
+			PK:              "cached-group-pk",
+			Code:            "cached-group-code",
+			MulticastIP:     "233.0.0.42",
+			PublisherCount:  4,
+			SubscriberCount: 5,
+		},
+		SourceAvailable: true,
+		GeneratedAt:     "2026-06-05T00:00:00Z",
+		Counts: handlers.MulticastHealthCounts{
+			Paths: handlers.MulticastHealthStatusCounts{Healthy: 40, Unhealthy: 2, Total: 42},
+		},
+	}
+	require.NoError(t, api.WritePageCache(t.Context(), handlers.MulticastHealthSummariesCacheKey, handlers.MulticastHealthSummariesCache{
+		GeneratedAt: cached.GeneratedAt,
+		Summaries:   []handlers.MulticastHealthGroupSummaryResponse{cached},
+	}))
+
+	rr, body := makeGroupHealthRequest(api, "cached-group-code", "/health")
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", string(body))
+	assert.Equal(t, "HIT", rr.Header().Get("X-Cache"))
+
+	var resp handlers.MulticastHealthGroupSummaryResponse
+	require.NoError(t, json.Unmarshal(body, &resp))
+	assert.Equal(t, "cached-group-pk", resp.Group.PK)
+	assert.EqualValues(t, 42, resp.Counts.Paths.Total)
 }
 
 func TestGetMulticastGroupHealth_NotFound(t *testing.T) {
@@ -162,18 +217,38 @@ func TestGetMulticastGroupHealth_Users(t *testing.T) {
 	assert.InDelta(t, 10_000_000, *sub.ObservedBps5m, 1)
 }
 
+func TestGetMulticastGroupHealth_UsersPagination(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertMulticastTestData(t, api)
+	insertMulticastHealthFixtures(t, api)
+
+	rr, body := makeGroupHealthRequest(api, "test-group", "/health/users?limit=1&offset=1")
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", string(body))
+
+	var resp handlers.MulticastHealthGroupUsersResponse
+	require.NoError(t, json.Unmarshal(body, &resp))
+	assert.EqualValues(t, 2, resp.Total)
+	assert.EqualValues(t, 1, resp.Limit)
+	assert.EqualValues(t, 1, resp.Offset)
+	require.Len(t, resp.Items, 1)
+}
+
 func TestGetMulticastGroupHealth_Paths(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertMulticastTestData(t, api)
 	insertMulticastHealthFixtures(t, api)
 
-	rr, body := makeGroupHealthRequest(api, "test-group", "/health/paths")
+	rr, body := makeGroupHealthRequest(api, "test-group", "/health/paths?limit=1&offset=0")
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", string(body))
 
 	var resp handlers.MulticastHealthGroupPathsResponse
 	require.NoError(t, json.Unmarshal(body, &resp))
 	assert.Equal(t, "test-group", resp.Group.Code)
+	assert.EqualValues(t, 1, resp.Total)
+	assert.EqualValues(t, 1, resp.Limit)
+	assert.EqualValues(t, 0, resp.Offset)
 	require.Len(t, resp.Items, 1)
 	assert.Equal(t, "user-pub", resp.Items[0].PublisherUserPK)
 	assert.Equal(t, "user-sub", resp.Items[0].SubscriberUserPK)
