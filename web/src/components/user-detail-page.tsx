@@ -5,11 +5,46 @@ import { Loader2, Users, AlertCircle, ArrowLeft, RefreshCw } from 'lucide-react'
 import { CopyableText } from '@/components/copyable-text'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
-import { fetchUser, fetchUserTraffic, fetchUserMulticastGroups, fetchPeeringDBFacility } from '@/lib/api'
+import {
+  fetchUser,
+  fetchUserTraffic,
+  fetchUserMulticastGroups,
+  fetchPeeringDBFacility,
+  fetchUserHealth,
+  type MulticastHealthStatus,
+} from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useBackLink } from '@/hooks/use-back-link'
 import { useTheme } from '@/hooks/use-theme'
 import { SmallDropdown } from '@/components/topology/TimeRangeSelector'
+
+const HEALTH_BADGE_CLASS: Record<MulticastHealthStatus, string> = {
+  healthy: 'bg-emerald-500/15 text-emerald-500',
+  degraded: 'bg-amber-500/15 text-amber-500',
+  unhealthy: 'bg-red-500/15 text-red-500',
+  unknown: 'bg-muted text-muted-foreground',
+}
+
+function UserHealthBadge({
+  status,
+  mode,
+  reason,
+}: {
+  status: MulticastHealthStatus
+  mode: string
+  reason?: string
+}) {
+  const cls = HEALTH_BADGE_CLASS[status] ?? HEALTH_BADGE_CLASS.unknown
+  const title = reason ? `${mode}: ${status} — ${reason}` : `${mode}: ${status}`
+  return (
+    <span
+      className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${cls}`}
+      title={title}
+    >
+      {status}
+    </span>
+  )
+}
 
 function formatBps(bps: number): string {
   if (bps === 0) return '—'
@@ -449,6 +484,14 @@ export function UserDetailPage() {
     enabled: !!pk,
   })
 
+  const hasMulticast = !!multicastGroups && multicastGroups.length > 0
+  const { data: userHealth } = useQuery({
+    queryKey: ['user-health', pk],
+    queryFn: () => fetchUserHealth(pk!),
+    enabled: !!pk && hasMulticast,
+    refetchInterval: 30_000,
+  })
+
   const { data: peeringdb } = useQuery({
     queryKey: ['peeringdb', user?.facility_loc_id],
     queryFn: () => fetchPeeringDBFacility(user!.facility_loc_id),
@@ -703,11 +746,15 @@ export function UserDetailPage() {
             <div className="border border-border rounded-lg p-4 bg-card">
               <h3 className="text-sm font-medium text-muted-foreground mb-3">Multicast Groups</h3>
               <div className="space-y-2">
-                {multicastGroups.map((g) => (
+                {multicastGroups.map((g) => {
+                  const healthItems = (userHealth?.items ?? []).filter(
+                    (it) => it.multicast_group_pk === g.group_pk,
+                  )
+                  return (
                   <div key={g.group_pk} className="flex items-center justify-between text-sm">
                     <div className="flex items-center gap-2">
                       <Link
-                        to={`/dz/multicast-groups/${g.group_pk}`}
+                        to={`/dz/multicast-groups/${g.group_pk}?tab=health`}
                         className="text-blue-600 dark:text-blue-400 hover:underline font-mono"
                       >
                         {g.group_code}
@@ -723,12 +770,21 @@ export function UserDetailPage() {
                       >
                         {g.mode === 'P' ? 'Publisher' : g.mode === 'S' ? 'Subscriber' : 'Pub + Sub'}
                       </span>
+                      {healthItems.map((it) => (
+                        <UserHealthBadge
+                          key={`${it.multicast_group_pk}-${it.mode}`}
+                          status={it.health_status}
+                          mode={it.mode}
+                          reason={it.mismatch_reason}
+                        />
+                      ))}
                     </div>
                     <span className="text-xs text-muted-foreground font-mono">
                       {g.multicast_ip}
                     </span>
                   </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           )}
