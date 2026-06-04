@@ -123,19 +123,13 @@ func Setup(log *slog.Logger, cfg Config) error {
 	defer remoteConn.Close()
 
 	// Discover all tables in the remote database
-	rows, err := remoteConn.Query(ctx, "SELECT name FROM system.tables WHERE database = ? ORDER BY name", cfg.RemoteDatabase)
+	tableNames, err := discoverProxyableTables(ctx, remoteConn, cfg.RemoteDatabase)
 	if err != nil {
-		return fmt.Errorf("failed to query remote tables: %w", err)
+		return err
 	}
-	defer rows.Close()
 
 	created, skipped := 0, 0
-	for rows.Next() {
-		var tableName string
-		if err := rows.Scan(&tableName); err != nil {
-			return fmt.Errorf("failed to scan table name: %w", err)
-		}
-
+	for _, tableName := range tableNames {
 		result, err := checkTable(ctx, localConn, cfg.RemoteDatabase, tableName, log)
 		if err != nil {
 			return err
@@ -221,18 +215,12 @@ func mirrorRemoteDatabase(ctx context.Context, log *slog.Logger, localConn, remo
 		return 0, 0, fmt.Errorf("failed to create database %s: %w", database, err)
 	}
 
-	rows, err := remoteConn.Query(ctx, "SELECT name FROM system.tables WHERE database = ? ORDER BY name", database)
+	tableNames, err := discoverProxyableTables(ctx, remoteConn, database)
 	if err != nil {
-		return 0, 0, fmt.Errorf("failed to query remote tables for %s: %w", database, err)
+		return 0, 0, err
 	}
-	defer rows.Close()
 
-	for rows.Next() {
-		var tableName string
-		if err := rows.Scan(&tableName); err != nil {
-			return 0, 0, fmt.Errorf("failed to scan table name: %w", err)
-		}
-
+	for _, tableName := range tableNames {
 		if skippedExternalTables[tableName] {
 			log.Info("skipping excluded table", "table", fmt.Sprintf("%s.%s", database, tableName))
 			skipped++
@@ -261,6 +249,35 @@ func mirrorRemoteDatabase(ctx context.Context, log *slog.Logger, localConn, remo
 		created++
 	}
 	return created, skipped, nil
+}
+
+// discoverProxyableTables returns the names of tables in the given remote
+// database to proxy, excluding ClickHouse internal materialized-view inner
+// tables (".inner.<name>" and ".inner_id.<uuid>"). Those inner tables cannot be
+// proxied: their leading-dot names are not valid qualified names, so
+// remoteSecure('db.<name>') is rejected with "Invalid qualified name" (code 62).
+func discoverProxyableTables(ctx context.Context, remoteConn clickhouse.Connection, database string) ([]string, error) {
+	rows, err := remoteConn.Query(ctx,
+		"SELECT name FROM system.tables WHERE database = ? AND name NOT LIKE '.inner%' ORDER BY name",
+		database,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query remote tables for %s: %w", database, err)
+	}
+	defer rows.Close()
+
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("failed to scan table name for %s: %w", database, err)
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating remote tables for %s: %w", database, err)
+	}
+	return names, nil
 }
 
 type tableCheckResult int
