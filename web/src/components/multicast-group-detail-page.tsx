@@ -1848,35 +1848,40 @@ export function MulticastGroupDetailPage() {
           </div>
         </div>
 
-        {/* Members filter + tabs */}
-        <div className="flex items-center gap-2 mb-3">
-          <InlineFilter
-            fieldPrefixes={memberFieldPrefixes}
-            entity="multicast-members"
-            autocompleteFields={memberAutocompleteFields}
-            placeholder="Filter members..."
-            onLiveFilterChange={setLiveFilter}
-            filterParams={pk ? { group: pk } : undefined}
-          />
-          {searchFilters.map((filter, idx) => (
-            <button
-              key={`${filter}-${idx}`}
-              onClick={() => removeFilter(filter)}
-              className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors"
-            >
-              {filter}
-              <X className="h-3 w-3" />
-            </button>
-          ))}
-          {searchFilters.length > 1 && (
-            <button
-              onClick={clearAllFilters}
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Clear all
-            </button>
-          )}
-        </div>
+        {/* Members filter + tabs. The Health tab is a reconciliation view
+            that always reports across the full group, so the member filter
+            bar would only mislead operators into thinking it scopes the
+            health queries (it doesn't). Hide it while Health is active. */}
+        {activeTab !== 'health' && (
+          <div className="flex items-center gap-2 mb-3">
+            <InlineFilter
+              fieldPrefixes={memberFieldPrefixes}
+              entity="multicast-members"
+              autocompleteFields={memberAutocompleteFields}
+              placeholder="Filter members..."
+              onLiveFilterChange={setLiveFilter}
+              filterParams={pk ? { group: pk } : undefined}
+            />
+            {searchFilters.map((filter, idx) => (
+              <button
+                key={`${filter}-${idx}`}
+                onClick={() => removeFilter(filter)}
+                className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors"
+              >
+                {filter}
+                <X className="h-3 w-3" />
+              </button>
+            ))}
+            {searchFilters.length > 1 && (
+              <button
+                onClick={clearAllFilters}
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Clear all
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Members table */}
         <div className="border border-border rounded-lg bg-card mb-6">

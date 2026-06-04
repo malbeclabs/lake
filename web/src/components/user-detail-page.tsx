@@ -78,7 +78,6 @@ function UserHealthBadge({ item }: { item: MulticastHealthUserItem }) {
     <Tooltip content={tooltipContent} delayDuration={120}>
       <span
         tabIndex={0}
-        role="button"
         aria-label={`Health ${item.health_status}: CP ${item.control_plane_status}, Rate ${item.rate_status}`}
         className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium cursor-help focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 ${cls}`}
       >
