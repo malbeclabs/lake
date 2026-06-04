@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { Loader2, AlertCircle } from 'lucide-react'
+import { Loader2, AlertCircle, Info, ChevronRight } from 'lucide-react'
+import { Tooltip } from '@/components/ui/tooltip'
 import {
   fetchMulticastGroupHealth,
   fetchMulticastGroupHealthUsers,
@@ -16,12 +17,68 @@ const STATUS_BADGE: Record<MulticastHealthStatus, string> = {
   unknown: 'bg-muted text-muted-foreground',
 }
 
+const STATUS_DOT: Record<MulticastHealthStatus, string> = {
+  healthy: 'bg-emerald-500',
+  degraded: 'bg-amber-500',
+  unhealthy: 'bg-red-500',
+  unknown: 'bg-muted-foreground',
+}
+
+const STATUS_DEFINITIONS: Array<{ status: MulticastHealthStatus; short: string }> = [
+  { status: 'healthy', short: '(S,G) present, SPT bit set, expected tunnel in IIF/OIF' },
+  { status: 'degraded', short: '(S,G) present but flags or tunnel position wrong' },
+  { status: 'unhealthy', short: 'no (S,G) — only (*,G), or expected tunnel missing' },
+  { status: 'unknown', short: 'state-collect has not reported for this device yet' },
+]
+
+const SECTION_HELP = {
+  summary:
+    'Per-status totals across three view granularities. A row is rolled up into "healthy" only if reconciliation passes on every dimension.',
+  users:
+    'Each row pairs one onchain user with the mroute observed at their device. ' +
+    'Publishers expect their Tunnel<N> as the IIF of (S,G); subscribers expect their Tunnel<N> in the OIF list. ' +
+    'A user in P+S mode contributes two rows.',
+  paths:
+    'Each row is a (publisher, subscriber) pair belonging to the group. ' +
+    'Endpoints-only verification: both endpoints must be reconciled. ' +
+    'A recursive OIF chain walk (full-path) is a follow-up that will replace "endpoints only" with "full path".',
+}
+
 function HealthBadge({ status }: { status: MulticastHealthStatus }) {
   const cls = STATUS_BADGE[status] ?? STATUS_BADGE.unknown
   return (
     <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${cls}`}>
       {status}
     </span>
+  )
+}
+
+function HelpIcon({ content }: { content: string }) {
+  return (
+    <Tooltip content={content}>
+      <button
+        type="button"
+        className="inline-flex items-center text-muted-foreground hover:text-foreground transition-colors"
+        aria-label="What does this mean?"
+      >
+        <Info className="h-3.5 w-3.5" />
+      </button>
+    </Tooltip>
+  )
+}
+
+function StatusLegend() {
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground border-t border-border pt-3 mt-1">
+      <span className="font-medium text-foreground">Status:</span>
+      {STATUS_DEFINITIONS.map(({ status, short }) => (
+        <span key={status} className="inline-flex items-center gap-1.5">
+          <span className={`inline-block h-2 w-2 rounded-full ${STATUS_DOT[status]}`} />
+          <span className="font-medium text-foreground">{status}</span>
+          <span>— {short}</span>
+        </span>
+      ))}
+    </div>
   )
 }
 
@@ -43,6 +100,10 @@ function CountsRow({
       </div>
     </div>
   )
+}
+
+function NavLinkArrow() {
+  return <ChevronRight className="inline h-3 w-3 ml-0.5 opacity-60 group-hover:opacity-100 transition-opacity" />
 }
 
 export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: string }) {
@@ -92,7 +153,10 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
       {/* Summary counts */}
       <div className="border border-border rounded-lg bg-card p-4">
         <div className="flex items-baseline justify-between mb-2">
-          <h3 className="text-sm font-medium">Reconciliation summary</h3>
+          <div className="flex items-center gap-1.5">
+            <h3 className="text-sm font-medium">Reconciliation summary</h3>
+            <HelpIcon content={SECTION_HELP.summary} />
+          </div>
           {!summary.source_available && (
             <span className="text-xs text-muted-foreground">no state-collect data yet</span>
           )}
@@ -100,12 +164,16 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
         <CountsRow label="Users (onchain ↔ mroute IIF/OIF)" counts={summary.counts.users} />
         <CountsRow label="Paths (publisher → subscriber endpoints)" counts={summary.counts.paths} />
         <CountsRow label="Mroutes (per-row dataplane state)" counts={summary.counts.mroutes} />
+        <StatusLegend />
       </div>
 
       {/* Per-user reconciliation */}
       <div className="border border-border rounded-lg bg-card">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-          <h3 className="text-sm font-medium">Per-user reconciliation</h3>
+          <div className="flex items-center gap-1.5">
+            <h3 className="text-sm font-medium">Per-user reconciliation</h3>
+            <HelpIcon content={SECTION_HELP.users} />
+          </div>
           {usersQuery.isFetching && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
         </div>
         <div className="overflow-x-auto">
@@ -133,9 +201,10 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
                   <td className="px-4 py-3 text-sm">
                     <Link
                       to={`/dz/users/${u.user_pk}`}
-                      className="text-blue-600 dark:text-blue-400 hover:underline font-mono"
+                      className="group text-blue-600 dark:text-blue-400 hover:underline font-mono inline-flex items-center"
                     >
                       {u.user_owner_pubkey ? u.user_owner_pubkey.slice(0, 8) : u.user_pk.slice(0, 8)}
+                      <NavLinkArrow />
                     </Link>
                   </td>
                   <td className="px-4 py-3 text-sm">
@@ -145,9 +214,10 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
                     {u.user_device_pk ? (
                       <Link
                         to={`/dz/devices/${u.user_device_pk}`}
-                        className="text-blue-600 dark:text-blue-400 hover:underline font-mono"
+                        className="group text-blue-600 dark:text-blue-400 hover:underline font-mono inline-flex items-center"
                       >
                         {u.user_device_code || u.user_device_pk.slice(0, 8)}
+                        <NavLinkArrow />
                       </Link>
                     ) : (
                       '—'
@@ -170,7 +240,10 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
       {/* Per-path reconciliation */}
       <div className="border border-border rounded-lg bg-card">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-          <h3 className="text-sm font-medium">Per-path reconciliation (publisher → subscriber)</h3>
+          <div className="flex items-center gap-1.5">
+            <h3 className="text-sm font-medium">Per-path reconciliation (publisher → subscriber)</h3>
+            <HelpIcon content={SECTION_HELP.paths} />
+          </div>
           {pathsQuery.isFetching && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
         </div>
         <div className="overflow-x-auto">
@@ -201,18 +274,20 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
                   <td className="px-4 py-3 text-sm font-mono">
                     <Link
                       to={`/dz/users/${p.publisher_user_pk}`}
-                      className="text-blue-600 dark:text-blue-400 hover:underline"
+                      className="group text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center"
                     >
                       {p.publisher_owner_pubkey?.slice(0, 8) || p.publisher_user_pk.slice(0, 8)}
+                      <NavLinkArrow />
                     </Link>
                   </td>
                   <td className="px-4 py-3 text-sm font-mono">
                     {p.publisher_device_pk ? (
                       <Link
                         to={`/dz/devices/${p.publisher_device_pk}`}
-                        className="text-blue-600 dark:text-blue-400 hover:underline"
+                        className="group text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center"
                       >
                         {p.publisher_device_code || p.publisher_device_pk.slice(0, 8)}
+                        <NavLinkArrow />
                       </Link>
                     ) : (
                       '—'
@@ -221,18 +296,20 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
                   <td className="px-4 py-3 text-sm font-mono">
                     <Link
                       to={`/dz/users/${p.subscriber_user_pk}`}
-                      className="text-blue-600 dark:text-blue-400 hover:underline"
+                      className="group text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center"
                     >
                       {p.subscriber_owner_pubkey?.slice(0, 8) || p.subscriber_user_pk.slice(0, 8)}
+                      <NavLinkArrow />
                     </Link>
                   </td>
                   <td className="px-4 py-3 text-sm font-mono">
                     {p.subscriber_device_pk ? (
                       <Link
                         to={`/dz/devices/${p.subscriber_device_pk}`}
-                        className="text-blue-600 dark:text-blue-400 hover:underline"
+                        className="group text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center"
                       >
                         {p.subscriber_device_code || p.subscriber_device_pk.slice(0, 8)}
+                        <NavLinkArrow />
                       </Link>
                     ) : (
                       '—'
