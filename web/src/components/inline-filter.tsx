@@ -20,6 +20,11 @@ interface InlineFilterProps {
   placeholder?: string
   onLiveFilterChange?: (filter: string) => void
   filterParams?: Record<string, string>
+  // URL query-string key to persist committed chips under. Defaults to
+  // 'search' so existing callers keep working; the Health tab uses a
+  // dedicated slot ('hsearch') so its filters don't collide with the
+  // members filter on the same page.
+  paramName?: string
 }
 
 export function InlineFilter({
@@ -29,6 +34,7 @@ export function InlineFilter({
   placeholder = 'Filter...',
   onLiveFilterChange,
   filterParams,
+  paramName = 'search',
 }: InlineFilterProps) {
   const [, setSearchParams] = useSearchParams()
   const [query, setQuery] = useState('')
@@ -114,11 +120,11 @@ export function InlineFilter({
   // Show all field prefixes when query is empty
   const showAllPrefixes = query.length === 0 && isFocused
 
-  // Helper to commit a filter (persist to URL)
+  // Helper to commit a filter (persist to URL under paramName)
   const commitFilter = useCallback((filterValue: string) => {
     setSearchParams(prev => {
       const newParams = new URLSearchParams(prev)
-      const currentSearch = newParams.get('search') || ''
+      const currentSearch = newParams.get(paramName) || ''
       const currentFilters = currentSearch ? currentSearch.split(',').map(f => f.trim()).filter(Boolean) : []
 
       // Add the committed filter if not already present
@@ -126,14 +132,14 @@ export function InlineFilter({
         currentFilters.push(filterValue)
       }
 
-      newParams.set('search', currentFilters.join(','))
+      newParams.set(paramName, currentFilters.join(','))
       newParams.delete('offset')
       newParams.delete('page')
       return newParams
     })
     setQuery('')
     inputRef.current?.focus()
-  }, [setSearchParams])
+  }, [setSearchParams, paramName])
 
   // Helper to clear the live filter without committing
   const clearLiveFilter = useCallback(() => {

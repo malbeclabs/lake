@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
-import { Loader2, AlertCircle, Info, ChevronRight } from 'lucide-react'
+import { Loader2, AlertCircle, Info, ChevronRight, X } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Pagination } from '@/components/pagination'
+import { InlineFilter } from '@/components/inline-filter'
 import {
   fetchMulticastGroupHealth,
   fetchMulticastGroupHealthUsers,
@@ -14,6 +15,33 @@ import {
   type MulticastRateStatus,
   type MulticastRateStatusReason,
 } from '@/lib/api'
+
+// URL query-string slot for committed Health-tab filter chips. Distinct
+// from the parent page's '?search=' so members-tab and Health-tab filters
+// don't trample each other when switching tabs.
+const HEALTH_SEARCH_PARAM = 'hsearch'
+
+// Field prefixes shown in the InlineFilter dropdown on the Health tab.
+// Spans both per-user (mode, tunnel) and per-path (publisher, subscriber)
+// columns since one search bar feeds both tables; server ignores tokens
+// whose field doesn't apply to a given query (unknown field falls through
+// to the bare-token path).
+const healthFieldPrefixes = [
+  { prefix: 'device:', description: 'Filter by device code (e.g. nyc001)' },
+  { prefix: 'status:', description: 'Filter by health status (healthy, degraded, unhealthy, unknown)' },
+  { prefix: 'mode:', description: 'Per-user mode: P, S, or P+S' },
+  { prefix: 'tunnel:', description: 'Per-user tunnel id' },
+  { prefix: 'user:', description: 'Match user account or owner pubkey' },
+  { prefix: 'owner:', description: 'Match owner pubkey' },
+  { prefix: 'publisher:', description: 'Per-path: match the publisher side' },
+  { prefix: 'subscriber:', description: 'Per-path: match the subscriber side' },
+  { prefix: 'ip:', description: "Match a user's dz_ip" },
+]
+
+function parseHealthSearchFilters(searchParam: string): string[] {
+  if (!searchParam) return []
+  return searchParam.split(',').map(f => f.trim()).filter(Boolean)
+}
 
 function formatBps(bps?: number): string {
   if (bps === undefined || bps === null) return '—'
@@ -47,41 +75,66 @@ const RATE_REASON_HUMAN: Record<MulticastRateStatusReason, string> = {
 // group so the first paint hits the worker cache.
 const HEALTH_PAGE_SIZE = 25
 
-// useDebouncedValue returns `value` delayed by `delayMs`, so a rapidly
-// changing input (typing in the search box) only triggers a new query
-// after the user pauses.
-function useDebouncedValue<T>(value: T, delayMs: number): T {
-  const [debounced, setDebounced] = useState(value)
-  useEffect(() => {
-    const id = setTimeout(() => setDebounced(value), delayMs)
-    return () => clearTimeout(id)
-  }, [value, delayMs])
-  return debounced
-}
+// HealthFilterBar renders the InlineFilter chip UX seen elsewhere on the
+// site (Devices, Facilities, etc.). Committed filters live in
+// `?hsearch=foo,bar` so reloads / shareable URLs preserve them. The
+// search prop combines committed chips with the in-progress text so the
+// table updates as the user types but before they hit Enter.
+function HealthFilterBar({ liveFilter, setLiveFilter }: { liveFilter: string; setLiveFilter: (v: string) => void }) {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const committed = parseHealthSearchFilters(searchParams.get(HEALTH_SEARCH_PARAM) || '')
 
-function SearchInput({
-  value,
-  onChange,
-  placeholder,
-  hint,
-}: {
-  value: string
-  onChange: (v: string) => void
-  placeholder: string
-  hint?: string
-}) {
+  const removeFilter = useCallback((toRemove: string) => {
+    const next = committed.filter(f => f !== toRemove)
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev)
+      if (next.length === 0) p.delete(HEALTH_SEARCH_PARAM)
+      else p.set(HEALTH_SEARCH_PARAM, next.join(','))
+      return p
+    })
+  }, [committed, setSearchParams])
+
+  const clearAll = useCallback(() => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev)
+      p.delete(HEALTH_SEARCH_PARAM)
+      return p
+    })
+  }, [setSearchParams])
+
   return (
-    <div className="relative">
-      <input
-        type="search"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        // title attribute renders a native hover hint; sufficient for a
-        // syntax cheat sheet without spawning a Radix tooltip per input.
-        title={hint}
-        className="h-7 w-80 rounded-md border border-border bg-background px-2 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+    <div className="flex flex-wrap items-center gap-2">
+      <InlineFilter
+        fieldPrefixes={healthFieldPrefixes}
+        entity="multicast-health"
+        autocompleteFields={[]}
+        placeholder="Filter health…"
+        paramName={HEALTH_SEARCH_PARAM}
+        onLiveFilterChange={setLiveFilter}
       />
+      {committed.map((filter, idx) => (
+        <button
+          key={`${filter}-${idx}`}
+          onClick={() => removeFilter(filter)}
+          className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors"
+        >
+          {filter}
+          <X className="h-3 w-3" />
+        </button>
+      ))}
+      {committed.length > 1 && (
+        <button
+          onClick={clearAll}
+          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          Clear all
+        </button>
+      )}
+      {liveFilter && (
+        <span className="text-xs text-muted-foreground italic">
+          previewing: {liveFilter}
+        </span>
+      )}
     </div>
   )
 }
@@ -334,30 +387,36 @@ function TableStateRow({
 }
 
 export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: string }) {
+  const [searchParams] = useSearchParams()
   const [usersOffset, setUsersOffset] = useState(0)
   const [pathsOffset, setPathsOffset] = useState(0)
   const [showPathDetails, setShowPathDetails] = useState(false)
-  const [usersSearchInput, setUsersSearchInput] = useState('')
-  const [pathsSearchInput, setPathsSearchInput] = useState('')
-  const usersSearch = useDebouncedValue(usersSearchInput, 200)
-  const pathsSearch = useDebouncedValue(pathsSearchInput, 200)
+  // Live filter — what's currently typed in the InlineFilter input but not
+  // yet committed as a chip. Combined with the URL-persisted chips on
+  // every query so the table updates as the user types.
+  const [liveFilter, setLiveFilter] = useState('')
+
+  const committedFilters = useMemo(
+    () => parseHealthSearchFilters(searchParams.get(HEALTH_SEARCH_PARAM) || ''),
+    [searchParams],
+  )
+  const effectiveSearch = useMemo(() => {
+    const all = liveFilter ? [...committedFilters, liveFilter] : committedFilters
+    return all.join(',')
+  }, [committedFilters, liveFilter])
 
   useEffect(() => {
     setUsersOffset(0)
     setPathsOffset(0)
     setShowPathDetails(false)
-    setUsersSearchInput('')
-    setPathsSearchInput('')
   }, [groupPkOrCode])
 
-  // Reset to page 1 whenever the search text changes so the user sees the
+  // Reset to page 1 whenever the filter set changes so the user sees the
   // first page of matches rather than an empty page-N.
   useEffect(() => {
     setUsersOffset(0)
-  }, [usersSearch])
-  useEffect(() => {
     setPathsOffset(0)
-  }, [pathsSearch])
+  }, [effectiveSearch])
 
   const summaryQuery = useQuery({
     queryKey: ['multicast-group-health-summary', groupPkOrCode],
@@ -367,16 +426,16 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
   })
 
   const usersQuery = useQuery({
-    queryKey: ['multicast-group-health-users', groupPkOrCode, HEALTH_PAGE_SIZE, usersOffset, usersSearch],
-    queryFn: () => fetchMulticastGroupHealthUsers(groupPkOrCode, HEALTH_PAGE_SIZE, usersOffset, usersSearch || undefined),
+    queryKey: ['multicast-group-health-users', groupPkOrCode, HEALTH_PAGE_SIZE, usersOffset, effectiveSearch],
+    queryFn: () => fetchMulticastGroupHealthUsers(groupPkOrCode, HEALTH_PAGE_SIZE, usersOffset, effectiveSearch || undefined),
     enabled: !!groupPkOrCode,
     refetchInterval: 60_000,
     placeholderData: keepPreviousData,
   })
 
   const pathsQuery = useQuery({
-    queryKey: ['multicast-group-health-paths', groupPkOrCode, HEALTH_PAGE_SIZE, pathsOffset, pathsSearch],
-    queryFn: () => fetchMulticastGroupHealthPaths(groupPkOrCode, HEALTH_PAGE_SIZE, pathsOffset, pathsSearch || undefined),
+    queryKey: ['multicast-group-health-paths', groupPkOrCode, HEALTH_PAGE_SIZE, pathsOffset, effectiveSearch],
+    queryFn: () => fetchMulticastGroupHealthPaths(groupPkOrCode, HEALTH_PAGE_SIZE, pathsOffset, effectiveSearch || undefined),
     enabled: !!groupPkOrCode && showPathDetails,
     refetchInterval: 60_000,
     placeholderData: keepPreviousData,
@@ -419,6 +478,11 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
         </div>
       </div>
 
+      {/* Filter bar — single InlineFilter scopes both per-user and per-path
+          tables. URL slot is dedicated to the Health tab so it doesn't
+          collide with the members filter on the parent page. */}
+      <HealthFilterBar liveFilter={liveFilter} setLiveFilter={setLiveFilter} />
+
       {/* Summary counts */}
       <div className="border border-border rounded-lg bg-card p-4">
         <div className="flex items-baseline justify-between mb-2">
@@ -443,15 +507,7 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
             <h3 className="text-sm font-medium">Per-user reconciliation</h3>
             <HelpIcon content={SECTION_HELP.users} />
           </div>
-          <div className="flex items-center gap-2">
-            <SearchInput
-              value={usersSearchInput}
-              onChange={setUsersSearchInput}
-              placeholder="device:NAME  status:unhealthy  tunnel:520  …"
-              hint="Use field:value (device, status, tunnel, mode, user, owner, ip). Bare text matches any column."
-            />
-            {usersQuery.isFetching && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
-          </div>
+          {usersQuery.isFetching && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
         </div>
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -545,14 +601,6 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
             <HelpIcon content={SECTION_HELP.paths} />
           </div>
           <div className="flex items-center gap-2">
-            {showPathDetails && (
-              <SearchInput
-                value={pathsSearchInput}
-                onChange={setPathsSearchInput}
-                placeholder="publisher:Df  subscriber:Hk  device:nyc001  …"
-                hint="Use field:value (publisher, subscriber, device, status, user, owner, ip). Bare text matches any column."
-              />
-            )}
             {showPathDetails && pathsQuery.isFetching && (
               <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
             )}

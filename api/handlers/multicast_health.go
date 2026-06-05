@@ -236,14 +236,27 @@ type healthSearchToken struct {
 	value string
 }
 
+// tokenizeHealthSearch accepts tokens separated by EITHER commas or
+// whitespace. The web UI's InlineFilter convention writes
+// `?search=device:foo,status:bar` (comma-delimited chips); operators
+// poking the API by hand tend to use spaces. We accept both. A leading
+// `all:` prefix (InlineFilter's marker for a bare term) is unwrapped so
+// the server sees just the value.
 func tokenizeHealthSearch(search string) []healthSearchToken {
 	out := []healthSearchToken{}
-	for _, raw := range strings.Fields(search) {
+	for _, raw := range strings.FieldsFunc(search, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t' || r == '\n'
+	}) {
 		if idx := strings.IndexByte(raw, ':'); idx > 0 && idx < len(raw)-1 {
-			out = append(out, healthSearchToken{
-				field: strings.ToLower(raw[:idx]),
-				value: raw[idx+1:],
-			})
+			field := strings.ToLower(raw[:idx])
+			value := raw[idx+1:]
+			if field == "all" {
+				// InlineFilter writes `all:value` for unprefixed text;
+				// treat it as a bare term.
+				out = append(out, healthSearchToken{value: value})
+				continue
+			}
+			out = append(out, healthSearchToken{field: field, value: value})
 			continue
 		}
 		// Bare term or malformed field prefix → substring fallback.

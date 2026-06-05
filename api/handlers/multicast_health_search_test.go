@@ -69,6 +69,29 @@ func TestTokenizeHealthSearch(t *testing.T) {
 				{field: "status", value: "unhealthy"},
 			},
 		},
+		{
+			name: "comma-separated tokens (InlineFilter URL form)",
+			in:   "device:nyc001,status:unhealthy,mode:P",
+			want: []healthSearchToken{
+				{field: "device", value: "nyc001"},
+				{field: "status", value: "unhealthy"},
+				{field: "mode", value: "P"},
+			},
+		},
+		{
+			name: "mixed comma + whitespace delimiters",
+			in:   "device:nyc001, status:unhealthy mode:P",
+			want: []healthSearchToken{
+				{field: "device", value: "nyc001"},
+				{field: "status", value: "unhealthy"},
+				{field: "mode", value: "P"},
+			},
+		},
+		{
+			name: "all: prefix is unwrapped to bare term",
+			in:   "all:3b2Ze7VY",
+			want: []healthSearchToken{{value: "3b2Ze7VY"}},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
