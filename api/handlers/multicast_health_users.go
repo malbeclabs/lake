@@ -13,13 +13,29 @@ import (
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
-// multicastHealthUserSearchCols are the columns the `?search=` filter
-// substring-matches across (case-insensitive). Order doesn't matter for
-// correctness, but listing the most likely-matched columns first lets
-// ClickHouse short-circuit OR evaluation in the common case.
-var multicastHealthUserSearchCols = []string{
-	"user_owner_pubkey",
+// multicastHealthUserSearchFields maps the prefixes accepted in a
+// `field:value` search token to the underlying columns to substring-match
+// against. Aliases are flattened (e.g. `user:` matches account or owner;
+// `pubkey:` is an alias for `user:`).
+var multicastHealthUserSearchFields = map[string][]string{
+	"user":    {"user_pk", "user_owner_pubkey"},
+	"account": {"user_pk"},
+	"owner":   {"user_owner_pubkey"},
+	"pubkey":  {"user_pk", "user_owner_pubkey"},
+	"ip":      {"user_dz_ip"},
+	"dz_ip":   {"user_dz_ip"},
+	"device":  {"user_device_code", "user_device_pk"},
+	"tunnel":  {"user_tunnel_id"},
+	"mode":    {"mode"},
+	"status":  {"health_status"},
+	"health":  {"health_status"},
+}
+
+// multicastHealthUserSearchFallback is OR-matched when the token has no
+// field prefix.
+var multicastHealthUserSearchFallback = []string{
 	"user_pk",
+	"user_owner_pubkey",
 	"user_dz_ip",
 	"user_device_code",
 	"user_device_pk",
@@ -67,7 +83,7 @@ func (a *API) GetMulticastGroupHealthUsers(w http.ResponseWriter, r *http.Reques
 
 	where := "multicast_group_pk = ?"
 	args := []any{group.PK}
-	if clause, extra := buildHealthSearchClause(search, multicastHealthUserSearchCols); clause != "" {
+	if clause, extra := buildHealthSearchClause(search, multicastHealthUserSearchFields, multicastHealthUserSearchFallback); clause != "" {
 		where += clause
 		args = append(args, extra...)
 	}

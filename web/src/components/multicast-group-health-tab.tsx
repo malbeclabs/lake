@@ -63,10 +63,12 @@ function SearchInput({
   value,
   onChange,
   placeholder,
+  hint,
 }: {
   value: string
   onChange: (v: string) => void
   placeholder: string
+  hint?: string
 }) {
   return (
     <div className="relative">
@@ -75,7 +77,10 @@ function SearchInput({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="h-7 w-72 rounded-md border border-border bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+        // title attribute renders a native hover hint; sufficient for a
+        // syntax cheat sheet without spawning a Radix tooltip per input.
+        title={hint}
+        className="h-7 w-80 rounded-md border border-border bg-background px-2 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-ring"
       />
     </div>
   )
@@ -401,6 +406,19 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
 
   return (
     <div className="p-4 space-y-6">
+      {/* Under-development notice. The reconciliation logic and rate dimension
+          here surface real data, but the verdicts assume state-collect covers
+          every device — today only jump devices are collected, so non-jump
+          publishers/subscribers can falsely render as unhealthy. Wording is
+          deliberately concrete so operators read it as caveat, not "do not
+          trust this page". */}
+      <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-100">
+        <div className="font-medium">This view is under development.</div>
+        <div className="mt-1 text-amber-200/90">
+          Health verdicts and the rate dimension are work in progress. State-collect runs only on jump devices today, so any user, publisher, or subscriber on a non-jump device will appear as <span className="font-mono">unhealthy</span> even when it is functioning normally. Treat verdicts as a starting point, not ground truth.
+        </div>
+      </div>
+
       {/* Summary counts */}
       <div className="border border-border rounded-lg bg-card p-4">
         <div className="flex items-baseline justify-between mb-2">
@@ -429,7 +447,8 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
             <SearchInput
               value={usersSearchInput}
               onChange={setUsersSearchInput}
-              placeholder="Filter user, mode, device, tunnel, status…"
+              placeholder="device:NAME  status:unhealthy  tunnel:520  …"
+              hint="Use field:value (device, status, tunnel, mode, user, owner, ip). Bare text matches any column."
             />
             {usersQuery.isFetching && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
           </div>
@@ -530,7 +549,8 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
               <SearchInput
                 value={pathsSearchInput}
                 onChange={setPathsSearchInput}
-                placeholder="Filter publisher, subscriber, device, status…"
+                placeholder="publisher:Df  subscriber:Hk  device:nyc001  …"
+                hint="Use field:value (publisher, subscriber, device, status, user, owner, ip). Bare text matches any column."
               />
             )}
             {showPathDetails && pathsQuery.isFetching && (
