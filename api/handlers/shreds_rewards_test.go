@@ -311,6 +311,42 @@ func TestGetShredsRewards_LimitOffset(t *testing.T) {
 	assert.Equal(t, "node-B", resp.Validators[0].NodeID)
 }
 
+func TestGetShredsRewards_DeduplicatesValidators(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertShredsRewardsTestData(t, api)
+	ctx := t.Context()
+
+	// Seed a SECOND activated DZ user sharing node-A's gossip IP
+	// (203.0.113.10). The list query joins dz_users on client_ip = gossip_ip,
+	// so without a per-node dedup this fans node-A into two identical rows.
+	err := api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_users_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tenant_pk, tunnel_id, publishers, subscribers)
+		VALUES
+		('user-A2', now(), now(), generateUUIDv4(), 0, 9,
+		 'user-A2', 'owner-A2', 'activated', 'multicast', '203.0.113.10', '10.0.0.11', '', '', 101, '[]', '[]')
+	`)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/rewards", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredsRewards(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+	resp := decodeShredsRewards(t, rr.Body.Bytes())
+
+	// Each validator must appear exactly once despite the fan-out.
+	require.Len(t, resp.Validators, 2)
+	seen := map[string]int{}
+	for _, v := range resp.Validators {
+		seen[v.NodeID]++
+	}
+	assert.Equal(t, 1, seen["node-A"], "node-A must not be duplicated by the dz_users fan-out")
+	assert.Equal(t, 1, seen["node-B"])
+}
+
 // withChiNodeIDParam installs the {nodeId} URL param onto the request context
 // so the handler can read it via chi.URLParam.
 func withChiNodeIDParam(req *http.Request, nodeID string) *http.Request {

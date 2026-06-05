@@ -280,6 +280,10 @@ func (a *API) GetShredsRewards(w http.ResponseWriter, r *http.Request) {
 			ON u.client_ip = g.gossip_ip AND u.status = 'activated'
 		%s
 		ORDER BY %s
+		-- Collapse to one row per validator: the gossip/dz_users joins can
+		-- fan out (e.g. multiple activated DZ users sharing a gossip IP),
+		-- which would otherwise duplicate a validator in the list.
+		LIMIT 1 BY node_id
 		LIMIT %d OFFSET %d
 	`, whereClause, sortSQL, limit, offset)
 

@@ -8,6 +8,7 @@ import {
   X,
   ChevronUp,
   ChevronDown,
+  ChevronRight,
   Trophy,
 } from 'lucide-react'
 import {
@@ -184,7 +185,6 @@ export function ShredsRewardsPage() {
   }
 
   const validators = data?.validators ?? []
-  const epochColumns = data?.epoch_columns ?? []
   // We don't know total count from the API; derive whether there's another page by
   // checking whether the response is a full page.
   const hasMore = validators.length === PAGE_SIZE
@@ -194,7 +194,6 @@ export function ShredsRewardsPage() {
     'px-4 py-3 font-medium cursor-pointer select-none hover:text-foreground transition-colors whitespace-nowrap'
   const thStatic = 'px-4 py-3 font-medium whitespace-nowrap'
   const thRight = `${thClass} text-right`
-  const thStaticRight = `${thStatic} text-right`
 
   if (isLoading && !data) {
     return (
@@ -274,9 +273,9 @@ export function ShredsRewardsPage() {
         />
 
         <div className="mb-4 rounded-lg bg-muted/50 px-4 py-3 text-xs xxs:text-sm text-muted-foreground">
-          Per-epoch $2Z earnings for validators publishing shreds via DoubleZero. The
-          newest epoch is rightmost. Claimable rewards are those that have not yet been
-          paid out by the on-chain claim journal.
+          $2Z earnings for validators publishing shreds via DoubleZero. Claimable
+          rewards are those that have not yet been paid out by the on-chain claim
+          journal. Select a validator to see its full per-epoch history.
         </div>
 
         <div className="border border-border rounded-lg overflow-hidden bg-card">
@@ -314,21 +313,14 @@ export function ShredsRewardsPage() {
                     Claimable
                     <SortIcon field="immediately_claimable_2z" />
                   </th>
-                  {epochColumns.map((ep) => (
-                    <th key={ep} className={thStaticRight}>
-                      <span className="text-[10px] uppercase tracking-wider text-muted-foreground/70 block">
-                        Epoch
-                      </span>
-                      <span className="tabular-nums">{ep}</span>
-                    </th>
-                  ))}
+                  <th className={cn(thStatic, 'w-8')} aria-label="Open detail" />
                 </tr>
               </thead>
               <tbody>
                 {validators.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={6 + epochColumns.length}
+                      colSpan={7}
                       className="px-4 py-12 text-center text-muted-foreground"
                     >
                       {searchFilters.length > 0
@@ -386,20 +378,9 @@ export function ShredsRewardsPage() {
                         >
                           {format2Z(v.immediately_claimable_2z)}
                         </td>
-                        {epochColumns.map((ep) => {
-                          const amt = v.epoch_earnings?.[String(ep)] ?? 0
-                          return (
-                            <td
-                              key={ep}
-                              className={cn(
-                                'px-4 py-3 text-sm tabular-nums text-right',
-                                amt > 0 ? '' : 'text-muted-foreground/40',
-                              )}
-                            >
-                              {format2Z(amt)}
-                            </td>
-                          )
-                        })}
+                        <td className="px-2 py-3 text-right text-muted-foreground/40">
+                          <ChevronRight className="inline h-4 w-4" />
+                        </td>
                       </tr>
                     )
                   })
