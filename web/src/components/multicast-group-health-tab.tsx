@@ -461,8 +461,9 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
                     <Link
                       to={`/dz/users/${u.user_pk}`}
                       className="group text-blue-600 dark:text-blue-400 hover:underline font-mono inline-flex items-center"
+                      title={u.user_owner_pubkey ? `account ${u.user_pk}\nowner ${u.user_owner_pubkey}` : u.user_pk}
                     >
-                      {u.user_owner_pubkey ? u.user_owner_pubkey.slice(0, 8) : u.user_pk.slice(0, 8)}
+                      {u.user_pk.slice(0, 8)}
                       <NavLinkArrow />
                     </Link>
                   </td>
@@ -592,8 +593,14 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
                         <Link
                           to={`/dz/users/${p.publisher_user_pk}`}
                           className="group text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center"
+                          // Show the account (user_pk) — owner_pubkey collides
+                          // across an operator's many accounts. Owner is in title.
+                          title={p.publisher_owner_pubkey ? `account ${p.publisher_user_pk}\nowner ${p.publisher_owner_pubkey}` : p.publisher_user_pk}
                         >
-                          {p.publisher_owner_pubkey?.slice(0, 8) || p.publisher_user_pk.slice(0, 8)}
+                          {p.publisher_user_pk.slice(0, 8)}
+                          {p.publisher_tunnel_id > 0 && (
+                            <span className="ml-1 text-muted-foreground">·T{p.publisher_tunnel_id}</span>
+                          )}
                           <NavLinkArrow />
                         </Link>
                       </td>
@@ -614,8 +621,12 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
                         <Link
                           to={`/dz/users/${p.subscriber_user_pk}`}
                           className="group text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center"
+                          title={p.subscriber_owner_pubkey ? `account ${p.subscriber_user_pk}\nowner ${p.subscriber_owner_pubkey}` : p.subscriber_user_pk}
                         >
-                          {p.subscriber_owner_pubkey?.slice(0, 8) || p.subscriber_user_pk.slice(0, 8)}
+                          {p.subscriber_user_pk.slice(0, 8)}
+                          {p.subscriber_tunnel_id > 0 && (
+                            <span className="ml-1 text-muted-foreground">·T{p.subscriber_tunnel_id}</span>
+                          )}
                           <NavLinkArrow />
                         </Link>
                       </td>
