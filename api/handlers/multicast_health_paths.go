@@ -14,19 +14,19 @@ import (
 )
 
 // multicastHealthPathSearchFields maps `field:value` prefixes accepted in
-// the path-table search to underlying columns. Both `publisher:` /
-// `subscriber:` and the generic `user:` / `device:` are supported.
-var multicastHealthPathSearchFields = map[string][]string{
-	"publisher":  {"publisher_user_pk", "publisher_owner_pubkey", "publisher_dz_ip", "publisher_device_code"},
-	"subscriber": {"subscriber_user_pk", "subscriber_owner_pubkey", "subscriber_dz_ip", "subscriber_device_code"},
-	"user":       {"publisher_user_pk", "publisher_owner_pubkey", "subscriber_user_pk", "subscriber_owner_pubkey"},
-	"owner":      {"publisher_owner_pubkey", "subscriber_owner_pubkey"},
-	"pubkey":     {"publisher_user_pk", "publisher_owner_pubkey", "subscriber_user_pk", "subscriber_owner_pubkey"},
-	"ip":         {"publisher_dz_ip", "subscriber_dz_ip"},
-	"dz_ip":      {"publisher_dz_ip", "subscriber_dz_ip"},
-	"device":     {"publisher_device_code", "subscriber_device_code", "publisher_device_pk", "subscriber_device_pk"},
-	"status":     {"health_status"},
-	"health":     {"health_status"},
+// the path-table search to underlying columns + match mode. status is
+// enum-like and uses exact match; everything else is substring.
+var multicastHealthPathSearchFields = map[string]healthSearchFieldSpec{
+	"publisher":  {cols: []string{"publisher_user_pk", "publisher_owner_pubkey", "publisher_dz_ip", "publisher_device_code"}},
+	"subscriber": {cols: []string{"subscriber_user_pk", "subscriber_owner_pubkey", "subscriber_dz_ip", "subscriber_device_code"}},
+	"user":       {cols: []string{"publisher_user_pk", "publisher_owner_pubkey", "subscriber_user_pk", "subscriber_owner_pubkey"}},
+	"owner":      {cols: []string{"publisher_owner_pubkey", "subscriber_owner_pubkey"}},
+	"pubkey":     {cols: []string{"publisher_user_pk", "publisher_owner_pubkey", "subscriber_user_pk", "subscriber_owner_pubkey"}},
+	"ip":         {cols: []string{"publisher_dz_ip", "subscriber_dz_ip"}},
+	"dz_ip":      {cols: []string{"publisher_dz_ip", "subscriber_dz_ip"}},
+	"device":     {cols: []string{"publisher_device_code", "subscriber_device_code", "publisher_device_pk", "subscriber_device_pk"}},
+	"status":     {cols: []string{"health_status"}, exact: true},
+	"health":     {cols: []string{"health_status"}, exact: true},
 }
 
 // multicastHealthPathSearchFallback is OR-matched when the token has no

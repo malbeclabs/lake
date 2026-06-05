@@ -102,9 +102,9 @@ func TestTokenizeHealthSearch(t *testing.T) {
 }
 
 func TestBuildHealthSearchClause(t *testing.T) {
-	fieldMap := map[string][]string{
-		"device": {"user_device_code", "user_device_pk"},
-		"status": {"health_status"},
+	fieldMap := map[string]healthSearchFieldSpec{
+		"device": {cols: []string{"user_device_code", "user_device_pk"}},
+		"status": {cols: []string{"health_status"}, exact: true},
 	}
 	fallback := []string{"user_pk", "user_owner_pubkey"}
 
@@ -160,5 +160,22 @@ func TestBuildHealthSearchClause(t *testing.T) {
 		assert.Equal(t, "nyc", args[0])
 		assert.Equal(t, "nyc", args[1])
 		assert.Equal(t, "unhealthy", args[2])
+	})
+
+	t.Run("exact-match field uses lower() equality, not positionCaseInsensitive", func(t *testing.T) {
+		// status is declared exact=true; SQL must equality-match (otherwise
+		// status:healthy would substring-match unhealthy, which is the bug
+		// that motivated the exact-match support).
+		clause, args := buildHealthSearchClause("status:healthy", fieldMap, fallback)
+		assert.Contains(t, clause, "lower(toString(health_status)) = lower(?)")
+		assert.NotContains(t, clause, "positionCaseInsensitive(toString(health_status)")
+		require.Len(t, args, 1)
+		assert.Equal(t, "healthy", args[0])
+	})
+
+	t.Run("substring-match field still uses positionCaseInsensitive", func(t *testing.T) {
+		clause, _ := buildHealthSearchClause("device:nyc", fieldMap, fallback)
+		assert.Contains(t, clause, "positionCaseInsensitive(toString(user_device_code), ?) > 0")
+		assert.NotContains(t, clause, "lower(toString(user_device_code)) =")
 	})
 }

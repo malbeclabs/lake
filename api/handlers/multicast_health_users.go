@@ -14,21 +14,22 @@ import (
 )
 
 // multicastHealthUserSearchFields maps the prefixes accepted in a
-// `field:value` search token to the underlying columns to substring-match
-// against. Aliases are flattened (e.g. `user:` matches account or owner;
-// `pubkey:` is an alias for `user:`).
-var multicastHealthUserSearchFields = map[string][]string{
-	"user":    {"user_pk", "user_owner_pubkey"},
-	"account": {"user_pk"},
-	"owner":   {"user_owner_pubkey"},
-	"pubkey":  {"user_pk", "user_owner_pubkey"},
-	"ip":      {"user_dz_ip"},
-	"dz_ip":   {"user_dz_ip"},
-	"device":  {"user_device_code", "user_device_pk"},
-	"tunnel":  {"user_tunnel_id"},
-	"mode":    {"mode"},
-	"status":  {"health_status"},
-	"health":  {"health_status"},
+// `field:value` search token to the underlying columns + match mode.
+// Enum-like fields (status / mode / tunnel) need exact match because
+// their values share substrings — e.g. `status:healthy` would otherwise
+// match `unhealthy`. Free-form columns stay substring.
+var multicastHealthUserSearchFields = map[string]healthSearchFieldSpec{
+	"user":    {cols: []string{"user_pk", "user_owner_pubkey"}},
+	"account": {cols: []string{"user_pk"}},
+	"owner":   {cols: []string{"user_owner_pubkey"}},
+	"pubkey":  {cols: []string{"user_pk", "user_owner_pubkey"}},
+	"ip":      {cols: []string{"user_dz_ip"}},
+	"dz_ip":   {cols: []string{"user_dz_ip"}},
+	"device":  {cols: []string{"user_device_code", "user_device_pk"}},
+	"tunnel":  {cols: []string{"user_tunnel_id"}, exact: true},
+	"mode":    {cols: []string{"mode"}, exact: true},
+	"status":  {cols: []string{"health_status"}, exact: true},
+	"health":  {cols: []string{"health_status"}, exact: true},
 }
 
 // multicastHealthUserSearchFallback is OR-matched when the token has no

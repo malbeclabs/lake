@@ -16,26 +16,33 @@ import {
   type MulticastRateStatusReason,
 } from '@/lib/api'
 
-// URL query-string slot for committed Health-tab filter chips. Distinct
-// from the parent page's '?search=' so members-tab and Health-tab filters
-// don't trample each other when switching tabs.
-const HEALTH_SEARCH_PARAM = 'hsearch'
+// URL query-string slots for committed Health-tab filter chips. Distinct
+// from the parent page's '?search=' (members filter) so they don't
+// trample each other when switching tabs. Per-user and per-path each
+// have their own slot so the two tables filter independently.
+const HEALTH_USERS_SEARCH_PARAM = 'husers'
+const HEALTH_PATHS_SEARCH_PARAM = 'hpaths'
 
-// Field prefixes shown in the InlineFilter dropdown on the Health tab.
-// Spans both per-user (mode, tunnel) and per-path (publisher, subscriber)
-// columns since one search bar feeds both tables; server ignores tokens
-// whose field doesn't apply to a given query (unknown field falls through
-// to the bare-token path).
-const healthFieldPrefixes = [
+// Field prefixes for the per-user table filter.
+const healthUserFieldPrefixes = [
   { prefix: 'device:', description: 'Filter by device code (e.g. nyc001)' },
   { prefix: 'status:', description: 'Filter by health status (healthy, degraded, unhealthy, unknown)' },
-  { prefix: 'mode:', description: 'Per-user mode: P, S, or P+S' },
-  { prefix: 'tunnel:', description: 'Per-user tunnel id' },
-  { prefix: 'user:', description: 'Match user account or owner pubkey' },
+  { prefix: 'mode:', description: 'Mode: P, S, or P+S' },
+  { prefix: 'tunnel:', description: 'Tunnel id (exact match)' },
+  { prefix: 'user:', description: "Match user account or owner pubkey" },
   { prefix: 'owner:', description: 'Match owner pubkey' },
-  { prefix: 'publisher:', description: 'Per-path: match the publisher side' },
-  { prefix: 'subscriber:', description: 'Per-path: match the subscriber side' },
-  { prefix: 'ip:', description: "Match a user's dz_ip" },
+  { prefix: 'ip:', description: "Match user's dz_ip" },
+]
+
+// Field prefixes for the per-path table filter.
+const healthPathFieldPrefixes = [
+  { prefix: 'publisher:', description: 'Match the publisher side (pk/owner/ip/device)' },
+  { prefix: 'subscriber:', description: 'Match the subscriber side (pk/owner/ip/device)' },
+  { prefix: 'device:', description: 'Match either publisher or subscriber device' },
+  { prefix: 'status:', description: 'Filter by health status (healthy, degraded, unhealthy, unknown)' },
+  { prefix: 'user:', description: 'Match either side\'s account or owner pubkey' },
+  { prefix: 'owner:', description: 'Match either side\'s owner pubkey' },
+  { prefix: 'ip:', description: "Match either side's dz_ip" },
 ]
 
 function parseHealthSearchFilters(searchParam: string): string[] {
@@ -76,40 +83,54 @@ const RATE_REASON_HUMAN: Record<MulticastRateStatusReason, string> = {
 const HEALTH_PAGE_SIZE = 25
 
 // HealthFilterBar renders the InlineFilter chip UX seen elsewhere on the
-// site (Devices, Facilities, etc.). Committed filters live in
-// `?hsearch=foo,bar` so reloads / shareable URLs preserve them. The
-// search prop combines committed chips with the in-progress text so the
-// table updates as the user types but before they hit Enter.
-function HealthFilterBar({ liveFilter, setLiveFilter }: { liveFilter: string; setLiveFilter: (v: string) => void }) {
+// site (Devices, Facilities, etc.). Committed filters live in the URL
+// slot named by `paramName` so reloads / shareable URLs preserve them.
+// The bar tracks its own live (in-progress) filter via a callback so the
+// parent can pass it through to the underlying API call.
+function HealthFilterBar({
+  paramName,
+  entity,
+  placeholder,
+  fieldPrefixes,
+  liveFilter,
+  setLiveFilter,
+}: {
+  paramName: string
+  entity: string
+  placeholder: string
+  fieldPrefixes: { prefix: string; description: string }[]
+  liveFilter: string
+  setLiveFilter: (v: string) => void
+}) {
   const [searchParams, setSearchParams] = useSearchParams()
-  const committed = parseHealthSearchFilters(searchParams.get(HEALTH_SEARCH_PARAM) || '')
+  const committed = parseHealthSearchFilters(searchParams.get(paramName) || '')
 
   const removeFilter = useCallback((toRemove: string) => {
     const next = committed.filter(f => f !== toRemove)
     setSearchParams(prev => {
       const p = new URLSearchParams(prev)
-      if (next.length === 0) p.delete(HEALTH_SEARCH_PARAM)
-      else p.set(HEALTH_SEARCH_PARAM, next.join(','))
+      if (next.length === 0) p.delete(paramName)
+      else p.set(paramName, next.join(','))
       return p
     })
-  }, [committed, setSearchParams])
+  }, [committed, setSearchParams, paramName])
 
   const clearAll = useCallback(() => {
     setSearchParams(prev => {
       const p = new URLSearchParams(prev)
-      p.delete(HEALTH_SEARCH_PARAM)
+      p.delete(paramName)
       return p
     })
-  }, [setSearchParams])
+  }, [setSearchParams, paramName])
 
   return (
     <div className="flex flex-wrap items-center gap-2">
       <InlineFilter
-        fieldPrefixes={healthFieldPrefixes}
-        entity="multicast-health"
+        fieldPrefixes={fieldPrefixes}
+        entity={entity}
         autocompleteFields={[]}
-        placeholder="Filter health…"
-        paramName={HEALTH_SEARCH_PARAM}
+        placeholder={placeholder}
+        paramName={paramName}
         onLiveFilterChange={setLiveFilter}
       />
       {committed.map((filter, idx) => (
@@ -391,19 +412,28 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
   const [usersOffset, setUsersOffset] = useState(0)
   const [pathsOffset, setPathsOffset] = useState(0)
   const [showPathDetails, setShowPathDetails] = useState(false)
-  // Live filter — what's currently typed in the InlineFilter input but not
-  // yet committed as a chip. Combined with the URL-persisted chips on
-  // every query so the table updates as the user types.
-  const [liveFilter, setLiveFilter] = useState('')
+  // Live (in-progress, not yet committed) filter for each table. Combined
+  // with that table's URL-persisted chips before being sent to the API so
+  // the table updates as the user types.
+  const [usersLiveFilter, setUsersLiveFilter] = useState('')
+  const [pathsLiveFilter, setPathsLiveFilter] = useState('')
 
-  const committedFilters = useMemo(
-    () => parseHealthSearchFilters(searchParams.get(HEALTH_SEARCH_PARAM) || ''),
+  const usersCommitted = useMemo(
+    () => parseHealthSearchFilters(searchParams.get(HEALTH_USERS_SEARCH_PARAM) || ''),
     [searchParams],
   )
-  const effectiveSearch = useMemo(() => {
-    const all = liveFilter ? [...committedFilters, liveFilter] : committedFilters
+  const pathsCommitted = useMemo(
+    () => parseHealthSearchFilters(searchParams.get(HEALTH_PATHS_SEARCH_PARAM) || ''),
+    [searchParams],
+  )
+  const usersSearch = useMemo(() => {
+    const all = usersLiveFilter ? [...usersCommitted, usersLiveFilter] : usersCommitted
     return all.join(',')
-  }, [committedFilters, liveFilter])
+  }, [usersCommitted, usersLiveFilter])
+  const pathsSearch = useMemo(() => {
+    const all = pathsLiveFilter ? [...pathsCommitted, pathsLiveFilter] : pathsCommitted
+    return all.join(',')
+  }, [pathsCommitted, pathsLiveFilter])
 
   useEffect(() => {
     setUsersOffset(0)
@@ -411,12 +441,14 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
     setShowPathDetails(false)
   }, [groupPkOrCode])
 
-  // Reset to page 1 whenever the filter set changes so the user sees the
-  // first page of matches rather than an empty page-N.
+  // Reset to page 1 whenever that table's filter set changes so the user
+  // sees the first page of matches rather than an empty page-N.
   useEffect(() => {
     setUsersOffset(0)
+  }, [usersSearch])
+  useEffect(() => {
     setPathsOffset(0)
-  }, [effectiveSearch])
+  }, [pathsSearch])
 
   const summaryQuery = useQuery({
     queryKey: ['multicast-group-health-summary', groupPkOrCode],
@@ -426,16 +458,16 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
   })
 
   const usersQuery = useQuery({
-    queryKey: ['multicast-group-health-users', groupPkOrCode, HEALTH_PAGE_SIZE, usersOffset, effectiveSearch],
-    queryFn: () => fetchMulticastGroupHealthUsers(groupPkOrCode, HEALTH_PAGE_SIZE, usersOffset, effectiveSearch || undefined),
+    queryKey: ['multicast-group-health-users', groupPkOrCode, HEALTH_PAGE_SIZE, usersOffset, usersSearch],
+    queryFn: () => fetchMulticastGroupHealthUsers(groupPkOrCode, HEALTH_PAGE_SIZE, usersOffset, usersSearch || undefined),
     enabled: !!groupPkOrCode,
     refetchInterval: 60_000,
     placeholderData: keepPreviousData,
   })
 
   const pathsQuery = useQuery({
-    queryKey: ['multicast-group-health-paths', groupPkOrCode, HEALTH_PAGE_SIZE, pathsOffset, effectiveSearch],
-    queryFn: () => fetchMulticastGroupHealthPaths(groupPkOrCode, HEALTH_PAGE_SIZE, pathsOffset, effectiveSearch || undefined),
+    queryKey: ['multicast-group-health-paths', groupPkOrCode, HEALTH_PAGE_SIZE, pathsOffset, pathsSearch],
+    queryFn: () => fetchMulticastGroupHealthPaths(groupPkOrCode, HEALTH_PAGE_SIZE, pathsOffset, pathsSearch || undefined),
     enabled: !!groupPkOrCode && showPathDetails,
     refetchInterval: 60_000,
     placeholderData: keepPreviousData,
@@ -478,11 +510,6 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
         </div>
       </div>
 
-      {/* Filter bar — single InlineFilter scopes both per-user and per-path
-          tables. URL slot is dedicated to the Health tab so it doesn't
-          collide with the members filter on the parent page. */}
-      <HealthFilterBar liveFilter={liveFilter} setLiveFilter={setLiveFilter} />
-
       {/* Summary counts */}
       <div className="border border-border rounded-lg bg-card p-4">
         <div className="flex items-baseline justify-between mb-2">
@@ -502,12 +529,22 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
 
       {/* Per-user reconciliation */}
       <div className="border border-border rounded-lg bg-card">
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
-          <div className="flex items-center gap-1.5">
-            <h3 className="text-sm font-medium">Per-user reconciliation</h3>
-            <HelpIcon content={SECTION_HELP.users} />
+        <div className="px-4 py-3 border-b border-border flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-1.5">
+              <h3 className="text-sm font-medium">Per-user reconciliation</h3>
+              <HelpIcon content={SECTION_HELP.users} />
+            </div>
+            {usersQuery.isFetching && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
           </div>
-          {usersQuery.isFetching && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+          <HealthFilterBar
+            paramName={HEALTH_USERS_SEARCH_PARAM}
+            entity="multicast-health-users"
+            placeholder="Filter users…"
+            fieldPrefixes={healthUserFieldPrefixes}
+            liveFilter={usersLiveFilter}
+            setLiveFilter={setUsersLiveFilter}
+          />
         </div>
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -595,23 +632,35 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
 
       {/* Per-path reconciliation */}
       <div className="border border-border rounded-lg bg-card">
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-          <div className="flex items-center gap-1.5">
-            <h3 className="text-sm font-medium">Per-path reconciliation (publisher → subscriber)</h3>
-            <HelpIcon content={SECTION_HELP.paths} />
+        <div className="px-4 py-3 border-b border-border flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <h3 className="text-sm font-medium">Per-path reconciliation (publisher → subscriber)</h3>
+              <HelpIcon content={SECTION_HELP.paths} />
+            </div>
+            <div className="flex items-center gap-2">
+              {showPathDetails && pathsQuery.isFetching && (
+                <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+              )}
+              <button
+                type="button"
+                onClick={() => setShowPathDetails((v) => !v)}
+                className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+              >
+                {showPathDetails ? 'Hide details' : 'Show details'}
+              </button>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            {showPathDetails && pathsQuery.isFetching && (
-              <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-            )}
-            <button
-              type="button"
-              onClick={() => setShowPathDetails((v) => !v)}
-              className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
-            >
-              {showPathDetails ? 'Hide details' : 'Show details'}
-            </button>
-          </div>
+          {showPathDetails && (
+            <HealthFilterBar
+              paramName={HEALTH_PATHS_SEARCH_PARAM}
+              entity="multicast-health-paths"
+              placeholder="Filter paths…"
+              fieldPrefixes={healthPathFieldPrefixes}
+              liveFilter={pathsLiveFilter}
+              setLiveFilter={setPathsLiveFilter}
+            />
+          )}
         </div>
         {!showPathDetails ? (
           <div className="px-4 py-6 text-sm text-muted-foreground flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">

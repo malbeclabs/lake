@@ -273,7 +273,18 @@ func tokenizeHealthSearch(search string) []healthSearchToken {
 // Returns ("", nil) when search is empty so callers can unconditionally
 // append. Tokens whose field prefix isn't in fieldMap silently fall back to
 // the bare-token path so a typo doesn't break the whole query.
-func buildHealthSearchClause(search string, fieldMap map[string][]string, fallbackCols []string) (string, []any) {
+// healthSearchFieldSpec describes how a field:value token is matched.
+// exact=true does case-insensitive equality (right for enum-like columns
+// like health_status / mode where substring would match too much, e.g.
+// `status:healthy` accidentally hitting `unhealthy`). exact=false is
+// case-insensitive substring via positionCaseInsensitive (right for
+// free-form columns like user_pk / device_code / dz_ip).
+type healthSearchFieldSpec struct {
+	cols  []string
+	exact bool
+}
+
+func buildHealthSearchClause(search string, fieldMap map[string]healthSearchFieldSpec, fallbackCols []string) (string, []any) {
 	if search == "" {
 		return "", nil
 	}
@@ -287,16 +298,28 @@ func buildHealthSearchClause(search string, fieldMap map[string][]string, fallba
 		if tok.value == "" {
 			continue
 		}
-		cols := fallbackCols
+		// Resolve the columns + match mode. Unknown prefix → fallback
+		// substring across the table's default columns.
+		var cols []string
+		exact := false
 		if tok.field != "" {
-			if mapped, ok := fieldMap[tok.field]; ok && len(mapped) > 0 {
-				cols = mapped
+			if spec, ok := fieldMap[tok.field]; ok && len(spec.cols) > 0 {
+				cols = spec.cols
+				exact = spec.exact
 			}
+		}
+		if cols == nil {
+			cols = fallbackCols
 		}
 		parts := make([]string, 0, len(cols))
 		for _, c := range cols {
-			// positionCaseInsensitive avoids LIKE '%' escaping headaches.
-			parts = append(parts, "positionCaseInsensitive(toString("+c+"), ?) > 0")
+			if exact {
+				// Equality on lower(col) gives case-insensitive exact match.
+				// toString() handles non-string columns (tunnel id).
+				parts = append(parts, "lower(toString("+c+")) = lower(?)")
+			} else {
+				parts = append(parts, "positionCaseInsensitive(toString("+c+"), ?) > 0")
+			}
 			args = append(args, tok.value)
 		}
 		if len(parts) == 0 {
