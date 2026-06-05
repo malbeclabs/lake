@@ -214,6 +214,33 @@ func addStatusCount(bucket *MulticastHealthStatusCounts, status string, n uint64
 	bucket.Total += n
 }
 
+// parseHealthSearch returns the trimmed `?search=` query param. Empty when
+// absent; handlers treat empty as "no filter" and avoid appending any
+// WHERE-LIKE clause.
+func parseHealthSearch(r *http.Request) string {
+	return strings.TrimSpace(r.URL.Query().Get("search"))
+}
+
+// buildHealthSearchClause builds a parameterized WHERE-LIKE OR across the
+// passed columns. Returns the SQL fragment (starting with " AND (...)" so
+// it appends cleanly) and the args to extend the query's argument slice.
+// Empty `search` returns ("", nil) so callers can unconditionally append.
+func buildHealthSearchClause(search string, cols []string) (string, []any) {
+	if search == "" || len(cols) == 0 {
+		return "", nil
+	}
+	// Case-insensitive substring match via positionCaseInsensitive() > 0.
+	// Beats LIKE '%foo%' because we don't have to escape % and _ in the
+	// user input, and lets ClickHouse use a single function per column.
+	parts := make([]string, 0, len(cols))
+	args := make([]any, 0, len(cols))
+	for _, c := range cols {
+		parts = append(parts, "positionCaseInsensitive(toString("+c+"), ?) > 0")
+		args = append(args, search)
+	}
+	return " AND (" + strings.Join(parts, " OR ") + ")", args
+}
+
 // parseLimitOffset extracts optional pagination params. Both default to 0,
 // which means "stream all rows" for handlers that don't set a bounded
 // default before querying.

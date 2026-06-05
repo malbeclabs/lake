@@ -13,6 +13,21 @@ import (
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
+// multicastHealthUserSearchCols are the columns the `?search=` filter
+// substring-matches across (case-insensitive). Order doesn't matter for
+// correctness, but listing the most likely-matched columns first lets
+// ClickHouse short-circuit OR evaluation in the common case.
+var multicastHealthUserSearchCols = []string{
+	"user_owner_pubkey",
+	"user_pk",
+	"user_dz_ip",
+	"user_device_code",
+	"user_device_pk",
+	"user_tunnel_id",
+	"mode",
+	"health_status",
+}
+
 // GetMulticastGroupHealthUsers returns per-user reconciliation rows from
 // health_multicast_user filtered to one group.
 func (a *API) GetMulticastGroupHealthUsers(w http.ResponseWriter, r *http.Request) {
@@ -36,11 +51,12 @@ func (a *API) GetMulticastGroupHealthUsers(w http.ResponseWriter, r *http.Reques
 	}
 
 	limit, offset := parseLimitOffset(r)
+	search := parseHealthSearch(r)
 
-	// Cache read-through: only the hot first page of the hot group (the UI's
-	// default request) is pre-fetched by the worker. Anything else falls
-	// through to a live query, which uses the same code path below.
-	if isMainnet(r.Context()) && offset == 0 && limit == MulticastHealthCachedPageSize && group.PK == ShredGroupPK {
+	// Cache read-through: only the hot first page of the hot group with no
+	// search filter is pre-fetched by the worker. Searched / paged / non-hot
+	// requests fall through to a live query.
+	if search == "" && isMainnet(r.Context()) && offset == 0 && limit == MulticastHealthCachedPageSize && group.PK == ShredGroupPK {
 		if cached, ok := a.readMulticastHealthUsersCache(ctx, group.PK); ok {
 			w.Header().Set("X-Cache", "HIT")
 			writeJSON(w, cached)
@@ -49,7 +65,13 @@ func (a *API) GetMulticastGroupHealthUsers(w http.ResponseWriter, r *http.Reques
 	}
 	w.Header().Set("X-Cache", "MISS")
 
-	items, total, err := a.queryMulticastHealthUsers(ctx, "multicast_group_pk = ?", []any{group.PK}, limit, offset)
+	where := "multicast_group_pk = ?"
+	args := []any{group.PK}
+	if clause, extra := buildHealthSearchClause(search, multicastHealthUserSearchCols); clause != "" {
+		where += clause
+		args = append(args, extra...)
+	}
+	items, total, err := a.queryMulticastHealthUsers(ctx, where, args, limit, offset)
 	if err != nil {
 		logError("multicast group health/users query error", "error", err, "pk", group.PK)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)

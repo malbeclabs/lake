@@ -2325,10 +2325,12 @@ export async function fetchMulticastGroupHealthUsers(
   pkOrCode: string,
   limit?: number,
   offset?: number,
+  search?: string,
 ): Promise<MulticastHealthGroupUsersResponse> {
   const params = new URLSearchParams()
   if (limit !== undefined) params.set('limit', String(limit))
   if (offset !== undefined) params.set('offset', String(offset))
+  if (search) params.set('search', search)
   const qs = params.toString()
   const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}/health/users${qs ? `?${qs}` : ''}`)
   if (!res.ok) {
@@ -2341,10 +2343,12 @@ export async function fetchMulticastGroupHealthPaths(
   pkOrCode: string,
   limit?: number,
   offset?: number,
+  search?: string,
 ): Promise<MulticastHealthGroupPathsResponse> {
   const params = new URLSearchParams()
   if (limit !== undefined) params.set('limit', String(limit))
   if (offset !== undefined) params.set('offset', String(offset))
+  if (search) params.set('search', search)
   const qs = params.toString()
   const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}/health/paths${qs ? `?${qs}` : ''}`)
   if (!res.ok) {

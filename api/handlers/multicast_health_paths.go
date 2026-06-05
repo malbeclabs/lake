@@ -13,6 +13,22 @@ import (
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
+// multicastHealthPathSearchCols are the columns the `?search=` filter
+// substring-matches across (case-insensitive).
+var multicastHealthPathSearchCols = []string{
+	"publisher_owner_pubkey",
+	"publisher_user_pk",
+	"publisher_dz_ip",
+	"publisher_device_code",
+	"publisher_device_pk",
+	"subscriber_owner_pubkey",
+	"subscriber_user_pk",
+	"subscriber_dz_ip",
+	"subscriber_device_code",
+	"subscriber_device_pk",
+	"health_status",
+}
+
 // GetMulticastGroupHealthPaths returns per-(publisher, subscriber) path
 // reconciliation rows from health_publisher_subscriber_path for one group.
 func (a *API) GetMulticastGroupHealthPaths(w http.ResponseWriter, r *http.Request) {
@@ -36,11 +52,12 @@ func (a *API) GetMulticastGroupHealthPaths(w http.ResponseWriter, r *http.Reques
 	}
 
 	limit, offset := parseLimitOffset(r)
+	search := parseHealthSearch(r)
 
-	// Cache read-through: only the hot first page of the hot group (the UI's
-	// default request) is pre-fetched by the worker. Anything else falls
-	// through to a live query, which uses the same code path below.
-	if isMainnet(r.Context()) && offset == 0 && limit == MulticastHealthCachedPageSize && group.PK == ShredGroupPK {
+	// Cache read-through: only the hot first page with no search filter
+	// is pre-fetched by the worker. Searched / paged / non-hot requests
+	// fall through to a live query.
+	if search == "" && isMainnet(r.Context()) && offset == 0 && limit == MulticastHealthCachedPageSize && group.PK == ShredGroupPK {
 		if cached, ok := a.readMulticastHealthPathsCache(ctx, group.PK); ok {
 			w.Header().Set("X-Cache", "HIT")
 			writeJSON(w, cached)
@@ -49,7 +66,7 @@ func (a *API) GetMulticastGroupHealthPaths(w http.ResponseWriter, r *http.Reques
 	}
 	w.Header().Set("X-Cache", "MISS")
 
-	items, total, err := a.queryMulticastHealthPaths(ctx, group.PK, limit, offset)
+	items, total, err := a.queryMulticastHealthPaths(ctx, group.PK, search, limit, offset)
 	if err != nil {
 		logError("multicast group health/paths query error", "error", err, "pk", group.PK)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
@@ -89,7 +106,7 @@ func (a *API) FetchMulticastHealthPathsPageData(ctx context.Context, pkOrCode st
 	if err != nil {
 		return nil, err
 	}
-	items, total, err := a.queryMulticastHealthPaths(ctx, group.PK, MulticastHealthCachedPageSize, 0)
+	items, total, err := a.queryMulticastHealthPaths(ctx, group.PK, "", MulticastHealthCachedPageSize, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -103,9 +120,13 @@ func (a *API) FetchMulticastHealthPathsPageData(ctx context.Context, pkOrCode st
 	}, nil
 }
 
-func (a *API) queryMulticastHealthPaths(ctx context.Context, groupPK string, limit, offset int) ([]MulticastHealthPathItem, int, error) {
+func (a *API) queryMulticastHealthPaths(ctx context.Context, groupPK, search string, limit, offset int) ([]MulticastHealthPathItem, int, error) {
 	whereClause := "multicast_group_pk = ?"
 	args := []any{groupPK}
+	if clause, extra := buildHealthSearchClause(search, multicastHealthPathSearchCols); clause != "" {
+		whereClause += clause
+		args = append(args, extra...)
+	}
 	total := 0
 	if limit > 0 {
 		var err error
