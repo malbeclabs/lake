@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS stg_dim_dz_shred_validator_rewards_leaves_snapshot (
     op_id                UUID,
     is_deleted           UInt8 DEFAULT 0,
     attrs_hash           UInt64,
+    pk                   String,
     subscription_epoch   UInt64,
     associated_dz_epoch  UInt64,
     node_id              String,
@@ -29,6 +30,7 @@ CREATE TABLE IF NOT EXISTS dim_dz_shred_validator_rewards_leaves_history (
     op_id                UUID,
     is_deleted           UInt8 DEFAULT 0,
     attrs_hash           UInt64,
+    pk                   String,
     subscription_epoch   UInt64,
     associated_dz_epoch  UInt64,
     node_id              String,
@@ -47,7 +49,7 @@ WITH ranked AS (
         row_number() OVER (PARTITION BY entity_id ORDER BY snapshot_ts DESC, ingested_at DESC, op_id DESC) AS rn
     FROM dim_dz_shred_validator_rewards_leaves_history
 )
-SELECT entity_id, snapshot_ts, ingested_at, op_id, attrs_hash,
+SELECT entity_id, snapshot_ts, ingested_at, op_id, attrs_hash, pk,
     subscription_epoch, associated_dz_epoch, node_id,
     leader_slots, client_id, leaf_index
 FROM ranked
@@ -63,6 +65,7 @@ CREATE TABLE IF NOT EXISTS stg_dim_dz_shred_validator_leaf_distribution_status_s
     op_id                UUID,
     is_deleted           UInt8 DEFAULT 0,
     attrs_hash           UInt64,
+    pk                   String,
     subscription_epoch   UInt64,
     node_id              String,
     is_claimable         UInt8,
@@ -81,6 +84,7 @@ CREATE TABLE IF NOT EXISTS dim_dz_shred_validator_leaf_distribution_status_histo
     op_id                UUID,
     is_deleted           UInt8 DEFAULT 0,
     attrs_hash           UInt64,
+    pk                   String,
     subscription_epoch   UInt64,
     node_id              String,
     is_claimable         UInt8,
@@ -97,7 +101,7 @@ WITH ranked AS (
         row_number() OVER (PARTITION BY entity_id ORDER BY snapshot_ts DESC, ingested_at DESC, op_id DESC) AS rn
     FROM dim_dz_shred_validator_leaf_distribution_status_history
 )
-SELECT entity_id, snapshot_ts, ingested_at, op_id, attrs_hash,
+SELECT entity_id, snapshot_ts, ingested_at, op_id, attrs_hash, pk,
     subscription_epoch, node_id, is_claimable, journal_mint_key
 FROM ranked
 WHERE rn = 1 AND is_deleted = 0;
@@ -112,6 +116,7 @@ CREATE TABLE IF NOT EXISTS stg_dim_dz_shred_distribution_client_proportions_snap
     op_id                UUID,
     is_deleted           UInt8 DEFAULT 0,
     attrs_hash           UInt64,
+    pk                   String,
     subscription_epoch   UInt64,
     client_id            UInt16,
     proportion           UInt16,
@@ -130,6 +135,7 @@ CREATE TABLE IF NOT EXISTS dim_dz_shred_distribution_client_proportions_history 
     op_id                UUID,
     is_deleted           UInt8 DEFAULT 0,
     attrs_hash           UInt64,
+    pk                   String,
     subscription_epoch   UInt64,
     client_id            UInt16,
     proportion           UInt16,
@@ -146,7 +152,7 @@ WITH ranked AS (
         row_number() OVER (PARTITION BY entity_id ORDER BY snapshot_ts DESC, ingested_at DESC, op_id DESC) AS rn
     FROM dim_dz_shred_distribution_client_proportions_history
 )
-SELECT entity_id, snapshot_ts, ingested_at, op_id, attrs_hash,
+SELECT entity_id, snapshot_ts, ingested_at, op_id, attrs_hash, pk,
     subscription_epoch, client_id, proportion, default_proportion
 FROM ranked
 WHERE rn = 1 AND is_deleted = 0;

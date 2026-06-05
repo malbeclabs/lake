@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS stg_dim_dz_shred_distribution_2z_pool_snapshot (
     op_id                UUID,
     is_deleted           UInt8 DEFAULT 0,
     attrs_hash           UInt64,
+    pk                   String,
     subscription_epoch   UInt64,
     tokens_received_2z   UInt64
 ) ENGINE = MergeTree
@@ -34,6 +35,7 @@ CREATE TABLE IF NOT EXISTS dim_dz_shred_distribution_2z_pool_history (
     op_id                UUID,
     is_deleted           UInt8 DEFAULT 0,
     attrs_hash           UInt64,
+    pk                   String,
     subscription_epoch   UInt64,
     tokens_received_2z   UInt64
 ) ENGINE = MergeTree
@@ -48,7 +50,7 @@ WITH ranked AS (
         row_number() OVER (PARTITION BY entity_id ORDER BY snapshot_ts DESC, ingested_at DESC, op_id DESC) AS rn
     FROM dim_dz_shred_distribution_2z_pool_history
 )
-SELECT entity_id, snapshot_ts, ingested_at, op_id, attrs_hash,
+SELECT entity_id, snapshot_ts, ingested_at, op_id, attrs_hash, pk,
     subscription_epoch, tokens_received_2z
 FROM ranked
 WHERE rn = 1 AND is_deleted = 0;

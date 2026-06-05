@@ -22,7 +22,7 @@ WITH ranked AS (
         row_number() OVER (PARTITION BY entity_id ORDER BY snapshot_ts DESC, ingested_at DESC, op_id DESC) AS rn
     FROM dim_dz_shred_validator_rewards_leaves_history
 )
-SELECT entity_id, snapshot_ts, ingested_at, op_id, attrs_hash,
+SELECT entity_id, snapshot_ts, ingested_at, op_id, attrs_hash, pk,
     subscription_epoch, associated_dz_epoch, node_id,
     leader_slots, client_id, leaf_index, is_verified
 FROM ranked
@@ -38,7 +38,7 @@ WITH ranked AS (
         row_number() OVER (PARTITION BY entity_id ORDER BY snapshot_ts DESC, ingested_at DESC, op_id DESC) AS rn
     FROM dim_dz_shred_validator_rewards_leaves_history
 )
-SELECT entity_id, snapshot_ts, ingested_at, op_id, attrs_hash,
+SELECT entity_id, snapshot_ts, ingested_at, op_id, attrs_hash, pk,
     subscription_epoch, associated_dz_epoch, node_id,
     leader_slots, client_id, leaf_index
 FROM ranked
