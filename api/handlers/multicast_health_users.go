@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -11,6 +12,21 @@ import (
 	"github.com/malbeclabs/lake/api/handlers/dberror"
 	"github.com/malbeclabs/lake/api/metrics"
 )
+
+// multicastHealthUserSearchCols are the columns the `?search=` filter
+// substring-matches across (case-insensitive). Order doesn't matter for
+// correctness, but listing the most likely-matched columns first lets
+// ClickHouse short-circuit OR evaluation in the common case.
+var multicastHealthUserSearchCols = []string{
+	"user_owner_pubkey",
+	"user_pk",
+	"user_dz_ip",
+	"user_device_code",
+	"user_device_pk",
+	"user_tunnel_id",
+	"mode",
+	"health_status",
+}
 
 // GetMulticastGroupHealthUsers returns per-user reconciliation rows from
 // health_multicast_user filtered to one group.
@@ -35,7 +51,27 @@ func (a *API) GetMulticastGroupHealthUsers(w http.ResponseWriter, r *http.Reques
 	}
 
 	limit, offset := parseLimitOffset(r)
-	items, total, err := a.queryMulticastHealthUsers(ctx, "multicast_group_pk = ?", []any{group.PK}, limit, offset)
+	search := parseHealthSearch(r)
+
+	// Cache read-through: only the hot first page of the hot group with no
+	// search filter is pre-fetched by the worker. Searched / paged / non-hot
+	// requests fall through to a live query.
+	if search == "" && isMainnet(r.Context()) && offset == 0 && limit == MulticastHealthCachedPageSize && group.PK == ShredGroupPK {
+		if cached, ok := a.readMulticastHealthUsersCache(ctx, group.PK); ok {
+			w.Header().Set("X-Cache", "HIT")
+			writeJSON(w, cached)
+			return
+		}
+	}
+	w.Header().Set("X-Cache", "MISS")
+
+	where := "multicast_group_pk = ?"
+	args := []any{group.PK}
+	if clause, extra := buildHealthSearchClause(search, multicastHealthUserSearchCols); clause != "" {
+		where += clause
+		args = append(args, extra...)
+	}
+	items, total, err := a.queryMulticastHealthUsers(ctx, where, args, limit, offset)
 	if err != nil {
 		logError("multicast group health/users query error", "error", err, "pk", group.PK)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
@@ -92,6 +128,46 @@ func (a *API) GetUserHealth(w http.ResponseWriter, r *http.Request) {
 		GeneratedAt:     formatMulticastTime(time.Now().UTC()),
 		Items:           items,
 	})
+}
+
+// readMulticastHealthUsersCache returns the cached first-page users response
+// for the given group pk if the worker has written it. Missing entry or
+// decode failure → cache miss, caller falls through to live query.
+func (a *API) readMulticastHealthUsersCache(ctx context.Context, groupPK string) (*MulticastHealthGroupUsersResponse, bool) {
+	data, err := a.readPageCache(ctx, MulticastHealthUsersCacheKey(groupPK))
+	if err != nil {
+		return nil, false
+	}
+	var cached MulticastHealthGroupUsersResponse
+	if err := json.Unmarshal(data, &cached); err != nil {
+		return nil, false
+	}
+	return &cached, true
+}
+
+// FetchMulticastHealthUsersPageData fetches the hot first page of
+// /health/users (offset=0, limit=MulticastHealthCachedPageSize) for the
+// given pkOrCode. The worker calls this on every refresh cycle and writes
+// the result under MulticastHealthUsersCacheKey(pk).
+func (a *API) FetchMulticastHealthUsersPageData(ctx context.Context, pkOrCode string) (*MulticastHealthGroupUsersResponse, error) {
+	group, err := a.queryMulticastDeliveryGroup(ctx, pkOrCode)
+	if err != nil {
+		return nil, err
+	}
+	items, total, err := a.queryMulticastHealthUsers(
+		ctx, "multicast_group_pk = ?", []any{group.PK}, MulticastHealthCachedPageSize, 0,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &MulticastHealthGroupUsersResponse{
+		Group:       group,
+		GeneratedAt: formatMulticastTime(time.Now().UTC()),
+		Items:       items,
+		Total:       total,
+		Limit:       MulticastHealthCachedPageSize,
+		Offset:      0,
+	}, nil
 }
 
 // queryMulticastHealthUsers reads from health_multicast_user_rate with a

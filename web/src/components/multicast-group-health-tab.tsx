@@ -40,7 +40,46 @@ const RATE_REASON_HUMAN: Record<MulticastRateStatusReason, string> = {
   group_idle: 'all publishers transmitting 0 — nothing to verify against',
 }
 
-const HEALTH_PAGE_SIZE = 100
+// 25 keeps the per-page Radix Tooltip.Root count (~2 per row × N rows) below
+// the threshold where mounting blocks the main thread long enough to trigger
+// Chrome's "Page Unresponsive" prompt on large groups (edge-solana-shreds has
+// 857 users). It also matches the server-side cached page size for the hot
+// group so the first paint hits the worker cache.
+const HEALTH_PAGE_SIZE = 25
+
+// useDebouncedValue returns `value` delayed by `delayMs`, so a rapidly
+// changing input (typing in the search box) only triggers a new query
+// after the user pauses.
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value)
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(value), delayMs)
+    return () => clearTimeout(id)
+  }, [value, delayMs])
+  return debounced
+}
+
+function SearchInput({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string
+  onChange: (v: string) => void
+  placeholder: string
+}) {
+  return (
+    <div className="relative">
+      <input
+        type="search"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="h-7 w-72 rounded-md border border-border bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+      />
+    </div>
+  )
+}
 
 const STATUS_BADGE: Record<MulticastHealthStatus, string> = {
   healthy: 'bg-emerald-500/15 text-emerald-500',
@@ -293,12 +332,27 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
   const [usersOffset, setUsersOffset] = useState(0)
   const [pathsOffset, setPathsOffset] = useState(0)
   const [showPathDetails, setShowPathDetails] = useState(false)
+  const [usersSearchInput, setUsersSearchInput] = useState('')
+  const [pathsSearchInput, setPathsSearchInput] = useState('')
+  const usersSearch = useDebouncedValue(usersSearchInput, 200)
+  const pathsSearch = useDebouncedValue(pathsSearchInput, 200)
 
   useEffect(() => {
     setUsersOffset(0)
     setPathsOffset(0)
     setShowPathDetails(false)
+    setUsersSearchInput('')
+    setPathsSearchInput('')
   }, [groupPkOrCode])
+
+  // Reset to page 1 whenever the search text changes so the user sees the
+  // first page of matches rather than an empty page-N.
+  useEffect(() => {
+    setUsersOffset(0)
+  }, [usersSearch])
+  useEffect(() => {
+    setPathsOffset(0)
+  }, [pathsSearch])
 
   const summaryQuery = useQuery({
     queryKey: ['multicast-group-health-summary', groupPkOrCode],
@@ -308,16 +362,16 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
   })
 
   const usersQuery = useQuery({
-    queryKey: ['multicast-group-health-users', groupPkOrCode, HEALTH_PAGE_SIZE, usersOffset],
-    queryFn: () => fetchMulticastGroupHealthUsers(groupPkOrCode, HEALTH_PAGE_SIZE, usersOffset),
+    queryKey: ['multicast-group-health-users', groupPkOrCode, HEALTH_PAGE_SIZE, usersOffset, usersSearch],
+    queryFn: () => fetchMulticastGroupHealthUsers(groupPkOrCode, HEALTH_PAGE_SIZE, usersOffset, usersSearch || undefined),
     enabled: !!groupPkOrCode,
     refetchInterval: 60_000,
     placeholderData: keepPreviousData,
   })
 
   const pathsQuery = useQuery({
-    queryKey: ['multicast-group-health-paths', groupPkOrCode, HEALTH_PAGE_SIZE, pathsOffset],
-    queryFn: () => fetchMulticastGroupHealthPaths(groupPkOrCode, HEALTH_PAGE_SIZE, pathsOffset),
+    queryKey: ['multicast-group-health-paths', groupPkOrCode, HEALTH_PAGE_SIZE, pathsOffset, pathsSearch],
+    queryFn: () => fetchMulticastGroupHealthPaths(groupPkOrCode, HEALTH_PAGE_SIZE, pathsOffset, pathsSearch || undefined),
     enabled: !!groupPkOrCode && showPathDetails,
     refetchInterval: 60_000,
     placeholderData: keepPreviousData,
@@ -366,12 +420,19 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
 
       {/* Per-user reconciliation */}
       <div className="border border-border rounded-lg bg-card">
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
           <div className="flex items-center gap-1.5">
             <h3 className="text-sm font-medium">Per-user reconciliation</h3>
             <HelpIcon content={SECTION_HELP.users} />
           </div>
-          {usersQuery.isFetching && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+          <div className="flex items-center gap-2">
+            <SearchInput
+              value={usersSearchInput}
+              onChange={setUsersSearchInput}
+              placeholder="Filter user, mode, device, tunnel, status…"
+            />
+            {usersQuery.isFetching && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -464,6 +525,13 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
             <HelpIcon content={SECTION_HELP.paths} />
           </div>
           <div className="flex items-center gap-2">
+            {showPathDetails && (
+              <SearchInput
+                value={pathsSearchInput}
+                onChange={setPathsSearchInput}
+                placeholder="Filter publisher, subscriber, device, status…"
+              />
+            )}
             {showPathDetails && pathsQuery.isFetching && (
               <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
             )}
