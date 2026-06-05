@@ -33,6 +33,7 @@ import { SmallDropdown } from '@/components/topology/TimeRangeSelector'
 import { InlineFilter } from '@/components/inline-filter'
 import { Pagination } from '@/components/pagination'
 import { MulticastGroupHealthTab } from '@/components/multicast-group-health-tab'
+import { useAuth } from '@/contexts/AuthContext'
 
 function formatBps(bps: number): string {
   if (bps === 0) return '—'
@@ -1482,12 +1483,16 @@ export function MulticastGroupDetailPage() {
   const { pk } = useParams<{ pk: string }>()
   const navigate = useNavigate()
   const back = useBackLink({ to: '/dz/multicast-groups', label: 'multicast groups' })
+  const { isAuthenticated } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
   const tabParam = searchParams.get('tab')
+  // Health tab is gated behind login for now: the underlying views are
+  // heavy and we don't want anonymous traffic hammering them. If the URL
+  // asks for tab=health while logged out, fall back to publishers.
   const activeTab = (
     tabParam === 'subscribers'
       ? 'subscribers'
-      : tabParam === 'health'
+      : tabParam === 'health' && isAuthenticated
         ? 'health'
         : 'publishers'
   ) as 'publishers' | 'subscribers' | 'health'
@@ -1917,16 +1922,18 @@ export function MulticastGroupDetailPage() {
             >
               Subscribers ({subscriberCount})
             </button>
-            <button
-              onClick={() => setActiveTab('health')}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px ${
-                activeTab === 'health'
-                  ? 'border-purple-500 text-purple-500'
-                  : 'border-transparent text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Health
-            </button>
+            {isAuthenticated && (
+              <button
+                onClick={() => setActiveTab('health')}
+                className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px ${
+                  activeTab === 'health'
+                    ? 'border-purple-500 text-purple-500'
+                    : 'border-transparent text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                Health
+              </button>
+            )}
             {membersFetching && activeTab !== 'health' && (
               <div className="flex items-center ml-2">
                 <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />

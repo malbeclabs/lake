@@ -19,6 +19,30 @@ import (
 // group health summaries.
 const MulticastHealthSummariesCacheKey = "multicast_health_summaries"
 
+// MulticastHealthCachedPageSize is the page size the worker pre-fetches for
+// the hot ShredGroupPK on /health/users and /health/paths. The UI defaults
+// to this same value so the first paint hits the cache; anything else
+// (different page size or non-zero offset) falls through to a live query.
+const MulticastHealthCachedPageSize = 25
+
+// multicast health users / paths per-pk cache keys.
+const (
+	multicastHealthUsersCacheKeyPrefix = "multicast_health_users:"
+	multicastHealthPathsCacheKeyPrefix = "multicast_health_paths:"
+)
+
+// MulticastHealthUsersCacheKey returns the per-pk cache key for the worker
+// to write and the handler to read for the hot first page of
+// /health/users. One row per pk, no list walk.
+func MulticastHealthUsersCacheKey(pk string) string {
+	return multicastHealthUsersCacheKeyPrefix + pk
+}
+
+// MulticastHealthPathsCacheKey returns the per-pk cache key for /health/paths.
+func MulticastHealthPathsCacheKey(pk string) string {
+	return multicastHealthPathsCacheKeyPrefix + pk
+}
+
 // GetMulticastGroupHealth returns per-group health counts across mroutes,
 // multicast users, and publisher↔subscriber paths. Reads from the three
 // health_* views, or from the page cache for mainnet requests when available.

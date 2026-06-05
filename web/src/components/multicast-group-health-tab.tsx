@@ -40,7 +40,12 @@ const RATE_REASON_HUMAN: Record<MulticastRateStatusReason, string> = {
   group_idle: 'all publishers transmitting 0 — nothing to verify against',
 }
 
-const HEALTH_PAGE_SIZE = 100
+// 25 keeps the per-page Radix Tooltip.Root count (~2 per row × N rows) below
+// the threshold where mounting blocks the main thread long enough to trigger
+// Chrome's "Page Unresponsive" prompt on large groups (edge-solana-shreds has
+// 857 users). It also matches the server-side cached page size for the hot
+// group so the first paint hits the worker cache.
+const HEALTH_PAGE_SIZE = 25
 
 const STATUS_BADGE: Record<MulticastHealthStatus, string> = {
   healthy: 'bg-emerald-500/15 text-emerald-500',

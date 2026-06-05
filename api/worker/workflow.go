@@ -129,6 +129,16 @@ func (a *Activities) entries() []cacheEntry {
 		{"multicast health summaries", handlers.MulticastHealthSummariesCacheKey, func(ctx context.Context) (any, error) {
 			return api.FetchMulticastHealthSummariesData(ctx, handlers.ShredGroupPK)
 		}},
+		// Pre-fetch the hot first page of /health/users and /health/paths for
+		// ShredGroupPK. The UI's default request (offset=0, limit=
+		// MulticastHealthCachedPageSize) hits these caches and returns in ~1ms
+		// instead of running the view live (multi-second on edge-solana-shreds).
+		{"multicast health users (shreds)", handlers.MulticastHealthUsersCacheKey(handlers.ShredGroupPK), func(ctx context.Context) (any, error) {
+			return api.FetchMulticastHealthUsersPageData(ctx, handlers.ShredGroupPK)
+		}},
+		{"multicast health paths (shreds)", handlers.MulticastHealthPathsCacheKey(handlers.ShredGroupPK), func(ctx context.Context) (any, error) {
+			return api.FetchMulticastHealthPathsPageData(ctx, handlers.ShredGroupPK)
+		}},
 	}
 }
 
