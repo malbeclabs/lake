@@ -13,9 +13,25 @@ import (
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
-// multicastHealthPathSearchCols are the columns the `?search=` filter
-// substring-matches across (case-insensitive).
-var multicastHealthPathSearchCols = []string{
+// multicastHealthPathSearchFields maps `field:value` prefixes accepted in
+// the path-table search to underlying columns. Both `publisher:` /
+// `subscriber:` and the generic `user:` / `device:` are supported.
+var multicastHealthPathSearchFields = map[string][]string{
+	"publisher": {"publisher_user_pk", "publisher_owner_pubkey", "publisher_dz_ip", "publisher_device_code"},
+	"subscriber": {"subscriber_user_pk", "subscriber_owner_pubkey", "subscriber_dz_ip", "subscriber_device_code"},
+	"user":   {"publisher_user_pk", "publisher_owner_pubkey", "subscriber_user_pk", "subscriber_owner_pubkey"},
+	"owner":  {"publisher_owner_pubkey", "subscriber_owner_pubkey"},
+	"pubkey": {"publisher_user_pk", "publisher_owner_pubkey", "subscriber_user_pk", "subscriber_owner_pubkey"},
+	"ip":     {"publisher_dz_ip", "subscriber_dz_ip"},
+	"dz_ip":  {"publisher_dz_ip", "subscriber_dz_ip"},
+	"device": {"publisher_device_code", "subscriber_device_code", "publisher_device_pk", "subscriber_device_pk"},
+	"status": {"health_status"},
+	"health": {"health_status"},
+}
+
+// multicastHealthPathSearchFallback is OR-matched when the token has no
+// field prefix.
+var multicastHealthPathSearchFallback = []string{
 	"publisher_owner_pubkey",
 	"publisher_user_pk",
 	"publisher_dz_ip",
@@ -123,7 +139,7 @@ func (a *API) FetchMulticastHealthPathsPageData(ctx context.Context, pkOrCode st
 func (a *API) queryMulticastHealthPaths(ctx context.Context, groupPK, search string, limit, offset int) ([]MulticastHealthPathItem, int, error) {
 	whereClause := "multicast_group_pk = ?"
 	args := []any{groupPK}
-	if clause, extra := buildHealthSearchClause(search, multicastHealthPathSearchCols); clause != "" {
+	if clause, extra := buildHealthSearchClause(search, multicastHealthPathSearchFields, multicastHealthPathSearchFallback); clause != "" {
 		whereClause += clause
 		args = append(args, extra...)
 	}

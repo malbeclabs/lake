@@ -221,24 +221,80 @@ func parseHealthSearch(r *http.Request) string {
 	return strings.TrimSpace(r.URL.Query().Get("search"))
 }
 
-// buildHealthSearchClause builds a parameterized WHERE-LIKE OR across the
-// passed columns. Returns the SQL fragment (starting with " AND (...)" so
-// it appends cleanly) and the args to extend the query's argument slice.
-// Empty `search` returns ("", nil) so callers can unconditionally append.
-func buildHealthSearchClause(search string, cols []string) (string, []any) {
-	if search == "" || len(cols) == 0 {
+// healthSearchTokens splits a search string into whitespace-separated tokens.
+// Each token is either `field:value` (case-insensitive field, free-form
+// value) or a bare term (matched as substring across the table's default
+// columns). Multiple tokens AND together.
+//
+// Examples:
+//
+//	"device:nyc001 status:unhealthy"      → two field-scoped filters
+//	"3b2Ze7VY"                            → one bare term (any column)
+//	"device:nyc001 unhealthy"             → field-scoped + bare term
+type healthSearchToken struct {
+	field string // empty for bare terms
+	value string
+}
+
+func tokenizeHealthSearch(search string) []healthSearchToken {
+	out := []healthSearchToken{}
+	for _, raw := range strings.Fields(search) {
+		if idx := strings.IndexByte(raw, ':'); idx > 0 && idx < len(raw)-1 {
+			out = append(out, healthSearchToken{
+				field: strings.ToLower(raw[:idx]),
+				value: raw[idx+1:],
+			})
+			continue
+		}
+		// Bare term or malformed field prefix → substring fallback.
+		out = append(out, healthSearchToken{value: strings.TrimSuffix(raw, ":")})
+	}
+	return out
+}
+
+// buildHealthSearchClause builds a parameterized WHERE clause from a search
+// string. Tokens of the form `field:value` are matched against the column
+// listed under that field in fieldMap (substring, case-insensitive). Bare
+// tokens are OR'd across fallbackCols. Multiple tokens AND together.
+//
+// Returns ("", nil) when search is empty so callers can unconditionally
+// append. Tokens whose field prefix isn't in fieldMap silently fall back to
+// the bare-token path so a typo doesn't break the whole query.
+func buildHealthSearchClause(search string, fieldMap map[string][]string, fallbackCols []string) (string, []any) {
+	if search == "" {
 		return "", nil
 	}
-	// Case-insensitive substring match via positionCaseInsensitive() > 0.
-	// Beats LIKE '%foo%' because we don't have to escape % and _ in the
-	// user input, and lets ClickHouse use a single function per column.
-	parts := make([]string, 0, len(cols))
-	args := make([]any, 0, len(cols))
-	for _, c := range cols {
-		parts = append(parts, "positionCaseInsensitive(toString("+c+"), ?) > 0")
-		args = append(args, search)
+	tokens := tokenizeHealthSearch(search)
+	if len(tokens) == 0 {
+		return "", nil
 	}
-	return " AND (" + strings.Join(parts, " OR ") + ")", args
+	clauses := make([]string, 0, len(tokens))
+	args := make([]any, 0, len(tokens))
+	for _, tok := range tokens {
+		if tok.value == "" {
+			continue
+		}
+		cols := fallbackCols
+		if tok.field != "" {
+			if mapped, ok := fieldMap[tok.field]; ok && len(mapped) > 0 {
+				cols = mapped
+			}
+		}
+		parts := make([]string, 0, len(cols))
+		for _, c := range cols {
+			// positionCaseInsensitive avoids LIKE '%' escaping headaches.
+			parts = append(parts, "positionCaseInsensitive(toString("+c+"), ?) > 0")
+			args = append(args, tok.value)
+		}
+		if len(parts) == 0 {
+			continue
+		}
+		clauses = append(clauses, "("+strings.Join(parts, " OR ")+")")
+	}
+	if len(clauses) == 0 {
+		return "", nil
+	}
+	return " AND " + strings.Join(clauses, " AND "), args
 }
 
 // parseLimitOffset extracts optional pagination params. Both default to 0,
