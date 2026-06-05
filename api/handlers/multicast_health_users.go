@@ -13,13 +13,30 @@ import (
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
-// multicastHealthUserSearchCols are the columns the `?search=` filter
-// substring-matches across (case-insensitive). Order doesn't matter for
-// correctness, but listing the most likely-matched columns first lets
-// ClickHouse short-circuit OR evaluation in the common case.
-var multicastHealthUserSearchCols = []string{
-	"user_owner_pubkey",
+// multicastHealthUserSearchFields maps the prefixes accepted in a
+// `field:value` search token to the underlying columns + match mode.
+// Enum-like fields (status / mode / tunnel) need exact match because
+// their values share substrings — e.g. `status:healthy` would otherwise
+// match `unhealthy`. Free-form columns stay substring.
+var multicastHealthUserSearchFields = map[string]healthSearchFieldSpec{
+	"user":    {cols: []string{"user_pk", "user_owner_pubkey"}},
+	"account": {cols: []string{"user_pk"}},
+	"owner":   {cols: []string{"user_owner_pubkey"}},
+	"pubkey":  {cols: []string{"user_pk", "user_owner_pubkey"}},
+	"ip":      {cols: []string{"user_dz_ip"}},
+	"dz_ip":   {cols: []string{"user_dz_ip"}},
+	"device":  {cols: []string{"user_device_code", "user_device_pk"}},
+	"tunnel":  {cols: []string{"user_tunnel_id"}, exact: true},
+	"mode":    {cols: []string{"mode"}, exact: true},
+	"status":  {cols: []string{"health_status"}, exact: true},
+	"health":  {cols: []string{"health_status"}, exact: true},
+}
+
+// multicastHealthUserSearchFallback is OR-matched when the token has no
+// field prefix.
+var multicastHealthUserSearchFallback = []string{
 	"user_pk",
+	"user_owner_pubkey",
 	"user_dz_ip",
 	"user_device_code",
 	"user_device_pk",
@@ -67,7 +84,7 @@ func (a *API) GetMulticastGroupHealthUsers(w http.ResponseWriter, r *http.Reques
 
 	where := "multicast_group_pk = ?"
 	args := []any{group.PK}
-	if clause, extra := buildHealthSearchClause(search, multicastHealthUserSearchCols); clause != "" {
+	if clause, extra := buildHealthSearchClause(search, multicastHealthUserSearchFields, multicastHealthUserSearchFallback); clause != "" {
 		where += clause
 		args = append(args, extra...)
 	}

@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
-import { Loader2, AlertCircle, Info, ChevronRight } from 'lucide-react'
+import { Loader2, AlertCircle, Info, ChevronRight, X } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Pagination } from '@/components/pagination'
+import { InlineFilter } from '@/components/inline-filter'
 import {
   fetchMulticastGroupHealth,
   fetchMulticastGroupHealthUsers,
@@ -14,6 +15,40 @@ import {
   type MulticastRateStatus,
   type MulticastRateStatusReason,
 } from '@/lib/api'
+
+// URL query-string slots for committed Health-tab filter chips. Distinct
+// from the parent page's '?search=' (members filter) so they don't
+// trample each other when switching tabs. Per-user and per-path each
+// have their own slot so the two tables filter independently.
+const HEALTH_USERS_SEARCH_PARAM = 'husers'
+const HEALTH_PATHS_SEARCH_PARAM = 'hpaths'
+
+// Field prefixes for the per-user table filter.
+const healthUserFieldPrefixes = [
+  { prefix: 'device:', description: 'Filter by device code (e.g. nyc001)' },
+  { prefix: 'status:', description: 'Filter by health status (healthy, degraded, unhealthy, unknown)' },
+  { prefix: 'mode:', description: 'Mode: P, S, or P+S' },
+  { prefix: 'tunnel:', description: 'Tunnel id (exact match)' },
+  { prefix: 'user:', description: "Match user account or owner pubkey" },
+  { prefix: 'owner:', description: 'Match owner pubkey' },
+  { prefix: 'ip:', description: "Match user's dz_ip" },
+]
+
+// Field prefixes for the per-path table filter.
+const healthPathFieldPrefixes = [
+  { prefix: 'publisher:', description: 'Match the publisher side (pk/owner/ip/device)' },
+  { prefix: 'subscriber:', description: 'Match the subscriber side (pk/owner/ip/device)' },
+  { prefix: 'device:', description: 'Match either publisher or subscriber device' },
+  { prefix: 'status:', description: 'Filter by health status (healthy, degraded, unhealthy, unknown)' },
+  { prefix: 'user:', description: 'Match either side\'s account or owner pubkey' },
+  { prefix: 'owner:', description: 'Match either side\'s owner pubkey' },
+  { prefix: 'ip:', description: "Match either side's dz_ip" },
+]
+
+function parseHealthSearchFilters(searchParam: string): string[] {
+  if (!searchParam) return []
+  return searchParam.split(',').map(f => f.trim()).filter(Boolean)
+}
 
 function formatBps(bps?: number): string {
   if (bps === undefined || bps === null) return '—'
@@ -47,36 +82,80 @@ const RATE_REASON_HUMAN: Record<MulticastRateStatusReason, string> = {
 // group so the first paint hits the worker cache.
 const HEALTH_PAGE_SIZE = 25
 
-// useDebouncedValue returns `value` delayed by `delayMs`, so a rapidly
-// changing input (typing in the search box) only triggers a new query
-// after the user pauses.
-function useDebouncedValue<T>(value: T, delayMs: number): T {
-  const [debounced, setDebounced] = useState(value)
-  useEffect(() => {
-    const id = setTimeout(() => setDebounced(value), delayMs)
-    return () => clearTimeout(id)
-  }, [value, delayMs])
-  return debounced
-}
-
-function SearchInput({
-  value,
-  onChange,
+// HealthFilterBar renders the InlineFilter chip UX seen elsewhere on the
+// site (Devices, Facilities, etc.). Committed filters live in the URL
+// slot named by `paramName` so reloads / shareable URLs preserve them.
+// The bar tracks its own live (in-progress) filter via a callback so the
+// parent can pass it through to the underlying API call.
+function HealthFilterBar({
+  paramName,
+  entity,
   placeholder,
+  fieldPrefixes,
+  liveFilter,
+  setLiveFilter,
 }: {
-  value: string
-  onChange: (v: string) => void
+  paramName: string
+  entity: string
   placeholder: string
+  fieldPrefixes: { prefix: string; description: string }[]
+  liveFilter: string
+  setLiveFilter: (v: string) => void
 }) {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const committed = parseHealthSearchFilters(searchParams.get(paramName) || '')
+
+  const removeFilter = useCallback((toRemove: string) => {
+    const next = committed.filter(f => f !== toRemove)
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev)
+      if (next.length === 0) p.delete(paramName)
+      else p.set(paramName, next.join(','))
+      return p
+    })
+  }, [committed, setSearchParams, paramName])
+
+  const clearAll = useCallback(() => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev)
+      p.delete(paramName)
+      return p
+    })
+  }, [setSearchParams, paramName])
+
   return (
-    <div className="relative">
-      <input
-        type="search"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
+    <div className="flex flex-wrap items-center gap-2">
+      <InlineFilter
+        fieldPrefixes={fieldPrefixes}
+        entity={entity}
+        autocompleteFields={[]}
         placeholder={placeholder}
-        className="h-7 w-72 rounded-md border border-border bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+        paramName={paramName}
+        onLiveFilterChange={setLiveFilter}
       />
+      {committed.map((filter, idx) => (
+        <button
+          key={`${filter}-${idx}`}
+          onClick={() => removeFilter(filter)}
+          className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors"
+        >
+          {filter}
+          <X className="h-3 w-3" />
+        </button>
+      ))}
+      {committed.length > 1 && (
+        <button
+          onClick={clearAll}
+          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          Clear all
+        </button>
+      )}
+      {liveFilter && (
+        <span className="text-xs text-muted-foreground italic">
+          previewing: {liveFilter}
+        </span>
+      )}
     </div>
   )
 }
@@ -329,24 +408,41 @@ function TableStateRow({
 }
 
 export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: string }) {
+  const [searchParams] = useSearchParams()
   const [usersOffset, setUsersOffset] = useState(0)
   const [pathsOffset, setPathsOffset] = useState(0)
   const [showPathDetails, setShowPathDetails] = useState(false)
-  const [usersSearchInput, setUsersSearchInput] = useState('')
-  const [pathsSearchInput, setPathsSearchInput] = useState('')
-  const usersSearch = useDebouncedValue(usersSearchInput, 200)
-  const pathsSearch = useDebouncedValue(pathsSearchInput, 200)
+  // Live (in-progress, not yet committed) filter for each table. Combined
+  // with that table's URL-persisted chips before being sent to the API so
+  // the table updates as the user types.
+  const [usersLiveFilter, setUsersLiveFilter] = useState('')
+  const [pathsLiveFilter, setPathsLiveFilter] = useState('')
+
+  const usersCommitted = useMemo(
+    () => parseHealthSearchFilters(searchParams.get(HEALTH_USERS_SEARCH_PARAM) || ''),
+    [searchParams],
+  )
+  const pathsCommitted = useMemo(
+    () => parseHealthSearchFilters(searchParams.get(HEALTH_PATHS_SEARCH_PARAM) || ''),
+    [searchParams],
+  )
+  const usersSearch = useMemo(() => {
+    const all = usersLiveFilter ? [...usersCommitted, usersLiveFilter] : usersCommitted
+    return all.join(',')
+  }, [usersCommitted, usersLiveFilter])
+  const pathsSearch = useMemo(() => {
+    const all = pathsLiveFilter ? [...pathsCommitted, pathsLiveFilter] : pathsCommitted
+    return all.join(',')
+  }, [pathsCommitted, pathsLiveFilter])
 
   useEffect(() => {
     setUsersOffset(0)
     setPathsOffset(0)
     setShowPathDetails(false)
-    setUsersSearchInput('')
-    setPathsSearchInput('')
   }, [groupPkOrCode])
 
-  // Reset to page 1 whenever the search text changes so the user sees the
-  // first page of matches rather than an empty page-N.
+  // Reset to page 1 whenever that table's filter set changes so the user
+  // sees the first page of matches rather than an empty page-N.
   useEffect(() => {
     setUsersOffset(0)
   }, [usersSearch])
@@ -401,6 +497,19 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
 
   return (
     <div className="p-4 space-y-6">
+      {/* Under-development notice. The reconciliation logic and rate dimension
+          here surface real data, but the verdicts assume state-collect covers
+          every device — today only jump devices are collected, so non-jump
+          publishers/subscribers can falsely render as unhealthy. Wording is
+          deliberately concrete so operators read it as caveat, not "do not
+          trust this page". */}
+      <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-100">
+        <div className="font-medium">This view is under development.</div>
+        <div className="mt-1 text-amber-700 dark:text-amber-200/90">
+          Health verdicts and the rate dimension are work in progress. State-collect runs only on jump devices today, so any user, publisher, or subscriber on a non-jump device will appear as <span className="font-mono">unhealthy</span> even when it is functioning normally. Treat verdicts as a starting point, not ground truth.
+        </div>
+      </div>
+
       {/* Summary counts */}
       <div className="border border-border rounded-lg bg-card p-4">
         <div className="flex items-baseline justify-between mb-2">
@@ -420,19 +529,22 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
 
       {/* Per-user reconciliation */}
       <div className="border border-border rounded-lg bg-card">
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
-          <div className="flex items-center gap-1.5">
-            <h3 className="text-sm font-medium">Per-user reconciliation</h3>
-            <HelpIcon content={SECTION_HELP.users} />
-          </div>
-          <div className="flex items-center gap-2">
-            <SearchInput
-              value={usersSearchInput}
-              onChange={setUsersSearchInput}
-              placeholder="Filter user, mode, device, tunnel, status…"
-            />
+        <div className="px-4 py-3 border-b border-border flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-1.5">
+              <h3 className="text-sm font-medium">Per-user reconciliation</h3>
+              <HelpIcon content={SECTION_HELP.users} />
+            </div>
             {usersQuery.isFetching && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
           </div>
+          <HealthFilterBar
+            paramName={HEALTH_USERS_SEARCH_PARAM}
+            entity="multicast-health-users"
+            placeholder="Filter users…"
+            fieldPrefixes={healthUserFieldPrefixes}
+            liveFilter={usersLiveFilter}
+            setLiveFilter={setUsersLiveFilter}
+          />
         </div>
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -461,8 +573,9 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
                     <Link
                       to={`/dz/users/${u.user_pk}`}
                       className="group text-blue-600 dark:text-blue-400 hover:underline font-mono inline-flex items-center"
+                      title={u.user_owner_pubkey ? `account ${u.user_pk}\nowner ${u.user_owner_pubkey}` : u.user_pk}
                     >
-                      {u.user_owner_pubkey ? u.user_owner_pubkey.slice(0, 8) : u.user_pk.slice(0, 8)}
+                      {u.user_pk.slice(0, 8)}
                       <NavLinkArrow />
                     </Link>
                   </td>
@@ -519,30 +632,35 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
 
       {/* Per-path reconciliation */}
       <div className="border border-border rounded-lg bg-card">
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-          <div className="flex items-center gap-1.5">
-            <h3 className="text-sm font-medium">Per-path reconciliation (publisher → subscriber)</h3>
-            <HelpIcon content={SECTION_HELP.paths} />
+        <div className="px-4 py-3 border-b border-border flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <h3 className="text-sm font-medium">Per-path reconciliation (publisher → subscriber)</h3>
+              <HelpIcon content={SECTION_HELP.paths} />
+            </div>
+            <div className="flex items-center gap-2">
+              {showPathDetails && pathsQuery.isFetching && (
+                <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+              )}
+              <button
+                type="button"
+                onClick={() => setShowPathDetails((v) => !v)}
+                className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+              >
+                {showPathDetails ? 'Hide details' : 'Show details'}
+              </button>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            {showPathDetails && (
-              <SearchInput
-                value={pathsSearchInput}
-                onChange={setPathsSearchInput}
-                placeholder="Filter publisher, subscriber, device, status…"
-              />
-            )}
-            {showPathDetails && pathsQuery.isFetching && (
-              <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-            )}
-            <button
-              type="button"
-              onClick={() => setShowPathDetails((v) => !v)}
-              className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
-            >
-              {showPathDetails ? 'Hide details' : 'Show details'}
-            </button>
-          </div>
+          {showPathDetails && (
+            <HealthFilterBar
+              paramName={HEALTH_PATHS_SEARCH_PARAM}
+              entity="multicast-health-paths"
+              placeholder="Filter paths…"
+              fieldPrefixes={healthPathFieldPrefixes}
+              liveFilter={pathsLiveFilter}
+              setLiveFilter={setPathsLiveFilter}
+            />
+          )}
         </div>
         {!showPathDetails ? (
           <div className="px-4 py-6 text-sm text-muted-foreground flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -592,8 +710,14 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
                         <Link
                           to={`/dz/users/${p.publisher_user_pk}`}
                           className="group text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center"
+                          // Show the account (user_pk) — owner_pubkey collides
+                          // across an operator's many accounts. Owner is in title.
+                          title={p.publisher_owner_pubkey ? `account ${p.publisher_user_pk}\nowner ${p.publisher_owner_pubkey}` : p.publisher_user_pk}
                         >
-                          {p.publisher_owner_pubkey?.slice(0, 8) || p.publisher_user_pk.slice(0, 8)}
+                          {p.publisher_user_pk.slice(0, 8)}
+                          {p.publisher_tunnel_id > 0 && (
+                            <span className="ml-1 text-muted-foreground">·T{p.publisher_tunnel_id}</span>
+                          )}
                           <NavLinkArrow />
                         </Link>
                       </td>
@@ -614,8 +738,12 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
                         <Link
                           to={`/dz/users/${p.subscriber_user_pk}`}
                           className="group text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center"
+                          title={p.subscriber_owner_pubkey ? `account ${p.subscriber_user_pk}\nowner ${p.subscriber_owner_pubkey}` : p.subscriber_user_pk}
                         >
-                          {p.subscriber_owner_pubkey?.slice(0, 8) || p.subscriber_user_pk.slice(0, 8)}
+                          {p.subscriber_user_pk.slice(0, 8)}
+                          {p.subscriber_tunnel_id > 0 && (
+                            <span className="ml-1 text-muted-foreground">·T{p.subscriber_tunnel_id}</span>
+                          )}
                           <NavLinkArrow />
                         </Link>
                       </td>
