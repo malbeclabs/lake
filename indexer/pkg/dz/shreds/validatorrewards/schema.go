@@ -121,3 +121,51 @@ func NewLeafDistributionStatusDataset(log *slog.Logger) (*dataset.DimensionType2
 func LeafDistributionStatusPK(subscriptionEpoch uint64, nodeID string) string {
 	return fmt.Sprintf("epoch-%d:node-%s", subscriptionEpoch, nodeID)
 }
+
+// Distribution2ZPoolRow is one row per subscription_epoch recording the 2Z
+// reward pool read from that epoch's 2Z ShredDistributionJournal. This is the
+// validator-pool the per-leaf publisher shares are drawn from, replacing the
+// defunct ShredDistribution.distributed_validator_2z_amount field.
+type Distribution2ZPoolRow struct {
+	PK                string // epoch-{subscription_epoch}
+	SubscriptionEpoch uint64
+	TokensReceived2Z  uint64
+}
+
+type distribution2ZPoolSchema struct{}
+
+func (s *distribution2ZPoolSchema) Name() string {
+	return "dz_shred_distribution_2z_pool"
+}
+
+func (s *distribution2ZPoolSchema) PrimaryKeyColumns() []string {
+	return []string{"pk:VARCHAR"}
+}
+
+func (s *distribution2ZPoolSchema) PayloadColumns() []string {
+	return []string{
+		"subscription_epoch:BIGINT",
+		"tokens_received_2z:BIGINT",
+	}
+}
+
+func (s *distribution2ZPoolSchema) ToRow(r Distribution2ZPoolRow) []any {
+	return []any{r.PK, r.SubscriptionEpoch, r.TokensReceived2Z}
+}
+
+func (s *distribution2ZPoolSchema) GetPrimaryKey(r Distribution2ZPoolRow) string {
+	return r.PK
+}
+
+var distribution2ZPoolSchemaSingleton = &distribution2ZPoolSchema{}
+
+// NewDistribution2ZPoolDataset constructs a dim-type-2 dataset for the
+// per-subscription_epoch 2Z reward pool.
+func NewDistribution2ZPoolDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
+	return dataset.NewDimensionType2Dataset(log, distribution2ZPoolSchemaSingleton)
+}
+
+// Distribution2ZPoolPK builds the canonical primary key.
+func Distribution2ZPoolPK(subscriptionEpoch uint64) string {
+	return fmt.Sprintf("epoch-%d", subscriptionEpoch)
+}

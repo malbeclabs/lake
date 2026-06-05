@@ -533,7 +533,29 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		}
 	}
 
-	totalRows := len(ecRows) + len(csRows) + len(peRows) + len(mhRows) + len(dhRows) + len(vrRows) + len(distributions) + len(clientProportions) + leafCount + len(statusRows)
+	// Project the per-epoch 2Z reward pool from the 2Z journals. Unlike the
+	// claimable-bit projection above, this is NOT window-bounded: the pool is
+	// the numerator for all-time earnings, so we record every 2Z journal we
+	// can still read on-chain (the table accumulates and survives sweeps).
+	var poolRows []validatorrewards.Distribution2ZPoolRow
+	for _, kj := range allAccounts.Journals {
+		view := kj.View
+		if view == nil || view.MintKey.String() != validatorrewards.DoubleZeroMintKey {
+			continue
+		}
+		poolRows = append(poolRows, validatorrewards.Distribution2ZPoolRow{
+			PK:                validatorrewards.Distribution2ZPoolPK(view.SubscriptionEpoch),
+			SubscriptionEpoch: view.SubscriptionEpoch,
+			TokensReceived2Z:  view.TokensReceivedAmount,
+		})
+	}
+	if len(poolRows) > 0 {
+		if err := v.leafStore.ReplaceDistribution2ZPools(ctx, poolRows); err != nil {
+			return result, fmt.Errorf("failed to replace 2Z distribution pools: %w", err)
+		}
+	}
+
+	totalRows := len(ecRows) + len(csRows) + len(peRows) + len(mhRows) + len(dhRows) + len(vrRows) + len(distributions) + len(clientProportions) + leafCount + len(statusRows) + len(poolRows)
 	result.RowsAffected = int64(totalRows)
 	fetchedAt := time.Now().UTC()
 	result.SourceMaxEventTS = &fetchedAt

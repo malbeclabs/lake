@@ -287,3 +287,53 @@ func (s *Store) ReplaceLeafDistributionStatuses(
 
 	return nil
 }
+
+// ReplaceDistribution2ZPools writes a fresh dim-type-2 snapshot of the
+// per-subscription_epoch 2Z reward pool read from each epoch's 2Z journal.
+//
+// A nil or empty rows slice is a no-op.
+//
+// MissingMeansDeleted is false: pool rows accumulate across every epoch ever
+// observed (all-time earnings must survive after an epoch's journal is swept),
+// so a refresh that no longer sees an old journal must not tombstone its row.
+func (s *Store) ReplaceDistribution2ZPools(
+	ctx context.Context,
+	rows []Distribution2ZPoolRow,
+) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	s.log.Debug("validatorrewards/store: replacing 2Z distribution pools",
+		"count", len(rows),
+	)
+
+	ds, err := NewDistribution2ZPoolDataset(s.log)
+	if err != nil {
+		return fmt.Errorf("failed to create 2Z distribution pool dataset: %w", err)
+	}
+
+	conn, err := s.cfg.ClickHouse.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get ClickHouse connection: %w", err)
+	}
+	defer conn.Close()
+
+	toRow := func(i int) ([]any, error) {
+		return distribution2ZPoolSchemaSingleton.ToRow(rows[i]), nil
+	}
+
+	if err := ds.WriteBatch(ctx, conn, len(rows), toRow, &dataset.DimensionType2DatasetWriteConfig{
+		// Additive: absent epochs in this batch must not tombstone earlier
+		// epochs' pool rows.
+		MissingMeansDeleted: false,
+	}); err != nil {
+		return fmt.Errorf("failed to write 2Z distribution pools: %w", err)
+	}
+
+	s.log.Info("validatorrewards/store: wrote 2Z distribution pools",
+		"count", len(rows),
+	)
+
+	return nil
+}

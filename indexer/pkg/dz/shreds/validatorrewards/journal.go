@@ -80,6 +80,7 @@ const (
 	offSubscriptionEpoch                     = 8
 	offMintKey                               = 16
 	offRewardMintKey                         = 48
+	offTokensReceivedAmount                  = 96
 	offPublisherAccumulationBitmapStartIndex = 104
 	offPublisherAccumulationBitmapEndIndex   = 108
 	offClientAccumulationBitmapStartIndex    = 112
@@ -94,8 +95,13 @@ const (
 // needed for the claimability projection but the byte layout above
 // documents where they live in the account.
 type JournalView struct {
-	SubscriptionEpoch                     uint64
-	MintKey                               solana.PublicKey
+	SubscriptionEpoch uint64
+	MintKey           solana.PublicKey
+	// TokensReceivedAmount is the journal's post-Jupiter-swap balance of
+	// reward_mint_key tokens (`rewards_amount()` upstream for a non-bypassed
+	// journal). For the 2Z journal this is the validator-reward pool that
+	// per-leaf publisher shares are drawn from.
+	TokensReceivedAmount                  uint64
 	PublisherAccumulationBitmapStartIndex uint32
 	PublisherAccumulationBitmapEndIndex   uint32
 	AccumulatedPublisherLeafCount         uint32
@@ -123,6 +129,7 @@ func DecodeJournalAccount(data []byte) (*JournalView, error) {
 
 	view := &JournalView{
 		SubscriptionEpoch:                     binary.LittleEndian.Uint64(data[offSubscriptionEpoch : offSubscriptionEpoch+8]),
+		TokensReceivedAmount:                  binary.LittleEndian.Uint64(data[offTokensReceivedAmount : offTokensReceivedAmount+8]),
 		PublisherAccumulationBitmapStartIndex: binary.LittleEndian.Uint32(data[offPublisherAccumulationBitmapStartIndex : offPublisherAccumulationBitmapStartIndex+4]),
 		PublisherAccumulationBitmapEndIndex:   binary.LittleEndian.Uint32(data[offPublisherAccumulationBitmapEndIndex : offPublisherAccumulationBitmapEndIndex+4]),
 		AccumulatedPublisherLeafCount:         binary.LittleEndian.Uint32(data[offAccumulatedPublisherLeafCount : offAccumulatedPublisherLeafCount+4]),

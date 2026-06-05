@@ -42,8 +42,10 @@ func buildJournalAccount(
 	// reward_mint_key (32B)
 	copy(buf[48:80], rewardMintKey[:])
 
-	// _flags (8B), usdc_swapped_amount (8B), tokens_received_amount (8B)
-	// — leave zero.
+	// _flags (8B), usdc_swapped_amount (8B): leave zero.
+	// tokens_received_amount (8B) at offset 96 — a recognizable sentinel so
+	// the decode of the 2Z reward pool is exercised.
+	binary.LittleEndian.PutUint64(buf[96:104], 7_000_000)
 
 	// publisher_accumulation_bitmap_start_index = 0
 	// publisher_accumulation_bitmap_end_index = len(bitmap)
@@ -80,6 +82,7 @@ func TestDecodeJournalAccount_ValidLayout(t *testing.T) {
 
 	assert.Equal(t, uint64(951), view.SubscriptionEpoch)
 	assert.Equal(t, mint, view.MintKey)
+	assert.Equal(t, uint64(7_000_000), view.TokensReceivedAmount)
 	assert.Equal(t, uint32(0), view.PublisherAccumulationBitmapStartIndex)
 	assert.Equal(t, uint32(len(bitmap)), view.PublisherAccumulationBitmapEndIndex)
 	assert.Equal(t, uint32(5), view.AccumulatedPublisherLeafCount)

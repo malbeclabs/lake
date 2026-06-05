@@ -18,7 +18,7 @@ import (
 // insertShredsRewardsTestData seeds two validators (node-A, node-B) across
 // three subscription epochs (100, 101, 102) so that the earnings math is exact:
 //
-//	distributed_validator_2z_amount = 10000 per epoch (associated_dz_epoch=10/11/12).
+//	tokens_received_2z (the 2Z journal pool) = 10000 per epoch.
 //	leader_slots: A=60, B=40 per epoch → total_leader_slots=100.
 //	client_proportion = 3500 (35% to client), so 65% to validator (10000-3500=6500).
 //	earned_2z(A) per epoch = 10000 * 60 * 6500 / (100 * 10000) = 3900.
@@ -65,6 +65,20 @@ func insertShredsRewardsTestData(t *testing.T, api *handlers.API) {
 		('d-100', now(), now(), generateUUIDv4(), 0, 1, 'd-100', 100, 10, 0, 0, 6500, 2, 0, 0, 0, 0, 10000, 0, 0),
 		('d-101', now(), now(), generateUUIDv4(), 0, 2, 'd-101', 101, 11, 0, 0, 6500, 2, 0, 0, 0, 0, 10000, 0, 0),
 		('d-102', now(), now(), generateUUIDv4(), 0, 3, 'd-102', 102, 12, 0, 0, 6500, 2, 0, 0, 0, 0, 10000, 0, 0)
+	`)
+	require.NoError(t, err)
+
+	// 2Z reward pool per subscription_epoch (the journal's post-swap 2Z). This
+	// is the numerator for the earnings formula: tokens_received_2z=10000 per
+	// epoch keeps the expected earned_2z values identical to the doc comment.
+	err = api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_distribution_2z_pool_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, tokens_received_2z)
+		VALUES
+		('epoch-100', now(), now(), generateUUIDv4(), 0, 1, 100, 10000),
+		('epoch-101', now(), now(), generateUUIDv4(), 0, 2, 101, 10000),
+		('epoch-102', now(), now(), generateUUIDv4(), 0, 3, 102, 10000)
 	`)
 	require.NoError(t, err)
 
@@ -414,6 +428,15 @@ func TestGetShredsRewardsDetail_IncludesEpochsOutsideRecentWindow(t *testing.T) 
 		 burned_2z_amount)
 		VALUES
 		('d-099', now(), now(), generateUUIDv4(), 0, 4, 'd-099', 99, 9, 0, 0, 6500, 2, 0, 0, 0, 0, 10000, 0, 0)
+	`)
+	require.NoError(t, err)
+
+	err = api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_distribution_2z_pool_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, tokens_received_2z)
+		VALUES
+		('epoch-99', now(), now(), generateUUIDv4(), 0, 4, 99, 10000)
 	`)
 	require.NoError(t, err)
 

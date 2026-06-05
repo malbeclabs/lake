@@ -157,8 +157,8 @@ func (a *API) GetShredsRewards(w http.ResponseWriter, r *http.Request) {
 	sortSQL := buildShredsRewardsSort(sortField, order)
 
 	// Fetch epoch columns: the up-to-10 newest Solana epochs that have a
-	// finalized distribution (non-zero distributed_validator_2z_amount).
-	// `subscription_epoch` numerically equals the Solana epoch — the
+	// funded 2Z reward pool (non-zero tokens_received_2z on the epoch's 2Z
+	// journal). `subscription_epoch` numerically equals the Solana epoch — the
 	// shred-subscription program creates one ShredDistribution per Solana
 	// epoch starting from its launch epoch. `associated_dz_epoch` is the
 	// parent revenue-distribution program's epoch counter (different,
@@ -166,8 +166,8 @@ func (a *API) GetShredsRewards(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	epochRows, err := a.envDB(ctx).Query(ctx, `
 		SELECT subscription_epoch
-		FROM dim_dz_shred_distributions_current
-		WHERE distributed_validator_2z_amount > 0
+		FROM dim_dz_shred_distribution_2z_pool_current
+		WHERE tokens_received_2z > 0
 		ORDER BY subscription_epoch DESC
 		LIMIT 10
 	`)
@@ -219,8 +219,8 @@ func (a *API) GetShredsRewards(w http.ResponseWriter, r *http.Request) {
 		),
 		recent_epochs AS (
 			SELECT subscription_epoch AS solana_epoch
-			FROM dim_dz_shred_distributions_current
-			WHERE distributed_validator_2z_amount > 0
+			FROM dim_dz_shred_distribution_2z_pool_current
+			WHERE tokens_received_2z > 0
 			ORDER BY subscription_epoch DESC
 			LIMIT 10
 		),
@@ -228,7 +228,7 @@ func (a *API) GetShredsRewards(w http.ResponseWriter, r *http.Request) {
 			SELECT
 				L.node_id AS node_id,
 				L.subscription_epoch AS subscription_epoch,
-				toFloat64(D.distributed_validator_2z_amount)
+				toFloat64(P.tokens_received_2z)
 				  * toFloat64(L.leader_slots)
 				  * toFloat64(10000 - coalesce(C.proportion, C.default_proportion, 3500))
 				  / nullIf(toFloat64(T.total_leader_slots) * toFloat64(10000), 0)
@@ -236,8 +236,8 @@ func (a *API) GetShredsRewards(w http.ResponseWriter, r *http.Request) {
 				coalesce(S.is_claimable, 0) AS is_claimable,
 				if(R.solana_epoch IS NULL, 0, 1) AS is_recent
 			FROM dim_dz_shred_validator_rewards_leaves_current L
-			INNER JOIN dim_dz_shred_distributions_current D
-				ON D.subscription_epoch = L.subscription_epoch
+			INNER JOIN dim_dz_shred_distribution_2z_pool_current P
+				ON P.subscription_epoch = L.subscription_epoch
 			INNER JOIN epoch_totals T
 				ON T.subscription_epoch = L.subscription_epoch
 			LEFT JOIN dim_dz_shred_distribution_client_proportions_current C
@@ -450,7 +450,7 @@ func (a *API) GetShredsRewardsDetail(w http.ResponseWriter, r *http.Request) {
 			L.subscription_epoch,
 			L.leader_slots,
 			L.client_id,
-			toFloat64(D.distributed_validator_2z_amount)
+			toFloat64(P.tokens_received_2z)
 			  * toFloat64(L.leader_slots)
 			  * toFloat64(10000 - coalesce(C.proportion, C.default_proportion, 3500))
 			  / nullIf(toFloat64(T.total_leader_slots) * toFloat64(10000), 0) AS earned_2z,
@@ -460,8 +460,8 @@ func (a *API) GetShredsRewardsDetail(w http.ResponseWriter, r *http.Request) {
 			if(S.node_id = '' OR S.node_id IS NULL, 0, 1) AS has_status,
 			coalesce(S.is_claimable, 0) AS is_claimable
 		FROM dim_dz_shred_validator_rewards_leaves_current L
-		INNER JOIN dim_dz_shred_distributions_current D
-			ON D.subscription_epoch = L.subscription_epoch
+		INNER JOIN dim_dz_shred_distribution_2z_pool_current P
+			ON P.subscription_epoch = L.subscription_epoch
 		INNER JOIN epoch_totals T
 			ON T.subscription_epoch = L.subscription_epoch
 		LEFT JOIN dim_dz_shred_distribution_client_proportions_current C
