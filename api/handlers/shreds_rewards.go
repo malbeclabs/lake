@@ -11,8 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"net/http/httptest"
-
 	"github.com/go-chi/chi/v5"
 	"github.com/malbeclabs/lake/api/handlers/dberror"
 	"github.com/malbeclabs/lake/api/metrics"
@@ -153,6 +151,26 @@ func (a *API) GetShredsRewards(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	resp, err := a.computeShredsRewards(ctx, search, sortField, order, limit, offset)
+	if err != nil {
+		logError("shreds rewards query failed", "error", err)
+		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		logError("shreds rewards encode failed", "error", err)
+	}
+}
+
+// computeShredsRewards runs the rewards-list queries directly against
+// ClickHouse and returns the response. It deliberately does NOT touch the page
+// cache, so it is safe to call from both the handler (on a cache miss) and the
+// page-cache refresh worker. (The worker must recompute fresh — if it went
+// through GetShredsRewards it would read its own cached entry and write it
+// straight back, freezing the cache.)
+func (a *API) computeShredsRewards(ctx context.Context, search, sortField, order string, limit, offset int) (*ShredsRewardsResponse, error) {
 	whereClause, args := buildShredsRewardsSearch(search)
 	sortSQL := buildShredsRewardsSort(sortField, order)
 
@@ -173,18 +191,14 @@ func (a *API) GetShredsRewards(w http.ResponseWriter, r *http.Request) {
 	`)
 	metrics.RecordClickHouseQuery("shreds_rewards:epochs", time.Since(start), err)
 	if err != nil {
-		logError("shreds rewards epoch query failed", "error", err)
-		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
-		return
+		return nil, fmt.Errorf("shreds rewards epoch query: %w", err)
 	}
 	var epochColumns []uint64
 	for epochRows.Next() {
 		var e uint64
 		if err := epochRows.Scan(&e); err != nil {
 			epochRows.Close()
-			logError("shreds rewards epoch scan failed", "error", err)
-			http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
-			return
+			return nil, fmt.Errorf("shreds rewards epoch scan: %w", err)
 		}
 		epochColumns = append(epochColumns, e)
 	}
@@ -291,9 +305,7 @@ func (a *API) GetShredsRewards(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.envDB(ctx).Query(ctx, query, args...)
 	metrics.RecordClickHouseQuery("shreds_rewards", time.Since(start), err)
 	if err != nil {
-		logError("shreds rewards query failed", "error", err)
-		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
-		return
+		return nil, fmt.Errorf("shreds rewards query: %w", err)
 	}
 	defer rows.Close()
 
@@ -313,9 +325,7 @@ func (a *API) GetShredsRewards(w http.ResponseWriter, r *http.Request) {
 			&recentEpochs,
 			&recentEarnings,
 		); err != nil {
-			logError("shreds rewards scan failed", "error", err)
-			http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
-			return
+			return nil, fmt.Errorf("shreds rewards scan: %w", err)
 		}
 		row.EpochEarnings = make(map[uint64]float64, len(recentEpochs))
 		for i, e := range recentEpochs {
@@ -329,45 +339,27 @@ func (a *API) GetShredsRewards(w http.ResponseWriter, r *http.Request) {
 		validators = append(validators, row)
 	}
 	if err := rows.Err(); err != nil {
-		logError("shreds rewards rows iteration failed", "error", err)
-		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
-		return
+		return nil, fmt.Errorf("shreds rewards rows iteration: %w", err)
 	}
 
 	if epochColumns == nil {
 		epochColumns = []uint64{}
 	}
-	resp := ShredsRewardsResponse{
+	return &ShredsRewardsResponse{
 		CurrentSolanaEpoch:   currentSolanaEpoch,
 		LatestFinalizedEpoch: latestFinalized,
 		EpochColumns:         epochColumns,
 		Validators:           validators,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		logError("shreds rewards encode failed", "error", err)
-	}
+	}, nil
 }
 
 // FetchShredsRewardsData computes the default-params shreds rewards response
 // for the page-cache refresh worker. Returns the same payload the handler
 // would produce for an unparameterized GET /api/dz/shreds/rewards request.
 func (a *API) FetchShredsRewardsData(ctx context.Context) (*ShredsRewardsResponse, error) {
-	rr := httptest.NewRecorder()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "/api/dz/shreds/rewards", nil)
-	if err != nil {
-		return nil, err
-	}
-	a.GetShredsRewards(rr, req)
-	if rr.Code != http.StatusOK {
-		return nil, fmt.Errorf("shreds rewards handler returned %d: %s", rr.Code, rr.Body.String())
-	}
-	var resp ShredsRewardsResponse
-	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
-		return nil, fmt.Errorf("decode shreds rewards response: %w", err)
-	}
-	return &resp, nil
+	// Compute directly (NOT via GetShredsRewards) so the refresh worker never
+	// reads the page cache it is responsible for populating.
+	return a.computeShredsRewards(ctx, "", "", "", shredsRewardsDefaultLimit, 0)
 }
 
 // ShredsRewardsEpochDetail is a single epoch row in the per-validator drilldown.
