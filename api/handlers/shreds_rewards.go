@@ -105,7 +105,19 @@ func buildShredsRewardsSort(field, order string) string {
 // list response. Refreshed by the worker every ~30s.
 const shredsRewardsCacheKey = "shreds_rewards"
 
-const shredsRewardsDefaultLimit = 200
+// shredsRewardsDefaultLimit is the page size for the default list view. It must
+// match the web client's PAGE_SIZE so the cached default-params entry (computed
+// with this limit by the refresh worker) is reusable for the page's first-page
+// request — otherwise every page load misses the cache and runs the full query.
+const shredsRewardsDefaultLimit = 100
+
+// shredsRewardsDefaultSort / Order are the canonical default ordering the web
+// sends on the first-page view. A request carrying these explicit values is
+// equivalent to the param-less default and is served from the page cache.
+const (
+	shredsRewardsDefaultSort  = "total_earned_2z"
+	shredsRewardsDefaultOrder = "desc"
+)
 
 // GetShredsRewards returns a paginated list of validators with all-time
 // earnings, immediately-claimable amounts, and the last 10 epochs of
@@ -139,9 +151,16 @@ func (a *API) GetShredsRewards(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Default-params requests are served from the page cache to keep the page
-	// snappy. The worker refreshes this entry on a 30s cadence.
-	isDefault := search == "" && sortField == "" && order == "" && !limitProvided && !offsetProvided
+	// Default-view requests are served from the page cache to keep the page
+	// snappy. The worker refreshes this entry on a 30s cadence. The web client
+	// always sends explicit sort/order/limit/offset, so we match the canonical
+	// default *values* (not just absent params) — anything else is a custom view
+	// and bypasses the cache.
+	isDefault := search == "" &&
+		(sortField == "" || sortField == shredsRewardsDefaultSort) &&
+		(order == "" || order == shredsRewardsDefaultOrder) &&
+		(!limitProvided || limit == shredsRewardsDefaultLimit) &&
+		(!offsetProvided || offset == 0)
 	if isDefault {
 		if data, err := a.readPageCache(r.Context(), shredsRewardsCacheKey); err == nil {
 			w.Header().Set("Content-Type", "application/json")
