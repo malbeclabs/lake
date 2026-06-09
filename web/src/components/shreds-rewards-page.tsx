@@ -245,7 +245,7 @@ export function ShredsRewardsPage() {
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <input
                   type="text"
-                  placeholder="Search by name, vote: or node:"
+                  placeholder="Search by name, Vote ID, or Validator Identity"
                   value={filterInput}
                   onChange={(e) => setFilterInput(e.target.value)}
                   className="w-full pl-8 pr-3 py-1.5 text-sm border border-border rounded-md bg-background focus:outline-none focus:ring-1 focus:ring-accent"
@@ -290,7 +290,7 @@ export function ShredsRewardsPage() {
                     Validator
                     <SortIcon field="validator_name" />
                   </th>
-                  <th className={thStatic}>Vote</th>
+                  <th className={thStatic}>Vote ID</th>
                   <th
                     className={thRight}
                     onClick={() => handleSort('activated_stake')}

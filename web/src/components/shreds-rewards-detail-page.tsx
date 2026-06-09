@@ -110,12 +110,12 @@ export function ShredsRewardsDetailPage() {
         />
 
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-8">
-          <FactCard label="Node ID">
+          <FactCard label="Validator Identity">
             <CopyableText text={data.node_id} className="text-xs">
               <span className="font-mono">{truncatePK(data.node_id)}</span>
             </CopyableText>
           </FactCard>
-          <FactCard label="Vote Pubkey">
+          <FactCard label="Vote ID">
             {data.vote_pubkey ? (
               <CopyableText text={data.vote_pubkey} className="text-xs">
                 <span className="font-mono">{truncatePK(data.vote_pubkey)}</span>
@@ -144,6 +144,11 @@ export function ShredsRewardsDetailPage() {
               {format2Z(totals.claimable)}
             </span>
           </FactCard>
+        </div>
+
+        <div className="mb-4 rounded-lg bg-muted/50 px-4 py-3 text-xs xxs:text-sm text-muted-foreground">
+          Accrued rewards will be claimable approximately 10 epochs after they are
+          earned.
         </div>
 
         <div className="border border-border rounded-lg overflow-hidden bg-card">
@@ -194,13 +199,13 @@ export function ShredsRewardsDetailPage() {
                         ? 'bg-amber-500/10 text-amber-500 dark:text-amber-400 border-amber-500/30'
                         : claimStatus === 'paid'
                           ? 'bg-muted text-muted-foreground border-border'
-                          : 'border-transparent text-muted-foreground/50'
+                          : 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30'
                     const statusLabel =
                       claimStatus === 'claimable'
                         ? 'Claimable'
                         : claimStatus === 'paid'
                           ? 'Paid'
-                          : '—'
+                          : 'Accrued'
                     return (
                       <tr
                         key={`${epoch.solana_epoch}-${epoch.subscription_epoch}`}
