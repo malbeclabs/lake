@@ -739,12 +739,10 @@ func accessPassTypeTagString(t serviceability.AccessPassTypeTag) string {
 		return "solana_validator"
 	case serviceability.AccessPassTypeSolanaRPC:
 		return "solana_rpc"
-	case serviceability.AccessPassTypeSolanaMulticastPub:
-		return "solana_multicast_pub"
-	case serviceability.AccessPassTypeSolanaMulticastSub:
-		return "solana_multicast_sub"
 	case serviceability.AccessPassTypeOthers:
 		return "others"
+	case serviceability.AccessPassTypeEdgeSeat:
+		return "edge_seat"
 	default:
 		return "unknown"
 	}
@@ -753,8 +751,10 @@ func accessPassTypeTagString(t serviceability.AccessPassTypeTag) string {
 func convertAccessPasses(onchain []serviceability.AccessPass) []AccessPass {
 	result := make([]AccessPass, len(onchain))
 	for i, ap := range onchain {
+		// Only SolanaValidator and SolanaRPC passes carry an associated pubkey onchain.
 		var associatedPubkey string
-		if ap.AccessPassTypeTag >= 1 && ap.AccessPassTypeTag <= 4 {
+		if ap.AccessPassTypeTag == serviceability.AccessPassTypeSolanaValidator ||
+			ap.AccessPassTypeTag == serviceability.AccessPassTypeSolanaRPC {
 			associatedPubkey = solana.PublicKeyFromBytes(ap.AssociatedPubkey[:]).String()
 		}
 
