@@ -2,6 +2,7 @@ package dzsvc
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -1241,5 +1242,29 @@ func TestLake_Serviceability_View_ConvertAccessPasses_AssociatedPubkey(t *testin
 		require.Len(t, result, 1)
 		require.Equal(t, tt.want, result[0].AssociatedPubkey,
 			"tag %s should have associated pubkey %q", accessPassTypeTagString(tt.tag), tt.want)
+	}
+}
+
+func TestLake_Serviceability_View_StatusString_StripsDeprecatedSuffix(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		status fmt.Stringer
+		want   string
+	}{
+		{serviceability.AccessPassStatusExpiredDeprecated, "expired"},
+		{serviceability.AccessPassStatusConnected, "connected"},
+		{serviceability.DeviceStatusPendingDeprecated, "pending"},
+		{serviceability.DeviceStatusRejectedDeprecated, "rejected"},
+		{serviceability.DeviceStatusActivated, "activated"},
+		{serviceability.LinkStatusPendingDeprecated, "pending"},
+		{serviceability.LinkStatusRejectedDeprecated, "rejected"},
+		{serviceability.UserStatusPendingDeprecated, "pending"},
+		{serviceability.UserStatusPendingBanDeprecated, "pending_ban"},
+		{serviceability.UserStatusActivated, "activated"},
+		{serviceability.LocationStatusPendingDeprecated, "pending"},
+	}
+	for _, tt := range tests {
+		require.Equal(t, tt.want, statusString(tt.status))
 	}
 }
