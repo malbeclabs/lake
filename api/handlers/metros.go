@@ -81,7 +81,19 @@ func (a *API) GetMetros(w http.ResponseWriter, r *http.Request) {
 		WHERE 1=1`
 
 	const onchainUserCountsCTE = `
-		-- NOTE: keep in sync with the identical CTE in GetMetro below
+		-- NOTE: keep in sync with the identical CTEs in GetMetro below
+		-- Live per-device multicast subscriber/publisher counts from attached users.
+		-- On-chain multicast_subscribers_count / multicast_publishers_count on
+		-- dz_devices_current are frequently stale or 0 even with users attached (#650).
+		device_multicast_live AS (
+			SELECT
+				device_pk,
+				countIf(JSONLength(subscribers) > 0) as live_subscribers,
+				countIf(JSONLength(publishers) > 0) as live_publishers
+			FROM dz_users_current
+			WHERE status = 'activated' AND kind = 'multicast'
+			GROUP BY device_pk
+		),
 		onchain_user_counts AS (
 			SELECT
 				metro_pk,
@@ -97,19 +109,20 @@ func (a *API) GetMetros(w http.ResponseWriter, r *http.Request) {
 				SUM(raw_max_pubs) as raw_max_multicast_publishers
 			FROM (
 				SELECT
-					metro_pk,
+					d.metro_pk as metro_pk,
 					unicast_users_count,
-					multicast_subscribers_count,
-					multicast_publishers_count,
+					toUInt64(COALESCE(dml.live_subscribers, 0)) as multicast_subscribers_count,
+					toUInt64(COALESCE(dml.live_publishers, 0)) as multicast_publishers_count,
 					max_users,
 					toUInt64(max_unicast_users) as raw_max_unicast,
 					toUInt64(max_multicast_subscribers) as raw_max_subs,
 					toUInt64(max_multicast_publishers) as raw_max_pubs,
 					greatest(if(max_unicast_users > 0, toUInt64(max_unicast_users), toUInt64(greatest(0, toInt64(max_users) - toInt64(max_multicast_subscribers) - toInt64(max_multicast_publishers)))), unicast_users_count) as eff_max_unicast,
-					greatest(if(max_multicast_subscribers > 0, toUInt64(max_multicast_subscribers), toUInt64(greatest(0, toInt64(max_users) - toInt64(max_unicast_users) - toInt64(max_multicast_publishers)))), multicast_subscribers_count) as eff_max_subs,
-					greatest(if(max_multicast_publishers > 0, toUInt64(max_multicast_publishers), toUInt64(greatest(0, toInt64(max_users) - toInt64(max_unicast_users) - toInt64(max_multicast_subscribers)))), multicast_publishers_count) as eff_max_pubs
-				FROM dz_devices_current
-				WHERE metro_pk IS NOT NULL
+					greatest(if(max_multicast_subscribers > 0, toUInt64(max_multicast_subscribers), toUInt64(greatest(0, toInt64(max_users) - toInt64(max_unicast_users) - toInt64(max_multicast_publishers)))), toUInt64(COALESCE(dml.live_subscribers, 0))) as eff_max_subs,
+					greatest(if(max_multicast_publishers > 0, toUInt64(max_multicast_publishers), toUInt64(greatest(0, toInt64(max_users) - toInt64(max_unicast_users) - toInt64(max_multicast_subscribers)))), toUInt64(COALESCE(dml.live_publishers, 0))) as eff_max_pubs
+				FROM dz_devices_current d
+				LEFT JOIN device_multicast_live dml ON dml.device_pk = d.pk
+				WHERE d.metro_pk IS NOT NULL
 			)
 			GROUP BY metro_pk
 		),`
@@ -366,7 +379,16 @@ func (a *API) GetMetro(w http.ResponseWriter, r *http.Request) {
 			WHERE u.status = 'activated' AND d.metro_pk = ?
 			GROUP BY d.metro_pk
 		),
-		-- NOTE: keep in sync with the identical CTE in GetMetros above
+		-- NOTE: keep in sync with the identical CTEs in GetMetros above
+		device_multicast_live AS (
+			SELECT
+				device_pk,
+				countIf(JSONLength(subscribers) > 0) as live_subscribers,
+				countIf(JSONLength(publishers) > 0) as live_publishers
+			FROM dz_users_current
+			WHERE status = 'activated' AND kind = 'multicast'
+			GROUP BY device_pk
+		),
 		onchain_user_counts AS (
 			SELECT
 				metro_pk,
@@ -382,19 +404,20 @@ func (a *API) GetMetro(w http.ResponseWriter, r *http.Request) {
 				SUM(raw_max_pubs) as raw_max_multicast_publishers
 			FROM (
 				SELECT
-					metro_pk,
+					d.metro_pk as metro_pk,
 					unicast_users_count,
-					multicast_subscribers_count,
-					multicast_publishers_count,
+					toUInt64(COALESCE(dml.live_subscribers, 0)) as multicast_subscribers_count,
+					toUInt64(COALESCE(dml.live_publishers, 0)) as multicast_publishers_count,
 					max_users,
 					toUInt64(max_unicast_users) as raw_max_unicast,
 					toUInt64(max_multicast_subscribers) as raw_max_subs,
 					toUInt64(max_multicast_publishers) as raw_max_pubs,
 					greatest(if(max_unicast_users > 0, toUInt64(max_unicast_users), toUInt64(greatest(0, toInt64(max_users) - toInt64(max_multicast_subscribers) - toInt64(max_multicast_publishers)))), unicast_users_count) as eff_max_unicast,
-					greatest(if(max_multicast_subscribers > 0, toUInt64(max_multicast_subscribers), toUInt64(greatest(0, toInt64(max_users) - toInt64(max_unicast_users) - toInt64(max_multicast_publishers)))), multicast_subscribers_count) as eff_max_subs,
-					greatest(if(max_multicast_publishers > 0, toUInt64(max_multicast_publishers), toUInt64(greatest(0, toInt64(max_users) - toInt64(max_unicast_users) - toInt64(max_multicast_subscribers)))), multicast_publishers_count) as eff_max_pubs
-				FROM dz_devices_current
-				WHERE metro_pk IS NOT NULL
+					greatest(if(max_multicast_subscribers > 0, toUInt64(max_multicast_subscribers), toUInt64(greatest(0, toInt64(max_users) - toInt64(max_unicast_users) - toInt64(max_multicast_publishers)))), toUInt64(COALESCE(dml.live_subscribers, 0))) as eff_max_subs,
+					greatest(if(max_multicast_publishers > 0, toUInt64(max_multicast_publishers), toUInt64(greatest(0, toInt64(max_users) - toInt64(max_unicast_users) - toInt64(max_multicast_subscribers)))), toUInt64(COALESCE(dml.live_publishers, 0))) as eff_max_pubs
+				FROM dz_devices_current d
+				LEFT JOIN device_multicast_live dml ON dml.device_pk = d.pk
+				WHERE d.metro_pk IS NOT NULL
 			)
 			GROUP BY metro_pk
 		),

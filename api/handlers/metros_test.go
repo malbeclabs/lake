@@ -267,3 +267,87 @@ func TestGetMetro_ReturnsDetails(t *testing.T) {
 	assert.Equal(t, uint64(2), metro.DeviceCount)
 	assert.Equal(t, uint64(2), metro.UserCount)
 }
+
+// insertMetroMulticastData inserts one metro with two devices whose on-chain
+// multicast counts are left at 0, plus activated multicast users that subscribe
+// to / publish to groups. The metro aggregate must sum the live per-device
+// counts, not the stale on-chain zeros (#650).
+func insertMetroMulticastData(t *testing.T, api *handlers.API) {
+	ctx := t.Context()
+
+	err := api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_metros_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name, latitude, longitude) VALUES
+		('metro-mc', now(), now(), generateUUIDv4(), 0, 1, 'metro-mc', 'MCM', 'Multicast Metro', 1.0, 2.0)
+	`)
+	require.NoError(t, err)
+
+	err = api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_devices_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, status, device_type, metro_pk, public_ip, contributor_pk, max_users) VALUES
+		('mcdev-1', now(), now(), generateUUIDv4(), 0, 1, 'mcdev-1', 'MC-DEV-01', 'up', 'switch', 'metro-mc', '10.9.0.1', '', 100),
+		('mcdev-2', now(), now(), generateUUIDv4(), 0, 2, 'mcdev-2', 'MC-DEV-02', 'up', 'switch', 'metro-mc', '10.9.0.2', '', 100)
+	`)
+	require.NoError(t, err)
+
+	// mcdev-1: 2 subscribers, 1 publisher. mcdev-2: 1 subscriber, 1 both-roles.
+	// Plus 1 pending (excluded). Metro totals: subscribers 4, publishers 2.
+	err = api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_users_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, status, device_pk, kind, owner_pubkey, client_ip, dz_ip, tunnel_id, publishers, subscribers) VALUES
+		('m-s1',   now(), now(), generateUUIDv4(), 0, 1, 'm-s1',   'activated', 'mcdev-1', 'multicast', 'p', '', '', 0, '[]',     '["g1"]'),
+		('m-s2',   now(), now(), generateUUIDv4(), 0, 2, 'm-s2',   'activated', 'mcdev-1', 'multicast', 'p', '', '', 0, '[]',     '["g1"]'),
+		('m-p1',   now(), now(), generateUUIDv4(), 0, 3, 'm-p1',   'activated', 'mcdev-1', 'multicast', 'p', '', '', 0, '["g1"]', '[]'),
+		('m-s3',   now(), now(), generateUUIDv4(), 0, 4, 'm-s3',   'activated', 'mcdev-2', 'multicast', 'p', '', '', 0, '[]',     '["g2"]'),
+		('m-b1',   now(), now(), generateUUIDv4(), 0, 5, 'm-b1',   'activated', 'mcdev-2', 'multicast', 'p', '', '', 0, '["g2"]', '["g2"]'),
+		('m-pend', now(), now(), generateUUIDv4(), 0, 6, 'm-pend', 'pending',   'mcdev-2', 'multicast', 'p', '', '', 0, '["g2"]', '["g2"]')
+	`)
+	require.NoError(t, err)
+}
+
+func TestGetMetros_MulticastCountsFromLiveUsers(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+
+	insertMetroMulticastData(t, api)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/metros", nil)
+	rr := httptest.NewRecorder()
+	api.GetMetros(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var response handlers.PaginatedResponse[handlers.MetroListItem]
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&response))
+
+	var m *handlers.MetroListItem
+	for i := range response.Items {
+		if response.Items[i].PK == "metro-mc" {
+			m = &response.Items[i]
+			break
+		}
+	}
+	require.NotNil(t, m)
+	assert.Equal(t, uint64(4), m.MulticastSubscribersCount)
+	assert.Equal(t, uint64(2), m.MulticastPublishersCount)
+}
+
+func TestGetMetro_MulticastCountsFromLiveUsers(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+
+	insertMetroMulticastData(t, api)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/metros/metro-mc", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("pk", "metro-mc")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rr := httptest.NewRecorder()
+	api.GetMetro(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var metro handlers.MetroDetail
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&metro))
+	assert.Equal(t, uint64(4), metro.MulticastSubscribersCount)
+	assert.Equal(t, uint64(2), metro.MulticastPublishersCount)
+}
