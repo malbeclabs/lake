@@ -17,9 +17,8 @@ const TYPE_TAG_COLORS: Record<string, string> = {
   prepaid: 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400 border-zinc-500/20',
   solana_validator: 'bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20',
   solana_rpc: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20',
-  solana_multicast_pub: 'bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20',
-  solana_multicast_sub: 'bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20',
   others: 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border-yellow-500/20',
+  edge_seat: 'bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20',
 }
 
 function TypeTagBadge({ tag }: { tag: string }) {

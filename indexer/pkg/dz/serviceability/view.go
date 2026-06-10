@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -440,6 +441,13 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	return result, nil
 }
 
+// statusString strips the SDK's " (deprecated)" suffix so the strings stored in
+// ClickHouse keep lake's stable status vocabulary (e.g. "pending", "expired")
+// regardless of upstream deprecation annotations.
+func statusString(s fmt.Stringer) string {
+	return strings.TrimSuffix(s.String(), " (deprecated)")
+}
+
 func convertContributors(onchain []serviceability.Contributor) []Contributor {
 	result := make([]Contributor, len(onchain))
 	for i, contributor := range onchain {
@@ -466,13 +474,13 @@ func convertDevices(onchain []serviceability.Device) []Device {
 			interfaces = append(interfaces, Interface{
 				Name:   iface.Name,
 				IP:     ip,
-				Status: iface.Status.String(),
+				Status: statusString(iface.Status),
 			})
 		}
 
 		result[i] = Device{
 			PK:                        solana.PublicKeyFromBytes(device.PubKey[:]).String(),
-			Status:                    device.Status.String(),
+			Status:                    statusString(device.Status),
 			DeviceType:                device.DeviceType.String(),
 			Code:                      device.Code,
 			PublicIP:                  net.IP(device.PublicIp[:]).String(),
@@ -501,7 +509,7 @@ func convertDeviceInterfaces(onchain []serviceability.Device) []DeviceInterface 
 			result = append(result, DeviceInterface{
 				DevicePK:           devicePK,
 				Intf:               iface.Name,
-				Status:             iface.Status.String(),
+				Status:             statusString(iface.Status),
 				InterfaceType:      iface.InterfaceType.String(),
 				CYOAType:           iface.InterfaceCYOA.String(),
 				DIAType:            iface.InterfaceDIA.String(),
@@ -536,7 +544,7 @@ func convertUsers(onchain []serviceability.User) []User {
 		result[i] = User{
 			PK:          solana.PublicKeyFromBytes(user.PubKey[:]).String(),
 			OwnerPubkey: solana.PublicKeyFromBytes(user.Owner[:]).String(),
-			Status:      user.Status.String(),
+			Status:      statusString(user.Status),
 			Kind:        user.UserType.String(),
 			ClientIP:    net.IP(user.ClientIp[:]),
 			DZIP:        net.IP(user.DzIp[:]),
@@ -599,7 +607,7 @@ func convertLinks(onchain []serviceability.Link, devices []serviceability.Device
 
 		result[i] = Link{
 			PK:                  solana.PublicKeyFromBytes(link.PubKey[:]).String(),
-			Status:              link.Status.String(),
+			Status:              statusString(link.Status),
 			Code:                link.Code,
 			SideAPK:             sideAPK,
 			SideZPK:             sideZPK,
@@ -671,7 +679,7 @@ func convertTenants(onchain []serviceability.Tenant, topologies []serviceability
 			PK:                solana.PublicKeyFromBytes(t.PubKey[:]).String(),
 			OwnerPubkey:       solana.PublicKeyFromBytes(t.Owner[:]).String(),
 			Code:              t.Code,
-			PaymentStatus:     t.PaymentStatus.String(),
+			PaymentStatus:     statusString(t.PaymentStatus),
 			VrfID:             t.VrfId,
 			MetroRouting:      t.MetroRouting,
 			RouteLiveness:     t.RouteLiveness,
@@ -691,7 +699,7 @@ func convertLocations(onchain []serviceability.Location) []Location {
 			Lat:            loc.Lat,
 			Lng:            loc.Lng,
 			LocId:          loc.LocId,
-			Status:         loc.Status.String(),
+			Status:         statusString(loc.Status),
 			Code:           loc.Code,
 			Name:           loc.Name,
 			Country:        loc.Country,
@@ -739,12 +747,10 @@ func accessPassTypeTagString(t serviceability.AccessPassTypeTag) string {
 		return "solana_validator"
 	case serviceability.AccessPassTypeSolanaRPC:
 		return "solana_rpc"
-	case serviceability.AccessPassTypeSolanaMulticastPub:
-		return "solana_multicast_pub"
-	case serviceability.AccessPassTypeSolanaMulticastSub:
-		return "solana_multicast_sub"
 	case serviceability.AccessPassTypeOthers:
 		return "others"
+	case serviceability.AccessPassTypeEdgeSeat:
+		return "edge_seat"
 	default:
 		return "unknown"
 	}
@@ -753,8 +759,10 @@ func accessPassTypeTagString(t serviceability.AccessPassTypeTag) string {
 func convertAccessPasses(onchain []serviceability.AccessPass) []AccessPass {
 	result := make([]AccessPass, len(onchain))
 	for i, ap := range onchain {
+		// Only SolanaValidator and SolanaRPC passes carry an associated pubkey onchain.
 		var associatedPubkey string
-		if ap.AccessPassTypeTag >= 1 && ap.AccessPassTypeTag <= 4 {
+		if ap.AccessPassTypeTag == serviceability.AccessPassTypeSolanaValidator ||
+			ap.AccessPassTypeTag == serviceability.AccessPassTypeSolanaRPC {
 			associatedPubkey = solana.PublicKeyFromBytes(ap.AssociatedPubkey[:]).String()
 		}
 
@@ -778,7 +786,7 @@ func convertAccessPasses(onchain []serviceability.AccessPass) []AccessPass {
 			UserPayer:          solana.PublicKeyFromBytes(ap.UserPayer[:]).String(),
 			LastAccessEpoch:    ap.LastAccessEpoch,
 			ConnectionCount:    ap.ConnectionCount,
-			Status:             ap.Status.String(),
+			Status:             statusString(ap.Status),
 			MGroupPubAllowlist: pubAllowlist,
 			MGroupSubAllowlist: subAllowlist,
 			Flags:              ap.Flags,

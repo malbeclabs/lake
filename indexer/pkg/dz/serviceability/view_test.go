@@ -2,6 +2,7 @@ package dzsvc
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -1196,4 +1197,74 @@ func TestLake_Serviceability_View_Refresh(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "refusing to write snapshot")
 	})
+}
+
+func TestLake_Serviceability_View_AccessPassTypeTagString(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		tag  serviceability.AccessPassTypeTag
+		want string
+	}{
+		{serviceability.AccessPassTypePrepaid, "prepaid"},
+		{serviceability.AccessPassTypeSolanaValidator, "solana_validator"},
+		{serviceability.AccessPassTypeSolanaRPC, "solana_rpc"},
+		{serviceability.AccessPassTypeOthers, "others"},
+		{serviceability.AccessPassTypeEdgeSeat, "edge_seat"},
+		{serviceability.AccessPassTypeTag(99), "unknown"},
+	}
+	for _, tt := range tests {
+		require.Equal(t, tt.want, accessPassTypeTagString(tt.tag))
+	}
+}
+
+func TestLake_Serviceability_View_ConvertAccessPasses_AssociatedPubkey(t *testing.T) {
+	t.Parallel()
+
+	pubkey := [32]byte{1, 2, 3}
+	want := solana.PublicKeyFromBytes(pubkey[:]).String()
+
+	tests := []struct {
+		tag  serviceability.AccessPassTypeTag
+		want string
+	}{
+		{serviceability.AccessPassTypePrepaid, ""},
+		{serviceability.AccessPassTypeSolanaValidator, want},
+		{serviceability.AccessPassTypeSolanaRPC, want},
+		{serviceability.AccessPassTypeOthers, ""},
+		{serviceability.AccessPassTypeEdgeSeat, ""},
+	}
+	for _, tt := range tests {
+		result := convertAccessPasses([]serviceability.AccessPass{{
+			AccessPassTypeTag: tt.tag,
+			AssociatedPubkey:  pubkey,
+		}})
+		require.Len(t, result, 1)
+		require.Equal(t, tt.want, result[0].AssociatedPubkey,
+			"tag %s should have associated pubkey %q", accessPassTypeTagString(tt.tag), tt.want)
+	}
+}
+
+func TestLake_Serviceability_View_StatusString_StripsDeprecatedSuffix(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		status fmt.Stringer
+		want   string
+	}{
+		{serviceability.AccessPassStatusExpiredDeprecated, "expired"},
+		{serviceability.AccessPassStatusConnected, "connected"},
+		{serviceability.DeviceStatusPendingDeprecated, "pending"},
+		{serviceability.DeviceStatusRejectedDeprecated, "rejected"},
+		{serviceability.DeviceStatusActivated, "activated"},
+		{serviceability.LinkStatusPendingDeprecated, "pending"},
+		{serviceability.LinkStatusRejectedDeprecated, "rejected"},
+		{serviceability.UserStatusPendingDeprecated, "pending"},
+		{serviceability.UserStatusPendingBanDeprecated, "pending_ban"},
+		{serviceability.UserStatusActivated, "activated"},
+		{serviceability.LocationStatusPendingDeprecated, "pending"},
+	}
+	for _, tt := range tests {
+		require.Equal(t, tt.want, statusString(tt.status))
+	}
 }
