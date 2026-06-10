@@ -9,6 +9,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.41.0
 	github.com/aws/aws-sdk-go-v2 v1.41.7
 	github.com/aws/aws-sdk-go-v2/config v1.32.17
+	github.com/aws/aws-sdk-go-v2/credentials v1.19.16
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0
 	github.com/danielgtaylor/huma/v2 v2.37.3
 	github.com/gagliardetto/solana-go v1.19.0
@@ -23,7 +24,7 @@ require (
 	github.com/lmittmann/tint v1.1.3
 	github.com/malbeclabs/doublezero v0.8.1-0.20260610023603-b4c5e59f80b8
 	github.com/modelcontextprotocol/go-sdk v1.6.0
-	github.com/mr-tron/base58 v1.2.0
+	github.com/mr-tron/base58 v1.3.0
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.4
 	github.com/oschwald/geoip2-golang v1.13.0
 	github.com/pressly/goose/v3 v3.27.0
@@ -34,6 +35,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/clickhouse v0.42.0
+	github.com/testcontainers/testcontainers-go/modules/minio v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/neo4j v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
 	go.temporal.io/sdk v1.41.1
@@ -52,7 +54,6 @@ require (
 	github.com/apache/arrow-go/v18 v18.5.1 // indirect
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.10 // indirect
-	github.com/aws/aws-sdk-go-v2/credentials v1.19.16 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.23 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.23 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.23 // indirect
@@ -151,7 +152,6 @@ require (
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.0-20260427160145-3afa6683f8b2 // indirect
 	github.com/streamingfast/logging v0.0.0-20250404134358-92b15d2fbd2e // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
-	github.com/testcontainers/testcontainers-go/modules/minio v0.42.0 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
