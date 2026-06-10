@@ -1619,6 +1619,9 @@ export interface TopologyDevice {
   status: string
   device_type: string
   metro_pk: string
+  // Facility coordinates (0/0 when the device has no facility coords).
+  latitude: number
+  longitude: number
   contributor_pk: string
   contributor_code: string
   user_count: number

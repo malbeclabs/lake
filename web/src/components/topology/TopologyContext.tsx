@@ -47,6 +47,7 @@ export interface OverlayState {
   // Independent overlays
   multicastTrees: boolean      // Multicast tree visualization
   userCounts: boolean          // Show U/S/P user count badges on devices
+  preciseLocations: boolean    // Anchor device markers at real facility coordinates (vs metro-centroid fanout)
 }
 
 // Context value type
@@ -125,6 +126,7 @@ function parseOverlaysFromUrl(param: string | null, view: 'map' | 'graph' | 'glo
     flexAlgo: false,
     multicastTrees: false,
     userCounts: false,
+    preciseLocations: false,
   }
   if (!param) return defaultState
 
@@ -145,6 +147,7 @@ function parseOverlaysFromUrl(param: string | null, view: 'map' | 'graph' | 'glo
     flexAlgo: false,
     multicastTrees: false,
     userCounts: false,
+    preciseLocations: false,
   }
   const activeOverlays = param.split(',').filter(Boolean)
   for (const overlay of activeOverlays) {

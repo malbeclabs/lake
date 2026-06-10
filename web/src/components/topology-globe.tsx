@@ -5,6 +5,7 @@ import Globe from 'react-globe.gl'
 import type { GlobeInstance } from 'react-globe.gl'
 import { useQuery } from '@tanstack/react-query'
 import type { TopologyMetro, TopologyDevice, TopologyLink, TopologyValidator, MultiPathResponse, SimulateLinkRemovalResponse, SimulateLinkAdditionResponse, WhatIfRemovalResponse, MetroDevicePathsResponse } from '@/lib/api'
+import { computeDevicePositions } from './topology/devicePositions'
 import { fetchISISPaths, fetchISISTopology, fetchCriticalLinks, fetchSimulateLinkRemoval, fetchSimulateLinkAddition, fetchWhatIfRemoval, fetchLinkHealth, fetchTopologyCompare, fetchMetroDevicePaths } from '@/lib/api'
 import { useTopology, useMulticastState, TopologyControlBar, TopologyPanel, DeviceDetails, LinkDetails, MetroDetails, ValidatorDetails, EntityLink as TopologyEntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, ValidatorsOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, LINK_TYPE_COLORS, MULTICAST_PUBLISHER_COLORS, type DeviceOption, type MetroOption } from '@/components/topology'
 import type { LinkInfo, SelectedItemData } from '@/components/topology'
@@ -281,22 +282,6 @@ function arcAnimateTime(avgLatencyUs: number): number {
 }
 
 // Calculate device position with radial offset around metro center
-function calculateDevicePosition(
-  metroLat: number,
-  metroLng: number,
-  deviceIndex: number,
-  totalDevices: number
-): { lat: number; lng: number } {
-  if (totalDevices === 1) {
-    return { lat: metroLat, lng: metroLng }
-  }
-  const radius = 0.3
-  const angle = (2 * Math.PI * deviceIndex) / totalDevices
-  const latOffset = radius * Math.cos(angle)
-  const lngOffset = radius * Math.sin(angle) / Math.cos(metroLat * Math.PI / 180)
-  return { lat: metroLat + latOffset, lng: metroLng + lngOffset }
-}
-
 export function TopologyGlobe({ metros, devices, links, validators }: TopologyGlobeProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
@@ -600,17 +585,16 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   }, [links])
 
   // Device positions
+  // Facility-anchored when the precise-locations toggle is on, otherwise a tight
+  // metro-centroid fanout (#652). Shared helper returns [lng, lat]; globe uses {lat, lng}.
   const devicePositions = useMemo(() => {
     const positions = new Map<string, { lat: number; lng: number }>()
-    for (const [metroPk, metroDevices] of devicesByMetro) {
-      const metro = metroMap.get(metroPk)
-      if (!metro) continue
-      metroDevices.forEach((device, index) => {
-        positions.set(device.pk, calculateDevicePosition(metro.latitude, metro.longitude, index, metroDevices.length))
-      })
+    const tuples = computeDevicePositions(devices, metroMap, overlays.preciseLocations ? 'facility' : 'fanout')
+    for (const [pk, [lng, lat]] of tuples) {
+      positions.set(pk, { lat, lng })
     }
     return positions
-  }, [devicesByMetro, metroMap])
+  }, [devices, metroMap, overlays.preciseLocations])
 
   // ─── Derived overlay maps ────────────────────────────────────────────
 
