@@ -63,6 +63,8 @@ import { GeolocUsersPage } from '@/components/geoloc-users-page'
 import { GeolocExplorerPage } from '@/components/geoloc-explorer-page'
 import { ShredsSeatsPage, ShredsFundersPage, ShredsDevicesPage, ShredsEscrowEventsPage } from '@/components/shreds-page'
 import { ShredsEconomicsPage } from '@/components/shreds-economics-page'
+import { ShredsRewardsPage } from '@/components/shreds-rewards-page'
+import { ShredsRewardsDetailPage } from '@/components/shreds-rewards-detail-page'
 import { PublisherCheckPage } from './components/publisher-check-page'
 import { EdgeScoreboardPage } from './components/edge-scoreboard-page'
 import { MulticastGroupDetailPage } from '@/components/multicast-group-detail-page'
@@ -729,6 +731,8 @@ function AppContent() {
             <Route path="/dz/shreds/devices" element={<ShredsDevicesPage />} />
             <Route path="/dz/shreds/activity" element={<ShredsEscrowEventsPage />} />
             <Route path="/dz/shreds/economics" element={<ShredsEconomicsPage />} />
+            <Route path="/dz/shreds/rewards" element={<ShredsRewardsPage />} />
+            <Route path="/dz/shreds/rewards/:nodeId" element={<ShredsRewardsDetailPage />} />
             {/* Subscribe page hidden for now — see shreds-subscribe-page.tsx */}
             <Route path="/dz/edge/scoreboard" element={<Navigate to="/dz/shreds/scoreboard" replace />} />
 

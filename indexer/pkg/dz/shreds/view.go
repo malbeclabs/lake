@@ -15,9 +15,9 @@ import (
 	shreds "github.com/malbeclabs/doublezero/sdk/shreds/go"
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/escrowevents"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/validatorrewards"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 	"github.com/malbeclabs/lake/indexer/pkg/metrics"
-	"golang.org/x/sync/errgroup"
 )
 
 // Row types for ClickHouse dimension tables.
@@ -109,6 +109,16 @@ type ShredDistributionRow struct {
 	Burned2ZAmount                     uint64
 }
 
+// DistributionClientProportionRow is one row of the per-epoch client-id reward
+// proportion snapshot taken from ShredDistribution.validator_client_rewards_config.
+type DistributionClientProportionRow struct {
+	PK                string // {subscription_epoch}:{client_id}
+	SubscriptionEpoch uint64
+	ClientID          uint16
+	Proportion        uint16 // UnitShare16, 0..10_000; zero means "use default"
+	DefaultProportion uint16 // per-epoch fallback resolved at projection time
+}
+
 // ShredsRPC abstracts the shreds SDK client for singleton account fetches.
 type ShredsRPC interface {
 	FetchExecutionController(ctx context.Context) (*shreds.ExecutionController, error)
@@ -168,6 +178,11 @@ type View struct {
 	// cachedEscrowInfos holds the escrow list from the last successful refresh,
 	// used by the escrow events view to know which accounts to fetch history for.
 	cachedEscrowInfos []escrowevents.EscrowInfo
+
+	// s3Client and leafStore handle fetching, verifying, and persisting the
+	// per-epoch validator-rewards merkle leaves from the off-chain S3 export.
+	s3Client  *validatorrewards.S3Client
+	leafStore *validatorrewards.Store
 }
 
 func NewView(cfg ViewConfig) (*View, error) {
@@ -183,11 +198,21 @@ func NewView(cfg ViewConfig) (*View, error) {
 		return nil, fmt.Errorf("failed to create store: %w", err)
 	}
 
+	leafStore, err := validatorrewards.NewStore(validatorrewards.StoreConfig{
+		Logger:     cfg.Logger,
+		ClickHouse: cfg.ClickHouse,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create validator rewards store: %w", err)
+	}
+
 	return &View{
-		log:     cfg.Logger,
-		cfg:     cfg,
-		store:   store,
-		readyCh: make(chan struct{}),
+		log:       cfg.Logger,
+		cfg:       cfg,
+		store:     store,
+		readyCh:   make(chan struct{}),
+		s3Client:  validatorrewards.NewS3Client(),
+		leafStore: leafStore,
 	}, nil
 }
 
@@ -265,40 +290,18 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		return result, fmt.Errorf("fetch execution controller: %w", err)
 	}
 
-	// Fetch all program accounts in a single RPC call and optionally fetch the
-	// current distribution in parallel.
-	var (
-		allAccounts   *AllProgramAccounts
-		distributions []ShredDistributionRow
-	)
-
-	g, gctx := errgroup.WithContext(ctx)
-	g.Go(func() error {
-		var err error
-		allAccounts, err = FetchAllProgramAccounts(gctx, v.cfg.ShredsRawRPC, v.cfg.ProgramID)
-		if err != nil {
-			return fmt.Errorf("fetch all program accounts: %w", err)
-		}
-		return nil
-	})
-	g.Go(func() error {
-		if ec.CurrentSubscriptionEpoch == 0 {
-			return nil
-		}
-		dist, err := v.cfg.ShredsRPC.FetchShredDistribution(gctx, ec.CurrentSubscriptionEpoch)
-		if err != nil {
-			// Distribution may not exist yet for the current epoch; log and continue.
-			v.log.Warn("shreds: failed to fetch current distribution, skipping",
-				"epoch", ec.CurrentSubscriptionEpoch, "error", err)
-			return nil
-		}
-		distributions = []ShredDistributionRow{convertShredDistribution(dist)}
-		return nil
-	})
-
-	if err := g.Wait(); err != nil {
+	// Fetch all program accounts in a single RPC call. ShredDistribution
+	// accounts are demuxed alongside the other dim types, so we get every
+	// epoch's distribution in one shot rather than fetching only the current
+	// epoch — important because past epochs' merkle roots land asynchronously
+	// (after the oracle posts PostValidatorRewardsData) and we'd otherwise
+	// miss the window where a past epoch is finalized.
+	var allAccounts *AllProgramAccounts
+	if a, err := FetchAllProgramAccounts(ctx, v.cfg.ShredsRawRPC, v.cfg.ProgramID); err != nil {
 		metrics.ViewRefreshTotal.WithLabelValues("shreds", "error").Inc()
 		return result, fmt.Errorf("fetch shreds accounts: %w", err)
+	} else {
+		allAccounts = a
 	}
 
 	clientSeats := allAccounts.ClientSeats
@@ -307,6 +310,17 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	deviceHistories := allAccounts.DeviceHistories
 	validatorRewards := allAccounts.ValidatorRewards
 
+	// Convert every on-chain ShredDistribution into both the dim row and the
+	// per-epoch client-proportions snapshot. Sort by subscription_epoch
+	// ascending so log lines and downstream iteration are deterministic.
+	distributions := make([]ShredDistributionRow, 0, len(allAccounts.ShredDistributions))
+	clientProportions := make([]DistributionClientProportionRow, 0)
+	for _, kd := range allAccounts.ShredDistributions {
+		d := kd.ShredDistribution
+		distributions = append(distributions, convertShredDistribution(&d))
+		clientProportions = append(clientProportions, convertDistributionClientProportions(&d)...)
+	}
+
 	v.log.Debug("shreds: fetched program data",
 		"client_seats", len(clientSeats),
 		"payment_escrows", len(paymentEscrows),
@@ -314,6 +328,7 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		"device_histories", len(deviceHistories),
 		"validator_rewards", len(validatorRewards),
 		"distributions", len(distributions),
+		"journals", len(allAccounts.Journals),
 	)
 
 	// Validate that we received data — empty responses would tombstone all existing entities.
@@ -373,7 +388,174 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		}
 	}
 
-	totalRows := len(ecRows) + len(csRows) + len(peRows) + len(mhRows) + len(dhRows) + len(vrRows) + len(distributions)
+	if len(clientProportions) > 0 {
+		if err := v.store.ReplaceDistributionClientProportions(ctx, clientProportions); err != nil {
+			return result, fmt.Errorf("failed to replace distribution client proportions: %w", err)
+		}
+	}
+
+	// Fetch and persist the per-epoch validator-rewards merkle leaves from the
+	// off-chain S3 export.
+	//
+	// Two paths run per distribution:
+	//   - If `ValidatorRewardsMerkleRoot` is non-zero (the oracle has posted
+	//     the on-chain root): fetch, verify, persist as verified. Replaces
+	//     any previously-indexed unverified rows for the epoch.
+	//   - If the root is still zero (the chain hasn't caught up yet): fetch
+	//     the S3 export without verification and persist with
+	//     IsVerified=false. Lets the rewards page surface publishing
+	//     validators with their leader slots immediately; the verified pass
+	//     overwrites these rows once the root lands.
+	//
+	// The S3 export is keyed by Solana epoch. The shred-subscription program's
+	// `subscription_epoch` counter equals the Solana epoch (the program
+	// creates one distribution per Solana epoch starting from its launch
+	// epoch). `associated_dz_epoch` is the parent revenue-distribution
+	// program's epoch counter — a slower, independent counter — and must NOT
+	// be used as the Solana epoch.
+	var leafCount int
+	var zeroRoot [32]byte
+	for _, kd := range allAccounts.ShredDistributions {
+		d := kd.ShredDistribution
+		expectedRoot := d.ValidatorRewardsMerkleRoot
+		solanaEpoch := d.SubscriptionEpoch
+
+		status, err := v.leafStore.LeavesStatusForEpoch(ctx, solanaEpoch)
+		if err != nil {
+			v.log.Warn("shreds: leaves status check failed",
+				"solana_epoch", solanaEpoch, "error", err)
+			continue
+		}
+
+		if expectedRoot == zeroRoot {
+			// Chain hasn't posted a root yet. Index unverified once; subsequent
+			// refreshes skip until the root lands.
+			if status.HasVerified || status.HasUnverified {
+				continue
+			}
+			leaves, ok, fErr := validatorrewards.FetchForEpoch(ctx, v.s3Client, solanaEpoch)
+			switch {
+			case fErr != nil:
+				v.log.Warn("shreds: leaf fetch failed",
+					"solana_epoch", solanaEpoch, "error", fErr)
+			case ok:
+				if err := v.leafStore.ReplaceLeaves(ctx, d.SubscriptionEpoch, uint64(d.AssociatedDZEpoch), leaves); err != nil {
+					return result, fmt.Errorf("failed to replace unverified leaves: %w", err)
+				}
+				leafCount += int(leaves.TotalPublishingValidators)
+			default:
+				// 404 — S3 export not yet published for this epoch.
+				v.log.Debug("shreds: leaf export not yet available",
+					"solana_epoch", solanaEpoch, "verified", false)
+			}
+			continue
+		}
+
+		// Root is posted. Skip if we already have verified leaves (root is
+		// immutable). Otherwise fetch+verify and persist; this overwrites
+		// any prior unverified entries because PK is the same per-leaf.
+		if status.HasVerified {
+			continue
+		}
+		verified, ok, vErr := validatorrewards.FetchAndVerifyForEpoch(ctx, v.s3Client, solanaEpoch, expectedRoot)
+		switch {
+		case vErr != nil:
+			v.log.Warn("shreds: leaf verify failed",
+				"solana_epoch", solanaEpoch,
+				"associated_dz_epoch", d.AssociatedDZEpoch,
+				"error", vErr)
+		case ok:
+			if err := v.leafStore.ReplaceLeaves(ctx, d.SubscriptionEpoch, uint64(d.AssociatedDZEpoch), verified); err != nil {
+				return result, fmt.Errorf("failed to replace validator rewards leaves: %w", err)
+			}
+			leafCount += int(verified.TotalPublishingValidators)
+		default:
+			// 404 — S3 export not yet published for this epoch. Will retry next refresh.
+			v.log.Debug("shreds: leaf export not yet available",
+				"solana_epoch", solanaEpoch, "verified", true)
+		}
+	}
+
+	// Project per-leaf claimable bits from in-flight ShredDistributionJournal
+	// accounts to the leaf_distribution_status table. We restrict to the most
+	// recent subscription epochs so we don't scan the entire history every
+	// refresh.
+	//
+	// Only project journal-status rows for the last 12 subscription epochs
+	// (10 visible on the page + 2 in-flight buffer). Older epochs are out of
+	// the "immediately claimable" window per the spec and don't need bitmap
+	// tracking.
+	const recentJournalWindow uint64 = 12
+	var statusRows []validatorrewards.LeafDistributionStatusRow
+	if len(allAccounts.Journals) > 0 {
+		var minEpoch uint64
+		if ec.CurrentSubscriptionEpoch > recentJournalWindow {
+			minEpoch = ec.CurrentSubscriptionEpoch - recentJournalWindow
+		}
+		// Cache leaf-index → node-id maps per subscription_epoch so we only
+		// hit ClickHouse once per epoch when multiple journals share it.
+		leafMaps := make(map[uint64]map[uint32]string)
+		for _, kj := range allAccounts.Journals {
+			view := kj.View
+			if view == nil {
+				continue
+			}
+			// Only the 2Z (DoubleZero) mint journal carries the publisher
+			// accumulation bitmap relevant to the rewards page.
+			if view.MintKey.String() != validatorrewards.DoubleZeroMintKey {
+				continue
+			}
+			if view.SubscriptionEpoch < minEpoch {
+				continue
+			}
+			leafMap, ok := leafMaps[view.SubscriptionEpoch]
+			if !ok {
+				m, err := v.leafStore.LeafIndexToNodeID(ctx, view.SubscriptionEpoch)
+				if err != nil {
+					return result, fmt.Errorf("load leaf_index → node_id mapping for epoch %d: %w",
+						view.SubscriptionEpoch, err)
+				}
+				leafMaps[view.SubscriptionEpoch] = m
+				leafMap = m
+			}
+			if len(leafMap) == 0 {
+				// Leaves not yet indexed for this epoch (S3 export pending,
+				// or out of the leaf window). Skip — next refresh will retry.
+				continue
+			}
+			statusRows = append(statusRows,
+				validatorrewards.ProjectStatuses(view, view.SubscriptionEpoch, leafMap)...)
+		}
+		if len(statusRows) > 0 {
+			if err := v.leafStore.ReplaceLeafDistributionStatuses(ctx, statusRows); err != nil {
+				return result, fmt.Errorf("failed to replace leaf distribution statuses: %w", err)
+			}
+		}
+	}
+
+	// Project the per-epoch 2Z reward pool from the 2Z journals. Unlike the
+	// claimable-bit projection above, this is NOT window-bounded: the pool is
+	// the numerator for all-time earnings, so we record every 2Z journal we
+	// can still read on-chain (the table accumulates and survives sweeps).
+	var poolRows []validatorrewards.Distribution2ZPoolRow
+	for _, kj := range allAccounts.Journals {
+		view := kj.View
+		if view == nil || view.MintKey.String() != validatorrewards.DoubleZeroMintKey {
+			continue
+		}
+		poolRows = append(poolRows, validatorrewards.Distribution2ZPoolRow{
+			PK:                validatorrewards.Distribution2ZPoolPK(view.SubscriptionEpoch),
+			SubscriptionEpoch: view.SubscriptionEpoch,
+			TokensReceived2Z:  view.TokensReceivedAmount,
+		})
+	}
+	if len(poolRows) > 0 {
+		if err := v.leafStore.ReplaceDistribution2ZPools(ctx, poolRows); err != nil {
+			return result, fmt.Errorf("failed to replace 2Z distribution pools: %w", err)
+		}
+	}
+
+	totalRows := len(ecRows) + len(csRows) + len(peRows) + len(mhRows) + len(dhRows) + len(vrRows) + len(distributions) + len(clientProportions) + leafCount + len(statusRows) + len(poolRows)
 	result.RowsAffected = int64(totalRows)
 	fetchedAt := time.Now().UTC()
 	result.SourceMaxEventTS = &fetchedAt
@@ -530,6 +712,47 @@ func convertShredDistribution(d *shreds.ShredDistribution) ShredDistributionRow 
 		DistributedContributor2ZAmount:     d.DistributedContributor2ZAmount,
 		Burned2ZAmount:                     d.Burned2ZAmount,
 	}
+}
+
+// legacyDefaultClientProportion mirrors the on-chain constant
+// LEGACY_DEFAULT_PROPORTION (35%). See
+// programs/shred-subscription/src/types/validator_client_rewards_proportion.rs:69-77.
+const legacyDefaultClientProportion uint16 = 3_500
+
+// convertDistributionClientProportions projects the per-epoch snapshot of
+// the validator-client rewards proportions from a ShredDistribution into one
+// row per (subscription_epoch, client_id). Zero-padded slots in the on-chain
+// fixed-size array are skipped (client_id=0 is reserved on-chain).
+//
+// NOTE: The on-chain ShredDistribution now snapshots a full
+// ValidatorClientRewardsConfig (proportions + default_proportion), but the
+// generated Go SDK binding still exposes only the proportions array as
+// ShredDistribution.ValidatorClientRewardProportions (no DefaultProportion
+// field). Until the SDK is regenerated, we apply legacyDefaultClientProportion
+// as the per-epoch default. When the SDK catches up, replace the fallback
+// with the snapshot's default_proportion (zero -> legacy fallback).
+func convertDistributionClientProportions(d *shreds.ShredDistribution) []DistributionClientProportionRow {
+	if d == nil {
+		return nil
+	}
+	defaultProp := legacyDefaultClientProportion
+	props := d.ValidatorClientRewardProportions
+	rows := make([]DistributionClientProportionRow, 0, len(props))
+	for _, p := range props {
+		// Skip zero-padded entries (the on-chain array is fixed-size and
+		// client_id=0 is reserved per the on-chain non-zero constraint).
+		if p.ID == 0 && p.RewardProportion == 0 {
+			continue
+		}
+		rows = append(rows, DistributionClientProportionRow{
+			PK:                fmt.Sprintf("epoch-%d:client-%d", d.SubscriptionEpoch, p.ID),
+			SubscriptionEpoch: d.SubscriptionEpoch,
+			ClientID:          p.ID,
+			Proportion:        p.RewardProportion,
+			DefaultProportion: defaultProp,
+		})
+	}
+	return rows
 }
 
 // PaymentEscrowInfos returns the escrow list from the last successful refresh.

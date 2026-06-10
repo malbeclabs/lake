@@ -112,6 +112,9 @@ const { resolvedTheme, setTheme } = useTheme()
   const isShredsDevicesRoute = location.pathname === '/dz/shreds/devices'
   const isShredsEscrowEventsRoute = location.pathname === '/dz/shreds/activity'
   const isShredsEconomicsRoute = location.pathname === '/dz/shreds/economics'
+  const isShredsRewardsRoute =
+    location.pathname === '/dz/shreds/rewards' ||
+    location.pathname.startsWith('/dz/shreds/rewards/')
   const isShredsRoute = location.pathname.startsWith('/dz/shreds') || isShredsPublishersRoute
   const isEdgeRoute = isShredsRoute
   const isGeolocRoute = location.pathname.startsWith('/dz/geoloc/')
@@ -560,6 +563,9 @@ const { resolvedTheme, setTheme } = useTheme()
                 </Link>
                 <Link to="/dz/shreds/publishers" className={subNavItemClass(isShredsPublishersRoute)}>
                   Publishers
+                </Link>
+                <Link to="/dz/shreds/rewards" className={subNavItemClass(isShredsRewardsRoute)}>
+                  Edge Rewards
                 </Link>
                 <Link to="/dz/shreds/subscribers" className={subNavItemClass(isShredsSeatsRoute)}>
                   Subscribers
