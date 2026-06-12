@@ -545,6 +545,7 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 			PK:                validatorrewards.Distribution2ZPoolPK(view.SubscriptionEpoch),
 			SubscriptionEpoch: view.SubscriptionEpoch,
 			TokensReceived2Z:  view.TokensReceivedAmount,
+			TotalLeaderSlots:  uint64(view.TotalLeaderSlots),
 		})
 	}
 	if len(poolRows) > 0 {

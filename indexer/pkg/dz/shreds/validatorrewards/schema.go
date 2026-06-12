@@ -141,6 +141,11 @@ type Distribution2ZPoolRow struct {
 	PK                string // epoch-{subscription_epoch}
 	SubscriptionEpoch uint64
 	TokensReceived2Z  uint64
+	// TotalLeaderSlots is the journal's authoritative leader-slot denominator
+	// for the epoch (see JournalView.TotalLeaderSlots). The rewards page divides
+	// each validator's leader_slots by this rather than by the sum of indexed
+	// leaves, which is incomplete for older epochs and over-credits validators.
+	TotalLeaderSlots uint64
 }
 
 type distribution2ZPoolSchema struct{}
@@ -157,11 +162,12 @@ func (s *distribution2ZPoolSchema) PayloadColumns() []string {
 	return []string{
 		"subscription_epoch:BIGINT",
 		"tokens_received_2z:BIGINT",
+		"total_leader_slots:BIGINT",
 	}
 }
 
 func (s *distribution2ZPoolSchema) ToRow(r Distribution2ZPoolRow) []any {
-	return []any{r.PK, r.SubscriptionEpoch, r.TokensReceived2Z}
+	return []any{r.PK, r.SubscriptionEpoch, r.TokensReceived2Z, r.TotalLeaderSlots}
 }
 
 func (s *distribution2ZPoolSchema) GetPrimaryKey(r Distribution2ZPoolRow) string {

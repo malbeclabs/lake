@@ -85,6 +85,7 @@ const (
 	offPublisherAccumulationBitmapEndIndex   = 108
 	offClientAccumulationBitmapStartIndex    = 112
 	offClientAccumulationBitmapEndIndex      = 116
+	offTotalLeaderSlots                      = 128
 	offAccumulatedPublisherLeafCount         = 152
 	offDistributedPublisherLeafCount         = 156
 )
@@ -104,8 +105,14 @@ type JournalView struct {
 	TokensReceivedAmount                  uint64
 	PublisherAccumulationBitmapStartIndex uint32
 	PublisherAccumulationBitmapEndIndex   uint32
-	AccumulatedPublisherLeafCount         uint32
-	DistributedPublisherLeafCount         uint32
+	// TotalLeaderSlots is the journal's authoritative count of all leader slots
+	// in the epoch. It is the denominator the on-chain distribution uses to
+	// split the pool by leader slots — NOT the sum of the leaves we happen to
+	// have indexed (which can be incomplete and would over-credit each present
+	// validator).
+	TotalLeaderSlots              uint32
+	AccumulatedPublisherLeafCount uint32
+	DistributedPublisherLeafCount uint32
 	// RemainingData is `account_data[journalFixedHeader:]`. Bitmaps are
 	// referenced into it via the start/end indices above.
 	RemainingData []byte
@@ -132,6 +139,7 @@ func DecodeJournalAccount(data []byte) (*JournalView, error) {
 		TokensReceivedAmount:                  binary.LittleEndian.Uint64(data[offTokensReceivedAmount : offTokensReceivedAmount+8]),
 		PublisherAccumulationBitmapStartIndex: binary.LittleEndian.Uint32(data[offPublisherAccumulationBitmapStartIndex : offPublisherAccumulationBitmapStartIndex+4]),
 		PublisherAccumulationBitmapEndIndex:   binary.LittleEndian.Uint32(data[offPublisherAccumulationBitmapEndIndex : offPublisherAccumulationBitmapEndIndex+4]),
+		TotalLeaderSlots:                      binary.LittleEndian.Uint32(data[offTotalLeaderSlots : offTotalLeaderSlots+4]),
 		AccumulatedPublisherLeafCount:         binary.LittleEndian.Uint32(data[offAccumulatedPublisherLeafCount : offAccumulatedPublisherLeafCount+4]),
 		DistributedPublisherLeafCount:         binary.LittleEndian.Uint32(data[offDistributedPublisherLeafCount : offDistributedPublisherLeafCount+4]),
 		RemainingData:                         data[journalFixedHeader:],

@@ -460,6 +460,54 @@ func TestGetShredsRewards_ProportionDefaultsWhenUnset(t *testing.T) {
 		"unset proportion must fall through to default_proportion, not a 100% share")
 }
 
+// TestGetShredsRewards_UsesJournalTotalLeaderSlots verifies earnings divide by
+// the journal's authoritative total_leader_slots (stored on the pool row), not
+// the sum of indexed leaves. When some validators' leaves are missing, the
+// summed-leaves denominator is too small and over-credits everyone; the stored
+// value is the true denominator.
+//
+//	pool = 10000, node-D leader_slots = 100, but the journal's total = 200
+//	(another 100 slots belong to a validator whose leaf isn't indexed).
+//	earned = 10000 * 100 * 6500 / (200 * 10000) = 3250   (NOT 6500)
+func TestGetShredsRewards_UsesJournalTotalLeaderSlots(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	ctx := t.Context()
+
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_validator_rewards_leaves_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, associated_dz_epoch, node_id, leader_slots, client_id, leaf_index)
+		VALUES ('400-D', now(), now(), generateUUIDv4(), 0, 1, 400, 40, 'node-D', 100, 1, 0)
+	`))
+	// Pool carries the authoritative denominator (200) — larger than the lone
+	// indexed leaf's 100 slots, simulating a missing validator's leaves.
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_distribution_2z_pool_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, tokens_received_2z, total_leader_slots)
+		VALUES ('epoch-400', now(), now(), generateUUIDv4(), 0, 1, 400, 10000, 200)
+	`))
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_distribution_client_proportions_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, client_id, proportion, default_proportion)
+		VALUES ('p-400-1', now(), now(), generateUUIDv4(), 0, 1, 400, 1, 3500, 3500)
+	`))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/rewards", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredsRewards(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+	resp := decodeShredsRewards(t, rr.Body.Bytes())
+
+	require.Len(t, resp.Validators, 1)
+	// 3250 (denominator 200), NOT 6500 (summed-leaves denominator 100).
+	assert.InDelta(t, 3250.0, resp.Validators[0].TotalEarned2Z, 1e-6,
+		"must divide by the journal's total_leader_slots, not the summed indexed leaves")
+}
+
 // withChiNodeIDParam installs the {nodeId} URL param onto the request context
 // so the handler can read it via chi.URLParam.
 func withChiNodeIDParam(req *http.Request, nodeID string) *http.Request {

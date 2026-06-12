@@ -272,7 +272,10 @@ func (a *API) computeShredsRewards(ctx context.Context, search, sortField, order
 				  -- share). Treat 0 as "unset" and fall through to
 				  -- default_proportion, then 3500.
 				  * toFloat64(10000 - if(C.proportion > 0, C.proportion, if(C.default_proportion > 0, C.default_proportion, 3500)))
-				  / nullIf(toFloat64(T.total_leader_slots) * toFloat64(10000), 0)
+				  -- Denominator: the journal's authoritative total_leader_slots
+				  -- when we have it, else fall back to the summed indexed leaves
+				  -- (older/swept epochs not yet re-projected with the field).
+				  / nullIf(toFloat64(if(P.total_leader_slots > 0, P.total_leader_slots, T.total_leader_slots)) * toFloat64(10000), 0)
 				  AS earned_2z,
 				coalesce(S.is_claimable, 0) AS is_claimable,
 				if(R.solana_epoch IS NULL, 0, 1) AS is_recent
@@ -520,7 +523,10 @@ func (a *API) GetShredsRewardsDetail(w http.ResponseWriter, r *http.Request) {
 			toFloat64(P.tokens_received_2z)
 			  * toFloat64(L.leader_slots)
 			  * toFloat64(10000 - coalesce(C.proportion, C.default_proportion, 3500))
-			  / nullIf(toFloat64(T.total_leader_slots) * toFloat64(10000), 0) AS earned_2z,
+			  -- Denominator: the journal's authoritative total_leader_slots when
+			  -- we have it, else fall back to the summed indexed leaves (older/
+			  -- swept epochs not yet re-projected with the field).
+			  / nullIf(toFloat64(if(P.total_leader_slots > 0, P.total_leader_slots, T.total_leader_slots)) * toFloat64(10000), 0) AS earned_2z,
 			-- has_status: ClickHouse LEFT JOINs default missing values rather than
 			-- emitting NULL, so we detect "no status row" by checking that the
 			-- joined node_id is the empty string (the String default).

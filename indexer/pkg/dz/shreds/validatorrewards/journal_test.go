@@ -54,7 +54,11 @@ func buildJournalAccount(
 
 	// client bitmap left zero (unallocated)
 
-	// validator_pool (8B), total_leader_slots (4B), padding (4B) zero
+	// validator_pool (8B) at 120 left zero; total_leader_slots (u32) at 128 —
+	// a recognizable sentinel so the decode of the denominator is exercised.
+	binary.LittleEndian.PutUint32(buf[128:132], 4242)
+
+	// padding (4B) zero
 
 	// accumulated_publisher_slots_scaled (8B), accumulated_client_slots_scaled (8B) zero
 
@@ -85,6 +89,7 @@ func TestDecodeJournalAccount_ValidLayout(t *testing.T) {
 	assert.Equal(t, uint64(7_000_000), view.TokensReceivedAmount)
 	assert.Equal(t, uint32(0), view.PublisherAccumulationBitmapStartIndex)
 	assert.Equal(t, uint32(len(bitmap)), view.PublisherAccumulationBitmapEndIndex)
+	assert.Equal(t, uint32(4242), view.TotalLeaderSlots)
 	assert.Equal(t, uint32(5), view.AccumulatedPublisherLeafCount)
 	assert.Equal(t, uint32(2), view.DistributedPublisherLeafCount)
 	assert.Equal(t, bitmap, view.RemainingData)
