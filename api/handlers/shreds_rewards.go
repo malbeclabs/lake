@@ -263,7 +263,15 @@ func (a *API) computeShredsRewards(ctx context.Context, search, sortField, order
 				L.subscription_epoch AS subscription_epoch,
 				toFloat64(P.tokens_received_2z)
 				  * toFloat64(L.leader_slots)
-				  * toFloat64(10000 - coalesce(C.proportion, C.default_proportion, 3500))
+				  -- Client reward proportion (basis points the client keeps; the
+				  -- validator gets the remainder). proportion is stored as 0 when
+				  -- the per-client value is unset, with the real fallback in
+				  -- default_proportion. A ClickHouse LEFT JOIN also fills a missing
+				  -- row with 0 (not NULL), so coalesce(proportion, default, 3500)
+				  -- would wrongly return 0 (the validator keeping the whole pool
+				  -- share). Treat 0 as "unset" and fall through to
+				  -- default_proportion, then 3500.
+				  * toFloat64(10000 - if(C.proportion > 0, C.proportion, if(C.default_proportion > 0, C.default_proportion, 3500)))
 				  / nullIf(toFloat64(T.total_leader_slots) * toFloat64(10000), 0)
 				  AS earned_2z,
 				coalesce(S.is_claimable, 0) AS is_claimable,

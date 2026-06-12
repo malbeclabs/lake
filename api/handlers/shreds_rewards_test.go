@@ -413,6 +413,53 @@ func TestGetShredsRewards_MultiClientValidator(t *testing.T) {
 	assert.InDelta(t, 6500.0, x.EpochEarnings[200], 1e-6)
 }
 
+// TestGetShredsRewards_ProportionDefaultsWhenUnset is the regression test for
+// the earnings overstatement: the per-client proportion is stored as 0 when
+// unset, with the real fallback in default_proportion, and a missing client
+// row also reads as 0 (ClickHouse fills LEFT JOIN columns with 0, not NULL).
+// The validator share must use default_proportion (3500 → 65%), NOT treat the
+// 0 as a literal proportion (which gave a 100% share and overstated earnings).
+//
+//	pool = 10000, total_leader_slots = 100, validator share = 10000-3500 = 6500
+//	earned = 10000 * 100 * 6500 / (100 * 10000) = 6500   (NOT 10000)
+func TestGetShredsRewards_ProportionDefaultsWhenUnset(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	ctx := t.Context()
+
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_validator_rewards_leaves_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, associated_dz_epoch, node_id, leader_slots, client_id, leaf_index)
+		VALUES ('300-Z', now(), now(), generateUUIDv4(), 0, 1, 300, 30, 'node-Z', 100, 1, 0)
+	`))
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_distribution_2z_pool_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, tokens_received_2z)
+		VALUES ('epoch-300', now(), now(), generateUUIDv4(), 0, 1, 300, 10000)
+	`))
+	// proportion stored as 0 (unset), real fallback in default_proportion.
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_distribution_client_proportions_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, client_id, proportion, default_proportion)
+		VALUES ('p-300-1', now(), now(), generateUUIDv4(), 0, 1, 300, 1, 0, 3500)
+	`))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/rewards", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredsRewards(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+	resp := decodeShredsRewards(t, rr.Body.Bytes())
+
+	require.Len(t, resp.Validators, 1)
+	// 6500 (65% share via default_proportion), NOT 10000 (the 0-proportion bug).
+	assert.InDelta(t, 6500.0, resp.Validators[0].TotalEarned2Z, 1e-6,
+		"unset proportion must fall through to default_proportion, not a 100% share")
+}
+
 // withChiNodeIDParam installs the {nodeId} URL param onto the request context
 // so the handler can read it via chi.URLParam.
 func withChiNodeIDParam(req *http.Request, nodeID string) *http.Request {
