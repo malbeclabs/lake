@@ -6808,13 +6808,21 @@ export async function fetchShredsRewards(
   return res.json()
 }
 
+export type ShredsRewardsClaimState =
+  | 'claimable'
+  | 'distributed'
+  | 'pending'
+  | 'unknown'
+
 export interface ShredsRewardsEpochDetail {
   solana_epoch: number
   subscription_epoch: number
   leader_slots: number
   client_id: number
   earned_2z: number
+  // Retained for back-compat; `state` carries the full lifecycle.
   is_claimable?: boolean | null
+  state: ShredsRewardsClaimState
 }
 
 export interface ShredsRewardsDetail {

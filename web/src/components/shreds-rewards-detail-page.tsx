@@ -53,7 +53,7 @@ export function ShredsRewardsDetailPage() {
     if (!data) return { all: 0, claimable: 0 }
     const all = data.epochs.reduce((acc, e) => acc + (e.earned_2z || 0), 0)
     const claimable = data.epochs
-      .filter((e) => e.is_claimable === true)
+      .filter((e) => e.state === 'claimable')
       .reduce((acc, e) => acc + (e.earned_2z || 0), 0)
     return { all, claimable }
   }, [data])
@@ -188,24 +188,35 @@ export function ShredsRewardsDetailPage() {
                   </tr>
                 ) : (
                   data.epochs.map((epoch) => {
-                    const claimStatus =
-                      epoch.is_claimable === true
-                        ? 'claimable'
-                        : epoch.is_claimable === false
-                          ? 'paid'
-                          : 'untracked'
-                    const statusStyle =
-                      claimStatus === 'claimable'
-                        ? 'bg-amber-500/10 text-amber-500 dark:text-amber-400 border-amber-500/30'
-                        : claimStatus === 'paid'
-                          ? 'bg-muted text-muted-foreground border-border'
-                          : 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30'
-                    const statusLabel =
-                      claimStatus === 'claimable'
-                        ? 'Claimable'
-                        : claimStatus === 'paid'
-                          ? 'Paid'
-                          : 'Accrued'
+                    // Drive the badge off the derived lifecycle `state`:
+                    //   claimable   -> Claimable (claimable now)
+                    //   distributed -> Paid (rewards already distributed)
+                    //   pending     -> Pending (accruing / not finalized)
+                    //   unknown     -> Unknown (journal swept before we tracked
+                    //                  it; per-leaf claim state is unrecoverable)
+                    const claimStyle: Record<string, string> = {
+                      claimable:
+                        'bg-amber-500/10 text-amber-500 dark:text-amber-400 border-amber-500/30',
+                      distributed: 'bg-muted text-muted-foreground border-border',
+                      pending:
+                        'bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30',
+                      unknown:
+                        'bg-transparent text-muted-foreground/50 border-border/50',
+                    }
+                    const claimLabel: Record<string, string> = {
+                      claimable: 'Claimable',
+                      distributed: 'Paid',
+                      pending: 'Pending',
+                      unknown: 'Unknown',
+                    }
+                    const bucket =
+                      epoch.state === 'claimable' ||
+                      epoch.state === 'distributed' ||
+                      epoch.state === 'unknown'
+                        ? epoch.state
+                        : 'pending'
+                    const statusStyle = claimStyle[bucket]
+                    const statusLabel = claimLabel[bucket]
                     return (
                       <tr
                         key={`${epoch.solana_epoch}-${epoch.subscription_epoch}`}
