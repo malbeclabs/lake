@@ -98,14 +98,14 @@ func insertShredsRewardsTestData(t *testing.T, api *handlers.API) {
 	err = api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_shred_validator_leaf_distribution_status_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
-		 subscription_epoch, node_id, is_claimable, journal_mint_key)
+		 subscription_epoch, node_id, client_id, is_claimable, journal_mint_key)
 		VALUES
-		('s-100-A', now(), now(), generateUUIDv4(), 0, 1, 100, 'node-A', 0, ''),
-		('s-100-B', now(), now(), generateUUIDv4(), 0, 2, 100, 'node-B', 0, ''),
-		('s-101-A', now(), now(), generateUUIDv4(), 0, 3, 101, 'node-A', 0, ''),
-		('s-101-B', now(), now(), generateUUIDv4(), 0, 4, 101, 'node-B', 0, ''),
-		('s-102-A', now(), now(), generateUUIDv4(), 0, 5, 102, 'node-A', 1, 'journal-A'),
-		('s-102-B', now(), now(), generateUUIDv4(), 0, 6, 102, 'node-B', 1, 'journal-B')
+		('s-100-A', now(), now(), generateUUIDv4(), 0, 1, 100, 'node-A', 1, 0, ''),
+		('s-100-B', now(), now(), generateUUIDv4(), 0, 2, 100, 'node-B', 1, 0, ''),
+		('s-101-A', now(), now(), generateUUIDv4(), 0, 3, 101, 'node-A', 1, 0, ''),
+		('s-101-B', now(), now(), generateUUIDv4(), 0, 4, 101, 'node-B', 1, 0, ''),
+		('s-102-A', now(), now(), generateUUIDv4(), 0, 5, 102, 'node-A', 1, 1, 'journal-A'),
+		('s-102-B', now(), now(), generateUUIDv4(), 0, 6, 102, 'node-B', 1, 1, 'journal-B')
 	`)
 	require.NoError(t, err)
 
@@ -347,6 +347,72 @@ func TestGetShredsRewards_DeduplicatesValidators(t *testing.T) {
 	assert.Equal(t, 1, seen["node-B"])
 }
 
+// TestGetShredsRewards_MultiClientValidator is the regression test for the bug
+// where a validator publishing under multiple software clients in a single
+// epoch was collapsed to one leaf row, understating its leader slots and
+// earnings. node-X publishes under client 1 (30 slots) and client 2 (70 slots)
+// in epoch 200; both leaves must be counted.
+//
+//	pool = 10000, total_leader_slots(200) = 30 + 70 = 100, client proportion 3500
+//	(→ 65% to validator). earned(client1) = 10000*30*6500/(100*10000) = 1950,
+//	earned(client2) = 10000*70*6500/(100*10000) = 4550, total = 6500.
+//
+// Only client 1 is claimable, so immediately_claimable = 1950 (not 6500) —
+// proving the per-client claimable grain too.
+func TestGetShredsRewards_MultiClientValidator(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	ctx := t.Context()
+
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_validator_rewards_leaves_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, associated_dz_epoch, node_id, leader_slots, client_id, leaf_index)
+		VALUES
+		('200-X-c1', now(), now(), generateUUIDv4(), 0, 1, 200, 20, 'node-X', 30, 1, 0),
+		('200-X-c2', now(), now(), generateUUIDv4(), 0, 2, 200, 20, 'node-X', 70, 2, 1)
+	`))
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_distribution_2z_pool_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, tokens_received_2z)
+		VALUES ('epoch-200', now(), now(), generateUUIDv4(), 0, 1, 200, 10000)
+	`))
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_distribution_client_proportions_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, client_id, proportion, default_proportion)
+		VALUES
+		('p-200-1', now(), now(), generateUUIDv4(), 0, 1, 200, 1, 3500, 3500),
+		('p-200-2', now(), now(), generateUUIDv4(), 0, 2, 200, 2, 3500, 3500)
+	`))
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_validator_leaf_distribution_status_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, node_id, client_id, is_claimable, journal_mint_key)
+		VALUES
+		('s-200-X-c1', now(), now(), generateUUIDv4(), 0, 1, 200, 'node-X', 1, 1, 'journal-X'),
+		('s-200-X-c2', now(), now(), generateUUIDv4(), 0, 2, 200, 'node-X', 2, 0, 'journal-X')
+	`))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/rewards", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredsRewards(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+	resp := decodeShredsRewards(t, rr.Body.Bytes())
+
+	require.Len(t, resp.Validators, 1, "node-X must appear exactly once")
+	x := resp.Validators[0]
+	assert.Equal(t, "node-X", x.NodeID)
+	// Both client leaves counted: 1950 + 4550 = 6500.
+	assert.InDelta(t, 6500.0, x.TotalEarned2Z, 1e-6, "earnings must sum across both clients")
+	// Only client 1 is claimable: 1950, not the full 6500.
+	assert.InDelta(t, 1950.0, x.ImmediatelyClaimable2Z, 1e-6, "only client 1's earnings are claimable")
+	// Per-epoch earnings for epoch 200 is the node's full 6500.
+	assert.InDelta(t, 6500.0, x.EpochEarnings[200], 1e-6)
+}
+
 // withChiNodeIDParam installs the {nodeId} URL param onto the request context
 // so the handler can read it via chi.URLParam.
 func withChiNodeIDParam(req *http.Request, nodeID string) *http.Request {
@@ -405,6 +471,12 @@ func TestGetShredsRewardsDetail_FullHistory(t *testing.T) {
 	assert.True(t, *resp.Epochs[0].IsClaimable, "epoch 102 is claimable")
 	assert.False(t, *resp.Epochs[1].IsClaimable, "epoch 101 is not claimable")
 	assert.False(t, *resp.Epochs[2].IsClaimable, "epoch 100 is not claimable")
+
+	// Derived state mirrors the live-journal bits: 102 claimable, 100/101 have
+	// live rows with the bit cleared -> distributed (accumulated then paid).
+	assert.Equal(t, handlers.ClaimStateClaimable, resp.Epochs[0].State, "epoch 102")
+	assert.Equal(t, handlers.ClaimStateDistributed, resp.Epochs[1].State, "epoch 101")
+	assert.Equal(t, handlers.ClaimStateDistributed, resp.Epochs[2].State, "epoch 100")
 
 	// SolanaEpoch equals SubscriptionEpoch by construction.
 	assert.Equal(t, uint64(102), resp.Epochs[0].SubscriptionEpoch)
@@ -507,6 +579,51 @@ func TestGetShredsRewardsDetail_IncludesEpochsOutsideRecentWindow(t *testing.T) 
 	assert.NotNil(t, resp.Epochs[1].IsClaimable, "epoch 101 has a status row")
 	assert.NotNil(t, resp.Epochs[2].IsClaimable, "epoch 100 has a status row")
 
+	// Epoch 99 has a funded pool but no status row at all (its journal was
+	// swept before we ever tracked it), so its per-leaf claim state is
+	// unrecoverable — reported as unknown, NOT assumed paid.
+	assert.Equal(t, handlers.ClaimStateUnknown, resp.Epochs[3].State, "epoch 99 has no recoverable status")
+	// 100/101 are live-journal rows with the bit cleared -> distributed (paid),
+	// 102 is claimable.
+	assert.Equal(t, handlers.ClaimStateClaimable, resp.Epochs[0].State, "epoch 102")
+	assert.Equal(t, handlers.ClaimStateDistributed, resp.Epochs[1].State, "epoch 101")
+	assert.Equal(t, handlers.ClaimStateDistributed, resp.Epochs[2].State, "epoch 100")
+
 	// And the earnings math still works for the older epoch.
 	assert.InDelta(t, 3900.0, resp.Epochs[3].Earned2Z, 1e-6)
+}
+
+// TestGetShredsRewardsDetail_PendingState covers the fourth claim state: an
+// epoch with a pool row but zero tokens (distribution not finalized) and no
+// status row anywhere must report `pending`, not `distributed`.
+func TestGetShredsRewardsDetail_PendingState(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	ctx := t.Context()
+
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_validator_rewards_leaves_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, associated_dz_epoch, node_id, leader_slots, client_id, leaf_index)
+		VALUES ('200-P', now(), now(), generateUUIDv4(), 0, 1, 200, 20, 'node-P', 50, 1, 0)
+	`))
+	// Pool row exists (so the INNER JOIN keeps the epoch) but tokens=0 →
+	// distribution not finalized. No status rows seeded anywhere.
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_distribution_2z_pool_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, subscription_epoch, tokens_received_2z)
+		VALUES ('epoch-200', now(), now(), generateUUIDv4(), 0, 1, 200, 0)
+	`))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/rewards/node-P", nil)
+	req = withChiNodeIDParam(req, "node-P")
+	rr := httptest.NewRecorder()
+	api.GetShredsRewardsDetail(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+	resp := decodeShredsRewardsDetail(t, rr.Body.Bytes())
+
+	require.Len(t, resp.Epochs, 1)
+	assert.Equal(t, handlers.ClaimStatePending, resp.Epochs[0].State, "unfunded epoch is pending, not distributed")
+	assert.Nil(t, resp.Epochs[0].IsClaimable, "no live journal row → is_claimable nil")
 }

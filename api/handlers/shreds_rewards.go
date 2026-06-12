@@ -279,6 +279,7 @@ func (a *API) computeShredsRewards(ctx context.Context, search, sortField, order
 			LEFT JOIN dim_dz_shred_validator_leaf_distribution_status_current S
 				ON S.subscription_epoch = L.subscription_epoch
 			   AND S.node_id = L.node_id
+			   AND S.client_id = L.client_id
 			LEFT JOIN recent_epochs R
 				ON R.solana_epoch = L.subscription_epoch
 		),
@@ -381,9 +382,42 @@ func (a *API) FetchShredsRewardsData(ctx context.Context) (*ShredsRewardsRespons
 	return a.computeShredsRewards(ctx, "", "", "", shredsRewardsDefaultLimit, 0)
 }
 
+// Claim-state values for ShredsRewardsEpochDetail.State. These let the page
+// distinguish "already paid out" from "not finalized yet" — both of which
+// previously surfaced as a bare null is_claimable.
+const (
+	// ClaimStateClaimable: the leaf is accumulated and not yet distributed —
+	// the validator can claim it now (publisher bit set on its status row).
+	ClaimStateClaimable = "claimable"
+	// ClaimStateDistributed: the reward for this leaf has already been paid
+	// out. This is the ONLY positive proof of payment: a status row exists for
+	// the (epoch, node, client) leaf and its publisher bit has been cleared.
+	// The bit is set when a leaf is accumulated and cleared on distribution,
+	// and the indexer freezes a leaf's final bit when its journal is swept — so
+	// a cleared bit, whether the journal is still live or long swept, means the
+	// reward was distributed.
+	ClaimStateDistributed = "distributed"
+	// ClaimStatePending: not claimable yet — either the distribution isn't
+	// finalized (no funded pool), or the leaf hasn't been accumulated yet while
+	// the epoch's journal is still live.
+	ClaimStatePending = "pending"
+	// ClaimStateUnknown: the epoch's pool is funded but we have no per-validator
+	// status row for the leaf and the journal is no longer live, so we cannot
+	// prove whether it was claimed. This is the unrecoverable history before the
+	// indexer began tracking the publisher bitmap — once a journal was swept
+	// without ever being captured, its per-leaf state is gone for good. Epochs
+	// indexed while their journal was live keep a real claimable/distributed
+	// state after the sweep, so this only ever applies to that backfill gap.
+	ClaimStateUnknown = "unknown"
+)
+
 // ShredsRewardsEpochDetail is a single epoch row in the per-validator drilldown.
-// IsClaimable is nil when no status row exists for the epoch (i.e. the epoch
-// is outside the on-chain tracking window).
+//
+// State is the derived lifecycle of the leaf (see ClaimState* constants) and is
+// always set. IsClaimable is retained for back-compat: it is non-nil only when
+// a live journal row exists for the leaf (true → claimable, false → a live row
+// with the bit cleared); it is nil for the distributed and pending states,
+// where there is no live journal bit to report.
 type ShredsRewardsEpochDetail struct {
 	SolanaEpoch       uint64  `json:"solana_epoch"`
 	SubscriptionEpoch uint64  `json:"subscription_epoch"`
@@ -391,6 +425,7 @@ type ShredsRewardsEpochDetail struct {
 	ClientID          uint16  `json:"client_id"`
 	Earned2Z          float64 `json:"earned_2z"`
 	IsClaimable       *bool   `json:"is_claimable,omitempty"`
+	State             string  `json:"state"`
 }
 
 // ShredsRewardsDetailResponse is the response body for the per-validator
@@ -454,6 +489,15 @@ func (a *API) GetShredsRewardsDetail(w http.ResponseWriter, r *http.Request) {
 			SELECT subscription_epoch, sum(leader_slots) AS total_leader_slots
 			FROM dim_dz_shred_validator_rewards_leaves_current
 			GROUP BY subscription_epoch
+		),
+		-- Epochs whose distribution journal is still live on-chain (i.e. we have
+		-- accumulation-status rows for them). Used to tell "already distributed"
+		-- (funded pool, journal swept → no rows) apart from "not yet accumulated"
+		-- (journal still live).
+		journal_live_epochs AS (
+			SELECT subscription_epoch, 1 AS jl_live
+			FROM dim_dz_shred_validator_leaf_distribution_status_current
+			GROUP BY subscription_epoch
 		)
 		SELECT
 			-- subscription_epoch numerically equals the Solana epoch (the
@@ -473,7 +517,30 @@ func (a *API) GetShredsRewardsDetail(w http.ResponseWriter, r *http.Request) {
 			-- emitting NULL, so we detect "no status row" by checking that the
 			-- joined node_id is the empty string (the String default).
 			if(S.node_id = '' OR S.node_id IS NULL, 0, 1) AS has_status,
-			coalesce(S.is_claimable, 0) AS is_claimable
+			coalesce(S.is_claimable, 0) AS is_claimable,
+			-- Derived claim state. Order matters (first match wins):
+			--   status row, bit set   -> claimable (accumulated, not yet distributed)
+			--   status row, bit clear -> distributed (accumulated then paid; the
+			--                            publisher bit is cleared on distribution
+			--                            and a status row only exists once the leaf
+			--                            has been accumulated, so a cleared bit is
+			--                            positive proof the reward was paid out.
+			--                            The indexer freezes this bit when the
+			--                            journal is swept, so it holds for old
+			--                            epochs too)
+			--   epoch has status rows -> pending (this leaf not yet accumulated
+			--                            while the journal is still live)
+			--   pool not funded       -> pending (distribution not finalized)
+			--   funded, no status row -> unknown (journal swept before we ever
+			--                            tracked it; per-leaf state is gone — we
+			--                            must NOT assume it was paid)
+			multiIf(
+				S.node_id != '' AND S.is_claimable = 1, 'claimable',
+				S.node_id != '', 'distributed',
+				JL.jl_live = 1, 'pending',
+				P.tokens_received_2z = 0, 'pending',
+				'unknown'
+			) AS state
 		FROM dim_dz_shred_validator_rewards_leaves_current L
 		INNER JOIN dim_dz_shred_distribution_2z_pool_current P
 			ON P.subscription_epoch = L.subscription_epoch
@@ -485,6 +552,9 @@ func (a *API) GetShredsRewardsDetail(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN dim_dz_shred_validator_leaf_distribution_status_current S
 			ON S.subscription_epoch = L.subscription_epoch
 		   AND S.node_id = L.node_id
+		   AND S.client_id = L.client_id
+		LEFT JOIN journal_live_epochs JL
+			ON JL.subscription_epoch = L.subscription_epoch
 		WHERE L.node_id = ?
 		ORDER BY L.subscription_epoch DESC
 	`
@@ -504,12 +574,14 @@ func (a *API) GetShredsRewardsDetail(w http.ResponseWriter, r *http.Request) {
 		var isClaimable uint8
 		if err := rows.Scan(
 			&ed.SolanaEpoch, &ed.SubscriptionEpoch, &ed.LeaderSlots, &ed.ClientID,
-			&ed.Earned2Z, &hasStatus, &isClaimable,
+			&ed.Earned2Z, &hasStatus, &isClaimable, &ed.State,
 		); err != nil {
 			logError("shreds rewards detail scan failed", "error", err)
 			http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 			return
 		}
+		// IsClaimable stays non-nil only when a live journal row exists, for
+		// back-compat; State carries the full lifecycle (incl. distributed).
 		if hasStatus == 1 {
 			b := isClaimable == 1
 			ed.IsClaimable = &b
