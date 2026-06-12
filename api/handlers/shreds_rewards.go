@@ -522,7 +522,10 @@ func (a *API) GetShredsRewardsDetail(w http.ResponseWriter, r *http.Request) {
 			L.client_id,
 			toFloat64(P.tokens_received_2z)
 			  * toFloat64(L.leader_slots)
-			  * toFloat64(10000 - coalesce(C.proportion, C.default_proportion, 3500))
+			  -- Client reward proportion: treat a 0/missing value as "unset" and
+			  -- fall through to default_proportion, then 3500 (see the list query
+			  -- for why coalesce alone returns 0 here).
+			  * toFloat64(10000 - if(C.proportion > 0, C.proportion, if(C.default_proportion > 0, C.default_proportion, 3500)))
 			  -- Denominator: the journal's authoritative total_leader_slots when
 			  -- we have it, else fall back to the summed indexed leaves (older/
 			  -- swept epochs not yet re-projected with the field).
