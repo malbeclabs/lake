@@ -184,10 +184,12 @@ func (j *JournalView) IsClaimableForLeafIndex(leafIndex uint32) (bool, bool) {
 }
 
 // ProjectStatuses emits one LeafDistributionStatusRow per leaf in
-// `[0, AccumulatedPublisherLeafCount)`. Leaves with no node-id mapping in
-// `leafIndexToNodeID` are silently skipped. The journal's mint key is
-// recorded on every row as the source of the bitmap.
-func ProjectStatuses(view *JournalView, subscriptionEpoch uint64, leafIndexToNodeID map[uint32]string) []LeafDistributionStatusRow {
+// `[0, AccumulatedPublisherLeafCount)`. Leaves with no (node_id, client_id)
+// mapping in `leafIndexToIdentity` are silently skipped. The journal's mint
+// key is recorded on every row as the source of the bitmap. Rows are keyed
+// per (node, client) so a validator running multiple clients keeps an
+// independent claimable bit per client.
+func ProjectStatuses(view *JournalView, subscriptionEpoch uint64, leafIndexToIdentity map[uint32]LeafIdentity) []LeafDistributionStatusRow {
 	if view == nil {
 		return nil
 	}
@@ -198,7 +200,7 @@ func ProjectStatuses(view *JournalView, subscriptionEpoch uint64, leafIndexToNod
 	rows := make([]LeafDistributionStatusRow, 0, count)
 	mintB58 := view.MintKey.String()
 	for leafIndex := uint32(0); leafIndex < count; leafIndex++ {
-		nodeID, ok := leafIndexToNodeID[leafIndex]
+		id, ok := leafIndexToIdentity[leafIndex]
 		if !ok {
 			continue
 		}
@@ -211,9 +213,10 @@ func ProjectStatuses(view *JournalView, subscriptionEpoch uint64, leafIndexToNod
 			bit = 1
 		}
 		rows = append(rows, LeafDistributionStatusRow{
-			PK:                LeafDistributionStatusPK(subscriptionEpoch, nodeID),
+			PK:                LeafDistributionStatusPK(subscriptionEpoch, id.NodeID, id.ClientID),
 			SubscriptionEpoch: subscriptionEpoch,
-			NodeID:            nodeID,
+			NodeID:            id.NodeID,
+			ClientID:          id.ClientID,
 			IsClaimable:       bit,
 			JournalMintKey:    mintB58,
 		})

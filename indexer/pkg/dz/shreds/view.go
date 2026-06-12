@@ -477,24 +477,25 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	}
 
 	// Project per-leaf claimable bits from in-flight ShredDistributionJournal
-	// accounts to the leaf_distribution_status table. We restrict to the most
-	// recent subscription epochs so we don't scan the entire history every
-	// refresh.
+	// accounts to the leaf_distribution_status table.
 	//
-	// Only project journal-status rows for the last 12 subscription epochs
-	// (10 visible on the page + 2 in-flight buffer). Older epochs are out of
-	// the "immediately claimable" window per the spec and don't need bitmap
-	// tracking.
-	const recentJournalWindow uint64 = 12
+	// We project EVERY 2Z journal still readable on-chain, not just a recent
+	// window. GetProgramAccounts only returns journals that have not yet been
+	// swept, so this set is inherently bounded by the on-chain journal lifetime
+	// (a handful of epochs). Projecting all of them every refresh — combined
+	// with the additive write (MissingMeansDeleted: false) and the un-TTL'd
+	// history table — guarantees the LAST snapshot we take before a journal is
+	// swept records its true final bitmap. That frozen final bit is what the
+	// rewards page reads for swept epochs: a cleared bit means the leaf was
+	// distributed (paid), a set bit means it was never claimed. Bounding to a
+	// recent window here would instead freeze a stale, pre-distribution bit for
+	// any journal that outlived the window, mislabeling paid epochs.
 	var statusRows []validatorrewards.LeafDistributionStatusRow
 	if len(allAccounts.Journals) > 0 {
-		var minEpoch uint64
-		if ec.CurrentSubscriptionEpoch > recentJournalWindow {
-			minEpoch = ec.CurrentSubscriptionEpoch - recentJournalWindow
-		}
-		// Cache leaf-index → node-id maps per subscription_epoch so we only
-		// hit ClickHouse once per epoch when multiple journals share it.
-		leafMaps := make(map[uint64]map[uint32]string)
+		// Cache leaf-index → (node-id, client-id) maps per subscription_epoch
+		// so we only hit ClickHouse once per epoch when multiple journals
+		// share it.
+		leafMaps := make(map[uint64]map[uint32]validatorrewards.LeafIdentity)
 		for _, kj := range allAccounts.Journals {
 			view := kj.View
 			if view == nil {
@@ -505,14 +506,11 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 			if view.MintKey.String() != validatorrewards.DoubleZeroMintKey {
 				continue
 			}
-			if view.SubscriptionEpoch < minEpoch {
-				continue
-			}
 			leafMap, ok := leafMaps[view.SubscriptionEpoch]
 			if !ok {
-				m, err := v.leafStore.LeafIndexToNodeID(ctx, view.SubscriptionEpoch)
+				m, err := v.leafStore.LeafIndexToNodeClient(ctx, view.SubscriptionEpoch)
 				if err != nil {
-					return result, fmt.Errorf("load leaf_index → node_id mapping for epoch %d: %w",
+					return result, fmt.Errorf("load leaf_index → (node_id, client_id) mapping for epoch %d: %w",
 						view.SubscriptionEpoch, err)
 				}
 				leafMaps[view.SubscriptionEpoch] = m

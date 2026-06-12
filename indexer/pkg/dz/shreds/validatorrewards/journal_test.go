@@ -159,10 +159,10 @@ func TestProjectStatuses_OnlyAccumulatedLeaves(t *testing.T) {
 	view, err := DecodeJournalAccount(data)
 	require.NoError(t, err)
 
-	leafIndexToNodeID := map[uint32]string{
-		0: "node-a",
-		1: "node-b",
-		2: "node-c",
+	leafIndexToNodeID := map[uint32]LeafIdentity{
+		0: {NodeID: "node-a", ClientID: 1},
+		1: {NodeID: "node-b", ClientID: 2},
+		2: {NodeID: "node-c", ClientID: 1},
 	}
 
 	rows := ProjectStatuses(view, 951, leafIndexToNodeID)
@@ -176,7 +176,8 @@ func TestProjectStatuses_OnlyAccumulatedLeaves(t *testing.T) {
 	rowA, ok := byNode["node-a"]
 	require.True(t, ok)
 	assert.Equal(t, uint64(951), rowA.SubscriptionEpoch)
-	assert.Equal(t, LeafDistributionStatusPK(951, "node-a"), rowA.PK)
+	assert.Equal(t, uint16(1), rowA.ClientID)
+	assert.Equal(t, LeafDistributionStatusPK(951, "node-a", 1), rowA.PK)
 	assert.Equal(t, uint8(1), rowA.IsClaimable)
 	assert.Equal(t, DoubleZeroMintKey, rowA.JournalMintKey)
 
@@ -199,9 +200,9 @@ func TestProjectStatuses_MissingLeafInMap(t *testing.T) {
 
 	// Only leaf index 0 and 2 have a node-id mapping. Leaf 1 has no
 	// mapping and must be silently skipped.
-	leafIndexToNodeID := map[uint32]string{
-		0: "node-a",
-		2: "node-c",
+	leafIndexToNodeID := map[uint32]LeafIdentity{
+		0: {NodeID: "node-a", ClientID: 1},
+		2: {NodeID: "node-c", ClientID: 1},
 	}
 
 	rows := ProjectStatuses(view, 951, leafIndexToNodeID)
@@ -230,10 +231,10 @@ func TestProjectStatuses_ClearedBitEmitsZero(t *testing.T) {
 	view, err := DecodeJournalAccount(data)
 	require.NoError(t, err)
 
-	leafIndexToNodeID := map[uint32]string{
-		0: "node-a",
-		1: "node-b",
-		2: "node-c",
+	leafIndexToNodeID := map[uint32]LeafIdentity{
+		0: {NodeID: "node-a", ClientID: 1},
+		1: {NodeID: "node-b", ClientID: 2},
+		2: {NodeID: "node-c", ClientID: 1},
 	}
 
 	rows := ProjectStatuses(view, 951, leafIndexToNodeID)
@@ -248,6 +249,45 @@ func TestProjectStatuses_ClearedBitEmitsZero(t *testing.T) {
 	// bit 1 is clear → already distributed (or never accumulated).
 	assert.Equal(t, uint8(0), byNode["node-b"].IsClaimable)
 	assert.Equal(t, uint8(1), byNode["node-c"].IsClaimable)
+}
+
+// TestProjectStatuses_MultiClientSameNode is the regression test for the bug
+// where a validator publishing under more than one software client in a single
+// epoch was collapsed to one row. The two leaves share a node_id but differ by
+// client_id, so they must produce two distinct rows with distinct PKs and
+// independent claimable bits.
+func TestProjectStatuses_MultiClientSameNode(t *testing.T) {
+	mint := solana.MustPublicKeyFromBase58(DoubleZeroMintKey)
+	// Two accumulated leaves: bit 0 set (claimable), bit 1 clear.
+	bitmap := []byte{0b00000001}
+	data := buildJournalAccount(t, 951, mint, mint, 2, 0, bitmap)
+
+	view, err := DecodeJournalAccount(data)
+	require.NoError(t, err)
+
+	// Same node_id, two different client_ids — distinct leaves.
+	leafIndexToIdentity := map[uint32]LeafIdentity{
+		0: {NodeID: "node-a", ClientID: 1},
+		1: {NodeID: "node-a", ClientID: 2},
+	}
+
+	rows := ProjectStatuses(view, 951, leafIndexToIdentity)
+	require.Len(t, rows, 2, "each (node, client) leaf must produce its own row")
+
+	byClient := make(map[uint16]LeafDistributionStatusRow, len(rows))
+	for _, r := range rows {
+		assert.Equal(t, "node-a", r.NodeID)
+		byClient[r.ClientID] = r
+	}
+
+	require.Contains(t, byClient, uint16(1))
+	require.Contains(t, byClient, uint16(2))
+	assert.NotEqual(t, byClient[1].PK, byClient[2].PK, "PKs must differ by client_id")
+	assert.Equal(t, LeafDistributionStatusPK(951, "node-a", 1), byClient[1].PK)
+	assert.Equal(t, LeafDistributionStatusPK(951, "node-a", 2), byClient[2].PK)
+	// Independent claimable bits: client 1 claimable, client 2 not.
+	assert.Equal(t, uint8(1), byClient[1].IsClaimable)
+	assert.Equal(t, uint8(0), byClient[2].IsClaimable)
 }
 
 func TestJournalPDA_IsDeterministic(t *testing.T) {

@@ -65,9 +65,14 @@ func NewLeafDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
 	return dataset.NewDimensionType2Dataset(log, schema)
 }
 
-// LeafPK builds the canonical primary key for a leaf row.
-func LeafPK(subscriptionEpoch uint64, nodeID string) string {
-	return fmt.Sprintf("epoch-%d:node-%s", subscriptionEpoch, nodeID)
+// LeafPK builds the canonical primary key for a leaf row. The grain is
+// (subscription_epoch, node_id, client_id): a validator can publish under
+// multiple software clients in a single epoch, each producing its own merkle
+// leaf. client_id MUST be part of the key, otherwise the multiple leaves for
+// one node collapse to a single row and that node's leader slots (and thus
+// earnings) are understated.
+func LeafPK(subscriptionEpoch uint64, nodeID string, clientID uint16) string {
+	return fmt.Sprintf("epoch-%d:node-%s:client-%d", subscriptionEpoch, nodeID, clientID)
 }
 
 // LeafDistributionStatusRow is one row per (subscription_epoch, node_id)
@@ -75,9 +80,10 @@ func LeafPK(subscriptionEpoch uint64, nodeID string) string {
 // yet distributed (immediately claimable); 0 = either not yet accumulated
 // or already distributed.
 type LeafDistributionStatusRow struct {
-	PK                string // {subscription_epoch}:{node_id}
+	PK                string // {subscription_epoch}:{node_id}:{client_id}
 	SubscriptionEpoch uint64
 	NodeID            string
+	ClientID          uint16
 	IsClaimable       uint8
 	JournalMintKey    string // base58 of the journal mint we read (the 2Z mint for v1)
 }
@@ -96,13 +102,14 @@ func (s *leafDistributionStatusSchema) PayloadColumns() []string {
 	return []string{
 		"subscription_epoch:BIGINT",
 		"node_id:VARCHAR",
+		"client_id:INTEGER",
 		"is_claimable:INTEGER",
 		"journal_mint_key:VARCHAR",
 	}
 }
 
 func (s *leafDistributionStatusSchema) ToRow(r LeafDistributionStatusRow) []any {
-	return []any{r.PK, r.SubscriptionEpoch, r.NodeID, r.IsClaimable, r.JournalMintKey}
+	return []any{r.PK, r.SubscriptionEpoch, r.NodeID, r.ClientID, r.IsClaimable, r.JournalMintKey}
 }
 
 func (s *leafDistributionStatusSchema) GetPrimaryKey(r LeafDistributionStatusRow) string {
@@ -117,9 +124,13 @@ func NewLeafDistributionStatusDataset(log *slog.Logger) (*dataset.DimensionType2
 	return dataset.NewDimensionType2Dataset(log, leafDistributionStatusSchemaSingleton)
 }
 
-// LeafDistributionStatusPK builds the canonical primary key.
-func LeafDistributionStatusPK(subscriptionEpoch uint64, nodeID string) string {
-	return fmt.Sprintf("epoch-%d:node-%s", subscriptionEpoch, nodeID)
+// LeafDistributionStatusPK builds the canonical primary key. The grain matches
+// the leaves table — (subscription_epoch, node_id, client_id) — because the
+// publisher-accumulation bitmap is per leaf, and a leaf is a (node, client)
+// pair. Keying per node alone would let one client's claimable bit overwrite
+// another's for the same validator in an epoch.
+func LeafDistributionStatusPK(subscriptionEpoch uint64, nodeID string, clientID uint16) string {
+	return fmt.Sprintf("epoch-%d:node-%s:client-%d", subscriptionEpoch, nodeID, clientID)
 }
 
 // Distribution2ZPoolRow is one row per subscription_epoch recording the 2Z

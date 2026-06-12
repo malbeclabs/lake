@@ -62,8 +62,8 @@ func TestStore_ReplaceLeafDistributionStatuses_RoundTrip(t *testing.T) {
 	ctx := t.Context()
 
 	rows := []LeafDistributionStatusRow{
-		{PK: LeafDistributionStatusPK(975, "node-A"), SubscriptionEpoch: 975, NodeID: "node-A", IsClaimable: 1, JournalMintKey: DoubleZeroMintKey},
-		{PK: LeafDistributionStatusPK(975, "node-B"), SubscriptionEpoch: 975, NodeID: "node-B", IsClaimable: 0, JournalMintKey: DoubleZeroMintKey},
+		{PK: LeafDistributionStatusPK(975, "node-A", 1), SubscriptionEpoch: 975, NodeID: "node-A", ClientID: 1, IsClaimable: 1, JournalMintKey: DoubleZeroMintKey},
+		{PK: LeafDistributionStatusPK(975, "node-B", 1), SubscriptionEpoch: 975, NodeID: "node-B", ClientID: 1, IsClaimable: 0, JournalMintKey: DoubleZeroMintKey},
 	}
 	require.NoError(t, store.ReplaceLeafDistributionStatuses(ctx, rows))
 
