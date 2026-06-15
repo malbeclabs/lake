@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	laketesting "github.com/malbeclabs/lake/utils/pkg/testing"
 	"github.com/stretchr/testify/require"
 )
 
@@ -90,4 +91,40 @@ func TestLake_TelemetryUsage_QueryIntfCountersChunked_PropagatesError(t *testing
 	_, err := queryIntfCountersChunked(context.Background(), mock, start, end, 5*time.Minute)
 	require.ErrorIs(t, err, wantErr)
 	require.Equal(t, 2, calls, "must stop at the first failing chunk")
+}
+
+// Backfill takes arbitrary, potentially multi-day ranges — the case most likely
+// to trigger the InfluxDB heap exhaustion this chunking guards against. It must
+// split its range into bounded sub-queries just like the steady-state refresh.
+func TestLake_TelemetryUsage_BackfillForTimeRange_ChunksQuery(t *testing.T) {
+	t.Parallel()
+
+	var windows [][2]time.Time
+	influx := &mockInfluxDBClient{
+		queryIntfCountersFunc: func(_ context.Context, s, e time.Time) ([]map[string]any, error) {
+			windows = append(windows, [2]time.Time{s, e})
+			return nil, nil
+		},
+	}
+
+	view, err := NewView(ViewConfig{
+		Logger:          laketesting.NewLogger(),
+		ClickHouse:      testClient(t),
+		InfluxDB:        influx,
+		Bucket:          "test-bucket",
+		RefreshInterval: time.Second,
+		QueryWindow:     time.Hour,
+		QueryChunk:      5 * time.Minute,
+	})
+	require.NoError(t, err)
+
+	start := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
+	end := start.Add(1 * time.Hour)
+	_, err = view.BackfillForTimeRange(context.Background(), start, end)
+	require.NoError(t, err)
+
+	require.Len(t, windows, 12, "backfill must split its range into bounded chunks")
+	for _, w := range windows {
+		require.LessOrEqualf(t, w[1].Sub(w[0]), 5*time.Minute, "backfill sub-query %v..%v exceeds chunk", w[0], w[1])
+	}
 }
