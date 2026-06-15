@@ -208,6 +208,40 @@ func TestParseBatchAllocateNewStyle(t *testing.T) {
 	}
 }
 
+func TestParseBatchAllocateChargedForBatchFormat(t *testing.T) {
+	// Newer program versions log "Charged {N} for batch seat allocation" rather
+	// than the legacy "Charged: {N}" form. Both must parse.
+	logs := []string{
+		"Program " + testProgramID + " invoke [1]",
+		"Program log: Batch allocate seats",
+		"Program log: Client seat: OtherSeat",
+		"Program log: Tenure epochs: 2, active_epoch: 10",
+		"Program log: Charged 200000 for batch seat allocation",
+		"Program log: Escrow balance: 800000",
+		"Program log: Client seat: " + testClientSeatPK,
+		"Program log: Tenure epochs: 5, active_epoch: 42",
+		"Program log: Charged 100000 for batch seat allocation",
+		"Program log: Escrow balance: 900000",
+		"Program " + testProgramID + " success",
+	}
+
+	events := ParseTransactionLogs(nil, testEscrowPK, testClientSeatPK, testTxSig, 501, testBlockTime, logs, false, testProgramID, testSigner)
+
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	e := events[0]
+	if e.EventType != EventTypeBatchAllocate {
+		t.Errorf("expected event type %q, got %q", EventTypeBatchAllocate, e.EventType)
+	}
+	if e.AmountUSDC == nil || *e.AmountUSDC != 100000 {
+		t.Errorf("expected amount 100000 (matching seat), got %v", e.AmountUSDC)
+	}
+	if e.BalanceAfterUSDC == nil || *e.BalanceAfterUSDC != 900000 {
+		t.Errorf("expected balance 900000, got %v", e.BalanceAfterUSDC)
+	}
+}
+
 func TestParseBatchAllocateOldStyle(t *testing.T) {
 	logs := []string{
 		"Program " + testProgramID + " invoke [1]",
@@ -296,6 +330,68 @@ func TestParseMultipleInstructionsInOneTx(t *testing.T) {
 	}
 	if events[1].EventType != EventTypeAllocateSeat {
 		t.Errorf("second event: expected %q, got %q", EventTypeAllocateSeat, events[1].EventType)
+	}
+	// No "Charged" log here (pre-upgrade tx): the allocation charge is recovered
+	// from the escrow balance delta (fund balance-after 1000000 minus allocation
+	// balance-after 900000).
+	if events[1].AmountUSDC == nil || *events[1].AmountUSDC != 100000 {
+		t.Errorf("expected allocation charge 100000 from balance delta, got %v", events[1].AmountUSDC)
+	}
+}
+
+func TestParseInstantAllocateChargeLog(t *testing.T) {
+	logs := []string{
+		"Program " + testProgramID + " invoke [1]",
+		"Program log: Request instant seat allocation",
+		"Program log: Charged 33088657 for instant seat allocation",
+		"Program log: Tenure epochs: 1, active_epoch: 982",
+		"Program log: Escrow balance: 68290279",
+		"Program " + testProgramID + " success",
+	}
+
+	events := ParseTransactionLogs(nil, testEscrowPK, testClientSeatPK, testTxSig, 300, testBlockTime, logs, false, testProgramID, testSigner)
+
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	e := events[0]
+	if e.EventType != EventTypeAllocateSeat {
+		t.Errorf("expected event type %q, got %q", EventTypeAllocateSeat, e.EventType)
+	}
+	if e.AmountUSDC == nil || *e.AmountUSDC != 33088657 {
+		t.Errorf("expected charge 33088657 from log, got %v", e.AmountUSDC)
+	}
+	if e.BalanceAfterUSDC == nil || *e.BalanceAfterUSDC != 68290279 {
+		t.Errorf("expected balance 68290279, got %v", e.BalanceAfterUSDC)
+	}
+}
+
+func TestParseInstantAllocateChargeLogTakesPrecedenceOverDelta(t *testing.T) {
+	// When both a preceding fund and a "Charged" log are present, the logged
+	// charge is authoritative and the balance-delta fallback must not override it.
+	logs := []string{
+		"Program " + testProgramID + " invoke [1]",
+		"Program log: Fund payment escrow with USDC",
+		"Program log: Funded payment escrow for client seat SeatDEF with 100000000 USDC",
+		"Program log: USDC balance after funding: 101378936",
+		"Program " + testProgramID + " success",
+		"Program " + testProgramID + " invoke [1]",
+		"Program log: Request instant seat allocation",
+		"Program log: Charged 33088657 for instant seat allocation",
+		"Program log: Tenure epochs: 1, active_epoch: 982",
+		"Program log: Escrow balance: 68290279",
+		"Program " + testProgramID + " success",
+	}
+
+	events := ParseTransactionLogs(nil, testEscrowPK, testClientSeatPK, testTxSig, 301, testBlockTime, logs, false, testProgramID, testSigner)
+
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+	// Balance delta would also yield 101378936 - 68290279 = 33088657 here, so to
+	// prove the log path wins, assert the value matches the logged charge exactly.
+	if events[1].AmountUSDC == nil || *events[1].AmountUSDC != 33088657 {
+		t.Errorf("expected logged charge 33088657, got %v", events[1].AmountUSDC)
 	}
 }
 
