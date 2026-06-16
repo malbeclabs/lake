@@ -15,7 +15,11 @@ import (
 //   - u-sub-healthy: subscriber whose Tunnel<N> appears in OIF list of an
 //     mroute for the group → healthy
 //   - u-pub-silent: publisher whose Tunnel<N> is NOT present anywhere on
-//     the device → unhealthy with a specific mismatch_reason
+//     the device, but the device DOES report other mroutes → unhealthy
+//     with a "not seen as RPF interface" mismatch_reason
+//   - u-pub-notel: publisher on a device that reports NO mroutes at all →
+//     unhealthy, but the reason says telemetry is missing rather than
+//     implying a forwarding fault
 func TestHealthMulticastUser_Reconciliation(t *testing.T) {
 	info := laketesting.NewClientWithInfo(t, sharedDB)
 	conn, err := info.Client.Conn(t.Context())
@@ -30,7 +34,9 @@ func TestHealthMulticastUser_Reconciliation(t *testing.T) {
 		VALUES ('d-sea', now(), now(), generateUUIDv4(), 0, 1,
 			'd-sea', 'activated', 'edge', 'sea001-dz001', '', '', '', 0, '[]'),
 			('d-nyc', now(), now(), generateUUIDv4(), 0, 2,
-			'd-nyc', 'activated', 'edge', 'nyc001-dz001', '', '', '', 0, '[]')`))
+			'd-nyc', 'activated', 'edge', 'nyc001-dz001', '', '', '', 0, '[]'),
+			('d-iad', now(), now(), generateUUIDv4(), 0, 3,
+			'd-iad', 'activated', 'hybrid', 'iad001-tsw', '', '', '', 0, '[]')`))
 
 	require.NoError(t, conn.Exec(ctx, `
 		INSERT INTO dim_dz_multicast_groups_history
@@ -47,6 +53,7 @@ func TestHealthMulticastUser_Reconciliation(t *testing.T) {
 		VALUES
 			('u-pub-healthy', now(), now(), generateUUIDv4(), 0, 1, 'u-pub-healthy', 'o', 'activated', 'multicast', '203.0.113.10', '10.99.0.10', 'd-sea', 't1', 503, '["grp-r"]', '[]'),
 			('u-pub-silent',  now(), now(), generateUUIDv4(), 0, 2, 'u-pub-silent',  'o', 'activated', 'multicast', '203.0.113.11', '10.99.0.11', 'd-sea', 't1', 504, '["grp-r"]', '[]'),
+			('u-pub-notel',   now(), now(), generateUUIDv4(), 0, 4, 'u-pub-notel',   'o', 'activated', 'multicast', '203.0.113.13', '10.99.0.13', 'd-iad', 't1', 505, '["grp-r"]', '[]'),
 			('u-sub-healthy', now(), now(), generateUUIDv4(), 0, 3, 'u-sub-healthy', 'o', 'activated', 'multicast', '203.0.113.12', '10.99.0.12', 'd-nyc', 't1', 602, '[]', '["grp-r"]')`))
 
 	// FHR mroute for u-pub-healthy — its tunnel appears as RPF interface
@@ -88,37 +95,50 @@ func TestHealthMulticastUser_Reconciliation(t *testing.T) {
 		userPK, mode, mismatchReason, healthStatus string
 		pubIIF, subOIF, reconciled                 bool
 	}
-	got := []row{}
+	got := map[string]row{}
 	for rows.Next() {
 		var r row
 		require.NoError(t, rows.Scan(&r.userPK, &r.mode, &r.pubIIF, &r.subOIF, &r.reconciled, &r.healthStatus, &r.mismatchReason))
-		got = append(got, r)
+		got[r.userPK] = r
 	}
 	require.NoError(t, rows.Err())
-	require.Len(t, got, 3)
+	require.Len(t, got, 4)
 
 	// u-pub-healthy
-	assert.Equal(t, "u-pub-healthy", got[0].userPK)
-	assert.Equal(t, "P", got[0].mode)
-	assert.True(t, got[0].pubIIF)
-	assert.True(t, got[0].reconciled)
-	assert.Equal(t, "healthy", got[0].healthStatus)
+	assert.Equal(t, "P", got["u-pub-healthy"].mode)
+	assert.True(t, got["u-pub-healthy"].pubIIF)
+	assert.True(t, got["u-pub-healthy"].reconciled)
+	assert.Equal(t, "healthy", got["u-pub-healthy"].healthStatus)
 
-	// u-pub-silent
-	assert.Equal(t, "u-pub-silent", got[1].userPK)
-	assert.Equal(t, "P", got[1].mode)
-	assert.False(t, got[1].pubIIF, "Tunnel504 isn't on any mroute → IIF not observed")
-	assert.False(t, got[1].reconciled)
-	assert.Equal(t, "unhealthy", got[1].healthStatus)
-	assert.Contains(t, got[1].mismatchReason, "Tunnel504")
-	assert.Contains(t, got[1].mismatchReason, "RPF interface")
+	// u-pub-silent — device d-sea reports other mroutes, but Tunnel504 is
+	// nowhere on them, so this is a genuine "not seen as RPF" fault.
+	silent := got["u-pub-silent"]
+	assert.Equal(t, "P", silent.mode)
+	assert.False(t, silent.pubIIF, "Tunnel504 isn't on any mroute → IIF not observed")
+	assert.False(t, silent.reconciled)
+	assert.Equal(t, "unhealthy", silent.healthStatus)
+	assert.Contains(t, silent.mismatchReason, "Tunnel504")
+	assert.Contains(t, silent.mismatchReason, "RPF interface")
+	assert.NotContains(t, silent.mismatchReason, "no mroute telemetry",
+		"device reports mroutes, so this is a real fault, not a telemetry gap")
+
+	// u-pub-notel — device d-iad reports NO mroutes at all. We can't determine
+	// health without data, so it's 'unknown' (not a confirmed 'unhealthy'),
+	// and the reason names the telemetry gap rather than implying a fault.
+	notel := got["u-pub-notel"]
+	assert.Equal(t, "P", notel.mode)
+	assert.False(t, notel.reconciled)
+	assert.Equal(t, "unknown", notel.healthStatus)
+	assert.Contains(t, notel.mismatchReason, "no mroute telemetry observed from iad001-tsw")
+	assert.Contains(t, notel.mismatchReason, "Tunnel505")
+	assert.NotContains(t, notel.mismatchReason, "RPF interface",
+		"no-telemetry reason should not imply the tunnel is missing from an observed mroute")
 
 	// u-sub-healthy
-	assert.Equal(t, "u-sub-healthy", got[2].userPK)
-	assert.Equal(t, "S", got[2].mode)
-	assert.True(t, got[2].subOIF)
-	assert.True(t, got[2].reconciled)
-	assert.Equal(t, "healthy", got[2].healthStatus)
+	assert.Equal(t, "S", got["u-sub-healthy"].mode)
+	assert.True(t, got["u-sub-healthy"].subOIF)
+	assert.True(t, got["u-sub-healthy"].reconciled)
+	assert.Equal(t, "healthy", got["u-sub-healthy"].healthStatus)
 }
 
 // TestHealthMulticastUser_PartialDelivery covers the multi-publisher case:

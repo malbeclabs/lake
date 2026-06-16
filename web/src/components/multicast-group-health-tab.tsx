@@ -178,7 +178,7 @@ const STATUS_DEFINITIONS: Array<{ status: MulticastHealthStatus; short: string }
   { status: 'healthy', short: 'control plane reconciles AND subscriber TX matches sum of publishers (±5% / 1 Mbps)' },
   { status: 'degraded', short: 'control plane reconciles but rates diverge, or partial control plane reconciliation' },
   { status: 'unhealthy', short: 'no (S,G) mroute, or rates diverge under a degraded control plane' },
-  { status: 'unknown', short: 'no counter data, or no traffic flowing in the 5-min window' },
+  { status: 'unknown', short: 'no mroute telemetry from the device, no counter data, or no traffic in the 5-min window' },
 ]
 
 const SECTION_HELP = {
@@ -498,15 +498,15 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
   return (
     <div className="p-4 space-y-6">
       {/* Under-development notice. The reconciliation logic and rate dimension
-          here surface real data, but the verdicts assume state-collect covers
-          every device — today only jump devices are collected, so non-jump
-          publishers/subscribers can falsely render as unhealthy. Wording is
-          deliberately concrete so operators read it as caveat, not "do not
-          trust this page". */}
+          here surface real data, but state-collect doesn't cover every device
+          yet — today only jump devices are collected. Users on a non-reporting
+          device now render as `unknown` (not a false `unhealthy`), so the
+          caveat is that absence of data ≠ a fault. Wording is deliberately
+          concrete so operators read it as caveat, not "do not trust this page". */}
       <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-100">
         <div className="font-medium">This view is under development.</div>
         <div className="mt-1 text-amber-700 dark:text-amber-200/90">
-          Health verdicts and the rate dimension are work in progress. State-collect runs only on jump devices today, so any user, publisher, or subscriber on a non-jump device will appear as <span className="font-mono">unhealthy</span> even when it is functioning normally. Treat verdicts as a starting point, not ground truth.
+          Health verdicts and the rate dimension are work in progress. State-collect runs only on jump devices today, so any user, publisher, or subscriber on a non-reporting device shows as <span className="font-mono">unknown</span> (no mroute telemetry observed) rather than a verdict — it is not necessarily unhealthy. Treat verdicts as a starting point, not ground truth.
         </div>
       </div>
 
