@@ -83,7 +83,10 @@ func (cfg *DBConfig) Validate() error {
 		cfg.Port = "9000"
 	}
 	if cfg.ContainerImage == "" {
-		cfg.ContainerImage = "clickhouse/clickhouse-server:latest"
+		// Pin to the version we run in dev/prod (docker-compose.yml,
+		// k8s/base/clickhouse.yaml) rather than :latest, so tests don't
+		// silently break on upstream ClickHouse changes.
+		cfg.ContainerImage = "clickhouse/clickhouse-server:25.12"
 	}
 	return nil
 }

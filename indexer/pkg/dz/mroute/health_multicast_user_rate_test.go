@@ -47,20 +47,20 @@ func TestHealthMulticastUserRate(t *testing.T) {
 			('grp-rate-gap',   now(), now(), generateUUIDv4(), 0, 2, 'grp-rate-gap',   'o', 'rate-gap',   '233.99.1.2', 100000000, 'activated', 1, 1),
 			('grp-rate-idle',  now(), now(), generateUUIDv4(), 0, 3, 'grp-rate-idle',  'o', 'rate-idle',  '233.99.1.3', 100000000, 'activated', 1, 1)`))
 
-	// Users
+	// Users:
+	//   - grp-rate-clean: one active publisher at 10 Mbps, two subscribers (one matched, one mismatched).
+	//   - grp-rate-gap:   publisher will have no counter row.
+	//   - grp-rate-idle:  publisher has counter row with 0 bps.
 	require.NoError(t, conn.Exec(ctx, `
 		INSERT INTO dim_dz_users_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tenant_pk, tunnel_id, publishers, subscribers)
 		VALUES
-			-- grp-rate-clean: one active publisher at 10 Mbps, two subscribers (one matched, one mismatched).
 			('u-pub-active', now(), now(), generateUUIDv4(), 0, 1, 'u-pub-active', 'o', 'activated', 'multicast', '203.0.113.10', '10.99.1.10', 'd-fhr', 't1', 701, '["grp-rate-clean"]', '[]'),
 			('u-sub-recon',  now(), now(), generateUUIDv4(), 0, 2, 'u-sub-recon',  'o', 'activated', 'multicast', '203.0.113.11', '10.99.1.11', 'd-lhr', 't1', 801, '[]', '["grp-rate-clean"]'),
 			('u-sub-mis',    now(), now(), generateUUIDv4(), 0, 3, 'u-sub-mis',    'o', 'activated', 'multicast', '203.0.113.12', '10.99.1.12', 'd-lhr', 't1', 802, '[]', '["grp-rate-clean"]'),
-			-- grp-rate-gap: publisher will have no counter row.
 			('u-pub-nodata', now(), now(), generateUUIDv4(), 0, 4, 'u-pub-nodata', 'o', 'activated', 'multicast', '203.0.113.13', '10.99.1.13', 'd-fhr', 't1', 702, '["grp-rate-gap"]', '[]'),
 			('u-sub-gap',    now(), now(), generateUUIDv4(), 0, 5, 'u-sub-gap',    'o', 'activated', 'multicast', '203.0.113.14', '10.99.1.14', 'd-lhr', 't1', 803, '[]', '["grp-rate-gap"]'),
-			-- grp-rate-idle: publisher has counter row with 0 bps.
 			('u-pub-idle',   now(), now(), generateUUIDv4(), 0, 6, 'u-pub-idle',   'o', 'activated', 'multicast', '203.0.113.15', '10.99.1.15', 'd-fhr', 't1', 703, '["grp-rate-idle"]', '[]'),
 			('u-sub-idle',   now(), now(), generateUUIDv4(), 0, 7, 'u-sub-idle',   'o', 'activated', 'multicast', '203.0.113.16', '10.99.1.16', 'd-lhr', 't1', 804, '[]', '["grp-rate-idle"]')`))
 
@@ -93,17 +93,17 @@ func TestHealthMulticastUserRate(t *testing.T) {
 			('mr-lhr-idle',  now(), now(), generateUUIDv4(), 0, 4, 'd-lhr', 'default', 'sparse', '233.99.1.3', '10.99.1.15', 'SMP', 0, 'Port-Channel1', '', '', 0, 0, '', 0, 0, '["Tunnel804"]', 1, now())`))
 
 	// Counter rollup rows. NOTE: u-pub-nodata / Tunnel702 deliberately omitted.
+	//   - grp-rate-clean: publisher RX = 10 Mbps; matched subscriber TX = 10 Mbps; mismatched subscriber TX = 50 Mbps.
+	//   - grp-rate-gap:   subscriber has data; publisher does not.
+	//   - grp-rate-idle:  publisher and subscriber both report 0 bps.
 	require.NoError(t, conn.Exec(ctx, `
 		INSERT INTO device_interface_rollup_5m
 			(bucket_ts, device_pk, intf, user_tunnel_id, user_pk, max_in_bps, max_out_bps, ingested_at)
 		VALUES
-			-- grp-rate-clean: publisher RX = 10 Mbps; matched subscriber TX = 10 Mbps; mismatched subscriber TX = 50 Mbps.
 			(now() - INTERVAL 1 MINUTE, 'd-fhr', 'Tunnel701', 701, 'u-pub-active', 10000000, 0, now()),
 			(now() - INTERVAL 1 MINUTE, 'd-lhr', 'Tunnel801', 801, 'u-sub-recon',  0, 10000000, now()),
 			(now() - INTERVAL 1 MINUTE, 'd-lhr', 'Tunnel802', 802, 'u-sub-mis',    0, 50000000, now()),
-			-- grp-rate-gap: subscriber has data; publisher does not.
 			(now() - INTERVAL 1 MINUTE, 'd-lhr', 'Tunnel803', 803, 'u-sub-gap',    0, 5000000,  now()),
-			-- grp-rate-idle: publisher and subscriber both report 0 bps.
 			(now() - INTERVAL 1 MINUTE, 'd-fhr', 'Tunnel703', 703, 'u-pub-idle',   0, 0, now()),
 			(now() - INTERVAL 1 MINUTE, 'd-lhr', 'Tunnel804', 804, 'u-sub-idle',   0, 0, now())`))
 
@@ -251,8 +251,6 @@ func TestHealthMulticastUserRate_PlusSubscriber(t *testing.T) {
 			 rpf_preference, rpf_metric, rpf_neighbor, rpf_attached, rpf_has_block,
 			 oif_list, oif_count, creation_time)
 		VALUES
-			-- u-ps is both publisher and subscriber on d-ps-mid: RPF=Tunnel901 (pub),
-			-- and OIF contains Tunnel901 reflecting OTHER publisher's traffic to it.
 			('mr-ps-pub',   now(), now(), generateUUIDv4(), 0, 1, 'd-ps-mid', 'default', 'sparse', '233.99.2.1', '10.99.2.1', 'SBNP', 0, 'Tunnel901',     '', '', 0, 0, '', 0, 0, '', 0, now()),
 			('mr-ps-sub',   now(), now(), generateUUIDv4(), 0, 2, 'd-ps-mid', 'default', 'sparse', '233.99.2.1', '10.99.2.2', 'SMP',  0, 'Port-Channel1', '', '', 0, 0, '', 0, 0, '["Tunnel901"]', 1, now()),
 			('mr-other-pub',now(), now(), generateUUIDv4(), 0, 3, 'd-ps-fhr', 'default', 'sparse', '233.99.2.1', '10.99.2.2', 'SBNP', 0, 'Tunnel902',     '', '', 0, 0, '', 0, 0, '', 0, now())`))
