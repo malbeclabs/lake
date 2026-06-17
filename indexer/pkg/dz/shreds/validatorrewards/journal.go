@@ -85,8 +85,12 @@ const (
 	offPublisherAccumulationBitmapEndIndex   = 108
 	offClientAccumulationBitmapStartIndex    = 112
 	offClientAccumulationBitmapEndIndex      = 116
+	offTotalLeaderSlots                      = 128
+	offAccumulatedPublisherSlotsScaled       = 136
+	offAccumulatedClientSlotsScaled          = 144
 	offAccumulatedPublisherLeafCount         = 152
 	offDistributedPublisherLeafCount         = 156
+	offDistributedAmount                     = 160
 )
 
 // JournalView captures the subset of ShredDistributionJournal state we
@@ -96,16 +100,44 @@ const (
 // documents where they live in the account.
 type JournalView struct {
 	SubscriptionEpoch uint64
-	MintKey           solana.PublicKey
+	// MintKey is the journal's seed mint — the token validators selected to be
+	// rewarded in. Each (subscription_epoch, mint_key) has its own journal, and
+	// a journal owns only the leaves of validators who picked that token.
+	MintKey solana.PublicKey
+	// RewardMintKey is the mint of the tokens actually held and paid out by this
+	// journal (TokensReceivedAmount is denominated in it). For the supported
+	// reward tokens (2Z, USDC, wSOL) it equals MintKey.
+	RewardMintKey solana.PublicKey
 	// TokensReceivedAmount is the journal's post-Jupiter-swap balance of
 	// reward_mint_key tokens (`rewards_amount()` upstream for a non-bypassed
-	// journal). For the 2Z journal this is the validator-reward pool that
-	// per-leaf publisher shares are drawn from.
+	// journal). This is the validator-reward pool that per-leaf publisher shares
+	// are drawn from, in base units of RewardMintKey.
 	TokensReceivedAmount                  uint64
 	PublisherAccumulationBitmapStartIndex uint32
 	PublisherAccumulationBitmapEndIndex   uint32
-	AccumulatedPublisherLeafCount         uint32
-	DistributedPublisherLeafCount         uint32
+	// TotalLeaderSlots is the journal's authoritative count of all leader slots
+	// in the epoch. It is the denominator the on-chain distribution uses to
+	// split the pool by leader slots — NOT the sum of the leaves we happen to
+	// have indexed (which can be incomplete and would over-credit each present
+	// validator).
+	TotalLeaderSlots uint32
+	// AccumulatedPublisherSlotsScaled and AccumulatedClientSlotsScaled are the
+	// running sums of leader_slots × proportion (in basis points) over the
+	// leaves accumulated into THIS journal — i.e. only the validators who picked
+	// this journal's token. Their sum equals (this journal's leader slots) ×
+	// 10000 and is the authoritative per-token reward denominator: in the
+	// multi-token era a validator's share is split over its journal's slots, not
+	// the epoch-wide total.
+	AccumulatedPublisherSlotsScaled uint64
+	AccumulatedClientSlotsScaled    uint64
+	AccumulatedPublisherLeafCount   uint32
+	DistributedPublisherLeafCount   uint32
+	// DistributedAmount is the running total of reward-token base units already
+	// paid out by this journal. For non-2Z tokens (USDC, wSOL) the journal does
+	// not pre-hold a swapped balance (TokensReceivedAmount is 0), so this is the
+	// reward pool the page splits; for a finalized epoch it is the full pool.
+	// (The 2Z journal instead splits TokensReceivedAmount, less the 10% burn.)
+	DistributedAmount uint64
 	// RemainingData is `account_data[journalFixedHeader:]`. Bitmaps are
 	// referenced into it via the start/end indices above.
 	RemainingData []byte
@@ -132,13 +164,30 @@ func DecodeJournalAccount(data []byte) (*JournalView, error) {
 		TokensReceivedAmount:                  binary.LittleEndian.Uint64(data[offTokensReceivedAmount : offTokensReceivedAmount+8]),
 		PublisherAccumulationBitmapStartIndex: binary.LittleEndian.Uint32(data[offPublisherAccumulationBitmapStartIndex : offPublisherAccumulationBitmapStartIndex+4]),
 		PublisherAccumulationBitmapEndIndex:   binary.LittleEndian.Uint32(data[offPublisherAccumulationBitmapEndIndex : offPublisherAccumulationBitmapEndIndex+4]),
+		TotalLeaderSlots:                      binary.LittleEndian.Uint32(data[offTotalLeaderSlots : offTotalLeaderSlots+4]),
+		AccumulatedPublisherSlotsScaled:       binary.LittleEndian.Uint64(data[offAccumulatedPublisherSlotsScaled : offAccumulatedPublisherSlotsScaled+8]),
+		AccumulatedClientSlotsScaled:          binary.LittleEndian.Uint64(data[offAccumulatedClientSlotsScaled : offAccumulatedClientSlotsScaled+8]),
 		AccumulatedPublisherLeafCount:         binary.LittleEndian.Uint32(data[offAccumulatedPublisherLeafCount : offAccumulatedPublisherLeafCount+4]),
 		DistributedPublisherLeafCount:         binary.LittleEndian.Uint32(data[offDistributedPublisherLeafCount : offDistributedPublisherLeafCount+4]),
+		DistributedAmount:                     binary.LittleEndian.Uint64(data[offDistributedAmount : offDistributedAmount+8]),
 		RemainingData:                         data[journalFixedHeader:],
 	}
 	copy(view.MintKey[:], data[offMintKey:offMintKey+32])
+	copy(view.RewardMintKey[:], data[offRewardMintKey:offRewardMintKey+32])
 
 	return view, nil
+}
+
+// AccumulatedSlotsScaledDenominator returns the per-token reward denominator:
+// accumulated_publisher_slots_scaled + accumulated_client_slots_scaled. This
+// equals (the journal's leader slots) × 10000, so dividing
+// tokens_received × leader_slots × (10000 − client_proportion) by it yields the
+// validator's share of this journal's pool.
+func (j *JournalView) AccumulatedSlotsScaledDenominator() uint64 {
+	if j == nil {
+		return 0
+	}
+	return j.AccumulatedPublisherSlotsScaled + j.AccumulatedClientSlotsScaled
 }
 
 // publisherBitmap returns the slice of RemainingData that holds the
@@ -183,39 +232,110 @@ func (j *JournalView) IsClaimableForLeafIndex(leafIndex uint32) (bool, bool) {
 	return set, true
 }
 
-// ProjectStatuses emits one LeafDistributionStatusRow per leaf in
-// `[0, AccumulatedPublisherLeafCount)`. Leaves with no node-id mapping in
-// `leafIndexToNodeID` are silently skipped. The journal's mint key is
-// recorded on every row as the source of the bitmap.
-func ProjectStatuses(view *JournalView, subscriptionEpoch uint64, leafIndexToNodeID map[uint32]string) []LeafDistributionStatusRow {
-	if view == nil {
-		return nil
-	}
-	count := view.AccumulatedPublisherLeafCount
-	if count == 0 {
-		return nil
-	}
-	rows := make([]LeafDistributionStatusRow, 0, count)
-	mintB58 := view.MintKey.String()
-	for leafIndex := uint32(0); leafIndex < count; leafIndex++ {
-		nodeID, ok := leafIndexToNodeID[leafIndex]
-		if !ok {
-			continue
+// CollectClaimableTokens records, for every leaf currently claimable (its
+// publisher bit is SET in one of the epoch's journals), the reward mint of the
+// owning journal into dst, keyed by (node, client). A set bit is the
+// authoritative ownership signal, so this is the source of truth for which token
+// each validator picked. Accumulated across all epochs, dst lets a leaf that is
+// now distributed (cleared everywhere) still be attributed to the token the
+// validator was last seen claimable in.
+func CollectClaimableTokens(views []*JournalView, leafIndexToIdentity map[uint32]LeafIdentity, dst map[LeafIdentity]string) {
+	for leafIndex, id := range leafIndexToIdentity {
+		for _, v := range views {
+			if v == nil {
+				continue
+			}
+			if set, ok := v.IsClaimableForLeafIndex(leafIndex); ok && set {
+				dst[id] = v.RewardMintKey.String()
+				break
+			}
 		}
-		claimable, ok := view.IsClaimableForLeafIndex(leafIndex)
-		if !ok {
-			continue
+	}
+}
+
+// ProjectEpochStatuses emits per-leaf status rows for one subscription epoch by
+// reading ALL of the epoch's still-live token journals together. Rows are keyed
+// per (node, client) so a validator running multiple clients keeps an
+// independent bit per client; leaves with no identity mapping are skipped.
+//
+// Unlike a per-journal projection this needs no observation history. Every leaf
+// accumulates into exactly one token journal, so Σ accumulated_publisher_leaf_count
+// across the epoch's journals equals the leaf count once accumulation is
+// complete. Given that:
+//
+//   - A SET publisher bit in some journal ⇒ that journal owns the leaf and it is
+//     claimable; the journal's reward mint is the validator's token.
+//   - A bit CLEAR in EVERY journal, in a fully-accumulated epoch ⇒ the leaf was
+//     accumulated then distributed (paid). Its token can't be read from a cleared
+//     bitmap. When the epoch has a single journal the token is unambiguous (every
+//     leaf belongs to it); otherwise it is taken from tokenByIdentity (the
+//     validator's claimable observations elsewhere), defaulting to 2Z.
+//   - A bit clear everywhere while the epoch is NOT yet fully accumulated ⇒ the
+//     leaf simply hasn't been accumulated yet; it is left out (pending).
+//
+// Because it derives distribution from the live on-chain bitmaps every refresh,
+// it is stateless-correct: an already-distributed leaf is reconstructed without
+// ever having been observed while claimable, as long as its journals are live.
+func ProjectEpochStatuses(
+	subscriptionEpoch uint64,
+	views []*JournalView,
+	leafIndexToIdentity map[uint32]LeafIdentity,
+	tokenByIdentity map[LeafIdentity]string,
+) []LeafDistributionStatusRow {
+	if len(views) == 0 {
+		return nil
+	}
+	var sumAccumulated uint64
+	for _, v := range views {
+		if v != nil {
+			sumAccumulated += uint64(v.AccumulatedPublisherLeafCount)
+		}
+	}
+	fullyAccumulated := sumAccumulated >= uint64(len(leafIndexToIdentity))
+
+	rows := make([]LeafDistributionStatusRow, 0, len(leafIndexToIdentity))
+	for leafIndex, id := range leafIndexToIdentity {
+		var mint string
+		var claimable, owned bool
+		for _, v := range views {
+			if v == nil {
+				continue
+			}
+			if set, ok := v.IsClaimableForLeafIndex(leafIndex); ok && set {
+				mint, claimable, owned = v.RewardMintKey.String(), true, true
+				break
+			}
+		}
+		if !owned {
+			if !fullyAccumulated {
+				// Not yet accumulated into any journal — pending. Skip.
+				continue
+			}
+			// Distributed. The reward token is unrecoverable from a cleared
+			// bitmap. If the epoch has a single journal the token is unambiguous
+			// (every leaf belongs to it — this covers all pre-multi-token epochs,
+			// which always had one 2Z journal). Otherwise borrow the token from
+			// the validator's claimable observations elsewhere, defaulting to 2Z.
+			switch {
+			case len(views) == 1:
+				mint = views[0].RewardMintKey.String()
+			case tokenByIdentity[id] != "":
+				mint = tokenByIdentity[id]
+			default:
+				mint = DoubleZeroMintKey
+			}
 		}
 		var bit uint8
 		if claimable {
 			bit = 1
 		}
 		rows = append(rows, LeafDistributionStatusRow{
-			PK:                LeafDistributionStatusPK(subscriptionEpoch, nodeID),
+			PK:                LeafDistributionStatusPK(subscriptionEpoch, id.NodeID, id.ClientID),
 			SubscriptionEpoch: subscriptionEpoch,
-			NodeID:            nodeID,
+			NodeID:            id.NodeID,
+			ClientID:          id.ClientID,
 			IsClaimable:       bit,
-			JournalMintKey:    mintB58,
+			JournalMintKey:    mint,
 		})
 	}
 	return rows

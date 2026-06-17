@@ -123,40 +123,50 @@ func (s *Store) LeavesStatusForEpoch(ctx context.Context, subscriptionEpoch uint
 	return status, nil
 }
 
-// LeafIndexToNodeID returns the leaf_index → node_id mapping for the given
-// subscription_epoch from the leaves _current view. Returns an empty (non-nil)
-// map when there are no leaves for that epoch (e.g., S3 verifier hasn't run
-// yet).
-func (s *Store) LeafIndexToNodeID(ctx context.Context, subscriptionEpoch uint64) (map[uint32]string, error) {
+// LeafIdentity is the (node_id, client_id) pair a leaf_index resolves to. A
+// validator (node_id) can own several leaves in one epoch — one per software
+// client — so the claimable-bit projection must carry the client_id through
+// to key its output rows at the same grain as the leaves table.
+type LeafIdentity struct {
+	NodeID   string
+	ClientID uint16
+}
+
+// LeafIndexToNodeClient returns the leaf_index → (node_id, client_id) mapping
+// for the given subscription_epoch from the leaves _current view. Returns an
+// empty (non-nil) map when there are no leaves for that epoch (e.g., S3
+// verifier hasn't run yet).
+func (s *Store) LeafIndexToNodeClient(ctx context.Context, subscriptionEpoch uint64) (map[uint32]LeafIdentity, error) {
 	conn, err := s.cfg.ClickHouse.Conn(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ClickHouse connection: %w", err)
 	}
 	defer conn.Close()
 
-	const q = `SELECT leaf_index, node_id
+	const q = `SELECT leaf_index, node_id, client_id
 		FROM dim_dz_shred_validator_rewards_leaves_current
 		WHERE subscription_epoch = ?`
 
 	rows, err := conn.Query(ctx, q, subscriptionEpoch)
 	if err != nil {
-		return nil, fmt.Errorf("query leaf_index → node_id mapping: %w", err)
+		return nil, fmt.Errorf("query leaf_index → (node_id, client_id) mapping: %w", err)
 	}
 	defer rows.Close()
 
-	out := make(map[uint32]string)
+	out := make(map[uint32]LeafIdentity)
 	for rows.Next() {
 		var (
 			leafIndex uint32
 			nodeID    string
+			clientID  uint16
 		)
-		if err := rows.Scan(&leafIndex, &nodeID); err != nil {
-			return nil, fmt.Errorf("scan leaf_index → node_id row: %w", err)
+		if err := rows.Scan(&leafIndex, &nodeID, &clientID); err != nil {
+			return nil, fmt.Errorf("scan leaf_index → (node_id, client_id) row: %w", err)
 		}
-		out[leafIndex] = nodeID
+		out[leafIndex] = LeafIdentity{NodeID: nodeID, ClientID: clientID}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate leaf_index → node_id rows: %w", err)
+		return nil, fmt.Errorf("iterate leaf_index → (node_id, client_id) rows: %w", err)
 	}
 	return out, nil
 }
@@ -209,7 +219,7 @@ func (s *Store) ReplaceLeaves(
 	toRow := func(i int) ([]any, error) {
 		nodeID := v.NodeIDStrings[i]
 		row := LeafRow{
-			PK:                LeafPK(subscriptionEpoch, nodeID),
+			PK:                LeafPK(subscriptionEpoch, nodeID, v.Leaves[i].ClientID),
 			SubscriptionEpoch: subscriptionEpoch,
 			AssociatedDZEpoch: associatedDZEpoch,
 			NodeID:            nodeID,

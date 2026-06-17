@@ -185,10 +185,14 @@ export function ShredsRewardsPage() {
   }
 
   const validators = data?.validators ?? []
-  // We don't know total count from the API; derive whether there's another page by
-  // checking whether the response is a full page.
-  const hasMore = validators.length === PAGE_SIZE
-  const fauxTotal = hasMore ? offset + PAGE_SIZE + 1 : offset + validators.length
+  // The API returns the true total of matching validators (before limit/offset),
+  // so the pagination footer can show the real page count. Fall back to the
+  // full-page heuristic only if total is missing (e.g. an older API).
+  const total =
+    data?.total ??
+    (validators.length === PAGE_SIZE
+      ? offset + PAGE_SIZE + 1
+      : offset + validators.length)
 
   const thClass =
     'px-4 py-3 font-medium cursor-pointer select-none hover:text-foreground transition-colors whitespace-nowrap'
@@ -388,9 +392,9 @@ export function ShredsRewardsPage() {
               </tbody>
             </table>
           </div>
-          {(hasMore || offset > 0) && (
+          {(total > PAGE_SIZE || offset > 0) && (
             <Pagination
-              total={fauxTotal}
+              total={total}
               limit={PAGE_SIZE}
               offset={offset}
               onOffsetChange={setOffset}
