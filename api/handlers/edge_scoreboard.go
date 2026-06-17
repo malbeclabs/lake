@@ -335,6 +335,48 @@ func (a *API) GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp)
 }
 
+// FetchRootPublishingStats returns the number of distinct validators publishing via the
+// turbine-root path and the sum of their activated stake (in lamports).
+//
+// edge-solana-root is intentionally not written to publisher_shred_stats (it would
+// otherwise pollute the retransmitter detection in publisher_check.go), so turbine-root
+// participation is re-derived from the timing events table instead. slot_feed_race_summary_v2
+// carries no publisher identity, so each root-observed slot is mapped to its scheduled
+// leader via the leader schedule and that leader's stake via vote accounts. Scope is the
+// current + previous epoch, matching the leader publishing metric's 2-epoch default.
+func (a *API) FetchRootPublishingStats(ctx context.Context) (count uint64, stake int64, err error) {
+	const slotsPerEpoch = 432_000
+	shredderDB := fmt.Sprintf("`%s`", a.ShredderDB)
+
+	query := fmt.Sprintf(`
+		WITH
+		root_slots AS (
+			SELECT DISTINCT slot
+			FROM %[1]s.slot_feed_race_summary_v2
+			WHERE feed_type = 'shred' AND feed = %[2]s
+				AND epoch >= (SELECT max(epoch) FROM %[1]s.slot_feed_race_summary_v2 WHERE feed_type = 'shred') - 1
+		),
+		sched AS (
+			SELECT toUInt64(epoch * %[3]d + arrayJoin(JSONExtract(slots, 'Array(UInt64)'))) AS slot, node_pubkey
+			FROM dim_solana_leader_schedule_history
+			WHERE epoch >= (SELECT max(epoch) FROM dim_solana_leader_schedule_history) - 1
+		),
+		root_leaders AS (
+			SELECT DISTINCT s.node_pubkey AS node_pubkey
+			FROM sched s INNER JOIN root_slots r ON s.slot = r.slot
+		)
+		SELECT count(), COALESCE(sum(v.activated_stake_lamports), 0)
+		FROM root_leaders rl
+		INNER JOIN solana_vote_accounts_current v
+			ON v.node_pubkey = rl.node_pubkey AND v.epoch_vote_account = 'true'
+	`, shredderDB, rootFeed, slotsPerEpoch)
+
+	t := time.Now()
+	err = a.envDB(ctx).QueryRow(ctx, query).Scan(&count, &stake)
+	metrics.RecordClickHouseQuery("edge_scoreboard:root_publishing", time.Since(t), err)
+	return count, stake, err
+}
+
 // FetchEdgeScoreboardData performs the actual edge scoreboard queries.
 // When leadersOnly is true, results are scoped to slots where the leader published via DZ.
 // sinceSlot > 0 or beforeSlot > 0 enables cursor mode: only recent_slots are returned
@@ -680,9 +722,10 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 
 		// Group P: publisher / publishing-shred / stake-% headline numbers.
 		// Reads the publisher_check page-cache entry (refreshed by the worker every 30s)
-		// and derives the three values from it. The previous in-place query (q1d) ran
-		// sequentially before this errgroup and consumed most of the deadline budget in
-		// prod, surfacing as "context deadline exceeded" on q1d / q8 in the worker.
+		// for the leader publishing count/stake and the network-stake denominator, then
+		// runs a follow-up query for the turbine-root numbers. The previous in-place query
+		// (q1d) ran sequentially before this errgroup and consumed most of the deadline
+		// budget in prod, surfacing as "context deadline exceeded" on q1d / q8 in the worker.
 		g.Go(func() error {
 			data, err := a.readPageCache(gctx, "publisher_check")
 			if err != nil {
@@ -698,8 +741,8 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				return nil
 			}
 			publisherCount = pc.TotalPublishers
-			var publishingStake, rootStake int64
-			var pubCount, rootCount uint64
+			var publishingStake int64
+			var pubCount uint64
 			for _, p := range pc.Publishers {
 				if p.VotePubkey == "" || p.NodePubkey == "" {
 					continue
@@ -708,16 +751,15 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					pubCount++
 					publishingStake += int64(p.ActivatedStake)
 				}
-				// Turbine-root participation, derived the same way as the leader metric.
-				// Reads zero until the shredder populates publisher_shred_stats with the
-				// edge-solana-root feed (see rootPublisherFeed in publisher_check.go).
-				if p.RootSlots > 0 {
-					rootCount++
-					rootStake += int64(p.ActivatedStake)
-				}
 			}
 			publishingCount = pubCount
 			publishingStakePct = float64(publishingStake) / float64(pc.TotalNetworkStake) * 100
+
+			rootCount, rootStake, rerr := a.FetchRootPublishingStats(gctx)
+			if rerr != nil {
+				log.Printf("EdgeScoreboard root publishing query error: %v", rerr)
+				return nil
+			}
 			rootPublishingCount = rootCount
 			rootPublishingStakePct = float64(rootStake) / float64(pc.TotalNetworkStake) * 100
 			return nil

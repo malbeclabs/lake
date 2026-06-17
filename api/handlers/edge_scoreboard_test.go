@@ -275,6 +275,65 @@ func TestGetEdgeScoreboard_WithData(t *testing.T) {
 	assert.Len(t, dzEdgeFeed.LeadTimes, 2, "fra dz_edge should have 2 pairwise lead times")
 }
 
+// TestFetchRootPublishingStats verifies turbine-root participation is re-derived from the
+// timing events table (slot_feed_race_summary_v2) by mapping each root-observed slot to its
+// scheduled leader (leader schedule) and that leader's stake (vote accounts) — rather than
+// from publisher_shred_stats, which is intentionally not populated with the root feed.
+func TestFetchRootPublishingStats(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	createShredderTables(t, api)
+	ctx := t.Context()
+
+	const epoch = 2
+	const slotsPerEpoch = 432_000
+	// Absolute slots = epoch*slotsPerEpoch + relative slot. nodepub1/nodepub2 lead root-observed
+	// slots; nodepub3 leads a slot that only the (excluded) dz feed delivered.
+	rootSlot1 := uint64(epoch*slotsPerEpoch + 100)  // nodepub1
+	rootSlot2 := uint64(epoch*slotsPerEpoch + 200)  // nodepub2
+	dzOnlySlot := uint64(epoch*slotsPerEpoch + 300) // nodepub3
+
+	// Timing events: two slots delivered via edge-solana-root, one via dz only.
+	err := api.DB.Exec(ctx, fmt.Sprintf(`
+		INSERT INTO %s.slot_feed_race_summary_v2
+			(event_ts, host, feed_type, epoch, slot, feed, loser_feed, total_shreds, shreds_won)
+		VALUES
+			(now(), 'slc-qa-bm1', 'shred', %[2]d, %[3]d, 'edge-solana-root', '', 100, 50),
+			(now(), 'slc-qa-bm1', 'shred', %[2]d, %[4]d, 'edge-solana-root', '', 100, 50),
+			(now(), 'slc-qa-bm1', 'shred', %[2]d, %[5]d, 'dz',               '', 100, 50)
+	`, "`"+api.ShredderDB+"`", epoch, rootSlot1, rootSlot2, dzOnlySlot))
+	require.NoError(t, err)
+
+	// Leader schedule: relative slots per leader within the epoch.
+	err = api.DB.Exec(ctx, `
+		INSERT INTO dim_solana_leader_schedule_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, node_pubkey, epoch, slots, slot_count)
+		VALUES
+			('nodepub1', now(), now(), generateUUIDv4(), 0, 1, 'nodepub1', 2, '[100]', 1),
+			('nodepub2', now(), now(), generateUUIDv4(), 0, 2, 'nodepub2', 2, '[200]', 1),
+			('nodepub3', now(), now(), generateUUIDv4(), 0, 3, 'nodepub3', 2, '[300]', 1)
+	`)
+	require.NoError(t, err)
+
+	// Vote accounts: stake per leader. nodepub3 has stake but leads no root slot.
+	err = api.DB.Exec(ctx, `
+		INSERT INTO dim_solana_vote_accounts_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 vote_pubkey, epoch, node_pubkey, activated_stake_lamports, epoch_vote_account, commission_percentage)
+		VALUES
+			('votepub1', now(), now(), generateUUIDv4(), 0, 1, 'votepub1', 2, 'nodepub1', 50000000000, 'true', 0),
+			('votepub2', now(), now(), generateUUIDv4(), 0, 2, 'votepub2', 2, 'nodepub2', 10000000000, 'true', 0),
+			('votepub3', now(), now(), generateUUIDv4(), 0, 3, 'votepub3', 2, 'nodepub3', 5000000000, 'true', 0)
+	`)
+	require.NoError(t, err)
+
+	count, stake, err := api.FetchRootPublishingStats(ctx)
+	require.NoError(t, err)
+	// nodepub1 + nodepub2 lead root-observed slots; nodepub3 (dz-only) is excluded.
+	assert.Equal(t, uint64(2), count)
+	assert.Equal(t, int64(60000000000), stake)
+}
+
 func TestGetEdgeScoreboard_WindowParam(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)

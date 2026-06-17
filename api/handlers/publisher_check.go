@@ -58,9 +58,7 @@ type PublisherCheckItem struct {
 	MulticastConnected      bool   `json:"multicast_connected"`
 	PublishingLeaderShreds  bool   `json:"publishing_leader_shreds"`
 	PublishingRetransmitted bool   `json:"publishing_retransmitted"`
-	PublishingRoot          bool   `json:"publishing_root"`
 	LeaderSlots             uint64 `json:"leader_slots"`
-	RootSlots               uint64 `json:"root_slots"`
 	TotalSlots              uint64 `json:"total_slots"`
 	TotalUniqueShreds       uint64 `json:"total_unique_shreds"`
 	SlotsNeedingRepair      uint64 `json:"slots_needing_repair"`
@@ -169,46 +167,22 @@ func (a *API) FetchPublisherCheckData(ctx context.Context, q string, epochsParam
 	// Only the dz source has `publisher_stats: true` in the shredder configs,
 	// so filtering to it preserves pre-per-feed-column numbers exactly. Pre-migration
 	// rows have feed='' (the ALTER added the column without a default), so include
-	// both to keep history continuous across the cutover.
+	// both to keep history continuous across the cutover. The turbine-root feed
+	// (edge-solana-root) is deliberately not written to publisher_shred_stats, so it
+	// never enters this filter; turbine-root participation is derived from the timing
+	// events table in the edge scoreboard instead (see edge_scoreboard.go Group P).
 	const leaderFeedFilter = "feed IN ('', 'dz')"
-
-	// rootPublisherFeed is the feed value the shredder writes to publisher_shred_stats for
-	// shreds a validator publishes as the turbine-tree root (the earliest DZ hop). It only
-	// produces rows once the shredder enables `publisher_stats: true` on the edge-solana-root
-	// source; until then root_slots reads zero for every publisher. Kept as a named constant
-	// so it's trivial to realign if the shredder uses a different feed string.
-	const rootPublisherFeed = "edge-solana-root"
 
 	var perSlotWhere string
 	var args []any
-	// rootStatsCTE counts, per publisher, the distinct slots that carried a turbine-root
-	// publish in the same epoch/slot window as the leader stats. Its epoch/slot bounds are
-	// inlined (validated ints) to avoid disturbing the positional `?` arg ordering below.
-	var rootStatsCTE string
 	if slotsParam > 0 {
 		perSlotWhere = `WHERE ` + leaderFeedFilter + `
 			AND epoch >= (SELECT epoch FROM current_epoch) - 1
 			AND slot >= (SELECT max(slot) FROM ` + shredStatsTable + ` WHERE ` + leaderFeedFilter + ` AND epoch >= (SELECT epoch FROM current_epoch) - 1) - ?`
 		args = []any{slotsParam, shredGroupPK}
-		rootStatsCTE = fmt.Sprintf(`,
-		root_stats AS (
-			SELECT dz_user_pubkey, uniqExact(slot) AS root_slots
-			FROM %[1]s
-			WHERE feed = '%[2]s'
-				AND epoch >= (SELECT epoch FROM current_epoch) - 1
-				AND slot >= (SELECT max(slot) FROM %[1]s WHERE %[3]s AND epoch >= (SELECT epoch FROM current_epoch) - 1) - %[4]d
-			GROUP BY dz_user_pubkey
-		)`, shredStatsTable, rootPublisherFeed, leaderFeedFilter, slotsParam)
 	} else {
 		perSlotWhere = `WHERE ` + leaderFeedFilter + ` AND epoch >= (SELECT epoch FROM current_epoch) - ? + 1`
 		args = []any{epochsParam, shredGroupPK}
-		rootStatsCTE = fmt.Sprintf(`,
-		root_stats AS (
-			SELECT dz_user_pubkey, uniqExact(slot) AS root_slots
-			FROM %[1]s
-			WHERE feed = '%[2]s' AND epoch >= (SELECT epoch FROM current_epoch) - %[3]d + 1
-			GROUP BY dz_user_pubkey
-		)`, shredStatsTable, rootPublisherFeed, epochsParam)
 	}
 
 	query := fmt.Sprintf(`
@@ -239,7 +213,7 @@ func (a *API) FetchPublisherCheckData(ctx context.Context, q string, epochsParam
 				max(slot) AS max_slot
 			FROM per_slot
 			GROUP BY dz_user_pubkey
-		)%s
+		)
 		SELECT
 			u.dz_ip AS publisher_ip,
 			u.client_ip,
@@ -252,7 +226,6 @@ func (a *API) FetchPublisherCheckData(ctx context.Context, q string, epochsParam
 			COALESCE(s.total_slots, 0) AS total_slots,
 			COALESCE(s.leader_slots, 0) AS leader_slots,
 			COALESCE(s.retransmit_slots, 0) AS retransmit_slots,
-			COALESCE(rs.root_slots, 0) AS root_slots,
 			COALESCE(s.total_unique_shreds, 0) AS total_unique_shreds,
 			COALESCE(s.slots_needing_repair, 0) AS slots_needing_repair,
 			(SELECT epoch FROM current_epoch) AS epoch,
@@ -266,11 +239,10 @@ func (a *API) FetchPublisherCheckData(ctx context.Context, q string, epochsParam
 		LEFT JOIN solana_gossip_nodes_current g ON u.client_ip = g.gossip_ip AND u.client_ip != ''
 		LEFT JOIN solana_vote_accounts_current v ON g.pubkey = v.node_pubkey AND v.epoch_vote_account = 'true'
 		LEFT JOIN stats s ON u.pk = s.dz_user_pubkey
-		LEFT JOIN root_stats rs ON u.pk = rs.dz_user_pubkey
 		LEFT JOIN validatorsapp_validators_current va ON v.vote_pubkey = va.vote_account
 		WHERE u.status = 'activated'
 			AND has(JSONExtract(u.publishers, 'Array(String)'), ?)
-	`, shredStatsTable, shredStatsTable, perSlotWhere, rootStatsCTE)
+	`, shredStatsTable, shredStatsTable, perSlotWhere)
 	if q != "" {
 		if strings.Contains(q, ".") {
 			query += " AND (u.dz_ip = ? OR u.client_ip = ?)"
@@ -298,7 +270,7 @@ func (a *API) FetchPublisherCheckData(ctx context.Context, q string, epochsParam
 
 	for rows.Next() {
 		var p PublisherCheckItem
-		var totalSlots, leaderSlots, retransmitSlots, rootSlots uint64
+		var totalSlots, leaderSlots, retransmitSlots uint64
 		var stakeRaw int64
 		var rowEpoch uint64
 		var rowMaxSlot uint64
@@ -315,7 +287,6 @@ func (a *API) FetchPublisherCheckData(ctx context.Context, q string, epochsParam
 			&totalSlots,
 			&leaderSlots,
 			&retransmitSlots,
-			&rootSlots,
 			&p.TotalUniqueShreds,
 			&p.SlotsNeedingRepair,
 			&rowEpoch,
@@ -338,10 +309,8 @@ func (a *API) FetchPublisherCheckData(ctx context.Context, q string, epochsParam
 		}
 		p.TotalSlots = totalSlots
 		p.LeaderSlots = leaderSlots
-		p.RootSlots = rootSlots
 		p.MulticastConnected = true // All rows are bebop group members
 		p.PublishingLeaderShreds = leaderSlots > 0
-		p.PublishingRoot = rootSlots > 0
 		p.PublishingRetransmitted = totalSlots > 0 &&
 			retransmitSlots >= retransmitMinSlots &&
 			float64(retransmitSlots)/float64(totalSlots) >= retransmitMinRatio
