@@ -1,16 +1,21 @@
 // Shared formatting helpers for the Edge Rewards pages.
 
-// The 2Z mint has 8 decimals (DOUBLEZERO_MINT_DECIMALS), so on-chain amounts
-// arrive in base units where 1 whole 2Z = 10^8 base units. Scale to whole 2Z
-// before display.
-const TWO_Z_UNITS_PER_TOKEN = 100_000_000
-
-export function format2Z(baseUnits: number): string {
-  if (!Number.isFinite(baseUnits) || baseUnits <= 0) return '—'
-  const amount = baseUnits / TWO_Z_UNITS_PER_TOKEN
+// formatTokenAmount renders a reward amount already scaled to whole tokens (the
+// API divides on-chain base units by the token's decimals) and appends the
+// token symbol. From epoch 968 validators may be rewarded in 2Z, USDC, or wSOL,
+// so the symbol must travel with the amount rather than being assumed to be 2Z.
+export function formatTokenAmount(amount: number, symbol: string): string {
+  const sym = symbol || '2Z'
+  if (!Number.isFinite(amount) || amount <= 0) return '—'
   if (amount >= 1_000_000)
-    return `${(amount / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 2 })}M 2Z`
+    return `${(amount / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 2 })}M ${sym}`
   if (amount >= 10_000)
-    return `${(amount / 1_000).toLocaleString(undefined, { maximumFractionDigits: 1 })}K 2Z`
-  return `${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} 2Z`
+    return `${(amount / 1_000).toLocaleString(undefined, { maximumFractionDigits: 1 })}K ${sym}`
+  return `${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${sym}`
+}
+
+// format2Z formats a whole-2Z amount. Thin wrapper for the 2Z-only call sites
+// (e.g. the list page's headline 2Z totals).
+export function format2Z(amount: number): string {
+  return formatTokenAmount(amount, '2Z')
 }

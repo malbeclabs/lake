@@ -496,33 +496,64 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		// so we only hit ClickHouse once per epoch when multiple journals
 		// share it.
 		leafMaps := make(map[uint64]map[uint32]validatorrewards.LeafIdentity)
+		loadLeafMap := func(epoch uint64) (map[uint32]validatorrewards.LeafIdentity, error) {
+			if m, ok := leafMaps[epoch]; ok {
+				return m, nil
+			}
+			m, err := v.leafStore.LeafIndexToNodeClient(ctx, epoch)
+			if err != nil {
+				return nil, fmt.Errorf("load leaf_index → (node_id, client_id) mapping for epoch %d: %w", epoch, err)
+			}
+			leafMaps[epoch] = m
+			return m, nil
+		}
+
+		// Per-epoch leaf_index → previously-recorded reward mint, from the
+		// persisted status table. ProjectStatuses uses it to mark a leaf
+		// distributed (bit cleared) only for the token it was already attributed
+		// to — never mistagging another token's leaf.
+		existingMintByEpoch := make(map[uint64]map[uint32]string)
+		loadExistingMint := func(epoch uint64, leafMap map[uint32]validatorrewards.LeafIdentity) (map[uint32]string, error) {
+			if m, ok := existingMintByEpoch[epoch]; ok {
+				return m, nil
+			}
+			byIdentity, err := v.leafStore.ExistingLeafMints(ctx, epoch)
+			if err != nil {
+				return nil, fmt.Errorf("load existing leaf mints for epoch %d: %w", epoch, err)
+			}
+			m := make(map[uint32]string, len(byIdentity))
+			for leafIndex, id := range leafMap {
+				if mint, ok := byIdentity[id]; ok {
+					m[leafIndex] = mint
+				}
+			}
+			existingMintByEpoch[epoch] = m
+			return m, nil
+		}
+
+		// Project EVERY token journal, attributing each leaf to its journal's
+		// reward mint. The per-leaf row records that mint, which is how the
+		// rewards page attributes each leaf to its reward token.
 		for _, kj := range allAccounts.Journals {
 			view := kj.View
 			if view == nil {
 				continue
 			}
-			// Only the 2Z (DoubleZero) mint journal carries the publisher
-			// accumulation bitmap relevant to the rewards page.
-			if view.MintKey.String() != validatorrewards.DoubleZeroMintKey {
-				continue
-			}
-			leafMap, ok := leafMaps[view.SubscriptionEpoch]
-			if !ok {
-				m, err := v.leafStore.LeafIndexToNodeClient(ctx, view.SubscriptionEpoch)
-				if err != nil {
-					return result, fmt.Errorf("load leaf_index → (node_id, client_id) mapping for epoch %d: %w",
-						view.SubscriptionEpoch, err)
-				}
-				leafMaps[view.SubscriptionEpoch] = m
-				leafMap = m
+			leafMap, err := loadLeafMap(view.SubscriptionEpoch)
+			if err != nil {
+				return result, err
 			}
 			if len(leafMap) == 0 {
 				// Leaves not yet indexed for this epoch (S3 export pending,
 				// or out of the leaf window). Skip — next refresh will retry.
 				continue
 			}
+			existingMint, err := loadExistingMint(view.SubscriptionEpoch, leafMap)
+			if err != nil {
+				return result, err
+			}
 			statusRows = append(statusRows,
-				validatorrewards.ProjectStatuses(view, view.SubscriptionEpoch, leafMap)...)
+				validatorrewards.ProjectStatuses(view, view.SubscriptionEpoch, leafMap, existingMint)...)
 		}
 		if len(statusRows) > 0 {
 			if err := v.leafStore.ReplaceLeafDistributionStatuses(ctx, statusRows); err != nil {
@@ -531,21 +562,27 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		}
 	}
 
-	// Project the per-epoch 2Z reward pool from the 2Z journals. Unlike the
+	// Project the per-(epoch, token) reward pool from every journal. Unlike the
 	// claimable-bit projection above, this is NOT window-bounded: the pool is
-	// the numerator for all-time earnings, so we record every 2Z journal we
-	// can still read on-chain (the table accumulates and survives sweeps).
+	// the numerator for all-time earnings, so we record every journal we can
+	// still read on-chain (the table accumulates and survives sweeps). Each
+	// journal contributes its token's pool size and the authoritative per-token
+	// denominator (accumulated_publisher_slots_scaled + accumulated_client_slots_scaled).
 	var poolRows []validatorrewards.Distribution2ZPoolRow
 	for _, kj := range allAccounts.Journals {
 		view := kj.View
-		if view == nil || view.MintKey.String() != validatorrewards.DoubleZeroMintKey {
+		if view == nil {
 			continue
 		}
+		rewardMint := view.RewardMintKey.String()
 		poolRows = append(poolRows, validatorrewards.Distribution2ZPoolRow{
-			PK:                validatorrewards.Distribution2ZPoolPK(view.SubscriptionEpoch),
-			SubscriptionEpoch: view.SubscriptionEpoch,
-			TokensReceived2Z:  view.TokensReceivedAmount,
-			TotalLeaderSlots:  uint64(view.TotalLeaderSlots),
+			PK:                     validatorrewards.DistributionPoolPK(view.SubscriptionEpoch, rewardMint),
+			SubscriptionEpoch:      view.SubscriptionEpoch,
+			TokensReceived2Z:       view.TokensReceivedAmount,
+			TotalLeaderSlots:       uint64(view.TotalLeaderSlots),
+			RewardMint:             rewardMint,
+			AccumulatedSlotsScaled: view.AccumulatedSlotsScaledDenominator(),
+			DistributedAmount:      view.DistributedAmount,
 		})
 	}
 	if len(poolRows) > 0 {

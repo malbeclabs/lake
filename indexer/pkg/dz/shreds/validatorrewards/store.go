@@ -171,6 +171,48 @@ func (s *Store) LeafIndexToNodeClient(ctx context.Context, subscriptionEpoch uin
 	return out, nil
 }
 
+// ExistingLeafMints returns the reward mint already recorded for each
+// (node_id, client_id) leaf of an epoch, from the leaf_distribution_status
+// _current view. The status projection uses this to tell an already-distributed
+// leaf (its journal's publisher bit cleared) apart from a leaf that never
+// belonged to the journal: only a leaf previously attributed to a token may be
+// marked distributed in that token. Returns an empty (non-nil) map when no
+// statuses exist yet for the epoch.
+func (s *Store) ExistingLeafMints(ctx context.Context, subscriptionEpoch uint64) (map[LeafIdentity]string, error) {
+	conn, err := s.cfg.ClickHouse.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ClickHouse connection: %w", err)
+	}
+	defer conn.Close()
+
+	const q = `SELECT node_id, client_id, journal_mint_key
+		FROM dim_dz_shred_validator_leaf_distribution_status_current
+		WHERE subscription_epoch = ?`
+
+	rows, err := conn.Query(ctx, q, subscriptionEpoch)
+	if err != nil {
+		return nil, fmt.Errorf("query existing leaf mints: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[LeafIdentity]string)
+	for rows.Next() {
+		var (
+			nodeID   string
+			clientID uint16
+			mint     string
+		)
+		if err := rows.Scan(&nodeID, &clientID, &mint); err != nil {
+			return nil, fmt.Errorf("scan existing leaf mint row: %w", err)
+		}
+		out[LeafIdentity{NodeID: nodeID, ClientID: clientID}] = mint
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate existing leaf mint rows: %w", err)
+	}
+	return out, nil
+}
+
 // ReplaceLeaves writes the verified leaves as a fresh dim-type-2 snapshot
 // for (subscriptionEpoch, associatedDZEpoch). Each leaf becomes one row
 // with LeafIndex set to its position in the sorted slice.

@@ -6,12 +6,22 @@ import { fetchShredsRewardsDetail } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { PageHeader } from './page-header'
 import { CopyableText } from './copyable-text'
-import { format2Z } from './shreds-rewards-format'
+import { formatTokenAmount } from './shreds-rewards-format'
 
 function truncatePK(pk: string): string {
   if (!pk) return ''
   if (pk.length <= 12) return pk
   return `${pk.slice(0, 6)}...${pk.slice(-4)}`
+}
+
+// formatTokenTotals renders a {symbol: whole-token amount} map as a compact
+// per-token list (e.g. "12.34 2Z · 5.00 USDC"). Rewards span multiple tokens
+// from epoch 968, so an all-time total is a per-token breakdown, not one number.
+function formatTokenTotals(totals: Record<string, number>): string {
+  const parts = Object.entries(totals)
+    .filter(([, amt]) => amt > 0)
+    .map(([sym, amt]) => formatTokenAmount(amt, sym))
+  return parts.length > 0 ? parts.join(' · ') : '—'
 }
 
 function formatStake(lamports: number): string {
@@ -50,12 +60,19 @@ export function ShredsRewardsDetailPage() {
   })
 
   const totals = useMemo(() => {
-    if (!data) return { all: 0, claimable: 0 }
-    const all = data.epochs.reduce((acc, e) => acc + (e.earned_2z || 0), 0)
-    const claimable = data.epochs
-      .filter((e) => e.state === 'claimable')
-      .reduce((acc, e) => acc + (e.earned_2z || 0), 0)
-    return { all, claimable }
+    const all: Record<string, number> = {}
+    const claimable: Record<string, number> = {}
+    if (data) {
+      for (const e of data.epochs) {
+        const sym = e.token_symbol || '2Z'
+        all[sym] = (all[sym] || 0) + (e.earned || 0)
+        if (e.state === 'claimable') {
+          claimable[sym] = (claimable[sym] || 0) + (e.earned || 0)
+        }
+      }
+    }
+    const hasClaimable = Object.values(claimable).some((v) => v > 0)
+    return { all, claimable, hasClaimable }
   }, [data])
 
   if (isLoading) {
@@ -132,16 +149,16 @@ export function ShredsRewardsDetailPage() {
               <span className="text-muted-foreground/60">—</span>
             )}
           </FactCard>
-          <FactCard label="All-time Earned">{format2Z(totals.all)}</FactCard>
+          <FactCard label="All-time Earned">{formatTokenTotals(totals.all)}</FactCard>
           <FactCard label="Immediately Claimable">
             <span
               className={cn(
-                totals.claimable > 0
+                totals.hasClaimable
                   ? 'text-amber-500 dark:text-amber-400'
                   : 'text-muted-foreground/60',
               )}
             >
-              {format2Z(totals.claimable)}
+              {formatTokenTotals(totals.claimable)}
             </span>
           </FactCard>
         </div>
@@ -169,7 +186,7 @@ export function ShredsRewardsDetailPage() {
                     Client
                   </th>
                   <th className="px-4 py-3 text-right font-medium uppercase tracking-wider">
-                    Earned 2Z
+                    Earned
                   </th>
                   <th className="px-4 py-3 text-left font-medium uppercase tracking-wider">
                     Status
@@ -235,7 +252,7 @@ export function ShredsRewardsDetailPage() {
                           {epoch.client_id}
                         </td>
                         <td className="px-4 py-3 tabular-nums text-right font-medium">
-                          {format2Z(epoch.earned_2z)}
+                          {formatTokenAmount(epoch.earned, epoch.token_symbol)}
                         </td>
                         <td className="px-4 py-3">
                           <span

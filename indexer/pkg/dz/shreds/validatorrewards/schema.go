@@ -133,19 +133,41 @@ func LeafDistributionStatusPK(subscriptionEpoch uint64, nodeID string, clientID 
 	return fmt.Sprintf("epoch-%d:node-%s:client-%d", subscriptionEpoch, nodeID, clientID)
 }
 
-// Distribution2ZPoolRow is one row per subscription_epoch recording the 2Z
-// reward pool read from that epoch's 2Z ShredDistributionJournal. This is the
-// validator-pool the per-leaf publisher shares are drawn from, replacing the
-// defunct ShredDistribution.distributed_validator_2z_amount field.
+// Distribution2ZPoolRow is one row per (subscription_epoch, reward token)
+// recording the reward pool read from that epoch's ShredDistributionJournal for
+// the token. Before epoch 968 there was a single 2Z journal per epoch (one row);
+// from 968 on, each supported token (2Z, USDC, wSOL) has its own journal owning
+// the leaves of validators who picked it (one row per token). This is the pool
+// the per-leaf publisher shares are drawn from.
+//
+// The table name and the 2Z row's PK (epoch-{e}) are retained so the historical
+// 2Z pool series — which must survive journal sweeps for all-time earnings — is
+// preserved; non-2Z rows are keyed per (epoch, mint). See DistributionPoolPK.
 type Distribution2ZPoolRow struct {
-	PK                string // epoch-{subscription_epoch}
+	PK                string // epoch-{subscription_epoch}[:mint-{reward_mint}]
 	SubscriptionEpoch uint64
-	TokensReceived2Z  uint64
-	// TotalLeaderSlots is the journal's authoritative leader-slot denominator
-	// for the epoch (see JournalView.TotalLeaderSlots). The rewards page divides
-	// each validator's leader_slots by this rather than by the sum of indexed
-	// leaves, which is incomplete for older epochs and over-credits validators.
+	// TokensReceived2Z is the pool size in base units of RewardMint (the column
+	// name is legacy; it now holds whichever token the journal pays out).
+	TokensReceived2Z uint64
+	// TotalLeaderSlots is the journal's authoritative leader-slot count for the
+	// epoch (see JournalView.TotalLeaderSlots). Legacy fallback denominator used
+	// when AccumulatedSlotsScaled is unavailable (older/swept rows).
 	TotalLeaderSlots uint64
+	// RewardMint is the base58 mint this pool pays out in (JournalView.RewardMintKey).
+	// Empty on legacy rows written before multi-token support; the API treats an
+	// empty mint as 2Z.
+	RewardMint string
+	// AccumulatedSlotsScaled is the journal's per-token reward denominator:
+	// accumulated_publisher_slots_scaled + accumulated_client_slots_scaled, which
+	// equals (this token's leader slots) × 10000. The API divides
+	// tokens × leader_slots × (10000 − client_proportion) by it. Zero on legacy
+	// rows; the API falls back to TotalLeaderSlots × 10000 then summed leaves.
+	AccumulatedSlotsScaled uint64
+	// DistributedAmount is the journal's running total of paid-out reward base
+	// units (JournalView.DistributedAmount). For non-2Z tokens this is the pool
+	// the page splits (their TokensReceived2Z is 0); the 2Z journal instead uses
+	// TokensReceived2Z less the 10% burn. Zero on legacy rows.
+	DistributedAmount uint64
 }
 
 type distribution2ZPoolSchema struct{}
@@ -163,11 +185,14 @@ func (s *distribution2ZPoolSchema) PayloadColumns() []string {
 		"subscription_epoch:BIGINT",
 		"tokens_received_2z:BIGINT",
 		"total_leader_slots:BIGINT",
+		"reward_mint:VARCHAR",
+		"accumulated_slots_scaled:BIGINT",
+		"distributed_amount:BIGINT",
 	}
 }
 
 func (s *distribution2ZPoolSchema) ToRow(r Distribution2ZPoolRow) []any {
-	return []any{r.PK, r.SubscriptionEpoch, r.TokensReceived2Z, r.TotalLeaderSlots}
+	return []any{r.PK, r.SubscriptionEpoch, r.TokensReceived2Z, r.TotalLeaderSlots, r.RewardMint, r.AccumulatedSlotsScaled, r.DistributedAmount}
 }
 
 func (s *distribution2ZPoolSchema) GetPrimaryKey(r Distribution2ZPoolRow) string {
@@ -182,7 +207,21 @@ func NewDistribution2ZPoolDataset(log *slog.Logger) (*dataset.DimensionType2Data
 	return dataset.NewDimensionType2Dataset(log, distribution2ZPoolSchemaSingleton)
 }
 
-// Distribution2ZPoolPK builds the canonical primary key.
+// Distribution2ZPoolPK builds the canonical primary key for the 2Z pool row.
+// The 2Z journal keeps the bare epoch-{e} key so the historical 2Z series
+// (written before multi-token support and before the reward_mint column) stays
+// one continuous entity per epoch rather than forking into a duplicate row.
 func Distribution2ZPoolPK(subscriptionEpoch uint64) string {
 	return fmt.Sprintf("epoch-%d", subscriptionEpoch)
+}
+
+// DistributionPoolPK builds the primary key for a per-(epoch, reward mint) pool
+// row. The 2Z journal uses the legacy bare epoch-{e} key (Distribution2ZPoolPK)
+// to preserve its historical series; every other token journal is keyed
+// epoch-{e}:mint-{mint} so the per-token pools never collide with it.
+func DistributionPoolPK(subscriptionEpoch uint64, rewardMint string) string {
+	if rewardMint == DoubleZeroMintKey {
+		return Distribution2ZPoolPK(subscriptionEpoch)
+	}
+	return fmt.Sprintf("epoch-%d:mint-%s", subscriptionEpoch, rewardMint)
 }

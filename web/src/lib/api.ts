@@ -6773,9 +6773,13 @@ export interface ShredsRewardsRow {
   validator_name: string
   activated_stake: number
   dz_user_ip: string
+  // 2Z-only headline totals (cross-token sums are not meaningful).
   total_earned_2z: number
   immediately_claimable_2z: number
+  // Per recent-epoch reward, in whole units of the token earned that epoch.
   epoch_earnings: Record<string, number>
+  // Per recent-epoch reward-token symbol, parallel to epoch_earnings.
+  epoch_tokens: Record<string, string>
 }
 
 export interface ShredsRewardsResponse {
@@ -6783,6 +6787,8 @@ export interface ShredsRewardsResponse {
   latest_finalized_epoch: number
   epoch_columns: number[]
   validators: ShredsRewardsRow[]
+  // Total distinct validators matching the filter, before limit/offset.
+  total: number
 }
 
 export interface ShredsRewardsParams {
@@ -6819,7 +6825,10 @@ export interface ShredsRewardsEpochDetail {
   subscription_epoch: number
   leader_slots: number
   client_id: number
-  earned_2z: number
+  // Reward in whole units of token_symbol (the token the validator chose for
+  // the epoch: 2Z, USDC, or wSOL).
+  earned: number
+  token_symbol: string
   // Retained for back-compat; `state` carries the full lifecycle.
   is_claimable?: boolean | null
   state: ShredsRewardsClaimState
