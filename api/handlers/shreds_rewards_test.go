@@ -196,6 +196,7 @@ func TestGetShredsRewards_GoldenPath(t *testing.T) {
 	assert.Equal(t, uint64(12), resp.CurrentSolanaEpoch)
 
 	require.Len(t, resp.Validators, 2)
+	assert.Equal(t, 2, resp.Total, "Total reflects the full count query, not the page size")
 	// Default sort is total_earned_2z DESC: node-A (10530) before node-B (7020).
 	a := resp.Validators[0]
 	b := resp.Validators[1]
@@ -524,8 +525,7 @@ func TestGetShredsRewards_UsesJournalTotalLeaderSlots(t *testing.T) {
 // TestGetShredsRewards_MultiTokenUSDC covers the multi-token era: a validator
 // rewarded in USDC. Its leaf is attributed to the USDC mint via the status row's
 // journal_mint_key, joined to the USDC pool, and split over the USDC journal's
-// accumulated_slots_scaled denominator (not the epoch total), with the 10% burn
-// and USDC's 6 decimals.
+// accumulated_slots_scaled denominator (not the epoch total), with USDC's 6 decimals.
 //
 //	USDC is not burned and its journal holds no swapped balance
 //	(tokens_received_2z = 0); the pool comes from distributed_amount = 9e8 base

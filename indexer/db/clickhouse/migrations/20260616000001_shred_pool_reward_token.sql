@@ -6,7 +6,7 @@
 -- for epochs ≥ 968 that mistagged USDC/wSOL leaves as 2Z. The new projection
 -- only marks a leaf distributed for the token it was previously attributed to,
 -- so the stale 2Z rows must be cleared or they would perpetuate. The table is
--- window-bounded (~12 recent epochs) and repopulated every indexer refresh, so
+-- window-bounded and repopulated every indexer refresh, so
 -- this is cheap; older epochs whose journals are already swept cannot be
 -- re-attributed regardless.
 TRUNCATE TABLE IF EXISTS dim_dz_shred_validator_leaf_distribution_status_history;

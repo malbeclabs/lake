@@ -21,7 +21,7 @@ TRUNCATE TABLE IF EXISTS stg_dim_dz_shred_validator_rewards_leaves_snapshot;
 -- overwrite another's. Extend the grain to include client_id. We drop and
 -- recreate (rather than ALTER ... ADD COLUMN) so client_id lands in the correct
 -- column position for the dim-type-2 positional batch insert. The table is
--- window-bounded (~12 most-recent epochs) and repopulated every refresh, so the
+-- window-bounded and repopulated every refresh, so the
 -- rebuild is cheap.
 DROP VIEW IF EXISTS dim_dz_shred_validator_leaf_distribution_status_current;
 DROP TABLE IF EXISTS dim_dz_shred_validator_leaf_distribution_status_history;
