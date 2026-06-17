@@ -6096,6 +6096,38 @@ export async function fetchEdgeScoreboard(
   return res.json()
 }
 
+export interface EdgeScoreboardMatrixPair {
+  winner: string
+  loser: string
+  wins: number
+  reverse: number
+  total: number
+  win_pct: number
+  complete: boolean
+}
+
+export interface EdgeScoreboardMatrixResponse {
+  window: string
+  leaders_only: boolean
+  generated_at: string
+  sources: string[]
+  pairs: EdgeScoreboardMatrixPair[]
+}
+
+export async function fetchEdgeScoreboardMatrix(
+  window: string = '1h',
+  leadersOnly: boolean = true
+): Promise<EdgeScoreboardMatrixResponse> {
+  const params = new URLSearchParams()
+  params.set('window', window)
+  params.set('leaders_only', leadersOnly ? 'true' : 'false')
+  const res = await apiFetch(`/api/dz/edge/scoreboard/matrix?${params}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch edge scoreboard matrix')
+  }
+  return res.json()
+}
+
 // --- Unified Metrics Types ---
 
 export interface EntityStatusChange {

@@ -128,6 +128,41 @@ type EdgeScoreboardResponse struct {
 	DataLagMs uint64 `json:"data_lag_ms,omitempty"`
 }
 
+// EdgeScoreboardMatrixPair is one directed head-to-head cell: among shreds that both
+// `winner` and `loser` delivered, `winner` arrived first `wins` times and `loser` arrived
+// first `reverse` times. WinPct = wins / (wins + reverse). Complete is true only when both
+// directions had pairwise rows in the source table — when false, the reverse count is
+// unknown (the shredder may not emit that pairing) and WinPct should be treated as n/a.
+type EdgeScoreboardMatrixPair struct {
+	Winner   string  `json:"winner"`
+	Loser    string  `json:"loser"`
+	Wins     uint64  `json:"wins"`
+	Reverse  uint64  `json:"reverse"`
+	Total    uint64  `json:"total"`
+	WinPct   float64 `json:"win_pct"`
+	Complete bool    `json:"complete"`
+}
+
+// EdgeScoreboardMatrixResponse is the response for the head-to-head win-rate matrix.
+// Sources is the canonical row/column order (only keys present in the data). Pairs holds
+// every ordered (winner, loser) cell that had data in at least one direction.
+type EdgeScoreboardMatrixResponse struct {
+	Window      string                     `json:"window"`
+	LeadersOnly bool                       `json:"leaders_only"`
+	GeneratedAt time.Time                  `json:"generated_at"`
+	Sources     []string                   `json:"sources"`
+	Pairs       []EdgeScoreboardMatrixPair `json:"pairs"`
+}
+
+// matrixSourceOrder is the canonical row/column ordering for the win-rate matrix, matching
+// the scoreboard's feed rollup keys: DZ leader, turbine-root, regional retransmit, then the
+// non-DZ competitors. Only keys that actually appear in the data are surfaced.
+var matrixSourceOrder = []string{"dz", "dz_root", "dz_retransmit", "jito", "turbine"}
+
+// loserFeedRollup mirrors feedRollup but maps the loser_feed column, so pairwise rows can be
+// grouped on the same rollup keys (dz_root, dz_retransmit) as the winning feed.
+const loserFeedRollup = `CASE WHEN loser_feed = 'edge-solana-root' THEN 'dz_root' WHEN loser_feed = 'dz_rebop' OR loser_feed LIKE 'edge-solana-retrans-%' THEN 'dz_retransmit' ELSE loser_feed END`
+
 // maxValidSlot caps max(slot) queries against shredder tables to exclude corrupted rows.
 // Occasional bad inserts produce slot values near 2^64; any of those poison the preamble
 // `SELECT max(slot)` so the derived slot-range filter excludes all real data. Valid Solana
@@ -333,6 +368,163 @@ func (a *API) GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, resp)
+}
+
+// GetEdgeScoreboardMatrix serves the head-to-head win-rate matrix: for each ordered pair of
+// shred sources (dz leader, turbine-root, retransmit, jito, turbine), what fraction of the
+// shreds they both delivered did the row source arrive first. Gated client-side behind the
+// scoreboard's ?matrix=1 flag; accepts the same window / leaders_only params.
+func (a *API) GetEdgeScoreboardMatrix(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+
+	window := strings.TrimSpace(r.URL.Query().Get("window"))
+	if _, ok := validWindows[window]; !ok {
+		window = "1h"
+	}
+	leadersOnly := strings.TrimSpace(r.URL.Query().Get("leaders_only")) != "false"
+
+	resp, err := a.FetchEdgeScoreboardMatrix(ctx, window, leadersOnly)
+	if err != nil {
+		logError("EdgeScoreboardMatrix error", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, resp)
+}
+
+// FetchEdgeScoreboardMatrix computes the pairwise win-rate matrix across scoreboard feeds.
+//
+// It reads the pairwise rows of slot_feed_race_summary_v2 (loser_feed != ”), rolling up both
+// feed and loser_feed to the scoreboard keys, and sums shreds_won per (winner, loser). A cell
+// (A,B) reports wins = shreds where A arrived before B and reverse = shreds where B arrived
+// before A; win_pct = wins / (wins + reverse). When the source table only carries one
+// direction of a pairing, complete is false and the percentage is left for the client to
+// render as n/a rather than a misleading 100%.
+func (a *API) FetchEdgeScoreboardMatrix(ctx context.Context, window string, leadersOnly bool) (*EdgeScoreboardMatrixResponse, error) {
+	interval := validWindows[window]
+	var timeFilter string
+	if interval != "" {
+		timeFilter = fmt.Sprintf("AND event_ts >= now() - INTERVAL %s", interval)
+	}
+
+	shredderDB := fmt.Sprintf("`%s`", a.ShredderDB)
+	publisherDB := fmt.Sprintf("`%s`", a.PublisherDB)
+
+	// Derive a slot lower bound from max(slot) so the (host, slot, …) primary index can seek
+	// directly to the window instead of scanning the whole monthly partition. Mirrors the
+	// main scoreboard fetch; max(slot) is O(1) against the primary key.
+	rangeFilter := timeFilter
+	if slotWindow, ok := slotsPerWindow[window]; ok {
+		var maxSlot uint64
+		err := a.envDB(ctx).QueryRow(ctx, fmt.Sprintf(
+			`SELECT max(slot) FROM %s.slot_feed_race_summary_v2 WHERE slot < %d`,
+			shredderDB, maxValidSlot,
+		)).Scan(&maxSlot)
+		if err != nil {
+			return nil, fmt.Errorf("matrix max slot: %w", err)
+		}
+		if maxSlot > slotWindow {
+			rangeFilter = fmt.Sprintf("%s AND slot >= %d", timeFilter, maxSlot-slotWindow)
+		}
+	}
+
+	// In leaders-only mode, scope pairwise rows to slots where the scheduled leader published
+	// via DZ, matching the main scoreboard's default view.
+	var ctePrefix, leaderScope string
+	if leadersOnly {
+		ctePrefix = fmt.Sprintf(`WITH dz_leader_slots AS (
+			SELECT DISTINCT slot
+			FROM %s.publisher_shred_stats
+			WHERE is_scheduled_leader = true %s
+		)`, publisherDB, timeFilter)
+		leaderScope = "AND slot IN (SELECT slot FROM dz_leader_slots)"
+	}
+
+	// winner_key != loser_key drops self-pairs created when two variants that roll up to the
+	// same key (e.g. two regional retransmit feeds) raced each other.
+	query := fmt.Sprintf(`%[1]s
+		SELECT winner_key, loser_key, sum(shreds_won) AS wins
+		FROM (
+			SELECT %[5]s AS winner_key, %[6]s AS loser_key, shreds_won
+			FROM %[2]s.slot_feed_race_summary_v2
+			WHERE feed_type = 'shred' AND loser_feed != '' AND host != ''
+				AND feed IN (%[3]s) AND loser_feed IN (%[3]s)
+				%[7]s
+				%[4]s
+		)
+		WHERE winner_key != loser_key
+		GROUP BY winner_key, loser_key
+	SETTINGS final=1
+`, ctePrefix, shredderDB, scoreboardFeeds, rangeFilter, feedRollup, loserFeedRollup, leaderScope)
+
+	t := time.Now()
+	rows, err := a.envDB(ctx).Query(ctx, query)
+	metrics.RecordClickHouseQuery("edge_scoreboard:matrix", time.Since(t), err)
+	if err != nil {
+		return nil, fmt.Errorf("matrix query: %w", err)
+	}
+	defer rows.Close()
+
+	type pairKey struct{ winner, loser string }
+	directed := make(map[pairKey]uint64)
+	present := make(map[string]bool)
+	for rows.Next() {
+		var winner, loser string
+		var wins uint64
+		if err := rows.Scan(&winner, &loser, &wins); err != nil {
+			return nil, fmt.Errorf("matrix scan: %w", err)
+		}
+		directed[pairKey{winner, loser}] = wins
+		present[winner] = true
+		present[loser] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("matrix rows: %w", err)
+	}
+
+	sources := make([]string, 0, len(matrixSourceOrder))
+	for _, s := range matrixSourceOrder {
+		if present[s] {
+			sources = append(sources, s)
+		}
+	}
+
+	pairs := make([]EdgeScoreboardMatrixPair, 0)
+	for _, winner := range sources {
+		for _, loser := range sources {
+			if winner == loser {
+				continue
+			}
+			wins, fwd := directed[pairKey{winner, loser}]
+			reverse, rev := directed[pairKey{loser, winner}]
+			if !fwd && !rev {
+				continue
+			}
+			total := wins + reverse
+			var pct float64
+			if total > 0 {
+				pct = float64(wins) / float64(total) * 100
+			}
+			pairs = append(pairs, EdgeScoreboardMatrixPair{
+				Winner:   winner,
+				Loser:    loser,
+				Wins:     wins,
+				Reverse:  reverse,
+				Total:    total,
+				WinPct:   pct,
+				Complete: fwd && rev,
+			})
+		}
+	}
+
+	return &EdgeScoreboardMatrixResponse{
+		Window:      window,
+		LeadersOnly: leadersOnly,
+		GeneratedAt: time.Now().UTC(),
+		Sources:     sources,
+		Pairs:       pairs,
+	}, nil
 }
 
 // FetchRootPublishingStats returns the number of distinct validators publishing via the

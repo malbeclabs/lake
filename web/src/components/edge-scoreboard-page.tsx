@@ -7,9 +7,11 @@ import 'uplot/dist/uPlot.min.css'
 
 import {
   fetchEdgeScoreboard,
+  fetchEdgeScoreboardMatrix,
   type EdgeScoreboardNode,
   type EdgeScoreboardSlotRace,
   type EdgeScoreboardLeader,
+  type EdgeScoreboardMatrixResponse,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -1951,6 +1953,134 @@ function RecentSlotsChart({
   )
 }
 
+// MATRIX_LABELS are short row/column labels for the head-to-head matrix (the full
+// FEED_LABELS strings are too wide for a grid header).
+const MATRIX_LABELS: Record<string, string> = {
+  dz: 'DZ Leaders',
+  dz_root: 'DZ turbine-root',
+  dz_retransmit: 'DZ Retransmits',
+  jito: 'Jito Shredstream',
+  turbine: 'Turbine',
+}
+
+// matrixCellStyle shades a cell by how decisively the row source wins: emerald above 50%,
+// rose below, intensity scaled by distance from a coin-flip.
+function matrixCellStyle(pct: number): React.CSSProperties {
+  const mag = Math.min(Math.abs(pct - 50) / 50, 1)
+  const alpha = 0.08 + mag * 0.45
+  const rgb = pct >= 50 ? '16, 185, 129' : '244, 63, 94' // emerald-500 / rose-500
+  return { backgroundColor: `rgba(${rgb}, ${alpha.toFixed(3)})` }
+}
+
+function WinRateMatrix({ data, loading, error, rootPublishingCount, rootPublishingStakePct }: { data?: EdgeScoreboardMatrixResponse; loading: boolean; error: unknown; rootPublishingCount?: number; rootPublishingStakePct?: number }) {
+  const lookup = useMemo(() => {
+    const m = new Map<string, EdgeScoreboardMatrixResponse['pairs'][number]>()
+    for (const p of data?.pairs ?? []) m.set(`${p.winner}|${p.loser}`, p)
+    return m
+  }, [data])
+
+  const sources = data?.sources ?? []
+
+  if (error) {
+    return (
+      <div className="border border-border rounded-lg bg-card p-6 text-sm text-rose-400">
+        Failed to load win-rate matrix.
+      </div>
+    )
+  }
+
+  return (
+    <div className="border border-border rounded-lg bg-card overflow-hidden mb-6">
+      <div className="flex items-center gap-4 px-4 py-3 border-b border-border">
+        <h2 className="text-sm font-semibold flex-1">Head-to-Head Win Rate</h2>
+        {rootPublishingCount !== undefined && (
+          <div className="flex items-center gap-5 text-right">
+            <Tooltip content="Validators publishing shreds via the turbine-root path (earliest DZ hop, before regional retransmit).">
+              <div className="cursor-default">
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Turbine-Root Publishing</div>
+                <div className="text-sm font-semibold tabular-nums">{Math.round(rootPublishingCount).toLocaleString()}</div>
+              </div>
+            </Tooltip>
+            <Tooltip content="Percentage of total network stake held by validators publishing via the turbine-root path.">
+              <div className="cursor-default">
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Turbine-Root Stake</div>
+                <div className="text-sm font-semibold tabular-nums">{formatPct(rootPublishingStakePct ?? 0)}</div>
+              </div>
+            </Tooltip>
+          </div>
+        )}
+        {loading && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
+      </div>
+      <div className="px-4 py-3">
+        <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
+          Among shreds that <span className="text-foreground">both</span> sources delivered, the % where the{' '}
+          <span className="text-foreground">row</span> source arrived <span className="text-foreground">before</span> the{' '}
+          <span className="text-foreground">column</span> source. Each cell is independent of the others (not normalized to 100%).
+        </p>
+        {!loading && sources.length === 0 ? (
+          <div className="text-sm text-muted-foreground py-6 text-center">No pairwise data in this window.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="border-collapse text-sm">
+              <thead>
+                <tr>
+                  <th className="p-2 text-left text-xs font-medium text-muted-foreground align-bottom">
+                    <span className="text-foreground">wins</span> ↓ over →
+                  </th>
+                  {sources.map((s) => (
+                    <th key={s} className="p-2 text-center text-xs font-medium whitespace-nowrap" style={{ color: FEED_COLORS[s] ?? undefined }}>
+                      {MATRIX_LABELS[s] ?? s}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sources.map((winner) => (
+                  <tr key={winner}>
+                    <td className="p-2 text-xs font-medium whitespace-nowrap" style={{ color: FEED_COLORS[winner] ?? undefined }}>
+                      {MATRIX_LABELS[winner] ?? winner}
+                    </td>
+                    {sources.map((loser) => {
+                      if (winner === loser) {
+                        return <td key={loser} className="p-2 text-center text-muted-foreground/30 bg-muted/20">—</td>
+                      }
+                      const pair = lookup.get(`${winner}|${loser}`)
+                      if (!pair || pair.total === 0) {
+                        return <td key={loser} className="p-2 text-center text-muted-foreground/40 text-xs">n/a</td>
+                      }
+                      const cell = (
+                        <td
+                          key={loser}
+                          className={cn('p-2 text-center tabular-nums cursor-default', !pair.complete && 'opacity-60')}
+                          style={pair.complete ? matrixCellStyle(pair.win_pct) : undefined}
+                        >
+                          <span className="font-medium">{pair.win_pct.toFixed(1)}%</span>
+                          {!pair.complete && <span className="text-amber-400 align-super text-[10px] ml-0.5">*</span>}
+                        </td>
+                      )
+                      const tip = pair.complete
+                        ? `${MATRIX_LABELS[winner] ?? winner} first on ${pair.wins.toLocaleString()} of ${pair.total.toLocaleString()} shared shreds vs ${MATRIX_LABELS[loser] ?? loser}`
+                        : `Only one direction is tracked in the source data — ${MATRIX_LABELS[winner] ?? winner} first on ${pair.wins.toLocaleString()} shreds, but reverse (${MATRIX_LABELS[loser] ?? loser} first) is not recorded. Rate is a lower-bound, not a true head-to-head.`
+                      return (
+                        <Tooltip key={loser} content={tip}>
+                          {cell}
+                        </Tooltip>
+                      )
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="text-[11px] text-muted-foreground mt-3">
+              <span className="text-amber-400">*</span> only one direction recorded in the source data; the reverse race isn't tracked, so the shown rate is a lower bound rather than a true head-to-head.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function EdgeScoreboardPage() {
   const [searchParams, setSearchParams] = useSearchParams()
 
@@ -1968,6 +2098,10 @@ export function EdgeScoreboardPage() {
       return p
     })
   }
+
+  // matrix=1 swaps the slot race / node table for the head-to-head win-rate matrix
+  // (source-vs-source). Opt-in flag, not surfaced in nav.
+  const matrixView = searchParams.get('matrix') === '1'
 
   const rawSlotCount = parseInt(searchParams.get('slot_count') ?? '200')
   const viewSlotCount = [50, 100, 200, 300, 500].includes(rawSlotCount) ? rawSlotCount : 200
@@ -2001,6 +2135,15 @@ export function EdgeScoreboardPage() {
   const { data, isLoading, isFetching, error } = useQuery({
     queryKey: ['edge-scoreboard', activeWindow, leadersOnly],
     queryFn: () => fetchEdgeScoreboard(activeWindow, leadersOnly),
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+    placeholderData: keepPreviousData,
+  })
+
+  const { data: matrixData, isLoading: matrixLoading, error: matrixError } = useQuery({
+    queryKey: ['edge-scoreboard-matrix', activeWindow, leadersOnly],
+    queryFn: () => fetchEdgeScoreboardMatrix(activeWindow, leadersOnly),
+    enabled: matrixView,
     refetchInterval: 30_000,
     staleTime: 15_000,
     placeholderData: keepPreviousData,
@@ -2292,26 +2435,6 @@ export function EdgeScoreboardPage() {
                     Percentage of total network stake held by validators actively publishing shreds.
                   </span>
                 </div>
-                <div className="group relative sm:border-l sm:border-border sm:pl-6">
-                  <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                    Turbine-Root Publishing
-                    <Info className="w-3 h-3 opacity-60" />
-                  </div>
-                  <div className="text-xl sm:text-2xl font-semibold tabular-nums">{Math.round(animRootPublishingCount ?? data.root_publishing_count).toLocaleString()}</div>
-                  <span className="pointer-events-none absolute top-full left-0 mt-2 z-30 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal opacity-0 group-hover:opacity-100 transition-opacity">
-                    Validators publishing shreds via the turbine-root path (earliest DZ hop, before regional retransmit).
-                  </span>
-                </div>
-                <div className="group relative sm:border-l sm:border-border sm:pl-6">
-                  <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                    Turbine-Root Stake Weight
-                    <Info className="w-3 h-3 opacity-60" />
-                  </div>
-                  <div className="text-xl sm:text-2xl font-semibold tabular-nums">{formatPct(animRootPublishingStakePct ?? data.root_publishing_stake_pct)}</div>
-                  <span className="pointer-events-none absolute top-full left-0 mt-2 z-30 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal opacity-0 group-hover:opacity-100 transition-opacity">
-                    Percentage of total network stake held by validators publishing via the turbine-root path.
-                  </span>
-                </div>
               </div>
             </div>
 
@@ -2349,8 +2472,19 @@ export function EdgeScoreboardPage() {
           </div>
         )}
 
+        {/* Head-to-head win-rate matrix (matrix=1 flag) */}
+        {matrixView && (
+          <WinRateMatrix
+            data={matrixData}
+            loading={matrixLoading}
+            error={matrixError}
+            rootPublishingCount={animRootPublishingCount ?? data?.root_publishing_count}
+            rootPublishingStakePct={animRootPublishingStakePct ?? data?.root_publishing_stake_pct}
+          />
+        )}
+
         {/* Win Rate by Slot chart */}
-        {data?.nodes && (
+        {!matrixView && data?.nodes && (
           <div className="mb-6">
             <div className="border border-border rounded-lg bg-card overflow-hidden">
               <div className="flex items-center px-4 py-3">
@@ -2433,6 +2567,7 @@ export function EdgeScoreboardPage() {
         )}
 
         {/* Node detail table */}
+        {!matrixView && (
         <div className="border border-border rounded-lg overflow-hidden bg-card mb-6">
           <div className="overflow-x-auto">
             <table className="min-w-full">
@@ -2460,6 +2595,7 @@ export function EdgeScoreboardPage() {
             </table>
           </div>
         </div>
+        )}
 
 
       </div>
