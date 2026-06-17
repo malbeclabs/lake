@@ -2313,7 +2313,7 @@ export function EdgeScoreboardPage() {
                 <div key={competitor}>
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-muted-foreground">DZ Edge vs {FEED_LABELS[competitor] ?? competitor}</span>
-                    <span className="text-sm font-medium tabular-nums ml-4 shrink-0"><AnimatedStat value={lead.p50} fmt={formatMs} /></span>
+                    <span className="text-sm font-medium tabular-nums ml-4 shrink-0"><span className="text-xs text-muted-foreground font-normal mr-1">p50:</span><AnimatedStat value={lead.p50} fmt={formatMs} /></span>
                   </div>
                   <div className="text-xs text-muted-foreground mt-0.5">p95: <AnimatedStat value={lead.p95} fmt={formatMs} /></div>
                 </div>
