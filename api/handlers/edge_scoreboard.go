@@ -102,24 +102,26 @@ type EdgeScoreboardLeader struct {
 
 // EdgeScoreboardResponse is the response for the edge scoreboard endpoint.
 type EdgeScoreboardResponse struct {
-	Window             string                           `json:"window"`
-	LeadersOnly        bool                             `json:"leaders_only"`
-	GeneratedAt        time.Time                        `json:"generated_at"`
-	CurrentEpoch       uint64                           `json:"current_epoch"`
-	CurrentSlot        uint64                           `json:"current_slot"`
-	TotalSlots         uint64                           `json:"total_slots"`
-	GlobalTotalSlots   uint64                           `json:"global_total_slots"`
-	DZSlots            uint64                           `json:"dz_slots"`
-	TotalDZLeaderSlots uint64                           `json:"total_dz_leader_slots"`
-	CompletenessPct    float64                          `json:"completeness_pct"`
-	PublisherCount     uint64                           `json:"publisher_count"`
-	PublishingCount    uint64                           `json:"publishing_count"`
-	PublishingStakePct float64                          `json:"publishing_stake_pct"`
-	Nodes              []EdgeScoreboardNode             `json:"nodes"`
-	RecentSlots        []EdgeScoreboardSlotRace         `json:"recent_slots"`
-	SlotBuckets        []EdgeScoreboardSlotBucket       `json:"slot_buckets,omitempty"`
-	SlotBucketSize     uint64                           `json:"slot_bucket_size,omitempty"`
-	SlotLeaders        map[string]*EdgeScoreboardLeader `json:"slot_leaders,omitempty"`
+	Window                 string                           `json:"window"`
+	LeadersOnly            bool                             `json:"leaders_only"`
+	GeneratedAt            time.Time                        `json:"generated_at"`
+	CurrentEpoch           uint64                           `json:"current_epoch"`
+	CurrentSlot            uint64                           `json:"current_slot"`
+	TotalSlots             uint64                           `json:"total_slots"`
+	GlobalTotalSlots       uint64                           `json:"global_total_slots"`
+	DZSlots                uint64                           `json:"dz_slots"`
+	TotalDZLeaderSlots     uint64                           `json:"total_dz_leader_slots"`
+	CompletenessPct        float64                          `json:"completeness_pct"`
+	PublisherCount         uint64                           `json:"publisher_count"`
+	PublishingCount        uint64                           `json:"publishing_count"`
+	PublishingStakePct     float64                          `json:"publishing_stake_pct"`
+	RootPublishingCount    uint64                           `json:"root_publishing_count"`
+	RootPublishingStakePct float64                          `json:"root_publishing_stake_pct"`
+	Nodes                  []EdgeScoreboardNode             `json:"nodes"`
+	RecentSlots            []EdgeScoreboardSlotRace         `json:"recent_slots"`
+	SlotBuckets            []EdgeScoreboardSlotBucket       `json:"slot_buckets,omitempty"`
+	SlotBucketSize         uint64                           `json:"slot_bucket_size,omitempty"`
+	SlotLeaders            map[string]*EdgeScoreboardLeader `json:"slot_leaders,omitempty"`
 	// DataLagMs is how far behind wall clock the latest row in slot_feed_race_summary_v2 is
 	// (server now − max(event_ts)). The client adds this to its own queue depth to show a
 	// pill reflecting actual on-chain time.
@@ -137,17 +139,23 @@ const maxValidSlot = 1_000_000_000_000
 // the per-validator local re-broadcast (dz_rebop) plus three regional retransmit feeds.
 const retransmitFeeds = `'dz_rebop', 'edge-solana-retrans-amer', 'edge-solana-retrans-eu', 'edge-solana-retrans-apac'`
 
-// dzFeeds combines the DZ leader feed with every retransmit variant. It backs the
-// dz_slots completeness count (q1) and the all-slots lead-time pool (q2b), so the root
-// feed is deliberately excluded here to keep those metrics on the existing 'dz' baseline.
+// dzFeeds combines the DZ leader feed with every retransmit variant (root excluded). It
+// backs the dz_slots completeness count (q1), so the root feed is deliberately excluded
+// here to keep that metric on the existing 'dz' + retransmit baseline.
 const dzFeeds = `'dz', ` + retransmitFeeds
 
 // rootFeed is the multicast group validators publish to when they are the root of the
 // turbine tree — the earliest hop of the DZ shred path, before regional retransmit.
 const rootFeed = `'edge-solana-root'`
 
+// dzEdgeFeeds is the full set of DZ delivery paths that make up the synthesized dz_edge
+// feed: leader (dz), turbine-root (edge-solana-root), and every retransmit variant. It
+// backs the lead-time pool (q2b) so the p50/p95 advantage reflects whichever DZ path
+// arrived first — matching the win-rate's dz_edge = dz + dz_root + dz_retransmit.
+const dzEdgeFeeds = dzFeeds + `, ` + rootFeed
+
 // scoreboardFeeds is the whitelist of feed names included in edge scoreboard results.
-const scoreboardFeeds = dzFeeds + `, ` + rootFeed + `, 'jito', 'turbine'`
+const scoreboardFeeds = dzEdgeFeeds + `, 'jito', 'turbine'`
 
 // scoreboardLoserFeeds is the whitelist of competitor feeds shown in lead-time comparisons.
 const scoreboardLoserFeeds = `'jito', 'turbine'`
@@ -398,6 +406,8 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 	var totalDZLeaderSlots, globalTotalSlots uint64
 	var publisherCount, publishingCount uint64
 	var publishingStakePct float64
+	var rootPublishingCount uint64
+	var rootPublishingStakePct float64
 
 	if cursorMode {
 		// Derive a slot window from the cursor. slotWindowMin/slotWindowMax (below)
@@ -688,16 +698,28 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				return nil
 			}
 			publisherCount = pc.TotalPublishers
-			var publishingStake int64
-			var pubCount uint64
+			var publishingStake, rootStake int64
+			var pubCount, rootCount uint64
 			for _, p := range pc.Publishers {
-				if p.LeaderSlots > 0 && p.VotePubkey != "" && p.NodePubkey != "" {
+				if p.VotePubkey == "" || p.NodePubkey == "" {
+					continue
+				}
+				if p.LeaderSlots > 0 {
 					pubCount++
 					publishingStake += int64(p.ActivatedStake)
+				}
+				// Turbine-root participation, derived the same way as the leader metric.
+				// Reads zero until the shredder populates publisher_shred_stats with the
+				// edge-solana-root feed (see rootPublisherFeed in publisher_check.go).
+				if p.RootSlots > 0 {
+					rootCount++
+					rootStake += int64(p.ActivatedStake)
 				}
 			}
 			publishingCount = pubCount
 			publishingStakePct = float64(publishingStake) / float64(pc.TotalNetworkStake) * 100
+			rootPublishingCount = rootCount
+			rootPublishingStakePct = float64(rootStake) / float64(pc.TotalNetworkStake) * 100
 			return nil
 		})
 
@@ -846,9 +868,10 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		// Group A2: pairwise lead times (q2b) for the synthetic dz_edge feed vs competitors.
 		// Runs in parallel with Group A so it is never starved by q2+q2c consuming
 		// the 45s budget, which caused intermittent empty lead-time columns.
-		// Leaders-only uses feed='dz' (leader path only). All-slots pools dz + regional
-		// retransmit feeds so retransmit wins are represented — direct quantile over the
-		// combined rows (no per-slot argMin CTE, which was too expensive over the full table).
+		// Both modes pool the full DZ path set (dz + turbine-root + regional retransmit) so the
+		// p50/p95 reflects whichever DZ path arrived first — matching the win-rate's dz_edge.
+		// Direct quantile over the combined rows (no per-slot argMin CTE, which was too
+		// expensive over the full table). Leaders-only additionally scopes to DZ-leader slots.
 		g.Go(func() error {
 			var q2b string
 			if leadersOnly {
@@ -860,13 +883,13 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					quantile(0.5)(lead_time_p50_ms) AS p50_ms,
 					quantile(0.95)(lead_time_p95_ms) AS p95_ms
 				FROM %s.slot_feed_race_summary_v2
-				WHERE feed_type = 'shred' AND feed = 'dz' AND loser_feed IN (%s)
+				WHERE feed_type = 'shred' AND feed IN (%s) AND loser_feed IN (%s)
 					AND slot IN (SELECT slot FROM dz_leader_slots)
 					AND lead_time_p50_ms <= 500
 					%s
 				GROUP BY host, loser_feed
 			SETTINGS final=1
-`, dzLeaderCTE, shredderDB, scoreboardLoserFeeds, rangeFilter)
+`, dzLeaderCTE, shredderDB, dzEdgeFeeds, scoreboardLoserFeeds, rangeFilter)
 			} else {
 				q2b = fmt.Sprintf(`
 				SELECT
@@ -880,7 +903,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					%s
 				GROUP BY host, loser_feed
 			SETTINGS final=1
-`, shredderDB, dzFeeds, scoreboardLoserFeeds, rangeFilter)
+`, shredderDB, dzEdgeFeeds, scoreboardLoserFeeds, rangeFilter)
 			}
 			t := time.Now()
 			rows2b, err := a.envDB(gctx).Query(gctx, q2b)
@@ -1533,25 +1556,27 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 	}
 
 	return &EdgeScoreboardResponse{
-		Window:             window,
-		LeadersOnly:        leadersOnly,
-		GeneratedAt:        time.Now().UTC(),
-		CurrentEpoch:       globalMaxEpoch,
-		CurrentSlot:        globalMaxSlot,
-		TotalSlots:         totalSlots,
-		GlobalTotalSlots:   globalTotalSlots,
-		DZSlots:            dzSlots,
-		TotalDZLeaderSlots: totalDZLeaderSlots,
-		CompletenessPct:    completenessPct,
-		PublisherCount:     publisherCount,
-		PublishingCount:    publishingCount,
-		PublishingStakePct: publishingStakePct,
-		Nodes:              nodes,
-		RecentSlots:        recentSlots,
-		SlotBuckets:        slotBuckets,
-		SlotBucketSize:     slotBucketSize,
-		SlotLeaders:        slotLeaders,
-		DataLagMs:          dataLagMs,
+		Window:                 window,
+		LeadersOnly:            leadersOnly,
+		GeneratedAt:            time.Now().UTC(),
+		CurrentEpoch:           globalMaxEpoch,
+		CurrentSlot:            globalMaxSlot,
+		TotalSlots:             totalSlots,
+		GlobalTotalSlots:       globalTotalSlots,
+		DZSlots:                dzSlots,
+		TotalDZLeaderSlots:     totalDZLeaderSlots,
+		CompletenessPct:        completenessPct,
+		PublisherCount:         publisherCount,
+		PublishingCount:        publishingCount,
+		PublishingStakePct:     publishingStakePct,
+		RootPublishingCount:    rootPublishingCount,
+		RootPublishingStakePct: rootPublishingStakePct,
+		Nodes:                  nodes,
+		RecentSlots:            recentSlots,
+		SlotBuckets:            slotBuckets,
+		SlotBucketSize:         slotBucketSize,
+		SlotLeaders:            slotLeaders,
+		DataLagMs:              dataLagMs,
 	}, nil
 }
 

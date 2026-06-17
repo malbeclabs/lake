@@ -2184,6 +2184,8 @@ export function EdgeScoreboardPage() {
 
   const animPublishingCount = useAnimatedNumber(data?.publishing_count)
   const animPublishingStakePct = useAnimatedNumber(data?.publishing_stake_pct)
+  const animRootPublishingCount = useAnimatedNumber(data?.root_publishing_count)
+  const animRootPublishingStakePct = useAnimatedNumber(data?.root_publishing_stake_pct)
   const animWinRate = useAnimatedNumber(globalStats?.winRate)
 
   if (isLoading && showLoader && !data) return (
@@ -2288,6 +2290,26 @@ export function EdgeScoreboardPage() {
                   <div className="text-xl sm:text-2xl font-semibold tabular-nums">{formatPct(animPublishingStakePct ?? data.publishing_stake_pct)}</div>
                   <span className="pointer-events-none absolute top-full left-0 mt-2 z-30 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal opacity-0 group-hover:opacity-100 transition-opacity">
                     Percentage of total network stake held by validators actively publishing shreds.
+                  </span>
+                </div>
+                <div className="group relative sm:border-l sm:border-border sm:pl-6">
+                  <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
+                    Turbine-Root Publishing
+                    <Info className="w-3 h-3 opacity-60" />
+                  </div>
+                  <div className="text-xl sm:text-2xl font-semibold tabular-nums">{Math.round(animRootPublishingCount ?? data.root_publishing_count).toLocaleString()}</div>
+                  <span className="pointer-events-none absolute top-full left-0 mt-2 z-30 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal opacity-0 group-hover:opacity-100 transition-opacity">
+                    Validators publishing shreds via the turbine-root path (earliest DZ hop, before regional retransmit).
+                  </span>
+                </div>
+                <div className="group relative sm:border-l sm:border-border sm:pl-6">
+                  <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
+                    Turbine-Root Stake Weight
+                    <Info className="w-3 h-3 opacity-60" />
+                  </div>
+                  <div className="text-xl sm:text-2xl font-semibold tabular-nums">{formatPct(animRootPublishingStakePct ?? data.root_publishing_stake_pct)}</div>
+                  <span className="pointer-events-none absolute top-full left-0 mt-2 z-30 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal opacity-0 group-hover:opacity-100 transition-opacity">
+                    Percentage of total network stake held by validators publishing via the turbine-root path.
                   </span>
                 </div>
               </div>

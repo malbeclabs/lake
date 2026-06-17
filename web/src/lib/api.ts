@@ -6043,6 +6043,8 @@ export interface EdgeScoreboardResponse {
   publisher_count: number
   publishing_count: number
   publishing_stake_pct: number
+  root_publishing_count: number
+  root_publishing_stake_pct: number
   nodes: EdgeScoreboardNode[]
   recent_slots: EdgeScoreboardSlotRace[]
   slot_buckets?: EdgeScoreboardSlotBucket[]
