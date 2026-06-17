@@ -166,32 +166,36 @@ func TestIsClaimableForLeafIndex_BitmapUnallocated(t *testing.T) {
 	assert.False(t, ok)
 }
 
-func TestProjectStatuses_OnlyAccumulatedLeaves(t *testing.T) {
+// indexByNode keys status rows by node_id for convenient assertions.
+func indexByNode(rows []LeafDistributionStatusRow) map[string]LeafDistributionStatusRow {
+	m := make(map[string]LeafDistributionStatusRow, len(rows))
+	for _, r := range rows {
+		m[r.NodeID] = r
+	}
+	return m
+}
+
+func TestProjectEpochStatuses_PartialAccumulationPending(t *testing.T) {
 	mint := solana.MustPublicKeyFromBase58(DoubleZeroMintKey)
-	// Bits 0 and 1 set (claimable), bit 2 clear; accumulated count is 2. The
-	// two set bits emit claimable rows; leaf index 2 has a clear bit and lies
-	// beyond the accumulated prefix, so it is neither claimable nor a
-	// distributed leaf — it must be excluded (pending).
+	// Bits 0 and 1 set (claimable), bit 2 clear; accumulated count is 2 but the
+	// map has 3 leaves, so the epoch is NOT fully accumulated. Leaf 2 hasn't been
+	// accumulated yet → pending (no row), not distributed.
 	bitmap := []byte{0b00000011}
 	data := buildJournalAccount(t, 951, mint, mint, 2, 0, bitmap)
 
 	view, err := DecodeJournalAccount(data)
 	require.NoError(t, err)
 
-	leafIndexToNodeID := map[uint32]LeafIdentity{
+	leafMap := map[uint32]LeafIdentity{
 		0: {NodeID: "node-a", ClientID: 1},
 		1: {NodeID: "node-b", ClientID: 2},
 		2: {NodeID: "node-c", ClientID: 1},
 	}
 
-	rows := ProjectStatuses(view, 951, leafIndexToNodeID, nil)
+	rows := ProjectEpochStatuses(951, []*JournalView{view}, leafMap, nil)
 	require.Len(t, rows, 2)
 
-	byNode := make(map[string]LeafDistributionStatusRow, len(rows))
-	for _, r := range rows {
-		byNode[r.NodeID] = r
-	}
-
+	byNode := indexByNode(rows)
 	rowA, ok := byNode["node-a"]
 	require.True(t, ok)
 	assert.Equal(t, uint64(951), rowA.SubscriptionEpoch)
@@ -200,25 +204,45 @@ func TestProjectStatuses_OnlyAccumulatedLeaves(t *testing.T) {
 	assert.Equal(t, uint8(1), rowA.IsClaimable)
 	assert.Equal(t, DoubleZeroMintKey, rowA.JournalMintKey)
 
-	rowB, ok := byNode["node-b"]
-	require.True(t, ok)
-	assert.Equal(t, uint8(1), rowB.IsClaimable)
+	assert.Equal(t, uint8(1), byNode["node-b"].IsClaimable)
 
-	// node-c (leaf index 2) has a clear bit beyond the accumulated prefix — excluded.
 	_, ok = byNode["node-c"]
-	assert.False(t, ok)
+	assert.False(t, ok, "leaf 2 not yet accumulated → pending, no row")
 }
 
-// TestProjectStatuses_NonPublisherTokenAttribution covers the multi-token era:
-// a non-2Z journal (here USDC) owns a sparse, high global leaf index. Its set
-// bit must attribute the leaf to the journal's reward mint (USDC) and mark it
-// claimable, while a clear bit must NOT emit a (distributed) row — only the 2Z
-// journal tracks distribution via its accumulated prefix.
-func TestProjectStatuses_NonPublisherTokenAttribution(t *testing.T) {
+func TestProjectEpochStatuses_FullAccumulationDistributed(t *testing.T) {
+	mint := solana.MustPublicKeyFromBase58(DoubleZeroMintKey)
+	// Bits 0 and 2 set, bit 1 clear; accumulated == leaf count (3), so the epoch
+	// is fully accumulated and leaf 1's cleared bit ⇒ distributed — derived from
+	// the live bitmap with no observation history.
+	bitmap := []byte{0b00000101}
+	data := buildJournalAccount(t, 951, mint, mint, 3, 1, bitmap)
+
+	view, err := DecodeJournalAccount(data)
+	require.NoError(t, err)
+
+	leafMap := map[uint32]LeafIdentity{
+		0: {NodeID: "node-a", ClientID: 1},
+		1: {NodeID: "node-b", ClientID: 2},
+		2: {NodeID: "node-c", ClientID: 1},
+	}
+
+	rows := ProjectEpochStatuses(951, []*JournalView{view}, leafMap, nil)
+	require.Len(t, rows, 3)
+
+	byNode := indexByNode(rows)
+	assert.Equal(t, uint8(1), byNode["node-a"].IsClaimable)
+	assert.Equal(t, uint8(0), byNode["node-b"].IsClaimable, "cleared bit in fully-accumulated epoch ⇒ distributed")
+	assert.Equal(t, DoubleZeroMintKey, byNode["node-b"].JournalMintKey, "pre-968 distributed defaults to 2Z")
+	assert.Equal(t, uint8(1), byNode["node-c"].IsClaimable)
+}
+
+// TestProjectEpochStatuses_NonPublisherTokenClaimable covers the multi-token
+// era: a non-2Z journal (here USDC) owns a sparse, high global leaf index. Its
+// set bit attributes the leaf to USDC and marks it claimable. The other leaf is
+// clear but the epoch is not fully accumulated, so it stays pending.
+func TestProjectEpochStatuses_NonPublisherTokenClaimable(t *testing.T) {
 	usdc := solana.MustPublicKeyFromBase58(USDCMintKey)
-	// Leaf at global index 17 owned by the USDC journal (bit 17 set); leaf at
-	// index 3 is not owned (bit clear). accumulatedCount is irrelevant for a
-	// non-2Z journal — ownership is the set bit alone.
 	bitmap := make([]byte, 3) // covers indices 0..23
 	bitmap[17/8] = 1 << (17 % 8)
 	data := buildJournalAccount(t, 970, usdc, usdc, 1, 0, bitmap)
@@ -227,20 +251,20 @@ func TestProjectStatuses_NonPublisherTokenAttribution(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, usdc, view.RewardMintKey)
 
-	leafIndexToIdentity := map[uint32]LeafIdentity{
+	leafMap := map[uint32]LeafIdentity{
 		3:  {NodeID: "node-x", ClientID: 1},
 		17: {NodeID: "node-y", ClientID: 2},
 	}
 
-	rows := ProjectStatuses(view, 970, leafIndexToIdentity, nil)
-	require.Len(t, rows, 1, "only the set-bit leaf is owned by this token journal")
+	rows := ProjectEpochStatuses(970, []*JournalView{view}, leafMap, nil)
+	require.Len(t, rows, 1, "set-bit leaf claimable; the other isn't accumulated yet (pending)")
 	assert.Equal(t, "node-y", rows[0].NodeID)
 	assert.Equal(t, uint16(2), rows[0].ClientID)
 	assert.Equal(t, uint8(1), rows[0].IsClaimable)
 	assert.Equal(t, USDCMintKey, rows[0].JournalMintKey, "leaf attributed to USDC")
 }
 
-func TestProjectStatuses_MissingLeafInMap(t *testing.T) {
+func TestProjectEpochStatuses_MissingLeafInMap(t *testing.T) {
 	mint := solana.MustPublicKeyFromBase58(DoubleZeroMintKey)
 	bitmap := []byte{0b00000101}
 	data := buildJournalAccount(t, 951, mint, mint, 3, 0, bitmap)
@@ -248,87 +272,96 @@ func TestProjectStatuses_MissingLeafInMap(t *testing.T) {
 	view, err := DecodeJournalAccount(data)
 	require.NoError(t, err)
 
-	// Only leaf index 0 and 2 have a node-id mapping. Leaf 1 has no
-	// mapping and must be silently skipped.
-	leafIndexToNodeID := map[uint32]LeafIdentity{
+	// Only leaf index 0 and 2 have a mapping. Leaf 1 has none → silently skipped.
+	leafMap := map[uint32]LeafIdentity{
 		0: {NodeID: "node-a", ClientID: 1},
 		2: {NodeID: "node-c", ClientID: 1},
 	}
 
-	rows := ProjectStatuses(view, 951, leafIndexToNodeID, nil)
+	rows := ProjectEpochStatuses(951, []*JournalView{view}, leafMap, nil)
 	require.Len(t, rows, 2)
-
-	byNode := make(map[string]LeafDistributionStatusRow, len(rows))
-	for _, r := range rows {
-		byNode[r.NodeID] = r
-	}
-
-	rowA, ok := byNode["node-a"]
-	require.True(t, ok)
-	assert.Equal(t, uint8(1), rowA.IsClaimable)
-
-	rowC, ok := byNode["node-c"]
-	require.True(t, ok)
-	assert.Equal(t, uint8(1), rowC.IsClaimable)
-}
-
-func TestProjectStatuses_ClearedBitEmitsZero(t *testing.T) {
-	mint := solana.MustPublicKeyFromBase58(DoubleZeroMintKey)
-	// Bit 0 set, bit 1 clear, bit 2 set.
-	bitmap := []byte{0b00000101}
-	data := buildJournalAccount(t, 951, mint, mint, 3, 1, bitmap)
-
-	view, err := DecodeJournalAccount(data)
-	require.NoError(t, err)
-
-	leafIndexToNodeID := map[uint32]LeafIdentity{
-		0: {NodeID: "node-a", ClientID: 1},
-		1: {NodeID: "node-b", ClientID: 2},
-		2: {NodeID: "node-c", ClientID: 1},
-	}
-	// node-b's leaf was previously attributed to 2Z, so its now-cleared bit marks
-	// it distributed (claimable=0). Without that prior attribution it would be
-	// skipped (an unrecoverable/other-token leaf), not assumed 2Z.
-	existingMint := map[uint32]string{1: DoubleZeroMintKey}
-
-	rows := ProjectStatuses(view, 951, leafIndexToNodeID, existingMint)
-	require.Len(t, rows, 3)
-
-	byNode := make(map[string]LeafDistributionStatusRow, len(rows))
-	for _, r := range rows {
-		byNode[r.NodeID] = r
-	}
-
+	byNode := indexByNode(rows)
 	assert.Equal(t, uint8(1), byNode["node-a"].IsClaimable)
-	// bit 1 clear + previously 2Z → distributed.
-	assert.Equal(t, uint8(0), byNode["node-b"].IsClaimable)
 	assert.Equal(t, uint8(1), byNode["node-c"].IsClaimable)
 }
 
-// TestProjectStatuses_MultiClientSameNode is the regression test for the bug
-// where a validator publishing under more than one software client in a single
-// epoch was collapsed to one row. The two leaves share a node_id but differ by
-// client_id, so they must produce two distinct rows with distinct PKs and
-// independent claimable bits.
-func TestProjectStatuses_MultiClientSameNode(t *testing.T) {
-	mint := solana.MustPublicKeyFromBase58(DoubleZeroMintKey)
-	// Two accumulated leaves: bit 0 set (claimable), bit 1 clear.
-	bitmap := []byte{0b00000001}
-	data := buildJournalAccount(t, 951, mint, mint, 2, 0, bitmap)
+// TestProjectEpochStatuses_MultiToken covers a fully-accumulated multi-token
+// epoch: a 2Z journal and a USDC journal. A set bit identifies the owning token
+// (claimable); a leaf cleared in EVERY journal is distributed, with its token
+// taken from the claimable-observation map.
+func TestProjectEpochStatuses_MultiToken(t *testing.T) {
+	twoZ := solana.MustPublicKeyFromBase58(DoubleZeroMintKey)
+	usdc := solana.MustPublicKeyFromBase58(USDCMintKey)
+	// 2Z journal owns leaf 0 (bit 0 set), accumulated 1.
+	zView, err := DecodeJournalAccount(buildJournalAccount(t, 970, twoZ, twoZ, 1, 0, []byte{0b00000001}))
+	require.NoError(t, err)
+	// USDC journal: leaf 1 set (claimable), leaf 2 clear (distributed). accumulated 2.
+	uView, err := DecodeJournalAccount(buildJournalAccount(t, 970, usdc, usdc, 2, 1, []byte{0b00000010}))
+	require.NoError(t, err)
 
+	views := []*JournalView{zView, uView}
+	leafMap := map[uint32]LeafIdentity{
+		0: {NodeID: "node-z", ClientID: 1},
+		1: {NodeID: "node-u", ClientID: 1},
+		2: {NodeID: "node-w", ClientID: 1},
+	}
+	// Σ accumulated = 3 = leaf count → fully accumulated.
+	tokenByIdentity := map[LeafIdentity]string{}
+	CollectClaimableTokens(views, leafMap, tokenByIdentity)
+	// node-w is distributed (not claimable this epoch); mimic a prior claimable
+	// observation in USDC so its distributed leaf attributes to USDC.
+	tokenByIdentity[LeafIdentity{NodeID: "node-w", ClientID: 1}] = USDCMintKey
+
+	rows := ProjectEpochStatuses(970, views, leafMap, tokenByIdentity)
+	require.Len(t, rows, 3)
+	byNode := indexByNode(rows)
+	assert.Equal(t, uint8(1), byNode["node-z"].IsClaimable)
+	assert.Equal(t, DoubleZeroMintKey, byNode["node-z"].JournalMintKey)
+	assert.Equal(t, uint8(1), byNode["node-u"].IsClaimable)
+	assert.Equal(t, USDCMintKey, byNode["node-u"].JournalMintKey)
+	assert.Equal(t, uint8(0), byNode["node-w"].IsClaimable, "cleared everywhere + fully accumulated ⇒ distributed")
+	assert.Equal(t, USDCMintKey, byNode["node-w"].JournalMintKey, "distributed token from claimable-observation map")
+}
+
+// TestProjectEpochStatuses_SingleJournalDistributedTokenUnambiguous: when an
+// epoch has a single journal, a distributed leaf takes that journal's token and
+// the cross-epoch token map is ignored. This is what keeps pre-multi-token
+// epochs (always one 2Z journal) correctly 2Z even for a validator that later
+// switched to USDC — without any hardcoded launch epoch.
+func TestProjectEpochStatuses_SingleJournalDistributedTokenUnambiguous(t *testing.T) {
+	mint := solana.MustPublicKeyFromBase58(DoubleZeroMintKey)
+	// bit 0 clear, accumulated 1 == leaf count → fully accumulated → distributed.
+	data := buildJournalAccount(t, 960, mint, mint, 1, 1, []byte{0b00000000})
 	view, err := DecodeJournalAccount(data)
 	require.NoError(t, err)
 
-	// Same node_id, two different client_ids — distinct leaves.
-	leafIndexToIdentity := map[uint32]LeafIdentity{
+	leafMap := map[uint32]LeafIdentity{0: {NodeID: "node-a", ClientID: 1}}
+	// Map says USDC, but the single 2Z journal wins (unambiguous).
+	tokenByIdentity := map[LeafIdentity]string{{NodeID: "node-a", ClientID: 1}: USDCMintKey}
+
+	rows := ProjectEpochStatuses(960, []*JournalView{view}, leafMap, tokenByIdentity)
+	require.Len(t, rows, 1)
+	assert.Equal(t, uint8(0), rows[0].IsClaimable)
+	assert.Equal(t, DoubleZeroMintKey, rows[0].JournalMintKey, "single-journal epoch ⇒ that journal's token")
+}
+
+// TestProjectEpochStatuses_MultiClientSameNode is the regression test for the
+// bug where a validator publishing under more than one software client in a
+// single epoch was collapsed to one row. The leaves share a node_id but differ
+// by client_id, so they produce two distinct rows with independent bits.
+func TestProjectEpochStatuses_MultiClientSameNode(t *testing.T) {
+	mint := solana.MustPublicKeyFromBase58(DoubleZeroMintKey)
+	// bit 0 set (claimable), bit 1 clear (distributed); accumulated == leaf count 2.
+	data := buildJournalAccount(t, 951, mint, mint, 2, 1, []byte{0b00000001})
+	view, err := DecodeJournalAccount(data)
+	require.NoError(t, err)
+
+	leafMap := map[uint32]LeafIdentity{
 		0: {NodeID: "node-a", ClientID: 1},
 		1: {NodeID: "node-a", ClientID: 2},
 	}
-	// client 2's leaf was previously attributed to 2Z, so its cleared bit marks
-	// it distributed; client 1's bit is still set (claimable).
-	existingMint := map[uint32]string{1: DoubleZeroMintKey}
 
-	rows := ProjectStatuses(view, 951, leafIndexToIdentity, existingMint)
+	rows := ProjectEpochStatuses(951, []*JournalView{view}, leafMap, nil)
 	require.Len(t, rows, 2, "each (node, client) leaf must produce its own row")
 
 	byClient := make(map[uint16]LeafDistributionStatusRow, len(rows))
@@ -336,53 +369,38 @@ func TestProjectStatuses_MultiClientSameNode(t *testing.T) {
 		assert.Equal(t, "node-a", r.NodeID)
 		byClient[r.ClientID] = r
 	}
-
-	require.Contains(t, byClient, uint16(1))
-	require.Contains(t, byClient, uint16(2))
 	assert.NotEqual(t, byClient[1].PK, byClient[2].PK, "PKs must differ by client_id")
 	assert.Equal(t, LeafDistributionStatusPK(951, "node-a", 1), byClient[1].PK)
 	assert.Equal(t, LeafDistributionStatusPK(951, "node-a", 2), byClient[2].PK)
-	// Independent claimable bits: client 1 claimable, client 2 not.
 	assert.Equal(t, uint8(1), byClient[1].IsClaimable)
 	assert.Equal(t, uint8(0), byClient[2].IsClaimable)
 }
 
-// TestProjectStatuses_SkipsLeafAttributedToOtherToken verifies the prior-
-// attribution guard: when the 2Z journal's bit for a leaf is clear, the leaf is
-// marked distributed-2Z ONLY if it was previously attributed to 2Z. A leaf
-// previously attributed to another token (USDC), or never attributed at all, is
-// skipped — never mistagged as a distributed 2Z leaf.
-func TestProjectStatuses_SkipsLeafAttributedToOtherToken(t *testing.T) {
-	mint := solana.MustPublicKeyFromBase58(DoubleZeroMintKey)
-	// bit 0 set, bits 1 and 2 clear.
-	bitmap := []byte{0b00000001}
-	data := buildJournalAccount(t, 951, mint, mint, 3, 0, bitmap)
-	view, err := DecodeJournalAccount(data)
+func TestProjectEpochStatuses_NoViews(t *testing.T) {
+	rows := ProjectEpochStatuses(951, nil, map[uint32]LeafIdentity{0: {NodeID: "n", ClientID: 1}}, nil)
+	assert.Empty(t, rows)
+}
+
+func TestCollectClaimableTokens(t *testing.T) {
+	twoZ := solana.MustPublicKeyFromBase58(DoubleZeroMintKey)
+	usdc := solana.MustPublicKeyFromBase58(USDCMintKey)
+	zView, err := DecodeJournalAccount(buildJournalAccount(t, 970, twoZ, twoZ, 1, 0, []byte{0b00000001}))
+	require.NoError(t, err)
+	uView, err := DecodeJournalAccount(buildJournalAccount(t, 970, usdc, usdc, 1, 0, []byte{0b00000010}))
 	require.NoError(t, err)
 
-	leafIndexToIdentity := map[uint32]LeafIdentity{
-		0: {NodeID: "node-a", ClientID: 1}, // bit set -> claimable
-		1: {NodeID: "node-b", ClientID: 1}, // bit clear, previously 2Z -> distributed
-		2: {NodeID: "node-c", ClientID: 1}, // bit clear, previously USDC -> skip
-		3: {NodeID: "node-d", ClientID: 1}, // bit clear, never attributed -> skip
+	leafMap := map[uint32]LeafIdentity{
+		0: {NodeID: "node-z", ClientID: 1}, // set in 2Z
+		1: {NodeID: "node-u", ClientID: 1}, // set in USDC
+		2: {NodeID: "node-x", ClientID: 1}, // set in neither
 	}
-	existingMint := map[uint32]string{
-		1: DoubleZeroMintKey,
-		2: USDCMintKey,
-	}
+	dst := map[LeafIdentity]string{}
+	CollectClaimableTokens([]*JournalView{zView, uView}, leafMap, dst)
 
-	rows := ProjectStatuses(view, 951, leafIndexToIdentity, existingMint)
-	byNode := make(map[string]LeafDistributionStatusRow, len(rows))
-	for _, r := range rows {
-		byNode[r.NodeID] = r
-	}
-	require.Len(t, rows, 2, "only the set-bit leaf and the previously-2Z leaf emit rows")
-	assert.Equal(t, uint8(1), byNode["node-a"].IsClaimable, "node-a claimable")
-	assert.Equal(t, uint8(0), byNode["node-b"].IsClaimable, "node-b distributed (was 2Z)")
-	_, ok := byNode["node-c"]
-	assert.False(t, ok, "node-c was USDC — must not be tagged a distributed 2Z leaf")
-	_, ok = byNode["node-d"]
-	assert.False(t, ok, "node-d never attributed — must be skipped, not assumed 2Z")
+	assert.Equal(t, DoubleZeroMintKey, dst[LeafIdentity{NodeID: "node-z", ClientID: 1}])
+	assert.Equal(t, USDCMintKey, dst[LeafIdentity{NodeID: "node-u", ClientID: 1}])
+	_, ok := dst[LeafIdentity{NodeID: "node-x", ClientID: 1}]
+	assert.False(t, ok, "leaf set in no journal is not recorded")
 }
 
 func TestJournalPDA_IsDeterministic(t *testing.T) {

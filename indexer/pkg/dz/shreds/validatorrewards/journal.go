@@ -232,50 +232,102 @@ func (j *JournalView) IsClaimableForLeafIndex(leafIndex uint32) (bool, bool) {
 	return set, true
 }
 
-// ProjectStatuses emits per-leaf status rows attributing each leaf to this
-// journal's reward token and recording its claimable bit. Leaves with no
-// (node_id, client_id) mapping in `leafIndexToIdentity` are silently skipped.
-// Rows are keyed per (node, client) so a validator running multiple clients
-// keeps an independent bit per client.
+// CollectClaimableTokens records, for every leaf currently claimable (its
+// publisher bit is SET in one of the epoch's journals), the reward mint of the
+// owning journal into dst, keyed by (node, client). A set bit is the
+// authoritative ownership signal, so this is the source of truth for which token
+// each validator picked. Accumulated across all epochs, dst lets a leaf that is
+// now distributed (cleared everywhere) still be attributed to the token the
+// validator was last seen claimable in.
+func CollectClaimableTokens(views []*JournalView, leafIndexToIdentity map[uint32]LeafIdentity, dst map[LeafIdentity]string) {
+	for leafIndex, id := range leafIndexToIdentity {
+		for _, v := range views {
+			if v == nil {
+				continue
+			}
+			if set, ok := v.IsClaimableForLeafIndex(leafIndex); ok && set {
+				dst[id] = v.RewardMintKey.String()
+				break
+			}
+		}
+	}
+}
+
+// ProjectEpochStatuses emits per-leaf status rows for one subscription epoch by
+// reading ALL of the epoch's still-live token journals together. Rows are keyed
+// per (node, client) so a validator running multiple clients keeps an
+// independent bit per client; leaves with no identity mapping are skipped.
 //
-// In the multi-token era each journal owns only the leaves of validators who
-// picked its token, scattered across the epoch's global leaf indices. A SET
-// publisher bit is the authoritative ownership signal: it means this journal
-// accumulated the leaf and has not yet distributed it (immediately claimable),
-// and the row's JournalMintKey then identifies the validator's reward token.
+// Unlike a per-journal projection this needs no observation history. Every leaf
+// accumulates into exactly one token journal, so Σ accumulated_publisher_leaf_count
+// across the epoch's journals equals the leaf count once accumulation is
+// complete. Given that:
 //
-// Detecting an already-distributed leaf (accumulated, then paid → bit cleared)
-// cannot be done from a cleared bit alone, because a cleared bit is
-// indistinguishable from "not this journal's leaf" — especially in the
-// multi-token era, where each journal owns only a sparse subset of the epoch's
-// global leaf indices (so the leaf index is NOT a contiguous accumulation
-// prefix). We resolve it with prior attribution: `existingMint` maps each leaf
-// index to the reward mint already recorded for it (from the persisted status
-// table). A leaf whose bit is now clear is marked distributed for THIS journal
-// only if it was previously attributed to this journal's token. A leaf never
-// captured while its bit was set (e.g. distributed before we first observed it)
-// has no prior attribution and is left out — its token is unrecoverable.
-func ProjectStatuses(view *JournalView, subscriptionEpoch uint64, leafIndexToIdentity map[uint32]LeafIdentity, existingMint map[uint32]string) []LeafDistributionStatusRow {
-	if view == nil {
+//   - A SET publisher bit in some journal ⇒ that journal owns the leaf and it is
+//     claimable; the journal's reward mint is the validator's token.
+//   - A bit CLEAR in EVERY journal, in a fully-accumulated epoch ⇒ the leaf was
+//     accumulated then distributed (paid). Its token can't be read from a cleared
+//     bitmap. When the epoch has a single journal the token is unambiguous (every
+//     leaf belongs to it); otherwise it is taken from tokenByIdentity (the
+//     validator's claimable observations elsewhere), defaulting to 2Z.
+//   - A bit clear everywhere while the epoch is NOT yet fully accumulated ⇒ the
+//     leaf simply hasn't been accumulated yet; it is left out (pending).
+//
+// Because it derives distribution from the live on-chain bitmaps every refresh,
+// it is stateless-correct: an already-distributed leaf is reconstructed without
+// ever having been observed while claimable, as long as its journals are live.
+func ProjectEpochStatuses(
+	subscriptionEpoch uint64,
+	views []*JournalView,
+	leafIndexToIdentity map[uint32]LeafIdentity,
+	tokenByIdentity map[LeafIdentity]string,
+) []LeafDistributionStatusRow {
+	if len(views) == 0 {
 		return nil
 	}
-	rewardMint := view.RewardMintKey.String()
+	var sumAccumulated uint64
+	for _, v := range views {
+		if v != nil {
+			sumAccumulated += uint64(v.AccumulatedPublisherLeafCount)
+		}
+	}
+	fullyAccumulated := sumAccumulated >= uint64(len(leafIndexToIdentity))
 
 	rows := make([]LeafDistributionStatusRow, 0, len(leafIndexToIdentity))
 	for leafIndex, id := range leafIndexToIdentity {
-		set, _ := view.IsClaimableForLeafIndex(leafIndex)
+		var mint string
+		var claimable, owned bool
+		for _, v := range views {
+			if v == nil {
+				continue
+			}
+			if set, ok := v.IsClaimableForLeafIndex(leafIndex); ok && set {
+				mint, claimable, owned = v.RewardMintKey.String(), true, true
+				break
+			}
+		}
+		if !owned {
+			if !fullyAccumulated {
+				// Not yet accumulated into any journal — pending. Skip.
+				continue
+			}
+			// Distributed. The reward token is unrecoverable from a cleared
+			// bitmap. If the epoch has a single journal the token is unambiguous
+			// (every leaf belongs to it — this covers all pre-multi-token epochs,
+			// which always had one 2Z journal). Otherwise borrow the token from
+			// the validator's claimable observations elsewhere, defaulting to 2Z.
+			switch {
+			case len(views) == 1:
+				mint = views[0].RewardMintKey.String()
+			case tokenByIdentity[id] != "":
+				mint = tokenByIdentity[id]
+			default:
+				mint = DoubleZeroMintKey
+			}
+		}
 		var bit uint8
-		switch {
-		case set:
-			// Bit set ⇒ this journal owns the leaf and it is claimable.
+		if claimable {
 			bit = 1
-		case rewardMint != "" && existingMint[leafIndex] == rewardMint:
-			// Previously attributed to this token, bit now clear ⇒ distributed.
-		default:
-			// Not owned by this journal (bit unset, no prior attribution to this
-			// token) ⇒ skip so we never mistag another token's (or an
-			// unrecoverable) leaf.
-			continue
 		}
 		rows = append(rows, LeafDistributionStatusRow{
 			PK:                LeafDistributionStatusPK(subscriptionEpoch, id.NodeID, id.ClientID),
@@ -283,7 +335,7 @@ func ProjectStatuses(view *JournalView, subscriptionEpoch uint64, leafIndexToIde
 			NodeID:            id.NodeID,
 			ClientID:          id.ClientID,
 			IsClaimable:       bit,
-			JournalMintKey:    rewardMint,
+			JournalMintKey:    mint,
 		})
 	}
 	return rows

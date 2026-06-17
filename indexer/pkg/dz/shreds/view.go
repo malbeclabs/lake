@@ -476,84 +476,67 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		}
 	}
 
-	// Project per-leaf claimable bits from in-flight ShredDistributionJournal
+	// Project per-leaf claim status from in-flight ShredDistributionJournal
 	// accounts to the leaf_distribution_status table.
 	//
-	// We project EVERY 2Z journal still readable on-chain, not just a recent
-	// window. GetProgramAccounts only returns journals that have not yet been
-	// swept, so this set is inherently bounded by the on-chain journal lifetime
-	// (a handful of epochs). Projecting all of them every refresh — combined
-	// with the additive write (MissingMeansDeleted: false) and the un-TTL'd
-	// history table — guarantees the LAST snapshot we take before a journal is
-	// swept records its true final bitmap. That frozen final bit is what the
-	// rewards page reads for swept epochs: a cleared bit means the leaf was
-	// distributed (paid), a set bit means it was never claimed. Bounding to a
-	// recent window here would instead freeze a stale, pre-distribution bit for
-	// any journal that outlived the window, mislabeling paid epochs.
+	// We project EVERY journal still readable on-chain, not just a recent window.
+	// GetProgramAccounts only returns journals that have not yet been swept, so
+	// this set is inherently bounded by the on-chain journal lifetime (a handful
+	// of epochs). Projecting all of them every refresh — combined with the
+	// additive write (MissingMeansDeleted: false) and the un-TTL'd history table —
+	// keeps every live epoch's status current and freezes its final state before
+	// the journal is swept.
+	//
+	// The projection is cross-journal and STATELESS: it reads all of an epoch's
+	// token journals together and uses the completeness invariant (every leaf
+	// accumulates into exactly one token) to classify distributed leaves without
+	// any observation history — see ProjectEpochStatuses. This is why no offline
+	// backfill is needed: an already-distributed leaf is reconstructed from the
+	// live bitmaps on every refresh. A (node,client)→token map built from the
+	// claimable (set-bit) observations across all live epochs attributes the
+	// reward token of those distributed leaves.
 	var statusRows []validatorrewards.LeafDistributionStatusRow
 	if len(allAccounts.Journals) > 0 {
-		// Cache leaf-index → (node-id, client-id) maps per subscription_epoch
-		// so we only hit ClickHouse once per epoch when multiple journals
-		// share it.
-		leafMaps := make(map[uint64]map[uint32]validatorrewards.LeafIdentity)
-		loadLeafMap := func(epoch uint64) (map[uint32]validatorrewards.LeafIdentity, error) {
-			if m, ok := leafMaps[epoch]; ok {
-				return m, nil
+		// Group the live journal views by subscription_epoch.
+		viewsByEpoch := make(map[uint64][]*validatorrewards.JournalView)
+		for _, kj := range allAccounts.Journals {
+			if kj.View == nil {
+				continue
 			}
+			viewsByEpoch[kj.View.SubscriptionEpoch] = append(viewsByEpoch[kj.View.SubscriptionEpoch], kj.View)
+		}
+
+		// Load each epoch's leaf_index → (node_id, client_id) map once. Epochs
+		// whose leaves aren't indexed yet (S3 export pending) are skipped.
+		leafMaps := make(map[uint64]map[uint32]validatorrewards.LeafIdentity, len(viewsByEpoch))
+		for epoch := range viewsByEpoch {
 			m, err := v.leafStore.LeafIndexToNodeClient(ctx, epoch)
 			if err != nil {
-				return nil, fmt.Errorf("load leaf_index → (node_id, client_id) mapping for epoch %d: %w", epoch, err)
+				return result, fmt.Errorf("load leaf_index → (node_id, client_id) mapping for epoch %d: %w", epoch, err)
 			}
-			leafMaps[epoch] = m
-			return m, nil
+			if len(m) > 0 {
+				leafMaps[epoch] = m
+			}
 		}
 
-		// Per-epoch leaf_index → previously-recorded reward mint, from the
-		// persisted status table. ProjectStatuses uses it to mark a leaf
-		// distributed (bit cleared) only for the token it was already attributed
-		// to — never mistagging another token's leaf.
-		existingMintByEpoch := make(map[uint64]map[uint32]string)
-		loadExistingMint := func(epoch uint64, leafMap map[uint32]validatorrewards.LeafIdentity) (map[uint32]string, error) {
-			if m, ok := existingMintByEpoch[epoch]; ok {
-				return m, nil
+		// Build the (node,client)→reward-token map from claimable observations
+		// across ALL live epochs, so a leaf distributed in one epoch can be
+		// attributed to the token the validator was last seen claimable in.
+		tokenByIdentity := make(map[validatorrewards.LeafIdentity]string)
+		for epoch, views := range viewsByEpoch {
+			if leafMap, ok := leafMaps[epoch]; ok {
+				validatorrewards.CollectClaimableTokens(views, leafMap, tokenByIdentity)
 			}
-			byIdentity, err := v.leafStore.ExistingLeafMints(ctx, epoch)
-			if err != nil {
-				return nil, fmt.Errorf("load existing leaf mints for epoch %d: %w", epoch, err)
-			}
-			m := make(map[uint32]string, len(byIdentity))
-			for leafIndex, id := range leafMap {
-				if mint, ok := byIdentity[id]; ok {
-					m[leafIndex] = mint
-				}
-			}
-			existingMintByEpoch[epoch] = m
-			return m, nil
 		}
 
-		// Project EVERY token journal, attributing each leaf to its journal's
-		// reward mint. The per-leaf row records that mint, which is how the
-		// rewards page attributes each leaf to its reward token.
-		for _, kj := range allAccounts.Journals {
-			view := kj.View
-			if view == nil {
+		// Project each epoch's status from all its token journals together.
+		for epoch, views := range viewsByEpoch {
+			leafMap, ok := leafMaps[epoch]
+			if !ok {
 				continue
-			}
-			leafMap, err := loadLeafMap(view.SubscriptionEpoch)
-			if err != nil {
-				return result, err
-			}
-			if len(leafMap) == 0 {
-				// Leaves not yet indexed for this epoch (S3 export pending,
-				// or out of the leaf window). Skip — next refresh will retry.
-				continue
-			}
-			existingMint, err := loadExistingMint(view.SubscriptionEpoch, leafMap)
-			if err != nil {
-				return result, err
 			}
 			statusRows = append(statusRows,
-				validatorrewards.ProjectStatuses(view, view.SubscriptionEpoch, leafMap, existingMint)...)
+				validatorrewards.ProjectEpochStatuses(epoch, views, leafMap, tokenByIdentity)...)
 		}
 		if len(statusRows) > 0 {
 			if err := v.leafStore.ReplaceLeafDistributionStatuses(ctx, statusRows); err != nil {
