@@ -6,6 +6,21 @@ export function startOfDay(d: Date): Date {
   return r
 }
 
+export function formatISODate(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+export function parseISODate(s: string | null): Date | null {
+  if (!s) return null
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s)
+  if (!m) return null
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) // local, avoids UTC day-shift
+  return isNaN(d.getTime()) ? null : startOfDay(d)
+}
+
 export function isSameDay(a: Date, b: Date): boolean {
   return (
     a.getFullYear() === b.getFullYear() &&

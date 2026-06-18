@@ -1,8 +1,59 @@
-import { useState, useMemo } from 'react'
+import { useMemo, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { fetchMaintenanceTickets, isTicketClosed } from '@/lib/ops-api'
 import { contributorHue } from './colors'
 import type { OpsTicket, OpsTicketStatus } from '@/lib/ops-api'
+
+const FILTER_KEYS = ['q', 'status', 'contributor', 'metro', 'device', 'link'] as const
+
+// Tolerate malformed percent-encoding (e.g. a bare "%") so a hand-edited URL
+// can't crash the calendar; fall back to the raw token.
+function safeDecode(v: string): string {
+  try {
+    return decodeURIComponent(v)
+  } catch {
+    return v
+  }
+}
+
+// Set values are comma-delimited; each value is URI-encoded so names containing
+// commas (e.g. "Acme, Inc") survive the round-trip.
+function parseSet(p: URLSearchParams, key: string): Set<string> {
+  return new Set(
+    (p.get(key) ?? '')
+      .split(',')
+      .filter(Boolean)
+      .map(safeDecode)
+  )
+}
+
+function serializeSet(set: Set<string>): string {
+  return [...set].map((v) => encodeURIComponent(v)).join(',')
+}
+
+function parseFilters(p: URLSearchParams): CalendarFilters {
+  return {
+    search: p.get('q') ?? '',
+    status: p.get('status') ?? '',
+    contributors: parseSet(p, 'contributor'),
+    metros: parseSet(p, 'metro'),
+    devices: parseSet(p, 'device'),
+    links: parseSet(p, 'link'),
+  }
+}
+
+function writeFilters(prev: URLSearchParams, f: CalendarFilters): URLSearchParams {
+  const next = new URLSearchParams(prev)
+  for (const k of FILTER_KEYS) next.delete(k) // preserves view/date params
+  if (f.search) next.set('q', f.search)
+  if (f.status) next.set('status', f.status)
+  if (f.contributors.size) next.set('contributor', serializeSet(f.contributors))
+  if (f.metros.size) next.set('metro', serializeSet(f.metros))
+  if (f.devices.size) next.set('device', serializeSet(f.devices))
+  if (f.links.size) next.set('link', serializeSet(f.links))
+  return next
+}
 
 export interface MaintenanceEvent {
   id: string
@@ -113,14 +164,12 @@ export function useMaintenanceEvents() {
   const isLoading = activeLoading || completedLoading
   const error = activeError ?? completedError
 
-  const [filters, setFilters] = useState<CalendarFilters>({
-    search: '',
-    contributors: new Set(),
-    metros: new Set(),
-    devices: new Set(),
-    links: new Set(),
-    status: '',
-  })
+  const [searchParams, setSearchParams] = useSearchParams()
+  const filters = useMemo(() => parseFilters(searchParams), [searchParams])
+  const setFilters = useCallback(
+    (f: CalendarFilters) => setSearchParams((prev) => writeFilters(prev, f), { replace: true }),
+    [setSearchParams]
+  )
 
   const filteredEvents = useMemo(
     () => applyFilters(allEvents, filters),
