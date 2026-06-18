@@ -16,6 +16,7 @@ import {
   Activity,
   BarChart3,
   MapPin,
+  LocateFixed,
   GitCompare,
   ChevronLeft,
   ChevronRight,
@@ -486,6 +487,18 @@ export function TopologyControlBar({
               label="User counts"
               onClick={() => handleToggleOverlay('userCounts')}
               active={overlays.userCounts}
+              activeColor="blue"
+              collapsed={collapsed}
+            />
+          )}
+
+          {(view === 'map' || view === 'globe') && (
+            <NavItem
+              icon={<LocateFixed className="h-3.5 w-3.5" />}
+              label="Precise locations"
+              tooltip="Place devices at their real facility coordinates instead of spreading them around the metro center"
+              onClick={() => handleToggleOverlay('preciseLocations')}
+              active={overlays.preciseLocations}
               activeColor="blue"
               collapsed={collapsed}
             />

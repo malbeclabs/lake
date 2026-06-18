@@ -34,6 +34,8 @@ type Device struct {
 	Status                    string            `json:"status"`
 	DeviceType                string            `json:"device_type"`
 	MetroPK                   string            `json:"metro_pk"`
+	Latitude                  float64           `json:"latitude"`
+	Longitude                 float64           `json:"longitude"`
 	ContributorPK             string            `json:"contributor_pk"`
 	ContributorCode           string            `json:"contributor_code"`
 	UserCount                 uint64            `json:"user_count"`
@@ -238,11 +240,14 @@ func (a *API) FetchTopologyData(ctx context.Context) (TopologyResponse, error) {
 					WHEN ts.total_lamports > 0 THEN COALESCE(ds.stake_sol, 0) * 1e9 / ts.total_lamports * 100
 					ELSE 0
 				END as stake_share,
+				COALESCE(f.lat, 0) as latitude,
+				COALESCE(f.lng, 0) as longitude,
 				COALESCE(d.interfaces, '[]') as interfaces
 			FROM dz_devices_current d
 			CROSS JOIN total_stake ts
 			LEFT JOIN device_stats ds ON d.pk = ds.device_pk
 			LEFT JOIN dz_contributors_current c ON d.contributor_pk = c.pk
+			LEFT JOIN dz_facilities_current f ON d.location_pk = f.pk
 			WHERE d.status = 'activated'
 		`
 		rows, err := a.envDB(ctx).Query(ctx, query)
@@ -254,7 +259,7 @@ func (a *API) FetchTopologyData(ctx context.Context) (TopologyResponse, error) {
 		for rows.Next() {
 			var d Device
 			var interfacesJSON string
-			if err := rows.Scan(&d.PK, &d.Code, &d.Status, &d.DeviceType, &d.MetroPK, &d.ContributorPK, &d.ContributorCode, &d.UserCount, &d.UnicastUsersCount, &d.MulticastSubscribersCount, &d.MulticastPublishersCount, &d.MaxUnicastUsers, &d.MaxMulticastSubscribers, &d.MaxMulticastPublishers, &d.ValidatorCount, &d.StakeSol, &d.StakeShare, &interfacesJSON); err != nil {
+			if err := rows.Scan(&d.PK, &d.Code, &d.Status, &d.DeviceType, &d.MetroPK, &d.ContributorPK, &d.ContributorCode, &d.UserCount, &d.UnicastUsersCount, &d.MulticastSubscribersCount, &d.MulticastPublishersCount, &d.MaxUnicastUsers, &d.MaxMulticastSubscribers, &d.MaxMulticastPublishers, &d.ValidatorCount, &d.StakeSol, &d.StakeShare, &d.Latitude, &d.Longitude, &interfacesJSON); err != nil {
 				return err
 			}
 			if err := json.Unmarshal([]byte(interfacesJSON), &d.Interfaces); err != nil {

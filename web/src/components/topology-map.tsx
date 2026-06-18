@@ -8,6 +8,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTheme } from '@/hooks/use-theme'
 import type { TopologyMetro, TopologyDevice, TopologyLink, TopologyValidator, MultiPathResponse, SimulateLinkRemovalResponse, SimulateLinkAdditionResponse, WhatIfRemovalResponse, MetroDevicePathsResponse } from '@/lib/api'
 import { fetchISISPaths, fetchISISTopology, fetchCriticalLinks, fetchSimulateLinkRemoval, fetchSimulateLinkAddition, fetchWhatIfRemoval, fetchLinkHealth, fetchTopologyCompare, fetchMetroDevicePaths } from '@/lib/api'
+import { computeDevicePositions } from './topology/devicePositions'
 import { useTopology, useMulticastState, TopologyControlBar, TopologyPanel, DeviceDetails, LinkDetails, MetroDetails, ValidatorDetails, EntityLink as TopologyEntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, ValidatorsOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, FlexAlgoOverlayPanel, LINK_TYPE_COLORS, MULTICAST_PUBLISHER_COLORS, type DeviceOption, type MetroOption } from '@/components/topology'
 import { useActiveOpsTickets } from '@/hooks/use-ops-tickets'
 import { opsTicketUrl } from '@/lib/ops-api'
@@ -251,27 +252,6 @@ type SelectedItem =
   | { type: 'device'; data: HoveredDeviceInfo }
   | { type: 'metro'; data: HoveredMetroInfo }
   | { type: 'validator'; data: HoveredValidatorInfo }
-
-// Calculate device position with radial offset for multiple devices at same metro
-function calculateDevicePosition(
-  metroLat: number,
-  metroLng: number,
-  deviceIndex: number,
-  totalDevices: number
-): [number, number] {
-  if (totalDevices === 1) {
-    return [metroLng, metroLat]
-  }
-
-  // Distribute devices in a circle around metro center
-  const radius = 0.3 // degrees offset
-  const angle = (2 * Math.PI * deviceIndex) / totalDevices
-  const latOffset = radius * Math.cos(angle)
-  // Adjust for latitude distortion
-  const lngOffset = radius * Math.sin(angle) / Math.cos(metroLat * Math.PI / 180)
-
-  return [metroLng + lngOffset, metroLat + latOffset]
-}
 
 // Calculate curved path between two points (returns GeoJSON coordinates [lng, lat])
 function calculateCurvedPath(
@@ -924,27 +904,12 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     return map
   }, [links])
 
-  // Calculate device positions
-  const devicePositions = useMemo(() => {
-    const positions = new Map<string, [number, number]>()
-
-    for (const [metroPk, metroDevices] of devicesByMetro) {
-      const metro = metroMap.get(metroPk)
-      if (!metro) continue
-
-      metroDevices.forEach((device, index) => {
-        const pos = calculateDevicePosition(
-          metro.latitude,
-          metro.longitude,
-          index,
-          metroDevices.length
-        )
-        positions.set(device.pk, pos)
-      })
-    }
-
-    return positions
-  }, [devicesByMetro, metroMap])
+  // Calculate device positions ([lng, lat]). Facility-anchored when the
+  // precise-locations toggle is on, otherwise a tight metro-centroid fanout (#652).
+  const devicePositions = useMemo(
+    () => computeDevicePositions(devices, metroMap, overlays.preciseLocations ? 'facility' : 'fanout'),
+    [devices, metroMap, overlays.preciseLocations],
+  )
 
   // Map style based on theme
   const mapStyle = useMemo(() => createMapStyle(isDark), [isDark])
