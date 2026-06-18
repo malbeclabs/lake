@@ -196,6 +196,13 @@ func (cfg *ViewConfig) Validate() error {
 // longer than 5 minutes, triggering a ClickHouse re-query.
 const baselineCacheTTL = 5 * time.Minute
 
+// maxCatchupChunks bounds a single refresh to maxCatchupChunks × QueryChunk of
+// data. After downtime maxTime can fall behind the query window, making one
+// refresh span the entire window at once; capping it spreads the catch-up over
+// successive refreshes (maxTime advances after each) so peak memory stays near
+// steady state. 3 × 5m = 15m per refresh, ~3× the normal incremental span.
+const maxCatchupChunks = 3
+
 type View struct {
 	log       *slog.Logger
 	cfg       ViewConfig
@@ -404,9 +411,25 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 
 	// Query InfluxDB for interface usage data
 	// Convert times to UTC for InfluxDB query (InfluxDB stores times in UTC)
+	// Bound how much a single refresh ingests. After downtime maxTime can fall
+	// behind the query window, making [queryStart, now) span the whole window.
+	// queryIntfCountersChunked bounds InfluxDB's server-side memory per chunk,
+	// but the indexer still materializes every chunk's rows, the converted usage
+	// slice, and the ClickHouse batch for the entire span at once — which
+	// OOM-crashlooped the pod: it died before InsertInterfaceUsage, so maxTime
+	// never advanced and every restart re-ran the same giant query. Capping the
+	// span lets a large catch-up proceed across successive refreshes (maxTime
+	// advances after each), keeping peak memory near steady state.
+	queryEnd := now
+	if maxCatchup := v.cfg.QueryChunk * maxCatchupChunks; maxCatchup > 0 && queryEnd.Sub(queryStart) > maxCatchup {
+		queryEnd = queryStart.Add(maxCatchup)
+		v.log.Info("telemetry/usage: capping catch-up window to bound memory",
+			"queryStart", queryStart.UTC(), "queryEnd", queryEnd.UTC(), "target", now.UTC())
+	}
+
 	queryStartUTC := queryStart.UTC()
-	nowUTC := now.UTC()
-	usage, endBaselines, err := v.queryInfluxDB(ctx, queryStartUTC, nowUTC, baselines, alreadyWritten)
+	queryEndUTC := queryEnd.UTC()
+	usage, endBaselines, err := v.queryInfluxDB(ctx, queryStartUTC, queryEndUTC, baselines, alreadyWritten)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return result, err
