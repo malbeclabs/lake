@@ -67,6 +67,8 @@ type PublisherCheckItem struct {
 	ValidatorName           string `json:"validator_name"`
 	ValidatorVersionOk      bool   `json:"validator_version_ok"`
 	IsBackup                bool   `json:"is_backup"`
+	Lagging                 bool   `json:"lagging"`
+	LaggingStatus           string `json:"lagging_status"`
 }
 
 // PublisherCheckResponse is the response for the publisher check endpoint.
@@ -325,6 +327,20 @@ func (a *API) FetchPublisherCheckData(ctx context.Context, q string, epochsParam
 		publishers = []PublisherCheckItem{}
 	}
 
+	// Mark publishers whose validator is reported as lagging (status != Healthy)
+	// in dzf_data.lagged_validators. Non-fatal: if the lookup fails we still
+	// return publisher data without lagging annotations.
+	if lagging, err := a.fetchLaggedValidators(ctx); err != nil {
+		slog.Warn("publisher check: lagged validators query failed", "error", err)
+	} else {
+		for i := range publishers {
+			if status, ok := lagging[publishers[i].VotePubkey]; ok {
+				publishers[i].Lagging = true
+				publishers[i].LaggingStatus = status
+			}
+		}
+	}
+
 	var totalNetworkStake int64
 	err = a.envDB(ctx).QueryRow(ctx,
 		`SELECT COALESCE(SUM(activated_stake_lamports), 0)
@@ -357,4 +373,35 @@ func (a *API) FetchPublisherCheckData(ctx context.Context, q string, epochsParam
 		TotalPublisherStake: totalPublisherStake,
 		Publishers:          publishers,
 	}, nil
+}
+
+// fetchLaggedValidators returns a map of validator vote pubkey to its lagging
+// status for every validator currently reported as not Healthy in
+// dzf_data.lagged_validators.
+func (a *API) fetchLaggedValidators(ctx context.Context) (map[string]string, error) {
+	start := time.Now()
+	query := fmt.Sprintf(`
+		SELECT validator_vote_public_key, status
+		FROM `+"`%s`"+`.lagged_validators
+		WHERE status != 'Healthy' AND validator_vote_public_key != ''`, a.DZFDataDB)
+
+	rows, err := a.envDB(ctx).Query(ctx, query)
+	metrics.RecordClickHouseQuery("lagged_validators", time.Since(start), err)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	lagging := make(map[string]string)
+	for rows.Next() {
+		var votePubkey, status string
+		if err := rows.Scan(&votePubkey, &status); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		lagging[votePubkey] = status
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+	return lagging, nil
 }

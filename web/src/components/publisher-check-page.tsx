@@ -33,7 +33,8 @@ type SortField =
   | "publishing_leader_shreds"
   | "publishing_retransmitted"
   | "leader_slots"
-  | "validator_client";
+  | "validator_client"
+  | "lagging";
 
 type SortDirection = "asc" | "desc";
 
@@ -411,6 +412,9 @@ export function PublisherCheckPage() {
           cmp = `${a.validator_client} ${a.validator_version}`.localeCompare(
             `${b.validator_client} ${b.validator_version}`,
           );
+          break;
+        case "lagging":
+          cmp = Number(a.lagging) - Number(b.lagging);
           break;
         default:
           cmp = 0;
@@ -881,13 +885,17 @@ export function PublisherCheckPage() {
                     Validator Client
                     <SortIcon field="validator_client" />
                   </th>
+                  <th className={thCenter} onClick={() => handleSort("lagging")}>
+                    Lagging
+                    <SortIcon field="lagging" />
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {pagedPublishers.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={13}
+                      colSpan={14}
                       className="px-4 py-12 text-center text-muted-foreground"
                     >
                       {activeFilter
@@ -979,6 +987,18 @@ export function PublisherCheckPage() {
                       </td>
                       <td className="px-4 py-3 text-sm">
                         {pub.validator_client} {pub.validator_version || "?"}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {pub.lagging ? (
+                          <span
+                            className="inline-block rounded bg-red-500/10 border border-red-500/50 px-1.5 py-0.5 text-xs xxs:text-sm text-red-400"
+                            title={pub.lagging_status || "Lagging"}
+                          >
+                            {pub.lagging_status || "Lagging"}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
                       </td>
                     </tr>
                   ))
