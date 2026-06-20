@@ -1,4 +1,5 @@
-import { useState, useCallback } from 'react'
+import { useMemo, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useMaintenanceEvents } from './maintenance-calendar/use-maintenance-events'
 import { MaintenanceFilters } from './maintenance-calendar/filters'
@@ -8,8 +9,13 @@ import {
   startOfDay,
   getDays,
   formatDateRange,
+  formatISODate,
+  parseISODate,
+  isSameDay,
 } from './maintenance-calendar/date-utils'
 import type { CalendarView } from './maintenance-calendar/date-utils'
+
+const VALID_VIEWS: CalendarView[] = ['day', 'week', '2week', 'month']
 
 function navigate(anchor: Date, view: CalendarView, dir: -1 | 1): Date {
   const next = new Date(anchor)
@@ -21,8 +27,15 @@ function navigate(anchor: Date, view: CalendarView, dir: -1 | 1): Date {
 }
 
 export function MaintenanceCalendarPage() {
-  const [view, setView] = useState<CalendarView>('2week')
-  const [anchor, setAnchor] = useState(() => startOfDay(new Date()))
+  const [searchParams, setSearchParams] = useSearchParams()
+  const view = useMemo<CalendarView>(() => {
+    const v = searchParams.get('view') as CalendarView | null
+    return v && VALID_VIEWS.includes(v) ? v : '2week'
+  }, [searchParams])
+  const anchor = useMemo(
+    () => parseISODate(searchParams.get('date')) ?? startOfDay(new Date()),
+    [searchParams]
+  )
 
   const {
     events,
@@ -40,14 +53,35 @@ export function MaintenanceCalendarPage() {
 
   const days = view === 'day' ? [anchor] : getDays(view, anchor)
 
-  const handleNavigate = useCallback(
-    (dir: -1 | 1) => setAnchor((a) => navigate(a, view, dir)),
-    [view]
+  const setParam = useCallback(
+    (key: string, value: string | null) =>
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          if (value === null) next.delete(key)
+          else next.set(key, value)
+          return next
+        },
+        { replace: true }
+      ),
+    [setSearchParams]
   )
 
-  const handleViewChange = useCallback((v: CalendarView) => {
-    setView(v)
-  }, [])
+  const setAnchorParam = useCallback(
+    (d: Date) =>
+      setParam('date', isSameDay(d, startOfDay(new Date())) ? null : formatISODate(d)),
+    [setParam]
+  )
+
+  const handleNavigate = useCallback(
+    (dir: -1 | 1) => setAnchorParam(navigate(anchor, view, dir)),
+    [anchor, view, setAnchorParam]
+  )
+
+  const handleViewChange = useCallback(
+    (v: CalendarView) => setParam('view', v === '2week' ? null : v),
+    [setParam]
+  )
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -57,7 +91,7 @@ export function MaintenanceCalendarPage() {
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={() => setAnchor(startOfDay(new Date()))}
+            onClick={() => setAnchorParam(startOfDay(new Date()))}
             className="text-sm text-muted-foreground hover:text-foreground transition-colors"
           >
             Go to today

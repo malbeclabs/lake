@@ -476,55 +476,67 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		}
 	}
 
-	// Project per-leaf claimable bits from in-flight ShredDistributionJournal
-	// accounts to the leaf_distribution_status table. We restrict to the most
-	// recent subscription epochs so we don't scan the entire history every
-	// refresh.
+	// Project per-leaf claim status from in-flight ShredDistributionJournal
+	// accounts to the leaf_distribution_status table.
 	//
-	// Only project journal-status rows for the last 12 subscription epochs
-	// (10 visible on the page + 2 in-flight buffer). Older epochs are out of
-	// the "immediately claimable" window per the spec and don't need bitmap
-	// tracking.
-	const recentJournalWindow uint64 = 12
+	// We project EVERY journal still readable on-chain, not just a recent window.
+	// GetProgramAccounts only returns journals that have not yet been swept, so
+	// this set is inherently bounded by the on-chain journal lifetime (a handful
+	// of epochs). Projecting all of them every refresh — combined with the
+	// additive write (MissingMeansDeleted: false) and the un-TTL'd history table —
+	// keeps every live epoch's status current and freezes its final state before
+	// the journal is swept.
+	//
+	// The projection is cross-journal and STATELESS: it reads all of an epoch's
+	// token journals together and uses the completeness invariant (every leaf
+	// accumulates into exactly one token) to classify distributed leaves without
+	// any observation history — see ProjectEpochStatuses. This is why no offline
+	// backfill is needed: an already-distributed leaf is reconstructed from the
+	// live bitmaps on every refresh. A (node,client)→token map built from the
+	// claimable (set-bit) observations across all live epochs attributes the
+	// reward token of those distributed leaves.
 	var statusRows []validatorrewards.LeafDistributionStatusRow
 	if len(allAccounts.Journals) > 0 {
-		var minEpoch uint64
-		if ec.CurrentSubscriptionEpoch > recentJournalWindow {
-			minEpoch = ec.CurrentSubscriptionEpoch - recentJournalWindow
-		}
-		// Cache leaf-index → node-id maps per subscription_epoch so we only
-		// hit ClickHouse once per epoch when multiple journals share it.
-		leafMaps := make(map[uint64]map[uint32]string)
+		// Group the live journal views by subscription_epoch.
+		viewsByEpoch := make(map[uint64][]*validatorrewards.JournalView)
 		for _, kj := range allAccounts.Journals {
-			view := kj.View
-			if view == nil {
+			if kj.View == nil {
 				continue
 			}
-			// Only the 2Z (DoubleZero) mint journal carries the publisher
-			// accumulation bitmap relevant to the rewards page.
-			if view.MintKey.String() != validatorrewards.DoubleZeroMintKey {
-				continue
+			viewsByEpoch[kj.View.SubscriptionEpoch] = append(viewsByEpoch[kj.View.SubscriptionEpoch], kj.View)
+		}
+
+		// Load each epoch's leaf_index → (node_id, client_id) map once. Epochs
+		// whose leaves aren't indexed yet (S3 export pending) are skipped.
+		leafMaps := make(map[uint64]map[uint32]validatorrewards.LeafIdentity, len(viewsByEpoch))
+		for epoch := range viewsByEpoch {
+			m, err := v.leafStore.LeafIndexToNodeClient(ctx, epoch)
+			if err != nil {
+				return result, fmt.Errorf("load leaf_index → (node_id, client_id) mapping for epoch %d: %w", epoch, err)
 			}
-			if view.SubscriptionEpoch < minEpoch {
-				continue
+			if len(m) > 0 {
+				leafMaps[epoch] = m
 			}
-			leafMap, ok := leafMaps[view.SubscriptionEpoch]
+		}
+
+		// Build the (node,client)→reward-token map from claimable observations
+		// across ALL live epochs, so a leaf distributed in one epoch can be
+		// attributed to the token the validator was last seen claimable in.
+		tokenByIdentity := make(map[validatorrewards.LeafIdentity]string)
+		for epoch, views := range viewsByEpoch {
+			if leafMap, ok := leafMaps[epoch]; ok {
+				validatorrewards.CollectClaimableTokens(views, leafMap, tokenByIdentity)
+			}
+		}
+
+		// Project each epoch's status from all its token journals together.
+		for epoch, views := range viewsByEpoch {
+			leafMap, ok := leafMaps[epoch]
 			if !ok {
-				m, err := v.leafStore.LeafIndexToNodeID(ctx, view.SubscriptionEpoch)
-				if err != nil {
-					return result, fmt.Errorf("load leaf_index → node_id mapping for epoch %d: %w",
-						view.SubscriptionEpoch, err)
-				}
-				leafMaps[view.SubscriptionEpoch] = m
-				leafMap = m
-			}
-			if len(leafMap) == 0 {
-				// Leaves not yet indexed for this epoch (S3 export pending,
-				// or out of the leaf window). Skip — next refresh will retry.
 				continue
 			}
 			statusRows = append(statusRows,
-				validatorrewards.ProjectStatuses(view, view.SubscriptionEpoch, leafMap)...)
+				validatorrewards.ProjectEpochStatuses(epoch, views, leafMap, tokenByIdentity)...)
 		}
 		if len(statusRows) > 0 {
 			if err := v.leafStore.ReplaceLeafDistributionStatuses(ctx, statusRows); err != nil {
@@ -533,20 +545,27 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		}
 	}
 
-	// Project the per-epoch 2Z reward pool from the 2Z journals. Unlike the
+	// Project the per-(epoch, token) reward pool from every journal. Unlike the
 	// claimable-bit projection above, this is NOT window-bounded: the pool is
-	// the numerator for all-time earnings, so we record every 2Z journal we
-	// can still read on-chain (the table accumulates and survives sweeps).
+	// the numerator for all-time earnings, so we record every journal we can
+	// still read on-chain (the table accumulates and survives sweeps). Each
+	// journal contributes its token's pool size and the authoritative per-token
+	// denominator (accumulated_publisher_slots_scaled + accumulated_client_slots_scaled).
 	var poolRows []validatorrewards.Distribution2ZPoolRow
 	for _, kj := range allAccounts.Journals {
 		view := kj.View
-		if view == nil || view.MintKey.String() != validatorrewards.DoubleZeroMintKey {
+		if view == nil {
 			continue
 		}
+		rewardMint := view.RewardMintKey.String()
 		poolRows = append(poolRows, validatorrewards.Distribution2ZPoolRow{
-			PK:                validatorrewards.Distribution2ZPoolPK(view.SubscriptionEpoch),
-			SubscriptionEpoch: view.SubscriptionEpoch,
-			TokensReceived2Z:  view.TokensReceivedAmount,
+			PK:                     validatorrewards.DistributionPoolPK(view.SubscriptionEpoch, rewardMint),
+			SubscriptionEpoch:      view.SubscriptionEpoch,
+			TokensReceived2Z:       view.TokensReceivedAmount,
+			TotalLeaderSlots:       uint64(view.TotalLeaderSlots),
+			RewardMint:             rewardMint,
+			AccumulatedSlotsScaled: view.AccumulatedSlotsScaledDenominator(),
+			DistributedAmount:      view.DistributedAmount,
 		})
 	}
 	if len(poolRows) > 0 {

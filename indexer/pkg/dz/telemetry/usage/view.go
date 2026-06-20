@@ -154,6 +154,7 @@ type ViewConfig struct {
 	ClickHouse      clickhouse.Client
 	RefreshInterval time.Duration
 	QueryWindow     time.Duration // How far back to query from InfluxDB
+	QueryChunk      time.Duration // Max time span of a single InfluxDB query; larger windows are split into chunks
 	DZEnv           string        // DZ network environment (e.g. "mainnet-beta", "testnet", "devnet")
 }
 
@@ -176,6 +177,13 @@ func (cfg *ViewConfig) Validate() error {
 	if cfg.QueryWindow <= 0 {
 		cfg.QueryWindow = 1 * time.Hour // Default to 1 hour window
 	}
+	if cfg.QueryChunk <= 0 {
+		// Bound each InfluxDB query to a small span. In steady state the query
+		// window is only a few minutes (one chunk), but when the high-water mark
+		// falls behind the window grows to QueryWindow; chunking keeps each
+		// server-side pivot small enough to stay under InfluxDB Cloud's heap limit.
+		cfg.QueryChunk = 5 * time.Minute
+	}
 	if cfg.Clock == nil {
 		cfg.Clock = clockwork.NewRealClock()
 	}
@@ -187,6 +195,13 @@ func (cfg *ViewConfig) Validate() error {
 // so this threshold is only hit on startup or after the indexer has been paused
 // longer than 5 minutes, triggering a ClickHouse re-query.
 const baselineCacheTTL = 5 * time.Minute
+
+// maxCatchupChunks bounds a single refresh to maxCatchupChunks × QueryChunk of
+// data. After downtime maxTime can fall behind the query window, making one
+// refresh span the entire window at once; capping it spreads the catch-up over
+// successive refreshes (maxTime advances after each) so peak memory stays near
+// steady state. 3 × 5m = 15m per refresh, ~3× the normal incremental span.
+const maxCatchupChunks = 3
 
 type View struct {
 	log       *slog.Logger
@@ -396,9 +411,25 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 
 	// Query InfluxDB for interface usage data
 	// Convert times to UTC for InfluxDB query (InfluxDB stores times in UTC)
+	// Bound how much a single refresh ingests. After downtime maxTime can fall
+	// behind the query window, making [queryStart, now) span the whole window.
+	// queryIntfCountersChunked bounds InfluxDB's server-side memory per chunk,
+	// but the indexer still materializes every chunk's rows, the converted usage
+	// slice, and the ClickHouse batch for the entire span at once — which
+	// OOM-crashlooped the pod: it died before InsertInterfaceUsage, so maxTime
+	// never advanced and every restart re-ran the same giant query. Capping the
+	// span lets a large catch-up proceed across successive refreshes (maxTime
+	// advances after each), keeping peak memory near steady state.
+	queryEnd := now
+	if maxCatchup := v.cfg.QueryChunk * maxCatchupChunks; maxCatchup > 0 && queryEnd.Sub(queryStart) > maxCatchup {
+		queryEnd = queryStart.Add(maxCatchup)
+		v.log.Info("telemetry/usage: capping catch-up window to bound memory",
+			"queryStart", queryStart.UTC(), "queryEnd", queryEnd.UTC(), "target", now.UTC())
+	}
+
 	queryStartUTC := queryStart.UTC()
-	nowUTC := now.UTC()
-	usage, endBaselines, err := v.queryInfluxDB(ctx, queryStartUTC, nowUTC, baselines, alreadyWritten)
+	queryEndUTC := queryEnd.UTC()
+	usage, endBaselines, err := v.queryInfluxDB(ctx, queryStartUTC, queryEndUTC, baselines, alreadyWritten)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return result, err
@@ -463,12 +494,39 @@ type CounterBaselines struct {
 	OutErrors   map[string]*int64
 }
 
+// queryIntfCountersChunked fetches interface counters over [start, end) by splitting the
+// range into contiguous half-open sub-windows of at most chunk duration and concatenating
+// the rows. A single unbounded query over a multi-hour window pivots millions of rows
+// server-side and exhausts InfluxDB Cloud's heap ("deduplicate batches: Heap exhausted");
+// chunking bounds each query's memory regardless of how far behind the high-water mark has
+// fallen. The sub-windows exactly partition [start, end), so the concatenated result matches
+// a single query and downstream time-sorting/forward-fill is unaffected.
+func queryIntfCountersChunked(ctx context.Context, client InfluxDBClient, start, end time.Time, chunk time.Duration) ([]map[string]any, error) {
+	if chunk <= 0 || !end.After(start) {
+		return client.QueryIntfCounters(ctx, start, end)
+	}
+
+	var all []map[string]any
+	for s := start; s.Before(end); s = s.Add(chunk) {
+		e := s.Add(chunk)
+		if e.After(end) {
+			e = end
+		}
+		rows, err := client.QueryIntfCounters(ctx, s, e)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, rows...)
+	}
+	return all, nil
+}
+
 func (v *View) queryInfluxDB(ctx context.Context, startTime, endTime time.Time, baselines *CounterBaselines, alreadyWritten MaxTimestampsByKey) ([]InterfaceUsage, *CounterBaselines, error) {
 	// InfluxDB uses dzd_pubkey as a tag, which we extract and map to device_pk.
 	v.log.Debug("telemetry/usage: executing main influxdb query", "from", startTime.UTC(), "to", endTime.UTC())
 	queryStart := time.Now()
 
-	rows, err := v.cfg.InfluxDB.QueryIntfCounters(ctx, startTime, endTime)
+	rows, err := queryIntfCountersChunked(ctx, v.cfg.InfluxDB, startTime, endTime, v.cfg.QueryChunk)
 	queryDuration := time.Since(queryStart)
 	metrics.RecordInfluxQuery(v.cfg.DZEnv, "interface_usage", queryDuration, len(rows), err)
 	if err != nil {
