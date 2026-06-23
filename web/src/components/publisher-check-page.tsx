@@ -871,6 +871,10 @@ export function PublisherCheckPage() {
                     No Retransmit Shreds
                     <SortIcon field="publishing_retransmitted" />
                   </th>
+                  <th className={thCenter} onClick={() => handleSort("lagging")}>
+                    Fast Shreds
+                    <SortIcon field="lagging" />
+                  </th>
                   <th
                     className={thCenter}
                     onClick={() => handleSort("leader_slots")}
@@ -884,10 +888,6 @@ export function PublisherCheckPage() {
                   >
                     Validator Client
                     <SortIcon field="validator_client" />
-                  </th>
-                  <th className={thCenter} onClick={() => handleSort("lagging")}>
-                    Lagging
-                    <SortIcon field="lagging" />
                   </th>
                 </tr>
               </thead>
@@ -982,23 +982,16 @@ export function PublisherCheckPage() {
                       <td className="px-4 py-3 text-center">
                         <StatusIcon ok={!pub.publishing_retransmitted} />
                       </td>
+                      <td className="px-4 py-3 text-center">
+                        <StatusIcon
+                          ok={pub.lagging_status !== "Action Needed"}
+                        />
+                      </td>
                       <td className="px-4 py-3 text-sm tabular-nums text-center">
                         {pub.leader_slots.toLocaleString()}
                       </td>
                       <td className="px-4 py-3 text-sm">
                         {pub.validator_client} {pub.validator_version || "?"}
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        {pub.lagging ? (
-                          <span
-                            className="inline-block rounded bg-red-500/10 border border-red-500/50 px-1.5 py-0.5 text-xs xxs:text-sm text-red-400"
-                            title={pub.lagging_status || "Lagging"}
-                          >
-                            {pub.lagging_status || "Lagging"}
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
                       </td>
                     </tr>
                   ))
