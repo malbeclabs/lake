@@ -178,6 +178,9 @@ echo ""
 EXTERNAL_TABLES=(
   "shredder:publisher_shred_stats"
   "shredder_qa:publisher_shred_stats"
+  # lagged_validators is filled by an external process and only exists in prod;
+  # proxy just this table (validator_rewards is ingested locally by the indexer).
+  "dzf_data:lagged_validators"
 )
 
 if [[ ${#EXTERNAL_TABLES[@]} -gt 0 ]]; then

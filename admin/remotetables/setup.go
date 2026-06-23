@@ -36,6 +36,10 @@ var externalRemoteTables = []struct {
 	{"dzdp", "offsets"},
 	{"dzdp", "location_decisions"},
 	{"dzdp", "location_state"},
+	// lagged_validators is filled by an external process and only exists in prod.
+	// Proxy just this table so non-prod envs can read it; validator_rewards in the
+	// same database is ingested natively by the indexer and is left untouched.
+	{"dzf_data", "lagged_validators"},
 }
 
 // externalRemoteDatabases lists remote databases to mirror in full, discovering
