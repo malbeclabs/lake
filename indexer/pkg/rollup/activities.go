@@ -18,6 +18,10 @@ type Activities struct {
 	Log          *slog.Logger
 	IngestionLog *ingestionlog.Writer
 	Network      string
+	// TelemetryDatabase is the gNMI interface_state DB (e.g. telemetry_mainnet_beta).
+	// When set, the device-interface rollup prefers it per device and falls back to the
+	// InfluxDB fact table for devices not present there. Empty = fact-only (current behavior).
+	TelemetryDatabase string
 }
 
 // tableRef returns a qualified table reference. If sourceDB is non-empty, the
@@ -593,7 +597,227 @@ func (a *Activities) ComputeDeviceInterfaceRollup(ctx context.Context, input Bac
 		return nil, nil
 	}
 
-	// Collect unique device PKs and (device_pk, tunnel_id) pairs for state resolution
+	if err := a.resolveDeviceInterfaceState(ctx, buckets, input.WindowEnd, srcDB); err != nil {
+		return nil, err
+	}
+
+	a.logRollup("computed device interface rollup buckets", len(buckets), input, time.Since(start))
+
+	return buckets, nil
+}
+
+// ComputeDeviceInterfaceRollupFromGNMI computes the device-interface rollup from the
+// gNMI interface_state table (raw cumulative counters) rather than the InfluxDB-derived
+// fact table. interface_state has no deltas, so we derive per-sample deltas with window
+// functions (per device+interface ordered by timestamp), cast to Int64 so counter resets
+// read negative and are dropped, and produce the SAME Nullable(Int64)/Nullable(Float64)
+// delta columns the fact table carries. The outer aggregation is then identical to
+// ComputeDeviceInterfaceRollup, so both sources roll up the same way; only the input
+// sampling cadence differs. Link/tunnel enrichment and the de-junk filter are added in a
+// later step; this step emits empty link context.
+func (a *Activities) ComputeDeviceInterfaceRollupFromGNMI(ctx context.Context, input BackfillChunkInput) ([]DeviceInterfaceBucket, error) {
+	safeHeartbeat(ctx, "computing device interface rollup from gnmi")
+	start := time.Now()
+
+	interfaceState := tableRef(input.TelemetryDatabase, "interface_state")
+	linksHistory := tableRef(input.SourceDatabase, "dim_dz_links_history")
+
+	query := `
+		WITH links AS (
+			SELECT pk, side_a_pk, side_a_iface_name, side_z_pk, side_z_iface_name
+			FROM (
+				SELECT *, ROW_NUMBER() OVER (PARTITION BY entity_id ORDER BY snapshot_ts DESC, ingested_at DESC, op_id DESC) AS rn
+				FROM ` + linksHistory + `
+			)
+			WHERE rn = 1 AND is_deleted = 0
+		),
+		link_map AS (
+			SELECT side_a_pk AS device_pk, side_a_iface_name AS intf, pk AS link_pk, 'A' AS link_side FROM links WHERE side_a_pk != '' AND side_a_iface_name != ''
+			UNION ALL
+			SELECT side_z_pk AS device_pk, side_z_iface_name AS intf, pk AS link_pk, 'Z' AS link_side FROM links WHERE side_z_pk != '' AND side_z_iface_name != ''
+		)
+		SELECT
+			d.device_pk,
+			d.intf,
+			d.bucket,
+			anyIf(lm.link_pk, lm.link_pk != '') as link_pk,
+			anyIf(lm.link_side, lm.link_side != '') as link_side,
+			if(startsWith(d.intf, 'Tunnel'), toInt64OrNull(substring(d.intf, 7)), NULL) as user_tunnel_id,
+			-- Error/discard counters
+			toUInt64(SUM(greatest(0, in_errors_delta))) as in_errors,
+			toUInt64(SUM(greatest(0, out_errors_delta))) as out_errors,
+			toUInt64(SUM(greatest(0, in_fcs_errors_delta))) as in_fcs_errors,
+			toUInt64(SUM(greatest(0, in_discards_delta))) as in_discards,
+			toUInt64(SUM(greatest(0, out_discards_delta))) as out_discards,
+			toUInt64(SUM(greatest(0, carrier_transitions_delta))) as carrier_transitions,
+			-- In BPS percentiles
+			avgIf(in_octets_delta * 8 / delta_duration, delta_duration > 0 AND in_octets_delta >= 0) as avg_in_bps,
+			minIf(in_octets_delta * 8 / delta_duration, delta_duration > 0 AND in_octets_delta >= 0) as min_in_bps,
+			quantileIf(0.50)(in_octets_delta * 8 / delta_duration, delta_duration > 0 AND in_octets_delta >= 0) as p50_in_bps,
+			quantileIf(0.90)(in_octets_delta * 8 / delta_duration, delta_duration > 0 AND in_octets_delta >= 0) as p90_in_bps,
+			quantileIf(0.95)(in_octets_delta * 8 / delta_duration, delta_duration > 0 AND in_octets_delta >= 0) as p95_in_bps,
+			quantileIf(0.99)(in_octets_delta * 8 / delta_duration, delta_duration > 0 AND in_octets_delta >= 0) as p99_in_bps,
+			maxIf(in_octets_delta * 8 / delta_duration, delta_duration > 0 AND in_octets_delta >= 0) as max_in_bps,
+			-- Out BPS percentiles
+			avgIf(out_octets_delta * 8 / delta_duration, delta_duration > 0 AND out_octets_delta >= 0) as avg_out_bps,
+			minIf(out_octets_delta * 8 / delta_duration, delta_duration > 0 AND out_octets_delta >= 0) as min_out_bps,
+			quantileIf(0.50)(out_octets_delta * 8 / delta_duration, delta_duration > 0 AND out_octets_delta >= 0) as p50_out_bps,
+			quantileIf(0.90)(out_octets_delta * 8 / delta_duration, delta_duration > 0 AND out_octets_delta >= 0) as p90_out_bps,
+			quantileIf(0.95)(out_octets_delta * 8 / delta_duration, delta_duration > 0 AND out_octets_delta >= 0) as p95_out_bps,
+			quantileIf(0.99)(out_octets_delta * 8 / delta_duration, delta_duration > 0 AND out_octets_delta >= 0) as p99_out_bps,
+			maxIf(out_octets_delta * 8 / delta_duration, delta_duration > 0 AND out_octets_delta >= 0) as max_out_bps,
+			-- In PPS percentiles
+			avgIf(in_pkts_delta / delta_duration, delta_duration > 0 AND in_pkts_delta >= 0) as avg_in_pps,
+			minIf(in_pkts_delta / delta_duration, delta_duration > 0 AND in_pkts_delta >= 0) as min_in_pps,
+			quantileIf(0.50)(in_pkts_delta / delta_duration, delta_duration > 0 AND in_pkts_delta >= 0) as p50_in_pps,
+			quantileIf(0.90)(in_pkts_delta / delta_duration, delta_duration > 0 AND in_pkts_delta >= 0) as p90_in_pps,
+			quantileIf(0.95)(in_pkts_delta / delta_duration, delta_duration > 0 AND in_pkts_delta >= 0) as p95_in_pps,
+			quantileIf(0.99)(in_pkts_delta / delta_duration, delta_duration > 0 AND in_pkts_delta >= 0) as p99_in_pps,
+			maxIf(in_pkts_delta / delta_duration, delta_duration > 0 AND in_pkts_delta >= 0) as max_in_pps,
+			-- Out PPS percentiles
+			avgIf(out_pkts_delta / delta_duration, delta_duration > 0 AND out_pkts_delta >= 0) as avg_out_pps,
+			minIf(out_pkts_delta / delta_duration, delta_duration > 0 AND out_pkts_delta >= 0) as min_out_pps,
+			quantileIf(0.50)(out_pkts_delta / delta_duration, delta_duration > 0 AND out_pkts_delta >= 0) as p50_out_pps,
+			quantileIf(0.90)(out_pkts_delta / delta_duration, delta_duration > 0 AND out_pkts_delta >= 0) as p90_out_pps,
+			quantileIf(0.95)(out_pkts_delta / delta_duration, delta_duration > 0 AND out_pkts_delta >= 0) as p95_out_pps,
+			quantileIf(0.99)(out_pkts_delta / delta_duration, delta_duration > 0 AND out_pkts_delta >= 0) as p99_out_pps,
+			maxIf(out_pkts_delta / delta_duration, delta_duration > 0 AND out_pkts_delta >= 0) as max_out_pps,
+			-- In Multicast PPS percentiles
+			avgIf(in_multicast_pkts_delta / delta_duration, delta_duration > 0 AND in_multicast_pkts_delta >= 0) as avg_in_mcast_pps,
+			minIf(in_multicast_pkts_delta / delta_duration, delta_duration > 0 AND in_multicast_pkts_delta >= 0) as min_in_mcast_pps,
+			quantileIf(0.50)(in_multicast_pkts_delta / delta_duration, delta_duration > 0 AND in_multicast_pkts_delta >= 0) as p50_in_mcast_pps,
+			quantileIf(0.90)(in_multicast_pkts_delta / delta_duration, delta_duration > 0 AND in_multicast_pkts_delta >= 0) as p90_in_mcast_pps,
+			quantileIf(0.95)(in_multicast_pkts_delta / delta_duration, delta_duration > 0 AND in_multicast_pkts_delta >= 0) as p95_in_mcast_pps,
+			quantileIf(0.99)(in_multicast_pkts_delta / delta_duration, delta_duration > 0 AND in_multicast_pkts_delta >= 0) as p99_in_mcast_pps,
+			maxIf(in_multicast_pkts_delta / delta_duration, delta_duration > 0 AND in_multicast_pkts_delta >= 0) as max_in_mcast_pps,
+			-- Out Multicast PPS percentiles
+			avgIf(out_multicast_pkts_delta / delta_duration, delta_duration > 0 AND out_multicast_pkts_delta >= 0) as avg_out_mcast_pps,
+			minIf(out_multicast_pkts_delta / delta_duration, delta_duration > 0 AND out_multicast_pkts_delta >= 0) as min_out_mcast_pps,
+			quantileIf(0.50)(out_multicast_pkts_delta / delta_duration, delta_duration > 0 AND out_multicast_pkts_delta >= 0) as p50_out_mcast_pps,
+			quantileIf(0.90)(out_multicast_pkts_delta / delta_duration, delta_duration > 0 AND out_multicast_pkts_delta >= 0) as p90_out_mcast_pps,
+			quantileIf(0.95)(out_multicast_pkts_delta / delta_duration, delta_duration > 0 AND out_multicast_pkts_delta >= 0) as p95_out_mcast_pps,
+			quantileIf(0.99)(out_multicast_pkts_delta / delta_duration, delta_duration > 0 AND out_multicast_pkts_delta >= 0) as p99_out_mcast_pps,
+			maxIf(out_multicast_pkts_delta / delta_duration, delta_duration > 0 AND out_multicast_pkts_delta >= 0) as max_out_mcast_pps
+		FROM (
+			SELECT
+				device_pubkey as device_pk,
+				interface_name as intf,
+				toStartOfFiveMinutes(timestamp) as bucket,
+				-- Per-sample deltas; NULL for the first sample of each partition (no baseline).
+				-- Cast to Int64 so counter resets produce negatives (dropped downstream).
+				if(rn > 1, toInt64(in_errors) - toInt64(prev_in_errors), NULL) as in_errors_delta,
+				if(rn > 1, toInt64(out_errors) - toInt64(prev_out_errors), NULL) as out_errors_delta,
+				if(rn > 1, toInt64(in_fcs_errors) - toInt64(prev_in_fcs_errors), NULL) as in_fcs_errors_delta,
+				if(rn > 1, toInt64(in_discards) - toInt64(prev_in_discards), NULL) as in_discards_delta,
+				if(rn > 1, toInt64(out_discards) - toInt64(prev_out_discards), NULL) as out_discards_delta,
+				if(rn > 1, toInt64(carrier_transitions) - toInt64(prev_carrier_transitions), NULL) as carrier_transitions_delta,
+				if(rn > 1, toInt64(in_octets) - toInt64(prev_in_octets), NULL) as in_octets_delta,
+				if(rn > 1, toInt64(out_octets) - toInt64(prev_out_octets), NULL) as out_octets_delta,
+				if(rn > 1, toInt64(in_pkts) - toInt64(prev_in_pkts), NULL) as in_pkts_delta,
+				if(rn > 1, toInt64(out_pkts) - toInt64(prev_out_pkts), NULL) as out_pkts_delta,
+				if(rn > 1, toInt64(in_multicast_pkts) - toInt64(prev_in_multicast_pkts), NULL) as in_multicast_pkts_delta,
+				if(rn > 1, toInt64(out_multicast_pkts) - toInt64(prev_out_multicast_pkts), NULL) as out_multicast_pkts_delta,
+				if(rn > 1, (toUnixTimestamp64Milli(timestamp) - toUnixTimestamp64Milli(prev_ts)) / 1000.0, NULL) as delta_duration
+			FROM (
+				SELECT
+					device_pubkey, interface_name, timestamp,
+					in_errors, out_errors, in_fcs_errors, in_discards, out_discards, carrier_transitions,
+					in_octets, out_octets, in_pkts, out_pkts, in_multicast_pkts, out_multicast_pkts,
+					row_number() OVER w as rn,
+					lagInFrame(timestamp) OVER w as prev_ts,
+					lagInFrame(in_errors) OVER w as prev_in_errors,
+					lagInFrame(out_errors) OVER w as prev_out_errors,
+					lagInFrame(in_fcs_errors) OVER w as prev_in_fcs_errors,
+					lagInFrame(in_discards) OVER w as prev_in_discards,
+					lagInFrame(out_discards) OVER w as prev_out_discards,
+					lagInFrame(carrier_transitions) OVER w as prev_carrier_transitions,
+					lagInFrame(in_octets) OVER w as prev_in_octets,
+					lagInFrame(out_octets) OVER w as prev_out_octets,
+					lagInFrame(in_pkts) OVER w as prev_in_pkts,
+					lagInFrame(out_pkts) OVER w as prev_out_pkts,
+					lagInFrame(in_multicast_pkts) OVER w as prev_in_multicast_pkts,
+					lagInFrame(out_multicast_pkts) OVER w as prev_out_multicast_pkts
+				FROM ` + interfaceState + `
+				WHERE timestamp >= $1 AND timestamp < $2
+				WINDOW w AS (PARTITION BY device_pubkey, interface_name ORDER BY timestamp ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+			)
+		) d
+		LEFT JOIN link_map lm ON d.device_pk = lm.device_pk AND d.intf = lm.intf
+		GROUP BY d.device_pk, d.intf, d.bucket
+		HAVING link_pk != '' OR user_tunnel_id IS NOT NULL OR avg_in_bps > 0 OR avg_out_bps > 0
+		ORDER BY d.device_pk, d.intf, d.bucket
+	`
+
+	rows, err := a.ClickHouse.Query(ctx, query, input.WindowStart, input.WindowEnd)
+	if err != nil {
+		return nil, fmt.Errorf("device interface gnmi query: %w", err)
+	}
+	defer rows.Close()
+
+	now := time.Now()
+	var buckets []DeviceInterfaceBucket
+
+	for rows.Next() {
+		var b DeviceInterfaceBucket
+		b.IngestedAt = now
+		if err := rows.Scan(
+			&b.DevicePK, &b.Intf, &b.BucketTS,
+			&b.LinkPK, &b.LinkSide,
+			&b.UserTunnelID,
+			&b.InErrors, &b.OutErrors, &b.InFcsErrors, &b.InDiscards, &b.OutDiscards, &b.CarrierTransitions,
+			&b.InBps.Avg, &b.InBps.Min, &b.InBps.P50, &b.InBps.P90, &b.InBps.P95, &b.InBps.P99, &b.InBps.Max,
+			&b.OutBps.Avg, &b.OutBps.Min, &b.OutBps.P50, &b.OutBps.P90, &b.OutBps.P95, &b.OutBps.P99, &b.OutBps.Max,
+			&b.InPps.Avg, &b.InPps.Min, &b.InPps.P50, &b.InPps.P90, &b.InPps.P95, &b.InPps.P99, &b.InPps.Max,
+			&b.OutPps.Avg, &b.OutPps.Min, &b.OutPps.P50, &b.OutPps.P90, &b.OutPps.P95, &b.OutPps.P99, &b.OutPps.Max,
+			&b.InMcastPps.Avg, &b.InMcastPps.Min, &b.InMcastPps.P50, &b.InMcastPps.P90, &b.InMcastPps.P95, &b.InMcastPps.P99, &b.InMcastPps.Max,
+			&b.OutMcastPps.Avg, &b.OutMcastPps.Min, &b.OutMcastPps.P50, &b.OutMcastPps.P90, &b.OutMcastPps.P95, &b.OutMcastPps.P99, &b.OutMcastPps.Max,
+		); err != nil {
+			return nil, fmt.Errorf("device interface gnmi scan: %w", err)
+		}
+		b.BucketTS = b.BucketTS.UTC()
+		buckets = append(buckets, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("device interface gnmi rows: %w", err)
+	}
+
+	if err := a.resolveDeviceInterfaceState(ctx, buckets, input.WindowEnd, input.SourceDatabase); err != nil {
+		return nil, err
+	}
+
+	a.logRollup("computed device interface rollup buckets from gnmi", len(buckets), input, time.Since(start))
+	return buckets, nil
+}
+
+// coalesceDeviceInterfaceBuckets merges gNMI-sourced and fact-table-sourced rollup buckets
+// per device: for any device present in the gNMI buckets, its gNMI buckets win and the
+// fact-table buckets for that device are dropped; devices not present in the gNMI buckets
+// fall back to their fact-table buckets. This lets monitoring shift to gNMI device-by-device
+// as contributors upgrade, with no flag day.
+func coalesceDeviceInterfaceBuckets(gnmiBuckets, factBuckets []DeviceInterfaceBucket) []DeviceInterfaceBucket {
+	gnmiDevices := make(map[string]struct{})
+	for _, b := range gnmiBuckets {
+		gnmiDevices[b.DevicePK] = struct{}{}
+	}
+	out := make([]DeviceInterfaceBucket, 0, len(gnmiBuckets)+len(factBuckets))
+	out = append(out, gnmiBuckets...)
+	for _, b := range factBuckets {
+		if _, ok := gnmiDevices[b.DevicePK]; !ok {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// resolveDeviceInterfaceState resolves device Status, ISIS state, and user PK onto the
+// given buckets. Shared by the InfluxDB (ComputeDeviceInterfaceRollup) and gNMI
+// (ComputeDeviceInterfaceRollupFromGNMI) device-interface rollups so both produce
+// fully-resolved buckets.
+func (a *Activities) resolveDeviceInterfaceState(ctx context.Context, buckets []DeviceInterfaceBucket, asOf time.Time, srcDB string) error {
+	if len(buckets) == 0 {
+		return nil
+	}
+
 	devicePKs := make(map[string]struct{})
 	tunnelKeys := make(map[tunnelKey]struct{})
 	for i := range buckets {
@@ -603,25 +827,19 @@ func (a *Activities) ComputeDeviceInterfaceRollup(ctx context.Context, input Bac
 		}
 	}
 
-	// Resolve device status from dim_dz_devices_history
-	deviceStatus, err := a.resolveDeviceStatus(ctx, devicePKs, input.WindowEnd, srcDB)
+	deviceStatus, err := a.resolveDeviceStatus(ctx, devicePKs, asOf, srcDB)
 	if err != nil {
-		return nil, fmt.Errorf("resolve device status: %w", err)
+		return fmt.Errorf("resolve device status: %w", err)
+	}
+	isisDeviceState, err := a.resolveISISDeviceState(ctx, devicePKs, asOf, srcDB)
+	if err != nil {
+		return fmt.Errorf("resolve ISIS device state: %w", err)
+	}
+	userPKs, err := a.resolveUserPKs(ctx, tunnelKeys, asOf, srcDB)
+	if err != nil {
+		return fmt.Errorf("resolve user PKs: %w", err)
 	}
 
-	// Resolve ISIS device state from dim_isis_devices_history
-	isisDeviceState, err := a.resolveISISDeviceState(ctx, devicePKs, input.WindowEnd, srcDB)
-	if err != nil {
-		return nil, fmt.Errorf("resolve ISIS device state: %w", err)
-	}
-
-	// Resolve user PKs from dim_dz_users_history
-	userPKs, err := a.resolveUserPKs(ctx, tunnelKeys, input.WindowEnd, srcDB)
-	if err != nil {
-		return nil, fmt.Errorf("resolve user PKs: %w", err)
-	}
-
-	// Apply resolved state to buckets
 	for i := range buckets {
 		b := &buckets[i]
 		if status, ok := deviceStatus[b.DevicePK]; ok {
@@ -638,10 +856,7 @@ func (a *Activities) ComputeDeviceInterfaceRollup(ctx context.Context, input Bac
 			}
 		}
 	}
-
-	a.logRollup("computed device interface rollup buckets", len(buckets), input, time.Since(start))
-
-	return buckets, nil
+	return nil
 }
 
 // resolveDeviceStatus queries dim_dz_devices_history to get the most recent status
@@ -862,13 +1077,22 @@ func (a *Activities) RollupLinks(ctx context.Context, input BackfillChunkInput) 
 // RollupDeviceInterfaces computes device interface rollup buckets and writes
 // them to ClickHouse in a single activity.
 func (a *Activities) RollupDeviceInterfaces(ctx context.Context, input BackfillChunkInput) (int, error) {
+	input.TelemetryDatabase = a.TelemetryDatabase
 	var count int
 	err := a.IngestionLog.Wrap(ctx, "rollup", "RollupDeviceInterfaces", a.Network, func() (ingestionlog.RefreshResult, error) {
 		var result ingestionlog.RefreshResult
-		buckets, err := a.ComputeDeviceInterfaceRollup(ctx, input)
+		factBuckets, err := a.ComputeDeviceInterfaceRollup(ctx, input)
 		if err != nil {
 			return result, err
 		}
+		// gNMI is additive: if it fails (e.g. misconfigured or unavailable), fall back to
+		// fact-only so the rollup is never worse than the InfluxDB-only behavior.
+		gnmiBuckets, gerr := a.ComputeDeviceInterfaceRollupFromGNMI(ctx, input)
+		if gerr != nil {
+			a.Log.Warn("gnmi device interface rollup failed; falling back to fact-only", "error", gerr)
+			gnmiBuckets = nil
+		}
+		buckets := coalesceDeviceInterfaceBuckets(gnmiBuckets, factBuckets)
 		if err := a.WriteDeviceInterfaceBuckets(ctx, buckets); err != nil {
 			return result, err
 		}

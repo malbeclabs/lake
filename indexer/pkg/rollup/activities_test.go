@@ -476,6 +476,314 @@ func TestComputeDeviceInterfaceRollup_WithData(t *testing.T) {
 	assert.Equal(t, uint64(1), count)
 }
 
+// TestComputeDeviceInterfaceRollupFromGNMI_ComputesDeltas verifies the gNMI
+// branch derives per-bucket deltas from interface_state's RAW CUMULATIVE counters
+// (the InfluxDB fact table arrives pre-delta'd; interface_state does not).
+func TestComputeDeviceInterfaceRollupFromGNMI_ComputesDeltas(t *testing.T) {
+	t.Parallel()
+	conn := setupTestDB(t)
+	ctx := context.Background()
+
+	// interface_state lives in the telemetry_* schema; create it in the test DB.
+	require.NoError(t, conn.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS interface_state (
+			timestamp DateTime64(9),
+			device_pubkey LowCardinality(String),
+			interface_name String,
+			admin_status LowCardinality(String),
+			oper_status LowCardinality(String),
+			ifindex UInt32, mtu UInt16, last_change Int64,
+			carrier_transitions UInt64,
+			in_octets UInt64, out_octets UInt64, in_pkts UInt64, out_pkts UInt64,
+			in_errors UInt64, out_errors UInt64, in_discards UInt64, out_discards UInt64,
+			in_fcs_errors UInt64,
+			in_unicast_pkts UInt64, in_multicast_pkts UInt64, in_broadcast_pkts UInt64,
+			out_unicast_pkts UInt64, out_multicast_pkts UInt64, out_broadcast_pkts UInt64
+		) ENGINE = MergeTree() ORDER BY (device_pubkey, interface_name, timestamp)
+	`))
+
+	now := time.Now().Truncate(5 * time.Minute)
+	bucketStart := now.Add(-5 * time.Minute)
+
+	// 3 cumulative samples in one 5-min bucket -> 2 consecutive deltas.
+	// per minute: in_octets +125000, in_pkts +100, in_errors +10, out_errors +5,
+	// in_discards +2, in_multicast_pkts +30.
+	for i := range 3 {
+		ts := bucketStart.Add(time.Duration(i) * time.Minute)
+		require.NoError(t, conn.Exec(ctx, `INSERT INTO interface_state
+			(timestamp, device_pubkey, interface_name, admin_status, oper_status, ifindex, mtu, last_change,
+			 carrier_transitions, in_octets, out_octets, in_pkts, out_pkts, in_errors, out_errors, in_discards, out_discards,
+			 in_fcs_errors, in_unicast_pkts, in_multicast_pkts, in_broadcast_pkts, out_unicast_pkts, out_multicast_pkts, out_broadcast_pkts)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
+			ts, "device-1", "Ethernet1/1", "UP", "UP", uint32(1), uint16(9000), int64(0),
+			uint64(0),
+			uint64(1000+125000*i), uint64(500+62500*i), uint64(10+100*i), uint64(5+50*i),
+			uint64(10*i), uint64(5*i), uint64(2*i), uint64(1*i),
+			uint64(0), uint64(0), uint64(30*i), uint64(0), uint64(0), uint64(0), uint64(0)))
+	}
+
+	a := &Activities{ClickHouse: conn, Log: laketesting.NewLogger()}
+	buckets, err := a.ComputeDeviceInterfaceRollupFromGNMI(ctx, BackfillChunkInput{
+		WindowStart: now.Add(-10 * time.Minute),
+		WindowEnd:   now.Add(5 * time.Minute),
+	})
+	require.NoError(t, err)
+	require.Len(t, buckets, 1)
+
+	b := buckets[0]
+	assert.Equal(t, "device-1", b.DevicePK)
+	assert.Equal(t, "Ethernet1/1", b.Intf)
+	// 2 deltas summed
+	assert.Equal(t, uint64(20), b.InErrors)
+	assert.Equal(t, uint64(10), b.OutErrors)
+	assert.Equal(t, uint64(4), b.InDiscards)
+	// rates derived from cumulative diffs
+	assert.Greater(t, b.InBps.Avg, float64(0))
+	assert.Greater(t, b.InPps.Avg, float64(0))
+	assert.Greater(t, b.InMcastPps.Avg, float64(0))
+}
+
+// TestComputeDeviceInterfaceRollupFromGNMI_EnrichesAndDropsJunk verifies the gNMI
+// branch enriches link/tunnel context (from dim_dz_links_history / Tunnel<N> name)
+// and drops junk interfaces: not mapped to a link or tunnel and carrying no traffic.
+func TestComputeDeviceInterfaceRollupFromGNMI_EnrichesAndDropsJunk(t *testing.T) {
+	t.Parallel()
+	conn := setupTestDB(t)
+	ctx := context.Background()
+
+	require.NoError(t, conn.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS interface_state (
+			timestamp DateTime64(9),
+			device_pubkey LowCardinality(String), interface_name String,
+			admin_status LowCardinality(String), oper_status LowCardinality(String),
+			ifindex UInt32, mtu UInt16, last_change Int64,
+			carrier_transitions UInt64,
+			in_octets UInt64, out_octets UInt64, in_pkts UInt64, out_pkts UInt64,
+			in_errors UInt64, out_errors UInt64, in_discards UInt64, out_discards UInt64,
+			in_fcs_errors UInt64,
+			in_unicast_pkts UInt64, in_multicast_pkts UInt64, in_broadcast_pkts UInt64,
+			out_unicast_pkts UInt64, out_multicast_pkts UInt64, out_broadcast_pkts UInt64
+		) ENGINE = MergeTree() ORDER BY (device_pubkey, interface_name, timestamp)
+	`))
+
+	now := time.Now().Truncate(5 * time.Minute)
+	bucketStart := now.Add(-5 * time.Minute)
+
+	// device-1/Ethernet1/1 is side A of link-1.
+	require.NoError(t, conn.Exec(ctx, `INSERT INTO dim_dz_links_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, pk, status, side_a_pk, side_a_iface_name, side_z_pk, side_z_iface_name) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+		"link-entity-1", now, now, "00000000-0000-0000-0000-000000000031", uint8(0), "link-1", "activated", "device-1", "Ethernet1/1", "device-2", "Ethernet9/9"))
+
+	// octetsStep>0 => traffic; octetsStep==0 => flat (no traffic).
+	insert := func(intf string, octetsStep uint64) {
+		for i := range 3 {
+			ts := bucketStart.Add(time.Duration(i) * time.Minute)
+			require.NoError(t, conn.Exec(ctx, `INSERT INTO interface_state
+				(timestamp, device_pubkey, interface_name, admin_status, oper_status, ifindex, mtu, last_change,
+				 carrier_transitions, in_octets, out_octets, in_pkts, out_pkts, in_errors, out_errors, in_discards, out_discards,
+				 in_fcs_errors, in_unicast_pkts, in_multicast_pkts, in_broadcast_pkts, out_unicast_pkts, out_multicast_pkts, out_broadcast_pkts)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
+				ts, "device-1", intf, "UP", "UP", uint32(1), uint16(9000), int64(0),
+				uint64(0),
+				uint64(1000+octetsStep*uint64(i)), uint64(500+octetsStep*uint64(i)), uint64(10+100*i), uint64(5+50*i),
+				uint64(0), uint64(0), uint64(0), uint64(0),
+				uint64(0), uint64(0), uint64(0), uint64(0), uint64(0), uint64(0), uint64(0)))
+		}
+	}
+	insert("Ethernet1/1", 125000) // link-mapped + traffic -> keep
+	insert("Tunnel500", 125000)   // user tunnel + traffic -> keep
+	insert("Ethernet48", 0)       // no link/tunnel, flat octets (no traffic) -> drop
+
+	a := &Activities{ClickHouse: conn, Log: laketesting.NewLogger()}
+	buckets, err := a.ComputeDeviceInterfaceRollupFromGNMI(ctx, BackfillChunkInput{
+		WindowStart: now.Add(-10 * time.Minute),
+		WindowEnd:   now.Add(5 * time.Minute),
+	})
+	require.NoError(t, err)
+
+	byIntf := make(map[string]DeviceInterfaceBucket)
+	for _, b := range buckets {
+		byIntf[b.Intf] = b
+	}
+
+	_, hasJunk := byIntf["Ethernet48"]
+	assert.False(t, hasJunk, "junk interface (no link/tunnel, no traffic) should be dropped")
+
+	eth, ok := byIntf["Ethernet1/1"]
+	require.True(t, ok, "link-mapped interface should be kept")
+	assert.Equal(t, "link-1", eth.LinkPK)
+	assert.Equal(t, "A", eth.LinkSide)
+
+	tun, ok := byIntf["Tunnel500"]
+	require.True(t, ok, "user-tunnel interface should be kept")
+	require.NotNil(t, tun.UserTunnelID)
+	assert.Equal(t, int64(500), *tun.UserTunnelID)
+}
+
+// TestCoalesceDeviceInterfaceBuckets_PrefersGNMI verifies the per-device merge: a device
+// present in the gNMI buckets wins (its fact-table buckets are dropped), and a device with
+// no gNMI data falls back to its fact-table buckets.
+func TestCoalesceDeviceInterfaceBuckets_PrefersGNMI(t *testing.T) {
+	t.Parallel()
+	gnmi := []DeviceInterfaceBucket{
+		{DevicePK: "d1", Intf: "Ethernet1", InErrors: 99},
+	}
+	fact := []DeviceInterfaceBucket{
+		{DevicePK: "d1", Intf: "Ethernet1", InErrors: 1}, // superseded by gNMI
+		{DevicePK: "d2", Intf: "Ethernet2", InErrors: 7}, // no gNMI for d2 -> kept
+	}
+
+	out := coalesceDeviceInterfaceBuckets(gnmi, fact)
+
+	byDev := make(map[string]DeviceInterfaceBucket)
+	for _, b := range out {
+		byDev[b.DevicePK] = b
+	}
+
+	require.Len(t, out, 2)
+	require.Contains(t, byDev, "d1")
+	require.Contains(t, byDev, "d2")
+	assert.Equal(t, uint64(99), byDev["d1"].InErrors, "d1 should come from gNMI, not fact")
+	assert.Equal(t, uint64(7), byDev["d2"].InErrors, "d2 has no gNMI data -> fall back to fact")
+}
+
+// TestComputeDeviceInterfaceRollupFromGNMI_ResolvesDeviceState verifies the gNMI branch
+// resolves device Status (from dim_dz_devices_history) onto its buckets, like the fact path.
+func TestComputeDeviceInterfaceRollupFromGNMI_ResolvesDeviceState(t *testing.T) {
+	t.Parallel()
+	conn := setupTestDB(t)
+	ctx := context.Background()
+
+	require.NoError(t, conn.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS interface_state (
+			timestamp DateTime64(9),
+			device_pubkey LowCardinality(String), interface_name String,
+			admin_status LowCardinality(String), oper_status LowCardinality(String),
+			ifindex UInt32, mtu UInt16, last_change Int64,
+			carrier_transitions UInt64,
+			in_octets UInt64, out_octets UInt64, in_pkts UInt64, out_pkts UInt64,
+			in_errors UInt64, out_errors UInt64, in_discards UInt64, out_discards UInt64,
+			in_fcs_errors UInt64,
+			in_unicast_pkts UInt64, in_multicast_pkts UInt64, in_broadcast_pkts UInt64,
+			out_unicast_pkts UInt64, out_multicast_pkts UInt64, out_broadcast_pkts UInt64
+		) ENGINE = MergeTree() ORDER BY (device_pubkey, interface_name, timestamp)
+	`))
+
+	now := time.Now().Truncate(5 * time.Minute)
+	bucketStart := now.Add(-5 * time.Minute)
+
+	require.NoError(t, conn.Exec(ctx, `INSERT INTO dim_dz_devices_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, pk, status, device_type, code, metro_pk) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		"dev-entity-9", now, now, "00000000-0000-0000-0000-000000000041", uint8(0), "device-9", "soft-drained", "router", "DEV9", "metro-1"))
+
+	for i := range 3 {
+		ts := bucketStart.Add(time.Duration(i) * time.Minute)
+		require.NoError(t, conn.Exec(ctx, `INSERT INTO interface_state
+			(timestamp, device_pubkey, interface_name, admin_status, oper_status, ifindex, mtu, last_change,
+			 carrier_transitions, in_octets, out_octets, in_pkts, out_pkts, in_errors, out_errors, in_discards, out_discards,
+			 in_fcs_errors, in_unicast_pkts, in_multicast_pkts, in_broadcast_pkts, out_unicast_pkts, out_multicast_pkts, out_broadcast_pkts)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
+			ts, "device-9", "Ethernet1/1", "UP", "UP", uint32(1), uint16(9000), int64(0),
+			uint64(0),
+			uint64(1000+125000*i), uint64(500+62500*i), uint64(10+100*i), uint64(5+50*i),
+			uint64(0), uint64(0), uint64(0), uint64(0),
+			uint64(0), uint64(0), uint64(0), uint64(0), uint64(0), uint64(0), uint64(0)))
+	}
+
+	a := &Activities{ClickHouse: conn, Log: laketesting.NewLogger()}
+	buckets, err := a.ComputeDeviceInterfaceRollupFromGNMI(ctx, BackfillChunkInput{
+		WindowStart: now.Add(-10 * time.Minute),
+		WindowEnd:   now.Add(5 * time.Minute),
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, buckets)
+	assert.Equal(t, "soft-drained", buckets[0].Status, "gNMI bucket should have device Status resolved")
+}
+
+// TestDeviceInterfaceRollup_GNMIMatchesInfluxForSameData seeds equivalent underlying data
+// into both sources (raw cumulative counters in interface_state; the equivalent precomputed
+// deltas in the fact table) and asserts the two rollups produce matching totals and average
+// rates. This guards that the gNMI delta math equals the InfluxDB path given the same samples.
+func TestDeviceInterfaceRollup_GNMIMatchesInfluxForSameData(t *testing.T) {
+	t.Parallel()
+	conn := setupTestDB(t)
+	ctx := context.Background()
+
+	require.NoError(t, conn.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS interface_state (
+			timestamp DateTime64(9),
+			device_pubkey LowCardinality(String), interface_name String,
+			admin_status LowCardinality(String), oper_status LowCardinality(String),
+			ifindex UInt32, mtu UInt16, last_change Int64,
+			carrier_transitions UInt64,
+			in_octets UInt64, out_octets UInt64, in_pkts UInt64, out_pkts UInt64,
+			in_errors UInt64, out_errors UInt64, in_discards UInt64, out_discards UInt64,
+			in_fcs_errors UInt64,
+			in_unicast_pkts UInt64, in_multicast_pkts UInt64, in_broadcast_pkts UInt64,
+			out_unicast_pkts UInt64, out_multicast_pkts UInt64, out_broadcast_pkts UInt64
+		) ENGINE = MergeTree() ORDER BY (device_pubkey, interface_name, timestamp)
+	`))
+
+	now := time.Now().Truncate(5 * time.Minute)
+	bucketStart := now.Add(-5 * time.Minute)
+
+	// Per minute: in_octets +125000, out_octets +62500, in_pkts +100, out_pkts +50,
+	// in_errors +10, out_errors +5, in_discards +2, in_multicast_pkts +30.
+	// gNMI: 3 cumulative samples (-> 2 deltas).
+	for i := range 3 {
+		ts := bucketStart.Add(time.Duration(i) * time.Minute)
+		require.NoError(t, conn.Exec(ctx, `INSERT INTO interface_state
+			(timestamp, device_pubkey, interface_name, admin_status, oper_status, ifindex, mtu, last_change,
+			 carrier_transitions, in_octets, out_octets, in_pkts, out_pkts, in_errors, out_errors, in_discards, out_discards,
+			 in_fcs_errors, in_unicast_pkts, in_multicast_pkts, in_broadcast_pkts, out_unicast_pkts, out_multicast_pkts, out_broadcast_pkts)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
+			ts, "device-eq", "Ethernet1/1", "UP", "UP", uint32(1), uint16(9000), int64(0),
+			uint64(0),
+			uint64(1000+125000*i), uint64(500+62500*i), uint64(10+100*i), uint64(5+50*i),
+			uint64(10*i), uint64(5*i), uint64(2*i), uint64(0),
+			uint64(0), uint64(0), uint64(30*i), uint64(0), uint64(0), uint64(0), uint64(0)))
+	}
+	// Fact: the equivalent 2 delta rows (matching the 2 gNMI deltas).
+	for i := 1; i < 3; i++ {
+		ts := bucketStart.Add(time.Duration(i) * time.Minute)
+		require.NoError(t, conn.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters (event_ts, ingested_at, device_pk, host, intf, link_pk, link_side, in_errors_delta, out_errors_delta, in_fcs_errors_delta, in_discards_delta, out_discards_delta, carrier_transitions_delta, in_octets_delta, out_octets_delta, in_pkts_delta, out_pkts_delta, in_multicast_pkts_delta, out_multicast_pkts_delta, delta_duration) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+			ts, ts, "device-eq", "host", "Ethernet1/1", "", "",
+			int64(10), int64(5), int64(0), int64(2), int64(0), int64(0),
+			int64(125000), int64(62500), int64(100), int64(50),
+			int64(30), int64(0), float64(60.0)))
+	}
+
+	a := &Activities{ClickHouse: conn, Log: laketesting.NewLogger()}
+	input := BackfillChunkInput{WindowStart: now.Add(-10 * time.Minute), WindowEnd: now.Add(5 * time.Minute)}
+
+	gnmi, err := a.ComputeDeviceInterfaceRollupFromGNMI(ctx, input)
+	require.NoError(t, err)
+	require.Len(t, gnmi, 1)
+	fact, err := a.ComputeDeviceInterfaceRollup(ctx, input)
+	require.NoError(t, err)
+	require.Len(t, fact, 1)
+
+	g, f := gnmi[0], fact[0]
+	// Totals match exactly.
+	assert.Equal(t, f.InErrors, g.InErrors)
+	assert.Equal(t, f.OutErrors, g.OutErrors)
+	assert.Equal(t, f.InDiscards, g.InDiscards)
+	assert.Equal(t, f.OutDiscards, g.OutDiscards)
+	assert.Equal(t, f.CarrierTransitions, g.CarrierTransitions)
+	// Average rates match (same samples, same aggregation).
+	assert.InDelta(t, f.InBps.Avg, g.InBps.Avg, 1.0)
+	assert.InDelta(t, f.OutBps.Avg, g.OutBps.Avg, 1.0)
+	assert.InDelta(t, f.InPps.Avg, g.InPps.Avg, 0.01)
+	assert.InDelta(t, f.InMcastPps.Avg, g.InMcastPps.Avg, 0.01)
+}
+
+// TestTelemetryDatabaseForNetwork verifies the gNMI telemetry DB name derived per network.
+func TestTelemetryDatabaseForNetwork(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "telemetry_mainnet_beta", telemetryDatabaseForNetwork("mainnet-beta"))
+	assert.Equal(t, "telemetry_testnet", telemetryDatabaseForNetwork("testnet"))
+	assert.Equal(t, "telemetry_devnet", telemetryDatabaseForNetwork("devnet"))
+	assert.Equal(t, "", telemetryDatabaseForNetwork(""), "empty network -> gNMI off (fact-only)")
+}
+
 func TestComputeDeviceInterfaceRollup_WithUserTunnel(t *testing.T) {
 	t.Parallel()
 	conn := setupTestDB(t)
