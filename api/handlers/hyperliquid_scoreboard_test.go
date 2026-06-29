@@ -58,17 +58,18 @@ func TestHyperliquidScoreboard_HeadlineAndCompetitors(t *testing.T) {
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	createFeedsTable(t, api)
 
-	// 3 races at node tyo: DZ (tob_*) beats Hydromancer twice, loses once.
+	// 4 races at node tyo: DZ (tob_*) beats Hydromancer three times, loses once.
 	insertPairwise(t, api, "tyo-rec1", "tyo", "BTC", 1000, 1, "tob_gcp_tyo_hl_mainnet1", "hydromancer_bbo", 1.0)
-	insertPairwise(t, api, "tyo-rec1", "tyo", "BTC", 2000, 2, "tob_gcp_tyo_hl_mainnet1", "hydromancer_bbo", 3.0)
-	insertPairwise(t, api, "tyo-rec1", "tyo", "BTC", 3000, 3, "hydromancer_bbo", "tob_gcp_tyo_hl_mainnet1", 0.5)
+	insertPairwise(t, api, "tyo-rec1", "tyo", "BTC", 2000, 2, "tob_gcp_tyo_hl_mainnet1", "hydromancer_bbo", 2.0)
+	insertPairwise(t, api, "tyo-rec1", "tyo", "BTC", 3000, 3, "tob_gcp_tyo_hl_mainnet1", "hydromancer_bbo", 3.0)
+	insertPairwise(t, api, "tyo-rec1", "tyo", "BTC", 4000, 4, "hydromancer_bbo", "tob_gcp_tyo_hl_mainnet1", 0.5)
 
 	resp, err := api.FetchHyperliquidScoreboardData(t.Context(), "24h", "")
 	require.NoError(t, err)
 
-	// DZ won 2 of 3 comparable races = 66.67%.
-	assert.InDelta(t, 66.67, resp.DZWinSharePct, 0.1)
-	assert.EqualValues(t, 3, resp.TotalRaces)
+	// DZ won 3 of 4 comparable races = 75%.
+	assert.InDelta(t, 75.0, resp.DZWinSharePct, 0.1)
+	assert.EqualValues(t, 4, resp.TotalRaces)
 
 	var hydro *handlers.HyperliquidCompetitor
 	for i := range resp.Competitors {
@@ -78,8 +79,8 @@ func TestHyperliquidScoreboard_HeadlineAndCompetitors(t *testing.T) {
 	}
 	require.NotNil(t, hydro)
 	assert.Equal(t, "Hydromancer", hydro.Label)
-	assert.InDelta(t, 66.67, hydro.DZWinPct, 0.1)
-	assert.EqualValues(t, 3, hydro.Races)
-	// Lead p50 over the 2 DZ wins (1.0, 3.0) = 1.0 (quantileExact lower).
-	assert.InDelta(t, 1.0, hydro.LeadP50Ms, 0.001)
+	assert.InDelta(t, 75.0, hydro.DZWinPct, 0.1)
+	assert.EqualValues(t, 4, hydro.Races)
+	// Lead p50 over the 3 DZ wins (1.0, 2.0, 3.0) = 2.0 (quantileExact(0.5)).
+	assert.InDelta(t, 2.0, hydro.LeadP50Ms, 0.001)
 }

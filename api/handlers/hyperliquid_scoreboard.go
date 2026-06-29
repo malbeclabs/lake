@@ -117,8 +117,8 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 	// Headline: DZ win share over all DZ-vs-competitor pairwise comparisons.
 	headlineQ := fmt.Sprintf(`
 		SELECT
-			100.0 * countIf(startsWith(feed,'tob_') AND NOT startsWith(loser_feed,'tob_'))
-			      / nullIf(countIf(startsWith(feed,'tob_') != startsWith(loser_feed,'tob_')), 0) AS dz_win_share_pct,
+			ifNull(100.0 * countIf(startsWith(feed,'tob_') AND NOT startsWith(loser_feed,'tob_'))
+			      / nullIf(countIf(startsWith(feed,'tob_') != startsWith(loser_feed,'tob_')), 0), 0) AS dz_win_share_pct,
 			countIf(startsWith(feed,'tob_') != startsWith(loser_feed,'tob_')) AS total_races
 		FROM %s.hyperliquid_bbo_feed_race_summary FINAL
 		WHERE feed != loser_feed AND loser_feed != '' %s
@@ -136,8 +136,8 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 		SELECT competitor,
 			countIf(dz_won = 1) AS dz_wins,
 			countIf(dz_won = 0) AS dz_losses,
-			quantileExactLowIf(0.5)(lead_ms, dz_won = 1) AS lead_p50,
-			quantileExactLowIf(0.95)(lead_ms, dz_won = 1) AS lead_p95
+			quantileExactIf(0.5)(lead_ms, dz_won = 1) AS lead_p50,
+			quantileExactIf(0.95)(lead_ms, dz_won = 1) AS lead_p95
 		FROM (
 			SELECT
 				if(startsWith(feed,'tob_'), loser_feed, feed) AS competitor,
