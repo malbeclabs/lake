@@ -114,6 +114,18 @@ func TestS3Client_Fetch_NotFound(t *testing.T) {
 	assert.Nil(t, got)
 }
 
+func TestS3Client_Fetch_Forbidden(t *testing.T) {
+	// A public bucket without s3:ListBucket returns 403 for a missing key.
+	// Treat it as "not exported yet", same as 404, not an error.
+	srv := newTestServer(t, http.StatusForbidden, []byte(""))
+	c := newClientFor(t, srv)
+
+	got, ok, err := c.FetchLeaderSlotData(context.Background(), 951)
+	require.NoError(t, err)
+	assert.False(t, ok)
+	assert.Nil(t, got)
+}
+
 func TestS3Client_Fetch_ServerError(t *testing.T) {
 	srv := newTestServer(t, http.StatusInternalServerError, []byte("boom"))
 	c := newClientFor(t, srv)
