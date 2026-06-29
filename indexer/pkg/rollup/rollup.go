@@ -93,10 +93,11 @@ func Start(ctx context.Context, cfg Config) error {
 	// Register rollup workflows
 	ingestionLogWriter := ingestionlog.NewWriter(chConn, log)
 	activities := &Activities{
-		ClickHouse:   chConn,
-		Log:          log.With("component", "rollup"),
-		IngestionLog: ingestionLogWriter,
-		Network:      cfg.Network,
+		ClickHouse:        chConn,
+		Log:               log.With("component", "rollup"),
+		IngestionLog:      ingestionLogWriter,
+		Network:           cfg.Network,
+		TelemetryDatabase: telemetryDatabaseForNetwork(cfg.Network),
 	}
 
 	w := worker.New(tc, tq, worker.Options{})
@@ -218,4 +219,14 @@ func envOrDefault(key, defaultValue string) string {
 		return v
 	}
 	return defaultValue
+}
+
+// telemetryDatabaseForNetwork returns the gNMI telemetry database for a DZ network
+// (e.g. "mainnet-beta" -> "telemetry_mainnet_beta"). It is a sibling database on the
+// same ClickHouse cluster as the lake DB. Empty network -> "" (gNMI off, fact-only).
+func telemetryDatabaseForNetwork(network string) string {
+	if network == "" {
+		return ""
+	}
+	return "telemetry_" + strings.ReplaceAll(network, "-", "_")
 }
