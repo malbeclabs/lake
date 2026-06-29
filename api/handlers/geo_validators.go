@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"net/http"
 	"sort"
@@ -94,6 +95,8 @@ func isDefaultGeoValidatorsRequest(r *http.Request) bool {
 func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string) (*GeoValidatorsResponse, error) {
 	dzdpDB := fmt.Sprintf("`%s`", a.DZDPDB)
 
+	// Fetch enriched validators with lat/lng — nearest-metro assignment and
+	// deduplication are done in Go to avoid a CROSS JOIN in ClickHouse.
 	query := fmt.Sprintf(`
 		WITH geolocated AS (
 			SELECT
@@ -104,86 +107,37 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 			FROM (SELECT * FROM %s.location_state FINAL) AS ls
 			JOIN solana_gossip_nodes_current gn ON ls.target_ip = gn.gossip_ip
 			WHERE ls.state = 'honed'
-		),
-		enriched AS (
-			SELECT
-				gv.target_ip AS target_ip,
-				gv.dzdp_lat AS dzdp_lat,
-				gv.dzdp_lng AS dzdp_lng,
-				gv.node_pubkey AS node_pubkey,
-				va.vote_pubkey AS vote_pubkey,
-				va.activated_stake_lamports / 1e9 AS stake_sol,
-				va.commission_percentage AS commission,
-				coalesce(geo.asn, 0) AS asn,
-				coalesce(geo.asn_org, '') AS asn_org,
-				coalesce(geo.country_code, '') AS country_code,
-				coalesce(vapp.name, '') AS vname,
-				coalesce(vapp.data_center_key, '') AS datacenter,
-				if(vapp.is_dz = 1, true, false) AS is_dz
-			FROM geolocated gv
-			JOIN solana_vote_accounts_current va ON gv.node_pubkey = va.node_pubkey
-			LEFT JOIN geoip_records_current geo ON gv.target_ip = geo.ip
-			LEFT JOIN validatorsapp_validators_current vapp ON va.vote_pubkey = vapp.vote_account
-			WHERE va.epoch_vote_account = 'true' AND va.activated_stake_lamports > 0
-		),
-		nearest_metro AS (
-			SELECT
-				e.vote_pubkey AS vote_pubkey,
-				e.node_pubkey AS node_pubkey,
-				e.stake_sol AS stake_sol,
-				e.commission AS commission,
-				e.asn AS asn,
-				e.asn_org AS asn_org,
-				e.country_code AS country_code,
-				e.vname AS vname,
-				e.datacenter AS datacenter,
-				e.is_dz AS is_dz,
-				e.dzdp_lat AS dzdp_lat,
-				e.dzdp_lng AS dzdp_lng,
-				arrayElement(
-					arraySort(
-						(x, y) -> y,
-						groupArray(m.code),
-						groupArray(geoDistance(e.dzdp_lng, e.dzdp_lat, m.longitude, m.latitude))
-					), 1
-				) AS metro_code
-			FROM enriched e
-			CROSS JOIN dz_metros_current m
-			GROUP BY vote_pubkey, node_pubkey, stake_sol, commission,
-				asn, asn_org, country_code, vname, datacenter, is_dz,
-				dzdp_lat, dzdp_lng
-		),
-		deduped AS (
-			SELECT
-				vote_pubkey,
-				argMax(node_pubkey, stake_sol) AS node_pubkey,
-				max(stake_sol) AS max_stake,
-				argMax(commission, stake_sol) AS commission,
-				argMax(metro_code, stake_sol) AS metro_code,
-				argMax(asn, stake_sol) AS asn,
-				argMax(asn_org, stake_sol) AS asn_org,
-				argMax(country_code, stake_sol) AS country_code,
-				argMax(vname, stake_sol) AS vname,
-				argMax(datacenter, stake_sol) AS datacenter,
-				argMax(is_dz, stake_sol) AS is_dz,
-				argMax(dzdp_lat, stake_sol) AS dzdp_lat,
-				argMax(dzdp_lng, stake_sol) AS dzdp_lng
-			FROM nearest_metro
-			GROUP BY vote_pubkey
 		)
-		SELECT vote_pubkey, node_pubkey, max_stake AS stake_sol, commission, metro_code, asn, asn_org,
-			country_code, vname, datacenter, is_dz, dzdp_lat, dzdp_lng
-		FROM deduped
-		ORDER BY max_stake DESC
+		SELECT
+			va.vote_pubkey,
+			gv.node_pubkey,
+			va.activated_stake_lamports / 1e9 AS stake_sol,
+			va.commission_percentage AS commission,
+			coalesce(geo.asn, 0) AS asn,
+			coalesce(geo.asn_org, '') AS asn_org,
+			coalesce(geo.country_code, '') AS country_code,
+			coalesce(vapp.name, '') AS vname,
+			coalesce(vapp.data_center_key, '') AS datacenter,
+			if(vapp.is_dz = 1, true, false) AS is_dz,
+			gv.dzdp_lat,
+			gv.dzdp_lng
+		FROM geolocated gv
+		JOIN solana_vote_accounts_current va ON gv.node_pubkey = va.node_pubkey
+		LEFT JOIN geoip_records_current geo ON gv.target_ip = geo.ip
+		LEFT JOIN validatorsapp_validators_current vapp ON va.vote_pubkey = vapp.vote_account
+		WHERE va.epoch_vote_account = 'true' AND va.activated_stake_lamports > 0
 	`, dzdpDB)
 
 	start := time.Now()
 	rows, err := a.DB.Query(ctx, query)
 	metrics.RecordClickHouseQuery("geo_validators", time.Since(start), err)
 	if err != nil {
-		// Return empty response when DZDP tables aren't available or accessible
+		// Return empty response when DZDP tables aren't available or accessible.
+		// Code 60 = UNKNOWN_TABLE, Code 81 = UNKNOWN_DATABASE, Code 497 = NOT_ENOUGH_PRIVILEGES.
 		var chErr *proto.Exception
-		if errors.As(err, &chErr) && (chErr.Code == 60 || chErr.Code == 497) {
+		if errors.As(err, &chErr) && (chErr.Code == 60 || chErr.Code == 81 || chErr.Code == 497) {
+			slog.Warn("geo validators: DZDP tables not available, returning empty response",
+				"dzdp_db", dzdpDB, "ch_error_code", chErr.Code, "error", err)
 			return &GeoValidatorsResponse{
 				Validators:       []GeoValidatorItem{},
 				TierDistribution: []GeoTierDistribution{},
@@ -192,21 +146,100 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 		}
 		return nil, err
 	}
-	defer rows.Close()
 
-	var allValidators []GeoValidatorItem
+	type enrichedRow struct {
+		votePubkey  string
+		nodePubkey  string
+		stakeSol    float64
+		commission  int64
+		asn         int64
+		asnOrg      string
+		countryCode string
+		name        string
+		datacenter  string
+		isDZ        bool
+		lat, lng    float64
+	}
+
+	var enriched []enrichedRow
 	for rows.Next() {
-		var v GeoValidatorItem
-		if err := rows.Scan(&v.VotePubkey, &v.NodePubkey, &v.StakeSol, &v.Commission,
-			&v.MetroCode, &v.ASN, &v.ASNOrg, &v.CountryCode, &v.Name, &v.Datacenter,
-			&v.IsDZ, &v.DZDPLat, &v.DZDPLng); err != nil {
+		var r enrichedRow
+		if err := rows.Scan(&r.votePubkey, &r.nodePubkey, &r.stakeSol, &r.commission,
+			&r.asn, &r.asnOrg, &r.countryCode, &r.name, &r.datacenter,
+			&r.isDZ, &r.lat, &r.lng); err != nil {
+			rows.Close()
 			return nil, err
 		}
-		allValidators = append(allValidators, v)
+		enriched = append(enriched, r)
 	}
 	if err := rows.Err(); err != nil {
+		rows.Close()
 		return nil, err
 	}
+	rows.Close()
+
+	// Fetch metros for nearest-metro assignment.
+	type metroCoord struct {
+		code     string
+		lat, lng float64
+	}
+	var metrosList []metroCoord
+	metroRows, err := a.DB.Query(ctx, "SELECT code, latitude, longitude FROM dz_metros_current")
+	if err != nil {
+		logError("geo validators metros query error", "error", err)
+	} else {
+		for metroRows.Next() {
+			var m metroCoord
+			if err := metroRows.Scan(&m.code, &m.lat, &m.lng); err != nil {
+				metroRows.Close()
+				return nil, err
+			}
+			metrosList = append(metrosList, m)
+		}
+		metroRows.Close()
+	}
+
+	// Assign nearest metro and deduplicate by vote_pubkey in Go.
+	type dedupEntry struct {
+		idx int // index into enriched
+	}
+	best := make(map[string]dedupEntry)
+	for i, e := range enriched {
+		if prev, ok := best[e.votePubkey]; !ok || e.stakeSol > enriched[prev.idx].stakeSol {
+			best[e.votePubkey] = dedupEntry{idx: i}
+		}
+	}
+
+	allValidators := make([]GeoValidatorItem, 0, len(best))
+	for _, entry := range best {
+		e := enriched[entry.idx]
+		// Find nearest metro.
+		bestCode := ""
+		bestDist := math.MaxFloat64
+		for _, m := range metrosList {
+			d := haversine(e.lat, e.lng, m.lat, m.lng)
+			if d < bestDist {
+				bestDist = d
+				bestCode = m.code
+			}
+		}
+		allValidators = append(allValidators, GeoValidatorItem{
+			VotePubkey:  e.votePubkey,
+			NodePubkey:  e.nodePubkey,
+			StakeSol:    e.stakeSol,
+			Commission:  e.commission,
+			MetroCode:   bestCode,
+			ASN:         e.asn,
+			ASNOrg:      e.asnOrg,
+			CountryCode: e.countryCode,
+			Name:        e.name,
+			Datacenter:  e.datacenter,
+			IsDZ:        e.isDZ,
+			DZDPLat:     e.lat,
+			DZDPLng:     e.lng,
+		})
+	}
+	sort.Slice(allValidators, func(i, j int) bool { return allValidators[i].StakeSol > allValidators[j].StakeSol })
 
 	// Assign tiers globally (before filtering) so a validator's tier reflects
 	// its position among all validators, not just the filtered subset.
