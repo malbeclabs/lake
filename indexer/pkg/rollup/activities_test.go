@@ -543,10 +543,10 @@ func TestComputeDeviceInterfaceRollupFromGNMI_ComputesDeltas(t *testing.T) {
 	assert.Greater(t, b.InMcastPps.Avg, float64(0))
 }
 
-// TestComputeDeviceInterfaceRollupFromGNMI_EnrichesAndDropsJunk verifies the gNMI
-// branch enriches link/tunnel context (from dim_dz_links_history / Tunnel<N> name)
-// and drops junk interfaces: not mapped to a link or tunnel and carrying no traffic.
-func TestComputeDeviceInterfaceRollupFromGNMI_EnrichesAndDropsJunk(t *testing.T) {
+// TestComputeDeviceInterfaceRollupFromGNMI_EnrichesAllInterfaces verifies the gNMI
+// branch enriches link/tunnel context (from dim_dz_links_history / Tunnel<N> name) and,
+// like the InfluxDB path, keeps every interface (no de-junk filter).
+func TestComputeDeviceInterfaceRollupFromGNMI_EnrichesAllInterfaces(t *testing.T) {
 	t.Parallel()
 	conn := setupTestDB(t)
 	ctx := context.Background()
@@ -606,7 +606,7 @@ func TestComputeDeviceInterfaceRollupFromGNMI_EnrichesAndDropsJunk(t *testing.T)
 	}
 
 	_, hasJunk := byIntf["Ethernet48"]
-	assert.False(t, hasJunk, "junk interface (no link/tunnel, no traffic) should be dropped")
+	assert.True(t, hasJunk, "no de-junk filter: all interfaces kept, matching the InfluxDB path")
 
 	eth, ok := byIntf["Ethernet1/1"]
 	require.True(t, ok, "link-mapped interface should be kept")
@@ -619,31 +619,146 @@ func TestComputeDeviceInterfaceRollupFromGNMI_EnrichesAndDropsJunk(t *testing.T)
 	assert.Equal(t, int64(500), *tun.UserTunnelID)
 }
 
+func createInterfaceStateTable(t *testing.T, ctx context.Context, conn clickhouse.Conn) {
+	t.Helper()
+	require.NoError(t, conn.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS interface_state (
+			timestamp DateTime64(9),
+			device_pubkey LowCardinality(String), interface_name String,
+			admin_status LowCardinality(String), oper_status LowCardinality(String),
+			ifindex UInt32, mtu UInt16, last_change Int64,
+			carrier_transitions UInt64,
+			in_octets UInt64, out_octets UInt64, in_pkts UInt64, out_pkts UInt64,
+			in_errors UInt64, out_errors UInt64, in_discards UInt64, out_discards UInt64,
+			in_fcs_errors UInt64,
+			in_unicast_pkts UInt64, in_multicast_pkts UInt64, in_broadcast_pkts UInt64,
+			out_unicast_pkts UInt64, out_multicast_pkts UInt64, out_broadcast_pkts UInt64
+		) ENGINE = MergeTree() ORDER BY (device_pubkey, interface_name, timestamp)
+	`))
+}
+
+const insertInterfaceStateSQL = `INSERT INTO interface_state
+	(timestamp, device_pubkey, interface_name, admin_status, oper_status, ifindex, mtu, last_change,
+	 carrier_transitions, in_octets, out_octets, in_pkts, out_pkts, in_errors, out_errors, in_discards, out_discards,
+	 in_fcs_errors, in_unicast_pkts, in_multicast_pkts, in_broadcast_pkts, out_unicast_pkts, out_multicast_pkts, out_broadcast_pkts)
+	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`
+
+// TestComputeDeviceInterfaceRollupFromGNMI_NoLinkMapFanout verifies that an interface
+// mapped by more than one link row does not fan out the per-sample delta rows in the JOIN
+// (which would double-count the SUM counters).
+func TestComputeDeviceInterfaceRollupFromGNMI_NoLinkMapFanout(t *testing.T) {
+	t.Parallel()
+	conn := setupTestDB(t)
+	ctx := context.Background()
+	createInterfaceStateTable(t, ctx, conn)
+
+	now := time.Now().Truncate(5 * time.Minute)
+	bucketStart := now.Add(-5 * time.Minute)
+
+	// Two active links both map device-fan/Ethernet1/1 as side A (e.g. a re-created link).
+	require.NoError(t, conn.Exec(ctx, `INSERT INTO dim_dz_links_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, pk, status, side_a_pk, side_a_iface_name, side_z_pk, side_z_iface_name) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+		"link-entity-A", now, now, "00000000-0000-0000-0000-000000000051", uint8(0), "link-A", "activated", "device-fan", "Ethernet1/1", "device-za", "Ethernet9/9"))
+	require.NoError(t, conn.Exec(ctx, `INSERT INTO dim_dz_links_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, pk, status, side_a_pk, side_a_iface_name, side_z_pk, side_z_iface_name) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+		"link-entity-B", now, now, "00000000-0000-0000-0000-000000000052", uint8(0), "link-B", "activated", "device-fan", "Ethernet1/1", "device-zb", "Ethernet9/9"))
+
+	// 3 cumulative samples -> 2 deltas of in_errors=10 each (true total 20).
+	for i := range 3 {
+		ts := bucketStart.Add(time.Duration(i) * time.Minute)
+		require.NoError(t, conn.Exec(ctx, insertInterfaceStateSQL,
+			ts, "device-fan", "Ethernet1/1", "UP", "UP", uint32(1), uint16(9000), int64(0),
+			uint64(0), uint64(1000+125000*i), uint64(500), uint64(10), uint64(5),
+			uint64(10*i), uint64(0), uint64(0), uint64(0),
+			uint64(0), uint64(0), uint64(0), uint64(0), uint64(0), uint64(0), uint64(0)))
+	}
+
+	a := &Activities{ClickHouse: conn, Log: laketesting.NewLogger()}
+	buckets, err := a.ComputeDeviceInterfaceRollupFromGNMI(ctx, BackfillChunkInput{
+		WindowStart: now.Add(-10 * time.Minute),
+		WindowEnd:   now.Add(5 * time.Minute),
+	})
+	require.NoError(t, err)
+	require.Len(t, buckets, 1, "duplicate link rows must not fan out into extra rows")
+	assert.Equal(t, uint64(20), buckets[0].InErrors, "two link rows must not double-count deltas")
+	assert.Equal(t, "link-A", buckets[0].LinkPK)
+}
+
+// TestComputeDeviceInterfaceRollupFromGNMI_BaselineLookbackIncludesFirstInWindowDelta
+// verifies the pre-window baseline so the first in-window sample is not undercounted, using
+// the live geometry: WindowStart exactly on the bucket boundary.
+func TestComputeDeviceInterfaceRollupFromGNMI_BaselineLookbackIncludesFirstInWindowDelta(t *testing.T) {
+	t.Parallel()
+	conn := setupTestDB(t)
+	ctx := context.Background()
+	createInterfaceStateTable(t, ctx, conn)
+
+	windowStart := time.Now().Truncate(5 * time.Minute) // exact 5-min bucket boundary
+	windowEnd := windowStart.Add(5 * time.Minute)
+
+	// baseline 60s before WindowStart (previous bucket), then 3 in-window samples.
+	// in_errors cumulative 100/110/120/130 -> 3 in-window deltas of 10 = 30.
+	samples := []struct {
+		ts   time.Time
+		errs uint64
+		oct  uint64
+	}{
+		{windowStart.Add(-60 * time.Second), 100, 100000},
+		{windowStart, 110, 225000},
+		{windowStart.Add(60 * time.Second), 120, 350000},
+		{windowStart.Add(120 * time.Second), 130, 475000},
+	}
+	for _, s := range samples {
+		require.NoError(t, conn.Exec(ctx, insertInterfaceStateSQL,
+			s.ts, "device-bl", "Ethernet1/1", "UP", "UP", uint32(1), uint16(9000), int64(0),
+			uint64(0), s.oct, uint64(0), uint64(0), uint64(0),
+			s.errs, uint64(0), uint64(0), uint64(0),
+			uint64(0), uint64(0), uint64(0), uint64(0), uint64(0), uint64(0), uint64(0)))
+	}
+
+	a := &Activities{ClickHouse: conn, Log: laketesting.NewLogger()}
+	buckets, err := a.ComputeDeviceInterfaceRollupFromGNMI(ctx, BackfillChunkInput{
+		WindowStart: windowStart,
+		WindowEnd:   windowEnd,
+	})
+	require.NoError(t, err)
+	require.Len(t, buckets, 1, "only the in-window bucket is emitted; the baseline bucket is dropped")
+	assert.Equal(t, windowStart.UTC(), buckets[0].BucketTS.UTC())
+	assert.Equal(t, uint64(30), buckets[0].InErrors, "first in-window delta (vs pre-window baseline) must be included")
+}
+
 // TestCoalesceDeviceInterfaceBuckets_PrefersGNMI verifies the per-device merge: a device
 // present in the gNMI buckets wins (its fact-table buckets are dropped), and a device with
 // no gNMI data falls back to its fact-table buckets.
-func TestCoalesceDeviceInterfaceBuckets_PrefersGNMI(t *testing.T) {
+func TestCoalesceDeviceInterfaceBuckets_PerKeyPreferGNMI(t *testing.T) {
 	t.Parallel()
+	t1 := time.Unix(1000, 0).UTC()
+	t2 := time.Unix(1300, 0).UTC() // a later bucket
 	gnmi := []DeviceInterfaceBucket{
-		{DevicePK: "d1", Intf: "Ethernet1", InErrors: 99},
+		// gNMI covers only the recent bucket of d1/Ethernet1
+		{DevicePK: "d1", Intf: "Ethernet1", BucketTS: t2, InErrors: 99},
 	}
 	fact := []DeviceInterfaceBucket{
-		{DevicePK: "d1", Intf: "Ethernet1", InErrors: 1}, // superseded by gNMI
-		{DevicePK: "d2", Intf: "Ethernet2", InErrors: 7}, // no gNMI for d2 -> kept
+		{DevicePK: "d1", Intf: "Ethernet1", BucketTS: t2, InErrors: 1}, // same key -> gNMI wins
+		{DevicePK: "d1", Intf: "Ethernet1", BucketTS: t1, InErrors: 5}, // older bucket gNMI didn't cover -> kept
+		{DevicePK: "d1", Intf: "Ethernet2", BucketTS: t2, InErrors: 7}, // other interface gNMI didn't cover -> kept
+		{DevicePK: "d2", Intf: "Ethernet1", BucketTS: t2, InErrors: 3}, // other device -> kept
 	}
 
 	out := coalesceDeviceInterfaceBuckets(gnmi, fact)
 
-	byDev := make(map[string]DeviceInterfaceBucket)
+	type key struct {
+		d, i string
+		b    int64
+	}
+	got := make(map[key]uint64)
 	for _, b := range out {
-		byDev[b.DevicePK] = b
+		got[key{b.DevicePK, b.Intf, b.BucketTS.UTC().UnixNano()}] = b.InErrors
 	}
 
-	require.Len(t, out, 2)
-	require.Contains(t, byDev, "d1")
-	require.Contains(t, byDev, "d2")
-	assert.Equal(t, uint64(99), byDev["d1"].InErrors, "d1 should come from gNMI, not fact")
-	assert.Equal(t, uint64(7), byDev["d2"].InErrors, "d2 has no gNMI data -> fall back to fact")
+	require.Len(t, out, 4, "every distinct (device,intf,bucket) key kept exactly once")
+	assert.Equal(t, uint64(99), got[key{"d1", "Ethernet1", t2.UnixNano()}], "gNMI wins for the key it covers")
+	assert.Equal(t, uint64(5), got[key{"d1", "Ethernet1", t1.UnixNano()}], "older bucket gNMI didn't cover -> fact kept")
+	assert.Equal(t, uint64(7), got[key{"d1", "Ethernet2", t2.UnixNano()}], "other interface gNMI didn't cover -> fact kept")
+	assert.Equal(t, uint64(3), got[key{"d2", "Ethernet1", t2.UnixNano()}], "other device -> fact kept")
 }
 
 // TestComputeDeviceInterfaceRollupFromGNMI_ResolvesDeviceState verifies the gNMI branch

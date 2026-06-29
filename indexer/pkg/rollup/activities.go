@@ -632,9 +632,16 @@ func (a *Activities) ComputeDeviceInterfaceRollupFromGNMI(ctx context.Context, i
 			WHERE rn = 1 AND is_deleted = 0
 		),
 		link_map AS (
-			SELECT side_a_pk AS device_pk, side_a_iface_name AS intf, pk AS link_pk, 'A' AS link_side FROM links WHERE side_a_pk != '' AND side_a_iface_name != ''
-			UNION ALL
-			SELECT side_z_pk AS device_pk, side_z_iface_name AS intf, pk AS link_pk, 'Z' AS link_side FROM links WHERE side_z_pk != '' AND side_z_iface_name != ''
+			-- One row per (device_pk, intf): an interface maps to at most one link side, so
+			-- collapse any duplicates (e.g. a re-created link sharing an interface) to avoid
+			-- fanning out the per-sample delta rows in the JOIN below (double-counting SUMs).
+			SELECT device_pk, intf, any(link_pk) AS link_pk, any(link_side) AS link_side
+			FROM (
+				SELECT side_a_pk AS device_pk, side_a_iface_name AS intf, pk AS link_pk, 'A' AS link_side FROM links WHERE side_a_pk != '' AND side_a_iface_name != ''
+				UNION ALL
+				SELECT side_z_pk AS device_pk, side_z_iface_name AS intf, pk AS link_pk, 'Z' AS link_side FROM links WHERE side_z_pk != '' AND side_z_iface_name != ''
+			)
+			GROUP BY device_pk, intf
 		)
 		SELECT
 			d.device_pk,
@@ -738,17 +745,21 @@ func (a *Activities) ComputeDeviceInterfaceRollupFromGNMI(ctx context.Context, i
 					lagInFrame(in_multicast_pkts) OVER w as prev_in_multicast_pkts,
 					lagInFrame(out_multicast_pkts) OVER w as prev_out_multicast_pkts
 				FROM ` + interfaceState + `
-				WHERE timestamp >= $1 AND timestamp < $2
+				WHERE timestamp >= $1 AND timestamp < $3
 				WINDOW w AS (PARTITION BY device_pubkey, interface_name ORDER BY timestamp ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
 			)
 		) d
 		LEFT JOIN link_map lm ON d.device_pk = lm.device_pk AND d.intf = lm.intf
+		WHERE d.bucket >= toStartOfFiveMinutes($2) AND d.bucket < $3
 		GROUP BY d.device_pk, d.intf, d.bucket
-		HAVING link_pk != '' OR user_tunnel_id IS NOT NULL OR avg_in_bps > 0 OR avg_out_bps > 0
 		ORDER BY d.device_pk, d.intf, d.bucket
 	`
 
-	rows, err := a.ClickHouse.Query(ctx, query, input.WindowStart, input.WindowEnd)
+	// Baseline lookback: scan samples up to 10m before WindowStart so the first in-window
+	// sample of each interface diffs against a real prior (mirrors the InfluxDB baseline);
+	// the outer query keeps only buckets in [WindowStart, WindowEnd) so lookback rows are dropped.
+	lookbackStart := input.WindowStart.Add(-10 * time.Minute)
+	rows, err := a.ClickHouse.Query(ctx, query, lookbackStart, input.WindowStart, input.WindowEnd)
 	if err != nil {
 		return nil, fmt.Errorf("device interface gnmi query: %w", err)
 	}
@@ -790,19 +801,27 @@ func (a *Activities) ComputeDeviceInterfaceRollupFromGNMI(ctx context.Context, i
 }
 
 // coalesceDeviceInterfaceBuckets merges gNMI-sourced and fact-table-sourced rollup buckets
-// per device: for any device present in the gNMI buckets, its gNMI buckets win and the
-// fact-table buckets for that device are dropped; devices not present in the gNMI buckets
-// fall back to their fact-table buckets. This lets monitoring shift to gNMI device-by-device
-// as contributors upgrade, with no flag day.
+// per (device, interface, bucket) key — the destination table's ReplacingMergeTree grain.
+// For any key present in the gNMI buckets, the gNMI bucket wins; every other key falls back
+// to its fact-table bucket. Keying at the row grain (not per device) keeps fact coverage for
+// buckets/interfaces gNMI hasn't produced (mid-window gNMI start, stalls, partial-interface
+// coverage), and because every live key is rewritten each cycle it supersedes stale rows.
+// This lets monitoring shift to gNMI device-by-device as contributors upgrade, with no flag day.
 func coalesceDeviceInterfaceBuckets(gnmiBuckets, factBuckets []DeviceInterfaceBucket) []DeviceInterfaceBucket {
-	gnmiDevices := make(map[string]struct{})
-	for _, b := range gnmiBuckets {
-		gnmiDevices[b.DevicePK] = struct{}{}
+	// Key on the destination table's replacement grain: (bucket_ts, device_pk, intf).
+	type diKey struct {
+		device string
+		intf   string
+		bucket int64
 	}
+	seen := make(map[diKey]struct{}, len(gnmiBuckets))
 	out := make([]DeviceInterfaceBucket, 0, len(gnmiBuckets)+len(factBuckets))
-	out = append(out, gnmiBuckets...)
-	for _, b := range factBuckets {
-		if _, ok := gnmiDevices[b.DevicePK]; !ok {
+	for _, b := range gnmiBuckets { // gNMI wins per key
+		seen[diKey{b.DevicePK, b.Intf, b.BucketTS.UTC().UnixNano()}] = struct{}{}
+		out = append(out, b)
+	}
+	for _, b := range factBuckets { // fact fills every key gNMI did not produce
+		if _, ok := seen[diKey{b.DevicePK, b.Intf, b.BucketTS.UTC().UnixNano()}]; !ok {
 			out = append(out, b)
 		}
 	}
