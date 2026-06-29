@@ -25,6 +25,14 @@ var hyperliquidWindows = map[string]string{
 	"7d":  "7 DAY",
 }
 
+// raceKeyTuple is the summary table's ReplacingMergeTree sorting key. The remote
+// materialized view refreshes on overlapping windows, so each logical race appears as
+// several rows that only FINAL (or a uniqExact over this key) collapses. uniqExact over
+// the key gives exact race counts without paying FINAL's merge cost, which dominated query
+// time against the full production table. Win rates are ratios and lead-time percentiles are
+// duplicate-insensitive, so dropping FINAL keeps them correct.
+const raceKeyTuple = "(measurement_node_id, symbol, source_ts_ms, bbo_hash, feed, loser_feed)"
+
 var hyperliquidSymbolRe = regexp.MustCompile(`^[A-Za-z0-9:_.-]{1,32}$`)
 
 // sanitizeHyperliquidSymbol returns the symbol if safe to inline, else "".
@@ -95,7 +103,7 @@ func labelForFeed(feed string) string {
 func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol string) (*HyperliquidScoreboardResponse, error) {
 	interval, ok := hyperliquidWindows[window]
 	if !ok {
-		window = "24h"
+		window = "1h"
 		interval = hyperliquidWindows[window]
 	}
 	symbol = sanitizeHyperliquidSymbol(symbol)
@@ -130,41 +138,29 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 		RecentRaces: []HyperliquidRace{},
 	}
 
-	// Headline: DZ win share over all DZ-vs-competitor pairwise comparisons.
-	headlineQ := fmt.Sprintf(`
-		SELECT
-			ifNull(100.0 * countIf(startsWith(feed,'tob_') AND NOT startsWith(loser_feed,'tob_'))
-			      / nullIf(countIf(startsWith(feed,'tob_') != startsWith(loser_feed,'tob_')), 0), 0) AS dz_win_share_pct,
-			countIf(startsWith(feed,'tob_') != startsWith(loser_feed,'tob_')) AS total_races
-		FROM %s.hyperliquid_bbo_feed_race_summary FINAL
-		WHERE feed != loser_feed AND loser_feed != '' %s
-		  AND event_ts >= now() - INTERVAL %s`, db, symbolFilter, interval)
-	var winShare float64
-	var totalRaces uint64
-	if err := a.envDB(ctx).QueryRow(ctx, headlineQ).Scan(&winShare, &totalRaces); err != nil {
-		return nil, err
-	}
-	resp.DZWinSharePct = winShare
-	resp.TotalRaces = totalRaces
+	// The headline (DZ win share + total races) is derived from the per-node aggregation
+	// below rather than its own scan — counts partition cleanly by competitor, so summing the
+	// per-node cells gives the same totals while saving a full scan of the (very large) table.
 
 	// Per-competitor: win%, lead p50/p95 (over DZ wins), and total comparable races.
 	compQ := fmt.Sprintf(`
 		SELECT competitor,
-			countIf(dz_won = 1) AS dz_wins,
-			countIf(dz_won = 0) AS dz_losses,
+			uniqExactIf(rk, dz_won = 1) AS dz_wins,
+			uniqExactIf(rk, dz_won = 0) AS dz_losses,
 			quantileExactIf(0.5)(lead_ms, dz_won = 1) AS lead_p50,
 			quantileExactIf(0.95)(lead_ms, dz_won = 1) AS lead_p95
 		FROM (
 			SELECT
+				%[1]s AS rk,
 				if(startsWith(feed,'tob_'), loser_feed, feed) AS competitor,
 				if(startsWith(feed,'tob_'), 1, 0) AS dz_won,
 				lead_time_p50_ms AS lead_ms
-			FROM %s.hyperliquid_bbo_feed_race_summary FINAL
+			FROM %[2]s.hyperliquid_bbo_feed_race_summary
 			WHERE feed != loser_feed AND loser_feed != ''
-			  AND (startsWith(feed,'tob_') != startsWith(loser_feed,'tob_')) %s
-			  AND event_ts >= now() - INTERVAL %s
+			  AND (startsWith(feed,'tob_') != startsWith(loser_feed,'tob_')) %[3]s
+			  AND event_ts >= now() - INTERVAL %[4]s
 		)
-		GROUP BY competitor`, db, symbolFilter, interval)
+		GROUP BY competitor`, raceKeyTuple, db, symbolFilter, interval)
 	rows, err := a.envDB(ctx).Query(ctx, compQ)
 	if err != nil {
 		return nil, err
@@ -212,21 +208,22 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 	// Per-node: same comparison, grouped by measurement node + competitor.
 	nodeQ := fmt.Sprintf(`
 		SELECT measurement_node_id, location_code, competitor,
-			countIf(dz_won = 1) AS dz_wins,
-			countIf(dz_won = 0) AS dz_losses,
+			uniqExactIf(rk, dz_won = 1) AS dz_wins,
+			uniqExactIf(rk, dz_won = 0) AS dz_losses,
 			quantileExactIf(0.5)(lead_ms, dz_won = 1) AS lead_p50,
 			quantileExactIf(0.95)(lead_ms, dz_won = 1) AS lead_p95
 		FROM (
 			SELECT measurement_node_id, location_code,
+				%[1]s AS rk,
 				if(startsWith(feed,'tob_'), loser_feed, feed) AS competitor,
 				if(startsWith(feed,'tob_'), 1, 0) AS dz_won,
 				lead_time_p50_ms AS lead_ms
-			FROM %s.hyperliquid_bbo_feed_race_summary FINAL
+			FROM %[2]s.hyperliquid_bbo_feed_race_summary
 			WHERE feed != loser_feed AND loser_feed != ''
-			  AND (startsWith(feed,'tob_') != startsWith(loser_feed,'tob_')) %s
-			  AND event_ts >= now() - INTERVAL %s
+			  AND (startsWith(feed,'tob_') != startsWith(loser_feed,'tob_')) %[3]s
+			  AND event_ts >= now() - INTERVAL %[4]s
 		)
-		GROUP BY measurement_node_id, location_code, competitor`, db, symbolFilter, interval)
+		GROUP BY measurement_node_id, location_code, competitor`, raceKeyTuple, db, symbolFilter, interval)
 	nrows, err := a.envDB(ctx).Query(ctx, nodeQ)
 	if err != nil {
 		return nil, err
@@ -257,6 +254,7 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 		return nil, err
 	}
 
+	var globalWins, globalRaces uint64
 	for _, node := range nodeOrder {
 		na := nodeMap[node]
 		n := HyperliquidNode{
@@ -287,6 +285,14 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 			n.DZWinSharePct = 100.0 * float64(wins) / float64(races)
 		}
 		resp.Nodes = append(resp.Nodes, n)
+		globalWins += wins
+		globalRaces += races
+	}
+
+	// Headline derived from the per-node totals (no extra scan).
+	resp.TotalRaces = globalRaces
+	if globalRaces > 0 {
+		resp.DZWinSharePct = 100.0 * float64(globalWins) / float64(globalRaces)
 	}
 
 	recent, err := a.fetchHyperliquidRecentRaces(ctx, symbol, time.Time{}, 50)
@@ -299,7 +305,7 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 }
 
 // fetchHyperliquidRecentRaces returns the most recent races (one row per race,
-// winner + closest competitor + lead). sinceTs zero -> last 2 minutes.
+// winner + closest competitor + lead). sinceTs zero -> last 5 minutes.
 func (a *API) fetchHyperliquidRecentRaces(ctx context.Context, symbol string, sinceTs time.Time, limit int) ([]HyperliquidRace, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 50
@@ -309,7 +315,9 @@ func (a *API) fetchHyperliquidRecentRaces(ctx context.Context, symbol string, si
 	if symbol != "" {
 		symbolFilter = fmt.Sprintf("AND symbol = '%s'", symbol)
 	}
-	timeFilter := "AND event_ts >= now() - INTERVAL 2 MINUTE"
+	// 5 minutes (not 2): the remote materialized view lags ~50-90s, so a tighter window
+	// intermittently comes up empty. The LIMIT still returns only the newest races.
+	timeFilter := "AND event_ts >= now() - INTERVAL 5 MINUTE"
 	if !sinceTs.IsZero() {
 		timeFilter = fmt.Sprintf("AND event_ts > toDateTime64(%d, 9)", sinceTs.Unix())
 	}
@@ -323,7 +331,7 @@ func (a *API) fetchHyperliquidRecentRaces(ctx context.Context, symbol string, si
 			startsWith(feed,'tob_') AS is_dz,
 			argMin(loser_feed, lead_time_p50_ms) AS runner_up_feed,
 			min(lead_time_p50_ms) AS lead_ms
-		FROM %s.hyperliquid_bbo_feed_race_summary FINAL
+		FROM %s.hyperliquid_bbo_feed_race_summary
 		WHERE loser_feed != '' AND feed != loser_feed %s %s
 		GROUP BY capture_run_id, measurement_node_id, symbol, source_ts_ms, bbo_hash, location_code, feed
 		ORDER BY max_event_ts DESC
@@ -352,8 +360,11 @@ func hyperliquidScoreboardCacheKey(r *http.Request) string {
 	if r.URL.Query().Get("since_ts") != "" || r.URL.Query().Get("symbol") != "" {
 		return ""
 	}
+	// 1h is the cacheable default — a 24h/7d aggregation over the full proxied table is too
+	// slow to refresh within the cache deadline (the summary table has no time-based index),
+	// so only the 1h view is cached; longer windows fall through to a (slower) live query.
 	window := strings.TrimSpace(r.URL.Query().Get("window"))
-	if window != "" && window != "24h" {
+	if window != "" && window != "1h" {
 		return ""
 	}
 	return "hyperliquid_scoreboard"
@@ -388,7 +399,7 @@ func (a *API) GetHyperliquidScoreboard(w http.ResponseWriter, r *http.Request) {
 
 	window := strings.TrimSpace(r.URL.Query().Get("window"))
 	if _, ok := hyperliquidWindows[window]; !ok {
-		window = "24h"
+		window = "1h"
 	}
 	symbol := r.URL.Query().Get("symbol")
 

@@ -112,7 +112,7 @@ func (a *Activities) entries() []cacheEntry {
 			return api.FetchEdgeScoreboardData(ctx, "24h", true, 0, 0, 1000)
 		}},
 		{"hyperliquid scoreboard", "hyperliquid_scoreboard", func(ctx context.Context) (any, error) {
-			return api.FetchHyperliquidScoreboardData(ctx, "24h", "")
+			return api.FetchHyperliquidScoreboardData(ctx, "1h", "")
 		}},
 		{"bulk link metrics", "bulk_link_metrics", func(ctx context.Context) (any, error) {
 			return api.FetchBulkLinkMetricsData(ctx)

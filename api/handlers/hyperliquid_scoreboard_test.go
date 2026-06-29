@@ -68,7 +68,7 @@ func TestGetHyperliquidScoreboard_Empty(t *testing.T) {
 	require.Equal(t, http.StatusOK, rr.Code)
 	var resp handlers.HyperliquidScoreboardResponse
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
-	assert.Equal(t, "24h", resp.Window)
+	assert.Equal(t, "1h", resp.Window)
 	assert.Equal(t, "MISS", rr.Header().Get("X-Cache"))
 }
 
