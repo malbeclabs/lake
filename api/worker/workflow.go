@@ -111,6 +111,9 @@ func (a *Activities) entries() []cacheEntry {
 		{"edge scoreboard (leaders)", "edge_scoreboard:leaders", func(ctx context.Context) (any, error) {
 			return api.FetchEdgeScoreboardData(ctx, "24h", true, 0, 0, 1000)
 		}},
+		{"hyperliquid scoreboard", "hyperliquid_scoreboard", func(ctx context.Context) (any, error) {
+			return api.FetchHyperliquidScoreboardData(ctx, "24h", "")
+		}},
 		{"bulk link metrics", "bulk_link_metrics", func(ctx context.Context) (any, error) {
 			return api.FetchBulkLinkMetricsData(ctx)
 		}},
@@ -199,6 +202,9 @@ func (a *Activities) latestEntries() []cacheEntry {
 		}},
 		{"edge scoreboard (latest, leaders)", "edge_scoreboard:latest:leaders", func(ctx context.Context) (any, error) {
 			return api.FetchEdgeScoreboardLatest(ctx, true, 1000)
+		}},
+		{"hyperliquid scoreboard (latest)", "hyperliquid_scoreboard:latest", func(ctx context.Context) (any, error) {
+			return api.FetchHyperliquidScoreboardLatest(ctx, 50)
 		}},
 	}
 }
