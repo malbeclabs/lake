@@ -54,6 +54,28 @@ func insertPairwise(t *testing.T, api *handlers.API, node, loc, symbol string, s
 	`, db, node, node, loc, symbol, srcTs, hash, winner, loser, leadMs, leadMs)))
 }
 
+func TestHyperliquidScoreboard_PerNode(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createFeedsTable(t, api)
+
+	// tyo: DZ wins both vs QuickNode. nyc: DZ wins 1, loses 1 vs QuickNode.
+	insertPairwise(t, api, "tyo-rec1", "tyo", "ETH", 10, 1, "tob_gcp_tyo_hl_mainnet1", "quicknode_l2book_bbo", 2.0)
+	insertPairwise(t, api, "tyo-rec1", "tyo", "ETH", 20, 2, "tob_gcp_tyo_hl_mainnet1", "quicknode_l2book_bbo", 2.0)
+	insertPairwise(t, api, "nyc-rec1", "nyc", "ETH", 30, 3, "tob_aws_galaxy1", "quicknode_l2book_bbo", 1.0)
+	insertPairwise(t, api, "nyc-rec1", "nyc", "ETH", 40, 4, "quicknode_l2book_bbo", "tob_aws_galaxy1", 1.0)
+
+	resp, err := api.FetchHyperliquidScoreboardData(t.Context(), "24h", "")
+	require.NoError(t, err)
+	require.Len(t, resp.Nodes, 2)
+
+	byNode := map[string]handlers.HyperliquidNode{}
+	for _, n := range resp.Nodes {
+		byNode[n.MeasurementNodeID] = n
+	}
+	assert.InDelta(t, 100.0, byNode["tyo-rec1"].DZWinSharePct, 0.1)
+	assert.InDelta(t, 50.0, byNode["nyc-rec1"].DZWinSharePct, 0.1)
+}
+
 func TestHyperliquidScoreboard_HeadlineAndCompetitors(t *testing.T) {
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	createFeedsTable(t, api)

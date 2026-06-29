@@ -193,5 +193,85 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 		})
 	}
 
+	// Per-node: same comparison, grouped by measurement node + competitor.
+	nodeQ := fmt.Sprintf(`
+		SELECT measurement_node_id, location_code, competitor,
+			countIf(dz_won = 1) AS dz_wins,
+			countIf(dz_won = 0) AS dz_losses,
+			quantileExactIf(0.5)(lead_ms, dz_won = 1) AS lead_p50,
+			quantileExactIf(0.95)(lead_ms, dz_won = 1) AS lead_p95
+		FROM (
+			SELECT measurement_node_id, location_code,
+				if(startsWith(feed,'tob_'), loser_feed, feed) AS competitor,
+				if(startsWith(feed,'tob_'), 1, 0) AS dz_won,
+				lead_time_p50_ms AS lead_ms
+			FROM %s.hyperliquid_bbo_feed_race_summary FINAL
+			WHERE feed != loser_feed AND loser_feed != ''
+			  AND (startsWith(feed,'tob_') != startsWith(loser_feed,'tob_')) %s
+			  AND event_ts >= now() - INTERVAL %s
+		)
+		GROUP BY measurement_node_id, location_code, competitor`, db, symbolFilter, interval)
+	nrows, err := a.envDB(ctx).Query(ctx, nodeQ)
+	if err != nil {
+		return nil, err
+	}
+	defer nrows.Close()
+
+	type nodeAgg struct {
+		loc    string
+		byFeed map[string]stat
+	}
+	nodeMap := map[string]*nodeAgg{}
+	var nodeOrder []string
+	for nrows.Next() {
+		var node, loc, competitor string
+		var s stat
+		if err := nrows.Scan(&node, &loc, &competitor, &s.wins, &s.losses, &s.leadP50, &s.leadP95); err != nil {
+			return nil, err
+		}
+		na, ok := nodeMap[node]
+		if !ok {
+			na = &nodeAgg{loc: loc, byFeed: map[string]stat{}}
+			nodeMap[node] = na
+			nodeOrder = append(nodeOrder, node)
+		}
+		na.byFeed[competitor] = s
+	}
+	if err := nrows.Err(); err != nil {
+		return nil, err
+	}
+
+	for _, node := range nodeOrder {
+		na := nodeMap[node]
+		n := HyperliquidNode{
+			MeasurementNodeID: node,
+			LocationCode:      na.loc,
+			Competitors:       []HyperliquidCompetitor{},
+		}
+		var wins, races uint64
+		for _, c := range hyperliquidCompetitors {
+			s, ok := na.byFeed[c.Feed]
+			if !ok {
+				continue
+			}
+			r := s.wins + s.losses
+			var winPct float64
+			if r > 0 {
+				winPct = 100.0 * float64(s.wins) / float64(r)
+			}
+			n.Competitors = append(n.Competitors, HyperliquidCompetitor{
+				Feed: c.Feed, Label: c.Label, DZWinPct: winPct,
+				LeadP50Ms: s.leadP50, LeadP95Ms: s.leadP95, Races: r,
+			})
+			wins += s.wins
+			races += r
+		}
+		n.TotalRaces = races
+		if races > 0 {
+			n.DZWinSharePct = 100.0 * float64(wins) / float64(races)
+		}
+		resp.Nodes = append(resp.Nodes, n)
+	}
+
 	return resp, nil
 }
