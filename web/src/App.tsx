@@ -67,6 +67,7 @@ import { ShredsRewardsPage } from '@/components/shreds-rewards-page'
 import { ShredsRewardsDetailPage } from '@/components/shreds-rewards-detail-page'
 import { PublisherCheckPage } from './components/publisher-check-page'
 import { EdgeScoreboardPage } from './components/edge-scoreboard-page'
+import { HyperliquidScoreboardPage } from './components/hyperliquid-scoreboard-page'
 import { MulticastGroupDetailPage } from '@/components/multicast-group-detail-page'
 import { AccessPassesPage } from '@/components/access-passes-page'
 import { AccessPassDetailPage } from '@/components/access-pass-detail-page'
@@ -735,6 +736,8 @@ function AppContent() {
             <Route path="/dz/shreds/rewards/:nodeId" element={<ShredsRewardsDetailPage />} />
             {/* Subscribe page hidden for now — see shreds-subscribe-page.tsx */}
             <Route path="/dz/edge/scoreboard" element={<Navigate to="/dz/shreds/scoreboard" replace />} />
+            <Route path="/dz/hyperliquid" element={<Navigate to="/dz/hyperliquid/scoreboard" replace />} />
+            <Route path="/dz/hyperliquid/scoreboard" element={<HyperliquidScoreboardPage />} />
 
             {/* Geolocation routes */}
             <Route path="/dz/geoloc/probes" element={<GeolocProbesPage />} />
