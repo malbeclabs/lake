@@ -17,7 +17,8 @@ func New(verbose bool) *slog.Logger {
 		logLevel = slog.LevelDebug
 	}
 	return slog.New(tint.NewHandler(os.Stdout, &tint.Options{
-		Level: logLevel,
+		Level:   logLevel,
+		NoColor: true,
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
 			if a.Key == slog.TimeKey {
 				t := a.Value.Time().UTC()
