@@ -383,6 +383,9 @@ func main() {
 				slog.Error("page cache worker failed", "error", err)
 			}
 		}()
+		// Composite feed latency is too heavy for the 60s page-cache loop; refresh it on its
+		// own slow cadence here (writes to the shared Postgres page cache).
+		api.StartHyperliquidCompositeLatencyRefresher(workerCtx)
 	}
 
 	// Start metrics server
