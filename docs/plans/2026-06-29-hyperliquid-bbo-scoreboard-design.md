@@ -253,3 +253,23 @@ are explicitly out of v1 scope:
 - Absolute **blocktime → receive** latency panels (p50/p90/p99).
 - The **gossip** feed type (`hyperliquid_gossip_*` tables, currently empty).
 - Per-symbol leaderboard, time-series charts, and historical drill-downs.
+
+## Implementation Revisions (post-review, 2026-06-29)
+
+Changes made while validating the page against production data:
+
+- **Default window is `1h`, not `24h`.** The summary table has no time-based index, so a 24h
+  aggregation over the (proxied) production table runs ~60s and exceeds the page-cache refresh
+  deadline. Only the `1h` view is cached; `24h`/`7d` remain selectable but run as slower live
+  queries. The proper fix (a time-ordered projection/materialized view on the remote summary,
+  analogous to the shreds slot-range index) is deferred and tracked for the feeds owner.
+- **Queries dedup with `uniqExact` over the sorting key instead of `FINAL`.** `FINAL` dominated
+  query time; win rates are ratios and lead percentiles are duplicate-insensitive, so dropping
+  it keeps results correct while cutting latency. The headline is derived from the per-node
+  aggregation (one fewer scan), which also makes headline and per-competitor totals consistent.
+- **Recent-races window widened to 5 minutes** (the remote MV lags ~50-90s, so a 2-minute
+  window intermittently came up empty). The `LIMIT` still returns only the newest races.
+- **Local dev uses a `remoteSecure()` proxy to production** (`scripts/setup-feeds-remote-local.sh`,
+  using the `feeds_reader` credentials) rather than static seed data, which was unrepresentative.
+- **Web page restyled** to match the shreds scoreboard (full-width layout, win-rate gauge,
+  per-vantage table).
