@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -329,6 +330,69 @@ func (a *API) fetchHyperliquidRecentRaces(ctx context.Context, symbol string, si
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// hyperliquidScoreboardCacheKey returns the cache key for the default request shape, or "".
+func hyperliquidScoreboardCacheKey(r *http.Request) string {
+	if r.URL.Query().Get("since_ts") != "" || r.URL.Query().Get("symbol") != "" {
+		return ""
+	}
+	window := strings.TrimSpace(r.URL.Query().Get("window"))
+	if window != "" && window != "24h" {
+		return ""
+	}
+	return "hyperliquid_scoreboard"
+}
+
+// hyperliquidFeedsTableExists reports whether the proxied summary table is queryable.
+func (a *API) hyperliquidFeedsTableExists(ctx context.Context) bool {
+	var n uint8
+	q := fmt.Sprintf("EXISTS TABLE `%s`.hyperliquid_bbo_feed_race_summary", a.FeedsDB)
+	if err := a.envDB(ctx).QueryRow(ctx, q).Scan(&n); err != nil {
+		return false
+	}
+	return n == 1
+}
+
+// GetHyperliquidScoreboard serves the Hyperliquid BBO scoreboard.
+func (a *API) GetHyperliquidScoreboard(w http.ResponseWriter, r *http.Request) {
+	if isMainnet(r.Context()) {
+		if key := hyperliquidScoreboardCacheKey(r); key != "" {
+			if data, err := a.readPageCache(r.Context(), key); err == nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("X-Cache", "HIT")
+				_, _ = w.Write(data)
+				return
+			}
+		}
+	}
+	w.Header().Set("X-Cache", "MISS")
+
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+
+	window := strings.TrimSpace(r.URL.Query().Get("window"))
+	if _, ok := hyperliquidWindows[window]; !ok {
+		window = "24h"
+	}
+	symbol := r.URL.Query().Get("symbol")
+
+	// Degrade gracefully if the proxy table isn't available (e.g. local dev).
+	if !a.hyperliquidFeedsTableExists(ctx) {
+		writeJSON(w, &HyperliquidScoreboardResponse{
+			Window: window, GeneratedAt: time.Now().UTC(), FeedType: "bbo",
+			Competitors: []HyperliquidCompetitor{}, Nodes: []HyperliquidNode{}, RecentRaces: []HyperliquidRace{},
+		})
+		return
+	}
+
+	resp, err := a.FetchHyperliquidScoreboardData(ctx, window, symbol)
+	if err != nil {
+		logError("HyperliquidScoreboard error", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, resp)
 }
 
 // FetchHyperliquidScoreboardLatest returns only the recent-races strip (fast cache).

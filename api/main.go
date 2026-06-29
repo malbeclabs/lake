@@ -603,6 +603,7 @@ func main() {
 		r.Get("/api/dz/access-passes/{pk}/connections", api.GetAccessPassConnections)
 		r.Get("/api/dz/publisher-check", api.GetPublisherCheck)
 		r.Get("/api/dz/edge/scoreboard", api.GetEdgeScoreboard)
+		r.Get("/api/dz/hyperliquid/scoreboard", api.GetHyperliquidScoreboard)
 		r.Get("/api/dz/tenants", api.GetTenants)
 		r.Get("/api/dz/tenants/{pk}", api.GetTenant)
 		r.Get("/api/dz/shreds/overview", api.GetShredsOverview)

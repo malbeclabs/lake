@@ -1,7 +1,10 @@
 package handlers_test
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/malbeclabs/lake/api/handlers"
@@ -52,6 +55,35 @@ func insertPairwise(t *testing.T, api *handlers.API, node, loc, symbol string, s
 		(event_ts, capture_run_id, measurement_node_id, host, location_code, symbol, source_ts_ms, bbo_hash, feed, loser_feed, total_events, events_won, lead_time_p50_ms, lead_time_p95_ms)
 		VALUES (now64(9), 'run1', '%s', '%s', '%s', '%s', %d, %d, '%s', '%s', 1, 1, %f, %f)
 	`, db, node, node, loc, symbol, srcTs, hash, winner, loser, leadMs, leadMs)))
+}
+
+func TestGetHyperliquidScoreboard_Empty(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createFeedsTable(t, api) // empty table -> empty-but-valid response
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/hyperliquid/scoreboard", nil)
+	rr := httptest.NewRecorder()
+	api.GetHyperliquidScoreboard(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	var resp handlers.HyperliquidScoreboardResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	assert.Equal(t, "24h", resp.Window)
+	assert.Equal(t, "MISS", rr.Header().Get("X-Cache"))
+}
+
+func TestGetHyperliquidScoreboard_MissingTable(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	// Do NOT create the table -> handler must degrade to empty 200, not 500.
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/hyperliquid/scoreboard", nil)
+	rr := httptest.NewRecorder()
+	api.GetHyperliquidScoreboard(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	var resp handlers.HyperliquidScoreboardResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	assert.Empty(t, resp.Competitors)
 }
 
 func TestHyperliquidScoreboard_PerNode(t *testing.T) {
