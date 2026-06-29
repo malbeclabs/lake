@@ -21,12 +21,14 @@ LOCAL_HOST="${CLICKHOUSE_ADDR_TCP:-localhost:9100}"
 LOCAL_ADDR="${LOCAL_HOST%%:*}"
 LOCAL_PORT="${LOCAL_HOST##*:}"
 
-TABLE="hyperliquid_bbo_feed_race_summary"
+# summary feeds the scoreboard; observations feeds the composite-latency hero stat.
+TABLES=("hyperliquid_bbo_feed_race_summary" "hyperliquid_bbo_observations")
 
-echo "==> Creating local proxy feeds.${TABLE} -> ${REMOTE_HOST}:${REMOTE_SECURE_PORT}/${REMOTE_DB}.${TABLE}"
-clickhouse client --host "$LOCAL_ADDR" --port "$LOCAL_PORT" --multiquery --query "
-CREATE DATABASE IF NOT EXISTS feeds;
-CREATE OR REPLACE TABLE feeds.${TABLE} AS remoteSecure('${REMOTE_HOST}:${REMOTE_SECURE_PORT}', '${REMOTE_DB}.${TABLE}', '${REMOTE_USER}', '${REMOTE_PASS}');
-"
-echo "==> Done. Local feeds.${TABLE} now serves production data via remoteSecure()."
-echo "    (Note: 24h/7d aggregations over the full table are slow; the API caches the 1h view.)"
+clickhouse client --host "$LOCAL_ADDR" --port "$LOCAL_PORT" --query "CREATE DATABASE IF NOT EXISTS feeds"
+for TABLE in "${TABLES[@]}"; do
+  echo "==> Creating local proxy feeds.${TABLE} -> ${REMOTE_HOST}:${REMOTE_SECURE_PORT}/${REMOTE_DB}.${TABLE}"
+  clickhouse client --host "$LOCAL_ADDR" --port "$LOCAL_PORT" --query "
+CREATE OR REPLACE TABLE feeds.${TABLE} AS remoteSecure('${REMOTE_HOST}:${REMOTE_SECURE_PORT}', '${REMOTE_DB}.${TABLE}', '${REMOTE_USER}', '${REMOTE_PASS}')"
+done
+echo "==> Done. Local feeds tables now serve production data via remoteSecure()."
+echo "    (Note: 24h aggregations over the full tables are slow; the API caches them.)"
