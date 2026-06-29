@@ -200,8 +200,16 @@ const baselineCacheTTL = 5 * time.Minute
 // data. After downtime maxTime can fall behind the query window, making one
 // refresh span the entire window at once; capping it spreads the catch-up over
 // successive refreshes (maxTime advances after each) so peak memory stays near
-// steady state. 3 × 5m = 15m per refresh, ~3× the normal incremental span.
-const maxCatchupChunks = 3
+// steady state.
+//
+// The cap must also keep each refresh inside the dzingest activity's
+// StartToCloseTimeout (5m). On mainnet-beta a 15m (3-chunk) window pulled ~6M
+// rows and the chunked InfluxDB pivot alone ran >5m, so the activity context
+// expired before InsertInterfaceUsage even started — every catch-up refresh
+// timed out, maxTime never advanced, and the window stayed pinned at the cap
+// (an unrecoverable loop). One chunk (5m) keeps the InfluxDB query and insert
+// comfortably under the activity deadline so maxTime advances every cycle.
+const maxCatchupChunks = 1
 
 type View struct {
 	log       *slog.Logger
@@ -444,7 +452,7 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		v.baselineCacheTime = now
 	}
 
-	v.log.Info("telemetry/usage: queried influxdb", "rows", len(usage), "from", queryStart, "to", now)
+	v.log.Info("telemetry/usage: queried influxdb", "rows", len(usage), "from", queryStart, "to", queryEnd)
 
 	if len(usage) == 0 {
 		v.log.Warn("telemetry/usage: no data returned from influxdb query", "from", queryStart, "to", now)
