@@ -203,12 +203,17 @@ const baselineCacheTTL = 5 * time.Minute
 // steady state.
 //
 // The cap must also keep each refresh inside the dzingest activity's
-// StartToCloseTimeout (5m). On mainnet-beta a 15m (3-chunk) window pulled ~6M
-// rows and the chunked InfluxDB pivot alone ran >5m, so the activity context
-// expired before InsertInterfaceUsage even started — every catch-up refresh
-// timed out, maxTime never advanced, and the window stayed pinned at the cap
-// (an unrecoverable loop). One chunk (5m) keeps the InfluxDB query and insert
-// comfortably under the activity deadline so maxTime advances every cycle.
+// StartToCloseTimeout (5m). Each chunk is a separate Flux query bounded only by
+// the client's per-request HTTP timeout (defaultFluxHTTPTimeout, 4m); the Flux
+// query does not abort on the activity context deadline, so a 3-chunk (15m)
+// window can spend up to ~12m in InfluxDB alone. In prod this overran the 5m
+// deadline (observed >10m on both mainnet-beta and testnet), so ctx was already
+// expired by the time InsertInterfaceUsage ran — every catch-up refresh failed,
+// maxTime never advanced, and the window stayed pinned at the cap (an
+// unrecoverable loop; the overrun also spawned a doomed second Temporal attempt
+// that failed instantly on the already-expired ctx). One chunk caps each
+// refresh at a single <=4m query, leaving room for the insert inside the 5m
+// deadline so maxTime advances every cycle.
 const maxCatchupChunks = 1
 
 type View struct {
