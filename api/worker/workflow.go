@@ -203,9 +203,6 @@ func (a *Activities) latestEntries() []cacheEntry {
 		{"edge scoreboard (latest, leaders)", "edge_scoreboard:latest:leaders", func(ctx context.Context) (any, error) {
 			return api.FetchEdgeScoreboardLatest(ctx, true, 1000)
 		}},
-		{"hyperliquid scoreboard (latest)", "hyperliquid_scoreboard:latest", func(ctx context.Context) (any, error) {
-			return api.FetchHyperliquidScoreboardLatest(ctx, 50)
-		}},
 	}
 }
 

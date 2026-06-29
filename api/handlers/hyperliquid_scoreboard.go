@@ -99,6 +99,21 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 		interval = hyperliquidWindows[window]
 	}
 	symbol = sanitizeHyperliquidSymbol(symbol)
+
+	// Guard: if the feeds summary table doesn't exist (e.g. local dev without the
+	// proxy/seed), return an empty-but-valid response so the page-cache refresher
+	// caches a clean empty payload instead of logging an error every cycle.
+	if !a.hyperliquidFeedsTableExists(ctx) {
+		return &HyperliquidScoreboardResponse{
+			Window:      window,
+			GeneratedAt: time.Now().UTC(),
+			FeedType:    "bbo",
+			Competitors: []HyperliquidCompetitor{},
+			Nodes:       []HyperliquidNode{},
+			RecentRaces: []HyperliquidRace{},
+		}, nil
+	}
+
 	symbolFilter := ""
 	if symbol != "" {
 		symbolFilter = fmt.Sprintf("AND symbol = '%s'", symbol)
@@ -395,17 +410,3 @@ func (a *API) GetHyperliquidScoreboard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp)
 }
 
-// FetchHyperliquidScoreboardLatest returns only the recent-races strip (fast cache).
-func (a *API) FetchHyperliquidScoreboardLatest(ctx context.Context, limit int) (*HyperliquidScoreboardResponse, error) {
-	races, err := a.fetchHyperliquidRecentRaces(ctx, "", time.Time{}, limit)
-	if err != nil {
-		return nil, err
-	}
-	return &HyperliquidScoreboardResponse{
-		GeneratedAt: time.Now().UTC(),
-		FeedType:    "bbo",
-		RecentRaces: races,
-		Competitors: []HyperliquidCompetitor{},
-		Nodes:       []HyperliquidNode{},
-	}, nil
-}

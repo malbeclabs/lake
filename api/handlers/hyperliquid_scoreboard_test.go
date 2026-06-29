@@ -86,6 +86,20 @@ func TestGetHyperliquidScoreboard_MissingTable(t *testing.T) {
 	assert.Empty(t, resp.Competitors)
 }
 
+func TestFetchHyperliquidScoreboardData_MissingTable(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	// Do NOT create the table -> FetchHyperliquidScoreboardData must return an
+	// empty-but-valid response (nil error, non-nil resp, empty slices).
+
+	resp, err := api.FetchHyperliquidScoreboardData(t.Context(), "24h", "")
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, "24h", resp.Window)
+	assert.Empty(t, resp.Competitors)
+	assert.Empty(t, resp.Nodes)
+	assert.Empty(t, resp.RecentRaces)
+}
+
 func TestHyperliquidScoreboard_PerNode(t *testing.T) {
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	createFeedsTable(t, api)
