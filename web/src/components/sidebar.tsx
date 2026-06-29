@@ -59,6 +59,8 @@ export function Sidebar() {
   })
   const hasTopologies = (topologiesData?.topologies?.length ?? 0) > 0
   const showGeoloc = user?.is_internal_user === true
+  // Internal only (unannounced venue) — gated to allowed-domain Google users.
+  const showHyperliquid = user?.is_internal_user === true
 const { resolvedTheme, setTheme } = useTheme()
   const { updateAvailable, reload } = useVersionCheck()
 
@@ -583,15 +585,19 @@ const { resolvedTheme, setTheme } = useTheme()
                 </Link>
               </>
             )}
-            <Link to="/dz/hyperliquid/scoreboard" className={isHyperliquidRoute ? navItemExpandedClass : navItemClass(false)}>
-              <Activity className="h-4 w-4" />
-              Hyperliquid
-            </Link>
-            {isHyperliquidRoute && (
+            {showHyperliquid && (
               <>
-                <Link to="/dz/hyperliquid/scoreboard" className={subNavItemClass(isHyperliquidScoreboardRoute)}>
-                  Scoreboard
+                <Link to="/dz/hyperliquid/scoreboard" className={isHyperliquidRoute ? navItemExpandedClass : navItemClass(false)}>
+                  <Activity className="h-4 w-4" />
+                  Hyperliquid
                 </Link>
+                {isHyperliquidRoute && (
+                  <>
+                    <Link to="/dz/hyperliquid/scoreboard" className={subNavItemClass(isHyperliquidScoreboardRoute)}>
+                      Scoreboard
+                    </Link>
+                  </>
+                )}
               </>
             )}
           </div>
