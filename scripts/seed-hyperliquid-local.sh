@@ -2,6 +2,7 @@
 # Seed local ClickHouse with recent rows from remote feeds.hyperliquid_bbo_feed_race_summary.
 # Reads credentials from .env (FEEDS_CH_*). Usage: ./scripts/seed-hyperliquid-local.sh [MINUTES]
 set -euo pipefail
+trap 'rm -f /tmp/hl_feed_race.tsv' EXIT
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -13,6 +14,7 @@ REMOTE_DB="${FEEDS_CH_DB:-feeds}"
 REMOTE_USER="${FEEDS_CH_USER:?set FEEDS_CH_USER in .env}"
 REMOTE_PASS="${FEEDS_CH_PASSWORD:?set FEEDS_CH_PASSWORD in .env}"
 MINUTES="${1:-10}"
+if ! [[ "$MINUTES" =~ ^[0-9]+$ ]]; then echo "Error: MINUTES must be a positive integer, got '$MINUTES'" >&2; exit 1; fi
 
 LOCAL_HOST="${CLICKHOUSE_ADDR_TCP:-localhost:9100}"
 LOCAL_ADDR="${LOCAL_HOST%%:*}"
@@ -39,7 +41,7 @@ ORDER BY (measurement_node_id, symbol, source_ts_ms, bbo_hash, feed, loser_feed)
 SQL
 
 echo "==> Fetching last ${MINUTES}m from remote..."
-curl -sS "https://${REMOTE_HOST}:${REMOTE_HTTPS_PORT}/?database=${REMOTE_DB}" \
+curl -sS --fail-with-body "https://${REMOTE_HOST}:${REMOTE_HTTPS_PORT}/?database=${REMOTE_DB}" \
   --user "${REMOTE_USER}:${REMOTE_PASS}" \
   --data-binary "SELECT ${COLS} FROM hyperliquid_bbo_feed_race_summary WHERE event_ts >= now() - INTERVAL ${MINUTES} MINUTE FORMAT TabSeparated" \
   > /tmp/hl_feed_race.tsv
