@@ -362,6 +362,7 @@ func main() {
 		ShredderDB:    config.GetShredderDB(),
 		PublisherDB:   config.GetPublisherDB(),
 		DZDPDB:        config.GetDZDPDB(),
+		FeedsDB:       config.GetFeedsDB(),
 		PgPool:        config.PgPool,
 		Neo4jClient:   config.Neo4jClient,
 		Neo4jDatabase: config.Neo4jDatabase,
