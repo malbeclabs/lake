@@ -273,5 +273,75 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 		resp.Nodes = append(resp.Nodes, n)
 	}
 
+	recent, err := a.fetchHyperliquidRecentRaces(ctx, symbol, time.Time{}, 50)
+	if err != nil {
+		return nil, err
+	}
+	resp.RecentRaces = recent
+
 	return resp, nil
+}
+
+// fetchHyperliquidRecentRaces returns the most recent races (one row per race,
+// winner + closest competitor + lead). sinceTs zero -> last 2 minutes.
+func (a *API) fetchHyperliquidRecentRaces(ctx context.Context, symbol string, sinceTs time.Time, limit int) ([]HyperliquidRace, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 50
+	}
+	symbol = sanitizeHyperliquidSymbol(symbol)
+	symbolFilter := ""
+	if symbol != "" {
+		symbolFilter = fmt.Sprintf("AND symbol = '%s'", symbol)
+	}
+	timeFilter := "AND event_ts >= now() - INTERVAL 2 MINUTE"
+	if !sinceTs.IsZero() {
+		timeFilter = fmt.Sprintf("AND event_ts > toDateTime64(%d, 9)", sinceTs.Unix())
+	}
+	db := fmt.Sprintf("`%s`", a.FeedsDB)
+	q := fmt.Sprintf(`
+		SELECT
+			max(event_ts) AS max_event_ts,
+			symbol,
+			location_code,
+			feed AS winner_feed,
+			startsWith(feed,'tob_') AS is_dz,
+			argMin(loser_feed, lead_time_p50_ms) AS runner_up_feed,
+			min(lead_time_p50_ms) AS lead_ms
+		FROM %s.hyperliquid_bbo_feed_race_summary FINAL
+		WHERE loser_feed != '' AND feed != loser_feed %s %s
+		GROUP BY capture_run_id, measurement_node_id, symbol, source_ts_ms, bbo_hash, location_code, feed
+		ORDER BY max_event_ts DESC
+		LIMIT %d`, db, symbolFilter, timeFilter, limit)
+	rows, err := a.envDB(ctx).Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []HyperliquidRace{}
+	for rows.Next() {
+		var r HyperliquidRace
+		var isDZ uint8
+		if err := rows.Scan(&r.EventTs, &r.Symbol, &r.LocationCode, &r.WinnerFeed, &isDZ, &r.RunnerUpFeed, &r.LeadMs); err != nil {
+			return nil, err
+		}
+		r.IsDZ = isDZ == 1
+		r.RunnerUpLabel = labelForFeed(r.RunnerUpFeed)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// FetchHyperliquidScoreboardLatest returns only the recent-races strip (fast cache).
+func (a *API) FetchHyperliquidScoreboardLatest(ctx context.Context, limit int) (*HyperliquidScoreboardResponse, error) {
+	races, err := a.fetchHyperliquidRecentRaces(ctx, "", time.Time{}, limit)
+	if err != nil {
+		return nil, err
+	}
+	return &HyperliquidScoreboardResponse{
+		GeneratedAt: time.Now().UTC(),
+		FeedType:    "bbo",
+		RecentRaces: races,
+		Competitors: []HyperliquidCompetitor{},
+		Nodes:       []HyperliquidNode{},
+	}, nil
 }

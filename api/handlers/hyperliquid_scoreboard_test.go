@@ -76,6 +76,28 @@ func TestHyperliquidScoreboard_PerNode(t *testing.T) {
 	assert.InDelta(t, 50.0, byNode["nyc-rec1"].DZWinSharePct, 0.1)
 }
 
+func TestHyperliquidScoreboard_RecentRaces(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createFeedsTable(t, api)
+
+	// A DZ-won race (BTC) and a competitor-won race (ETH), both pairwise.
+	insertPairwise(t, api, "tyo-rec1", "tyo", "BTC", 100, 1, "tob_gcp_tyo_hl_mainnet1", "hydromancer_bbo", 1.5)
+	insertPairwise(t, api, "tyo-rec1", "tyo", "ETH", 200, 2, "quicknode_l2book_bbo", "tob_gcp_tyo_hl_mainnet1", 0.7)
+
+	races, err := api.FetchHyperliquidScoreboardData(t.Context(), "24h", "")
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(races.RecentRaces), 2)
+
+	bySym := map[string]handlers.HyperliquidRace{}
+	for _, r := range races.RecentRaces {
+		bySym[r.Symbol] = r
+	}
+	assert.True(t, bySym["BTC"].IsDZ)
+	assert.Equal(t, "Hydromancer", bySym["BTC"].RunnerUpLabel)
+	assert.InDelta(t, 1.5, bySym["BTC"].LeadMs, 0.001)
+	assert.False(t, bySym["ETH"].IsDZ)
+}
+
 func TestHyperliquidScoreboard_HeadlineAndCompetitors(t *testing.T) {
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	createFeedsTable(t, api)
