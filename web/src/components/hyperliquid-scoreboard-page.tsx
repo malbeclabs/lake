@@ -4,6 +4,7 @@ import { PageHeader } from './page-header'
 import {
   fetchHyperliquidScoreboard,
   type HyperliquidScoreboardResponse,
+  type HyperliquidRace,
 } from '@/lib/api'
 
 const WINDOWS = ['1h', '24h', '7d'] as const
@@ -18,6 +19,22 @@ function pct(n: number): string {
 function lead(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(2)} s`
   return `${n.toFixed(n < 10 ? 1 : 0)} ms`
+}
+
+// Recent-races grid: two sections of top symbols by volume. Only some symbols have competitor
+// feeds (currently BTC/ETH); the rest render as DoubleZero-exclusive coverage.
+const RECENT_SECTIONS = [
+  { title: 'Hyperliquid Perpetual Futures', symbols: ['BTC', 'ETH', 'SOL', 'HYPE'] },
+  { title: 'Hyperliquid HIP-3 DEX Perpetual Futures', symbols: ['xyz:SP500', 'xyz:XYZ100', 'xyz:MU', 'xyz:SKHX'] },
+] as const
+
+function symbolDisplay(sym: string): string {
+  return sym.startsWith('xyz:') ? sym.slice(4) : sym
+}
+
+function fmtPrice(p: number): string {
+  if (p >= 1000) return `$${Math.round(p).toLocaleString()}`
+  return `$${p.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 // Three-quarter-arc win-rate gauge — mirrors the edge scoreboard's WinRateGauge.
@@ -65,6 +82,33 @@ function WinBar({ value }: { value: number }) {
   )
 }
 
+// Competitor colors for the win-rate bar — warm hues contrasting with DoubleZero green.
+const COMPETITOR_COLORS = ['#fbbf24', '#fb923c', '#ef4444', '#ec4899', '#a855f7'] // amber, orange, red, pink, purple
+function competitorColor(i: number): string {
+  return COMPETITOR_COLORS[i % COMPETITOR_COLORS.length]
+}
+
+// Win-rate bar: DoubleZero's share in green, the remaining loss split by competitor color.
+function WinRateBar({ dzPct, segments }: { dzPct: number; segments: { label: string; pct: number; color: string }[] }) {
+  return (
+    <div className="flex h-1.5 overflow-hidden rounded-full bg-muted-foreground/25">
+      <div
+        className="h-full transition-all duration-500"
+        style={{ width: `${Math.max(0, Math.min(100, dzPct))}%`, backgroundColor: DZ_COLOR }}
+        title={`DoubleZero ${pct(dzPct)}`}
+      />
+      {segments.map((s) => (
+        <div
+          key={s.label}
+          className="h-full transition-all duration-500"
+          style={{ width: `${Math.max(0, s.pct)}%`, backgroundColor: s.color }}
+          title={`${s.label} ${pct(s.pct)}`}
+        />
+      ))}
+    </div>
+  )
+}
+
 export function HyperliquidScoreboardPage() {
   const [timeWindow, setTimeWindow] = useState<(typeof WINDOWS)[number]>('1h')
   const [data, setData] = useState<HyperliquidScoreboardResponse | null>(null)
@@ -99,6 +143,22 @@ export function HyperliquidScoreboardPage() {
 
   // Global competitor set drives the per-vantage table columns (stable order).
   const competitorCols = data?.competitors ?? []
+
+  // Win-rate bar segments: each competitor's share of all comparisons where it beat DoubleZero
+  // (so the green DZ share + the colored competitor segments fill the bar to ~100%).
+  const lossTotal = data?.total_races ?? 0
+  const lossSegments = (data?.competitors ?? []).map((c, i) => ({
+    label: c.label,
+    pct: lossTotal > 0 ? (c.races * (1 - c.dz_win_pct / 100) / lossTotal) * 100 : 0,
+    color: competitorColor(i),
+  }))
+
+  // Recent races grouped by symbol for the per-symbol grid.
+  const racesBySymbol = useMemo(() => {
+    const m: Record<string, HyperliquidRace[]> = {}
+    for (const r of data?.recent_races ?? []) (m[r.symbol] ??= []).push(r)
+    return m
+  }, [data?.recent_races])
 
   return (
     <div className="flex-1 overflow-auto">
@@ -158,6 +218,29 @@ export function HyperliquidScoreboardPage() {
                     <div className="mb-1 text-xs text-muted-foreground">Vantage points</div>
                     <div className="text-xl font-semibold tabular-nums sm:text-2xl">{data.nodes.length}</div>
                   </div>
+                  {data.composite_latency && (
+                    <div className="w-full">
+                      <div className="mb-1.5 text-xs text-muted-foreground">
+                        Composite feed latency{' '}
+                        <span className="text-muted-foreground/60">({data.composite_latency.window})</span>
+                      </div>
+                      <div className="flex gap-5">
+                        {([
+                          ['p50', data.composite_latency.p50_ms],
+                          ['p90', data.composite_latency.p90_ms],
+                          ['p99', data.composite_latency.p99_ms],
+                        ] as const).map(([label, v]) => (
+                          <div key={label}>
+                            <div className="text-xl font-semibold tabular-nums sm:text-2xl">
+                              {Math.round(v)}
+                              <span className="ml-1 text-xs font-normal text-muted-foreground">ms</span>
+                            </div>
+                            <div className="text-xs text-muted-foreground">{label}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -168,15 +251,18 @@ export function HyperliquidScoreboardPage() {
                     <span className="text-sm text-muted-foreground">DoubleZero Win Rate</span>
                     <span className="ml-4 shrink-0 text-sm font-medium tabular-nums">{pct(data.dz_win_share_pct)}</span>
                   </div>
-                  <WinBar value={data.dz_win_share_pct} />
+                  <WinRateBar dzPct={data.dz_win_share_pct} segments={lossSegments} />
                 </div>
-                {data.competitors.map((c) => (
+                {data.competitors.map((c, i) => (
                   <div key={c.feed}>
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-muted-foreground">DoubleZero vs {c.label}</span>
+                      <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                        <span className="inline-block h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: competitorColor(i) }} />
+                        DoubleZero vs {c.label}
+                      </span>
                       <span className="ml-4 shrink-0 text-sm font-medium tabular-nums">
                         <span className="mr-1 text-xs font-normal text-muted-foreground">p50:</span>
-                        <span className="text-emerald-500">+{lead(c.lead_p50_ms)}</span>
+                        +{lead(c.lead_p50_ms)}
                       </span>
                     </div>
                     <div className="mt-0.5 text-xs text-muted-foreground">p95: +{lead(c.lead_p95_ms)}</div>
@@ -233,7 +319,7 @@ export function HyperliquidScoreboardPage() {
                                 <td key={col.feed} className="whitespace-nowrap px-3 py-3 text-right text-sm tabular-nums sm:px-4">
                                   {c ? (
                                     <>
-                                      <span className="text-emerald-500">+{lead(c.lead_p50_ms)}</span>{' '}
+                                      <span>+{lead(c.lead_p50_ms)}</span>{' '}
                                       <span className="text-muted-foreground">(+{lead(c.lead_p95_ms)})</span>
                                     </>
                                   ) : (
@@ -251,39 +337,58 @@ export function HyperliquidScoreboardPage() {
               </div>
             </div>
 
-            {/* Recent races */}
-            <div className="mb-6 overflow-hidden rounded-lg border border-border bg-card">
-              <div className="border-b border-border px-4 py-3 text-sm font-medium text-muted-foreground">Recent races</div>
-              {data.recent_races.length === 0 ? (
-                <div className="flex flex-col items-center gap-1 px-4 py-10 text-center">
-                  <div className="text-sm text-muted-foreground">No races in the last couple of minutes.</div>
-                  <div className="max-w-md text-xs text-muted-foreground/70">
-                    The live feed populates from the continuously-updating production source.
-                  </div>
+            {/* Recent races — per-symbol grid, split into native perps and HIP-3 DEX perps */}
+            {RECENT_SECTIONS.map((section) => (
+              <div key={section.title} className="mb-6 overflow-hidden rounded-lg border border-border bg-card">
+                <div className="border-b border-border px-4 py-3 text-sm font-medium text-muted-foreground">
+                  {section.title}
                 </div>
-              ) : (
-                <table className="min-w-full">
-                  <tbody>
-                    {data.recent_races.map((r, i) => (
-                      <tr key={`${r.symbol}-${r.event_ts}-${i}`} className="border-b border-border text-sm last:border-b-0 hover:bg-muted/50">
-                        <td className="px-4 py-2 font-medium">{r.symbol}</td>
-                        <td className="px-4 py-2">
-                          {r.is_dz ? (
-                            <span className="text-emerald-500">DoubleZero</span>
-                          ) : (
-                            <span className="text-muted-foreground">{r.runner_up_label}</span>
+                <div className="grid grid-cols-2 gap-px bg-border sm:grid-cols-4">
+                  {section.symbols.map((sym) => {
+                    const races = racesBySymbol[sym] ?? []
+                    const price = data.prices?.[sym]
+                    return (
+                      <div key={sym} className="bg-card p-3">
+                        <div className="mb-2 flex items-baseline justify-between gap-1">
+                          <span className="text-sm font-semibold">{symbolDisplay(sym)}</span>
+                          {price != null && (
+                            <span className="text-xs tabular-nums text-muted-foreground">{fmtPrice(price)}</span>
                           )}
-                          <span className="text-muted-foreground/60"> · {r.winner_feed}</span>
-                        </td>
-                        <td className="whitespace-nowrap px-4 py-2 text-right tabular-nums text-muted-foreground">
-                          +{lead(r.lead_ms)} <span className="text-muted-foreground/60">vs {r.runner_up_label}</span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
+                        </div>
+                        {races.length === 0 ? (
+                          <div className="flex flex-col gap-1">
+                            <span className="inline-flex w-fit items-center rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                              Competitor feeds pending
+                            </span>
+                            <span className="text-[11px] text-muted-foreground/60">No head-to-head races yet</span>
+                          </div>
+                        ) : (
+                          <div className="space-y-1">
+                            {races.map((r, i) => {
+                              const won = r.is_dz
+                              const comp = won ? r.runner_up_label : r.winner_label
+                              return (
+                                <div key={i} className="flex items-baseline justify-between gap-1.5 text-xs">
+                                  <span className="flex min-w-0 items-baseline gap-1 truncate">
+                                    <span className={`shrink-0 font-semibold ${won ? 'text-emerald-500' : 'text-rose-400'}`}>
+                                      {won ? '▲ DoubleZero' : `▼ ${comp}`}
+                                    </span>
+                                    <span className="truncate text-muted-foreground/50">vs {won ? comp : 'DZ'}</span>
+                                  </span>
+                                  <span className={`shrink-0 tabular-nums ${won ? 'text-emerald-500' : 'text-rose-400'}`}>
+                                    +{lead(r.lead_ms)}
+                                  </span>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
           </>
         )}
       </div>

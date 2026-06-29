@@ -6871,6 +6871,7 @@ export interface HyperliquidRace {
   symbol: string
   location_code: string
   winner_feed: string
+  winner_label: string
   is_dz: boolean
   runner_up_feed: string
   runner_up_label: string
@@ -6887,6 +6888,16 @@ export interface HyperliquidScoreboardResponse {
   competitors: HyperliquidCompetitor[]
   nodes: HyperliquidNode[]
   recent_races: HyperliquidRace[]
+  prices?: Record<string, number>
+  composite_latency?: HyperliquidCompositeLatency
+}
+
+export interface HyperliquidCompositeLatency {
+  window: string
+  p50_ms: number
+  p90_ms: number
+  p99_ms: number
+  generated_at: string
 }
 
 export async function fetchHyperliquidScoreboard(
