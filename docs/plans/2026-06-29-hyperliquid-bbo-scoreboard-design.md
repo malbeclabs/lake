@@ -30,7 +30,7 @@ across clouds/regions). All other feeds are competitors:
 | `tob_*` (all)            | **DoubleZero**| us                    |
 | `hyperliquid_public_bbo` | Public API    | baseline (free)       |
 | `hydromancer_bbo`        | Hydromancer   | paid competitor       |
-| `hyperpc_shared_bbo`     | HyperPC       | paid competitor       |
+| `hyperpc_shared_bbo`     | HypeRPC       | paid competitor       |
 | `quicknode_l2book_bbo`   | QuickNode     | paid competitor       |
 
 The competitor set lives as a small ordered slice of `{rawFeed, label}` in Go;
@@ -124,7 +124,7 @@ live query (`X-Cache: MISS`).
   "competitors": [
     { "feed": "hyperliquid_public_bbo", "label": "Public API",  "dz_win_pct": 99.1, "lead_p50_ms": 2.4, "lead_p95_ms": 8.1, "races": 12300000 },
     { "feed": "hydromancer_bbo",        "label": "Hydromancer", "dz_win_pct": 94.2, "lead_p50_ms": 0.9, "lead_p95_ms": 3.7, "races": 1100000 },
-    { "feed": "hyperpc_shared_bbo",     "label": "HyperPC",     "dz_win_pct": 97.8, "lead_p50_ms": 1.6, "lead_p95_ms": 5.2, "races": 400000 },
+    { "feed": "hyperpc_shared_bbo",     "label": "HypeRPC",     "dz_win_pct": 97.8, "lead_p50_ms": 1.6, "lead_p95_ms": 5.2, "races": 400000 },
     { "feed": "quicknode_l2book_bbo",   "label": "QuickNode",   "dz_win_pct": 95.0, "lead_p50_ms": 1.1, "lead_p95_ms": 4.4, "races": 900000 }
   ],
   "nodes": [
@@ -205,7 +205,7 @@ Hyperliquid ▸ BBO Scoreboard         window:[24h ▾]   symbol:[All ▾]
   vs Competitor   DZ win%    median lead    p95 lead    races
   Public API       99.1%      +2.4 ms        +8.1 ms     12.3M
   Hydromancer      94.2%      +0.9 ms        +3.7 ms      1.1M
-  HyperPC          97.8%      +1.6 ms        +5.2 ms      0.4M
+  HypeRPC          97.8%      +1.6 ms        +5.2 ms      0.4M
   QuickNode        95.0%      +1.1 ms        +4.4 ms      0.9M
 
   By vantage:   [chi]   [nyc]   [tyo]        (per-node cards, same stats)

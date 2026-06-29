@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - User-facing product name is **"DoubleZero Data"**, not "Lake".
-- DoubleZero rollup = any feed where `startsWith(feed, 'tob_')`. Competitors (raw feed → label): `hyperliquid_public_bbo`→`Public API`, `hydromancer_bbo`→`Hydromancer`, `hyperpc_shared_bbo`→`HyperPC`, `quicknode_l2book_bbo`→`QuickNode`.
+- DoubleZero rollup = any feed where `startsWith(feed, 'tob_')`. Competitors (raw feed → label): `hyperliquid_public_bbo`→`Public API`, `hydromancer_bbo`→`Hydromancer`, `hyperpc_shared_bbo`→`HypeRPC`, `quicknode_l2book_bbo`→`QuickNode`.
 - Source table: `{FeedsDB}.hyperliquid_bbo_feed_race_summary`, default db name `feeds`, overridable via `CLICKHOUSE_FEEDS_DB`. Always query with `FINAL` (ReplacingMergeTree).
 - Race key columns: `(capture_run_id, measurement_node_id, symbol, source_ts_ms, bbo_hash)`.
 - Window values: `1h`, `24h`, `7d`; default `24h`. Default (cacheable) request shape = no `symbol`, no `since_ts`, window omitted or `24h`.
@@ -306,7 +306,7 @@ import (
 var hyperliquidCompetitors = []struct{ Feed, Label string }{
 	{"hyperliquid_public_bbo", "Public API"},
 	{"hydromancer_bbo", "Hydromancer"},
-	{"hyperpc_shared_bbo", "HyperPC"},
+	{"hyperpc_shared_bbo", "HypeRPC"},
 	{"quicknode_l2book_bbo", "QuickNode"},
 }
 
