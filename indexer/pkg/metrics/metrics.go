@@ -26,6 +26,21 @@ var (
 		[]string{"view_type", "status"},
 	)
 
+	// ShredLeafFetchTotal counts validator-rewards leaf-export fetches from the
+	// foundation S3 bucket by HTTP outcome. 403 ("forbidden") is treated as
+	// "not exported yet" (the public bucket returns 403 for missing keys), so it
+	// is no longer logged as an error — this metric is what keeps a real access
+	// loss visible: only mainnet ever produces "ok", so a sustained collapse of
+	// "ok" to zero, or a 403 where a 200 is expected, indicates the export
+	// access was lost rather than the epoch simply being unpublished.
+	ShredLeafFetchTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "doublezero_data_indexer_shred_leaf_fetch_total",
+			Help: "Total validator-rewards leaf-export fetches from S3 by HTTP outcome (ok, not_found, forbidden, error)",
+		},
+		[]string{"status"},
+	)
+
 	ViewRefreshDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "doublezero_data_indexer_view_refresh_duration_seconds",
