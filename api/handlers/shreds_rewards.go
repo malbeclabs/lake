@@ -609,26 +609,29 @@ func (a *API) GetShredsRewardsDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Header: vote pubkey, validator name, activated stake, DZ user IP.
-	// Same join shape as the list endpoint. A single-row anchor SELECT lets
-	// the LEFT JOINs return zero values for unknown node_ids without erroring.
+	// The single-row anchor carries the node_id so the LEFT JOINs have a real
+	// join key (ON v.node_pubkey = one.node_id); this returns zero values for
+	// unknown node_ids instead of erroring. Joining directly on a bound param
+	// (ON v.node_pubkey = ?) leaves no key relating the two tables, which
+	// ClickHouse rejects with "cannot determine join keys".
 	const headerQuery = `
 		SELECT
 			coalesce(v.vote_pubkey, ''),
 			coalesce(va.name, ''),
 			toUInt64(coalesce(v.activated_stake_lamports, 0)),
 			coalesce(u.client_ip, '')
-		FROM (SELECT 1 AS x) one
+		FROM (SELECT ? AS node_id) one
 		LEFT JOIN solana_vote_accounts_current v
-			ON v.node_pubkey = ? AND v.epoch_vote_account = 'true'
+			ON v.node_pubkey = one.node_id AND v.epoch_vote_account = 'true'
 		LEFT JOIN validatorsapp_validators_current va
 			ON v.vote_pubkey = va.vote_account
 		LEFT JOIN solana_gossip_nodes_current g
-			ON g.pubkey = ?
+			ON g.pubkey = one.node_id
 		LEFT JOIN dz_users_current u
 			ON u.client_ip = g.gossip_ip AND u.status = 'activated'
 		LIMIT 1
 	`
-	if err := a.envDB(ctx).QueryRow(ctx, headerQuery, nodeID, nodeID).Scan(
+	if err := a.envDB(ctx).QueryRow(ctx, headerQuery, nodeID).Scan(
 		&resp.VotePubkey, &resp.ValidatorName, &resp.ActivatedStake, &resp.DZUserIP,
 	); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		// Tolerate missing rows; leave fields zero-valued.
