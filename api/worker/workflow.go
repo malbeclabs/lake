@@ -152,16 +152,19 @@ type refreshError struct{ msg string }
 
 func (e *refreshError) Error() string { return e.msg }
 
+// pageCacheRefreshConcurrency bounds how many cache entries refresh at once.
+// 2-wide was too slow (each entry refreshed only every few minutes), but fully
+// unbounded (~28 entries) oversubscribed ClickHouse — ~55 concurrent queries
+// pegged an 8-core node, so even trivial queries hit their timeouts and the
+// per-entry retry amplified the storm. A bounded limit keeps in-flight queries
+// near what ClickHouse can run while still refreshing the batch within the cycle.
+const pageCacheRefreshConcurrency = 8
+
 // RefreshCaches refreshes all page cache entries, writing results to Postgres.
 func (a *Activities) RefreshCaches(ctx context.Context) error {
 	start := time.Now()
-	// Run all entries fully in parallel. With ~21 entries at 2-wide concurrency,
-	// the batch took longer than the 30s refresh interval, causing each entry to
-	// effectively refresh only once every few minutes. Fully parallel execution
-	// means the activity completes in max(entry_times) rather than sum/2, so the
-	// 30s sleep actually achieves a ~30s refresh cycle. Each entry has its own
-	// 60s timeout, so failures remain bounded.
 	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(pageCacheRefreshConcurrency)
 
 	for _, entry := range a.entries() {
 		g.Go(func() error {
