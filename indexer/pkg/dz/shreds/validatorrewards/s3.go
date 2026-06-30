@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gagliardetto/solana-go"
+	"github.com/malbeclabs/lake/indexer/pkg/metrics"
 )
 
 // S3BaseURL is the base URL for the DoubleZero Foundation's public
@@ -58,8 +59,12 @@ func (c *S3Client) SetBaseURL(url string) {
 //
 // Return shapes:
 //   - 200: (entries, true, nil)
-//   - 404: (nil, false, nil) — signals "not exported yet" without it being
-//     an error condition
+//   - 404 or 403: (nil, false, nil) — signals "not exported yet" without it
+//     being an error condition. A public S3 bucket whose policy grants
+//     s3:GetObject but not s3:ListBucket returns 403 (AccessDenied), not 404,
+//     for a key that does not exist, to avoid leaking object existence. The
+//     export only publishes a subset of epochs (e.g. testnet epochs are not
+//     exported at all), so both statuses mean "no data for this epoch".
 //   - any other status or transport/decode error: (nil, false, err)
 func (c *S3Client) FetchLeaderSlotData(ctx context.Context, solanaEpoch uint64) ([]ValidatorLeaderSlotEntry, bool, error) {
 	url := fmt.Sprintf("%s/%d.json", c.baseURL, solanaEpoch)
@@ -71,22 +76,35 @@ func (c *S3Client) FetchLeaderSlotData(ctx context.Context, solanaEpoch uint64) 
 
 	resp, err := c.http.Do(req)
 	if err != nil {
+		metrics.ShredLeafFetchTotal.WithLabelValues("error").Inc()
 		return nil, false, fmt.Errorf("HTTP request to %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
+	// 404, or 403 from a public bucket without s3:ListBucket, both mean the
+	// object for this epoch does not exist — treat as "not exported yet". They
+	// are recorded under distinct metric statuses ("not_found" vs "forbidden")
+	// so a real access loss — a 403 where a 200 is expected — stays visible even
+	// though neither is returned as an error.
+	switch {
+	case resp.StatusCode == http.StatusNotFound:
+		metrics.ShredLeafFetchTotal.WithLabelValues("not_found").Inc()
 		return nil, false, nil
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	case resp.StatusCode == http.StatusForbidden:
+		metrics.ShredLeafFetchTotal.WithLabelValues("forbidden").Inc()
+		return nil, false, nil
+	case resp.StatusCode < 200 || resp.StatusCode >= 300:
+		metrics.ShredLeafFetchTotal.WithLabelValues("error").Inc()
 		return nil, false, fmt.Errorf("S3 returned status %d for epoch %d", resp.StatusCode, solanaEpoch)
 	}
 
 	var entries []ValidatorLeaderSlotEntry
 	if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
+		metrics.ShredLeafFetchTotal.WithLabelValues("error").Inc()
 		return nil, false, fmt.Errorf("decode leader-slot JSON for epoch %d: %w", solanaEpoch, err)
 	}
 
+	metrics.ShredLeafFetchTotal.WithLabelValues("ok").Inc()
 	return entries, true, nil
 }
 
