@@ -5908,6 +5908,8 @@ export interface PublisherCheckItem {
   validator_name: string
   validator_version_ok: boolean
   is_backup: boolean
+  lagging: boolean
+  lagging_status: string
 }
 
 export interface PublisherCheckResponse {

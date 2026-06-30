@@ -33,7 +33,8 @@ type SortField =
   | "publishing_leader_shreds"
   | "publishing_retransmitted"
   | "leader_slots"
-  | "validator_client";
+  | "validator_client"
+  | "lagging";
 
 type SortDirection = "asc" | "desc";
 
@@ -411,6 +412,9 @@ export function PublisherCheckPage() {
           cmp = `${a.validator_client} ${a.validator_version}`.localeCompare(
             `${b.validator_client} ${b.validator_version}`,
           );
+          break;
+        case "lagging":
+          cmp = Number(a.lagging) - Number(b.lagging);
           break;
         default:
           cmp = 0;
@@ -867,6 +871,10 @@ export function PublisherCheckPage() {
                     No Retransmit Shreds
                     <SortIcon field="publishing_retransmitted" />
                   </th>
+                  <th className={thCenter} onClick={() => handleSort("lagging")}>
+                    Fast Shreds
+                    <SortIcon field="lagging" />
+                  </th>
                   <th
                     className={thCenter}
                     onClick={() => handleSort("leader_slots")}
@@ -887,7 +895,7 @@ export function PublisherCheckPage() {
                 {pagedPublishers.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={13}
+                      colSpan={14}
                       className="px-4 py-12 text-center text-muted-foreground"
                     >
                       {activeFilter
@@ -973,6 +981,11 @@ export function PublisherCheckPage() {
                       </td>
                       <td className="px-4 py-3 text-center">
                         <StatusIcon ok={!pub.publishing_retransmitted} />
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <StatusIcon
+                          ok={pub.lagging_status !== "Action Needed"}
+                        />
                       </td>
                       <td className="px-4 py-3 text-sm tabular-nums text-center">
                         {pub.leader_slots.toLocaleString()}

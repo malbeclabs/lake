@@ -35,6 +35,9 @@ var publisherDB = "shredder"
 // dzdpDB is the ClickHouse database name for DZDP tables e.g. location_state (default: "dzdp").
 var dzdpDB = "dzdp"
 
+// dzfDataDB is the ClickHouse database name for dzf_data tables (default: "dzf_data").
+var dzfDataDB = "dzf_data"
+
 // EnvDBs maps environment names to their ClickHouse connection pools.
 // The mainnet-beta entry always points to DB.
 var EnvDBs map[string]driver.Conn
@@ -81,6 +84,16 @@ func GetDZDPDB() string {
 // SetDZDPDB sets the DZDP database name.
 func SetDZDPDB(db string) {
 	dzdpDB = db
+}
+
+// GetDZFDataDB returns the dzf_data database name.
+func GetDZFDataDB() string {
+	return dzfDataDB
+}
+
+// SetDZFDataDB sets the dzf_data database name.
+func SetDZFDataDB(db string) {
+	dzfDataDB = db
 }
 
 // Database returns the configured database name.
@@ -154,6 +167,10 @@ func Load() error {
 		dzdpDB = db
 	}
 
+	if db := os.Getenv("CLICKHOUSE_DZF_DATA_DB"); db != "" {
+		dzfDataDB = db
+	}
+
 	// Build env -> database mapping.
 	// Devnet and testnet databases default to lake_devnet / lake_testnet
 	// unless overridden by env vars or disabled with CLICKHOUSE_NO_DEVNET / CLICKHOUSE_NO_TESTNET.
@@ -177,7 +194,7 @@ func Load() error {
 
 	secure := os.Getenv("CLICKHOUSE_SECURE") == "true"
 
-	slog.Info("connecting to ClickHouse", "addr", cfg.Addr, "database", cfg.Database, "username", cfg.Username, "secure", secure, "shredder_db", shredderDB, "publisher_db", publisherDB, "dzdp_db", dzdpDB)
+	slog.Info("connecting to ClickHouse", "addr", cfg.Addr, "database", cfg.Database, "username", cfg.Username, "secure", secure, "shredder_db", shredderDB, "publisher_db", publisherDB, "dzdp_db", dzdpDB, "dzf_data_db", dzfDataDB)
 
 	// Create connection pool
 	opts := &clickhouse.Options{

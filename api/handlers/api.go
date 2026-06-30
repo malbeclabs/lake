@@ -43,6 +43,7 @@ type API struct {
 	ShredderDB    string
 	PublisherDB   string
 	DZDPDB        string
+	DZFDataDB     string
 
 	// PostgreSQL
 	PgPool *pgxpool.Pool
