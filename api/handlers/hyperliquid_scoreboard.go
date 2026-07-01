@@ -608,4 +608,3 @@ func (a *API) GetHyperliquidScoreboard(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, resp)
 }
-
