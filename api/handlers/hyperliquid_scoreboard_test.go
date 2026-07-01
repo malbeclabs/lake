@@ -144,6 +144,36 @@ func TestHyperliquidScoreboard_RecentRaces(t *testing.T) {
 	assert.False(t, bySym["ETH"].IsDZ)
 }
 
+// A cell where DoubleZero won zero races (competitor swept it) makes the lead-time
+// quantile aggregate over an empty predicate set, which ClickHouse returns as NaN. If that
+// NaN reaches the float64 fields, json encoding of the whole response fails — breaking the
+// scoreboard for everyone and poisoning the page cache. The percentiles must coalesce to 0.
+func TestHyperliquidScoreboard_ZeroDZWins_Encodable(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createFeedsTable(t, api)
+
+	// Only a competitor-won race: DZ has zero wins vs Hydromancer in this window.
+	insertPairwise(t, api, "nyc-rec1", "nyc", "ETH", 10, 1, "hydromancer_bbo", "tob_aws_galaxy1", 3.0)
+
+	resp, err := api.FetchHyperliquidScoreboardData(t.Context(), "24h", "")
+	require.NoError(t, err)
+
+	// The entire response must be JSON-encodable — a single NaN anywhere fails encoding.
+	_, err = json.Marshal(resp)
+	require.NoError(t, err, "response must not contain NaN percentiles")
+
+	var hydro *handlers.HyperliquidCompetitor
+	for i := range resp.Competitors {
+		if resp.Competitors[i].Feed == "hydromancer_bbo" {
+			hydro = &resp.Competitors[i]
+		}
+	}
+	require.NotNil(t, hydro)
+	assert.InDelta(t, 0.0, hydro.DZWinPct, 0.001)
+	assert.InDelta(t, 0.0, hydro.LeadP50Ms, 0.001)
+	assert.InDelta(t, 0.0, hydro.LeadP95Ms, 0.001)
+}
+
 func TestHyperliquidScoreboard_HeadlineAndCompetitors(t *testing.T) {
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	createFeedsTable(t, api)

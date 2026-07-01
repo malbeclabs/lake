@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
 // hyperliquidCompetitors lists the non-DoubleZero feeds shown on the scoreboard,
@@ -247,8 +249,11 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 		SELECT competitor, measurement_node_id, any(location_code) AS location_code,
 			uniqCombinedIf(rk, dz_won = 1) AS dz_wins,
 			uniqCombinedIf(rk, dz_won = 0) AS dz_losses,
-			toFloat64(quantileTDigestIf(0.5)(lead_ms, dz_won = 1)) AS lead_p50,
-			toFloat64(quantileTDigestIf(0.95)(lead_ms, dz_won = 1)) AS lead_p95
+			-- ifNotFinite guards the empty-set case: when DZ won zero races in a (competitor, node)
+			-- cell, quantileTDigestIf over no rows returns NaN, which fails JSON encoding of the whole
+			-- response (and poisons the page cache). Coalesce to 0 so a swept cell serializes cleanly.
+			ifNotFinite(toFloat64(quantileTDigestIf(0.5)(lead_ms, dz_won = 1)), 0) AS lead_p50,
+			ifNotFinite(toFloat64(quantileTDigestIf(0.95)(lead_ms, dz_won = 1)), 0) AS lead_p95
 		FROM (
 			SELECT measurement_node_id, location_code,
 				%[1]s AS rk,
@@ -261,11 +266,6 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 			  AND event_ts >= now() - INTERVAL %[4]s
 		)
 		GROUP BY competitor, measurement_node_id WITH ROLLUP`, raceKeyTuple, db, symbolFilter, interval)
-	rows, err := a.envDB(ctx).Query(ctx, q)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 
 	type stat struct {
 		wins, losses     uint64
@@ -279,29 +279,59 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 	byFeed := map[string]stat{}
 	nodeMap := map[string]*nodeAgg{}
 	var nodeOrder []string
-	for rows.Next() {
-		var competitor, node, loc string
-		var s stat
-		if err := rows.Scan(&competitor, &node, &loc, &s.wins, &s.losses, &s.leadP50, &s.leadP95); err != nil {
-			return nil, err
+	var recent []HyperliquidRace
+	var prices map[string]float64
+
+	// The main ROLLUP scan, the recent-races scan, and the live-price lookup are three independent
+	// ClickHouse reads; run them concurrently so their latencies overlap rather than stack under
+	// the request timeout. gctx cancels the siblings if the main scan or recent-races hard-fails.
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		rows, err := a.envDB(gctx).Query(gctx, q)
+		if err != nil {
+			return err
 		}
-		switch {
-		case competitor == "":
-			// Grand-total ROLLUP row; the headline is derived from per-node cells instead.
-			continue
-		case node == "":
-			byFeed[competitor] = s
-		default:
-			na, ok := nodeMap[node]
-			if !ok {
-				na = &nodeAgg{loc: loc, byFeed: map[string]stat{}}
-				nodeMap[node] = na
-				nodeOrder = append(nodeOrder, node)
+		defer rows.Close()
+		for rows.Next() {
+			var competitor, node, loc string
+			var s stat
+			if err := rows.Scan(&competitor, &node, &loc, &s.wins, &s.losses, &s.leadP50, &s.leadP95); err != nil {
+				return err
 			}
-			na.byFeed[competitor] = s
+			switch {
+			case competitor == "":
+				// Grand-total ROLLUP row; the headline is derived from per-node cells instead.
+				continue
+			case node == "":
+				byFeed[competitor] = s
+			default:
+				na, ok := nodeMap[node]
+				if !ok {
+					na = &nodeAgg{loc: loc, byFeed: map[string]stat{}}
+					nodeMap[node] = na
+					nodeOrder = append(nodeOrder, node)
+				}
+				na.byFeed[competitor] = s
+			}
 		}
-	}
-	if err := rows.Err(); err != nil {
+		return rows.Err()
+	})
+	g.Go(func() error {
+		r, err := a.fetchHyperliquidRecentRaces(gctx, time.Time{}, 10)
+		if err != nil {
+			return err
+		}
+		recent = r
+		return nil
+	})
+	g.Go(func() error {
+		// Best-effort: a live-price lookup failure must not fail the whole scoreboard.
+		if p, err := a.fetchHyperliquidPrices(gctx); err == nil {
+			prices = p
+		}
+		return nil
+	})
+	if err := g.Wait(); err != nil {
 		return nil, err
 	}
 
@@ -367,14 +397,10 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 		resp.DZWinSharePct = 100.0 * float64(globalWins) / float64(globalRaces)
 	}
 
-	recent, err := a.fetchHyperliquidRecentRaces(ctx, time.Time{}, 10)
-	if err != nil {
-		return nil, err
+	if recent != nil {
+		resp.RecentRaces = recent
 	}
-	resp.RecentRaces = recent
-
-	// Live prices per symbol for the recent-races grid (best-effort; cheap latest-BBO lookup).
-	if prices, err := a.fetchHyperliquidPrices(ctx); err == nil {
+	if prices != nil {
 		resp.Prices = prices
 	}
 
@@ -441,19 +467,33 @@ func (a *API) fetchHyperliquidRecentRaces(ctx context.Context, sinceTs time.Time
 	return out, rows.Err()
 }
 
-// hyperliquidScoreboardCacheKey returns the cache key for the default request shape, or "".
+// hyperliquidScoreboardCacheKey returns the cache key for a cacheable request shape, or "".
+// A symbol filter is a non-default view and is never cached. Each supported window has its own
+// cached key: the 1h view is refreshed by the page-cache worker; the heavier 24h/7d views are
+// refreshed on a slow background cadence (StartHyperliquidBackgroundRefresher) so they are served
+// from cache instead of running a multi-day scan on the request path.
 func hyperliquidScoreboardCacheKey(r *http.Request) string {
-	if r.URL.Query().Get("since_ts") != "" || r.URL.Query().Get("symbol") != "" {
+	if r.URL.Query().Get("symbol") != "" {
 		return ""
 	}
-	// 1h is the cacheable default — a 24h/7d aggregation over the full proxied table is too
-	// slow to refresh within the cache deadline (the summary table has no time-based index),
-	// so only the 1h view is cached; longer windows fall through to a (slower) live query.
 	window := strings.TrimSpace(r.URL.Query().Get("window"))
-	if window != "" && window != "1h" {
+	if window == "" {
+		window = "1h"
+	}
+	if _, ok := hyperliquidWindows[window]; !ok {
 		return ""
 	}
-	return "hyperliquid_scoreboard"
+	return hyperliquidScoreboardWindowKey(window)
+}
+
+// hyperliquidScoreboardWindowKey is the page-cache key for a given window. The 1h key keeps its
+// original name (populated by the page-cache worker); 24h/7d get suffixed keys populated by the
+// background refresher.
+func hyperliquidScoreboardWindowKey(window string) string {
+	if window == "1h" {
+		return "hyperliquid_scoreboard"
+	}
+	return "hyperliquid_scoreboard:" + window
 }
 
 // hyperliquidFeedsTableExists reports whether the proxied summary table is queryable.
@@ -535,13 +575,18 @@ func (a *API) FetchHyperliquidCompositeLatency(ctx context.Context) (*Hyperliqui
 	}, nil
 }
 
-// StartHyperliquidCompositeLatencyRefresher periodically computes the composite latency and
-// writes it to the page cache (Postgres) so all replicas share one value. The query is far too
-// slow for the 60s page-cache worker, so it runs here on its own slow cadence.
-func (a *API) StartHyperliquidCompositeLatencyRefresher(ctx context.Context) {
+// StartHyperliquidBackgroundRefresher periodically computes the Hyperliquid views that are too
+// heavy for the 60s page-cache worker and writes them to the page cache (Postgres) so all replicas
+// share them and the request path never runs a multi-day scan:
+//   - the composite feed latency, and
+//   - the 24h and 7d scoreboards (the 1h scoreboard stays on the ordinary page-cache worker).
+//
+// Each computation gets its own timeout so a slow one can't starve the others; the composite
+// latency is refreshed first so the 24h/7d scoreboards pick up its freshly-cached value.
+func (a *API) StartHyperliquidBackgroundRefresher(ctx context.Context) {
 	const interval = 10 * time.Minute
 	const runTimeout = 3 * time.Minute
-	refresh := func() {
+	refreshComposite := func() {
 		rctx, cancel := context.WithTimeout(ctx, runTimeout)
 		defer cancel()
 		val, err := a.FetchHyperliquidCompositeLatency(rctx)
@@ -552,6 +597,23 @@ func (a *API) StartHyperliquidCompositeLatencyRefresher(ctx context.Context) {
 		if err := a.WritePageCache(ctx, hyperliquidCompositeLatencyCacheKey, val); err != nil {
 			slog.Warn("hyperliquid composite latency cache write failed", "error", err)
 		}
+	}
+	refreshScoreboard := func(window string) {
+		rctx, cancel := context.WithTimeout(ctx, runTimeout)
+		defer cancel()
+		val, err := a.FetchHyperliquidScoreboardData(rctx, window, "")
+		if err != nil {
+			slog.Warn("hyperliquid scoreboard refresh failed", "window", window, "error", err)
+			return
+		}
+		if err := a.WritePageCache(ctx, hyperliquidScoreboardWindowKey(window), val); err != nil {
+			slog.Warn("hyperliquid scoreboard cache write failed", "window", window, "error", err)
+		}
+	}
+	refresh := func() {
+		refreshComposite()
+		refreshScoreboard("24h")
+		refreshScoreboard("7d")
 	}
 	go func() {
 		refresh()
@@ -591,15 +653,9 @@ func (a *API) GetHyperliquidScoreboard(w http.ResponseWriter, r *http.Request) {
 	}
 	symbol := r.URL.Query().Get("symbol")
 
-	// Degrade gracefully if the proxy table isn't available (e.g. local dev).
-	if !a.hyperliquidFeedsTableExists(ctx) {
-		writeJSON(w, &HyperliquidScoreboardResponse{
-			Window: window, GeneratedAt: time.Now().UTC(), FeedType: "bbo",
-			Competitors: []HyperliquidCompetitor{}, Nodes: []HyperliquidNode{}, RecentRaces: []HyperliquidRace{},
-		})
-		return
-	}
-
+	// FetchHyperliquidScoreboardData already degrades to an empty-but-valid response when the
+	// proxy table is absent (e.g. local dev), so no separate existence check is needed here —
+	// that avoids a redundant EXISTS TABLE round-trip per uncached request.
 	resp, err := a.FetchHyperliquidScoreboardData(ctx, window, symbol)
 	if err != nil {
 		logError("HyperliquidScoreboard error", "error", err)
