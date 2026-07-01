@@ -18,6 +18,7 @@ import (
 var hyperliquidCompetitors = []struct{ Feed, Label string }{
 	{"hyperliquid_public_bbo", "Public API"},
 	{"hydromancer_bbo", "Hydromancer"},
+	{"dwellir_l2book_bbo", "Dwellir"},
 	{"quicknode_l2book_bbo", "QuickNode"},
 }
 
