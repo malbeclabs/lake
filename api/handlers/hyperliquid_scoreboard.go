@@ -500,23 +500,30 @@ func (a *API) fetchHyperliquidPrices(ctx context.Context) (map[string]float64, e
 // request path or the 60s page-cache loop.
 func (a *API) FetchHyperliquidCompositeLatency(ctx context.Context) (*HyperliquidCompositeLatency, error) {
 	db := fmt.Sprintf("`%s`", a.FeedsDB)
+	// Single GROUP BY over (metro, symbol, block): min(recv) is associative, so the earlier
+	// per-source pre-aggregation was redundant, and uniqExact(source) >= 2 enforces ">=2 distinct
+	// DZ feeds delivered" directly. Filtering to tob_ feeds in WHERE (not after grouping) drops
+	// competitor rows before they enter the hash table. The prior two-CTE form grouped every
+	// source by a source-keyed tuple over 24h of the 667 GiB observations table, which on the
+	// memory-constrained proxy ClickHouse (feeds is a remoteSecure() proxy, so the GROUP BY runs
+	// locally) built a hash table that tripped the OvercommitTracker (code 241). This form keeps
+	// tiny per-group state; max_bytes_before_external_group_by spills to disk as a safety net so
+	// high block cardinality degrades to a slower query instead of an OOM.
 	q := fmt.Sprintf(`
-		WITH d AS (
-			SELECT location_code, symbol, source_ts_ms, source, min(recv_ts_ns) AS r
+		WITH c AS (
+			SELECT location_code, symbol, source_ts_ms, min(recv_ts_ns) AS r
 			FROM %[1]s.hyperliquid_bbo_observations
-			WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalHour(24))) %[2]s
-			GROUP BY location_code, symbol, source_ts_ms, source
-		),
-		c AS (
-			SELECT location_code, symbol, source_ts_ms, min(r) AS r
-			FROM d WHERE startsWith(source, 'tob_')
-			GROUP BY location_code, symbol, source_ts_ms HAVING count() >= 2
+			WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalHour(24)))
+			  AND startsWith(source, 'tob_') %[2]s
+			GROUP BY location_code, symbol, source_ts_ms
+			HAVING uniqExact(source) >= 2
 		)
 		SELECT
 			toFloat64(quantileTDigest(0.5)((toInt64(r) - toInt64(source_ts_ms) * 1000000) / 1e6)),
 			toFloat64(quantileTDigest(0.9)((toInt64(r) - toInt64(source_ts_ms) * 1000000) / 1e6)),
 			toFloat64(quantileTDigest(0.99)((toInt64(r) - toInt64(source_ts_ms) * 1000000) / 1e6))
-		FROM c`, db, hyperliquidLiquidSymbolFilter())
+		FROM c
+		SETTINGS max_bytes_before_external_group_by = 2000000000`, db, hyperliquidLiquidSymbolFilter())
 	var p50, p90, p99 float64
 	if err := a.envDB(ctx).QueryRow(ctx, q).Scan(&p50, &p90, &p99); err != nil {
 		return nil, err
