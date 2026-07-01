@@ -1863,11 +1863,16 @@ export interface MultiPathResponse {
   paths: SinglePath[]
   from: string
   to: string
+  service?: string
   error?: string
 }
 
-export async function fetchISISPaths(fromPK: string, toPK: string, k: number = 5): Promise<MultiPathResponse> {
-  const res = await apiFetch(`/api/topology/paths?from=${encodeURIComponent(fromPK)}&to=${encodeURIComponent(toPK)}&k=${k}`)
+export async function fetchISISPaths(fromPK: string, toPK: string, k: number = 5, service?: string): Promise<MultiPathResponse> {
+  let url = `/api/topology/paths?from=${encodeURIComponent(fromPK)}&to=${encodeURIComponent(toPK)}&k=${k}`
+  if (service) {
+    url += `&service=${encodeURIComponent(service)}`
+  }
+  const res = await apiFetch(url)
   if (!res.ok) {
     throw new Error('Failed to fetch paths')
   }
@@ -1908,10 +1913,13 @@ export interface MetroDevicePathsResponse {
 export async function fetchMetroDevicePaths(
   fromMetroPK: string,
   toMetroPK: string,
+  service?: string,
 ): Promise<MetroDevicePathsResponse> {
-  const res = await apiFetch(
-    `/api/topology/metro-device-paths?from=${encodeURIComponent(fromMetroPK)}&to=${encodeURIComponent(toMetroPK)}`
-  )
+  let url = `/api/topology/metro-device-paths?from=${encodeURIComponent(fromMetroPK)}&to=${encodeURIComponent(toMetroPK)}`
+  if (service) {
+    url += `&service=${encodeURIComponent(service)}`
+  }
+  const res = await apiFetch(url)
   if (!res.ok) {
     throw new Error('Failed to fetch metro device paths')
   }

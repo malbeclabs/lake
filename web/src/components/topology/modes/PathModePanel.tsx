@@ -38,6 +38,8 @@ interface PathModePanelProps {
   onToggleReverse: () => void
   pathK: number
   onPathKChange: (k: number) => void
+  pathService?: 'unicast' | 'multicast'
+  onPathServiceChange?: (service: 'unicast' | 'multicast') => void
 }
 
 export function PathModePanel({
@@ -59,6 +61,8 @@ export function PathModePanel({
   onToggleReverse,
   pathK,
   onPathKChange,
+  pathService = 'unicast',
+  onPathServiceChange,
 }: PathModePanelProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
@@ -118,6 +122,37 @@ export function PathModePanel({
 
       {!pathSource && (
         <div className="text-muted-foreground text-[10px]">Or click a device on the map</div>
+      )}
+
+      {/* Service type toggle */}
+      {onPathServiceChange && (
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-[10px] text-muted-foreground">Traffic</span>
+          <div className="inline-flex rounded border border-border bg-muted/40 p-px">
+            <button
+              onClick={() => onPathServiceChange('unicast')}
+              className={cn(
+                'px-2 py-0.5 text-[10px] rounded-sm transition-colors',
+                pathService === 'unicast'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              Unicast
+            </button>
+            <button
+              onClick={() => onPathServiceChange('multicast')}
+              className={cn(
+                'px-2 py-0.5 text-[10px] rounded-sm transition-colors',
+                pathService === 'multicast'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              Multicast
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Direction toggle + loading */}

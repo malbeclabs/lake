@@ -286,6 +286,9 @@ export function PathCalculatorPage() {
   const [targetDevice, setTargetDevice] = useState<DeviceOption | null>(null)
   const [selectedPathIndex, setSelectedPathIndex] = useState(0)
   const [initializedFromUrl, setInitializedFromUrl] = useState(false)
+  const [service, setService] = useState<'unicast' | 'multicast'>(
+    (searchParams.get('service') as 'unicast' | 'multicast') || 'unicast'
+  )
 
   // Fetch topology for device list
   const { data: topology, isLoading: topologyLoading } = useQuery({
@@ -358,14 +361,26 @@ export function PathCalculatorPage() {
     setSearchParams({}, { replace: true })
   }
 
+  const updateService = (s: 'unicast' | 'multicast') => {
+    setService(s)
+    setSelectedPathIndex(0)
+    const newParams = new URLSearchParams(searchParams)
+    if (s !== 'unicast') {
+      newParams.set('service', s)
+    } else {
+      newParams.delete('service')
+    }
+    setSearchParams(newParams, { replace: true })
+  }
+
   // Fetch paths when both devices are selected
   const {
     data: pathsResult,
     isLoading: pathsLoading,
     error: pathsError,
   } = useQuery<MultiPathResponse>({
-    queryKey: ['paths', sourceDevice?.pk, targetDevice?.pk],
-    queryFn: () => fetchISISPaths(sourceDevice!.pk, targetDevice!.pk, 5),
+    queryKey: ['paths', sourceDevice?.pk, targetDevice?.pk, service],
+    queryFn: () => fetchISISPaths(sourceDevice!.pk, targetDevice!.pk, 5, service),
     enabled: !!sourceDevice && !!targetDevice,
   })
 
@@ -395,6 +410,38 @@ export function PathCalculatorPage() {
         <p className="text-muted-foreground mb-6">
           Find and compare paths between two devices in the ISIS topology.
         </p>
+
+        {/* Service Type Toggle */}
+        <div className="flex items-center gap-3 mb-6">
+          <span className="text-sm text-muted-foreground">Traffic type</span>
+          <div className="inline-flex rounded-md border border-border bg-muted/40 p-0.5">
+            <button
+              onClick={() => updateService('unicast')}
+              className={`px-3 py-1 text-sm rounded-sm transition-colors ${
+                service === 'unicast'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Unicast
+            </button>
+            <button
+              onClick={() => updateService('multicast')}
+              className={`px-3 py-1 text-sm rounded-sm transition-colors ${
+                service === 'multicast'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Multicast
+            </button>
+          </div>
+          <span className="text-xs text-muted-foreground">
+            {service === 'unicast'
+              ? 'Flex-algo 128 — topology-tagged links only'
+              : 'Algo 0 — all links'}
+          </span>
+        </div>
 
         {/* Device Selection */}
         <div className="bg-card border border-border rounded-lg p-6 mb-6">
@@ -436,7 +483,7 @@ export function PathCalculatorPage() {
           {sourceDevice && targetDevice && (
             <div className="mt-4 pt-4 border-t border-border flex items-center justify-between md:justify-start">
               <Link
-                to={`/topology/graph?path_source=${sourceDevice.pk}&path_target=${targetDevice.pk}`}
+                to={`/topology/graph?path_source=${sourceDevice.pk}&path_target=${targetDevice.pk}${service !== 'unicast' ? `&path_service=${service}` : ''}`}
                 className="text-sm text-primary hover:underline flex items-center gap-1"
               >
                 View in graph

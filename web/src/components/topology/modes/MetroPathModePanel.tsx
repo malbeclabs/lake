@@ -1,6 +1,7 @@
 import { Building2, X, ArrowLeft } from 'lucide-react'
 import type { MetroDevicePathsResponse } from '@/lib/api'
 import { useTheme } from '@/hooks/use-theme'
+import { cn } from '@/lib/utils'
 import { MetroSelector, type MetroOption } from '../MetroSelector'
 
 // Path colors for comparison
@@ -26,6 +27,8 @@ interface MetroPathModePanelProps {
   onTogglePair: (index: number) => void
   onClearSelection: () => void
   onClear: () => void
+  pathService?: 'unicast' | 'multicast'
+  onPathServiceChange?: (service: 'unicast' | 'multicast') => void
 }
 
 // Latency color scale (green to red)
@@ -62,6 +65,8 @@ export function MetroPathModePanel({
   onTogglePair,
   onClearSelection,
   onClear,
+  pathService = 'unicast',
+  onPathServiceChange,
 }: MetroPathModePanelProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
@@ -109,6 +114,37 @@ export function MetroPathModePanel({
           disabled={!sourceMetro}
         />
       </div>
+
+      {/* Service type toggle */}
+      {onPathServiceChange && (
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-[10px] text-muted-foreground">Traffic</span>
+          <div className="inline-flex rounded border border-border bg-muted/40 p-px">
+            <button
+              onClick={() => onPathServiceChange('unicast')}
+              className={cn(
+                'px-2 py-0.5 text-[10px] rounded-sm transition-colors',
+                pathService === 'unicast'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              Unicast
+            </button>
+            <button
+              onClick={() => onPathServiceChange('multicast')}
+              className={cn(
+                'px-2 py-0.5 text-[10px] rounded-sm transition-colors',
+                pathService === 'multicast'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              Multicast
+            </button>
+          </div>
+        </div>
+      )}
 
       {!sourceMetro && (
         <div className="text-muted-foreground text-[10px]">Select a source and target metro to find paths</div>

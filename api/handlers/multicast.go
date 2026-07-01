@@ -1263,7 +1263,7 @@ func (a *API) GetMulticastTreePaths(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load in-memory topology graph with committed latency for path finding
-	g, err := a.loadTopologyGraph(ctx)
+	g, err := a.loadTopologyGraph(ctx, "")
 	if err != nil {
 		response.Error = fmt.Sprintf("failed to load topology graph: %v", err)
 		writeJSON(w, response)
@@ -1475,7 +1475,7 @@ func (a *API) GetMulticastTreeSegments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load in-memory topology graph with committed latency for path finding
-	g, err := a.loadTopologyGraph(ctx)
+	g, err := a.loadTopologyGraph(ctx, "")
 	if err != nil {
 		response.Error = fmt.Sprintf("failed to load topology graph: %v", err)
 		writeJSON(w, response)
