@@ -32,6 +32,16 @@ function symbolDisplay(sym: string): string {
   return sym.startsWith('xyz:') ? sym.slice(4) : sym
 }
 
+// Vantage-point facility metadata (keyed by location_code), plus the row display order.
+const VANTAGE_INFO: Record<string, { facility: string; city: string; order: number }> = {
+  tyo: { facility: 'AWS ap-northeast-1b', city: 'Tokyo, JP', order: 0 },
+  chi: { facility: 'CyrusOne CHI1', city: 'Aurora, IL', order: 1 },
+  nyc: { facility: 'Equinix NY5', city: 'Secaucus, NJ', order: 2 },
+}
+function vantageOrder(locationCode: string): number {
+  return VANTAGE_INFO[locationCode]?.order ?? 99
+}
+
 function fmtPrice(p: number): string {
   if (p >= 1000) return `$${Math.round(p).toLocaleString()}`
   return `$${p.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -311,14 +321,29 @@ export function HyperliquidScoreboardPage() {
                         </td>
                       </tr>
                     ) : (
-                      data.nodes.map((n) => {
+                      [...data.nodes]
+                        .sort((a, b) => vantageOrder(a.location_code) - vantageOrder(b.location_code))
+                        .map((n) => {
                         const byFeed = new Map(n.competitors.map((c) => [c.feed, c]))
+                        const info = VANTAGE_INFO[n.location_code]
                         return (
                           <tr key={n.measurement_node_id} className="border-b border-border transition-colors last:border-b-0 hover:bg-muted/50">
                             <td className="px-3 py-3 sm:px-4">
-                              <div className="text-sm font-medium uppercase">{n.location_code}</div>
-                              <div className="text-xs text-muted-foreground">{n.measurement_node_id}</div>
-                              <div className="text-xs text-muted-foreground">{n.total_races.toLocaleString()} races</div>
+                              <div
+                                className="cursor-default"
+                                title={[
+                                  info?.facility ?? n.location_code.toUpperCase(),
+                                  info?.city,
+                                  n.measurement_node_id,
+                                  `${n.total_races.toLocaleString()} races`,
+                                ]
+                                  .filter(Boolean)
+                                  .join('\n')}
+                              >
+                                <div className="text-sm font-medium uppercase">{n.location_code}</div>
+                                <div className="text-xs text-muted-foreground">{info?.facility ?? n.measurement_node_id}</div>
+                                <div className="text-xs text-muted-foreground/70">{n.total_races.toLocaleString()} races</div>
+                              </div>
                             </td>
                             <td className="px-3 py-3 text-right text-sm tabular-nums sm:px-4">
                               <div className="mb-1.5">{pct(n.dz_win_share_pct)}</div>
