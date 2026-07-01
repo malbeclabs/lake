@@ -155,13 +155,14 @@ type HyperliquidScoreboardResponse struct {
 	RecentRaces   []HyperliquidRace       `json:"recent_races"`
 	// Prices is the latest BBO mid price per recent-race symbol (live, for the grid).
 	Prices map[string]float64 `json:"prices,omitempty"`
-	// CompositeLatency is DoubleZero's composite first-arrival feed latency (24h); nil until the
+	// CompositeLatency is DoubleZero's Tokyo first-arrival feed latency (24h); nil until the
 	// background refresher computes it (the query is too heavy for the request path).
 	CompositeLatency *HyperliquidCompositeLatency `json:"composite_latency,omitempty"`
 }
 
-// HyperliquidCompositeLatency is DoubleZero's composite first-arrival latency (blocktime ->
-// receive, earliest across all tob_ DZ feeds) over a fixed 24h window, p50/p90/p99 in ms.
+// HyperliquidCompositeLatency is DoubleZero's Tokyo first-arrival latency (blocktime -> receive,
+// earliest across the tob_ DZ feeds at the Tokyo vantage point) over a fixed 24h window,
+// p50/p90/p99 in ms.
 type HyperliquidCompositeLatency struct {
 	Window      string    `json:"window"`
 	P50Ms       float64   `json:"p50_ms"`
@@ -492,30 +493,31 @@ func (a *API) fetchHyperliquidPrices(ctx context.Context) (map[string]float64, e
 	return out, rows.Err()
 }
 
-// FetchHyperliquidCompositeLatency computes DoubleZero's composite first-arrival latency
-// (p50/p90/p99 in ms) over the last 24h across the liquid symbols and all vantage points, from
-// the raw observations table: per (metro, symbol, block) the earliest receive across DZ tob_
-// feeds, restricted to blocks where >=2 DZ feeds delivered. This is a heavy full-day scan over
-// the proxied table (~tens of seconds) — it must run on a slow background cadence, never in the
-// request path or the 60s page-cache loop.
+// FetchHyperliquidCompositeLatency computes DoubleZero's Tokyo first-arrival feed latency
+// (p50/p90/p99 in ms) over the last 24h across the liquid symbols, from the raw observations
+// table: per (symbol, block) the earliest receive across DZ tob_ feeds at the Tokyo vantage
+// point, restricted to blocks where >=2 DZ feeds delivered. Scoped to Tokyo (DZ's fastest metro,
+// nearest Hyperliquid) so the headline reflects best-case DZ delivery rather than an all-metro
+// average — this matches the Grafana "tob_* (first-arrival, all DZ)" panel. This is a heavy
+// full-day scan over the proxied table (~tens of seconds) — it must run on a slow background
+// cadence, never in the request path or the 60s page-cache loop.
 func (a *API) FetchHyperliquidCompositeLatency(ctx context.Context) (*HyperliquidCompositeLatency, error) {
 	db := fmt.Sprintf("`%s`", a.FeedsDB)
-	// Single GROUP BY over (metro, symbol, block): min(recv) is associative, so the earlier
-	// per-source pre-aggregation was redundant, and uniqExact(source) >= 2 enforces ">=2 distinct
-	// DZ feeds delivered" directly. Filtering to tob_ feeds in WHERE (not after grouping) drops
-	// competitor rows before they enter the hash table. The prior two-CTE form grouped every
-	// source by a source-keyed tuple over 24h of the 667 GiB observations table, which on the
-	// memory-constrained proxy ClickHouse (feeds is a remoteSecure() proxy, so the GROUP BY runs
-	// locally) built a hash table that tripped the OvercommitTracker (code 241). This form keeps
-	// tiny per-group state; max_bytes_before_external_group_by spills to disk as a safety net so
-	// high block cardinality degrades to a slower query instead of an OOM.
+	// Single GROUP BY over (symbol, block) at Tokyo: min(recv) is associative, so a per-source
+	// pre-aggregation is redundant, and uniqExact(source) >= 2 enforces ">=2 distinct Tokyo DZ
+	// feeds delivered" directly (this >=2 requirement is what keeps p99 realistic; without it a
+	// single laggy feed inflates the tail). Filtering to tob_ feeds and Tokyo in WHERE (not after
+	// grouping) drops other rows before they enter the hash table. This keeps tiny per-group state;
+	// max_bytes_before_external_group_by spills to disk as a safety net so high block cardinality
+	// degrades to a slower query instead of an OOM on the memory-constrained proxy ClickHouse.
 	q := fmt.Sprintf(`
 		WITH c AS (
-			SELECT location_code, symbol, source_ts_ms, min(recv_ts_ns) AS r
+			SELECT symbol, source_ts_ms, min(recv_ts_ns) AS r
 			FROM %[1]s.hyperliquid_bbo_observations
 			WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalHour(24)))
-			  AND startsWith(source, 'tob_') %[2]s
-			GROUP BY location_code, symbol, source_ts_ms
+			  AND startsWith(source, 'tob_')
+			  AND location_code = 'tyo' %[2]s
+			GROUP BY symbol, source_ts_ms
 			HAVING uniqExact(source) >= 2
 		)
 		SELECT

@@ -230,8 +230,10 @@ export function HyperliquidScoreboardPage() {
                   {data.composite_latency && (
                     <div className="w-full">
                       <div className="mb-1.5 text-xs text-muted-foreground">
-                        Composite feed latency{' '}
-                        <span className="text-muted-foreground/60">({data.composite_latency.window})</span>
+                        Tokyo feed latency{' '}
+                        <span className="text-muted-foreground/60">
+                          (blocktime → receive, first-arrival across DZ Tokyo feeds, {data.composite_latency.window})
+                        </span>
                       </div>
                       <div className="flex gap-5">
                         {([
