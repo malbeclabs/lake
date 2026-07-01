@@ -234,19 +234,22 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 		RecentRaces: []HyperliquidRace{},
 	}
 
-	// The headline (DZ win share + total races) is derived from the per-node aggregation
-	// below rather than its own scan — counts partition cleanly by competitor, so summing the
-	// per-node cells gives the same totals while saving a full scan of the (very large) table.
-
-	// Per-competitor: win%, lead p50/p95 (over DZ wins), and total comparable races.
-	compQ := fmt.Sprintf(`
-		SELECT competitor,
+	// Single scan grouped per (competitor, node) WITH ROLLUP: the (competitor, node) rows give the
+	// per-vantage breakdown and the rolled-up (competitor) rows give per-competitor totals, so the
+	// per-competitor stats come from the same scan instead of a second full-table scan. A race key
+	// includes measurement_node_id, so races partition cleanly by node — the ROLLUP counts are
+	// exact and the headline is derivable by summing per-node cells. One query (vs two) also
+	// refreshes atomically: on the memory-constrained proxy ClickHouse the refresh succeeds or
+	// retries as a unit, instead of needing two independent scans to both survive the
+	// OvercommitTracker when other page-cache queries have the server near its memory ceiling.
+	q := fmt.Sprintf(`
+		SELECT competitor, measurement_node_id, any(location_code) AS location_code,
 			uniqCombinedIf(rk, dz_won = 1) AS dz_wins,
 			uniqCombinedIf(rk, dz_won = 0) AS dz_losses,
 			toFloat64(quantileTDigestIf(0.5)(lead_ms, dz_won = 1)) AS lead_p50,
 			toFloat64(quantileTDigestIf(0.95)(lead_ms, dz_won = 1)) AS lead_p95
 		FROM (
-			SELECT
+			SELECT measurement_node_id, location_code,
 				%[1]s AS rk,
 				if(startsWith(feed,'tob_'), loser_feed, feed) AS competitor,
 				if(startsWith(feed,'tob_'), 1, 0) AS dz_won,
@@ -256,8 +259,8 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 			  AND (startsWith(feed,'tob_') != startsWith(loser_feed,'tob_')) %[3]s
 			  AND event_ts >= now() - INTERVAL %[4]s
 		)
-		GROUP BY competitor`, raceKeyTuple, db, symbolFilter, interval)
-	rows, err := a.envDB(ctx).Query(ctx, compQ)
+		GROUP BY competitor, measurement_node_id WITH ROLLUP`, raceKeyTuple, db, symbolFilter, interval)
+	rows, err := a.envDB(ctx).Query(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -267,14 +270,35 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 		wins, losses     uint64
 		leadP50, leadP95 float64
 	}
+	type nodeAgg struct {
+		loc    string
+		byFeed map[string]stat
+	}
+	// byFeed holds per-competitor totals (ROLLUP rows where node == ""); nodeMap holds per-node cells.
 	byFeed := map[string]stat{}
+	nodeMap := map[string]*nodeAgg{}
+	var nodeOrder []string
 	for rows.Next() {
-		var competitor string
+		var competitor, node, loc string
 		var s stat
-		if err := rows.Scan(&competitor, &s.wins, &s.losses, &s.leadP50, &s.leadP95); err != nil {
+		if err := rows.Scan(&competitor, &node, &loc, &s.wins, &s.losses, &s.leadP50, &s.leadP95); err != nil {
 			return nil, err
 		}
-		byFeed[competitor] = s
+		switch {
+		case competitor == "":
+			// Grand-total ROLLUP row; the headline is derived from per-node cells instead.
+			continue
+		case node == "":
+			byFeed[competitor] = s
+		default:
+			na, ok := nodeMap[node]
+			if !ok {
+				na = &nodeAgg{loc: loc, byFeed: map[string]stat{}}
+				nodeMap[node] = na
+				nodeOrder = append(nodeOrder, node)
+			}
+			na.byFeed[competitor] = s
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -299,55 +323,6 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 			LeadP95Ms: s.leadP95,
 			Races:     races,
 		})
-	}
-
-	// Per-node: same comparison, grouped by measurement node + competitor.
-	nodeQ := fmt.Sprintf(`
-		SELECT measurement_node_id, location_code, competitor,
-			uniqCombinedIf(rk, dz_won = 1) AS dz_wins,
-			uniqCombinedIf(rk, dz_won = 0) AS dz_losses,
-			toFloat64(quantileTDigestIf(0.5)(lead_ms, dz_won = 1)) AS lead_p50,
-			toFloat64(quantileTDigestIf(0.95)(lead_ms, dz_won = 1)) AS lead_p95
-		FROM (
-			SELECT measurement_node_id, location_code,
-				%[1]s AS rk,
-				if(startsWith(feed,'tob_'), loser_feed, feed) AS competitor,
-				if(startsWith(feed,'tob_'), 1, 0) AS dz_won,
-				lead_time_p50_ms AS lead_ms
-			FROM %[2]s.hyperliquid_bbo_feed_race_summary
-			WHERE feed != loser_feed AND loser_feed != ''
-			  AND (startsWith(feed,'tob_') != startsWith(loser_feed,'tob_')) %[3]s
-			  AND event_ts >= now() - INTERVAL %[4]s
-		)
-		GROUP BY measurement_node_id, location_code, competitor`, raceKeyTuple, db, symbolFilter, interval)
-	nrows, err := a.envDB(ctx).Query(ctx, nodeQ)
-	if err != nil {
-		return nil, err
-	}
-	defer nrows.Close()
-
-	type nodeAgg struct {
-		loc    string
-		byFeed map[string]stat
-	}
-	nodeMap := map[string]*nodeAgg{}
-	var nodeOrder []string
-	for nrows.Next() {
-		var node, loc, competitor string
-		var s stat
-		if err := nrows.Scan(&node, &loc, &competitor, &s.wins, &s.losses, &s.leadP50, &s.leadP95); err != nil {
-			return nil, err
-		}
-		na, ok := nodeMap[node]
-		if !ok {
-			na = &nodeAgg{loc: loc, byFeed: map[string]stat{}}
-			nodeMap[node] = na
-			nodeOrder = append(nodeOrder, node)
-		}
-		na.byFeed[competitor] = s
-	}
-	if err := nrows.Err(); err != nil {
-		return nil, err
 	}
 
 	var globalWins, globalRaces uint64
