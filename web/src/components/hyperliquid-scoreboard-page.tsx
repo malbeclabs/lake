@@ -109,6 +109,15 @@ function WinRateBar({ dzPct, segments }: { dzPct: number; segments: { label: str
   )
 }
 
+// relAge returns a short "just now" / "12s ago" / "3m ago" / "2h ago" string for a ms timestamp.
+function relAge(tsMs: number, nowMs: number): string {
+  const age = Math.round((nowMs - tsMs) / 1000)
+  if (age < 5) return 'just now'
+  if (age < 60) return `${age}s ago`
+  if (age < 3600) return `${Math.round(age / 60)}m ago`
+  return `${Math.round(age / 3600)}h ago`
+}
+
 export function HyperliquidScoreboardPage() {
   const [timeWindow, setTimeWindow] = useState<(typeof WINDOWS)[number]>('1h')
   const [data, setData] = useState<HyperliquidScoreboardResponse | null>(null)
@@ -347,6 +356,9 @@ export function HyperliquidScoreboardPage() {
                   {section.symbols.map((sym) => {
                     const races = racesBySymbol[sym] ?? []
                     const price = data.prices?.[sym]
+                    const lastTs = races.length
+                      ? Math.max(...races.map((r) => new Date(r.event_ts).getTime()))
+                      : null
                     return (
                       <div key={sym} className="bg-card p-3">
                         <div className="mb-2 flex items-baseline justify-between gap-1">
@@ -355,6 +367,11 @@ export function HyperliquidScoreboardPage() {
                             <span className="text-xs tabular-nums text-muted-foreground">{fmtPrice(price)}</span>
                           )}
                         </div>
+                        {lastTs != null && (
+                          <div className="mb-1.5 text-[11px] tabular-nums text-muted-foreground/50">
+                            updated {relAge(lastTs, now)}
+                          </div>
+                        )}
                         {races.length === 0 ? (
                           <div className="flex flex-col gap-1">
                             <span className="inline-flex w-fit items-center rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
