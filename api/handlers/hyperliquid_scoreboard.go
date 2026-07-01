@@ -16,8 +16,29 @@ import (
 var hyperliquidCompetitors = []struct{ Feed, Label string }{
 	{"hyperliquid_public_bbo", "Public API"},
 	{"hydromancer_bbo", "Hydromancer"},
-	{"hyperpc_shared_bbo", "HypeRPC"},
 	{"quicknode_l2book_bbo", "QuickNode"},
+}
+
+// hyperliquidExcludedFeeds are competitor feeds withheld from every scoreboard measurement
+// (per-competitor, per-node, headline totals, and recent races) because their upstream data is
+// currently unreliable. hyperpc_shared_bbo (HypeRPC) arrives a median ~100s stale during
+// recurring multi-hour backlog episodes — vs ~300ms for the other feeds — which would render
+// DoubleZero "winning" by seconds-to-minutes and is a HypeRPC-side feed fault, not a real result.
+// Remove entries here (and re-add to hyperliquidCompetitors) once the feed is fixed.
+var hyperliquidExcludedFeeds = []string{"hyperpc_shared_bbo"}
+
+// hyperliquidExcludedFeedsClause returns a SQL predicate dropping excluded feeds from either
+// side of a race, or "" if none are excluded.
+func hyperliquidExcludedFeedsClause() string {
+	if len(hyperliquidExcludedFeeds) == 0 {
+		return ""
+	}
+	quoted := make([]string, len(hyperliquidExcludedFeeds))
+	for i, f := range hyperliquidExcludedFeeds {
+		quoted[i] = "'" + f + "'"
+	}
+	in := strings.Join(quoted, ", ")
+	return fmt.Sprintf("AND feed NOT IN (%[1]s) AND loser_feed NOT IN (%[1]s)", in)
 }
 
 // hyperliquidWindows maps window params to ClickHouse interval expressions.
@@ -198,6 +219,9 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 	if symbol != "" {
 		symbolFilter = fmt.Sprintf("AND symbol = '%s'", symbol)
 	}
+	// Drop excluded (unreliable) competitor feeds from the per-competitor and per-node
+	// aggregations. Flows into both compQ and nodeQ via the shared symbolFilter slot.
+	symbolFilter = strings.TrimSpace(symbolFilter + " " + hyperliquidExcludedFeedsClause())
 	db := fmt.Sprintf("`%s`", a.FeedsDB)
 
 	resp := &HyperliquidScoreboardResponse{
@@ -419,7 +443,8 @@ func (a *API) fetchHyperliquidRecentRaces(ctx context.Context, sinceTs time.Time
 		  AND (startsWith(feed,'tob_') != startsWith(loser_feed,'tob_')) %s %s
 		GROUP BY capture_run_id, measurement_node_id, symbol, source_ts_ms, bbo_hash, location_code, feed
 		ORDER BY max_event_ts DESC
-		LIMIT %d BY symbol`, db, hyperliquidRecentRaceSymbolFilter(), timeFilter, perSymbol)
+		LIMIT %d BY symbol`, db,
+		strings.TrimSpace(hyperliquidRecentRaceSymbolFilter()+" "+hyperliquidExcludedFeedsClause()), timeFilter, perSymbol)
 	rows, err := a.envDB(ctx).Query(ctx, q)
 	if err != nil {
 		return nil, err
