@@ -29,10 +29,18 @@ var hyperliquidWindows = map[string]string{
 
 // raceKeyTuple is the summary table's ReplacingMergeTree sorting key. The remote
 // materialized view refreshes on overlapping windows, so each logical race appears as
-// several rows that only FINAL (or a uniqExact over this key) collapses. uniqExact over
-// the key gives exact race counts without paying FINAL's merge cost, which dominated query
-// time against the full production table. Win rates are ratios and lead-time percentiles are
-// duplicate-insensitive, so dropping FINAL keeps them correct.
+// several rows that only FINAL (or a uniq over this key) collapses. Counting distinct keys
+// dedups without paying FINAL's merge cost, which dominated query time against the full
+// production table. Win rates are ratios and lead-time percentiles are duplicate-insensitive,
+// so dropping FINAL keeps them correct.
+//
+// The dedup uses uniqCombined (not uniqExact) and lead percentiles use quantileTDigest (not
+// quantileExact): the exact variants buffer per-group state proportional to the number of
+// races in the window (~7.5M matchup rows/hour at current volume, ~750 MiB of aggregation
+// state), which tripped the ClickHouse OvercommitTracker and got the page-cache refresh killed
+// under concurrent load. The approximate variants use bounded (~KB/group) memory; at scoreboard
+// scale their sub-1% error is invisible, and they are exact at the small cardinalities the
+// unit tests assert.
 const raceKeyTuple = "(measurement_node_id, symbol, source_ts_ms, bbo_hash, feed, loser_feed)"
 
 // hyperliquidLiquidSymbols is the curated universe of the most-liquid Hyperliquid markets
@@ -209,10 +217,10 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 	// Per-competitor: win%, lead p50/p95 (over DZ wins), and total comparable races.
 	compQ := fmt.Sprintf(`
 		SELECT competitor,
-			uniqExactIf(rk, dz_won = 1) AS dz_wins,
-			uniqExactIf(rk, dz_won = 0) AS dz_losses,
-			quantileExactIf(0.5)(lead_ms, dz_won = 1) AS lead_p50,
-			quantileExactIf(0.95)(lead_ms, dz_won = 1) AS lead_p95
+			uniqCombinedIf(rk, dz_won = 1) AS dz_wins,
+			uniqCombinedIf(rk, dz_won = 0) AS dz_losses,
+			toFloat64(quantileTDigestIf(0.5)(lead_ms, dz_won = 1)) AS lead_p50,
+			toFloat64(quantileTDigestIf(0.95)(lead_ms, dz_won = 1)) AS lead_p95
 		FROM (
 			SELECT
 				%[1]s AS rk,
@@ -272,10 +280,10 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 	// Per-node: same comparison, grouped by measurement node + competitor.
 	nodeQ := fmt.Sprintf(`
 		SELECT measurement_node_id, location_code, competitor,
-			uniqExactIf(rk, dz_won = 1) AS dz_wins,
-			uniqExactIf(rk, dz_won = 0) AS dz_losses,
-			quantileExactIf(0.5)(lead_ms, dz_won = 1) AS lead_p50,
-			quantileExactIf(0.95)(lead_ms, dz_won = 1) AS lead_p95
+			uniqCombinedIf(rk, dz_won = 1) AS dz_wins,
+			uniqCombinedIf(rk, dz_won = 0) AS dz_losses,
+			toFloat64(quantileTDigestIf(0.5)(lead_ms, dz_won = 1)) AS lead_p50,
+			toFloat64(quantileTDigestIf(0.95)(lead_ms, dz_won = 1)) AS lead_p95
 		FROM (
 			SELECT measurement_node_id, location_code,
 				%[1]s AS rk,
@@ -505,9 +513,9 @@ func (a *API) FetchHyperliquidCompositeLatency(ctx context.Context) (*Hyperliqui
 			GROUP BY location_code, symbol, source_ts_ms HAVING count() >= 2
 		)
 		SELECT
-			quantileExact(0.5)((toInt64(r) - toInt64(source_ts_ms) * 1000000) / 1e6),
-			quantileExact(0.9)((toInt64(r) - toInt64(source_ts_ms) * 1000000) / 1e6),
-			quantileExact(0.99)((toInt64(r) - toInt64(source_ts_ms) * 1000000) / 1e6)
+			toFloat64(quantileTDigest(0.5)((toInt64(r) - toInt64(source_ts_ms) * 1000000) / 1e6)),
+			toFloat64(quantileTDigest(0.9)((toInt64(r) - toInt64(source_ts_ms) * 1000000) / 1e6)),
+			toFloat64(quantileTDigest(0.99)((toInt64(r) - toInt64(source_ts_ms) * 1000000) / 1e6))
 		FROM c`, db, hyperliquidLiquidSymbolFilter())
 	var p50, p90, p99 float64
 	if err := a.envDB(ctx).QueryRow(ctx, q).Scan(&p50, &p90, &p99); err != nil {

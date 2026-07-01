@@ -171,6 +171,6 @@ func TestHyperliquidScoreboard_HeadlineAndCompetitors(t *testing.T) {
 	assert.Equal(t, "Hydromancer", hydro.Label)
 	assert.InDelta(t, 75.0, hydro.DZWinPct, 0.1)
 	assert.EqualValues(t, 4, hydro.Races)
-	// Lead p50 over the 3 DZ wins (1.0, 2.0, 3.0) = 2.0 (quantileExact(0.5)).
+	// Lead p50 over the 3 DZ wins (1.0, 2.0, 3.0) = 2.0 (quantileTDigest(0.5), exact at this size).
 	assert.InDelta(t, 2.0, hydro.LeadP50Ms, 0.001)
 }

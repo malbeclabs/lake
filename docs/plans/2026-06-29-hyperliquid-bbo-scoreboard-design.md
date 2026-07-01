@@ -71,9 +71,11 @@ the summary, exactly as it does for `shredder.slot_feed_race_summary_v2`.
 
 **Key semantics (verified against live data):**
 - **One row == one race.** `events_won == total_events == 1` and
-  `lead_time_p50_ms == lead_time_p95_ms` for every row. Therefore aggregating
-  `quantileExact(q)(lead_time_p50_ms)` across rows yields an **exact** lead-time
-  distribution, and counting rows counts races.
+  `lead_time_p50_ms == lead_time_p95_ms` for every row. So the set of `lead_time_p50_ms`
+  values across rows *is* the true per-race lead-time distribution (one sample per race), and
+  counting distinct race keys counts races. Query time uses the bounded-memory estimators
+  `quantileTDigest` / `uniqCombined` over that distribution rather than the exact variants (see
+  Design Decisions) — a sub-1% approximation, not a semantic change.
 - **Aggregate rows** (`loser_feed = ''`): one per `(race key, winner feed)` —
   used for "who won" counts.
 - **Pairwise rows** (`loser_feed != ''`): one per `(race key, winner, loser)` —
@@ -151,7 +153,7 @@ Notes:
   over pairwise rows (`loser_feed != '' AND feed != loser_feed`).
 - Per-competitor `dz_win_pct` and `lead_p50/p95_ms` come from pairwise rows where
   exactly one side is `tob_*` and the other is that competitor; lead percentiles
-  are `quantileExact` over `lead_time_p50_ms` for races DoubleZero won.
+  are `quantileTDigest` over `lead_time_p50_ms` for races DoubleZero won.
 - `nodes[]` is the same computation grouped by `measurement_node_id` /
   `location_code` (the per-vantage breakdown).
 - `recent_races[]` is the newest aggregate rows (`loser_feed=''`) ordered by
@@ -263,10 +265,22 @@ Changes made while validating the page against production data:
   deadline. Only the `1h` view is cached; `24h`/`7d` remain selectable but run as slower live
   queries. The proper fix (a time-ordered projection/materialized view on the remote summary,
   analogous to the shreds slot-range index) is deferred and tracked for the feeds owner.
-- **Queries dedup with `uniqExact` over the sorting key instead of `FINAL`.** `FINAL` dominated
-  query time; win rates are ratios and lead percentiles are duplicate-insensitive, so dropping
-  it keeps results correct while cutting latency. The headline is derived from the per-node
-  aggregation (one fewer scan), which also makes headline and per-competitor totals consistent.
+- **Queries dedup with a distinct-key count over the sorting key instead of `FINAL`.** `FINAL`
+  dominated query time; win rates are ratios and lead percentiles are duplicate-insensitive, so
+  dropping it keeps results correct while cutting latency. The headline is derived from the
+  per-node aggregation (one fewer scan), which also makes headline and per-competitor totals
+  consistent.
+- **Aggregations use approximate estimators (`uniqCombined`, `quantileTDigest`), not the exact
+  variants.** The exact functions (`uniqExact`, `quantileExact`) buffer per-group state
+  proportional to the window's race count (~7.5M matchup rows/hour → ~750 MiB of aggregation
+  state at current volume). On the memory-constrained preview/dev ClickHouse — where the `feeds`
+  tables are `remoteSecure()` proxies, so the GROUP BY runs on the small local instance — that
+  tripped the OvercommitTracker and got the page-cache refresh killed (`code 241`) under the
+  concurrent refresh load. The approximate estimators use bounded (~KB/group) memory; at
+  scoreboard scale their sub-1% error is invisible (win % is a ratio, race totals and lead-time
+  percentiles are display-only), and they are exact at the small cardinalities the unit tests
+  assert. This does **not** reduce rows *read* — the `event_ts` filter still does not prune
+  through the proxy (no time index), the separately-tracked deferred item below.
 - **Recent-races window widened to 5 minutes** (the remote MV lags ~50-90s, so a 2-minute
   window intermittently came up empty). The `LIMIT` still returns only the newest races.
 - **Local dev uses a `remoteSecure()` proxy to production** (`scripts/setup-feeds-remote-local.sh`,
