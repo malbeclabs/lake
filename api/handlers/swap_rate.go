@@ -61,7 +61,7 @@ func (a *API) GetSwapRate(w http.ResponseWriter, r *http.Request) {
 	out, err := fetchSwapRateWithRetry(r.Context())
 	if err != nil {
 		if entry != nil {
-			logError("swap rate: oracle fetch failed, serving stale cache", "error", err)
+			logWarn("swap rate: oracle fetch failed, serving stale cache", "error", err)
 			writeSwapRateJSON(w, entry.resp, true)
 			return
 		}
