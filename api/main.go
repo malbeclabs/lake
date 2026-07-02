@@ -362,6 +362,7 @@ func main() {
 		ShredderDB:    config.GetShredderDB(),
 		PublisherDB:   config.GetPublisherDB(),
 		DZDPDB:        config.GetDZDPDB(),
+		FeedsDB:       config.GetFeedsDB(),
 		PgPool:        config.PgPool,
 		Neo4jClient:   config.Neo4jClient,
 		Neo4jDatabase: config.Neo4jDatabase,
@@ -382,6 +383,9 @@ func main() {
 				slog.Error("page cache worker failed", "error", err)
 			}
 		}()
+		// The composite feed latency and the 24h/7d scoreboards are too heavy for the 60s
+		// page-cache loop; refresh them on a slow cadence here (writes to the shared page cache).
+		api.StartHyperliquidBackgroundRefresher(workerCtx)
 	}
 
 	// Start metrics server
@@ -602,6 +606,8 @@ func main() {
 		r.Get("/api/dz/access-passes/{pk}/connections", api.GetAccessPassConnections)
 		r.Get("/api/dz/publisher-check", api.GetPublisherCheck)
 		r.Get("/api/dz/edge/scoreboard", api.GetEdgeScoreboard)
+		// Internal only (unannounced venue): allowed-domain Google users only.
+		r.With(handlers.RequireInternalDomain).Get("/api/dz/hyperliquid/scoreboard", api.GetHyperliquidScoreboard)
 		r.Get("/api/dz/tenants", api.GetTenants)
 		r.Get("/api/dz/tenants/{pk}", api.GetTenant)
 		r.Get("/api/dz/shreds/overview", api.GetShredsOverview)

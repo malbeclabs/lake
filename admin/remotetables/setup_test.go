@@ -56,3 +56,16 @@ func TestDiscoverProxyableTablesSkipsMaterializedViewInnerTables(t *testing.T) {
 		require.False(t, strings.HasPrefix(n, ".inner"), "internal MV inner table must be excluded: %s", n)
 	}
 }
+
+func TestExternalRemoteTablesIncludesFeeds(t *testing.T) {
+	found := false
+	for _, e := range externalRemoteTables {
+		if e.RemoteDB == "feeds" && e.RemoteTable == "hyperliquid_bbo_feed_race_summary" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("externalRemoteTables missing feeds.hyperliquid_bbo_feed_race_summary")
+	}
+}

@@ -36,6 +36,8 @@ var externalRemoteTables = []struct {
 	{"dzdp", "offsets"},
 	{"dzdp", "location_decisions"},
 	{"dzdp", "location_state"},
+	{"feeds", "hyperliquid_bbo_feed_race_summary"},
+	{"feeds", "hyperliquid_bbo_observations"},
 }
 
 // externalRemoteDatabases lists remote databases to mirror in full, discovering
