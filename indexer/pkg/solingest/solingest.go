@@ -94,7 +94,7 @@ func Start(ctx context.Context, cfg Config) error {
 				if ctx.Err() != nil {
 					return
 				}
-				log.Error("solingest: workflow interrupted, reattaching", "id", wfID, "error", err)
+				log.Warn("solingest: workflow interrupted, reattaching", "id", wfID, "error", err)
 				current = tc.GetWorkflow(ctx, wfID, "")
 			} else {
 				return
