@@ -13,6 +13,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/dz/mroute"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/msdp"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/serviceability/permissionevents"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/escrowevents"
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
@@ -27,22 +28,23 @@ type Indexer struct {
 	log *slog.Logger
 	cfg Config
 
-	svc           *dzsvc.View
-	geoloc        *dzgeoloc.View
-	shreds        *dzshreds.View
-	escrowEvents  *escrowevents.View
-	graphStore    *dzgraph.Store
-	telemLatency  *dztelemlatency.View
-	telemUsage    *dztelemusage.View
-	sol           *sol.View
-	geoip         *mcpgeoip.View
-	isisSource    isis.Source
-	isisStore     *isis.Store
-	mrouteSource  mroute.Source
-	mrouteStore   *mroute.Store
-	msdpSource    msdp.Source
-	msdpStore     *msdp.Store
-	validatorsApp *validatorsapp.View
+	svc              *dzsvc.View
+	geoloc           *dzgeoloc.View
+	shreds           *dzshreds.View
+	escrowEvents     *escrowevents.View
+	permissionEvents *permissionevents.View
+	graphStore       *dzgraph.Store
+	telemLatency     *dztelemlatency.View
+	telemUsage       *dztelemusage.View
+	sol              *sol.View
+	geoip            *mcpgeoip.View
+	isisSource       isis.Source
+	isisStore        *isis.Store
+	mrouteSource     mroute.Source
+	mrouteStore      *mroute.Store
+	msdpSource       msdp.Source
+	msdpStore        *msdp.Store
+	validatorsApp    *validatorsapp.View
 }
 
 func New(ctx context.Context, cfg Config) (*Indexer, error) {
@@ -137,6 +139,23 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create escrow events view: %w", err)
+		}
+	}
+
+	// Initialize permission events audit view (optional, requires the serviceability
+	// program id + a raw Solana RPC on the DZ ledger).
+	var permissionEventsView *permissionevents.View
+	if cfg.PermissionEventsRPC != nil && !cfg.ServiceabilityProgramID.IsZero() {
+		permissionEventsView, err = permissionevents.NewView(permissionevents.ViewConfig{
+			Logger:          cfg.Logger,
+			Clock:           cfg.Clock,
+			RPC:             cfg.PermissionEventsRPC,
+			ProgramID:       cfg.ServiceabilityProgramID,
+			RefreshInterval: cfg.RefreshInterval,
+			ClickHouse:      cfg.ClickHouse,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create permission events view: %w", err)
 		}
 	}
 
@@ -324,22 +343,23 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 		log: cfg.Logger,
 		cfg: cfg,
 
-		svc:           svcView,
-		geoloc:        geolocView,
-		shreds:        shredsView,
-		escrowEvents:  escrowEventsView,
-		graphStore:    graphStore,
-		telemLatency:  telemView,
-		telemUsage:    telemetryUsageView,
-		sol:           solanaView,
-		geoip:         geoipView,
-		isisSource:    isisSource,
-		isisStore:     isisStore,
-		mrouteSource:  mrouteSource,
-		mrouteStore:   mrouteStore,
-		msdpSource:    msdpSource,
-		msdpStore:     msdpStore,
-		validatorsApp: validatorsAppView,
+		svc:              svcView,
+		geoloc:           geolocView,
+		shreds:           shredsView,
+		escrowEvents:     escrowEventsView,
+		permissionEvents: permissionEventsView,
+		graphStore:       graphStore,
+		telemLatency:     telemView,
+		telemUsage:       telemetryUsageView,
+		sol:              solanaView,
+		geoip:            geoipView,
+		isisSource:       isisSource,
+		isisStore:        isisStore,
+		mrouteSource:     mrouteSource,
+		mrouteStore:      mrouteStore,
+		msdpSource:       msdpSource,
+		msdpStore:        msdpStore,
+		validatorsApp:    validatorsAppView,
 	}
 
 	return i, nil
@@ -459,6 +479,11 @@ func (i *Indexer) Shreds() *dzshreds.View {
 // EscrowEvents returns the escrow events view, or nil if not configured.
 func (i *Indexer) EscrowEvents() *escrowevents.View {
 	return i.escrowEvents
+}
+
+// PermissionEvents returns the permission events audit view, or nil if not configured.
+func (i *Indexer) PermissionEvents() *permissionevents.View {
+	return i.permissionEvents
 }
 
 // ValidatorsApp returns the validators.app view, or nil if not configured.

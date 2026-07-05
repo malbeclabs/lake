@@ -608,6 +608,8 @@ func main() {
 		r.Get("/api/dz/edge/scoreboard", api.GetEdgeScoreboard)
 		// Internal only (unannounced venue): allowed-domain Google users only.
 		r.With(handlers.RequireInternalDomain).Get("/api/dz/hyperliquid/scoreboard", api.GetHyperliquidScoreboard)
+		// Serviceability permission audit trail (internal only: allowed-domain Google users).
+		r.With(handlers.RequireInternalDomain).Get("/api/dz/permission-audit", api.GetPermissionAudit)
 		r.Get("/api/dz/tenants", api.GetTenants)
 		r.Get("/api/dz/tenants/{pk}", api.GetTenant)
 		r.Get("/api/dz/shreds/overview", api.GetShredsOverview)

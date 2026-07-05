@@ -6924,3 +6924,29 @@ export async function fetchHyperliquidScoreboard(
   }
   return res.json()
 }
+
+// Serviceability permission audit trail (internal only).
+export interface PermissionAuditEvent {
+  eventTs: string
+  txSignature: string
+  slot: number
+  signer: string
+  permissionPk: string
+  targetPubkey: string
+  eventType: string
+  permissionsAdded: string
+  permissionsRemoved: string
+  success: boolean
+}
+
+export interface PermissionAuditResponse {
+  events: PermissionAuditEvent[]
+}
+
+export async function fetchPermissionAudit(limit = 200): Promise<PermissionAuditResponse> {
+  const res = await apiFetch(`/api/dz/permission-audit?limit=${limit}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch permission audit')
+  }
+  return res.json()
+}

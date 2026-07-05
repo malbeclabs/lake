@@ -26,6 +26,7 @@ const (
 func RegisterWorkflows(w worker.Worker) {
 	w.RegisterWorkflow(DZIngestWorkflow)
 	w.RegisterWorkflow(BackfillEscrowEventsWorkflow)
+	w.RegisterWorkflow(BackfillPermissionEventsWorkflow)
 }
 
 // DZIngestWorkflow is a long-running workflow that refreshes DZ mainnet data
@@ -59,6 +60,7 @@ func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 		geolocationFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshGeolocation)
 		shredsFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshShreds)
 		escrowEventsFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshShredEscrowEvents)
+		permissionEventsFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshPermissionEvents)
 		isisSyncFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).SyncISIS)
 		mrouteSyncFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).SyncIPMroute)
 		msdpSyncFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).SyncMSDP)
@@ -93,6 +95,12 @@ func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 				return ctx.Err()
 			}
 			logger.Error("escrow events refresh failed", "error", err)
+		}
+		if err := permissionEventsFuture.Get(ctx, nil); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			logger.Error("permission events refresh failed", "error", err)
 		}
 		if err := isisSyncFuture.Get(ctx, nil); err != nil {
 			if ctx.Err() != nil {

@@ -13,6 +13,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/dz/mroute"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/msdp"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/serviceability/permissionevents"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/escrowevents"
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
@@ -31,22 +32,23 @@ const errorAfterFailures = 3
 
 // Activities holds dependencies for DZ ingest activities.
 type Activities struct {
-	Log            *slog.Logger
-	IngestionLog   *ingestionlog.Writer
-	Network        string
-	Serviceability *dzsvc.View
-	Geolocation    *dzgeoloc.View     // nil when geolocation is not configured
-	Shreds         *dzshreds.View     // nil when shreds is not configured
-	EscrowEvents   *escrowevents.View // nil when shreds is not configured
-	TelemLatency   *dztelemlatency.View
-	TelemUsage     *dztelemusage.View // nil when InfluxDB is not configured
-	GraphStore     *dzgraph.Store     // nil when Neo4j is not configured
-	ISISSource     isis.Source        // nil when ISIS is not enabled
-	ISISStore      *isis.Store        // nil when ISIS is not enabled
-	MrouteSource   mroute.Source      // nil when mroute ingest is not enabled
-	MrouteStore    *mroute.Store      // nil when mroute ingest is not enabled
-	MSDPSource     msdp.Source        // nil when MSDP ingest is not enabled
-	MSDPStore      *msdp.Store        // nil when MSDP ingest is not enabled
+	Log              *slog.Logger
+	IngestionLog     *ingestionlog.Writer
+	Network          string
+	Serviceability   *dzsvc.View
+	Geolocation      *dzgeoloc.View         // nil when geolocation is not configured
+	Shreds           *dzshreds.View         // nil when shreds is not configured
+	EscrowEvents     *escrowevents.View     // nil when shreds is not configured
+	PermissionEvents *permissionevents.View // nil when permission events indexing is not configured
+	TelemLatency     *dztelemlatency.View
+	TelemUsage       *dztelemusage.View // nil when InfluxDB is not configured
+	GraphStore       *dzgraph.Store     // nil when Neo4j is not configured
+	ISISSource       isis.Source        // nil when ISIS is not enabled
+	ISISStore        *isis.Store        // nil when ISIS is not enabled
+	MrouteSource     mroute.Source      // nil when mroute ingest is not enabled
+	MrouteStore      *mroute.Store      // nil when mroute ingest is not enabled
+	MSDPSource       msdp.Source        // nil when MSDP ingest is not enabled
+	MSDPStore        *msdp.Store        // nil when MSDP ingest is not enabled
 
 	// failures tracks consecutive-failure counts per activity name.
 	// map[string]*atomic.Int32; populated lazily.
@@ -212,6 +214,23 @@ func (a *Activities) RefreshShredEscrowEvents(ctx context.Context) error {
 		result, err := a.EscrowEvents.Refresh(ctx)
 		if err != nil {
 			return result, fmt.Errorf("escrow events refresh: %w", err)
+		}
+		return result, nil
+	})
+}
+
+// RefreshPermissionEvents scans serviceability transaction history for Permission-
+// management instructions and writes the decoded audit rows to ClickHouse. No-op if
+// permission events indexing is not configured.
+func (a *Activities) RefreshPermissionEvents(ctx context.Context) error {
+	if a.PermissionEvents == nil {
+		a.IngestionLog.WrapSkipped(ctx, "dzingest", "RefreshPermissionEvents", a.Network)
+		return nil
+	}
+	return a.refresh(ctx, "RefreshPermissionEvents", func() (ingestionlog.RefreshResult, error) {
+		result, err := a.PermissionEvents.Refresh(ctx)
+		if err != nil {
+			return result, fmt.Errorf("permission events refresh: %w", err)
 		}
 		return result, nil
 	})

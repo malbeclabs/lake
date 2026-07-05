@@ -12,6 +12,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	dzgeoloc "github.com/malbeclabs/lake/indexer/pkg/dz/geolocation"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/serviceability/permissionevents"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/escrowevents"
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
@@ -40,6 +41,12 @@ type Config struct {
 
 	// Serviceability RPC configuration.
 	ServiceabilityRPC dzsvc.ServiceabilityRPC
+
+	// Serviceability program id and a raw Solana RPC for the permission-events audit
+	// indexer (optional). PermissionEventsRPC watches the serviceability program's
+	// transaction history for Permission-management instructions.
+	ServiceabilityProgramID solana.PublicKey
+	PermissionEventsRPC     permissionevents.SolanaRPC
 
 	// Geolocation RPC configuration (optional).
 	GeolocationRPC dzgeoloc.GeolocationRPC
