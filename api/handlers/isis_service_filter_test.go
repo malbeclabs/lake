@@ -108,3 +108,18 @@ func TestGetISISPaths_InvalidServiceRejected(t *testing.T) {
 	assert.Contains(t, resp.Error, "service must be")
 	assert.Empty(t, resp.Paths)
 }
+
+// GetMetroDevicePaths validates service the same way GetISISPaths does; a bad
+// value is rejected before any topology work.
+func TestGetMetroDevicePaths_InvalidServiceRejected(t *testing.T) {
+	api := apitesting.NewTestAPI(t, testChDB)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/topology/metro-device-paths?from=metro-a&to=metro-b&service=bogus", nil)
+	rr := httptest.NewRecorder()
+	api.GetMetroDevicePaths(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp handlers.MetroDevicePathsResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+	assert.Contains(t, resp.Error, "service must be")
+}

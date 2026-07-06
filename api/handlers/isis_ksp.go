@@ -39,6 +39,14 @@ type kspPath struct {
 	TotalMetric uint32
 }
 
+// validPathService reports whether the service query param is one the topology
+// filter understands. Empty means all-links (multicast / algo-0) behavior.
+// Shared by every handler that accepts a service param so validation stays
+// consistent across endpoints.
+func validPathService(service string) bool {
+	return service == "" || service == "unicast" || service == "multicast"
+}
+
 // loadTopologyGraph loads the device/link topology from ClickHouse into memory.
 // Edge weights use isis_delay_override_ns (if set) or committed_rtt_ns, converted
 // to microseconds, as the metric.

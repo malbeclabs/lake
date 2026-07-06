@@ -927,7 +927,7 @@ func (a *API) GetISISPaths(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if service != "" && service != "unicast" && service != "multicast" {
+	if !validPathService(service) {
 		writeJSON(w, MultiPathResponse{Error: "service must be 'unicast' or 'multicast'"})
 		return
 	}
@@ -2958,6 +2958,11 @@ func (a *API) GetMetroDevicePaths(w http.ResponseWriter, r *http.Request) {
 
 	if fromMetroPK == toMetroPK {
 		writeJSON(w, MetroDevicePathsResponse{Error: "from and to must be different metros"})
+		return
+	}
+
+	if !validPathService(service) {
+		writeJSON(w, MetroDevicePathsResponse{Error: "service must be 'unicast' or 'multicast'"})
 		return
 	}
 

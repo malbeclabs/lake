@@ -2,8 +2,8 @@ import type { PathService } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 const DESCRIPTIONS: Record<PathService, string> = {
-  unicast: 'Flex-algo 128 — topology-tagged links only',
-  multicast: 'Algo 0 — all links',
+  unicast: 'Topology-tagged, non-drained links only',
+  multicast: 'All links',
 }
 
 interface ServiceToggleProps {
