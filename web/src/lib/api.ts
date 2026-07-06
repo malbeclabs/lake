@@ -1859,6 +1859,10 @@ export interface SinglePath {
   totalSamples?: number       // min samples across hops
 }
 
+// PathService selects which IS-IS topology a path is resolved through:
+// 'unicast' constrains to flex-algo 128 (topology-tagged links); 'multicast' uses algo 0 (all links).
+export type PathService = 'unicast' | 'multicast'
+
 export interface MultiPathResponse {
   paths: SinglePath[]
   from: string
@@ -1866,8 +1870,12 @@ export interface MultiPathResponse {
   error?: string
 }
 
-export async function fetchISISPaths(fromPK: string, toPK: string, k: number = 5): Promise<MultiPathResponse> {
-  const res = await apiFetch(`/api/topology/paths?from=${encodeURIComponent(fromPK)}&to=${encodeURIComponent(toPK)}&k=${k}`)
+export async function fetchISISPaths(fromPK: string, toPK: string, k: number = 5, service?: PathService): Promise<MultiPathResponse> {
+  let url = `/api/topology/paths?from=${encodeURIComponent(fromPK)}&to=${encodeURIComponent(toPK)}&k=${k}`
+  if (service) {
+    url += `&service=${encodeURIComponent(service)}`
+  }
+  const res = await apiFetch(url)
   if (!res.ok) {
     throw new Error('Failed to fetch paths')
   }
@@ -1908,10 +1916,13 @@ export interface MetroDevicePathsResponse {
 export async function fetchMetroDevicePaths(
   fromMetroPK: string,
   toMetroPK: string,
+  service?: PathService,
 ): Promise<MetroDevicePathsResponse> {
-  const res = await apiFetch(
-    `/api/topology/metro-device-paths?from=${encodeURIComponent(fromMetroPK)}&to=${encodeURIComponent(toMetroPK)}`
-  )
+  let url = `/api/topology/metro-device-paths?from=${encodeURIComponent(fromMetroPK)}&to=${encodeURIComponent(toMetroPK)}`
+  if (service) {
+    url += `&service=${encodeURIComponent(service)}`
+  }
+  const res = await apiFetch(url)
   if (!res.ok) {
     throw new Error('Failed to fetch metro device paths')
   }

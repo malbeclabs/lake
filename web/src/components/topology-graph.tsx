@@ -142,6 +142,7 @@ export function TopologyGraph({
   const [selectedPathIndex, setSelectedPathIndex] = useState<number>(0)
   const [pathLoading, setPathLoading] = useState(false)
   const [pathK, setPathK] = useState(10)
+  const [pathService, setPathService] = useState<'unicast' | 'multicast'>('unicast')
 
   // Reverse path state
   const [showReverse, setShowReverse] = useState(false)
@@ -742,7 +743,7 @@ export function TopologyGraph({
 
     setPathLoading(true)
     setSelectedPathIndex(0) // Reset to first path
-    fetchISISPaths(pathSource, pathTarget, pathK)
+    fetchISISPaths(pathSource, pathTarget, pathK, pathService)
       .then(result => {
         setPathsResult(result)
         // Turn off device/link type overlays when path is found to make path visualization clearer
@@ -758,7 +759,7 @@ export function TopologyGraph({
         setPathLoading(false)
       })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, pathSource, pathTarget, pathK])
+  }, [mode, pathSource, pathTarget, pathK, pathService])
 
   // Pre-fetch reverse paths so toggling direction is instant
   useEffect(() => {
@@ -769,7 +770,7 @@ export function TopologyGraph({
 
     setReversePathLoading(true)
     setSelectedReversePathIndex(0)
-    fetchISISPaths(pathTarget, pathSource, pathK)
+    fetchISISPaths(pathTarget, pathSource, pathK, pathService)
       .then(result => {
         setReversePathsResult(result)
       })
@@ -779,7 +780,7 @@ export function TopologyGraph({
       .finally(() => {
         setReversePathLoading(false)
       })
-  }, [mode, pathSource, pathTarget, pathK])
+  }, [mode, pathSource, pathTarget, pathK, pathService])
 
   // Fetch metro paths when source and target metros are set
   useEffect(() => {
@@ -790,7 +791,7 @@ export function TopologyGraph({
     setMetroPathLoading(true)
     setMetroPathViewMode('aggregate')
     setMetroPathSelectedPairs([])
-    fetchMetroDevicePaths(metroPathSource, metroPathTarget)
+    fetchMetroDevicePaths(metroPathSource, metroPathTarget, pathService)
       .then(result => {
         setMetroPathsResult(result)
         // Turn off device/link type overlays when paths are found
@@ -821,7 +822,7 @@ export function TopologyGraph({
         setMetroPathLoading(false)
       })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, metroPathSource, metroPathTarget])
+  }, [mode, metroPathSource, metroPathTarget, pathService])
 
   // Highlight paths on graph - show all paths with different colors, selected path is prominent
   // Uses direct .style() calls to override any other overlay styles (bandwidth, link type, etc.)
@@ -1542,6 +1543,10 @@ export function TopologyGraph({
       }
       if (pathTargetParam) {
         setPathTarget(pathTargetParam)
+      }
+      const pathServiceParam = searchParams.get('path_service')
+      if (pathServiceParam === 'unicast' || pathServiceParam === 'multicast') {
+        setPathService(pathServiceParam)
       }
       if (mode !== 'path') {
         setMode('path')
@@ -3594,6 +3599,8 @@ export function TopologyGraph({
               }}
               pathK={pathK}
               onPathKChange={setPathK}
+              pathService={pathService}
+              onPathServiceChange={setPathService}
             />
           )}
           {mode === 'metro-path' && (
@@ -3617,6 +3624,8 @@ export function TopologyGraph({
                 setMetroPathSelectedPairs([])
                 setMetroPathViewMode('aggregate')
               }}
+              pathService={pathService}
+              onPathServiceChange={setPathService}
             />
           )}
           {mode === 'whatif-removal' && (

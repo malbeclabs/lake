@@ -1,7 +1,8 @@
 import { Building2, X, ArrowLeft } from 'lucide-react'
-import type { MetroDevicePathsResponse } from '@/lib/api'
+import type { MetroDevicePathsResponse, PathService } from '@/lib/api'
 import { useTheme } from '@/hooks/use-theme'
 import { MetroSelector, type MetroOption } from '../MetroSelector'
+import { ServiceToggle } from '../ServiceToggle'
 
 // Path colors for comparison
 const PATH_COLORS = [
@@ -26,6 +27,8 @@ interface MetroPathModePanelProps {
   onTogglePair: (index: number) => void
   onClearSelection: () => void
   onClear: () => void
+  pathService?: PathService
+  onPathServiceChange?: (service: PathService) => void
 }
 
 // Latency color scale (green to red)
@@ -62,6 +65,8 @@ export function MetroPathModePanel({
   onTogglePair,
   onClearSelection,
   onClear,
+  pathService = 'unicast',
+  onPathServiceChange,
 }: MetroPathModePanelProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
@@ -109,6 +114,11 @@ export function MetroPathModePanel({
           disabled={!sourceMetro}
         />
       </div>
+
+      {/* Service type toggle */}
+      {onPathServiceChange && (
+        <ServiceToggle value={pathService} onChange={onPathServiceChange} className="mb-3" />
+      )}
 
       {!sourceMetro && (
         <div className="text-muted-foreground text-[10px]">Select a source and target metro to find paths</div>

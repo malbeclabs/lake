@@ -441,6 +441,9 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const [pathLoading, setPathLoading] = useState(false)
   const [selectedPathIndex, setSelectedPathIndex] = useState(0)
   const [pathK, setPathK] = useState(10)
+  const [pathService, setPathService] = useState<'unicast' | 'multicast'>(
+    (searchParams.get('path_service') as 'unicast' | 'multicast') || 'unicast'
+  )
 
   // Reverse path state
   const [showReverse, setShowReverse] = useState(false)
@@ -981,7 +984,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
 
     setPathLoading(true)
     setSelectedPathIndex(0)
-    fetchISISPaths(pathSource, pathTarget, pathK)
+    fetchISISPaths(pathSource, pathTarget, pathK, pathService)
       .then(result => {
         setPathsResult(result)
         // Turn off device/link type overlays when path is found to make path visualization clearer
@@ -997,7 +1000,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         setPathLoading(false)
       })
   // eslint-disable-next-line react-hooks/exhaustive-deps -- overlays/toggleOverlay are intentionally excluded to avoid re-fetching when overlays change
-  }, [pathModeEnabled, pathSource, pathTarget, pathK])
+  }, [pathModeEnabled, pathSource, pathTarget, pathK, pathService])
 
   // Pre-fetch reverse paths so toggling direction is instant
   useEffect(() => {
@@ -1008,7 +1011,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
 
     setReversePathLoading(true)
     setSelectedReversePathIndex(0)
-    fetchISISPaths(pathTarget, pathSource, pathK)
+    fetchISISPaths(pathTarget, pathSource, pathK, pathService)
       .then(result => {
         setReversePathsResult(result)
       })
@@ -1018,7 +1021,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       .finally(() => {
         setReversePathLoading(false)
       })
-  }, [pathModeEnabled, pathSource, pathTarget, pathK])
+  }, [pathModeEnabled, pathSource, pathTarget, pathK, pathService])
 
   // Fetch metro paths when source and target metros are set
   const metroPathModeEnabled = mode === 'metro-path'
@@ -1030,7 +1033,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     setMetroPathLoading(true)
     setMetroPathViewMode('aggregate')
     setMetroPathSelectedPairs([])
-    fetchMetroDevicePaths(metroPathSource, metroPathTarget)
+    fetchMetroDevicePaths(metroPathSource, metroPathTarget, pathService)
       .then(result => {
         setMetroPathsResult(result)
         // Turn off device/link type overlays when paths are found
@@ -1061,7 +1064,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         setMetroPathLoading(false)
       })
   // eslint-disable-next-line react-hooks/exhaustive-deps -- overlays/toggleOverlay are intentionally excluded
-  }, [metroPathModeEnabled, metroPathSource, metroPathTarget])
+  }, [metroPathModeEnabled, metroPathSource, metroPathTarget, pathService])
 
   // Clear path when exiting path mode
   useEffect(() => {
@@ -1143,6 +1146,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     // Path mode params
     setParam('path_source', pathModeEnabled ? pathSource : null)
     setParam('path_target', pathModeEnabled ? pathTarget : null)
+    setParam('path_service', (pathModeEnabled || metroPathModeEnabled) && pathService !== 'unicast' ? pathService : null)
 
     // What-if removal params
     setParam('removal_link', whatifRemovalMode ? removalLink?.linkPK ?? null : null)
@@ -3732,6 +3736,8 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
               }}
               pathK={pathK}
               onPathKChange={setPathK}
+              pathService={pathService}
+              onPathServiceChange={setPathService}
             />
           )}
           {mode === 'metro-path' && (
@@ -3755,6 +3761,8 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
                 setMetroPathSelectedPairs([])
                 setMetroPathViewMode('aggregate')
               }}
+              pathService={pathService}
+              onPathServiceChange={setPathService}
             />
           )}
           {mode === 'whatif-removal' && (

@@ -15,7 +15,8 @@ import {
   RotateCcw,
 } from 'lucide-react'
 import { fetchISISTopology, fetchISISPaths } from '@/lib/api'
-import type { MultiPathResponse, SinglePath } from '@/lib/api'
+import type { MultiPathResponse, SinglePath, PathService } from '@/lib/api'
+import { ServiceToggle } from '@/components/topology'
 
 // Path colors matching the graph view
 const PATH_COLORS = [
@@ -286,6 +287,9 @@ export function PathCalculatorPage() {
   const [targetDevice, setTargetDevice] = useState<DeviceOption | null>(null)
   const [selectedPathIndex, setSelectedPathIndex] = useState(0)
   const [initializedFromUrl, setInitializedFromUrl] = useState(false)
+  const [service, setService] = useState<PathService>(
+    (searchParams.get('service') as PathService) || 'unicast'
+  )
 
   // Fetch topology for device list
   const { data: topology, isLoading: topologyLoading } = useQuery({
@@ -358,14 +362,26 @@ export function PathCalculatorPage() {
     setSearchParams({}, { replace: true })
   }
 
+  const updateService = (s: PathService) => {
+    setService(s)
+    setSelectedPathIndex(0)
+    const newParams = new URLSearchParams(searchParams)
+    if (s !== 'unicast') {
+      newParams.set('service', s)
+    } else {
+      newParams.delete('service')
+    }
+    setSearchParams(newParams, { replace: true })
+  }
+
   // Fetch paths when both devices are selected
   const {
     data: pathsResult,
     isLoading: pathsLoading,
     error: pathsError,
   } = useQuery<MultiPathResponse>({
-    queryKey: ['paths', sourceDevice?.pk, targetDevice?.pk],
-    queryFn: () => fetchISISPaths(sourceDevice!.pk, targetDevice!.pk, 5),
+    queryKey: ['paths', sourceDevice?.pk, targetDevice?.pk, service],
+    queryFn: () => fetchISISPaths(sourceDevice!.pk, targetDevice!.pk, 5, service),
     enabled: !!sourceDevice && !!targetDevice,
   })
 
@@ -395,6 +411,16 @@ export function PathCalculatorPage() {
         <p className="text-muted-foreground mb-6">
           Find and compare paths between two devices in the ISIS topology.
         </p>
+
+        {/* Service Type Toggle */}
+        <ServiceToggle
+          value={service}
+          onChange={updateService}
+          size="md"
+          label="Traffic type"
+          showDescription
+          className="mb-6"
+        />
 
         {/* Device Selection */}
         <div className="bg-card border border-border rounded-lg p-6 mb-6">
@@ -436,7 +462,7 @@ export function PathCalculatorPage() {
           {sourceDevice && targetDevice && (
             <div className="mt-4 pt-4 border-t border-border flex items-center justify-between md:justify-start">
               <Link
-                to={`/topology/graph?path_source=${sourceDevice.pk}&path_target=${targetDevice.pk}`}
+                to={`/topology/graph?path_source=${sourceDevice.pk}&path_target=${targetDevice.pk}${service !== 'unicast' ? `&path_service=${service}` : ''}`}
                 className="text-sm text-primary hover:underline flex items-center gap-1"
               >
                 View in graph

@@ -16,7 +16,7 @@ func (a *API) buildExpectedMulticastDeliverySegments(ctx context.Context, groupP
 	if len(publishers) == 0 || len(subscribers) == 0 {
 		return []MulticastDeliverySegment{}, nil
 	}
-	g, err := a.loadTopologyGraph(ctx)
+	g, err := a.loadTopologyGraph(ctx, "")
 	if err != nil {
 		return []MulticastDeliverySegment{}, err
 	}

@@ -397,6 +397,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   const [pathLoading, setPathLoading] = useState(false)
   const [selectedPathIndex, setSelectedPathIndex] = useState(0)
   const [pathK, setPathK] = useState(10)
+  const [pathService, setPathService] = useState<'unicast' | 'multicast'>('unicast')
   const [showReverse, setShowReverse] = useState(false)
   const [reversePathsResult, setReversePathsResult] = useState<MultiPathResponse | null>(null)
   const [selectedReversePathIndex, setSelectedReversePathIndex] = useState<number>(0)
@@ -952,7 +953,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     if (!pathModeEnabled || !pathSource || !pathTarget) return
     setPathLoading(true)
     setSelectedPathIndex(0)
-    fetchISISPaths(pathSource, pathTarget, pathK)
+    fetchISISPaths(pathSource, pathTarget, pathK, pathService)
       .then(result => {
         setPathsResult(result)
         if (result.paths?.length > 0) {
@@ -963,7 +964,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       .catch(err => setPathsResult({ paths: [], from: pathSource, to: pathTarget, error: err.message }))
       .finally(() => setPathLoading(false))
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathModeEnabled, pathSource, pathTarget, pathK])
+  }, [pathModeEnabled, pathSource, pathTarget, pathK, pathService])
 
   // Pre-fetch reverse paths so toggling direction is instant
   useEffect(() => {
@@ -973,11 +974,11 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     }
     setReversePathLoading(true)
     setSelectedReversePathIndex(0)
-    fetchISISPaths(pathTarget, pathSource, pathK)
+    fetchISISPaths(pathTarget, pathSource, pathK, pathService)
       .then(result => setReversePathsResult(result))
       .catch(err => setReversePathsResult({ paths: [], from: pathTarget, to: pathSource, error: err.message }))
       .finally(() => setReversePathLoading(false))
-  }, [pathModeEnabled, pathSource, pathTarget, pathK])
+  }, [pathModeEnabled, pathSource, pathTarget, pathK, pathService])
 
   // Fetch metro paths
   useEffect(() => {
@@ -985,7 +986,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     setMetroPathLoading(true)
     setMetroPathViewMode('aggregate')
     setMetroPathSelectedPairs([])
-    fetchMetroDevicePaths(metroPathSource, metroPathTarget)
+    fetchMetroDevicePaths(metroPathSource, metroPathTarget, pathService)
       .then(result => {
         setMetroPathsResult(result)
         if (result.devicePairs?.length > 0) {
@@ -1000,7 +1001,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       }))
       .finally(() => setMetroPathLoading(false))
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [metroPathModeEnabled, metroPathSource, metroPathTarget])
+  }, [metroPathModeEnabled, metroPathSource, metroPathTarget, pathService])
 
   // Clear state on mode exit
   useEffect(() => { if (!pathModeEnabled) { setPathSource(null); setPathTarget(null); setPathsResult(null); setSelectedPathIndex(0) } }, [pathModeEnabled])
@@ -2172,6 +2173,8 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
               }}
               pathK={pathK}
               onPathKChange={setPathK}
+              pathService={pathService}
+              onPathServiceChange={setPathService}
             />
           )}
           {mode === 'metro-path' && (
@@ -2184,6 +2187,8 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
               onTogglePair={handleToggleMetroPathPair}
               onClearSelection={() => setMetroPathSelectedPairs([])}
               onClear={() => { setMetroPathSource(null); setMetroPathTarget(null); setMetroPathsResult(null); setMetroPathSelectedPairs([]); setMetroPathViewMode('aggregate') }}
+              pathService={pathService}
+              onPathServiceChange={setPathService}
             />
           )}
           {mode === 'whatif-removal' && (
