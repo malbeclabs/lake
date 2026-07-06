@@ -1,7 +1,8 @@
 import { Route, X, ArrowRightLeft } from 'lucide-react'
-import type { MultiPathResponse, SinglePath } from '@/lib/api'
+import type { MultiPathResponse, SinglePath, PathService } from '@/lib/api'
 import { useTheme } from '@/hooks/use-theme'
 import { DeviceSelector, type DeviceOption } from '../DeviceSelector'
+import { ServiceToggle } from '../ServiceToggle'
 import { cn } from '@/lib/utils'
 import { SmallDropdown } from '../TimeRangeSelector'
 
@@ -38,8 +39,8 @@ interface PathModePanelProps {
   onToggleReverse: () => void
   pathK: number
   onPathKChange: (k: number) => void
-  pathService?: 'unicast' | 'multicast'
-  onPathServiceChange?: (service: 'unicast' | 'multicast') => void
+  pathService?: PathService
+  onPathServiceChange?: (service: PathService) => void
 }
 
 export function PathModePanel({
@@ -126,33 +127,7 @@ export function PathModePanel({
 
       {/* Service type toggle */}
       {onPathServiceChange && (
-        <div className="flex items-center gap-2 mb-3">
-          <span className="text-[10px] text-muted-foreground">Traffic</span>
-          <div className="inline-flex rounded border border-border bg-muted/40 p-px">
-            <button
-              onClick={() => onPathServiceChange('unicast')}
-              className={cn(
-                'px-2 py-0.5 text-[10px] rounded-sm transition-colors',
-                pathService === 'unicast'
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              Unicast
-            </button>
-            <button
-              onClick={() => onPathServiceChange('multicast')}
-              className={cn(
-                'px-2 py-0.5 text-[10px] rounded-sm transition-colors',
-                pathService === 'multicast'
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              Multicast
-            </button>
-          </div>
-        </div>
+        <ServiceToggle value={pathService} onChange={onPathServiceChange} className="mb-3" />
       )}
 
       {/* Direction toggle + loading */}

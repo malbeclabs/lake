@@ -1859,15 +1859,18 @@ export interface SinglePath {
   totalSamples?: number       // min samples across hops
 }
 
+// PathService selects which IS-IS topology a path is resolved through:
+// 'unicast' constrains to flex-algo 128 (topology-tagged links); 'multicast' uses algo 0 (all links).
+export type PathService = 'unicast' | 'multicast'
+
 export interface MultiPathResponse {
   paths: SinglePath[]
   from: string
   to: string
-  service?: string
   error?: string
 }
 
-export async function fetchISISPaths(fromPK: string, toPK: string, k: number = 5, service?: string): Promise<MultiPathResponse> {
+export async function fetchISISPaths(fromPK: string, toPK: string, k: number = 5, service?: PathService): Promise<MultiPathResponse> {
   let url = `/api/topology/paths?from=${encodeURIComponent(fromPK)}&to=${encodeURIComponent(toPK)}&k=${k}`
   if (service) {
     url += `&service=${encodeURIComponent(service)}`
@@ -1913,7 +1916,7 @@ export interface MetroDevicePathsResponse {
 export async function fetchMetroDevicePaths(
   fromMetroPK: string,
   toMetroPK: string,
-  service?: string,
+  service?: PathService,
 ): Promise<MetroDevicePathsResponse> {
   let url = `/api/topology/metro-device-paths?from=${encodeURIComponent(fromMetroPK)}&to=${encodeURIComponent(toMetroPK)}`
   if (service) {

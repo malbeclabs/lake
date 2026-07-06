@@ -1,8 +1,8 @@
 import { Building2, X, ArrowLeft } from 'lucide-react'
-import type { MetroDevicePathsResponse } from '@/lib/api'
+import type { MetroDevicePathsResponse, PathService } from '@/lib/api'
 import { useTheme } from '@/hooks/use-theme'
-import { cn } from '@/lib/utils'
 import { MetroSelector, type MetroOption } from '../MetroSelector'
+import { ServiceToggle } from '../ServiceToggle'
 
 // Path colors for comparison
 const PATH_COLORS = [
@@ -27,8 +27,8 @@ interface MetroPathModePanelProps {
   onTogglePair: (index: number) => void
   onClearSelection: () => void
   onClear: () => void
-  pathService?: 'unicast' | 'multicast'
-  onPathServiceChange?: (service: 'unicast' | 'multicast') => void
+  pathService?: PathService
+  onPathServiceChange?: (service: PathService) => void
 }
 
 // Latency color scale (green to red)
@@ -117,33 +117,7 @@ export function MetroPathModePanel({
 
       {/* Service type toggle */}
       {onPathServiceChange && (
-        <div className="flex items-center gap-2 mb-3">
-          <span className="text-[10px] text-muted-foreground">Traffic</span>
-          <div className="inline-flex rounded border border-border bg-muted/40 p-px">
-            <button
-              onClick={() => onPathServiceChange('unicast')}
-              className={cn(
-                'px-2 py-0.5 text-[10px] rounded-sm transition-colors',
-                pathService === 'unicast'
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              Unicast
-            </button>
-            <button
-              onClick={() => onPathServiceChange('multicast')}
-              className={cn(
-                'px-2 py-0.5 text-[10px] rounded-sm transition-colors',
-                pathService === 'multicast'
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              Multicast
-            </button>
-          </div>
-        </div>
+        <ServiceToggle value={pathService} onChange={onPathServiceChange} className="mb-3" />
       )}
 
       {!sourceMetro && (

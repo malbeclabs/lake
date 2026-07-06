@@ -15,7 +15,8 @@ import {
   RotateCcw,
 } from 'lucide-react'
 import { fetchISISTopology, fetchISISPaths } from '@/lib/api'
-import type { MultiPathResponse, SinglePath } from '@/lib/api'
+import type { MultiPathResponse, SinglePath, PathService } from '@/lib/api'
+import { ServiceToggle } from '@/components/topology'
 
 // Path colors matching the graph view
 const PATH_COLORS = [
@@ -286,8 +287,8 @@ export function PathCalculatorPage() {
   const [targetDevice, setTargetDevice] = useState<DeviceOption | null>(null)
   const [selectedPathIndex, setSelectedPathIndex] = useState(0)
   const [initializedFromUrl, setInitializedFromUrl] = useState(false)
-  const [service, setService] = useState<'unicast' | 'multicast'>(
-    (searchParams.get('service') as 'unicast' | 'multicast') || 'unicast'
+  const [service, setService] = useState<PathService>(
+    (searchParams.get('service') as PathService) || 'unicast'
   )
 
   // Fetch topology for device list
@@ -361,7 +362,7 @@ export function PathCalculatorPage() {
     setSearchParams({}, { replace: true })
   }
 
-  const updateService = (s: 'unicast' | 'multicast') => {
+  const updateService = (s: PathService) => {
     setService(s)
     setSelectedPathIndex(0)
     const newParams = new URLSearchParams(searchParams)
@@ -412,36 +413,14 @@ export function PathCalculatorPage() {
         </p>
 
         {/* Service Type Toggle */}
-        <div className="flex items-center gap-3 mb-6">
-          <span className="text-sm text-muted-foreground">Traffic type</span>
-          <div className="inline-flex rounded-md border border-border bg-muted/40 p-0.5">
-            <button
-              onClick={() => updateService('unicast')}
-              className={`px-3 py-1 text-sm rounded-sm transition-colors ${
-                service === 'unicast'
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Unicast
-            </button>
-            <button
-              onClick={() => updateService('multicast')}
-              className={`px-3 py-1 text-sm rounded-sm transition-colors ${
-                service === 'multicast'
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Multicast
-            </button>
-          </div>
-          <span className="text-xs text-muted-foreground">
-            {service === 'unicast'
-              ? 'Flex-algo 128 — topology-tagged links only'
-              : 'Algo 0 — all links'}
-          </span>
-        </div>
+        <ServiceToggle
+          value={service}
+          onChange={updateService}
+          size="md"
+          label="Traffic type"
+          showDescription
+          className="mb-6"
+        />
 
         {/* Device Selection */}
         <div className="bg-card border border-border rounded-lg p-6 mb-6">
