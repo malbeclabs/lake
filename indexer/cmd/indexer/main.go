@@ -726,6 +726,7 @@ func run() error {
 	type secondaryEnvConfig struct {
 		database       string
 		dzLedgerRPCURL string
+		solanaRPCURL   string // overrides shred-subscription RPC; empty = read shreds from DZ ledger
 		noInflux       bool
 		mrouteS3Bucket string // empty = mroute ingest disabled for this env
 		msdpS3Bucket   string // empty = MSDP ingest disabled for this env
@@ -754,6 +755,17 @@ func run() error {
 		cfg.dzLedgerRPCURL = rpcURL
 		secondaryEnvs["testnet"] = cfg
 	}
+	if rpcURL := os.Getenv("SOLANA_RPC_URL_TESTNET"); rpcURL != "" {
+		cfg := secondaryEnvs["testnet"]
+		cfg.solanaRPCURL = rpcURL
+		secondaryEnvs["testnet"] = cfg
+	}
+	// Uncomment for devnet shred oracle instance.
+	// if rpcURL := os.Getenv("SOLANA_RPC_URL_DEVNET"); rpcURL != "" {
+	// 	cfg := secondaryEnvs["devnet"]
+	// 	cfg.solanaRPCURL = rpcURL
+	// 	secondaryEnvs["devnet"] = cfg
+	// }
 	if *noInfluxDevnetFlag {
 		cfg := secondaryEnvs["devnet"]
 		cfg.noInflux = true
@@ -811,6 +823,7 @@ func run() error {
 				clickhouseAddr:             *clickhouseAddrFlag,
 				clickhouseDatabase:         envCfg.database,
 				dzLedgerRPCURL:             envCfg.dzLedgerRPCURL,
+				solanaRPCURL:               envCfg.solanaRPCURL,
 				clickhouseUsername:         *clickhouseUsernameFlag,
 				clickhousePassword:         *clickhousePasswordFlag,
 				clickhouseSecure:           *clickhouseSecureFlag,
@@ -900,6 +913,11 @@ type secondaryNetworkConfig struct {
 	// DZ ledger RPC URL override (optional).
 	dzLedgerRPCURL string
 
+	// Solana RPC URL for shred-subscription reads (optional). When set, the
+	// secondary network indexer reads shred-subscription state from this
+	// endpoint instead of the DZ ledger.
+	solanaRPCURL string
+
 	// ISIS configuration (optional).
 	isisS3Bucket string
 	isisS3Region string
@@ -981,9 +999,13 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 	var shredsClient *shreds.Client
 	var secondaryShredsRawRPC *solanarpc.Client
 	if env != config.EnvDevnet {
-		secondaryShredsRawRPC = shreds.NewRPCClient(networkConfig.LedgerPublicRPCURL)
+		shredsRPCURL := networkConfig.LedgerPublicRPCURL
+		if cfg.solanaRPCURL != "" {
+			shredsRPCURL = cfg.solanaRPCURL
+		}
+		secondaryShredsRawRPC = shreds.NewRPCClient(shredsRPCURL)
 		shredsClient = shreds.New(secondaryShredsRawRPC, shreds.ProgramID)
-		log.Info("shreds subscription client initialized", "env", env)
+		log.Info("shreds subscription client initialized", "env", env, "rpc_url", shredsRPCURL)
 	}
 
 	// Initialize InfluxDB client for device usage (optional).

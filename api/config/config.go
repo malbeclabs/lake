@@ -35,6 +35,9 @@ var publisherDB = "shredder"
 // dzdpDB is the ClickHouse database name for DZDP tables e.g. location_state (default: "dzdp").
 var dzdpDB = "dzdp"
 
+// feedsDB is the ClickHouse database name for the Hyperliquid feeds tables (default: "feeds").
+var feedsDB = "feeds"
+
 // EnvDBs maps environment names to their ClickHouse connection pools.
 // The mainnet-beta entry always points to DB.
 var EnvDBs map[string]driver.Conn
@@ -81,6 +84,16 @@ func GetDZDPDB() string {
 // SetDZDPDB sets the DZDP database name.
 func SetDZDPDB(db string) {
 	dzdpDB = db
+}
+
+// GetFeedsDB returns the feeds database name.
+func GetFeedsDB() string {
+	return feedsDB
+}
+
+// SetFeedsDB sets the feeds database name.
+func SetFeedsDB(db string) {
+	feedsDB = db
 }
 
 // Database returns the configured database name.
@@ -152,6 +165,10 @@ func Load() error {
 
 	if db := os.Getenv("CLICKHOUSE_DZDP_DB"); db != "" {
 		dzdpDB = db
+	}
+
+	if db := os.Getenv("CLICKHOUSE_FEEDS_DB"); db != "" {
+		feedsDB = db
 	}
 
 	// Build env -> database mapping.

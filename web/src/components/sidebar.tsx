@@ -59,6 +59,8 @@ export function Sidebar() {
   })
   const hasTopologies = (topologiesData?.topologies?.length ?? 0) > 0
   const showGeoloc = user?.is_internal_user === true
+  // Internal only (unannounced venue) — gated to allowed-domain Google users.
+  const showHyperliquid = user?.is_internal_user === true
 const { resolvedTheme, setTheme } = useTheme()
   const { updateAvailable, reload } = useVersionCheck()
 
@@ -116,7 +118,9 @@ const { resolvedTheme, setTheme } = useTheme()
     location.pathname === '/dz/shreds/rewards' ||
     location.pathname.startsWith('/dz/shreds/rewards/')
   const isShredsRoute = location.pathname.startsWith('/dz/shreds') || isShredsPublishersRoute
-  const isEdgeRoute = isShredsRoute
+  const isHyperliquidScoreboardRoute = location.pathname === '/dz/hyperliquid/scoreboard'
+  const isHyperliquidRoute = location.pathname.startsWith('/dz/hyperliquid')
+  const isEdgeRoute = isShredsRoute || isHyperliquidRoute
   const isGeolocRoute = location.pathname.startsWith('/dz/geoloc/')
   const isGeolocProbesRoute = location.pathname.startsWith('/dz/geoloc/probes')
   const isGeolocUsersRoute = location.pathname.startsWith('/dz/geoloc/users')
@@ -579,6 +583,21 @@ const { resolvedTheme, setTheme } = useTheme()
                 <Link to="/dz/shreds/economics" className={subNavItemClass(isShredsEconomicsRoute)}>
                   Economics
                 </Link>
+              </>
+            )}
+            {showHyperliquid && (
+              <>
+                <Link to="/dz/hyperliquid/scoreboard" className={isHyperliquidRoute ? navItemExpandedClass : navItemClass(false)}>
+                  <Activity className="h-4 w-4" />
+                  Hyperliquid
+                </Link>
+                {isHyperliquidRoute && (
+                  <>
+                    <Link to="/dz/hyperliquid/scoreboard" className={subNavItemClass(isHyperliquidScoreboardRoute)}>
+                      Scoreboard
+                    </Link>
+                  </>
+                )}
               </>
             )}
           </div>

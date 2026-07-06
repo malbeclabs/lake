@@ -6859,3 +6859,68 @@ export async function fetchShredsRewardsDetail(nodeId: string): Promise<ShredsRe
   if (!res.ok) throw new Error('Failed to fetch shreds rewards detail')
   return res.json()
 }
+
+export interface HyperliquidCompetitor {
+  feed: string
+  label: string
+  dz_win_pct: number
+  lead_p50_ms: number
+  lead_p95_ms: number
+  races: number
+}
+
+export interface HyperliquidNode {
+  measurement_node_id: string
+  location_code: string
+  dz_win_share_pct: number
+  total_races: number
+  competitors: HyperliquidCompetitor[]
+}
+
+export interface HyperliquidRace {
+  event_ts: string
+  symbol: string
+  location_code: string
+  winner_feed: string
+  winner_label: string
+  is_dz: boolean
+  runner_up_feed: string
+  runner_up_label: string
+  lead_ms: number
+}
+
+export interface HyperliquidScoreboardResponse {
+  window: string
+  symbol?: string
+  generated_at: string
+  feed_type: string
+  dz_win_share_pct: number
+  total_races: number
+  competitors: HyperliquidCompetitor[]
+  nodes: HyperliquidNode[]
+  recent_races: HyperliquidRace[]
+  prices?: Record<string, number>
+  composite_latency?: HyperliquidCompositeLatency
+}
+
+export interface HyperliquidCompositeLatency {
+  window: string
+  p50_ms: number
+  p90_ms: number
+  p99_ms: number
+  generated_at: string
+}
+
+export async function fetchHyperliquidScoreboard(
+  window: string = '24h',
+  symbol?: string,
+): Promise<HyperliquidScoreboardResponse> {
+  const params = new URLSearchParams()
+  params.set('window', window)
+  if (symbol && symbol !== 'all') params.set('symbol', symbol)
+  const res = await apiFetch(`/api/dz/hyperliquid/scoreboard?${params}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch hyperliquid scoreboard')
+  }
+  return res.json()
+}
