@@ -3,23 +3,20 @@ package handlers
 import (
 	"context"
 	"net/http"
-	"strconv"
 	"time"
 )
 
-const (
-	permissionAuditDefaultLimit = 200
-	permissionAuditMaxLimit     = 1000
-)
+const permissionAuditDefaultLimit = 200
 
 // PermissionAuditRow is a single serviceability Permission-management event.
 type PermissionAuditRow struct {
 	EventTS            time.Time `json:"eventTs"`
 	TxSignature        string    `json:"txSignature"`
 	Slot               uint64    `json:"slot"`
-	Signer             string    `json:"signer"`       // acting admin (transaction fee-payer)
-	PermissionPK       string    `json:"permissionPk"` // the Permission PDA
-	TargetPubkey       string    `json:"targetPubkey"` // grantee
+	InstructionIndex   uint16    `json:"instructionIndex"` // index within the tx; distinguishes multiple events in one tx
+	Signer             string    `json:"signer"`           // acting admin (transaction fee-payer)
+	PermissionPK       string    `json:"permissionPk"`     // the Permission PDA
+	TargetPubkey       string    `json:"targetPubkey"`     // grantee
 	EventType          string    `json:"eventType"`
 	PermissionsAdded   string    `json:"permissionsAdded"`
 	PermissionsRemoved string    `json:"permissionsRemoved"`
@@ -34,15 +31,7 @@ type PermissionAuditResponse struct {
 // GetPermissionAudit serves the serviceability permission audit trail. Gated to
 // internal-domain users (see RequireInternalDomain in api/main.go).
 func (a *API) GetPermissionAudit(w http.ResponseWriter, r *http.Request) {
-	limit := permissionAuditDefaultLimit
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			limit = n
-		}
-	}
-	if limit > permissionAuditMaxLimit {
-		limit = permissionAuditMaxLimit
-	}
+	limit := ParsePagination(r, permissionAuditDefaultLimit).Limit
 
 	resp, err := a.FetchPermissionAuditData(r.Context(), limit)
 	if err != nil {
@@ -62,6 +51,7 @@ func (a *API) FetchPermissionAuditData(ctx context.Context, limit int) (Permissi
 			e.event_ts,
 			e.tx_signature,
 			e.slot,
+			e.instruction_index,
 			e.signer,
 			e.permission_pk,
 			if(e.target_pubkey != '', e.target_pubkey, tgt.target) AS target_pubkey,
@@ -69,14 +59,14 @@ func (a *API) FetchPermissionAuditData(ctx context.Context, limit int) (Permissi
 			e.permissions_added,
 			e.permissions_removed,
 			e.success
-		FROM fact_dz_permission_events FINAL AS e
+		FROM fact_dz_permission_events AS e FINAL
 		LEFT JOIN (
 			SELECT permission_pk, max(target_pubkey) AS target
 			FROM fact_dz_permission_events
 			WHERE target_pubkey != ''
 			GROUP BY permission_pk
 		) AS tgt USING (permission_pk)
-		ORDER BY e.event_ts DESC, e.slot DESC, e.tx_signature DESC
+		ORDER BY e.slot DESC, e.event_ts DESC, e.tx_signature DESC, e.instruction_index DESC
 		LIMIT ?
 	`
 
@@ -94,6 +84,7 @@ func (a *API) FetchPermissionAuditData(ctx context.Context, limit int) (Permissi
 			&row.EventTS,
 			&row.TxSignature,
 			&row.Slot,
+			&row.InstructionIndex,
 			&row.Signer,
 			&row.PermissionPK,
 			&row.TargetPubkey,

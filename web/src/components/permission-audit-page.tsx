@@ -36,6 +36,7 @@ function formatTs(ts: string): string {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
+    timeZone: 'UTC',
   })
 }
 
@@ -102,7 +103,7 @@ export function PermissionAuditPage() {
           <table className="w-full">
             <thead>
               <tr className="text-left text-sm text-muted-foreground border-b border-border bg-muted/30">
-                <th className="px-4 py-2.5 font-medium">Time (UTC local)</th>
+                <th className="px-4 py-2.5 font-medium">Time (UTC)</th>
                 <th className="px-4 py-2.5 font-medium">Event</th>
                 <th className="px-4 py-2.5 font-medium">Admin (signer)</th>
                 <th className="px-4 py-2.5 font-medium">Grantee</th>
@@ -114,7 +115,7 @@ export function PermissionAuditPage() {
             <tbody>
               {events.map((e) => (
                 <tr
-                  key={`${e.txSignature}-${e.permissionPk}-${e.eventType}-${e.slot}`}
+                  key={`${e.txSignature}-${e.permissionPk}-${e.slot}-${e.instructionIndex}`}
                   className="border-b border-border last:border-b-0 hover:bg-muted/50 transition-colors"
                 >
                   <td className="px-4 py-2.5 text-sm whitespace-nowrap tabular-nums">{formatTs(e.eventTs)}</td>

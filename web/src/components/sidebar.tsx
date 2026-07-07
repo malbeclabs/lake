@@ -602,12 +602,6 @@ const { resolvedTheme, setTheme } = useTheme()
                 )}
               </>
             )}
-            {showPermissionAudit && (
-              <Link to="/dz/permission-audit" className={navItemClass(isPermissionAuditRoute)}>
-                <Shield className="h-4 w-4" />
-                Permission Audit
-              </Link>
-            )}
           </div>
         </div>
 
@@ -659,6 +653,12 @@ const { resolvedTheme, setTheme } = useTheme()
               <KeyRound className="h-4 w-4" />
               Access Passes
             </Link>
+            {showPermissionAudit && (
+              <Link to="/dz/permission-audit" className={navItemClass(isPermissionAuditRoute)}>
+                <Shield className="h-4 w-4" />
+                Permission Audit
+              </Link>
+            )}
           </div>
         </div>
 

@@ -6930,6 +6930,7 @@ export interface PermissionAuditEvent {
   eventTs: string
   txSignature: string
   slot: number
+  instructionIndex: number
   signer: string
   permissionPk: string
   targetPubkey: string

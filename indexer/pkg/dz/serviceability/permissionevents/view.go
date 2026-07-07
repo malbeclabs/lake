@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
 	"sync"
 	"time"
 
@@ -23,6 +22,12 @@ const (
 	maxConcurrentFetches = 10
 	// maxSignaturesPerRequest is the Solana RPC page limit.
 	maxSignaturesPerRequest = 1000
+	// scanChunkSize is how many signatures are fetched, decoded, and durably written
+	// before the scan cursor is advanced. Chunking (oldest-first) bounds how much work
+	// is lost if the refresh is cancelled — e.g. a first-run full-history sweep that
+	// exceeds the Temporal activity timeout resumes from the last completed chunk instead
+	// of restarting from scratch.
+	scanChunkSize = 200
 	// metricSource labels this view's refresh metrics.
 	metricSource = "serviceability_permission_events"
 )
@@ -142,6 +147,25 @@ func (v *View) safeRefresh(ctx context.Context) {
 }
 
 func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) {
+	return v.refresh(ctx, v.cfg.SkipHighWaterMarks)
+}
+
+// BackfillRefresh runs a full re-scan ignoring the stored cursor. Existing events are
+// safely overwritten via ReplacingMergeTree dedup.
+func (v *View) BackfillRefresh(ctx context.Context) (ingestionlog.RefreshResult, error) {
+	return v.refresh(ctx, true)
+}
+
+// refresh scans the program's transaction history and writes any permission events.
+// ignoreCursor forces a full re-scan (backfill); otherwise it resumes from the stored
+// scan cursor.
+//
+// The scan is processed oldest-first in chunks, and the cursor is advanced only after
+// each chunk is durably written. This means (a) a cancelled/timed-out refresh resumes
+// from the last completed chunk rather than restarting, and (b) a transient fetch/decode
+// failure fails the refresh without advancing past the un-indexed signatures, so the
+// events are retried on the next run rather than silently dropped from the audit trail.
+func (v *View) refresh(ctx context.Context, ignoreCursor bool) (ingestionlog.RefreshResult, error) {
 	v.refreshMu.Lock()
 	defer v.refreshMu.Unlock()
 
@@ -159,7 +183,7 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 
 	// Resolve where to resume from (unless backfilling).
 	var cursor ScanCursor
-	if !v.cfg.SkipHighWaterMarks {
+	if !ignoreCursor {
 		var err error
 		cursor, err = v.store.GetScanCursor(ctx, programPK)
 		if err != nil {
@@ -169,6 +193,7 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	}
 
 	// Fetch all new signatures for the program, paginating backward to the cursor.
+	// Results are newest-first.
 	sigs, err := v.fetchNewSignatures(ctx, cursor)
 	if err != nil {
 		metrics.ViewRefreshTotal.WithLabelValues(metricSource, "error").Inc()
@@ -180,23 +205,78 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		return result, nil
 	}
 
-	// The newest signature (first, since results are newest-first) becomes the new cursor.
-	newCursor := ScanCursor{TxSignature: sigs[0].Signature.String(), Slot: sigs[0].Slot}
+	// Reverse to oldest-first so the cursor advances monotonically as we checkpoint each
+	// chunk; a partial scan then leaves the cursor at the newest fully-indexed signature.
+	for i, j := 0, len(sigs)-1; i < j; i, j = i+1, j-1 {
+		sigs[i], sigs[j] = sigs[j], sigs[i]
+	}
 
-	// Fetch and decode each transaction concurrently.
+	var totalEvents int64
+	for start := 0; start < len(sigs); start += scanChunkSize {
+		end := start + scanChunkSize
+		if end > len(sigs) {
+			end = len(sigs)
+		}
+		chunk := sigs[start:end]
+
+		events, decodeErr := v.decodeChunk(ctx, chunk)
+
+		// Persist whatever decoded cleanly (idempotent via ReplacingMergeTree) before
+		// deciding whether to advance the cursor.
+		if err := v.store.InsertEvents(ctx, events); err != nil {
+			metrics.ViewRefreshTotal.WithLabelValues(metricSource, "error").Inc()
+			return result, fmt.Errorf("insert permission events: %w", err)
+		}
+		totalEvents += int64(len(events))
+
+		// A transient fetch/decode error must not advance the cursor past the affected
+		// signatures — fail the refresh so Temporal retries and the events are re-scanned.
+		if decodeErr != nil {
+			metrics.ViewRefreshTotal.WithLabelValues(metricSource, "error").Inc()
+			return result, fmt.Errorf("decode transactions: %w", decodeErr)
+		}
+
+		// Chunk is oldest-first, so its last element is the newest signature indexed so far.
+		newest := chunk[len(chunk)-1]
+		newCursor := ScanCursor{TxSignature: newest.Signature.String(), Slot: newest.Slot}
+		if err := v.store.SetScanCursor(ctx, programPK, newCursor); err != nil {
+			metrics.ViewRefreshTotal.WithLabelValues(metricSource, "error").Inc()
+			return result, fmt.Errorf("set scan cursor: %w", err)
+		}
+	}
+
+	result.RowsAffected = totalEvents
+	fetchedAt := time.Now().UTC()
+	result.SourceMaxEventTS = &fetchedAt
+
+	v.markReady()
+	metrics.ViewRefreshTotal.WithLabelValues(metricSource, "success").Inc()
+
+	if totalEvents > 0 {
+		v.log.Info("serviceability/permission-events: indexed new events",
+			"count", totalEvents, "scanned_signatures", len(sigs))
+	}
+	return result, nil
+}
+
+// decodeChunk fetches and decodes a batch of transactions concurrently. It returns the
+// events that decoded cleanly along with the first fetch/decode error encountered, if any.
+// All transactions are attempted even when one fails (no early cancellation) so a single
+// transient error doesn't discard the rest of the chunk's successfully decoded events.
+func (v *View) decodeChunk(ctx context.Context, sigs []*rpc.TransactionSignature) ([]PermissionEventRow, error) {
 	var (
 		mu        sync.Mutex
 		allEvents []PermissionEventRow
 	)
-	g, gctx := errgroup.WithContext(ctx)
+	var g errgroup.Group
 	g.SetLimit(maxConcurrentFetches)
 	for _, sig := range sigs {
 		g.Go(func() error {
-			events, err := v.decodeTransaction(gctx, sig)
+			events, err := v.decodeTransaction(ctx, sig)
 			if err != nil {
 				v.log.Warn("serviceability/permission-events: failed to decode transaction",
 					"signature", sig.Signature.String(), "error", err)
-				return nil // one bad tx shouldn't fail the whole refresh
+				return err
 			}
 			if len(events) > 0 {
 				mu.Lock()
@@ -206,44 +286,8 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 			return nil
 		})
 	}
-	if err := g.Wait(); err != nil {
-		metrics.ViewRefreshTotal.WithLabelValues(metricSource, "error").Inc()
-		return result, fmt.Errorf("decode transactions: %w", err)
-	}
-
-	if err := v.store.InsertEvents(ctx, allEvents); err != nil {
-		metrics.ViewRefreshTotal.WithLabelValues(metricSource, "error").Inc()
-		return result, fmt.Errorf("insert permission events: %w", err)
-	}
-
-	// Advance the cursor only after events are durably written, so a crash mid-refresh
-	// re-scans (idempotent via ReplacingMergeTree) rather than skipping.
-	if err := v.store.SetScanCursor(ctx, programPK, newCursor); err != nil {
-		metrics.ViewRefreshTotal.WithLabelValues(metricSource, "error").Inc()
-		return result, fmt.Errorf("set scan cursor: %w", err)
-	}
-
-	result.RowsAffected = int64(len(allEvents))
-	fetchedAt := time.Now().UTC()
-	result.SourceMaxEventTS = &fetchedAt
-
-	v.markReady()
-	metrics.ViewRefreshTotal.WithLabelValues(metricSource, "success").Inc()
-
-	if len(allEvents) > 0 {
-		v.log.Info("serviceability/permission-events: indexed new events",
-			"count", len(allEvents), "scanned_signatures", len(sigs))
-	}
-	return result, nil
-}
-
-// BackfillRefresh runs a full re-scan ignoring the stored cursor. Existing events are
-// safely overwritten via ReplacingMergeTree dedup.
-func (v *View) BackfillRefresh(ctx context.Context) (ingestionlog.RefreshResult, error) {
-	orig := v.cfg.SkipHighWaterMarks
-	v.cfg.SkipHighWaterMarks = true
-	defer func() { v.cfg.SkipHighWaterMarks = orig }()
-	return v.Refresh(ctx)
+	err := g.Wait()
+	return allEvents, err
 }
 
 // ClickHouse returns the ClickHouse client for direct operations (e.g. truncate).
@@ -269,10 +313,18 @@ func (v *View) fetchNewSignatures(ctx context.Context, cursor ScanCursor) ([]*rp
 		}
 	}
 
+	// Paginate backward (via Before) until an empty page. We terminate only on an empty
+	// page rather than on a short page: a provider/gateway may cap pages below our
+	// requested limit, and stopping on the first short page would skip older history and
+	// advance the cursor past it permanently.
+	limit := maxSignaturesPerRequest
 	var allSigs []*rpc.TransactionSignature
 	var beforeSig solana.Signature
 	for {
-		opts := &rpc.GetSignaturesForAddressOpts{Commitment: rpc.CommitmentFinalized}
+		opts := &rpc.GetSignaturesForAddressOpts{
+			Commitment: rpc.CommitmentFinalized,
+			Limit:      &limit,
+		}
 		if !untilSig.IsZero() {
 			opts.Until = untilSig
 		}
@@ -284,17 +336,24 @@ func (v *View) fetchNewSignatures(ctx context.Context, cursor ScanCursor) ([]*rp
 		if err != nil {
 			return nil, fmt.Errorf("get signatures: %w", err)
 		}
-		allSigs = append(allSigs, page...)
-		if len(page) < maxSignaturesPerRequest {
+		if len(page) == 0 {
 			break
 		}
+		allSigs = append(allSigs, page...)
 		beforeSig = page[len(page)-1].Signature
 	}
 	return allSigs, nil
 }
 
 // decodeTransaction fetches one transaction and decodes any permission-management
-// instructions it contains into audit rows.
+// instructions it contains into audit rows. Both top-level and CPI (inner) instructions
+// are scanned, since permission ops invoked via a multisig/governance program appear only
+// in the transaction's inner instructions.
+//
+// Signer is the transaction fee-payer (accountKeys[0]). For the common case — an admin
+// signing and paying for their own permission tx — this is the acting authority. When a
+// relayer or multisig pays fees, the fee-payer is not the acting admin; the true signer
+// set is not recorded here.
 func (v *View) decodeTransaction(ctx context.Context, sig *rpc.TransactionSignature) ([]PermissionEventRow, error) {
 	maxVersion := uint64(0)
 	txResult, err := v.cfg.RPC.GetTransaction(ctx, sig.Signature, &rpc.GetTransactionOpts{
@@ -316,12 +375,25 @@ func (v *View) decodeTransaction(ctx context.Context, sig *rpc.TransactionSignat
 		return nil, nil
 	}
 
+	// Resolve the full account key list. For v0 transactions the instruction account
+	// indices also reference address-lookup-table entries, which the RPC returns in
+	// Meta.LoadedAddresses (writable first, then read-only). Without merging them, a
+	// looked-up Permission PDA would resolve to an empty pubkey.
 	accountKeys := tx.Message.AccountKeys
+	if txResult.Meta != nil {
+		accountKeys = append(accountKeys, txResult.Meta.LoadedAddresses.Writable...)
+		accountKeys = append(accountKeys, txResult.Meta.LoadedAddresses.ReadOnly...)
+	}
 	feePayer := accountKeys[0].String()
 
+	// Prefer the signature's block time; fall back to the transaction result's block time
+	// (either may be nil on some RPC states). event_ts may still be zero in the rare case
+	// both are absent — the API sorts by slot first so such rows remain visible.
 	var blockTime time.Time
 	if sig.BlockTime != nil {
 		blockTime = sig.BlockTime.Time().UTC()
+	} else if txResult.BlockTime != nil {
+		blockTime = txResult.BlockTime.Time().UTC()
 	}
 	success := uint8(1)
 	if sig.Err != nil {
@@ -329,35 +401,43 @@ func (v *View) decodeTransaction(ctx context.Context, sig *rpc.TransactionSignat
 	}
 
 	var rows []PermissionEventRow
-	for idx, ci := range tx.Message.Instructions {
-		if int(ci.ProgramIDIndex) >= len(accountKeys) {
-			continue
+	// seq assigns a stable, unique index to each permission row within the tx (top-level
+	// instructions in order, then inner instructions). It backs the (permission_pk, slot,
+	// tx_signature, instruction_index) dedup key, so two permission instructions in one tx
+	// stay distinct rows.
+	// decodeInto decodes a single (top-level or inner) instruction. Top-level and inner
+	// instructions are distinct Go types (solana.CompiledInstruction vs
+	// rpc.CompiledInstruction) with the same shape, so it takes the fields directly.
+	var seq uint16
+	decodeInto := func(programIDIndex uint16, accounts []uint16, data []byte) {
+		if int(programIDIndex) >= len(accountKeys) {
+			return
 		}
-		if !accountKeys[ci.ProgramIDIndex].Equals(v.cfg.ProgramID) {
-			continue
+		if !accountKeys[programIDIndex].Equals(v.cfg.ProgramID) {
+			return
 		}
 
-		decoded, ok, err := DecodePermissionInstruction(ci.Data)
+		decoded, ok, err := DecodePermissionInstruction(data)
 		if err != nil {
 			v.log.Warn("serviceability/permission-events: malformed permission instruction",
-				"signature", sig.Signature.String(), "instruction_index", idx, "error", err)
-			continue
+				"signature", sig.Signature.String(), "instruction_index", seq, "error", err)
+			return
 		}
 		if !ok {
-			continue
+			return
 		}
 
 		// account[0] is the target Permission PDA.
 		var permissionPK string
-		if len(ci.Accounts) > 0 && int(ci.Accounts[0]) < len(accountKeys) {
-			permissionPK = accountKeys[ci.Accounts[0]].String()
+		if len(accounts) > 0 && int(accounts[0]) < len(accountKeys) {
+			permissionPK = accountKeys[accounts[0]].String()
 		}
 
 		rows = append(rows, PermissionEventRow{
 			EventTS:                blockTime,
 			TxSignature:            sig.Signature.String(),
 			Slot:                   sig.Slot,
-			InstructionIndex:       uint16(idx),
+			InstructionIndex:       seq,
 			Signer:                 feePayer,
 			PermissionPK:           permissionPK,
 			TargetPubkey:           decoded.TargetUserPayer,
@@ -368,9 +448,19 @@ func (v *View) decodeTransaction(ctx context.Context, sig *rpc.TransactionSignat
 			PermissionsRemovedMask: decoded.Removed.Hex(),
 			Success:                success,
 		})
+		seq++
 	}
 
-	// Deterministic order within a tx (stable across concurrent refreshes).
-	sort.SliceStable(rows, func(i, j int) bool { return rows[i].InstructionIndex < rows[j].InstructionIndex })
+	for _, ci := range tx.Message.Instructions {
+		decodeInto(ci.ProgramIDIndex, ci.Accounts, ci.Data)
+	}
+	if txResult.Meta != nil {
+		for _, inner := range txResult.Meta.InnerInstructions {
+			for _, ci := range inner.Instructions {
+				decodeInto(ci.ProgramIDIndex, ci.Accounts, ci.Data)
+			}
+		}
+	}
+
 	return rows, nil
 }

@@ -96,6 +96,16 @@ var flagNames = []struct {
 	{1 << 17, "index-admin"},
 }
 
+// knownFlagBits is the union of all named flag bits (all in the low 64 bits). Computed
+// once from flagNames so FlagNames doesn't recompute the constant on every call.
+var knownFlagBits = func() uint64 {
+	var known uint64
+	for _, f := range flagNames {
+		known |= f.bit
+	}
+	return known
+}()
+
 // FlagNames returns the comma-separated role names set in the mask, in the same order
 // as the Rust CLI. Known flags all live in the low 64 bits; if any unknown high bits are
 // set they are surfaced as "unknown-hi:0x..." so the audit never silently drops a grant.
@@ -107,11 +117,7 @@ func FlagNames(m u128) string {
 		}
 	}
 	// Surface any bits we don't have a name for (future flags) rather than hiding them.
-	known := uint64(0)
-	for _, f := range flagNames {
-		known |= f.bit
-	}
-	if unknownLo := m.Lo &^ known; unknownLo != 0 {
+	if unknownLo := m.Lo &^ knownFlagBits; unknownLo != 0 {
 		out = append(out, fmt.Sprintf("unknown-lo:0x%x", unknownLo))
 	}
 	if m.Hi != 0 {

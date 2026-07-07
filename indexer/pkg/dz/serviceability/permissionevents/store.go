@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse/dataset"
 )
 
 // ScanCursor is the newest signature already scanned for a watched program. Empty when
@@ -35,13 +36,18 @@ func (cfg *StoreConfig) Validate() error {
 type Store struct {
 	log *slog.Logger
 	cfg StoreConfig
+	ds  *dataset.FactDataset
 }
 
 func NewStore(cfg StoreConfig) (*Store, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	return &Store{log: cfg.Logger, cfg: cfg}, nil
+	ds, err := newDataset(cfg.Logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create dataset: %w", err)
+	}
+	return &Store{log: cfg.Logger, cfg: cfg, ds: ds}, nil
 }
 
 // GetScanCursor returns the newest signature/slot already scanned for the given program.
@@ -101,18 +107,13 @@ func (s *Store) InsertEvents(ctx context.Context, events []PermissionEventRow) e
 		return nil
 	}
 
-	ds, err := newDataset(s.log)
-	if err != nil {
-		return fmt.Errorf("failed to create dataset: %w", err)
-	}
-
 	conn, err := s.cfg.ClickHouse.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get ClickHouse connection: %w", err)
 	}
 
 	ingestedAt := time.Now().UTC()
-	if err := ds.WriteBatch(ctx, conn, len(events), func(i int) ([]any, error) {
+	if err := s.ds.WriteBatch(ctx, conn, len(events), func(i int) ([]any, error) {
 		row := events[i]
 		row.IngestedAt = ingestedAt
 		return schema.ToRow(row), nil

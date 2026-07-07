@@ -341,7 +341,9 @@ func run() error {
 
 	// Raw Solana RPC on the DZ ledger for the permission-events audit indexer, which
 	// reads serviceability transaction history (getSignaturesForAddress + getTransaction).
-	permissionEventsRawRPC := solanarpc.New(networkConfig.LedgerPublicRPCURL)
+	// Retrying client so a transient RPC error on getTransaction doesn't drop a
+	// permission event from the audit trail (the refresh fails and retries instead).
+	permissionEventsRawRPC := rpc.NewWithRetries(networkConfig.LedgerPublicRPCURL, nil)
 
 	// Shreds subscription client (mainnet-beta and testnet only, not devnet).
 	// Mainnet uses Solana proper RPC; testnet uses the DZ ledger RPC.
@@ -1003,7 +1005,9 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 	geolocationClient := geolocsdk.New(log, dzRPCClient, networkConfig.GeolocationProgramID)
 
 	// Raw Solana RPC on the DZ ledger for the permission-events audit indexer.
-	permissionEventsRawRPC := solanarpc.New(networkConfig.LedgerPublicRPCURL)
+	// Retrying client so a transient RPC error on getTransaction doesn't drop a
+	// permission event from the audit trail (the refresh fails and retries instead).
+	permissionEventsRawRPC := rpc.NewWithRetries(networkConfig.LedgerPublicRPCURL, nil)
 
 	// Shreds subscription client (testnet only, not devnet).
 	var shredsClient *shreds.Client
