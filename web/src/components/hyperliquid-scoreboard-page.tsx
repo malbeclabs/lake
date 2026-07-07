@@ -129,7 +129,7 @@ function relAge(tsMs: number, nowMs: number): string {
 }
 
 export function HyperliquidScoreboardPage() {
-  const [timeWindow, setTimeWindow] = useState<(typeof WINDOWS)[number]>('1h')
+  const [timeWindow, setTimeWindow] = useState<(typeof WINDOWS)[number]>('24h')
   const [data, setData] = useState<HyperliquidScoreboardResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
