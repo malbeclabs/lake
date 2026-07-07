@@ -23,6 +23,8 @@ const (
 	ErrorTypeAuth
 	// ErrorTypeQuery indicates a query/syntax error.
 	ErrorTypeQuery
+	// ErrorTypeRateLimit indicates the upstream throttled the request (e.g. HTTP 429).
+	ErrorTypeRateLimit
 )
 
 // IsTransient returns true if the error is likely transient and worth retrying.
@@ -38,7 +40,7 @@ func IsTransient(err error) bool {
 
 	errType := Classify(err)
 	switch errType {
-	case ErrorTypeConnectivity, ErrorTypeTimeout:
+	case ErrorTypeConnectivity, ErrorTypeTimeout, ErrorTypeRateLimit:
 		return true
 	default:
 		return false
@@ -104,6 +106,20 @@ func Classify(err error) ErrorType {
 		}
 	}
 
+	// Rate-limit patterns (upstream throttling, e.g. an external RPC returning 429).
+	// These are transient and self-healing — worth retrying, not worth paging on.
+	rateLimitPatterns := []string{
+		"rate limited",
+		"too many requests",
+		"status 429",
+	}
+
+	for _, pattern := range rateLimitPatterns {
+		if strings.Contains(errStr, pattern) {
+			return ErrorTypeRateLimit
+		}
+	}
+
 	// Auth patterns
 	authPatterns := []string{
 		"unauthorized",
@@ -149,6 +165,8 @@ func UserMessage(err error) string {
 		return "Database temporarily unavailable. Please try again in a moment."
 	case ErrorTypeTimeout:
 		return "Request timed out. Please try again."
+	case ErrorTypeRateLimit:
+		return "Upstream is rate limiting requests. Please try again in a moment."
 	case ErrorTypeAuth:
 		return "Database authentication error. Please contact support."
 	case ErrorTypeQuery:

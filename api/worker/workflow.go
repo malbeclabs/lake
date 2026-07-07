@@ -11,6 +11,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/malbeclabs/lake/api/handlers"
+	"github.com/malbeclabs/lake/api/handlers/dberror"
 )
 
 const (
@@ -21,6 +22,14 @@ const (
 	fastRefreshInterval    = 3 * time.Second
 	continueAsNewThreshold = 60 // ~30 min at 30s intervals
 	errorAfterFailures     = 3  // log WARN for transient failures, ERROR after this many consecutive failures
+
+	// transientErrorAfterFailures is the ERROR-escalation threshold for transient
+	// causes (upstream connection blips, timeouts, rate limits). It's higher than
+	// errorAfterFailures because a brief transient failure is self-healing and not
+	// actionable — only a sustained one (this many × refreshInterval ≈ 5 min) is
+	// worth paging on. Keeps single/short blips (e.g. a CH connection drop or an
+	// external RPC 429) at WARN so they don't page on-call.
+	transientErrorAfterFailures = 10
 
 	// slowRefreshThreshold surfaces per-entry duration at INFO when a single
 	// cache refresh (query + write) takes at least this long. Normal entries
@@ -248,7 +257,14 @@ func (a *Activities) refresh(parentCtx context.Context, name, key string, fn fun
 				continue
 			}
 			n := a.incFailures(key)
-			if n >= errorAfterFailures {
+			// Transient causes (connection blips, timeouts, upstream 429s) are
+			// self-healing, so only escalate to ERROR once they persist — a brief
+			// blip stays at WARN and doesn't page on-call.
+			threshold := errorAfterFailures
+			if dberror.IsTransient(err) {
+				threshold = transientErrorAfterFailures
+			}
+			if n >= threshold {
 				a.Log.Error("cache refresh failed", "cache", name, "consecutive_failures", n, "error", err)
 			} else {
 				a.Log.Warn("cache refresh failed", "cache", name, "consecutive_failures", n, "error", err)

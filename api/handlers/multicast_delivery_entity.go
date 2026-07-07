@@ -374,6 +374,12 @@ func writeMulticastDeliveryEntityError(w http.ResponseWriter, err error, msg, en
 		http.Error(w, entityKind+" not found", http.StatusNotFound)
 		return
 	}
-	logError(msg, "error", err, "pk", pkOrCode)
+	// Transient CH connection blips are self-healing — log at WARN so they don't
+	// page on-call; reserve ERROR for real (non-transient) query failures.
+	if dberror.IsTransient(err) {
+		logWarn(msg, "error", err, "pk", pkOrCode)
+	} else {
+		logError(msg, "error", err, "pk", pkOrCode)
+	}
 	http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 }
