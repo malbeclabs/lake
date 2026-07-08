@@ -185,3 +185,69 @@ func TestHealthMroute_Classifier(t *testing.T) {
 	assert.True(t, severities["fhr_missing"], "d-sea should report fhr_missing severity")
 	assert.True(t, severities["downstream_missing"], "d-nyc / d-fra should report downstream_missing")
 }
+
+// TestHealthMroute_BgpDownPublisherExcluded verifies a BGP-down publisher is
+// excluded from the active-publisher set, so a (*,G) is not flagged unhealthy
+// for that publisher's legitimately-absent (S,G). A BGP-up publisher with the
+// same missing (S,G) still counts.
+func TestHealthMroute_BgpDownPublisherExcluded(t *testing.T) {
+	info := laketesting.NewClientWithInfo(t, sharedDB)
+	conn, err := info.Client.Conn(t.Context())
+	require.NoError(t, err)
+	defer conn.Close()
+	ctx := t.Context()
+
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_devices_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users, interfaces)
+		VALUES ('dm-lhr', now(), now(), generateUUIDv4(), 0, 1, 'dm-lhr', 'activated', 'edge', 'mlhr-dz001', '', '', '', 0, '[]')`))
+
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_multicast_groups_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
+		VALUES ('grp-mx', now(), now(), generateUUIDv4(), 0, 1,
+			'grp-mx', 'owner', 'test-mroute-bgp', '233.99.99.7', 100000000, 'activated', 2, 0)`))
+
+	// Two publishers, neither with any (S,G): one BGP-down (must be excluded),
+	// one BGP-up (must still count as expected-but-missing).
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_users_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tenant_pk, tunnel_id, publishers, subscribers, bgp_status)
+		VALUES
+			('um-pub-down', now(), now(), generateUUIDv4(), 0, 1, 'um-pub-down', 'o', 'activated', 'multicast', '203.0.113.41', '10.99.7.1', 'dm-lhr', 't1', 511, '["grp-mx"]', '[]', 'down'),
+			('um-pub-up',   now(), now(), generateUUIDv4(), 0, 2, 'um-pub-up',   'o', 'activated', 'multicast', '203.0.113.42', '10.99.7.2', 'dm-lhr', 't1', 512, '["grp-mx"]', '[]', 'up')`))
+
+	// (*,G) on dm-lhr — its health depends on which active publishers' (S,G) are missing.
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_ip_mroute_entries_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			device_pubkey, vrf, mode, group_address, source_address,
+			route_flags, register_in_oif_list, rpf_interface, rpf_rib, rpf_prefix, rpf_preference, rpf_metric,
+			rpf_neighbor, rpf_attached, rpf_has_block, oif_list, oif_count, creation_time)
+		VALUES ('mr-star-mx', now(), now(), generateUUIDv4(), 0, 1,
+			'dm-lhr', 'default', 'sparse', '233.99.99.7', '0.0.0.0',
+			'W', 0, 'Register0', '', '', 0, 0, '', 0, 0, '["Tunnel601"]', 1, now())`))
+
+	require.NoError(t, conn.Exec(ctx, `SYSTEM REFRESH VIEW dz_device_interface_ips`))
+	require.NoError(t, conn.Exec(ctx, `SYSTEM WAIT VIEW dz_device_interface_ips`))
+
+	var (
+		status      string
+		activeCount uint64
+		missing     []string
+	)
+	rows, err := conn.Query(ctx, `
+		SELECT health_status, active_publisher_count, missing_publisher_ips
+		FROM health_mroute
+		WHERE multicast_group_pk = 'grp-mx' AND source_address = '0.0.0.0'`)
+	require.NoError(t, err)
+	defer rows.Close()
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&status, &activeCount, &missing))
+
+	// Only the BGP-up publisher counts: active_publisher_count = 1, and the
+	// BGP-down publisher's IP is not in missing_publisher_ips.
+	assert.EqualValues(t, 1, activeCount, "BGP-down publisher excluded from active set")
+	assert.NotContains(t, missing, "10.99.7.1", "BGP-down publisher must not be flagged missing")
+	assert.Contains(t, missing, "10.99.7.2", "BGP-up publisher with no (S,G) is still missing")
+	assert.Equal(t, "unhealthy", status)
+}
