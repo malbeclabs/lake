@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/malbeclabs/lake/api/handlers/dberror"
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -267,13 +266,7 @@ func (a *API) GetValidators(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		// A transient CH connection drop mid-iteration is self-healing — log at
-		// WARN so it doesn't page on-call; reserve ERROR for real failures.
-		if dberror.IsTransient(err) {
-			logWarn("validators rows iteration failed", "error", err)
-		} else {
-			logError("validators rows iteration failed", "error", err)
-		}
+		logError("validators rows iteration failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
