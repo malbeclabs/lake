@@ -1,4 +1,5 @@
-import type { LinkDetail } from '@/lib/api'
+import type { LinkDetail, TopologyLink } from '@/lib/api'
+import type { LinkInfo } from '@/components/topology/types'
 import type { LinkInfoData } from './LinkInfoContent'
 
 /**
@@ -44,6 +45,60 @@ export function linkDetailToInfo(link: LinkDetail): LinkInfoData {
     isisDelayOverrideNs: link.isis_delay_override_ns,
     linkTopologies: link.link_topologies ?? [],
     unicastDrained: link.unicast_drained ?? false,
+  }
+}
+
+/**
+ * Convert TopologyLink (from /api/topology) to the shared LinkInfo consumed
+ * by the map/globe/graph link drawers. Single mapping point so API fields
+ * (e.g. link_topologies) reach every view.
+ */
+export function topologyLinkToLinkInfo(
+  link: TopologyLink,
+  health?: { status: string; committedRttNs: number; slaRatio: number; lossPct: number }
+): LinkInfo {
+  return {
+    pk: link.pk,
+    code: link.code || `${link.side_a_code || 'Unknown'} — ${link.side_z_code || 'Unknown'}`,
+    status: link.status,
+    linkType: link.link_type || 'unknown',
+    bandwidthBps: link.bandwidth_bps ?? 0,
+    latencyUs: link.latency_us ?? 0,
+    jitterUs: link.jitter_us ?? 0,
+    latencyAtoZUs: link.latency_a_to_z_us ?? 0,
+    jitterAtoZUs: link.jitter_a_to_z_us ?? 0,
+    latencyZtoAUs: link.latency_z_to_a_us ?? 0,
+    jitterZtoAUs: link.jitter_z_to_a_us ?? 0,
+    lossPercent: link.loss_percent ?? 0,
+    inBps: link.in_bps ?? 0,
+    outBps: link.out_bps ?? 0,
+    deviceAPk: link.side_a_pk || '',
+    deviceACode: link.side_a_code || 'Unknown',
+    interfaceAName: link.side_a_iface_name || '',
+    interfaceAIP: link.side_a_ip || '',
+    deviceZPk: link.side_z_pk || '',
+    deviceZCode: link.side_z_code || 'Unknown',
+    interfaceZName: link.side_z_iface_name || '',
+    interfaceZIP: link.side_z_ip || '',
+    contributorPk: link.contributor_pk || '',
+    contributorCode: link.contributor_code || '',
+    sideAContributorPk: link.side_a_contributor_pk || '',
+    sideAContributorCode: link.side_a_contributor_code || '',
+    sideZContributorPk: link.side_z_contributor_pk || '',
+    sideZContributorCode: link.side_z_contributor_code || '',
+    sampleCount: link.sample_count ?? 0,
+    committedRttNs: link.committed_rtt_ns ?? 0,
+    isisDelayOverrideNs: link.isis_delay_override_ns ?? 0,
+    linkTopologies: link.link_topologies,
+    unicastDrained: link.unicast_drained,
+    health: health
+      ? {
+          status: health.status,
+          committedRttNs: health.committedRttNs,
+          slaRatio: health.slaRatio,
+          lossPct: health.lossPct,
+        }
+      : undefined,
   }
 }
 

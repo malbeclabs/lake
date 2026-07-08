@@ -9,6 +9,7 @@ import { fetchISISPaths, fetchISISTopology, fetchCriticalLinks, fetchSimulateLin
 import { useTopology, useMulticastState, TopologyControlBar, TopologyPanel, DeviceDetails, LinkDetails, MetroDetails, ValidatorDetails, EntityLink as TopologyEntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, ValidatorsOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, LINK_TYPE_COLORS, MULTICAST_PUBLISHER_COLORS, type DeviceOption, type MetroOption } from '@/components/topology'
 import type { LinkInfo, SelectedItemData } from '@/components/topology'
 import { formatBandwidth, formatTrafficRate } from '@/components/topology'
+import { topologyLinkToLinkInfo } from '@/components/shared/link-info-converters'
 
 // Path colors for multi-path visualization
 const PATH_COLORS = [
@@ -783,27 +784,10 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   }, [selection, selectedItem])
 
   // Build link info for panel/hover
-  const buildLinkInfo = useCallback((link: TopologyLink): LinkInfo => {
-    const healthInfo = linkSlaStatus.get(link.pk)
-    return {
-      pk: link.pk, code: link.code, status: link.status, linkType: link.link_type,
-      bandwidthBps: link.bandwidth_bps, latencyUs: link.latency_us,
-      jitterUs: link.jitter_us ?? 0, latencyAtoZUs: link.latency_a_to_z_us,
-      jitterAtoZUs: link.jitter_a_to_z_us ?? 0, latencyZtoAUs: link.latency_z_to_a_us,
-      jitterZtoAUs: link.jitter_z_to_a_us ?? 0, lossPercent: link.loss_percent ?? 0,
-      inBps: link.in_bps, outBps: link.out_bps,
-      deviceAPk: link.side_a_pk, deviceACode: link.side_a_code || 'Unknown',
-      interfaceAName: link.side_a_iface_name || '', interfaceAIP: link.side_a_ip || '',
-      deviceZPk: link.side_z_pk, deviceZCode: link.side_z_code || 'Unknown',
-      interfaceZName: link.side_z_iface_name || '', interfaceZIP: link.side_z_ip || '',
-      contributorPk: link.contributor_pk, contributorCode: link.contributor_code,
-      sideAContributorPk: link.side_a_contributor_pk || '', sideAContributorCode: link.side_a_contributor_code || '',
-      sideZContributorPk: link.side_z_contributor_pk || '', sideZContributorCode: link.side_z_contributor_code || '',
-      sampleCount: link.sample_count ?? 0, committedRttNs: link.committed_rtt_ns,
-      isisDelayOverrideNs: link.isis_delay_override_ns,
-      health: healthInfo ? { status: healthInfo.status, committedRttNs: healthInfo.committedRttNs, slaRatio: healthInfo.slaRatio, lossPct: healthInfo.lossPct } : undefined,
-    }
-  }, [linkSlaStatus])
+  const buildLinkInfo = useCallback(
+    (link: TopologyLink): LinkInfo => topologyLinkToLinkInfo(link, linkSlaStatus.get(link.pk)),
+    [linkSlaStatus]
+  )
 
   // ─── Dimension tracking ──────────────────────────────────────────────
 
