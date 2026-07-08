@@ -26,7 +26,7 @@ const HEALTH_PATHS_SEARCH_PARAM = 'hpaths'
 // Field prefixes for the per-user table filter.
 const healthUserFieldPrefixes = [
   { prefix: 'device:', description: 'Filter by device code (e.g. nyc001)' },
-  { prefix: 'status:', description: 'Filter by health status (healthy, degraded, unhealthy, unknown)' },
+  { prefix: 'status:', description: 'Filter by health status (healthy, degraded, unhealthy, disconnected, unknown)' },
   { prefix: 'mode:', description: 'Mode: P, S, or P+S' },
   { prefix: 'tunnel:', description: 'Tunnel id (exact match)' },
   { prefix: 'user:', description: "Match user account or owner pubkey" },
@@ -39,7 +39,7 @@ const healthPathFieldPrefixes = [
   { prefix: 'publisher:', description: 'Match the publisher side (pk/owner/ip/device)' },
   { prefix: 'subscriber:', description: 'Match the subscriber side (pk/owner/ip/device)' },
   { prefix: 'device:', description: 'Match either publisher or subscriber device' },
-  { prefix: 'status:', description: 'Filter by health status (healthy, degraded, unhealthy, unknown)' },
+  { prefix: 'status:', description: 'Filter by health status (healthy, degraded, unhealthy, disconnected, unknown)' },
   { prefix: 'user:', description: 'Match either side\'s account or owner pubkey' },
   { prefix: 'owner:', description: 'Match either side\'s owner pubkey' },
   { prefix: 'ip:', description: "Match either side's dz_ip" },
@@ -164,6 +164,7 @@ const STATUS_BADGE: Record<MulticastHealthStatus, string> = {
   healthy: 'bg-emerald-500/15 text-emerald-500',
   degraded: 'bg-amber-500/15 text-amber-500',
   unhealthy: 'bg-red-500/15 text-red-500',
+  disconnected: 'bg-sky-500/15 text-sky-500',
   unknown: 'bg-muted text-muted-foreground',
 }
 
@@ -171,6 +172,7 @@ const STATUS_DOT: Record<MulticastHealthStatus, string> = {
   healthy: 'bg-emerald-500',
   degraded: 'bg-amber-500',
   unhealthy: 'bg-red-500',
+  disconnected: 'bg-sky-500',
   unknown: 'bg-muted-foreground',
 }
 
@@ -178,6 +180,7 @@ const STATUS_DEFINITIONS: Array<{ status: MulticastHealthStatus; short: string }
   { status: 'healthy', short: 'control plane reconciles AND subscriber TX matches sum of publishers (±5% / 1 Mbps)' },
   { status: 'degraded', short: 'control plane reconciles but rates diverge, or partial control plane reconciliation' },
   { status: 'unhealthy', short: 'no (S,G) mroute, or rates diverge under a degraded control plane' },
+  { status: 'disconnected', short: "user's onchain BGP session is down — not connected, so no (S,G)/OIF is expected (not a forwarding fault)" },
   { status: 'unknown', short: 'no counter data, or no traffic flowing in the 5-min window' },
 ]
 
@@ -253,6 +256,7 @@ const DIM_BADGE_CLASS: Record<string, string> = {
   degraded: 'bg-amber-500/15 text-amber-500',
   mismatch: 'bg-red-500/15 text-red-500',
   unhealthy: 'bg-red-500/15 text-red-500',
+  disconnected: 'bg-sky-500/15 text-sky-500',
   unknown: 'bg-muted text-muted-foreground',
   idle: 'bg-muted text-muted-foreground',
   no_data: 'bg-muted text-muted-foreground',

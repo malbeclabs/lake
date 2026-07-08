@@ -31,6 +31,7 @@ const STATUS_BADGE: Record<MulticastHealthStatus, string> = {
   healthy: 'bg-emerald-500/15 text-emerald-500',
   degraded: 'bg-amber-500/15 text-amber-500',
   unhealthy: 'bg-red-500/15 text-red-500',
+  disconnected: 'bg-sky-500/15 text-sky-500',
   unknown: 'bg-muted text-muted-foreground',
 }
 
@@ -98,6 +99,7 @@ function worstHealth(counts?: MulticastEntityHealthStatusCounts): MulticastHealt
   if (counts.unhealthy > 0) return 'unhealthy'
   if (counts.degraded > 0) return 'degraded'
   if (counts.unknown > 0) return 'unknown'
+  if (counts.disconnected > 0) return 'disconnected'
   return 'healthy'
 }
 
@@ -127,6 +129,7 @@ function HealthCountsStrip({ counts, compact = false }: { counts?: MulticastEnti
     ['unhealthy', counts.unhealthy],
     ['degraded', counts.degraded],
     ['unknown', counts.unknown],
+    ['disconnected', counts.disconnected],
     ['healthy', counts.healthy],
   ]
   return (
