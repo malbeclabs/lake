@@ -190,7 +190,8 @@ func (a *API) queryMulticastHealthPaths(ctx context.Context, groupPK, search str
 			multiIf(health_status = 'unhealthy', 0,
 			        health_status = 'degraded',  1,
 			        health_status = 'unknown',   2,
-			                                     3),
+			        health_status = 'disconnected', 3,
+			                                     4),
 			publisher_dz_ip, subscriber_device_code, subscriber_user_pk` + limitClause + `
 		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0
 	`

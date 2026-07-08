@@ -208,6 +208,8 @@ func addStatusCount(bucket *MulticastHealthStatusCounts, status string, n uint64
 		bucket.Degraded += n
 	case "unhealthy":
 		bucket.Unhealthy += n
+	case "disconnected":
+		bucket.Disconnected += n
 	case "unknown":
 		bucket.Unknown += n
 	}

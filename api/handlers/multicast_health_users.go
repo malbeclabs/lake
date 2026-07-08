@@ -235,13 +235,16 @@ func (a *API) queryMulticastHealthUsers(ctx context.Context, whereClause string,
 			health_status
 		FROM health_multicast_user_rate
 		WHERE ` + whereClause + `
-		-- Sort actionable rows first (unhealthy → degraded → unknown → healthy)
-		-- so paginated consumers land on the rows operators most need to see.
+		-- Sort actionable rows first (unhealthy → degraded → unknown →
+		-- disconnected → healthy) so paginated consumers land on the rows
+		-- operators most need to see. 'disconnected' is a client-side BGP
+		-- outage, not a network fault, so it sorts below unknown.
 		ORDER BY
 			multiIf(health_status = 'unhealthy', 0,
 			        health_status = 'degraded',  1,
 			        health_status = 'unknown',   2,
-			                                     3),
+			        health_status = 'disconnected', 3,
+			                                     4),
 			multicast_group_code, user_pk` + limitClause + `
 		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0
 	`

@@ -140,11 +140,12 @@ type MulticastDeliveryLink struct {
 }
 
 type MulticastEntityHealthStatusCounts struct {
-	Healthy   uint64 `json:"healthy"`
-	Degraded  uint64 `json:"degraded"`
-	Unhealthy uint64 `json:"unhealthy"`
-	Unknown   uint64 `json:"unknown"`
-	Total     uint64 `json:"total"`
+	Healthy      uint64 `json:"healthy"`
+	Degraded     uint64 `json:"degraded"`
+	Unhealthy    uint64 `json:"unhealthy"`
+	Disconnected uint64 `json:"disconnected"`
+	Unknown      uint64 `json:"unknown"`
+	Total        uint64 `json:"total"`
 }
 
 type MulticastDeliveryDeviceSummary struct {
