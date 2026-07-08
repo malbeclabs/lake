@@ -137,6 +137,10 @@ type User struct {
 	TunnelID    uint16
 	Publishers  []string // multicast group PKs this user publishes to
 	Subscribers []string // multicast group PKs this user subscribes to
+	// BGP session state as last reported by the device agent (onchain).
+	BgpStatus         string // "up" | "down" | "unknown"
+	LastBgpUpAt       uint64 // ledger slot of the most recent BGP up event
+	LastBgpReportedAt uint64 // ledger slot of the most recent BGP status report
 }
 
 type MulticastGroup struct {
@@ -542,17 +546,20 @@ func convertUsers(onchain []serviceability.User) []User {
 		}
 
 		result[i] = User{
-			PK:          solana.PublicKeyFromBytes(user.PubKey[:]).String(),
-			OwnerPubkey: solana.PublicKeyFromBytes(user.Owner[:]).String(),
-			Status:      statusString(user.Status),
-			Kind:        user.UserType.String(),
-			ClientIP:    net.IP(user.ClientIp[:]),
-			DZIP:        net.IP(user.DzIp[:]),
-			DevicePK:    solana.PublicKeyFromBytes(user.DevicePubKey[:]).String(),
-			TenantPK:    solana.PublicKeyFromBytes(user.TenantPubKey[:]).String(),
-			TunnelID:    user.TunnelId,
-			Publishers:  publishers,
-			Subscribers: subscribers,
+			PK:                solana.PublicKeyFromBytes(user.PubKey[:]).String(),
+			OwnerPubkey:       solana.PublicKeyFromBytes(user.Owner[:]).String(),
+			Status:            statusString(user.Status),
+			Kind:              user.UserType.String(),
+			ClientIP:          net.IP(user.ClientIp[:]),
+			DZIP:              net.IP(user.DzIp[:]),
+			DevicePK:          solana.PublicKeyFromBytes(user.DevicePubKey[:]).String(),
+			TenantPK:          solana.PublicKeyFromBytes(user.TenantPubKey[:]).String(),
+			TunnelID:          user.TunnelId,
+			Publishers:        publishers,
+			Subscribers:       subscribers,
+			BgpStatus:         serviceability.BGPStatus(user.BgpStatus).String(),
+			LastBgpUpAt:       user.LastBgpUpAt,
+			LastBgpReportedAt: user.LastBgpReportedAt,
 		}
 	}
 	return result

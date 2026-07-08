@@ -236,6 +236,35 @@ func TestLake_Serviceability_View_ConvertUsers(t *testing.T) {
 		require.Equal(t, "activated", result[0].Status)
 		require.Equal(t, "ibrl", result[0].Kind)
 	})
+
+	t.Run("maps onchain BGP session state", func(t *testing.T) {
+		t.Parallel()
+
+		onchain := []serviceability.User{
+			{
+				PubKey:            [32]byte{1},
+				Status:            serviceability.UserStatusActivated,
+				UserType:          serviceability.UserTypeMulticast,
+				BgpStatus:         uint8(serviceability.BGPStatusDown),
+				LastBgpUpAt:       12345,
+				LastBgpReportedAt: 67890,
+			},
+			{
+				PubKey:    [32]byte{2},
+				Status:    serviceability.UserStatusActivated,
+				UserType:  serviceability.UserTypeMulticast,
+				BgpStatus: uint8(serviceability.BGPStatusUp),
+			},
+		}
+
+		result := convertUsers(onchain)
+
+		require.Len(t, result, 2)
+		require.Equal(t, "down", result[0].BgpStatus)
+		require.Equal(t, uint64(12345), result[0].LastBgpUpAt)
+		require.Equal(t, uint64(67890), result[0].LastBgpReportedAt)
+		require.Equal(t, "up", result[1].BgpStatus)
+	})
 }
 
 func TestLake_Serviceability_View_ConvertMetros(t *testing.T) {

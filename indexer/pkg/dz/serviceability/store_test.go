@@ -329,6 +329,64 @@ func TestLake_Serviceability_Store_ReplaceUsers(t *testing.T) {
 		require.Equal(t, "10.0.0.2", current["dz_ip"])
 		require.Equal(t, devicePK, current["device_pk"])
 	})
+
+	t.Run("persists onchain BGP status through to dz_users_current", func(t *testing.T) {
+		t.Parallel()
+
+		db := testClient(t)
+		log := laketesting.NewLogger()
+		ctx := t.Context()
+
+		store, err := NewStore(StoreConfig{
+			Logger:     log,
+			ClickHouse: db,
+		})
+		require.NoError(t, err)
+
+		userPK := testPK(10)
+
+		users := []User{
+			{
+				PK:                userPK,
+				OwnerPubkey:       testPK(11),
+				Status:            "activated",
+				Kind:              "multicast",
+				ClientIP:          net.IP{10, 0, 0, 1},
+				DZIP:              net.IP{10, 0, 0, 2},
+				DevicePK:          testPK(12),
+				TunnelID:          505,
+				BgpStatus:         "down",
+				LastBgpUpAt:       12345,
+				LastBgpReportedAt: 67890,
+			},
+		}
+
+		err = store.ReplaceUsers(ctx, users)
+		require.NoError(t, err)
+
+		conn, err := db.Conn(ctx)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		// The dz_users_current view (recreated by the migration) must expose the
+		// BGP columns.
+		rows, err := conn.Query(ctx,
+			"SELECT bgp_status, last_bgp_up_at, last_bgp_reported_at FROM dz_users_current WHERE pk = ?",
+			userPK)
+		require.NoError(t, err)
+		defer rows.Close()
+
+		require.True(t, rows.Next(), "expected a dz_users_current row for the user")
+		var (
+			bgpStatus         string
+			lastBgpUpAt       uint64
+			lastBgpReportedAt uint64
+		)
+		require.NoError(t, rows.Scan(&bgpStatus, &lastBgpUpAt, &lastBgpReportedAt))
+		require.Equal(t, "down", bgpStatus)
+		require.Equal(t, uint64(12345), lastBgpUpAt)
+		require.Equal(t, uint64(67890), lastBgpReportedAt)
+	})
 }
 
 func TestLake_Serviceability_Store_ReplaceLinks(t *testing.T) {
