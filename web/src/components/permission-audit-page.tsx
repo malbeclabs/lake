@@ -2,7 +2,22 @@ import { useQuery } from '@tanstack/react-query'
 import { Loader2, ShieldCheck, AlertCircle } from 'lucide-react'
 import { fetchPermissionAudit, type PermissionAuditEvent } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useEnv } from '@/contexts/EnvContext'
 import { CopyableText } from '@/components/copyable-text'
+
+// Permission events live on the DoubleZero ledger (a Solana-fork sidechain), not
+// Solana mainnet — so solscan can't resolve them. Point the Solana Explorer at the
+// per-env ledger RPC via its custom-cluster support.
+const LEDGER_RPC_URL_BY_ENV: Record<string, string> = {
+  'mainnet-beta': 'https://doublezero-mainnet-beta.rpcpool.com/db336024-e7a8-46b1-80e5-352dd77060ab',
+  testnet: 'https://doublezerolocalnet.rpcpool.com/8a4fd3f4-0977-449f-88c7-63d4b0f10f16',
+  devnet: 'https://doublezerolocalnet.rpcpool.com/8a4fd3f4-0977-449f-88c7-63d4b0f10f16',
+}
+
+function txExplorerUrl(txSignature: string, env: string): string {
+  const rpcUrl = LEDGER_RPC_URL_BY_ENV[env] ?? LEDGER_RPC_URL_BY_ENV['mainnet-beta']
+  return `https://explorer.solana.com/tx/${txSignature}?cluster=custom&customUrl=${encodeURIComponent(rpcUrl)}`
+}
 
 function shortPubkey(pk: string): string {
   if (!pk) return '—'
@@ -59,6 +74,7 @@ function FlagList({ names, tone }: { names: string; tone: 'add' | 'remove' }) {
 
 export function PermissionAuditPage() {
   useDocumentTitle('Permission Audit')
+  const { env } = useEnv()
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['permission-audit'],
@@ -139,7 +155,7 @@ export function PermissionAuditPage() {
                   <td className="px-4 py-2.5"><FlagList names={e.permissionsRemoved} tone="remove" /></td>
                   <td className="px-4 py-2.5 text-sm font-mono">
                     <a
-                      href={`https://solscan.io/tx/${e.txSignature}`}
+                      href={txExplorerUrl(e.txSignature, env)}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-purple-500 hover:underline"
