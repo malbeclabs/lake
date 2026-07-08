@@ -13,7 +13,15 @@ import (
 
 // ScanCursor is the newest signature already scanned for a watched program. Empty when
 // nothing has been scanned yet (first run / after truncate), which triggers a full sweep.
+// Used only by the full-program backfill scan.
 type ScanCursor struct {
+	TxSignature string
+	Slot        uint64
+}
+
+// HighWaterMark is the newest signature/slot already indexed for a single Permission PDA.
+// Used by the steady-state per-account watch to resume incrementally.
+type HighWaterMark struct {
 	TxSignature string
 	Slot        uint64
 }
@@ -99,6 +107,49 @@ func (s *Store) SetScanCursor(ctx context.Context, programPK string, cur ScanCur
 		return fmt.Errorf("failed to write scan cursor: %w", err)
 	}
 	return nil
+}
+
+// GetHighWaterMarks returns the newest indexed signature/slot per Permission PDA, derived
+// from the fact table. Every permission event for a PDA lands in the fact table, so
+// max(slot) per permission_pk is where the per-account watch resumes.
+func (s *Store) GetHighWaterMarks(ctx context.Context) (map[string]HighWaterMark, error) {
+	conn, err := s.cfg.ClickHouse.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ClickHouse connection: %w", err)
+	}
+
+	const query = `
+		SELECT permission_pk, tx_signature, slot
+		FROM fact_dz_permission_events
+		WHERE (permission_pk, slot) IN (
+			SELECT permission_pk, max(slot)
+			FROM fact_dz_permission_events
+			GROUP BY permission_pk
+		)
+		ORDER BY permission_pk, slot DESC, tx_signature DESC
+	`
+	rows, err := conn.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query high water marks: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]HighWaterMark)
+	for rows.Next() {
+		var pk, txSig string
+		var slot uint64
+		if err := rows.Scan(&pk, &txSig, &slot); err != nil {
+			return nil, fmt.Errorf("failed to scan high water mark row: %w", err)
+		}
+		// Keep the first (newest, by ORDER BY) row per PDA.
+		if _, ok := result[pk]; !ok {
+			result[pk] = HighWaterMark{TxSignature: txSig, Slot: slot}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating high water marks: %w", err)
+	}
+	return result, nil
 }
 
 // InsertEvents writes permission event rows to ClickHouse.

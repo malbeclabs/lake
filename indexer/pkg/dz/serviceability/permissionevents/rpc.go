@@ -1,8 +1,20 @@
 package permissionevents
 
-import "github.com/malbeclabs/lake/indexer/pkg/sol"
+import (
+	"context"
 
-// SolanaRPC abstracts the Solana RPC methods needed for fetching serviceability
-// transaction history. It aliases the shared sol.TxHistoryRPC so the escrowevents
-// and permissionevents indexers stay on one interface. Satisfied by *rpc.Client.
-type SolanaRPC = sol.TxHistoryRPC
+	"github.com/gagliardetto/solana-go"
+	"github.com/gagliardetto/solana-go/rpc"
+	"github.com/malbeclabs/lake/indexer/pkg/sol"
+)
+
+// SolanaRPC is the RPC surface the permission-events indexer needs: the shared tx-history
+// methods (getSignaturesForAddress + getTransaction, via sol.TxHistoryRPC) plus
+// getProgramAccounts for discovering Permission PDAs to watch. Satisfied by *rpc.Client.
+type SolanaRPC interface {
+	sol.TxHistoryRPC
+	GetProgramAccountsWithOpts(ctx context.Context, program solana.PublicKey, opts *rpc.GetProgramAccountsOpts) (rpc.GetProgramAccountsResult, error)
+}
+
+// Compile-time check that *rpc.Client satisfies SolanaRPC.
+var _ SolanaRPC = (*rpc.Client)(nil)

@@ -22,12 +22,16 @@ const (
 	maxConcurrentFetches = 10
 	// maxSignaturesPerRequest is the Solana RPC page limit.
 	maxSignaturesPerRequest = 1000
-	// scanChunkSize is how many signatures are fetched, decoded, and durably written
-	// before the scan cursor is advanced. Chunking (oldest-first) bounds how much work
-	// is lost if the refresh is cancelled — e.g. a first-run full-history sweep that
-	// exceeds the Temporal activity timeout resumes from the last completed chunk instead
-	// of restarting from scratch.
+	// scanChunkSize is how many signatures the full-program backfill scan fetches,
+	// decodes, and durably writes before advancing the program scan cursor. Chunking
+	// (oldest-first) bounds how much work is lost if the backfill is cancelled — a
+	// full-history sweep that exceeds the Temporal activity timeout resumes from the last
+	// completed chunk instead of restarting from scratch.
 	scanChunkSize = 200
+	// permissionAccountType is the serviceability account_type discriminator (first byte
+	// of account data) for Permission accounts — AccountType::Permission = 15 in
+	// state/permission.rs. Used to enumerate Permission PDAs via getProgramAccounts.
+	permissionAccountType byte = 15
 	// metricSource labels this view's refresh metrics.
 	metricSource = "serviceability_permission_events"
 )
@@ -39,10 +43,6 @@ type ViewConfig struct {
 	ProgramID       solana.PublicKey // the serviceability program id
 	RefreshInterval time.Duration
 	ClickHouse      clickhouse.Client
-	// SkipHighWaterMarks ignores the stored scan cursor, forcing a full re-scan of all
-	// history. Used by the backfill command. Existing rows are safely overwritten via
-	// ReplacingMergeTree dedup.
-	SkipHighWaterMarks bool
 }
 
 func (cfg *ViewConfig) Validate() error {
@@ -146,26 +146,22 @@ func (v *View) safeRefresh(ctx context.Context) {
 	}
 }
 
-func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) {
-	return v.refresh(ctx, v.cfg.SkipHighWaterMarks)
-}
-
-// BackfillRefresh runs a full re-scan ignoring the stored cursor. Existing events are
-// safely overwritten via ReplacingMergeTree dedup.
-func (v *View) BackfillRefresh(ctx context.Context) (ingestionlog.RefreshResult, error) {
-	return v.refresh(ctx, true)
-}
-
-// refresh scans the program's transaction history and writes any permission events.
-// ignoreCursor forces a full re-scan (backfill); otherwise it resumes from the stored
-// scan cursor.
+// Refresh is the steady-state refresh. Permission-management instructions are sporadic
+// among a high volume of other serviceability transactions, so instead of fetching every
+// program transaction just to check its variant byte, it watches each Permission account
+// directly:
 //
-// The scan is processed oldest-first in chunks, and the cursor is advanced only after
-// each chunk is durably written. This means (a) a cancelled/timed-out refresh resumes
-// from the last completed chunk rather than restarting, and (b) a transient fetch/decode
-// failure fails the refresh without advancing past the un-indexed signatures, so the
-// events are retried on the next run rather than silently dropped from the audit trail.
-func (v *View) refresh(ctx context.Context, ignoreCursor bool) (ingestionlog.RefreshResult, error) {
+//  1. discover the current Permission PDAs via getProgramAccounts (one cheap call), then
+//  2. per PDA, getSignaturesForAddress since that account's high-water mark and decode only
+//     those transactions.
+//
+// Because a Permission PDA is only ever referenced by permission instructions, this fetches
+// only permission transactions rather than the whole program's history. New grants are
+// picked up once the PDA is discovered (its create tx references the account). The only gap
+// is an account created and deleted between two discovery polls (a deleted account no longer
+// appears in getProgramAccounts) — BackfillRefresh's full-history program scan is the
+// completeness backstop for that.
+func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) {
 	v.refreshMu.Lock()
 	defer v.refreshMu.Unlock()
 
@@ -179,17 +175,107 @@ func (v *View) refresh(ctx context.Context, ignoreCursor bool) (ingestionlog.Ref
 		metrics.ViewRefreshDuration.WithLabelValues(metricSource).Observe(duration.Seconds())
 	}()
 
+	// Discover the Permission accounts to watch.
+	pdas, err := v.discoverPermissionAccounts(ctx)
+	if err != nil {
+		metrics.ViewRefreshTotal.WithLabelValues(metricSource, "error").Inc()
+		return result, fmt.Errorf("discover permission accounts: %w", err)
+	}
+	if len(pdas) == 0 {
+		v.markReady()
+		metrics.ViewRefreshTotal.WithLabelValues(metricSource, "success").Inc()
+		return result, nil
+	}
+
+	// Resume each account from the newest slot already indexed for it. The fact table holds
+	// every permission event for a given PDA, so max(slot) per permission_pk is a sound
+	// per-account cursor (unlike a program-wide scan, which the fact table can't anchor).
+	hwms, err := v.store.GetHighWaterMarks(ctx)
+	if err != nil {
+		metrics.ViewRefreshTotal.WithLabelValues(metricSource, "error").Inc()
+		return result, fmt.Errorf("get high water marks: %w", err)
+	}
+
+	var (
+		mu        sync.Mutex
+		allEvents []PermissionEventRow
+	)
+	var g errgroup.Group
+	g.SetLimit(maxConcurrentFetches)
+	for _, pda := range pdas {
+		g.Go(func() error {
+			events, err := v.fetchAccountEvents(ctx, pda, hwms[pda.String()])
+			if len(events) > 0 {
+				mu.Lock()
+				allEvents = append(allEvents, events...)
+				mu.Unlock()
+			}
+			if err != nil {
+				v.log.Warn("serviceability/permission-events: failed to fetch account",
+					"permission_pk", pda.String(), "error", err)
+				return err
+			}
+			return nil
+		})
+	}
+	fetchErr := g.Wait()
+
+	// Persist whatever decoded cleanly (idempotent via ReplacingMergeTree). Because the
+	// per-account cursor is derived from the fact table, a failed account simply isn't
+	// advanced — it is re-fetched next refresh rather than leaving a silent gap.
+	if err := v.store.InsertEvents(ctx, allEvents); err != nil {
+		metrics.ViewRefreshTotal.WithLabelValues(metricSource, "error").Inc()
+		return result, fmt.Errorf("insert permission events: %w", err)
+	}
+	if fetchErr != nil {
+		metrics.ViewRefreshTotal.WithLabelValues(metricSource, "error").Inc()
+		return result, fmt.Errorf("fetch account events: %w", fetchErr)
+	}
+
+	result.RowsAffected = int64(len(allEvents))
+	fetchedAt := time.Now().UTC()
+	result.SourceMaxEventTS = &fetchedAt
+
+	v.markReady()
+	metrics.ViewRefreshTotal.WithLabelValues(metricSource, "success").Inc()
+
+	if len(allEvents) > 0 {
+		v.log.Info("serviceability/permission-events: indexed new events",
+			"count", len(allEvents), "watched_accounts", len(pdas))
+	}
+	return result, nil
+}
+
+// BackfillRefresh scans the serviceability program's entire transaction history for
+// permission instructions, ignoring the per-account cursors. This is the completeness
+// path: it catches historical events and permission accounts that were created and later
+// deleted (which the steady-state per-account watch can't discover). Existing rows are
+// safely overwritten via ReplacingMergeTree dedup.
+//
+// The scan is processed oldest-first in chunks, advancing a program scan cursor after each
+// chunk is durably written. So (a) a cancelled/timed-out backfill resumes from the last
+// completed chunk rather than restarting, and (b) a transient fetch/decode failure fails
+// the run without advancing past the un-indexed signatures.
+func (v *View) BackfillRefresh(ctx context.Context) (ingestionlog.RefreshResult, error) {
+	v.refreshMu.Lock()
+	defer v.refreshMu.Unlock()
+
+	var result ingestionlog.RefreshResult
+
+	refreshStart := time.Now()
+	v.log.Debug("serviceability/permission-events: backfill started")
+	defer func() {
+		duration := time.Since(refreshStart)
+		v.log.Info("serviceability/permission-events: backfill completed", "duration", duration.String())
+		metrics.ViewRefreshDuration.WithLabelValues(metricSource).Observe(duration.Seconds())
+	}()
+
 	programPK := v.cfg.ProgramID.String()
 
-	// Resolve where to resume from (unless backfilling).
-	var cursor ScanCursor
-	if !ignoreCursor {
-		var err error
-		cursor, err = v.store.GetScanCursor(ctx, programPK)
-		if err != nil {
-			metrics.ViewRefreshTotal.WithLabelValues(metricSource, "error").Inc()
-			return result, fmt.Errorf("get scan cursor: %w", err)
-		}
+	cursor, err := v.store.GetScanCursor(ctx, programPK)
+	if err != nil {
+		metrics.ViewRefreshTotal.WithLabelValues(metricSource, "error").Inc()
+		return result, fmt.Errorf("get scan cursor: %w", err)
 	}
 
 	// Fetch all new signatures for the program, paginating backward to the cursor.
@@ -257,6 +343,84 @@ func (v *View) refresh(ctx context.Context, ignoreCursor bool) (ingestionlog.Ref
 			"count", totalEvents, "scanned_signatures", len(sigs))
 	}
 	return result, nil
+}
+
+// discoverPermissionAccounts returns the current Permission PDAs owned by the serviceability
+// program, via a single getProgramAccounts filtered on the account_type discriminator. The
+// data slice is zero-length: we only need the pubkeys, not the account contents.
+func (v *View) discoverPermissionAccounts(ctx context.Context) ([]solana.PublicKey, error) {
+	zero := uint64(0)
+	res, err := v.cfg.RPC.GetProgramAccountsWithOpts(ctx, v.cfg.ProgramID, &rpc.GetProgramAccountsOpts{
+		Commitment: rpc.CommitmentFinalized,
+		Encoding:   solana.EncodingBase64,
+		DataSlice:  &rpc.DataSlice{Offset: &zero, Length: &zero},
+		Filters: []rpc.RPCFilter{{
+			Memcmp: &rpc.RPCFilterMemcmp{Offset: 0, Bytes: solana.Base58{permissionAccountType}},
+		}},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get program accounts: %w", err)
+	}
+	pdas := make([]solana.PublicKey, 0, len(res))
+	for _, acc := range res {
+		if acc != nil {
+			pdas = append(pdas, acc.Pubkey)
+		}
+	}
+	return pdas, nil
+}
+
+// fetchAccountEvents fetches all transactions touching a single Permission PDA newer than
+// its high-water mark and decodes their permission instructions. A Permission PDA is only
+// referenced by permission instructions, so every signature here yields audit rows.
+func (v *View) fetchAccountEvents(ctx context.Context, pda solana.PublicKey, hwm HighWaterMark) ([]PermissionEventRow, error) {
+	var untilSig solana.Signature
+	if hwm.TxSignature != "" {
+		var err error
+		untilSig, err = solana.SignatureFromBase58(hwm.TxSignature)
+		if err != nil {
+			return nil, fmt.Errorf("invalid high water mark signature %q: %w", hwm.TxSignature, err)
+		}
+	}
+
+	// Paginate backward (via Before) until an empty page — robust to gateways that cap
+	// pages below the requested limit (a short page would otherwise end pagination early).
+	limit := maxSignaturesPerRequest
+	var allSigs []*rpc.TransactionSignature
+	var beforeSig solana.Signature
+	for {
+		opts := &rpc.GetSignaturesForAddressOpts{Commitment: rpc.CommitmentFinalized, Limit: &limit}
+		if !untilSig.IsZero() {
+			opts.Until = untilSig
+		}
+		if !beforeSig.IsZero() {
+			opts.Before = beforeSig
+		}
+		page, err := v.cfg.RPC.GetSignaturesForAddressWithOpts(ctx, pda, opts)
+		if err != nil {
+			return nil, fmt.Errorf("get signatures: %w", err)
+		}
+		if len(page) == 0 {
+			break
+		}
+		allSigs = append(allSigs, page...)
+		beforeSig = page[len(page)-1].Signature
+	}
+	if len(allSigs) == 0 {
+		return nil, nil
+	}
+
+	var events []PermissionEventRow
+	for _, sig := range allSigs {
+		decoded, err := v.decodeTransaction(ctx, sig)
+		if err != nil {
+			// Fail the account so it is retried (cursor is derived from the fact table and
+			// therefore not advanced) rather than silently dropping the event.
+			return events, fmt.Errorf("decode transaction %s: %w", sig.Signature.String(), err)
+		}
+		events = append(events, decoded...)
+	}
+	return events, nil
 }
 
 // decodeChunk fetches and decodes a batch of transactions concurrently. It returns the
