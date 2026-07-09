@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { buildLocationOptions, filterLocations, parseEndpointKind } from './path-calculator'
+import { buildLocationOptions, filterLocations, parseEndpointKind, pickBestPair, filterPairsForDevice } from './path-calculator'
+import type { MetroDevicePairPath } from '@/lib/api'
 
 const metros = [
   { pk: 'm-lon', code: 'lon', name: 'London' },
@@ -58,5 +59,61 @@ describe('parseEndpointKind', () => {
     expect(parseEndpointKind('device')).toBe('device')
     expect(parseEndpointKind(null)).toBe('device')
     expect(parseEndpointKind('')).toBe('device')
+  })
+})
+
+function pair(
+  over: Partial<Omit<MetroDevicePairPath, 'bestPath'>> & { bestPath?: Partial<MetroDevicePairPath['bestPath']> },
+): MetroDevicePairPath {
+  return {
+    sourceDevicePK: 's',
+    sourceDeviceCode: 'src',
+    targetDevicePK: 't',
+    targetDeviceCode: 'tgt',
+    ...over,
+    bestPath: { path: [], totalMetric: 0, hopCount: 0, ...(over.bestPath || {}) },
+  } as MetroDevicePairPath
+}
+
+describe('pickBestPair', () => {
+  it('returns null for no pairs', () => {
+    expect(pickBestPair([])).toBeNull()
+  })
+
+  it('prefers the lowest measured latency when present', () => {
+    const best = pickBestPair([
+      pair({ sourceDevicePK: 'a', bestPath: { measuredLatencyMs: 30, hopCount: 2 } }),
+      pair({ sourceDevicePK: 'b', bestPath: { measuredLatencyMs: 12, hopCount: 4 } }),
+    ])
+    expect(best?.sourceDevicePK).toBe('b')
+  })
+
+  it('falls back to fewest hops, then ISIS metric, when no measured latency', () => {
+    const best = pickBestPair([
+      pair({ sourceDevicePK: 'a', bestPath: { hopCount: 3, totalMetric: 100 } }),
+      pair({ sourceDevicePK: 'b', bestPath: { hopCount: 2, totalMetric: 900 } }),
+      pair({ sourceDevicePK: 'c', bestPath: { hopCount: 2, totalMetric: 400 } }),
+    ])
+    expect(best?.sourceDevicePK).toBe('c')
+  })
+})
+
+describe('filterPairsForDevice', () => {
+  const pairs = [
+    pair({ sourceDevicePK: 'a', targetDevicePK: 'x' }),
+    pair({ sourceDevicePK: 'a', targetDevicePK: 'y' }),
+    pair({ sourceDevicePK: 'b', targetDevicePK: 'x' }),
+  ]
+
+  it('filters by target device (metro→device query)', () => {
+    expect(filterPairsForDevice(pairs, { targetDevicePK: 'x' })).toHaveLength(2)
+  })
+
+  it('filters by source device (device→metro query)', () => {
+    expect(filterPairsForDevice(pairs, { sourceDevicePK: 'a' })).toHaveLength(2)
+  })
+
+  it('returns all pairs when no device constraint given (metro→metro)', () => {
+    expect(filterPairsForDevice(pairs, {})).toHaveLength(3)
   })
 })

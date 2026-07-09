@@ -78,5 +78,35 @@ export function parseEndpointKind(raw: string | null): LocationKind {
   return raw === 'metro' ? 'metro' : 'device'
 }
 
+// Pick the "best" device pair: lowest measured RTT when any pair has it,
+// otherwise fewest hops (ISIS-metric tiebreak).
+export function pickBestPair(pairs: MetroDevicePairPath[]): MetroDevicePairPath | null {
+  if (pairs.length === 0) return null
+  const withLatency = pairs.filter(
+    (p) => typeof p.bestPath.measuredLatencyMs === 'number' && p.bestPath.measuredLatencyMs > 0,
+  )
+  if (withLatency.length > 0) {
+    return [...withLatency].sort(
+      (a, b) => (a.bestPath.measuredLatencyMs as number) - (b.bestPath.measuredLatencyMs as number),
+    )[0]
+  }
+  return [...pairs].sort((a, b) => {
+    if (a.bestPath.hopCount !== b.bestPath.hopCount) return a.bestPath.hopCount - b.bestPath.hopCount
+    return a.bestPath.totalMetric - b.bestPath.totalMetric
+  })[0]
+}
+
+// Restrict metro-device pairs to a specific endpoint device (mixed metro↔device queries).
+export function filterPairsForDevice(
+  pairs: MetroDevicePairPath[],
+  opts: { sourceDevicePK?: string; targetDevicePK?: string },
+): MetroDevicePairPath[] {
+  return pairs.filter((p) => {
+    if (opts.sourceDevicePK && p.sourceDevicePK !== opts.sourceDevicePK) return false
+    if (opts.targetDevicePK && p.targetDevicePK !== opts.targetDevicePK) return false
+    return true
+  })
+}
+
 // Re-exported for Task 2 consumers; kept here so all path-calc logic lives in one module.
 export type { MetroDevicePairPath, SinglePath }
