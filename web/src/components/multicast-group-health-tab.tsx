@@ -256,17 +256,13 @@ function rowReason(item: MulticastHealthUserItem): string {
 // the combined-verdict hover-card on the Status column.
 const DIM_BADGE_CLASS: Record<string, string> = {
   healthy: 'bg-emerald-500/15 text-emerald-500',
-  reconciled: 'bg-emerald-500/15 text-emerald-500',
   active: 'bg-emerald-500/15 text-emerald-500',
   degraded: 'bg-amber-500/15 text-amber-500',
-  mismatch: 'bg-red-500/15 text-red-500',
+  idle: 'bg-amber-500/15 text-amber-500',
   unhealthy: 'bg-red-500/15 text-red-500',
   disconnected: 'bg-sky-500/15 text-sky-500',
   unknown: 'bg-muted text-muted-foreground',
-  idle: 'bg-muted text-muted-foreground',
   no_data: 'bg-muted text-muted-foreground',
-  monitoring_gap: 'bg-muted text-muted-foreground',
-  group_idle: 'bg-muted text-muted-foreground',
 }
 
 function DimBadge({ value }: { value: string }) {

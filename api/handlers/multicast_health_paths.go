@@ -138,12 +138,20 @@ func (a *API) GetMulticastGroupHealthPathRootCauses(w http.ResponseWriter, r *ht
 	})
 }
 
-// queryMulticastHealthPathRootCauses attributes every non-healthy path to the
-// endpoint(s) that are not observed. A BGP-down endpoint has no session, so no
-// (S,G)/OIF, so its *_endpoint_observed is false — meaning this single filter
-// catches both 'unhealthy' (endpoint present but not forwarding) and
-// 'disconnected' (BGP down) attributions. endpoint_status reports the
-// endpoint's own condition (disconnected if its BGP is down, else unhealthy).
+// queryMulticastHealthPathRootCauses attributes every non-healthy path to a
+// single primary faulting endpoint. A BGP-down endpoint has no session, so no
+// (S,G)/OIF, so its *_endpoint_observed is false — meaning the not-observed
+// filter catches both 'unhealthy' (endpoint present but not forwarding) and
+// 'disconnected' (BGP down). endpoint_status reports the endpoint's own
+// condition (disconnected if its BGP is down, else unhealthy).
+//
+// The subscriber branch additionally requires publisher_endpoint_observed = 1:
+// when a publisher is itself unobserved (e.g. BGP down) there is no (S,G) for
+// that source anywhere, so every one of its subscribers is trivially
+// unobserved too. Attributing those subscribers would re-create the exact
+// fan-out this rollup exists to collapse (1 down publisher → N false
+// subscriber root causes). The fault is upstream, so the pair is attributed
+// to the publisher alone.
 func (a *API) queryMulticastHealthPathRootCauses(ctx context.Context, groupPK string) ([]MulticastHealthPathRootCause, error) {
 	query := `
 		WITH faults AS (
@@ -172,6 +180,7 @@ func (a *API) queryMulticastHealthPathRootCauses(ctx context.Context, groupPK st
 			WHERE multicast_group_pk = ?
 			  AND health_status != 'healthy'
 			  AND subscriber_endpoint_observed = 0
+			  AND publisher_endpoint_observed = 1
 		)
 		SELECT
 			f.faulting_role,

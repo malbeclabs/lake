@@ -314,6 +314,50 @@ func TestGetMulticastGroupHealth_PathRootCauses(t *testing.T) {
 	assert.False(t, hasPub, "observed publisher should not be a root cause")
 }
 
+// TestGetMulticastGroupHealth_PathRootCauses_DownPublisherNoSubscriberFanout
+// pins the primary-endpoint attribution: when a publisher's BGP is down, there
+// is no (S,G) for its source, so every one of its subscribers is trivially
+// unobserved too. The rollup must attribute all those pairs to the publisher
+// alone (1 'disconnected' root cause, affects N) and must NOT emit a false
+// 'unhealthy' root cause per healthy subscriber — otherwise it re-creates the
+// fan-out it exists to collapse.
+func TestGetMulticastGroupHealth_PathRootCauses_DownPublisherNoSubscriberFanout(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertMulticastTestData(t, api)
+
+	// Fresh group-2 with a BGP-down publisher and three BGP-up subscribers.
+	// No mroute fixtures for its address → nothing observed for the group.
+	require.NoError(t, api.DB.Exec(t.Context(), `
+		INSERT INTO dim_dz_multicast_groups_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
+		VALUES ('group-2', now(), now(), generateUUIDv4(), 0, 1, 'group-2', '', 'test-group-2', '233.0.0.2', 100000000, 'activated', 0, 0)`))
+	require.NoError(t, api.DB.Exec(t.Context(), `
+		INSERT INTO dim_dz_users_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id, publishers, subscribers, bgp_status)
+		VALUES
+			('user-pub-down', now(), now(), generateUUIDv4(), 0, 1, 'user-pub-down', 'pubkey-pd', 'activated', 'multicast', '10.0.1.1', '10.0.1.1', 'dev-ams1', 601, '["group-2"]', '[]', 'down'),
+			('user-subA', now(), now(), generateUUIDv4(), 0, 1, 'user-subA', 'pubkey-sa', 'activated', 'multicast', '10.0.1.2', '10.0.1.2', 'dev-nyc1', 602, '[]', '["group-2"]', 'up'),
+			('user-subB', now(), now(), generateUUIDv4(), 0, 1, 'user-subB', 'pubkey-sb', 'activated', 'multicast', '10.0.1.3', '10.0.1.3', 'dev-nyc1', 603, '[]', '["group-2"]', 'up'),
+			('user-subC', now(), now(), generateUUIDv4(), 0, 1, 'user-subC', 'pubkey-sc', 'activated', 'multicast', '10.0.1.4', '10.0.1.4', 'dev-nyc1', 604, '[]', '["group-2"]', 'up')`))
+
+	rr, body := makeGroupHealthRequest(api, "test-group-2", "/health/path-root-causes")
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", string(body))
+
+	var resp handlers.MulticastHealthPathRootCausesResponse
+	require.NoError(t, json.Unmarshal(body, &resp))
+	// Exactly one root cause: the down publisher, owning all 3 pairs. No
+	// per-subscriber fan-out.
+	require.Len(t, resp.Items, 1, "body: %s", string(body))
+	rc := resp.Items[0]
+	assert.Equal(t, "user-pub-down", rc.UserPK)
+	assert.Equal(t, "publisher", rc.FaultingRole)
+	assert.Equal(t, "disconnected", rc.EndpointStatus)
+	assert.EqualValues(t, 3, rc.AffectedPairs)
+}
+
 func TestGetUserHealth_PerGroupRows(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
