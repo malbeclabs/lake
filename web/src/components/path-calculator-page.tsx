@@ -238,7 +238,7 @@ export function PathCalculatorPage() {
   }, [isis, topology])
 
   useEffect(() => {
-    if (initializedFromUrl || options.length === 0) return
+    if (initializedFromUrl || isisLoading || topoLoading) return
     const findOpt = (raw: string | null, kind: 'metro' | 'device') =>
       raw ? options.find((o) => o.kind === kind && (o.pk === raw || o.code === raw)) ?? null : null
     const s = findOpt(searchParams.get('from'), parseEndpointKind(searchParams.get('fromType')))
@@ -246,7 +246,7 @@ export function PathCalculatorPage() {
     if (s) setSource(s)
     if (t) setTarget(t)
     setInitializedFromUrl(true)
-  }, [options, searchParams, initializedFromUrl])
+  }, [options, searchParams, initializedFromUrl, isisLoading, topoLoading])
 
   const writeEndpoint = (
     which: 'from' | 'to',
@@ -359,11 +359,11 @@ export function PathCalculatorPage() {
             <h1 className="text-2xl font-medium">Path Calculator</h1>
           </div>
           <Link
-            to="/topology/map?mode=metro-path"
+            to="/topology/map"
             className="text-sm text-primary hover:underline flex items-center gap-1"
           >
             <MapIcon className="h-4 w-4" />
-            Metro Paths map
+            Open in Map
           </Link>
         </div>
 
@@ -458,7 +458,10 @@ export function PathCalculatorPage() {
               </h2>
               {anyMetro && pairs && pairs.length > 1 && (
                 <button
-                  onClick={() => setShowAllPairs((v) => !v)}
+                  onClick={() => {
+                    setShowAllPairs((v) => !v)
+                    setSelectedPathIndex(0)
+                  }}
                   className="text-sm text-primary hover:underline flex items-center gap-1"
                 >
                   {showAllPairs ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
