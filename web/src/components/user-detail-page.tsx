@@ -30,17 +30,13 @@ const HEALTH_BADGE_CLASS: Record<MulticastHealthStatus, string> = {
 
 const DIM_BADGE_CLASS: Record<string, string> = {
   healthy: 'bg-emerald-500/15 text-emerald-500',
-  reconciled: 'bg-emerald-500/15 text-emerald-500',
   active: 'bg-emerald-500/15 text-emerald-500',
   degraded: 'bg-amber-500/15 text-amber-500',
-  mismatch: 'bg-red-500/15 text-red-500',
+  idle: 'bg-amber-500/15 text-amber-500',
   unhealthy: 'bg-red-500/15 text-red-500',
   disconnected: 'bg-sky-500/15 text-sky-500',
   unknown: 'bg-muted text-muted-foreground',
-  idle: 'bg-muted text-muted-foreground',
   no_data: 'bg-muted text-muted-foreground',
-  monitoring_gap: 'bg-muted text-muted-foreground',
-  group_idle: 'bg-muted text-muted-foreground',
 }
 
 function DimBadge({ value }: { value: string }) {
@@ -213,6 +209,14 @@ function UserTrafficChart({ userPk }: { userPk: string }) {
   const [bucket, setBucket] = useState<string>('auto')
   const [agg, setAgg] = useState<AggMethod>('max')
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+
+  // Scroll into view when linked to with #traffic (e.g. from a multicast
+  // health tab's "traffic" link). Client-side nav doesn't honor the hash.
+  useEffect(() => {
+    if (window.location.hash === '#traffic') {
+      document.getElementById('traffic')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [])
 
   const effectiveBucket = bucket === 'auto' ? resolveAutoBucket(timeRange) : bucket
   const autoBucketLabel = BUCKET_LABELS[resolveAutoBucket(timeRange)] || '5m'
@@ -387,7 +391,7 @@ function UserTrafficChart({ userPk }: { userPk: string }) {
   }, [uplotData, hoveredIdx])
 
   return (
-    <div className="border border-border rounded-lg p-4 bg-card col-span-full group/chart">
+    <div id="traffic" className="border border-border rounded-lg p-4 bg-card col-span-full group/chart scroll-mt-20">
       <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-medium text-muted-foreground">Traffic History</h3>
@@ -793,7 +797,7 @@ export function UserDetailPage() {
             <div className="border border-border rounded-lg p-4 bg-card">
               <h3 className="text-sm font-medium text-muted-foreground mb-1">Multicast Groups</h3>
               <p className="text-xs text-muted-foreground mb-3">
-                Healthy = control plane reconciled with onchain expectation AND data-plane rate matches expected. Hover a badge for the CP × Rate breakdown.
+                Health reflects the control plane reconciled against the onchain expectation. Rate is a presence-only signal (active/idle) and does not affect health. Hover a badge for the breakdown.
               </p>
               <div className="space-y-2">
                 {multicastGroups.map((g) => {

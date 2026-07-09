@@ -77,6 +77,8 @@ func executeRequest(api *handlers.API, req *http.Request, path string) (*httptes
 		api.GetMulticastGroupHealthUsers(rr, req)
 	case "/api/dz/multicast-groups/" + chi.URLParam(req, "pk") + "/health/paths":
 		api.GetMulticastGroupHealthPaths(rr, req)
+	case "/api/dz/multicast-groups/" + chi.URLParam(req, "pk") + "/health/path-root-causes":
+		api.GetMulticastGroupHealthPathRootCauses(rr, req)
 	case "/user-health":
 		api.GetUserHealth(rr, req)
 	}
@@ -189,16 +191,18 @@ func TestGetMulticastGroupHealth_Users(t *testing.T) {
 	require.Len(t, resp.Items, 2)
 	assert.EqualValues(t, 2, resp.Total)
 
-	// Both items should be reconciled on both dimensions.
+	// Rate is presence-only now: both endpoints transmit non-zero, so both are
+	// 'active' and healthy. expected_bps_5m is always nil (reconciliation removed).
 	var pub, sub *handlers.MulticastHealthUserItem
 	for i := range resp.Items {
 		it := &resp.Items[i]
 		assert.True(t, it.Reconciled, "user %s expected reconciled", it.UserPK)
 		assert.Equal(t, "healthy", it.ControlPlaneStatus, "user %s expected CP healthy", it.UserPK)
-		assert.Equal(t, "reconciled", it.RateStatus, "user %s expected rate reconciled", it.UserPK)
+		assert.Equal(t, "active", it.RateStatus, "user %s expected rate active", it.UserPK)
 		assert.Equal(t, "healthy", it.HealthStatus, "user %s expected combined healthy", it.UserPK)
 		assert.NotNil(t, it.ObservedBps5m, "user %s missing observed rate", it.UserPK)
 		assert.NotNil(t, it.RateBucketTS, "user %s missing rate bucket ts", it.UserPK)
+		assert.Nil(t, it.ExpectedBps5m, "user %s expected_bps should be nil (reconciliation removed)", it.UserPK)
 		switch it.Mode {
 		case "P":
 			pub = it
@@ -206,14 +210,11 @@ func TestGetMulticastGroupHealth_Users(t *testing.T) {
 			sub = it
 		}
 	}
-	// Publisher's rate reason is 'active' (transmitting). Subscriber's is 'reconciled'
-	// (TX matches sum of publishers).
+	// Both endpoints are transmitting → both read 'active'.
 	require.NotNil(t, pub)
 	require.NotNil(t, sub)
 	assert.Equal(t, "active", pub.RateStatusReason)
-	assert.Equal(t, "reconciled", sub.RateStatusReason)
-	require.NotNil(t, sub.ExpectedBps5m)
-	assert.InDelta(t, 10_000_000, *sub.ExpectedBps5m, 1)
+	assert.Equal(t, "active", sub.RateStatusReason)
 	assert.InDelta(t, 10_000_000, *sub.ObservedBps5m, 1)
 }
 
@@ -255,6 +256,62 @@ func TestGetMulticastGroupHealth_Paths(t *testing.T) {
 	assert.True(t, resp.Items[0].EndpointsReconciled)
 	assert.Equal(t, "healthy", resp.Items[0].HealthStatus)
 	assert.Equal(t, "endpoints_only", resp.Items[0].VerificationMethod)
+}
+
+// TestGetMulticastGroupHealth_PathRootCauses verifies the fan-out rollup:
+// two extra subscribers of group-1 whose OIF is never observed each make their
+// (user-pub → sub) path non-healthy, and the endpoint should surface each one
+// as a root cause with affected_pairs=1 — user-sub2 as 'unhealthy' (BGP up,
+// just not forwarding) and user-sub3 as 'disconnected' (BGP down). The healthy
+// user-pub → user-sub path contributes no root cause.
+func TestGetMulticastGroupHealth_PathRootCauses(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertMulticastTestData(t, api)
+	insertMulticastHealthFixtures(t, api)
+
+	// Two more subscribers of group-1 on nyc, neither observed in any OIF.
+	// user-sub3's BGP is down → 'disconnected'; user-sub2's is up → 'unhealthy'.
+	require.NoError(t, api.DB.Exec(t.Context(), `
+		INSERT INTO dim_dz_users_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id, publishers, subscribers, bgp_status)
+		VALUES
+			('user-sub2', now(), now(), generateUUIDv4(), 0, 1, 'user-sub2', 'pubkey-sub2', 'activated', 'multicast', '10.0.0.3', '10.0.0.3', 'dev-nyc1', 503, '[]', '["group-1"]', 'up'),
+			('user-sub3', now(), now(), generateUUIDv4(), 0, 1, 'user-sub3', 'pubkey-sub3', 'activated', 'multicast', '10.0.0.4', '10.0.0.4', 'dev-nyc1', 504, '[]', '["group-1"]', 'down')`))
+
+	rr, body := makeGroupHealthRequest(api, "test-group", "/health/path-root-causes")
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", string(body))
+
+	var resp handlers.MulticastHealthPathRootCausesResponse
+	require.NoError(t, json.Unmarshal(body, &resp))
+	assert.Equal(t, "test-group", resp.Group.Code)
+	require.Len(t, resp.Items, 2, "body: %s", string(body))
+	assert.EqualValues(t, 2, resp.Total)
+
+	byUser := map[string]handlers.MulticastHealthPathRootCause{}
+	for _, it := range resp.Items {
+		byUser[it.UserPK] = it
+	}
+
+	sub2, ok := byUser["user-sub2"]
+	require.True(t, ok, "expected user-sub2 root cause, body: %s", string(body))
+	assert.Equal(t, "subscriber", sub2.FaultingRole)
+	assert.Equal(t, "unhealthy", sub2.EndpointStatus)
+	assert.EqualValues(t, 1, sub2.AffectedPairs)
+	assert.Equal(t, "nyc001-dz001", sub2.DeviceCode)
+	assert.EqualValues(t, 503, sub2.TunnelID)
+
+	sub3, ok := byUser["user-sub3"]
+	require.True(t, ok, "expected user-sub3 root cause, body: %s", string(body))
+	assert.Equal(t, "subscriber", sub3.FaultingRole)
+	assert.Equal(t, "disconnected", sub3.EndpointStatus)
+	assert.EqualValues(t, 1, sub3.AffectedPairs)
+
+	// The healthy user-pub → user-sub path must not surface a root cause, and
+	// the observed publisher (user-pub) is never at fault.
+	_, hasPub := byUser["user-pub"]
+	assert.False(t, hasPub, "observed publisher should not be a root cause")
 }
 
 func TestGetUserHealth_PerGroupRows(t *testing.T) {

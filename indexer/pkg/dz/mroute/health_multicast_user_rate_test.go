@@ -8,19 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestHealthMulticastUserRate exercises the rate-reconciliation view across
-// the three publisher rate states (active / idle / no_data) and the four
-// subscriber reasons (reconciled / mismatch / monitoring_gap / group_idle).
-// Three groups are set up:
-//
-//	grp-rate-clean — full counter data; one active publisher, one matched
-//	  subscriber, one mismatched subscriber.
-//	grp-rate-gap — publisher has no counter row in the freshness window;
-//	  subscriber's rate goes to unknown via monitoring_gap.
-//	grp-rate-idle — publisher transmits zero; subscriber's rate goes to
-//	  unknown via group_idle.
-//
-// The combined health_status column is verified against the rollup matrix.
+// TestHealthMulticastUserRate exercises the presence-only rate signal across
+// the three states (active / idle / no_data) and confirms rate never downgrades
+// the control-plane verdict. Every user here has a healthy control plane, so
+// all stay healthy regardless of observed rate; expected_bps_5m is always NULL.
 func TestHealthMulticastUserRate(t *testing.T) {
 	info := laketesting.NewClientWithInfo(t, sharedDB)
 	conn, err := info.Client.Conn(t.Context())
@@ -146,63 +137,67 @@ func TestHealthMulticastUserRate(t *testing.T) {
 		byKey[r.userPK] = r
 	}
 
-	// grp-rate-clean: u-pub-active is transmitting → active → reconciled.
+	// Rate is now a presence-only signal and never downgrades the verdict:
+	// every user here has a healthy control plane, so all are 'healthy'
+	// regardless of observed rate. expected_bps_5m is always NULL (no
+	// reconciliation). See migration 20260709000003.
+
+	// u-pub-active: transmitting → active.
 	pub := byKey["u-pub-active"]
 	assert.Equal(t, "healthy", pub.cp, "publisher CP healthy")
 	assert.Equal(t, "active", pub.reason)
-	assert.Equal(t, "reconciled", pub.rate)
+	assert.Equal(t, "active", pub.rate)
 	require.NotNil(t, pub.observedBps)
 	assert.InDelta(t, 10000000, *pub.observedBps, 1)
+	assert.Nil(t, pub.expectedBps, "expected_bps is no longer computed")
 	assert.Equal(t, "healthy", pub.combined)
 
-	// u-sub-recon: 10 Mbps matches sum-of-publishers = 10 Mbps → reconciled.
+	// u-sub-recon: transmitting → active, healthy.
 	subR := byKey["u-sub-recon"]
-	assert.Equal(t, "reconciled", subR.rate)
-	assert.Equal(t, "reconciled", subR.reason)
+	assert.Equal(t, "active", subR.rate)
+	assert.Equal(t, "active", subR.reason)
 	require.NotNil(t, subR.observedBps)
-	require.NotNil(t, subR.expectedBps)
 	assert.InDelta(t, 10000000, *subR.observedBps, 1)
-	assert.InDelta(t, 10000000, *subR.expectedBps, 1)
+	assert.Nil(t, subR.expectedBps)
 	assert.Equal(t, "healthy", subR.combined)
 
-	// u-sub-mis: 50 Mbps vs expected 10 Mbps → mismatch.
+	// u-sub-mis: high TX (50 Mbps) no longer matters — presence-only, so it is
+	// 'active' and stays healthy (previously this was a false 'degraded').
 	subM := byKey["u-sub-mis"]
-	assert.Equal(t, "mismatch", subM.rate)
-	assert.Equal(t, "mismatch", subM.reason)
+	assert.Equal(t, "active", subM.rate)
+	assert.Equal(t, "active", subM.reason)
 	require.NotNil(t, subM.observedBps)
 	assert.InDelta(t, 50000000, *subM.observedBps, 1)
-	// CP healthy + rate mismatch → combined degraded.
-	assert.Equal(t, "degraded", subM.combined)
+	assert.Equal(t, "healthy", subM.combined, "rate divergence must not downgrade the verdict")
 
-	// grp-rate-gap: publisher has no rate row.
+	// grp-rate-gap: publisher has no counter row → no_data, but CP is healthy.
 	pubNoData := byKey["u-pub-nodata"]
 	assert.Equal(t, "no_data", pubNoData.reason)
 	assert.Equal(t, "unknown", pubNoData.rate)
 	assert.Nil(t, pubNoData.observedBps, "no observed rate when no counter row")
-	assert.Equal(t, "unknown", pubNoData.combined)
+	assert.Equal(t, "healthy", pubNoData.combined)
 
-	// u-sub-gap: subscriber has data but expected is NULL (one+ publisher no_data) → monitoring_gap.
+	// u-sub-gap: subscriber has TX → active; healthy (no more monitoring_gap).
 	subGap := byKey["u-sub-gap"]
-	assert.Equal(t, "monitoring_gap", subGap.reason)
-	assert.Equal(t, "unknown", subGap.rate)
-	assert.Nil(t, subGap.expectedBps, "expected NULL when group has no_data publishers")
-	assert.Equal(t, "unknown", subGap.combined)
+	assert.Equal(t, "active", subGap.reason)
+	assert.Equal(t, "active", subGap.rate)
+	assert.Nil(t, subGap.expectedBps)
+	assert.Equal(t, "healthy", subGap.combined)
 
-	// grp-rate-idle: publisher RX = 0 → idle.
+	// grp-rate-idle: publisher RX = 0 → idle; CP healthy so still healthy.
 	pubIdle := byKey["u-pub-idle"]
 	assert.Equal(t, "idle", pubIdle.reason)
-	assert.Equal(t, "unknown", pubIdle.rate)
+	assert.Equal(t, "idle", pubIdle.rate)
 	require.NotNil(t, pubIdle.observedBps)
 	assert.InDelta(t, 0, *pubIdle.observedBps, 1)
-	assert.Equal(t, "unknown", pubIdle.combined)
+	assert.Equal(t, "healthy", pubIdle.combined)
 
-	// u-sub-idle: expected = 0 (publisher present but transmitting 0) → group_idle.
+	// u-sub-idle: subscriber TX = 0 → idle; CP healthy so still healthy.
 	subIdle := byKey["u-sub-idle"]
-	assert.Equal(t, "group_idle", subIdle.reason)
-	assert.Equal(t, "unknown", subIdle.rate)
-	require.NotNil(t, subIdle.expectedBps)
-	assert.InDelta(t, 0, *subIdle.expectedBps, 1)
-	assert.Equal(t, "unknown", subIdle.combined)
+	assert.Equal(t, "idle", subIdle.reason)
+	assert.Equal(t, "idle", subIdle.rate)
+	assert.Nil(t, subIdle.expectedBps)
+	assert.Equal(t, "healthy", subIdle.combined)
 }
 
 // TestHealthMulticastUserRate_PlusSubscriber covers a dual-role (P+S) user.
@@ -283,13 +278,14 @@ func TestHealthMulticastUserRate_PlusSubscriber(t *testing.T) {
 	require.NoError(t, rows.Err())
 
 	assert.Equal(t, "P+S", mode)
-	assert.Equal(t, "reconciled", reason, "P+S subscriber side reconciles against group_total minus self")
-	assert.Equal(t, "reconciled", rate)
+	// Presence-only: a P+S user transmitting on its tunnel is 'active'; no
+	// reconciliation, so expected_bps is NULL.
+	assert.Equal(t, "active", reason)
+	assert.Equal(t, "active", rate)
 	require.NotNil(t, observed)
-	require.NotNil(t, expected)
-	// Observed = max_out_bps = 5 Mbps; expected = group_total (10M) - self.max_in_bps (5M) = 5M.
+	// Observed = max_out_bps = 5 Mbps.
 	assert.InDelta(t, 5000000, *observed, 1)
-	assert.InDelta(t, 5000000, *expected, 1)
+	assert.Nil(t, expected, "expected_bps is no longer computed")
 }
 
 // TestHealthMulticastUserRate_TunnelReuse verifies the user_pk component
@@ -372,15 +368,13 @@ func TestHealthMulticastUserRate_TunnelReuse(t *testing.T) {
 	assert.InDelta(t, 99000000, observed["u-B"], 1, "u-B keeps its own 99 Mbps")
 }
 
-// TestHealthMulticastUserRate_MultiGroupSubscriberFlaggedDegraded verifies
-// that when one (device, tunnel, user) tuple subscribes to multiple multicast
-// groups — so its per-tunnel TX is a cross-group aggregate — every rate row
-// for that user gets the standard tolerance check applied. The TX includes
-// other groups' traffic, so observed (10 Mbps) exceeds expected (5 Mbps
-// per-group) beyond tolerance and the view flags mismatch → degraded.
-// Operators read this as "user tunnel deviates, investigate" rather than
-// the previous silent fall-through to unknown.
-func TestHealthMulticastUserRate_MultiGroupSubscriberFlaggedDegraded(t *testing.T) {
+// TestHealthMulticastUserRate_MultiGroupSubscriberStaysHealthy verifies that a
+// subscriber whose (device, tunnel, user) tuple joins multiple multicast groups
+// — so its per-tunnel TX is a cross-group aggregate that cannot be attributed
+// per group — stays healthy. Rate reconciliation used to flag this as a false
+// 'mismatch'/'degraded'; presence-only rate reports it as 'active' and lets the
+// control-plane verdict stand.
+func TestHealthMulticastUserRate_MultiGroupSubscriberStaysHealthy(t *testing.T) {
 	info := laketesting.NewClientWithInfo(t, sharedDB)
 	conn, err := info.Client.Conn(t.Context())
 	require.NoError(t, err)
@@ -462,104 +456,17 @@ func TestHealthMulticastUserRate_MultiGroupSubscriberFlaggedDegraded(t *testing.
 	require.Len(t, got, 2, "subscriber should produce one row per group")
 
 	for _, row := range got {
-		// Observed = subscriber tunnel TX (10 Mbps, cross-group aggregate).
-		// Expected = single-group publisher RX (5 Mbps). |10M - 5M| = 5M > 1M tolerance.
-		assert.Equal(t, "mismatch", row.rate, "TX/expected divergence must surface as mismatch (group=%s)", row.group)
-		assert.Equal(t, "mismatch", row.reason, "group=%s", row.group)
+		// The subscriber's tunnel TX (10 Mbps) is a cross-group aggregate that
+		// cannot be attributed per group. Reconciliation used to flag this as a
+		// false 'mismatch'/'degraded'; with presence-only rate it is simply
+		// 'active' and stays healthy (its control plane is fine). No expected_bps.
+		assert.Equal(t, "active", row.rate, "group=%s", row.group)
+		assert.Equal(t, "active", row.reason, "group=%s", row.group)
 		require.NotNil(t, row.observed)
-		require.NotNil(t, row.expected)
 		assert.InDelta(t, 10000000, *row.observed, 1)
-		assert.InDelta(t, 5000000, *row.expected, 1)
-		assert.Equal(t, "degraded", row.combined, "CP healthy + rate mismatch → combined degraded (group=%s)", row.group)
+		assert.Nil(t, row.expected, "group=%s", row.group)
+		assert.Equal(t, "healthy", row.combined, "multi-group aggregate must not degrade the verdict (group=%s)", row.group)
 	}
-}
-
-// TestHealthMulticastUserRate_AmbiguousPublisherFlaggedDegraded verifies
-// that when a group's publisher is multi-group (its per-tunnel RX is a
-// cross-group aggregate that inflates gpt_total_publisher_rx_bps), every
-// single-group subscriber in that group sees observed (their honest
-// per-group TX) < expected (the inflated total) and the standard
-// tolerance check flags mismatch → degraded. This replaces the previous
-// silent fall-through to unknown.
-func TestHealthMulticastUserRate_AmbiguousPublisherFlaggedDegraded(t *testing.T) {
-	info := laketesting.NewClientWithInfo(t, sharedDB)
-	conn, err := info.Client.Conn(t.Context())
-	require.NoError(t, err)
-	defer conn.Close()
-	ctx := t.Context()
-
-	require.NoError(t, conn.Exec(ctx, `
-		INSERT INTO dim_dz_devices_history
-			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
-			 pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users, interfaces)
-		VALUES
-			('d-ap-fhr', now(), now(), generateUUIDv4(), 0, 1, 'd-ap-fhr', 'activated', 'edge', 'ap-fhr-dz1', '', '', '', 0, '[]'),
-			('d-ap-lhr', now(), now(), generateUUIDv4(), 0, 2, 'd-ap-lhr', 'activated', 'edge', 'ap-lhr-dz1', '', '', '', 0, '[]')`))
-
-	require.NoError(t, conn.Exec(ctx, `
-		INSERT INTO dim_dz_multicast_groups_history
-			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
-			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
-		VALUES
-			('grp-ap-X', now(), now(), generateUUIDv4(), 0, 1, 'grp-ap-X', 'o', 'ap-X', '233.99.5.1', 100000000, 'activated', 1, 1),
-			('grp-ap-Y', now(), now(), generateUUIDv4(), 0, 2, 'grp-ap-Y', 'o', 'ap-Y', '233.99.5.2', 100000000, 'activated', 1, 0)`))
-
-	// u-ap-pub publishes to BOTH grp-ap-X and grp-ap-Y over the same tunnel
-	// — its RX is a cross-group aggregate. u-ap-sub is a single-group
-	// subscriber on grp-ap-X only.
-	require.NoError(t, conn.Exec(ctx, `
-		INSERT INTO dim_dz_users_history
-			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
-			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tenant_pk, tunnel_id, publishers, subscribers)
-		VALUES
-			('u-ap-pub', now(), now(), generateUUIDv4(), 0, 1, 'u-ap-pub', 'o', 'activated', 'multicast', '203.0.117.1', '10.99.5.1', 'd-ap-fhr', 't1', 960, '["grp-ap-X","grp-ap-Y"]', '[]'),
-			('u-ap-sub', now(), now(), generateUUIDv4(), 0, 2, 'u-ap-sub', 'o', 'activated', 'multicast', '203.0.117.2', '10.99.5.2', 'd-ap-lhr', 't1', 961, '[]', '["grp-ap-X"]')`))
-
-	require.NoError(t, conn.Exec(ctx, `
-		INSERT INTO dim_dz_ip_mroute_entries_history
-			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
-			 device_pubkey, vrf, mode, group_address, source_address,
-			 route_flags, register_in_oif_list, rpf_interface, rpf_rib, rpf_prefix,
-			 rpf_preference, rpf_metric, rpf_neighbor, rpf_attached, rpf_has_block,
-			 oif_list, oif_count, creation_time)
-		VALUES
-			('mr-ap-fhr-X', now(), now(), generateUUIDv4(), 0, 1, 'd-ap-fhr', 'default', 'sparse', '233.99.5.1', '10.99.5.1', 'SBNP', 0, 'Tunnel960', '', '', 0, 0, '', 0, 0, '', 0, now()),
-			('mr-ap-fhr-Y', now(), now(), generateUUIDv4(), 0, 2, 'd-ap-fhr', 'default', 'sparse', '233.99.5.2', '10.99.5.1', 'SBNP', 0, 'Tunnel960', '', '', 0, 0, '', 0, 0, '', 0, now()),
-			('mr-ap-lhr-X', now(), now(), generateUUIDv4(), 0, 3, 'd-ap-lhr', 'default', 'sparse', '233.99.5.1', '10.99.5.1', 'SMP',  0, 'Port-Channel1', '', '', 0, 0, '', 0, 0, '["Tunnel961"]', 1, now())`))
-
-	// Publisher's tunnel reports 10 Mbps (aggregate of X+Y).
-	// Single-group subscriber tunnel reports 5 Mbps.
-	require.NoError(t, conn.Exec(ctx, `
-		INSERT INTO device_interface_rollup_5m
-			(bucket_ts, device_pk, intf, user_tunnel_id, user_pk, max_in_bps, max_out_bps, ingested_at)
-		VALUES
-			(now() - INTERVAL 1 MINUTE, 'd-ap-fhr', 'Tunnel960', 960, 'u-ap-pub', 10000000, 0,       now()),
-			(now() - INTERVAL 1 MINUTE, 'd-ap-lhr', 'Tunnel961', 961, 'u-ap-sub', 0,        5000000, now())`))
-
-	require.NoError(t, conn.Exec(ctx, `SYSTEM REFRESH VIEW dz_device_interface_ips`))
-	require.NoError(t, conn.Exec(ctx, `SYSTEM WAIT VIEW dz_device_interface_ips`))
-
-	rows2, err := conn.Query(ctx, `
-		SELECT rate_status, rate_status_reason, observed_bps_5m, expected_bps_5m, health_status
-		FROM health_multicast_user_rate
-		WHERE user_pk = 'u-ap-sub' AND multicast_group_pk = 'grp-ap-X'`)
-	require.NoError(t, err)
-	defer rows2.Close()
-	require.True(t, rows2.Next(), "expected one row for u-ap-sub on grp-ap-X")
-
-	var rate, reason, combined string
-	var observed, expected *float64
-	require.NoError(t, rows2.Scan(&rate, &reason, &observed, &expected, &combined))
-	require.NoError(t, rows2.Err())
-	// Observed = honest single-group subscriber TX (5 Mbps).
-	// Expected = publisher's contaminated cross-group RX (10 Mbps). |5M - 10M| = 5M > 1M tolerance.
-	assert.Equal(t, "mismatch", rate, "TX/expected divergence must surface as mismatch")
-	assert.Equal(t, "mismatch", reason)
-	require.NotNil(t, observed)
-	require.NotNil(t, expected)
-	assert.InDelta(t, 5000000, *observed, 1)
-	assert.InDelta(t, 10000000, *expected, 1)
-	assert.Equal(t, "degraded", combined, "CP healthy + rate mismatch → combined degraded")
 }
 
 // TestHealthMulticastUserRate_RollupDedup guards against the
@@ -610,10 +517,8 @@ func TestHealthMulticastUserRate_RollupDedup(t *testing.T) {
 
 	// Insert THREE identical part-row copies for each rollup bucket — emulates
 	// what ReplacingMergeTree leaves on disk before background merges run.
-	// Without dedup in the view, the publisher fan-out would multiply
-	// gpt_total_publisher_rx_bps by 3 (30 Mbps), and the subscriber's
-	// observed (10 Mbps) would be flagged mismatch against the inflated
-	// expected. With dedup, expected == observed == 10 Mbps → reconciled.
+	// Without the argMax dedup in the view, the duplicates would both fan out
+	// into multiple view rows per (user, group, mode) and inflate observed_bps.
 	require.NoError(t, conn.Exec(ctx, `
 		INSERT INTO device_interface_rollup_5m
 			(bucket_ts, device_pk, intf, user_tunnel_id, user_pk, max_in_bps, max_out_bps, ingested_at)
@@ -639,38 +544,32 @@ func TestHealthMulticastUserRate_RollupDedup(t *testing.T) {
 	assert.Equal(t, uint64(2), rowCount,
 		"expected 2 rows (publisher + subscriber); got %d means part-row duplicates fanned out", rowCount)
 
-	// 2. Subscriber's expected_bps_5m must reflect the deduped publisher RX
-	//    (10 Mbps), not the inflated 30 Mbps — so the verdict is healthy,
-	//    not the spurious 'mismatch' the original bug would produce.
+	// 2. The subscriber's observed_bps_5m must be the deduped tunnel TX
+	//    (10 Mbps), not 3× inflated by the part-row copies — argMax collapses them.
 	rows, err := conn.Query(ctx, `
-		SELECT mode, observed_bps_5m, expected_bps_5m, rate_status, health_status
+		SELECT mode, observed_bps_5m, rate_status, health_status
 		FROM health_multicast_user_rate
 		WHERE multicast_group_pk = 'grp-dd' AND user_pk = 'u-dd-sub'`)
 	require.NoError(t, err)
 	defer rows.Close()
 	require.True(t, rows.Next())
 	var mode, rate, combined string
-	var observed, expected *float64
-	require.NoError(t, rows.Scan(&mode, &observed, &expected, &rate, &combined))
+	var observed *float64
+	require.NoError(t, rows.Scan(&mode, &observed, &rate, &combined))
 	require.NoError(t, rows.Err())
 	assert.Equal(t, "S", mode)
 	require.NotNil(t, observed)
-	require.NotNil(t, expected)
-	assert.InDelta(t, 10000000, *observed, 1)
-	assert.InDelta(t, 10000000, *expected, 1, "expected must equal deduped publisher RX, not 3× inflated")
-	assert.Equal(t, "reconciled", rate)
+	assert.InDelta(t, 10000000, *observed, 1, "observed must be the deduped TX, not 3× inflated")
+	assert.Equal(t, "active", rate)
 	assert.Equal(t, "healthy", combined)
 }
 
-// TestHealthMulticastUserRate_DisconnectedPublisherNotCountedAsMissing pins the
-// two review fixes on the rate view:
-//  1. A BGP-down (disconnected) publisher — which has no counter row — is
-//     excluded from group_publisher_total, so a co-group subscriber that
-//     matches the live publisher's rate stays 'healthy' instead of being
-//     dragged to monitoring_gap → 'unknown'.
-//  2. The disconnected control-plane verdict propagates through the combined
-//     rate verdict (control_plane_status='disconnected' → health_status='disconnected').
-func TestHealthMulticastUserRate_DisconnectedPublisherNotCountedAsMissing(t *testing.T) {
+// TestHealthMulticastUserRate_DisconnectedPublisherPropagates verifies that a
+// BGP-down publisher's 'disconnected' control-plane verdict propagates through
+// the rate view (health_status='disconnected'), and that a live co-group
+// subscriber is unaffected (stays 'active'/healthy) — trivially true now that
+// rate is presence-only with no cross-publisher reconciliation.
+func TestHealthMulticastUserRate_DisconnectedPublisherPropagates(t *testing.T) {
 	info := laketesting.NewClientWithInfo(t, sharedDB)
 	conn, err := info.Client.Conn(t.Context())
 	require.NoError(t, err)
@@ -748,9 +647,10 @@ func TestHealthMulticastUserRate_DisconnectedPublisherNotCountedAsMissing(t *tes
 	assert.Equal(t, "disconnected", got["u-pub-down"].cp)
 	assert.Equal(t, "disconnected", got["u-pub-down"].combined)
 
-	// The subscriber reconciles against the live publisher only: the disconnected
-	// publisher must NOT force monitoring_gap/unknown.
+	// The subscriber is transmitting and its control plane is healthy, so it is
+	// 'active' and healthy — a disconnected co-group publisher has no effect
+	// (presence-only rate; no cross-publisher reconciliation).
 	require.Contains(t, got, "u-sub-rb")
-	assert.Equal(t, "reconciled", got["u-sub-rb"].reason, "disconnected publisher must not create a monitoring gap")
+	assert.Equal(t, "active", got["u-sub-rb"].reason)
 	assert.Equal(t, "healthy", got["u-sub-rb"].combined)
 }

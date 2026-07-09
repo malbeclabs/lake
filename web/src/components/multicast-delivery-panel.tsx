@@ -36,19 +36,15 @@ const STATUS_BADGE: Record<MulticastHealthStatus, string> = {
 }
 
 const RATE_STATUS_BADGE: Record<MulticastRateStatus, string> = {
-  reconciled: 'bg-emerald-500/15 text-emerald-500',
-  mismatch: 'bg-red-500/15 text-red-500',
+  active: 'bg-emerald-500/15 text-emerald-500',
+  idle: 'bg-amber-500/15 text-amber-500',
   unknown: 'bg-muted text-muted-foreground',
 }
 
 const RATE_REASON_HUMAN: Record<MulticastRateStatusReason, string> = {
-  active: 'transmitting',
-  idle: 'idle, registered but sending zero',
+  active: 'non-zero traffic on tunnel',
+  idle: 'registered, transmitting 0',
   no_data: 'no counter data in 15 min',
-  reconciled: 'TX matches sum of publishers',
-  mismatch: 'TX deviates from sum of publishers',
-  monitoring_gap: 'a publisher in this group has no counter data',
-  group_idle: 'all publishers are idle, nothing to verify',
 }
 
 function compactNumber(value: number): string {
@@ -298,14 +294,14 @@ function HealthTooltip({ item }: { item: MulticastHealthUserItem }) {
       <div><span className="font-medium">Control plane:</span> {item.control_plane_status}</div>
       <div><span className="font-medium">Rate:</span> {item.rate_status}, {RATE_REASON_HUMAN[item.rate_status_reason] ?? item.rate_status_reason}</div>
       <div className="text-muted-foreground">Observed: {formatBps(item.observed_bps_5m)}</div>
-      {item.expected_bps_5m !== undefined && <div className="text-muted-foreground">Expected: {formatBps(item.expected_bps_5m)}</div>}
+      <div className="text-muted-foreground">Presence only — does not affect health.</div>
     </div>
   )
 }
 
 function rowReason(item: MulticastHealthUserItem): string {
   if (item.mismatch_reason) return item.mismatch_reason
-  if (item.rate_status_reason === 'active' || item.rate_status_reason === 'reconciled') return EMPTY
+  if (item.rate_status_reason === 'active') return EMPTY
   return RATE_REASON_HUMAN[item.rate_status_reason] ?? item.rate_status_reason
 }
 

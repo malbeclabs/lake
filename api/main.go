@@ -600,6 +600,7 @@ func main() {
 		r.Get("/api/dz/multicast-groups/{pk}/health", api.GetMulticastGroupHealth)
 		r.Get("/api/dz/multicast-groups/{pk}/health/users", api.GetMulticastGroupHealthUsers)
 		r.Get("/api/dz/multicast-groups/{pk}/health/paths", api.GetMulticastGroupHealthPaths)
+		r.Get("/api/dz/multicast-groups/{pk}/health/path-root-causes", api.GetMulticastGroupHealthPathRootCauses)
 		r.Get("/api/dz/users/{pk}/health", api.GetUserHealth)
 		r.Get("/api/dz/access-passes", api.GetAccessPasses)
 		r.Get("/api/dz/access-passes/{pk}", api.GetAccessPass)

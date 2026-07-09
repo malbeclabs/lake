@@ -9,9 +9,11 @@ import {
   fetchMulticastGroupHealth,
   fetchMulticastGroupHealthUsers,
   fetchMulticastGroupHealthPaths,
+  fetchMulticastGroupHealthPathRootCauses,
   type MulticastHealthStatus,
   type MulticastHealthStatusCounts,
   type MulticastHealthUserItem,
+  type MulticastHealthPathRootCause,
   type MulticastRateStatus,
   type MulticastRateStatusReason,
 } from '@/lib/api'
@@ -60,19 +62,15 @@ function formatBps(bps?: number): string {
 }
 
 const RATE_STATUS_BADGE: Record<MulticastRateStatus, string> = {
-  reconciled: 'bg-emerald-500/15 text-emerald-500',
-  mismatch: 'bg-red-500/15 text-red-500',
+  active: 'bg-emerald-500/15 text-emerald-500',
+  idle: 'bg-amber-500/15 text-amber-500',
   unknown: 'bg-muted text-muted-foreground',
 }
 
 const RATE_REASON_HUMAN: Record<MulticastRateStatusReason, string> = {
-  active: 'transmitting',
-  idle: 'idle (registered, transmitting 0)',
+  active: 'non-zero traffic on tunnel',
+  idle: 'registered, transmitting 0',
   no_data: 'no counter data in 15 min',
-  reconciled: 'TX matches sum of publishers',
-  mismatch: 'TX deviates from sum of publishers',
-  monitoring_gap: 'a publisher in this group has no counter data',
-  group_idle: 'all publishers transmitting 0 — nothing to verify against',
 }
 
 // 25 keeps the per-page Radix Tooltip.Root count (~2 per row × N rows) below
@@ -216,34 +214,41 @@ function RateCell({ item }: { item: MulticastHealthUserItem }) {
         <span className="font-medium">{item.rate_status_reason}</span> — {RATE_REASON_HUMAN[item.rate_status_reason] ?? ''}
       </div>
       <div className="text-muted-foreground">Observed: {formatBps(item.observed_bps_5m)}</div>
-      {item.expected_bps_5m !== undefined && item.expected_bps_5m !== null && (
-        <div className="text-muted-foreground">Expected: {formatBps(item.expected_bps_5m)} (sum of publishers' RX)</div>
-      )}
       {item.rate_bucket_ts && (
         <div className="text-muted-foreground">5-min bucket: {new Date(item.rate_bucket_ts).toLocaleTimeString()}</div>
       )}
+      <div className="text-muted-foreground">Presence only — does not affect health.</div>
     </div>
   )
   return (
-    <Tooltip content={tooltip}>
-      <span
-        tabIndex={0}
-        aria-label={`Rate ${item.rate_status}: ${item.rate_status_reason}`}
-        className="inline-flex items-center gap-1.5 cursor-help focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 rounded-full"
-      >
-        <span className="tabular-nums font-mono text-xs">{formatBps(item.observed_bps_5m)}</span>
-        <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${cls}`}>
-          {item.rate_status}
+    <span className="inline-flex items-center gap-1.5">
+      <Tooltip content={tooltip}>
+        <span
+          tabIndex={0}
+          aria-label={`Rate ${item.rate_status}: ${item.rate_status_reason}`}
+          className="inline-flex items-center gap-1.5 cursor-help focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 rounded-full"
+        >
+          <span className="tabular-nums font-mono text-xs">{formatBps(item.observed_bps_5m)}</span>
+          <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${cls}`}>
+            {item.rate_status}
+          </span>
         </span>
-      </span>
-    </Tooltip>
+      </Tooltip>
+      <Link
+        to={`/dz/users/${item.user_pk}#traffic`}
+        className="text-[10px] text-primary hover:underline whitespace-nowrap"
+        title="View this tunnel's traffic history"
+      >
+        traffic<NavLinkArrow />
+      </Link>
+    </span>
   )
 }
 
 function rowReason(item: MulticastHealthUserItem): string {
   if (item.mismatch_reason) return item.mismatch_reason
-  // No CP reason → surface the rate reason (or nothing if rate is healthy/active/reconciled).
-  if (['active', 'reconciled'].includes(item.rate_status_reason)) return '—'
+  // No CP reason → surface the rate reason (nothing if the tunnel is active).
+  if (item.rate_status_reason === 'active') return '—'
   return RATE_REASON_HUMAN[item.rate_status_reason] ?? '—'
 }
 
@@ -412,6 +417,76 @@ function TableStateRow({
   return null
 }
 
+// RootCausePanel collapses the unhealthy per-path fan-out to the handful of
+// endpoints actually at fault. A single broken publisher drags down every one
+// of its subscriber pairs (and vice-versa), so N unhealthy rows usually trace
+// back to just a few endpoints — this shows them, ranked by blast radius.
+function RootCausePanel({
+  items,
+  isLoading,
+  faultCount,
+}: {
+  items: MulticastHealthPathRootCause[]
+  isLoading: boolean
+  faultCount: number
+}) {
+  return (
+    <div className="px-4 py-3 border-b border-border bg-muted/30">
+      <div className="flex items-center gap-1.5 mb-2">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Root causes</h4>
+        {isLoading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+      </div>
+      {isLoading && items.length === 0 ? (
+        <div className="text-xs text-muted-foreground">Loading…</div>
+      ) : items.length === 0 ? (
+        <div className="text-xs text-muted-foreground">
+          {faultCount.toLocaleString()} unhealthy pairs, but no single endpoint could be attributed.
+        </div>
+      ) : (
+        <>
+          <div className="text-xs text-muted-foreground mb-2">
+            {faultCount.toLocaleString()} unhealthy publisher → subscriber pairs trace back to{' '}
+            <span className="font-medium text-foreground">{items.length}</span>{' '}
+            {items.length === 1 ? 'endpoint' : 'endpoints'}:
+          </div>
+          <ul className="space-y-1">
+            {items.map((rc) => (
+              <li key={`${rc.faulting_role}-${rc.user_pk}`} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-muted text-muted-foreground uppercase">
+                  {rc.faulting_role}
+                </span>
+                <HealthBadge status={rc.endpoint_status} />
+                <Link
+                  to={`/dz/users/${rc.user_pk}`}
+                  className="group font-mono text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center"
+                  title={rc.owner_pubkey ? `account ${rc.user_pk}\nowner ${rc.owner_pubkey}` : rc.user_pk}
+                >
+                  {rc.dz_ip || rc.user_pk.slice(0, 8)}
+                  {rc.tunnel_id > 0 && <span className="ml-1 text-muted-foreground">·T{rc.tunnel_id}</span>}
+                  <NavLinkArrow />
+                </Link>
+                {rc.device_pk && (
+                  <Link
+                    to={`/dz/devices/${rc.device_pk}`}
+                    className="group text-xs font-mono text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center"
+                  >
+                    {rc.device_code || rc.device_pk.slice(0, 8)}
+                    <NavLinkArrow />
+                  </Link>
+                )}
+                <span className="text-muted-foreground text-xs">
+                  affects <span className="tabular-nums font-medium text-foreground">{rc.affected_pairs.toLocaleString()}</span>{' '}
+                  {rc.affected_pairs === 1 ? 'pair' : 'pairs'}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  )
+}
+
 export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: string }) {
   const [searchParams] = useSearchParams()
   const [usersOffset, setUsersOffset] = useState(0)
@@ -474,6 +549,19 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
     queryKey: ['multicast-group-health-paths', groupPkOrCode, HEALTH_PAGE_SIZE, pathsOffset, pathsSearch],
     queryFn: () => fetchMulticastGroupHealthPaths(groupPkOrCode, HEALTH_PAGE_SIZE, pathsOffset, pathsSearch || undefined),
     enabled: !!groupPkOrCode && showPathDetails,
+    refetchInterval: 60_000,
+    placeholderData: keepPreviousData,
+  })
+
+  // Root-cause rollup of the unhealthy per-path fan-out. Only fetched when the
+  // group actually has faulting paths (cheap aggregation, always shown when
+  // present — independent of the raw-row details toggle).
+  const pathFaultCount =
+    (summaryQuery.data?.counts.paths.unhealthy ?? 0) + (summaryQuery.data?.counts.paths.disconnected ?? 0)
+  const rootCausesQuery = useQuery({
+    queryKey: ['multicast-group-health-path-root-causes', groupPkOrCode],
+    queryFn: () => fetchMulticastGroupHealthPathRootCauses(groupPkOrCode),
+    enabled: !!groupPkOrCode && pathFaultCount > 0,
     refetchInterval: 60_000,
     placeholderData: keepPreviousData,
   })
@@ -667,6 +755,13 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
             />
           )}
         </div>
+        {pathFaultCount > 0 && (
+          <RootCausePanel
+            items={rootCausesQuery.data?.items ?? []}
+            isLoading={rootCausesQuery.isLoading}
+            faultCount={pathFaultCount}
+          />
+        )}
         {!showPathDetails ? (
           <div className="px-4 py-6 text-sm text-muted-foreground flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
