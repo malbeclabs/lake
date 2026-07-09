@@ -18,7 +18,6 @@ const (
 	TaskQueue  = "api-page-cache"
 	WorkflowID = "api-page-cache"
 
-	refreshInterval        = 30 * time.Second
 	fastRefreshInterval    = 3 * time.Second
 	continueAsNewThreshold = 60 // ~30 min at 30s intervals
 	errorAfterFailures     = 3  // log WARN for transient failures, ERROR after this many consecutive failures
@@ -164,13 +163,26 @@ type refreshError struct{ msg string }
 
 func (e *refreshError) Error() string { return e.msg }
 
-// pageCacheRefreshConcurrency bounds how many cache entries refresh at once.
-// 2-wide was too slow (each entry refreshed only every few minutes), but fully
-// unbounded (~28 entries) oversubscribed ClickHouse — ~55 concurrent queries
-// pegged an 8-core node, so even trivial queries hit their timeouts and the
-// per-entry retry amplified the storm. A bounded limit keeps in-flight queries
-// near what ClickHouse can run while still refreshing the batch within the cycle.
-const pageCacheRefreshConcurrency = 8
+// refreshInterval (how often the full page-cache batch refreshes) and
+// pageCacheRefreshConcurrency (how many entries refresh at once) are the two
+// load-shaping knobs. They default to prod-appropriate values and are overridden
+// per-environment from env in Start (PAGE_CACHE_REFRESH_INTERVAL,
+// PAGE_CACHE_REFRESH_CONCURRENCY) — staging runs gentler values to spread load
+// across its smaller self-hosted ClickHouse instead of scaling it up.
+//
+// Concurrency history: 2-wide was too slow (each entry refreshed only every few
+// minutes); fully unbounded (~28 entries) oversubscribed ClickHouse (~55
+// concurrent queries pegged the node, timeouts + per-entry retries amplified the
+// storm). A bounded limit keeps in-flight queries near what ClickHouse can run
+// while still refreshing the batch within the cycle.
+//
+// These are read once at startup (Start) and then treated as constant for the
+// life of the worker, so the workflow's use of refreshInterval stays
+// deterministic across replay/continue-as-new within a deployment.
+var (
+	refreshInterval             = 30 * time.Second
+	pageCacheRefreshConcurrency = 8
+)
 
 // RefreshCaches refreshes all page cache entries, writing results to Postgres.
 func (a *Activities) RefreshCaches(ctx context.Context) error {

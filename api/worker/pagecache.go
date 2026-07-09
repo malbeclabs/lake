@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	temporalclient "go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
@@ -26,6 +28,18 @@ func Start(ctx context.Context, cfg Config) error {
 	if log == nil {
 		log = slog.Default()
 	}
+
+	// Load-shaping knobs (see workflow.go), overridable per-environment. Staging
+	// runs gentler values (lower concurrency, longer interval) to spread page-cache
+	// load across its smaller self-hosted ClickHouse rather than scaling it up.
+	// Read once here, before the worker/workflow start, so both are in effect.
+	if d := envDuration("PAGE_CACHE_REFRESH_INTERVAL", 0); d > 0 {
+		refreshInterval = d
+	}
+	if n := envInt("PAGE_CACHE_REFRESH_CONCURRENCY", 0); n > 0 {
+		pageCacheRefreshConcurrency = n
+	}
+	log.Info("page-cache: refresh config", "interval", refreshInterval, "concurrency", pageCacheRefreshConcurrency)
 
 	// Connect to Temporal
 	temporalHost := envOrDefault("TEMPORAL_HOST_PORT", "localhost:7233")
@@ -145,4 +159,25 @@ func envOrDefault(key, defaultValue string) string {
 		return v
 	}
 	return defaultValue
+}
+
+// envDuration returns the env var parsed as a Go duration (e.g. "90s"), or def
+// if unset/invalid.
+func envDuration(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	return def
+}
+
+// envInt returns the env var parsed as an int, or def if unset/invalid.
+func envInt(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
 }
