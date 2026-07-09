@@ -236,6 +236,40 @@ func TestLake_Serviceability_View_ConvertUsers(t *testing.T) {
 		require.Equal(t, "activated", result[0].Status)
 		require.Equal(t, "ibrl", result[0].Kind)
 	})
+
+	t.Run("maps onchain BGP session state", func(t *testing.T) {
+		t.Parallel()
+
+		onchain := []serviceability.User{
+			{
+				PubKey:    [32]byte{1},
+				Status:    serviceability.UserStatusActivated,
+				UserType:  serviceability.UserTypeMulticast,
+				BgpStatus: uint8(serviceability.BGPStatusDown),
+			},
+			{
+				PubKey:    [32]byte{2},
+				Status:    serviceability.UserStatusActivated,
+				UserType:  serviceability.UserTypeMulticast,
+				BgpStatus: uint8(serviceability.BGPStatusUp),
+			},
+			{
+				// Value outside the known enum (a future onchain variant)
+				// normalizes to "unknown", never a raw "BGPStatus(N)" string.
+				PubKey:    [32]byte{3},
+				Status:    serviceability.UserStatusActivated,
+				UserType:  serviceability.UserTypeMulticast,
+				BgpStatus: 99,
+			},
+		}
+
+		result := convertUsers(onchain)
+
+		require.Len(t, result, 3)
+		require.Equal(t, "down", result[0].BgpStatus)
+		require.Equal(t, "up", result[1].BgpStatus)
+		require.Equal(t, "unknown", result[2].BgpStatus)
+	})
 }
 
 func TestLake_Serviceability_View_ConvertMetros(t *testing.T) {

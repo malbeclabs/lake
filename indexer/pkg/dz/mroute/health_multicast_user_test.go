@@ -121,6 +121,65 @@ func TestHealthMulticastUser_Reconciliation(t *testing.T) {
 	assert.Equal(t, "healthy", got[2].healthStatus)
 }
 
+// TestHealthMulticastUser_BgpDownIsDisconnected verifies that a publisher whose
+// onchain BGP session is down is classified 'disconnected' (not 'unhealthy'):
+// with no session there is no (S,G)/RPF entry, so the absence is expected, not a
+// forwarding fault. A BGP-up publisher with the same missing RPF entry stays
+// 'unhealthy'.
+func TestHealthMulticastUser_BgpDownIsDisconnected(t *testing.T) {
+	info := laketesting.NewClientWithInfo(t, sharedDB)
+	conn, err := info.Client.Conn(t.Context())
+	require.NoError(t, err)
+	defer conn.Close()
+	ctx := t.Context()
+
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_devices_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users, interfaces)
+		VALUES ('d-bgp', now(), now(), generateUUIDv4(), 0, 1,
+			'd-bgp', 'activated', 'edge', 'bgp001-dz001', '', '', '', 0, '[]')`))
+
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_multicast_groups_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
+		VALUES ('grp-bgp', now(), now(), generateUUIDv4(), 0, 1,
+			'grp-bgp', 'owner', 'test-bgp', '233.99.99.9', 100000000, 'activated', 2, 0)`))
+
+	// Two publishers, neither with any mroute. One BGP-down, one BGP-up.
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_users_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tenant_pk, tunnel_id, publishers, subscribers, bgp_status)
+		VALUES
+			('u-bgp-down', now(), now(), generateUUIDv4(), 0, 1, 'u-bgp-down', 'o', 'activated', 'multicast', '203.0.113.20', '10.99.9.20', 'd-bgp', 't1', 701, '["grp-bgp"]', '[]', 'down'),
+			('u-bgp-up',   now(), now(), generateUUIDv4(), 0, 2, 'u-bgp-up',   'o', 'activated', 'multicast', '203.0.113.21', '10.99.9.21', 'd-bgp', 't1', 702, '["grp-bgp"]', '[]', 'up')`))
+
+	rows, err := conn.Query(ctx, `
+		SELECT user_pk, health_status, mismatch_reason
+		FROM health_multicast_user
+		WHERE multicast_group_pk = 'grp-bgp'
+		ORDER BY user_pk`)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	got := map[string][2]string{}
+	for rows.Next() {
+		var pk, hs, mr string
+		require.NoError(t, rows.Scan(&pk, &hs, &mr))
+		got[pk] = [2]string{hs, mr}
+	}
+	require.NoError(t, rows.Err())
+
+	require.Contains(t, got, "u-bgp-down")
+	assert.Equal(t, "disconnected", got["u-bgp-down"][0])
+	assert.Contains(t, got["u-bgp-down"][1], "BGP session down")
+
+	require.Contains(t, got, "u-bgp-up")
+	assert.Equal(t, "unhealthy", got["u-bgp-up"][0], "BGP up but no RPF entry is still a real fault")
+}
+
 // TestHealthMulticastUser_PartialDelivery covers the multi-publisher case:
 // a subscriber whose Tunnel<N> is in the OIF list of one publisher's (S, G)
 // mroute but missing from another publisher's (S, G) mroute. The aggregated

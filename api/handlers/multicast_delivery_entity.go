@@ -329,7 +329,7 @@ func parseMulticastDeliveryEntityParams(r *http.Request) (multicastDeliveryEntit
 	}
 	health := splitCSVParam(q.Get("health"))
 	for _, status := range health {
-		if status != "healthy" && status != "degraded" && status != "unhealthy" && status != "unknown" {
+		if status != "healthy" && status != "degraded" && status != "unhealthy" && status != "disconnected" && status != "unknown" {
 			return multicastDeliveryEntityParams{}, fmt.Errorf("invalid health")
 		}
 	}
@@ -374,12 +374,6 @@ func writeMulticastDeliveryEntityError(w http.ResponseWriter, err error, msg, en
 		http.Error(w, entityKind+" not found", http.StatusNotFound)
 		return
 	}
-	// Transient CH connection blips are self-healing — log at WARN so they don't
-	// page on-call; reserve ERROR for real (non-transient) query failures.
-	if dberror.IsTransient(err) {
-		logWarn(msg, "error", err, "pk", pkOrCode)
-	} else {
-		logError(msg, "error", err, "pk", pkOrCode)
-	}
+	logError(msg, "error", err, "pk", pkOrCode)
 	http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 }

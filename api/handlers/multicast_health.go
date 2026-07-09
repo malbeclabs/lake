@@ -197,6 +197,16 @@ func getCountsBucket(c *MulticastHealthCounts, source string) *MulticastHealthSt
 	return nil
 }
 
+// healthStatusSeverityOrderSQL ranks multicast health rows so the most
+// actionable land first: unhealthy → degraded → unknown → disconnected →
+// healthy. 'disconnected' is a client-side BGP outage, not a network fault, so
+// it sorts below unknown. Shared by every health query builder that paginates
+// so the ordering (and the disconnected placement) stays consistent.
+const healthStatusSeverityOrderSQL = `multiIf(health_status = 'unhealthy', 0, ` +
+	`health_status = 'degraded', 1, ` +
+	`health_status = 'unknown', 2, ` +
+	`health_status = 'disconnected', 3, 4)`
+
 func addStatusCount(bucket *MulticastHealthStatusCounts, status string, n uint64) {
 	if bucket == nil {
 		return
@@ -208,7 +218,13 @@ func addStatusCount(bucket *MulticastHealthStatusCounts, status string, n uint64
 		bucket.Degraded += n
 	case "unhealthy":
 		bucket.Unhealthy += n
+	case "disconnected":
+		bucket.Disconnected += n
 	case "unknown":
+		bucket.Unknown += n
+	default:
+		// Fold any unrecognized status (e.g. a future value seen by an old
+		// binary) into Unknown so the buckets always sum to Total.
 		bucket.Unknown += n
 	}
 	bucket.Total += n

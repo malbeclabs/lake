@@ -661,3 +661,96 @@ func TestHealthMulticastUserRate_RollupDedup(t *testing.T) {
 	assert.Equal(t, "reconciled", rate)
 	assert.Equal(t, "healthy", combined)
 }
+
+// TestHealthMulticastUserRate_DisconnectedPublisherNotCountedAsMissing pins the
+// two review fixes on the rate view:
+//  1. A BGP-down (disconnected) publisher — which has no counter row — is
+//     excluded from group_publisher_total, so a co-group subscriber that
+//     matches the live publisher's rate stays 'healthy' instead of being
+//     dragged to monitoring_gap → 'unknown'.
+//  2. The disconnected control-plane verdict propagates through the combined
+//     rate verdict (control_plane_status='disconnected' → health_status='disconnected').
+func TestHealthMulticastUserRate_DisconnectedPublisherNotCountedAsMissing(t *testing.T) {
+	info := laketesting.NewClientWithInfo(t, sharedDB)
+	conn, err := info.Client.Conn(t.Context())
+	require.NoError(t, err)
+	defer conn.Close()
+	ctx := t.Context()
+
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_devices_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users, interfaces)
+		VALUES
+			('db-fhr', now(), now(), generateUUIDv4(), 0, 1, 'db-fhr', 'activated', 'edge', 'dbfhr-dz1', '', '', '', 0, '[]'),
+			('db-lhr', now(), now(), generateUUIDv4(), 0, 2, 'db-lhr', 'activated', 'edge', 'dblhr-dz1', '', '', '', 0, '[]')`))
+
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_multicast_groups_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
+		VALUES ('grp-rb', now(), now(), generateUUIDv4(), 0, 1, 'grp-rb', 'o', 'rate-bgp', '233.99.2.1', 100000000, 'activated', 2, 1)`))
+
+	// pub-up: live publisher (10 Mbps). pub-down: BGP-down, no counter, no mroute.
+	// sub: subscribes, TX 10 Mbps, reconciles against pub-up only.
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_users_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tenant_pk, tunnel_id, publishers, subscribers, bgp_status)
+		VALUES
+			('u-pub-up',   now(), now(), generateUUIDv4(), 0, 1, 'u-pub-up',   'o', 'activated', 'multicast', '203.0.113.20', '10.99.2.10', 'db-fhr', 't1', 711, '["grp-rb"]', '[]', 'up'),
+			('u-pub-down', now(), now(), generateUUIDv4(), 0, 2, 'u-pub-down', 'o', 'activated', 'multicast', '203.0.113.21', '10.99.2.11', 'db-fhr', 't1', 712, '["grp-rb"]', '[]', 'down'),
+			('u-sub-rb',   now(), now(), generateUUIDv4(), 0, 3, 'u-sub-rb',   'o', 'activated', 'multicast', '203.0.113.22', '10.99.2.12', 'db-lhr', 't1', 811, '[]', '["grp-rb"]', 'up')`))
+
+	// FHR + LHR only for the live publisher (pub-down has no dataplane presence).
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_ip_mroute_entries_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 device_pubkey, vrf, mode, group_address, source_address,
+			 route_flags, register_in_oif_list, rpf_interface, rpf_rib, rpf_prefix,
+			 rpf_preference, rpf_metric, rpf_neighbor, rpf_attached, rpf_has_block,
+			 oif_list, oif_count, creation_time)
+		VALUES
+			('mrb-fhr', now(), now(), generateUUIDv4(), 0, 1, 'db-fhr', 'default', 'sparse', '233.99.2.1', '10.99.2.10', 'SBNP', 0, 'Tunnel711', '', '', 0, 0, '', 0, 0, '', 0, now()),
+			('mrb-lhr', now(), now(), generateUUIDv4(), 0, 2, 'db-lhr', 'default', 'sparse', '233.99.2.1', '10.99.2.10', 'SMP', 0, 'Port-Channel1', '', '', 0, 0, '', 0, 0, '["Tunnel811"]', 1, now())`))
+
+	// Counters for the live publisher and subscriber only. pub-down has none.
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO device_interface_rollup_5m
+			(bucket_ts, device_pk, intf, user_tunnel_id, user_pk, max_in_bps, max_out_bps, ingested_at)
+		VALUES
+			(now() - INTERVAL 1 MINUTE, 'db-fhr', 'Tunnel711', 711, 'u-pub-up', 10000000, 0, now()),
+			(now() - INTERVAL 1 MINUTE, 'db-lhr', 'Tunnel811', 811, 'u-sub-rb', 0, 10000000, now())`))
+
+	require.NoError(t, conn.Exec(ctx, `SYSTEM REFRESH VIEW dz_device_interface_ips`))
+	require.NoError(t, conn.Exec(ctx, `SYSTEM WAIT VIEW dz_device_interface_ips`))
+
+	rows, err := conn.Query(ctx, `
+		SELECT user_pk, control_plane_status, rate_status_reason, health_status
+		FROM health_multicast_user_rate
+		WHERE multicast_group_pk = 'grp-rb'
+		ORDER BY user_pk`)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	type row struct{ cp, reason, combined string }
+	got := map[string]row{}
+	for rows.Next() {
+		var pk string
+		var r row
+		require.NoError(t, rows.Scan(&pk, &r.cp, &r.reason, &r.combined))
+		got[pk] = r
+	}
+	require.NoError(t, rows.Err())
+
+	// pub-down propagates the disconnected verdict through the rate view.
+	require.Contains(t, got, "u-pub-down")
+	assert.Equal(t, "disconnected", got["u-pub-down"].cp)
+	assert.Equal(t, "disconnected", got["u-pub-down"].combined)
+
+	// The subscriber reconciles against the live publisher only: the disconnected
+	// publisher must NOT force monitoring_gap/unknown.
+	require.Contains(t, got, "u-sub-rb")
+	assert.Equal(t, "reconciled", got["u-sub-rb"].reason, "disconnected publisher must not create a monitoring gap")
+	assert.Equal(t, "healthy", got["u-sub-rb"].combined)
+}

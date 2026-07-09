@@ -162,6 +162,11 @@ func TestDeviceMulticastDelivery_HealthFiltersUseHealthSemantics(t *testing.T) {
 
 	rr, _ = deviceMulticastDeliveryRequest(api, "dev-nyc1", "health=broken")
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
+
+	// disconnected is a valid health filter value (regression: allowlist must
+	// include it, matching the disconnected count bucket in the response).
+	rr, _ = deviceMulticastDeliveryRequest(api, "dev-nyc1", "health=disconnected")
+	assert.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 }
 
 func TestLinkMulticastDelivery_ObservedStateAndDirectionFilter(t *testing.T) {
