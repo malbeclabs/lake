@@ -336,7 +336,12 @@ export function PathCalculatorPage() {
 
   const paths = result?.paths ?? []
   const pairs = result?.pairs ?? null
-  if (selectedPathIndex >= paths.length && paths.length > 0) setSelectedPathIndex(0)
+
+  // Clamp the selected path when a new result set arrives (e.g. fewer paths than before).
+  useEffect(() => {
+    const len = result?.paths?.length ?? 0
+    setSelectedPathIndex((i) => (i >= len && len > 0 ? 0 : i))
+  }, [result])
 
   // Device pks used for the "View in graph" link (resolve metros via the best/selected pair).
   const graphSourcePK = anyMetro ? pairs?.[selectedPathIndex]?.sourceDevicePK : source?.pk
@@ -406,7 +411,7 @@ export function PathCalculatorPage() {
             {(source || target) && (
               <button
                 onClick={resetSelection}
-                className="hidden md:block pb-2 p-2 hover:bg-muted rounded-md text-muted-foreground hover:text-foreground transition-colors"
+                className="pb-2 p-2 hover:bg-muted rounded-md text-muted-foreground hover:text-foreground transition-colors"
                 title="Reset selection"
               >
                 <RotateCcw className="h-5 w-5" />
