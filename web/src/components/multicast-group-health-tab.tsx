@@ -26,7 +26,7 @@ const HEALTH_PATHS_SEARCH_PARAM = 'hpaths'
 // Field prefixes for the per-user table filter.
 const healthUserFieldPrefixes = [
   { prefix: 'device:', description: 'Filter by device code (e.g. nyc001)' },
-  { prefix: 'status:', description: 'Filter by health status (healthy, degraded, unhealthy, unknown)' },
+  { prefix: 'status:', description: 'Filter by health status (healthy, degraded, unhealthy, disconnected, unknown)' },
   { prefix: 'mode:', description: 'Mode: P, S, or P+S' },
   { prefix: 'tunnel:', description: 'Tunnel id (exact match)' },
   { prefix: 'user:', description: "Match user account or owner pubkey" },
@@ -39,7 +39,7 @@ const healthPathFieldPrefixes = [
   { prefix: 'publisher:', description: 'Match the publisher side (pk/owner/ip/device)' },
   { prefix: 'subscriber:', description: 'Match the subscriber side (pk/owner/ip/device)' },
   { prefix: 'device:', description: 'Match either publisher or subscriber device' },
-  { prefix: 'status:', description: 'Filter by health status (healthy, degraded, unhealthy, unknown)' },
+  { prefix: 'status:', description: 'Filter by health status (healthy, degraded, unhealthy, disconnected, unknown)' },
   { prefix: 'user:', description: 'Match either side\'s account or owner pubkey' },
   { prefix: 'owner:', description: 'Match either side\'s owner pubkey' },
   { prefix: 'ip:', description: "Match either side's dz_ip" },
@@ -164,6 +164,7 @@ const STATUS_BADGE: Record<MulticastHealthStatus, string> = {
   healthy: 'bg-emerald-500/15 text-emerald-500',
   degraded: 'bg-amber-500/15 text-amber-500',
   unhealthy: 'bg-red-500/15 text-red-500',
+  disconnected: 'bg-sky-500/15 text-sky-500',
   unknown: 'bg-muted text-muted-foreground',
 }
 
@@ -171,6 +172,7 @@ const STATUS_DOT: Record<MulticastHealthStatus, string> = {
   healthy: 'bg-emerald-500',
   degraded: 'bg-amber-500',
   unhealthy: 'bg-red-500',
+  disconnected: 'bg-sky-500',
   unknown: 'bg-muted-foreground',
 }
 
@@ -178,6 +180,7 @@ const STATUS_DEFINITIONS: Array<{ status: MulticastHealthStatus; short: string }
   { status: 'healthy', short: 'control plane reconciles AND subscriber TX matches sum of publishers (±5% / 1 Mbps)' },
   { status: 'degraded', short: 'control plane reconciles but rates diverge, or partial control plane reconciliation' },
   { status: 'unhealthy', short: 'no (S,G) mroute, or rates diverge under a degraded control plane' },
+  { status: 'disconnected', short: "user's onchain BGP session is down — not connected, so no (S,G)/OIF is expected (not a forwarding fault)" },
   { status: 'unknown', short: 'no counter data, or no traffic flowing in the 5-min window' },
 ]
 
@@ -253,6 +256,7 @@ const DIM_BADGE_CLASS: Record<string, string> = {
   degraded: 'bg-amber-500/15 text-amber-500',
   mismatch: 'bg-red-500/15 text-red-500',
   unhealthy: 'bg-red-500/15 text-red-500',
+  disconnected: 'bg-sky-500/15 text-sky-500',
   unknown: 'bg-muted text-muted-foreground',
   idle: 'bg-muted text-muted-foreground',
   no_data: 'bg-muted text-muted-foreground',
@@ -349,6 +353,7 @@ function CountsRow({
         <span className="text-emerald-500">{counts.healthy} healthy</span>
         <span className="text-amber-500">{counts.degraded} degraded</span>
         <span className="text-red-500">{counts.unhealthy} unhealthy</span>
+        <span className="text-sky-500">{counts.disconnected} disconnected</span>
         <span className="text-muted-foreground">{counts.unknown} unknown</span>
         <span className="text-muted-foreground">/ {counts.total}</span>
       </div>
@@ -506,7 +511,7 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
       <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-100">
         <div className="font-medium">This view is under development.</div>
         <div className="mt-1 text-amber-700 dark:text-amber-200/90">
-          Health verdicts and the rate dimension are work in progress. State-collect runs only on jump devices today, so any user, publisher, or subscriber on a non-jump device will appear as <span className="font-mono">unhealthy</span> even when it is functioning normally. Treat verdicts as a starting point, not ground truth.
+          Health verdicts and the rate dimension are work in progress. State-collect runs only on jump devices today, so any user, publisher, or subscriber on a non-jump device will appear as <span className="font-mono">unhealthy</span> (or <span className="font-mono">disconnected</span> when its onchain BGP session is down) even when it is functioning normally. Treat verdicts as a starting point, not ground truth.
         </div>
       </div>
 

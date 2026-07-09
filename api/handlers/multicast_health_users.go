@@ -235,13 +235,8 @@ func (a *API) queryMulticastHealthUsers(ctx context.Context, whereClause string,
 			health_status
 		FROM health_multicast_user_rate
 		WHERE ` + whereClause + `
-		-- Sort actionable rows first (unhealthy → degraded → unknown → healthy)
-		-- so paginated consumers land on the rows operators most need to see.
-		ORDER BY
-			multiIf(health_status = 'unhealthy', 0,
-			        health_status = 'degraded',  1,
-			        health_status = 'unknown',   2,
-			                                     3),
+		-- Sort actionable rows first (see healthStatusSeverityOrderSQL).
+		ORDER BY ` + healthStatusSeverityOrderSQL + `,
 			multicast_group_code, user_pk` + limitClause + `
 		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0
 	`

@@ -121,3 +121,74 @@ func TestHealthPublisherSubscriberPath_Endpoints(t *testing.T) {
 	assert.Equal(t, "healthy", got[1].healthStatus)
 	assert.EqualValues(t, 0, got[1].missingCount)
 }
+
+// TestHealthPublisherSubscriberPath_BgpDownIsDisconnected verifies a pair is
+// 'disconnected' when an endpoint's BGP session is down, versus 'unhealthy' for
+// the same missing endpoint when BGP is up.
+func TestHealthPublisherSubscriberPath_BgpDownIsDisconnected(t *testing.T) {
+	info := laketesting.NewClientWithInfo(t, sharedDB)
+	conn, err := info.Client.Conn(t.Context())
+	require.NoError(t, err)
+	defer conn.Close()
+	ctx := t.Context()
+
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_devices_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users, interfaces)
+		VALUES
+			('dp-sea', now(), now(), generateUUIDv4(), 0, 1, 'dp-sea', 'activated', 'edge', 'psea-dz001', '', '', '', 0, '[]'),
+			('dp-nyc', now(), now(), generateUUIDv4(), 0, 2, 'dp-nyc', 'activated', 'edge', 'pnyc-dz001', '', '', '', 0, '[]'),
+			('dp-fra', now(), now(), generateUUIDv4(), 0, 3, 'dp-fra', 'activated', 'edge', 'pfra-dz001', '', '', '', 0, '[]')`))
+
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_multicast_groups_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
+		VALUES ('grp-pd', now(), now(), generateUUIDv4(), 0, 1,
+			'grp-pd', 'owner', 'test-path-bgp', '233.99.99.4', 100000000, 'activated', 1, 2)`))
+
+	// Publisher (BGP up) + two subscribers with no LHR mroute: one BGP-down, one up.
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_users_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tenant_pk, tunnel_id, publishers, subscribers, bgp_status)
+		VALUES
+			('up-pub',      now(), now(), generateUUIDv4(), 0, 1, 'up-pub',      'o', 'activated', 'multicast', '203.0.113.30', '10.99.4.30', 'dp-sea', 't1', 505, '["grp-pd"]', '[]', 'up'),
+			('up-sub-down', now(), now(), generateUUIDv4(), 0, 2, 'up-sub-down', 'o', 'activated', 'multicast', '203.0.113.31', '10.99.4.31', 'dp-fra', 't1', 604, '[]', '["grp-pd"]', 'down'),
+			('up-sub-up',   now(), now(), generateUUIDv4(), 0, 3, 'up-sub-up',   'o', 'activated', 'multicast', '203.0.113.32', '10.99.4.32', 'dp-nyc', 't1', 605, '[]', '["grp-pd"]', 'up')`))
+
+	// Publisher FHR so the publisher endpoint is observed; no LHR for either sub.
+	require.NoError(t, conn.Exec(ctx, `
+		INSERT INTO dim_dz_ip_mroute_entries_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 device_pubkey, vrf, mode, group_address, source_address,
+			 route_flags, register_in_oif_list, rpf_interface, rpf_rib, rpf_prefix,
+			 rpf_preference, rpf_metric, rpf_neighbor, rpf_attached, rpf_has_block,
+			 oif_list, oif_count, creation_time)
+		VALUES ('mr-fhr-pd', now(), now(), generateUUIDv4(), 0, 1,
+			'dp-sea', 'default', 'sparse', '233.99.99.4', '10.99.4.30',
+			'SBNP', 0, 'Tunnel505', '', '', 0, 0, '', 0, 0, '', 0, now())`))
+
+	require.NoError(t, conn.Exec(ctx, `SYSTEM REFRESH VIEW dz_device_interface_ips`))
+	require.NoError(t, conn.Exec(ctx, `SYSTEM WAIT VIEW dz_device_interface_ips`))
+
+	rows, err := conn.Query(ctx, `
+		SELECT subscriber_user_pk, health_status
+		FROM health_publisher_subscriber_path
+		WHERE multicast_group_pk = 'grp-pd'
+		ORDER BY subscriber_user_pk`)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	got := map[string]string{}
+	for rows.Next() {
+		var sub, hs string
+		require.NoError(t, rows.Scan(&sub, &hs))
+		got[sub] = hs
+	}
+	require.NoError(t, rows.Err())
+
+	assert.Equal(t, "disconnected", got["up-sub-down"], "BGP-down subscriber → disconnected")
+	assert.Equal(t, "unhealthy", got["up-sub-up"], "BGP-up subscriber with missing endpoint → unhealthy")
+}
