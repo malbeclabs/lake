@@ -7,16 +7,33 @@ import {
   AlertCircle,
   ArrowRight,
   ArrowDown,
-  Search,
-  X,
-  Copy,
-  Check,
   ExternalLink,
   RotateCcw,
+  ChevronDown,
+  ChevronRight,
+  Map as MapIcon,
+  Copy,
+  Check,
 } from 'lucide-react'
-import { fetchISISTopology, fetchISISPaths } from '@/lib/api'
-import type { MultiPathResponse, SinglePath, PathService } from '@/lib/api'
-import { ServiceToggle } from '@/components/topology'
+import {
+  fetchTopology,
+  fetchISISTopology,
+  fetchISISPaths,
+  fetchMetroDevicePaths,
+} from '@/lib/api'
+import type {
+  SinglePath,
+  PathService,
+  MetroDevicePairPath,
+} from '@/lib/api'
+import {
+  buildLocationOptions,
+  parseEndpointKind,
+  pickBestPair,
+  filterPairsForDevice,
+  type LocationOption,
+} from '@/lib/path-calculator'
+import { ServiceToggle, LocationSearch } from '@/components/topology'
 
 // Path colors matching the graph view
 const PATH_COLORS = [
@@ -26,104 +43,6 @@ const PATH_COLORS = [
   '#f97316', // orange - alternate 3
   '#06b6d4', // cyan - alternate 4
 ]
-
-interface DeviceOption {
-  pk: string
-  code: string
-  status: string
-  deviceType: string
-}
-
-function DeviceSearch({
-  label,
-  placeholder,
-  value,
-  onChange,
-  devices,
-  excludePK,
-}: {
-  label: string
-  placeholder: string
-  value: DeviceOption | null
-  onChange: (device: DeviceOption | null) => void
-  devices: DeviceOption[]
-  excludePK?: string
-}) {
-  const [search, setSearch] = useState('')
-  const [isOpen, setIsOpen] = useState(false)
-
-  const filteredDevices = useMemo(() => {
-    const query = search.toLowerCase()
-    return devices
-      .filter((d) => d.pk !== excludePK)
-      .filter((d) => d.code.toLowerCase().includes(query))
-      .slice(0, 20)
-  }, [devices, search, excludePK])
-
-  return (
-    <div className="flex-1 w-full">
-      <label className="block text-sm font-medium text-muted-foreground mb-2">{label}</label>
-      <div className="relative">
-        {value ? (
-          <div className="flex items-center gap-2 px-3 py-2 border border-border rounded-md bg-card">
-            <span className="font-mono text-sm flex-1">{value.code}</span>
-            <button
-              onClick={() => {
-                onChange(null)
-                setSearch('')
-              }}
-              className="p-1 hover:bg-muted rounded"
-            >
-              <X className="h-4 w-4 text-muted-foreground" />
-            </button>
-          </div>
-        ) : (
-          <>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => {
-                  setSearch(e.target.value)
-                  setIsOpen(true)
-                }}
-                onFocus={() => setIsOpen(true)}
-                placeholder={placeholder}
-                className="w-full pl-9 pr-3 py-2 border border-border rounded-md bg-card text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-              />
-            </div>
-            {isOpen && search && filteredDevices.length > 0 && (
-              <div className="absolute z-50 w-full mt-1 bg-card border border-border rounded-md shadow-lg max-h-60 overflow-y-auto">
-                {filteredDevices.map((device) => (
-                  <button
-                    key={device.pk}
-                    onClick={() => {
-                      onChange(device)
-                      setSearch('')
-                      setIsOpen(false)
-                    }}
-                    className="w-full px-3 py-2 text-left hover:bg-muted flex items-center justify-between"
-                  >
-                    <span className="font-mono text-sm">{device.code}</span>
-                    <span className="text-xs text-muted-foreground capitalize">
-                      {device.deviceType}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-            {isOpen && search && filteredDevices.length === 0 && (
-              <div className="absolute z-50 w-full mt-1 bg-card border border-border rounded-md shadow-lg p-3 text-sm text-muted-foreground">
-                No devices found
-              </div>
-            )}
-          </>
-        )}
-      </div>
-    </div>
-  )
-}
 
 function PathCard({
   path,
@@ -283,115 +202,147 @@ function PathCard({
 
 export function PathCalculatorPage() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const [sourceDevice, setSourceDevice] = useState<DeviceOption | null>(null)
-  const [targetDevice, setTargetDevice] = useState<DeviceOption | null>(null)
+  const [source, setSource] = useState<LocationOption | null>(null)
+  const [target, setTarget] = useState<LocationOption | null>(null)
   const [selectedPathIndex, setSelectedPathIndex] = useState(0)
+  const [showAllPairs, setShowAllPairs] = useState(false)
   const [initializedFromUrl, setInitializedFromUrl] = useState(false)
   const [service, setService] = useState<PathService>(
-    (searchParams.get('service') as PathService) || 'unicast'
+    (searchParams.get('service') as PathService) || 'unicast',
   )
 
-  // Fetch topology for device list
-  const { data: topology, isLoading: topologyLoading } = useQuery({
+  const { data: isis, isLoading: isisLoading } = useQuery({
     queryKey: ['isis-topology'],
     queryFn: fetchISISTopology,
     staleTime: 60000,
   })
+  const { data: topology, isLoading: topoLoading } = useQuery({
+    queryKey: ['topology'],
+    queryFn: fetchTopology,
+    staleTime: 60000,
+  })
 
-  // Convert topology nodes to device options
-  const devices: DeviceOption[] = useMemo(() => {
-    if (!topology?.nodes) return []
-    return topology.nodes
-      .map((n) => ({
-        pk: n.data.id,
-        code: n.data.label,
-        status: n.data.status,
-        deviceType: n.data.deviceType,
-      }))
-      .sort((a, b) => a.code.localeCompare(b.code))
-  }, [topology])
+  // Merge metros + devices into one option list. Device set comes from ISIS
+  // (as before); metro linkage (metroPK) is joined from the topology payload.
+  const options: LocationOption[] = useMemo(() => {
+    const metroPKByDevice = new Map((topology?.devices ?? []).map((d) => [d.pk, d.metro_pk]))
+    const metros = (topology?.metros ?? []).map((m) => ({ pk: m.pk, code: m.code, name: m.name }))
+    const devices = (isis?.nodes ?? []).map((n) => ({
+      pk: n.data.id,
+      code: n.data.label,
+      status: n.data.status,
+      deviceType: n.data.deviceType,
+      metroPK: metroPKByDevice.get(n.data.id) ?? n.data.metroPK,
+    }))
+    return buildLocationOptions(metros, devices)
+  }, [isis, topology])
 
-  // Initialize from URL params once devices are loaded
   useEffect(() => {
-    if (initializedFromUrl || devices.length === 0) return
-
-    const fromParam = searchParams.get('from')
-    const toParam = searchParams.get('to')
-
-    if (fromParam) {
-      const device = devices.find((d) => d.pk === fromParam || d.code === fromParam)
-      if (device) setSourceDevice(device)
-    }
-    if (toParam) {
-      const device = devices.find((d) => d.pk === toParam || d.code === toParam)
-      if (device) setTargetDevice(device)
-    }
-
+    if (initializedFromUrl || options.length === 0) return
+    const findOpt = (raw: string | null, kind: 'metro' | 'device') =>
+      raw ? options.find((o) => o.kind === kind && (o.pk === raw || o.code === raw)) ?? null : null
+    const s = findOpt(searchParams.get('from'), parseEndpointKind(searchParams.get('fromType')))
+    const t = findOpt(searchParams.get('to'), parseEndpointKind(searchParams.get('toType')))
+    if (s) setSource(s)
+    if (t) setTarget(t)
     setInitializedFromUrl(true)
-  }, [devices, searchParams, initializedFromUrl])
+  }, [options, searchParams, initializedFromUrl])
 
-  // Update URL when devices change
-  const updateSource = (device: DeviceOption | null) => {
-    setSourceDevice(device)
-    setSelectedPathIndex(0)
-    const newParams = new URLSearchParams(searchParams)
-    if (device) {
-      newParams.set('from', device.pk)
+  const writeEndpoint = (
+    which: 'from' | 'to',
+    opt: LocationOption | null,
+    params: URLSearchParams,
+  ) => {
+    const typeKey = which === 'from' ? 'fromType' : 'toType'
+    if (opt) {
+      params.set(which, opt.pk)
+      if (opt.kind === 'metro') params.set(typeKey, 'metro')
+      else params.delete(typeKey) // device is the default → keep old links clean
     } else {
-      newParams.delete('from')
+      params.delete(which)
+      params.delete(typeKey)
     }
-    setSearchParams(newParams, { replace: true })
   }
 
-  const updateTarget = (device: DeviceOption | null) => {
-    setTargetDevice(device)
+  const updateSource = (opt: LocationOption | null) => {
+    setSource(opt)
     setSelectedPathIndex(0)
-    const newParams = new URLSearchParams(searchParams)
-    if (device) {
-      newParams.set('to', device.pk)
-    } else {
-      newParams.delete('to')
-    }
-    setSearchParams(newParams, { replace: true })
+    setShowAllPairs(false)
+    const p = new URLSearchParams(searchParams)
+    writeEndpoint('from', opt, p)
+    setSearchParams(p, { replace: true })
   }
-
+  const updateTarget = (opt: LocationOption | null) => {
+    setTarget(opt)
+    setSelectedPathIndex(0)
+    setShowAllPairs(false)
+    const p = new URLSearchParams(searchParams)
+    writeEndpoint('to', opt, p)
+    setSearchParams(p, { replace: true })
+  }
   const resetSelection = () => {
-    setSourceDevice(null)
-    setTargetDevice(null)
+    setSource(null)
+    setTarget(null)
     setSelectedPathIndex(0)
+    setShowAllPairs(false)
     setSearchParams({}, { replace: true })
   }
-
   const updateService = (s: PathService) => {
     setService(s)
     setSelectedPathIndex(0)
-    const newParams = new URLSearchParams(searchParams)
-    if (s !== 'unicast') {
-      newParams.set('service', s)
-    } else {
-      newParams.delete('service')
-    }
-    setSearchParams(newParams, { replace: true })
+    const p = new URLSearchParams(searchParams)
+    if (s !== 'unicast') p.set('service', s)
+    else p.delete('service')
+    setSearchParams(p, { replace: true })
   }
 
-  // Fetch paths when both devices are selected
+  const bothSelected = !!source && !!target
+  const anyMetro = !!source && !!target && (source.kind === 'metro' || target.kind === 'metro')
+
   const {
-    data: pathsResult,
-    isLoading: pathsLoading,
-    error: pathsError,
-  } = useQuery<MultiPathResponse>({
-    queryKey: ['paths', sourceDevice?.pk, targetDevice?.pk, service],
-    queryFn: () => fetchISISPaths(sourceDevice!.pk, targetDevice!.pk, 5, service),
-    enabled: !!sourceDevice && !!targetDevice,
+    data: result,
+    isLoading: resultLoading,
+    error: resultError,
+  } = useQuery({
+    queryKey: ['path-calc', source?.kind, source?.pk, target?.kind, target?.pk, service],
+    enabled: bothSelected,
+    queryFn: async (): Promise<{
+      paths: SinglePath[]
+      pairs: MetroDevicePairPath[] | null
+      error?: string
+    }> => {
+      const s = source!
+      const t = target!
+      if (!anyMetro) {
+        const res = await fetchISISPaths(s.pk, t.pk, 5, service)
+        return { paths: res.paths ?? [], pairs: null, error: res.error }
+      }
+      const fromMetro = s.kind === 'metro' ? s.pk : s.metroPK
+      const toMetro = t.kind === 'metro' ? t.pk : t.metroPK
+      if (!fromMetro || !toMetro) {
+        return { paths: [], pairs: [], error: 'Selected device has no metro assigned.' }
+      }
+      const res = await fetchMetroDevicePaths(fromMetro, toMetro, service)
+      const pairs = filterPairsForDevice(res.devicePairs ?? [], {
+        sourceDevicePK: s.kind === 'device' ? s.pk : undefined,
+        targetDevicePK: t.kind === 'device' ? t.pk : undefined,
+      })
+      const best = pickBestPair(pairs)
+      // Best pair first so the default card is the recommended path.
+      const ordered = best ? [best, ...pairs.filter((p) => p !== best)] : pairs
+      return { paths: ordered.map((p) => p.bestPath), pairs: ordered, error: res.error }
+    },
   })
 
-  // Reset selected path when results change
-  const paths = pathsResult?.paths ?? []
-  if (selectedPathIndex >= paths.length && paths.length > 0) {
-    setSelectedPathIndex(0)
-  }
+  const paths = result?.paths ?? []
+  const pairs = result?.pairs ?? null
+  if (selectedPathIndex >= paths.length && paths.length > 0) setSelectedPathIndex(0)
 
-  if (topologyLoading) {
+  // Device pks used for the "View in graph" link (resolve metros via the best/selected pair).
+  const graphSourcePK = anyMetro ? pairs?.[selectedPathIndex]?.sourceDevicePK : source?.pk
+  const graphTargetPK = anyMetro ? pairs?.[selectedPathIndex]?.targetDevicePK : target?.pk
+
+  if (isisLoading || topoLoading) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -402,17 +353,25 @@ export function PathCalculatorPage() {
   return (
     <div className="flex-1 overflow-auto">
       <div className="max-w-4xl mx-auto px-4 sm:px-8 py-8">
-        {/* Header */}
-        <div className="flex items-center gap-3 mb-6">
-          <Route className="h-6 w-6 text-muted-foreground" />
-          <h1 className="text-2xl font-medium">Path Calculator</h1>
+        <div className="flex items-center justify-between gap-3 mb-2">
+          <div className="flex items-center gap-3">
+            <Route className="h-6 w-6 text-muted-foreground" />
+            <h1 className="text-2xl font-medium">Path Calculator</h1>
+          </div>
+          <Link
+            to="/topology/map?mode=metro-path"
+            className="text-sm text-primary hover:underline flex items-center gap-1"
+          >
+            <MapIcon className="h-4 w-4" />
+            Metro Paths map
+          </Link>
         </div>
 
         <p className="text-muted-foreground mb-6">
-          Find and compare paths between two devices in the ISIS topology.
+          Path Calculator shows the DoubleZero network route between two locations. Search by
+          city or metro, or by a specific device.
         </p>
 
-        {/* Service Type Toggle */}
         <ServiceToggle
           value={service}
           onChange={updateService}
@@ -422,33 +381,29 @@ export function PathCalculatorPage() {
           className="mb-6"
         />
 
-        {/* Device Selection */}
         <div className="bg-card border border-border rounded-lg p-6 mb-6">
           <div className="flex items-end gap-4 flex-col sm:flex-row">
-            <DeviceSearch
-              label="Source Device"
-              placeholder="Search source..."
-              value={sourceDevice}
+            <LocationSearch
+              label="Source"
+              placeholder="Search city, metro, or device..."
+              value={source}
               onChange={updateSource}
-              devices={devices}
-              excludePK={targetDevice?.pk}
+              options={options}
+              excludePK={target?.pk}
             />
-
             <div className="self-center sm:self-auto sm:pb-2">
               <ArrowRight className="hidden sm:block h-5 w-5 text-muted-foreground" />
               <ArrowDown className="block sm:hidden h-5 w-5 text-muted-foreground" />
             </div>
-
-            <DeviceSearch
-              label="Destination Device"
-              placeholder="Search destination..."
-              value={targetDevice}
+            <LocationSearch
+              label="Destination"
+              placeholder="Search city, metro, or device..."
+              value={target}
               onChange={updateTarget}
-              devices={devices}
-              excludePK={sourceDevice?.pk}
+              options={options}
+              excludePK={source?.pk}
             />
-
-            {(sourceDevice || targetDevice) && (
+            {(source || target) && (
               <button
                 onClick={resetSelection}
                 className="hidden md:block pb-2 p-2 hover:bg-muted rounded-md text-muted-foreground hover:text-foreground transition-colors"
@@ -459,46 +414,36 @@ export function PathCalculatorPage() {
             )}
           </div>
 
-          {sourceDevice && targetDevice && (
+          {bothSelected && graphSourcePK && graphTargetPK && (
             <div className="mt-4 pt-4 border-t border-border flex items-center justify-between md:justify-start">
               <Link
-                to={`/topology/graph?path_source=${sourceDevice.pk}&path_target=${targetDevice.pk}${service !== 'unicast' ? `&path_service=${service}` : ''}`}
+                to={`/topology/graph?path_source=${graphSourcePK}&path_target=${graphTargetPK}${service !== 'unicast' ? `&path_service=${service}` : ''}`}
                 className="text-sm text-primary hover:underline flex items-center gap-1"
               >
                 View in graph
                 <ExternalLink className="h-3 w-3" />
               </Link>
-              <button
-                onClick={resetSelection}
-                className="md:hidden p-2 hover:bg-muted rounded-md text-muted-foreground hover:text-foreground transition-colors"
-                title="Reset selection"
-              >
-                <RotateCcw className="h-5 w-5" />
-              </button>
             </div>
           )}
         </div>
 
-        {/* Results */}
-        {pathsLoading && (
+        {resultLoading && (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mr-2" />
             <span className="text-muted-foreground">Finding paths...</span>
           </div>
         )}
-
-        {pathsError && (
+        {resultError && (
           <div className="flex items-center justify-center py-12">
             <AlertCircle className="h-6 w-6 text-red-500 mr-2" />
-            <span className="text-red-500">{pathsError.message}</span>
+            <span className="text-red-500">{(resultError as Error).message}</span>
           </div>
         )}
-
-        {pathsResult?.error && (
+        {result?.error && (
           <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
             <div className="flex items-center gap-2 text-red-700 dark:text-red-400">
               <AlertCircle className="h-5 w-5" />
-              <span>{pathsResult.error}</span>
+              <span>{result.error}</span>
             </div>
           </div>
         )}
@@ -507,35 +452,60 @@ export function PathCalculatorPage() {
           <div>
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-medium">
-                {paths.length} {paths.length === 1 ? 'Path' : 'Paths'} Found
+                {anyMetro
+                  ? 'Best path'
+                  : `${paths.length} ${paths.length === 1 ? 'Path' : 'Paths'} Found`}
               </h2>
+              {anyMetro && pairs && pairs.length > 1 && (
+                <button
+                  onClick={() => setShowAllPairs((v) => !v)}
+                  className="text-sm text-primary hover:underline flex items-center gap-1"
+                >
+                  {showAllPairs ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                  {showAllPairs ? 'Hide' : `Show all ${pairs.length} device pairs`}
+                </button>
+              )}
             </div>
 
-            <div className="grid gap-4">
-              {paths.map((path, index) => (
-                <PathCard
-                  key={index}
-                  path={path}
-                  index={index}
-                  isSelected={index === selectedPathIndex}
-                  onSelect={() => setSelectedPathIndex(index)}
-                />
-              ))}
-            </div>
+            {anyMetro && pairs ? (
+              <div className="grid gap-4">
+                {(showAllPairs ? pairs : pairs.slice(0, 1)).map((pair, index) => (
+                  <div key={`${pair.sourceDevicePK}-${pair.targetDevicePK}`}>
+                    <div className="text-xs text-muted-foreground mb-1 font-mono">
+                      {pair.sourceDeviceCode} → {pair.targetDeviceCode}
+                    </div>
+                    <PathCard
+                      path={pair.bestPath}
+                      index={index}
+                      isSelected={index === selectedPathIndex}
+                      onSelect={() => setSelectedPathIndex(index)}
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="grid gap-4">
+                {paths.map((path, index) => (
+                  <PathCard
+                    key={index}
+                    path={path}
+                    index={index}
+                    isSelected={index === selectedPathIndex}
+                    onSelect={() => setSelectedPathIndex(index)}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         )}
 
-        {sourceDevice &&
-          targetDevice &&
-          !pathsLoading &&
-          !pathsResult?.error &&
-          paths.length === 0 && (
-            <div className="text-center py-12 text-muted-foreground">
-              <Route className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p>No paths found between these devices.</p>
-              <p className="text-sm mt-2">They may not be connected in the ISIS topology.</p>
-            </div>
-          )}
+        {bothSelected && !resultLoading && !result?.error && paths.length === 0 && (
+          <div className="text-center py-12 text-muted-foreground">
+            <Route className="h-12 w-12 mx-auto mb-4 opacity-50" />
+            <p>No paths found between these locations.</p>
+            <p className="text-sm mt-2">They may not be connected in the ISIS topology.</p>
+          </div>
+        )}
       </div>
     </div>
   )
