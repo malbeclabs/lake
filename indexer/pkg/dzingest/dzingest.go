@@ -21,6 +21,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/dz/mroute"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/msdp"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/serviceability/permissionevents"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/escrowevents"
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
@@ -38,19 +39,20 @@ type Config struct {
 	Network string
 
 	// Views and stores for activity execution.
-	Serviceability *dzsvc.View
-	Geolocation    *dzgeoloc.View     // optional
-	Shreds         *dzshreds.View     // optional
-	EscrowEvents   *escrowevents.View // optional
-	TelemLatency   *dztelemlatency.View
-	TelemUsage     *dztelemusage.View // optional
-	GraphStore     *dzgraph.Store     // optional
-	ISISSource     isis.Source        // optional
-	ISISStore      *isis.Store        // optional
-	MrouteSource   mroute.Source      // optional
-	MrouteStore    *mroute.Store      // optional
-	MSDPSource     msdp.Source        // optional
-	MSDPStore      *msdp.Store        // optional
+	Serviceability   *dzsvc.View
+	Geolocation      *dzgeoloc.View         // optional
+	Shreds           *dzshreds.View         // optional
+	EscrowEvents     *escrowevents.View     // optional
+	PermissionEvents *permissionevents.View // optional
+	TelemLatency     *dztelemlatency.View
+	TelemUsage       *dztelemusage.View // optional
+	GraphStore       *dzgraph.Store     // optional
+	ISISSource       isis.Source        // optional
+	ISISStore        *isis.Store        // optional
+	MrouteSource     mroute.Source      // optional
+	MrouteStore      *mroute.Store      // optional
+	MSDPSource       msdp.Source        // optional
+	MSDPStore        *msdp.Store        // optional
 }
 
 // TaskQueue returns the Temporal task queue name for the given network.
@@ -84,22 +86,23 @@ func Start(ctx context.Context, cfg Config) error {
 	wfID := workflowID(cfg.Network)
 
 	activities := &Activities{
-		Log:            log.With("component", "dz-ingest"),
-		IngestionLog:   cfg.IngestionLog,
-		Network:        cfg.Network,
-		Serviceability: cfg.Serviceability,
-		Geolocation:    cfg.Geolocation,
-		Shreds:         cfg.Shreds,
-		EscrowEvents:   cfg.EscrowEvents,
-		TelemLatency:   cfg.TelemLatency,
-		TelemUsage:     cfg.TelemUsage,
-		GraphStore:     cfg.GraphStore,
-		ISISSource:     cfg.ISISSource,
-		ISISStore:      cfg.ISISStore,
-		MrouteSource:   cfg.MrouteSource,
-		MrouteStore:    cfg.MrouteStore,
-		MSDPSource:     cfg.MSDPSource,
-		MSDPStore:      cfg.MSDPStore,
+		Log:              log.With("component", "dz-ingest"),
+		IngestionLog:     cfg.IngestionLog,
+		Network:          cfg.Network,
+		Serviceability:   cfg.Serviceability,
+		Geolocation:      cfg.Geolocation,
+		Shreds:           cfg.Shreds,
+		EscrowEvents:     cfg.EscrowEvents,
+		PermissionEvents: cfg.PermissionEvents,
+		TelemLatency:     cfg.TelemLatency,
+		TelemUsage:       cfg.TelemUsage,
+		GraphStore:       cfg.GraphStore,
+		ISISSource:       cfg.ISISSource,
+		ISISStore:        cfg.ISISStore,
+		MrouteSource:     cfg.MrouteSource,
+		MrouteStore:      cfg.MrouteStore,
+		MSDPSource:       cfg.MSDPSource,
+		MSDPStore:        cfg.MSDPStore,
 	}
 
 	w := worker.New(tc, tq, worker.Options{})

@@ -339,6 +339,12 @@ func run() error {
 	telemetryClient := telemetry.New(log, dzRPCClient, nil, networkConfig.TelemetryProgramID)
 	geolocationClient := geolocsdk.New(log, dzRPCClient, networkConfig.GeolocationProgramID)
 
+	// Raw Solana RPC on the DZ ledger for the permission-events audit indexer, which
+	// reads serviceability transaction history (getSignaturesForAddress + getTransaction).
+	// Retrying client so a transient RPC error on getTransaction doesn't drop a
+	// permission event from the audit trail (the refresh fails and retries instead).
+	permissionEventsRawRPC := rpc.NewWithRetries(networkConfig.LedgerPublicRPCURL, nil)
+
 	// Shreds subscription client (mainnet-beta and testnet only, not devnet).
 	// Mainnet uses Solana proper RPC; testnet uses the DZ ledger RPC.
 	shredsEnabled := *dzEnvFlag != config.EnvDevnet
@@ -570,7 +576,9 @@ func run() error {
 		GeoIPResolver: geoIPResolver,
 
 		// Serviceability configuration
-		ServiceabilityRPC: serviceabilityClient,
+		ServiceabilityRPC:       serviceabilityClient,
+		ServiceabilityProgramID: networkConfig.ServiceabilityProgramID,
+		PermissionEventsRPC:     permissionEventsRawRPC,
 
 		// Geolocation configuration
 		GeolocationRPC: geolocationClient,
@@ -672,22 +680,23 @@ func run() error {
 		dzIngestErrCh = make(chan error, 1)
 		go func() {
 			err := dzingest.Start(ctx, dzingest.Config{
-				Log:            log.With("component", "dz-ingest"),
-				IngestionLog:   ingestionLogWriter,
-				Network:        *dzEnvFlag,
-				Serviceability: idx.Serviceability(),
-				Geolocation:    idx.Geolocation(),
-				Shreds:         idx.Shreds(),
-				EscrowEvents:   idx.EscrowEvents(),
-				TelemLatency:   idx.TelemLatency(),
-				TelemUsage:     idx.TelemUsage(),
-				GraphStore:     idx.GraphStore(),
-				ISISSource:     idx.ISISSource(),
-				ISISStore:      idx.ISISStore(),
-				MrouteSource:   idx.MrouteSource(),
-				MrouteStore:    idx.MrouteStore(),
-				MSDPSource:     idx.MSDPSource(),
-				MSDPStore:      idx.MSDPStore(),
+				Log:              log.With("component", "dz-ingest"),
+				IngestionLog:     ingestionLogWriter,
+				Network:          *dzEnvFlag,
+				Serviceability:   idx.Serviceability(),
+				Geolocation:      idx.Geolocation(),
+				Shreds:           idx.Shreds(),
+				EscrowEvents:     idx.EscrowEvents(),
+				PermissionEvents: idx.PermissionEvents(),
+				TelemLatency:     idx.TelemLatency(),
+				TelemUsage:       idx.TelemUsage(),
+				GraphStore:       idx.GraphStore(),
+				ISISSource:       idx.ISISSource(),
+				ISISStore:        idx.ISISStore(),
+				MrouteSource:     idx.MrouteSource(),
+				MrouteStore:      idx.MrouteStore(),
+				MSDPSource:       idx.MSDPSource(),
+				MSDPStore:        idx.MSDPStore(),
 			})
 			if err != nil {
 				dzIngestErrCh <- err
@@ -995,6 +1004,11 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 	telemetryClient := telemetry.New(log, dzRPCClient, nil, networkConfig.TelemetryProgramID)
 	geolocationClient := geolocsdk.New(log, dzRPCClient, networkConfig.GeolocationProgramID)
 
+	// Raw Solana RPC on the DZ ledger for the permission-events audit indexer.
+	// Retrying client so a transient RPC error on getTransaction doesn't drop a
+	// permission event from the audit trail (the refresh fails and retries instead).
+	permissionEventsRawRPC := rpc.NewWithRetries(networkConfig.LedgerPublicRPCURL, nil)
+
 	// Shreds subscription client (testnet only, not devnet).
 	var shredsClient *shreds.Client
 	var secondaryShredsRawRPC *solanarpc.Client
@@ -1032,15 +1046,17 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 			Password: cfg.clickhousePassword,
 			Secure:   cfg.clickhouseSecure,
 		},
-		RefreshInterval:        cfg.refreshInterval,
-		MaxConcurrency:         cfg.maxConcurrency,
-		ServiceabilityRPC:      serviceabilityClient,
-		GeolocationRPC:         geolocationClient,
-		TelemetryRPC:           telemetryClient,
-		DZEpochRPC:             dzRPCClient,
-		InternetLatencyAgentPK: networkConfig.InternetLatencyCollectorPK,
-		InternetDataProviders:  telemetryconfig.InternetTelemetryDataProviders,
-		SkipReadyWait:          cfg.skipReadyWait,
+		RefreshInterval:         cfg.refreshInterval,
+		MaxConcurrency:          cfg.maxConcurrency,
+		ServiceabilityRPC:       serviceabilityClient,
+		ServiceabilityProgramID: networkConfig.ServiceabilityProgramID,
+		PermissionEventsRPC:     permissionEventsRawRPC,
+		GeolocationRPC:          geolocationClient,
+		TelemetryRPC:            telemetryClient,
+		DZEpochRPC:              dzRPCClient,
+		InternetLatencyAgentPK:  networkConfig.InternetLatencyCollectorPK,
+		InternetDataProviders:   telemetryconfig.InternetTelemetryDataProviders,
+		SkipReadyWait:           cfg.skipReadyWait,
 
 		// Device usage configuration.
 		DeviceUsageInfluxClient:      influxDBClient,
@@ -1095,22 +1111,23 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 
 	// Start DZ ingest worker (blocks until ctx cancelled or error).
 	dzErr := dzingest.Start(ctx, dzingest.Config{
-		Log:            log.With("component", "dz-ingest"),
-		IngestionLog:   secondaryIngestionLog,
-		Network:        env,
-		Serviceability: idx.Serviceability(),
-		Geolocation:    idx.Geolocation(),
-		Shreds:         idx.Shreds(),
-		EscrowEvents:   idx.EscrowEvents(),
-		TelemLatency:   idx.TelemLatency(),
-		TelemUsage:     idx.TelemUsage(),
-		GraphStore:     idx.GraphStore(),
-		ISISSource:     idx.ISISSource(),
-		ISISStore:      idx.ISISStore(),
-		MrouteSource:   idx.MrouteSource(),
-		MrouteStore:    idx.MrouteStore(),
-		MSDPSource:     idx.MSDPSource(),
-		MSDPStore:      idx.MSDPStore(),
+		Log:              log.With("component", "dz-ingest"),
+		IngestionLog:     secondaryIngestionLog,
+		Network:          env,
+		Serviceability:   idx.Serviceability(),
+		Geolocation:      idx.Geolocation(),
+		Shreds:           idx.Shreds(),
+		EscrowEvents:     idx.EscrowEvents(),
+		PermissionEvents: idx.PermissionEvents(),
+		TelemLatency:     idx.TelemLatency(),
+		TelemUsage:       idx.TelemUsage(),
+		GraphStore:       idx.GraphStore(),
+		ISISSource:       idx.ISISSource(),
+		ISISStore:        idx.ISISStore(),
+		MrouteSource:     idx.MrouteSource(),
+		MrouteStore:      idx.MrouteStore(),
+		MSDPSource:       idx.MSDPSource(),
+		MSDPStore:        idx.MSDPStore(),
 	})
 
 	select {

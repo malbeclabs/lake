@@ -61,6 +61,7 @@ export function Sidebar() {
   const showGeoloc = user?.is_internal_user === true
   // Internal only (unannounced venue) — gated to allowed-domain Google users.
   const showHyperliquid = user?.is_internal_user === true
+  const showPermissionAudit = user?.is_internal_user === true
 const { resolvedTheme, setTheme } = useTheme()
   const { updateAvailable, reload } = useVersionCheck()
 
@@ -119,6 +120,7 @@ const { resolvedTheme, setTheme } = useTheme()
     location.pathname.startsWith('/dz/shreds/rewards/')
   const isShredsRoute = location.pathname.startsWith('/dz/shreds') || isShredsPublishersRoute
   const isHyperliquidScoreboardRoute = location.pathname === '/dz/hyperliquid/scoreboard'
+  const isPermissionAuditRoute = location.pathname === '/dz/permission-audit'
   const isHyperliquidRoute = location.pathname.startsWith('/dz/hyperliquid')
   const isEdgeRoute = isShredsRoute || isHyperliquidRoute
   const isGeolocRoute = location.pathname.startsWith('/dz/geoloc/')
@@ -651,6 +653,12 @@ const { resolvedTheme, setTheme } = useTheme()
               <KeyRound className="h-4 w-4" />
               Access Passes
             </Link>
+            {showPermissionAudit && (
+              <Link to="/dz/permission-audit" className={navItemClass(isPermissionAuditRoute)}>
+                <Shield className="h-4 w-4" />
+                Permission Audit
+              </Link>
+            )}
           </div>
         </div>
 

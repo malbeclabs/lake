@@ -107,6 +107,8 @@ func run() error {
 	backfillRollupFlag := flag.Bool("start-backfill-rollup", false, "Trigger Temporal rollup backfill workflow (requires --start-time-ago or --start-time)")
 	backfillEscrowEventsFlag := flag.Bool("backfill-escrow-events", false, "Re-fetch all escrow events from on-chain transaction history via Temporal workflow")
 	backfillEscrowEventsTruncateFlag := flag.Bool("backfill-escrow-events-truncate", false, "Truncate the escrow events table before backfilling (use with --backfill-escrow-events)")
+	backfillPermissionEventsFlag := flag.Bool("backfill-permission-events", false, "Re-scan all serviceability permission events from on-chain transaction history via Temporal workflow")
+	backfillPermissionEventsTruncateFlag := flag.Bool("backfill-permission-events-truncate", false, "Truncate the permission events table + scan cursor before backfilling (use with --backfill-permission-events)")
 
 	// Backfill options (latency - epoch-based)
 	dzEnvFlag := flag.String("dz-env", config.EnvMainnetBeta, "DZ ledger environment (devnet, testnet, mainnet-beta)")
@@ -462,6 +464,13 @@ func run() error {
 		return admin.BackfillEscrowEvents(log, admin.BackfillEscrowEventsConfig{
 			Network:  *dzEnvFlag,
 			Truncate: *backfillEscrowEventsTruncateFlag,
+		})
+	}
+
+	if *backfillPermissionEventsFlag {
+		return admin.BackfillPermissionEvents(log, admin.BackfillPermissionEventsConfig{
+			Network:  *dzEnvFlag,
+			Truncate: *backfillPermissionEventsTruncateFlag,
 		})
 	}
 
