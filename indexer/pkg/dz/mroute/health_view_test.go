@@ -250,4 +250,22 @@ func TestHealthMroute_BgpDownPublisherExcluded(t *testing.T) {
 	assert.NotContains(t, missing, "10.99.7.1", "BGP-down publisher must not be flagged missing")
 	assert.Contains(t, missing, "10.99.7.2", "BGP-up publisher with no (S,G) is still missing")
 	assert.Equal(t, "unhealthy", status)
+
+	// health_missing_sg applies the same exclusion: the BGP-down publisher is
+	// not reported as missing, the BGP-up one is.
+	msRows, err := conn.Query(ctx, `
+		SELECT publisher_dz_ip
+		FROM health_missing_sg
+		WHERE multicast_group_pk = 'grp-mx'`)
+	require.NoError(t, err)
+	defer msRows.Close()
+	var missingSGIPs []string
+	for msRows.Next() {
+		var ip string
+		require.NoError(t, msRows.Scan(&ip))
+		missingSGIPs = append(missingSGIPs, ip)
+	}
+	require.NoError(t, msRows.Err())
+	assert.NotContains(t, missingSGIPs, "10.99.7.1", "BGP-down publisher must not appear in health_missing_sg")
+	assert.Contains(t, missingSGIPs, "10.99.7.2", "BGP-up publisher with no (S,G) still appears in health_missing_sg")
 }
