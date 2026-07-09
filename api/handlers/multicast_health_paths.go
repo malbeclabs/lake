@@ -184,13 +184,8 @@ func (a *API) queryMulticastHealthPaths(ctx context.Context, groupPK, search str
 			missing_endpoint_reasons
 		FROM health_publisher_subscriber_path
 		WHERE ` + whereClause + `
-		-- Sort actionable rows first so paginated consumers land on the
-		-- unhealthy/degraded pairs first.
-		ORDER BY
-			multiIf(health_status = 'unhealthy', 0,
-			        health_status = 'degraded',  1,
-			        health_status = 'unknown',   2,
-			                                     3),
+		-- Sort actionable rows first (see healthStatusSeverityOrderSQL).
+		ORDER BY ` + healthStatusSeverityOrderSQL + `,
 			publisher_dz_ip, subscriber_device_code, subscriber_user_pk` + limitClause + `
 		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0
 	`

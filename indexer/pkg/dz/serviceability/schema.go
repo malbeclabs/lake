@@ -163,6 +163,7 @@ func (s *UserSchema) PayloadColumns() []string {
 		"tunnel_id:INTEGER",
 		"publishers:VARCHAR",
 		"subscribers:VARCHAR",
+		"bgp_status:VARCHAR",
 	}
 }
 
@@ -181,6 +182,7 @@ func (s *UserSchema) ToRow(u User) []any {
 		u.TunnelID,
 		string(publishersJSON),
 		string(subscribersJSON),
+		u.BgpStatus,
 	}
 }
 

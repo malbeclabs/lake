@@ -2201,12 +2201,13 @@ export async function fetchMulticastGroupShredStats(pkOrCode: string, timeRange?
 
 // Multicast health (onchain ↔ dataplane reconciliation) types
 
-export type MulticastHealthStatus = 'healthy' | 'degraded' | 'unhealthy' | 'unknown'
+export type MulticastHealthStatus = 'healthy' | 'degraded' | 'unhealthy' | 'disconnected' | 'unknown'
 
 export interface MulticastHealthStatusCounts {
   healthy: number
   degraded: number
   unhealthy: number
+  disconnected: number
   unknown: number
   total: number
 }
@@ -2400,6 +2401,7 @@ export interface MulticastEntityHealthStatusCounts {
   healthy: number
   degraded: number
   unhealthy: number
+  disconnected: number
   unknown: number
   total: number
 }

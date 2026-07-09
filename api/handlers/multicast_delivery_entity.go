@@ -329,7 +329,7 @@ func parseMulticastDeliveryEntityParams(r *http.Request) (multicastDeliveryEntit
 	}
 	health := splitCSVParam(q.Get("health"))
 	for _, status := range health {
-		if status != "healthy" && status != "degraded" && status != "unhealthy" && status != "unknown" {
+		if status != "healthy" && status != "degraded" && status != "unhealthy" && status != "disconnected" && status != "unknown" {
 			return multicastDeliveryEntityParams{}, fmt.Errorf("invalid health")
 		}
 	}
