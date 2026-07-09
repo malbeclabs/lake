@@ -20,12 +20,19 @@ const (
 	// At 60s base interval, 1 iteration = ~1 minute. Source data is reported
 	// at ~2s resolution so indexing every minute keeps data reasonably fresh.
 	telemUsageEveryN = 1
+
+	// permissionEventsEveryN controls how often the permission audit refresh runs.
+	// Serviceability permission changes are sporadic, so at the 60s base interval this
+	// runs every ~5 minutes — enough freshness for an audit page while avoiding a
+	// per-minute getProgramAccounts poll.
+	permissionEventsEveryN = 5
 )
 
 // RegisterWorkflows registers all DZ ingest workflows with the given worker.
 func RegisterWorkflows(w worker.Worker) {
 	w.RegisterWorkflow(DZIngestWorkflow)
 	w.RegisterWorkflow(BackfillEscrowEventsWorkflow)
+	w.RegisterWorkflow(BackfillPermissionEventsWorkflow)
 }
 
 // DZIngestWorkflow is a long-running workflow that refreshes DZ mainnet data
@@ -68,6 +75,12 @@ func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 		var telemUsageFuture temporalworkflow.Future
 		if iteration%telemUsageEveryN == 0 {
 			telemUsageFuture = temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshTelemetryUsage)
+		}
+
+		// Permission audit events run less frequently (~5 minutes); changes are sporadic.
+		var permissionEventsFuture temporalworkflow.Future
+		if iteration%permissionEventsEveryN == 0 {
+			permissionEventsFuture = temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshPermissionEvents)
 		}
 
 		if err := telemLatencyFuture.Get(ctx, nil); err != nil {
@@ -124,6 +137,14 @@ func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 					return ctx.Err()
 				}
 				logger.Error("telemetry usage refresh failed", "error", err)
+			}
+		}
+		if permissionEventsFuture != nil {
+			if err := permissionEventsFuture.Get(ctx, nil); err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				logger.Error("permission events refresh failed", "error", err)
 			}
 		}
 
