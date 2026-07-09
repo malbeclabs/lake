@@ -175,22 +175,22 @@ const STATUS_DOT: Record<MulticastHealthStatus, string> = {
 }
 
 const STATUS_DEFINITIONS: Array<{ status: MulticastHealthStatus; short: string }> = [
-  { status: 'healthy', short: 'control plane reconciles AND subscriber TX matches sum of publishers (±5% / 1 Mbps)' },
-  { status: 'degraded', short: 'control plane reconciles but rates diverge, or partial control plane reconciliation' },
-  { status: 'unhealthy', short: 'no (S,G) mroute, or rates diverge under a degraded control plane' },
+  { status: 'healthy', short: 'control plane reconciles — publisher Tunnel is the (S,G) IIF, and/or subscriber Tunnel is in the OIF list for every source' },
+  { status: 'degraded', short: 'partial reconciliation — some but not all sources/endpoints reconcile (e.g. subscriber sees some publishers but not all)' },
+  { status: 'unhealthy', short: 'no (S,G) mroute — the expected publisher IIF or subscriber OIF is not observed at the device' },
   { status: 'disconnected', short: "user's onchain BGP session is down — not connected, so no (S,G)/OIF is expected (not a forwarding fault)" },
-  { status: 'unknown', short: 'no counter data, or no traffic flowing in the 5-min window' },
+  { status: 'unknown', short: 'not enough collected state to classify' },
 ]
 
 const SECTION_HELP = {
   summary:
-    'Per-status totals across three view granularities. The combined verdict requires control-plane reconciliation (mroute matches onchain) AND data-plane reconciliation (subscriber TX matches sum of publishers within tolerance).',
+    'Per-status totals across three view granularities. The verdict is the control-plane reconciliation — onchain membership matched against the (S,G) IIF/OIF state observed at each device. A user whose onchain BGP session is down is "disconnected". The 5-min rate is a presence signal only and does not affect the verdict.',
   users:
-    'Each row pairs one onchain user with the mroute and 5-min rate observed at their device. ' +
-    'Publishers expect their Tunnel<N> as the IIF of (S,G) and to be transmitting; ' +
-    'subscribers expect their Tunnel<N> in the OIF list and to receive at the same rate publishers send. ' +
-    'A user in P+S mode contributes one row (mode = "P+S") that reconciles subscriber-side ' +
-    'against (sum of publishers − self).',
+    'Each row pairs one onchain user with the mroute state observed at their device. ' +
+    'Publishers expect their Tunnel<N> as the IIF of (S,G); ' +
+    'subscribers expect their Tunnel<N> in the OIF list for every source. ' +
+    'A user in P+S mode contributes one row (mode = "P+S") reconciled on both sides. ' +
+    'The observed 5-min rate is shown as a presence signal (active / idle) only.',
   paths:
     'Each row is a (publisher, subscriber) pair belonging to the group. ' +
     'Endpoints-only verification: both endpoints must be reconciled. ' +
@@ -599,7 +599,7 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
       <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-100">
         <div className="font-medium">This view is under development.</div>
         <div className="mt-1 text-amber-700 dark:text-amber-200/90">
-          Health verdicts and the rate dimension are work in progress. State-collect runs only on jump devices today, so any user, publisher, or subscriber on a non-jump device will appear as <span className="font-mono">unhealthy</span> (or <span className="font-mono">disconnected</span> when its onchain BGP session is down) even when it is functioning normally. Treat verdicts as a starting point, not ground truth.
+          Health verdicts are a work in progress. State-collect runs only on jump devices today, so any user, publisher, or subscriber on a non-jump device will appear as <span className="font-mono">unhealthy</span> (or <span className="font-mono">disconnected</span> when its onchain BGP session is down) even when it is functioning normally. Treat verdicts as a starting point, not ground truth.
         </div>
       </div>
 
