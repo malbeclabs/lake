@@ -20,6 +20,19 @@
 --   health_mroute                    — BGP-down publishers are excluded from
 --                                      the "active publisher" set so a (*,G)
 --                                      is not flagged for their missing (S,G).
+--
+-- Semantics (apply across migrations 000002–000005):
+--   * Precedence: an onchain bgp_status='down' overrides observed dataplane
+--     state — the row is 'disconnected' regardless of mroute presence. A stale
+--     'down' (agent died after reporting down, session later recovered) can
+--     therefore mask a live/faulty path until the next status is ingested. A
+--     freshness gate on last_bgp_reported_at is a possible follow-up.
+--   * Fail-open: bgp_status '' (pre-ingestion rows) and 'unknown' (never
+--     reported) are treated as NOT disconnected, preserving pre-PR behavior.
+--   * Rollback: 000002 and 000003 must be rolled back TOGETHER. Rolling back
+--     000003 (rate) alone while 000002 still emits 'disconnected' leaves the
+--     restored rate matrix routing 'disconnected' into its 'unknown' catch-all
+--     instead of the pre-PR 'unhealthy'.
 
 -- +goose StatementBegin
 CREATE OR REPLACE VIEW health_multicast_user

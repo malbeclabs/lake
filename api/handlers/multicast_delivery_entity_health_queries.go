@@ -41,7 +41,7 @@ func (a *API) queryDeviceMulticastHealthUsers(ctx context.Context, device Multic
 			health_status
 		FROM health_multicast_user_rate
 		WHERE user_device_pk = ?` + groupFilter + endpointFilter + healthFilter + `
-		ORDER BY multiIf(health_status = 'unhealthy', 0, health_status = 'degraded', 1, health_status = 'unknown', 2, health_status = 'disconnected', 3, 4), multicast_group_code, user_pk
+		ORDER BY ` + healthStatusSeverityOrderSQL + `,multicast_group_code, user_pk
 		LIMIT ? OFFSET ?
 		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0
 	`
@@ -129,7 +129,7 @@ func (a *API) queryDeviceMulticastEndpointHealth(ctx context.Context, device Mul
 			missing_endpoint_reasons
 		FROM health_publisher_subscriber_path
 		WHERE ` + where + `
-		ORDER BY multiIf(health_status = 'unhealthy', 0, health_status = 'degraded', 1, health_status = 'unknown', 2, health_status = 'disconnected', 3, 4), multicast_group_code, publisher_dz_ip, subscriber_device_code, subscriber_user_pk
+		ORDER BY ` + healthStatusSeverityOrderSQL + `,multicast_group_code, publisher_dz_ip, subscriber_device_code, subscriber_user_pk
 		LIMIT ? OFFSET ?
 		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0
 	`

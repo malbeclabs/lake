@@ -353,6 +353,7 @@ function CountsRow({
         <span className="text-emerald-500">{counts.healthy} healthy</span>
         <span className="text-amber-500">{counts.degraded} degraded</span>
         <span className="text-red-500">{counts.unhealthy} unhealthy</span>
+        <span className="text-sky-500">{counts.disconnected} disconnected</span>
         <span className="text-muted-foreground">{counts.unknown} unknown</span>
         <span className="text-muted-foreground">/ {counts.total}</span>
       </div>
@@ -510,7 +511,7 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
       <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-100">
         <div className="font-medium">This view is under development.</div>
         <div className="mt-1 text-amber-700 dark:text-amber-200/90">
-          Health verdicts and the rate dimension are work in progress. State-collect runs only on jump devices today, so any user, publisher, or subscriber on a non-jump device will appear as <span className="font-mono">unhealthy</span> even when it is functioning normally. Treat verdicts as a starting point, not ground truth.
+          Health verdicts and the rate dimension are work in progress. State-collect runs only on jump devices today, so any user, publisher, or subscriber on a non-jump device will appear as <span className="font-mono">unhealthy</span> (or <span className="font-mono">disconnected</span> when its onchain BGP session is down) even when it is functioning normally. Treat verdicts as a starting point, not ground truth.
         </div>
       </div>
 

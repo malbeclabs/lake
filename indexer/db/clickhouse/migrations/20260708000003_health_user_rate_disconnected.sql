@@ -1,8 +1,13 @@
 -- +goose Up
 --
 -- Propagate the 'disconnected' control-plane verdict (BGP down, from
--- health_multicast_user) through the combined rate verdict. Requires
--- 20260708000002.
+-- health_multicast_user) through the combined rate verdict, and exclude
+-- disconnected publishers from group_publisher_total so they do not force
+-- co-group subscribers to monitoring_gap. Requires 20260708000002.
+--
+-- Rollback: must be rolled back together with 000002. Rolling back this
+-- migration alone, while 000002 still emits 'disconnected', routes that verdict
+-- into the restored rate matrix's 'unknown' catch-all instead of 'unhealthy'.
 
 -- +goose StatementBegin
 CREATE OR REPLACE VIEW health_multicast_user_rate
@@ -46,7 +51,10 @@ group_publisher_total AS (
         ON ur.ur_device_pk = h.user_device_pk
        AND ur.ur_user_tunnel_id = h.user_tunnel_id
        AND ur.ur_user_pk = h.user_pk
-    WHERE h.mode IN ('P', 'P+S')
+    -- Exclude BGP-down (disconnected) publishers: no counter row, so counting them
+    -- forces subscribers to monitoring_gap/unknown (the masking this feature removes).
+    -- Mirrors health_mroute (000005).
+    WHERE h.mode IN ('P', 'P+S') AND h.health_status != 'disconnected'
     GROUP BY gpt_multicast_group_pk
 ),
 -- Inner layer: compute rate_status_reason / observed_bps_5m / expected_bps_5m
