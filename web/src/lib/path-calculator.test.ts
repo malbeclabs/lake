@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest'
-import { buildLocationOptions, filterLocations, parseEndpointKind, pickBestPair, filterPairsForDevice } from './path-calculator'
+import {
+  buildLocationOptions,
+  filterLocations,
+  parseEndpointKind,
+  pickBestPair,
+  orderPairsBestFirst,
+  filterPairsForDevice,
+  resolveMetroPair,
+  type LocationOption,
+} from './path-calculator'
 import type { MetroDevicePairPath } from '@/lib/api'
 
 const metros = [
@@ -95,6 +104,78 @@ describe('pickBestPair', () => {
       pair({ sourceDevicePK: 'c', bestPath: { hopCount: 2, totalMetric: 400 } }),
     ])
     expect(best?.sourceDevicePK).toBe('c')
+  })
+})
+
+describe('orderPairsBestFirst', () => {
+  it('orders the whole list by measured latency when any pair has it (best first)', () => {
+    const ordered = orderPairsBestFirst([
+      pair({ sourceDevicePK: 'a', bestPath: { measuredLatencyMs: 30, hopCount: 2 } }),
+      pair({ sourceDevicePK: 'b', bestPath: { measuredLatencyMs: 12, hopCount: 4 } }),
+      pair({ sourceDevicePK: 'c', bestPath: { measuredLatencyMs: 20, hopCount: 3 } }),
+    ])
+    expect(ordered.map((p) => p.sourceDevicePK)).toEqual(['b', 'c', 'a'])
+  })
+
+  it('sinks pairs without measured latency below those that have it', () => {
+    const ordered = orderPairsBestFirst([
+      pair({ sourceDevicePK: 'a', bestPath: { hopCount: 1, totalMetric: 10 } }),
+      pair({ sourceDevicePK: 'b', bestPath: { measuredLatencyMs: 40, hopCount: 9 } }),
+    ])
+    expect(ordered.map((p) => p.sourceDevicePK)).toEqual(['b', 'a'])
+  })
+
+  it('falls back to fewest hops then ISIS metric when no pair has latency', () => {
+    const ordered = orderPairsBestFirst([
+      pair({ sourceDevicePK: 'a', bestPath: { hopCount: 3, totalMetric: 100 } }),
+      pair({ sourceDevicePK: 'b', bestPath: { hopCount: 2, totalMetric: 900 } }),
+      pair({ sourceDevicePK: 'c', bestPath: { hopCount: 2, totalMetric: 400 } }),
+    ])
+    expect(ordered.map((p) => p.sourceDevicePK)).toEqual(['c', 'b', 'a'])
+  })
+
+  it('is consistent with pickBestPair (its first element is the best pair)', () => {
+    const pairs = [
+      pair({ sourceDevicePK: 'a', bestPath: { measuredLatencyMs: 30, hopCount: 2 } }),
+      pair({ sourceDevicePK: 'b', bestPath: { measuredLatencyMs: 12, hopCount: 4 } }),
+    ]
+    expect(orderPairsBestFirst(pairs)[0]).toBe(pickBestPair(pairs))
+  })
+
+  it('does not mutate the input array', () => {
+    const pairs = [
+      pair({ sourceDevicePK: 'a', bestPath: { measuredLatencyMs: 30 } }),
+      pair({ sourceDevicePK: 'b', bestPath: { measuredLatencyMs: 12 } }),
+    ]
+    orderPairsBestFirst(pairs)
+    expect(pairs.map((p) => p.sourceDevicePK)).toEqual(['a', 'b'])
+  })
+})
+
+describe('resolveMetroPair', () => {
+  const metroA: LocationOption = { kind: 'metro', pk: 'm-a', code: 'aaa' }
+  const metroB: LocationOption = { kind: 'metro', pk: 'm-b', code: 'bbb' }
+  const deviceInA: LocationOption = { kind: 'device', pk: 'd-a', code: 'dev-a', metroPK: 'm-a' }
+  const deviceNoMetro: LocationOption = { kind: 'device', pk: 'd-x', code: 'dev-x' }
+
+  it('resolves distinct metros for a metro↔metro pair', () => {
+    expect(resolveMetroPair(metroA, metroB)).toEqual({ fromMetro: 'm-a', toMetro: 'm-b' })
+  })
+
+  it('resolves a device to its metroPK for mixed queries', () => {
+    expect(resolveMetroPair(metroB, deviceInA)).toEqual({ fromMetro: 'm-b', toMetro: 'm-a' })
+  })
+
+  it('errors when a device has no metro assigned', () => {
+    const r = resolveMetroPair(metroA, deviceNoMetro)
+    expect(r.error).toMatch(/no metro/i)
+  })
+
+  it('errors when both endpoints resolve to the same metro', () => {
+    const r = resolveMetroPair(metroA, deviceInA)
+    expect(r.fromMetro).toBe('m-a')
+    expect(r.toMetro).toBe('m-a')
+    expect(r.error).toMatch(/same metro/i)
   })
 })
 

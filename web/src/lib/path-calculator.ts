@@ -1,4 +1,4 @@
-import type { MetroDevicePairPath, SinglePath } from '@/lib/api'
+import type { MetroDevicePairPath } from '@/lib/api'
 
 export type LocationKind = 'metro' | 'device'
 
@@ -78,22 +78,54 @@ export function parseEndpointKind(raw: string | null): LocationKind {
   return raw === 'metro' ? 'metro' : 'device'
 }
 
-// Pick the "best" device pair: lowest measured RTT when any pair has it,
-// otherwise fewest hops (ISIS-metric tiebreak).
-export function pickBestPair(pairs: MetroDevicePairPath[]): MetroDevicePairPath | null {
-  if (pairs.length === 0) return null
-  const withLatency = pairs.filter(
-    (p) => typeof p.bestPath.measuredLatencyMs === 'number' && p.bestPath.measuredLatencyMs > 0,
-  )
-  if (withLatency.length > 0) {
-    return [...withLatency].sort(
-      (a, b) => (a.bestPath.measuredLatencyMs as number) - (b.bestPath.measuredLatencyMs as number),
-    )[0]
-  }
+// Order device pairs best-first: lowest measured RTT when any pair has it
+// (pairs without a measurement sink below those that do), otherwise fewest
+// hops with an ISIS-metric tiebreak. Non-mutating.
+export function orderPairsBestFirst(pairs: MetroDevicePairPath[]): MetroDevicePairPath[] {
+  const latency = (p: MetroDevicePairPath) =>
+    typeof p.bestPath.measuredLatencyMs === 'number' && p.bestPath.measuredLatencyMs > 0
+      ? p.bestPath.measuredLatencyMs
+      : Infinity
+  const anyLatency = pairs.some((p) => latency(p) !== Infinity)
   return [...pairs].sort((a, b) => {
+    if (anyLatency && latency(a) !== latency(b)) return latency(a) - latency(b)
     if (a.bestPath.hopCount !== b.bestPath.hopCount) return a.bestPath.hopCount - b.bestPath.hopCount
     return a.bestPath.totalMetric - b.bestPath.totalMetric
-  })[0]
+  })
+}
+
+// Pick the "best" device pair (the first element of the best-first ordering).
+export function pickBestPair(pairs: MetroDevicePairPath[]): MetroDevicePairPath | null {
+  return orderPairsBestFirst(pairs)[0] ?? null
+}
+
+export interface MetroPairResult {
+  fromMetro?: string
+  toMetro?: string
+  error?: string
+}
+
+// Resolve the metro pair for a metro/mixed query and validate it. Devices
+// resolve to their assigned metro; a same-metro selection is a dead end for
+// the metro-device-paths endpoint (which requires two distinct metros), so we
+// surface a friendly message instead of the raw backend error.
+export function resolveMetroPair(
+  source: LocationOption,
+  target: LocationOption,
+): MetroPairResult {
+  const fromMetro = source.kind === 'metro' ? source.pk : source.metroPK
+  const toMetro = target.kind === 'metro' ? target.pk : target.metroPK
+  if (!fromMetro || !toMetro) {
+    return { fromMetro, toMetro, error: 'Selected device has no metro assigned.' }
+  }
+  if (fromMetro === toMetro) {
+    return {
+      fromMetro,
+      toMetro,
+      error: 'Source and destination are in the same metro. Pick locations in different metros.',
+    }
+  }
+  return { fromMetro, toMetro }
 }
 
 // Restrict metro-device pairs to a specific endpoint device (mixed metro↔device queries).
@@ -107,6 +139,3 @@ export function filterPairsForDevice(
     return true
   })
 }
-
-// Re-exported for Task 2 consumers; kept here so all path-calc logic lives in one module.
-export type { MetroDevicePairPath, SinglePath }

@@ -29,7 +29,8 @@ import type {
 import {
   buildLocationOptions,
   parseEndpointKind,
-  pickBestPair,
+  orderPairsBestFirst,
+  resolveMetroPair,
   filterPairsForDevice,
   type LocationOption,
 } from '@/lib/path-calculator'
@@ -47,11 +48,15 @@ const PATH_COLORS = [
 function PathCard({
   path,
   index,
+  label,
+  badge,
   isSelected,
   onSelect,
 }: {
   path: SinglePath
   index: number
+  label: string
+  badge?: string
   isSelected: boolean
   onSelect: () => void
 }) {
@@ -79,10 +84,10 @@ function PathCard({
             className="w-3 h-3 rounded-full"
             style={{ backgroundColor: PATH_COLORS[index % PATH_COLORS.length] }}
           />
-          <span className="font-medium">Path {index + 1}</span>
-          {index === 0 && (
+          <span className="font-medium">{label}</span>
+          {badge && (
             <span className="text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-2 py-0.5 rounded">
-              Shortest
+              {badge}
             </span>
           )}
         </div>
@@ -211,12 +216,16 @@ export function PathCalculatorPage() {
     (searchParams.get('service') as PathService) || 'unicast',
   )
 
-  const { data: isis, isLoading: isisLoading } = useQuery({
+  const { data: isis, isLoading: isisLoading, isError: isisError } = useQuery({
     queryKey: ['isis-topology'],
     queryFn: fetchISISTopology,
     staleTime: 60000,
   })
-  const { data: topology, isLoading: topoLoading } = useQuery({
+  const {
+    data: topology,
+    isLoading: topoLoading,
+    isError: topoError,
+  } = useQuery({
     queryKey: ['topology'],
     queryFn: fetchTopology,
     staleTime: 60000,
@@ -239,6 +248,9 @@ export function PathCalculatorPage() {
 
   useEffect(() => {
     if (initializedFromUrl || isisLoading || topoLoading) return
+    // Don't latch init until options actually arrived — a failed/empty fetch
+    // must not silently drop the URL from/to and block a later recovery.
+    if (options.length === 0) return
     const findOpt = (raw: string | null, kind: 'metro' | 'device') =>
       raw ? options.find((o) => o.kind === kind && (o.pk === raw || o.code === raw)) ?? null : null
     const s = findOpt(searchParams.get('from'), parseEndpointKind(searchParams.get('fromType')))
@@ -317,19 +329,18 @@ export function PathCalculatorPage() {
         const res = await fetchISISPaths(s.pk, t.pk, 5, service)
         return { paths: res.paths ?? [], pairs: null, error: res.error }
       }
-      const fromMetro = s.kind === 'metro' ? s.pk : s.metroPK
-      const toMetro = t.kind === 'metro' ? t.pk : t.metroPK
-      if (!fromMetro || !toMetro) {
-        return { paths: [], pairs: [], error: 'Selected device has no metro assigned.' }
+      const { fromMetro, toMetro, error } = resolveMetroPair(s, t)
+      if (!fromMetro || !toMetro || error) {
+        return { paths: [], pairs: [], error }
       }
       const res = await fetchMetroDevicePaths(fromMetro, toMetro, service)
-      const pairs = filterPairsForDevice(res.devicePairs ?? [], {
+      const filtered = filterPairsForDevice(res.devicePairs ?? [], {
         sourceDevicePK: s.kind === 'device' ? s.pk : undefined,
         targetDevicePK: t.kind === 'device' ? t.pk : undefined,
       })
-      const best = pickBestPair(pairs)
-      // Best pair first so the default card is the recommended path.
-      const ordered = best ? [best, ...pairs.filter((p) => p !== best)] : pairs
+      // Best pair first (and the whole list ordered by the same criterion) so
+      // card ordering matches the "Best" badge and "Pair N" reflects rank.
+      const ordered = orderPairsBestFirst(filtered)
       return { paths: ordered.map((p) => p.bestPath), pairs: ordered, error: res.error }
     },
   })
@@ -351,6 +362,17 @@ export function PathCalculatorPage() {
     return (
       <div className="flex-1 flex items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+
+  if (isisError || topoError) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="flex items-center gap-2 text-red-500">
+          <AlertCircle className="h-6 w-6" />
+          <span>Failed to load network topology. Please try again.</span>
+        </div>
       </div>
     )
   }
@@ -485,6 +507,8 @@ export function PathCalculatorPage() {
                     <PathCard
                       path={pair.bestPath}
                       index={index}
+                      label={`Pair ${index + 1}`}
+                      badge={index === 0 ? 'Best' : undefined}
                       isSelected={index === selectedPathIndex}
                       onSelect={() => setSelectedPathIndex(index)}
                     />
@@ -498,6 +522,8 @@ export function PathCalculatorPage() {
                     key={index}
                     path={path}
                     index={index}
+                    label={`Path ${index + 1}`}
+                    badge={index === 0 ? 'Shortest' : undefined}
                     isSelected={index === selectedPathIndex}
                     onSelect={() => setSelectedPathIndex(index)}
                   />
