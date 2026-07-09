@@ -2234,16 +2234,13 @@ export interface MulticastHealthGroupSummary {
   counts: MulticastHealthCounts
 }
 
-export type MulticastRateStatus = 'reconciled' | 'mismatch' | 'unknown'
+// Rate is a presence-only signal now (see the health_rate_presence_only
+// migration): 'active' = non-zero traffic observed on the tunnel, 'idle' =
+// registered but 0 bps, 'unknown' = no counter data. It never gates
+// health_status — that comes from the control plane.
+export type MulticastRateStatus = 'active' | 'idle' | 'unknown'
 
-export type MulticastRateStatusReason =
-  | 'active'
-  | 'idle'
-  | 'no_data'
-  | 'reconciled'
-  | 'mismatch'
-  | 'monitoring_gap'
-  | 'group_idle'
+export type MulticastRateStatusReason = 'active' | 'idle' | 'no_data'
 
 export interface MulticastHealthUserItem {
   user_pk: string
@@ -2325,6 +2322,29 @@ export interface MulticastHealthGroupPathsResponse {
   offset: number
 }
 
+// One faulting endpoint behind the unhealthy per-path fan-out. affected_pairs
+// is how many (publisher, subscriber) pairs this endpoint drags down. A user
+// broken as both publisher and subscriber of the group reports the combined
+// 'publisher+subscriber' role.
+export interface MulticastHealthPathRootCause {
+  faulting_role: 'publisher' | 'subscriber' | 'publisher+subscriber'
+  user_pk: string
+  owner_pubkey: string
+  dz_ip: string
+  tunnel_id: number
+  device_pk: string
+  device_code: string
+  endpoint_status: 'disconnected' | 'unhealthy'
+  affected_pairs: number
+}
+
+export interface MulticastHealthPathRootCausesResponse {
+  group: MulticastHealthGroupRef
+  generated_at: string
+  items: MulticastHealthPathRootCause[]
+  total: number
+}
+
 export async function fetchMulticastGroupHealth(pkOrCode: string): Promise<MulticastHealthGroupSummary> {
   const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}/health`)
   if (!res.ok) {
@@ -2365,6 +2385,16 @@ export async function fetchMulticastGroupHealthPaths(
   const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}/health/paths${qs ? `?${qs}` : ''}`)
   if (!res.ok) {
     throw new Error('Failed to fetch multicast group health paths')
+  }
+  return res.json()
+}
+
+export async function fetchMulticastGroupHealthPathRootCauses(
+  pkOrCode: string,
+): Promise<MulticastHealthPathRootCausesResponse> {
+  const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}/health/path-root-causes`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch multicast group path root causes')
   }
   return res.json()
 }

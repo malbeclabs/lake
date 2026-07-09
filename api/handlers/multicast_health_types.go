@@ -116,3 +116,28 @@ type MulticastHealthGroupPathsResponse struct {
 	Limit       int                       `json:"limit"`
 	Offset      int                       `json:"offset"`
 }
+
+// MulticastHealthPathRootCause collapses the per-(publisher, subscriber) path
+// fan-out to the endpoint that is actually at fault. One faulty endpoint drags
+// down every pair it participates in (a publisher → all its subscribers, a
+// subscriber → all its publishers), so listing endpoints with an affected-pair
+// count is far more actionable than N raw rows.
+type MulticastHealthPathRootCause struct {
+	// FaultingRole is "publisher" or "subscriber".
+	FaultingRole   string `json:"faulting_role"`
+	UserPK         string `json:"user_pk"`
+	OwnerPubkey    string `json:"owner_pubkey"`
+	DZIP           string `json:"dz_ip"`
+	TunnelID       int32  `json:"tunnel_id"`
+	DevicePK       string `json:"device_pk"`
+	DeviceCode     string `json:"device_code"`
+	EndpointStatus string `json:"endpoint_status"` // disconnected | unhealthy
+	AffectedPairs  int32  `json:"affected_pairs"`
+}
+
+type MulticastHealthPathRootCausesResponse struct {
+	Group       MulticastDeliveryGroup         `json:"group"`
+	GeneratedAt string                         `json:"generated_at"`
+	Items       []MulticastHealthPathRootCause `json:"items"`
+	Total       int                            `json:"total"`
+}

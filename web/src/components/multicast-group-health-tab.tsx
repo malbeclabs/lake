@@ -9,9 +9,11 @@ import {
   fetchMulticastGroupHealth,
   fetchMulticastGroupHealthUsers,
   fetchMulticastGroupHealthPaths,
+  fetchMulticastGroupHealthPathRootCauses,
   type MulticastHealthStatus,
   type MulticastHealthStatusCounts,
   type MulticastHealthUserItem,
+  type MulticastHealthPathRootCause,
   type MulticastRateStatus,
   type MulticastRateStatusReason,
 } from '@/lib/api'
@@ -60,19 +62,15 @@ function formatBps(bps?: number): string {
 }
 
 const RATE_STATUS_BADGE: Record<MulticastRateStatus, string> = {
-  reconciled: 'bg-emerald-500/15 text-emerald-500',
-  mismatch: 'bg-red-500/15 text-red-500',
+  active: 'bg-emerald-500/15 text-emerald-500',
+  idle: 'bg-amber-500/15 text-amber-500',
   unknown: 'bg-muted text-muted-foreground',
 }
 
 const RATE_REASON_HUMAN: Record<MulticastRateStatusReason, string> = {
-  active: 'transmitting',
-  idle: 'idle (registered, transmitting 0)',
+  active: 'non-zero traffic on tunnel',
+  idle: 'registered, transmitting 0',
   no_data: 'no counter data in 15 min',
-  reconciled: 'TX matches sum of publishers',
-  mismatch: 'TX deviates from sum of publishers',
-  monitoring_gap: 'a publisher in this group has no counter data',
-  group_idle: 'all publishers transmitting 0 — nothing to verify against',
 }
 
 // 25 keeps the per-page Radix Tooltip.Root count (~2 per row × N rows) below
@@ -177,22 +175,22 @@ const STATUS_DOT: Record<MulticastHealthStatus, string> = {
 }
 
 const STATUS_DEFINITIONS: Array<{ status: MulticastHealthStatus; short: string }> = [
-  { status: 'healthy', short: 'control plane reconciles AND subscriber TX matches sum of publishers (±5% / 1 Mbps)' },
-  { status: 'degraded', short: 'control plane reconciles but rates diverge, or partial control plane reconciliation' },
-  { status: 'unhealthy', short: 'no (S,G) mroute, or rates diverge under a degraded control plane' },
+  { status: 'healthy', short: 'control plane reconciles — publisher Tunnel is the (S,G) IIF, and/or subscriber Tunnel is in the OIF list for every source' },
+  { status: 'degraded', short: 'partial reconciliation — some but not all sources/endpoints reconcile (e.g. subscriber sees some publishers but not all)' },
+  { status: 'unhealthy', short: 'no (S,G) mroute — the expected publisher IIF or subscriber OIF is not observed at the device' },
   { status: 'disconnected', short: "user's onchain BGP session is down — not connected, so no (S,G)/OIF is expected (not a forwarding fault)" },
-  { status: 'unknown', short: 'no counter data, or no traffic flowing in the 5-min window' },
+  { status: 'unknown', short: 'not enough collected state to classify' },
 ]
 
 const SECTION_HELP = {
   summary:
-    'Per-status totals across three view granularities. The combined verdict requires control-plane reconciliation (mroute matches onchain) AND data-plane reconciliation (subscriber TX matches sum of publishers within tolerance).',
+    'Per-status totals across three view granularities. The verdict is the control-plane reconciliation — onchain membership matched against the (S,G) IIF/OIF state observed at each device. A user whose onchain BGP session is down is "disconnected". The 5-min rate is a presence signal only and does not affect the verdict.',
   users:
-    'Each row pairs one onchain user with the mroute and 5-min rate observed at their device. ' +
-    'Publishers expect their Tunnel<N> as the IIF of (S,G) and to be transmitting; ' +
-    'subscribers expect their Tunnel<N> in the OIF list and to receive at the same rate publishers send. ' +
-    'A user in P+S mode contributes one row (mode = "P+S") that reconciles subscriber-side ' +
-    'against (sum of publishers − self).',
+    'Each row pairs one onchain user with the mroute state observed at their device. ' +
+    'Publishers expect their Tunnel<N> as the IIF of (S,G); ' +
+    'subscribers expect their Tunnel<N> in the OIF list for every source. ' +
+    'A user in P+S mode contributes one row (mode = "P+S") reconciled on both sides. ' +
+    'The observed 5-min rate is shown as a presence signal (active / idle) only.',
   paths:
     'Each row is a (publisher, subscriber) pair belonging to the group. ' +
     'Endpoints-only verification: both endpoints must be reconciled. ' +
@@ -216,34 +214,41 @@ function RateCell({ item }: { item: MulticastHealthUserItem }) {
         <span className="font-medium">{item.rate_status_reason}</span> — {RATE_REASON_HUMAN[item.rate_status_reason] ?? ''}
       </div>
       <div className="text-muted-foreground">Observed: {formatBps(item.observed_bps_5m)}</div>
-      {item.expected_bps_5m !== undefined && item.expected_bps_5m !== null && (
-        <div className="text-muted-foreground">Expected: {formatBps(item.expected_bps_5m)} (sum of publishers' RX)</div>
-      )}
       {item.rate_bucket_ts && (
         <div className="text-muted-foreground">5-min bucket: {new Date(item.rate_bucket_ts).toLocaleTimeString()}</div>
       )}
+      <div className="text-muted-foreground">Presence only — does not affect health.</div>
     </div>
   )
   return (
-    <Tooltip content={tooltip}>
-      <span
-        tabIndex={0}
-        aria-label={`Rate ${item.rate_status}: ${item.rate_status_reason}`}
-        className="inline-flex items-center gap-1.5 cursor-help focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 rounded-full"
-      >
-        <span className="tabular-nums font-mono text-xs">{formatBps(item.observed_bps_5m)}</span>
-        <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${cls}`}>
-          {item.rate_status}
+    <span className="inline-flex items-center gap-1.5">
+      <Tooltip content={tooltip}>
+        <span
+          tabIndex={0}
+          aria-label={`Rate ${item.rate_status}: ${item.rate_status_reason}`}
+          className="inline-flex items-center gap-1.5 cursor-help focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 rounded-full"
+        >
+          <span className="tabular-nums font-mono text-xs">{formatBps(item.observed_bps_5m)}</span>
+          <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${cls}`}>
+            {item.rate_status}
+          </span>
         </span>
-      </span>
-    </Tooltip>
+      </Tooltip>
+      <Link
+        to={`/dz/users/${item.user_pk}#traffic`}
+        className="text-[10px] text-primary hover:underline whitespace-nowrap"
+        title="View this tunnel's traffic history"
+      >
+        traffic<NavLinkArrow />
+      </Link>
+    </span>
   )
 }
 
 function rowReason(item: MulticastHealthUserItem): string {
   if (item.mismatch_reason) return item.mismatch_reason
-  // No CP reason → surface the rate reason (or nothing if rate is healthy/active/reconciled).
-  if (['active', 'reconciled'].includes(item.rate_status_reason)) return '—'
+  // No CP reason → surface the rate reason (nothing if the tunnel is active).
+  if (item.rate_status_reason === 'active') return '—'
   return RATE_REASON_HUMAN[item.rate_status_reason] ?? '—'
 }
 
@@ -251,17 +256,13 @@ function rowReason(item: MulticastHealthUserItem): string {
 // the combined-verdict hover-card on the Status column.
 const DIM_BADGE_CLASS: Record<string, string> = {
   healthy: 'bg-emerald-500/15 text-emerald-500',
-  reconciled: 'bg-emerald-500/15 text-emerald-500',
   active: 'bg-emerald-500/15 text-emerald-500',
   degraded: 'bg-amber-500/15 text-amber-500',
-  mismatch: 'bg-red-500/15 text-red-500',
+  idle: 'bg-amber-500/15 text-amber-500',
   unhealthy: 'bg-red-500/15 text-red-500',
   disconnected: 'bg-sky-500/15 text-sky-500',
   unknown: 'bg-muted text-muted-foreground',
-  idle: 'bg-muted text-muted-foreground',
   no_data: 'bg-muted text-muted-foreground',
-  monitoring_gap: 'bg-muted text-muted-foreground',
-  group_idle: 'bg-muted text-muted-foreground',
 }
 
 function DimBadge({ value }: { value: string }) {
@@ -412,6 +413,82 @@ function TableStateRow({
   return null
 }
 
+// RootCausePanel collapses the unhealthy per-path fan-out to the handful of
+// endpoints actually at fault. A single broken publisher drags down every one
+// of its subscriber pairs (and vice-versa), so N unhealthy rows usually trace
+// back to just a few endpoints — this shows them, ranked by blast radius.
+function RootCausePanel({
+  items,
+  isLoading,
+  isError,
+  faultCount,
+  total,
+}: {
+  items: MulticastHealthPathRootCause[]
+  isLoading: boolean
+  isError: boolean
+  faultCount: number
+  total: number
+}) {
+  return (
+    <div className="px-4 py-3 border-b border-border bg-muted/30">
+      <div className="flex items-center gap-1.5 mb-2">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Root causes</h4>
+        {isLoading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+      </div>
+      {isError ? (
+        <div className="text-xs text-red-500">Failed to load root causes.</div>
+      ) : isLoading && items.length === 0 ? (
+        <div className="text-xs text-muted-foreground">Loading…</div>
+      ) : items.length === 0 ? (
+        <div className="text-xs text-muted-foreground">
+          {faultCount.toLocaleString()} faulting pairs, but none could be attributed to a single endpoint.
+        </div>
+      ) : (
+        <>
+          <div className="text-xs text-muted-foreground mb-2">
+            <span className="font-medium text-foreground">{total.toLocaleString()}</span>{' '}
+            {total === 1 ? 'endpoint accounts' : 'endpoints account'} for the faulting publisher → subscriber
+            pairs in this group{items.length < total ? ` (showing top ${items.length})` : ''}:
+          </div>
+          <ul className="space-y-1">
+            {items.map((rc) => (
+              <li key={`${rc.faulting_role}-${rc.user_pk}`} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-muted text-muted-foreground uppercase">
+                  {rc.faulting_role}
+                </span>
+                <HealthBadge status={rc.endpoint_status} />
+                <Link
+                  to={`/dz/users/${rc.user_pk}`}
+                  className="group font-mono text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center"
+                  title={rc.owner_pubkey ? `account ${rc.user_pk}\nowner ${rc.owner_pubkey}` : rc.user_pk}
+                >
+                  {rc.dz_ip || rc.user_pk.slice(0, 8)}
+                  {rc.tunnel_id > 0 && <span className="ml-1 text-muted-foreground">·T{rc.tunnel_id}</span>}
+                  <NavLinkArrow />
+                </Link>
+                {rc.device_pk && (
+                  <Link
+                    to={`/dz/devices/${rc.device_pk}`}
+                    className="group text-xs font-mono text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center"
+                  >
+                    {rc.device_code || rc.device_pk.slice(0, 8)}
+                    <NavLinkArrow />
+                  </Link>
+                )}
+                <span className="text-muted-foreground text-xs">
+                  affects <span className="tabular-nums font-medium text-foreground">{rc.affected_pairs.toLocaleString()}</span>{' '}
+                  {rc.affected_pairs === 1 ? 'pair' : 'pairs'}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  )
+}
+
 export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: string }) {
   const [searchParams] = useSearchParams()
   const [usersOffset, setUsersOffset] = useState(0)
@@ -478,6 +555,19 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
     placeholderData: keepPreviousData,
   })
 
+  // Root-cause rollup of the unhealthy per-path fan-out. Only fetched when the
+  // group actually has faulting paths (cheap aggregation, always shown when
+  // present — independent of the raw-row details toggle).
+  const pathFaultCount =
+    (summaryQuery.data?.counts.paths.unhealthy ?? 0) + (summaryQuery.data?.counts.paths.disconnected ?? 0)
+  const rootCausesQuery = useQuery({
+    queryKey: ['multicast-group-health-path-root-causes', groupPkOrCode],
+    queryFn: () => fetchMulticastGroupHealthPathRootCauses(groupPkOrCode),
+    enabled: !!groupPkOrCode && pathFaultCount > 0,
+    refetchInterval: 60_000,
+    placeholderData: keepPreviousData,
+  })
+
   if (summaryQuery.isLoading) {
     return (
       <div className="px-4 py-8 text-center text-muted-foreground">
@@ -502,17 +592,9 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
 
   return (
     <div className="p-4 space-y-6">
-      {/* Under-development notice. The reconciliation logic and rate dimension
-          here surface real data, but the verdicts assume state-collect covers
-          every device — today only jump devices are collected, so non-jump
-          publishers/subscribers can falsely render as unhealthy. Wording is
-          deliberately concrete so operators read it as caveat, not "do not
-          trust this page". */}
+      {/* Under-development notice. */}
       <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-100">
         <div className="font-medium">This view is under development.</div>
-        <div className="mt-1 text-amber-700 dark:text-amber-200/90">
-          Health verdicts and the rate dimension are work in progress. State-collect runs only on jump devices today, so any user, publisher, or subscriber on a non-jump device will appear as <span className="font-mono">unhealthy</span> (or <span className="font-mono">disconnected</span> when its onchain BGP session is down) even when it is functioning normally. Treat verdicts as a starting point, not ground truth.
-        </div>
       </div>
 
       {/* Summary counts */}
@@ -667,6 +749,15 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
             />
           )}
         </div>
+        {pathFaultCount > 0 && (
+          <RootCausePanel
+            items={rootCausesQuery.data?.items ?? []}
+            isLoading={rootCausesQuery.isLoading}
+            isError={rootCausesQuery.isError}
+            faultCount={pathFaultCount}
+            total={rootCausesQuery.data?.total ?? 0}
+          />
+        )}
         {!showPathDetails ? (
           <div className="px-4 py-6 text-sm text-muted-foreground flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
