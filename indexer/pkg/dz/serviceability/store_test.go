@@ -347,17 +347,15 @@ func TestLake_Serviceability_Store_ReplaceUsers(t *testing.T) {
 
 		users := []User{
 			{
-				PK:                userPK,
-				OwnerPubkey:       testPK(11),
-				Status:            "activated",
-				Kind:              "multicast",
-				ClientIP:          net.IP{10, 0, 0, 1},
-				DZIP:              net.IP{10, 0, 0, 2},
-				DevicePK:          testPK(12),
-				TunnelID:          505,
-				BgpStatus:         "down",
-				LastBgpUpAt:       12345,
-				LastBgpReportedAt: 67890,
+				PK:          userPK,
+				OwnerPubkey: testPK(11),
+				Status:      "activated",
+				Kind:        "multicast",
+				ClientIP:    net.IP{10, 0, 0, 1},
+				DZIP:        net.IP{10, 0, 0, 2},
+				DevicePK:    testPK(12),
+				TunnelID:    505,
+				BgpStatus:   "down",
 			},
 		}
 
@@ -368,24 +366,64 @@ func TestLake_Serviceability_Store_ReplaceUsers(t *testing.T) {
 		require.NoError(t, err)
 		defer conn.Close()
 
-		// The dz_users_current view (recreated by the migration) must expose the
-		// BGP columns.
+		// The dz_users_current view (recreated by the migration) must expose bgp_status.
 		rows, err := conn.Query(ctx,
-			"SELECT bgp_status, last_bgp_up_at, last_bgp_reported_at FROM dz_users_current WHERE pk = ?",
-			userPK)
+			"SELECT bgp_status FROM dz_users_current WHERE pk = ?", userPK)
 		require.NoError(t, err)
 		defer rows.Close()
 
 		require.True(t, rows.Next(), "expected a dz_users_current row for the user")
-		var (
-			bgpStatus         string
-			lastBgpUpAt       uint64
-			lastBgpReportedAt uint64
-		)
-		require.NoError(t, rows.Scan(&bgpStatus, &lastBgpUpAt, &lastBgpReportedAt))
+		var bgpStatus string
+		require.NoError(t, rows.Scan(&bgpStatus))
 		require.Equal(t, "down", bgpStatus)
-		require.Equal(t, uint64(12345), lastBgpUpAt)
-		require.Equal(t, uint64(67890), lastBgpReportedAt)
+	})
+
+	// Guards against the SCD-churn concern from review: only bgp_status is
+	// ingested (not the ~6-hourly last_bgp_reported_at keepalive slot), so a
+	// re-ingest with unchanged BGP state must NOT write a new history row. A
+	// real bgp_status transition must.
+	t.Run("bgp_status change detection does not churn history", func(t *testing.T) {
+		t.Parallel()
+
+		db := testClient(t)
+		ctx := t.Context()
+
+		store, err := NewStore(StoreConfig{Logger: laketesting.NewLogger(), ClickHouse: db})
+		require.NoError(t, err)
+
+		userPK := testPK(20)
+		mk := func(bgp string) []User {
+			return []User{{
+				PK: userPK, OwnerPubkey: testPK(21), Status: "activated", Kind: "multicast",
+				ClientIP: net.IP{10, 0, 1, 1}, DZIP: net.IP{10, 0, 1, 2}, DevicePK: testPK(22),
+				TunnelID: 506, BgpStatus: bgp,
+			}}
+		}
+
+		conn, err := db.Conn(ctx)
+		require.NoError(t, err)
+		defer conn.Close()
+		entityID := dataset.NewNaturalKey(userPK).ToSurrogate()
+		historyRows := func() uint64 {
+			r, err := conn.Query(ctx, "SELECT count() FROM dim_dz_users_history WHERE entity_id = ?", entityID)
+			require.NoError(t, err)
+			defer r.Close()
+			require.True(t, r.Next())
+			var n uint64
+			require.NoError(t, r.Scan(&n))
+			return n
+		}
+
+		require.NoError(t, store.ReplaceUsers(ctx, mk("up")))
+		require.EqualValues(t, 1, historyRows())
+
+		// Same BGP state re-ingested → no new row (attrs_hash unchanged).
+		require.NoError(t, store.ReplaceUsers(ctx, mk("up")))
+		require.EqualValues(t, 1, historyRows(), "unchanged bgp_status must not churn a new history row")
+
+		// Real transition → exactly one new row.
+		require.NoError(t, store.ReplaceUsers(ctx, mk("down")))
+		require.EqualValues(t, 2, historyRows(), "bgp_status transition must write one new history row")
 	})
 }
 

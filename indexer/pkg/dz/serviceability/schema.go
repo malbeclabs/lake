@@ -164,8 +164,6 @@ func (s *UserSchema) PayloadColumns() []string {
 		"publishers:VARCHAR",
 		"subscribers:VARCHAR",
 		"bgp_status:VARCHAR",
-		"last_bgp_up_at:BIGINT",
-		"last_bgp_reported_at:BIGINT",
 	}
 }
 
@@ -185,8 +183,6 @@ func (s *UserSchema) ToRow(u User) []any {
 		string(publishersJSON),
 		string(subscribersJSON),
 		u.BgpStatus,
-		u.LastBgpUpAt,
-		u.LastBgpReportedAt,
 	}
 }
 

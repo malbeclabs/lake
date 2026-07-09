@@ -137,10 +137,9 @@ type User struct {
 	TunnelID    uint16
 	Publishers  []string // multicast group PKs this user publishes to
 	Subscribers []string // multicast group PKs this user subscribes to
-	// BGP session state as last reported by the device agent (onchain).
-	BgpStatus         string // "up" | "down" | "unknown"
-	LastBgpUpAt       uint64 // ledger slot of the most recent BGP up event
-	LastBgpReportedAt uint64 // ledger slot of the most recent BGP status report
+	// BgpStatus is the onchain BGP session status as last reported by the
+	// device agent: always one of "up" | "down" | "unknown".
+	BgpStatus string
 }
 
 type MulticastGroup struct {
@@ -546,23 +545,36 @@ func convertUsers(onchain []serviceability.User) []User {
 		}
 
 		result[i] = User{
-			PK:                solana.PublicKeyFromBytes(user.PubKey[:]).String(),
-			OwnerPubkey:       solana.PublicKeyFromBytes(user.Owner[:]).String(),
-			Status:            statusString(user.Status),
-			Kind:              user.UserType.String(),
-			ClientIP:          net.IP(user.ClientIp[:]),
-			DZIP:              net.IP(user.DzIp[:]),
-			DevicePK:          solana.PublicKeyFromBytes(user.DevicePubKey[:]).String(),
-			TenantPK:          solana.PublicKeyFromBytes(user.TenantPubKey[:]).String(),
-			TunnelID:          user.TunnelId,
-			Publishers:        publishers,
-			Subscribers:       subscribers,
-			BgpStatus:         serviceability.BGPStatus(user.BgpStatus).String(),
-			LastBgpUpAt:       user.LastBgpUpAt,
-			LastBgpReportedAt: user.LastBgpReportedAt,
+			PK:          solana.PublicKeyFromBytes(user.PubKey[:]).String(),
+			OwnerPubkey: solana.PublicKeyFromBytes(user.Owner[:]).String(),
+			Status:      statusString(user.Status),
+			Kind:        user.UserType.String(),
+			ClientIP:    net.IP(user.ClientIp[:]),
+			DZIP:        net.IP(user.DzIp[:]),
+			DevicePK:    solana.PublicKeyFromBytes(user.DevicePubKey[:]).String(),
+			TenantPK:    solana.PublicKeyFromBytes(user.TenantPubKey[:]).String(),
+			TunnelID:    user.TunnelId,
+			Publishers:  publishers,
+			Subscribers: subscribers,
+			BgpStatus:   bgpStatusString(user.BgpStatus),
 		}
 	}
 	return result
+}
+
+// bgpStatusString maps the onchain BGP status enum to the documented
+// "up" | "down" | "unknown" vocabulary. Any value outside the known enum (a
+// future onchain variant) normalizes to "unknown" so consumers never see an
+// out-of-vocabulary string like "BGPStatus(3)".
+func bgpStatusString(status uint8) string {
+	switch serviceability.BGPStatus(status) {
+	case serviceability.BGPStatusUp:
+		return "up"
+	case serviceability.BGPStatusDown:
+		return "down"
+	default:
+		return "unknown"
+	}
 }
 
 func convertLinks(onchain []serviceability.Link, devices []serviceability.Device, topologies []serviceability.TopologyInfo) []Link {

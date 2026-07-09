@@ -1,25 +1,35 @@
 -- +goose Up
-
--- Add onchain BGP session state (User account: bgp_status, last_bgp_up_at,
--- last_bgp_reported_at) to the users dimension so consumers can distinguish a
--- user that is not connected (BGP down) from a multicast forwarding fault.
+--
+-- Add the onchain BGP session status (User account) to the users dimension so
+-- consumers can distinguish a user that is not connected (BGP down) from a
+-- multicast forwarding fault.
+--
+-- Only bgp_status is ingested. The onchain last_bgp_up_at / last_bgp_reported_at
+-- slots are deliberately NOT ingested: last_bgp_reported_at is rewritten by a
+-- ~6-hourly onchain keepalive, and since attrs_hash covers every payload column
+-- it would churn a new dim_dz_users_history row per user ~4x/day forever. If a
+-- freshness signal is needed later, add it as a non-hashed column.
+--
+-- Column values: 'up' | 'down' | 'unknown' (agent never reported). DEFAULT
+-- 'unknown' means "not yet reported"; consumers treat anything != 'down' as
+-- fail-open (old behavior), so an unreported user is never masked.
+--
+-- NOTE: the AFTER placement is load-bearing. loadSnapshotIntoStaging appends a
+-- positional batch with no column list, so the physical column order MUST match
+-- UserSchema.PayloadColumns() order (bgp_status last, after subscribers).
 
 -- +goose StatementBegin
 ALTER TABLE dim_dz_users_history
-    ADD COLUMN IF NOT EXISTS bgp_status String DEFAULT '' AFTER subscribers,
-    ADD COLUMN IF NOT EXISTS last_bgp_up_at UInt64 DEFAULT 0 AFTER bgp_status,
-    ADD COLUMN IF NOT EXISTS last_bgp_reported_at UInt64 DEFAULT 0 AFTER last_bgp_up_at;
+    ADD COLUMN IF NOT EXISTS bgp_status String DEFAULT 'unknown' AFTER subscribers;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
 ALTER TABLE stg_dim_dz_users_snapshot
-    ADD COLUMN IF NOT EXISTS bgp_status String DEFAULT '' AFTER subscribers,
-    ADD COLUMN IF NOT EXISTS last_bgp_up_at UInt64 DEFAULT 0 AFTER bgp_status,
-    ADD COLUMN IF NOT EXISTS last_bgp_reported_at UInt64 DEFAULT 0 AFTER last_bgp_up_at;
+    ADD COLUMN IF NOT EXISTS bgp_status String DEFAULT 'unknown' AFTER subscribers;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
--- Recreate dz_users_current to expose the BGP columns.
+-- Recreate dz_users_current to expose bgp_status.
 CREATE OR REPLACE VIEW dz_users_current
 AS
 WITH ranked AS (
@@ -45,9 +55,7 @@ SELECT
     tunnel_id,
     publishers,
     subscribers,
-    bgp_status,
-    last_bgp_up_at,
-    last_bgp_reported_at
+    bgp_status
 FROM ranked
 WHERE rn = 1 AND is_deleted = 0;
 -- +goose StatementEnd
@@ -55,7 +63,7 @@ WHERE rn = 1 AND is_deleted = 0;
 -- +goose Down
 
 -- +goose StatementBegin
--- Restore dz_users_current without the BGP columns.
+-- Restore dz_users_current without bgp_status.
 CREATE OR REPLACE VIEW dz_users_current
 AS
 WITH ranked AS (
@@ -87,14 +95,10 @@ WHERE rn = 1 AND is_deleted = 0;
 
 -- +goose StatementBegin
 ALTER TABLE dim_dz_users_history
-    DROP COLUMN IF EXISTS bgp_status,
-    DROP COLUMN IF EXISTS last_bgp_up_at,
-    DROP COLUMN IF EXISTS last_bgp_reported_at;
+    DROP COLUMN IF EXISTS bgp_status;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
 ALTER TABLE stg_dim_dz_users_snapshot
-    DROP COLUMN IF EXISTS bgp_status,
-    DROP COLUMN IF EXISTS last_bgp_up_at,
-    DROP COLUMN IF EXISTS last_bgp_reported_at;
+    DROP COLUMN IF EXISTS bgp_status;
 -- +goose StatementEnd
