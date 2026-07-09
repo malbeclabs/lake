@@ -275,7 +275,7 @@ function UserHealthTable({ items }: { items: MulticastHealthUserItem[] }) {
               <td className="px-3 py-2"><HealthBadge status={item.control_plane_status} /></td>
               <td className="px-3 py-2 whitespace-nowrap">
                 <span className="font-mono tabular-nums">{formatBps(item.observed_bps_5m)}</span>
-                <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${RATE_STATUS_BADGE[item.rate_status]}`}>{item.rate_status}</span>
+                <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${RATE_STATUS_BADGE[item.rate_status] ?? RATE_STATUS_BADGE.unknown}`}>{item.rate_status}</span>
               </td>
               <td className="px-3 py-2"><FocusHealthBadge status={item.health_status} label={<HealthTooltip item={item} />} /></td>
               <td className="px-3 py-2 text-muted-foreground">{rowReason(item)}</td>

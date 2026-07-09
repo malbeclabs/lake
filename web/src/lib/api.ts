@@ -2323,16 +2323,18 @@ export interface MulticastHealthGroupPathsResponse {
 }
 
 // One faulting endpoint behind the unhealthy per-path fan-out. affected_pairs
-// is how many (publisher, subscriber) pairs this endpoint drags down.
+// is how many (publisher, subscriber) pairs this endpoint drags down. A user
+// broken as both publisher and subscriber of the group reports the combined
+// 'publisher+subscriber' role.
 export interface MulticastHealthPathRootCause {
-  faulting_role: 'publisher' | 'subscriber' | string
+  faulting_role: 'publisher' | 'subscriber' | 'publisher+subscriber'
   user_pk: string
   owner_pubkey: string
   dz_ip: string
   tunnel_id: number
   device_pk: string
   device_code: string
-  endpoint_status: MulticastHealthStatus
+  endpoint_status: 'disconnected' | 'unhealthy'
   affected_pairs: number
 }
 

@@ -420,11 +420,15 @@ function TableStateRow({
 function RootCausePanel({
   items,
   isLoading,
+  isError,
   faultCount,
+  total,
 }: {
   items: MulticastHealthPathRootCause[]
   isLoading: boolean
+  isError: boolean
   faultCount: number
+  total: number
 }) {
   return (
     <div className="px-4 py-3 border-b border-border bg-muted/30">
@@ -432,18 +436,20 @@ function RootCausePanel({
         <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Root causes</h4>
         {isLoading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
       </div>
-      {isLoading && items.length === 0 ? (
+      {isError ? (
+        <div className="text-xs text-red-500">Failed to load root causes.</div>
+      ) : isLoading && items.length === 0 ? (
         <div className="text-xs text-muted-foreground">Loading…</div>
       ) : items.length === 0 ? (
         <div className="text-xs text-muted-foreground">
-          {faultCount.toLocaleString()} unhealthy pairs, but no single endpoint could be attributed.
+          {faultCount.toLocaleString()} faulting pairs, but none could be attributed to a single endpoint.
         </div>
       ) : (
         <>
           <div className="text-xs text-muted-foreground mb-2">
-            {faultCount.toLocaleString()} unhealthy publisher → subscriber pairs trace back to{' '}
-            <span className="font-medium text-foreground">{items.length}</span>{' '}
-            {items.length === 1 ? 'endpoint' : 'endpoints'}:
+            <span className="font-medium text-foreground">{total.toLocaleString()}</span>{' '}
+            {total === 1 ? 'endpoint accounts' : 'endpoints account'} for the faulting publisher → subscriber
+            pairs in this group{items.length < total ? ` (showing top ${items.length})` : ''}:
           </div>
           <ul className="space-y-1">
             {items.map((rc) => (
@@ -747,7 +753,9 @@ export function MulticastGroupHealthTab({ groupPkOrCode }: { groupPkOrCode: stri
           <RootCausePanel
             items={rootCausesQuery.data?.items ?? []}
             isLoading={rootCausesQuery.isLoading}
+            isError={rootCausesQuery.isError}
             faultCount={pathFaultCount}
+            total={rootCausesQuery.data?.total ?? 0}
           />
         )}
         {!showPathDetails ? (

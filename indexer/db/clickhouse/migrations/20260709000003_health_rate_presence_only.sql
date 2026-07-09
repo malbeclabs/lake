@@ -3,6 +3,12 @@
 -- Drop rate reconciliation from the multicast health verdict. See the view
 -- header for the rationale (per-group rate attribution is impossible from
 -- per-tunnel counters when users span multiple groups).
+--
+-- ROLLBACK COUPLING: the Down body restores the reconciled/mismatch/
+-- monitoring_gap/group_idle rate vocabulary, but this PR's web bundle removes
+-- those keys from the badge/reason maps and narrows the TS unions. Roll this
+-- migration back together with the web deploy — a DB-only rollback would leave
+-- unstyled badges and blank reasons. (Same coupling documented in 20260708000003.)
 
 -- +goose StatementBegin
 CREATE OR REPLACE VIEW health_multicast_user_rate
@@ -56,12 +62,9 @@ SELECT
             OR (h.mode IN ('S', 'P+S') AND ur.ur_max_out_bps > 0), 'active',
         'idle'
     ) AS rate_status_reason,
-    multiIf(
-        ur.ur_present = 0, 'unknown',
-        (h.mode = 'P' AND ur.ur_max_in_bps > 0)
-            OR (h.mode IN ('S', 'P+S') AND ur.ur_max_out_bps > 0), 'active',
-        'idle'
-    ) AS rate_status,
+    -- Derived from the reason so the two can't drift; the only difference is
+    -- that 'no_data' surfaces as 'unknown' in the status.
+    if(rate_status_reason = 'no_data', 'unknown', rate_status_reason) AS rate_status,
     -- Verdict = control-plane + disconnected. Rate never downgrades it.
     h.health_status AS health_status
 FROM health_multicast_user h

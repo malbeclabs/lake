@@ -99,6 +99,11 @@ func (a *API) GetMulticastGroupHealthPaths(w http.ResponseWriter, r *http.Reques
 	})
 }
 
+// multicastHealthRootCauseLimit bounds the returned root causes; after a
+// whole-group event every endpoint can be a fault, so the panel shows the
+// top-N by blast radius while Total still reports the true distinct count.
+const multicastHealthRootCauseLimit = 100
+
 // GetMulticastGroupHealthPathRootCauses returns the unhealthy per-path fan-out
 // collapsed to the faulting endpoint (publisher or subscriber), with a count of
 // how many (publisher, subscriber) pairs each one drags down. This is the
@@ -123,7 +128,7 @@ func (a *API) GetMulticastGroupHealthPathRootCauses(w http.ResponseWriter, r *ht
 		return
 	}
 
-	items, err := a.queryMulticastHealthPathRootCauses(ctx, group.PK)
+	items, total, err := a.queryMulticastHealthPathRootCauses(ctx, group.PK)
 	if err != nil {
 		logError("multicast group health/path-root-causes query error", "error", err, "pk", group.PK)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
@@ -134,81 +139,106 @@ func (a *API) GetMulticastGroupHealthPathRootCauses(w http.ResponseWriter, r *ht
 		Group:       group,
 		GeneratedAt: formatMulticastTime(time.Now().UTC()),
 		Items:       items,
-		Total:       len(items),
+		Total:       total,
 	})
 }
 
 // queryMulticastHealthPathRootCauses attributes every non-healthy path to a
-// single primary faulting endpoint. A BGP-down endpoint has no session, so no
-// (S,G)/OIF, so its *_endpoint_observed is false — meaning the not-observed
-// filter catches both 'unhealthy' (endpoint present but not forwarding) and
-// 'disconnected' (BGP down). endpoint_status reports the endpoint's own
-// condition (disconnected if its BGP is down, else unhealthy).
+// single primary faulting endpoint and rolls the fan-out up per endpoint.
 //
-// The subscriber branch additionally requires publisher_endpoint_observed = 1:
-// when a publisher is itself unobserved (e.g. BGP down) there is no (S,G) for
-// that source anywhere, so every one of its subscribers is trivially
-// unobserved too. Attributing those subscribers would re-create the exact
-// fan-out this rollup exists to collapse (1 down publisher → N false
-// subscriber root causes). The fault is upstream, so the pair is attributed
-// to the publisher alone.
-func (a *API) queryMulticastHealthPathRootCauses(ctx context.Context, groupPK string) ([]MulticastHealthPathRootCause, error) {
+// A single scan of the (expensive, non-materialized) path view feeds an
+// ARRAY JOIN over two candidate endpoint tuples per pair, each gated by the
+// observed flags — replacing a UNION ALL that scanned the view twice.
+// Candidates:
+//   - publisher, when publisher_endpoint_observed = 0
+//   - subscriber, when subscriber_endpoint_observed = 0 AND publisher is
+//     observed
+//
+// The publisher gate on the subscriber candidate makes each pair attribute to
+// a single primary endpoint: when a publisher is itself unobserved (e.g. BGP
+// down) there is no (S,G) for that source, so every one of its subscribers is
+// trivially unobserved too — the fault is upstream and the pair belongs to the
+// publisher alone. Without this a down publisher with N subscribers would
+// re-create the exact fan-out this rollup exists to collapse.
+//
+// A BGP-down endpoint has no session, so no (S,G)/OIF, so its *_endpoint_observed
+// is false — the not-observed gate therefore catches both 'unhealthy' (present
+// but not forwarding) and 'disconnected' (BGP down). endpoint_status reports the
+// endpoint's own condition via dz_users_current (the path view only exposes the
+// pair-level verdict, not which side is down). Grouping is by endpoint alone so
+// a P+S user broken on both sides is one row with a combined role label.
+//
+// Returns the top-N rows by blast radius plus the true distinct-endpoint total.
+func (a *API) queryMulticastHealthPathRootCauses(ctx context.Context, groupPK string) ([]MulticastHealthPathRootCause, int, error) {
 	query := `
 		WITH faults AS (
 			SELECT
-				'publisher' AS faulting_role,
-				publisher_user_pk AS endpoint_user_pk,
-				publisher_owner_pubkey AS endpoint_owner_pubkey,
-				publisher_dz_ip AS endpoint_dz_ip,
-				publisher_tunnel_id AS endpoint_tunnel_id,
-				publisher_device_pk AS endpoint_device_pk,
-				publisher_device_code AS endpoint_device_code
+				c.1 AS faulting_role,
+				c.2 AS endpoint_user_pk,
+				c.3 AS endpoint_owner_pubkey,
+				c.4 AS endpoint_dz_ip,
+				c.5 AS endpoint_tunnel_id,
+				c.6 AS endpoint_device_pk,
+				c.7 AS endpoint_device_code
 			FROM health_publisher_subscriber_path
+			ARRAY JOIN [
+				if(publisher_endpoint_observed = 0,
+					('publisher', publisher_user_pk, publisher_owner_pubkey, publisher_dz_ip,
+					 CAST(publisher_tunnel_id AS Int32), publisher_device_pk, publisher_device_code),
+					('', '', '', '', CAST(0 AS Int32), '', '')),
+				if(subscriber_endpoint_observed = 0 AND publisher_endpoint_observed = 1,
+					('subscriber', subscriber_user_pk, subscriber_owner_pubkey, subscriber_dz_ip,
+					 CAST(subscriber_tunnel_id AS Int32), subscriber_device_pk, subscriber_device_code),
+					('', '', '', '', CAST(0 AS Int32), '', ''))
+			] AS c
 			WHERE multicast_group_pk = ?
 			  AND health_status != 'healthy'
-			  AND publisher_endpoint_observed = 0
-			UNION ALL
+		),
+		grouped AS (
 			SELECT
-				'subscriber' AS faulting_role,
-				subscriber_user_pk AS endpoint_user_pk,
-				subscriber_owner_pubkey AS endpoint_owner_pubkey,
-				subscriber_dz_ip AS endpoint_dz_ip,
-				subscriber_tunnel_id AS endpoint_tunnel_id,
-				subscriber_device_pk AS endpoint_device_pk,
-				subscriber_device_code AS endpoint_device_code
-			FROM health_publisher_subscriber_path
-			WHERE multicast_group_pk = ?
-			  AND health_status != 'healthy'
-			  AND subscriber_endpoint_observed = 0
-			  AND publisher_endpoint_observed = 1
+				arrayStringConcat(arraySort(groupUniqArray(f.faulting_role)), '+') AS faulting_role,
+				f.endpoint_user_pk AS endpoint_user_pk,
+				any(f.endpoint_owner_pubkey) AS endpoint_owner_pubkey,
+				any(f.endpoint_dz_ip) AS endpoint_dz_ip,
+				any(f.endpoint_tunnel_id) AS endpoint_tunnel_id,
+				any(f.endpoint_device_pk) AS endpoint_device_pk,
+				any(f.endpoint_device_code) AS endpoint_device_code,
+				if(any(u.bgp_status) = 'down', 'disconnected', 'unhealthy') AS endpoint_status,
+				toInt32(count()) AS affected_pairs
+			FROM faults f
+			LEFT ANY JOIN dz_users_current u ON f.endpoint_user_pk = u.pk
+			WHERE f.faulting_role != ''
+			GROUP BY f.endpoint_user_pk
 		)
 		SELECT
-			f.faulting_role,
-			f.endpoint_user_pk,
-			any(f.endpoint_owner_pubkey),
-			any(f.endpoint_dz_ip),
-			any(f.endpoint_tunnel_id),
-			any(f.endpoint_device_pk),
-			any(f.endpoint_device_code),
-			if(any(u.bgp_status) = 'down', 'disconnected', 'unhealthy') AS endpoint_status,
-			toInt32(count()) AS affected_pairs
-		FROM faults f
-		LEFT ANY JOIN dz_users_current u ON f.endpoint_user_pk = u.pk
-		GROUP BY f.faulting_role, f.endpoint_user_pk
-		ORDER BY affected_pairs DESC, endpoint_status, f.endpoint_user_pk
+			faulting_role,
+			endpoint_user_pk,
+			endpoint_owner_pubkey,
+			endpoint_dz_ip,
+			endpoint_tunnel_id,
+			endpoint_device_pk,
+			endpoint_device_code,
+			endpoint_status,
+			affected_pairs,
+			toInt32(count() OVER ()) AS total_endpoints
+		FROM grouped
+		ORDER BY affected_pairs DESC, endpoint_status, endpoint_user_pk
+		LIMIT ?
 		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0
 	`
 	start := time.Now()
-	rows, err := a.envDB(ctx).Query(ctx, query, groupPK, groupPK)
+	rows, err := a.envDB(ctx).Query(ctx, query, groupPK, multicastHealthRootCauseLimit)
 	metrics.RecordClickHouseQuery("multicast_health_path_root_causes", time.Since(start), err)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
 	items := []MulticastHealthPathRootCause{}
+	total := 0
 	for rows.Next() {
 		var it MulticastHealthPathRootCause
+		var rowTotal int32
 		if err := rows.Scan(
 			&it.FaultingRole,
 			&it.UserPK,
@@ -219,15 +249,17 @@ func (a *API) queryMulticastHealthPathRootCauses(ctx context.Context, groupPK st
 			&it.DeviceCode,
 			&it.EndpointStatus,
 			&it.AffectedPairs,
+			&rowTotal,
 		); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
+		total = int(rowTotal)
 		items = append(items, it)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return items, nil
+	return items, total, nil
 }
 
 // readMulticastHealthPathsCache returns the cached first-page paths response

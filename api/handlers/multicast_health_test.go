@@ -351,11 +351,50 @@ func TestGetMulticastGroupHealth_PathRootCauses_DownPublisherNoSubscriberFanout(
 	// Exactly one root cause: the down publisher, owning all 3 pairs. No
 	// per-subscriber fan-out.
 	require.Len(t, resp.Items, 1, "body: %s", string(body))
+	assert.EqualValues(t, 1, resp.Total)
 	rc := resp.Items[0]
 	assert.Equal(t, "user-pub-down", rc.UserPK)
 	assert.Equal(t, "publisher", rc.FaultingRole)
 	assert.Equal(t, "disconnected", rc.EndpointStatus)
 	assert.EqualValues(t, 3, rc.AffectedPairs)
+}
+
+// TestGetMulticastGroupHealth_PathRootCauses_PlusSubscriberSingleRow verifies
+// that a P+S user broken on both its publisher and subscriber sides collapses
+// to a single root-cause row with a combined role label (grouped by endpoint,
+// not by (role, endpoint)), rather than appearing twice.
+func TestGetMulticastGroupHealth_PathRootCauses_PlusSubscriberSingleRow(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertMulticastTestData(t, api)
+	insertMulticastHealthFixtures(t, api) // user-pub IIF + user-sub OIF observed
+
+	// user-ps both publishes and subscribes group-1; its Tunnel505 is neither
+	// an observed IIF nor OIF, so it is unobserved on both sides. It pairs as
+	// publisher with user-sub (→ publisher fault) and as subscriber behind the
+	// observed user-pub (→ subscriber fault) = 2 pairs, one endpoint.
+	require.NoError(t, api.DB.Exec(t.Context(), `
+		INSERT INTO dim_dz_users_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id, publishers, subscribers, bgp_status)
+		VALUES ('user-ps', now(), now(), generateUUIDv4(), 0, 1, 'user-ps', 'pubkey-ps', 'activated', 'multicast', '10.0.0.9', '10.0.0.9', 'dev-nyc1', 505, '["group-1"]', '["group-1"]', 'up')`))
+
+	rr, body := makeGroupHealthRequest(api, "test-group", "/health/path-root-causes")
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", string(body))
+
+	var resp handlers.MulticastHealthPathRootCausesResponse
+	require.NoError(t, json.Unmarshal(body, &resp))
+
+	psRows := make([]handlers.MulticastHealthPathRootCause, 0)
+	for _, it := range resp.Items {
+		if it.UserPK == "user-ps" {
+			psRows = append(psRows, it)
+		}
+	}
+	require.Len(t, psRows, 1, "P+S user must be a single row, body: %s", string(body))
+	assert.Equal(t, "publisher+subscriber", psRows[0].FaultingRole)
+	assert.EqualValues(t, 2, psRows[0].AffectedPairs)
+	assert.Equal(t, "unhealthy", psRows[0].EndpointStatus)
 }
 
 func TestGetUserHealth_PerGroupRows(t *testing.T) {
