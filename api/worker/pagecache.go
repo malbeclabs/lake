@@ -29,17 +29,16 @@ func Start(ctx context.Context, cfg Config) error {
 		log = slog.Default()
 	}
 
-	// Load-shaping knobs (see workflow.go), overridable per-environment. Staging
-	// runs gentler values (lower concurrency, longer interval) to spread page-cache
-	// load across its smaller self-hosted ClickHouse rather than scaling it up.
-	// Read once here, before the worker/workflow start, so both are in effect.
-	if d := envDuration("PAGE_CACHE_REFRESH_INTERVAL", 0); d > 0 {
-		refreshInterval = d
-	}
-	if n := envInt("PAGE_CACHE_REFRESH_CONCURRENCY", 0); n > 0 {
-		pageCacheRefreshConcurrency = n
-	}
-	log.Info("page-cache: refresh config", "interval", refreshInterval, "concurrency", pageCacheRefreshConcurrency)
+	// Load-shaping knobs (see PageCacheParams / loadRefreshConfig), overridable
+	// per-environment. Staging runs gentler values (lower concurrency, longer
+	// interval) to spread page-cache load across its smaller self-hosted
+	// ClickHouse rather than scaling it up. Read once here; the interval/timeout
+	// go into the workflow as arguments (replay-deterministic) and concurrency
+	// onto the activity struct.
+	params, concurrency := loadRefreshConfig(log)
+	log.Info("page-cache: refresh config",
+		"interval", params.RefreshInterval, "concurrency", concurrency,
+		"activity_timeout", params.ActivityTimeout, "continue_as_new_after", params.ContinueAsNewThreshold)
 
 	// Connect to Temporal
 	temporalHost := envOrDefault("TEMPORAL_HOST_PORT", "localhost:7233")
@@ -57,8 +56,9 @@ func Start(ctx context.Context, cfg Config) error {
 
 	// Register workflows and activities
 	activities := &Activities{
-		Log: log.With("component", "page-cache"),
-		API: cfg.API,
+		Log:                log.With("component", "page-cache"),
+		API:                cfg.API,
+		RefreshConcurrency: concurrency,
 	}
 
 	w := worker.New(tc, TaskQueue, worker.Options{})
@@ -70,7 +70,7 @@ func Start(ctx context.Context, cfg Config) error {
 	run, err := tc.ExecuteWorkflow(ctx, temporalclient.StartWorkflowOptions{
 		ID:        WorkflowID,
 		TaskQueue: TaskQueue,
-	}, PageCacheWorkflow, 0)
+	}, PageCacheWorkflow, 0, params)
 	if err != nil {
 		return fmt.Errorf("page-cache: failed to start workflow: %w", err)
 	}
@@ -161,23 +161,71 @@ func envOrDefault(key, defaultValue string) string {
 	return defaultValue
 }
 
-// envDuration returns the env var parsed as a Go duration (e.g. "90s"), or def
-// if unset/invalid.
-func envDuration(key string, def time.Duration) time.Duration {
-	if v := os.Getenv(key); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			return d
-		}
-	}
-	return def
+// loadRefreshConfig reads the page-cache load-shaping knobs from the environment,
+// clamping to sane bounds and warning on anything set-but-invalid/out-of-range so
+// a typo (e.g. PAGE_CACHE_REFRESH_INTERVAL=90 with no unit) is visible rather than
+// silently falling back to prod defaults. Returns the workflow params (interval,
+// activity timeout, derived continue-as-new threshold) and the activity-side
+// concurrency. Pure and side-effect-free (aside from logging) so it's unit-testable
+// without a Temporal connection.
+func loadRefreshConfig(log *slog.Logger) (PageCacheParams, int) {
+	interval := durationEnv(log, "PAGE_CACHE_REFRESH_INTERVAL", defaultRefreshInterval, minRefreshInterval, maxRefreshInterval)
+	concurrency := intEnv(log, "PAGE_CACHE_REFRESH_CONCURRENCY", defaultRefreshConcurrency, minRefreshConcurrency, maxRefreshConcurrency)
+	timeout := durationEnv(log, "PAGE_CACHE_REFRESH_TIMEOUT", defaultActivityTimeout, minActivityTimeout, maxActivityTimeout)
+
+	// Continue-as-new after roughly continueAsNewTargetWindow of wall-clock so a
+	// longer interval can't inflate per-run history toward Temporal's limits.
+	threshold := max(int(continueAsNewTargetWindow/interval), 1)
+	return PageCacheParams{
+		RefreshInterval:        interval,
+		ActivityTimeout:        timeout,
+		ContinueAsNewThreshold: threshold,
+	}, concurrency
 }
 
-// envInt returns the env var parsed as an int, or def if unset/invalid.
-func envInt(key string, def int) int {
-	if v := os.Getenv(key); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
-		}
+// durationEnv parses key as a Go duration (e.g. "90s"), clamped to [min,max].
+// Unset → def; set-but-unparseable → def with a warn; out-of-range → clamped with
+// a warn (so an operator sees their value was adjusted).
+func durationEnv(log *slog.Logger, key string, def, min, max time.Duration) time.Duration {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return def
 	}
-	return def
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		log.Warn("ignoring invalid duration env var; using default", "var", key, "value", raw, "default", def)
+		return def
+	}
+	if d < min {
+		log.Warn("duration env var below minimum; clamping", "var", key, "value", d.String(), "min", min.String())
+		return min
+	}
+	if d > max {
+		log.Warn("duration env var above maximum; clamping", "var", key, "value", d.String(), "max", max.String())
+		return max
+	}
+	return d
+}
+
+// intEnv parses key as an int, clamped to [min,max]. Unset → def;
+// set-but-unparseable → def with a warn; out-of-range → clamped with a warn.
+func intEnv(log *slog.Logger, key string, def, min, max int) int {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return def
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		log.Warn("ignoring invalid int env var; using default", "var", key, "value", raw, "default", def)
+		return def
+	}
+	if n < min {
+		log.Warn("int env var below minimum; clamping", "var", key, "value", n, "min", min)
+		return min
+	}
+	if n > max {
+		log.Warn("int env var above maximum; clamping", "var", key, "value", n, "max", max)
+		return max
+	}
+	return n
 }

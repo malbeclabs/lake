@@ -2,10 +2,12 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
+	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
 	temporalworkflow "go.temporal.io/sdk/workflow"
 	"golang.org/x/sync/errgroup"
@@ -18,16 +20,14 @@ const (
 	TaskQueue  = "api-page-cache"
 	WorkflowID = "api-page-cache"
 
-	fastRefreshInterval    = 3 * time.Second
-	continueAsNewThreshold = 60 // ~30 min at 30s intervals
-	errorAfterFailures     = 3  // log WARN for transient failures, ERROR after this many consecutive failures
+	fastRefreshInterval = 3 * time.Second
+	errorAfterFailures  = 3 // log WARN for transient failures, ERROR after this many consecutive failures
 
 	// transientErrorAfterFailures is the ERROR-escalation threshold for transient
 	// causes (upstream connection blips, timeouts, rate limits). It's higher than
 	// errorAfterFailures because a brief transient failure is self-healing and not
-	// actionable — only a sustained one (this many × refreshInterval ≈ 5 min) is
-	// worth paging on. Keeps single/short blips (e.g. a CH connection drop or an
-	// external RPC 429) at WARN so they don't page on-call.
+	// actionable — only a sustained run is worth paging on. Keeps single/short
+	// blips (e.g. a CH connection drop or an external RPC 429) at WARN.
 	transientErrorAfterFailures = 10
 
 	// slowRefreshThreshold surfaces per-entry duration at INFO when a single
@@ -35,7 +35,65 @@ const (
 	// finish in well under a second; anything above this is worth flagging
 	// when the activity is running close to its StartToCloseTimeout budget.
 	slowRefreshThreshold = 10 * time.Second
+
+	// Defaults for the per-environment load-shaping knobs (see loadRefreshConfig).
+	// Prod runs these against ClickHouse Cloud; staging overrides them lower/longer
+	// to spread load across its smaller self-hosted ClickHouse.
+	defaultRefreshInterval    = 30 * time.Second
+	defaultRefreshConcurrency = 8
+	defaultActivityTimeout    = 3 * time.Minute
+
+	// continueAsNewTargetWindow bounds workflow history: PageCacheWorkflow
+	// continues-as-new after roughly this much wall-clock regardless of the
+	// refresh interval, so a longer interval can't inflate per-run history toward
+	// Temporal's ~10k-event soft / ~51k hard limits.
+	continueAsNewTargetWindow = 30 * time.Minute
+
+	// Sane bounds for the knobs; out-of-range env values are clamped (with a warn).
+	minRefreshInterval    = 5 * time.Second
+	maxRefreshInterval    = 10 * time.Minute
+	minRefreshConcurrency = 1
+	maxRefreshConcurrency = 32
+	minActivityTimeout    = 30 * time.Second
+	maxActivityTimeout    = 10 * time.Minute
 )
+
+// PageCacheParams carries the load-shaping config into PageCacheWorkflow as an
+// argument, so the values are recorded in workflow history and replay is
+// deterministic by construction. This matters because the workflow's fast-refresh
+// loop emits a command count that depends on RefreshInterval: reading it from a
+// mutable package var would let a rolling deploy that changed the value replay an
+// in-flight run with a different value → history divergence → the workflow task
+// fails forever and the page cache silently freezes. As an argument, a config
+// change instead starts a fresh run (Start terminates + restarts) with the new
+// value, and any in-flight replay uses the value from its own history.
+type PageCacheParams struct {
+	RefreshInterval        time.Duration
+	ActivityTimeout        time.Duration
+	ContinueAsNewThreshold int
+}
+
+// withDefaults normalizes zero/nonsensical values to defaults. Applied at the top
+// of the workflow so it stays deterministic even if started without params.
+func (p PageCacheParams) withDefaults() PageCacheParams {
+	if p.RefreshInterval <= 0 {
+		p.RefreshInterval = defaultRefreshInterval
+	}
+	if p.ActivityTimeout <= 0 {
+		p.ActivityTimeout = defaultActivityTimeout
+	}
+	if p.ContinueAsNewThreshold <= 0 {
+		p.ContinueAsNewThreshold = max(int(continueAsNewTargetWindow/p.RefreshInterval), 1)
+	}
+	return p
+}
+
+// errBatchDeadline marks an entry that never ran (or was cut off) because the
+// RefreshCaches activity ran out of its StartToCloseTimeout budget — i.e. the
+// batch is starving tail entries. Phrased to avoid dberror's transient keywords
+// so it escalates at errorAfterFailures (making starvation visible), not the
+// higher transient threshold.
+var errBatchDeadline = errors.New("page-cache batch budget exhausted before refresh completed")
 
 // cacheEntry defines a single cache key to refresh.
 type cacheEntry struct {
@@ -46,10 +104,15 @@ type cacheEntry struct {
 
 // Activities holds the logger and API deps for the refresh activity.
 type Activities struct {
-	Log      *slog.Logger
-	API      *handlers.API
-	failures sync.Map   // map[string]int: consecutive failure count per cache key
-	writeMu  sync.Mutex // serializes WritePageCache calls to avoid Postgres OOM from concurrent large JSONB upserts
+	Log *slog.Logger
+	API *handlers.API
+	// RefreshConcurrency bounds how many cache entries refresh at once. Set from
+	// config in Start; 0 falls back to defaultRefreshConcurrency. Activity-side
+	// only (no replay concern), so it stays a plain field rather than a workflow
+	// argument.
+	RefreshConcurrency int
+	failures           sync.Map   // map[string]int: consecutive failure count per cache key
+	writeMu            sync.Mutex // serializes WritePageCache calls to avoid Postgres OOM from concurrent large JSONB upserts
 }
 
 func (a *Activities) entries() []cacheEntry {
@@ -163,36 +226,30 @@ type refreshError struct{ msg string }
 
 func (e *refreshError) Error() string { return e.msg }
 
-// refreshInterval (how often the full page-cache batch refreshes) and
-// pageCacheRefreshConcurrency (how many entries refresh at once) are the two
-// load-shaping knobs. They default to prod-appropriate values and are overridden
-// per-environment from env in Start (PAGE_CACHE_REFRESH_INTERVAL,
-// PAGE_CACHE_REFRESH_CONCURRENCY) — staging runs gentler values to spread load
-// across its smaller self-hosted ClickHouse instead of scaling it up.
+// RefreshCaches refreshes all page cache entries, writing results to Postgres.
 //
 // Concurrency history: 2-wide was too slow (each entry refreshed only every few
 // minutes); fully unbounded (~28 entries) oversubscribed ClickHouse (~55
 // concurrent queries pegged the node, timeouts + per-entry retries amplified the
 // storm). A bounded limit keeps in-flight queries near what ClickHouse can run
 // while still refreshing the batch within the cycle.
-//
-// These are read once at startup (Start) and then treated as constant for the
-// life of the worker, so the workflow's use of refreshInterval stays
-// deterministic across replay/continue-as-new within a deployment.
-var (
-	refreshInterval             = 30 * time.Second
-	pageCacheRefreshConcurrency = 8
-)
-
-// RefreshCaches refreshes all page cache entries, writing results to Postgres.
 func (a *Activities) RefreshCaches(ctx context.Context) error {
 	start := time.Now()
+	limit := a.RefreshConcurrency
+	if limit <= 0 {
+		limit = defaultRefreshConcurrency
+	}
+	// Distinguish a real worker shutdown (deploy) from an activity-deadline
+	// cancellation so tail-entry starvation under the StartToCloseTimeout is
+	// counted rather than silently swallowed as "shutdown".
+	shuttingDown := workerStopping(ctx)
+
 	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(pageCacheRefreshConcurrency)
+	g.SetLimit(limit)
 
 	for _, entry := range a.entries() {
 		g.Go(func() error {
-			a.refresh(gctx, entry.name, entry.key, entry.fn)
+			a.refresh(gctx, entry.name, entry.key, entry.fn, shuttingDown)
 			return nil
 		})
 	}
@@ -202,7 +259,7 @@ func (a *Activities) RefreshCaches(ctx context.Context) error {
 		g.Go(func() error {
 			a.refresh(gctx, "metro path latency:"+strategy, "metro_path_latency:"+strategy, func(ctx context.Context) (any, error) {
 				return a.API.FetchMetroPathLatencyData(ctx, strategy)
-			})
+			}, shuttingDown)
 			return nil
 		})
 	}
@@ -210,6 +267,21 @@ func (a *Activities) RefreshCaches(ctx context.Context) error {
 	_ = g.Wait()
 	a.Log.Info("page cache refresh complete", "duration", time.Since(start).Round(time.Millisecond))
 	return nil
+}
+
+// workerStopping returns a predicate reporting whether the Temporal worker is
+// shutting down (deploy/stop). Used to tell a benign shutdown cancellation from
+// an activity-deadline cancellation. Must be called with an activity context.
+func workerStopping(ctx context.Context) func() bool {
+	stop := activity.GetWorkerStopChannel(ctx)
+	return func() bool {
+		select {
+		case <-stop:
+			return true
+		default:
+			return false
+		}
+	}
 }
 
 // latestEntries are refreshed on the fast cadence (see fastRefreshInterval). They back
@@ -229,10 +301,11 @@ func (a *Activities) latestEntries() []cacheEntry {
 
 // RefreshLatestCaches refreshes just the fast-cadence entries (latest slots slice).
 func (a *Activities) RefreshLatestCaches(ctx context.Context) error {
+	shuttingDown := workerStopping(ctx)
 	g, gctx := errgroup.WithContext(ctx)
 	for _, entry := range a.latestEntries() {
 		g.Go(func() error {
-			a.refresh(gctx, entry.name, entry.key, entry.fn)
+			a.refresh(gctx, entry.name, entry.key, entry.fn, shuttingDown)
 			return nil
 		})
 	}
@@ -240,14 +313,15 @@ func (a *Activities) RefreshLatestCaches(ctx context.Context) error {
 	return nil
 }
 
-func (a *Activities) refresh(parentCtx context.Context, name, key string, fn func(context.Context) (any, error)) {
+func (a *Activities) refresh(parentCtx context.Context, name, key string, fn func(context.Context) (any, error), shuttingDown func() bool) {
 	start := time.Now()
 	var queryDuration, writeDuration time.Duration
 
 	const maxAttempts = 2
 	for attempt := range maxAttempts {
 		if parentCtx.Err() != nil {
-			a.Log.Warn("cache refresh interrupted (shutdown)", "cache", name)
+			// Batch context already done before this entry ran.
+			a.interrupted(name, key, nil, shuttingDown)
 			return
 		}
 
@@ -259,8 +333,7 @@ func (a *Activities) refresh(parentCtx context.Context, name, key string, fn fun
 
 		if err != nil {
 			if parentCtx.Err() != nil {
-				// Temporal is shutting down — not a query failure, don't count it.
-				a.Log.Warn("cache refresh interrupted (shutdown)", "cache", name, "error", err)
+				a.interrupted(name, key, err, shuttingDown)
 				return
 			}
 			// Query error or timeout. Retry once before counting as a failure.
@@ -268,19 +341,7 @@ func (a *Activities) refresh(parentCtx context.Context, name, key string, fn fun
 				a.Log.Warn("cache refresh failed, retrying", "cache", name, "attempt", attempt+1, "error", err)
 				continue
 			}
-			n := a.incFailures(key)
-			// Transient causes (connection blips, timeouts, upstream 429s) are
-			// self-healing, so only escalate to ERROR once they persist — a brief
-			// blip stays at WARN and doesn't page on-call.
-			threshold := errorAfterFailures
-			if dberror.IsTransient(err) {
-				threshold = transientErrorAfterFailures
-			}
-			if n >= threshold {
-				a.Log.Error("cache refresh failed", "cache", name, "consecutive_failures", n, "error", err)
-			} else {
-				a.Log.Warn("cache refresh failed", "cache", name, "consecutive_failures", n, "error", err)
-			}
+			a.recordFailure(name, key, err)
 			return
 		}
 
@@ -328,12 +389,47 @@ func (a *Activities) incFailures(key string) int {
 	}
 }
 
-// PageCacheWorkflow is a long-running workflow that refreshes all page caches
-// every 30s. It uses continue-as-new after 60 iterations (~30 min) to keep
-// workflow history bounded.
-func PageCacheWorkflow(ctx temporalworkflow.Context, iteration int) error {
+// interrupted handles a refresh cut short because the batch's parent context was
+// cancelled. A genuine worker shutdown (deploy) is benign and not counted;
+// otherwise the RefreshCaches activity ran out of its StartToCloseTimeout budget
+// and this entry is being starved — count it (as errBatchDeadline) so persistent
+// starvation of tail entries surfaces and escalates rather than hiding as
+// "shutdown". cause is the underlying fn error if any (nil if the entry never ran).
+func (a *Activities) interrupted(name, key string, cause error, shuttingDown func() bool) {
+	if shuttingDown == nil || shuttingDown() {
+		a.Log.Warn("cache refresh interrupted (shutdown)", "cache", name, "error", cause)
+		return
+	}
+	a.recordFailure(name, key, errBatchDeadline)
+}
+
+// recordFailure increments the consecutive-failure counter for key and logs at
+// WARN below the escalation threshold, ERROR at/above it. Transient causes
+// (connection blips, timeouts, upstream 429s) get a higher threshold since they
+// self-heal; a brief blip stays at WARN and doesn't page on-call.
+func (a *Activities) recordFailure(name, key string, err error) {
+	n := a.incFailures(key)
+	threshold := errorAfterFailures
+	if dberror.IsTransient(err) {
+		threshold = transientErrorAfterFailures
+	}
+	if n >= threshold {
+		a.Log.Error("cache refresh failed", "cache", name, "consecutive_failures", n, "error", err)
+	} else {
+		a.Log.Warn("cache refresh failed", "cache", name, "consecutive_failures", n, "error", err)
+	}
+}
+
+// PageCacheWorkflow is a long-running workflow that refreshes all page caches on
+// p.RefreshInterval. It continues-as-new after p.ContinueAsNewThreshold iterations
+// (derived to bound wall-clock ≈ continueAsNewTargetWindow) to keep workflow
+// history bounded. p is passed as an argument (not read from package state) so
+// replay is deterministic across a config change — see PageCacheParams.
+func PageCacheWorkflow(ctx temporalworkflow.Context, iteration int, p PageCacheParams) error {
+	p = p.withDefaults()
+
 	actOpts := temporalworkflow.ActivityOptions{
-		StartToCloseTimeout: 3 * time.Minute,
+		StartToCloseTimeout: p.ActivityTimeout,
 		RetryPolicy: &temporal.RetryPolicy{
 			MaximumAttempts: 1,
 		},
@@ -353,14 +449,14 @@ func PageCacheWorkflow(ctx temporalworkflow.Context, iteration int) error {
 	}
 	fastCtx := temporalworkflow.WithActivityOptions(ctx, fastActOpts)
 
-	for iteration < continueAsNewThreshold {
+	for iteration < p.ContinueAsNewThreshold {
 		_ = temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshCaches).Get(ctx, nil)
 
 		iteration++
-		if iteration < continueAsNewThreshold {
+		if iteration < p.ContinueAsNewThreshold {
 			// Tick the fast-cadence refresh repeatedly during the outer sleep window
 			// so latest-slots caches stay fresh for live-tail clients.
-			deadline := temporalworkflow.Now(ctx).Add(refreshInterval)
+			deadline := temporalworkflow.Now(ctx).Add(p.RefreshInterval)
 			for temporalworkflow.Now(ctx).Before(deadline) {
 				_ = temporalworkflow.ExecuteActivity(fastCtx, (*Activities).RefreshLatestCaches).Get(fastCtx, nil)
 				remaining := deadline.Sub(temporalworkflow.Now(ctx))
@@ -378,5 +474,5 @@ func PageCacheWorkflow(ctx temporalworkflow.Context, iteration int) error {
 		}
 	}
 
-	return temporalworkflow.NewContinueAsNewError(ctx, PageCacheWorkflow, 0)
+	return temporalworkflow.NewContinueAsNewError(ctx, PageCacheWorkflow, 0, p)
 }
