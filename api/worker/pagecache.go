@@ -36,6 +36,7 @@ func Start(ctx context.Context, cfg Config) error {
 	// go into the workflow as arguments (replay-deterministic) and concurrency
 	// onto the activity struct.
 	params, concurrency := loadRefreshConfig(log)
+	params = params.withDefaults() // derive ContinueAsNewThreshold (single source) for the log + workflow arg
 	log.Info("page-cache: refresh config",
 		"interval", params.RefreshInterval, "concurrency", concurrency,
 		"activity_timeout", params.ActivityTimeout, "continue_as_new_after", params.ContinueAsNewThreshold)
@@ -165,21 +166,17 @@ func envOrDefault(key, defaultValue string) string {
 // clamping to sane bounds and warning on anything set-but-invalid/out-of-range so
 // a typo (e.g. PAGE_CACHE_REFRESH_INTERVAL=90 with no unit) is visible rather than
 // silently falling back to prod defaults. Returns the workflow params (interval,
-// activity timeout, derived continue-as-new threshold) and the activity-side
-// concurrency. Pure and side-effect-free (aside from logging) so it's unit-testable
-// without a Temporal connection.
+// activity timeout) and the activity-side concurrency. ContinueAsNewThreshold is
+// left zero and derived by PageCacheParams.withDefaults (the single source, so
+// the derivation isn't duplicated). Pure and side-effect-free (aside from logging)
+// so it's unit-testable without a Temporal connection.
 func loadRefreshConfig(log *slog.Logger) (PageCacheParams, int) {
 	interval := durationEnv(log, "PAGE_CACHE_REFRESH_INTERVAL", defaultRefreshInterval, minRefreshInterval, maxRefreshInterval)
 	concurrency := intEnv(log, "PAGE_CACHE_REFRESH_CONCURRENCY", defaultRefreshConcurrency, minRefreshConcurrency, maxRefreshConcurrency)
 	timeout := durationEnv(log, "PAGE_CACHE_REFRESH_TIMEOUT", defaultActivityTimeout, minActivityTimeout, maxActivityTimeout)
-
-	// Continue-as-new after roughly continueAsNewTargetWindow of wall-clock so a
-	// longer interval can't inflate per-run history toward Temporal's limits.
-	threshold := max(int(continueAsNewTargetWindow/interval), 1)
 	return PageCacheParams{
-		RefreshInterval:        interval,
-		ActivityTimeout:        timeout,
-		ContinueAsNewThreshold: threshold,
+		RefreshInterval: interval,
+		ActivityTimeout: timeout,
 	}, concurrency
 }
 

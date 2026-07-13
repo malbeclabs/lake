@@ -88,12 +88,21 @@ func (p PageCacheParams) withDefaults() PageCacheParams {
 	return p
 }
 
-// errBatchDeadline marks an entry that never ran (or was cut off) because the
-// RefreshCaches activity ran out of its StartToCloseTimeout budget — i.e. the
-// batch is starving tail entries. Phrased to avoid dberror's transient keywords
-// so it escalates at errorAfterFailures (making starvation visible), not the
-// higher transient threshold.
-var errBatchDeadline = errors.New("page-cache batch budget exhausted before refresh completed")
+// Sentinels recorded when a refresh is cut short by its activity's deadline (not
+// a worker shutdown). They differ by cadence so escalation matches the cause:
+var (
+	// errBatchDeadline: the full RefreshCaches batch ran out of its
+	// StartToCloseTimeout before this entry ran — deterministic tail starvation.
+	// Phrased to avoid dberror's transient keywords so it escalates at
+	// errorAfterFailures, making starvation visible.
+	errBatchDeadline = errors.New("page-cache batch budget exhausted before refresh completed")
+
+	// errFastRefreshDeadline: a fast-cadence (RefreshLatestCaches) entry hit the
+	// fast activity's StartToCloseTimeout — ordinary, self-healing ClickHouse
+	// contention. Phrased as a timeout so dberror classifies it transient and it
+	// escalates only at transientErrorAfterFailures (a blip shouldn't page).
+	errFastRefreshDeadline = errors.New("page-cache fast refresh deadline exceeded")
+)
 
 // cacheEntry defines a single cache key to refresh.
 type cacheEntry struct {
@@ -249,7 +258,7 @@ func (a *Activities) RefreshCaches(ctx context.Context) error {
 
 	for _, entry := range a.entries() {
 		g.Go(func() error {
-			a.refresh(gctx, entry.name, entry.key, entry.fn, shuttingDown)
+			a.refresh(gctx, entry.name, entry.key, entry.fn, shuttingDown, errBatchDeadline)
 			return nil
 		})
 	}
@@ -259,7 +268,7 @@ func (a *Activities) RefreshCaches(ctx context.Context) error {
 		g.Go(func() error {
 			a.refresh(gctx, "metro path latency:"+strategy, "metro_path_latency:"+strategy, func(ctx context.Context) (any, error) {
 				return a.API.FetchMetroPathLatencyData(ctx, strategy)
-			}, shuttingDown)
+			}, shuttingDown, errBatchDeadline)
 			return nil
 		})
 	}
@@ -305,7 +314,7 @@ func (a *Activities) RefreshLatestCaches(ctx context.Context) error {
 	g, gctx := errgroup.WithContext(ctx)
 	for _, entry := range a.latestEntries() {
 		g.Go(func() error {
-			a.refresh(gctx, entry.name, entry.key, entry.fn, shuttingDown)
+			a.refresh(gctx, entry.name, entry.key, entry.fn, shuttingDown, errFastRefreshDeadline)
 			return nil
 		})
 	}
@@ -313,7 +322,11 @@ func (a *Activities) RefreshLatestCaches(ctx context.Context) error {
 	return nil
 }
 
-func (a *Activities) refresh(parentCtx context.Context, name, key string, fn func(context.Context) (any, error), shuttingDown func() bool) {
+// deadlineErr is the sentinel recorded when the parent (activity) context is
+// cancelled by its own deadline rather than a worker shutdown — it selects the
+// escalation cadence (errBatchDeadline for the slow batch, errFastRefreshDeadline
+// for the fast loop).
+func (a *Activities) refresh(parentCtx context.Context, name, key string, fn func(context.Context) (any, error), shuttingDown func() bool, deadlineErr error) {
 	start := time.Now()
 	var queryDuration, writeDuration time.Duration
 
@@ -321,7 +334,7 @@ func (a *Activities) refresh(parentCtx context.Context, name, key string, fn fun
 	for attempt := range maxAttempts {
 		if parentCtx.Err() != nil {
 			// Batch context already done before this entry ran.
-			a.interrupted(name, key, nil, shuttingDown)
+			a.interrupted(name, key, nil, shuttingDown, deadlineErr)
 			return
 		}
 
@@ -333,7 +346,7 @@ func (a *Activities) refresh(parentCtx context.Context, name, key string, fn fun
 
 		if err != nil {
 			if parentCtx.Err() != nil {
-				a.interrupted(name, key, err, shuttingDown)
+				a.interrupted(name, key, err, shuttingDown, deadlineErr)
 				return
 			}
 			// Query error or timeout. Retry once before counting as a failure.
@@ -389,34 +402,42 @@ func (a *Activities) incFailures(key string) int {
 	}
 }
 
-// interrupted handles a refresh cut short because the batch's parent context was
+// interrupted handles a refresh cut short because its parent context was
 // cancelled. A genuine worker shutdown (deploy) is benign and not counted;
-// otherwise the RefreshCaches activity ran out of its StartToCloseTimeout budget
-// and this entry is being starved — count it (as errBatchDeadline) so persistent
-// starvation of tail entries surfaces and escalates rather than hiding as
-// "shutdown". cause is the underlying fn error if any (nil if the entry never ran).
-func (a *Activities) interrupted(name, key string, cause error, shuttingDown func() bool) {
+// otherwise the activity ran out of its StartToCloseTimeout and this entry is
+// being starved — count it (as deadlineErr) so it surfaces/escalates rather than
+// hiding as "shutdown". deadlineErr selects the escalation cadence per cadence
+// (errBatchDeadline: strict, for the slow batch; errFastRefreshDeadline: transient,
+// for the self-healing fast loop). cause is the underlying fn error, if any, and
+// is attached as a log attribute only (not wrapped into the classification error).
+func (a *Activities) interrupted(name, key string, cause error, shuttingDown func() bool, deadlineErr error) {
 	if shuttingDown == nil || shuttingDown() {
 		a.Log.Warn("cache refresh interrupted (shutdown)", "cache", name, "error", cause)
 		return
 	}
-	a.recordFailure(name, key, errBatchDeadline)
+	if cause != nil {
+		a.recordFailure(name, key, deadlineErr, "cause", cause)
+	} else {
+		a.recordFailure(name, key, deadlineErr)
+	}
 }
 
 // recordFailure increments the consecutive-failure counter for key and logs at
 // WARN below the escalation threshold, ERROR at/above it. Transient causes
 // (connection blips, timeouts, upstream 429s) get a higher threshold since they
-// self-heal; a brief blip stays at WARN and doesn't page on-call.
-func (a *Activities) recordFailure(name, key string, err error) {
+// self-heal; a brief blip stays at WARN and doesn't page on-call. extra key/value
+// pairs are appended to the log line (e.g. the underlying cause).
+func (a *Activities) recordFailure(name, key string, err error, extra ...any) {
 	n := a.incFailures(key)
 	threshold := errorAfterFailures
 	if dberror.IsTransient(err) {
 		threshold = transientErrorAfterFailures
 	}
+	args := append([]any{"cache", name, "consecutive_failures", n, "error", err}, extra...)
 	if n >= threshold {
-		a.Log.Error("cache refresh failed", "cache", name, "consecutive_failures", n, "error", err)
+		a.Log.Error("cache refresh failed", args...)
 	} else {
-		a.Log.Warn("cache refresh failed", "cache", name, "consecutive_failures", n, "error", err)
+		a.Log.Warn("cache refresh failed", args...)
 	}
 }
 
