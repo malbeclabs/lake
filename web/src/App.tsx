@@ -28,6 +28,7 @@ import { TopologyPage } from '@/components/topology-page'
 import { PathCalculatorPage } from '@/components/path-calculator-page'
 import { RedundancyReportPage } from '@/components/redundancy-report-page'
 import { MetroConnectivityPage } from '@/components/metro-connectivity-page'
+import { NetworkHealthReportingPage } from '@/components/network-health-reporting-page'
 import { DzVsInternetPage } from '@/components/dz-vs-internet-page'
 import { PathLatencyPage } from '@/components/path-latency-page'
 import { LinkLatencyPage } from '@/pages/link-latency-page'
@@ -686,6 +687,7 @@ function AppContent() {
             <Route path="/ops/incidents/links" element={<IncidentsPage />} />
             <Route path="/ops/incidents/devices" element={<IncidentsPage />} />
             <Route path="/ops/maintenance" element={<MaintenanceCalendarPage />} />
+            <Route path="/ops/network-health-reporting" element={<NetworkHealthReportingPage />} />
 
 
             {/* Settings */}

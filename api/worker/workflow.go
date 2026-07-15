@@ -42,6 +42,9 @@ const (
 	defaultRefreshInterval    = 30 * time.Second
 	defaultRefreshConcurrency = 8
 	defaultActivityTimeout    = 3 * time.Minute
+	// defaultRefreshTimeout is the per-entry refresh context deadline, applied
+	// when a cacheEntry does not set its own timeout.
+	defaultRefreshTimeout = 60 * time.Second
 
 	// continueAsNewTargetWindow bounds workflow history: PageCacheWorkflow
 	// continues-as-new after roughly this much wall-clock regardless of the
@@ -109,6 +112,10 @@ type cacheEntry struct {
 	name string
 	key  string
 	fn   func(ctx context.Context) (any, error)
+	// timeout overrides the per-refresh context deadline. Zero means the default
+	// (see refresh). The two heavy Network Health groups (impactful, deferred)
+	// set it to 180s so their max_execution_time=170 queries can finish and cache.
+	timeout time.Duration
 }
 
 // Activities holds the logger and API deps for the refresh activity.
@@ -127,7 +134,27 @@ type Activities struct {
 func (a *Activities) entries() []cacheEntry {
 	api := a.API
 	return []cacheEntry{
-		{"topology", "topology", func(ctx context.Context) (any, error) {
+		// The two heavy Network Health groups are scheduled FIRST so they start at
+		// the head of the concurrency-limited batch and have the whole activity
+		// budget to finish their 170s queries, rather than being cut when scheduled
+		// last. Their per-entry timeout is 180s (see cacheEntry.timeout).
+		{name: "network health impactful", key: handlers.NetworkHealthImpactfulCacheKey, timeout: 180 * time.Second, fn: func(ctx context.Context) (any, error) {
+			start, end := handlers.DefaultNetworkHealthWindow()
+			resp := api.FetchNetworkHealthImpactfulData(ctx, start, end, "")
+			if resp.Error != "" {
+				return nil, &refreshError{resp.Error}
+			}
+			return resp, nil
+		}},
+		{name: "network health deferred", key: handlers.NetworkHealthDeferredCacheKey, timeout: 180 * time.Second, fn: func(ctx context.Context) (any, error) {
+			start, end := handlers.DefaultNetworkHealthWindow()
+			resp := api.FetchNetworkHealthDeferredData(ctx, start, end, "")
+			if resp.Error != "" {
+				return nil, &refreshError{resp.Error}
+			}
+			return resp, nil
+		}},
+		{name: "topology", key: "topology", fn: func(ctx context.Context) (any, error) {
 			resp, err := api.FetchTopologyData(ctx)
 			if err != nil {
 				return nil, err
@@ -137,93 +164,142 @@ func (a *Activities) entries() []cacheEntry {
 			}
 			return resp, nil
 		}},
-		{"status", "status", func(ctx context.Context) (any, error) {
+		{name: "status", key: "status", fn: func(ctx context.Context) (any, error) {
 			resp := api.FetchStatusData(ctx)
 			if resp.Error != "" {
 				return nil, &refreshError{resp.Error}
 			}
 			return resp, nil
 		}},
-		{"incidents", "incidents", func(ctx context.Context) (any, error) {
+		{name: "incidents", key: "incidents", fn: func(ctx context.Context) (any, error) {
 			resp := api.FetchDefaultIncidentsData(ctx)
 			if resp == nil {
 				return nil, &refreshError{"nil response"}
 			}
 			return resp, nil
 		}},
-		{"device incidents", "device_incidents", func(ctx context.Context) (any, error) {
+		{name: "device incidents", key: "device_incidents", fn: func(ctx context.Context) (any, error) {
 			resp := api.FetchDefaultDeviceIncidentsData(ctx)
 			if resp == nil {
 				return nil, &refreshError{"nil response"}
 			}
 			return resp, nil
 		}},
-		{"link history", "link_history:24h:72", func(ctx context.Context) (any, error) {
+		{name: "link history", key: "link_history:24h:72", fn: func(ctx context.Context) (any, error) {
 			return api.FetchLinkHistoryData(ctx, "24h", 72)
 		}},
-		{"device history", "device_history:24h:72", func(ctx context.Context) (any, error) {
+		{name: "device history", key: "device_history:24h:72", fn: func(ctx context.Context) (any, error) {
 			return api.FetchDeviceHistoryData(ctx, "24h", 72)
 		}},
-		{"latency comparison", "latency_comparison", func(ctx context.Context) (any, error) {
+		{name: "latency comparison", key: "latency_comparison", fn: func(ctx context.Context) (any, error) {
 			return api.FetchLatencyComparisonData(ctx)
 		}},
-		{"dz ledger", "dz_ledger", func(ctx context.Context) (any, error) {
+		{name: "dz ledger", key: "dz_ledger", fn: func(ctx context.Context) (any, error) {
 			return handlers.FetchLedgerData(ctx, handlers.GetDZLedgerRPCURL())
 		}},
-		{"solana ledger", "solana_ledger", func(ctx context.Context) (any, error) {
+		{name: "solana ledger", key: "solana_ledger", fn: func(ctx context.Context) (any, error) {
 			return handlers.FetchLedgerData(ctx, handlers.GetSolanaRPCURL())
 		}},
-		{"validator perf", "validator_perf", func(ctx context.Context) (any, error) {
+		{name: "validator perf", key: "validator_perf", fn: func(ctx context.Context) (any, error) {
 			return api.FetchValidatorPerfData(ctx)
 		}},
-		{"stake overview", "stake_overview", func(ctx context.Context) (any, error) {
+		{name: "stake overview", key: "stake_overview", fn: func(ctx context.Context) (any, error) {
 			return api.FetchStakeOverviewData(ctx)
 		}},
-		{"publisher check", "publisher_check", func(ctx context.Context) (any, error) {
+		{name: "publisher check", key: "publisher_check", fn: func(ctx context.Context) (any, error) {
 			return api.FetchPublisherCheckData(ctx, "", 2, 0)
 		}},
-		{"shreds rewards", "shreds_rewards", func(ctx context.Context) (any, error) {
+		{name: "shreds rewards", key: "shreds_rewards", fn: func(ctx context.Context) (any, error) {
 			return api.FetchShredsRewardsData(ctx)
 		}},
-		{"edge scoreboard", "edge_scoreboard", func(ctx context.Context) (any, error) {
+		{name: "edge scoreboard", key: "edge_scoreboard", fn: func(ctx context.Context) (any, error) {
 			return api.FetchEdgeScoreboardData(ctx, "24h", false, 0, 0, 1000)
 		}},
-		{"edge scoreboard (leaders)", "edge_scoreboard:leaders", func(ctx context.Context) (any, error) {
+		{name: "edge scoreboard (leaders)", key: "edge_scoreboard:leaders", fn: func(ctx context.Context) (any, error) {
 			return api.FetchEdgeScoreboardData(ctx, "24h", true, 0, 0, 1000)
 		}},
-		{"hyperliquid scoreboard", "hyperliquid_scoreboard", func(ctx context.Context) (any, error) {
+		{name: "hyperliquid scoreboard", key: "hyperliquid_scoreboard", fn: func(ctx context.Context) (any, error) {
 			return api.FetchHyperliquidScoreboardData(ctx, "1h", "")
 		}},
-		{"bulk link metrics", "bulk_link_metrics", func(ctx context.Context) (any, error) {
+		{name: "bulk link metrics", key: "bulk_link_metrics", fn: func(ctx context.Context) (any, error) {
 			return api.FetchBulkLinkMetricsData(ctx)
 		}},
-		{"bulk link metrics (issues)", "bulk_link_metrics_issues", func(ctx context.Context) (any, error) {
+		{name: "bulk link metrics (issues)", key: "bulk_link_metrics_issues", fn: func(ctx context.Context) (any, error) {
 			return api.FetchBulkLinkMetricsIssuesData(ctx)
 		}},
-		{"bulk device metrics", "bulk_device_metrics", func(ctx context.Context) (any, error) {
+		{name: "bulk device metrics", key: "bulk_device_metrics", fn: func(ctx context.Context) (any, error) {
 			return api.FetchBulkDeviceMetricsData(ctx)
 		}},
-		{"bulk device metrics (issues)", "bulk_device_metrics_issues", func(ctx context.Context) (any, error) {
+		{name: "bulk device metrics (issues)", key: "bulk_device_metrics_issues", fn: func(ctx context.Context) (any, error) {
 			return api.FetchBulkDeviceMetricsIssuesData(ctx)
 		}},
-		{"geo concentration", "geo_concentration", func(ctx context.Context) (any, error) {
+		{name: "geo concentration", key: "geo_concentration", fn: func(ctx context.Context) (any, error) {
 			return api.FetchGeoConcentrationData(ctx)
 		}},
-		{"geo validators", "geo_validators", func(ctx context.Context) (any, error) {
+		{name: "geo validators", key: "geo_validators", fn: func(ctx context.Context) (any, error) {
 			return api.FetchGeoValidatorsData(ctx, "", "")
 		}},
-		{"multicast health summaries", handlers.MulticastHealthSummariesCacheKey, func(ctx context.Context) (any, error) {
+		{name: "multicast health summaries", key: handlers.MulticastHealthSummariesCacheKey, fn: func(ctx context.Context) (any, error) {
 			return api.FetchMulticastHealthSummariesData(ctx, handlers.ShredGroupPK)
 		}},
 		// Pre-fetch the hot first page of /health/users and /health/paths for
 		// ShredGroupPK. The UI's default request (offset=0, limit=
 		// MulticastHealthCachedPageSize) hits these caches and returns in ~1ms
 		// instead of running the view live (multi-second on edge-solana-shreds).
-		{"multicast health users (shreds)", handlers.MulticastHealthUsersCacheKey(handlers.ShredGroupPK), func(ctx context.Context) (any, error) {
+		{name: "multicast health users (shreds)", key: handlers.MulticastHealthUsersCacheKey(handlers.ShredGroupPK), fn: func(ctx context.Context) (any, error) {
 			return api.FetchMulticastHealthUsersPageData(ctx, handlers.ShredGroupPK)
 		}},
-		{"multicast health paths (shreds)", handlers.MulticastHealthPathsCacheKey(handlers.ShredGroupPK), func(ctx context.Context) (any, error) {
+		{name: "multicast health paths (shreds)", key: handlers.MulticastHealthPathsCacheKey(handlers.ShredGroupPK), fn: func(ctx context.Context) (any, error) {
 			return api.FetchMulticastHealthPathsPageData(ctx, handlers.ShredGroupPK)
+		}},
+		// Network Health is split into independent data-source-group caches so the
+		// page loads progressively and no slow group blocks another. Each group is a
+		// strict subset of the old monolith, so each refreshes faster than the single
+		// entry did. Only the headline-critical groups (overview: throughput/peak;
+		// outages: reliability; impactful; deferred) return a refreshError on a
+		// critical failure so their last-good blob is kept; the rest always write. See
+		// pageCacheRefreshConcurrency for the aggregate-load guardrail.
+		{name: "network health overview", key: handlers.NetworkHealthOverviewCacheKey, fn: func(ctx context.Context) (any, error) {
+			start, end := handlers.DefaultNetworkHealthWindow()
+			resp := api.FetchNetworkHealthOverviewData(ctx, start, end, "")
+			if resp.Error != "" {
+				return nil, &refreshError{resp.Error}
+			}
+			return resp, nil
+		}},
+		{name: "network health availability", key: handlers.NetworkHealthAvailabilityCacheKey, fn: func(ctx context.Context) (any, error) {
+			start, end := handlers.DefaultNetworkHealthWindow()
+			return api.FetchNetworkHealthAvailabilityData(ctx, start, end, ""), nil
+		}},
+		{name: "network health latency", key: handlers.NetworkHealthLatencyCacheKey, fn: func(ctx context.Context) (any, error) {
+			start, end := handlers.DefaultNetworkHealthWindow()
+			return api.FetchNetworkHealthLatencyData(ctx, start, end, ""), nil
+		}},
+		{name: "network health capacity", key: handlers.NetworkHealthCapacityCacheKey, fn: func(ctx context.Context) (any, error) {
+			start, end := handlers.DefaultNetworkHealthWindow()
+			return api.FetchNetworkHealthCapacityData(ctx, start, end, ""), nil
+		}},
+		{name: "network health outages", key: handlers.NetworkHealthOutagesCacheKey, fn: func(ctx context.Context) (any, error) {
+			start, end := handlers.DefaultNetworkHealthWindow()
+			resp := api.FetchNetworkHealthOutagesData(ctx, start, end, "")
+			if resp.Error != "" {
+				return nil, &refreshError{resp.Error}
+			}
+			return resp, nil
+		}},
+		{name: "network health drain", key: handlers.NetworkHealthDrainCacheKey, fn: func(ctx context.Context) (any, error) {
+			start, end := handlers.DefaultNetworkHealthWindow()
+			return api.FetchNetworkHealthDrainData(ctx, start, end, ""), nil
+		}},
+		{name: "network health tickets", key: handlers.NetworkHealthTicketsCacheKey, fn: func(ctx context.Context) (any, error) {
+			start, end := handlers.DefaultNetworkHealthWindow()
+			resp := api.FetchNetworkHealthTicketsData(ctx, start, end, "")
+			// A transient ops-API outage sets resp.Error; keep the last-good blob
+			// instead of caching an empty aggregate (like overview/outages/impactful).
+			if resp.Error != "" {
+				return nil, &refreshError{resp.Error}
+			}
+			return resp, nil
 		}},
 	}
 }
@@ -258,7 +334,7 @@ func (a *Activities) RefreshCaches(ctx context.Context) error {
 
 	for _, entry := range a.entries() {
 		g.Go(func() error {
-			a.refresh(gctx, entry.name, entry.key, entry.fn, shuttingDown, errBatchDeadline)
+			a.refresh(gctx, entry.name, entry.key, entry.fn, entry.timeout, shuttingDown, errBatchDeadline)
 			return nil
 		})
 	}
@@ -268,11 +344,22 @@ func (a *Activities) RefreshCaches(ctx context.Context) error {
 		g.Go(func() error {
 			a.refresh(gctx, "metro path latency:"+strategy, "metro_path_latency:"+strategy, func(ctx context.Context) (any, error) {
 				return a.API.FetchMetroPathLatencyData(ctx, strategy)
-			}, shuttingDown, errBatchDeadline)
+			}, 0, shuttingDown, errBatchDeadline)
 			return nil
 		})
 	}
 
+	// Network health, per contributor: NOT precomputed. This used to iterate
+	// every active contributor here and run the full heavy network-health
+	// pipeline (topology graph + 30d path-impact + DIA scan + rollup scans) per
+	// code, which meant ~15 full heavy pipelines running alongside the other
+	// cache entries every refresh cycle. That oversubscribed ClickHouse badly
+	// enough to saturate the cluster and starve the network-default view's own
+	// queries (see .superpowers/sdd/stabilize-report.md). Scoped requests now
+	// always fall back to a live compute: each group handler reads its
+	// per-contributor cache key first, MISSes, and computes that group live
+	// under its deadline — slower per-contributor page loads, but it does not
+	// compete with the default view for cluster capacity.
 	_ = g.Wait()
 	a.Log.Info("page cache refresh complete", "duration", time.Since(start).Round(time.Millisecond))
 	return nil
@@ -299,10 +386,10 @@ func workerStopping(ctx context.Context) func() bool {
 func (a *Activities) latestEntries() []cacheEntry {
 	api := a.API
 	return []cacheEntry{
-		{"edge scoreboard (latest)", "edge_scoreboard:latest", func(ctx context.Context) (any, error) {
+		{name: "edge scoreboard (latest)", key: "edge_scoreboard:latest", fn: func(ctx context.Context) (any, error) {
 			return api.FetchEdgeScoreboardLatest(ctx, false, 1000)
 		}},
-		{"edge scoreboard (latest, leaders)", "edge_scoreboard:latest:leaders", func(ctx context.Context) (any, error) {
+		{name: "edge scoreboard (latest, leaders)", key: "edge_scoreboard:latest:leaders", fn: func(ctx context.Context) (any, error) {
 			return api.FetchEdgeScoreboardLatest(ctx, true, 1000)
 		}},
 	}
@@ -314,7 +401,7 @@ func (a *Activities) RefreshLatestCaches(ctx context.Context) error {
 	g, gctx := errgroup.WithContext(ctx)
 	for _, entry := range a.latestEntries() {
 		g.Go(func() error {
-			a.refresh(gctx, entry.name, entry.key, entry.fn, shuttingDown, errFastRefreshDeadline)
+			a.refresh(gctx, entry.name, entry.key, entry.fn, entry.timeout, shuttingDown, errFastRefreshDeadline)
 			return nil
 		})
 	}
@@ -322,13 +409,19 @@ func (a *Activities) RefreshLatestCaches(ctx context.Context) error {
 	return nil
 }
 
-// deadlineErr is the sentinel recorded when the parent (activity) context is
-// cancelled by its own deadline rather than a worker shutdown — it selects the
-// escalation cadence (errBatchDeadline for the slow batch, errFastRefreshDeadline
-// for the fast loop).
-func (a *Activities) refresh(parentCtx context.Context, name, key string, fn func(context.Context) (any, error), shuttingDown func() bool, deadlineErr error) {
+// refresh runs one cache entry's fetch under a per-attempt context deadline and
+// writes the result. timeout overrides that deadline when > 0; otherwise
+// defaultRefreshTimeout applies. deadlineErr is the sentinel recorded when the
+// parent (activity) context is cancelled by its own deadline rather than a
+// worker shutdown; it selects the escalation cadence (errBatchDeadline for the
+// slow batch, errFastRefreshDeadline for the fast loop).
+func (a *Activities) refresh(parentCtx context.Context, name, key string, fn func(context.Context) (any, error), timeout time.Duration, shuttingDown func() bool, deadlineErr error) {
 	start := time.Now()
 	var queryDuration, writeDuration time.Duration
+
+	if timeout <= 0 {
+		timeout = defaultRefreshTimeout
+	}
 
 	const maxAttempts = 2
 	for attempt := range maxAttempts {
@@ -338,7 +431,7 @@ func (a *Activities) refresh(parentCtx context.Context, name, key string, fn fun
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(parentCtx, 60*time.Second)
+		ctx, cancel := context.WithTimeout(parentCtx, timeout)
 		queryStart := time.Now()
 		result, err := fn(ctx)
 		queryDuration = time.Since(queryStart)
