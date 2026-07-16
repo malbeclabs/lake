@@ -298,6 +298,11 @@ func (a *API) GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 	var groupPK string
 	err := a.envDB(ctx).QueryRow(ctx,
 		`SELECT pk FROM dz_multicast_groups_current WHERE pk = ? OR code = ?`, pkOrCode, pkOrCode).Scan(&groupPK)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Unknown group pk/code is an ordinary 404, not an error — don't log/page.
+		http.Error(w, "multicast group not found", http.StatusNotFound)
+		return
+	}
 	if err != nil {
 		logError("multicast group members group query error", "error", err)
 		http.Error(w, "multicast group not found", http.StatusNotFound)
@@ -728,6 +733,11 @@ func (a *API) GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 	var groupPK string
 	err := a.envDB(ctx).QueryRow(ctx,
 		`SELECT pk FROM dz_multicast_groups_current WHERE pk = ? OR code = ?`, pkOrCode, pkOrCode).Scan(&groupPK)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Unknown group pk/code is an ordinary 404, not an error — don't log/page.
+		http.Error(w, "multicast group not found", http.StatusNotFound)
+		return
+	}
 	if err != nil {
 		logError("multicast group traffic group query error", "error", err)
 		http.Error(w, "multicast group not found", http.StatusNotFound)
