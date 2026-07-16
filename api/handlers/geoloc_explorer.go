@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/malbeclabs/lake/api/handlers/dberror"
+	"github.com/malbeclabs/lake/utils/pkg/dberror"
 	"github.com/malbeclabs/lake/api/metrics"
 )
 

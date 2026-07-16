@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/malbeclabs/lake/api/handlers/dberror"
+	"github.com/malbeclabs/lake/utils/pkg/dberror"
 	"github.com/stretchr/testify/require"
 )
 
