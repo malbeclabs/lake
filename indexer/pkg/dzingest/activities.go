@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sync"
-	"sync/atomic"
 
 	dzgeoloc "github.com/malbeclabs/lake/indexer/pkg/dz/geolocation"
 	dzgraph "github.com/malbeclabs/lake/indexer/pkg/dz/graph"
@@ -19,16 +17,10 @@ import (
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
-
-// errorAfterFailures is the number of consecutive failed refreshes after
-// which we escalate the log to ERROR. Below the threshold, transient
-// failures (deploys, ClickHouse restarts, InfluxDB rate limits) log at WARN.
-// At ~60s per workflow iteration, 3 means ~3 minutes of sustained failure
-// before paging anyone.
-const errorAfterFailures = 3
 
 // Activities holds dependencies for DZ ingest activities.
 type Activities struct {
@@ -50,14 +42,17 @@ type Activities struct {
 	MSDPSource       msdp.Source        // nil when MSDP ingest is not enabled
 	MSDPStore        *msdp.Store        // nil when MSDP ingest is not enabled
 
-	// failures tracks consecutive-failure counts per activity name.
-	// map[string]*atomic.Int32; populated lazily.
-	failures sync.Map
+	// esc escalates consecutive refresh failures per activity from WARN to
+	// ERROR. At ~60s per workflow iteration, the default thresholds mean ~3
+	// minutes of sustained failure before paging anyone (~10 for transient
+	// causes: deploys, ClickHouse restarts, InfluxDB rate limits).
+	esc logger.Escalator
 }
 
 // refresh runs fn under the IngestionLog wrapper and tracks consecutive
 // failures per activity. On error, increments the counter and logs at WARN
-// below errorAfterFailures, ERROR at/above. On success, resets the counter.
+// below the escalation threshold, ERROR at/above. On success, resets the
+// counter.
 //
 // Always returns nil to Temporal. Transient failures (in-flight ClickHouse
 // during a pod restart, InfluxDB rate limits, brief network blips) don't
@@ -69,32 +64,16 @@ type Activities struct {
 func (a *Activities) refresh(ctx context.Context, name string, fn func() (ingestionlog.RefreshResult, error)) error {
 	err := a.IngestionLog.Wrap(ctx, "dzingest", name, a.Network, fn)
 	if err != nil {
-		n := a.incFailures(name)
-		args := []any{"activity", name, "consecutive_failures", n, "error", err}
+		args := []any{"activity", name, "error", err}
 		// Annotate the well-known InfluxDB rate-limit cause for readability.
 		if status.Code(err) == codes.ResourceExhausted {
 			args = append(args, "cause", "influxdb_rate_limit")
 		}
-		if n >= errorAfterFailures {
-			a.Log.Error("activity refresh failed", args...)
-		} else {
-			a.Log.Warn("activity refresh failed", args...)
-		}
+		a.esc.Fail(a.Log, name, "activity refresh failed", args...)
 		return nil
 	}
-	a.resetFailures(name)
+	a.esc.Reset(name)
 	return nil
-}
-
-func (a *Activities) incFailures(name string) int32 {
-	v, _ := a.failures.LoadOrStore(name, &atomic.Int32{})
-	return v.(*atomic.Int32).Add(1)
-}
-
-func (a *Activities) resetFailures(name string) {
-	if v, ok := a.failures.Load(name); ok {
-		v.(*atomic.Int32).Store(0)
-	}
 }
 
 // RefreshServiceability fetches the latest DZ serviceability state from RPC

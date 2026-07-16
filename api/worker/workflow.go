@@ -13,7 +13,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/malbeclabs/lake/api/handlers"
-	"github.com/malbeclabs/lake/utils/pkg/dberror"
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
 const (
@@ -21,14 +21,14 @@ const (
 	WorkflowID = "api-page-cache"
 
 	fastRefreshInterval = 3 * time.Second
-	errorAfterFailures  = 3 // log WARN for transient failures, ERROR after this many consecutive failures
 
-	// transientErrorAfterFailures is the ERROR-escalation threshold for transient
-	// causes (upstream connection blips, timeouts, rate limits). It's higher than
-	// errorAfterFailures because a brief transient failure is self-healing and not
-	// actionable — only a sustained run is worth paging on. Keeps single/short
-	// blips (e.g. a CH connection drop or an external RPC 429) at WARN.
-	transientErrorAfterFailures = 10
+	// Escalation thresholds: WARN below, ERROR at/above. Transient causes
+	// (connection blips, timeouts, rate limits) self-heal, so they get the
+	// higher threshold — only a sustained run is worth paging on. These match
+	// the logger.Escalator defaults; named here because tests and the
+	// deadline-sentinel comments reference them.
+	errorAfterFailures          = logger.DefaultErrorAfter
+	transientErrorAfterFailures = logger.DefaultTransientErrorAfter
 
 	// slowRefreshThreshold surfaces per-entry duration at INFO when a single
 	// cache refresh (query + write) takes at least this long. Normal entries
@@ -120,8 +120,10 @@ type Activities struct {
 	// only (no replay concern), so it stays a plain field rather than a workflow
 	// argument.
 	RefreshConcurrency int
-	failures           sync.Map   // map[string]int: consecutive failure count per cache key
-	writeMu            sync.Mutex // serializes WritePageCache calls to avoid Postgres OOM from concurrent large JSONB upserts
+	// esc escalates consecutive refresh failures per cache key from WARN to
+	// ERROR (zero value: errorAfterFailures / transientErrorAfterFailures).
+	esc     logger.Escalator
+	writeMu sync.Mutex // serializes WritePageCache calls to avoid Postgres OOM from concurrent large JSONB upserts
 }
 
 func (a *Activities) entries() []cacheEntry {
@@ -358,7 +360,7 @@ func (a *Activities) refresh(parentCtx context.Context, name, key string, fn fun
 			return
 		}
 
-		a.failures.Delete(key)
+		a.esc.Reset(key)
 
 		writeStart := time.Now()
 		a.writeMu.Lock()
@@ -392,16 +394,6 @@ func (a *Activities) refresh(parentCtx context.Context, name, key string, fn fun
 	}
 }
 
-func (a *Activities) incFailures(key string) int {
-	for {
-		v, _ := a.failures.LoadOrStore(key, 1)
-		n := v.(int)
-		if a.failures.CompareAndSwap(key, n, n+1) {
-			return n + 1
-		}
-	}
-}
-
 // interrupted handles a refresh cut short because its parent context was
 // cancelled. A genuine worker shutdown (deploy) is benign and not counted;
 // otherwise the activity ran out of its StartToCloseTimeout and this entry is
@@ -423,22 +415,12 @@ func (a *Activities) interrupted(name, key string, cause error, shuttingDown fun
 }
 
 // recordFailure increments the consecutive-failure counter for key and logs at
-// WARN below the escalation threshold, ERROR at/above it. Transient causes
-// (connection blips, timeouts, upstream 429s) get a higher threshold since they
-// self-heal; a brief blip stays at WARN and doesn't page on-call. extra key/value
-// pairs are appended to the log line (e.g. the underlying cause).
+// WARN below the escalation threshold, ERROR at/above it (see logger.Escalator:
+// transient causes get the higher threshold since they self-heal). extra
+// key/value pairs are appended to the log line (e.g. the underlying cause).
 func (a *Activities) recordFailure(name, key string, err error, extra ...any) {
-	n := a.incFailures(key)
-	threshold := errorAfterFailures
-	if dberror.IsTransient(err) {
-		threshold = transientErrorAfterFailures
-	}
-	args := append([]any{"cache", name, "consecutive_failures", n, "error", err}, extra...)
-	if n >= threshold {
-		a.Log.Error("cache refresh failed", args...)
-	} else {
-		a.Log.Warn("cache refresh failed", args...)
-	}
+	args := append([]any{"cache", name, "error", err}, extra...)
+	a.esc.Fail(a.Log, key, "cache refresh failed", args...)
 }
 
 // PageCacheWorkflow is a long-running workflow that refreshes all page caches on
