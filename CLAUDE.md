@@ -114,6 +114,17 @@ The API has a background page cache (`api/handlers/page_cache.go`) that pre-comp
 
 Add caching when a page runs expensive queries, has a common default view, and 30–60s staleness is acceptable. See publisher check or edge scoreboard handlers for reference implementations.
 
+## Logging Levels
+
+ERROR-level log lines page on-call (alerts fire on `level="ERR"` — prod → `#alerts`, staging → `#alerts-l2`). Reserve raw `.Error(...)` calls for genuinely-actionable terminal failures: process/component death, startup failures, panics, config errors.
+
+Any log call that can carry a transient, not-found, client-cancel, or lifecycle error must go through a classification helper from `utils/pkg/logger`:
+
+- `logger.Error(log, msg, args...)` — one-shot failures on request paths: skips client disconnects, logs transient causes (`utils/pkg/dberror.IsTransient`: connection blips, timeouts, rate limits) at WARN, everything else at ERROR. `api/handlers.logError` wraps this.
+- `logger.Escalator` — periodic/background loops (view refreshes, workflow iterations, cache refreshes): `Fail` logs WARN below a consecutive-failure threshold and ERROR at/above (default 3, transient 10), `Reset` on success. A single blip stays at WARN; sustained failure still pages.
+
+Non-actionable conditions that should never log ERROR: empty/not-found results (return a 404 instead), client disconnects, worker/pod shutdown, deploy-time dependency races, expected Temporal lifecycle events, and served-stale/degraded fallbacks (WARN/INFO).
+
 ## Git Commits
 
 - Do NOT include "Co-Authored-By" lines in commit messages
