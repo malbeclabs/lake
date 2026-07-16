@@ -120,7 +120,7 @@ ERROR-level log lines page on-call (alerts fire on `level="ERR"` — prod → `#
 
 Any log call that can carry a transient, not-found, client-cancel, or lifecycle error must go through a classification helper from `utils/pkg/logger`:
 
-- `logger.Error(log, msg, args...)` — one-shot failures on request paths: skips client disconnects, logs transient causes (`utils/pkg/dberror.IsTransient`: connection blips, timeouts, rate limits) at WARN, everything else at ERROR. `api/handlers.logError` wraps this.
+- `logger.Error(log, msg, args...)` — one-shot failures: logs transient causes (`utils/pkg/dberror.IsTransient`: connection blips, timeouts, rate limits) and disconnect-class context errors at WARN, everything else at ERROR; it never drops a line. `api/handlers.logError` wraps this and additionally skips client disconnects entirely (on a request path the caller is gone).
 - `logger.Escalator` — periodic/background loops (view refreshes, workflow iterations, cache refreshes): `Fail` logs WARN below a consecutive-failure threshold and ERROR at/above (default 3, transient 10), `Reset` on success. A single blip stays at WARN; sustained failure still pages.
 
 Non-actionable conditions that should never log ERROR: empty/not-found results (return a 404 instead), client disconnects, worker/pod shutdown, deploy-time dependency races, expected Temporal lifecycle events, and served-stale/degraded fallbacks (WARN/INFO).

@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"slices"
 	"sync"
 
 	"github.com/malbeclabs/lake/utils/pkg/dberror"
@@ -65,7 +66,8 @@ func (e *Escalator) Fail(log Logger, key, msg string, args ...any) {
 		}
 	}
 
-	args = append(args, "consecutive_failures", n)
+	// Clip so the append can't clobber a caller-owned backing array.
+	args = append(slices.Clip(args), "consecutive_failures", n)
 	if n >= threshold {
 		log.Error(msg, args...)
 	} else {

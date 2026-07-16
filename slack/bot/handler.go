@@ -15,6 +15,8 @@ import (
 
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
+
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
 const processedEventsMaxAge = 1 * time.Hour
@@ -379,6 +381,11 @@ func (h *EventHandler) handleMessageEvent(ctx context.Context, ev *slackevents.M
 func (h *EventHandler) HandleSocketMode(ctx context.Context, client *socketmode.Client) error {
 	h.log.Info("bot running in socket mode (DMs and channel mentions, thread replies enabled)")
 
+	// connectErrs escalates consecutive connection errors: socketmode
+	// auto-reconnects, so a blip warns, but sustained failure (revoked app
+	// token, broken egress) still reaches ERROR and pages.
+	var connectErrs logger.Escalator
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -400,8 +407,9 @@ func (h *EventHandler) HandleSocketMode(ctx context.Context, client *socketmode.
 				h.log.Info("socketmode: connecting")
 			case socketmode.EventTypeConnected:
 				h.log.Info("socketmode: connected")
+				connectErrs.Reset("connect")
 			case socketmode.EventTypeConnectionError:
-				h.log.Warn("socketmode: connection error", "error", evt.Data)
+				connectErrs.Fail(h.log, "connect", "socketmode: connection error", "error", evt.Data)
 			case socketmode.EventTypeEventsAPI:
 				h.log.Info("socketmode: EventsAPI event received", "inner_event_type", func() string {
 					if e, ok := evt.Data.(slackevents.EventsAPIEvent); ok {

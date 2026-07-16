@@ -29,20 +29,22 @@ func TestError_ClassifiesByErrorArg(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		args       []any
-		wantLogged bool
-		wantLevel  slog.Level
+		name      string
+		args      []any
+		wantLevel slog.Level
 	}{
-		{"transient connection reset", []any{"error", errors.New("read: connection reset by peer")}, true, slog.LevelWarn},
-		{"transient io timeout", []any{"error", errors.New("read: i/o timeout")}, true, slog.LevelWarn},
-		{"transient rate limit", []any{"error", errors.New("rate limited (status 429)")}, true, slog.LevelWarn},
-		{"actionable syntax error", []any{"error", errors.New("DB::Exception: Syntax error")}, true, slog.LevelError},
-		{"actionable generic", []any{"error", errors.New("boom")}, true, slog.LevelError},
-		{"client cancel skipped", []any{"error", context.Canceled}, false, 0},
-		{"wrapped cancel skipped", []any{"error", errors.New("neo4j: context canceled")}, false, 0},
-		{"no error arg", []any{"key", "value"}, true, slog.LevelError},
-		{"no args", nil, true, slog.LevelError},
+		{"transient connection reset", []any{"error", errors.New("read: connection reset by peer")}, slog.LevelWarn},
+		{"transient io timeout", []any{"error", errors.New("read: i/o timeout")}, slog.LevelWarn},
+		{"transient rate limit", []any{"error", errors.New("rate limited (status 429)")}, slog.LevelWarn},
+		{"actionable syntax error", []any{"error", errors.New("DB::Exception: Syntax error")}, slog.LevelError},
+		{"actionable generic", []any{"error", errors.New("boom")}, slog.LevelError},
+		// Disconnect-class errors demote to WARN, never vanish: outside a
+		// request handler a context deadline is usually a server-side timeout.
+		{"client cancel warns", []any{"error", context.Canceled}, slog.LevelWarn},
+		{"deadline exceeded warns", []any{"error", context.DeadlineExceeded}, slog.LevelWarn},
+		{"wrapped cancel warns", []any{"error", errors.New("neo4j: context canceled")}, slog.LevelWarn},
+		{"no error arg", []any{"key", "value"}, slog.LevelError},
+		{"no args", nil, slog.LevelError},
 	}
 
 	for _, tt := range tests {
@@ -50,11 +52,7 @@ func TestError_ClassifiesByErrorArg(t *testing.T) {
 			t.Parallel()
 			log, recs := capLogger()
 			Error(log, "op failed", tt.args...)
-			if !tt.wantLogged {
-				require.Empty(t, *recs)
-				return
-			}
-			require.Len(t, *recs, 1)
+			require.Len(t, *recs, 1, "Error never drops a line")
 			require.Equal(t, tt.wantLevel, (*recs)[0].Level)
 		})
 	}

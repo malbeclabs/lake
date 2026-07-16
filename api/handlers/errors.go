@@ -26,6 +26,11 @@ func isClientDisconnect(err error) bool {
 // log at ERROR. Sustained outages are caught elsewhere (the page-cache
 // consecutive-failure threshold and the lake-api-down/crash-loop alerts).
 func logError(msg string, args ...any) {
+	// Request path: a client disconnect means the caller is gone — skip the
+	// log line entirely rather than warn.
+	if err := logger.ErrorFromArgs(args); err != nil && logger.IsClientDisconnect(err) {
+		return
+	}
 	logger.Error(slog.Default(), msg, args...)
 }
 

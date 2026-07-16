@@ -19,27 +19,29 @@ type Logger interface {
 }
 
 // Error logs msg at a level chosen by the error carried in args (the value of
-// the first "error" key): client disconnects are skipped entirely, transient
-// self-healing causes (see dberror.IsTransient) log at WARN, and everything
-// else logs at ERROR.
+// the first "error" key): transient self-healing causes (see
+// dberror.IsTransient) and disconnect-class context errors (see
+// IsClientDisconnect) log at WARN, and everything else logs at ERROR.
 //
 // Alerts fire on ERROR lines only, so this is the default way to log a
 // failure that can carry a transient, not-found, or client-caused error.
 // Reserve a raw log.Error call for genuinely-actionable terminal failures.
+//
+// The helper never drops a line: outside a request handler a context
+// deadline is usually a server-side timeout, which deserves a WARN. Request
+// handlers that want to skip logging entirely when the client has gone away
+// should check IsClientDisconnect first (see api/handlers.logError).
 func Error(log Logger, msg string, args ...any) {
-	if err := ErrorFromArgs(args); err != nil {
-		if IsClientDisconnect(err) {
-			return
-		}
-		if dberror.IsTransient(err) {
-			log.Warn(msg, args...)
-			return
-		}
+	if err := ErrorFromArgs(args); err != nil && (IsClientDisconnect(err) || dberror.IsTransient(err)) {
+		log.Warn(msg, args...)
+		return
 	}
 	log.Error(msg, args...)
 }
 
-// Warn logs at WARN level, silently skipping client disconnects.
+// Warn logs at WARN level, silently skipping client disconnects. Meant for
+// request paths, where a disconnect-class error means the client is gone and
+// there is nothing to log; elsewhere prefer a plain log.Warn.
 func Warn(log Logger, msg string, args ...any) {
 	if err := ErrorFromArgs(args); err != nil && IsClientDisconnect(err) {
 		return
