@@ -97,6 +97,11 @@ func NewWorkflowManager(api *API) *WorkflowManager {
 	}
 }
 
+// ServerID returns the unique identifier generated for this server instance,
+// used to attribute single-flight claims (e.g. the seat alert worker lock) to
+// the replica that holds them.
+func (m *WorkflowManager) ServerID() string { return m.serverID }
+
 // SessionChatMessage represents a message in session content, matching the web's ChatMessage format.
 type SessionChatMessage struct {
 	ID              string               `json:"id"`

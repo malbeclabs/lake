@@ -15,6 +15,7 @@ import {
   Check,
   RefreshCw,
   Info,
+  Bell,
 } from 'lucide-react'
 import {
   fetchShredClientSeats,
@@ -30,6 +31,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
 import { PageHeader } from './page-header'
+import { SeatAlertModal } from './seat-alert-modal'
 
 const PAGE_SIZE = 100
 
@@ -433,6 +435,7 @@ export function ShredsSeatsPage() {
   const [showStatusInfo, setShowStatusInfo] = useState(false)
   const { user } = useAuth()
   const showClientIP = !!user?.is_internal_user
+  const [notifySeat, setNotifySeat] = useState<ShredClientSeat | null>(null)
 
   // Fetch overview for current Solana epoch (used for status badges)
   const { data: overview } = useQuery({
@@ -774,6 +777,7 @@ export function ShredsSeatsPage() {
                     currentDir={sortDir}
                     onSort={handleSort}
                   />
+                  {showClientIP && <th className="px-4 py-3 font-medium">Notify</th>}
                 </tr>
               </thead>
               <tbody>
@@ -864,12 +868,23 @@ export function ShredsSeatsPage() {
                           <ChevronRight className="h-3 w-3" />
                         </Link>
                       </td>
+                      {showClientIP && (
+                        <td className="px-4 py-3">
+                          <button
+                            onClick={() => setNotifySeat(seat)}
+                            title="Set up notifications"
+                            className="inline-flex items-center text-muted-foreground hover:text-foreground"
+                          >
+                            <Bell className="h-4 w-4" />
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   )
                 })}
                 {items.length === 0 && (
                   <tr>
-                    <td colSpan={showClientIP ? 10 : 9} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={showClientIP ? 11 : 9} className="px-4 py-8 text-center text-muted-foreground">
                       No subscribers found
                     </td>
                   </tr>
@@ -887,6 +902,7 @@ export function ShredsSeatsPage() {
           )}
         </div>
       </div>
+      {notifySeat && <SeatAlertModal seat={notifySeat} onClose={() => setNotifySeat(null)} />}
     </div>
   )
 }

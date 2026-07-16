@@ -1,0 +1,89 @@
+package bot
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+type fakeStore struct {
+	activatedToken  string
+	activatedChatID int64
+	stoppedChatID   int64
+}
+
+func (f *fakeStore) Activate(ctx context.Context, token string, chatID int64, username string) (string, error) {
+	f.activatedToken = token
+	f.activatedChatID = chatID
+	return "seat-abc", nil // returns a short seat description
+}
+func (f *fakeStore) List(ctx context.Context, chatID int64) ([]string, error) {
+	return []string{"seat-abc"}, nil
+}
+func (f *fakeStore) Stop(ctx context.Context, chatID int64) (int64, error) {
+	f.stoppedChatID = chatID
+	return 1, nil
+}
+
+func newTestHandler(t *testing.T, store Store) (*EventHandler, *httptest.Server, *[]map[string]any) {
+	var sent []map[string]any
+	tg := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		var m map[string]any
+		_ = json.Unmarshal(b, &m)
+		sent = append(sent, m)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(tg.Close)
+	client := NewClient("TESTTOKEN")
+	client.baseURL = tg.URL
+	return NewEventHandler(client, store, "s3cret", slog.Default()), tg, &sent
+}
+
+func postUpdate(t *testing.T, h *EventHandler, secret string, update map[string]any) *httptest.ResponseRecorder {
+	body, _ := json.Marshal(update)
+	req := httptest.NewRequest(http.MethodPost, "/telegram/webhook", bytes.NewReader(body))
+	req.Header.Set("X-Telegram-Bot-Api-Secret-Token", secret)
+	rr := httptest.NewRecorder()
+	h.HandleHTTP(rr, req)
+	return rr
+}
+
+func TestWebhook_RejectsBadSecret(t *testing.T) {
+	t.Parallel()
+	h, _, _ := newTestHandler(t, &fakeStore{})
+	rr := postUpdate(t, h, "wrong", map[string]any{})
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("code = %d want 401", rr.Code)
+	}
+}
+
+func TestWebhook_StartActivates(t *testing.T) {
+	t.Parallel()
+	store := &fakeStore{}
+	h, _, sent := newTestHandler(t, store)
+	update := map[string]any{
+		"update_id": 1,
+		"message": map[string]any{
+			"text": "/start tok-123",
+			"chat": map[string]any{"id": 4242},
+			"from": map[string]any{"username": "tester"},
+		},
+	}
+	rr := postUpdate(t, h, "s3cret", update)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code = %d want 200", rr.Code)
+	}
+	h.WaitForTest() // drain async processing (test-only helper)
+	if store.activatedToken != "tok-123" || store.activatedChatID != 4242 {
+		t.Fatalf("activation not recorded: %+v", store)
+	}
+	if len(*sent) == 0 {
+		t.Fatalf("expected a confirmation message to be sent")
+	}
+}

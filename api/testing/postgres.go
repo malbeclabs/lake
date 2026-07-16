@@ -35,6 +35,11 @@ type DB struct {
 	cfg       *DBConfig
 	connStr   string
 	container *tcpostgres.PostgresContainer
+
+	// migrateOnce ensures goose migrations run exactly once for this
+	// container, even when many parallel tests share it (see SetupPostgresForTest).
+	migrateOnce sync.Once
+	migrateErr  error
 }
 
 // ConnStr returns the PostgreSQL connection string.
@@ -132,12 +137,19 @@ func SetupPostgresForTest(t *testing.T, db *DB) *pgxpool.Pool {
 		goose.SetLogger(goose.NopLogger())
 	})
 
-	sqlDB, err := sql.Open("pgx", db.connStr)
-	require.NoError(t, err, "failed to open database for migrations")
-
-	err = goose.Up(sqlDB, "migrations")
-	require.NoError(t, err, "failed to run migrations")
-	sqlDB.Close()
+	// Many tests share one *DB (one container per package). goose.Up isn't
+	// safe for concurrent callers against the same database, so run it once
+	// per container and let later callers reuse the result.
+	db.migrateOnce.Do(func() {
+		sqlDB, err := sql.Open("pgx", db.connStr)
+		if err != nil {
+			db.migrateErr = fmt.Errorf("failed to open database for migrations: %w", err)
+			return
+		}
+		defer sqlDB.Close()
+		db.migrateErr = goose.Up(sqlDB, "migrations")
+	})
+	require.NoError(t, db.migrateErr, "failed to run migrations")
 
 	return NewTestPool(t, db)
 }

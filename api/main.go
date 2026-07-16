@@ -31,6 +31,7 @@ import (
 	v1 "github.com/malbeclabs/lake/api/v1"
 	"github.com/malbeclabs/lake/api/worker"
 	slackbot "github.com/malbeclabs/lake/slack/bot"
+	telegrambot "github.com/malbeclabs/lake/telegram/bot"
 	"github.com/malbeclabs/lake/utils/pkg/logger"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/slack-go/slack/socketmode"
@@ -626,6 +627,15 @@ func main() {
 		r.Get("/api/dz/field-values", api.GetFieldValues)
 		r.Get("/api/dz/ledger", api.GetDZLedger)
 
+		// Seat expiry notifications (internal dogfood: allowed-domain Google users only).
+		r.Group(func(r chi.Router) {
+			r.Use(handlers.RequireInternalDomain)
+			r.Post("/api/dz/shreds/seat-alerts", api.CreateSeatAlertHandler)
+			r.Get("/api/dz/shreds/seat-alerts/mine", api.ListMySeatAlertsHandler)
+			r.Delete("/api/dz/shreds/seat-alerts/{id}", api.DeleteSeatAlertHandler)
+			r.Post("/api/dz/shreds/seat-alerts/{id}/test", api.SendTestAlertHandler)
+		})
+
 		// Geolocation routes (internal only)
 		r.Group(func(r chi.Router) {
 			r.Use(handlers.RequireInternalDomain)
@@ -807,6 +817,9 @@ func main() {
 	// Start cleanup worker for expired sessions/nonces
 	api.StartCleanupWorker(serverCtx)
 
+	// Start the seat alert evaluator worker (single-flighted across replicas).
+	api.StartSeatAlertWorker(serverCtx, api.Manager.ServerID())
+
 	// Initialize usage metrics and start daily reset worker
 	api.InitUsageMetrics(serverCtx)
 	api.StartDailyResetWorker(serverCtx)
@@ -831,6 +844,11 @@ func main() {
 	} else if os.Getenv("SLACK_CLIENT_ID") != "" && os.Getenv("SLACK_CLIENT_SECRET") != "" {
 		// Multi-tenant mode
 		slackEventHandler = startSlackBotMultiTenant(serverCtx, r, api)
+	}
+
+	// Start Telegram bot if configured
+	if os.Getenv("TELEGRAM_BOT_TOKEN") != "" {
+		startTelegramBot(r, api)
 	}
 
 	// Wait for shutdown signal
@@ -1039,4 +1057,54 @@ func startSlackBotMultiTenant(ctx context.Context, r *chi.Mux, api *handlers.API
 
 	slog.Info("Slack bot started in multi-tenant HTTP mode", "route", "/slack/events")
 	return eventHandler
+}
+
+// telegramStore adapts *handlers.API to telegrambot.Store.
+type telegramStore struct{ api *handlers.API }
+
+func (s telegramStore) Activate(ctx context.Context, token string, chatID int64, username string) (string, error) {
+	a, err := s.api.ActivateSeatAlertByToken(ctx, token, chatID, username)
+	if err != nil {
+		return "", err
+	}
+	return shortSeat(a.SeatPK), nil
+}
+func (s telegramStore) List(ctx context.Context, chatID int64) ([]string, error) {
+	alerts, err := s.api.ListAlertsByChatID(ctx, chatID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(alerts))
+	for _, a := range alerts {
+		out = append(out, shortSeat(a.SeatPK))
+	}
+	return out, nil
+}
+func (s telegramStore) Stop(ctx context.Context, chatID int64) (int64, error) {
+	return s.api.StopAlertsByChatID(ctx, chatID)
+}
+
+// shortSeat abbreviates a seat pubkey for display in chat messages, e.g.
+// "AbCdEf…wxYz" instead of the full base58 string.
+func shortSeat(pk string) string {
+	if len(pk) <= 12 {
+		return pk
+	}
+	return pk[:6] + "…" + pk[len(pk)-4:]
+}
+
+// startTelegramBot registers the Telegram webhook route on the root router.
+// The route sits outside any auth middleware group: request authenticity is
+// verified by the secret-token header check inside EventHandler.HandleHTTP.
+func startTelegramBot(r *chi.Mux, api *handlers.API) {
+	cfg, err := telegrambot.LoadConfig()
+	if err != nil {
+		slog.Error("telegram bot not started", "error", err)
+		return
+	}
+	client := telegrambot.NewClient(cfg.BotToken)
+	h := telegrambot.NewEventHandler(client, telegramStore{api: api}, cfg.WebhookSecret, slog.Default())
+	r.Post("/telegram/webhook", h.HandleHTTP)
+	api.TelegramSender = client
+	slog.Info("Telegram bot started", "route", "/telegram/webhook")
 }

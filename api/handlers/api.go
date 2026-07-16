@@ -62,6 +62,10 @@ type API struct {
 
 	// OnSlackInstallationChange is called when a Slack installation changes.
 	OnSlackInstallationChange func(teamID string)
+
+	// TelegramSender sends outbound Telegram messages. Set to the real
+	// telegram bot client in main; nil when Telegram is not configured.
+	TelegramSender TelegramSender
 }
 
 // envDB returns the ClickHouse connection for the environment in the context.

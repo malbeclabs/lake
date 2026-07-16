@@ -6983,3 +6983,38 @@ export async function fetchPermissionAudit(limit = 200): Promise<PermissionAudit
   }
   return res.json()
 }
+
+// Seat alerts (Telegram low-escrow notifications, internal only)
+export interface SeatAlertCreateInput {
+  seat_pk: string
+  trigger_type: 'epochs_left' | 'balance_below_usdc'
+  threshold_value: number
+  announcements_opt_in: boolean
+}
+
+export interface SeatAlertCreateResponse {
+  id: string
+  activation_token: string
+  telegram_deep_link: string
+  status: string
+}
+
+export async function createSeatAlert(input: SeatAlertCreateInput): Promise<SeatAlertCreateResponse> {
+  const res = await apiFetch('/api/dz/shreds/seat-alerts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  if (!res.ok) throw new Error(`Failed to create alert: ${res.status}`)
+  return res.json()
+}
+
+export async function sendTestAlert(id: string): Promise<void> {
+  const res = await apiFetch(`/api/dz/shreds/seat-alerts/${id}/test`, { method: 'POST' })
+  if (!res.ok) throw new Error(`Failed to send test: ${res.status}`)
+}
+
+export async function deleteSeatAlert(id: string): Promise<void> {
+  const res = await apiFetch(`/api/dz/shreds/seat-alerts/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`Failed to delete alert: ${res.status}`)
+}
