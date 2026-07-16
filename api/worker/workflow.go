@@ -371,7 +371,9 @@ func (a *Activities) refresh(parentCtx context.Context, name, key string, fn fun
 			if parentCtx.Err() != nil {
 				return
 			}
-			a.Log.Error("cache write failed", "cache", name, "error", err)
+			// Transient-aware: a Postgres blip warns, a genuine write
+			// failure still pages.
+			logger.Error(a.Log, "cache write failed", "cache", name, "error", err)
 			return
 		}
 
