@@ -308,7 +308,7 @@ func run() error {
 			log.Info("starting pprof server", "address", "localhost:6060")
 			err := http.ListenAndServe("localhost:6060", nil)
 			if err != nil {
-				log.Error("failed to start pprof server", "error", err)
+				log.Warn("failed to start pprof server", "error", err)
 			}
 		}()
 	}
@@ -319,14 +319,14 @@ func run() error {
 		go func() {
 			listener, err := net.Listen("tcp", *metricsAddrFlag)
 			if err != nil {
-				log.Error("failed to start prometheus metrics server listener", "error", err)
+				log.Warn("failed to start prometheus metrics server listener", "error", err)
 				metricsServerErrCh <- err
 				return
 			}
 			log.Info("prometheus metrics server listening", "address", listener.Addr().String())
 			http.Handle("/metrics", promhttp.Handler())
 			if err := http.Serve(listener, nil); err != nil {
-				log.Error("failed to start prometheus metrics server", "error", err)
+				log.Warn("failed to start prometheus metrics server", "error", err)
 				metricsServerErrCh <- err
 				return
 			}
@@ -424,7 +424,7 @@ func run() error {
 	}
 	defer func() {
 		if err := clickhouseDB.Close(); err != nil {
-			log.Error("failed to close ClickHouse database", "error", err)
+			log.Warn("failed to close ClickHouse database", "error", err)
 		}
 	}()
 	log.Info("clickhouse client initialized", "addr", *clickhouseAddrFlag, "database", *clickhouseDatabaseFlag)
@@ -475,7 +475,7 @@ func run() error {
 		}
 		defer func() {
 			if err := geoIPCloseFn(); err != nil {
-				log.Error("failed to close GeoIP resolver", "error", err)
+				log.Warn("failed to close GeoIP resolver", "error", err)
 			}
 		}()
 	}
@@ -645,7 +645,7 @@ func run() error {
 	}
 	defer func() {
 		if err := idx.Close(); err != nil {
-			log.Error("failed to close indexer", "error", err)
+			log.Warn("failed to close indexer", "error", err)
 		}
 	}()
 

@@ -6,6 +6,8 @@ import (
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 	temporalworkflow "go.temporal.io/sdk/workflow"
+
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
 const (
@@ -41,7 +43,13 @@ func RegisterWorkflows(w worker.Worker) {
 //
 // Activity failures are logged and the workflow continues to the next iteration.
 func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
-	logger := temporalworkflow.GetLogger(ctx)
+	log := temporalworkflow.GetLogger(ctx)
+
+	// Activity errors reaching the workflow are Temporal-level (StartToClose
+	// timeouts, scheduling failures) — the activity-side failure counter never
+	// sees them, and timeouts classify as transient, so escalate them at the
+	// strict threshold to keep sustained timeouts visible.
+	esc := &logger.Escalator{TransientErrorAfter: logger.DefaultErrorAfter}
 
 	actOpts := temporalworkflow.ActivityOptions{
 		StartToCloseTimeout: 5 * time.Minute,
@@ -58,7 +66,9 @@ func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			logger.Error("serviceability refresh failed", "error", err)
+			esc.Fail(log, "serviceability", "serviceability refresh failed", "error", err)
+		} else {
+			esc.Reset("serviceability")
 		}
 
 		// Run telemetry latency, geolocation, shreds, escrow events, ISIS sync, and graph sync in parallel.
@@ -87,56 +97,74 @@ func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			logger.Error("telemetry latency refresh failed", "error", err)
+			esc.Fail(log, "telemetry_latency", "telemetry latency refresh failed", "error", err)
+		} else {
+			esc.Reset("telemetry_latency")
 		}
 		if err := geolocationFuture.Get(ctx, nil); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			logger.Error("geolocation refresh failed", "error", err)
+			esc.Fail(log, "geolocation", "geolocation refresh failed", "error", err)
+		} else {
+			esc.Reset("geolocation")
 		}
 		if err := shredsFuture.Get(ctx, nil); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			logger.Error("shreds refresh failed", "error", err)
+			esc.Fail(log, "shreds", "shreds refresh failed", "error", err)
+		} else {
+			esc.Reset("shreds")
 		}
 		if err := escrowEventsFuture.Get(ctx, nil); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			logger.Error("escrow events refresh failed", "error", err)
+			esc.Fail(log, "escrow_events", "escrow events refresh failed", "error", err)
+		} else {
+			esc.Reset("escrow_events")
 		}
 		if err := isisSyncFuture.Get(ctx, nil); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			logger.Error("isis sync failed", "error", err)
+			esc.Fail(log, "isis", "isis sync failed", "error", err)
+		} else {
+			esc.Reset("isis")
 		}
 		if err := mrouteSyncFuture.Get(ctx, nil); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			logger.Error("mroute sync failed", "error", err)
+			esc.Fail(log, "mroute", "mroute sync failed", "error", err)
+		} else {
+			esc.Reset("mroute")
 		}
 		if err := msdpSyncFuture.Get(ctx, nil); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			logger.Error("msdp sync failed", "error", err)
+			esc.Fail(log, "msdp", "msdp sync failed", "error", err)
+		} else {
+			esc.Reset("msdp")
 		}
 		if err := graphSyncFuture.Get(ctx, nil); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			logger.Error("graph sync failed", "error", err)
+			esc.Fail(log, "graph", "graph sync failed", "error", err)
+		} else {
+			esc.Reset("graph")
 		}
 		if telemUsageFuture != nil {
 			if err := telemUsageFuture.Get(ctx, nil); err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
-				logger.Error("telemetry usage refresh failed", "error", err)
+				esc.Fail(log, "telemetry_usage", "telemetry usage refresh failed", "error", err)
+			} else {
+				esc.Reset("telemetry_usage")
 			}
 		}
 		if permissionEventsFuture != nil {
@@ -144,7 +172,9 @@ func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
-				logger.Error("permission events refresh failed", "error", err)
+				esc.Fail(log, "permission_events", "permission events refresh failed", "error", err)
+			} else {
+				esc.Reset("permission_events")
 			}
 		}
 

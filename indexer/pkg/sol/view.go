@@ -14,6 +14,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 	"github.com/malbeclabs/lake/indexer/pkg/metrics"
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
 type SolanaRPC interface {
@@ -63,6 +64,10 @@ type View struct {
 
 	readyOnce sync.Once
 	readyCh   chan struct{}
+
+	// esc escalates consecutive refresh failures from WARN to ERROR so a
+	// single blip doesn't page on-call (see logger.Escalator).
+	esc logger.Escalator
 }
 
 func NewView(
@@ -160,12 +165,15 @@ func (v *View) safeRefresh(ctx context.Context) {
 		}
 	}()
 
-	if _, err := v.Refresh(ctx); err != nil {
+	_, err := v.Refresh(ctx)
+	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
 		}
-		v.log.Error("solana: refresh failed", "error", err)
+		v.esc.Fail(v.log, "refresh", "solana: refresh failed", "error", err)
+		return
 	}
+	v.esc.Reset("refresh")
 }
 
 // safeRefreshBlockProduction wraps RefreshBlockProduction with panic recovery
@@ -177,12 +185,15 @@ func (v *View) safeRefreshBlockProduction(ctx context.Context) {
 		}
 	}()
 
-	if _, err := v.RefreshBlockProduction(ctx); err != nil {
+	_, err := v.RefreshBlockProduction(ctx)
+	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
 		}
-		v.log.Error("solana: block production refresh failed", "error", err)
+		v.esc.Fail(v.log, "block_production", "solana: block production refresh failed", "error", err)
+		return
 	}
+	v.esc.Reset("block_production")
 }
 
 func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) {
@@ -250,9 +261,11 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		if errors.Is(err, context.Canceled) {
 			v.log.Warn("solana: vote account activity refresh cancelled", "error", err)
 		} else {
-			v.log.Error("solana: failed to refresh vote account activity", "error", err)
+			v.esc.Fail(v.log, "vote_account_activity", "solana: failed to refresh vote account activity", "error", err)
 		}
 		// Don't fail the entire refresh if vote account activity fails
+	} else {
+		v.esc.Reset("vote_account_activity")
 	}
 
 	v.fetchedAt = fetchedAt

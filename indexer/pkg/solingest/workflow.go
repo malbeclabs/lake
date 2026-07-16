@@ -6,6 +6,8 @@ import (
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 	temporalworkflow "go.temporal.io/sdk/workflow"
+
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
 const (
@@ -36,7 +38,13 @@ func RegisterWorkflows(w worker.Worker) {
 //
 // Activity failures are logged and the workflow continues to the next iteration.
 func SolIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
-	logger := temporalworkflow.GetLogger(ctx)
+	log := temporalworkflow.GetLogger(ctx)
+
+	// Activity errors reaching the workflow are Temporal-level (StartToClose
+	// timeouts, scheduling failures) — the activity-side failure counter never
+	// sees them, and timeouts classify as transient, so escalate them at the
+	// strict threshold to keep sustained timeouts visible.
+	esc := &logger.Escalator{TransientErrorAfter: logger.DefaultErrorAfter}
 
 	actOpts := temporalworkflow.ActivityOptions{
 		StartToCloseTimeout: 5 * time.Minute,
@@ -52,7 +60,9 @@ func SolIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			logger.Error("solana refresh failed", "error", err)
+			esc.Fail(log, "solana", "solana refresh failed", "error", err)
+		} else {
+			esc.Reset("solana")
 		}
 
 		// Run GeoIP in parallel with optional activities.
@@ -74,14 +84,18 @@ func SolIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			logger.Error("geoip refresh failed", "error", err)
+			esc.Fail(log, "geoip", "geoip refresh failed", "error", err)
+		} else {
+			esc.Reset("geoip")
 		}
 		if blockProdFuture != nil {
 			if err := blockProdFuture.Get(ctx, nil); err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
-				logger.Error("block production refresh failed", "error", err)
+				esc.Fail(log, "block_production", "block production refresh failed", "error", err)
+			} else {
+				esc.Reset("block_production")
 			}
 		}
 		if validatorsAppFuture != nil {
@@ -89,7 +103,9 @@ func SolIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
-				logger.Error("validatorsapp refresh failed", "error", err)
+				esc.Fail(log, "validatorsapp", "validatorsapp refresh failed", "error", err)
+			} else {
+				esc.Reset("validatorsapp")
 			}
 		}
 
