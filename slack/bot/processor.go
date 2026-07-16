@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/malbeclabs/lake/agent/pkg/workflow"
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 	"github.com/slack-go/slack/slackevents"
 	slackmdgo "github.com/snormore/slackmd/slackgo"
 )
@@ -413,7 +414,7 @@ func (p *Processor) ProcessMessage(
 	result, err := p.chatRunner.ChatStream(ctx, txt, history, sessionID, onProgress)
 	if err != nil {
 		AgentErrorsTotal.WithLabelValues("workflow", "api").Inc()
-		p.log.Error("API error", "error", err, "message_ts", ev.TimeStamp, "envelope_id", eventID)
+		logger.Error(p.log, "API error", "error", err, "message_ts", ev.TimeStamp, "envelope_id", eventID)
 
 		p.MarkResponded(messageKey)
 

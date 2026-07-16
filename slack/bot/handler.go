@@ -401,7 +401,7 @@ func (h *EventHandler) HandleSocketMode(ctx context.Context, client *socketmode.
 			case socketmode.EventTypeConnected:
 				h.log.Info("socketmode: connected")
 			case socketmode.EventTypeConnectionError:
-				h.log.Error("socketmode: connection error", "error", evt.Data)
+				h.log.Warn("socketmode: connection error", "error", evt.Data)
 			case socketmode.EventTypeEventsAPI:
 				h.log.Info("socketmode: EventsAPI event received", "inner_event_type", func() string {
 					if e, ok := evt.Data.(slackevents.EventsAPIEvent); ok {
@@ -474,7 +474,7 @@ func (h *EventHandler) HandleHTTP(w http.ResponseWriter, r *http.Request, signin
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.log.Error("failed to read request body", "error", err)
+		h.log.Warn("failed to read request body", "error", err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -497,7 +497,7 @@ func (h *EventHandler) HandleHTTP(w http.ResponseWriter, r *http.Request, signin
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
 		if _, err := w.Write([]byte(challengeResp.Challenge)); err != nil {
-			h.log.Error("failed to write challenge response", "error", err)
+			h.log.Warn("failed to write challenge response", "error", err)
 		}
 		return
 	}
@@ -505,7 +505,7 @@ func (h *EventHandler) HandleHTTP(w http.ResponseWriter, r *http.Request, signin
 	// Parse event
 	event, err := slackevents.ParseEvent(json.RawMessage(body), slackevents.OptionNoVerifyToken())
 	if err != nil {
-		h.log.Error("failed to parse event", "error", err)
+		h.log.Warn("failed to parse event", "error", err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -552,7 +552,7 @@ func (h *EventHandler) HandleHTTP(w http.ResponseWriter, r *http.Request, signin
 		h.log.Info("not accepting new events, returning 503")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		if _, err := w.Write([]byte("Service is shutting down")); err != nil {
-			h.log.Error("failed to write shutdown response", "error", err)
+			h.log.Warn("failed to write shutdown response", "error", err)
 		}
 		return
 	}

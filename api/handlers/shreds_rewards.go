@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/malbeclabs/lake/utils/pkg/dberror"
 	"github.com/malbeclabs/lake/api/metrics"
+	"github.com/malbeclabs/lake/utils/pkg/dberror"
 )
 
 // Supported reward-token mints. From epoch 968 validators may be rewarded in

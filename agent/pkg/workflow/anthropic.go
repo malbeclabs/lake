@@ -10,6 +10,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/getsentry/sentry-go"
 	"github.com/malbeclabs/lake/api/metrics"
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
 // AnthropicLLMClient implements LLMClient using the Anthropic API.
@@ -86,7 +87,7 @@ func (c *AnthropicLLMClient) Complete(ctx context.Context, systemPrompt, userPro
 
 	duration := time.Since(start)
 	if err != nil {
-		slog.Error("Anthropic API call failed", "phase", c.name, "duration", duration, "error", err)
+		logger.Error(slog.Default(), "Anthropic API call failed", "phase", c.name, "duration", duration, "error", err)
 		metrics.RecordAnthropicRequest(c.name, duration, err)
 		span.Status = sentry.SpanStatusInternalError
 		sentry.CaptureException(err)
@@ -254,7 +255,7 @@ func (c *AnthropicLLMClient) CompleteWithTools(
 
 	duration := time.Since(start)
 	if err != nil {
-		slog.Error("Anthropic API call failed", "phase", c.name, "duration", duration, "error", err)
+		logger.Error(slog.Default(), "Anthropic API call failed", "phase", c.name, "duration", duration, "error", err)
 		metrics.RecordAnthropicRequest(c.name, duration, err)
 		span.Status = sentry.SpanStatusInternalError
 		sentry.CaptureException(err)

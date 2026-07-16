@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 	"github.com/malbeclabs/lake/utils/pkg/retry"
 	"github.com/slack-go/slack"
 )
@@ -139,7 +140,7 @@ func (c *Client) CheckRootMessageMentioned(ctx context.Context, channelID, threa
 	})
 
 	if err != nil {
-		c.log.Error("checkRootMessageMentioned: failed to get thread replies after retries", "error", err, "channel", channelID, "thread_ts", threadTS)
+		logger.Error(c.log, "checkRootMessageMentioned: failed to get thread replies after retries", "error", err, "channel", channelID, "thread_ts", threadTS)
 		return false, fmt.Errorf("failed to get thread replies: %w", err)
 	}
 

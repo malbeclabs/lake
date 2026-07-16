@@ -12,8 +12,8 @@ import (
 
 	"golang.org/x/mod/semver"
 
-	"github.com/malbeclabs/lake/utils/pkg/dberror"
 	"github.com/malbeclabs/lake/api/metrics"
+	"github.com/malbeclabs/lake/utils/pkg/dberror"
 )
 
 // minValidatorVersions defines the minimum acceptable version per client type.

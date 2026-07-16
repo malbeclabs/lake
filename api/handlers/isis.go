@@ -10,9 +10,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/malbeclabs/lake/utils/pkg/dberror"
 	"github.com/malbeclabs/lake/api/metrics"
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
+	"github.com/malbeclabs/lake/utils/pkg/dberror"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
