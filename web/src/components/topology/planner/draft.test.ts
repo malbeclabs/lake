@@ -63,6 +63,34 @@ describe('buildDraft', () => {
     expect(dev?.code).toBe('fra-x2')
   })
 
+  // Canonical add_device shape: a brand-new metro (no baseline metro_pk) carries
+  // its own code + coordinates inline. The draft must add it to its own metro
+  // list (without mutating the baseline) so the device renders at the right place.
+  it('add_device with new_metro adds a synthetic metro to the draft without mutating the baseline', () => {
+    const b = baseline()
+    const d = buildDraft(b, [
+      change({
+        op_type: 'add_device', local_ref: 'tmp_dev_1',
+        payload: {
+          contributor_code: 'newco', code: 'zzz-x1',
+          new_metro: { code: 'zzz', latitude: 10, longitude: 20 },
+        },
+      }),
+    ])
+    const dev = d.deviceByKey.get('tmp_dev_1')
+    expect(dev?.changeState).toBe('added')
+    expect(dev?.contributor_code).toBe('newco')
+
+    const metro = d.metros.find((m) => m.code === 'zzz')
+    expect(metro).toBeDefined()
+    expect(metro?.latitude).toBe(10)
+    expect(metro?.longitude).toBe(20)
+    expect(dev?.metro_pk).toBe(metro?.pk)
+
+    // The baseline's own metros array must stay untouched.
+    expect(b.metros).toHaveLength(3)
+  })
+
   it('add_link resolves endpoints (pk and local_ref) and converts latency to us', () => {
     const d = buildDraft(baseline(), [
       change({

@@ -138,7 +138,7 @@ describe('MoveLinkEndForm', () => {
     expect(screen.getByLabelText(/Bandwidth/)).toHaveValue(10)
   })
 
-  it('rounds latency to ns and bandwidth to bps, trimming the interface name, on confirm', () => {
+  it('rounds latency to ns and bandwidth to bps on confirm (no interface field)', () => {
     const onSubmit = vi.fn()
     render(
       <MoveLinkEndForm
@@ -150,27 +150,11 @@ describe('MoveLinkEndForm', () => {
         onCancel={vi.fn()}
       />
     )
-    fireEvent.change(screen.getByLabelText(/New interface/), { target: { value: '  Ethernet2  ' } })
+    expect(screen.queryByLabelText(/interface/i)).not.toBeInTheDocument()
     fireEvent.change(screen.getByLabelText(/Latency/), { target: { value: '1500.5' } })
     fireEvent.change(screen.getByLabelText(/Bandwidth/), { target: { value: '2.5' } })
     fireEvent.click(screen.getByText('Confirm move'))
-    expect(onSubmit).toHaveBeenCalledWith('Ethernet2', 1_500_500, 2_500_000_000)
-  })
-
-  it('does not submit when the interface name is blank', () => {
-    const onSubmit = vi.fn()
-    render(
-      <MoveLinkEndForm
-        linkCode="nyc-lon1"
-        targetDeviceCode="lon-x2"
-        defaultLatencyUs={5_000}
-        defaultBandwidthGbps={10}
-        onSubmit={onSubmit}
-        onCancel={vi.fn()}
-      />
-    )
-    fireEvent.click(screen.getByText('Confirm move'))
-    expect(onSubmit).not.toHaveBeenCalled()
+    expect(onSubmit).toHaveBeenCalledWith(1_500_500, 2_500_000_000)
   })
 
   it('does not submit when latency is non-positive', () => {
@@ -185,7 +169,6 @@ describe('MoveLinkEndForm', () => {
         onCancel={vi.fn()}
       />
     )
-    fireEvent.change(screen.getByLabelText(/New interface/), { target: { value: 'Ethernet1' } })
     fireEvent.change(screen.getByLabelText(/Latency/), { target: { value: '0' } })
     fireEvent.click(screen.getByText('Confirm move'))
     expect(onSubmit).not.toHaveBeenCalled()
@@ -203,7 +186,6 @@ describe('MoveLinkEndForm', () => {
         onCancel={vi.fn()}
       />
     )
-    fireEvent.change(screen.getByLabelText(/New interface/), { target: { value: 'Ethernet1' } })
     fireEvent.change(screen.getByLabelText(/Bandwidth/), { target: { value: '0' } })
     fireEvent.click(screen.getByText('Confirm move'))
     expect(onSubmit).not.toHaveBeenCalled()
@@ -224,7 +206,6 @@ describe('MoveLinkEndForm', () => {
       />
     )
     expect(UNSET_LATENCY_NS).toBe(1_000_000 * 1000)
-    fireEvent.change(screen.getByLabelText(/New interface/), { target: { value: 'Ethernet1' } })
     fireEvent.change(screen.getByLabelText(/Latency/), { target: { value: '1000000' } })
     fireEvent.click(screen.getByText('Confirm move'))
     expect(onSubmit).not.toHaveBeenCalled()
@@ -289,7 +270,6 @@ describe('PlannerMap pending-move reset on link selection change', () => {
     fireEvent.click(screen.getAllByTestId('drag-handle')[0])
     expect(screen.getByText(/Move lb-link/)).toBeInTheDocument()
 
-    fireEvent.change(screen.getByLabelText(/New interface/), { target: { value: 'Ethernet9' } })
     fireEvent.click(screen.getByText('Confirm move'))
 
     expect(addChange).toHaveBeenCalledTimes(1)
@@ -298,6 +278,8 @@ describe('PlannerMap pending-move reset on link selection change', () => {
         op_type: 'move_link_end',
         ref_link_pk: 'LB',
         new_device_pk: 'dB',
+        // The real interface is TBD -- the contributor decides it later.
+        payload: expect.objectContaining({ new_iface_name: 'TBD' }),
       })
     )
   })

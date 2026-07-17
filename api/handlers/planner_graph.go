@@ -12,16 +12,29 @@ import (
 // applyChanges refuses it.
 const unsetLatencyNs = 1000000000
 
+// NewMetroPayload is an add_device payload's inline definition of a metro that
+// does not exist onchain yet. Latitude/Longitude come from the map-click drop
+// point (see PlannerMap.tsx's placeDeviceAt), Code is operator-typed. Exactly
+// one of a change's metro_pk / new_metro is expected to be set (the canonical
+// add_device shape).
+type NewMetroPayload struct {
+	Code      string  `json:"code"`
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+}
+
 // plannerPayload is the op-specific JSONB payload of a topology_plan_changes row.
 // Only the fields the impact engine reads are modeled. Per SC-1, move_link_end's
 // target existing-device pk lives in the ref column (c.NewDevicePK), NOT here;
 // only the temp/local reference (new_device_ref) is carried in the payload.
 type plannerPayload struct {
 	// add_device
-	ContributorPK string `json:"contributor_pk"`
-	MetroPK       string `json:"metro_pk"`
-	Code          string `json:"code"`
-	DeviceType    string `json:"device_type"`
+	ContributorPK   string           `json:"contributor_pk"`
+	ContributorCode string           `json:"contributor_code"`
+	MetroPK         string           `json:"metro_pk"`
+	NewMetro        *NewMetroPayload `json:"new_metro"`
+	Code            string           `json:"code"`
+	DeviceType      string           `json:"device_type"`
 	// move_link_end (target existing device is c.NewDevicePK, a column, not payload)
 	Side         string `json:"side"` // "a" | "z"
 	NewDeviceRef string `json:"new_device_ref"`
@@ -148,9 +161,14 @@ func applyChanges(g *kspGraph, changes []PlanChange) error {
 				return fmt.Errorf("add_device seq %d: missing local_ref", c.Seq)
 			}
 			key := c.LocalRef
+			deviceType := p.DeviceType
+			if deviceType == "" {
+				deviceType = "switch"
+			}
+			metroPK, metroCode := resolveAddDeviceMetro(g, p)
 			g.Nodes[key] = kspNodeInfo{
-				PK: key, Code: p.Code, Status: "planned", DeviceType: p.DeviceType,
-				MetroPK: p.MetroPK, MetroCode: metroCodeForPK(g, p.MetroPK),
+				PK: key, Code: p.Code, Status: "planned", DeviceType: deviceType,
+				MetroPK: metroPK, MetroCode: metroCode,
 				ContributorPK: p.ContributorPK,
 			}
 			localRefs[c.LocalRef] = key
@@ -316,4 +334,25 @@ func metroCodeForPK(g *kspGraph, metroPK string) string {
 		}
 	}
 	return ""
+}
+
+// newMetroPK synthesizes a stable pseudo-pk for a plan-local new metro (one
+// that does not exist onchain yet), keyed by its operator-typed code so every
+// add_device change for the same new metro resolves to the same graph node
+// identity. Prefixed to avoid ever colliding with a real onchain metro pk.
+func newMetroPK(code string) string {
+	return "new_metro:" + code
+}
+
+// resolveAddDeviceMetro resolves an add_device change's metro identity: an
+// EXISTING metro (looked up by pk against nodes already in the graph, same as
+// changeFootprints) or a NEW metro (its own code, keyed by a synthetic pk
+// since it has no onchain pk yet). Exactly one of metro_pk / new_metro is
+// expected to be set per the canonical add_device shape; new_metro wins if
+// both are somehow present.
+func resolveAddDeviceMetro(g *kspGraph, p plannerPayload) (metroPK, metroCode string) {
+	if p.NewMetro != nil && p.NewMetro.Code != "" {
+		return newMetroPK(p.NewMetro.Code), p.NewMetro.Code
+	}
+	return p.MetroPK, metroCodeForPK(g, p.MetroPK)
 }

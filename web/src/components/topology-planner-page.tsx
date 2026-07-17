@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import { Map as MapIcon } from 'lucide-react'
 import { useIsOpsUser } from '@/hooks/use-is-ops-user'
 import { PlannerProvider, usePlanner } from '@/components/topology/planner/PlannerContext'
 import { PlannerToolbar } from '@/components/topology/planner/PlannerToolbar'
 import { PlannerMap } from '@/components/topology/planner/PlannerMap'
+import { PlannerLanding } from '@/components/topology/planner/PlannerLanding'
 import { ChangesPanel } from '@/components/topology/planner/ChangesPanel'
 import { ConflictBanner } from '@/components/topology/planner/ConflictBanner'
 import { ActionListPanel } from '@/components/topology/planner/ActionListPanel'
@@ -59,10 +59,7 @@ function PlannerLayout() {
           Loading topology…
         </div>
       ) : !plan ? (
-        <div className="flex-1 flex flex-col items-center justify-center text-center gap-2 text-muted-foreground">
-          <MapIcon className="h-8 w-8" />
-          <p className="text-sm">Create a new plan or open an existing one to start editing.</p>
-        </div>
+        <PlannerLanding />
       ) : (
         <div className="flex-1 flex min-h-0">
           <div className="flex-1 relative min-w-0">

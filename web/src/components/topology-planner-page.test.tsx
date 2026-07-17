@@ -13,6 +13,9 @@ vi.mock('@/components/topology/planner/PlannerToolbar', () => ({
 vi.mock('@/components/topology/planner/PlannerMap', () => ({
   PlannerMap: () => <div>map-stub</div>,
 }))
+vi.mock('@/components/topology/planner/PlannerLanding', () => ({
+  PlannerLanding: () => <div>landing-stub</div>,
+}))
 vi.mock('@/components/topology/planner/ConflictBanner', () => ({
   ConflictBanner: () => null,
 }))
@@ -62,10 +65,11 @@ describe('TopologyPlannerPage right-panel tabs', () => {
     expect(screen.queryByText(/action-list-content/)).not.toBeInTheDocument()
   })
 
-  it('does not render the tab panels when no plan is loaded', () => {
+  it('does not render the tab panels when no plan is loaded, and shows the landing view instead', () => {
     mockPlanner.mockReturnValue({ plan: null, loading: false })
     render(<TopologyPlannerPage />)
     expect(screen.queryByText('changes-panel-content')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /action list/i })).not.toBeInTheDocument()
+    expect(screen.getByText('landing-stub')).toBeInTheDocument()
   })
 })

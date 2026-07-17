@@ -1,9 +1,12 @@
-import { render, screen, fireEvent } from '@testing-library/react'
-import { describe, it, expect, vi } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { AddDeviceForm } from './AddDeviceForm'
 import { PlannerMap } from './PlannerMap'
 import { buildDraft, type DraftTopology } from './draft'
+import { fetchContributors } from '@/lib/api'
 import type {
+  Contributor,
+  PaginatedResponse,
   PlanChange,
   TopologyDevice,
   TopologyLink,
@@ -11,80 +14,202 @@ import type {
   TopologyResponse,
 } from '@/lib/api'
 
+// Only fetchContributors is mocked; every other export (types, other client fns)
+// comes through untouched.
+vi.mock('@/lib/api', async (importActual) => {
+  const actual = await importActual<typeof import('@/lib/api')>()
+  return {
+    ...actual,
+    fetchContributors: vi.fn(),
+  }
+})
+
 const METROS: TopologyMetro[] = [
   { pk: 'M1', code: 'nyc', name: 'New York', latitude: 40, longitude: -74 },
   { pk: 'M2', code: 'lon', name: 'London', latitude: 51, longitude: 0 },
   { pk: 'M3', code: 'par', name: 'Paris', latitude: 48, longitude: 2 },
 ]
 
+function mockContributors(codes: Array<{ pk: string; code: string }>) {
+  const items: Contributor[] = codes.map((c) => ({
+    pk: c.pk, code: c.code, name: c.code, metro_count: 0, facility_count: 0,
+    device_count: 0, side_a_devices: 0, side_z_devices: 0, link_count: 0,
+    user_count: 0, max_users: 0,
+  }))
+  const res: PaginatedResponse<Contributor> = { items, total: items.length, limit: 500, offset: 0 }
+  vi.mocked(fetchContributors).mockResolvedValue(res)
+}
+
+// File-wide default so every AddDeviceForm mount (direct or via PlannerMap) has
+// something to resolve; individual tests override with a more specific list.
+beforeEach(() => {
+  mockContributors([
+    { pk: 'C1', code: 'acme' },
+    { pk: 'C2', code: 'globex' },
+  ])
+})
+
 describe('AddDeviceForm', () => {
-  it('defaults to the given metro and the switch device type', () => {
+  it('has no device-type input (device_type defaults to switch)', async () => {
     render(
       <AddDeviceForm
         metros={METROS}
         defaultMetroPk="M2"
+        newMetroCoords={[10, 20]}
         onSubmit={vi.fn()}
         onCancel={vi.fn()}
       />
     )
-    expect(screen.getByLabelText(/Metro/)).toHaveValue('M2')
-    expect(screen.getByLabelText(/Type/)).toHaveValue('switch')
+    expect(screen.queryByLabelText(/Type/)).not.toBeInTheDocument()
+    await waitFor(() => expect(fetchContributors).toHaveBeenCalled())
   })
 
-  it('requires contributor, metro and code before submitting', () => {
+  it('defaults the metro field to the given metro (by code)', async () => {
+    render(
+      <AddDeviceForm
+        metros={METROS}
+        defaultMetroPk="M2"
+        newMetroCoords={[10, 20]}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    )
+    expect(screen.getByLabelText(/Metro/)).toHaveValue('lon')
+    await waitFor(() => expect(fetchContributors).toHaveBeenCalled())
+  })
+
+  it('requires code, contributor and metro before submitting', async () => {
     const onSubmit = vi.fn()
     render(
       <AddDeviceForm
         metros={METROS}
         defaultMetroPk=""
+        newMetroCoords={[10, 20]}
         onSubmit={onSubmit}
         onCancel={vi.fn()}
       />
     )
     fireEvent.click(screen.getByText('Add device'))
     expect(onSubmit).not.toHaveBeenCalled()
-    expect(
-      screen.getByText('Metro, contributor and code are required.')
-    ).toBeInTheDocument()
+    expect(screen.getByText('Code, contributor and metro are required.')).toBeInTheDocument()
+    await waitFor(() => expect(fetchContributors).toHaveBeenCalled())
   })
 
-  it('trims contributor pk and code, and reports the chosen metro and type', () => {
+  it('choosing an existing contributor from the dropdown stores its code and pk', async () => {
     const onSubmit = vi.fn()
     render(
       <AddDeviceForm
         metros={METROS}
         defaultMetroPk="M1"
+        newMetroCoords={[10, 20]}
         onSubmit={onSubmit}
         onCancel={vi.fn()}
       />
     )
-    fireEvent.change(screen.getByLabelText(/Contributor pk/), {
-      target: { value: '  contrib1  ' },
-    })
-    fireEvent.change(screen.getByLabelText(/Code/), { target: { value: '  nyc-x9  ' } })
-    fireEvent.change(screen.getByLabelText(/Metro/), { target: { value: 'M3' } })
-    fireEvent.change(screen.getByLabelText(/Type/), { target: { value: 'router' } })
+    fireEvent.change(screen.getByLabelText(/Code/), { target: { value: 'nyc-x9' } })
+    fireEvent.change(screen.getByLabelText(/Contributor/), { target: { value: 'ac' } })
+    fireEvent.click(await screen.findByText('acme'))
     fireEvent.click(screen.getByText('Add device'))
     expect(onSubmit).toHaveBeenCalledWith({
-      contributorPk: 'contrib1',
-      metroPk: 'M3',
       code: 'nyc-x9',
-      deviceType: 'router',
+      contributorCode: 'acme',
+      contributorPk: 'C1',
+      metroPk: 'M1',
+      newMetro: undefined,
     })
   })
 
-  it('calls onCancel when Cancel is clicked', () => {
+  it('typing a brand-new contributor code stores the code without a pk', async () => {
+    const onSubmit = vi.fn()
+    render(
+      <AddDeviceForm
+        metros={METROS}
+        defaultMetroPk="M1"
+        newMetroCoords={[10, 20]}
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+      />
+    )
+    await waitFor(() => expect(fetchContributors).toHaveBeenCalled())
+    fireEvent.change(screen.getByLabelText(/Code/), { target: { value: 'nyc-x9' } })
+    fireEvent.change(screen.getByLabelText(/Contributor/), { target: { value: 'brand-new-co' } })
+    expect(screen.getByText(/Will create a new contributor/)).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Add device'))
+    expect(onSubmit).toHaveBeenCalledWith({
+      code: 'nyc-x9',
+      contributorCode: 'brand-new-co',
+      contributorPk: undefined,
+      metroPk: 'M1',
+      newMetro: undefined,
+    })
+  })
+
+  it('choosing an existing metro from the dropdown stores its pk (no new_metro)', async () => {
+    const onSubmit = vi.fn()
+    render(
+      <AddDeviceForm
+        metros={METROS}
+        defaultMetroPk=""
+        newMetroCoords={[10, 20]}
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+      />
+    )
+    fireEvent.change(screen.getByLabelText(/Code/), { target: { value: 'par-x9' } })
+    fireEvent.change(screen.getByLabelText(/Contributor/), { target: { value: 'newco' } })
+    fireEvent.change(screen.getByLabelText(/Metro/), { target: { value: 'pa' } })
+    fireEvent.click(screen.getByText('par — Paris'))
+    fireEvent.click(screen.getByText('Add device'))
+    expect(onSubmit).toHaveBeenCalledWith({
+      code: 'par-x9',
+      contributorCode: 'newco',
+      contributorPk: undefined,
+      metroPk: 'M3',
+      newMetro: undefined,
+    })
+    await waitFor(() => expect(fetchContributors).toHaveBeenCalled())
+  })
+
+  it('typing a brand-new metro code stages it with the map-click coordinates', async () => {
+    const onSubmit = vi.fn()
+    render(
+      <AddDeviceForm
+        metros={METROS}
+        defaultMetroPk=""
+        newMetroCoords={[10, 20]}
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+      />
+    )
+    fireEvent.change(screen.getByLabelText(/Code/), { target: { value: 'zzz-x1' } })
+    fireEvent.change(screen.getByLabelText(/Contributor/), { target: { value: 'newco' } })
+    fireEvent.change(screen.getByLabelText(/Metro/), { target: { value: 'ZZZ' } })
+    expect(screen.getByText(/Will create a new metro/)).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Add device'))
+    expect(onSubmit).toHaveBeenCalledWith({
+      code: 'zzz-x1',
+      contributorCode: 'newco',
+      contributorPk: undefined,
+      metroPk: undefined,
+      newMetro: { code: 'ZZZ', latitude: 20, longitude: 10 },
+    })
+    await waitFor(() => expect(fetchContributors).toHaveBeenCalled())
+  })
+
+  it('calls onCancel when Cancel is clicked', async () => {
     const onCancel = vi.fn()
     render(
       <AddDeviceForm
         metros={METROS}
         defaultMetroPk="M1"
+        newMetroCoords={[10, 20]}
         onSubmit={vi.fn()}
         onCancel={onCancel}
       />
     )
     fireEvent.click(screen.getByText('Cancel'))
     expect(onCancel).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(fetchContributors).toHaveBeenCalled())
   })
 })
 
@@ -207,7 +332,7 @@ function makePlanner(
 }
 
 describe('PlannerMap add-device tool', () => {
-  it('drops a device at the click point and preselects the nearest metro', () => {
+  it('drops a device at the click point and preselects the nearest metro', async () => {
     const addChange = vi.fn()
     const setTool = vi.fn()
     plannerRef.current = makePlanner('add-device', setTool, addChange)
@@ -217,10 +342,12 @@ describe('PlannerMap add-device tool', () => {
     fireEvent.click(screen.getByTestId('map-surface'))
 
     expect(screen.getByText('New device')).toBeInTheDocument()
-    expect(screen.getByLabelText(/Metro/)).toHaveValue('M1')
+    // The metro combobox shows the resolved metro's CODE, not its pk.
+    expect(screen.getByLabelText(/Metro/)).toHaveValue('nyc')
+    await waitFor(() => expect(fetchContributors).toHaveBeenCalled())
   })
 
-  it('stages an add_device with a local_ref, a resolved metro code, and returns to select', () => {
+  it('stages an add_device with a local_ref, a new contributor, a resolved metro, and returns to select', () => {
     const addChange = vi.fn()
     const setTool = vi.fn()
     plannerRef.current = makePlanner('add-device', setTool, addChange)
@@ -228,7 +355,7 @@ describe('PlannerMap add-device tool', () => {
     render(<PlannerMap />)
 
     fireEvent.click(screen.getByTestId('map-surface'))
-    fireEvent.change(screen.getByLabelText(/Contributor pk/), {
+    fireEvent.change(screen.getByLabelText(/Contributor/), {
       target: { value: 'contrib1' },
     })
     fireEvent.change(screen.getByLabelText(/Code/), { target: { value: 'nyc-x9' } })
@@ -240,15 +367,20 @@ describe('PlannerMap add-device tool', () => {
         op_type: 'add_device',
         local_ref: expect.stringMatching(/^tmp_dev_/),
         payload: expect.objectContaining({
-          contributor_pk: 'contrib1',
+          contributor_code: 'contrib1',
+          contributor_pk: undefined,
           metro_pk: 'M1',
+          new_metro: undefined,
           code: 'nyc-x9',
-          device_type: 'switch',
         }),
         // ref_snapshot must carry the human-readable metro CODE ("nyc"), not the pk
         // ("M1") -- same invariant buildRemoveDeviceSnapshot enforces for remove_device,
         // since ref_snapshot exists to stay readable after the pk is gone.
-        ref_snapshot: expect.objectContaining({ device_code: 'nyc-x9', metro_code: 'nyc' }),
+        ref_snapshot: expect.objectContaining({
+          device_code: 'nyc-x9',
+          metro_code: 'nyc',
+          contributor_code: 'contrib1',
+        }),
       })
     )
     expect(setTool).toHaveBeenCalledWith('select')
@@ -274,7 +406,7 @@ describe('PlannerMap add-device tool', () => {
   // reset): a pending device placement picked in one add-device session must never
   // survive a switch away from the tool and back. If it did, re-entering the tool
   // would silently reopen a form still pinned to the abandoned drop point.
-  it('resets a stale pending placement when the tool changes away and back', () => {
+  it('resets a stale pending placement when the tool changes away and back', async () => {
     const addChange = vi.fn()
     const setTool = vi.fn()
     plannerRef.current = makePlanner('add-device', setTool, addChange)
@@ -296,6 +428,7 @@ describe('PlannerMap add-device tool', () => {
     fireEvent.click(screen.getByTestId('map-surface'))
     expect(screen.getByText('New device')).toBeInTheDocument()
     expect(addChange).not.toHaveBeenCalled()
+    await waitFor(() => expect(fetchContributors).toHaveBeenCalled())
   })
 })
 

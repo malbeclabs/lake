@@ -13,24 +13,24 @@ export function MoveLinkEndForm({
   targetDeviceCode: string
   defaultLatencyUs: number
   defaultBandwidthGbps: number
-  onSubmit: (ifaceName: string, latencyNs: number, bandwidthBps: number) => void
+  onSubmit: (latencyNs: number, bandwidthBps: number) => void
   onCancel: () => void
 }) {
-  const [iface, setIface] = useState('')
+  // The real interface is TBD -- the contributor decides it later, so this form no
+  // longer collects one. PlannerMap stages the change with a "TBD" placeholder.
   const [latencyUs, setLatencyUs] = useState(String(defaultLatencyUs))
   const [bandwidthGbps, setBandwidthGbps] = useState(String(defaultBandwidthGbps))
 
   const submit = () => {
     const us = Number(latencyUs)
     const gbps = Number(bandwidthGbps)
-    if (!iface.trim() || !Number.isFinite(us) || us <= 0 || !Number.isFinite(gbps) || gbps <= 0)
-      return
+    if (!Number.isFinite(us) || us <= 0 || !Number.isFinite(gbps) || gbps <= 0) return
     const latencyNs = Math.round(us * 1000)
     // 1e9 ns is the reserved "unset" sentinel (estimator UNSET_LATENCY_NS); an edge
     // carrying it is silently dropped by the impact engine, so reject it here too,
     // mirroring the guard in LinkEditForm.
     if (latencyNs === UNSET_LATENCY_NS) return
-    onSubmit(iface.trim(), latencyNs, Math.round(gbps * 1e9))
+    onSubmit(latencyNs, Math.round(gbps * 1e9))
   }
 
   return (
@@ -39,18 +39,9 @@ export function MoveLinkEndForm({
         Move {linkCode} → {targetDeviceCode}
       </div>
       <label className="block text-xs text-muted-foreground">
-        New interface
-        <input
-          autoFocus
-          value={iface}
-          onChange={(e) => setIface(e.target.value)}
-          placeholder="Ethernet1"
-          className="mt-1 w-full px-2 py-1 text-sm bg-muted border border-border rounded"
-        />
-      </label>
-      <label className="block text-xs text-muted-foreground">
         Latency (µs)
         <input
+          autoFocus
           type="number"
           value={latencyUs}
           onChange={(e) => setLatencyUs(e.target.value)}

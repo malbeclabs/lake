@@ -8,6 +8,7 @@ import type {
 import {
   severityRank,
   sortLatencyDeltas,
+  groupLatencyDeltas,
   sortRedundancy,
   sortCapacityRisks,
   countBySeverity,
@@ -87,6 +88,160 @@ describe('sortLatencyDeltas', () => {
     const copy = [...items]
     sortLatencyDeltas(items)
     expect(items).toEqual(copy)
+  })
+})
+
+describe('groupLatencyDeltas', () => {
+  it('collapses pairs sharing a common metro and the same delta into one group', () => {
+    const items = [
+      lat({ metro_a: 'ams', metro_z: 'fra', delta_us: 10000 }),
+      lat({ metro_a: 'lon', metro_z: 'fra', delta_us: 10000 }),
+      lat({ metro_a: 'par', metro_z: 'fra', delta_us: 10000 }),
+    ]
+    const groups = groupLatencyDeltas(items)
+    expect(groups).toHaveLength(1)
+    const [group] = groups
+    expect(group.commonMetro).toBe('fra')
+    expect(group.unreachable).toBe(false)
+    expect(group.deltaUs).toBe(10000)
+    expect(group.members).toHaveLength(3)
+    expect([...group.otherMetros].sort()).toEqual(['ams', 'lon', 'par'])
+  })
+
+  it('groups by the DISPLAYED ms value and labels the group from the bucket, not a raw member (x.x5ms boundary)', () => {
+    // 9950 rounds up to 10000 (Math.round(99.5) = 100), 10020 -> 10000: same
+    // bucket, so they merge. The group must display the bucketed +10.0ms, not
+    // whichever raw member happened to be first (9950 alone would render as
+    // +9.9ms via toFixed, mislabeling the group).
+    const items = [
+      lat({ metro_a: 'ams', metro_z: 'fra', delta_us: 9950 }),
+      lat({ metro_a: 'lon', metro_z: 'fra', delta_us: 10020 }),
+    ]
+    const groups = groupLatencyDeltas(items)
+    expect(groups).toHaveLength(1)
+    expect(groups[0].members).toHaveLength(2)
+    expect(groups[0].deltaUs).toBe(10000)
+    expect(formatDeltaMs(groups[0].deltaUs ?? 0)).toBe('+10.0ms')
+  })
+
+  it('never shows the same figure for pairs in different buckets (no display-same/never-merge gap)', () => {
+    // 9899 -> bucket 9900 (+9.9ms); 9950 -> bucket 10000 (+10.0ms). With raw
+    // display both toFixed to "+9.9ms" yet land in different buckets -- the
+    // exact gap the fix closes. Same common metro, so if they shared a figure
+    // they'd be expected to merge; they must instead stay separate AND show
+    // different figures.
+    const items = [
+      lat({ metro_a: 'ams', metro_z: 'fra', delta_us: 9899 }),
+      lat({ metro_a: 'lon', metro_z: 'fra', delta_us: 9950 }),
+    ]
+    const groups = groupLatencyDeltas(items)
+    expect(groups).toHaveLength(2)
+    expect(groups.every((g) => g.members.length === 1)).toBe(true)
+    const shown = groups.map((g) => formatDeltaMs(g.deltaUs ?? 0))
+    // display figures are distinct, matching the distinct buckets
+    expect(new Set(shown).size).toBe(2)
+    expect(shown.sort()).toEqual(['+10.0ms', '+9.9ms'])
+  })
+
+  it('buckets a lone reachable pair for display too, so its figure matches an equivalent group', () => {
+    const single = groupLatencyDeltas([lat({ metro_a: 'ams', metro_z: 'fra', delta_us: 9950 })])
+    expect(single).toHaveLength(1)
+    expect(single[0].members).toHaveLength(1)
+    expect(single[0].deltaUs).toBe(10000)
+    expect(formatDeltaMs(single[0].deltaUs ?? 0)).toBe('+10.0ms')
+  })
+
+  it('takes the worst severity across the grouped members', () => {
+    const items = [
+      lat({ metro_a: 'ams', metro_z: 'fra', delta_us: 10000, severity: 'low' }),
+      lat({ metro_a: 'lon', metro_z: 'fra', delta_us: 10000, severity: 'high' }),
+      lat({ metro_a: 'par', metro_z: 'fra', delta_us: 10000, severity: 'medium' }),
+    ]
+    const [group] = groupLatencyDeltas(items)
+    expect(group.severity).toBe('high')
+  })
+
+  it('unions caused_by across grouped members, de-duplicated by seq', () => {
+    const items = [
+      lat({
+        metro_a: 'ams',
+        metro_z: 'fra',
+        delta_us: 10000,
+        caused_by: [{ seq: 1, op_type: 'remove_link', label: 'a' }],
+      }),
+      lat({
+        metro_a: 'lon',
+        metro_z: 'fra',
+        delta_us: 10000,
+        caused_by: [{ seq: 1, op_type: 'remove_link', label: 'a' }],
+      }),
+      lat({
+        metro_a: 'par',
+        metro_z: 'fra',
+        delta_us: 10000,
+        caused_by: [{ seq: 2, op_type: 'remove_link', label: 'b' }],
+      }),
+    ]
+    const [group] = groupLatencyDeltas(items)
+    expect(group.causedBy?.map((c) => c.seq).sort()).toEqual([1, 2])
+  })
+
+  it('keeps different deltas to the same metro in separate rows', () => {
+    const items = [
+      lat({ metro_a: 'ams', metro_z: 'fra', delta_us: 10000 }),
+      lat({ metro_a: 'lon', metro_z: 'fra', delta_us: 5000 }),
+    ]
+    const groups = groupLatencyDeltas(items)
+    expect(groups).toHaveLength(2)
+    expect(groups.every((g) => g.members.length === 1)).toBe(true)
+  })
+
+  it('keeps pairs with no shared metro in separate rows', () => {
+    const items = [
+      lat({ metro_a: 'ams', metro_z: 'fra', delta_us: 10000 }),
+      lat({ metro_a: 'nyc', metro_z: 'lax', delta_us: 10000 }),
+    ]
+    const groups = groupLatencyDeltas(items)
+    expect(groups).toHaveLength(2)
+    expect(groups.every((g) => g.members.length === 1)).toBe(true)
+  })
+
+  it('renders a lone pair as a single row, not a forced group', () => {
+    const items = [lat({ metro_a: 'ams', metro_z: 'fra', delta_us: 10000 })]
+    const groups = groupLatencyDeltas(items)
+    expect(groups).toHaveLength(1)
+    expect(groups[0].members).toEqual(items)
+    expect(groups[0].otherMetros).toEqual(['ams'])
+    expect(groups[0].commonMetro).toBe('fra')
+  })
+
+  it('never merges unreachable pairs into a latency-delta group, even with a shared metro', () => {
+    const items = [
+      lat({ metro_a: 'ams', metro_z: 'sin', after_us: -1, delta_us: 0 }),
+      lat({ metro_a: 'lon', metro_z: 'sin', after_us: -1, delta_us: 0 }),
+      lat({ metro_a: 'par', metro_z: 'sin', after_us: -1, delta_us: 0 }),
+    ]
+    const groups = groupLatencyDeltas(items)
+    expect(groups).toHaveLength(3)
+    for (const g of groups) {
+      expect(g.unreachable).toBe(true)
+      expect(g.deltaUs).toBeNull()
+      expect(g.members).toHaveLength(1)
+    }
+  })
+
+  it('keeps unreachable and reachable pairs from mixing into the same group', () => {
+    const items = [
+      lat({ metro_a: 'ams', metro_z: 'fra', delta_us: 10000 }),
+      lat({ metro_a: 'lon', metro_z: 'fra', delta_us: 10000 }),
+      lat({ metro_a: 'par', metro_z: 'fra', after_us: -1, delta_us: 0 }),
+    ]
+    const groups = groupLatencyDeltas(items)
+    // the two reachable ams/lon->fra pairs collapse into one group; the
+    // unreachable par->fra pair stays a singleton, unreachable-first.
+    expect(groups).toHaveLength(2)
+    expect(groups[0].unreachable).toBe(true)
+    expect(groups[1].members).toHaveLength(2)
   })
 })
 

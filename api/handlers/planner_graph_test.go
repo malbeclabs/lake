@@ -186,6 +186,37 @@ func TestApplyChanges_AddDevice(t *testing.T) {
 	assert.Equal(t, "M1", n.MetroCode, "metro code resolved from existing m1 node")
 }
 
+// TestApplyChanges_AddDevice_NewMetro covers a brand-new contributor + a
+// brand-new metro (no baseline metro_pk to resolve against): the node's
+// MetroCode must resolve from new_metro.code directly, keyed under its own
+// synthetic MetroPK distinct from any existing metro, and device_type
+// defaults to "switch" when the payload omits it.
+func TestApplyChanges_AddDevice_NewMetro(t *testing.T) {
+	g := mkPlannerBase()
+	err := applyChanges(g, []PlanChange{{
+		Seq: 10, OpType: OpAddDevice, LocalRef: "tmp_dev_1",
+		Payload: json.RawMessage(`{"contributor_code":"newco","code":"zzz-x1","new_metro":{"code":"ZZZ","latitude":10,"longitude":20}}`),
+	}})
+	require.NoError(t, err)
+	n, ok := g.Nodes["tmp_dev_1"]
+	require.True(t, ok)
+	assert.Equal(t, "zzz-x1", n.Code)
+	assert.Equal(t, "ZZZ", n.MetroCode)
+	assert.NotEmpty(t, n.MetroPK)
+	assert.NotEqual(t, "m1", n.MetroPK, "must not collide with an existing metro pk")
+	assert.Equal(t, "", n.ContributorPK, "a brand-new contributor has no pk yet")
+	assert.Equal(t, "switch", n.DeviceType, "device_type defaults to switch when the payload omits it")
+
+	// A second device for the SAME new metro resolves to the identical MetroPK,
+	// so the pair shares one graph-level metro identity.
+	err = applyChanges(g, []PlanChange{{
+		Seq: 20, OpType: OpAddDevice, LocalRef: "tmp_dev_2",
+		Payload: json.RawMessage(`{"contributor_code":"newco","code":"zzz-x2","new_metro":{"code":"ZZZ","latitude":10,"longitude":20}}`),
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, n.MetroPK, g.Nodes["tmp_dev_2"].MetroPK)
+}
+
 func TestApplyChanges_RemoveDevice(t *testing.T) {
 	// c is a leaf attached only via l2; remove l2 first, then remove c.
 	g := mkPlannerBase()

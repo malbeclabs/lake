@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useState, useEffect } from 'react'
+import { useMemo, useCallback, useState, useEffect, type ReactNode } from 'react'
 import MapGL, { Source, Layer, Marker } from 'react-map-gl/maplibre'
 import type { MapLayerMouseEvent } from 'react-map-gl/maplibre'
 import type { StyleSpecification } from 'maplibre-gl'
@@ -9,10 +9,11 @@ import { buildDevicePositions, buildLinkFeatures, buildRemoveDeviceSnapshot } fr
 import { deviceChangeStyle, CHANGE_LEGEND } from './change-styles'
 import { LinkContextPopup } from './LinkContextPopup'
 import { LinkEditForm } from './LinkEditForm'
-import { nearestKeyWithin } from './geo'
+import { nearestKeyWithin, SNAP_RADIUS_DEG } from './geo'
+import { resolveMapClick, computeRubberBand } from './map-interactions'
 import { MoveLinkEndForm } from './MoveLinkEndForm'
 import { AddLinkForm } from './AddLinkForm'
-import { AddDeviceForm } from './AddDeviceForm'
+import { AddDeviceForm, type AddDeviceSubmitValue } from './AddDeviceForm'
 import { attachedLinks } from './attached-links'
 import { estimateLatencyNs } from './estimator'
 
@@ -91,68 +92,78 @@ export function PlannerMap() {
 
   const handleMapClick = useCallback(
     (e: MapLayerMouseEvent) => {
-      if (tool === 'add-device') {
-        setPlaceDeviceAt([e.lngLat.lng, e.lngLat.lat])
-        return
-      }
       const feature = e.features?.[0]
-      if (feature?.properties?.pk) {
-        selectLink(String(feature.properties.pk))
-      } else {
-        selectLink(null)
+      const action = resolveMapClick({
+        tool,
+        addLinkSource,
+        addLinkTarget,
+        lng: e.lngLat.lng,
+        lat: e.lngLat.lat,
+        positions,
+        linkFeaturePk: feature?.properties?.pk ? String(feature.properties.pk) : null,
+      })
+      switch (action.kind) {
+        case 'place-device':
+          setPlaceDeviceAt([e.lngLat.lng, e.lngLat.lat])
+          break
+        case 'add-link-pick':
+          if (!addLinkSource) setAddLinkSource(action.deviceKey)
+          else setAddLinkTarget(action.deviceKey)
+          break
+        case 'select-link':
+          selectLink(action.linkPk)
+          break
+        case 'deselect-link':
+          selectLink(null)
+          break
+        case 'ignore':
+          break
       }
     },
-    [tool, selectLink]
+    [tool, addLinkSource, addLinkTarget, positions, selectLink]
   )
 
+  // Device removal is the only tool still keyed off a specific device pk (rather
+  // than a geo-snapped map click) -- it needs the exact device the operator clicked,
+  // not the nearest one to some coordinate.
   const handleDeviceClick = useCallback(
     async (deviceKey: string) => {
-      if (!draft) return
+      if (!draft || tool !== 'remove-device') return
       const dev = draft.deviceByKey.get(deviceKey)
       if (!dev) return
-      if (tool === 'remove-device') {
-        // Stage a remove (or, once the operator adjusts it in the Changes panel, a
-        // move) for each link still attached in the draft before removing the
-        // device itself -- never a silent cascade. attachedLinks reads the live
-        // draft, so a link already staged for removal is never staged twice.
-        //
-        // Await each staging call in sequence so the backend assigns each change a
-        // strictly increasing seq (it derives seq via an unlocked SELECT MAX(seq)+10
-        // per transaction). Firing these concurrently could give the remove_device a
-        // seq below its own attached-link removals -- reproducing the impact engine's
-        // "device still has attached link(s)" error -- or collide on the unique
-        // (plan_id, seq) constraint and 500, silently dropping a change. Stage the
-        // attached-link changes FIRST, the remove_device LAST. If any call fails,
-        // stop rather than leave a half-staged partial teardown.
-        try {
-          for (const link of attachedLinks(draft, deviceKey)) {
-            await addChange({
-              op_type: 'remove_link',
-              ref_link_pk: link.pk,
-              payload: {},
-              ref_snapshot: { link_code: link.code },
-            })
-          }
+      // Stage a remove (or, once the operator adjusts it in the Changes panel, a
+      // move) for each link still attached in the draft before removing the
+      // device itself -- never a silent cascade. attachedLinks reads the live
+      // draft, so a link already staged for removal is never staged twice.
+      //
+      // Await each staging call in sequence so the backend assigns each change a
+      // strictly increasing seq (it derives seq via an unlocked SELECT MAX(seq)+10
+      // per transaction). Firing these concurrently could give the remove_device a
+      // seq below its own attached-link removals -- reproducing the impact engine's
+      // "device still has attached link(s)" error -- or collide on the unique
+      // (plan_id, seq) constraint and 500, silently dropping a change. Stage the
+      // attached-link changes FIRST, the remove_device LAST. If any call fails,
+      // stop rather than leave a half-staged partial teardown.
+      try {
+        for (const link of attachedLinks(draft, deviceKey)) {
           await addChange({
-            op_type: 'remove_device',
-            ref_device_pk: dev.pk,
+            op_type: 'remove_link',
+            ref_link_pk: link.pk,
             payload: {},
-            ref_snapshot: buildRemoveDeviceSnapshot(draft, dev),
+            ref_snapshot: { link_code: link.code },
           })
-        } catch (err) {
-          console.error('remove-device staging failed', err)
         }
-        return
-      }
-      if (tool === 'add-link') {
-        if (!addLinkSource) {
-          setAddLinkSource(deviceKey)
-        } else if (deviceKey !== addLinkSource) {
-          setAddLinkTarget(deviceKey)
-        }
+        await addChange({
+          op_type: 'remove_device',
+          ref_device_pk: dev.pk,
+          payload: {},
+          ref_snapshot: buildRemoveDeviceSnapshot(draft, dev),
+        })
+      } catch (err) {
+        console.error('remove-device staging failed', err)
       }
     },
-    [draft, tool, addChange, addLinkSource]
+    [draft, tool, addChange]
   )
 
   const selectedLink =
@@ -208,7 +219,7 @@ export function PlannerMap() {
       const candidates = new Map(positions)
       candidates.delete(selectedLink.side_a_pk)
       candidates.delete(selectedLink.side_z_pk)
-      const snapped = nearestKeyWithin(lng, lat, candidates, 1.5)
+      const snapped = nearestKeyWithin(lng, lat, candidates, SNAP_RADIUS_DEG)
       setDragSnapKey(null)
       if (snapped) setPendingMove({ side, targetKey: snapped })
     },
@@ -216,7 +227,7 @@ export function PlannerMap() {
   )
 
   const submitMove = useCallback(
-    (ifaceName: string, latencyNs: number, bandwidthBps: number) => {
+    (latencyNs: number, bandwidthBps: number) => {
       if (!selectedLink || !pendingMove) return
       const target = draft?.deviceByKey.get(pendingMove.targetKey)
       addChange({
@@ -226,7 +237,8 @@ export function PlannerMap() {
         payload: {
           side: pendingMove.side,
           new_device_ref: target?.localRef ?? undefined,
-          new_iface_name: ifaceName,
+          // The real interface is TBD -- the contributor decides it later.
+          new_iface_name: 'TBD',
           latency_ns: latencyNs,
           bandwidth_bps: bandwidthBps,
           estimate_source: 'manual',
@@ -242,23 +254,10 @@ export function PlannerMap() {
     [selectedLink, pendingMove, draft, addChange, selectLink]
   )
 
-  const rubberBand = useMemo<GeoJSON.FeatureCollection>(() => {
-    if (tool !== 'add-link' || !addLinkSource || !cursor) {
-      return { type: 'FeatureCollection', features: [] }
-    }
-    const start = positions.get(addLinkSource)
-    if (!start) return { type: 'FeatureCollection', features: [] }
-    return {
-      type: 'FeatureCollection',
-      features: [
-        {
-          type: 'Feature',
-          properties: {},
-          geometry: { type: 'LineString', coordinates: [start, cursor] },
-        },
-      ],
-    }
-  }, [tool, addLinkSource, cursor, positions])
+  const rubberBand = useMemo(
+    () => computeRubberBand({ tool, addLinkSource, addLinkTarget, cursor, positions }),
+    [tool, addLinkSource, addLinkTarget, cursor, positions]
+  )
 
   const metroOfDevice = useCallback(
     (deviceKey: string) => draft?.deviceByKey.get(deviceKey)?.metro_pk ?? '',
@@ -286,8 +285,6 @@ export function PlannerMap() {
     (v: {
       latencyNs: number
       bandwidthBps: number
-      sideAIface: string
-      sideZIface: string
       estimateSource: 'copied' | 'great_circle' | 'manual'
       linkType: 'WAN' | 'DZX'
     }) => {
@@ -302,8 +299,9 @@ export function PlannerMap() {
           side_a_ref: a?.localRef ?? undefined,
           side_z_device_pk: z?.localRef ? undefined : addLinkTarget,
           side_z_ref: z?.localRef ?? undefined,
-          side_a_iface_name: v.sideAIface,
-          side_z_iface_name: v.sideZIface,
+          // The real interfaces are TBD -- the contributor decides them later.
+          side_a_iface_name: 'TBD',
+          side_z_iface_name: 'TBD',
           latency_ns: v.latencyNs,
           bandwidth_bps: v.bandwidthBps,
           estimate_source: v.estimateSource,
@@ -333,21 +331,31 @@ export function PlannerMap() {
   }, [placeDeviceAt, metroPositions])
 
   const submitAddDevice = useCallback(
-    (v: { contributorPk: string; metroPk: string; code: string; deviceType: string }) => {
-      // ref_snapshot must carry the metro's human-readable code, not its pk, so it
-      // stays meaningful after the pk is gone -- same invariant buildRemoveDeviceSnapshot
-      // enforces for remove_device.
-      const metroCode = draft?.metros.find((m) => m.pk === v.metroPk)?.code ?? v.metroPk
+    (v: AddDeviceSubmitValue) => {
+      const localRef = `tmp_dev_${crypto.randomUUID().slice(0, 8)}`
+      // ref_snapshot carries human-readable identity (code, not pk) so it stays
+      // meaningful after the pk is gone -- same invariant buildRemoveDeviceSnapshot
+      // enforces for remove_device. Exactly one of metro_pk / new_metro is set,
+      // matching the canonical add_device payload shape.
+      const metroCode = v.metroPk
+        ? (draft?.metros.find((m) => m.pk === v.metroPk)?.code ?? v.metroPk)
+        : (v.newMetro?.code ?? '')
       addChange({
         op_type: 'add_device',
-        local_ref: `tmp_dev_${crypto.randomUUID().slice(0, 8)}`,
+        local_ref: localRef,
         payload: {
+          local_ref: localRef,
+          code: v.code,
+          contributor_code: v.contributorCode,
           contributor_pk: v.contributorPk,
           metro_pk: v.metroPk,
-          code: v.code,
-          device_type: v.deviceType,
+          new_metro: v.newMetro,
         },
-        ref_snapshot: { device_code: v.code, metro_code: metroCode },
+        ref_snapshot: {
+          device_code: v.code,
+          metro_code: metroCode,
+          contributor_code: v.contributorCode,
+        },
       })
       setPlaceDeviceAt(null)
       setTool('select')
@@ -355,8 +363,61 @@ export function PlannerMap() {
     [draft, addChange, setTool]
   )
 
+  // The single floating panel shown over the map, chosen from whichever
+  // interactive form is currently active. Rendered as a plain DOM overlay OUTSIDE
+  // the map's Marker/event layer -- MapLibre's Marker implementation calls
+  // preventDefault() on mousedown, which stops the browser from ever focusing an
+  // <input>/<select> nested inside one, so a form with real fields can never be a
+  // Marker child. (LinkContextPopup is buttons-only and unaffected by this, so it
+  // stays a Marker, anchored next to the link it's about.)
+  let activeForm: ReactNode = null
+  if (pendingMove && selectedLink) {
+    const target = draft?.deviceByKey.get(pendingMove.targetKey)
+    activeForm = (
+      <MoveLinkEndForm
+        linkCode={selectedLink.code}
+        targetDeviceCode={target?.code ?? pendingMove.targetKey}
+        defaultLatencyUs={selectedLink.latency_us}
+        defaultBandwidthGbps={selectedLink.bandwidth_bps / 1e9}
+        onSubmit={submitMove}
+        onCancel={() => setPendingMove(null)}
+      />
+    )
+  } else if (selectedLink && popupMode === 'edit') {
+    activeForm = (
+      <LinkEditForm
+        link={selectedLink}
+        onSubmit={handleEditLink}
+        onCancel={() => setPopupMode('menu')}
+      />
+    )
+  } else if (addLinkSource && addLinkTarget) {
+    const a = draft?.deviceByKey.get(addLinkSource)
+    const z = draft?.deviceByKey.get(addLinkTarget)
+    activeForm = (
+      <AddLinkForm
+        sourceCode={a?.code ?? '?'}
+        targetCode={z?.code ?? '?'}
+        suggestedLatencyUs={Math.round(addLinkSuggestion.latencyNs / 1000)}
+        estimateSource={addLinkSuggestion.source}
+        onSubmit={submitAddLink}
+        onCancel={resetAddLink}
+      />
+    )
+  } else if (placeDeviceAt) {
+    activeForm = (
+      <AddDeviceForm
+        metros={draft?.metros ?? []}
+        defaultMetroPk={nearestMetroPk}
+        newMetroCoords={placeDeviceAt}
+        onSubmit={submitAddDevice}
+        onCancel={() => setPlaceDeviceAt(null)}
+      />
+    )
+  }
+
   return (
-    <>
+    <div className="relative w-full h-full">
       <MapGL
         initialViewState={{ longitude: 0, latitude: 30, zoom: 2 }}
         minZoom={2}
@@ -367,7 +428,7 @@ export function PlannerMap() {
         interactiveLayerIds={['planner-link-hit', 'planner-link-lines']}
         onClick={handleMapClick}
         onMouseMove={(e) => {
-          if (tool === 'add-link' && addLinkSource) {
+          if (tool === 'add-link' && addLinkSource && !addLinkTarget) {
             setCursor([e.lngLat.lng, e.lngLat.lat])
           }
         }}
@@ -444,22 +505,14 @@ export function PlannerMap() {
           )
         })}
 
-        {selectedLink && selectedMidpoint && (
+        {selectedLink && selectedMidpoint && popupMode === 'menu' && (
           <Marker longitude={selectedMidpoint[0]} latitude={selectedMidpoint[1]} anchor="bottom">
             <div onClick={(e) => e.stopPropagation()} className="-translate-y-3">
-              {popupMode === 'edit' ? (
-                <LinkEditForm
-                  link={selectedLink}
-                  onSubmit={handleEditLink}
-                  onCancel={() => setPopupMode('menu')}
-                />
-              ) : (
-                <LinkContextPopup
-                  link={selectedLink}
-                  onDelete={handleDeleteLink}
-                  onEdit={() => setPopupMode('edit')}
-                />
-              )}
+              <LinkContextPopup
+                link={selectedLink}
+                onDelete={handleDeleteLink}
+                onEdit={() => setPopupMode('edit')}
+              />
             </div>
           </Marker>
         )}
@@ -483,7 +536,7 @@ export function PlannerMap() {
                   candidates.delete(selectedLink.side_a_pk)
                   candidates.delete(selectedLink.side_z_pk)
                   setDragSnapKey(
-                    nearestKeyWithin(e.lngLat.lng, e.lngLat.lat, candidates, 1.5)
+                    nearestKeyWithin(e.lngLat.lng, e.lngLat.lat, candidates, SNAP_RADIUS_DEG)
                   )
                 }}
                 onDragEnd={(e) => handleEndpointDragEnd(side, e.lngLat.lng, e.lngLat.lat)}
@@ -511,29 +564,6 @@ export function PlannerMap() {
             )
           })()}
 
-        {/* Move confirmation form */}
-        {pendingMove &&
-          selectedLink &&
-          (() => {
-            const pos = positions.get(pendingMove.targetKey)
-            const target = draft?.deviceByKey.get(pendingMove.targetKey)
-            if (!pos) return null
-            return (
-              <Marker longitude={pos[0]} latitude={pos[1]} anchor="top">
-                <div onClick={(e) => e.stopPropagation()} className="translate-y-2">
-                  <MoveLinkEndForm
-                    linkCode={selectedLink.code}
-                    targetDeviceCode={target?.code ?? pendingMove.targetKey}
-                    defaultLatencyUs={selectedLink.latency_us}
-                    defaultBandwidthGbps={selectedLink.bandwidth_bps / 1e9}
-                    onSubmit={submitMove}
-                    onCancel={() => setPendingMove(null)}
-                  />
-                </div>
-              </Marker>
-            )
-          })()}
-
         {tool === 'add-link' && addLinkSource && (
           <Source id="planner-rubber-band" type="geojson" data={rubberBand}>
             <Layer
@@ -543,43 +573,15 @@ export function PlannerMap() {
             />
           </Source>
         )}
-
-        {addLinkSource &&
-          addLinkTarget &&
-          (() => {
-            const pos = positions.get(addLinkTarget)
-            const a = draft?.deviceByKey.get(addLinkSource)
-            const z = draft?.deviceByKey.get(addLinkTarget)
-            if (!pos) return null
-            return (
-              <Marker longitude={pos[0]} latitude={pos[1]} anchor="top">
-                <div onClick={(e) => e.stopPropagation()} className="translate-y-2">
-                  <AddLinkForm
-                    sourceCode={a?.code ?? '?'}
-                    targetCode={z?.code ?? '?'}
-                    suggestedLatencyUs={Math.round(addLinkSuggestion.latencyNs / 1000)}
-                    estimateSource={addLinkSuggestion.source}
-                    onSubmit={submitAddLink}
-                    onCancel={resetAddLink}
-                  />
-                </div>
-              </Marker>
-            )
-          })()}
-
-        {placeDeviceAt && (
-          <Marker longitude={placeDeviceAt[0]} latitude={placeDeviceAt[1]} anchor="top">
-            <div onClick={(e) => e.stopPropagation()} className="translate-y-2">
-              <AddDeviceForm
-                metros={draft?.metros ?? []}
-                defaultMetroPk={nearestMetroPk}
-                onSubmit={submitAddDevice}
-                onCancel={() => setPlaceDeviceAt(null)}
-              />
-            </div>
-          </Marker>
-        )}
       </MapGL>
+
+      {/* Floating overlay for whichever form is active. A normal DOM sibling of the
+          map (not a Marker child), positioned top-center so it stays clear of the
+          point of interest while still being reachable/focusable like any other
+          page content. */}
+      {activeForm && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20">{activeForm}</div>
+      )}
 
       {/* Legend */}
       <div className="absolute bottom-3 left-3 bg-card/90 border border-border rounded-md px-3 py-2 text-xs space-y-1">
@@ -590,6 +592,6 @@ export function PlannerMap() {
           </div>
         ))}
       </div>
-    </>
+    </div>
   )
 }

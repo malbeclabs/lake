@@ -152,7 +152,13 @@ func (b *baselineIndex) resolveEndpoint(devicePK, ref string) endpoint {
 			if code == "" {
 				code = snap.DeviceCode
 			}
-			cc := b.contribCode(p.ContributorPK)
+			// A brand-new contributor carries its code directly on the add_device
+			// payload (no pk to look up yet); fall back to a baseline pk lookup,
+			// then to the ref_snapshot, for an existing contributor.
+			cc := p.ContributorCode
+			if cc == "" {
+				cc = b.contribCode(p.ContributorPK)
+			}
 			if cc == "" {
 				cc = snap.ContributorCode
 			}
@@ -302,11 +308,23 @@ func deriveAddDevice(acc *actionAccumulator, b *baselineIndex, ch PlanChange) {
 	snap := parseSnapshot(ch.RefSnapshot)
 
 	code := orFallback(p.Code, snap.DeviceCode)
-	contribCode := orFallback(b.contribCode(p.ContributorPK), snap.ContributorCode)
+	// Group by contributor_code first: it's always present on the canonical
+	// add_device payload (even for a brand-new contributor with no pk yet),
+	// falling back to a baseline pk lookup (existing contributor) then the
+	// ref_snapshot for older changes staged before this field existed.
+	contribCode := p.ContributorCode
+	if contribCode == "" {
+		contribCode = orFallback(b.contribCode(p.ContributorPK), snap.ContributorCode)
+	}
 
 	metroCode := snap.MetroCode
-	if m, ok := b.metroByPK[p.MetroPK]; ok {
-		metroCode = m.Code
+	switch {
+	case p.NewMetro != nil && p.NewMetro.Code != "":
+		metroCode = p.NewMetro.Code
+	case p.MetroPK != "":
+		if m, ok := b.metroByPK[p.MetroPK]; ok {
+			metroCode = m.Code
+		}
 	}
 
 	title := fmt.Sprintf("Bring device %s online", code)

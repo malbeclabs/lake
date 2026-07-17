@@ -634,13 +634,19 @@ func validChangeState(s PlanChangeState) bool {
 func nonEmpty(p *string) bool { return p != nil && *p != "" }
 
 // validateChangeShape mirrors the DB CHECK so the API returns 400 (not 500) for
-// a change missing its required anchor column.
-func validateChangeShape(op PlanOpType, refDevice, refLink, localRef *string) error {
+// a change missing its required anchor column, plus (for add_device) the
+// payload-level shape the DB CHECK cannot express.
+func validateChangeShape(op PlanOpType, refDevice, refLink, localRef *string, payload json.RawMessage) error {
 	switch op {
-	case OpAddDevice, OpAddLink:
+	case OpAddLink:
 		if !nonEmpty(localRef) {
 			return fmt.Errorf("local_ref is required for %s", op)
 		}
+	case OpAddDevice:
+		if !nonEmpty(localRef) {
+			return fmt.Errorf("local_ref is required for %s", op)
+		}
+		return validateAddDevicePayload(payload)
 	case OpRemoveDevice:
 		if !nonEmpty(refDevice) {
 			return fmt.Errorf("ref_device_pk is required for remove_device")
@@ -649,6 +655,60 @@ func validateChangeShape(op PlanOpType, refDevice, refLink, localRef *string) er
 		if !nonEmpty(refLink) {
 			return fmt.Errorf("ref_link_pk is required for %s", op)
 		}
+	}
+	return nil
+}
+
+// validateAddDevicePayload requires the device code, a contributor (an
+// existing contributor_pk or a brand-new contributor_code), and a metro (an
+// existing metro_pk or a fully-specified new_metro) in an add_device change's
+// JSONB payload. This relaxes the previous "requires contributor_pk +
+// metro_pk" so a plan can introduce a contributor or metro that doesn't exist
+// onchain yet (SC canonical add_device shape).
+func validateAddDevicePayload(payload json.RawMessage) error {
+	var p plannerPayload
+	if len(payload) > 0 {
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return fmt.Errorf("invalid payload for add_device: %w", err)
+		}
+	}
+	if strings.TrimSpace(p.Code) == "" {
+		return fmt.Errorf("code is required for add_device")
+	}
+	if p.ContributorCode == "" && p.ContributorPK == "" {
+		return fmt.Errorf("contributor_code or contributor_pk is required for add_device")
+	}
+	// Metro: an existing metro_pk, or a fully-specified new_metro. When a
+	// new_metro is provided it must carry a code AND real coordinates -- a
+	// missing lat/long decodes to 0 and would silently place the metro at the
+	// null island (0,0), corrupting every downstream great-circle / metro-pair
+	// computation, so reject it here (this function is the authoritative guard).
+	if p.NewMetro != nil {
+		if err := validateNewMetro(p.NewMetro); err != nil {
+			return err
+		}
+	} else if p.MetroPK == "" {
+		return fmt.Errorf("metro_pk or new_metro (with a code and coordinates) is required for add_device")
+	}
+	return nil
+}
+
+// validateNewMetro rejects an inline new_metro that lacks a code or real
+// coordinates. Latitude/longitude of exactly (0,0) is treated as unset (a JSON
+// payload that omits either field decodes to 0); a real metro is never at the
+// null island. Out-of-range coordinates are also rejected.
+func validateNewMetro(m *NewMetroPayload) error {
+	if strings.TrimSpace(m.Code) == "" {
+		return fmt.Errorf("new_metro.code is required for add_device")
+	}
+	if m.Latitude == 0 && m.Longitude == 0 {
+		return fmt.Errorf("new_metro requires valid latitude/longitude (got 0,0)")
+	}
+	if m.Latitude < -90 || m.Latitude > 90 {
+		return fmt.Errorf("new_metro.latitude out of range: %v", m.Latitude)
+	}
+	if m.Longitude < -180 || m.Longitude > 180 {
+		return fmt.Errorf("new_metro.longitude out of range: %v", m.Longitude)
 	}
 	return nil
 }
@@ -691,7 +751,7 @@ func (a *API) AddPlanChange(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid state", http.StatusBadRequest)
 		return
 	}
-	if err := validateChangeShape(req.OpType, req.RefDevicePK, req.RefLinkPK, req.LocalRef); err != nil {
+	if err := validateChangeShape(req.OpType, req.RefDevicePK, req.RefLinkPK, req.LocalRef, req.Payload); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -859,7 +919,11 @@ func (a *API) UpdatePlanChange(w http.ResponseWriter, r *http.Request) {
 		mergedLink = *req.RefLinkPK
 	}
 	mergedLocal := existing.LocalRef // local_ref is not editable via PATCH
-	if err := validateChangeShape(existing.OpType, &mergedDevice, &mergedLink, &mergedLocal); err != nil {
+	mergedPayload := existing.Payload
+	if req.Payload != nil {
+		mergedPayload = req.Payload
+	}
+	if err := validateChangeShape(existing.OpType, &mergedDevice, &mergedLink, &mergedLocal, mergedPayload); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

@@ -78,7 +78,10 @@ func changeFootprints(baseline *kspGraph, changes []PlanChange) map[int]changeFo
 			if c.LocalRef != "" {
 				fp.DevicePKs[c.LocalRef] = true
 			}
-			if mc := metroCodeForPK(baseline, p.MetroPK); mc != "" {
+			// Resolve the metro code the same way the apply path does, so a
+			// new-metro add_device attributes to its own metro (its inline code)
+			// and not just an existing metro_pk.
+			if _, mc := resolveAddDeviceMetro(baseline, p); mc != "" {
 				fp.MetroCodes[mc] = true
 			}
 		case OpRemoveDevice:

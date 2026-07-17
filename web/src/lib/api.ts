@@ -1788,17 +1788,29 @@ export interface RefSnapshot {
   device_code?: string
   link_code?: string
   metro_code?: string
+  contributor_code?: string
   side_a_contributor_code?: string
   side_z_contributor_code?: string
   bandwidth_bps?: number
   latency_ns?: number
 }
 
+// A metro that doesn't exist onchain yet, inlined into an add_device payload.
+// Latitude/longitude come from the map-click drop point.
+export interface NewMetroInput {
+  code: string
+  latitude: number
+  longitude: number
+}
+
 // Op-specific fields. All optional; which apply depends on op_type (see SPEC section 6).
 export interface PlanChangePayload {
   // add_device
+  local_ref?: string
   contributor_pk?: string
+  contributor_code?: string
   metro_pk?: string
+  new_metro?: NewMetroInput
   code?: string
   device_type?: string
   // remove_device

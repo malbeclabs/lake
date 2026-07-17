@@ -16,17 +16,16 @@ export function AddLinkForm({
   onSubmit: (v: {
     latencyNs: number
     bandwidthBps: number
-    sideAIface: string
-    sideZIface: string
     estimateSource: 'copied' | 'great_circle' | 'manual'
     linkType: 'WAN' | 'DZX'
   }) => void
   onCancel: () => void
 }) {
+  // The real interfaces are TBD -- the contributor decides them later, so this
+  // form no longer collects them. PlannerMap stages the change with "TBD"
+  // placeholders for side_a_iface_name / side_z_iface_name.
   const [latencyUs, setLatencyUs] = useState(String(suggestedLatencyUs || ''))
   const [bandwidthGbps, setBandwidthGbps] = useState('10')
-  const [sideAIface, setSideAIface] = useState('')
-  const [sideZIface, setSideZIface] = useState('')
   const [linkType, setLinkType] = useState<'WAN' | 'DZX'>('WAN')
   const [touched, setTouched] = useState(false)
 
@@ -38,14 +37,7 @@ export function AddLinkForm({
   // impact engine, so a new link must never be allowed to save it either -- same
   // guard as LinkEditForm and MoveLinkEndForm.
   const sentinelBlocked = Number.isFinite(us) && us > 0 && latencyNs === UNSET_LATENCY_NS
-  const valid =
-    Number.isFinite(us) &&
-    us > 0 &&
-    !sentinelBlocked &&
-    Number.isFinite(gbps) &&
-    gbps > 0 &&
-    sideAIface.trim() !== '' &&
-    sideZIface.trim() !== ''
+  const valid = Number.isFinite(us) && us > 0 && !sentinelBlocked && Number.isFinite(gbps) && gbps > 0
 
   const submit = () => {
     setTouched(true)
@@ -53,8 +45,6 @@ export function AddLinkForm({
     onSubmit({
       latencyNs,
       bandwidthBps: Math.round(gbps * 1e9),
-      sideAIface: sideAIface.trim(),
-      sideZIface: sideZIface.trim(),
       // If the operator changed the pre-filled value, it becomes a manual estimate.
       estimateSource: us === suggestedLatencyUs ? estimateSource : 'manual',
       linkType,
@@ -66,30 +56,11 @@ export function AddLinkForm({
       <div className="text-xs font-medium">
         New link {sourceCode} ↔ {targetCode}
       </div>
-      <div className="grid grid-cols-2 gap-2">
-        <label className="block text-xs text-muted-foreground">
-          {sourceCode} iface
-          <input
-            value={sideAIface}
-            onChange={(e) => setSideAIface(e.target.value)}
-            placeholder="Ethernet1"
-            className="mt-1 w-full px-2 py-1 text-sm bg-muted border border-border rounded"
-          />
-        </label>
-        <label className="block text-xs text-muted-foreground">
-          {targetCode} iface
-          <input
-            value={sideZIface}
-            onChange={(e) => setSideZIface(e.target.value)}
-            placeholder="Ethernet1"
-            className="mt-1 w-full px-2 py-1 text-sm bg-muted border border-border rounded"
-          />
-        </label>
-      </div>
       <label className="block text-xs text-muted-foreground">
         Latency (µs) — required{' '}
         <span className="text-[10px] uppercase tracking-wide">({estimateSource})</span>
         <input
+          autoFocus
           type="number"
           value={latencyUs}
           onChange={(e) => setLatencyUs(e.target.value)}
@@ -122,9 +93,7 @@ export function AddLinkForm({
         </p>
       )}
       {touched && !valid && !sentinelBlocked && (
-        <p className="text-[11px] text-red-500">
-          Latency, bandwidth and both interfaces are required.
-        </p>
+        <p className="text-[11px] text-red-500">Latency and bandwidth are required.</p>
       )}
       <div className="flex gap-2 pt-1">
         <button

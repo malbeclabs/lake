@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { render, screen } from '@testing-library/react'
-import type { PlanImpactReport } from '@/lib/api'
+import { render, screen, fireEvent } from '@testing-library/react'
+import type { PlanImpactReport, MetroLatencyDelta } from '@/lib/api'
 import { PlannerImpactPanel } from './PlannerImpactPanel'
 
 const fullReport: PlanImpactReport = {
@@ -163,5 +163,71 @@ describe('PlannerImpactPanel', () => {
       <PlannerImpactPanel report={null} isLoading={false} error="boom" changeLabels={new Map()} />,
     )
     expect(screen.getByText('boom')).toBeInTheDocument()
+  })
+
+  it('collapses metros sharing the same added latency into one row, revealed on hover', () => {
+    const others = [
+      'ams', 'lon', 'par', 'mad', 'mil', 'zrh', 'vie', 'waw', 'osl', 'sto', 'hel', 'dub', 'lax',
+    ]
+    const latency_deltas: MetroLatencyDelta[] = others.map((m) => ({
+      severity: 'medium',
+      metro_a: m,
+      metro_z: 'nyc',
+      before_us: 50000,
+      after_us: 60000,
+      delta_us: 10000,
+      caused_by: [{ seq: 1, op_type: 'remove_link', label: 'change 1' }],
+    }))
+    const report: PlanImpactReport = { ...emptyReport, latency_deltas }
+
+    render(
+      <PlannerImpactPanel report={report} isLoading={false} error={null} changeLabels={new Map()} />,
+    )
+
+    // 13 near-identical pairs collapse into a single summary row.
+    const rows = screen.getAllByTestId('impact-latency-row')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toHaveTextContent('13 metros')
+    expect(rows[0]).toHaveTextContent('nyc')
+    expect(rows[0]).toHaveTextContent('+10.0ms')
+
+    // members stay hidden until hover
+    expect(screen.queryByTestId('latency-group-members')).not.toBeInTheDocument()
+
+    const trigger = screen.getByText('13 metros')
+    fireEvent.mouseOver(trigger)
+    const membersPanel = screen.getByTestId('latency-group-members')
+    for (const m of others) {
+      expect(membersPanel).toHaveTextContent(m)
+    }
+
+    fireEvent.mouseOut(trigger)
+    expect(screen.queryByTestId('latency-group-members')).not.toBeInTheDocument()
+  })
+
+  it('renders a lone latency pair as a normal single row (no forced grouping)', () => {
+    const latency_deltas: MetroLatencyDelta[] = [
+      {
+        severity: 'medium',
+        metro_a: 'nyc',
+        metro_z: 'lon',
+        before_us: 30000,
+        after_us: 33000,
+        delta_us: 3000,
+        caused_by: [],
+      },
+    ]
+    const report: PlanImpactReport = { ...emptyReport, latency_deltas }
+
+    render(
+      <PlannerImpactPanel report={report} isLoading={false} error={null} changeLabels={new Map()} />,
+    )
+
+    const rows = screen.getAllByTestId('impact-latency-row')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toHaveTextContent('nyc')
+    expect(rows[0]).toHaveTextContent('lon')
+    expect(rows[0]).toHaveTextContent('+3.0ms')
+    expect(screen.queryByTestId('latency-group-members')).not.toBeInTheDocument()
   })
 })

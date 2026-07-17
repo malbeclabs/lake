@@ -55,6 +55,14 @@ function blankLink(over: Partial<DraftLink>): DraftLink {
   }
 }
 
+// Synthesizes a stable pseudo-pk for a plan-local new metro (one that does not
+// exist onchain yet), keyed by its operator-typed code so every add_device
+// change for the same new metro resolves to the same draft metro entry.
+// Mirrors the Go newMetroPK in planner_graph.go.
+function newMetroKey(code: string): string {
+  return `new_metro:${code}`
+}
+
 // Browser mirror of the Go applyChanges: baseline + ordered patch -> annotated draft.
 export function buildDraft(
   baseline: TopologyResponse,
@@ -62,6 +70,9 @@ export function buildDraft(
 ): DraftTopology {
   const deviceByKey = new Map<string, DraftDevice>()
   const linkByKey = new Map<string, DraftLink>()
+  // Own copy: an add_device with a new_metro appends to this, and baseline.metros
+  // must stay untouched.
+  const metros = [...baseline.metros]
 
   for (const d of baseline.devices) {
     deviceByKey.set(d.pk, { ...d, changeState: 'unchanged' })
@@ -85,6 +96,22 @@ export function buildDraft(
     switch (c.op_type) {
       case 'add_device': {
         const key = c.local_ref ?? c.id
+        // Resolve the device's metro: an EXISTING metro_pk, or a NEW metro (added
+        // to this draft's own metro list, keyed by its code) so the device renders
+        // at the right place and great-circle latency for new links to it works.
+        let metroPk = p.metro_pk ?? ''
+        if (p.new_metro) {
+          metroPk = newMetroKey(p.new_metro.code)
+          if (!metros.some((m) => m.pk === metroPk)) {
+            metros.push({
+              pk: metroPk,
+              code: p.new_metro.code,
+              name: p.new_metro.code,
+              latitude: p.new_metro.latitude,
+              longitude: p.new_metro.longitude,
+            })
+          }
+        }
         deviceByKey.set(
           key,
           blankDevice({
@@ -92,9 +119,10 @@ export function buildDraft(
             localRef: c.local_ref ?? undefined,
             changeId: c.id,
             code: p.code ?? c.ref_snapshot.device_code ?? key,
-            metro_pk: p.metro_pk ?? '',
+            metro_pk: metroPk,
             contributor_pk: p.contributor_pk ?? '',
-            device_type: p.device_type ?? '',
+            contributor_code: p.contributor_code ?? c.ref_snapshot.contributor_code ?? '',
+            device_type: p.device_type ?? 'switch',
           })
         )
         break
@@ -207,7 +235,7 @@ export function buildDraft(
   }
 
   return {
-    metros: baseline.metros,
+    metros,
     devices: [...deviceByKey.values()],
     links: [...linkByKey.values()],
     deviceByKey,

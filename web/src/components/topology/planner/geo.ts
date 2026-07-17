@@ -63,6 +63,11 @@ export function haversineKm(
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)))
 }
 
+// Degrees-of-lng/lat tolerance for snapping a click or drag to the nearest device.
+// Shared by endpoint-drag reattachment and add-link source/target picking, so both
+// interactions feel equally forgiving.
+export const SNAP_RADIUS_DEG = 1.5
+
 // Nearest map key to a lng/lat, using degree distance, within maxDeg. For snap.
 export function nearestKeyWithin(
   lng: number,

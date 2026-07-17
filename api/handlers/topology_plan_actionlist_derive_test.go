@@ -73,6 +73,71 @@ func TestDeriveActionList_SingleOwnerOps(t *testing.T) {
 	require.Equal(t, "notify NOC", rm.Note)
 }
 
+// TestDeriveActionList_AddDevice_NewContributorAndMetro covers the canonical
+// add_device shape for a contributor and metro that don't exist onchain yet:
+// no contributor_pk to look up in the baseline, no metro_pk either, so both
+// must resolve straight from the payload (contributor_code, new_metro.code).
+func TestDeriveActionList_AddDevice_NewContributorAndMetro(t *testing.T) {
+	baseline := &TopologyResponse{
+		Metros:  []Metro{{PK: "m-lax", Code: "LAX", Name: "Los Angeles"}},
+		Devices: []Device{},
+	}
+	changes := []PlanChange{
+		{
+			Seq: 10, OpType: OpAddDevice, LocalRef: "tmp_dev_1", State: StatePending,
+			Payload: rawJSON(t, map[string]any{
+				"contributor_code": "newco", "code": "zzz001-dz001",
+				"new_metro": map[string]any{"code": "ZZZ", "latitude": 10.0, "longitude": 20.0},
+			}),
+		},
+	}
+
+	al := deriveActionListFromBaseline(&Plan{Name: "New region"}, changes, baseline)
+
+	require.Len(t, al.Groups, 1)
+	g := al.Groups[0]
+	require.Equal(t, "newco", g.ContributorCode)
+	require.Empty(t, g.ContributorPK, "brand-new contributor has no pk yet")
+	require.Equal(t, "#ext-doublezero-newco", g.SlackChannel)
+	require.Len(t, g.Tasks, 1)
+	require.Equal(t, "Bring device zzz001-dz001 online in ZZZ", g.Tasks[0].Title)
+}
+
+// TestDeriveActionList_AddLink_SiblingNewContributor covers an add_link that
+// resolves one endpoint to a sibling add_device carrying a brand-new
+// contributor (contributor_code only, no pk): the link task must attribute
+// that endpoint to the new contributor's code, not leave it blank.
+func TestDeriveActionList_AddLink_SiblingNewContributor(t *testing.T) {
+	baseline := &TopologyResponse{
+		Metros: []Metro{{PK: "m-nyc", Code: "NYC", Name: "New York"}},
+		Devices: []Device{
+			{PK: "d-z", Code: "nyc001-dz001", Status: "activated", MetroPK: "m-nyc", ContributorPK: "c-tele", ContributorCode: "teleport"},
+		},
+	}
+	changes := []PlanChange{
+		{
+			Seq: 5, OpType: OpAddDevice, LocalRef: "tmp_dev_1", State: StatePending,
+			Payload: rawJSON(t, map[string]any{
+				"contributor_code": "newco", "code": "nyc003-dz001",
+				"new_metro": map[string]any{"code": "NYC", "latitude": 40.7, "longitude": -74.0},
+			}),
+		},
+		{
+			Seq: 10, OpType: OpAddLink, State: StatePending,
+			Payload: rawJSON(t, map[string]any{
+				"side_a_ref": "tmp_dev_1", "side_z_device_pk": "d-z",
+				"link_type": "WAN", "bandwidth_bps": 10000000000, "latency_ns": 5000000,
+			}),
+		},
+	}
+
+	al := deriveActionListFromBaseline(&Plan{Name: "n"}, changes, baseline)
+
+	titles := groupTitles(al)
+	require.Contains(t, titles["newco"], "Provision WAN link nyc003-dz001 <-> nyc001-dz001")
+	require.Contains(t, titles["teleport"], "Provision WAN link nyc003-dz001 <-> nyc001-dz001")
+}
+
 func TestDeriveActionList_DualEndpointOps(t *testing.T) {
 	baseline := &TopologyResponse{
 		Metros: []Metro{{PK: "m-nyc", Code: "NYC", Name: "New York"}},

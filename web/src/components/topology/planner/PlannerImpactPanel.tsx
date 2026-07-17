@@ -1,9 +1,8 @@
-import { type ReactNode } from 'react'
+import { type ReactNode, useState } from 'react'
 import { AlertTriangle, Shield, ArrowRight, Zap, Loader2 } from 'lucide-react'
 import type {
   PlanImpactReport,
   PartitionIssue,
-  MetroLatencyDelta,
   RedundancyChange,
   CapacityRisk,
   PlanOverlapWarning,
@@ -12,12 +11,13 @@ import type {
   ImpactSeverity,
 } from '@/lib/api'
 import {
-  sortLatencyDeltas,
+  groupLatencyDeltas,
   sortRedundancy,
   sortCapacityRisks,
   severityRank,
   countBySeverity,
   formatDeltaMs,
+  type LatencyDeltaGroup,
 } from './impact-format'
 
 interface PlannerImpactPanelProps {
@@ -66,6 +66,37 @@ function CausedBy({
         </span>
       ))}
     </div>
+  )
+}
+
+/** The "N metros" side of a collapsed latency-delta row. Hovering (or
+ *  focusing, for keyboard users) reveals the individual member metros so the
+ *  summary row stays compact without hiding the detail entirely. */
+function LatencyGroupMembers({ group }: { group: LatencyDeltaGroup }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <span
+      className="relative inline-flex"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <span
+        tabIndex={0}
+        className="text-foreground underline decoration-dotted decoration-muted-foreground cursor-default"
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+      >
+        {group.otherMetros.length} metros
+      </span>
+      {open && (
+        <div
+          data-testid="latency-group-members"
+          className="absolute left-0 top-full mt-1 z-10 max-w-xs whitespace-normal rounded border border-[var(--border)] bg-[var(--popover)] px-2 py-1 text-popover-foreground shadow-lg"
+        >
+          {group.otherMetros.join(', ')}
+        </div>
+      )}
+    </span>
   )
 }
 
@@ -161,27 +192,34 @@ export function PlannerImpactPanel({
             </div>
           )}
 
-          {/* 2. Metro-pair latency, worst-first */}
+          {/* 2. Metro-pair latency, worst-first. Pairs sharing a common
+              endpoint metro and the same added latency are collapsed into
+              one "N metros +Xms to Y" row (members shown on hover) so a
+              removed link doesn't dump dozens of near-identical rows. */}
           {report.latency_deltas.length > 0 && (
             <div className="space-y-1.5 pt-2 border-t border-[var(--border)]">
               <SectionTitle>Metro-pair latency</SectionTitle>
-              {sortLatencyDeltas(report.latency_deltas).map((d: MetroLatencyDelta, i) => (
-                <div key={`${d.metro_a}-${d.metro_z}-${i}`} data-testid="impact-latency-row" className="flex items-start gap-1.5">
-                  <SeverityDot severity={d.severity} />
+              {groupLatencyDeltas(report.latency_deltas).map((g) => (
+                <div key={g.key} data-testid="impact-latency-row" className="flex items-start gap-1.5">
+                  <SeverityDot severity={g.severity} />
                   <div className="space-y-0.5">
-                    <div className="flex items-center gap-1">
-                      <span className="text-foreground">{d.metro_a}</span>
+                    <div className="flex items-center gap-1 flex-wrap">
+                      {g.otherMetros.length > 1 ? (
+                        <LatencyGroupMembers group={g} />
+                      ) : (
+                        <span className="text-foreground">{g.otherMetros[0]}</span>
+                      )}
                       <ArrowRight className="h-2.5 w-2.5 text-muted-foreground" />
-                      <span className="text-foreground">{d.metro_z}</span>
-                      {d.after_us < 0 ? (
+                      <span className="text-foreground">{g.commonMetro}</span>
+                      {g.unreachable ? (
                         <span className="ml-1 text-red-500 font-medium">no path</span>
                       ) : (
-                        <span className={`ml-1 ${d.delta_us > 0 ? 'text-amber-500' : 'text-green-500'}`}>
-                          {formatDeltaMs(d.delta_us)}
+                        <span className={`ml-1 ${(g.deltaUs ?? 0) > 0 ? 'text-amber-500' : 'text-green-500'}`}>
+                          {formatDeltaMs(g.deltaUs ?? 0)}
                         </span>
                       )}
                     </div>
-                    <CausedBy causedBy={d.caused_by} changeLabels={changeLabels} />
+                    <CausedBy causedBy={g.causedBy} changeLabels={changeLabels} />
                   </div>
                 </div>
               ))}

@@ -25,26 +25,21 @@ describe('AddLinkForm', () => {
     expect(screen.getByLabelText(/Bandwidth/)).toHaveValue(10)
   })
 
-  it('requires both interface names, latency and bandwidth before submitting', () => {
-    const onSubmit = vi.fn()
+  it('has no interface-name inputs (interface is TBD)', () => {
     render(
       <AddLinkForm
         sourceCode="nyc-a"
         targetCode="lon-b"
         suggestedLatencyUs={5_000}
         estimateSource="copied"
-        onSubmit={onSubmit}
+        onSubmit={vi.fn()}
         onCancel={vi.fn()}
       />
     )
-    fireEvent.click(screen.getByText('Add link'))
-    expect(onSubmit).not.toHaveBeenCalled()
-    expect(
-      screen.getByText('Latency, bandwidth and both interfaces are required.')
-    ).toBeInTheDocument()
+    expect(screen.queryByLabelText(/iface/i)).not.toBeInTheDocument()
   })
 
-  it('rounds latency to ns and bandwidth to bps, trims interface names, and keeps the estimate source when latency is untouched', () => {
+  it('requires latency and bandwidth before submitting', () => {
     const onSubmit = vi.fn()
     render(
       <AddLinkForm
@@ -56,15 +51,29 @@ describe('AddLinkForm', () => {
         onCancel={vi.fn()}
       />
     )
-    fireEvent.change(screen.getByLabelText(/nyc-a iface/), { target: { value: '  Ethernet1  ' } })
-    fireEvent.change(screen.getByLabelText(/lon-b iface/), { target: { value: '  Ethernet2  ' } })
+    fireEvent.change(screen.getByLabelText(/Latency/), { target: { value: '0' } })
+    fireEvent.click(screen.getByText('Add link'))
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(screen.getByText('Latency and bandwidth are required.')).toBeInTheDocument()
+  })
+
+  it('rounds latency to ns and bandwidth to bps, and keeps the estimate source when latency is untouched', () => {
+    const onSubmit = vi.fn()
+    render(
+      <AddLinkForm
+        sourceCode="nyc-a"
+        targetCode="lon-b"
+        suggestedLatencyUs={5_000}
+        estimateSource="copied"
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+      />
+    )
     fireEvent.change(screen.getByLabelText(/Bandwidth/), { target: { value: '2.5' } })
     fireEvent.click(screen.getByText('Add link'))
     expect(onSubmit).toHaveBeenCalledWith({
       latencyNs: 5_000_000,
       bandwidthBps: 2_500_000_000,
-      sideAIface: 'Ethernet1',
-      sideZIface: 'Ethernet2',
       estimateSource: 'copied',
       linkType: 'WAN',
     })
@@ -82,8 +91,6 @@ describe('AddLinkForm', () => {
         onCancel={vi.fn()}
       />
     )
-    fireEvent.change(screen.getByLabelText(/nyc-a iface/), { target: { value: 'Ethernet1' } })
-    fireEvent.change(screen.getByLabelText(/lon-b iface/), { target: { value: 'Ethernet2' } })
     fireEvent.change(screen.getByLabelText(/Latency/), { target: { value: '9000' } })
     fireEvent.click(screen.getByText('Add link'))
     expect(onSubmit).toHaveBeenCalledWith(
@@ -103,8 +110,6 @@ describe('AddLinkForm', () => {
         onCancel={vi.fn()}
       />
     )
-    fireEvent.change(screen.getByLabelText(/nyc-a iface/), { target: { value: 'Ethernet1' } })
-    fireEvent.change(screen.getByLabelText(/lon-b iface/), { target: { value: 'Ethernet2' } })
     fireEvent.change(screen.getByLabelText(/Link type/), { target: { value: 'DZX' } })
     fireEvent.click(screen.getByText('Add link'))
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ linkType: 'DZX' }))
@@ -126,8 +131,6 @@ describe('AddLinkForm', () => {
       />
     )
     expect(UNSET_LATENCY_NS).toBe(1_000_000 * 1000)
-    fireEvent.change(screen.getByLabelText(/nyc-a iface/), { target: { value: 'Ethernet1' } })
-    fireEvent.change(screen.getByLabelText(/lon-b iface/), { target: { value: 'Ethernet2' } })
     fireEvent.change(screen.getByLabelText(/Latency/), { target: { value: '1000000' } })
     fireEvent.click(screen.getByText('Add link'))
     expect(onSubmit).not.toHaveBeenCalled()
@@ -163,8 +166,14 @@ interface MockPlanner {
   addChange: (input: unknown) => void
 }
 
-const { plannerRef } = vi.hoisted(() => ({
+// Shared, hoisted refs so the mocked modules below can read values the tests set.
+const { plannerRef, mapClickTargetRef } = vi.hoisted(() => ({
   plannerRef: { current: null as unknown as MockPlanner },
+  // Where a simulated map click "lands" (lng/lat). Add-link picking now geo-snaps
+  // off the map's own click (not the device marker's click) -- see PlannerMap's
+  // handleMapClick / resolveMapClick -- so tests point this at a device's exact
+  // position rather than clicking the device dot directly.
+  mapClickTargetRef: { current: { lng: 0, lat: 0 } },
 }))
 
 vi.mock('@/hooks/use-theme', () => ({
@@ -175,12 +184,28 @@ vi.mock('./PlannerContext', () => ({
   usePlanner: () => plannerRef.current,
 }))
 
-// Same light MapLibre stand-ins used by MoveLinkEndForm.test.tsx: MapGL/Source pass
-// children through, Layer renders nothing, non-draggable Marker is a plain div (so
-// the device dots' own onClick handlers still fire).
+// Same light MapLibre stand-ins used by AddDeviceForm.test.tsx: MapGL/Source pass
+// children through, Layer renders nothing, non-draggable Marker is a plain div. A
+// dedicated "map-surface" sibling (not an ancestor of the device markers) fires the
+// MapGL onClick prop, matching how react-map-gl/maplibre keeps marker DOM nodes
+// separate from the map canvas's own click handling.
 vi.mock('react-map-gl/maplibre', () => ({
   __esModule: true,
-  default: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+  default: ({
+    children,
+    onClick,
+  }: {
+    children?: React.ReactNode
+    onClick?: (e: { lngLat: { lng: number; lat: number }; features?: unknown[] }) => void
+  }) => (
+    <div>
+      <div
+        data-testid="map-surface"
+        onClick={() => onClick?.({ lngLat: mapClickTargetRef.current, features: [] })}
+      />
+      {children}
+    </div>
+  ),
   Source: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
   Layer: () => null,
   Marker: ({
@@ -260,15 +285,15 @@ describe('PlannerMap add-link rubber-band tool', () => {
     plannerRef.current = makePlanner('add-link', setTool, addChange)
     render(<PlannerMap />)
 
-    fireEvent.click(screen.getByTitle('nyc-a'))
-    fireEvent.click(screen.getByTitle('lon-b'))
+    mapClickTargetRef.current = { lng: -74, lat: 40 } // nyc-a
+    fireEvent.click(screen.getByTestId('map-surface'))
+    mapClickTargetRef.current = { lng: 0, lat: 51 } // lon-b
+    fireEvent.click(screen.getByTestId('map-surface'))
 
     expect(screen.getByText(/New link/)).toBeInTheDocument()
     expect(screen.getByLabelText(/Latency/)).toHaveValue(5_000)
     expect(screen.getByText('(copied)')).toBeInTheDocument()
 
-    fireEvent.change(screen.getByLabelText(/nyc-a iface/), { target: { value: 'Ethernet1' } })
-    fireEvent.change(screen.getByLabelText(/lon-b iface/), { target: { value: 'Ethernet2' } })
     fireEvent.click(screen.getByText('Add link'))
 
     expect(addChange).toHaveBeenCalledTimes(1)
@@ -279,8 +304,9 @@ describe('PlannerMap add-link rubber-band tool', () => {
         payload: expect.objectContaining({
           side_a_device_pk: 'dA',
           side_z_device_pk: 'dB',
-          side_a_iface_name: 'Ethernet1',
-          side_z_iface_name: 'Ethernet2',
+          // The real interfaces are TBD -- the contributor decides them later.
+          side_a_iface_name: 'TBD',
+          side_z_iface_name: 'TBD',
           latency_ns: 5_000_000,
           bandwidth_bps: 10_000_000_000,
           estimate_source: 'copied',
@@ -305,7 +331,8 @@ describe('PlannerMap add-link rubber-band tool', () => {
 
     // Pick nyc-a as the source, then abandon the flow by switching tools (e.g. via
     // the toolbar) without ever picking a target.
-    fireEvent.click(screen.getByTitle('nyc-a'))
+    mapClickTargetRef.current = { lng: -74, lat: 40 } // nyc-a
+    fireEvent.click(screen.getByTestId('map-surface'))
 
     plannerRef.current = makePlanner('select', setTool, addChange)
     rerender(<PlannerMap />)
@@ -314,12 +341,14 @@ describe('PlannerMap add-link rubber-band tool', () => {
 
     // A single click now must start a FRESH source pick (par-c), not resolve as the
     // target of the abandoned nyc-a pick -- so no form yet.
-    fireEvent.click(screen.getByTitle('par-c'))
+    mapClickTargetRef.current = { lng: 2, lat: 48 } // par-c
+    fireEvent.click(screen.getByTestId('map-surface'))
     expect(screen.queryByText(/New link/)).not.toBeInTheDocument()
     expect(addChange).not.toHaveBeenCalled()
 
     // Completing the pick proves par-c (not the stale nyc-a) is the actual source.
-    fireEvent.click(screen.getByTitle('lon-b'))
+    mapClickTargetRef.current = { lng: 0, lat: 51 } // lon-b
+    fireEvent.click(screen.getByTestId('map-surface'))
     expect(screen.getByText('New link par-c ↔ lon-b')).toBeInTheDocument()
     expect(screen.queryByText(/New link nyc-a/)).not.toBeInTheDocument()
   })
@@ -330,16 +359,20 @@ describe('PlannerMap add-link rubber-band tool', () => {
     plannerRef.current = makePlanner('add-link', setTool, addChange)
     render(<PlannerMap />)
 
-    fireEvent.click(screen.getByTitle('nyc-a'))
-    fireEvent.click(screen.getByTitle('lon-b'))
+    mapClickTargetRef.current = { lng: -74, lat: 40 } // nyc-a
+    fireEvent.click(screen.getByTestId('map-surface'))
+    mapClickTargetRef.current = { lng: 0, lat: 51 } // lon-b
+    fireEvent.click(screen.getByTestId('map-surface'))
     expect(screen.getByText(/New link/)).toBeInTheDocument()
 
     fireEvent.click(screen.getByText('Cancel'))
     expect(screen.queryByText(/New link/)).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByTitle('par-c'))
+    mapClickTargetRef.current = { lng: 2, lat: 48 } // par-c
+    fireEvent.click(screen.getByTestId('map-surface'))
     expect(screen.queryByText(/New link/)).not.toBeInTheDocument()
-    fireEvent.click(screen.getByTitle('lon-b'))
+    mapClickTargetRef.current = { lng: 0, lat: 51 } // lon-b
+    fireEvent.click(screen.getByTestId('map-surface'))
     expect(screen.getByText('New link par-c ↔ lon-b')).toBeInTheDocument()
 
     expect(addChange).not.toHaveBeenCalled()
