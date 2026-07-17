@@ -45,9 +45,8 @@ type Activities struct {
 	// esc escalates consecutive refresh failures per activity from WARN to
 	// ERROR. At ~60s per workflow iteration, the default thresholds mean ~3
 	// minutes of sustained failure before paging anyone (~10 for transient
-	// causes: deploys, ClickHouse restarts). Note the InfluxDB gRPC
-	// rate-limit error (ResourceExhausted) is not string-classified as
-	// transient, so it escalates at the strict threshold.
+	// causes: deploys, ClickHouse restarts, InfluxDB rate limits — the gRPC
+	// ResourceExhausted error classifies as a rate limit).
 	esc logger.Escalator
 }
 

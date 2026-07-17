@@ -21,10 +21,16 @@ func TestClassifyAndIsTransient(t *testing.T) {
 		// Rate limits (new): upstream 429 — transient, self-healing.
 		{"rpc rate limit message", errors.New("rate limited (status 429)"), dberror.ErrorTypeRateLimit, true},
 		{"too many requests", errors.New("upstream returned Too Many Requests"), dberror.ErrorTypeRateLimit, true},
+		{"grpc resource exhausted", errors.New("rpc error: code = ResourceExhausted desc = token bucket exhausted"), dberror.ErrorTypeRateLimit, true},
 
 		// The actual prod CH-connection-drop errors we saw — must be transient.
 		{"ch read packet reset", errors.New("query processing: failed to read packet from 52.4.220.199:9440 (conn_id=492): read: connection reset by peer"), dberror.ErrorTypeConnectivity, true},
 		{"ch read packet io timeout", errors.New("failed to read packet from 54.166.56.105:9440: read: i/o timeout"), dberror.ErrorTypeConnectivity, true},
+		{"unexpected eof", errors.New("read tcp 10.0.0.1:9000: unexpected EOF"), dberror.ErrorTypeConnectivity, true},
+		{"bare eof", errors.New("EOF"), dberror.ErrorTypeConnectivity, true},
+
+		// "eof" must match as a word, not an embedded trigram.
+		{"geofence not transient", errors.New("failed to update geofence for device"), dberror.ErrorTypeUnknown, false},
 
 		// Non-transient: real, actionable failures should still escalate to ERROR.
 		{"syntax error", errors.New("Code: 62. DB::Exception: Syntax error"), dberror.ErrorTypeQuery, false},
