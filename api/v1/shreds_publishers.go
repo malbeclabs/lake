@@ -70,7 +70,7 @@ func registerEdgeShredsPublishers(humaAPI huma.API, api *handlers.API) {
 		Description: "Returns the status of every DoubleZero validator-publisher in the shred multicast group for a recent window (epochs or slots). Includes activated stake, leader/retransmit activity, and validator client/version info. A broader publishers endpoint (covering non-validator publishers) may be introduced later at /edge/shreds/publishers.",
 		Tags:        []string{"Edge/Shreds"},
 	}, func(ctx context.Context, input *EdgeShredsPublishersInput) (*EdgeShredsPublishersOutput, error) {
-		resp, err := api.FetchPublisherCheckData(ctx, input.Q, input.Epochs, input.Slots)
+		resp, err := api.FetchPublisherCheckCachedOrLive(ctx, input.Q, input.Epochs, input.Slots)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to fetch shreds publishers", err)
 		}

@@ -283,3 +283,38 @@ func TestV1EdgeShredsPublishers_EpochsAndSlotsParams(t *testing.T) {
 		})
 	}
 }
+
+// TestV1EdgeShredsPublishers_ServedFromCache asserts a default-shape request is
+// served from the page cache when a cached payload exists. The API has no
+// ClickHouse connection, so a cache miss would fail — returning the distinctive
+// cached values proves the cache was used (and the heavy live query was skipped).
+func TestV1EdgeShredsPublishers_ServedFromCache(t *testing.T) {
+	api := apitesting.NewTestAPIPg(t, testPgDB)
+
+	cached := handlers.PublisherCheckResponse{
+		Epoch:               4242,
+		MaxSlot:             999999,
+		TotalNetworkStake:   123456789,
+		TotalPublishers:     7,
+		TotalPublisherStake: 42,
+		Publishers: []handlers.PublisherCheckItem{
+			{PublisherIP: "10.9.9.9", DZUserPubkey: "cached-user"},
+		},
+	}
+	require.NoError(t, api.WritePageCache(t.Context(), "publisher_check", cached))
+
+	r := newV1Router(t, api)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/edge/shreds/publishers/leaders", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+	var resp v1.EdgeShredsPublishersResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+	assert.Equal(t, uint64(4242), resp.Epoch)
+	assert.Equal(t, uint64(7), resp.TotalPublishers)
+	assert.EqualValues(t, 42, resp.TotalPublisherStake)
+	require.Len(t, resp.Publishers, 1)
+	assert.Equal(t, "cached-user", resp.Publishers[0].DZUserPubkey)
+}

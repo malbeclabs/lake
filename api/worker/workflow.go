@@ -111,6 +111,27 @@ type cacheEntry struct {
 	fn   func(ctx context.Context) (any, error)
 }
 
+// slowBatchEveryN sets a per-entry slow-refresh cadence: an entry whose key maps
+// to N refreshes only on every Nth slow cycle; keys absent from the map refresh
+// every cycle (the default). publisher_check reads shredder.publisher_shred_stats,
+// the heaviest recurring query on the shared ClickHouse, yet its data only changes
+// on epoch timescales (~2 days) — refreshing every 4th cycle (~2 min at the default
+// 30s interval) removes it from the 30s treadmill with no user-visible staleness.
+// edge_scoreboard also reads that table but backs a live-tail view, so it stays at
+// every cycle.
+var slowBatchEveryN = map[string]int{
+	"publisher_check": 4,
+}
+
+// dueThisCycle reports whether an entry with the given cadence refreshes on the
+// given zero-based cycle. everyN <= 1 means every cycle.
+func dueThisCycle(everyN, cycle int) bool {
+	if everyN <= 1 {
+		return true
+	}
+	return cycle%everyN == 0
+}
+
 // Activities holds the logger and API deps for the refresh activity.
 type Activities struct {
 	Log *slog.Logger
@@ -242,7 +263,7 @@ func (e *refreshError) Error() string { return e.msg }
 // concurrent queries pegged the node, timeouts + per-entry retries amplified the
 // storm). A bounded limit keeps in-flight queries near what ClickHouse can run
 // while still refreshing the batch within the cycle.
-func (a *Activities) RefreshCaches(ctx context.Context) error {
+func (a *Activities) RefreshCaches(ctx context.Context, cycle int) error {
 	start := time.Now()
 	limit := a.RefreshConcurrency
 	if limit <= 0 {
@@ -257,6 +278,9 @@ func (a *Activities) RefreshCaches(ctx context.Context) error {
 	g.SetLimit(limit)
 
 	for _, entry := range a.entries() {
+		if !dueThisCycle(slowBatchEveryN[entry.key], cycle) {
+			continue
+		}
 		g.Go(func() error {
 			a.refresh(gctx, entry.name, entry.key, entry.fn, shuttingDown, errBatchDeadline)
 			return nil
@@ -471,7 +495,12 @@ func PageCacheWorkflow(ctx temporalworkflow.Context, iteration int, p PageCacheP
 	fastCtx := temporalworkflow.WithActivityOptions(ctx, fastActOpts)
 
 	for iteration < p.ContinueAsNewThreshold {
-		_ = temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshCaches).Get(ctx, nil)
+		// iteration doubles as the slow-refresh cycle counter (see slowBatchEveryN).
+		// It resets to 0 at each continue-as-new boundary; carrying it across would
+		// require threading it through NewContinueAsNewError for no real benefit, so
+		// we accept the worst case of one early publisher_check refresh per
+		// continue-as-new (~every 30 min).
+		_ = temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshCaches, iteration).Get(ctx, nil)
 
 		iteration++
 		if iteration < p.ContinueAsNewThreshold {

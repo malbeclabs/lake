@@ -97,6 +97,48 @@ func isDefaultPublisherCheckRequest(r *http.Request) bool {
 	return true
 }
 
+// publisherCheckLiveTimeout bounds a live (uncached) publisher-check run. Matches
+// the REST handler's per-attempt budget.
+const publisherCheckLiveTimeout = 20 * time.Second
+
+// isDefaultPublisherCheckShape reports whether the given parameters match the
+// cached default (no filter, epochs=2, no slots). Parameter-level mirror of
+// isDefaultPublisherCheckRequest for callers that don't have an *http.Request.
+func isDefaultPublisherCheckShape(q string, epochsParam, slotsParam int) bool {
+	return q == "" && epochsParam == 2 && slotsParam == 0
+}
+
+// FetchPublisherCheckCachedOrLive returns publisher-check data, serving the
+// default-shape mainnet request (no filter, epochs=2, no slots) from the page
+// cache when a cached payload exists and otherwise running the query live under
+// publisherCheckLiveTimeout. It lets uncapped callers (e.g. the v1 edge endpoint)
+// avoid an unbounded live run of the heavy query on every request while reusing
+// the same cache the REST handler serves.
+func (a *API) FetchPublisherCheckCachedOrLive(ctx context.Context, q string, epochsParam, slotsParam int) (*PublisherCheckResponse, error) {
+	return a.fetchPublisherCheckCachedOrLive(ctx, q, epochsParam, slotsParam, a.FetchPublisherCheckData)
+}
+
+// fetchPublisherCheckCachedOrLive is the testable core of
+// FetchPublisherCheckCachedOrLive: fetch is injected so a test can observe the
+// deadline applied to the live path.
+func (a *API) fetchPublisherCheckCachedOrLive(
+	ctx context.Context, q string, epochsParam, slotsParam int,
+	fetch func(context.Context, string, int, int) (*PublisherCheckResponse, error),
+) (*PublisherCheckResponse, error) {
+	if isMainnet(ctx) && isDefaultPublisherCheckShape(q, epochsParam, slotsParam) {
+		if data, err := a.readPageCache(ctx, "publisher_check"); err == nil {
+			var resp PublisherCheckResponse
+			if err := json.Unmarshal(data, &resp); err == nil {
+				return &resp, nil
+			}
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, publisherCheckLiveTimeout)
+	defer cancel()
+	return fetch(ctx, q, epochsParam, slotsParam)
+}
+
 func (a *API) GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 	// Try to serve from cache for default requests
 	if isMainnet(r.Context()) && isDefaultPublisherCheckRequest(r) {
@@ -325,13 +367,17 @@ func (a *API) FetchPublisherCheckData(ctx context.Context, q string, epochsParam
 		publishers = []PublisherCheckItem{}
 	}
 
+	// Propagate errors from the totals queries rather than warn-and-continue:
+	// a failure here (typically context expiry after the main query consumed the
+	// budget) would otherwise return a 200 with silently-zeroed totals. Every
+	// caller handles the error (retry, keep last cached payload, or 500).
 	var totalNetworkStake int64
 	err = a.envDB(ctx).QueryRow(ctx,
 		`SELECT COALESCE(SUM(activated_stake_lamports), 0)
 		 FROM solana_vote_accounts_current
 		 WHERE epoch_vote_account = 'true' AND activated_stake_lamports > 0`).Scan(&totalNetworkStake)
 	if err != nil {
-		slog.Warn("publisher check: total network stake query failed", "error", err)
+		return nil, fmt.Errorf("total network stake: %w", err)
 	}
 
 	var totalPublishers uint64
@@ -346,7 +392,7 @@ func (a *API) FetchPublisherCheckData(ctx context.Context, q string, epochsParam
 		   AND v.vote_pubkey != ''
 		   AND g.pubkey != ''`).Scan(&totalPublishers, &totalPublisherStake)
 	if err != nil {
-		slog.Warn("publisher check: total publishers query failed", "error", err)
+		return nil, fmt.Errorf("total publishers: %w", err)
 	}
 
 	return &PublisherCheckResponse{

@@ -193,3 +193,39 @@ func TestInterruptedEscalation(t *testing.T) {
 		require.Equal(t, 1, countLevel(*recs, slog.LevelWarn)) // "interrupted (shutdown)"
 	})
 }
+
+// TestDueThisCycle pins the per-entry slow-refresh cadence: an everyN=4 entry
+// (publisher_check) refreshes on cycles 0, 4, 8 and is skipped otherwise, while
+// default (everyN<=1) entries refresh every cycle.
+func TestDueThisCycle(t *testing.T) {
+	t.Run("everyN=4 refreshes on multiples of 4 only", func(t *testing.T) {
+		for cycle := 0; cycle <= 12; cycle++ {
+			want := cycle%4 == 0 // cycles 0, 4, 8, 12
+			require.Equal(t, want, dueThisCycle(4, cycle), "cycle %d", cycle)
+		}
+	})
+
+	t.Run("default cadence refreshes every cycle", func(t *testing.T) {
+		for cycle := 0; cycle <= 12; cycle++ {
+			require.True(t, dueThisCycle(0, cycle), "everyN=0, cycle %d", cycle)
+			require.True(t, dueThisCycle(1, cycle), "everyN=1, cycle %d", cycle)
+		}
+	})
+
+	t.Run("publisher_check is configured at everyN=4; others default", func(t *testing.T) {
+		require.Equal(t, 4, slowBatchEveryN["publisher_check"])
+
+		// A representative every-cycle entry must not be in the override map.
+		_, ok := slowBatchEveryN["topology"]
+		require.False(t, ok, "topology must refresh every cycle")
+
+		// Model the RefreshCaches gate: publisher_check is due only on cycles 0,4,8;
+		// topology is due every cycle.
+		for _, cycle := range []int{0, 1, 2, 3, 4, 5, 8} {
+			pubDue := dueThisCycle(slowBatchEveryN["publisher_check"], cycle)
+			topoDue := dueThisCycle(slowBatchEveryN["topology"], cycle)
+			require.Equal(t, cycle%4 == 0, pubDue, "publisher_check cycle %d", cycle)
+			require.True(t, topoDue, "topology cycle %d", cycle)
+		}
+	})
+}
