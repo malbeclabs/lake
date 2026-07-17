@@ -116,11 +116,16 @@ export function PlannerMap() {
     lastFitPlanIdRef.current = plan.id
   }, [plan?.id, draft, mapLoaded])
 
-  // Fly to a single change when the Changes panel asks (focusChange). Keyed on the
-  // whole focusRequest object so its nonce forces a re-fire on a repeat click of
-  // the same change (a plain changeId dependency would not change between clicks).
+  // Fly to a single change when the Changes panel asks (focusChange). The nonce guard
+  // makes this fire exactly once per focusChange call and never on an unrelated
+  // draft/positions recompute. The ref is seeded with the mount-time nonce so a
+  // focusRequest left in context from before this mount does not auto-fly on remount
+  // (which would otherwise override the auto-fit-on-open).
+  const lastHandledNonceRef = useRef<number | null>(focusRequest?.nonce ?? null)
   useEffect(() => {
     if (!focusRequest || !draft) return
+    if (focusRequest.nonce === lastHandledNonceRef.current) return
+    lastHandledNonceRef.current = focusRequest.nonce
     const target = changeGeoTargetById(draft, positions, focusRequest.changeId)
     if (!target) return
     const current = mapRef.current?.getZoom() ?? 2
@@ -536,7 +541,7 @@ export function PlannerMap() {
           return (
             <Marker key={device.pk} longitude={pos[0]} latitude={pos[1]} anchor="center">
               <div
-                className="flex flex-col items-center cursor-pointer"
+                className="relative cursor-pointer"
                 title={device.code}
                 onClick={() => handleDeviceClick(device.pk)}
                 onMouseEnter={() => setHoveredDeviceKey(device.pk)}
@@ -555,7 +560,7 @@ export function PlannerMap() {
                   }}
                 />
                 {showLabel && (
-                  <div className="pointer-events-none mt-0.5 text-[10px] leading-tight text-center bg-background/80 rounded px-1 whitespace-nowrap">
+                  <div className="pointer-events-none absolute left-1/2 top-full -translate-x-1/2 mt-0.5 text-[10px] leading-tight text-center bg-background/80 rounded px-1 whitespace-nowrap">
                     <div>{device.code}</div>
                     {hovered && device.contributor_code && <div>{device.contributor_code}</div>}
                   </div>

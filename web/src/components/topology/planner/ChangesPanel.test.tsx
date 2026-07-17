@@ -37,6 +37,8 @@ function makePlanner(changes: PlanChange[], drift: Map<string, DriftStatus> = ne
     patchChange: vi.fn(),
     removeChange: vi.fn(),
     reorderChanges: vi.fn(),
+    focusChange: vi.fn(),
+    focusRequest: null,
   }
 }
 
@@ -155,5 +157,20 @@ describe('ChangesPanel drift', () => {
 
     expect(screen.queryByText('Broken')).not.toBeInTheDocument()
     expect(screen.queryByText('Already done')).not.toBeInTheDocument()
+  })
+})
+
+describe('ChangesPanel focusChange', () => {
+  it('calls focusChange with the clicked change id when its summary button is clicked', () => {
+    const planner = makePlanner([
+      ch({ id: 'c1', seq: 10, op_type: 'remove_link', ref_snapshot: { link_code: 'aaa' } }),
+    ])
+    plannerRef.current = planner
+    render(<ChangesPanel />)
+
+    fireEvent.click(screen.getByText('Remove link aaa'))
+
+    expect(planner.focusChange).toHaveBeenCalledTimes(1)
+    expect(planner.focusChange).toHaveBeenCalledWith('c1')
   })
 })
