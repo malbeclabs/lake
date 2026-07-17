@@ -1,6 +1,7 @@
 package handlers_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/malbeclabs/lake/api/handlers"
 	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/stretchr/testify/assert"
@@ -614,4 +616,41 @@ func TestGetPublisherCheck_RetransmitThreshold(t *testing.T) {
 				"publisher %s: retransmit flag mismatch", tt.dzUser)
 		})
 	}
+}
+
+// totalsFailConn wraps a ClickHouse connection so every QueryRow call fails while
+// Query passes through. FetchPublisherCheckData runs its main query via Query and
+// its two totals queries via QueryRow, so this makes only the totals queries fail
+// — reproducing the prod scenario where the totals queries error (context expiry
+// after the main query consumed the budget) but the main query succeeded.
+type totalsFailConn struct {
+	driver.Conn
+}
+
+func (c totalsFailConn) QueryRow(ctx context.Context, _ string, _ ...any) driver.Row {
+	return c.Conn.QueryRow(ctx, "SELECT throwIf(1, 'forced totals query failure')")
+}
+
+// TestFetchPublisherCheck_TotalsQueryError asserts that a failure in a totals
+// query surfaces as an error rather than a 200 with silently-zeroed totals. This
+// fails against the old Warn-and-continue code, which returned a nil error with
+// TotalNetworkStake/TotalPublishers/TotalPublisherStake all zero.
+func TestFetchPublisherCheck_TotalsQueryError(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertPublisherCheckTestData(t, api)
+
+	// Sanity: the main-path query succeeds and returns publishers before we
+	// break the totals queries.
+	baseline, err := api.FetchPublisherCheckData(t.Context(), "", 2, 0)
+	require.NoError(t, err)
+	require.NotEmpty(t, baseline.Publishers)
+	require.Positive(t, baseline.TotalNetworkStake)
+
+	// Now fail only the totals (QueryRow) path; the main (Query) path still works.
+	api.DB = totalsFailConn{api.DB}
+
+	resp, err := api.FetchPublisherCheckData(t.Context(), "", 2, 0)
+	require.Error(t, err, "a totals query failure must propagate, not yield zeroed totals")
+	assert.Nil(t, resp)
 }
