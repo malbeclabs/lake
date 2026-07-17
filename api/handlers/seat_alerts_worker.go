@@ -137,18 +137,19 @@ func seatAlertMessage(alert SeatAlert, s ShredSubscriberRow) string {
 	var suggested int64
 	if price > 0 {
 		suggested = price * 15 // ~15 epochs of runway
-		lines = append(lines, fmt.Sprintf("This device costs ~%d USDC/epoch (~2 days). Top up (adds to your escrow — more is better):", price))
-	} else {
-		lines = append(lines, "Top up (adds to your escrow — more is better):")
-	}
-	if price > 0 {
 		lines = append(lines,
+			fmt.Sprintf("This device costs ~%d USDC/epoch (~2 days). Top up (adds to your escrow — more is better):", price),
+			"",
 			fmt.Sprintf("<pre>doublezero-solana shreds pay --device-code %s --client-ip %s --amount %d</pre>", htmlEscape(deviceCode), htmlEscape(clientIP), suggested),
+			"",
 			fmt.Sprintf("%d USDC ≈ ~%d days here. Minimum %d = one epoch.", suggested, suggested/price*2, price),
 		)
 	} else {
 		lines = append(lines,
-			fmt.Sprintf("<pre>doublezero-solana shreds pay --device-code %s --client-ip %s --amount [USDC]</pre>", htmlEscape(deviceCode), htmlEscape(clientIP)))
+			"Top up (adds to your escrow — more is better):",
+			"",
+			fmt.Sprintf("<pre>doublezero-solana shreds pay --device-code %s --client-ip %s --amount [USDC]</pre>", htmlEscape(deviceCode), htmlEscape(clientIP)),
+		)
 	}
 	lines = append(lines, "", "Reply /topup for details, /help for all commands.")
 

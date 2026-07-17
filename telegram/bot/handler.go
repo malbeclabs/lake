@@ -204,14 +204,19 @@ I warn you before a shred seat runs out of prepaid escrow, so you don't lose the
 const topupText = `<b>Topping up a seat's escrow</b>
 
 Run this with the wallet that funds the seat:
+
 <pre>doublezero-solana shreds pay --device-code [CODE] --client-ip [IP] --amount [USDC]</pre>
+
 [CODE] — the device your seat is on
 [IP] — your machine's public IP (curl -4 ifconfig.me)
 [USDC] — amount to add; at least one epoch's price (more is better)
 
 Check the price:
+
 <pre>doublezero-solana shreds price --device-code [CODE]</pre>
+
 Check your balance:
+
 <pre>doublezero-solana shreds list --client-ip [IP]</pre>
 
 Re-running just adds to your existing escrow.`
