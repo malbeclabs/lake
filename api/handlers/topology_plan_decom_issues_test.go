@@ -310,3 +310,122 @@ func TestFormatBandwidthBps_Decom(t *testing.T) {
 	require.Equal(t, "1.5 Gbps", formatBandwidthBps(1_500_000_000))
 	require.Equal(t, "0 bps", formatBandwidthBps(0))
 }
+
+func TestCollectDecomTargets_Device_DriftKeepsCapturedMetroCode(t *testing.T) {
+	baseline := decomFixtureBaseline()
+	plan := &Plan{
+		Name: "Q3 decom",
+		Changes: []PlanChange{
+			{
+				Seq: 10, OpType: OpRemoveDevice, RefDevicePK: "dev-ghost-pk", State: StatePending,
+				RefSnapshot: rawJSON(t, map[string]any{
+					"device_code": "dev-ghost", "contributor_code": "contrib-z", "metro_code": "mtr-ghost",
+				}),
+			},
+		},
+	}
+
+	devices, _ := collectDecomTargets(plan, baseline)
+	require.Len(t, devices, 1)
+
+	d := devices[0]
+	require.False(t, d.Resolved)
+	require.Equal(t, "mtr-ghost", d.MetroLabel)
+
+	title := renderDeviceDecomTitle(d)
+	require.Contains(t, title, "mtr-ghost")
+	require.NotContains(t, title, "metro unknown")
+
+	body := renderDeviceDecomBody(d)
+	require.Contains(t, body, "- Metro: mtr-ghost\n")
+}
+
+func TestRenderLinkDecomTitle_Drift(t *testing.T) {
+	target := LinkDecomTarget{
+		Resolved:         false,
+		LinkPK:           "link-ghost-pk",
+		LinkCode:         "link-ghost",
+		OwnerContribCode: "contrib-z",
+	}
+
+	title := renderLinkDecomTitle(target)
+	require.Contains(t, title, "link-ghost")
+	require.NotContains(t, title, " - : - ")
+	require.Equal(t, "[Decom-Link] contrib-z - link-ghost - TBD", title)
+}
+
+func TestRenderLinkDecomBody_Drift(t *testing.T) {
+	target := LinkDecomTarget{
+		Resolved:         false,
+		LinkPK:           "link-ghost-pk",
+		LinkCode:         "link-ghost",
+		OwnerContribCode: "contrib-z",
+	}
+
+	body := renderLinkDecomBody(target)
+
+	require.Contains(t, body, linkDriftNote)
+	require.NotContains(t, body, "Cross-contributor: no")
+	require.Contains(t, body, "Endpoint details unavailable (drift); confirm endpoints, user counts, and cross-contributor exposure manually.")
+	require.Contains(t, body, "- [ ] Maintenance event created in OPS portal")
+	require.Contains(t, body, "- [ ] Metro-pair latency still within target")
+	require.NotContains(t, body, "- Endpoints:")
+	require.False(t, strings.Contains(body, "—"))
+}
+
+func TestRenderDeviceDecomTitle_SanitizesDriftedFields(t *testing.T) {
+	target := DeviceDecomTarget{
+		ContributorCode: "contrib`x",
+		MetroLabel:      "mtr-a\nline2",
+		DeviceCode:      "dev-a`bad",
+	}
+
+	title := renderDeviceDecomTitle(target)
+	require.NotContains(t, title, "\n")
+	require.NotContains(t, title, "mtr-a\nline2")
+	require.Contains(t, title, "\\`")
+}
+
+func TestRenderDeviceDecomBody_Drift_OmitsFabricatedConnectedCount(t *testing.T) {
+	target := DeviceDecomTarget{
+		Resolved:        false,
+		DevicePK:        "dev-ghost-pk",
+		DeviceCode:      "dev-ghost",
+		ContributorCode: "contrib-z",
+		Users:           0,
+	}
+
+	body := renderDeviceDecomBody(target)
+
+	require.Contains(t, body, "- [ ] Notify affected users to migrate\n")
+	require.NotContains(t, body, "connected")
+}
+
+func TestCollectDecomTargets_Device_SelfLoopLinkListedOnce(t *testing.T) {
+	baseline := decomFixtureBaseline()
+	baseline.Links = append(baseline.Links, Link{
+		PK: "link-loop-pk", Code: "link-loop", LinkType: "WAN", BandwidthBps: 1_000_000_000,
+		SideAPK: "dev-a-pk", SideACode: "dev-a", SideAIfaceName: "Ethernet3",
+		SideZPK: "dev-a-pk", SideZCode: "dev-a", SideZIfaceName: "Ethernet3",
+		ContributorPK: "contrib-x-pk", ContributorCode: "contrib-x",
+		SideAContributorPK: "contrib-x-pk", SideAContributorCode: "contrib-x",
+		SideZContributorPK: "contrib-x-pk", SideZContributorCode: "contrib-x",
+	})
+	plan := &Plan{
+		Name: "Q3 decom",
+		Changes: []PlanChange{
+			{Seq: 10, OpType: OpRemoveDevice, RefDevicePK: "dev-a-pk", State: StatePending},
+		},
+	}
+
+	devices, _ := collectDecomTargets(plan, baseline)
+	require.Len(t, devices, 1)
+
+	count := 0
+	for _, al := range devices[0].AttachedLinks {
+		if al.LinkCode == "link-loop" {
+			count++
+		}
+	}
+	require.Equal(t, 1, count)
+}

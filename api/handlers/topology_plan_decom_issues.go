@@ -169,6 +169,7 @@ func resolveDeviceTarget(idx *decomBaselineIndex, ch PlanChange) DeviceDecomTarg
 	if !ok {
 		t.DeviceCode = orFallback(snap.DeviceCode, ch.RefDevicePK)
 		t.ContributorCode = snap.ContributorCode
+		t.MetroLabel = snap.MetroCode
 		return t
 	}
 
@@ -345,17 +346,30 @@ func crossContribExposureLine(t DeviceDecomTarget) string {
 
 // renderDeviceDecomTitle builds the device decom issue title, matching the
 // infra contributor-decommission format but with a plain hyphen separator (no
-// em dash).
+// em dash). Every interpolated field is sanitized: ref_snapshot is unconstrained
+// JSON, so a drifted device's code or metro can carry a backtick or newline.
 func renderDeviceDecomTitle(t DeviceDecomTarget) string {
 	metro := orFallback(t.MetroLabel, "metro unknown")
 	return fmt.Sprintf("[Decom] %s - %s (%s) - %s",
-		orFallback(t.ContributorCode, "unknown contributor"), metro, t.DeviceCode, decomDate(t.Change.TargetDate))
+		sanitizeInline(orFallback(t.ContributorCode, "unknown contributor")),
+		sanitizeInline(metro),
+		sanitizeInline(t.DeviceCode),
+		sanitizeInline(decomDate(t.Change.TargetDate)))
 }
 
-// renderLinkDecomTitle builds the link decom issue title.
+// renderLinkDecomTitle builds the link decom issue title. The endpoints
+// segment is only built from the side device codes when at least one is
+// non-empty; on a drifted link (both sides empty) it falls back to the
+// sanitized link code so the title never reads a bare "unknown - : - TBD".
 func renderLinkDecomTitle(t LinkDecomTarget) string {
-	return fmt.Sprintf("[Decom-Link] %s - %s:%s - %s",
-		orFallback(t.OwnerContribCode, "unknown contributor"), t.SideADeviceCode, t.SideZDeviceCode, decomDate(t.Change.TargetDate))
+	endpoints := sanitizeInline(t.LinkCode)
+	if t.SideADeviceCode != "" || t.SideZDeviceCode != "" {
+		endpoints = sanitizeInline(t.SideADeviceCode) + ":" + sanitizeInline(t.SideZDeviceCode)
+	}
+	return fmt.Sprintf("[Decom-Link] %s - %s - %s",
+		sanitizeInline(orFallback(t.OwnerContribCode, "unknown contributor")),
+		endpoints,
+		sanitizeInline(decomDate(t.Change.TargetDate)))
 }
 
 // renderDeviceDecomBody renders the full device decom issue body: a summary,
@@ -368,7 +382,7 @@ func renderDeviceDecomBody(t DeviceDecomTarget) string {
 	var b strings.Builder
 	contribCode := orFallback(t.ContributorCode, "unknown contributor")
 	metro := orFallback(t.MetroLabel, "unknown")
-	date := decomDate(t.Change.TargetDate)
+	date := sanitizeInline(decomDate(t.Change.TargetDate))
 	devCode := t.DeviceCode
 
 	b.WriteString("## Summary\n")
@@ -418,7 +432,11 @@ func renderDeviceDecomBody(t DeviceDecomTarget) string {
 	fmt.Fprintf(&b, "### T-31 days: Cap (%s)\n", sanitizeInline(contribCode))
 	fmt.Fprintf(&b, "- [ ] `device update --max-users 0` on `%s` (stops new users; existing users keep working)\n", sanitizeInline(devCode))
 	b.WriteString("### T-14 days: Notice (User team)\n")
-	fmt.Fprintf(&b, "- [ ] Notify affected users (%d connected) to migrate\n", t.Users)
+	if t.Resolved {
+		fmt.Fprintf(&b, "- [ ] Notify affected users (%d connected) to migrate\n", t.Users)
+	} else {
+		b.WriteString("- [ ] Notify affected users to migrate\n")
+	}
 	b.WriteString("### T-1 day: DZ prep\n")
 	b.WriteString("- [ ] Confirm user count has drained\n")
 	b.WriteString("- [ ] Final go / no-go\n")
@@ -456,13 +474,16 @@ func renderLinkDecomBody(t LinkDecomTarget) string {
 	owner := orFallback(t.OwnerContribCode, "unknown contributor")
 	sideAMetro := orFallback(t.SideAMetroLabel, "unknown")
 	sideZMetro := orFallback(t.SideZMetroLabel, "unknown")
-	date := decomDate(t.Change.TargetDate)
+	date := sanitizeInline(decomDate(t.Change.TargetDate))
+	hasEndpoints := t.SideADeviceCode != "" || t.SideZDeviceCode != ""
 
 	b.WriteString("## Summary\n")
 	fmt.Fprintf(&b, "- Contributor: `%s`\n", sanitizeInline(owner))
 	fmt.Fprintf(&b, "- Link: `%s` (`%s`)\n", sanitizeInline(t.LinkCode), sanitizeInline(t.LinkPK))
-	fmt.Fprintf(&b, "- Endpoints: `%s` (%s) to `%s` (%s)\n",
-		sanitizeInline(t.SideADeviceCode), sanitizeInline(sideAMetro), sanitizeInline(t.SideZDeviceCode), sanitizeInline(sideZMetro))
+	if hasEndpoints {
+		fmt.Fprintf(&b, "- Endpoints: `%s` (%s) to `%s` (%s)\n",
+			sanitizeInline(t.SideADeviceCode), sanitizeInline(sideAMetro), sanitizeInline(t.SideZDeviceCode), sanitizeInline(sideZMetro))
+	}
 	fmt.Fprintf(&b, "- Bandwidth: %s %s\n", formatBandwidthBps(t.BandwidthBps), sanitizeInline(t.LinkType))
 	fmt.Fprintf(&b, "- Target date: %s\n\n", date)
 
@@ -471,17 +492,21 @@ func renderLinkDecomBody(t LinkDecomTarget) string {
 	}
 
 	b.WriteString("## Pre-decom notes\n")
-	fmt.Fprintf(&b, "- Side A `%s` (%s, `%s`): %d users\n",
-		sanitizeInline(t.SideADeviceCode), sanitizeInline(sideAMetro), sanitizeInline(t.SideAContribCode), t.SideAUsers)
-	fmt.Fprintf(&b, "- Side Z `%s` (%s, `%s`): %d users\n",
-		sanitizeInline(t.SideZDeviceCode), sanitizeInline(sideZMetro), sanitizeInline(t.SideZContribCode), t.SideZUsers)
-	if t.CrossContributor {
-		fmt.Fprintf(&b, "- Cross-contributor: yes (`%s` and `%s`)\n", sanitizeInline(t.SideAContribCode), sanitizeInline(t.SideZContribCode))
+	if t.Resolved {
+		fmt.Fprintf(&b, "- Side A `%s` (%s, `%s`): %d users\n",
+			sanitizeInline(t.SideADeviceCode), sanitizeInline(sideAMetro), sanitizeInline(t.SideAContribCode), t.SideAUsers)
+		fmt.Fprintf(&b, "- Side Z `%s` (%s, `%s`): %d users\n",
+			sanitizeInline(t.SideZDeviceCode), sanitizeInline(sideZMetro), sanitizeInline(t.SideZContribCode), t.SideZUsers)
+		if t.CrossContributor {
+			fmt.Fprintf(&b, "- Cross-contributor: yes (`%s` and `%s`)\n", sanitizeInline(t.SideAContribCode), sanitizeInline(t.SideZContribCode))
+		} else {
+			b.WriteString("- Cross-contributor: no\n")
+		}
+		fmt.Fprintf(&b, "- Impact: removing this link reroutes traffic between %s and %s; confirm alternate-path capacity.\n",
+			sanitizeInline(sideAMetro), sanitizeInline(sideZMetro))
 	} else {
-		b.WriteString("- Cross-contributor: no\n")
+		b.WriteString("- Endpoint details unavailable (drift); confirm endpoints, user counts, and cross-contributor exposure manually.\n")
 	}
-	fmt.Fprintf(&b, "- Impact: removing this link reroutes traffic between %s and %s; confirm alternate-path capacity.\n",
-		sanitizeInline(sideAMetro), sanitizeInline(sideZMetro))
 	b.WriteString("- [ ] Maintenance event created in OPS portal\n\n")
 
 	b.WriteString("## Contributor actions (in order)\n")
@@ -500,7 +525,11 @@ func renderLinkDecomBody(t LinkDecomTarget) string {
 	b.WriteString("## Post-decom verification (DZ)\n")
 	fmt.Fprintf(&b, "- [ ] Link `%s` no longer onchain\n", sanitizeInline(t.LinkCode))
 	b.WriteString("- [ ] Freed interfaces confirmed removed\n")
-	fmt.Fprintf(&b, "- [ ] Metro-pair latency %s to %s still within target\n", sanitizeInline(sideAMetro), sanitizeInline(sideZMetro))
+	if t.Resolved {
+		fmt.Fprintf(&b, "- [ ] Metro-pair latency %s to %s still within target\n", sanitizeInline(sideAMetro), sanitizeInline(sideZMetro))
+	} else {
+		b.WriteString("- [ ] Metro-pair latency still within target\n")
+	}
 
 	if t.Change.AssigneeNote != "" {
 		b.WriteString("\n## Notes\n")
