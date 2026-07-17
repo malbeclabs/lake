@@ -7,7 +7,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/malbeclabs/lake/api/handlers"
-	"github.com/malbeclabs/lake/api/handlers/dberror"
+	"github.com/malbeclabs/lake/utils/pkg/dberror"
 )
 
 // EdgeShredsPublisher is a stable public shape for a single shreds publisher.

@@ -16,6 +16,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 	"github.com/malbeclabs/lake/indexer/pkg/metrics"
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
 // InfluxDBClient is an interface for querying InfluxDB interface counter data.
@@ -228,6 +229,10 @@ type View struct {
 	// refreshMu already serialises refreshes, so no additional lock is needed.
 	baselineCache     *CounterBaselines
 	baselineCacheTime time.Time
+
+	// esc escalates consecutive refresh failures from WARN to ERROR so a
+	// single blip doesn't page on-call (see logger.Escalator).
+	esc logger.Escalator
 }
 
 func NewView(cfg ViewConfig) (*View, error) {
@@ -248,6 +253,11 @@ func NewView(cfg ViewConfig) (*View, error) {
 		cfg:     cfg,
 		store:   store,
 		readyCh: make(chan struct{}),
+		// This view refreshes every ~5 minutes and is the only signal for the
+		// InfluxDB dependency, so the default transient threshold (10) would
+		// take ~50 minutes to page. Escalate transient causes at the strict
+		// threshold (~15 minutes) instead.
+		esc: logger.Escalator{TransientErrorAfter: logger.DefaultErrorAfter},
 	}
 
 	return v, nil
@@ -281,12 +291,11 @@ func (v *View) safeRefresh(ctx context.Context) {
 		}
 	}()
 
-	if _, err := v.Refresh(ctx); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return
-		}
-		v.log.Error("telemetry/usage: refresh failed", "error", err)
+	_, err := v.Refresh(ctx)
+	if err != nil && errors.Is(err, context.Canceled) {
+		return
 	}
+	v.esc.Observe(v.log, "refresh", "telemetry/usage: refresh failed", err)
 }
 
 func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) {
