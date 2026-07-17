@@ -2,11 +2,14 @@ import { useMemo, useCallback, useState, useEffect, useRef, type ReactNode } fro
 import MapGL, { Source, Layer, Marker } from 'react-map-gl/maplibre'
 import type { MapLayerMouseEvent, MapRef } from 'react-map-gl/maplibre'
 import type { StyleSpecification } from 'maplibre-gl'
+import { Building2 } from 'lucide-react'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { useTheme } from '@/hooks/use-theme'
 import { usePlanner } from './PlannerContext'
 import { buildDevicePositions, buildLinkFeatures, buildRemoveDeviceSnapshot } from './map-geojson'
 import { deviceChangeStyle, CHANGE_LEGEND } from './change-styles'
+import { buildContributorColors } from './contributor-colors'
+import { ContributorLegend } from './ContributorLegend'
 import { LinkContextPopup } from './LinkContextPopup'
 import { LinkEditForm } from './LinkEditForm'
 import { nearestKeyWithin, SNAP_RADIUS_DEG } from './geo'
@@ -60,6 +63,7 @@ export function PlannerMap() {
   const [zoom, setZoom] = useState(2)
   const [mapLoaded, setMapLoaded] = useState(false)
   const [hoveredDeviceKey, setHoveredDeviceKey] = useState<string | null>(null)
+  const [showContributors, setShowContributors] = useState(false)
   const [popupMode, setPopupMode] = useState<'menu' | 'edit'>('menu')
   const [dragSnapKey, setDragSnapKey] = useState<string | null>(null)
   const [pendingMove, setPendingMove] = useState<{
@@ -101,6 +105,11 @@ export function PlannerMap() {
     [draft]
   )
 
+  const contributorColors = useMemo(
+    () => (draft ? buildContributorColors(draft.devices, draft.links) : null),
+    [draft]
+  )
+
   // Auto-fit to the plan's changed region once per plan open. Guarded by a ref
   // (not state) so an edit made after opening never re-triggers the fit -- only a
   // different plan.id does. A brand new plan with no changes still marks itself
@@ -135,9 +144,15 @@ export function PlannerMap() {
   const linkGeoJson = useMemo(
     () =>
       draft
-        ? buildLinkFeatures(draft, positions, isDark, selectedLinkKey)
+        ? buildLinkFeatures(
+            draft,
+            positions,
+            isDark,
+            selectedLinkKey,
+            showContributors ? contributorColors?.colorByPk : undefined
+          )
         : { type: 'FeatureCollection' as const, features: [] },
-    [draft, positions, isDark, selectedLinkKey]
+    [draft, positions, isDark, selectedLinkKey, showContributors, contributorColors]
   )
 
   const handleMapClick = useCallback(
@@ -552,7 +567,9 @@ export function PlannerMap() {
                   style={{
                     width: 12,
                     height: 12,
-                    backgroundColor: style.color,
+                    backgroundColor: showContributors
+                      ? (contributorColors?.colorByPk.get(device.contributor_pk) ?? style.color)
+                      : style.color,
                     opacity: style.opacity,
                     border: style.ring ? '2px solid #fff' : '1px solid rgba(0,0,0,0.3)',
                     boxShadow: style.ring ? `0 0 0 2px ${style.color}` : undefined,
@@ -678,6 +695,24 @@ export function PlannerMap() {
           </div>
         ))}
       </div>
+
+      {/* Contributor color overlay toggle, top-right */}
+      <button
+        onClick={() => setShowContributors((v) => !v)}
+        className={`absolute top-3 right-3 z-10 bg-card/90 border rounded-md px-2.5 py-1.5 text-xs flex items-center gap-1.5 ${
+          showContributors ? 'text-purple-500 border-purple-400' : 'border-border text-muted-foreground'
+        }`}
+        title="Color devices and links by contributor"
+      >
+        <Building2 className="h-3.5 w-3.5" />
+        Contributors
+      </button>
+
+      {showContributors && contributorColors && (
+        <div className="absolute top-14 right-3 z-10">
+          <ContributorLegend contributors={contributorColors.contributors} />
+        </div>
+      )}
     </div>
   )
 }

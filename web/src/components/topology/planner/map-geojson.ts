@@ -44,7 +44,8 @@ export function buildLinkFeatures(
   draft: DraftTopology,
   positions: Map<string, [number, number]>,
   isDark: boolean,
-  selectedKey: string | null
+  selectedKey: string | null,
+  contributorColorByPk?: Map<string, string>
 ): GeoJSON.FeatureCollection {
   const features: GeoJSON.Feature[] = []
   for (const link of draft.links) {
@@ -53,12 +54,17 @@ export function buildLinkFeatures(
     if (!start || !end) continue
     const style = linkChangeStyle(link.changeState, isDark)
     const key = link.localRef ?? link.pk
+    // When the contributor overlay is on, color by the link's owning contributor
+    // (falling back to the change-state color if the contributor has no color).
+    const color = contributorColorByPk
+      ? (contributorColorByPk.get(link.contributor_pk || link.side_a_contributor_pk) ?? style.color)
+      : style.color
     features.push({
       type: 'Feature',
       properties: {
         pk: key,
         code: link.code,
-        color: style.color,
+        color,
         weight: style.weight,
         opacity: style.opacity,
         useDash: style.dashed,
