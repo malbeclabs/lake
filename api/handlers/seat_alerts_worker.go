@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"os"
 	"strings"
 	"time"
@@ -87,10 +88,20 @@ func (a *API) RunSeatAlertSweep(ctx context.Context) error {
 	return nil
 }
 
+// htmlEscape escapes &, <, and > so a dynamic value (seat pk, device code,
+// metro code, trigger text, etc.) can be safely interpolated into an
+// HTML-parse-mode Telegram message without being misread as markup.
+func htmlEscape(s string) string {
+	return html.EscapeString(s)
+}
+
 // seatAlertMessage renders the low-balance warning sent to Telegram. It is a
 // pure function (no I/O) so it is unit tested directly (see
-// seat_alerts_message_test.go). The Telegram client sends this with no
-// parse_mode, so the layout relies on line breaks and spacing only, no markdown.
+// seat_alerts_message_test.go). The message uses Telegram's HTML parse mode
+// (bold labels, a <pre> block around the copy-pasteable command); every
+// dynamic value is passed through htmlEscape before interpolation, and static
+// text uses square-bracket placeholders like [device-code] instead of angle
+// brackets so nothing in the template itself needs escaping.
 func seatAlertMessage(alert SeatAlert, s ShredSubscriberRow) string {
 	epochsLeft := PrepaidEpochs(s.TotalUSDCBalance, s.PricePerEpochDollars)
 	balance := float64(s.TotalUSDCBalance) / 1_000_000
@@ -99,24 +110,24 @@ func seatAlertMessage(alert SeatAlert, s ShredSubscriberRow) string {
 
 	deviceCode := s.DeviceCode
 	if deviceCode == "" {
-		deviceCode = "<device-code>"
+		deviceCode = "[device-code]"
 	}
 	clientIP := s.ClientIP
 	if clientIP == "" {
-		clientIP = "<your-ip>"
+		clientIP = "[your-ip]"
 	}
 
 	lines := []string{
-		"⚠️ Seat running low",
+		"⚠️ <b>Seat running low</b>",
 		"",
-		fmt.Sprintf("%-11s%s", "Seat:", shortSeatPK(s.PK)),
-		fmt.Sprintf("%-11s%s (%s)", "Device:", deviceCode, s.MetroCode),
-		fmt.Sprintf("%-11s%.2f USDC left", "Escrow:", balance),
-		fmt.Sprintf("%-11s~%d epoch(s) (about %d days)", "Runway:", epochsLeft, days),
-		fmt.Sprintf("Tenure at stake: %d epochs", s.TenureEpochs),
-		fmt.Sprintf("%-11s%s", "Trigger:", triggerText(alert)),
+		fmt.Sprintf("<b>Seat:</b> %s", htmlEscape(shortSeatPK(s.PK))),
+		fmt.Sprintf("<b>Device:</b> %s (%s)", htmlEscape(deviceCode), htmlEscape(s.MetroCode)),
+		fmt.Sprintf("<b>Escrow:</b> %.2f USDC left", balance),
+		fmt.Sprintf("<b>Runway:</b> ~%d epoch(s) (~%d days)", epochsLeft, days),
+		fmt.Sprintf("<b>Tenure at stake:</b> %d epoch(s)", s.TenureEpochs),
+		fmt.Sprintf("<b>Trigger:</b> %s", htmlEscape(triggerText(alert))),
 		"",
-		fmt.Sprintf("If the escrow runs out you lose the seat and its %d epochs of tenure.", s.TenureEpochs),
+		"If the escrow runs out you lose the seat and its tenure.",
 		"",
 	}
 
@@ -126,17 +137,18 @@ func seatAlertMessage(alert SeatAlert, s ShredSubscriberRow) string {
 	var suggested int64
 	if price > 0 {
 		suggested = price * 15 // ~15 epochs of runway
-		lines = append(lines, fmt.Sprintf("This device costs ~%d USDC per epoch (~2 days).", price))
+		lines = append(lines, fmt.Sprintf("This device costs ~%d USDC/epoch (~2 days). Top up (adds to your escrow — more is better):", price))
+	} else {
+		lines = append(lines, "Top up (adds to your escrow — more is better):")
 	}
-	lines = append(lines, "Top up (adds to your escrow; more is better, it only draws down as you use it):")
 	if price > 0 {
 		lines = append(lines,
-			fmt.Sprintf("doublezero-solana shreds pay --device-code %s --client-ip %s --amount %d", deviceCode, clientIP, suggested),
-			fmt.Sprintf("(%d USDC ≈ ~%d days here. Minimum %d = one epoch.)", suggested, suggested/price*2, price),
+			fmt.Sprintf("<pre>doublezero-solana shreds pay --device-code %s --client-ip %s --amount %d</pre>", htmlEscape(deviceCode), htmlEscape(clientIP), suggested),
+			fmt.Sprintf("%d USDC ≈ ~%d days here. Minimum %d = one epoch.", suggested, suggested/price*2, price),
 		)
 	} else {
 		lines = append(lines,
-			fmt.Sprintf("doublezero-solana shreds pay --device-code %s --client-ip %s --amount <USDC>", deviceCode, clientIP))
+			fmt.Sprintf("<pre>doublezero-solana shreds pay --device-code %s --client-ip %s --amount [USDC]</pre>", htmlEscape(deviceCode), htmlEscape(clientIP)))
 	}
 	lines = append(lines, "", "Reply /topup for details, /help for all commands.")
 

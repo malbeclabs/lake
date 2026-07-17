@@ -116,7 +116,7 @@ func (h *EventHandler) process(ctx context.Context, u tgUpdate) {
 			h.send(ctx, chatID, "That activation link is invalid or already used. Create a new alert on the site.")
 			return
 		}
-		h.send(ctx, chatID, fmt.Sprintf("✅ Connected\n\nI'll watch: %s\n\nCommands: /list · /stop · /topup · /help", seat))
+		h.send(ctx, chatID, fmt.Sprintf(startConfirmedTmpl, htmlEscape(seat)))
 	case strings.HasPrefix(text, "/list"):
 		seats, err := h.store.List(ctx, chatID)
 		if err != nil || len(seats) == 0 {
@@ -125,9 +125,9 @@ func (h *EventHandler) process(ctx context.Context, u tgUpdate) {
 		}
 		lines := make([]string, len(seats))
 		for i, s := range seats {
-			lines[i] = fmt.Sprintf("%d. %s", i+1, s)
+			lines[i] = fmt.Sprintf("%d. %s", i+1, htmlEscape(s))
 		}
-		h.send(ctx, chatID, "Your active alerts:\n"+strings.Join(lines, "\n"))
+		h.send(ctx, chatID, "<b>Your active alerts:</b>\n"+strings.Join(lines, "\n"))
 	case strings.HasPrefix(text, "/stop"):
 		arg := strings.TrimSpace(strings.TrimPrefix(text, "/stop"))
 		switch {
@@ -137,7 +137,7 @@ func (h *EventHandler) process(ctx context.Context, u tgUpdate) {
 		default:
 			n, err := strconv.Atoi(arg)
 			if err != nil || n <= 0 {
-				h.send(ctx, chatID, "Use /stop <number> (see /list), or /stop all.")
+				h.send(ctx, chatID, "Use /stop [number] (see /list), or /stop all.")
 				return
 			}
 			desc, ok, err := h.store.StopOne(ctx, chatID, n)
@@ -145,7 +145,7 @@ func (h *EventHandler) process(ctx context.Context, u tgUpdate) {
 				h.send(ctx, chatID, fmt.Sprintf("No alert #%d. Use /list to see your alerts.", n))
 				return
 			}
-			h.send(ctx, chatID, fmt.Sprintf("Stopped alert #%d: %s", n, desc))
+			h.send(ctx, chatID, fmt.Sprintf("Stopped alert #%d: %s", n, htmlEscape(desc)))
 		}
 	case strings.HasPrefix(text, "/help"):
 		h.send(ctx, chatID, helpText)
@@ -186,31 +186,35 @@ func (h *EventHandler) process(ctx context.Context, u tgUpdate) {
 	}
 }
 
-const helpText = `DoubleZero Seat Alerts
+// startConfirmedTmpl is the /start success reply. %s is the htmlEscape'd seat
+// description returned by Store.Activate.
+const startConfirmedTmpl = "✅ <b>Connected</b>\n\nI'll watch <b>%s</b>\n\nCommands: /list · /stop · /topup · /help"
+
+const helpText = `<b>DoubleZero Seat Alerts</b>
 
 I warn you before a shred seat runs out of prepaid escrow, so you don't lose the seat or its tenure. Create alerts on the DoubleZero site (the bell on a seat), then activate them here.
 
-/list                your active alerts, numbered
-/stop <n>            stop alert number n (from /list)
-/stop all            stop every alert
-/announcements on|off  product update messages (on by default)
-/topup               how to top up a seat's escrow
-/help                this message`
+<pre>/list                  your active alerts
+/stop [n]              stop alert number n
+/stop all             stop every alert
+/announcements on|off  product updates (on)
+/topup                how to top up a seat
+/help                 this message</pre>`
 
-const topupText = `Topping up a seat's escrow
+const topupText = `<b>Topping up a seat's escrow</b>
 
 Run this with the wallet that funds the seat:
+<pre>doublezero-solana shreds pay --device-code [CODE] --client-ip [IP] --amount [USDC]</pre>
+[CODE] — the device your seat is on
+[IP] — your machine's public IP (curl -4 ifconfig.me)
+[USDC] — amount to add; at least one epoch's price (more is better)
 
-doublezero-solana shreds pay --device-code <CODE> --client-ip <IP> --amount <USDC>
+Check the price:
+<pre>doublezero-solana shreds price --device-code [CODE]</pre>
+Check your balance:
+<pre>doublezero-solana shreds list --client-ip [IP]</pre>
 
-<CODE>  the device your seat is on
-<IP>    your machine's public IP (curl -4 ifconfig.me)
-<USDC>  amount to add; at least one epoch's price (more is better)
-
-Check the price:    doublezero-solana shreds price --device-code <CODE>
-Check your balance: doublezero-solana shreds list --client-ip <IP>
-
-Re-running just adds to your existing escrow; unused balance stays as runway.`
+Re-running just adds to your existing escrow.`
 
 func (h *EventHandler) send(ctx context.Context, chatID int64, text string) {
 	if err := h.client.SendMessage(ctx, chatID, text); err != nil {

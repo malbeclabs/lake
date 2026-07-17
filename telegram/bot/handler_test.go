@@ -148,7 +148,7 @@ func TestWebhook_Help(t *testing.T) {
 		t.Fatalf("expected a reply to be sent")
 	}
 	text, _ := (*sent)[0]["text"].(string)
-	if !strings.Contains(text, "/topup") || !strings.Contains(text, "/stop <n>") {
+	if !strings.Contains(text, "<pre>") || !strings.Contains(text, "/stop [n]") {
 		t.Fatalf("help reply missing expected content: %q", text)
 	}
 }
@@ -172,7 +172,7 @@ func TestWebhook_Topup(t *testing.T) {
 		t.Fatalf("expected a reply to be sent")
 	}
 	text, _ := (*sent)[0]["text"].(string)
-	if !strings.Contains(text, "shreds pay") {
+	if !strings.Contains(text, "<pre>") || !strings.Contains(text, "doublezero-solana shreds pay") {
 		t.Fatalf("topup reply missing expected content: %q", text)
 	}
 }
