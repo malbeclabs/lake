@@ -1,6 +1,6 @@
-import { useMemo, useCallback, useState, useEffect, type ReactNode } from 'react'
+import { useMemo, useCallback, useState, useEffect, useRef, type ReactNode } from 'react'
 import MapGL, { Source, Layer, Marker } from 'react-map-gl/maplibre'
-import type { MapLayerMouseEvent } from 'react-map-gl/maplibre'
+import type { MapLayerMouseEvent, MapRef } from 'react-map-gl/maplibre'
 import type { StyleSpecification } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { useTheme } from '@/hooks/use-theme'
@@ -16,6 +16,12 @@ import { AddLinkForm } from './AddLinkForm'
 import { AddDeviceForm, type AddDeviceSubmitValue } from './AddDeviceForm'
 import { attachedLinks } from './attached-links'
 import { estimateLatencyNs } from './estimator'
+import { changedEntitiesBounds, changeGeoTargetById } from './change-geo'
+
+// Zoom thresholds above which device/link codes are drawn on the map, so labels
+// only appear once there is enough room for them without cluttering a world view.
+const DEVICE_LABEL_ZOOM = 3.5
+const LINK_LABEL_ZOOM = 6
 
 function createMapStyle(isDark: boolean): StyleSpecification {
   const tileUrl = isDark
@@ -37,10 +43,23 @@ function createMapStyle(isDark: boolean): StyleSpecification {
 }
 
 export function PlannerMap() {
-  const { draft, baseline, tool, setTool, selectedLinkKey, selectLink, addChange } =
-    usePlanner()
+  const {
+    draft,
+    baseline,
+    tool,
+    setTool,
+    selectedLinkKey,
+    selectLink,
+    addChange,
+    plan,
+    focusRequest,
+  } = usePlanner()
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
+  const mapRef = useRef<MapRef | null>(null)
+  const [zoom, setZoom] = useState(2)
+  const [mapLoaded, setMapLoaded] = useState(false)
+  const [hoveredDeviceKey, setHoveredDeviceKey] = useState<string | null>(null)
   const [popupMode, setPopupMode] = useState<'menu' | 'edit'>('menu')
   const [dragSnapKey, setDragSnapKey] = useState<string | null>(null)
   const [pendingMove, setPendingMove] = useState<{
@@ -81,6 +100,32 @@ export function PlannerMap() {
     () => (draft ? buildDevicePositions(draft) : new Map<string, [number, number]>()),
     [draft]
   )
+
+  // Auto-fit to the plan's changed region once per plan open. Guarded by a ref
+  // (not state) so an edit made after opening never re-triggers the fit -- only a
+  // different plan.id does. A brand new plan with no changes still marks itself
+  // fitted, so it doesn't retry the fit forever waiting for changes that never come.
+  const lastFitPlanIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!mapLoaded || !plan?.id || !draft) return
+    if (lastFitPlanIdRef.current === plan.id) return
+    const bounds = changedEntitiesBounds(draft)
+    if (bounds) {
+      mapRef.current?.fitBounds(bounds, { padding: 60, maxZoom: 8, duration: 600 })
+    }
+    lastFitPlanIdRef.current = plan.id
+  }, [plan?.id, draft, mapLoaded])
+
+  // Fly to a single change when the Changes panel asks (focusChange). Keyed on the
+  // whole focusRequest object so its nonce forces a re-fire on a repeat click of
+  // the same change (a plain changeId dependency would not change between clicks).
+  useEffect(() => {
+    if (!focusRequest || !draft) return
+    const target = changeGeoTargetById(draft, positions, focusRequest.changeId)
+    if (!target) return
+    const current = mapRef.current?.getZoom() ?? 2
+    mapRef.current?.flyTo({ center: target, zoom: Math.max(current, 6), duration: 800 })
+  }, [focusRequest, draft, positions])
 
   const linkGeoJson = useMemo(
     () =>
@@ -419,6 +464,7 @@ export function PlannerMap() {
   return (
     <div className="relative w-full h-full">
       <MapGL
+        ref={mapRef}
         initialViewState={{ longitude: 0, latitude: 30, zoom: 2 }}
         minZoom={2}
         maxZoom={18}
@@ -426,6 +472,8 @@ export function PlannerMap() {
         style={{ width: '100%', height: '100%' }}
         attributionControl={false}
         interactiveLayerIds={['planner-link-hit', 'planner-link-lines']}
+        onLoad={() => setMapLoaded(true)}
+        onZoom={(e) => setZoom(e.viewState.zoom)}
         onClick={handleMapClick}
         onMouseMove={(e) => {
           if (tool === 'add-link' && addLinkSource && !addLinkTarget) {
@@ -481,12 +529,18 @@ export function PlannerMap() {
           const pos = positions.get(device.pk)
           if (!pos) return null
           const style = deviceChangeStyle(device.changeState, isDark)
+          const hovered = hoveredDeviceKey === device.pk
+          // Always legible for changed devices (the interesting ones); otherwise only
+          // once zoomed in enough, or while hovered.
+          const showLabel = zoom >= DEVICE_LABEL_ZOOM || hovered || device.changeState !== 'unchanged'
           return (
             <Marker key={device.pk} longitude={pos[0]} latitude={pos[1]} anchor="center">
               <div
-                className="cursor-pointer"
+                className="flex flex-col items-center cursor-pointer"
                 title={device.code}
                 onClick={() => handleDeviceClick(device.pk)}
+                onMouseEnter={() => setHoveredDeviceKey(device.pk)}
+                onMouseLeave={() => setHoveredDeviceKey(null)}
               >
                 <div
                   className="rounded-full"
@@ -500,10 +554,37 @@ export function PlannerMap() {
                     textDecoration: style.struck ? 'line-through' : undefined,
                   }}
                 />
+                {showLabel && (
+                  <div className="pointer-events-none mt-0.5 text-[10px] leading-tight text-center bg-background/80 rounded px-1 whitespace-nowrap">
+                    <div>{device.code}</div>
+                    {hovered && device.contributor_code && <div>{device.contributor_code}</div>}
+                  </div>
+                )}
               </div>
             </Marker>
           )
         })}
+
+        {zoom >= LINK_LABEL_ZOOM &&
+          draft?.links.map((link) => {
+            const a = positions.get(link.side_a_pk)
+            const z = positions.get(link.side_z_pk)
+            if (!a || !z) return null
+            const midLng = (a[0] + z[0]) / 2
+            const midLat = (a[1] + z[1]) / 2
+            return (
+              <Marker
+                key={`linklabel-${link.localRef ?? link.pk}`}
+                longitude={midLng}
+                latitude={midLat}
+                anchor="center"
+              >
+                <div className="pointer-events-none text-[10px] bg-background/80 rounded px-1 whitespace-nowrap">
+                  {link.code}
+                </div>
+              </Marker>
+            )
+          })}
 
         {selectedLink && selectedMidpoint && popupMode === 'menu' && (
           <Marker longitude={selectedMidpoint[0]} latitude={selectedMidpoint[1]} anchor="bottom">

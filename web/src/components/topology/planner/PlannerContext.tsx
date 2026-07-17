@@ -6,6 +6,7 @@ import {
   useCallback,
   useMemo,
   useRef,
+  useState,
   type ReactNode,
 } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -70,6 +71,8 @@ export interface PlannerContextValue {
     status?: PlanStatus
   }) => Promise<void>
   reload: () => Promise<void>
+  focusChange: (changeId: string) => void
+  focusRequest: { changeId: string; nonce: number } | null
 }
 
 const PlannerContext = createContext<PlannerContextValue | null>(null)
@@ -144,6 +147,16 @@ export function PlannerProvider({ children }: { children: ReactNode }) {
     if (!baseline || !activePlan) return new Map()
     return annotateDrift(baseline, activePlan.changes)
   }, [baseline, activePlan])
+
+  // Focus bus: clicking a change in the Changes panel asks the map to fly there.
+  // The nonce guarantees a NEW request object on every call, even a repeat click on
+  // the same change, so the map's effect (keyed on this object) always re-fires.
+  const [focusRequest, setFocusRequest] = useState<{ changeId: string; nonce: number } | null>(
+    null
+  )
+  const focusChange = useCallback((changeId: string) => {
+    setFocusRequest((prev) => ({ changeId, nonce: (prev?.nonce ?? 0) + 1 }))
+  }, [])
 
   const setTool = useCallback((t: PlannerTool) => dispatch({ type: 'setTool', tool: t }), [])
   const selectLink = useCallback(
@@ -411,6 +424,8 @@ export function PlannerProvider({ children }: { children: ReactNode }) {
     reorderChanges,
     savePlanMeta,
     reload,
+    focusChange,
+    focusRequest,
   }
 
   return <PlannerContext.Provider value={value}>{children}</PlannerContext.Provider>

@@ -15,6 +15,7 @@ function ChangeRow({
   onMove,
   patchChange,
   removeChange,
+  focusChange,
 }: {
   change: PlanChange
   drift: DriftStatus
@@ -23,6 +24,7 @@ function ChangeRow({
   onMove: (index: number, dir: -1 | 1) => void
   patchChange: PlannerContextValue['patchChange']
   removeChange: PlannerContextValue['removeChange']
+  focusChange: PlannerContextValue['focusChange']
 }) {
   // The free-text note keeps LOCAL state and commits on blur, so typing fires a
   // single versioned PATCH per edit session -- not one per keystroke (which would
@@ -52,7 +54,14 @@ function ChangeRow({
     <div className="border border-border rounded-md p-2 bg-card">
       <div className="flex items-start justify-between gap-2">
         <span className="text-xs font-medium flex items-center gap-1.5">
-          {changeSummary(change)}
+          <button
+            type="button"
+            onClick={() => focusChange(change.id)}
+            className="hover:underline text-left"
+            title="Fly the map to this change"
+          >
+            {changeSummary(change)}
+          </button>
           <DriftBadge drift={drift} />
         </span>
         <div className="flex items-center gap-0.5 shrink-0">
@@ -120,7 +129,7 @@ function ChangeRow({
 }
 
 export function ChangesPanel() {
-  const { plan, drift, patchChange, removeChange, reorderChanges } = usePlanner()
+  const { plan, drift, patchChange, removeChange, reorderChanges, focusChange } = usePlanner()
   if (!plan) return null
 
   const ordered = [...plan.changes].sort((a, b) => a.seq - b.seq)
@@ -166,6 +175,7 @@ export function ChangesPanel() {
               onMove={move}
               patchChange={patchChange}
               removeChange={removeChange}
+              focusChange={focusChange}
             />
           ))}
         </div>
