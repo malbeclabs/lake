@@ -44,7 +44,11 @@ func SolIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 	// timeouts, scheduling failures) — the activity-side failure counter never
 	// sees them, and timeouts classify as transient, so escalate them at the
 	// strict threshold to keep sustained timeouts visible.
+	// Counts reset at continue-as-new (~hourly), deferring escalation by up
+	// to ErrorAfter-1 iterations across the boundary — fine at threshold 3;
+	// revisit before raising the threshold.
 	esc := &logger.Escalator{TransientErrorAfter: logger.DefaultErrorAfter}
+	var err error
 
 	actOpts := temporalworkflow.ActivityOptions{
 		StartToCloseTimeout: 5 * time.Minute,
@@ -56,14 +60,11 @@ func SolIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 
 	for iteration < continueAsNewThreshold {
 		// Solana validator state must run first — GeoIP depends on gossip IPs.
-		if err := temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshSolana).Get(ctx, nil); err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			esc.Fail(log, "solana", "solana refresh failed", "error", err)
-		} else {
-			esc.Reset("solana")
+		err = temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshSolana).Get(ctx, nil)
+		if err != nil && ctx.Err() != nil {
+			return ctx.Err()
 		}
+		esc.Observe(log, "solana", "solana refresh failed", err)
 
 		// Run GeoIP in parallel with optional activities.
 		geoipFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshGeoIP)
@@ -80,33 +81,24 @@ func SolIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 			validatorsAppFuture = temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshValidatorsApp)
 		}
 
-		if err := geoipFuture.Get(ctx, nil); err != nil {
-			if ctx.Err() != nil {
+		err = geoipFuture.Get(ctx, nil)
+		if err != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
+		esc.Observe(log, "geoip", "geoip refresh failed", err)
+		if blockProdFuture != nil {
+			err = blockProdFuture.Get(ctx, nil)
+			if err != nil && ctx.Err() != nil {
 				return ctx.Err()
 			}
-			esc.Fail(log, "geoip", "geoip refresh failed", "error", err)
-		} else {
-			esc.Reset("geoip")
-		}
-		if blockProdFuture != nil {
-			if err := blockProdFuture.Get(ctx, nil); err != nil {
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-				esc.Fail(log, "block_production", "block production refresh failed", "error", err)
-			} else {
-				esc.Reset("block_production")
-			}
+			esc.Observe(log, "block_production", "block production refresh failed", err)
 		}
 		if validatorsAppFuture != nil {
-			if err := validatorsAppFuture.Get(ctx, nil); err != nil {
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-				esc.Fail(log, "validatorsapp", "validatorsapp refresh failed", "error", err)
-			} else {
-				esc.Reset("validatorsapp")
+			err = validatorsAppFuture.Get(ctx, nil)
+			if err != nil && ctx.Err() != nil {
+				return ctx.Err()
 			}
+			esc.Observe(log, "validatorsapp", "validatorsapp refresh failed", err)
 		}
 
 		iteration++

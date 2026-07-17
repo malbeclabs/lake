@@ -77,6 +77,11 @@ func NewView(cfg ViewConfig) (*View, error) {
 		cfg:     cfg,
 		store:   store,
 		readyCh: make(chan struct{}),
+		// This view refreshes every ~5 minutes and is the only signal for the
+		// validators.app dependency, so the default transient threshold (10)
+		// would take ~50 minutes to page. Escalate transient causes at the
+		// strict threshold (~15 minutes) instead.
+		esc: logger.Escalator{TransientErrorAfter: logger.DefaultErrorAfter},
 	}, nil
 }
 
@@ -130,14 +135,10 @@ func (v *View) safeRefresh(ctx context.Context) {
 	}()
 
 	_, err := v.Refresh(ctx)
-	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			return
-		}
-		v.esc.Fail(v.log, "refresh", "validatorsapp: refresh failed", "error", err)
+	if err != nil && errors.Is(err, context.Canceled) {
 		return
 	}
-	v.esc.Reset("refresh")
+	v.esc.Observe(v.log, "refresh", "validatorsapp: refresh failed", err)
 }
 
 // Refresh fetches validators from the API and writes them to ClickHouse.

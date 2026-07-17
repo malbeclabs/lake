@@ -131,14 +131,10 @@ func (v *View) safeRefresh(ctx context.Context) {
 	}()
 
 	_, err := v.Refresh(ctx)
-	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			return
-		}
-		v.esc.Fail(v.log, "refresh", "geoip: refresh failed", "error", err)
+	if err != nil && errors.Is(err, context.Canceled) {
 		return
 	}
-	v.esc.Reset("refresh")
+	v.esc.Observe(v.log, "refresh", "geoip: refresh failed", err)
 }
 
 func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) {

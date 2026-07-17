@@ -45,6 +45,9 @@ func ComputeRollupWorkflow(ctx temporalworkflow.Context, iteration int) error {
 	// timeouts, scheduling failures) — the activity-side failure counter never
 	// sees them, and timeouts classify as transient, so escalate them at the
 	// strict threshold to keep sustained timeouts visible.
+	// Counts reset at continue-as-new (~hourly), deferring escalation by up
+	// to ErrorAfter-1 iterations across the boundary — fine at threshold 3;
+	// revisit before raising the threshold.
 	esc := &lakelogger.Escalator{TransientErrorAfter: lakelogger.DefaultErrorAfter}
 
 	actOpts := temporalworkflow.ActivityOptions{
@@ -79,20 +82,17 @@ func ComputeRollupWorkflow(ctx temporalworkflow.Context, iteration int) error {
 // runIteration executes one rollup cycle. Errors are logged, not returned,
 // so the workflow loop continues on failure.
 func runIteration(ctx temporalworkflow.Context, log log.Logger, esc *lakelogger.Escalator, window BackfillChunkInput) {
-	if err := temporalworkflow.ExecuteActivity(ctx, (*Activities).RollupLinks, window).Get(ctx, nil); err != nil {
-		if ctx.Err() == nil {
-			esc.Fail(log, "link_rollup", "link rollup failed", "error", err, "window_start", window.WindowStart, "window_end", window.WindowEnd)
-		}
-	} else {
-		esc.Reset("link_rollup")
+	err := temporalworkflow.ExecuteActivity(ctx, (*Activities).RollupLinks, window).Get(ctx, nil)
+	if err != nil && ctx.Err() != nil {
+		return // workflow context done; the error is just the cancellation
 	}
-	if err := temporalworkflow.ExecuteActivity(ctx, (*Activities).RollupDeviceInterfaces, window).Get(ctx, nil); err != nil {
-		if ctx.Err() == nil {
-			esc.Fail(log, "device_interface_rollup", "device interface rollup failed", "error", err, "window_start", window.WindowStart, "window_end", window.WindowEnd)
-		}
-	} else {
-		esc.Reset("device_interface_rollup")
+	esc.Observe(log, "link_rollup", "link rollup failed", err, "window_start", window.WindowStart, "window_end", window.WindowEnd)
+
+	err = temporalworkflow.ExecuteActivity(ctx, (*Activities).RollupDeviceInterfaces, window).Get(ctx, nil)
+	if err != nil && ctx.Err() != nil {
+		return
 	}
+	esc.Observe(log, "device_interface_rollup", "device interface rollup failed", err, "window_start", window.WindowStart, "window_end", window.WindowEnd)
 }
 
 // BackfillRollupWorkflow processes historical data in time chunks.
@@ -107,6 +107,9 @@ func BackfillRollupWorkflow(ctx temporalworkflow.Context, input BackfillInput) e
 	// timeouts, scheduling failures) — the activity-side failure counter never
 	// sees them, and timeouts classify as transient, so escalate them at the
 	// strict threshold to keep sustained timeouts visible.
+	// Counts reset at continue-as-new (~hourly), deferring escalation by up
+	// to ErrorAfter-1 iterations across the boundary — fine at threshold 3;
+	// revisit before raising the threshold.
 	esc := &lakelogger.Escalator{TransientErrorAfter: lakelogger.DefaultErrorAfter}
 
 	chunkOpts := temporalworkflow.ActivityOptions{

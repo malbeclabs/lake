@@ -166,14 +166,10 @@ func (v *View) safeRefresh(ctx context.Context) {
 	}()
 
 	_, err := v.Refresh(ctx)
-	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			return
-		}
-		v.esc.Fail(v.log, "refresh", "solana: refresh failed", "error", err)
+	if err != nil && errors.Is(err, context.Canceled) {
 		return
 	}
-	v.esc.Reset("refresh")
+	v.esc.Observe(v.log, "refresh", "solana: refresh failed", err)
 }
 
 // safeRefreshBlockProduction wraps RefreshBlockProduction with panic recovery
@@ -186,14 +182,10 @@ func (v *View) safeRefreshBlockProduction(ctx context.Context) {
 	}()
 
 	_, err := v.RefreshBlockProduction(ctx)
-	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			return
-		}
-		v.esc.Fail(v.log, "block_production", "solana: block production refresh failed", "error", err)
+	if err != nil && errors.Is(err, context.Canceled) {
 		return
 	}
-	v.esc.Reset("block_production")
+	v.esc.Observe(v.log, "block_production", "solana: block production refresh failed", err)
 }
 
 func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) {
@@ -257,15 +249,11 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	}
 
 	// Refresh vote account activity (sampled every minute)
-	if _, err := v.RefreshVoteAccountActivity(ctx); err != nil {
-		if errors.Is(err, context.Canceled) {
-			v.log.Warn("solana: vote account activity refresh cancelled", "error", err)
-		} else {
-			v.esc.Fail(v.log, "vote_account_activity", "solana: failed to refresh vote account activity", "error", err)
-		}
-		// Don't fail the entire refresh if vote account activity fails
+	// Don't fail the entire refresh if vote account activity fails.
+	if _, err := v.RefreshVoteAccountActivity(ctx); err != nil && errors.Is(err, context.Canceled) {
+		v.log.Warn("solana: vote account activity refresh cancelled", "error", err)
 	} else {
-		v.esc.Reset("vote_account_activity")
+		v.esc.Observe(v.log, "vote_account_activity", "solana: failed to refresh vote account activity", err)
 	}
 
 	v.fetchedAt = fetchedAt
