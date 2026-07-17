@@ -318,3 +318,34 @@ func TestV1EdgeShredsPublishers_ServedFromCache(t *testing.T) {
 	require.Len(t, resp.Publishers, 1)
 	assert.Equal(t, "cached-user", resp.Publishers[0].DZUserPubkey)
 }
+
+// TestV1EdgeShredsPublishers_NonDefaultShapeBypassesCache asserts that a
+// non-default-shape request (a q filter) runs live and is NOT served the
+// default-shape cached payload. Guards against a regression in
+// isDefaultPublisherCheckShape serving unfiltered cached data for a filtered
+// request on the public endpoint.
+func TestV1EdgeShredsPublishers_NonDefaultShapeBypassesCache(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPIAll(t, testChDB, testPgDB, nil, nil)
+	insertPublisherCheckTestData(t, api)
+
+	// Populate the default-shape cache with a distinctive sentinel epoch.
+	require.NoError(t, api.WritePageCache(t.Context(), "publisher_check", handlers.PublisherCheckResponse{
+		Epoch:      4242,
+		Publishers: []handlers.PublisherCheckItem{{DZUserPubkey: "cached-user"}},
+	}))
+
+	r := newV1Router(t, api)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/edge/shreds/publishers/leaders?q=dzuser1", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+	var resp v1.EdgeShredsPublishersResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+	// Live query result, not the cached sentinel.
+	assert.Equal(t, uint64(800), resp.Epoch)
+	require.Len(t, resp.Publishers, 1)
+	assert.Equal(t, "dzuser1", resp.Publishers[0].DZUserPubkey)
+}

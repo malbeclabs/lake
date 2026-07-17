@@ -7,8 +7,9 @@ All notable changes to this project are documented here, following
 
 ### Fixed
 - Publisher-check no longer serves a `200` with silently-zeroed totals when a
-  totals query fails; the error now propagates so callers retry, keep the last
-  complete cached payload, or return `500` (#698).
+  totals query fails; the error now propagates so the REST handler retries
+  transient failures then returns `500`, the page-cache worker keeps its last
+  complete payload, and the v1 edge endpoint returns `500` (#698).
 
 ### Changed
 - Page-cache worker refreshes `publisher_check` every 4th slow cycle (~2 min)

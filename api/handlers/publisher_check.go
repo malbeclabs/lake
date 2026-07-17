@@ -128,7 +128,11 @@ func (a *API) fetchPublisherCheckCachedOrLive(
 	if isMainnet(ctx) && isDefaultPublisherCheckShape(q, epochsParam, slotsParam) {
 		if data, err := a.readPageCache(ctx, "publisher_check"); err == nil {
 			var resp PublisherCheckResponse
-			if err := json.Unmarshal(data, &resp); err == nil {
+			if uerr := json.Unmarshal(data, &resp); uerr != nil {
+				// A populated but unparseable cache entry indicates payload drift;
+				// fall through to a live query but surface it so it's diagnosable.
+				slog.Warn("publisher check: cached payload unmarshal failed", "error", uerr)
+			} else {
 				return &resp, nil
 			}
 		}
@@ -151,7 +155,7 @@ func (a *API) GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("X-Cache", "MISS")
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), publisherCheckLiveTimeout)
 	defer cancel()
 
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
@@ -181,7 +185,7 @@ func (a *API) GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 	if err != nil && dberror.IsTransient(err) {
 		cancel()
 		var retryCancel context.CancelFunc
-		ctx, retryCancel = context.WithTimeout(r.Context(), 20*time.Second)
+		ctx, retryCancel = context.WithTimeout(r.Context(), publisherCheckLiveTimeout)
 		defer retryCancel()
 		resp, err = a.FetchPublisherCheckData(ctx, q, epochsParam, slotsParam)
 	}
@@ -369,8 +373,10 @@ func (a *API) FetchPublisherCheckData(ctx context.Context, q string, epochsParam
 
 	// Propagate errors from the totals queries rather than warn-and-continue:
 	// a failure here (typically context expiry after the main query consumed the
-	// budget) would otherwise return a 200 with silently-zeroed totals. Every
-	// caller handles the error (retry, keep last cached payload, or 500).
+	// budget) would otherwise return a 200 with silently-zeroed totals. Callers
+	// handle the error: the REST handler retries transient failures then 500s,
+	// the page-cache worker keeps its last complete payload, and other callers
+	// (v1 edge, scoreboard) return 500.
 	var totalNetworkStake int64
 	err = a.envDB(ctx).QueryRow(ctx,
 		`SELECT COALESCE(SUM(activated_stake_lamports), 0)

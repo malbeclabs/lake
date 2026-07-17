@@ -212,6 +212,19 @@ func TestDueThisCycle(t *testing.T) {
 		}
 	})
 
+	t.Run("every slowBatchEveryN key maps to a real slow-batch entry", func(t *testing.T) {
+		// Guards against a rename in entries() orphaning a cadence override, which
+		// would silently revert that entry to every-cycle refresh. entries() does
+		// not dereference a.API at construction, so a bare Activities is safe.
+		keys := map[string]bool{}
+		for _, e := range (&Activities{}).entries() {
+			keys[e.key] = true
+		}
+		for k := range slowBatchEveryN {
+			require.True(t, keys[k], "slowBatchEveryN key %q has no matching entry", k)
+		}
+	})
+
 	t.Run("publisher_check is configured at everyN=4; others default", func(t *testing.T) {
 		require.Equal(t, 4, slowBatchEveryN["publisher_check"])
 
