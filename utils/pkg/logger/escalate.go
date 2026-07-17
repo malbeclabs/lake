@@ -28,6 +28,11 @@ const (
 // Safe for concurrent use. Also safe inside Temporal workflow code: it holds
 // only a mutex-guarded plain map (no goroutines, atomics, or time), so counts
 // are recomputed deterministically on replay.
+//
+// Set ErrorAfter/TransientErrorAfter before the first Fail call and don't
+// change them afterwards — they are read without the mutex. Keys must be
+// low-cardinality (activity names, cache keys), never derived from
+// request/user data: the map only shrinks via Reset.
 type Escalator struct {
 	// ErrorAfter is the consecutive-failure count at which Fail logs ERROR.
 	// Zero means DefaultErrorAfter.
@@ -46,6 +51,12 @@ type Escalator struct {
 // threshold, ERROR at/above it. The error in args (the value of the first
 // "error" key) selects the threshold: transient causes use the higher
 // TransientErrorAfter since they self-heal.
+//
+// The threshold is chosen by the latest failure's class, not the streak's:
+// under mixed-cause flapping (genuine failures interleaved with transient
+// blips) escalation can defer up to TransientErrorAfter. That's intentional —
+// the streak length itself proves the failure is sustained, and re-deriving
+// a per-streak class would make the level depend on failure order.
 func (e *Escalator) Fail(log Logger, key, msg string, args ...any) {
 	e.mu.Lock()
 	if e.failures == nil {
@@ -81,4 +92,15 @@ func (e *Escalator) Reset(key string) {
 	e.mu.Lock()
 	delete(e.failures, key)
 	e.mu.Unlock()
+}
+
+// Observe folds the Fail/Reset pair into one call for the common
+// run-loop shape: a nil err resets key's count, a non-nil err records a
+// failure and logs msg with an "error" attribute (plus any extra args).
+func (e *Escalator) Observe(log Logger, key, msg string, err error, args ...any) {
+	if err == nil {
+		e.Reset(key)
+		return
+	}
+	e.Fail(log, key, msg, append([]any{"error", err}, args...)...)
 }

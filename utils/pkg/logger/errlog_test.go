@@ -80,3 +80,17 @@ func TestErrorFromArgs(t *testing.T) {
 	// Odd-length slice: trailing "error" key with no value is ignored.
 	require.NoError(t, ErrorFromArgs([]any{"error"}))
 }
+
+func TestErrorFromArgs_SlogAttrDoesNotShiftParity(t *testing.T) {
+	t.Parallel()
+
+	err := errors.New("boom")
+	// A slog.Attr consumes one slot; the "error" key after it must still be
+	// found (previously the parity shift hid it).
+	require.Equal(t, err, ErrorFromArgs([]any{slog.String("cache", "topology"), "error", err}))
+	// An Attr can carry the error itself.
+	require.Equal(t, err, ErrorFromArgs([]any{slog.Any("error", err)}))
+	// slog badkey case: a non-string non-Attr where a key is expected
+	// consumes one slot.
+	require.Equal(t, err, ErrorFromArgs([]any{42, "error", err}))
+}

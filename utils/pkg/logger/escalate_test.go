@@ -2,7 +2,9 @@ package logger
 
 import (
 	"errors"
+	"io"
 	"log/slog"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -112,4 +114,92 @@ func TestEscalator_AppendsConsecutiveFailures(t *testing.T) {
 		return true
 	})
 	require.True(t, found, "log line must carry consecutive_failures")
+}
+
+func TestEscalator_ThresholdFollowsLatestFailureClass(t *testing.T) {
+	t.Parallel()
+
+	// Pins the documented behavior: the threshold is chosen by the latest
+	// failure's class. Two genuine failures followed by transient blips stay
+	// WARN until the transient threshold, even though the strict threshold
+	// was crossed mid-streak by count.
+	log, recs := capLogger()
+	var esc Escalator
+	genuine := errors.New("boom")
+	transient := errors.New("read: connection reset by peer")
+
+	esc.Fail(log, "k", "refresh failed", "error", genuine)
+	esc.Fail(log, "k", "refresh failed", "error", genuine)
+	for n := 3; n < DefaultTransientErrorAfter; n++ {
+		esc.Fail(log, "k", "refresh failed", "error", transient)
+	}
+	require.Zero(t, countLevel(*recs, slog.LevelError))
+
+	esc.Fail(log, "k", "refresh failed", "error", transient)
+	require.Equal(t, 1, countLevel(*recs, slog.LevelError))
+}
+
+func TestEscalator_Observe(t *testing.T) {
+	t.Parallel()
+
+	log, recs := capLogger()
+	var esc Escalator
+	err := errors.New("boom")
+
+	for range DefaultErrorAfter - 1 {
+		esc.Observe(log, "k", "refresh failed", err)
+	}
+	require.Equal(t, DefaultErrorAfter-1, countLevel(*recs, slog.LevelWarn))
+
+	esc.Observe(log, "k", "refresh failed", nil) // success resets
+	require.Len(t, *recs, DefaultErrorAfter-1, "nil error must not log")
+
+	for range DefaultErrorAfter - 1 {
+		esc.Observe(log, "k", "refresh failed", err)
+	}
+	require.Zero(t, countLevel(*recs, slog.LevelError), "reset must have cleared the count")
+
+	esc.Observe(log, "k", "refresh failed", err, "extra", "attr")
+	require.Equal(t, 1, countLevel(*recs, slog.LevelError))
+}
+
+func TestEscalator_ConcurrentFailReset(t *testing.T) {
+	t.Parallel()
+
+	// Hammer Fail/Reset from many goroutines over overlapping keys so `make
+	// test`'s race detector exercises the mutex, then verify counts are exact
+	// once the concurrency stops. The hammer phase discards output — the
+	// capturing test handler is itself not concurrency-safe.
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	var esc Escalator
+	keys := []string{"a", "b", "c"}
+	err := errors.New("boom")
+
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			for j := range 200 {
+				key := keys[(i+j)%len(keys)]
+				esc.Fail(log, key, "refresh failed", "error", err)
+				if j%3 == 0 {
+					esc.Reset(key)
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	for _, key := range keys {
+		esc.Reset(key)
+	}
+	// After the hammer, counting is exact again: below threshold stays WARN,
+	// at threshold escalates.
+	log2, recs := capLogger()
+	for range DefaultErrorAfter {
+		esc.Fail(log2, "a", "refresh failed", "error", err)
+	}
+	require.Equal(t, DefaultErrorAfter-1, countLevel(*recs, slog.LevelWarn))
+	require.Equal(t, 1, countLevel(*recs, slog.LevelError))
 }

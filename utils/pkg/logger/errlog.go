@@ -18,10 +18,11 @@ type Logger interface {
 	Error(msg string, args ...any)
 }
 
-// Error logs msg at a level chosen by the error carried in args (the value of
-// the first "error" key): transient self-healing causes (see
+// Error logs msg at ERROR or WARN, chosen by the error carried in args (the
+// value of the first "error" key wins): transient self-healing causes (see
 // dberror.IsTransient) and disconnect-class context errors (see
-// IsClientDisconnect) log at WARN, and everything else logs at ERROR.
+// IsClientDisconnect) log at WARN, and everything else — including args with
+// no "error" key at all — logs at ERROR. log must be non-nil.
 //
 // Alerts fire on ERROR lines only, so this is the default way to log a
 // failure that can carry a transient, not-found, or client-caused error.
@@ -49,6 +50,18 @@ func Warn(log Logger, msg string, args ...any) {
 	log.Warn(msg, args...)
 }
 
+// IsCanceled reports whether err is a context cancellation, including
+// non-standard wrappings that only carry the message. Unlike
+// IsClientDisconnect it does not match deadline errors, so callers can treat
+// "the caller went away" differently from "the operation timed out".
+func IsCanceled(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, context.Canceled) ||
+		strings.Contains(err.Error(), "context canceled")
+}
+
 // IsClientDisconnect returns true if the error is caused by the client
 // disconnecting: context cancellation, deadline exceeded, broken pipe,
 // connection reset, or unexpected EOF.
@@ -72,13 +85,32 @@ func IsClientDisconnect(err error) bool {
 }
 
 // ErrorFromArgs returns the value of the first "error" key in a slog-style
-// args slice, or nil if none is present.
+// args slice, or nil if none is present. It walks args the way slog does:
+// a string key consumes two slots, a slog.Attr consumes one, and anything
+// else where a key is expected consumes one (slog's badkey case) — so a
+// slog.Attr mixed into args doesn't shift parity and defeat classification.
 func ErrorFromArgs(args []any) error {
-	for i := 0; i+1 < len(args); i += 2 {
-		if args[i] == "error" {
-			if err, ok := args[i+1].(error); ok {
-				return err
+	for i := 0; i < len(args); {
+		switch k := args[i].(type) {
+		case string:
+			if i+1 >= len(args) {
+				return nil
 			}
+			if k == "error" {
+				if err, ok := args[i+1].(error); ok {
+					return err
+				}
+			}
+			i += 2
+		case slog.Attr:
+			if k.Key == "error" {
+				if err, ok := k.Value.Any().(error); ok {
+					return err
+				}
+			}
+			i++
+		default:
+			i++
 		}
 	}
 	return nil
