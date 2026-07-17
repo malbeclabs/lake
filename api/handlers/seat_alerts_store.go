@@ -275,6 +275,17 @@ func (a *API) DeleteSeatAlert(ctx context.Context, id, accountID uuid.UUID) erro
 	return nil
 }
 
+// SetAnnouncementsOptIn toggles the announcements_opt_in flag for a chat's
+// contact. Returns ok=false if no contact exists for that chat yet.
+func (a *API) SetAnnouncementsOptIn(ctx context.Context, chatID int64, optIn bool) (bool, error) {
+	tag, err := a.PgPool.Exec(ctx,
+		`UPDATE telegram_contacts SET announcements_opt_in = $2 WHERE chat_id = $1`, chatID, optIn)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 // chatIDForAlert looks up the Telegram chat_id for an alert, scoped to the
 // account that created it. Returns (0, false, nil) when the alert doesn't
 // exist, isn't owned by accountID, or has no activated contact yet.

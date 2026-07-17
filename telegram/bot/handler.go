@@ -24,6 +24,10 @@ type Store interface {
 	// StopOne stops a single alert, identified by its 1-based position in the
 	// order List returns (the same order/numbering shown to the user).
 	StopOne(ctx context.Context, chatID int64, index int) (desc string, ok bool, err error)
+	// SetAnnouncements toggles the announcements_opt_in flag for the chat's
+	// contact, separate from its seat alerts. Returns ok=false if the chat has
+	// no contact yet (no alert has ever been activated there).
+	SetAnnouncements(ctx context.Context, chatID int64, optIn bool) (ok bool, err error)
 }
 
 type EventHandler struct {
@@ -147,6 +151,36 @@ func (h *EventHandler) process(ctx context.Context, u tgUpdate) {
 		h.send(ctx, chatID, helpText)
 	case strings.HasPrefix(text, "/topup"):
 		h.send(ctx, chatID, topupText)
+	case strings.HasPrefix(text, "/announcements"):
+		arg := strings.TrimSpace(strings.TrimPrefix(text, "/announcements"))
+		switch arg {
+		case "on":
+			ok, err := h.store.SetAnnouncements(ctx, chatID, true)
+			if err != nil {
+				h.log.Warn("set announcements opt-in failed", "error", err)
+				h.send(ctx, chatID, "Something went wrong, please try again.")
+				return
+			}
+			if !ok {
+				h.send(ctx, chatID, "You have no active alerts here yet — activate one first, then you can manage announcements.")
+				return
+			}
+			h.send(ctx, chatID, "Product update messages: ON. I'll only message you when we have something worth sharing.")
+		case "off":
+			ok, err := h.store.SetAnnouncements(ctx, chatID, false)
+			if err != nil {
+				h.log.Warn("set announcements opt-in failed", "error", err)
+				h.send(ctx, chatID, "Something went wrong, please try again.")
+				return
+			}
+			if !ok {
+				h.send(ctx, chatID, "You have no active alerts here yet — activate one first, then you can manage announcements.")
+				return
+			}
+			h.send(ctx, chatID, "Product update messages: OFF. You'll still get your seat alerts.")
+		default:
+			h.send(ctx, chatID, "Use /announcements on or /announcements off.")
+		}
 	default:
 		h.send(ctx, chatID, "Commands: /list, /stop, /topup, /help. To add an alert, use the DoubleZero site.")
 	}
@@ -156,11 +190,12 @@ const helpText = `DoubleZero Seat Alerts
 
 I warn you before a shred seat runs out of prepaid escrow, so you don't lose the seat or its tenure. Create alerts on the DoubleZero site (the bell on a seat), then activate them here.
 
-/list        your active alerts, numbered
-/stop <n>    stop alert number n (from /list)
-/stop all    stop every alert
-/topup       how to top up a seat's escrow
-/help        this message`
+/list                your active alerts, numbered
+/stop <n>            stop alert number n (from /list)
+/stop all            stop every alert
+/announcements on|off  product update messages (on by default)
+/topup               how to top up a seat's escrow
+/help                this message`
 
 const topupText = `Topping up a seat's escrow
 

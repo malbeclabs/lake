@@ -1086,6 +1086,9 @@ func (s telegramStore) Stop(ctx context.Context, chatID int64) (int64, error) {
 func (s telegramStore) StopOne(ctx context.Context, chatID int64, index int) (string, bool, error) {
 	return s.api.StopSeatAlertByChatIndex(ctx, chatID, index)
 }
+func (s telegramStore) SetAnnouncements(ctx context.Context, chatID int64, optIn bool) (bool, error) {
+	return s.api.SetAnnouncementsOptIn(ctx, chatID, optIn)
+}
 
 // startTelegramBot registers the Telegram webhook route on the root router.
 // The route sits outside any auth middleware group: request authenticity is

@@ -122,6 +122,39 @@ func TestStopSeatAlertByChatIndex(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestSetAnnouncementsOptIn(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPIPg(t, testPgDB)
+	ctx := t.Context()
+	acct := createTestAccount(t, ctx, api)
+
+	// The Postgres test DB is shared across the package, so pick a chat_id
+	// unlikely to collide with other tests and scope assertions to it.
+	const chatID = int64(90020)
+
+	// Create + activate an alert for the chat so a telegram_contacts row exists.
+	a, err := api.CreateSeatAlert(ctx, acct.ID, "seat-announce-1", "epochs_left", 2, true)
+	require.NoError(t, err)
+	_, err = api.ActivateSeatAlertByToken(ctx, a.ActivationToken, chatID, "tester")
+	require.NoError(t, err)
+
+	ok, err := api.SetAnnouncementsOptIn(ctx, chatID, false)
+	require.NoError(t, err)
+	assert.True(t, ok)
+
+	var optIn bool
+	err = api.PgPool.QueryRow(ctx,
+		`SELECT announcements_opt_in FROM telegram_contacts WHERE chat_id = $1`, chatID).Scan(&optIn)
+	require.NoError(t, err)
+	assert.False(t, optIn)
+
+	// No contact exists for this chat id -> ok=false.
+	const unusedChatID = int64(90021)
+	ok, err = api.SetAnnouncementsOptIn(ctx, unusedChatID, false)
+	require.NoError(t, err)
+	assert.False(t, ok)
+}
+
 func TestActivateSeatAlert_BadToken(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)

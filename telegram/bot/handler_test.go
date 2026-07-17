@@ -13,11 +13,14 @@ import (
 )
 
 type fakeStore struct {
-	activatedToken  string
-	activatedChatID int64
-	stoppedChatID   int64
-	stopOneChatID   int64
-	stopOneIndex    int
+	activatedToken     string
+	activatedChatID    int64
+	stoppedChatID      int64
+	stopOneChatID      int64
+	stopOneIndex       int
+	announceChatID     int64
+	announceOptIn      bool
+	announceOptInCalls int
 }
 
 func (f *fakeStore) Activate(ctx context.Context, token string, chatID int64, username string) (string, error) {
@@ -36,6 +39,12 @@ func (f *fakeStore) StopOne(ctx context.Context, chatID int64, index int) (strin
 	f.stopOneChatID = chatID
 	f.stopOneIndex = index
 	return "seat-abc", true, nil
+}
+func (f *fakeStore) SetAnnouncements(ctx context.Context, chatID int64, optIn bool) (bool, error) {
+	f.announceChatID = chatID
+	f.announceOptIn = optIn
+	f.announceOptInCalls++
+	return true, nil
 }
 
 func newTestHandler(t *testing.T, store Store) (*EventHandler, *httptest.Server, *[]map[string]any) {
@@ -165,6 +174,62 @@ func TestWebhook_Topup(t *testing.T) {
 	text, _ := (*sent)[0]["text"].(string)
 	if !strings.Contains(text, "shreds pay") {
 		t.Fatalf("topup reply missing expected content: %q", text)
+	}
+}
+
+func TestWebhook_AnnouncementsOff(t *testing.T) {
+	t.Parallel()
+	store := &fakeStore{}
+	h, _, sent := newTestHandler(t, store)
+	update := map[string]any{
+		"update_id": 6,
+		"message": map[string]any{
+			"text": "/announcements off",
+			"chat": map[string]any{"id": 111},
+		},
+	}
+	rr := postUpdate(t, h, "s3cret", update)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code = %d want 200", rr.Code)
+	}
+	h.WaitForTest() // drain async processing (test-only helper)
+	if store.announceOptInCalls != 1 || store.announceChatID != 111 || store.announceOptIn != false {
+		t.Fatalf("expected SetAnnouncements(chat=111, optIn=false), got %+v", store)
+	}
+	if len(*sent) == 0 {
+		t.Fatalf("expected a confirmation message to be sent")
+	}
+	text, _ := (*sent)[0]["text"].(string)
+	if !strings.Contains(text, "OFF") {
+		t.Fatalf("announcements-off reply missing expected content: %q", text)
+	}
+}
+
+func TestWebhook_AnnouncementsOn(t *testing.T) {
+	t.Parallel()
+	store := &fakeStore{}
+	h, _, sent := newTestHandler(t, store)
+	update := map[string]any{
+		"update_id": 7,
+		"message": map[string]any{
+			"text": "/announcements on",
+			"chat": map[string]any{"id": 222},
+		},
+	}
+	rr := postUpdate(t, h, "s3cret", update)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code = %d want 200", rr.Code)
+	}
+	h.WaitForTest() // drain async processing (test-only helper)
+	if store.announceOptInCalls != 1 || store.announceChatID != 222 || store.announceOptIn != true {
+		t.Fatalf("expected SetAnnouncements(chat=222, optIn=true), got %+v", store)
+	}
+	if len(*sent) == 0 {
+		t.Fatalf("expected a confirmation message to be sent")
+	}
+	text, _ := (*sent)[0]["text"].(string)
+	if !strings.Contains(text, "ON") {
+		t.Fatalf("announcements-on reply missing expected content: %q", text)
 	}
 }
 
