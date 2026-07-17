@@ -371,11 +371,10 @@ func (a *Activities) refresh(parentCtx context.Context, name, key string, fn fun
 			if parentCtx.Err() != nil {
 				return
 			}
-			// Transient-aware: a Postgres blip warns, a genuine write
-			// failure still pages.
-			logger.Error(a.Log, "cache write failed", "cache", name, "error", err)
+			a.recordWriteFailure(name, key, err)
 			return
 		}
+		a.esc.Reset(key + ":write")
 
 		// Surface slow entries at INFO so we can spot the outlier that's
 		// eating the activity's StartToCloseTimeout budget. Normal entries
@@ -414,6 +413,15 @@ func (a *Activities) interrupted(name, key string, cause error, shuttingDown fun
 	} else {
 		a.recordFailure(name, key, deadlineErr)
 	}
+}
+
+// recordWriteFailure escalates cache-write failures under a separate key from
+// the query leg: a Postgres blip warns, but a sustained outage (whose errors
+// classify transient indefinitely, e.g. connection refused) still reaches
+// ERROR and pages. Nothing else alerts on this — handlers fall back silently
+// and PageCacheWorkflow never fails since activities return nil.
+func (a *Activities) recordWriteFailure(name, key string, err error) {
+	a.esc.Fail(a.Log, key+":write", "cache write failed", "cache", name, "error", err)
 }
 
 // recordFailure increments the consecutive-failure counter for key and logs at

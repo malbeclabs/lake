@@ -10,6 +10,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/getsentry/sentry-go"
 	"github.com/malbeclabs/lake/api/metrics"
+	"github.com/malbeclabs/lake/utils/pkg/dberror"
 	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
@@ -19,6 +20,24 @@ type AnthropicLLMClient struct {
 	model     anthropic.Model
 	maxTokens int64
 	name      string // optional label for logging (e.g., "agent", "eval")
+}
+
+// apiFailures escalates consecutive Anthropic API failures per client name so
+// a sustained provider outage still pages: individual causes (429s,
+// connection blips, timeouts) classify transient or disconnect-class and
+// would log WARN one-shot, but a sustained run must reach ERROR.
+// Package-level so the count survives however clients are constructed.
+var apiFailures logger.Escalator
+
+// recordAPIFailure logs an Anthropic API failure and counts it toward
+// escalation. Caller-canceled requests (the user went away mid-request) log
+// WARN without counting — they say nothing about provider health.
+func (c *AnthropicLLMClient) recordAPIFailure(duration time.Duration, err error) {
+	if logger.IsCanceled(err) {
+		slog.Warn("Anthropic API call failed", "phase", c.name, "duration", duration, "error", err)
+		return
+	}
+	apiFailures.Fail(slog.Default(), c.name, "Anthropic API call failed", "phase", c.name, "duration", duration, "error", err)
 }
 
 // NewAnthropicLLMClient creates a new Anthropic-based LLM client.
@@ -87,12 +106,17 @@ func (c *AnthropicLLMClient) Complete(ctx context.Context, systemPrompt, userPro
 
 	duration := time.Since(start)
 	if err != nil {
-		logger.Error(slog.Default(), "Anthropic API call failed", "phase", c.name, "duration", duration, "error", err)
+		c.recordAPIFailure(duration, err)
 		metrics.RecordAnthropicRequest(c.name, duration, err)
 		span.Status = sentry.SpanStatusInternalError
-		sentry.CaptureException(err)
+		// Match api/handlers.internalError: transient self-healing causes
+		// aren't actionable — skip the Sentry issue.
+		if !dberror.IsTransient(err) {
+			sentry.CaptureException(err)
+		}
 		return "", fmt.Errorf("anthropic API error: %w", err)
 	}
+	apiFailures.Reset(c.name)
 
 	// Log with cache metrics if available
 	slog.Info("Anthropic API call completed",
@@ -255,12 +279,17 @@ func (c *AnthropicLLMClient) CompleteWithTools(
 
 	duration := time.Since(start)
 	if err != nil {
-		logger.Error(slog.Default(), "Anthropic API call failed", "phase", c.name, "duration", duration, "error", err)
+		c.recordAPIFailure(duration, err)
 		metrics.RecordAnthropicRequest(c.name, duration, err)
 		span.Status = sentry.SpanStatusInternalError
-		sentry.CaptureException(err)
+		// Match api/handlers.internalError: transient self-healing causes
+		// aren't actionable — skip the Sentry issue.
+		if !dberror.IsTransient(err) {
+			sentry.CaptureException(err)
+		}
 		return nil, fmt.Errorf("anthropic API error: %w", err)
 	}
+	apiFailures.Reset(c.name)
 
 	// Log with cache metrics if available (use same format as Complete for eval script parsing)
 	slog.Info("Anthropic API call completed",

@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"testing"
 	"time"
@@ -192,4 +193,26 @@ func TestInterruptedEscalation(t *testing.T) {
 		require.Zero(t, countLevel(*recs, slog.LevelError))
 		require.Equal(t, 1, countLevel(*recs, slog.LevelWarn)) // "interrupted (shutdown)"
 	})
+}
+
+// TestWriteFailureEscalation pins that the cache-write leg escalates under its
+// own counter: a sustained Postgres outage whose errors classify transient
+// indefinitely (connection refused) must still reach ERROR — nothing else
+// alerts on write failures.
+func TestWriteFailureEscalation(t *testing.T) {
+	log, recs := capLogger()
+	a := &Activities{Log: log}
+	err := errors.New("dial tcp 10.0.0.1:5432: connect: connection refused")
+
+	for range transientErrorAfterFailures {
+		a.recordWriteFailure("topology", "topology", err)
+	}
+	require.Equal(t, transientErrorAfterFailures-1, countLevel(*recs, slog.LevelWarn))
+	require.Equal(t, 1, countLevel(*recs, slog.LevelError), "sustained transient write failures must page")
+
+	// A successful write resets the counter via the query-leg-independent key.
+	a.esc.Reset("topology:write")
+	*recs = nil
+	a.recordWriteFailure("topology", "topology", err)
+	require.Zero(t, countLevel(*recs, slog.LevelError))
 }

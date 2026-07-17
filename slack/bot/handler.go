@@ -382,8 +382,11 @@ func (h *EventHandler) HandleSocketMode(ctx context.Context, client *socketmode.
 	h.log.Info("bot running in socket mode (DMs and channel mentions, thread replies enabled)")
 
 	// connectErrs escalates consecutive connection errors: socketmode
-	// auto-reconnects, so a blip warns, but sustained failure (revoked app
-	// token, broken egress) still reaches ERROR and pages.
+	// auto-reconnects on recoverable failures (broken egress, Slack-side
+	// blips), so a blip warns and a sustained run still reaches ERROR and
+	// pages. Fatal auth failures (invalid_auth, token_revoked) never reach
+	// this loop — slack-go aborts connect() and client.Run() returns an
+	// error on a different path.
 	var connectErrs logger.Escalator
 
 	for {
