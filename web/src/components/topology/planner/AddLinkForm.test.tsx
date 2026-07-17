@@ -7,19 +7,19 @@ import { buildDraft, type DraftTopology } from './draft'
 import type { TopologyDevice, TopologyLink, TopologyMetro, TopologyResponse } from '@/lib/api'
 
 describe('AddLinkForm', () => {
-  it('shows the source/target codes and pre-fills latency (µs) with the estimate source', () => {
+  it('shows the source/target codes and pre-fills latency (ms) with the estimate source', () => {
     render(
       <AddLinkForm
         sourceCode="nyc-a"
         targetCode="lon-b"
-        suggestedLatencyUs={5_000}
+        suggestedLatencyMs={5}
         estimateSource="copied"
         onSubmit={vi.fn()}
         onCancel={vi.fn()}
       />
     )
     expect(screen.getByText('New link nyc-a ↔ lon-b')).toBeInTheDocument()
-    expect(screen.getByLabelText(/Latency/)).toHaveValue(5_000)
+    expect(screen.getByLabelText(/Latency/)).toHaveValue(5)
     expect(screen.getByText('(copied)')).toBeInTheDocument()
     // Defaults.
     expect(screen.getByLabelText(/Bandwidth/)).toHaveValue(10)
@@ -30,7 +30,7 @@ describe('AddLinkForm', () => {
       <AddLinkForm
         sourceCode="nyc-a"
         targetCode="lon-b"
-        suggestedLatencyUs={5_000}
+        suggestedLatencyMs={5}
         estimateSource="copied"
         onSubmit={vi.fn()}
         onCancel={vi.fn()}
@@ -45,7 +45,7 @@ describe('AddLinkForm', () => {
       <AddLinkForm
         sourceCode="nyc-a"
         targetCode="lon-b"
-        suggestedLatencyUs={5_000}
+        suggestedLatencyMs={5}
         estimateSource="copied"
         onSubmit={onSubmit}
         onCancel={vi.fn()}
@@ -63,7 +63,7 @@ describe('AddLinkForm', () => {
       <AddLinkForm
         sourceCode="nyc-a"
         targetCode="lon-b"
-        suggestedLatencyUs={5_000}
+        suggestedLatencyMs={5}
         estimateSource="copied"
         onSubmit={onSubmit}
         onCancel={vi.fn()}
@@ -85,13 +85,13 @@ describe('AddLinkForm', () => {
       <AddLinkForm
         sourceCode="nyc-a"
         targetCode="lon-b"
-        suggestedLatencyUs={5_000}
+        suggestedLatencyMs={5}
         estimateSource="great_circle"
         onSubmit={onSubmit}
         onCancel={vi.fn()}
       />
     )
-    fireEvent.change(screen.getByLabelText(/Latency/), { target: { value: '9000' } })
+    fireEvent.change(screen.getByLabelText(/Latency/), { target: { value: '9' } })
     fireEvent.click(screen.getByText('Add link'))
     expect(onSubmit).toHaveBeenCalledWith(
       expect.objectContaining({ latencyNs: 9_000_000, estimateSource: 'manual' })
@@ -104,7 +104,7 @@ describe('AddLinkForm', () => {
       <AddLinkForm
         sourceCode="nyc-a"
         targetCode="lon-b"
-        suggestedLatencyUs={5_000}
+        suggestedLatencyMs={5}
         estimateSource="copied"
         onSubmit={onSubmit}
         onCancel={vi.fn()}
@@ -115,7 +115,7 @@ describe('AddLinkForm', () => {
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ linkType: 'DZX' }))
   })
 
-  // Global constraint: a latency of exactly 1,000,000 µs converts to the 1e9-ns
+  // Global constraint: a latency of exactly 1,000 ms converts to the 1e9-ns
   // sentinel the impact engine treats as "unset" and silently drops. Same guard as
   // LinkEditForm / MoveLinkEndForm; never let it save from this form either.
   it('rejects a latency that equals the unset sentinel (1e9 ns) and shows an alert', () => {
@@ -124,14 +124,14 @@ describe('AddLinkForm', () => {
       <AddLinkForm
         sourceCode="nyc-a"
         targetCode="lon-b"
-        suggestedLatencyUs={5_000}
+        suggestedLatencyMs={5}
         estimateSource="copied"
         onSubmit={onSubmit}
         onCancel={vi.fn()}
       />
     )
-    expect(UNSET_LATENCY_NS).toBe(1_000_000 * 1000)
-    fireEvent.change(screen.getByLabelText(/Latency/), { target: { value: '1000000' } })
+    expect(UNSET_LATENCY_NS).toBe(1_000 * 1e6)
+    fireEvent.change(screen.getByLabelText(/Latency/), { target: { value: '1000' } })
     fireEvent.click(screen.getByText('Add link'))
     expect(onSubmit).not.toHaveBeenCalled()
     expect(screen.getByRole('alert')).toBeInTheDocument()
@@ -143,7 +143,7 @@ describe('AddLinkForm', () => {
       <AddLinkForm
         sourceCode="nyc-a"
         targetCode="lon-b"
-        suggestedLatencyUs={5_000}
+        suggestedLatencyMs={5}
         estimateSource="copied"
         onSubmit={vi.fn()}
         onCancel={onCancel}
@@ -291,7 +291,7 @@ describe('PlannerMap add-link rubber-band tool', () => {
     fireEvent.click(screen.getByTestId('map-surface'))
 
     expect(screen.getByText(/New link/)).toBeInTheDocument()
-    expect(screen.getByLabelText(/Latency/)).toHaveValue(5_000)
+    expect(screen.getByLabelText(/Latency/)).toHaveValue(5)
     expect(screen.getByText('(copied)')).toBeInTheDocument()
 
     fireEvent.click(screen.getByText('Add link'))

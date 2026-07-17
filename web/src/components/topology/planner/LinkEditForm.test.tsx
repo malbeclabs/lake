@@ -43,11 +43,11 @@ function makeLink(over: Partial<DraftLink> = {}): DraftLink {
 }
 
 describe('LinkEditForm', () => {
-  it('pre-fills latency (µs) and bandwidth (Gbps) from the link', () => {
+  it('pre-fills latency (ms) and bandwidth (Gbps) from the link', () => {
     render(
       <LinkEditForm link={makeLink()} onSubmit={vi.fn()} onCancel={vi.fn()} />
     )
-    expect(screen.getByLabelText(/Latency/)).toHaveValue(5_000)
+    expect(screen.getByLabelText(/Latency/)).toHaveValue(5)
     expect(screen.getByLabelText(/Bandwidth/)).toHaveValue(10)
   })
 
@@ -56,7 +56,7 @@ describe('LinkEditForm', () => {
     render(
       <LinkEditForm link={makeLink()} onSubmit={onSubmit} onCancel={vi.fn()} />
     )
-    fireEvent.change(screen.getByLabelText(/Latency/), { target: { value: '1500.5' } })
+    fireEvent.change(screen.getByLabelText(/Latency/), { target: { value: '1.5005' } })
     fireEvent.change(screen.getByLabelText(/Bandwidth/), { target: { value: '2.5' } })
     fireEvent.click(screen.getByText('Save'))
     expect(onSubmit).toHaveBeenCalledWith(1_500_500, 2_500_000_000)
@@ -110,7 +110,7 @@ describe('LinkEditForm', () => {
     rerender(<LinkEditForm link={linkB} onSubmit={onSubmit} onCancel={vi.fn()} />)
 
     // Fields now show B's values, not A's abandoned edits.
-    expect(screen.getByLabelText(/Latency/)).toHaveValue(2_000)
+    expect(screen.getByLabelText(/Latency/)).toHaveValue(2)
     expect(screen.getByLabelText(/Bandwidth/)).toHaveValue(100)
 
     // Saving stages B's re-initialized values under B, never A's 9999/400.
@@ -126,9 +126,9 @@ describe('LinkEditForm', () => {
     render(
       <LinkEditForm link={makeLink()} onSubmit={onSubmit} onCancel={vi.fn()} />
     )
-    // 1,000,000 µs * 1000 = 1e9 ns = UNSET_LATENCY_NS.
-    expect(UNSET_LATENCY_NS).toBe(1_000_000 * 1000)
-    fireEvent.change(screen.getByLabelText(/Latency/), { target: { value: '1000000' } })
+    // 1,000 ms * 1e6 = 1e9 ns = UNSET_LATENCY_NS.
+    expect(UNSET_LATENCY_NS).toBe(1_000 * 1e6)
+    fireEvent.change(screen.getByLabelText(/Latency/), { target: { value: '1000' } })
     fireEvent.click(screen.getByText('Save'))
     expect(onSubmit).not.toHaveBeenCalled()
     expect(screen.getByRole('alert')).toBeInTheDocument()
@@ -150,7 +150,7 @@ describe('LinkEditForm', () => {
     render(
       <LinkEditForm link={makeLink()} onSubmit={onSubmit} onCancel={vi.fn()} />
     )
-    fireEvent.change(screen.getByLabelText(/Latency/), { target: { value: '999999' } })
+    fireEvent.change(screen.getByLabelText(/Latency/), { target: { value: '999.999' } })
     fireEvent.change(screen.getByLabelText(/Bandwidth/), { target: { value: '10' } })
     fireEvent.click(screen.getByText('Save'))
     expect(onSubmit).toHaveBeenCalledWith(999_999_000, 10_000_000_000)

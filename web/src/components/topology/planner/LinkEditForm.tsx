@@ -11,7 +11,7 @@ export function LinkEditForm({
   onSubmit: (latencyNs: number, bandwidthBps: number) => void
   onCancel: () => void
 }) {
-  const [latencyUs, setLatencyUs] = useState(String(link.latency_us ?? 0))
+  const [latencyMs, setLatencyMs] = useState(String((link.latency_us ?? 0) / 1000))
   const [bandwidthGbps, setBandwidthGbps] = useState(
     String((link.bandwidth_bps ?? 0) / 1e9)
   )
@@ -22,16 +22,16 @@ export function LinkEditForm({
   // (cross-link data corruption). Keyed on link.pk so in-progress typing on the
   // SAME link is never clobbered by an unrelated draft rebuild.
   useEffect(() => {
-    setLatencyUs(String(link.latency_us ?? 0))
+    setLatencyMs(String((link.latency_us ?? 0) / 1000))
     setBandwidthGbps(String((link.bandwidth_bps ?? 0) / 1e9))
     setError(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [link.pk])
 
   const submit = () => {
-    const us = Number(latencyUs)
+    const ms = Number(latencyMs)
     const gbps = Number(bandwidthGbps)
-    if (!Number.isFinite(us) || us <= 0) {
+    if (!Number.isFinite(ms) || ms <= 0) {
       setError('Latency must be a positive number.')
       return
     }
@@ -39,11 +39,11 @@ export function LinkEditForm({
       setError('Bandwidth must be a positive number.')
       return
     }
-    const latencyNs = Math.round(us * 1000)
+    const latencyNs = Math.round(ms * 1e6)
     // 1e9 ns is the reserved "unset" sentinel; an edge carrying it is silently
     // dropped by the impact engine, so reject it here (SC / estimator UNSET_LATENCY_NS).
     if (latencyNs === UNSET_LATENCY_NS) {
-      setError('That latency (1,000,000 µs) is reserved as the unset value. Choose another.')
+      setError('That latency (1,000 ms) is reserved as the unset value. Choose another.')
       return
     }
     setError(null)
@@ -54,11 +54,12 @@ export function LinkEditForm({
     <div className="bg-card border border-border rounded-md shadow-lg p-3 w-56 space-y-2">
       <div className="text-xs font-medium">Edit {link.code}</div>
       <label className="block text-xs text-muted-foreground">
-        Latency (µs)
+        Latency (ms)
         <input
           type="number"
-          value={latencyUs}
-          onChange={(e) => setLatencyUs(e.target.value)}
+          step="0.001"
+          value={latencyMs}
+          onChange={(e) => setLatencyMs(e.target.value)}
           className="mt-1 w-full px-2 py-1 text-sm bg-muted border border-border rounded"
         />
       </label>

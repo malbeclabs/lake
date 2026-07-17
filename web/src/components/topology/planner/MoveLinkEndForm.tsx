@@ -4,28 +4,28 @@ import { UNSET_LATENCY_NS } from './estimator'
 export function MoveLinkEndForm({
   linkCode,
   targetDeviceCode,
-  defaultLatencyUs,
+  defaultLatencyMs,
   defaultBandwidthGbps,
   onSubmit,
   onCancel,
 }: {
   linkCode: string
   targetDeviceCode: string
-  defaultLatencyUs: number
+  defaultLatencyMs: number
   defaultBandwidthGbps: number
   onSubmit: (latencyNs: number, bandwidthBps: number) => void
   onCancel: () => void
 }) {
   // The real interface is TBD -- the contributor decides it later, so this form no
   // longer collects one. PlannerMap stages the change with a "TBD" placeholder.
-  const [latencyUs, setLatencyUs] = useState(String(defaultLatencyUs))
+  const [latencyMs, setLatencyMs] = useState(String(defaultLatencyMs))
   const [bandwidthGbps, setBandwidthGbps] = useState(String(defaultBandwidthGbps))
 
   const submit = () => {
-    const us = Number(latencyUs)
+    const ms = Number(latencyMs)
     const gbps = Number(bandwidthGbps)
-    if (!Number.isFinite(us) || us <= 0 || !Number.isFinite(gbps) || gbps <= 0) return
-    const latencyNs = Math.round(us * 1000)
+    if (!Number.isFinite(ms) || ms <= 0 || !Number.isFinite(gbps) || gbps <= 0) return
+    const latencyNs = Math.round(ms * 1e6)
     // 1e9 ns is the reserved "unset" sentinel (estimator UNSET_LATENCY_NS); an edge
     // carrying it is silently dropped by the impact engine, so reject it here too,
     // mirroring the guard in LinkEditForm.
@@ -39,12 +39,13 @@ export function MoveLinkEndForm({
         Move {linkCode} → {targetDeviceCode}
       </div>
       <label className="block text-xs text-muted-foreground">
-        Latency (µs)
+        Latency (ms)
         <input
           autoFocus
           type="number"
-          value={latencyUs}
-          onChange={(e) => setLatencyUs(e.target.value)}
+          step="0.001"
+          value={latencyMs}
+          onChange={(e) => setLatencyMs(e.target.value)}
           className="mt-1 w-full px-2 py-1 text-sm bg-muted border border-border rounded"
         />
       </label>

@@ -121,12 +121,12 @@ function makePlanner(selectedLinkKey: string | null, addChange: (i: unknown) => 
 }
 
 describe('MoveLinkEndForm', () => {
-  it('shows the link and target device codes, pre-filled latency (µs) and bandwidth (Gbps)', () => {
+  it('shows the link and target device codes, pre-filled latency (ms) and bandwidth (Gbps)', () => {
     render(
       <MoveLinkEndForm
         linkCode="nyc-lon1"
         targetDeviceCode="lon-x2"
-        defaultLatencyUs={5_000}
+        defaultLatencyMs={5}
         defaultBandwidthGbps={10}
         onSubmit={vi.fn()}
         onCancel={vi.fn()}
@@ -134,7 +134,7 @@ describe('MoveLinkEndForm', () => {
     )
     expect(screen.getByText(/nyc-lon1/)).toBeInTheDocument()
     expect(screen.getByText(/lon-x2/)).toBeInTheDocument()
-    expect(screen.getByLabelText(/Latency/)).toHaveValue(5_000)
+    expect(screen.getByLabelText(/Latency/)).toHaveValue(5)
     expect(screen.getByLabelText(/Bandwidth/)).toHaveValue(10)
   })
 
@@ -144,14 +144,14 @@ describe('MoveLinkEndForm', () => {
       <MoveLinkEndForm
         linkCode="nyc-lon1"
         targetDeviceCode="lon-x2"
-        defaultLatencyUs={5_000}
+        defaultLatencyMs={5}
         defaultBandwidthGbps={10}
         onSubmit={onSubmit}
         onCancel={vi.fn()}
       />
     )
     expect(screen.queryByLabelText(/interface/i)).not.toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText(/Latency/), { target: { value: '1500.5' } })
+    fireEvent.change(screen.getByLabelText(/Latency/), { target: { value: '1.5005' } })
     fireEvent.change(screen.getByLabelText(/Bandwidth/), { target: { value: '2.5' } })
     fireEvent.click(screen.getByText('Confirm move'))
     expect(onSubmit).toHaveBeenCalledWith(1_500_500, 2_500_000_000)
@@ -163,7 +163,7 @@ describe('MoveLinkEndForm', () => {
       <MoveLinkEndForm
         linkCode="nyc-lon1"
         targetDeviceCode="lon-x2"
-        defaultLatencyUs={5_000}
+        defaultLatencyMs={5}
         defaultBandwidthGbps={10}
         onSubmit={onSubmit}
         onCancel={vi.fn()}
@@ -180,7 +180,7 @@ describe('MoveLinkEndForm', () => {
       <MoveLinkEndForm
         linkCode="nyc-lon1"
         targetDeviceCode="lon-x2"
-        defaultLatencyUs={5_000}
+        defaultLatencyMs={5}
         defaultBandwidthGbps={10}
         onSubmit={onSubmit}
         onCancel={vi.fn()}
@@ -191,7 +191,7 @@ describe('MoveLinkEndForm', () => {
     expect(onSubmit).not.toHaveBeenCalled()
   })
 
-  // A latency of exactly 1,000,000 µs converts to the 1e9-ns sentinel that the
+  // A latency of exactly 1,000 ms converts to the 1e9-ns sentinel that the
   // impact engine treats as "unset" and silently drops. Never let that value save.
   it('does not submit a latency that equals the unset sentinel (1e9 ns)', () => {
     const onSubmit = vi.fn()
@@ -199,14 +199,14 @@ describe('MoveLinkEndForm', () => {
       <MoveLinkEndForm
         linkCode="nyc-lon1"
         targetDeviceCode="lon-x2"
-        defaultLatencyUs={5_000}
+        defaultLatencyMs={5}
         defaultBandwidthGbps={10}
         onSubmit={onSubmit}
         onCancel={vi.fn()}
       />
     )
-    expect(UNSET_LATENCY_NS).toBe(1_000_000 * 1000)
-    fireEvent.change(screen.getByLabelText(/Latency/), { target: { value: '1000000' } })
+    expect(UNSET_LATENCY_NS).toBe(1_000 * 1e6)
+    fireEvent.change(screen.getByLabelText(/Latency/), { target: { value: '1000' } })
     fireEvent.click(screen.getByText('Confirm move'))
     expect(onSubmit).not.toHaveBeenCalled()
   })
@@ -217,7 +217,7 @@ describe('MoveLinkEndForm', () => {
       <MoveLinkEndForm
         linkCode="nyc-lon1"
         targetDeviceCode="lon-x2"
-        defaultLatencyUs={5_000}
+        defaultLatencyMs={5}
         defaultBandwidthGbps={10}
         onSubmit={vi.fn()}
         onCancel={onCancel}

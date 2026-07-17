@@ -4,14 +4,14 @@ import { UNSET_LATENCY_NS } from './estimator'
 export function AddLinkForm({
   sourceCode,
   targetCode,
-  suggestedLatencyUs,
+  suggestedLatencyMs,
   estimateSource,
   onSubmit,
   onCancel,
 }: {
   sourceCode: string
   targetCode: string
-  suggestedLatencyUs: number
+  suggestedLatencyMs: number
   estimateSource: 'copied' | 'great_circle' | 'manual'
   onSubmit: (v: {
     latencyNs: number
@@ -24,20 +24,20 @@ export function AddLinkForm({
   // The real interfaces are TBD -- the contributor decides them later, so this
   // form no longer collects them. PlannerMap stages the change with "TBD"
   // placeholders for side_a_iface_name / side_z_iface_name.
-  const [latencyUs, setLatencyUs] = useState(String(suggestedLatencyUs || ''))
+  const [latencyMs, setLatencyMs] = useState(String(suggestedLatencyMs || ''))
   const [bandwidthGbps, setBandwidthGbps] = useState('10')
   const [linkType, setLinkType] = useState<'WAN' | 'DZX'>('WAN')
   const [touched, setTouched] = useState(false)
 
-  const us = Number(latencyUs)
+  const ms = Number(latencyMs)
   const gbps = Number(bandwidthGbps)
-  const latencyNs = Math.round(us * 1000)
+  const latencyNs = Math.round(ms * 1e6)
   // Global constraint: 1e9 ns is the reserved "unset" sentinel (api unsetLatencyNs /
   // estimator.UNSET_LATENCY_NS). An edge carrying it is silently dropped by the
   // impact engine, so a new link must never be allowed to save it either -- same
   // guard as LinkEditForm and MoveLinkEndForm.
-  const sentinelBlocked = Number.isFinite(us) && us > 0 && latencyNs === UNSET_LATENCY_NS
-  const valid = Number.isFinite(us) && us > 0 && !sentinelBlocked && Number.isFinite(gbps) && gbps > 0
+  const sentinelBlocked = Number.isFinite(ms) && ms > 0 && latencyNs === UNSET_LATENCY_NS
+  const valid = Number.isFinite(ms) && ms > 0 && !sentinelBlocked && Number.isFinite(gbps) && gbps > 0
 
   const submit = () => {
     setTouched(true)
@@ -46,7 +46,7 @@ export function AddLinkForm({
       latencyNs,
       bandwidthBps: Math.round(gbps * 1e9),
       // If the operator changed the pre-filled value, it becomes a manual estimate.
-      estimateSource: us === suggestedLatencyUs ? estimateSource : 'manual',
+      estimateSource: ms === suggestedLatencyMs ? estimateSource : 'manual',
       linkType,
     })
   }
@@ -57,13 +57,14 @@ export function AddLinkForm({
         New link {sourceCode} ↔ {targetCode}
       </div>
       <label className="block text-xs text-muted-foreground">
-        Latency (µs) — required{' '}
+        Latency (ms) — required{' '}
         <span className="text-[10px] uppercase tracking-wide">({estimateSource})</span>
         <input
           autoFocus
           type="number"
-          value={latencyUs}
-          onChange={(e) => setLatencyUs(e.target.value)}
+          step="0.001"
+          value={latencyMs}
+          onChange={(e) => setLatencyMs(e.target.value)}
           className="mt-1 w-full px-2 py-1 text-sm bg-muted border border-border rounded"
         />
       </label>
@@ -89,7 +90,7 @@ export function AddLinkForm({
       </label>
       {touched && sentinelBlocked && (
         <p role="alert" className="text-[11px] text-red-500">
-          That latency (1,000,000 µs) is reserved as the unset value. Choose another.
+          That latency (1,000 ms) is reserved as the unset value. Choose another.
         </p>
       )}
       {touched && !valid && !sentinelBlocked && (

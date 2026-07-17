@@ -377,7 +377,7 @@ export function PlannerMap() {
       <MoveLinkEndForm
         linkCode={selectedLink.code}
         targetDeviceCode={target?.code ?? pendingMove.targetKey}
-        defaultLatencyUs={selectedLink.latency_us}
+        defaultLatencyMs={selectedLink.latency_us / 1000}
         defaultBandwidthGbps={selectedLink.bandwidth_bps / 1e9}
         onSubmit={submitMove}
         onCancel={() => setPendingMove(null)}
@@ -398,7 +398,7 @@ export function PlannerMap() {
       <AddLinkForm
         sourceCode={a?.code ?? '?'}
         targetCode={z?.code ?? '?'}
-        suggestedLatencyUs={Math.round(addLinkSuggestion.latencyNs / 1000)}
+        suggestedLatencyMs={addLinkSuggestion.latencyNs / 1e6}
         estimateSource={addLinkSuggestion.source}
         onSubmit={submitAddLink}
         onCancel={resetAddLink}
