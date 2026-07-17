@@ -212,33 +212,28 @@ func TestDueThisCycle(t *testing.T) {
 		}
 	})
 
-	t.Run("every slowBatchEveryN key maps to a real slow-batch entry", func(t *testing.T) {
-		// Guards against a rename in entries() orphaning a cadence override, which
-		// would silently revert that entry to every-cycle refresh. entries() does
-		// not dereference a.API at construction, so a bare Activities is safe.
-		keys := map[string]bool{}
+	t.Run("publisher_check carries everyN=4 on its entry; others default", func(t *testing.T) {
+		// entries() does not dereference a.API at construction, so a bare Activities
+		// is safe. Cadence lives on the entry, so a rename can't orphan it.
+		byKey := map[string]cacheEntry{}
 		for _, e := range (&Activities{}).entries() {
-			keys[e.key] = true
+			byKey[e.key] = e
 		}
-		for k := range slowBatchEveryN {
-			require.True(t, keys[k], "slowBatchEveryN key %q has no matching entry", k)
-		}
-	})
 
-	t.Run("publisher_check is configured at everyN=4; others default", func(t *testing.T) {
-		require.Equal(t, 4, slowBatchEveryN["publisher_check"])
+		pub, ok := byKey["publisher_check"]
+		require.True(t, ok, "publisher_check entry must exist")
+		require.Equal(t, publisherCheckEveryN, pub.everyN)
+		require.Equal(t, 4, pub.everyN)
 
-		// A representative every-cycle entry must not be in the override map.
-		_, ok := slowBatchEveryN["topology"]
-		require.False(t, ok, "topology must refresh every cycle")
+		topo, ok := byKey["topology"]
+		require.True(t, ok, "topology entry must exist")
+		require.LessOrEqual(t, topo.everyN, 1, "topology must refresh every cycle")
 
 		// Model the RefreshCaches gate: publisher_check is due only on cycles 0,4,8;
 		// topology is due every cycle.
 		for _, cycle := range []int{0, 1, 2, 3, 4, 5, 8} {
-			pubDue := dueThisCycle(slowBatchEveryN["publisher_check"], cycle)
-			topoDue := dueThisCycle(slowBatchEveryN["topology"], cycle)
-			require.Equal(t, cycle%4 == 0, pubDue, "publisher_check cycle %d", cycle)
-			require.True(t, topoDue, "topology cycle %d", cycle)
+			require.Equal(t, cycle%4 == 0, dueThisCycle(pub.everyN, cycle), "publisher_check cycle %d", cycle)
+			require.True(t, dueThisCycle(topo.everyN, cycle), "topology cycle %d", cycle)
 		}
 	})
 }

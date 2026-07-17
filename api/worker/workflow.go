@@ -104,24 +104,30 @@ var (
 	errFastRefreshDeadline = errors.New("page-cache fast refresh deadline exceeded")
 )
 
-// cacheEntry defines a single cache key to refresh.
+// cacheEntry defines a single cache key to refresh. everyN sets a slow-refresh
+// cadence: the entry refreshes only on every Nth slow cycle (everyN <= 1, the
+// zero value, means every cycle). Keeping the cadence on the entry itself — rather
+// than in a side map keyed by string — removes the drift hazard where a renamed
+// key silently reverts to every-cycle refresh.
 type cacheEntry struct {
-	name string
-	key  string
-	fn   func(ctx context.Context) (any, error)
+	name   string
+	key    string
+	everyN int
+	fn     func(ctx context.Context) (any, error)
 }
 
-// slowBatchEveryN sets a per-entry slow-refresh cadence: an entry whose key maps
-// to N refreshes only on every Nth slow cycle; keys absent from the map refresh
-// every cycle (the default). publisher_check reads shredder.publisher_shred_stats,
-// the heaviest recurring query on the shared ClickHouse, yet its data only changes
-// on epoch timescales (~2 days) — refreshing every 4th cycle (~2 min at the default
-// 30s interval) removes it from the 30s treadmill with no user-visible staleness.
-// edge_scoreboard also reads that table but backs a live-tail view, so it stays at
-// every cycle.
-var slowBatchEveryN = map[string]int{
-	"publisher_check": 4,
-}
+// publisherCheckEveryN slows the publisher_check refresh. It reads
+// shredder.publisher_shred_stats, the heaviest recurring query on the shared
+// ClickHouse, yet its data only changes on epoch timescales (~2 days) — refreshing
+// every 4th cycle (~2 min at the default 30s interval) removes it from the 30s
+// treadmill with no user-visible staleness. edge_scoreboard also reads that table
+// but backs a live-tail view, so it stays at every cycle.
+//
+// Tradeoff: the failure counters advance only once per due cycle, so a persistently
+// broken refresh takes ~4× longer to cross the escalation thresholds (~6 min for a
+// strict cause, ~20 min for a transient one) than an every-cycle entry. Acceptable
+// for data this slow-moving; the cached-or-live readers cap staleness independently.
+const publisherCheckEveryN = 4
 
 // dueThisCycle reports whether an entry with the given cadence refreshes on the
 // given zero-based cycle. everyN <= 1 means every cycle.
@@ -148,7 +154,7 @@ type Activities struct {
 func (a *Activities) entries() []cacheEntry {
 	api := a.API
 	return []cacheEntry{
-		{"topology", "topology", func(ctx context.Context) (any, error) {
+		{name: "topology", key: "topology", fn: func(ctx context.Context) (any, error) {
 			resp, err := api.FetchTopologyData(ctx)
 			if err != nil {
 				return nil, err
@@ -158,92 +164,92 @@ func (a *Activities) entries() []cacheEntry {
 			}
 			return resp, nil
 		}},
-		{"status", "status", func(ctx context.Context) (any, error) {
+		{name: "status", key: "status", fn: func(ctx context.Context) (any, error) {
 			resp := api.FetchStatusData(ctx)
 			if resp.Error != "" {
 				return nil, &refreshError{resp.Error}
 			}
 			return resp, nil
 		}},
-		{"incidents", "incidents", func(ctx context.Context) (any, error) {
+		{name: "incidents", key: "incidents", fn: func(ctx context.Context) (any, error) {
 			resp := api.FetchDefaultIncidentsData(ctx)
 			if resp == nil {
 				return nil, &refreshError{"nil response"}
 			}
 			return resp, nil
 		}},
-		{"device incidents", "device_incidents", func(ctx context.Context) (any, error) {
+		{name: "device incidents", key: "device_incidents", fn: func(ctx context.Context) (any, error) {
 			resp := api.FetchDefaultDeviceIncidentsData(ctx)
 			if resp == nil {
 				return nil, &refreshError{"nil response"}
 			}
 			return resp, nil
 		}},
-		{"link history", "link_history:24h:72", func(ctx context.Context) (any, error) {
+		{name: "link history", key: "link_history:24h:72", fn: func(ctx context.Context) (any, error) {
 			return api.FetchLinkHistoryData(ctx, "24h", 72)
 		}},
-		{"device history", "device_history:24h:72", func(ctx context.Context) (any, error) {
+		{name: "device history", key: "device_history:24h:72", fn: func(ctx context.Context) (any, error) {
 			return api.FetchDeviceHistoryData(ctx, "24h", 72)
 		}},
-		{"latency comparison", "latency_comparison", func(ctx context.Context) (any, error) {
+		{name: "latency comparison", key: "latency_comparison", fn: func(ctx context.Context) (any, error) {
 			return api.FetchLatencyComparisonData(ctx)
 		}},
-		{"dz ledger", "dz_ledger", func(ctx context.Context) (any, error) {
+		{name: "dz ledger", key: "dz_ledger", fn: func(ctx context.Context) (any, error) {
 			return handlers.FetchLedgerData(ctx, handlers.GetDZLedgerRPCURL())
 		}},
-		{"solana ledger", "solana_ledger", func(ctx context.Context) (any, error) {
+		{name: "solana ledger", key: "solana_ledger", fn: func(ctx context.Context) (any, error) {
 			return handlers.FetchLedgerData(ctx, handlers.GetSolanaRPCURL())
 		}},
-		{"validator perf", "validator_perf", func(ctx context.Context) (any, error) {
+		{name: "validator perf", key: "validator_perf", fn: func(ctx context.Context) (any, error) {
 			return api.FetchValidatorPerfData(ctx)
 		}},
-		{"stake overview", "stake_overview", func(ctx context.Context) (any, error) {
+		{name: "stake overview", key: "stake_overview", fn: func(ctx context.Context) (any, error) {
 			return api.FetchStakeOverviewData(ctx)
 		}},
-		{"publisher check", "publisher_check", func(ctx context.Context) (any, error) {
-			return api.FetchPublisherCheckData(ctx, "", 2, 0)
+		{name: "publisher check", key: "publisher_check", everyN: publisherCheckEveryN, fn: func(ctx context.Context) (any, error) {
+			return api.FetchPublisherCheckData(ctx, "", handlers.DefaultPublisherCheckEpochs, 0)
 		}},
-		{"shreds rewards", "shreds_rewards", func(ctx context.Context) (any, error) {
+		{name: "shreds rewards", key: "shreds_rewards", fn: func(ctx context.Context) (any, error) {
 			return api.FetchShredsRewardsData(ctx)
 		}},
-		{"edge scoreboard", "edge_scoreboard", func(ctx context.Context) (any, error) {
+		{name: "edge scoreboard", key: "edge_scoreboard", fn: func(ctx context.Context) (any, error) {
 			return api.FetchEdgeScoreboardData(ctx, "24h", false, 0, 0, 1000)
 		}},
-		{"edge scoreboard (leaders)", "edge_scoreboard:leaders", func(ctx context.Context) (any, error) {
+		{name: "edge scoreboard (leaders)", key: "edge_scoreboard:leaders", fn: func(ctx context.Context) (any, error) {
 			return api.FetchEdgeScoreboardData(ctx, "24h", true, 0, 0, 1000)
 		}},
-		{"hyperliquid scoreboard", "hyperliquid_scoreboard", func(ctx context.Context) (any, error) {
+		{name: "hyperliquid scoreboard", key: "hyperliquid_scoreboard", fn: func(ctx context.Context) (any, error) {
 			return api.FetchHyperliquidScoreboardData(ctx, "1h", "")
 		}},
-		{"bulk link metrics", "bulk_link_metrics", func(ctx context.Context) (any, error) {
+		{name: "bulk link metrics", key: "bulk_link_metrics", fn: func(ctx context.Context) (any, error) {
 			return api.FetchBulkLinkMetricsData(ctx)
 		}},
-		{"bulk link metrics (issues)", "bulk_link_metrics_issues", func(ctx context.Context) (any, error) {
+		{name: "bulk link metrics (issues)", key: "bulk_link_metrics_issues", fn: func(ctx context.Context) (any, error) {
 			return api.FetchBulkLinkMetricsIssuesData(ctx)
 		}},
-		{"bulk device metrics", "bulk_device_metrics", func(ctx context.Context) (any, error) {
+		{name: "bulk device metrics", key: "bulk_device_metrics", fn: func(ctx context.Context) (any, error) {
 			return api.FetchBulkDeviceMetricsData(ctx)
 		}},
-		{"bulk device metrics (issues)", "bulk_device_metrics_issues", func(ctx context.Context) (any, error) {
+		{name: "bulk device metrics (issues)", key: "bulk_device_metrics_issues", fn: func(ctx context.Context) (any, error) {
 			return api.FetchBulkDeviceMetricsIssuesData(ctx)
 		}},
-		{"geo concentration", "geo_concentration", func(ctx context.Context) (any, error) {
+		{name: "geo concentration", key: "geo_concentration", fn: func(ctx context.Context) (any, error) {
 			return api.FetchGeoConcentrationData(ctx)
 		}},
-		{"geo validators", "geo_validators", func(ctx context.Context) (any, error) {
+		{name: "geo validators", key: "geo_validators", fn: func(ctx context.Context) (any, error) {
 			return api.FetchGeoValidatorsData(ctx, "", "")
 		}},
-		{"multicast health summaries", handlers.MulticastHealthSummariesCacheKey, func(ctx context.Context) (any, error) {
+		{name: "multicast health summaries", key: handlers.MulticastHealthSummariesCacheKey, fn: func(ctx context.Context) (any, error) {
 			return api.FetchMulticastHealthSummariesData(ctx, handlers.ShredGroupPK)
 		}},
 		// Pre-fetch the hot first page of /health/users and /health/paths for
 		// ShredGroupPK. The UI's default request (offset=0, limit=
 		// MulticastHealthCachedPageSize) hits these caches and returns in ~1ms
 		// instead of running the view live (multi-second on edge-solana-shreds).
-		{"multicast health users (shreds)", handlers.MulticastHealthUsersCacheKey(handlers.ShredGroupPK), func(ctx context.Context) (any, error) {
+		{name: "multicast health users (shreds)", key: handlers.MulticastHealthUsersCacheKey(handlers.ShredGroupPK), fn: func(ctx context.Context) (any, error) {
 			return api.FetchMulticastHealthUsersPageData(ctx, handlers.ShredGroupPK)
 		}},
-		{"multicast health paths (shreds)", handlers.MulticastHealthPathsCacheKey(handlers.ShredGroupPK), func(ctx context.Context) (any, error) {
+		{name: "multicast health paths (shreds)", key: handlers.MulticastHealthPathsCacheKey(handlers.ShredGroupPK), fn: func(ctx context.Context) (any, error) {
 			return api.FetchMulticastHealthPathsPageData(ctx, handlers.ShredGroupPK)
 		}},
 	}
@@ -278,7 +284,7 @@ func (a *Activities) RefreshCaches(ctx context.Context, cycle int) error {
 	g.SetLimit(limit)
 
 	for _, entry := range a.entries() {
-		if !dueThisCycle(slowBatchEveryN[entry.key], cycle) {
+		if !dueThisCycle(entry.everyN, cycle) {
 			continue
 		}
 		g.Go(func() error {
@@ -323,10 +329,10 @@ func workerStopping(ctx context.Context) func() bool {
 func (a *Activities) latestEntries() []cacheEntry {
 	api := a.API
 	return []cacheEntry{
-		{"edge scoreboard (latest)", "edge_scoreboard:latest", func(ctx context.Context) (any, error) {
+		{name: "edge scoreboard (latest)", key: "edge_scoreboard:latest", fn: func(ctx context.Context) (any, error) {
 			return api.FetchEdgeScoreboardLatest(ctx, false, 1000)
 		}},
-		{"edge scoreboard (latest, leaders)", "edge_scoreboard:latest:leaders", func(ctx context.Context) (any, error) {
+		{name: "edge scoreboard (latest, leaders)", key: "edge_scoreboard:latest:leaders", fn: func(ctx context.Context) (any, error) {
 			return api.FetchEdgeScoreboardLatest(ctx, true, 1000)
 		}},
 	}
@@ -495,11 +501,17 @@ func PageCacheWorkflow(ctx temporalworkflow.Context, iteration int, p PageCacheP
 	fastCtx := temporalworkflow.WithActivityOptions(ctx, fastActOpts)
 
 	for iteration < p.ContinueAsNewThreshold {
-		// iteration doubles as the slow-refresh cycle counter (see slowBatchEveryN).
+		// iteration doubles as the slow-refresh cycle counter (see publisherCheckEveryN).
 		// It resets to 0 at each continue-as-new boundary; carrying it across would
 		// require threading it through NewContinueAsNewError for no real benefit, so
 		// we accept the worst case of one early publisher_check refresh per
 		// continue-as-new (~every 30 min).
+		//
+		// The cycle argument was added to RefreshCaches without a version guard, which
+		// is safe under our deploy model: Start terminates and restarts the workflow
+		// (see pagecache.go), the Go SDK doesn't compare activity inputs on replay, and
+		// during a rolling deploy a mixed-version worker either zero-fills the missing
+		// arg (old code) or drops the extra one (new code) — no history divergence.
 		_ = temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshCaches, iteration).Get(ctx, nil)
 
 		iteration++

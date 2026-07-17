@@ -1,6 +1,7 @@
 package handlers_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,9 +16,22 @@ import (
 	v1 "github.com/malbeclabs/lake/api/v1"
 )
 
+// cleanupPublisherCheckCache deletes the shared publisher_check page-cache row
+// after the test. SetupPostgresForTest gives no per-test isolation, so tests that
+// write this production key must clean up or the sentinel leaks into later tests.
+func cleanupPublisherCheckCache(t *testing.T, api *handlers.API) {
+	t.Helper()
+	t.Cleanup(func() {
+		_, _ = api.PgPool.Exec(context.Background(), `DELETE FROM page_cache WHERE key = $1`, "publisher_check")
+	})
+}
+
 func newV1Router(t *testing.T, api *handlers.API) *chi.Mux {
 	t.Helper()
 	r := chi.NewRouter()
+	// EnvMiddleware resolves X-DZ-Env (defaults to mainnet), so tests can target a
+	// non-mainnet env to exercise the isMainnet cache gate.
+	r.Use(handlers.EnvMiddleware)
 	v1.Mount(r, api)
 	return r
 }
@@ -288,8 +302,13 @@ func TestV1EdgeShredsPublishers_EpochsAndSlotsParams(t *testing.T) {
 // served from the page cache when a cached payload exists. The API has no
 // ClickHouse connection, so a cache miss would fail — returning the distinctive
 // cached values proves the cache was used (and the heavy live query was skipped).
+//
+// Must NOT run in parallel: it and the other pg-backed cache tests share one
+// Postgres (SetupPostgresForTest has no per-test isolation) and write the same
+// production key. t.Cleanup deletes the row so the sentinel doesn't leak.
 func TestV1EdgeShredsPublishers_ServedFromCache(t *testing.T) {
 	api := apitesting.NewTestAPIPg(t, testPgDB)
+	cleanupPublisherCheckCache(t, api)
 
 	cached := handlers.PublisherCheckResponse{
 		Epoch:               4242,
@@ -327,6 +346,7 @@ func TestV1EdgeShredsPublishers_ServedFromCache(t *testing.T) {
 func TestV1EdgeShredsPublishers_NonDefaultShapeBypassesCache(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPIAll(t, testChDB, testPgDB, nil, nil)
+	cleanupPublisherCheckCache(t, api)
 	insertPublisherCheckTestData(t, api)
 
 	// Populate the default-shape cache with a distinctive sentinel epoch.
@@ -348,4 +368,65 @@ func TestV1EdgeShredsPublishers_NonDefaultShapeBypassesCache(t *testing.T) {
 	assert.Equal(t, uint64(800), resp.Epoch)
 	require.Len(t, resp.Publishers, 1)
 	assert.Equal(t, "dzuser1", resp.Publishers[0].DZUserPubkey)
+}
+
+// TestV1EdgeShredsPublishers_StaleCacheRunsLive asserts that a default-shape
+// request ignores a cached payload older than publisherCheckStaleAfter and runs
+// live instead — guarding H1, where a stalled page-cache worker would otherwise
+// let v1 serve arbitrarily old data with no signal. Not parallel: shares the
+// publisher_check pg key with the parallel bypass test.
+func TestV1EdgeShredsPublishers_StaleCacheRunsLive(t *testing.T) {
+	api := apitesting.NewTestAPIAll(t, testChDB, testPgDB, nil, nil)
+	cleanupPublisherCheckCache(t, api)
+	insertPublisherCheckTestData(t, api)
+
+	// Populate the default-shape cache with a sentinel, then backdate it well past
+	// the staleness cap so the cached-or-live path must fall through to live.
+	require.NoError(t, api.WritePageCache(t.Context(), "publisher_check", handlers.PublisherCheckResponse{
+		Epoch:      4242,
+		Publishers: []handlers.PublisherCheckItem{{DZUserPubkey: "cached-user"}},
+	}))
+	_, err := api.PgPool.Exec(t.Context(),
+		`UPDATE page_cache SET updated_at = NOW() - INTERVAL '1 hour' WHERE key = $1`, "publisher_check")
+	require.NoError(t, err)
+
+	r := newV1Router(t, api)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/edge/shreds/publishers/leaders", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+	var resp v1.EdgeShredsPublishersResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+	// Live query result (epoch 800), not the stale sentinel (4242).
+	assert.Equal(t, uint64(800), resp.Epoch)
+}
+
+// TestV1EdgeShredsPublishers_NonMainnetBypassesCache asserts the isMainnet gate:
+// a non-mainnet (testnet) default-shape request must not read the mainnet page
+// cache and instead runs live. Not parallel: shares the publisher_check pg key.
+func TestV1EdgeShredsPublishers_NonMainnetBypassesCache(t *testing.T) {
+	api := apitesting.NewTestAPIAll(t, testChDB, testPgDB, nil, nil)
+	cleanupPublisherCheckCache(t, api)
+	insertPublisherCheckTestData(t, api)
+
+	// Fresh cached sentinel — a mainnet default request would serve it; testnet must not.
+	require.NoError(t, api.WritePageCache(t.Context(), "publisher_check", handlers.PublisherCheckResponse{
+		Epoch:      4242,
+		Publishers: []handlers.PublisherCheckItem{{DZUserPubkey: "cached-user"}},
+	}))
+
+	r := newV1Router(t, api)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/edge/shreds/publishers/leaders", nil)
+	req.Header.Set("X-DZ-Env", "testnet")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+	var resp v1.EdgeShredsPublishersResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+	// Live result (epoch 800), not the mainnet cached sentinel (4242).
+	assert.Equal(t, uint64(800), resp.Epoch)
 }

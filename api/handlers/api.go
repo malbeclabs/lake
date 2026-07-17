@@ -4,9 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/sync/singleflight"
+
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 )
 
@@ -62,6 +66,23 @@ type API struct {
 
 	// OnSlackInstallationChange is called when a Slack installation changes.
 	OnSlackInstallationChange func(teamID string)
+
+	// Guards for live publisher-check runs (see fetchPublisherCheckLive):
+	// pubCheckSF collapses concurrent identical default-shape misses into one
+	// query; pubCheckSem bounds the aggregate number of concurrent live runs so
+	// the load isn't gated only by the client-controllable per-IP rate-limit key.
+	pubCheckSF      singleflight.Group
+	pubCheckSem     chan struct{}
+	pubCheckSemOnce sync.Once
+}
+
+// publisherCheckLiveSem lazily builds the concurrency-bounding semaphore so a
+// zero-value API (used widely in tests) needs no constructor change.
+func (a *API) publisherCheckLiveSem() chan struct{} {
+	a.pubCheckSemOnce.Do(func() {
+		a.pubCheckSem = make(chan struct{}, maxConcurrentPublisherCheckLive)
+	})
+	return a.pubCheckSem
 }
 
 // envDB returns the ClickHouse connection for the environment in the context.
@@ -115,6 +136,23 @@ func (a *API) readPageCache(ctx context.Context, key string) (json.RawMessage, e
 		return nil, err
 	}
 	return data, nil
+}
+
+// readPageCacheWithAge reads a cached JSON value along with its last-write time,
+// so callers can reject a stale payload (see fetchPublisherCheckCachedOrLive).
+func (a *API) readPageCacheWithAge(ctx context.Context, key string) (json.RawMessage, time.Time, error) {
+	if a.PgPool == nil {
+		return nil, time.Time{}, errNoPgPool
+	}
+	var data json.RawMessage
+	var updatedAt time.Time
+	err := a.PgPool.QueryRow(ctx,
+		`SELECT data, updated_at FROM page_cache WHERE key = $1`, key,
+	).Scan(&data, &updatedAt)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	return data, updatedAt, nil
 }
 
 // WritePageCache upserts a cache entry in Postgres.

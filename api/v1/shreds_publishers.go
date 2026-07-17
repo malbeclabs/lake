@@ -2,10 +2,12 @@ package v1
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/malbeclabs/lake/api/handlers"
+	"github.com/malbeclabs/lake/api/handlers/dberror"
 )
 
 // EdgeShredsPublisher is a stable public shape for a single shreds publisher.
@@ -49,11 +51,13 @@ type EdgeShredsPublishersResponse struct {
 
 // EdgeShredsPublishersInput is the request for the shreds publishers endpoint.
 type EdgeShredsPublishersInput struct {
-	Q      string `query:"q" doc:"Optional filter: DZ user pubkey, publisher IP, or client IP"`
-	Epochs int    `query:"epochs" minimum:"1" maximum:"10" default:"2" doc:"Number of recent epochs to include (ignored if slots > 0)"`
-	Slots  int    `query:"slots" minimum:"0" maximum:"5000" default:"0" doc:"If > 0, restrict the window to this many most-recent slots instead of epochs. Recommended values: 100, 500, 1000, 5000."`
-	Limit  int    `query:"limit" minimum:"1" maximum:"1000" default:"100" doc:"Maximum publishers to return"`
-	Offset int    `query:"offset" minimum:"0" default:"0" doc:"Offset into the result set"`
+	Q string `query:"q" doc:"Optional filter: DZ user pubkey, publisher IP, or client IP"`
+	// The default must match handlers.DefaultPublisherCheckEpochs (the cacheable
+	// shape); a struct tag can't reference the const, so keep them in sync by hand.
+	Epochs int `query:"epochs" minimum:"1" maximum:"10" default:"2" doc:"Number of recent epochs to include (ignored if slots > 0)"`
+	Slots  int `query:"slots" minimum:"0" maximum:"5000" default:"0" doc:"If > 0, restrict the window to this many most-recent slots instead of epochs. Recommended values: 100, 500, 1000, 5000."`
+	Limit  int `query:"limit" minimum:"1" maximum:"1000" default:"100" doc:"Maximum publishers to return"`
+	Offset int `query:"offset" minimum:"0" default:"0" doc:"Offset into the result set"`
 }
 
 // EdgeShredsPublishersOutput wraps the response body for huma.
@@ -72,7 +76,11 @@ func registerEdgeShredsPublishers(humaAPI huma.API, api *handlers.API) {
 	}, func(ctx context.Context, input *EdgeShredsPublishersInput) (*EdgeShredsPublishersOutput, error) {
 		resp, err := api.FetchPublisherCheckCachedOrLive(ctx, input.Q, input.Epochs, input.Slots)
 		if err != nil {
-			return nil, huma.Error500InternalServerError("failed to fetch shreds publishers", err)
+			// Log the raw error server-side; return only a sanitized message so
+			// internal table/column names and dial-tcp host:port don't leak to
+			// unauthenticated clients (huma serializes err.Error() into the body).
+			slog.Warn("v1 shreds publishers failed", "error", err)
+			return nil, huma.Error500InternalServerError(dberror.UserMessage(err))
 		}
 		return &EdgeShredsPublishersOutput{Body: toEdgeShredsPublishersResponse(resp, input.Limit, input.Offset)}, nil
 	})

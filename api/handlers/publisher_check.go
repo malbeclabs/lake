@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"golang.org/x/mod/semver"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/malbeclabs/lake/api/handlers/dberror"
 	"github.com/malbeclabs/lake/api/metrics"
@@ -79,88 +80,140 @@ type PublisherCheckResponse struct {
 	Publishers          []PublisherCheckItem `json:"publishers"`
 }
 
-// GetPublisherCheck returns publisher status for all publishers in the current epoch,
-// optionally filtered by IP address or DZ user pubkey.
-// isDefaultPublisherCheckRequest returns true if the request uses default parameters
-// (no filter, epochs=2, no slots), meaning it can be served from cache.
-func isDefaultPublisherCheckRequest(r *http.Request) bool {
-	q := r.URL.Query()
-	if q.Get("q") != "" {
-		return false
-	}
-	if e := q.Get("epochs"); e != "" && e != "2" {
-		return false
-	}
-	if q.Get("slots") != "" {
-		return false
-	}
-	return true
-}
+const (
+	// DefaultPublisherCheckEpochs is the default recent-epoch window and the only
+	// shape backed by the page cache. Single source of truth for the default shape;
+	// the worker's cache-warming entry and huma's `default` tag on the v1 endpoint
+	// must match it (they can't reference this const from a struct tag).
+	DefaultPublisherCheckEpochs = 2
 
-// publisherCheckLiveTimeout bounds a live (uncached) publisher-check run. Matches
-// the REST handler's per-attempt budget.
-const publisherCheckLiveTimeout = 20 * time.Second
+	// publisherCheckLiveTimeout bounds a single live (uncached) publisher-check
+	// attempt. Matches the REST handler's per-attempt budget.
+	publisherCheckLiveTimeout = 20 * time.Second
+
+	// publisherCheckStaleAfter caps how old a cached publisher_check payload may be
+	// before the cached-or-live path ignores it and runs live. The page-cache worker
+	// deliberately keeps its last payload on failure, so without this cap a stalled
+	// worker could serve arbitrarily old data with no signal. Set to ~3× the
+	// effective slow-batch cadence (everyN=4 × 30s ≈ 2 min).
+	publisherCheckStaleAfter = 6 * time.Minute
+
+	// maxConcurrentPublisherCheckLive bounds simultaneous live runs of the heavy
+	// publisher-check query across all callers. The per-IP rate-limit key is
+	// client-controlled (X-Forwarded-For), so it can't be the aggregate DoS bound;
+	// this server-side cap does not depend on client input.
+	maxConcurrentPublisherCheckLive = 4
+)
 
 // isDefaultPublisherCheckShape reports whether the given parameters match the
-// cached default (no filter, epochs=2, no slots). Parameter-level mirror of
-// isDefaultPublisherCheckRequest for callers that don't have an *http.Request.
+// cached default (no filter, default epochs, no slots). Single source of truth for
+// "is this the cacheable shape", used by both the REST and v1 entry points.
 func isDefaultPublisherCheckShape(q string, epochsParam, slotsParam int) bool {
-	return q == "" && epochsParam == 2 && slotsParam == 0
+	return q == "" && epochsParam == DefaultPublisherCheckEpochs && slotsParam == 0
 }
 
 // FetchPublisherCheckCachedOrLive returns publisher-check data, serving the
-// default-shape mainnet request (no filter, epochs=2, no slots) from the page
-// cache when a cached payload exists and otherwise running the query live under
-// publisherCheckLiveTimeout. It lets uncapped callers (e.g. the v1 edge endpoint)
-// avoid an unbounded live run of the heavy query on every request while reusing
-// the same cache the REST handler serves.
+// default-shape mainnet request from the page cache when a fresh payload exists
+// and otherwise running the query live under publisherCheckLiveTimeout. It lets
+// uncapped callers (e.g. the v1 edge endpoint) avoid an unbounded live run of the
+// heavy query on every request while reusing the same cache the REST handler serves.
 func (a *API) FetchPublisherCheckCachedOrLive(ctx context.Context, q string, epochsParam, slotsParam int) (*PublisherCheckResponse, error) {
-	return a.fetchPublisherCheckCachedOrLive(ctx, q, epochsParam, slotsParam, a.FetchPublisherCheckData)
+	resp, _, err := a.fetchPublisherCheckCachedOrLive(ctx, q, epochsParam, slotsParam, a.FetchPublisherCheckData)
+	return resp, err
 }
 
-// fetchPublisherCheckCachedOrLive is the testable core of
-// FetchPublisherCheckCachedOrLive: fetch is injected so a test can observe the
-// deadline applied to the live path.
+// fetchPublisherCheckCachedOrLive is the shared cache-or-live core for both the
+// REST handler and the v1 endpoint (fetch is injected so tests can observe the
+// live path). It returns fromCache so the REST handler can set X-Cache. A cached
+// default-shape payload is served only when mainnet, parseable, and fresher than
+// publisherCheckStaleAfter; otherwise it runs live.
 func (a *API) fetchPublisherCheckCachedOrLive(
 	ctx context.Context, q string, epochsParam, slotsParam int,
 	fetch func(context.Context, string, int, int) (*PublisherCheckResponse, error),
-) (*PublisherCheckResponse, error) {
+) (resp *PublisherCheckResponse, fromCache bool, err error) {
+	q = strings.TrimSpace(q)
+
 	if isMainnet(ctx) && isDefaultPublisherCheckShape(q, epochsParam, slotsParam) {
-		if data, err := a.readPageCache(ctx, "publisher_check"); err == nil {
-			var resp PublisherCheckResponse
-			if uerr := json.Unmarshal(data, &resp); uerr != nil {
-				// A populated but unparseable cache entry indicates payload drift;
-				// fall through to a live query but surface it so it's diagnosable.
-				slog.Warn("publisher check: cached payload unmarshal failed", "error", uerr)
+		// Bound the cache read too; it must not run on the caller's unbounded ctx.
+		readCtx, cancel := context.WithTimeout(ctx, publisherCheckLiveTimeout)
+		data, updatedAt, rerr := a.readPageCacheWithAge(readCtx, "publisher_check")
+		cancel()
+		if rerr == nil {
+			if age := time.Since(updatedAt); age > publisherCheckStaleAfter {
+				slog.Warn("publisher check: cached payload stale, running live",
+					"age", age.Round(time.Second), "max_age", publisherCheckStaleAfter)
 			} else {
-				return &resp, nil
+				var cached PublisherCheckResponse
+				if uerr := json.Unmarshal(data, &cached); uerr != nil {
+					// A populated but unparseable cache entry indicates payload drift;
+					// fall through to a live query but surface it so it's diagnosable.
+					slog.Warn("publisher check: cached payload unmarshal failed", "error", uerr)
+				} else {
+					return &cached, true, nil
+				}
 			}
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, publisherCheckLiveTimeout)
-	defer cancel()
-	return fetch(ctx, q, epochsParam, slotsParam)
+	resp, err = a.fetchPublisherCheckLive(ctx, q, epochsParam, slotsParam, fetch)
+	return resp, false, err
+}
+
+// fetchPublisherCheckLive runs the heavy query under a bounded per-attempt
+// deadline, retrying once on transient failure with a fresh budget. Concurrent
+// identical default-shape misses are collapsed via singleflight (one query serves
+// all), and every live run is gated by a server-side concurrency semaphore.
+func (a *API) fetchPublisherCheckLive(
+	ctx context.Context, q string, epochsParam, slotsParam int,
+	fetch func(context.Context, string, int, int) (*PublisherCheckResponse, error),
+) (*PublisherCheckResponse, error) {
+	run := func() (*PublisherCheckResponse, error) {
+		return a.fetchPublisherCheckLiveGuarded(ctx, q, epochsParam, slotsParam, fetch)
+	}
+
+	// Only the default shape stampedes (a Postgres outage sends every default
+	// request live at once); collapse those. Filtered shapes are varied and
+	// low-volume, so singleflight would rarely help and could mask distinct work.
+	if isDefaultPublisherCheckShape(q, epochsParam, slotsParam) {
+		key := string(EnvFromContext(ctx))
+		v, err, _ := a.pubCheckSF.Do(key, func() (any, error) { return run() })
+		if err != nil {
+			return nil, err
+		}
+		return v.(*PublisherCheckResponse), nil
+	}
+	return run()
+}
+
+func (a *API) fetchPublisherCheckLiveGuarded(
+	ctx context.Context, q string, epochsParam, slotsParam int,
+	fetch func(context.Context, string, int, int) (*PublisherCheckResponse, error),
+) (*PublisherCheckResponse, error) {
+	sem := a.publisherCheckLiveSem()
+	select {
+	case sem <- struct{}{}:
+		defer func() { <-sem }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
+	attempt := func() (*PublisherCheckResponse, error) {
+		actx, cancel := context.WithTimeout(ctx, publisherCheckLiveTimeout)
+		defer cancel()
+		return fetch(actx, q, epochsParam, slotsParam)
+	}
+
+	resp, err := attempt()
+	if err != nil && dberror.IsTransient(err) && ctx.Err() == nil {
+		resp, err = attempt()
+	}
+	return resp, err
 }
 
 func (a *API) GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
-	// Try to serve from cache for default requests
-	if isMainnet(r.Context()) && isDefaultPublisherCheckRequest(r) {
-		if data, err := a.readPageCache(r.Context(), "publisher_check"); err == nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("X-Cache", "HIT")
-			_, _ = w.Write(data)
-			return
-		}
-	}
-
-	w.Header().Set("X-Cache", "MISS")
-	ctx, cancel := context.WithTimeout(r.Context(), publisherCheckLiveTimeout)
-	defer cancel()
-
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 
-	epochsParam := 2 // default: current + previous epoch
+	epochsParam := DefaultPublisherCheckEpochs // current + previous epoch
 	if e := r.URL.Query().Get("epochs"); e != "" {
 		if parsed, err := strconv.Atoi(e); err == nil && parsed >= 1 && parsed <= 10 {
 			epochsParam = parsed
@@ -181,15 +234,7 @@ func (a *API) GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp, err := a.FetchPublisherCheckData(ctx, q, epochsParam, slotsParam)
-	if err != nil && dberror.IsTransient(err) {
-		cancel()
-		var retryCancel context.CancelFunc
-		ctx, retryCancel = context.WithTimeout(r.Context(), publisherCheckLiveTimeout)
-		defer retryCancel()
-		resp, err = a.FetchPublisherCheckData(ctx, q, epochsParam, slotsParam)
-	}
-
+	resp, fromCache, err := a.fetchPublisherCheckCachedOrLive(r.Context(), q, epochsParam, slotsParam, a.FetchPublisherCheckData)
 	if err != nil {
 		slog.Warn("publisher check failed", "error", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
@@ -197,6 +242,11 @@ func (a *API) GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	if fromCache {
+		w.Header().Set("X-Cache", "HIT")
+	} else {
+		w.Header().Set("X-Cache", "MISS")
+	}
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		logError("failed to encode response", "error", err)
 	}
@@ -298,107 +348,123 @@ func (a *API) FetchPublisherCheckData(ctx context.Context, q string, epochsParam
 
 	query += " ORDER BY activated_stake DESC, publisher_ip"
 
-	rows, err := a.envDB(ctx).Query(ctx, query, args...)
-	duration := time.Since(start)
-	metrics.RecordClickHouseQuery("publisher_check", duration, err)
+	// The main publisher query and the two totals queries are independent, so run
+	// them concurrently under one context. Previously all three ran sequentially
+	// under a single budget, so a slow main query starved the totals; propagating
+	// the totals error (rather than warn-and-continue) then turned that starvation
+	// into a 500. Running them together removes that ordering dependency.
+	//
+	// Totals errors are propagated rather than warn-and-continued: a failure would
+	// otherwise return a 200 with silently-zeroed totals. Callers handle the error —
+	// the REST handler and v1 edge endpoint retry transient failures then 500, and
+	// the page-cache worker keeps its last complete payload.
+	var (
+		epoch, maxSlot      uint64
+		publishers          []PublisherCheckItem
+		totalNetworkStake   int64
+		totalPublishers     uint64
+		totalPublisherStake int64
+	)
 
-	if err != nil {
+	g, gctx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		rows, err := a.envDB(gctx).Query(gctx, query, args...)
+		metrics.RecordClickHouseQuery("publisher_check", time.Since(start), err)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var p PublisherCheckItem
+			var totalSlots, leaderSlots, retransmitSlots uint64
+			var stakeRaw int64
+			var rowEpoch uint64
+			var rowMaxSlot uint64
+
+			if err := rows.Scan(
+				&p.PublisherIP,
+				&p.ClientIP,
+				&p.NodePubkey,
+				&p.VotePubkey,
+				&p.DZUserPubkey,
+				&p.DZDeviceCode,
+				&p.DZMetroCode,
+				&stakeRaw,
+				&totalSlots,
+				&leaderSlots,
+				&retransmitSlots,
+				&p.TotalUniqueShreds,
+				&p.SlotsNeedingRepair,
+				&rowEpoch,
+				&rowMaxSlot,
+				&p.ValidatorClient,
+				&p.ValidatorVersion,
+				&p.ValidatorName,
+			); err != nil {
+				return fmt.Errorf("scan: %w", err)
+			}
+
+			if rowEpoch > epoch {
+				epoch = rowEpoch
+			}
+			if rowMaxSlot > maxSlot {
+				maxSlot = rowMaxSlot
+			}
+			if stakeRaw > 0 {
+				p.ActivatedStake = uint64(stakeRaw)
+			}
+			p.TotalSlots = totalSlots
+			p.LeaderSlots = leaderSlots
+			p.MulticastConnected = true // All rows are bebop group members
+			p.PublishingLeaderShreds = leaderSlots > 0
+			p.PublishingRetransmitted = totalSlots > 0 &&
+				retransmitSlots >= retransmitMinSlots &&
+				float64(retransmitSlots)/float64(totalSlots) >= retransmitMinRatio
+			p.ValidatorVersionOk = isValidatorVersionOk(p.ValidatorClient, p.ValidatorVersion)
+			p.IsBackup = p.NodePubkey != "" && p.VotePubkey == ""
+
+			publishers = append(publishers, p)
+		}
+
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("rows: %w", err)
+		}
+		return nil
+	})
+
+	g.Go(func() error {
+		if err := a.envDB(gctx).QueryRow(gctx,
+			`SELECT COALESCE(SUM(activated_stake_lamports), 0)
+			 FROM solana_vote_accounts_current
+			 WHERE epoch_vote_account = 'true' AND activated_stake_lamports > 0`).Scan(&totalNetworkStake); err != nil {
+			return fmt.Errorf("total network stake: %w", err)
+		}
+		return nil
+	})
+
+	g.Go(func() error {
+		if err := a.envDB(gctx).QueryRow(gctx,
+			`SELECT count(), COALESCE(sum(v.activated_stake_lamports), 0)
+			 FROM dz_users_current u
+			 LEFT JOIN solana_gossip_nodes_current g ON u.client_ip = g.gossip_ip AND u.client_ip != ''
+			 LEFT JOIN solana_vote_accounts_current v ON g.pubkey = v.node_pubkey AND v.epoch_vote_account = 'true'
+			 WHERE u.status = 'activated'
+			   AND JSONLength(u.publishers) > 0
+			   AND v.vote_pubkey != ''
+			   AND g.pubkey != ''`).Scan(&totalPublishers, &totalPublisherStake); err != nil {
+			return fmt.Errorf("total publishers: %w", err)
+		}
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
 		return nil, err
-	}
-	defer rows.Close()
-
-	var epoch uint64
-	var maxSlot uint64
-	var publishers []PublisherCheckItem
-
-	for rows.Next() {
-		var p PublisherCheckItem
-		var totalSlots, leaderSlots, retransmitSlots uint64
-		var stakeRaw int64
-		var rowEpoch uint64
-		var rowMaxSlot uint64
-
-		if err := rows.Scan(
-			&p.PublisherIP,
-			&p.ClientIP,
-			&p.NodePubkey,
-			&p.VotePubkey,
-			&p.DZUserPubkey,
-			&p.DZDeviceCode,
-			&p.DZMetroCode,
-			&stakeRaw,
-			&totalSlots,
-			&leaderSlots,
-			&retransmitSlots,
-			&p.TotalUniqueShreds,
-			&p.SlotsNeedingRepair,
-			&rowEpoch,
-			&rowMaxSlot,
-			&p.ValidatorClient,
-			&p.ValidatorVersion,
-			&p.ValidatorName,
-		); err != nil {
-			return nil, fmt.Errorf("scan: %w", err)
-		}
-
-		if rowEpoch > epoch {
-			epoch = rowEpoch
-		}
-		if rowMaxSlot > maxSlot {
-			maxSlot = rowMaxSlot
-		}
-		if stakeRaw > 0 {
-			p.ActivatedStake = uint64(stakeRaw)
-		}
-		p.TotalSlots = totalSlots
-		p.LeaderSlots = leaderSlots
-		p.MulticastConnected = true // All rows are bebop group members
-		p.PublishingLeaderShreds = leaderSlots > 0
-		p.PublishingRetransmitted = totalSlots > 0 &&
-			retransmitSlots >= retransmitMinSlots &&
-			float64(retransmitSlots)/float64(totalSlots) >= retransmitMinRatio
-		p.ValidatorVersionOk = isValidatorVersionOk(p.ValidatorClient, p.ValidatorVersion)
-		p.IsBackup = p.NodePubkey != "" && p.VotePubkey == ""
-
-		publishers = append(publishers, p)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("rows: %w", err)
 	}
 
 	if publishers == nil {
 		publishers = []PublisherCheckItem{}
-	}
-
-	// Propagate errors from the totals queries rather than warn-and-continue:
-	// a failure here (typically context expiry after the main query consumed the
-	// budget) would otherwise return a 200 with silently-zeroed totals. Callers
-	// handle the error: the REST handler retries transient failures then 500s,
-	// the page-cache worker keeps its last complete payload, and other callers
-	// (v1 edge, scoreboard) return 500.
-	var totalNetworkStake int64
-	err = a.envDB(ctx).QueryRow(ctx,
-		`SELECT COALESCE(SUM(activated_stake_lamports), 0)
-		 FROM solana_vote_accounts_current
-		 WHERE epoch_vote_account = 'true' AND activated_stake_lamports > 0`).Scan(&totalNetworkStake)
-	if err != nil {
-		return nil, fmt.Errorf("total network stake: %w", err)
-	}
-
-	var totalPublishers uint64
-	var totalPublisherStake int64
-	err = a.envDB(ctx).QueryRow(ctx,
-		`SELECT count(), COALESCE(sum(v.activated_stake_lamports), 0)
-		 FROM dz_users_current u
-		 LEFT JOIN solana_gossip_nodes_current g ON u.client_ip = g.gossip_ip AND u.client_ip != ''
-		 LEFT JOIN solana_vote_accounts_current v ON g.pubkey = v.node_pubkey AND v.epoch_vote_account = 'true'
-		 WHERE u.status = 'activated'
-		   AND JSONLength(u.publishers) > 0
-		   AND v.vote_pubkey != ''
-		   AND g.pubkey != ''`).Scan(&totalPublishers, &totalPublisherStake)
-	if err != nil {
-		return nil, fmt.Errorf("total publishers: %w", err)
 	}
 
 	return &PublisherCheckResponse{

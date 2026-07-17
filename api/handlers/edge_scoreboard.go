@@ -669,8 +669,9 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 	if !cursorMode {
 
 		// Group P: publisher / publishing-shred / stake-% headline numbers.
-		// Reads the publisher_check page-cache entry (refreshed by the worker every 30s)
-		// and derives the three values from it. The previous in-place query (q1d) ran
+		// Reads the publisher_check page-cache entry (refreshed by the worker on a slow
+		// cadence, ~every 2 min; see publisherCheckEveryN) and derives the three values
+		// from it. The previous in-place query (q1d) ran
 		// sequentially before this errgroup and consumed most of the deadline budget in
 		// prod, surfacing as "context deadline exceeded" on q1d / q8 in the worker.
 		g.Go(func() error {
