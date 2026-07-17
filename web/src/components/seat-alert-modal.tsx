@@ -39,7 +39,7 @@ export function SeatAlertModal({ seat, onClose }: SeatAlertModalProps) {
         <h2 className="text-lg font-medium mb-1">Set up a Telegram alert</h2>
         <p className="text-xs text-muted-foreground font-mono">{seat.pk}</p>
         <p className="text-xs text-muted-foreground mb-4">
-          You'll get a Telegram message when this seat runs low. Telegram is the only channel for now — close this if you don't use it.
+          You'll get a Telegram message when this seat runs low.
         </p>
 
         {create.isSuccess ? (
