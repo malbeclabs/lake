@@ -244,10 +244,17 @@ export function hasAnyImpact(report: PlanImpactReport): boolean {
   return countBySeverity(report).total > 0
 }
 
+/** Plain (unsigned) microsecond -> millisecond display, e.g. `4100` -> `"4.1ms"`.
+ *  Internal values stay in µs/ns everywhere else; this is a DISPLAY-only
+ *  conversion. `formatDeltaMs` below reuses this for the signed delta case. */
+export function formatMs(us: number): string {
+  return `${(us / 1000).toFixed(1)}ms`
+}
+
 export function formatDeltaMs(us: number): string {
   const ms = us / 1000
   const sign = ms > 0 ? '+' : ''
-  return `${sign}${ms.toFixed(1)}ms`
+  return `${sign}${formatMs(us)}`
 }
 
 const OP_LABEL: Record<PlanOpType, string> = {

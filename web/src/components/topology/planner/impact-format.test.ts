@@ -14,6 +14,7 @@ import {
   countBySeverity,
   hasAnyImpact,
   formatDeltaMs,
+  formatMs,
   changeShortLabel,
 } from './impact-format'
 
@@ -310,6 +311,18 @@ describe('formatDeltaMs', () => {
     expect(formatDeltaMs(3200)).toBe('+3.2ms')
     expect(formatDeltaMs(-1500)).toBe('-1.5ms')
     expect(formatDeltaMs(0)).toBe('0.0ms')
+  })
+})
+
+describe('formatMs', () => {
+  it('converts microseconds to an unsigned millisecond string', () => {
+    expect(formatMs(30000)).toBe('30.0ms')
+    expect(formatMs(4100)).toBe('4.1ms')
+    expect(formatMs(0)).toBe('0.0ms')
+  })
+
+  it('is reused by formatDeltaMs so both stay consistent', () => {
+    expect(formatDeltaMs(4100)).toBe(`+${formatMs(4100)}`)
   })
 })
 

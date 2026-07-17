@@ -1,5 +1,5 @@
-import { type ReactNode, useState } from 'react'
-import { AlertTriangle, Shield, ArrowRight, Zap, Loader2 } from 'lucide-react'
+import { type ReactNode, useId, useState } from 'react'
+import { AlertTriangle, ChevronDown, Shield, ArrowRight, Zap, Loader2 } from 'lucide-react'
 import type {
   PlanImpactReport,
   PartitionIssue,
@@ -17,6 +17,7 @@ import {
   severityRank,
   countBySeverity,
   formatDeltaMs,
+  formatMs,
   type LatencyDeltaGroup,
 } from './impact-format'
 
@@ -69,9 +70,21 @@ function CausedBy({
   )
 }
 
+/** Compact "before X ms → after Y ms" line for one metro-pair's individual
+ *  latency, always ms (never raw µs). Skipped for unreachable pairs -- "no
+ *  path" already says everything an after-value can't. */
+function BeforeAfter({ beforeUs, afterUs }: { beforeUs: number; afterUs: number }) {
+  return (
+    <span className="text-[10px] text-muted-foreground">
+      before {formatMs(beforeUs)} → after {formatMs(afterUs)}
+    </span>
+  )
+}
+
 /** The "N metros" side of a collapsed latency-delta row. Hovering (or
- *  focusing, for keyboard users) reveals the individual member metros so the
- *  summary row stays compact without hiding the detail entirely. */
+ *  focusing, for keyboard users) reveals the individual member metros --
+ *  each with its own before/after latency in ms -- so the summary row stays
+ *  compact without hiding the detail entirely. */
 function LatencyGroupMembers({ group }: { group: LatencyDeltaGroup }) {
   const [open, setOpen] = useState(false)
   return (
@@ -91,9 +104,17 @@ function LatencyGroupMembers({ group }: { group: LatencyDeltaGroup }) {
       {open && (
         <div
           data-testid="latency-group-members"
-          className="absolute left-0 top-full mt-1 z-10 max-w-xs whitespace-normal rounded border border-[var(--border)] bg-[var(--popover)] px-2 py-1 text-popover-foreground shadow-lg"
+          className="absolute left-0 top-full mt-1 z-10 max-w-xs whitespace-normal rounded border border-[var(--border)] bg-[var(--popover)] px-2 py-1 text-popover-foreground shadow-lg space-y-0.5"
         >
-          {group.otherMetros.join(', ')}
+          {group.members.map((m, i) => (
+            <div key={`${m.metro_a}-${m.metro_z}-${i}`}>
+              <span className="text-foreground">{group.otherMetros[i]}</span>
+              {m.after_us >= 0 && (
+                <span className="text-muted-foreground"> · </span>
+              )}
+              {m.after_us >= 0 && <BeforeAfter beforeUs={m.before_us} afterUs={m.after_us} />}
+            </div>
+          ))}
         </div>
       )}
     </span>
@@ -104,6 +125,51 @@ function SectionTitle({ children }: { children: ReactNode }) {
   return (
     <div className="font-medium text-muted-foreground uppercase tracking-wider text-[10px]">
       {children}
+    </div>
+  )
+}
+
+/** A foldable finding-category section: header shows the category name + a
+ *  count of the underlying findings (before any display-only grouping, e.g.
+ *  latency's "N metros" collapse), and toggles the section body. Keyboard
+ *  accessible: a real <button> with aria-expanded, so it works with Enter/
+ *  Space and is announced by screen readers. Default expanded. */
+function CollapsibleSection({
+  title,
+  icon,
+  count,
+  children,
+}: {
+  title: string
+  icon?: ReactNode
+  count: number
+  children: ReactNode
+}) {
+  const [expanded, setExpanded] = useState(true)
+  const contentId = useId()
+  return (
+    <div className="space-y-1.5 pt-2 border-t border-[var(--border)]">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        aria-controls={contentId}
+        onClick={() => setExpanded((e) => !e)}
+        className="w-full flex items-center justify-between gap-1.5 text-left group"
+      >
+        <span className="inline-flex items-center gap-1 font-medium text-muted-foreground uppercase tracking-wider text-[10px] group-hover:text-foreground">
+          {icon}
+          {title}
+          <span className="normal-case tracking-normal">({count})</span>
+        </span>
+        <ChevronDown
+          className={`h-3 w-3 flex-shrink-0 text-muted-foreground transition-transform ${expanded ? '' : '-rotate-90'}`}
+        />
+      </button>
+      {expanded && (
+        <div id={contentId} className="space-y-1.5">
+          {children}
+        </div>
+      )}
     </div>
   )
 }
@@ -173,8 +239,7 @@ export function PlannerImpactPanel({
 
           {/* 1. Connectivity / partitions */}
           {report.partition_issues.length > 0 && (
-            <div className="space-y-1.5 pt-2 border-t border-[var(--border)]">
-              <SectionTitle>Connectivity</SectionTitle>
+            <CollapsibleSection title="Connectivity" count={report.partition_issues.length}>
               {[...report.partition_issues]
                 .sort((a, b) => severityRank(a.severity) - severityRank(b.severity))
                 .map((p: PartitionIssue, i) => (
@@ -189,16 +254,16 @@ export function PlannerImpactPanel({
                     </div>
                   </div>
                 ))}
-            </div>
+            </CollapsibleSection>
           )}
 
           {/* 2. Metro-pair latency, worst-first. Pairs sharing a common
               endpoint metro and the same added latency are collapsed into
               one "N metros +Xms to Y" row (members shown on hover) so a
-              removed link doesn't dump dozens of near-identical rows. */}
+              removed link doesn't dump dozens of near-identical rows. The
+              header count is the raw finding count (pre-grouping). */}
           {report.latency_deltas.length > 0 && (
-            <div className="space-y-1.5 pt-2 border-t border-[var(--border)]">
-              <SectionTitle>Metro-pair latency</SectionTitle>
+            <CollapsibleSection title="Latency changes" count={report.latency_deltas.length}>
               {groupLatencyDeltas(report.latency_deltas).map((g) => (
                 <div key={g.key} data-testid="impact-latency-row" className="flex items-start gap-1.5">
                   <SeverityDot severity={g.severity} />
@@ -219,22 +284,23 @@ export function PlannerImpactPanel({
                         </span>
                       )}
                     </div>
+                    {!g.unreachable && g.otherMetros.length === 1 && (
+                      <BeforeAfter beforeUs={g.members[0].before_us} afterUs={g.members[0].after_us} />
+                    )}
                     <CausedBy causedBy={g.causedBy} changeLabels={changeLabels} />
                   </div>
                 </div>
               ))}
-            </div>
+            </CollapsibleSection>
           )}
 
           {/* 3. Redundancy (path count before/after) */}
           {report.redundancy_changes.length > 0 && (
-            <div className="space-y-1.5 pt-2 border-t border-[var(--border)]">
-              <SectionTitle>
-                <span className="inline-flex items-center gap-1">
-                  <Shield className="h-3 w-3" />
-                  Redundancy
-                </span>
-              </SectionTitle>
+            <CollapsibleSection
+              title="Redundancy"
+              count={report.redundancy_changes.length}
+              icon={<Shield className="h-3 w-3" />}
+            >
               {sortRedundancy(report.redundancy_changes).map((r: RedundancyChange, i) => (
                 <div key={`${r.metro_a}-${r.metro_z}-${i}`} className="flex items-start gap-1.5">
                   <SeverityDot severity={r.severity} />
@@ -252,13 +318,12 @@ export function PlannerImpactPanel({
                   </div>
                 </div>
               ))}
-            </div>
+            </CollapsibleSection>
           )}
 
           {/* 4. Capacity / bandwidth fallback risk (estimate) */}
           {report.capacity_risks.length > 0 && (
-            <div className="space-y-1.5 pt-2 border-t border-[var(--border)]">
-              <SectionTitle>Capacity fallback risk</SectionTitle>
+            <CollapsibleSection title="Capacity" count={report.capacity_risks.length}>
               {sortCapacityRisks(report.capacity_risks).map((c: CapacityRisk, i) => (
                 <div key={`${c.link_pk}-${i}`} className="flex items-start gap-1.5">
                   <SeverityDot severity={c.severity} />
@@ -276,13 +341,12 @@ export function PlannerImpactPanel({
                   </div>
                 </div>
               ))}
-            </div>
+            </CollapsibleSection>
           )}
 
           {/* Cross-plan overlap warnings */}
           {report.overlap_warnings.length > 0 && (
-            <div className="space-y-1.5 pt-2 border-t border-[var(--border)]">
-              <SectionTitle>Overlapping plans</SectionTitle>
+            <CollapsibleSection title="Overlap warnings" count={report.overlap_warnings.length}>
               {[...report.overlap_warnings]
                 .sort((a, b) => severityRank(a.severity) - severityRank(b.severity))
                 .map((o: PlanOverlapWarning, i) => (
@@ -300,7 +364,7 @@ export function PlannerImpactPanel({
                     </div>
                   </div>
                 ))}
-            </div>
+            </CollapsibleSection>
           )}
 
           {/* Data issues that limited the analysis */}

@@ -201,8 +201,82 @@ describe('PlannerImpactPanel', () => {
       expect(membersPanel).toHaveTextContent(m)
     }
 
+    // each member's individual before/after latency is shown in ms too
+    // (before_us 50000 / after_us 60000 -> before 50.0ms / after 60.0ms)
+    expect(membersPanel).toHaveTextContent(/before 50\.0ms/i)
+    expect(membersPanel).toHaveTextContent(/after 60\.0ms/i)
+    expect(membersPanel).not.toHaveTextContent('50000')
+    expect(membersPanel).not.toHaveTextContent('60000')
+
     fireEvent.mouseOut(trigger)
     expect(screen.queryByTestId('latency-group-members')).not.toBeInTheDocument()
+  })
+
+  it('shows a category header with a count of findings and folds/unfolds its rows on click', () => {
+    render(
+      <PlannerImpactPanel report={fullReport} isLoading={false} error={null} changeLabels={labels} />,
+    )
+
+    // header shows the category name + a count of the underlying findings
+    const connectivityToggle = screen.getByRole('button', { name: /connectivity/i })
+    expect(connectivityToggle).toHaveTextContent('(1)')
+    expect(connectivityToggle).toHaveAttribute('aria-expanded', 'true')
+
+    // default expanded: the finding row is visible
+    expect(screen.getByText('lax-dz1')).toBeInTheDocument()
+
+    // click folds the section: the row disappears, aria-expanded flips
+    fireEvent.click(connectivityToggle)
+    expect(connectivityToggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('lax-dz1')).not.toBeInTheDocument()
+
+    // click again unfolds it back
+    fireEvent.click(connectivityToggle)
+    expect(connectivityToggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('lax-dz1')).toBeInTheDocument()
+  })
+
+  it('shows the correct finding count in each category header', () => {
+    render(
+      <PlannerImpactPanel report={fullReport} isLoading={false} error={null} changeLabels={labels} />,
+    )
+
+    expect(screen.getByRole('button', { name: /connectivity/i })).toHaveTextContent('(1)')
+    expect(screen.getByRole('button', { name: /latency changes/i })).toHaveTextContent('(2)')
+    expect(screen.getByRole('button', { name: /redundancy/i })).toHaveTextContent('(1)')
+    expect(screen.getByRole('button', { name: /capacity/i })).toHaveTextContent('(1)')
+    expect(screen.getByRole('button', { name: /overlap warnings/i })).toHaveTextContent('(1)')
+  })
+
+  it('folding a section only hides that section, leaving other sections untouched', () => {
+    render(
+      <PlannerImpactPanel report={fullReport} isLoading={false} error={null} changeLabels={labels} />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /redundancy/i }))
+
+    // redundancy row is gone
+    expect(screen.queryByText(/3 → 1/)).not.toBeInTheDocument()
+    // other sections remain visible
+    expect(screen.getByText('lax-dz1')).toBeInTheDocument()
+    expect(screen.getByText(/run hot at 90%/i)).toBeInTheDocument()
+  })
+
+  it('shows individual before/after latency in milliseconds, not microseconds', () => {
+    render(
+      <PlannerImpactPanel report={fullReport} isLoading={false} error={null} changeLabels={labels} />,
+    )
+
+    // nyc -> lon: before_us 30000 / after_us 33000 -> before 30.0ms / after 33.0ms
+    // ("lon" is unique to this row; "nyc" also appears in the other row's
+    // caused-by chip label "#10 Remove link chi-nyc")
+    const latRows = screen.getAllByTestId('impact-latency-row')
+    const nycRow = latRows.find((r) => r.textContent?.includes('lon'))
+    expect(nycRow).toHaveTextContent(/before 30\.0ms/i)
+    expect(nycRow).toHaveTextContent(/after 33\.0ms/i)
+    // never the raw microsecond values
+    expect(nycRow).not.toHaveTextContent('30000')
+    expect(nycRow).not.toHaveTextContent('33000')
   })
 
   it('renders a lone latency pair as a normal single row (no forced grouping)', () => {
