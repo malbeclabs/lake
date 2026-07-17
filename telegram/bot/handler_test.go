@@ -15,6 +15,8 @@ type fakeStore struct {
 	activatedToken  string
 	activatedChatID int64
 	stoppedChatID   int64
+	stopOneChatID   int64
+	stopOneIndex    int
 }
 
 func (f *fakeStore) Activate(ctx context.Context, token string, chatID int64, username string) (string, error) {
@@ -28,6 +30,11 @@ func (f *fakeStore) List(ctx context.Context, chatID int64) ([]string, error) {
 func (f *fakeStore) Stop(ctx context.Context, chatID int64) (int64, error) {
 	f.stoppedChatID = chatID
 	return 1, nil
+}
+func (f *fakeStore) StopOne(ctx context.Context, chatID int64, index int) (string, bool, error) {
+	f.stopOneChatID = chatID
+	f.stopOneIndex = index
+	return "seat-abc", true, nil
 }
 
 func newTestHandler(t *testing.T, store Store) (*EventHandler, *httptest.Server, *[]map[string]any) {
@@ -82,6 +89,57 @@ func TestWebhook_StartActivates(t *testing.T) {
 	h.WaitForTest() // drain async processing (test-only helper)
 	if store.activatedToken != "tok-123" || store.activatedChatID != 4242 {
 		t.Fatalf("activation not recorded: %+v", store)
+	}
+	if len(*sent) == 0 {
+		t.Fatalf("expected a confirmation message to be sent")
+	}
+}
+
+func TestWebhook_StopAll(t *testing.T) {
+	t.Parallel()
+	store := &fakeStore{}
+	h, _, _ := newTestHandler(t, store)
+	update := map[string]any{
+		"update_id": 2,
+		"message": map[string]any{
+			"text": "/stop",
+			"chat": map[string]any{"id": 555},
+		},
+	}
+	rr := postUpdate(t, h, "s3cret", update)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code = %d want 200", rr.Code)
+	}
+	h.WaitForTest() // drain async processing (test-only helper)
+	if store.stoppedChatID != 555 {
+		t.Fatalf("expected Stop (all) to be called for chat 555, got %+v", store)
+	}
+	if store.stopOneIndex != 0 {
+		t.Fatalf("expected StopOne not to be called, got index %d", store.stopOneIndex)
+	}
+}
+
+func TestWebhook_StopOne(t *testing.T) {
+	t.Parallel()
+	store := &fakeStore{}
+	h, _, sent := newTestHandler(t, store)
+	update := map[string]any{
+		"update_id": 3,
+		"message": map[string]any{
+			"text": "/stop 2",
+			"chat": map[string]any{"id": 777},
+		},
+	}
+	rr := postUpdate(t, h, "s3cret", update)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code = %d want 200", rr.Code)
+	}
+	h.WaitForTest() // drain async processing (test-only helper)
+	if store.stopOneChatID != 777 || store.stopOneIndex != 2 {
+		t.Fatalf("expected StopOne(chat=777, index=2), got %+v", store)
+	}
+	if store.stoppedChatID != 0 {
+		t.Fatalf("expected Stop (all) not to be called, got chat %d", store.stoppedChatID)
 	}
 	if len(*sent) == 0 {
 		t.Fatalf("expected a confirmation message to be sent")

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -20,6 +21,9 @@ type Store interface {
 	Activate(ctx context.Context, token string, chatID int64, username string) (seatDesc string, err error)
 	List(ctx context.Context, chatID int64) (seatDescs []string, err error)
 	Stop(ctx context.Context, chatID int64) (stopped int64, err error)
+	// StopOne stops a single alert, identified by its 1-based position in the
+	// order List returns (the same order/numbering shown to the user).
+	StopOne(ctx context.Context, chatID int64, index int) (desc string, ok bool, err error)
 }
 
 type EventHandler struct {
@@ -115,10 +119,30 @@ func (h *EventHandler) process(ctx context.Context, u tgUpdate) {
 			h.send(ctx, chatID, "You have no active alerts.")
 			return
 		}
-		h.send(ctx, chatID, "Your active alerts:\n"+strings.Join(seats, "\n"))
+		lines := make([]string, len(seats))
+		for i, s := range seats {
+			lines[i] = fmt.Sprintf("%d. %s", i+1, s)
+		}
+		h.send(ctx, chatID, "Your active alerts:\n"+strings.Join(lines, "\n"))
 	case strings.HasPrefix(text, "/stop"):
-		n, _ := h.store.Stop(ctx, chatID)
-		h.send(ctx, chatID, fmt.Sprintf("Stopped %d alert(s). You won't get further messages.", n))
+		arg := strings.TrimSpace(strings.TrimPrefix(text, "/stop"))
+		switch {
+		case arg == "" || arg == "all":
+			n, _ := h.store.Stop(ctx, chatID)
+			h.send(ctx, chatID, fmt.Sprintf("Stopped %d alert(s). You won't get further messages.", n))
+		default:
+			n, err := strconv.Atoi(arg)
+			if err != nil || n <= 0 {
+				h.send(ctx, chatID, "Use /stop <number> (see /list), or /stop all.")
+				return
+			}
+			desc, ok, err := h.store.StopOne(ctx, chatID, n)
+			if err != nil || !ok {
+				h.send(ctx, chatID, fmt.Sprintf("No alert #%d. Use /list to see your alerts.", n))
+				return
+			}
+			h.send(ctx, chatID, fmt.Sprintf("Stopped alert #%d: %s", n, desc))
+		}
 	default:
 		h.send(ctx, chatID, "Commands: /list, /stop. To add an alert, use the DoubleZero site.")
 	}

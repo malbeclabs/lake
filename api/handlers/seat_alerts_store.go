@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -48,6 +49,28 @@ func scanSeatAlert(row rowScanner) (SeatAlert, error) {
 	a.TriggerType = trigger
 	a.Status = status
 	return a, err
+}
+
+// FormatSeatAlertLine renders a single alert as a human-readable line for
+// Telegram, e.g. "5i6ajS…Zxs8 — below 200 USDC" or "5i6ajS…Zxs8 — ≤ 2 epochs left".
+func FormatSeatAlertLine(a SeatAlert) string {
+	seat := shortSeatPK(a.SeatPK)
+	switch a.TriggerType {
+	case "balance_below_usdc":
+		return fmt.Sprintf("%s — below %g USDC", seat, a.ThresholdValue)
+	case "epochs_left":
+		return fmt.Sprintf("%s — ≤ %d epochs left", seat, int64(a.ThresholdValue))
+	}
+	return seat
+}
+
+// shortSeatPK abbreviates a seat pubkey for display in chat messages, e.g.
+// "AbCdEf…wxYz" instead of the full base58 string.
+func shortSeatPK(pk string) string {
+	if len(pk) <= 12 {
+		return pk
+	}
+	return pk[:6] + "…" + pk[len(pk)-4:]
 }
 
 func (a *API) CreateSeatAlert(ctx context.Context, accountID uuid.UUID, seatPK, triggerType string, threshold float64, announcements bool) (SeatAlert, error) {
@@ -137,11 +160,15 @@ func (a *API) ListActiveAlertsWithContacts(ctx context.Context) ([]AlertWithCont
 	return out, rows.Err()
 }
 
+// ListAlertsByChatID returns the chat's active alerts in a stable order
+// (created_at ascending), so their position matches the numbering shown by
+// /list and relied on by /stop <n> (see StopSeatAlertByChatIndex).
 func (a *API) ListAlertsByChatID(ctx context.Context, chatID int64) ([]SeatAlert, error) {
 	rows, err := a.PgPool.Query(ctx, `
 		SELECT `+prefixed("s", seatAlertColumns)+`
 		FROM seat_alerts s JOIN telegram_contacts c ON c.id = s.contact_id
-		WHERE c.chat_id = $1 AND s.status = 'active'`, chatID)
+		WHERE c.chat_id = $1 AND s.status = 'active'
+		ORDER BY s.created_at ASC`, chatID)
 	if err != nil {
 		return nil, err
 	}
@@ -177,6 +204,26 @@ func (a *API) StopAlertsByChatID(ctx context.Context, chatID int64) (int64, erro
 		return 0, err
 	}
 	return tag.RowsAffected(), nil
+}
+
+// StopSeatAlertByChatIndex stops a single active alert for chatID, selected by
+// its 1-based position in ListAlertsByChatID's stable order (the same order
+// and numbering /list shows the user). Returns ok=false when index is out of
+// range. The contact and the chat's other alerts are left untouched.
+func (a *API) StopSeatAlertByChatIndex(ctx context.Context, chatID int64, index int) (string, bool, error) {
+	alerts, err := a.ListAlertsByChatID(ctx, chatID)
+	if err != nil {
+		return "", false, err
+	}
+	if index < 1 || index > len(alerts) {
+		return "", false, nil
+	}
+	alert := alerts[index-1]
+	if _, err := a.PgPool.Exec(ctx,
+		`UPDATE seat_alerts SET status = 'stopped', updated_at = NOW() WHERE id = $1`, alert.ID); err != nil {
+		return "", false, err
+	}
+	return FormatSeatAlertLine(alert), true, nil
 }
 
 func (a *API) MarkAlertNotified(ctx context.Context, alertID uuid.UUID, epoch int64) error {

@@ -85,6 +85,43 @@ func TestSeatAlertLifecycle(t *testing.T) {
 	assert.Nil(t, findMine(active), "not active after stop")
 }
 
+func TestStopSeatAlertByChatIndex(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPIPg(t, testPgDB)
+	ctx := t.Context()
+	acct := createTestAccount(t, ctx, api)
+
+	// The Postgres test DB is shared across the package, so pick a chat_id
+	// unlikely to collide with other tests and scope assertions to it.
+	const chatID = int64(90010)
+
+	a1, err := api.CreateSeatAlert(ctx, acct.ID, "seat-stop-1", "epochs_left", 2, false)
+	require.NoError(t, err)
+	_, err = api.ActivateSeatAlertByToken(ctx, a1.ActivationToken, chatID, "tester")
+	require.NoError(t, err)
+
+	a2, err := api.CreateSeatAlert(ctx, acct.ID, "seat-stop-2", "balance_below_usdc", 200, false)
+	require.NoError(t, err)
+	_, err = api.ActivateSeatAlertByToken(ctx, a2.ActivationToken, chatID, "tester")
+	require.NoError(t, err)
+
+	// ListAlertsByChatID orders by created_at ASC, so index 1 is a1 and index 2 is a2.
+	desc, ok, err := api.StopSeatAlertByChatIndex(ctx, chatID, 1)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Contains(t, desc, "epochs left")
+
+	remaining, err := api.ListAlertsByChatID(ctx, chatID)
+	require.NoError(t, err)
+	require.Len(t, remaining, 1)
+	assert.Equal(t, a2.ID, remaining[0].ID, "the other alert for this chat should remain active")
+
+	// Out of range index does not stop anything and is reported as not ok.
+	_, ok, err = api.StopSeatAlertByChatIndex(ctx, chatID, 5)
+	require.NoError(t, err)
+	assert.False(t, ok)
+}
+
 func TestActivateSeatAlert_BadToken(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)

@@ -1076,12 +1076,15 @@ func (s telegramStore) List(ctx context.Context, chatID int64) ([]string, error)
 	}
 	out := make([]string, 0, len(alerts))
 	for _, a := range alerts {
-		out = append(out, shortSeat(a.SeatPK))
+		out = append(out, handlers.FormatSeatAlertLine(a))
 	}
 	return out, nil
 }
 func (s telegramStore) Stop(ctx context.Context, chatID int64) (int64, error) {
 	return s.api.StopAlertsByChatID(ctx, chatID)
+}
+func (s telegramStore) StopOne(ctx context.Context, chatID int64, index int) (string, bool, error) {
+	return s.api.StopSeatAlertByChatIndex(ctx, chatID, index)
 }
 
 // shortSeat abbreviates a seat pubkey for display in chat messages, e.g.
