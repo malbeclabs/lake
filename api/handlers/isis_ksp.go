@@ -18,20 +18,28 @@ type kspEdge struct {
 	To           string
 	Metric       uint32
 	BandwidthBps uint64
+	// Link identity — lets remove_link / move_link_end target an exact edge and
+	// keeps parallel links between the same device pair distinct.
+	LinkPK             string
+	LinkType           string
+	SideAContributorPK string
+	SideZContributorPK string
 }
 
 type kspGraph struct {
-	Adj   map[string][]kspEdge   // adjacency list
-	Nodes map[string]kspNodeInfo // node metadata
+	Adj       map[string][]kspEdge   // adjacency list
+	Nodes     map[string]kspNodeInfo // node metadata
+	LinkIndex map[string][2]string   // linkPK -> {sideA node key, sideZ node key}
 }
 
 type kspNodeInfo struct {
-	PK         string
-	Code       string
-	Status     string
-	DeviceType string
-	MetroPK    string
-	MetroCode  string
+	PK            string
+	Code          string
+	Status        string
+	DeviceType    string
+	MetroPK       string
+	MetroCode     string
+	ContributorPK string
 }
 
 type kspPath struct {
@@ -56,8 +64,9 @@ func validPathService(service string) bool {
 //   - "multicast" or "": all activated links (IS-IS algo 0)
 func (a *API) loadTopologyGraph(ctx context.Context, service string) (*kspGraph, error) {
 	g := &kspGraph{
-		Adj:   make(map[string][]kspEdge),
-		Nodes: make(map[string]kspNodeInfo),
+		Adj:       make(map[string][]kspEdge),
+		Nodes:     make(map[string]kspNodeInfo),
+		LinkIndex: make(map[string][2]string),
 	}
 
 	topologyFilter := ""
@@ -75,18 +84,22 @@ func (a *API) loadTopologyGraph(ctx context.Context, service string) (*kspGraph,
 			l.committed_rtt_ns AS committed_rtt_ns,
 			l.isis_delay_override_ns AS isis_delay_override_ns,
 			COALESCE(l.bandwidth_bps, 0) AS bandwidth_bps,
+			l.pk AS link_pk,
+			COALESCE(l.link_type, '') AS link_type,
 			da.pk AS a_device_pk,
 			da.code AS a_code,
 			da.status AS a_status,
 			da.device_type AS a_type,
 			COALESCE(ma.pk, '') AS a_metro_pk,
 			COALESCE(ma.code, '') AS a_metro_code,
+			COALESCE(da.contributor_pk, '') AS a_contributor_pk,
 			dz.pk AS b_device_pk,
 			dz.code AS b_code,
 			dz.status AS b_status,
 			dz.device_type AS b_type,
 			COALESCE(mz.pk, '') AS b_metro_pk,
-			COALESCE(mz.code, '') AS b_metro_code
+			COALESCE(mz.code, '') AS b_metro_code,
+			COALESCE(dz.contributor_pk, '') AS b_contributor_pk
 		FROM dz_links_current l
 		JOIN dz_devices_current da ON l.side_a_pk = da.pk
 		JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
@@ -110,16 +123,18 @@ func (a *API) loadTopologyGraph(ctx context.Context, service string) (*kspGraph,
 			aPK, bPK                         string
 			committedNs, overrideNs          int64
 			bwBps                            int64
+			linkPK, linkType                 string
 			aDevicePK, aCode, aStatus, aType string
-			aMetroPK, aMetroCode             string
+			aMetroPK, aMetroCode, aContrib   string
 			bDevicePK, bCode, bStatus, bType string
-			bMetroPK, bMetroCode             string
+			bMetroPK, bMetroCode, bContrib   string
 		)
 		if err := rows.Scan(
 			&aPK, &bPK,
 			&committedNs, &overrideNs, &bwBps,
-			&aDevicePK, &aCode, &aStatus, &aType, &aMetroPK, &aMetroCode,
-			&bDevicePK, &bCode, &bStatus, &bType, &bMetroPK, &bMetroCode,
+			&linkPK, &linkType,
+			&aDevicePK, &aCode, &aStatus, &aType, &aMetroPK, &aMetroCode, &aContrib,
+			&bDevicePK, &bCode, &bStatus, &bType, &bMetroPK, &bMetroCode, &bContrib,
 		); err != nil {
 			return nil, fmt.Errorf("scanning topology row: %w", err)
 		}
@@ -134,29 +149,42 @@ func (a *API) loadTopologyGraph(ctx context.Context, service string) (*kspGraph,
 			metric = 1
 		}
 
-		// Bidirectional edges
-		g.Adj[aPK] = append(g.Adj[aPK], kspEdge{To: bPK, Metric: metric, BandwidthBps: uint64(bwBps)})
-		g.Adj[bPK] = append(g.Adj[bPK], kspEdge{To: aPK, Metric: metric, BandwidthBps: uint64(bwBps)})
+		// Bidirectional edges. For the reverse edge the A/Z contributor sides swap.
+		g.Adj[aPK] = append(g.Adj[aPK], kspEdge{
+			To: bPK, Metric: metric, BandwidthBps: uint64(bwBps),
+			LinkPK: linkPK, LinkType: linkType,
+			SideAContributorPK: aContrib, SideZContributorPK: bContrib,
+		})
+		g.Adj[bPK] = append(g.Adj[bPK], kspEdge{
+			To: aPK, Metric: metric, BandwidthBps: uint64(bwBps),
+			LinkPK: linkPK, LinkType: linkType,
+			SideAContributorPK: bContrib, SideZContributorPK: aContrib,
+		})
+		if linkPK != "" {
+			g.LinkIndex[linkPK] = [2]string{aPK, bPK}
+		}
 		edgeCount++
 
 		if _, ok := g.Nodes[aPK]; !ok {
 			g.Nodes[aPK] = kspNodeInfo{
-				PK:         aDevicePK,
-				Code:       aCode,
-				Status:     aStatus,
-				DeviceType: aType,
-				MetroPK:    aMetroPK,
-				MetroCode:  aMetroCode,
+				PK:            aDevicePK,
+				Code:          aCode,
+				Status:        aStatus,
+				DeviceType:    aType,
+				MetroPK:       aMetroPK,
+				MetroCode:     aMetroCode,
+				ContributorPK: aContrib,
 			}
 		}
 		if _, ok := g.Nodes[bPK]; !ok {
 			g.Nodes[bPK] = kspNodeInfo{
-				PK:         bDevicePK,
-				Code:       bCode,
-				Status:     bStatus,
-				DeviceType: bType,
-				MetroPK:    bMetroPK,
-				MetroCode:  bMetroCode,
+				PK:            bDevicePK,
+				Code:          bCode,
+				Status:        bStatus,
+				DeviceType:    bType,
+				MetroPK:       bMetroPK,
+				MetroCode:     bMetroCode,
+				ContributorPK: bContrib,
 			}
 		}
 	}
@@ -607,4 +635,26 @@ func edgeBandwidth(g *kspGraph, from, to string) uint64 {
 		}
 	}
 	return 0
+}
+
+// cloneGraph returns a deep copy of g so a draft can be mutated without touching
+// the baseline. Adjacency slices, node map, and link index are all copied.
+func cloneGraph(g *kspGraph) *kspGraph {
+	c := &kspGraph{
+		Adj:       make(map[string][]kspEdge, len(g.Adj)),
+		Nodes:     make(map[string]kspNodeInfo, len(g.Nodes)),
+		LinkIndex: make(map[string][2]string, len(g.LinkIndex)),
+	}
+	for k, edges := range g.Adj {
+		cp := make([]kspEdge, len(edges))
+		copy(cp, edges)
+		c.Adj[k] = cp
+	}
+	for k, n := range g.Nodes {
+		c.Nodes[k] = n
+	}
+	for k, v := range g.LinkIndex {
+		c.LinkIndex[k] = v
+	}
+	return c
 }

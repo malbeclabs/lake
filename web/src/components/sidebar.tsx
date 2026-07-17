@@ -62,6 +62,7 @@ export function Sidebar() {
   // Internal only (unannounced venue) — gated to allowed-domain Google users.
   const showHyperliquid = user?.is_internal_user === true
   const showPermissionAudit = user?.is_internal_user === true
+  const showPlanner = user?.is_internal_user === true
 const { resolvedTheme, setTheme } = useTheme()
   const { updateAvailable, reload } = useVersionCheck()
 
@@ -88,7 +89,8 @@ const { resolvedTheme, setTheme } = useTheme()
   const isTopologyRedundancy = location.pathname === '/topology/redundancy'
   const isTopologyMetroConnectivity = location.pathname === '/topology/metro-connectivity'
   const isTopologyMaintenance = location.pathname === '/topology/maintenance'
-  const isTopologyTool = isTopologyPathCalculator || isTopologyRedundancy || isTopologyMetroConnectivity || isTopologyMaintenance
+  const isTopologyPlanner = location.pathname === '/topology/planner'
+  const isTopologyTool = isTopologyPathCalculator || isTopologyRedundancy || isTopologyMetroConnectivity || isTopologyMaintenance || isTopologyPlanner
 
   // Performance sub-routes
   const isPerformanceDzVsInternet = location.pathname === '/performance/dz-vs-internet'
@@ -424,6 +426,12 @@ const { resolvedTheme, setTheme } = useTheme()
                           <Wrench className="h-4 w-4" />
                           Maintenance
                         </Link>
+                        {showPlanner && (
+                          <Link to="/topology/planner" className={subNavItemClass(isTopologyPlanner, true)}>
+                            <Wrench className="h-4 w-4" />
+                            Planner
+                          </Link>
+                        )}
                       </>
                     )}
                   </>

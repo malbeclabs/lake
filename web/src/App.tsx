@@ -34,6 +34,7 @@ import { LinkLatencyPage } from '@/pages/link-latency-page'
 import { TrafficPage } from '@/pages/traffic-page'
 import { TrafficDashboardPage } from '@/pages/traffic-dashboard-page'
 import { MaintenancePlannerPage } from '@/components/maintenance-planner-page'
+import { TopologyPlannerPage } from '@/components/topology-planner-page'
 import { StatusPage } from '@/components/status-page'
 import { TimelinePage } from '@/components/timeline-page'
 import { IncidentsPage } from '@/components/incidents-page'
@@ -653,6 +654,7 @@ function AppContent() {
             <Route path="/topology/redundancy" element={<RedundancyReportPage />} />
             <Route path="/topology/metro-connectivity" element={<MetroConnectivityPage />} />
             <Route path="/topology/maintenance" element={<MaintenancePlannerPage />} />
+            <Route path="/topology/planner" element={<TopologyPlannerPage />} />
 
             {/* Performance routes */}
             <Route path="/performance" element={<Navigate to="/performance/dz-vs-internet" replace />} />

@@ -1771,6 +1771,285 @@ export async function fetchTopologyValidators(): Promise<TopologyValidatorsRespo
   return res.json()
 }
 
+// ─── Topology planner (internal-only) ──────────────────────────────────────
+
+export type PlanOpType =
+  | 'add_device'
+  | 'remove_device'
+  | 'add_link'
+  | 'remove_link'
+  | 'move_link_end'
+export type PlanStatus = 'draft' | 'approved' | 'done' | 'archived'
+export type PlanChangeState = 'pending' | 'done' | 'skipped' | 'superseded'
+export type DriftStatus = 'already_done' | 'pending' | 'broken'
+
+// Human identity of referenced pks, captured at add-time (survives pk removal).
+export interface RefSnapshot {
+  device_code?: string
+  link_code?: string
+  metro_code?: string
+  side_a_contributor_code?: string
+  side_z_contributor_code?: string
+  bandwidth_bps?: number
+  latency_ns?: number
+}
+
+// Op-specific fields. All optional; which apply depends on op_type (see SPEC section 6).
+export interface PlanChangePayload {
+  // add_device
+  contributor_pk?: string
+  metro_pk?: string
+  code?: string
+  device_type?: string
+  // remove_device
+  user_disposition?: string
+  has_shred_subscribers?: boolean
+  // move_link_end
+  side?: 'a' | 'z'
+  new_device_ref?: string
+  new_iface_name?: string
+  new_ip?: string
+  metric_override_ns?: number
+  // add_link / move_link_end shared
+  latency_ns?: number
+  bandwidth_bps?: number
+  estimate_source?: 'copied' | 'great_circle' | 'manual'
+  // add_link
+  side_a_device_pk?: string
+  side_a_ref?: string
+  side_z_device_pk?: string
+  side_z_ref?: string
+  side_a_iface_name?: string
+  side_z_iface_name?: string
+  side_a_ip?: string
+  side_z_ip?: string
+  link_type?: 'WAN' | 'DZX'
+  link_topologies?: string[]
+}
+
+export interface PlanChange {
+  id: string
+  plan_id: string
+  seq: number
+  op_type: PlanOpType
+  ref_device_pk?: string | null
+  ref_link_pk?: string | null
+  new_device_pk?: string | null
+  local_ref?: string | null
+  payload: PlanChangePayload
+  ref_snapshot: RefSnapshot
+  target_date?: string | null
+  assignee_note?: string | null
+  state: PlanChangeState
+  version: number
+  created_by_email?: string | null
+  created_at: string
+  updated_at: string
+  // Drift vs live topology is computed client-side (SC-7); GET returns only raw changes.
+  drift?: DriftStatus
+}
+
+export interface PlanSummary {
+  id: string
+  name: string
+  description?: string | null
+  status: PlanStatus
+  environment: string
+  baseline_as_of: string
+  version: number
+  created_by_email?: string | null
+  updated_by_email?: string | null
+  forked_from_plan_id?: string | null
+  created_at: string
+  updated_at: string
+  change_count: number
+}
+
+export interface Plan extends PlanSummary {
+  changes: PlanChange[]
+}
+
+// Fields the client sends when staging a new change (server assigns id/seq/version/state).
+export type NewChangeInput = {
+  op_type: PlanOpType
+  ref_device_pk?: string | null
+  ref_link_pk?: string | null
+  new_device_pk?: string | null
+  local_ref?: string | null
+  payload: PlanChangePayload
+  ref_snapshot: RefSnapshot
+  target_date?: string | null
+  assignee_note?: string | null
+}
+
+// NOTE: The impact report types (`PlanImpactReport` + finding types) are declared
+// by Phase 5, the action-list types (`ActionList`, `ContributorActionGroup`,
+// `ActionTask`) by Phase 4, and the issue types by Phase 6 (SC-5). This phase must
+// NOT declare them. Each symbol has a single owning phase, which avoids duplicate
+// declarations in this module.
+
+// Thrown on HTTP 409 so callers can distinguish a stale write from other errors.
+export class PlanConflictError extends Error {
+  constructor(message = 'Plan changed since you loaded it') {
+    super(message)
+    this.name = 'PlanConflictError'
+  }
+}
+
+const PLANS_BASE = '/api/topology/plans'
+const jsonHeaders = { 'Content-Type': 'application/json' }
+
+export async function fetchPlans(): Promise<PlanSummary[]> {
+  const res = await apiFetch(PLANS_BASE)
+  if (!res.ok) throw new Error('Failed to fetch plans')
+  // Backend ListPlans wraps the array in an envelope: { plans: [...] }.
+  const data: { plans?: PlanSummary[] } = await res.json()
+  return data.plans ?? []
+}
+
+export async function fetchPlan(id: string): Promise<Plan> {
+  const res = await apiFetch(`${PLANS_BASE}/${id}`)
+  if (!res.ok) throw new Error('Failed to fetch plan')
+  return res.json()
+}
+
+export async function createPlan(input: {
+  name: string
+  description?: string
+}): Promise<Plan> {
+  const res = await apiFetch(PLANS_BASE, {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify(input),
+  })
+  if (!res.ok) throw new Error('Failed to create plan')
+  return res.json()
+}
+
+export async function updatePlan(
+  id: string,
+  patch: { name?: string; description?: string; status?: PlanStatus },
+  version: number
+): Promise<Plan> {
+  const res = await apiFetch(`${PLANS_BASE}/${id}`, {
+    method: 'PATCH',
+    headers: jsonHeaders,
+    body: JSON.stringify({ ...patch, version }),
+  })
+  if (res.status === 409) throw new PlanConflictError()
+  if (!res.ok) throw new Error('Failed to update plan')
+  return res.json()
+}
+
+export async function deletePlan(id: string): Promise<void> {
+  const res = await apiFetch(`${PLANS_BASE}/${id}`, { method: 'DELETE' })
+  if (!res.ok && res.status !== 404) throw new Error('Failed to delete plan')
+}
+
+export async function duplicatePlan(id: string): Promise<Plan> {
+  const res = await apiFetch(`${PLANS_BASE}/${id}/duplicate`, { method: 'POST' })
+  if (!res.ok) throw new Error('Failed to duplicate plan')
+  return res.json()
+}
+
+export async function addPlanChange(
+  planId: string,
+  input: NewChangeInput
+): Promise<PlanChange> {
+  const res = await apiFetch(`${PLANS_BASE}/${planId}/changes`, {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify(input),
+  })
+  if (res.status === 409) throw new PlanConflictError()
+  if (!res.ok) throw new Error('Failed to add change')
+  return res.json()
+}
+
+export async function updatePlanChange(
+  planId: string,
+  changeId: string,
+  patch: Partial<
+    Pick<
+      PlanChange,
+      'payload' | 'ref_snapshot' | 'target_date' | 'assignee_note' | 'state' | 'seq'
+    >
+  >,
+  version: number
+): Promise<PlanChange> {
+  const res = await apiFetch(`${PLANS_BASE}/${planId}/changes/${changeId}`, {
+    method: 'PATCH',
+    headers: jsonHeaders,
+    body: JSON.stringify({ ...patch, version }),
+  })
+  if (res.status === 409) throw new PlanConflictError()
+  if (!res.ok) throw new Error('Failed to update change')
+  return res.json()
+}
+
+export async function deletePlanChange(planId: string, changeId: string): Promise<void> {
+  const res = await apiFetch(`${PLANS_BASE}/${planId}/changes/${changeId}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok && res.status !== 404) throw new Error('Failed to delete change')
+}
+
+// Bulk reorder: rewrites all change seqs in one transaction server-side and
+// returns the updated plan (version bumped), so a single call replaces the
+// old one-PATCH-per-change loop.
+export async function reorderPlanChanges(planId: string, orderedIds: string[]): Promise<Plan> {
+  const res = await apiFetch(`${PLANS_BASE}/${planId}/changes/reorder`, {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify({ ordered_ids: orderedIds }),
+  })
+  if (res.status === 409) throw new PlanConflictError()
+  if (!res.ok) throw new Error('Failed to reorder changes')
+  return res.json()
+}
+
+// Impact (fetchPlanImpact) and issue (previewPlanIssues / syncPlanIssues) client
+// fns are added by Phases 5 and 6 respectively (SC-5). Do not declare them here.
+
+// ---- Topology planner: action list ----
+
+export interface ActionTask {
+  seq: number
+  op_type: PlanOpType
+  title: string
+  state: 'pending' | 'done' | 'skipped' | 'superseded'
+  // Go emits these two without omitempty: always present, null when empty.
+  target_date: string | null
+  involved_contributors: string[] | null
+  note?: string
+  current_users?: number
+  stake_sol?: number
+  stake_share?: number
+}
+
+export interface ContributorActionGroup {
+  contributor_pk: string
+  contributor_code: string
+  slack_channel: string
+  tasks: ActionTask[]
+  markdown: string
+}
+
+export interface ActionList {
+  plan_id: string
+  environment: string
+  groups: ContributorActionGroup[]
+  markdown: string
+}
+
+export async function fetchPlanActionList(planId: string): Promise<ActionList> {
+  const res = await apiFetch(`/api/topology/plans/${planId}/action-list`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch action list')
+  }
+  return res.json()
+}
+
 // ISIS Topology types (graph view)
 export interface ISISNodeData {
   id: string
@@ -4675,6 +4954,179 @@ export async function fetchWhatIfRemoval(
   })
   if (!res.ok) {
     throw new Error('Failed to analyze what-if removal impact')
+  }
+  return res.json()
+}
+
+// ---- Topology planner: impact analysis (SPEC section 9) ----
+
+// Wire shape mirrors the Go structs in api/handlers/topology_plan_impact.go
+// (SC-4) field-for-field, with snake_case JSON keys. Phase 5 OWNS these
+// declarations (SC-5).
+
+export type ImpactSeverity = 'high' | 'medium' | 'low'
+
+/** A change referenced as the cause of a finding. */
+export interface ChangeRef {
+  seq: number
+  op_type: PlanOpType
+  label: string
+}
+
+/** A device or metro cut off from the network by the draft. */
+export interface PartitionIssue {
+  severity: ImpactSeverity
+  entity_type: string // "device" | "metro"
+  entity_pk: string
+  entity_code: string
+  description: string
+  // Go can leave the caused_by slice nil (no footprint match) -> JSON null.
+  caused_by: ChangeRef[] | null
+  type: string // "device_isolated" | "metro_isolated" | "single_exit_metro"
+  metro_code?: string // Go: value string with `omitempty` -> absent, not null, when empty
+}
+
+/** Best-path latency for a metro pair, baseline (live) vs draft. -1 = unreachable. */
+export interface MetroLatencyDelta {
+  severity: ImpactSeverity
+  metro_a: string
+  metro_z: string
+  before_us: number
+  after_us: number
+  delta_us: number
+  // Go can leave the caused_by slice nil (no footprint match) -> JSON null.
+  caused_by: ChangeRef[] | null
+}
+
+/** Independent path count (Yen KSP) for a metro pair, before vs after. */
+export interface RedundancyChange {
+  severity: ImpactSeverity
+  metro_a: string
+  metro_z: string
+  before_paths: number
+  after_paths: number
+  // Go can leave the caused_by slice nil (no footprint match) -> JSON null.
+  caused_by: ChangeRef[] | null
+}
+
+/** Where rerouted traffic may run a link hot. Estimate only in v1. */
+export interface CapacityRisk {
+  severity: ImpactSeverity
+  link_pk: string
+  description: string
+  estimated: boolean
+  reroute_from_link_pk: string
+  current_bps: number
+  displaced_bps: number
+  projected_bps: number
+  bandwidth_bps: number
+  utilization_pct: number
+  caused_by: ChangeRef[]
+  note: string
+}
+
+/** Another active plan touches the same device or link. */
+export interface PlanOverlapWarning {
+  severity: ImpactSeverity
+  other_plan_id: string
+  other_plan_name: string
+  other_plan_status: string
+  entity_type: string // "device" | "link"
+  entity_pk: string
+  entity_code: string
+  description: string
+}
+
+/** A non-fatal problem that limited the analysis (e.g. missing traffic data). */
+export interface DataIssue {
+  message: string
+}
+
+export interface PlanImpactReport {
+  partition_issues: PartitionIssue[]
+  latency_deltas: MetroLatencyDelta[]
+  redundancy_changes: RedundancyChange[]
+  capacity_risks: CapacityRisk[]
+  overlap_warnings: PlanOverlapWarning[]
+  data_issues: DataIssue[]
+  estimated: boolean
+  generated_at: string
+}
+
+/**
+ * Compute impact for a plan's draft (baseline + changes). The changes may be
+ * unsaved edits for live preview, so they are posted in the body rather than
+ * read from storage.
+ */
+export async function fetchPlanImpact(
+  planId: string,
+  changes: PlanChange[]
+): Promise<PlanImpactReport> {
+  const res = await apiFetch(`/api/topology/plans/${encodeURIComponent(planId)}/impact`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ changes }),
+  })
+  if (!res.ok) {
+    throw new Error('Failed to compute plan impact')
+  }
+  return res.json()
+}
+
+// ---- Topology planner: GitHub issues ----
+
+// Wire shape mirrors the Go structs in api/handlers/topology_plan_issues.go
+// (SC-5) field-for-field, with snake_case JSON keys. Phase 6 OWNS these
+// declarations (SC-5).
+
+export interface IssuePreviewItem {
+  contributor_pk: string
+  contributor_code: string
+  is_parent: boolean
+  action: 'create' | 'update'
+  title: string
+  body: string
+  existing_issue_number?: number
+  existing_issue_url?: string
+  repo: string
+}
+
+export interface SyncedIssue {
+  contributor_pk: string
+  contributor_code: string
+  is_parent: boolean
+  action: 'created' | 'updated'
+  issue_number: number
+  issue_url: string
+  repo: string
+}
+
+export async function previewPlanIssues(
+  planId: string,
+): Promise<{ repo: string; issues: IssuePreviewItem[] }> {
+  const res = await apiFetch(`/api/topology/plans/${encodeURIComponent(planId)}/issues/preview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || 'Failed to preview issues')
+  }
+  return res.json()
+}
+
+export async function syncPlanIssues(
+  planId: string,
+): Promise<{ repo: string; issues: SyncedIssue[] }> {
+  const res = await apiFetch(`/api/topology/plans/${encodeURIComponent(planId)}/issues/sync`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || 'Failed to sync issues')
   }
   return res.json()
 }

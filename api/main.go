@@ -734,6 +734,25 @@ func main() {
 	// Session workflow route (get running workflow for a session)
 	r.Get("/api/sessions/{id}/workflow", api.GetWorkflowForSession)
 
+	// Topology planner (internal-only shared workspace).
+	// Action-list / issues endpoints are added in later phases.
+	r.With(handlers.RequireInternalDomain).Get("/api/topology/plans", api.ListPlans)
+	r.With(handlers.RequireInternalDomain).Post("/api/topology/plans", api.CreatePlan)
+	r.With(handlers.RequireInternalDomain).Get("/api/topology/plans/{id}", api.GetPlan)
+	r.With(handlers.RequireInternalDomain).Patch("/api/topology/plans/{id}", api.UpdatePlan)
+	r.With(handlers.RequireInternalDomain).Delete("/api/topology/plans/{id}", api.DeletePlan)
+	r.With(handlers.RequireInternalDomain).Post("/api/topology/plans/{id}/duplicate", api.DuplicatePlan)
+	r.With(handlers.RequireInternalDomain).Post("/api/topology/plans/{id}/changes", api.AddPlanChange)
+	r.With(handlers.RequireInternalDomain).Post("/api/topology/plans/{id}/changes/reorder", api.ReorderPlanChanges)
+	r.With(handlers.RequireInternalDomain).Patch("/api/topology/plans/{id}/changes/{changeId}", api.UpdatePlanChange)
+	r.With(handlers.RequireInternalDomain).Delete("/api/topology/plans/{id}/changes/{changeId}", api.DeletePlanChange)
+	r.With(handlers.RequireInternalDomain).Post("/api/topology/plans/{id}/impact", api.PostTopologyPlanImpact)
+	r.With(handlers.RequireInternalDomain).Get("/api/topology/plans/{id}/action-list", api.GetTopologyPlanActionList)
+
+	// Topology planner — GitHub issues (internal only; feature-gated on GITHUB_TOKEN)
+	r.With(handlers.RequireInternalDomain).Post("/api/topology/plans/{id}/issues/preview", api.PostPlanIssuesPreview)
+	r.With(handlers.RequireInternalDomain).Post("/api/topology/plans/{id}/issues/sync", api.PostPlanIssuesSync)
+
 	// Workflow routes (for durable workflow persistence)
 	r.Get("/api/workflows/{id}", api.GetWorkflow)
 	r.Get("/api/workflows/{id}/stream", api.StreamWorkflow)
