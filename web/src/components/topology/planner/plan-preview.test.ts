@@ -4,6 +4,7 @@ import {
   changedEntitiesBBox,
   projectPoint,
   buildPlanPreview,
+  collectChangedMetros,
   type BBox,
 } from './plan-preview'
 import { buildDraft } from './draft'
@@ -206,5 +207,51 @@ describe('buildPlanPreview', () => {
     )
     expect(preview).not.toBeNull()
     expect(preview!.links[0].state).toBe('modified')
+  })
+
+  it('returns non-empty metros and includes context geometry for unchanged entities inside the bbox', () => {
+    // Removing L1 (NYC <-> LON) leaves dA/dB unchanged themselves but touched by
+    // the change, so they should show up both as changed-link endpoints AND as
+    // context devices (their own changeState stays 'unchanged'). FRA sits well
+    // outside the padded NYC/LON bbox, so it contributes no context or metro.
+    const preview = buildPlanPreview(
+      baseline(),
+      [change({ op_type: 'remove_link', ref_link_pk: 'L1' })],
+      160,
+      100
+    )
+    expect(preview).not.toBeNull()
+    expect(preview!.metros.length).toBeGreaterThan(0)
+    expect(preview!.metros.map((m) => m.code).sort()).toEqual(['lon', 'nyc'])
+    expect(preview!.context.devices.length).toBeGreaterThan(0)
+  })
+
+  it('still returns null for a plan with no changes', () => {
+    expect(buildPlanPreview(baseline(), [], 160, 100)).toBeNull()
+  })
+})
+
+describe('collectChangedMetros', () => {
+  it('returns the deduped touched metros with correct codes for a changed device and a changed link across two metros', () => {
+    const draft = buildDraft(baseline(), [
+      change({
+        op_type: 'add_device', local_ref: 'tmp_dev_1',
+        payload: { contributor_pk: 'c9', metro_pk: 'mC', code: 'fra-x2', device_type: 'switch' },
+      }),
+      change({
+        seq: 20, op_type: 'add_link', local_ref: 'tmp_link_1',
+        payload: { side_a_device_pk: 'dA', side_z_ref: 'tmp_dev_1', latency_ns: 42_000_000, bandwidth_bps: 1e10 },
+      }),
+    ])
+    const metros = collectChangedMetros(draft)
+    expect(metros.map((m) => m.code).sort()).toEqual(['fra', 'nyc'])
+    // Deduped: FRA is touched twice (the added device + the added link's z-side)
+    // but appears only once.
+    expect(metros).toHaveLength(2)
+  })
+
+  it('returns an empty list when there are no changed entities', () => {
+    const draft = buildDraft(baseline(), [])
+    expect(collectChangedMetros(draft)).toEqual([])
   })
 })

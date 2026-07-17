@@ -28,6 +28,8 @@ export function PlanPreviewThumb({
     )
   }
 
+  const contextColor = isDark ? '#475569' : '#cbd5e1'
+
   return (
     <svg
       viewBox={`0 0 ${PREVIEW_VIEW_W} ${PREVIEW_VIEW_H}`}
@@ -35,6 +37,28 @@ export function PlanPreviewThumb({
       role="img"
       aria-label="Plan change preview"
     >
+      {geometry.context.links.map((l, i) => (
+        <line
+          key={`ctx-link-${i}`}
+          x1={l.x1}
+          y1={l.y1}
+          x2={l.x2}
+          y2={l.y2}
+          stroke={contextColor}
+          strokeWidth={0.75}
+          strokeOpacity={0.35}
+        />
+      ))}
+      {geometry.context.devices.map((d, i) => (
+        <circle
+          key={`ctx-device-${i}`}
+          cx={d.x}
+          cy={d.y}
+          r={1.5}
+          fill={contextColor}
+          fillOpacity={0.5}
+        />
+      ))}
       {geometry.links.map((l) => {
         const style = linkChangeStyle(l.state, isDark)
         return (
@@ -67,6 +91,21 @@ export function PlanPreviewThumb({
           />
         )
       })}
+      {geometry.metros.map((m) => (
+        <text
+          key={m.code}
+          x={m.x}
+          y={m.y - 5}
+          textAnchor="middle"
+          fontSize={8}
+          fill={isDark ? '#e2e8f0' : '#334155'}
+          stroke={isDark ? '#0f172a' : '#f8fafc'}
+          strokeWidth={2}
+          paintOrder="stroke"
+        >
+          {m.code}
+        </text>
+      ))}
     </svg>
   )
 }

@@ -76,7 +76,7 @@ function PlanCard({
       onClick={onOpen}
       className="flex flex-col text-left rounded-lg border border-border bg-card overflow-hidden hover:border-purple-400 hover:shadow-md transition-all"
     >
-      <div className="h-24 w-full">
+      <div className="h-28 w-full">
         {fetchDetail ? (
           <PlanPreviewThumb geometry={geometry} isDark={isDark} />
         ) : (

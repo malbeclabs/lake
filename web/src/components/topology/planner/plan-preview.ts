@@ -131,9 +131,59 @@ export interface PreviewLinkLine {
   state: EntityChangeState
 }
 
+export interface PreviewMetroLabel {
+  code: string
+  x: number
+  y: number
+}
+
+export interface PreviewContext {
+  devices: { x: number; y: number }[]
+  links: { x1: number; y1: number; x2: number; y2: number }[]
+}
+
 export interface PlanPreviewGeometry {
   devices: PreviewDevicePoint[]
   links: PreviewLinkLine[]
+  metros: PreviewMetroLabel[]
+  context: PreviewContext
+}
+
+// The metros the plan's changes touch: the metro of every changed device, plus the
+// metros of both endpoint devices of every changed link. Deduped by metro pk.
+// Position is the metro's own lat/lng (draft.metros), NOT the ringed device
+// position, so the label sits on the city rather than on one specific device.
+export function collectChangedMetros(
+  draft: DraftTopology
+): { pk: string; code: string; lat: number; lng: number }[] {
+  const metroPks = new Set<string>()
+  for (const d of draft.devices) {
+    if (d.changeState === 'unchanged') continue
+    if (d.metro_pk) metroPks.add(d.metro_pk)
+  }
+  for (const l of draft.links) {
+    if (l.changeState === 'unchanged') continue
+    const a = draft.deviceByKey.get(l.side_a_pk)
+    const z = draft.deviceByKey.get(l.side_z_pk)
+    if (a?.metro_pk) metroPks.add(a.metro_pk)
+    if (z?.metro_pk) metroPks.add(z.metro_pk)
+  }
+
+  const result: { pk: string; code: string; lat: number; lng: number }[] = []
+  for (const pk of metroPks) {
+    const metro = draft.metros.find((m) => m.pk === pk)
+    if (!metro) continue
+    result.push({ pk: metro.pk, code: metro.code, lat: metro.latitude, lng: metro.longitude })
+  }
+  return result
+}
+
+// Bound on the number of context devices/links projected into a preview, so a huge
+// baseline topology doesn't blow up the SVG node count for a single thumbnail.
+const MAX_CONTEXT_ENTITIES = 80
+
+function inBBox(lat: number, lng: number, bbox: BBox): boolean {
+  return lat >= bbox.minLat && lat <= bbox.maxLat && lng >= bbox.minLng && lng <= bbox.maxLng
 }
 
 // Full pipeline: baseline topology + a plan's changes -> ready-to-draw SVG
@@ -151,6 +201,33 @@ export function buildPlanPreview(
   const bbox = changedEntitiesBBox(entities)
   if (!bbox) return null
 
+  const positions = buildDevicePositions(draft)
+
+  const contextDevices: PreviewContext['devices'] = []
+  for (const d of draft.devices) {
+    if (d.changeState !== 'unchanged') continue
+    if (contextDevices.length >= MAX_CONTEXT_ENTITIES) break
+    const pos = positions.get(d.pk)
+    if (!pos) continue
+    const [lng, lat] = pos
+    if (!inBBox(lat, lng, bbox)) continue
+    const [x, y] = projectPoint(lat, lng, bbox, viewW, viewH)
+    contextDevices.push({ x, y })
+  }
+
+  const contextLinks: PreviewContext['links'] = []
+  for (const l of draft.links) {
+    if (l.changeState !== 'unchanged') continue
+    if (contextLinks.length >= MAX_CONTEXT_ENTITIES) break
+    const a = positions.get(l.side_a_pk)
+    const z = positions.get(l.side_z_pk)
+    if (!a || !z) continue
+    if (!inBBox(a[1], a[0], bbox) || !inBBox(z[1], z[0], bbox)) continue
+    const [x1, y1] = projectPoint(a[1], a[0], bbox, viewW, viewH)
+    const [x2, y2] = projectPoint(z[1], z[0], bbox, viewW, viewH)
+    contextLinks.push({ x1, y1, x2, y2 })
+  }
+
   return {
     devices: entities.devices.map((d) => {
       const [x, y] = projectPoint(d.lat, d.lng, bbox, viewW, viewH)
@@ -161,5 +238,10 @@ export function buildPlanPreview(
       const [x2, y2] = projectPoint(l.z.lat, l.z.lng, bbox, viewW, viewH)
       return { key: l.key, x1, y1, x2, y2, state: l.state }
     }),
+    metros: collectChangedMetros(draft).map((m) => {
+      const [x, y] = projectPoint(m.lat, m.lng, bbox, viewW, viewH)
+      return { code: m.code, x, y }
+    }),
+    context: { devices: contextDevices, links: contextLinks },
   }
 }

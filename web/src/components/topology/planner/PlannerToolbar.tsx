@@ -8,6 +8,7 @@ import {
   FolderOpen,
   Copy,
   Loader2,
+  ArrowLeft,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { duplicatePlan } from '@/lib/api'
@@ -25,7 +26,7 @@ const TOOLS: { tool: PlannerTool; label: string; icon: typeof MousePointer2 }[] 
 ]
 
 export function PlannerToolbar() {
-  const { plan, tool, setTool, saving, newPlan, openPlan, savePlanMeta } = usePlanner()
+  const { plan, tool, setTool, saving, newPlan, openPlan, closePlan, savePlanMeta } = usePlanner()
   const [picking, setPicking] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [nameDraft, setNameDraft] = useState('')
@@ -50,6 +51,17 @@ export function PlannerToolbar() {
 
   return (
     <div className="border-b border-border px-4 py-2 flex items-center gap-3">
+      {plan && (
+        <button
+          onClick={closePlan}
+          title="Back to all plans"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded text-muted-foreground hover:text-foreground hover:bg-muted"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          All plans
+        </button>
+      )}
+
       {/* Plan identity */}
       <div className="flex items-center gap-2 min-w-0">
         {plan ? (

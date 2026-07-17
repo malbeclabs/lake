@@ -53,6 +53,7 @@ export interface PlannerContextValue {
   dismissConflict: () => void
   newPlan: (name: string) => Promise<void>
   openPlan: (id: string) => void
+  closePlan: () => void
   addChange: (input: NewChangeInput) => Promise<void>
   patchChange: (
     id: string,
@@ -184,6 +185,13 @@ export function PlannerProvider({ children }: { children: ReactNode }) {
     },
     [setSearchParams]
   )
+
+  const closePlan = useCallback(() => {
+    setSearchParams((prev) => {
+      prev.delete('plan')
+      return prev
+    })
+  }, [setSearchParams])
 
   const newPlan = useCallback(
     async (name: string) => {
@@ -418,6 +426,7 @@ export function PlannerProvider({ children }: { children: ReactNode }) {
     dismissConflict,
     newPlan,
     openPlan,
+    closePlan,
     addChange,
     patchChange,
     removeChange,
