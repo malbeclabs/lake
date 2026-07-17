@@ -56,9 +56,11 @@ func TestFetchPublisherCheckCachedOrLive_LiveDeadline(t *testing.T) {
 func TestFetchPublisherCheckLive_ConcurrencyCap(t *testing.T) {
 	a := &API{}
 
+	const n = maxConcurrentPublisherCheckLive + 3
+
 	var inflight, maxInflight int64
 	release := make(chan struct{})
-	var started sync.WaitGroup
+	entered := make(chan struct{}, n) // buffered so sends never block, even after release
 
 	spy := func(ctx context.Context, _ string, _, _ int) (*PublisherCheckResponse, error) {
 		cur := atomic.AddInt64(&inflight, 1)
@@ -68,14 +70,12 @@ func TestFetchPublisherCheckLive_ConcurrencyCap(t *testing.T) {
 				break
 			}
 		}
-		started.Done()
+		entered <- struct{}{}
 		<-release // block so concurrent runs pile up against the semaphore
 		atomic.AddInt64(&inflight, -1)
 		return &PublisherCheckResponse{}, nil
 	}
 
-	const n = maxConcurrentPublisherCheckLive + 3
-	started.Add(maxConcurrentPublisherCheckLive) // only the cap can start while blocked
 	var wg sync.WaitGroup
 	for i := range n {
 		wg.Add(1)
@@ -87,9 +87,15 @@ func TestFetchPublisherCheckLive_ConcurrencyCap(t *testing.T) {
 		}()
 	}
 
-	started.Wait() // exactly the cap have entered the spy
+	// Once the cap have entered the spy they're all blocked on release, and the
+	// semaphore holds the rest at acquire (before they touch inflight), so inflight
+	// is exactly the cap at this instant.
+	for range maxConcurrentPublisherCheckLive {
+		<-entered
+	}
 	require.Equal(t, int64(maxConcurrentPublisherCheckLive), atomic.LoadInt64(&inflight),
 		"only maxConcurrentPublisherCheckLive runs may execute at once")
+
 	close(release)
 	wg.Wait()
 	require.LessOrEqual(t, atomic.LoadInt64(&maxInflight), int64(maxConcurrentPublisherCheckLive))
