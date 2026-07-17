@@ -203,33 +203,146 @@ func sanitizeChannel(ch string) string {
 // with the other's issue). Skip these groups instead.
 func unassignedGroup(ca ContributorActionGroup) bool { return ca.ContributorPK == "" }
 
-// unassignedTaskCount sums the tasks in every contributor-less group, so the
-// preview/sync response can surface how many tasks have no issue to land in.
+// unassignedTaskCount sums the NON-removal tasks in every contributor-less
+// group, so the preview/sync response can surface how many tasks have no
+// issue to land in. A contributor-less group's removal tasks are excluded:
+// removals always become a per-entity decom issue regardless of contributor,
+// so they are not actually unfiled.
 func unassignedTaskCount(al *ActionList) int {
 	n := 0
 	for _, ca := range al.Groups {
-		if unassignedGroup(ca) {
-			n += len(ca.Tasks)
+		if !unassignedGroup(ca) {
+			continue
+		}
+		for _, t := range ca.Tasks {
+			if t.OpType != OpRemoveDevice && t.OpType != OpRemoveLink {
+				n++
+			}
 		}
 	}
 	return n
 }
 
+// issueKind tags each non-parent issue a sync produces, so the preview/sync
+// loop can treat per-entity decom issues and per-contributor issues
+// uniformly.
+type issueKind string
+
+const (
+	kindContributor issueKind = "contributor"
+	kindDeviceDecom issueKind = "device_decom"
+	kindLinkDecom   issueKind = "link_decom"
+)
+
+// decomIssueLabels mirrors the private infra repo's contributor-decommission
+// label, plus a per-plan marker for discoverability.
+func decomIssueLabels(planName string) []string {
+	return []string{"contributor-decommission", "plan:" + planName}
+}
+
+// plannedIssue is one non-parent issue a sync will create/update, kind-tagged
+// so the preview/sync loop treats decom (per-entity) and contributor issues
+// uniformly.
+type plannedIssue struct {
+	Kind            issueKind
+	EntityPK        string // device/link pk for decom kinds; "" for contributor
+	ContributorPK   string // set for contributor kind; "" for decom
+	ContributorCode string // display / routing
+	Title           string
+	Body            string
+	Labels          []string
+}
+
+// buildPlannedIssues turns a plan + its action list + the live baseline into
+// the set of non-parent issues a sync should file: one decom issue per
+// pending remove_device / remove_link (per-entity, contributor-decommission
+// label), plus one per-contributor issue per contributor that has NON-removal
+// work (removals are covered by the decom issues, so they are filtered out of
+// the contributor bodies). Order: device decoms, link decoms, then
+// contributor groups (as ordered in al.Groups). Pure and DB-free so it is
+// unit-testable.
+func buildPlannedIssues(plan *Plan, al *ActionList, baseline *TopologyResponse, planURL string) []plannedIssue {
+	var out []plannedIssue
+
+	devTargets, linkTargets := collectDecomTargets(plan, baseline)
+	for _, t := range devTargets {
+		if t.DevicePK == "" {
+			continue // defensive; removals always carry a ref pk
+		}
+		out = append(out, plannedIssue{
+			Kind:            kindDeviceDecom,
+			EntityPK:        t.DevicePK,
+			ContributorCode: t.ContributorCode,
+			Title:           renderDeviceDecomTitle(t),
+			Body:            renderDeviceDecomBody(t),
+			Labels:          decomIssueLabels(plan.Name),
+		})
+	}
+	for _, t := range linkTargets {
+		if t.LinkPK == "" {
+			continue // defensive; removals always carry a ref pk
+		}
+		out = append(out, plannedIssue{
+			Kind:            kindLinkDecom,
+			EntityPK:        t.LinkPK,
+			ContributorCode: t.OwnerContribCode,
+			Title:           renderLinkDecomTitle(t),
+			Body:            renderLinkDecomBody(t),
+			Labels:          decomIssueLabels(plan.Name),
+		})
+	}
+
+	for _, ca := range al.Groups {
+		if unassignedGroup(ca) {
+			continue // FIX 3: can't route an issue to an unknown contributor
+		}
+		var kept []ActionTask
+		for _, t := range ca.Tasks {
+			if t.OpType == OpRemoveDevice || t.OpType == OpRemoveLink {
+				continue // covered by the per-entity decom issue instead
+			}
+			kept = append(kept, t)
+		}
+		if len(kept) == 0 {
+			continue // this contributor's only work is removals: no per-contributor issue
+		}
+		filtered := ca
+		filtered.Tasks = kept
+		filtered.Markdown = renderGroupMarkdown(&filtered)
+		out = append(out, plannedIssue{
+			Kind:            kindContributor,
+			ContributorPK:   ca.ContributorPK,
+			ContributorCode: ca.ContributorCode,
+			Title:           issueTitle(plan.Name, ca.ContributorCode),
+			Body:            renderContributorIssueBody(plan, filtered, planURL),
+			Labels:          issueLabels(plan.Name),
+		})
+	}
+
+	return out
+}
+
 // SyncedIssue is a single issue result after a sync ran. It is declared here
 // (not in Task 4) because renderParentIssueBody and the Task 3 preview both
-// reference it; Task 4's sync engine reuses this same type.
+// reference it; Task 4's sync engine reuses this same type. Kind/EntityPK/Title
+// let a decom issue (which has no contributor code) be labeled and routed the
+// same way a contributor issue is.
 type SyncedIssue struct {
+	Kind            string `json:"kind"`
 	ContributorPK   string `json:"contributor_pk"`
 	ContributorCode string `json:"contributor_code"`
 	IsParent        bool   `json:"is_parent"`
 	Action          string `json:"action"` // "created" | "updated"
+	Title           string `json:"title"`
+	EntityPK        string `json:"entity_pk,omitempty"`
 	IssueNumber     int    `json:"issue_number"`
 	IssueURL        string `json:"issue_url"`
 	Repo            string `json:"repo"`
 }
 
 // renderParentIssueBody renders the optional single tracking issue that links
-// every per-contributor issue.
+// every child issue. A decom child has no contributor code, so it is labeled
+// by its own Title instead.
 func renderParentIssueBody(plan *Plan, children []SyncedIssue, planURL string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Tracking issue for topology plan **%s** (`%s`).\n\n", sanitizeInline(plan.Name), sanitizeInline(plan.Environment))
@@ -238,7 +351,11 @@ func renderParentIssueBody(plan *Plan, children []SyncedIssue, planURL string) s
 		if ch.IsParent {
 			continue
 		}
-		fmt.Fprintf(&b, "- [ ] %s: %s\n", sanitizeInline(ch.ContributorCode), ch.IssueURL)
+		label := ch.ContributorCode
+		if ch.Kind != string(kindContributor) {
+			label = ch.Title
+		}
+		fmt.Fprintf(&b, "- [ ] %s: %s\n", sanitizeInline(label), ch.IssueURL)
 	}
 	fmt.Fprintf(&b, "\nPlan: %s\n", planURL)
 	return b.String()
@@ -246,12 +363,14 @@ func renderParentIssueBody(plan *Plan, children []SyncedIssue, planURL string) s
 
 // IssuePreview describes a single issue that a sync would create or update.
 type IssuePreview struct {
+	Kind                string `json:"kind"`
 	ContributorPK       string `json:"contributor_pk"`
 	ContributorCode     string `json:"contributor_code"`
 	IsParent            bool   `json:"is_parent"`
 	Action              string `json:"action"` // "create" | "update"
 	Title               string `json:"title"`
 	Body                string `json:"body"`
+	EntityPK            string `json:"entity_pk,omitempty"`
 	ExistingIssueNumber *int   `json:"existing_issue_number,omitempty"`
 	ExistingIssueURL    string `json:"existing_issue_url,omitempty"`
 	Repo                string `json:"repo"`
@@ -275,80 +394,90 @@ type existingIssue struct {
 }
 
 // loadExistingIssues returns recorded issues for a plan: a map keyed by
-// contributor_pk for per-contributor issues, and the parent issue separately.
-// Parent rows carry a NULL contributor_pk (which the UNIQUE index treats as
-// distinct), so they are keyed on is_parent, not on the map.
-func (a *API) loadExistingIssues(ctx context.Context, planID uuid.UUID) (map[string]existingIssue, *existingIssue, error) {
+// contributor_pk for per-contributor issues, a map keyed by
+// "<issue_kind>|<entity_pk>" for per-entity decom issues, and the parent issue
+// separately. Parent rows carry a NULL contributor_pk (which the UNIQUE index
+// treats as distinct), so they are keyed on is_parent, not on either map.
+func (a *API) loadExistingIssues(ctx context.Context, planID uuid.UUID) (
+	byContrib map[string]existingIssue, byEntity map[string]existingIssue, parent *existingIssue, err error) {
 	if a.PgPool == nil {
-		return nil, nil, errNoPgPool
+		return nil, nil, nil, errNoPgPool
 	}
 	rows, err := a.PgPool.Query(ctx, `
-		SELECT contributor_pk, issue_number, issue_url, is_parent
+		SELECT contributor_pk, issue_number, issue_url, is_parent, issue_kind, entity_pk
 		FROM topology_plan_issues
 		WHERE plan_id = $1`, planID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("query existing issues: %w", err)
+		return nil, nil, nil, fmt.Errorf("query existing issues: %w", err)
 	}
 	defer rows.Close()
 
-	byContrib := make(map[string]existingIssue)
-	var parent *existingIssue
+	byContrib = make(map[string]existingIssue)
+	byEntity = make(map[string]existingIssue)
 	for rows.Next() {
 		var (
 			contribPK *string
 			number    int
 			url       string
 			isParent  bool
+			kind      string
+			entityPK  *string
 		)
-		if err := rows.Scan(&contribPK, &number, &url, &isParent); err != nil {
-			return nil, nil, fmt.Errorf("scan existing issue: %w", err)
+		if err := rows.Scan(&contribPK, &number, &url, &isParent, &kind, &entityPK); err != nil {
+			return nil, nil, nil, fmt.Errorf("scan existing issue: %w", err)
 		}
 		ei := existingIssue{number: number, url: url, isParent: isParent}
-		if isParent || contribPK == nil {
+		switch {
+		case isParent || (contribPK == nil && entityPK == nil):
 			p := ei
 			parent = &p
-			continue
+		case entityPK != nil:
+			byEntity[kind+"|"+*entityPK] = ei
+		default:
+			byContrib[*contribPK] = ei
 		}
-		byContrib[*contribPK] = ei
 	}
 	if err := rows.Err(); err != nil {
-		return nil, nil, fmt.Errorf("iterate existing issues: %w", err)
+		return nil, nil, nil, fmt.Errorf("iterate existing issues: %w", err)
 	}
-	return byContrib, parent, nil
+	return byContrib, byEntity, parent, nil
 }
 
 // PreviewPlanIssues computes the issues a sync would create or update, without
-// touching GitHub. It classifies each contributor as create/update by consulting
-// topology_plan_issues.
-func (a *API) PreviewPlanIssues(ctx context.Context, plan *Plan, al *ActionList, repo string, includeParent bool) ([]IssuePreview, error) {
-	existing, parent, err := a.loadExistingIssues(ctx, plan.ID)
+// touching GitHub. It classifies each planned issue as create/update by
+// consulting topology_plan_issues: contributor issues by contributor_pk, decom
+// issues by (kind, entity_pk).
+func (a *API) PreviewPlanIssues(ctx context.Context, plan *Plan, al *ActionList, baseline *TopologyResponse, repo string, includeParent bool) ([]IssuePreview, error) {
+	byContrib, byEntity, parent, err := a.loadExistingIssues(ctx, plan.ID)
 	if err != nil {
 		return nil, err
 	}
 	planURL := plannerPlanURL(plan.ID.String())
-	previews := make([]IssuePreview, 0, len(al.Groups)+1)
-	for _, ca := range al.Groups {
-		if unassignedGroup(ca) {
-			continue // FIX 3: can't route an issue to an unknown contributor
-		}
+	specs := buildPlannedIssues(plan, al, baseline, planURL)
+	previews := make([]IssuePreview, 0, len(specs)+1)
+	for _, spec := range specs {
 		p := IssuePreview{
-			ContributorPK:   ca.ContributorPK,
-			ContributorCode: ca.ContributorCode,
-			Title:           issueTitle(plan.Name, ca.ContributorCode),
-			Body:            renderContributorIssueBody(plan, ca, planURL),
+			Kind:            string(spec.Kind),
+			EntityPK:        spec.EntityPK,
+			ContributorPK:   spec.ContributorPK,
+			ContributorCode: spec.ContributorCode,
+			Title:           spec.Title,
+			Body:            spec.Body,
 			Repo:            repo,
 			Action:          "create",
 		}
-		if ei, ok := existing[ca.ContributorPK]; ok {
+		existing, ok := lookupExistingIssue(spec, byContrib, byEntity)
+		if ok {
 			p.Action = "update"
-			n := ei.number
+			n := existing.number
 			p.ExistingIssueNumber = &n
-			p.ExistingIssueURL = ei.url
+			p.ExistingIssueURL = existing.url
 		}
 		previews = append(previews, p)
 	}
 	if includeParent {
 		pp := IssuePreview{
+			Kind:     "parent",
 			IsParent: true,
 			Title:    parentIssueTitle(plan.Name),
 			Body:     renderParentIssueBody(plan, nil, planURL),
@@ -366,6 +495,17 @@ func (a *API) PreviewPlanIssues(ctx context.Context, plan *Plan, al *ActionList,
 	return previews, nil
 }
 
+// lookupExistingIssue finds the recorded issue for a planned issue spec:
+// contributor issues by contributor_pk, decom issues by "<kind>|<entity_pk>".
+func lookupExistingIssue(spec plannedIssue, byContrib, byEntity map[string]existingIssue) (existingIssue, bool) {
+	if spec.Kind == kindContributor {
+		ei, ok := byContrib[spec.ContributorPK]
+		return ei, ok
+	}
+	ei, ok := byEntity[string(spec.Kind)+"|"+spec.EntityPK]
+	return ei, ok
+}
+
 // IssuesSyncResponse is the /issues/sync response envelope.
 type IssuesSyncResponse struct {
 	Repo   string        `json:"repo"`
@@ -377,50 +517,59 @@ type IssuesSyncResponse struct {
 	UnassignedTaskCount int `json:"unassigned_task_count,omitempty"`
 }
 
-// SyncPlanIssues creates issues for newly-involved contributors, updates the
-// bodies of existing ones, and records each in topology_plan_issues. It is
-// idempotent: re-running only updates and never duplicates. When includeParent
-// is set, a single tracking issue linking all per-contributor issues is
-// created/updated last (so it can reference their numbers).
-func (a *API) SyncPlanIssues(ctx context.Context, gh GithubIssueAPI, plan *Plan, al *ActionList, includeParent bool) ([]SyncedIssue, error) {
+// SyncPlanIssues creates issues for newly-planned entities/contributors,
+// updates the bodies of existing ones, and records each in
+// topology_plan_issues. It is idempotent: re-running only updates and never
+// duplicates (contributor issues on contributor_pk, decom issues on
+// (issue_kind, entity_pk)). When includeParent is set, a single tracking issue
+// linking all child issues is created/updated last (so it can reference their
+// numbers).
+func (a *API) SyncPlanIssues(ctx context.Context, gh GithubIssueAPI, plan *Plan, al *ActionList, baseline *TopologyResponse, includeParent bool) ([]SyncedIssue, error) {
 	if a.PgPool == nil {
 		return nil, errNoPgPool
 	}
-	existing, parent, err := a.loadExistingIssues(ctx, plan.ID)
+	byContrib, byEntity, parent, err := a.loadExistingIssues(ctx, plan.ID)
 	if err != nil {
 		return nil, err
 	}
 	planURL := plannerPlanURL(plan.ID.String())
-	labels := issueLabels(plan.Name)
-	results := make([]SyncedIssue, 0, len(al.Groups)+1)
+	specs := buildPlannedIssues(plan, al, baseline, planURL)
+	results := make([]SyncedIssue, 0, len(specs)+1)
 
-	for _, ca := range al.Groups {
-		if unassignedGroup(ca) {
-			continue // FIX 3: can't route an issue to an unknown contributor
-		}
-		title := issueTitle(plan.Name, ca.ContributorCode)
-		body := renderContributorIssueBody(plan, ca, planURL)
+	for _, spec := range specs {
+		existing, ok := lookupExistingIssue(spec, byContrib, byEntity)
 
 		var (
 			issue  *GithubIssue
 			action string
 		)
-		if ei, ok := existing[ca.ContributorPK]; ok {
-			issue, err = gh.UpdateIssue(ctx, ei.number, title, body)
+		if ok {
+			issue, err = gh.UpdateIssue(ctx, existing.number, spec.Title, spec.Body)
 			action = "updated"
 		} else {
-			issue, err = gh.CreateIssue(ctx, title, body, labels)
+			issue, err = gh.CreateIssue(ctx, spec.Title, spec.Body, spec.Labels)
 			action = "created"
 		}
 		if err != nil {
-			return nil, fmt.Errorf("sync issue for %s: %w", ca.ContributorCode, err)
+			return nil, fmt.Errorf("sync issue %q: %w", spec.Title, err)
 		}
-		if err := a.upsertPlanIssue(ctx, plan.ID, ca.ContributorPK, ca.ContributorCode, gh.RepoName(), issue); err != nil {
-			return nil, err
+
+		if spec.Kind == kindContributor {
+			if err := a.upsertPlanIssue(ctx, plan.ID, spec.ContributorPK, spec.ContributorCode, gh.RepoName(), issue); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := a.upsertDecomPlanIssue(ctx, plan.ID, spec.Kind, spec.EntityPK, spec.ContributorCode, gh.RepoName(), issue); err != nil {
+				return nil, err
+			}
 		}
+
 		results = append(results, SyncedIssue{
-			ContributorPK:   ca.ContributorPK,
-			ContributorCode: ca.ContributorCode,
+			Kind:            string(spec.Kind),
+			EntityPK:        spec.EntityPK,
+			Title:           spec.Title,
+			ContributorPK:   spec.ContributorPK,
+			ContributorCode: spec.ContributorCode,
 			Action:          action,
 			IssueNumber:     issue.Number,
 			IssueURL:        issue.HTMLURL,
@@ -439,7 +588,7 @@ func (a *API) SyncPlanIssues(ctx context.Context, gh GithubIssueAPI, plan *Plan,
 			issue, err = gh.UpdateIssue(ctx, parent.number, title, body)
 			action = "updated"
 		} else {
-			issue, err = gh.CreateIssue(ctx, title, body, labels)
+			issue, err = gh.CreateIssue(ctx, title, body, issueLabels(plan.Name))
 			action = "created"
 		}
 		if err != nil {
@@ -449,7 +598,9 @@ func (a *API) SyncPlanIssues(ctx context.Context, gh GithubIssueAPI, plan *Plan,
 			return nil, err
 		}
 		results = append(results, SyncedIssue{
+			Kind:        "parent",
 			IsParent:    true,
+			Title:       title,
 			Action:      action,
 			IssueNumber: issue.Number,
 			IssueURL:    issue.HTMLURL,
@@ -487,6 +638,29 @@ func (a *API) upsertPlanIssue(ctx context.Context, planID uuid.UUID, contributor
 	return nil
 }
 
+// upsertDecomPlanIssue records a per-entity decom issue, idempotent on
+// (plan_id, issue_kind, entity_pk). contributor_pk stays NULL (decom rows are
+// keyed by entity, not contributor, and a contributor can own several decom'd
+// entities, which would collide on UNIQUE(plan_id, contributor_pk)).
+func (a *API) upsertDecomPlanIssue(ctx context.Context, planID uuid.UUID, kind issueKind, entityPK, contributorCode, repo string, issue *GithubIssue) error {
+	_, err := a.PgPool.Exec(ctx, `
+		INSERT INTO topology_plan_issues
+			(id, plan_id, contributor_pk, contributor_code, github_repo, issue_number, issue_url, is_parent, issue_kind, entity_pk, last_synced_at, created_at)
+		VALUES (gen_random_uuid(), $1, NULL, $2, $3, $4, $5, false, $6, $7, NOW(), NOW())
+		ON CONFLICT (plan_id, issue_kind, entity_pk) WHERE entity_pk IS NOT NULL
+		DO UPDATE SET
+			contributor_code = EXCLUDED.contributor_code,
+			github_repo      = EXCLUDED.github_repo,
+			issue_number     = EXCLUDED.issue_number,
+			issue_url        = EXCLUDED.issue_url,
+			last_synced_at   = NOW()`,
+		planID, contributorCode, repo, issue.Number, issue.HTMLURL, string(kind), entityPK)
+	if err != nil {
+		return fmt.Errorf("upsert decom plan issue: %w", err)
+	}
+	return nil
+}
+
 // upsertParentPlanIssue inserts or updates the parent tracking row. Parent rows
 // carry a NULL contributor_pk, which the UNIQUE index treats as distinct, so
 // ON CONFLICT cannot be used: update in place if a parent exists, else insert.
@@ -514,20 +688,22 @@ func (a *API) upsertParentPlanIssue(ctx context.Context, planID uuid.UUID, repo 
 }
 
 // loadPlanAndActionList resolves the plan from the URL + env, enforces that it
-// is approved, and derives its action list. The returned int is the HTTP status
-// to use when err is non-nil.
-func (a *API) loadPlanAndActionList(ctx context.Context, r *http.Request) (*Plan, *ActionList, int, error) {
+// is approved, fetches the live baseline for the plan's own environment once,
+// and derives the action list from that same baseline, so the issue path can
+// pass it into collectDecomTargets without a second fetch. The returned int is
+// the HTTP status to use when err is non-nil.
+func (a *API) loadPlanAndActionList(ctx context.Context, r *http.Request) (*Plan, *ActionList, *TopologyResponse, int, error) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		return nil, nil, http.StatusBadRequest, errors.New("plan id is required")
+		return nil, nil, nil, http.StatusBadRequest, errors.New("plan id is required")
 	}
 	planID, err := uuid.Parse(id)
 	if err != nil {
-		return nil, nil, http.StatusBadRequest, errors.New("invalid plan id")
+		return nil, nil, nil, http.StatusBadRequest, errors.New("invalid plan id")
 	}
 	plan, err := loadPlanWithChanges(ctx, a.PgPool, planID)
 	if err != nil {
-		return nil, nil, http.StatusNotFound, errors.New("plan not found")
+		return nil, nil, nil, http.StatusNotFound, errors.New("plan not found")
 	}
 	// FIX 4: by-id plan lookup is not env-scoped, but this path files/updates
 	// real GitHub issues, so a plan from another environment must not be
@@ -536,17 +712,21 @@ func (a *API) loadPlanAndActionList(ctx context.Context, r *http.Request) (*Plan
 	// Checked before any GitHub client call in both PostPlanIssuesPreview and
 	// PostPlanIssuesSync, since both funnel through this loader.
 	if reqEnv := string(EnvFromContext(ctx)); plan.Environment != reqEnv {
-		return nil, nil, http.StatusBadRequest, fmt.Errorf(
+		return nil, nil, nil, http.StatusBadRequest, fmt.Errorf(
 			"plan belongs to environment %q, not the request environment %q", plan.Environment, reqEnv)
 	}
 	if plan.Status != StatusApproved {
-		return nil, nil, http.StatusConflict, errors.New("plan must be approved before creating issues")
+		return nil, nil, nil, http.StatusConflict, errors.New("plan must be approved before creating issues")
 	}
-	al, err := a.deriveActionList(ctx, plan)
+	// Baseline is the live topology for the plan's own environment, not the
+	// request's (mirrors (a *API) deriveActionList).
+	baseCtx := ContextWithEnv(ctx, DZEnv(plan.Environment))
+	baseline, err := a.FetchTopologyData(baseCtx)
 	if err != nil {
-		return nil, nil, http.StatusInternalServerError, errors.New("failed to build action list")
+		return nil, nil, nil, http.StatusInternalServerError, errors.New("failed to load baseline topology")
 	}
-	return &plan, al, http.StatusOK, nil
+	al := deriveActionListFromBaseline(&plan, plan.Changes, &baseline)
+	return &plan, al, &baseline, http.StatusOK, nil
 }
 
 // PostPlanIssuesPreview serves POST /api/topology/plans/{id}/issues/preview.
@@ -563,12 +743,12 @@ func (a *API) PostPlanIssuesPreview(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "GitHub integration not configured", http.StatusServiceUnavailable)
 		return
 	}
-	plan, al, code, err := a.loadPlanAndActionList(r.Context(), r)
+	plan, al, baseline, code, err := a.loadPlanAndActionList(r.Context(), r)
 	if err != nil {
 		http.Error(w, err.Error(), code)
 		return
 	}
-	previews, err := a.PreviewPlanIssues(r.Context(), plan, al, gh.RepoName(), true)
+	previews, err := a.PreviewPlanIssues(r.Context(), plan, al, baseline, gh.RepoName(), true)
 	if err != nil {
 		log.Printf("PreviewPlanIssues: %v", err)
 		http.Error(w, "failed to preview issues", http.StatusInternalServerError)
@@ -591,12 +771,12 @@ func (a *API) PostPlanIssuesSync(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "GitHub integration not configured", http.StatusServiceUnavailable)
 		return
 	}
-	plan, al, code, err := a.loadPlanAndActionList(r.Context(), r)
+	plan, al, baseline, code, err := a.loadPlanAndActionList(r.Context(), r)
 	if err != nil {
 		http.Error(w, err.Error(), code)
 		return
 	}
-	issues, err := a.SyncPlanIssues(r.Context(), gh, plan, al, true)
+	issues, err := a.SyncPlanIssues(r.Context(), gh, plan, al, baseline, true)
 	if err != nil {
 		log.Printf("SyncPlanIssues: %v", err)
 		http.Error(w, "failed to sync issues", http.StatusBadGateway)

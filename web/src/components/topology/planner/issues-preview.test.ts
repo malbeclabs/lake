@@ -3,6 +3,7 @@ import { summarizeIssuePreview } from './issues-preview'
 import type { IssuePreviewItem } from '@/lib/api'
 
 const mk = (action: 'create' | 'update', overrides: Partial<IssuePreviewItem> = {}): IssuePreviewItem => ({
+  kind: 'contributor',
   contributor_pk: 'pk',
   contributor_code: 'code',
   is_parent: false,

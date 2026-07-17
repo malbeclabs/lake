@@ -17,6 +17,7 @@ const REPO = 'malbeclabs/infra'
 
 const previewItems: IssuePreviewItem[] = [
   {
+    kind: 'contributor',
     contributor_pk: 'c-jump',
     contributor_code: 'jump_',
     is_parent: false,
@@ -26,6 +27,7 @@ const previewItems: IssuePreviewItem[] = [
     repo: REPO,
   },
   {
+    kind: 'parent',
     contributor_pk: '',
     contributor_code: '',
     is_parent: true,
@@ -40,19 +42,23 @@ const previewItems: IssuePreviewItem[] = [
 
 const syncedItems: SyncedIssue[] = [
   {
+    kind: 'contributor',
     contributor_pk: 'c-jump',
     contributor_code: 'jump_',
     is_parent: false,
     action: 'created',
+    title: 't1',
     issue_number: 42,
     issue_url: `https://github.com/${REPO}/issues/42`,
     repo: REPO,
   },
   {
+    kind: 'parent',
     contributor_pk: '',
     contributor_code: '',
     is_parent: true,
     action: 'updated',
+    title: 'parent',
     issue_number: 7,
     issue_url: `https://github.com/${REPO}/issues/7`,
     repo: REPO,

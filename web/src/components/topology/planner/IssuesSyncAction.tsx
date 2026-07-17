@@ -18,6 +18,27 @@ interface IssuesSyncActionProps {
   planStatus: string
 }
 
+// Shared row-labeling helpers for both the preview and synced issue lists: a
+// decom issue (device_decom / link_decom) has no contributor code, so it is
+// keyed and labeled by its own kind + entity rather than by contributor.
+type IssueRow = Pick<IssuePreviewItem, 'is_parent' | 'kind' | 'entity_pk' | 'contributor_pk' | 'contributor_code' | 'title'>
+
+function isDecomKind(kind: string): boolean {
+  return kind === 'device_decom' || kind === 'link_decom'
+}
+
+function issueRowKey(row: IssueRow): string {
+  if (row.is_parent) return '__parent__'
+  if (row.entity_pk) return `${row.kind}:${row.entity_pk}`
+  return row.contributor_pk
+}
+
+function issueRowLabel(row: IssueRow): string {
+  if (row.is_parent) return 'Parent tracking issue'
+  if (isDecomKind(row.kind)) return row.title
+  return row.contributor_code
+}
+
 export function IssuesSyncAction({ planId, planStatus }: IssuesSyncActionProps) {
   const [open, setOpen] = useState(false)
   const isApproved = canCreateIssues(planStatus as PlanStatus)
@@ -88,10 +109,17 @@ function IssuesSyncDialog({ planId, onClose }: { planId: string; onClose: () => 
               <ul className="space-y-2">
                 {previews.map((p) => (
                   <li
-                    key={p.is_parent ? '__parent__' : p.contributor_pk}
+                    key={issueRowKey(p)}
                     className="flex items-center justify-between rounded border border-border px-3 py-2 text-sm"
                   >
-                    <span>{p.is_parent ? 'Parent tracking issue' : p.contributor_code}</span>
+                    <span className="flex items-center gap-2">
+                      {isDecomKind(p.kind) && (
+                        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground">
+                          decom
+                        </span>
+                      )}
+                      {issueRowLabel(p)}
+                    </span>
                     <span
                       className={cn(
                         'rounded px-2 py-0.5 text-xs',
@@ -112,11 +140,16 @@ function IssuesSyncDialog({ planId, onClose }: { planId: string; onClose: () => 
             <ul className="space-y-2">
               {synced.map((s) => (
                 <li
-                  key={s.is_parent ? '__parent__' : s.contributor_pk}
+                  key={issueRowKey(s)}
                   className="flex items-center justify-between rounded border border-border px-3 py-2 text-sm"
                 >
-                  <span>
-                    {s.is_parent ? 'Parent tracking issue' : s.contributor_code}{' '}
+                  <span className="flex items-center gap-2">
+                    {isDecomKind(s.kind) && (
+                      <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground">
+                        decom
+                      </span>
+                    )}
+                    {issueRowLabel(s)}{' '}
                     <span className="text-xs text-muted-foreground">({s.action})</span>
                   </span>
                   <a

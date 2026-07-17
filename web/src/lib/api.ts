@@ -5092,22 +5092,27 @@ export async function fetchPlanImpact(
 // declarations (SC-5).
 
 export interface IssuePreviewItem {
+  kind: 'contributor' | 'device_decom' | 'link_decom' | 'parent'
   contributor_pk: string
   contributor_code: string
   is_parent: boolean
   action: 'create' | 'update'
   title: string
   body: string
+  entity_pk?: string
   existing_issue_number?: number
   existing_issue_url?: string
   repo: string
 }
 
 export interface SyncedIssue {
+  kind: 'contributor' | 'device_decom' | 'link_decom' | 'parent'
   contributor_pk: string
   contributor_code: string
   is_parent: boolean
   action: 'created' | 'updated'
+  title: string
+  entity_pk?: string
   issue_number: number
   issue_url: string
   repo: string
