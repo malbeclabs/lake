@@ -164,6 +164,29 @@ describe('IssuesSyncAction', () => {
     expect(mockSync).toHaveBeenCalledTimes(1)
   })
 
+  it('renders a decom row with a distinguishing chip and its title', async () => {
+    const decomPreviewItems: IssuePreviewItem[] = [
+      {
+        kind: 'device_decom',
+        contributor_pk: '',
+        contributor_code: '',
+        is_parent: false,
+        action: 'create',
+        title: 'Decommission device sea-dz01',
+        body: 'db',
+        entity_pk: 'dev-b-pk',
+        repo: REPO,
+      },
+    ]
+    mockPreview.mockResolvedValue({ repo: REPO, issues: decomPreviewItems })
+    renderAction('approved')
+
+    fireEvent.click(screen.getByRole('button', { name: /create \/ sync issues/i }))
+
+    await screen.findByText('Decommission device sea-dz01')
+    expect(screen.getByText('decom')).toBeInTheDocument()
+  })
+
   it('shows a clear message when GitHub is not configured (503)', async () => {
     mockPreview.mockRejectedValue(new Error('GitHub integration not configured'))
     renderAction('approved')

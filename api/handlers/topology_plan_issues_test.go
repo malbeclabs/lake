@@ -206,6 +206,34 @@ func TestRenderParentIssueBody(t *testing.T) {
 	assert.Contains(t, body, "topology/planner?plan=x")
 }
 
+// TestUnassignedTaskCountIssues proves unassignedTaskCount only counts the
+// NON-removal tasks in contributor-less groups: a removal task in a
+// contributor-less group is excluded (it becomes a per-entity decom issue
+// instead), and tasks in a group with a resolved contributor_pk are excluded
+// entirely.
+func TestUnassignedTaskCountIssues(t *testing.T) {
+	t.Parallel()
+	al := &ActionList{
+		Groups: []ContributorActionGroup{
+			{
+				ContributorPK: "",
+				Tasks: []ActionTask{
+					{OpType: OpRemoveLink, Title: "Remove link"},
+					{OpType: OpAddLink, Title: "Add link"},
+				},
+			},
+			{
+				ContributorPK:   "contrib-a",
+				ContributorCode: "rockawayx",
+				Tasks: []ActionTask{
+					{OpType: OpAddDevice, Title: "Add device"},
+				},
+			},
+		},
+	}
+	assert.Equal(t, 1, unassignedTaskCount(al))
+}
+
 func TestPlannerPlanURLDefault(t *testing.T) {
 	t.Setenv("APP_BASE_URL", "")
 	assert.Equal(t, "https://data.malbeclabs.com/topology/planner?plan=abc", plannerPlanURL("abc"))

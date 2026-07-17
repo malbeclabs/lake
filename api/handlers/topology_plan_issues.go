@@ -346,7 +346,7 @@ type SyncedIssue struct {
 func renderParentIssueBody(plan *Plan, children []SyncedIssue, planURL string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Tracking issue for topology plan **%s** (`%s`).\n\n", sanitizeInline(plan.Name), sanitizeInline(plan.Environment))
-	b.WriteString("Per-contributor issues:\n\n")
+	b.WriteString("Issues:\n\n")
 	for _, ch := range children {
 		if ch.IsParent {
 			continue

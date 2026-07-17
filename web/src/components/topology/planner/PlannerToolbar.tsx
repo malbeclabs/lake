@@ -61,7 +61,6 @@ export function PlannerToolbar() {
           All plans
         </button>
       )}
-
       {/* Plan identity */}
       <div className="flex items-center gap-2 min-w-0">
         {plan ? (

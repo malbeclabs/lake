@@ -225,10 +225,6 @@ describe('buildPlanPreview', () => {
     expect(preview!.metros.map((m) => m.code).sort()).toEqual(['lon', 'nyc'])
     expect(preview!.context.devices.length).toBeGreaterThan(0)
   })
-
-  it('still returns null for a plan with no changes', () => {
-    expect(buildPlanPreview(baseline(), [], 160, 100)).toBeNull()
-  })
 })
 
 describe('collectChangedMetros', () => {

@@ -30,7 +30,7 @@ function isDecomKind(kind: string): boolean {
 function issueRowKey(row: IssueRow): string {
   if (row.is_parent) return '__parent__'
   if (row.entity_pk) return `${row.kind}:${row.entity_pk}`
-  return row.contributor_pk
+  return row.contributor_pk || `${row.kind}:${row.title}`
 }
 
 function issueRowLabel(row: IssueRow): string {
