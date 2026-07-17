@@ -121,3 +121,70 @@ func TestFetchPublisherCheckLive_TransientRetry(t *testing.T) {
 	require.Equal(t, uint64(7), resp.Epoch)
 	require.Equal(t, int64(2), atomic.LoadInt64(&calls), "transient failure must be retried once")
 }
+
+// TestFetchPublisherCheckLive_DefaultShapeDetachedFromCaller verifies the shared
+// (collapsed) default-shape run is not tied to the winning caller's context: if
+// the caller disconnects mid-query, the query's context must stay live so the run
+// can complete and serve any collapsed waiters, rather than failing with
+// context.Canceled. The assertion reads the fetch's own context error via a
+// channel, so it does not race the caller's DoChan return.
+func TestFetchPublisherCheckLive_DefaultShapeDetachedFromCaller(t *testing.T) {
+	a := &API{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	fetchCtxErr := make(chan error, 1)
+	spy := func(fctx context.Context, _ string, _, _ int) (*PublisherCheckResponse, error) {
+		cancel()                  // caller disconnects while the shared query runs
+		fetchCtxErr <- fctx.Err() // detached context must remain live
+		return &PublisherCheckResponse{Epoch: 900}, nil
+	}
+
+	// Default shape → the collapsed/detached path.
+	_, _ = a.fetchPublisherCheckLive(ctx, "", DefaultPublisherCheckEpochs, 0, spy)
+
+	require.NoError(t, <-fetchCtxErr,
+		"detached run must not inherit the caller's cancellation")
+}
+
+// TestFetchPublisherCheckLive_AcquireBounded verifies the semaphore wait is
+// bounded by the caller's context rather than parking indefinitely: with the
+// semaphore saturated, a request whose context is already done returns promptly
+// with that context's error instead of blocking on acquisition.
+func TestFetchPublisherCheckLive_AcquireBounded(t *testing.T) {
+	a := &API{}
+
+	release := make(chan struct{})
+	entered := make(chan struct{}, maxConcurrentPublisherCheckLive)
+	blocker := func(context.Context, string, int, int) (*PublisherCheckResponse, error) {
+		entered <- struct{}{}
+		<-release
+		return &PublisherCheckResponse{}, nil
+	}
+
+	// Saturate the semaphore with distinct (filtered) shapes so none collapse.
+	var wg sync.WaitGroup
+	for i := range maxConcurrentPublisherCheckLive {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = a.fetchPublisherCheckLive(context.Background(), string(rune('a'+i)), DefaultPublisherCheckEpochs, 1, blocker)
+		}()
+	}
+	for range maxConcurrentPublisherCheckLive {
+		<-entered // all slots held
+	}
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	var reached int64
+	_, err := a.fetchPublisherCheckLive(canceled, "z", DefaultPublisherCheckEpochs, 1, func(context.Context, string, int, int) (*PublisherCheckResponse, error) {
+		atomic.AddInt64(&reached, 1)
+		return &PublisherCheckResponse{}, nil
+	})
+	require.Error(t, err, "a done context must not block on a saturated semaphore")
+	require.ErrorIs(t, err, context.Canceled)
+	require.Zero(t, atomic.LoadInt64(&reached), "fetch must not run when acquisition is abandoned")
+
+	close(release)
+	wg.Wait()
+}

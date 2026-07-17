@@ -167,34 +167,53 @@ func (a *API) fetchPublisherCheckLive(
 	ctx context.Context, q string, epochsParam, slotsParam int,
 	fetch func(context.Context, string, int, int) (*PublisherCheckResponse, error),
 ) (*PublisherCheckResponse, error) {
-	run := func() (*PublisherCheckResponse, error) {
+	// Filtered shapes are varied and low-volume; run them directly under the
+	// caller's context. Only the default shape stampedes (a Postgres outage sends
+	// every default request live at once), so collapse just those.
+	if !isDefaultPublisherCheckShape(q, epochsParam, slotsParam) {
 		return a.fetchPublisherCheckLiveGuarded(ctx, q, epochsParam, slotsParam, fetch)
 	}
 
-	// Only the default shape stampedes (a Postgres outage sends every default
-	// request live at once); collapse those. Filtered shapes are varied and
-	// low-volume, so singleflight would rarely help and could mask distinct work.
-	if isDefaultPublisherCheckShape(q, epochsParam, slotsParam) {
-		key := string(EnvFromContext(ctx))
-		v, err, _ := a.pubCheckSF.Do(key, func() (any, error) { return run() })
-		if err != nil {
-			return nil, err
+	// The collapsed run must not be tied to the winning caller's context: with a
+	// plain singleflight.Do the shared query would inherit the winner's ctx, so one
+	// caller's disconnect (or earlier deadline) would cancel the query and 500 every
+	// collapsed waiter — exactly the stampede this path protects against. Run the
+	// shared fetch on a context detached from the winner (WithoutCancel keeps the
+	// env value envDB routes on; the guarded run adds its own deadline so it can't
+	// hold a semaphore slot forever), and use DoChan so each caller selects on its
+	// own ctx and a disconnecting caller returns promptly without failing the rest.
+	key := string(EnvFromContext(ctx))
+	ch := a.pubCheckSF.DoChan(key, func() (any, error) {
+		return a.fetchPublisherCheckLiveGuarded(context.WithoutCancel(ctx), q, epochsParam, slotsParam, fetch)
+	})
+	select {
+	case res := <-ch:
+		if res.Err != nil {
+			return nil, res.Err
 		}
-		return v.(*PublisherCheckResponse), nil
+		return res.Val.(*PublisherCheckResponse), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
-	return run()
 }
 
 func (a *API) fetchPublisherCheckLiveGuarded(
 	ctx context.Context, q string, epochsParam, slotsParam int,
 	fetch func(context.Context, string, int, int) (*PublisherCheckResponse, error),
 ) (*PublisherCheckResponse, error) {
+	// Bound the semaphore wait even when the caller's context has no deadline
+	// (REST/huma requests may not) — otherwise a burst of distinct live requests
+	// parks goroutines indefinitely. The per-attempt deadline below only applies
+	// after acquisition, so it can't bound the wait itself.
+	acqCtx, cancelAcq := context.WithTimeout(ctx, publisherCheckLiveTimeout)
+	defer cancelAcq()
+
 	sem := a.publisherCheckLiveSem()
 	select {
 	case sem <- struct{}{}:
 		defer func() { <-sem }()
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	case <-acqCtx.Done():
+		return nil, acqCtx.Err()
 	}
 
 	attempt := func() (*PublisherCheckResponse, error) {
