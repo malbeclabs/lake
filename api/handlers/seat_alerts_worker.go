@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -86,15 +87,60 @@ func (a *API) RunSeatAlertSweep(ctx context.Context) error {
 	return nil
 }
 
+// seatAlertMessage renders the low-balance warning sent to Telegram. It is a
+// pure function (no I/O) so it is unit tested directly (see
+// seat_alerts_message_test.go). The Telegram client sends this with no
+// parse_mode, so the layout relies on line breaks and spacing only, no markdown.
 func seatAlertMessage(alert SeatAlert, s ShredSubscriberRow) string {
-	if alert.TriggerType == "balance_below_usdc" {
-		return fmt.Sprintf(
-			"Heads up: your seat %s (%s) escrow is about %.2f USDC, at or below your %.2f USDC alert threshold. Top up to keep the seat and its tenure.",
-			s.PK, s.MetroCode, float64(s.TotalUSDCBalance)/1_000_000, alert.ThresholdValue)
+	epochsLeft := PrepaidEpochs(s.TotalUSDCBalance, s.PricePerEpochDollars)
+	balance := float64(s.TotalUSDCBalance) / 1_000_000
+	price := s.PricePerEpochDollars
+	days := epochsLeft * 2
+
+	deviceCode := s.DeviceCode
+	if deviceCode == "" {
+		deviceCode = "<device-code>"
 	}
-	return fmt.Sprintf(
-		"Heads up: your seat %s (%s) has about %d epoch(s) of runway left. Top up the escrow to keep the seat and its tenure.",
-		s.PK, s.MetroCode, PrepaidEpochs(s.TotalUSDCBalance, s.PricePerEpochDollars))
+	clientIP := s.ClientIP
+	if clientIP == "" {
+		clientIP = "<your-ip>"
+	}
+
+	lines := []string{
+		"⚠️ Seat running low",
+		"",
+		fmt.Sprintf("%-11s%s", "Seat:", shortSeatPK(s.PK)),
+		fmt.Sprintf("%-11s%s (%s)", "Device:", deviceCode, s.MetroCode),
+		fmt.Sprintf("%-11s%.2f USDC left", "Escrow:", balance),
+		fmt.Sprintf("%-11s~%d epoch(s) (about %d days)", "Runway:", epochsLeft, days),
+		fmt.Sprintf("Tenure at stake: %d epochs", s.TenureEpochs),
+		fmt.Sprintf("%-11s%s", "Trigger:", triggerText(alert)),
+		"",
+		fmt.Sprintf("If the escrow runs out you lose the seat and its %d epochs of tenure.", s.TenureEpochs),
+		"",
+	}
+
+	// A device with no configured price (price <= 0) can't offer a suggested
+	// top-up amount, so the cost line and the suggested-amount line are
+	// dropped and the pay command falls back to a placeholder amount.
+	var suggested int64
+	if price > 0 {
+		suggested = price * 15 // ~15 epochs of runway
+		lines = append(lines, fmt.Sprintf("This device costs ~%d USDC per epoch (~2 days).", price))
+	}
+	lines = append(lines, "Top up (adds to your escrow; more is better, it only draws down as you use it):")
+	if price > 0 {
+		lines = append(lines,
+			fmt.Sprintf("doublezero-solana shreds pay --device-code %s --client-ip %s --amount %d", deviceCode, clientIP, suggested),
+			fmt.Sprintf("(%d USDC ≈ ~%d days here. Minimum %d = one epoch.)", suggested, suggested/price*2, price),
+		)
+	} else {
+		lines = append(lines,
+			fmt.Sprintf("doublezero-solana shreds pay --device-code %s --client-ip %s --amount <USDC>", deviceCode, clientIP))
+	}
+	lines = append(lines, "", "Reply /topup for details, /help for all commands.")
+
+	return strings.Join(lines, "\n")
 }
 
 // StartSeatAlertWorker runs RunSeatAlertSweep on a ticker, single-flighted

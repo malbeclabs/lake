@@ -112,7 +112,7 @@ func (h *EventHandler) process(ctx context.Context, u tgUpdate) {
 			h.send(ctx, chatID, "That activation link is invalid or already used. Create a new alert on the site.")
 			return
 		}
-		h.send(ctx, chatID, fmt.Sprintf("Connected. I'll warn you when seat %s runs low. Reply /list or /stop anytime.", seat))
+		h.send(ctx, chatID, fmt.Sprintf("✅ Connected\n\nI'll watch: %s\n\nCommands: /list · /stop · /topup · /help", seat))
 	case strings.HasPrefix(text, "/list"):
 		seats, err := h.store.List(ctx, chatID)
 		if err != nil || len(seats) == 0 {
@@ -143,10 +143,39 @@ func (h *EventHandler) process(ctx context.Context, u tgUpdate) {
 			}
 			h.send(ctx, chatID, fmt.Sprintf("Stopped alert #%d: %s", n, desc))
 		}
+	case strings.HasPrefix(text, "/help"):
+		h.send(ctx, chatID, helpText)
+	case strings.HasPrefix(text, "/topup"):
+		h.send(ctx, chatID, topupText)
 	default:
-		h.send(ctx, chatID, "Commands: /list, /stop. To add an alert, use the DoubleZero site.")
+		h.send(ctx, chatID, "Commands: /list, /stop, /topup, /help. To add an alert, use the DoubleZero site.")
 	}
 }
+
+const helpText = `DoubleZero Seat Alerts
+
+I warn you before a shred seat runs out of prepaid escrow, so you don't lose the seat or its tenure. Create alerts on the DoubleZero site (the bell on a seat), then activate them here.
+
+/list        your active alerts, numbered
+/stop <n>    stop alert number n (from /list)
+/stop all    stop every alert
+/topup       how to top up a seat's escrow
+/help        this message`
+
+const topupText = `Topping up a seat's escrow
+
+Run this with the wallet that funds the seat:
+
+doublezero-solana shreds pay --device-code <CODE> --client-ip <IP> --amount <USDC>
+
+<CODE>  the device your seat is on
+<IP>    your machine's public IP (curl -4 ifconfig.me)
+<USDC>  amount to add; at least one epoch's price (more is better)
+
+Check the price:    doublezero-solana shreds price --device-code <CODE>
+Check your balance: doublezero-solana shreds list --client-ip <IP>
+
+Re-running just adds to your existing escrow; unused balance stays as runway.`
 
 func (h *EventHandler) send(ctx context.Context, chatID int64, text string) {
 	if err := h.client.SendMessage(ctx, chatID, text); err != nil {

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -116,6 +117,54 @@ func TestWebhook_StopAll(t *testing.T) {
 	}
 	if store.stopOneIndex != 0 {
 		t.Fatalf("expected StopOne not to be called, got index %d", store.stopOneIndex)
+	}
+}
+
+func TestWebhook_Help(t *testing.T) {
+	t.Parallel()
+	h, _, sent := newTestHandler(t, &fakeStore{})
+	update := map[string]any{
+		"update_id": 4,
+		"message": map[string]any{
+			"text": "/help",
+			"chat": map[string]any{"id": 888},
+		},
+	}
+	rr := postUpdate(t, h, "s3cret", update)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code = %d want 200", rr.Code)
+	}
+	h.WaitForTest() // drain async processing (test-only helper)
+	if len(*sent) == 0 {
+		t.Fatalf("expected a reply to be sent")
+	}
+	text, _ := (*sent)[0]["text"].(string)
+	if !strings.Contains(text, "/topup") || !strings.Contains(text, "/stop <n>") {
+		t.Fatalf("help reply missing expected content: %q", text)
+	}
+}
+
+func TestWebhook_Topup(t *testing.T) {
+	t.Parallel()
+	h, _, sent := newTestHandler(t, &fakeStore{})
+	update := map[string]any{
+		"update_id": 5,
+		"message": map[string]any{
+			"text": "/topup",
+			"chat": map[string]any{"id": 999},
+		},
+	}
+	rr := postUpdate(t, h, "s3cret", update)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code = %d want 200", rr.Code)
+	}
+	h.WaitForTest() // drain async processing (test-only helper)
+	if len(*sent) == 0 {
+		t.Fatalf("expected a reply to be sent")
+	}
+	text, _ := (*sent)[0]["text"].(string)
+	if !strings.Contains(text, "shreds pay") {
+		t.Fatalf("topup reply missing expected content: %q", text)
 	}
 }
 

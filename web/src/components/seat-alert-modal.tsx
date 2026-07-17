@@ -36,8 +36,11 @@ export function SeatAlertModal({ seat, onClose }: SeatAlertModalProps) {
         <button onClick={onClose} className="absolute top-3 right-3 p-1 text-muted-foreground hover:text-foreground">
           <X className="h-4 w-4" />
         </button>
-        <h2 className="text-lg font-medium mb-1">Set up notifications</h2>
-        <p className="text-xs text-muted-foreground mb-4 font-mono">{seat.pk}</p>
+        <h2 className="text-lg font-medium mb-1">Set up a Telegram alert</h2>
+        <p className="text-xs text-muted-foreground font-mono">{seat.pk}</p>
+        <p className="text-xs text-muted-foreground mb-4">
+          You'll get a Telegram message when this seat runs low. Telegram is the only channel for now — close this if you don't use it.
+        </p>
 
         {create.isSuccess ? (
           <div className="space-y-3">

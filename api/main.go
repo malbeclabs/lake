@@ -1067,7 +1067,7 @@ func (s telegramStore) Activate(ctx context.Context, token string, chatID int64,
 	if err != nil {
 		return "", err
 	}
-	return shortSeat(a.SeatPK), nil
+	return handlers.FormatSeatAlertLine(a), nil
 }
 func (s telegramStore) List(ctx context.Context, chatID int64) ([]string, error) {
 	alerts, err := s.api.ListAlertsByChatID(ctx, chatID)
@@ -1085,15 +1085,6 @@ func (s telegramStore) Stop(ctx context.Context, chatID int64) (int64, error) {
 }
 func (s telegramStore) StopOne(ctx context.Context, chatID int64, index int) (string, bool, error) {
 	return s.api.StopSeatAlertByChatIndex(ctx, chatID, index)
-}
-
-// shortSeat abbreviates a seat pubkey for display in chat messages, e.g.
-// "AbCdEf…wxYz" instead of the full base58 string.
-func shortSeat(pk string) string {
-	if len(pk) <= 12 {
-		return pk
-	}
-	return pk[:6] + "…" + pk[len(pk)-4:]
 }
 
 // startTelegramBot registers the Telegram webhook route on the root router.

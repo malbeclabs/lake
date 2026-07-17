@@ -52,16 +52,29 @@ func scanSeatAlert(row rowScanner) (SeatAlert, error) {
 }
 
 // FormatSeatAlertLine renders a single alert as a human-readable line for
-// Telegram, e.g. "5i6ajS…Zxs8 — below 200 USDC" or "5i6ajS…Zxs8 — ≤ 2 epochs left".
+// Telegram, e.g. "5i6ajS…Zxs8 — balance below 200 USDC" or
+// "5i6ajS…Zxs8 — 2 or fewer epochs left".
 func FormatSeatAlertLine(a SeatAlert) string {
 	seat := shortSeatPK(a.SeatPK)
+	t := triggerText(a)
+	if t == "" {
+		return seat
+	}
+	return fmt.Sprintf("%s — %s", seat, t)
+}
+
+// triggerText describes an alert's trigger condition in plain language, e.g.
+// "balance below 200 USDC" or "2 or fewer epochs left". Shared by
+// FormatSeatAlertLine (used by /list) and seatAlertMessage (the low-balance
+// warning) so the wording stays consistent between the two.
+func triggerText(a SeatAlert) string {
 	switch a.TriggerType {
 	case "balance_below_usdc":
-		return fmt.Sprintf("%s — below %g USDC", seat, a.ThresholdValue)
+		return fmt.Sprintf("balance below %g USDC", a.ThresholdValue)
 	case "epochs_left":
-		return fmt.Sprintf("%s — ≤ %d epochs left", seat, int64(a.ThresholdValue))
+		return fmt.Sprintf("%d or fewer epochs left", int64(a.ThresholdValue))
 	}
-	return seat
+	return ""
 }
 
 // shortSeatPK abbreviates a seat pubkey for display in chat messages, e.g.
