@@ -33,9 +33,11 @@ across clouds/regions). All other feeds are competitors:
 | `feed_c_bbo`   | Feed C         |
 | `feed_d_bbo`   | Feed D         |
 
-The competitor set lives as a small ordered slice of `{rawFeed, label}` in Go;
-adding/renaming a competitor is a one-line change. The `tob_*` rollup is applied
-in SQL via `startsWith(feed, 'tob_')`.
+The feed set lives in the Postgres table `hyperliquid_scoreboard_entry`
+(`feed`, `label`, `display_order`, `enabled`), seeded out of band per
+environment; adding, removing, or reordering a feed is a row change rather than
+a code change. The `tob_*` rollup is applied in SQL via
+`startsWith(feed, 'tob_')`.
 
 ## Data Source
 

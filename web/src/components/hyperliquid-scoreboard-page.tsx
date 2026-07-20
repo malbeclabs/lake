@@ -223,7 +223,7 @@ export function HyperliquidScoreboardPage() {
         {data && data.total_races === 0 && data.competitors.length === 0 && (
           <div className="flex flex-col items-center justify-center rounded-lg border border-border bg-card py-12 text-center">
             <Trophy className="mb-4 h-12 w-12 text-muted-foreground" />
-            <h3 className="mb-2 text-lg font-medium">Scoreboard not configured</h3>
+            <h3 className="mb-2 text-lg font-medium">No scoreboard data yet</h3>
             <p className="text-sm text-muted-foreground">No feed data available for this time window yet.</p>
           </div>
         )}
