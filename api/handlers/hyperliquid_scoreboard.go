@@ -66,31 +66,42 @@ func (e hyperliquidEntries) display(feed string) string {
 }
 
 // loadHyperliquidScoreboardEntries reads the enabled scoreboard feeds from Postgres, in
-// display order. A load failure degrades to an empty set (the scoreboard renders empty)
-// rather than failing the request: this is display config, and a Postgres blip must not take
-// the page down. Logged at WARN, never ERROR — ERROR pages on-call.
-func (a *API) loadHyperliquidScoreboardEntries(ctx context.Context) hyperliquidEntries {
+// display order. Zero configured rows is not an error — it is the deliberate "nothing
+// configured yet" state and returns a clean empty set with a nil error. A genuine load
+// failure (query, scan, or row iteration) returns a non-nil error instead of degrading to an
+// empty set: the caller must not treat a Postgres blip as "zero feeds configured", or the
+// background refresher and page-cache worker would overwrite the last-good cached payload
+// with an empty one. Logged at WARN, never ERROR — ERROR pages on-call.
+func (a *API) loadHyperliquidScoreboardEntries(ctx context.Context) (hyperliquidEntries, error) {
 	e := hyperliquidEntries{labels: map[string]string{}}
 	if a.PgPool == nil {
-		return e
+		return e, nil
 	}
 	rows, err := a.PgPool.Query(ctx, `
 		SELECT feed, label FROM hyperliquid_scoreboard_entry
 		WHERE enabled ORDER BY display_order, feed`)
 	if err != nil {
 		slog.Warn("hyperliquid scoreboard entry load failed", "error", err)
-		return e
+		return hyperliquidEntries{}, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var feed, label string
 		if err := rows.Scan(&feed, &label); err != nil {
 			slog.Warn("hyperliquid scoreboard entry scan failed", "error", err)
-			return hyperliquidEntries{labels: map[string]string{}}
+			return hyperliquidEntries{}, err
 		}
 		// A malformed feed would be inlined into SQL; drop it and keep serving the rest.
 		if !hyperliquidFeedRe.MatchString(feed) {
 			slog.Warn("hyperliquid scoreboard entry skipped: unsafe feed id", "feed", feed)
+			continue
+		}
+		// tob_ feeds are DoubleZero's own; the allow-list clause relies on them never being
+		// configured entries (see inClause). A tob_ config row would broaden the clause to
+		// match races against unconfigured competitors, leaking their raw feed ids into the
+		// public payload, so it is dropped rather than trusted.
+		if strings.HasPrefix(feed, "tob_") {
+			slog.Warn("hyperliquid scoreboard entry skipped: tob_ feed not allowed", "feed", feed)
 			continue
 		}
 		e.ordered = append(e.ordered, hyperliquidEntry{Feed: feed, Label: label})
@@ -98,9 +109,9 @@ func (a *API) loadHyperliquidScoreboardEntries(ctx context.Context) hyperliquidE
 	}
 	if err := rows.Err(); err != nil {
 		slog.Warn("hyperliquid scoreboard entry iteration failed", "error", err)
-		return hyperliquidEntries{labels: map[string]string{}}
+		return hyperliquidEntries{}, err
 	}
-	return e
+	return e, nil
 }
 
 // hyperliquidWindows maps window params to ClickHouse interval expressions.
@@ -268,9 +279,15 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 	}
 
 	// The configured feed allow-list drives which feeds are raced, counted, and labelled.
-	// With nothing configured there is no scoreboard to compute, so serve the same
-	// empty-but-valid payload rather than scanning for feeds we would then discard.
-	entries := a.loadHyperliquidScoreboardEntries(ctx)
+	// A load failure propagates as an error so the caller (page-cache refresher, request
+	// handler) does not mistake it for "nothing configured" and overwrite a last-good cached
+	// payload with an empty one. Zero configured rows is not an error — with nothing
+	// configured there is no scoreboard to compute, so serve the empty-but-valid payload
+	// rather than scanning for feeds we would then discard.
+	entries, err := a.loadHyperliquidScoreboardEntries(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if entries.empty() {
 		return emptyHyperliquidScoreboard(window), nil
 	}

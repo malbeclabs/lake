@@ -344,3 +344,52 @@ func TestHyperliquidScoreboard_NoConfiguredEntries(t *testing.T) {
 	assert.Empty(t, resp.RecentRaces)
 	assert.EqualValues(t, 0, resp.TotalRaces)
 }
+
+// A genuine Postgres failure while loading the feed config must propagate as an error rather
+// than degrade to the same empty-but-valid response as "zero rows configured" — otherwise the
+// background refresher and page-cache worker would treat the failure as success and overwrite
+// the last-good cached payload with an empty one.
+func TestFetchHyperliquidScoreboardData_ConfigLoadFailure(t *testing.T) {
+	api := apitesting.NewTestAPIBarePg(t, testChDB, testPgDB)
+	createFeedsTable(t, api)
+
+	api.PgPool.Close() // force loadHyperliquidScoreboardEntries's query to fail
+
+	resp, err := api.FetchHyperliquidScoreboardData(t.Context(), "24h", "")
+	require.Error(t, err)
+	assert.Nil(t, resp)
+}
+
+// A tob_ feed accidentally added as a scoreboard config row must be ignored. tob_* feeds are
+// DoubleZero's own; the allow-list clause assumes they are never configured entries, so a
+// configured tob_ row would broaden the clause to match races against unconfigured
+// competitors, leaking their raw feed ids into the public payload.
+func TestHyperliquidScoreboard_TobFeedEntryIgnored(t *testing.T) {
+	api := apitesting.NewTestAPIBarePg(t, testChDB, testPgDB)
+	createFeedsTable(t, api)
+	insertEntry(t, api, "feed_a_bbo", "Feed A", 1, true)
+	insertEntry(t, api, "tob_gcp_tyo_hl_mainnet1", "Bad DZ Entry", 2, true)
+
+	// If the tob_ row were honored, this race would slip through the allow-list purely
+	// because tob_gcp_tyo_hl_mainnet1 appears in the IN(...) list, exposing the otherwise
+	// unconfigured feed_unlisted_bbo.
+	insertPairwise(t, api, "tyo-rec1", "tyo", "BTC", 10, 1, "tob_gcp_tyo_hl_mainnet1", "feed_a_bbo", 1.0)
+	insertPairwise(t, api, "tyo-rec1", "tyo", "ETH", 20, 2, "tob_gcp_tyo_hl_mainnet1", "feed_unlisted_bbo", 1.0)
+
+	resp, err := api.FetchHyperliquidScoreboardData(t.Context(), "24h", "")
+	require.NoError(t, err)
+
+	require.Len(t, resp.Competitors, 1)
+	assert.Equal(t, "feed_a_bbo", resp.Competitors[0].Feed)
+	for _, r := range resp.RecentRaces {
+		assert.NotEqual(t, "feed_unlisted_bbo", r.RunnerUpFeed)
+		assert.NotEqual(t, "feed_unlisted_bbo", r.WinnerFeed)
+	}
+
+	// The config table must still hold the tob_ row — it's dropped from the in-memory
+	// allow-list, not deleted from Postgres.
+	var n int
+	require.NoError(t, api.PgPool.QueryRow(t.Context(),
+		`SELECT count(*) FROM hyperliquid_scoreboard_entry`).Scan(&n))
+	assert.Equal(t, 2, n)
+}
