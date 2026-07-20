@@ -218,7 +218,17 @@ export function HyperliquidScoreboardPage() {
           <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">Loading…</div>
         )}
 
-        {data && (
+        {/* No configured feeds yet (post-deploy, pre-seeding): show a neutral empty state
+            instead of a headline hero implying real data (0 races, 0.0% win rate). */}
+        {data && data.total_races === 0 && data.competitors.length === 0 && (
+          <div className="flex flex-col items-center justify-center rounded-lg border border-border bg-card py-12 text-center">
+            <Trophy className="mb-4 h-12 w-12 text-muted-foreground" />
+            <h3 className="mb-2 text-lg font-medium">Scoreboard not configured</h3>
+            <p className="text-sm text-muted-foreground">No feed data available for this time window yet.</p>
+          </div>
+        )}
+
+        {data && (data.total_races > 0 || data.competitors.length > 0) && (
           <>
             {/* Hero stats — 3 columns: description+stats | metrics | gauge */}
             <div className="mb-8 flex flex-col rounded-lg border border-border bg-card lg:flex-row">
