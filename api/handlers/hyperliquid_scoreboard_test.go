@@ -204,3 +204,15 @@ func TestHyperliquidScoreboard_HeadlineAndCompetitors(t *testing.T) {
 	// Lead p50 over the 3 DZ wins (1.0, 2.0, 3.0) = 2.0 (quantileTDigest(0.5), exact at this size).
 	assert.InDelta(t, 2.0, hydro.LeadP50Ms, 0.001)
 }
+
+// The migration must create an empty config table: rows are environment config inserted
+// out of band, never seeded by the migration.
+func TestHyperliquidScoreboardEntry_TableCreatedEmpty(t *testing.T) {
+	api := apitesting.NewTestAPIBarePg(t, testChDB, testPgDB)
+
+	var n int
+	err := api.PgPool.QueryRow(t.Context(),
+		`SELECT count(*) FROM hyperliquid_scoreboard_entry`).Scan(&n)
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
+}
