@@ -25,13 +25,13 @@ Solana slot.
 **DoubleZero = every feed whose name starts with `tob_`** (our top-of-book feeds
 across clouds/regions). All other feeds are competitors:
 
-| Raw feed(s)              | Rollup label  | Role                  |
-|--------------------------|---------------|-----------------------|
-| `tob_*` (all)            | **DoubleZero**| us                    |
-| `hyperliquid_public_bbo` | Public API    | baseline (free)       |
-| `hydromancer_bbo`        | Hydromancer   | paid competitor       |
-| `hyperpc_shared_bbo`     | HypeRPC       | paid competitor       |
-| `quicknode_l2book_bbo`   | QuickNode     | paid competitor       |
+| Raw feed(s)    | Rollup label   |
+|----------------|----------------|
+| `tob_*` (all)  | **DoubleZero** |
+| `feed_a_bbo`   | Feed A         |
+| `feed_b_bbo`   | Feed B         |
+| `feed_c_bbo`   | Feed C         |
+| `feed_d_bbo`   | Feed D         |
 
 The competitor set lives as a small ordered slice of `{rawFeed, label}` in Go;
 adding/renaming a competitor is a one-line change. The `tob_*` rollup is applied
@@ -124,10 +124,10 @@ live query (`X-Cache: MISS`).
   "dz_win_share_pct": 96.4,
   "total_races": 13680322,
   "competitors": [
-    { "feed": "hyperliquid_public_bbo", "label": "Public API",  "dz_win_pct": 99.1, "lead_p50_ms": 2.4, "lead_p95_ms": 8.1, "races": 12300000 },
-    { "feed": "hydromancer_bbo",        "label": "Hydromancer", "dz_win_pct": 94.2, "lead_p50_ms": 0.9, "lead_p95_ms": 3.7, "races": 1100000 },
-    { "feed": "hyperpc_shared_bbo",     "label": "HypeRPC",     "dz_win_pct": 97.8, "lead_p50_ms": 1.6, "lead_p95_ms": 5.2, "races": 400000 },
-    { "feed": "quicknode_l2book_bbo",   "label": "QuickNode",   "dz_win_pct": 95.0, "lead_p50_ms": 1.1, "lead_p95_ms": 4.4, "races": 900000 }
+    { "feed": "feed_a_bbo", "label": "Feed A", "dz_win_pct": 99.1, "lead_p50_ms": 2.4, "lead_p95_ms": 8.1, "races": 12300000 },
+    { "feed": "feed_b_bbo", "label": "Feed B", "dz_win_pct": 94.2, "lead_p50_ms": 0.9, "lead_p95_ms": 3.7, "races": 1100000 },
+    { "feed": "feed_c_bbo", "label": "Feed C", "dz_win_pct": 97.8, "lead_p50_ms": 1.6, "lead_p95_ms": 5.2, "races": 400000 },
+    { "feed": "feed_d_bbo", "label": "Feed D", "dz_win_pct": 95.0, "lead_p50_ms": 1.1, "lead_p95_ms": 4.4, "races": 900000 }
   ],
   "nodes": [
     {
@@ -136,12 +136,12 @@ live query (`X-Cache: MISS`).
       "dz_win_share_pct": 99.2,
       "total_races": 4600000,
       "competitors": [
-        { "feed": "hydromancer_bbo", "label": "Hydromancer", "dz_win_pct": 98.9, "lead_p50_ms": 0.6, "lead_p95_ms": 2.1, "races": 380000 }
+        { "feed": "feed_b_bbo", "label": "Feed B", "dz_win_pct": 98.9, "lead_p50_ms": 0.6, "lead_p95_ms": 2.1, "races": 380000 }
       ]
     }
   ],
   "recent_races": [
-    { "event_ts": "2026-06-29T16:59:59.9Z", "symbol": "BTC", "winner_feed": "tob_gcp_tyo_hl_mainnet1", "is_dz": true, "runner_up_feed": "hydromancer_bbo", "runner_up_label": "Hydromancer", "lead_ms": 1.2, "location_code": "tyo" }
+    { "event_ts": "2026-06-29T16:59:59.9Z", "symbol": "BTC", "winner_feed": "tob_gcp_tyo_hl_mainnet1", "is_dz": true, "runner_up_feed": "feed_b_bbo", "runner_up_label": "Feed B", "lead_ms": 1.2, "location_code": "tyo" }
   ]
 }
 ```
@@ -205,15 +205,15 @@ Hyperliquid ▸ BBO Scoreboard         window:[24h ▾]   symbol:[All ▾]
   DoubleZero wins  96.4%  of races            (all vantages, 24h)
 
   vs Competitor   DZ win%    median lead    p95 lead    races
-  Public API       99.1%      +2.4 ms        +8.1 ms     12.3M
-  Hydromancer      94.2%      +0.9 ms        +3.7 ms      1.1M
-  HypeRPC          97.8%      +1.6 ms        +5.2 ms      0.4M
-  QuickNode        95.0%      +1.1 ms        +4.4 ms      0.9M
+  Feed A          99.1%      +2.4 ms        +8.1 ms     12.3M
+  Feed B          94.2%      +0.9 ms        +3.7 ms      1.1M
+  Feed C          97.8%      +1.6 ms        +5.2 ms      0.4M
+  Feed D          95.0%      +1.1 ms        +4.4 ms      0.9M
 
   By vantage:   [chi]   [nyc]   [tyo]        (per-node cards, same stats)
 
   Recent races (live)   symbol  winner               lead vs runner-up
-  BTC   DoubleZero (tob_gcp_tyo)     +1.2 ms vs Hydromancer
+  BTC   DoubleZero (tob_gcp_tyo)     +1.2 ms vs Feed B
   ...                                            (polls :latest cache)
 ```
 
