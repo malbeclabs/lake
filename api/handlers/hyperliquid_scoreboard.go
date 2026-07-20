@@ -13,6 +13,96 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// hyperliquidFeedRe bounds feed ids to characters safe to inline into ClickHouse SQL.
+// Config rows are operator-managed rather than user input, but the values are concatenated
+// into queries, so anything outside this set is dropped rather than trusted.
+var hyperliquidFeedRe = regexp.MustCompile(`^[A-Za-z0-9:_.-]{1,64}$`)
+
+// hyperliquidEntry is one configured scoreboard feed.
+type hyperliquidEntry struct{ Feed, Label string }
+
+// hyperliquidEntries is the scoreboard's configured feed allow-list, loaded from Postgres.
+// Only feeds present here are raced, counted, or displayed, so a feed is added, removed, or
+// reordered by changing rows — no code change and no deploy.
+type hyperliquidEntries struct {
+	ordered []hyperliquidEntry // display order
+	labels  map[string]string  // feed -> label
+}
+
+// empty reports whether any feed is configured.
+func (e hyperliquidEntries) empty() bool { return len(e.ordered) == 0 }
+
+// inClause returns the SQL predicate restricting a race to configured feeds, or "" if none
+// are configured. Every race pairs one tob_* DoubleZero feed with one competing feed, and DZ
+// feeds are never configured entries, so requiring either side to be in the set is equivalent
+// to requiring the non-DZ side to be configured.
+func (e hyperliquidEntries) inClause() string {
+	if e.empty() {
+		return ""
+	}
+	quoted := make([]string, 0, len(e.ordered))
+	for _, en := range e.ordered {
+		quoted = append(quoted, "'"+en.Feed+"'")
+	}
+	in := strings.Join(quoted, ", ")
+	return fmt.Sprintf("AND (feed IN (%[1]s) OR loser_feed IN (%[1]s))", in)
+}
+
+// label maps a raw feed to its configured display label (falls back to the raw name).
+func (e hyperliquidEntries) label(feed string) string {
+	if l, ok := e.labels[feed]; ok {
+		return l
+	}
+	return feed
+}
+
+// display returns "DoubleZero" for any tob_ DZ feed, else the configured label. Used so a
+// competitor-won recent race reads "<Label> … vs DoubleZero", not a raw tob_ id.
+func (e hyperliquidEntries) display(feed string) string {
+	if strings.HasPrefix(feed, "tob_") {
+		return "DoubleZero"
+	}
+	return e.label(feed)
+}
+
+// loadHyperliquidScoreboardEntries reads the enabled scoreboard feeds from Postgres, in
+// display order. A load failure degrades to an empty set (the scoreboard renders empty)
+// rather than failing the request: this is display config, and a Postgres blip must not take
+// the page down. Logged at WARN, never ERROR — ERROR pages on-call.
+func (a *API) loadHyperliquidScoreboardEntries(ctx context.Context) hyperliquidEntries {
+	e := hyperliquidEntries{labels: map[string]string{}}
+	if a.PgPool == nil {
+		return e
+	}
+	rows, err := a.PgPool.Query(ctx, `
+		SELECT feed, label FROM hyperliquid_scoreboard_entry
+		WHERE enabled ORDER BY display_order, feed`)
+	if err != nil {
+		slog.Warn("hyperliquid scoreboard entry load failed", "error", err)
+		return e
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var feed, label string
+		if err := rows.Scan(&feed, &label); err != nil {
+			slog.Warn("hyperliquid scoreboard entry scan failed", "error", err)
+			return hyperliquidEntries{labels: map[string]string{}}
+		}
+		// A malformed feed would be inlined into SQL; drop it and keep serving the rest.
+		if !hyperliquidFeedRe.MatchString(feed) {
+			slog.Warn("hyperliquid scoreboard entry skipped: unsafe feed id", "feed", feed)
+			continue
+		}
+		e.ordered = append(e.ordered, hyperliquidEntry{Feed: feed, Label: label})
+		e.labels[feed] = label
+	}
+	if err := rows.Err(); err != nil {
+		slog.Warn("hyperliquid scoreboard entry iteration failed", "error", err)
+		return hyperliquidEntries{labels: map[string]string{}}
+	}
+	return e
+}
+
 // hyperliquidCompetitors lists the non-DoubleZero feeds shown on the scoreboard,
 // in display order, mapping each raw feed name to its label.
 var hyperliquidCompetitors = []struct{ Feed, Label string }{
