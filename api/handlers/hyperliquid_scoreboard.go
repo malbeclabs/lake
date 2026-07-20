@@ -103,37 +103,6 @@ func (a *API) loadHyperliquidScoreboardEntries(ctx context.Context) hyperliquidE
 	return e
 }
 
-// hyperliquidCompetitors lists the non-DoubleZero feeds shown on the scoreboard,
-// in display order, mapping each raw feed name to its label.
-var hyperliquidCompetitors = []struct{ Feed, Label string }{
-	{"hyperliquid_public_bbo", "Public API"},
-	{"hydromancer_bbo", "Hydromancer"},
-	{"dwellir_l2book_bbo", "Dwellir"},
-	{"quicknode_l2book_bbo", "QuickNode"},
-}
-
-// hyperliquidExcludedFeeds are competitor feeds withheld from every scoreboard measurement
-// (per-competitor, per-node, headline totals, and recent races) because their upstream data is
-// currently unreliable. hyperpc_shared_bbo (HypeRPC) arrives a median ~100s stale during
-// recurring multi-hour backlog episodes — vs ~300ms for the other feeds — which would render
-// DoubleZero "winning" by seconds-to-minutes and is a HypeRPC-side feed fault, not a real result.
-// Remove entries here (and re-add to hyperliquidCompetitors) once the feed is fixed.
-var hyperliquidExcludedFeeds = []string{"hyperpc_shared_bbo"}
-
-// hyperliquidExcludedFeedsClause returns a SQL predicate dropping excluded feeds from either
-// side of a race, or "" if none are excluded.
-func hyperliquidExcludedFeedsClause() string {
-	if len(hyperliquidExcludedFeeds) == 0 {
-		return ""
-	}
-	quoted := make([]string, len(hyperliquidExcludedFeeds))
-	for i, f := range hyperliquidExcludedFeeds {
-		quoted[i] = "'" + f + "'"
-	}
-	in := strings.Join(quoted, ", ")
-	return fmt.Sprintf("AND feed NOT IN (%[1]s) AND loser_feed NOT IN (%[1]s)", in)
-}
-
 // hyperliquidWindows maps window params to ClickHouse interval expressions.
 var hyperliquidWindows = map[string]string{
 	"1h":  "1 HOUR",
@@ -266,23 +235,19 @@ type HyperliquidCompositeLatency struct {
 
 const hyperliquidCompositeLatencyCacheKey = "hyperliquid_composite_latency"
 
-// labelForFeed maps a raw competitor feed to its display label (falls back to the raw name).
-func labelForFeed(feed string) string {
-	for _, c := range hyperliquidCompetitors {
-		if c.Feed == feed {
-			return c.Label
-		}
+// emptyHyperliquidScoreboard is the empty-but-valid response served when the scoreboard has
+// nothing to compute — the proxied summary table is absent (e.g. local dev) or no feeds are
+// configured. Returning this instead of an error keeps the page-cache refresher caching a
+// clean payload rather than logging every cycle.
+func emptyHyperliquidScoreboard(window string) *HyperliquidScoreboardResponse {
+	return &HyperliquidScoreboardResponse{
+		Window:      window,
+		GeneratedAt: time.Now().UTC(),
+		FeedType:    "bbo",
+		Competitors: []HyperliquidCompetitor{},
+		Nodes:       []HyperliquidNode{},
+		RecentRaces: []HyperliquidRace{},
 	}
-	return feed
-}
-
-// hyperliquidFeedDisplay returns "DoubleZero" for any tob_ DZ feed, else the competitor label.
-// Used so a competitor-won recent race reads "Hydromancer … vs DoubleZero", not a raw tob_ id.
-func hyperliquidFeedDisplay(feed string) string {
-	if strings.HasPrefix(feed, "tob_") {
-		return "DoubleZero"
-	}
-	return labelForFeed(feed)
 }
 
 // FetchHyperliquidScoreboardData computes the aggregated scoreboard for a window and
@@ -299,23 +264,24 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 	// proxy/seed), return an empty-but-valid response so the page-cache refresher
 	// caches a clean empty payload instead of logging an error every cycle.
 	if !a.hyperliquidFeedsTableExists(ctx) {
-		return &HyperliquidScoreboardResponse{
-			Window:      window,
-			GeneratedAt: time.Now().UTC(),
-			FeedType:    "bbo",
-			Competitors: []HyperliquidCompetitor{},
-			Nodes:       []HyperliquidNode{},
-			RecentRaces: []HyperliquidRace{},
-		}, nil
+		return emptyHyperliquidScoreboard(window), nil
+	}
+
+	// The configured feed allow-list drives which feeds are raced, counted, and labelled.
+	// With nothing configured there is no scoreboard to compute, so serve the same
+	// empty-but-valid payload rather than scanning for feeds we would then discard.
+	entries := a.loadHyperliquidScoreboardEntries(ctx)
+	if entries.empty() {
+		return emptyHyperliquidScoreboard(window), nil
 	}
 
 	symbolFilter := hyperliquidLiquidSymbolFilter()
 	if symbol != "" {
 		symbolFilter = fmt.Sprintf("AND symbol = '%s'", symbol)
 	}
-	// Drop excluded (unreliable) competitor feeds from the per-competitor and per-node
-	// aggregations. Flows into both compQ and nodeQ via the shared symbolFilter slot.
-	symbolFilter = strings.TrimSpace(symbolFilter + " " + hyperliquidExcludedFeedsClause())
+	// Restrict both aggregations to configured feeds. Flows into the scan via the shared
+	// symbolFilter slot.
+	symbolFilter = strings.TrimSpace(symbolFilter + " " + entries.inClause())
 	db := fmt.Sprintf("`%s`", a.FeedsDB)
 
 	resp := &HyperliquidScoreboardResponse{
@@ -408,7 +374,7 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 		return rows.Err()
 	})
 	g.Go(func() error {
-		r, err := a.fetchHyperliquidRecentRaces(gctx, time.Time{}, 10)
+		r, err := a.fetchHyperliquidRecentRaces(gctx, time.Time{}, 10, entries)
 		if err != nil {
 			return err
 		}
@@ -427,7 +393,7 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 	}
 
 	// Emit competitors in configured order.
-	for _, c := range hyperliquidCompetitors {
+	for _, c := range entries.ordered {
 		s, ok := byFeed[c.Feed]
 		if !ok {
 			continue
@@ -456,7 +422,7 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 			Competitors:       []HyperliquidCompetitor{},
 		}
 		var wins, races uint64
-		for _, c := range hyperliquidCompetitors {
+		for _, c := range entries.ordered {
 			s, ok := na.byFeed[c.Feed]
 			if !ok {
 				continue
@@ -509,7 +475,7 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 
 // fetchHyperliquidRecentRaces returns the most recent races (one row per race,
 // winner + closest competitor + lead). sinceTs zero -> last 5 minutes.
-func (a *API) fetchHyperliquidRecentRaces(ctx context.Context, sinceTs time.Time, perSymbol int) ([]HyperliquidRace, error) {
+func (a *API) fetchHyperliquidRecentRaces(ctx context.Context, sinceTs time.Time, perSymbol int, entries hyperliquidEntries) ([]HyperliquidRace, error) {
 	if perSymbol <= 0 || perSymbol > 50 {
 		perSymbol = 10
 	}
@@ -537,7 +503,7 @@ func (a *API) fetchHyperliquidRecentRaces(ctx context.Context, sinceTs time.Time
 		GROUP BY capture_run_id, measurement_node_id, symbol, source_ts_ms, bbo_hash, location_code, feed
 		ORDER BY max_event_ts DESC
 		LIMIT %d BY symbol`, db,
-		strings.TrimSpace(hyperliquidRecentRaceSymbolFilter()+" "+hyperliquidExcludedFeedsClause()), timeFilter, perSymbol)
+		strings.TrimSpace(hyperliquidRecentRaceSymbolFilter()+" "+entries.inClause()), timeFilter, perSymbol)
 	rows, err := a.envDB(ctx).Query(ctx, q)
 	if err != nil {
 		return nil, err
@@ -551,8 +517,8 @@ func (a *API) fetchHyperliquidRecentRaces(ctx context.Context, sinceTs time.Time
 			return nil, err
 		}
 		r.IsDZ = isDZ == 1
-		r.WinnerLabel = hyperliquidFeedDisplay(r.WinnerFeed)
-		r.RunnerUpLabel = hyperliquidFeedDisplay(r.RunnerUpFeed)
+		r.WinnerLabel = entries.display(r.WinnerFeed)
+		r.RunnerUpLabel = entries.display(r.RunnerUpFeed)
 		out = append(out, r)
 	}
 	return out, rows.Err()
