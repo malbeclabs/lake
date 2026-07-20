@@ -4,7 +4,7 @@
 -- config, inserted out of band, so they never live in this repository.
 CREATE TABLE hyperliquid_scoreboard_entry (
     feed          TEXT PRIMARY KEY,
-    label         TEXT NOT NULL,
+    label         TEXT NOT NULL CHECK (length(label) BETWEEN 1 AND 64),
     display_order INT  NOT NULL DEFAULT 0,
     enabled       BOOLEAN NOT NULL DEFAULT TRUE,
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
