@@ -240,6 +240,39 @@ func decomIssueLabels(planName string) []string {
 	return []string{"contributor-decommission", "plan:" + planName}
 }
 
+// loadContributorNames queries ClickHouse for the contributor code->display
+// name map, mirroring the query in GetOpsAssignees (ops_tickets.go ~line
+// 546). Decom issue titles/bodies use the display name (falling back to the
+// code) to match the real malbeclabs/infra contributor-decommission issue
+// convention. A DB error must never break issue rendering: it is logged and
+// an empty map is returned, so every caller degrades to code-only titles.
+func (a *API) loadContributorNames(ctx context.Context) map[string]string {
+	names := map[string]string{}
+	if a.DB == nil {
+		return names
+	}
+	rows, err := a.DB.Query(ctx, `SELECT code, name FROM dz_contributors_current`)
+	if err != nil {
+		log.Printf("loadContributorNames: query: %v", err)
+		return names
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var code, name string
+		if err := rows.Scan(&code, &name); err != nil {
+			log.Printf("loadContributorNames: scan: %v", err)
+			return names
+		}
+		if code != "" {
+			names[code] = name
+		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("loadContributorNames: iterate: %v", err)
+	}
+	return names
+}
+
 // plannedIssue is one non-parent issue a sync will create/update, kind-tagged
 // so the preview/sync loop treats decom (per-entity) and contributor issues
 // uniformly.
@@ -261,10 +294,10 @@ type plannedIssue struct {
 // the contributor bodies). Order: device decoms, link decoms, then
 // contributor groups (as ordered in al.Groups). Pure and DB-free so it is
 // unit-testable.
-func buildPlannedIssues(plan *Plan, al *ActionList, baseline *TopologyResponse, planURL string) []plannedIssue {
+func buildPlannedIssues(plan *Plan, al *ActionList, baseline *TopologyResponse, planURL string, contributorNames map[string]string) []plannedIssue {
 	var out []plannedIssue
 
-	devTargets, linkTargets := collectDecomTargets(plan, baseline)
+	devTargets, linkTargets := collectDecomTargets(plan, baseline, contributorNames)
 	for _, t := range devTargets {
 		if t.DevicePK == "" {
 			continue // defensive; removals always carry a ref pk
@@ -454,7 +487,8 @@ func (a *API) PreviewPlanIssues(ctx context.Context, plan *Plan, al *ActionList,
 		return nil, err
 	}
 	planURL := plannerPlanURL(plan.ID.String())
-	specs := buildPlannedIssues(plan, al, baseline, planURL)
+	names := a.loadContributorNames(ctx)
+	specs := buildPlannedIssues(plan, al, baseline, planURL, names)
 	previews := make([]IssuePreview, 0, len(specs)+1)
 	for _, spec := range specs {
 		p := IssuePreview{
@@ -536,7 +570,8 @@ func (a *API) SyncPlanIssues(ctx context.Context, gh GithubIssueAPI, plan *Plan,
 		return nil, err
 	}
 	planURL := plannerPlanURL(plan.ID.String())
-	specs := buildPlannedIssues(plan, al, baseline, planURL)
+	names := a.loadContributorNames(ctx)
+	specs := buildPlannedIssues(plan, al, baseline, planURL, names)
 	results := make([]SyncedIssue, 0, len(specs)+1)
 
 	for _, spec := range specs {

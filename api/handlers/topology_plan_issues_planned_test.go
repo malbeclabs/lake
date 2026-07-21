@@ -31,7 +31,7 @@ func TestBuildPlannedIssues_DecomAndFilteredContributorSpecs(t *testing.T) {
 	}
 	al := deriveActionListFromBaseline(plan, plan.Changes, baseline)
 
-	specs := buildPlannedIssues(plan, al, baseline, "https://data.malbeclabs.com/topology/planner?plan=x")
+	specs := buildPlannedIssues(plan, al, baseline, "https://data.malbeclabs.com/topology/planner?plan=x", nil)
 
 	var deviceDecoms, linkDecoms, contributors []plannedIssue
 	for _, s := range specs {
@@ -81,6 +81,6 @@ func TestBuildPlannedIssues_NoChanges(t *testing.T) {
 	plan := &Plan{Name: "Empty plan"}
 	al := deriveActionListFromBaseline(plan, plan.Changes, baseline)
 
-	specs := buildPlannedIssues(plan, al, baseline, "https://data.malbeclabs.com/topology/planner?plan=x")
+	specs := buildPlannedIssues(plan, al, baseline, "https://data.malbeclabs.com/topology/planner?plan=x", nil)
 	require.Empty(t, specs)
 }

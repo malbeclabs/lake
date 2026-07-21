@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // This file is the pure rendering layer for decommission ("decom") GitHub
@@ -16,37 +17,33 @@ import (
 // and nothing here is wired into the existing issue sync (topology_plan_issues.go)
 // -- that wiring is a separate follow-up task.
 //
-// House rule: no em dashes anywhere in rendered text. Use a plain hyphen.
+// House rule: no em dashes anywhere in rendered text, EXCEPT the device/link
+// decom issue TITLES, which use an em dash separator to match the real
+// malbeclabs/infra contributor-decommission issue convention exactly. This is
+// a deliberate, explicit exception scoped to those two title formats only.
 
 // DeviceDecomTarget is one remove_device change resolved against the live
 // baseline into everything a decom issue needs. When the device is absent
 // from the baseline (drift), the rich fields stay zero/empty and Resolved is
-// false, so the renderer emits a drift note instead of fabricated data.
+// false, so the renderer emits "unknown (drift)" placeholders instead of
+// fabricated data.
 type DeviceDecomTarget struct {
 	Change            PlanChange
 	Resolved          bool
 	DevicePK          string
 	DeviceCode        string
 	ContributorCode   string
-	MetroLabel        string // "<code>" or "<code> (<name>)"; "" if unknown
-	Users             uint64
-	UnicastUsers      uint16
-	MulticastSubs     uint16
-	MulticastPubs     uint16
-	StakeSol          float64
-	StakeShare        float64
+	ContributorName   string   // resolved display name; falls back to ContributorCode
+	MetroCity         string   // metro city name for the issue title; "" if unknown
 	Interfaces        []string // interface names, sorted
 	AttachedLinks     []DecomAttachedLink
 	CrossContribCodes []string // distinct other-contributor codes with links terminating here, sorted
 }
 
 // DecomAttachedLink is one baseline link terminating on a device targeted for
-// decommission, from that device's point of view (OtherDeviceCode/OtherMetroLabel
-// describe the far end).
+// decommission, from that device's point of view.
 type DecomAttachedLink struct {
 	LinkCode         string
-	OtherDeviceCode  string
-	OtherMetroLabel  string
 	BandwidthBps     int64
 	LinkType         string
 	CrossContributor bool
@@ -62,13 +59,14 @@ type LinkDecomTarget struct {
 	LinkType         string
 	BandwidthBps     int64
 	OwnerContribCode string
+	OwnerContribName string // resolved display name; falls back to OwnerContribCode
 	SideADeviceCode  string
-	SideAMetroLabel  string
+	SideAMetroCity   string
 	SideAContribCode string
 	SideAIface       string
 	SideAUsers       uint64
 	SideZDeviceCode  string
-	SideZMetroLabel  string
+	SideZMetroCity   string
 	SideZContribCode string
 	SideZIface       string
 	SideZUsers       uint64
@@ -114,17 +112,30 @@ func newDecomBaselineIndex(b *TopologyResponse) *decomBaselineIndex {
 	return idx
 }
 
-// metroLabelFor renders a metro as "<code>" or "<code> (<name>)" when the name
-// differs from the code and is non-empty. Returns "" for a zero-value Metro
-// (i.e. the metro pk was not found in the baseline).
-func metroLabelFor(m Metro) string {
-	if m.Code == "" {
-		return ""
-	}
-	if m.Name != "" && m.Name != m.Code {
-		return fmt.Sprintf("%s (%s)", m.Code, m.Name)
+// metroCityFor returns a metro's display city name (its Name, falling back to
+// Code) for interpolation into decom titles and endpoint lines, matching the
+// infra convention of naming the metro by city rather than code. Returns ""
+// for a zero-value Metro (i.e. the metro pk was not found in the baseline).
+func metroCityFor(m Metro) string {
+	if m.Name != "" {
+		return m.Name
 	}
 	return m.Code
+}
+
+// contributorDisplayName resolves a contributor code to its display name via
+// the code->name map (see (a *API) loadContributorNames), falling back to the
+// code itself when the name is unknown or the map lookup failed. Returns ""
+// when code is itself empty, so callers can apply their own "unknown
+// contributor" fallback.
+func contributorDisplayName(code string, names map[string]string) string {
+	if code == "" {
+		return ""
+	}
+	if name, ok := names[code]; ok && name != "" {
+		return name
+	}
+	return code
 }
 
 // decomDate renders a change's target date, or "TBD" when unset.
@@ -135,33 +146,70 @@ func decomDate(targetDate *string) string {
 	return *targetDate
 }
 
-// formatBandwidthBps renders a bps value as a human-readable rate (e.g.
-// "100 Gbps", "400 Mbps"), 1 decimal place with a trailing ".0" trimmed.
-func formatBandwidthBps(bps int64) string {
-	switch {
-	case bps >= 1_000_000_000_000:
-		return trimBandwidthUnit(float64(bps)/1_000_000_000_000, "Tbps")
-	case bps >= 1_000_000_000:
-		return trimBandwidthUnit(float64(bps)/1_000_000_000, "Gbps")
-	case bps >= 1_000_000:
-		return trimBandwidthUnit(float64(bps)/1_000_000, "Mbps")
-	case bps >= 1_000:
-		return trimBandwidthUnit(float64(bps)/1_000, "Kbps")
-	default:
-		return fmt.Sprintf("%d bps", bps)
+// parseDecomDate parses a change's target date as YYYY-MM-DD, reporting
+// ok=false for an unset or unparseable date (e.g. "TBD").
+func parseDecomDate(targetDate *string) (time.Time, bool) {
+	if targetDate == nil || *targetDate == "" {
+		return time.Time{}, false
 	}
+	d, err := time.Parse("2006-01-02", *targetDate)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return d, true
 }
 
-func trimBandwidthUnit(v float64, unit string) string {
+// t1DayParenthetical renders " (<date - 1 day>)" for the T-1 day timeline
+// header, or "" when the target date is unset/unparseable (the header then
+// carries no parenthetical at all, matching the infra convention of only
+// dating the header when a real date is known).
+func t1DayParenthetical(targetDate *string) string {
+	d, ok := parseDecomDate(targetDate)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf(" (%s)", d.AddDate(0, 0, -1).Format("2006-01-02"))
+}
+
+// decomDayParenthetical renders " (<date>)" for the decom-day timeline header,
+// or "" when the target date is unset/unparseable.
+func decomDayParenthetical(targetDate *string) string {
+	d, ok := parseDecomDate(targetDate)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf(" (%s)", d.Format("2006-01-02"))
+}
+
+// bwShort renders a bps value as a compact rate for the device "Links on the
+// device" line (e.g. "100G", "10G", "400M"): bps/1e9 + "G" once it reaches
+// gigabit scale, else bps/1e6 + "M", with a trailing ".0" trimmed.
+func bwShort(bps int64) string {
+	if bps >= 1_000_000_000 {
+		return trimTrailingZero(float64(bps)/1_000_000_000) + "G"
+	}
+	return trimTrailingZero(float64(bps)/1_000_000) + "M"
+}
+
+// bwGbps renders a bps value as a Gbps rate for the link "Endpoints" line
+// (e.g. "50Gbps", "100Gbps"), or "" when bandwidth is 0/unknown so the caller
+// can omit the token entirely rather than print a fabricated "0Gbps".
+func bwGbps(bps int64) string {
+	if bps <= 0 {
+		return ""
+	}
+	return trimTrailingZero(float64(bps)/1_000_000_000) + "Gbps"
+}
+
+func trimTrailingZero(v float64) string {
 	s := fmt.Sprintf("%.1f", v)
-	s = strings.TrimSuffix(s, ".0")
-	return s + " " + unit
+	return strings.TrimSuffix(s, ".0")
 }
 
 // resolveDeviceTarget resolves one remove_device change against the baseline
 // index. When the device pk is not present in the baseline (drift), only
 // identity fields (from ref_snapshot) are filled and Resolved stays false.
-func resolveDeviceTarget(idx *decomBaselineIndex, ch PlanChange) DeviceDecomTarget {
+func resolveDeviceTarget(idx *decomBaselineIndex, ch PlanChange, names map[string]string) DeviceDecomTarget {
 	t := DeviceDecomTarget{Change: ch, DevicePK: ch.RefDevicePK}
 	snap := parseSnapshot(ch.RefSnapshot)
 
@@ -169,7 +217,8 @@ func resolveDeviceTarget(idx *decomBaselineIndex, ch PlanChange) DeviceDecomTarg
 	if !ok {
 		t.DeviceCode = orFallback(snap.DeviceCode, ch.RefDevicePK)
 		t.ContributorCode = snap.ContributorCode
-		t.MetroLabel = snap.MetroCode
+		t.ContributorName = contributorDisplayName(t.ContributorCode, names)
+		t.MetroCity = snap.MetroCode
 		return t
 	}
 
@@ -177,13 +226,8 @@ func resolveDeviceTarget(idx *decomBaselineIndex, ch PlanChange) DeviceDecomTarg
 	t.DevicePK = d.PK
 	t.DeviceCode = d.Code
 	t.ContributorCode = d.ContributorCode
-	t.MetroLabel = metroLabelFor(idx.metroByPK[d.MetroPK])
-	t.Users = d.UserCount
-	t.UnicastUsers = d.UnicastUsersCount
-	t.MulticastSubs = d.MulticastSubscribersCount
-	t.MulticastPubs = d.MulticastPublishersCount
-	t.StakeSol = d.StakeSol
-	t.StakeShare = d.StakeShare
+	t.ContributorName = contributorDisplayName(d.ContributorCode, names)
+	t.MetroCity = metroCityFor(idx.metroByPK[d.MetroPK])
 
 	for _, iface := range d.Interfaces {
 		if iface.Name != "" {
@@ -194,23 +238,15 @@ func resolveDeviceTarget(idx *decomBaselineIndex, ch PlanChange) DeviceDecomTarg
 
 	crossCodes := map[string]bool{}
 	for _, l := range idx.linksByDevicePK[d.PK] {
-		var otherPK, otherCode, otherContribPK, otherContribCode string
+		var otherContribPK, otherContribCode string
 		if l.SideAPK == d.PK {
-			otherPK, otherCode = l.SideZPK, l.SideZCode
 			otherContribPK, otherContribCode = l.SideZContributorPK, l.SideZContributorCode
 		} else {
-			otherPK, otherCode = l.SideAPK, l.SideACode
 			otherContribPK, otherContribCode = l.SideAContributorPK, l.SideAContributorCode
-		}
-		otherMetroLabel := ""
-		if otherDev, ok := idx.deviceByPK[otherPK]; ok {
-			otherMetroLabel = metroLabelFor(idx.metroByPK[otherDev.MetroPK])
 		}
 		cross := otherContribPK != "" && d.ContributorPK != "" && otherContribPK != d.ContributorPK
 		t.AttachedLinks = append(t.AttachedLinks, DecomAttachedLink{
 			LinkCode:         l.Code,
-			OtherDeviceCode:  otherCode,
-			OtherMetroLabel:  otherMetroLabel,
 			BandwidthBps:     l.BandwidthBps,
 			LinkType:         l.LinkType,
 			CrossContributor: cross,
@@ -233,7 +269,7 @@ func resolveDeviceTarget(idx *decomBaselineIndex, ch PlanChange) DeviceDecomTarg
 // resolveLinkTarget resolves one remove_link change against the baseline
 // index. When the link pk is not present in the baseline (drift), only
 // identity fields (from ref_snapshot) are filled and Resolved stays false.
-func resolveLinkTarget(idx *decomBaselineIndex, ch PlanChange) LinkDecomTarget {
+func resolveLinkTarget(idx *decomBaselineIndex, ch PlanChange, names map[string]string) LinkDecomTarget {
 	t := LinkDecomTarget{Change: ch, LinkPK: ch.RefLinkPK}
 	snap := parseSnapshot(ch.RefSnapshot)
 
@@ -243,6 +279,7 @@ func resolveLinkTarget(idx *decomBaselineIndex, ch PlanChange) LinkDecomTarget {
 		t.LinkType = snap.LinkType
 		t.BandwidthBps = snap.BandwidthBps
 		t.OwnerContribCode = snap.ContributorCode
+		t.OwnerContribName = contributorDisplayName(t.OwnerContribCode, names)
 		t.SideAContribCode = snap.SideAContributorCode
 		t.SideZContribCode = snap.SideZContributorCode
 		t.CrossContributor = snap.SideAContributorPK != "" && snap.SideZContributorPK != "" &&
@@ -256,6 +293,7 @@ func resolveLinkTarget(idx *decomBaselineIndex, ch PlanChange) LinkDecomTarget {
 	t.LinkType = l.LinkType
 	t.BandwidthBps = l.BandwidthBps
 	t.OwnerContribCode = l.ContributorCode
+	t.OwnerContribName = contributorDisplayName(l.ContributorCode, names)
 	t.SideADeviceCode = l.SideACode
 	t.SideAContribCode = l.SideAContributorCode
 	t.SideAIface = l.SideAIfaceName
@@ -264,11 +302,11 @@ func resolveLinkTarget(idx *decomBaselineIndex, ch PlanChange) LinkDecomTarget {
 	t.SideZIface = l.SideZIfaceName
 
 	if da, ok := idx.deviceByPK[l.SideAPK]; ok {
-		t.SideAMetroLabel = metroLabelFor(idx.metroByPK[da.MetroPK])
+		t.SideAMetroCity = metroCityFor(idx.metroByPK[da.MetroPK])
 		t.SideAUsers = da.UserCount
 	}
 	if dz, ok := idx.deviceByPK[l.SideZPK]; ok {
-		t.SideZMetroLabel = metroLabelFor(idx.metroByPK[dz.MetroPK])
+		t.SideZMetroCity = metroCityFor(idx.metroByPK[dz.MetroPK])
 		t.SideZUsers = dz.UserCount
 	}
 
@@ -283,7 +321,10 @@ func resolveLinkTarget(idx *decomBaselineIndex, ch PlanChange) LinkDecomTarget {
 // baseline. skipped/superseded changes are ignored (mirrors
 // deriveActionListFromBaseline's filter). Devices/links missing from the
 // baseline fall back to ref_snapshot for identity and are marked Resolved=false.
-func collectDecomTargets(plan *Plan, baseline *TopologyResponse) ([]DeviceDecomTarget, []LinkDecomTarget) {
+// names is the contributor code->display-name map (see (a *API)
+// loadContributorNames); pass nil when the caller has no resolution available
+// (targets then fall back to the contributor code everywhere).
+func collectDecomTargets(plan *Plan, baseline *TopologyResponse, names map[string]string) ([]DeviceDecomTarget, []LinkDecomTarget) {
 	idx := newDecomBaselineIndex(baseline)
 
 	var changes []PlanChange
@@ -300,25 +341,63 @@ func collectDecomTargets(plan *Plan, baseline *TopologyResponse) ([]DeviceDecomT
 		}
 		switch ch.OpType {
 		case OpRemoveDevice:
-			devices = append(devices, resolveDeviceTarget(idx, ch))
+			devices = append(devices, resolveDeviceTarget(idx, ch, names))
 		case OpRemoveLink:
-			links = append(links, resolveLinkTarget(idx, ch))
+			links = append(links, resolveLinkTarget(idx, ch, names))
 		}
 	}
 	return devices, links
 }
 
-// deviceDriftNote and linkDriftNote are the exact strings shown in place of
-// baseline-derived data when a decom target has drifted out of the live
-// topology (the referenced device/link no longer exists there).
-const (
-	deviceDriftNote = "> Device not found in the live baseline (drift); fill in load, links, and interfaces manually."
-	linkDriftNote   = "> Link not found in the live baseline (drift); fill in endpoint load and interface details manually."
-)
+// driftPlaceholder is the short, deterministic stand-in used everywhere a fact
+// is unknowable because the target has drifted out of the live baseline
+// (Resolved == false). Counts and identifiers are never fabricated; this
+// placeholder is used in their place instead.
+const driftPlaceholder = "unknown (drift)"
+
+// contributorSummaryLine renders the "Contributor: Name (`code`)" fact line
+// value, matching the real infra issue format. When no code is known at all,
+// it falls back to a plain "unknown contributor" (no empty backtick pair).
+func contributorSummaryLine(name, code string) string {
+	if code == "" {
+		return sanitizeInline(orFallback(name, "unknown contributor"))
+	}
+	return fmt.Sprintf("%s (`%s`)", sanitizeInline(orFallback(name, code)), sanitizeInline(code))
+}
+
+// deviceLinksLine renders the device decom "Links on the device" fact line:
+// every attached link as `code` (bwShort type), comma-separated, followed by
+// the deterministic "; peer devices stay" suffix (the real issues carry
+// hand-written prose here that this app cannot fabricate).
+func deviceLinksLine(t DeviceDecomTarget) string {
+	if len(t.AttachedLinks) == 0 {
+		return "none"
+	}
+	parts := make([]string, len(t.AttachedLinks))
+	for i, al := range t.AttachedLinks {
+		parts[i] = fmt.Sprintf("`%s` (%s %s)", sanitizeInline(al.LinkCode), bwShort(al.BandwidthBps), sanitizeInline(al.LinkType))
+	}
+	return strings.Join(parts, ", ") + "; peer devices stay"
+}
+
+// interfacesLine renders the device decom "Interfaces" fact line: a sorted,
+// comma-separated list of interface names, or "none recorded" when empty.
+func interfacesLine(ifaces []string) string {
+	if len(ifaces) == 0 {
+		return "none recorded"
+	}
+	parts := make([]string, len(ifaces))
+	for i, iface := range ifaces {
+		parts[i] = sanitizeInline(iface)
+	}
+	return strings.Join(parts, ", ")
+}
 
 // crossContribExposureLine renders the "Cross-contributor / DZX exposure" fact
 // line for a resolved device target: the distinct other-contributor codes with
-// links terminating here, and/or a note that a DZX link is attached.
+// links terminating here, and/or a note that a DZX link is attached, or the
+// deterministic "none (only <ContribName> links terminate here)" when neither
+// applies.
 func crossContribExposureLine(t DeviceDecomTarget) string {
 	var parts []string
 	if len(t.CrossContribCodes) > 0 {
@@ -339,202 +418,218 @@ func crossContribExposureLine(t DeviceDecomTarget) string {
 		parts = append(parts, "includes DZX link(s)")
 	}
 	if len(parts) == 0 {
-		return "None detected"
+		name := orFallback(t.ContributorName, orFallback(t.ContributorCode, "unknown contributor"))
+		return fmt.Sprintf("none (only %s links terminate here)", sanitizeInline(name))
 	}
 	return strings.Join(parts, "; ")
 }
 
 // renderDeviceDecomTitle builds the device decom issue title, matching the
-// infra contributor-decommission format but with a plain hyphen separator (no
-// em dash). Every interpolated field is sanitized: ref_snapshot is unconstrained
-// JSON, so a drifted device's code or metro can carry a backtick or newline.
+// real malbeclabs/infra contributor-decommission issue format exactly:
+// "[Decom] <ContributorName> — <MetroCity> (<DeviceCode>) — <date>". The em
+// dash separator and display-name/city fields are a deliberate, explicit
+// match to the infra convention (see the house rule at the top of this file).
+// Every interpolated field is sanitized: ref_snapshot is unconstrained JSON,
+// so a drifted device's code or metro can carry a backtick or newline.
 func renderDeviceDecomTitle(t DeviceDecomTarget) string {
-	metro := orFallback(t.MetroLabel, "metro unknown")
-	return fmt.Sprintf("[Decom] %s - %s (%s) - %s",
-		sanitizeInline(orFallback(t.ContributorCode, "unknown contributor")),
-		sanitizeInline(metro),
+	name := orFallback(t.ContributorName, orFallback(t.ContributorCode, "unknown contributor"))
+	city := orFallback(t.MetroCity, "metro unknown")
+	return fmt.Sprintf("[Decom] %s — %s (%s) — %s",
+		sanitizeInline(name),
+		sanitizeInline(city),
 		sanitizeInline(t.DeviceCode),
 		sanitizeInline(decomDate(t.Change.TargetDate)))
 }
 
-// renderLinkDecomTitle builds the link decom issue title. The endpoints
-// segment is only built from the side device codes when at least one is
-// non-empty; on a drifted link (both sides empty) it falls back to the
-// sanitized link code so the title never reads a bare "unknown - : - TBD".
+// renderLinkDecomTitle builds the link decom issue title, matching the real
+// infra format: "[Decom-Link] <ContributorName> — <sideA>:<sideZ> — <date>".
+// The endpoints segment falls back to the sanitized link code on a drifted
+// link (both sides empty), so the title never reads a bare "unknown — : —
+// TBD".
 func renderLinkDecomTitle(t LinkDecomTarget) string {
+	name := orFallback(t.OwnerContribName, orFallback(t.OwnerContribCode, "unknown contributor"))
 	endpoints := sanitizeInline(t.LinkCode)
 	if t.SideADeviceCode != "" || t.SideZDeviceCode != "" {
 		endpoints = sanitizeInline(t.SideADeviceCode) + ":" + sanitizeInline(t.SideZDeviceCode)
 	}
-	return fmt.Sprintf("[Decom-Link] %s - %s - %s",
-		sanitizeInline(orFallback(t.OwnerContribCode, "unknown contributor")),
+	return fmt.Sprintf("[Decom-Link] %s — %s — %s",
+		sanitizeInline(name),
 		endpoints,
 		sanitizeInline(decomDate(t.Change.TargetDate)))
 }
 
-// renderDeviceDecomBody renders the full device decom issue body: a summary,
-// a pre-decom investigation checklist, a dated teardown timeline, and a
-// post-decom verification checklist. When the target has drifted out of the
-// live baseline (Resolved == false), the data-derived load/links/interfaces
-// facts are replaced by a single drift note; the checklists stay intact since
-// they are still valid actions regardless of drift.
+// renderDeviceDecomBody renders the full device decom issue body, matching the
+// real infra issue's section structure exactly: a summary, a pre-decom
+// investigation checklist, a dated teardown timeline, and a post-decom
+// verification checklist. When the target has drifted out of the live
+// baseline (Resolved == false), the data-derived links/interfaces/exposure
+// facts are replaced by the driftPlaceholder; every checklist / plain-bullet
+// step stays intact since it is still a valid action regardless of drift.
 func renderDeviceDecomBody(t DeviceDecomTarget) string {
 	var b strings.Builder
-	contribCode := orFallback(t.ContributorCode, "unknown contributor")
-	metro := orFallback(t.MetroLabel, "unknown")
 	date := sanitizeInline(decomDate(t.Change.TargetDate))
 	devCode := t.DeviceCode
 
 	b.WriteString("## Summary\n")
-	fmt.Fprintf(&b, "- Contributor: `%s`\n", sanitizeInline(contribCode))
+	fmt.Fprintf(&b, "- Contributor: %s\n", contributorSummaryLine(t.ContributorName, t.ContributorCode))
 	fmt.Fprintf(&b, "- Device: `%s` (`%s`)\n", sanitizeInline(devCode), sanitizeInline(t.DevicePK))
 	b.WriteString("- Type: Device decommission\n")
-	fmt.Fprintf(&b, "- Metro: %s\n", sanitizeInline(metro))
 	fmt.Fprintf(&b, "- Decommission date: %s\n\n", date)
-
-	if t.Resolved {
-		fmt.Fprintf(&b, "Current load: %d users (%d unicast), %d multicast subscribers, %d multicast publishers; stake %.1f SOL (%.2f%%).\n\n",
-			t.Users, t.UnicastUsers, t.MulticastSubs, t.MulticastPubs, t.StakeSol, t.StakeShare)
-	} else {
-		b.WriteString(deviceDriftNote + "\n\n")
-	}
 
 	b.WriteString("## Pre-decom investigation\n")
 	if t.Resolved {
-		b.WriteString("- Links on the device:\n")
-		if len(t.AttachedLinks) == 0 {
-			b.WriteString("  - None\n")
-		} else {
-			for _, al := range t.AttachedLinks {
-				otherMetro := orFallback(al.OtherMetroLabel, "unknown")
-				fmt.Fprintf(&b, "  - `%s` -> `%s` (%s), %s", sanitizeInline(al.LinkCode), sanitizeInline(al.OtherDeviceCode), sanitizeInline(otherMetro), formatBandwidthBps(al.BandwidthBps))
-				if al.CrossContributor {
-					fmt.Fprintf(&b, " [cross-contributor: `%s`]", sanitizeInline(al.OtherContribCode))
-				}
-				b.WriteString("\n")
-			}
-		}
-		b.WriteString("- Interfaces:\n")
-		if len(t.Interfaces) == 0 {
-			b.WriteString("  - None recorded\n")
-		} else {
-			for _, iface := range t.Interfaces {
-				fmt.Fprintf(&b, "  - `%s`\n", sanitizeInline(iface))
-			}
-		}
+		fmt.Fprintf(&b, "- Links on the device: %s\n", deviceLinksLine(t))
+		fmt.Fprintf(&b, "- Interfaces: %s\n", interfacesLine(t.Interfaces))
 		fmt.Fprintf(&b, "- Cross-contributor / DZX exposure: %s\n", crossContribExposureLine(t))
+	} else {
+		fmt.Fprintf(&b, "- Links on the device: %s\n", driftPlaceholder)
+		fmt.Fprintf(&b, "- Interfaces: %s\n", driftPlaceholder)
+		fmt.Fprintf(&b, "- Cross-contributor / DZX exposure: %s\n", driftPlaceholder)
 	}
-	b.WriteString("- [ ] Confirm shred-seat subscribers and multicast subscribers to notify\n")
-	b.WriteString("- [ ] Physical switch disposition (return / repurpose / dispose)\n")
-	b.WriteString("- [ ] Maintenance event created in OPS portal\n\n")
+	b.WriteString("- Physical switch disposition: (confirm)\n")
+	b.WriteString("- [ ] Maintenance event created in OPS portal for the decom date\n\n")
 
 	fmt.Fprintf(&b, "## Timeline (decom date: %s)\n", date)
-	fmt.Fprintf(&b, "### T-31 days: Cap (%s)\n", sanitizeInline(contribCode))
-	fmt.Fprintf(&b, "- [ ] `device update --max-users 0` on `%s` (stops new users; existing users keep working)\n", sanitizeInline(devCode))
+	b.WriteString("### T-31 days: Cap (Contributor)\n")
+	b.WriteString("- [ ] `device update --max-users 0`\n")
 	b.WriteString("### T-14 days: Notice (User team)\n")
-	if t.Resolved {
-		fmt.Fprintf(&b, "- [ ] Notify affected users (%d connected) to migrate\n", t.Users)
-	} else {
-		b.WriteString("- [ ] Notify affected users to migrate\n")
-	}
-	b.WriteString("### T-1 day: DZ prep\n")
-	b.WriteString("- [ ] Confirm user count has drained\n")
-	b.WriteString("- [ ] Final go / no-go\n")
-	fmt.Fprintf(&b, "### Decom day: Teardown (%s, in order)\n", sanitizeInline(contribCode))
-	for _, al := range t.AttachedLinks {
-		fmt.Fprintf(&b, "- [ ] Soft-drain link `%s`\n", sanitizeInline(al.LinkCode))
-		fmt.Fprintf(&b, "- [ ] Confirm reroute and no traffic on `%s`\n", sanitizeInline(al.LinkCode))
-		fmt.Fprintf(&b, "- [ ] Hard-drain link `%s`\n", sanitizeInline(al.LinkCode))
-		fmt.Fprintf(&b, "- [ ] Delete link `%s`\n", sanitizeInline(al.LinkCode))
-	}
-	fmt.Fprintf(&b, "- [ ] Delete interfaces on `%s`\n", sanitizeInline(devCode))
-	fmt.Fprintf(&b, "- [ ] Drain device `%s`\n", sanitizeInline(devCode))
-	fmt.Fprintf(&b, "- [ ] Delete device `%s`\n\n", sanitizeInline(devCode))
+	b.WriteString("- [ ] User team contacts connected users to migrate to another DZD\n")
+	fmt.Fprintf(&b, "### T-1 day%s: DZ prep\n", t1DayParenthetical(t.Change.TargetDate))
+	b.WriteString("- [ ] Engineering disables the device in the shred program (no active seats, safe)\n")
+	b.WriteString("- [ ] Remove any straggler users\n")
+	fmt.Fprintf(&b, "### Decom day%s: Teardown (Contributor, in order)\n", decomDayParenthetical(t.Change.TargetDate))
+	b.WriteString("- Soft-drain then hard-drain each link\n")
+	b.WriteString("- Delete each link\n")
+	b.WriteString("- Delete each interface\n")
+	b.WriteString("- Drain the device\n")
+	b.WriteString("- Delete the device\n\n")
 
 	b.WriteString("## Post-decom verification (DZ)\n")
-	fmt.Fprintf(&b, "- [ ] Device `%s` no longer onchain\n", sanitizeInline(devCode))
-	fmt.Fprintf(&b, "- [ ] No orphaned links reference `%s`\n", sanitizeInline(devCode))
-	b.WriteString("- [ ] Monitoring and alerts updated\n")
-
-	if t.Change.AssigneeNote != "" {
-		b.WriteString("\n## Notes\n")
-		fmt.Fprintf(&b, "%s\n", sanitizeInline(t.Change.AssigneeNote))
-	}
+	b.WriteString("- [ ] Device gone from `device list`; links gone from `link list`; interfaces removed\n")
+	b.WriteString("- [ ] Shred oracle healthy and settling (no wedge)\n")
+	b.WriteString("- [ ] Physical switch return handled\n")
 
 	return b.String()
 }
 
-// renderLinkDecomBody renders the full link decom issue body: a summary,
-// pre-decom notes on both endpoints, an ordered contributor action checklist,
-// and a post-decom verification checklist. When the target has drifted out of
-// the live baseline (Resolved == false), a drift note is added after the
-// summary; the checklists stay intact since they are still valid actions.
+// linkEndpointsLine renders the link decom "Endpoints" fact line: both side
+// device codes and metro cities, plus the bandwidth+type token (bandwidth
+// omitted entirely when 0/unknown).
+func linkEndpointsLine(t LinkDecomTarget) string {
+	sideACity := orFallback(t.SideAMetroCity, "unknown")
+	sideZCity := orFallback(t.SideZMetroCity, "unknown")
+	tail := sanitizeInline(t.LinkType)
+	if bw := bwGbps(t.BandwidthBps); bw != "" {
+		tail = bw + " " + tail
+	}
+	return fmt.Sprintf("`%s` (%s) to `%s` (%s), %s",
+		sanitizeInline(t.SideADeviceCode), sanitizeInline(sideACity),
+		sanitizeInline(t.SideZDeviceCode), sanitizeInline(sideZCity),
+		tail)
+}
+
+// userCountPhrase renders a user count as "N users", using the singular
+// "1 user" for exactly one.
+func userCountPhrase(n uint64) string {
+	if n == 1 {
+		return "1 user"
+	}
+	return fmt.Sprintf("%d users", n)
+}
+
+// bothEndpointsStayNote renders the parenthetical on the link decom "Both
+// endpoint devices stay" line: per-side user counts when either endpoint has
+// users, else the deterministic "(only the link is removed)".
+func bothEndpointsStayNote(t LinkDecomTarget) string {
+	if t.SideAUsers == 0 && t.SideZUsers == 0 {
+		return "(only the link is removed)"
+	}
+	return fmt.Sprintf("(%s %s, %s %s)",
+		sanitizeInline(orFallback(t.SideAMetroCity, "unknown")), userCountPhrase(t.SideAUsers),
+		sanitizeInline(orFallback(t.SideZMetroCity, "unknown")), userCountPhrase(t.SideZUsers))
+}
+
+// linkCrossContributorLine renders the link decom "Cross-contributor" fact
+// line: "yes (`a` and `z`)" when the two endpoints belong to different
+// contributors, else "none (both endpoints <code>)".
+func linkCrossContributorLine(t LinkDecomTarget) string {
+	if t.CrossContributor {
+		return fmt.Sprintf("yes (`%s` and `%s`)", sanitizeInline(t.SideAContribCode), sanitizeInline(t.SideZContribCode))
+	}
+	code := orFallback(t.SideAContribCode, orFallback(t.OwnerContribCode, "unknown"))
+	return fmt.Sprintf("none (both endpoints %s)", sanitizeInline(code))
+}
+
+// freedInterfacesNote renders the parenthetical on the link decom "Delete the
+// freed interfaces on both endpoints" line: "<cityA> <ifaceA>, <cityZ>
+// <ifaceZ>", dropping an unknown side's interface name (city only), or the
+// deterministic "both endpoints" when neither is known.
+func freedInterfacesNote(t LinkDecomTarget) string {
+	if !t.Resolved {
+		return driftPlaceholder
+	}
+	aKnown := t.SideAIface != ""
+	zKnown := t.SideZIface != ""
+	if !aKnown && !zKnown {
+		return "both endpoints"
+	}
+	aCity := sanitizeInline(orFallback(t.SideAMetroCity, "unknown"))
+	zCity := sanitizeInline(orFallback(t.SideZMetroCity, "unknown"))
+	sideA := aCity
+	if aKnown {
+		sideA = aCity + " " + sanitizeInline(t.SideAIface)
+	}
+	sideZ := zCity
+	if zKnown {
+		sideZ = zCity + " " + sanitizeInline(t.SideZIface)
+	}
+	return sideA + ", " + sideZ
+}
+
+// renderLinkDecomBody renders the full link decom issue body, matching the
+// real infra issue's section structure exactly: a summary, pre-decom notes on
+// both endpoints, an ordered contributor action list, and a post-decom
+// verification checklist. When the target has drifted out of the live
+// baseline (Resolved == false), the data-derived facts are replaced by the
+// driftPlaceholder; every checklist / plain-bullet step stays intact since it
+// is still a valid action regardless of drift.
 func renderLinkDecomBody(t LinkDecomTarget) string {
 	var b strings.Builder
-	owner := orFallback(t.OwnerContribCode, "unknown contributor")
-	sideAMetro := orFallback(t.SideAMetroLabel, "unknown")
-	sideZMetro := orFallback(t.SideZMetroLabel, "unknown")
 	date := sanitizeInline(decomDate(t.Change.TargetDate))
-	hasEndpoints := t.SideADeviceCode != "" || t.SideZDeviceCode != ""
+	hasEndpoints := t.Resolved && (t.SideADeviceCode != "" || t.SideZDeviceCode != "")
 
 	b.WriteString("## Summary\n")
-	fmt.Fprintf(&b, "- Contributor: `%s`\n", sanitizeInline(owner))
+	fmt.Fprintf(&b, "- Contributor: %s\n", contributorSummaryLine(t.OwnerContribName, t.OwnerContribCode))
 	fmt.Fprintf(&b, "- Link: `%s` (`%s`)\n", sanitizeInline(t.LinkCode), sanitizeInline(t.LinkPK))
 	if hasEndpoints {
-		fmt.Fprintf(&b, "- Endpoints: `%s` (%s) to `%s` (%s)\n",
-			sanitizeInline(t.SideADeviceCode), sanitizeInline(sideAMetro), sanitizeInline(t.SideZDeviceCode), sanitizeInline(sideZMetro))
+		fmt.Fprintf(&b, "- Endpoints: %s\n", linkEndpointsLine(t))
+	} else {
+		fmt.Fprintf(&b, "- Endpoints: %s\n", driftPlaceholder)
 	}
-	fmt.Fprintf(&b, "- Bandwidth: %s %s\n", formatBandwidthBps(t.BandwidthBps), sanitizeInline(t.LinkType))
 	fmt.Fprintf(&b, "- Target date: %s\n\n", date)
-
-	if !t.Resolved {
-		b.WriteString(linkDriftNote + "\n\n")
-	}
 
 	b.WriteString("## Pre-decom notes\n")
 	if t.Resolved {
-		fmt.Fprintf(&b, "- Side A `%s` (%s, `%s`): %d users\n",
-			sanitizeInline(t.SideADeviceCode), sanitizeInline(sideAMetro), sanitizeInline(t.SideAContribCode), t.SideAUsers)
-		fmt.Fprintf(&b, "- Side Z `%s` (%s, `%s`): %d users\n",
-			sanitizeInline(t.SideZDeviceCode), sanitizeInline(sideZMetro), sanitizeInline(t.SideZContribCode), t.SideZUsers)
-		if t.CrossContributor {
-			fmt.Fprintf(&b, "- Cross-contributor: yes (`%s` and `%s`)\n", sanitizeInline(t.SideAContribCode), sanitizeInline(t.SideZContribCode))
-		} else {
-			b.WriteString("- Cross-contributor: no\n")
-		}
-		fmt.Fprintf(&b, "- Impact: removing this link reroutes traffic between %s and %s; confirm alternate-path capacity.\n",
-			sanitizeInline(sideAMetro), sanitizeInline(sideZMetro))
+		fmt.Fprintf(&b, "- [ ] Both endpoint devices stay %s\n", bothEndpointsStayNote(t))
+		b.WriteString("- [ ] Impact: does removing this link reroute or degrade any paths? (watch after soft-drain)\n")
+		fmt.Fprintf(&b, "- [ ] Cross-contributor: %s\n", linkCrossContributorLine(t))
 	} else {
-		b.WriteString("- Endpoint details unavailable (drift); confirm endpoints, user counts, and cross-contributor exposure manually.\n")
+		fmt.Fprintf(&b, "- [ ] Both endpoint devices stay (%s)\n", driftPlaceholder)
+		b.WriteString("- [ ] Impact: does removing this link reroute or degrade any paths? (watch after soft-drain)\n")
+		fmt.Fprintf(&b, "- [ ] Cross-contributor: %s\n", driftPlaceholder)
 	}
-	b.WriteString("- [ ] Maintenance event created in OPS portal\n\n")
+	b.WriteString("- [ ] Maintenance event in OPS portal (if user-impacting)\n\n")
 
 	b.WriteString("## Contributor actions (in order)\n")
-	fmt.Fprintf(&b, "- [ ] Soft-drain link `%s`\n", sanitizeInline(t.LinkCode))
-	fmt.Fprintf(&b, "- [ ] Confirm reroute and no traffic on `%s`\n", sanitizeInline(t.LinkCode))
-	fmt.Fprintf(&b, "- [ ] Hard-drain link `%s`\n", sanitizeInline(t.LinkCode))
-	fmt.Fprintf(&b, "- [ ] Delete link `%s`\n", sanitizeInline(t.LinkCode))
-	if t.SideAIface != "" {
-		fmt.Fprintf(&b, "- [ ] Delete freed interface `%s` on `%s`\n", sanitizeInline(t.SideAIface), sanitizeInline(t.SideADeviceCode))
-	}
-	if t.SideZIface != "" {
-		fmt.Fprintf(&b, "- [ ] Delete freed interface `%s` on `%s`\n", sanitizeInline(t.SideZIface), sanitizeInline(t.SideZDeviceCode))
-	}
-	b.WriteString("\n")
+	b.WriteString("- Soft-drain the link\n")
+	b.WriteString("- Confirm the network reroutes cleanly\n")
+	b.WriteString("- Hard-drain the link\n")
+	b.WriteString("- Delete the link\n")
+	fmt.Fprintf(&b, "- Delete the freed interfaces on both endpoints (%s)\n\n", freedInterfacesNote(t))
 
 	b.WriteString("## Post-decom verification (DZ)\n")
-	fmt.Fprintf(&b, "- [ ] Link `%s` no longer onchain\n", sanitizeInline(t.LinkCode))
-	b.WriteString("- [ ] Freed interfaces confirmed removed\n")
-	if t.Resolved {
-		fmt.Fprintf(&b, "- [ ] Metro-pair latency %s to %s still within target\n", sanitizeInline(sideAMetro), sanitizeInline(sideZMetro))
-	} else {
-		b.WriteString("- [ ] Metro-pair latency still within target\n")
-	}
-
-	if t.Change.AssigneeNote != "" {
-		b.WriteString("\n## Notes\n")
-		fmt.Fprintf(&b, "%s\n", sanitizeInline(t.Change.AssigneeNote))
-	}
+	b.WriteString("- [ ] Link gone from `link list`; freed interfaces removed\n")
+	b.WriteString("- [ ] No path/latency regressions\n")
 
 	return b.String()
 }
