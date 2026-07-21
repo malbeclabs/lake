@@ -429,6 +429,85 @@ func computeLatencyImpact(baseline, draft *kspGraph, fps map[int]changeFootprint
 	return out
 }
 
+// computeLatencyImprovements returns metro pairs whose best-path latency
+// DROPPED (before_us/after_us >= 0, delta_us < 0) or that became reachable
+// (before_us = -1, after_us >= 0). It is the positive mirror of
+// computeLatencyImpact. Best-first: newly-reachable pairs, then largest
+// reduction. Severity is always SeverityLow (improvements are not risks).
+// Cap at 100.
+func computeLatencyImprovements(baseline, draft *kspGraph, fps map[int]changeFootprint) []MetroLatencyDelta {
+	basePaths := indexMetroPaths(computeMetroPairPaths(baseline))
+	draftPaths := indexMetroPaths(computeMetroPairPaths(draft))
+
+	seen := map[string]bool{}
+	keys := make([]string, 0, len(draftPaths))
+	for k := range basePaths {
+		if !seen[k] {
+			seen[k] = true
+			keys = append(keys, k)
+		}
+	}
+	for k := range draftPaths {
+		if !seen[k] {
+			seen[k] = true
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+
+	var out []MetroLatencyDelta
+	for _, key := range keys {
+		dp, inDraft := draftPaths[key]
+		if !inDraft {
+			continue // no longer reachable in the draft: not an improvement
+		}
+		codes := strings.SplitN(key, "|", 2)
+		after := float64(dp.Path.TotalMetric)
+
+		bp, inBase := basePaths[key]
+		if inBase {
+			before := float64(bp.Path.TotalMetric)
+			if after >= before {
+				continue // no improvement
+			}
+			out = append(out, MetroLatencyDelta{
+				Severity: SeverityLow,
+				MetroA:   codes[0], MetroZ: codes[1],
+				BeforeUS: before, AfterUS: after, DeltaUS: after - before,
+				CausedBy: attributeLatency(draft, dp, codes[0], codes[1], fps),
+			})
+		} else {
+			// Pair was unreachable in the baseline and became reachable in the draft.
+			out = append(out, MetroLatencyDelta{
+				Severity: SeverityLow,
+				MetroA:   codes[0], MetroZ: codes[1],
+				BeforeUS: -1, AfterUS: after, DeltaUS: 0,
+				CausedBy: attributeLatency(draft, dp, codes[0], codes[1], fps),
+			})
+		}
+	}
+
+	// Best-first: newly-reachable pairs (before_us < 0) first, then largest
+	// reduction (most-negative delta first).
+	sort.SliceStable(out, func(i, j int) bool {
+		ni, nj := out[i].BeforeUS < 0, out[j].BeforeUS < 0
+		if ni != nj {
+			return ni
+		}
+		if out[i].DeltaUS != out[j].DeltaUS {
+			return out[i].DeltaUS < out[j].DeltaUS
+		}
+		if out[i].MetroA != out[j].MetroA {
+			return out[i].MetroA < out[j].MetroA
+		}
+		return out[i].MetroZ < out[j].MetroZ
+	})
+	if len(out) > 100 {
+		out = out[:100]
+	}
+	return out
+}
+
 // RedundancyChange reports a drop in the number of independent (node-disjoint)
 // paths between two metros.
 type RedundancyChange struct {
@@ -452,30 +531,126 @@ func redundancySeverity(afterPaths int) Severity {
 	}
 }
 
-// countNodeDisjointPaths greedily counts node-disjoint shortest paths from src
-// to dst (up to cap) by removing each found path's intermediate nodes.
-func countNodeDisjointPaths(g *kspGraph, src, dst string, cap int) int {
+// flowEdge is a residual-graph edge used by maxNodeDisjointPaths. rev is the
+// index of its paired reverse edge in graph[to], so augmenting a unit of flow
+// only ever touches two edges in the adjacency map.
+type flowEdge struct {
+	to  string
+	cap int
+	rev int
+}
+
+// maxNodeDisjointPaths returns the maximum number of node-disjoint paths from
+// src to dst (capped at cap), computed as a max-flow on a node-split graph:
+// every real node v (all nodes EXCEPT src and dst) is split into v_in -> v_out
+// with unit capacity, and every graph edge u->w becomes u_out -> w_in with
+// large capacity. The result equals the min node cut (Menger), is exact, and
+// is monotonic under edge addition (adding a link never lowers it) - unlike
+// the previous greedy count, which deleted a found path's intermediate nodes
+// and could strand an otherwise-valid disjoint path when a new edge shifted
+// which path dijkstra found first.
+func maxNodeDisjointPaths(g *kspGraph, src, dst string, cap int) int {
 	if src == dst {
 		return 0
 	}
-	excl := map[string]bool{}
-	count := 0
-	for count < cap {
-		p := dijkstra(g, src, dst, excl, nil)
-		if p == nil {
-			break
+	if _, ok := g.Nodes[src]; !ok {
+		return 0
+	}
+	if _, ok := g.Nodes[dst]; !ok {
+		return 0
+	}
+
+	inID := func(x string) string {
+		if x == src || x == dst {
+			return x
 		}
-		count++
-		for i := 1; i < len(p.Nodes)-1; i++ {
-			excl[p.Nodes[i]] = true
+		return x + "#in"
+	}
+	outID := func(x string) string {
+		if x == src || x == dst {
+			return x
+		}
+		return x + "#out"
+	}
+
+	graph := map[string][]flowEdge{}
+	addEdge := func(u, v string, c int) {
+		graph[u] = append(graph[u], flowEdge{to: v, cap: c, rev: len(graph[v])})
+		graph[v] = append(graph[v], flowEdge{to: u, cap: 0, rev: len(graph[u]) - 1})
+	}
+
+	const bigCap = 1_000_000
+	for v := range g.Nodes {
+		if v != src && v != dst {
+			addEdge(inID(v), outID(v), 1)
 		}
 	}
-	return count
+	for u, edges := range g.Adj {
+		if _, ok := g.Nodes[u]; !ok {
+			continue
+		}
+		for _, e := range edges {
+			if _, ok := g.Nodes[e.To]; !ok {
+				continue
+			}
+			addEdge(outID(u), inID(e.To), bigCap)
+		}
+	}
+
+	flow := 0
+	for flow < cap {
+		// BFS shortest augmenting path (Edmonds-Karp) on residual capacities.
+		prevNode := map[string]string{}
+		prevEdge := map[string]int{}
+		visited := map[string]bool{src: true}
+		queue := []string{src}
+		for len(queue) > 0 && !visited[dst] {
+			n := queue[0]
+			queue = queue[1:]
+			for i, e := range graph[n] {
+				if e.cap > 0 && !visited[e.to] {
+					visited[e.to] = true
+					prevNode[e.to] = n
+					prevEdge[e.to] = i
+					queue = append(queue, e.to)
+					if e.to == dst {
+						break
+					}
+				}
+			}
+		}
+		if !visited[dst] {
+			break
+		}
+
+		// Bottleneck along the augmenting path (node-split edges cap this at 1).
+		bottleneck := bigCap
+		for n := dst; n != src; {
+			p := prevNode[n]
+			if c := graph[p][prevEdge[n]].cap; c < bottleneck {
+				bottleneck = c
+			}
+			n = p
+		}
+		for n := dst; n != src; {
+			p := prevNode[n]
+			idx := prevEdge[n]
+			graph[p][idx].cap -= bottleneck
+			graph[graph[p][idx].to][graph[p][idx].rev].cap += bottleneck
+			n = p
+		}
+		flow += bottleneck
+	}
+	if flow > cap {
+		flow = cap
+	}
+	return flow
 }
 
 // countMetroDisjointPaths counts node-disjoint paths between two metros by
 // attaching a super-source to the from-metro devices and a super-sink to the
-// to-metro devices on a clone, then counting disjoint paths between them.
+// to-metro devices on a clone, then computing the max node-disjoint path count
+// between them.
 func countMetroDisjointPaths(g *kspGraph, fromCode, toCode string, cap int) int {
 	const src, dst = "__src__", "__dst__"
 	c := cloneGraph(g)
@@ -496,7 +671,7 @@ func countMetroDisjointPaths(g *kspGraph, fromCode, toCode string, cap int) int 
 	if attached == 0 {
 		return 0
 	}
-	return countNodeDisjointPaths(c, src, dst, cap)
+	return maxNodeDisjointPaths(c, src, dst, cap)
 }
 
 // candidateMetroPairs returns unordered metro pairs where at least one endpoint
@@ -563,7 +738,7 @@ func sortedSet(s map[string]bool) []string {
 // computeRedundancyImpact reports metro pairs whose node-disjoint path count
 // dropped between baseline and draft.
 func computeRedundancyImpact(baseline, draft *kspGraph, candidates [][2]string, fps map[int]changeFootprint) []RedundancyChange {
-	const cap = 4
+	const cap = 8
 	var out []RedundancyChange
 	for _, pair := range candidates {
 		before := countMetroDisjointPaths(baseline, pair[0], pair[1], cap)
@@ -581,6 +756,40 @@ func computeRedundancyImpact(baseline, draft *kspGraph, candidates [][2]string, 
 	sort.SliceStable(out, func(i, j int) bool {
 		di := out[i].BeforePaths - out[i].AfterPaths
 		dj := out[j].BeforePaths - out[j].AfterPaths
+		if di != dj {
+			return di > dj
+		}
+		if out[i].MetroA != out[j].MetroA {
+			return out[i].MetroA < out[j].MetroA
+		}
+		return out[i].MetroZ < out[j].MetroZ
+	})
+	return out
+}
+
+// computeRedundancyImprovements returns metro pairs whose independent-path
+// count INCREASED (after_paths > before_paths). Positive mirror of
+// computeRedundancyImpact. Biggest gain first. Severity always SeverityLow.
+// Uses cap = 8.
+func computeRedundancyImprovements(baseline, draft *kspGraph, candidates [][2]string, fps map[int]changeFootprint) []RedundancyChange {
+	const cap = 8
+	var out []RedundancyChange
+	for _, pair := range candidates {
+		before := countMetroDisjointPaths(baseline, pair[0], pair[1], cap)
+		after := countMetroDisjointPaths(draft, pair[0], pair[1], cap)
+		if after <= before {
+			continue
+		}
+		out = append(out, RedundancyChange{
+			Severity: SeverityLow,
+			MetroA:   pair[0], MetroZ: pair[1],
+			BeforePaths: before, AfterPaths: after,
+			CausedBy: changeRefsForMetros(fps, pair[0], pair[1]),
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		di := out[i].AfterPaths - out[i].BeforePaths
+		dj := out[j].AfterPaths - out[j].BeforePaths
 		if di != dj {
 			return di > dj
 		}
@@ -707,26 +916,30 @@ type DataIssue struct {
 
 // PlanImpactReport is the result of impact analysis on a draft topology (SC-4).
 type PlanImpactReport struct {
-	PartitionIssues   []PartitionIssue     `json:"partition_issues"`
-	LatencyDeltas     []MetroLatencyDelta  `json:"latency_deltas"`
-	RedundancyChanges []RedundancyChange   `json:"redundancy_changes"`
-	CapacityRisks     []CapacityRisk       `json:"capacity_risks"`
-	OverlapWarnings   []PlanOverlapWarning `json:"overlap_warnings"`
-	DataIssues        []DataIssue          `json:"data_issues"`
-	Estimated         bool                 `json:"estimated"`
-	GeneratedAt       time.Time            `json:"generated_at"`
+	PartitionIssues        []PartitionIssue     `json:"partition_issues"`
+	LatencyDeltas          []MetroLatencyDelta  `json:"latency_deltas"`
+	RedundancyChanges      []RedundancyChange   `json:"redundancy_changes"`
+	CapacityRisks          []CapacityRisk       `json:"capacity_risks"`
+	OverlapWarnings        []PlanOverlapWarning `json:"overlap_warnings"`
+	DataIssues             []DataIssue          `json:"data_issues"`
+	LatencyImprovements    []MetroLatencyDelta  `json:"latency_improvements"`
+	RedundancyImprovements []RedundancyChange   `json:"redundancy_improvements"`
+	Estimated              bool                 `json:"estimated"`
+	GeneratedAt            time.Time            `json:"generated_at"`
 }
 
 // newImpactReport returns a report with all slices non-nil.
 func newImpactReport() PlanImpactReport {
 	return PlanImpactReport{
-		PartitionIssues:   []PartitionIssue{},
-		LatencyDeltas:     []MetroLatencyDelta{},
-		RedundancyChanges: []RedundancyChange{},
-		CapacityRisks:     []CapacityRisk{},
-		OverlapWarnings:   []PlanOverlapWarning{},
-		DataIssues:        []DataIssue{},
-		GeneratedAt:       time.Now().UTC(),
+		PartitionIssues:        []PartitionIssue{},
+		LatencyDeltas:          []MetroLatencyDelta{},
+		RedundancyChanges:      []RedundancyChange{},
+		CapacityRisks:          []CapacityRisk{},
+		OverlapWarnings:        []PlanOverlapWarning{},
+		DataIssues:             []DataIssue{},
+		LatencyImprovements:    []MetroLatencyDelta{},
+		RedundancyImprovements: []RedundancyChange{},
+		GeneratedAt:            time.Now().UTC(),
 	}
 }
 
@@ -765,6 +978,12 @@ func computePlanImpact(baseline, draft *kspGraph, changes []PlanChange, linkTraf
 	}
 	if len(overlaps) > 0 {
 		rep.OverlapWarnings = overlaps
+	}
+	if li := computeLatencyImprovements(baseline, draft, fps); len(li) > 0 {
+		rep.LatencyImprovements = li
+	}
+	if ri := computeRedundancyImprovements(baseline, draft, cands, fps); len(ri) > 0 {
+		rep.RedundancyImprovements = ri
 	}
 	rep.Estimated = anyEstimated(changes)
 	return rep

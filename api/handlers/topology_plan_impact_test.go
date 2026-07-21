@@ -378,3 +378,210 @@ func TestAnyEstimated(t *testing.T) {
 	assert.False(t, anyEstimated([]PlanChange{{OpType: OpAddLink,
 		Payload: json.RawMessage(`{"estimate_source":"manual"}`)}}))
 }
+
+// TestMaxNodeDisjointPaths_AddingRouteNeverDecreases is the regression test for
+// the "4 -> 3" bug: the max node-disjoint path count between two metros must
+// only ever go up (or stay the same) when a new disjoint route is added, never
+// down. M1{a1,a2} and M2{b1,b2} start with two node-disjoint routes (a1-b1,
+// a2-b2); adding a third device pair on both sides plus a third disjoint link
+// (a3-b3) must raise the count from 2 to 3.
+func TestMaxNodeDisjointPaths_AddingRouteNeverDecreases(t *testing.T) {
+	g := mkGraph()
+	g.addNode("a1", "A1", "m1", "M1", "c1")
+	g.addNode("a2", "A2", "m1", "M1", "c1")
+	g.addNode("a3", "A3", "m1", "M1", "c1")
+	g.addNode("b1", "B1", "m2", "M2", "c2")
+	g.addNode("b2", "B2", "m2", "M2", "c2")
+	g.addNode("b3", "B3", "m2", "M2", "c2")
+	g.addLink("l1", "a1", "b1", 10, 100)
+	g.addLink("l2", "a2", "b2", 10, 100)
+
+	assert.Equal(t, 2, countMetroDisjointPaths(g, "M1", "M2", 8))
+
+	draft := cloneGraph(g)
+	draft.addLink("l3", "a3", "b3", 10, 100)
+
+	assert.Equal(t, 3, countMetroDisjointPaths(draft, "M1", "M2", 8),
+		"adding a third node-disjoint route must raise the count, never lower it")
+}
+
+// TestMaxNodeDisjointPaths_ShortcutEdgeDoesNotDropCount reproduces the exact
+// failure mode of the old greedy countNodeDisjointPaths: it ran dijkstra
+// repeatedly and deleted each found path's intermediate nodes. s-a-t (cost 6)
+// and s-b-c-t (cost 7) are two node-disjoint paths (true max = 2). Adding the
+// a-c shortcut makes s-a-c-t (cost 3) the new shortest path; the OLD greedy
+// algorithm would pick it first and delete BOTH a and c, stranding b (which
+// only reaches t via c) -- dropping the count to 1 even though the true max
+// node-disjoint path count is unchanged: {s-a-t, s-b-c-t} still both exist.
+// maxNodeDisjointPaths (max-flow with node splitting) must not drop below 2.
+func TestMaxNodeDisjointPaths_ShortcutEdgeDoesNotDropCount(t *testing.T) {
+	g := mkGraph()
+	g.addNode("s", "S", "ms", "MS", "cs")
+	g.addNode("t", "T", "mt", "MT", "ct")
+	g.addNode("a", "A", "ma", "MA", "ca")
+	g.addNode("b", "B", "mb", "MB", "cb")
+	g.addNode("c", "C", "mc", "MC", "cc")
+	g.addLink("sa", "s", "a", 1, 100)
+	g.addLink("at", "a", "t", 5, 100)
+	g.addLink("sb", "s", "b", 1, 100)
+	g.addLink("bc", "b", "c", 5, 100)
+	g.addLink("ct", "c", "t", 1, 100)
+
+	assert.Equal(t, 2, maxNodeDisjointPaths(g, "s", "t", 8))
+
+	draft := cloneGraph(g)
+	draft.addLink("ac", "a", "c", 1, 100) // shortcut: makes s-a-c-t the new shortest path
+
+	assert.Equal(t, 2, maxNodeDisjointPaths(draft, "s", "t", 8),
+		"adding the a-c shortcut must not drop the max disjoint path count below the pre-shortcut value")
+}
+
+// TestComputeLatencyImprovements_FasterAndNewlyReachable exercises both
+// improvement shapes on one draft: M1(a) --100-- M2(b) --100-- M3(c), plus a
+// short M1-M4(d) leg (a-d, 5). The draft adds a fast direct a-c shortcut (10)
+// and removes b-c, and separately connects a previously-isolated M5(e).
+//   - M1-M3 speeds up via the new a-c shortcut (200 -> 10): an improvement.
+//   - M3-M4 ALSO reroutes through the same new a-c link (205 -> 15): a second
+//     pair benefiting from the same change, as the brief requires.
+//   - M1-M5 was unreachable (e had no edges) and becomes reachable via the new
+//     e-a link: a newly-reachable row (before_us = -1).
+//   - M2-M3 regresses (b-c removed, reroutes via a-c: 100 -> 110) and must NOT
+//     appear in the improvements list; it must appear in computeLatencyImpact.
+func TestComputeLatencyImprovements_FasterAndNewlyReachable(t *testing.T) {
+	g := mkGraph()
+	g.addNode("a", "A", "m1", "M1", "c1")
+	g.addNode("b", "B", "m2", "M2", "c2")
+	g.addNode("c", "C", "m3", "M3", "c3")
+	g.addNode("d", "D", "m4", "M4", "c4")
+	g.addNode("e", "E", "m5", "M5", "c5") // isolated in the baseline
+	g.addLink("ab", "a", "b", 100, 100)
+	g.addLink("bc", "b", "c", 100, 100)
+	g.addLink("ad", "a", "d", 5, 100)
+
+	draft := cloneGraph(g)
+	changes := []PlanChange{
+		{Seq: 1, OpType: OpAddLink, LocalRef: "ac",
+			Payload: json.RawMessage(`{"side_a_device_pk":"a","side_z_device_pk":"c","latency_ns":10000,"bandwidth_bps":100,"link_type":"WAN"}`)},
+		{Seq: 2, OpType: OpRemoveLink, RefLinkPK: "bc", RefSnapshot: json.RawMessage(`{"link_code":"B-C"}`)},
+		{Seq: 3, OpType: OpAddLink, LocalRef: "ea",
+			Payload: json.RawMessage(`{"side_a_device_pk":"e","side_z_device_pk":"a","latency_ns":20000,"bandwidth_bps":100,"link_type":"WAN"}`)},
+	}
+	require.NoError(t, applyChanges(draft, changes))
+
+	fps := changeFootprints(g, changes)
+	improvements := computeLatencyImprovements(g, draft, fps)
+	regressions := computeLatencyImpact(g, draft, fps)
+
+	byPair := map[string]MetroLatencyDelta{}
+	for _, d := range improvements {
+		byPair[metroPairKey(d.MetroA, d.MetroZ)] = d
+		assert.Equal(t, SeverityLow, d.Severity, "improvements are always low severity")
+	}
+
+	m13, ok := byPair[metroPairKey("M1", "M3")]
+	require.True(t, ok, "M1-M3 should show an improvement")
+	assert.Equal(t, float64(200), m13.BeforeUS)
+	assert.Equal(t, float64(10), m13.AfterUS)
+	assert.Equal(t, float64(-190), m13.DeltaUS)
+	require.NotEmpty(t, m13.CausedBy)
+
+	m34, ok := byPair[metroPairKey("M3", "M4")]
+	require.True(t, ok, "M3-M4 should also improve via the new shortcut")
+	assert.Equal(t, float64(205), m34.BeforeUS)
+	assert.Equal(t, float64(15), m34.AfterUS)
+
+	m15, ok := byPair[metroPairKey("M1", "M5")]
+	require.True(t, ok, "M1-M5 should be newly reachable")
+	assert.Equal(t, float64(-1), m15.BeforeUS)
+	assert.Equal(t, float64(20), m15.AfterUS)
+	assert.Equal(t, float64(0), m15.DeltaUS)
+
+	_, isImprovement := byPair[metroPairKey("M2", "M3")]
+	assert.False(t, isImprovement, "a regression must not appear in the improvements list")
+
+	var m23 *MetroLatencyDelta
+	for i := range regressions {
+		if regressions[i].MetroA == "M2" && regressions[i].MetroZ == "M3" {
+			m23 = &regressions[i]
+		}
+	}
+	require.NotNil(t, m23, "M2-M3 should appear as a regression instead")
+	assert.Equal(t, float64(100), m23.BeforeUS)
+	assert.Equal(t, float64(110), m23.AfterUS)
+}
+
+// TestComputeRedundancyImprovements mirrors TestComputeRedundancyImpact in
+// reverse: adding a parallel node-disjoint link between two metros must raise
+// the path count (1 -> 2), not lower it.
+func TestComputeRedundancyImprovements(t *testing.T) {
+	g := mkGraph()
+	g.addNode("a", "A", "m1", "M1", "c1")
+	g.addNode("b", "B", "m2", "M2", "c2")
+	g.addNode("a2", "A2", "m1", "M1", "c1")
+	g.addNode("b2", "B2", "m2", "M2", "c2")
+	g.addLink("ab", "a", "b", 10, 100)
+
+	require.Equal(t, 1, countMetroDisjointPaths(g, "M1", "M2", 8))
+
+	draft := cloneGraph(g)
+	changes := []PlanChange{{
+		Seq: 9, OpType: OpAddLink, LocalRef: "a2b2",
+		Payload: json.RawMessage(`{"side_a_device_pk":"a2","side_z_device_pk":"b2","latency_ns":10000,"bandwidth_bps":100,"link_type":"WAN"}`),
+	}}
+	require.NoError(t, applyChanges(draft, changes))
+
+	fps := changeFootprints(g, changes)
+	cands := candidateMetroPairs(g, draft, fps)
+	ri := computeRedundancyImprovements(g, draft, cands, fps)
+	require.Len(t, ri, 1)
+	assert.Equal(t, "M1", ri[0].MetroA)
+	assert.Equal(t, "M2", ri[0].MetroZ)
+	assert.Equal(t, 1, ri[0].BeforePaths)
+	assert.Equal(t, 2, ri[0].AfterPaths)
+	assert.Equal(t, SeverityLow, ri[0].Severity)
+	require.NotEmpty(t, ri[0].CausedBy)
+}
+
+// TestComputePlanImpact_PopulatesImprovements confirms the orchestrator wires
+// both new improvement slices end to end: an add-link draft that both speeds
+// up a metro pair AND gives it a second independent path populates both
+// LatencyImprovements and RedundancyImprovements; a pure removal draft that
+// changes nothing for the better leaves both empty but non-nil.
+func TestComputePlanImpact_PopulatesImprovements(t *testing.T) {
+	// M1{a,a2} -- M2{b,b2}; baseline has only the slow a2-b2 link (50). Adding
+	// the fast direct a-b link (10) both improves latency (50 -> 10) and adds a
+	// second node-disjoint path (1 -> 2).
+	g := mkGraph()
+	g.addNode("a", "A", "m1", "M1", "c1")
+	g.addNode("a2", "A2", "m1", "M1", "c1")
+	g.addNode("b", "B", "m2", "M2", "c2")
+	g.addNode("b2", "B2", "m2", "M2", "c2")
+	g.addLink("a2b2", "a2", "b2", 50, 100)
+
+	addChanges := []PlanChange{{
+		Seq: 1, OpType: OpAddLink, LocalRef: "ab",
+		Payload: json.RawMessage(`{"side_a_device_pk":"a","side_z_device_pk":"b","latency_ns":10000,"bandwidth_bps":100,"link_type":"WAN"}`),
+	}}
+	draftAdd := cloneGraph(g)
+	require.NoError(t, applyChanges(draftAdd, addChanges))
+	repAdd := computePlanImpact(g, draftAdd, addChanges, map[string]float64{}, nil)
+	assert.NotEmpty(t, repAdd.LatencyImprovements, "add-link draft should show a latency improvement")
+	assert.NotEmpty(t, repAdd.RedundancyImprovements, "add-link draft should show a redundancy improvement")
+
+	// Pure removal draft: removing an unused slower parallel link changes nothing
+	// for the better (or worse); both new slices stay empty but non-nil.
+	g2 := mkGraph()
+	g2.addNode("x", "X", "m1", "M1", "c1")
+	g2.addNode("y", "Y", "m2", "M2", "c2")
+	g2.addLink("xy", "x", "y", 10, 100)
+	g2.addLink("xy2", "x", "y", 20, 100) // slower parallel, never on the best path
+
+	removeChanges := []PlanChange{{Seq: 2, OpType: OpRemoveLink, RefLinkPK: "xy2"}}
+	draftRemove := cloneGraph(g2)
+	require.NoError(t, applyChanges(draftRemove, removeChanges))
+	repRemove := computePlanImpact(g2, draftRemove, removeChanges, map[string]float64{}, nil)
+	assert.NotNil(t, repRemove.LatencyImprovements)
+	assert.Empty(t, repRemove.LatencyImprovements)
+	assert.NotNil(t, repRemove.RedundancyImprovements)
+	assert.Empty(t, repRemove.RedundancyImprovements)
+}
