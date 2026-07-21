@@ -5058,6 +5058,8 @@ export interface PlanImpactReport {
   partition_issues: PartitionIssue[]
   latency_deltas: MetroLatencyDelta[]
   redundancy_changes: RedundancyChange[]
+  latency_improvements: MetroLatencyDelta[]
+  redundancy_improvements: RedundancyChange[]
   capacity_risks: CapacityRisk[]
   overlap_warnings: PlanOverlapWarning[]
   data_issues: DataIssue[]

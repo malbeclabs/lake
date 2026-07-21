@@ -9,7 +9,9 @@ import {
   severityRank,
   sortLatencyDeltas,
   groupLatencyDeltas,
+  splitLatencyImprovements,
   sortRedundancy,
+  sortRedundancyImprovements,
   sortCapacityRisks,
   countBySeverity,
   hasAnyImpact,
@@ -27,6 +29,8 @@ const emptyReport: PlanImpactReport = {
   data_issues: [],
   estimated: false,
   generated_at: 'x',
+  latency_improvements: [],
+  redundancy_improvements: [],
 }
 
 const lat = (o: Partial<MetroLatencyDelta>): MetroLatencyDelta => ({
@@ -253,6 +257,56 @@ describe('sortRedundancy', () => {
       red({ metro_a: 'b', before_paths: 3, after_paths: 1 }),
     ]
     expect(sortRedundancy(items).map((r) => r.metro_a)).toEqual(['b', 'a'])
+  })
+})
+
+describe('splitLatencyImprovements', () => {
+  it('partitions reductions (before_us >= 0) from newly-reachable pairs (before_us < 0)', () => {
+    const items = [
+      lat({ metro_a: 'nyc', metro_z: 'lon', before_us: 30000, after_us: 20000, delta_us: -10000 }),
+      lat({ metro_a: 'sea', metro_z: 'sin', before_us: -1, after_us: 40000, delta_us: 0 }),
+      lat({ metro_a: 'chi', metro_z: 'dal', before_us: 15000, after_us: 12000, delta_us: -3000 }),
+    ]
+    const { reductions, newlyReachable } = splitLatencyImprovements(items)
+    expect(reductions.map((d) => d.metro_a)).toEqual(['nyc', 'chi'])
+    expect(newlyReachable.map((d) => d.metro_a)).toEqual(['sea'])
+  })
+
+  it('returns empty arrays for an empty input', () => {
+    expect(splitLatencyImprovements([])).toEqual({ reductions: [], newlyReachable: [] })
+  })
+})
+
+describe('sortRedundancyImprovements', () => {
+  it('ranks the biggest path-count gain first', () => {
+    const items = [
+      red({ metro_a: 'a', before_paths: 3, after_paths: 4 }),
+      red({ metro_a: 'b', before_paths: 1, after_paths: 4 }),
+    ]
+    expect(sortRedundancyImprovements(items).map((r) => r.metro_a)).toEqual(['b', 'a'])
+  })
+
+  it('breaks ties by metro codes', () => {
+    const items = [
+      red({ metro_a: 'z', metro_z: 'y', before_paths: 3, after_paths: 4 }),
+      red({ metro_a: 'a', metro_z: 'b', before_paths: 3, after_paths: 4 }),
+    ]
+    expect(sortRedundancyImprovements(items).map((r) => r.metro_a)).toEqual(['a', 'z'])
+  })
+})
+
+describe('groupLatencyDeltas on latency improvements', () => {
+  it('produces a green-eligible group (negative deltaUs) for reduction items', () => {
+    const items = [
+      lat({ metro_a: 'nyc', metro_z: 'lon', before_us: 30000, after_us: 20000, delta_us: -10000 }),
+      lat({ metro_a: 'chi', metro_z: 'lon', before_us: 15000, after_us: 5000, delta_us: -10000 }),
+    ]
+    const { reductions } = splitLatencyImprovements(items)
+    const groups = groupLatencyDeltas(reductions)
+    expect(groups).toHaveLength(1)
+    expect(groups[0].unreachable).toBe(false)
+    expect(groups[0].deltaUs).not.toBeNull()
+    expect(groups[0].deltaUs ?? 0).toBeLessThan(0)
   })
 })
 

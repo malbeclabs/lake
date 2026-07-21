@@ -6,6 +6,8 @@ const emptyReport: PlanImpactReport = {
   partition_issues: [],
   latency_deltas: [],
   redundancy_changes: [],
+  latency_improvements: [],
+  redundancy_improvements: [],
   capacity_risks: [],
   overlap_warnings: [],
   data_issues: [],

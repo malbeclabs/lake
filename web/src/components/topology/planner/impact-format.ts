@@ -200,6 +200,23 @@ export function groupLatencyDeltas(deltas: MetroLatencyDelta[]): LatencyDeltaGro
   return sortGroups(groups)
 }
 
+/** Splits latency improvements into the two visual kinds: a faster path
+ *  (`before_us >= 0`, rendered via `groupLatencyDeltas` alongside its negative
+ *  delta) and a newly-reachable pair (`before_us < 0`, no prior path so there
+ *  is no meaningful delta to show). */
+export function splitLatencyImprovements(items: MetroLatencyDelta[]): {
+  reductions: MetroLatencyDelta[]
+  newlyReachable: MetroLatencyDelta[]
+} {
+  const reductions: MetroLatencyDelta[] = []
+  const newlyReachable: MetroLatencyDelta[] = []
+  for (const item of items) {
+    if (item.before_us < 0) newlyReachable.push(item)
+    else reductions.push(item)
+  }
+  return { reductions, newlyReachable }
+}
+
 /** Biggest drop in independent paths first, then lowest remaining count. */
 export function sortRedundancy(items: RedundancyChange[]): RedundancyChange[] {
   return [...items].sort((a, b) => {
@@ -207,6 +224,17 @@ export function sortRedundancy(items: RedundancyChange[]): RedundancyChange[] {
     const dropB = b.before_paths - b.after_paths
     if (dropB !== dropA) return dropB - dropA
     return a.after_paths - b.after_paths
+  })
+}
+
+/** Biggest gain in independent paths first, then metro codes. */
+export function sortRedundancyImprovements(items: RedundancyChange[]): RedundancyChange[] {
+  return [...items].sort((a, b) => {
+    const gainA = a.after_paths - a.before_paths
+    const gainB = b.after_paths - b.before_paths
+    if (gainB !== gainA) return gainB - gainA
+    if (a.metro_a !== b.metro_a) return a.metro_a < b.metro_a ? -1 : 1
+    return a.metro_z < b.metro_z ? -1 : a.metro_z > b.metro_z ? 1 : 0
   })
 }
 

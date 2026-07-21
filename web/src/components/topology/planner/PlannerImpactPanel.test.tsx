@@ -76,6 +76,8 @@ const fullReport: PlanImpactReport = {
   data_issues: [{ message: 'traffic metrics unavailable for 2 links' }],
   estimated: true,
   generated_at: '2026-07-16T00:00:00Z',
+  latency_improvements: [],
+  redundancy_improvements: [],
 }
 
 const labels = new Map<number, string>([
@@ -92,6 +94,8 @@ const emptyReport: PlanImpactReport = {
   data_issues: [],
   estimated: false,
   generated_at: 'x',
+  latency_improvements: [],
+  redundancy_improvements: [],
 }
 
 describe('PlannerImpactPanel', () => {
@@ -303,5 +307,68 @@ describe('PlannerImpactPanel', () => {
     expect(rows[0]).toHaveTextContent('lon')
     expect(rows[0]).toHaveTextContent('+3.0ms')
     expect(screen.queryByTestId('latency-group-members')).not.toBeInTheDocument()
+  })
+
+  it('shows the two green improvement sections and hides the "no impact" line when improvements exist', () => {
+    const report: PlanImpactReport = {
+      ...emptyReport,
+      latency_improvements: [
+        {
+          severity: 'low',
+          metro_a: 'nyc',
+          metro_z: 'lon',
+          before_us: 33000,
+          after_us: 23000,
+          delta_us: -10000,
+          caused_by: [],
+        },
+        {
+          severity: 'low',
+          metro_a: 'sea',
+          metro_z: 'sin',
+          before_us: -1,
+          after_us: 40000,
+          delta_us: 0,
+          caused_by: [],
+        },
+      ],
+      redundancy_improvements: [
+        {
+          severity: 'low',
+          metro_a: 'fra',
+          metro_z: 'ams',
+          before_paths: 3,
+          after_paths: 4,
+          caused_by: [],
+        },
+      ],
+    }
+
+    render(
+      <PlannerImpactPanel report={report} isLoading={false} error={null} changeLabels={new Map()} />,
+    )
+
+    // "no impact" line does not show -- improvements exist even though there are no risks
+    expect(screen.queryByText(/no impact detected/i)).not.toBeInTheDocument()
+
+    // latency improvements: a grouped reduction (green delta) + a newly-reachable row
+    const reductionRows = screen.getAllByTestId('impact-latency-improvement-row')
+    expect(reductionRows).toHaveLength(1)
+    expect(reductionRows[0]).toHaveTextContent('nyc')
+    expect(reductionRows[0]).toHaveTextContent('lon')
+    expect(reductionRows[0]).toHaveTextContent('-10.0ms')
+
+    const reachableRows = screen.getAllByTestId('impact-latency-reachable-row')
+    expect(reachableRows).toHaveLength(1)
+    expect(reachableRows[0]).toHaveTextContent('sea')
+    expect(reachableRows[0]).toHaveTextContent('sin')
+    expect(reachableRows[0]).toHaveTextContent(/now reachable/i)
+
+    // added redundancy: the gained path count
+    expect(screen.getByText(/3 → 4/)).toBeInTheDocument()
+
+    // section headers exist and are counted correctly
+    expect(screen.getByRole('button', { name: /latency improvements/i })).toHaveTextContent('(2)')
+    expect(screen.getByRole('button', { name: /added redundancy/i })).toHaveTextContent('(1)')
   })
 })

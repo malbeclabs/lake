@@ -12,7 +12,9 @@ import type {
 } from '@/lib/api'
 import {
   groupLatencyDeltas,
+  splitLatencyImprovements,
   sortRedundancy,
+  sortRedundancyImprovements,
   sortCapacityRisks,
   severityRank,
   countBySeverity,
@@ -42,6 +44,12 @@ const SEVERITY_DOT: Record<ImpactSeverity, string> = {
 
 function SeverityDot({ severity }: { severity: ImpactSeverity }) {
   return <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${SEVERITY_DOT[severity]}`} />
+}
+
+/** Dot for an improvement row -- improvements are not risks, so they never
+ *  use the risk severity color maps (SEVERITY_TEXT / SEVERITY_DOT). */
+function GreenDot() {
+  return <span className="inline-block w-2 h-2 rounded-full flex-shrink-0 bg-green-500" />
 }
 
 /** Render each causing change as a read-only chip. A client-supplied label
@@ -118,6 +126,85 @@ function LatencyGroupMembers({ group }: { group: LatencyDeltaGroup }) {
         </div>
       )}
     </span>
+  )
+}
+
+/** One row of a grouped latency-delta list -- shared by the "Latency
+ *  changes" risk section and the "Latency improvements" section. `dot`
+ *  carries the severity dot for a risk row or a green dot for an improvement
+ *  row, so the two sections never mix into the risk severity styling. */
+function LatencyGroupRow({
+  group,
+  changeLabels,
+  dot,
+  testId,
+}: {
+  group: LatencyDeltaGroup
+  changeLabels: Map<number, string>
+  dot: ReactNode
+  testId: string
+}) {
+  return (
+    <div data-testid={testId} className="flex items-start gap-1.5">
+      {dot}
+      <div className="space-y-0.5">
+        <div className="flex items-center gap-1 flex-wrap">
+          {group.otherMetros.length > 1 ? (
+            <LatencyGroupMembers group={group} />
+          ) : (
+            <span className="text-foreground">{group.otherMetros[0]}</span>
+          )}
+          <ArrowRight className="h-2.5 w-2.5 text-muted-foreground" />
+          <span className="text-foreground">{group.commonMetro}</span>
+          {group.unreachable ? (
+            <span className="ml-1 text-red-500 font-medium">no path</span>
+          ) : (
+            <span className={`ml-1 ${(group.deltaUs ?? 0) > 0 ? 'text-amber-500' : 'text-green-500'}`}>
+              {formatDeltaMs(group.deltaUs ?? 0)}
+            </span>
+          )}
+        </div>
+        {!group.unreachable && group.otherMetros.length === 1 && (
+          <BeforeAfter beforeUs={group.members[0].before_us} afterUs={group.members[0].after_us} />
+        )}
+        <CausedBy causedBy={group.causedBy} changeLabels={changeLabels} />
+      </div>
+    </div>
+  )
+}
+
+/** One row of a redundancy path-count list -- shared by the "Redundancy"
+ *  risk section (amber when paths drop) and the "Added redundancy"
+ *  improvement section (always green, since after_paths > before_paths). */
+function RedundancyRow({
+  item,
+  changeLabels,
+  dot,
+  pathsClassName,
+  testId,
+}: {
+  item: RedundancyChange
+  changeLabels: Map<number, string>
+  dot: ReactNode
+  pathsClassName: string
+  testId?: string
+}) {
+  return (
+    <div data-testid={testId} className="flex items-start gap-1.5">
+      {dot}
+      <div className="space-y-0.5">
+        <div>
+          <span className="text-foreground">{item.metro_a}</span>
+          <ArrowRight className="inline h-2.5 w-2.5 mx-0.5 text-muted-foreground" />
+          <span className="text-foreground">{item.metro_z}</span>
+          <span className="text-muted-foreground"> · paths </span>
+          <span className={pathsClassName}>
+            {item.before_paths} → {item.after_paths}
+          </span>
+        </div>
+        <CausedBy causedBy={item.caused_by} changeLabels={changeLabels} />
+      </div>
+    </div>
   )
 }
 
@@ -230,12 +317,14 @@ export function PlannerImpactPanel({
             </span>
           </div>
 
-          {counts.total === 0 && (
-            <div className="text-green-500 flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-green-500" />
-              No impact detected - the draft keeps the network fully connected.
-            </div>
-          )}
+          {counts.total === 0 &&
+            report.latency_improvements.length === 0 &&
+            report.redundancy_improvements.length === 0 && (
+              <div className="text-green-500 flex items-center gap-1.5">
+                <div className="w-2 h-2 rounded-full bg-green-500" />
+                No impact detected - the draft keeps the network fully connected.
+              </div>
+            )}
 
           {/* 1. Connectivity / partitions */}
           {report.partition_issues.length > 0 && (
@@ -265,31 +354,13 @@ export function PlannerImpactPanel({
           {report.latency_deltas.length > 0 && (
             <CollapsibleSection title="Latency changes" count={report.latency_deltas.length}>
               {groupLatencyDeltas(report.latency_deltas).map((g) => (
-                <div key={g.key} data-testid="impact-latency-row" className="flex items-start gap-1.5">
-                  <SeverityDot severity={g.severity} />
-                  <div className="space-y-0.5">
-                    <div className="flex items-center gap-1 flex-wrap">
-                      {g.otherMetros.length > 1 ? (
-                        <LatencyGroupMembers group={g} />
-                      ) : (
-                        <span className="text-foreground">{g.otherMetros[0]}</span>
-                      )}
-                      <ArrowRight className="h-2.5 w-2.5 text-muted-foreground" />
-                      <span className="text-foreground">{g.commonMetro}</span>
-                      {g.unreachable ? (
-                        <span className="ml-1 text-red-500 font-medium">no path</span>
-                      ) : (
-                        <span className={`ml-1 ${(g.deltaUs ?? 0) > 0 ? 'text-amber-500' : 'text-green-500'}`}>
-                          {formatDeltaMs(g.deltaUs ?? 0)}
-                        </span>
-                      )}
-                    </div>
-                    {!g.unreachable && g.otherMetros.length === 1 && (
-                      <BeforeAfter beforeUs={g.members[0].before_us} afterUs={g.members[0].after_us} />
-                    )}
-                    <CausedBy causedBy={g.causedBy} changeLabels={changeLabels} />
-                  </div>
-                </div>
+                <LatencyGroupRow
+                  key={g.key}
+                  group={g}
+                  changeLabels={changeLabels}
+                  dot={<SeverityDot severity={g.severity} />}
+                  testId="impact-latency-row"
+                />
               ))}
             </CollapsibleSection>
           )}
@@ -302,21 +373,13 @@ export function PlannerImpactPanel({
               icon={<Shield className="h-3 w-3" />}
             >
               {sortRedundancy(report.redundancy_changes).map((r: RedundancyChange, i) => (
-                <div key={`${r.metro_a}-${r.metro_z}-${i}`} className="flex items-start gap-1.5">
-                  <SeverityDot severity={r.severity} />
-                  <div className="space-y-0.5">
-                    <div>
-                      <span className="text-foreground">{r.metro_a}</span>
-                      <ArrowRight className="inline h-2.5 w-2.5 mx-0.5 text-muted-foreground" />
-                      <span className="text-foreground">{r.metro_z}</span>
-                      <span className="text-muted-foreground"> · paths </span>
-                      <span className={r.after_paths < r.before_paths ? 'text-amber-500' : 'text-muted-foreground'}>
-                        {r.before_paths} → {r.after_paths}
-                      </span>
-                    </div>
-                    <CausedBy causedBy={r.caused_by} changeLabels={changeLabels} />
-                  </div>
-                </div>
+                <RedundancyRow
+                  key={`${r.metro_a}-${r.metro_z}-${i}`}
+                  item={r}
+                  changeLabels={changeLabels}
+                  dot={<SeverityDot severity={r.severity} />}
+                  pathsClassName={r.after_paths < r.before_paths ? 'text-amber-500' : 'text-muted-foreground'}
+                />
               ))}
             </CollapsibleSection>
           )}
@@ -364,6 +427,77 @@ export function PlannerImpactPanel({
                     </div>
                   </div>
                 ))}
+            </CollapsibleSection>
+          )}
+
+          {/* Positive findings, always after every risk section: metro pairs
+              that got faster or newly reachable, and pairs that gained a
+              backup path. These are not risks, so they never feed into
+              countBySeverity or the risk severity color maps -- each row
+              uses a plain green dot instead of a SeverityDot. */}
+          {report.latency_improvements.length > 0 && (
+            <CollapsibleSection
+              title="Latency improvements"
+              count={report.latency_improvements.length}
+              icon={<Zap className="h-3 w-3" />}
+            >
+              {(() => {
+                const { reductions, newlyReachable } = splitLatencyImprovements(
+                  report.latency_improvements,
+                )
+                return (
+                  <>
+                    {groupLatencyDeltas(reductions).map((g) => (
+                      <LatencyGroupRow
+                        key={g.key}
+                        group={g}
+                        changeLabels={changeLabels}
+                        dot={<GreenDot />}
+                        testId="impact-latency-improvement-row"
+                      />
+                    ))}
+                    {newlyReachable.map((d, i) => (
+                      <div
+                        key={`${d.metro_a}-${d.metro_z}-${i}`}
+                        data-testid="impact-latency-reachable-row"
+                        className="flex items-start gap-1.5"
+                      >
+                        <GreenDot />
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1 flex-wrap">
+                            <span className="text-foreground">{d.metro_a}</span>
+                            <ArrowRight className="h-2.5 w-2.5 text-muted-foreground" />
+                            <span className="text-foreground">{d.metro_z}</span>
+                            <span className="ml-1 px-1 py-0.5 rounded bg-green-500/15 text-green-500 text-[9px] uppercase tracking-wider">
+                              now reachable
+                            </span>
+                          </div>
+                          <CausedBy causedBy={d.caused_by} changeLabels={changeLabels} />
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )
+              })()}
+            </CollapsibleSection>
+          )}
+
+          {report.redundancy_improvements.length > 0 && (
+            <CollapsibleSection
+              title="Added redundancy"
+              count={report.redundancy_improvements.length}
+              icon={<Shield className="h-3 w-3" />}
+            >
+              {sortRedundancyImprovements(report.redundancy_improvements).map((r, i) => (
+                <RedundancyRow
+                  key={`${r.metro_a}-${r.metro_z}-${i}`}
+                  item={r}
+                  changeLabels={changeLabels}
+                  dot={<GreenDot />}
+                  pathsClassName="text-green-500"
+                  testId="impact-redundancy-improvement-row"
+                />
+              ))}
             </CollapsibleSection>
           )}
 
