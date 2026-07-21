@@ -9,16 +9,17 @@ vi.mock('@/hooks/use-theme', () => ({
 }))
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>()
-  return { ...actual, fetchPlans: vi.fn(), fetchPlan: vi.fn() }
+  return { ...actual, fetchPlans: vi.fn(), fetchPlan: vi.fn(), deletePlan: vi.fn() }
 })
 
 import { usePlanner } from './PlannerContext'
-import { fetchPlans, fetchPlan } from '@/lib/api'
+import { fetchPlans, fetchPlan, deletePlan } from '@/lib/api'
 import { PlannerLanding } from './PlannerLanding'
 
 const mockPlanner = usePlanner as unknown as Mock
 const mockFetchPlans = fetchPlans as unknown as Mock
 const mockFetchPlan = fetchPlan as unknown as Mock
+const mockDeletePlan = deletePlan as unknown as Mock
 
 const BASELINE: TopologyResponse = {
   metros: [
@@ -71,6 +72,7 @@ describe('PlannerLanding', () => {
   beforeEach(() => {
     mockFetchPlans.mockReset()
     mockFetchPlan.mockReset()
+    mockDeletePlan.mockReset()
     newPlan.mockReset()
     openPlan.mockReset()
     mockPlanner.mockReset()
@@ -142,5 +144,37 @@ describe('PlannerLanding', () => {
 
     expect(await screen.findByText('No pending changes')).toBeInTheDocument()
     expect(await screen.findByText('Empty plan')).toBeInTheDocument()
+  })
+
+  it('deletes a plan from its trash button without opening it', async () => {
+    mockFetchPlans.mockResolvedValue([summary({ id: 'p1', name: 'Warsaw expansion' })])
+    mockFetchPlan.mockResolvedValue(planFor(summary({ id: 'p1' }), []))
+    mockDeletePlan.mockResolvedValue(undefined)
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    renderLanding()
+
+    const trash = await screen.findByTitle('Delete plan')
+    fireEvent.click(trash)
+
+    expect(confirmSpy).toHaveBeenCalledWith(
+      'Delete plan "Warsaw expansion"? It will be removed from your list.'
+    )
+    await waitFor(() => expect(mockDeletePlan).toHaveBeenCalledWith('p1'))
+    expect(openPlan).not.toHaveBeenCalled()
+    confirmSpy.mockRestore()
+  })
+
+  it('does not delete a plan when the confirm dialog is dismissed', async () => {
+    mockFetchPlans.mockResolvedValue([summary({ id: 'p1', name: 'Warsaw expansion' })])
+    mockFetchPlan.mockResolvedValue(planFor(summary({ id: 'p1' }), []))
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    renderLanding()
+
+    const trash = await screen.findByTitle('Delete plan')
+    fireEvent.click(trash)
+
+    await waitFor(() => expect(confirmSpy).toHaveBeenCalled())
+    expect(mockDeletePlan).not.toHaveBeenCalled()
+    confirmSpy.mockRestore()
   })
 })

@@ -1,6 +1,7 @@
-import { useQuery } from '@tanstack/react-query'
-import { X, Loader2 } from 'lucide-react'
-import { fetchPlans } from '@/lib/api'
+import { useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { X, Loader2, Trash2 } from 'lucide-react'
+import { fetchPlans, deletePlan, type PlanSummary } from '@/lib/api'
 
 export function PlanPickerDialog({
   onPick,
@@ -14,6 +15,19 @@ export function PlanPickerDialog({
     queryFn: fetchPlans,
     staleTime: 10_000,
   })
+  const queryClient = useQueryClient()
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  const handleDelete = async (p: PlanSummary) => {
+    if (!window.confirm(`Delete plan "${p.name}"? It will be removed from your list.`)) return
+    setDeletingId(p.id)
+    try {
+      await deletePlan(p.id)
+      await queryClient.invalidateQueries({ queryKey: ['plans'] })
+    } finally {
+      setDeletingId(null)
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
@@ -37,19 +51,32 @@ export function PlanPickerDialog({
           ) : (
             <div className="space-y-1">
               {plans.map((p) => (
-                <button
-                  key={p.id}
-                  onClick={() => {
-                    onPick(p.id)
-                    onClose()
-                  }}
-                  className="w-full flex items-center justify-between px-3 py-2 text-left text-sm rounded hover:bg-muted"
-                >
-                  <span className="font-medium">{p.name}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {p.change_count} changes · {p.status}
-                  </span>
-                </button>
+                <div key={p.id} className="w-full flex items-center gap-1 rounded hover:bg-muted">
+                  <button
+                    onClick={() => {
+                      onPick(p.id)
+                      onClose()
+                    }}
+                    className="flex-1 flex items-center justify-between px-3 py-2 text-left text-sm min-w-0"
+                  >
+                    <span className="font-medium truncate">{p.name}</span>
+                    <span className="text-xs text-muted-foreground shrink-0">
+                      {p.change_count} changes · {p.status}
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => handleDelete(p)}
+                    disabled={deletingId === p.id}
+                    title="Delete plan"
+                    className="shrink-0 mr-1 rounded p-1 text-muted-foreground hover:text-red-500 disabled:opacity-50"
+                  >
+                    {deletingId === p.id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                </div>
               ))}
             </div>
           )}

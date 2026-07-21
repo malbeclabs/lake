@@ -3,9 +3,9 @@
 // browsable list of existing plans, each previewed via a small SVG thumbnail
 // (see PlanPreviewThumb) so the user can recognize a plan at a glance.
 import { useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Plus, FolderOpen, Loader2, MapIcon } from 'lucide-react'
-import { fetchPlans, fetchPlan, type PlanSummary, type TopologyResponse } from '@/lib/api'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Plus, FolderOpen, Loader2, MapIcon, Trash2 } from 'lucide-react'
+import { fetchPlans, fetchPlan, deletePlan, type PlanSummary, type TopologyResponse } from '@/lib/api'
 import { useTheme } from '@/hooks/use-theme'
 import { usePlanner } from './PlannerContext'
 import { PlanPickerDialog } from './PlanPickerDialog'
@@ -70,30 +70,55 @@ function PlanCard({
         : 'Changes unavailable'
       : 'Open to see changes'
 
+  const queryClient = useQueryClient()
+  const [deleting, setDeleting] = useState(false)
+
+  const handleDelete = async () => {
+    if (!window.confirm(`Delete plan "${plan.name}"? It will be removed from your list.`)) return
+    setDeleting(true)
+    try {
+      await deletePlan(plan.id)
+      await queryClient.invalidateQueries({ queryKey: ['plans'] })
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className="flex flex-col text-left rounded-lg border border-border bg-card overflow-hidden hover:border-purple-400 hover:shadow-md transition-all"
-    >
-      <div className="h-28 w-full">
-        {fetchDetail ? (
-          <PlanPreviewThumb geometry={geometry} isDark={isDark} />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center bg-muted/40 text-[11px] text-muted-foreground">
-            Preview not loaded
-          </div>
-        )}
-      </div>
-      <div className="flex min-w-0 flex-col gap-1.5 p-3">
-        <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-sm font-semibold">{plan.name}</span>
-          <span className={statusBadgeClass(plan.status)}>{plan.status}</span>
+    <div className="relative">
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex flex-col text-left rounded-lg border border-border bg-card overflow-hidden hover:border-purple-400 hover:shadow-md transition-all"
+      >
+        <div className="h-28 w-full">
+          {fetchDetail ? (
+            <PlanPreviewThumb geometry={geometry} isDark={isDark} />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center bg-muted/40 text-[11px] text-muted-foreground">
+              Preview not loaded
+            </div>
+          )}
         </div>
-        <p className="truncate text-xs text-muted-foreground">{summaryText}</p>
-        <p className="text-[11px] text-muted-foreground">Updated {formatTimeAgo(plan.updated_at)}</p>
-      </div>
-    </button>
+        <div className="flex min-w-0 flex-col gap-1.5 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="truncate text-sm font-semibold">{plan.name}</span>
+            <span className={statusBadgeClass(plan.status)}>{plan.status}</span>
+          </div>
+          <p className="truncate text-xs text-muted-foreground">{summaryText}</p>
+          <p className="text-[11px] text-muted-foreground">Updated {formatTimeAgo(plan.updated_at)}</p>
+        </div>
+      </button>
+      <button
+        type="button"
+        onClick={handleDelete}
+        disabled={deleting}
+        title="Delete plan"
+        className="absolute top-2 right-2 z-10 rounded p-1 text-muted-foreground hover:text-red-500 hover:bg-background/80 disabled:opacity-50"
+      >
+        {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+      </button>
+    </div>
   )
 }
 
