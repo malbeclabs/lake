@@ -576,6 +576,89 @@ func TestUpdatePlanChange_RejectsInvalidShape(t *testing.T) {
 	assert.Equal(t, 1, version)
 }
 
+// TestUpdatePlanChange_AddLinkRuleEnforced closes the PATCH bypass of the
+// WAN/DZX contributor+metro rule: AddPlanChange validates a new add_link
+// against validateAddLinkRule, but until this fix UpdatePlanChange did not, so
+// a client could PATCH a valid add_link's payload into a cross-contributor +
+// cross-metro pair with no server rejection. Reuses seedActionListBaseline
+// (topology_plan_actionlist_test.go), the FetchTopologyData-compatible
+// dz_*_current schema, so the plan's baseline actually resolves the two
+// endpoints instead of skipping the check.
+func TestUpdatePlanChange_AddLinkRuleEnforced(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPIAll(t, testChDB, testPgDB, nil, nil)
+	ctx := t.Context()
+	acc := newInternalAccount(t, ctx, api)
+	env := "updlinkrule_" + uuid.New().String()[:8]
+
+	seedActionListBaseline(t, api)
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dz_metros_current (pk, code, name, latitude, longitude) VALUES
+		('m-1', 'M1', 'Metro1', 10, 10),
+		('m-2', 'M2', 'Metro2', 20, 20)`))
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dz_contributors_current (pk, code, name) VALUES
+		('c-1', 'contrib1', 'Contrib1'),
+		('c-2', 'contrib2', 'Contrib2'),
+		('c-3', 'contrib3', 'Contrib3')`))
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dz_devices_current (pk, code, status, device_type, metro_pk, contributor_pk) VALUES
+		('d-a', 'dev-a', 'activated', 'switch', 'm-1', 'c-1'),
+		('d-b', 'dev-b', 'activated', 'switch', 'm-1', 'c-2'),
+		('d-x', 'dev-x', 'activated', 'switch', 'm-2', 'c-3')`))
+
+	var planID uuid.UUID
+	require.NoError(t, api.PgPool.QueryRow(ctx,
+		`INSERT INTO topology_plans (name, environment, created_by_account_id) VALUES ('p',$1,$2) RETURNING id`,
+		env, acc.ID).Scan(&planID))
+
+	// d-a/d-b: same metro (m-1), different contributor -> valid DZX pair.
+	validPayload := `{"side_a_device_pk":"d-a","side_z_device_pk":"d-b","side_a_iface_name":"TBD","side_z_iface_name":"TBD","latency_ns":5000000,"bandwidth_bps":10000000000,"link_type":"DZX"}`
+
+	insertLinkChange := func(seq int, localRef, payload string) uuid.UUID {
+		var id uuid.UUID
+		require.NoError(t, api.PgPool.QueryRow(ctx, `
+			INSERT INTO topology_plan_changes (plan_id, seq, op_type, local_ref, payload, ref_snapshot, state, version)
+			VALUES ($1, $2, 'add_link', $3, $4::jsonb, '{}'::jsonb, 'pending', 1)
+			RETURNING id`,
+			planID, seq, localRef, payload).Scan(&id))
+		return id
+	}
+
+	patch := func(changeID uuid.UUID, body []byte) *httptest.ResponseRecorder {
+		req := planReq(t, http.MethodPatch,
+			"/api/topology/plans/"+planID.String()+"/changes/"+changeID.String(), body, env, acc)
+		req = withChiURLParams(req, map[string]string{"id": planID.String(), "changeId": changeID.String()})
+		rr := httptest.NewRecorder()
+		api.UpdatePlanChange(rr, req)
+		return rr
+	}
+
+	// PATCH turns the valid d-a/d-b pair into d-a/d-x: different contributor
+	// AND different metro -> rejected.
+	crossChangeID := insertLinkChange(10, "tmp_link_1", validPayload)
+	badPayload := `{"side_a_device_pk":"d-a","side_z_device_pk":"d-x","side_a_iface_name":"TBD","side_z_iface_name":"TBD","latency_ns":5000000,"bandwidth_bps":10000000000}`
+	body, _ := json.Marshal(handlers.UpdateChangeRequest{Payload: json.RawMessage(badPayload), Version: 1})
+	rr := patch(crossChangeID, body)
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+
+	// Rejected PATCH leaves the change untouched.
+	var version int
+	var storedPayload string
+	require.NoError(t, api.PgPool.QueryRow(ctx,
+		`SELECT version, payload::text FROM topology_plan_changes WHERE id=$1`, crossChangeID).
+		Scan(&version, &storedPayload))
+	assert.Equal(t, 1, version)
+	assert.Contains(t, storedPayload, `"d-b"`)
+
+	// A benign PATCH (same endpoints, only latency changed) still succeeds.
+	benignChangeID := insertLinkChange(20, "tmp_link_2", validPayload)
+	benignPayload := `{"side_a_device_pk":"d-a","side_z_device_pk":"d-b","side_a_iface_name":"TBD","side_z_iface_name":"TBD","latency_ns":7000000,"bandwidth_bps":10000000000,"link_type":"DZX"}`
+	body, _ = json.Marshal(handlers.UpdateChangeRequest{Payload: json.RawMessage(benignPayload), Version: 1})
+	rr = patch(benignChangeID, body)
+	assert.Equal(t, http.StatusOK, rr.Code)
+}
+
 func TestDeletePlanChange(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)

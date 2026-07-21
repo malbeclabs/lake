@@ -376,14 +376,16 @@ export function PlannerMap() {
   }, [draft, addLinkSource, addLinkTarget])
 
   // Block an invalid pick (different contributor AND different metro) before the
-  // add-link form ever opens: clear the pick and drop back to the select tool,
-  // surfacing the reason in a dismissible banner (rendered below, near the map).
+  // add-link form ever opens: clear the pick and surface the reason in a dismissible
+  // banner (rendered below, near the map). Stays on the add-link tool so the operator
+  // can immediately retry -- switching tools here would trigger the tool-change effect
+  // above, which unconditionally clears addLinkError and would silently erase the
+  // banner before it's ever seen.
   useEffect(() => {
     if (!addLinkDerivation || addLinkDerivation.valid) return
     setAddLinkError(addLinkDerivation.reason ?? null)
     resetAddLink()
-    setTool('select')
-  }, [addLinkDerivation, resetAddLink, setTool])
+  }, [addLinkDerivation, resetAddLink])
 
   const submitAddLink = useCallback(
     (v: {

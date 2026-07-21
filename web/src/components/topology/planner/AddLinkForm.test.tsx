@@ -405,4 +405,49 @@ describe('PlannerMap add-link rubber-band tool', () => {
 
     expect(addChange).not.toHaveBeenCalled()
   })
+
+  // Regression for the invalid-pair banner self-clear bug: setTool('select') on an
+  // invalid pick used to trigger the tool-change effect, which unconditionally clears
+  // addLinkError -- so the banner was set then wiped in the same tick and the operator
+  // saw nothing. The fix keeps the tool on 'add-link' so the banner persists.
+  it('blocks a cross-contributor + cross-metro pick with a persistent banner instead of opening the form', () => {
+    const addChange = vi.fn()
+    const setTool = vi.fn()
+    const baseline: TopologyResponse = {
+      metros: METROS,
+      devices: [
+        { ...makeDevice('dA', 'nyc-a', 'M1'), contributor_pk: 'c1', contributor_code: 'co1' },
+        { ...makeDevice('dX', 'par-x', 'M3'), contributor_pk: 'c2', contributor_code: 'co2' },
+      ],
+      links: [],
+      validators: [],
+    }
+    plannerRef.current = {
+      draft: buildDraft(baseline, []),
+      baseline,
+      tool: 'add-link',
+      setTool,
+      selectedLinkKey: null,
+      selectLink: () => {},
+      addChange,
+    }
+    render(<PlannerMap />)
+
+    mapClickTargetRef.current = { lng: -74, lat: 40 } // nyc-a (c1)
+    fireEvent.click(screen.getByTestId('map-surface'))
+    mapClickTargetRef.current = { lng: 2, lat: 48 } // par-x (c2) -- different contributor AND metro
+    fireEvent.click(screen.getByTestId('map-surface'))
+
+    // No add-link form opened.
+    expect(screen.queryByText(/New link/)).not.toBeInTheDocument()
+    // The reason banner is shown and stays shown (not cleared by a tool-change effect).
+    expect(
+      screen.getByText(
+        'A cross-contributor link must be within one metro (DZX); a cross-metro link must be owned by one contributor (WAN). This pair is neither.'
+      )
+    ).toBeInTheDocument()
+    expect(addChange).not.toHaveBeenCalled()
+    // Critically, the tool was never reset -- the operator stays in add-link to retry.
+    expect(setTool).not.toHaveBeenCalled()
+  })
 })

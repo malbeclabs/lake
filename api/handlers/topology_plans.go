@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -790,16 +791,19 @@ func (a *API) validateAddLinkRule(ctx context.Context, planID uuid.UUID, payload
 	var p plannerPayload
 	if len(payload) > 0 {
 		if err := json.Unmarshal(payload, &p); err != nil {
+			log.Printf("validateAddLinkRule: invalid add_link payload for plan %s, skipping rule check: %v", planID, err)
 			return nil
 		}
 	}
 	plan, err := loadPlanWithChanges(ctx, a.PgPool, planID)
 	if err != nil {
+		log.Printf("validateAddLinkRule: failed to load plan %s, skipping rule check: %v", planID, err)
 		return nil
 	}
 	baseCtx := ContextWithEnv(ctx, DZEnv(plan.Environment))
 	baseline, err := a.FetchTopologyData(baseCtx)
 	if err != nil {
+		log.Printf("validateAddLinkRule: FetchTopologyData failed for plan %s, skipping rule check: %v", planID, err)
 		return nil
 	}
 	idx := newBaselineIndex(&baseline, plan.Changes)
@@ -1027,6 +1031,17 @@ func (a *API) UpdatePlanChange(w http.ResponseWriter, r *http.Request) {
 	if err := validateChangeShape(existing.OpType, &mergedDevice, &mergedLink, &mergedLocal, mergedPayload); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	// Same WAN/DZX contributor+metro rule as AddPlanChange, applied to the
+	// MERGED payload -- without this, a PATCH could edit a valid add_link's
+	// payload into a cross-contributor + cross-metro pair with no server
+	// rejection. Only runs when op_type is add_link AND the request actually
+	// touches the payload.
+	if existing.OpType == OpAddLink && req.Payload != nil {
+		if err := a.validateAddLinkRule(ctx, planID, mergedPayload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 
 	change, err := scanPlanChange(tx.QueryRow(ctx, `
