@@ -81,4 +81,39 @@ describe('PlanPickerDialog', () => {
     expect(mockDeletePlan).not.toHaveBeenCalled()
     confirmSpy.mockRestore()
   })
+
+  it('tracks busy state per row so finishing one delete does not re-enable another in-flight row', async () => {
+    mockFetchPlans.mockResolvedValue([
+      summary({ id: 'p1', name: 'Warsaw expansion' }),
+      summary({ id: 'p2', name: 'Berlin ring' }),
+    ])
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    let resolveP1: () => void = () => {}
+    let resolveP2: () => void = () => {}
+    mockDeletePlan.mockImplementation((id: string) => {
+      if (id === 'p1') return new Promise<void>((resolve) => { resolveP1 = resolve })
+      return new Promise<void>((resolve) => { resolveP2 = resolve })
+    })
+
+    renderDialog()
+
+    const trashButtons = await screen.findAllByTitle('Delete plan')
+    fireEvent.click(trashButtons[0])
+    await waitFor(() => expect(mockDeletePlan).toHaveBeenCalledWith('p1'))
+    fireEvent.click(trashButtons[1])
+    await waitFor(() => expect(mockDeletePlan).toHaveBeenCalledWith('p2'))
+
+    expect(trashButtons[0]).toBeDisabled()
+    expect(trashButtons[1]).toBeDisabled()
+
+    resolveP1()
+    await waitFor(() => expect(trashButtons[0]).not.toBeDisabled())
+    expect(trashButtons[1]).toBeDisabled()
+
+    resolveP2()
+    await waitFor(() => expect(trashButtons[1]).not.toBeDisabled())
+
+    confirmSpy.mockRestore()
+  })
 })

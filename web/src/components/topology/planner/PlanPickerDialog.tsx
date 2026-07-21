@@ -16,16 +16,24 @@ export function PlanPickerDialog({
     staleTime: 10_000,
   })
   const queryClient = useQueryClient()
-  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set())
 
   const handleDelete = async (p: PlanSummary) => {
     if (!window.confirm(`Delete plan "${p.name}"? It will be removed from your list.`)) return
-    setDeletingId(p.id)
+    setDeletingIds((prev) => {
+      const next = new Set(prev)
+      next.add(p.id)
+      return next
+    })
     try {
       await deletePlan(p.id)
       await queryClient.invalidateQueries({ queryKey: ['plans'] })
     } finally {
-      setDeletingId(null)
+      setDeletingIds((prev) => {
+        const next = new Set(prev)
+        next.delete(p.id)
+        return next
+      })
     }
   }
 
@@ -66,11 +74,11 @@ export function PlanPickerDialog({
                   </button>
                   <button
                     onClick={() => handleDelete(p)}
-                    disabled={deletingId === p.id}
+                    disabled={deletingIds.has(p.id)}
                     title="Delete plan"
                     className="shrink-0 mr-1 rounded p-1 text-muted-foreground hover:text-red-500 disabled:opacity-50"
                   >
-                    {deletingId === p.id ? (
+                    {deletingIds.has(p.id) ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     ) : (
                       <Trash2 className="h-3.5 w-3.5" />
