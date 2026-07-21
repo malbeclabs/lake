@@ -45,6 +45,8 @@ describe('PlannerImpactTab', () => {
       redundancy_changes: [],
       capacity_risks: [],
       overlap_warnings: [],
+      latency_improvements: [],
+      redundancy_improvements: [],
       data_issues: [],
       estimated: false,
       generated_at: 'x',

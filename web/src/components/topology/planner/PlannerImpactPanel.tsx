@@ -268,6 +268,8 @@ export function PlannerImpactPanel({
   changeLabels,
 }: PlannerImpactPanelProps) {
   const counts = report ? countBySeverity(report) : null
+  const latencyImprovements = report?.latency_improvements ?? []
+  const redundancyImprovements = report?.redundancy_improvements ?? []
 
   return (
     <div className="p-3 text-xs space-y-3">
@@ -318,8 +320,8 @@ export function PlannerImpactPanel({
           </div>
 
           {counts.total === 0 &&
-            report.latency_improvements.length === 0 &&
-            report.redundancy_improvements.length === 0 && (
+            latencyImprovements.length === 0 &&
+            redundancyImprovements.length === 0 && (
               <div className="text-green-500 flex items-center gap-1.5">
                 <div className="w-2 h-2 rounded-full bg-green-500" />
                 No impact detected - the draft keeps the network fully connected.
@@ -435,15 +437,15 @@ export function PlannerImpactPanel({
               backup path. These are not risks, so they never feed into
               countBySeverity or the risk severity color maps -- each row
               uses a plain green dot instead of a SeverityDot. */}
-          {report.latency_improvements.length > 0 && (
+          {latencyImprovements.length > 0 && (
             <CollapsibleSection
               title="Latency improvements"
-              count={report.latency_improvements.length}
+              count={latencyImprovements.length}
               icon={<Zap className="h-3 w-3 text-green-500" />}
             >
               {(() => {
                 const { reductions, newlyReachable } = splitLatencyImprovements(
-                  report.latency_improvements,
+                  latencyImprovements,
                 )
                 return (
                   <>
@@ -482,13 +484,13 @@ export function PlannerImpactPanel({
             </CollapsibleSection>
           )}
 
-          {report.redundancy_improvements.length > 0 && (
+          {redundancyImprovements.length > 0 && (
             <CollapsibleSection
               title="Added redundancy"
-              count={report.redundancy_improvements.length}
+              count={redundancyImprovements.length}
               icon={<Shield className="h-3 w-3 text-green-500" />}
             >
-              {sortRedundancyImprovements(report.redundancy_improvements).map((r, i) => (
+              {sortRedundancyImprovements(redundancyImprovements).map((r, i) => (
                 <RedundancyRow
                   key={`${r.metro_a}-${r.metro_z}-${i}`}
                   item={r}
