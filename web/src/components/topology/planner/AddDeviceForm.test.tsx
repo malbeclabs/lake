@@ -158,7 +158,7 @@ describe('AddDeviceForm', () => {
     fireEvent.change(screen.getByLabelText(/Code/), { target: { value: 'par-x9' } })
     fireEvent.change(screen.getByLabelText(/Contributor/), { target: { value: 'newco' } })
     fireEvent.change(screen.getByLabelText(/Metro/), { target: { value: 'pa' } })
-    fireEvent.click(screen.getByText('par — Paris'))
+    fireEvent.click(screen.getByText('par - Paris'))
     fireEvent.click(screen.getByText('Add device'))
     expect(onSubmit).toHaveBeenCalledWith({
       code: 'par-x9',

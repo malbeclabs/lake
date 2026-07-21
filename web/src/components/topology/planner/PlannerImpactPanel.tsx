@@ -439,7 +439,7 @@ export function PlannerImpactPanel({
             <CollapsibleSection
               title="Latency improvements"
               count={report.latency_improvements.length}
-              icon={<Zap className="h-3 w-3" />}
+              icon={<Zap className="h-3 w-3 text-green-500" />}
             >
               {(() => {
                 const { reductions, newlyReachable } = splitLatencyImprovements(
@@ -486,7 +486,7 @@ export function PlannerImpactPanel({
             <CollapsibleSection
               title="Added redundancy"
               count={report.redundancy_improvements.length}
-              icon={<Shield className="h-3 w-3" />}
+              icon={<Shield className="h-3 w-3 text-green-500" />}
             >
               {sortRedundancyImprovements(report.redundancy_improvements).map((r, i) => (
                 <RedundancyRow

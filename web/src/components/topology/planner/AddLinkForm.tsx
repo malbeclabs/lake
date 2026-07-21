@@ -66,7 +66,7 @@ export function AddLinkForm({
         New link {sourceCode} ↔ {targetCode}
       </div>
       <label className="block text-xs text-muted-foreground">
-        Latency (ms) — required{' '}
+        Latency (ms) - required{' '}
         <span className="text-[10px] uppercase tracking-wide">({estimateSource})</span>
         <input
           autoFocus
@@ -78,7 +78,7 @@ export function AddLinkForm({
         />
       </label>
       <label className="block text-xs text-muted-foreground">
-        Bandwidth (Gbps) — required
+        Bandwidth (Gbps) - required
         <input
           type="number"
           value={bandwidthGbps}

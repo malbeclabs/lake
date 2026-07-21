@@ -171,7 +171,7 @@ export function AddDeviceForm({
                 metroPk === m.pk ? 'border-accent bg-accent/20' : 'border-border bg-muted hover:bg-muted/80'
               }`}
             >
-              {m.code} — {m.name}
+              {m.code} - {m.name}
             </button>
           ))}
         </div>
