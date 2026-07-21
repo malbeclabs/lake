@@ -5101,6 +5101,7 @@ export interface IssuePreviewItem {
   action: 'create' | 'update'
   title: string
   body: string
+  labels: string[]
   entity_pk?: string
   existing_issue_number?: number
   existing_issue_url?: string

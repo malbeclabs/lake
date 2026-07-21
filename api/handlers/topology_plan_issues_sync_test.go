@@ -356,3 +356,65 @@ func TestSyncPlanIssuesDecomDeviceIdempotent(t *testing.T) {
 		`SELECT COUNT(*) FROM topology_plan_issues WHERE plan_id = $1`, planID).Scan(&count))
 	assert.Equal(t, 1, count) // still 1, idempotent, no duplicates
 }
+
+// TestPreviewPlanIssuesNoParentIncludesDecomLabels proves the manual-creation
+// preview path (includeParent=false, used by PostPlanIssuesPreview) surfaces
+// both the device-decom issue (labeled contributor-decommission, per the
+// private infra repo's label) and the per-contributor issue, and omits the
+// parent tracking issue entirely: its body links child issue numbers that
+// don't exist until something is actually filed on GitHub, so it makes no
+// sense in a preview meant for manual copy/paste. PreviewPlanIssues needs no
+// GithubIssueAPI at all (unlike SyncPlanIssues), which is what lets the
+// preview endpoint drop the GITHUB_TOKEN requirement.
+func TestPreviewPlanIssuesNoParentIncludesDecomLabels(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPIPg(t, testPgDB)
+	ctx := context.Background()
+
+	planID := insertApprovedPlan(t, api, "Decom plus contributor plan")
+	plan := &handlers.Plan{
+		ID: planID, Name: "Decom plus contributor plan", Environment: "mainnet-beta", Status: "approved",
+		Changes: []handlers.PlanChange{
+			{Seq: 1, OpType: handlers.OpRemoveDevice, RefDevicePK: "dev-x-pk", State: handlers.StatePending},
+		},
+	}
+	baseline := &handlers.TopologyResponse{
+		Devices: []handlers.Device{
+			{PK: "dev-x-pk", Code: "dev-x", ContributorPK: "contrib-a", ContributorCode: "rockawayx"},
+		},
+	}
+	al := &handlers.ActionList{
+		PlanID:      planID.String(),
+		Environment: "mainnet-beta",
+		Groups: []handlers.ContributorActionGroup{
+			{
+				ContributorPK:   "contrib-b",
+				ContributorCode: "jump",
+				Tasks:           []handlers.ActionTask{{OpType: handlers.OpAddLink, Title: "Provision link Y", State: handlers.StatePending}},
+			},
+		},
+	}
+
+	previews, err := api.PreviewPlanIssues(ctx, plan, al, baseline, "malbeclabs/infra", false)
+	require.NoError(t, err)
+	require.Len(t, previews, 2, "device decom + contributor issue, no parent")
+
+	var decom, contrib *handlers.IssuePreview
+	for i := range previews {
+		p := &previews[i]
+		assert.False(t, p.IsParent, "includeParent=false must not add a parent issue")
+		assert.NotEqual(t, "parent", p.Kind)
+		switch p.Kind {
+		case "device_decom":
+			decom = p
+		case "contributor":
+			contrib = p
+		}
+	}
+	require.NotNil(t, decom, "expected a device_decom issue")
+	require.NotNil(t, contrib, "expected a per-contributor issue")
+	assert.Contains(t, decom.Labels, "contributor-decommission")
+	assert.Equal(t, "dev-x-pk", decom.EntityPK)
+	assert.Equal(t, "jump", contrib.ContributorCode)
+	assert.Contains(t, contrib.Body, "jump")
+}

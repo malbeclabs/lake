@@ -149,7 +149,7 @@ export function PlannerToolbar() {
             {plan.status === 'draft' ? 'Approve' : 'Set draft'}
           </button>
         )}
-        {plan && <IssuesSyncAction planId={plan.id} planStatus={plan.status} />}
+        {plan && <IssuesSyncAction planId={plan.id} changeCount={plan.change_count} />}
       </div>
 
       {picking && (

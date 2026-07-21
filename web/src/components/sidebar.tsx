@@ -24,6 +24,7 @@ import {
   Network,
   Shield,
   Wrench,
+  PencilRuler,
   ShieldAlert,
   CalendarClock,
   Gauge,
@@ -428,7 +429,7 @@ const { resolvedTheme, setTheme } = useTheme()
                         </Link>
                         {showPlanner && (
                           <Link to="/topology/planner" className={subNavItemClass(isTopologyPlanner, true)}>
-                            <Wrench className="h-4 w-4" />
+                            <PencilRuler className="h-4 w-4" />
                             Planner
                           </Link>
                         )}

@@ -363,17 +363,18 @@ func renderParentIssueBody(plan *Plan, children []SyncedIssue, planURL string) s
 
 // IssuePreview describes a single issue that a sync would create or update.
 type IssuePreview struct {
-	Kind                string `json:"kind"`
-	ContributorPK       string `json:"contributor_pk"`
-	ContributorCode     string `json:"contributor_code"`
-	IsParent            bool   `json:"is_parent"`
-	Action              string `json:"action"` // "create" | "update"
-	Title               string `json:"title"`
-	Body                string `json:"body"`
-	EntityPK            string `json:"entity_pk,omitempty"`
-	ExistingIssueNumber *int   `json:"existing_issue_number,omitempty"`
-	ExistingIssueURL    string `json:"existing_issue_url,omitempty"`
-	Repo                string `json:"repo"`
+	Kind                string   `json:"kind"`
+	ContributorPK       string   `json:"contributor_pk"`
+	ContributorCode     string   `json:"contributor_code"`
+	IsParent            bool     `json:"is_parent"`
+	Action              string   `json:"action"` // "create" | "update"
+	Title               string   `json:"title"`
+	Body                string   `json:"body"`
+	Labels              []string `json:"labels"`
+	EntityPK            string   `json:"entity_pk,omitempty"`
+	ExistingIssueNumber *int     `json:"existing_issue_number,omitempty"`
+	ExistingIssueURL    string   `json:"existing_issue_url,omitempty"`
+	Repo                string   `json:"repo"`
 }
 
 // IssuesPreviewResponse is the /issues/preview response envelope.
@@ -463,6 +464,7 @@ func (a *API) PreviewPlanIssues(ctx context.Context, plan *Plan, al *ActionList,
 			ContributorCode: spec.ContributorCode,
 			Title:           spec.Title,
 			Body:            spec.Body,
+			Labels:          spec.Labels,
 			Repo:            repo,
 			Action:          "create",
 		}
@@ -481,6 +483,7 @@ func (a *API) PreviewPlanIssues(ctx context.Context, plan *Plan, al *ActionList,
 			IsParent: true,
 			Title:    parentIssueTitle(plan.Name),
 			Body:     renderParentIssueBody(plan, nil, planURL),
+			Labels:   issueLabels(plan.Name),
 			Repo:     repo,
 			Action:   "create",
 		}
@@ -687,12 +690,15 @@ func (a *API) upsertParentPlanIssue(ctx context.Context, planID uuid.UUID, repo 
 	return nil
 }
 
-// loadPlanAndActionList resolves the plan from the URL + env, enforces that it
-// is approved, fetches the live baseline for the plan's own environment once,
-// and derives the action list from that same baseline, so the issue path can
-// pass it into collectDecomTargets without a second fetch. The returned int is
-// the HTTP status to use when err is non-nil.
-func (a *API) loadPlanAndActionList(ctx context.Context, r *http.Request) (*Plan, *ActionList, *TopologyResponse, int, error) {
+// loadPlanAndActionList resolves the plan from the URL + env, optionally
+// enforces that it is approved, fetches the live baseline for the plan's own
+// environment once, and derives the action list from that same baseline, so
+// the issue path can pass it into collectDecomTargets without a second fetch.
+// requireApproved is false for the preview path (rendering issue text has no
+// side effects, so drafts are fine) and true for the sync path (filing real
+// GitHub issues still needs an approved plan). The returned int is the HTTP
+// status to use when err is non-nil.
+func (a *API) loadPlanAndActionList(ctx context.Context, r *http.Request, requireApproved bool) (*Plan, *ActionList, *TopologyResponse, int, error) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		return nil, nil, nil, http.StatusBadRequest, errors.New("plan id is required")
@@ -715,7 +721,7 @@ func (a *API) loadPlanAndActionList(ctx context.Context, r *http.Request) (*Plan
 		return nil, nil, nil, http.StatusBadRequest, fmt.Errorf(
 			"plan belongs to environment %q, not the request environment %q", plan.Environment, reqEnv)
 	}
-	if plan.Status != StatusApproved {
+	if requireApproved && plan.Status != StatusApproved {
 		return nil, nil, nil, http.StatusConflict, errors.New("plan must be approved before creating issues")
 	}
 	// Baseline is the live topology for the plan's own environment, not the
@@ -730,31 +736,33 @@ func (a *API) loadPlanAndActionList(ctx context.Context, r *http.Request) (*Plan
 }
 
 // PostPlanIssuesPreview serves POST /api/topology/plans/{id}/issues/preview.
-// Internal-only; feature-gated on GITHUB_TOKEN. Returns the issues a sync would
-// create or update, without touching GitHub.
+// Internal-only; no GitHub token required. Renders the issue titles/bodies a
+// manual creation flow would use, without touching GitHub and without
+// requiring the plan to be approved (rendering issue text has no side
+// effects). The parent tracking issue is dropped: it links child issue
+// numbers that do not exist until something is actually filed on GitHub.
 func (a *API) PostPlanIssuesPreview(w http.ResponseWriter, r *http.Request) {
 	account := GetAccountFromContext(r.Context())
 	if account == nil || !account.IsInternalUser {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	gh, err := newGithubClient()
-	if err != nil {
-		http.Error(w, "GitHub integration not configured", http.StatusServiceUnavailable)
-		return
+	repo := os.Getenv("INFRA_ISSUES_REPO")
+	if repo == "" {
+		repo = defaultInfraRepo
 	}
-	plan, al, baseline, code, err := a.loadPlanAndActionList(r.Context(), r)
+	plan, al, baseline, code, err := a.loadPlanAndActionList(r.Context(), r, false)
 	if err != nil {
 		http.Error(w, err.Error(), code)
 		return
 	}
-	previews, err := a.PreviewPlanIssues(r.Context(), plan, al, baseline, gh.RepoName(), true)
+	previews, err := a.PreviewPlanIssues(r.Context(), plan, al, baseline, repo, false)
 	if err != nil {
 		log.Printf("PreviewPlanIssues: %v", err)
 		http.Error(w, "failed to preview issues", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, IssuesPreviewResponse{Repo: gh.RepoName(), Issues: previews, UnassignedTaskCount: unassignedTaskCount(al)})
+	writeJSON(w, IssuesPreviewResponse{Repo: repo, Issues: previews, UnassignedTaskCount: unassignedTaskCount(al)})
 }
 
 // PostPlanIssuesSync serves POST /api/topology/plans/{id}/issues/sync.
@@ -771,7 +779,7 @@ func (a *API) PostPlanIssuesSync(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "GitHub integration not configured", http.StatusServiceUnavailable)
 		return
 	}
-	plan, al, baseline, code, err := a.loadPlanAndActionList(r.Context(), r)
+	plan, al, baseline, code, err := a.loadPlanAndActionList(r.Context(), r, true)
 	if err != nil {
 		http.Error(w, err.Error(), code)
 		return

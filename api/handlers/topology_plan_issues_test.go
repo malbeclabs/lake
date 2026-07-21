@@ -259,7 +259,20 @@ func TestPostPlanIssuesSyncRequiresToken(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
-func TestPostPlanIssuesPreviewRequiresToken(t *testing.T) {
+func TestPostPlanIssuesPreviewRequiresInternalUser(t *testing.T) {
+	t.Parallel()
+	api := &API{}
+	req := httptest.NewRequest(http.MethodPost, "/api/topology/plans/abc/issues/preview", nil)
+	w := httptest.NewRecorder()
+	api.PostPlanIssuesPreview(w, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+// TestPostPlanIssuesPreviewNoTokenRequired proves the preview endpoint is
+// ungated on GITHUB_TOKEN: an internal user with no token set still reaches
+// loadPlanAndActionList (which fails here on the malformed plan id, not on a
+// missing GitHub client), so manual issue creation never needs a token.
+func TestPostPlanIssuesPreviewNoTokenRequired(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "")
 	api := &API{}
 	acct := &Account{AccountType: AccountTypeDomain, IsInternalUser: true, Email: strPtr("t@doublezero.xyz")}
@@ -267,5 +280,6 @@ func TestPostPlanIssuesPreviewRequiresToken(t *testing.T) {
 	req = req.WithContext(SetAccountInContext(req.Context(), acct))
 	w := httptest.NewRecorder()
 	api.PostPlanIssuesPreview(w, req)
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.NotContains(t, w.Body.String(), "GitHub")
 }
