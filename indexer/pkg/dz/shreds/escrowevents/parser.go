@@ -4,8 +4,16 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
+
+// unknownActionsSeen dedupes the unknown-instruction log per action string: a
+// new on-chain instruction type is actionable (missing decoder) and logs
+// ERROR once, then WARN for every further matching transaction so the backlog
+// doesn't re-page until the decoder catches up. Action strings come from the
+// escrow program's own logs, so cardinality is bounded by its instruction set.
+var unknownActionsSeen sync.Map
 
 // Event type constants.
 const (
@@ -55,11 +63,12 @@ func ParseTransactionLogs(
 			continue
 		}
 		if pe.EventType == EventTypeUnknown && log != nil {
-			log.Error("shreds/escrow-events: unknown instruction action",
-				"action", g.action,
-				"escrow_pk", escrowPK,
-				"tx_signature", txSig,
-			)
+			args := []any{"action", g.action, "escrow_pk", escrowPK, "tx_signature", txSig}
+			if _, seen := unknownActionsSeen.LoadOrStore(g.action, struct{}{}); seen {
+				log.Warn("shreds/escrow-events: unknown instruction action", args...)
+			} else {
+				log.Error("shreds/escrow-events: unknown instruction action", args...)
+			}
 		}
 
 		status := "ok"

@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"testing"
 	"time"
@@ -192,4 +193,70 @@ func TestInterruptedEscalation(t *testing.T) {
 		require.Zero(t, countLevel(*recs, slog.LevelError))
 		require.Equal(t, 1, countLevel(*recs, slog.LevelWarn)) // "interrupted (shutdown)"
 	})
+}
+
+// TestDueThisCycle pins the per-entry slow-refresh cadence: an everyN=4 entry
+// (publisher_check) refreshes on cycles 0, 4, 8 and is skipped otherwise, while
+// default (everyN<=1) entries refresh every cycle.
+func TestDueThisCycle(t *testing.T) {
+	t.Run("everyN=4 refreshes on multiples of 4 only", func(t *testing.T) {
+		for cycle := 0; cycle <= 12; cycle++ {
+			want := cycle%4 == 0 // cycles 0, 4, 8, 12
+			require.Equal(t, want, dueThisCycle(4, cycle), "cycle %d", cycle)
+		}
+	})
+
+	t.Run("default cadence refreshes every cycle", func(t *testing.T) {
+		for cycle := 0; cycle <= 12; cycle++ {
+			require.True(t, dueThisCycle(0, cycle), "everyN=0, cycle %d", cycle)
+			require.True(t, dueThisCycle(1, cycle), "everyN=1, cycle %d", cycle)
+		}
+	})
+
+	t.Run("publisher_check carries everyN=4 on its entry; others default", func(t *testing.T) {
+		// entries() does not dereference a.API at construction, so a bare Activities
+		// is safe. Cadence lives on the entry, so a rename can't orphan it.
+		byKey := map[string]cacheEntry{}
+		for _, e := range (&Activities{}).entries() {
+			byKey[e.key] = e
+		}
+
+		pub, ok := byKey["publisher_check"]
+		require.True(t, ok, "publisher_check entry must exist")
+		require.Equal(t, publisherCheckEveryN, pub.everyN)
+		require.Equal(t, 4, pub.everyN)
+
+		topo, ok := byKey["topology"]
+		require.True(t, ok, "topology entry must exist")
+		require.LessOrEqual(t, topo.everyN, 1, "topology must refresh every cycle")
+
+		// Model the RefreshCaches gate: publisher_check is due only on cycles 0,4,8;
+		// topology is due every cycle.
+		for _, cycle := range []int{0, 1, 2, 3, 4, 5, 8} {
+			require.Equal(t, cycle%4 == 0, dueThisCycle(pub.everyN, cycle), "publisher_check cycle %d", cycle)
+			require.True(t, dueThisCycle(topo.everyN, cycle), "topology cycle %d", cycle)
+		}
+	})
+}
+
+// TestWriteFailureEscalation pins that the cache-write leg escalates under its
+// own counter: a sustained Postgres outage whose errors classify transient
+// indefinitely (connection refused) must still reach ERROR — nothing else
+// alerts on write failures.
+func TestWriteFailureEscalation(t *testing.T) {
+	log, recs := capLogger()
+	a := &Activities{Log: log}
+	err := errors.New("dial tcp 10.0.0.1:5432: connect: connection refused")
+
+	for range transientErrorAfterFailures {
+		a.recordWriteFailure("topology", "topology", err)
+	}
+	require.Equal(t, transientErrorAfterFailures-1, countLevel(*recs, slog.LevelWarn))
+	require.Equal(t, 1, countLevel(*recs, slog.LevelError), "sustained transient write failures must page")
+
+	// A successful write resets the counter via the query-leg-independent key.
+	a.esc.Reset("topology:write")
+	*recs = nil
+	a.recordWriteFailure("topology", "topology", err)
+	require.Zero(t, countLevel(*recs, slog.LevelError))
 }

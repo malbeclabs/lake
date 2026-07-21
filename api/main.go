@@ -132,7 +132,9 @@ func spaHandler(staticDir, assetBucketURL string) http.HandlerFunc {
 		url := strings.TrimSuffix(assetBucketURL, "/") + "/" + assetName
 		resp, err := http.Get(url)
 		if err != nil {
-			slog.Error("failed to fetch asset from bucket", "error", err)
+			// Transient-aware: an S3 blip on this per-request fallback path
+			// warns; only a persistent misconfiguration logs ERROR.
+			logger.Error(slog.Default(), "failed to fetch asset from bucket", "error", err)
 			return ""
 		}
 		defer resp.Body.Close()
@@ -394,7 +396,8 @@ func main() {
 		metrics.BuildInfo.WithLabelValues(version, commit, date).Set(1)
 		listener, err := net.Listen("tcp", *metricsAddrFlag)
 		if err != nil {
-			slog.Error("failed to start Prometheus metrics server listener", "error", err)
+			// Optional feature; the API keeps serving without metrics.
+			slog.Warn("failed to start Prometheus metrics server listener", "error", err)
 		} else {
 			slog.Info("Prometheus metrics server listening", "addr", listener.Addr().String())
 			mux := http.NewServeMux()
@@ -402,7 +405,7 @@ func main() {
 			metricsServer = &http.Server{Handler: mux}
 			go func() {
 				if err := metricsServer.Serve(listener); err != nil && err != http.ErrServerClosed {
-					slog.Error("metrics server error", "error", err)
+					slog.Warn("metrics server error", "error", err)
 				}
 			}()
 		}

@@ -12,6 +12,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 	"github.com/malbeclabs/lake/indexer/pkg/metrics"
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
 // ViewConfig holds configuration for the validatorsapp View.
@@ -51,6 +52,10 @@ type View struct {
 
 	readyOnce sync.Once
 	readyCh   chan struct{}
+
+	// esc escalates consecutive refresh failures from WARN to ERROR so a
+	// single blip doesn't page on-call (see logger.Escalator).
+	esc logger.Escalator
 }
 
 // NewView creates a new View after validating the provided config.
@@ -72,6 +77,11 @@ func NewView(cfg ViewConfig) (*View, error) {
 		cfg:     cfg,
 		store:   store,
 		readyCh: make(chan struct{}),
+		// This view refreshes every ~5 minutes and is the only signal for the
+		// validators.app dependency, so the default transient threshold (10)
+		// would take ~50 minutes to page. Escalate transient causes at the
+		// strict threshold (~15 minutes) instead.
+		esc: logger.Escalator{TransientErrorAfter: logger.DefaultErrorAfter},
 	}, nil
 }
 
@@ -124,12 +134,11 @@ func (v *View) safeRefresh(ctx context.Context) {
 		}
 	}()
 
-	if _, err := v.Refresh(ctx); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return
-		}
-		v.log.Error("validatorsapp: refresh failed", "error", err)
+	_, err := v.Refresh(ctx)
+	if err != nil && errors.Is(err, context.Canceled) {
+		return
 	}
+	v.esc.Observe(v.log, "refresh", "validatorsapp: refresh failed", err)
 }
 
 // Refresh fetches validators from the API and writes them to ClickHouse.

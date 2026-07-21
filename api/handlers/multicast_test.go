@@ -3,6 +3,7 @@ package handlers_test
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,6 +14,17 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// recordingHandler captures emitted records so a test can assert on log level.
+type recordingHandler struct{ records *[]slog.Record }
+
+func (h recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h recordingHandler) Handle(_ context.Context, r slog.Record) error {
+	*h.records = append(*h.records, r)
+	return nil
+}
+func (h recordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h recordingHandler) WithGroup(string) slog.Handler      { return h }
 
 func insertMulticastTestData(t *testing.T, api *handlers.API) {
 	ctx := t.Context()
@@ -191,6 +203,32 @@ func TestGetMulticastGroupMembers_ReturnsMembers(t *testing.T) {
 	assert.Equal(t, "nyc001-dz001", sub.DeviceCode)
 	assert.Equal(t, "nyc", sub.MetroCode)
 	assert.Equal(t, int32(502), sub.TunnelID)
+}
+
+// TestGetMulticastGroupMembers_UnknownGroupIsNotAnError guards the fix: a request
+// for a non-existent group must return 404 *without* logging at ERROR (an unknown
+// group is an ordinary not-found, and logging it ERROR paged prod #alerts).
+// Not parallel: it swaps the global slog default to inspect log level.
+func TestGetMulticastGroupMembers_UnknownGroupIsNotAnError(t *testing.T) {
+	api := apitesting.NewTestAPI(t, testChDB)
+
+	var recs []slog.Record
+	prev := slog.Default()
+	slog.SetDefault(slog.New(recordingHandler{&recs}))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/does-not-exist/members", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("pk", "does-not-exist")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rr := httptest.NewRecorder()
+	api.GetMulticastGroupMembers(rr, req)
+
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+	for _, r := range recs {
+		assert.NotEqual(t, slog.LevelError, r.Level, "unknown group should not log ERROR: %q", r.Message)
+	}
 }
 
 func TestGetMulticastGroupMembers_TrafficBps(t *testing.T) {

@@ -7,6 +7,8 @@ import (
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 	temporalworkflow "go.temporal.io/sdk/workflow"
+
+	lakelogger "github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
 const (
@@ -37,7 +39,16 @@ func RegisterWorkflows(w worker.Worker) {
 // Activity failures are logged and the workflow continues to the next iteration
 // rather than failing, so the rollup loop runs indefinitely.
 func ComputeRollupWorkflow(ctx temporalworkflow.Context, iteration int) error {
-	logger := temporalworkflow.GetLogger(ctx)
+	log := temporalworkflow.GetLogger(ctx)
+
+	// Activity errors reaching the workflow are Temporal-level (StartToClose
+	// timeouts, scheduling failures) — the activity-side failure counter never
+	// sees them, and timeouts classify as transient, so escalate them at the
+	// strict threshold to keep sustained timeouts visible.
+	// Counts reset at continue-as-new (~hourly), deferring escalation by up
+	// to ErrorAfter-1 iterations across the boundary — fine at threshold 3;
+	// revisit before raising the threshold.
+	esc := &lakelogger.Escalator{TransientErrorAfter: lakelogger.DefaultErrorAfter}
 
 	actOpts := temporalworkflow.ActivityOptions{
 		StartToCloseTimeout: 2 * time.Minute,
@@ -54,7 +65,7 @@ func ComputeRollupWorkflow(ctx temporalworkflow.Context, iteration int) error {
 			WindowEnd:   now,
 		}
 
-		runIteration(ctx, logger, window)
+		runIteration(ctx, log, esc, window)
 
 		iteration++
 
@@ -70,17 +81,18 @@ func ComputeRollupWorkflow(ctx temporalworkflow.Context, iteration int) error {
 
 // runIteration executes one rollup cycle. Errors are logged, not returned,
 // so the workflow loop continues on failure.
-func runIteration(ctx temporalworkflow.Context, logger log.Logger, window BackfillChunkInput) {
-	if err := temporalworkflow.ExecuteActivity(ctx, (*Activities).RollupLinks, window).Get(ctx, nil); err != nil {
-		if ctx.Err() == nil {
-			logger.Error("link rollup failed", "error", err, "window_start", window.WindowStart, "window_end", window.WindowEnd)
-		}
+func runIteration(ctx temporalworkflow.Context, log log.Logger, esc *lakelogger.Escalator, window BackfillChunkInput) {
+	err := temporalworkflow.ExecuteActivity(ctx, (*Activities).RollupLinks, window).Get(ctx, nil)
+	if err != nil && ctx.Err() != nil {
+		return // workflow context done; the error is just the cancellation
 	}
-	if err := temporalworkflow.ExecuteActivity(ctx, (*Activities).RollupDeviceInterfaces, window).Get(ctx, nil); err != nil {
-		if ctx.Err() == nil {
-			logger.Error("device interface rollup failed", "error", err, "window_start", window.WindowStart, "window_end", window.WindowEnd)
-		}
+	esc.Observe(log, "link_rollup", "link rollup failed", err, "window_start", window.WindowStart, "window_end", window.WindowEnd)
+
+	err = temporalworkflow.ExecuteActivity(ctx, (*Activities).RollupDeviceInterfaces, window).Get(ctx, nil)
+	if err != nil && ctx.Err() != nil {
+		return
 	}
+	esc.Observe(log, "device_interface_rollup", "device interface rollup failed", err, "window_start", window.WindowStart, "window_end", window.WindowEnd)
 }
 
 // BackfillRollupWorkflow processes historical data in time chunks.
@@ -89,7 +101,16 @@ func BackfillRollupWorkflow(ctx temporalworkflow.Context, input BackfillInput) e
 		input.ChunkSize = 1 * time.Hour
 	}
 
-	logger := temporalworkflow.GetLogger(ctx)
+	log := temporalworkflow.GetLogger(ctx)
+
+	// Activity errors reaching the workflow are Temporal-level (StartToClose
+	// timeouts, scheduling failures) — the activity-side failure counter never
+	// sees them, and timeouts classify as transient, so escalate them at the
+	// strict threshold to keep sustained timeouts visible.
+	// Counts reset at continue-as-new (~hourly), deferring escalation by up
+	// to ErrorAfter-1 iterations across the boundary — fine at threshold 3;
+	// revisit before raising the threshold.
+	esc := &lakelogger.Escalator{TransientErrorAfter: lakelogger.DefaultErrorAfter}
 
 	chunkOpts := temporalworkflow.ActivityOptions{
 		StartToCloseTimeout: 5 * time.Minute,
@@ -107,7 +128,7 @@ func BackfillRollupWorkflow(ctx temporalworkflow.Context, input BackfillInput) e
 	liveStart := temporalworkflow.Now(ctx).Add(-rollupWindow).Truncate(5 * time.Minute)
 	if endTime.After(liveStart) {
 		endTime = liveStart
-		logger.Info("capped backfill end time to avoid live rollup overlap", "end_time", endTime)
+		log.Info("capped backfill end time to avoid live rollup overlap", "end_time", endTime)
 	}
 
 	chunkStart := input.StartTime
@@ -123,7 +144,7 @@ func BackfillRollupWorkflow(ctx temporalworkflow.Context, input BackfillInput) e
 			SourceDatabase: input.SourceDatabase,
 		}
 
-		runIteration(ctx, logger, chunk)
+		runIteration(ctx, log, esc, chunk)
 
 		chunkStart = chunkEnd
 	}

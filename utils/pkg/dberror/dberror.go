@@ -5,9 +5,13 @@ import (
 	"context"
 	"errors"
 	"net"
+	"regexp"
 	"strings"
 	"time"
 )
+
+// eofRe matches "eof" as a standalone word in a lowercased error message.
+var eofRe = regexp.MustCompile(`\beof\b`)
 
 // ErrorType classifies database errors for appropriate handling.
 type ErrorType int
@@ -64,6 +68,13 @@ func Classify(err error) ErrorType {
 		return ErrorTypeConnectivity
 	}
 
+	// "eof" needs word-boundary matching: a bare substring check would match
+	// embedded trigrams (e.g. "geofence") and misclassify actionable errors
+	// as transient connectivity blips. Matches "EOF", "unexpected eof", etc.
+	if eofRe.MatchString(errStr) {
+		return ErrorTypeConnectivity
+	}
+
 	// Connection/connectivity patterns
 	connectivityPatterns := []string{
 		"connectivityerror",
@@ -73,7 +84,6 @@ func Classify(err error) ErrorType {
 		"no such host",
 		"dial tcp",
 		"dial unix",
-		"eof",
 		"broken pipe",
 		"network is unreachable",
 		"no route to host",
@@ -106,12 +116,15 @@ func Classify(err error) ErrorType {
 		}
 	}
 
-	// Rate-limit patterns (upstream throttling, e.g. an external RPC returning 429).
+	// Rate-limit patterns (upstream throttling, e.g. an external RPC returning
+	// 429 or a gRPC service returning ResourceExhausted, like InfluxDB).
 	// These are transient and self-healing — worth retrying, not worth paging on.
 	rateLimitPatterns := []string{
 		"rate limited",
 		"too many requests",
 		"status 429",
+		"resourceexhausted",
+		"resource exhausted",
 	}
 
 	for _, pattern := range rateLimitPatterns {

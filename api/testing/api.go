@@ -81,6 +81,7 @@ func NewTestAPIAll(t *testing.T, chDB *ClickHouseDB, pgDB *DB, neo4jDB *Neo4jDB,
 		api.PublicQueryDB = conn
 		api.Database = dbName
 		api.ShredderDB = dbName
+		api.PublisherDB = dbName
 		api.DZDPDB = "dzdp"
 		api.FeedsDB = dbName
 	}
