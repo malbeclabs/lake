@@ -624,17 +624,21 @@ const nhGroupDeadline = 35 * time.Second
 // directly (bypassing these handlers) so it is excluded too.
 var nhLiveComputeSem = make(chan struct{}, 4)
 
-// nhAcquireLive tries to reserve a live-compute slot within a short timeout. On
-// success it returns a release func and true; on failure it returns false and the
-// caller must return 503 without launching a query. Release must be deferred.
+// nhAcquireLive reserves a live-compute slot, waiting for one to free rather
+// than shedding immediately. A scoped page load fires ~9 group requests at once
+// and every one computes live (scoped views are never precomputed); with only 4
+// slots, an immediate-shed policy 503'd the requests that lost the race, so the
+// UI showed "Couldn't load" on ~5 of 9 panels. Waiting for a slot instead lets
+// them queue and fill in progressively as the running queries finish. The wait
+// is bounded by ctx (the caller passes the group deadline), so a request still
+// sheds if its deadline expires while queued (genuine sustained overload) or if
+// the client disconnected. On success it returns a release func and true; on
+// failure it returns false and the caller must return 503 without launching a
+// query. Release must be deferred.
 func nhAcquireLive(ctx context.Context) (func(), bool) {
-	timer := time.NewTimer(2 * time.Second)
-	defer timer.Stop()
 	select {
 	case nhLiveComputeSem <- struct{}{}:
 		return func() { <-nhLiveComputeSem }, true
-	case <-timer.C:
-		return nil, false
 	case <-ctx.Done():
 		return nil, false
 	}
@@ -668,17 +672,21 @@ func (a *API) serveNHGroup(
 	)
 
 	writeLive := func(contrib string) {
-		// Bound concurrent live computes; shed load with 503 rather than piling on
-		// another ClickHouse query when the limit is saturated.
-		release, ok := nhAcquireLive(r.Context())
+		// One deadline covers the whole live operation: waiting for a slot plus
+		// the query. Concurrent ClickHouse queries are still bounded to 4, but
+		// waiters queue for a free slot instead of shedding on contention, so a
+		// single page load's ~9 concurrent group requests fill in progressively
+		// rather than 503-ing each other. Only a request whose deadline expires
+		// while queued (sustained overload) or whose client disconnected is shed.
+		ctx, cancel := context.WithTimeout(r.Context(), deadline)
+		defer cancel()
+		release, ok := nhAcquireLive(ctx)
 		if !ok {
 			nhWriteLiveUnavailable(w)
 			return
 		}
 		defer release()
 		w.Header().Set("X-Cache", "MISS")
-		ctx, cancel := context.WithTimeout(r.Context(), deadline)
-		defer cancel()
 		resp := fetch(ctx, start, end, contrib)
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
