@@ -6,6 +6,7 @@ export function AddLinkForm({
   targetCode,
   suggestedLatencyMs,
   estimateSource,
+  derivedType,
   onSubmit,
   onCancel,
 }: {
@@ -13,6 +14,10 @@ export function AddLinkForm({
   targetCode: string
   suggestedLatencyMs: number
   estimateSource: 'copied' | 'great_circle' | 'manual'
+  // 'WAN' or 'DZX' when the endpoints unambiguously determine the type (shown
+  // read-only); null for the ambiguous same-contributor-same-metro case (operator
+  // picks via a selector, defaulting to DZX). See link-type.ts.
+  derivedType: 'WAN' | 'DZX' | null
   onSubmit: (v: {
     latencyNs: number
     bandwidthBps: number
@@ -26,8 +31,12 @@ export function AddLinkForm({
   // placeholders for side_a_iface_name / side_z_iface_name.
   const [latencyMs, setLatencyMs] = useState(String(suggestedLatencyMs || ''))
   const [bandwidthGbps, setBandwidthGbps] = useState('10')
-  const [linkType, setLinkType] = useState<'WAN' | 'DZX'>('WAN')
+  const [pickedLinkType, setPickedLinkType] = useState<'WAN' | 'DZX'>('DZX')
   const [touched, setTouched] = useState(false)
+
+  // A concrete derivedType is authoritative and read-only; only the ambiguous
+  // (null) case lets the operator pick, defaulting to DZX.
+  const linkType = derivedType ?? pickedLinkType
 
   const ms = Number(latencyMs)
   const gbps = Number(bandwidthGbps)
@@ -77,17 +86,23 @@ export function AddLinkForm({
           className="mt-1 w-full px-2 py-1 text-sm bg-muted border border-border rounded"
         />
       </label>
-      <label className="block text-xs text-muted-foreground">
-        Link type
-        <select
-          value={linkType}
-          onChange={(e) => setLinkType(e.target.value as 'WAN' | 'DZX')}
-          className="mt-1 w-full px-2 py-1 text-sm bg-muted border border-border rounded"
-        >
-          <option value="WAN">WAN</option>
-          <option value="DZX">DZX</option>
-        </select>
-      </label>
+      {derivedType ? (
+        <div className="text-xs text-muted-foreground">
+          Link type: <span className="font-medium text-foreground">{derivedType}</span> (from endpoints)
+        </div>
+      ) : (
+        <label className="block text-xs text-muted-foreground">
+          Link type -- same contributor, same metro (ambiguous)
+          <select
+            value={pickedLinkType}
+            onChange={(e) => setPickedLinkType(e.target.value as 'WAN' | 'DZX')}
+            className="mt-1 w-full px-2 py-1 text-sm bg-muted border border-border rounded"
+          >
+            <option value="DZX">DZX</option>
+            <option value="WAN">WAN</option>
+          </select>
+        </label>
+      )}
       {touched && sentinelBlocked && (
         <p role="alert" className="text-[11px] text-red-500">
           That latency (1,000 ms) is reserved as the unset value. Choose another.

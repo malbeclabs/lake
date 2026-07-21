@@ -20,6 +20,8 @@ import { AddDeviceForm, type AddDeviceSubmitValue } from './AddDeviceForm'
 import { attachedLinks } from './attached-links'
 import { estimateLatencyNs } from './estimator'
 import { changedEntitiesBounds, changeGeoTargetById } from './change-geo'
+import { deriveLinkType, type LinkEndpoint } from './link-type'
+import type { DraftDevice } from './draft'
 
 // Zoom thresholds above which device/link codes are drawn on the map, so labels
 // only appear once there is enough room for them without cluttering a world view.
@@ -42,6 +44,16 @@ function createMapStyle(isDark: boolean): StyleSpecification {
       },
     },
     layers: [{ id: 'carto-tiles', type: 'raster', source: 'carto' }],
+  }
+}
+
+// Resolves an add-link endpoint's contributor + metro from a draft device, for
+// deriveLinkType. A missing device (or blank field) becomes "" (unknown) --
+// deriveLinkType treats an unknown side as invalid rather than a silent match.
+function toLinkEndpoint(dev: DraftDevice | undefined): LinkEndpoint {
+  return {
+    contributorKey: dev?.contributor_pk || dev?.contributor_code || '',
+    metroKey: dev?.metro_pk ?? '',
   }
 }
 
@@ -73,6 +85,9 @@ export function PlannerMap() {
   const [addLinkSource, setAddLinkSource] = useState<string | null>(null)
   const [cursor, setCursor] = useState<[number, number] | null>(null)
   const [addLinkTarget, setAddLinkTarget] = useState<string | null>(null)
+  // Reason shown in the dismissible banner when a picked pair is blocked (see the
+  // addLinkDerivation effect below). Cleared on tool change and on the next pick.
+  const [addLinkError, setAddLinkError] = useState<string | null>(null)
   const [placeDeviceAt, setPlaceDeviceAt] = useState<[number, number] | null>(null)
   // Always reopen the popup in its menu state when the selected link changes, so a
   // half-finished edit on one link never shows up over the next. Also drop any
@@ -97,6 +112,7 @@ export function PlannerMap() {
     setAddLinkTarget(null)
     setCursor(null)
     setPlaceDeviceAt(null)
+    setAddLinkError(null)
   }, [tool])
   const mapStyle = useMemo(() => createMapStyle(isDark), [isDark])
 
@@ -172,8 +188,12 @@ export function PlannerMap() {
           setPlaceDeviceAt([e.lngLat.lng, e.lngLat.lat])
           break
         case 'add-link-pick':
-          if (!addLinkSource) setAddLinkSource(action.deviceKey)
-          else setAddLinkTarget(action.deviceKey)
+          if (!addLinkSource) {
+            setAddLinkSource(action.deviceKey)
+            setAddLinkError(null)
+          } else {
+            setAddLinkTarget(action.deviceKey)
+          }
           break
         case 'select-link':
           selectLink(action.linkPk)
@@ -346,6 +366,25 @@ export function PlannerMap() {
     setCursor(null)
   }, [])
 
+  // WAN/DZX rule (link-type.ts), derived from the two picked devices' contributor
+  // + metro. null until both ends are picked.
+  const addLinkDerivation = useMemo(() => {
+    if (!draft || !addLinkSource || !addLinkTarget) return null
+    const a = draft.deviceByKey.get(addLinkSource)
+    const z = draft.deviceByKey.get(addLinkTarget)
+    return deriveLinkType(toLinkEndpoint(a), toLinkEndpoint(z))
+  }, [draft, addLinkSource, addLinkTarget])
+
+  // Block an invalid pick (different contributor AND different metro) before the
+  // add-link form ever opens: clear the pick and drop back to the select tool,
+  // surfacing the reason in a dismissible banner (rendered below, near the map).
+  useEffect(() => {
+    if (!addLinkDerivation || addLinkDerivation.valid) return
+    setAddLinkError(addLinkDerivation.reason ?? null)
+    resetAddLink()
+    setTool('select')
+  }, [addLinkDerivation, resetAddLink, setTool])
+
   const submitAddLink = useCallback(
     (v: {
       latencyNs: number
@@ -456,7 +495,9 @@ export function PlannerMap() {
         onCancel={() => setPopupMode('menu')}
       />
     )
-  } else if (addLinkSource && addLinkTarget) {
+  } else if (addLinkSource && addLinkTarget && addLinkDerivation?.valid) {
+    // Only ever reached for a valid pair -- the addLinkDerivation effect above
+    // resets an invalid pick before this branch can render it.
     const a = draft?.deviceByKey.get(addLinkSource)
     const z = draft?.deviceByKey.get(addLinkTarget)
     activeForm = (
@@ -465,6 +506,7 @@ export function PlannerMap() {
         targetCode={z?.code ?? '?'}
         suggestedLatencyMs={addLinkSuggestion.latencyNs / 1e6}
         estimateSource={addLinkSuggestion.source}
+        derivedType={addLinkDerivation.type}
         onSubmit={submitAddLink}
         onCancel={resetAddLink}
       />
@@ -684,6 +726,25 @@ export function PlannerMap() {
           page content. */}
       {activeForm && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20">{activeForm}</div>
+      )}
+
+      {/* Blocked add-link banner: shown instead of the form when the picked pair
+          is invalid (different contributor AND different metro). Non-blocking and
+          dismissible -- no window.alert. */}
+      {!activeForm && addLinkError && (
+        <div
+          role="alert"
+          className="absolute top-4 left-1/2 -translate-x-1/2 z-20 bg-red-50 dark:bg-red-950 border border-red-400 dark:border-red-700 text-red-700 dark:text-red-300 rounded-md px-3 py-2 text-xs flex items-center gap-2 max-w-sm"
+        >
+          <span>{addLinkError}</span>
+          <button
+            onClick={() => setAddLinkError(null)}
+            className="shrink-0 text-red-700 dark:text-red-300 hover:underline"
+            aria-label="Dismiss"
+          >
+            ✕
+          </button>
+        </div>
       )}
 
       {/* Legend */}

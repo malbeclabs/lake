@@ -14,6 +14,7 @@ describe('AddLinkForm', () => {
         targetCode="lon-b"
         suggestedLatencyMs={5}
         estimateSource="copied"
+        derivedType="WAN"
         onSubmit={vi.fn()}
         onCancel={vi.fn()}
       />
@@ -32,6 +33,7 @@ describe('AddLinkForm', () => {
         targetCode="lon-b"
         suggestedLatencyMs={5}
         estimateSource="copied"
+        derivedType="WAN"
         onSubmit={vi.fn()}
         onCancel={vi.fn()}
       />
@@ -47,6 +49,7 @@ describe('AddLinkForm', () => {
         targetCode="lon-b"
         suggestedLatencyMs={5}
         estimateSource="copied"
+        derivedType="WAN"
         onSubmit={onSubmit}
         onCancel={vi.fn()}
       />
@@ -65,6 +68,7 @@ describe('AddLinkForm', () => {
         targetCode="lon-b"
         suggestedLatencyMs={5}
         estimateSource="copied"
+        derivedType="WAN"
         onSubmit={onSubmit}
         onCancel={vi.fn()}
       />
@@ -87,6 +91,7 @@ describe('AddLinkForm', () => {
         targetCode="lon-b"
         suggestedLatencyMs={5}
         estimateSource="great_circle"
+        derivedType="WAN"
         onSubmit={onSubmit}
         onCancel={vi.fn()}
       />
@@ -98,7 +103,7 @@ describe('AddLinkForm', () => {
     )
   })
 
-  it('lets the operator switch the link type to DZX', () => {
+  it('shows the derived type read-only and submits it, with no selector', () => {
     const onSubmit = vi.fn()
     render(
       <AddLinkForm
@@ -106,13 +111,34 @@ describe('AddLinkForm', () => {
         targetCode="lon-b"
         suggestedLatencyMs={5}
         estimateSource="copied"
+        derivedType="DZX"
         onSubmit={onSubmit}
         onCancel={vi.fn()}
       />
     )
-    fireEvent.change(screen.getByLabelText(/Link type/), { target: { value: 'DZX' } })
+    expect(screen.getByText('DZX')).toBeInTheDocument()
+    expect(screen.queryByLabelText(/Link type/)).not.toBeInTheDocument()
     fireEvent.click(screen.getByText('Add link'))
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ linkType: 'DZX' }))
+  })
+
+  it('defaults the ambiguous (same contributor, same metro) selector to DZX and lets the operator switch to WAN', () => {
+    const onSubmit = vi.fn()
+    render(
+      <AddLinkForm
+        sourceCode="nyc-a"
+        targetCode="nyc-b"
+        suggestedLatencyMs={5}
+        estimateSource="copied"
+        derivedType={null}
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+      />
+    )
+    expect(screen.getByLabelText(/Link type/)).toHaveValue('DZX')
+    fireEvent.change(screen.getByLabelText(/Link type/), { target: { value: 'WAN' } })
+    fireEvent.click(screen.getByText('Add link'))
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ linkType: 'WAN' }))
   })
 
   // Global constraint: a latency of exactly 1,000 ms converts to the 1e9-ns
@@ -126,6 +152,7 @@ describe('AddLinkForm', () => {
         targetCode="lon-b"
         suggestedLatencyMs={5}
         estimateSource="copied"
+        derivedType="WAN"
         onSubmit={onSubmit}
         onCancel={vi.fn()}
       />
@@ -145,6 +172,7 @@ describe('AddLinkForm', () => {
         targetCode="lon-b"
         suggestedLatencyMs={5}
         estimateSource="copied"
+        derivedType="WAN"
         onSubmit={vi.fn()}
         onCancel={onCancel}
       />

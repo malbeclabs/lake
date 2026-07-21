@@ -713,6 +713,101 @@ func validateNewMetro(m *NewMetroPayload) error {
 	return nil
 }
 
+// addLinkEndpointRule is one add_link endpoint's resolved contributor + metro
+// identity, used only to enforce the WAN/DZX rule below (defense-in-depth for
+// the frontend's link-type.ts deriveLinkType). An empty ContributorKey or
+// MetroKey means "unresolved" -- validateAddLinkEndpointsRule skips the check
+// rather than blocking on an unknown endpoint.
+type addLinkEndpointRule struct {
+	ContributorKey string
+	MetroKey       string
+}
+
+// resolveAddLinkEndpointRule resolves one add_link endpoint's contributor +
+// metro identity for the WAN/DZX rule: an existing device pk resolves against
+// the baseline; a sibling add_device change's local_ref resolves against that
+// change's own payload (contributor_pk, falling back to contributor_code, and
+// metro_pk or the synthesized new-metro key from new_metro.code). Mirrors
+// resolveEndpoint (topology_plan_actionlist.go) and resolveAddDeviceMetro
+// (planner_graph.go), combined and metro-aware for this rule.
+func (b *baselineIndex) resolveAddLinkEndpointRule(devicePK, ref string) addLinkEndpointRule {
+	if ref != "" {
+		add, ok := b.addDeviceByRef[ref]
+		if !ok {
+			return addLinkEndpointRule{}
+		}
+		p, _ := decodePlanChangePayload(add)
+		contrib := p.ContributorPK
+		if contrib == "" {
+			contrib = p.ContributorCode
+		}
+		metro := p.MetroPK
+		if p.NewMetro != nil && p.NewMetro.Code != "" {
+			metro = newMetroPK(p.NewMetro.Code)
+		}
+		return addLinkEndpointRule{ContributorKey: contrib, MetroKey: metro}
+	}
+	if d, ok := b.deviceByPK[devicePK]; ok {
+		contrib := d.ContributorPK
+		if contrib == "" {
+			contrib = d.ContributorCode
+		}
+		return addLinkEndpointRule{ContributorKey: contrib, MetroKey: d.MetroPK}
+	}
+	return addLinkEndpointRule{}
+}
+
+// validateAddLinkEndpointsRule enforces the WAN/DZX contributor+metro rule
+// (the frontend's link-type.ts deriveLinkType) for an add_link change's two
+// resolved endpoints. It rejects ONLY the invalid combo -- different
+// contributor AND different metro; WAN (same contributor, different metro),
+// DZX (different contributor, same metro), and same-contributor-same-metro
+// are all allowed here (the operator picks the type for that last case on the
+// frontend). An endpoint that could not be resolved (empty ContributorKey or
+// MetroKey) is skipped rather than blocked: the frontend already guards this
+// case, and a backend that cannot resolve an endpoint must not block what may
+// be a legitimate edit.
+func validateAddLinkEndpointsRule(a, z addLinkEndpointRule) error {
+	if a.ContributorKey == "" || a.MetroKey == "" || z.ContributorKey == "" || z.MetroKey == "" {
+		return nil
+	}
+	sameContrib := a.ContributorKey == z.ContributorKey
+	sameMetro := a.MetroKey == z.MetroKey
+	if !sameContrib && !sameMetro {
+		return fmt.Errorf("invalid link: a cross-contributor link must be within one metro (DZX); a cross-metro link must be owned by one contributor (WAN)")
+	}
+	return nil
+}
+
+// validateAddLinkRule loads the plan's baseline topology and existing changes
+// and applies validateAddLinkEndpointsRule to this add_link payload's two
+// endpoints. Defense-in-depth for PlannerMap.tsx's frontend block: a malformed
+// or stale client must not be able to stage an invalid link. Any failure to
+// load the plan or the baseline resolves nothing and skips the check, rather
+// than 500ing a request that the rest of AddPlanChange will otherwise handle
+// (including a plan-not-found 404) normally.
+func (a *API) validateAddLinkRule(ctx context.Context, planID uuid.UUID, payload json.RawMessage) error {
+	var p plannerPayload
+	if len(payload) > 0 {
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return nil
+		}
+	}
+	plan, err := loadPlanWithChanges(ctx, a.PgPool, planID)
+	if err != nil {
+		return nil
+	}
+	baseCtx := ContextWithEnv(ctx, DZEnv(plan.Environment))
+	baseline, err := a.FetchTopologyData(baseCtx)
+	if err != nil {
+		return nil
+	}
+	idx := newBaselineIndex(&baseline, plan.Changes)
+	aEnd := idx.resolveAddLinkEndpointRule(p.SideADevicePK, p.SideARef)
+	zEnd := idx.resolveAddLinkEndpointRule(p.SideZDevicePK, p.SideZRef)
+	return validateAddLinkEndpointsRule(aEnd, zEnd)
+}
+
 // touchPlan records activity on a plan (updated_at / updated_by) without bumping
 // its optimistic-concurrency version. Change edits touch; only plan-metadata
 // PATCH bumps version.
@@ -754,6 +849,12 @@ func (a *API) AddPlanChange(w http.ResponseWriter, r *http.Request) {
 	if err := validateChangeShape(req.OpType, req.RefDevicePK, req.RefLinkPK, req.LocalRef, req.Payload); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	if req.OpType == OpAddLink {
+		if err := a.validateAddLinkRule(r.Context(), planID, req.Payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 
 	payload := req.Payload
