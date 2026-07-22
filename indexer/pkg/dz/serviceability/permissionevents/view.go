@@ -200,52 +200,56 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		return result, fmt.Errorf("get high water marks: %w", err)
 	}
 
+	// Persist each account's events as soon as it finishes fetching, rather than
+	// accumulating every account into one end-of-cycle insert. The per-account cursor is
+	// derived from the fact table (max(slot) per permission_pk), so committing an account
+	// immediately advances its cursor. If the refresh later times out — the Temporal activity
+	// has a bounded StartToCloseTimeout — the accounts already committed are not re-fetched
+	// next cycle. A single terminal batch instead discards the whole cycle's work on timeout
+	// and re-fetches it forever: a poison loop once the backlog exceeds one timeout window.
 	var (
-		mu        sync.Mutex
-		allEvents []PermissionEventRow
+		mu            sync.Mutex
+		totalInserted int64
 	)
 	var g errgroup.Group
 	g.SetLimit(maxConcurrentFetches)
 	for _, pda := range pdas {
 		g.Go(func() error {
-			events, err := v.fetchAccountEvents(ctx, pda, hwms[pda.String()])
+			events, fetchErr := v.fetchAccountEvents(ctx, pda, hwms[pda.String()])
+			// Persist whatever decoded cleanly before surfacing any fetch error (idempotent
+			// via ReplacingMergeTree). A failed account isn't cursor-advanced past its
+			// un-indexed signatures, so it is simply re-fetched next refresh — no silent gap.
 			if len(events) > 0 {
+				if err := v.store.InsertEvents(ctx, events); err != nil {
+					return fmt.Errorf("insert permission events for %s: %w", pda.String(), err)
+				}
 				mu.Lock()
-				allEvents = append(allEvents, events...)
+				totalInserted += int64(len(events))
 				mu.Unlock()
 			}
-			if err != nil {
+			if fetchErr != nil {
 				v.log.Warn("serviceability/permission-events: failed to fetch account",
-					"permission_pk", pda.String(), "error", err)
-				return err
+					"permission_pk", pda.String(), "error", fetchErr)
+				return fetchErr
 			}
 			return nil
 		})
 	}
-	fetchErr := g.Wait()
-
-	// Persist whatever decoded cleanly (idempotent via ReplacingMergeTree). Because the
-	// per-account cursor is derived from the fact table, a failed account simply isn't
-	// advanced — it is re-fetched next refresh rather than leaving a silent gap.
-	if err := v.store.InsertEvents(ctx, allEvents); err != nil {
+	if err := g.Wait(); err != nil {
 		metrics.ViewRefreshTotal.WithLabelValues(metricSource, "error").Inc()
-		return result, fmt.Errorf("insert permission events: %w", err)
-	}
-	if fetchErr != nil {
-		metrics.ViewRefreshTotal.WithLabelValues(metricSource, "error").Inc()
-		return result, fmt.Errorf("fetch account events: %w", fetchErr)
+		return result, fmt.Errorf("refresh permission accounts: %w", err)
 	}
 
-	result.RowsAffected = int64(len(allEvents))
+	result.RowsAffected = totalInserted
 	fetchedAt := time.Now().UTC()
 	result.SourceMaxEventTS = &fetchedAt
 
 	v.markReady()
 	metrics.ViewRefreshTotal.WithLabelValues(metricSource, "success").Inc()
 
-	if len(allEvents) > 0 {
+	if totalInserted > 0 {
 		v.log.Info("serviceability/permission-events: indexed new events",
-			"count", len(allEvents), "watched_accounts", len(pdas))
+			"count", totalInserted, "watched_accounts", len(pdas))
 	}
 	return result, nil
 }
