@@ -22,6 +22,11 @@ func TestClassifyAndIsTransient(t *testing.T) {
 		{"rpc rate limit message", errors.New("rate limited (status 429)"), dberror.ErrorTypeRateLimit, true},
 		{"too many requests", errors.New("upstream returned Too Many Requests"), dberror.ErrorTypeRateLimit, true},
 		{"grpc resource exhausted", errors.New("rpc error: code = ResourceExhausted desc = token bucket exhausted"), dberror.ErrorTypeRateLimit, true},
+		// InfluxDB Cloud throttle signatures. It emits the plural "Resources exhausted",
+		// which the singular "resource exhausted" pattern does not substring-match, plus a
+		// "request too large" prefix — both must classify as transient rate limits.
+		{"influxdb resources exhausted plural", errors.New("Resources exhausted: Heap exhausted"), dberror.ErrorTypeRateLimit, true},
+		{"influxdb request too large", errors.New("request too large: Error running series plans for namespace 'x': Resources exhausted: Heap exhausted"), dberror.ErrorTypeRateLimit, true},
 
 		// The actual prod CH-connection-drop errors we saw — must be transient.
 		{"ch read packet reset", errors.New("query processing: failed to read packet from 52.4.220.199:9440 (conn_id=492): read: connection reset by peer"), dberror.ErrorTypeConnectivity, true},

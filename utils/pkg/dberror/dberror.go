@@ -123,8 +123,10 @@ func Classify(err error) ErrorType {
 		"rate limited",
 		"too many requests",
 		"status 429",
+		"request too large",
 		"resourceexhausted",
 		"resource exhausted",
+		"resources exhausted",
 	}
 
 	for _, pattern := range rateLimitPatterns {
