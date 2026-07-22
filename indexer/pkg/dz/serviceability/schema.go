@@ -481,7 +481,11 @@ func (s *AccessPassSchema) PayloadColumns() []string {
 func (s *AccessPassSchema) ToRow(ap AccessPass) []any {
 	pubAllowlistJSON, _ := json.Marshal(ap.MGroupPubAllowlist)
 	subAllowlistJSON, _ := json.Marshal(ap.MGroupSubAllowlist)
-	feedSeatsJSON, _ := json.Marshal(ap.FeedSeats)
+	feedSeats := ap.FeedSeats
+	if feedSeats == nil {
+		feedSeats = []FeedSeat{}
+	}
+	feedSeatsJSON, _ := json.Marshal(feedSeats)
 	return []any{
 		ap.PK,
 		ap.OwnerPubkey,
