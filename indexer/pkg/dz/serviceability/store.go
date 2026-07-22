@@ -300,6 +300,31 @@ func (s *Store) ReplaceTopologies(ctx context.Context, topologies []Topology) er
 	return nil
 }
 
+func (s *Store) ReplaceFeeds(ctx context.Context, feeds []Feed) error {
+	s.log.Debug("serviceability/store: replacing feeds", "count", len(feeds))
+
+	d, err := NewFeedDataset(s.log)
+	if err != nil {
+		return fmt.Errorf("failed to create dataset: %w", err)
+	}
+
+	conn, err := s.cfg.ClickHouse.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get ClickHouse connection: %w", err)
+	}
+	defer conn.Close()
+
+	if err := d.WriteBatch(ctx, conn, len(feeds), func(i int) ([]any, error) {
+		return feedSchema.ToRow(feeds[i]), nil
+	}, &dataset.DimensionType2DatasetWriteConfig{
+		MissingMeansDeleted: true,
+	}); err != nil {
+		return fmt.Errorf("failed to write feeds to ClickHouse: %w", err)
+	}
+
+	return nil
+}
+
 func (s *Store) ReplaceMulticastGroups(ctx context.Context, groups []MulticastGroup) error {
 	s.log.Debug("serviceability/store: replacing multicast groups", "count", len(groups))
 

@@ -2,6 +2,7 @@ package dzsvc
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -269,6 +270,68 @@ func TestLake_Serviceability_View_ConvertUsers(t *testing.T) {
 		require.Equal(t, "down", result[0].BgpStatus)
 		require.Equal(t, "up", result[1].BgpStatus)
 		require.Equal(t, "unknown", result[2].BgpStatus)
+	})
+
+	t.Run("maps FeedPk, empty for the zero pubkey", func(t *testing.T) {
+		t.Parallel()
+
+		feedPK := [32]byte{9, 9, 9}
+		onchain := []serviceability.User{
+			// EdgeSeat multicast user with a feed.
+			{PubKey: [32]byte{1}, Status: serviceability.UserStatusActivated, UserType: serviceability.UserTypeMulticast, FeedPk: feedPK},
+			// Non-EdgeSeat user: zero pubkey → "".
+			{PubKey: [32]byte{2}, Status: serviceability.UserStatusActivated, UserType: serviceability.UserTypeIBRL},
+		}
+
+		result := convertUsers(onchain)
+
+		require.Len(t, result, 2)
+		require.Equal(t, solana.PublicKeyFromBytes(feedPK[:]).String(), result[0].FeedPK)
+		require.Equal(t, "", result[1].FeedPK)
+	})
+}
+
+func TestLake_Serviceability_View_ConvertFeeds(t *testing.T) {
+	t.Parallel()
+
+	t.Run("converts onchain feeds to domain types", func(t *testing.T) {
+		t.Parallel()
+
+		pk := [32]byte{1, 2, 3, 4}
+		owner := [32]byte{5, 6, 7, 8}
+		exchange := [32]byte{9, 10}
+		group1 := [32]byte{11}
+		group2 := [32]byte{12}
+
+		onchain := []serviceability.Feed{
+			{
+				PubKey:   pk,
+				Owner:    owner,
+				Code:     "FEED001",
+				Name:     "NYC Multicast",
+				Exchange: exchange,
+				Groups:   [][32]byte{group1, group2},
+			},
+		}
+
+		result := convertFeeds(onchain)
+
+		require.Len(t, result, 1)
+		require.Equal(t, solana.PublicKeyFromBytes(pk[:]).String(), result[0].PK)
+		require.Equal(t, solana.PublicKeyFromBytes(owner[:]).String(), result[0].OwnerPubkey)
+		require.Equal(t, "FEED001", result[0].Code)
+		require.Equal(t, "NYC Multicast", result[0].Name)
+		require.Equal(t, solana.PublicKeyFromBytes(exchange[:]).String(), result[0].MetroPK)
+		require.Equal(t, []string{
+			solana.PublicKeyFromBytes(group1[:]).String(),
+			solana.PublicKeyFromBytes(group2[:]).String(),
+		}, result[0].Groups)
+
+		// Groups must serialize as a JSON array (not null) even when empty.
+		empty := convertFeeds([]serviceability.Feed{{PubKey: [32]byte{1}}})
+		groupsJSON, err := json.Marshal(empty[0].Groups)
+		require.NoError(t, err)
+		require.Equal(t, "[]", string(groupsJSON))
 	})
 }
 
@@ -920,6 +983,9 @@ func TestLake_Serviceability_View_Refresh(t *testing.T) {
 		linkPK := testPubkeyBytes(6)
 		sideAPK := testPubkeyBytes(7)
 		sideZPK := testPubkeyBytes(8)
+		feedPK := testPubkeyBytes(11)
+		accessPassPK := testPubkeyBytes(12)
+		groupPK := testPubkeyBytes(13)
 
 		rpc := &MockServiceabilityRPC{
 			getProgramDataFunc: func(ctx context.Context) (*serviceability.ProgramData, error) {
@@ -949,10 +1015,11 @@ func TestLake_Serviceability_View_Refresh(t *testing.T) {
 							PubKey:       userPK,
 							Owner:        ownerPubkey,
 							Status:       serviceability.UserStatusActivated,
-							UserType:     serviceability.UserTypeIBRL,
+							UserType:     serviceability.UserTypeMulticast,
 							ClientIp:     [4]byte{1, 1, 1, 1},
 							DzIp:         [4]byte{10, 0, 0, 1},
 							DevicePubKey: devicePK,
+							FeedPk:       feedPK,
 						},
 						{
 							PubKey:       testPubkeyBytes(9),
@@ -1000,6 +1067,27 @@ func TestLake_Serviceability_View_Refresh(t *testing.T) {
 							JitterNs:          1000000, // onchain field name
 							Bandwidth:         1000000000,
 							DelayOverrideNs:   0, // onchain field name
+						},
+					},
+					Feeds: []serviceability.Feed{
+						{
+							PubKey:   feedPK,
+							Owner:    ownerPubkey,
+							Code:     "FEED001",
+							Name:     "NYC Multicast",
+							Exchange: metroPK,
+							Groups:   [][32]byte{groupPK},
+						},
+					},
+					AccessPasses: []serviceability.AccessPass{
+						{
+							PubKey:            accessPassPK,
+							Owner:             ownerPubkey,
+							AccessPassTypeTag: serviceability.AccessPassTypeEdgeSeat,
+							Status:            serviceability.AccessPassStatusConnected,
+							FeedSeats: []serviceability.FeedSeat{
+								{FeedKey: feedPK, MaxUsers: 5, CurrentUsers: 2, WindowEnd: 1800000000, TerminatesAt: 1900000000},
+							},
 						},
 					},
 				}, nil
@@ -1089,11 +1177,25 @@ func TestLake_Serviceability_View_Refresh(t *testing.T) {
 		require.NoError(t, rows.Scan(&linkCount))
 		rows.Close()
 
+		rows, err = conn.Query(ctx, `
+			WITH ranked AS (
+				SELECT *, ROW_NUMBER() OVER (PARTITION BY entity_id ORDER BY snapshot_ts DESC, ingested_at DESC, op_id DESC) AS rn
+				FROM dim_dz_feeds_history
+			)
+			SELECT count(*) FROM ranked WHERE rn = 1 AND is_deleted = 0
+		`)
+		require.NoError(t, err)
+		require.True(t, rows.Next())
+		var feedCount uint64
+		require.NoError(t, rows.Scan(&feedCount))
+		rows.Close()
+
 		require.Equal(t, uint64(1), contributorCount, "should have 1 contributor")
 		require.Equal(t, uint64(1), deviceCount, "should have 1 device")
 		require.Equal(t, uint64(3), userCount, "should have 3 users")
 		require.Equal(t, uint64(1), metroCount, "should have 1 metro")
 		require.Equal(t, uint64(1), linkCount, "should have 1 link")
+		require.Equal(t, uint64(1), feedCount, "should have 1 feed")
 
 		// Note: GeoIP records are now handled by the geoip view, not the serviceability view
 
@@ -1137,6 +1239,36 @@ func TestLake_Serviceability_View_Refresh(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, current)
 		require.Equal(t, "LINK001", current["code"], "link should have correct code")
+
+		// Feed content, metro rename, and JSON groups array.
+		feedPKStr := testPubkey(11).String()
+		feedsDataset, err := NewFeedDataset(laketesting.NewLogger())
+		require.NoError(t, err)
+		feedEntityID := dataset.NewNaturalKey(feedPKStr).ToSurrogate()
+		current, err = feedsDataset.GetCurrentRow(ctx, conn, feedEntityID)
+		require.NoError(t, err)
+		require.NotNil(t, current)
+		require.Equal(t, "FEED001", current["code"], "feed should have correct code")
+		require.Equal(t, testPubkey(2).String(), current["metro_pk"], "feed metro_pk should be the exchange")
+		require.JSONEq(t, `["`+testPubkey(13).String()+`"]`, current["groups"].(string))
+
+		// User carries its EdgeSeat feed pubkey through to dz_users_current.
+		rows, err = conn.Query(ctx, "SELECT feed_pk FROM dz_users_current WHERE pk = ?", testPubkey(4).String())
+		require.NoError(t, err)
+		require.True(t, rows.Next())
+		var userFeedPk string
+		require.NoError(t, rows.Scan(&userFeedPk))
+		rows.Close()
+		require.Equal(t, feedPKStr, userFeedPk)
+
+		// EdgeSeat pass carries its feed-seat JSON through to dz_access_passes_current.
+		rows, err = conn.Query(ctx, "SELECT feed_seats FROM dz_access_passes_current WHERE pk = ?", testPubkey(12).String())
+		require.NoError(t, err)
+		require.True(t, rows.Next())
+		var feedSeats string
+		require.NoError(t, rows.Scan(&feedSeats))
+		rows.Close()
+		require.JSONEq(t, `[{"feed_pk":"`+feedPKStr+`","max_users":5,"max_future_users":0,"current_users":2,"anniversary_day":0,"window_end":1800000000,"terminates_at":1900000000}]`, feedSeats)
 	})
 
 	t.Run("handles users without client IPs", func(t *testing.T) {
@@ -1277,6 +1409,50 @@ func TestLake_Serviceability_View_ConvertAccessPasses_AssociatedPubkey(t *testin
 		require.Equal(t, tt.want, result[0].AssociatedPubkey,
 			"tag %s should have associated pubkey %q", accessPassTypeTagString(tt.tag), tt.want)
 	}
+}
+
+func TestLake_Serviceability_View_ConvertAccessPasses_FeedSeats(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no seats serialize as []", func(t *testing.T) {
+		t.Parallel()
+
+		result := convertAccessPasses([]serviceability.AccessPass{{
+			AccessPassTypeTag: serviceability.AccessPassTypePrepaid,
+		}})
+		require.Len(t, result, 1)
+		seatsJSON, err := json.Marshal(result[0].FeedSeats)
+		require.NoError(t, err)
+		require.Equal(t, "[]", string(seatsJSON))
+	})
+
+	t.Run("converts EdgeSeat feed seats", func(t *testing.T) {
+		t.Parallel()
+
+		feedA := [32]byte{0xA1}
+		feedB := [32]byte{0xB2}
+		result := convertAccessPasses([]serviceability.AccessPass{{
+			AccessPassTypeTag: serviceability.AccessPassTypeEdgeSeat,
+			FeedSeats: []serviceability.FeedSeat{
+				{FeedKey: feedA, MaxUsers: 7, MaxFutureUsers: 4, CurrentUsers: 3, AnniversaryDay: 15, WindowEnd: 1800000000, TerminatesAt: 1900000000},
+				{FeedKey: feedB, MaxUsers: 1},
+			},
+		}})
+
+		require.Len(t, result, 1)
+		require.Equal(t, []FeedSeat{
+			{FeedPK: solana.PublicKeyFromBytes(feedA[:]).String(), MaxUsers: 7, MaxFutureUsers: 4, CurrentUsers: 3, AnniversaryDay: 15, WindowEnd: 1800000000, TerminatesAt: 1900000000},
+			{FeedPK: solana.PublicKeyFromBytes(feedB[:]).String(), MaxUsers: 1},
+		}, result[0].FeedSeats)
+
+		// Assert exact JSON shape (stored column contract).
+		seatsJSON, err := json.Marshal(result[0].FeedSeats)
+		require.NoError(t, err)
+		require.JSONEq(t, `[
+			{"feed_pk":"`+solana.PublicKeyFromBytes(feedA[:]).String()+`","max_users":7,"max_future_users":4,"current_users":3,"anniversary_day":15,"window_end":1800000000,"terminates_at":1900000000},
+			{"feed_pk":"`+solana.PublicKeyFromBytes(feedB[:]).String()+`","max_users":1,"max_future_users":0,"current_users":0,"anniversary_day":0,"window_end":0,"terminates_at":0}
+		]`, string(seatsJSON))
+	})
 }
 
 func TestLake_Serviceability_View_StatusString_StripsDeprecatedSuffix(t *testing.T) {
