@@ -141,6 +141,62 @@ func TestLake_TelemetryUsage_BaselineCache_LookbackBound(t *testing.T) {
 	require.Equal(t, int64(22), *got.InErrors["devNew:eth0"])
 }
 
+// TestLake_TelemetryUsage_BaselineCache_MergePreservesSilentKeys proves the cache
+// is merged, not replaced: a key absent from a window's end-of-window baselines
+// (an interface that reported no rows that window) keeps its carried value, and a
+// window with no new data does not wipe the cache — only advances the watermark.
+func TestLake_TelemetryUsage_BaselineCache_MergePreservesSilentKeys(t *testing.T) {
+	t.Parallel()
+
+	w1 := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	w2 := w1.Add(10 * time.Minute)
+
+	view := &View{
+		baselineCache: &CounterBaselines{
+			InDiscards:  map[string]*int64{},
+			InErrors:    map[string]*int64{"devA:eth0": int64Ptr(100)},
+			InFCSErrors: map[string]*int64{},
+			OutDiscards: map[string]*int64{},
+			OutErrors:   map[string]*int64{},
+		},
+		baselineCacheWatermark: w1,
+	}
+
+	// Next window: only devB reported; devA was silent.
+	view.updateBaselineCache(&CounterBaselines{
+		InDiscards:  map[string]*int64{},
+		InErrors:    map[string]*int64{"devB:eth0": int64Ptr(200)},
+		InFCSErrors: map[string]*int64{},
+		OutDiscards: map[string]*int64{},
+		OutErrors:   map[string]*int64{},
+	}, w2)
+
+	require.NotNil(t, view.baselineCache.InErrors["devA:eth0"], "silent key must be preserved by merge")
+	require.Equal(t, int64(100), *view.baselineCache.InErrors["devA:eth0"])
+	require.Equal(t, int64(200), *view.baselineCache.InErrors["devB:eth0"])
+	require.Equal(t, w2, view.baselineCacheWatermark)
+
+	// An empty window (0 rows → empty end-of-window baselines) must not wipe the
+	// cache, only advance the watermark — otherwise the next refresh cache-hits on
+	// 0 keys and falls into the expensive InfluxDB fallback.
+	w3 := w2.Add(10 * time.Minute)
+	view.updateBaselineCache(&CounterBaselines{
+		InDiscards:  map[string]*int64{},
+		InErrors:    map[string]*int64{},
+		InFCSErrors: map[string]*int64{},
+		OutDiscards: map[string]*int64{},
+		OutErrors:   map[string]*int64{},
+	}, w3)
+
+	require.Equal(t, int64(100), *view.baselineCache.InErrors["devA:eth0"])
+	require.Equal(t, int64(200), *view.baselineCache.InErrors["devB:eth0"])
+	require.Equal(t, w3, view.baselineCacheWatermark, "empty window must still advance the watermark")
+
+	// A nil end-of-window struct is a no-op (watermark unchanged).
+	view.updateBaselineCache(nil, w3.Add(time.Hour))
+	require.Equal(t, w3, view.baselineCacheWatermark)
+}
+
 // TestLake_TelemetryUsage_BaselineCache_BackfillCarry proves two sequential
 // contiguous backfill chunks scan ClickHouse for baselines only once: the second
 // chunk reuses the first chunk's carried end-of-window baselines.

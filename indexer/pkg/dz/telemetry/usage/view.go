@@ -206,6 +206,11 @@ const baselineLookback = 2 * 24 * time.Hour
 // watermark, not against wall-clock time. Steady-state incremental refreshes
 // query [maxTime-5m, ...], so windowStart lands ~5m below the watermark; the
 // margin also covers capped catch-up steps.
+//
+// It must exceed the refresh overlap (5m, see queryStart in Refresh) plus one
+// capped catch-up step (QueryChunk × maxCatchupChunks, 5m); 15m leaves headroom.
+// If those constants grow past this margin the cache stops hitting and every
+// refresh scans ClickHouse again — watch doublezero_data_indexer_clickhouse_baseline_query_total.
 const baselineCacheMaxLag = 15 * time.Minute
 
 // maxCatchupChunks bounds a single refresh to maxCatchupChunks × QueryChunk of
@@ -237,7 +242,8 @@ type View struct {
 	refreshMu sync.Mutex // prevents concurrent refreshes
 
 	// baselineCache caches the result of queryBaselineCountersFromClickHouse.
-	// refreshMu already serialises refreshes, so no additional lock is needed.
+	// Both Refresh and BackfillForTimeRange read and write it under refreshMu, so
+	// no additional lock is needed.
 	// baselineCacheWatermark is the data end (queryEnd of the refresh, or endTime
 	// of the backfill chunk) that the cached baselines represent.
 	baselineCache          *CounterBaselines
@@ -472,19 +478,15 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		metrics.ViewRefreshTotal.WithLabelValues("telemetry-usage", "error").Inc()
 		return result, fmt.Errorf("failed to query influxdb: %w", err)
 	}
-	// Update the baseline cache with the end-of-window values so the next cycle
-	// uses what was actually processed rather than re-querying ClickHouse. The
-	// watermark is the data end actually processed (queryEnd), not now: the cache
-	// represents sparse-counter state as of that watermark.
-	if endBaselines != nil {
-		v.baselineCache = endBaselines
-		v.baselineCacheWatermark = queryEnd
-	}
-
 	v.log.Info("telemetry/usage: queried influxdb", "rows", len(usage), "from", queryStart, "to", queryEnd)
 
 	if len(usage) == 0 {
 		v.log.Warn("telemetry/usage: no data returned from influxdb query", "from", queryStart, "to", now)
+		// Nothing to insert, so no persistence to wait on. Merge end-of-window
+		// baselines (a no-op when the window was genuinely empty) and advance the
+		// watermark: nothing changed through queryEnd, so the cached last-known
+		// values still hold there and the next refresh can cache-hit.
+		v.updateBaselineCache(endBaselines, queryEnd)
 		v.readyOnce.Do(func() {
 			close(v.readyCh)
 			v.log.Info("telemetry/usage: view is now ready (no data)")
@@ -501,6 +503,14 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	insertDuration := time.Since(insertStart)
 	v.log.Info("telemetry/usage: inserted data to clickhouse", "rows", len(usage), "duration", insertDuration.String())
 
+	// Update the baseline cache only after the rows are durably in ClickHouse. A
+	// failed insert must not leave the cache holding unpersisted end-of-window
+	// values: the next refresh's overlap re-reads those same rows and would
+	// compute their first sparse delta against a poisoned baseline. Merge (not
+	// replace) so interfaces that reported no rows this window keep their carried
+	// baseline instead of being dropped and losing forward-fill.
+	v.updateBaselineCache(endBaselines, queryEnd)
+
 	v.readyOnce.Do(func() {
 		close(v.readyCh)
 		v.log.Info("telemetry/usage: view is now ready")
@@ -512,6 +522,44 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 
 	metrics.ViewRefreshTotal.WithLabelValues("telemetry-usage", "success").Inc()
 	return result, nil
+}
+
+// updateBaselineCache merges the end-of-window sparse baselines into the cache
+// and advances the watermark to the data end just processed. Merging (rather
+// than replacing the pointer) preserves baselines for interfaces that reported
+// no rows in this window: convertRowsToUsage only emits keys it saw rows for, so
+// a wholesale replace would drop a silent interface's baseline and — since the
+// cache now actually hits and never expires — never recover it. A key that did
+// report keeps its latest value (src overwrites dst). Callers must hold the same
+// serialization as the rest of the refresh (refreshMu).
+func (v *View) updateBaselineCache(endBaselines *CounterBaselines, watermark time.Time) {
+	if endBaselines == nil {
+		return
+	}
+	if v.baselineCache == nil {
+		v.baselineCache = &CounterBaselines{
+			InDiscards:  make(map[string]*int64),
+			InErrors:    make(map[string]*int64),
+			InFCSErrors: make(map[string]*int64),
+			OutDiscards: make(map[string]*int64),
+			OutErrors:   make(map[string]*int64),
+		}
+	}
+	mergeBaselineMap(v.baselineCache.InDiscards, endBaselines.InDiscards)
+	mergeBaselineMap(v.baselineCache.InErrors, endBaselines.InErrors)
+	mergeBaselineMap(v.baselineCache.InFCSErrors, endBaselines.InFCSErrors)
+	mergeBaselineMap(v.baselineCache.OutDiscards, endBaselines.OutDiscards)
+	mergeBaselineMap(v.baselineCache.OutErrors, endBaselines.OutErrors)
+	v.baselineCacheWatermark = watermark
+}
+
+// mergeBaselineMap upserts each non-nil src entry into dst.
+func mergeBaselineMap(dst, src map[string]*int64) {
+	for k, val := range src {
+		if val != nil {
+			dst[k] = val
+		}
+	}
 }
 
 // LinkInfo holds link information for a device/interface
@@ -1002,13 +1050,22 @@ func (v *View) convertRowsToUsage(rows []map[string]any, baselines *CounterBasel
 func (v *View) queryBaselineCountersFromClickHouse(ctx context.Context, windowStart time.Time) (*CounterBaselines, error) {
 	// Reuse the cached baselines when windowStart is at or near the watermark they
 	// represent. The cache holds end-of-window sparse-counter values from the last
-	// refresh/backfill chunk this process ran. Because this view is the table's only
-	// writer, ClickHouse holds no data past the watermark, so a fresh query at a
+	// refresh/backfill chunk this process ran. This view is the sole writer of the
+	// region [watermark, now) — the live indexer writes the realtime region and a
+	// backfill process writes only its (historical, contiguous, ascending) range —
+	// so ClickHouse holds no fresher data past the watermark, and a fresh query at a
 	// windowStart >= watermark returns the same state. A windowStart slightly below
 	// the watermark (the normal 5m overlap) is also safe: overlap rows are re-read
 	// and their values overwrite lastKnownValues before any new row is processed.
 	// Historical windowStart values (backfill of an old region) fall far below the
 	// watermark and bypass the cache, re-querying ClickHouse as before.
+	//
+	// The guard is intentionally unbounded on the forward side: a live refresh that
+	// falls behind resumes at windowStart = now-QueryWindow, far above the watermark,
+	// and must still cache-hit (the source stopped, so ClickHouse has nothing new).
+	// The one unsafe shape — a large FORWARD jump into a region another writer has
+	// since populated — cannot arise from the admin backfill loop, which runs a
+	// single contiguous ascending range per process with a fresh (nil) cache.
 	if v.baselineCache != nil && !windowStart.Before(v.baselineCacheWatermark.Add(-baselineCacheMaxLag)) {
 		v.log.Debug("telemetry/usage: using cached baselines",
 			"windowStart", windowStart.UTC(), "watermark", v.baselineCacheWatermark.UTC())

@@ -23,6 +23,13 @@ func (v *View) BackfillForTimeRange(ctx context.Context, startTime, endTime time
 		return nil, fmt.Errorf("start time (%s) must be before end time (%s)", startTime, endTime)
 	}
 
+	// Serialize with the refresh loop: both read and write the shared baseline
+	// cache/watermark. In production backfill runs in a standalone admin process
+	// that never starts the refresh loop, but taking the lock keeps the cache
+	// invariant enforced in code rather than by that call-site convention.
+	v.refreshMu.Lock()
+	defer v.refreshMu.Unlock()
+
 	// Query baseline counters from ClickHouse (or InfluxDB if not available)
 	baselines, err := v.queryBaselineCountersFromClickHouse(ctx, startTime)
 	if err != nil {
@@ -76,19 +83,20 @@ func (v *View) BackfillForTimeRange(ctx context.Context, startTime, endTime time
 		return nil, fmt.Errorf("failed to convert rows for backfill: %w", err)
 	}
 
-	// Carry the end-of-window baselines forward so the next contiguous backfill
-	// chunk reuses them instead of re-running the expensive historical ClickHouse
-	// scan (which timed out repeatedly during the June backfill). The admin
-	// backfill loop processes ascending contiguous chunks in one process, so the
-	// next chunk's startTime == this chunk's endTime hits the watermark cache in
-	// queryBaselineCountersFromClickHouse. A non-contiguous call simply misses the
-	// cache and re-queries — a safe fallback.
-	if endBaselines != nil {
-		v.baselineCache = endBaselines
-		v.baselineCacheWatermark = endTime
-	}
+	// carryBaselines carries this chunk's end-of-window baselines forward so the
+	// next contiguous backfill chunk reuses them instead of re-running the
+	// expensive historical ClickHouse scan (which timed out repeatedly during the
+	// June backfill). The admin backfill loop processes ascending contiguous
+	// chunks in one process, so the next chunk's startTime == this chunk's endTime
+	// hits the watermark cache in queryBaselineCountersFromClickHouse. A
+	// non-contiguous backward call simply misses the cache and re-queries — a safe
+	// fallback (see the guard's doc for the forward-jump caveat). Done only after
+	// the rows are durably in ClickHouse (mirrors Refresh), so a failed insert
+	// can't leave the cache holding unpersisted values.
+	carryBaselines := func() { v.updateBaselineCache(endBaselines, endTime) }
 
 	if len(usage) == 0 {
+		carryBaselines()
 		return &BackfillResult{
 			StartTime:    startTime,
 			EndTime:      endTime,
@@ -101,6 +109,7 @@ func (v *View) BackfillForTimeRange(ctx context.Context, startTime, endTime time
 	if err := v.store.InsertInterfaceUsage(ctx, usage); err != nil {
 		return nil, fmt.Errorf("failed to insert backfill data: %w", err)
 	}
+	carryBaselines()
 
 	return &BackfillResult{
 		StartTime:    startTime,
