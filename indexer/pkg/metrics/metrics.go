@@ -21,7 +21,7 @@ var (
 	ViewRefreshTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "doublezero_data_indexer_view_refresh_total",
-			Help: "Total number of view refreshes",
+			Help: "Total number of view refreshes (status: success, partial, error, panic; partial = stopped at the refresh budget with backlog pending)",
 		},
 		[]string{"view_type", "status"},
 	)
@@ -39,6 +39,19 @@ var (
 			Help: "Total validator-rewards leaf-export fetches from S3 by HTTP outcome (ok, not_found, forbidden, error)",
 		},
 		[]string{"status"},
+	)
+
+	// PermissionEventsSkippedTx counts transactions the permission-events indexer skipped
+	// because the RPC would not serve them (getTransaction not-found for a finalized,
+	// listed signature — pruned or inconsistent upstream history). Each skip is a
+	// potentially missing audit row that no automatic path recovers (the backfill skips
+	// them identically); a sustained non-zero rate means upstream retention is dropping
+	// events and a manual re-backfill against an archival node is warranted.
+	PermissionEventsSkippedTx = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "doublezero_data_indexer_permission_events_skipped_tx_total",
+			Help: "Permission-events transactions skipped because the RPC could not serve them",
+		},
 	)
 
 	ViewRefreshDuration = promauto.NewHistogramVec(
