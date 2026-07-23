@@ -531,7 +531,11 @@ func (s *FeedSchema) PayloadColumns() []string {
 }
 
 func (s *FeedSchema) ToRow(f Feed) []any {
-	groupsJSON, _ := json.Marshal(f.Groups)
+	groups := f.Groups
+	if groups == nil {
+		groups = []string{}
+	}
+	groupsJSON, _ := json.Marshal(groups)
 	return []any{
 		f.PK,
 		f.OwnerPubkey,

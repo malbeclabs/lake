@@ -604,7 +604,7 @@ func convertUsers(onchain []serviceability.User) []User {
 
 // pubkeyOrEmpty returns the base58 pubkey, or "" for the zero pubkey. The
 // serviceability SDK uses the zero pubkey to mean "no value" (e.g. User.FeedPk
-// on non-EdgeSeat/unicast users), and "" keeps `WHERE col != ”` filters sane.
+// on non-EdgeSeat/unicast users), and "" keeps `WHERE col != ''` filters sane.
 func pubkeyOrEmpty(pk [32]byte) string {
 	if pk == ([32]byte{}) {
 		return ""
