@@ -19,16 +19,23 @@ import (
 )
 
 const (
-	// maxConcurrentFetches limits parallel getTransaction calls per refresh.
+	// maxConcurrentFetches limits in-flight getTransaction calls across the whole view
+	// via a shared semaphore: accounts drain concurrently, but the RPC never sees more
+	// than this many transaction fetches at once.
 	maxConcurrentFetches = 10
 	// maxSignaturesPerRequest is the Solana RPC page limit.
 	maxSignaturesPerRequest = 1000
-	// scanChunkSize is how many signatures the full-program backfill scan fetches,
-	// decodes, and durably writes before advancing the program scan cursor. Chunking
-	// (oldest-first) bounds how much work is lost if the backfill is cancelled — a
-	// full-history sweep that exceeds the Temporal activity timeout resumes from the last
+	// scanChunkSize is how many signatures the program backfill scan and the per-account
+	// drain decode and durably write before advancing their cursor. Chunking
+	// (oldest-first) bounds how much work is lost if a refresh is cancelled — a
+	// backlog that exceeds the Temporal activity timeout resumes from the last
 	// completed chunk instead of restarting from scratch.
 	scanChunkSize = 200
+	// drainBudgetMargin is how much of the refresh context's deadline the per-account
+	// drain leaves unspent when deciding to start another chunk: enough to decode,
+	// insert, and checkpoint that chunk. When less than this remains, the drain stops
+	// and the next refresh continues from the durable cursor.
+	drainBudgetMargin = 30 * time.Second
 	// permissionAccountType is the serviceability account_type discriminator (first byte
 	// of account data) for Permission accounts — AccountType::Permission = 15 in
 	// state/permission.rs. Used to enumerate Permission PDAs via getProgramAccounts.
@@ -74,6 +81,11 @@ type View struct {
 	store     *Store
 	refreshMu sync.Mutex
 
+	// decodeSem bounds in-flight getTransaction calls view-wide (see
+	// maxConcurrentFetches); per-chunk errgroup limits alone would multiply
+	// by the number of concurrently draining accounts.
+	decodeSem chan struct{}
+
 	readyOnce sync.Once
 	readyCh   chan struct{}
 
@@ -91,10 +103,11 @@ func NewView(cfg ViewConfig) (*View, error) {
 		return nil, fmt.Errorf("failed to create store: %w", err)
 	}
 	return &View{
-		log:     cfg.Logger,
-		cfg:     cfg,
-		store:   store,
-		readyCh: make(chan struct{}),
+		log:       cfg.Logger,
+		cfg:       cfg,
+		store:     store,
+		decodeSem: make(chan struct{}, maxConcurrentFetches),
+		readyCh:   make(chan struct{}),
 	}, nil
 }
 
@@ -159,8 +172,11 @@ func (v *View) safeRefresh(ctx context.Context) {
 //  2. per PDA, getSignaturesForAddress since that account's high-water mark and decode only
 //     those transactions.
 //
-// Because a Permission PDA is only ever referenced by permission instructions, this fetches
-// only permission transactions rather than the whole program's history. New grants are
+// This fetches only transactions touching Permission PDAs rather than the whole program's
+// history. Note a Permission PDA is not only referenced by permission-management
+// instructions: other serviceability instructions (e.g. multicast allowlist ops) reference
+// it too and decode to zero audit rows — which is why resume progress is tracked in a
+// durable per-account cursor rather than derived from indexed rows. New grants are
 // picked up once the PDA is discovered (its create tx references the account). The only gap
 // is an account created and deleted between two discovery polls (a deleted account no longer
 // appears in getProgramAccounts) — BackfillRefresh's full-history program scan is the
@@ -191,61 +207,77 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		return result, nil
 	}
 
-	// Resume each account from the newest slot already indexed for it. The fact table holds
-	// every permission event for a given PDA, so max(slot) per permission_pk is a sound
-	// per-account cursor (unlike a program-wide scan, which the fact table can't anchor).
+	// Resume each account from its durable cursor, falling back to the fact-derived
+	// high-water mark for accounts indexed before the cursor table existed. When both
+	// exist take the newer: the program-wide backfill can insert rows beyond the cursor.
 	hwms, err := v.store.GetHighWaterMarks(ctx)
 	if err != nil {
 		metrics.ViewRefreshTotal.WithLabelValues(metricSource, "error").Inc()
 		return result, fmt.Errorf("get high water marks: %w", err)
 	}
+	cursors, err := v.store.GetAccountCursors(ctx)
+	if err != nil {
+		metrics.ViewRefreshTotal.WithLabelValues(metricSource, "error").Inc()
+		return result, fmt.Errorf("get account cursors: %w", err)
+	}
+	resume := func(pk string) HighWaterMark {
+		cur, hasCur := cursors[pk]
+		if hwm, ok := hwms[pk]; ok && (!hasCur || hwm.Slot > cur.Slot) {
+			return hwm
+		}
+		return cur
+	}
 
-	// Persist each account's events as soon as it finishes fetching, rather than
-	// accumulating every account into one end-of-cycle insert. The per-account cursor is
-	// derived from the fact table (max(slot) per permission_pk), so committing an account
-	// immediately advances its cursor. If the refresh later times out — the Temporal activity
-	// has a bounded StartToCloseTimeout — the accounts already committed are not re-fetched
-	// next cycle. A single terminal batch instead discards the whole cycle's work on timeout
-	// and re-fetches it forever: a poison loop once the backlog exceeds one timeout window.
+	// Drain each account in durable oldest-first chunks (see drainAccount). A refresh cut
+	// short by the Temporal activity timeout keeps every committed chunk, so even a single
+	// account whose backlog exceeds one timeout window makes forward progress each cycle
+	// instead of re-fetching the same work forever: the poison-loop failure mode.
 	var (
 		mu            sync.Mutex
 		totalInserted int64
+		totalPending  int
 	)
 	var g errgroup.Group
 	g.SetLimit(maxConcurrentFetches)
 	for _, pda := range pdas {
 		g.Go(func() error {
-			events, fetchErr := v.fetchAccountEvents(ctx, pda, hwms[pda.String()])
-			// Persist whatever decoded cleanly before surfacing any fetch error (idempotent
-			// via ReplacingMergeTree). A failed account isn't cursor-advanced past its
-			// un-indexed signatures, so it is simply re-fetched next refresh — no silent gap.
-			if len(events) > 0 {
-				if err := v.store.InsertEvents(ctx, events); err != nil {
-					return fmt.Errorf("insert permission events for %s: %w", pda.String(), err)
-				}
-				mu.Lock()
-				totalInserted += int64(len(events))
-				mu.Unlock()
-			}
-			if fetchErr != nil {
-				v.log.Warn("serviceability/permission-events: failed to fetch account",
-					"permission_pk", pda.String(), "error", fetchErr)
-				return fetchErr
+			inserted, pending, drainErr := v.drainAccount(ctx, pda, resume(pda.String()))
+			mu.Lock()
+			totalInserted += inserted
+			totalPending += pending
+			mu.Unlock()
+			if drainErr != nil {
+				v.log.Warn("serviceability/permission-events: failed to drain account",
+					"permission_pk", pda.String(), "error", drainErr)
+				return fmt.Errorf("drain account %s: %w", pda.String(), drainErr)
 			}
 			return nil
 		})
 	}
-	if err := g.Wait(); err != nil {
+	// Committed chunks are durable regardless of the refresh outcome — report them, and
+	// let freshness advance on partial progress (overstates by at most one cycle).
+	err = g.Wait()
+	result.RowsAffected = totalInserted
+	if totalInserted > 0 || err == nil {
+		fetchedAt := time.Now().UTC()
+		result.SourceMaxEventTS = &fetchedAt
+	}
+	if err != nil {
 		metrics.ViewRefreshTotal.WithLabelValues(metricSource, "error").Inc()
 		return result, fmt.Errorf("refresh permission accounts: %w", err)
 	}
 
-	result.RowsAffected = totalInserted
-	fetchedAt := time.Now().UTC()
-	result.SourceMaxEventTS = &fetchedAt
-
 	v.markReady()
-	metrics.ViewRefreshTotal.WithLabelValues(metricSource, "success").Inc()
+	// "partial" = every account made progress but at least one stopped at the refresh
+	// budget with backlog left. A drain that stays partial forever is a stalled drain —
+	// the metric is what keeps that visible, since each cycle reports success.
+	if totalPending > 0 {
+		metrics.ViewRefreshTotal.WithLabelValues(metricSource, "partial").Inc()
+		v.log.Info("serviceability/permission-events: drain stopped at refresh budget",
+			"inserted", totalInserted, "pending_signatures", totalPending, "watched_accounts", len(pdas))
+	} else {
+		metrics.ViewRefreshTotal.WithLabelValues(metricSource, "success").Inc()
+	}
 
 	if totalInserted > 0 {
 		v.log.Info("serviceability/permission-events: indexed new events",
@@ -378,16 +410,85 @@ func (v *View) discoverPermissionAccounts(ctx context.Context) ([]solana.PublicK
 	return pdas, nil
 }
 
-// fetchAccountEvents fetches all transactions touching a single Permission PDA newer than
-// its high-water mark and decodes their permission instructions. A Permission PDA is only
-// referenced by permission instructions, so every signature here yields audit rows.
-func (v *View) fetchAccountEvents(ctx context.Context, pda solana.PublicKey, hwm HighWaterMark) ([]PermissionEventRow, error) {
+// drainAccount incrementally indexes one Permission PDA's transaction history newer than
+// resume, oldest-first in chunks. Each fully-decoded chunk is persisted and the account's
+// durable cursor advanced before the next chunk starts, so a refresh cut short by
+// cancellation or the deadline budget re-does at most one chunk of work — an account whose
+// backlog exceeds one refresh window drains across cycles instead of poison-looping.
+// Returns the audit rows inserted (meaningful even alongside an error) and how many
+// signatures were left unprocessed.
+//
+// Signature pagination is O(remaining backlog) each refresh: getSignaturesForAddress pages
+// newest-first, so reaching the oldest unprocessed chunk requires paging everything newer
+// than the cursor. If pagination alone ever consumes the budget, the zero-progress error
+// below fires — a pagination-starved account is loud, never a silent no-op.
+func (v *View) drainAccount(ctx context.Context, pda solana.PublicKey, resume HighWaterMark) (inserted int64, pending int, err error) {
+	sigs, err := v.fetchAccountSignatures(ctx, pda, resume)
+	if err != nil {
+		return 0, 0, err
+	}
+	if len(sigs) == 0 {
+		return 0, 0, nil
+	}
+
+	// Reverse to oldest-first so the cursor advances monotonically as chunks commit; a
+	// partial drain then leaves the cursor at the newest fully-processed signature.
+	for i, j := 0, len(sigs)-1; i < j; i, j = i+1, j-1 {
+		sigs[i], sigs[j] = sigs[j], sigs[i]
+	}
+
+	for start := 0; start < len(sigs); start += scanChunkSize {
+		if err := ctx.Err(); err != nil {
+			return inserted, len(sigs) - start, err
+		}
+		// Stop when too little of the deadline remains to decode, insert, and checkpoint
+		// another chunk. Progress so far is committed, so stopping with progress is a
+		// success — the next refresh continues from the cursor. Stopping with none is an
+		// error so a persistently starved account escalates instead of no-op succeeding.
+		if deadline, ok := ctx.Deadline(); ok && deadline.Sub(v.cfg.Clock.Now()) < drainBudgetMargin {
+			if start == 0 {
+				return 0, len(sigs), fmt.Errorf("refresh budget exhausted before first chunk (%d signatures pending)", len(sigs))
+			}
+			v.log.Info("serviceability/permission-events: account drain stopping at refresh budget",
+				"permission_pk", pda.String(), "processed", start, "pending", len(sigs)-start)
+			return inserted, len(sigs) - start, nil
+		}
+
+		chunk := sigs[start:min(start+scanChunkSize, len(sigs))]
+		events, decodeErr := v.decodeChunk(ctx, chunk)
+		if decodeErr != nil {
+			// Decode order within a chunk is not cursor order: persisting a partially
+			// decoded chunk could advance the fact-derived high-water mark past
+			// never-decoded signatures — a silent, permanent gap. Drop the chunk's
+			// events; the cursor stays put and the chunk is re-fetched next refresh.
+			return inserted, len(sigs) - start, fmt.Errorf("decode transactions: %w", decodeErr)
+		}
+		if err := v.store.InsertEvents(ctx, events); err != nil {
+			return inserted, len(sigs) - start, fmt.Errorf("insert permission events: %w", err)
+		}
+		inserted += int64(len(events))
+
+		// Chunk is oldest-first, so its last element is the newest processed signature.
+		// The cursor must advance even when the chunk produced no rows: non-permission
+		// instructions also reference Permission PDAs, and a backlog of them would
+		// otherwise be re-fetched forever.
+		newest := chunk[len(chunk)-1]
+		cur := HighWaterMark{TxSignature: newest.Signature.String(), Slot: newest.Slot}
+		if err := v.store.SetAccountCursor(ctx, pda.String(), cur); err != nil {
+			return inserted, len(sigs) - start, fmt.Errorf("set account cursor: %w", err)
+		}
+	}
+	return inserted, 0, nil
+}
+
+// fetchAccountSignatures returns all signatures touching pda newer than resume, newest-first.
+func (v *View) fetchAccountSignatures(ctx context.Context, pda solana.PublicKey, resume HighWaterMark) ([]*rpc.TransactionSignature, error) {
 	var untilSig solana.Signature
-	if hwm.TxSignature != "" {
+	if resume.TxSignature != "" {
 		var err error
-		untilSig, err = solana.SignatureFromBase58(hwm.TxSignature)
+		untilSig, err = solana.SignatureFromBase58(resume.TxSignature)
 		if err != nil {
-			return nil, fmt.Errorf("invalid high water mark signature %q: %w", hwm.TxSignature, err)
+			return nil, fmt.Errorf("invalid resume cursor signature %q: %w", resume.TxSignature, err)
 		}
 	}
 
@@ -414,27 +515,20 @@ func (v *View) fetchAccountEvents(ctx context.Context, pda solana.PublicKey, hwm
 		allSigs = append(allSigs, page...)
 		beforeSig = page[len(page)-1].Signature
 	}
-	if len(allSigs) == 0 {
-		return nil, nil
-	}
-
-	var events []PermissionEventRow
-	for _, sig := range allSigs {
-		decoded, err := v.decodeTransaction(ctx, sig)
-		if err != nil {
-			// Fail the account so it is retried (cursor is derived from the fact table and
-			// therefore not advanced) rather than silently dropping the event.
-			return events, fmt.Errorf("decode transaction %s: %w", sig.Signature.String(), err)
-		}
-		events = append(events, decoded...)
-	}
-	return events, nil
+	return allSigs, nil
 }
 
 // decodeChunk fetches and decodes a batch of transactions concurrently. It returns the
 // events that decoded cleanly along with the first fetch/decode error encountered, if any.
 // All transactions are attempted even when one fails (no early cancellation) so a single
 // transient error doesn't discard the rest of the chunk's successfully decoded events.
+//
+// A finalized signature whose transaction the RPC cannot serve (rpc.ErrNotFound — pruned
+// or inconsistent upstream history) is skipped with a warning rather than failing the
+// chunk: retrying can never recover it, and failing would wedge the drain (and the
+// backfill, which advances past skipped signatures identically) at that point forever.
+// A skip is therefore a permanently missing audit row unless re-backfilled against an
+// archival node — the PermissionEventsSkippedTx metric is what keeps that loss visible.
 func (v *View) decodeChunk(ctx context.Context, sigs []*rpc.TransactionSignature) ([]PermissionEventRow, error) {
 	var (
 		mu        sync.Mutex
@@ -444,8 +538,23 @@ func (v *View) decodeChunk(ctx context.Context, sigs []*rpc.TransactionSignature
 	g.SetLimit(maxConcurrentFetches)
 	for _, sig := range sigs {
 		g.Go(func() error {
+			// The view-wide semaphore bounds total RPC pressure: without it, chunks
+			// draining in parallel across accounts would each fetch at the group limit.
+			select {
+			case v.decodeSem <- struct{}{}:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			defer func() { <-v.decodeSem }()
+
 			events, err := v.decodeTransaction(ctx, sig)
 			if err != nil {
+				if errors.Is(err, rpc.ErrNotFound) {
+					metrics.PermissionEventsSkippedTx.Inc()
+					v.log.Warn("serviceability/permission-events: transaction unretrievable upstream, skipping",
+						"signature", sig.Signature.String(), "slot", sig.Slot, "error", err)
+					return nil
+				}
 				v.log.Warn("serviceability/permission-events: failed to decode transaction",
 					"signature", sig.Signature.String(), "error", err)
 				return err
