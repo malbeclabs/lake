@@ -530,8 +530,13 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		v.log.Warn("telemetry/usage: no data returned from influxdb query", "from", queryStart, "to", now)
 		// Nothing to insert, so no persistence to wait on. Merge end-of-window
 		// baselines (a no-op when the window was genuinely empty) and advance the
-		// watermark: nothing changed through queryEnd, so the cached last-known
-		// values still hold there and the next refresh can cache-hit.
+		// baseline-cache watermark: nothing changed through queryEnd, so the
+		// cached last-known values still hold there and the next refresh can
+		// cache-hit. Note this advances only the cache watermark, not maxTime
+		// (nothing was written): while a data gap longer than QueryChunk sits at
+		// maxTime, the incremental window stays pinned at [maxTime-overlap,
+		// maxTime+chunk) returning zero new rows, until maxTime ages out of
+		// QueryWindow and the "data too old" branch skips past the gap.
 		v.updateBaselineCache(endBaselines, queryEnd)
 		v.readyOnce.Do(func() {
 			close(v.readyCh)
