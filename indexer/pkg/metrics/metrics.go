@@ -162,6 +162,18 @@ var (
 		},
 		[]string{"dz_env"},
 	)
+
+	// ClickHouseBaselineQueryTotal counts how many times the sparse-counter
+	// baseline query actually scanned ClickHouse (in-memory watermark cache miss).
+	// In steady state this should fire only on indexer restart per env; a high
+	// rate means the watermark cache is not hitting.
+	ClickHouseBaselineQueryTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "doublezero_data_indexer_clickhouse_baseline_query_total",
+			Help: "Total number of times the sparse-counter baseline query scanned ClickHouse (watermark cache miss)",
+		},
+		[]string{"dz_env"},
+	)
 )
 
 // RecordInfluxQuery records metrics for an InfluxDB query.

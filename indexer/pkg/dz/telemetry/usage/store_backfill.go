@@ -71,9 +71,21 @@ func (v *View) BackfillForTimeRange(ctx context.Context, startTime, endTime time
 
 	// Convert rows to InterfaceUsage
 	// Pass nil for alreadyWritten - backfill relies on ReplacingMergeTree for deduplication
-	usage, _, err := v.convertRowsToUsage(rows, baselines, linkLookup, nil)
+	usage, endBaselines, err := v.convertRowsToUsage(rows, baselines, linkLookup, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert rows for backfill: %w", err)
+	}
+
+	// Carry the end-of-window baselines forward so the next contiguous backfill
+	// chunk reuses them instead of re-running the expensive historical ClickHouse
+	// scan (which timed out repeatedly during the June backfill). The admin
+	// backfill loop processes ascending contiguous chunks in one process, so the
+	// next chunk's startTime == this chunk's endTime hits the watermark cache in
+	// queryBaselineCountersFromClickHouse. A non-contiguous call simply misses the
+	// cache and re-queries — a safe fallback.
+	if endBaselines != nil {
+		v.baselineCache = endBaselines
+		v.baselineCacheWatermark = endTime
 	}
 
 	if len(usage) == 0 {
