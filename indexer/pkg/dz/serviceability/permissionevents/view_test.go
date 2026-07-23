@@ -315,24 +315,86 @@ func TestLake_PermissionEvents_View_DrainProgressPersistsAcrossTimedOutRefreshes
 	require.EqualValues(t, 0, factRowCount(t, ch))
 }
 
-// TestLake_PermissionEvents_View_SkipsUnretrievableTransaction: a signature whose
-// transaction the RPC no longer serves (pruned history) is skipped with a warning
-// instead of wedging the account forever.
-func TestLake_PermissionEvents_View_SkipsUnretrievableTransaction(t *testing.T) {
+// TestLake_PermissionEvents_View_SkipsUnretrievableOldTransaction: a not-found
+// transaction far below the account's fetch tip is pruned history — skipped with a
+// warning instead of wedging the account forever.
+func TestLake_PermissionEvents_View_SkipsUnretrievableOldTransaction(t *testing.T) {
 	t.Parallel()
 
-	rpc := newFakeRPC(t, seqSlots(1, 5), createPermissionIxData())
-	delete(rpc.txResults, mkSig(3)) // fake returns solanarpc.ErrNotFound for it
+	slots := append([]uint64{1000}, seqSlots(10001, 10004)...)
+	rpc := newFakeRPC(t, slots, createPermissionIxData())
+	delete(rpc.txResults, mkSig(1000)) // fake returns solanarpc.ErrNotFound for it
 	ch := testClient(t)
 	view := newTestView(t, ch, rpc)
 
 	_, err := view.Refresh(context.Background())
-	require.NoError(t, err, "an unretrievable transaction must not fail the refresh")
+	require.NoError(t, err, "an old unretrievable transaction must not fail the refresh")
 	require.EqualValues(t, 4, factRowCount(t, ch))
 
 	_, slot, found := accountCursor(t, ch, testPDA.String())
 	require.True(t, found)
+	require.EqualValues(t, 10004, slot)
+}
+
+// TestLake_PermissionEvents_View_NearTipNotFoundFailsChunkAndRetries: a not-found
+// near the fetch tip is usually a load-balanced backend lagging finalization — a
+// transient null, not pruned history. Skipping it would advance the cursor past a
+// recoverable audit row permanently; the chunk must fail so the next refresh
+// retries, and the event must land once the transaction becomes retrievable.
+func TestLake_PermissionEvents_View_NearTipNotFoundFailsChunkAndRetries(t *testing.T) {
+	t.Parallel()
+
+	rpc := newFakeRPC(t, seqSlots(1, 5), createPermissionIxData())
+	tipTx := rpc.txResults[mkSig(5)]
+	delete(rpc.txResults, mkSig(5)) // near-tip null from a lagging backend
+	ch := testClient(t)
+	view := newTestView(t, ch, rpc)
+
+	_, err := view.Refresh(context.Background())
+	require.Error(t, err, "a near-tip not-found must fail the chunk, not be skipped")
+	require.EqualValues(t, 0, factRowCount(t, ch))
+	_, _, found := accountCursor(t, ch, testPDA.String())
+	require.False(t, found, "cursor must not advance past a recoverable signature")
+
+	// The lagging backend catches up; nothing may have been lost.
+	rpc.txResults[mkSig(5)] = tipTx
+	_, err = view.Refresh(context.Background())
+	require.NoError(t, err)
+	require.EqualValues(t, 5, factRowCount(t, ch))
+	_, slot, found := accountCursor(t, ch, testPDA.String())
+	require.True(t, found)
 	require.EqualValues(t, 5, slot)
+}
+
+// TestLake_PermissionEvents_View_DurableCursorWinsOverStaleHighWaterMark: once a
+// durable cursor exists it must be the resume point even when fact rows carry higher
+// slots (a program-wide backfill wrote ahead, or pre-ledger-reset rows survive with
+// old high slots). Preferring the higher slot would let a stale high-water mark
+// shadow the cursor forever and re-page the account's full history every cycle.
+func TestLake_PermissionEvents_View_DurableCursorWinsOverStaleHighWaterMark(t *testing.T) {
+	t.Parallel()
+
+	rpc := newFakeRPC(t, seqSlots(95, 110), createPermissionIxData())
+	ch := testClient(t)
+	view := newTestView(t, ch, rpc)
+
+	ctx := context.Background()
+	require.NoError(t, view.store.SetAccountCursor(ctx, testPDA.String(),
+		HighWaterMark{TxSignature: mkSig(100).String(), Slot: 100}))
+	bt := time.Unix(1753200105, 0).UTC()
+	require.NoError(t, view.store.InsertEvents(ctx, []PermissionEventRow{{
+		EventTS:      bt,
+		TxSignature:  mkSig(105).String(),
+		Slot:         105,
+		PermissionPK: testPDA.String(),
+		EventType:    EventCreate,
+		Success:      1,
+	}}))
+
+	_, err := view.Refresh(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 10, rpc.decodes.Load(),
+		"resume must start at the durable cursor (slot 100), not the higher fact high-water mark")
 }
 
 // TestLake_PermissionEvents_View_FailedChunkKeepsCursorAndBackfillsOnRetry: a
@@ -410,10 +472,15 @@ func TestLake_PermissionEvents_View_BudgetStopWithProgressResumesNextRefresh(t *
 	// the chunk the fake clock has advanced 20s, so 25s < margin stops the drain.
 	ctx, cancel := context.WithDeadline(context.Background(), start.Add(45*time.Second))
 	defer cancel()
-	_, err = view.Refresh(ctx)
+	res, err := view.Refresh(ctx)
 	require.NoError(t, err, "budget stop after committed progress is a success, not an error")
 	require.EqualValues(t, scanChunkSize, rpc.decodes.Load(),
 		"only the first chunk may be decoded before the budget stop")
+	// Freshness must not overstate during a drain: with backlog pending, the source
+	// timestamp is the committed chunk's frontier (block time of slot 200), not now.
+	require.NotNil(t, res.SourceMaxEventTS)
+	require.True(t, res.SourceMaxEventTS.Equal(time.Unix(1753200000+int64(scanChunkSize), 0)),
+		"partial-progress freshness must be the committed frontier, got %v", res.SourceMaxEventTS)
 
 	_, slot, found := accountCursor(t, ch, testPDA.String())
 	require.True(t, found)

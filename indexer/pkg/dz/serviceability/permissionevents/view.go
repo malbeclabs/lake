@@ -36,6 +36,14 @@ const (
 	// insert, and checkpoint that chunk. When less than this remains, the drain stops
 	// and the next refresh continues from the durable cursor.
 	drainBudgetMargin = 30 * time.Second
+	// notFoundSkipSlotLag is how far below the newest fetched signature a not-found
+	// transaction must sit before it is skipped as pruned history. A getTransaction
+	// null near the tip is usually a load-balanced backend lagging finalization — a
+	// transient, recoverable miss that must fail the chunk (the un-advanced cursor
+	// retries it next refresh) rather than permanently skip an audit row. One this
+	// many slots back (~minutes of ledger time) is genuinely unretrievable and would
+	// wedge the drain forever if it kept failing.
+	notFoundSkipSlotLag = 300
 	// permissionAccountType is the serviceability account_type discriminator (first byte
 	// of account data) for Permission accounts — AccountType::Permission = 15 in
 	// state/permission.rs. Used to enumerate Permission PDAs via getProgramAccounts.
@@ -207,9 +215,13 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		return result, nil
 	}
 
-	// Resume each account from its durable cursor, falling back to the fact-derived
-	// high-water mark for accounts indexed before the cursor table existed. When both
-	// exist take the newer: the program-wide backfill can insert rows beyond the cursor.
+	// Resume each account from its durable cursor; the fact-derived high-water mark is
+	// only the fallback for accounts indexed before the cursor table existed. The cursor
+	// always wins once present — comparing slots would let stale fact rows (e.g. rows
+	// surviving a ledger reset, whose old slots exceed any new-ledger slot forever)
+	// permanently shadow the cursor and force a full re-page + re-decode every cycle.
+	// The bounded cost: after a program-wide backfill inserts rows beyond the cursor,
+	// one drain pass re-decodes that span (idempotent) and the cursor catches up.
 	hwms, err := v.store.GetHighWaterMarks(ctx)
 	if err != nil {
 		metrics.ViewRefreshTotal.WithLabelValues(metricSource, "error").Inc()
@@ -221,11 +233,10 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		return result, fmt.Errorf("get account cursors: %w", err)
 	}
 	resume := func(pk string) HighWaterMark {
-		cur, hasCur := cursors[pk]
-		if hwm, ok := hwms[pk]; ok && (!hasCur || hwm.Slot > cur.Slot) {
-			return hwm
+		if cur, ok := cursors[pk]; ok {
+			return cur
 		}
-		return cur
+		return hwms[pk]
 	}
 
 	// Drain each account in durable oldest-first chunks (see drainAccount). A refresh cut
@@ -236,15 +247,20 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		mu            sync.Mutex
 		totalInserted int64
 		totalPending  int
+		frontier      time.Time // oldest committedTip among accounts left with a backlog
 	)
 	var g errgroup.Group
 	g.SetLimit(maxConcurrentFetches)
 	for _, pda := range pdas {
 		g.Go(func() error {
-			inserted, pending, drainErr := v.drainAccount(ctx, pda, resume(pda.String()))
+			res, drainErr := v.drainAccount(ctx, pda, resume(pda.String()))
 			mu.Lock()
-			totalInserted += inserted
-			totalPending += pending
+			totalInserted += res.inserted
+			totalPending += res.pending
+			if res.pending > 0 && !res.committedTip.IsZero() &&
+				(frontier.IsZero() || res.committedTip.Before(frontier)) {
+				frontier = res.committedTip
+			}
 			mu.Unlock()
 			if drainErr != nil {
 				v.log.Warn("serviceability/permission-events: failed to drain account",
@@ -254,13 +270,18 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 			return nil
 		})
 	}
-	// Committed chunks are durable regardless of the refresh outcome — report them, and
-	// let freshness advance on partial progress (overstates by at most one cycle).
+	// Committed chunks are durable regardless of the refresh outcome — report them.
+	// Freshness must not overstate during a multi-cycle drain: with backlog pending,
+	// the honest frontier is the oldest committed chunk tip across backlogged accounts
+	// (their newest events stay unindexed until the drain converges), not "now".
 	err = g.Wait()
 	result.RowsAffected = totalInserted
-	if totalInserted > 0 || err == nil {
+	switch {
+	case err == nil && totalPending == 0:
 		fetchedAt := time.Now().UTC()
 		result.SourceMaxEventTS = &fetchedAt
+	case !frontier.IsZero():
+		result.SourceMaxEventTS = &frontier
 	}
 	if err != nil {
 		metrics.ViewRefreshTotal.WithLabelValues(metricSource, "error").Inc()
@@ -331,6 +352,13 @@ func (v *View) BackfillRefresh(ctx context.Context) (ingestionlog.RefreshResult,
 		return result, nil
 	}
 
+	// sigs is newest-first here, so sigs[0] is the scan tip; see drainAccount for the
+	// not-found age-gate rationale.
+	var skipNotFoundBelow uint64
+	if tip := sigs[0].Slot; tip > notFoundSkipSlotLag {
+		skipNotFoundBelow = tip - notFoundSkipSlotLag
+	}
+
 	// Reverse to oldest-first so the cursor advances monotonically as we checkpoint each
 	// chunk; a partial scan then leaves the cursor at the newest fully-indexed signature.
 	for i, j := 0, len(sigs)-1; i < j; i, j = i+1, j-1 {
@@ -345,7 +373,7 @@ func (v *View) BackfillRefresh(ctx context.Context) (ingestionlog.RefreshResult,
 		}
 		chunk := sigs[start:end]
 
-		events, decodeErr := v.decodeChunk(ctx, chunk)
+		events, decodeErr := v.decodeChunk(ctx, chunk, skipNotFoundBelow)
 
 		// Persist whatever decoded cleanly (idempotent via ReplacingMergeTree) before
 		// deciding whether to advance the cursor.
@@ -410,25 +438,44 @@ func (v *View) discoverPermissionAccounts(ctx context.Context) ([]solana.PublicK
 	return pdas, nil
 }
 
+// drainResult reports one account's drain outcome.
+type drainResult struct {
+	inserted int64
+	// pending is how many fetched signatures were left unprocessed (budget stop,
+	// cancellation, or a failed chunk).
+	pending int
+	// committedTip is the block time of the newest committed chunk's tail — the
+	// account's honest indexing frontier when pending > 0. Zero when no chunk
+	// committed this pass or the tail carried no block time.
+	committedTip time.Time
+}
+
 // drainAccount incrementally indexes one Permission PDA's transaction history newer than
 // resume, oldest-first in chunks. Each fully-decoded chunk is persisted and the account's
 // durable cursor advanced before the next chunk starts, so a refresh cut short by
 // cancellation or the deadline budget re-does at most one chunk of work — an account whose
 // backlog exceeds one refresh window drains across cycles instead of poison-looping.
-// Returns the audit rows inserted (meaningful even alongside an error) and how many
-// signatures were left unprocessed.
+// The returned result is meaningful even alongside an error.
 //
 // Signature pagination is O(remaining backlog) each refresh: getSignaturesForAddress pages
 // newest-first, so reaching the oldest unprocessed chunk requires paging everything newer
 // than the cursor. Pagination checks the same deadline budget per page and fails fast when
 // it can't finish in time — a pagination-starved account is loud, never a silent no-op.
-func (v *View) drainAccount(ctx context.Context, pda solana.PublicKey, resume HighWaterMark) (inserted int64, pending int, err error) {
+func (v *View) drainAccount(ctx context.Context, pda solana.PublicKey, resume HighWaterMark) (drainResult, error) {
+	var res drainResult
 	sigs, err := v.fetchAccountSignatures(ctx, pda, resume)
 	if err != nil {
-		return 0, 0, err
+		return res, err
 	}
 	if len(sigs) == 0 {
-		return 0, 0, nil
+		return res, nil
+	}
+
+	// sigs is newest-first here, so sigs[0] is the account's fetch tip: not-founds more
+	// than notFoundSkipSlotLag below it are pruned history, safe to skip.
+	var skipNotFoundBelow uint64
+	if tip := sigs[0].Slot; tip > notFoundSkipSlotLag {
+		skipNotFoundBelow = tip - notFoundSkipSlotLag
 	}
 
 	// Reverse to oldest-first so the cursor advances monotonically as chunks commit; a
@@ -439,34 +486,38 @@ func (v *View) drainAccount(ctx context.Context, pda solana.PublicKey, resume Hi
 
 	for start := 0; start < len(sigs); start += scanChunkSize {
 		if err := ctx.Err(); err != nil {
-			return inserted, len(sigs) - start, err
+			res.pending = len(sigs) - start
+			return res, err
 		}
 		// Stop when too little of the deadline remains to decode, insert, and checkpoint
 		// another chunk. Progress so far is committed, so stopping with progress is a
 		// success — the next refresh continues from the cursor. Stopping with none is an
 		// error so a persistently starved account escalates instead of no-op succeeding.
 		if deadline, ok := ctx.Deadline(); ok && deadline.Sub(v.cfg.Clock.Now()) < drainBudgetMargin {
+			res.pending = len(sigs) - start
 			if start == 0 {
-				return 0, len(sigs), fmt.Errorf("refresh budget exhausted before first chunk (%d signatures pending)", len(sigs))
+				return res, fmt.Errorf("refresh budget exhausted before first chunk (%d signatures pending)", len(sigs))
 			}
 			v.log.Info("serviceability/permission-events: account drain stopping at refresh budget",
-				"permission_pk", pda.String(), "processed", start, "pending", len(sigs)-start)
-			return inserted, len(sigs) - start, nil
+				"permission_pk", pda.String(), "processed", start, "pending", res.pending)
+			return res, nil
 		}
 
 		chunk := sigs[start:min(start+scanChunkSize, len(sigs))]
-		events, decodeErr := v.decodeChunk(ctx, chunk)
+		events, decodeErr := v.decodeChunk(ctx, chunk, skipNotFoundBelow)
 		if decodeErr != nil {
 			// Decode order within a chunk is not cursor order: persisting a partially
 			// decoded chunk could advance the fact-derived high-water mark past
 			// never-decoded signatures — a silent, permanent gap. Drop the chunk's
 			// events; the cursor stays put and the chunk is re-fetched next refresh.
-			return inserted, len(sigs) - start, fmt.Errorf("decode transactions: %w", decodeErr)
+			res.pending = len(sigs) - start
+			return res, fmt.Errorf("decode transactions: %w", decodeErr)
 		}
 		if err := v.store.InsertEvents(ctx, events); err != nil {
-			return inserted, len(sigs) - start, fmt.Errorf("insert permission events: %w", err)
+			res.pending = len(sigs) - start
+			return res, fmt.Errorf("insert permission events: %w", err)
 		}
-		inserted += int64(len(events))
+		res.inserted += int64(len(events))
 
 		// Chunk is oldest-first, so its last element is the newest processed signature.
 		// The cursor must advance even when the chunk produced no rows: non-permission
@@ -475,10 +526,14 @@ func (v *View) drainAccount(ctx context.Context, pda solana.PublicKey, resume Hi
 		newest := chunk[len(chunk)-1]
 		cur := HighWaterMark{TxSignature: newest.Signature.String(), Slot: newest.Slot}
 		if err := v.store.SetAccountCursor(ctx, pda.String(), cur); err != nil {
-			return inserted, len(sigs) - start, fmt.Errorf("set account cursor: %w", err)
+			res.pending = len(sigs) - start
+			return res, fmt.Errorf("set account cursor: %w", err)
+		}
+		if newest.BlockTime != nil {
+			res.committedTip = newest.BlockTime.Time().UTC()
 		}
 	}
-	return inserted, 0, nil
+	return res, nil
 }
 
 // fetchAccountSignatures returns all signatures touching pda newer than resume, newest-first.
@@ -530,13 +585,15 @@ func (v *View) fetchAccountSignatures(ctx context.Context, pda solana.PublicKey,
 // All transactions are attempted even when one fails (no early cancellation) so a single
 // transient error doesn't discard the rest of the chunk's successfully decoded events.
 //
-// A finalized signature whose transaction the RPC cannot serve (rpc.ErrNotFound — pruned
-// or inconsistent upstream history) is skipped with a warning rather than failing the
-// chunk: retrying can never recover it, and failing would wedge the drain (and the
-// backfill, which advances past skipped signatures identically) at that point forever.
-// A skip is therefore a permanently missing audit row unless re-backfilled against an
-// archival node — the PermissionEventsSkippedTx metric is what keeps that loss visible.
-func (v *View) decodeChunk(ctx context.Context, sigs []*rpc.TransactionSignature) ([]PermissionEventRow, error) {
+// A finalized signature whose transaction the RPC cannot serve (rpc.ErrNotFound) is
+// handled by age: below skipNotFoundBelow it is pruned history — skipped with a warning,
+// since retrying can never recover it and failing would wedge the drain (and the backfill,
+// which advances past skipped signatures identically) at that point forever; such a skip
+// is a permanently missing audit row unless re-backfilled against an archival node, kept
+// visible by the PermissionEventsSkippedTx metric. At or above the threshold the null is
+// most likely a load-balanced backend lagging finalization, so the chunk fails and the
+// un-advanced cursor retries the signature next refresh.
+func (v *View) decodeChunk(ctx context.Context, sigs []*rpc.TransactionSignature, skipNotFoundBelow uint64) ([]PermissionEventRow, error) {
 	var (
 		mu        sync.Mutex
 		allEvents []PermissionEventRow
@@ -557,10 +614,15 @@ func (v *View) decodeChunk(ctx context.Context, sigs []*rpc.TransactionSignature
 			events, err := v.decodeTransaction(ctx, sig)
 			if err != nil {
 				if errors.Is(err, rpc.ErrNotFound) {
-					metrics.PermissionEventsSkippedTx.Inc()
-					v.log.Warn("serviceability/permission-events: transaction unretrievable upstream, skipping",
-						"signature", sig.Signature.String(), "slot", sig.Slot, "error", err)
-					return nil
+					if sig.Slot < skipNotFoundBelow {
+						metrics.PermissionEventsSkippedTx.Inc()
+						v.log.Warn("serviceability/permission-events: transaction unretrievable upstream, skipping",
+							"signature", sig.Signature.String(), "slot", sig.Slot, "error", err)
+						return nil
+					}
+					v.log.Warn("serviceability/permission-events: transaction not found near tip, retrying next refresh",
+						"signature", sig.Signature.String(), "slot", sig.Slot)
+					return err
 				}
 				v.log.Warn("serviceability/permission-events: failed to decode transaction",
 					"signature", sig.Signature.String(), "error", err)
