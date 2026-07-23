@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Non-actionable failures no longer log at ERROR (which pages on-call): indexer view refreshes and ingest workflows escalate WARN→ERROR only on sustained consecutive failures; slack, agent, and worker log sites classify transient and client-caused errors as WARN; probe-write, optional-listener, and shutdown-cleanup failures demote to WARN (#696)
 - `dberror` moved from `api/handlers/dberror` to `utils/pkg/dberror` so all services can share transient-error classification (#696)
 
+### Fixed
+
+- Indexer interface-counter data (`fact_dz_device_interface_counters`) is no longer permanently ~1h stale: the telemetry-usage catch-up cap is now anchored at `maxTime` (the ingest watermark) instead of `queryStart`, which had made the cap equal the 5m re-read overlap so an incremental refresh could never query past `maxTime` — every cycle re-read only rows that dedup out and inserted nothing, and `max(event_ts)` sawtoothed ~1h behind `now()`. Steady state now ingests the overlap plus one chunk (~10m, 2 Flux queries) and advances every refresh. `RefreshTelemetryUsage` gets a dedicated 10m activity `StartToCloseTimeout` (was the shared 5m) to bound the two-query worst case plus ClickHouse work, preventing the #665/#671 timeout loop. The post-downtime catch-up memory bound is unchanged (#708)
+
 ### Added
 
 - Shared `utils/pkg/logger` helpers: transient-aware `logger.Error`/`logger.Warn` and consecutive-failure `logger.Escalator`; logging-level convention documented in CLAUDE.md (#696)

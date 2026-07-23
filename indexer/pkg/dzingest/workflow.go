@@ -82,10 +82,21 @@ func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 		msdpSyncFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).SyncMSDP)
 		graphSyncFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).SyncGraph)
 
-		// Telemetry usage runs less frequently (~5 minutes).
+		// Telemetry usage runs less frequently (~5 minutes). It needs a longer
+		// StartToCloseTimeout than the shared 5m: a steady-state refresh runs 2
+		// Flux queries (overlap re-read + one new chunk, see maxCatchupChunks),
+		// each bounded by defaultFluxHTTPTimeout (4m) and not aborting on the
+		// activity deadline, so the worst case is ~8m of InfluxDB plus the
+		// ClickHouse dedup/baseline/insert work. 10m bounds that; a shorter
+		// deadline would expire before the insert on slow InfluxDB and pin
+		// maxTime in a retry loop (the #665/#671 failure mode).
 		var telemUsageFuture temporalworkflow.Future
 		if iteration%telemUsageEveryN == 0 {
-			telemUsageFuture = temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshTelemetryUsage)
+			telemUsageCtx := temporalworkflow.WithActivityOptions(ctx, temporalworkflow.ActivityOptions{
+				StartToCloseTimeout: 10 * time.Minute,
+				RetryPolicy:         actOpts.RetryPolicy,
+			})
+			telemUsageFuture = temporalworkflow.ExecuteActivity(telemUsageCtx, (*Activities).RefreshTelemetryUsage)
 		}
 
 		// Permission audit events run less frequently (~5 minutes); changes are sporadic.
