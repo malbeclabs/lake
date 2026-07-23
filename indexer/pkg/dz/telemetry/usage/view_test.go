@@ -1530,7 +1530,8 @@ func TestLake_TelemetryUsage_View_Refresh_IncrementalQueriesPastMaxTime(t *testi
 	const chunk = 5 * time.Minute
 	clock := clockwork.NewFakeClock()
 	now := clock.Now()
-	maxTime := now.Add(-30 * time.Minute) // well inside the 1h window
+	// event_ts is DateTime64(3); align the seed so it round-trips exactly.
+	maxTime := now.Add(-30 * time.Minute).Truncate(time.Millisecond) // well inside the 1h window
 
 	view, windows := captureIntfCounterWindows(t, clock, chunk)
 	seedMaxTime(t, view, maxTime)
@@ -1557,7 +1558,8 @@ func TestLake_TelemetryUsage_View_Refresh_SteadyStateAdvancesOneChunk(t *testing
 	const chunk = 5 * time.Minute
 	clock := clockwork.NewFakeClock()
 	now := clock.Now()
-	maxTime := now.Add(-40 * time.Minute)
+	// event_ts is DateTime64(3); align the seed so it round-trips exactly.
+	maxTime := now.Add(-40 * time.Minute).Truncate(time.Millisecond)
 
 	view, windows := captureIntfCounterWindows(t, clock, chunk)
 	seedMaxTime(t, view, maxTime)
