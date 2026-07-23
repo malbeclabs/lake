@@ -21,7 +21,7 @@ var (
 	ViewRefreshTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "doublezero_data_indexer_view_refresh_total",
-			Help: "Total number of view refreshes",
+			Help: "Total number of view refreshes (status: success, partial, error, panic; partial = stopped at the refresh budget with backlog pending)",
 		},
 		[]string{"view_type", "status"},
 	)

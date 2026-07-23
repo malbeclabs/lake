@@ -420,8 +420,8 @@ func (v *View) discoverPermissionAccounts(ctx context.Context) ([]solana.PublicK
 //
 // Signature pagination is O(remaining backlog) each refresh: getSignaturesForAddress pages
 // newest-first, so reaching the oldest unprocessed chunk requires paging everything newer
-// than the cursor. If pagination alone ever consumes the budget, the zero-progress error
-// below fires — a pagination-starved account is loud, never a silent no-op.
+// than the cursor. Pagination checks the same deadline budget per page and fails fast when
+// it can't finish in time — a pagination-starved account is loud, never a silent no-op.
 func (v *View) drainAccount(ctx context.Context, pda solana.PublicKey, resume HighWaterMark) (inserted int64, pending int, err error) {
 	sigs, err := v.fetchAccountSignatures(ctx, pda, resume)
 	if err != nil {
@@ -498,6 +498,13 @@ func (v *View) fetchAccountSignatures(ctx context.Context, pda solana.PublicKey,
 	var allSigs []*rpc.TransactionSignature
 	var beforeSig solana.Signature
 	for {
+		// Pagination cost is O(remaining backlog) and yields nothing processable until it
+		// reaches the cursor (pages are newest-first, chunks drain oldest-first), so a
+		// backlog whose pagination alone fills the window must fail fast here rather than
+		// burn the whole activity before the zero-progress check.
+		if deadline, ok := ctx.Deadline(); ok && deadline.Sub(v.cfg.Clock.Now()) < drainBudgetMargin {
+			return nil, fmt.Errorf("refresh budget exhausted during signature pagination (%d signatures paged)", len(allSigs))
+		}
 		opts := &rpc.GetSignaturesForAddressOpts{Commitment: rpc.CommitmentFinalized, Limit: &limit}
 		if !untilSig.IsZero() {
 			opts.Until = untilSig

@@ -25,20 +25,34 @@ var (
 	testPDA       = solana.MustPublicKeyFromBase58("9onLAjzQx38ajKMbyfPs5L2jXFRtioXJBsFZNduxc4jA")
 )
 
-// fakeRPC serves a single Permission PDA with a synthetic transaction history.
-// history is newest-first, mirroring getSignaturesForAddress. Until/Before/Limit
+// fakeRPC serves Permission PDAs with synthetic per-account transaction histories.
+// Each history is newest-first, mirroring getSignaturesForAddress. Until/Before/Limit
 // are honored like the real RPC. txErrs/txResults may only be mutated between
 // Refresh calls (decode goroutines read them concurrently).
 type fakeRPC struct {
 	pdas      []solana.PublicKey
-	history   []*solanarpc.TransactionSignature
+	histories map[solana.PublicKey][]*solanarpc.TransactionSignature
 	txResults map[solana.Signature]*solanarpc.GetTransactionResult
 	txErrs    map[solana.Signature]error
 
-	decodes  atomic.Int64
-	cancelAt int64 // if >0, the Nth GetTransaction call invokes cancel and fails
-	cancel   context.CancelFunc
-	onDecode func() // if set, invoked on every GetTransaction (e.g. to advance a fake clock)
+	decodes   atomic.Int64
+	cancelAt  int64 // if >0, the Nth GetTransaction call invokes cancel and fails
+	cancel    context.CancelFunc
+	onDecode  func() // if set, invoked on every GetTransaction (e.g. to advance a fake clock)
+	onSigPage func() // if set, invoked on every GetSignaturesForAddress page
+
+	inflight     atomic.Int64 // current concurrent GetTransaction calls
+	peakInflight atomic.Int64 // high-water mark of inflight
+}
+
+// notePeak records cur into peakInflight if it is a new high-water mark.
+func (f *fakeRPC) notePeak(cur int64) {
+	for {
+		peak := f.peakInflight.Load()
+		if cur <= peak || f.peakInflight.CompareAndSwap(peak, cur) {
+			return
+		}
+	}
 }
 
 func (f *fakeRPC) GetProgramAccountsWithOpts(ctx context.Context, program solana.PublicKey, opts *solanarpc.GetProgramAccountsOpts) (solanarpc.GetProgramAccountsResult, error) {
@@ -53,7 +67,10 @@ func (f *fakeRPC) GetSignaturesForAddressWithOpts(ctx context.Context, account s
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	hist := f.history
+	if f.onSigPage != nil {
+		f.onSigPage()
+	}
+	hist := f.histories[account]
 	if !opts.Until.IsZero() {
 		for i, e := range hist {
 			if e.Signature == opts.Until {
@@ -83,6 +100,8 @@ func (f *fakeRPC) GetTransaction(ctx context.Context, txSig solana.Signature, op
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	f.notePeak(f.inflight.Add(1))
+	defer f.inflight.Add(-1)
 	n := f.decodes.Add(1)
 	if f.onDecode != nil {
 		f.onDecode()
@@ -179,15 +198,23 @@ func buildTxResult(t *testing.T, ixData []byte) *solanarpc.GetTransactionResult 
 func newFakeRPC(t *testing.T, slots []uint64, ixData []byte) *fakeRPC {
 	t.Helper()
 	f := &fakeRPC{
-		pdas:      []solana.PublicKey{testPDA},
-		history:   newHistory(slots),
+		histories: make(map[solana.PublicKey][]*solanarpc.TransactionSignature),
 		txResults: make(map[solana.Signature]*solanarpc.GetTransactionResult, len(slots)),
 		txErrs:    make(map[solana.Signature]error),
 	}
+	f.addAccount(t, testPDA, slots, ixData)
+	return f
+}
+
+// addAccount registers another watched PDA with its own history. Slot ranges must not
+// overlap across accounts (mkSig derives signatures from slots).
+func (f *fakeRPC) addAccount(t *testing.T, pda solana.PublicKey, slots []uint64, ixData []byte) {
+	t.Helper()
+	f.pdas = append(f.pdas, pda)
+	f.histories[pda] = newHistory(slots)
 	for _, slot := range slots {
 		f.txResults[mkSig(slot)] = buildTxResult(t, ixData)
 	}
-	return f
 }
 
 func newTestView(t *testing.T, ch clickhouse.Client, rpc *fakeRPC) *View {
@@ -402,6 +429,62 @@ func TestLake_PermissionEvents_View_BudgetStopWithProgressResumesNextRefresh(t *
 	_, slot, found = accountCursor(t, ch, testPDA.String())
 	require.True(t, found)
 	require.Equal(t, total, slot)
+}
+
+// TestLake_PermissionEvents_View_PaginationRespectsBudget: signature pagination is
+// O(remaining backlog) and runs before any chunk work, so it must respect the deadline
+// budget too — otherwise a backlog whose pagination alone fills the window would burn
+// the whole activity every cycle before failing. It must fail fast, before any decode.
+func TestLake_PermissionEvents_View_PaginationRespectsBudget(t *testing.T) {
+	t.Parallel()
+
+	rpc := newFakeRPC(t, seqSlots(1, 10), rowlessIxData())
+	ch := testClient(t)
+
+	start := time.Now()
+	clock := clockwork.NewFakeClockAt(start)
+	// Each signature page consumes 20s of budget; deadline 45s out with a 30s margin
+	// means the second page's check sees 25s remaining and stops.
+	rpc.onSigPage = func() { clock.Advance(20 * time.Second) }
+
+	view, err := NewView(ViewConfig{
+		Logger:          laketesting.NewLogger(),
+		Clock:           clock,
+		RPC:             rpc,
+		ProgramID:       testProgramID,
+		RefreshInterval: time.Second,
+		ClickHouse:      ch,
+	})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithDeadline(context.Background(), start.Add(45*time.Second))
+	defer cancel()
+	_, err = view.Refresh(ctx)
+	require.Error(t, err, "pagination that exhausts the budget must fail the account loudly")
+	require.ErrorContains(t, err, "pagination")
+	require.EqualValues(t, 0, rpc.decodes.Load(), "no decode work may start after pagination exhausts the budget")
+}
+
+// TestLake_PermissionEvents_View_BoundsConcurrentTransactionFetches: the view-wide
+// semaphore must cap in-flight getTransaction calls at maxConcurrentFetches even with
+// several accounts draining chunks concurrently — without it, nested per-chunk limits
+// multiply by the number of accounts (the 10×10=100 hazard).
+func TestLake_PermissionEvents_View_BoundsConcurrentTransactionFetches(t *testing.T) {
+	t.Parallel()
+
+	rpc := newFakeRPC(t, seqSlots(1, 250), rowlessIxData())
+	rpc.addAccount(t, solana.NewWallet().PublicKey(), seqSlots(1001, 1250), rowlessIxData())
+	rpc.addAccount(t, solana.NewWallet().PublicKey(), seqSlots(2001, 2250), rowlessIxData())
+	// Hold each fetch briefly so goroutines genuinely overlap.
+	rpc.onDecode = func() { time.Sleep(2 * time.Millisecond) }
+	ch := testClient(t)
+	view := newTestView(t, ch, rpc)
+
+	_, err := view.Refresh(context.Background())
+	require.NoError(t, err)
+	require.EqualValues(t, 750, rpc.decodes.Load())
+	require.LessOrEqual(t, rpc.peakInflight.Load(), int64(maxConcurrentFetches),
+		"in-flight getTransaction calls must stay within the view-wide bound")
 }
 
 // TestLake_PermissionEvents_View_ResumesFromFactHighWaterMark guards the upgrade
