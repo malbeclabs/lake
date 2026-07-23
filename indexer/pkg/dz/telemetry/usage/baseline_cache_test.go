@@ -88,6 +88,15 @@ func TestLake_TelemetryUsage_BaselineCache_HitAtWatermark(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(100), *got.InErrors[key])
 
+	// The forward side is deliberately unbounded for single-writer stall
+	// recovery: even a large jump (source down for hours, windowStart resumed at
+	// now-QueryWindow) must hit while max event_ts stays at the watermark —
+	// nobody wrote the gap, so the cached state still describes it.
+	got, err = view.queryBaselineCountersFromClickHouse(context.Background(), watermark.Add(6*time.Hour), &chMaxTime)
+	require.NoError(t, err)
+	require.Equal(t, int64(100), *got.InErrors[key],
+		"large forward jump with unmoved max event_ts must still cache-hit")
+
 	require.Equal(t, before, testutil.ToFloat64(counter), "baseline query must not run on cache hit")
 }
 

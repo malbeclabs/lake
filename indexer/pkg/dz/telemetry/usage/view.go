@@ -188,6 +188,15 @@ func (cfg *ViewConfig) Validate() error {
 	if cfg.Clock == nil {
 		cfg.Clock = clockwork.NewRealClock()
 	}
+	// The baseline cache only hits while windowStart stays within
+	// baselineCacheMaxLag of the watermark; steady-state windowStart lags by
+	// refreshOverlap plus up to one capped catch-up step. A QueryChunk large
+	// enough to break this would silently regress every refresh to a full
+	// baseline re-scan, so reject it at startup rather than rely on the metric.
+	if steadyStateLag := refreshOverlap + cfg.QueryChunk*maxCatchupChunks; steadyStateLag >= baselineCacheMaxLag {
+		return fmt.Errorf("query chunk %s is too large for the baseline cache: refreshOverlap (%s) + QueryChunk×maxCatchupChunks (%s) must stay below baselineCacheMaxLag (%s)",
+			cfg.QueryChunk, refreshOverlap, cfg.QueryChunk*maxCatchupChunks, baselineCacheMaxLag)
+	}
 	return nil
 }
 
@@ -215,9 +224,10 @@ const refreshOverlap = 5 * time.Minute
 // margin also covers capped catch-up steps.
 //
 // It must exceed refreshOverlap plus one capped catch-up step (QueryChunk ×
-// maxCatchupChunks, 5m); 15m leaves headroom. If those constants grow past this
-// margin the cache stops hitting and every refresh scans ClickHouse again —
-// watch doublezero_data_indexer_clickhouse_baseline_query_total.
+// maxCatchupChunks, 5m); 15m leaves headroom. ViewConfig.Validate enforces this
+// against the operator-settable QueryChunk so a larger chunk can't silently
+// regress every refresh to a full re-scan; the runtime signal is
+// doublezero_data_indexer_clickhouse_baseline_query_total.
 //
 // This bounds only the backward direction (windowStart below the watermark).
 // The forward direction is bounded separately, by comparing ClickHouse's max

@@ -82,7 +82,10 @@ func (v *View) BackfillForTimeRange(ctx context.Context, startTime, endTime time
 		// advance the watermark, or it goes stale mid-backfill and stops tracking
 		// the data end the cached baselines represent. Nothing changed through
 		// endTime, so the start-of-window baselines are also the end-of-window
-		// state: merge them (a no-op when they came from the cache) and advance.
+		// state: merge them and advance. On a cache hit, baselines ALIASES
+		// v.baselineCache, so this merges the maps into themselves — safe because
+		// mergeBaselineMap only overwrites existing keys (no insert/delete while
+		// ranging), leaving the merge a pure no-op that advances the watermark.
 		v.updateBaselineCache(baselines, endTime)
 		return &BackfillResult{
 			StartTime:    startTime,
