@@ -135,6 +135,25 @@ func TestLake_TelemetryUsage_View_ViewConfig_Validate(t *testing.T) {
 		require.Equal(t, 1*time.Hour, cfg.QueryWindow)
 	})
 
+	t.Run("returns error when query chunk defeats the baseline cache", func(t *testing.T) {
+		t.Parallel()
+		mockDB := testClient(t)
+
+		cfg := ViewConfig{
+			Logger:          laketesting.NewLogger(),
+			ClickHouse:      mockDB,
+			InfluxDB:        &mockInfluxDBClient{},
+			Bucket:          "test-bucket",
+			RefreshInterval: time.Second,
+			// refreshOverlap (5m) + 10m = baselineCacheMaxLag (15m): the steady-state
+			// lag must stay strictly below the cache guard's backward bound.
+			QueryChunk: 10 * time.Minute,
+		}
+		err := cfg.Validate()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "too large for the baseline cache")
+	})
+
 	t.Run("sets default clock when nil", func(t *testing.T) {
 		t.Parallel()
 		mockDB := testClient(t)

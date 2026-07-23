@@ -23,6 +23,7 @@ type BackfillDeviceInterfaceCountersConfig struct {
 	ChunkInterval time.Duration
 	QueryDelay    time.Duration // Delay between InfluxDB queries
 	DryRun        bool
+	DZEnv         string // DZ network environment, used as the dz_env metrics label
 }
 
 // BackfillDeviceInterfaceCounters backfills device interface counters data for a time range
@@ -159,6 +160,7 @@ func BackfillDeviceInterfaceCounters(
 		ClickHouse:      chDB,
 		RefreshInterval: 1 * time.Hour, // Not used for backfill
 		QueryWindow:     1 * time.Hour, // Not used for backfill
+		DZEnv:           cfg.DZEnv,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create view: %w", err)

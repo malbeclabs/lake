@@ -394,6 +394,7 @@ func run() error {
 				ChunkInterval: *chunkIntervalFlag,
 				QueryDelay:    *queryDelayFlag,
 				DryRun:        *dryRunFlag,
+				DZEnv:         *dzEnvFlag,
 			},
 		)
 	}

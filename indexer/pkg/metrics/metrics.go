@@ -162,6 +162,19 @@ var (
 		},
 		[]string{"dz_env"},
 	)
+
+	// ClickHouseBaselineQueryTotal counts sparse-counter baseline cache misses:
+	// each increment is a refresh/backfill that bypassed the in-memory watermark
+	// cache and attempted the ClickHouse scan. In steady state this should fire
+	// only on indexer restart per env; a high rate means the watermark cache is
+	// not hitting.
+	ClickHouseBaselineQueryTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "doublezero_data_indexer_clickhouse_baseline_query_total",
+			Help: "Total sparse-counter baseline cache misses (watermark cache bypassed, ClickHouse scan attempted)",
+		},
+		[]string{"dz_env"},
+	)
 )
 
 // RecordInfluxQuery records metrics for an InfluxDB query.
