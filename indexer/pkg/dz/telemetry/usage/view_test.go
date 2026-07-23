@@ -1468,3 +1468,177 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 		require.Equal(t, int64(1000200-1000100), *usage[2].InOctetsDelta) // 100, not 500200
 	})
 }
+
+// captureIntfCounterWindows returns a View whose InfluxDB mock records the
+// [start, end) of every QueryIntfCounters sub-query so tests can assert the
+// span a refresh actually queried. The mock returns no rows, so Refresh
+// completes without exercising the convert/insert path (not what these tests
+// cover).
+func captureIntfCounterWindows(t *testing.T, clock clockwork.Clock, chunk time.Duration) (*View, *[][2]time.Time) {
+	t.Helper()
+	windows := &[][2]time.Time{}
+	influx := &mockInfluxDBClient{
+		queryIntfCountersFunc: func(_ context.Context, s, e time.Time) ([]map[string]any, error) {
+			*windows = append(*windows, [2]time.Time{s, e})
+			return nil, nil
+		},
+	}
+	view, err := NewView(ViewConfig{
+		Logger:          laketesting.NewLogger(),
+		Clock:           clock,
+		ClickHouse:      testClient(t),
+		InfluxDB:        influx,
+		Bucket:          "test-bucket",
+		RefreshInterval: time.Second,
+		QueryWindow:     time.Hour,
+		QueryChunk:      chunk,
+	})
+	require.NoError(t, err)
+	return view, windows
+}
+
+// seedMaxTime inserts a single interface-counter row at event_ts=ts so the next
+// refresh reads ts as maxTime (the ingest watermark).
+func seedMaxTime(t *testing.T, v *View, ts time.Time) {
+	t.Helper()
+	dev, intf := "seed-device", "eth0"
+	err := v.store.InsertInterfaceUsage(context.Background(), []InterfaceUsage{{
+		Time:     ts.UTC(),
+		DevicePK: &dev,
+		Intf:     &intf,
+	}})
+	require.NoError(t, err)
+}
+
+// span returns the overall [start, end) covered by the recorded sub-query
+// windows (first start, last end).
+func span(t *testing.T, windows [][2]time.Time) (time.Time, time.Time) {
+	t.Helper()
+	require.NotEmpty(t, windows, "expected at least one InfluxDB sub-query")
+	return windows[0][0], windows[len(windows)-1][1]
+}
+
+// Regression for #708: an incremental refresh (maxTime inside the query window)
+// must query PAST maxTime, not stop at it. The catch-up cap is anchored at
+// maxTime, so the span is refreshOverlap behind maxTime plus one QueryChunk of
+// new data. On the buggy code the cap was anchored at queryStart (= maxTime −
+// overlap) and equalled the overlap, so queryEnd landed exactly at maxTime and
+// no new data was ever ingested.
+func TestLake_TelemetryUsage_View_Refresh_IncrementalQueriesPastMaxTime(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClock()
+	now := clock.Now()
+	// event_ts is DateTime64(3); align the seed so it round-trips exactly.
+	maxTime := now.Add(-30 * time.Minute).Truncate(time.Millisecond) // well inside the 1h window
+
+	view, windows := captureIntfCounterWindows(t, clock, chunk)
+	seedMaxTime(t, view, maxTime)
+
+	_, err := view.Refresh(t.Context())
+	require.NoError(t, err)
+
+	start, end := span(t, *windows)
+	require.Equal(t, maxTime.Add(-refreshOverlap).UTC(), start.UTC(),
+		"refresh must re-read the overlap behind maxTime")
+	require.Equal(t, maxTime.Add(chunk).UTC(), end.UTC(),
+		"refresh must query one chunk PAST maxTime (the #708 regression)")
+	require.True(t, end.After(maxTime), "queryEnd must advance past maxTime")
+	// overlap + one chunk = 2 chunk-sized sub-queries.
+	require.Len(t, *windows, 2)
+}
+
+// Steady state must step forward one chunk per refresh — the sawtooth is gone
+// and progress is monotonic. Re-seeding the watermark to the prior queryEnd
+// stands in for the insert that advances maxTime in production.
+func TestLake_TelemetryUsage_View_Refresh_SteadyStateAdvancesOneChunk(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClock()
+	now := clock.Now()
+	// event_ts is DateTime64(3); align the seed so it round-trips exactly.
+	maxTime := now.Add(-40 * time.Minute).Truncate(time.Millisecond)
+
+	view, windows := captureIntfCounterWindows(t, clock, chunk)
+	seedMaxTime(t, view, maxTime)
+
+	_, err := view.Refresh(t.Context())
+	require.NoError(t, err)
+	_, end1 := span(t, *windows)
+	require.Equal(t, maxTime.Add(chunk).UTC(), end1.UTC())
+
+	// Simulate the insert advancing the watermark to the first refresh's end.
+	*windows = nil
+	seedMaxTime(t, view, end1)
+
+	_, err = view.Refresh(t.Context())
+	require.NoError(t, err)
+	_, end2 := span(t, *windows)
+	require.Equal(t, end1.Add(chunk).UTC(), end2.UTC(), "each refresh advances exactly one chunk")
+	require.True(t, end2.After(end1), "progress must be monotonic")
+}
+
+// The catch-up cap (the #665 memory bound) is preserved when maxTime is older
+// than the query window or absent: the span starts at the window start and
+// covers exactly one chunk, regardless of how far behind maxTime is.
+func TestLake_TelemetryUsage_View_Refresh_CatchupCapPreserved(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+
+	t.Run("maxTime older than query window", func(t *testing.T) {
+		t.Parallel()
+		clock := clockwork.NewFakeClock()
+		now := clock.Now()
+		windowStart := now.Add(-time.Hour)
+
+		view, windows := captureIntfCounterWindows(t, clock, chunk)
+		seedMaxTime(t, view, now.Add(-90*time.Minute)) // outside the window
+
+		_, err := view.Refresh(t.Context())
+		require.NoError(t, err)
+
+		start, end := span(t, *windows)
+		require.Equal(t, windowStart.UTC(), start.UTC(), "catch-up starts at the window start")
+		require.Equal(t, windowStart.Add(chunk).UTC(), end.UTC(), "catch-up ingests exactly one chunk")
+		require.Len(t, *windows, 1)
+	})
+
+	t.Run("empty table", func(t *testing.T) {
+		t.Parallel()
+		clock := clockwork.NewFakeClock()
+		now := clock.Now()
+		windowStart := now.Add(-time.Hour)
+
+		view, windows := captureIntfCounterWindows(t, clock, chunk)
+
+		_, err := view.Refresh(t.Context())
+		require.NoError(t, err)
+
+		start, end := span(t, *windows)
+		require.Equal(t, windowStart.UTC(), start.UTC())
+		require.Equal(t, windowStart.Add(chunk).UTC(), end.UTC())
+	})
+}
+
+// When maxTime + QueryChunk is beyond now, the refresh must clamp queryEnd to
+// now rather than overshooting into the future.
+func TestLake_TelemetryUsage_View_Refresh_UncappedTailClampsToNow(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClock()
+	now := clock.Now()
+	maxTime := now.Add(-3 * time.Minute) // maxTime + 5m chunk > now
+
+	view, windows := captureIntfCounterWindows(t, clock, chunk)
+	seedMaxTime(t, view, maxTime)
+
+	_, err := view.Refresh(t.Context())
+	require.NoError(t, err)
+
+	_, end := span(t, *windows)
+	require.Equal(t, now.UTC(), end.UTC(), "queryEnd must clamp to now, never past it")
+}

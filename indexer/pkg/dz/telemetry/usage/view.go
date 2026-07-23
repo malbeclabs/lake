@@ -234,24 +234,30 @@ const refreshOverlap = 5 * time.Minute
 // event_ts against the watermark (see queryBaselineCountersFromClickHouse).
 const baselineCacheMaxLag = 15 * time.Minute
 
-// maxCatchupChunks bounds a single refresh to maxCatchupChunks × QueryChunk of
-// data. After downtime maxTime can fall behind the query window, making one
-// refresh span the entire window at once; capping it spreads the catch-up over
-// successive refreshes (maxTime advances after each) so peak memory stays near
-// steady state.
+// maxCatchupChunks bounds how much NEW data (past maxTime) a single refresh
+// ingests: maxCatchupChunks × QueryChunk. After downtime maxTime can fall
+// behind the query window, making one refresh span the entire window at once;
+// capping it spreads the catch-up over successive refreshes (maxTime advances
+// after each) so peak memory stays near steady state.
 //
-// The cap must also keep each refresh inside the dzingest activity's
-// StartToCloseTimeout (5m). Each chunk is a separate Flux query bounded only by
-// the client's per-request HTTP timeout (defaultFluxHTTPTimeout, 4m); the Flux
-// query does not abort on the activity context deadline, so a 3-chunk (15m)
-// window can spend up to ~12m in InfluxDB alone. In prod this overran the 5m
-// deadline (observed >10m on both mainnet-beta and testnet), so ctx was already
-// expired by the time InsertInterfaceUsage ran — every catch-up refresh failed,
-// maxTime never advanced, and the window stayed pinned at the cap (an
-// unrecoverable loop; the overrun also spawned a doomed second Temporal attempt
-// that failed instantly on the already-expired ctx). One chunk caps each
-// refresh at a single <=4m query, leaving room for the insert inside the 5m
-// deadline so maxTime advances every cycle.
+// The cap is anchored at maxTime, not queryStart (see Refresh). In steady state
+// queryStart = maxTime − refreshOverlap, so the ingested span is the overlap
+// plus one chunk (~10m) = 2 Flux queries per refresh: one re-reading the
+// overlap (dedups out) and one ingesting the new chunk. maxTime advances one
+// chunk per refresh.
+//
+// The cap must keep each refresh inside the dzingest activity's
+// StartToCloseTimeout. Each chunk is a separate Flux query bounded only by the
+// client's per-request HTTP timeout (defaultFluxHTTPTimeout, 4m); the Flux
+// query does not abort on the activity context deadline, so the 2-query steady
+// state can spend up to ~8m in InfluxDB alone. RefreshTelemetryUsage runs under
+// a dedicated 10m StartToCloseTimeout (see dzingest/workflow.go) that bounds
+// this worst case plus the ClickHouse dedup/baseline/insert work, so ctx is not
+// already expired when InsertInterfaceUsage runs and maxTime advances every
+// cycle. (History: a 3-chunk/15m span under the old 5m deadline overran on both
+// mainnet-beta and testnet — ctx expired before the insert, every catch-up
+// refresh failed, and the window stayed pinned at the cap in an unrecoverable
+// loop.)
 const maxCatchupChunks = 1
 
 type View struct {
@@ -486,9 +492,24 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	// never advanced and every restart re-ran the same giant query. Capping the
 	// span lets a large catch-up proceed across successive refreshes (maxTime
 	// advances after each), keeping peak memory near steady state.
+	//
+	// Anchor the cap at the start of NEW data (maxTime), not queryStart.
+	// queryStart sits refreshOverlap (5m) behind maxTime to re-read late
+	// arrivals; anchoring the cap there made queryEnd = queryStart + 5m =
+	// maxTime, so an incremental refresh could never query past maxTime — it
+	// only re-read rows that dedup out and ingest stalled ~1h behind (#708).
+	// Anchoring at maxTime makes the steady-state span overlap + one chunk
+	// (~10m, 2 Flux queries) so maxTime advances every cycle. When maxTime is
+	// nil or older than queryStart (initial / "data too old"), newDataStart
+	// falls back to queryStart and the cap behaves as before — one chunk from
+	// the window start, preserving the post-downtime memory bound.
+	newDataStart := queryStart
+	if maxTime != nil && maxTime.After(newDataStart) {
+		newDataStart = *maxTime
+	}
 	queryEnd := now
-	if maxCatchup := v.cfg.QueryChunk * maxCatchupChunks; maxCatchup > 0 && queryEnd.Sub(queryStart) > maxCatchup {
-		queryEnd = queryStart.Add(maxCatchup)
+	if maxCatchup := v.cfg.QueryChunk * maxCatchupChunks; maxCatchup > 0 && queryEnd.Sub(newDataStart) > maxCatchup {
+		queryEnd = newDataStart.Add(maxCatchup)
 		v.log.Info("telemetry/usage: capping catch-up window to bound memory",
 			"queryStart", queryStart.UTC(), "queryEnd", queryEnd.UTC(), "target", now.UTC())
 	}
@@ -509,8 +530,13 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		v.log.Warn("telemetry/usage: no data returned from influxdb query", "from", queryStart, "to", now)
 		// Nothing to insert, so no persistence to wait on. Merge end-of-window
 		// baselines (a no-op when the window was genuinely empty) and advance the
-		// watermark: nothing changed through queryEnd, so the cached last-known
-		// values still hold there and the next refresh can cache-hit.
+		// baseline-cache watermark: nothing changed through queryEnd, so the
+		// cached last-known values still hold there and the next refresh can
+		// cache-hit. Note this advances only the cache watermark, not maxTime
+		// (nothing was written): while a data gap longer than QueryChunk sits at
+		// maxTime, the incremental window stays pinned at [maxTime-overlap,
+		// maxTime+chunk) returning zero new rows, until maxTime ages out of
+		// QueryWindow and the "data too old" branch skips past the gap.
 		v.updateBaselineCache(endBaselines, queryEnd)
 		v.readyOnce.Do(func() {
 			close(v.readyCh)
