@@ -27,6 +27,12 @@ func TestClassifyAndIsTransient(t *testing.T) {
 		// "request too large" prefix — both must classify as transient rate limits.
 		{"influxdb resources exhausted plural", errors.New("Resources exhausted: Heap exhausted"), dberror.ErrorTypeRateLimit, true},
 		{"influxdb request too large", errors.New("request too large: Error running series plans for namespace 'x': Resources exhausted: Heap exhausted"), dberror.ErrorTypeRateLimit, true},
+		// rpcpool 429 as surfaced by the jsonrpc client's dump formatting: neither
+		// "rate limited" nor "status 429" substring-matches it, but it is plainly a
+		// transient throttle (observed from the DZ ledger RPC during the 2026-07-23
+		// permission-events drain).
+		{"rpcpool connection rate limit", errors.New("get transaction: (*jsonrpc.RPCError)(0xc003100330)({\n Code: (int) 429,\n Message: (string) (len=31) \"Connection rate limits exceeded\",\n Data: (interface {}) <nil>\n})"), dberror.ErrorTypeRateLimit, true},
+		{"rate limiting variant", errors.New("upstream is rate limiting requests"), dberror.ErrorTypeRateLimit, true},
 
 		// The actual prod CH-connection-drop errors we saw — must be transient.
 		{"ch read packet reset", errors.New("query processing: failed to read packet from 52.4.220.199:9440 (conn_id=492): read: connection reset by peer"), dberror.ErrorTypeConnectivity, true},
