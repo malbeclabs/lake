@@ -158,7 +158,9 @@ const escrowBalancesCTE = `escrow_balances AS (
 	)`
 
 // seatPriceExpr is a seat's per-epoch price in dollars (override, else metro price +
-// device premium). Requires s, mh, dh joined.
+// device premium). Requires s, mh, dh joined. It backs seatPrepaidEpochsExpr; the SELECT
+// lists in the data queries (shreds.go and shred_subscribers.go) inline the same CASE for
+// the returned price_per_epoch_dollars column — keep those copies in lockstep with this one.
 const seatPriceExpr = `CASE
 			WHEN s.has_price_override = 1 THEN toInt64(s.override_usdc_price_dollars)
 			ELSE toInt64(COALESCE(mh.current_usdc_price_dollars, 0)) + toInt64(COALESCE(dh.current_usdc_metro_premium_dollars, 0))
@@ -191,6 +193,7 @@ var seatFilterFields = map[string]FilterFieldConfig{
 	"tenure":  {Column: "s.tenure_epochs", Type: FieldTypeNumeric},
 	"epoch":   {Column: "s.active_epoch", Type: FieldTypeNumeric},
 	"balance": {Column: "COALESCE(eb.spendable_usdc_balance, 0)", Type: FieldTypeNumeric},
+	"prepaid": {Column: seatPrepaidEpochsExpr, Type: FieldTypeNumeric},
 }
 
 func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
@@ -250,27 +253,25 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 			statuses[s] = true
 		}
 
-		prepaidExpr := seatPrepaidEpochsExpr
-
 		var statusOr []string
 		if statuses["active"] {
 			// Active but NOT expiring (prepaid >= 1).
-			statusOr = append(statusOr, "(s.active_epoch >= ? AND s.escrow_count > 0 AND "+prepaidExpr+" >= 1)")
+			statusOr = append(statusOr, "(s.active_epoch >= ? AND s.escrow_count > 0 AND "+seatPrepaidEpochsExpr+" >= 1)")
 			whereArgs = append(whereArgs, solanaEpoch)
 		}
 		if statuses["expiring"] {
 			// Active but expiring soon (prepaid < 1).
-			statusOr = append(statusOr, "(s.active_epoch >= ? AND s.escrow_count > 0 AND "+prepaidExpr+" < 1)")
+			statusOr = append(statusOr, "(s.active_epoch >= ? AND s.escrow_count > 0 AND "+seatPrepaidEpochsExpr+" < 1)")
 			whereArgs = append(whereArgs, solanaEpoch)
 		}
 		if statuses["pending"] {
 			// Funded but not yet active (balance covers at least 1 epoch).
-			statusOr = append(statusOr, "(s.active_epoch < ? AND s.escrow_count > 0 AND "+prepaidExpr+" >= 1)")
+			statusOr = append(statusOr, "(s.active_epoch < ? AND s.escrow_count > 0 AND "+seatPrepaidEpochsExpr+" >= 1)")
 			whereArgs = append(whereArgs, solanaEpoch)
 		}
 		if statuses["inactive"] {
 			// Expired: not active, insufficient balance for next epoch.
-			statusOr = append(statusOr, "(s.active_epoch < ? AND s.escrow_count > 0 AND "+prepaidExpr+" < 1)")
+			statusOr = append(statusOr, "(s.active_epoch < ? AND s.escrow_count > 0 AND "+seatPrepaidEpochsExpr+" < 1)")
 			whereArgs = append(whereArgs, solanaEpoch)
 		}
 		if statuses["closed"] {

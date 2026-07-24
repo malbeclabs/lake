@@ -384,6 +384,63 @@ func TestGetShredClientSeats_MultiEscrowUsesMaxNotSum(t *testing.T) {
 	}
 }
 
+// TestGetShredClientSeats_PrepaidSortAndFilter pins the prepaid semantics change:
+// the "prepaid" sort orders by prepaid-epochs (spendable / price), not the stale
+// price_per_epoch_dollars proxy, and the "prepaid" filter is honored (it was silently
+// dropped before the shared expr existed). The two seats are constructed so price order
+// and prepaid-epoch order disagree: the cheaper seat has more prepaid runway.
+func TestGetShredClientSeats_PrepaidSortAndFilter(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	ctx := t.Context()
+
+	// seat-hi: $8/epoch, one $48 escrow → prepaid = 6.
+	// seat-lo: $30/epoch, one $25.65 escrow → prepaid = 0.
+	// Price order (asc) is seat-hi < seat-lo; prepaid order (desc) is seat-hi > seat-lo.
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_client_seats_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, device_key, client_ip, tenure_epochs, funded_epoch, active_epoch,
+		 has_price_override, override_usdc_price_dollars, escrow_count, funding_authority_key)
+		VALUES
+		('seat-hi', now(), now(), generateUUIDv4(), 0, 1, 'seat-hi', 'dev-1', '203.0.113.8', 0, 900, 900, 1, 8, 1, 'funder-ps'),
+		('seat-lo', now(), now(), generateUUIDv4(), 0, 1, 'seat-lo', 'dev-1', '203.0.113.9', 0, 900, 900, 1, 30, 1, 'funder-ps')
+	`))
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_payment_escrows_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, client_seat_key, withdraw_authority_key, usdc_balance)
+		VALUES
+		('escrow-hi', now(), now(), generateUUIDv4(), 0, 1, 'escrow-hi', 'seat-hi', 'withdraw-ps', 48000000),
+		('escrow-lo', now(), now(), generateUUIDv4(), 0, 1, 'escrow-lo', 'seat-lo', 'withdraw-ps', 25650000)
+	`))
+
+	// Sort by prepaid descending: seat-hi (6 epochs) before seat-lo (0 epochs).
+	// The old price-based sort would put seat-lo ($30) first.
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/client-seats?filters=funder:funder-ps&sort_by=prepaid&sort_dir=desc", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredClientSeats(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+	var sorted handlers.PaginatedResponse[handlers.ShredClientSeatItem]
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&sorted))
+	require.Len(t, sorted.Items, 2)
+	assert.Equal(t, "seat-hi", sorted.Items[0].PK, "prepaid sort must order by epochs, not price")
+	assert.Equal(t, "seat-lo", sorted.Items[1].PK)
+
+	// Filter by prepaid >= 1: only seat-hi qualifies.
+	req = httptest.NewRequest(http.MethodGet, "/api/dz/shreds/client-seats?filters=funder:funder-ps&filters=prepaid:%3E=1", nil)
+	rr = httptest.NewRecorder()
+	api.GetShredClientSeats(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+	var filtered handlers.PaginatedResponse[handlers.ShredClientSeatItem]
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&filtered))
+	require.Len(t, filtered.Items, 1, "prepaid filter must be honored")
+	assert.Equal(t, "seat-hi", filtered.Items[0].PK)
+	assert.Equal(t, 1, filtered.Total)
+}
+
 func TestGetShredClientSeats_Sort(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
