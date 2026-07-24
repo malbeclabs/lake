@@ -24,17 +24,17 @@ const (
 	telemUsageEveryN = 1
 
 	// telemUsageStartToCloseTimeout is the dedicated activity deadline for
-	// RefreshTelemetryUsage, larger than the shared 5m. A steady-state refresh
-	// runs 2 Flux queries (overlap re-read + one new chunk, see
+	// RefreshTelemetryUsage, larger than the shared 5m. A capped catch-up
+	// refresh runs up to 3 Flux queries (overlap re-read + two new chunks, see
 	// dztelemusage.maxCatchupChunks), each bounded by defaultFluxHTTPTimeout
-	// (4m) and not aborting on the activity ctx, so the worst case is ~8m of
-	// InfluxDB plus the ClickHouse dedup/baseline/insert work; 10m bounds that.
+	// (4m) and not aborting on the activity ctx, so the worst case is ~12m of
+	// InfluxDB plus the ClickHouse dedup/baseline/insert work; 15m bounds that.
 	// A shorter deadline would expire before the insert on slow InfluxDB and pin
 	// maxTime in a retry loop (the #665/#671 failure mode). (The rare InfluxDB
 	// baseline fallback adds up to 120s before the chunked read; on that path
 	// the deadline is tight, but it needs a cache miss plus 0 ClickHouse
 	// baselines and the next cycle recovers.)
-	telemUsageStartToCloseTimeout = 10 * time.Minute
+	telemUsageStartToCloseTimeout = 15 * time.Minute
 
 	// permissionEventsEveryN controls how often the permission audit refresh runs.
 	// Serviceability permission changes are sporadic, so at the 60s base interval this
@@ -96,13 +96,14 @@ func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 		graphSyncFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).SyncGraph)
 
 		// Telemetry usage runs every iteration (~1 minute) but under a dedicated
-		// longer deadline (telemUsageStartToCloseTimeout) because a refresh now
-		// runs 2 Flux queries. Use MaximumAttempts: 1, not the shared retry
-		// policy: the workflow reschedules this activity every iteration, so a
-		// Temporal retry adds no recovery a re-run wouldn't — while a 10m×3
-		// retry chain would block the whole ingest loop for up to ~30m and stack
-		// attempts on refreshMu behind a first attempt whose Flux query ignores
-		// the expired ctx. One attempt keeps the worst-case loop stall at 10m.
+		// longer deadline (telemUsageStartToCloseTimeout) because a refresh
+		// runs up to 3 Flux queries. Use MaximumAttempts: 1, not the shared
+		// retry policy: the workflow reschedules this activity every iteration,
+		// so a Temporal retry adds no recovery a re-run wouldn't — while a
+		// 15m×3 retry chain would block the whole ingest loop for up to ~45m
+		// and stack attempts on refreshMu behind a first attempt whose Flux
+		// query ignores the expired ctx. One attempt keeps the worst-case loop
+		// stall at 15m.
 		var telemUsageFuture temporalworkflow.Future
 		if iteration%telemUsageEveryN == 0 {
 			telemUsageCtx := temporalworkflow.WithActivityOptions(ctx, temporalworkflow.ActivityOptions{
