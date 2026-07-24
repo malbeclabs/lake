@@ -27,6 +27,7 @@ import (
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
+	"github.com/malbeclabs/lake/utils/pkg/dberror"
 )
 
 // Config configures the DZ ingest worker.
@@ -176,7 +177,34 @@ func (l *temporalLogger) Error(msg string, keyvals ...any) {
 		l.log.Warn(msg, keyvals...)
 		return
 	}
+	// The periodic DZ ingest activities return nil to Temporal (see
+	// activities.refresh), so they never reach this "Activity error." log. The
+	// manual backfill activities do return their error, and BackfillRefresh
+	// shares the permission-events near-tip not-found gate — a transient-by-
+	// design condition (dberror.ErrTransient) that would otherwise page an
+	// attended backfill. Demote transient causes to WARN; non-transient
+	// failures still log ERROR. Mirrors the rollup worker's temporalLogger.
+	if msg == "Activity error." && isTransientActivityError(keyvals) {
+		l.log.Warn(msg, keyvals...)
+		return
+	}
 	l.log.Error(msg, keyvals...)
+}
+
+// isTransientActivityError reports whether Temporal's activity-error keyvals
+// carry an Error that dberror classifies as transient (a self-healing upstream
+// blip, or one explicitly marked with dberror.ErrTransient). At the "Activity
+// error." log site the Error keyval is the raw error the activity returned.
+func isTransientActivityError(keyvals []any) bool {
+	for i := 0; i+1 < len(keyvals); i += 2 {
+		if keyvals[i] != "Error" {
+			continue
+		}
+		if err, ok := keyvals[i+1].(error); ok {
+			return dberror.IsTransient(err)
+		}
+	}
+	return false
 }
 
 // hasBenignTaskProcessingError reports whether Temporal's "Task processing

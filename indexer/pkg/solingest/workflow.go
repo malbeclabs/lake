@@ -48,6 +48,15 @@ func SolIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 	// to ErrorAfter-1 iterations across the boundary — fine at threshold 3;
 	// revisit before raising the threshold.
 	esc := &logger.Escalator{TransientErrorAfter: logger.DefaultErrorAfter}
+
+	// Block production runs once per ~hourly run (blockProductionEveryN ==
+	// continueAsNewThreshold, so only at iteration 0), and esc is workflow-local
+	// and recreated on every ContinueAsNew — so its block_production count can
+	// never exceed 1 and the default threshold of 3 is unreachable. A block
+	// production failure that survived Temporal's in-activity retries is already
+	// sustained, so escalate it at 1 to preserve pre-PR paging (the per-attempt
+	// "Activity error." lines that used to page are now demoted to WARN).
+	bpEsc := &logger.Escalator{ErrorAfter: 1, TransientErrorAfter: 1}
 	var err error
 
 	actOpts := temporalworkflow.ActivityOptions{
@@ -91,7 +100,7 @@ func SolIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 			if err != nil && ctx.Err() != nil {
 				return ctx.Err()
 			}
-			esc.Observe(log, "block_production", "block production refresh failed", err)
+			bpEsc.Observe(log, "block_production", "block production refresh failed", err)
 		}
 		if validatorsAppFuture != nil {
 			err = validatorsAppFuture.Get(ctx, nil)

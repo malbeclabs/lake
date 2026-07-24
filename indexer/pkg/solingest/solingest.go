@@ -149,8 +149,11 @@ func (l *temporalLogger) Error(msg string, keyvals ...any) {
 	// activities write to ClickHouse and return their errors to Temporal, so a
 	// transient connection blip (a native-TLS read: EOF from ClickHouse Cloud)
 	// self-heals on retry but still trips the aggregate level="ERR" pager.
-	// Demote to WARN; sustained failure still surfaces via the ingestion log.
-	// Mirrors the rollup worker's temporalLogger.
+	// Demote to WARN; a sustained failure still pages via the workflow-side
+	// Escalator, which observes the frequent activities (solana/geoip/
+	// validatorsapp) enough times per run to reach its threshold, and observes
+	// the once-per-run block production activity at a dedicated threshold of 1
+	// (see workflow.go). Mirrors the rollup worker's temporalLogger.
 	if msg == "Activity error." && isTransientActivityError(keyvals) {
 		l.log.Warn(msg, keyvals...)
 		return
