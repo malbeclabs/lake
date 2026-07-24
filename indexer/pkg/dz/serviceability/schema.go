@@ -164,13 +164,18 @@ func (s *UserSchema) PayloadColumns() []string {
 		"publishers:VARCHAR",
 		"subscribers:VARCHAR",
 		"bgp_status:VARCHAR",
-		"feed_pk:VARCHAR",
+		"feed_pks:VARCHAR",
 	}
 }
 
 func (s *UserSchema) ToRow(u User) []any {
 	publishersJSON, _ := json.Marshal(u.Publishers)
 	subscribersJSON, _ := json.Marshal(u.Subscribers)
+	feedPKs := u.FeedPKs
+	if feedPKs == nil {
+		feedPKs = []string{}
+	}
+	feedPKsJSON, _ := json.Marshal(feedPKs)
 	return []any{
 		u.PK,
 		u.OwnerPubkey,
@@ -184,7 +189,7 @@ func (s *UserSchema) ToRow(u User) []any {
 		string(publishersJSON),
 		string(subscribersJSON),
 		u.BgpStatus,
-		u.FeedPK,
+		string(feedPKsJSON),
 	}
 }
 

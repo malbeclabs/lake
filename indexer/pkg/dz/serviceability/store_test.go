@@ -295,6 +295,7 @@ func TestLake_Serviceability_Store_ReplaceUsers(t *testing.T) {
 		ownerPubkey := testPK(2)
 		devicePK := testPK(3)
 		feedPK := testPK(4)
+		unicastPK := testPK(5)
 
 		users := []User{
 			{
@@ -305,7 +306,17 @@ func TestLake_Serviceability_Store_ReplaceUsers(t *testing.T) {
 				ClientIP:    net.IP{10, 0, 0, 1},
 				DZIP:        net.IP{10, 0, 0, 2},
 				DevicePK:    devicePK,
-				FeedPK:      feedPK,
+				FeedPKs:     []string{feedPK},
+			},
+			{
+				PK:          unicastPK,
+				OwnerPubkey: ownerPubkey,
+				Status:      "activated",
+				Kind:        "ibrl",
+				ClientIP:    net.IP{10, 0, 0, 3},
+				DZIP:        net.IP{10, 0, 0, 4},
+				DevicePK:    devicePK,
+				// FeedPKs deliberately nil: must persist as [] (not null).
 			},
 		}
 
@@ -330,7 +341,13 @@ func TestLake_Serviceability_Store_ReplaceUsers(t *testing.T) {
 		require.Equal(t, "10.0.0.1", current["client_ip"])
 		require.Equal(t, "10.0.0.2", current["dz_ip"])
 		require.Equal(t, devicePK, current["device_pk"])
-		require.Equal(t, feedPK, current["feed_pk"])
+		require.JSONEq(t, `["`+feedPK+`"]`, current["feed_pks"].(string))
+
+		// Nil FeedPKs persist as [] (not null).
+		current, err = ds.GetCurrentRow(ctx, conn, dataset.NewNaturalKey(unicastPK).ToSurrogate())
+		require.NoError(t, err)
+		require.NotNil(t, current)
+		require.Equal(t, "[]", current["feed_pks"].(string))
 	})
 
 	t.Run("persists onchain BGP status through to dz_users_current", func(t *testing.T) {

@@ -229,8 +229,8 @@ github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e h1:Q6MvJtQK/iRcRt
 github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e/go.mod h1:autxFIvghDt3jPTLoqZ9OZ7s9qTGNAWmYCjVFWPX/zg=
 github.com/magiconair/properties v1.8.10 h1:s31yESBquKXCV9a/ScB3ESkOjUYYv+X0rg8SYxI99mE=
 github.com/magiconair/properties v1.8.10/go.mod h1:Dhd985XPs7jluiymwWYZ0G4Z61jb3vdS329zhj2hYo0=
-github.com/malbeclabs/doublezero v0.8.1-0.20260722174450-58d10802e644 h1:1YrYYYbhAMhrkDZqNBDM0rAjumWjhAXixKafWHLWfFI=
-github.com/malbeclabs/doublezero v0.8.1-0.20260722174450-58d10802e644/go.mod h1:w5j6o+ROrFvOS1bhVtBZZA1FB/o81pOiJ7pzbueSb0g=
+github.com/malbeclabs/doublezero v0.8.1-0.20260724204114-f7981ab6f7a3 h1:67hJvUmdRNtXcW2BbUCBrH6kANhOL6tlqsg3lYD1Akk=
+github.com/malbeclabs/doublezero v0.8.1-0.20260724204114-f7981ab6f7a3/go.mod h1:TIfH1zvFiSLdeSNVr6HM7LbwNfkZXlHSTiDWdNpxE80=
 github.com/mattn/go-colorable v0.1.14 h1:9A9LHSqF/7dyVVX6g0U9cwm9pG3kP9gSzcuIPHPsaIE=
 github.com/mattn/go-colorable v0.1.14/go.mod h1:6LmQG8QLFO4G5z1gPvYEzlUgJ2wF+stgPZH1UqBm1s8=
 github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=

@@ -272,22 +272,26 @@ func TestLake_Serviceability_View_ConvertUsers(t *testing.T) {
 		require.Equal(t, "unknown", result[2].BgpStatus)
 	})
 
-	t.Run("maps FeedPk, empty for the zero pubkey", func(t *testing.T) {
+	t.Run("maps FeedPks, empty for non-EdgeSeat users", func(t *testing.T) {
 		t.Parallel()
 
-		feedPK := [32]byte{9, 9, 9}
+		feedA := [32]byte{9, 9, 9}
+		feedB := [32]byte{8, 8, 8}
 		onchain := []serviceability.User{
-			// EdgeSeat multicast user with a feed.
-			{PubKey: [32]byte{1}, Status: serviceability.UserStatusActivated, UserType: serviceability.UserTypeMulticast, FeedPk: feedPK},
-			// Non-EdgeSeat user: zero pubkey → "".
+			// EdgeSeat multicast user holding seats on two feeds.
+			{PubKey: [32]byte{1}, Status: serviceability.UserStatusActivated, UserType: serviceability.UserTypeMulticast, FeedPks: [][32]byte{feedA, feedB}},
+			// Non-EdgeSeat user: empty onchain vec → empty slice.
 			{PubKey: [32]byte{2}, Status: serviceability.UserStatusActivated, UserType: serviceability.UserTypeIBRL},
 		}
 
 		result := convertUsers(onchain)
 
 		require.Len(t, result, 2)
-		require.Equal(t, solana.PublicKeyFromBytes(feedPK[:]).String(), result[0].FeedPK)
-		require.Equal(t, "", result[1].FeedPK)
+		require.Equal(t, []string{
+			solana.PublicKeyFromBytes(feedA[:]).String(),
+			solana.PublicKeyFromBytes(feedB[:]).String(),
+		}, result[0].FeedPKs)
+		require.Empty(t, result[1].FeedPKs)
 	})
 }
 
@@ -1019,7 +1023,7 @@ func TestLake_Serviceability_View_Refresh(t *testing.T) {
 							ClientIp:     [4]byte{1, 1, 1, 1},
 							DzIp:         [4]byte{10, 0, 0, 1},
 							DevicePubKey: devicePK,
-							FeedPk:       feedPK,
+							FeedPks:      [][32]byte{feedPK},
 						},
 						{
 							PubKey:       testPubkeyBytes(9),
@@ -1252,14 +1256,14 @@ func TestLake_Serviceability_View_Refresh(t *testing.T) {
 		require.Equal(t, testPubkey(2).String(), current["metro_pk"], "feed metro_pk should be the exchange")
 		require.JSONEq(t, `["`+testPubkey(13).String()+`"]`, current["groups"].(string))
 
-		// User carries its EdgeSeat feed pubkey through to dz_users_current.
-		rows, err = conn.Query(ctx, "SELECT feed_pk FROM dz_users_current WHERE pk = ?", testPubkey(4).String())
+		// User carries its EdgeSeat feed pubkeys through to dz_users_current.
+		rows, err = conn.Query(ctx, "SELECT feed_pks FROM dz_users_current WHERE pk = ?", testPubkey(4).String())
 		require.NoError(t, err)
 		require.True(t, rows.Next())
-		var userFeedPk string
-		require.NoError(t, rows.Scan(&userFeedPk))
+		var userFeedPks string
+		require.NoError(t, rows.Scan(&userFeedPks))
 		rows.Close()
-		require.Equal(t, feedPKStr, userFeedPk)
+		require.JSONEq(t, `["`+feedPKStr+`"]`, userFeedPks)
 
 		// EdgeSeat pass carries its feed-seat JSON through to dz_access_passes_current.
 		rows, err = conn.Query(ctx, "SELECT feed_seats FROM dz_access_passes_current WHERE pk = ?", testPubkey(12).String())

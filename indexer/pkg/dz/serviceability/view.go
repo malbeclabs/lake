@@ -141,9 +141,10 @@ type User struct {
 	// BgpStatus is the onchain BGP session status as last reported by the
 	// device agent: always one of "up" | "down" | "unknown".
 	BgpStatus string
-	// FeedPK is the base58 EdgeSeat feed whose per-feed seat this user consumed
-	// at connect; empty string for non-EdgeSeat/unicast users (zero pubkey onchain).
-	FeedPK string
+	// FeedPKs are the base58 EdgeSeat feeds whose per-feed seats this user
+	// consumed at connect (a user may hold seats on multiple feeds); empty for
+	// non-EdgeSeat/unicast users.
+	FeedPKs []string
 }
 
 // Feed is a serviceability catalog entry (SKU): one feed scoped to a single
@@ -582,6 +583,11 @@ func convertUsers(onchain []serviceability.User) []User {
 		for j, sub := range user.Subscribers {
 			subscribers[j] = solana.PublicKeyFromBytes(sub[:]).String()
 		}
+		// Convert consumed EdgeSeat feed PKs
+		feedPKs := make([]string, len(user.FeedPks))
+		for j, f := range user.FeedPks {
+			feedPKs[j] = solana.PublicKeyFromBytes(f[:]).String()
+		}
 
 		result[i] = User{
 			PK:          solana.PublicKeyFromBytes(user.PubKey[:]).String(),
@@ -596,15 +602,15 @@ func convertUsers(onchain []serviceability.User) []User {
 			Publishers:  publishers,
 			Subscribers: subscribers,
 			BgpStatus:   bgpStatusString(user.BgpStatus),
-			FeedPK:      pubkeyOrEmpty(user.FeedPk),
+			FeedPKs:     feedPKs,
 		}
 	}
 	return result
 }
 
 // pubkeyOrEmpty returns the base58 pubkey, or "" for the zero pubkey. The
-// serviceability SDK uses the zero pubkey to mean "no value" (e.g. User.FeedPk
-// on non-EdgeSeat/unicast users), and "" keeps empty-string WHERE filters sane.
+// serviceability SDK uses the zero pubkey to mean "no value" (e.g. an unset
+// FeedSeat.FeedKey), and "" keeps empty-string WHERE filters sane.
 func pubkeyOrEmpty(pk [32]byte) string {
 	if pk == ([32]byte{}) {
 		return ""
