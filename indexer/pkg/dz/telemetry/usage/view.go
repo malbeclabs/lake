@@ -224,15 +224,15 @@ const refreshOverlap = 5 * time.Minute
 // margin also covers capped catch-up steps.
 //
 // It must exceed refreshOverlap plus one capped catch-up step (QueryChunk ×
-// maxCatchupChunks, 5m); 15m leaves headroom. ViewConfig.Validate enforces this
-// against the operator-settable QueryChunk so a larger chunk can't silently
-// regress every refresh to a full re-scan; the runtime signal is
+// maxCatchupChunks, 10m); 20m leaves headroom. ViewConfig.Validate enforces
+// this against the operator-settable QueryChunk so a larger chunk can't
+// silently regress every refresh to a full re-scan; the runtime signal is
 // doublezero_data_indexer_clickhouse_baseline_query_total.
 //
 // This bounds only the backward direction (windowStart below the watermark).
 // The forward direction is bounded separately, by comparing ClickHouse's max
 // event_ts against the watermark (see queryBaselineCountersFromClickHouse).
-const baselineCacheMaxLag = 15 * time.Minute
+const baselineCacheMaxLag = 20 * time.Minute
 
 // maxCatchupChunks bounds how much NEW data (past maxTime) a single refresh
 // ingests: maxCatchupChunks × QueryChunk. After downtime maxTime can fall
@@ -240,25 +240,39 @@ const baselineCacheMaxLag = 15 * time.Minute
 // capping it spreads the catch-up over successive refreshes (maxTime advances
 // after each) so peak memory stays near steady state.
 //
-// The cap is anchored at maxTime, not queryStart (see Refresh). In steady state
-// queryStart = maxTime − refreshOverlap, so the ingested span is the overlap
-// plus one chunk (~10m) = 2 Flux queries per refresh: one re-reading the
-// overlap (dedups out) and one ingesting the new chunk. maxTime advances one
-// chunk per refresh.
+// The cap is anchored at maxTime, not queryStart (see Refresh). queryStart
+// always sits refreshOverlap behind maxTime — the overlap re-read is
+// load-bearing, not just late-arrival capture. Non-sparse counters (in-octets,
+// in-pkts, …) have no ClickHouse baseline; re-reading each key's
+// recently-written rows seeds lastKnownValues/firstRowSeen via the dedup path
+// in convertRowsToUsage, so the first NEW row per key emits a correct delta.
+// Without the re-read, every key whose latest written row sits behind the
+// global maxTime — the norm for an unsynchronized multi-device fleet — would
+// have its first in-window row consumed as a baseline and silently dropped,
+// undercounting its traffic. Catch-up throughput must therefore come from this
+// forward cap, never from skipping the overlap.
+//
+// Two chunks, not one, so catch-up converges (#713): the measured prod refresh
+// cadence is ~5m per cycle, and a 1-chunk (5m) cap gained ~1.0× wall clock per
+// cycle — a stale watermark never caught up. Two chunks pay lag down ~5m per
+// cycle. The cost, paid only while the cap binds (maxTime more than 2 chunks
+// behind now): a capped refresh spans overlap + 2 chunks (~15m, 3 Flux
+// queries) versus steady state's ≤ overlap + lag (~10m, ≤2 Flux queries) —
+// ~1.5× steady-state peak memory and one extra Flux query.
 //
 // The cap must keep each refresh inside the dzingest activity's
 // StartToCloseTimeout. Each chunk is a separate Flux query bounded only by the
 // client's per-request HTTP timeout (defaultFluxHTTPTimeout, 4m); the Flux
-// query does not abort on the activity context deadline, so the 2-query steady
-// state can spend up to ~8m in InfluxDB alone. RefreshTelemetryUsage runs under
-// a dedicated 10m StartToCloseTimeout (see dzingest/workflow.go) that bounds
-// this worst case plus the ClickHouse dedup/baseline/insert work, so ctx is not
-// already expired when InsertInterfaceUsage runs and maxTime advances every
-// cycle. (History: a 3-chunk/15m span under the old 5m deadline overran on both
-// mainnet-beta and testnet — ctx expired before the insert, every catch-up
-// refresh failed, and the window stayed pinned at the cap in an unrecoverable
-// loop.)
-const maxCatchupChunks = 1
+// query does not abort on the activity context deadline, so a capped 3-query
+// refresh can spend up to ~12m in InfluxDB alone. RefreshTelemetryUsage runs
+// under a dedicated 15m StartToCloseTimeout (see dzingest/workflow.go) that
+// bounds this worst case plus the ClickHouse dedup/baseline/insert work, so
+// ctx is not already expired when InsertInterfaceUsage runs and maxTime
+// advances every cycle. (History: a 15m span under the old 5m deadline overran
+// on both mainnet-beta and testnet — ctx expired before the insert, every
+// catch-up refresh failed, and the window stayed pinned at the cap in an
+// unrecoverable loop. The deadline, not the span, was the bug.)
+const maxCatchupChunks = 2
 
 type View struct {
 	log       *slog.Logger
@@ -375,9 +389,15 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 
 	if maxTime != nil {
 		if maxTime.After(queryWindowStart) {
-			// Include a small overlap to catch late-arriving data with past timestamps
-			overlap := refreshOverlap
-			queryStart = maxTime.Add(-overlap)
+			// Include a small overlap to catch late-arriving data with past
+			// timestamps. The overlap is kept even while far behind (catch-up):
+			// beyond late arrivals, the re-read of already-written rows seeds
+			// non-sparse counter baselines via the dedup path — without it,
+			// every key whose latest row sits behind the global maxTime would
+			// have its first new row swallowed as a baseline (see
+			// maxCatchupChunks). Catch-up speed comes from the forward cap
+			// instead.
+			queryStart = maxTime.Add(-refreshOverlap)
 			newDataWindow := now.Sub(*maxTime)
 			totalQueryWindow := now.Sub(queryStart)
 			v.log.Debug("telemetry/usage: incremental refresh (data within query window)",
@@ -386,7 +406,7 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 				"now", now.UTC(),
 				"newDataWindow", newDataWindow,
 				"totalQueryWindow", totalQueryWindow,
-				"overlap", overlap)
+				"overlap", refreshOverlap)
 		} else {
 			queryStart = queryWindowStart
 			age := now.Sub(*maxTime)
@@ -533,10 +553,10 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		// baseline-cache watermark: nothing changed through queryEnd, so the
 		// cached last-known values still hold there and the next refresh can
 		// cache-hit. Note this advances only the cache watermark, not maxTime
-		// (nothing was written): while a data gap longer than QueryChunk sits at
-		// maxTime, the incremental window stays pinned at [maxTime-overlap,
-		// maxTime+chunk) returning zero new rows, until maxTime ages out of
-		// QueryWindow and the "data too old" branch skips past the gap.
+		// (nothing was written): while a data gap longer than the capped span
+		// sits at maxTime, the incremental window stays pinned at the same
+		// [queryStart, queryEnd) returning zero new rows, until maxTime ages
+		// out of QueryWindow and the "data too old" branch skips past the gap.
 		v.updateBaselineCache(endBaselines, queryEnd)
 		v.readyOnce.Do(func() {
 			close(v.readyCh)
