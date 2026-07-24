@@ -1799,16 +1799,19 @@ func TestLake_TelemetryUsage_View_Refresh_SkipsOnlyBeyondCatchupHorizon(t *testi
 }
 
 // Removing the jump (#718) must not let a genuine source data gap pin
-// catch-up: a capped span that returned zero rows was queried and proven empty
-// at the source, so the next refresh anchors past it instead of re-reading the
-// same span forever (maxTime only advances on insert).
+// catch-up: a capped span that returned zero rows AND has aged out of
+// QueryWindow held nothing for the full late-arrival window, so the next
+// refresh anchors past it instead of re-reading the same span forever
+// (maxTime only advances on insert).
 func TestLake_TelemetryUsage_View_Refresh_EmptyCappedSpanAdvancesAnchor(t *testing.T) {
 	t.Parallel()
 
 	const chunk = 5 * time.Minute
 	clock := clockwork.NewFakeClock()
 	now := clock.Now()
-	maxTime := now.Add(-30 * time.Minute).Truncate(time.Millisecond)
+	// 2h stale: the capped span [maxTime−5m, maxTime+10m) ends well before
+	// now−QueryWindow (1h), so it has aged out of the late-arrival window.
+	maxTime := now.Add(-2 * time.Hour).Truncate(time.Millisecond)
 
 	view, windows := captureIntfCounterWindows(t, clock, chunk) // mock returns zero rows
 	seedMaxTime(t, view, maxTime)
@@ -1818,8 +1821,9 @@ func TestLake_TelemetryUsage_View_Refresh_EmptyCappedSpanAdvancesAnchor(t *testi
 	_, end1 := span(t, *windows)
 	require.Equal(t, maxTime.Add(maxCatchupChunks*chunk).UTC(), end1.UTC())
 
-	// maxTime is unchanged (nothing was inserted), but the capped span was
-	// proven empty — the next refresh must anchor at its end, not re-read it.
+	// maxTime is unchanged (nothing was inserted), but the aged-out capped
+	// span was proven empty — the next refresh must anchor at its end, not
+	// re-read it.
 	*windows = nil
 	_, err = view.Refresh(t.Context())
 	require.NoError(t, err)
@@ -1829,6 +1833,94 @@ func TestLake_TelemetryUsage_View_Refresh_EmptyCappedSpanAdvancesAnchor(t *testi
 		"next refresh anchors at the proven-empty span's end (minus the standard overlap)")
 	require.Equal(t, end1.Add(maxCatchupChunks*chunk).UTC(), end2.UTC(),
 		"gap traversal proceeds one capped span per cycle")
+}
+
+// A capped span that is empty but still within QueryWindow must NOT advance
+// the anchor: it may only be empty *yet* (source stall), and a writer that
+// replays buffered data with past timestamps within QueryWindow must lose
+// nothing. The span is re-read every cycle until it ages out.
+func TestLake_TelemetryUsage_View_Refresh_EmptyYoungCappedSpanKeepsAnchor(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClock()
+	now := clock.Now()
+	// 30m stale: capped (beyond the 10m cap) but the span end (maxTime+10m =
+	// now−20m) is still inside the 1h late-arrival window.
+	maxTime := now.Add(-30 * time.Minute).Truncate(time.Millisecond)
+
+	view, windows := captureIntfCounterWindows(t, clock, chunk)
+	seedMaxTime(t, view, maxTime)
+
+	_, err := view.Refresh(t.Context())
+	require.NoError(t, err)
+
+	*windows = nil
+	_, err = view.Refresh(t.Context())
+	require.NoError(t, err)
+
+	start2, _ := span(t, *windows)
+	require.Equal(t, maxTime.Add(-refreshOverlap).UTC(), start2.UTC(),
+		"an empty span still within QueryWindow must be re-read, not skipped — buffered data may yet be replayed into it")
+}
+
+// The anchor advance keys on zero INGESTIBLE rows, not zero raw rows: an
+// aged-out capped span whose only rows are overlap re-reads that dedup out
+// (already written) produces nothing to insert and must still advance —
+// otherwise the pin the advance exists to break would persist whenever the
+// overlap contains data.
+func TestLake_TelemetryUsage_View_Refresh_DedupedOnlyAgedSpanAdvancesAnchor(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClockAt(time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC))
+	now := clock.Now()
+	maxTime := now.Add(-2 * time.Hour) // aged out of the 1h QueryWindow
+	const dev, intf = "dedup-device", "eth0"
+
+	// InfluxDB holds only the row a previous refresh already wrote; the
+	// overlap re-read returns it and it dedups out.
+	windows := &[][2]time.Time{}
+	influx := &mockInfluxDBClient{
+		queryIntfCountersFunc: func(_ context.Context, s, e time.Time) ([]map[string]any, error) {
+			*windows = append(*windows, [2]time.Time{s, e})
+			if !maxTime.Before(s) && maxTime.Before(e) {
+				return []map[string]any{{
+					"time":       maxTime.UTC().Format(time.RFC3339Nano),
+					"dzd_pubkey": dev,
+					"intf":       intf,
+					"in-octets":  int64(1000),
+				}}, nil
+			}
+			return nil, nil
+		},
+	}
+	view, err := NewView(ViewConfig{
+		Logger:          laketesting.NewLogger(),
+		Clock:           clock,
+		ClickHouse:      testClient(t),
+		InfluxDB:        influx,
+		Bucket:          "test-bucket",
+		RefreshInterval: time.Second,
+		QueryWindow:     time.Hour,
+		QueryChunk:      chunk,
+	})
+	require.NoError(t, err)
+	seedUsageRow(t, view, dev, intf, maxTime, 1000)
+
+	_, err = view.Refresh(t.Context())
+	require.NoError(t, err)
+
+	// Nothing was inserted (the only row deduped out), but the aged-out span
+	// [maxTime, maxTime+10m) was proven to hold nothing ingestible — the next
+	// refresh must anchor past it.
+	*windows = nil
+	_, err = view.Refresh(t.Context())
+	require.NoError(t, err)
+
+	start2, _ := span(t, *windows)
+	require.Equal(t, maxTime.Add(maxCatchupChunks*chunk).Add(-refreshOverlap).UTC(), start2.UTC(),
+		"a deduped-only aged span must advance the anchor like a zero-row one")
 }
 
 // An UNCAPPED empty window (steady state) must not advance the anchor: the

@@ -197,6 +197,13 @@ func (cfg *ViewConfig) Validate() error {
 		return fmt.Errorf("query chunk %s is too large for the baseline cache: refreshOverlap (%s) + QueryChunk×maxCatchupChunks (%s) must stay below baselineCacheMaxLag (%s)",
 			cfg.QueryChunk, refreshOverlap, cfg.QueryChunk*maxCatchupChunks, baselineCacheMaxLag)
 	}
+	// The beyond-horizon skip lands at now−QueryWindow (see maxCatchupHorizon);
+	// a window at or past the horizon would make the "skip" jump backwards
+	// behind the watermark. It would also disable the empty-span age-out that
+	// unpins genuine source gaps.
+	if cfg.QueryWindow >= maxCatchupHorizon {
+		return fmt.Errorf("query window %s must stay below maxCatchupHorizon (%s)", cfg.QueryWindow, maxCatchupHorizon)
+	}
 	return nil
 }
 
@@ -301,14 +308,20 @@ type View struct {
 	baselineCache          *CounterBaselines
 	baselineCacheWatermark time.Time
 
-	// sourceEmptyThrough is the end of the latest capped catch-up span that was
-	// queried and returned zero ingestible rows: the source has been proven
-	// empty through this instant, so the next refresh anchors past it instead
-	// of re-querying the same span forever. Without it, removing the old
-	// jump-to-now−QueryWindow (#718) would let a genuine source data gap longer
-	// than one capped span pin catch-up permanently (maxTime only advances on
-	// insert). Guarded by refreshMu. In-memory only: a restart re-traverses the
-	// gap with cheap zero-row queries, one capped span per cycle.
+	// sourceEmptyThrough is the end of the latest capped catch-up span that
+	// returned zero ingestible rows AND had already aged out of QueryWindow:
+	// the source held nothing there for the full late-arrival window, so the
+	// next refresh anchors past it instead of re-querying the same span
+	// forever. Without it, removing the old jump-to-now−QueryWindow (#718)
+	// would let a genuine source data gap longer than one capped span pin
+	// catch-up permanently (maxTime only advances on insert). The age-out
+	// condition preserves the pre-#718 late-replay tolerance: a span that is
+	// empty merely *right now* (source stall) is re-read every cycle until it
+	// is QueryWindow old, so a writer that replays buffered data with past
+	// timestamps within QueryWindow loses nothing; gap traversal instead
+	// trails now−QueryWindow. Guarded by refreshMu. In-memory only: a restart
+	// re-traverses the already-aged gap with cheap zero-row queries, one
+	// capped span per cycle.
 	sourceEmptyThrough time.Time
 
 	// esc escalates consecutive refresh failures from WARN to ERROR so a
@@ -419,10 +432,18 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	if watermark != nil {
 		if age := now.Sub(*watermark); age > maxCatchupHorizon {
 			queryStart = queryWindowStart
-			v.log.Error("telemetry/usage: watermark is beyond the catch-up horizon; skipping ahead and permanently dropping the intervening span — recover it with the admin backfill",
+			// chMaxTime is the raw ClickHouse watermark: the effective watermark
+			// may sit past it (sourceEmptyThrough), and this log line is the
+			// operator's backfill instruction, so report both ends honestly.
+			chMaxTime := "none"
+			if maxTime != nil {
+				chMaxTime = maxTime.UTC().String()
+			}
+			v.log.Error("telemetry/usage: watermark is beyond the catch-up horizon; skipping ahead — the intervening span will not be ingested once this refresh succeeds; recover it with the admin backfill",
 				"skippedFrom", watermark.UTC(),
 				"skippedTo", queryStart.UTC(),
 				"skippedSpan", queryStart.Sub(*watermark).String(),
+				"chMaxTime", chMaxTime,
 				"watermarkAge", age.String(),
 				"horizon", maxCatchupHorizon.String())
 		} else {
@@ -593,17 +614,29 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		// maxTime doesn't advance (nothing was written), so a source data gap
 		// longer than the capped span would pin the incremental window at the
 		// same [queryStart, queryEnd) forever. A capped span that returned zero
-		// ingestible rows was just queried and proven empty at the source —
-		// nothing is lost by moving past it — so advance sourceEmptyThrough to
-		// let the next refresh anchor there, traversing the gap one capped span
-		// per cycle. Uncapped (steady-state) empty windows keep the watermark
-		// where it is: the window isn't pinned (it grows with now), and the
-		// wide re-read maximizes late-arrival capture.
-		if capped && queryEnd.After(v.sourceEmptyThrough) {
+		// ingestible rows AND has aged out of QueryWindow held nothing for the
+		// full late-arrival window — advance sourceEmptyThrough so the next
+		// refresh anchors past it, traversing the gap one capped span per cycle
+		// (trailing now−QueryWindow). A younger empty span is re-read every
+		// cycle instead: it may only be empty *yet* (source stall), and a
+		// writer replaying buffered data with past timestamps within
+		// QueryWindow must lose nothing. Uncapped (steady-state) empty windows
+		// keep the watermark where it is: the window isn't pinned (it grows
+		// with now), and the wide re-read maximizes late-arrival capture.
+		if capped && queryEnd.Before(queryWindowStart) && queryEnd.After(v.sourceEmptyThrough) {
 			v.sourceEmptyThrough = queryEnd
-			v.log.Info("telemetry/usage: capped span is empty at the source; advancing catch-up anchor past it",
+			v.log.Info("telemetry/usage: no ingestible rows in aged-out capped span; advancing catch-up anchor past it",
 				"emptyFrom", newDataStart.UTC(), "emptyThrough", queryEnd.UTC())
 		}
+		// Nothing changed through queryEnd, so the start-of-window baselines
+		// are also the end-of-window state: merge them too (on a cache hit
+		// `baselines` aliases the cache — a self-merge, documented safe in the
+		// backfill's zero-row branch). Merging only `endBaselines` (empty when
+		// zero rows came back) would seed a restarted process's nil cache with
+		// empty maps, and every later refresh would "hit" a 0-key cache and
+		// fall back to the expensive 1-year InfluxDB baseline scan for the
+		// rest of the gap traversal.
+		v.updateBaselineCache(baselines, queryEnd)
 		v.updateBaselineCache(endBaselines, queryEnd)
 		v.readyOnce.Do(func() {
 			close(v.readyCh)
