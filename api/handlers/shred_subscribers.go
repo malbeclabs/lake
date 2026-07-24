@@ -17,13 +17,7 @@ func (a *API) fetchShredSeatByClientIP(ctx context.Context, clientIP string) (*S
 
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, `
-		WITH escrow_balances AS (
-			SELECT client_seat_key,
-				max(usdc_balance) as spendable_usdc_balance,
-				sum(usdc_balance) as all_escrows_usdc_balance
-			FROM dim_dz_shred_payment_escrows_current
-			GROUP BY client_seat_key
-		)
+		WITH `+escrowBalancesCTE+`
 		SELECT
 			s.pk, s.device_key, COALESCE(d.code, '') as device_code,
 			COALESCE(d.metro_pk, '') as metro_pk, COALESCE(m.code, '') as metro_code,
@@ -129,13 +123,7 @@ func (a *API) FetchShredSubscribers(ctx context.Context, funder string, limit, o
 	}
 
 	query := `
-		WITH escrow_balances AS (
-			SELECT client_seat_key,
-				max(usdc_balance) as spendable_usdc_balance,
-				sum(usdc_balance) as all_escrows_usdc_balance
-			FROM dim_dz_shred_payment_escrows_current
-			GROUP BY client_seat_key
-		),
+		WITH ` + escrowBalancesCTE + `,
 		last_events AS (
 			SELECT client_seat_pk, max(event_ts) as last_activity
 			FROM fact_dz_shred_escrow_events FINAL

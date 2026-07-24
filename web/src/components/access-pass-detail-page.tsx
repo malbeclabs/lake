@@ -260,7 +260,10 @@ function ShredsSubscriptionCard({ seat }: { seat: AccessPassShredsSeat }) {
           <dd className="text-sm tabular-nums text-right">
             ${balanceDollars.toFixed(2)}
             {seat.escrow_count > 1 && (
-              <div className="text-xs text-muted-foreground">
+              <div
+                className="text-xs text-muted-foreground"
+                title="Balances are evaluated per escrow; only the largest single escrow can cover a charge."
+              >
                 {seat.escrow_count} escrows · ${allEscrowsDollars.toFixed(2)} total
               </div>
             )}

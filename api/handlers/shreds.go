@@ -144,6 +144,31 @@ type ShredClientSeatItem struct {
 	LastActivity          string `json:"last_activity"`
 }
 
+// escrowBalancesCTE is the shared escrow_balances CTE body (usable after WITH, and
+// composable with a trailing "," for further CTEs). Activation is per-escrow: the
+// oracle covers each charge from a single escrow, so spendable balance is the largest
+// single escrow (max), never the sum. all_escrows_usdc_balance keeps the across-escrow
+// total visible so stranded funds on multi-escrow seats aren't hidden.
+const escrowBalancesCTE = `escrow_balances AS (
+		SELECT client_seat_key,
+			max(usdc_balance) as spendable_usdc_balance,
+			sum(usdc_balance) as all_escrows_usdc_balance
+		FROM dim_dz_shred_payment_escrows_current
+		GROUP BY client_seat_key
+	)`
+
+// seatPriceExpr is a seat's per-epoch price in dollars (override, else metro price +
+// device premium). Requires s, mh, dh joined.
+const seatPriceExpr = `CASE
+			WHEN s.has_price_override = 1 THEN toInt64(s.override_usdc_price_dollars)
+			ELSE toInt64(COALESCE(mh.current_usdc_price_dollars, 0)) + toInt64(COALESCE(dh.current_usdc_metro_premium_dollars, 0))
+		END`
+
+// seatPrepaidEpochsExpr is the number of epochs the largest single escrow prepays at the
+// seat's price. Requires the escrow_balances CTE joined as eb. Used for both the
+// status buckets and the "prepaid" sort so ordering matches the displayed value.
+const seatPrepaidEpochsExpr = `CASE WHEN ` + seatPriceExpr + ` > 0 THEN intDiv(COALESCE(eb.spendable_usdc_balance, 0) / 1000000, ` + seatPriceExpr + `) ELSE 0 END`
+
 var seatSortFields = map[string]string{
 	"seat":          "s.pk",
 	"device":        "device_code",
@@ -153,7 +178,7 @@ var seatSortFields = map[string]string{
 	"active_epoch":  "s.active_epoch",
 	"funder":        "s.funding_authority_key",
 	"balance":       "spendable_usdc_balance",
-	"prepaid":       "price_per_epoch_dollars",
+	"prepaid":       seatPrepaidEpochsExpr,
 	"last_activity": "last_activity",
 }
 
@@ -225,12 +250,7 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 			statuses[s] = true
 		}
 
-		// Price expression used for prepaid epoch calculation.
-		priceExpr := `CASE
-			WHEN s.has_price_override = 1 THEN toInt64(s.override_usdc_price_dollars)
-			ELSE toInt64(COALESCE(mh.current_usdc_price_dollars, 0)) + toInt64(COALESCE(dh.current_usdc_metro_premium_dollars, 0))
-		END`
-		prepaidExpr := `CASE WHEN ` + priceExpr + ` > 0 THEN intDiv(COALESCE(eb.spendable_usdc_balance, 0) / 1000000, ` + priceExpr + `) ELSE 0 END`
+		prepaidExpr := seatPrepaidEpochsExpr
 
 		var statusOr []string
 		if statuses["active"] {
@@ -268,13 +288,7 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 
 	// Count query.
 	countQuery := `
-		WITH escrow_balances AS (
-			SELECT client_seat_key,
-				max(usdc_balance) as spendable_usdc_balance,
-				sum(usdc_balance) as all_escrows_usdc_balance
-			FROM dim_dz_shred_payment_escrows_current
-			GROUP BY client_seat_key
-		)
+		WITH ` + escrowBalancesCTE + `
 		SELECT count(*)
 		FROM dim_dz_shred_client_seats_current s
 		LEFT JOIN dz_devices_current d ON s.device_key = d.pk
@@ -294,13 +308,7 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 	// Data query.
 	orderBy := sort.OrderByClause(sortFields)
 	query := `
-		WITH escrow_balances AS (
-			SELECT client_seat_key,
-				max(usdc_balance) as spendable_usdc_balance,
-				sum(usdc_balance) as all_escrows_usdc_balance
-			FROM dim_dz_shred_payment_escrows_current
-			GROUP BY client_seat_key
-		),
+		WITH ` + escrowBalancesCTE + `,
 		last_events AS (
 			SELECT client_seat_pk, max(event_ts) as last_activity
 			FROM fact_dz_shred_escrow_events FINAL
