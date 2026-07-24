@@ -14,6 +14,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 	"github.com/malbeclabs/lake/indexer/pkg/metrics"
+	"github.com/malbeclabs/lake/utils/pkg/dberror"
 	"github.com/malbeclabs/lake/utils/pkg/logger"
 	"golang.org/x/sync/errgroup"
 )
@@ -622,7 +623,12 @@ func (v *View) decodeChunk(ctx context.Context, sigs []*rpc.TransactionSignature
 					}
 					v.log.Warn("serviceability/permission-events: transaction not found near tip, retrying next refresh",
 						"signature", sig.Signature.String(), "slot", sig.Slot)
-					return err
+					// Mark transient: this near-tip null is a load-balanced backend
+					// lagging finalization and self-heals on retry, so escalation
+					// should use the higher transient threshold rather than paging
+					// after a few consecutive refreshes. Still unwraps to
+					// rpc.ErrNotFound for any upstream errors.Is checks.
+					return fmt.Errorf("%w (%w)", err, dberror.ErrTransient)
 				}
 				v.log.Warn("serviceability/permission-events: failed to decode transaction",
 					"signature", sig.Signature.String(), "error", err)
