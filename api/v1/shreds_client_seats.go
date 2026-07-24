@@ -29,12 +29,16 @@ type EdgeShredsClientSeat struct {
 	EscrowCount              uint32 `json:"escrow_count" doc:"Number of payment escrows currently attached to the seat"`
 	SpendableUSDCBalance     string `json:"spendable_usdc_balance" doc:"Largest single escrow balance, as a decimal USDC string (6 fractional digits). The oracle evaluates activation/renewal per-escrow, so this — not the sum — determines whether the seat can cover the per-epoch price." example:"25.650000"`
 	AllEscrowsUSDCBalance    string `json:"all_escrows_usdc_balance" doc:"Sum of USDC balances across all escrows attached to this seat, as a decimal USDC string (6 fractional digits). Informational: cannot be spent as a single charge." example:"31.480000"`
-	PricePerEpochDollars     int64  `json:"price_per_epoch_dollars" doc:"Effective per-epoch price (override or metro + device premium)"`
-	FundingAuthorityKey      string `json:"funding_authority_key" doc:"Funder pubkey (on-chain authority that funded this seat)"`
-	UserPK                   string `json:"user_pk" doc:"Linked DoubleZero user pubkey, if any"`
-	UserOwnerPubkey          string `json:"user_owner_pubkey" doc:"Solana wallet that owns the linked DZ user"`
-	UserStatus               string `json:"user_status" doc:"Linked DZ user status (e.g. activated)"`
-	LastActivity             string `json:"last_activity" doc:"RFC3339 timestamp of the last escrow event for this seat, if any" example:"2026-04-23T12:34:56Z"`
+	// TotalUSDCBalance is a deprecated alias of all_escrows_usdc_balance (the
+	// across-escrow sum), kept for backward compatibility. Use spendable_usdc_balance
+	// to reason about activation and all_escrows_usdc_balance for total held funds.
+	TotalUSDCBalance     string `json:"total_usdc_balance" doc:"DEPRECATED: alias of all_escrows_usdc_balance (the across-escrow sum). Use spendable_usdc_balance for activation and all_escrows_usdc_balance for total held funds." example:"31.480000"`
+	PricePerEpochDollars int64  `json:"price_per_epoch_dollars" doc:"Effective per-epoch price (override or metro + device premium)"`
+	FundingAuthorityKey  string `json:"funding_authority_key" doc:"Funder pubkey (on-chain authority that funded this seat)"`
+	UserPK               string `json:"user_pk" doc:"Linked DoubleZero user pubkey, if any"`
+	UserOwnerPubkey      string `json:"user_owner_pubkey" doc:"Solana wallet that owns the linked DZ user"`
+	UserStatus           string `json:"user_status" doc:"Linked DZ user status (e.g. activated)"`
+	LastActivity         string `json:"last_activity" doc:"RFC3339 timestamp of the last escrow event for this seat, if any" example:"2026-04-23T12:34:56Z"`
 }
 
 // EdgeShredsClientSeatsResponse is the paginated response body.
@@ -87,6 +91,7 @@ func registerEdgeShredsClientSeats(humaAPI huma.API, api *handlers.API) {
 				EscrowCount:              r.EscrowCount,
 				SpendableUSDCBalance:     formatUSDC(r.SpendableUSDCBalance),
 				AllEscrowsUSDCBalance:    formatUSDC(r.AllEscrowsUSDCBalance),
+				TotalUSDCBalance:         formatUSDC(r.AllEscrowsUSDCBalance),
 				PricePerEpochDollars:     r.PricePerEpochDollars,
 				FundingAuthorityKey:      r.FundingAuthorityKey,
 				UserPK:                   r.UserPK,

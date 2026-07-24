@@ -320,8 +320,10 @@ const seatFieldPrefixesWithIP = [
 const seatFieldPrefixesWithoutIP = seatFieldPrefixesWithIP.filter(p => p.prefix !== 'ip:')
 
 // prepaidEpochs derives runway from the largest single escrow, not the sum:
-// the oracle covers each per-epoch charge from one escrow, so a seat whose
-// escrows individually fall short of the price never activates regardless of total.
+// the oracle covers each per-epoch charge from one escrow, so a seat whose escrows
+// individually fall short of the price never activates regardless of total. The
+// activation check (>= 1) is exact; for a seat with several individually-sufficient
+// escrows this is a conservative lower bound on multi-epoch runway.
 function prepaidEpochs(seat: ShredClientSeat): number {
   if (seat.price_per_epoch_dollars <= 0 || seat.spendable_usdc_balance === 0) return 0
   return Math.floor(seat.spendable_usdc_balance / 1e6 / seat.price_per_epoch_dollars)

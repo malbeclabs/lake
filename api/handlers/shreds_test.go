@@ -306,12 +306,12 @@ func TestGetShredClientSeats_StatusFilter(t *testing.T) {
 	}
 }
 
-// TestGetShredClientSeats_MultiEscrowUsesMaxNotSum is the regression test for
-// the 72.251.3.102 case: a seat with two escrows ($5.83 + $25.65) at a $30/epoch
-// price. The oracle evaluates activation per-escrow, so no single escrow covers
-// the price and the seat never activates. The dashboard must report the greatest
-// single escrow (25.65) as spendable — not the sum (31.48) — so status derives to
-// inactive/expired, not pending.
+// TestGetShredClientSeats_MultiEscrowUsesMaxNotSum is the regression test for the
+// multi-escrow production case: a seat with two escrows ($5.83 + $25.65) at a
+// $30/epoch price. The oracle evaluates activation per-escrow, so no single escrow
+// covers the price and the seat never activates. The dashboard must report the
+// greatest single escrow (25.65) as spendable — not the sum (31.48) — so status
+// derives to inactive/expired, not pending.
 func TestGetShredClientSeats_MultiEscrowUsesMaxNotSum(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
@@ -335,7 +335,7 @@ func TestGetShredClientSeats_MultiEscrowUsesMaxNotSum(t *testing.T) {
 		 has_price_override, override_usdc_price_dollars, escrow_count, funding_authority_key)
 		VALUES
 		('seat-me', now(), now(), generateUUIDv4(), 0, 1,
-		 'seat-me', 'dev-1', '72.251.3.102', 0, 945, 945,
+		 'seat-me', 'dev-1', '203.0.113.7', 0, 945, 945,
 		 1, 30, 2, 'funder-me')
 	`))
 

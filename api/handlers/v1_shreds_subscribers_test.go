@@ -31,6 +31,7 @@ var v1EdgeShredsSubscribersContractFields = struct {
 		"active_epoch",
 		"spendable_usdc_balance",
 		"all_escrows_usdc_balance",
+		"total_usdc_balance",
 		"price_per_epoch_dollars",
 		"funding_authority_key",
 		"user_pk",
@@ -114,9 +115,10 @@ func TestV1EdgeShredsSubscribers_AllSubscribers(t *testing.T) {
 	assert.Equal(t, "NYC-CORE-01", resp.Items[0].DeviceCode)
 	assert.Equal(t, "metro-nyc", resp.Items[0].MetroPK)
 	assert.Equal(t, "NYC", resp.Items[0].MetroCode)
-	// Single escrow: spendable == all-escrows == the one balance.
+	// Single escrow: spendable == all-escrows == deprecated total alias == the one balance.
 	assert.Equal(t, "50.000000", resp.Items[0].SpendableUSDCBalance)
 	assert.Equal(t, "50.000000", resp.Items[0].AllEscrowsUSDCBalance)
+	assert.Equal(t, "50.000000", resp.Items[0].TotalUSDCBalance)
 
 	assert.Equal(t, "seat-2", resp.Items[1].SeatPK)
 	assert.Equal(t, "seat-3", resp.Items[2].SeatPK)
@@ -193,4 +195,49 @@ func TestV1EdgeShredsSubscribers_Pagination(t *testing.T) {
 	assert.Equal(t, 3, resp.Total)
 	assert.Equal(t, 2, resp.Offset)
 	require.Len(t, resp.Items, 1)
+}
+
+// TestV1EdgeShredsSubscribers_MultiEscrowMaxNotSum verifies the v1 balance
+// semantics for a seat with multiple escrows: spendable is the largest single
+// escrow (max), all_escrows is the across-escrow total (sum), and the deprecated
+// total_usdc_balance alias stays equal to the sum. This exercises the
+// escrow_balances CTE in FetchShredSubscribers where max != sum (the shared
+// contract fixtures use single-escrow seats where the two coincide).
+func TestV1EdgeShredsSubscribers_MultiEscrowMaxNotSum(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	ctx := t.Context()
+
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_client_seats_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, device_key, client_ip, tenure_epochs, funded_epoch, active_epoch,
+		 has_price_override, override_usdc_price_dollars, escrow_count, funding_authority_key)
+		VALUES
+		('seat-multi', now(), now(), generateUUIDv4(), 0, 1,
+		 'seat-multi', 'dev-x', '203.0.113.8', 0, 945, 945,
+		 1, 30, 2, 'funder-multi')
+	`))
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_payment_escrows_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, client_seat_key, withdraw_authority_key, usdc_balance)
+		VALUES
+		('escrow-multi-1', now(), now(), generateUUIDv4(), 0, 1, 'escrow-multi-1', 'seat-multi', 'withdraw-x', 5830000),
+		('escrow-multi-2', now(), now(), generateUUIDv4(), 0, 1, 'escrow-multi-2', 'seat-multi', 'withdraw-x', 25650000)
+	`))
+
+	r := newV1Router(t, api)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/edge/shreds/subscribers", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+	var resp v1.EdgeShredsSubscribersResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+	require.Len(t, resp.Items, 1)
+	s := resp.Items[0]
+	assert.Equal(t, "25.650000", s.SpendableUSDCBalance, "spendable must be the largest single escrow, not the sum")
+	assert.Equal(t, "31.480000", s.AllEscrowsUSDCBalance)
+	assert.Equal(t, "31.480000", s.TotalUSDCBalance, "deprecated alias must equal the across-escrow sum")
 }
