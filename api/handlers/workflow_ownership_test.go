@@ -275,3 +275,73 @@ func assertRejectedBeforeStream(t *testing.T, rr *httptest.ResponseRecorder) {
 	assert.NotContains(t, rr.Body.String(), "event:")
 	assert.NotContains(t, rr.Body.String(), "data:")
 }
+
+// --- Auto-created session ownership (StartWorkflow / ensureSessionExists) ---
+// Auto-created sessions must be stamped with the caller's identity, or the owner
+// would fail the ownership check on their own runs. Background execution is
+// disabled so the test exercises only StartWorkflow's synchronous session upsert
+// (the live runner needs ClickHouse + an LLM client).
+
+func sessionOwner(t *testing.T, ctx context.Context, api *handlers.API, sessionID uuid.UUID) (*uuid.UUID, *string) {
+	t.Helper()
+	var accountID *uuid.UUID
+	var anonymousID *string
+	err := api.PgPool.QueryRow(ctx, `
+		SELECT account_id, anonymous_id FROM sessions WHERE id = $1
+	`, sessionID).Scan(&accountID, &anonymousID)
+	require.NoError(t, err)
+	return accountID, anonymousID
+}
+
+func TestStartWorkflow_StampsAccountOwner(t *testing.T) {
+	api := apitesting.NewTestAPIPg(t, testPgDB)
+	api.Manager.DisableBackgroundExecutionForTest()
+	ctx := t.Context()
+
+	account := createTestAccount(t, ctx, api)
+	sessionID := uuid.New() // not yet persisted - StartWorkflow must auto-create it
+
+	_, err := api.Manager.StartWorkflow(sessionID, "Test question", nil, "", &account.ID, nil)
+	require.NoError(t, err)
+
+	accountID, anonymousID := sessionOwner(t, ctx, api, sessionID)
+	require.NotNil(t, accountID)
+	assert.Equal(t, account.ID, *accountID)
+	assert.Nil(t, anonymousID)
+}
+
+func TestStartWorkflow_StampsAnonymousOwner(t *testing.T) {
+	api := apitesting.NewTestAPIPg(t, testPgDB)
+	api.Manager.DisableBackgroundExecutionForTest()
+	ctx := t.Context()
+
+	anonID := "anon-" + uuid.New().String()
+	sessionID := uuid.New()
+
+	_, err := api.Manager.StartWorkflow(sessionID, "Test question", nil, "", nil, &anonID)
+	require.NoError(t, err)
+
+	accountID, anonymousID := sessionOwner(t, ctx, api, sessionID)
+	assert.Nil(t, accountID)
+	require.NotNil(t, anonymousID)
+	assert.Equal(t, anonID, *anonymousID)
+}
+
+func TestStartWorkflow_PreservesExistingOwner(t *testing.T) {
+	api := apitesting.NewTestAPIPg(t, testPgDB)
+	api.Manager.DisableBackgroundExecutionForTest()
+	ctx := t.Context()
+
+	// Session already owned by an account; a workflow started with different
+	// (or no) identity must not overwrite the existing owner.
+	owner := createTestAccount(t, ctx, api)
+	sessionID := newAccountSession(t, ctx, api, owner.ID)
+
+	_, err := api.Manager.StartWorkflow(sessionID, "Test question", nil, "", nil, nil)
+	require.NoError(t, err)
+
+	accountID, anonymousID := sessionOwner(t, ctx, api, sessionID)
+	require.NotNil(t, accountID)
+	assert.Equal(t, owner.ID, *accountID)
+	assert.Nil(t, anonymousID)
+}

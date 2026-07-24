@@ -440,13 +440,14 @@ func (a *API) chatStreamV3(ctx context.Context, req ChatRequest, history []workf
 	}
 
 	// Resolve the caller's identity so auto-created sessions are owned from the
-	// start (see StartWorkflow / ensureSessionExists).
+	// start (see StartWorkflow / ensureSessionExists). Mirror CreateSession's
+	// precedence: an authenticated account owns the session, otherwise the
+	// anonymous ID does — never both.
 	var accountID *uuid.UUID
+	var anonymousID *string
 	if account := GetAccountFromContext(ctx); account != nil {
 		accountID = &account.ID
-	}
-	var anonymousID *string
-	if req.AnonymousID != "" {
+	} else if req.AnonymousID != "" {
 		anonymousID = &req.AnonymousID
 	}
 

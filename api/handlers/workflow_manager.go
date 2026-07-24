@@ -85,16 +85,30 @@ type WorkflowManager struct {
 	running   map[uuid.UUID]*runningWorkflow // workflowID -> running workflow
 	bySession map[uuid.UUID]uuid.UUID        // sessionID -> workflowID
 	serverID  string                         // Unique identifier for this server instance
+
+	// runFn launches background execution of a workflow. It defaults to
+	// runWorkflow and is overridable so tests can exercise the synchronous
+	// StartWorkflow path (session upsert, run creation) without spinning up the
+	// live workflow, which requires ClickHouse and an LLM client.
+	runFn func(ctx context.Context, rw *runningWorkflow, question string, history []workflow.ConversationMessage)
 }
 
 // NewWorkflowManager creates a new WorkflowManager bound to the given API.
 func NewWorkflowManager(api *API) *WorkflowManager {
-	return &WorkflowManager{
+	m := &WorkflowManager{
 		api:       api,
 		running:   make(map[uuid.UUID]*runningWorkflow),
 		bySession: make(map[uuid.UUID]uuid.UUID),
 		serverID:  uuid.NewString(),
 	}
+	m.runFn = m.runWorkflow
+	return m
+}
+
+// DisableBackgroundExecutionForTest replaces the background workflow runner with
+// a no-op so tests can call StartWorkflow without launching real execution.
+func (m *WorkflowManager) DisableBackgroundExecutionForTest() {
+	m.runFn = func(context.Context, *runningWorkflow, string, []workflow.ConversationMessage) {}
 }
 
 // SessionChatMessage represents a message in session content, matching the web's ChatMessage format.
@@ -369,7 +383,7 @@ func (m *WorkflowManager) StartWorkflow(
 	m.mu.Unlock()
 
 	// Start workflow in background goroutine
-	go m.runWorkflow(workflowCtx, rw, question, history)
+	go m.runFn(workflowCtx, rw, question, history)
 
 	slog.Info("Started background workflow",
 		"workflow_id", run.ID,
