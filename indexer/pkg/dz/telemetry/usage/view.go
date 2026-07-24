@@ -258,6 +258,11 @@ const baselineCacheMaxLag = 15 * time.Minute
 // mainnet-beta and testnet — ctx expired before the insert, every catch-up
 // refresh failed, and the window stayed pinned at the cap in an unrecoverable
 // loop.)
+//
+// Catch-up refreshes that skip the overlap re-read (see Refresh) cover the
+// same overlap+chunk span with the same 2 Flux queries — only the split
+// between re-read and new data changes — so the timeout and memory math above
+// is unchanged.
 const maxCatchupChunks = 1
 
 type View struct {
@@ -373,10 +378,36 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	queryWindowStart := now.Add(-v.cfg.QueryWindow)
 	var queryStart time.Time
 
+	// ingestSpan is the most a single refresh reads from InfluxDB past
+	// queryStart: the refreshOverlap re-read plus the capped catch-up step. It
+	// is also the watermark advance per refresh while the overlap is skipped
+	// (below).
+	ingestSpan := refreshOverlap + v.cfg.QueryChunk*maxCatchupChunks
+	skipOverlap := false
+
 	if maxTime != nil {
 		if maxTime.After(queryWindowStart) {
-			// Include a small overlap to catch late-arriving data with past timestamps
+			// Include a small overlap to catch late-arriving data with past
+			// timestamps.
+			//
+			// Skip the overlap while catching up: once maxTime is so stale that
+			// even this refresh's capped span [maxTime, maxTime+ingestSpan) ends
+			// more than refreshOverlap before now, every point that span or the
+			// overlap region can contain has already arrived (refreshOverlap is
+			// the design's late-arrival bound — steady state never re-reads
+			// further behind maxTime either), so the re-read cannot surface
+			// anything new. Spending its budget on new data instead doubles net
+			// catch-up throughput from ~QueryChunk to ~ingestSpan per refresh —
+			// at 1× (+5m of data per ~5m refresh cycle) a stale watermark never
+			// converged (#713) — with the same span size, Flux query count, and
+			// peak memory as steady state. The final catch-up span's tail is
+			// still re-read by the first steady-state refresh's overlap once
+			// maxTime gets close enough to now.
 			overlap := refreshOverlap
+			if now.Sub(*maxTime) > ingestSpan+refreshOverlap {
+				skipOverlap = true
+				overlap = 0
+			}
 			queryStart = maxTime.Add(-overlap)
 			newDataWindow := now.Sub(*maxTime)
 			totalQueryWindow := now.Sub(queryStart)
@@ -386,7 +417,8 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 				"now", now.UTC(),
 				"newDataWindow", newDataWindow,
 				"totalQueryWindow", totalQueryWindow,
-				"overlap", overlap)
+				"overlap", overlap,
+				"overlapSkipped", skipOverlap)
 		} else {
 			queryStart = queryWindowStart
 			age := now.Sub(*maxTime)
@@ -507,11 +539,20 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	if maxTime != nil && maxTime.After(newDataStart) {
 		newDataStart = *maxTime
 	}
+	// While the overlap is skipped (catch-up, see above), its budget is spent
+	// on new data instead: the cap grows from one chunk to the full ingestSpan,
+	// so the refresh covers [maxTime, maxTime+ingestSpan) — the same total span
+	// as a steady-state refresh, but all of it new (#713).
+	maxCatchup := v.cfg.QueryChunk * maxCatchupChunks
+	if skipOverlap {
+		maxCatchup = ingestSpan
+	}
 	queryEnd := now
-	if maxCatchup := v.cfg.QueryChunk * maxCatchupChunks; maxCatchup > 0 && queryEnd.Sub(newDataStart) > maxCatchup {
+	if maxCatchup > 0 && queryEnd.Sub(newDataStart) > maxCatchup {
 		queryEnd = newDataStart.Add(maxCatchup)
 		v.log.Info("telemetry/usage: capping catch-up window to bound memory",
-			"queryStart", queryStart.UTC(), "queryEnd", queryEnd.UTC(), "target", now.UTC())
+			"queryStart", queryStart.UTC(), "queryEnd", queryEnd.UTC(), "target", now.UTC(),
+			"overlapSkipped", skipOverlap)
 	}
 
 	queryStartUTC := queryStart.UTC()
@@ -533,10 +574,10 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		// baseline-cache watermark: nothing changed through queryEnd, so the
 		// cached last-known values still hold there and the next refresh can
 		// cache-hit. Note this advances only the cache watermark, not maxTime
-		// (nothing was written): while a data gap longer than QueryChunk sits at
-		// maxTime, the incremental window stays pinned at [maxTime-overlap,
-		// maxTime+chunk) returning zero new rows, until maxTime ages out of
-		// QueryWindow and the "data too old" branch skips past the gap.
+		// (nothing was written): while a data gap longer than the capped span
+		// sits at maxTime, the incremental window stays pinned at the same
+		// [queryStart, queryEnd) returning zero new rows, until maxTime ages
+		// out of QueryWindow and the "data too old" branch skips past the gap.
 		v.updateBaselineCache(endBaselines, queryEnd)
 		v.readyOnce.Do(func() {
 			close(v.readyCh)

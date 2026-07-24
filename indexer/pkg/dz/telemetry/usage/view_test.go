@@ -1531,7 +1531,10 @@ func TestLake_TelemetryUsage_View_Refresh_IncrementalQueriesPastMaxTime(t *testi
 	clock := clockwork.NewFakeClock()
 	now := clock.Now()
 	// event_ts is DateTime64(3); align the seed so it round-trips exactly.
-	maxTime := now.Add(-30 * time.Minute).Truncate(time.Millisecond) // well inside the 1h window
+	// 10m stale: inside the 1h window and within the overlap-retention bound
+	// (≤ overlap+chunk+overlap = 15m), so the steady-state overlap re-read
+	// applies.
+	maxTime := now.Add(-10 * time.Minute).Truncate(time.Millisecond)
 
 	view, windows := captureIntfCounterWindows(t, clock, chunk)
 	seedMaxTime(t, view, maxTime)
@@ -1559,7 +1562,9 @@ func TestLake_TelemetryUsage_View_Refresh_SteadyStateAdvancesOneChunk(t *testing
 	clock := clockwork.NewFakeClock()
 	now := clock.Now()
 	// event_ts is DateTime64(3); align the seed so it round-trips exactly.
-	maxTime := now.Add(-40 * time.Minute).Truncate(time.Millisecond)
+	// 12m stale: close enough to now that both refreshes keep the overlap
+	// (catch-up overlap-skipping needs > 15m).
+	maxTime := now.Add(-12 * time.Minute).Truncate(time.Millisecond)
 
 	view, windows := captureIntfCounterWindows(t, clock, chunk)
 	seedMaxTime(t, view, maxTime)
@@ -1641,4 +1646,123 @@ func TestLake_TelemetryUsage_View_Refresh_UncappedTailClampsToNow(t *testing.T) 
 
 	_, end := span(t, *windows)
 	require.Equal(t, now.UTC(), end.UTC(), "queryEnd must clamp to now, never past it")
+}
+
+// Regression for #713: while catching up (maxTime far behind now), the refresh
+// must skip the overlap re-read and spend its budget on new data — covering
+// [maxTime, maxTime+overlap+chunk) instead of [maxTime−overlap, maxTime+chunk).
+// Same span size and sub-query count, twice the net advance. On the buggy code
+// the net gain was one chunk (~5m) per ~5m refresh cycle — ratio ~1.0 — so a
+// ~58m-stale watermark never converged.
+func TestLake_TelemetryUsage_View_Refresh_CatchupSkipsOverlapWhenFarBehind(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClock()
+	now := clock.Now()
+	// 30m stale: inside the 1h query window, beyond the 15m overlap-retention
+	// bound (overlap + chunk + overlap).
+	maxTime := now.Add(-30 * time.Minute).Truncate(time.Millisecond)
+
+	view, windows := captureIntfCounterWindows(t, clock, chunk)
+	seedMaxTime(t, view, maxTime)
+
+	_, err := view.Refresh(t.Context())
+	require.NoError(t, err)
+
+	start, end := span(t, *windows)
+	require.Equal(t, maxTime.UTC(), start.UTC(),
+		"catch-up must start at maxTime — no overlap re-read of already-arrived data")
+	require.Equal(t, maxTime.Add(refreshOverlap+chunk).UTC(), end.UTC(),
+		"catch-up must spend the overlap budget on new data: overlap+chunk past maxTime")
+	// Same total span as steady state = same 2 chunk-sized sub-queries.
+	require.Len(t, *windows, 2)
+}
+
+// The overlap is skipped only when every point the extended span could touch
+// is at least refreshOverlap old (the design's late-arrival bound). At exactly
+// maxTime = now − (overlap+chunk+overlap) the youngest point would be exactly
+// refreshOverlap old — not strictly older — so the overlap must be retained.
+func TestLake_TelemetryUsage_View_Refresh_CatchupOverlapSkipBoundary(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+
+	t.Run("at the boundary the overlap is retained", func(t *testing.T) {
+		t.Parallel()
+		// A millisecond-aligned clock keeps the seeded maxTime's DateTime64(3)
+		// round-trip exact, so the strict > comparison lands on the boundary.
+		clock := clockwork.NewFakeClockAt(time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC))
+		now := clock.Now()
+		maxTime := now.Add(-(refreshOverlap + chunk + refreshOverlap))
+
+		view, windows := captureIntfCounterWindows(t, clock, chunk)
+		seedMaxTime(t, view, maxTime)
+
+		_, err := view.Refresh(t.Context())
+		require.NoError(t, err)
+
+		start, end := span(t, *windows)
+		require.Equal(t, maxTime.Add(-refreshOverlap).UTC(), start.UTC())
+		require.Equal(t, maxTime.Add(chunk).UTC(), end.UTC())
+	})
+
+	t.Run("past the boundary the overlap is skipped", func(t *testing.T) {
+		t.Parallel()
+		clock := clockwork.NewFakeClockAt(time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC))
+		now := clock.Now()
+		maxTime := now.Add(-(refreshOverlap + chunk + refreshOverlap + time.Minute))
+
+		view, windows := captureIntfCounterWindows(t, clock, chunk)
+		seedMaxTime(t, view, maxTime)
+
+		_, err := view.Refresh(t.Context())
+		require.NoError(t, err)
+
+		start, end := span(t, *windows)
+		require.Equal(t, maxTime.UTC(), start.UTC())
+		require.Equal(t, maxTime.Add(refreshOverlap+chunk).UTC(), end.UTC())
+	})
+}
+
+// The throughput inequality from #713: catch-up only converges if
+// net_gain / cycle_time > 1 at a MODELED cycle time, not just per-refresh
+// advancement. Model the prod incident: watermark ~58m stale, each refresh
+// costs ~5m of wall clock (the measured cadence). With the overlap skipped the
+// net gain is overlap+chunk (10m) per cycle, so lag must pay down ~5m per
+// cycle and reach the overlap-retention bound (15m), then hold there. On the
+// buggy code net gain equalled cycle time and this loop stayed pinned at ~58m
+// forever.
+func TestLake_TelemetryUsage_View_Refresh_CatchupConvergesUnderModeledCycleTime(t *testing.T) {
+	t.Parallel()
+
+	const (
+		chunk     = 5 * time.Minute
+		cycleTime = 5 * time.Minute // measured prod refresh cadence (#713)
+	)
+	clock := clockwork.NewFakeClock()
+	maxTime := clock.Now().Add(-58 * time.Minute).Truncate(time.Millisecond)
+
+	view, windows := captureIntfCounterWindows(t, clock, chunk)
+	seedMaxTime(t, view, maxTime)
+
+	// 58m → 15m at −5m net per cycle needs 9 cycles; run a few more to verify
+	// lag holds (does not re-grow) once the overlap re-read resumes.
+	for cycle := 0; cycle < 12; cycle++ {
+		*windows = nil
+		_, err := view.Refresh(t.Context())
+		require.NoError(t, err)
+
+		_, end := span(t, *windows)
+		require.True(t, end.After(maxTime), "watermark must advance every cycle (cycle %d)", cycle)
+
+		// Stand-in for the insert advancing maxTime to the ingested end.
+		maxTime = end
+		seedMaxTime(t, view, maxTime)
+		clock.Advance(cycleTime)
+	}
+
+	lag := clock.Now().Sub(maxTime)
+	require.LessOrEqual(t, lag, refreshOverlap+chunk+refreshOverlap,
+		"lag must converge to the overlap-retention bound and hold, got %s", lag)
 }
