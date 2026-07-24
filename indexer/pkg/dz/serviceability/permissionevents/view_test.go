@@ -15,6 +15,7 @@ import (
 	solanarpc "github.com/gagliardetto/solana-go/rpc"
 	"github.com/jonboulle/clockwork"
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/utils/pkg/dberror"
 	laketesting "github.com/malbeclabs/lake/utils/pkg/testing"
 	"github.com/stretchr/testify/require"
 )
@@ -352,6 +353,12 @@ func TestLake_PermissionEvents_View_NearTipNotFoundFailsChunkAndRetries(t *testi
 
 	_, err := view.Refresh(context.Background())
 	require.Error(t, err, "a near-tip not-found must fail the chunk, not be skipped")
+	// The failure is transient-by-design (a lagging backend that self-heals),
+	// so it must classify as transient — the activity escalator then pages at
+	// the higher transient threshold instead of after a few refreshes — while
+	// still unwrapping to the original not-found cause.
+	require.True(t, dberror.IsTransient(err), "near-tip not-found must be classified transient")
+	require.True(t, errors.Is(err, solanarpc.ErrNotFound), "error must still unwrap to ErrNotFound")
 	require.EqualValues(t, 0, factRowCount(t, ch))
 	_, _, found := accountCursor(t, ch, testPDA.String())
 	require.False(t, found, "cursor must not advance past a recoverable signature")

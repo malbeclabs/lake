@@ -13,6 +13,22 @@ import (
 // eofRe matches "eof" as a standalone word in a lowercased error message.
 var eofRe = regexp.MustCompile(`\beof\b`)
 
+// ErrTransient is a sentinel that explicitly marks an error as transient for
+// IsTransient, independent of its message. Wrap a return with it (e.g. via
+// errors.Join or fmt.Errorf("...: %w", ErrTransient)) when the caller knows a
+// failure is self-healing but its message wouldn't be classified as transient
+// by Classify — for example an expected, retryable upstream miss.
+//
+// Two limits, both of which fail safe (page sooner rather than suppress):
+//   - IsTransient checks context.Canceled/DeadlineExceeded before this marker,
+//     so wrapping a context error with ErrTransient does not make it transient.
+//   - The marker does not survive Temporal's failure serialization: after the
+//     ErrorToFailure/FailureToError round-trip errors.Is(reconstructed,
+//     ErrTransient) is false, so it cannot classify an error that reaches a
+//     caller across an activity boundary. Use it where the wrapped error is
+//     inspected in-process (e.g. before an activity returns nil to Temporal).
+var ErrTransient = errors.New("transient error")
+
 // ErrorType classifies database errors for appropriate handling.
 type ErrorType int
 
@@ -40,6 +56,12 @@ func IsTransient(err error) bool {
 	// Context errors are not transient (user cancelled or deadline exceeded)
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
+	}
+
+	// An explicit ErrTransient marker overrides message-based classification:
+	// the caller already knows the failure is self-healing.
+	if errors.Is(err, ErrTransient) {
+		return true
 	}
 
 	errType := Classify(err)

@@ -3,6 +3,7 @@ package dberror_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/malbeclabs/lake/utils/pkg/dberror"
@@ -52,4 +53,19 @@ func TestClassifyAndIsTransient(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestIsTransientSentinel(t *testing.T) {
+	// The explicit ErrTransient marker makes IsTransient true even when the
+	// message alone would classify as non-transient (e.g. a not-found miss).
+	notFound := errors.New("get transaction: not found")
+	require.False(t, dberror.IsTransient(notFound), "plain not-found is not transient")
+
+	wrapped := fmt.Errorf("%w (%w)", notFound, dberror.ErrTransient)
+	require.True(t, dberror.IsTransient(wrapped), "not-found wrapped with ErrTransient is transient")
+	require.True(t, errors.Is(wrapped, dberror.ErrTransient), "wrapped unwraps to ErrTransient")
+	require.True(t, errors.Is(wrapped, notFound), "wrapped still unwraps to the original cause")
+
+	// The marker does not override a genuine context cancellation.
+	require.False(t, dberror.IsTransient(context.Canceled))
 }
