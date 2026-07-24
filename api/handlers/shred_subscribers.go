@@ -18,7 +18,9 @@ func (a *API) fetchShredSeatByClientIP(ctx context.Context, clientIP string) (*S
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, `
 		WITH escrow_balances AS (
-			SELECT client_seat_key, sum(usdc_balance) as total_usdc_balance
+			SELECT client_seat_key,
+				max(usdc_balance) as spendable_usdc_balance,
+				sum(usdc_balance) as all_escrows_usdc_balance
 			FROM dim_dz_shred_payment_escrows_current
 			GROUP BY client_seat_key
 		)
@@ -27,7 +29,8 @@ func (a *API) fetchShredSeatByClientIP(ctx context.Context, clientIP string) (*S
 			COALESCE(d.metro_pk, '') as metro_pk, COALESCE(m.code, '') as metro_code,
 			s.client_ip, s.tenure_epochs, s.funded_epoch, s.active_epoch,
 			s.has_price_override, s.override_usdc_price_dollars, s.escrow_count,
-			COALESCE(eb.total_usdc_balance, 0) as total_usdc_balance,
+			COALESCE(eb.spendable_usdc_balance, 0) as spendable_usdc_balance,
+			COALESCE(eb.all_escrows_usdc_balance, 0) as all_escrows_usdc_balance,
 			CASE
 				WHEN s.has_price_override = 1 THEN toInt64(s.override_usdc_price_dollars)
 				ELSE toInt64(COALESCE(mh.current_usdc_price_dollars, 0)) + toInt64(COALESCE(dh.current_usdc_metro_premium_dollars, 0))
@@ -61,7 +64,8 @@ func (a *API) fetchShredSeatByClientIP(ctx context.Context, clientIP string) (*S
 	if err := rows.Scan(
 		&s.PK, &s.DeviceKey, &s.DeviceCode, &s.MetroPK, &s.MetroCode,
 		&s.ClientIP, &s.TenureEpochs, &s.FundedEpoch, &s.ActiveEpoch,
-		&s.HasPriceOverride, &s.OverrideUSDCPriceDollars, &s.EscrowCount, &s.TotalUSDCBalance,
+		&s.HasPriceOverride, &s.OverrideUSDCPriceDollars, &s.EscrowCount,
+		&s.SpendableUSDCBalance, &s.AllEscrowsUSDCBalance,
 		&s.PricePerEpochDollars, &s.FundingAuthorityKey,
 		&s.UserPK, &s.UserOwnerPubkey, &s.UserStatus, &s.LastActivity,
 	); err != nil {
@@ -86,13 +90,18 @@ type ShredSubscriberRow struct {
 	HasPriceOverride         uint8
 	OverrideUSDCPriceDollars uint16
 	EscrowCount              uint32
-	TotalUSDCBalance         uint64
-	PricePerEpochDollars     int64
-	FundingAuthorityKey      string
-	UserPK                   string
-	UserOwnerPubkey          string
-	UserStatus               string
-	LastActivity             *time.Time
+	// SpendableUSDCBalance is the largest single escrow balance (max, not sum):
+	// the oracle evaluates activation/renewal per-escrow, so a charge must be
+	// covered by one escrow. AllEscrowsUSDCBalance is the across-escrow sum,
+	// retained for operator visibility into stranded funds.
+	SpendableUSDCBalance  uint64
+	AllEscrowsUSDCBalance uint64
+	PricePerEpochDollars  int64
+	FundingAuthorityKey   string
+	UserPK                string
+	UserOwnerPubkey       string
+	UserStatus            string
+	LastActivity          *time.Time
 }
 
 // FetchShredSubscribers returns a page of shred subscribers (client seats),
@@ -121,7 +130,9 @@ func (a *API) FetchShredSubscribers(ctx context.Context, funder string, limit, o
 
 	query := `
 		WITH escrow_balances AS (
-			SELECT client_seat_key, sum(usdc_balance) as total_usdc_balance
+			SELECT client_seat_key,
+				max(usdc_balance) as spendable_usdc_balance,
+				sum(usdc_balance) as all_escrows_usdc_balance
 			FROM dim_dz_shred_payment_escrows_current
 			GROUP BY client_seat_key
 		),
@@ -135,7 +146,8 @@ func (a *API) FetchShredSubscribers(ctx context.Context, funder string, limit, o
 			COALESCE(d.metro_pk, '') as metro_pk, COALESCE(m.code, '') as metro_code,
 			s.client_ip, s.tenure_epochs, s.funded_epoch, s.active_epoch,
 			s.has_price_override, s.override_usdc_price_dollars, s.escrow_count,
-			COALESCE(eb.total_usdc_balance, 0) as total_usdc_balance,
+			COALESCE(eb.spendable_usdc_balance, 0) as spendable_usdc_balance,
+			COALESCE(eb.all_escrows_usdc_balance, 0) as all_escrows_usdc_balance,
 			CASE
 				WHEN s.has_price_override = 1 THEN toInt64(s.override_usdc_price_dollars)
 				ELSE toInt64(COALESCE(mh.current_usdc_price_dollars, 0)) + toInt64(COALESCE(dh.current_usdc_metro_premium_dollars, 0))
@@ -170,7 +182,8 @@ func (a *API) FetchShredSubscribers(ctx context.Context, funder string, limit, o
 		if err := rows.Scan(
 			&s.PK, &s.DeviceKey, &s.DeviceCode, &s.MetroPK, &s.MetroCode,
 			&s.ClientIP, &s.TenureEpochs, &s.FundedEpoch, &s.ActiveEpoch,
-			&s.HasPriceOverride, &s.OverrideUSDCPriceDollars, &s.EscrowCount, &s.TotalUSDCBalance,
+			&s.HasPriceOverride, &s.OverrideUSDCPriceDollars, &s.EscrowCount,
+			&s.SpendableUSDCBalance, &s.AllEscrowsUSDCBalance,
 			&s.PricePerEpochDollars, &s.FundingAuthorityKey,
 			&s.UserPK, &s.UserOwnerPubkey, &s.UserStatus, &s.LastActivity,
 		); err != nil {

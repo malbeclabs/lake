@@ -20,7 +20,7 @@ export function ShredWithdrawModal({ seat, onClose }: ShredWithdrawModalProps) {
   const { status, txSignature, error, execute, reset } = useShredTransaction()
   const queryClient = useQueryClient()
 
-  const currentBalance = seat.total_usdc_balance / 1e6
+  const currentBalance = seat.all_escrows_usdc_balance / 1e6
 
   const devicePubkey = useMemo(() => {
     try { return new PublicKey(seat.device_key) } catch { return null }

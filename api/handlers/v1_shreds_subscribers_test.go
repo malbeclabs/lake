@@ -29,7 +29,8 @@ var v1EdgeShredsSubscribersContractFields = struct {
 		"metro_code",
 		"tenure_epochs",
 		"active_epoch",
-		"total_usdc_balance",
+		"spendable_usdc_balance",
+		"all_escrows_usdc_balance",
 		"price_per_epoch_dollars",
 		"funding_authority_key",
 		"user_pk",
@@ -113,7 +114,9 @@ func TestV1EdgeShredsSubscribers_AllSubscribers(t *testing.T) {
 	assert.Equal(t, "NYC-CORE-01", resp.Items[0].DeviceCode)
 	assert.Equal(t, "metro-nyc", resp.Items[0].MetroPK)
 	assert.Equal(t, "NYC", resp.Items[0].MetroCode)
-	assert.Equal(t, "50.000000", resp.Items[0].TotalUSDCBalance)
+	// Single escrow: spendable == all-escrows == the one balance.
+	assert.Equal(t, "50.000000", resp.Items[0].SpendableUSDCBalance)
+	assert.Equal(t, "50.000000", resp.Items[0].AllEscrowsUSDCBalance)
 
 	assert.Equal(t, "seat-2", resp.Items[1].SeatPK)
 	assert.Equal(t, "seat-3", resp.Items[2].SeatPK)

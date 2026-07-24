@@ -5782,7 +5782,11 @@ export interface ShredClientSeat {
   has_price_override: number
   override_usdc_price_dollars: number
   escrow_count: number
-  total_usdc_balance: number
+  // Largest single escrow balance (micro-USDC). Activation/renewal is per-escrow,
+  // so this — not the sum — decides whether the seat covers the per-epoch price.
+  spendable_usdc_balance: number
+  // Sum across all escrows (micro-USDC); informational, cannot be spent as one charge.
+  all_escrows_usdc_balance: number
   price_per_epoch_dollars: number
   funding_authority_key: string
   user_pk: string
@@ -6742,7 +6746,8 @@ export interface AccessPassShredsSeat {
   funded_epoch: number
   active_epoch: number
   escrow_count: number
-  total_usdc_balance: number
+  spendable_usdc_balance: number
+  all_escrows_usdc_balance: number
   price_per_epoch_dollars: number
   funding_authority_key: string
 }

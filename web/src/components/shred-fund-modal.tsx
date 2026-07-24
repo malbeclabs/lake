@@ -29,7 +29,7 @@ export function ShredFundModal({ seat, onClose }: ShredFundModalProps) {
 
   const pricePerEpoch = seat.price_per_epoch_dollars
   const prepaidEpochs = pricePerEpoch > 0 && amountValid ? Math.floor(amount / pricePerEpoch) : 0
-  const currentBalance = seat.total_usdc_balance / 1e6
+  const currentBalance = seat.all_escrows_usdc_balance / 1e6
 
   const canSubmit = connected && amountValid && !insufficientBalance && status === 'idle'
 

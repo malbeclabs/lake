@@ -27,20 +27,21 @@ func formatUSDC(microUSDC uint64) string {
 // intentionally omitted: v1 is unauthed and the internal handler redacts it
 // for non-internal callers.
 type EdgeShredsSubscriber struct {
-	SeatPK               string `json:"seat_pk" doc:"Client seat pubkey"`
-	DeviceKey            string `json:"device_key" doc:"DoubleZero edge device pubkey"`
-	DeviceCode           string `json:"device_code" doc:"DoubleZero edge device code"`
-	MetroPK              string `json:"metro_pk" doc:"DoubleZero metro pubkey"`
-	MetroCode            string `json:"metro_code" doc:"DoubleZero metro code"`
-	TenureEpochs         uint16 `json:"tenure_epochs" doc:"Number of epochs this seat has been active"`
-	ActiveEpoch          uint64 `json:"active_epoch" doc:"Epoch the seat became active"`
-	TotalUSDCBalance     string `json:"total_usdc_balance" doc:"Sum of USDC balances across all escrows, as a decimal USDC string (6 fractional digits)" example:"50.000000"`
-	PricePerEpochDollars int64  `json:"price_per_epoch_dollars" doc:"Effective per-epoch price (override or metro + device premium)"`
-	FundingAuthorityKey  string `json:"funding_authority_key" doc:"Funder pubkey (on-chain authority that funded this seat)"`
-	UserPK               string `json:"user_pk" doc:"Linked DoubleZero user pubkey, if any"`
-	UserOwnerPubkey      string `json:"user_owner_pubkey" doc:"Solana wallet that owns the linked DZ user"`
-	UserStatus           string `json:"user_status" doc:"Linked DZ user status (e.g. activated)"`
-	LastActivity         string `json:"last_activity" doc:"RFC3339 timestamp of the last escrow event for this seat, if any" example:"2026-04-23T12:34:56Z"`
+	SeatPK                string `json:"seat_pk" doc:"Client seat pubkey"`
+	DeviceKey             string `json:"device_key" doc:"DoubleZero edge device pubkey"`
+	DeviceCode            string `json:"device_code" doc:"DoubleZero edge device code"`
+	MetroPK               string `json:"metro_pk" doc:"DoubleZero metro pubkey"`
+	MetroCode             string `json:"metro_code" doc:"DoubleZero metro code"`
+	TenureEpochs          uint16 `json:"tenure_epochs" doc:"Number of epochs this seat has been active"`
+	ActiveEpoch           uint64 `json:"active_epoch" doc:"Epoch the seat became active"`
+	SpendableUSDCBalance  string `json:"spendable_usdc_balance" doc:"Largest single escrow balance, as a decimal USDC string (6 fractional digits). The oracle evaluates activation/renewal per-escrow, so this — not the sum — determines whether the seat can cover the per-epoch price." example:"25.650000"`
+	AllEscrowsUSDCBalance string `json:"all_escrows_usdc_balance" doc:"Sum of USDC balances across all escrows, as a decimal USDC string (6 fractional digits). Informational: cannot be spent as a single charge." example:"31.480000"`
+	PricePerEpochDollars  int64  `json:"price_per_epoch_dollars" doc:"Effective per-epoch price (override or metro + device premium)"`
+	FundingAuthorityKey   string `json:"funding_authority_key" doc:"Funder pubkey (on-chain authority that funded this seat)"`
+	UserPK                string `json:"user_pk" doc:"Linked DoubleZero user pubkey, if any"`
+	UserOwnerPubkey       string `json:"user_owner_pubkey" doc:"Solana wallet that owns the linked DZ user"`
+	UserStatus            string `json:"user_status" doc:"Linked DZ user status (e.g. activated)"`
+	LastActivity          string `json:"last_activity" doc:"RFC3339 timestamp of the last escrow event for this seat, if any" example:"2026-04-23T12:34:56Z"`
 }
 
 // EdgeShredsSubscribersResponse is the paginated response body.
@@ -80,19 +81,20 @@ func registerEdgeShredsSubscribers(humaAPI huma.API, api *handlers.API) {
 		items := make([]EdgeShredsSubscriber, len(rows))
 		for i, r := range rows {
 			items[i] = EdgeShredsSubscriber{
-				SeatPK:               r.PK,
-				DeviceKey:            r.DeviceKey,
-				DeviceCode:           r.DeviceCode,
-				MetroPK:              r.MetroPK,
-				MetroCode:            r.MetroCode,
-				TenureEpochs:         r.TenureEpochs,
-				ActiveEpoch:          r.ActiveEpoch,
-				TotalUSDCBalance:     formatUSDC(r.TotalUSDCBalance),
-				PricePerEpochDollars: r.PricePerEpochDollars,
-				FundingAuthorityKey:  r.FundingAuthorityKey,
-				UserPK:               r.UserPK,
-				UserOwnerPubkey:      r.UserOwnerPubkey,
-				UserStatus:           r.UserStatus,
+				SeatPK:                r.PK,
+				DeviceKey:             r.DeviceKey,
+				DeviceCode:            r.DeviceCode,
+				MetroPK:               r.MetroPK,
+				MetroCode:             r.MetroCode,
+				TenureEpochs:          r.TenureEpochs,
+				ActiveEpoch:           r.ActiveEpoch,
+				SpendableUSDCBalance:  formatUSDC(r.SpendableUSDCBalance),
+				AllEscrowsUSDCBalance: formatUSDC(r.AllEscrowsUSDCBalance),
+				PricePerEpochDollars:  r.PricePerEpochDollars,
+				FundingAuthorityKey:   r.FundingAuthorityKey,
+				UserPK:                r.UserPK,
+				UserOwnerPubkey:       r.UserOwnerPubkey,
+				UserStatus:            r.UserStatus,
 			}
 			if r.LastActivity != nil && !r.LastActivity.IsZero() {
 				items[i].LastActivity = r.LastActivity.UTC().Format(time.RFC3339)

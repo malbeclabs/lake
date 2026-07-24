@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Shred subscribers dashboard now reflects per-escrow activation: seat status, balance, and prepaid epochs derive from the greatest single escrow (`max`), not the sum across escrows (`sum`), matching how the oracle evaluates activation and renewal. A seat with two escrows of $5.83 + $25.65 at a $30/epoch price now correctly shows as inactive/expired (spendable $25.65, 0 prepaid) instead of pending. The `total_usdc_balance` field is renamed to `spendable_usdc_balance` across the internal and `/api/v1/edge/shreds/*` responses, and a new `all_escrows_usdc_balance` field exposes the across-escrow total so operators can still see stranded funds (#715)
 - Indexer interface-counter data (`fact_dz_device_interface_counters`) is no longer permanently ~1h stale: the telemetry-usage catch-up cap is now anchored at `maxTime` (the ingest watermark) instead of `queryStart`, which had made the cap equal the 5m re-read overlap so an incremental refresh could never query past `maxTime` — every cycle re-read only rows that dedup out and inserted nothing, and `max(event_ts)` sawtoothed ~1h behind `now()`. Steady state now ingests the overlap plus one chunk (~10m, 2 Flux queries) and advances every refresh. `RefreshTelemetryUsage` gets a dedicated 10m activity `StartToCloseTimeout` (was the shared 5m) to bound the two-query worst case plus ClickHouse work, preventing the #665/#671 timeout loop. The post-downtime catch-up memory bound is unchanged (#708)
 
 ### Added

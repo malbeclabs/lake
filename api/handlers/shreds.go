@@ -129,13 +129,19 @@ type ShredClientSeatItem struct {
 	HasPriceOverride         uint8  `json:"has_price_override"`
 	OverrideUSDCPriceDollars uint16 `json:"override_usdc_price_dollars"`
 	EscrowCount              uint32 `json:"escrow_count"`
-	TotalUSDCBalance         uint64 `json:"total_usdc_balance"`
-	PricePerEpochDollars     int64  `json:"price_per_epoch_dollars"`
-	FundingAuthorityKey      string `json:"funding_authority_key"`
-	UserPK                   string `json:"user_pk"`
-	UserOwnerPubkey          string `json:"user_owner_pubkey"`
-	UserStatus               string `json:"user_status"`
-	LastActivity             string `json:"last_activity"`
+	// SpendableUSDCBalance is the largest single escrow balance. Activation and
+	// renewal are evaluated per-escrow by the oracle: a charge must be covered by
+	// one escrow, so balances are never summed across escrows.
+	SpendableUSDCBalance uint64 `json:"spendable_usdc_balance"`
+	// AllEscrowsUSDCBalance is the sum across every escrow on the seat, exposed so
+	// operators can still see funds stranded in undersized escrows.
+	AllEscrowsUSDCBalance uint64 `json:"all_escrows_usdc_balance"`
+	PricePerEpochDollars  int64  `json:"price_per_epoch_dollars"`
+	FundingAuthorityKey   string `json:"funding_authority_key"`
+	UserPK                string `json:"user_pk"`
+	UserOwnerPubkey       string `json:"user_owner_pubkey"`
+	UserStatus            string `json:"user_status"`
+	LastActivity          string `json:"last_activity"`
 }
 
 var seatSortFields = map[string]string{
@@ -146,7 +152,7 @@ var seatSortFields = map[string]string{
 	"tenure":        "s.tenure_epochs",
 	"active_epoch":  "s.active_epoch",
 	"funder":        "s.funding_authority_key",
-	"balance":       "total_usdc_balance",
+	"balance":       "spendable_usdc_balance",
 	"prepaid":       "price_per_epoch_dollars",
 	"last_activity": "last_activity",
 }
@@ -159,7 +165,7 @@ var seatFilterFields = map[string]FilterFieldConfig{
 	"funder":  {Column: "s.funding_authority_key", Type: FieldTypeText},
 	"tenure":  {Column: "s.tenure_epochs", Type: FieldTypeNumeric},
 	"epoch":   {Column: "s.active_epoch", Type: FieldTypeNumeric},
-	"balance": {Column: "COALESCE(eb.total_usdc_balance, 0)", Type: FieldTypeNumeric},
+	"balance": {Column: "COALESCE(eb.spendable_usdc_balance, 0)", Type: FieldTypeNumeric},
 }
 
 func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
@@ -224,7 +230,7 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 			WHEN s.has_price_override = 1 THEN toInt64(s.override_usdc_price_dollars)
 			ELSE toInt64(COALESCE(mh.current_usdc_price_dollars, 0)) + toInt64(COALESCE(dh.current_usdc_metro_premium_dollars, 0))
 		END`
-		prepaidExpr := `CASE WHEN ` + priceExpr + ` > 0 THEN intDiv(COALESCE(eb.total_usdc_balance, 0) / 1000000, ` + priceExpr + `) ELSE 0 END`
+		prepaidExpr := `CASE WHEN ` + priceExpr + ` > 0 THEN intDiv(COALESCE(eb.spendable_usdc_balance, 0) / 1000000, ` + priceExpr + `) ELSE 0 END`
 
 		var statusOr []string
 		if statuses["active"] {
@@ -263,7 +269,9 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 	// Count query.
 	countQuery := `
 		WITH escrow_balances AS (
-			SELECT client_seat_key, sum(usdc_balance) as total_usdc_balance
+			SELECT client_seat_key,
+				max(usdc_balance) as spendable_usdc_balance,
+				sum(usdc_balance) as all_escrows_usdc_balance
 			FROM dim_dz_shred_payment_escrows_current
 			GROUP BY client_seat_key
 		)
@@ -287,7 +295,9 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 	orderBy := sort.OrderByClause(sortFields)
 	query := `
 		WITH escrow_balances AS (
-			SELECT client_seat_key, sum(usdc_balance) as total_usdc_balance
+			SELECT client_seat_key,
+				max(usdc_balance) as spendable_usdc_balance,
+				sum(usdc_balance) as all_escrows_usdc_balance
 			FROM dim_dz_shred_payment_escrows_current
 			GROUP BY client_seat_key
 		),
@@ -301,7 +311,8 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 			COALESCE(d.metro_pk, '') as metro_pk, COALESCE(m.code, '') as metro_code,
 			s.client_ip, s.tenure_epochs, s.funded_epoch, s.active_epoch,
 			s.has_price_override, s.override_usdc_price_dollars, s.escrow_count,
-			COALESCE(eb.total_usdc_balance, 0) as total_usdc_balance,
+			COALESCE(eb.spendable_usdc_balance, 0) as spendable_usdc_balance,
+			COALESCE(eb.all_escrows_usdc_balance, 0) as all_escrows_usdc_balance,
 			CASE
 				WHEN s.has_price_override = 1 THEN toInt32(s.override_usdc_price_dollars)
 				ELSE toInt32(COALESCE(mh.current_usdc_price_dollars, 0)) + toInt32(COALESCE(dh.current_usdc_metro_premium_dollars, 0))
@@ -340,7 +351,8 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(
 			&s.PK, &s.DeviceKey, &s.DeviceCode, &s.MetroPK, &s.MetroCode,
 			&s.ClientIP, &s.TenureEpochs, &s.FundedEpoch, &s.ActiveEpoch,
-			&s.HasPriceOverride, &s.OverrideUSDCPriceDollars, &s.EscrowCount, &s.TotalUSDCBalance,
+			&s.HasPriceOverride, &s.OverrideUSDCPriceDollars, &s.EscrowCount,
+			&s.SpendableUSDCBalance, &s.AllEscrowsUSDCBalance,
 			&s.PricePerEpochDollars, &s.FundingAuthorityKey,
 			&s.UserPK, &s.UserOwnerPubkey, &s.UserStatus, &lastActivity,
 		); err != nil {

@@ -27,7 +27,8 @@ type EdgeShredsClientSeat struct {
 	HasPriceOverride         uint8  `json:"has_price_override" doc:"1 if the seat has an explicit per-seat price override, 0 otherwise"`
 	OverrideUSDCPriceDollars uint16 `json:"override_usdc_price_dollars" doc:"Per-seat price override (whole USDC dollars); 0 unless has_price_override = 1"`
 	EscrowCount              uint32 `json:"escrow_count" doc:"Number of payment escrows currently attached to the seat"`
-	TotalUSDCBalance         string `json:"total_usdc_balance" doc:"Sum of USDC balances across all escrows attached to this seat, as a decimal USDC string (6 fractional digits)" example:"50.000000"`
+	SpendableUSDCBalance     string `json:"spendable_usdc_balance" doc:"Largest single escrow balance, as a decimal USDC string (6 fractional digits). The oracle evaluates activation/renewal per-escrow, so this — not the sum — determines whether the seat can cover the per-epoch price." example:"25.650000"`
+	AllEscrowsUSDCBalance    string `json:"all_escrows_usdc_balance" doc:"Sum of USDC balances across all escrows attached to this seat, as a decimal USDC string (6 fractional digits). Informational: cannot be spent as a single charge." example:"31.480000"`
 	PricePerEpochDollars     int64  `json:"price_per_epoch_dollars" doc:"Effective per-epoch price (override or metro + device premium)"`
 	FundingAuthorityKey      string `json:"funding_authority_key" doc:"Funder pubkey (on-chain authority that funded this seat)"`
 	UserPK                   string `json:"user_pk" doc:"Linked DoubleZero user pubkey, if any"`
@@ -84,7 +85,8 @@ func registerEdgeShredsClientSeats(humaAPI huma.API, api *handlers.API) {
 				HasPriceOverride:         r.HasPriceOverride,
 				OverrideUSDCPriceDollars: r.OverrideUSDCPriceDollars,
 				EscrowCount:              r.EscrowCount,
-				TotalUSDCBalance:         formatUSDC(r.TotalUSDCBalance),
+				SpendableUSDCBalance:     formatUSDC(r.SpendableUSDCBalance),
+				AllEscrowsUSDCBalance:    formatUSDC(r.AllEscrowsUSDCBalance),
 				PricePerEpochDollars:     r.PricePerEpochDollars,
 				FundingAuthorityKey:      r.FundingAuthorityKey,
 				UserPK:                   r.UserPK,
