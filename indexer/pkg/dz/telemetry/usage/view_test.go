@@ -145,8 +145,9 @@ func TestLake_TelemetryUsage_View_ViewConfig_Validate(t *testing.T) {
 			InfluxDB:        &mockInfluxDBClient{},
 			Bucket:          "test-bucket",
 			RefreshInterval: time.Second,
-			// refreshOverlap (5m) + 10m = baselineCacheMaxLag (15m): the steady-state
-			// lag must stay strictly below the cache guard's backward bound.
+			// refreshOverlap (5m) + 2×10m = 25m ≥ baselineCacheMaxLag (20m): the
+			// capped-refresh lag must stay strictly below the cache guard's
+			// backward bound.
 			QueryChunk: 10 * time.Minute,
 		}
 		err := cfg.Validate()
@@ -1531,7 +1532,9 @@ func TestLake_TelemetryUsage_View_Refresh_IncrementalQueriesPastMaxTime(t *testi
 	clock := clockwork.NewFakeClock()
 	now := clock.Now()
 	// event_ts is DateTime64(3); align the seed so it round-trips exactly.
-	maxTime := now.Add(-30 * time.Minute).Truncate(time.Millisecond) // well inside the 1h window
+	// 30m stale: inside the 1h window, far enough behind that the catch-up cap
+	// binds.
+	maxTime := now.Add(-30 * time.Minute).Truncate(time.Millisecond)
 
 	view, windows := captureIntfCounterWindows(t, clock, chunk)
 	seedMaxTime(t, view, maxTime)
@@ -1542,24 +1545,27 @@ func TestLake_TelemetryUsage_View_Refresh_IncrementalQueriesPastMaxTime(t *testi
 	start, end := span(t, *windows)
 	require.Equal(t, maxTime.Add(-refreshOverlap).UTC(), start.UTC(),
 		"refresh must re-read the overlap behind maxTime")
-	require.Equal(t, maxTime.Add(chunk).UTC(), end.UTC(),
-		"refresh must query one chunk PAST maxTime (the #708 regression)")
+	require.Equal(t, maxTime.Add(maxCatchupChunks*chunk).UTC(), end.UTC(),
+		"refresh must query maxCatchupChunks PAST maxTime (the #708 regression)")
 	require.True(t, end.After(maxTime), "queryEnd must advance past maxTime")
-	// overlap + one chunk = 2 chunk-sized sub-queries.
-	require.Len(t, *windows, 2)
+	// overlap + two chunks = 3 chunk-sized sub-queries.
+	require.Len(t, *windows, 3)
 }
 
-// Steady state must step forward one chunk per refresh — the sawtooth is gone
-// and progress is monotonic. Re-seeding the watermark to the prior queryEnd
-// stands in for the insert that advances maxTime in production.
-func TestLake_TelemetryUsage_View_Refresh_SteadyStateAdvancesOneChunk(t *testing.T) {
+// Successive refreshes must make monotonic forward progress — the sawtooth is
+// gone. A refresh behind by more than the cap advances exactly the capped two
+// chunks; once within the cap it reads through to now. Re-seeding the
+// watermark to the prior queryEnd stands in for the insert that advances
+// maxTime in production.
+func TestLake_TelemetryUsage_View_Refresh_AdvancesMonotonically(t *testing.T) {
 	t.Parallel()
 
 	const chunk = 5 * time.Minute
 	clock := clockwork.NewFakeClock()
 	now := clock.Now()
 	// event_ts is DateTime64(3); align the seed so it round-trips exactly.
-	maxTime := now.Add(-40 * time.Minute).Truncate(time.Millisecond)
+	// 12m stale: beyond the 10m cap, so the first refresh is capped.
+	maxTime := now.Add(-12 * time.Minute).Truncate(time.Millisecond)
 
 	view, windows := captureIntfCounterWindows(t, clock, chunk)
 	seedMaxTime(t, view, maxTime)
@@ -1567,7 +1573,8 @@ func TestLake_TelemetryUsage_View_Refresh_SteadyStateAdvancesOneChunk(t *testing
 	_, err := view.Refresh(t.Context())
 	require.NoError(t, err)
 	_, end1 := span(t, *windows)
-	require.Equal(t, maxTime.Add(chunk).UTC(), end1.UTC())
+	require.Equal(t, maxTime.Add(maxCatchupChunks*chunk).UTC(), end1.UTC(),
+		"a capped refresh advances exactly maxCatchupChunks chunks")
 
 	// Simulate the insert advancing the watermark to the first refresh's end.
 	*windows = nil
@@ -1576,13 +1583,14 @@ func TestLake_TelemetryUsage_View_Refresh_SteadyStateAdvancesOneChunk(t *testing
 	_, err = view.Refresh(t.Context())
 	require.NoError(t, err)
 	_, end2 := span(t, *windows)
-	require.Equal(t, end1.Add(chunk).UTC(), end2.UTC(), "each refresh advances exactly one chunk")
+	require.Equal(t, now.UTC(), end2.UTC(), "within the cap, a refresh reads through to now")
 	require.True(t, end2.After(end1), "progress must be monotonic")
 }
 
 // The catch-up cap (the #665 memory bound) is preserved when maxTime is older
 // than the query window or absent: the span starts at the window start and
-// covers exactly one chunk, regardless of how far behind maxTime is.
+// covers exactly maxCatchupChunks chunks, regardless of how far behind maxTime
+// is.
 func TestLake_TelemetryUsage_View_Refresh_CatchupCapPreserved(t *testing.T) {
 	t.Parallel()
 
@@ -1602,8 +1610,9 @@ func TestLake_TelemetryUsage_View_Refresh_CatchupCapPreserved(t *testing.T) {
 
 		start, end := span(t, *windows)
 		require.Equal(t, windowStart.UTC(), start.UTC(), "catch-up starts at the window start")
-		require.Equal(t, windowStart.Add(chunk).UTC(), end.UTC(), "catch-up ingests exactly one chunk")
-		require.Len(t, *windows, 1)
+		require.Equal(t, windowStart.Add(maxCatchupChunks*chunk).UTC(), end.UTC(),
+			"catch-up ingests exactly maxCatchupChunks chunks")
+		require.Len(t, *windows, maxCatchupChunks)
 	})
 
 	t.Run("empty table", func(t *testing.T) {
@@ -1619,7 +1628,7 @@ func TestLake_TelemetryUsage_View_Refresh_CatchupCapPreserved(t *testing.T) {
 
 		start, end := span(t, *windows)
 		require.Equal(t, windowStart.UTC(), start.UTC())
-		require.Equal(t, windowStart.Add(chunk).UTC(), end.UTC())
+		require.Equal(t, windowStart.Add(maxCatchupChunks*chunk).UTC(), end.UTC())
 	})
 }
 
@@ -1641,4 +1650,206 @@ func TestLake_TelemetryUsage_View_Refresh_UncappedTailClampsToNow(t *testing.T) 
 
 	_, end := span(t, *windows)
 	require.Equal(t, now.UTC(), end.UTC(), "queryEnd must clamp to now, never past it")
+}
+
+// Regression for #713: while catching up (maxTime far behind now) the refresh
+// must keep the overlap re-read AND extend the forward cap, covering
+// [maxTime−overlap, maxTime+2·chunk). The overlap cannot be traded for new
+// data even though its rows dedup out: the re-read seeds non-sparse counter
+// baselines for keys whose latest row is behind the global maxTime (see
+// TestLake_TelemetryUsage_View_Refresh_CatchupEmitsFirstRowOfLaggingKey).
+// Convergence comes from the second chunk instead.
+func TestLake_TelemetryUsage_View_Refresh_CatchupKeepsOverlapAndExtendsCap(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClock()
+	now := clock.Now()
+	// 30m stale: inside the 1h query window, far beyond the 10m cap.
+	maxTime := now.Add(-30 * time.Minute).Truncate(time.Millisecond)
+
+	view, windows := captureIntfCounterWindows(t, clock, chunk)
+	seedMaxTime(t, view, maxTime)
+
+	_, err := view.Refresh(t.Context())
+	require.NoError(t, err)
+
+	start, end := span(t, *windows)
+	require.Equal(t, maxTime.Add(-refreshOverlap).UTC(), start.UTC(),
+		"catch-up must keep the overlap re-read — it seeds non-sparse baselines and catches late arrivals")
+	require.Equal(t, maxTime.Add(maxCatchupChunks*chunk).UTC(), end.UTC(),
+		"catch-up must ingest maxCatchupChunks chunks past maxTime")
+	// overlap + two chunks = 3 chunk-sized sub-queries.
+	require.Len(t, *windows, 3)
+}
+
+// The throughput inequality from #713: catch-up only converges if
+// net_gain / cycle_time > 1 at a MODELED cycle time, not just per-refresh
+// advancement. Model the prod incident: watermark ~58m stale, each refresh
+// costs ~5m of wall clock (the measured cadence). With the 2-chunk cap the net
+// gain is 10m per 5m cycle, so lag must pay down ~5m per cycle until the cap
+// no longer binds, then hold at the refresh cadence. On the buggy code (1-chunk
+// cap) net gain equalled cycle time and this loop stayed pinned at ~58m
+// forever.
+func TestLake_TelemetryUsage_View_Refresh_CatchupConvergesUnderModeledCycleTime(t *testing.T) {
+	t.Parallel()
+
+	const (
+		chunk     = 5 * time.Minute
+		cycleTime = 5 * time.Minute // measured prod refresh cadence (#713)
+	)
+	clock := clockwork.NewFakeClock()
+	maxTime := clock.Now().Add(-58 * time.Minute).Truncate(time.Millisecond)
+
+	view, windows := captureIntfCounterWindows(t, clock, chunk)
+	seedMaxTime(t, view, maxTime)
+
+	// 58m → converged at −5m net per capped cycle needs ~10 cycles; run a few
+	// more to verify lag holds (does not re-grow) once the cap stops binding.
+	for cycle := 0; cycle < 13; cycle++ {
+		*windows = nil
+		_, err := view.Refresh(t.Context())
+		require.NoError(t, err)
+
+		_, end := span(t, *windows)
+		require.True(t, end.After(maxTime), "watermark must advance every cycle (cycle %d)", cycle)
+
+		// Stand-in for the insert advancing maxTime to the ingested end.
+		maxTime = end
+		seedMaxTime(t, view, maxTime)
+		clock.Advance(cycleTime)
+	}
+
+	lag := clock.Now().Sub(maxTime)
+	require.LessOrEqual(t, lag, cycleTime,
+		"lag must converge to the refresh cadence and hold, got %s", lag)
+}
+
+// Regression for the #714 review: a catch-up refresh must not swallow the
+// first new row of a key whose latest written row is behind the global
+// maxTime — the norm for an unsynchronized multi-device fleet. Non-sparse
+// counters (in-octets, …) have no ClickHouse baseline; their delta continuity
+// depends on the overlap re-read returning each key's already-written rows,
+// which seed lastKnownValues/firstRowSeen via the dedup path. If catch-up
+// starts the read at maxTime instead of maxTime−overlap, the lagging key's
+// first new row is consumed as a baseline and never inserted, silently
+// undercounting its traffic across the whole recovered region.
+func TestLake_TelemetryUsage_View_Refresh_CatchupEmitsFirstRowOfLaggingKey(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClockAt(time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC))
+	now := clock.Now()
+	// Deep catch-up: 30m stale, far beyond the 10m cap.
+	maxTime := now.Add(-30 * time.Minute)
+	// lag-device's latest written row is 2m behind the global maxTime (set by
+	// fast-device), inside the overlap.
+	lagTime := maxTime.Add(-2 * time.Minute)
+
+	const fastDev, lagDev, intf = "fast-device", "lag-device", "eth0"
+
+	influxRow := func(ts time.Time, dev string, inOctets int64) map[string]any {
+		return map[string]any{
+			"time":       ts.UTC().Format(time.RFC3339Nano),
+			"dzd_pubkey": dev,
+			"intf":       intf,
+			"in-octets":  inOctets,
+		}
+	}
+	// InfluxDB holds the rows a previous refresh already wrote (returned by
+	// the overlap re-read, they dedup out) plus one new row per device.
+	influxRows := []map[string]any{
+		influxRow(lagTime, lagDev, 1000),
+		influxRow(maxTime, fastDev, 5000),
+		influxRow(maxTime.Add(time.Minute), lagDev, 1500),
+		influxRow(maxTime.Add(time.Minute), fastDev, 5600),
+	}
+	influx := &mockInfluxDBClient{
+		queryIntfCountersFunc: func(_ context.Context, s, e time.Time) ([]map[string]any, error) {
+			var out []map[string]any
+			for _, r := range influxRows {
+				ts, err := time.Parse(time.RFC3339Nano, r["time"].(string))
+				if err != nil {
+					return nil, err
+				}
+				if !ts.Before(s) && ts.Before(e) {
+					out = append(out, r)
+				}
+			}
+			return out, nil
+		},
+	}
+
+	view, err := NewView(ViewConfig{
+		Logger:          laketesting.NewLogger(),
+		Clock:           clock,
+		ClickHouse:      testClient(t),
+		InfluxDB:        influx,
+		Bucket:          "test-bucket",
+		RefreshInterval: time.Second,
+		QueryWindow:     time.Hour,
+		QueryChunk:      chunk,
+	})
+	require.NoError(t, err)
+
+	// Seed ClickHouse with what the previous refresh already wrote.
+	seedUsageRow(t, view, lagDev, intf, lagTime, 1000)
+	seedUsageRow(t, view, fastDev, intf, maxTime, 5000)
+
+	_, err = view.Refresh(t.Context())
+	require.NoError(t, err)
+
+	// lag-device's new row must be inserted with its delta computed against
+	// the re-read overlap row (1500−1000), not swallowed as a baseline.
+	lagDeltas := queryInOctetsDeltas(t, view, lagDev, maxTime)
+	require.Len(t, lagDeltas, 1, "lag-device's first new row must be emitted, not consumed as a baseline")
+	delta, ok := lagDeltas[maxTime.Add(time.Minute).UTC()]
+	require.True(t, ok, "expected lag-device row at maxTime+1m, got %v", lagDeltas)
+	require.NotNil(t, delta)
+	require.Equal(t, int64(500), *delta)
+
+	// fast-device (the key that defines the global maxTime) also emits its new
+	// row with a correct delta.
+	fastDeltas := queryInOctetsDeltas(t, view, fastDev, maxTime.Add(time.Second))
+	require.Len(t, fastDeltas, 1)
+	delta, ok = fastDeltas[maxTime.Add(time.Minute).UTC()]
+	require.True(t, ok, "expected fast-device row at maxTime+1m, got %v", fastDeltas)
+	require.NotNil(t, delta)
+	require.Equal(t, int64(600), *delta)
+}
+
+// seedUsageRow inserts an interface-counter row with an in-octets value, as a
+// previous refresh would have written it.
+func seedUsageRow(t *testing.T, v *View, dev, intf string, ts time.Time, inOctets int64) {
+	t.Helper()
+	err := v.store.InsertInterfaceUsage(context.Background(), []InterfaceUsage{{
+		Time:     ts.UTC(),
+		DevicePK: &dev,
+		Intf:     &intf,
+		InOctets: &inOctets,
+	}})
+	require.NoError(t, err)
+}
+
+// queryInOctetsDeltas returns event_ts → in_octets_delta for the device's rows
+// at or after since.
+func queryInOctetsDeltas(t *testing.T, v *View, dev string, since time.Time) map[time.Time]*int64 {
+	t.Helper()
+	ctx := context.Background()
+	conn, err := v.cfg.ClickHouse.Conn(ctx)
+	require.NoError(t, err)
+	rows, err := conn.Query(ctx,
+		"SELECT event_ts, in_octets_delta FROM fact_dz_device_interface_counters WHERE device_pk = ? AND event_ts >= ?",
+		dev, since.UTC())
+	require.NoError(t, err)
+	defer rows.Close()
+	out := map[time.Time]*int64{}
+	for rows.Next() {
+		var ts time.Time
+		var delta *int64
+		require.NoError(t, rows.Scan(&ts, &delta))
+		out[ts.UTC()] = delta
+	}
+	require.NoError(t, rows.Err())
+	return out
 }
