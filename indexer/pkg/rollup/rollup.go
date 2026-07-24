@@ -16,6 +16,7 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
+	"github.com/malbeclabs/lake/utils/pkg/dberror"
 	temporalclient "go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 )
@@ -175,6 +176,15 @@ func (l *temporalLogger) Error(msg string, keyvals ...any) {
 		l.log.Warn(msg, keyvals...)
 		return
 	}
+	// Temporal logs "Activity error." at ERROR on every failed attempt,
+	// including non-final ones the activity's retry policy will recover. A
+	// transient cause (ClickHouse connection blip, timeout) self-heals on
+	// retry, so demote to WARN; a sustained failure still pages via the
+	// workflow-side Escalator once retries are exhausted across iterations.
+	if msg == "Activity error." && isTransientActivityError(keyvals) {
+		l.log.Warn(msg, keyvals...)
+		return
+	}
 	l.log.Error(msg, keyvals...)
 }
 
@@ -194,6 +204,23 @@ func hasBenignTaskProcessingError(keyvals []any) bool {
 				strings.Contains(msg, "grpc: the client connection is closing") {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// isTransientActivityError reports whether Temporal's activity-error keyvals
+// carry an Error that dberror classifies as transient (a self-healing upstream
+// blip the activity's retry policy will recover). The Error value arrives
+// wrapped in the SDK's ApplicationError, but dberror.Classify matches on the
+// unwrapped message string, so a connectivity/timeout cause still classifies.
+func isTransientActivityError(keyvals []any) bool {
+	for i := 0; i+1 < len(keyvals); i += 2 {
+		if keyvals[i] != "Error" {
+			continue
+		}
+		if err, ok := keyvals[i+1].(error); ok {
+			return dberror.IsTransient(err)
 		}
 	}
 	return false
