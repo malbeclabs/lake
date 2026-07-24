@@ -13,35 +13,105 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// hyperliquidCompetitors lists the non-DoubleZero feeds shown on the scoreboard,
-// in display order, mapping each raw feed name to its label.
-var hyperliquidCompetitors = []struct{ Feed, Label string }{
-	{"hyperliquid_public_bbo", "Public API"},
-	{"hydromancer_bbo", "Hydromancer"},
-	{"dwellir_l2book_bbo", "Dwellir"},
-	{"quicknode_l2book_bbo", "QuickNode"},
+// hyperliquidFeedRe bounds feed ids to characters safe to inline into ClickHouse SQL.
+// Config rows are operator-managed rather than user input, but the values are concatenated
+// into queries, so anything outside this set is dropped rather than trusted.
+var hyperliquidFeedRe = regexp.MustCompile(`^[A-Za-z0-9:_.-]{1,64}$`)
+
+// hyperliquidEntry is one configured scoreboard feed.
+type hyperliquidEntry struct{ Feed, Label string }
+
+// hyperliquidEntries is the scoreboard's configured feed allow-list, loaded from Postgres.
+// Only feeds present here are raced, counted, or displayed, so a feed is added, removed, or
+// reordered by changing rows — no code change and no deploy.
+type hyperliquidEntries struct {
+	ordered []hyperliquidEntry // display order
+	labels  map[string]string  // feed -> label
 }
 
-// hyperliquidExcludedFeeds are competitor feeds withheld from every scoreboard measurement
-// (per-competitor, per-node, headline totals, and recent races) because their upstream data is
-// currently unreliable. hyperpc_shared_bbo (HypeRPC) arrives a median ~100s stale during
-// recurring multi-hour backlog episodes — vs ~300ms for the other feeds — which would render
-// DoubleZero "winning" by seconds-to-minutes and is a HypeRPC-side feed fault, not a real result.
-// Remove entries here (and re-add to hyperliquidCompetitors) once the feed is fixed.
-var hyperliquidExcludedFeeds = []string{"hyperpc_shared_bbo"}
+// empty reports whether any feed is configured.
+func (e hyperliquidEntries) empty() bool { return len(e.ordered) == 0 }
 
-// hyperliquidExcludedFeedsClause returns a SQL predicate dropping excluded feeds from either
-// side of a race, or "" if none are excluded.
-func hyperliquidExcludedFeedsClause() string {
-	if len(hyperliquidExcludedFeeds) == 0 {
+// inClause returns the SQL predicate restricting a race to configured feeds, or "" if none
+// are configured. Every race pairs one tob_* DoubleZero feed with one competing feed, and DZ
+// feeds are never configured entries, so requiring either side to be in the set is equivalent
+// to requiring the non-DZ side to be configured.
+func (e hyperliquidEntries) inClause() string {
+	if e.empty() {
 		return ""
 	}
-	quoted := make([]string, len(hyperliquidExcludedFeeds))
-	for i, f := range hyperliquidExcludedFeeds {
-		quoted[i] = "'" + f + "'"
+	quoted := make([]string, 0, len(e.ordered))
+	for _, en := range e.ordered {
+		quoted = append(quoted, "'"+en.Feed+"'")
 	}
 	in := strings.Join(quoted, ", ")
-	return fmt.Sprintf("AND feed NOT IN (%[1]s) AND loser_feed NOT IN (%[1]s)", in)
+	return fmt.Sprintf("AND (feed IN (%[1]s) OR loser_feed IN (%[1]s))", in)
+}
+
+// label maps a raw feed to its configured display label (falls back to the raw name).
+func (e hyperliquidEntries) label(feed string) string {
+	if l, ok := e.labels[feed]; ok {
+		return l
+	}
+	return feed
+}
+
+// display returns "DoubleZero" for any tob_ DZ feed, else the configured label. Used so a
+// competitor-won recent race reads "<Label> … vs DoubleZero", not a raw tob_ id.
+func (e hyperliquidEntries) display(feed string) string {
+	if strings.HasPrefix(feed, "tob_") {
+		return "DoubleZero"
+	}
+	return e.label(feed)
+}
+
+// loadHyperliquidScoreboardEntries reads the enabled scoreboard feeds from Postgres, in
+// display order. Zero configured rows is not an error — it is the deliberate "nothing
+// configured yet" state and returns a clean empty set with a nil error. A genuine load
+// failure (query, scan, or row iteration) returns a non-nil error instead of degrading to an
+// empty set: the caller must not treat a Postgres blip as "zero feeds configured", or the
+// background refresher and page-cache worker would overwrite the last-good cached payload
+// with an empty one. Logged at WARN, never ERROR — ERROR pages on-call.
+func (a *API) loadHyperliquidScoreboardEntries(ctx context.Context) (hyperliquidEntries, error) {
+	e := hyperliquidEntries{labels: map[string]string{}}
+	if a.PgPool == nil {
+		return e, nil
+	}
+	rows, err := a.PgPool.Query(ctx, `
+		SELECT feed, label FROM hyperliquid_scoreboard_entry
+		WHERE enabled ORDER BY display_order, feed`)
+	if err != nil {
+		slog.Warn("hyperliquid scoreboard entry load failed", "error", err)
+		return hyperliquidEntries{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var feed, label string
+		if err := rows.Scan(&feed, &label); err != nil {
+			slog.Warn("hyperliquid scoreboard entry scan failed", "error", err)
+			return hyperliquidEntries{}, err
+		}
+		// A malformed feed would be inlined into SQL; drop it and keep serving the rest.
+		if !hyperliquidFeedRe.MatchString(feed) {
+			slog.Warn("hyperliquid scoreboard entry skipped: unsafe feed id", "feed", feed)
+			continue
+		}
+		// tob_ feeds are DoubleZero's own; the allow-list clause relies on them never being
+		// configured entries (see inClause). A tob_ config row would broaden the clause to
+		// match races against unconfigured competitors, leaking their raw feed ids into the
+		// public payload, so it is dropped rather than trusted.
+		if strings.HasPrefix(feed, "tob_") {
+			slog.Warn("hyperliquid scoreboard entry skipped: tob_ feed not allowed", "feed", feed)
+			continue
+		}
+		e.ordered = append(e.ordered, hyperliquidEntry{Feed: feed, Label: label})
+		e.labels[feed] = label
+	}
+	if err := rows.Err(); err != nil {
+		slog.Warn("hyperliquid scoreboard entry iteration failed", "error", err)
+		return hyperliquidEntries{}, err
+	}
+	return e, nil
 }
 
 // hyperliquidWindows maps window params to ClickHouse interval expressions.
@@ -176,23 +246,19 @@ type HyperliquidCompositeLatency struct {
 
 const hyperliquidCompositeLatencyCacheKey = "hyperliquid_composite_latency"
 
-// labelForFeed maps a raw competitor feed to its display label (falls back to the raw name).
-func labelForFeed(feed string) string {
-	for _, c := range hyperliquidCompetitors {
-		if c.Feed == feed {
-			return c.Label
-		}
+// emptyHyperliquidScoreboard is the empty-but-valid response served when the scoreboard has
+// nothing to compute — the proxied summary table is absent (e.g. local dev) or no feeds are
+// configured. Returning this instead of an error keeps the page-cache refresher caching a
+// clean payload rather than logging every cycle.
+func emptyHyperliquidScoreboard(window string) *HyperliquidScoreboardResponse {
+	return &HyperliquidScoreboardResponse{
+		Window:      window,
+		GeneratedAt: time.Now().UTC(),
+		FeedType:    "bbo",
+		Competitors: []HyperliquidCompetitor{},
+		Nodes:       []HyperliquidNode{},
+		RecentRaces: []HyperliquidRace{},
 	}
-	return feed
-}
-
-// hyperliquidFeedDisplay returns "DoubleZero" for any tob_ DZ feed, else the competitor label.
-// Used so a competitor-won recent race reads "Hydromancer … vs DoubleZero", not a raw tob_ id.
-func hyperliquidFeedDisplay(feed string) string {
-	if strings.HasPrefix(feed, "tob_") {
-		return "DoubleZero"
-	}
-	return labelForFeed(feed)
 }
 
 // FetchHyperliquidScoreboardData computes the aggregated scoreboard for a window and
@@ -209,23 +275,30 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 	// proxy/seed), return an empty-but-valid response so the page-cache refresher
 	// caches a clean empty payload instead of logging an error every cycle.
 	if !a.hyperliquidFeedsTableExists(ctx) {
-		return &HyperliquidScoreboardResponse{
-			Window:      window,
-			GeneratedAt: time.Now().UTC(),
-			FeedType:    "bbo",
-			Competitors: []HyperliquidCompetitor{},
-			Nodes:       []HyperliquidNode{},
-			RecentRaces: []HyperliquidRace{},
-		}, nil
+		return emptyHyperliquidScoreboard(window), nil
+	}
+
+	// The configured feed allow-list drives which feeds are raced, counted, and labelled.
+	// A load failure propagates as an error so the caller (page-cache refresher, request
+	// handler) does not mistake it for "nothing configured" and overwrite a last-good cached
+	// payload with an empty one. Zero configured rows is not an error — with nothing
+	// configured there is no scoreboard to compute, so serve the empty-but-valid payload
+	// rather than scanning for feeds we would then discard.
+	entries, err := a.loadHyperliquidScoreboardEntries(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if entries.empty() {
+		return emptyHyperliquidScoreboard(window), nil
 	}
 
 	symbolFilter := hyperliquidLiquidSymbolFilter()
 	if symbol != "" {
 		symbolFilter = fmt.Sprintf("AND symbol = '%s'", symbol)
 	}
-	// Drop excluded (unreliable) competitor feeds from the per-competitor and per-node
-	// aggregations. Flows into both compQ and nodeQ via the shared symbolFilter slot.
-	symbolFilter = strings.TrimSpace(symbolFilter + " " + hyperliquidExcludedFeedsClause())
+	// Restrict both aggregations to configured feeds. Flows into the scan via the shared
+	// symbolFilter slot.
+	symbolFilter = strings.TrimSpace(symbolFilter + " " + entries.inClause())
 	db := fmt.Sprintf("`%s`", a.FeedsDB)
 
 	resp := &HyperliquidScoreboardResponse{
@@ -318,7 +391,7 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 		return rows.Err()
 	})
 	g.Go(func() error {
-		r, err := a.fetchHyperliquidRecentRaces(gctx, time.Time{}, 10)
+		r, err := a.fetchHyperliquidRecentRaces(gctx, time.Time{}, 10, entries)
 		if err != nil {
 			return err
 		}
@@ -337,7 +410,7 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 	}
 
 	// Emit competitors in configured order.
-	for _, c := range hyperliquidCompetitors {
+	for _, c := range entries.ordered {
 		s, ok := byFeed[c.Feed]
 		if !ok {
 			continue
@@ -366,7 +439,7 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 			Competitors:       []HyperliquidCompetitor{},
 		}
 		var wins, races uint64
-		for _, c := range hyperliquidCompetitors {
+		for _, c := range entries.ordered {
 			s, ok := na.byFeed[c.Feed]
 			if !ok {
 				continue
@@ -419,7 +492,7 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol
 
 // fetchHyperliquidRecentRaces returns the most recent races (one row per race,
 // winner + closest competitor + lead). sinceTs zero -> last 5 minutes.
-func (a *API) fetchHyperliquidRecentRaces(ctx context.Context, sinceTs time.Time, perSymbol int) ([]HyperliquidRace, error) {
+func (a *API) fetchHyperliquidRecentRaces(ctx context.Context, sinceTs time.Time, perSymbol int, entries hyperliquidEntries) ([]HyperliquidRace, error) {
 	if perSymbol <= 0 || perSymbol > 50 {
 		perSymbol = 10
 	}
@@ -447,7 +520,7 @@ func (a *API) fetchHyperliquidRecentRaces(ctx context.Context, sinceTs time.Time
 		GROUP BY capture_run_id, measurement_node_id, symbol, source_ts_ms, bbo_hash, location_code, feed
 		ORDER BY max_event_ts DESC
 		LIMIT %d BY symbol`, db,
-		strings.TrimSpace(hyperliquidRecentRaceSymbolFilter()+" "+hyperliquidExcludedFeedsClause()), timeFilter, perSymbol)
+		strings.TrimSpace(hyperliquidRecentRaceSymbolFilter()+" "+entries.inClause()), timeFilter, perSymbol)
 	rows, err := a.envDB(ctx).Query(ctx, q)
 	if err != nil {
 		return nil, err
@@ -461,8 +534,8 @@ func (a *API) fetchHyperliquidRecentRaces(ctx context.Context, sinceTs time.Time
 			return nil, err
 		}
 		r.IsDZ = isDZ == 1
-		r.WinnerLabel = hyperliquidFeedDisplay(r.WinnerFeed)
-		r.RunnerUpLabel = hyperliquidFeedDisplay(r.RunnerUpFeed)
+		r.WinnerLabel = entries.display(r.WinnerFeed)
+		r.RunnerUpLabel = entries.display(r.RunnerUpFeed)
 		out = append(out, r)
 	}
 	return out, rows.Err()

@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - User-facing product name is **"DoubleZero Data"**, not "Lake".
-- DoubleZero rollup = any feed where `startsWith(feed, 'tob_')`. Competitors (raw feed → label): `hyperliquid_public_bbo`→`Public API`, `hydromancer_bbo`→`Hydromancer`, `hyperpc_shared_bbo`→`HypeRPC`, `quicknode_l2book_bbo`→`QuickNode`.
+- DoubleZero rollup = any feed where `startsWith(feed, 'tob_')`. Competitors (raw feed → label): `feed_a_bbo`→`Feed A`, `feed_b_bbo`→`Feed B`, `feed_c_bbo`→`Feed C`, `feed_d_bbo`→`Feed D`.
 - Source table: `{FeedsDB}.hyperliquid_bbo_feed_race_summary`, default db name `feeds`, overridable via `CLICKHOUSE_FEEDS_DB`. Always query with `FINAL` (ReplacingMergeTree).
 - Race key columns: `(capture_run_id, measurement_node_id, symbol, source_ts_ms, bbo_hash)`.
 - Window values: `1h`, `24h`, `7d`; default `24h`. Default (cacheable) request shape = no `symbol`, no `since_ts`, window omitted or `24h`.
@@ -255,10 +255,10 @@ func TestHyperliquidScoreboard_HeadlineAndCompetitors(t *testing.T) {
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	createFeedsTable(t, api)
 
-	// 3 races at node tyo: DZ (tob_*) beats Hydromancer twice, loses once.
-	insertPairwise(t, api, "tyo-rec1", "tyo", "BTC", 1000, 1, "tob_gcp_tyo_hl_mainnet1", "hydromancer_bbo", 1.0)
-	insertPairwise(t, api, "tyo-rec1", "tyo", "BTC", 2000, 2, "tob_gcp_tyo_hl_mainnet1", "hydromancer_bbo", 3.0)
-	insertPairwise(t, api, "tyo-rec1", "tyo", "BTC", 3000, 3, "hydromancer_bbo", "tob_gcp_tyo_hl_mainnet1", 0.5)
+	// 3 races at node tyo: DZ (tob_*) beats Feed B twice, loses once.
+	insertPairwise(t, api, "tyo-rec1", "tyo", "BTC", 1000, 1, "tob_gcp_tyo_hl_mainnet1", "feed_b_bbo", 1.0)
+	insertPairwise(t, api, "tyo-rec1", "tyo", "BTC", 2000, 2, "tob_gcp_tyo_hl_mainnet1", "feed_b_bbo", 3.0)
+	insertPairwise(t, api, "tyo-rec1", "tyo", "BTC", 3000, 3, "feed_b_bbo", "tob_gcp_tyo_hl_mainnet1", 0.5)
 
 	resp, err := api.FetchHyperliquidScoreboardData(t.Context(), "24h", "")
 	require.NoError(t, err)
@@ -267,18 +267,18 @@ func TestHyperliquidScoreboard_HeadlineAndCompetitors(t *testing.T) {
 	assert.InDelta(t, 66.67, resp.DZWinSharePct, 0.1)
 	assert.EqualValues(t, 3, resp.TotalRaces)
 
-	var hydro *handlers.HyperliquidCompetitor
+	var feedB *handlers.HyperliquidCompetitor
 	for i := range resp.Competitors {
-		if resp.Competitors[i].Feed == "hydromancer_bbo" {
-			hydro = &resp.Competitors[i]
+		if resp.Competitors[i].Feed == "feed_b_bbo" {
+			feedB = &resp.Competitors[i]
 		}
 	}
-	require.NotNil(t, hydro)
-	assert.Equal(t, "Hydromancer", hydro.Label)
-	assert.InDelta(t, 66.67, hydro.DZWinPct, 0.1)
-	assert.EqualValues(t, 3, hydro.Races)
+	require.NotNil(t, feedB)
+	assert.Equal(t, "Feed B", feedB.Label)
+	assert.InDelta(t, 66.67, feedB.DZWinPct, 0.1)
+	assert.EqualValues(t, 3, feedB.Races)
 	// Lead p50 over the 2 DZ wins (1.0, 3.0) = 1.0 (quantileExact lower).
-	assert.InDelta(t, 1.0, hydro.LeadP50Ms, 0.001)
+	assert.InDelta(t, 1.0, feedB.LeadP50Ms, 0.001)
 }
 ```
 
@@ -304,10 +304,10 @@ import (
 // hyperliquidCompetitors lists the non-DoubleZero feeds shown on the scoreboard,
 // in display order, mapping each raw feed name to its label.
 var hyperliquidCompetitors = []struct{ Feed, Label string }{
-	{"hyperliquid_public_bbo", "Public API"},
-	{"hydromancer_bbo", "Hydromancer"},
-	{"hyperpc_shared_bbo", "HypeRPC"},
-	{"quicknode_l2book_bbo", "QuickNode"},
+	{"feed_a_bbo", "Feed A"},
+	{"feed_b_bbo", "Feed B"},
+	{"feed_c_bbo", "Feed C"},
+	{"feed_d_bbo", "Feed D"},
 }
 
 // hyperliquidWindows maps window params to ClickHouse interval expressions.
@@ -522,11 +522,11 @@ func TestHyperliquidScoreboard_PerNode(t *testing.T) {
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	createFeedsTable(t, api)
 
-	// tyo: DZ wins both vs QuickNode. nyc: DZ wins 1, loses 1 vs QuickNode.
-	insertPairwise(t, api, "tyo-rec1", "tyo", "ETH", 10, 1, "tob_gcp_tyo_hl_mainnet1", "quicknode_l2book_bbo", 2.0)
-	insertPairwise(t, api, "tyo-rec1", "tyo", "ETH", 20, 2, "tob_gcp_tyo_hl_mainnet1", "quicknode_l2book_bbo", 2.0)
-	insertPairwise(t, api, "nyc-rec1", "nyc", "ETH", 30, 3, "tob_aws_galaxy1", "quicknode_l2book_bbo", 1.0)
-	insertPairwise(t, api, "nyc-rec1", "nyc", "ETH", 40, 4, "quicknode_l2book_bbo", "tob_aws_galaxy1", 1.0)
+	// tyo: DZ wins both vs Feed D. nyc: DZ wins 1, loses 1 vs Feed D.
+	insertPairwise(t, api, "tyo-rec1", "tyo", "ETH", 10, 1, "tob_gcp_tyo_hl_mainnet1", "feed_d_bbo", 2.0)
+	insertPairwise(t, api, "tyo-rec1", "tyo", "ETH", 20, 2, "tob_gcp_tyo_hl_mainnet1", "feed_d_bbo", 2.0)
+	insertPairwise(t, api, "nyc-rec1", "nyc", "ETH", 30, 3, "tob_aws_galaxy1", "feed_d_bbo", 1.0)
+	insertPairwise(t, api, "nyc-rec1", "nyc", "ETH", 40, 4, "feed_d_bbo", "tob_aws_galaxy1", 1.0)
 
 	resp, err := api.FetchHyperliquidScoreboardData(t.Context(), "24h", "")
 	require.NoError(t, err)
@@ -668,8 +668,8 @@ func TestHyperliquidScoreboard_RecentRaces(t *testing.T) {
 	createFeedsTable(t, api)
 
 	// A DZ-won race (BTC) and a competitor-won race (ETH), both pairwise.
-	insertPairwise(t, api, "tyo-rec1", "tyo", "BTC", 100, 1, "tob_gcp_tyo_hl_mainnet1", "hydromancer_bbo", 1.5)
-	insertPairwise(t, api, "tyo-rec1", "tyo", "ETH", 200, 2, "quicknode_l2book_bbo", "tob_gcp_tyo_hl_mainnet1", 0.7)
+	insertPairwise(t, api, "tyo-rec1", "tyo", "BTC", 100, 1, "tob_gcp_tyo_hl_mainnet1", "feed_b_bbo", 1.5)
+	insertPairwise(t, api, "tyo-rec1", "tyo", "ETH", 200, 2, "feed_d_bbo", "tob_gcp_tyo_hl_mainnet1", 0.7)
 
 	races, err := api.FetchHyperliquidScoreboardData(t.Context(), "24h", "")
 	require.NoError(t, err)
@@ -680,7 +680,7 @@ func TestHyperliquidScoreboard_RecentRaces(t *testing.T) {
 		bySym[r.Symbol] = r
 	}
 	assert.True(t, bySym["BTC"].IsDZ)
-	assert.Equal(t, "Hydromancer", bySym["BTC"].RunnerUpLabel)
+	assert.Equal(t, "Feed B", bySym["BTC"].RunnerUpLabel)
 	assert.InDelta(t, 1.5, bySym["BTC"].LeadMs, 0.001)
 	assert.False(t, bySym["ETH"].IsDZ)
 }

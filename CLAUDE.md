@@ -114,6 +114,35 @@ The API has a background page cache (`api/handlers/page_cache.go`) that pre-comp
 
 Add caching when a page runs expensive queries, has a common default view, and 30–60s staleness is acceptable. See publisher check or edge scoreboard handlers for reference implementations.
 
+## Hyperliquid Scoreboard Feed Config
+
+The feeds shown on the Hyperliquid scoreboard are **not** in code — they live in the
+Postgres table `hyperliquid_scoreboard_entry` (`feed`, `label`, `display_order`, `enabled`).
+Only enabled rows are raced, counted, or displayed; a feed with no row never appears.
+
+Add, remove, or reorder a feed by changing rows — no code change, no deploy.
+
+**These statements are run by a human operator against the target environment.** They are
+recorded here as a runbook, not as something to execute automatically: do not run them, or
+any other write against this table, from an agent session unless explicitly asked to.
+
+```sql
+-- stop showing a feed
+UPDATE hyperliquid_scoreboard_entry SET enabled = FALSE, updated_at = NOW() WHERE feed = '<feed>';
+-- start showing a feed
+INSERT INTO hyperliquid_scoreboard_entry (feed, label, display_order, enabled)
+VALUES ('<feed>', '<label>', <n>, TRUE)
+ON CONFLICT (feed) DO UPDATE SET enabled = TRUE, label = EXCLUDED.label,
+    display_order = EXCLUDED.display_order, updated_at = NOW();
+```
+
+Changes take effect on the next cache refresh with no restart: about 60s for the 1h view
+(page-cache worker) and about 10min for the 24h/7d views (background refresher).
+
+The migration creates the table **empty on purpose** — rows are environment config and are
+inserted out of band, so they never live in this repository. An unseeded environment renders
+an empty scoreboard, which is also the expected local-dev state.
+
 ## Logging Levels
 
 ERROR-level log lines page on-call (alerts fire on `level="ERR"` — prod → `#alerts`, staging → `#alerts-l2`). Reserve raw `.Error(...)` calls for genuinely-actionable terminal failures: process/component death, startup failures, panics, config errors.
