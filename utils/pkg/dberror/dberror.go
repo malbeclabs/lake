@@ -18,6 +18,15 @@ var eofRe = regexp.MustCompile(`\beof\b`)
 // errors.Join or fmt.Errorf("...: %w", ErrTransient)) when the caller knows a
 // failure is self-healing but its message wouldn't be classified as transient
 // by Classify — for example an expected, retryable upstream miss.
+//
+// Two limits, both of which fail safe (page sooner rather than suppress):
+//   - IsTransient checks context.Canceled/DeadlineExceeded before this marker,
+//     so wrapping a context error with ErrTransient does not make it transient.
+//   - The marker does not survive Temporal's failure serialization: after the
+//     ErrorToFailure/FailureToError round-trip errors.Is(reconstructed,
+//     ErrTransient) is false, so it cannot classify an error that reaches a
+//     caller across an activity boundary. Use it where the wrapped error is
+//     inspected in-process (e.g. before an activity returns nil to Temporal).
 var ErrTransient = errors.New("transient error")
 
 // ErrorType classifies database errors for appropriate handling.

@@ -211,9 +211,11 @@ func hasBenignTaskProcessingError(keyvals []any) bool {
 
 // isTransientActivityError reports whether Temporal's activity-error keyvals
 // carry an Error that dberror classifies as transient (a self-healing upstream
-// blip the activity's retry policy will recover). The Error value arrives
-// wrapped in the SDK's ApplicationError, but dberror.Classify matches on the
-// unwrapped message string, so a connectivity/timeout cause still classifies.
+// blip the activity's retry policy will recover). At the "Activity error." log
+// site the Error keyval is the raw error the activity returned (conversion to
+// the SDK's ApplicationError happens afterward). dberror.Classify matches on
+// the message string, so classification would also hold if a converted error
+// ever appeared here.
 func isTransientActivityError(keyvals []any) bool {
 	for i := 0; i+1 < len(keyvals); i += 2 {
 		if keyvals[i] != "Error" {
