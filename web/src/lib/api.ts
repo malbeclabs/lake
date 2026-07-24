@@ -3195,7 +3195,9 @@ export interface WorkflowRun {
 
 // Get a workflow run by ID
 export async function getWorkflow(workflowId: string): Promise<WorkflowRun | null> {
-  const res = await apiFetch(`/api/workflows/${workflowId}`)
+  const anonParam = getAnonymousIdParam()
+  const url = anonParam ? `/api/workflows/${workflowId}?${anonParam}` : `/api/workflows/${workflowId}`
+  const res = await apiFetch(url)
   if (res.status === 404) {
     return null
   }
@@ -3207,7 +3209,9 @@ export async function getWorkflow(workflowId: string): Promise<WorkflowRun | nul
 
 // Get the latest workflow for a session (running, completed, or failed)
 export async function getLatestWorkflowForSession(sessionId: string): Promise<WorkflowRun | null> {
-  const res = await apiFetch(`/api/sessions/${sessionId}/workflow`)
+  const anonParam = getAnonymousIdParam()
+  const url = anonParam ? `/api/sessions/${sessionId}/workflow?${anonParam}` : `/api/sessions/${sessionId}/workflow`
+  const res = await apiFetch(url)
   if (res.status === 204 || res.status === 404) {
     return null // No workflow
   }
@@ -3243,7 +3247,11 @@ export async function reconnectToWorkflow(
   callbacks: WorkflowReconnectCallbacks,
   signal?: AbortSignal
 ): Promise<void> {
-  const res = await apiFetch(`/api/workflows/${workflowId}/stream`, { signal })
+  const anonParam = getAnonymousIdParam()
+  const url = anonParam
+    ? `/api/workflows/${workflowId}/stream?${anonParam}`
+    : `/api/workflows/${workflowId}/stream`
+  const res = await apiFetch(url, { signal })
 
   if (!res.ok) {
     if (res.status === 404) {
