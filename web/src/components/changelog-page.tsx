@@ -10,6 +10,12 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    date: 'July 24, 2026',
+    changes: [
+      { type: 'fix', description: 'Shred subscriber status, balance, and prepaid epochs now derive from the largest single escrow, matching how the oracle activates seats per escrow. Seats whose funds are split across escrows that each fall short of the price no longer show as pending. Multi-escrow seats show the across-escrow total as muted subtext.' },
+    ],
+  },
+  {
     date: 'April 22, 2026',
     changes: [
       { type: 'feature', description: 'Locations listing page with device count, user capacity bar, and available unicast/subscriber/publisher slots per location' },

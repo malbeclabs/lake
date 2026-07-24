@@ -214,7 +214,8 @@ function RelatedPassesTable({ byIpPasses, byPayerPasses, currentPk, navigate }: 
 }
 
 function ShredsSubscriptionCard({ seat }: { seat: AccessPassShredsSeat }) {
-  const balanceDollars = seat.total_usdc_balance / 1_000_000
+  const balanceDollars = seat.spendable_usdc_balance / 1_000_000
+  const allEscrowsDollars = seat.all_escrows_usdc_balance / 1_000_000
   return (
     <div className="border border-border rounded-lg p-4 bg-card">
       <h3 className="text-sm font-medium text-muted-foreground mb-3 flex items-center gap-2">
@@ -256,7 +257,17 @@ function ShredsSubscriptionCard({ seat }: { seat: AccessPassShredsSeat }) {
         </div>
         <div className="flex justify-between gap-4">
           <dt className="text-sm text-muted-foreground shrink-0">Escrow Balance</dt>
-          <dd className="text-sm tabular-nums">${balanceDollars.toFixed(2)}</dd>
+          <dd className="text-sm tabular-nums text-right">
+            ${balanceDollars.toFixed(2)}
+            {seat.escrow_count > 1 && (
+              <div
+                className="text-xs text-muted-foreground"
+                title="Balances are evaluated per escrow; only the largest single escrow can cover a charge."
+              >
+                {seat.escrow_count} escrows · ${allEscrowsDollars.toFixed(2)} total
+              </div>
+            )}
+          </dd>
         </div>
 
       </dl>
