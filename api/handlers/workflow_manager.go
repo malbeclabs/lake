@@ -305,6 +305,8 @@ func (m *WorkflowManager) StartWorkflow(
 	question string,
 	history []workflow.ConversationMessage,
 	format string,
+	accountID *uuid.UUID,
+	anonymousID *string,
 	env ...DZEnv,
 ) (uuid.UUID, error) {
 	ctx := context.Background()
@@ -315,8 +317,10 @@ func (m *WorkflowManager) StartWorkflow(
 		workflowEnv = env[0]
 	}
 
-	// Ensure session exists (auto-create if needed for workflow persistence)
-	if err := m.ensureSessionExists(ctx, sessionID); err != nil {
+	// Ensure session exists (auto-create if needed for workflow persistence),
+	// stamping the caller's identity so auto-created sessions are owned from the
+	// start and pass the ownership check on later reads.
+	if err := m.ensureSessionExists(ctx, sessionID, accountID, anonymousID); err != nil {
 		return uuid.Nil, fmt.Errorf("failed to ensure session exists: %w", err)
 	}
 
@@ -1256,17 +1260,20 @@ func truncateLog(s string, n int) string {
 	return s[:n] + "..."
 }
 
-// ensureSessionExists creates a session if it doesn't already exist.
-// This allows workflows to be created even if the frontend hasn't persisted the session yet.
-func (m *WorkflowManager) ensureSessionExists(ctx context.Context, sessionID uuid.UUID) error {
+// ensureSessionExists creates a session if it doesn't already exist, owned by
+// the given account or anonymous ID (either may be nil for a truly anonymous
+// caller). This allows workflows to be created even if the frontend hasn't
+// persisted the session yet. If the session already exists, ON CONFLICT DO
+// NOTHING leaves its existing ownership untouched.
+func (m *WorkflowManager) ensureSessionExists(ctx context.Context, sessionID uuid.UUID, accountID *uuid.UUID, anonymousID *string) error {
 	slog.Info("ensureSessionExists called", "session_id", sessionID)
 
 	// Use INSERT ... ON CONFLICT DO NOTHING to avoid race conditions
 	result, err := m.api.PgPool.Exec(ctx, `
-		INSERT INTO sessions (id, type, name, content)
-		VALUES ($1, 'chat', 'Untitled', '[]')
+		INSERT INTO sessions (id, type, name, content, account_id, anonymous_id)
+		VALUES ($1, 'chat', 'Untitled', '[]', $2, $3)
 		ON CONFLICT (id) DO NOTHING
-	`, sessionID)
+	`, sessionID, accountID, anonymousID)
 	if err != nil {
 		logError("ensureSessionExists failed", "session_id", sessionID, "error", err)
 		return fmt.Errorf("failed to ensure session exists: %w", err)
