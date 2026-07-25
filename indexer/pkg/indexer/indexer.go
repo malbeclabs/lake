@@ -171,6 +171,7 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 		ClickHouse:             cfg.ClickHouse,
 		Serviceability:         svcView,
 		RefreshInterval:        cfg.RefreshInterval,
+		DZEnv:                  cfg.DZEnv,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create telemetry view: %w", err)
