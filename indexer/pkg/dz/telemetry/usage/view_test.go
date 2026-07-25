@@ -155,6 +155,27 @@ func TestLake_TelemetryUsage_View_ViewConfig_Validate(t *testing.T) {
 		require.Contains(t, err.Error(), "too large for the baseline cache")
 	})
 
+	t.Run("returns error when query window defeats the empty-span age-out", func(t *testing.T) {
+		t.Parallel()
+		mockDB := testClient(t)
+
+		cfg := ViewConfig{
+			Logger:          laketesting.NewLogger(),
+			ClickHouse:      mockDB,
+			InfluxDB:        &mockInfluxDBClient{},
+			Bucket:          "test-bucket",
+			RefreshInterval: time.Second,
+			// The age-out fires at watermark age > QueryWindow + one capped
+			// span (10m with the default chunk), but the horizon skip
+			// intercepts at 24h first: 23h55m leaves the age-out unreachable,
+			// so a genuine source gap would pin ingest at the horizon forever.
+			QueryWindow: 24*time.Hour - 5*time.Minute,
+		}
+		err := cfg.Validate()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "must stay below maxCatchupHorizon")
+	})
+
 	t.Run("sets default clock when nil", func(t *testing.T) {
 		t.Parallel()
 		mockDB := testClient(t)
@@ -1735,7 +1756,10 @@ func TestLake_TelemetryUsage_View_Refresh_CatchupConvergesUnderModeledCycleTime(
 // queryStart jumped to now−QueryWindow and [maxTime, now−QueryWindow) was
 // permanently dropped — staging lost ~30% of its interface-counter rows this
 // way. Model a 2h ingest outage at the measured prod cycle time and assert the
-// reads cover the whole gap contiguously until lag converges.
+// reads cover the whole gap contiguously until lag converges. The source has a
+// row every minute across the whole timeline, so every span yields inserts:
+// usage is never empty, sourceEmptyThrough is never set, and progress is
+// carried by the real ClickHouse watermark alone.
 func TestLake_TelemetryUsage_View_Refresh_GapBeyondQueryWindowIsCaughtUpNotSkipped(t *testing.T) {
 	t.Parallel()
 
@@ -1743,16 +1767,49 @@ func TestLake_TelemetryUsage_View_Refresh_GapBeyondQueryWindowIsCaughtUpNotSkipp
 		chunk     = 5 * time.Minute
 		cycleTime = 5 * time.Minute // measured prod refresh cadence (#713)
 	)
-	clock := clockwork.NewFakeClock()
-	maxTime := clock.Now().Add(-2 * time.Hour).Truncate(time.Millisecond)
+	clock := clockwork.NewFakeClockAt(time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC))
+	maxTime := clock.Now().Add(-2 * time.Hour)
+	const dev, intf = "gap-device", "eth0"
 
-	view, windows := captureIntfCounterWindows(t, clock, chunk)
-	seedMaxTime(t, view, maxTime)
+	windows := &[][2]time.Time{}
+	influx := &mockInfluxDBClient{
+		queryIntfCountersFunc: func(_ context.Context, s, e time.Time) ([]map[string]any, error) {
+			*windows = append(*windows, [2]time.Time{s, e})
+			var out []map[string]any
+			for ts, k := maxTime.Add(-time.Hour), int64(0); ts.Before(e); ts, k = ts.Add(time.Minute), k+1 {
+				if !ts.Before(s) {
+					out = append(out, map[string]any{
+						"time":       ts.UTC().Format(time.RFC3339Nano),
+						"dzd_pubkey": dev,
+						"intf":       intf,
+						"in-octets":  1000 + k,
+					})
+				}
+			}
+			return out, nil
+		},
+	}
+	view, err := NewView(ViewConfig{
+		Logger:          laketesting.NewLogger(),
+		Clock:           clock,
+		ClickHouse:      testClient(t),
+		InfluxDB:        influx,
+		Bucket:          "test-bucket",
+		RefreshInterval: time.Second,
+		QueryWindow:     time.Hour,
+		QueryChunk:      chunk,
+	})
+	require.NoError(t, err)
+	// The row at maxTime (minute 60 on the mock's grid) is already written —
+	// it defines the ingest watermark the outage left behind.
+	seedUsageRow(t, view, dev, intf, maxTime, 1060)
 
 	prevEnd := maxTime
-	// 120m of lag paying down ~5m per capped cycle needs ~24 cycles; run a few
-	// more to verify lag holds once the cap stops binding.
-	for cycle := 0; cycle < 28; cycle++ {
+	// A capped cycle advances the watermark ~9m (last 1m-grid row inside the
+	// 10m cap) while the clock advances 5m, so 120m of lag pays down ~4m per
+	// cycle: ~28 capped cycles, then a few more to verify lag holds once the
+	// cap stops binding.
+	for cycle := 0; cycle < 33; cycle++ {
 		*windows = nil
 		_, err := view.Refresh(t.Context())
 		require.NoError(t, err)
@@ -1762,9 +1819,7 @@ func TestLake_TelemetryUsage_View_Refresh_GapBeyondQueryWindowIsCaughtUpNotSkipp
 			"cycle %d: read must start at or before the previous end — a later start is a silently skipped span", cycle)
 		require.True(t, end.After(prevEnd), "cycle %d: watermark must advance", cycle)
 
-		// Stand-in for the insert advancing maxTime to the ingested end.
 		prevEnd = end
-		seedMaxTime(t, view, end)
 		clock.Advance(cycleTime)
 	}
 

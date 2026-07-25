@@ -199,10 +199,15 @@ func (cfg *ViewConfig) Validate() error {
 	}
 	// The beyond-horizon skip lands at now−QueryWindow (see maxCatchupHorizon);
 	// a window at or past the horizon would make the "skip" jump backwards
-	// behind the watermark. It would also disable the empty-span age-out that
-	// unpins genuine source gaps.
-	if cfg.QueryWindow >= maxCatchupHorizon {
-		return fmt.Errorf("query window %s must stay below maxCatchupHorizon (%s)", cfg.QueryWindow, maxCatchupHorizon)
+	// behind the watermark. The empty-span age-out needs the full margin: it
+	// fires at watermark age > QueryWindow + one capped span (queryEnd must age
+	// out of the window), and the horizon skip intercepts at age >
+	// maxCatchupHorizon first — without the capped-span headroom a genuine
+	// source gap could never age out and would pin ingest at the horizon,
+	// re-paging forever.
+	if ageOutLag := cfg.QueryWindow + cfg.QueryChunk*maxCatchupChunks; ageOutLag >= maxCatchupHorizon {
+		return fmt.Errorf("query window %s plus one capped span (%s) must stay below maxCatchupHorizon (%s)",
+			cfg.QueryWindow, cfg.QueryChunk*maxCatchupChunks, maxCatchupHorizon)
 	}
 	return nil
 }
@@ -283,13 +288,24 @@ const maxCatchupChunks = 2
 
 // maxCatchupHorizon is the only remaining hard skip-ahead: a watermark older
 // than this jumps to now−QueryWindow and the intervening span is PERMANENTLY
-// LOST, so the skip logs at ERROR (pages on-call) with the exact span — recover
-// it with the admin backfill tooling. Within the horizon the refresh always
-// catches up from the watermark instead (paced one capped span per cycle, see
-// maxCatchupChunks), so an ingest outage shorter than this is recovered rather
-// than dropped: at the measured prod cadence catch-up gains ~2× real time, so
-// even a near-24h gap clears in about half a day. The old jump at QueryWindow
-// (1h) silently discarded every span that fell behind it (#718).
+// LOST, so the skip logs at ERROR (pages on-call, once per distinct stall)
+// with the exact span — recover it with the admin backfill tooling. Within the
+// horizon the refresh always catches up from the watermark instead (paced one
+// capped span per cycle, see maxCatchupChunks), so an ingest outage shorter
+// than this is recovered rather than dropped.
+//
+// Convergence: a capped cycle advances the watermark by at most QueryChunk ×
+// maxCatchupChunks (10m) while wall clock advances by the cycle time, so lag
+// closes at (10m − cycle_time) per cycle — ~5m per cycle at the measured ~5m
+// prod cadence, i.e. ~1× real time: a near-24h gap takes on the order of a
+// day to clear on its own; run the admin backfill to clear a large gap
+// faster. If a cycle sustainedly exceeds 10m (the budgeted worst case under a
+// slow InfluxDB is ~12m+, see the timeout note on maxCatchupChunks), lag
+// GROWS toward the horizon instead of closing; Refresh logs a WARN when lag
+// fails to decrease across consecutive capped cycles and reports the real max
+// ingested event_ts as SourceMaxEventTS, so freshness monitoring shows the
+// divergence long before the horizon discards anything. The old jump at
+// QueryWindow (1h) silently discarded every span that fell behind it (#718).
 const maxCatchupHorizon = 24 * time.Hour
 
 type View struct {
@@ -323,6 +339,22 @@ type View struct {
 	// re-traverses the already-aged gap with cheap zero-row queries, one
 	// capped span per cycle.
 	sourceEmptyThrough time.Time
+
+	// lastHorizonSkipFrom is the watermark of the last beyond-horizon skip that
+	// logged at ERROR. The skip branch re-executes every refresh while the
+	// watermark stays put (a source dead longer than the horizon cannot
+	// self-clear), and re-paging each cycle for the same ongoing stall adds
+	// nothing — repeats log at WARN until the watermark moves and falls behind
+	// again (a distinct loss event). Guarded by refreshMu.
+	lastHorizonSkipFrom time.Time
+
+	// lastCatchupLag is the watermark lag observed on the previous refresh IF
+	// that refresh was capped (zero otherwise). Catch-up converges only while a
+	// cycle completes faster than the capped span (see maxCatchupHorizon); when
+	// lag fails to decrease across consecutive capped cycles the refresh WARNs
+	// so on-call sees the divergence long before the horizon ERROR. Guarded by
+	// refreshMu.
+	lastCatchupLag time.Duration
 
 	// esc escalates consecutive refresh failures from WARN to ERROR so a
 	// single blip doesn't page on-call (see logger.Escalator).
@@ -439,7 +471,15 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 			if maxTime != nil {
 				chMaxTime = maxTime.UTC().String()
 			}
-			v.log.Error("telemetry/usage: watermark is beyond the catch-up horizon; skipping ahead — the intervening span will not be ingested once this refresh succeeds; recover it with the admin backfill",
+			// Page once per distinct stall (see lastHorizonSkipFrom): first
+			// sight of this watermark beyond the horizon logs ERROR, repeats
+			// while it stays put log WARN.
+			logSkip := v.log.Warn
+			if !watermark.Equal(v.lastHorizonSkipFrom) {
+				logSkip = v.log.Error
+				v.lastHorizonSkipFrom = *watermark
+			}
+			logSkip("telemetry/usage: watermark is beyond the catch-up horizon; skipping ahead — the intervening span will not be ingested once this refresh succeeds; recover it with the admin backfill",
 				"skippedFrom", watermark.UTC(),
 				"skippedTo", queryStart.UTC(),
 				"skippedSpan", queryStart.Sub(*watermark).String(),
@@ -590,6 +630,24 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		v.log.Info("telemetry/usage: capping catch-up window to bound memory",
 			"queryStart", queryStart.UTC(), "queryEnd", queryEnd.UTC(), "target", now.UTC())
 	}
+	// Catch-up only converges while a cycle completes faster than the capped
+	// span (see maxCatchupHorizon); surface divergence before the horizon
+	// cliff. Lag is meaningful only when the cap is anchored at the watermark
+	// (newDataStart advanced past queryStart) — not on an initial refresh or a
+	// horizon skip, where newDataStart is the window start.
+	if capped && !newDataStart.Equal(queryStart) {
+		lag := now.Sub(newDataStart)
+		if v.lastCatchupLag > 0 && lag >= v.lastCatchupLag {
+			v.log.Warn("telemetry/usage: catch-up lag is not decreasing — refresh cycle time is at or above the capped span; ingest is diverging toward the catch-up horizon",
+				"lag", lag.String(),
+				"previousLag", v.lastCatchupLag.String(),
+				"cappedSpan", (v.cfg.QueryChunk * maxCatchupChunks).String(),
+				"horizon", maxCatchupHorizon.String())
+		}
+		v.lastCatchupLag = lag
+	} else {
+		v.lastCatchupLag = 0
+	}
 
 	queryStartUTC := queryStart.UTC()
 	queryEndUTC := queryEnd.UTC()
@@ -623,20 +681,22 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		// QueryWindow must lose nothing. Uncapped (steady-state) empty windows
 		// keep the watermark where it is: the window isn't pinned (it grows
 		// with now), and the wide re-read maximizes late-arrival capture.
-		if capped && queryEnd.Before(queryWindowStart) && queryEnd.After(v.sourceEmptyThrough) {
+		if capped && !queryEnd.After(queryWindowStart) && queryEnd.After(v.sourceEmptyThrough) {
 			v.sourceEmptyThrough = queryEnd
 			v.log.Info("telemetry/usage: no ingestible rows in aged-out capped span; advancing catch-up anchor past it",
 				"emptyFrom", newDataStart.UTC(), "emptyThrough", queryEnd.UTC())
 		}
 		// Nothing changed through queryEnd, so the start-of-window baselines
-		// are also the end-of-window state: merge them too (on a cache hit
-		// `baselines` aliases the cache — a self-merge, documented safe in the
-		// backfill's zero-row branch). Merging only `endBaselines` (empty when
-		// zero rows came back) would seed a restarted process's nil cache with
-		// empty maps, and every later refresh would "hit" a 0-key cache and
-		// fall back to the expensive 1-year InfluxDB baseline scan for the
-		// rest of the gap traversal.
-		v.updateBaselineCache(baselines, queryEnd)
+		// are also the end-of-window state: merge them too, unless they already
+		// ARE the cache (cache hit) — then the merge is a pointless O(keys)
+		// self-walk and advancing the watermark below suffices. Merging only
+		// `endBaselines` (empty when zero rows came back) would seed a
+		// restarted process's nil cache with empty maps, and every later
+		// refresh would "hit" a 0-key cache and fall back to the expensive
+		// 1-year InfluxDB baseline scan for the rest of the gap traversal.
+		if baselines != v.baselineCache {
+			v.updateBaselineCache(baselines, queryEnd)
+		}
 		v.updateBaselineCache(endBaselines, queryEnd)
 		v.readyOnce.Do(func() {
 			close(v.readyCh)
@@ -667,9 +727,18 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		v.log.Info("telemetry/usage: view is now ready")
 	})
 
-	now2 := v.cfg.Clock.Now()
+	// Report the real max ingested event_ts, not wall-clock now: this is what
+	// ingestion-log freshness monitoring reads, and during catch-up it must
+	// show the actual watermark lag (a diverging catch-up otherwise looks
+	// healthy right up to the horizon cliff — see maxCatchupHorizon).
+	maxIngested := usage[0].Time
+	for _, u := range usage[1:] {
+		if u.Time.After(maxIngested) {
+			maxIngested = u.Time
+		}
+	}
 	result.RowsAffected = int64(len(usage))
-	result.SourceMaxEventTS = &now2
+	result.SourceMaxEventTS = &maxIngested
 
 	metrics.ViewRefreshTotal.WithLabelValues("telemetry-usage", "success").Inc()
 	return result, nil
