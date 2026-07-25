@@ -1,0 +1,8 @@
+User-agent: *
+Content-Signal: search=yes, ai-input=yes, ai-train=yes
+Allow: /
+Disallow: /query/
+Disallow: /chat/
+Disallow: /settings
+
+Sitemap: https://data.malbeclabs.com/sitemap.xml
