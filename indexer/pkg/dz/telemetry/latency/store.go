@@ -21,7 +21,9 @@ import (
 // full-history scan this replaces was the top lake CPU consumer on the shared
 // cluster (#720). Circuits with no row inside the window (new, or quiet longer
 // than the lookback) fall back to an unbounded query restricted to just those
-// circuits, so IPDV semantics are unchanged.
+// circuits, so quiet circuits keep their carried-forward IPDV baseline (see
+// the Store cache docs for the one known divergence, which is unrelated to
+// this bound).
 const prevRTTLookback = 2 * 24 * time.Hour
 
 // maxSampleIndexLookback bounds the max-sample-index scans to enable partition
@@ -55,14 +57,24 @@ type Store struct {
 
 	// prevRTTMu guards the previous-RTT carry-forward caches below. They hold
 	// the last non-zero RTT this process wrote (or seeded from ClickHouse) per
-	// circuit, so steady-state appends compute IPDV without any ClickHouse
-	// read. The indexer is the only live writer per env and its appends are
-	// serialized by the view's refreshMu; the mutex is cheap insurance since
-	// Store is an exported type. Entries are only merged in after a successful
-	// WriteBatch so a failed write's retry re-seeds from the pre-batch state.
+	// circuit — 0 is a negative-cache sentinel meaning "checked, no baseline"
+	// — so steady-state appends compute IPDV without any ClickHouse read. The
+	// indexer is the only live writer per env and its appends are serialized
+	// by the view's refreshMu; the mutex is cheap insurance since Store is an
+	// exported type. Entries are only merged in after a successful WriteBatch
+	// so a failed write's retry re-seeds from the pre-batch state.
+	//
+	// Known divergence from the old latest-overall argMax read: a batch
+	// containing only samples older than the cached value (a late
+	// previous-epoch tail, or a backfilled epoch) advances the cache to its
+	// last-sorted sample, so the next sample's IPDV anchors on that instead of
+	// the newest row overall. Within a batch that spans epochs the sort order
+	// makes the two agree; the divergence is rare, bounded to one sample, and
+	// arguably more correct (the baseline is the previously written sample of
+	// the tail being extended).
 	prevRTTMu             sync.Mutex
-	prevDeviceLinkRTTs    map[string]uint32 // "origin:target:link" -> last non-zero RTT
-	prevInternetMetroRTTs map[string]uint32 // "origin:target:provider" -> last non-zero RTT
+	prevDeviceLinkRTTs    map[string]uint32 // "origin:target:link" -> last RTT (0 = no baseline)
+	prevInternetMetroRTTs map[string]uint32 // "origin:target:provider" -> last RTT (0 = no baseline)
 }
 
 func NewStore(cfg StoreConfig) (*Store, error) {
@@ -134,6 +146,16 @@ func (s *Store) getPreviousDeviceLinkRTTs(ctx context.Context, circuits []device
 	}
 	for key, rtt := range fallback {
 		result[key] = rtt
+	}
+	// Negative-cache circuits with no non-zero RTT anywhere (all-loss or brand
+	// new): a 0 entry means "checked, no baseline" — the IPDV guard treats it
+	// as absent, and without it every append containing such a circuit would
+	// rerun both passes for the lifetime of the process.
+	for _, c := range unresolved {
+		key := fmt.Sprintf("%s:%s:%s", c.originDevicePK, c.targetDevicePK, c.linkPK)
+		if _, ok := result[key]; !ok {
+			result[key] = 0
+		}
 	}
 	return result, nil
 }
@@ -354,6 +376,14 @@ func (s *Store) getPreviousInternetMetroRTTs(ctx context.Context, circuits []int
 	}
 	for key, rtt := range fallback {
 		result[key] = rtt
+	}
+	// Negative-cache circuits with no non-zero RTT anywhere; see
+	// getPreviousDeviceLinkRTTs.
+	for _, c := range unresolved {
+		key := fmt.Sprintf("%s:%s:%s", c.originMetroPK, c.targetMetroPK, c.dataProvider)
+		if _, ok := result[key]; !ok {
+			result[key] = 0
+		}
 	}
 	return result, nil
 }

@@ -175,7 +175,7 @@ func TestLake_TelemetryLatency_Store_AppendDeviceLinkLatencySamples(t *testing.T
 		conn.Close()
 	})
 
-	t.Run("calculates IPDV from previous RTTs in database", func(t *testing.T) {
+	t.Run("calculates IPDV from previous RTTs across batches", func(t *testing.T) {
 		t.Parallel()
 
 		db := testClient(t)
@@ -584,7 +584,7 @@ func TestLake_TelemetryLatency_Store_AppendInternetMetroLatencySamples(t *testin
 		conn.Close()
 	})
 
-	t.Run("calculates IPDV from previous RTTs in database", func(t *testing.T) {
+	t.Run("calculates IPDV from previous RTTs across batches", func(t *testing.T) {
 		t.Parallel()
 
 		db := testClient(t)

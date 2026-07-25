@@ -201,6 +201,47 @@ func TestLake_TelemetryLatency_PrevRTTCache_NewCircuit(t *testing.T) {
 		"first sample of a brand-new circuit must have NULL IPDV")
 }
 
+// TestLake_TelemetryLatency_PrevRTTCache_AllLossCircuitQueriedOnce proves the
+// negative-cache sentinel: a circuit that has never produced a non-zero RTT is
+// looked up in ClickHouse once, not on every append — without the sentinel the
+// unbounded fallback (the exact query shape #720 removes) would rerun per
+// refresh for as long as the circuit stays all-loss.
+func TestLake_TelemetryLatency_PrevRTTCache_AllLossCircuitQueriedOnce(t *testing.T) {
+	t.Parallel()
+
+	const dzEnv = "test-prevrtt-dl-all-loss"
+	db := testClient(t)
+	store := newCacheTestStore(t, db, dzEnv)
+	originPK, targetPK, linkPK := testPK(1), testPK(2), testPK(3)
+	now := time.Now()
+
+	// All-loss batch: both passes run and find nothing, caching the sentinel.
+	err := store.AppendDeviceLinkLatencySamples(context.Background(), []DeviceLinkLatencySample{
+		{OriginDevicePK: originPK, TargetDevicePK: targetPK, LinkPK: linkPK, Epoch: 100, SampleIndex: 0, Time: now.Add(-2 * time.Minute), RTTMicroseconds: 0},
+	})
+	require.NoError(t, err)
+
+	before := prevRTTQueryCount(dzEnv, "device_link")
+
+	// Second all-loss batch must be served from the sentinel, no queries.
+	err = store.AppendDeviceLinkLatencySamples(context.Background(), []DeviceLinkLatencySample{
+		{OriginDevicePK: originPK, TargetDevicePK: targetPK, LinkPK: linkPK, Epoch: 100, SampleIndex: 1, Time: now.Add(-1 * time.Minute), RTTMicroseconds: 0},
+	})
+	require.NoError(t, err)
+	require.Equal(t, before, prevRTTQueryCount(dzEnv, "device_link"),
+		"an all-loss circuit must not requery ClickHouse on subsequent appends")
+
+	// First non-zero sample: still no query (sentinel hit), NULL IPDV (no
+	// baseline), and the real RTT replaces the sentinel.
+	err = store.AppendDeviceLinkLatencySamples(context.Background(), []DeviceLinkLatencySample{
+		{OriginDevicePK: originPK, TargetDevicePK: targetPK, LinkPK: linkPK, Epoch: 100, SampleIndex: 2, Time: now, RTTMicroseconds: 5000},
+	})
+	require.NoError(t, err)
+	require.Equal(t, before, prevRTTQueryCount(dzEnv, "device_link"))
+	require.Nil(t, queryDeviceLinkIPDV(t, db, originPK, targetPK, linkPK, 100, 2),
+		"first non-zero sample after all-loss history must have NULL IPDV")
+}
+
 // TestLake_TelemetryLatency_PrevRTTCache_InternetMetro_HitOnSameStore mirrors
 // the device-link cache-hit test for the internet-metro append path.
 func TestLake_TelemetryLatency_PrevRTTCache_InternetMetro_HitOnSameStore(t *testing.T) {

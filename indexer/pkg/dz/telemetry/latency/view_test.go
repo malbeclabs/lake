@@ -767,6 +767,12 @@ func TestLake_TelemetryLatency_View_IncrementalAppend(t *testing.T) {
 		// Mock that simulates incremental samples: data source grows from 3 to 5 samples
 		// First refresh: data source has 3 samples (0-2), existingMaxIdx=-1, return all 3
 		// Second refresh: data source has 5 samples (0-4), existingMaxIdx=2, return tail (3-4)
+		// Recent start timestamp so the samples land inside the 4-day
+		// event_ts bound in GetExistingMaxSampleIndices; a stale timestamp
+		// would make the second refresh see no existing indices and
+		// re-insert instead of appending.
+		startTsMicro := uint64(time.Now().Add(-1 * time.Hour).UnixMicro())
+
 		mockTelemetryRPC := &mockTelemetryRPCWithIncrementalSamples{
 			getSamplesFunc: func(originDevicePK, targetDevicePK, linkPK solana.PublicKey, epoch uint64, existingMaxIdx int) (*telemetry.DeviceLatencySamplesHeader, int, []uint32, error) {
 				sampleKey := key(originDevicePK, targetDevicePK, linkPK, epoch)
@@ -782,7 +788,7 @@ func TestLake_TelemetryLatency_View_IncrementalAppend(t *testing.T) {
 				if existingMaxIdx < 0 {
 					// First refresh: no existing data, data source has 3 samples
 					return &telemetry.DeviceLatencySamplesHeader{
-						StartTimestampMicroseconds:   1_600_000_000,
+						StartTimestampMicroseconds:   startTsMicro,
 						SamplingIntervalMicroseconds: 100_000,
 						NextSampleIndex:              3, // 3 samples (indices 0, 1, 2)
 					}, 0, firstBatch, nil
@@ -793,7 +799,7 @@ func TestLake_TelemetryLatency_View_IncrementalAppend(t *testing.T) {
 					if startIdx >= len(allSamples) {
 						// No new samples
 						return &telemetry.DeviceLatencySamplesHeader{
-							StartTimestampMicroseconds:   1_600_000_000,
+							StartTimestampMicroseconds:   startTsMicro,
 							SamplingIntervalMicroseconds: 100_000,
 							NextSampleIndex:              uint32(len(allSamples)),
 						}, startIdx, nil, nil
@@ -801,7 +807,7 @@ func TestLake_TelemetryLatency_View_IncrementalAppend(t *testing.T) {
 
 					tail := allSamples[startIdx:]
 					return &telemetry.DeviceLatencySamplesHeader{
-						StartTimestampMicroseconds:   1_600_000_000,
+						StartTimestampMicroseconds:   startTsMicro,
 						SamplingIntervalMicroseconds: 100_000,
 						NextSampleIndex:              5, // 5 samples (indices 0-4)
 					}, startIdx, tail, nil
@@ -976,6 +982,12 @@ func TestLake_TelemetryLatency_View_IncrementalAppend(t *testing.T) {
 		targetPK := solana.PublicKeyFromBytes(metroPK2[:])
 		agentPK := solana.MustPublicKeyFromBase58("So11111111111111111111111111111111111111112")
 
+		// Recent start timestamp so the samples land inside the 4-day
+		// event_ts bound in GetExistingInternetMaxSampleIndices; a stale
+		// timestamp would make the second refresh see no existing indices
+		// and re-insert instead of appending.
+		startTsMicro := uint64(time.Now().Add(-1 * time.Hour).UnixMicro())
+
 		var refreshCount atomic.Int64
 		mockTelemetryRPC := &mockTelemetryRPCWithIncrementalInternetSamples{
 			getSamplesFunc: func(dataProviderName string, originLocationPK, targetLocationPK, agentPK solana.PublicKey, epoch uint64) (*telemetry.InternetLatencySamples, error) {
@@ -991,7 +1003,7 @@ func TestLake_TelemetryLatency_View_IncrementalAppend(t *testing.T) {
 					// First refresh: return samples 0-1
 					return &telemetry.InternetLatencySamples{
 						InternetLatencySamplesHeader: telemetry.InternetLatencySamplesHeader{
-							StartTimestampMicroseconds:   1_700_000_000,
+							StartTimestampMicroseconds:   startTsMicro,
 							SamplingIntervalMicroseconds: 250_000,
 							NextSampleIndex:              2, // 2 samples (indices 0, 1)
 						},
@@ -1001,7 +1013,7 @@ func TestLake_TelemetryLatency_View_IncrementalAppend(t *testing.T) {
 					// Second refresh: return samples 0-3 (new samples 2-3 added)
 					return &telemetry.InternetLatencySamples{
 						InternetLatencySamplesHeader: telemetry.InternetLatencySamplesHeader{
-							StartTimestampMicroseconds:   1_700_000_000,
+							StartTimestampMicroseconds:   startTsMicro,
 							SamplingIntervalMicroseconds: 250_000,
 							NextSampleIndex:              4, // 4 samples (indices 0-3)
 						},
