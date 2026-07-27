@@ -349,10 +349,13 @@ type View struct {
 	lastHorizonSkipFrom time.Time
 
 	// lastCatchupLag is the watermark lag observed on the previous refresh IF
-	// that refresh was capped (zero otherwise). Catch-up converges only while a
-	// cycle completes faster than the capped span (see maxCatchupHorizon); when
-	// lag fails to decrease across consecutive capped cycles the refresh WARNs
-	// so on-call sees the divergence long before the horizon ERROR. Guarded by
+	// that refresh was capped, anchored at the watermark, AND ingested rows
+	// (zero otherwise). Catch-up converges only while a cycle completes faster
+	// than the capped span (see maxCatchupHorizon); when lag fails to decrease
+	// across consecutive such cycles the refresh WARNs so on-call sees the
+	// divergence long before the horizon ERROR. Empty cycles reset it: their
+	// lag growth means the source has no rows (bounded separately by the
+	// sourceEmptyThrough age-out), not that cycles are slow. Guarded by
 	// refreshMu.
 	lastCatchupLag time.Duration
 
@@ -630,25 +633,6 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		v.log.Info("telemetry/usage: capping catch-up window to bound memory",
 			"queryStart", queryStart.UTC(), "queryEnd", queryEnd.UTC(), "target", now.UTC())
 	}
-	// Catch-up only converges while a cycle completes faster than the capped
-	// span (see maxCatchupHorizon); surface divergence before the horizon
-	// cliff. Lag is meaningful only when the cap is anchored at the watermark
-	// (newDataStart advanced past queryStart) — not on an initial refresh or a
-	// horizon skip, where newDataStart is the window start.
-	if capped && !newDataStart.Equal(queryStart) {
-		lag := now.Sub(newDataStart)
-		if v.lastCatchupLag > 0 && lag >= v.lastCatchupLag {
-			v.log.Warn("telemetry/usage: catch-up lag is not decreasing — refresh cycle time is at or above the capped span; ingest is diverging toward the catch-up horizon",
-				"lag", lag.String(),
-				"previousLag", v.lastCatchupLag.String(),
-				"cappedSpan", (v.cfg.QueryChunk * maxCatchupChunks).String(),
-				"horizon", maxCatchupHorizon.String())
-		}
-		v.lastCatchupLag = lag
-	} else {
-		v.lastCatchupLag = 0
-	}
-
 	queryStartUTC := queryStart.UTC()
 	queryEndUTC := queryEnd.UTC()
 	usage, endBaselines, err := v.queryInfluxDB(ctx, queryStartUTC, queryEndUTC, baselines, alreadyWritten)
@@ -698,6 +682,11 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 			v.updateBaselineCache(baselines, queryEnd)
 		}
 		v.updateBaselineCache(endBaselines, queryEnd)
+		// An empty cycle says nothing about cycle-time throughput — lag grows
+		// here because the source has no rows, a state the sourceEmptyThrough
+		// age-out bounds separately — so it must not feed the divergence
+		// comparison below.
+		v.lastCatchupLag = 0
 		v.readyOnce.Do(func() {
 			close(v.readyCh)
 			v.log.Info("telemetry/usage: view is now ready (no data)")
@@ -713,6 +702,27 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	}
 	insertDuration := time.Since(insertStart)
 	v.log.Info("telemetry/usage: inserted data to clickhouse", "rows", len(usage), "duration", insertDuration.String())
+
+	// Catch-up only converges while a cycle completes faster than the capped
+	// span (see maxCatchupHorizon); surface divergence before the horizon
+	// cliff. Compared only across capped cycles that actually ingested rows
+	// with the cap anchored at the watermark (newDataStart advanced past
+	// queryStart): an initial refresh or horizon skip anchors at the window
+	// start, and an empty cycle grows lag because the source has no rows, not
+	// because cycles are slow — both reset the comparison instead.
+	if capped && !newDataStart.Equal(queryStart) {
+		lag := now.Sub(newDataStart)
+		if v.lastCatchupLag > 0 && lag >= v.lastCatchupLag {
+			v.log.Warn("telemetry/usage: catch-up lag is not decreasing — refresh cycle time is at or above the capped span; ingest is diverging toward the catch-up horizon",
+				"lag", lag.String(),
+				"previousLag", v.lastCatchupLag.String(),
+				"cappedSpan", (v.cfg.QueryChunk * maxCatchupChunks).String(),
+				"horizon", maxCatchupHorizon.String())
+		}
+		v.lastCatchupLag = lag
+	} else {
+		v.lastCatchupLag = 0
+	}
 
 	// Update the baseline cache only after the rows are durably in ClickHouse. A
 	// failed insert must not leave the cache holding unpersisted end-of-window

@@ -1,7 +1,9 @@
 package dztelemusage
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -1826,6 +1828,94 @@ func TestLake_TelemetryUsage_View_Refresh_GapBeyondQueryWindowIsCaughtUpNotSkipp
 	lag := clock.Now().Sub(prevEnd)
 	require.LessOrEqual(t, lag, cycleTime,
 		"a 2h gap must fully converge to the refresh cadence, got lag %s", lag)
+}
+
+// The catch-up divergence WARN must mean "cycles are ingesting rows but lag
+// still is not decreasing" — a genuine throughput problem (cycle time at or
+// above the capped span). A source outage also grows lag on capped cycles, but
+// with the opposite cause (no rows, cheapest cycles there are) and a separate
+// bound (the sourceEmptyThrough age-out), so empty cycles must not fire it.
+func TestLake_TelemetryUsage_View_Refresh_CatchupDivergenceWarn(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	const warnMsg = "catch-up lag is not decreasing"
+
+	newViewWithLogBuffer := func(t *testing.T, clock clockwork.Clock, influx InfluxDBClient) (*View, *bytes.Buffer) {
+		t.Helper()
+		var logBuf bytes.Buffer
+		view, err := NewView(ViewConfig{
+			Logger:          slog.New(slog.NewTextHandler(&logBuf, nil)),
+			Clock:           clock,
+			ClickHouse:      testClient(t),
+			InfluxDB:        influx,
+			Bucket:          "test-bucket",
+			RefreshInterval: time.Second,
+			QueryWindow:     time.Hour,
+			QueryChunk:      chunk,
+		})
+		require.NoError(t, err)
+		return view, &logBuf
+	}
+
+	t.Run("fires when ingesting cycles cannot pay lag down", func(t *testing.T) {
+		t.Parallel()
+		clock := clockwork.NewFakeClockAt(time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC))
+		maxTime := clock.Now().Add(-30 * time.Minute)
+		const dev, intf = "slow-device", "eth0"
+
+		// Row-per-minute source: every capped cycle ingests rows, but a 15m
+		// cycle time exceeds the 10m capped span so lag grows every cycle.
+		influx := &mockInfluxDBClient{
+			queryIntfCountersFunc: func(_ context.Context, s, e time.Time) ([]map[string]any, error) {
+				var out []map[string]any
+				for ts, k := maxTime.Add(-time.Hour), int64(0); ts.Before(e); ts, k = ts.Add(time.Minute), k+1 {
+					if !ts.Before(s) {
+						out = append(out, map[string]any{
+							"time":       ts.UTC().Format(time.RFC3339Nano),
+							"dzd_pubkey": dev,
+							"intf":       intf,
+							"in-octets":  1000 + k,
+						})
+					}
+				}
+				return out, nil
+			},
+		}
+		view, logBuf := newViewWithLogBuffer(t, clock, influx)
+		seedUsageRow(t, view, dev, intf, maxTime, 1060)
+
+		_, err := view.Refresh(t.Context())
+		require.NoError(t, err)
+		require.NotContains(t, logBuf.String(), warnMsg,
+			"the first capped cycle has no previous lag to compare against")
+
+		clock.Advance(15 * time.Minute)
+		_, err = view.Refresh(t.Context())
+		require.NoError(t, err)
+		require.Contains(t, logBuf.String(), warnMsg,
+			"consecutive ingesting capped cycles with growing lag must WARN")
+	})
+
+	t.Run("stays quiet through a source outage", func(t *testing.T) {
+		t.Parallel()
+		clock := clockwork.NewFakeClock()
+		maxTime := clock.Now().Add(-30 * time.Minute).Truncate(time.Millisecond)
+
+		// Empty source, fast cycles: every span is capped and anchored at the
+		// watermark, lag grows by the cycle time each cycle — for the wrong
+		// reason (no rows), so the WARN must not fire.
+		view, logBuf := newViewWithLogBuffer(t, clock, &mockInfluxDBClient{})
+		seedMaxTime(t, view, maxTime)
+
+		for cycle := 0; cycle < 3; cycle++ {
+			_, err := view.Refresh(t.Context())
+			require.NoError(t, err)
+			clock.Advance(5 * time.Minute)
+		}
+		require.NotContains(t, logBuf.String(), warnMsg,
+			"empty cycles say nothing about cycle-time throughput and must not feed the divergence comparison")
+	})
 }
 
 // The only remaining skip-ahead (#718): a watermark older than
