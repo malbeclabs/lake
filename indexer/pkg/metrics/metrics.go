@@ -175,6 +175,31 @@ var (
 		},
 		[]string{"dz_env"},
 	)
+
+	// ClickHousePrevRTTQueryTotal counts previous-RTT cache misses that hit
+	// ClickHouse: kind=bounded is the prevRTTLookback-bounded seed scan,
+	// kind=fallback is the unbounded per-circuit scan for circuits the bounded
+	// pass missed. In steady state both should be ~0 except around indexer
+	// restart; a sustained rate means the carry-forward cache is not hitting.
+	ClickHousePrevRTTQueryTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "doublezero_data_indexer_clickhouse_prev_rtt_query_total",
+			Help: "Previous-RTT cache misses that hit ClickHouse (kind=bounded|fallback)",
+		},
+		[]string{"dz_env", "table", "kind"}, // table: device_link|internet_metro
+	)
+
+	// ClickHousePrevRTTFallbackCircuitsTotal counts the circuits resolved via
+	// the unbounded fallback pass. Queries alone can't distinguish one quiet
+	// circuit from pathological new-circuit churn; a high circuits-to-queries
+	// ratio flags the latter.
+	ClickHousePrevRTTFallbackCircuitsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "doublezero_data_indexer_clickhouse_prev_rtt_fallback_circuits_total",
+			Help: "Circuits resolved via the unbounded previous-RTT fallback query",
+		},
+		[]string{"dz_env", "table"},
+	)
 )
 
 // RecordInfluxQuery records metrics for an InfluxDB query.

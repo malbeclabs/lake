@@ -40,6 +40,8 @@ type ViewConfig struct {
 	Serviceability             *dzsvc.View
 	RefreshInterval            time.Duration
 	ServiceabilityReadyTimeout time.Duration
+	// DZEnv labels the store's Prometheus metrics; it does not affect behavior.
+	DZEnv string
 }
 
 func (cfg *ViewConfig) Validate() error {
@@ -101,6 +103,7 @@ func NewView(cfg ViewConfig) (*View, error) {
 	store, err := NewStore(StoreConfig{
 		Logger:     cfg.Logger,
 		ClickHouse: cfg.ClickHouse,
+		DZEnv:      cfg.DZEnv,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create store: %w", err)
