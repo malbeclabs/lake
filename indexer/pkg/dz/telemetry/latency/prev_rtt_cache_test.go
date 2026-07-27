@@ -308,49 +308,111 @@ func TestLake_TelemetryLatency_PrevRTTCache_InternetMetro_FallbackForQuietCircui
 	require.Equal(t, int64(1200), *ipdv, "quiet circuit keeps its carried-forward IPDV baseline (6200-5000)")
 }
 
-// TestLake_TelemetryLatency_Store_GetExistingMaxSampleIndices_TimeBound proves
-// the maxSampleIndexLookback filter: keys whose samples are all older than 4
-// days are dropped (the caller then refetches the epoch tail; dedup makes that
-// safe), while recent keys are returned.
-func TestLake_TelemetryLatency_Store_GetExistingMaxSampleIndices_TimeBound(t *testing.T) {
+// TestLake_TelemetryLatency_Store_MaxSampleIndices_CarryForward proves a
+// circuit-epoch whose samples are all older than maxSampleIndexLookback keeps
+// its max index on the store that wrote it (no recurring full-tail refetch),
+// is dropped exactly once on a fresh store (the per-process-start refetch),
+// and is carried forward again after that refetch's append.
+func TestLake_TelemetryLatency_Store_MaxSampleIndices_CarryForward(t *testing.T) {
 	t.Parallel()
 
 	db := testClient(t)
-	store := newCacheTestStore(t, db, "test-maxidx-dl-bound")
+	now := time.Now()
+	staleKey := fmt.Sprintf("%s:%s:%s:99", testPK(1), testPK(2), testPK(3))
+	staleSamples := []DeviceLinkLatencySample{
+		// Previous epoch, agent quiet for 5 days: all rows outside the bound.
+		{OriginDevicePK: testPK(1), TargetDevicePK: testPK(2), LinkPK: testPK(3), Epoch: 99, SampleIndex: 0, Time: now.Add(-5 * 24 * time.Hour), RTTMicroseconds: 5000},
+		{OriginDevicePK: testPK(1), TargetDevicePK: testPK(2), LinkPK: testPK(3), Epoch: 99, SampleIndex: 1, Time: now.Add(-5 * 24 * time.Hour), RTTMicroseconds: 5100},
+	}
+
+	writer := newCacheTestStore(t, db, "test-maxidx-dl-carry-writer")
+	err := writer.AppendDeviceLinkLatencySamples(context.Background(), append(staleSamples,
+		// Current epoch on another circuit, recent.
+		DeviceLinkLatencySample{OriginDevicePK: testPK(4), TargetDevicePK: testPK(5), LinkPK: testPK(6), Epoch: 100, SampleIndex: 0, Time: now.Add(-1 * time.Hour), RTTMicroseconds: 6000},
+	))
+	require.NoError(t, err)
+
+	indices, err := writer.GetExistingMaxSampleIndices()
+	require.NoError(t, err)
+	require.Contains(t, indices, staleKey,
+		"the writing process must carry a stale circuit-epoch's max index forward past the scan bound")
+	require.Equal(t, 1, indices[staleKey])
+	require.Contains(t, indices, fmt.Sprintf("%s:%s:%s:100", testPK(4), testPK(5), testPK(6)))
+
+	// A fresh store (restart) sees only the bounded scan: the stale key is
+	// dropped and the caller refetches that epoch's tail once.
+	restarted := newCacheTestStore(t, db, "test-maxidx-dl-carry-restart")
+	indices, err = restarted.GetExistingMaxSampleIndices()
+	require.NoError(t, err)
+	require.NotContains(t, indices, staleKey,
+		"a fresh store must drop keys whose rows are all older than the scan bound")
+
+	// The refetch's (deduped) re-append repopulates the carry-forward, so the
+	// refetch happens once per process start, not once per refresh.
+	err = restarted.AppendDeviceLinkLatencySamples(context.Background(), staleSamples)
+	require.NoError(t, err)
+	indices, err = restarted.GetExistingMaxSampleIndices()
+	require.NoError(t, err)
+	require.Contains(t, indices, staleKey,
+		"the re-append must restore the carry-forward on the new store")
+	require.Equal(t, 1, indices[staleKey])
+}
+
+// TestLake_TelemetryLatency_Store_MaxSampleIndices_CarryForwardPruning proves
+// cached epochs at least two behind the newest written epoch are pruned:
+// callers only fetch the current and previous epoch, so those entries would
+// only accumulate for the process lifetime.
+func TestLake_TelemetryLatency_Store_MaxSampleIndices_CarryForwardPruning(t *testing.T) {
+	t.Parallel()
+
+	db := testClient(t)
+	store := newCacheTestStore(t, db, "test-maxidx-dl-prune")
 	now := time.Now()
 
 	err := store.AppendDeviceLinkLatencySamples(context.Background(), []DeviceLinkLatencySample{
-		// Old epoch: all samples beyond the 4-day lookback.
 		{OriginDevicePK: testPK(1), TargetDevicePK: testPK(2), LinkPK: testPK(3), Epoch: 90, SampleIndex: 0, Time: now.Add(-5 * 24 * time.Hour), RTTMicroseconds: 5000},
-		{OriginDevicePK: testPK(1), TargetDevicePK: testPK(2), LinkPK: testPK(3), Epoch: 90, SampleIndex: 1, Time: now.Add(-5 * 24 * time.Hour), RTTMicroseconds: 5100},
-		// Recent epoch on the same circuit.
+	})
+	require.NoError(t, err)
+
+	err = store.AppendDeviceLinkLatencySamples(context.Background(), []DeviceLinkLatencySample{
 		{OriginDevicePK: testPK(1), TargetDevicePK: testPK(2), LinkPK: testPK(3), Epoch: 100, SampleIndex: 0, Time: now.Add(-1 * time.Hour), RTTMicroseconds: 6000},
 	})
 	require.NoError(t, err)
 
 	indices, err := store.GetExistingMaxSampleIndices()
 	require.NoError(t, err)
-	require.Len(t, indices, 1, "epoch older than the lookback must be dropped")
-	require.Equal(t, 0, indices[fmt.Sprintf("%s:%s:%s:100", testPK(1), testPK(2), testPK(3))])
+	require.NotContains(t, indices, fmt.Sprintf("%s:%s:%s:90", testPK(1), testPK(2), testPK(3)),
+		"an epoch two or more behind the newest written epoch must be pruned from the carry-forward")
+	require.Contains(t, indices, fmt.Sprintf("%s:%s:%s:100", testPK(1), testPK(2), testPK(3)))
 }
 
-// TestLake_TelemetryLatency_Store_GetExistingInternetMaxSampleIndices_TimeBound
-// mirrors the device-link time-bound test for the internet-metro table.
-func TestLake_TelemetryLatency_Store_GetExistingInternetMaxSampleIndices_TimeBound(t *testing.T) {
+// TestLake_TelemetryLatency_Store_InternetMaxSampleIndices_CarryForward mirrors
+// the device-link carry-forward test for the internet-metro table.
+func TestLake_TelemetryLatency_Store_InternetMaxSampleIndices_CarryForward(t *testing.T) {
 	t.Parallel()
 
 	db := testClient(t)
-	store := newCacheTestStore(t, db, "test-maxidx-im-bound")
 	now := time.Now()
+	staleKey := fmt.Sprintf("%s:%s:%s:99", testPK(1), testPK(2), "RIPE Atlas")
+	staleSamples := []InternetMetroLatencySample{
+		{OriginMetroPK: testPK(1), TargetMetroPK: testPK(2), DataProvider: "RIPE Atlas", Epoch: 99, SampleIndex: 0, Time: now.Add(-5 * 24 * time.Hour), RTTMicroseconds: 5000},
+	}
 
-	err := store.AppendInternetMetroLatencySamples(context.Background(), []InternetMetroLatencySample{
-		{OriginMetroPK: testPK(1), TargetMetroPK: testPK(2), DataProvider: "RIPE Atlas", Epoch: 90, SampleIndex: 0, Time: now.Add(-5 * 24 * time.Hour), RTTMicroseconds: 5000},
-		{OriginMetroPK: testPK(1), TargetMetroPK: testPK(2), DataProvider: "RIPE Atlas", Epoch: 100, SampleIndex: 0, Time: now.Add(-1 * time.Hour), RTTMicroseconds: 6000},
-	})
+	writer := newCacheTestStore(t, db, "test-maxidx-im-carry-writer")
+	err := writer.AppendInternetMetroLatencySamples(context.Background(), append(staleSamples,
+		InternetMetroLatencySample{OriginMetroPK: testPK(1), TargetMetroPK: testPK(2), DataProvider: "RIPE Atlas", Epoch: 100, SampleIndex: 0, Time: now.Add(-1 * time.Hour), RTTMicroseconds: 6000},
+	))
 	require.NoError(t, err)
 
-	indices, err := store.GetExistingInternetMaxSampleIndices()
+	indices, err := writer.GetExistingInternetMaxSampleIndices()
 	require.NoError(t, err)
-	require.Len(t, indices, 1, "epoch older than the lookback must be dropped")
-	require.Equal(t, 0, indices[fmt.Sprintf("%s:%s:%s:100", testPK(1), testPK(2), "RIPE Atlas")])
+	require.Contains(t, indices, staleKey,
+		"the writing process must carry a stale circuit-epoch's max index forward past the scan bound")
+	require.Contains(t, indices, fmt.Sprintf("%s:%s:%s:100", testPK(1), testPK(2), "RIPE Atlas"))
+
+	restarted := newCacheTestStore(t, db, "test-maxidx-im-carry-restart")
+	indices, err = restarted.GetExistingInternetMaxSampleIndices()
+	require.NoError(t, err)
+	require.NotContains(t, indices, staleKey,
+		"a fresh store must drop keys whose rows are all older than the scan bound")
 }

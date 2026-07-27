@@ -27,11 +27,18 @@ import (
 const prevRTTLookback = 2 * 24 * time.Hour
 
 // maxSampleIndexLookback bounds the max-sample-index scans to enable partition
-// pruning. Callers only fetch the current and previous epoch; Solana epochs
-// are ~2-3 days, so 4 days covers the previous epoch's boundary row. A key
-// dropped by the bound makes the caller pass existingMaxIdx=-1 and refetch the
-// epoch's full sample tail from the chain; ReplacingMergeTree dedups the
-// re-insert, so the worst case is a redundant RPC fetch, not data loss.
+// pruning. Callers only fetch the current and previous epoch, but a
+// circuit-epoch can outlive the bound while still being fetched: an agent that
+// stopped writing mid-epoch, or an epoch running longer than the bound. The
+// bound alone would then drop that key every scan, making the caller pass
+// existingMaxIdx=-1 and refetch + re-insert the epoch's full sample tail on
+// every refresh. The in-memory carry-forward caches (see Store.maxIdxMu)
+// backstop this: a key this process has written or read back once is never
+// dropped while it's still fetched. The residual cost is one full-tail refetch
+// per such circuit-epoch per process start (the process started after the
+// key's rows all aged out). ReplacingMergeTree dedups the re-insert, except
+// the first re-inserted sample's ipdv_us is recomputed against the
+// carried-forward RTT baseline and replaces the originally written value.
 const maxSampleIndexLookback = 4 * 24 * time.Hour
 
 type StoreConfig struct {
@@ -75,6 +82,19 @@ type Store struct {
 	prevRTTMu             sync.Mutex
 	prevDeviceLinkRTTs    map[string]uint32 // "origin:target:link" -> last RTT (0 = no baseline)
 	prevInternetMetroRTTs map[string]uint32 // "origin:target:provider" -> last RTT (0 = no baseline)
+
+	// maxIdxMu guards the max-sample-index carry-forward caches below. They
+	// hold the highest sample_index this process has written or read back per
+	// circuit-epoch, so a key whose rows have all aged past
+	// maxSampleIndexLookback keeps its max in memory instead of the bounded
+	// scan dropping it and the caller refetching that epoch's full tail every
+	// refresh. Entries merge from bounded-scan reads and from successful
+	// writes (after WriteBatch, like the prev-RTT caches); epochs more than
+	// one behind the newest written epoch are pruned since callers only fetch
+	// the current and previous epoch.
+	maxIdxMu            sync.Mutex
+	deviceLinkMaxIdx    map[uint64]map[string]int // epoch -> "origin:target:link" -> max sample_index
+	internetMetroMaxIdx map[uint64]map[string]int // epoch -> "origin:target:provider" -> max sample_index
 }
 
 func NewStore(cfg StoreConfig) (*Store, error) {
@@ -86,11 +106,50 @@ func NewStore(cfg StoreConfig) (*Store, error) {
 		cfg:                   cfg,
 		prevDeviceLinkRTTs:    make(map[string]uint32),
 		prevInternetMetroRTTs: make(map[string]uint32),
+		deviceLinkMaxIdx:      make(map[uint64]map[string]int),
+		internetMetroMaxIdx:   make(map[uint64]map[string]int),
 	}, nil
 }
 
 type deviceLinkCircuit struct {
 	originDevicePK, targetDevicePK, linkPK string
+}
+
+// mergeMaxSampleIdx records idx for circuitKey at epoch if it exceeds the
+// cached value. The caller must hold maxIdxMu.
+func mergeMaxSampleIdx(cache map[uint64]map[string]int, epoch uint64, circuitKey string, idx int) {
+	circuits, ok := cache[epoch]
+	if !ok {
+		circuits = make(map[string]int)
+		cache[epoch] = circuits
+	}
+	if cur, ok := circuits[circuitKey]; !ok || idx > cur {
+		circuits[circuitKey] = idx
+	}
+}
+
+// pruneMaxSampleIdx drops cached epochs more than one behind newest: callers
+// only fetch the current and previous epoch, so older entries are never
+// consulted again and would otherwise accumulate for the process lifetime.
+// The caller must hold maxIdxMu.
+func pruneMaxSampleIdx(cache map[uint64]map[string]int, newest uint64) {
+	for epoch := range cache {
+		if epoch+1 < newest {
+			delete(cache, epoch)
+		}
+	}
+}
+
+// flattenMaxSampleIdx renders the carry-forward cache in the callers' key
+// format, "circuitKey:epoch". The caller must hold maxIdxMu.
+func flattenMaxSampleIdx(cache map[uint64]map[string]int) map[string]int {
+	result := make(map[string]int)
+	for epoch, circuits := range cache {
+		for circuitKey, idx := range circuits {
+			result[fmt.Sprintf("%s:%d", circuitKey, epoch)] = idx
+		}
+	}
+	return result
 }
 
 type internetMetroCircuit struct {
@@ -165,7 +224,13 @@ func (s *Store) getPreviousDeviceLinkRTTs(ctx context.Context, circuits []device
 // ClickHouse can prune partitions and granules; within a circuit the argMax
 // ordering key (epoch, sample_index, event_ts) is monotone with event_ts, so a
 // bounded result equals the unbounded one whenever the circuit has any row
-// inside the window.
+// inside the window. That monotonicity is an assumption about well-formed
+// headers, not an invariant: event_ts derives from the device-agent-supplied
+// header start timestamp, so an epoch written with a bogus old timestamp can
+// leave the circuit's true argMax row outside the window while an older-epoch
+// row passes the bound, seeding a stale IPDV baseline for that circuit's
+// first post-restart sample. We accept that: the agent owns the header, and
+// the blast radius is one sample's ipdv_us per malformed circuit per restart.
 func (s *Store) queryPreviousDeviceLinkRTTBatch(ctx context.Context, circuits []deviceLinkCircuit, since *time.Time) (map[string]uint32, error) {
 	if len(circuits) == 0 {
 		return make(map[string]uint32), nil
@@ -326,6 +391,21 @@ func (s *Store) AppendDeviceLinkLatencySamples(ctx context.Context, samples []De
 		s.prevDeviceLinkRTTs[key] = rtt
 	}
 	s.prevRTTMu.Unlock()
+
+	// Carry the written max sample indices forward so the bounded max-index
+	// scan dropping this circuit-epoch later doesn't trigger a full-tail
+	// refetch; see maxSampleIndexLookback.
+	s.maxIdxMu.Lock()
+	var newestEpoch uint64
+	for _, sample := range sortedSamples {
+		circuitKey := fmt.Sprintf("%s:%s:%s", sample.OriginDevicePK, sample.TargetDevicePK, sample.LinkPK)
+		mergeMaxSampleIdx(s.deviceLinkMaxIdx, sample.Epoch, circuitKey, sample.SampleIndex)
+		if sample.Epoch > newestEpoch {
+			newestEpoch = sample.Epoch
+		}
+	}
+	pruneMaxSampleIdx(s.deviceLinkMaxIdx, newestEpoch)
+	s.maxIdxMu.Unlock()
 
 	return nil
 }
@@ -550,16 +630,32 @@ func (s *Store) AppendInternetMetroLatencySamples(ctx context.Context, samples [
 	}
 	s.prevRTTMu.Unlock()
 
+	// Carry the written max sample indices forward; see the device-link
+	// append and maxSampleIndexLookback.
+	s.maxIdxMu.Lock()
+	var newestEpoch uint64
+	for _, sample := range sortedSamples {
+		circuitKey := fmt.Sprintf("%s:%s:%s", sample.OriginMetroPK, sample.TargetMetroPK, sample.DataProvider)
+		mergeMaxSampleIdx(s.internetMetroMaxIdx, sample.Epoch, circuitKey, sample.SampleIndex)
+		if sample.Epoch > newestEpoch {
+			newestEpoch = sample.Epoch
+		}
+	}
+	pruneMaxSampleIdx(s.internetMetroMaxIdx, newestEpoch)
+	s.maxIdxMu.Unlock()
+
 	return nil
 }
 
+// GetExistingMaxSampleIndices returns the max written sample_index per
+// circuit-epoch: the union of a maxSampleIndexLookback-bounded scan (which
+// enables partition pruning) and the in-memory carry-forward cache (which
+// backstops keys whose rows have all aged past the bound; see
+// maxSampleIndexLookback). Within an epoch a higher sample_index always has a
+// later event_ts, so the bound can only drop whole keys, never return a lower
+// max — the union therefore takes the max per key.
 func (s *Store) GetExistingMaxSampleIndices() (map[string]int, error) {
 	ctx := context.Background()
-	// maxSampleIndexLookback (4 days) covers the current and previous epoch,
-	// which is all the callers fetch; see the constant's doc for the safety of
-	// dropping older keys. Within an epoch a higher sample_index always has a
-	// later event_ts, so the bound can only drop whole keys, never return a
-	// lower max.
 	query := `SELECT origin_device_pk, target_device_pk, link_pk, epoch, max(sample_index) as max_idx
 	          FROM fact_dz_device_link_latency
 	          WHERE event_ts >= ?
@@ -575,7 +671,12 @@ func (s *Store) GetExistingMaxSampleIndices() (map[string]int, error) {
 	}
 	defer rows.Close()
 
-	result := make(map[string]int)
+	type scannedIdx struct {
+		circuitKey string
+		epoch      uint64
+		maxIdx     int
+	}
+	var scanned []scannedIdx
 	for rows.Next() {
 		var originDevicePK, targetDevicePK, linkPK string
 		var epoch int64
@@ -584,18 +685,30 @@ func (s *Store) GetExistingMaxSampleIndices() (map[string]int, error) {
 			return nil, fmt.Errorf("failed to scan max index: %w", err)
 		}
 		if maxIdx != nil {
-			key := fmt.Sprintf("%s:%s:%s:%d", originDevicePK, targetDevicePK, linkPK, epoch)
-			result[key] = int(*maxIdx)
+			scanned = append(scanned, scannedIdx{
+				circuitKey: fmt.Sprintf("%s:%s:%s", originDevicePK, targetDevicePK, linkPK),
+				epoch:      uint64(epoch),
+				maxIdx:     int(*maxIdx),
+			})
 		}
 	}
-	return result, nil
+
+	// Merge the scan into the carry-forward cache so a key seen here once
+	// survives its rows later aging past the bound, then answer from the
+	// cache (a superset of the scan).
+	s.maxIdxMu.Lock()
+	defer s.maxIdxMu.Unlock()
+	for _, row := range scanned {
+		mergeMaxSampleIdx(s.deviceLinkMaxIdx, row.epoch, row.circuitKey, row.maxIdx)
+	}
+	return flattenMaxSampleIdx(s.deviceLinkMaxIdx), nil
 }
 
+// GetExistingInternetMaxSampleIndices returns the max written sample_index
+// per circuit-epoch for the internet-metro table; bounded scan unioned with
+// the carry-forward cache, see GetExistingMaxSampleIndices.
 func (s *Store) GetExistingInternetMaxSampleIndices() (map[string]int, error) {
 	ctx := context.Background()
-	// Query recent samples grouped by circuit and epoch to determine what's already been inserted.
-	// This enables incremental appends by only inserting new samples (sample_index > existing max).
-	// maxSampleIndexLookback bounds the scan; see GetExistingMaxSampleIndices.
 	query := `SELECT origin_metro_pk, target_metro_pk, data_provider, epoch, max(sample_index) as max_idx
 	          FROM fact_dz_internet_metro_latency
 	          WHERE event_ts >= ?
@@ -611,7 +724,12 @@ func (s *Store) GetExistingInternetMaxSampleIndices() (map[string]int, error) {
 	}
 	defer rows.Close()
 
-	result := make(map[string]int)
+	type scannedIdx struct {
+		circuitKey string
+		epoch      uint64
+		maxIdx     int
+	}
+	var scanned []scannedIdx
 	for rows.Next() {
 		var originMetroPK, targetMetroPK, dataProvider string
 		var epoch int64
@@ -620,12 +738,21 @@ func (s *Store) GetExistingInternetMaxSampleIndices() (map[string]int, error) {
 			return nil, fmt.Errorf("failed to scan max index: %w", err)
 		}
 		if maxIdx != nil {
-			// Convert int64 epoch to uint64 for key consistency (epoch is stored as int64 in DB but used as uint64 elsewhere)
-			key := fmt.Sprintf("%s:%s:%s:%d", originMetroPK, targetMetroPK, dataProvider, uint64(epoch))
-			result[key] = int(*maxIdx)
+			// Epoch is stored as int64 in DB but used as uint64 elsewhere.
+			scanned = append(scanned, scannedIdx{
+				circuitKey: fmt.Sprintf("%s:%s:%s", originMetroPK, targetMetroPK, dataProvider),
+				epoch:      uint64(epoch),
+				maxIdx:     int(*maxIdx),
+			})
 		}
 	}
-	return result, nil
+
+	s.maxIdxMu.Lock()
+	defer s.maxIdxMu.Unlock()
+	for _, row := range scanned {
+		mergeMaxSampleIdx(s.internetMetroMaxIdx, row.epoch, row.circuitKey, row.maxIdx)
+	}
+	return flattenMaxSampleIdx(s.internetMetroMaxIdx), nil
 }
 
 // DataBoundaries contains min/max timestamps and epochs for a fact table

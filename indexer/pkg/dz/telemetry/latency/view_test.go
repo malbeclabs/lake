@@ -768,9 +768,10 @@ func TestLake_TelemetryLatency_View_IncrementalAppend(t *testing.T) {
 		// First refresh: data source has 3 samples (0-2), existingMaxIdx=-1, return all 3
 		// Second refresh: data source has 5 samples (0-4), existingMaxIdx=2, return tail (3-4)
 		// Recent start timestamp so the samples land inside the 4-day
-		// event_ts bound in GetExistingMaxSampleIndices; a stale timestamp
-		// would make the second refresh see no existing indices and
-		// re-insert instead of appending.
+		// event_ts bound in GetExistingMaxSampleIndices and the second
+		// refresh exercises the bounded scan itself, not only the
+		// same-process max-index carry-forward cache (which would mask a
+		// broken scan here but is empty after a real restart).
 		startTsMicro := uint64(time.Now().Add(-1 * time.Hour).UnixMicro())
 
 		mockTelemetryRPC := &mockTelemetryRPCWithIncrementalSamples{
@@ -983,9 +984,10 @@ func TestLake_TelemetryLatency_View_IncrementalAppend(t *testing.T) {
 		agentPK := solana.MustPublicKeyFromBase58("So11111111111111111111111111111111111111112")
 
 		// Recent start timestamp so the samples land inside the 4-day
-		// event_ts bound in GetExistingInternetMaxSampleIndices; a stale
-		// timestamp would make the second refresh see no existing indices
-		// and re-insert instead of appending.
+		// event_ts bound in GetExistingInternetMaxSampleIndices and the
+		// second refresh exercises the bounded scan itself, not only the
+		// same-process max-index carry-forward cache (which would mask a
+		// broken scan here but is empty after a real restart).
 		startTsMicro := uint64(time.Now().Add(-1 * time.Hour).UnixMicro())
 
 		var refreshCount atomic.Int64
