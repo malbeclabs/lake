@@ -101,12 +101,14 @@ func TestDZIngestWorkflow_ActivityFailuresNeverLogError(t *testing.T) {
 		env.OnActivity(fn, mock.Anything).Return(boom)
 	}
 
-	// Run enough iterations to exercise >3 consecutive failures (past the old
-	// escalation threshold of 3) and to guarantee at least one tick of every
-	// modulo-gated activity: any window of N consecutive iterations contains a
-	// multiple of N, so a span of max(EveryN...) covers them all regardless of
-	// how the constants change.
-	span := max(5, telemUsageEveryN, permissionEventsEveryN)
+	// Run enough iterations that every asserted message accumulates >=3
+	// consecutive failures — the old workflow escalator's ERROR threshold — so
+	// each assertion discriminates against the regressed behavior (a single
+	// failure logged WARN under the old escalator too). Any window of 3*N
+	// consecutive iterations contains at least 3 multiples of N, so a span of
+	// 3*max(EveryN...) gives every modulo-gated activity 3 ticks regardless of
+	// how the cadence constants change.
+	span := 3 * max(1, telemUsageEveryN, permissionEventsEveryN)
 	env.ExecuteWorkflow(DZIngestWorkflow, continueAsNewThreshold-span)
 
 	require.True(t, env.IsWorkflowCompleted())
