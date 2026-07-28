@@ -32,9 +32,15 @@ func (l *levelCapture) Error(msg string, _ ...any) {
 	l.errors = append(l.errors, msg)
 }
 
-func (l *levelCapture) has(list []string, msg string) bool {
+// has reports whether msg was logged at the given level ("warn" or "error").
+// It selects the slice under the lock so no guarded field is read unlocked.
+func (l *levelCapture) has(level, msg string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	list := l.warns
+	if level == "error" {
+		list = l.errors
+	}
 	for _, m := range list {
 		if m == msg {
 			return true
@@ -96,8 +102,10 @@ func TestDZIngestWorkflow_ActivityFailuresNeverLogError(t *testing.T) {
 	}
 
 	// Start a few iterations short of continue-as-new so the run exercises >3
-	// consecutive failures (past the old threshold) for every activity, including
-	// permission events (iteration%permissionEventsEveryN == 0 at iteration 55).
+	// consecutive failures (past the old escalation threshold of 3) for every
+	// per-iteration activity. Permission events fires once in this range
+	// (iteration%permissionEventsEveryN == 0 at iteration 55); the rest fire
+	// every iteration.
 	env.ExecuteWorkflow(DZIngestWorkflow, continueAsNewThreshold-5)
 
 	require.True(t, env.IsWorkflowCompleted())
@@ -107,9 +115,9 @@ func TestDZIngestWorkflow_ActivityFailuresNeverLogError(t *testing.T) {
 	// errors to Temporal directly — a test artifact (in production activities.refresh
 	// returns nil, so those lines never occur).
 	for _, msg := range failureMessages {
-		require.False(t, logCap.has(logCap.errors, msg),
+		require.False(t, logCap.has("error", msg),
 			"workflow failure %q must never log at ERROR (owns paging: activities.refresh)", msg)
-		require.True(t, logCap.has(logCap.warns, msg),
+		require.True(t, logCap.has("warn", msg),
 			"workflow failure %q should log at WARN", msg)
 	}
 }

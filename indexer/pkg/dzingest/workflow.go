@@ -59,13 +59,21 @@ func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 	// Every dzingest activity goes through activities.refresh, which swallows
 	// the error (returns nil to Temporal) and owns the paging decision via its
 	// own escalation-gated counter. Errors still reaching the workflow future
-	// are Temporal-level (StartToClose timeouts, scheduling failures) and, for
-	// timeouts, the activity function also returns on the expired ctx and logs
-	// activity-side — so a second alert-bearing line here doubled every page
-	// (#730, a #697 regression via #711's MaximumAttempts: 1). Log these at
-	// WARN: the Temporal-level cause (timeout vs scheduling) stays visible for
-	// debugging without paging. Per the #696/#697 principle, one failure yields
-	// at most one alert-bearing line, owned by the layer with escalation context.
+	// are Temporal-level: StartToClose timeouts (the activity function also
+	// returns on the expired ctx and logs activity-side), scheduling failures,
+	// and activity panics (paged by the SDK's "Activity error." line, which
+	// temporalLogger demotes only for transient causes). A second alert-bearing
+	// line here doubled every page (#730, a #697 regression via #711's
+	// MaximumAttempts: 1), so log these at WARN: the Temporal-level cause
+	// (timeout vs scheduling) stays visible for debugging without paging. Per
+	// the #696/#697 principle, one failure yields at most one alert-bearing
+	// line, owned by the layer with escalation context.
+	//
+	// Consequence: time-to-page for a sustained timeout now follows the
+	// activity-side thresholds (3 consecutive, or 10 for a transient-classified
+	// cause that self-heals) instead of the former workflow-escalator's flat 3.
+	// Intended — the activity layer's error classification owns the decision,
+	// matching how every other activity already escalates.
 	warnOnErr := func(msg string, err error) {
 		if err != nil {
 			log.Warn(msg, "error", err)
