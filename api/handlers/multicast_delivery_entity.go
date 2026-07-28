@@ -61,11 +61,16 @@ func (a *API) GetDeviceMulticastDelivery(w http.ResponseWriter, r *http.Request)
 	// Goroutines write only their own result/error variables; errors are
 	// processed after each Wait in the original sequential order so error
 	// precedence (device 404 first) and the source-unavailable downgrades are
-	// unchanged. No cross-cancellation on error: sibling errors would surface as
-	// context.Canceled and scramble that precedence, and each query already
-	// bounds itself with max_execution_time. Note the per-env ClickHouse pools
-	// cap at 10 open conns (vs 100 for mainnet), so stage 2's fan-out of up to 8
-	// bounds non-mainnet envs to ~1 concurrent request before acquisitions queue.
+	// unchanged. The device lookup gates everything else, so it gets its own
+	// done signal: on device error (typically a 404) the handler returns as
+	// soon as that result lands, without waiting for the sibling stage-1
+	// queries — the deferred cancel aborts them and their writes go to
+	// variables the handler no longer reads. No cross-cancellation on other
+	// errors: sibling errors would surface as context.Canceled and scramble
+	// the precedence, and each query already bounds itself with
+	// max_execution_time. Note the per-env ClickHouse pools cap at 10 open
+	// conns (vs 100 for mainnet), so stage 2's fan-out of up to 8 bounds
+	// non-mainnet envs to ~1 concurrent request before acquisitions queue.
 	now := time.Now().UTC()
 
 	var (
@@ -82,15 +87,21 @@ func (a *API) GetDeviceMulticastDelivery(w http.ResponseWriter, r *http.Request)
 			fn()
 		}()
 	}
-	spawn(func() { device, deviceErr = a.queryMulticastDeliveryDevice(ctx, pkOrCode) })
+	deviceDone := make(chan struct{})
+	go func() {
+		defer close(deviceDone)
+		device, deviceErr = a.queryMulticastDeliveryDevice(ctx, pkOrCode)
+	}()
 	spawn(func() { available, availableErr = a.queryMulticastDeliverySources(ctx) })
 	spawn(func() { sourceTimes, sourceTimesErr = a.queryMulticastDeliverySourceIngestTimes(ctx) })
-	wg.Wait()
 
+	<-deviceDone
 	if deviceErr != nil {
 		writeMulticastDeliveryEntityError(w, deviceErr, "multicast device delivery query error", "device", pkOrCode)
 		return
 	}
+	wg.Wait()
+
 	if availableErr != nil {
 		writeMulticastDeliveryEntityError(w, availableErr, "multicast device delivery sources query error", "device", pkOrCode)
 		return
