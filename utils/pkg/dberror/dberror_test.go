@@ -38,6 +38,20 @@ func TestClassifyAndIsTransient(t *testing.T) {
 		// "eof" must match as a word, not an embedded trigram.
 		{"geofence not transient", errors.New("failed to update geofence for device"), dberror.ErrorTypeUnknown, false},
 
+		// AWS SDK v2 transient S3 responses (SyncMSDP staging noise, #731).
+		// The observed shape: a 200 with an error embedded mid-body.
+		{"s3 200 embedded error", errors.New("msdp fetch: msdp: list snapshots/ip-msdp-sa-cache-rejected/device=x/date=2026-07-26/: operation error S3: ListObjectsV2, https response error StatusCode: 200, RequestID: abc123, HostID: def, api error InternalError"), dberror.ErrorTypeConnectivity, true},
+		{"s3 500 internal error", errors.New("operation error S3: ListObjectsV2, https response error StatusCode: 500, RequestID: x, InternalError"), dberror.ErrorTypeConnectivity, true},
+		{"s3 503 slow down", errors.New("operation error S3: GetObject, https response error StatusCode: 503, RequestID: x, SlowDown"), dberror.ErrorTypeConnectivity, true},
+
+		// Actionable S3 4xx must keep paging (not transient). The SDK spells it
+		// "AccessDenied" (no space), so it stays Unknown rather than matching the
+		// auth pattern — either way it is non-transient, which is the point.
+		{"s3 403 access denied", errors.New("operation error S3: ListObjectsV2, https response error StatusCode: 403, RequestID: x, AccessDenied"), dberror.ErrorTypeUnknown, false},
+		{"s3 404 no such key", errors.New("operation error S3: GetObject, https response error StatusCode: 404, RequestID: x, NoSuchKey"), dberror.ErrorTypeUnknown, false},
+		// A non-AWS message mentioning statuscode: 200 without the SDK prefix must not match.
+		{"non-aws statuscode 200", errors.New("handler returned statuscode: 200 but body was empty"), dberror.ErrorTypeUnknown, false},
+
 		// Non-transient: real, actionable failures should still escalate to ERROR.
 		{"syntax error", errors.New("Code: 62. DB::Exception: Syntax error"), dberror.ErrorTypeQuery, false},
 		{"access denied", errors.New("access denied for user"), dberror.ErrorTypeAuth, false},
