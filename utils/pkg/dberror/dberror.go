@@ -16,13 +16,16 @@ var eofRe = regexp.MustCompile(`\beof\b`)
 // awsRespErrRe matches the AWS SDK v2 "https response error StatusCode: ..."
 // shape (lowercased by Classify before matching) for a transient S3 status: a
 // 200 (S3's documented "200 OK with an error mid-body" blip, which the SDK
-// surfaces as a response error) or any 5xx server error (InternalError, 502,
-// 503 SlowDown, 504). The "https response error statuscode:" prefix scopes the
-// match to AWS SDK v2 messages, so ClickHouse, Neo4j, and Influx errors never
-// hit it. Actionable 4xx (403 AccessDenied, 404 NoSuchBucket/NoSuchKey) are
-// deliberately excluded so they keep paging. The trailing \b prevents matching
-// a status inside a longer digit run (e.g. "statuscode: 2001").
-var awsRespErrRe = regexp.MustCompile(`https response error statuscode: (200|5\d\d)\b`)
+// surfaces as a response error but does not retry internally — transient per
+// S3's own guidance) or the SDK's DefaultRetryableHTTPStatusCodes set of
+// {500, 502, 503, 504}. 501 NotImplemented and 505 are deliberately not
+// matched: they are permanent endpoint/configuration failures, not blips. The
+// "https response error statuscode:" prefix scopes the match to AWS SDK v2
+// messages, so ClickHouse, Neo4j, and Influx errors never hit it. Actionable
+// 4xx (403 AccessDenied, 404 NoSuchBucket/NoSuchKey) are also excluded so
+// they keep paging. The trailing \b prevents matching a status inside a
+// longer digit run (e.g. "statuscode: 2001").
+var awsRespErrRe = regexp.MustCompile(`https response error statuscode: (200|500|502|503|504)\b`)
 
 // ErrTransient is a sentinel that explicitly marks an error as transient for
 // IsTransient, independent of its message. Wrap a return with it (e.g. via
@@ -108,8 +111,8 @@ func Classify(err error) ErrorType {
 		return ErrorTypeConnectivity
 	}
 
-	// AWS SDK v2 transient S3 responses (200-with-embedded-error, 5xx server
-	// errors) — self-healing blips the SDK marks retryable, not actionable.
+	// AWS SDK v2 transient S3 responses (200-with-embedded-error, retryable
+	// 5xx server errors) — self-healing blips, not actionable.
 	if awsRespErrRe.MatchString(errStr) {
 		return ErrorTypeConnectivity
 	}

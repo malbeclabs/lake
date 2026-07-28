@@ -43,6 +43,13 @@ func TestClassifyAndIsTransient(t *testing.T) {
 		{"s3 200 embedded error", errors.New("msdp fetch: msdp: list snapshots/ip-msdp-sa-cache-rejected/device=x/date=2026-07-26/: operation error S3: ListObjectsV2, https response error StatusCode: 200, RequestID: abc123, HostID: def, api error InternalError"), dberror.ErrorTypeConnectivity, true},
 		{"s3 500 internal error", errors.New("operation error S3: ListObjectsV2, https response error StatusCode: 500, RequestID: x, InternalError"), dberror.ErrorTypeConnectivity, true},
 		{"s3 503 slow down", errors.New("operation error S3: GetObject, https response error StatusCode: 503, RequestID: x, SlowDown"), dberror.ErrorTypeConnectivity, true},
+		// The production 5xx shape: the SDK retries 500/502/503/504 internally,
+		// so a sustained 5xx reaches us wrapped in the max-attempts message.
+		// Pins the regex staying unanchored to the message start.
+		{"s3 500 after sdk retries", errors.New("operation error S3: ListObjectsV2, exceeded maximum number of attempts, 3, https response error StatusCode: 500, RequestID: x, api error InternalError"), dberror.ErrorTypeConnectivity, true},
+		// 501 NotImplemented is a permanent endpoint/config failure, outside the
+		// SDK's DefaultRetryableHTTPStatusCodes {500, 502, 503, 504} — must page.
+		{"s3 501 not implemented", errors.New("operation error S3: ListObjectsV2, https response error StatusCode: 501, RequestID: x, NotImplemented"), dberror.ErrorTypeUnknown, false},
 
 		// Actionable S3 4xx must keep paging (not transient). The SDK spells it
 		// "AccessDenied" (no space), so it stays Unknown rather than matching the
