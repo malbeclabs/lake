@@ -101,12 +101,13 @@ func TestDZIngestWorkflow_ActivityFailuresNeverLogError(t *testing.T) {
 		env.OnActivity(fn, mock.Anything).Return(boom)
 	}
 
-	// Start a few iterations short of continue-as-new so the run exercises >3
-	// consecutive failures (past the old escalation threshold of 3) for every
-	// per-iteration activity. Permission events fires once in this range
-	// (iteration%permissionEventsEveryN == 0 at iteration 55); the rest fire
-	// every iteration.
-	env.ExecuteWorkflow(DZIngestWorkflow, continueAsNewThreshold-5)
+	// Run enough iterations to exercise >3 consecutive failures (past the old
+	// escalation threshold of 3) and to guarantee at least one tick of every
+	// modulo-gated activity: any window of N consecutive iterations contains a
+	// multiple of N, so a span of max(EveryN...) covers them all regardless of
+	// how the constants change.
+	span := max(5, telemUsageEveryN, permissionEventsEveryN)
+	env.ExecuteWorkflow(DZIngestWorkflow, continueAsNewThreshold-span)
 
 	require.True(t, env.IsWorkflowCompleted())
 
