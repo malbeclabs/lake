@@ -6,8 +6,6 @@ import (
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 	temporalworkflow "go.temporal.io/sdk/workflow"
-
-	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
 const (
@@ -58,14 +56,21 @@ func RegisterWorkflows(w worker.Worker) {
 func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 	log := temporalworkflow.GetLogger(ctx)
 
-	// Activity errors reaching the workflow are Temporal-level (StartToClose
-	// timeouts, scheduling failures) — the activity-side failure counter never
-	// sees them, and timeouts classify as transient, so escalate them at the
-	// strict threshold to keep sustained timeouts visible.
-	// Counts reset at continue-as-new (~hourly), deferring escalation by up
-	// to ErrorAfter-1 iterations across the boundary — fine at threshold 3;
-	// revisit before raising the threshold.
-	esc := &logger.Escalator{TransientErrorAfter: logger.DefaultErrorAfter}
+	// Every dzingest activity goes through activities.refresh, which swallows
+	// the error (returns nil to Temporal) and owns the paging decision via its
+	// own escalation-gated counter. Errors still reaching the workflow future
+	// are Temporal-level (StartToClose timeouts, scheduling failures) and, for
+	// timeouts, the activity function also returns on the expired ctx and logs
+	// activity-side — so a second alert-bearing line here doubled every page
+	// (#730, a #697 regression via #711's MaximumAttempts: 1). Log these at
+	// WARN: the Temporal-level cause (timeout vs scheduling) stays visible for
+	// debugging without paging. Per the #696/#697 principle, one failure yields
+	// at most one alert-bearing line, owned by the layer with escalation context.
+	warnOnErr := func(msg string, err error) {
+		if err != nil {
+			log.Warn(msg, "error", err)
+		}
+	}
 	var err error
 
 	actOpts := temporalworkflow.ActivityOptions{
@@ -83,7 +88,7 @@ func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 		if err != nil && ctx.Err() != nil {
 			return ctx.Err()
 		}
-		esc.Observe(log, "serviceability", "serviceability refresh failed", err)
+		warnOnErr("serviceability refresh failed", err)
 
 		// Run telemetry latency, geolocation, shreds, escrow events, ISIS sync, and graph sync in parallel.
 		telemLatencyFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshTelemetryLatency)
@@ -123,55 +128,55 @@ func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 		if err != nil && ctx.Err() != nil {
 			return ctx.Err()
 		}
-		esc.Observe(log, "telemetry_latency", "telemetry latency refresh failed", err)
+		warnOnErr("telemetry latency refresh failed", err)
 		err = geolocationFuture.Get(ctx, nil)
 		if err != nil && ctx.Err() != nil {
 			return ctx.Err()
 		}
-		esc.Observe(log, "geolocation", "geolocation refresh failed", err)
+		warnOnErr("geolocation refresh failed", err)
 		err = shredsFuture.Get(ctx, nil)
 		if err != nil && ctx.Err() != nil {
 			return ctx.Err()
 		}
-		esc.Observe(log, "shreds", "shreds refresh failed", err)
+		warnOnErr("shreds refresh failed", err)
 		err = escrowEventsFuture.Get(ctx, nil)
 		if err != nil && ctx.Err() != nil {
 			return ctx.Err()
 		}
-		esc.Observe(log, "escrow_events", "escrow events refresh failed", err)
+		warnOnErr("escrow events refresh failed", err)
 		err = isisSyncFuture.Get(ctx, nil)
 		if err != nil && ctx.Err() != nil {
 			return ctx.Err()
 		}
-		esc.Observe(log, "isis", "isis sync failed", err)
+		warnOnErr("isis sync failed", err)
 		err = mrouteSyncFuture.Get(ctx, nil)
 		if err != nil && ctx.Err() != nil {
 			return ctx.Err()
 		}
-		esc.Observe(log, "mroute", "mroute sync failed", err)
+		warnOnErr("mroute sync failed", err)
 		err = msdpSyncFuture.Get(ctx, nil)
 		if err != nil && ctx.Err() != nil {
 			return ctx.Err()
 		}
-		esc.Observe(log, "msdp", "msdp sync failed", err)
+		warnOnErr("msdp sync failed", err)
 		err = graphSyncFuture.Get(ctx, nil)
 		if err != nil && ctx.Err() != nil {
 			return ctx.Err()
 		}
-		esc.Observe(log, "graph", "graph sync failed", err)
+		warnOnErr("graph sync failed", err)
 		if telemUsageFuture != nil {
 			err = telemUsageFuture.Get(ctx, nil)
 			if err != nil && ctx.Err() != nil {
 				return ctx.Err()
 			}
-			esc.Observe(log, "telemetry_usage", "telemetry usage refresh failed", err)
+			warnOnErr("telemetry usage refresh failed", err)
 		}
 		if permissionEventsFuture != nil {
 			err = permissionEventsFuture.Get(ctx, nil)
 			if err != nil && ctx.Err() != nil {
 				return ctx.Err()
 			}
-			esc.Observe(log, "permission_events", "permission events refresh failed", err)
+			warnOnErr("permission events refresh failed", err)
 		}
 
 		iteration++
