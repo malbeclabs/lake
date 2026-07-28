@@ -1220,47 +1220,16 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			}
 
 			if len(pubkeySet) > 0 {
-				pubkeys := make([]string, 0, len(pubkeySet))
-				for pk := range pubkeySet {
-					pubkeys = append(pubkeys, pk)
-				}
-				query6b := `
-					SELECT
-						v.account,
-						COALESCE(v.name, ''),
-						COALESCE(v.ip, ''),
-						COALESCE(g.asn_org, ''),
-						COALESCE(g.city, ''),
-						COALESCE(g.country, '')
-					FROM validatorsapp_validators_current v
-					LEFT JOIN geoip_records_current g ON g.ip = v.ip
-					WHERE v.account IN (?)
-				`
-				t = time.Now()
-				rows6b, err := a.envDB(gctx).Query(gctx, query6b, pubkeys)
-				metrics.RecordClickHouseQuery("edge_scoreboard:q6b", time.Since(t), err)
+				// Leader enrichment (name/ip/asn/geo) is served from a per-env
+				// TTL-cached map instead of re-joining validatorsapp+geoip for this
+				// run's pubkey set. A map miss yields empty enrichment — identical to
+				// the old LEFT-JOIN no-match.
+				infoByPubkey, err := a.cachedLeaderInfo(gctx)
 				if err != nil {
 					if gctx.Err() != nil {
 						return nil
 					}
-					return fmt.Errorf("query6b: %w", err)
-				}
-				defer rows6b.Close()
-
-				type leaderInfo struct {
-					name, ip, asnOrg, city, country string
-				}
-				infoByPubkey := make(map[string]*leaderInfo)
-				for rows6b.Next() {
-					var pubkey string
-					var li leaderInfo
-					if err := rows6b.Scan(&pubkey, &li.name, &li.ip, &li.asnOrg, &li.city, &li.country); err != nil {
-						return fmt.Errorf("query6b scan: %w", err)
-					}
-					infoByPubkey[pubkey] = &li
-				}
-				if err := rows6b.Err(); err != nil {
-					return fmt.Errorf("query6b rows: %w", err)
+					return fmt.Errorf("leader info: %w", err)
 				}
 
 				for absSlot, pubkey := range slotPubkeys {

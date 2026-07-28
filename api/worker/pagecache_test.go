@@ -239,6 +239,10 @@ func TestDueThisCycle(t *testing.T) {
 			require.Equal(t, cycle%2 == 0, dueThisCycle(vals.everyN, cycle), "validators cycle %d", cycle)
 		}
 
+		meta, ok := byKey["validators_metadata"]
+		require.True(t, ok, "validators_metadata entry must exist")
+		require.Equal(t, validatorsListingEveryN, meta.everyN)
+
 		// Model the RefreshCaches gate: publisher_check is due only on cycles 0,4,8;
 		// topology is due every cycle.
 		for _, cycle := range []int{0, 1, 2, 3, 4, 5, 8} {

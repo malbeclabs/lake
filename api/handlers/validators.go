@@ -338,6 +338,33 @@ type ValidatorMetadataRow struct {
 	SoftwareVersion string
 }
 
+// validatorsMetadataPageCacheKey is the page-cache key for the parameterless v1
+// validators-metadata endpoint.
+const validatorsMetadataPageCacheKey = "validators_metadata"
+
+// FetchValidatorsMetadataCachedOrLive returns validator metadata from the page
+// cache when present (the worker refreshes it against mainnet), falling back to a
+// live query on miss. The v1 mount sits behind EnvMiddleware, so a request may
+// carry a non-mainnet env; only mainnet requests read the cache (the worker
+// computes it against mainnet). Non-mainnet requests fall through to the live
+// per-env query. The parameterless endpoint has a single cached shape, so the
+// external ~10s mainnet poller becomes a Postgres read.
+func (a *API) FetchValidatorsMetadataCachedOrLive(ctx context.Context) ([]ValidatorMetadataRow, error) {
+	if isMainnet(ctx) {
+		if data, err := a.readPageCache(ctx, validatorsMetadataPageCacheKey); err == nil {
+			var rows []ValidatorMetadataRow
+			if err := json.Unmarshal(data, &rows); err == nil {
+				return rows, nil
+			} else {
+				// A corrupt cache row shouldn't be silent — it degrades every request
+				// to the full live query with no signal.
+				logWarn("validators metadata cache unmarshal failed, using live query", "error", err)
+			}
+		}
+	}
+	return a.FetchValidatorsMetadata(ctx)
+}
+
 // FetchValidatorsMetadata returns active validator metadata ordered by
 // active_stake DESC.
 func (a *API) FetchValidatorsMetadata(ctx context.Context) ([]ValidatorMetadataRow, error) {

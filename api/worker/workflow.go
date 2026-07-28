@@ -252,6 +252,11 @@ func (a *Activities) entries() []cacheEntry {
 		{name: "validators", key: "validators", everyN: validatorsListingEveryN, fn: func(ctx context.Context) (any, error) {
 			return api.FetchValidatorsData(ctx)
 		}},
+		// Parameterless v1 /solana/validators-metadata, polled externally at ~10s.
+		// Same ~60s cadence; daily-timescale metadata.
+		{name: "validators metadata", key: "validators_metadata", everyN: validatorsListingEveryN, fn: func(ctx context.Context) (any, error) {
+			return api.FetchValidatorsMetadata(ctx)
+		}},
 		{name: "multicast health summaries", key: handlers.MulticastHealthSummariesCacheKey, fn: func(ctx context.Context) (any, error) {
 			return api.FetchMulticastHealthSummariesData(ctx, handlers.ShredGroupPK)
 		}},

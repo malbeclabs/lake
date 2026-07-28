@@ -32,7 +32,7 @@ func registerValidatorsMetadata(humaAPI huma.API, api *handlers.API) {
 		Description: "Returns client name/version/stake metadata for every active Solana validator, ordered by active stake descending.",
 		Tags:        []string{"Solana"},
 	}, func(ctx context.Context, _ *struct{}) (*ValidatorsMetadataOutput, error) {
-		rows, err := api.FetchValidatorsMetadata(ctx)
+		rows, err := api.FetchValidatorsMetadataCachedOrLive(ctx)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to fetch validators metadata", err)
 		}

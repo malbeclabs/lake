@@ -79,6 +79,10 @@ type API struct {
 	// cluster slot) that dashboard handlers previously recomputed per request. Its
 	// zero value is ready to use, so a directly-constructed API needs no change.
 	scalarCache scalarCache
+
+	// leaderInfoCache holds the per-env validator enrichment map (name/ip/asn/geo)
+	// that the edge scoreboard previously re-joined per run. Zero value ready to use.
+	leaderInfoCache leaderInfoCache
 }
 
 // publisherCheckLiveSem lazily builds the concurrency-bounding semaphore so a
