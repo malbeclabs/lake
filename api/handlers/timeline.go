@@ -2154,14 +2154,16 @@ func (a *API) queryValidatorEvents(ctx context.Context, startTime, endTime time.
 		internalFilter = fmt.Sprintf(" AND u.owner_pubkey NOT IN ('%s')", strings.Join(internalUserPubkeys, "','"))
 	}
 
+	total, err := a.cachedTotalStake(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Validators/gossip nodes are identified by joining users with gossip_nodes via client_ip = gossip_ip
 	// A user is a "validator" if their gossip node has a vote account, otherwise "gossip_node"
 	// We use history tables to detect both join AND leave events (current tables miss users who left)
 	query := fmt.Sprintf(`
-		WITH total_stake AS (
-			SELECT sum(activated_stake_lamports) as total
-			FROM solana_vote_accounts_current
-		),
+		WITH
 		-- Get gossip IPs that were ever active during the time range (using history table)
 		gossip_ips AS (
 			SELECT DISTINCT gossip_ip
@@ -2221,10 +2223,9 @@ func (a *API) queryValidatorEvents(ctx context.Context, startTime, endTime time.
 			COALESCE(gn_curr.pubkey, gn_hist.pubkey, '') as node_pubkey,
 			COALESCE(va_curr.vote_pubkey, va_hist.vote_pubkey, '') as vote_pubkey,
 			COALESCE(va_curr.activated_stake_lamports, va_hist.stake_lamports, 0) as stake_lamports,
-			COALESCE(va_curr.activated_stake_lamports, va_hist.stake_lamports, 0) * 100.0 / NULLIF(ts.total, 0) as stake_share_pct,
+			COALESCE(va_curr.activated_stake_lamports, va_hist.stake_lamports, 0) * 100.0 / NULLIF(%d, 0) as stake_share_pct,
 			CASE WHEN COALESCE(va_curr.vote_pubkey, va_hist.vote_pubkey, '') != '' THEN 'validator' ELSE 'gossip_only' END as validator_kind
 		FROM all_history uc
-		CROSS JOIN total_stake ts
 		LEFT JOIN dz_devices_current d ON uc.device_pk = d.pk
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 		LEFT JOIN dz_contributors_current cont ON d.contributor_pk = cont.pk
@@ -2241,7 +2242,7 @@ func (a *API) queryValidatorEvents(ctx context.Context, startTime, endTime time.
 		  AND uc.snapshot_ts >= ? AND uc.snapshot_ts <= ?
 		ORDER BY uc.snapshot_ts DESC, uc.entity_id
 		LIMIT 200
-	`, internalFilter)
+	`, internalFilter, total)
 
 	start := time.Now()
 	// Query has 4 pairs of time parameters: gossip_ips, latest_gossip, latest_vote, and final WHERE
@@ -2359,11 +2360,12 @@ func (a *API) queryGossipNetworkChanges(ctx context.Context, startTime, endTime 
 	// Find gossip nodes that disappeared from the network
 	// by tracking node PUBKEYS (not IPs) that are no longer in the current gossip table
 	// This correctly handles validators that change IP addresses
-	query := `
-		WITH total_stake AS (
-			SELECT sum(activated_stake_lamports) as total
-			FROM solana_vote_accounts_current
-		),
+	total, err := a.cachedTotalStake(ctx)
+	if err != nil {
+		return nil, err
+	}
+	query := fmt.Sprintf(`
+		WITH
 		-- Current node pubkeys (nodes that are still online)
 		current_pubkeys AS (
 			SELECT DISTINCT pubkey FROM solana_gossip_nodes_current
@@ -2387,7 +2389,7 @@ func (a *API) queryGossipNetworkChanges(ctx context.Context, startTime, endTime 
 			'offline' as change_type,
 			COALESCE(va_hist.vote_pubkey, '') as vote_pubkey,
 			COALESCE(va_hist.stake_lamports, 0) as stake_lamports,
-			COALESCE(va_hist.stake_lamports * 100.0 / NULLIF(ts.total, 0), 0) as stake_share_pct,
+			COALESCE(va_hist.stake_lamports * 100.0 / NULLIF(%d, 0), 0) as stake_share_pct,
 			COALESCE(u.owner_pubkey, '') as dz_owner_pubkey,
 			COALESCE(u.pk, '') as user_pk,
 			COALESCE(dev.code, '') as device_code,
@@ -2395,7 +2397,6 @@ func (a *API) queryGossipNetworkChanges(ctx context.Context, startTime, endTime 
 			COALESCE(m.code, '') as metro_code,
 			COALESCE(cont.code, '') as contributor_code
 		FROM disappeared d
-		CROSS JOIN total_stake ts
 		-- Get historical vote account info (since node is offline, won't be in current)
 		LEFT JOIN (
 			SELECT node_pubkey, argMax(vote_pubkey, snapshot_ts) as vote_pubkey,
@@ -2410,7 +2411,7 @@ func (a *API) queryGossipNetworkChanges(ctx context.Context, startTime, endTime 
 		LEFT JOIN dz_contributors_current cont ON dev.contributor_pk = cont.pk
 		ORDER BY d.last_seen_ts DESC, d.pubkey
 		LIMIT 100
-	`
+	`, total)
 
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query, startTime, endTime)
@@ -2503,11 +2504,12 @@ func (a *API) queryVoteAccountChanges(ctx context.Context, startTime, endTime ti
 	// Track validators (vote accounts) joining or leaving the network
 	// A validator "joins" when their vote_pubkey first appears in the vote accounts table
 	// A validator "leaves" when their vote_pubkey is no longer in the current vote accounts table
-	query := `
-		WITH total_stake AS (
-			SELECT sum(activated_stake_lamports) as total
-			FROM solana_vote_accounts_current
-		),
+	total, err := a.cachedTotalStake(ctx)
+	if err != nil {
+		return nil, err
+	}
+	query := fmt.Sprintf(`
+		WITH
 		-- IPs that are connected to DZ (current state)
 		dz_ips AS (
 			SELECT DISTINCT client_ip FROM dz_users_current WHERE client_ip != ''
@@ -2548,7 +2550,7 @@ func (a *API) queryVoteAccountChanges(ctx context.Context, startTime, endTime ti
 			lv.last_seen_ts as event_ts,
 			'left' as change_type,
 			lv.last_stake as stake_lamports,
-			lv.last_stake * 100.0 / NULLIF(ts.total, 0) as stake_share_pct,
+			lv.last_stake * 100.0 / NULLIF(%d, 0) as stake_share_pct,
 			COALESCE(gn.gossip_ip, '') as gossip_ip,
 			COALESCE(u.owner_pubkey, '') as dz_owner_pubkey,
 			COALESCE(u.pk, '') as user_pk,
@@ -2557,7 +2559,6 @@ func (a *API) queryVoteAccountChanges(ctx context.Context, startTime, endTime ti
 			COALESCE(m.code, '') as metro_code,
 			COALESCE(cont.code, '') as contributor_code
 		FROM left_validators lv
-		CROSS JOIN total_stake ts
 		LEFT JOIN solana_gossip_nodes_current gn ON lv.node_pubkey = gn.pubkey
 		LEFT JOIN dz_users_current u ON gn.gossip_ip = u.client_ip
 		LEFT JOIN dz_devices_current dev ON u.device_pk = dev.pk
@@ -2572,7 +2573,7 @@ func (a *API) queryVoteAccountChanges(ctx context.Context, startTime, endTime ti
 			jv.first_seen_ts as event_ts,
 			'joined' as change_type,
 			jv.first_stake as stake_lamports,
-			jv.first_stake * 100.0 / NULLIF(ts.total, 0) as stake_share_pct,
+			jv.first_stake * 100.0 / NULLIF(%d, 0) as stake_share_pct,
 			COALESCE(gn.gossip_ip, '') as gossip_ip,
 			COALESCE(u.owner_pubkey, '') as dz_owner_pubkey,
 			COALESCE(u.pk, '') as user_pk,
@@ -2581,7 +2582,6 @@ func (a *API) queryVoteAccountChanges(ctx context.Context, startTime, endTime ti
 			COALESCE(m.code, '') as metro_code,
 			COALESCE(cont.code, '') as contributor_code
 		FROM joined_validators jv
-		CROSS JOIN total_stake ts
 		LEFT JOIN solana_gossip_nodes_current gn ON jv.node_pubkey = gn.pubkey
 		LEFT JOIN dz_users_current u ON gn.gossip_ip = u.client_ip
 		LEFT JOIN dz_devices_current dev ON u.device_pk = dev.pk
@@ -2590,7 +2590,7 @@ func (a *API) queryVoteAccountChanges(ctx context.Context, startTime, endTime ti
 
 		ORDER BY event_ts DESC, vote_pubkey
 		LIMIT 100
-	`
+	`, total, total)
 
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query, startTime, endTime, startTime, endTime)
@@ -2673,11 +2673,12 @@ func (a *API) queryVoteAccountChanges(ctx context.Context, startTime, endTime ti
 func (a *API) queryStakeChanges(ctx context.Context, startTime, endTime time.Time) ([]TimelineEvent, error) {
 	// Track significant stake changes for validators
 	// A significant change is >10k SOL or >5% change
-	query := `
-		WITH total_stake AS (
-			SELECT sum(activated_stake_lamports) as total
-			FROM solana_vote_accounts_current
-		),
+	total, err := a.cachedTotalStake(ctx)
+	if err != nil {
+		return nil, err
+	}
+	query := fmt.Sprintf(`
+		WITH
 		dz_ips AS (
 			SELECT DISTINCT client_ip FROM dz_users_current WHERE client_ip != ''
 		),
@@ -2708,7 +2709,7 @@ func (a *API) queryStakeChanges(ctx context.Context, startTime, endTime time.Tim
 			  AND prev_stake > 0
 			  AND (
 			  	abs(toInt64(stake) - toInt64(prev_stake)) >= 10000000000000  -- >10k SOL in lamports
-			  	OR abs((toInt64(stake) - toInt64(prev_stake)) * 100.0 / prev_stake) >= 5  -- >5% change
+			  	OR abs((toInt64(stake) - toInt64(prev_stake)) * 100.0 / prev_stake) >= 5  -- >5 pct change
 			  )
 		)
 		SELECT
@@ -2719,8 +2720,8 @@ func (a *API) queryStakeChanges(ctx context.Context, startTime, endTime time.Tim
 			toInt64(sc.prev_stake) as prev_stake,
 			sc.change,
 			sc.change_pct,
-			sc.stake * 100.0 / NULLIF(ts.total, 0) as stake_share_pct,
-			sc.change * 100.0 / NULLIF(ts.total, 0) as stake_share_change_pct,
+			sc.stake * 100.0 / NULLIF(%[1]d, 0) as stake_share_pct,
+			sc.change * 100.0 / NULLIF(%[1]d, 0) as stake_share_change_pct,
 			COALESCE(gn.gossip_ip, '') as gossip_ip,
 			gn.gossip_ip IN (SELECT client_ip FROM dz_ips) as is_on_dz,
 			COALESCE(u.owner_pubkey, '') as dz_owner_pubkey,
@@ -2730,7 +2731,6 @@ func (a *API) queryStakeChanges(ctx context.Context, startTime, endTime time.Tim
 			COALESCE(m.code, '') as metro_code,
 			COALESCE(cont.code, '') as contributor_code
 		FROM significant_changes sc
-		CROSS JOIN total_stake ts
 		LEFT JOIN solana_gossip_nodes_current gn ON sc.node_pubkey = gn.pubkey
 		LEFT JOIN dz_users_current u ON gn.gossip_ip = u.client_ip
 		LEFT JOIN dz_devices_current dev ON u.device_pk = dev.pk
@@ -2738,7 +2738,7 @@ func (a *API) queryStakeChanges(ctx context.Context, startTime, endTime time.Tim
 		LEFT JOIN dz_contributors_current cont ON dev.contributor_pk = cont.pk
 		ORDER BY sc.snapshot_ts DESC, sc.vote_pubkey
 		LIMIT 200
-	`
+	`, total)
 
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query, startTime, endTime)
@@ -2837,11 +2837,12 @@ func (a *API) queryStakeChanges(ctx context.Context, startTime, endTime time.Tim
 // and attributes the change to specific validators (connected, disconnected, stake changed, or left).
 func (a *API) queryDZStakeAttribution(ctx context.Context, startTime, endTime time.Time) ([]TimelineEvent, error) {
 	// Phase 1: Find interesting snapshot pairs where DZ total changed significantly
-	querySnapshots := `
-		WITH total_stake AS (
-			SELECT sum(activated_stake_lamports) as total
-			FROM solana_vote_accounts_current
-		),
+	total, err := a.cachedTotalStake(ctx)
+	if err != nil {
+		return nil, err
+	}
+	querySnapshots := fmt.Sprintf(`
+		WITH
 		dz_ips AS (
 			SELECT DISTINCT client_ip FROM dz_users_current WHERE client_ip != ''
 		),
@@ -2868,14 +2869,13 @@ func (a *API) queryDZStakeAttribution(ctx context.Context, startTime, endTime ti
 		SELECT
 			snapshot_ts,
 			prev_snapshot_ts,
-			dz_stake * 100.0 / NULLIF(ts.total, 0) as dz_total_pct,
-			prev_dz_stake * 100.0 / NULLIF(ts.total, 0) as prev_dz_total_pct
+			dz_stake * 100.0 / NULLIF(%[1]d, 0) as dz_total_pct,
+			prev_dz_stake * 100.0 / NULLIF(%[1]d, 0) as prev_dz_total_pct
 		FROM dz_totals
-		CROSS JOIN total_stake ts
 		WHERE rn > 1
 			AND toInt64(dz_stake) != toInt64(prev_dz_stake)
 		ORDER BY abs(toInt64(dz_stake) - toInt64(prev_dz_stake)) DESC
-	`
+	`, total)
 
 	start := time.Now()
 	snapRows, err := a.envDB(ctx).Query(ctx, querySnapshots, startTime, endTime)
@@ -2917,10 +2917,7 @@ func (a *API) queryDZStakeAttribution(ctx context.Context, startTime, endTime ti
 
 	// Phase 2: Get per-validator data at those timestamps
 	queryValidators := fmt.Sprintf(`
-		WITH total_stake AS (
-			SELECT sum(activated_stake_lamports) as total
-			FROM solana_vote_accounts_current
-		),
+		WITH
 		dz_ips AS (
 			SELECT DISTINCT client_ip FROM dz_users_current WHERE client_ip != ''
 		)
@@ -2932,15 +2929,14 @@ func (a *API) queryDZStakeAttribution(ctx context.Context, startTime, endTime ti
 			COALESCE(gn.gossip_ip, '') as gossip_ip,
 			COALESCE(gn.gossip_ip, '') IN (SELECT client_ip FROM dz_ips) as is_on_dz,
 			toInt64(va.activated_stake_lamports) * toInt64(COALESCE(gn.gossip_ip, '') IN (SELECT client_ip FROM dz_ips)) as dz_contribution,
-			va.activated_stake_lamports * 100.0 / NULLIF(ts.total, 0) as stake_share_pct
+			va.activated_stake_lamports * 100.0 / NULLIF(%[1]d, 0) as stake_share_pct
 		FROM dim_solana_vote_accounts_history va
-		CROSS JOIN total_stake ts
 		ASOF LEFT JOIN dim_solana_gossip_nodes_history gn
 			ON va.node_pubkey = gn.pubkey AND va.snapshot_ts >= gn.snapshot_ts
 		WHERE va.activated_stake_lamports > 0
-			AND va.snapshot_ts IN (%s)
+			AND va.snapshot_ts IN (%[2]s)
 		ORDER BY va.snapshot_ts, va.vote_pubkey
-	`, tsInClause)
+	`, total, tsInClause)
 
 	start2 := time.Now()
 	valRows, err := a.envDB(ctx).Query(ctx, queryValidators)
@@ -3117,26 +3113,24 @@ type dzTotalStakeInfo struct {
 // queryCurrentDZTotalStakeShare returns the current DZ-connected total stake
 // share as a percentage of total network stake, plus the total network stake.
 func (a *API) queryCurrentDZTotalStakeShare(ctx context.Context) (dzTotalStakeInfo, error) {
-	query := `
-		WITH total_stake AS (
-			SELECT sum(activated_stake_lamports) as total
-			FROM solana_vote_accounts_current
-		),
+	total, err := a.cachedTotalStake(ctx)
+	if err != nil {
+		return dzTotalStakeInfo{}, err
+	}
+	query := fmt.Sprintf(`
+		WITH
 		dz_ips AS (
 			SELECT DISTINCT client_ip FROM dz_users_current WHERE client_ip != ''
 		)
 		SELECT
 			sum(va.activated_stake_lamports * toUInt64(COALESCE(gn.gossip_ip, '') IN (SELECT client_ip FROM dz_ips))) * 100.0
-				/ NULLIF(any(ts.total), 0) as dz_total_pct,
-			any(ts.total) as total_stake
+				/ NULLIF(%d, 0) as dz_total_pct
 		FROM solana_vote_accounts_current va
-		CROSS JOIN total_stake ts
 		LEFT JOIN solana_gossip_nodes_current gn ON va.node_pubkey = gn.pubkey
-	`
+	`, total)
 
-	var info dzTotalStakeInfo
-	err := a.envDB(ctx).QueryRow(ctx, query).Scan(&info.DZTotalPct, &info.TotalStakeLamports)
-	if err != nil {
+	info := dzTotalStakeInfo{TotalStakeLamports: total}
+	if err := a.envDB(ctx).QueryRow(ctx, query).Scan(&info.DZTotalPct); err != nil {
 		return dzTotalStakeInfo{}, err
 	}
 	return info, nil
