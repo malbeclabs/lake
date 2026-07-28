@@ -15,7 +15,7 @@ Each View operates independently with its own refresh interval and can depend on
 
 | View | Source | Description |
 |------|--------|-------------|
-| **Serviceability** | Solana (DZ program) | Network topology: devices, metros, links, contributors, users |
+| **Serviceability** | Solana (DZ program) | Network topology: devices, metros, links, contributors, users, feeds |
 | **Telemetry Latency** | Solana (DZ program) | Latency measurements between devices and to internet endpoints |
 | **Telemetry Usage** | InfluxDB | Device interface counters (bandwidth utilization) |
 | **Solana** | Solana (mainnet) | Validator stakes, vote accounts, leader slots |

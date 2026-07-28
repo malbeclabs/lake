@@ -21,4 +21,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Publish serviceability feeds (Generalized Payments) to ClickHouse: new `dz_feeds_current` view (SKU catalog: feed → metro + joinable multicast groups), plus `dz_users_current.feed_pks` (JSON array of the EdgeSeat feeds a connected user consumed seats on) and `dz_access_passes_current.feed_seats` (per-feed seat billing lifecycle on EdgeSeat passes). Bumps the doublezero SDK to pick up the `Feed` account, `User.FeedPks`, and `AccessPass.FeedSeats` (#2068)
 - Shared `utils/pkg/logger` helpers: transient-aware `logger.Error`/`logger.Warn` and consecutive-failure `logger.Escalator`; logging-level convention documented in CLAUDE.md (#696)

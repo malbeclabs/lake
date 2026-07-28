@@ -294,16 +294,29 @@ func TestLake_Serviceability_Store_ReplaceUsers(t *testing.T) {
 		userPK := testPK(1)
 		ownerPubkey := testPK(2)
 		devicePK := testPK(3)
+		feedPK := testPK(4)
+		unicastPK := testPK(5)
 
 		users := []User{
 			{
 				PK:          userPK,
 				OwnerPubkey: ownerPubkey,
 				Status:      "activated",
-				Kind:        "ibrl",
+				Kind:        "multicast",
 				ClientIP:    net.IP{10, 0, 0, 1},
 				DZIP:        net.IP{10, 0, 0, 2},
 				DevicePK:    devicePK,
+				FeedPKs:     []string{feedPK},
+			},
+			{
+				PK:          unicastPK,
+				OwnerPubkey: ownerPubkey,
+				Status:      "activated",
+				Kind:        "ibrl",
+				ClientIP:    net.IP{10, 0, 0, 3},
+				DZIP:        net.IP{10, 0, 0, 4},
+				DevicePK:    devicePK,
+				// FeedPKs deliberately nil: must persist as [] (not null).
 			},
 		}
 
@@ -324,10 +337,17 @@ func TestLake_Serviceability_Store_ReplaceUsers(t *testing.T) {
 		require.NotNil(t, current)
 		require.Equal(t, ownerPubkey, current["owner_pubkey"])
 		require.Equal(t, "activated", current["status"])
-		require.Equal(t, "ibrl", current["kind"])
+		require.Equal(t, "multicast", current["kind"])
 		require.Equal(t, "10.0.0.1", current["client_ip"])
 		require.Equal(t, "10.0.0.2", current["dz_ip"])
 		require.Equal(t, devicePK, current["device_pk"])
+		require.JSONEq(t, `["`+feedPK+`"]`, current["feed_pks"].(string))
+
+		// Nil FeedPKs persist as [] (not null).
+		current, err = ds.GetCurrentRow(ctx, conn, dataset.NewNaturalKey(unicastPK).ToSurrogate())
+		require.NoError(t, err)
+		require.NotNil(t, current)
+		require.Equal(t, "[]", current["feed_pks"].(string))
 	})
 
 	t.Run("persists onchain BGP status through to dz_users_current", func(t *testing.T) {
@@ -424,6 +444,121 @@ func TestLake_Serviceability_Store_ReplaceUsers(t *testing.T) {
 		// Real transition → exactly one new row.
 		require.NoError(t, store.ReplaceUsers(ctx, mk("down")))
 		require.EqualValues(t, 2, historyRows(), "bgp_status transition must write one new history row")
+	})
+}
+
+func TestLake_Serviceability_Store_ReplaceAccessPasses(t *testing.T) {
+	t.Parallel()
+
+	t.Run("persists feed seats as JSON, empty as []", func(t *testing.T) {
+		t.Parallel()
+
+		db := testClient(t)
+		log := laketesting.NewLogger()
+		ctx := t.Context()
+
+		store, err := NewStore(StoreConfig{Logger: log, ClickHouse: db})
+		require.NoError(t, err)
+
+		edgeSeatPK := testPK(1)
+		prepaidPK := testPK(2)
+		feedPK := testPK(3)
+
+		require.NoError(t, store.ReplaceAccessPasses(ctx, []AccessPass{
+			{
+				PK: edgeSeatPK, OwnerPubkey: testPK(4), TypeTag: "edge_seat", Status: "connected",
+				ClientIP: net.IP{0, 0, 0, 0}, UserPayer: testPK(5),
+				FeedSeats: []FeedSeat{
+					{FeedPK: feedPK, MaxUsers: 5, CurrentUsers: 2, WindowEnd: 1800000000, TerminatesAt: 1900000000},
+				},
+			},
+			{
+				PK: prepaidPK, OwnerPubkey: testPK(6), TypeTag: "prepaid", Status: "requested",
+				ClientIP: net.IP{0, 0, 0, 0}, UserPayer: testPK(7),
+			},
+		}))
+
+		conn, err := db.Conn(ctx)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		ds, err := NewAccessPassDataset(log)
+		require.NoError(t, err)
+
+		current, err := ds.GetCurrentRow(ctx, conn, dataset.NewNaturalKey(edgeSeatPK).ToSurrogate())
+		require.NoError(t, err)
+		require.NotNil(t, current)
+		require.JSONEq(t,
+			`[{"feed_pk":"`+feedPK+`","max_users":5,"max_future_users":0,"current_users":2,"anniversary_day":0,"window_end":1800000000,"terminates_at":1900000000}]`,
+			current["feed_seats"].(string))
+
+		current, err = ds.GetCurrentRow(ctx, conn, dataset.NewNaturalKey(prepaidPK).ToSurrogate())
+		require.NoError(t, err)
+		require.NotNil(t, current)
+		require.Equal(t, "[]", current["feed_seats"].(string))
+	})
+}
+
+func TestLake_Serviceability_Store_ReplaceFeeds(t *testing.T) {
+	t.Parallel()
+
+	t.Run("insert, update, and tombstone-on-missing", func(t *testing.T) {
+		t.Parallel()
+
+		db := testClient(t)
+		log := laketesting.NewLogger()
+		ctx := t.Context()
+
+		store, err := NewStore(StoreConfig{Logger: log, ClickHouse: db})
+		require.NoError(t, err)
+
+		feedPK1 := testPK(1)
+		feedPK2 := testPK(2)
+		metroPK := testPK(3)
+		groupPK := testPK(4)
+
+		require.NoError(t, store.ReplaceFeeds(ctx, []Feed{
+			{PK: feedPK1, OwnerPubkey: testPK(5), Code: "FEED001", Name: "NYC", MetroPK: metroPK, Groups: []string{groupPK}},
+			{PK: feedPK2, OwnerPubkey: testPK(6), Code: "FEED002", Name: "LON", MetroPK: metroPK, Groups: []string{}},
+		}))
+
+		conn, err := db.Conn(ctx)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		ds, err := NewFeedDataset(log)
+		require.NoError(t, err)
+		entityID1 := dataset.NewNaturalKey(feedPK1).ToSurrogate()
+		entityID2 := dataset.NewNaturalKey(feedPK2).ToSurrogate()
+
+		current, err := ds.GetCurrentRow(ctx, conn, entityID1)
+		require.NoError(t, err)
+		require.NotNil(t, current)
+		require.Equal(t, "FEED001", current["code"])
+		require.Equal(t, metroPK, current["metro_pk"])
+		require.JSONEq(t, `["`+groupPK+`"]`, current["groups"].(string))
+
+		// Empty groups persist as [] (not null).
+		current, err = ds.GetCurrentRow(ctx, conn, entityID2)
+		require.NoError(t, err)
+		require.NotNil(t, current)
+		require.Equal(t, "[]", current["groups"].(string))
+
+		time.Sleep(1100 * time.Millisecond)
+
+		// Re-write with feed 2 removed and feed 1 renamed: feed 1 updates, feed 2 tombstones.
+		require.NoError(t, store.ReplaceFeeds(ctx, []Feed{
+			{PK: feedPK1, OwnerPubkey: testPK(5), Code: "FEED001-RENAMED", Name: "NYC", MetroPK: metroPK, Groups: []string{groupPK}},
+		}))
+
+		current, err = ds.GetCurrentRow(ctx, conn, entityID1)
+		require.NoError(t, err)
+		require.NotNil(t, current)
+		require.Equal(t, "FEED001-RENAMED", current["code"])
+
+		current, err = ds.GetCurrentRow(ctx, conn, entityID2)
+		require.NoError(t, err)
+		require.Nil(t, current, "feed absent from the snapshot should be tombstoned")
 	})
 }
 
