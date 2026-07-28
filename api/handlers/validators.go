@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -92,20 +93,23 @@ var validatorsQuerySortFields = map[string]string{
 	"client":     "software_client",
 }
 
-// validatorsPageCacheKey is the page-cache key for the default validators listing
+// ValidatorsPageCacheKey is the page-cache key for the default validators listing
 // (no filters, sorted by stake desc, first page). The worker refreshes it; the
-// handler serves it for the matching request shape.
-const validatorsPageCacheKey = "validators"
+// handler serves it for the matching request shape. Exported so the worker entry
+// and this handler share one definition (like MulticastHealthSummariesCacheKey).
+const ValidatorsPageCacheKey = "validators"
 
 func (a *API) GetValidators(w http.ResponseWriter, r *http.Request) {
-	pagination := ParsePagination(r, 100)
+	// DefaultLimit (not a literal) so the parse default and the page-cache gate's
+	// isDefaultValidatorsRequest comparison can't drift apart.
+	pagination := ParsePagination(r, DefaultLimit)
 	sort := ParseSort(r, "stake", validatorSortFields)
 	filters := ParseFilters(r)
 
 	// The default shape (first page, stake desc, no filters) is polled continuously
 	// and served from the page cache on mainnet. Other shapes bypass the cache.
 	if isMainnet(r.Context()) && isDefaultValidatorsRequest(pagination, sort, filters) {
-		if data, err := a.readPageCache(r.Context(), validatorsPageCacheKey); err == nil {
+		if data, err := a.readPageCache(r.Context(), ValidatorsPageCacheKey); err == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			_, _ = w.Write(data)
@@ -307,13 +311,13 @@ func (a *API) fetchValidatorsPage(ctx context.Context, whereFilter string, filte
 			&total,
 			&onDZCount,
 		); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("validators row scan: %w", err)
 		}
 		validators = append(validators, v)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("validators rows iteration: %w", err)
 	}
 
 	// Return empty array instead of null

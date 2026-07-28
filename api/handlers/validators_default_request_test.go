@@ -27,9 +27,11 @@ func TestValidatorsSortFieldsKeyParity(t *testing.T) {
 func TestIsDefaultValidatorsRequest(t *testing.T) {
 	t.Parallel()
 
+	// DefaultLimit (not 100) so this stays in lockstep with GetValidators' parse
+	// call — a changed handler default must fail here, not silently stop caching.
 	parse := func(rawQuery string) (PaginationParams, SortParams, MultiFilterParams) {
 		r := httptest.NewRequest(http.MethodGet, "/api/solana/validators?"+rawQuery, nil)
-		return ParsePagination(r, 100), ParseSort(r, "stake", validatorSortFields), ParseFilters(r)
+		return ParsePagination(r, DefaultLimit), ParseSort(r, "stake", validatorSortFields), ParseFilters(r)
 	}
 
 	tests := []struct {

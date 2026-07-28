@@ -249,7 +249,7 @@ func (a *Activities) entries() []cacheEntry {
 		// The default validators listing (first page, stake desc, no filters) is
 		// polled continuously by the UI and an external consumer. Cache it every
 		// other slow cycle (~60s) — its stake/geo data moves on slow timescales.
-		{name: "validators", key: "validators", everyN: validatorsListingEveryN, fn: func(ctx context.Context) (any, error) {
+		{name: "validators", key: handlers.ValidatorsPageCacheKey, everyN: validatorsListingEveryN, fn: func(ctx context.Context) (any, error) {
 			return api.FetchValidatorsData(ctx)
 		}},
 		{name: "multicast health summaries", key: handlers.MulticastHealthSummariesCacheKey, fn: func(ctx context.Context) (any, error) {
