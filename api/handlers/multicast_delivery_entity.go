@@ -63,7 +63,9 @@ func (a *API) GetDeviceMulticastDelivery(w http.ResponseWriter, r *http.Request)
 	// precedence (device 404 first) and the source-unavailable downgrades are
 	// unchanged. No cross-cancellation on error: sibling errors would surface as
 	// context.Canceled and scramble that precedence, and each query already
-	// bounds itself with max_execution_time.
+	// bounds itself with max_execution_time. Note the per-env ClickHouse pools
+	// cap at 10 open conns (vs 100 for mainnet), so stage 2's fan-out of up to 8
+	// bounds non-mainnet envs to ~1 concurrent request before acquisitions queue.
 	now := time.Now().UTC()
 
 	var (
@@ -73,16 +75,16 @@ func (a *API) GetDeviceMulticastDelivery(w http.ResponseWriter, r *http.Request)
 		deviceErr, availableErr, sourceTimesErr error
 	)
 	var wg sync.WaitGroup
-	runQuery := func(fn func()) {
+	spawn := func(fn func()) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			fn()
 		}()
 	}
-	runQuery(func() { device, deviceErr = a.queryMulticastDeliveryDevice(ctx, pkOrCode) })
-	runQuery(func() { available, availableErr = a.queryMulticastDeliverySources(ctx) })
-	runQuery(func() { sourceTimes, sourceTimesErr = a.queryMulticastDeliverySourceIngestTimes(ctx) })
+	spawn(func() { device, deviceErr = a.queryMulticastDeliveryDevice(ctx, pkOrCode) })
+	spawn(func() { available, availableErr = a.queryMulticastDeliverySources(ctx) })
+	spawn(func() { sourceTimes, sourceTimesErr = a.queryMulticastDeliverySourceIngestTimes(ctx) })
 	wg.Wait()
 
 	if deviceErr != nil {
@@ -118,36 +120,36 @@ func (a *API) GetDeviceMulticastDelivery(w http.ResponseWriter, r *http.Request)
 	var endpointErr error
 
 	if available[multicastDeliveryMrouteView] {
-		runQuery(func() {
+		spawn(func() {
 			mroutes, mrouteTimes, routeTotal, mrouteErr = a.queryMulticastDeviceDeliveryMroutes(ctx, device, params)
 		})
 	}
 	if available[multicastDeliveryOIFView] {
-		runQuery(func() { oifs, oifTimes, oifTotal, oifErr = a.queryMulticastDeviceDeliveryOIFs(ctx, device, params) })
+		spawn(func() { oifs, oifTimes, oifTotal, oifErr = a.queryMulticastDeviceDeliveryOIFs(ctx, device, params) })
 	}
 	if available[multicastDeliveryMSDPPeersView] {
-		runQuery(func() { msdpPeers, peerTimes, peersErr = a.queryMulticastDeviceDeliveryMSDPPeers(ctx, device) })
+		spawn(func() { msdpPeers, peerTimes, peersErr = a.queryMulticastDeviceDeliveryMSDPPeers(ctx, device) })
 	}
 	if available[multicastDeliveryMSDPPimSAView] {
-		runQuery(func() {
+		spawn(func() {
 			pimSAs, pimSATimes, pimSAErr = a.queryMulticastDeviceDeliveryMSDPSAs(ctx, multicastDeliveryMSDPPimSAView, "msdp_pim_sa_entity_id", device, params, false)
 		})
 	}
 	if available[multicastDeliveryMSDPSAView] {
-		runQuery(func() {
+		spawn(func() {
 			saCache, saTimes, saErr = a.queryMulticastDeviceDeliveryMSDPSAs(ctx, multicastDeliveryMSDPSAView, "msdp_sa_entity_id", device, params, true)
 		})
 	}
-	runQuery(func() { groups, groupErr = a.queryMulticastDeviceDeliveryGroups(ctx, device, params) })
-	runQuery(func() {
+	spawn(func() { groups, groupErr = a.queryMulticastDeviceDeliveryGroups(ctx, device, params) })
+	spawn(func() {
 		healthUsers, healthUserTotal, userHealthCounts, healthErr = a.queryDeviceMulticastHealthUsers(ctx, device, params)
 	})
-	runQuery(func() {
+	spawn(func() {
 		endpointHealthItems, endpointHealthTotal, endpointHealthCounts, endpointErr = a.queryDeviceMulticastEndpointHealth(ctx, device, params)
 	})
 	wg.Wait()
 
-	if mrouteErr != nil {
+	if available[multicastDeliveryMrouteView] && mrouteErr != nil {
 		if !multicastDeliverySourceErr(mrouteErr) {
 			writeMulticastDeliveryEntityError(w, mrouteErr, "multicast device mroutes query error", "device", pkOrCode)
 			return
@@ -157,7 +159,7 @@ func (a *API) GetDeviceMulticastDelivery(w http.ResponseWriter, r *http.Request)
 		mrouteTimes = nil
 	}
 
-	if oifErr != nil {
+	if available[multicastDeliveryOIFView] && oifErr != nil {
 		if !multicastDeliverySourceErr(oifErr) {
 			writeMulticastDeliveryEntityError(w, oifErr, "multicast device oifs query error", "device", pkOrCode)
 			return
@@ -167,7 +169,7 @@ func (a *API) GetDeviceMulticastDelivery(w http.ResponseWriter, r *http.Request)
 		oifTimes = nil
 	}
 
-	if peersErr != nil {
+	if available[multicastDeliveryMSDPPeersView] && peersErr != nil {
 		if !multicastDeliverySourceErr(peersErr) {
 			writeMulticastDeliveryEntityError(w, peersErr, "multicast device msdp peers query error", "device", pkOrCode)
 			return
