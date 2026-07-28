@@ -230,6 +230,15 @@ func TestDueThisCycle(t *testing.T) {
 		require.True(t, ok, "topology entry must exist")
 		require.LessOrEqual(t, topo.everyN, 1, "topology must refresh every cycle")
 
+		vals, ok := byKey["validators"]
+		require.True(t, ok, "validators entry must exist")
+		require.Equal(t, validatorsListingEveryN, vals.everyN)
+		require.Equal(t, 2, vals.everyN)
+		// Due on cycles 0, 2, 4, ... (~60s at the default 30s interval).
+		for _, cycle := range []int{0, 1, 2, 3, 4, 5} {
+			require.Equal(t, cycle%2 == 0, dueThisCycle(vals.everyN, cycle), "validators cycle %d", cycle)
+		}
+
 		// Model the RefreshCaches gate: publisher_check is due only on cycles 0,4,8;
 		// topology is due every cycle.
 		for _, cycle := range []int{0, 1, 2, 3, 4, 5, 8} {

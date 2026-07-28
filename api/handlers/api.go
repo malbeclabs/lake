@@ -74,6 +74,11 @@ type API struct {
 	pubCheckSF      singleflight.Group
 	pubCheckSem     chan struct{}
 	pubCheckSemOnce sync.Once
+
+	// scalarCache holds per-env TTL-cached scalars (network total stake, current
+	// cluster slot) that dashboard handlers previously recomputed per request. Its
+	// zero value is ready to use, so a directly-constructed API needs no change.
+	scalarCache scalarCache
 }
 
 // publisherCheckLiveSem lazily builds the concurrency-bounding semaphore so a
