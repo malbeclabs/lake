@@ -75,6 +75,11 @@ type API struct {
 	pubCheckSem     chan struct{}
 	pubCheckSemOnce sync.Once
 
+	// mcastQuerySem bounds the aggregate ClickHouse query fan-out of the device
+	// multicast-delivery handler (see maxConcurrentMulticastDeliveryQueries).
+	mcastQuerySem     chan struct{}
+	mcastQuerySemOnce sync.Once
+
 	// scalarCache holds per-env TTL-cached scalars (network total stake, current
 	// cluster slot) that dashboard handlers previously recomputed per request. Its
 	// zero value is ready to use, so a directly-constructed API needs no change.
@@ -88,6 +93,15 @@ func (a *API) publisherCheckLiveSem() chan struct{} {
 		a.pubCheckSem = make(chan struct{}, maxConcurrentPublisherCheckLive)
 	})
 	return a.pubCheckSem
+}
+
+// multicastDeliveryQuerySem lazily builds the concurrency-bounding semaphore
+// so a zero-value API (used widely in tests) needs no constructor change.
+func (a *API) multicastDeliveryQuerySem() chan struct{} {
+	a.mcastQuerySemOnce.Do(func() {
+		a.mcastQuerySem = make(chan struct{}, maxConcurrentMulticastDeliveryQueries)
+	})
+	return a.mcastQuerySem
 }
 
 // envDB returns the ClickHouse connection for the environment in the context.

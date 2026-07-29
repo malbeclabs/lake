@@ -17,6 +17,17 @@ import (
 
 const multicastDeliveryEntityCoverageNote = "Current observed route state is limited to devices reporting multicast forwarding telemetry; absence is not proof of packet loss."
 
+// maxConcurrentMulticastDeliveryQueries bounds the aggregate number of
+// in-flight ClickHouse queries the device multicast-delivery fan-out holds
+// across all concurrent requests. clickhouse-go does not queue pool
+// acquisitions: past DialTimeout (5s) an acquisition fails with
+// ErrAcquireConnTimeout, which is not a source-unavailable error and so
+// surfaces as a 500 — to this endpoint and to every other handler sharing the
+// env pool. The smallest env pools have MaxOpenConns: 10, so the bound stays
+// below that with headroom for other endpoints (same rationale and shape as
+// maxConcurrentPublisherCheckLive).
+const maxConcurrentMulticastDeliveryQueries = 6
+
 type multicastDeliveryEntityParams struct {
 	Groups         []string
 	Sources        []string
@@ -68,9 +79,15 @@ func (a *API) GetDeviceMulticastDelivery(w http.ResponseWriter, r *http.Request)
 	// variables the handler no longer reads. No cross-cancellation on other
 	// errors: sibling errors would surface as context.Canceled and scramble
 	// the precedence, and each query already bounds itself with
-	// max_execution_time. Note the per-env ClickHouse pools cap at 10 open
-	// conns (vs 100 for mainnet), so stage 2's fan-out of up to 8 bounds
-	// non-mainnet envs to ~1 concurrent request before acquisitions queue.
+	// max_execution_time.
+	//
+	// Spawned queries acquire the process-wide semaphore so the fan-out's
+	// aggregate ClickHouse footprint stays below the smallest env pool (see
+	// maxConcurrentMulticastDeliveryQueries). The device lookup skips the
+	// semaphore: it is a single point lookup that gates everything else, and
+	// its common failure mode (404) must stay fast even when the semaphore is
+	// saturated — one ungated conn per request matches the old sequential
+	// footprint.
 	now := time.Now().UTC()
 
 	var (
@@ -80,10 +97,20 @@ func (a *API) GetDeviceMulticastDelivery(w http.ResponseWriter, r *http.Request)
 		deviceErr, availableErr, sourceTimesErr error
 	)
 	var wg sync.WaitGroup
+	sem := a.multicastDeliveryQuerySem()
 	spawn := func(fn func()) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				// No slot before the request deadline (or the handler already
+				// returned). Run fn anyway: with ctx done it fails fast with
+				// the context error, keeping error handling uniform instead of
+				// leaving its result vars zeroed as if the query succeeded.
+			}
 			fn()
 		}()
 	}
