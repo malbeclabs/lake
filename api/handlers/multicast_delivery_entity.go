@@ -17,16 +17,27 @@ import (
 
 const multicastDeliveryEntityCoverageNote = "Current observed route state is limited to devices reporting multicast forwarding telemetry; absence is not proof of packet loss."
 
-// maxConcurrentMulticastDeliveryQueries bounds the aggregate number of
-// in-flight ClickHouse queries the device multicast-delivery fan-out holds
-// across all concurrent requests. clickhouse-go does not queue pool
-// acquisitions: past DialTimeout (5s) an acquisition fails with
-// ErrAcquireConnTimeout, which is not a source-unavailable error and so
-// surfaces as a 500 — to this endpoint and to every other handler sharing the
-// env pool. The smallest env pools have MaxOpenConns: 10, so the bound stays
-// below that with headroom for other endpoints (same rationale and shape as
+// The device multicast-delivery fan-out bounds its aggregate in-flight
+// ClickHouse queries per env (across all concurrent requests). clickhouse-go
+// does not queue pool acquisitions: past DialTimeout (5s) an acquisition
+// fails with ErrAcquireConnTimeout, which is not a source-unavailable error
+// and so surfaces as a 500 — to this endpoint and to every other handler
+// sharing the env pool. The bound is 60% of the env pool's MaxOpenConns
+// (6 of the 10-conn devnet/testnet pools, 60 of mainnet's 100), leaving the
+// rest for other endpoints on the same pool (same rationale and shape as
 // maxConcurrentPublisherCheckLive).
+//
+// maxConcurrentMulticastDeliveryQueries is the fallback bound when the pool
+// size is unavailable, matching the smallest env pool's derived value.
 const maxConcurrentMulticastDeliveryQueries = 6
+
+func multicastDeliveryQuerySemSize(maxOpenConns int) int {
+	size := maxOpenConns * 6 / 10
+	if size < 1 {
+		return 1
+	}
+	return size
+}
 
 type multicastDeliveryEntityParams struct {
 	Groups         []string
@@ -81,9 +92,9 @@ func (a *API) GetDeviceMulticastDelivery(w http.ResponseWriter, r *http.Request)
 	// the precedence, and each query already bounds itself with
 	// max_execution_time.
 	//
-	// Spawned queries acquire the process-wide semaphore so the fan-out's
-	// aggregate ClickHouse footprint stays below the smallest env pool (see
-	// maxConcurrentMulticastDeliveryQueries). The device lookup skips the
+	// Spawned queries acquire the per-env semaphore so the fan-out's
+	// aggregate ClickHouse footprint stays below that env's pool (see
+	// multicastDeliveryQuerySemSize). The device lookup skips the
 	// semaphore: it is a single point lookup that gates everything else, and
 	// its common failure mode (404) must stay fast even when the semaphore is
 	// saturated — one ungated conn per request matches the old sequential
@@ -97,7 +108,7 @@ func (a *API) GetDeviceMulticastDelivery(w http.ResponseWriter, r *http.Request)
 		deviceErr, availableErr, sourceTimesErr error
 	)
 	var wg sync.WaitGroup
-	sem := a.multicastDeliveryQuerySem()
+	sem := a.multicastDeliveryQuerySem(ctx)
 	spawn := func(fn func()) {
 		wg.Add(1)
 		go func() {
