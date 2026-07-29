@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -15,6 +16,28 @@ import (
 )
 
 const multicastDeliveryEntityCoverageNote = "Current observed route state is limited to devices reporting multicast forwarding telemetry; absence is not proof of packet loss."
+
+// The device multicast-delivery fan-out bounds its aggregate in-flight
+// ClickHouse queries per env (across all concurrent requests). clickhouse-go
+// does not queue pool acquisitions: past DialTimeout (5s) an acquisition
+// fails with ErrAcquireConnTimeout, which is not a source-unavailable error
+// and so surfaces as a 500 — to this endpoint and to every other handler
+// sharing the env pool. The bound is 60% of the env pool's MaxOpenConns
+// (6 of the 10-conn devnet/testnet pools, 60 of mainnet's 100), leaving the
+// rest for other endpoints on the same pool (same rationale and shape as
+// maxConcurrentPublisherCheckLive).
+//
+// maxConcurrentMulticastDeliveryQueries is the fallback bound when the pool
+// size is unavailable, matching the smallest env pool's derived value.
+const maxConcurrentMulticastDeliveryQueries = 6
+
+func multicastDeliveryQuerySemSize(maxOpenConns int) int {
+	size := maxOpenConns * 6 / 10
+	if size < 1 {
+		return 1
+	}
+	return size
+}
 
 type multicastDeliveryEntityParams struct {
 	Groups         []string
@@ -48,76 +71,167 @@ func (a *API) GetDeviceMulticastDelivery(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// The handler runs up to 11 ClickHouse queries under a single 30s request
+	// deadline; sequentially their wall times accumulate to the margin on loaded
+	// runners. Independent queries therefore run concurrently, in two stages:
+	//
+	//   stage 1: device row, source availability, source ingest times
+	//            (independent of each other; everything else needs their results)
+	//   stage 2: per-view state, rollup, and health queries
+	//            (each depends only on stage 1's device + available map)
+	//
+	// Goroutines write only their own result/error variables; errors are
+	// processed after each Wait in the original sequential order so error
+	// precedence (device 404 first) and the source-unavailable downgrades are
+	// unchanged. The device lookup gates everything else, so it gets its own
+	// done signal: on device error (typically a 404) the handler returns as
+	// soon as that result lands, without waiting for the sibling stage-1
+	// queries — the deferred cancel aborts them and their writes go to
+	// variables the handler no longer reads. No cross-cancellation on other
+	// errors: sibling errors would surface as context.Canceled and scramble
+	// the precedence, and each query already bounds itself with
+	// max_execution_time.
+	//
+	// Spawned queries acquire the per-env semaphore so the fan-out's
+	// aggregate ClickHouse footprint stays below that env's pool (see
+	// multicastDeliveryQuerySemSize). The device lookup skips the
+	// semaphore: it is a single point lookup that gates everything else, and
+	// its common failure mode (404) must stay fast even when the semaphore is
+	// saturated — one ungated conn per request matches the old sequential
+	// footprint.
 	now := time.Now().UTC()
-	device, err := a.queryMulticastDeliveryDevice(ctx, pkOrCode)
-	if err != nil {
-		writeMulticastDeliveryEntityError(w, err, "multicast device delivery query error", "device", pkOrCode)
-		return
-	}
 
-	available, err := a.queryMulticastDeliverySources(ctx)
-	if err != nil {
-		writeMulticastDeliveryEntityError(w, err, "multicast device delivery sources query error", "device", pkOrCode)
+	var (
+		device                                  MulticastDeliveryDevice
+		available                               map[string]bool
+		sourceTimes                             map[string]time.Time
+		deviceErr, availableErr, sourceTimesErr error
+	)
+	var wg sync.WaitGroup
+	sem := a.multicastDeliveryQuerySem(ctx)
+	spawn := func(fn func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				// No slot before the request deadline (or the handler already
+				// returned). Run fn anyway: with ctx done it fails fast with
+				// the context error, keeping error handling uniform instead of
+				// leaving its result vars zeroed as if the query succeeded.
+			}
+			fn()
+		}()
+	}
+	deviceDone := make(chan struct{})
+	go func() {
+		defer close(deviceDone)
+		device, deviceErr = a.queryMulticastDeliveryDevice(ctx, pkOrCode)
+	}()
+	spawn(func() { available, availableErr = a.queryMulticastDeliverySources(ctx) })
+	spawn(func() { sourceTimes, sourceTimesErr = a.queryMulticastDeliverySourceIngestTimes(ctx) })
+
+	<-deviceDone
+	if deviceErr != nil {
+		writeMulticastDeliveryEntityError(w, deviceErr, "multicast device delivery query error", "device", pkOrCode)
 		return
 	}
-	sourceTimes, err := a.queryMulticastDeliverySourceIngestTimes(ctx)
-	if err != nil {
-		writeMulticastDeliveryEntityError(w, err, "multicast device delivery freshness query error", "device", pkOrCode)
+	wg.Wait()
+
+	if availableErr != nil {
+		writeMulticastDeliveryEntityError(w, availableErr, "multicast device delivery sources query error", "device", pkOrCode)
+		return
+	}
+	if sourceTimesErr != nil {
+		writeMulticastDeliveryEntityError(w, sourceTimesErr, "multicast device delivery freshness query error", "device", pkOrCode)
 		return
 	}
 
 	var mroutes []MulticastDeliveryMroute
 	var oifs []MulticastDeliveryOIF
 	var msdpPeers []MulticastDeliveryMSDPPeer
-	var msdpSAs []MulticastDeliveryMSDPSA
+	var msdpSAs, pimSAs, saCache []MulticastDeliveryMSDPSA
 	var routeTotal, oifTotal int
 	var mrouteTimes, oifTimes, peerTimes, pimSATimes, saTimes []time.Time
+	var mrouteErr, oifErr, peersErr, pimSAErr, saErr error
+
+	var groups []MulticastDeliveryEntityGroup
+	var groupErr error
+	var healthUsers []MulticastHealthUserItem
+	var healthUserTotal int
+	var userHealthCounts MulticastEntityHealthStatusCounts
+	var healthErr error
+	var endpointHealthItems []MulticastHealthPathItem
+	var endpointHealthTotal int
+	var endpointHealthCounts MulticastEntityHealthStatusCounts
+	var endpointErr error
 
 	if available[multicastDeliveryMrouteView] {
-		mroutes, mrouteTimes, routeTotal, err = a.queryMulticastDeviceDeliveryMroutes(ctx, device, params)
-		if err != nil {
-			if !multicastDeliverySourceErr(err) {
-				writeMulticastDeliveryEntityError(w, err, "multicast device mroutes query error", "device", pkOrCode)
-				return
-			}
-			available[multicastDeliveryMrouteView] = false
-			mroutes = []MulticastDeliveryMroute{}
-			mrouteTimes = nil
-		}
+		spawn(func() {
+			mroutes, mrouteTimes, routeTotal, mrouteErr = a.queryMulticastDeviceDeliveryMroutes(ctx, device, params)
+		})
 	}
-
 	if available[multicastDeliveryOIFView] {
-		oifs, oifTimes, oifTotal, err = a.queryMulticastDeviceDeliveryOIFs(ctx, device, params)
-		if err != nil {
-			if !multicastDeliverySourceErr(err) {
-				writeMulticastDeliveryEntityError(w, err, "multicast device oifs query error", "device", pkOrCode)
-				return
-			}
-			available[multicastDeliveryOIFView] = false
-			oifs = []MulticastDeliveryOIF{}
-			oifTimes = nil
+		spawn(func() { oifs, oifTimes, oifTotal, oifErr = a.queryMulticastDeviceDeliveryOIFs(ctx, device, params) })
+	}
+	if available[multicastDeliveryMSDPPeersView] {
+		spawn(func() { msdpPeers, peerTimes, peersErr = a.queryMulticastDeviceDeliveryMSDPPeers(ctx, device) })
+	}
+	if available[multicastDeliveryMSDPPimSAView] {
+		spawn(func() {
+			pimSAs, pimSATimes, pimSAErr = a.queryMulticastDeviceDeliveryMSDPSAs(ctx, multicastDeliveryMSDPPimSAView, "msdp_pim_sa_entity_id", device, params, false)
+		})
+	}
+	if available[multicastDeliveryMSDPSAView] {
+		spawn(func() {
+			saCache, saTimes, saErr = a.queryMulticastDeviceDeliveryMSDPSAs(ctx, multicastDeliveryMSDPSAView, "msdp_sa_entity_id", device, params, true)
+		})
+	}
+	spawn(func() { groups, groupErr = a.queryMulticastDeviceDeliveryGroups(ctx, device, params) })
+	spawn(func() {
+		healthUsers, healthUserTotal, userHealthCounts, healthErr = a.queryDeviceMulticastHealthUsers(ctx, device, params)
+	})
+	spawn(func() {
+		endpointHealthItems, endpointHealthTotal, endpointHealthCounts, endpointErr = a.queryDeviceMulticastEndpointHealth(ctx, device, params)
+	})
+	wg.Wait()
+
+	if available[multicastDeliveryMrouteView] && mrouteErr != nil {
+		if !multicastDeliverySourceErr(mrouteErr) {
+			writeMulticastDeliveryEntityError(w, mrouteErr, "multicast device mroutes query error", "device", pkOrCode)
+			return
 		}
+		available[multicastDeliveryMrouteView] = false
+		mroutes = []MulticastDeliveryMroute{}
+		mrouteTimes = nil
 	}
 
-	if available[multicastDeliveryMSDPPeersView] {
-		msdpPeers, peerTimes, err = a.queryMulticastDeviceDeliveryMSDPPeers(ctx, device)
-		if err != nil {
-			if !multicastDeliverySourceErr(err) {
-				writeMulticastDeliveryEntityError(w, err, "multicast device msdp peers query error", "device", pkOrCode)
-				return
-			}
-			available[multicastDeliveryMSDPPeersView] = false
-			msdpPeers = []MulticastDeliveryMSDPPeer{}
-			peerTimes = nil
+	if available[multicastDeliveryOIFView] && oifErr != nil {
+		if !multicastDeliverySourceErr(oifErr) {
+			writeMulticastDeliveryEntityError(w, oifErr, "multicast device oifs query error", "device", pkOrCode)
+			return
 		}
+		available[multicastDeliveryOIFView] = false
+		oifs = []MulticastDeliveryOIF{}
+		oifTimes = nil
+	}
+
+	if available[multicastDeliveryMSDPPeersView] && peersErr != nil {
+		if !multicastDeliverySourceErr(peersErr) {
+			writeMulticastDeliveryEntityError(w, peersErr, "multicast device msdp peers query error", "device", pkOrCode)
+			return
+		}
+		available[multicastDeliveryMSDPPeersView] = false
+		msdpPeers = []MulticastDeliveryMSDPPeer{}
+		peerTimes = nil
 	}
 
 	if available[multicastDeliveryMSDPPimSAView] {
-		var pimSAs []MulticastDeliveryMSDPSA
-		pimSAs, pimSATimes, err = a.queryMulticastDeviceDeliveryMSDPSAs(ctx, multicastDeliveryMSDPPimSAView, "msdp_pim_sa_entity_id", device, params, false)
-		if err != nil {
-			if !multicastDeliverySourceErr(err) {
-				writeMulticastDeliveryEntityError(w, err, "multicast device pim sa query error", "device", pkOrCode)
+		if pimSAErr != nil {
+			if !multicastDeliverySourceErr(pimSAErr) {
+				writeMulticastDeliveryEntityError(w, pimSAErr, "multicast device pim sa query error", "device", pkOrCode)
 				return
 			}
 			available[multicastDeliveryMSDPPimSAView] = false
@@ -128,11 +242,9 @@ func (a *API) GetDeviceMulticastDelivery(w http.ResponseWriter, r *http.Request)
 	}
 
 	if available[multicastDeliveryMSDPSAView] {
-		var saCache []MulticastDeliveryMSDPSA
-		saCache, saTimes, err = a.queryMulticastDeviceDeliveryMSDPSAs(ctx, multicastDeliveryMSDPSAView, "msdp_sa_entity_id", device, params, true)
-		if err != nil {
-			if !multicastDeliverySourceErr(err) {
-				writeMulticastDeliveryEntityError(w, err, "multicast device sa cache query error", "device", pkOrCode)
+		if saErr != nil {
+			if !multicastDeliverySourceErr(saErr) {
+				writeMulticastDeliveryEntityError(w, saErr, "multicast device sa cache query error", "device", pkOrCode)
 				return
 			}
 			available[multicastDeliveryMSDPSAView] = false
@@ -155,7 +267,6 @@ func (a *API) GetDeviceMulticastDelivery(w http.ResponseWriter, r *http.Request)
 	if len(params.Roles) > 0 {
 		roles = filterMulticastDeviceRoles(roles, params.Roles)
 	}
-	groups, groupErr := a.queryMulticastDeviceDeliveryGroups(ctx, device, params)
 	if groupErr != nil {
 		if !multicastDeliverySourceErr(groupErr) {
 			writeMulticastDeliveryEntityError(w, groupErr, "multicast device groups query error", "device", pkOrCode)
@@ -163,7 +274,6 @@ func (a *API) GetDeviceMulticastDelivery(w http.ResponseWriter, r *http.Request)
 		}
 		groups = buildMulticastEntityGroups(mroutes, oifs)
 	}
-	healthUsers, healthUserTotal, userHealthCounts, healthErr := a.queryDeviceMulticastHealthUsers(ctx, device, params)
 	if healthErr != nil {
 		if !multicastDeliverySourceErr(healthErr) {
 			writeMulticastDeliveryEntityError(w, healthErr, "multicast device health users query error", "device", pkOrCode)
@@ -171,7 +281,6 @@ func (a *API) GetDeviceMulticastDelivery(w http.ResponseWriter, r *http.Request)
 		}
 		healthUsers = []MulticastHealthUserItem{}
 	}
-	endpointHealthItems, endpointHealthTotal, endpointHealthCounts, endpointErr := a.queryDeviceMulticastEndpointHealth(ctx, device, params)
 	if endpointErr != nil {
 		if !multicastDeliverySourceErr(endpointErr) {
 			writeMulticastDeliveryEntityError(w, endpointErr, "multicast device endpoint health query error", "device", pkOrCode)

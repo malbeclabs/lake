@@ -75,6 +75,12 @@ type API struct {
 	pubCheckSem     chan struct{}
 	pubCheckSemOnce sync.Once
 
+	// mcastQuerySems bounds the aggregate ClickHouse query fan-out of the
+	// device multicast-delivery handler, keyed by env because the pools it
+	// protects are per-env with very different sizes (see
+	// multicastDeliveryQuerySem). Values are chan struct{} semaphores.
+	mcastQuerySems sync.Map
+
 	// scalarCache holds per-env TTL-cached scalars (network total stake, current
 	// cluster slot) that dashboard handlers previously recomputed per request. Its
 	// zero value is ready to use, so a directly-constructed API needs no change.
@@ -88,6 +94,27 @@ func (a *API) publisherCheckLiveSem() chan struct{} {
 		a.pubCheckSem = make(chan struct{}, maxConcurrentPublisherCheckLive)
 	})
 	return a.pubCheckSem
+}
+
+// multicastDeliveryQuerySem lazily builds the concurrency-bounding semaphore
+// for the request's env, so a zero-value API (used widely in tests) needs no
+// constructor change. The bound is sized from the env pool's MaxOpenConns
+// (see multicastDeliveryQuerySemSize): devnet/testnet pools are 10 conns,
+// mainnet is 100, and one shared counter sized for the smallest pool would
+// throttle mainnet an order of magnitude below its capacity.
+func (a *API) multicastDeliveryQuerySem(ctx context.Context) chan struct{} {
+	env := string(EnvFromContext(ctx))
+	if sem, ok := a.mcastQuerySems.Load(env); ok {
+		return sem.(chan struct{})
+	}
+	size := maxConcurrentMulticastDeliveryQueries
+	if conn := a.envDB(ctx); conn != nil {
+		if pool := conn.Stats().MaxOpenConns; pool > 0 {
+			size = multicastDeliveryQuerySemSize(pool)
+		}
+	}
+	sem, _ := a.mcastQuerySems.LoadOrStore(env, make(chan struct{}, size))
+	return sem.(chan struct{})
 }
 
 // envDB returns the ClickHouse connection for the environment in the context.
