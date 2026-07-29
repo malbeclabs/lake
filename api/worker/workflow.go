@@ -129,6 +129,11 @@ type cacheEntry struct {
 // for data this slow-moving; the cached-or-live readers cap staleness independently.
 const publisherCheckEveryN = 4
 
+// validatorsListingEveryN refreshes the default validators listing every other
+// slow cycle (~60s at the default 30s interval), matching the UI's ~60s poll and
+// absorbing the external ~10s poller that previously ran the query ~6,500×/day.
+const validatorsListingEveryN = 2
+
 // dueThisCycle reports whether an entry with the given cadence refreshes on the
 // given zero-based cycle. everyN <= 1 means every cycle.
 func dueThisCycle(everyN, cycle int) bool {
@@ -240,6 +245,12 @@ func (a *Activities) entries() []cacheEntry {
 		}},
 		{name: "geo validators", key: "geo_validators", fn: func(ctx context.Context) (any, error) {
 			return api.FetchGeoValidatorsData(ctx, "", "")
+		}},
+		// The default validators listing (first page, stake desc, no filters) is
+		// polled continuously by the UI and an external consumer. Cache it every
+		// other slow cycle (~60s) — its stake/geo data moves on slow timescales.
+		{name: "validators", key: handlers.ValidatorsPageCacheKey, everyN: validatorsListingEveryN, fn: func(ctx context.Context) (any, error) {
+			return api.FetchValidatorsData(ctx)
 		}},
 		{name: "multicast health summaries", key: handlers.MulticastHealthSummariesCacheKey, fn: func(ctx context.Context) (any, error) {
 			return api.FetchMulticastHealthSummariesData(ctx, handlers.ShredGroupPK)

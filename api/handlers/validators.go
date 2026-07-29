@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -72,47 +73,103 @@ var validatorFilterFields = map[string]FilterFieldConfig{
 	"client":     {Column: "software_client", Type: FieldTypeText},
 }
 
+// validatorsQuerySortFields maps sort keys to the output column names used in the
+// ORDER BY of the validators listing query (distinct from validatorSortFields,
+// which references view columns for other query shapes).
+var validatorsQuerySortFields = map[string]string{
+	"vote":       "vote_pubkey",
+	"node":       "node_pubkey",
+	"stake":      "activated_stake_lamports",
+	"share":      "activated_stake_lamports",
+	"commission": "commission",
+	"dz":         "on_dz",
+	"device":     "device_code",
+	"city":       "city",
+	"country":    "country",
+	"in":         "in_bps",
+	"out":        "out_bps",
+	"skip":       "skip_rate",
+	"version":    "version",
+	"client":     "software_client",
+}
+
+// ValidatorsPageCacheKey is the page-cache key for the default validators listing
+// (no filters, sorted by stake desc, first page). The worker refreshes it; the
+// handler serves it for the matching request shape. Exported so the worker entry
+// and this handler share one definition (like MulticastHealthSummariesCacheKey).
+const ValidatorsPageCacheKey = "validators"
+
 func (a *API) GetValidators(w http.ResponseWriter, r *http.Request) {
+	// DefaultLimit (not a literal) so the parse default and the page-cache gate's
+	// isDefaultValidatorsRequest comparison can't drift apart.
+	pagination := ParsePagination(r, DefaultLimit)
+	sort := ParseSort(r, "stake", validatorSortFields)
+	filters := ParseFilters(r)
+
+	// The default shape (first page, stake desc, no filters) is polled continuously
+	// and served from the page cache on mainnet. Other shapes bypass the cache.
+	if isMainnet(r.Context()) && isDefaultValidatorsRequest(pagination, sort, filters) {
+		if data, err := a.readPageCache(r.Context(), ValidatorsPageCacheKey); err == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Cache", "HIT")
+			_, _ = w.Write(data)
+			return
+		}
+	}
+	w.Header().Set("X-Cache", "MISS")
+
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 
-	pagination := ParsePagination(r, 100)
-	sort := ParseSort(r, "stake", validatorSortFields)
-	filters := ParseFilters(r)
-	start := time.Now()
-
-	// Build filter clause
 	filterClause, filterArgs := filters.BuildFilterClause(validatorFilterFields)
 	whereFilter := ""
 	if filterClause != "" {
 		whereFilter = " AND " + filterClause
 	}
+	orderBy := sort.OrderByClause(validatorsQuerySortFields)
+
+	resp, err := a.fetchValidatorsPage(ctx, whereFilter, filterArgs, orderBy, pagination.Limit, pagination.Offset)
+	if err != nil {
+		logError("validators query failed", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		logError("failed to encode response", "error", err)
+	}
+}
+
+// isDefaultValidatorsRequest reports whether the parsed request matches the shape
+// the page cache holds: first page (default limit, offset 0), stake desc, no
+// filters. Comparing parsed values (not the raw URL) so both a bare request and
+// an explicit "?limit=100&offset=0&sort_by=stake&sort_dir=desc" match.
+func isDefaultValidatorsRequest(p PaginationParams, s SortParams, f MultiFilterParams) bool {
+	return p.Limit == DefaultLimit && p.Offset == 0 &&
+		s.Field == "stake" && s.Direction == "desc" &&
+		f.IsEmpty()
+}
+
+// FetchValidatorsData computes the default validators listing (the page-cached
+// shape) for the page-cache worker. It runs against the mainnet connection, like
+// the other worker fetch functions.
+func (a *API) FetchValidatorsData(ctx context.Context) (*ValidatorListResponse, error) {
+	orderBy := SortParams{Field: "stake", Direction: "desc"}.OrderByClause(validatorsQuerySortFields)
+	return a.fetchValidatorsPage(ctx, "", nil, orderBy, DefaultLimit, 0)
+}
+
+// fetchValidatorsPage runs the validators listing query for the given filter,
+// sort, and pagination, returning the assembled response. Shared by the live
+// handler and the page-cache worker.
+func (a *API) fetchValidatorsPage(ctx context.Context, whereFilter string, filterArgs []any, orderBy string, limit, offset int) (*ValidatorListResponse, error) {
+	start := time.Now()
 
 	// Single query using window functions for counts to avoid repeating expensive CTEs.
 	// NOTE: We avoid JOINing _current views (which use window functions) with each other
 	// directly, as ClickHouse incorrectly correlates the window functions across views
 	// in the same JOIN chain. Instead, we use IN for the on_dz boolean check and join
 	// the DZ metadata (dz_ip_info) separately via gossip_ip after the gossip join.
-
-	// Build sort clause using output column names
-	sortFieldsForQuery := map[string]string{
-		"vote":       "vote_pubkey",
-		"node":       "node_pubkey",
-		"stake":      "activated_stake_lamports",
-		"share":      "activated_stake_lamports",
-		"commission": "commission",
-		"dz":         "on_dz",
-		"device":     "device_code",
-		"city":       "city",
-		"country":    "country",
-		"in":         "in_bps",
-		"out":        "out_bps",
-		"skip":       "skip_rate",
-		"version":    "version",
-		"client":     "software_client",
-	}
-	orderBy := sort.OrderByClause(sortFieldsForQuery)
-
 	query := `
 		WITH total_stake AS (
 			SELECT sum(activated_stake_lamports) as total
@@ -223,15 +280,11 @@ func (a *API) GetValidators(w http.ResponseWriter, r *http.Request) {
 		LIMIT ? OFFSET ?
 	`
 
-	queryArgs := append(filterArgs, pagination.Limit, pagination.Offset)
+	queryArgs := append(append([]any{}, filterArgs...), limit, offset)
 	rows, err := a.envDB(ctx).Query(ctx, query, queryArgs...)
-	duration := time.Since(start)
-	metrics.RecordClickHouseQuery("validators", duration, err)
-
+	metrics.RecordClickHouseQuery("validators", time.Since(start), err)
 	if err != nil {
-		logError("validators query failed", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, err
 	}
 	defer rows.Close()
 
@@ -258,17 +311,13 @@ func (a *API) GetValidators(w http.ResponseWriter, r *http.Request) {
 			&total,
 			&onDZCount,
 		); err != nil {
-			logError("validators row scan failed", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			return nil, fmt.Errorf("validators row scan: %w", err)
 		}
 		validators = append(validators, v)
 	}
 
 	if err := rows.Err(); err != nil {
-		logError("validators rows iteration failed", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, fmt.Errorf("validators rows iteration: %w", err)
 	}
 
 	// Return empty array instead of null
@@ -276,18 +325,13 @@ func (a *API) GetValidators(w http.ResponseWriter, r *http.Request) {
 		validators = []ValidatorListItem{}
 	}
 
-	response := ValidatorListResponse{
+	return &ValidatorListResponse{
 		Items:     validators,
 		Total:     int(total),
 		OnDZCount: int(onDZCount),
-		Limit:     pagination.Limit,
-		Offset:    pagination.Offset,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		logError("failed to encode response", "error", err)
-	}
+		Limit:     limit,
+		Offset:    offset,
+	}, nil
 }
 
 type ValidatorMetadataRow struct {
