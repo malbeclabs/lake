@@ -432,6 +432,13 @@ type View struct {
 	// refreshMu; in-memory only, like sourceEmptyThrough and the baseline cache.
 	catchupSpan time.Duration
 
+	// consecutiveCappedFailures counts capped cycles that failed back-to-back. It
+	// is the shrink trigger (see adjustCatchupSpan) — window identity cannot serve,
+	// because the initial full refresh and the horizon-skip cycle anchor the window
+	// at now−QueryWindow, so both ends slide every cycle and the window never
+	// repeats even while the cost does. Guarded by refreshMu.
+	consecutiveCappedFailures int
+
 	// lastWindowStart/lastWindowEnd and sameWindowCycles count consecutive CAPPED
 	// refreshes that queried the same window, so the capping log can escalate once
 	// shrinking has stopped helping. An uncapped cycle resets them: its window is
@@ -886,11 +893,20 @@ func (v *View) Refresh(ctx context.Context) (result ingestionlog.RefreshResult, 
 // paying a full failed cycle every other cycle. The cost is 9 successful cycles
 // from floor to ceiling, during which lag can still grow.
 //
-// The trigger is the identical window genuinely repeating, not any single failure.
-// Cause is still irrelevant — #740 surfaced as both a wrapped
-// context.DeadlineExceeded and a bare Flux iterator error, so cause-specific
-// detection would have missed the case that froze staging — but a lone failure
-// proves nothing, because the next cycle may succeed and move the window.
+// The trigger is two capped cycles failing back-to-back, not any single failure.
+// Cause is irrelevant — #740 surfaced as both a wrapped context.DeadlineExceeded
+// and a bare Flux iterator error, so cause-specific detection would have missed
+// the case that froze staging — but a lone failure proves nothing, because the
+// next cycle may succeed and move the window.
+//
+// Consecutive failures, not window identity: cost decides whether a cycle fits and
+// the span decides cost, so the streak covers a frozen and a sliding window anchor
+// alike. The initial full refresh (maxTime == nil) and the horizon-skip cycle
+// anchor at now−QueryWindow, so both window ends slide every cycle — a
+// window-identity trigger can never fire there, and a fresh dz_env's bootstrap is
+// the most expensive cycle in the system (0 ClickHouse baselines, so the InfluxDB
+// baseline fallback lands on top of three chunked reads: the full
+// WorstCaseRefreshFluxBudget).
 //
 // Shrinking on every failure would tie the steady-state span to the failure RATE
 // rather than to what a cycle can afford: halving against a +minCatchupSpan
@@ -904,6 +920,14 @@ func (v *View) Refresh(ctx context.Context) (result ingestionlog.RefreshResult, 
 //
 // Callers must hold refreshMu.
 func (v *View) adjustCatchupSpan(capped bool, err error) {
+	switch {
+	case err == nil:
+		// A success at any window size proves the cost is affordable, so it clears
+		// the streak even on an uncapped cycle.
+		v.consecutiveCappedFailures = 0
+	case capped && !errors.Is(err, context.Canceled):
+		v.consecutiveCappedFailures++
+	}
 	// An uncapped window ends at now and is never pinned, so a steady-state blip
 	// must not perturb the span.
 	if !capped {
@@ -918,9 +942,9 @@ func (v *View) adjustCatchupSpan(capped bool, err error) {
 		v.catchupSpan = min(v.catchupSpan+minCatchupSpan, ceiling)
 	case errors.Is(err, context.Canceled):
 		// Pod shutdown says nothing about the cost of the window.
-	case v.sameWindowCycles < 2:
-		// The window has not actually repeated yet, so this is not #740. A sustained
-		// failure still walks down, at two cycles per halving.
+	case v.consecutiveCappedFailures < 2:
+		// One failure proves nothing: the next cycle may succeed, which advances the
+		// watermark and moves the window anyway.
 	case v.catchupSpan <= minCatchupSpan:
 		// At the floor; the repeated-window WARN owns this state.
 	default:
@@ -934,6 +958,7 @@ func (v *View) adjustCatchupSpan(capped bool, err error) {
 			"newSpan", v.catchupSpan.String(),
 			"floor", minCatchupSpan.String(),
 			"ceiling", ceiling.String(),
+			"consecutiveFailures", v.consecutiveCappedFailures,
 			"error", err)
 	}
 }
