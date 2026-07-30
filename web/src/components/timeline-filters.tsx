@@ -21,6 +21,7 @@ import {
   Users,
   Landmark,
   Radio,
+  Rss,
   Calendar,
   Search,
   RotateCw,
@@ -93,6 +94,7 @@ const dzEntityOptions: { value: EntityType; label: string; icon: typeof Server }
   { value: 'metro', label: 'Metros', icon: MapPin },
   { value: 'contributor', label: 'Contributors', icon: Building2 },
   { value: 'user', label: 'Users', icon: Users },
+  { value: 'feed', label: 'Feeds', icon: Rss },
 ]
 
 const solanaEntityOptions: { value: EntityType; label: string; icon: typeof Server }[] = [
