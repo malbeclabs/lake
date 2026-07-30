@@ -22,16 +22,17 @@ const (
 	telemUsageEveryN = 1
 
 	// telemUsageStartToCloseTimeout is the dedicated activity deadline for
-	// RefreshTelemetryUsage, larger than the shared 5m. A capped catch-up
-	// refresh runs up to 3 Flux queries (overlap re-read + two new chunks), each
-	// bounded by defaultFluxHTTPTimeout (4m) and not aborting on the activity
-	// ctx, so the worst case is ~12m of InfluxDB plus the ClickHouse
-	// dedup/baseline/insert work; 15m bounds that. A shorter deadline would
-	// expire before the insert on slow InfluxDB and pin maxTime in a retry loop
-	// (the #665/#671 failure mode). (The rare InfluxDB baseline fallback adds a
-	// further 120s before the chunked read, leaving ~1m for ClickHouse; on that
-	// path the deadline is tight, but it needs a cache miss plus 0 ClickHouse
-	// baselines and the next cycle recovers.)
+	// RefreshTelemetryUsage, larger than the shared 5m. A capped catch-up refresh
+	// runs 3 Flux queries (overlap re-read + two new chunks), each bounded by
+	// defaultFluxHTTPTimeout (4m), so the worst case is 12m of InfluxDB plus the
+	// ClickHouse dedup/baseline/insert work; 15m bounds that. This deadline does
+	// cancel the Flux queries, which is the point: set below the InfluxDB worst
+	// case it cancels mid-query, so the insert never runs and maxTime is pinned in
+	// a retry loop (the #665/#671 failure mode). (The rare InfluxDB baseline
+	// fallback adds a further 120s before the chunked read, leaving ~1m for
+	// ClickHouse — tighter than the 60s max_execution_time the baseline scan alone
+	// can use, but it needs a cache miss plus 0 ClickHouse baselines and the next
+	// cycle recovers.)
 	//
 	// #711 and #714 set this value and the span it must cover independently, and
 	// the pair drifted into incoherence — 22.6h of frozen staging ingest (#740).

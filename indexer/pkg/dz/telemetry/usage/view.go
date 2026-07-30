@@ -213,11 +213,20 @@ func (cfg *ViewConfig) Validate() error {
 		return fmt.Errorf("query window %s plus one capped span (%s) must stay below maxCatchupHorizon (%s)",
 			cfg.QueryWindow, cfg.QueryChunk*maxCatchupChunks, maxCatchupHorizon)
 	}
-	// A ceiling at or below minCatchupSpan silently disables the adaptive shrink
-	// (see adjustCatchupSpan) and restores the #740 livelock.
-	if ceiling := cfg.QueryChunk * maxCatchupChunks; ceiling <= minCatchupSpan {
-		return fmt.Errorf("query chunk %s is too small: the catch-up span ceiling (QueryChunk×maxCatchupChunks = %s) must exceed minCatchupSpan (%s) or the adaptive shrink cannot fire",
-			cfg.QueryChunk, ceiling, minCatchupSpan)
+	// Pin a capped refresh at exactly 3 Flux sub-queries —
+	// ceil((refreshOverlap + QueryChunk×maxCatchupChunks) / QueryChunk) — so
+	// WorstCaseRefreshFluxBudget holds for every config Validate accepts. The
+	// baselineCacheMaxLag check above caps the chunk below 7.5m, and at
+	// QueryChunk >= refreshOverlap the ceiling is also comfortably above
+	// minCatchupSpan, so the adaptive shrink always has room to fire.
+	//
+	// A smaller chunk splits the same window into more sub-queries and is the
+	// direction that actually hurts: QueryChunk=4m costs 4 × defaultFluxHTTPTimeout
+	// = 18m against the 15m activity deadline, while passing every other check
+	// here.
+	if cfg.QueryChunk < refreshOverlap {
+		return fmt.Errorf("query chunk %s must be at least refreshOverlap (%s): a smaller chunk splits a capped refresh into more than 3 Flux sub-queries, exceeding WorstCaseRefreshFluxBudget (%s) and the activity deadline",
+			cfg.QueryChunk, refreshOverlap, WorstCaseRefreshFluxBudget())
 	}
 	return nil
 }
@@ -320,8 +329,15 @@ const minCatchupSpan = 1 * time.Minute
 const sameWindowWarnAfter = 3
 
 // WorstCaseRefreshFluxBudget is how long one capped catch-up refresh can spend in
-// InfluxDB alone at the shipping QueryChunk: every chunk's Flux query at its full
-// HTTP timeout, plus the baseline fallback.
+// InfluxDB at the shipping QueryChunk: every chunk's Flux query at its full HTTP
+// timeout, plus the baseline fallback. Validate pins the sub-query count at 3, so
+// this holds for any accepted config.
+//
+// The activity ctx does cancel these queries (the client builds them with
+// http.NewRequestWithContext), so total Flux time is bounded by the deadline
+// itself — which is exactly why the deadline must exceed this budget rather than
+// merely equal it. A deadline below it makes cancellation land mid-Flux, so the
+// insert never runs and the watermark never advances.
 //
 // The dzingest activity's StartToCloseTimeout must exceed this plus the ClickHouse
 // dedup/baseline/insert work, or a capped cycle dies before the insert and the
@@ -870,10 +886,21 @@ func (v *View) Refresh(ctx context.Context) (result ingestionlog.RefreshResult, 
 // paying a full failed cycle every other cycle. The cost is 9 successful cycles
 // from floor to ceiling, during which lag can still grow.
 //
-// ANY failure shrinks, not just deadline-class ones: #740 surfaced as both a
-// wrapped context.DeadlineExceeded and a bare Flux iterator error, so narrow
-// detection would have missed the case that actually froze staging. Shrinking on
-// an unrelated failure (ClickHouse down) costs only catch-up throughput.
+// The trigger is the identical window genuinely repeating, not any single failure.
+// Cause is still irrelevant — #740 surfaced as both a wrapped
+// context.DeadlineExceeded and a bare Flux iterator error, so cause-specific
+// detection would have missed the case that froze staging — but a lone failure
+// proves nothing, because the next cycle may succeed and move the window.
+//
+// Shrinking on every failure would tie the steady-state span to the failure RATE
+// rather than to what a cycle can afford: halving against a +minCatchupSpan
+// recovery has a fixed point at k minutes for k successes per failure, so a
+// sustained ~50% failure rate uncorrelated with span size (InfluxDB rate
+// limiting — a named cause in dzingest/activities.go, and catch-up issues 3× the
+// steady-state query count) walks the span to the floor and makes catch-up
+// DIVERGE, where the old fixed span converged at ceiling-per-success. Nothing
+// pages there either: the activity escalator resets on each success, so it never
+// sees three consecutive failures.
 //
 // Callers must hold refreshMu.
 func (v *View) adjustCatchupSpan(capped bool, err error) {
@@ -891,6 +918,9 @@ func (v *View) adjustCatchupSpan(capped bool, err error) {
 		v.catchupSpan = min(v.catchupSpan+minCatchupSpan, ceiling)
 	case errors.Is(err, context.Canceled):
 		// Pod shutdown says nothing about the cost of the window.
+	case v.sameWindowCycles < 2:
+		// The window has not actually repeated yet, so this is not #740. A sustained
+		// failure still walks down, at two cycles per halving.
 	case v.catchupSpan <= minCatchupSpan:
 		// At the floor; the repeated-window WARN owns this state.
 	default:

@@ -132,13 +132,15 @@ func TestDZIngestWorkflow_ActivityFailuresNeverLogError(t *testing.T) {
 // frozen staging ingest (#740). Assert the relationship instead of trusting prose.
 //
 // The budget is three chunked Flux queries (12m) plus the rare baseline fallback
-// (2m), leaving 1m for ClickHouse on that fallback path — tight, as the comment on
-// telemUsageStartToCloseTimeout says. #711's 10m fails this assert outright.
+// (2m). The residual is 1m, so this asserts only that the deadline clears the
+// InfluxDB work — not that ClickHouse has comfortable room on the fallback path,
+// which telemUsageStartToCloseTimeout documents as tight. #711's 10m fails this
+// assert outright.
 func TestLake_DZIngest_TelemetryUsageBudgetCoversWorstCaseRefresh(t *testing.T) {
 	t.Parallel()
 
 	fluxBudget := dztelemusage.WorstCaseRefreshFluxBudget()
 	require.Greater(t, telemUsageStartToCloseTimeout, fluxBudget,
-		"the RefreshTelemetryUsage activity deadline (%s) must exceed the worst-case InfluxDB time for one capped refresh (%s), with margin for the ClickHouse insert",
+		"the RefreshTelemetryUsage activity deadline (%s) must exceed the worst-case InfluxDB time for one capped refresh (%s), or cancellation lands mid-Flux and the insert never runs",
 		telemUsageStartToCloseTimeout, fluxBudget)
 }
