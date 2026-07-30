@@ -112,33 +112,47 @@ const ValidatorsPageCacheKey = "validators:all"
 // than serving a truncated page — see sliceCachedValidators.
 const validatorsCacheMaxRows = 5000
 
+const (
+	// validatorsCacheReadTimeout bounds the page-cache read. It must not run on the
+	// caller's unbounded ctx: every unfiltered stake-desc request now reads a ~490 KB
+	// payload from a pool capped at MaxConns=10 and shared with the auth queries, so
+	// a Postgres slowdown would otherwise stall the whole endpoint for as long as
+	// clients wait. Falling through to the live query is the better failure mode.
+	validatorsCacheReadTimeout = 2 * time.Second
+
+	// validatorsCacheStaleAfter rejects a frozen entry: ~3× the refresh cadence
+	// (validatorsListingEveryN=2 × the 30s default interval), the same ratio
+	// publisherCheckStaleAfter uses. Refresh failures already escalate via
+	// logger.Escalator, so this only catches a worker that isn't running at all —
+	// which Cache-Control: max-age=60 would otherwise extend into client caches.
+	validatorsCacheStaleAfter = 3 * time.Minute
+)
+
 func (a *API) GetValidators(w http.ResponseWriter, r *http.Request) {
 	pagination := ParsePagination(r, DefaultLimit)
 	sort := ParseSort(r, "stake", validatorSortFields)
 	filters := ParseFilters(r)
+
+	// Unconditional, not HIT-only: the body depends on the env header, which is not
+	// in the URL (EnvMiddleware reads X-DZ-Env first, ?env= only as a fallback). On
+	// the HIT path alone, whether a shared cache can tell two envs apart would hinge
+	// on server cache state.
+	w.Header().Add("Vary", "X-DZ-Env")
 
 	// The unfiltered stake-desc listing is polled continuously (by the UI at
 	// limit=100 and by an external consumer at limit=900). The cache holds the
 	// complete set, so any page of it can be served without a ClickHouse query.
 	// Filtered or differently-sorted shapes bypass the cache.
 	if isMainnet(r.Context()) && isCacheableValidatorsRequest(sort, filters) {
-		if data, err := a.readPageCache(r.Context(), ValidatorsPageCacheKey); err == nil {
-			if page, ok := sliceCachedValidators(data, pagination); ok {
-				w.Header().Set("Content-Type", "application/json")
-				w.Header().Set("X-Cache", "HIT")
-				// Let the polling clients self-throttle to the refresh cadence.
-				w.Header().Set("Cache-Control", "public, max-age=60")
-				// The response body depends on the env header, which is not in the URL
-				// (EnvMiddleware reads X-DZ-Env first, ?env= only as a fallback). Without
-				// this, a cache would replay this mainnet payload for a devnet request to
-				// the same URL — starting with the browser's own cache when the UI's env
-				// selector switches.
-				w.Header().Add("Vary", "X-DZ-Env")
-				if err := json.NewEncoder(w).Encode(page); err != nil {
-					logError("failed to encode response", "error", err)
-				}
-				return
+		if page, ok := a.cachedValidatorsPage(r.Context(), pagination); ok {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Cache", "HIT")
+			// Let the polling clients self-throttle to the refresh cadence.
+			w.Header().Set("Cache-Control", "public, max-age=60")
+			if err := json.NewEncoder(w).Encode(page); err != nil {
+				logError("failed to encode response", "error", err)
 			}
+			return
 		}
 	}
 	w.Header().Set("X-Cache", "MISS")
@@ -177,6 +191,26 @@ func isCacheableValidatorsRequest(s SortParams, f MultiFilterParams) bool {
 	return s.Field == "stake" && s.Direction == "desc" && f.IsEmpty()
 }
 
+// cachedValidatorsPage reads the page-cache entry under its own deadline and slices
+// the requested page out of it, reporting false whenever the cache can't answer:
+// no entry, a read failure, an entry older than validatorsCacheStaleAfter, or a
+// payload that isn't the complete set. Every false falls through to the live query.
+func (a *API) cachedValidatorsPage(ctx context.Context, p PaginationParams) (*ValidatorListResponse, bool) {
+	readCtx, cancel := context.WithTimeout(ctx, validatorsCacheReadTimeout)
+	defer cancel()
+
+	data, updatedAt, err := a.readPageCacheWithAge(readCtx, ValidatorsPageCacheKey)
+	if err != nil {
+		return nil, false
+	}
+	if age := time.Since(updatedAt); age > validatorsCacheStaleAfter {
+		logWarn("validators: cached payload stale, running live",
+			"age", age.Round(time.Second), "max_age", validatorsCacheStaleAfter)
+		return nil, false
+	}
+	return sliceCachedValidators(data, p)
+}
+
 // sliceCachedValidators returns the requested page of a cached validators listing,
 // or false when the cached payload is not the complete set and therefore can't
 // answer an arbitrary page.
@@ -207,6 +241,15 @@ func sliceCachedValidators(data []byte, p PaginationParams) (*ValidatorListRespo
 	return &ValidatorListResponse{
 		Items: cached.Items[start:end],
 		// Whole-set aggregates, independent of the page being served.
+		//
+		// These diverge from the live path for offset >= Total: fetchValidatorsPage
+		// only assigns total/onDZCount inside its rows.Next() loop, so a page past the
+		// end reports total: 0 there while this reports the real count. That live-path
+		// behavior is the wart — the web pager reads response.total — but fixing it
+		// needs the whole-set count for a page that returns no rows, i.e. a second
+		// full query, and it affects filtered and non-stake-sorted shapes just as much.
+		// Left for its own change; TestGetValidators_CachedPageMatchesLive pins both
+		// sides so neither can drift silently.
 		Total:     cached.Total,
 		OnDZCount: cached.OnDZCount,
 		Limit:     p.Limit,
