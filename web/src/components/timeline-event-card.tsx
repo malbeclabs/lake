@@ -31,6 +31,7 @@ import type {
   MetroEntity,
   ContributorEntity,
   UserEntity,
+  FeedEntity,
 } from '@/lib/api'
 
 const severityDotColors: Record<string, string> = {
@@ -106,6 +107,10 @@ const fieldLabels: Record<string, string> = {
   dz_ip: 'DZ IP',
   device: 'Device',
   tunnel_id: 'Tunnel ID',
+  bgp_status: 'BGP',
+  feed_pks: 'Feeds',
+  owner_pubkey: 'Owner',
+  groups: 'Groups',
 }
 
 function truncatePubkey(value: string): string {
@@ -171,7 +176,7 @@ function EntityLink({ to, children }: { to: string, children: React.ReactNode })
   )
 }
 
-function EntityDetailsView({ entity, entityType }: { entity: DeviceEntity | LinkEntity | MetroEntity | ContributorEntity | UserEntity, entityType: string }) {
+function EntityDetailsView({ entity, entityType }: { entity: DeviceEntity | LinkEntity | MetroEntity | ContributorEntity | UserEntity | FeedEntity, entityType: string }) {
   if (entityType === 'device') {
     const d = entity as DeviceEntity
     return (
@@ -216,6 +221,17 @@ function EntityDetailsView({ entity, entityType }: { entity: DeviceEntity | Link
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground">
         <div>Name: <span className="font-medium text-foreground">{d.name}</span></div>
         <div>Code: <span className="font-medium text-foreground">{d.code}</span></div>
+      </div>
+    )
+  }
+  if (entityType === 'feed') {
+    const d = entity as FeedEntity
+    return (
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        <div>Name: <span className="font-medium text-foreground">{d.name}</span></div>
+        <div>Code: <span className="font-medium text-foreground">{d.code}</span></div>
+        {d.metro_pk && d.metro_code && <div>Metro: <EntityLink to={`/dz/metros/${encodeURIComponent(d.metro_pk)}`}>{d.metro_code}</EntityLink></div>}
+        <div className="col-span-2">Owner: <span className="font-mono text-foreground break-all">{d.owner_pubkey}</span></div>
       </div>
     )
   }

@@ -119,6 +119,18 @@ type UserEntity struct {
 	MetroCode  string `json:"metro_code,omitempty"`
 }
 
+// FeedEntity represents a feed's current state
+type FeedEntity struct {
+	PK          string `json:"pk"`
+	OwnerPubkey string `json:"owner_pubkey"`
+	Code        string `json:"code"`
+	Name        string `json:"name"`
+	MetroPK     string `json:"metro_pk"`
+	Groups      string `json:"groups"`
+	// Joined fields
+	MetroCode string `json:"metro_code,omitempty"`
+}
+
 // IncidentEventDetails contains details for incident-based timeline events.
 type IncidentEventDetails struct {
 	EntityPK        string  `json:"entity_pk"`
@@ -419,6 +431,9 @@ func eventMatchesFieldSearch(event TimelineEvent, field, value string) bool {
 				return contains(entity.Code)
 			}
 			if entity, ok := details.Entity.(UserEntity); ok {
+				return contains(entity.MetroCode)
+			}
+			if entity, ok := details.Entity.(FeedEntity); ok {
 				return contains(entity.MetroCode)
 			}
 		case IncidentEventDetails:
@@ -1611,20 +1626,22 @@ func (a *API) fetchUserChangeDetails(ctx context.Context, rows []entityChangeRow
 	query := `
 		WITH target AS (
 			SELECT entity_id, snapshot_ts, pk, owner_pubkey, kind, status, client_ip, dz_ip,
-				   device_pk, tunnel_id,
+				   device_pk, tunnel_id, bgp_status, feed_pks,
 				   lag(status) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_status,
 				   lag(kind) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_kind,
 				   lag(client_ip) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_client_ip,
 				   lag(dz_ip) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_dz_ip,
 				   lag(device_pk) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_device_pk,
-				   lag(tunnel_id) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_tunnel_id
+				   lag(tunnel_id) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_tunnel_id,
+				   lag(bgp_status) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_bgp_status,
+				   lag(feed_pks) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_feed_pks
 			FROM dim_dz_users_history
 			WHERE pk IN (?) AND kind NOT IN ('validator', 'gossip_only')
 		)
 		SELECT t.entity_id, t.snapshot_ts, t.pk, t.owner_pubkey, t.kind, t.status,
-			   t.client_ip, t.dz_ip, t.device_pk, t.tunnel_id,
+			   t.client_ip, t.dz_ip, t.device_pk, t.tunnel_id, t.bgp_status, t.feed_pks,
 			   t.prev_status, t.prev_kind, t.prev_client_ip, t.prev_dz_ip,
-			   t.prev_device_pk, t.prev_tunnel_id,
+			   t.prev_device_pk, t.prev_tunnel_id, t.prev_bgp_status, t.prev_feed_pks,
 			   COALESCE(d.code, '') AS device_code,
 			   COALESCE(m.code, '') AS metro_code
 		FROM target t
@@ -1656,29 +1673,34 @@ func (a *API) fetchUserChangeDetails(ctx context.Context, rows []entityChangeRow
 	result := make(map[string]EntityChangeDetails)
 	for dbRows.Next() {
 		var (
-			entityID     string
-			snapshotTS   time.Time
-			pk           string
-			ownerPubkey  string
-			kind         string
-			status       string
-			clientIP     string
-			dzIP         string
-			devicePK     string
-			tunnelID     int32
-			prevStatus   *string
-			prevKind     *string
-			prevClientIP *string
-			prevDZIP     *string
-			prevDevicePK *string
-			prevTunnelID *int32
-			deviceCode   string
-			metroCode    string
+			entityID      string
+			snapshotTS    time.Time
+			pk            string
+			ownerPubkey   string
+			kind          string
+			status        string
+			clientIP      string
+			dzIP          string
+			devicePK      string
+			tunnelID      int32
+			bgpStatus     string
+			feedPKs       string
+			prevStatus    *string
+			prevKind      *string
+			prevClientIP  *string
+			prevDZIP      *string
+			prevDevicePK  *string
+			prevTunnelID  *int32
+			prevBGPStatus *string
+			prevFeedPKs   *string
+			deviceCode    string
+			metroCode     string
 		)
 		if err := dbRows.Scan(
 			&entityID, &snapshotTS, &pk, &ownerPubkey, &kind, &status,
-			&clientIP, &dzIP, &devicePK, &tunnelID,
+			&clientIP, &dzIP, &devicePK, &tunnelID, &bgpStatus, &feedPKs,
 			&prevStatus, &prevKind, &prevClientIP, &prevDZIP, &prevDevicePK, &prevTunnelID,
+			&prevBGPStatus, &prevFeedPKs,
 			&deviceCode, &metroCode,
 		); err != nil {
 			return nil, fmt.Errorf("user detail scan error: %w", err)
@@ -1710,6 +1732,12 @@ func (a *API) fetchUserChangeDetails(ctx context.Context, rows []entityChangeRow
 			if prevTunnelID != nil && *prevTunnelID != tunnelID {
 				changes = append(changes, FieldChange{Field: "tunnel_id", OldValue: *prevTunnelID, NewValue: tunnelID})
 			}
+			if prevBGPStatus != nil && *prevBGPStatus != bgpStatus {
+				changes = append(changes, FieldChange{Field: "bgp_status", OldValue: *prevBGPStatus, NewValue: bgpStatus})
+			}
+			if prevFeedPKs != nil && *prevFeedPKs != feedPKs {
+				changes = append(changes, FieldChange{Field: "feed_pks", OldValue: *prevFeedPKs, NewValue: feedPKs})
+			}
 		}
 
 		entity := UserEntity{
@@ -1722,6 +1750,129 @@ func (a *API) fetchUserChangeDetails(ctx context.Context, rows []entityChangeRow
 			DevicePK:    devicePK,
 			TunnelID:    tunnelID,
 			DeviceCode:  deviceCode,
+			MetroCode:   metroCode,
+		}
+
+		mapKey := entityID + snapshotTS.Format(time.RFC3339Nano)
+		result[mapKey] = EntityChangeDetails{
+			ChangeType: feedRow.ChangeType,
+			Changes:    changes,
+			Entity:     entity,
+		}
+	}
+	return result, nil
+}
+
+// fetchFeedChangeDetails batch-fetches feed entity details for the given feed rows.
+func (a *API) fetchFeedChangeDetails(ctx context.Context, rows []entityChangeRow) (map[string]EntityChangeDetails, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+
+	pks := make([]string, len(rows))
+	tsList := make([]time.Time, len(rows))
+	for i, r := range rows {
+		pks[i] = r.EntityPK
+		tsList[i] = r.SnapshotTS
+	}
+
+	query := `
+		WITH target AS (
+			SELECT entity_id, snapshot_ts, pk, owner_pubkey, code, name, metro_pk, groups,
+				   lag(code) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_code,
+				   lag(name) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_name,
+				   lag(owner_pubkey) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_owner_pubkey,
+				   lag(metro_pk) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_metro_pk,
+				   lag(groups) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_groups
+			FROM dim_dz_feeds_history
+			WHERE pk IN (?)
+		)
+		SELECT t.entity_id, t.snapshot_ts, t.pk, t.owner_pubkey, t.code, t.name, t.metro_pk, t.groups,
+			   t.prev_code, t.prev_name, t.prev_owner_pubkey, t.prev_metro_pk, t.prev_groups,
+			   COALESCE(m.code, '') AS metro_code
+		FROM target t
+		LEFT JOIN dz_metros_current m ON t.metro_pk = m.pk
+		WHERE (t.entity_id, t.snapshot_ts) IN (
+			SELECT entity_id, snapshot_ts FROM dim_dz_feeds_history
+			WHERE pk IN (?) AND snapshot_ts IN (?)
+		)
+	`
+
+	start := time.Now()
+	dbRows, err := a.envDB(ctx).Query(ctx, query, pks, pks, tsList)
+	if err != nil {
+		return nil, err
+	}
+	defer dbRows.Close()
+	metrics.RecordClickHouseQuery("timeline", time.Since(start), err)
+
+	type rowKey struct {
+		entityID   string
+		snapshotTS time.Time
+	}
+	requested := make(map[rowKey]entityChangeRow, len(rows))
+	for _, r := range rows {
+		requested[rowKey{r.EntityID, r.SnapshotTS}] = r
+	}
+
+	result := make(map[string]EntityChangeDetails)
+	for dbRows.Next() {
+		var (
+			entityID        string
+			snapshotTS      time.Time
+			pk              string
+			ownerPubkey     string
+			code            string
+			name            string
+			metroPK         string
+			groups          string
+			prevCode        *string
+			prevName        *string
+			prevOwnerPubkey *string
+			prevMetroPK     *string
+			prevGroups      *string
+			metroCode       string
+		)
+		if err := dbRows.Scan(
+			&entityID, &snapshotTS, &pk, &ownerPubkey, &code, &name, &metroPK, &groups,
+			&prevCode, &prevName, &prevOwnerPubkey, &prevMetroPK, &prevGroups,
+			&metroCode,
+		); err != nil {
+			return nil, fmt.Errorf("feed detail scan error: %w", err)
+		}
+
+		key := rowKey{entityID, snapshotTS}
+		feedRow, ok := requested[key]
+		if !ok {
+			continue
+		}
+
+		var changes []FieldChange
+		if feedRow.ChangeType == "updated" {
+			if prevCode != nil && *prevCode != code {
+				changes = append(changes, FieldChange{Field: "code", OldValue: *prevCode, NewValue: code})
+			}
+			if prevName != nil && *prevName != name {
+				changes = append(changes, FieldChange{Field: "name", OldValue: *prevName, NewValue: name})
+			}
+			if prevOwnerPubkey != nil && *prevOwnerPubkey != ownerPubkey {
+				changes = append(changes, FieldChange{Field: "owner_pubkey", OldValue: *prevOwnerPubkey, NewValue: ownerPubkey})
+			}
+			if prevMetroPK != nil && *prevMetroPK != metroPK {
+				changes = append(changes, FieldChange{Field: "metro", OldValue: *prevMetroPK, NewValue: metroPK})
+			}
+			if prevGroups != nil && *prevGroups != groups {
+				changes = append(changes, FieldChange{Field: "groups", OldValue: *prevGroups, NewValue: groups})
+			}
+		}
+
+		entity := FeedEntity{
+			PK:          pk,
+			OwnerPubkey: ownerPubkey,
+			Code:        code,
+			Name:        name,
+			MetroPK:     metroPK,
+			Groups:      groups,
 			MetroCode:   metroCode,
 		}
 
@@ -1776,6 +1927,9 @@ func (a *API) batchFetchEntityDetails(ctx context.Context, rows []entityChangeRo
 	}
 	if typeRows, ok := grouped["user"]; ok {
 		fetchAndMerge(a.fetchUserChangeDetails, typeRows)
+	}
+	if typeRows, ok := grouped["feed"]; ok {
+		fetchAndMerge(a.fetchFeedChangeDetails, typeRows)
 	}
 
 	if err := g.Wait(); err != nil {
