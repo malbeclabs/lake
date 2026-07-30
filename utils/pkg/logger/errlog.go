@@ -62,6 +62,20 @@ func IsCanceled(err error) bool {
 		strings.Contains(err.Error(), "context canceled")
 }
 
+// IsDeadlineExceeded reports whether err is a context deadline expiring,
+// including non-standard wrappings that only carry the message. Unlike
+// IsClientDisconnect it does not match cancellation, so a request path can
+// separate "the caller went away" (nothing to log) from its own budget
+// expiring (worth a WARN — net/http never puts a deadline on r.Context(), so
+// on a request path a deadline is always server-side).
+func IsDeadlineExceeded(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, context.DeadlineExceeded) ||
+		strings.Contains(err.Error(), "context deadline exceeded")
+}
+
 // IsClientDisconnect returns true if the error is caused by the client
 // disconnecting: context cancellation, deadline exceeded, broken pipe,
 // connection reset, or unexpected EOF.

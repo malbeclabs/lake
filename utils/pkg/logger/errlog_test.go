@@ -94,3 +94,11 @@ func TestErrorFromArgs_SlogAttrDoesNotShiftParity(t *testing.T) {
 	// consumes one slot.
 	require.Equal(t, err, ErrorFromArgs([]any{42, "error", err}))
 }
+
+func TestIsDeadlineExceeded(t *testing.T) {
+	require.True(t, IsDeadlineExceeded(context.DeadlineExceeded))
+	require.True(t, IsDeadlineExceeded(errors.New("query failed: context deadline exceeded")))
+	require.False(t, IsDeadlineExceeded(nil))
+	require.False(t, IsDeadlineExceeded(context.Canceled), "cancellation is not a deadline")
+	require.False(t, IsDeadlineExceeded(errors.New("boom")))
+}

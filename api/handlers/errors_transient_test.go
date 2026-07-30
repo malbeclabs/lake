@@ -43,6 +43,11 @@ func TestLogError_DowngradesTransientToWarn(t *testing.T) {
 		{"generic error", errors.New("boom"), true, slog.LevelError},
 		// Client disconnects are dropped entirely (not logged).
 		{"client cancel", context.Canceled, false, 0},
+		// A deadline is the handler's own budget expiring (net/http never sets
+		// one on r.Context()), so it stays visible at WARN. Dropping it made an
+		// overrun return a 500 with no log line at all.
+		{"handler deadline", context.DeadlineExceeded, true, slog.LevelWarn},
+		{"wrapped handler deadline", errors.New("query failed: context deadline exceeded"), true, slog.LevelWarn},
 	}
 
 	for _, tt := range tests {
@@ -74,4 +79,15 @@ func TestInternalError_DowngradesTransientToWarn(t *testing.T) {
 	internalError("fetch failed", errors.New("unexpected boom"))
 	require.Len(t, recs, 1)
 	require.Equal(t, slog.LevelError, recs[0].Level, "genuine → ERROR")
+}
+
+func TestInternalError_HandlerDeadlineWarns(t *testing.T) {
+	var recs []slog.Record
+	prev := slog.Default()
+	slog.SetDefault(slog.New(levelRecorder{&recs}))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	internalError("fetch failed", context.DeadlineExceeded)
+	require.Len(t, recs, 1, "a handler's own deadline must not be dropped as a disconnect")
+	require.Equal(t, slog.LevelWarn, recs[0].Level)
 }

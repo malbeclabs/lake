@@ -11,10 +11,6 @@ func (a *API) queryMulticastLinkDeliveryBranches(ctx context.Context, link Multi
 	sourceFilter, sourceArgs := sqlInFilter("source_address", params.Sources)
 	groupFilter, groupArgs := sqlMulticastGroupFilter(params.Groups)
 	oifKindFilter, oifKindArgs := sqlInFilter("oif_kind", params.OIFKinds)
-	total, err := a.countMulticastLinkDeliveryBranches(ctx, link, params)
-	if err != nil {
-		return nil, nil, 0, err
-	}
 	query := `
 		SELECT
 			mroute_entity_id,
@@ -56,7 +52,8 @@ func (a *API) queryMulticastLinkDeliveryBranches(ctx context.Context, link Multi
 			oif_kind,
 			observed_delivery_role,
 			mroute_id,
-			direction
+			direction,
+			count() OVER () AS total_count
 		FROM (
 			SELECT
 				mroute_entity_id,
@@ -111,8 +108,7 @@ func (a *API) queryMulticastLinkDeliveryBranches(ctx context.Context, link Multi
 		WHERE (? = '' OR direction = ?)
 		ORDER BY multicast_group_code, group_address, source_address, device_code, oif_name
 		LIMIT ? OFFSET ?
-		SETTINGS max_execution_time = 30,
-			timeout_before_checking_execution_speed = 0
+		` + multicastDeliveryQuerySettings + `
 	`
 	args := []any{link.SideAPK, link.SideZPK, link.SideZPK, link.SideAPK, link.PK, link.Code}
 	args = append(args, sourceArgs...)
@@ -130,10 +126,12 @@ func (a *API) queryMulticastLinkDeliveryBranches(ctx context.Context, link Multi
 
 	branches := []MulticastDeliveryLinkBranch{}
 	times := []time.Time{}
+	total := 0
 	for rows.Next() {
 		var s multicastOIFScan
 		var vrf, routeMode string
 		var direction string
+		var rowTotal uint64
 		if err := rows.Scan(
 			&s.OIF.EntityID,
 			&s.snapshotTS,
@@ -175,9 +173,11 @@ func (a *API) queryMulticastLinkDeliveryBranches(ctx context.Context, link Multi
 			&s.OIF.ObservedDeliveryRole,
 			&s.OIF.MrouteID,
 			&direction,
+			&rowTotal,
 		); err != nil {
 			return nil, nil, 0, err
 		}
+		total = int(rowTotal)
 		s.OIF.SnapshotTS = formatMulticastTime(s.snapshotTS)
 		s.OIF.AgeSeconds = ageSeconds(s.snapshotTS)
 		s.OIF.FreshnessStatus = multicastFreshnessStatus(s.OIF.AgeSeconds)
@@ -189,7 +189,18 @@ func (a *API) queryMulticastLinkDeliveryBranches(ctx context.Context, link Multi
 		})
 		times = append(times, s.snapshotTS)
 	}
-	return branches, times, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, nil, 0, err
+	}
+	// Offset past the end: no page row carries the window total (see
+	// queryMulticastDeviceDeliveryMroutes).
+	if len(branches) == 0 && params.Offset > 0 {
+		total, err = a.countMulticastLinkDeliveryBranches(ctx, link, params)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+	}
+	return branches, times, total, nil
 }
 
 func (a *API) countMulticastLinkDeliveryBranches(ctx context.Context, link MulticastDeliveryLink, params multicastDeliveryEntityParams) (int, error) {
@@ -211,7 +222,7 @@ func (a *API) countMulticastLinkDeliveryBranches(ctx context.Context, link Multi
 			WHERE (link_pk = ? OR link_code = ?)` + sourceFilter + groupFilter + oifKindFilter + `
 		)
 		WHERE (? = '' OR direction = ?)
-		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0
+		` + multicastDeliveryQuerySettings + `
 	`
 	args := []any{link.SideAPK, link.SideZPK, link.SideZPK, link.SideAPK, link.PK, link.Code}
 	args = append(args, sourceArgs...)

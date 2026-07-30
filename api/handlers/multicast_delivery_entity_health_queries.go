@@ -7,14 +7,52 @@ import (
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
+// multicastHealthWindowCountsSQL folds the health-status buckets a paged health
+// query needs into the page query itself, so the totals cost no extra scan of
+// the table.
+const multicastHealthWindowCountsSQL = `
+			count() OVER () AS health_total,
+			countIf(health_status = 'healthy') OVER () AS health_healthy,
+			countIf(health_status = 'degraded') OVER () AS health_degraded,
+			countIf(health_status = 'unhealthy') OVER () AS health_unhealthy,
+			countIf(health_status = 'disconnected') OVER () AS health_disconnected`
+
+// multicastHealthWindowScan holds the multicastHealthWindowCountsSQL columns of
+// one page row.
+type multicastHealthWindowScan struct {
+	total        uint64
+	healthy      uint64
+	degraded     uint64
+	unhealthy    uint64
+	disconnected uint64
+}
+
+// counts derives Unknown as the remainder rather than counting it, so an
+// unrecognized health_status lands in Unknown exactly as addEntityStatusCount
+// puts it there.
+func (w multicastHealthWindowScan) counts() MulticastEntityHealthStatusCounts {
+	counts := MulticastEntityHealthStatusCounts{
+		Healthy:      w.healthy,
+		Degraded:     w.degraded,
+		Unhealthy:    w.unhealthy,
+		Disconnected: w.disconnected,
+		Total:        w.total,
+	}
+	if named := w.healthy + w.degraded + w.unhealthy + w.disconnected; w.total > named {
+		counts.Unknown = w.total - named
+	}
+	return counts
+}
+
 func (a *API) queryDeviceMulticastHealthUsers(ctx context.Context, device MulticastDeliveryDevice, params multicastDeliveryEntityParams) ([]MulticastHealthUserItem, int, MulticastEntityHealthStatusCounts, error) {
 	groupFilter, groupArgs := sqlMulticastGroupFilter(params.Groups)
 	endpointFilter, endpointArgs := sqlInFilter("user_dz_ip", params.EndpointIPs)
 	healthFilter, healthArgs := sqlInFilter("health_status", params.Health)
-	counts, err := a.queryEntityHealthCounts(ctx, "health_multicast_user_rate", "user_device_pk = ?"+groupFilter+endpointFilter+healthFilter, append(append(append([]any{device.PK}, groupArgs...), endpointArgs...), healthArgs...), "multicast_device_health_user_counts")
-	if err != nil {
-		return nil, 0, MulticastEntityHealthStatusCounts{}, err
-	}
+	where := "user_device_pk = ?" + groupFilter + endpointFilter + healthFilter
+	baseArgs := []any{device.PK}
+	baseArgs = append(baseArgs, groupArgs...)
+	baseArgs = append(baseArgs, endpointArgs...)
+	baseArgs = append(baseArgs, healthArgs...)
 	query := `
 		SELECT
 			user_pk,
@@ -38,17 +76,14 @@ func (a *API) queryDeviceMulticastHealthUsers(ctx context.Context, device Multic
 			expected_bps_5m,
 			rate_status,
 			rate_status_reason,
-			health_status
+			health_status,` + multicastHealthWindowCountsSQL + `
 		FROM health_multicast_user_rate
-		WHERE user_device_pk = ?` + groupFilter + endpointFilter + healthFilter + `
+		WHERE ` + where + `
 		ORDER BY ` + healthStatusSeverityOrderSQL + `,multicast_group_code, user_pk
 		LIMIT ? OFFSET ?
-		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0
+		` + multicastDeliveryQuerySettings + `
 	`
-	args := []any{device.PK}
-	args = append(args, groupArgs...)
-	args = append(args, endpointArgs...)
-	args = append(args, healthArgs...)
+	args := append([]any{}, baseArgs...)
 	args = append(args, params.Limit, params.Offset)
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query, args...)
@@ -58,8 +93,10 @@ func (a *API) queryDeviceMulticastHealthUsers(ctx context.Context, device Multic
 	}
 	defer rows.Close()
 	items := []MulticastHealthUserItem{}
+	counts := MulticastEntityHealthStatusCounts{}
 	for rows.Next() {
 		var it MulticastHealthUserItem
+		var w multicastHealthWindowScan
 		if err := rows.Scan(
 			&it.UserPK,
 			&it.UserOwnerPubkey,
@@ -83,12 +120,29 @@ func (a *API) queryDeviceMulticastHealthUsers(ctx context.Context, device Multic
 			&it.RateStatus,
 			&it.RateStatusReason,
 			&it.HealthStatus,
+			&w.total,
+			&w.healthy,
+			&w.degraded,
+			&w.unhealthy,
+			&w.disconnected,
 		); err != nil {
 			return nil, 0, MulticastEntityHealthStatusCounts{}, err
 		}
+		counts = w.counts()
 		items = append(items, it)
 	}
-	return items, int(counts.Total), counts, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, MulticastEntityHealthStatusCounts{}, err
+	}
+	// Offset past the end: no page row carries the window counts (see
+	// queryMulticastDeviceDeliveryMroutes).
+	if len(items) == 0 && params.Offset > 0 {
+		counts, err = a.queryEntityHealthCounts(ctx, "health_multicast_user_rate", where, baseArgs, "multicast_device_health_user_counts")
+		if err != nil {
+			return nil, 0, MulticastEntityHealthStatusCounts{}, err
+		}
+	}
+	return items, int(counts.Total), counts, nil
 }
 
 func (a *API) queryDeviceMulticastEndpointHealth(ctx context.Context, device MulticastDeliveryDevice, params multicastDeliveryEntityParams) ([]MulticastHealthPathItem, int, MulticastEntityHealthStatusCounts, error) {
@@ -100,10 +154,6 @@ func (a *API) queryDeviceMulticastEndpointHealth(ctx context.Context, device Mul
 	baseArgs = append(baseArgs, groupArgs...)
 	baseArgs = append(baseArgs, endpointArgs...)
 	baseArgs = append(baseArgs, healthArgs...)
-	counts, err := a.queryEntityHealthCounts(ctx, "health_publisher_subscriber_path", where, baseArgs, "multicast_device_endpoint_health_counts")
-	if err != nil {
-		return nil, 0, MulticastEntityHealthStatusCounts{}, err
-	}
 	query := `
 		SELECT
 			multicast_group_pk,
@@ -126,12 +176,12 @@ func (a *API) queryDeviceMulticastEndpointHealth(ctx context.Context, device Mul
 			endpoints_reconciled,
 			health_status,
 			verification_method,
-			missing_endpoint_reasons
+			missing_endpoint_reasons,` + multicastHealthWindowCountsSQL + `
 		FROM health_publisher_subscriber_path
 		WHERE ` + where + `
 		ORDER BY ` + healthStatusSeverityOrderSQL + `,multicast_group_code, publisher_dz_ip, subscriber_device_code, subscriber_user_pk
 		LIMIT ? OFFSET ?
-		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0
+		` + multicastDeliveryQuerySettings + `
 	`
 	args := append([]any{}, baseArgs...)
 	args = append(args, params.EndpointLimit, params.EndpointOffset)
@@ -143,8 +193,10 @@ func (a *API) queryDeviceMulticastEndpointHealth(ctx context.Context, device Mul
 	}
 	defer rows.Close()
 	items := []MulticastHealthPathItem{}
+	counts := MulticastEntityHealthStatusCounts{}
 	for rows.Next() {
 		var it MulticastHealthPathItem
+		var w multicastHealthWindowScan
 		if err := rows.Scan(
 			&it.MulticastGroupPK,
 			&it.MulticastGroupCode,
@@ -167,12 +219,29 @@ func (a *API) queryDeviceMulticastEndpointHealth(ctx context.Context, device Mul
 			&it.HealthStatus,
 			&it.VerificationMethod,
 			&it.MissingEndpointReasons,
+			&w.total,
+			&w.healthy,
+			&w.degraded,
+			&w.unhealthy,
+			&w.disconnected,
 		); err != nil {
 			return nil, 0, MulticastEntityHealthStatusCounts{}, err
 		}
+		counts = w.counts()
 		items = append(items, it)
 	}
-	return items, int(counts.Total), counts, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, MulticastEntityHealthStatusCounts{}, err
+	}
+	// Offset past the end: no page row carries the window counts (see
+	// queryMulticastDeviceDeliveryMroutes).
+	if len(items) == 0 && params.EndpointOffset > 0 {
+		counts, err = a.queryEntityHealthCounts(ctx, "health_publisher_subscriber_path", where, baseArgs, "multicast_device_endpoint_health_counts")
+		if err != nil {
+			return nil, 0, MulticastEntityHealthStatusCounts{}, err
+		}
+	}
+	return items, int(counts.Total), counts, nil
 }
 
 func (a *API) queryLinkRelatedGroupHealth(ctx context.Context, groups []MulticastDeliveryEntityGroup) ([]MulticastDeliveryEntityGroup, MulticastEntityHealthStatusCounts, error) {
@@ -194,7 +263,7 @@ func (a *API) queryLinkRelatedGroupHealth(ctx context.Context, groups []Multicas
 			SELECT multicast_group_pk, health_status FROM health_publisher_subscriber_path WHERE multicast_group_pk IN (?)
 		)
 		GROUP BY multicast_group_pk, health_status
-		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0
+		` + multicastDeliveryQuerySettings + `
 	`
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query, groupPKs, groupPKs, groupPKs)
@@ -240,7 +309,7 @@ func (a *API) queryEntityHealthCounts(ctx context.Context, table, whereClause st
 		FROM ` + table + `
 		WHERE ` + whereClause + `
 		GROUP BY health_status
-		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0
+		` + multicastDeliveryQuerySettings + `
 	`
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query, args...)

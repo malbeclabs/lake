@@ -10,11 +10,13 @@ import (
 	"github.com/malbeclabs/lake/utils/pkg/redact"
 )
 
-// isClientDisconnect returns true if the error is caused by the client
-// disconnecting: context cancellation, deadline exceeded, broken pipe,
-// connection reset, or unexpected EOF.
-func isClientDisconnect(err error) bool {
-	return logger.IsClientDisconnect(err)
+// isCallerGone reports whether err means nobody is left to serve, so dropping
+// the log line loses nothing. A deadline is deliberately excluded: net/http
+// never sets one on r.Context(), so on a request path it is a handler's own
+// budget (e.g. multicastDeliveryRequestTimeout) expiring, and dropping it turns
+// a 500 into a silent one.
+func isCallerGone(err error) bool {
+	return logger.IsClientDisconnect(err) && !logger.IsDeadlineExceeded(err)
 }
 
 // logError logs a handler error, silently skipping client disconnects.
@@ -27,8 +29,9 @@ func isClientDisconnect(err error) bool {
 // consecutive-failure threshold and the lake-api-down/crash-loop alerts).
 func logError(msg string, args ...any) {
 	// Request path: a client disconnect means the caller is gone — skip the
-	// log line entirely rather than warn.
-	if err := logger.ErrorFromArgs(args); err != nil && logger.IsClientDisconnect(err) {
+	// log line entirely rather than warn. A handler's own expired deadline is
+	// not that (see isCallerGone) and lands at WARN via logger.Error.
+	if err := logger.ErrorFromArgs(args); err != nil && isCallerGone(err) {
 		return
 	}
 	logger.Error(slog.Default(), msg, args...)
@@ -43,13 +46,14 @@ func logWarn(msg string, args ...any) {
 // The returned message does not contain sensitive information like credentials,
 // hostnames, or query details.
 func internalError(operation string, err error) string {
-	if isClientDisconnect(err) {
+	if isCallerGone(err) {
 		return operation
 	}
 
-	// Transient (self-healing) causes aren't actionable — log at WARN and skip
-	// the Sentry capture so a momentary hiccup neither pages nor opens an issue.
-	if dberror.IsTransient(err) {
+	// Transient (self-healing) causes and a handler's own expired deadline
+	// aren't actionable — log at WARN and skip the Sentry capture so a momentary
+	// hiccup neither pages nor opens an issue.
+	if dberror.IsTransient(err) || logger.IsDeadlineExceeded(err) {
 		slog.Warn(operation, "error", err)
 		return operation
 	}

@@ -87,10 +87,6 @@ func (a *API) queryMulticastDeliveryLink(ctx context.Context, pkOrCode string) (
 func (a *API) queryMulticastDeviceDeliveryMroutes(ctx context.Context, device MulticastDeliveryDevice, params multicastDeliveryEntityParams) ([]MulticastDeliveryMroute, []time.Time, int, error) {
 	sourceFilter, sourceArgs := sqlInFilter("source_address", params.Sources)
 	groupFilter, groupArgs := sqlMulticastGroupFilter(params.Groups)
-	total, err := a.countMulticastDeviceDeliveryMroutes(ctx, device, params)
-	if err != nil {
-		return nil, nil, 0, err
-	}
 	query := `
 		SELECT
 			mroute_entity_id,
@@ -130,13 +126,13 @@ func (a *API) queryMulticastDeviceDeliveryMroutes(ctx context.Context, device Mu
 			publisher_owner_pubkey,
 			publisher_dz_ip,
 			source_match_status,
-			mroute_id
+			mroute_id,
+			count() OVER () AS total_count
 		FROM enriched_ip_mroute
 		WHERE (device_pk = ? OR publisher_device_pk = ?)` + sourceFilter + groupFilter + `
 		ORDER BY multicast_group_code, group_address, source_address, device_code, vrf, mode
 		LIMIT ? OFFSET ?
-		SETTINGS max_execution_time = 30,
-			timeout_before_checking_execution_speed = 0
+		` + multicastDeliveryQuerySettings + `
 	`
 	args := []any{device.PK, device.PK}
 	args = append(args, sourceArgs...)
@@ -153,8 +149,10 @@ func (a *API) queryMulticastDeviceDeliveryMroutes(ctx context.Context, device Mu
 
 	mroutes := []MulticastDeliveryMroute{}
 	times := []time.Time{}
+	total := 0
 	for rows.Next() {
 		var s multicastMrouteScan
+		var rowTotal uint64
 		if err := rows.Scan(
 			&s.Mroute.EntityID,
 			&s.snapshotTS,
@@ -194,9 +192,11 @@ func (a *API) queryMulticastDeviceDeliveryMroutes(ctx context.Context, device Mu
 			&s.Mroute.PublisherDZIP,
 			&s.Mroute.SourceMatchStatus,
 			&s.Mroute.MrouteID,
+			&rowTotal,
 		); err != nil {
 			return nil, nil, 0, err
 		}
+		total = int(rowTotal)
 		s.Mroute.SnapshotTS = formatMulticastTime(s.snapshotTS)
 		s.Mroute.IngestedAt = formatMulticastTime(s.ingestedAt)
 		s.Mroute.CreationTime = formatMulticastTime(s.creationTime)
@@ -208,17 +208,26 @@ func (a *API) queryMulticastDeviceDeliveryMroutes(ctx context.Context, device Mu
 		mroutes = append(mroutes, s.Mroute)
 		times = append(times, s.snapshotTS)
 	}
-	return mroutes, times, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, nil, 0, err
+	}
+	// The total rides on the page rows as a window aggregate, which saves a
+	// second full scan of the view but leaves nothing to read it from when an
+	// offset lands past the end. Only then does the count query still run; at
+	// offset 0 an empty page means the total really is zero.
+	if len(mroutes) == 0 && params.Offset > 0 {
+		total, err = a.countMulticastDeviceDeliveryMroutes(ctx, device, params)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+	}
+	return mroutes, times, total, nil
 }
 
 func (a *API) queryMulticastDeviceDeliveryOIFs(ctx context.Context, device MulticastDeliveryDevice, params multicastDeliveryEntityParams) ([]MulticastDeliveryOIF, []time.Time, int, error) {
 	sourceFilter, sourceArgs := sqlInFilter("source_address", params.Sources)
 	groupFilter, groupArgs := sqlMulticastGroupFilter(params.Groups)
 	oifKindFilter, oifKindArgs := sqlInFilter("oif_kind", params.OIFKinds)
-	total, err := a.countMulticastDeviceDeliveryOIFs(ctx, device, params)
-	if err != nil {
-		return nil, nil, 0, err
-	}
 	query := `
 		SELECT
 			mroute_entity_id,
@@ -259,13 +268,13 @@ func (a *API) queryMulticastDeviceDeliveryOIFs(ctx context.Context, device Multi
 			subscriber_client_ip,
 			oif_kind,
 			observed_delivery_role,
-			mroute_id
+			mroute_id,
+			count() OVER () AS total_count
 		FROM enriched_ip_mroute_oifs
 		WHERE (device_pk = ? OR publisher_device_pk = ? OR subscriber_device_pk = ? OR peer_device_pk = ?)` + sourceFilter + groupFilter + oifKindFilter + `
 		ORDER BY multiIf(oif_kind = 'unknown', 0, oif_kind = 'subscriber_tunnel', 1, 2), multicast_group_code, group_address, source_address, device_code, oif_name
 		LIMIT ? OFFSET ?
-		SETTINGS max_execution_time = 30,
-			timeout_before_checking_execution_speed = 0
+		` + multicastDeliveryQuerySettings + `
 	`
 	args := []any{device.PK, device.PK, device.PK, device.PK}
 	args = append(args, sourceArgs...)
@@ -283,9 +292,11 @@ func (a *API) queryMulticastDeviceDeliveryOIFs(ctx context.Context, device Multi
 
 	oifs := []MulticastDeliveryOIF{}
 	times := []time.Time{}
+	total := 0
 	for rows.Next() {
 		var s multicastOIFScan
 		var vrf, routeMode string
+		var rowTotal uint64
 		if err := rows.Scan(
 			&s.OIF.EntityID,
 			&s.snapshotTS,
@@ -326,9 +337,11 @@ func (a *API) queryMulticastDeviceDeliveryOIFs(ctx context.Context, device Multi
 			&s.OIF.OIFKind,
 			&s.OIF.ObservedDeliveryRole,
 			&s.OIF.MrouteID,
+			&rowTotal,
 		); err != nil {
 			return nil, nil, 0, err
 		}
+		total = int(rowTotal)
 		s.OIF.SnapshotTS = formatMulticastTime(s.snapshotTS)
 		s.OIF.AgeSeconds = ageSeconds(s.snapshotTS)
 		s.OIF.FreshnessStatus = multicastFreshnessStatus(s.OIF.AgeSeconds)
@@ -337,7 +350,18 @@ func (a *API) queryMulticastDeviceDeliveryOIFs(ctx context.Context, device Multi
 		oifs = append(oifs, s.OIF)
 		times = append(times, s.snapshotTS)
 	}
-	return oifs, times, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, nil, 0, err
+	}
+	// Offset past the end: no page row carries the window total (see
+	// queryMulticastDeviceDeliveryMroutes).
+	if len(oifs) == 0 && params.Offset > 0 {
+		total, err = a.countMulticastDeviceDeliveryOIFs(ctx, device, params)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+	}
+	return oifs, times, total, nil
 }
 
 func (a *API) queryMulticastDeviceDeliveryMSDPPeers(ctx context.Context, device MulticastDeliveryDevice) ([]MulticastDeliveryMSDPPeer, []time.Time, error) {
@@ -359,8 +383,7 @@ func (a *API) queryMulticastDeviceDeliveryMSDPPeers(ctx context.Context, device 
 		WHERE device_pk = ? OR peer_device_pk = ?
 		ORDER BY device_code, peer_address
 		LIMIT 2000
-		SETTINGS max_execution_time = 30,
-			timeout_before_checking_execution_speed = 0
+		` + multicastDeliveryQuerySettings + `
 	`
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query, device.PK, device.PK)
@@ -427,8 +450,7 @@ func (a *API) queryMulticastDeviceDeliveryMSDPSAs(ctx context.Context, viewName,
 		WHERE (device_pk = ? OR publisher_device_pk = ?` + remoteFilter + `)` + sourceFilter + groupFilter + `
 		ORDER BY group_address, source_address, device_code
 		LIMIT 5000
-		SETTINGS max_execution_time = 30,
-			timeout_before_checking_execution_speed = 0
+		` + multicastDeliveryQuerySettings + `
 	`
 	args := []any{device.PK, device.PK}
 	args = append(args, remoteArg...)
