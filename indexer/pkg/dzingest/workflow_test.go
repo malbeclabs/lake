@@ -5,6 +5,7 @@ import (
 	"sync"
 	"testing"
 
+	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/testsuite"
@@ -123,4 +124,22 @@ func TestDZIngestWorkflow_ActivityFailuresNeverLogError(t *testing.T) {
 		require.True(t, logCap.has("warn", msg),
 			"workflow failure %q should log at WARN", msg)
 	}
+}
+
+// The activity deadline and the worst-case cost of the refresh it bounds were
+// chosen independently — #711 set a 10m StartToClose, #714 widened the catch-up
+// window to 15m of data — and the pair silently became incoherent: every capped
+// cycle died on the deadline before its insert, so the watermark never advanced
+// and the next cycle re-queried the identical window, freezing staging ingest for
+// ~22.6h (#740). Assert the relationship instead of leaving it in prose.
+//
+// The margin left over (15m − 12m = 3m at the default chunk) covers the
+// ClickHouse dedup/baseline/insert work. The #711 configuration fails this.
+func TestLake_DZIngest_TelemetryUsageBudgetCoversWorstCaseRefresh(t *testing.T) {
+	t.Parallel()
+
+	fluxBudget := dztelemusage.WorstCaseRefreshFluxBudget(dztelemusage.DefaultQueryChunk)
+	require.Greater(t, telemUsageStartToCloseTimeout, fluxBudget,
+		"the RefreshTelemetryUsage activity deadline (%s) must exceed the worst-case InfluxDB time for one capped refresh (%s), with margin for the ClickHouse insert",
+		telemUsageStartToCloseTimeout, fluxBudget)
 }

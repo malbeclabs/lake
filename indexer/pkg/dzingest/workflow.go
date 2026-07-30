@@ -23,15 +23,23 @@ const (
 
 	// telemUsageStartToCloseTimeout is the dedicated activity deadline for
 	// RefreshTelemetryUsage, larger than the shared 5m. A capped catch-up
-	// refresh runs up to 3 Flux queries (overlap re-read + two new chunks, see
-	// dztelemusage.maxCatchupChunks), each bounded by defaultFluxHTTPTimeout
-	// (4m) and not aborting on the activity ctx, so the worst case is ~12m of
-	// InfluxDB plus the ClickHouse dedup/baseline/insert work; 15m bounds that.
-	// A shorter deadline would expire before the insert on slow InfluxDB and pin
-	// maxTime in a retry loop (the #665/#671 failure mode). (The rare InfluxDB
-	// baseline fallback adds up to 120s before the chunked read; on that path
-	// the deadline is tight, but it needs a cache miss plus 0 ClickHouse
-	// baselines and the next cycle recovers.)
+	// refresh runs up to 3 Flux queries (overlap re-read + two new chunks), each
+	// bounded by defaultFluxHTTPTimeout (4m) and not aborting on the activity
+	// ctx, so the worst case is ~12m of InfluxDB plus the ClickHouse
+	// dedup/baseline/insert work; 15m bounds that. A shorter deadline would
+	// expire before the insert on slow InfluxDB and pin maxTime in a retry loop
+	// (the #665/#671 failure mode). (The rare InfluxDB baseline fallback adds up
+	// to 120s before the chunked read; on that path the deadline is tight, but
+	// it needs a cache miss plus 0 ClickHouse baselines and the next cycle
+	// recovers.)
+	//
+	// This value and the span it must cover were chosen independently in #711
+	// and #714 and drifted into incoherence, freezing staging ingest for ~22.6h
+	// (#740). dztelemusage.WorstCaseRefreshFluxBudget now names the InfluxDB
+	// half of the worst case, TestTelemetryUsageBudgetCoversWorstCaseRefresh
+	// asserts this deadline exceeds it, and the view shrinks its catch-up span
+	// on a failed capped cycle so an environment that still overruns cannot
+	// repeat identical work forever.
 	telemUsageStartToCloseTimeout = 15 * time.Minute
 
 	// permissionEventsEveryN controls how often the permission audit refresh runs.

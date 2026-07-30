@@ -176,6 +176,23 @@ var (
 		[]string{"dz_env"},
 	)
 
+	// TelemetryUsageWatermarkLagSeconds is now − the telemetry-usage ingest
+	// watermark (ClickHouse max event_ts), published at the top of every refresh
+	// including ones that later fail. A frozen watermark climbs monotonically
+	// here from the first failing cycle, which is what makes #740's 22.6h of
+	// zero ingest detectable without waiting for the 24h horizon ERROR. One
+	// series per dz_env; a single indexer pod publishes all envs it runs.
+	//
+	// An env with no rows yet has no watermark, so it publishes no series until
+	// its first insert.
+	TelemetryUsageWatermarkLagSeconds = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "doublezero_data_indexer_telemetry_usage_watermark_lag_seconds",
+			Help: "Age of the telemetry-usage ingest watermark (now - max event_ts) in seconds",
+		},
+		[]string{"dz_env"},
+	)
+
 	// ClickHousePrevRTTQueryTotal counts previous-RTT cache misses that hit
 	// ClickHouse: kind=bounded is the prevRTTLookback-bounded seed scan,
 	// kind=fallback is the unbounded per-circuit scan for circuits the bounded
