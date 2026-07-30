@@ -33,13 +33,12 @@ const (
 	// path the deadline is tight, but it needs a cache miss plus 0 ClickHouse
 	// baselines and the next cycle recovers.)
 	//
-	// This value and the span it must cover were chosen independently in #711
-	// and #714 and drifted into incoherence, freezing staging ingest for ~22.6h
-	// (#740). dztelemusage.WorstCaseRefreshFluxBudget now names the InfluxDB
-	// half of the worst case, TestTelemetryUsageBudgetCoversWorstCaseRefresh
-	// asserts this deadline exceeds it, and the view shrinks its catch-up span
-	// on a failed capped cycle so an environment that still overruns cannot
-	// repeat identical work forever.
+	// #711 and #714 set this value and the span it must cover independently, and
+	// the pair drifted into incoherence — 22.6h of frozen staging ingest (#740).
+	// dztelemusage.WorstCaseRefreshFluxBudget now names the InfluxDB worst case and
+	// workflow_test asserts this deadline exceeds it; the view additionally shrinks
+	// its catch-up span on a failed capped cycle, so an environment that still
+	// overruns cannot repeat identical work forever.
 	telemUsageStartToCloseTimeout = 15 * time.Minute
 
 	// permissionEventsEveryN controls how often the permission audit refresh runs.

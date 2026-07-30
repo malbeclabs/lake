@@ -177,20 +177,16 @@ var (
 	)
 
 	// TelemetryUsageWatermarkTimestampSeconds is the telemetry-usage ingest
-	// watermark (ClickHouse max event_ts) as a Unix timestamp, published at the
-	// top of every refresh including ones that later fail. Query its age as
-	// `time() - doublezero_data_indexer_telemetry_usage_watermark_timestamp_seconds`.
+	// watermark (ClickHouse max event_ts), published at the top of every refresh
+	// including ones that later fail. Alert on `time() - <this>` — #740's 22.6h of
+	// zero ingest was otherwise invisible until the 24h horizon ERROR.
 	//
-	// An absolute timestamp, not a pre-computed lag: a lag gauge is only correct
-	// while it keeps being republished, so it FREEZES at its last value if the
-	// refresh stops running or fails before this point (e.g. every cycle failing
-	// on the ClickHouse read) — exactly the outage it exists to catch. An age
-	// derived from `time()` keeps climbing on its own.
+	// An absolute timestamp rather than a pre-computed lag: a lag gauge freezes at
+	// its last value once the refresh stops running or starts failing before this
+	// point, which is exactly the outage it exists to catch.
 	//
-	// This is what makes #740's 22.6h of zero ingest detectable without waiting
-	// for the 24h horizon ERROR. One series per dz_env; a single indexer pod
-	// publishes all envs it runs. An env with no rows yet has no watermark, so it
-	// publishes no series until its first insert.
+	// One series per dz_env (a single pod publishes every env it runs); an env with
+	// no rows yet has no watermark and so no series.
 	TelemetryUsageWatermarkTimestampSeconds = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "doublezero_data_indexer_telemetry_usage_watermark_timestamp_seconds",

@@ -126,18 +126,14 @@ func TestDZIngestWorkflow_ActivityFailuresNeverLogError(t *testing.T) {
 	}
 }
 
-// The activity deadline and the worst-case cost of the refresh it bounds were
-// chosen independently — #711 set a 10m StartToClose, #714 widened the catch-up
-// window to 15m of data — and the pair silently became incoherent: every capped
-// cycle died on the deadline before its insert, so the watermark never advanced
-// and the next cycle re-queried the identical window, freezing staging ingest for
-// ~22.6h (#740). Assert the relationship instead of leaving it in prose.
+// #711 set a 10m StartToClose and #714 widened the catch-up window to 15m of data;
+// the pair silently became incoherent, so every capped cycle died on the deadline
+// before its insert and the next cycle re-queried the identical window — 22.6h of
+// frozen staging ingest (#740). Assert the relationship instead of trusting prose.
 //
-// The budget covers three chunked Flux queries (12m) plus the rare baseline
-// fallback (2m); what is left over — 1m at today's 15m deadline — is all the
-// ClickHouse dedup/baseline/insert work gets on that fallback path, which is why
-// the comment on telemUsageStartToCloseTimeout calls it tight. The #711
-// configuration (10m) fails this assert outright.
+// The budget is three chunked Flux queries (12m) plus the rare baseline fallback
+// (2m), leaving 1m for ClickHouse on that fallback path — tight, as the comment on
+// telemUsageStartToCloseTimeout says. #711's 10m fails this assert outright.
 func TestLake_DZIngest_TelemetryUsageBudgetCoversWorstCaseRefresh(t *testing.T) {
 	t.Parallel()
 
