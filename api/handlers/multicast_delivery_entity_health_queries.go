@@ -309,7 +309,7 @@ func (a *API) queryEntityHealthCounts(ctx context.Context, table, whereClause st
 		FROM ` + table + `
 		WHERE ` + whereClause + `
 		GROUP BY health_status
-		` + multicastDeliveryQuerySettings + `
+		` + multicastDeliveryFallbackQuerySettings(ctx) + `
 	`
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query, args...)

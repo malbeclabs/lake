@@ -69,7 +69,7 @@ func (a *API) countMulticastDeviceDeliveryMroutes(ctx context.Context, device Mu
 		SELECT count()
 		FROM enriched_ip_mroute
 		WHERE (device_pk = ? OR publisher_device_pk = ?)` + sourceFilter + groupFilter + `
-		` + multicastDeliveryQuerySettings + `
+		` + multicastDeliveryFallbackQuerySettings(ctx) + `
 	`
 	args := []any{device.PK, device.PK}
 	args = append(args, sourceArgs...)
@@ -89,7 +89,7 @@ func (a *API) countMulticastDeviceDeliveryOIFs(ctx context.Context, device Multi
 		SELECT count()
 		FROM enriched_ip_mroute_oifs
 		WHERE (device_pk = ? OR publisher_device_pk = ? OR subscriber_device_pk = ? OR peer_device_pk = ?)` + sourceFilter + groupFilter + oifKindFilter + `
-		` + multicastDeliveryQuerySettings + `
+		` + multicastDeliveryFallbackQuerySettings(ctx) + `
 	`
 	args := []any{device.PK, device.PK, device.PK, device.PK}
 	args = append(args, sourceArgs...)

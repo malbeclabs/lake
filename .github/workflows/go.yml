@@ -52,9 +52,9 @@ jobs:
       # -p bounds how many packages run at once. ~20 packages start their own
       # database container, so the GOMAXPROCS default (16 on this runner) had 16
       # ClickHouse/Postgres/Neo4j servers each sizing thread pools and caches for
-      # the whole machine. Suite wall time is bounded by one package's critical
-      # path, so trading package parallelism for per-container CPU is close to
-      # free and keeps container-backed tests off their handler deadlines.
+      # the whole machine, which is what pushed container-backed tests toward
+      # their handler deadlines. Fewer packages at once means more CPU per
+      # container; watch total step time here against the pre-change baseline.
       - run: go test -race -v -p 6 ./...
   evals-short:
     runs-on: ubuntu-latest

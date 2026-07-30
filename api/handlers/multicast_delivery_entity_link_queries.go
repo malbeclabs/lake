@@ -222,7 +222,7 @@ func (a *API) countMulticastLinkDeliveryBranches(ctx context.Context, link Multi
 			WHERE (link_pk = ? OR link_code = ?)` + sourceFilter + groupFilter + oifKindFilter + `
 		)
 		WHERE (? = '' OR direction = ?)
-		` + multicastDeliveryQuerySettings + `
+		` + multicastDeliveryFallbackQuerySettings(ctx) + `
 	`
 	args := []any{link.SideAPK, link.SideZPK, link.SideZPK, link.SideAPK, link.PK, link.Code}
 	args = append(args, sourceArgs...)

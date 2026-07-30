@@ -178,8 +178,11 @@ func TestDeviceMulticastDelivery_TotalsSurvivePageOffsetPastEnd(t *testing.T) {
 	insertMulticastTestData(t, api)
 	insertMulticastHealthFixtures(t, api)
 
+	// The two pagers are independent: the endpoint-health leg pages on
+	// endpoint_offset, everything else on offset. Move them past the end one at
+	// a time, so a leg guarding on the wrong offset fails here.
 	rr, resp := deviceMulticastDeliveryRequest(api, "dev-nyc1",
-		"source=10.0.0.1&health=healthy&limit=1&offset=5&endpoint_limit=1&endpoint_offset=5")
+		"source=10.0.0.1&health=healthy&limit=1&offset=5&endpoint_limit=10")
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 	assert.Empty(t, resp.Routes)
@@ -190,9 +193,17 @@ func TestDeviceMulticastDelivery_TotalsSurvivePageOffsetPastEnd(t *testing.T) {
 	assert.Equal(t, 1, resp.HealthUserTotal)
 	assert.EqualValues(t, 1, resp.Summary.UserHealthCounts.Healthy)
 	assert.EqualValues(t, 1, resp.Summary.UserHealthCounts.Total)
-	assert.Empty(t, resp.EndpointHealthItems)
-	assert.Equal(t, 1, resp.EndpointHealthTotal)
-	assert.EqualValues(t, 1, resp.Summary.EndpointHealthCounts.Healthy)
+	assert.NotEmpty(t, resp.EndpointHealthItems, "endpoint pager is still on its first page")
+
+	rr, endpointPastEnd := deviceMulticastDeliveryRequest(api, "dev-nyc1",
+		"source=10.0.0.1&health=healthy&limit=10&endpoint_limit=1&endpoint_offset=5")
+
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+	assert.Empty(t, endpointPastEnd.EndpointHealthItems)
+	assert.Equal(t, 1, endpointPastEnd.EndpointHealthTotal)
+	assert.EqualValues(t, 1, endpointPastEnd.Summary.EndpointHealthCounts.Healthy)
+	assert.NotEmpty(t, endpointPastEnd.Routes, "route pager is still on its first page")
+	assert.NotEmpty(t, endpointPastEnd.HealthUsers)
 }
 
 func TestLinkMulticastDelivery_ObservedStateAndDirectionFilter(t *testing.T) {
