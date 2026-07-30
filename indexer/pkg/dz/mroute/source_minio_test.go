@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ import (
 	tcminio "github.com/testcontainers/testcontainers-go/modules/minio"
 
 	"github.com/malbeclabs/lake/indexer/pkg/dz/statecollect"
+	laketesting "github.com/malbeclabs/lake/utils/pkg/testing"
 )
 
 // TestS3Source_FetchLatest_MinIO is layer C: round-trip the source against a
@@ -153,8 +155,8 @@ func TestS3Source_FetchLatest_FanOut(t *testing.T) {
 	}
 
 	t.Run("device set and ordering follow the listing, work runs concurrently", func(t *testing.T) {
-		ft := &faultTransport{base: http.DefaultTransport}
-		src := mio.newSource(t, bucket, ft)
+		ft := &faultTransport{base: http.DefaultTransport, devices: pubkeys}
+		src := mio.newSource(t, bucket, ft, laketesting.NewLogger())
 
 		dumps, err := src.FetchLatest(ctx)
 		require.NoError(t, err)
@@ -172,8 +174,8 @@ func TestS3Source_FetchLatest_FanOut(t *testing.T) {
 	})
 
 	t.Run("transient mid-walk failure is retried and the walk completes", func(t *testing.T) {
-		ft := &faultTransport{base: http.DefaultTransport, target: pubkeys[7], failFirst: 1}
-		src := mio.newSource(t, bucket, ft)
+		ft := &faultTransport{base: http.DefaultTransport, devices: pubkeys, target: pubkeys[7], failFirst: 1}
+		src := mio.newSource(t, bucket, ft, laketesting.NewLogger())
 
 		dumps, err := src.FetchLatest(ctx)
 		require.NoError(t, err)
@@ -182,8 +184,8 @@ func TestS3Source_FetchLatest_FanOut(t *testing.T) {
 	})
 
 	t.Run("persistent device failure aborts the whole fetch", func(t *testing.T) {
-		ft := &faultTransport{base: http.DefaultTransport, target: pubkeys[7], failAll: true}
-		src := mio.newSource(t, bucket, ft)
+		ft := &faultTransport{base: http.DefaultTransport, devices: pubkeys, target: pubkeys[7], failAll: true}
+		src := mio.newSource(t, bucket, ft, laketesting.NewLogger())
 
 		dumps, err := src.FetchLatest(ctx)
 		require.Error(t, err, "a partial device set would tombstone the missing devices")
@@ -197,43 +199,104 @@ func TestS3Source_FetchLatest_FanOut(t *testing.T) {
 
 		ft := &faultTransport{
 			base:    http.DefaultTransport,
+			devices: pubkeys,
 			target:  pubkeys[7],
 			failAll: true,
 			onFail:  cancel,
 		}
-		src := mio.newSource(t, bucket, ft)
+		src := mio.newSource(t, bucket, ft, laketesting.NewLogger())
 
 		dumps, err := src.FetchLatest(cancelCtx)
 		require.ErrorIs(t, err, context.Canceled)
 		assert.Nil(t, dumps)
 		assert.Equal(t, 1, ft.matched(), "retrying a cancelled context is pointless")
 	})
+
+	t.Run("no S3 calls are issued after the walk aborts", func(t *testing.T) {
+		// pubkeys[0] is in the first batch, so it aborts the group while the other
+		// in-flight devices are still held in delay and the rest have not started.
+		ft := &faultTransport{
+			base:    http.DefaultTransport,
+			devices: pubkeys,
+			target:  pubkeys[0],
+			failAll: true,
+			delay:   2 * time.Second,
+		}
+		src := mio.newSource(t, bucket, ft, laketesting.NewLogger())
+
+		_, err := src.FetchLatest(ctx)
+		require.Error(t, err)
+		assert.LessOrEqual(t, ft.devicesReached(), maxConcurrentFetches,
+			"devices that had not started must not reach S3 once the group is cancelled")
+	})
+
+	t.Run("device with no snapshot in the lookback window is dropped and logged", func(t *testing.T) {
+		const staleBucket = "doublezero-stale-state-collect"
+		_, err := mio.client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(staleBucket)})
+		require.NoError(t, err)
+
+		const freshPK = "DzPkFresh11111111111111111111111111111111111"
+		const stalePK = "DzPkStale22222222222222222222222222222222222"
+		mio.putSnapshot(t, staleBucket, freshPK, now, body)
+		mio.putSnapshot(t, staleBucket, stalePK, now.AddDate(0, 0, -5), body)
+
+		var logs bytes.Buffer
+		log := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+		src := mio.newSource(t, staleBucket, http.DefaultTransport, log)
+
+		dumps, err := src.FetchLatest(ctx)
+		require.NoError(t, err)
+		require.Len(t, dumps, 1)
+		assert.Equal(t, freshPK, dumps[0].DevicePubkey)
+		// The drop tombstones the device under MissingMeansDeleted, so it must
+		// not be silent.
+		assert.Contains(t, logs.String(), stalePK)
+	})
 }
 
-// faultTransport injects failures into the S3 calls whose URL mentions a target
-// device pubkey, so tests can drive the per-device retry path deterministically.
-// It also records peak concurrent requests.
+// faultTransport attributes each S3 call to a device by pubkey and injects
+// failures for one target device, so tests can drive the per-device retry path
+// deterministically. It also records peak concurrency and which devices were
+// reached at all.
 type faultTransport struct {
-	base http.RoundTripper
+	base    http.RoundTripper
+	devices []string // pubkeys used to attribute a request to a device
 
 	// target is the device pubkey whose requests fail; empty fails nothing.
 	target    string
-	failFirst int  // fail this many matching requests, then pass through
-	failAll   bool // fail every matching request
+	failFirst int           // fail this many target requests, then pass through
+	failAll   bool          // fail every target request
+	delay     time.Duration // held on non-target requests, to keep the fan-out busy
 	onFail    func()
 
 	mu       sync.Mutex
 	inflight int
 	peak     int
 	matches  int
+	seen     map[string]struct{}
 }
 
 func (f *faultTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	url := req.URL.String()
+
 	f.mu.Lock()
 	f.inflight++
 	f.peak = max(f.peak, f.inflight)
+	var device string
+	for _, pk := range f.devices {
+		if strings.Contains(url, pk) {
+			device = pk
+			break
+		}
+	}
+	if device != "" {
+		if f.seen == nil {
+			f.seen = map[string]struct{}{}
+		}
+		f.seen[device] = struct{}{}
+	}
 	fail := false
-	if f.target != "" && strings.Contains(req.URL.String(), f.target) {
+	if device != "" && device == f.target {
 		f.matches++
 		fail = f.failAll || f.matches <= f.failFirst
 	}
@@ -252,6 +315,13 @@ func (f *faultTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		// dberror classifies this as connectivity, i.e. transient.
 		return nil, errors.New("connection reset by peer")
 	}
+	if f.delay > 0 && device != "" && device != f.target {
+		select {
+		case <-time.After(f.delay):
+		case <-req.Context().Done():
+			return nil, req.Context().Err()
+		}
+	}
 	return f.base.RoundTrip(req)
 }
 
@@ -266,6 +336,13 @@ func (f *faultTransport) matched() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.matches
+}
+
+// devicesReached returns how many distinct devices issued at least one request.
+func (f *faultTransport) devicesReached() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.seen)
 }
 
 // minioBackend is a MinIO container plus a raw S3 client for populating it.
@@ -336,7 +413,7 @@ func (m *minioBackend) putSnapshot(t *testing.T, bucket, pubkey string, ts time.
 // newSource builds an S3Source whose HTTP calls go through rt. The AWS SDK's own
 // retryer is disabled so request counts reflect only the source's retry layer;
 // in production the SDK retryer sits underneath and can only help.
-func (m *minioBackend) newSource(t *testing.T, bucket string, rt http.RoundTripper) *S3Source {
+func (m *minioBackend) newSource(t *testing.T, bucket string, rt http.RoundTripper, log *slog.Logger) *S3Source {
 	t.Helper()
 	awsCfg, err := config.LoadDefaultConfig(t.Context(),
 		config.WithRegion("us-east-1"),
@@ -350,7 +427,7 @@ func (m *minioBackend) newSource(t *testing.T, bucket string, rt http.RoundTripp
 		o.HTTPClient = &http.Client{Transport: rt}
 		o.Retryer = aws.NopRetryer{}
 	})
-	return &S3Source{client: client, bucket: bucket, lookbackDays: 3}
+	return &S3Source{client: client, log: log, bucket: bucket, lookbackDays: 3}
 }
 
 // buildStateIngestKey reproduces the key pattern from the telemetry

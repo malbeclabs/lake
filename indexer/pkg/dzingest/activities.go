@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	dzgeoloc "github.com/malbeclabs/lake/indexer/pkg/dz/geolocation"
 	dzgraph "github.com/malbeclabs/lake/indexer/pkg/dz/graph"
@@ -17,6 +18,7 @@ import (
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
+	"github.com/malbeclabs/lake/indexer/pkg/metrics"
 	"github.com/malbeclabs/lake/utils/pkg/logger"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -225,14 +227,14 @@ func (a *Activities) SyncIPMroute(ctx context.Context) error {
 		a.IngestionLog.WrapSkipped(ctx, "dzingest", "SyncIPMroute", a.Network)
 		return nil
 	}
-	return a.refresh(ctx, "SyncIPMroute", func() (ingestionlog.RefreshResult, error) {
+	return a.refresh(ctx, "SyncIPMroute", a.observeSync("mroute", func() (ingestionlog.RefreshResult, error) {
 		var result ingestionlog.RefreshResult
 		dumps, err := a.MrouteSource.FetchLatest(ctx)
 		if err != nil {
 			return result, fmt.Errorf("mroute fetch: %w", err)
 		}
 		return result, a.MrouteStore.Sync(ctx, dumps)
-	})
+	}))
 }
 
 // SyncMSDP fetches per-device `show ip msdp ...` snapshots from S3
@@ -244,14 +246,37 @@ func (a *Activities) SyncMSDP(ctx context.Context) error {
 		a.IngestionLog.WrapSkipped(ctx, "dzingest", "SyncMSDP", a.Network)
 		return nil
 	}
-	return a.refresh(ctx, "SyncMSDP", func() (ingestionlog.RefreshResult, error) {
+	return a.refresh(ctx, "SyncMSDP", a.observeSync("msdp", func() (ingestionlog.RefreshResult, error) {
 		var result ingestionlog.RefreshResult
 		dumps, err := a.MSDPSource.FetchLatest(ctx)
 		if err != nil {
 			return result, fmt.Errorf("msdp fetch: %w", err)
 		}
 		return result, a.MSDPStore.Sync(ctx, dumps)
-	})
+	}))
+}
+
+// observeSync records the view-refresh metrics and a duration log line for the
+// state-collect syncs. Unlike the other activities, these have no view layer of
+// their own to report from, so without this their runtime — and the headroom
+// left under the activity's StartToCloseTimeout — is invisible outside the
+// ingestion log table.
+func (a *Activities) observeSync(viewType string, fn func() (ingestionlog.RefreshResult, error)) func() (ingestionlog.RefreshResult, error) {
+	return func() (ingestionlog.RefreshResult, error) {
+		start := time.Now()
+		result, err := fn()
+		duration := time.Since(start)
+
+		status := "success"
+		if err != nil {
+			status = "error"
+		}
+		metrics.ViewRefreshTotal.WithLabelValues(viewType, status).Inc()
+		metrics.ViewRefreshDuration.WithLabelValues(viewType).Observe(duration.Seconds())
+		a.Log.Info(viewType+": sync completed", "duration", duration.String(), "status", status)
+
+		return result, err
+	}
 }
 
 func (a *Activities) fetchISISData(ctx context.Context) ([]isis.LSP, error) {
