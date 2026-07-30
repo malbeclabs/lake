@@ -114,6 +114,8 @@ The API has a background page cache (`api/handlers/page_cache.go`) that pre-comp
 
 Add caching when a page runs expensive queries, has a common default view, and 30–60s staleness is acceptable. See publisher check or edge scoreboard handlers for reference implementations.
 
+An entry may cache a complete result set and slice request-shaped pages out of it, so hit eligibility doesn't depend on the `limit` a client happens to send (see `sliceCachedValidators`). Cap the cached row count and fall through to the live query when the entry doesn't hold the whole set.
+
 ## Logging Levels
 
 ERROR-level log lines page on-call (alerts fire on `level="ERR"` — prod → `#alerts`, staging → `#alerts-l2`). Reserve raw `.Error(...)` calls for genuinely-actionable terminal failures: process/component death, startup failures, panics, config errors.

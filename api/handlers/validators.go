@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -93,27 +94,51 @@ var validatorsQuerySortFields = map[string]string{
 	"client":     "software_client",
 }
 
-// ValidatorsPageCacheKey is the page-cache key for the default validators listing
-// (no filters, sorted by stake desc, first page). The worker refreshes it; the
-// handler serves it for the matching request shape. Exported so the worker entry
-// and this handler share one definition (like MulticastHealthSummariesCacheKey).
-const ValidatorsPageCacheKey = "validators"
+// ValidatorsPageCacheKey is the page-cache key for the unfiltered, stake-desc
+// validators listing. The worker refreshes the *complete* set; the handler slices
+// the requested page out of it. Exported so the worker entry and this handler
+// share one definition (like MulticastHealthSummariesCacheKey).
+//
+// Deliberately not the old "validators" key, which held only the first page: the
+// worker runs inside the api pod, so during a rolling update a new pod would write
+// the complete set under a key that old pods still serve verbatim — returning every
+// row and ignoring the request's limit. A new key means both versions simply miss
+// and serve live for the rollout window.
+const ValidatorsPageCacheKey = "validators:all"
+
+// validatorsCacheMaxRows caps the row count the page-cache entry holds. At ~390
+// bytes of JSON per row the current ~1,300-row validator set is ~490 KB, so this
+// is ~4× headroom at ~1.9 MB worst case. Exceeding it disables the cache rather
+// than serving a truncated page — see sliceCachedValidators.
+const validatorsCacheMaxRows = 5000
 
 func (a *API) GetValidators(w http.ResponseWriter, r *http.Request) {
-	// DefaultLimit (not a literal) so the parse default and the page-cache gate's
-	// isDefaultValidatorsRequest comparison can't drift apart.
 	pagination := ParsePagination(r, DefaultLimit)
 	sort := ParseSort(r, "stake", validatorSortFields)
 	filters := ParseFilters(r)
 
-	// The default shape (first page, stake desc, no filters) is polled continuously
-	// and served from the page cache on mainnet. Other shapes bypass the cache.
-	if isMainnet(r.Context()) && isDefaultValidatorsRequest(pagination, sort, filters) {
+	// The unfiltered stake-desc listing is polled continuously (by the UI at
+	// limit=100 and by an external consumer at limit=900). The cache holds the
+	// complete set, so any page of it can be served without a ClickHouse query.
+	// Filtered or differently-sorted shapes bypass the cache.
+	if isMainnet(r.Context()) && isCacheableValidatorsRequest(sort, filters) {
 		if data, err := a.readPageCache(r.Context(), ValidatorsPageCacheKey); err == nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("X-Cache", "HIT")
-			_, _ = w.Write(data)
-			return
+			if page, ok := sliceCachedValidators(data, pagination); ok {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("X-Cache", "HIT")
+				// Let the polling clients self-throttle to the refresh cadence.
+				w.Header().Set("Cache-Control", "public, max-age=60")
+				// The response body depends on the env header, which is not in the URL
+				// (EnvMiddleware reads X-DZ-Env first, ?env= only as a fallback). Without
+				// this, a cache would replay this mainnet payload for a devnet request to
+				// the same URL — starting with the browser's own cache when the UI's env
+				// selector switches.
+				w.Header().Add("Vary", "X-DZ-Env")
+				if err := json.NewEncoder(w).Encode(page); err != nil {
+					logError("failed to encode response", "error", err)
+				}
+				return
+			}
 		}
 	}
 	w.Header().Set("X-Cache", "MISS")
@@ -131,7 +156,9 @@ func (a *API) GetValidators(w http.ResponseWriter, r *http.Request) {
 	resp, err := a.fetchValidatorsPage(ctx, whereFilter, filterArgs, orderBy, pagination.Limit, pagination.Offset)
 	if err != nil {
 		logError("validators query failed", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		// Fixed message, not err.Error(): this endpoint is unauthenticated, and a raw
+		// driver error leaks the ClickHouse host and user. The detail is in the log.
+		http.Error(w, "validators query failed", http.StatusInternalServerError)
 		return
 	}
 
@@ -141,28 +168,88 @@ func (a *API) GetValidators(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// isDefaultValidatorsRequest reports whether the parsed request matches the shape
-// the page cache holds: first page (default limit, offset 0), stake desc, no
-// filters. Comparing parsed values (not the raw URL) so both a bare request and
-// an explicit "?limit=100&offset=0&sort_by=stake&sort_dir=desc" match.
-func isDefaultValidatorsRequest(p PaginationParams, s SortParams, f MultiFilterParams) bool {
-	return p.Limit == DefaultLimit && p.Offset == 0 &&
-		s.Field == "stake" && s.Direction == "desc" &&
-		f.IsEmpty()
+// isCacheableValidatorsRequest reports whether the parsed request can be served
+// from the page-cache entry: unfiltered and sorted by stake desc. Pagination is
+// deliberately not part of the gate — the entry holds the complete set, so any
+// limit/offset is serviceable. Comparing parsed values (not the raw URL) so both a
+// bare request and an explicit "?sort_by=stake&sort_dir=desc" match.
+func isCacheableValidatorsRequest(s SortParams, f MultiFilterParams) bool {
+	return s.Field == "stake" && s.Direction == "desc" && f.IsEmpty()
 }
 
-// FetchValidatorsData computes the default validators listing (the page-cached
-// shape) for the page-cache worker. It runs against the mainnet connection, like
-// the other worker fetch functions.
+// sliceCachedValidators returns the requested page of a cached validators listing,
+// or false when the cached payload is not the complete set and therefore can't
+// answer an arbitrary page.
+//
+// Completeness is decided by Total (count() OVER () over the whole set, so it
+// reports the true row count even when the SELECT was capped) against the number
+// of items actually stored. That check covers the row cap being exceeded and any
+// future truncation, both of which fall through to the live query.
+//
+// An empty set is also treated as unusable rather than as a trivially complete
+// one: a single refresh that caught the view mid-reload would otherwise pin an
+// empty listing as an authoritative answer for a whole refresh cycle. Same reason
+// scalarCache.set refuses to cache a zero.
+func sliceCachedValidators(data []byte, p PaginationParams) (*ValidatorListResponse, bool) {
+	var cached ValidatorListResponse
+	if err := json.Unmarshal(data, &cached); err != nil {
+		return nil, false
+	}
+	if cached.Total == 0 || cached.Total > len(cached.Items) {
+		return nil, false
+	}
+
+	// Both bounds are clamped to the set, so a page past the end is an empty (but
+	// non-nil, hence still JSON "[]") slice rather than an out-of-range panic.
+	start := min(p.Offset, len(cached.Items))
+	end := min(start+p.Limit, len(cached.Items))
+
+	return &ValidatorListResponse{
+		Items: cached.Items[start:end],
+		// Whole-set aggregates, independent of the page being served.
+		Total:     cached.Total,
+		OnDZCount: cached.OnDZCount,
+		Limit:     p.Limit,
+		Offset:    p.Offset,
+	}, true
+}
+
+// FetchValidatorsData computes the complete unfiltered stake-desc validators
+// listing for the page-cache worker, from which the handler slices whatever page a
+// client asks for. It runs against the mainnet connection, like the other worker
+// fetch functions.
 func (a *API) FetchValidatorsData(ctx context.Context) (*ValidatorListResponse, error) {
 	orderBy := SortParams{Field: "stake", Direction: "desc"}.OrderByClause(validatorsQuerySortFields)
-	return a.fetchValidatorsPage(ctx, "", nil, orderBy, DefaultLimit, 0)
+	resp, err := a.fetchValidatorsPage(ctx, "", nil, orderBy, validatorsCacheMaxRows, 0)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Total > len(resp.Items) {
+		// The cache entry is now incomplete, so the handler will serve every request
+		// live until the cap is raised. Degraded fallback, not a terminal failure —
+		// WARN, never ERROR (this would otherwise page on-call for Solana growth).
+		logWarn("validators page cache row cap exceeded; listing requests will bypass the cache",
+			"cap", validatorsCacheMaxRows, "total", resp.Total)
+		// Drop the rows before they're written: Total already fails the handler's
+		// completeness check, so storing multiple MB every refresh only to unmarshal
+		// and discard it per request is strictly worse than caching nothing.
+		resp.Items = []ValidatorListItem{}
+	}
+	return resp, nil
 }
 
 // fetchValidatorsPage runs the validators listing query for the given filter,
 // sort, and pagination, returning the assembled response. Shared by the live
 // handler and the page-cache worker.
 func (a *API) fetchValidatorsPage(ctx context.Context, whereFilter string, filterArgs []any, orderBy string, limit, offset int) (*ValidatorListResponse, error) {
+	// The stake_share denominator comes from the TTL-cached scalar instead of a
+	// per-request CTE that re-scanned the vote-accounts window-function view.
+	totalStake, err := a.cachedEpochVoteTotalStake(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("validators total stake: %w", err)
+	}
+	totalStakeLit := strconv.FormatInt(totalStake, 10)
+
 	start := time.Now()
 
 	// Single query using window functions for counts to avoid repeating expensive CTEs.
@@ -171,12 +258,7 @@ func (a *API) fetchValidatorsPage(ctx context.Context, whereFilter string, filte
 	// in the same JOIN chain. Instead, we use IN for the on_dz boolean check and join
 	// the DZ metadata (dz_ip_info) separately via gossip_ip after the gossip join.
 	query := `
-		WITH total_stake AS (
-			SELECT sum(activated_stake_lamports) as total
-			FROM solana_vote_accounts_current
-			WHERE epoch_vote_account = 'true'
-		),
-		dz_ip_info AS (
+		WITH dz_ip_info AS (
 			SELECT
 				u.client_ip,
 				any(u.pk) as user_pk,
@@ -226,8 +308,8 @@ func (a *API) fetchValidatorsPage(ctx context.Context, whereFilter string, filte
 				v.node_pubkey,
 				v.activated_stake_lamports,
 				v.activated_stake_lamports / 1e9 as stake_sol,
-				CASE WHEN ts.total > 0
-					THEN v.activated_stake_lamports * 100.0 / ts.total
+				CASE WHEN ` + totalStakeLit + ` > 0
+					THEN v.activated_stake_lamports * 100.0 / ` + totalStakeLit + `
 					ELSE 0
 				END as stake_share,
 				COALESCE(v.commission_percentage, 0) as commission,
@@ -239,7 +321,6 @@ func (a *API) fetchValidatorsPage(ctx context.Context, whereFilter string, filte
 				COALESCE(g.version, '') as version,
 				COALESCE(va.software_client, '') as software_client
 			FROM solana_vote_accounts_current v
-			CROSS JOIN total_stake ts
 			LEFT JOIN solana_gossip_nodes_current g ON v.node_pubkey = g.pubkey
 			LEFT JOIN geoip_records_current geo ON g.gossip_ip = geo.ip
 			LEFT JOIN skip_rates sr ON v.node_pubkey = sr.leader_identity_pubkey
@@ -412,14 +493,19 @@ func (a *API) GetValidator(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// TTL-cached denominator instead of a per-request total_stake CTE (see
+	// cachedEpochVoteTotalStake).
+	totalStake, err := a.cachedEpochVoteTotalStake(ctx)
+	if err != nil {
+		logError("validator total stake query failed", "error", err, "vote_pubkey", votePubkey)
+		http.Error(w, "validator lookup failed", http.StatusInternalServerError)
+		return
+	}
+	totalStakeLit := strconv.FormatInt(totalStake, 10)
+
 	start := time.Now()
 	query := `
-		WITH total_stake AS (
-			SELECT sum(activated_stake_lamports) as total
-			FROM solana_vote_accounts_current
-			WHERE epoch_vote_account = 'true'
-		),
-		dz_ip_info AS (
+		WITH dz_ip_info AS (
 			SELECT
 				u.client_ip,
 				any(u.pk) as user_pk,
@@ -475,8 +561,8 @@ func (a *API) GetValidator(w http.ResponseWriter, r *http.Request) {
 			v.vote_pubkey,
 			v.node_pubkey,
 			v.activated_stake_lamports / 1e9 as stake_sol,
-			CASE WHEN ts.total > 0
-				THEN v.activated_stake_lamports * 100.0 / ts.total
+			CASE WHEN ` + totalStakeLit + ` > 0
+				THEN v.activated_stake_lamports * 100.0 / ` + totalStakeLit + `
 				ELSE 0
 			END as stake_share,
 			COALESCE(v.commission_percentage, 0) as commission,
@@ -496,7 +582,6 @@ func (a *API) GetValidator(w http.ResponseWriter, r *http.Request) {
 			COALESCE(va.software_client, '') as software_client,
 			COALESCE(va.software_version, '') as software_version
 		FROM solana_vote_accounts_current v
-		CROSS JOIN total_stake ts
 		LEFT JOIN solana_gossip_nodes_current g ON v.node_pubkey = g.pubkey
 		LEFT JOIN geoip_records_current geo ON g.gossip_ip = geo.ip
 		LEFT JOIN dz_ip_info di ON g.gossip_ip = di.client_ip
@@ -507,7 +592,7 @@ func (a *API) GetValidator(w http.ResponseWriter, r *http.Request) {
 	`
 
 	var validator ValidatorDetail
-	err := a.envDB(ctx).QueryRow(ctx, query, votePubkey, votePubkey, votePubkey, votePubkey).Scan(
+	err = a.envDB(ctx).QueryRow(ctx, query, votePubkey, votePubkey, votePubkey, votePubkey).Scan(
 		&validator.VotePubkey,
 		&validator.NodePubkey,
 		&validator.StakeSol,

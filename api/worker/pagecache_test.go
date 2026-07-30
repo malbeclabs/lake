@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/malbeclabs/lake/api/handlers"
 )
 
 // capHandler records emitted records so tests can assert on log level.
@@ -230,7 +232,7 @@ func TestDueThisCycle(t *testing.T) {
 		require.True(t, ok, "topology entry must exist")
 		require.LessOrEqual(t, topo.everyN, 1, "topology must refresh every cycle")
 
-		vals, ok := byKey["validators"]
+		vals, ok := byKey[handlers.ValidatorsPageCacheKey]
 		require.True(t, ok, "validators entry must exist")
 		require.Equal(t, validatorsListingEveryN, vals.everyN)
 		require.Equal(t, 2, vals.everyN)
