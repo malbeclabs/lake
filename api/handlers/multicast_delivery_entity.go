@@ -17,7 +17,7 @@ import (
 
 const multicastDeliveryEntityCoverageNote = "Current observed route state is limited to devices reporting multicast forwarding telemetry; absence is not proof of packet loss."
 
-// The device multicast-delivery fan-out bounds its aggregate in-flight
+// The multicast-delivery fan-outs bound their aggregate in-flight
 // ClickHouse queries per env (across all concurrent requests). clickhouse-go
 // does not queue pool acquisitions: past DialTimeout (5s) an acquisition
 // fails with ErrAcquireConnTimeout, which is not a source-unavailable error
@@ -38,6 +38,40 @@ func multicastDeliveryQuerySemSize(maxOpenConns int) int {
 	}
 	return size
 }
+
+// multicastDeliveryFanout runs a multicast-delivery handler's independent
+// ClickHouse queries concurrently, each holding a slot in the request env's
+// semaphore.
+type multicastDeliveryFanout struct {
+	ctx context.Context
+	sem chan struct{}
+	wg  sync.WaitGroup
+}
+
+func (a *API) newMulticastDeliveryFanout(ctx context.Context) *multicastDeliveryFanout {
+	return &multicastDeliveryFanout{ctx: ctx, sem: a.multicastDeliveryQuerySem(ctx)}
+}
+
+func (f *multicastDeliveryFanout) spawn(fn func()) {
+	f.wg.Add(1)
+	go func() {
+		defer f.wg.Done()
+		select {
+		case f.sem <- struct{}{}:
+			defer func() { <-f.sem }()
+		case <-f.ctx.Done():
+			// No slot before the request deadline (or the handler already
+			// returned). Run fn anyway: with ctx done it fails fast with
+			// the context error, keeping error handling uniform instead of
+			// leaving its result vars zeroed as if the query succeeded.
+		}
+		fn()
+	}()
+}
+
+// wait blocks until every query spawned since the last wait has finished, so a
+// handler can Wait per stage.
+func (f *multicastDeliveryFanout) wait() { f.wg.Wait() }
 
 type multicastDeliveryEntityParams struct {
 	Groups         []string
@@ -107,24 +141,8 @@ func (a *API) GetDeviceMulticastDelivery(w http.ResponseWriter, r *http.Request)
 		sourceTimes                             map[string]time.Time
 		deviceErr, availableErr, sourceTimesErr error
 	)
-	var wg sync.WaitGroup
-	sem := a.multicastDeliveryQuerySem(ctx)
-	spawn := func(fn func()) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-				defer func() { <-sem }()
-			case <-ctx.Done():
-				// No slot before the request deadline (or the handler already
-				// returned). Run fn anyway: with ctx done it fails fast with
-				// the context error, keeping error handling uniform instead of
-				// leaving its result vars zeroed as if the query succeeded.
-			}
-			fn()
-		}()
-	}
+	fanout := a.newMulticastDeliveryFanout(ctx)
+	spawn := fanout.spawn
 	deviceDone := make(chan struct{})
 	go func() {
 		defer close(deviceDone)
@@ -138,7 +156,7 @@ func (a *API) GetDeviceMulticastDelivery(w http.ResponseWriter, r *http.Request)
 		writeMulticastDeliveryEntityError(w, deviceErr, "multicast device delivery query error", "device", pkOrCode)
 		return
 	}
-	wg.Wait()
+	fanout.wait()
 
 	if availableErr != nil {
 		writeMulticastDeliveryEntityError(w, availableErr, "multicast device delivery sources query error", "device", pkOrCode)
@@ -196,7 +214,7 @@ func (a *API) GetDeviceMulticastDelivery(w http.ResponseWriter, r *http.Request)
 	spawn(func() {
 		endpointHealthItems, endpointHealthTotal, endpointHealthCounts, endpointErr = a.queryDeviceMulticastEndpointHealth(ctx, device, params)
 	})
-	wg.Wait()
+	fanout.wait()
 
 	if available[multicastDeliveryMrouteView] && mrouteErr != nil {
 		if !multicastDeliverySourceErr(mrouteErr) {
@@ -341,38 +359,77 @@ func (a *API) GetLinkMulticastDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Same two-stage fan-out, semaphore, and error-ordering rationale as
+	// GetDeviceMulticastDelivery above: the link lookup gates the rest and
+	// stays ungated so a 404 stays fast, then the queries that depend only on
+	// it run concurrently. Sequentially, these queries each scan the same
+	// view chains and their wall times accumulated to the 30s request deadline
+	// on loaded runners. Related-group health needs the group rows, so it
+	// chains behind the groups query inside one slot rather than forming a
+	// third stage; its one caller-visible fallback (groups unavailable) is
+	// handled below, where the OIF rows it needs exist.
 	now := time.Now().UTC()
-	link, err := a.queryMulticastDeliveryLink(ctx, pkOrCode)
-	if err != nil {
-		writeMulticastDeliveryEntityError(w, err, "multicast link delivery query error", "link", pkOrCode)
-		return
-	}
 
-	available, err := a.queryMulticastDeliverySources(ctx)
-	if err != nil {
-		writeMulticastDeliveryEntityError(w, err, "multicast link delivery sources query error", "link", pkOrCode)
+	var (
+		link                                  MulticastDeliveryLink
+		available                             map[string]bool
+		sourceTimes                           map[string]time.Time
+		linkErr, availableErr, sourceTimesErr error
+	)
+	fanout := a.newMulticastDeliveryFanout(ctx)
+	linkDone := make(chan struct{})
+	go func() {
+		defer close(linkDone)
+		link, linkErr = a.queryMulticastDeliveryLink(ctx, pkOrCode)
+	}()
+	fanout.spawn(func() { available, availableErr = a.queryMulticastDeliverySources(ctx) })
+	fanout.spawn(func() { sourceTimes, sourceTimesErr = a.queryMulticastDeliverySourceIngestTimes(ctx) })
+
+	<-linkDone
+	if linkErr != nil {
+		writeMulticastDeliveryEntityError(w, linkErr, "multicast link delivery query error", "link", pkOrCode)
 		return
 	}
-	sourceTimes, err := a.queryMulticastDeliverySourceIngestTimes(ctx)
-	if err != nil {
-		writeMulticastDeliveryEntityError(w, err, "multicast link delivery freshness query error", "link", pkOrCode)
+	fanout.wait()
+
+	if availableErr != nil {
+		writeMulticastDeliveryEntityError(w, availableErr, "multicast link delivery sources query error", "link", pkOrCode)
+		return
+	}
+	if sourceTimesErr != nil {
+		writeMulticastDeliveryEntityError(w, sourceTimesErr, "multicast link delivery freshness query error", "link", pkOrCode)
 		return
 	}
 
 	branches := []MulticastDeliveryLinkBranch{}
 	var oifTimes []time.Time
 	var branchTotal int
+	var branchErr error
+	var groups, groupsWithHealth []MulticastDeliveryEntityGroup
+	var relatedHealthCounts MulticastEntityHealthStatusCounts
+	var groupErr, healthErr error
+
 	if available[multicastDeliveryOIFView] {
-		branches, oifTimes, branchTotal, err = a.queryMulticastLinkDeliveryBranches(ctx, link, params)
-		if err != nil {
-			if !multicastDeliverySourceErr(err) {
-				writeMulticastDeliveryEntityError(w, err, "multicast link branches query error", "link", pkOrCode)
-				return
-			}
-			available[multicastDeliveryOIFView] = false
-			branches = []MulticastDeliveryLinkBranch{}
-			oifTimes = nil
+		fanout.spawn(func() {
+			branches, oifTimes, branchTotal, branchErr = a.queryMulticastLinkDeliveryBranches(ctx, link, params)
+		})
+	}
+	fanout.spawn(func() {
+		groups, groupErr = a.queryMulticastLinkDeliveryGroups(ctx, link, params)
+		if groupErr == nil {
+			groupsWithHealth, relatedHealthCounts, healthErr = a.queryLinkRelatedGroupHealth(ctx, groups)
 		}
+	})
+	fanout.wait()
+
+	if branchErr != nil {
+		if !multicastDeliverySourceErr(branchErr) {
+			writeMulticastDeliveryEntityError(w, branchErr, "multicast link branches query error", "link", pkOrCode)
+			return
+		}
+		available[multicastDeliveryOIFView] = false
+		branches = []MulticastDeliveryLinkBranch{}
+		oifTimes = nil
 	}
 
 	freshnessAvailable := copyMulticastDeliveryAvailability(available)
@@ -389,15 +446,14 @@ func (a *API) GetLinkMulticastDelivery(w http.ResponseWriter, r *http.Request) {
 	for _, branch := range branches {
 		oifs = append(oifs, branch.MulticastDeliveryOIF)
 	}
-	groups, groupErr := a.queryMulticastLinkDeliveryGroups(ctx, link, params)
 	if groupErr != nil {
 		if !multicastDeliverySourceErr(groupErr) {
 			writeMulticastDeliveryEntityError(w, groupErr, "multicast link groups query error", "link", pkOrCode)
 			return
 		}
 		groups = buildMulticastEntityGroups(nil, oifs)
+		groupsWithHealth, relatedHealthCounts, healthErr = a.queryLinkRelatedGroupHealth(ctx, groups)
 	}
-	groupsWithHealth, relatedHealthCounts, healthErr := a.queryLinkRelatedGroupHealth(ctx, groups)
 	if healthErr != nil {
 		if !multicastDeliverySourceErr(healthErr) {
 			writeMulticastDeliveryEntityError(w, healthErr, "multicast link related health query error", "link", pkOrCode)
