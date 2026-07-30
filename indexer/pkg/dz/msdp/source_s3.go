@@ -11,9 +11,26 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/malbeclabs/lake/indexer/pkg/dz/statecollect"
+	"github.com/malbeclabs/lake/utils/pkg/dberror"
 )
+
+// maxConcurrentFetches bounds in-flight per-device S3 reads, matching the limit
+// used by the serviceability and shreds views.
+const maxConcurrentFetches = 10
+
+// deviceFetchRetry bounds per-device retries for transient S3 failures. The fetch
+// is all-or-nothing (see Store.Sync), so without a retry one blip among the
+// hundreds of calls a cycle makes aborts the whole thing. dberror.IsTransient
+// treats context errors as non-transient, so a cancelled activity aborts
+// immediately rather than retrying into its deadline.
+var deviceFetchRetry = dberror.RetryConfig{
+	MaxAttempts: 3,
+	BaseBackoff: 100 * time.Millisecond,
+	MaxBackoff:  time.Second,
+}
 
 // snapshotKinds lists the state-collect kinds this package consumes.
 // `ip-msdp-sa-cache` is intentionally absent — the `*-rejected` variant
@@ -111,14 +128,48 @@ func (s *S3Source) fetchLatestForKind(ctx context.Context, kind string, now time
 	if err != nil {
 		return nil, err
 	}
-	var dumps []*Dump
-	for _, pubkey := range devices {
+	// Per-device reads are independent. Collect by device index so the result
+	// order tracks the device listing regardless of completion order.
+	perDevice := make([]*Dump, len(devices))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(maxConcurrentFetches)
+	for i, pubkey := range devices {
+		g.Go(func() error {
+			dump, err := s.fetchDevice(gctx, kind, pubkey, now)
+			if err != nil {
+				return err
+			}
+			perDevice[i] = dump
+			return nil
+		})
+	}
+	// One failed device aborts the whole kind: Store.Sync writes with
+	// MissingMeansDeleted=true, so returning a partial device set would
+	// tombstone the missing devices' prior state.
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	dumps := make([]*Dump, 0, len(perDevice))
+	for _, d := range perDevice {
+		if d != nil {
+			dumps = append(dumps, d)
+		}
+	}
+	return dumps, nil
+}
+
+// fetchDevice reads the latest snapshot for one device, retrying transient S3
+// failures. A nil Dump with a nil error means the device has no snapshot in the
+// lookback window.
+func (s *S3Source) fetchDevice(ctx context.Context, kind, pubkey string, now time.Time) (*Dump, error) {
+	return dberror.Retry(ctx, deviceFetchRetry, func() (*Dump, error) {
 		key, keyTS, err := s.latestKeyForDevice(ctx, kind, pubkey, now)
 		if err != nil {
 			return nil, err
 		}
 		if key == "" {
-			continue
+			return nil, nil
 		}
 		body, err := s.getObject(ctx, key)
 		if err != nil {
@@ -145,16 +196,15 @@ func (s *S3Source) fetchLatestForKind(ctx context.Context, kind string, now time
 			}
 		}
 
-		dumps = append(dumps, &Dump{
+		return &Dump{
 			Kind:         kind,
 			FetchedAt:    time.Now().UTC(),
 			SnapshotTS:   snapTS,
 			DevicePubkey: devicePK,
 			RawJSON:      env.Data,
 			FileName:     key,
-		})
-	}
-	return dumps, nil
+		}, nil
+	})
 }
 
 func (s *S3Source) listDevicePubkeys(ctx context.Context, kind string) ([]string, error) {
