@@ -120,12 +120,23 @@ const (
 	// clients wait. Falling through to the live query is the better failure mode.
 	validatorsCacheReadTimeout = 2 * time.Second
 
-	// validatorsCacheStaleAfter rejects a frozen entry: ~3× the refresh cadence
-	// (validatorsListingEveryN=2 × the 30s default interval), the same ratio
-	// publisherCheckStaleAfter uses. Refresh failures already escalate via
-	// logger.Escalator, so this only catches a worker that isn't running at all —
-	// which Cache-Control: max-age=60 would otherwise extend into client caches.
-	validatorsCacheStaleAfter = 3 * time.Minute
+	// ValidatorsCacheStaleAfter rejects a frozen entry. Refresh failures already
+	// escalate via logger.Escalator, so this only catches a worker that isn't running
+	// at all — which Cache-Control: max-age=60 would otherwise extend into client
+	// caches. That makes it a backstop, not a freshness mechanism, so it is sized to
+	// never reject a *healthy* entry at any configurable refresh interval rather than
+	// to track the cadence tightly.
+	//
+	// The bound must therefore exceed the worst-case age of a healthy entry:
+	// PAGE_CACHE_REFRESH_INTERVAL is clamped to 10 minutes and the validators entry
+	// refreshes every other cycle, so the cadence tops out at 20 minutes, plus up to
+	// maxActivityTimeout for the refresh itself. A tighter bound (an earlier revision
+	// used 3 minutes, ~3× the *default* cadence) would silently send a growing share
+	// of every cycle back to the live query as soon as an operator raised the interval,
+	// reverting the CPU win this cache exists for. Exported so TestValidatorsCacheBound
+	// in api/worker can assert that against the worker's own constants — api/worker
+	// imports api/handlers, so the invariant can only be checked from that side.
+	ValidatorsCacheStaleAfter = 45 * time.Minute
 )
 
 func (a *API) GetValidators(w http.ResponseWriter, r *http.Request) {
@@ -193,7 +204,7 @@ func isCacheableValidatorsRequest(s SortParams, f MultiFilterParams) bool {
 
 // cachedValidatorsPage reads the page-cache entry under its own deadline and slices
 // the requested page out of it, reporting false whenever the cache can't answer:
-// no entry, a read failure, an entry older than validatorsCacheStaleAfter, or a
+// no entry, a read failure, an entry older than ValidatorsCacheStaleAfter, or a
 // payload that isn't the complete set. Every false falls through to the live query.
 func (a *API) cachedValidatorsPage(ctx context.Context, p PaginationParams) (*ValidatorListResponse, bool) {
 	readCtx, cancel := context.WithTimeout(ctx, validatorsCacheReadTimeout)
@@ -203,9 +214,9 @@ func (a *API) cachedValidatorsPage(ctx context.Context, p PaginationParams) (*Va
 	if err != nil {
 		return nil, false
 	}
-	if age := time.Since(updatedAt); age > validatorsCacheStaleAfter {
+	if age := time.Since(updatedAt); age > ValidatorsCacheStaleAfter {
 		logWarn("validators: cached payload stale, running live",
-			"age", age.Round(time.Second), "max_age", validatorsCacheStaleAfter)
+			"age", age.Round(time.Second), "max_age", ValidatorsCacheStaleAfter)
 		return nil, false
 	}
 	return sliceCachedValidators(data, p)
@@ -248,8 +259,8 @@ func sliceCachedValidators(data []byte, p PaginationParams) (*ValidatorListRespo
 		// behavior is the wart — the web pager reads response.total — but fixing it
 		// needs the whole-set count for a page that returns no rows, i.e. a second
 		// full query, and it affects filtered and non-stake-sorted shapes just as much.
-		// Left for its own change; TestGetValidators_CachedPageMatchesLive pins both
-		// sides so neither can drift silently.
+		// Left for its own change (#750); TestGetValidators_CachedPageMatchesLive pins
+		// both sides so neither can drift silently.
 		Total:     cached.Total,
 		OnDZCount: cached.OnDZCount,
 		Limit:     p.Limit,
@@ -413,6 +424,9 @@ func (a *API) fetchValidatorsPage(ctx context.Context, whereFilter string, filte
 	defer rows.Close()
 
 	var validators []ValidatorListItem
+	// Assigned only inside the loop, so a page past the end of the set reports 0 for
+	// both instead of the real whole-set counts — the window aggregates ride on the
+	// returned rows. Affects every shape that reaches this path; see #750.
 	var total, onDZCount uint64
 	for rows.Next() {
 		var v ValidatorListItem

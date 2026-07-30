@@ -201,7 +201,7 @@ func TestGetValidators_CachedPageMatchesLive(t *testing.T) {
 }
 
 // TestGetValidators_StaleCacheFallsThroughToLive pins that an entry older than
-// validatorsCacheStaleAfter is not served — a worker that stopped running must not
+// ValidatorsCacheStaleAfter is not served — a worker that stopped running must not
 // pin an answer indefinitely, especially with Cache-Control: max-age=60 on top.
 //
 // Must NOT run in parallel, for the same shared-key reason as the test above.
