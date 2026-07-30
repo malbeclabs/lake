@@ -30,6 +30,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
 import { PageHeader } from './page-header'
+import { RetransmitOnlyBadge } from './retransmit-only-badge'
 
 const PAGE_SIZE = 100
 
@@ -1129,13 +1130,16 @@ export function ShredsDevicesPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-sm">
-                      <Link
-                        to={`/dz/metros/${d.metro_exchange_key}`}
-                        className="text-foreground/85 hover:text-foreground hover:underline font-mono text-xs"
-                        title={d.metro_exchange_key}
-                      >
-                        {d.metro_code || truncatePK(d.metro_exchange_key)}
-                      </Link>
+                      <span className="inline-flex items-center gap-1.5">
+                        <Link
+                          to={`/dz/metros/${d.metro_exchange_key}`}
+                          className="text-foreground/85 hover:text-foreground hover:underline font-mono text-xs"
+                          title={d.metro_exchange_key}
+                        >
+                          {d.metro_code || truncatePK(d.metro_exchange_key)}
+                        </Link>
+                        <RetransmitOnlyBadge enabled={d.retransmit_only_enabled} />
+                      </span>
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
                       ${d.total_price_dollars}

@@ -485,6 +485,7 @@ type ShredMetroHistoryItem struct {
 	TotalInitializedDevices uint16 `json:"total_initialized_devices"`
 	CurrentEpoch            uint64 `json:"current_epoch"`
 	CurrentUSDCPriceDollars uint16 `json:"current_usdc_price_dollars"`
+	RetransmitOnlyEnabled   uint8  `json:"retransmit_only_enabled"`
 }
 
 func (a *API) GetShredMetroHistories(w http.ResponseWriter, r *http.Request) {
@@ -505,7 +506,8 @@ func (a *API) GetShredMetroHistories(w http.ResponseWriter, r *http.Request) {
 		SELECT
 			sh.pk, sh.exchange_key, COALESCE(m.code, '') as metro_code,
 			sh.is_current_price_finalized, sh.total_initialized_devices,
-			sh.current_epoch, sh.current_usdc_price_dollars
+			sh.current_epoch, sh.current_usdc_price_dollars,
+			sh.retransmit_only_enabled
 		FROM dim_dz_shred_metro_histories_current sh
 		LEFT JOIN dz_metros_current m ON sh.exchange_key = m.pk
 		ORDER BY sh.total_initialized_devices DESC
@@ -530,6 +532,7 @@ func (a *API) GetShredMetroHistories(w http.ResponseWriter, r *http.Request) {
 			&m.PK, &m.ExchangeKey, &m.MetroCode,
 			&m.IsCurrentPriceFinalized, &m.TotalInitializedDevices,
 			&m.CurrentEpoch, &m.CurrentUSDCPriceDollars,
+			&m.RetransmitOnlyEnabled,
 		); err != nil {
 			logError("shred metro histories row scan failed", "error", err)
 			http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)

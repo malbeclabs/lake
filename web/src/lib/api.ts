@@ -6500,6 +6500,8 @@ export interface ShredDevice {
   granted_seats: number
   capacity: number
   available_seats: number
+  /** Metro-level: 1 when every device in the metro serves the retransmit group only. */
+  retransmit_only_enabled: number
 }
 
 export async function fetchShredDevices(params: {
