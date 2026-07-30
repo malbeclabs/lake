@@ -4180,7 +4180,7 @@ export interface TimelineEvent {
 export interface EntityChangeDetails {
   change_type: 'created' | 'updated' | 'deleted'
   changes?: FieldChange[]
-  entity?: DeviceEntity | LinkEntity | MetroEntity | ContributorEntity | UserEntity
+  entity?: DeviceEntity | LinkEntity | MetroEntity | ContributorEntity | UserEntity | FeedEntity
 }
 
 export interface FieldChange {
@@ -4250,6 +4250,16 @@ export interface UserEntity {
   device_pk: string
   tunnel_id: number
   device_code?: string
+  metro_code?: string
+}
+
+export interface FeedEntity {
+  pk: string
+  owner_pubkey: string
+  code: string
+  name: string
+  metro_pk: string
+  groups: string
   metro_code?: string
 }
 
