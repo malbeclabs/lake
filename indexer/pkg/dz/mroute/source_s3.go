@@ -22,11 +22,13 @@ import (
 // used by the serviceability and shreds views.
 const maxConcurrentFetches = 10
 
-// deviceFetchRetry bounds per-device retries for transient S3 failures. The fetch
-// is all-or-nothing (see Store.Sync), so without a retry one blip among the
-// hundreds of calls a cycle makes aborts the whole thing. dberror.IsTransient
-// treats context errors as non-transient, so a cancelled activity aborts
-// immediately rather than retrying into its deadline.
+// deviceFetchRetry bounds retries for transient S3 failures, covering both the
+// device listing and each per-device read. The fetch is all-or-nothing (see
+// Store.Sync), so without a retry one blip among the hundreds of calls a cycle
+// makes aborts the whole thing — and nothing above retries either, since
+// Activities.refresh returns nil to Temporal. dberror.IsTransient treats
+// context errors as non-transient, so a cancelled activity aborts immediately
+// rather than retrying into its deadline.
 var deviceFetchRetry = dberror.RetryConfig{
 	MaxAttempts: 3,
 	BaseBackoff: 100 * time.Millisecond,
@@ -121,7 +123,9 @@ func (s *S3Source) snapshotsPrefix() string {
 // window. Each S3 object is a statecollect.Envelope; this method unwraps
 // it so callers receive only the inner Arista JSON in Dump.RawJSON.
 func (s *S3Source) FetchLatest(ctx context.Context) ([]*Dump, error) {
-	devices, err := s.listDevicePubkeys(ctx)
+	devices, err := dberror.Retry(ctx, deviceFetchRetry, func() ([]string, error) {
+		return s.listDevicePubkeys(ctx)
+	})
 	if err != nil {
 		return nil, err
 	}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -182,6 +183,28 @@ func TestS3Source_FetchLatest_FanOut(t *testing.T) {
 		assert.Greater(t, ft.matched(), 1, "the failed device should have been retried")
 	})
 
+	t.Run("transient failure listing devices is retried and the walk completes", func(t *testing.T) {
+		ft := &faultTransport{base: http.DefaultTransport, devices: pubkeys, failListFirst: 1}
+		src := mio.newSource(t, bucket, ft, laketesting.NewLogger())
+
+		dumpsByKind, err := src.FetchLatest(ctx)
+		require.NoError(t, err, "a blip listing devices must not abort the cycle")
+		require.Len(t, dumpsByKind[SnapshotKindSummary], deviceCount)
+		// One listing per kind plus the retried one.
+		assert.Greater(t, ft.listAttempts(), len(snapshotKinds), "the device listing should have been retried")
+	})
+
+	t.Run("persistent listing failure aborts with bounded retries", func(t *testing.T) {
+		ft := &faultTransport{base: http.DefaultTransport, devices: pubkeys, failListFirst: math.MaxInt}
+		src := mio.newSource(t, bucket, ft, laketesting.NewLogger())
+
+		dumpsByKind, err := src.FetchLatest(ctx)
+		require.Error(t, err)
+		assert.Nil(t, dumpsByKind)
+		// Aborts on the first kind's listing, so no further kind is attempted.
+		assert.Equal(t, deviceFetchRetry.MaxAttempts, ft.listAttempts(), "retries must be bounded")
+	})
+
 	t.Run("persistent device failure aborts the whole fetch", func(t *testing.T) {
 		ft := &faultTransport{base: http.DefaultTransport, devices: pubkeys, target: pubkeys[7], failAll: true}
 		src := mio.newSource(t, bucket, ft, laketesting.NewLogger())
@@ -268,11 +291,16 @@ type faultTransport struct {
 	delay     time.Duration // held on non-target requests, to keep the fan-out busy
 	onFail    func()
 
-	mu       sync.Mutex
-	inflight int
-	peak     int
-	matches  int
-	seen     map[string]struct{}
+	// failListFirst fails this many device-listing requests, then passes them
+	// through. Each kind lists before its fan-out, so no pubkey identifies one.
+	failListFirst int
+
+	mu        sync.Mutex
+	inflight  int
+	peak      int
+	matches   int
+	listCalls int
+	seen      map[string]struct{}
 }
 
 func (f *faultTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -298,6 +326,13 @@ func (f *faultTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if device != "" && device == f.target {
 		f.matches++
 		fail = f.failAll || f.matches <= f.failFirst
+	}
+	// Every request the source issues either names a device or is a
+	// device-prefix listing: newSource pins region and credentials statically,
+	// so the SDK makes no discovery calls of its own.
+	if device == "" {
+		f.listCalls++
+		fail = f.listCalls <= f.failListFirst
 	}
 	f.mu.Unlock()
 
@@ -335,6 +370,14 @@ func (f *faultTransport) matched() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.matches
+}
+
+// listAttempts returns how many device-listing requests the transport saw,
+// summed across kinds.
+func (f *faultTransport) listAttempts() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.listCalls
 }
 
 // devicesReached returns how many distinct devices issued at least one request.
