@@ -25,8 +25,9 @@ func TestMulticastDeliveryQueryTimeoutLosesToRequestDeadline(t *testing.T) {
 	queryTimeout := time.Duration(multicastDeliveryQueryTimeoutSeconds) * time.Second
 	require.Less(t, queryTimeout, multicastDeliveryRequestTimeout,
 		"query cap must expire before the request deadline")
-	require.Contains(t, multicastDeliveryQuerySettings,
-		"max_execution_time = "+strconv.Itoa(multicastDeliveryQueryTimeoutSeconds))
+	require.Contains(t, multicastDeliveryQuerySettings(context.Background()),
+		"max_execution_time = "+strconv.Itoa(multicastDeliveryQueryTimeoutSeconds),
+		"no deadline in play: full per-query cap")
 
 	// Catch a literal cap that skipped the templated clause. Matching nothing is
 	// a pass: it means every cap is built from the constants above.
@@ -45,22 +46,20 @@ func TestMulticastDeliveryQueryTimeoutLosesToRequestDeadline(t *testing.T) {
 	}
 }
 
-// A count fallback runs second within its fan-out branch, so it gets what is
-// left of the request deadline instead of the full per-query cap — two queries
-// at the full cap would together outlast the handler's own budget.
-func TestMulticastDeliveryFallbackQuerySettingsUseRemainingDeadline(t *testing.T) {
+// ClickHouse counts max_execution_time from when the query starts executing, so
+// the cap has to come off the time actually left on the request: a query that
+// queued on the fan-out semaphore, or that runs second within its branch, would
+// otherwise get a full fresh budget and win the race the cap exists to lose.
+func TestMulticastDeliveryQuerySettingsUseRemainingDeadline(t *testing.T) {
 	t.Parallel()
-
-	require.Equal(t, multicastDeliveryQuerySettings,
-		multicastDeliveryFallbackQuerySettings(context.Background()),
-		"no deadline: full per-query cap")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	require.Contains(t, multicastDeliveryFallbackQuerySettings(ctx), "max_execution_time = 4")
+	require.Contains(t, multicastDeliveryQuerySettings(ctx), "max_execution_time = 4",
+		"less time left than the per-query cap: cap to the remainder, minus a second of margin")
 
 	expired, cancelExpired := context.WithTimeout(context.Background(), -time.Second)
 	defer cancelExpired()
-	require.Contains(t, multicastDeliveryFallbackQuerySettings(expired), "max_execution_time = 1",
+	require.Contains(t, multicastDeliveryQuerySettings(expired), "max_execution_time = 1",
 		"an expired deadline still yields a valid cap")
 }

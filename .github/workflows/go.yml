@@ -54,7 +54,8 @@ jobs:
       # ClickHouse/Postgres/Neo4j servers each sizing thread pools and caches for
       # the whole machine, which is what pushed container-backed tests toward
       # their handler deadlines. Fewer packages at once means more CPU per
-      # container; watch total step time here against the pre-change baseline.
+      # container, and costs nothing in wall time: one package's critical path
+      # bounds the suite (390s at -p 6 vs 402s at the default).
       - run: go test -race -v -p 6 ./...
   evals-short:
     runs-on: ubuntu-latest

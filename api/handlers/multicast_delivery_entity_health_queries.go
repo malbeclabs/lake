@@ -81,7 +81,7 @@ func (a *API) queryDeviceMulticastHealthUsers(ctx context.Context, device Multic
 		WHERE ` + where + `
 		ORDER BY ` + healthStatusSeverityOrderSQL + `,multicast_group_code, user_pk
 		LIMIT ? OFFSET ?
-		` + multicastDeliveryQuerySettings + `
+		` + multicastDeliveryQuerySettings(ctx) + `
 	`
 	args := append([]any{}, baseArgs...)
 	args = append(args, params.Limit, params.Offset)
@@ -181,7 +181,7 @@ func (a *API) queryDeviceMulticastEndpointHealth(ctx context.Context, device Mul
 		WHERE ` + where + `
 		ORDER BY ` + healthStatusSeverityOrderSQL + `,multicast_group_code, publisher_dz_ip, subscriber_device_code, subscriber_user_pk
 		LIMIT ? OFFSET ?
-		` + multicastDeliveryQuerySettings + `
+		` + multicastDeliveryQuerySettings(ctx) + `
 	`
 	args := append([]any{}, baseArgs...)
 	args = append(args, params.EndpointLimit, params.EndpointOffset)
@@ -263,7 +263,7 @@ func (a *API) queryLinkRelatedGroupHealth(ctx context.Context, groups []Multicas
 			SELECT multicast_group_pk, health_status FROM health_publisher_subscriber_path WHERE multicast_group_pk IN (?)
 		)
 		GROUP BY multicast_group_pk, health_status
-		` + multicastDeliveryQuerySettings + `
+		` + multicastDeliveryQuerySettings(ctx) + `
 	`
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query, groupPKs, groupPKs, groupPKs)
@@ -309,7 +309,7 @@ func (a *API) queryEntityHealthCounts(ctx context.Context, table, whereClause st
 		FROM ` + table + `
 		WHERE ` + whereClause + `
 		GROUP BY health_status
-		` + multicastDeliveryFallbackQuerySettings(ctx) + `
+		` + multicastDeliveryQuerySettings(ctx) + `
 	`
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query, args...)

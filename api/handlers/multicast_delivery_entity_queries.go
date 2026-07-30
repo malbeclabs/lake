@@ -132,7 +132,7 @@ func (a *API) queryMulticastDeviceDeliveryMroutes(ctx context.Context, device Mu
 		WHERE (device_pk = ? OR publisher_device_pk = ?)` + sourceFilter + groupFilter + `
 		ORDER BY multicast_group_code, group_address, source_address, device_code, vrf, mode
 		LIMIT ? OFFSET ?
-		` + multicastDeliveryQuerySettings + `
+		` + multicastDeliveryQuerySettings(ctx) + `
 	`
 	args := []any{device.PK, device.PK}
 	args = append(args, sourceArgs...)
@@ -274,7 +274,7 @@ func (a *API) queryMulticastDeviceDeliveryOIFs(ctx context.Context, device Multi
 		WHERE (device_pk = ? OR publisher_device_pk = ? OR subscriber_device_pk = ? OR peer_device_pk = ?)` + sourceFilter + groupFilter + oifKindFilter + `
 		ORDER BY multiIf(oif_kind = 'unknown', 0, oif_kind = 'subscriber_tunnel', 1, 2), multicast_group_code, group_address, source_address, device_code, oif_name
 		LIMIT ? OFFSET ?
-		` + multicastDeliveryQuerySettings + `
+		` + multicastDeliveryQuerySettings(ctx) + `
 	`
 	args := []any{device.PK, device.PK, device.PK, device.PK}
 	args = append(args, sourceArgs...)
@@ -383,7 +383,7 @@ func (a *API) queryMulticastDeviceDeliveryMSDPPeers(ctx context.Context, device 
 		WHERE device_pk = ? OR peer_device_pk = ?
 		ORDER BY device_code, peer_address
 		LIMIT 2000
-		` + multicastDeliveryQuerySettings + `
+		` + multicastDeliveryQuerySettings(ctx) + `
 	`
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query, device.PK, device.PK)
@@ -450,7 +450,7 @@ func (a *API) queryMulticastDeviceDeliveryMSDPSAs(ctx context.Context, viewName,
 		WHERE (device_pk = ? OR publisher_device_pk = ?` + remoteFilter + `)` + sourceFilter + groupFilter + `
 		ORDER BY group_address, source_address, device_code
 		LIMIT 5000
-		` + multicastDeliveryQuerySettings + `
+		` + multicastDeliveryQuerySettings(ctx) + `
 	`
 	args := []any{device.PK, device.PK}
 	args = append(args, remoteArg...)

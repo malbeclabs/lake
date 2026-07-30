@@ -108,7 +108,7 @@ func (a *API) queryMulticastLinkDeliveryBranches(ctx context.Context, link Multi
 		WHERE (? = '' OR direction = ?)
 		ORDER BY multicast_group_code, group_address, source_address, device_code, oif_name
 		LIMIT ? OFFSET ?
-		` + multicastDeliveryQuerySettings + `
+		` + multicastDeliveryQuerySettings(ctx) + `
 	`
 	args := []any{link.SideAPK, link.SideZPK, link.SideZPK, link.SideAPK, link.PK, link.Code}
 	args = append(args, sourceArgs...)
@@ -222,7 +222,7 @@ func (a *API) countMulticastLinkDeliveryBranches(ctx context.Context, link Multi
 			WHERE (link_pk = ? OR link_code = ?)` + sourceFilter + groupFilter + oifKindFilter + `
 		)
 		WHERE (? = '' OR direction = ?)
-		` + multicastDeliveryFallbackQuerySettings(ctx) + `
+		` + multicastDeliveryQuerySettings(ctx) + `
 	`
 	args := []any{link.SideAPK, link.SideZPK, link.SideZPK, link.SideAPK, link.PK, link.Code}
 	args = append(args, sourceArgs...)

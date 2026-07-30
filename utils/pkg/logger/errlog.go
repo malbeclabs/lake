@@ -31,7 +31,10 @@ type Logger interface {
 // The helper never drops a line: outside a request handler a context
 // deadline is usually a server-side timeout, which deserves a WARN. Request
 // handlers that want to skip logging entirely when the client has gone away
-// should check IsClientDisconnect first (see api/handlers.logError).
+// should check first — but on the cancel/broken-connection half only, not on
+// IsClientDisconnect as a whole: a deadline there is the handler's own budget
+// expiring, and dropping it leaves a 500 with no log line at any level. See
+// api/handlers.isCallerGone, i.e. IsClientDisconnect && !IsDeadlineExceeded.
 func Error(log Logger, msg string, args ...any) {
 	if err := ErrorFromArgs(args); err != nil && (IsClientDisconnect(err) || dberror.IsTransient(err)) {
 		log.Warn(msg, args...)

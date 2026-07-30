@@ -91,3 +91,20 @@ func TestInternalError_HandlerDeadlineWarns(t *testing.T) {
 	require.Len(t, recs, 1, "a handler's own deadline must not be dropped as a disconnect")
 	require.Equal(t, slog.LevelWarn, recs[0].Level)
 }
+
+func TestLogWarn_KeepsHandlerDeadline(t *testing.T) {
+	var recs []slog.Record
+	prev := slog.Default()
+	slog.SetDefault(slog.New(levelRecorder{&recs}))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	// Several handlers bound themselves with context.WithTimeout and no SQL-side
+	// cap, so this WARN is the only signal the request ran out of budget.
+	logWarn("served stale", "error", context.DeadlineExceeded)
+	require.Len(t, recs, 1)
+	require.Equal(t, slog.LevelWarn, recs[0].Level)
+
+	recs = nil
+	logWarn("served stale", "error", context.Canceled)
+	require.Empty(t, recs, "the caller is gone: nothing to log")
+}

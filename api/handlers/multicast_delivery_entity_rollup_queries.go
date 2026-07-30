@@ -31,7 +31,7 @@ func (a *API) queryMulticastDeviceDeliveryGroups(ctx context.Context, device Mul
 		GROUP BY multicast_group_pk
 		ORDER BY multicast_group_code, group_address, multicast_group_pk
 		LIMIT 500
-		` + multicastDeliveryQuerySettings + `
+		` + multicastDeliveryQuerySettings(ctx) + `
 	`
 	args := []any{device.PK, device.PK}
 	args = append(args, sourceArgs...)
@@ -69,7 +69,7 @@ func (a *API) countMulticastDeviceDeliveryMroutes(ctx context.Context, device Mu
 		SELECT count()
 		FROM enriched_ip_mroute
 		WHERE (device_pk = ? OR publisher_device_pk = ?)` + sourceFilter + groupFilter + `
-		` + multicastDeliveryFallbackQuerySettings(ctx) + `
+		` + multicastDeliveryQuerySettings(ctx) + `
 	`
 	args := []any{device.PK, device.PK}
 	args = append(args, sourceArgs...)
@@ -89,7 +89,7 @@ func (a *API) countMulticastDeviceDeliveryOIFs(ctx context.Context, device Multi
 		SELECT count()
 		FROM enriched_ip_mroute_oifs
 		WHERE (device_pk = ? OR publisher_device_pk = ? OR subscriber_device_pk = ? OR peer_device_pk = ?)` + sourceFilter + groupFilter + oifKindFilter + `
-		` + multicastDeliveryFallbackQuerySettings(ctx) + `
+		` + multicastDeliveryQuerySettings(ctx) + `
 	`
 	args := []any{device.PK, device.PK, device.PK, device.PK}
 	args = append(args, sourceArgs...)
@@ -134,7 +134,7 @@ func (a *API) queryMulticastLinkDeliveryGroups(ctx context.Context, link Multica
 		GROUP BY multicast_group_pk
 		ORDER BY multicast_group_code, group_address, multicast_group_pk
 		LIMIT 500
-		` + multicastDeliveryQuerySettings + `
+		` + multicastDeliveryQuerySettings(ctx) + `
 	`
 	args := []any{link.SideAPK, link.SideZPK, link.SideZPK, link.SideAPK, link.PK, link.Code}
 	args = append(args, sourceArgs...)

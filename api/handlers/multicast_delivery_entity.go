@@ -44,22 +44,13 @@ const (
 )
 
 // multicastDeliveryQuerySettings is the SETTINGS clause every multicast
-// delivery entity query ends with.
-var multicastDeliveryQuerySettings = multicastDeliveryQuerySettingsFor(multicastDeliveryQueryTimeoutSeconds)
-
-func multicastDeliveryQuerySettingsFor(seconds int) string {
-	return fmt.Sprintf(
-		"SETTINGS max_execution_time = %d, timeout_before_checking_execution_speed = 0",
-		seconds,
-	)
-}
-
-// multicastDeliveryFallbackQuerySettings caps a query that runs second within a
-// fan-out branch — the count fallback a paged leg takes when its offset lands
-// past the end — at what is left of the request deadline. Two queries at the
-// full per-query cap would together outlast the handler's own budget, which is
-// the race the cap exists to lose.
-func multicastDeliveryFallbackQuerySettings(ctx context.Context) string {
+// delivery entity query ends with. The cap is the per-query budget or what is
+// left of the request deadline, whichever is smaller: ClickHouse counts
+// max_execution_time from the moment the query starts executing, so a query
+// that waited on the fan-out semaphore, or that runs second within its branch
+// (a count fallback), would otherwise outlast the handler's own deadline and
+// lose the race the cap exists to lose.
+func multicastDeliveryQuerySettings(ctx context.Context) string {
 	seconds := multicastDeliveryQueryTimeoutSeconds
 	if deadline, ok := ctx.Deadline(); ok {
 		// One second of margin, so ClickHouse still gets to report its own
@@ -69,7 +60,10 @@ func multicastDeliveryFallbackQuerySettings(ctx context.Context) string {
 			seconds = max(remaining, 1)
 		}
 	}
-	return multicastDeliveryQuerySettingsFor(seconds)
+	return fmt.Sprintf(
+		"SETTINGS max_execution_time = %d, timeout_before_checking_execution_speed = 0",
+		seconds,
+	)
 }
 
 func multicastDeliveryQuerySemSize(maxOpenConns int) int {
