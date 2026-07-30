@@ -575,6 +575,10 @@ func TestGetShredDevices_RetransmitOnlyFromMetro(t *testing.T) {
 	for _, d := range response.Items {
 		flags[d.DeviceKey] = d.RetransmitOnlyEnabled
 	}
+	// Presence first: a device whose metro has no history row must still be
+	// listed, otherwise the zero-value lookups below would pass vacuously.
+	require.Contains(t, flags, "dev-1")
+	require.Contains(t, flags, "dev-2")
 	assert.Equal(t, uint8(1), flags["dev-1"], "dev-1's metro has the flag set")
 	assert.Equal(t, uint8(0), flags["dev-2"], "dev-2's metro has no history row")
 }
