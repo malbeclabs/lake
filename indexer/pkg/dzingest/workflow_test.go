@@ -133,12 +133,15 @@ func TestDZIngestWorkflow_ActivityFailuresNeverLogError(t *testing.T) {
 // and the next cycle re-queried the identical window, freezing staging ingest for
 // ~22.6h (#740). Assert the relationship instead of leaving it in prose.
 //
-// The margin left over (15m − 12m = 3m at the default chunk) covers the
-// ClickHouse dedup/baseline/insert work. The #711 configuration fails this.
+// The budget covers three chunked Flux queries (12m) plus the rare baseline
+// fallback (2m); what is left over — 1m at today's 15m deadline — is all the
+// ClickHouse dedup/baseline/insert work gets on that fallback path, which is why
+// the comment on telemUsageStartToCloseTimeout calls it tight. The #711
+// configuration (10m) fails this assert outright.
 func TestLake_DZIngest_TelemetryUsageBudgetCoversWorstCaseRefresh(t *testing.T) {
 	t.Parallel()
 
-	fluxBudget := dztelemusage.WorstCaseRefreshFluxBudget(dztelemusage.DefaultQueryChunk)
+	fluxBudget := dztelemusage.WorstCaseRefreshFluxBudget()
 	require.Greater(t, telemUsageStartToCloseTimeout, fluxBudget,
 		"the RefreshTelemetryUsage activity deadline (%s) must exceed the worst-case InfluxDB time for one capped refresh (%s), with margin for the ClickHouse insert",
 		telemUsageStartToCloseTimeout, fluxBudget)

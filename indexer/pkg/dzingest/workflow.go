@@ -28,10 +28,10 @@ const (
 	// ctx, so the worst case is ~12m of InfluxDB plus the ClickHouse
 	// dedup/baseline/insert work; 15m bounds that. A shorter deadline would
 	// expire before the insert on slow InfluxDB and pin maxTime in a retry loop
-	// (the #665/#671 failure mode). (The rare InfluxDB baseline fallback adds up
-	// to 120s before the chunked read; on that path the deadline is tight, but
-	// it needs a cache miss plus 0 ClickHouse baselines and the next cycle
-	// recovers.)
+	// (the #665/#671 failure mode). (The rare InfluxDB baseline fallback adds a
+	// further 120s before the chunked read, leaving ~1m for ClickHouse; on that
+	// path the deadline is tight, but it needs a cache miss plus 0 ClickHouse
+	// baselines and the next cycle recovers.)
 	//
 	// This value and the span it must cover were chosen independently in #711
 	// and #714 and drifted into incoherence, freezing staging ingest for ~22.6h

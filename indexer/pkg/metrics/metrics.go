@@ -176,19 +176,25 @@ var (
 		[]string{"dz_env"},
 	)
 
-	// TelemetryUsageWatermarkLagSeconds is now − the telemetry-usage ingest
-	// watermark (ClickHouse max event_ts), published at the top of every refresh
-	// including ones that later fail. A frozen watermark climbs monotonically
-	// here from the first failing cycle, which is what makes #740's 22.6h of
-	// zero ingest detectable without waiting for the 24h horizon ERROR. One
-	// series per dz_env; a single indexer pod publishes all envs it runs.
+	// TelemetryUsageWatermarkTimestampSeconds is the telemetry-usage ingest
+	// watermark (ClickHouse max event_ts) as a Unix timestamp, published at the
+	// top of every refresh including ones that later fail. Query its age as
+	// `time() - doublezero_data_indexer_telemetry_usage_watermark_timestamp_seconds`.
 	//
-	// An env with no rows yet has no watermark, so it publishes no series until
-	// its first insert.
-	TelemetryUsageWatermarkLagSeconds = promauto.NewGaugeVec(
+	// An absolute timestamp, not a pre-computed lag: a lag gauge is only correct
+	// while it keeps being republished, so it FREEZES at its last value if the
+	// refresh stops running or fails before this point (e.g. every cycle failing
+	// on the ClickHouse read) — exactly the outage it exists to catch. An age
+	// derived from `time()` keeps climbing on its own.
+	//
+	// This is what makes #740's 22.6h of zero ingest detectable without waiting
+	// for the 24h horizon ERROR. One series per dz_env; a single indexer pod
+	// publishes all envs it runs. An env with no rows yet has no watermark, so it
+	// publishes no series until its first insert.
+	TelemetryUsageWatermarkTimestampSeconds = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "doublezero_data_indexer_telemetry_usage_watermark_lag_seconds",
-			Help: "Age of the telemetry-usage ingest watermark (now - max event_ts) in seconds",
+			Name: "doublezero_data_indexer_telemetry_usage_watermark_timestamp_seconds",
+			Help: "Unix timestamp of the telemetry-usage ingest watermark (max event_ts)",
 		},
 		[]string{"dz_env"},
 	)
