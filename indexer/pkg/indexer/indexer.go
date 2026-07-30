@@ -282,6 +282,7 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 			Region:      cfg.MrouteS3Region,
 			KeyPrefix:   cfg.MrouteS3KeyPrefix,
 			EndpointURL: cfg.MrouteS3EndpointURL,
+			Logger:      cfg.Logger,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create mroute S3 source: %w", err)
@@ -308,6 +309,7 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 			Region:      cfg.MSDPS3Region,
 			KeyPrefix:   cfg.MSDPS3KeyPrefix,
 			EndpointURL: cfg.MSDPS3EndpointURL,
+			Logger:      cfg.Logger,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create MSDP S3 source: %w", err)

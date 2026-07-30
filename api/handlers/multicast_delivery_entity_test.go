@@ -79,7 +79,7 @@ func TestDeviceMulticastDelivery_EmptyState(t *testing.T) {
 
 	rr, resp := deviceMulticastDeliveryRequest(api, "dev-ams1", "")
 
-	require.Equal(t, http.StatusOK, rr.Code)
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 	assert.True(t, resp.SourceAvailable)
 	assert.Equal(t, "dev-ams1", resp.Device.PK)
 	assert.Zero(t, resp.Summary.GroupCount)
@@ -102,7 +102,7 @@ func TestDeviceMulticastDelivery_ObservedStateAndPagination(t *testing.T) {
 
 	rr, resp := deviceMulticastDeliveryRequest(api, "dev-ams1", "limit=1")
 
-	require.Equal(t, http.StatusOK, rr.Code)
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 	assert.True(t, resp.SourceAvailable)
 	assert.Equal(t, "fresh", resp.Freshness.Mroute.Status)
 	assert.Equal(t, 1, resp.Summary.GroupCount)
@@ -180,7 +180,7 @@ func TestLinkMulticastDelivery_ObservedStateAndDirectionFilter(t *testing.T) {
 
 	rr, resp := linkMulticastDeliveryRequest(api, "link-ams-nyc", "")
 
-	require.Equal(t, http.StatusOK, rr.Code)
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 	assert.True(t, resp.SourceAvailable)
 	assert.Equal(t, "link-ams-nyc", resp.Link.PK)
 	assert.Equal(t, 1, resp.BranchTotal)
@@ -195,7 +195,7 @@ func TestLinkMulticastDelivery_ObservedStateAndDirectionFilter(t *testing.T) {
 	assert.Greater(t, resp.Summary.RelatedGroupHealthCounts.Total, uint64(0))
 
 	rr, filtered := linkMulticastDeliveryRequest(api, "link-ams-nyc", "direction=z_to_a")
-	require.Equal(t, http.StatusOK, rr.Code)
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 	assert.Zero(t, filtered.BranchTotal)
 	assert.Empty(t, filtered.Branches)
 }
