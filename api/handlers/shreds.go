@@ -540,6 +540,11 @@ func (a *API) GetShredMetroHistories(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, m)
 	}
+	if err := rows.Err(); err != nil {
+		logError("shred metro histories rows error", "error", err)
+		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
+		return
+	}
 	if items == nil {
 		items = []ShredMetroHistoryItem{}
 	}

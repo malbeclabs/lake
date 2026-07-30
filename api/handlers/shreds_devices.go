@@ -126,6 +126,11 @@ func (a *API) GetShredDevices(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, d)
 	}
+	if err := rows.Err(); err != nil {
+		logError("shred devices rows error", "error", err)
+		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
+		return
+	}
 	if items == nil {
 		items = []ShredDeviceItem{}
 	}
