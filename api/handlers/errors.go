@@ -38,10 +38,9 @@ func logError(msg string, args ...any) {
 }
 
 // logWarn logs at WARN level, silently skipping client disconnects. Like
-// logError it keeps a handler's own expired deadline (see isCallerGone), which
-// is what logger.Warn would drop — several handlers bound themselves with
-// context.WithTimeout and no SQL-side cap, so that line is the only signal the
-// request ran out of budget.
+// logError it keeps a handler's own expired deadline (see isCallerGone):
+// several handlers bound themselves with context.WithTimeout and no SQL-side
+// cap, so that line is the only signal the request ran out of budget.
 func logWarn(msg string, args ...any) {
 	if err := logger.ErrorFromArgs(args); err != nil && isCallerGone(err) {
 		return

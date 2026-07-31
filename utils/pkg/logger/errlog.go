@@ -43,16 +43,6 @@ func Error(log Logger, msg string, args ...any) {
 	log.Error(msg, args...)
 }
 
-// Warn logs at WARN level, silently skipping client disconnects. Meant for
-// request paths, where a disconnect-class error means the client is gone and
-// there is nothing to log; elsewhere prefer a plain log.Warn.
-func Warn(log Logger, msg string, args ...any) {
-	if err := ErrorFromArgs(args); err != nil && IsClientDisconnect(err) {
-		return
-	}
-	log.Warn(msg, args...)
-}
-
 // IsCanceled reports whether err is a context cancellation, including
 // non-standard wrappings that only carry the message. Unlike
 // IsClientDisconnect it does not match deadline errors, so callers can treat

@@ -58,18 +58,6 @@ func TestError_ClassifiesByErrorArg(t *testing.T) {
 	}
 }
 
-func TestWarn_SkipsClientDisconnect(t *testing.T) {
-	t.Parallel()
-
-	log, recs := capLogger()
-	Warn(log, "op failed", "error", context.Canceled)
-	require.Empty(t, *recs)
-
-	Warn(log, "op failed", "error", errors.New("boom"))
-	require.Len(t, *recs, 1)
-	require.Equal(t, slog.LevelWarn, (*recs)[0].Level)
-}
-
 func TestErrorFromArgs(t *testing.T) {
 	t.Parallel()
 
