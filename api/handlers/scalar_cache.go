@@ -120,6 +120,18 @@ func (a *API) cachedTotalStake(ctx context.Context) (int64, error) {
 		`SELECT sum(activated_stake_lamports) FROM solana_vote_accounts_current`)
 }
 
+// cachedEpochVoteTotalStake returns the total activated stake (lamports) across
+// epoch-voting accounts only, cached per env for totalStakeCacheTTL.
+//
+// Deliberately separate from cachedTotalStake: solana_vote_accounts_current does
+// not pre-filter on epoch_vote_account, so the unfiltered sum is strictly larger.
+// The listing/detail handlers use this filtered total as the stake_share
+// denominator; reusing the unfiltered one would silently shrink every share.
+func (a *API) cachedEpochVoteTotalStake(ctx context.Context) (int64, error) {
+	return a.cachedScalar(ctx, "epoch_vote_total_stake", totalStakeCacheTTL,
+		`SELECT sum(activated_stake_lamports) FROM solana_vote_accounts_current WHERE epoch_vote_account = 'true'`)
+}
+
 // cachedCurrentSlot returns the latest cluster slot, cached per env for
 // currentSlotCacheTTL. Replaces the per-request max(cluster_slot) subquery over
 // the vote-account activity window.
