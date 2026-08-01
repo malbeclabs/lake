@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/malbeclabs/lake/api/handlers/dberror"
 	"github.com/malbeclabs/lake/api/metrics"
 	"github.com/malbeclabs/lake/api/rewards"
+	"github.com/malbeclabs/lake/utils/pkg/dberror"
 	"golang.org/x/sync/errgroup"
 )
 
