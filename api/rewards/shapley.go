@@ -73,19 +73,19 @@ type OperatorValue struct {
 
 // CompareResult holds baseline vs modified simulation results with deltas.
 type CompareResult struct {
-	BaselineResults  []OperatorValue `json:"baseline_results"`
-	ModifiedResults  []OperatorValue `json:"modified_results"`
-	Deltas           []OperatorDelta `json:"deltas"`
-	BaselineTotal    float64         `json:"baseline_total"`
-	ModifiedTotal    float64         `json:"modified_total"`
+	BaselineResults []OperatorValue `json:"baseline_results"`
+	ModifiedResults []OperatorValue `json:"modified_results"`
+	Deltas          []OperatorDelta `json:"deltas"`
+	BaselineTotal   float64         `json:"baseline_total"`
+	ModifiedTotal   float64         `json:"modified_total"`
 }
 
 // OperatorDelta shows the change between baseline and modified for an operator.
 type OperatorDelta struct {
-	Operator         string  `json:"operator"`
-	BaselineValue    float64 `json:"baseline_value"`
-	ModifiedValue    float64 `json:"modified_value"`
-	ValueDelta       float64 `json:"value_delta"`
+	Operator           string  `json:"operator"`
+	BaselineValue      float64 `json:"baseline_value"`
+	ModifiedValue      float64 `json:"modified_value"`
+	ValueDelta         float64 `json:"value_delta"`
 	BaselineProportion float64 `json:"baseline_proportion"`
 	ModifiedProportion float64 `json:"modified_proportion"`
 	ProportionDelta    float64 `json:"proportion_delta"`
@@ -413,8 +413,8 @@ func LinkEstimate(ctx context.Context, operatorFocus string, input ShapleyInput,
 
 	// Build index for O(1) symmetric link lookup: (d2,d1,bw,latency) -> index
 	type linkKey struct {
-		d1, d2        string
-		bw, latency   float64
+		d1, d2      string
+		bw, latency float64
 	}
 	symIndex := make(map[linkKey]int, len(links))
 	for i, l := range links {

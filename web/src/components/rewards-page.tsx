@@ -44,6 +44,14 @@ function formatRelativeTime(date: Date): string {
   return `${days}d ago`
 }
 
+// Plain helper (not a hook) so Date.now() isn't called directly in component render.
+function computeStaleness(computedAtStr: string | undefined): { computedAt: Date; stale: boolean } | null {
+  if (!computedAtStr) return null
+  const computedAt = new Date(computedAtStr)
+  const ageHours = (Date.now() - computedAt.getTime()) / 3600000
+  return { computedAt, stale: ageHours > 24 }
+}
+
 // Operator color palette
 const COLORS = [
   '#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6',
@@ -154,7 +162,7 @@ function OperatorTable({ results, title, operatorNames, operatorPks }: { results
 
   const sorted = useMemo(() => {
     return [...results].sort((a, b) => {
-      let cmp = 0
+      let cmp: number
       if (sortField === 'operator') {
         cmp = a.operator.localeCompare(b.operator)
       } else if (sortField === 'value') {
@@ -229,7 +237,7 @@ function DeltaTable({ deltas, operatorNames, operatorPks }: { deltas: OperatorDe
 
   const sorted = useMemo(() => {
     return [...deltas].sort((a, b) => {
-      let cmp = 0
+      let cmp: number
       if (sortField === 'operator') {
         cmp = a.operator.localeCompare(b.operator)
       } else if (sortField === 'baseline_value') {
@@ -294,7 +302,7 @@ function LinkTable({ results }: { results: RewardsLinkResult[] }) {
 
   const sorted = useMemo(() => {
     return [...results].sort((a, b) => {
-      let cmp = 0
+      let cmp: number
       if (sortField === 'device1') cmp = a.device1.localeCompare(b.device1)
       else if (sortField === 'device2') cmp = a.device2.localeCompare(b.device2)
       else if (sortField === 'bandwidth') cmp = a.bandwidth - b.bandwidth
@@ -515,7 +523,7 @@ function ContributorSummary({ network, operatorNames, operatorPks }: { network: 
 
   const sorted = useMemo(() => {
     return [...stats].sort((a, b) => {
-      let cmp = 0
+      let cmp: number
       if (sortField === 'operator') {
         cmp = a.operator.localeCompare(b.operator)
       } else if (sortField === 'devices') {
@@ -643,6 +651,8 @@ export function RewardsPage() {
   const simResults = simulateQuery.data?.results ?? null
   const simComputing = simulateQuery.error instanceof Error && simulateQuery.error.message === 'computing'
   const simRunning = simEnabled && (simulateQuery.isLoading || simComputing)
+
+  const simComputedAt = computeStaleness(simulateQuery.data?.computed_at)
 
   // Update state when live network loads
   useEffect(() => {
@@ -860,21 +870,16 @@ export function RewardsPage() {
             {simResults && simResults.length > 0 ? (
               <>
                 <OperatorTable results={simResults} title="Shapley Reward Shares" operatorNames={operatorNames} operatorPks={operatorPks} />
-                {simulateQuery.data?.computed_at && (() => {
-                  const computedAt = new Date(simulateQuery.data.computed_at)
-                  const ageHours = (Date.now() - computedAt.getTime()) / 3600000
-                  const stale = ageHours > 24
-                  return (
-                    <div className="flex items-center justify-between text-xs text-muted-foreground">
-                      <span className={stale ? 'text-amber-500' : ''}>
-                        Last computed {formatRelativeTime(computedAt)} ({computedAt.toLocaleString()})
-                        {simulateQuery.data.epoch ? ` · Epoch ${simulateQuery.data.epoch}` : ''}
-                        {stale ? ' · may be stale' : ''}
-                      </span>
-                      <span>Refreshes automatically each epoch (~2–3 days)</span>
-                    </div>
-                  )
-                })()}
+                {simComputedAt && (
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span className={simComputedAt.stale ? 'text-amber-500' : ''}>
+                      Last computed {formatRelativeTime(simComputedAt.computedAt)} ({simComputedAt.computedAt.toLocaleString()})
+                      {simulateQuery.data?.epoch ? ` · Epoch ${simulateQuery.data.epoch}` : ''}
+                      {simComputedAt.stale ? ' · may be stale' : ''}
+                    </span>
+                    <span>Refreshes automatically each epoch (~2–3 days)</span>
+                  </div>
+                )}
               </>
             ) : simResults ? (
               <div className="text-center text-muted-foreground py-8">
