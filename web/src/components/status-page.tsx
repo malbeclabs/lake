@@ -285,7 +285,9 @@ type IssueSeverity = "down" | "critical" | "degraded" | "no_data";
 
 function classifyIssueSeverity(issue: LinkIssue): IssueSeverity {
   if (issue.is_down) return "down";
-  if (issue.issue === "missing_adjacency") return "down";
+  // A missing ISIS adjacency while the data plane is still forwarding traffic
+  // (is_down=false) is a critical routing issue, not a full link-down.
+  if (issue.issue === "missing_adjacency") return "critical";
   if (issue.issue === "packet_loss") {
     if (issue.value >= 95) return "down";
     if (issue.value >= 10) return "critical";
@@ -379,19 +381,38 @@ function IssueDetails({
   onNonActivatedDeviceClick: (deviceCode: string) => void;
   onDeviceIssueClick: (devicePk: string) => void;
 }) {
-  const grouped = issues.reduce(
-    (acc, issue) => {
+  // Group all issues by link first, then assign each link to a single section based on
+  // its worst issue severity. This ensures a link with multiple issues (e.g. packet loss
+  // + missing adjacency) appears exactly once, not duplicated across severity sections.
+  const severityRank: Record<IssueSeverity, number> = {
+    down: 0,
+    critical: 1,
+    degraded: 2,
+    no_data: 3,
+  };
+  const issuesByLink = new Map<string, LinkIssue[]>();
+  for (const issue of issues) {
+    const existing = issuesByLink.get(issue.code) || [];
+    existing.push(issue);
+    issuesByLink.set(issue.code, existing);
+  }
+  const grouped: Record<
+    IssueSeverity,
+    { code: string; issues: LinkIssue[] }[]
+  > = {
+    down: [],
+    critical: [],
+    degraded: [],
+    no_data: [],
+  };
+  for (const [code, linkIssues] of issuesByLink) {
+    let worst = classifyIssueSeverity(linkIssues[0]);
+    for (const issue of linkIssues) {
       const severity = classifyIssueSeverity(issue);
-      acc[severity].push(issue);
-      return acc;
-    },
-    {
-      down: [] as LinkIssue[],
-      critical: [] as LinkIssue[],
-      degraded: [] as LinkIssue[],
-      no_data: [] as LinkIssue[],
-    },
-  );
+      if (severityRank[severity] < severityRank[worst]) worst = severity;
+    }
+    grouped[worst].push({ code, issues: linkIssues });
+  }
 
   const sections: {
     key: IssueSeverity;
@@ -463,16 +484,8 @@ function IssueDetails({
         Showing issues from the last hour
       </div>
       {sections.map(({ key, label, icon: Icon, iconColor, valueColor }) => {
-        const sectionIssues = grouped[key];
-        if (sectionIssues.length === 0) return null;
-
-        // Group issues by link code so the same link appears once with all its issues
-        const byLink = new Map<string, LinkIssue[]>();
-        for (const issue of sectionIssues) {
-          const existing = byLink.get(issue.code) || [];
-          existing.push(issue);
-          byLink.set(issue.code, existing);
-        }
+        const sectionLinks = grouped[key];
+        if (sectionLinks.length === 0) return null;
 
         return (
           <div key={key}>
@@ -480,7 +493,7 @@ function IssueDetails({
               {label}
             </div>
             <div className="space-y-2">
-              {[...byLink.entries()].map(([code, linkIssues]) => {
+              {sectionLinks.map(({ code, issues: linkIssues }) => {
                 const first = linkIssues[0];
                 // Use the most recent "since" across all issues for this link
                 const mostRecentSince = linkIssues.reduce((latest, i) => {
@@ -740,23 +753,16 @@ function IssueDetails({
                       {link.link_type}
                       {link.bandwidth_bps > 0 && ` · ${formatBandwidthShort(link.bandwidth_bps)}`}
                     </div>
-                    {link.status !== "provisioning" && (
+                    {link.status !== "provisioning" && link.active_incident_types && link.active_incident_types.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-1">
-                        {link.active_incident_types &&
-                        link.active_incident_types.length > 0 ? (
-                          link.active_incident_types.map((t) => (
-                            <span
-                              key={t}
-                              className={`text-xs rounded-full px-2 py-0.5 font-medium ${drainIncidentColor(t)}`}
-                            >
-                              {drainIncidentLabel(t)}
-                            </span>
-                          ))
-                        ) : (
-                          <span className="text-xs rounded-full px-2 py-0.5 font-medium bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                            Planned Maintenance
+                        {link.active_incident_types.map((t) => (
+                          <span
+                            key={t}
+                            className={`text-xs rounded-full px-2 py-0.5 font-medium ${drainIncidentColor(t)}`}
+                          >
+                            {drainIncidentLabel(t)}
                           </span>
-                        )}
+                        ))}
                       </div>
                     )}
                   </div>

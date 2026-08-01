@@ -289,7 +289,7 @@ The API exposes an MCP (Model Context Protocol) server at `/api/mcp` for use wit
 
 1. Open Settings → Manage Connectors
 2. Click "Add Custom Connector"
-3. Enter URL: `https://data.malbeclabs.com/api/mcp`
+3. Enter URL: `https://data.doublezero.xyz/api/mcp`
 
 ### Claude Code / Cursor
 
@@ -300,7 +300,7 @@ Add a `.mcp.json` file to your project:
   "mcpServers": {
     "doublezero": {
       "type": "http",
-      "url": "https://data.malbeclabs.com/api/mcp"
+      "url": "https://data.doublezero.xyz/api/mcp"
     }
   }
 }

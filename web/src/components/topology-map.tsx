@@ -8,7 +8,8 @@ import { useQuery } from '@tanstack/react-query'
 import { useTheme } from '@/hooks/use-theme'
 import type { TopologyMetro, TopologyDevice, TopologyLink, TopologyValidator, MultiPathResponse, SimulateLinkRemovalResponse, SimulateLinkAdditionResponse, WhatIfRemovalResponse, MetroDevicePathsResponse } from '@/lib/api'
 import { fetchISISPaths, fetchISISTopology, fetchCriticalLinks, fetchSimulateLinkRemoval, fetchSimulateLinkAddition, fetchWhatIfRemoval, fetchLinkHealth, fetchTopologyCompare, fetchMetroDevicePaths } from '@/lib/api'
-import { useTopology, useMulticastState, TopologyControlBar, TopologyPanel, DeviceDetails, LinkDetails, MetroDetails, ValidatorDetails, EntityLink as TopologyEntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, ValidatorsOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, FlexAlgoOverlayPanel, LINK_TYPE_COLORS, MULTICAST_PUBLISHER_COLORS, type DeviceOption, type MetroOption } from '@/components/topology'
+import { useTopology, useMulticastState, TopologyControlBar, TopologyPanel, DeviceDetails, LinkDetails, MetroDetails, ValidatorDetails, EntityLink as TopologyEntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, ValidatorsOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, FlexAlgoOverlayPanel, LINK_TYPE_COLORS, MULTICAST_PUBLISHER_COLORS, type LinkInfo, type DeviceOption, type MetroOption } from '@/components/topology'
+import { topologyLinkToLinkInfo } from '@/components/shared/link-info-converters'
 import { useActiveOpsTickets } from '@/hooks/use-ops-tickets'
 import { opsTicketUrl } from '@/lib/ops-api'
 import type { OpsTicket } from '@/lib/ops-api'
@@ -146,51 +147,6 @@ function getStakeColor(stakeShare: number): string {
   return `rgb(${r}, ${g}, ${b})`
 }
 
-// Hovered link info type
-interface HoveredLinkInfo {
-  pk: string
-  code: string
-  status: string
-  linkType: string
-  bandwidthBps: number
-  latencyUs: number
-  jitterUs: number
-  latencyAtoZUs: number
-  jitterAtoZUs: number
-  latencyZtoAUs: number
-  jitterZtoAUs: number
-  lossPercent: number
-  inBps: number
-  outBps: number
-  deviceAPk: string
-  deviceACode: string
-  interfaceAName: string
-  interfaceAIP: string
-  deviceZPk: string
-  deviceZCode: string
-  interfaceZName: string
-  interfaceZIP: string
-  contributorPk: string
-  contributorCode: string
-  sideAContributorPk: string
-  sideAContributorCode: string
-  sideZContributorPk: string
-  sideZContributorCode: string
-  sampleCount: number
-  committedRttNs: number
-  isisDelayOverrideNs: number
-  health?: {
-    status: string
-    committedRttNs: number
-    slaRatio: number
-    lossPct: number
-  }
-  // Inter-metro link properties
-  isInterMetro?: boolean
-  linkCount?: number
-  avgLatencyUs?: number
-}
-
 // Hovered device info type
 interface HoveredDeviceInfo {
   pk: string
@@ -247,7 +203,7 @@ interface HoveredValidatorInfo {
 
 // Selected item type for drawer
 type SelectedItem =
-  | { type: 'link'; data: HoveredLinkInfo }
+  | { type: 'link'; data: LinkInfo }
   | { type: 'device'; data: HoveredDeviceInfo }
   | { type: 'metro'; data: HoveredMetroInfo }
   | { type: 'validator'; data: HoveredValidatorInfo }
@@ -344,7 +300,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
   const [searchParams, setSearchParams] = useSearchParams()
-  const [hoveredLink, setHoveredLink] = useState<HoveredLinkInfo | null>(null)
+  const [hoveredLink, setHoveredLink] = useState<LinkInfo | null>(null)
   const [hoveredDevice, setHoveredDevice] = useState<HoveredDeviceInfo | null>(null)
   const [hoveredMetro, setHoveredMetro] = useState<HoveredMetroInfo | null>(null)
   const [hoveredValidator, setHoveredValidator] = useState<HoveredValidatorInfo | null>(null)
@@ -441,6 +397,9 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const [pathLoading, setPathLoading] = useState(false)
   const [selectedPathIndex, setSelectedPathIndex] = useState(0)
   const [pathK, setPathK] = useState(10)
+  const [pathService, setPathService] = useState<'unicast' | 'multicast'>(
+    (searchParams.get('path_service') as 'unicast' | 'multicast') || 'unicast'
+  )
 
   // Reverse path state
   const [showReverse, setShowReverse] = useState(false)
@@ -981,7 +940,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
 
     setPathLoading(true)
     setSelectedPathIndex(0)
-    fetchISISPaths(pathSource, pathTarget, pathK)
+    fetchISISPaths(pathSource, pathTarget, pathK, pathService)
       .then(result => {
         setPathsResult(result)
         // Turn off device/link type overlays when path is found to make path visualization clearer
@@ -997,7 +956,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         setPathLoading(false)
       })
   // eslint-disable-next-line react-hooks/exhaustive-deps -- overlays/toggleOverlay are intentionally excluded to avoid re-fetching when overlays change
-  }, [pathModeEnabled, pathSource, pathTarget, pathK])
+  }, [pathModeEnabled, pathSource, pathTarget, pathK, pathService])
 
   // Pre-fetch reverse paths so toggling direction is instant
   useEffect(() => {
@@ -1008,7 +967,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
 
     setReversePathLoading(true)
     setSelectedReversePathIndex(0)
-    fetchISISPaths(pathTarget, pathSource, pathK)
+    fetchISISPaths(pathTarget, pathSource, pathK, pathService)
       .then(result => {
         setReversePathsResult(result)
       })
@@ -1018,7 +977,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       .finally(() => {
         setReversePathLoading(false)
       })
-  }, [pathModeEnabled, pathSource, pathTarget, pathK])
+  }, [pathModeEnabled, pathSource, pathTarget, pathK, pathService])
 
   // Fetch metro paths when source and target metros are set
   const metroPathModeEnabled = mode === 'metro-path'
@@ -1030,7 +989,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     setMetroPathLoading(true)
     setMetroPathViewMode('aggregate')
     setMetroPathSelectedPairs([])
-    fetchMetroDevicePaths(metroPathSource, metroPathTarget)
+    fetchMetroDevicePaths(metroPathSource, metroPathTarget, pathService)
       .then(result => {
         setMetroPathsResult(result)
         // Turn off device/link type overlays when paths are found
@@ -1061,7 +1020,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         setMetroPathLoading(false)
       })
   // eslint-disable-next-line react-hooks/exhaustive-deps -- overlays/toggleOverlay are intentionally excluded
-  }, [metroPathModeEnabled, metroPathSource, metroPathTarget])
+  }, [metroPathModeEnabled, metroPathSource, metroPathTarget, pathService])
 
   // Clear path when exiting path mode
   useEffect(() => {
@@ -1143,6 +1102,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     // Path mode params
     setParam('path_source', pathModeEnabled ? pathSource : null)
     setParam('path_target', pathModeEnabled ? pathTarget : null)
+    setParam('path_service', (pathModeEnabled || metroPathModeEnabled) && pathService !== 'unicast' ? pathService : null)
 
     // What-if removal params
     setParam('removal_link', whatifRemovalMode ? removalLink?.linkPK ?? null : null)
@@ -2284,48 +2244,10 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const selectionColor = '#3b82f6' // blue - consistent with graph view
 
   // Build hover info for links
-  const buildLinkInfo = useCallback((link: TopologyLink): HoveredLinkInfo => {
-    const healthInfo = linkSlaStatus.get(link.pk)
-    return {
-      pk: link.pk,
-      code: link.code,
-      status: link.status,
-      linkType: link.link_type,
-      bandwidthBps: link.bandwidth_bps,
-      latencyUs: link.latency_us,
-      jitterUs: link.jitter_us ?? 0,
-      latencyAtoZUs: link.latency_a_to_z_us,
-      jitterAtoZUs: link.jitter_a_to_z_us ?? 0,
-      latencyZtoAUs: link.latency_z_to_a_us,
-      jitterZtoAUs: link.jitter_z_to_a_us ?? 0,
-      lossPercent: link.loss_percent ?? 0,
-      inBps: link.in_bps,
-      outBps: link.out_bps,
-      deviceAPk: link.side_a_pk,
-      deviceACode: link.side_a_code || 'Unknown',
-      interfaceAName: link.side_a_iface_name || '',
-      interfaceAIP: link.side_a_ip || '',
-      deviceZPk: link.side_z_pk,
-      deviceZCode: link.side_z_code || 'Unknown',
-      interfaceZName: link.side_z_iface_name || '',
-      interfaceZIP: link.side_z_ip || '',
-      contributorPk: link.contributor_pk,
-      contributorCode: link.contributor_code,
-      sideAContributorPk: link.side_a_contributor_pk || '',
-      sideAContributorCode: link.side_a_contributor_code || '',
-      sideZContributorPk: link.side_z_contributor_pk || '',
-      sideZContributorCode: link.side_z_contributor_code || '',
-      sampleCount: link.sample_count ?? 0,
-      committedRttNs: link.committed_rtt_ns,
-      isisDelayOverrideNs: link.isis_delay_override_ns,
-      health: healthInfo ? {
-        status: healthInfo.status,
-        committedRttNs: healthInfo.committedRttNs,
-        slaRatio: healthInfo.slaRatio,
-        lossPct: healthInfo.lossPct,
-      } : undefined,
-    }
-  }, [linkSlaStatus])
+  const buildLinkInfo = useCallback(
+    (link: TopologyLink): LinkInfo => topologyLinkToLinkInfo(link, linkSlaStatus.get(link.pk)),
+    [linkSlaStatus]
+  )
 
   // Handle map click to deselect or select links
   const handleMapClick = useCallback((e: MapLayerMouseEvent) => {
@@ -3732,6 +3654,8 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
               }}
               pathK={pathK}
               onPathKChange={setPathK}
+              pathService={pathService}
+              onPathServiceChange={setPathService}
             />
           )}
           {mode === 'metro-path' && (
@@ -3755,6 +3679,8 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
                 setMetroPathSelectedPairs([])
                 setMetroPathViewMode('aggregate')
               }}
+              pathService={pathService}
+              onPathServiceChange={setPathService}
             />
           )}
           {mode === 'whatif-removal' && (

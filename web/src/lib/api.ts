@@ -1859,6 +1859,10 @@ export interface SinglePath {
   totalSamples?: number       // min samples across hops
 }
 
+// PathService selects which IS-IS topology a path is resolved through:
+// 'unicast' constrains to flex-algo 128 (topology-tagged links); 'multicast' uses algo 0 (all links).
+export type PathService = 'unicast' | 'multicast'
+
 export interface MultiPathResponse {
   paths: SinglePath[]
   from: string
@@ -1866,8 +1870,12 @@ export interface MultiPathResponse {
   error?: string
 }
 
-export async function fetchISISPaths(fromPK: string, toPK: string, k: number = 5): Promise<MultiPathResponse> {
-  const res = await apiFetch(`/api/topology/paths?from=${encodeURIComponent(fromPK)}&to=${encodeURIComponent(toPK)}&k=${k}`)
+export async function fetchISISPaths(fromPK: string, toPK: string, k: number = 5, service?: PathService): Promise<MultiPathResponse> {
+  let url = `/api/topology/paths?from=${encodeURIComponent(fromPK)}&to=${encodeURIComponent(toPK)}&k=${k}`
+  if (service) {
+    url += `&service=${encodeURIComponent(service)}`
+  }
+  const res = await apiFetch(url)
   if (!res.ok) {
     throw new Error('Failed to fetch paths')
   }
@@ -1908,10 +1916,13 @@ export interface MetroDevicePathsResponse {
 export async function fetchMetroDevicePaths(
   fromMetroPK: string,
   toMetroPK: string,
+  service?: PathService,
 ): Promise<MetroDevicePathsResponse> {
-  const res = await apiFetch(
-    `/api/topology/metro-device-paths?from=${encodeURIComponent(fromMetroPK)}&to=${encodeURIComponent(toMetroPK)}`
-  )
+  let url = `/api/topology/metro-device-paths?from=${encodeURIComponent(fromMetroPK)}&to=${encodeURIComponent(toMetroPK)}`
+  if (service) {
+    url += `&service=${encodeURIComponent(service)}`
+  }
+  const res = await apiFetch(url)
   if (!res.ok) {
     throw new Error('Failed to fetch metro device paths')
   }
@@ -1953,9 +1964,12 @@ export interface MulticastMember {
   current_slot: number
 }
 
-export interface MulticastGroupDetail extends MulticastGroupListItem {
-  members: MulticastMember[]
+export interface MulticastGroupMetadata extends MulticastGroupListItem {
   has_shred_stats: boolean
+}
+
+export interface MulticastGroupDetail extends MulticastGroupMetadata {
+  members: MulticastMember[]
 }
 
 export interface MulticastMembersResponse extends PaginatedResponse<MulticastMember> {
@@ -1983,17 +1997,24 @@ export async function fetchMulticastGroups(
   return res.json()
 }
 
-export async function fetchMulticastGroup(pkOrCode: string): Promise<MulticastGroupDetail> {
-  const encoded = encodeURIComponent(pkOrCode)
-  const [groupRes, pubRes, subRes] = await Promise.all([
-    apiFetch(`/api/dz/multicast-groups/${encoded}`),
-    apiFetch(`/api/dz/multicast-groups/${encoded}/members?tab=publishers&limit=1000`),
-    apiFetch(`/api/dz/multicast-groups/${encoded}/members?tab=subscribers&limit=1000`),
-  ])
-  if (!groupRes.ok) {
+export async function fetchMulticastGroupMetadata(pkOrCode: string): Promise<MulticastGroupMetadata> {
+  const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}`)
+  if (!res.ok) {
     throw new Error('Failed to fetch multicast group')
   }
-  const group = await groupRes.json() as MulticastGroupListItem & { has_shred_stats?: boolean }
+  const group = await res.json() as MulticastGroupListItem & { has_shred_stats?: boolean }
+  return { ...group, has_shred_stats: group.has_shred_stats ?? false }
+}
+
+export async function fetchMulticastGroupMemberSnapshot(
+  pkOrCode: string,
+  limit = 1000,
+): Promise<MulticastMember[]> {
+  const encoded = encodeURIComponent(pkOrCode)
+  const [pubRes, subRes] = await Promise.all([
+    apiFetch(`/api/dz/multicast-groups/${encoded}/members?tab=publishers&limit=${limit}`),
+    apiFetch(`/api/dz/multicast-groups/${encoded}/members?tab=subscribers&limit=${limit}`),
+  ])
   let members: MulticastMember[] = []
   if (pubRes.ok) {
     const pubData = await pubRes.json() as MulticastMembersResponse
@@ -2009,7 +2030,15 @@ export async function fetchMulticastGroup(pkOrCode: string): Promise<MulticastGr
       }
     }
   }
-  return { ...group, members, has_shred_stats: group.has_shred_stats ?? false }
+  return members
+}
+
+export async function fetchMulticastGroup(pkOrCode: string): Promise<MulticastGroupDetail> {
+  const [group, members] = await Promise.all([
+    fetchMulticastGroupMetadata(pkOrCode),
+    fetchMulticastGroupMemberSnapshot(pkOrCode),
+  ])
+  return { ...group, members }
 }
 
 export async function fetchMulticastGroupMembers(
@@ -2166,6 +2195,495 @@ export async function fetchMulticastGroupShredStats(pkOrCode: string, timeRange?
   const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}/shred-stats${qs ? `?${qs}` : ''}`)
   if (!res.ok) {
     throw new Error('Failed to fetch multicast group shred stats')
+  }
+  return res.json()
+}
+
+// Multicast health (onchain ↔ dataplane reconciliation) types
+
+export type MulticastHealthStatus = 'healthy' | 'degraded' | 'unhealthy' | 'disconnected' | 'unknown'
+
+export interface MulticastHealthStatusCounts {
+  healthy: number
+  degraded: number
+  unhealthy: number
+  disconnected: number
+  unknown: number
+  total: number
+}
+
+export interface MulticastHealthCounts {
+  mroutes: MulticastHealthStatusCounts
+  users: MulticastHealthStatusCounts
+  paths: MulticastHealthStatusCounts
+}
+
+export interface MulticastHealthGroupRef {
+  pk: string
+  code: string
+  multicast_ip: string
+  status: string
+  publisher_count: number
+  subscriber_count: number
+}
+
+export interface MulticastHealthGroupSummary {
+  group: MulticastHealthGroupRef
+  source_available: boolean
+  generated_at: string
+  counts: MulticastHealthCounts
+}
+
+// Rate is a presence-only signal now (see the health_rate_presence_only
+// migration): 'active' = non-zero traffic observed on the tunnel, 'idle' =
+// registered but 0 bps, 'unknown' = no counter data. It never gates
+// health_status — that comes from the control plane.
+export type MulticastRateStatus = 'active' | 'idle' | 'unknown'
+
+export type MulticastRateStatusReason = 'active' | 'idle' | 'no_data'
+
+export interface MulticastHealthUserItem {
+  user_pk: string
+  user_owner_pubkey: string
+  user_dz_ip: string
+  user_tunnel_id: number
+  user_device_pk: string
+  user_device_code: string
+  multicast_group_pk: string
+  multicast_group_code: string
+  group_address: string
+  mode: 'P' | 'S' | 'P+S' | string
+  expected_tunnel_position: string
+  publisher_iif_observed: boolean
+  subscriber_oif_observed: boolean
+  reconciled: boolean
+  // Combined (CP × rate) verdict. The CP-only verdict lives on
+  // control_plane_status, the rate-only verdict on rate_status.
+  health_status: MulticastHealthStatus
+  control_plane_status: MulticastHealthStatus
+  rate_status: MulticastRateStatus
+  rate_status_reason: MulticastRateStatusReason
+  rate_bucket_ts?: string
+  observed_bps_5m?: number
+  expected_bps_5m?: number
+  mismatch_reason?: string
+}
+
+export interface MulticastHealthGroupUsersResponse {
+  group: MulticastHealthGroupRef
+  generated_at: string
+  items: MulticastHealthUserItem[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface MulticastHealthUserResponse {
+  user_pk: string
+  user_owner_pubkey: string
+  user_dz_ip: string
+  user_tunnel_id: number
+  user_device_pk: string
+  user_device_code: string
+  generated_at: string
+  items: MulticastHealthUserItem[]
+}
+
+export interface MulticastHealthPathItem {
+  multicast_group_pk?: string
+  multicast_group_code?: string
+  group_address?: string
+  publisher_user_pk: string
+  publisher_owner_pubkey: string
+  publisher_dz_ip: string
+  publisher_tunnel_id: number
+  publisher_device_pk: string
+  publisher_device_code: string
+  subscriber_user_pk: string
+  subscriber_owner_pubkey: string
+  subscriber_dz_ip: string
+  subscriber_tunnel_id: number
+  subscriber_device_pk: string
+  subscriber_device_code: string
+  publisher_endpoint_observed: boolean
+  subscriber_endpoint_observed: boolean
+  endpoints_reconciled: boolean
+  health_status: MulticastHealthStatus
+  verification_method: 'endpoints_only' | 'full_path' | string
+  missing_endpoint_reasons?: string[]
+}
+
+export interface MulticastHealthGroupPathsResponse {
+  group: MulticastHealthGroupRef
+  generated_at: string
+  items: MulticastHealthPathItem[]
+  total: number
+  limit: number
+  offset: number
+}
+
+// One faulting endpoint behind the unhealthy per-path fan-out. affected_pairs
+// is how many (publisher, subscriber) pairs this endpoint drags down. A user
+// broken as both publisher and subscriber of the group reports the combined
+// 'publisher+subscriber' role.
+export interface MulticastHealthPathRootCause {
+  faulting_role: 'publisher' | 'subscriber' | 'publisher+subscriber'
+  user_pk: string
+  owner_pubkey: string
+  dz_ip: string
+  tunnel_id: number
+  device_pk: string
+  device_code: string
+  endpoint_status: 'disconnected' | 'unhealthy'
+  affected_pairs: number
+}
+
+export interface MulticastHealthPathRootCausesResponse {
+  group: MulticastHealthGroupRef
+  generated_at: string
+  items: MulticastHealthPathRootCause[]
+  total: number
+}
+
+export async function fetchMulticastGroupHealth(pkOrCode: string): Promise<MulticastHealthGroupSummary> {
+  const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}/health`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch multicast group health')
+  }
+  return res.json()
+}
+
+export async function fetchMulticastGroupHealthUsers(
+  pkOrCode: string,
+  limit?: number,
+  offset?: number,
+  search?: string,
+): Promise<MulticastHealthGroupUsersResponse> {
+  const params = new URLSearchParams()
+  if (limit !== undefined) params.set('limit', String(limit))
+  if (offset !== undefined) params.set('offset', String(offset))
+  if (search) params.set('search', search)
+  const qs = params.toString()
+  const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}/health/users${qs ? `?${qs}` : ''}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch multicast group health users')
+  }
+  return res.json()
+}
+
+export async function fetchMulticastGroupHealthPaths(
+  pkOrCode: string,
+  limit?: number,
+  offset?: number,
+  search?: string,
+): Promise<MulticastHealthGroupPathsResponse> {
+  const params = new URLSearchParams()
+  if (limit !== undefined) params.set('limit', String(limit))
+  if (offset !== undefined) params.set('offset', String(offset))
+  if (search) params.set('search', search)
+  const qs = params.toString()
+  const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}/health/paths${qs ? `?${qs}` : ''}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch multicast group health paths')
+  }
+  return res.json()
+}
+
+export async function fetchMulticastGroupHealthPathRootCauses(
+  pkOrCode: string,
+): Promise<MulticastHealthPathRootCausesResponse> {
+  const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}/health/path-root-causes`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch multicast group path root causes')
+  }
+  return res.json()
+}
+
+export async function fetchUserHealth(pk: string): Promise<MulticastHealthUserResponse> {
+  const res = await apiFetch(`/api/dz/users/${encodeURIComponent(pk)}/health`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch user health')
+  }
+  return res.json()
+}
+
+export type MulticastDeliveryFreshnessStatus = 'fresh' | 'stale' | 'missing' | 'unavailable'
+
+export interface MulticastDeliverySourceFreshness {
+  available: boolean
+  status: MulticastDeliveryFreshnessStatus | string
+  row_count: number
+  latest_snapshot_ts?: string
+  latest_ingested_at?: string
+  age_seconds?: number
+  note?: string
+}
+
+export interface MulticastDeliveryFreshness {
+  mroute: MulticastDeliverySourceFreshness
+  msdp_peers: MulticastDeliverySourceFreshness
+  msdp_pim_sa_cache: MulticastDeliverySourceFreshness
+  msdp_sa_cache: MulticastDeliverySourceFreshness
+  pim_neighbors: MulticastDeliverySourceFreshness
+}
+
+export interface MulticastEntityHealthStatusCounts {
+  healthy: number
+  degraded: number
+  unhealthy: number
+  disconnected: number
+  unknown: number
+  total: number
+}
+
+export interface MulticastDeliveryEntityGroup {
+  group_pk: string
+  group_code: string
+  group_address: string
+  source_count: number
+  mroute_count: number
+  oif_count: number
+  health_counts: MulticastEntityHealthStatusCounts
+}
+
+export interface MulticastDeliveryRole {
+  role: string
+  label: string
+  description: string
+  group_count: number
+  source_count: number
+  mroute_count: number
+  oif_count: number
+  health_counts: MulticastEntityHealthStatusCounts
+}
+
+export interface MulticastDeliveryDirection {
+  direction: 'a_to_z' | 'z_to_a' | 'unknown' | string
+  label: string
+  group_count: number
+  source_count: number
+  branch_count: number
+}
+
+export interface MulticastDeliveryMroute {
+  mroute_id: string
+  entity_id: string
+  snapshot_ts: string
+  ingested_at: string
+  age_seconds: number
+  freshness_status: string
+  device_pk: string
+  device_code: string
+  device_status: string
+  device_type: string
+  metro_code: string
+  contributor_code: string
+  vrf: string
+  mode: string
+  group_address: string
+  multicast_group_pk?: string
+  multicast_group_code?: string
+  source_address: string
+  route_flags: string
+  register_in_oif_list: boolean
+  rpf_interface: string
+  rpf_rib: string
+  rpf_prefix: string
+  rpf_preference: number
+  rpf_metric: number
+  rpf_neighbor: string
+  rpf_attached: boolean
+  rpf_has_block: boolean
+  oif_list: string
+  oif_count: number
+  creation_time: string
+  publisher_user_pk: string
+  publisher_device_pk: string
+  publisher_device_code: string
+  publisher_metro_code: string
+  publisher_contributor_code: string
+  publisher_tunnel_id: number
+  publisher_owner_pubkey: string
+  publisher_dz_ip: string
+  source_match_status: string
+}
+
+export interface MulticastDeliveryOIF {
+  mroute_id: string
+  entity_id: string
+  snapshot_ts: string
+  age_seconds: number
+  freshness_status: string
+  device_pk: string
+  device_code: string
+  group_address: string
+  multicast_group_pk?: string
+  multicast_group_code?: string
+  source_address: string
+  publisher_user_pk: string
+  publisher_device_pk: string
+  publisher_device_code?: string
+  oif_name: string
+  oif_kind: string
+  observed_delivery_role: string
+  link_pk?: string
+  link_code?: string
+  link_side?: string
+  peer_device_pk?: string
+  peer_device_code?: string
+  peer_interface_name?: string
+  link_type?: string
+  bandwidth_bps?: number
+  link_topologies?: string
+  unicast_drained?: boolean
+  interface_type?: string
+  routing_mode?: string
+  interface_bandwidth?: number
+  interface_mtu?: number
+  user_tunnel_endpoint?: boolean
+  subscriber_user_pk?: string
+  subscriber_device_pk?: string
+  subscriber_device_code?: string
+  subscriber_tunnel_id?: number
+  subscriber_owner_pubkey?: string
+  subscriber_dz_ip?: string
+  subscriber_client_ip?: string
+}
+
+export interface MulticastDeliveryLinkBranch extends MulticastDeliveryOIF {
+  direction: 'a_to_z' | 'z_to_a' | 'unknown' | string
+}
+
+export interface MulticastDeliveryAnomaly {
+  id: string
+  severity: string
+  kind: string
+  scope: string
+  object_ids: Record<string, string>
+  message: string
+}
+
+export interface DeviceMulticastDeliverySummary {
+  group_count: number
+  source_count: number
+  mroute_count: number
+  routes_with_oifs: number
+  oif_count: number
+  underlay_oif_count: number
+  subscriber_tunnel_oif_count: number
+  msdp_peer_count: number
+  msdp_sa_count: number
+  user_health_counts: MulticastEntityHealthStatusCounts
+  endpoint_health_counts: MulticastEntityHealthStatusCounts
+  anomaly_count: number
+}
+
+export interface LinkMulticastDeliverySummary {
+  group_count: number
+  source_count: number
+  branch_count: number
+  a_to_z_count: number
+  z_to_a_count: number
+  unknown_direction_count: number
+  reporting_device_count: number
+  related_group_health_counts: MulticastEntityHealthStatusCounts
+  anomaly_count: number
+}
+
+export interface DeviceMulticastDeliveryResponse {
+  device: Pick<Device, 'pk' | 'code' | 'status' | 'device_type' | 'contributor_pk' | 'contributor_code' | 'metro_pk' | 'metro_code'>
+  source_available: boolean
+  generated_at: string
+  freshness: MulticastDeliveryFreshness
+  coverage_note: string
+  health_context_note: string
+  summary: DeviceMulticastDeliverySummary
+  groups: MulticastDeliveryEntityGroup[]
+  roles: MulticastDeliveryRole[]
+  health_users: MulticastHealthUserItem[]
+  health_user_total: number
+  endpoint_health_items: MulticastHealthPathItem[]
+  endpoint_health_total: number
+  endpoint_limit: number
+  endpoint_offset: number
+  routes: MulticastDeliveryMroute[]
+  oifs: MulticastDeliveryOIF[]
+  route_total: number
+  oif_total: number
+  limit: number
+  offset: number
+  anomalies: MulticastDeliveryAnomaly[]
+}
+
+export interface LinkMulticastDeliveryResponse {
+  link: Pick<Link, 'pk' | 'code' | 'status' | 'link_type' | 'side_a_pk' | 'side_a_code' | 'side_a_iface_name' | 'side_z_pk' | 'side_z_code' | 'side_z_iface_name' | 'contributor_pk' | 'contributor_code'>
+  source_available: boolean
+  generated_at: string
+  freshness: MulticastDeliveryFreshness
+  coverage_note: string
+  health_context_note: string
+  summary: LinkMulticastDeliverySummary
+  groups: MulticastDeliveryEntityGroup[]
+  branches: MulticastDeliveryLinkBranch[]
+  directions: MulticastDeliveryDirection[]
+  branch_total: number
+  limit: number
+  offset: number
+  anomalies: MulticastDeliveryAnomaly[]
+}
+
+export interface FetchMulticastDeliveryParams {
+  limit?: number
+  offset?: number
+  endpointLimit?: number
+  endpointOffset?: number
+  group?: string
+  source?: string
+  endpointIp?: string
+  health?: MulticastHealthStatus
+  oifKind?: string
+  role?: string
+  direction?: 'a_to_z' | 'z_to_a' | 'unknown'
+}
+
+function multicastDeliverySearchParams(params: FetchMulticastDeliveryParams = {}): URLSearchParams {
+  const search = new URLSearchParams()
+  if (params.limit !== undefined) search.set('limit', String(params.limit))
+  if (params.offset !== undefined) search.set('offset', String(params.offset))
+  if (params.endpointLimit !== undefined) search.set('endpoint_limit', String(params.endpointLimit))
+  if (params.endpointOffset !== undefined) search.set('endpoint_offset', String(params.endpointOffset))
+  if (params.group) search.set('group', params.group)
+  if (params.source) search.set('source', params.source)
+  if (params.endpointIp) search.set('endpoint_ip', params.endpointIp)
+  if (params.health) search.set('health', params.health)
+  if (params.oifKind) search.set('oif_kind', params.oifKind)
+  if (params.role) search.set('role', params.role)
+  if (params.direction) search.set('direction', params.direction)
+  return search
+}
+
+export async function fetchDeviceMulticastDelivery(
+  pk: string,
+  params: FetchMulticastDeliveryParams = {},
+): Promise<DeviceMulticastDeliveryResponse> {
+  const search = multicastDeliverySearchParams(params)
+  const qs = search.toString()
+  const res = await apiFetch(`/api/dz/devices/${encodeURIComponent(pk)}/multicast-delivery${qs ? `?${qs}` : ''}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch device multicast delivery')
+  }
+  return res.json()
+}
+
+export async function fetchLinkMulticastDelivery(
+  pk: string,
+  params: FetchMulticastDeliveryParams = {},
+): Promise<LinkMulticastDeliveryResponse> {
+  const search = multicastDeliverySearchParams(params)
+  const qs = search.toString()
+  const res = await apiFetch(`/api/dz/links/${encodeURIComponent(pk)}/multicast-delivery${qs ? `?${qs}` : ''}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch link multicast delivery')
   }
   return res.json()
 }
@@ -2677,7 +3195,9 @@ export interface WorkflowRun {
 
 // Get a workflow run by ID
 export async function getWorkflow(workflowId: string): Promise<WorkflowRun | null> {
-  const res = await apiFetch(`/api/workflows/${workflowId}`)
+  const anonParam = getAnonymousIdParam()
+  const url = anonParam ? `/api/workflows/${workflowId}?${anonParam}` : `/api/workflows/${workflowId}`
+  const res = await apiFetch(url)
   if (res.status === 404) {
     return null
   }
@@ -2689,7 +3209,9 @@ export async function getWorkflow(workflowId: string): Promise<WorkflowRun | nul
 
 // Get the latest workflow for a session (running, completed, or failed)
 export async function getLatestWorkflowForSession(sessionId: string): Promise<WorkflowRun | null> {
-  const res = await apiFetch(`/api/sessions/${sessionId}/workflow`)
+  const anonParam = getAnonymousIdParam()
+  const url = anonParam ? `/api/sessions/${sessionId}/workflow?${anonParam}` : `/api/sessions/${sessionId}/workflow`
+  const res = await apiFetch(url)
   if (res.status === 204 || res.status === 404) {
     return null // No workflow
   }
@@ -2725,7 +3247,11 @@ export async function reconnectToWorkflow(
   callbacks: WorkflowReconnectCallbacks,
   signal?: AbortSignal
 ): Promise<void> {
-  const res = await apiFetch(`/api/workflows/${workflowId}/stream`, { signal })
+  const anonParam = getAnonymousIdParam()
+  const url = anonParam
+    ? `/api/workflows/${workflowId}/stream?${anonParam}`
+    : `/api/workflows/${workflowId}/stream`
+  const res = await apiFetch(url, { signal })
 
   if (!res.ok) {
     if (res.status === 404) {
@@ -2954,6 +3480,58 @@ export async function fetchDeviceValidatorStats(pk: string): Promise<DeviceValid
   if (!res.ok) {
     throw new Error('Failed to fetch device validator stats')
   }
+  return res.json()
+}
+
+export type DeviceControllerCallStatus = 'calling' | 'stopped' | 'recovered' | 'no_data' | 'not_expected'
+
+export interface DeviceControllerCallsBucket {
+  ts: string
+  calls: number
+  minutes_with_calls: number
+  status: DeviceControllerCallStatus
+  gap_seconds?: number
+}
+
+export interface DeviceControllerCallsResponse {
+  device_pk: string
+  device_code: string
+  device_status: string
+  time_range: string
+  bucket_seconds: number
+  bucket_count: number
+  from: string
+  to: string
+  source_available: boolean
+  last_call_at?: string
+  current_gap_seconds?: number
+  last_status: DeviceControllerCallStatus
+  total_calls: number
+  minutes_with_calls: number
+  alert_threshold_minutes: number
+  history_window_hours: number
+  prior_history_minimum: number
+  buckets: DeviceControllerCallsBucket[]
+}
+
+export interface FetchDeviceControllerCallsParams {
+  range?: string
+  startTime?: number
+  endTime?: number
+  bucket?: string
+}
+
+export async function fetchDeviceControllerCalls(
+  pk: string,
+  params: FetchDeviceControllerCallsParams = {}
+): Promise<DeviceControllerCallsResponse> {
+  const qs = new URLSearchParams()
+  if (params.range) qs.set('range', params.range)
+  if (params.startTime) qs.set('start_time', params.startTime.toString())
+  if (params.endTime) qs.set('end_time', params.endTime.toString())
+  if (params.bucket) qs.set('bucket', params.bucket)
+  const res = await apiFetch(`/api/dz/devices/${encodeURIComponent(pk)}/controller-calls${qs.toString() ? '?' + qs.toString() : ''}`)
+  if (!res.ok) throw new Error('Failed to fetch device controller calls')
   return res.json()
 }
 
@@ -3602,7 +4180,7 @@ export interface TimelineEvent {
 export interface EntityChangeDetails {
   change_type: 'created' | 'updated' | 'deleted'
   changes?: FieldChange[]
-  entity?: DeviceEntity | LinkEntity | MetroEntity | ContributorEntity | UserEntity
+  entity?: DeviceEntity | LinkEntity | MetroEntity | ContributorEntity | UserEntity | FeedEntity
 }
 
 export interface FieldChange {
@@ -3672,6 +4250,16 @@ export interface UserEntity {
   device_pk: string
   tunnel_id: number
   device_code?: string
+  metro_code?: string
+}
+
+export interface FeedEntity {
+  pk: string
+  owner_pubkey: string
+  code: string
+  name: string
+  metro_pk: string
+  groups: string
   metro_code?: string
 }
 
@@ -5212,7 +5800,11 @@ export interface ShredClientSeat {
   has_price_override: number
   override_usdc_price_dollars: number
   escrow_count: number
-  total_usdc_balance: number
+  // Largest single escrow balance (micro-USDC). Activation/renewal is per-escrow,
+  // so this — not the sum — decides whether the seat covers the per-epoch price.
+  spendable_usdc_balance: number
+  // Sum across all escrows (micro-USDC); informational, cannot be spent as one charge.
+  all_escrows_usdc_balance: number
   price_per_epoch_dollars: number
   funding_authority_key: string
   user_pk: string
@@ -6324,7 +6916,8 @@ export interface AccessPassShredsSeat {
   funded_epoch: number
   active_epoch: number
   escrow_count: number
-  total_usdc_balance: number
+  spendable_usdc_balance: number
+  all_escrows_usdc_balance: number
   price_per_epoch_dollars: number
   funding_authority_key: string
 }
@@ -6404,6 +6997,182 @@ export async function fetchRewardsLinkEstimate(
   if (!res.ok) {
     const text = await res.text()
     throw new Error(text || 'Link estimate failed')
+  }
+  return res.json()
+}
+
+// Shreds — Edge Rewards (per-epoch validator earnings)
+
+export interface ShredsRewardsRow {
+  node_id: string
+  vote_pubkey: string
+  validator_name: string
+  activated_stake: number
+  dz_user_ip: string
+  // 2Z-only headline totals (cross-token sums are not meaningful).
+  total_earned_2z: number
+  immediately_claimable_2z: number
+  // Per recent-epoch reward, in whole units of the token earned that epoch.
+  epoch_earnings: Record<string, number>
+  // Per recent-epoch reward-token symbol, parallel to epoch_earnings.
+  epoch_tokens: Record<string, string>
+}
+
+export interface ShredsRewardsResponse {
+  current_solana_epoch: number
+  latest_finalized_epoch: number
+  epoch_columns: number[]
+  validators: ShredsRewardsRow[]
+  // Total distinct validators matching the filter, before limit/offset.
+  total: number
+}
+
+export interface ShredsRewardsParams {
+  search?: string
+  sort?: 'validator_name' | 'activated_stake' | 'total_earned_2z' | 'immediately_claimable_2z'
+  order?: 'asc' | 'desc'
+  limit?: number
+  offset?: number
+}
+
+export async function fetchShredsRewards(
+  params: ShredsRewardsParams = {},
+): Promise<ShredsRewardsResponse> {
+  const q = new URLSearchParams()
+  if (params.search) q.set('search', params.search)
+  if (params.sort) q.set('sort', params.sort)
+  if (params.order) q.set('order', params.order)
+  if (params.limit != null) q.set('limit', String(params.limit))
+  if (params.offset != null) q.set('offset', String(params.offset))
+  const qs = q.toString()
+  const res = await apiFetch(`/api/dz/shreds/rewards${qs ? `?${qs}` : ''}`)
+  if (!res.ok) throw new Error('Failed to fetch shreds rewards')
+  return res.json()
+}
+
+export type ShredsRewardsClaimState =
+  | 'claimable'
+  | 'distributed'
+  | 'pending'
+  | 'unknown'
+
+export interface ShredsRewardsEpochDetail {
+  solana_epoch: number
+  subscription_epoch: number
+  leader_slots: number
+  client_id: number
+  // Reward in whole units of token_symbol (the token the validator chose for
+  // the epoch: 2Z, USDC, or wSOL).
+  earned: number
+  token_symbol: string
+  // Retained for back-compat; `state` carries the full lifecycle.
+  is_claimable?: boolean | null
+  state: ShredsRewardsClaimState
+}
+
+export interface ShredsRewardsDetail {
+  node_id: string
+  vote_pubkey: string
+  validator_name: string
+  activated_stake: number
+  dz_user_ip: string
+  epochs: ShredsRewardsEpochDetail[]
+}
+
+export async function fetchShredsRewardsDetail(nodeId: string): Promise<ShredsRewardsDetail> {
+  const res = await apiFetch(`/api/dz/shreds/rewards/${encodeURIComponent(nodeId)}`)
+  if (!res.ok) throw new Error('Failed to fetch shreds rewards detail')
+  return res.json()
+}
+
+export interface HyperliquidCompetitor {
+  feed: string
+  label: string
+  dz_win_pct: number
+  lead_p50_ms: number
+  lead_p95_ms: number
+  races: number
+}
+
+export interface HyperliquidNode {
+  measurement_node_id: string
+  location_code: string
+  dz_win_share_pct: number
+  total_races: number
+  competitors: HyperliquidCompetitor[]
+}
+
+export interface HyperliquidRace {
+  event_ts: string
+  symbol: string
+  location_code: string
+  winner_feed: string
+  winner_label: string
+  is_dz: boolean
+  runner_up_feed: string
+  runner_up_label: string
+  lead_ms: number
+}
+
+export interface HyperliquidScoreboardResponse {
+  window: string
+  symbol?: string
+  generated_at: string
+  feed_type: string
+  dz_win_share_pct: number
+  total_races: number
+  competitors: HyperliquidCompetitor[]
+  nodes: HyperliquidNode[]
+  recent_races: HyperliquidRace[]
+  prices?: Record<string, number>
+  composite_latency?: HyperliquidCompositeLatency
+}
+
+export interface HyperliquidCompositeLatency {
+  window: string
+  p50_ms: number
+  p90_ms: number
+  p99_ms: number
+  generated_at: string
+}
+
+export async function fetchHyperliquidScoreboard(
+  window: string = '24h',
+  symbol?: string,
+): Promise<HyperliquidScoreboardResponse> {
+  const params = new URLSearchParams()
+  params.set('window', window)
+  if (symbol && symbol !== 'all') params.set('symbol', symbol)
+  const res = await apiFetch(`/api/dz/hyperliquid/scoreboard?${params}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch hyperliquid scoreboard')
+  }
+  return res.json()
+}
+
+// Serviceability permission audit trail (internal only).
+export interface PermissionAuditEvent {
+  eventTs: string
+  txSignature: string
+  slot: number
+  instructionIndex: number
+  signer: string
+  permissionPk: string
+  targetPubkey: string
+  eventType: string
+  permissionsAdded: string
+  permissionsRemoved: string
+  success: boolean
+}
+
+export interface PermissionAuditResponse {
+  events: PermissionAuditEvent[]
+}
+
+export async function fetchPermissionAudit(limit = 200): Promise<PermissionAuditResponse> {
+  const res = await apiFetch(`/api/dz/permission-audit?limit=${limit}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch permission audit')
   }
   return res.json()
 }

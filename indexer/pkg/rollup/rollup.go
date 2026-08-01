@@ -16,6 +16,7 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
+	"github.com/malbeclabs/lake/utils/pkg/dberror"
 	temporalclient "go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 )
@@ -93,10 +94,11 @@ func Start(ctx context.Context, cfg Config) error {
 	// Register rollup workflows
 	ingestionLogWriter := ingestionlog.NewWriter(chConn, log)
 	activities := &Activities{
-		ClickHouse:   chConn,
-		Log:          log.With("component", "rollup"),
-		IngestionLog: ingestionLogWriter,
-		Network:      cfg.Network,
+		ClickHouse:        chConn,
+		Log:               log.With("component", "rollup"),
+		IngestionLog:      ingestionLogWriter,
+		Network:           cfg.Network,
+		TelemetryDatabase: telemetryDatabaseForNetwork(cfg.Network),
 	}
 
 	w := worker.New(tc, tq, worker.Options{})
@@ -124,7 +126,7 @@ func Start(ctx context.Context, cfg Config) error {
 				if ctx.Err() != nil {
 					return
 				}
-				log.Error("rollup: workflow interrupted, reattaching", "id", wfID, "error", err)
+				log.Warn("rollup: workflow interrupted, reattaching", "id", wfID, "error", err)
 				current = tc.GetWorkflow(ctx, wfID, "")
 			} else {
 				return
@@ -174,6 +176,15 @@ func (l *temporalLogger) Error(msg string, keyvals ...any) {
 		l.log.Warn(msg, keyvals...)
 		return
 	}
+	// Temporal logs "Activity error." at ERROR on every failed attempt,
+	// including non-final ones the activity's retry policy will recover. A
+	// transient cause (ClickHouse connection blip, timeout) self-heals on
+	// retry, so demote to WARN; a sustained failure still pages via the
+	// workflow-side Escalator once retries are exhausted across iterations.
+	if msg == "Activity error." && isTransientActivityError(keyvals) {
+		l.log.Warn(msg, keyvals...)
+		return
+	}
 	l.log.Error(msg, keyvals...)
 }
 
@@ -193,6 +204,25 @@ func hasBenignTaskProcessingError(keyvals []any) bool {
 				strings.Contains(msg, "grpc: the client connection is closing") {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// isTransientActivityError reports whether Temporal's activity-error keyvals
+// carry an Error that dberror classifies as transient (a self-healing upstream
+// blip the activity's retry policy will recover). At the "Activity error." log
+// site the Error keyval is the raw error the activity returned (conversion to
+// the SDK's ApplicationError happens afterward). dberror.Classify matches on
+// the message string, so classification would also hold if a converted error
+// ever appeared here.
+func isTransientActivityError(keyvals []any) bool {
+	for i := 0; i+1 < len(keyvals); i += 2 {
+		if keyvals[i] != "Error" {
+			continue
+		}
+		if err, ok := keyvals[i+1].(error); ok {
+			return dberror.IsTransient(err)
 		}
 	}
 	return false
@@ -218,4 +248,14 @@ func envOrDefault(key, defaultValue string) string {
 		return v
 	}
 	return defaultValue
+}
+
+// telemetryDatabaseForNetwork returns the gNMI telemetry database for a DZ network
+// (e.g. "mainnet-beta" -> "telemetry_mainnet_beta"). It is a sibling database on the
+// same ClickHouse cluster as the lake DB. Empty network -> "" (gNMI off, fact-only).
+func telemetryDatabaseForNetwork(network string) string {
+	if network == "" {
+		return ""
+	}
+	return "telemetry_" + strings.ReplaceAll(network, "-", "_")
 }

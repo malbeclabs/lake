@@ -6,6 +6,8 @@ import (
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 	temporalworkflow "go.temporal.io/sdk/workflow"
+
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
 const (
@@ -36,7 +38,26 @@ func RegisterWorkflows(w worker.Worker) {
 //
 // Activity failures are logged and the workflow continues to the next iteration.
 func SolIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
-	logger := temporalworkflow.GetLogger(ctx)
+	log := temporalworkflow.GetLogger(ctx)
+
+	// Activity errors reaching the workflow are Temporal-level (StartToClose
+	// timeouts, scheduling failures) — the activity-side failure counter never
+	// sees them, and timeouts classify as transient, so escalate them at the
+	// strict threshold to keep sustained timeouts visible.
+	// Counts reset at continue-as-new (~hourly), deferring escalation by up
+	// to ErrorAfter-1 iterations across the boundary — fine at threshold 3;
+	// revisit before raising the threshold.
+	esc := &logger.Escalator{TransientErrorAfter: logger.DefaultErrorAfter}
+
+	// Block production runs once per ~hourly run (blockProductionEveryN ==
+	// continueAsNewThreshold, so only at iteration 0), and esc is workflow-local
+	// and recreated on every ContinueAsNew — so its block_production count can
+	// never exceed 1 and the default threshold of 3 is unreachable. A block
+	// production failure that survived Temporal's in-activity retries is already
+	// sustained, so escalate it at 1 to preserve pre-PR paging (the per-attempt
+	// "Activity error." lines that used to page are now demoted to WARN).
+	bpEsc := &logger.Escalator{ErrorAfter: 1, TransientErrorAfter: 1}
+	var err error
 
 	actOpts := temporalworkflow.ActivityOptions{
 		StartToCloseTimeout: 5 * time.Minute,
@@ -48,12 +69,11 @@ func SolIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 
 	for iteration < continueAsNewThreshold {
 		// Solana validator state must run first — GeoIP depends on gossip IPs.
-		if err := temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshSolana).Get(ctx, nil); err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			logger.Error("solana refresh failed", "error", err)
+		err = temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshSolana).Get(ctx, nil)
+		if err != nil && ctx.Err() != nil {
+			return ctx.Err()
 		}
+		esc.Observe(log, "solana", "solana refresh failed", err)
 
 		// Run GeoIP in parallel with optional activities.
 		geoipFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshGeoIP)
@@ -70,27 +90,24 @@ func SolIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 			validatorsAppFuture = temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshValidatorsApp)
 		}
 
-		if err := geoipFuture.Get(ctx, nil); err != nil {
-			if ctx.Err() != nil {
+		err = geoipFuture.Get(ctx, nil)
+		if err != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
+		esc.Observe(log, "geoip", "geoip refresh failed", err)
+		if blockProdFuture != nil {
+			err = blockProdFuture.Get(ctx, nil)
+			if err != nil && ctx.Err() != nil {
 				return ctx.Err()
 			}
-			logger.Error("geoip refresh failed", "error", err)
-		}
-		if blockProdFuture != nil {
-			if err := blockProdFuture.Get(ctx, nil); err != nil {
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-				logger.Error("block production refresh failed", "error", err)
-			}
+			bpEsc.Observe(log, "block_production", "block production refresh failed", err)
 		}
 		if validatorsAppFuture != nil {
-			if err := validatorsAppFuture.Get(ctx, nil); err != nil {
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-				logger.Error("validatorsapp refresh failed", "error", err)
+			err = validatorsAppFuture.Get(ctx, nil)
+			if err != nil && ctx.Err() != nil {
+				return ctx.Err()
 			}
+			esc.Observe(log, "validatorsapp", "validatorsapp refresh failed", err)
 		}
 
 		iteration++

@@ -137,22 +137,29 @@ const maxValidSlot = 1_000_000_000_000
 // the per-validator local re-broadcast (dz_rebop) plus three regional retransmit feeds.
 const retransmitFeeds = `'dz_rebop', 'edge-solana-retrans-amer', 'edge-solana-retrans-eu', 'edge-solana-retrans-apac'`
 
-// dzFeeds combines the DZ leader feed with every retransmit variant.
+// dzFeeds combines the DZ leader feed with every retransmit variant. It backs the
+// dz_slots completeness count (q1) and the all-slots lead-time pool (q2b), so the root
+// feed is deliberately excluded here to keep those metrics on the existing 'dz' baseline.
 const dzFeeds = `'dz', ` + retransmitFeeds
 
+// rootFeed is the multicast group validators publish to when they are the root of the
+// turbine tree — the earliest hop of the DZ shred path, before regional retransmit.
+const rootFeed = `'edge-solana-root'`
+
 // scoreboardFeeds is the whitelist of feed names included in edge scoreboard results.
-const scoreboardFeeds = dzFeeds + `, 'jito', 'turbine'`
+const scoreboardFeeds = dzFeeds + `, ` + rootFeed + `, 'jito', 'turbine'`
 
 // scoreboardLoserFeeds is the whitelist of competitor feeds shown in lead-time comparisons.
 const scoreboardLoserFeeds = `'jito', 'turbine'`
 
-// retransmitRollup is a SQL CASE expression that aggregates every DZ retransmit variant
-// (dz_rebop + regional retransmits) into a single 'dz_retransmit' key, shrinking per-feed
-// result sets and keeping the scoreboard's retransmit column stable as the feed set evolves.
+// feedRollup is a SQL CASE expression that maps raw feed names to the keys surfaced in the
+// scoreboard: the root feed becomes 'dz_root' and every DZ retransmit variant (dz_rebop +
+// regional retransmits) collapses into 'dz_retransmit'. This shrinks per-feed result sets
+// and keeps the scoreboard's columns stable as the feed set evolves.
 // Callers alias this as something other than `feed` (e.g. `feed_key`) to avoid shadowing
 // the raw column — if an outer WHERE/GROUP BY also references `feed`, ClickHouse resolves
 // it back to the alias and silently filters/groups against the mapped value.
-const retransmitRollup = `CASE WHEN feed = 'dz_rebop' OR feed LIKE 'edge-solana-retrans-%' THEN 'dz_retransmit' ELSE feed END`
+const feedRollup = `CASE WHEN feed = 'edge-solana-root' THEN 'dz_root' WHEN feed = 'dz_rebop' OR feed LIKE 'edge-solana-retrans-%' THEN 'dz_retransmit' ELSE feed END`
 
 // validWindows maps window parameter values to ClickHouse interval expressions.
 var validWindows = map[string]string{
@@ -662,8 +669,9 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 	if !cursorMode {
 
 		// Group P: publisher / publishing-shred / stake-% headline numbers.
-		// Reads the publisher_check page-cache entry (refreshed by the worker every 30s)
-		// and derives the three values from it. The previous in-place query (q1d) ran
+		// Reads the publisher_check page-cache entry (refreshed by the worker on a slow
+		// cadence, ~every 2 min; see publisherCheckEveryN) and derives the three values
+		// from it. The previous in-place query (q1d) ran
 		// sequentially before this errgroup and consumed most of the deadline budget in
 		// prod, surfacing as "context deadline exceeded" on q1d / q8 in the worker.
 		g.Go(func() error {
@@ -702,8 +710,8 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			// by the race's observer host (the DZ edge box that saw the winning feed deliver
 			// first), so a validator's win rates reflect what it experiences as a receiver.
 			// denom = sum(shreds_won) across all scoreboard feeds for that observer in scope —
-			// so dz + dz_retransmit + jito + turbine sum to 100% and dz_edge (synthesized
-			// below from dz + dz_retransmit) is additive.
+			// so dz + dz_root + dz_retransmit + jito + turbine sum to 100% and dz_edge
+			// (synthesized below from dz + dz_root + dz_retransmit) is additive.
 			// This excludes shreds won first by untracked feeds (provider_one etc.) so the
 			// scoreboard isn't diluted by new feeds we don't yet track.
 			var q2 string
@@ -737,7 +745,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				FROM feed_totals ft
 				INNER JOIN host_denom hd ON ft.host = hd.host
 			SETTINGS final=1
-`, dzLeaderCTE, shredderDB, scoreboardFeeds, rangeFilter, retransmitRollup)
+`, dzLeaderCTE, shredderDB, scoreboardFeeds, rangeFilter, feedRollup)
 			} else {
 				q2 = fmt.Sprintf(`
 				WITH feed_totals AS (
@@ -762,7 +770,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				FROM feed_totals ft
 				INNER JOIN host_denom hd ON ft.host = hd.host
 			SETTINGS final=1
-`, shredderDB, scoreboardFeeds, rangeFilter, retransmitRollup)
+`, shredderDB, scoreboardFeeds, rangeFilter, feedRollup)
 			}
 
 			t := time.Now()
@@ -789,24 +797,31 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				return fmt.Errorf("query2 rows: %w", err)
 			}
 
-			// Synthesize dz_edge = dz + dz_retransmit (dz_rebop plus regional retransmits) on
-			// the shared per-host denominator. All DZ feeds carry the same host_denom as
-			// TotalShreds, so summing ShredsWon and dividing by the shared denominator gives
-			// the correct combined win rate.
+			// Synthesize dz_edge = dz + dz_root + dz_retransmit (root publish, leader feed, and
+			// dz_rebop plus regional retransmits) on the shared per-host denominator. All DZ
+			// feeds carry the same host_denom as TotalShreds, so summing ShredsWon and dividing
+			// by the shared denominator gives the correct combined win rate.
 			hosts := make(map[string]struct{})
 			for k := range localFeedStats {
 				hosts[k.nodeID] = struct{}{}
 			}
 			for nodeID := range hosts {
 				dz := localFeedStats[feedKey{nodeID, "dz"}]
+				root := localFeedStats[feedKey{nodeID, "dz_root"}]
 				retrans := localFeedStats[feedKey{nodeID, "dz_retransmit"}]
-				if dz == nil && retrans == nil {
+				if dz == nil && root == nil && retrans == nil {
 					continue
 				}
 				var denom, won uint64
 				if dz != nil {
 					denom = dz.TotalShreds
 					won += dz.ShredsWon
+				}
+				if root != nil {
+					if denom == 0 {
+						denom = root.TotalShreds
+					}
+					won += root.ShredsWon
 				}
 				if retrans != nil {
 					if denom == 0 {
@@ -1075,7 +1090,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				)
 				ORDER BY host, slot, feed
 			SETTINGS final=1
-`, dzLeaderCTEForRecent, shredderDB, slotWindowMin, slotWindowMax, slotFilter, orderDir, slotLimit, scoreboardFeeds, retransmitRollup)
+`, dzLeaderCTEForRecent, shredderDB, slotWindowMin, slotWindowMax, slotFilter, orderDir, slotLimit, scoreboardFeeds, feedRollup)
 		} else {
 			query5 = fmt.Sprintf(`
 				WITH active_hosts AS (
@@ -1119,7 +1134,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				)
 				ORDER BY host, slot, feed
 			SETTINGS final=1
-`, shredderDB, slotWindowMin, slotWindowMax, slotFilter, orderDir, slotLimit, scoreboardFeeds, retransmitRollup)
+`, shredderDB, slotWindowMin, slotWindowMax, slotFilter, orderDir, slotLimit, scoreboardFeeds, feedRollup)
 		}
 		t := time.Now()
 		rows5, err := a.envDB(gctx).Query(gctx, query5)
@@ -1334,7 +1349,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				JOIN bucket_totals bt ON f.host = bt.host AND f.slot_bucket = bt.slot_bucket
 				ORDER BY f.host, f.slot_bucket, f.feed
 			SETTINGS final=1
-`, dzLeaderCTE, bucketSize, shredderDB, scoreboardFeeds, nodeList, slotWindowMax, rangeFilter, "" /* unused [8] */, retransmitRollup)
+`, dzLeaderCTE, bucketSize, shredderDB, scoreboardFeeds, nodeList, slotWindowMax, rangeFilter, "" /* unused [8] */, feedRollup)
 			} else {
 				query7 = fmt.Sprintf(`
 				WITH per_feed AS (
@@ -1363,7 +1378,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				JOIN bucket_totals bt ON f.host = bt.host AND f.slot_bucket = bt.slot_bucket
 				ORDER BY f.host, f.slot_bucket, f.feed
 			SETTINGS final=1
-`, bucketSize, shredderDB, scoreboardFeeds, nodeList, slotWindowMax, rangeFilter, retransmitRollup)
+`, bucketSize, shredderDB, scoreboardFeeds, nodeList, slotWindowMax, rangeFilter, feedRollup)
 			}
 
 			t := time.Now()

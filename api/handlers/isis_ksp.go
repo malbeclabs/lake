@@ -39,13 +39,33 @@ type kspPath struct {
 	TotalMetric uint32
 }
 
+// validPathService reports whether the service query param is one the topology
+// filter understands. Empty means all-links (multicast / algo-0) behavior.
+// Shared by every handler that accepts a service param so validation stays
+// consistent across endpoints.
+func validPathService(service string) bool {
+	return service == "" || service == "unicast" || service == "multicast"
+}
+
 // loadTopologyGraph loads the device/link topology from ClickHouse into memory.
 // Edge weights use isis_delay_override_ns (if set) or committed_rtt_ns, converted
 // to microseconds, as the metric.
-func (a *API) loadTopologyGraph(ctx context.Context) (*kspGraph, error) {
+//
+// The service parameter controls which links are included:
+//   - "unicast": only links tagged to a topology (non-empty link_topologies) and not drained
+//   - "multicast" or "": all activated links (IS-IS algo 0)
+func (a *API) loadTopologyGraph(ctx context.Context, service string) (*kspGraph, error) {
 	g := &kspGraph{
 		Adj:   make(map[string][]kspEdge),
 		Nodes: make(map[string]kspNodeInfo),
+	}
+
+	topologyFilter := ""
+	if service == "unicast" {
+		topologyFilter = `
+			  AND l.link_topologies != '[]'
+			  AND l.link_topologies != ''
+			  AND l.unicast_drained = 0`
 	}
 
 	query := `
@@ -74,7 +94,7 @@ func (a *API) loadTopologyGraph(ctx context.Context) (*kspGraph, error) {
 		LEFT JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
 		WHERE l.status = 'activated'
 			  AND l.committed_rtt_ns != 1000000000
-	`
+	` + topologyFilter
 
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query)
@@ -362,9 +382,9 @@ func kspToSinglePaths(g *kspGraph, paths []kspPath) []SinglePath {
 }
 
 // findKShortestPaths loads the graph and runs Yen's algorithm.
-func (a *API) findKShortestPaths(ctx context.Context, fromPK, toPK string, k int) ([]SinglePath, error) {
+func (a *API) findKShortestPaths(ctx context.Context, fromPK, toPK string, k int, service string) ([]SinglePath, error) {
 	start := time.Now()
-	g, err := a.loadTopologyGraph(ctx)
+	g, err := a.loadTopologyGraph(ctx, service)
 	if err != nil {
 		return nil, err
 	}

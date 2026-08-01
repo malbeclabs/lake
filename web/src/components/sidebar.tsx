@@ -25,6 +25,7 @@ import {
   Shield,
   Wrench,
   ShieldAlert,
+  CalendarClock,
   Gauge,
   BarChart3,
   Zap,
@@ -59,12 +60,19 @@ export function Sidebar() {
   })
   const hasTopologies = (topologiesData?.topologies?.length ?? 0) > 0
   const showGeoloc = user?.is_internal_user === true
+  // Internal only (unannounced venue) — gated to allowed-domain Google users.
+  const showHyperliquid = user?.is_internal_user === true
+  const showPermissionAudit = user?.is_internal_user === true
 const { resolvedTheme, setTheme } = useTheme()
   const { updateAvailable, reload } = useVersionCheck()
 
   // Route detection
   const isStatusRoute = location.pathname.startsWith('/status')
-  const isIncidentsRoute = location.pathname.startsWith('/incidents')
+  const isOpsRoute = location.pathname.startsWith('/ops')
+  const isOpsIncidentsRoute = location.pathname.startsWith('/ops/incidents')
+  const isOpsIncidentsLinksRoute = location.pathname === '/ops/incidents/links'
+  const isOpsIncidentsDevicesRoute = location.pathname === '/ops/incidents/devices'
+  const isOpsMaintenanceRoute = location.pathname === '/ops/maintenance'
   const isChatRoute = location.pathname.startsWith('/chat')
   const isChatSessions = location.pathname === '/chat/sessions'
   const isTopologyRoute = location.pathname === '/topology' || location.pathname.startsWith('/topology/')
@@ -109,8 +117,14 @@ const { resolvedTheme, setTheme } = useTheme()
   const isShredsDevicesRoute = location.pathname === '/dz/shreds/devices'
   const isShredsEscrowEventsRoute = location.pathname === '/dz/shreds/activity'
   const isShredsEconomicsRoute = location.pathname === '/dz/shreds/economics'
+  const isShredsRewardsRoute =
+    location.pathname === '/dz/shreds/rewards' ||
+    location.pathname.startsWith('/dz/shreds/rewards/')
   const isShredsRoute = location.pathname.startsWith('/dz/shreds') || isShredsPublishersRoute
-  const isEdgeRoute = isShredsRoute
+  const isHyperliquidScoreboardRoute = location.pathname === '/dz/hyperliquid/scoreboard'
+  const isPermissionAuditRoute = location.pathname === '/dz/permission-audit'
+  const isHyperliquidRoute = location.pathname.startsWith('/dz/hyperliquid')
+  const isEdgeRoute = isShredsRoute || isHyperliquidRoute
   const isGeolocRoute = location.pathname.startsWith('/dz/geoloc/')
   const isGeolocProbesRoute = location.pathname.startsWith('/dz/geoloc/probes')
   const isGeolocUsersRoute = location.pathname.startsWith('/dz/geoloc/users')
@@ -255,7 +269,7 @@ const { resolvedTheme, setTheme } = useTheme()
           <Link to="/performance/dz-vs-internet" className={collapsedIconClass(isPerformanceRoute)} title="Performance">
             <Gauge className="h-4 w-4" />
           </Link>
-          <Link to="/incidents/links" className={collapsedIconClass(isIncidentsRoute)} title="Incidents">
+          <Link to="/ops/incidents/links" className={collapsedIconClass(isOpsRoute)} title="Ops">
             <ShieldAlert className="h-4 w-4" />
           </Link>
           <button
@@ -467,10 +481,7 @@ const { resolvedTheme, setTheme } = useTheme()
                 )}
               </>
             )}
-            <Link to="/incidents/links" className={navItemClass(isIncidentsRoute)}>
-              <ShieldAlert className="h-4 w-4" />
-              Incidents
-            </Link>
+
             {/* Chat with inline sub-items */}
             <button
               onClick={(e) => {
@@ -518,6 +529,38 @@ const { resolvedTheme, setTheme } = useTheme()
           </div>
         </div>
 
+        {/* Ops section */}
+        <div className="px-3 pt-4">
+          <div className="px-3 mb-2">
+            <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Ops</span>
+          </div>
+          <div className="space-y-1">
+            <Link
+              to="/ops/incidents/links"
+              className={isOpsIncidentsRoute ? navItemExpandedClass : navItemClass(false)}
+            >
+              <ShieldAlert className="h-4 w-4" />
+              Incidents
+            </Link>
+            {isOpsIncidentsRoute && (
+              <>
+                <Link to="/ops/incidents/links" className={subNavItemClass(isOpsIncidentsLinksRoute)}>
+                  <Link2 className="h-4 w-4" />
+                  Links
+                </Link>
+                <Link to="/ops/incidents/devices" className={subNavItemClass(isOpsIncidentsDevicesRoute)}>
+                  <Server className="h-4 w-4" />
+                  Devices
+                </Link>
+              </>
+            )}
+            <Link to="/ops/maintenance" className={navItemClass(isOpsMaintenanceRoute)}>
+              <CalendarClock className="h-4 w-4" />
+              Maintenance
+            </Link>
+          </div>
+        </div>
+
         {/* Edge section */}
         <div className="px-3 pt-4">
           <div className="px-3 mb-2">
@@ -536,6 +579,9 @@ const { resolvedTheme, setTheme } = useTheme()
                 <Link to="/dz/shreds/publishers" className={subNavItemClass(isShredsPublishersRoute)}>
                   Publishers
                 </Link>
+                <Link to="/dz/shreds/rewards" className={subNavItemClass(isShredsRewardsRoute)}>
+                  Edge Rewards
+                </Link>
                 <Link to="/dz/shreds/subscribers" className={subNavItemClass(isShredsSeatsRoute)}>
                   Subscribers
                 </Link>
@@ -548,6 +594,21 @@ const { resolvedTheme, setTheme } = useTheme()
                 <Link to="/dz/shreds/economics" className={subNavItemClass(isShredsEconomicsRoute)}>
                   Economics
                 </Link>
+              </>
+            )}
+            {showHyperliquid && (
+              <>
+                <Link to="/dz/hyperliquid/scoreboard" className={isHyperliquidRoute ? navItemExpandedClass : navItemClass(false)}>
+                  <Activity className="h-4 w-4" />
+                  Hyperliquid
+                </Link>
+                {isHyperliquidRoute && (
+                  <>
+                    <Link to="/dz/hyperliquid/scoreboard" className={subNavItemClass(isHyperliquidScoreboardRoute)}>
+                      Scoreboard
+                    </Link>
+                  </>
+                )}
               </>
             )}
           </div>
@@ -601,6 +662,12 @@ const { resolvedTheme, setTheme } = useTheme()
               <KeyRound className="h-4 w-4" />
               Access Passes
             </Link>
+            {showPermissionAudit && (
+              <Link to="/dz/permission-audit" className={navItemClass(isPermissionAuditRoute)}>
+                <Shield className="h-4 w-4" />
+                Permission Audit
+              </Link>
+            )}
           </div>
         </div>
 

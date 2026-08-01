@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/malbeclabs/lake/api/handlers/dberror"
 	"github.com/malbeclabs/lake/api/metrics"
+	"github.com/malbeclabs/lake/utils/pkg/dberror"
 )
 
 // ShredsOverview is a summary of the shred subscription program state.
@@ -35,10 +35,11 @@ type ShredsOverview struct {
 	ValidatorClientRewardCount uint64 `json:"validator_client_reward_count"`
 }
 
-func (a *API) GetShredsOverview(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
+// FetchShredsOverview returns the program-state overview for the env in ctx.
+// Errors are swallowed: missing execution controller / count tables resolve to
+// zero values rather than propagating up, matching the legacy HTTP handler's
+// behavior so v1 and the internal handler stay in lockstep.
+func (a *API) FetchShredsOverview(ctx context.Context) ShredsOverview {
 	start := time.Now()
 
 	// Fetch execution controller singleton.
@@ -67,15 +68,13 @@ func (a *API) GetShredsOverview(w http.ResponseWriter, r *http.Request) {
 		&overview.SettledClientSeatsCount,
 		&overview.NextSeatFundingIndex,
 	)
-	duration := time.Since(start)
-	metrics.RecordClickHouseQuery("shreds", duration, err)
+	metrics.RecordClickHouseQuery("shreds", time.Since(start), err)
 
 	if err != nil {
 		// If no execution controller exists yet, return empty overview.
 		overview = ShredsOverview{}
 	}
 
-	// Fetch aggregate counts in parallel-ish (sequential but fast).
 	// Fetch current Solana epoch.
 	var solanaEpoch int64
 	if err := a.envDB(ctx).QueryRow(ctx, `SELECT max(epoch) FROM solana_vote_accounts_current`).Scan(&solanaEpoch); err != nil {
@@ -83,6 +82,7 @@ func (a *API) GetShredsOverview(w http.ResponseWriter, r *http.Request) {
 	}
 	overview.CurrentSolanaEpoch = uint64(solanaEpoch)
 
+	// Aggregate counts. Tables may not exist yet on a fresh env; treat as zero.
 	countQueries := []struct {
 		query string
 		dest  *uint64
@@ -96,10 +96,18 @@ func (a *API) GetShredsOverview(w http.ResponseWriter, r *http.Request) {
 
 	for _, cq := range countQueries {
 		if err := a.envDB(ctx).QueryRow(ctx, cq.query).Scan(cq.dest); err != nil {
-			// Tables may not exist yet; treat as zero.
 			*cq.dest = 0
 		}
 	}
+
+	return overview
+}
+
+func (a *API) GetShredsOverview(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	overview := a.FetchShredsOverview(ctx)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(overview); err != nil {
@@ -121,14 +129,47 @@ type ShredClientSeatItem struct {
 	HasPriceOverride         uint8  `json:"has_price_override"`
 	OverrideUSDCPriceDollars uint16 `json:"override_usdc_price_dollars"`
 	EscrowCount              uint32 `json:"escrow_count"`
-	TotalUSDCBalance         uint64 `json:"total_usdc_balance"`
-	PricePerEpochDollars     int64  `json:"price_per_epoch_dollars"`
-	FundingAuthorityKey      string `json:"funding_authority_key"`
-	UserPK                   string `json:"user_pk"`
-	UserOwnerPubkey          string `json:"user_owner_pubkey"`
-	UserStatus               string `json:"user_status"`
-	LastActivity             string `json:"last_activity"`
+	// SpendableUSDCBalance is the largest single escrow balance. Activation and
+	// renewal are evaluated per-escrow by the oracle: a charge must be covered by
+	// one escrow, so balances are never summed across escrows.
+	SpendableUSDCBalance uint64 `json:"spendable_usdc_balance"`
+	// AllEscrowsUSDCBalance is the sum across every escrow on the seat, exposed so
+	// operators can still see funds stranded in undersized escrows.
+	AllEscrowsUSDCBalance uint64 `json:"all_escrows_usdc_balance"`
+	PricePerEpochDollars  int64  `json:"price_per_epoch_dollars"`
+	FundingAuthorityKey   string `json:"funding_authority_key"`
+	UserPK                string `json:"user_pk"`
+	UserOwnerPubkey       string `json:"user_owner_pubkey"`
+	UserStatus            string `json:"user_status"`
+	LastActivity          string `json:"last_activity"`
 }
+
+// escrowBalancesCTE is the shared escrow_balances CTE body (usable after WITH, and
+// composable with a trailing "," for further CTEs). Activation is per-escrow: the
+// oracle covers each charge from a single escrow, so spendable balance is the largest
+// single escrow (max), never the sum. all_escrows_usdc_balance keeps the across-escrow
+// total visible so stranded funds on multi-escrow seats aren't hidden.
+const escrowBalancesCTE = `escrow_balances AS (
+		SELECT client_seat_key,
+			max(usdc_balance) as spendable_usdc_balance,
+			sum(usdc_balance) as all_escrows_usdc_balance
+		FROM dim_dz_shred_payment_escrows_current
+		GROUP BY client_seat_key
+	)`
+
+// seatPriceExpr is a seat's per-epoch price in dollars (override, else metro price +
+// device premium). Requires s, mh, dh joined. It backs seatPrepaidEpochsExpr; the SELECT
+// lists in the data queries (shreds.go and shred_subscribers.go) inline the same CASE for
+// the returned price_per_epoch_dollars column — keep those copies in lockstep with this one.
+const seatPriceExpr = `CASE
+			WHEN s.has_price_override = 1 THEN toInt64(s.override_usdc_price_dollars)
+			ELSE toInt64(COALESCE(mh.current_usdc_price_dollars, 0)) + toInt64(COALESCE(dh.current_usdc_metro_premium_dollars, 0))
+		END`
+
+// seatPrepaidEpochsExpr is the number of epochs the largest single escrow prepays at the
+// seat's price. Requires the escrow_balances CTE joined as eb. Used for both the
+// status buckets and the "prepaid" sort so ordering matches the displayed value.
+const seatPrepaidEpochsExpr = `CASE WHEN ` + seatPriceExpr + ` > 0 THEN intDiv(COALESCE(eb.spendable_usdc_balance, 0) / 1000000, ` + seatPriceExpr + `) ELSE 0 END`
 
 var seatSortFields = map[string]string{
 	"seat":          "s.pk",
@@ -138,8 +179,8 @@ var seatSortFields = map[string]string{
 	"tenure":        "s.tenure_epochs",
 	"active_epoch":  "s.active_epoch",
 	"funder":        "s.funding_authority_key",
-	"balance":       "total_usdc_balance",
-	"prepaid":       "price_per_epoch_dollars",
+	"balance":       "spendable_usdc_balance",
+	"prepaid":       seatPrepaidEpochsExpr,
 	"last_activity": "last_activity",
 }
 
@@ -151,7 +192,8 @@ var seatFilterFields = map[string]FilterFieldConfig{
 	"funder":  {Column: "s.funding_authority_key", Type: FieldTypeText},
 	"tenure":  {Column: "s.tenure_epochs", Type: FieldTypeNumeric},
 	"epoch":   {Column: "s.active_epoch", Type: FieldTypeNumeric},
-	"balance": {Column: "COALESCE(eb.total_usdc_balance, 0)", Type: FieldTypeNumeric},
+	"balance": {Column: "COALESCE(eb.spendable_usdc_balance, 0)", Type: FieldTypeNumeric},
+	"prepaid": {Column: seatPrepaidEpochsExpr, Type: FieldTypeNumeric},
 }
 
 func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
@@ -211,32 +253,25 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 			statuses[s] = true
 		}
 
-		// Price expression used for prepaid epoch calculation.
-		priceExpr := `CASE
-			WHEN s.has_price_override = 1 THEN toInt64(s.override_usdc_price_dollars)
-			ELSE toInt64(COALESCE(mh.current_usdc_price_dollars, 0)) + toInt64(COALESCE(dh.current_usdc_metro_premium_dollars, 0))
-		END`
-		prepaidExpr := `CASE WHEN ` + priceExpr + ` > 0 THEN intDiv(COALESCE(eb.total_usdc_balance, 0) / 1000000, ` + priceExpr + `) ELSE 0 END`
-
 		var statusOr []string
 		if statuses["active"] {
 			// Active but NOT expiring (prepaid >= 1).
-			statusOr = append(statusOr, "(s.active_epoch >= ? AND s.escrow_count > 0 AND "+prepaidExpr+" >= 1)")
+			statusOr = append(statusOr, "(s.active_epoch >= ? AND s.escrow_count > 0 AND "+seatPrepaidEpochsExpr+" >= 1)")
 			whereArgs = append(whereArgs, solanaEpoch)
 		}
 		if statuses["expiring"] {
 			// Active but expiring soon (prepaid < 1).
-			statusOr = append(statusOr, "(s.active_epoch >= ? AND s.escrow_count > 0 AND "+prepaidExpr+" < 1)")
+			statusOr = append(statusOr, "(s.active_epoch >= ? AND s.escrow_count > 0 AND "+seatPrepaidEpochsExpr+" < 1)")
 			whereArgs = append(whereArgs, solanaEpoch)
 		}
 		if statuses["pending"] {
 			// Funded but not yet active (balance covers at least 1 epoch).
-			statusOr = append(statusOr, "(s.active_epoch < ? AND s.escrow_count > 0 AND "+prepaidExpr+" >= 1)")
+			statusOr = append(statusOr, "(s.active_epoch < ? AND s.escrow_count > 0 AND "+seatPrepaidEpochsExpr+" >= 1)")
 			whereArgs = append(whereArgs, solanaEpoch)
 		}
 		if statuses["inactive"] {
 			// Expired: not active, insufficient balance for next epoch.
-			statusOr = append(statusOr, "(s.active_epoch < ? AND s.escrow_count > 0 AND "+prepaidExpr+" < 1)")
+			statusOr = append(statusOr, "(s.active_epoch < ? AND s.escrow_count > 0 AND "+seatPrepaidEpochsExpr+" < 1)")
 			whereArgs = append(whereArgs, solanaEpoch)
 		}
 		if statuses["closed"] {
@@ -254,11 +289,7 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 
 	// Count query.
 	countQuery := `
-		WITH escrow_balances AS (
-			SELECT client_seat_key, sum(usdc_balance) as total_usdc_balance
-			FROM dim_dz_shred_payment_escrows_current
-			GROUP BY client_seat_key
-		)
+		WITH ` + escrowBalancesCTE + `
 		SELECT count(*)
 		FROM dim_dz_shred_client_seats_current s
 		LEFT JOIN dz_devices_current d ON s.device_key = d.pk
@@ -278,11 +309,7 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 	// Data query.
 	orderBy := sort.OrderByClause(sortFields)
 	query := `
-		WITH escrow_balances AS (
-			SELECT client_seat_key, sum(usdc_balance) as total_usdc_balance
-			FROM dim_dz_shred_payment_escrows_current
-			GROUP BY client_seat_key
-		),
+		WITH ` + escrowBalancesCTE + `,
 		last_events AS (
 			SELECT client_seat_pk, max(event_ts) as last_activity
 			FROM fact_dz_shred_escrow_events FINAL
@@ -293,7 +320,8 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 			COALESCE(d.metro_pk, '') as metro_pk, COALESCE(m.code, '') as metro_code,
 			s.client_ip, s.tenure_epochs, s.funded_epoch, s.active_epoch,
 			s.has_price_override, s.override_usdc_price_dollars, s.escrow_count,
-			COALESCE(eb.total_usdc_balance, 0) as total_usdc_balance,
+			COALESCE(eb.spendable_usdc_balance, 0) as spendable_usdc_balance,
+			COALESCE(eb.all_escrows_usdc_balance, 0) as all_escrows_usdc_balance,
 			CASE
 				WHEN s.has_price_override = 1 THEN toInt32(s.override_usdc_price_dollars)
 				ELSE toInt32(COALESCE(mh.current_usdc_price_dollars, 0)) + toInt32(COALESCE(dh.current_usdc_metro_premium_dollars, 0))
@@ -332,7 +360,8 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(
 			&s.PK, &s.DeviceKey, &s.DeviceCode, &s.MetroPK, &s.MetroCode,
 			&s.ClientIP, &s.TenureEpochs, &s.FundedEpoch, &s.ActiveEpoch,
-			&s.HasPriceOverride, &s.OverrideUSDCPriceDollars, &s.EscrowCount, &s.TotalUSDCBalance,
+			&s.HasPriceOverride, &s.OverrideUSDCPriceDollars, &s.EscrowCount,
+			&s.SpendableUSDCBalance, &s.AllEscrowsUSDCBalance,
 			&s.PricePerEpochDollars, &s.FundingAuthorityKey,
 			&s.UserPK, &s.UserOwnerPubkey, &s.UserStatus, &lastActivity,
 		); err != nil {
@@ -621,12 +650,12 @@ var escrowEventSortFields = map[string]string{
 }
 
 var escrowEventFilterFields = map[string]FilterFieldConfig{
-	"type":   {Column: "e.event_type", Type: FieldTypeText},
-	"escrow": {Column: "e.escrow_pk", Type: FieldTypeText},
-	"seat":   {Column: "e.client_seat_pk", Type: FieldTypeText},
-	"status": {Column: "e.status", Type: FieldTypeText},
-	"epoch":  {Column: "e.epoch", Type: FieldTypeNumeric},
-	"signer": {Column: "e.signer", Type: FieldTypeText},
+	"type":   {Column: "event_type", Type: FieldTypeText},
+	"escrow": {Column: "escrow_pk", Type: FieldTypeText},
+	"seat":   {Column: "client_seat_pk", Type: FieldTypeText},
+	"status": {Column: "status", Type: FieldTypeText},
+	"epoch":  {Column: "epoch", Type: FieldTypeNumeric},
+	"signer": {Column: "signer", Type: FieldTypeText},
 }
 
 // splitCSV splits a comma-separated string into trimmed non-empty values.
@@ -703,8 +732,10 @@ func (a *API) GetShredEscrowEvents(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
-	// Build WHERE clause.
-	whereClause := ` WHERE e.event_ts >= ? AND e.event_ts <= ?`
+	// Build event-table WHERE clause. Keep these predicates inside the FINAL
+	// subquery; newer ClickHouse releases can fail if a FINAL subquery is filtered
+	// after a LEFT JOIN.
+	whereClause := ` WHERE event_ts >= ? AND event_ts <= ?`
 	whereArgs := []any{startTime, endTime}
 
 	filterClause, filterArgs := filters.BuildFilterClause(escrowEventFilterFields)
@@ -716,13 +747,13 @@ func (a *API) GetShredEscrowEvents(w http.ResponseWriter, r *http.Request) {
 	// Exclude internal/test signers unless include_internal=true.
 	if r.URL.Query().Get("include_internal") != "true" && len(escrowEventExcludedSigners) > 0 {
 		for _, signer := range escrowEventExcludedSigners {
-			whereClause += ` AND e.signer != ?`
+			whereClause += ` AND signer != ?`
 			whereArgs = append(whereArgs, signer)
 		}
 	}
 
 	// Count query.
-	countQuery := `SELECT count(*) FROM fact_dz_shred_escrow_events AS e FINAL` + whereClause
+	countQuery := `SELECT count(*) FROM fact_dz_shred_escrow_events FINAL` + whereClause
 	var total uint64
 	if err := a.envDB(ctx).QueryRow(ctx, countQuery, whereArgs...).Scan(&total); err != nil {
 		logError("shred escrow events count failed", "error", err)
@@ -737,9 +768,15 @@ func (a *API) GetShredEscrowEvents(w http.ResponseWriter, r *http.Request) {
 			e.event_ts, e.escrow_pk, e.client_seat_pk, e.tx_signature, e.slot,
 			e.event_type, e.amount_usdc, e.balance_after_usdc, e.epoch, e.status, e.signer,
 			COALESCE(s.client_ip, '') as client_ip
-		FROM fact_dz_shred_escrow_events AS e FINAL
+		FROM (
+			SELECT
+				event_ts, escrow_pk, client_seat_pk, tx_signature, slot,
+				event_type, amount_usdc, balance_after_usdc, epoch, status, signer
+			FROM fact_dz_shred_escrow_events FINAL
+		` + whereClause + `
+		) AS e
 		LEFT JOIN dim_dz_shred_client_seats_current s ON e.client_seat_pk = s.pk
-	` + whereClause + ` ` + orderBy + ` LIMIT ? OFFSET ?`
+	` + orderBy + ` LIMIT ? OFFSET ?`
 	queryArgs := append(whereArgs, pagination.Limit, pagination.Offset)
 
 	rows, err := a.envDB(ctx).Query(ctx, query, queryArgs...)

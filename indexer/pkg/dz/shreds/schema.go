@@ -292,14 +292,49 @@ func (s *ShredDistributionSchema) GetPrimaryKey(d ShredDistributionRow) string {
 	return d.PK
 }
 
+// DistributionClientProportionSchema defines the schema for per-(epoch, client) reward proportions.
+type DistributionClientProportionSchema struct{}
+
+func (s *DistributionClientProportionSchema) Name() string {
+	return "dz_shred_distribution_client_proportions"
+}
+
+func (s *DistributionClientProportionSchema) PrimaryKeyColumns() []string {
+	return []string{"pk:VARCHAR"}
+}
+
+func (s *DistributionClientProportionSchema) PayloadColumns() []string {
+	return []string{
+		"subscription_epoch:BIGINT",
+		"client_id:INTEGER",
+		"proportion:INTEGER",
+		"default_proportion:INTEGER",
+	}
+}
+
+func (s *DistributionClientProportionSchema) ToRow(d DistributionClientProportionRow) []any {
+	return []any{
+		d.PK,
+		d.SubscriptionEpoch,
+		d.ClientID,
+		d.Proportion,
+		d.DefaultProportion,
+	}
+}
+
+func (s *DistributionClientProportionSchema) GetPrimaryKey(d DistributionClientProportionRow) string {
+	return d.PK
+}
+
 var (
-	executionControllerSchema    = &ExecutionControllerSchema{}
-	clientSeatSchema             = &ClientSeatSchema{}
-	paymentEscrowSchema          = &PaymentEscrowSchema{}
-	metroHistorySchema           = &MetroHistorySchema{}
-	deviceHistorySchema          = &DeviceHistorySchema{}
-	validatorClientRewardsSchema = &ValidatorClientRewardsSchema{}
-	shredDistributionSchema      = &ShredDistributionSchema{}
+	executionControllerSchema          = &ExecutionControllerSchema{}
+	clientSeatSchema                   = &ClientSeatSchema{}
+	paymentEscrowSchema                = &PaymentEscrowSchema{}
+	metroHistorySchema                 = &MetroHistorySchema{}
+	deviceHistorySchema                = &DeviceHistorySchema{}
+	validatorClientRewardsSchema       = &ValidatorClientRewardsSchema{}
+	shredDistributionSchema            = &ShredDistributionSchema{}
+	distributionClientProportionSchema = &DistributionClientProportionSchema{}
 )
 
 func NewExecutionControllerDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
@@ -328,4 +363,8 @@ func NewValidatorClientRewardsDataset(log *slog.Logger) (*dataset.DimensionType2
 
 func NewShredDistributionDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
 	return dataset.NewDimensionType2Dataset(log, shredDistributionSchema)
+}
+
+func NewDistributionClientProportionDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
+	return dataset.NewDimensionType2Dataset(log, distributionClientProportionSchema)
 }

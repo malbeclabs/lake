@@ -10,7 +10,10 @@ import (
 	dzgeoloc "github.com/malbeclabs/lake/indexer/pkg/dz/geolocation"
 	dzgraph "github.com/malbeclabs/lake/indexer/pkg/dz/graph"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/isis"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/mroute"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/msdp"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/serviceability/permissionevents"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/escrowevents"
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
@@ -25,18 +28,23 @@ type Indexer struct {
 	log *slog.Logger
 	cfg Config
 
-	svc           *dzsvc.View
-	geoloc        *dzgeoloc.View
-	shreds        *dzshreds.View
-	escrowEvents  *escrowevents.View
-	graphStore    *dzgraph.Store
-	telemLatency  *dztelemlatency.View
-	telemUsage    *dztelemusage.View
-	sol           *sol.View
-	geoip         *mcpgeoip.View
-	isisSource    isis.Source
-	isisStore     *isis.Store
-	validatorsApp *validatorsapp.View
+	svc              *dzsvc.View
+	geoloc           *dzgeoloc.View
+	shreds           *dzshreds.View
+	escrowEvents     *escrowevents.View
+	permissionEvents *permissionevents.View
+	graphStore       *dzgraph.Store
+	telemLatency     *dztelemlatency.View
+	telemUsage       *dztelemusage.View
+	sol              *sol.View
+	geoip            *mcpgeoip.View
+	isisSource       isis.Source
+	isisStore        *isis.Store
+	mrouteSource     mroute.Source
+	mrouteStore      *mroute.Store
+	msdpSource       msdp.Source
+	msdpStore        *msdp.Store
+	validatorsApp    *validatorsapp.View
 }
 
 func New(ctx context.Context, cfg Config) (*Indexer, error) {
@@ -134,6 +142,23 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 		}
 	}
 
+	// Initialize permission events audit view (optional, requires the serviceability
+	// program id + a raw Solana RPC on the DZ ledger).
+	var permissionEventsView *permissionevents.View
+	if cfg.PermissionEventsRPC != nil && !cfg.ServiceabilityProgramID.IsZero() {
+		permissionEventsView, err = permissionevents.NewView(permissionevents.ViewConfig{
+			Logger:          cfg.Logger,
+			Clock:           cfg.Clock,
+			RPC:             cfg.PermissionEventsRPC,
+			ProgramID:       cfg.ServiceabilityProgramID,
+			RefreshInterval: cfg.RefreshInterval,
+			ClickHouse:      cfg.ClickHouse,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create permission events view: %w", err)
+		}
+	}
+
 	// Initialize telemetry view
 	telemView, err := dztelemlatency.NewView(dztelemlatency.ViewConfig{
 		Logger:                 cfg.Logger,
@@ -146,6 +171,7 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 		ClickHouse:             cfg.ClickHouse,
 		Serviceability:         svcView,
 		RefreshInterval:        cfg.RefreshInterval,
+		DZEnv:                  cfg.DZEnv,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create telemetry view: %w", err)
@@ -247,6 +273,60 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 			"region", cfg.ISISS3Region)
 	}
 
+	// Initialize mroute source and store if enabled
+	var mrouteSource mroute.Source
+	var mrouteStore *mroute.Store
+	if cfg.MrouteEnabled {
+		mrouteSource, err = mroute.NewS3Source(ctx, mroute.S3SourceConfig{
+			Bucket:      cfg.MrouteS3Bucket,
+			Region:      cfg.MrouteS3Region,
+			KeyPrefix:   cfg.MrouteS3KeyPrefix,
+			EndpointURL: cfg.MrouteS3EndpointURL,
+			Logger:      cfg.Logger,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create mroute S3 source: %w", err)
+		}
+		mrouteStore, err = mroute.NewStore(mroute.StoreConfig{
+			Logger:     cfg.Logger,
+			ClickHouse: cfg.ClickHouse,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create mroute store: %w", err)
+		}
+		cfg.Logger.Info("mroute state-collect source initialized",
+			"bucket", cfg.MrouteS3Bucket,
+			"region", cfg.MrouteS3Region,
+			"key_prefix", cfg.MrouteS3KeyPrefix)
+	}
+
+	// Initialize MSDP source and store if enabled
+	var msdpSource msdp.Source
+	var msdpStore *msdp.Store
+	if cfg.MSDPEnabled {
+		msdpSource, err = msdp.NewS3Source(ctx, msdp.S3SourceConfig{
+			Bucket:      cfg.MSDPS3Bucket,
+			Region:      cfg.MSDPS3Region,
+			KeyPrefix:   cfg.MSDPS3KeyPrefix,
+			EndpointURL: cfg.MSDPS3EndpointURL,
+			Logger:      cfg.Logger,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create MSDP S3 source: %w", err)
+		}
+		msdpStore, err = msdp.NewStore(msdp.StoreConfig{
+			Logger:     cfg.Logger,
+			ClickHouse: cfg.ClickHouse,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create MSDP store: %w", err)
+		}
+		cfg.Logger.Info("MSDP state-collect source initialized",
+			"bucket", cfg.MSDPS3Bucket,
+			"region", cfg.MSDPS3Region,
+			"key_prefix", cfg.MSDPS3KeyPrefix)
+	}
+
 	// Initialize validators.app view (optional)
 	var validatorsAppView *validatorsapp.View
 	if cfg.ValidatorsAppClient != nil {
@@ -266,18 +346,23 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 		log: cfg.Logger,
 		cfg: cfg,
 
-		svc:           svcView,
-		geoloc:        geolocView,
-		shreds:        shredsView,
-		escrowEvents:  escrowEventsView,
-		graphStore:    graphStore,
-		telemLatency:  telemView,
-		telemUsage:    telemetryUsageView,
-		sol:           solanaView,
-		geoip:         geoipView,
-		isisSource:    isisSource,
-		isisStore:     isisStore,
-		validatorsApp: validatorsAppView,
+		svc:              svcView,
+		geoloc:           geolocView,
+		shreds:           shredsView,
+		escrowEvents:     escrowEventsView,
+		permissionEvents: permissionEventsView,
+		graphStore:       graphStore,
+		telemLatency:     telemView,
+		telemUsage:       telemetryUsageView,
+		sol:              solanaView,
+		geoip:            geoipView,
+		isisSource:       isisSource,
+		isisStore:        isisStore,
+		mrouteSource:     mrouteSource,
+		mrouteStore:      mrouteStore,
+		msdpSource:       msdpSource,
+		msdpStore:        msdpStore,
+		validatorsApp:    validatorsAppView,
 	}
 
 	return i, nil
@@ -302,6 +387,18 @@ func (i *Indexer) Close() error {
 		if err := i.isisSource.Close(); err != nil {
 			i.log.Warn("failed to close ISIS source", "error", err)
 			errs = append(errs, fmt.Errorf("failed to close ISIS source: %w", err))
+		}
+	}
+	if i.mrouteSource != nil {
+		if err := i.mrouteSource.Close(); err != nil {
+			i.log.Warn("failed to close mroute source", "error", err)
+			errs = append(errs, fmt.Errorf("failed to close mroute source: %w", err))
+		}
+	}
+	if i.msdpSource != nil {
+		if err := i.msdpSource.Close(); err != nil {
+			i.log.Warn("failed to close MSDP source", "error", err)
+			errs = append(errs, fmt.Errorf("failed to close MSDP source: %w", err))
 		}
 	}
 	if len(errs) > 0 {
@@ -352,6 +449,26 @@ func (i *Indexer) ISISStore() *isis.Store {
 	return i.isisStore
 }
 
+// MrouteSource returns the state-collect mroute data source, or nil if not configured.
+func (i *Indexer) MrouteSource() mroute.Source {
+	return i.mrouteSource
+}
+
+// MrouteStore returns the mroute ClickHouse store, or nil if not configured.
+func (i *Indexer) MrouteStore() *mroute.Store {
+	return i.mrouteStore
+}
+
+// MSDPSource returns the state-collect MSDP data source, or nil if not configured.
+func (i *Indexer) MSDPSource() msdp.Source {
+	return i.msdpSource
+}
+
+// MSDPStore returns the MSDP ClickHouse store, or nil if not configured.
+func (i *Indexer) MSDPStore() *msdp.Store {
+	return i.msdpStore
+}
+
 // Geolocation returns the geolocation view, or nil if not configured.
 func (i *Indexer) Geolocation() *dzgeoloc.View {
 	return i.geoloc
@@ -365,6 +482,11 @@ func (i *Indexer) Shreds() *dzshreds.View {
 // EscrowEvents returns the escrow events view, or nil if not configured.
 func (i *Indexer) EscrowEvents() *escrowevents.View {
 	return i.escrowEvents
+}
+
+// PermissionEvents returns the permission events audit view, or nil if not configured.
+func (i *Indexer) PermissionEvents() *permissionevents.View {
+	return i.permissionEvents
 }
 
 // ValidatorsApp returns the validators.app view, or nil if not configured.

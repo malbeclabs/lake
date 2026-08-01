@@ -16,6 +16,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 	"github.com/malbeclabs/lake/indexer/pkg/metrics"
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
 // InfluxDBClient is an interface for querying InfluxDB interface counter data.
@@ -153,7 +154,8 @@ type ViewConfig struct {
 	Bucket          string
 	ClickHouse      clickhouse.Client
 	RefreshInterval time.Duration
-	QueryWindow     time.Duration // How far back to query from InfluxDB
+	QueryWindow     time.Duration // How far back the initial refresh (empty table) and a beyond-horizon skip (see maxCatchupHorizon) start from
+	QueryChunk      time.Duration // Max time span of a single InfluxDB query; larger windows are split into chunks
 	DZEnv           string        // DZ network environment (e.g. "mainnet-beta", "testnet", "devnet")
 }
 
@@ -176,17 +178,135 @@ func (cfg *ViewConfig) Validate() error {
 	if cfg.QueryWindow <= 0 {
 		cfg.QueryWindow = 1 * time.Hour // Default to 1 hour window
 	}
+	if cfg.QueryChunk <= 0 {
+		// Bound each InfluxDB query to a small span. In steady state the query
+		// window is only a few minutes (one chunk), but when the high-water mark
+		// falls behind the window grows to QueryWindow; chunking keeps each
+		// server-side pivot small enough to stay under InfluxDB Cloud's heap limit.
+		cfg.QueryChunk = 5 * time.Minute
+	}
 	if cfg.Clock == nil {
 		cfg.Clock = clockwork.NewRealClock()
+	}
+	// The baseline cache only hits while windowStart stays within
+	// baselineCacheMaxLag of the watermark; steady-state windowStart lags by
+	// refreshOverlap plus up to one capped catch-up step. A QueryChunk large
+	// enough to break this would silently regress every refresh to a full
+	// baseline re-scan, so reject it at startup rather than rely on the metric.
+	if steadyStateLag := refreshOverlap + cfg.QueryChunk*maxCatchupChunks; steadyStateLag >= baselineCacheMaxLag {
+		return fmt.Errorf("query chunk %s is too large for the baseline cache: refreshOverlap (%s) + QueryChunk×maxCatchupChunks (%s) must stay below baselineCacheMaxLag (%s)",
+			cfg.QueryChunk, refreshOverlap, cfg.QueryChunk*maxCatchupChunks, baselineCacheMaxLag)
+	}
+	// The beyond-horizon skip lands at now−QueryWindow (see maxCatchupHorizon);
+	// a window at or past the horizon would make the "skip" jump backwards
+	// behind the watermark. The empty-span age-out needs the full margin: it
+	// fires at watermark age > QueryWindow + one capped span (queryEnd must age
+	// out of the window), and the horizon skip intercepts at age >
+	// maxCatchupHorizon first — without the capped-span headroom a genuine
+	// source gap could never age out and would pin ingest at the horizon,
+	// re-paging forever.
+	if ageOutLag := cfg.QueryWindow + cfg.QueryChunk*maxCatchupChunks; ageOutLag >= maxCatchupHorizon {
+		return fmt.Errorf("query window %s plus one capped span (%s) must stay below maxCatchupHorizon (%s)",
+			cfg.QueryWindow, cfg.QueryChunk*maxCatchupChunks, maxCatchupHorizon)
 	}
 	return nil
 }
 
-// baselineCacheTTL is the staleness threshold for the baseline cache.
-// During normal operation the cache is updated after every refresh cycle (~60 s),
-// so this threshold is only hit on startup or after the indexer has been paused
-// longer than 5 minutes, triggering a ClickHouse re-query.
-const baselineCacheTTL = 5 * time.Minute
+// baselineLookback bounds the raw ClickHouse baseline scan. The indexer writes
+// interface counters every few minutes, so the last non-null sparse-counter
+// value is almost always within a couple of days. 2 days keeps the scan far
+// under the global max_execution_time (60s) that a 7-day scan repeatedly hit
+// during the June backfill. An interface silent longer than this loses its
+// baseline (one nil delta on its next report) unless the in-memory cache below
+// still carries it forward.
+const baselineLookback = 2 * 24 * time.Hour
+
+// refreshOverlap is how far a refresh re-reads behind maxTime to catch
+// late-arriving data with past timestamps. It also serves as the forward slack
+// in the baseline cache guard: within a single writer ClickHouse's max event_ts
+// never exceeds the watermark, so any excursion past watermark+refreshOverlap
+// proves another writer filled the region and forces a re-scan.
+const refreshOverlap = 5 * time.Minute
+
+// baselineCacheMaxLag is how far windowStart may sit behind the cached watermark
+// and still reuse the cache. The cache holds sparse-counter state as of the last
+// data watermark this process processed, so its validity is judged against that
+// watermark, not against wall-clock time. Steady-state incremental refreshes
+// query [maxTime-5m, ...], so windowStart lands ~5m below the watermark; the
+// margin also covers capped catch-up steps.
+//
+// It must exceed refreshOverlap plus one capped catch-up step (QueryChunk ×
+// maxCatchupChunks, 10m); 20m leaves headroom. ViewConfig.Validate enforces
+// this against the operator-settable QueryChunk so a larger chunk can't
+// silently regress every refresh to a full re-scan; the runtime signal is
+// doublezero_data_indexer_clickhouse_baseline_query_total.
+//
+// This bounds only the backward direction (windowStart below the watermark).
+// The forward direction is bounded separately, by comparing ClickHouse's max
+// event_ts against the watermark (see queryBaselineCountersFromClickHouse).
+const baselineCacheMaxLag = 20 * time.Minute
+
+// maxCatchupChunks bounds how much NEW data (past maxTime) a single refresh
+// ingests: maxCatchupChunks × QueryChunk. After downtime maxTime can fall
+// behind the query window, making one refresh span the entire window at once;
+// capping it spreads the catch-up over successive refreshes (maxTime advances
+// after each) so peak memory stays near steady state.
+//
+// The cap is anchored at maxTime, not queryStart (see Refresh). queryStart
+// always sits refreshOverlap behind maxTime — the overlap re-read is
+// load-bearing, not just late-arrival capture. Non-sparse counters (in-octets,
+// in-pkts, …) have no ClickHouse baseline; re-reading each key's
+// recently-written rows seeds lastKnownValues/firstRowSeen via the dedup path
+// in convertRowsToUsage, so the first NEW row per key emits a correct delta.
+// Without the re-read, every key whose latest written row sits behind the
+// global maxTime — the norm for an unsynchronized multi-device fleet — would
+// have its first in-window row consumed as a baseline and silently dropped,
+// undercounting its traffic. Catch-up throughput must therefore come from this
+// forward cap, never from skipping the overlap.
+//
+// Two chunks, not one, so catch-up converges (#713): the measured prod refresh
+// cadence is ~5m per cycle, and a 1-chunk (5m) cap gained ~1.0× wall clock per
+// cycle — a stale watermark never caught up. Two chunks pay lag down ~5m per
+// cycle. The cost, paid only while the cap binds (maxTime more than 2 chunks
+// behind now): a capped refresh spans overlap + 2 chunks (~15m, 3 Flux
+// queries) versus steady state's ≤ overlap + lag (~10m, ≤2 Flux queries) —
+// ~1.5× steady-state peak memory and one extra Flux query.
+//
+// The cap must keep each refresh inside the dzingest activity's
+// StartToCloseTimeout. Each chunk is a separate Flux query bounded only by the
+// client's per-request HTTP timeout (defaultFluxHTTPTimeout, 4m); the Flux
+// query does not abort on the activity context deadline, so a capped 3-query
+// refresh can spend up to ~12m in InfluxDB alone. RefreshTelemetryUsage runs
+// under a dedicated 15m StartToCloseTimeout (see dzingest/workflow.go) that
+// bounds this worst case plus the ClickHouse dedup/baseline/insert work, so
+// ctx is not already expired when InsertInterfaceUsage runs and maxTime
+// advances every cycle. (History: a 15m span under the old 5m deadline overran
+// on both mainnet-beta and testnet — ctx expired before the insert, every
+// catch-up refresh failed, and the window stayed pinned at the cap in an
+// unrecoverable loop. The deadline, not the span, was the bug.)
+const maxCatchupChunks = 2
+
+// maxCatchupHorizon is the only remaining hard skip-ahead: a watermark older
+// than this jumps to now−QueryWindow and the intervening span is PERMANENTLY
+// LOST, so the skip logs at ERROR (pages on-call, once per distinct stall)
+// with the exact span — recover it with the admin backfill tooling. Within the
+// horizon the refresh always catches up from the watermark instead (paced one
+// capped span per cycle, see maxCatchupChunks), so an ingest outage shorter
+// than this is recovered rather than dropped.
+//
+// Convergence: a capped cycle advances the watermark by at most QueryChunk ×
+// maxCatchupChunks (10m) while wall clock advances by the cycle time, so lag
+// closes at (10m − cycle_time) per cycle — ~5m per cycle at the measured ~5m
+// prod cadence, i.e. ~1× real time: a near-24h gap takes on the order of a
+// day to clear on its own; run the admin backfill to clear a large gap
+// faster. If a cycle sustainedly exceeds 10m (the budgeted worst case under a
+// slow InfluxDB is ~12m+, see the timeout note on maxCatchupChunks), lag
+// GROWS toward the horizon instead of closing; Refresh logs a WARN when lag
+// fails to decrease across consecutive capped cycles and reports the real max
+// ingested event_ts as SourceMaxEventTS, so freshness monitoring shows the
+// divergence long before the horizon discards anything. The old jump at
+// QueryWindow (1h) silently discarded every span that fell behind it (#718).
+const maxCatchupHorizon = 24 * time.Hour
 
 type View struct {
 	log       *slog.Logger
@@ -197,9 +317,51 @@ type View struct {
 	refreshMu sync.Mutex // prevents concurrent refreshes
 
 	// baselineCache caches the result of queryBaselineCountersFromClickHouse.
-	// refreshMu already serialises refreshes, so no additional lock is needed.
-	baselineCache     *CounterBaselines
-	baselineCacheTime time.Time
+	// Both Refresh and BackfillForTimeRange read and write it under refreshMu, so
+	// no additional lock is needed.
+	// baselineCacheWatermark is the data end (queryEnd of the refresh, or endTime
+	// of the backfill chunk) that the cached baselines represent.
+	baselineCache          *CounterBaselines
+	baselineCacheWatermark time.Time
+
+	// sourceEmptyThrough is the end of the latest capped catch-up span that
+	// returned zero ingestible rows AND had already aged out of QueryWindow:
+	// the source held nothing there for the full late-arrival window, so the
+	// next refresh anchors past it instead of re-querying the same span
+	// forever. Without it, removing the old jump-to-now−QueryWindow (#718)
+	// would let a genuine source data gap longer than one capped span pin
+	// catch-up permanently (maxTime only advances on insert). The age-out
+	// condition preserves the pre-#718 late-replay tolerance: a span that is
+	// empty merely *right now* (source stall) is re-read every cycle until it
+	// is QueryWindow old, so a writer that replays buffered data with past
+	// timestamps within QueryWindow loses nothing; gap traversal instead
+	// trails now−QueryWindow. Guarded by refreshMu. In-memory only: a restart
+	// re-traverses the already-aged gap with cheap zero-row queries, one
+	// capped span per cycle.
+	sourceEmptyThrough time.Time
+
+	// lastHorizonSkipFrom is the watermark of the last beyond-horizon skip that
+	// logged at ERROR. The skip branch re-executes every refresh while the
+	// watermark stays put (a source dead longer than the horizon cannot
+	// self-clear), and re-paging each cycle for the same ongoing stall adds
+	// nothing — repeats log at WARN until the watermark moves and falls behind
+	// again (a distinct loss event). Guarded by refreshMu.
+	lastHorizonSkipFrom time.Time
+
+	// lastCatchupLag is the watermark lag observed on the previous refresh IF
+	// that refresh was capped, anchored at the watermark, AND ingested rows
+	// (zero otherwise). Catch-up converges only while a cycle completes faster
+	// than the capped span (see maxCatchupHorizon); when lag fails to decrease
+	// across consecutive such cycles the refresh WARNs so on-call sees the
+	// divergence long before the horizon ERROR. Empty cycles reset it: their
+	// lag growth means the source has no rows (bounded separately by the
+	// sourceEmptyThrough age-out), not that cycles are slow. Guarded by
+	// refreshMu.
+	lastCatchupLag time.Duration
+
+	// esc escalates consecutive refresh failures from WARN to ERROR so a
+	// single blip doesn't page on-call (see logger.Escalator).
+	esc logger.Escalator
 }
 
 func NewView(cfg ViewConfig) (*View, error) {
@@ -220,6 +382,11 @@ func NewView(cfg ViewConfig) (*View, error) {
 		cfg:     cfg,
 		store:   store,
 		readyCh: make(chan struct{}),
+		// This view refreshes every ~5 minutes and is the only signal for the
+		// InfluxDB dependency, so the default transient threshold (10) would
+		// take ~50 minutes to page. Escalate transient causes at the strict
+		// threshold (~15 minutes) instead.
+		esc: logger.Escalator{TransientErrorAfter: logger.DefaultErrorAfter},
 	}
 
 	return v, nil
@@ -253,12 +420,11 @@ func (v *View) safeRefresh(ctx context.Context) {
 		}
 	}()
 
-	if _, err := v.Refresh(ctx); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return
-		}
-		v.log.Error("telemetry/usage: refresh failed", "error", err)
+	_, err := v.Refresh(ctx)
+	if err != nil && errors.Is(err, context.Canceled) {
+		return
 	}
+	v.esc.Observe(v.log, "refresh", "telemetry/usage: refresh failed", err)
 }
 
 func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) {
@@ -288,30 +454,64 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 
 	now := v.cfg.Clock.Now()
 	queryWindowStart := now.Add(-v.cfg.QueryWindow)
-	var queryStart time.Time
 
-	if maxTime != nil {
-		if maxTime.After(queryWindowStart) {
-			// Include a small overlap (5 minutes) to catch late-arriving data with past timestamps
-			overlap := 5 * time.Minute
-			queryStart = maxTime.Add(-overlap)
-			newDataWindow := now.Sub(*maxTime)
-			totalQueryWindow := now.Sub(queryStart)
-			v.log.Debug("telemetry/usage: incremental refresh (data within query window)",
-				"maxTime", maxTime.UTC(),
-				"queryStart", queryStart.UTC(),
-				"now", now.UTC(),
-				"newDataWindow", newDataWindow,
-				"totalQueryWindow", totalQueryWindow,
-				"overlap", overlap)
-		} else {
+	// Effective watermark: ClickHouse's max event_ts, advanced past any span a
+	// prior capped refresh queried and proved empty (see sourceEmptyThrough).
+	watermark := maxTime
+	if watermark != nil && v.sourceEmptyThrough.After(*watermark) {
+		emptyThrough := v.sourceEmptyThrough
+		watermark = &emptyThrough
+	}
+
+	var queryStart time.Time
+	if watermark != nil {
+		if age := now.Sub(*watermark); age > maxCatchupHorizon {
 			queryStart = queryWindowStart
-			age := now.Sub(*maxTime)
-			v.log.Debug("telemetry/usage: data exists but too old, starting from query window",
-				"maxTime", maxTime.UTC(),
+			// chMaxTime is the raw ClickHouse watermark: the effective watermark
+			// may sit past it (sourceEmptyThrough), and this log line is the
+			// operator's backfill instruction, so report both ends honestly.
+			chMaxTime := "none"
+			if maxTime != nil {
+				chMaxTime = maxTime.UTC().String()
+			}
+			// Page once per distinct stall (see lastHorizonSkipFrom): first
+			// sight of this watermark beyond the horizon logs ERROR, repeats
+			// while it stays put log WARN.
+			logSkip := v.log.Warn
+			if !watermark.Equal(v.lastHorizonSkipFrom) {
+				logSkip = v.log.Error
+				v.lastHorizonSkipFrom = *watermark
+			}
+			logSkip("telemetry/usage: watermark is beyond the catch-up horizon; skipping ahead — the intervening span will not be ingested once this refresh succeeds; recover it with the admin backfill",
+				"skippedFrom", watermark.UTC(),
+				"skippedTo", queryStart.UTC(),
+				"skippedSpan", queryStart.Sub(*watermark).String(),
+				"chMaxTime", chMaxTime,
+				"watermarkAge", age.String(),
+				"horizon", maxCatchupHorizon.String())
+		} else {
+			// Catch up from the watermark, however far behind now it sits
+			// (bounded by maxCatchupHorizon above). The forward cap below paces
+			// the catch-up one capped span per refresh, so a watermark that
+			// fell behind — even past QueryWindow — is recovered instead of
+			// skipped (#718; the old jump to now−QueryWindow silently dropped
+			// the intervening span).
+			//
+			// Include a small overlap to catch late-arriving data with past
+			// timestamps. The overlap is kept even while far behind (catch-up):
+			// beyond late arrivals, the re-read of already-written rows seeds
+			// non-sparse counter baselines via the dedup path — without it,
+			// every key whose latest row sits behind the global maxTime would
+			// have its first new row swallowed as a baseline (see
+			// maxCatchupChunks). Catch-up speed comes from the forward cap
+			// instead.
+			queryStart = watermark.Add(-refreshOverlap)
+			v.log.Debug("telemetry/usage: incremental refresh from watermark",
+				"watermark", watermark.UTC(),
 				"queryStart", queryStart.UTC(),
 				"now", now.UTC(),
-				"dataAge", age)
+				"lag", age,
+				"overlap", refreshOverlap)
 		}
 	} else {
 		queryStart = queryWindowStart
@@ -322,7 +522,7 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	var baselines *CounterBaselines
 	v.log.Debug("telemetry/usage: querying baselines from clickhouse")
 	chStart := time.Now()
-	chBaselines, err := v.queryBaselineCountersFromClickHouse(ctx, queryStart)
+	chBaselines, err := v.queryBaselineCountersFromClickHouse(ctx, queryStart, maxTime)
 	chDuration := time.Since(chStart)
 	if err != nil {
 		v.log.Warn("telemetry/usage: failed to query baseline counters from clickhouse", "error", err, "duration", chDuration.String())
@@ -382,23 +582,60 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	// Query max timestamps per device/interface to skip already-written rows
 	// This is needed because we use an overlap window to catch late-arriving data,
 	// but we don't want to re-insert rows that were already written
+	// Proceeding without dedup was tolerable when baselines were re-scanned from
+	// ClickHouse every refresh (re-emitted overlap rows recomputed the same
+	// deltas). With the baseline cache holding END-of-window values, re-emitting
+	// overlap rows would delta them against those newer values, writing negative
+	// sparse deltas that ReplacingMergeTree keeps (fresh event_ts) — so a failed
+	// dedup query must fail the refresh instead; the next cycle retries.
 	alreadyWrittenStart := time.Now()
 	alreadyWritten, err := v.store.GetMaxTimestampsByKey(ctx, queryStart)
 	alreadyWrittenDuration := time.Since(alreadyWrittenStart)
 	if err != nil {
-		v.log.Warn("telemetry/usage: failed to query already-written timestamps, proceeding without dedup",
-			"error", err, "duration", alreadyWrittenDuration.String())
-		alreadyWritten = nil
-	} else {
-		v.log.Debug("telemetry/usage: queried already-written timestamps",
-			"keys", len(alreadyWritten), "duration", alreadyWrittenDuration.String())
+		metrics.ViewRefreshTotal.WithLabelValues("telemetry-usage", "error").Inc()
+		return result, fmt.Errorf("failed to query already-written timestamps: %w", err)
 	}
+	v.log.Debug("telemetry/usage: queried already-written timestamps",
+		"keys", len(alreadyWritten), "duration", alreadyWrittenDuration.String())
 
 	// Query InfluxDB for interface usage data
 	// Convert times to UTC for InfluxDB query (InfluxDB stores times in UTC)
+	// Bound how much a single refresh ingests. After downtime the watermark can
+	// fall hours behind, making [queryStart, now) span the whole backlog.
+	// queryIntfCountersChunked bounds InfluxDB's server-side memory per chunk,
+	// but the indexer still materializes every chunk's rows, the converted usage
+	// slice, and the ClickHouse batch for the entire span at once — which
+	// OOM-crashlooped the pod: it died before InsertInterfaceUsage, so maxTime
+	// never advanced and every restart re-ran the same giant query. Capping the
+	// span lets a large catch-up proceed across successive refreshes (maxTime
+	// advances after each), keeping peak memory near steady state.
+	//
+	// Anchor the cap at the start of NEW data (the watermark), not queryStart.
+	// queryStart sits refreshOverlap (5m) behind the watermark to re-read late
+	// arrivals; anchoring the cap there made queryEnd = queryStart + 5m =
+	// maxTime, so an incremental refresh could never query past maxTime — it
+	// only re-read rows that dedup out and ingest stalled ~1h behind (#708).
+	// Anchoring at the watermark makes the steady-state span overlap + one
+	// chunk (~10m, 2 Flux queries) so maxTime advances every cycle. When the
+	// watermark is nil or older than queryStart (initial refresh / horizon
+	// skip), newDataStart falls back to queryStart and the cap behaves as
+	// before — one capped span from the window start, preserving the
+	// post-downtime memory bound.
+	newDataStart := queryStart
+	if watermark != nil && watermark.After(newDataStart) {
+		newDataStart = *watermark
+	}
+	queryEnd := now
+	capped := false
+	if maxCatchup := v.cfg.QueryChunk * maxCatchupChunks; maxCatchup > 0 && queryEnd.Sub(newDataStart) > maxCatchup {
+		queryEnd = newDataStart.Add(maxCatchup)
+		capped = true
+		v.log.Info("telemetry/usage: capping catch-up window to bound memory",
+			"queryStart", queryStart.UTC(), "queryEnd", queryEnd.UTC(), "target", now.UTC())
+	}
 	queryStartUTC := queryStart.UTC()
-	nowUTC := now.UTC()
-	usage, endBaselines, err := v.queryInfluxDB(ctx, queryStartUTC, nowUTC, baselines, alreadyWritten)
+	queryEndUTC := queryEnd.UTC()
+	usage, endBaselines, err := v.queryInfluxDB(ctx, queryStartUTC, queryEndUTC, baselines, alreadyWritten)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return result, err
@@ -406,17 +643,50 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		metrics.ViewRefreshTotal.WithLabelValues("telemetry-usage", "error").Inc()
 		return result, fmt.Errorf("failed to query influxdb: %w", err)
 	}
-	// Update the baseline cache with the end-of-window values so the next cycle
-	// uses what was actually processed rather than re-querying ClickHouse.
-	if endBaselines != nil {
-		v.baselineCache = endBaselines
-		v.baselineCacheTime = now
-	}
-
-	v.log.Info("telemetry/usage: queried influxdb", "rows", len(usage), "from", queryStart, "to", now)
+	v.log.Info("telemetry/usage: queried influxdb", "rows", len(usage), "from", queryStart, "to", queryEnd)
 
 	if len(usage) == 0 {
 		v.log.Warn("telemetry/usage: no data returned from influxdb query", "from", queryStart, "to", now)
+		// Nothing to insert, so no persistence to wait on. Merge end-of-window
+		// baselines (a no-op when the window was genuinely empty) and advance the
+		// baseline-cache watermark: nothing changed through queryEnd, so the
+		// cached last-known values still hold there and the next refresh can
+		// cache-hit.
+		//
+		// maxTime doesn't advance (nothing was written), so a source data gap
+		// longer than the capped span would pin the incremental window at the
+		// same [queryStart, queryEnd) forever. A capped span that returned zero
+		// ingestible rows AND has aged out of QueryWindow held nothing for the
+		// full late-arrival window — advance sourceEmptyThrough so the next
+		// refresh anchors past it, traversing the gap one capped span per cycle
+		// (trailing now−QueryWindow). A younger empty span is re-read every
+		// cycle instead: it may only be empty *yet* (source stall), and a
+		// writer replaying buffered data with past timestamps within
+		// QueryWindow must lose nothing. Uncapped (steady-state) empty windows
+		// keep the watermark where it is: the window isn't pinned (it grows
+		// with now), and the wide re-read maximizes late-arrival capture.
+		if capped && !queryEnd.After(queryWindowStart) && queryEnd.After(v.sourceEmptyThrough) {
+			v.sourceEmptyThrough = queryEnd
+			v.log.Info("telemetry/usage: no ingestible rows in aged-out capped span; advancing catch-up anchor past it",
+				"emptyFrom", newDataStart.UTC(), "emptyThrough", queryEnd.UTC())
+		}
+		// Nothing changed through queryEnd, so the start-of-window baselines
+		// are also the end-of-window state: merge them too, unless they already
+		// ARE the cache (cache hit) — then the merge is a pointless O(keys)
+		// self-walk and advancing the watermark below suffices. Merging only
+		// `endBaselines` (empty when zero rows came back) would seed a
+		// restarted process's nil cache with empty maps, and every later
+		// refresh would "hit" a 0-key cache and fall back to the expensive
+		// 1-year InfluxDB baseline scan for the rest of the gap traversal.
+		if baselines != v.baselineCache {
+			v.updateBaselineCache(baselines, queryEnd)
+		}
+		v.updateBaselineCache(endBaselines, queryEnd)
+		// An empty cycle says nothing about cycle-time throughput — lag grows
+		// here because the source has no rows, a state the sourceEmptyThrough
+		// age-out bounds separately — so it must not feed the divergence
+		// comparison below.
+		v.lastCatchupLag = 0
 		v.readyOnce.Do(func() {
 			close(v.readyCh)
 			v.log.Info("telemetry/usage: view is now ready (no data)")
@@ -433,17 +703,101 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	insertDuration := time.Since(insertStart)
 	v.log.Info("telemetry/usage: inserted data to clickhouse", "rows", len(usage), "duration", insertDuration.String())
 
+	// Catch-up only converges while a cycle completes faster than the capped
+	// span (see maxCatchupHorizon); surface divergence before the horizon
+	// cliff. Compared only across capped cycles that actually ingested rows
+	// with the cap anchored at the watermark (newDataStart advanced past
+	// queryStart): an initial refresh or horizon skip anchors at the window
+	// start, and an empty cycle grows lag because the source has no rows, not
+	// because cycles are slow — both reset the comparison instead.
+	if capped && !newDataStart.Equal(queryStart) {
+		lag := now.Sub(newDataStart)
+		if v.lastCatchupLag > 0 && lag >= v.lastCatchupLag {
+			v.log.Warn("telemetry/usage: catch-up lag is not decreasing — refresh cycle time is at or above the capped span; ingest is diverging toward the catch-up horizon",
+				"lag", lag.String(),
+				"previousLag", v.lastCatchupLag.String(),
+				"cappedSpan", (v.cfg.QueryChunk * maxCatchupChunks).String(),
+				"horizon", maxCatchupHorizon.String())
+		}
+		v.lastCatchupLag = lag
+	} else {
+		v.lastCatchupLag = 0
+	}
+
+	// Update the baseline cache only after the rows are durably in ClickHouse. A
+	// failed insert must not leave the cache holding unpersisted end-of-window
+	// values: the next refresh's overlap re-reads those same rows and would
+	// compute their first sparse delta against a poisoned baseline. Merge (not
+	// replace) so interfaces that reported no rows this window keep their carried
+	// baseline instead of being dropped and losing forward-fill.
+	v.updateBaselineCache(endBaselines, queryEnd)
+
 	v.readyOnce.Do(func() {
 		close(v.readyCh)
 		v.log.Info("telemetry/usage: view is now ready")
 	})
 
-	now2 := v.cfg.Clock.Now()
+	// Report the real max ingested event_ts, not wall-clock now: this is what
+	// ingestion-log freshness monitoring reads, and during catch-up it must
+	// show the actual watermark lag (a diverging catch-up otherwise looks
+	// healthy right up to the horizon cliff — see maxCatchupHorizon).
+	maxIngested := usage[0].Time
+	for _, u := range usage[1:] {
+		if u.Time.After(maxIngested) {
+			maxIngested = u.Time
+		}
+	}
 	result.RowsAffected = int64(len(usage))
-	result.SourceMaxEventTS = &now2
+	result.SourceMaxEventTS = &maxIngested
 
 	metrics.ViewRefreshTotal.WithLabelValues("telemetry-usage", "success").Inc()
 	return result, nil
+}
+
+// updateBaselineCache merges the end-of-window sparse baselines into the cache
+// and advances the watermark to the data end just processed. Merging (rather
+// than replacing the pointer) preserves baselines for interfaces that reported
+// no rows in this window: convertRowsToUsage only emits keys it saw rows for, so
+// a wholesale replace would drop a silent interface's baseline and — since the
+// cache now actually hits and never expires — never recover it. A key that did
+// report keeps its latest value (src overwrites dst). Callers must hold the same
+// serialization as the rest of the refresh (refreshMu).
+func (v *View) updateBaselineCache(endBaselines *CounterBaselines, watermark time.Time) {
+	if endBaselines == nil {
+		return
+	}
+	if v.baselineCache == nil {
+		v.baselineCache = &CounterBaselines{
+			InDiscards:  make(map[string]*int64),
+			InErrors:    make(map[string]*int64),
+			InFCSErrors: make(map[string]*int64),
+			OutDiscards: make(map[string]*int64),
+			OutErrors:   make(map[string]*int64),
+		}
+	}
+	mergeBaselineMap(v.baselineCache.InDiscards, endBaselines.InDiscards)
+	mergeBaselineMap(v.baselineCache.InErrors, endBaselines.InErrors)
+	mergeBaselineMap(v.baselineCache.InFCSErrors, endBaselines.InFCSErrors)
+	mergeBaselineMap(v.baselineCache.OutDiscards, endBaselines.OutDiscards)
+	mergeBaselineMap(v.baselineCache.OutErrors, endBaselines.OutErrors)
+	v.baselineCacheWatermark = watermark
+}
+
+// mergeBaselineMap upserts each non-nil src entry into dst. It never deletes:
+// a decommissioned device/interface keeps its entry for the life of the process.
+// This is intentional, not an oversight — the map is bounded by real
+// device×interface cardinality (small), and evicting would require per-key
+// timestamps for a leak that a restart clears anyway. Consequence: an interface
+// silent longer than baselineLookback still deltas against its carried value
+// rather than getting the one nil delta described in baselineLookback's doc;
+// that doc's "unless the in-memory cache still carries it forward" caveat is
+// this code path.
+func mergeBaselineMap(dst, src map[string]*int64) {
+	for k, val := range src {
+		if val != nil {
+			dst[k] = val
+		}
+	}
 }
 
 // LinkInfo holds link information for a device/interface
@@ -463,12 +817,39 @@ type CounterBaselines struct {
 	OutErrors   map[string]*int64
 }
 
+// queryIntfCountersChunked fetches interface counters over [start, end) by splitting the
+// range into contiguous half-open sub-windows of at most chunk duration and concatenating
+// the rows. A single unbounded query over a multi-hour window pivots millions of rows
+// server-side and exhausts InfluxDB Cloud's heap ("deduplicate batches: Heap exhausted");
+// chunking bounds each query's memory regardless of how far behind the high-water mark has
+// fallen. The sub-windows exactly partition [start, end), so the concatenated result matches
+// a single query and downstream time-sorting/forward-fill is unaffected.
+func queryIntfCountersChunked(ctx context.Context, client InfluxDBClient, start, end time.Time, chunk time.Duration) ([]map[string]any, error) {
+	if chunk <= 0 || !end.After(start) {
+		return client.QueryIntfCounters(ctx, start, end)
+	}
+
+	var all []map[string]any
+	for s := start; s.Before(end); s = s.Add(chunk) {
+		e := s.Add(chunk)
+		if e.After(end) {
+			e = end
+		}
+		rows, err := client.QueryIntfCounters(ctx, s, e)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, rows...)
+	}
+	return all, nil
+}
+
 func (v *View) queryInfluxDB(ctx context.Context, startTime, endTime time.Time, baselines *CounterBaselines, alreadyWritten MaxTimestampsByKey) ([]InterfaceUsage, *CounterBaselines, error) {
 	// InfluxDB uses dzd_pubkey as a tag, which we extract and map to device_pk.
 	v.log.Debug("telemetry/usage: executing main influxdb query", "from", startTime.UTC(), "to", endTime.UTC())
 	queryStart := time.Now()
 
-	rows, err := v.cfg.InfluxDB.QueryIntfCounters(ctx, startTime, endTime)
+	rows, err := queryIntfCountersChunked(ctx, v.cfg.InfluxDB, startTime, endTime, v.cfg.QueryChunk)
 	queryDuration := time.Since(queryStart)
 	metrics.RecordInfluxQuery(v.cfg.DZEnv, "interface_usage", queryDuration, len(rows), err)
 	if err != nil {
@@ -900,27 +1281,63 @@ func (v *View) convertRowsToUsage(rows []map[string]any, baselines *CounterBasel
 // queryBaselineCountersFromClickHouse queries ClickHouse for the last non-null counter values before the window start
 // for each device/interface combination. Returns error if ClickHouse doesn't have data or query fails.
 //
-// During steady-state operation the cache is populated after each successful refresh cycle with the
-// end-of-window values from convertRowsToUsage, so this query runs only on startup or after a gap
-// longer than baselineCacheTTL (5 minutes). The backfill path calls this with historical
-// windowStart values and bypasses the cache entirely.
-func (v *View) queryBaselineCountersFromClickHouse(ctx context.Context, windowStart time.Time) (*CounterBaselines, error) {
-	// Use the cache only for near-real-time refreshes (windowStart within 2× baselineCacheTTL of now).
-	// Backfill calls with historical windowStart values bypass the cache.
-	now := v.cfg.Clock.Now()
-	isRealtime := now.Sub(windowStart) < 2*baselineCacheTTL
-	if isRealtime && v.baselineCache != nil && now.Before(v.baselineCacheTime.Add(baselineCacheTTL)) {
-		v.log.Debug("telemetry/usage: using cached baselines", "age", now.Sub(v.baselineCacheTime).Round(time.Second))
-		return v.baselineCache, nil
+// chMaxTime is ClickHouse's current max event_ts (nil when the table is empty or
+// the caller has no fresher signal, e.g. backfill); it gates the forward side of
+// the cache guard below.
+//
+// During steady-state operation the cache is populated after each successful refresh cycle
+// (and after each backfill chunk) with the end-of-window values from convertRowsToUsage, so
+// this query runs only on startup per env or when windowStart moves outside the cached
+// watermark's lag window (backfill of an old region).
+func (v *View) queryBaselineCountersFromClickHouse(ctx context.Context, windowStart time.Time, chMaxTime *time.Time) (*CounterBaselines, error) {
+	// Reuse the cached baselines when windowStart is at or near the watermark they
+	// represent. The cache holds end-of-window sparse-counter values from the last
+	// refresh/backfill chunk this process ran. A windowStart slightly below the
+	// watermark (the normal refreshOverlap) is safe: overlap rows are re-read and
+	// their values overwrite lastKnownValues before any new row is processed.
+	// Historical windowStart values (backfill of an old region) fall far below the
+	// watermark and bypass the cache, re-querying ClickHouse as before.
+	//
+	// A windowStart above the watermark is safe only while this process is the sole
+	// writer of [watermark, now): then ClickHouse holds nothing past the watermark
+	// and the cached state still describes it (a stalled source that resumes must
+	// still cache-hit). But a second writer — concretely, the admin backfill's
+	// "continue from where we left off" mode — can fill that region while this
+	// process holds a frozen watermark; serving the stale cache then computes the
+	// first post-gap sparse deltas against pre-gap values, silently corrupting
+	// them (fresh event_ts, so ReplacingMergeTree never repairs the rows). The
+	// chMaxTime gate detects exactly that: within one writer max event_ts never
+	// exceeds the watermark, so an excursion past watermark+refreshOverlap proves
+	// foreign writes and forces a re-scan (only a baselineLookback-bounded query).
+	//
+	// The gate cannot detect re-backfills of an already-cached HISTORICAL range
+	// (they don't advance max event_ts past the watermark): after correcting data
+	// under a running live indexer, restart it so the cache is rebuilt.
+	if v.baselineCache != nil {
+		foreignWrites := chMaxTime != nil && chMaxTime.After(v.baselineCacheWatermark.Add(refreshOverlap))
+		if !foreignWrites && !windowStart.Before(v.baselineCacheWatermark.Add(-baselineCacheMaxLag)) {
+			v.log.Debug("telemetry/usage: using cached baselines",
+				"windowStart", windowStart.UTC(), "watermark", v.baselineCacheWatermark.UTC())
+			return v.baselineCache, nil
+		}
+		if foreignWrites {
+			// Foreign writes invalidate the whole cache, not just this lookup:
+			// the post-refresh updateBaselineCache MERGES, so keys silent through
+			// the foreign-filled gap would otherwise keep their pre-gap values and
+			// poison their next delta. Dropping the cache means such keys get one
+			// nil delta on their next report (the documented lookback semantics).
+			v.log.Warn("telemetry/usage: clickhouse max event_ts moved past the baseline watermark (another writer filled the gap); discarding cached baselines",
+				"chMaxTime", chMaxTime.UTC(), "watermark", v.baselineCacheWatermark.UTC())
+			v.baselineCache = nil
+			v.baselineCacheWatermark = time.Time{}
+		}
 	}
 
+	metrics.ClickHouseBaselineQueryTotal.WithLabelValues(v.cfg.DZEnv).Inc()
+
 	// Query recent data before the window start to find the last non-null values.
-	// Use a 7-day lookback — the indexer writes every few minutes, so the last
-	// non-null value for any sparse counter should be well within this window.
-	// A shorter window is critical because the table has billions of rows and the
-	// global max_execution_time (60s) can cause longer lookbacks to time out,
-	// leaving baselines empty and breaking forward-fill.
-	lookbackStart := windowStart.Add(-7 * 24 * time.Hour)
+	// baselineLookback bounds the scan; see its doc for why 7 days was cut to 2.
+	lookbackStart := windowStart.Add(-baselineLookback)
 
 	baselines := &CounterBaselines{
 		InDiscards:  make(map[string]*int64),

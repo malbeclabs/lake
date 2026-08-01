@@ -10,9 +10,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/malbeclabs/lake/api/handlers/dberror"
 	"github.com/malbeclabs/lake/api/metrics"
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
+	"github.com/malbeclabs/lake/utils/pkg/dberror"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
@@ -915,6 +915,7 @@ func (a *API) GetISISPaths(w http.ResponseWriter, r *http.Request) {
 	fromPK := r.URL.Query().Get("from")
 	toPK := r.URL.Query().Get("to")
 	kStr := r.URL.Query().Get("k")
+	service := r.URL.Query().Get("service")
 
 	if fromPK == "" || toPK == "" {
 		writeJSON(w, MultiPathResponse{Error: "from and to parameters are required"})
@@ -923,6 +924,11 @@ func (a *API) GetISISPaths(w http.ResponseWriter, r *http.Request) {
 
 	if fromPK == toPK {
 		writeJSON(w, MultiPathResponse{Error: "from and to must be different devices"})
+		return
+	}
+
+	if !validPathService(service) {
+		writeJSON(w, MultiPathResponse{Error: "service must be 'unicast' or 'multicast'"})
 		return
 	}
 
@@ -943,7 +949,7 @@ func (a *API) GetISISPaths(w http.ResponseWriter, r *http.Request) {
 
 	// Load graph into memory and run Yen's k-shortest paths algorithm.
 	// This is faster than Neo4j's allSimplePaths which has combinatorial explosion at high depths.
-	paths, err := a.findKShortestPaths(ctx, fromPK, toPK, k)
+	paths, err := a.findKShortestPaths(ctx, fromPK, toPK, k, service)
 	if err != nil {
 		logError("KSP error", "error", err)
 		response.Error = "Failed to find paths: " + err.Error()
@@ -1746,7 +1752,7 @@ func (a *API) GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 func (a *API) FetchMetroPathLatencyData(ctx context.Context, optimize string) (*MetroPathLatencyResponse, error) {
 	start := time.Now()
 
-	g, err := a.loadTopologyGraph(ctx)
+	g, err := a.loadTopologyGraph(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("loading topology graph: %w", err)
 	}
@@ -1916,7 +1922,7 @@ func (a *API) GetMetroPathDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load in-memory topology graph with committed latency
-	g, err := a.loadTopologyGraph(ctx)
+	g, err := a.loadTopologyGraph(ctx, "")
 	if err != nil {
 		logError("metro path detail graph load error", "error", err)
 		response.Error = err.Error()
@@ -2043,7 +2049,7 @@ func (a *API) GetMetroPaths(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load in-memory topology graph with committed latency
-	g, err := a.loadTopologyGraph(ctx)
+	g, err := a.loadTopologyGraph(ctx, "")
 	if err != nil {
 		response.Error = err.Error()
 		writeJSON(w, response)
@@ -2943,6 +2949,7 @@ func (a *API) GetMetroDevicePaths(w http.ResponseWriter, r *http.Request) {
 
 	fromMetroPK := r.URL.Query().Get("from")
 	toMetroPK := r.URL.Query().Get("to")
+	service := r.URL.Query().Get("service")
 
 	if fromMetroPK == "" || toMetroPK == "" {
 		writeJSON(w, MetroDevicePathsResponse{Error: "from and to parameters are required"})
@@ -2951,6 +2958,11 @@ func (a *API) GetMetroDevicePaths(w http.ResponseWriter, r *http.Request) {
 
 	if fromMetroPK == toMetroPK {
 		writeJSON(w, MetroDevicePathsResponse{Error: "from and to must be different metros"})
+		return
+	}
+
+	if !validPathService(service) {
+		writeJSON(w, MetroDevicePathsResponse{Error: "service must be 'unicast' or 'multicast'"})
 		return
 	}
 
@@ -3047,7 +3059,7 @@ func (a *API) GetMetroDevicePaths(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load graph once, find shortest path for each pair in-memory
-	g, err := a.loadTopologyGraph(ctx)
+	g, err := a.loadTopologyGraph(ctx, service)
 	if err != nil {
 		logError("metro device paths graph load error", "error", err)
 		response.Error = "Failed to load graph: " + err.Error()

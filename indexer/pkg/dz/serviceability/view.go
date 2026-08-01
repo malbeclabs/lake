@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 	"github.com/malbeclabs/lake/indexer/pkg/metrics"
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
 type Contributor struct {
@@ -38,7 +40,7 @@ var (
 		"rox":      "RockawayX",
 		"s3v":      "S3V",
 		"stakefac": "Staking Facilities",
-		"tsw":      "Terraswitch",
+		"tsw":      "Teraswitch",
 		"velia":    "Velia",
 	}
 )
@@ -136,6 +138,36 @@ type User struct {
 	TunnelID    uint16
 	Publishers  []string // multicast group PKs this user publishes to
 	Subscribers []string // multicast group PKs this user subscribes to
+	// BgpStatus is the onchain BGP session status as last reported by the
+	// device agent: always one of "up" | "down" | "unknown".
+	BgpStatus string
+	// FeedPKs are the base58 EdgeSeat feeds whose per-feed seats this user
+	// consumed at connect (a user may hold seats on multiple feeds); empty for
+	// non-EdgeSeat/unicast users.
+	FeedPKs []string
+}
+
+// Feed is a serviceability catalog entry (SKU): one feed scoped to a single
+// metro (exchange), holding the multicast groups joinable there.
+type Feed struct {
+	PK          string
+	OwnerPubkey string
+	Code        string
+	Name        string
+	MetroPK     string
+	Groups      []string // multicast group PKs joinable via this feed
+}
+
+// FeedSeat is one purchased per-feed seat on an EdgeSeat access pass, carrying
+// the feed's billing lifecycle. WindowEnd and TerminatesAt are unix seconds.
+type FeedSeat struct {
+	FeedPK         string `json:"feed_pk"`
+	MaxUsers       uint8  `json:"max_users"`
+	MaxFutureUsers uint8  `json:"max_future_users"`
+	CurrentUsers   uint8  `json:"current_users"`
+	AnniversaryDay uint8  `json:"anniversary_day"`
+	WindowEnd      int64  `json:"window_end"`
+	TerminatesAt   int64  `json:"terminates_at"`
 }
 
 type MulticastGroup struct {
@@ -176,6 +208,9 @@ type AccessPass struct {
 	MGroupPubAllowlist []string
 	MGroupSubAllowlist []string
 	Flags              uint8
+	// FeedSeats are the per-feed seats purchased on an EdgeSeat pass; empty for
+	// other pass types.
+	FeedSeats []FeedSeat
 }
 
 type Location struct {
@@ -232,6 +267,10 @@ type View struct {
 	fetchedAt time.Time
 	readyOnce sync.Once
 	readyCh   chan struct{}
+
+	// esc escalates consecutive refresh failures from WARN to ERROR so a
+	// single blip doesn't page on-call (see logger.Escalator).
+	esc logger.Escalator
 }
 
 func NewView(cfg ViewConfig) (*View, error) {
@@ -311,12 +350,11 @@ func (v *View) safeRefresh(ctx context.Context) {
 		}
 	}()
 
-	if _, err := v.Refresh(ctx); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return
-		}
-		v.log.Error("serviceability: refresh failed", "error", err)
+	_, err := v.Refresh(ctx)
+	if err != nil && errors.Is(err, context.Canceled) {
+		return
 	}
+	v.esc.Observe(v.log, "refresh", "serviceability: refresh failed", err)
 }
 
 func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) {
@@ -351,7 +389,8 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		"multicast_groups", len(pd.MulticastGroups),
 		"tenants", len(pd.Tenants),
 		"access_passes", len(pd.AccessPasses),
-		"topologies", len(pd.Topologies))
+		"topologies", len(pd.Topologies),
+		"feeds", len(pd.Feeds))
 
 	// Validate that we received data for each entity type - empty responses would tombstone all existing entities.
 	// Check each independently since they're written separately with MissingMeansDeleted=true.
@@ -379,6 +418,7 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	multicastGroups := convertMulticastGroups(pd.MulticastGroups)
 	tenants := convertTenants(pd.Tenants, pd.Topologies)
 	accessPasses := convertAccessPasses(pd.AccessPasses)
+	feeds := convertFeeds(pd.Feeds)
 
 	fetchedAt := time.Now().UTC()
 
@@ -426,7 +466,11 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		return result, fmt.Errorf("failed to replace access passes: %w", err)
 	}
 
-	result.RowsAffected = int64(len(contributors) + len(devices) + len(deviceInterfaces) + len(users) + len(metros) + len(locations) + len(links) + len(topologies) + len(multicastGroups) + len(tenants) + len(accessPasses))
+	if err := v.store.ReplaceFeeds(ctx, feeds); err != nil {
+		return result, fmt.Errorf("failed to replace feeds: %w", err)
+	}
+
+	result.RowsAffected = int64(len(contributors) + len(devices) + len(deviceInterfaces) + len(users) + len(metros) + len(locations) + len(links) + len(topologies) + len(multicastGroups) + len(tenants) + len(accessPasses) + len(feeds))
 	result.SourceMaxEventTS = &fetchedAt
 
 	v.fetchedAt = fetchedAt
@@ -438,6 +482,13 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	v.log.Debug("serviceability: refresh completed", "fetched_at", fetchedAt)
 	metrics.ViewRefreshTotal.WithLabelValues("serviceability", "success").Inc()
 	return result, nil
+}
+
+// statusString strips the SDK's " (deprecated)" suffix so the strings stored in
+// ClickHouse keep lake's stable status vocabulary (e.g. "pending", "expired")
+// regardless of upstream deprecation annotations.
+func statusString(s fmt.Stringer) string {
+	return strings.TrimSuffix(s.String(), " (deprecated)")
 }
 
 func convertContributors(onchain []serviceability.Contributor) []Contributor {
@@ -466,13 +517,13 @@ func convertDevices(onchain []serviceability.Device) []Device {
 			interfaces = append(interfaces, Interface{
 				Name:   iface.Name,
 				IP:     ip,
-				Status: iface.Status.String(),
+				Status: statusString(iface.Status),
 			})
 		}
 
 		result[i] = Device{
 			PK:                        solana.PublicKeyFromBytes(device.PubKey[:]).String(),
-			Status:                    device.Status.String(),
+			Status:                    statusString(device.Status),
 			DeviceType:                device.DeviceType.String(),
 			Code:                      device.Code,
 			PublicIP:                  net.IP(device.PublicIp[:]).String(),
@@ -501,7 +552,7 @@ func convertDeviceInterfaces(onchain []serviceability.Device) []DeviceInterface 
 			result = append(result, DeviceInterface{
 				DevicePK:           devicePK,
 				Intf:               iface.Name,
-				Status:             iface.Status.String(),
+				Status:             statusString(iface.Status),
 				InterfaceType:      iface.InterfaceType.String(),
 				CYOAType:           iface.InterfaceCYOA.String(),
 				DIAType:            iface.InterfaceDIA.String(),
@@ -532,11 +583,16 @@ func convertUsers(onchain []serviceability.User) []User {
 		for j, sub := range user.Subscribers {
 			subscribers[j] = solana.PublicKeyFromBytes(sub[:]).String()
 		}
+		// Convert consumed EdgeSeat feed PKs
+		feedPKs := make([]string, len(user.FeedPks))
+		for j, f := range user.FeedPks {
+			feedPKs[j] = solana.PublicKeyFromBytes(f[:]).String()
+		}
 
 		result[i] = User{
 			PK:          solana.PublicKeyFromBytes(user.PubKey[:]).String(),
 			OwnerPubkey: solana.PublicKeyFromBytes(user.Owner[:]).String(),
-			Status:      user.Status.String(),
+			Status:      statusString(user.Status),
 			Kind:        user.UserType.String(),
 			ClientIP:    net.IP(user.ClientIp[:]),
 			DZIP:        net.IP(user.DzIp[:]),
@@ -545,9 +601,55 @@ func convertUsers(onchain []serviceability.User) []User {
 			TunnelID:    user.TunnelId,
 			Publishers:  publishers,
 			Subscribers: subscribers,
+			BgpStatus:   bgpStatusString(user.BgpStatus),
+			FeedPKs:     feedPKs,
 		}
 	}
 	return result
+}
+
+// pubkeyOrEmpty returns the base58 pubkey, or "" for the zero pubkey. The
+// serviceability SDK uses the zero pubkey to mean "no value" (e.g. an unset
+// FeedSeat.FeedKey), and "" keeps empty-string WHERE filters sane.
+func pubkeyOrEmpty(pk [32]byte) string {
+	if pk == ([32]byte{}) {
+		return ""
+	}
+	return solana.PublicKeyFromBytes(pk[:]).String()
+}
+
+func convertFeeds(onchain []serviceability.Feed) []Feed {
+	result := make([]Feed, len(onchain))
+	for i, feed := range onchain {
+		groups := make([]string, len(feed.Groups))
+		for j, g := range feed.Groups {
+			groups[j] = solana.PublicKeyFromBytes(g[:]).String()
+		}
+		result[i] = Feed{
+			PK:          solana.PublicKeyFromBytes(feed.PubKey[:]).String(),
+			OwnerPubkey: solana.PublicKeyFromBytes(feed.Owner[:]).String(),
+			Code:        feed.Code,
+			Name:        feed.Name,
+			MetroPK:     solana.PublicKeyFromBytes(feed.Exchange[:]).String(),
+			Groups:      groups,
+		}
+	}
+	return result
+}
+
+// bgpStatusString maps the onchain BGP status enum to the documented
+// "up" | "down" | "unknown" vocabulary. Any value outside the known enum (a
+// future onchain variant) normalizes to "unknown" so consumers never see an
+// out-of-vocabulary string like "BGPStatus(3)".
+func bgpStatusString(status uint8) string {
+	switch serviceability.BGPStatus(status) {
+	case serviceability.BGPStatusUp:
+		return "up"
+	case serviceability.BGPStatusDown:
+		return "down"
+	default:
+		return "unknown"
+	}
 }
 
 func convertLinks(onchain []serviceability.Link, devices []serviceability.Device, topologies []serviceability.TopologyInfo) []Link {
@@ -599,7 +701,7 @@ func convertLinks(onchain []serviceability.Link, devices []serviceability.Device
 
 		result[i] = Link{
 			PK:                  solana.PublicKeyFromBytes(link.PubKey[:]).String(),
-			Status:              link.Status.String(),
+			Status:              statusString(link.Status),
 			Code:                link.Code,
 			SideAPK:             sideAPK,
 			SideZPK:             sideZPK,
@@ -671,7 +773,7 @@ func convertTenants(onchain []serviceability.Tenant, topologies []serviceability
 			PK:                solana.PublicKeyFromBytes(t.PubKey[:]).String(),
 			OwnerPubkey:       solana.PublicKeyFromBytes(t.Owner[:]).String(),
 			Code:              t.Code,
-			PaymentStatus:     t.PaymentStatus.String(),
+			PaymentStatus:     statusString(t.PaymentStatus),
 			VrfID:             t.VrfId,
 			MetroRouting:      t.MetroRouting,
 			RouteLiveness:     t.RouteLiveness,
@@ -691,7 +793,7 @@ func convertLocations(onchain []serviceability.Location) []Location {
 			Lat:            loc.Lat,
 			Lng:            loc.Lng,
 			LocId:          loc.LocId,
-			Status:         loc.Status.String(),
+			Status:         statusString(loc.Status),
 			Code:           loc.Code,
 			Name:           loc.Name,
 			Country:        loc.Country,
@@ -739,12 +841,10 @@ func accessPassTypeTagString(t serviceability.AccessPassTypeTag) string {
 		return "solana_validator"
 	case serviceability.AccessPassTypeSolanaRPC:
 		return "solana_rpc"
-	case serviceability.AccessPassTypeSolanaMulticastPub:
-		return "solana_multicast_pub"
-	case serviceability.AccessPassTypeSolanaMulticastSub:
-		return "solana_multicast_sub"
 	case serviceability.AccessPassTypeOthers:
 		return "others"
+	case serviceability.AccessPassTypeEdgeSeat:
+		return "edge_seat"
 	default:
 		return "unknown"
 	}
@@ -753,8 +853,10 @@ func accessPassTypeTagString(t serviceability.AccessPassTypeTag) string {
 func convertAccessPasses(onchain []serviceability.AccessPass) []AccessPass {
 	result := make([]AccessPass, len(onchain))
 	for i, ap := range onchain {
+		// Only SolanaValidator and SolanaRPC passes carry an associated pubkey onchain.
 		var associatedPubkey string
-		if ap.AccessPassTypeTag >= 1 && ap.AccessPassTypeTag <= 4 {
+		if ap.AccessPassTypeTag == serviceability.AccessPassTypeSolanaValidator ||
+			ap.AccessPassTypeTag == serviceability.AccessPassTypeSolanaRPC {
 			associatedPubkey = solana.PublicKeyFromBytes(ap.AssociatedPubkey[:]).String()
 		}
 
@@ -765,6 +867,21 @@ func convertAccessPasses(onchain []serviceability.AccessPass) []AccessPass {
 		subAllowlist := make([]string, len(ap.MGroupSubAllowlist))
 		for j, pk := range ap.MGroupSubAllowlist {
 			subAllowlist[j] = solana.PublicKeyFromBytes(pk[:]).String()
+		}
+
+		// Initialized (never nil) so ToRow's json.Marshal emits [] rather than
+		// null for passes with no seats.
+		feedSeats := make([]FeedSeat, len(ap.FeedSeats))
+		for j, seat := range ap.FeedSeats {
+			feedSeats[j] = FeedSeat{
+				FeedPK:         pubkeyOrEmpty(seat.FeedKey),
+				MaxUsers:       seat.MaxUsers,
+				MaxFutureUsers: seat.MaxFutureUsers,
+				CurrentUsers:   seat.CurrentUsers,
+				AnniversaryDay: seat.AnniversaryDay,
+				WindowEnd:      seat.WindowEnd,
+				TerminatesAt:   seat.TerminatesAt,
+			}
 		}
 
 		result[i] = AccessPass{
@@ -778,10 +895,11 @@ func convertAccessPasses(onchain []serviceability.AccessPass) []AccessPass {
 			UserPayer:          solana.PublicKeyFromBytes(ap.UserPayer[:]).String(),
 			LastAccessEpoch:    ap.LastAccessEpoch,
 			ConnectionCount:    ap.ConnectionCount,
-			Status:             ap.Status.String(),
+			Status:             statusString(ap.Status),
 			MGroupPubAllowlist: pubAllowlist,
 			MGroupSubAllowlist: subAllowlist,
 			Flags:              ap.Flags,
+			FeedSeats:          feedSeats,
 		}
 	}
 	return result

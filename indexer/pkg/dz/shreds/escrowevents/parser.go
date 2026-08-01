@@ -4,8 +4,16 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
+
+// unknownActionsSeen dedupes the unknown-instruction log per action string: a
+// new on-chain instruction type is actionable (missing decoder) and logs
+// ERROR once, then WARN for every further matching transaction so the backlog
+// doesn't re-page until the decoder catches up. Action strings come from the
+// escrow program's own logs, so cardinality is bounded by its instruction set.
+var unknownActionsSeen sync.Map
 
 // Event type constants.
 const (
@@ -55,11 +63,12 @@ func ParseTransactionLogs(
 			continue
 		}
 		if pe.EventType == EventTypeUnknown && log != nil {
-			log.Error("shreds/escrow-events: unknown instruction action",
-				"action", g.action,
-				"escrow_pk", escrowPK,
-				"tx_signature", txSig,
-			)
+			args := []any{"action", g.action, "escrow_pk", escrowPK, "tx_signature", txSig}
+			if _, seen := unknownActionsSeen.LoadOrStore(g.action, struct{}{}); seen {
+				log.Warn("shreds/escrow-events: unknown instruction action", args...)
+			} else {
+				log.Error("shreds/escrow-events: unknown instruction action", args...)
+			}
 		}
 
 		status := "ok"
@@ -82,7 +91,35 @@ func ParseTransactionLogs(
 		})
 	}
 
+	fillAllocateChargeFromBalanceDelta(events)
+
 	return events
+}
+
+// fillAllocateChargeFromBalanceDelta sets amount_usdc for instant-allocation
+// events that don't carry a logged charge. Programs from before the
+// "Charged {N} for instant seat allocation" log was added only emit the escrow
+// balance after the allocation, not the amount charged. Since an instant
+// allocation is bundled after a fund (and escrow balances chain across the
+// transaction's instructions), the charge is the drop from the nearest
+// preceding event with a known escrow balance. Events already populated by the
+// log path are left untouched.
+func fillAllocateChargeFromBalanceDelta(events []EscrowEventRow) {
+	for i := range events {
+		e := &events[i]
+		if e.EventType != EventTypeAllocateSeat || e.AmountUSDC != nil || e.BalanceAfterUSDC == nil {
+			continue
+		}
+		for j := i - 1; j >= 0; j-- {
+			if events[j].BalanceAfterUSDC == nil {
+				continue
+			}
+			if charge := *events[j].BalanceAfterUSDC - *e.BalanceAfterUSDC; charge >= 0 {
+				e.AmountUSDC = &charge
+			}
+			break
+		}
+	}
 }
 
 // instructionGroup represents a single instruction's logs within a transaction.
@@ -151,6 +188,25 @@ func parseInstructionGroup(action string, details []string, clientSeatPK string)
 	}
 }
 
+// parseChargedAmount parses the charged amount (micro-USDC) from a "Charged ..."
+// log line, accepting both the legacy "Charged: {n}" form (older batch-allocate
+// logs) and the newer "Charged {n} for {batch,instant} seat allocation" form.
+func parseChargedAmount(d string) (int64, bool) {
+	if after, ok := strings.CutPrefix(d, "Charged: "); ok {
+		n, err := strconv.ParseInt(after, 10, 64)
+		return n, err == nil
+	}
+	if after, ok := strings.CutPrefix(d, "Charged "); ok {
+		numStr := after
+		if idx := strings.Index(after, " for "); idx >= 0 {
+			numStr = after[:idx]
+		}
+		n, err := strconv.ParseInt(numStr, 10, 64)
+		return n, err == nil
+	}
+	return 0, false
+}
+
 func parseFund(details []string) *parsedEvent {
 	pe := &parsedEvent{EventType: EventTypeFund}
 
@@ -179,6 +235,12 @@ func parseInstantAllocate(details []string) *parsedEvent {
 
 	for _, d := range details {
 		pe.Epoch = parseEpochFromTenure(d, pe.Epoch)
+		// Amount: "Charged {N} for instant seat allocation" (N in micro-USDC).
+		// Older program versions didn't log the charge; ParseTransactionLogs
+		// recovers it from the escrow balance delta as a fallback.
+		if n, ok := parseChargedAmount(d); ok {
+			pe.Amount = &n
+		}
 		if after, ok := strings.CutPrefix(d, "Escrow balance: "); ok {
 			if n, err := strconv.ParseInt(after, 10, 64); err == nil {
 				pe.Balance = &n
@@ -277,10 +339,8 @@ func parseBatchAllocate(details []string, clientSeatPK string) *parsedEvent {
 			}
 			for _, d := range g.details {
 				pe.Epoch = parseEpochFromTenure(d, pe.Epoch)
-				if after, ok := strings.CutPrefix(d, "Charged: "); ok {
-					if n, err := strconv.ParseInt(after, 10, 64); err == nil {
-						pe.Amount = &n
-					}
+				if n, ok := parseChargedAmount(d); ok {
+					pe.Amount = &n
 				}
 				if after, ok := strings.CutPrefix(d, "Escrow balance: "); ok {
 					if n, err := strconv.ParseInt(after, 10, 64); err == nil {

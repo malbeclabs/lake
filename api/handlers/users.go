@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -279,6 +280,16 @@ func (a *API) GetUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// TTL-cached stake_weight_pct denominator instead of a per-request total_stake
+	// CTE (see cachedEpochVoteTotalStake).
+	totalStake, err := a.cachedEpochVoteTotalStake(ctx)
+	if err != nil {
+		logError("user total stake query failed", "error", err, "pk", pk)
+		http.Error(w, "user lookup failed", http.StatusInternalServerError)
+		return
+	}
+	totalStakeLit := strconv.FormatInt(totalStake, 10)
+
 	start := time.Now()
 	query := `
 		WITH latest_user AS (
@@ -317,11 +328,6 @@ func (a *API) GetUser(w http.ResponseWriter, r *http.Request) {
 				COALESCE(v.activated_stake_lamports, 0) as stake_lamports
 			FROM solana_gossip_nodes_current g
 			LEFT JOIN solana_vote_accounts_current v ON g.pubkey = v.node_pubkey AND v.epoch_vote_account = 'true'
-		),
-		total_stake AS (
-			SELECT COALESCE(SUM(activated_stake_lamports), 0) as total_lamports
-			FROM solana_vote_accounts_current
-			WHERE epoch_vote_account = 'true'
 		)
 		SELECT
 			u.pk,
@@ -350,7 +356,7 @@ func (a *API) GetUser(w http.ResponseWriter, r *http.Request) {
 			COALESCE(si.node_pubkey, '') as node_pubkey,
 			COALESCE(si.vote_pubkey, '') as vote_pubkey,
 			COALESCE(si.stake_sol, 0) as stake_sol,
-			CASE WHEN ts.total_lamports > 0 THEN si.stake_lamports * 100.0 / ts.total_lamports ELSE 0 END as stake_weight_pct,
+			CASE WHEN ` + totalStakeLit + ` > 0 THEN si.stake_lamports * 100.0 / ` + totalStakeLit + ` ELSE 0 END as stake_weight_pct,
 			u.is_deleted = 1 as is_deleted
 		FROM latest_user u
 		LEFT JOIN dz_devices_current d ON u.device_pk = d.pk
@@ -360,12 +366,11 @@ func (a *API) GetUser(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN dz_tenants_current t ON u.tenant_pk = t.pk
 		LEFT JOIN traffic_rates tr ON u.pk = tr.user_pk
 		LEFT JOIN solana_info si ON u.client_ip = si.gossip_ip
-		CROSS JOIN total_stake ts
 	`
 
 	var user UserDetail
 	var includeTopologiesJSON string
-	err := a.envDB(ctx).QueryRow(ctx, query, pk).Scan(
+	err = a.envDB(ctx).QueryRow(ctx, query, pk).Scan(
 		&user.PK,
 		&user.OwnerPubkey,
 		&user.Status,

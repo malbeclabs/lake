@@ -388,6 +388,36 @@ func (a *API) GetLatestWorkflowForSession(ctx context.Context, sessionID uuid.UU
 	return &run, nil
 }
 
+// accountOwnsSession reports whether the caller owns the given session, applying
+// the same ownership logic as GetSession: an authenticated account must match
+// session.account_id; otherwise an anonymous_id query param must match
+// session.anonymous_id; otherwise access is denied. A missing session or any
+// mismatch returns (false, nil) so callers can respond 404 without disclosing
+// existence.
+func (a *API) accountOwnsSession(ctx context.Context, r *http.Request, sessionID uuid.UUID) (bool, error) {
+	var accountID *uuid.UUID
+	var anonymousID *string
+	err := a.PgPool.QueryRow(ctx, `
+		SELECT account_id, anonymous_id FROM sessions WHERE id = $1
+	`, sessionID).Scan(&accountID, &anonymousID)
+	if err != nil {
+		if err.Error() == "no rows in result set" {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get session owner: %w", err)
+	}
+
+	account := GetAccountFromContext(ctx)
+	if account != nil {
+		return accountID != nil && *accountID == account.ID, nil
+	}
+	if reqAnonID := r.URL.Query().Get("anonymous_id"); reqAnonID != "" {
+		return anonymousID != nil && *anonymousID == reqAnonID, nil
+	}
+	// No owner context - deny access
+	return false, nil
+}
+
 // HTTP Handlers
 
 // GetWorkflowForSession handles GET /api/sessions/{id}/workflow
@@ -398,6 +428,18 @@ func (a *API) GetWorkflowForSession(w http.ResponseWriter, r *http.Request) {
 	sessionID, err := uuid.Parse(sessionIDStr)
 	if err != nil {
 		http.Error(w, "Invalid session ID", http.StatusBadRequest)
+		return
+	}
+
+	// Verify ownership of the session before returning its workflow. Deny with
+	// 404 (matching the not-found path) to avoid leaking whether it exists.
+	owns, err := a.accountOwnsSession(r.Context(), r, sessionID)
+	if err != nil {
+		http.Error(w, internalError("Failed to get workflow", err), http.StatusInternalServerError)
+		return
+	}
+	if !owns {
+		http.Error(w, "Workflow not found", http.StatusNotFound)
 		return
 	}
 
@@ -443,6 +485,17 @@ func (a *API) GetWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Verify the caller owns the run's session before returning run data.
+	owns, err := a.accountOwnsSession(r.Context(), r, run.SessionID)
+	if err != nil {
+		http.Error(w, internalError("Failed to get workflow", err), http.StatusInternalServerError)
+		return
+	}
+	if !owns {
+		http.Error(w, "Workflow not found", http.StatusNotFound)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(run)
 }
@@ -475,6 +528,18 @@ func (a *API) StreamWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if run == nil {
+		http.Error(w, "Workflow not found", http.StatusNotFound)
+		return
+	}
+
+	// Verify ownership before writing any SSE headers or events, so a non-owner
+	// never receives run data.
+	owns, err := a.accountOwnsSession(r.Context(), r, run.SessionID)
+	if err != nil {
+		http.Error(w, internalError("Failed to get workflow", err), http.StatusInternalServerError)
+		return
+	}
+	if !owns {
 		http.Error(w, "Workflow not found", http.StatusNotFound)
 		return
 	}

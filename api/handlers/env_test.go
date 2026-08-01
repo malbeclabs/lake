@@ -102,13 +102,24 @@ func TestEnvMiddleware(t *testing.T) {
 	tests := []struct {
 		name        string
 		headerValue string
+		queryEnv    string
 		expectedEnv handlers.DZEnv
 	}{
-		{"header present devnet", "devnet", handlers.EnvDevnet},
-		{"header present testnet", "testnet", handlers.EnvTestnet},
-		{"header present mainnet", "mainnet-beta", handlers.EnvMainnet},
-		{"header missing defaults to mainnet", "", handlers.EnvMainnet},
-		{"invalid header defaults to mainnet", "invalid-env", handlers.EnvMainnet},
+		{"header present devnet", "devnet", "", handlers.EnvDevnet},
+		{"header present testnet", "testnet", "", handlers.EnvTestnet},
+		{"header present mainnet", "mainnet-beta", "", handlers.EnvMainnet},
+		{"header missing defaults to mainnet", "", "", handlers.EnvMainnet},
+		{"invalid header defaults to mainnet", "invalid-env", "", handlers.EnvMainnet},
+
+		// Query-string fallback fires when the header is missing or invalid.
+		{"query fallback testnet, no header", "", "testnet", handlers.EnvTestnet},
+		{"query fallback devnet, no header", "", "devnet", handlers.EnvDevnet},
+		{"query fallback mainnet, no header", "", "mainnet-beta", handlers.EnvMainnet},
+		{"invalid header falls through to query", "invalid-env", "testnet", handlers.EnvTestnet},
+		{"invalid query defaults to mainnet", "", "invalid-env", handlers.EnvMainnet},
+
+		// Header wins when both are present.
+		{"header wins over conflicting query", "devnet", "testnet", handlers.EnvDevnet},
 	}
 
 	for _, tt := range tests {
@@ -122,7 +133,11 @@ func TestEnvMiddleware(t *testing.T) {
 			})
 
 			handler := handlers.EnvMiddleware(inner)
-			req := httptest.NewRequest("GET", "/test", nil)
+			url := "/test"
+			if tt.queryEnv != "" {
+				url += "?env=" + tt.queryEnv
+			}
+			req := httptest.NewRequest("GET", url, nil)
 			if tt.headerValue != "" {
 				req.Header.Set("X-DZ-Env", tt.headerValue)
 			}

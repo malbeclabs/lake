@@ -133,7 +133,9 @@ func spaHandler(staticDir, assetBucketURL string) http.HandlerFunc {
 		url := strings.TrimSuffix(assetBucketURL, "/") + "/" + assetName
 		resp, err := http.Get(url)
 		if err != nil {
-			slog.Error("failed to fetch asset from bucket", "error", err)
+			// Transient-aware: an S3 blip on this per-request fallback path
+			// warns; only a persistent misconfiguration logs ERROR.
+			logger.Error(slog.Default(), "failed to fetch asset from bucket", "error", err)
 			return ""
 		}
 		defer resp.Body.Close()
@@ -363,6 +365,7 @@ func main() {
 		ShredderDB:    config.GetShredderDB(),
 		PublisherDB:   config.GetPublisherDB(),
 		DZDPDB:        config.GetDZDPDB(),
+		FeedsDB:       config.GetFeedsDB(),
 		PgPool:        config.PgPool,
 		Neo4jClient:   config.Neo4jClient,
 		Neo4jDatabase: config.Neo4jDatabase,
@@ -383,6 +386,9 @@ func main() {
 				slog.Error("page cache worker failed", "error", err)
 			}
 		}()
+		// The composite feed latency and the 24h/7d scoreboards are too heavy for the 60s
+		// page-cache loop; refresh them on a slow cadence here (writes to the shared page cache).
+		api.StartHyperliquidBackgroundRefresher(workerCtx)
 	}
 
 	// Configure shapley-cli binary path for rewards calculations
@@ -401,7 +407,8 @@ func main() {
 		metrics.BuildInfo.WithLabelValues(version, commit, date).Set(1)
 		listener, err := net.Listen("tcp", *metricsAddrFlag)
 		if err != nil {
-			slog.Error("failed to start Prometheus metrics server listener", "error", err)
+			// Optional feature; the API keeps serving without metrics.
+			slog.Warn("failed to start Prometheus metrics server listener", "error", err)
 		} else {
 			slog.Info("Prometheus metrics server listening", "addr", listener.Addr().String())
 			mux := http.NewServeMux()
@@ -409,7 +416,7 @@ func main() {
 			metricsServer = &http.Server{Handler: mux}
 			go func() {
 				if err := metricsServer.Serve(listener); err != nil && err != http.ErrServerClosed {
-					slog.Error("metrics server error", "error", err)
+					slog.Warn("metrics server error", "error", err)
 				}
 			}()
 		}
@@ -557,6 +564,7 @@ func main() {
 		r.Get("/api/incidents/devices/csv", api.GetDeviceIncidentsCSV)
 
 		// Ops Management tickets proxy (auth required — tickets contain reporter PII)
+		r.Get("/api/ops-tickets/maintenance", api.GetMaintenanceCalendar)
 		r.With(api.RequireAuth).Get("/api/ops-tickets", api.GetOpsTickets)
 		r.With(api.RequireAuth).Get("/api/ops-tickets/history", api.GetOpsTicketHistory)
 		r.With(api.RequireAuth).Get("/api/ops-tickets/assignees", api.GetOpsAssignees)
@@ -570,10 +578,14 @@ func main() {
 		r.Get("/api/dz/devices", api.GetDevices)
 		r.Get("/api/dz/devices/{pk}", api.GetDevice)
 		r.Get("/api/dz/devices/{pk}/validator-stats", api.GetDeviceValidatorStats)
+		r.Get("/api/dz/devices/{pk}/controller-calls", api.GetDeviceControllerCalls)
+		r.Get("/api/dz/devices/{pk}/multicast-delivery", api.GetDeviceMulticastDelivery)
 		r.Get("/api/dz/devices/{pk}/optics", api.GetDeviceOptics)
 		r.Get("/api/dz/devices/{pk}/optics/history", api.GetDeviceOpticsHistory)
+		r.Get("/api/dz/network-state", api.GetNetworkState)
 		r.Get("/api/dz/links", api.GetLinks)
 		r.Get("/api/dz/links/{pk}", api.GetLink)
+		r.Get("/api/dz/links/{pk}/multicast-delivery", api.GetLinkMulticastDelivery)
 		r.Get("/api/dz/links-health", api.GetLinkHealth)
 		r.Get("/api/dz/metros", api.GetMetros)
 		r.Get("/api/dz/metros/{pk}", api.GetMetro)
@@ -592,14 +604,27 @@ func main() {
 		r.Get("/api/dz/multicast-groups/{pk}/members", api.GetMulticastGroupMembers)
 		r.Get("/api/dz/multicast-groups/{pk}/tree-paths", api.GetMulticastTreePaths)
 		r.Get("/api/dz/multicast-groups/{pk}/tree-segments", api.GetMulticastTreeSegments)
+		r.Get("/api/dz/multicast-groups/{pk}/mroutes", api.GetMulticastGroupMroutes)
+		r.Get("/api/dz/multicast-groups/{pk}/oifs", api.GetMulticastGroupOIFs)
+		r.Get("/api/dz/multicast-groups/{pk}/msdp", api.GetMulticastGroupMSDP)
+		r.Get("/api/dz/multicast-groups/{pk}/delivery-tree", api.GetMulticastGroupDeliveryTree)
 		r.Get("/api/dz/multicast-groups/{pk}/traffic", api.GetMulticastGroupTraffic)
 		r.Get("/api/dz/multicast-groups/{pk}/member-counts", api.GetMulticastGroupMemberCounts)
 		r.Get("/api/dz/multicast-groups/{pk}/shred-stats", api.GetMulticastGroupShredStats)
+		r.Get("/api/dz/multicast-groups/{pk}/health", api.GetMulticastGroupHealth)
+		r.Get("/api/dz/multicast-groups/{pk}/health/users", api.GetMulticastGroupHealthUsers)
+		r.Get("/api/dz/multicast-groups/{pk}/health/paths", api.GetMulticastGroupHealthPaths)
+		r.Get("/api/dz/multicast-groups/{pk}/health/path-root-causes", api.GetMulticastGroupHealthPathRootCauses)
+		r.Get("/api/dz/users/{pk}/health", api.GetUserHealth)
 		r.Get("/api/dz/access-passes", api.GetAccessPasses)
 		r.Get("/api/dz/access-passes/{pk}", api.GetAccessPass)
 		r.Get("/api/dz/access-passes/{pk}/connections", api.GetAccessPassConnections)
 		r.Get("/api/dz/publisher-check", api.GetPublisherCheck)
 		r.Get("/api/dz/edge/scoreboard", api.GetEdgeScoreboard)
+		// Internal only (unannounced venue): allowed-domain Google users only.
+		r.With(handlers.RequireInternalDomain).Get("/api/dz/hyperliquid/scoreboard", api.GetHyperliquidScoreboard)
+		// Serviceability permission audit trail (internal only: allowed-domain Google users).
+		r.With(handlers.RequireInternalDomain).Get("/api/dz/permission-audit", api.GetPermissionAudit)
 		r.Get("/api/dz/tenants", api.GetTenants)
 		r.Get("/api/dz/tenants/{pk}", api.GetTenant)
 		r.Get("/api/dz/shreds/overview", api.GetShredsOverview)
@@ -608,6 +633,8 @@ func main() {
 		r.Get("/api/dz/shreds/escrow-events", api.GetShredEscrowEvents)
 		r.Get("/api/dz/shreds/devices", api.GetShredDevices)
 		r.Get("/api/dz/shreds/epoch-revenue", api.GetShredEpochRevenue)
+		r.Get("/api/dz/shreds/rewards", api.GetShredsRewards)
+		r.Get("/api/dz/shreds/rewards/{nodeId}", api.GetShredsRewardsDetail)
 		r.Get("/api/dz/shreds/subscriber-history", api.GetShredSubscriberHistory)
 		r.Get("/api/dz/swap-rate", api.GetSwapRate)
 		r.Get("/api/dz/field-values", api.GetFieldValues)

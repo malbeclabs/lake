@@ -16,6 +16,7 @@ import (
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 	"github.com/malbeclabs/lake/indexer/pkg/metrics"
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
 type TelemetryRPC interface {
@@ -39,6 +40,8 @@ type ViewConfig struct {
 	Serviceability             *dzsvc.View
 	RefreshInterval            time.Duration
 	ServiceabilityReadyTimeout time.Duration
+	// DZEnv labels the store's Prometheus metrics; it does not affect behavior.
+	DZEnv string
 }
 
 func (cfg *ViewConfig) Validate() error {
@@ -86,6 +89,10 @@ type View struct {
 	readyOnce sync.Once
 	readyCh   chan struct{}
 	refreshMu sync.Mutex // prevents concurrent refreshes
+
+	// esc escalates consecutive refresh failures from WARN to ERROR so a
+	// single blip doesn't page on-call (see logger.Escalator).
+	esc logger.Escalator
 }
 
 func NewView(cfg ViewConfig) (*View, error) {
@@ -96,6 +103,7 @@ func NewView(cfg ViewConfig) (*View, error) {
 	store, err := NewStore(StoreConfig{
 		Logger:     cfg.Logger,
 		ClickHouse: cfg.ClickHouse,
+		DZEnv:      cfg.DZEnv,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create store: %w", err)
@@ -139,12 +147,11 @@ func (v *View) safeRefresh(ctx context.Context) {
 		}
 	}()
 
-	if _, err := v.Refresh(ctx); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return
-		}
-		v.log.Error("telemetry/latency: refresh failed", "error", err)
+	_, err := v.Refresh(ctx)
+	if err != nil && errors.Is(err, context.Canceled) {
+		return
 	}
+	v.esc.Observe(v.log, "refresh", "telemetry/latency: refresh failed", err)
 }
 
 func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) {

@@ -439,8 +439,20 @@ func (a *API) chatStreamV3(ctx context.Context, req ChatRequest, history []workf
 		env = DZEnv(sessionEnv)
 	}
 
+	// Resolve the caller's identity so auto-created sessions are owned from the
+	// start (see StartWorkflow / ensureSessionExists). Mirror CreateSession's
+	// precedence: an authenticated account owns the session, otherwise the
+	// anonymous ID does — never both.
+	var accountID *uuid.UUID
+	var anonymousID *string
+	if account := GetAccountFromContext(ctx); account != nil {
+		accountID = &account.ID
+	} else if req.AnonymousID != "" {
+		anonymousID = &req.AnonymousID
+	}
+
 	// Start the workflow in background
-	workflowID, err := a.Manager.StartWorkflow(sessionUUID, req.Message, history, req.Format, env)
+	workflowID, err := a.Manager.StartWorkflow(sessionUUID, req.Message, history, req.Format, accountID, anonymousID, env)
 	if err != nil {
 		logError("Failed to start background workflow", "session_id", req.SessionID, "error", err)
 		// Don't expose internal errors to the UI

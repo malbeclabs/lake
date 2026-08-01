@@ -18,8 +18,9 @@ import { useUPlotChart } from '@/hooks/use-uplot-chart'
 import { useUPlotLegendSync } from '@/hooks/use-uplot-legend-sync'
 import { formatChartAxisRate, formatChartAxisPps } from '@/components/topology/utils'
 import {
-  fetchMulticastGroup,
+  fetchMulticastGroupMemberSnapshot,
   fetchMulticastGroupMembers,
+  fetchMulticastGroupMetadata,
   fetchMulticastGroupTraffic,
   fetchMulticastGroupMemberCounts,
   fetchMulticastGroupShredStats,
@@ -31,6 +32,8 @@ import { useChartLegend } from '@/hooks/use-chart-legend'
 import { SmallDropdown } from '@/components/topology/TimeRangeSelector'
 import { InlineFilter } from '@/components/inline-filter'
 import { Pagination } from '@/components/pagination'
+import { MulticastGroupHealthTab } from '@/components/multicast-group-health-tab'
+import { useAuth } from '@/contexts/AuthContext'
 
 function formatBps(bps: number): string {
   if (bps === 0) return '—'
@@ -1480,10 +1483,19 @@ export function MulticastGroupDetailPage() {
   const { pk } = useParams<{ pk: string }>()
   const navigate = useNavigate()
   const back = useBackLink({ to: '/dz/multicast-groups', label: 'multicast groups' })
+  const { isAuthenticated } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
-  const activeTab = (searchParams.get('tab') === 'subscribers' ? 'subscribers' : 'publishers') as
-    | 'publishers'
-    | 'subscribers'
+  const tabParam = searchParams.get('tab')
+  // Health tab is gated behind login for now: the underlying views are
+  // heavy and we don't want anonymous traffic hammering them. If the URL
+  // asks for tab=health while logged out, fall back to publishers.
+  const activeTab = (
+    tabParam === 'subscribers'
+      ? 'subscribers'
+      : tabParam === 'health' && isAuthenticated
+        ? 'health'
+        : 'publishers'
+  ) as 'publishers' | 'subscribers' | 'health'
   const sortField = (searchParams.get('sort') || 'stake_sol') as MemberSortField
   const sortDirection = (searchParams.get('dir') || 'desc') as SortDirection
   const page = parseInt(searchParams.get('page') || '1')
@@ -1495,7 +1507,7 @@ export function MulticastGroupDetailPage() {
   const [selectedSeriesKeys, setSelectedSeriesKeys] = useState<Set<string>>(new Set())
 
   const setActiveTab = useCallback(
-    (tab: 'publishers' | 'subscribers') => {
+    (tab: 'publishers' | 'subscribers' | 'health') => {
       setSearchParams((prev) => {
         const p = new URLSearchParams(prev)
         if (tab === 'publishers') {
@@ -1631,15 +1643,25 @@ export function MulticastGroupDetailPage() {
     })
   }, [filterKey, setSearchParams])
 
-  // Group metadata query
+  // Group metadata query. Keep this metadata-only so the Health tab does
+  // not preload large publisher/subscriber member snapshots it never renders.
   const {
     data: group,
     isLoading: groupLoading,
     error: groupError,
   } = useQuery({
     queryKey: ['multicast-group', pk],
-    queryFn: () => fetchMulticastGroup(pk!),
+    queryFn: () => fetchMulticastGroupMetadata(pk!),
     enabled: !!pk,
+    refetchInterval: 30000,
+  })
+
+  // Full member snapshot for chart labels and selected-series surfacing.
+  // This intentionally stays disabled on Health, where charts are hidden.
+  const { data: chartMembers = [] } = useQuery({
+    queryKey: ['multicast-group-member-snapshot', pk],
+    queryFn: () => fetchMulticastGroupMemberSnapshot(pk!),
+    enabled: !!pk && activeTab !== 'health',
     refetchInterval: 30000,
   })
 
@@ -1669,31 +1691,31 @@ export function MulticastGroupDetailPage() {
         activeTab,
         filterParams.length > 0 ? filterParams : undefined,
       ),
-    enabled: !!pk,
+    enabled: !!pk && activeTab !== 'health',
     refetchInterval: 30000,
     placeholderData: keepPreviousData,
   })
 
   useDocumentTitle(group?.code || 'Multicast Group')
 
-  const publisherCount = membersResponse?.publisher_count ?? 0
-  const subscriberCount = membersResponse?.subscriber_count ?? 0
+  const publisherCount = membersResponse?.publisher_count ?? group?.publisher_count ?? 0
+  const subscriberCount = membersResponse?.subscriber_count ?? group?.subscriber_count ?? 0
 
   const activeMembers = membersResponse?.items ?? []
 
   // Selected members not on current page — surfaced at top of table
   const surfacedMembers = useMemo(() => {
-    if (selectedSeriesKeys.size === 0 || !group) return []
+    if (selectedSeriesKeys.size === 0) return []
     const activeKeys = new Set(activeMembers.map((m) => `${m.device_pk}_${m.tunnel_id}`))
     const modeFilter = activeTab === 'publishers' ? 'P' : 'S'
-    return group.members.filter((m) => {
+    return chartMembers.filter((m) => {
       const key = `${m.device_pk}_${m.tunnel_id}`
       if (!selectedSeriesKeys.has(key)) return false
       if (activeKeys.has(key)) return false
       // Only surface members matching the active tab
       return m.mode === modeFilter || m.mode === 'P+S'
     })
-  }, [selectedSeriesKeys, group, activeMembers, activeTab])
+  }, [selectedSeriesKeys, chartMembers, activeMembers, activeTab])
 
   // Scroll to first selected row when selection changes
   const selectedRowRef = useRef<HTMLTableRowElement>(null)
@@ -1842,35 +1864,40 @@ export function MulticastGroupDetailPage() {
           </div>
         </div>
 
-        {/* Members filter + tabs */}
-        <div className="flex items-center gap-2 mb-3">
-          <InlineFilter
-            fieldPrefixes={memberFieldPrefixes}
-            entity="multicast-members"
-            autocompleteFields={memberAutocompleteFields}
-            placeholder="Filter members..."
-            onLiveFilterChange={setLiveFilter}
-            filterParams={pk ? { group: pk } : undefined}
-          />
-          {searchFilters.map((filter, idx) => (
-            <button
-              key={`${filter}-${idx}`}
-              onClick={() => removeFilter(filter)}
-              className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors"
-            >
-              {filter}
-              <X className="h-3 w-3" />
-            </button>
-          ))}
-          {searchFilters.length > 1 && (
-            <button
-              onClick={clearAllFilters}
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Clear all
-            </button>
-          )}
-        </div>
+        {/* Members filter + tabs. The Health tab is a reconciliation view
+            that always reports across the full group, so the member filter
+            bar would only mislead operators into thinking it scopes the
+            health queries (it doesn't). Hide it while Health is active. */}
+        {activeTab !== 'health' && (
+          <div className="flex items-center gap-2 mb-3">
+            <InlineFilter
+              fieldPrefixes={memberFieldPrefixes}
+              entity="multicast-members"
+              autocompleteFields={memberAutocompleteFields}
+              placeholder="Filter members..."
+              onLiveFilterChange={setLiveFilter}
+              filterParams={pk ? { group: pk } : undefined}
+            />
+            {searchFilters.map((filter, idx) => (
+              <button
+                key={`${filter}-${idx}`}
+                onClick={() => removeFilter(filter)}
+                className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors"
+              >
+                {filter}
+                <X className="h-3 w-3" />
+              </button>
+            ))}
+            {searchFilters.length > 1 && (
+              <button
+                onClick={clearAllFilters}
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Clear all
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Members table */}
         <div className="border border-border rounded-lg bg-card mb-6">
@@ -1895,12 +1922,29 @@ export function MulticastGroupDetailPage() {
             >
               Subscribers ({subscriberCount})
             </button>
-            {membersFetching && (
+            {isAuthenticated && (
+              <button
+                onClick={() => setActiveTab('health')}
+                className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px ${
+                  activeTab === 'health'
+                    ? 'border-purple-500 text-purple-500'
+                    : 'border-transparent text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                Health
+              </button>
+            )}
+            {membersFetching && activeTab !== 'health' && (
               <div className="flex items-center ml-2">
                 <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
               </div>
             )}
           </div>
+          {activeTab === 'health' && pk && (
+            <MulticastGroupHealthTab groupPkOrCode={pk} />
+          )}
+          {activeTab !== 'health' && (
+          <>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
@@ -2045,29 +2089,32 @@ export function MulticastGroupDetailPage() {
               onPageSizeChange={setPageSize}
             />
           )}
+          </>
+          )}
         </div>
 
+        {activeTab !== 'health' && (
         <div className="space-y-6">
           {/* Shred stats chart — only for groups with shred stats */}
           {pk &&
             group &&
             group.has_shred_stats &&
             activeTab === 'publishers' &&
-            group.members.length > 0 && (
+            chartMembers.length > 0 && (
               <ShredStatsChart
                 groupCode={pk}
-                members={group.members}
+                members={chartMembers}
                 onHoverMember={setHoveredSeriesKey}
                 onSelectMember={setSelectedSeriesKeys}
               />
             )}
 
           {/* Traffic chart — uses all members (not just current page) for series labels */}
-          {pk && group && group.members.length > 0 && (
+          {pk && chartMembers.length > 0 && (
             <MulticastTrafficChart
               groupCode={pk}
-              members={group.members}
-              activeTab={activeTab}
+              members={chartMembers}
+              activeTab={activeTab === 'subscribers' ? 'subscribers' : 'publishers'}
               onHoverMember={setHoveredSeriesKey}
               onSelectMember={setSelectedSeriesKeys}
             />
@@ -2076,6 +2123,7 @@ export function MulticastGroupDetailPage() {
           {/* Member count chart */}
           {pk && <MemberCountChart groupCode={pk} />}
         </div>
+        )}
       </div>
     </div>
   )

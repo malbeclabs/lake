@@ -1,5 +1,8 @@
 .DS_STORE
 .env
+.env.*
+!.env.example
+!*/.env.example
 .idea
 .private
 .vscode
@@ -18,3 +21,4 @@ controlcenter-data/
 bin/
 main
 shapley-cli/target/
+docs/superpowers/

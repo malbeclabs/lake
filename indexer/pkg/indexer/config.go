@@ -12,6 +12,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	dzgeoloc "github.com/malbeclabs/lake/indexer/pkg/dz/geolocation"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/serviceability/permissionevents"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/escrowevents"
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
@@ -40,6 +41,12 @@ type Config struct {
 
 	// Serviceability RPC configuration.
 	ServiceabilityRPC dzsvc.ServiceabilityRPC
+
+	// Serviceability program id and a raw Solana RPC for the permission-events audit
+	// indexer (optional). PermissionEventsRPC watches the serviceability program's
+	// transaction history for Permission-management instructions.
+	ServiceabilityProgramID solana.PublicKey
+	PermissionEventsRPC     permissionevents.SolanaRPC
 
 	// Geolocation RPC configuration (optional).
 	GeolocationRPC dzgeoloc.GeolocationRPC
@@ -75,6 +82,26 @@ type Config struct {
 	ISISS3Region        string        // AWS region (default: us-east-1)
 	ISISS3EndpointURL   string        // Custom S3 endpoint URL (for testing)
 	ISISRefreshInterval time.Duration // Refresh interval for IS-IS sync (default: 30s)
+
+	// Mroute (state-collect) configuration (optional).
+	// When enabled, periodically pulls `show ip mroute | json` snapshots that
+	// doublezero-telemetry uploads to S3 and writes the parsed entries to
+	// ClickHouse as a type-2 dimension.
+	MrouteEnabled       bool
+	MrouteS3Bucket      string // S3 bucket the state-ingest server writes to
+	MrouteS3Region      string // AWS region (default: us-east-1)
+	MrouteS3KeyPrefix   string // Optional matching state-ingest BucketPathPrefix
+	MrouteS3EndpointURL string // Custom S3 endpoint URL (for testing)
+
+	// MSDP (state-collect) configuration (optional).
+	// When enabled, periodically pulls `show ip msdp ...` snapshots for
+	// summary, pim sa-cache, and sa-cache-rejected kinds and writes the
+	// parsed entries to ClickHouse as three type-2 dimensions.
+	MSDPEnabled       bool
+	MSDPS3Bucket      string // Same state-collect bucket as MrouteS3Bucket in practice
+	MSDPS3Region      string // AWS region (default: us-east-1)
+	MSDPS3KeyPrefix   string // Optional matching state-ingest BucketPathPrefix
+	MSDPS3EndpointURL string // Custom S3 endpoint URL (for testing)
 
 	// validators.app configuration (optional, mainnet-beta only).
 	ValidatorsAppClient          validatorsapp.Client

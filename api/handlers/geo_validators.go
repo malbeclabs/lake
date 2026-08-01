@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/proto"
-	"github.com/malbeclabs/lake/api/handlers/dberror"
 	"github.com/malbeclabs/lake/api/metrics"
+	"github.com/malbeclabs/lake/utils/pkg/dberror"
 )
 
 type GeoValidatorItem struct {
@@ -101,7 +101,21 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 				coalesce(ls.lat, 0) AS dzdp_lat,
 				coalesce(ls.lng, 0) AS dzdp_lng,
 				gn.pubkey AS node_pubkey
-			FROM (SELECT * FROM %s.location_state FINAL) AS ls
+			FROM (
+				-- location_state is append-only history: its sort key is
+				-- (target_ip, snapshot_at), so FINAL does NOT collapse to one row
+				-- per IP — it keeps every snapshot (~25k per IP, ~37M rows). Take
+				-- each IP's latest snapshot explicitly instead; joining the full
+				-- history exploded the downstream cross join (~35M rows) and timed
+				-- out the query.
+				SELECT
+					target_ip,
+					argMax(state, snapshot_at) AS state,
+					argMax(lat, snapshot_at) AS lat,
+					argMax(lng, snapshot_at) AS lng
+				FROM %s.location_state
+				GROUP BY target_ip
+			) AS ls
 			JOIN solana_gossip_nodes_current gn ON ls.target_ip = gn.gossip_ip
 			WHERE ls.state = 'honed'
 		),

@@ -34,18 +34,19 @@ type MulticastGroupRef struct {
 // AccessPassShredsSeat is embedded in AccessPassDetail when the access pass
 // belongs to the Shreds product (user_payer == ShredsInternalUserPayer).
 type AccessPassShredsSeat struct {
-	PK                   string `json:"pk"`
-	DeviceKey            string `json:"device_key"`
-	DeviceCode           string `json:"device_code"`
-	MetroPK              string `json:"metro_pk"`
-	MetroCode            string `json:"metro_code"`
-	TenureEpochs         uint16 `json:"tenure_epochs"`
-	FundedEpoch          uint64 `json:"funded_epoch"`
-	ActiveEpoch          uint64 `json:"active_epoch"`
-	EscrowCount          uint32 `json:"escrow_count"`
-	TotalUSDCBalance     uint64 `json:"total_usdc_balance"`
-	PricePerEpochDollars int64  `json:"price_per_epoch_dollars"`
-	FundingAuthorityKey  string `json:"funding_authority_key"`
+	PK                    string `json:"pk"`
+	DeviceKey             string `json:"device_key"`
+	DeviceCode            string `json:"device_code"`
+	MetroPK               string `json:"metro_pk"`
+	MetroCode             string `json:"metro_code"`
+	TenureEpochs          uint16 `json:"tenure_epochs"`
+	FundedEpoch           uint64 `json:"funded_epoch"`
+	ActiveEpoch           uint64 `json:"active_epoch"`
+	EscrowCount           uint32 `json:"escrow_count"`
+	SpendableUSDCBalance  uint64 `json:"spendable_usdc_balance"`
+	AllEscrowsUSDCBalance uint64 `json:"all_escrows_usdc_balance"`
+	PricePerEpochDollars  int64  `json:"price_per_epoch_dollars"`
+	FundingAuthorityKey   string `json:"funding_authority_key"`
 }
 
 type AccessPassDetail struct {
@@ -292,18 +293,19 @@ func (a *API) GetAccessPass(w http.ResponseWriter, r *http.Request) {
 			logError("failed to fetch shreds seat for access pass", "pk", pk, "error", seatErr)
 		} else if seat != nil {
 			ap.ShredsSeat = &AccessPassShredsSeat{
-				PK:                   seat.PK,
-				DeviceKey:            seat.DeviceKey,
-				DeviceCode:           seat.DeviceCode,
-				MetroPK:              seat.MetroPK,
-				MetroCode:            seat.MetroCode,
-				TenureEpochs:         seat.TenureEpochs,
-				FundedEpoch:          seat.FundedEpoch,
-				ActiveEpoch:          seat.ActiveEpoch,
-				EscrowCount:          seat.EscrowCount,
-				TotalUSDCBalance:     seat.TotalUSDCBalance,
-				PricePerEpochDollars: seat.PricePerEpochDollars,
-				FundingAuthorityKey:  seat.FundingAuthorityKey,
+				PK:                    seat.PK,
+				DeviceKey:             seat.DeviceKey,
+				DeviceCode:            seat.DeviceCode,
+				MetroPK:               seat.MetroPK,
+				MetroCode:             seat.MetroCode,
+				TenureEpochs:          seat.TenureEpochs,
+				FundedEpoch:           seat.FundedEpoch,
+				ActiveEpoch:           seat.ActiveEpoch,
+				EscrowCount:           seat.EscrowCount,
+				SpendableUSDCBalance:  seat.SpendableUSDCBalance,
+				AllEscrowsUSDCBalance: seat.AllEscrowsUSDCBalance,
+				PricePerEpochDollars:  seat.PricePerEpochDollars,
+				FundingAuthorityKey:   seat.FundingAuthorityKey,
 			}
 		}
 	}

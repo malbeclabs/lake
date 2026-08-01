@@ -116,6 +116,18 @@ func run() error {
 	isisS3RegionFlag := flag.String("isis-s3-region", "us-east-1", "AWS region for IS-IS S3 bucket (or set ISIS_S3_REGION env var)")
 	isisRefreshIntervalFlag := flag.Duration("isis-refresh-interval", 30*time.Second, "Refresh interval for IS-IS sync (or set ISIS_REFRESH_INTERVAL env var)")
 
+	// Mroute (state-collect) configuration
+	mrouteEnabledFlag := flag.Bool("mroute-enabled", false, "Enable mroute state-collect sync from S3 (or set MROUTE_ENABLED env var)")
+	mrouteS3BucketFlag := flag.String("mroute-s3-bucket", "", "S3 bucket the state-ingest server writes to (or set MROUTE_S3_BUCKET env var)")
+	mrouteS3RegionFlag := flag.String("mroute-s3-region", "us-east-1", "AWS region for mroute S3 bucket (or set MROUTE_S3_REGION env var)")
+	mrouteS3KeyPrefixFlag := flag.String("mroute-s3-key-prefix", "", "Optional key prefix matching state-ingest BucketPathPrefix (or set MROUTE_S3_KEY_PREFIX env var)")
+
+	// MSDP (state-collect) configuration
+	msdpEnabledFlag := flag.Bool("msdp-enabled", false, "Enable MSDP state-collect sync from S3 (or set MSDP_ENABLED env var)")
+	msdpS3BucketFlag := flag.String("msdp-s3-bucket", "", "S3 bucket the state-ingest server writes to (or set MSDP_S3_BUCKET env var)")
+	msdpS3RegionFlag := flag.String("msdp-s3-region", "us-east-1", "AWS region for MSDP S3 bucket (or set MSDP_S3_REGION env var)")
+	msdpS3KeyPrefixFlag := flag.String("msdp-s3-key-prefix", "", "Optional key prefix matching state-ingest BucketPathPrefix (or set MSDP_S3_KEY_PREFIX env var)")
+
 	// validators.app configuration
 	validatorsAppAPIKeyFlag := flag.String("validatorsapp-api-key", "", "validators.app API key (or set VALIDATORSAPP_API_KEY env var)")
 	validatorsAppRefreshIntervalFlag := flag.Duration("validatorsapp-refresh-interval", 5*time.Minute, "validators.app refresh interval (or set VALIDATORSAPP_REFRESH_INTERVAL env var)")
@@ -194,6 +206,34 @@ func run() error {
 		}
 	}
 
+	// Override mroute flags with environment variables if set
+	if envMrouteEnabled := os.Getenv("MROUTE_ENABLED"); envMrouteEnabled != "" {
+		*mrouteEnabledFlag = envMrouteEnabled == "true"
+	}
+	if envMrouteBucket := os.Getenv("MROUTE_S3_BUCKET"); envMrouteBucket != "" {
+		*mrouteS3BucketFlag = envMrouteBucket
+	}
+	if envMrouteRegion := os.Getenv("MROUTE_S3_REGION"); envMrouteRegion != "" {
+		*mrouteS3RegionFlag = envMrouteRegion
+	}
+	if envMroutePrefix := os.Getenv("MROUTE_S3_KEY_PREFIX"); envMroutePrefix != "" {
+		*mrouteS3KeyPrefixFlag = envMroutePrefix
+	}
+
+	// Override MSDP flags with environment variables if set
+	if envMSDPEnabled := os.Getenv("MSDP_ENABLED"); envMSDPEnabled != "" {
+		*msdpEnabledFlag = envMSDPEnabled == "true"
+	}
+	if envMSDPBucket := os.Getenv("MSDP_S3_BUCKET"); envMSDPBucket != "" {
+		*msdpS3BucketFlag = envMSDPBucket
+	}
+	if envMSDPRegion := os.Getenv("MSDP_S3_REGION"); envMSDPRegion != "" {
+		*msdpS3RegionFlag = envMSDPRegion
+	}
+	if envMSDPPrefix := os.Getenv("MSDP_S3_KEY_PREFIX"); envMSDPPrefix != "" {
+		*msdpS3KeyPrefixFlag = envMSDPPrefix
+	}
+
 	// Override validators.app flags with environment variables
 	if envKey := os.Getenv("VALIDATORSAPP_API_KEY"); envKey != "" {
 		*validatorsAppAPIKeyFlag = envKey
@@ -268,7 +308,7 @@ func run() error {
 			log.Info("starting pprof server", "address", "localhost:6060")
 			err := http.ListenAndServe("localhost:6060", nil)
 			if err != nil {
-				log.Error("failed to start pprof server", "error", err)
+				log.Warn("failed to start pprof server", "error", err)
 			}
 		}()
 	}
@@ -279,14 +319,14 @@ func run() error {
 		go func() {
 			listener, err := net.Listen("tcp", *metricsAddrFlag)
 			if err != nil {
-				log.Error("failed to start prometheus metrics server listener", "error", err)
+				log.Warn("failed to start prometheus metrics server listener", "error", err)
 				metricsServerErrCh <- err
 				return
 			}
 			log.Info("prometheus metrics server listening", "address", listener.Addr().String())
 			http.Handle("/metrics", promhttp.Handler())
 			if err := http.Serve(listener, nil); err != nil {
-				log.Error("failed to start prometheus metrics server", "error", err)
+				log.Warn("failed to start prometheus metrics server", "error", err)
 				metricsServerErrCh <- err
 				return
 			}
@@ -298,6 +338,12 @@ func run() error {
 	serviceabilityClient := serviceability.New(dzRPCClient, networkConfig.ServiceabilityProgramID)
 	telemetryClient := telemetry.New(log, dzRPCClient, nil, networkConfig.TelemetryProgramID)
 	geolocationClient := geolocsdk.New(log, dzRPCClient, networkConfig.GeolocationProgramID)
+
+	// Raw Solana RPC on the DZ ledger for the permission-events audit indexer, which
+	// reads serviceability transaction history (getSignaturesForAddress + getTransaction).
+	// Retrying client so a transient RPC error on getTransaction doesn't drop a
+	// permission event from the audit trail (the refresh fails and retries instead).
+	permissionEventsRawRPC := rpc.NewWithRetries(networkConfig.LedgerPublicRPCURL, nil)
 
 	// Shreds subscription client (mainnet-beta and testnet only, not devnet).
 	// Mainnet uses Solana proper RPC; testnet uses the DZ ledger RPC.
@@ -378,7 +424,7 @@ func run() error {
 	}
 	defer func() {
 		if err := clickhouseDB.Close(); err != nil {
-			log.Error("failed to close ClickHouse database", "error", err)
+			log.Warn("failed to close ClickHouse database", "error", err)
 		}
 	}()
 	log.Info("clickhouse client initialized", "addr", *clickhouseAddrFlag, "database", *clickhouseDatabaseFlag)
@@ -429,7 +475,7 @@ func run() error {
 		}
 		defer func() {
 			if err := geoIPCloseFn(); err != nil {
-				log.Error("failed to close GeoIP resolver", "error", err)
+				log.Warn("failed to close GeoIP resolver", "error", err)
 			}
 		}()
 	}
@@ -530,7 +576,9 @@ func run() error {
 		GeoIPResolver: geoIPResolver,
 
 		// Serviceability configuration
-		ServiceabilityRPC: serviceabilityClient,
+		ServiceabilityRPC:       serviceabilityClient,
+		ServiceabilityProgramID: networkConfig.ServiceabilityProgramID,
+		PermissionEventsRPC:     permissionEventsRawRPC,
 
 		// Geolocation configuration
 		GeolocationRPC: geolocationClient,
@@ -566,6 +614,18 @@ func run() error {
 		ISISS3Region:        *isisS3RegionFlag,
 		ISISRefreshInterval: *isisRefreshIntervalFlag,
 
+		// Mroute (state-collect) configuration
+		MrouteEnabled:     *mrouteEnabledFlag,
+		MrouteS3Bucket:    *mrouteS3BucketFlag,
+		MrouteS3Region:    *mrouteS3RegionFlag,
+		MrouteS3KeyPrefix: *mrouteS3KeyPrefixFlag,
+
+		// MSDP (state-collect) configuration
+		MSDPEnabled:     *msdpEnabledFlag,
+		MSDPS3Bucket:    *msdpS3BucketFlag,
+		MSDPS3Region:    *msdpS3RegionFlag,
+		MSDPS3KeyPrefix: *msdpS3KeyPrefixFlag,
+
 		// validators.app configuration
 		ValidatorsAppClient:          validatorsAppClient,
 		ValidatorsAppRefreshInterval: *validatorsAppRefreshIntervalFlag,
@@ -585,7 +645,7 @@ func run() error {
 	}
 	defer func() {
 		if err := idx.Close(); err != nil {
-			log.Error("failed to close indexer", "error", err)
+			log.Warn("failed to close indexer", "error", err)
 		}
 	}()
 
@@ -620,18 +680,23 @@ func run() error {
 		dzIngestErrCh = make(chan error, 1)
 		go func() {
 			err := dzingest.Start(ctx, dzingest.Config{
-				Log:            log.With("component", "dz-ingest"),
-				IngestionLog:   ingestionLogWriter,
-				Network:        *dzEnvFlag,
-				Serviceability: idx.Serviceability(),
-				Geolocation:    idx.Geolocation(),
-				Shreds:         idx.Shreds(),
-				EscrowEvents:   idx.EscrowEvents(),
-				TelemLatency:   idx.TelemLatency(),
-				TelemUsage:     idx.TelemUsage(),
-				GraphStore:     idx.GraphStore(),
-				ISISSource:     idx.ISISSource(),
-				ISISStore:      idx.ISISStore(),
+				Log:              log.With("component", "dz-ingest"),
+				IngestionLog:     ingestionLogWriter,
+				Network:          *dzEnvFlag,
+				Serviceability:   idx.Serviceability(),
+				Geolocation:      idx.Geolocation(),
+				Shreds:           idx.Shreds(),
+				EscrowEvents:     idx.EscrowEvents(),
+				PermissionEvents: idx.PermissionEvents(),
+				TelemLatency:     idx.TelemLatency(),
+				TelemUsage:       idx.TelemUsage(),
+				GraphStore:       idx.GraphStore(),
+				ISISSource:       idx.ISISSource(),
+				ISISStore:        idx.ISISStore(),
+				MrouteSource:     idx.MrouteSource(),
+				MrouteStore:      idx.MrouteStore(),
+				MSDPSource:       idx.MSDPSource(),
+				MSDPStore:        idx.MSDPStore(),
 			})
 			if err != nil {
 				dzIngestErrCh <- err
@@ -670,7 +735,10 @@ func run() error {
 	type secondaryEnvConfig struct {
 		database       string
 		dzLedgerRPCURL string
+		solanaRPCURL   string // overrides shred-subscription RPC; empty = read shreds from DZ ledger
 		noInflux       bool
+		mrouteS3Bucket string // empty = mroute ingest disabled for this env
+		msdpS3Bucket   string // empty = MSDP ingest disabled for this env
 	}
 	secondaryEnvs := map[string]secondaryEnvConfig{
 		"devnet":  {database: "lake_devnet"},
@@ -696,6 +764,17 @@ func run() error {
 		cfg.dzLedgerRPCURL = rpcURL
 		secondaryEnvs["testnet"] = cfg
 	}
+	if rpcURL := os.Getenv("SOLANA_RPC_URL_TESTNET"); rpcURL != "" {
+		cfg := secondaryEnvs["testnet"]
+		cfg.solanaRPCURL = rpcURL
+		secondaryEnvs["testnet"] = cfg
+	}
+	// Uncomment for devnet shred oracle instance.
+	// if rpcURL := os.Getenv("SOLANA_RPC_URL_DEVNET"); rpcURL != "" {
+	// 	cfg := secondaryEnvs["devnet"]
+	// 	cfg.solanaRPCURL = rpcURL
+	// 	secondaryEnvs["devnet"] = cfg
+	// }
 	if *noInfluxDevnetFlag {
 		cfg := secondaryEnvs["devnet"]
 		cfg.noInflux = true
@@ -704,6 +783,30 @@ func run() error {
 	if *noInfluxTestnetFlag {
 		cfg := secondaryEnvs["testnet"]
 		cfg.noInflux = true
+		secondaryEnvs["testnet"] = cfg
+	}
+	// Mroute / MSDP ingest are per-env; setting the env-specific bucket
+	// enables the relevant ingest for that secondary network. Region and
+	// key-prefix reuse the global --{mroute,msdp}-s3-{region,key-prefix}
+	// flags.
+	if b := os.Getenv("MROUTE_S3_BUCKET_DEVNET"); b != "" {
+		cfg := secondaryEnvs["devnet"]
+		cfg.mrouteS3Bucket = b
+		secondaryEnvs["devnet"] = cfg
+	}
+	if b := os.Getenv("MROUTE_S3_BUCKET_TESTNET"); b != "" {
+		cfg := secondaryEnvs["testnet"]
+		cfg.mrouteS3Bucket = b
+		secondaryEnvs["testnet"] = cfg
+	}
+	if b := os.Getenv("MSDP_S3_BUCKET_DEVNET"); b != "" {
+		cfg := secondaryEnvs["devnet"]
+		cfg.msdpS3Bucket = b
+		secondaryEnvs["devnet"] = cfg
+	}
+	if b := os.Getenv("MSDP_S3_BUCKET_TESTNET"); b != "" {
+		cfg := secondaryEnvs["testnet"]
+		cfg.msdpS3Bucket = b
 		secondaryEnvs["testnet"] = cfg
 	}
 	if *noDevnetFlag {
@@ -729,6 +832,7 @@ func run() error {
 				clickhouseAddr:             *clickhouseAddrFlag,
 				clickhouseDatabase:         envCfg.database,
 				dzLedgerRPCURL:             envCfg.dzLedgerRPCURL,
+				solanaRPCURL:               envCfg.solanaRPCURL,
 				clickhouseUsername:         *clickhouseUsernameFlag,
 				clickhousePassword:         *clickhousePasswordFlag,
 				clickhouseSecure:           *clickhouseSecureFlag,
@@ -739,6 +843,12 @@ func run() error {
 				skipReadyWait:              *skipReadyWaitFlag,
 				isisS3Bucket:               "doublezero-" + env + "-isis-db",
 				isisS3Region:               *isisS3RegionFlag,
+				mrouteS3Bucket:             envCfg.mrouteS3Bucket,
+				mrouteS3Region:             *mrouteS3RegionFlag,
+				mrouteS3KeyPrefix:          *mrouteS3KeyPrefixFlag,
+				msdpS3Bucket:               envCfg.msdpS3Bucket,
+				msdpS3Region:               *msdpS3RegionFlag,
+				msdpS3KeyPrefix:            *msdpS3KeyPrefixFlag,
 				influxURL:                  secondaryInfluxURL,
 				influxToken:                secondaryInfluxToken,
 				influxOrg:                  influxOrg,
@@ -812,9 +922,26 @@ type secondaryNetworkConfig struct {
 	// DZ ledger RPC URL override (optional).
 	dzLedgerRPCURL string
 
+	// Solana RPC URL for shred-subscription reads (optional). When set, the
+	// secondary network indexer reads shred-subscription state from this
+	// endpoint instead of the DZ ledger.
+	solanaRPCURL string
+
 	// ISIS configuration (optional).
 	isisS3Bucket string
 	isisS3Region string
+
+	// Mroute (state-collect) configuration (optional, per-env).
+	// mrouteS3Bucket="" means mroute ingest is disabled for this network.
+	mrouteS3Bucket    string
+	mrouteS3Region    string
+	mrouteS3KeyPrefix string
+
+	// MSDP (state-collect) configuration (optional, per-env).
+	// msdpS3Bucket="" means MSDP ingest is disabled for this network.
+	msdpS3Bucket    string
+	msdpS3Region    string
+	msdpS3KeyPrefix string
 
 	// InfluxDB configuration (optional).
 	influxURL                  string
@@ -877,13 +1004,22 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 	telemetryClient := telemetry.New(log, dzRPCClient, nil, networkConfig.TelemetryProgramID)
 	geolocationClient := geolocsdk.New(log, dzRPCClient, networkConfig.GeolocationProgramID)
 
+	// Raw Solana RPC on the DZ ledger for the permission-events audit indexer.
+	// Retrying client so a transient RPC error on getTransaction doesn't drop a
+	// permission event from the audit trail (the refresh fails and retries instead).
+	permissionEventsRawRPC := rpc.NewWithRetries(networkConfig.LedgerPublicRPCURL, nil)
+
 	// Shreds subscription client (testnet only, not devnet).
 	var shredsClient *shreds.Client
 	var secondaryShredsRawRPC *solanarpc.Client
 	if env != config.EnvDevnet {
-		secondaryShredsRawRPC = shreds.NewRPCClient(networkConfig.LedgerPublicRPCURL)
+		shredsRPCURL := networkConfig.LedgerPublicRPCURL
+		if cfg.solanaRPCURL != "" {
+			shredsRPCURL = cfg.solanaRPCURL
+		}
+		secondaryShredsRawRPC = shreds.NewRPCClient(shredsRPCURL)
 		shredsClient = shreds.New(secondaryShredsRawRPC, shreds.ProgramID)
-		log.Info("shreds subscription client initialized", "env", env)
+		log.Info("shreds subscription client initialized", "env", env, "rpc_url", shredsRPCURL)
 	}
 
 	// Initialize InfluxDB client for device usage (optional).
@@ -910,15 +1046,17 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 			Password: cfg.clickhousePassword,
 			Secure:   cfg.clickhouseSecure,
 		},
-		RefreshInterval:        cfg.refreshInterval,
-		MaxConcurrency:         cfg.maxConcurrency,
-		ServiceabilityRPC:      serviceabilityClient,
-		GeolocationRPC:         geolocationClient,
-		TelemetryRPC:           telemetryClient,
-		DZEpochRPC:             dzRPCClient,
-		InternetLatencyAgentPK: networkConfig.InternetLatencyCollectorPK,
-		InternetDataProviders:  telemetryconfig.InternetTelemetryDataProviders,
-		SkipReadyWait:          cfg.skipReadyWait,
+		RefreshInterval:         cfg.refreshInterval,
+		MaxConcurrency:          cfg.maxConcurrency,
+		ServiceabilityRPC:       serviceabilityClient,
+		ServiceabilityProgramID: networkConfig.ServiceabilityProgramID,
+		PermissionEventsRPC:     permissionEventsRawRPC,
+		GeolocationRPC:          geolocationClient,
+		TelemetryRPC:            telemetryClient,
+		DZEpochRPC:              dzRPCClient,
+		InternetLatencyAgentPK:  networkConfig.InternetLatencyCollectorPK,
+		InternetDataProviders:   telemetryconfig.InternetTelemetryDataProviders,
+		SkipReadyWait:           cfg.skipReadyWait,
 
 		// Device usage configuration.
 		DeviceUsageInfluxClient:      influxDBClient,
@@ -930,6 +1068,20 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 		ISISEnabled:  cfg.isisS3Bucket != "",
 		ISISS3Bucket: cfg.isisS3Bucket,
 		ISISS3Region: cfg.isisS3Region,
+
+		// Mroute (state-collect) configuration. Enabled iff a per-env
+		// bucket was provided via MROUTE_S3_BUCKET_<ENV>.
+		MrouteEnabled:     cfg.mrouteS3Bucket != "",
+		MrouteS3Bucket:    cfg.mrouteS3Bucket,
+		MrouteS3Region:    cfg.mrouteS3Region,
+		MrouteS3KeyPrefix: cfg.mrouteS3KeyPrefix,
+
+		// MSDP (state-collect) configuration. Enabled iff a per-env
+		// bucket was provided via MSDP_S3_BUCKET_<ENV>.
+		MSDPEnabled:     cfg.msdpS3Bucket != "",
+		MSDPS3Bucket:    cfg.msdpS3Bucket,
+		MSDPS3Region:    cfg.msdpS3Region,
+		MSDPS3KeyPrefix: cfg.msdpS3KeyPrefix,
 	}
 	if shredsClient != nil {
 		secondaryIdxCfg.ShredsRPC = shredsClient
@@ -959,18 +1111,23 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 
 	// Start DZ ingest worker (blocks until ctx cancelled or error).
 	dzErr := dzingest.Start(ctx, dzingest.Config{
-		Log:            log.With("component", "dz-ingest"),
-		IngestionLog:   secondaryIngestionLog,
-		Network:        env,
-		Serviceability: idx.Serviceability(),
-		Geolocation:    idx.Geolocation(),
-		Shreds:         idx.Shreds(),
-		EscrowEvents:   idx.EscrowEvents(),
-		TelemLatency:   idx.TelemLatency(),
-		TelemUsage:     idx.TelemUsage(),
-		GraphStore:     idx.GraphStore(),
-		ISISSource:     idx.ISISSource(),
-		ISISStore:      idx.ISISStore(),
+		Log:              log.With("component", "dz-ingest"),
+		IngestionLog:     secondaryIngestionLog,
+		Network:          env,
+		Serviceability:   idx.Serviceability(),
+		Geolocation:      idx.Geolocation(),
+		Shreds:           idx.Shreds(),
+		EscrowEvents:     idx.EscrowEvents(),
+		PermissionEvents: idx.PermissionEvents(),
+		TelemLatency:     idx.TelemLatency(),
+		TelemUsage:       idx.TelemUsage(),
+		GraphStore:       idx.GraphStore(),
+		ISISSource:       idx.ISISSource(),
+		ISISStore:        idx.ISISStore(),
+		MrouteSource:     idx.MrouteSource(),
+		MrouteStore:      idx.MrouteStore(),
+		MSDPSource:       idx.MSDPSource(),
+		MSDPStore:        idx.MSDPStore(),
 	})
 
 	select {

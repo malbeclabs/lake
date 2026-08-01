@@ -117,4 +117,7 @@ type BackfillChunkInput struct {
 	WindowStart    time.Time
 	WindowEnd      time.Time
 	SourceDatabase string // if set, read from this database (e.g. remote proxy tables)
+	// TelemetryDatabase is the database holding the gNMI interface_state table
+	// (e.g. telemetry_mainnet_beta). Used by ComputeDeviceInterfaceRollupFromGNMI.
+	TelemetryDatabase string
 }

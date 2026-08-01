@@ -16,6 +16,12 @@ const (
 	EnvTestnet DZEnv = "testnet"
 )
 
+// ControllerCallsDatabaseForEnv returns the ClickHouse database used by the
+// controller service for GetConfig call history.
+func ControllerCallsDatabaseForEnv(env DZEnv) string {
+	return string(env)
+}
+
 // TelemetryDatabaseForEnv returns the ClickHouse database that mirrors the
 // dz/telemetry tables for the given environment (e.g. "mainnet-beta" →
 // "telemetry_mainnet_beta"). These databases are created by the admin
@@ -84,11 +90,18 @@ func (a *API) RequireNeo4jMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// EnvMiddleware extracts the X-DZ-Env header and stores the environment in the
-// request context. Defaults to mainnet-beta if not provided or invalid.
+// EnvMiddleware extracts the request's target environment and stores it in
+// the context. The canonical channel is the `X-DZ-Env` header; when no valid
+// header is present we fall back to the `env` query parameter so URLs pasted
+// into a browser (or the Scalar API docs page) can target a non-default env
+// without needing custom header support. Defaults to mainnet-beta when
+// neither carries a recognized value.
 func EnvMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		env := DZEnv(r.Header.Get("X-DZ-Env"))
+		if !ValidEnvs[env] {
+			env = DZEnv(r.URL.Query().Get("env"))
+		}
 		if !ValidEnvs[env] {
 			env = EnvMainnet
 		}

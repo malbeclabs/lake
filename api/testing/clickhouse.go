@@ -252,6 +252,21 @@ func SetupClickHouseForTest(t *testing.T, db *ClickHouseDB) (driver.Conn, string
 	return testConn, databaseName
 }
 
+// skipTemplateTable reports whether a system.tables row in the template
+// database should be excluded when cloning its schema.
+//
+// Dot-prefixed names are ClickHouse internals, never part of the migrated
+// schema. A materialized view's own CREATE recreates its ".inner_id.<uuid>"
+// storage table, so cloning that row is at best redundant. It is also unsafe:
+// dz_device_interface_ips is a REFRESHABLE materialized view, so the template
+// database — which outlives every test — rebuilds it into a transient
+// ".tmp.inner_id.<uuid>" table once a minute and swaps it in. A clone whose
+// system.tables read lands inside that window sees the transient row with an
+// empty create_table_query and fails with "code: 62, Empty query".
+func skipTemplateTable(name string) bool {
+	return name == "goose_db_version" || strings.HasPrefix(name, ".")
+}
+
 // SetupClickHouseWithMigrationsForTest creates a per-test ClickHouse database
 // with full schema migrations and returns the direct connection and database name.
 func SetupClickHouseWithMigrationsForTest(t *testing.T, db *ClickHouseDB) (driver.Conn, string) {
@@ -274,18 +289,48 @@ func SetupClickHouseWithMigrationsForTest(t *testing.T, db *ClickHouseDB) (drive
 	require.NoError(t, err, "failed to list template tables")
 	defer rows.Close()
 
+	// Collect all clone queries first, then apply with dependency-aware retries.
+	// system.tables returns rows in arbitrary order; plain VIEWs are created
+	// lazily so order doesn't matter for them, but MATERIALIZED VIEWs eagerly
+	// validate their AS SELECT against the source table at CREATE time. A
+	// repeat-until-no-progress loop resolves dependency ordering without
+	// having to parse SQL.
+	type pending struct{ name, query string }
+	var queries []pending
 	for rows.Next() {
 		var name, engineFull, createQuery string
 		require.NoError(t, rows.Scan(&name, &engineFull, &createQuery))
-		if name == "goose_db_version" {
+		if skipTemplateTable(name) {
 			continue
 		}
 		cloneQuery := strings.Replace(createQuery, fmt.Sprintf("%s.", templateDB), fmt.Sprintf("%s.", databaseName), -1)
 		cloneQuery = strings.Replace(cloneQuery, fmt.Sprintf("CREATE TABLE %s", templateDB), fmt.Sprintf("CREATE TABLE %s", databaseName), 1)
 		cloneQuery = strings.Replace(cloneQuery, fmt.Sprintf("CREATE VIEW %s", templateDB), fmt.Sprintf("CREATE VIEW %s", databaseName), 1)
 		cloneQuery = strings.Replace(cloneQuery, fmt.Sprintf("CREATE MATERIALIZED VIEW %s", templateDB), fmt.Sprintf("CREATE MATERIALIZED VIEW %s", databaseName), 1)
-		err := adminConn.Exec(ctx, cloneQuery)
-		require.NoError(t, err, "failed to clone table %s: query=%s", name, cloneQuery)
+		queries = append(queries, pending{name: name, query: cloneQuery})
+	}
+	for {
+		var deferred []pending
+		var lastErrs map[string]error
+		for _, p := range queries {
+			if err := adminConn.Exec(ctx, p.query); err != nil {
+				if lastErrs == nil {
+					lastErrs = map[string]error{}
+				}
+				lastErrs[p.name] = err
+				deferred = append(deferred, p)
+			}
+		}
+		if len(deferred) == 0 {
+			break
+		}
+		// No progress made — remaining failures are real, not ordering. Report.
+		if len(deferred) == len(queries) {
+			for name, err := range lastErrs {
+				require.NoError(t, err, "failed to clone table %s", name)
+			}
+		}
+		queries = deferred
 	}
 
 	testConn, err := createClickHouseConn(ctx, db.addr, databaseName, db.cfg.Username, db.cfg.Password)

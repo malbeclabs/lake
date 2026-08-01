@@ -10,7 +10,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 var opsMgmtBaseURL = "https://doublezero.xyz/api/network_incidents/v1"
@@ -49,12 +52,15 @@ type OpsTicket struct {
 	AffectedLinks       []OpsTicketEntity `json:"affected_links,omitempty"`
 	AffectedDevices     []OpsTicketEntity `json:"affected_devices,omitempty"`
 	ReporterName        string            `json:"reporter_name"`
-	ReporterEmail       string            `json:"reporter_email"`
+	ReporterEmail       string            `json:"reporter_email,omitempty"`
+	ContributorName     *string           `json:"contributor_name,omitempty"`
 	StartAt             *string           `json:"start_at,omitempty"`
 	EndAt               *string           `json:"end_at,omitempty"`
 	SlackMessageURL     *string           `json:"slack_message_url,omitempty"`
 	CreatedAt           string            `json:"created_at"`
 	UpdatedAt           string            `json:"updated_at"`
+	MetroCodes          []string          `json:"metro_codes,omitempty"`
+	EnrichedDeviceCodes []string          `json:"enriched_device_codes,omitempty"`
 }
 
 // OpsTicketsListResponse wraps a paginated list of tickets.
@@ -149,20 +155,29 @@ func (c *opsClient) post(ctx context.Context, path string, payload any) ([]byte,
 }
 
 // GetOpsTickets proxies GET /api/ops-tickets
-// Query param: status=active (default) or any single status value.
-// The upstream API understands "active" and "not_active" as presets.
+// Query params: status (default "active"), type (optional), limit (optional).
+// The upstream API understands "active" and "not_active" as status presets.
 // No auth required.
 func (a *API) GetOpsTickets(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	client := newOpsClient()
 
-	// Pass status param directly to the upstream API; default to "active".
-	status := r.URL.Query().Get("status")
+	q := r.URL.Query()
+	status := q.Get("status")
 	if status == "" {
 		status = "active"
 	}
 
-	body, err := client.get(ctx, "/tickets?status="+url.QueryEscape(status))
+	upstream := url.Values{}
+	upstream.Set("status", status)
+	if t := q.Get("type"); t != "" {
+		upstream.Set("type", t)
+	}
+	if lim := q.Get("limit"); lim != "" {
+		upstream.Set("limit", lim)
+	}
+
+	body, err := client.get(ctx, "/tickets?"+upstream.Encode())
 	if err != nil {
 		http.Error(w, "failed to fetch ops tickets", http.StatusBadGateway)
 		return
@@ -170,6 +185,234 @@ func (a *API) GetOpsTickets(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(body)
+}
+
+// GetMaintenanceCalendar serves GET /api/ops-tickets/maintenance.
+// Public endpoint — returns only maintenance tickets with reporter_email stripped
+// and metro_codes enriched from ClickHouse.
+func (a *API) GetMaintenanceCalendar(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	client := newOpsClient()
+
+	status := r.URL.Query().Get("status")
+	if status == "" {
+		status = "active"
+	}
+
+	tickets, err := fetchAllMaintenanceTickets(ctx, client, status)
+	if err != nil {
+		http.Error(w, "failed to fetch maintenance calendar", http.StatusBadGateway)
+		return
+	}
+
+	if a.DB != nil {
+		tickets = enrichTicketsWithMetros(ctx, a.DB, tickets)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"data": OpsTicketsListResponse{Tickets: tickets, Total: len(tickets)},
+	})
+}
+
+// fetchAllMaintenanceTickets fetches all maintenance tickets for the given status,
+// paginating through the upstream API using offset until all pages are collected.
+func fetchAllMaintenanceTickets(ctx context.Context, client *opsClient, status string) ([]OpsTicket, error) {
+	const (
+		maxPages = 50
+		pageSize = 50
+	)
+	seen := make(map[string]struct{})
+	var all []OpsTicket
+
+	for page := 0; page < maxPages; page++ {
+		offset := page * pageSize
+		// limit= is sent explicitly so the offset step always matches the server page size.
+		path := fmt.Sprintf("/tickets?status=%s&type=maintenance&limit=%d&offset=%d",
+			url.QueryEscape(status), pageSize, offset)
+		body, err := client.get(ctx, path)
+		if err != nil {
+			return nil, err
+		}
+
+		tickets, gotSize, upstreamTotal, err := parseMaintenanceTickets(body)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, t := range tickets {
+			// Skip tickets with empty IDs (upstream data quality issue).
+			if t.ID == "" {
+				continue
+			}
+			if _, dup := seen[t.ID]; !dup {
+				seen[t.ID] = struct{}{}
+				all = append(all, t)
+			}
+		}
+		log.Printf("maintenance calendar: status=%s offset=%d upstream_total=%d page_size=%d collected=%d",
+			status, offset, upstreamTotal, gotSize, len(all))
+
+		// Stop when the page was empty or we've received all upstream items.
+		// upstreamTotal=0 with gotSize=0 also exits via the first guard.
+		if gotSize == 0 || offset+gotSize >= upstreamTotal {
+			break
+		}
+	}
+
+	return all, nil
+}
+
+// parseMaintenanceTickets extracts maintenance tickets from the upstream response
+// envelope { "data": { "tickets": [...], "total": N } }, stripping reporter_email.
+// Returns the filtered tickets, count of all upstream tickets in the page, and the upstream total.
+func parseMaintenanceTickets(body []byte) (tickets []OpsTicket, pageSize int, upstreamTotal int, err error) {
+	var envelope struct {
+		Data struct {
+			Tickets []OpsTicket `json:"tickets"`
+			Total   int         `json:"total"`
+		} `json:"data"`
+	}
+	if err = json.Unmarshal(body, &envelope); err != nil {
+		return
+	}
+	pageSize = len(envelope.Data.Tickets)
+	upstreamTotal = envelope.Data.Total
+	tickets = make([]OpsTicket, 0)
+	for _, t := range envelope.Data.Tickets {
+		if t.Type != OpsTicketTypeMaintenance {
+			continue
+		}
+		t.ReporterEmail = ""
+		tickets = append(tickets, t)
+	}
+	return
+}
+
+// enrichTicketsWithMetros queries ClickHouse to resolve actual metro codes for the
+// link and device pubkeys referenced by each ticket, populating MetroCodes.
+func enrichTicketsWithMetros(ctx context.Context, db driver.Conn, tickets []OpsTicket) []OpsTicket {
+	linkPKSet := make(map[string]struct{})
+	devicePKSet := make(map[string]struct{})
+	for _, t := range tickets {
+		for _, pk := range t.AffectedLinkPubkeys {
+			if pk != "" {
+				linkPKSet[pk] = struct{}{}
+			}
+		}
+		for _, pk := range t.DevicePubkeys {
+			if pk != "" {
+				devicePKSet[pk] = struct{}{}
+			}
+		}
+	}
+
+	linkMetros := make(map[string][]string)
+	linkDevices := make(map[string][]string) // link pk → side device codes
+	deviceMetros := make(map[string][]string)
+
+	if len(devicePKSet) > 0 {
+		pks := make([]string, 0, len(devicePKSet))
+		for pk := range devicePKSet {
+			pks = append(pks, pk)
+		}
+		devRows, err := db.Query(ctx, `
+			SELECT d.pk, m.code
+			FROM dz_devices_current d
+			LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
+			WHERE d.pk IN ($1) AND m.code != ''`, pks)
+		if err == nil {
+			for devRows.Next() {
+				var pk, code string
+				if devRows.Scan(&pk, &code) == nil {
+					deviceMetros[pk] = append(deviceMetros[pk], code)
+				}
+			}
+			if err := devRows.Err(); err != nil {
+				log.Printf("enrichTicketsWithMetros: device rows error: %v", err)
+			}
+			devRows.Close()
+		}
+	}
+
+	if len(linkPKSet) > 0 {
+		pks := make([]string, 0, len(linkPKSet))
+		for pk := range linkPKSet {
+			pks = append(pks, pk)
+		}
+		linkRows, err := db.Query(ctx, `
+			SELECT l.pk, COALESCE(ma.code, ''), COALESCE(mz.code, ''), COALESCE(da.code, ''), COALESCE(dz.code, '')
+			FROM dz_links_current l
+			LEFT JOIN dz_devices_current da ON l.side_a_pk = da.pk
+			LEFT JOIN dz_metros_current ma ON da.metro_pk = ma.pk
+			LEFT JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
+			LEFT JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
+			WHERE l.pk IN ($1)`, pks)
+		if err == nil {
+			for linkRows.Next() {
+				var pk, aMetro, zMetro, aDevice, zDevice string
+				if linkRows.Scan(&pk, &aMetro, &zMetro, &aDevice, &zDevice) == nil {
+					if aMetro != "" {
+						linkMetros[pk] = append(linkMetros[pk], aMetro)
+					}
+					if zMetro != "" {
+						linkMetros[pk] = append(linkMetros[pk], zMetro)
+					}
+					if aDevice != "" {
+						linkDevices[pk] = append(linkDevices[pk], aDevice)
+					}
+					if zDevice != "" {
+						linkDevices[pk] = append(linkDevices[pk], zDevice)
+					}
+				}
+			}
+			if err := linkRows.Err(); err != nil {
+				log.Printf("enrichTicketsWithMetros: link rows error: %v", err)
+			}
+			linkRows.Close()
+		}
+	}
+
+	for i := range tickets {
+		metroSeen := make(map[string]bool)
+		var metros []string
+		devSeen := make(map[string]bool)
+		var enrichedDevices []string
+
+		// Seed devSeen with explicitly listed device codes so we don't duplicate them.
+		for _, d := range tickets[i].AffectedDevices {
+			devSeen[d.Code] = true
+		}
+
+		for _, pk := range tickets[i].AffectedLinkPubkeys {
+			for _, code := range linkMetros[pk] {
+				if !metroSeen[code] {
+					metroSeen[code] = true
+					metros = append(metros, code)
+				}
+			}
+			for _, code := range linkDevices[pk] {
+				if !devSeen[code] {
+					devSeen[code] = true
+					enrichedDevices = append(enrichedDevices, code)
+				}
+			}
+		}
+		for _, pk := range tickets[i].DevicePubkeys {
+			for _, code := range deviceMetros[pk] {
+				if !metroSeen[code] {
+					metroSeen[code] = true
+					metros = append(metros, code)
+				}
+			}
+		}
+		sort.Strings(metros)
+		sort.Strings(enrichedDevices)
+		tickets[i].MetroCodes = metros
+		tickets[i].EnrichedDeviceCodes = enrichedDevices
+	}
+
+	return tickets
 }
 
 // CreateOpsTicket proxies POST /api/ops-tickets.

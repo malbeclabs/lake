@@ -115,22 +115,26 @@ func insertEdgeScoreboardTestData(t *testing.T, api *handlers.API) {
 	require.NoError(t, err)
 
 	// Insert win-count rows (loser_feed = '') — per-feed summary for each slot
-	// slot1: all 3 feeds (dz, turbine, jito) for both nodes — DZ wins most shreds (DZ-leader slot)
+	// slot1: DZ family (dz leader + edge-solana-root) + turbine + jito for both nodes — the
+	//   per-host wins sum to 100 (the shared denominator), so rates stay clean: edge-solana-root
+	//   rolls up to dz_root and dz_edge = dz + dz_root + dz_retransmit.
 	// slot2: only turbine + jito (no DZ) — tests completeness calculation
 	err = api.DB.Exec(ctx, fmt.Sprintf(`
 		INSERT INTO %s.slot_feed_race_summary_v2
 			(event_ts, host, feed_type, epoch, slot, feed, loser_feed, total_shreds, shreds_won)
 		VALUES
-			(now(), 'slc-qa-bm1', 'shred', %[2]d, %[3]d, 'dz',      '', 100, 80),
-			(now(), 'slc-qa-bm1', 'shred', %[2]d, %[3]d, 'turbine',  '', 100, 15),
-			(now(), 'slc-qa-bm1', 'shred', %[2]d, %[3]d, 'jito',     '', 100,  5),
-			(now(), 'slc-qa-bm1', 'shred', %[2]d, %[4]d, 'turbine',  '', 100, 60),
-			(now(), 'slc-qa-bm1', 'shred', %[2]d, %[4]d, 'jito',     '', 100, 40),
-			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[3]d, 'dz',       '', 100, 70),
-			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[3]d, 'turbine',  '', 100, 20),
-			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[3]d, 'jito',     '', 100, 10),
-			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[4]d, 'turbine',  '', 100, 55),
-			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[4]d, 'jito',     '', 100, 45)
+			(now(), 'slc-qa-bm1', 'shred', %[2]d, %[3]d, 'dz',               '', 100, 70),
+			(now(), 'slc-qa-bm1', 'shred', %[2]d, %[3]d, 'edge-solana-root', '', 100, 20),
+			(now(), 'slc-qa-bm1', 'shred', %[2]d, %[3]d, 'turbine',          '', 100,  8),
+			(now(), 'slc-qa-bm1', 'shred', %[2]d, %[3]d, 'jito',             '', 100,  2),
+			(now(), 'slc-qa-bm1', 'shred', %[2]d, %[4]d, 'turbine',          '', 100, 60),
+			(now(), 'slc-qa-bm1', 'shred', %[2]d, %[4]d, 'jito',             '', 100, 40),
+			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[3]d, 'dz',               '', 100, 60),
+			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[3]d, 'edge-solana-root', '', 100, 20),
+			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[3]d, 'turbine',          '', 100, 15),
+			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[3]d, 'jito',             '', 100,  5),
+			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[4]d, 'turbine',          '', 100, 55),
+			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[4]d, 'jito',             '', 100, 45)
 	`, "`"+api.ShredderDB+"`", epoch, slot1, slot2))
 	require.NoError(t, err)
 
@@ -208,12 +212,26 @@ func TestGetEdgeScoreboard_WithData(t *testing.T) {
 	assert.Equal(t, uint64(1), slc.SlotsObserved)
 
 	// Check DZ feed win rate for SLC. leaders_only=true by default, so only slot1
-	// (DZ-leader slot) is in scope. Shared denom = slot1 max(total_shreds)=100. dz won 80.
+	// (DZ-leader slot) is in scope. Shared denom = sum of slot1 wins = 100. dz won 70.
 	dzFeed, ok := slc.Feeds["dz"]
 	require.True(t, ok, "dz feed should exist for slc")
-	assert.Equal(t, uint64(80), dzFeed.ShredsWon)
+	assert.Equal(t, uint64(70), dzFeed.ShredsWon)
 	assert.Equal(t, uint64(100), dzFeed.TotalShreds)
-	assert.Equal(t, 80.0, dzFeed.WinRatePct)
+	assert.Equal(t, 70.0, dzFeed.WinRatePct)
+
+	// edge-solana-root rolls up to the dz_root feed key (20 wins on the shared denom of 100).
+	dzRootFeed, ok := slc.Feeds["dz_root"]
+	require.True(t, ok, "dz_root feed should exist for slc")
+	assert.Equal(t, uint64(20), dzRootFeed.ShredsWon)
+	assert.Equal(t, uint64(100), dzRootFeed.TotalShreds)
+	assert.Equal(t, 20.0, dzRootFeed.WinRatePct)
+
+	// dz_edge combines dz + dz_root + dz_retransmit on the shared denom: 70 + 20 = 90.
+	slcDzEdge, ok := slc.Feeds["dz_edge"]
+	require.True(t, ok, "dz_edge feed should exist for slc")
+	assert.Equal(t, uint64(90), slcDzEdge.ShredsWon)
+	assert.Equal(t, uint64(100), slcDzEdge.TotalShreds)
+	assert.Equal(t, 90.0, slcDzEdge.WinRatePct)
 
 	// Check pairwise lead times — now attached to the synthetic dz_edge feed
 	// (combines dz + regional retransmit best-per-slot lead vs each loser).
@@ -241,9 +259,15 @@ func TestGetEdgeScoreboard_WithData(t *testing.T) {
 
 	dzFeed, ok = fra.Feeds["dz"]
 	require.True(t, ok, "dz feed should exist for fra")
-	assert.Equal(t, uint64(70), dzFeed.ShredsWon)
+	assert.Equal(t, uint64(60), dzFeed.ShredsWon)
 	assert.Equal(t, uint64(100), dzFeed.TotalShreds)
-	assert.Equal(t, 70.0, dzFeed.WinRatePct)
+	assert.Equal(t, 60.0, dzFeed.WinRatePct)
+
+	// FRA also has an edge-solana-root → dz_root feed (20 wins on the shared denom of 100).
+	dzRootFeed, ok = fra.Feeds["dz_root"]
+	require.True(t, ok, "dz_root feed should exist for fra")
+	assert.Equal(t, uint64(20), dzRootFeed.ShredsWon)
+	assert.Equal(t, 20.0, dzRootFeed.WinRatePct)
 
 	// Check pairwise lead times for FRA — attached to dz_edge synthetic feed.
 	dzEdgeFeed, ok = fra.Feeds["dz_edge"]

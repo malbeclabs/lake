@@ -9,6 +9,7 @@ import { fetchISISPaths, fetchISISTopology, fetchCriticalLinks, fetchSimulateLin
 import { useTopology, useMulticastState, TopologyControlBar, TopologyPanel, DeviceDetails, LinkDetails, MetroDetails, ValidatorDetails, EntityLink as TopologyEntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, ValidatorsOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, LINK_TYPE_COLORS, MULTICAST_PUBLISHER_COLORS, type DeviceOption, type MetroOption } from '@/components/topology'
 import type { LinkInfo, SelectedItemData } from '@/components/topology'
 import { formatBandwidth, formatTrafficRate } from '@/components/topology'
+import { topologyLinkToLinkInfo } from '@/components/shared/link-info-converters'
 
 // Path colors for multi-path visualization
 const PATH_COLORS = [
@@ -397,6 +398,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   const [pathLoading, setPathLoading] = useState(false)
   const [selectedPathIndex, setSelectedPathIndex] = useState(0)
   const [pathK, setPathK] = useState(10)
+  const [pathService, setPathService] = useState<'unicast' | 'multicast'>('unicast')
   const [showReverse, setShowReverse] = useState(false)
   const [reversePathsResult, setReversePathsResult] = useState<MultiPathResponse | null>(null)
   const [selectedReversePathIndex, setSelectedReversePathIndex] = useState<number>(0)
@@ -782,27 +784,10 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   }, [selection, selectedItem])
 
   // Build link info for panel/hover
-  const buildLinkInfo = useCallback((link: TopologyLink): LinkInfo => {
-    const healthInfo = linkSlaStatus.get(link.pk)
-    return {
-      pk: link.pk, code: link.code, status: link.status, linkType: link.link_type,
-      bandwidthBps: link.bandwidth_bps, latencyUs: link.latency_us,
-      jitterUs: link.jitter_us ?? 0, latencyAtoZUs: link.latency_a_to_z_us,
-      jitterAtoZUs: link.jitter_a_to_z_us ?? 0, latencyZtoAUs: link.latency_z_to_a_us,
-      jitterZtoAUs: link.jitter_z_to_a_us ?? 0, lossPercent: link.loss_percent ?? 0,
-      inBps: link.in_bps, outBps: link.out_bps,
-      deviceAPk: link.side_a_pk, deviceACode: link.side_a_code || 'Unknown',
-      interfaceAName: link.side_a_iface_name || '', interfaceAIP: link.side_a_ip || '',
-      deviceZPk: link.side_z_pk, deviceZCode: link.side_z_code || 'Unknown',
-      interfaceZName: link.side_z_iface_name || '', interfaceZIP: link.side_z_ip || '',
-      contributorPk: link.contributor_pk, contributorCode: link.contributor_code,
-      sideAContributorPk: link.side_a_contributor_pk || '', sideAContributorCode: link.side_a_contributor_code || '',
-      sideZContributorPk: link.side_z_contributor_pk || '', sideZContributorCode: link.side_z_contributor_code || '',
-      sampleCount: link.sample_count ?? 0, committedRttNs: link.committed_rtt_ns,
-      isisDelayOverrideNs: link.isis_delay_override_ns,
-      health: healthInfo ? { status: healthInfo.status, committedRttNs: healthInfo.committedRttNs, slaRatio: healthInfo.slaRatio, lossPct: healthInfo.lossPct } : undefined,
-    }
-  }, [linkSlaStatus])
+  const buildLinkInfo = useCallback(
+    (link: TopologyLink): LinkInfo => topologyLinkToLinkInfo(link, linkSlaStatus.get(link.pk)),
+    [linkSlaStatus]
+  )
 
   // ─── Dimension tracking ──────────────────────────────────────────────
 
@@ -952,7 +937,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     if (!pathModeEnabled || !pathSource || !pathTarget) return
     setPathLoading(true)
     setSelectedPathIndex(0)
-    fetchISISPaths(pathSource, pathTarget, pathK)
+    fetchISISPaths(pathSource, pathTarget, pathK, pathService)
       .then(result => {
         setPathsResult(result)
         if (result.paths?.length > 0) {
@@ -963,7 +948,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       .catch(err => setPathsResult({ paths: [], from: pathSource, to: pathTarget, error: err.message }))
       .finally(() => setPathLoading(false))
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathModeEnabled, pathSource, pathTarget, pathK])
+  }, [pathModeEnabled, pathSource, pathTarget, pathK, pathService])
 
   // Pre-fetch reverse paths so toggling direction is instant
   useEffect(() => {
@@ -973,11 +958,11 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     }
     setReversePathLoading(true)
     setSelectedReversePathIndex(0)
-    fetchISISPaths(pathTarget, pathSource, pathK)
+    fetchISISPaths(pathTarget, pathSource, pathK, pathService)
       .then(result => setReversePathsResult(result))
       .catch(err => setReversePathsResult({ paths: [], from: pathTarget, to: pathSource, error: err.message }))
       .finally(() => setReversePathLoading(false))
-  }, [pathModeEnabled, pathSource, pathTarget, pathK])
+  }, [pathModeEnabled, pathSource, pathTarget, pathK, pathService])
 
   // Fetch metro paths
   useEffect(() => {
@@ -985,7 +970,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     setMetroPathLoading(true)
     setMetroPathViewMode('aggregate')
     setMetroPathSelectedPairs([])
-    fetchMetroDevicePaths(metroPathSource, metroPathTarget)
+    fetchMetroDevicePaths(metroPathSource, metroPathTarget, pathService)
       .then(result => {
         setMetroPathsResult(result)
         if (result.devicePairs?.length > 0) {
@@ -1000,7 +985,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       }))
       .finally(() => setMetroPathLoading(false))
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [metroPathModeEnabled, metroPathSource, metroPathTarget])
+  }, [metroPathModeEnabled, metroPathSource, metroPathTarget, pathService])
 
   // Clear state on mode exit
   useEffect(() => { if (!pathModeEnabled) { setPathSource(null); setPathTarget(null); setPathsResult(null); setSelectedPathIndex(0) } }, [pathModeEnabled])
@@ -2172,6 +2157,8 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
               }}
               pathK={pathK}
               onPathKChange={setPathK}
+              pathService={pathService}
+              onPathServiceChange={setPathService}
             />
           )}
           {mode === 'metro-path' && (
@@ -2184,6 +2171,8 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
               onTogglePair={handleToggleMetroPathPair}
               onClearSelection={() => setMetroPathSelectedPairs([])}
               onClear={() => { setMetroPathSource(null); setMetroPathTarget(null); setMetroPathsResult(null); setMetroPathSelectedPairs([]); setMetroPathViewMode('aggregate') }}
+              pathService={pathService}
+              onPathServiceChange={setPathService}
             />
           )}
           {mode === 'whatif-removal' && (

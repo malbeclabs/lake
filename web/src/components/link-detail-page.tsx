@@ -13,6 +13,7 @@ import { LinkInterfaceIssuesChart } from '@/components/link-charts/LinkInterface
 import { LinkLatencyChart } from '@/components/link-charts/LinkLatencyChart'
 import { LinkJitterChart } from '@/components/link-charts/LinkJitterChart'
 import { LinkTrafficChart } from '@/components/link-charts/LinkTrafficChart'
+import { LinkMulticastDeliveryPanel } from '@/components/multicast-delivery-panel'
 import { TimeRangeSelector, TrafficFilters } from '@/components/topology/TimeRangeSelector'
 import type { TimeRange, BucketSize } from '@/components/topology/utils'
 import { bucketLabels, resolveAutoBucket, type TimeRangePreset } from '@/components/topology/utils'
@@ -158,6 +159,9 @@ export function LinkDetailPage() {
             onSuccess={() => setShowCreateIncident(false)}
           />
         )}
+        <div className="mt-6">
+          <LinkMulticastDeliveryPanel linkPk={link.pk} />
+        </div>
       </div>
 
       {/* Filters + charts */}

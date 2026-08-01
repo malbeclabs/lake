@@ -21,8 +21,11 @@ type FluxInfluxDBClient struct {
 
 // defaultFluxHTTPTimeout is the HTTP client timeout for Flux queries.
 // The influxdb-client-go/v2 default is 20s which is too short for pivot queries
-// over a 1-hour window of interface counter data. The Temporal activity
-// StartToCloseTimeout is 5 minutes, so 4 minutes gives a comfortable margin.
+// over a 1-hour window of interface counter data. A steady-state telemetry-usage
+// refresh runs 2 chunked queries (overlap re-read + one new chunk), so ~8m of
+// Flux worst case; RefreshTelemetryUsage runs under a dedicated 10m
+// StartToCloseTimeout (see dzingest/workflow.go) that leaves margin for that
+// plus the ClickHouse work.
 const defaultFluxHTTPTimeout = 4 * time.Minute
 
 // NewFluxInfluxDBClient creates a new InfluxDB client that uses Flux queries.

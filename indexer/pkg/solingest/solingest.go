@@ -19,6 +19,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 	"github.com/malbeclabs/lake/indexer/pkg/sol"
 	"github.com/malbeclabs/lake/indexer/pkg/validatorsapp"
+	"github.com/malbeclabs/lake/utils/pkg/dberror"
 )
 
 // Config configures the Solana ingest worker.
@@ -94,7 +95,7 @@ func Start(ctx context.Context, cfg Config) error {
 				if ctx.Err() != nil {
 					return
 				}
-				log.Error("solingest: workflow interrupted, reattaching", "id", wfID, "error", err)
+				log.Warn("solingest: workflow interrupted, reattaching", "id", wfID, "error", err)
 				current = tc.GetWorkflow(ctx, wfID, "")
 			} else {
 				return
@@ -143,7 +144,37 @@ func (l *temporalLogger) Error(msg string, keyvals ...any) {
 		l.log.Warn(msg, keyvals...)
 		return
 	}
+	// Temporal logs "Activity error." at ERROR on every failed attempt,
+	// including non-final ones the activity's retry policy will recover. These
+	// activities write to ClickHouse and return their errors to Temporal, so a
+	// transient connection blip (a native-TLS read: EOF from ClickHouse Cloud)
+	// self-heals on retry but still trips the aggregate level="ERR" pager.
+	// Demote to WARN; a sustained failure still pages via the workflow-side
+	// Escalator, which observes the frequent activities (solana/geoip/
+	// validatorsapp) enough times per run to reach its threshold, and observes
+	// the once-per-run block production activity at a dedicated threshold of 1
+	// (see workflow.go). Mirrors the rollup worker's temporalLogger.
+	if msg == "Activity error." && isTransientActivityError(keyvals) {
+		l.log.Warn(msg, keyvals...)
+		return
+	}
 	l.log.Error(msg, keyvals...)
+}
+
+// isTransientActivityError reports whether Temporal's activity-error keyvals
+// carry an Error that dberror classifies as transient (a self-healing upstream
+// blip the activity's retry policy will recover). At the "Activity error." log
+// site the Error keyval is the raw error the activity returned.
+func isTransientActivityError(keyvals []any) bool {
+	for i := 0; i+1 < len(keyvals); i += 2 {
+		if keyvals[i] != "Error" {
+			continue
+		}
+		if err, ok := keyvals[i+1].(error); ok {
+			return dberror.IsTransient(err)
+		}
+	}
+	return false
 }
 
 // hasBenignTaskProcessingError reports whether Temporal's "Task processing

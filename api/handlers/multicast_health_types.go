@@ -1,0 +1,143 @@
+package handlers
+
+import "time"
+
+// Response shapes for the multicast health endpoints (infra#1501 Track 2).
+// Each is a thin packaging around the underlying health_* ClickHouse views.
+
+type MulticastHealthGroupSummaryResponse struct {
+	Group           MulticastDeliveryGroup `json:"group"`
+	SourceAvailable bool                   `json:"source_available"`
+	GeneratedAt     string                 `json:"generated_at"`
+	Counts          MulticastHealthCounts  `json:"counts"`
+}
+
+type MulticastHealthSummariesCache struct {
+	GeneratedAt string                                `json:"generated_at"`
+	Summaries   []MulticastHealthGroupSummaryResponse `json:"summaries"`
+}
+
+// MulticastHealthCounts breaks the per-status totals down across the three
+// view granularities for a group. A consumer can read this to render a
+// per-group health dashboard summary without fetching the full row sets.
+type MulticastHealthCounts struct {
+	Mroutes MulticastHealthStatusCounts `json:"mroutes"`
+	Users   MulticastHealthStatusCounts `json:"users"`
+	Paths   MulticastHealthStatusCounts `json:"paths"`
+}
+
+type MulticastHealthStatusCounts struct {
+	Healthy      uint64 `json:"healthy"`
+	Degraded     uint64 `json:"degraded"`
+	Unhealthy    uint64 `json:"unhealthy"`
+	Disconnected uint64 `json:"disconnected"`
+	Unknown      uint64 `json:"unknown"`
+	Total        uint64 `json:"total"`
+}
+
+// MulticastHealthUserItem matches one row of health_multicast_user_rate.
+// HealthStatus is the combined CP × rate verdict; ControlPlaneStatus and
+// RateStatus carry the per-dimension verdicts so callers can drill in.
+type MulticastHealthUserItem struct {
+	UserPK                string     `json:"user_pk"`
+	UserOwnerPubkey       string     `json:"user_owner_pubkey"`
+	UserDZIP              string     `json:"user_dz_ip"`
+	UserTunnelID          int32      `json:"user_tunnel_id"`
+	UserDevicePK          string     `json:"user_device_pk"`
+	UserDeviceCode        string     `json:"user_device_code"`
+	MulticastGroupPK      string     `json:"multicast_group_pk"`
+	MulticastGroupCode    string     `json:"multicast_group_code"`
+	GroupAddress          string     `json:"group_address"`
+	Mode                  string     `json:"mode"`
+	ExpectedTunnelPos     string     `json:"expected_tunnel_position"`
+	PublisherIIFObserved  bool       `json:"publisher_iif_observed"`
+	SubscriberOIFObserved bool       `json:"subscriber_oif_observed"`
+	Reconciled            bool       `json:"reconciled"`
+	ControlPlaneStatus    string     `json:"control_plane_status"`
+	MismatchReason        string     `json:"mismatch_reason,omitempty"`
+	RateBucketTS          *time.Time `json:"rate_bucket_ts,omitempty"`
+	ObservedBps5m         *float64   `json:"observed_bps_5m,omitempty"`
+	ExpectedBps5m         *float64   `json:"expected_bps_5m,omitempty"`
+	RateStatus            string     `json:"rate_status"`
+	RateStatusReason      string     `json:"rate_status_reason"`
+	HealthStatus          string     `json:"health_status"`
+}
+
+type MulticastHealthGroupUsersResponse struct {
+	Group       MulticastDeliveryGroup    `json:"group"`
+	GeneratedAt string                    `json:"generated_at"`
+	Items       []MulticastHealthUserItem `json:"items"`
+	Total       int                       `json:"total"`
+	Limit       int                       `json:"limit"`
+	Offset      int                       `json:"offset"`
+}
+
+type MulticastHealthUserResponse struct {
+	UserPK          string                    `json:"user_pk"`
+	UserOwnerPubkey string                    `json:"user_owner_pubkey"`
+	UserDZIP        string                    `json:"user_dz_ip"`
+	UserTunnelID    int32                     `json:"user_tunnel_id"`
+	UserDevicePK    string                    `json:"user_device_pk"`
+	UserDeviceCode  string                    `json:"user_device_code"`
+	GeneratedAt     string                    `json:"generated_at"`
+	Items           []MulticastHealthUserItem `json:"items"`
+}
+
+// MulticastHealthPathItem matches one row of health_publisher_subscriber_path.
+type MulticastHealthPathItem struct {
+	MulticastGroupPK           string   `json:"multicast_group_pk,omitempty"`
+	MulticastGroupCode         string   `json:"multicast_group_code,omitempty"`
+	GroupAddress               string   `json:"group_address,omitempty"`
+	PublisherUserPK            string   `json:"publisher_user_pk"`
+	PublisherOwnerPubkey       string   `json:"publisher_owner_pubkey"`
+	PublisherDZIP              string   `json:"publisher_dz_ip"`
+	PublisherTunnelID          int32    `json:"publisher_tunnel_id"`
+	PublisherDevicePK          string   `json:"publisher_device_pk"`
+	PublisherDeviceCode        string   `json:"publisher_device_code"`
+	SubscriberUserPK           string   `json:"subscriber_user_pk"`
+	SubscriberOwnerPubkey      string   `json:"subscriber_owner_pubkey"`
+	SubscriberDZIP             string   `json:"subscriber_dz_ip"`
+	SubscriberTunnelID         int32    `json:"subscriber_tunnel_id"`
+	SubscriberDevicePK         string   `json:"subscriber_device_pk"`
+	SubscriberDeviceCode       string   `json:"subscriber_device_code"`
+	PublisherEndpointObserved  bool     `json:"publisher_endpoint_observed"`
+	SubscriberEndpointObserved bool     `json:"subscriber_endpoint_observed"`
+	EndpointsReconciled        bool     `json:"endpoints_reconciled"`
+	HealthStatus               string   `json:"health_status"`
+	VerificationMethod         string   `json:"verification_method"`
+	MissingEndpointReasons     []string `json:"missing_endpoint_reasons,omitempty"`
+}
+
+type MulticastHealthGroupPathsResponse struct {
+	Group       MulticastDeliveryGroup    `json:"group"`
+	GeneratedAt string                    `json:"generated_at"`
+	Items       []MulticastHealthPathItem `json:"items"`
+	Total       int                       `json:"total"`
+	Limit       int                       `json:"limit"`
+	Offset      int                       `json:"offset"`
+}
+
+// MulticastHealthPathRootCause collapses the per-(publisher, subscriber) path
+// fan-out to the endpoint that is actually at fault. One faulty endpoint drags
+// down every pair it participates in (a publisher → all its subscribers, a
+// subscriber → all its publishers), so listing endpoints with an affected-pair
+// count is far more actionable than N raw rows.
+type MulticastHealthPathRootCause struct {
+	// FaultingRole is "publisher" or "subscriber".
+	FaultingRole   string `json:"faulting_role"`
+	UserPK         string `json:"user_pk"`
+	OwnerPubkey    string `json:"owner_pubkey"`
+	DZIP           string `json:"dz_ip"`
+	TunnelID       int32  `json:"tunnel_id"`
+	DevicePK       string `json:"device_pk"`
+	DeviceCode     string `json:"device_code"`
+	EndpointStatus string `json:"endpoint_status"` // disconnected | unhealthy
+	AffectedPairs  int32  `json:"affected_pairs"`
+}
+
+type MulticastHealthPathRootCausesResponse struct {
+	Group       MulticastDeliveryGroup         `json:"group"`
+	GeneratedAt string                         `json:"generated_at"`
+	Items       []MulticastHealthPathRootCause `json:"items"`
+	Total       int                            `json:"total"`
+}

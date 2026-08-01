@@ -1,7 +1,8 @@
 import { Route, X, ArrowRightLeft } from 'lucide-react'
-import type { MultiPathResponse, SinglePath } from '@/lib/api'
+import type { MultiPathResponse, SinglePath, PathService } from '@/lib/api'
 import { useTheme } from '@/hooks/use-theme'
 import { DeviceSelector, type DeviceOption } from '../DeviceSelector'
+import { ServiceToggle } from '../ServiceToggle'
 import { cn } from '@/lib/utils'
 import { SmallDropdown } from '../TimeRangeSelector'
 
@@ -38,6 +39,8 @@ interface PathModePanelProps {
   onToggleReverse: () => void
   pathK: number
   onPathKChange: (k: number) => void
+  pathService?: PathService
+  onPathServiceChange?: (service: PathService) => void
 }
 
 export function PathModePanel({
@@ -59,6 +62,8 @@ export function PathModePanel({
   onToggleReverse,
   pathK,
   onPathKChange,
+  pathService = 'unicast',
+  onPathServiceChange,
 }: PathModePanelProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
@@ -118,6 +123,11 @@ export function PathModePanel({
 
       {!pathSource && (
         <div className="text-muted-foreground text-[10px]">Or click a device on the map</div>
+      )}
+
+      {/* Service type toggle */}
+      {onPathServiceChange && (
+        <ServiceToggle value={pathService} onChange={onPathServiceChange} className="mb-3" />
       )}
 
       {/* Direction toggle + loading */}

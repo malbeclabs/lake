@@ -49,7 +49,7 @@ jobs:
         working-directory: dev/controlcenter/ui
       - run: bun run build
         working-directory: dev/controlcenter/ui
-      - run: go test -v ./...
+      - run: go test -race -v ./...
   evals-short:
     runs-on: ubuntu-latest
     needs: go-build

@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/malbeclabs/lake/api/handlers/dberror"
 	"github.com/malbeclabs/lake/api/health"
 	"github.com/malbeclabs/lake/api/metrics"
+	"github.com/malbeclabs/lake/utils/pkg/dberror"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -1314,6 +1314,11 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 		// Find when each adjacency was last seen to compute accurate "since" time.
 		// The last snapshot where is_deleted=0 is when the adjacency was still up.
 		lastSeen := make(map[string]string) // link_pk -> ISO timestamp
+		// A missing ISIS adjacency does not by itself mean the link is down: the data
+		// plane can keep forwarding traffic while the adjacency is absent. Track which
+		// of these links are still producing telemetry so we don't report them as
+		// "down" when they are only missing an adjacency.
+		hasRecentTelemetry := make(map[string]bool) // link_pk -> has samples in last 15m
 		if len(missing) > 0 {
 			linkPKs := make([]string, len(missing))
 			for i, m := range missing {
@@ -1338,6 +1343,24 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 					}
 				}
 			}
+
+			telemetryQuery := `
+				SELECT DISTINCT link_pk
+				FROM link_rollup_5m
+				WHERE link_pk IN ?
+				  AND bucket_ts >= now() - INTERVAL 15 MINUTE
+				  AND (a_samples + z_samples) > 0
+			`
+			telemetryRows, telemetryErr := a.envDB(ctx).Query(ctx, telemetryQuery, linkPKs)
+			if telemetryErr == nil {
+				defer telemetryRows.Close()
+				for telemetryRows.Next() {
+					var pk string
+					if err := telemetryRows.Scan(&pk); err == nil {
+						hasRecentTelemetry[pk] = true
+					}
+				}
+			}
 		}
 
 		for _, m := range missing {
@@ -1350,8 +1373,9 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 				SideAMetro:       m.sideAMetro,
 				SideZMetro:       m.sideZMetro,
 				Since:            lastSeen[m.linkPK],
-				IsDown:           true,
-				BandwidthBps:     m.bandwidthBps,
+				// Only a link whose data plane is also dark counts as down.
+				IsDown:       !hasRecentTelemetry[m.linkPK],
+				BandwidthBps: m.bandwidthBps,
 			})
 		}
 		return nil
@@ -1359,20 +1383,24 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 
 	err := g.Wait()
 
-	// Merge missing adjacency issues after all goroutines complete (avoids race on resp.Links.Issues)
-	// Also update the Down count for links that weren't already counted during the latency scan.
-	existingIssueCodes := make(map[string]bool)
+	// Merge missing adjacency issues after all goroutines complete (avoids race on resp.Links.Issues).
+	// Only a link whose data plane is also dark (IsDown) counts toward Down. A link that is
+	// missing an adjacency but still carrying telemetry stays in the bucket the latency scan
+	// assigned it (e.g. degraded), so it is never counted as both degraded and down.
+	downCodes := make(map[string]bool)
 	for _, issue := range resp.Links.Issues {
 		if issue.IsDown {
-			existingIssueCodes[issue.Code] = true
+			downCodes[issue.Code] = true
 		}
 	}
 	for _, issue := range missingAdjIssues {
-		if !existingIssueCodes[issue.Code] {
+		if issue.IsDown && !downCodes[issue.Code] {
 			resp.Links.Down++
+			// A link with no telemetry was classified healthy by the latency scan.
 			if resp.Links.Healthy > 0 {
 				resp.Links.Healthy--
 			}
+			downCodes[issue.Code] = true
 		}
 	}
 	resp.Links.Issues = append(resp.Links.Issues, missingAdjIssues...)

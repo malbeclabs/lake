@@ -1,15 +1,12 @@
 package handlers
 
 import (
-	"context"
-	"errors"
-	"io"
 	"log/slog"
-	"strings"
-	"syscall"
 
 	"github.com/getsentry/sentry-go"
 
+	"github.com/malbeclabs/lake/utils/pkg/dberror"
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 	"github.com/malbeclabs/lake/utils/pkg/redact"
 )
 
@@ -17,48 +14,29 @@ import (
 // disconnecting: context cancellation, deadline exceeded, broken pipe,
 // connection reset, or unexpected EOF.
 func isClientDisconnect(err error) bool {
-	if errors.Is(err, context.Canceled) ||
-		errors.Is(err, context.DeadlineExceeded) ||
-		errors.Is(err, syscall.EPIPE) ||
-		errors.Is(err, syscall.ECONNRESET) ||
-		errors.Is(err, io.ErrUnexpectedEOF) {
-		return true
-	}
-	// Some drivers (e.g. neo4j) wrap context errors without using Go's
-	// standard error wrapping, so errors.Is fails. Fall back to checking
-	// the error message.
-	msg := err.Error()
-	return strings.Contains(msg, "context canceled") ||
-		strings.Contains(msg, "context deadline exceeded")
+	return logger.IsClientDisconnect(err)
 }
 
-// logError logs at ERROR level, silently skipping client disconnects.
+// logError logs a handler error, silently skipping client disconnects.
+//
+// Transient (self-healing) causes — upstream connection blips, timeouts, and
+// rate limits (see dberror.IsTransient) — are logged at WARN rather than ERROR
+// so a momentary ClickHouse/RPC hiccup on the request path doesn't page on-call.
+// Genuine failures (query/syntax/auth errors, nil-derived, anything else) still
+// log at ERROR. Sustained outages are caught elsewhere (the page-cache
+// consecutive-failure threshold and the lake-api-down/crash-loop alerts).
 func logError(msg string, args ...any) {
-	if hasClientDisconnect(args) {
+	// Request path: a client disconnect means the caller is gone — skip the
+	// log line entirely rather than warn.
+	if err := logger.ErrorFromArgs(args); err != nil && logger.IsClientDisconnect(err) {
 		return
 	}
-	slog.Error(msg, args...)
+	logger.Error(slog.Default(), msg, args...)
 }
 
 // logWarn logs at WARN level, silently skipping client disconnects.
 func logWarn(msg string, args ...any) {
-	if hasClientDisconnect(args) {
-		return
-	}
-	slog.Warn(msg, args...)
-}
-
-// hasClientDisconnect reports whether args contains an "error" key whose
-// value is a client-disconnect error (context cancellation, broken pipe, etc.).
-func hasClientDisconnect(args []any) bool {
-	for i := 0; i+1 < len(args); i += 2 {
-		if args[i] == "error" {
-			if err, ok := args[i+1].(error); ok && isClientDisconnect(err) {
-				return true
-			}
-		}
-	}
-	return false
+	logger.Warn(slog.Default(), msg, args...)
 }
 
 // internalError logs the full error internally and returns a user-safe message.
@@ -66,6 +44,13 @@ func hasClientDisconnect(args []any) bool {
 // hostnames, or query details.
 func internalError(operation string, err error) string {
 	if isClientDisconnect(err) {
+		return operation
+	}
+
+	// Transient (self-healing) causes aren't actionable — log at WARN and skip
+	// the Sentry capture so a momentary hiccup neither pages nor opens an issue.
+	if dberror.IsTransient(err) {
+		slog.Warn(operation, "error", err)
 		return operation
 	}
 

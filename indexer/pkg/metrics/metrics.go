@@ -21,9 +21,37 @@ var (
 	ViewRefreshTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "doublezero_data_indexer_view_refresh_total",
-			Help: "Total number of view refreshes",
+			Help: "Total number of view refreshes (status: success, partial, error, panic; partial = stopped at the refresh budget with backlog pending)",
 		},
 		[]string{"view_type", "status"},
+	)
+
+	// ShredLeafFetchTotal counts validator-rewards leaf-export fetches from the
+	// foundation S3 bucket by HTTP outcome. 403 ("forbidden") is treated as
+	// "not exported yet" (the public bucket returns 403 for missing keys), so it
+	// is no longer logged as an error — this metric is what keeps a real access
+	// loss visible: only mainnet ever produces "ok", so a sustained collapse of
+	// "ok" to zero, or a 403 where a 200 is expected, indicates the export
+	// access was lost rather than the epoch simply being unpublished.
+	ShredLeafFetchTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "doublezero_data_indexer_shred_leaf_fetch_total",
+			Help: "Total validator-rewards leaf-export fetches from S3 by HTTP outcome (ok, not_found, forbidden, error)",
+		},
+		[]string{"status"},
+	)
+
+	// PermissionEventsSkippedTx counts transactions the permission-events indexer skipped
+	// because the RPC would not serve them (getTransaction not-found for a finalized,
+	// listed signature — pruned or inconsistent upstream history). Each skip is a
+	// potentially missing audit row that no automatic path recovers (the backfill skips
+	// them identically); a sustained non-zero rate means upstream retention is dropping
+	// events and a manual re-backfill against an archival node is warranted.
+	PermissionEventsSkippedTx = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "doublezero_data_indexer_permission_events_skipped_tx_total",
+			Help: "Permission-events transactions skipped because the RPC could not serve them",
+		},
 	)
 
 	ViewRefreshDuration = promauto.NewHistogramVec(
@@ -133,6 +161,44 @@ var (
 			Help: "Total number of times baseline query fell back from ClickHouse to InfluxDB (0 rows from ClickHouse)",
 		},
 		[]string{"dz_env"},
+	)
+
+	// ClickHouseBaselineQueryTotal counts sparse-counter baseline cache misses:
+	// each increment is a refresh/backfill that bypassed the in-memory watermark
+	// cache and attempted the ClickHouse scan. In steady state this should fire
+	// only on indexer restart per env; a high rate means the watermark cache is
+	// not hitting.
+	ClickHouseBaselineQueryTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "doublezero_data_indexer_clickhouse_baseline_query_total",
+			Help: "Total sparse-counter baseline cache misses (watermark cache bypassed, ClickHouse scan attempted)",
+		},
+		[]string{"dz_env"},
+	)
+
+	// ClickHousePrevRTTQueryTotal counts previous-RTT cache misses that hit
+	// ClickHouse: kind=bounded is the prevRTTLookback-bounded seed scan,
+	// kind=fallback is the unbounded per-circuit scan for circuits the bounded
+	// pass missed. In steady state both should be ~0 except around indexer
+	// restart; a sustained rate means the carry-forward cache is not hitting.
+	ClickHousePrevRTTQueryTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "doublezero_data_indexer_clickhouse_prev_rtt_query_total",
+			Help: "Previous-RTT cache misses that hit ClickHouse (kind=bounded|fallback)",
+		},
+		[]string{"dz_env", "table", "kind"}, // table: device_link|internet_metro
+	)
+
+	// ClickHousePrevRTTFallbackCircuitsTotal counts the circuits resolved via
+	// the unbounded fallback pass. Queries alone can't distinguish one quiet
+	// circuit from pathological new-circuit churn; a high circuits-to-queries
+	// ratio flags the latter.
+	ClickHousePrevRTTFallbackCircuitsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "doublezero_data_indexer_clickhouse_prev_rtt_fallback_circuits_total",
+			Help: "Circuits resolved via the unbounded previous-RTT fallback query",
+		},
+		[]string{"dz_env", "table"},
 	)
 )
 

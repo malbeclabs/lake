@@ -37,6 +37,7 @@ import { MaintenancePlannerPage } from '@/components/maintenance-planner-page'
 import { StatusPage } from '@/components/status-page'
 import { TimelinePage } from '@/components/timeline-page'
 import { IncidentsPage } from '@/components/incidents-page'
+import { MaintenanceCalendarPage } from '@/components/maintenance-calendar-page'
 import { StatusAppendix } from '@/components/status-appendix'
 import { DevicesPage } from '@/components/devices-page'
 import { LinksPage } from '@/components/links-page'
@@ -62,8 +63,12 @@ import { GeolocUsersPage } from '@/components/geoloc-users-page'
 import { GeolocExplorerPage } from '@/components/geoloc-explorer-page'
 import { ShredsSeatsPage, ShredsFundersPage, ShredsDevicesPage, ShredsEscrowEventsPage } from '@/components/shreds-page'
 import { ShredsEconomicsPage } from '@/components/shreds-economics-page'
+import { ShredsRewardsPage } from '@/components/shreds-rewards-page'
+import { ShredsRewardsDetailPage } from '@/components/shreds-rewards-detail-page'
 import { PublisherCheckPage } from './components/publisher-check-page'
 import { EdgeScoreboardPage } from './components/edge-scoreboard-page'
+import { HyperliquidScoreboardPage } from './components/hyperliquid-scoreboard-page'
+import { PermissionAuditPage } from './components/permission-audit-page'
 import { MulticastGroupDetailPage } from '@/components/multicast-group-detail-page'
 import { AccessPassesPage } from '@/components/access-passes-page'
 import { AccessPassDetailPage } from '@/components/access-pass-detail-page'
@@ -672,10 +677,16 @@ function AppContent() {
             {/* Timeline route */}
             <Route path="/timeline" element={<TimelinePage />} />
 
-            {/* Incidents routes */}
-            <Route path="/incidents" element={<Navigate to="/incidents/links" replace />} />
-            <Route path="/incidents/links" element={<IncidentsPage />} />
-            <Route path="/incidents/devices" element={<IncidentsPage />} />
+            {/* Incidents redirects — keep old URLs working */}
+            <Route path="/incidents" element={<Navigate to="/ops/incidents/links" replace />} />
+            <Route path="/incidents/links" element={<Navigate to="/ops/incidents/links" replace />} />
+            <Route path="/incidents/devices" element={<Navigate to="/ops/incidents/devices" replace />} />
+
+            {/* Ops routes */}
+            <Route path="/ops/incidents" element={<Navigate to="/ops/incidents/links" replace />} />
+            <Route path="/ops/incidents/links" element={<IncidentsPage />} />
+            <Route path="/ops/incidents/devices" element={<IncidentsPage />} />
+            <Route path="/ops/maintenance" element={<MaintenanceCalendarPage />} />
 
 
             {/* Rewards simulation (under topology tools) */}
@@ -727,8 +738,13 @@ function AppContent() {
             <Route path="/dz/shreds/devices" element={<ShredsDevicesPage />} />
             <Route path="/dz/shreds/activity" element={<ShredsEscrowEventsPage />} />
             <Route path="/dz/shreds/economics" element={<ShredsEconomicsPage />} />
+            <Route path="/dz/shreds/rewards" element={<ShredsRewardsPage />} />
+            <Route path="/dz/shreds/rewards/:nodeId" element={<ShredsRewardsDetailPage />} />
             {/* Subscribe page hidden for now — see shreds-subscribe-page.tsx */}
             <Route path="/dz/edge/scoreboard" element={<Navigate to="/dz/shreds/scoreboard" replace />} />
+            <Route path="/dz/hyperliquid" element={<Navigate to="/dz/hyperliquid/scoreboard" replace />} />
+            <Route path="/dz/hyperliquid/scoreboard" element={<HyperliquidScoreboardPage />} />
+            <Route path="/dz/permission-audit" element={<PermissionAuditPage />} />
 
             {/* Geolocation routes */}
             <Route path="/dz/geoloc/probes" element={<GeolocProbesPage />} />

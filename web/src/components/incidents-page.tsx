@@ -431,7 +431,7 @@ export function IncidentsPage() {
   const location = useLocation()
 
   // Scope from path
-  const scope: IncidentScope = location.pathname === '/incidents/devices' ? 'devices' : 'links'
+  const scope: IncidentScope = location.pathname.endsWith('/devices') ? 'devices' : 'links'
 
   // Parse URL params with defaults
   const range = (searchParams.get('range') as IncidentTimeRange) || '24h'
@@ -902,7 +902,7 @@ export function IncidentsPage() {
         <div className="flex items-center gap-2 mb-4">
           <div className="flex items-center gap-1 bg-muted rounded-md p-1">
             <button
-              onClick={() => navigate('/incidents/links')}
+              onClick={() => navigate('/ops/incidents/links')}
               className={`px-3 py-1 text-sm rounded transition-colors ${
                 scope === 'links'
                   ? 'bg-background text-foreground shadow-sm'
@@ -912,7 +912,7 @@ export function IncidentsPage() {
               Links
             </button>
             <button
-              onClick={() => navigate('/incidents/devices')}
+              onClick={() => navigate('/ops/incidents/devices')}
               className={`px-3 py-1 text-sm rounded transition-colors ${
                 scope === 'devices'
                   ? 'bg-background text-foreground shadow-sm'

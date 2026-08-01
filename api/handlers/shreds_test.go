@@ -211,7 +211,9 @@ func TestGetShredClientSeats_WithData(t *testing.T) {
 	assert.Equal(t, "metro-nyc", seat1.MetroPK)
 	assert.Equal(t, "NYC", seat1.MetroCode)
 	assert.Equal(t, "192.168.1.1", seat1.ClientIP)
-	assert.Equal(t, uint64(50000000), seat1.TotalUSDCBalance)
+	// Single escrow: spendable == all-escrows == the one balance.
+	assert.Equal(t, uint64(50000000), seat1.SpendableUSDCBalance)
+	assert.Equal(t, uint64(50000000), seat1.AllEscrowsUSDCBalance)
 	assert.Equal(t, "user-1", seat1.UserPK)
 	assert.Equal(t, "owner-pubkey-1", seat1.UserOwnerPubkey)
 	// Price per epoch = metro price (10) + device premium (-2) = 8
@@ -302,6 +304,141 @@ func TestGetShredClientSeats_StatusFilter(t *testing.T) {
 			assert.Equal(t, tt.want, response.Total, "status=%q", tt.status)
 		})
 	}
+}
+
+// TestGetShredClientSeats_MultiEscrowUsesMaxNotSum is the regression test for the
+// multi-escrow production case: a seat with two escrows ($5.83 + $25.65) at a
+// $30/epoch price. The oracle evaluates activation per-escrow, so no single escrow
+// covers the price and the seat never activates. The dashboard must report the
+// greatest single escrow (25.65) as spendable — not the sum (31.48) — so status
+// derives to inactive/expired, not pending.
+func TestGetShredClientSeats_MultiEscrowUsesMaxNotSum(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	ctx := t.Context()
+
+	// Current Solana epoch = 950.
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_solana_vote_accounts_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 vote_pubkey, epoch, node_pubkey, activated_stake_lamports, epoch_vote_account, commission_percentage)
+		VALUES
+		('vote-1', now(), now(), generateUUIDv4(), 0, 1,
+		 'vote-1', 950, 'node-1', 1000000000, 'true', 0)
+	`))
+
+	// Seat active_epoch (945) < current epoch (950), escrow_count = 2, $30/epoch override.
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_client_seats_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, device_key, client_ip, tenure_epochs, funded_epoch, active_epoch,
+		 has_price_override, override_usdc_price_dollars, escrow_count, funding_authority_key)
+		VALUES
+		('seat-me', now(), now(), generateUUIDv4(), 0, 1,
+		 'seat-me', 'dev-1', '203.0.113.7', 0, 945, 945,
+		 1, 30, 2, 'funder-me')
+	`))
+
+	// Two escrows: $5.83 and $25.65. Neither alone covers the $30 price.
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_payment_escrows_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, client_seat_key, withdraw_authority_key, usdc_balance)
+		VALUES
+		('escrow-me-1', now(), now(), generateUUIDv4(), 0, 1, 'escrow-me-1', 'seat-me', 'withdraw-me', 5830000),
+		('escrow-me-2', now(), now(), generateUUIDv4(), 0, 1, 'escrow-me-2', 'seat-me', 'withdraw-me', 25650000)
+	`))
+
+	// Balance fields: spendable = max (25.65), all-escrows = sum (31.48).
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/client-seats", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredClientSeats(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+	var response handlers.PaginatedResponse[handlers.ShredClientSeatItem]
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&response))
+	require.Len(t, response.Items, 1)
+	seat := response.Items[0]
+	assert.Equal(t, uint32(2), seat.EscrowCount)
+	assert.Equal(t, uint64(25650000), seat.SpendableUSDCBalance, "spendable must be the greatest single escrow, not the sum")
+	assert.Equal(t, uint64(31480000), seat.AllEscrowsUSDCBalance, "all-escrows total exposes stranded funds")
+
+	// Status must derive to inactive/expired (prepaid = intDiv(25.65, 30) = 0),
+	// NOT pending (which the sum-based bug produced: intDiv(31.48, 30) = 1).
+	statusChecks := []struct {
+		status string
+		want   int
+	}{
+		{"inactive", 1},
+		{"pending", 0},
+		{"active", 0},
+	}
+	for _, sc := range statusChecks {
+		req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/client-seats?status="+sc.status, nil)
+		rr := httptest.NewRecorder()
+		api.GetShredClientSeats(rr, req)
+		require.Equal(t, http.StatusOK, rr.Code)
+		var resp handlers.PaginatedResponse[handlers.ShredClientSeatItem]
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+		assert.Equal(t, sc.want, resp.Total, "status=%q", sc.status)
+	}
+}
+
+// TestGetShredClientSeats_PrepaidSortAndFilter pins the prepaid semantics change:
+// the "prepaid" sort orders by prepaid-epochs (spendable / price), not the stale
+// price_per_epoch_dollars proxy, and the "prepaid" filter is honored (it was silently
+// dropped before the shared expr existed). The two seats are constructed so price order
+// and prepaid-epoch order disagree: the cheaper seat has more prepaid runway.
+func TestGetShredClientSeats_PrepaidSortAndFilter(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	ctx := t.Context()
+
+	// seat-hi: $8/epoch, one $48 escrow → prepaid = 6.
+	// seat-lo: $30/epoch, one $25.65 escrow → prepaid = 0.
+	// Price order (asc) is seat-hi < seat-lo; prepaid order (desc) is seat-hi > seat-lo.
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_client_seats_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, device_key, client_ip, tenure_epochs, funded_epoch, active_epoch,
+		 has_price_override, override_usdc_price_dollars, escrow_count, funding_authority_key)
+		VALUES
+		('seat-hi', now(), now(), generateUUIDv4(), 0, 1, 'seat-hi', 'dev-1', '203.0.113.8', 0, 900, 900, 1, 8, 1, 'funder-ps'),
+		('seat-lo', now(), now(), generateUUIDv4(), 0, 1, 'seat-lo', 'dev-1', '203.0.113.9', 0, 900, 900, 1, 30, 1, 'funder-ps')
+	`))
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_payment_escrows_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, client_seat_key, withdraw_authority_key, usdc_balance)
+		VALUES
+		('escrow-hi', now(), now(), generateUUIDv4(), 0, 1, 'escrow-hi', 'seat-hi', 'withdraw-ps', 48000000),
+		('escrow-lo', now(), now(), generateUUIDv4(), 0, 1, 'escrow-lo', 'seat-lo', 'withdraw-ps', 25650000)
+	`))
+
+	// Sort by prepaid descending: seat-hi (6 epochs) before seat-lo (0 epochs).
+	// The old price-based sort would put seat-lo ($30) first.
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/client-seats?filters=funder:funder-ps&sort_by=prepaid&sort_dir=desc", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredClientSeats(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+	var sorted handlers.PaginatedResponse[handlers.ShredClientSeatItem]
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&sorted))
+	require.Len(t, sorted.Items, 2)
+	assert.Equal(t, "seat-hi", sorted.Items[0].PK, "prepaid sort must order by epochs, not price")
+	assert.Equal(t, "seat-lo", sorted.Items[1].PK)
+
+	// Filter by prepaid >= 1: only seat-hi qualifies.
+	req = httptest.NewRequest(http.MethodGet, "/api/dz/shreds/client-seats?filters=funder:funder-ps&filters=prepaid:%3E=1", nil)
+	rr = httptest.NewRecorder()
+	api.GetShredClientSeats(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+	var filtered handlers.PaginatedResponse[handlers.ShredClientSeatItem]
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&filtered))
+	require.Len(t, filtered.Items, 1, "prepaid filter must be honored")
+	assert.Equal(t, "seat-hi", filtered.Items[0].PK)
+	assert.Equal(t, 1, filtered.Total)
 }
 
 func TestGetShredClientSeats_Sort(t *testing.T) {

@@ -18,12 +18,16 @@ import (
 	dzgeoloc "github.com/malbeclabs/lake/indexer/pkg/dz/geolocation"
 	dzgraph "github.com/malbeclabs/lake/indexer/pkg/dz/graph"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/isis"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/mroute"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/msdp"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/serviceability/permissionevents"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/escrowevents"
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
+	"github.com/malbeclabs/lake/utils/pkg/dberror"
 )
 
 // Config configures the DZ ingest worker.
@@ -36,15 +40,20 @@ type Config struct {
 	Network string
 
 	// Views and stores for activity execution.
-	Serviceability *dzsvc.View
-	Geolocation    *dzgeoloc.View     // optional
-	Shreds         *dzshreds.View     // optional
-	EscrowEvents   *escrowevents.View // optional
-	TelemLatency   *dztelemlatency.View
-	TelemUsage     *dztelemusage.View // optional
-	GraphStore     *dzgraph.Store     // optional
-	ISISSource     isis.Source        // optional
-	ISISStore      *isis.Store        // optional
+	Serviceability   *dzsvc.View
+	Geolocation      *dzgeoloc.View         // optional
+	Shreds           *dzshreds.View         // optional
+	EscrowEvents     *escrowevents.View     // optional
+	PermissionEvents *permissionevents.View // optional
+	TelemLatency     *dztelemlatency.View
+	TelemUsage       *dztelemusage.View // optional
+	GraphStore       *dzgraph.Store     // optional
+	ISISSource       isis.Source        // optional
+	ISISStore        *isis.Store        // optional
+	MrouteSource     mroute.Source      // optional
+	MrouteStore      *mroute.Store      // optional
+	MSDPSource       msdp.Source        // optional
+	MSDPStore        *msdp.Store        // optional
 }
 
 // TaskQueue returns the Temporal task queue name for the given network.
@@ -78,18 +87,23 @@ func Start(ctx context.Context, cfg Config) error {
 	wfID := workflowID(cfg.Network)
 
 	activities := &Activities{
-		Log:            log.With("component", "dz-ingest"),
-		IngestionLog:   cfg.IngestionLog,
-		Network:        cfg.Network,
-		Serviceability: cfg.Serviceability,
-		Geolocation:    cfg.Geolocation,
-		Shreds:         cfg.Shreds,
-		EscrowEvents:   cfg.EscrowEvents,
-		TelemLatency:   cfg.TelemLatency,
-		TelemUsage:     cfg.TelemUsage,
-		GraphStore:     cfg.GraphStore,
-		ISISSource:     cfg.ISISSource,
-		ISISStore:      cfg.ISISStore,
+		Log:              log.With("component", "dz-ingest"),
+		IngestionLog:     cfg.IngestionLog,
+		Network:          cfg.Network,
+		Serviceability:   cfg.Serviceability,
+		Geolocation:      cfg.Geolocation,
+		Shreds:           cfg.Shreds,
+		EscrowEvents:     cfg.EscrowEvents,
+		PermissionEvents: cfg.PermissionEvents,
+		TelemLatency:     cfg.TelemLatency,
+		TelemUsage:       cfg.TelemUsage,
+		GraphStore:       cfg.GraphStore,
+		ISISSource:       cfg.ISISSource,
+		ISISStore:        cfg.ISISStore,
+		MrouteSource:     cfg.MrouteSource,
+		MrouteStore:      cfg.MrouteStore,
+		MSDPSource:       cfg.MSDPSource,
+		MSDPStore:        cfg.MSDPStore,
 	}
 
 	w := worker.New(tc, tq, worker.Options{})
@@ -114,7 +128,7 @@ func Start(ctx context.Context, cfg Config) error {
 				if ctx.Err() != nil {
 					return
 				}
-				log.Error("dzingest: workflow interrupted, reattaching", "id", wfID, "error", err)
+				log.Warn("dzingest: workflow interrupted, reattaching", "id", wfID, "error", err)
 				current = tc.GetWorkflow(ctx, wfID, "")
 			} else {
 				return
@@ -163,7 +177,34 @@ func (l *temporalLogger) Error(msg string, keyvals ...any) {
 		l.log.Warn(msg, keyvals...)
 		return
 	}
+	// The periodic DZ ingest activities return nil to Temporal (see
+	// activities.refresh), so they never reach this "Activity error." log. The
+	// manual backfill activities do return their error, and BackfillRefresh
+	// shares the permission-events near-tip not-found gate — a transient-by-
+	// design condition (dberror.ErrTransient) that would otherwise page an
+	// attended backfill. Demote transient causes to WARN; non-transient
+	// failures still log ERROR. Mirrors the rollup worker's temporalLogger.
+	if msg == "Activity error." && isTransientActivityError(keyvals) {
+		l.log.Warn(msg, keyvals...)
+		return
+	}
 	l.log.Error(msg, keyvals...)
+}
+
+// isTransientActivityError reports whether Temporal's activity-error keyvals
+// carry an Error that dberror classifies as transient (a self-healing upstream
+// blip, or one explicitly marked with dberror.ErrTransient). At the "Activity
+// error." log site the Error keyval is the raw error the activity returned.
+func isTransientActivityError(keyvals []any) bool {
+	for i := 0; i+1 < len(keyvals); i += 2 {
+		if keyvals[i] != "Error" {
+			continue
+		}
+		if err, ok := keyvals[i+1].(error); ok {
+			return dberror.IsTransient(err)
+		}
+	}
+	return false
 }
 
 // hasBenignTaskProcessingError reports whether Temporal's "Task processing

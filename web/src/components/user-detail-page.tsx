@@ -3,13 +3,87 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Loader2, Users, AlertCircle, ArrowLeft, RefreshCw } from 'lucide-react'
 import { CopyableText } from '@/components/copyable-text'
+import { Tooltip } from '@/components/ui/tooltip'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
-import { fetchUser, fetchUserTraffic, fetchUserMulticastGroups, fetchPeeringDBFacility } from '@/lib/api'
+import {
+  fetchUser,
+  fetchUserTraffic,
+  fetchUserMulticastGroups,
+  fetchPeeringDBFacility,
+  fetchUserHealth,
+  type MulticastHealthStatus,
+  type MulticastHealthUserItem,
+} from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useBackLink } from '@/hooks/use-back-link'
 import { useTheme } from '@/hooks/use-theme'
 import { SmallDropdown } from '@/components/topology/TimeRangeSelector'
+
+const HEALTH_BADGE_CLASS: Record<MulticastHealthStatus, string> = {
+  healthy: 'bg-emerald-500/15 text-emerald-500',
+  degraded: 'bg-amber-500/15 text-amber-500',
+  unhealthy: 'bg-red-500/15 text-red-500',
+  disconnected: 'bg-sky-500/15 text-sky-500',
+  unknown: 'bg-muted text-muted-foreground',
+}
+
+const DIM_BADGE_CLASS: Record<string, string> = {
+  healthy: 'bg-emerald-500/15 text-emerald-500',
+  active: 'bg-emerald-500/15 text-emerald-500',
+  degraded: 'bg-amber-500/15 text-amber-500',
+  idle: 'bg-amber-500/15 text-amber-500',
+  unhealthy: 'bg-red-500/15 text-red-500',
+  disconnected: 'bg-sky-500/15 text-sky-500',
+  unknown: 'bg-muted text-muted-foreground',
+  no_data: 'bg-muted text-muted-foreground',
+}
+
+function DimBadge({ value }: { value: string }) {
+  const cls = DIM_BADGE_CLASS[value] ?? DIM_BADGE_CLASS.unknown
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${cls}`}>
+      {value}
+    </span>
+  )
+}
+
+function UserHealthBadge({ item }: { item: MulticastHealthUserItem }) {
+  const cls = HEALTH_BADGE_CLASS[item.health_status] ?? HEALTH_BADGE_CLASS.unknown
+  const tooltipContent = (
+    <div className="space-y-2 min-w-[260px]">
+      <div className="text-xs font-medium">
+        {item.mode === 'P' ? 'Publisher' : item.mode === 'S' ? 'Subscriber' : 'Publisher + Subscriber'} —{' '}
+        <span className="capitalize">{item.health_status}</span>
+      </div>
+      <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-xs">
+        <span className="text-muted-foreground">Control plane</span>
+        <span className="flex items-center gap-2">
+          <DimBadge value={item.control_plane_status} />
+          {item.mismatch_reason && (
+            <span className="text-muted-foreground text-[11px]">{item.mismatch_reason}</span>
+          )}
+        </span>
+        <span className="text-muted-foreground">Rate</span>
+        <span className="flex items-center gap-2">
+          <DimBadge value={item.rate_status} />
+          <span className="text-muted-foreground text-[11px]">{item.rate_status_reason}</span>
+        </span>
+      </div>
+    </div>
+  )
+  return (
+    <Tooltip content={tooltipContent} delayDuration={120}>
+      <span
+        tabIndex={0}
+        aria-label={`Health ${item.health_status}: CP ${item.control_plane_status}, Rate ${item.rate_status}`}
+        className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium cursor-help focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 ${cls}`}
+      >
+        {item.health_status}
+      </span>
+    </Tooltip>
+  )
+}
 
 function formatBps(bps: number): string {
   if (bps === 0) return '—'
@@ -135,6 +209,14 @@ function UserTrafficChart({ userPk }: { userPk: string }) {
   const [bucket, setBucket] = useState<string>('auto')
   const [agg, setAgg] = useState<AggMethod>('max')
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+
+  // Scroll into view when linked to with #traffic (e.g. from a multicast
+  // health tab's "traffic" link). Client-side nav doesn't honor the hash.
+  useEffect(() => {
+    if (window.location.hash === '#traffic') {
+      document.getElementById('traffic')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [])
 
   const effectiveBucket = bucket === 'auto' ? resolveAutoBucket(timeRange) : bucket
   const autoBucketLabel = BUCKET_LABELS[resolveAutoBucket(timeRange)] || '5m'
@@ -309,7 +391,7 @@ function UserTrafficChart({ userPk }: { userPk: string }) {
   }, [uplotData, hoveredIdx])
 
   return (
-    <div className="border border-border rounded-lg p-4 bg-card col-span-full group/chart">
+    <div id="traffic" className="border border-border rounded-lg p-4 bg-card col-span-full group/chart scroll-mt-20">
       <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-medium text-muted-foreground">Traffic History</h3>
@@ -447,6 +529,18 @@ export function UserDetailPage() {
     queryKey: ['user-multicast-groups', pk],
     queryFn: () => fetchUserMulticastGroups(pk!),
     enabled: !!pk,
+  })
+
+  const hasMulticast = !!multicastGroups && multicastGroups.length > 0
+  const {
+    data: userHealth,
+    isLoading: userHealthLoading,
+    error: userHealthError,
+  } = useQuery({
+    queryKey: ['user-health', pk],
+    queryFn: () => fetchUserHealth(pk!),
+    enabled: !!pk && hasMulticast,
+    refetchInterval: 30_000,
   })
 
   const { data: peeringdb } = useQuery({
@@ -701,13 +795,27 @@ export function UserDetailPage() {
           {/* Multicast Groups */}
           {multicastGroups && multicastGroups.length > 0 && (
             <div className="border border-border rounded-lg p-4 bg-card">
-              <h3 className="text-sm font-medium text-muted-foreground mb-3">Multicast Groups</h3>
+              <h3 className="text-sm font-medium text-muted-foreground mb-1">Multicast Groups</h3>
+              <p className="text-xs text-muted-foreground mb-3">
+                Health reflects the control plane reconciled against the onchain expectation. Rate is a presence-only signal (active/idle) and does not affect health. Hover a badge for the breakdown.
+              </p>
               <div className="space-y-2">
-                {multicastGroups.map((g) => (
+                {multicastGroups.map((g) => {
+                  // Filter to this group, then dedupe by mode as a safety net
+                  // against any future duplicate rows from the rate view.
+                  const seenModes = new Set<string>()
+                  const healthItems = (userHealth?.items ?? [])
+                    .filter((it) => it.multicast_group_pk === g.group_pk)
+                    .filter((it) => {
+                      if (seenModes.has(it.mode)) return false
+                      seenModes.add(it.mode)
+                      return true
+                    })
+                  return (
                   <div key={g.group_pk} className="flex items-center justify-between text-sm">
                     <div className="flex items-center gap-2">
                       <Link
-                        to={`/dz/multicast-groups/${g.group_pk}`}
+                        to={`/dz/multicast-groups/${g.group_pk}?tab=health`}
                         className="text-blue-600 dark:text-blue-400 hover:underline font-mono"
                       >
                         {g.group_code}
@@ -723,12 +831,32 @@ export function UserDetailPage() {
                       >
                         {g.mode === 'P' ? 'Publisher' : g.mode === 'S' ? 'Subscriber' : 'Pub + Sub'}
                       </span>
+                      {healthItems.map((it) => (
+                        <UserHealthBadge
+                          key={`${it.multicast_group_pk}-${it.mode}`}
+                          item={it}
+                        />
+                      ))}
+                      {healthItems.length === 0 && userHealthLoading && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-muted text-muted-foreground">
+                          loading…
+                        </span>
+                      )}
+                      {healthItems.length === 0 && !!userHealthError && (
+                        <span
+                          className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-red-500/15 text-red-500"
+                          title={(userHealthError as Error).message}
+                        >
+                          health unavailable
+                        </span>
+                      )}
                     </div>
                     <span className="text-xs text-muted-foreground font-mono">
                       {g.multicast_ip}
                     </span>
                   </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           )}

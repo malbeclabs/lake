@@ -14,6 +14,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 	"github.com/malbeclabs/lake/indexer/pkg/metrics"
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -71,6 +72,10 @@ type View struct {
 
 	readyOnce sync.Once
 	readyCh   chan struct{}
+
+	// esc escalates consecutive refresh failures from WARN to ERROR so a
+	// single blip doesn't page on-call (see logger.Escalator).
+	esc logger.Escalator
 }
 
 func NewView(cfg ViewConfig) (*View, error) {
@@ -139,15 +144,18 @@ func (v *View) safeRefresh(ctx context.Context) {
 		}
 	}()
 
-	if _, err := v.Refresh(ctx); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return
-		}
-		v.log.Error("shreds/escrow-events: refresh failed", "error", err)
+	_, err := v.Refresh(ctx)
+	if err != nil && errors.Is(err, context.Canceled) {
+		return
 	}
+	v.esc.Observe(v.log, "refresh", "shreds/escrow-events: refresh failed", err)
 }
 
 func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) {
+	return v.refresh(ctx, v.cfg.SkipHighWaterMarks)
+}
+
+func (v *View) refresh(ctx context.Context, ignoreCursor bool) (ingestionlog.RefreshResult, error) {
 	v.refreshMu.Lock()
 	defer v.refreshMu.Unlock()
 
@@ -172,7 +180,7 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 
 	// Get high water marks to know where to resume (unless skipping for backfill).
 	var hwms map[string]HighWaterMark
-	if v.cfg.SkipHighWaterMarks {
+	if ignoreCursor {
 		hwms = make(map[string]HighWaterMark)
 	} else {
 		var err error
@@ -246,10 +254,7 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 // BackfillRefresh runs a full refresh ignoring high-water marks. Existing events
 // are safely overwritten via ReplacingMergeTree deduplication.
 func (v *View) BackfillRefresh(ctx context.Context) (ingestionlog.RefreshResult, error) {
-	orig := v.cfg.SkipHighWaterMarks
-	v.cfg.SkipHighWaterMarks = true
-	defer func() { v.cfg.SkipHighWaterMarks = orig }()
-	return v.Refresh(ctx)
+	return v.refresh(ctx, true)
 }
 
 // ClickHouse returns the ClickHouse client for direct operations (e.g. truncate).
@@ -285,9 +290,14 @@ func (v *View) fetchEscrowEvents(ctx context.Context, escrow EscrowInfo, hwm Hig
 	var allSigs []*rpc.TransactionSignature
 	var beforeSig solana.Signature
 
+	// Paginate backward (via Before) until an empty page. Terminating on an empty page
+	// rather than a short page is robust to providers/gateways that cap pages below the
+	// requested limit — stopping on the first short page would skip older history.
+	limit := maxSignaturesPerRequest
 	for {
 		opts := &rpc.GetSignaturesForAddressOpts{
 			Commitment: rpc.CommitmentFinalized,
+			Limit:      &limit,
 		}
 		if !untilSig.IsZero() {
 			opts.Until = untilSig
@@ -300,13 +310,11 @@ func (v *View) fetchEscrowEvents(ctx context.Context, escrow EscrowInfo, hwm Hig
 		if err != nil {
 			return nil, fmt.Errorf("get signatures: %w", err)
 		}
-
-		allSigs = append(allSigs, sigs...)
-
-		// If we got fewer than the max, we've reached the end.
-		if len(sigs) < maxSignaturesPerRequest {
+		if len(sigs) == 0 {
 			break
 		}
+
+		allSigs = append(allSigs, sigs...)
 
 		// Paginate: set before to the last (oldest) signature.
 		beforeSig = sigs[len(sigs)-1].Signature

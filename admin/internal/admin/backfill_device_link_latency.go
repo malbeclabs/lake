@@ -62,6 +62,7 @@ func BackfillDeviceLinkLatency(
 	store, err := dztelemlatency.NewStore(dztelemlatency.StoreConfig{
 		Logger:     log,
 		ClickHouse: chDB,
+		DZEnv:      dzEnv,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create store: %w", err)
