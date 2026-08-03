@@ -169,6 +169,43 @@ func TestDeviceMulticastDelivery_HealthFiltersUseHealthSemantics(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 }
 
+// Totals are window aggregates on the page rows, so a page that lands past the
+// end of the result set carries none and falls back to a count query. The pager
+// still needs the true totals there.
+func TestDeviceMulticastDelivery_TotalsSurvivePageOffsetPastEnd(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertMulticastTestData(t, api)
+	insertMulticastHealthFixtures(t, api)
+
+	// The two pagers are independent: the endpoint-health leg pages on
+	// endpoint_offset, everything else on offset. Move them past the end one at
+	// a time, so a leg guarding on the wrong offset fails here.
+	rr, resp := deviceMulticastDeliveryRequest(api, "dev-nyc1",
+		"source=10.0.0.1&health=healthy&limit=1&offset=5&endpoint_limit=10")
+
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+	assert.Empty(t, resp.Routes)
+	assert.Equal(t, 1, resp.RouteTotal)
+	assert.Empty(t, resp.OIFs)
+	assert.Positive(t, resp.OIFTotal)
+	assert.Empty(t, resp.HealthUsers)
+	assert.Equal(t, 1, resp.HealthUserTotal)
+	assert.EqualValues(t, 1, resp.Summary.UserHealthCounts.Healthy)
+	assert.EqualValues(t, 1, resp.Summary.UserHealthCounts.Total)
+	assert.NotEmpty(t, resp.EndpointHealthItems, "endpoint pager is still on its first page")
+
+	rr, endpointPastEnd := deviceMulticastDeliveryRequest(api, "dev-nyc1",
+		"source=10.0.0.1&health=healthy&limit=10&endpoint_limit=1&endpoint_offset=5")
+
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+	assert.Empty(t, endpointPastEnd.EndpointHealthItems)
+	assert.Equal(t, 1, endpointPastEnd.EndpointHealthTotal)
+	assert.EqualValues(t, 1, endpointPastEnd.Summary.EndpointHealthCounts.Healthy)
+	assert.NotEmpty(t, endpointPastEnd.Routes, "route pager is still on its first page")
+	assert.NotEmpty(t, endpointPastEnd.HealthUsers)
+}
+
 func TestLinkMulticastDelivery_ObservedStateAndDirectionFilter(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
@@ -198,4 +235,11 @@ func TestLinkMulticastDelivery_ObservedStateAndDirectionFilter(t *testing.T) {
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 	assert.Zero(t, filtered.BranchTotal)
 	assert.Empty(t, filtered.Branches)
+
+	// Past-the-end page: the branch total comes from the count fallback, not
+	// from a window aggregate on rows that aren't there.
+	rr, pastEnd := linkMulticastDeliveryRequest(api, "link-ams-nyc", "limit=1&offset=5")
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.Empty(t, pastEnd.Branches)
+	assert.Equal(t, 1, pastEnd.BranchTotal)
 }

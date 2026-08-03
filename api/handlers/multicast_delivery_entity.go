@@ -31,6 +31,41 @@ const multicastDeliveryEntityCoverageNote = "Current observed route state is lim
 // size is unavailable, matching the smallest env pool's derived value.
 const maxConcurrentMulticastDeliveryQueries = 6
 
+const (
+	// multicastDeliveryRequestTimeout bounds a whole entity request.
+	multicastDeliveryRequestTimeout = 30 * time.Second
+
+	// multicastDeliveryQueryTimeoutSeconds must stay strictly below
+	// multicastDeliveryRequestTimeout so an overrun surfaces as a ClickHouse
+	// TIMEOUT_EXCEEDED naming the query (logged at WARN, transient) rather than
+	// a bare context.DeadlineExceeded from the handler's own deadline winning
+	// the race. See TestMulticastDeliveryQueryTimeoutLosesToRequestDeadline.
+	multicastDeliveryQueryTimeoutSeconds = 20
+)
+
+// multicastDeliveryQuerySettings is the SETTINGS clause every multicast
+// delivery entity query ends with. The cap is the per-query budget or what is
+// left of the request deadline, whichever is smaller: ClickHouse counts
+// max_execution_time from the moment the query starts executing, so a query
+// that waited on the fan-out semaphore, or that runs second within its branch
+// (a count fallback), would otherwise outlast the handler's own deadline and
+// lose the race the cap exists to lose.
+func multicastDeliveryQuerySettings(ctx context.Context) string {
+	seconds := multicastDeliveryQueryTimeoutSeconds
+	if deadline, ok := ctx.Deadline(); ok {
+		// One second of margin, so ClickHouse still gets to report its own
+		// TIMEOUT_EXCEEDED before the request deadline fires.
+		remaining := int(time.Until(deadline).Round(time.Second)/time.Second) - 1
+		if remaining < seconds {
+			seconds = max(remaining, 1)
+		}
+	}
+	return fmt.Sprintf(
+		"SETTINGS max_execution_time = %d, timeout_before_checking_execution_speed = 0",
+		seconds,
+	)
+}
+
 func multicastDeliveryQuerySemSize(maxOpenConns int) int {
 	size := maxOpenConns * 6 / 10
 	if size < 1 {
@@ -90,7 +125,7 @@ type multicastDeliveryEntityParams struct {
 // GetDeviceMulticastDelivery returns observed multicast route/OIF state related
 // to one device across all multicast groups.
 func (a *API) GetDeviceMulticastDelivery(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), multicastDeliveryRequestTimeout)
 	defer cancel()
 
 	pkOrCode := chi.URLParam(r, "pk")
@@ -105,9 +140,10 @@ func (a *API) GetDeviceMulticastDelivery(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// The handler runs up to 11 ClickHouse queries under a single 30s request
-	// deadline; sequentially their wall times accumulate to the margin on loaded
-	// runners. Independent queries therefore run concurrently, in two stages:
+	// The handler runs up to 11 ClickHouse queries — one per branch, since each
+	// page query carries its own total as a window aggregate — under a single 30s
+	// request deadline; sequentially their wall times accumulate to the margin on
+	// loaded runners. Independent queries therefore run concurrently, in two stages:
 	//
 	//   stage 1: device row, source availability, source ingest times
 	//            (independent of each other; everything else needs their results)
@@ -344,7 +380,7 @@ func (a *API) GetDeviceMulticastDelivery(w http.ResponseWriter, r *http.Request)
 // GetLinkMulticastDelivery returns observed multicast OIF state for one link
 // across all multicast groups.
 func (a *API) GetLinkMulticastDelivery(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), multicastDeliveryRequestTimeout)
 	defer cancel()
 
 	pkOrCode := chi.URLParam(r, "pk")

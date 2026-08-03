@@ -31,23 +31,16 @@ type Logger interface {
 // The helper never drops a line: outside a request handler a context
 // deadline is usually a server-side timeout, which deserves a WARN. Request
 // handlers that want to skip logging entirely when the client has gone away
-// should check IsClientDisconnect first (see api/handlers.logError).
+// should check first — but on the cancel/broken-connection half only, not on
+// IsClientDisconnect as a whole: a deadline there is the handler's own budget
+// expiring, and dropping it leaves a 500 with no log line at any level. See
+// api/handlers.isCallerGone, i.e. IsClientDisconnect && !IsDeadlineExceeded.
 func Error(log Logger, msg string, args ...any) {
 	if err := ErrorFromArgs(args); err != nil && (IsClientDisconnect(err) || dberror.IsTransient(err)) {
 		log.Warn(msg, args...)
 		return
 	}
 	log.Error(msg, args...)
-}
-
-// Warn logs at WARN level, silently skipping client disconnects. Meant for
-// request paths, where a disconnect-class error means the client is gone and
-// there is nothing to log; elsewhere prefer a plain log.Warn.
-func Warn(log Logger, msg string, args ...any) {
-	if err := ErrorFromArgs(args); err != nil && IsClientDisconnect(err) {
-		return
-	}
-	log.Warn(msg, args...)
 }
 
 // IsCanceled reports whether err is a context cancellation, including
@@ -60,6 +53,20 @@ func IsCanceled(err error) bool {
 	}
 	return errors.Is(err, context.Canceled) ||
 		strings.Contains(err.Error(), "context canceled")
+}
+
+// IsDeadlineExceeded reports whether err is a context deadline expiring,
+// including non-standard wrappings that only carry the message. Unlike
+// IsClientDisconnect it does not match cancellation, so a request path can
+// separate "the caller went away" (nothing to log) from its own budget
+// expiring (worth a WARN — net/http never puts a deadline on r.Context(), so
+// on a request path a deadline is always server-side).
+func IsDeadlineExceeded(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, context.DeadlineExceeded) ||
+		strings.Contains(err.Error(), "context deadline exceeded")
 }
 
 // IsClientDisconnect returns true if the error is caused by the client
