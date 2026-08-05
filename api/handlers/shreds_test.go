@@ -583,6 +583,22 @@ func TestGetShredDevices_RetransmitOnlyFromMetro(t *testing.T) {
 	assert.Equal(t, uint8(0), flags["dev-2"], "dev-2's metro has no history row")
 }
 
+// The v1 fetch path fills the same ShredDeviceItem struct as GetShredDevices;
+// it must populate RetransmitOnlyEnabled too, not leave it zero, so the field
+// is trustworthy for any internal consumer (and for a future v1 exposure).
+func TestFetchEdgeShredsDevices_PopulatesRetransmitOnly(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertShredsTestData(t, api)
+
+	rows, total, err := api.FetchEdgeShredsDevices(t.Context(), 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1), total)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "dev-1", rows[0].DeviceKey)
+	assert.Equal(t, uint8(1), rows[0].RetransmitOnlyEnabled)
+}
+
 func TestGetShredFunders_WithData(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
