@@ -23,7 +23,8 @@ type FluxInfluxDBClient struct {
 // The influxdb-client-go/v2 default is 20s which is too short for pivot queries
 // over a 1-hour window of interface counter data. A steady-state telemetry-usage
 // refresh runs 2 chunked queries (overlap re-read + one new chunk), so ~8m of
-// Flux worst case; RefreshTelemetryUsage runs under a dedicated 10m
+// Flux worst case; a capped catch-up refresh runs 3, so ~12m (see
+// WorstCaseRefreshFluxBudget). RefreshTelemetryUsage runs under a dedicated 15m
 // StartToCloseTimeout (see dzingest/workflow.go) that leaves margin for that
 // plus the ClickHouse work.
 const defaultFluxHTTPTimeout = 4 * time.Minute

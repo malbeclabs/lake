@@ -159,6 +159,10 @@ type ViewConfig struct {
 	DZEnv           string        // DZ network environment (e.g. "mainnet-beta", "testnet", "devnet")
 }
 
+// defaultQueryChunk is the shipping QueryChunk: nothing outside this package
+// sets the field, so this is the value WorstCaseRefreshFluxBudget is computed at.
+const defaultQueryChunk = 5 * time.Minute
+
 func (cfg *ViewConfig) Validate() error {
 	if cfg.Logger == nil {
 		return errors.New("logger is required")
@@ -183,7 +187,7 @@ func (cfg *ViewConfig) Validate() error {
 		// window is only a few minutes (one chunk), but when the high-water mark
 		// falls behind the window grows to QueryWindow; chunking keeps each
 		// server-side pivot small enough to stay under InfluxDB Cloud's heap limit.
-		cfg.QueryChunk = 5 * time.Minute
+		cfg.QueryChunk = defaultQueryChunk
 	}
 	if cfg.Clock == nil {
 		cfg.Clock = clockwork.NewRealClock()
@@ -209,6 +213,21 @@ func (cfg *ViewConfig) Validate() error {
 		return fmt.Errorf("query window %s plus one capped span (%s) must stay below maxCatchupHorizon (%s)",
 			cfg.QueryWindow, cfg.QueryChunk*maxCatchupChunks, maxCatchupHorizon)
 	}
+	// Pin a capped refresh at exactly 3 Flux sub-queries —
+	// ceil((refreshOverlap + QueryChunk×maxCatchupChunks) / QueryChunk) — so
+	// WorstCaseRefreshFluxBudget holds for every config Validate accepts. The
+	// baselineCacheMaxLag check above caps the chunk below 7.5m, and at
+	// QueryChunk >= refreshOverlap the ceiling is also comfortably above
+	// minCatchupSpan, so the adaptive shrink always has room to fire.
+	//
+	// A smaller chunk splits the same window into more sub-queries and is the
+	// direction that actually hurts: QueryChunk=4m costs 4 × defaultFluxHTTPTimeout
+	// = 18m against the 15m activity deadline, while passing every other check
+	// here.
+	if cfg.QueryChunk < refreshOverlap {
+		return fmt.Errorf("query chunk %s must be at least refreshOverlap (%s): a smaller chunk splits a capped refresh into more than 3 Flux sub-queries, exceeding WorstCaseRefreshFluxBudget (%s) and the activity deadline",
+			cfg.QueryChunk, refreshOverlap, WorstCaseRefreshFluxBudget())
+	}
 	return nil
 }
 
@@ -227,6 +246,11 @@ const baselineLookback = 2 * 24 * time.Hour
 // never exceeds the watermark, so any excursion past watermark+refreshOverlap
 // proves another writer filled the region and forces a re-scan.
 const refreshOverlap = 5 * time.Minute
+
+// baselineFallbackTimeout bounds the InfluxDB baseline scan taken when the cache
+// misses AND ClickHouse returns zero baselines. Counted by
+// WorstCaseRefreshFluxBudget: it spends the same activity deadline.
+const baselineFallbackTimeout = 120 * time.Second
 
 // baselineCacheMaxLag is how far windowStart may sit behind the cached watermark
 // and still reuse the cache. The cache holds sparse-counter state as of the last
@@ -273,18 +297,57 @@ const baselineCacheMaxLag = 20 * time.Minute
 // ~1.5× steady-state peak memory and one extra Flux query.
 //
 // The cap must keep each refresh inside the dzingest activity's
-// StartToCloseTimeout. Each chunk is a separate Flux query bounded only by the
-// client's per-request HTTP timeout (defaultFluxHTTPTimeout, 4m); the Flux
-// query does not abort on the activity context deadline, so a capped 3-query
-// refresh can spend up to ~12m in InfluxDB alone. RefreshTelemetryUsage runs
-// under a dedicated 15m StartToCloseTimeout (see dzingest/workflow.go) that
-// bounds this worst case plus the ClickHouse dedup/baseline/insert work, so
-// ctx is not already expired when InsertInterfaceUsage runs and maxTime
-// advances every cycle. (History: a 15m span under the old 5m deadline overran
-// on both mainnet-beta and testnet — ctx expired before the insert, every
-// catch-up refresh failed, and the window stayed pinned at the cap in an
-// unrecoverable loop. The deadline, not the span, was the bug.)
+// StartToCloseTimeout; WorstCaseRefreshFluxBudget computes the InfluxDB half of
+// that worst case, and dzingest asserts the deadline exceeds it.
+// RefreshTelemetryUsage runs under a dedicated 15m StartToCloseTimeout (see
+// dzingest/workflow.go) that bounds it plus the ClickHouse
+// dedup/baseline/insert work, so ctx is not already expired when
+// InsertInterfaceUsage runs and maxTime advances every cycle. (History: a 15m
+// span under the old 5m deadline overran on both mainnet-beta and testnet —
+// ctx expired before the insert, every catch-up refresh failed, and the window
+// stayed pinned at the cap in an unrecoverable loop. The deadline, not the
+// span, was the bug.)
+//
+// This product is now only the CEILING of the span: no fixed (span, deadline)
+// pair holds on every environment (#740), so the span shrinks on a failed capped
+// cycle and recovers on success (see View.adjustCatchupSpan).
 const maxCatchupChunks = 2
+
+// minCatchupSpan is the floor the adaptive catch-up span shrinks to, and the step
+// it recovers by (see View.adjustCatchupSpan). Shrinking below a minute buys
+// nothing: refreshOverlap is always re-read, so the window can never drop below
+// ~5m however small the span.
+//
+// The floor does NOT guarantee convergence — if a ~6m window still exceeds the
+// activity budget the watermark advances 1m per cycle, slower than real time, and
+// lag keeps growing. Still strictly better than #740's zero-ingest freeze, and
+// the divergence WARN and maxCatchupHorizon ERROR remain the escalation path.
+const minCatchupSpan = 1 * time.Minute
+
+// sameWindowWarnAfter is how many consecutive identical catch-up windows the
+// capping log tolerates at INFO before escalating to WARN.
+const sameWindowWarnAfter = 3
+
+// WorstCaseRefreshFluxBudget is how long one capped catch-up refresh can spend in
+// InfluxDB at the shipping QueryChunk: every chunk's Flux query at its full HTTP
+// timeout, plus the baseline fallback. Validate pins the sub-query count at 3, so
+// this holds for any accepted config.
+//
+// The activity ctx does cancel these queries (the client builds them with
+// http.NewRequestWithContext), so total Flux time is bounded by the deadline
+// itself — which is exactly why the deadline must exceed this budget rather than
+// merely equal it. A deadline below it makes cancellation land mid-Flux, so the
+// insert never runs and the watermark never advances.
+//
+// The dzingest activity's StartToCloseTimeout must exceed this plus the ClickHouse
+// dedup/baseline/insert work, or a capped cycle dies before the insert and the
+// watermark never advances (#740). #711 and #714 set the two independently and
+// broke it; dzingest now asserts the relationship against this helper.
+func WorstCaseRefreshFluxBudget() time.Duration {
+	span := refreshOverlap + defaultQueryChunk*maxCatchupChunks
+	subQueries := int((span + defaultQueryChunk - 1) / defaultQueryChunk) // ceil
+	return time.Duration(subQueries)*defaultFluxHTTPTimeout + baselineFallbackTimeout
+}
 
 // maxCatchupHorizon is the only remaining hard skip-ahead: a watermark older
 // than this jumps to now−QueryWindow and the intervening span is PERMANENTLY
@@ -359,6 +422,31 @@ type View struct {
 	// refreshMu.
 	lastCatchupLag time.Duration
 
+	// catchupSpan is how much NEW data (past the watermark) a capped refresh
+	// ingests. It starts at, and is ceilinged by, QueryChunk × maxCatchupChunks and
+	// self-tunes from each capped cycle's outcome (see adjustCatchupSpan).
+	//
+	// Fixed, it made the window a function of the watermark alone — so a capped
+	// cycle that failed re-queried the IDENTICAL window forever, since maxTime only
+	// advances on a successful insert (#740: 22.6h across 76 cycles). Guarded by
+	// refreshMu; in-memory only, like sourceEmptyThrough and the baseline cache.
+	catchupSpan time.Duration
+
+	// consecutiveCappedFailures counts capped cycles that failed back-to-back. It
+	// is the shrink trigger (see adjustCatchupSpan) — window identity cannot serve,
+	// because the initial full refresh and the horizon-skip cycle anchor the window
+	// at now−QueryWindow, so both ends slide every cycle and the window never
+	// repeats even while the cost does. Guarded by refreshMu.
+	consecutiveCappedFailures int
+
+	// lastWindowStart/lastWindowEnd and sameWindowCycles count consecutive CAPPED
+	// refreshes that queried the same window, so the capping log can escalate once
+	// shrinking has stopped helping. An uncapped cycle resets them: its window is
+	// not pinned. Guarded by refreshMu.
+	lastWindowStart  time.Time
+	lastWindowEnd    time.Time
+	sameWindowCycles int
+
 	// esc escalates consecutive refresh failures from WARN to ERROR so a
 	// single blip doesn't page on-call (see logger.Escalator).
 	esc logger.Escalator
@@ -378,10 +466,11 @@ func NewView(cfg ViewConfig) (*View, error) {
 	}
 
 	v := &View{
-		log:     cfg.Logger,
-		cfg:     cfg,
-		store:   store,
-		readyCh: make(chan struct{}),
+		log:         cfg.Logger,
+		cfg:         cfg,
+		store:       store,
+		readyCh:     make(chan struct{}),
+		catchupSpan: cfg.QueryChunk * maxCatchupChunks,
 		// This view refreshes every ~5 minutes and is the only signal for the
 		// InfluxDB dependency, so the default transient threshold (10) would
 		// take ~50 minutes to page. Escalate transient causes at the strict
@@ -427,11 +516,22 @@ func (v *View) safeRefresh(ctx context.Context) {
 	v.esc.Observe(v.log, "refresh", "telemetry/usage: refresh failed", err)
 }
 
-func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) {
-	var result ingestionlog.RefreshResult
-
+func (v *View) Refresh(ctx context.Context) (result ingestionlog.RefreshResult, err error) {
 	v.refreshMu.Lock()
 	defer v.refreshMu.Unlock()
+
+	// Only a capped cycle can repeat an identical window, so only its outcome
+	// adjusts the span. The defer covers every one of Refresh's error returns.
+	capped := false
+	defer func() {
+		// A panic would otherwise unwind with err nil and be scored as a success,
+		// growing the span. safeRefresh recovers it again.
+		if r := recover(); r != nil {
+			v.adjustCatchupSpan(capped, fmt.Errorf("refresh panicked: %v", r))
+			panic(r)
+		}
+		v.adjustCatchupSpan(capped, err)
+	}()
 
 	refreshStart := time.Now()
 	v.log.Debug("telemetry/usage: refresh started", "start_time", refreshStart)
@@ -454,6 +554,13 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 
 	now := v.cfg.Clock.Now()
 	queryWindowStart := now.Add(-v.cfg.QueryWindow)
+
+	// Publish before any expensive work, so a cycle that later dies on the activity
+	// deadline still reports it: the watermark's age then climbs from the first
+	// failing cycle rather than going unnoticed until the horizon ERROR (#740).
+	if maxTime != nil {
+		metrics.TelemetryUsageWatermarkTimestampSeconds.WithLabelValues(v.cfg.DZEnv).Set(float64(maxTime.UnixNano()) / 1e9)
+	}
 
 	// Effective watermark: ClickHouse's max event_ts, advanced past any span a
 	// prior capped refresh queried and proved empty (see sourceEmptyThrough).
@@ -541,7 +648,7 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	if baselines == nil {
 		metrics.InfluxBaselineFallbackTotal.WithLabelValues(v.cfg.DZEnv).Inc()
 		v.log.Warn("telemetry/usage: querying baselines from influxdb (clickhouse returned 0 baselines)")
-		baselineCtx, baselineCancel := context.WithTimeout(ctx, 120*time.Second)
+		baselineCtx, baselineCancel := context.WithTimeout(ctx, baselineFallbackTimeout)
 		defer baselineCancel()
 
 		influxStart := time.Now()
@@ -626,12 +733,34 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		newDataStart = *watermark
 	}
 	queryEnd := now
-	capped := false
-	if maxCatchup := v.cfg.QueryChunk * maxCatchupChunks; maxCatchup > 0 && queryEnd.Sub(newDataStart) > maxCatchup {
+	if maxCatchup := v.catchupSpan; maxCatchup > 0 && queryEnd.Sub(newDataStart) > maxCatchup {
 		queryEnd = newDataStart.Add(maxCatchup)
 		capped = true
-		v.log.Info("telemetry/usage: capping catch-up window to bound memory",
-			"queryStart", queryStart.UTC(), "queryEnd", queryEnd.UTC(), "target", now.UTC())
+	}
+	if capped {
+		if queryStart.Equal(v.lastWindowStart) && queryEnd.Equal(v.lastWindowEnd) {
+			v.sameWindowCycles++
+		} else {
+			v.sameWindowCycles = 1
+			v.lastWindowStart, v.lastWindowEnd = queryStart, queryEnd
+		}
+		// Escalate only once the window repeats AND the span is pinned at the floor:
+		// shrinking has run out of room. Both conditions are load-bearing — a repeat
+		// alone is benign, since a capped span the source has no rows in SUCCEEDS,
+		// leaving the span at its ceiling and the same window re-read every cycle
+		// until it ages out of QueryWindow (the empty-span branch below bounds that).
+		// WARN, not ERROR: the underlying failure already escalates via the refresh
+		// escalator, and one failure yields at most one alert-bearing line.
+		logCap := v.log.Info
+		if v.sameWindowCycles > sameWindowWarnAfter && v.catchupSpan <= minCatchupSpan {
+			logCap = v.log.Warn
+		}
+		logCap("telemetry/usage: capping catch-up window to bound memory",
+			"queryStart", queryStart.UTC(), "queryEnd", queryEnd.UTC(), "target", now.UTC(),
+			"cappedSpan", v.catchupSpan.String(), "sameWindowCycles", v.sameWindowCycles)
+	} else {
+		v.sameWindowCycles = 0
+		v.lastWindowStart, v.lastWindowEnd = time.Time{}, time.Time{}
 	}
 	queryStartUTC := queryStart.UTC()
 	queryEndUTC := queryEnd.UTC()
@@ -716,7 +845,7 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 			v.log.Warn("telemetry/usage: catch-up lag is not decreasing — refresh cycle time is at or above the capped span; ingest is diverging toward the catch-up horizon",
 				"lag", lag.String(),
 				"previousLag", v.lastCatchupLag.String(),
-				"cappedSpan", (v.cfg.QueryChunk * maxCatchupChunks).String(),
+				"cappedSpan", v.catchupSpan.String(),
 				"horizon", maxCatchupHorizon.String())
 		}
 		v.lastCatchupLag = lag
@@ -752,6 +881,86 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 
 	metrics.ViewRefreshTotal.WithLabelValues("telemetry-usage", "success").Inc()
 	return result, nil
+}
+
+// adjustCatchupSpan self-tunes the catch-up span from a capped cycle's outcome,
+// AIMD-style. The fix for #740: a failed capped cycle re-queries the same window
+// next cycle, so the retry must be made strictly cheaper.
+//
+// Recovery is additive rather than a jump back to the ceiling because the safe
+// operating point is unknown and drifts with source row density — returning in
+// one step re-triggers the failure and settles into a fail/succeed oscillation
+// paying a full failed cycle every other cycle. The cost is 9 successful cycles
+// from floor to ceiling, during which lag can still grow.
+//
+// The trigger is two capped cycles failing back-to-back, not any single failure.
+// Cause is irrelevant — #740 surfaced as both a wrapped context.DeadlineExceeded
+// and a bare Flux iterator error, so cause-specific detection would have missed
+// the case that froze staging — but a lone failure proves nothing, because the
+// next cycle may succeed and move the window.
+//
+// Consecutive failures, not window identity: cost decides whether a cycle fits and
+// the span decides cost, so the streak covers a frozen and a sliding window anchor
+// alike. The initial full refresh (maxTime == nil) and the horizon-skip cycle
+// anchor at now−QueryWindow, so both window ends slide every cycle — a
+// window-identity trigger can never fire there, and a fresh dz_env's bootstrap is
+// the most expensive cycle in the system (0 ClickHouse baselines, so the InfluxDB
+// baseline fallback lands on top of three chunked reads: the full
+// WorstCaseRefreshFluxBudget).
+//
+// Shrinking on every failure would tie the steady-state span to the failure RATE
+// rather than to what a cycle can afford: halving against a +minCatchupSpan
+// recovery has a fixed point at k minutes for k successes per failure, so a
+// sustained ~50% failure rate uncorrelated with span size (InfluxDB rate
+// limiting — a named cause in dzingest/activities.go, and catch-up issues 3× the
+// steady-state query count) walks the span to the floor and makes catch-up
+// DIVERGE, where the old fixed span converged at ceiling-per-success. Nothing
+// pages there either: the activity escalator resets on each success, so it never
+// sees three consecutive failures.
+//
+// Callers must hold refreshMu.
+func (v *View) adjustCatchupSpan(capped bool, err error) {
+	switch {
+	case err == nil:
+		// A success at any window size proves the cost is affordable, so it clears
+		// the streak even on an uncapped cycle.
+		v.consecutiveCappedFailures = 0
+	case capped && !errors.Is(err, context.Canceled):
+		v.consecutiveCappedFailures++
+	}
+	// An uncapped window ends at now and is never pinned, so a steady-state blip
+	// must not perturb the span.
+	if !capped {
+		return
+	}
+	ceiling := v.cfg.QueryChunk * maxCatchupChunks
+	switch {
+	case err == nil:
+		if v.catchupSpan >= ceiling {
+			return
+		}
+		v.catchupSpan = min(v.catchupSpan+minCatchupSpan, ceiling)
+	case errors.Is(err, context.Canceled):
+		// Pod shutdown says nothing about the cost of the window.
+	case v.consecutiveCappedFailures < 2:
+		// One failure proves nothing: the next cycle may succeed, which advances the
+		// watermark and moves the window anyway.
+	case v.catchupSpan <= minCatchupSpan:
+		// At the floor; the repeated-window WARN owns this state.
+	default:
+		prev := v.catchupSpan
+		v.catchupSpan = max(prev/2, minCatchupSpan)
+		// WARN, not INFO: the only per-cycle line naming an in-progress walk-down,
+		// and what an operator greps for where metrics are not scraped. Below ERROR
+		// because the underlying failure already escalates via the refresh escalator.
+		v.log.Warn("telemetry/usage: capped catch-up cycle failed; halving the catch-up span so the retry cannot repeat the same work",
+			"previousSpan", prev.String(),
+			"newSpan", v.catchupSpan.String(),
+			"floor", minCatchupSpan.String(),
+			"ceiling", ceiling.String(),
+			"consecutiveFailures", v.consecutiveCappedFailures,
+			"error", err)
+	}
 }
 
 // updateBaselineCache merges the end-of-window sparse baselines into the cache

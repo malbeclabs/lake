@@ -5,6 +5,7 @@ import (
 	"sync"
 	"testing"
 
+	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/testsuite"
@@ -123,4 +124,23 @@ func TestDZIngestWorkflow_ActivityFailuresNeverLogError(t *testing.T) {
 		require.True(t, logCap.has("warn", msg),
 			"workflow failure %q should log at WARN", msg)
 	}
+}
+
+// #711 set a 10m StartToClose and #714 widened the catch-up window to 15m of data;
+// the pair silently became incoherent, so every capped cycle died on the deadline
+// before its insert and the next cycle re-queried the identical window — 22.6h of
+// frozen staging ingest (#740). Assert the relationship instead of trusting prose.
+//
+// The budget is three chunked Flux queries (12m) plus the rare baseline fallback
+// (2m). The residual is 1m, so this asserts only that the deadline clears the
+// InfluxDB work — not that ClickHouse has comfortable room on the fallback path,
+// which telemUsageStartToCloseTimeout documents as tight. #711's 10m fails this
+// assert outright.
+func TestLake_DZIngest_TelemetryUsageBudgetCoversWorstCaseRefresh(t *testing.T) {
+	t.Parallel()
+
+	fluxBudget := dztelemusage.WorstCaseRefreshFluxBudget()
+	require.Greater(t, telemUsageStartToCloseTimeout, fluxBudget,
+		"the RefreshTelemetryUsage activity deadline (%s) must exceed the worst-case InfluxDB time for one capped refresh (%s), or cancellation lands mid-Flux and the insert never runs",
+		telemUsageStartToCloseTimeout, fluxBudget)
 }

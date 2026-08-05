@@ -3,7 +3,9 @@ package dztelemusage
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -155,6 +157,28 @@ func TestLake_TelemetryUsage_View_ViewConfig_Validate(t *testing.T) {
 		err := cfg.Validate()
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "too large for the baseline cache")
+	})
+
+	// The direction that actually breaks the activity deadline. A chunk below
+	// refreshOverlap splits a capped refresh into 4+ Flux sub-queries — 4m gives
+	// 4×4m + 2m = 18m against the 15m deadline — while passing every other check
+	// here, and WorstCaseRefreshFluxBudget (computed at the shipping chunk) would
+	// not see it.
+	t.Run("rejects a query chunk below the overlap", func(t *testing.T) {
+		t.Parallel()
+		mockDB := testClient(t)
+
+		cfg := ViewConfig{
+			Logger:          laketesting.NewLogger(),
+			ClickHouse:      mockDB,
+			InfluxDB:        &mockInfluxDBClient{},
+			Bucket:          "test-bucket",
+			RefreshInterval: time.Second,
+			QueryChunk:      4 * time.Minute,
+		}
+		err := cfg.Validate()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "must be at least refreshOverlap")
 	})
 
 	t.Run("returns error when query window defeats the empty-span age-out", func(t *testing.T) {
@@ -2221,4 +2245,432 @@ func queryInOctetsDeltas(t *testing.T, v *View, dev string, since time.Time) map
 	}
 	require.NoError(t, rows.Err())
 	return out
+}
+
+// adaptiveSpanView builds a View whose InfluxDB mock returns whatever respond says
+// for each sub-query, with log output captured so the new WARNs can be asserted.
+func adaptiveSpanView(
+	t *testing.T,
+	clock clockwork.Clock,
+	chunk time.Duration,
+	respond func(s, e time.Time) ([]map[string]any, error),
+) (*View, *bytes.Buffer) {
+	t.Helper()
+	var logBuf bytes.Buffer
+	influx := &mockInfluxDBClient{
+		queryIntfCountersFunc: func(_ context.Context, s, e time.Time) ([]map[string]any, error) {
+			return respond(s, e)
+		},
+	}
+	view, err := NewView(ViewConfig{
+		Logger:          slog.New(slog.NewTextHandler(&logBuf, nil)),
+		Clock:           clock,
+		ClickHouse:      testClient(t),
+		InfluxDB:        influx,
+		Bucket:          "test-bucket",
+		RefreshInterval: time.Second,
+		QueryWindow:     time.Hour,
+		QueryChunk:      chunk,
+	})
+	require.NoError(t, err)
+	return view, &logBuf
+}
+
+// Regression for #740: a failed capped cycle used to re-query the IDENTICAL window
+// forever, since maxTime only advances on a successful insert (staging: ~22.6h
+// across 76 cycles). A window that has actually repeated now halves the span, so
+// the retry is cheaper and the window moves. With the insert never landing,
+// queryStart is frozen and queryEnd is watermark + span — so the span sequence IS
+// the window sequence.
+//
+// The first failure is a free pass — it could still be followed by a success that
+// moves the watermark — after which every consecutive failure halves (see
+// adjustCatchupSpan).
+func TestLake_TelemetryUsage_View_Refresh_FailedCappedCycleShrinksWindow(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClock()
+	// 30m stale: inside the 1h query window, past the 10m ceiling, so every cycle
+	// is capped.
+	maxTime := clock.Now().Add(-30 * time.Minute).Truncate(time.Millisecond)
+
+	view, logBuf := adaptiveSpanView(t, clock, chunk, func(_, _ time.Time) ([]map[string]any, error) {
+		return nil, context.DeadlineExceeded
+	})
+	seedMaxTime(t, view, maxTime)
+
+	require.Equal(t, maxCatchupChunks*chunk, view.catchupSpan, "a fresh view starts at the ceiling")
+
+	spans := []time.Duration{}
+	for cycle := 0; cycle < 10; cycle++ {
+		_, err := view.Refresh(t.Context())
+		require.Error(t, err, "cycle %d must fail (the induced slow source)", cycle)
+		spans = append(spans, view.catchupSpan)
+	}
+
+	// One free failure, then halving to the floor by cycle 5 and held there.
+	require.Equal(t, []time.Duration{
+		10 * time.Minute,
+		5 * time.Minute,
+		150 * time.Second,
+		75 * time.Second,
+		minCatchupSpan,
+		minCatchupSpan,
+		minCatchupSpan,
+		minCatchupSpan,
+		minCatchupSpan,
+		minCatchupSpan,
+	}, spans)
+	require.Contains(t, logBuf.String(), "halving the catch-up span",
+		"each shrink must WARN — on an environment whose metrics are not scraped this is the only per-cycle signal")
+}
+
+// A repeated window shrinks whatever the cause: #740 surfaced as both a wrapped
+// context.DeadlineExceeded and a bare Flux iterator error, so cause-specific
+// detection would have missed the case that actually froze staging.
+func TestLake_TelemetryUsage_View_Refresh_NonDeadlineFailureShrinksWindow(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClock()
+	maxTime := clock.Now().Add(-30 * time.Minute).Truncate(time.Millisecond)
+
+	view, _ := adaptiveSpanView(t, clock, chunk, func(_, _ time.Time) ([]map[string]any, error) {
+		return nil, errors.New("error iterating flux intf counters results")
+	})
+	seedMaxTime(t, view, maxTime)
+
+	for i := 0; i < 2; i++ {
+		_, err := view.Refresh(t.Context())
+		require.Error(t, err)
+	}
+	require.Equal(t, chunk, view.catchupSpan, "a repeated window must shrink on a non-deadline cause too")
+}
+
+// The #740 acceptance criterion: an induced slow environment must still make
+// forward progress. This source fails any cycle costing more than the budget
+// affords, so the ceiling window always dies and the shrink has to find one that
+// fits.
+func TestLake_TelemetryUsage_View_Refresh_InducedSlowSourceMakesProgress(t *testing.T) {
+	t.Parallel()
+
+	const (
+		chunk = 5 * time.Minute
+		// Affords overlap + one chunk (10m) but not overlap + two (15m).
+		affordable = 11 * time.Minute
+		dev, intf  = "slow-device", "eth0"
+	)
+	clock := clockwork.NewFakeClockAt(time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC))
+	maxTime := clock.Now().Add(-30 * time.Minute)
+
+	// Charged per sub-query, reset per cycle by the loop below.
+	var spent time.Duration
+	view, logBuf := adaptiveSpanView(t, clock, chunk, func(s, e time.Time) ([]map[string]any, error) {
+		spent += e.Sub(s)
+		if spent > affordable {
+			return nil, context.DeadlineExceeded
+		}
+		// Row-per-minute source, so a cycle that fits actually ingests.
+		var out []map[string]any
+		for ts, k := maxTime.Add(-time.Hour), int64(0); ts.Before(e); ts, k = ts.Add(time.Minute), k+1 {
+			if !ts.Before(s) {
+				out = append(out, map[string]any{
+					"time":       ts.UTC().Format(time.RFC3339Nano),
+					"dzd_pubkey": dev,
+					"intf":       intf,
+					"in-octets":  1000 + k,
+				})
+			}
+		}
+		return out, nil
+	})
+	seedUsageRow(t, view, dev, intf, maxTime, 1060)
+
+	var ingested int
+	for cycle := 0; cycle < 6 && ingested == 0; cycle++ {
+		spent = 0
+		res, err := view.Refresh(t.Context())
+		if err != nil {
+			continue
+		}
+		ingested = int(res.RowsAffected)
+		if ingested == 0 {
+			continue // succeeded but ingested nothing: SourceMaxEventTS is nil by design
+		}
+		require.NotNil(t, res.SourceMaxEventTS)
+		require.True(t, res.SourceMaxEventTS.After(maxTime),
+			"a cycle that fits must advance the watermark past where it froze")
+	}
+	require.NotZero(t, ingested, "catch-up must find a window that fits within a few cycles")
+	require.Contains(t, logBuf.String(), "halving the catch-up span")
+}
+
+// Recovery is additive, not a jump back to the ceiling: returning in one step
+// re-triggers the failure that caused the shrink and settles into a fail/succeed
+// oscillation paying a full failed cycle every other cycle.
+func TestLake_TelemetryUsage_View_Refresh_SuccessAdditivelyRestoresCatchupSpan(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClock()
+	// 30m stale and never advancing (no rows), so every cycle stays capped and the
+	// span is the only thing that moves. Inside the 1h window, so the empty span
+	// does not age out and shift the anchor.
+	maxTime := clock.Now().Add(-30 * time.Minute).Truncate(time.Millisecond)
+
+	cycle := 0
+	view, _ := adaptiveSpanView(t, clock, chunk, func(_, _ time.Time) ([]map[string]any, error) {
+		if cycle < 2 {
+			return nil, context.DeadlineExceeded
+		}
+		return nil, nil
+	})
+	seedMaxTime(t, view, maxTime)
+
+	// Two failures on the same window to trigger one halving.
+	for ; cycle < 2; cycle++ {
+		_, err := view.Refresh(t.Context())
+		require.Error(t, err)
+	}
+	require.Equal(t, chunk, view.catchupSpan)
+
+	// +1m per successful capped cycle, clamped at the ceiling and then held.
+	wantMinutes := []int{6, 7, 8, 9, 10, 10, 10}
+	for i, m := range wantMinutes {
+		_, err := view.Refresh(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, time.Duration(m)*time.Minute, view.catchupSpan,
+			"recovery must be additive (cycle %d)", i)
+	}
+}
+
+// An uncapped window ends at now, so it can never repeat. A blip there must not
+// perturb the span, or an unrelated outage would leave catch-up crippled for the
+// ~9 cycles additive recovery takes.
+func TestLake_TelemetryUsage_View_Refresh_UncappedFailureKeepsCatchupSpan(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClock()
+	// 3m stale: queryEnd clamps to now and the cap does not bind.
+	maxTime := clock.Now().Add(-3 * time.Minute).Truncate(time.Millisecond)
+
+	view, logBuf := adaptiveSpanView(t, clock, chunk, func(_, _ time.Time) ([]map[string]any, error) {
+		return nil, context.DeadlineExceeded
+	})
+	seedMaxTime(t, view, maxTime)
+
+	for i := 0; i < 3; i++ {
+		_, err := view.Refresh(t.Context())
+		require.Error(t, err)
+	}
+	require.Equal(t, maxCatchupChunks*chunk, view.catchupSpan,
+		"an uncapped failure must leave the span at the ceiling")
+	require.NotContains(t, logBuf.String(), "halving the catch-up span")
+}
+
+// The repeated-window signal fires only once the span has bottomed out AND the
+// window is repeating. Both conditions matter: a repeat alone is benign, since a
+// capped span the source has no rows in SUCCEEDS and the identical window is
+// re-read until it ages out of QueryWindow. WARNing there would tell on-call to
+// escalate a state the design already bounds.
+func TestLake_TelemetryUsage_View_Refresh_RepeatedWindowWarnsOnlyAtFloor(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	const capMsg = "capping catch-up window"
+
+	// cappingWarned reports whether any capping line was logged at WARN.
+	cappingWarned := func(logBuf *bytes.Buffer) bool {
+		for _, line := range strings.Split(logBuf.String(), "\n") {
+			if strings.Contains(line, capMsg) && strings.Contains(line, "level=WARN") {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("warns once pinned at the floor", func(t *testing.T) {
+		t.Parallel()
+		clock := clockwork.NewFakeClock()
+		maxTime := clock.Now().Add(-30 * time.Minute).Truncate(time.Millisecond)
+
+		view, logBuf := adaptiveSpanView(t, clock, chunk, func(_, _ time.Time) ([]map[string]any, error) {
+			return nil, context.DeadlineExceeded
+		})
+		seedMaxTime(t, view, maxTime)
+
+		// The span moves on all but the first of these, so the window cannot repeat
+		// past the escalation threshold while there is still room to shrink.
+		for i := 0; i < 8; i++ {
+			_, err := view.Refresh(t.Context())
+			require.Error(t, err)
+			require.LessOrEqual(t, view.sameWindowCycles, sameWindowWarnAfter,
+				"the walk-down keeps moving the window (cycle %d)", i)
+		}
+		require.Equal(t, minCatchupSpan, view.catchupSpan, "the walk-down must reach the floor")
+		require.False(t, cappingWarned(logBuf), "the walk-down alone must not escalate")
+
+		// Pinned at the floor, the window now repeats without bound.
+		_, err := view.Refresh(t.Context())
+		require.Error(t, err)
+		require.Equal(t, sameWindowWarnAfter+1, view.sameWindowCycles)
+		require.True(t, cappingWarned(logBuf),
+			"a window pinned at the floor must escalate the capping log to WARN")
+		require.Contains(t, logBuf.String(), "sameWindowCycles=4",
+			"the capping log must report the repeat count")
+	})
+
+	t.Run("stays quiet through an empty source stall", func(t *testing.T) {
+		t.Parallel()
+		clock := clockwork.NewFakeClock()
+		// Inside the 1h window, so the empty span never ages out and
+		// sourceEmptyThrough never advances. Every cycle is capped, succeeds with
+		// zero rows and leaves both the ceiling span and maxTime alone — an
+		// identical window every cycle, for a wholly benign reason.
+		maxTime := clock.Now().Add(-30 * time.Minute).Truncate(time.Millisecond)
+
+		view, logBuf := adaptiveSpanView(t, clock, chunk, func(_, _ time.Time) ([]map[string]any, error) {
+			return nil, nil
+		})
+		seedMaxTime(t, view, maxTime)
+
+		for i := 0; i < sameWindowWarnAfter+3; i++ {
+			_, err := view.Refresh(t.Context())
+			require.NoError(t, err)
+			clock.Advance(time.Minute)
+		}
+		require.Greater(t, view.sameWindowCycles, sameWindowWarnAfter,
+			"the window really does repeat here — only the floor gate keeps this quiet")
+		require.Equal(t, maxCatchupChunks*chunk, view.catchupSpan, "successful cycles hold the ceiling")
+		require.False(t, cappingWarned(logBuf),
+			"a repeated window with the span at its ceiling is a source stall, not a stuck catch-up")
+	})
+}
+
+// The shrink trigger, tested directly on the state machine so the cases that
+// matter need no ClickHouse container.
+//
+// Two properties are load-bearing. A lone failure must not shrink: otherwise the
+// steady-state span tracks the failure RATE (fixed point at k minutes for k
+// successes per failure), so a ~50% rate uncorrelated with span size walks it to
+// the floor and makes catch-up diverge where the pre-#740 fixed span converged.
+// And the trigger must be the failure streak, not window identity — the initial
+// full refresh and the horizon-skip cycle slide both window ends every cycle, so
+// an identity trigger can never fire on the most expensive cycle in the system.
+func TestLake_TelemetryUsage_View_adjustCatchupSpan(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	const ceiling = maxCatchupChunks * chunk
+	fluxErr := errors.New("error iterating flux intf counters results")
+
+	tests := []struct {
+		name       string
+		span       time.Duration
+		priorFails int
+		sameWindow int
+		capped     bool
+		err        error
+		want       time.Duration
+		wantStreak int
+	}{
+		{"uncapped failure leaves the span alone and does not count", ceiling, 0, 1, false, context.DeadlineExceeded, ceiling, 0},
+		{"first capped failure does not shrink", ceiling, 0, 1, true, context.DeadlineExceeded, ceiling, 1},
+		{"second consecutive capped failure shrinks", ceiling, 1, 2, true, context.DeadlineExceeded, chunk, 2},
+		// The regression the streak trigger exists for: on a sliding window anchor
+		// (initial refresh, horizon skip) sameWindowCycles is pinned at 1 forever.
+		{"shrinks on a sliding anchor, where the window never repeats", ceiling, 1, 1, true, context.DeadlineExceeded, chunk, 2},
+		{"shrinks on a non-deadline cause too", ceiling, 1, 1, true, fluxErr, chunk, 2},
+		{"shutdown neither shrinks nor counts", ceiling, 1, 9, true, context.Canceled, ceiling, 1},
+		{"shrink stops at the floor", 75 * time.Second, 1, 1, true, context.DeadlineExceeded, minCatchupSpan, 2},
+		{"already at the floor", minCatchupSpan, 9, 9, true, context.DeadlineExceeded, minCatchupSpan, 10},
+		{"success recovers additively and clears the streak", chunk, 5, 1, true, nil, chunk + minCatchupSpan, 0},
+		{"success clamps at the ceiling", ceiling - 30*time.Second, 0, 1, true, nil, ceiling, 0},
+		{"success at the ceiling holds", ceiling, 0, 1, true, nil, ceiling, 0},
+		{"uncapped success holds the span but clears the streak", chunk, 5, 1, false, nil, chunk, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			v := &View{
+				log:                       laketesting.NewLogger(),
+				cfg:                       ViewConfig{QueryChunk: chunk},
+				catchupSpan:               tt.span,
+				consecutiveCappedFailures: tt.priorFails,
+				sameWindowCycles:          tt.sameWindow,
+			}
+			v.adjustCatchupSpan(tt.capped, tt.err)
+			require.Equal(t, tt.want, v.catchupSpan, "span")
+			require.Equal(t, tt.wantStreak, v.consecutiveCappedFailures, "failure streak")
+		})
+	}
+}
+
+// An intermittent failure rate must not drag the span down. Halving on every
+// failure gave the span a fixed point at the failure rate rather than at what a
+// cycle can afford, so an alternating fail/succeed pattern walked it to the floor
+// and catch-up diverged.
+func TestLake_TelemetryUsage_View_adjustCatchupSpan_IntermittentFailureHoldsCeiling(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	const ceiling = maxCatchupChunks * chunk
+
+	v := &View{
+		log:         laketesting.NewLogger(),
+		cfg:         ViewConfig{QueryChunk: chunk},
+		catchupSpan: ceiling,
+	}
+	// F,S,S repeated: the intervening success clears the streak, so no failure is
+	// ever the second in a row.
+	for i := 0; i < 30; i++ {
+		var err error
+		if i%3 == 0 {
+			err = context.DeadlineExceeded
+		}
+		v.adjustCatchupSpan(true, err)
+	}
+	require.Equal(t, ceiling, v.catchupSpan,
+		"an intermittent failure rate must leave the span at the ceiling, not tie it to the failure rate")
+}
+
+// The gap the failure-streak trigger closes: on an empty table the window is
+// anchored at now−QueryWindow, so both ends slide every cycle and it never
+// repeats — a window-identity trigger could never shrink here. This is the most
+// expensive cycle in the system (0 ClickHouse baselines, so the InfluxDB baseline
+// fallback lands on top of three chunked reads), and it is the one path every
+// other adaptive-span test misses, since they all seed a watermark.
+func TestLake_TelemetryUsage_View_Refresh_InitialRefreshShrinksDespiteSlidingWindow(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClock()
+
+	// No seedMaxTime: maxTime is nil, so queryStart is the query-window start.
+	view, logBuf := adaptiveSpanView(t, clock, chunk, func(_, _ time.Time) ([]map[string]any, error) {
+		return nil, context.DeadlineExceeded
+	})
+
+	spans := []time.Duration{}
+	for cycle := 0; cycle < 5; cycle++ {
+		_, err := view.Refresh(t.Context())
+		require.Error(t, err)
+		spans = append(spans, view.catchupSpan)
+		// Advance so the window genuinely slides between cycles.
+		clock.Advance(90 * time.Second)
+	}
+
+	require.Equal(t, []time.Duration{
+		10 * time.Minute,
+		5 * time.Minute,
+		150 * time.Second,
+		75 * time.Second,
+		minCatchupSpan,
+	}, spans, "the sliding window must still walk the span down to the floor")
+	require.Equal(t, 1, view.sameWindowCycles,
+		"the window never repeats here — which is exactly why the trigger cannot be window identity")
+	require.Contains(t, logBuf.String(), "halving the catch-up span")
 }

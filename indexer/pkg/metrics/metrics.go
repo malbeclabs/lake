@@ -176,6 +176,25 @@ var (
 		[]string{"dz_env"},
 	)
 
+	// TelemetryUsageWatermarkTimestampSeconds is the telemetry-usage ingest
+	// watermark (ClickHouse max event_ts), published at the top of every refresh
+	// including ones that later fail. Alert on `time() - <this>` — #740's 22.6h of
+	// zero ingest was otherwise invisible until the 24h horizon ERROR.
+	//
+	// An absolute timestamp rather than a pre-computed lag: a lag gauge freezes at
+	// its last value once the refresh stops running or starts failing before this
+	// point, which is exactly the outage it exists to catch.
+	//
+	// One series per dz_env (a single pod publishes every env it runs); an env with
+	// no rows yet has no watermark and so no series.
+	TelemetryUsageWatermarkTimestampSeconds = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "doublezero_data_indexer_telemetry_usage_watermark_timestamp_seconds",
+			Help: "Unix timestamp of the telemetry-usage ingest watermark (max event_ts)",
+		},
+		[]string{"dz_env"},
+	)
+
 	// ClickHousePrevRTTQueryTotal counts previous-RTT cache misses that hit
 	// ClickHouse: kind=bounded is the prevRTTLookback-bounded seed scan,
 	// kind=fallback is the unbounded per-circuit scan for circuits the bounded
