@@ -69,6 +69,7 @@ type MetroHistoryRow struct {
 	TotalInitializedDevices uint16
 	CurrentEpoch            uint64
 	CurrentUSDCPriceDollars uint16
+	RetransmitOnlyEnabled   bool
 }
 
 type DeviceHistoryRow struct {
@@ -668,6 +669,7 @@ func convertMetroHistories(metros []shreds.KeyedMetroHistory) []MetroHistoryRow 
 			TotalInitializedDevices: m.TotalInitializedDevices,
 			CurrentEpoch:            currentEpoch,
 			CurrentUSDCPriceDollars: currentPrice,
+			RetransmitOnlyEnabled:   m.IsRetransmitOnlyEnabled(),
 		}
 	}
 	return rows

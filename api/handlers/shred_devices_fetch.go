@@ -30,7 +30,8 @@ func (a *API) FetchEdgeShredsDevices(ctx context.Context, limit, offset int) ([]
 			toInt64(COALESCE(mh.current_usdc_price_dollars, 0)) + toInt64(dh.current_usdc_metro_premium_dollars) as total_price_dollars,
 			dh.active_granted_seats as granted_seats,
 			dh.active_total_available_seats as capacity,
-			toInt32(dh.active_total_available_seats) - toInt32(dh.active_granted_seats) as available_seats
+			toInt32(dh.active_total_available_seats) - toInt32(dh.active_granted_seats) as available_seats,
+			COALESCE(mh.retransmit_only_enabled, 0) as retransmit_only_enabled
 		FROM dim_dz_shred_device_histories_current dh
 		LEFT JOIN dz_devices_current d ON dh.device_key = d.pk
 		LEFT JOIN dz_metros_current m ON dh.metro_exchange_key = m.pk
@@ -60,6 +61,7 @@ func (a *API) FetchEdgeShredsDevices(ctx context.Context, limit, offset int) ([]
 			&d.IsEnabled,
 			&d.BasePriceDollars, &d.PremiumDollars, &d.TotalPriceDollars,
 			&d.GrantedSeats, &d.Capacity, &d.AvailableSeats,
+			&d.RetransmitOnlyEnabled,
 		); err != nil {
 			return nil, 0, err
 		}

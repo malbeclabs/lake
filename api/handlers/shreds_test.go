@@ -108,10 +108,10 @@ func insertShredsTestData(t *testing.T, api *handlers.API) {
 		INSERT INTO dim_dz_shred_metro_histories_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 		 pk, exchange_key, is_current_price_finalized, total_initialized_devices,
-		 current_epoch, current_usdc_price_dollars)
+		 current_epoch, current_usdc_price_dollars, retransmit_only_enabled)
 		VALUES
 		('mh-1', now(), now(), generateUUIDv4(), 0, 1,
-		 'mh-1', 'metro-nyc', 1, 3, 950, 10)
+		 'mh-1', 'metro-nyc', 1, 3, 950, 10, 1)
 	`)
 	require.NoError(t, err)
 
@@ -536,6 +536,67 @@ func TestGetShredMetroHistories_WithData(t *testing.T) {
 	assert.Equal(t, 1, response.Total)
 	assert.Equal(t, "NYC", response.Items[0].MetroCode)
 	assert.Equal(t, uint16(10), response.Items[0].CurrentUSDCPriceDollars)
+	assert.Equal(t, uint8(1), response.Items[0].RetransmitOnlyEnabled)
+}
+
+// The devices listing inherits retransmit_only_enabled from the device's metro,
+// and must fall back to 0 for a device whose metro has no history row.
+func TestGetShredDevices_RetransmitOnlyFromMetro(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertShredsTestData(t, api)
+
+	// Second device in a metro with no dim_dz_shred_metro_histories row.
+	err := api.DB.Exec(t.Context(), `
+		INSERT INTO dim_dz_shred_device_histories_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, device_key, is_enabled, has_settled_seats, metro_exchange_key,
+		 active_granted_seats, active_total_available_seats,
+		 current_epoch, current_requested_seat_count, current_granted_seat_count,
+		 current_total_available_seats, current_usdc_metro_premium_dollars)
+		VALUES
+		('dh-2', now(), now(), generateUUIDv4(), 0, 2,
+		 'dh-2', 'dev-2', 1, 1, 'metro-unknown',
+		 0, 10, 950, 0, 0, 10, 0)
+	`)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/devices", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredDevices(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var response handlers.PaginatedResponse[handlers.ShredDeviceItem]
+	err = json.NewDecoder(rr.Body).Decode(&response)
+	require.NoError(t, err)
+
+	flags := map[string]uint8{}
+	for _, d := range response.Items {
+		flags[d.DeviceKey] = d.RetransmitOnlyEnabled
+	}
+	// Presence first: a device whose metro has no history row must still be
+	// listed, otherwise the zero-value lookups below would pass vacuously.
+	require.Contains(t, flags, "dev-1")
+	require.Contains(t, flags, "dev-2")
+	assert.Equal(t, uint8(1), flags["dev-1"], "dev-1's metro has the flag set")
+	assert.Equal(t, uint8(0), flags["dev-2"], "dev-2's metro has no history row")
+}
+
+// The v1 fetch path fills the same ShredDeviceItem struct as GetShredDevices;
+// it must populate RetransmitOnlyEnabled too, not leave it zero, so the field
+// is trustworthy for any internal consumer (and for a future v1 exposure).
+func TestFetchEdgeShredsDevices_PopulatesRetransmitOnly(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertShredsTestData(t, api)
+
+	rows, total, err := api.FetchEdgeShredsDevices(t.Context(), 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1), total)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "dev-1", rows[0].DeviceKey)
+	assert.Equal(t, uint8(1), rows[0].RetransmitOnlyEnabled)
 }
 
 func TestGetShredFunders_WithData(t *testing.T) {

@@ -23,6 +23,9 @@ type ShredDeviceItem struct {
 	GrantedSeats      uint16 `json:"granted_seats"`
 	Capacity          uint16 `json:"capacity"`
 	AvailableSeats    int64  `json:"available_seats"`
+	// RetransmitOnlyEnabled is a metro-level flag: 1 means every device in the
+	// metro serves the retransmit multicast group only.
+	RetransmitOnlyEnabled uint8 `json:"retransmit_only_enabled"`
 }
 
 var deviceSortFields = map[string]string{
@@ -73,7 +76,8 @@ func (a *API) GetShredDevices(w http.ResponseWriter, r *http.Request) {
 			toInt64(COALESCE(mh.current_usdc_price_dollars, 0)) + toInt64(dh.current_usdc_metro_premium_dollars) as total_price_dollars,
 			dh.active_granted_seats as granted_seats,
 			dh.active_total_available_seats as capacity,
-			toInt32(dh.active_total_available_seats) - toInt32(dh.active_granted_seats) as available_seats
+			toInt32(dh.active_total_available_seats) - toInt32(dh.active_granted_seats) as available_seats,
+			COALESCE(mh.retransmit_only_enabled, 0) as retransmit_only_enabled
 		FROM dim_dz_shred_device_histories_current dh
 		LEFT JOIN dz_devices_current d ON dh.device_key = d.pk
 		LEFT JOIN dz_metros_current m ON dh.metro_exchange_key = m.pk
@@ -114,12 +118,18 @@ func (a *API) GetShredDevices(w http.ResponseWriter, r *http.Request) {
 			&d.IsEnabled,
 			&d.BasePriceDollars, &d.PremiumDollars, &d.TotalPriceDollars,
 			&d.GrantedSeats, &d.Capacity, &d.AvailableSeats,
+			&d.RetransmitOnlyEnabled,
 		); err != nil {
 			logError("shred devices row scan failed", "error", err)
 			http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 			return
 		}
 		items = append(items, d)
+	}
+	if err := rows.Err(); err != nil {
+		logError("shred devices rows error", "error", err)
+		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
+		return
 	}
 	if items == nil {
 		items = []ShredDeviceItem{}

@@ -9,8 +9,9 @@ import (
 )
 
 // EdgeShredsDevice is the public, stable shape of a single shred-eligible
-// device. Fields mirror the internal ShredDeviceItem 1:1 — they're already
-// derived from on-chain state and safe to expose.
+// device. Fields are a subset of the internal ShredDeviceItem — they're already
+// derived from on-chain state and safe to expose. Adding an internal field here
+// changes the public contract, so it requires an API version bump.
 type EdgeShredsDevice struct {
 	DeviceKey         string `json:"device_key" doc:"DoubleZero edge device pubkey"`
 	DeviceCode        string `json:"device_code" doc:"Human-readable device code (e.g. NYC-CORE-01)"`
