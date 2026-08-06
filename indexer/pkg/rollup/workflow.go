@@ -1,6 +1,8 @@
 package rollup
 
 import (
+	"errors"
+	"fmt"
 	"time"
 
 	"go.temporal.io/sdk/log"
@@ -65,7 +67,10 @@ func ComputeRollupWorkflow(ctx temporalworkflow.Context, iteration int) error {
 			WindowEnd:   now,
 		}
 
-		runIteration(ctx, log, esc, window)
+		// The live loop must keep running: a bucket stays in the overlap window
+		// (rollupWindow) for several iterations, so a failed cycle gets another
+		// chance on its own. The escalator already logged it.
+		_ = runIteration(ctx, log, esc, window)
 
 		iteration++
 
@@ -79,20 +84,27 @@ func ComputeRollupWorkflow(ctx temporalworkflow.Context, iteration int) error {
 	return temporalworkflow.NewContinueAsNewError(ctx, ComputeRollupWorkflow, 0)
 }
 
-// runIteration executes one rollup cycle. Errors are logged, not returned,
-// so the workflow loop continues on failure.
-func runIteration(ctx temporalworkflow.Context, log log.Logger, esc *lakelogger.Escalator, window BackfillChunkInput) {
-	err := temporalworkflow.ExecuteActivity(ctx, (*Activities).RollupLinks, window).Get(ctx, nil)
-	if err != nil && ctx.Err() != nil {
-		return // workflow context done; the error is just the cancellation
+// runIteration executes one rollup cycle. Errors are logged via the escalator,
+// which owns the paging decision, and also returned so a caller that must not
+// silently skip a window can act on them. The live loop discards the return and
+// continues; the backfill records it (see BackfillRollupWorkflow).
+//
+// A cancellation is reported as ctx.Err() rather than an activity failure: the
+// window did not fail, the workflow is shutting down.
+func runIteration(ctx temporalworkflow.Context, log log.Logger, esc *lakelogger.Escalator, window BackfillChunkInput) error {
+	linkErr := temporalworkflow.ExecuteActivity(ctx, (*Activities).RollupLinks, window).Get(ctx, nil)
+	if linkErr != nil && ctx.Err() != nil {
+		return ctx.Err() // workflow context done; the error is just the cancellation
 	}
-	esc.Observe(log, "link_rollup", "link rollup failed", err, "window_start", window.WindowStart, "window_end", window.WindowEnd)
+	esc.Observe(log, "link_rollup", "link rollup failed", linkErr, "window_start", window.WindowStart, "window_end", window.WindowEnd)
 
-	err = temporalworkflow.ExecuteActivity(ctx, (*Activities).RollupDeviceInterfaces, window).Get(ctx, nil)
-	if err != nil && ctx.Err() != nil {
-		return
+	intfErr := temporalworkflow.ExecuteActivity(ctx, (*Activities).RollupDeviceInterfaces, window).Get(ctx, nil)
+	if intfErr != nil && ctx.Err() != nil {
+		return ctx.Err()
 	}
-	esc.Observe(log, "device_interface_rollup", "device interface rollup failed", err, "window_start", window.WindowStart, "window_end", window.WindowEnd)
+	esc.Observe(log, "device_interface_rollup", "device interface rollup failed", intfErr, "window_start", window.WindowStart, "window_end", window.WindowEnd)
+
+	return errors.Join(linkErr, intfErr)
 }
 
 // BackfillRollupWorkflow processes historical data in time chunks.
@@ -131,6 +143,16 @@ func BackfillRollupWorkflow(ctx temporalworkflow.Context, input BackfillInput) e
 		log.Info("capped backfill end time to avoid live rollup overlap", "end_time", endTime)
 	}
 
+	// A backfill is a one-shot pass: unlike the live rollup there is no overlap
+	// window and no later cycle to recompute a window that failed. Advancing past
+	// a failed chunk therefore leaves a permanent hole in the rollups. Collect the
+	// failures instead — keep going so one bad window doesn't abandon the rest of
+	// the range, then fail with the windows to re-run. Re-running is safe: both
+	// rollup tables are ReplacingMergeTree keyed on the bucket, so recomputing a
+	// window is idempotent.
+	var failed []BackfillChunkInput
+	totalChunks := 0
+
 	chunkStart := input.StartTime
 	for chunkStart.Before(endTime) {
 		chunkEnd := chunkStart.Add(input.ChunkSize)
@@ -144,9 +166,24 @@ func BackfillRollupWorkflow(ctx temporalworkflow.Context, input BackfillInput) e
 			SourceDatabase: input.SourceDatabase,
 		}
 
-		runIteration(ctx, log, esc, chunk)
+		totalChunks++
+		if err := runIteration(ctx, log, esc, chunk); err != nil {
+			if ctx.Err() != nil {
+				return err // shutting down, not a chunk failure
+			}
+			failed = append(failed, chunk)
+		}
 
 		chunkStart = chunkEnd
+	}
+
+	if len(failed) > 0 {
+		// Each failure was already logged with its window by the escalator, so this
+		// carries the summary and the range to re-run rather than repeating them.
+		return fmt.Errorf("backfill incomplete: %d of %d chunks failed, leaving gaps between %s and %s; re-run the backfill over the failed windows (each is logged with window_start/window_end)",
+			len(failed), totalChunks,
+			failed[0].WindowStart.Format(time.RFC3339),
+			failed[len(failed)-1].WindowEnd.Format(time.RFC3339))
 	}
 
 	return nil
