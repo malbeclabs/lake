@@ -147,12 +147,13 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 	var permissionEventsView *permissionevents.View
 	if cfg.PermissionEventsRPC != nil && !cfg.ServiceabilityProgramID.IsZero() {
 		permissionEventsView, err = permissionevents.NewView(permissionevents.ViewConfig{
-			Logger:          cfg.Logger,
-			Clock:           cfg.Clock,
-			RPC:             cfg.PermissionEventsRPC,
-			ProgramID:       cfg.ServiceabilityProgramID,
-			RefreshInterval: cfg.RefreshInterval,
-			ClickHouse:      cfg.ClickHouse,
+			Logger:           cfg.Logger,
+			Clock:            cfg.Clock,
+			RPC:              cfg.PermissionEventsRPC,
+			ProgramID:        cfg.ServiceabilityProgramID,
+			RefreshInterval:  cfg.RefreshInterval,
+			ClickHouse:       cfg.ClickHouse,
+			FetchesPerSecond: cfg.PermissionEventsFetchesPerSecond,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create permission events view: %w", err)

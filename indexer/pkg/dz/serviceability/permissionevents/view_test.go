@@ -13,6 +13,7 @@ import (
 
 	"github.com/gagliardetto/solana-go"
 	solanarpc "github.com/gagliardetto/solana-go/rpc"
+	soljsonrpc "github.com/gagliardetto/solana-go/rpc/jsonrpc"
 	"github.com/jonboulle/clockwork"
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	"github.com/malbeclabs/lake/utils/pkg/dberror"
@@ -218,15 +219,22 @@ func (f *fakeRPC) addAccount(t *testing.T, pda solana.PublicKey, slots []uint64,
 	}
 }
 
+// testFetchesPerSecond effectively disables getTransaction pacing. The fake RPC has
+// no rate limit to respect, and the production default (25/s) would add tens of
+// seconds to the multi-hundred-signature drain tests for no coverage. The pacing
+// itself is covered by TestLake_PermissionEvents_View_PacesTransactionFetches.
+const testFetchesPerSecond = 1e6
+
 func newTestView(t *testing.T, ch clickhouse.Client, rpc *fakeRPC) *View {
 	t.Helper()
 	view, err := NewView(ViewConfig{
-		Logger:          laketesting.NewLogger(),
-		Clock:           clockwork.NewRealClock(),
-		RPC:             rpc,
-		ProgramID:       testProgramID,
-		RefreshInterval: time.Second,
-		ClickHouse:      ch,
+		Logger:           laketesting.NewLogger(),
+		Clock:            clockwork.NewRealClock(),
+		RPC:              rpc,
+		ProgramID:        testProgramID,
+		RefreshInterval:  time.Second,
+		ClickHouse:       ch,
+		FetchesPerSecond: testFetchesPerSecond,
 	})
 	require.NoError(t, err)
 	return view
@@ -430,6 +438,120 @@ func TestLake_PermissionEvents_View_FailedChunkKeepsCursorAndBackfillsOnRetry(t 
 	require.EqualValues(t, 10, factDistinctSlots(t, ch))
 }
 
+// TestLake_PermissionEvents_View_PacesTransactionFetches: the concurrency semaphore
+// bounds in-flight calls but not request rate, which is what a per-method provider
+// limit actually measures. The view-wide limiter must hold the drain to
+// FetchesPerSecond so we stay under the limit instead of discovering it.
+func TestLake_PermissionEvents_View_PacesTransactionFetches(t *testing.T) {
+	t.Parallel()
+
+	const (
+		fetches         = 40
+		perSecond       = 20
+		burst           = maxConcurrentFetches
+		wantMinDuration = (fetches - burst) * time.Second / perSecond
+	)
+
+	rpc := newFakeRPC(t, seqSlots(1, fetches), rowlessIxData())
+	ch := testClient(t)
+	view, err := NewView(ViewConfig{
+		Logger:           laketesting.NewLogger(),
+		Clock:            clockwork.NewRealClock(),
+		RPC:              rpc,
+		ProgramID:        testProgramID,
+		RefreshInterval:  time.Second,
+		ClickHouse:       ch,
+		FetchesPerSecond: perSecond,
+	})
+	require.NoError(t, err)
+
+	start := time.Now()
+	_, err = view.Refresh(context.Background())
+	elapsed := time.Since(start)
+
+	require.NoError(t, err)
+	require.EqualValues(t, fetches, rpc.decodes.Load(), "every signature must still be fetched")
+	// The burst is spent immediately; the remainder is paced at perSecond.
+	require.GreaterOrEqual(t, elapsed, wantMinDuration,
+		"drain finished in %v — faster than %d fetches/s allows, so pacing is not applied", elapsed, perSecond)
+}
+
+// TestLake_PermissionEvents_View_ThrottledChunkStopsWithProgressAndResumes is the
+// catch-up-livelock regression. A rate-limited getTransaction (RPCPool answers a
+// throttled call with an *RPCError carrying HTTP 429 in its code field) used to
+// abort the whole refresh cycle, so an account with a backlog committed only its
+// first chunk per cycle and was recorded as a failure. With the drain cycle running
+// every ~27min and a backlog growing faster than one chunk, the account could never
+// catch up: prod sat 3h26m behind and widening.
+//
+// An upstream throttle is a budget exhaustion, not a fault — the same shape the
+// deadline check already handles. Committed chunks are durable, so the drain must
+// stop, report the honest committed frontier, and resume from the cursor next cycle.
+func TestLake_PermissionEvents_View_ThrottledChunkStopsWithProgressAndResumes(t *testing.T) {
+	t.Parallel()
+
+	total := uint64(2 * scanChunkSize)
+	rpc := newFakeRPC(t, seqSlots(1, total), createPermissionIxData())
+	// Throttle a signature in the second chunk: the first commits, the second cannot.
+	throttled := mkSig(scanChunkSize + 50)
+	rpc.txErrs[throttled] = &soljsonrpc.RPCError{
+		Code:    429,
+		Message: "Too many requests for a specific RPC call",
+	}
+	require.True(t, dberror.IsTransient(rpc.txErrs[throttled]),
+		"the injected error must classify as transient, else the test proves nothing")
+
+	ch := testClient(t)
+	view := newTestView(t, ch, rpc)
+
+	res, err := view.Refresh(context.Background())
+	require.NoError(t, err,
+		"a throttle after committed progress is a budget stop, not a cycle failure")
+	require.EqualValues(t, scanChunkSize, factRowCount(t, ch),
+		"the first chunk must stay committed")
+
+	_, slot, found := accountCursor(t, ch, testPDA.String())
+	require.True(t, found)
+	require.EqualValues(t, scanChunkSize, slot, "cursor must sit at the committed chunk boundary")
+
+	// Freshness must not overstate: with backlog pending the frontier is the committed
+	// chunk's block time, not now — this is what feeds the ingest-staleness alert.
+	require.NotNil(t, res.SourceMaxEventTS)
+	require.True(t, res.SourceMaxEventTS.Equal(time.Unix(1753200000+int64(scanChunkSize), 0)),
+		"partial-progress freshness must be the committed frontier, got %v", res.SourceMaxEventTS)
+
+	// Throttle lifts; the next cycle drains the remainder from the cursor.
+	delete(rpc.txErrs, throttled)
+	_, err = view.Refresh(context.Background())
+	require.NoError(t, err)
+	require.EqualValues(t, total, factRowCount(t, ch))
+	require.EqualValues(t, total, factDistinctSlots(t, ch), "no signature may be skipped or double-counted")
+	_, slot, found = accountCursor(t, ch, testPDA.String())
+	require.True(t, found)
+	require.EqualValues(t, total, slot)
+}
+
+// TestLake_PermissionEvents_View_ThrottledFirstChunkStillErrors pins the guard on the
+// graceful-stop path above: an account that is throttled before committing anything
+// has made no progress, so it must still surface an error. Otherwise a persistently
+// throttled account would no-op succeed forever and the staleness signal would be the
+// only thing left.
+func TestLake_PermissionEvents_View_ThrottledFirstChunkStillErrors(t *testing.T) {
+	t.Parallel()
+
+	rpc := newFakeRPC(t, seqSlots(1, 10), createPermissionIxData())
+	rpc.txErrs[mkSig(5)] = &soljsonrpc.RPCError{
+		Code:    429,
+		Message: "Too many requests for a specific RPC call",
+	}
+	ch := testClient(t)
+	view := newTestView(t, ch, rpc)
+
+	_, err := view.Refresh(context.Background())
+	require.Error(t, err, "zero-progress throttle must still escalate")
+	require.EqualValues(t, 0, factRowCount(t, ch))
+}
+
 // TestLake_PermissionEvents_View_RefusesChunkWhenBudgetExhausted: when the
 // context deadline is too close to safely decode and commit a chunk, the drain
 // stops before starting one and reports an error (no silent no-op success).
@@ -466,12 +588,13 @@ func TestLake_PermissionEvents_View_BudgetStopWithProgressResumesNextRefresh(t *
 	rpc.onDecode = func() { clock.Advance(100 * time.Millisecond) }
 
 	view, err := NewView(ViewConfig{
-		Logger:          laketesting.NewLogger(),
-		Clock:           clock,
-		RPC:             rpc,
-		ProgramID:       testProgramID,
-		RefreshInterval: time.Second,
-		ClickHouse:      ch,
+		Logger:           laketesting.NewLogger(),
+		Clock:            clock,
+		RPC:              rpc,
+		ProgramID:        testProgramID,
+		RefreshInterval:  time.Second,
+		ClickHouse:       ch,
+		FetchesPerSecond: testFetchesPerSecond,
 	})
 	require.NoError(t, err)
 
@@ -522,12 +645,13 @@ func TestLake_PermissionEvents_View_PaginationRespectsBudget(t *testing.T) {
 	rpc.onSigPage = func() { clock.Advance(20 * time.Second) }
 
 	view, err := NewView(ViewConfig{
-		Logger:          laketesting.NewLogger(),
-		Clock:           clock,
-		RPC:             rpc,
-		ProgramID:       testProgramID,
-		RefreshInterval: time.Second,
-		ClickHouse:      ch,
+		Logger:           laketesting.NewLogger(),
+		Clock:            clock,
+		RPC:              rpc,
+		ProgramID:        testProgramID,
+		RefreshInterval:  time.Second,
+		ClickHouse:       ch,
+		FetchesPerSecond: testFetchesPerSecond,
 	})
 	require.NoError(t, err)
 

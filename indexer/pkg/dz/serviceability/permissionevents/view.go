@@ -17,6 +17,7 @@ import (
 	"github.com/malbeclabs/lake/utils/pkg/dberror"
 	"github.com/malbeclabs/lake/utils/pkg/logger"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -24,6 +25,21 @@ const (
 	// via a shared semaphore: accounts drain concurrently, but the RPC never sees more
 	// than this many transaction fetches at once.
 	maxConcurrentFetches = 10
+	// defaultFetchesPerSecond paces getTransaction across the whole view. A
+	// concurrency cap alone does not bound request *rate*: 10 in-flight calls
+	// against a fast endpoint is an unbounded rate, which is how the drain earned
+	// "Too many requests for a specific RPC call" (a per-method provider limit) on
+	// every cycle for hours. Pacing keeps us under the limit instead of discovering
+	// it, so the retry budget is spent on real blips rather than on throttles we
+	// caused ourselves.
+	//
+	// This is a calibration knob, not a derived constant: the provider publishes no
+	// per-method number and it differs per endpoint and plan. 25/s is chosen to sit
+	// well under observed limits while still draining a chunk (scanChunkSize=200) in
+	// ~8s, so the ~4.5min usable drain window fits ~30 chunks — enough to catch up on
+	// a multi-hour backlog in a few cycles. Override via ViewConfig.FetchesPerSecond
+	// if an endpoint proves tighter or more generous.
+	defaultFetchesPerSecond = 25
 	// maxSignaturesPerRequest is the Solana RPC page limit.
 	maxSignaturesPerRequest = 1000
 	// scanChunkSize is how many signatures the program backfill scan and the per-account
@@ -60,6 +76,10 @@ type ViewConfig struct {
 	ProgramID       solana.PublicKey // the serviceability program id
 	RefreshInterval time.Duration
 	ClickHouse      clickhouse.Client
+
+	// FetchesPerSecond caps the view-wide getTransaction rate. Zero means
+	// defaultFetchesPerSecond.
+	FetchesPerSecond float64
 }
 
 func (cfg *ViewConfig) Validate() error {
@@ -95,6 +115,10 @@ type View struct {
 	// by the number of concurrently draining accounts.
 	decodeSem chan struct{}
 
+	// fetchLimiter bounds the view-wide getTransaction *rate*, which decodeSem
+	// cannot (see defaultFetchesPerSecond).
+	fetchLimiter *rate.Limiter
+
 	readyOnce sync.Once
 	readyCh   chan struct{}
 
@@ -111,12 +135,19 @@ func NewView(cfg ViewConfig) (*View, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create store: %w", err)
 	}
+	fetchesPerSecond := cfg.FetchesPerSecond
+	if fetchesPerSecond <= 0 {
+		fetchesPerSecond = defaultFetchesPerSecond
+	}
 	return &View{
-		log:       cfg.Logger,
-		cfg:       cfg,
-		store:     store,
-		decodeSem: make(chan struct{}, maxConcurrentFetches),
-		readyCh:   make(chan struct{}),
+		log:   cfg.Logger,
+		cfg:   cfg,
+		store: store,
+		// Burst equals the concurrency cap so a chunk's fan-out fills the semaphore
+		// immediately and steady state is then governed by the rate, not the burst.
+		fetchLimiter: rate.NewLimiter(rate.Limit(fetchesPerSecond), maxConcurrentFetches),
+		decodeSem:    make(chan struct{}, maxConcurrentFetches),
+		readyCh:      make(chan struct{}),
 	}, nil
 }
 
@@ -512,6 +543,23 @@ func (v *View) drainAccount(ctx context.Context, pda solana.PublicKey, resume Hi
 			// never-decoded signatures — a silent, permanent gap. Drop the chunk's
 			// events; the cursor stays put and the chunk is re-fetched next refresh.
 			res.pending = len(sigs) - start
+
+			// A transient upstream failure (provider throttle, connection blip) is a
+			// budget exhaustion, not a fault: the endpoint will serve this same chunk
+			// later. Treat it like the deadline stop above — committed chunks are
+			// durable, so stopping with progress is a success and the next refresh
+			// resumes from the cursor. Failing the whole cycle instead is what made a
+			// throttled account unable to catch up: it committed one chunk per cycle
+			// and was recorded as an error every time, so the drain fell permanently
+			// behind while the retry-exhausted 429 read as a hard failure.
+			//
+			// Zero progress still errors (below): a persistently throttled account must
+			// escalate rather than no-op succeed.
+			if start > 0 && dberror.IsTransient(decodeErr) {
+				v.log.Warn("serviceability/permission-events: account drain stopping on transient upstream failure",
+					"permission_pk", pda.String(), "processed", start, "pending", res.pending, "error", decodeErr)
+				return res, nil
+			}
 			return res, fmt.Errorf("decode transactions: %w", decodeErr)
 		}
 		if err := v.store.InsertEvents(ctx, events); err != nil {
@@ -611,6 +659,13 @@ func (v *View) decodeChunk(ctx context.Context, sigs []*rpc.TransactionSignature
 				return ctx.Err()
 			}
 			defer func() { <-v.decodeSem }()
+
+			// Pace the call. Held inside the semaphore so a waiting fetch also holds
+			// its concurrency slot: the rate is the binding constraint, and releasing
+			// the slot while waiting would let the queue grow without bound.
+			if err := v.fetchLimiter.Wait(ctx); err != nil {
+				return err
+			}
 
 			events, err := v.decodeTransaction(ctx, sig)
 			if err != nil {
