@@ -2,7 +2,6 @@ package dztelemlatency
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -12,6 +11,7 @@ import (
 	solanarpc "github.com/gagliardetto/solana-go/rpc"
 	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/telemetry"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/metrics"
 )
 
 type InternetMetroLatencySample struct {
@@ -141,13 +141,18 @@ func (v *View) refreshInternetMetroLatencySamples(ctx context.Context, metros []
 
 						samples, err := v.cfg.TelemetryRPC.GetInternetLatencySamples(ctx, dataProvider, originPK, targetPK, v.cfg.InternetLatencyAgentPK, epoch)
 						if err != nil {
-							if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+							switch classifyFetchErr(err) {
+							case fetchAbort:
 								return
-							}
-							if errors.Is(err, telemetry.ErrAccountNotFound) {
+							case fetchExpectedMiss:
+								continue
+							default:
+								metrics.TelemetryFetchSkipped.WithLabelValues("internet_metro").Inc()
+								v.log.Warn("telemetry/internet-metro: sample fetch failed, skipping until next refresh",
+									"origin_metro_pk", originMetroPK, "target_metro_pk", targetMetroPK,
+									"data_provider", dataProvider, "epoch", epoch, "error", err)
 								continue
 							}
-							continue
 						}
 
 						metroHasSamples = true

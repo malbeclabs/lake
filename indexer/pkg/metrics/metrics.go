@@ -54,6 +54,22 @@ var (
 		},
 	)
 
+	// TelemetryFetchSkipped counts telemetry sample fetches the latency indexer
+	// dropped on an unclassified RPC error. The drop itself is safe — each circuit
+	// resumes from its own stored max sample index, so the next refresh re-fetches
+	// what this one missed — but nothing else records it: the activity still reports
+	// success, so without this counter a circuit (or a throttled subset) can
+	// under-collect indefinitely with no signal at all. Expected conditions
+	// (no telemetry account for a circuit/epoch, worker shutdown) are not counted.
+	// A sustained non-zero rate means a subset of circuits is not being collected.
+	TelemetryFetchSkipped = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "doublezero_data_indexer_telemetry_fetch_skipped_total",
+			Help: "Telemetry sample fetches skipped on an unclassified RPC error, by source",
+		},
+		[]string{"source"},
+	)
+
 	ViewRefreshDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "doublezero_data_indexer_view_refresh_duration_seconds",

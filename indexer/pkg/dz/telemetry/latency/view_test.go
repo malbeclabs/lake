@@ -2,6 +2,7 @@ package dztelemlatency
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -1739,4 +1740,40 @@ func TestLake_TelemetryLatency_View_AgentVersionCommit(t *testing.T) {
 		require.Equal(t, "", storedVersion, "zero-value AgentVersion should produce empty string")
 		require.Equal(t, "", storedCommit, "zero-value AgentCommit should produce empty string")
 	})
+}
+
+// TestLake_TelemetryLatency_ClassifyFetchErr pins which sample-fetch errors are
+// counted as skips. Both fan-outs drop a failed circuit and let the next refresh
+// re-fetch it, which is safe but silent — the refresh still reports success. The
+// counter is the only signal that a circuit is not being collected, so an error
+// class landing in the wrong bucket either hides a real outage (unclassified
+// treated as expected) or floods the counter with routine misses.
+func TestLake_TelemetryLatency_ClassifyFetchErr(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want fetchOutcome
+	}{
+		{"context canceled", context.Canceled, fetchAbort},
+		{"deadline exceeded", context.DeadlineExceeded, fetchAbort},
+		{"wrapped cancel", fmt.Errorf("fetch tail: %w", context.Canceled), fetchAbort},
+
+		{"no telemetry account", telemetry.ErrAccountNotFound, fetchExpectedMiss},
+		{"wrapped no account", fmt.Errorf("epoch 42: %w", telemetry.ErrAccountNotFound), fetchExpectedMiss},
+
+		// Everything else must be counted — these are the cases that used to vanish.
+		{"rpc throttle", errors.New("Too many requests for a specific RPC call"), fetchUnclassified},
+		{"service unavailable", errors.New("Service unavailable, please try again later."), fetchUnclassified},
+		{"connection reset", errors.New("read tcp 10.0.0.1:8899: connection reset by peer"), fetchUnclassified},
+		{"decode failure", errors.New("failed to deserialize account data"), fetchUnclassified},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, classifyFetchErr(tt.err))
+		})
+	}
 }

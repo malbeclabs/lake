@@ -19,6 +19,36 @@ import (
 	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
+// fetchOutcome classifies a telemetry sample-fetch error. Both the device-link
+// and internet-metro fan-outs need the same three-way split, so it lives here
+// rather than being spelled out (and drifting) at each call site.
+type fetchOutcome int
+
+const (
+	// fetchAbort means the worker is shutting down: stop, don't record anything.
+	fetchAbort fetchOutcome = iota
+	// fetchExpectedMiss means there is simply no telemetry account for this
+	// circuit/epoch. Routine and very common — not worth counting.
+	fetchExpectedMiss
+	// fetchUnclassified is any other error. Skipping it is safe (each circuit
+	// resumes from its own stored max sample index, so the next refresh re-fetches
+	// what this one missed) but it MUST be counted and logged: the refresh still
+	// reports success, so an uncounted skip lets a persistently failing circuit
+	// under-collect indefinitely with no signal anywhere.
+	fetchUnclassified
+)
+
+func classifyFetchErr(err error) fetchOutcome {
+	switch {
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return fetchAbort
+	case errors.Is(err, telemetry.ErrAccountNotFound):
+		return fetchExpectedMiss
+	default:
+		return fetchUnclassified
+	}
+}
+
 type TelemetryRPC interface {
 	GetDeviceLatencySamplesTail(ctx context.Context, originDevicePK, targetDevicePK, linkPK solana.PublicKey, epoch uint64, existingMaxIdx int) (*telemetry.DeviceLatencySamplesHeader, int, []uint32, error)
 	GetInternetLatencySamples(ctx context.Context, dataProviderName string, originLocationPK, targetLocationPK, agentPK solana.PublicKey, epoch uint64) (*telemetry.InternetLatencySamples, error)

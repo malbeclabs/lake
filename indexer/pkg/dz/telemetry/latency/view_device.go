@@ -3,15 +3,14 @@ package dztelemlatency
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/gagliardetto/solana-go"
 	solanarpc "github.com/gagliardetto/solana-go/rpc"
-	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/telemetry"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/metrics"
 )
 
 type DeviceLinkLatencySample struct {
@@ -123,13 +122,18 @@ func (v *View) refreshDeviceLinkTelemetrySamples(ctx context.Context, devices []
 
 						hdr, startIdx, tail, err := v.cfg.TelemetryRPC.GetDeviceLatencySamplesTail(ctx, originPK, targetPK, linkPK, epoch, existingMaxIdx)
 						if err != nil {
-							if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+							switch classifyFetchErr(err) {
+							case fetchAbort:
 								return
-							}
-							if errors.Is(err, telemetry.ErrAccountNotFound) {
+							case fetchExpectedMiss:
+								continue
+							default:
+								metrics.TelemetryFetchSkipped.WithLabelValues("device_link").Inc()
+								v.log.Warn("telemetry/device-link: sample fetch failed, skipping until next refresh",
+									"origin_device_pk", originDevicePK, "target_device_pk", targetDevicePK,
+									"link_pk", linkPKStr, "epoch", epoch, "error", err)
 								continue
 							}
-							continue
 						}
 						if hdr == nil {
 							continue
