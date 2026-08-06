@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gagliardetto/solana-go"
@@ -23,6 +24,20 @@ const (
 	maxConcurrentFetches = 10
 	// maxSignaturesPerRequest is the Solana RPC limit.
 	maxSignaturesPerRequest = 1000
+	// scanChunkSize is how many signatures are decoded and durably written before the
+	// walk continues. It bounds what a mid-walk failure costs: the fact-derived
+	// high-water mark advances over every committed chunk, so a retry resumes rather
+	// than restarting. The largest escrow in production holds 4471 signatures and grows
+	// unbounded, so an all-or-nothing walk over it never converges once anything fails
+	// part-way. Mirrors permissionevents.scanChunkSize.
+	scanChunkSize = 200
+	// notFoundSkipSlotLag is how far below the newest fetched signature a not-found
+	// transaction must sit before it is skipped as pruned history. A getTransaction null
+	// near the tip is a load-balanced backend lagging finalization: transient, and it
+	// must be retried rather than skipped, or the event is lost for good. One this many
+	// slots back is genuinely unretrievable and would wedge the escrow forever.
+	// Same value and reasoning as permissionevents.
+	notFoundSkipSlotLag = 300
 )
 
 type ViewConfig struct {
@@ -196,10 +211,13 @@ func (v *View) refresh(ctx context.Context, ignoreCursor bool) (ingestionlog.Ref
 		"high_water_marks", len(hwms),
 	)
 
-	// Fetch and parse transactions for each escrow with concurrency limit.
+	// Drain each escrow with a concurrency limit. Each drain commits its own chunks, so
+	// there is no aggregate insert here: a failure mid-walk leaves the chunks before it
+	// durable and the next refresh resumes from the advanced high-water mark.
 	var (
-		mu        sync.Mutex
-		allEvents []EscrowEventRow
+		totalInserted int64
+		failedEscrows int64
+		firstErr      atomic.Pointer[error]
 	)
 
 	programID := v.cfg.ProgramID.String()
@@ -209,18 +227,20 @@ func (v *View) refresh(ctx context.Context, ignoreCursor bool) (ingestionlog.Ref
 
 	for _, escrow := range escrows {
 		g.Go(func() error {
-			events, err := v.fetchEscrowEvents(gctx, escrow, hwms[escrow.EscrowPK], programID)
+			n, err := v.drainEscrow(gctx, escrow, hwms[escrow.EscrowPK], programID)
+			atomic.AddInt64(&totalInserted, n)
 			if err != nil {
-				v.log.Warn("shreds/escrow-events: failed to fetch for escrow",
-					"escrow_pk", escrow.EscrowPK,
-					"error", err,
-				)
-				return nil // Don't fail the entire refresh for one escrow.
-			}
-			if len(events) > 0 {
-				mu.Lock()
-				allEvents = append(allEvents, events...)
-				mu.Unlock()
+				// One escrow's failure must not fail the refresh: the others are
+				// independent and their committed chunks are already durable. But it
+				// must be visible, so it is counted and summarised after the barrier
+				// rather than left as a per-escrow line nobody aggregates.
+				if ctx.Err() != nil {
+					return err
+				}
+				atomic.AddInt64(&failedEscrows, 1)
+				firstErr.CompareAndSwap(nil, &err)
+				v.log.Debug("shreds/escrow-events: escrow drain failed, resuming next refresh",
+					"escrow_pk", escrow.EscrowPK, "inserted", n, "error", err)
 			}
 			return nil
 		})
@@ -231,21 +251,32 @@ func (v *View) refresh(ctx context.Context, ignoreCursor bool) (ingestionlog.Ref
 		return result, fmt.Errorf("fetch shreds/escrow-events: %w", err)
 	}
 
-	// Insert all events.
-	if err := v.store.InsertEvents(ctx, allEvents); err != nil {
-		metrics.ViewRefreshTotal.WithLabelValues("shreds_escrow_events", "error").Inc()
-		return result, fmt.Errorf("insert shreds/escrow-events: %w", err)
+	result.RowsAffected = totalInserted
+
+	// One summary line per refresh rather than one per escrow, so a partial run is
+	// visible without burying the log. A failed escrow keeps its committed chunks and
+	// resumes next refresh, so the count matters more than any single error.
+	if n := failedEscrows; n > 0 {
+		var first error
+		if ptr := firstErr.Load(); ptr != nil {
+			first = *ptr
+		}
+		metrics.ViewRefreshTotal.WithLabelValues("shreds_escrow_events", "partial").Inc()
+		v.log.Warn("shreds/escrow-events: some escrows did not finish, resuming next refresh",
+			"failed_escrows", n, "total_escrows", len(escrows),
+			"inserted", totalInserted, "first_error", first)
+	} else {
+		// Only a clean sweep may claim current freshness. Restamping this while an
+		// escrow is still behind is what let a stalled drain look healthy.
+		fetchedAt := time.Now().UTC()
+		result.SourceMaxEventTS = &fetchedAt
+		metrics.ViewRefreshTotal.WithLabelValues("shreds_escrow_events", "success").Inc()
 	}
 
-	result.RowsAffected = int64(len(allEvents))
-	fetchedAt := time.Now().UTC()
-	result.SourceMaxEventTS = &fetchedAt
-
 	v.markReady()
-	metrics.ViewRefreshTotal.WithLabelValues("shreds_escrow_events", "success").Inc()
 
-	if len(allEvents) > 0 {
-		v.log.Info("shreds/escrow-events: indexed new events", "count", len(allEvents))
+	if totalInserted > 0 {
+		v.log.Info("shreds/escrow-events: indexed new events", "count", totalInserted)
 	}
 
 	return result, nil
@@ -271,10 +302,10 @@ func (v *View) markReady() {
 
 // fetchEscrowEvents fetches all new transactions for a single escrow account
 // and parses them into events.
-func (v *View) fetchEscrowEvents(ctx context.Context, escrow EscrowInfo, hwm HighWaterMark, programID string) ([]EscrowEventRow, error) {
+func (v *View) drainEscrow(ctx context.Context, escrow EscrowInfo, hwm HighWaterMark, programID string) (int64, error) {
 	escrowPK, err := solana.PublicKeyFromBase58(escrow.EscrowPK)
 	if err != nil {
-		return nil, fmt.Errorf("invalid escrow pubkey %q: %w", escrow.EscrowPK, err)
+		return 0, fmt.Errorf("invalid escrow pubkey %q: %w", escrow.EscrowPK, err)
 	}
 
 	// Build opts for incremental fetching.
@@ -282,7 +313,7 @@ func (v *View) fetchEscrowEvents(ctx context.Context, escrow EscrowInfo, hwm Hig
 	if hwm.TxSignature != "" {
 		untilSig, err = solana.SignatureFromBase58(hwm.TxSignature)
 		if err != nil {
-			return nil, fmt.Errorf("invalid high water mark signature %q: %w", hwm.TxSignature, err)
+			return 0, fmt.Errorf("invalid high water mark signature %q: %w", hwm.TxSignature, err)
 		}
 	}
 
@@ -308,7 +339,7 @@ func (v *View) fetchEscrowEvents(ctx context.Context, escrow EscrowInfo, hwm Hig
 
 		sigs, err := v.cfg.RPC.GetSignaturesForAddressWithOpts(ctx, escrowPK, opts)
 		if err != nil {
-			return nil, fmt.Errorf("get signatures: %w", err)
+			return 0, fmt.Errorf("get signatures: %w", err)
 		}
 		if len(sigs) == 0 {
 			break
@@ -321,7 +352,7 @@ func (v *View) fetchEscrowEvents(ctx context.Context, escrow EscrowInfo, hwm Hig
 	}
 
 	if len(allSigs) == 0 {
-		return nil, nil
+		return 0, nil
 	}
 
 	v.log.Debug("shreds/escrow-events: fetching transaction details",
@@ -329,57 +360,106 @@ func (v *View) fetchEscrowEvents(ctx context.Context, escrow EscrowInfo, hwm Hig
 		"new_signatures", len(allSigs),
 	)
 
-	// Fetch transaction details and parse logs.
-	var events []EscrowEventRow
-	maxVersion := uint64(0)
-	for _, sig := range allSigs {
-		txResult, err := v.cfg.RPC.GetTransaction(ctx, sig.Signature, &rpc.GetTransactionOpts{
-			MaxSupportedTransactionVersion: &maxVersion,
-		})
-		if err != nil {
-			v.log.Warn("shreds/escrow-events: failed to fetch transaction",
-				"signature", sig.Signature.String(),
-				"error", err,
-			)
-			continue
-		}
-
-		var logs []string
-		if txResult.Meta != nil {
-			logs = txResult.Meta.LogMessages
-		}
-
-		// Extract fee payer (first account key / signer).
-		var signer string
-		if txResult.Transaction != nil {
-			if tx, err := txResult.Transaction.GetTransaction(); err == nil && tx != nil {
-				if len(tx.Message.AccountKeys) > 0 {
-					signer = tx.Message.AccountKeys[0].String()
-				}
-			}
-		}
-
-		var blockTime time.Time
-		if sig.BlockTime != nil {
-			blockTime = sig.BlockTime.Time()
-		}
-
-		failed := sig.Err != nil
-
-		parsed := ParseTransactionLogs(
-			v.log,
-			escrow.EscrowPK,
-			escrow.ClientSeatPK,
-			sig.Signature.String(),
-			sig.Slot,
-			blockTime,
-			logs,
-			failed,
-			programID,
-			signer,
-		)
-		events = append(events, parsed...)
+	// Walk oldest-first in durable chunks. allSigs is newest-first from pagination, and
+	// GetHighWaterMarks derives the resume point from max(slot) of rows actually
+	// written, so committing a prefix of the *oldest* signatures advances the mark over
+	// exactly the range that is done. Committing newest-first would push the mark past
+	// signatures never decoded, which is the permanent gap this whole change is about.
+	for i, j := 0, len(allSigs)-1; i < j; i, j = i+1, j-1 {
+		allSigs[i], allSigs[j] = allSigs[j], allSigs[i]
 	}
 
-	return events, nil
+	// The tip is now the last element. Not-founds more than notFoundSkipSlotLag below it
+	// are pruned history and safe to skip.
+	var skipNotFoundBelow uint64
+	if tip := allSigs[len(allSigs)-1].Slot; tip > notFoundSkipSlotLag {
+		skipNotFoundBelow = tip - notFoundSkipSlotLag
+	}
+
+	maxVersion := uint64(0)
+	var inserted int64
+
+	for start := 0; start < len(allSigs); start += scanChunkSize {
+		chunk := allSigs[start:min(start+scanChunkSize, len(allSigs))]
+		var events []EscrowEventRow
+
+		for _, sig := range chunk {
+			// Shutdown is decided by the context, not by the error. Without this a
+			// cancelled context walks every remaining signature against a dead
+			// connection, emitting one line each: thousands that read like data loss.
+			if err := ctx.Err(); err != nil {
+				return inserted, err
+			}
+
+			txResult, err := v.cfg.RPC.GetTransaction(ctx, sig.Signature, &rpc.GetTransactionOpts{
+				MaxSupportedTransactionVersion: &maxVersion,
+			})
+			if err != nil {
+				// One narrow escape hatch: a finalized signature the RPC cannot serve
+				// from far enough below the tip is pruned history. Retrying can never
+				// recover it and failing forever would wedge the escrow, so it is
+				// skipped and counted. Every other error fails the chunk.
+				//
+				// Failing closed is what closes the gap. The previous version gated on
+				// dberror.IsTransient, a message-substring classifier written for
+				// ClickHouse and S3 errors: of the shapes solana-go actually returns,
+				// only RPCError{429} matched, so ErrNotFound, HTTPError{429,502,503} and
+				// RPCError{-32005,-32004,-32603} all still took the skip path and still
+				// lost events.
+				if errors.Is(err, rpc.ErrNotFound) && sig.Slot < skipNotFoundBelow {
+					metrics.EscrowEventsSkippedTx.Inc()
+					v.log.Warn("shreds/escrow-events: transaction unretrievable upstream, skipping",
+						"escrow_pk", escrow.EscrowPK, "signature", sig.Signature.String(),
+						"slot", sig.Slot, "error", err)
+					continue
+				}
+				return inserted, fmt.Errorf("get transaction %s: %w", sig.Signature.String(), err)
+			}
+
+			var logs []string
+			if txResult.Meta != nil {
+				logs = txResult.Meta.LogMessages
+			}
+
+			// Extract fee payer (first account key / signer).
+			var signer string
+			if txResult.Transaction != nil {
+				if tx, err := txResult.Transaction.GetTransaction(); err == nil && tx != nil {
+					if len(tx.Message.AccountKeys) > 0 {
+						signer = tx.Message.AccountKeys[0].String()
+					}
+				}
+			}
+
+			var blockTime time.Time
+			if sig.BlockTime != nil {
+				blockTime = sig.BlockTime.Time()
+			}
+
+			parsed := ParseTransactionLogs(
+				v.log,
+				escrow.EscrowPK,
+				escrow.ClientSeatPK,
+				sig.Signature.String(),
+				sig.Slot,
+				blockTime,
+				logs,
+				sig.Err != nil,
+				programID,
+				signer,
+			)
+			events = append(events, parsed...)
+		}
+
+		// Commit the chunk before moving on. This is what makes a later failure cost one
+		// chunk rather than the whole walk.
+		if len(events) > 0 {
+			if err := v.store.InsertEvents(ctx, events); err != nil {
+				return inserted, fmt.Errorf("insert escrow events: %w", err)
+			}
+			inserted += int64(len(events))
+		}
+	}
+
+	return inserted, nil
 }
