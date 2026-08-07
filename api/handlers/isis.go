@@ -1827,7 +1827,7 @@ func (a *API) FetchMetroPathLatencyData(ctx context.Context, optimize string, wi
 			least(ma.code, mz.code) AS metro1,
 			greatest(ma.code, mz.code) AS metro2,
 			round(avg(f.rtt_us) / 1000.0, 2) AS avg_rtt_ms,
-			round(quantile(0.95)(f.rtt_us) / 1000.0, 2) AS p95_rtt_ms,
+			round(quantileExact(0.95)(f.rtt_us) / 1000.0, 2) AS p95_rtt_ms,
 			-- ipdv_us is nullable; avg skips nulls and yields NULL over an
 			-- all-null group. Fold that to 0 here so the column stays Float64 and
 			-- an unmeasured pair reads as absent rather than failing the scan.
