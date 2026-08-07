@@ -110,7 +110,7 @@ func run() error {
 	solanaEnvFlag := flag.String("solana-env", config.SolanaEnvMainnetBeta, "solana environment (devnet, testnet, mainnet-beta)")
 	refreshIntervalFlag := flag.Duration("cache-ttl", defaultRefreshInterval, "cache TTL duration")
 	maxConcurrencyFlag := flag.Int("max-concurrency", defaultMaxConcurrency, "maximum number of concurrent operations")
-	permissionEventsFetchesPerSecondFlag := flag.Float64("permission-events-fetches-per-second", 0, "cap on permission-events getTransaction calls per second (0 = package default); lower it if the ledger endpoint rate-limits the audit drain")
+	permissionEventsFetchesPerSecondFlag := flag.Float64("permission-events-fetches-per-second", 0, "cap on permission-events getTransaction calls per second (0 = package default). Lower it if the ledger endpoint rate-limits the audit drain. Above roughly 43/s the RPC client's 9-connection pool becomes the limit instead, and time queued for a connection counts against the per-request timeout.")
 	deviceUsageQueryWindowFlag := flag.Duration("device-usage-query-window", defaultDeviceUsageInfluxQueryWindow, "Query window for device usage (default: 1 hour)")
 	deviceUsageRefreshIntervalFlag := flag.Duration("device-usage-refresh-interval", defaultDeviceUsageRefreshInterval, "Refresh interval for device usage (default: 5 minutes)")
 	mockDeviceUsageFlag := flag.Bool("mock-device-usage", false, "Use mock data for device usage instead of InfluxDB (for testing/staging)")
