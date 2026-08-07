@@ -78,6 +78,15 @@ describe('route-anchors', () => {
     expect(formatCityToken('ohio', 'pit')).toBe('ohio@pit')
   })
 
+  // Every id lookup downstream is case-sensitive, so a link an inbox uppercased
+  // has to fold back onto the same location rather than become an unknown one.
+  it('case-folds a location token', () => {
+    expect(parseCityToken('ZURICH')).toEqual({ id: 'zurich' })
+    expect(parseCityToken('Ohio@PIT')).toEqual({ id: 'ohio', anchor: 'pit' })
+    expect(resolveEndpoint('OHIO'.toLowerCase()).metroCode).toBe('chi')
+    expect(parseRouteToken('OHIO@PIT-LON')).toEqual({ from: 'ohio', to: 'lon', fromAnchor: 'pit' })
+  })
+
   it('rejects a malformed location token instead of guessing', () => {
     expect(parseCityToken('')).toBeNull()
     expect(parseCityToken('   ')).toBeNull()

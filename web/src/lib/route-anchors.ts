@@ -88,9 +88,16 @@ export function parseRouteToken(token: string): {
  * Also one side of a route token, so the `?cities=` list and the `?routes=`
  * encoding share a single rule: anything malformed returns `null` and must be
  * dropped by the caller, never coerced into a plausible-but-wrong location.
+ *
+ * Case-folded, because every id lookup downstream is case-sensitive — the
+ * off-net table here, the metro table on the page. A link an inbox uppercased to
+ * `?cities=ZURICH` would otherwise pass for an unknown metro code and print a
+ * whole row of "no path", asserting DoubleZero cannot reach somewhere it has
+ * only ever said it does not serve. That is the same coercion this function's
+ * strictness exists to prevent, arriving through casing instead of syntax.
  */
 export function parseCityToken(raw: string): { id: string; anchor?: string } | null {
-  const parts = raw.trim().split('@')
+  const parts = raw.trim().toLowerCase().split('@')
   if (parts.length > 2) return null
   const [id, anchor] = parts
   if (!id) return null

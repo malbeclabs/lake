@@ -9,6 +9,7 @@ import {
   parseCities,
   resolveRoute,
   routeFigures,
+  shadeFor,
   summariseMatrix,
 } from './routes-page'
 import type { MatrixCell } from './routes-page'
@@ -305,5 +306,89 @@ describe('summariseMatrix', () => {
     const s = summariseMatrix([{ label: 'DUB↔FRA', cell: improvement(-4, -2) }])
     expect(s.avgPct).toBe(-4)
     expect(s.best?.pct).toBe(-4)
+  })
+})
+
+describe('summariseMatrix pending and failed', () => {
+  // The cell-level rule, one layer up: a request that failed must not total to
+  // "0 pairs where DoubleZero has a path", which reads to a customer as
+  // DoubleZero carrying none of their routes.
+  it('counts a failed pair as failed, never as a pair without a path', () => {
+    const s = summariseMatrix([
+      { label: 'LON↔TYO', cell: { kind: 'error' } },
+      { label: 'DUB↔FRA', cell: { kind: 'error' } },
+    ])
+    expect(s.failed).toBe(2)
+    expect(s.pending).toBe(0)
+    expect(s.withPath).toBe(0)
+    expect(s.avgPct).toBeNull()
+    expect(s.best).toBeNull()
+  })
+
+  it('counts a pending pair as pending, and keeps it out of every total', () => {
+    const s = summariseMatrix([
+      { label: 'LON↔TYO', cell: { kind: 'loading' } },
+      { label: 'DUB↔FRA', cell: { kind: 'loading' } },
+    ])
+    expect(s.pending).toBe(2)
+    expect(s.failed).toBe(0)
+    expect(s.withPath).toBe(0)
+  })
+
+  // A part-loaded grid still has an unknown in it, so the caller has something
+  // to gate on even when some pairs did resolve.
+  it('reports the unknowns alongside the pairs that did resolve', () => {
+    const s = summariseMatrix([
+      { label: 'LON↔TYO', cell: { kind: 'improvement', pct: 20, savedMs: 40 } },
+      { label: 'DUB↔FRA', cell: { kind: 'error' } },
+      { label: 'DUB↔LON', cell: { kind: 'loading' } },
+    ])
+    expect(s.pairs).toBe(3)
+    expect(s.withPath).toBe(1)
+    expect(s.failed).toBe(1)
+    expect(s.pending).toBe(1)
+  })
+
+  it('reports no unknowns on a fully resolved grid', () => {
+    const s = summariseMatrix([
+      { label: 'LON↔TYO', cell: { kind: 'improvement', pct: 20, savedMs: 40 } },
+      { label: 'DUB↔ZRH', cell: { kind: 'unavailable', note: null } },
+    ])
+    expect(s.pending).toBe(0)
+    expect(s.failed).toBe(0)
+  })
+})
+
+describe('shadeFor', () => {
+  // A route DoubleZero makes slower must never be shaded as a win.
+  it('shades a slower or level route away from the green ramp', () => {
+    expect(shadeFor(-0.1)).toContain('red')
+    expect(shadeFor(0)).toContain('red')
+    expect(shadeFor(0.1)).toContain('emerald')
+  })
+
+  it('deepens with the improvement and never lightens', () => {
+    const weights = [0.1, 9.9, 10, 19.9, 20, 29.9, 30, 39.9, 40, 100].map((pct) =>
+      Number(shadeFor(pct).split('/')[1]),
+    )
+    for (let i = 1; i < weights.length; i++) {
+      expect(weights[i]).toBeGreaterThanOrEqual(weights[i - 1])
+    }
+    expect(weights[weights.length - 1]).toBeGreaterThan(weights[0])
+  })
+})
+
+describe('parseCities case folding', () => {
+  // An inbox or a hand edit that uppercases a shared link must not turn an
+  // off-net location into an unknown metro code, whose row would then read
+  // "no path" — asserting DoubleZero cannot reach a place it has only ever said
+  // it does not serve.
+  it('folds an uppercased token back onto its off-net endpoint', () => {
+    const { cities } = parseCities('LON,ZURICH,Ohio@PIT')
+    expect(cities).toEqual([{ id: 'lon' }, { id: 'zurich' }, { id: 'ohio', anchor: 'pit' }])
+    expect(resolveRoute({ from: cities[1].id, to: 'lon' }).notes[0]).toContain('Zurich')
+    expect(resolveRoute({ from: cities[2].id, to: 'lon', fromAnchor: cities[2].anchor }).pairKey).toBe(
+      'lon-pit',
+    )
   })
 })

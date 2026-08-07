@@ -289,8 +289,12 @@ export function cellFor(
 
 export type MatrixSummary = {
   pairs: number
-  /** Pairs DoubleZero carries, measured or not. */
+  /** Pairs DoubleZero is known to carry, measured or not. */
   withPath: number
+  /** Pairs whose state is not known yet — the latency query is still in flight. */
+  pending: number
+  /** Pairs whose state could not be asked for — the latency query failed. */
+  failed: number
   avgSavedMs: number | null
   avgPct: number | null
   best: { label: string; pct: number; savedMs: number | null } | null
@@ -300,6 +304,13 @@ export type MatrixSummary = {
  * Totals for the KPI cards. Only `improvement` cells carry a percentage, so a
  * withheld or unmeasured pair moves no average and can never be the best route —
  * it is counted as carried by DoubleZero, which is a fact, and nothing more.
+ *
+ * `pending` and `failed` are counted separately and never folded into
+ * `withPath`, because the same collapse that would misreport one cell misreports
+ * the whole grid at this level: a failed request would otherwise total to "0
+ * pairs where DoubleZero has a path", which reads as "DoubleZero carries none of
+ * your routes" and stays on screen for as long as the endpoint is down. The
+ * caller must state an unknown as an unknown whenever either is non-zero.
  */
 export function summariseMatrix(entries: { label: string; cell: MatrixCell }[]): MatrixSummary {
   const improved = entries.flatMap((e) =>
@@ -307,12 +318,14 @@ export function summariseMatrix(entries: { label: string; cell: MatrixCell }[]):
   )
   const saved = improved.map((e) => e.savedMs).filter((ms): ms is number => ms !== null)
   const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null)
+  const count = (...kinds: MatrixCell['kind'][]) =>
+    entries.filter((e) => kinds.includes(e.cell.kind)).length
 
   return {
     pairs: entries.length,
-    withPath: entries.filter((e) =>
-      ['improvement', 'withheld', 'not-measured'].includes(e.cell.kind),
-    ).length,
+    withPath: count('improvement', 'withheld', 'not-measured'),
+    pending: count('loading'),
+    failed: count('error'),
     avgSavedMs: mean(saved),
     avgPct: mean(improved.map((e) => e.pct)),
     best: improved.reduce<MatrixSummary['best']>(
@@ -883,7 +896,10 @@ export function RoutesPage() {
           )}
         </div>
 
-        {axis.length < 2 ? (
+        {/* The grid waits for the metros: the axes sort on the city name, so
+            rendering before the names arrive shows one order and then visibly
+            reshuffles rows and columns a beat later. */}
+        {metrosLoading || axis.length < 2 ? (
           <div className="text-sm text-muted-foreground py-8 text-center">
             {metrosLoading ? (
               <Loader2 className="h-5 w-5 animate-spin mx-auto" />
@@ -941,34 +957,59 @@ function shortLabel(id: string): string {
   return (OFF_NET_ENDPOINTS.find((e) => e.id === id)?.short ?? id).toUpperCase()
 }
 
+/** `-4.0` reads "4.0% slower", never "-4.0% faster". */
+function fasterPhrase(pct: number): string {
+  return `${Math.abs(pct).toFixed(1)}% ${pct < 0 ? 'slower' : 'faster'}`
+}
+
 function SummaryCards({ summary, locations }: { summary: MatrixSummary; locations: number }) {
+  // Three of the four cards are claims about measurements. While any pair's
+  // state is unknown they state the unknown instead, because a request that
+  // failed would otherwise total to a confident "0 pairs on DoubleZero".
+  const unknown =
+    summary.failed > 0
+      ? 'latency data could not be loaded'
+      : summary.pending > 0
+        ? 'waiting for latency data'
+        : null
+  const avgSlower = (summary.avgPct ?? 0) < 0
+  const bestSaved = summary.best?.savedMs ?? null
+
   const cards: { label: string; value: string; lines: string[] }[] = [
     {
+      // The only card that is arithmetic on the selection rather than a claim
+      // about measurements, so it stands whatever the latency query is doing.
       label: 'Pairs shown',
       value: String(summary.pairs),
       lines: [`${locations} locations`],
     },
     {
       label: 'On DoubleZero',
-      value: `${summary.withPath} pairs`,
-      lines: ['where DoubleZero has a path'],
+      value: unknown ? '—' : `${summary.withPath} pairs`,
+      lines: [unknown ?? 'where DoubleZero has a path'],
     },
     {
-      label: 'Average faster',
-      value: summary.avgSavedMs !== null ? `${summary.avgSavedMs.toFixed(1)} ms` : '—',
+      label: avgSlower ? 'Average slower' : 'Average faster',
+      value: unknown || summary.avgSavedMs === null ? '—' : `${Math.abs(summary.avgSavedMs).toFixed(1)} ms`,
       lines: [
-        summary.avgPct !== null ? `${summary.avgPct.toFixed(1)}% mean reduction` : 'nothing to average',
+        unknown ??
+          (summary.avgPct !== null
+            ? `${Math.abs(summary.avgPct).toFixed(1)}% mean ${avgSlower ? 'increase' : 'reduction'}`
+            : 'nothing to average'),
       ],
     },
     {
       label: 'Best route',
-      value: summary.best ? `${summary.best.pct.toFixed(1)}%` : '—',
-      lines: summary.best
-        ? [
-            summary.best.label,
-            summary.best.savedMs !== null ? `${summary.best.savedMs.toFixed(1)} ms saved` : '',
-          ].filter(Boolean)
-        : ['no measured comparison'],
+      value: unknown || !summary.best ? '—' : fasterPhrase(summary.best.pct),
+      lines:
+        unknown || !summary.best
+          ? [unknown ?? 'no measured comparison']
+          : [
+              summary.best.label,
+              bestSaved !== null
+                ? `${Math.abs(bestSaved).toFixed(1)} ms ${bestSaved < 0 ? 'added' : 'saved'}`
+                : '',
+            ].filter(Boolean),
     },
   ]
 
@@ -989,14 +1030,33 @@ function SummaryCards({ summary, locations }: { summary: MatrixSummary; location
   )
 }
 
-const CELL_NOTE: Record<Exclude<MatrixCell['kind'], 'improvement' | 'unavailable'>, string> = {
-  diagonal: 'same location',
-  loading: 'loading…',
-  error: 'latency data could not be loaded',
-  'no-path': 'DoubleZero has no path between these metros',
-  'not-measured': 'no public-internet measurements for this pair in the window',
-  withheld: 'improvement withheld: a hop reports its contracted figure, not a measurement',
-}
+/**
+ * One wording per fact. The cell, its tooltip and the legend all read from here,
+ * so the grid cannot end up calling the same state three different things.
+ * Spelled out rather than derived from the kind — a customer reads this.
+ */
+const CELL_FACTS: Record<Exclude<MatrixCell['kind'], 'improvement'>, { short: string; long: string }> =
+  {
+    diagonal: { short: '·', long: 'same location' },
+    loading: { short: '', long: 'loading…' },
+    error: { short: 'load failed', long: 'the latency data could not be loaded' },
+    'no-path': { short: 'no path', long: 'DoubleZero cannot route between these two metros' },
+    'not-measured': {
+      short: 'not measured',
+      long: 'no public-internet samples for this pair in the window',
+    },
+    withheld: {
+      short: 'withheld',
+      long: 'a hop reports a contracted figure, so no percentage is claimed',
+    },
+    unavailable: {
+      short: 'N/A',
+      long: 'no committed DoubleZero coverage at this location',
+    },
+  }
+
+/** The states the legend explains, in the order a reader meets them. */
+const LEGEND_FACTS = ['no-path', 'not-measured', 'withheld', 'unavailable'] as const
 
 function CellBody({ cell }: { cell: MatrixCell }) {
   switch (cell.kind) {
@@ -1009,27 +1069,19 @@ function CellBody({ cell }: { cell: MatrixCell }) {
           </span>
         </>
       )
-    case 'unavailable':
-      return <span className="text-xs text-muted-foreground">N/A</span>
     case 'loading':
       return <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+    case 'unavailable':
+      return <span className="text-xs text-muted-foreground">{CELL_FACTS.unavailable.short}</span>
     case 'diagonal':
-      return <span className="text-muted-foreground/40">·</span>
+      return <span className="text-muted-foreground/40">{CELL_FACTS.diagonal.short}</span>
     default:
       return (
         <span className="text-[10px] leading-tight text-muted-foreground px-1 text-center">
-          {CELL_TEXT[cell.kind]}
+          {CELL_FACTS[cell.kind].short}
         </span>
       )
   }
-}
-
-/** Spelled out rather than derived from the kind: this is text a customer reads. */
-const CELL_TEXT: Record<'no-path' | 'not-measured' | 'withheld' | 'error', string> = {
-  'no-path': 'no path',
-  'not-measured': 'not measured',
-  withheld: 'withheld',
-  error: 'load failed',
 }
 
 const CELL_BOX = 'w-24 h-14 flex flex-col items-center justify-center gap-0.5 border border-border/40'
@@ -1050,8 +1102,8 @@ function LatencyMatrix({
     <div className="mt-4 max-w-full overflow-x-auto">
       <table className="border-separate border-spacing-0">
         <caption className="caption-top text-left text-[11px] text-muted-foreground pb-2">
-          Latency reduction on DoubleZero against the public internet, row to column: percentage,
-          and milliseconds saved.
+          Latency on DoubleZero against the public internet, row to column: the percentage and the
+          milliseconds it saves. Negative where DoubleZero is the slower of the two.
         </caption>
         <thead>
           <tr>
@@ -1090,10 +1142,10 @@ function LatencyMatrix({
                 const isSelected = selected?.i === i && selected?.j === j
                 const note =
                   cell.kind === 'improvement'
-                    ? `${cell.pct.toFixed(1)}% faster on DoubleZero`
+                    ? `${fasterPhrase(cell.pct)} on DoubleZero`
                     : cell.kind === 'unavailable'
-                      ? (cell.note ?? 'no figure to report')
-                      : CELL_NOTE[cell.kind]
+                      ? (cell.note ?? CELL_FACTS.unavailable.long)
+                      : CELL_FACTS[cell.kind].long
                 return (
                   <td key={col.id} className="p-0">
                     <button
@@ -1102,7 +1154,7 @@ function LatencyMatrix({
                       aria-pressed={isSelected}
                       className={cn(
                         CELL_BOX,
-                        'w-full transition-colors hover:brightness-110',
+                        'transition-colors hover:brightness-110',
                         cell.kind === 'improvement' ? shadeFor(cell.pct) : 'bg-muted/10',
                         isSelected && 'outline-2 -outline-offset-2 outline-foreground',
                       )}
@@ -1151,10 +1203,11 @@ function Legend() {
         ))}
         40%+ faster on DoubleZero
       </span>
-      <span>no path — DoubleZero cannot route between the two metros</span>
-      <span>not measured — no public-internet samples in the window</span>
-      <span>withheld — a hop reports a contracted figure, so no percentage is claimed</span>
-      <span>N/A — no committed DoubleZero coverage at that location</span>
+      {LEGEND_FACTS.map((kind) => (
+        <span key={kind}>
+          {CELL_FACTS[kind].short} — {CELL_FACTS[kind].long}
+        </span>
+      ))}
     </div>
   )
 }
