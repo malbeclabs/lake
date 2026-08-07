@@ -47,22 +47,45 @@ export function resolveEndpoint(
   return { metroCode: chosen, offNet, anchor: chosen }
 }
 
-/** Parses `tyo-lon` or `ohio@pit-lon` into its endpoints and optional anchors. */
+/**
+ * Parses `tyo-lon` or `ohio@pit-lon` into its endpoints and optional anchors.
+ *
+ * This backs a shareable URL, so a corrupted or hand-edited token must fail
+ * visibly rather than parse into a plausible-but-wrong route. Returns `null`
+ * for anything malformed — callers must drop `null` results, not coerce them
+ * (e.g. with `?? ''`).
+ */
 export function parseRouteToken(token: string): {
   from: string
   to: string
   fromAnchor?: string
   toAnchor?: string
-} {
-  const [rawFrom = '', rawTo = ''] = token.split('-')
-  const [from, fromAnchor] = rawFrom.split('@')
-  const [to, toAnchor] = rawTo.split('@')
+} | null {
+  if (!token.trim()) return null
+
+  const segments = token.split('-')
+  if (segments.length !== 2) return null
+
+  const left = parseSide(segments[0])
+  const right = parseSide(segments[1])
+  if (!left || !right) return null
+
   return {
-    from,
-    to,
-    ...(fromAnchor ? { fromAnchor } : {}),
-    ...(toAnchor ? { toAnchor } : {}),
+    from: left.id,
+    to: right.id,
+    ...(left.anchor ? { fromAnchor: left.anchor } : {}),
+    ...(right.anchor ? { toAnchor: right.anchor } : {}),
   }
+}
+
+/** Splits one side of a route token (`id` or `id@anchor`); null if malformed. */
+function parseSide(raw: string): { id: string; anchor?: string } | null {
+  const parts = raw.split('@')
+  if (parts.length > 2) return null
+  const [id, anchor] = parts
+  if (!id) return null
+  if (parts.length === 2 && !anchor) return null
+  return { id, ...(anchor ? { anchor } : {}) }
 }
 
 export function formatRouteToken(

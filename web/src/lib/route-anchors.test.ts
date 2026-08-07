@@ -45,6 +45,30 @@ describe('route-anchors', () => {
     expect(formatRouteToken('ohio', 'lon', 'pit')).toBe('ohio@pit-lon')
   })
 
+  it('round-trips an anchor on the destination side', () => {
+    expect(parseRouteToken('tyo-ohio@pit')).toEqual({ from: 'tyo', to: 'ohio', toAnchor: 'pit' })
+    expect(formatRouteToken('tyo', 'ohio', undefined, 'pit')).toBe('tyo-ohio@pit')
+  })
+
+  it('round-trips anchors on both sides', () => {
+    expect(parseRouteToken('ohio@pit-ohio@chi')).toEqual({
+      from: 'ohio',
+      to: 'ohio',
+      fromAnchor: 'pit',
+      toAnchor: 'chi',
+    })
+    expect(formatRouteToken('ohio', 'ohio', 'pit', 'chi')).toBe('ohio@pit-ohio@chi')
+  })
+
+  it('rejects malformed route tokens instead of guessing', () => {
+    expect(parseRouteToken('')).toBeNull()
+    expect(parseRouteToken('tyo-lon-extra')).toBeNull()
+    expect(parseRouteToken('-lon')).toBeNull()
+    expect(parseRouteToken('tyo-')).toBeNull()
+    expect(parseRouteToken('ohio@-lon')).toBeNull()
+    expect(parseRouteToken('ohio@pit@x-lon')).toBeNull()
+  })
+
   it('every off-net entry lists its default among its candidates', () => {
     for (const e of OFF_NET_ENDPOINTS) {
       if (e.defaultAnchor) {
