@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
@@ -8,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -751,6 +754,9 @@ func run() error {
 		noInflux       bool
 		mrouteS3Bucket string // empty = mroute ingest disabled for this env
 		msdpS3Bucket   string // empty = MSDP ingest disabled for this env
+		// fetchesPerSecond overrides the permission-events getTransaction pace for
+		// this env; 0 inherits the primary --permission-events-fetches-per-second.
+		fetchesPerSecond float64
 	}
 	secondaryEnvs := map[string]secondaryEnvConfig{
 		"testnet": {database: "lake_testnet"},
@@ -764,6 +770,19 @@ func run() error {
 		cfg := secondaryEnvs["testnet"]
 		cfg.dzLedgerRPCURL = rpcURL
 		secondaryEnvs["testnet"] = cfg
+	}
+	for _, env := range []string{"devnet", "testnet"} {
+		v := os.Getenv("PERMISSION_EVENTS_FETCHES_PER_SECOND_" + strings.ToUpper(env))
+		if v == "" {
+			continue
+		}
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil || f < 0 {
+			return fmt.Errorf("invalid PERMISSION_EVENTS_FETCHES_PER_SECOND_%s %q", strings.ToUpper(env), v)
+		}
+		cfg := secondaryEnvs[env]
+		cfg.fetchesPerSecond = f
+		secondaryEnvs[env] = cfg
 	}
 	if rpcURL := os.Getenv("SOLANA_RPC_URL_TESTNET"); rpcURL != "" {
 		cfg := secondaryEnvs["testnet"]
@@ -806,32 +825,37 @@ func run() error {
 			}
 
 			if err := startSecondaryNetwork(ctx, logger.New(*verboseFlag), env, secondaryNetworkConfig{
-				clickhouseAddr:             *clickhouseAddrFlag,
-				clickhouseDatabase:         envCfg.database,
-				dzLedgerRPCURL:             envCfg.dzLedgerRPCURL,
-				solanaRPCURL:               envCfg.solanaRPCURL,
-				clickhouseUsername:         *clickhouseUsernameFlag,
-				clickhousePassword:         *clickhousePasswordFlag,
-				clickhouseSecure:           *clickhouseSecureFlag,
-				refreshInterval:            *refreshIntervalFlag,
-				maxConcurrency:             *maxConcurrencyFlag,
-				migrationsEnable:           *migrationsEnableFlag,
-				createDatabase:             true,
-				skipReadyWait:              *skipReadyWaitFlag,
-				isisS3Bucket:               "doublezero-" + env + "-isis-db",
-				isisS3Region:               *isisS3RegionFlag,
-				mrouteS3Bucket:             envCfg.mrouteS3Bucket,
-				mrouteS3Region:             *mrouteS3RegionFlag,
-				mrouteS3KeyPrefix:          *mrouteS3KeyPrefixFlag,
-				msdpS3Bucket:               envCfg.msdpS3Bucket,
-				msdpS3Region:               *msdpS3RegionFlag,
-				msdpS3KeyPrefix:            *msdpS3KeyPrefixFlag,
-				influxURL:                  secondaryInfluxURL,
-				influxToken:                secondaryInfluxToken,
-				influxOrg:                  influxOrg,
-				influxBucket:               secondaryInfluxBucket,
-				deviceUsageRefreshInterval: *deviceUsageRefreshIntervalFlag,
-				deviceUsageQueryWindow:     deviceUsageQueryWindow,
+				clickhouseAddr:     *clickhouseAddrFlag,
+				clickhouseDatabase: envCfg.database,
+				dzLedgerRPCURL:     envCfg.dzLedgerRPCURL,
+				solanaRPCURL:       envCfg.solanaRPCURL,
+				// Inherit the primary dial unless this env overrides it. Without this the
+				// flag this PR adds would only reach mainnet-beta, leaving devnet and
+				// testnet pinned at the package default — and testnet carries the
+				// high-volume Permission PDA.
+				permissionEventsFetchesPerSecond: cmp.Or(envCfg.fetchesPerSecond, *permissionEventsFetchesPerSecondFlag),
+				clickhouseUsername:               *clickhouseUsernameFlag,
+				clickhousePassword:               *clickhousePasswordFlag,
+				clickhouseSecure:                 *clickhouseSecureFlag,
+				refreshInterval:                  *refreshIntervalFlag,
+				maxConcurrency:                   *maxConcurrencyFlag,
+				migrationsEnable:                 *migrationsEnableFlag,
+				createDatabase:                   true,
+				skipReadyWait:                    *skipReadyWaitFlag,
+				isisS3Bucket:                     "doublezero-" + env + "-isis-db",
+				isisS3Region:                     *isisS3RegionFlag,
+				mrouteS3Bucket:                   envCfg.mrouteS3Bucket,
+				mrouteS3Region:                   *mrouteS3RegionFlag,
+				mrouteS3KeyPrefix:                *mrouteS3KeyPrefixFlag,
+				msdpS3Bucket:                     envCfg.msdpS3Bucket,
+				msdpS3Region:                     *msdpS3RegionFlag,
+				msdpS3KeyPrefix:                  *msdpS3KeyPrefixFlag,
+				influxURL:                        secondaryInfluxURL,
+				influxToken:                      secondaryInfluxToken,
+				influxOrg:                        influxOrg,
+				influxBucket:                     secondaryInfluxBucket,
+				deviceUsageRefreshInterval:       *deviceUsageRefreshIntervalFlag,
+				deviceUsageQueryWindow:           deviceUsageQueryWindow,
 			}); err != nil {
 				log.Error("secondary network indexer failed", "env", env, "error", err)
 			}
@@ -903,6 +927,12 @@ type secondaryNetworkConfig struct {
 	// secondary network indexer reads shred-subscription state from this
 	// endpoint instead of the DZ ledger.
 	solanaRPCURL string
+
+	// permissionEventsFetchesPerSecond paces the audit indexer's getTransaction
+	// calls for this network. Defaults to the primary flag value so one dial covers
+	// every env, and is overridable per env because the limits are enforced per
+	// method per source IP and every env shares this cluster's single egress.
+	permissionEventsFetchesPerSecond float64
 
 	// ISIS configuration (optional).
 	isisS3Bucket string
@@ -1028,17 +1058,18 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 			Password: cfg.clickhousePassword,
 			Secure:   cfg.clickhouseSecure,
 		},
-		RefreshInterval:         cfg.refreshInterval,
-		MaxConcurrency:          cfg.maxConcurrency,
-		ServiceabilityRPC:       serviceabilityClient,
-		ServiceabilityProgramID: networkConfig.ServiceabilityProgramID,
-		PermissionEventsRPC:     permissionEventsRawRPC,
-		GeolocationRPC:          geolocationClient,
-		TelemetryRPC:            telemetryClient,
-		DZEpochRPC:              dzRPCClient,
-		InternetLatencyAgentPK:  networkConfig.InternetLatencyCollectorPK,
-		InternetDataProviders:   telemetryconfig.InternetTelemetryDataProviders,
-		SkipReadyWait:           cfg.skipReadyWait,
+		RefreshInterval:                  cfg.refreshInterval,
+		MaxConcurrency:                   cfg.maxConcurrency,
+		ServiceabilityRPC:                serviceabilityClient,
+		ServiceabilityProgramID:          networkConfig.ServiceabilityProgramID,
+		PermissionEventsRPC:              permissionEventsRawRPC,
+		PermissionEventsFetchesPerSecond: cfg.permissionEventsFetchesPerSecond,
+		GeolocationRPC:                   geolocationClient,
+		TelemetryRPC:                     telemetryClient,
+		DZEpochRPC:                       dzRPCClient,
+		InternetLatencyAgentPK:           networkConfig.InternetLatencyCollectorPK,
+		InternetDataProviders:            telemetryconfig.InternetTelemetryDataProviders,
+		SkipReadyWait:                    cfg.skipReadyWait,
 
 		// Device usage configuration.
 		DeviceUsageInfluxClient:      influxDBClient,

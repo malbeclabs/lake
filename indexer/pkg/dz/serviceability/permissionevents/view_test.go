@@ -712,3 +712,81 @@ func TestLake_PermissionEvents_View_ResumesFromFactHighWaterMark(t *testing.T) {
 		"only signatures newer than the fact high-water mark may be fetched")
 	require.EqualValues(t, 11, factRowCount(t, ch))
 }
+
+// TestLake_PermissionEvents_View_ChunkBudgetScalesWithFetchRate: pacing put the
+// fetch rate in charge of how long a chunk takes, so the deadline reserve has to
+// follow it. A fixed reserve lets the drain start a chunk it cannot finish, and the
+// overrun is silent — rate.Limiter.Wait refuses a reservation that would outlast the
+// deadline and returns "would exceed context deadline", which classifies transient
+// and so takes the stop-with-progress path, reporting success after fetching a
+// chunk's worth of transactions that commit nothing.
+func TestLake_PermissionEvents_View_ChunkBudgetScalesWithFetchRate(t *testing.T) {
+	t.Parallel()
+
+	ch := testClient(t)
+	rpc := newFakeRPC(t, seqSlots(1, 10), rowlessIxData())
+
+	newAt := func(perSecond float64) *View {
+		v, err := NewView(ViewConfig{
+			Logger: laketesting.NewLogger(), Clock: clockwork.NewRealClock(), RPC: rpc,
+			ProgramID: testProgramID, RefreshInterval: time.Second, ClickHouse: ch,
+			FetchesPerSecond: perSecond,
+		})
+		require.NoError(t, err)
+		return v
+	}
+
+	// Worst-case contention: the limiter is view-wide, so a chunk can complete at a
+	// fraction of the configured rate when other accounts drain through it.
+	fast := newAt(100)
+	slow := newAt(10)
+	wantFast := time.Duration(float64(scanChunkSize*maxConcurrentFetches)/100*float64(time.Second)) + drainCommitReserve
+	wantSlow := time.Duration(float64(scanChunkSize*maxConcurrentFetches)/10*float64(time.Second)) + drainCommitReserve
+
+	require.Equal(t, wantFast, fast.chunkBudget(scanChunkSize))
+	require.Equal(t, wantSlow, slow.chunkBudget(scanChunkSize))
+	require.Greater(t, slow.chunkBudget(scanChunkSize), fast.chunkBudget(scanChunkSize),
+		"a slower fetch rate must reserve more of the deadline, not the same fixed amount")
+
+	// A short final chunk must not be charged for a full one.
+	require.Less(t, fast.chunkBudget(1), fast.chunkBudget(scanChunkSize))
+	// The reserve is always at least the insert+checkpoint cost.
+	require.GreaterOrEqual(t, fast.chunkBudget(0), drainCommitReserve)
+}
+
+// TestLake_PermissionEvents_View_PartialCycleAlwaysReportsAFrontier: a partial cycle
+// whose committedTip stays zero reports no freshness value at all — Refresh's switch
+// leaves SourceMaxEventTS nil — so the run lands as a clean success with nothing to
+// show how far behind it is. The tip must come from the newest dated signature in the
+// chunk, not only its last element.
+func TestLake_PermissionEvents_View_PartialCycleAlwaysReportsAFrontier(t *testing.T) {
+	t.Parallel()
+
+	total := uint64(2 * scanChunkSize)
+	rpc := newFakeRPC(t, seqSlots(1, total), createPermissionIxData())
+
+	// The first chunk's newest signature carries no block time, as the RPC returns for
+	// states it cannot date. Earlier entries in that chunk are still dated.
+	for _, h := range rpc.histories {
+		for _, e := range h {
+			if e.Slot == scanChunkSize {
+				e.BlockTime = nil
+			}
+		}
+	}
+	// Throttle into the second chunk so the cycle stops with progress.
+	rpc.txErrs[mkSig(scanChunkSize+50)] = &soljsonrpc.RPCError{
+		Code: 429, Message: "Too many requests for a specific RPC call",
+	}
+
+	ch := testClient(t)
+	view := newTestView(t, ch, rpc)
+
+	res, err := view.Refresh(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, res.SourceMaxEventTS,
+		"a partial cycle must report a frontier even when its last committed signature is undated")
+	// Slot scanChunkSize is undated, so the frontier falls back to scanChunkSize-1.
+	require.True(t, res.SourceMaxEventTS.Equal(time.Unix(1753200000+int64(scanChunkSize)-1, 0)),
+		"frontier should be the newest dated signature in the committed chunk, got %v", res.SourceMaxEventTS)
+}
