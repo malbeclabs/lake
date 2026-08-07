@@ -285,6 +285,12 @@ export function parseCells(
   for (const token of tokens) {
     // Malformed, naming a location outside the mesh, or naming a pair with
     // nothing to compare: dropped, never coerced into a neighbouring route.
+    //
+    // A cell token carrying an anchor is refused rather than half-honoured. The
+    // anchor lives on the location, once, in `?cities=`; parsing `ohio@pit-lon`
+    // and then applying the city's `chi` would render CHI figures under a URL
+    // that says PIT, which is the coercion this parser exists to prevent.
+    if (token.includes('@')) continue
     const parsed = parseRouteToken(token)
     if (!parsed) continue
     const cell = { from: parsed.from, to: parsed.to }
@@ -1047,12 +1053,19 @@ export function RoutesPage() {
               onPick={pickCell}
             />
 
-            <p className="mt-2 text-[11px] text-muted-foreground">
-              Click a cell for the full breakdown of that route. Hold Cmd, Ctrl or Shift — or press
-              Enter with one of them held — to compare several routes side by side.
+            {/* Ctrl-click is a right-click on macOS — Chrome and Safari raise a
+                context menu and dispatch no primary click — so the hint offers
+                Shift and Cmd, the two that work everywhere a Mac reader is. The
+                gesture still accepts Ctrl for everyone else. */}
+            <p id={MATRIX_HINT_ID} className="mt-2 text-[11px] text-muted-foreground">
+              Click a cell for the full breakdown of that route. Hold Shift or Cmd — Ctrl also
+              works away from macOS — or press Enter with one of them held, to compare several
+              routes side by side.
               {atCellLimit && ` Comparing the maximum of ${MAX_CELLS} routes; deselect one to add another.`}
+              {/* Neutral about cause: the shortfall is as likely to be an anchor
+                  change collapsing a pair as anything the link did. */}
               {cellsRequested > selectedCells.length &&
-                ` This link asked for ${cellsRequested} routes; showing ${selectedCells.length}.`}
+                ` ${cellsRequested} routes asked for; showing ${selectedCells.length}.`}
             </p>
 
             <Legend />
@@ -1230,6 +1243,13 @@ function CellBody({ cell }: { cell: MatrixCell }) {
 
 const CELL_BOX = 'w-24 h-14 flex flex-col items-center justify-center gap-0.5 border border-border/40'
 
+/**
+ * Every cell points at the hint line, so focusing one announces what plain and
+ * modified Enter each do. The gesture is otherwise written down nowhere a screen
+ * reader would reach it.
+ */
+const MATRIX_HINT_ID = 'route-matrix-hint'
+
 function LatencyMatrix({
   axis,
   grid,
@@ -1292,26 +1312,36 @@ function LatencyMatrix({
                     : cell.kind === 'unavailable'
                       ? (cell.note ?? CELL_FACTS.unavailable.long)
                       : CELL_FACTS[cell.kind].long
+                // aria-disabled rather than disabled: a disabled control leaves
+                // the tab order and, in Firefox and Safari, stops receiving
+                // pointer events, which would put this cell's title — the only
+                // place its particular reason is written, including the off-net
+                // notes — out of reach of exactly the readers who need it.
+                const inert = !isComparable(cell)
                 return (
                   <td key={col.id} className="p-0">
                     <button
-                      onClick={(e) => onPick(picked, isToggleGesture(e))}
+                      onClick={(e) => {
+                        if (inert) return
+                        onPick(picked, isToggleGesture(e))
+                      }}
                       // Enter and Space already reach onClick; this adds the
                       // modified form of the same gesture, so the comparison is
                       // not mouse-only. preventDefault stops the button also
                       // synthesising a click and toggling twice.
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter' && isToggleGesture(e)) {
-                          e.preventDefault()
-                          onPick(picked, true)
-                        }
+                        if (inert || e.key !== 'Enter' || !isToggleGesture(e)) return
+                        e.preventDefault()
+                        onPick(picked, true)
                       }}
-                      disabled={!isComparable(cell)}
+                      aria-disabled={inert}
+                      aria-describedby={MATRIX_HINT_ID}
                       title={`${shortLabel(row.id)} → ${shortLabel(col.id)} — ${note}`}
                       aria-pressed={isCompared}
                       className={cn(
                         CELL_BOX,
-                        'transition-colors enabled:hover:brightness-110 disabled:cursor-not-allowed',
+                        'transition-colors',
+                        inert ? 'cursor-not-allowed' : 'hover:brightness-110',
                         cell.kind === 'improvement' ? shadeFor(cell.pct) : 'bg-muted/10',
                         isCompared && 'outline-2 -outline-offset-2 outline-foreground',
                       )}
@@ -1336,13 +1366,25 @@ function LatencyMatrix({
  * without having to click a cell first.
  */
 function OffNetNotes({ axis }: { axis: SelectedCity[] }) {
-  const present = axis.flatMap((c) => OFF_NET_ENDPOINTS.filter((e) => e.id === c.id))
+  const present = axis.flatMap((c) => {
+    const offNet = OFF_NET_ENDPOINTS.find((e) => e.id === c.id)
+    if (!offNet) return []
+    // When the on-ramp metro is itself in the mesh, the two rows are one row:
+    // both cells resolve to the same pair, so both highlight together and either
+    // one removes the comparison. That is honest — it is one measurement — but
+    // it looks like a bug unless it is said.
+    const anchor = resolveEndpoint(c.id, c.anchor).metroCode
+    const twin = anchor && axis.some((a) => a.id.toLowerCase() === anchor.toLowerCase())
+    return [{ ...offNet, twin: twin ? anchor.toUpperCase() : null }]
+  })
   if (present.length === 0) return null
   return (
     <div className="mt-2 space-y-1 max-w-4xl">
       {present.map((e) => (
         <p key={e.id} className="text-xs text-muted-foreground">
           <span className="font-medium text-foreground">{e.short}</span> — {e.note}
+          {e.twin &&
+            ` While it is on-ramped at ${e.twin}, the ${e.short} row is the ${e.twin} row: those cells are one measurement, so they select and clear together.`}
         </p>
       ))}
     </div>

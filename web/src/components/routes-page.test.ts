@@ -3,6 +3,7 @@ import {
   MAX_CELLS,
   MAX_CITIES,
   cellFor,
+  cellPairKey,
   formatCells,
   formatCities,
   isComparable,
@@ -420,10 +421,33 @@ describe('parseCells', () => {
     expect(requested).toBe(2)
   })
 
-  it('folds two cells that resolve to one pair through their anchors', () => {
-    // Ohio anchors at Chicago by default, so ohio-lon and chi-lon are one route.
-    const { cells } = parseCells('ohio-lon,lon-ohio', [...cities, { id: 'chi' }])
-    expect(cells).toEqual([{ from: 'ohio', to: 'lon' }])
+  // The anchor a location carries has to reach the pair key, or the grid cell
+  // reads pit-lon while the card under it reads chi-lon, under one heading. The
+  // default anchor cannot show this: it would still fold if the anchor were
+  // dropped entirely, so the assertion is on a non-default one.
+  it('threads each location’s own anchor into the pair a cell names', () => {
+    const cells: SelectedCity[] = [{ id: 'ohio', anchor: 'pit' }, { id: 'lon' }]
+    expect(cellPairKey({ from: 'ohio', to: 'lon' }, cells)).toBe('lon-pit')
+    expect(cellPairKey({ from: 'ohio', to: 'lon' }, [{ id: 'ohio' }, { id: 'lon' }])).toBe('chi-lon')
+    expect(parseCells('ohio-lon', cells).cells).toEqual([{ from: 'ohio', to: 'lon' }])
+  })
+
+  // An off-net location on-ramped at a metro that is also in the mesh is that
+  // metro: one route, one card, however the reader reaches it.
+  it('folds an off-net cell onto its on-ramp metro cell', () => {
+    const withChi: SelectedCity[] = [...cities, { id: 'chi' }]
+    expect(cellPairKey({ from: 'ohio', to: 'lon' }, withChi)).toBe('chi-lon')
+    expect(parseCells('ohio-lon,chi-lon', withChi).cells).toEqual([{ from: 'ohio', to: 'lon' }])
+  })
+
+  // The anchor belongs to the location, once, in ?cities=. Half-honouring it
+  // here would render CHI under a URL that says PIT.
+  it('refuses a cell token carrying an anchor rather than applying a different one', () => {
+    const withAnchor: SelectedCity[] = [{ id: 'ohio', anchor: 'chi' }, { id: 'lon' }]
+    const { cells, requested } = parseCells('ohio@pit-lon', withAnchor)
+    expect(cells).toEqual([])
+    // Counted, so the shortfall is stated rather than silently absent.
+    expect(requested).toBe(1)
   })
 
   it('drops a malformed token instead of coercing it', () => {
