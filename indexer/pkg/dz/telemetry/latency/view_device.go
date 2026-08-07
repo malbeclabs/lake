@@ -3,15 +3,15 @@ package dztelemlatency
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gagliardetto/solana-go"
 	solanarpc "github.com/gagliardetto/solana-go/rpc"
-	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/telemetry"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/metrics"
 )
 
 type DeviceLinkLatencySample struct {
@@ -53,6 +53,8 @@ func (v *View) refreshDeviceLinkTelemetrySamples(ctx context.Context, devices []
 	var allSamples []DeviceLinkLatencySample
 	var allHeaders []DeviceLinkLatencySampleHeader
 	var samplesMu sync.Mutex
+	var skipped atomic.Int64
+	var firstSkipErr atomic.Pointer[error]
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, v.cfg.MaxConcurrency)
 	linksProcessed := 0
@@ -123,13 +125,19 @@ func (v *View) refreshDeviceLinkTelemetrySamples(ctx context.Context, devices []
 
 						hdr, startIdx, tail, err := v.cfg.TelemetryRPC.GetDeviceLatencySamplesTail(ctx, originPK, targetPK, linkPK, epoch, existingMaxIdx)
 						if err != nil {
-							if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+							switch classifyFetchErr(ctx, err) {
+							case fetchAbort:
 								return
-							}
-							if errors.Is(err, telemetry.ErrAccountNotFound) {
+							case fetchExpectedMiss:
+								continue
+							default:
+								metrics.TelemetryFetchSkipped.WithLabelValues(v.cfg.DZEnv, "device_link").Inc()
+								v.log.Debug("telemetry/device-link: sample fetch failed, skipping until next refresh",
+									"origin_device_pk", originDevicePK, "target_device_pk", targetDevicePK,
+									"link_pk", linkPKStr, "epoch", epoch, "error", err)
+								noteSkip(&skipped, &firstSkipErr, err)
 								continue
 							}
-							continue
 						}
 						if hdr == nil {
 							continue
@@ -189,6 +197,18 @@ func (v *View) refreshDeviceLinkTelemetrySamples(ctx context.Context, devices []
 
 done:
 	wg.Wait()
+
+	// One line per refresh, not per fetch. A skipped circuit is re-fetched next refresh
+	// while its epoch is still in the window, so the count matters more than any single
+	// failure. Per-fetch detail is at Debug.
+	if n := skipped.Load(); n > 0 {
+		var first error
+		if ptr := firstSkipErr.Load(); ptr != nil {
+			first = *ptr
+		}
+		v.log.Warn("telemetry/device-link: sample fetches skipped, retried next refresh",
+			"skipped", n, "first_error", first)
+	}
 
 	// Append new samples to table (instead of replacing)
 	if len(allSamples) > 0 {
