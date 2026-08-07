@@ -34,10 +34,10 @@ require (
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.43.0
-	github.com/testcontainers/testcontainers-go/modules/clickhouse v0.42.0
-	github.com/testcontainers/testcontainers-go/modules/minio v0.42.0
-	github.com/testcontainers/testcontainers-go/modules/neo4j v0.42.0
-	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
+	github.com/testcontainers/testcontainers-go/modules/clickhouse v0.43.0
+	github.com/testcontainers/testcontainers-go/modules/minio v0.43.0
+	github.com/testcontainers/testcontainers-go/modules/neo4j v0.43.0
+	github.com/testcontainers/testcontainers-go/modules/postgres v0.43.0
 	go.temporal.io/sdk v1.46.0
 	golang.org/x/mod v0.36.0
 	golang.org/x/sync v0.21.0
