@@ -507,6 +507,9 @@ func TestLake_PermissionEvents_View_ThrottledChunkStopsWithProgressAndResumes(t 
 	res, err := view.Refresh(context.Background())
 	require.NoError(t, err,
 		"a throttle after committed progress is a budget stop, not a cycle failure")
+	require.True(t, res.Partial,
+		"a cycle that stopped with backlog left must record status=partial, not success — "+
+			"the staleness alert reads the last successful run's finished_at")
 	require.EqualValues(t, scanChunkSize, factRowCount(t, ch),
 		"the first chunk must stay committed")
 
@@ -522,8 +525,10 @@ func TestLake_PermissionEvents_View_ThrottledChunkStopsWithProgressAndResumes(t 
 
 	// Throttle lifts; the next cycle drains the remainder from the cursor.
 	delete(rpc.txErrs, throttled)
-	_, err = view.Refresh(context.Background())
+	res, err = view.Refresh(context.Background())
 	require.NoError(t, err)
+	require.False(t, res.Partial,
+		"a converged cycle must report success so the staleness clock resets")
 	require.EqualValues(t, total, factRowCount(t, ch))
 	require.EqualValues(t, total, factDistinctSlots(t, ch), "no signature may be skipped or double-counted")
 	_, slot, found = accountCursor(t, ch, testPDA.String())

@@ -312,6 +312,11 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	// (their newest events stay unindexed until the drain converges), not "now".
 	err = g.Wait()
 	result.RowsAffected = totalInserted
+	// A cycle that banked committed chunks and stopped is not a success: the staleness
+	// alert asks for the last successful run's finished_at, so calling this "success"
+	// resets that clock while the data it covers stays behind. status="partial" keeps
+	// the clock running until the drain actually converges.
+	result.Partial = totalPending > 0
 	switch {
 	case err == nil && totalPending == 0:
 		fetchedAt := time.Now().UTC()
