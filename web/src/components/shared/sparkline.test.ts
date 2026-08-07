@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { sparklinePoints } from './sparkline'
+import { sparklinePoints } from './sparkline-points'
 
 describe('sparklinePoints', () => {
   it('maps the lowest value to the bottom and the highest to the top', () => {
