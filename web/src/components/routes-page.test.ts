@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { orientPath, pairKeyOf, resolveRoute, routeFigures } from './routes-page'
+import {
+  MAX_CITIES,
+  cellFor,
+  formatCities,
+  meshPairs,
+  orientPath,
+  pairKeyOf,
+  parseCities,
+  resolveRoute,
+  routeFigures,
+  summariseMatrix,
+} from './routes-page'
+import type { MatrixCell } from './routes-page'
 import type { MetroPathLatency } from '@/lib/api'
 
 /** A fully-measured route; individual tests override the fields they care about. */
@@ -59,6 +71,23 @@ describe('routeFigures', () => {
     const f = routeFigures(latency({ internetP95Ms: 0, internetJitterMs: 0 }))
     expect(f.tiles[4].value).toBeNull()
     expect(f.tiles[5].value).toBeNull()
+  })
+
+  it('reports the milliseconds saved on a fully-measured route', () => {
+    const f = routeFigures(latency())
+    expect(f.internetMeasured).toBe(true)
+    expect(f.savedMs).toBeCloseTo(49.26, 5)
+  })
+
+  // The saving is the improvement in another unit, so it must be withheld
+  // wherever the percentage is — a matrix cell and a KPI card read it directly.
+  it('withholds the saving whenever the improvement is withheld', () => {
+    expect(routeFigures(latency({ partiallyCommitted: true })).savedMs).toBeNull()
+    expect(routeFigures(latency({ internetLatencyMs: 0 })).savedMs).toBeNull()
+  })
+
+  it('reports an internet side with no samples as unmeasured', () => {
+    expect(routeFigures(latency({ internetLatencyMs: 0 })).internetMeasured).toBe(false)
   })
 })
 
@@ -120,5 +149,161 @@ describe('resolveRoute', () => {
   it('is case-insensitive', () => {
     expect(pairKeyOf('TYO', 'lon')).toBe('lon-tyo')
     expect(resolveRoute({ from: 'LON', to: 'lon' }).unavailable).toBe(true)
+  })
+})
+
+describe('parseCities', () => {
+  it('parses a plain list and round-trips it', () => {
+    const { cities, requested } = parseCities('dub,fra,lon')
+    expect(cities).toEqual([{ id: 'dub' }, { id: 'fra' }, { id: 'lon' }])
+    expect(requested).toBe(3)
+    expect(formatCities(cities)).toBe('dub,fra,lon')
+  })
+
+  it('carries an off-net anchor through the token', () => {
+    const { cities } = parseCities('lon,ohio@pit')
+    expect(cities[1]).toEqual({ id: 'ohio', anchor: 'pit' })
+    expect(formatCities(cities)).toBe('lon,ohio@pit')
+  })
+
+  // Same rule as parseRouteToken: a corrupted shared link drops the token rather
+  // than rendering a plausible-but-wrong location.
+  it('drops a malformed token instead of coercing it', () => {
+    const { cities, requested } = parseCities('lon,ohio@,@pit,fra')
+    expect(cities).toEqual([{ id: 'lon' }, { id: 'fra' }])
+    // requested still counts them, so the page can say the selection shrank.
+    expect(requested).toBe(4)
+  })
+
+  it('folds a repeated location, because a city cannot hold two anchors in one grid', () => {
+    const { cities, requested } = parseCities('lon,LON,ohio@pit,ohio@chi')
+    expect(cities).toEqual([{ id: 'lon' }, { id: 'ohio', anchor: 'pit' }])
+    expect(requested).toBe(4)
+  })
+
+  it('caps the selection and reports that it asked for more', () => {
+    const raw = Array.from({ length: MAX_CITIES + 3 }, (_, i) => `m${i}`).join(',')
+    const { cities, requested } = parseCities(raw)
+    expect(cities).toHaveLength(MAX_CITIES)
+    expect(requested).toBe(MAX_CITIES + 3)
+  })
+
+  it('is empty for a missing param', () => {
+    expect(parseCities(null)).toEqual({ cities: [], requested: 0 })
+  })
+})
+
+describe('meshPairs', () => {
+  it('enumerates every unordered pair once, in axis order', () => {
+    expect(meshPairs(['a', 'b', 'c'])).toEqual([
+      ['a', 'b'],
+      ['a', 'c'],
+      ['b', 'c'],
+    ])
+  })
+
+  it('has no pairs below two locations', () => {
+    expect(meshPairs(['a'])).toEqual([])
+    expect(meshPairs([])).toEqual([])
+  })
+
+  it('grows quadratically, which is why the selection is capped', () => {
+    expect(meshPairs(Array.from({ length: 6 }, (_, i) => i))).toHaveLength(15)
+  })
+})
+
+describe('cellFor', () => {
+  const route = resolveRoute({ from: 'tyo', to: 'lon' })
+
+  it('states the improvement and the saving on a measured pair', () => {
+    expect(cellFor(route, latency(), false, false)).toEqual({
+      kind: 'improvement',
+      pct: 19,
+      savedMs: 259.76 - 210.5,
+    })
+  })
+
+  // Three separate facts. A request failure reported as "no path" would tell a
+  // customer DoubleZero cannot reach between two of its own metros.
+  it('separates a failed request from a pending one and from a genuine absence', () => {
+    expect(cellFor(route, null, true, true)).toEqual({ kind: 'error' })
+    expect(cellFor(route, null, true, false)).toEqual({ kind: 'loading' })
+    expect(cellFor(route, null, false, false)).toEqual({ kind: 'no-path' })
+  })
+
+  it('keeps figures it already holds when a background refetch fails', () => {
+    expect(cellFor(route, latency(), false, true).kind).toBe('improvement')
+  })
+
+  it('marks a pair with no public-internet samples as unmeasured', () => {
+    expect(cellFor(route, latency({ internetLatencyMs: 0 }), false, false)).toEqual({
+      kind: 'not-measured',
+    })
+  })
+
+  // Distinct from 'not-measured': there is an internet figure here, it is the
+  // DoubleZero side that is a commitment rather than an observation.
+  it('withholds rather than fabricating on a partiallyCommitted route', () => {
+    expect(cellFor(route, latency({ partiallyCommitted: true }), false, false)).toEqual({
+      kind: 'withheld',
+    })
+  })
+
+  it('reports Zurich as unavailable with its note, at every column', () => {
+    const cell = cellFor(resolveRoute({ from: 'zurich', to: 'lon' }), null, false, false)
+    expect(cell.kind).toBe('unavailable')
+    expect(cell.kind === 'unavailable' && cell.note).toContain('no presence in Zurich')
+  })
+})
+
+describe('summariseMatrix', () => {
+  const improvement = (pct: number, savedMs: number | null): MatrixCell => ({
+    kind: 'improvement',
+    pct,
+    savedMs,
+  })
+
+  it('counts pairs, averages the measured ones, and names the best', () => {
+    const s = summariseMatrix([
+      { label: 'LON↔TYO', cell: improvement(44, 115) },
+      { label: 'DUB↔FRA', cell: improvement(20, 35) },
+      { label: 'DUB↔ZRH', cell: { kind: 'unavailable', note: null } },
+    ])
+    expect(s.pairs).toBe(3)
+    expect(s.withPath).toBe(2)
+    expect(s.avgPct).toBe(32)
+    expect(s.avgSavedMs).toBe(75)
+    expect(s.best).toEqual({ label: 'LON↔TYO', kind: 'improvement', pct: 44, savedMs: 115 })
+  })
+
+  // The point of the whole suppression chain: a contracted route is carried by
+  // DoubleZero, and that is all the KPI cards may say about it.
+  it('lets a withheld route count as carried but not move any average', () => {
+    const s = summariseMatrix([
+      { label: 'LON↔TYO', cell: improvement(20, 40) },
+      { label: 'FRA↔OHIO', cell: { kind: 'withheld' } },
+      { label: 'DUB↔FRA', cell: { kind: 'not-measured' } },
+    ])
+    expect(s.withPath).toBe(3)
+    expect(s.avgPct).toBe(20)
+    expect(s.avgSavedMs).toBe(40)
+    expect(s.best?.label).toBe('LON↔TYO')
+  })
+
+  it('averages nothing rather than zero when no pair is comparable', () => {
+    const s = summariseMatrix([
+      { label: 'DUB↔ZRH', cell: { kind: 'unavailable', note: null } },
+      { label: 'DUB↔FRA', cell: { kind: 'no-path' } },
+    ])
+    expect(s.withPath).toBe(0)
+    expect(s.avgPct).toBeNull()
+    expect(s.avgSavedMs).toBeNull()
+    expect(s.best).toBeNull()
+  })
+
+  it('reports a slower route honestly rather than hiding it', () => {
+    const s = summariseMatrix([{ label: 'DUB↔FRA', cell: improvement(-4, -2) }])
+    expect(s.avgPct).toBe(-4)
+    expect(s.best?.pct).toBe(-4)
   })
 })

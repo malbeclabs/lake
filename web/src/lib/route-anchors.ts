@@ -8,6 +8,8 @@
 export type OffNetEndpoint = {
   id: string
   label: string
+  /** Axis label in the matrix, where a metro contributes its three-letter code. */
+  short: string
   note: string
   /** null means N/A — no substitution is offered. */
   defaultAnchor: string | null
@@ -18,8 +20,9 @@ export const OFF_NET_ENDPOINTS: OffNetEndpoint[] = [
   {
     id: 'ohio',
     label: 'Ohio (AWS us-east-2)',
+    short: 'OHIO',
     note:
-      'DoubleZero coverage in Ohio is in progress. Figures are measured at the on-ramp below. ' +
+      'DoubleZero coverage in Ohio is in progress. Figures are measured at the on-ramp shown. ' +
       'Your access leg from us-east-2 to the on-ramp applies equally to both the DoubleZero and ' +
       'public-internet path, so the difference between them is unaffected.',
     defaultAnchor: 'chi',
@@ -28,6 +31,7 @@ export const OFF_NET_ENDPOINTS: OffNetEndpoint[] = [
   {
     id: 'zurich',
     label: 'Zurich (ZH4)',
+    short: 'ZRH',
     note: 'DoubleZero has no presence in Zurich, so there is no figure to report.',
     defaultAnchor: null,
     candidateAnchors: [],
@@ -66,8 +70,8 @@ export function parseRouteToken(token: string): {
   const segments = token.split('-')
   if (segments.length !== 2) return null
 
-  const left = parseSide(segments[0])
-  const right = parseSide(segments[1])
+  const left = parseCityToken(segments[0])
+  const right = parseCityToken(segments[1])
   if (!left || !right) return null
 
   return {
@@ -78,14 +82,24 @@ export function parseRouteToken(token: string): {
   }
 }
 
-/** Splits one side of a route token (`id` or `id@anchor`); null if malformed. */
-function parseSide(raw: string): { id: string; anchor?: string } | null {
-  const parts = raw.split('@')
+/**
+ * Parses one location token — `lon`, or `ohio@chi` carrying its anchor.
+ *
+ * Also one side of a route token, so the `?cities=` list and the `?routes=`
+ * encoding share a single rule: anything malformed returns `null` and must be
+ * dropped by the caller, never coerced into a plausible-but-wrong location.
+ */
+export function parseCityToken(raw: string): { id: string; anchor?: string } | null {
+  const parts = raw.trim().split('@')
   if (parts.length > 2) return null
   const [id, anchor] = parts
   if (!id) return null
   if (parts.length === 2 && !anchor) return null
   return { id, ...(anchor ? { anchor } : {}) }
+}
+
+export function formatCityToken(id: string, anchor?: string): string {
+  return anchor ? `${id}@${anchor}` : id
 }
 
 export function formatRouteToken(
@@ -94,7 +108,5 @@ export function formatRouteToken(
   fromAnchor?: string,
   toAnchor?: string
 ): string {
-  const left = fromAnchor ? `${from}@${fromAnchor}` : from
-  const right = toAnchor ? `${to}@${toAnchor}` : to
-  return `${left}-${right}`
+  return `${formatCityToken(from, fromAnchor)}-${formatCityToken(to, toAnchor)}`
 }

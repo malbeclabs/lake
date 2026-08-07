@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   OFF_NET_ENDPOINTS,
+  formatCityToken,
   formatRouteToken,
+  parseCityToken,
   parseRouteToken,
   resolveEndpoint,
 } from './route-anchors'
@@ -67,6 +69,27 @@ describe('route-anchors', () => {
     expect(parseRouteToken('tyo-')).toBeNull()
     expect(parseRouteToken('ohio@-lon')).toBeNull()
     expect(parseRouteToken('ohio@pit@x-lon')).toBeNull()
+  })
+
+  it('round-trips a location token, with and without an anchor', () => {
+    expect(parseCityToken('lon')).toEqual({ id: 'lon' })
+    expect(parseCityToken('ohio@pit')).toEqual({ id: 'ohio', anchor: 'pit' })
+    expect(formatCityToken('lon')).toBe('lon')
+    expect(formatCityToken('ohio', 'pit')).toBe('ohio@pit')
+  })
+
+  it('rejects a malformed location token instead of guessing', () => {
+    expect(parseCityToken('')).toBeNull()
+    expect(parseCityToken('   ')).toBeNull()
+    expect(parseCityToken('ohio@')).toBeNull()
+    expect(parseCityToken('@pit')).toBeNull()
+    expect(parseCityToken('ohio@pit@x')).toBeNull()
+  })
+
+  it('every off-net entry carries a short axis label', () => {
+    for (const e of OFF_NET_ENDPOINTS) {
+      expect(e.short).toMatch(/^[A-Z0-9]{2,6}$/)
+    }
   })
 
   it('every off-net entry lists its default among its candidates', () => {

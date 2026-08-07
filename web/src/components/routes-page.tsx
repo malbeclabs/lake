@@ -1,17 +1,19 @@
 /* eslint-disable react-refresh/only-export-components */
 // Customer-facing route latency page. Deliberately separate from the internal
-// /performance/path-latency matrix: this one answers "how much faster is my
-// route", so it shows a handful of user-chosen routes with their measured
-// figures and a shareable URL, not an all-pairs grid.
-import { useCallback, useMemo, useState } from 'react'
+// /performance/path-latency matrix: that one grids every metro pair on the
+// network, this one grids only the locations a customer picked and answers
+// "how much faster is my mesh", with a shareable URL.
+import { useCallback, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
-import { ArrowRight, Loader2, Plus, Route as RouteIcon, X } from 'lucide-react'
+import { ArrowRight, Loader2, Route as RouteIcon, X } from 'lucide-react'
 import { fetchFacilitiesByMetro, fetchMetroPathLatency, fetchMetros, fetchRouteSeries } from '@/lib/api'
 import type { MetroPathLatency } from '@/lib/api'
 import {
   OFF_NET_ENDPOINTS,
+  formatCityToken,
   formatRouteToken,
+  parseCityToken,
   parseRouteToken,
   resolveEndpoint,
 } from '@/lib/route-anchors'
@@ -20,8 +22,12 @@ import { PageHeader } from '@/components/page-header'
 import { ErrorState } from '@/components/ui/error-state'
 import { cn } from '@/lib/utils'
 
-/** Matches maxRouteSeriesPairs on the route-series endpoint. */
-const MAX_ROUTES = 10
+/**
+ * Presentational cap. The mesh is quadratic — 12 locations is 66 pairs, which is
+ * about as much as a reader can still scan. It is not the route-series cap: the
+ * series is fetched for the selected cell alone, one pair at a time.
+ */
+export const MAX_CITIES = 12
 
 // Copied rather than exported from path-latency-page.tsx: that page is a
 // separate, internal artefact and must not grow an export surface for this one.
@@ -122,6 +128,14 @@ export const CONTRACTED_NOTE =
 export type RouteFigures = {
   tiles: { label: string; value: string | null }[]
   improvementPct: number | null
+  /**
+   * Milliseconds saved against the public internet. Null wherever the
+   * improvement is withheld, so a matrix cell and a KPI card cannot print a
+   * saving for a route whose percentage we refuse to state.
+   */
+  savedMs: number | null
+  /** False when the public internet has no samples for this pair in the window. */
+  internetMeasured: boolean
   footnote: string | null
 }
 
@@ -145,6 +159,8 @@ export type RouteFigures = {
  */
 export function routeFigures(l: MetroPathLatency): RouteFigures {
   const partial = l.partiallyCommitted
+  const internetMeasured = l.internetLatencyMs > 0
+  const improvementPct = partial ? null : l.measuredImprovementPct
   return {
     tiles: [
       {
@@ -157,7 +173,12 @@ export function routeFigures(l: MetroPathLatency): RouteFigures {
       { label: 'Internet p95', value: orAbsent(l.internetP95Ms) },
       { label: 'Internet jitter', value: orAbsent(l.internetJitterMs, 3) },
     ],
-    improvementPct: partial ? null : l.measuredImprovementPct,
+    improvementPct,
+    savedMs:
+      improvementPct !== null && internetMeasured && l.measuredLatencyMs > 0
+        ? l.internetLatencyMs - l.measuredLatencyMs
+        : null,
+    internetMeasured,
     footnote: partial ? CONTRACTED_NOTE : null,
   }
 }
@@ -174,6 +195,146 @@ export function routeFigures(l: MetroPathLatency): RouteFigures {
  */
 export function orientPath(pathMetros: string[], apiFrom: string, routeFrom: string): string[] {
   return apiFrom.toLowerCase() === routeFrom.toLowerCase() ? pathMetros : [...pathMetros].reverse()
+}
+
+// --- Matrix model ----------------------------------------------------------
+
+/** A location the customer picked, with the on-ramp chosen for it if it is off-net. */
+export type SelectedCity = { id: string; anchor?: string }
+
+/**
+ * Reads the `?cities=` list. Returns how many tokens the link asked for as well
+ * as the ones kept, because a malformed token is dropped and a repeat is folded:
+ * the recipient of a shared link must be told the selection shrank rather than
+ * quietly seeing a smaller mesh than the sender.
+ */
+export function parseCities(raw: string | null): { cities: SelectedCity[]; requested: number } {
+  if (!raw) return { cities: [], requested: 0 }
+  const tokens = raw.split(',').filter(Boolean)
+  const seen = new Set<string>()
+  const cities: SelectedCity[] = []
+  for (const token of tokens) {
+    const parsed = parseCityToken(token)
+    if (!parsed) continue
+    const key = parsed.id.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    cities.push(parsed)
+  }
+  return { cities: cities.slice(0, MAX_CITIES), requested: tokens.length }
+}
+
+export function formatCities(cities: SelectedCity[]): string {
+  return cities.map((c) => formatCityToken(c.id, c.anchor)).join(',')
+}
+
+/** Every unordered pair of a selection, each once — the mesh the KPI cards sum over. */
+export function meshPairs<T>(items: T[]): [T, T][] {
+  const out: [T, T][] = []
+  for (let i = 0; i < items.length; i++) {
+    for (let j = i + 1; j < items.length; j++) out.push([items[i], items[j]])
+  }
+  return out
+}
+
+/**
+ * What one cell of the mesh states.
+ *
+ * The four ways a cell can hold no percentage are four different facts, and a
+ * customer reading the grid will ask which one applies, so none of them
+ * collapse into a shared blank:
+ *
+ *  - `unavailable` — the location has no committed DoubleZero coverage (Zurich),
+ *    or both ends resolve to one metro. Carries the note that says which.
+ *  - `no-path` — DoubleZero cannot route between the two metros.
+ *  - `not-measured` — the public internet had no samples for the pair.
+ *  - `withheld` — `partiallyCommitted`; a percentage here would compare a
+ *    commitment against a measurement.
+ *
+ * `loading` and `error` are separate again: a failed request must never render
+ * as DoubleZero having no route.
+ */
+export type MatrixCell =
+  | { kind: 'diagonal' }
+  | { kind: 'unavailable'; note: string | null }
+  | { kind: 'loading' }
+  | { kind: 'error' }
+  | { kind: 'no-path' }
+  | { kind: 'not-measured' }
+  | { kind: 'withheld' }
+  | { kind: 'improvement'; pct: number; savedMs: number | null }
+
+/**
+ * Classifies one cell. Every suppression decision is read off `routeFigures` —
+ * the cell re-derives none of them, so the grid and the card below it cannot
+ * disagree about what counts as a measurement.
+ */
+export function cellFor(
+  resolved: ResolvedRoute,
+  latency: MetroPathLatency | null,
+  pending: boolean,
+  error: boolean,
+): MatrixCell {
+  if (resolved.unavailable) return { kind: 'unavailable', note: resolved.notes[0] ?? null }
+  // Guarded on !latency so a failed background refetch does not blank figures we hold.
+  if (!latency && error) return { kind: 'error' }
+  if (!latency && pending) return { kind: 'loading' }
+  if (!latency) return { kind: 'no-path' }
+
+  const figures = routeFigures(latency)
+  if (!figures.internetMeasured) return { kind: 'not-measured' }
+  if (figures.improvementPct === null) return { kind: 'withheld' }
+  return { kind: 'improvement', pct: figures.improvementPct, savedMs: figures.savedMs }
+}
+
+export type MatrixSummary = {
+  pairs: number
+  /** Pairs DoubleZero carries, measured or not. */
+  withPath: number
+  avgSavedMs: number | null
+  avgPct: number | null
+  best: { label: string; pct: number; savedMs: number | null } | null
+}
+
+/**
+ * Totals for the KPI cards. Only `improvement` cells carry a percentage, so a
+ * withheld or unmeasured pair moves no average and can never be the best route —
+ * it is counted as carried by DoubleZero, which is a fact, and nothing more.
+ */
+export function summariseMatrix(entries: { label: string; cell: MatrixCell }[]): MatrixSummary {
+  const improved = entries.flatMap((e) =>
+    e.cell.kind === 'improvement' ? [{ label: e.label, ...e.cell }] : [],
+  )
+  const saved = improved.map((e) => e.savedMs).filter((ms): ms is number => ms !== null)
+  const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null)
+
+  return {
+    pairs: entries.length,
+    withPath: entries.filter((e) =>
+      ['improvement', 'withheld', 'not-measured'].includes(e.cell.kind),
+    ).length,
+    avgSavedMs: mean(saved),
+    avgPct: mean(improved.map((e) => e.pct)),
+    best: improved.reduce<MatrixSummary['best']>(
+      (best, e) => (best === null || e.pct > best.pct ? e : best),
+      null,
+    ),
+  }
+}
+
+/**
+ * Cell shading, by improvement rather than by absolute latency: 25 metros carry
+ * activated links and the graph is connected, so DoubleZero carrying a route is
+ * the norm across the mesh and shading that fact would spend the whole range on
+ * a constant.
+ */
+export function shadeFor(pct: number): string {
+  if (pct <= 0) return 'bg-red-500/20'
+  if (pct < 10) return 'bg-emerald-500/10'
+  if (pct < 20) return 'bg-emerald-500/20'
+  if (pct < 30) return 'bg-emerald-500/30'
+  if (pct < 40) return 'bg-emerald-500/45'
+  return 'bg-emerald-500/60'
 }
 
 /** One measured figure, or an em dash when the figure is absent. */
@@ -310,7 +471,7 @@ function RouteCard({
           )}
           <button
             onClick={onRemove}
-            aria-label="Remove route"
+            aria-label="Clear selected route"
             className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
           >
             <X className="h-4 w-4" />
@@ -431,29 +592,33 @@ export function RoutesPage() {
   // --- URL state -----------------------------------------------------------
   const [searchParams, setSearchParams] = useSearchParams()
 
-  const { routes, truncated } = useMemo(() => {
-    const raw = searchParams.get('routes')
-    if (!raw) return { routes: [] as SelectedRoute[], truncated: false }
-    // parseRouteToken returns null for a malformed token. Drop those rather than
-    // coercing — a corrupted shared link must not render as a plausible-but-wrong
-    // route, which is the same failure the Zurich N/A rule exists to prevent.
-    const parsed = raw
-      .split(',')
-      .filter(Boolean)
-      .map(parseRouteToken)
-      .filter((r): r is NonNullable<ReturnType<typeof parseRouteToken>> => r !== null)
-    // Truncation is reported, not silent: otherwise the recipient of a shared
-    // link sees a different set of routes than the sender and cannot tell.
-    return { routes: parsed.slice(0, MAX_ROUTES), truncated: parsed.length > MAX_ROUTES }
-  }, [searchParams])
+  // parseCities drops a malformed or repeated token rather than coercing it, and
+  // reports how many the link asked for so a shrunken selection can be stated.
+  const { cities, requested } = useMemo(
+    () => parseCities(searchParams.get('cities')),
+    [searchParams],
+  )
 
-  const setRoutes = useCallback(
-    (next: SelectedRoute[]) => {
-      const tokens = next.map((r) => formatRouteToken(r.from, r.to, r.fromAnchor, r.toAnchor))
-      // Replace the whole param so a shared link reproduces the view exactly, and
+  const selectedCell = useMemo(() => {
+    const parsed = parseRouteToken(searchParams.get('cell') ?? '')
+    if (!parsed) return null
+    // A cell naming a location outside the mesh is dropped on the same rule: a
+    // shared link must not open on a pair this grid does not show.
+    const inMesh = (id: string) => cities.some((c) => c.id.toLowerCase() === id.toLowerCase())
+    if (!inMesh(parsed.from) || !inMesh(parsed.to)) return null
+    if (parsed.from.toLowerCase() === parsed.to.toLowerCase()) return null
+    return { from: parsed.from, to: parsed.to }
+  }, [searchParams, cities])
+
+  const setUrl = useCallback(
+    (nextCities: SelectedCity[], cell: { from: string; to: string } | null) => {
+      const params: Record<string, string> = {}
+      if (nextCities.length) params.cities = formatCities(nextCities)
+      if (cell) params.cell = formatRouteToken(cell.from, cell.to)
+      // Replace the whole query so a shared link reproduces the view exactly, and
       // replace the history entry so Back leaves the page rather than walking
-      // back through every intermediate route list.
-      setSearchParams(tokens.length ? { routes: tokens.join(',') } : {}, { replace: true })
+      // back through every intermediate selection.
+      setSearchParams(params, { replace: true })
     },
     [setSearchParams],
   )
@@ -480,30 +645,8 @@ export function RoutesPage() {
   })
 
   // The endpoint also returns 200 with an `error` body on a backend failure, so
-  // check both. Either way the card must not fall through to "no path".
+  // check both. Either way a cell must not fall through to "no path".
   const latencyError = Boolean(latencyQueryError) || Boolean(latencyData?.error)
-
-  const resolved = useMemo(() => routes.map(resolveRoute), [routes])
-
-  const pairKeys = useMemo(
-    () => [...new Set(resolved.map((r) => r.pairKey).filter((k): k is string => k !== null))],
-    [resolved],
-  )
-
-  const {
-    data: seriesData,
-    isPending: seriesIsPending,
-    error: seriesQueryError,
-  } = useQuery({
-    queryKey: ['route-series', pairKeys.join(',')],
-    queryFn: () => fetchRouteSeries(pairKeys),
-    enabled: pairKeys.length > 0,
-    staleTime: 300000,
-  })
-
-  // A disabled query reports isPending, so gate on there being something to fetch.
-  const seriesError = Boolean(seriesQueryError) || Boolean(seriesData?.error)
-  const seriesPending = pairKeys.length > 0 && seriesIsPending && !seriesError
 
   const latencyByPair = useMemo(() => {
     const map = new Map<string, MetroPathLatency>()
@@ -512,17 +655,6 @@ export function RoutesPage() {
     }
     return map
   }, [latencyData])
-
-  const seriesByPair = useMemo(() => {
-    const map = new Map<string, { dz: number[]; internet: number[] }>()
-    for (const s of seriesData?.series ?? []) {
-      map.set(pairKeyOf(s.fromMetroCode, s.toMetroCode), {
-        dz: s.points.map((p) => p.dzMs),
-        internet: s.points.map((p) => p.internetMs),
-      })
-    }
-    return map
-  }, [seriesData])
 
   const metros = useMemo(() => metroData?.items ?? [], [metroData])
 
@@ -546,25 +678,137 @@ export function RoutesPage() {
     [metroByCode],
   )
 
-  // --- Selection -----------------------------------------------------------
-  const [origin, setOrigin] = useState('')
-  const [destination, setDestination] = useState('')
+  // --- Mesh ----------------------------------------------------------------
 
-  const atLimit = routes.length >= MAX_ROUTES
-  const canAdd = Boolean(origin) && Boolean(destination) && origin !== destination && !atLimit
-
-  const addRoute = useCallback(() => {
-    if (!canAdd) return
-    setRoutes([...routes, { from: origin, to: destination }])
-  }, [canAdd, routes, origin, destination, setRoutes])
-
-  const options = useMemo(
-    () => ({
-      onNet: metros.map((m) => ({ value: m.code, label: `${m.name} (${m.code.toUpperCase()})` })),
-      offNet: OFF_NET_ENDPOINTS.map((e) => ({ value: e.id, label: e.label })),
-    }),
-    [metros],
+  // Axes are alphabetical by city name, matching the picker, so a reader can find
+  // a location in the grid without first learning the order it was added in.
+  const axis = useMemo(
+    () => [...cities].sort((a, b) => labelFor(a.id).localeCompare(labelFor(b.id))),
+    [cities, labelFor],
   )
+
+  const grid = useMemo(
+    () =>
+      axis.map((row, i) =>
+        axis.map((col, j) => {
+          if (i === j) {
+            return { resolved: null, cell: { kind: 'diagonal' } as MatrixCell }
+          }
+          // Row is the origin and column the destination, which is the direction
+          // the reader is scanning — orientPath in the card below uses it.
+          const resolved = resolveRoute({
+            from: row.id,
+            to: col.id,
+            fromAnchor: row.anchor,
+            toAnchor: col.anchor,
+          })
+          const latency = resolved.pairKey ? (latencyByPair.get(resolved.pairKey) ?? null) : null
+          return { resolved, cell: cellFor(resolved, latency, latencyPending, latencyError) }
+        }),
+      ),
+    [axis, latencyByPair, latencyPending, latencyError],
+  )
+
+  const summary = useMemo(
+    () =>
+      summariseMatrix(
+        meshPairs(axis.map((_, i) => i)).map(([i, j]) => ({
+          label: `${shortLabel(axis[i].id)}↔${shortLabel(axis[j].id)}`,
+          cell: grid[i][j].cell,
+        })),
+      ),
+    [axis, grid],
+  )
+
+  const selectedIndex = useMemo(() => {
+    if (!selectedCell) return null
+    const at = (id: string) => axis.findIndex((c) => c.id.toLowerCase() === id.toLowerCase())
+    const i = at(selectedCell.from)
+    const j = at(selectedCell.to)
+    return i < 0 || j < 0 || i === j ? null : { i, j }
+  }, [selectedCell, axis])
+
+  const selected = selectedIndex ? grid[selectedIndex.i][selectedIndex.j].resolved : null
+  const selectedLatency = selected?.pairKey ? (latencyByPair.get(selected.pairKey) ?? null) : null
+
+  // Fetched one pair at a time, for the selected cell only: the grid shows no
+  // sparklines, so the route-series cap of 10 pairs is never approached.
+  const selectedPairKey = selected?.pairKey ?? null
+  const {
+    data: seriesData,
+    isPending: seriesIsPending,
+    error: seriesQueryError,
+  } = useQuery({
+    queryKey: ['route-series', selectedPairKey],
+    queryFn: () => fetchRouteSeries([selectedPairKey as string]),
+    enabled: selectedPairKey !== null,
+    staleTime: 300000,
+  })
+
+  // A disabled query reports isPending, so gate on there being something to fetch.
+  const seriesError = Boolean(seriesQueryError) || Boolean(seriesData?.error)
+  const seriesPending = selectedPairKey !== null && seriesIsPending && !seriesError
+
+  const series = useMemo(() => {
+    const s = (seriesData?.series ?? []).find(
+      (x) => pairKeyOf(x.fromMetroCode, x.toMetroCode) === selectedPairKey,
+    )
+    if (!s) return null
+    return { dz: s.points.map((p) => p.dzMs), internet: s.points.map((p) => p.internetMs) }
+  }, [seriesData, selectedPairKey])
+
+  // --- Selection -----------------------------------------------------------
+  const atLimit = cities.length >= MAX_CITIES
+
+  const addCity = useCallback(
+    (id: string) => {
+      if (!id || atLimit) return
+      setUrl([...cities, { id }], selectedCell)
+    },
+    [atLimit, cities, selectedCell, setUrl],
+  )
+
+  const removeCity = useCallback(
+    (id: string) => {
+      const gone = (other: string) => other.toLowerCase() === id.toLowerCase()
+      const stillShown =
+        selectedCell && !gone(selectedCell.from) && !gone(selectedCell.to) ? selectedCell : null
+      setUrl(
+        cities.filter((c) => !gone(c.id)),
+        stillShown,
+      )
+    },
+    [cities, selectedCell, setUrl],
+  )
+
+  // One anchor per city rather than per route: the same city cannot sensibly have
+  // two on-ramps in one grid, and both sides of every pair it appears in move
+  // together, so the customer's access leg still cancels.
+  const setAnchor = useCallback(
+    (id: string, anchor: string) => {
+      setUrl(
+        cities.map((c) => (c.id === id ? { ...c, anchor } : c)),
+        selectedCell,
+      )
+    },
+    [cities, selectedCell, setUrl],
+  )
+
+  const options = useMemo(() => {
+    const chosen = new Set(cities.map((c) => c.id.toLowerCase()))
+    // Sorted by the label, which leads with the city name — a reader looking for
+    // Dublin should not have to know it is DUB.
+    const byLabel = (a: { label: string }, b: { label: string }) => a.label.localeCompare(b.label)
+    return {
+      onNet: metros
+        .filter((m) => !chosen.has(m.code.toLowerCase()))
+        .map((m) => ({ value: m.code, label: `${m.name} (${m.code.toUpperCase()})` }))
+        .sort(byLabel),
+      offNet: OFF_NET_ENDPOINTS.filter((e) => !chosen.has(e.id.toLowerCase()))
+        .map((e) => ({ value: e.id, label: e.label }))
+        .sort(byLabel),
+    }
+  }, [metros, cities])
 
   if (metrosError) {
     return (
@@ -583,11 +827,11 @@ export function RoutesPage() {
         <PageHeader icon={RouteIcon} title="Route Latency" />
 
         <p className="mt-2 text-sm text-muted-foreground">
-          Round-trip latency between metros, measured over the DoubleZero network and the public
-          internet.
+          DoubleZero against the public internet, across your locations. Pick the locations you
+          care about and every route between them is compared.
         </p>
         <p className="mt-1 text-xs text-muted-foreground max-w-4xl">
-          Figures cover the last 24 hours; the spark lines show the last 7 days by the
+          Figures cover the last 24 hours; the selected route also shows the last 7 days by the
           hour. The public-internet figures are measured end to end. The DoubleZero p95 and jitter
           are sums of each hop&apos;s own p95 and mean jitter — percentiles and jitter do not add,
           so those two figures are higher than what a packet actually sees. The bias runs against
@@ -595,117 +839,362 @@ export function RoutesPage() {
         </p>
 
         {/* Selection */}
-        <div className="flex flex-wrap items-end gap-2 mt-4">
+        <div className="flex flex-wrap items-center gap-2 mt-4">
           <EndpointSelect
-            label="Origin"
-            value={origin}
-            onChange={setOrigin}
+            value=""
+            onChange={addCity}
             options={options}
             loading={metrosLoading}
+            disabled={atLimit}
           />
-          <EndpointSelect
-            label="Destination"
-            value={destination}
-            onChange={setDestination}
-            options={options}
-            loading={metrosLoading}
-          />
-          <button
-            onClick={addRoute}
-            disabled={!canAdd}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-border bg-background hover:bg-muted/50 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Plus className="h-3 w-3" />
-            Add route
-          </button>
-          {(atLimit || truncated) && (
-            <span className="text-xs text-muted-foreground pb-1.5">
-              Showing the maximum of {MAX_ROUTES} routes
-              {truncated ? '; this link asked for more.' : '. Remove one to add another.'}
+          {/* Chips follow the axis order, so the picker, the chips and the grid all
+              read alphabetically. */}
+          {axis.map((c) => {
+            const offNet = OFF_NET_ENDPOINTS.find((e) => e.id === c.id)
+            return (
+              <span
+                key={c.id}
+                className="flex items-center gap-2 pl-2.5 pr-1 py-1 text-xs border border-border rounded-md bg-muted/40"
+              >
+                {labelFor(c.id)}
+                {offNet && offNet.candidateAnchors.length > 0 && (
+                  <AnchorPicker
+                    candidates={offNet.candidateAnchors}
+                    value={resolveEndpoint(c.id, c.anchor).metroCode}
+                    onChange={(a) => setAnchor(c.id, a)}
+                  />
+                )}
+                <button
+                  onClick={() => removeCity(c.id)}
+                  aria-label={`Remove ${labelFor(c.id)}`}
+                  className="p-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </span>
+            )
+          })}
+          {(atLimit || requested > cities.length) && (
+            <span className="text-xs text-muted-foreground">
+              {requested > cities.length
+                ? `This link asked for ${requested} locations; showing ${cities.length}.`
+                : `Showing the maximum of ${MAX_CITIES} locations. Remove one to add another.`}
             </span>
           )}
         </div>
 
-        {/* Routes */}
-        <div className="mt-4 space-y-3">
-          {resolved.length === 0 ? (
-            <div className="text-sm text-muted-foreground py-8 text-center">
-              {metrosLoading ? (
-                <Loader2 className="h-5 w-5 animate-spin mx-auto" />
+        {axis.length < 2 ? (
+          <div className="text-sm text-muted-foreground py-8 text-center">
+            {metrosLoading ? (
+              <Loader2 className="h-5 w-5 animate-spin mx-auto" />
+            ) : (
+              'Add two or more locations to compare every route between them.'
+            )}
+          </div>
+        ) : (
+          <>
+            <SummaryCards summary={summary} locations={axis.length} />
+
+            <LatencyMatrix
+              axis={axis}
+              grid={grid}
+              selected={selectedIndex}
+              onSelect={(i, j) => setUrl(cities, { from: axis[i].id, to: axis[j].id })}
+            />
+
+            <Legend />
+
+            <OffNetNotes axis={axis} />
+
+            <div className="mt-4">
+              {selected ? (
+                <RouteCard
+                  resolved={selected}
+                  labelFor={labelFor}
+                  metroPkFor={metroPkFor}
+                  latency={selectedLatency}
+                  latencyPending={latencyPending}
+                  latencyError={latencyError}
+                  series={series}
+                  seriesPending={seriesPending}
+                  seriesError={seriesError}
+                  onRemove={() => setUrl(cities, null)}
+                  onAnchorChange={(side, anchor) =>
+                    setAnchor(side === 'from' ? selected.route.from : selected.route.to, anchor)
+                  }
+                />
               ) : (
-                'Pick an origin and a destination to compare a route.'
+                <p className="text-sm text-muted-foreground text-center py-6">
+                  Select a cell to see the full breakdown for that route.
+                </p>
               )}
             </div>
-          ) : (
-            resolved.map((r, i) => (
-              <RouteCard
-                key={`${formatRouteToken(r.route.from, r.route.to, r.route.fromAnchor, r.route.toAnchor)}#${i}`}
-                resolved={r}
-                labelFor={labelFor}
-                metroPkFor={metroPkFor}
-                latency={r.pairKey ? (latencyByPair.get(r.pairKey) ?? null) : null}
-                latencyPending={latencyPending}
-                latencyError={latencyError}
-                series={r.pairKey ? (seriesByPair.get(r.pairKey) ?? null) : null}
-                seriesPending={seriesPending}
-                seriesError={seriesError}
-                onRemove={() => setRoutes(routes.filter((_, idx) => idx !== i))}
-                onAnchorChange={(side, anchor) =>
-                  setRoutes(
-                    routes.map((route, idx) =>
-                      idx === i
-                        ? { ...route, [side === 'from' ? 'fromAnchor' : 'toAnchor']: anchor }
-                        : route,
-                    ),
-                  )
-                }
-              />
-            ))
-          )}
-        </div>
+          </>
+        )}
       </div>
     </div>
   )
 }
 
+/** Axis label: a metro shows its code, an off-net location its own short form. */
+function shortLabel(id: string): string {
+  return (OFF_NET_ENDPOINTS.find((e) => e.id === id)?.short ?? id).toUpperCase()
+}
+
+function SummaryCards({ summary, locations }: { summary: MatrixSummary; locations: number }) {
+  const cards: { label: string; value: string; lines: string[] }[] = [
+    {
+      label: 'Pairs shown',
+      value: String(summary.pairs),
+      lines: [`${locations} locations`],
+    },
+    {
+      label: 'On DoubleZero',
+      value: `${summary.withPath} pairs`,
+      lines: ['where DoubleZero has a path'],
+    },
+    {
+      label: 'Average faster',
+      value: summary.avgSavedMs !== null ? `${summary.avgSavedMs.toFixed(1)} ms` : '—',
+      lines: [
+        summary.avgPct !== null ? `${summary.avgPct.toFixed(1)}% mean reduction` : 'nothing to average',
+      ],
+    },
+    {
+      label: 'Best route',
+      value: summary.best ? `${summary.best.pct.toFixed(1)}%` : '—',
+      lines: summary.best
+        ? [
+            summary.best.label,
+            summary.best.savedMs !== null ? `${summary.best.savedMs.toFixed(1)} ms saved` : '',
+          ].filter(Boolean)
+        : ['no measured comparison'],
+    },
+  ]
+
+  return (
+    <div className="mt-4 grid grid-cols-2 lg:grid-cols-4 gap-2">
+      {cards.map((c) => (
+        <div key={c.label} className="bg-card border border-border rounded-lg p-3">
+          <div className="text-[10px] text-muted-foreground uppercase tracking-wider">{c.label}</div>
+          <div className="mt-1 text-xl font-bold tabular-nums">{c.value}</div>
+          {c.lines.map((l) => (
+            <div key={l} className="text-xs text-muted-foreground">
+              {l}
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+const CELL_NOTE: Record<Exclude<MatrixCell['kind'], 'improvement' | 'unavailable'>, string> = {
+  diagonal: 'same location',
+  loading: 'loading…',
+  error: 'latency data could not be loaded',
+  'no-path': 'DoubleZero has no path between these metros',
+  'not-measured': 'no public-internet measurements for this pair in the window',
+  withheld: 'improvement withheld: a hop reports its contracted figure, not a measurement',
+}
+
+function CellBody({ cell }: { cell: MatrixCell }) {
+  switch (cell.kind) {
+    case 'improvement':
+      return (
+        <>
+          <span className="text-sm font-semibold tabular-nums">{cell.pct.toFixed(1)}%</span>
+          <span className="text-[10px] text-muted-foreground tabular-nums">
+            {cell.savedMs !== null ? `${cell.savedMs.toFixed(1)} ms` : '—'}
+          </span>
+        </>
+      )
+    case 'unavailable':
+      return <span className="text-xs text-muted-foreground">N/A</span>
+    case 'loading':
+      return <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+    case 'diagonal':
+      return <span className="text-muted-foreground/40">·</span>
+    default:
+      return (
+        <span className="text-[10px] leading-tight text-muted-foreground px-1 text-center">
+          {CELL_TEXT[cell.kind]}
+        </span>
+      )
+  }
+}
+
+/** Spelled out rather than derived from the kind: this is text a customer reads. */
+const CELL_TEXT: Record<'no-path' | 'not-measured' | 'withheld' | 'error', string> = {
+  'no-path': 'no path',
+  'not-measured': 'not measured',
+  withheld: 'withheld',
+  error: 'load failed',
+}
+
+const CELL_BOX = 'w-24 h-14 flex flex-col items-center justify-center gap-0.5 border border-border/40'
+
+function LatencyMatrix({
+  axis,
+  grid,
+  selected,
+  onSelect,
+}: {
+  axis: SelectedCity[]
+  grid: { resolved: ResolvedRoute | null; cell: MatrixCell }[][]
+  selected: { i: number; j: number } | null
+  onSelect: (i: number, j: number) => void
+}) {
+  return (
+    // The grid scrolls inside this box; the page body never scrolls sideways.
+    <div className="mt-4 max-w-full overflow-x-auto">
+      <table className="border-separate border-spacing-0">
+        <caption className="caption-top text-left text-[11px] text-muted-foreground pb-2">
+          Latency reduction on DoubleZero against the public internet, row to column: percentage,
+          and milliseconds saved.
+        </caption>
+        <thead>
+          <tr>
+            <th className="sticky left-0 z-10 bg-background" />
+            {axis.map((c) => (
+              <th
+                key={c.id}
+                scope="col"
+                className="px-1 pb-1 text-[11px] font-medium text-muted-foreground"
+              >
+                {shortLabel(c.id)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {axis.map((row, i) => (
+            <tr key={row.id}>
+              <th
+                scope="row"
+                className="sticky left-0 z-10 bg-background pr-2 text-right text-[11px] font-medium text-muted-foreground"
+              >
+                {shortLabel(row.id)}
+              </th>
+              {axis.map((col, j) => {
+                const { cell } = grid[i][j]
+                if (cell.kind === 'diagonal') {
+                  return (
+                    <td key={col.id} className="p-0">
+                      <div className={cn(CELL_BOX, 'bg-muted/30')}>
+                        <CellBody cell={cell} />
+                      </div>
+                    </td>
+                  )
+                }
+                const isSelected = selected?.i === i && selected?.j === j
+                const note =
+                  cell.kind === 'improvement'
+                    ? `${cell.pct.toFixed(1)}% faster on DoubleZero`
+                    : cell.kind === 'unavailable'
+                      ? (cell.note ?? 'no figure to report')
+                      : CELL_NOTE[cell.kind]
+                return (
+                  <td key={col.id} className="p-0">
+                    <button
+                      onClick={() => onSelect(i, j)}
+                      title={`${shortLabel(row.id)} → ${shortLabel(col.id)} — ${note}`}
+                      aria-pressed={isSelected}
+                      className={cn(
+                        CELL_BOX,
+                        'w-full transition-colors hover:brightness-110',
+                        cell.kind === 'improvement' ? shadeFor(cell.pct) : 'bg-muted/10',
+                        isSelected && 'outline-2 -outline-offset-2 outline-foreground',
+                      )}
+                    >
+                      <CellBody cell={cell} />
+                    </button>
+                  </td>
+                )
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+/**
+ * Where an off-net location's figures actually come from, stated beside the grid
+ * rather than only inside the card. An OHIO row of ordinary-looking numbers is
+ * taken at its on-ramp, and a reader scanning the mesh has to be told that
+ * without having to click a cell first.
+ */
+function OffNetNotes({ axis }: { axis: SelectedCity[] }) {
+  const present = axis.flatMap((c) => OFF_NET_ENDPOINTS.filter((e) => e.id === c.id))
+  if (present.length === 0) return null
+  return (
+    <div className="mt-2 space-y-1 max-w-4xl">
+      {present.map((e) => (
+        <p key={e.id} className="text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">{e.short}</span> — {e.note}
+        </p>
+      ))}
+    </div>
+  )
+}
+
+/** Swatches come from shadeFor, so the key cannot drift from the cells. */
+function Legend() {
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2 text-[11px] text-muted-foreground">
+      <span className="flex items-center gap-1">
+        slower
+        {[-1, 5, 15, 25, 35, 45].map((pct) => (
+          <span key={pct} className={cn('w-5 h-3 border border-border/40', shadeFor(pct))} />
+        ))}
+        40%+ faster on DoubleZero
+      </span>
+      <span>no path — DoubleZero cannot route between the two metros</span>
+      <span>not measured — no public-internet samples in the window</span>
+      <span>withheld — a hop reports a contracted figure, so no percentage is claimed</span>
+      <span>N/A — no committed DoubleZero coverage at that location</span>
+    </div>
+  )
+}
+
 function EndpointSelect({
-  label,
   value,
   onChange,
   options,
   loading,
+  disabled,
 }: {
-  label: string
   value: string
   onChange: (v: string) => void
   options: { onNet: { value: string; label: string }[]; offNet: { value: string; label: string }[] }
   loading: boolean
+  disabled: boolean
 }) {
   return (
-    <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-      {label}
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={loading}
-        className="min-w-[14rem] px-3 py-1.5 text-xs border border-border rounded-md bg-background hover:bg-muted transition-colors disabled:opacity-50"
-      >
-        <option value="">Select a location…</option>
-        <optgroup label="DoubleZero metros">
-          {options.onNet.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </optgroup>
-        <optgroup label="Not yet on DoubleZero">
-          {options.offNet.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </optgroup>
-      </select>
-    </label>
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      disabled={loading || disabled}
+      aria-label="Add a location"
+      className="min-w-[14rem] px-3 py-1.5 text-xs border border-border rounded-md bg-background hover:bg-muted transition-colors disabled:opacity-50"
+    >
+      <option value="">Add a location…</option>
+      <optgroup label="DoubleZero metros">
+        {options.onNet.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </optgroup>
+      <optgroup label="Not yet on DoubleZero">
+        {options.offNet.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </optgroup>
+    </select>
   )
 }
