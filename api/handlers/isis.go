@@ -3176,3 +3176,54 @@ func (a *API) GetMetroDevicePaths(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, response)
 }
+
+// linkMeasured holds observed latency for one link over the query window.
+type linkMeasured struct {
+	AvgRttMs    float64
+	P95RttMs    float64
+	AvgJitterMs float64
+	SampleCount uint64
+}
+
+// sumMeasuredAlongPath accumulates observed per-hop latency across the device
+// sequence Dijkstra selected. Returns partial=true when any hop lacks rollup
+// samples, in which case every returned value falls back to the contracted
+// figure for the whole path — a partial sum would understate the route, which
+// is the dangerous direction for a customer-facing number.
+//
+// p95 is a sum of per-hop p95s, which overestimates the true end-to-end p95
+// (percentiles are not additive). That bias is conservative for DoubleZero, so
+// it is the safe approximation to publish.
+func sumMeasuredAlongPath(nodes []string, m map[string]linkMeasured, committedUs uint32) (rtt, p95, jitter float64, partial bool) {
+	if len(nodes) < 2 {
+		return float64(committedUs) / 1000.0, 0, 0, true
+	}
+	for i := 1; i < len(nodes); i++ {
+		data, ok := m[nodes[i-1]+":"+nodes[i]]
+		if !ok || data.SampleCount == 0 {
+			return float64(committedUs) / 1000.0, 0, 0, true
+		}
+		rtt += data.AvgRttMs
+		p95 += data.P95RttMs
+		jitter += data.AvgJitterMs
+	}
+	return rtt, p95, jitter, false
+}
+
+// pathMetroCodes reduces a device path to the metros it traverses, collapsing
+// consecutive devices in the same metro. This is what the UI renders as
+// "tyo — fra — lon" so a reader can audit the composed figure.
+func pathMetroCodes(nodes []string, g *kspGraph) []string {
+	out := make([]string, 0, len(nodes))
+	for _, pk := range nodes {
+		info, ok := g.Nodes[pk]
+		if !ok || info.MetroCode == "" {
+			continue
+		}
+		if len(out) > 0 && out[len(out)-1] == info.MetroCode {
+			continue
+		}
+		out = append(out, info.MetroCode)
+	}
+	return out
+}
