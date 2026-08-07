@@ -31,6 +31,7 @@ import (
 	"github.com/malbeclabs/doublezero/tools/maxmind/pkg/metrodb"
 	"github.com/malbeclabs/doublezero/tools/solana/pkg/rpc"
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/serviceability/permissionevents"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/malbeclabs/lake/indexer/pkg/dzingest"
 	"github.com/malbeclabs/lake/indexer/pkg/indexer"
@@ -353,7 +354,11 @@ func run() error {
 	// reads serviceability transaction history (getSignaturesForAddress + getTransaction).
 	// Retrying client so a transient RPC error on getTransaction doesn't drop a
 	// permission event from the audit trail (the refresh fails and retries instead).
-	permissionEventsRawRPC := rpc.NewWithRetries(networkConfig.LedgerPublicRPCURL, nil)
+	// Pool sized to this view's own peak, which is higher than it looks: concurrent
+	// account drains paginate signatures while decodeSem separately caps in-flight
+	// getTransaction, and the two overlap.
+	permissionEventsRawRPC := rpc.New(networkConfig.LedgerPublicRPCURL,
+		rpc.Options{MaxConnsPerHost: permissionevents.MaxConcurrentRPCRequests})
 
 	// Shreds subscription client (mainnet-beta and testnet only, not devnet).
 	// Mainnet uses Solana proper RPC; testnet uses the DZ ledger RPC.
@@ -1018,7 +1023,11 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 	// Raw Solana RPC on the DZ ledger for the permission-events audit indexer.
 	// Retrying client so a transient RPC error on getTransaction doesn't drop a
 	// permission event from the audit trail (the refresh fails and retries instead).
-	permissionEventsRawRPC := rpc.NewWithRetries(networkConfig.LedgerPublicRPCURL, nil)
+	// Pool sized to this view's own peak, which is higher than it looks: concurrent
+	// account drains paginate signatures while decodeSem separately caps in-flight
+	// getTransaction, and the two overlap.
+	permissionEventsRawRPC := rpc.New(networkConfig.LedgerPublicRPCURL,
+		rpc.Options{MaxConnsPerHost: permissionevents.MaxConcurrentRPCRequests})
 
 	// Shreds subscription client (testnet only, not devnet).
 	var shredsClient *shreds.Client
