@@ -141,7 +141,7 @@ func (v *View) refreshInternetMetroLatencySamples(ctx context.Context, metros []
 
 						samples, err := v.cfg.TelemetryRPC.GetInternetLatencySamples(ctx, dataProvider, originPK, targetPK, v.cfg.InternetLatencyAgentPK, epoch)
 						if err != nil {
-							switch classifyFetchErr(err) {
+							switch classifyFetchErr(ctx, err) {
 							case fetchAbort:
 								return
 							case fetchExpectedMiss:

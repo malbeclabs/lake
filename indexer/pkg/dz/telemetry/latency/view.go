@@ -25,7 +25,9 @@ import (
 type fetchOutcome int
 
 const (
-	// fetchAbort means the worker is shutting down: stop, don't record anything.
+	// fetchAbort means the refresh context is done — worker shutdown or the refresh
+	// deadline — so stop and record nothing. Shutdown is not a collection failure and
+	// must not be counted as one.
 	fetchAbort fetchOutcome = iota
 	// fetchExpectedMiss means there is simply no telemetry account for this
 	// circuit/epoch. Routine and very common — not worth counting.
@@ -38,15 +40,30 @@ const (
 	fetchUnclassified
 )
 
-func classifyFetchErr(err error) fetchOutcome {
-	switch {
-	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+// classifyFetchErr decides what a sample-fetch error means. Shutdown is decided by
+// the context, never by the error's shape.
+//
+// The distinction matters because an http.Client timeout also satisfies
+// errors.Is(err, context.DeadlineExceeded) — verified: a Client.Timeout abort
+// produces "context deadline exceeded (Client.Timeout exceeded while awaiting
+// headers)" and errors.Is against context.DeadlineExceeded is true. Keying on the
+// error therefore read a slow endpoint as "we are shutting down" and returned from
+// the worker goroutine, which sits before the append of everything already collected
+// for that circuit — so a timeout silently discarded the earlier epochs' samples
+// while the refresh still reported a clean cycle.
+//
+// With the context as the authority, a live context means the fetch genuinely failed:
+// it is counted, logged, and the circuit resumes from its stored max sample index next
+// refresh. Only a cancelled or expired context aborts, and the loop's own
+// select-on-ctx.Done already handles that case first.
+func classifyFetchErr(ctx context.Context, err error) fetchOutcome {
+	if ctx.Err() != nil {
 		return fetchAbort
-	case errors.Is(err, telemetry.ErrAccountNotFound):
-		return fetchExpectedMiss
-	default:
-		return fetchUnclassified
 	}
+	if errors.Is(err, telemetry.ErrAccountNotFound) {
+		return fetchExpectedMiss
+	}
+	return fetchUnclassified
 }
 
 type TelemetryRPC interface {

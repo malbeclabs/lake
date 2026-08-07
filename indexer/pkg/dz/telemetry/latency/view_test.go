@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1742,38 +1744,67 @@ func TestLake_TelemetryLatency_View_AgentVersionCommit(t *testing.T) {
 	})
 }
 
-// TestLake_TelemetryLatency_ClassifyFetchErr pins which sample-fetch errors are
-// counted as skips. Both fan-outs drop a failed circuit and let the next refresh
-// re-fetch it, which is safe but silent — the refresh still reports success. The
-// counter is the only signal that a circuit is not being collected, so an error
-// class landing in the wrong bucket either hides a real outage (unclassified
-// treated as expected) or floods the counter with routine misses.
+// TestLake_TelemetryLatency_ClassifyFetchErr pins that shutdown is decided by the
+// context, not by the error's shape.
+//
+// The regression this guards: an http.Client timeout also satisfies
+// errors.Is(err, context.DeadlineExceeded), so classifying on the error read a slow
+// endpoint as shutdown and returned from the worker goroutine — before the append of
+// everything already collected for that circuit. A timeout therefore discarded earlier
+// epochs' samples silently, with the refresh still reporting a clean cycle.
 func TestLake_TelemetryLatency_ClassifyFetchErr(t *testing.T) {
 	t.Parallel()
 
+	// The exact error an http.Client timeout produces. Constructed rather than
+	// hand-written so it keeps matching whatever net/http actually returns.
+	clientTimeout := func() error {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			time.Sleep(500 * time.Millisecond)
+		}))
+		defer srv.Close()
+		_, err := (&http.Client{Timeout: 20 * time.Millisecond}).Get(srv.URL)
+		require.Error(t, err)
+		require.True(t, errors.Is(err, context.DeadlineExceeded),
+			"precondition: a Client.Timeout abort must look like context.DeadlineExceeded, "+
+				"otherwise this test is not exercising the bug")
+		return err
+	}()
+
+	live := context.Background()
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+
 	tests := []struct {
 		name string
+		ctx  context.Context
 		err  error
 		want fetchOutcome
 	}{
-		{"context canceled", context.Canceled, fetchAbort},
-		{"deadline exceeded", context.DeadlineExceeded, fetchAbort},
-		{"wrapped cancel", fmt.Errorf("fetch tail: %w", context.Canceled), fetchAbort},
+		// The regression: live context, timeout-shaped error => a real failure to count,
+		// not a shutdown to swallow.
+		{"client timeout on a live context", live, clientTimeout, fetchUnclassified},
+		{"bare deadline exceeded on a live context", live, context.DeadlineExceeded, fetchUnclassified},
 
-		{"no telemetry account", telemetry.ErrAccountNotFound, fetchExpectedMiss},
-		{"wrapped no account", fmt.Errorf("epoch 42: %w", telemetry.ErrAccountNotFound), fetchExpectedMiss},
+		// Genuine shutdown, whatever the error looks like.
+		{"cancelled context", cancelled, errors.New("read tcp: connection reset by peer"), fetchAbort},
+		{"cancelled context with timeout error", cancelled, clientTimeout, fetchAbort},
+		{"cancelled context with no account", cancelled, telemetry.ErrAccountNotFound, fetchAbort},
 
-		// Everything else must be counted — these are the cases that used to vanish.
-		{"rpc throttle", errors.New("Too many requests for a specific RPC call"), fetchUnclassified},
-		{"service unavailable", errors.New("Service unavailable, please try again later."), fetchUnclassified},
-		{"connection reset", errors.New("read tcp 10.0.0.1:8899: connection reset by peer"), fetchUnclassified},
-		{"decode failure", errors.New("failed to deserialize account data"), fetchUnclassified},
+		// Expected miss: no telemetry account for this circuit/epoch. Routine, uncounted.
+		{"no telemetry account", live, telemetry.ErrAccountNotFound, fetchExpectedMiss},
+		{"wrapped no account", live, fmt.Errorf("epoch 42: %w", telemetry.ErrAccountNotFound), fetchExpectedMiss},
+
+		// Everything else is counted.
+		{"rpc throttle", live, errors.New("Too many requests for a specific RPC call"), fetchUnclassified},
+		{"connection reset", live, errors.New("read tcp 10.0.0.1:8899: connection reset by peer"), fetchUnclassified},
+		{"decode failure", live, errors.New("failed to deserialize account data"), fetchUnclassified},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			require.Equal(t, tt.want, classifyFetchErr(tt.err))
+			if got := classifyFetchErr(tt.ctx, tt.err); got != tt.want {
+				t.Errorf("classifyFetchErr() = %v, want %v", got, tt.want)
+			}
 		})
 	}
 }

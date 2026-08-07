@@ -122,7 +122,7 @@ func (v *View) refreshDeviceLinkTelemetrySamples(ctx context.Context, devices []
 
 						hdr, startIdx, tail, err := v.cfg.TelemetryRPC.GetDeviceLatencySamplesTail(ctx, originPK, targetPK, linkPK, epoch, existingMaxIdx)
 						if err != nil {
-							switch classifyFetchErr(err) {
+							switch classifyFetchErr(ctx, err) {
 							case fetchAbort:
 								return
 							case fetchExpectedMiss:
