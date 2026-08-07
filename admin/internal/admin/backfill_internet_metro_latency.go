@@ -48,8 +48,16 @@ func BackfillInternetMetroLatency(
 	}
 	defer chDB.Close()
 
-	// Create RPC clients
-	dzRPCClient := rpc.NewWithRetries(networkConfig.LedgerPublicRPCURL, nil)
+	// Resolved here rather than at first use: it sizes the connection pool below.
+	maxConcurrency := cfg.MaxConcurrency
+	if maxConcurrency <= 0 {
+		maxConcurrency = defaultBackfillMaxConcurrency
+	}
+
+	// Create RPC clients. Pool sized to the backfill fan-out: the SDK's per-request
+	// timeout includes time queued for a connection, so a smaller pool turns a slow
+	// backend into terminal timeouts rather than slow successes.
+	dzRPCClient := rpc.New(networkConfig.LedgerPublicRPCURL, rpc.Options{MaxConnsPerHost: maxConcurrency})
 	defer dzRPCClient.Close()
 
 	telemetryClient := telemetry.New(log, dzRPCClient, nil, networkConfig.TelemetryProgramID)
@@ -138,11 +146,6 @@ func BackfillInternetMetroLatency(
 		fmt.Printf("No epochs available to backfill.\n")
 		fmt.Printf("To backfill specific epochs, use --start-epoch and --end-epoch flags.\n")
 		return nil
-	}
-
-	maxConcurrency := cfg.MaxConcurrency
-	if maxConcurrency <= 0 {
-		maxConcurrency = defaultBackfillMaxConcurrency
 	}
 
 	fmt.Printf("Backfill Internet Metro Latency\n")

@@ -31,6 +31,7 @@ import (
 	"github.com/malbeclabs/doublezero/tools/maxmind/pkg/metrodb"
 	"github.com/malbeclabs/doublezero/tools/solana/pkg/rpc"
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/serviceability/permissionevents"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/malbeclabs/lake/indexer/pkg/dzingest"
 	"github.com/malbeclabs/lake/indexer/pkg/indexer"
@@ -333,7 +334,17 @@ func run() error {
 		}()
 	}
 
-	dzRPCClient := rpc.NewWithRetries(networkConfig.LedgerPublicRPCURL, nil)
+	// The connection pool must match the fan-out that shares this client. The SDK's
+	// per-request timeout bounds total wall time, queue wait included, so a pool
+	// smaller than the fan-out turns one slow backend into terminal timeouts: 64
+	// goroutines through 9 connections is ~7 waves, making each request's wall time
+	// roughly 7x the server's service time, and a timed-out request is not retried
+	// (isRetryableJSONRPC rejects context errors before any other check).
+	//
+	// This does not increase exposure to the endpoint's rate limits, which are counted
+	// per method per source IP over a rolling window: the same requests land in the
+	// window either way, just less spread out.
+	dzRPCClient := rpc.New(networkConfig.LedgerPublicRPCURL, rpc.Options{MaxConnsPerHost: *maxConcurrencyFlag})
 	defer dzRPCClient.Close()
 	serviceabilityClient := serviceability.New(dzRPCClient, networkConfig.ServiceabilityProgramID)
 	telemetryClient := telemetry.New(log, dzRPCClient, nil, networkConfig.TelemetryProgramID)
@@ -343,7 +354,11 @@ func run() error {
 	// reads serviceability transaction history (getSignaturesForAddress + getTransaction).
 	// Retrying client so a transient RPC error on getTransaction doesn't drop a
 	// permission event from the audit trail (the refresh fails and retries instead).
-	permissionEventsRawRPC := rpc.NewWithRetries(networkConfig.LedgerPublicRPCURL, nil)
+	// Pool sized to this view's own peak, which is higher than it looks: concurrent
+	// account drains paginate signatures while decodeSem separately caps in-flight
+	// getTransaction, and the two overlap.
+	permissionEventsRawRPC := rpc.New(networkConfig.LedgerPublicRPCURL,
+		rpc.Options{MaxConnsPerHost: permissionevents.MaxConcurrentRPCRequests})
 
 	// Shreds subscription client (mainnet-beta and testnet only, not devnet).
 	// Mainnet uses Solana proper RPC; testnet uses the DZ ledger RPC.
@@ -998,7 +1013,8 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 	}
 	secondaryIngestionLog := ingestionlog.NewWriter(secondaryChConn, log)
 
-	dzRPCClient := rpc.NewWithRetries(networkConfig.LedgerPublicRPCURL, nil)
+	// Pool sized to this network's fan-out; see the primary path for why.
+	dzRPCClient := rpc.New(networkConfig.LedgerPublicRPCURL, rpc.Options{MaxConnsPerHost: cfg.maxConcurrency})
 	defer dzRPCClient.Close()
 	serviceabilityClient := serviceability.New(dzRPCClient, networkConfig.ServiceabilityProgramID)
 	telemetryClient := telemetry.New(log, dzRPCClient, nil, networkConfig.TelemetryProgramID)
@@ -1007,7 +1023,11 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 	// Raw Solana RPC on the DZ ledger for the permission-events audit indexer.
 	// Retrying client so a transient RPC error on getTransaction doesn't drop a
 	// permission event from the audit trail (the refresh fails and retries instead).
-	permissionEventsRawRPC := rpc.NewWithRetries(networkConfig.LedgerPublicRPCURL, nil)
+	// Pool sized to this view's own peak, which is higher than it looks: concurrent
+	// account drains paginate signatures while decodeSem separately caps in-flight
+	// getTransaction, and the two overlap.
+	permissionEventsRawRPC := rpc.New(networkConfig.LedgerPublicRPCURL,
+		rpc.Options{MaxConnsPerHost: permissionevents.MaxConcurrentRPCRequests})
 
 	// Shreds subscription client (testnet only, not devnet).
 	var shredsClient *shreds.Client
