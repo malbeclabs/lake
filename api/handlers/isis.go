@@ -1702,7 +1702,14 @@ type MetroPathLatency struct {
 	InternetLatencyMs  float64  `json:"internetLatencyMs"`
 	InternetP95Ms      float64  `json:"internetP95Ms"`    // 95th percentile of internet samples (ms)
 	InternetJitterMs   float64  `json:"internetJitterMs"` // mean |IPDV| of internet samples (ms)
-	ImprovementPct     *float64 `json:"improvementPct"`   // vs internet, computed from measured latency
+	ImprovementPct     *float64 `json:"improvementPct"`   // vs internet, from contracted PathLatencyMs
+	// MeasuredImprovementPct is the same comparison against MeasuredLatencyMs.
+	// It is a separate field rather than a change of basis on ImprovementPct
+	// because the internal path-latency page displays contracted figures beside
+	// that badge; measured and contracted differ by up to tens of milliseconds,
+	// so one basis cannot serve both pages without one of them showing a
+	// percentage that cannot be reproduced from any number next to it.
+	MeasuredImprovementPct *float64 `json:"measuredImprovementPct"`
 }
 
 // MetroPathLatencyResponse is the response for the metro path latency endpoint
@@ -1862,13 +1869,17 @@ func (a *API) FetchMetroPathLatencyData(ctx context.Context, optimize string, wi
 				p.InternetLatencyMs = avgRttMs
 				p.InternetP95Ms = p95RttMs
 				p.InternetJitterMs = jitterMs
-				basis := p.MeasuredLatencyMs
-				if basis <= 0 {
-					basis = p.PathLatencyMs
-				}
-				if avgRttMs > 0 && basis > 0 {
-					pct := (avgRttMs - basis) / avgRttMs * 100
+				if avgRttMs > 0 && p.PathLatencyMs > 0 {
+					pct := (avgRttMs - p.PathLatencyMs) / avgRttMs * 100
 					p.ImprovementPct = &pct
+				}
+				measuredBasis := p.MeasuredLatencyMs
+				if measuredBasis <= 0 {
+					measuredBasis = p.PathLatencyMs
+				}
+				if avgRttMs > 0 && measuredBasis > 0 {
+					pct := (avgRttMs - measuredBasis) / avgRttMs * 100
+					p.MeasuredImprovementPct = &pct
 				}
 			}
 		}

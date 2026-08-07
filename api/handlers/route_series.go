@@ -95,6 +95,10 @@ func (a *API) GetRouteSeries(w http.ResponseWriter, r *http.Request) {
 	resp, err := a.FetchRouteSeries(ctx, pairs)
 	if err != nil {
 		logError("route series error", "error", err)
+		// Must not be a 200: the client renders an empty series as "no history",
+		// so a backend failure returned with a success status reads to a customer
+		// as "DoubleZero has no measurements for this route".
+		w.WriteHeader(http.StatusInternalServerError)
 		writeJSON(w, RouteSeriesResponse{Series: []RouteSeries{}, Error: err.Error()})
 		return
 	}
