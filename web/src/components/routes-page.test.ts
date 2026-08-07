@@ -1,18 +1,24 @@
 import { describe, expect, it } from 'vitest'
 import {
+  MAX_CELLS,
   MAX_CITIES,
   cellFor,
+  formatCells,
   formatCities,
+  isComparable,
+  isToggleGesture,
   meshPairs,
   orientPath,
   pairKeyOf,
+  parseCells,
   parseCities,
   resolveRoute,
   routeFigures,
   shadeFor,
   summariseMatrix,
+  toggleCell,
 } from './routes-page'
-import type { MatrixCell } from './routes-page'
+import type { MatrixCell, SelectedCity } from './routes-page'
 import type { MetroPathLatency } from '@/lib/api'
 
 /** A fully-measured route; individual tests override the fields they care about. */
@@ -390,5 +396,133 @@ describe('parseCities case folding', () => {
     expect(resolveRoute({ from: cities[2].id, to: 'lon', fromAnchor: cities[2].anchor }).pairKey).toBe(
       'lon-pit',
     )
+  })
+})
+
+describe('parseCells', () => {
+  const cities: SelectedCity[] = [{ id: 'lon' }, { id: 'tyo' }, { id: 'fra' }, { id: 'ohio' }]
+
+  it('round-trips a comparison set', () => {
+    const { cells, requested } = parseCells('lon-tyo,fra-ohio', cities)
+    expect(cells).toEqual([
+      { from: 'lon', to: 'tyo' },
+      { from: 'fra', to: 'ohio' },
+    ])
+    expect(requested).toBe(2)
+    expect(formatCells(cells)).toBe('lon-tyo,fra-ohio')
+  })
+
+  // The matrix is symmetric, so the mirrored cell is the same route. Two cards
+  // would report one pair's figures twice under two headings.
+  it('folds a mirrored cell onto the route it names, keeping the first orientation', () => {
+    const { cells, requested } = parseCells('lon-tyo,tyo-lon', cities)
+    expect(cells).toEqual([{ from: 'lon', to: 'tyo' }])
+    expect(requested).toBe(2)
+  })
+
+  it('folds two cells that resolve to one pair through their anchors', () => {
+    // Ohio anchors at Chicago by default, so ohio-lon and chi-lon are one route.
+    const { cells } = parseCells('ohio-lon,lon-ohio', [...cities, { id: 'chi' }])
+    expect(cells).toEqual([{ from: 'ohio', to: 'lon' }])
+  })
+
+  it('drops a malformed token instead of coercing it', () => {
+    const { cells, requested } = parseCells('lon-tyo,lon-tyo-fra,,fra-lon', cities)
+    expect(cells).toEqual([
+      { from: 'lon', to: 'tyo' },
+      { from: 'fra', to: 'lon' },
+    ])
+    expect(requested).toBe(3)
+  })
+
+  it('drops a cell naming a location outside the mesh', () => {
+    expect(parseCells('lon-sao,lon-tyo', cities).cells).toEqual([{ from: 'lon', to: 'tyo' }])
+  })
+
+  // Nothing to compare: Zurich has no committed coverage, and a cell whose ends
+  // resolve to one metro is not a route.
+  it('drops a cell with nothing to compare', () => {
+    const withZurich: SelectedCity[] = [...cities, { id: 'zurich' }, { id: 'chi' }]
+    expect(parseCells('lon-zurich', withZurich).cells).toEqual([])
+    expect(parseCells('ohio-chi', withZurich).cells).toEqual([])
+    expect(parseCells('lon-lon', withZurich).cells).toEqual([])
+  })
+
+  it('caps the set at the pairs one series request accepts, and says it asked for more', () => {
+    const many: SelectedCity[] = Array.from({ length: MAX_CELLS + 2 }, (_, i) => ({ id: `m${i}` }))
+    const raw = many.slice(1).map((c) => `m0-${c.id}`).join(',')
+    const { cells, requested } = parseCells(raw, many)
+    expect(cells).toHaveLength(MAX_CELLS)
+    expect(requested).toBe(MAX_CELLS + 1)
+    expect(requested).toBeGreaterThan(cells.length)
+  })
+
+  it('is empty for a missing param', () => {
+    expect(parseCells(null, cities)).toEqual({ cells: [], requested: 0 })
+  })
+})
+
+describe('toggleCell', () => {
+  const cities: SelectedCity[] = [{ id: 'lon' }, { id: 'tyo' }, { id: 'fra' }]
+
+  it('adds a cell that is not in the set', () => {
+    expect(toggleCell([], { from: 'lon', to: 'tyo' }, cities)).toEqual([{ from: 'lon', to: 'tyo' }])
+  })
+
+  it('removes the route when its mirror is toggled', () => {
+    const set = [{ from: 'lon', to: 'tyo' }]
+    expect(toggleCell(set, { from: 'tyo', to: 'lon' }, cities)).toEqual([])
+  })
+
+  it('keeps the orientation of the cells already in the set', () => {
+    const set = [{ from: 'lon', to: 'tyo' }]
+    expect(toggleCell(set, { from: 'fra', to: 'lon' }, cities)).toEqual([
+      { from: 'lon', to: 'tyo' },
+      { from: 'fra', to: 'lon' },
+    ])
+  })
+
+  it('refuses to grow past the cap', () => {
+    const many: SelectedCity[] = Array.from({ length: MAX_CELLS + 2 }, (_, i) => ({ id: `m${i}` }))
+    const full = many.slice(1, MAX_CELLS + 1).map((c) => ({ from: 'm0', to: c.id }))
+    expect(full).toHaveLength(MAX_CELLS)
+    const extra = { from: 'm0', to: `m${MAX_CELLS + 1}` }
+    expect(toggleCell(full, extra, many)).toBe(full)
+    // Still lets one already in the set out, which is how a user makes room.
+    expect(toggleCell(full, full[0], many)).toHaveLength(MAX_CELLS - 1)
+  })
+
+  it('ignores a cell with nothing to compare', () => {
+    const withZurich: SelectedCity[] = [...cities, { id: 'zurich' }]
+    const set = [{ from: 'lon', to: 'tyo' }]
+    expect(toggleCell(set, { from: 'lon', to: 'zurich' }, withZurich)).toBe(set)
+  })
+})
+
+describe('isComparable', () => {
+  it('opens a cell that carries figures', () => {
+    expect(isComparable({ kind: 'improvement', pct: 20, savedMs: 40 })).toBe(true)
+    expect(isComparable({ kind: 'withheld' })).toBe(true)
+  })
+
+  it('refuses a cell with nothing to compare, and one whose state is not known yet', () => {
+    expect(isComparable({ kind: 'unavailable', note: null })).toBe(false)
+    expect(isComparable({ kind: 'no-path' })).toBe(false)
+    expect(isComparable({ kind: 'not-measured' })).toBe(false)
+    expect(isComparable({ kind: 'loading' })).toBe(false)
+    expect(isComparable({ kind: 'error' })).toBe(false)
+    expect(isComparable({ kind: 'diagonal' })).toBe(false)
+  })
+})
+
+describe('isToggleGesture', () => {
+  // One gesture for all three: a matrix has no linear range for Shift to extend,
+  // so distinguishing them would only punish reaching for the wrong modifier.
+  it('treats meta, ctrl and shift alike, and a plain click as a plain click', () => {
+    const plain = { metaKey: false, ctrlKey: false, shiftKey: false }
+    expect(isToggleGesture(plain)).toBe(false)
+    expect(isToggleGesture({ ...plain, metaKey: true })).toBe(true)
+    expect(isToggleGesture({ ...plain, ctrlKey: true })).toBe(true)
+    expect(isToggleGesture({ ...plain, shiftKey: true })).toBe(true)
   })
 })

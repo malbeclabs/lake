@@ -25,7 +25,8 @@ import { cn } from '@/lib/utils'
 /**
  * Presentational cap. The mesh is quadratic — 12 locations is 66 pairs, which is
  * about as much as a reader can still scan. It is not the route-series cap: the
- * series is fetched for the selected cell alone, one pair at a time.
+ * series is fetched only for the cells opened as cards, which `MAX_CELLS` caps
+ * at the 10 pairs that endpoint accepts.
  */
 export const MAX_CITIES = 12
 
@@ -228,6 +229,94 @@ export function formatCities(cities: SelectedCity[]): string {
   return cities.map((c) => formatCityToken(c.id, c.anchor)).join(',')
 }
 
+/**
+ * One cell of the mesh, as the row and column the reader clicked. The direction
+ * is kept because `orientPath` reads the path in it and the card is headed by
+ * it; the pair it identifies is undirected (see `cellPairKey`).
+ */
+export type SelectedCell = { from: string; to: string }
+
+/**
+ * Matches maxRouteSeriesPairs on the route-series endpoint, which is why the
+ * whole comparison set is fetched in one request rather than one per card.
+ */
+export const MAX_CELLS = 10
+
+function cityOf(cities: SelectedCity[], id: string): SelectedCity | undefined {
+  return cities.find((c) => c.id.toLowerCase() === id.toLowerCase())
+}
+
+/** The route a cell names, with each end's anchor applied. Null if either end left the mesh. */
+export function resolveCell(cell: SelectedCell, cities: SelectedCity[]): ResolvedRoute | null {
+  const from = cityOf(cities, cell.from)
+  const to = cityOf(cities, cell.to)
+  if (!from || !to) return null
+  return resolveRoute({
+    from: from.id,
+    to: to.id,
+    fromAnchor: from.anchor,
+    toAnchor: to.anchor,
+  })
+}
+
+/**
+ * Identity of a cell for the comparison set. Undirected, because the matrix is
+ * symmetric: (LON, TYO) and (TYO, LON) are one route, and two cards for one
+ * route would report the same figures twice under two headings. Null where there
+ * is nothing to compare.
+ */
+export function cellPairKey(cell: SelectedCell, cities: SelectedCity[]): string | null {
+  return resolveCell(cell, cities)?.pairKey ?? null
+}
+
+/**
+ * Reads the `?cell=` set. Membership is by pair, so a link naming both a cell
+ * and its mirror yields one route, keeping the orientation named first — the
+ * heading a reader is already looking at must not flip as the set grows.
+ */
+export function parseCells(
+  raw: string | null,
+  cities: SelectedCity[],
+): { cells: SelectedCell[]; requested: number } {
+  if (!raw) return { cells: [], requested: 0 }
+  const tokens = raw.split(',').filter(Boolean)
+  const seen = new Set<string>()
+  const cells: SelectedCell[] = []
+  for (const token of tokens) {
+    // Malformed, naming a location outside the mesh, or naming a pair with
+    // nothing to compare: dropped, never coerced into a neighbouring route.
+    const parsed = parseRouteToken(token)
+    if (!parsed) continue
+    const cell = { from: parsed.from, to: parsed.to }
+    const key = cellPairKey(cell, cities)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    cells.push(cell)
+  }
+  return { cells: cells.slice(0, MAX_CELLS), requested: tokens.length }
+}
+
+export function formatCells(cells: SelectedCell[]): string {
+  return cells.map((c) => formatRouteToken(c.from, c.to)).join(',')
+}
+
+/**
+ * Adds or removes one cell. Removal matches on the pair, so clicking the mirror
+ * of a selected cell takes that route out rather than adding a second card for
+ * it. At the cap the set is returned unchanged — the caller says so on screen.
+ */
+export function toggleCell(
+  cells: SelectedCell[],
+  cell: SelectedCell,
+  cities: SelectedCity[],
+): SelectedCell[] {
+  const key = cellPairKey(cell, cities)
+  if (!key) return cells
+  const without = cells.filter((c) => cellPairKey(c, cities) !== key)
+  if (without.length < cells.length) return without
+  return cells.length >= MAX_CELLS ? cells : [...cells, cell]
+}
+
 /** Every unordered pair of a selection, each once — the mesh the KPI cards sum over. */
 export function meshPairs<T>(items: T[]): [T, T][] {
   const out: [T, T][] = []
@@ -285,6 +374,28 @@ export function cellFor(
   if (!figures.internetMeasured) return { kind: 'not-measured' }
   if (figures.improvementPct === null) return { kind: 'withheld' }
   return { kind: 'improvement', pct: figures.improvementPct, savedMs: figures.savedMs }
+}
+
+/**
+ * Whether a cell can be opened as a card. N/A, no path and not measured have
+ * nothing to compare; loading and error are not yet known to have anything, and
+ * while either is on screen the grid holds no figures to pick between anyway.
+ */
+export function isComparable(cell: MatrixCell): boolean {
+  return cell.kind === 'improvement' || cell.kind === 'withheld'
+}
+
+/**
+ * Meta, Ctrl and Shift are one gesture: the request arrived as "shift + cmd
+ * click", muscle memory differs by platform, and a matrix has no linear range
+ * for Shift to extend, so there is nothing for them to mean separately.
+ */
+export function isToggleGesture(e: {
+  metaKey: boolean
+  ctrlKey: boolean
+  shiftKey: boolean
+}): boolean {
+  return e.metaKey || e.ctrlKey || e.shiftKey
 }
 
 export type MatrixSummary = {
@@ -484,7 +595,7 @@ function RouteCard({
           )}
           <button
             onClick={onRemove}
-            aria-label="Clear selected route"
+            aria-label="Remove this route from the comparison"
             className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
           >
             <X className="h-4 w-4" />
@@ -612,22 +723,19 @@ export function RoutesPage() {
     [searchParams],
   )
 
-  const selectedCell = useMemo(() => {
-    const parsed = parseRouteToken(searchParams.get('cell') ?? '')
-    if (!parsed) return null
-    // A cell naming a location outside the mesh is dropped on the same rule: a
-    // shared link must not open on a pair this grid does not show.
-    const inMesh = (id: string) => cities.some((c) => c.id.toLowerCase() === id.toLowerCase())
-    if (!inMesh(parsed.from) || !inMesh(parsed.to)) return null
-    if (parsed.from.toLowerCase() === parsed.to.toLowerCase()) return null
-    return { from: parsed.from, to: parsed.to }
-  }, [searchParams, cities])
+  // Same rules as the city list: a malformed token is dropped, a mirrored repeat
+  // folds onto the route it names, and the count asked for is kept so a set the
+  // link could not reproduce is stated rather than silently shorter.
+  const { cells: selectedCells, requested: cellsRequested } = useMemo(
+    () => parseCells(searchParams.get('cell'), cities),
+    [searchParams, cities],
+  )
 
   const setUrl = useCallback(
-    (nextCities: SelectedCity[], cell: { from: string; to: string } | null) => {
+    (nextCities: SelectedCity[], cells: SelectedCell[]) => {
       const params: Record<string, string> = {}
       if (nextCities.length) params.cities = formatCities(nextCities)
-      if (cell) params.cell = formatRouteToken(cell.from, cell.to)
+      if (cells.length) params.cell = formatCells(cells)
       // Replace the whole query so a shared link reproduces the view exactly, and
       // replace the history entry so Back leaves the page rather than walking
       // back through every intermediate selection.
@@ -733,65 +841,77 @@ export function RoutesPage() {
     [axis, grid],
   )
 
-  const selectedIndex = useMemo(() => {
-    if (!selectedCell) return null
-    const at = (id: string) => axis.findIndex((c) => c.id.toLowerCase() === id.toLowerCase())
-    const i = at(selectedCell.from)
-    const j = at(selectedCell.to)
-    return i < 0 || j < 0 || i === j ? null : { i, j }
-  }, [selectedCell, axis])
+  // --- Comparison set ------------------------------------------------------
 
-  const selected = selectedIndex ? grid[selectedIndex.i][selectedIndex.j].resolved : null
-  const selectedLatency = selected?.pairKey ? (latencyByPair.get(selected.pairKey) ?? null) : null
+  const compared = useMemo(
+    () =>
+      selectedCells.flatMap((cell) => {
+        const resolved = resolveCell(cell, cities)
+        return resolved?.pairKey ? [{ cell, resolved, pairKey: resolved.pairKey }] : []
+      }),
+    [selectedCells, cities],
+  )
 
-  // Fetched one pair at a time, for the selected cell only: the grid shows no
-  // sparklines, so the route-series cap of 10 pairs is never approached.
-  const selectedPairKey = selected?.pairKey ?? null
+  // Membership is by pair, so both triangles of a selected route light up and
+  // either one toggles it back off.
+  const comparedKeys = useMemo(() => new Set(compared.map((c) => c.pairKey)), [compared])
+
+  // One request for the whole set, which is why the set is capped at the same 10
+  // pairs the endpoint accepts. A card per request would be up to ten requests.
+  const pairKeys = useMemo(() => compared.map((c) => c.pairKey), [compared])
   const {
     data: seriesData,
     isPending: seriesIsPending,
     error: seriesQueryError,
   } = useQuery({
-    queryKey: ['route-series', selectedPairKey],
-    queryFn: () => fetchRouteSeries([selectedPairKey as string]),
-    enabled: selectedPairKey !== null,
+    queryKey: ['route-series', pairKeys.join(',')],
+    queryFn: () => fetchRouteSeries(pairKeys),
+    enabled: pairKeys.length > 0,
     staleTime: 300000,
   })
 
   // A disabled query reports isPending, so gate on there being something to fetch.
+  // Both flags are shared by every card, which is exactly why the per-pair lookup
+  // below stays separate: a pair absent from a response that arrived is "no
+  // history" for that one card, and it must not read like the request failing.
   const seriesError = Boolean(seriesQueryError) || Boolean(seriesData?.error)
-  const seriesPending = selectedPairKey !== null && seriesIsPending && !seriesError
+  const seriesPending = pairKeys.length > 0 && seriesIsPending && !seriesError
 
-  const series = useMemo(() => {
-    const s = (seriesData?.series ?? []).find(
-      (x) => pairKeyOf(x.fromMetroCode, x.toMetroCode) === selectedPairKey,
-    )
-    if (!s) return null
-    return { dz: s.points.map((p) => p.dzMs), internet: s.points.map((p) => p.internetMs) }
-  }, [seriesData, selectedPairKey])
+  const seriesByPair = useMemo(() => {
+    const map = new Map<string, { dz: number[]; internet: number[] }>()
+    for (const s of seriesData?.series ?? []) {
+      map.set(pairKeyOf(s.fromMetroCode, s.toMetroCode), {
+        dz: s.points.map((p) => p.dzMs),
+        internet: s.points.map((p) => p.internetMs),
+      })
+    }
+    return map
+  }, [seriesData])
 
   // --- Selection -----------------------------------------------------------
   const atLimit = cities.length >= MAX_CITIES
+  const atCellLimit = selectedCells.length >= MAX_CELLS
 
   const addCity = useCallback(
     (id: string) => {
       if (!id || atLimit) return
-      setUrl([...cities, { id }], selectedCell)
+      setUrl([...cities, { id }], selectedCells)
     },
-    [atLimit, cities, selectedCell, setUrl],
+    [atLimit, cities, selectedCells, setUrl],
   )
 
   const removeCity = useCallback(
     (id: string) => {
       const gone = (other: string) => other.toLowerCase() === id.toLowerCase()
-      const stillShown =
-        selectedCell && !gone(selectedCell.from) && !gone(selectedCell.to) ? selectedCell : null
+      const nextCities = cities.filter((c) => !gone(c.id))
+      // A comparison whose location just left the mesh has nothing left to
+      // compare, so it goes with it rather than lingering as a dead card.
       setUrl(
-        cities.filter((c) => !gone(c.id)),
-        stillShown,
+        nextCities,
+        selectedCells.filter((c) => !gone(c.from) && !gone(c.to)),
       )
     },
-    [cities, selectedCell, setUrl],
+    [cities, selectedCells, setUrl],
   )
 
   // One anchor per city rather than per route: the same city cannot sensibly have
@@ -801,10 +921,19 @@ export function RoutesPage() {
     (id: string, anchor: string) => {
       setUrl(
         cities.map((c) => (c.id === id ? { ...c, anchor } : c)),
-        selectedCell,
+        selectedCells,
       )
     },
-    [cities, selectedCell, setUrl],
+    [cities, selectedCells, setUrl],
+  )
+
+  // Plain click replaces the selection; any modifier toggles the cell in or out
+  // of the comparison.
+  const pickCell = useCallback(
+    (cell: SelectedCell, toggle: boolean) => {
+      setUrl(cities, toggle ? toggleCell(selectedCells, cell, cities) : [cell])
+    },
+    [cities, selectedCells, setUrl],
   )
 
   const options = useMemo(() => {
@@ -844,8 +973,8 @@ export function RoutesPage() {
           care about and every route between them is compared.
         </p>
         <p className="mt-1 text-xs text-muted-foreground max-w-4xl">
-          Figures cover the last 24 hours; the selected route also shows the last 7 days by the
-          hour. The public-internet figures are measured end to end. The DoubleZero p95 and jitter
+          Figures cover the last 24 hours; a route opened as a card also shows the last 7 days by
+          the hour. The public-internet figures are measured end to end. The DoubleZero p95 and jitter
           are sums of each hop&apos;s own p95 and mean jitter — percentiles and jitter do not add,
           so those two figures are higher than what a packet actually sees. The bias runs against
           DoubleZero.
@@ -914,37 +1043,52 @@ export function RoutesPage() {
             <LatencyMatrix
               axis={axis}
               grid={grid}
-              selected={selectedIndex}
-              onSelect={(i, j) => setUrl(cities, { from: axis[i].id, to: axis[j].id })}
+              comparedKeys={comparedKeys}
+              onPick={pickCell}
             />
+
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              Click a cell for the full breakdown of that route. Hold Cmd, Ctrl or Shift — or press
+              Enter with one of them held — to compare several routes side by side.
+              {atCellLimit && ` Comparing the maximum of ${MAX_CELLS} routes; deselect one to add another.`}
+              {cellsRequested > selectedCells.length &&
+                ` This link asked for ${cellsRequested} routes; showing ${selectedCells.length}.`}
+            </p>
 
             <Legend />
 
             <OffNetNotes axis={axis} />
 
-            <div className="mt-4">
-              {selected ? (
+            {/* Side by side where there is room, stacked where there is not. */}
+            <div className="mt-4 grid gap-3 xl:grid-cols-2">
+              {compared.map(({ cell, resolved, pairKey }) => (
                 <RouteCard
-                  resolved={selected}
+                  key={pairKey}
+                  resolved={resolved}
                   labelFor={labelFor}
                   metroPkFor={metroPkFor}
-                  latency={selectedLatency}
+                  latency={latencyByPair.get(pairKey) ?? null}
                   latencyPending={latencyPending}
                   latencyError={latencyError}
-                  series={series}
+                  // Null here means this pair was absent from a response that did
+                  // arrive, which the card renders as "no history". The request
+                  // having failed is the seriesError flag, and reads differently.
+                  series={seriesByPair.get(pairKey) ?? null}
                   seriesPending={seriesPending}
                   seriesError={seriesError}
-                  onRemove={() => setUrl(cities, null)}
+                  onRemove={() => pickCell(cell, true)}
                   onAnchorChange={(side, anchor) =>
-                    setAnchor(side === 'from' ? selected.route.from : selected.route.to, anchor)
+                    setAnchor(side === 'from' ? cell.from : cell.to, anchor)
                   }
                 />
-              ) : (
-                <p className="text-sm text-muted-foreground text-center py-6">
-                  Select a cell to see the full breakdown for that route.
-                </p>
-              )}
+              ))}
             </div>
+
+            {compared.length === 0 && (
+              <p className="text-sm text-muted-foreground text-center py-6">
+                Select a cell to see the full breakdown for that route.
+              </p>
+            )}
           </>
         )}
       </div>
@@ -1089,13 +1233,14 @@ const CELL_BOX = 'w-24 h-14 flex flex-col items-center justify-center gap-0.5 bo
 function LatencyMatrix({
   axis,
   grid,
-  selected,
-  onSelect,
+  comparedKeys,
+  onPick,
 }: {
   axis: SelectedCity[]
   grid: { resolved: ResolvedRoute | null; cell: MatrixCell }[][]
-  selected: { i: number; j: number } | null
-  onSelect: (i: number, j: number) => void
+  /** Pair keys currently compared — by pair, so both triangles of a route light up. */
+  comparedKeys: Set<string>
+  onPick: (cell: SelectedCell, toggle: boolean) => void
 }) {
   return (
     // The grid scrolls inside this box; the page body never scrolls sideways.
@@ -1129,7 +1274,7 @@ function LatencyMatrix({
                 {shortLabel(row.id)}
               </th>
               {axis.map((col, j) => {
-                const { cell } = grid[i][j]
+                const { cell, resolved } = grid[i][j]
                 if (cell.kind === 'diagonal') {
                   return (
                     <td key={col.id} className="p-0">
@@ -1139,7 +1284,8 @@ function LatencyMatrix({
                     </td>
                   )
                 }
-                const isSelected = selected?.i === i && selected?.j === j
+                const isCompared = Boolean(resolved?.pairKey && comparedKeys.has(resolved.pairKey))
+                const picked = { from: row.id, to: col.id }
                 const note =
                   cell.kind === 'improvement'
                     ? `${fasterPhrase(cell.pct)} on DoubleZero`
@@ -1149,14 +1295,25 @@ function LatencyMatrix({
                 return (
                   <td key={col.id} className="p-0">
                     <button
-                      onClick={() => onSelect(i, j)}
+                      onClick={(e) => onPick(picked, isToggleGesture(e))}
+                      // Enter and Space already reach onClick; this adds the
+                      // modified form of the same gesture, so the comparison is
+                      // not mouse-only. preventDefault stops the button also
+                      // synthesising a click and toggling twice.
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && isToggleGesture(e)) {
+                          e.preventDefault()
+                          onPick(picked, true)
+                        }
+                      }}
+                      disabled={!isComparable(cell)}
                       title={`${shortLabel(row.id)} → ${shortLabel(col.id)} — ${note}`}
-                      aria-pressed={isSelected}
+                      aria-pressed={isCompared}
                       className={cn(
                         CELL_BOX,
-                        'transition-colors hover:brightness-110',
+                        'transition-colors enabled:hover:brightness-110 disabled:cursor-not-allowed',
                         cell.kind === 'improvement' ? shadeFor(cell.pct) : 'bg-muted/10',
-                        isSelected && 'outline-2 -outline-offset-2 outline-foreground',
+                        isCompared && 'outline-2 -outline-offset-2 outline-foreground',
                       )}
                     >
                       <CellBody cell={cell} />
