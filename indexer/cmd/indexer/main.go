@@ -333,7 +333,17 @@ func run() error {
 		}()
 	}
 
-	dzRPCClient := rpc.NewWithRetries(networkConfig.LedgerPublicRPCURL, nil)
+	// The connection pool must match the fan-out that shares this client. The SDK's
+	// per-request timeout bounds total wall time, queue wait included, so a pool
+	// smaller than the fan-out turns one slow backend into terminal timeouts: 64
+	// goroutines through 9 connections is ~7 waves, making each request's wall time
+	// roughly 7x the server's service time, and a timed-out request is not retried
+	// (isRetryableJSONRPC rejects context errors before any other check).
+	//
+	// This does not increase exposure to the endpoint's rate limits, which are counted
+	// per method per source IP over a rolling window: the same requests land in the
+	// window either way, just less spread out.
+	dzRPCClient := rpc.New(networkConfig.LedgerPublicRPCURL, rpc.Options{MaxConnsPerHost: *maxConcurrencyFlag})
 	defer dzRPCClient.Close()
 	serviceabilityClient := serviceability.New(dzRPCClient, networkConfig.ServiceabilityProgramID)
 	telemetryClient := telemetry.New(log, dzRPCClient, nil, networkConfig.TelemetryProgramID)
@@ -998,7 +1008,8 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 	}
 	secondaryIngestionLog := ingestionlog.NewWriter(secondaryChConn, log)
 
-	dzRPCClient := rpc.NewWithRetries(networkConfig.LedgerPublicRPCURL, nil)
+	// Pool sized to this network's fan-out; see the primary path for why.
+	dzRPCClient := rpc.New(networkConfig.LedgerPublicRPCURL, rpc.Options{MaxConnsPerHost: cfg.maxConcurrency})
 	defer dzRPCClient.Close()
 	serviceabilityClient := serviceability.New(dzRPCClient, networkConfig.ServiceabilityProgramID)
 	telemetryClient := telemetry.New(log, dzRPCClient, nil, networkConfig.TelemetryProgramID)
