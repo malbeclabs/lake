@@ -1687,15 +1687,20 @@ func (a *API) GetMetroConnectivity(w http.ResponseWriter, r *http.Request) {
 
 // MetroPathLatency represents path-based latency between two metros
 type MetroPathLatency struct {
-	FromMetroPK       string   `json:"fromMetroPK"`
-	FromMetroCode     string   `json:"fromMetroCode"`
-	ToMetroPK         string   `json:"toMetroPK"`
-	ToMetroCode       string   `json:"toMetroCode"`
-	PathLatencyMs     float64  `json:"pathLatencyMs"`     // Sum of link metrics along path (in ms)
-	HopCount          int      `json:"hopCount"`          // Number of hops
-	BottleneckBwGbps  float64  `json:"bottleneckBwGbps"`  // Min bandwidth along path (Gbps)
-	InternetLatencyMs float64  `json:"internetLatencyMs"` // Internet latency for comparison (0 if not available)
-	ImprovementPct    *float64 `json:"improvementPct"`    // Improvement vs internet (nil if no internet data)
+	FromMetroPK        string   `json:"fromMetroPK"`
+	FromMetroCode      string   `json:"fromMetroCode"`
+	ToMetroPK          string   `json:"toMetroPK"`
+	ToMetroCode        string   `json:"toMetroCode"`
+	PathLatencyMs      float64  `json:"pathLatencyMs"`      // Contracted: sum of link metrics along path (ms)
+	MeasuredLatencyMs  float64  `json:"measuredLatencyMs"`  // Observed: sum of per-hop rollup RTT (ms)
+	MeasuredP95Ms      float64  `json:"measuredP95Ms"`      // Sum of per-hop p95 (conservative; percentiles are not additive)
+	MeasuredJitterMs   float64  `json:"measuredJitterMs"`   // Sum of per-hop avg jitter (ms)
+	PartiallyCommitted bool     `json:"partiallyCommitted"` // true when a hop lacked samples and measured fell back to contracted
+	PathMetros         []string `json:"pathMetros"`         // metros traversed, e.g. ["tyo","fra","lon"]
+	HopCount           int      `json:"hopCount"`
+	BottleneckBwGbps   float64  `json:"bottleneckBwGbps"`
+	InternetLatencyMs  float64  `json:"internetLatencyMs"`
+	ImprovementPct     *float64 `json:"improvementPct"` // vs internet, computed from measured latency
 }
 
 // MetroPathLatencyResponse is the response for the metro path latency endpoint
@@ -1737,7 +1742,7 @@ func (a *API) GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	response, err := a.FetchMetroPathLatencyData(ctx, optimize)
+	response, err := a.FetchMetroPathLatencyData(ctx, optimize, 0)
 	if err != nil {
 		logError("metro path latency error", "error", err)
 		writeJSON(w, MetroPathLatencyResponse{Optimize: optimize, Paths: []MetroPathLatency{}, Error: err.Error()})
@@ -1749,7 +1754,7 @@ func (a *API) GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 
 // FetchMetroPathLatencyData fetches metro path latency data for the given optimization strategy.
 // Used by both the handler and the cache.
-func (a *API) FetchMetroPathLatencyData(ctx context.Context, optimize string) (*MetroPathLatencyResponse, error) {
+func (a *API) FetchMetroPathLatencyData(ctx context.Context, optimize string, window time.Duration) (*MetroPathLatencyResponse, error) {
 	start := time.Now()
 
 	g, err := a.loadTopologyGraph(ctx, "")
@@ -1765,31 +1770,52 @@ func (a *API) FetchMetroPathLatencyData(ctx context.Context, optimize string) (*
 	// Compute best paths between all metro pairs using in-memory Dijkstra
 	metroPaths := computeMetroPairPaths(g)
 
+	measured, err := a.linkMeasuredMap(ctx, window)
+	if err != nil {
+		return nil, fmt.Errorf("loading measured link latency: %w", err)
+	}
+
 	// Build map of metro paths
 	pathMap := make(map[string]*MetroPathLatency)
 	for _, mp := range metroPaths {
+		mRtt, mP95, mJitter, partial := sumMeasuredAlongPath(mp.Path.Nodes, measured, mp.Path.TotalMetric)
+		metros := pathMetroCodes(mp.Path.Nodes, g)
 		path := &MetroPathLatency{
-			FromMetroPK:      mp.FromMetroPK,
-			FromMetroCode:    mp.FromMetroCode,
-			ToMetroPK:        mp.ToMetroPK,
-			ToMetroCode:      mp.ToMetroCode,
-			PathLatencyMs:    float64(mp.Path.TotalMetric) / 1000.0, // Convert microseconds to milliseconds
-			HopCount:         mp.HopCount,
-			BottleneckBwGbps: float64(mp.BottleneckBps) / 1e9, // Convert bps to Gbps
+			FromMetroPK:        mp.FromMetroPK,
+			FromMetroCode:      mp.FromMetroCode,
+			ToMetroPK:          mp.ToMetroPK,
+			ToMetroCode:        mp.ToMetroCode,
+			PathLatencyMs:      float64(mp.Path.TotalMetric) / 1000.0, // Convert microseconds to milliseconds
+			MeasuredLatencyMs:  mRtt,
+			MeasuredP95Ms:      mP95,
+			MeasuredJitterMs:   mJitter,
+			PartiallyCommitted: partial,
+			PathMetros:         metros,
+			HopCount:           mp.HopCount,
+			BottleneckBwGbps:   float64(mp.BottleneckBps) / 1e9, // Convert bps to Gbps
 		}
 
 		// Store in map for both directions
 		key1 := mp.FromMetroCode + ":" + mp.ToMetroCode
 		key2 := mp.ToMetroCode + ":" + mp.FromMetroCode
 		pathMap[key1] = path
+		reversed := make([]string, len(metros))
+		for i, c := range metros {
+			reversed[len(metros)-1-i] = c
+		}
 		pathMap[key2] = &MetroPathLatency{
-			FromMetroPK:      mp.ToMetroPK,
-			FromMetroCode:    mp.ToMetroCode,
-			ToMetroPK:        mp.FromMetroPK,
-			ToMetroCode:      mp.FromMetroCode,
-			PathLatencyMs:    path.PathLatencyMs,
-			HopCount:         path.HopCount,
-			BottleneckBwGbps: path.BottleneckBwGbps,
+			FromMetroPK:        mp.ToMetroPK,
+			FromMetroCode:      mp.ToMetroCode,
+			ToMetroPK:          mp.FromMetroPK,
+			ToMetroCode:        mp.FromMetroCode,
+			PathLatencyMs:      path.PathLatencyMs,
+			MeasuredLatencyMs:  path.MeasuredLatencyMs,
+			MeasuredP95Ms:      path.MeasuredP95Ms,
+			MeasuredJitterMs:   path.MeasuredJitterMs,
+			PartiallyCommitted: path.PartiallyCommitted,
+			PathMetros:         reversed,
+			HopCount:           path.HopCount,
+			BottleneckBwGbps:   path.BottleneckBwGbps,
 		}
 	}
 
@@ -1824,15 +1850,23 @@ func (a *API) FetchMetroPathLatencyData(ctx context.Context, optimize string) (*
 			key2 := metro2 + ":" + metro1
 			if p, ok := pathMap[key1]; ok {
 				p.InternetLatencyMs = avgRttMs
-				if avgRttMs > 0 && p.PathLatencyMs > 0 {
-					pct := (avgRttMs - p.PathLatencyMs) / avgRttMs * 100
+				basis := p.MeasuredLatencyMs
+				if basis <= 0 {
+					basis = p.PathLatencyMs
+				}
+				if avgRttMs > 0 && basis > 0 {
+					pct := (avgRttMs - basis) / avgRttMs * 100
 					p.ImprovementPct = &pct
 				}
 			}
 			if p, ok := pathMap[key2]; ok {
 				p.InternetLatencyMs = avgRttMs
-				if avgRttMs > 0 && p.PathLatencyMs > 0 {
-					pct := (avgRttMs - p.PathLatencyMs) / avgRttMs * 100
+				basis := p.MeasuredLatencyMs
+				if basis <= 0 {
+					basis = p.PathLatencyMs
+				}
+				if avgRttMs > 0 && basis > 0 {
+					pct := (avgRttMs - basis) / avgRttMs * 100
 					p.ImprovementPct = &pct
 				}
 			}
@@ -3226,4 +3260,47 @@ func pathMetroCodes(nodes []string, g *kspGraph) []string {
 		out = append(out, info.MetroCode)
 	}
 	return out
+}
+
+// linkMeasuredMap returns observed per-link latency keyed by "devicePK:devicePK"
+// in both directions, over the given window (0 defaults to 24h).
+func (a *API) linkMeasuredMap(ctx context.Context, window time.Duration) (map[string]linkMeasured, error) {
+	if window <= 0 {
+		window = 24 * time.Hour
+	}
+	query := `
+		SELECT
+			l.side_a_pk,
+			l.side_z_pk,
+			round(sum(r.a_avg_rtt_us * r.a_samples + r.z_avg_rtt_us * r.z_samples) / greatest(sum(r.a_samples + r.z_samples), 1) / 1000.0, 3) AS avg_rtt_ms,
+			round(sum(r.a_p95_rtt_us * r.a_samples + r.z_p95_rtt_us * r.z_samples) / greatest(sum(r.a_samples + r.z_samples), 1) / 1000.0, 3) AS p95_rtt_ms,
+			round(sum(r.a_avg_jitter_us * r.a_samples + r.z_avg_jitter_us * r.z_samples) / greatest(sum(r.a_samples + r.z_samples), 1) / 1000.0, 3) AS avg_jitter_ms,
+			sum(r.a_samples + r.z_samples) AS sample_count
+		FROM dz_links_current l
+		JOIN link_rollup_5m r FINAL ON l.pk = r.link_pk
+		WHERE r.bucket_ts >= now() - toIntervalSecond($1)
+		  AND l.side_a_pk != ''
+		  AND l.side_z_pk != ''
+		GROUP BY l.side_a_pk, l.side_z_pk
+	`
+	rows, err := a.envDB(ctx).Query(ctx, query, int64(window.Seconds()))
+	if err != nil {
+		return nil, fmt.Errorf("linkMeasuredMap query: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]linkMeasured)
+	for rows.Next() {
+		var sideA, sideZ string
+		var d linkMeasured
+		if err := rows.Scan(&sideA, &sideZ, &d.AvgRttMs, &d.P95RttMs, &d.AvgJitterMs, &d.SampleCount); err != nil {
+			return nil, fmt.Errorf("linkMeasuredMap scan: %w", err)
+		}
+		out[sideA+":"+sideZ] = d
+		out[sideZ+":"+sideA] = d
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("linkMeasuredMap rows: %w", err)
+	}
+	return out, nil
 }
