@@ -32,30 +32,33 @@ const (
 	// fetchExpectedMiss means there is simply no telemetry account for this
 	// circuit/epoch. Routine and very common — not worth counting.
 	fetchExpectedMiss
-	// fetchUnclassified is any other error. Skipping it is safe (each circuit
-	// resumes from its own stored max sample index, so the next refresh re-fetches
-	// what this one missed) but it MUST be counted and logged: the refresh still
-	// reports success, so an uncounted skip lets a persistently failing circuit
-	// under-collect indefinitely with no signal anywhere.
+	// fetchUnclassified is any other error. The circuit resumes from its own stored
+	// max sample index, so the next refresh re-fetches what this one missed — but only
+	// while the epoch is still in the fetch window (current and current-1). Past that,
+	// roughly two days, only the admin backfill recovers it. So the skip must be
+	// counted and logged: the refresh still reports success, and an uncounted skip lets
+	// a failing circuit under-collect with no signal anywhere.
 	fetchUnclassified
 )
 
-// classifyFetchErr decides what a sample-fetch error means. Shutdown is decided by
-// the context, never by the error's shape.
+// classifyFetchErr decides what a sample-fetch error means. The context decides
+// shutdown, never the error's shape.
 //
-// The distinction matters because an http.Client timeout also satisfies
-// errors.Is(err, context.DeadlineExceeded) — verified: a Client.Timeout abort
-// produces "context deadline exceeded (Client.Timeout exceeded while awaiting
-// headers)" and errors.Is against context.DeadlineExceeded is true. Keying on the
-// error therefore read a slow endpoint as "we are shutting down" and returned from
-// the worker goroutine, which sits before the append of everything already collected
-// for that circuit — so a timeout silently discarded the earlier epochs' samples
-// while the refresh still reported a clean cycle.
+// The invariant: an http.Client timeout also satisfies
+// errors.Is(err, context.DeadlineExceeded). Keying the abort on the error therefore
+// reads a slow endpoint as shutdown and returns from the worker goroutine, and that
+// return sits before the append of everything already collected for the circuit. The
+// refresh still reports success, so the cycle looks clean with a hole in it.
 //
-// With the context as the authority, a live context means the fetch genuinely failed:
-// it is counted, logged, and the circuit resumes from its stored max sample index next
-// refresh. Only a cancelled or expired context aborts, and the loop's own
-// select-on-ctx.Done already handles that case first.
+// This has not fired in production. The deployed client timeout and the activity
+// StartToCloseTimeout are both 5 minutes and the HTTP request starts later, so the
+// context always expired first and the abort was genuine. It bites as soon as the
+// client timeout drops below the activity deadline, which the SDK bump in #757 does
+// (10s), or when Refresh runs from a context with no deadline.
+//
+// A live context therefore means the fetch genuinely failed: count it, log it, and let
+// the circuit resume from its stored max sample index. Only a cancelled or expired
+// context aborts, and the loop's own select on ctx.Done handles that first.
 func classifyFetchErr(ctx context.Context, err error) fetchOutcome {
 	if ctx.Err() != nil {
 		return fetchAbort

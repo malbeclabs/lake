@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gagliardetto/solana-go"
@@ -52,6 +53,8 @@ func (v *View) refreshDeviceLinkTelemetrySamples(ctx context.Context, devices []
 	var allSamples []DeviceLinkLatencySample
 	var allHeaders []DeviceLinkLatencySampleHeader
 	var samplesMu sync.Mutex
+	var skipped atomic.Int64
+	var firstSkipErr atomic.Pointer[error]
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, v.cfg.MaxConcurrency)
 	linksProcessed := 0
@@ -128,14 +131,16 @@ func (v *View) refreshDeviceLinkTelemetrySamples(ctx context.Context, devices []
 							case fetchExpectedMiss:
 								continue
 							default:
-								metrics.TelemetryFetchSkipped.WithLabelValues("device_link").Inc()
-								v.log.Warn("telemetry/device-link: sample fetch failed, skipping until next refresh",
+								metrics.TelemetryFetchSkipped.WithLabelValues(v.cfg.DZEnv, "device_link").Inc()
+								v.log.Debug("telemetry/device-link: sample fetch failed, skipping until next refresh",
 									"origin_device_pk", originDevicePK, "target_device_pk", targetDevicePK,
 									"link_pk", linkPKStr, "epoch", epoch, "error", err)
 								continue
 							}
 						}
 						if hdr == nil {
+							skipped.Add(1)
+							firstSkipErr.CompareAndSwap(nil, &err)
 							continue
 						}
 
@@ -193,6 +198,18 @@ func (v *View) refreshDeviceLinkTelemetrySamples(ctx context.Context, devices []
 
 done:
 	wg.Wait()
+
+	// One line per refresh, not per fetch. A skipped circuit is re-fetched next refresh
+	// while its epoch is still in the window, so the count matters more than any single
+	// failure. Per-fetch detail is at Debug.
+	if n := skipped.Load(); n > 0 {
+		var first error
+		if ptr := firstSkipErr.Load(); ptr != nil {
+			first = *ptr
+		}
+		v.log.Warn("telemetry/device-link: sample fetches skipped, retried next refresh",
+			"skipped", n, "first_error", first)
+	}
 
 	// Append new samples to table (instead of replacing)
 	if len(allSamples) > 0 {

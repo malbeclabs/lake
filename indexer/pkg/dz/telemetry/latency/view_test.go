@@ -16,7 +16,9 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse/dataset"
 	mcpgeoip "github.com/malbeclabs/lake/indexer/pkg/geoip"
+	"github.com/malbeclabs/lake/indexer/pkg/metrics"
 	laketesting "github.com/malbeclabs/lake/utils/pkg/testing"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 
 	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/serviceability"
@@ -1807,4 +1809,184 @@ func TestLake_TelemetryLatency_ClassifyFetchErr(t *testing.T) {
 			}
 		})
 	}
+}
+
+// latencyFixture builds the serviceability state the latency views read: two activated
+// devices joined by one WAN link, refreshed into ClickHouse. It returns the view and the
+// circuit's three pubkeys. Nine tests in this file inline the same block; new tests
+// should call this rather than add a tenth copy.
+func latencyFixture(t *testing.T, db clickhouse.Client) (*dzsvc.View, solana.PublicKey, solana.PublicKey, solana.PublicKey) {
+	t.Helper()
+	devicePK1 := [32]byte{1, 2, 3, 4}
+	devicePK2 := [32]byte{5, 6, 7, 8}
+	linkPK := [32]byte{9, 10, 11, 12}
+	contributorPK := [32]byte{13, 14, 15, 16}
+	metroPK := [32]byte{17, 18, 19, 20}
+	ownerPubkey := [32]byte{21, 22, 23, 24}
+	publicIP1 := [4]byte{192, 168, 1, 1}
+	publicIP2 := [4]byte{192, 168, 1, 2}
+	tunnelNet := [5]byte{10, 0, 0, 0, 24}
+
+	svcMockRPC := &MockServiceabilityRPC{
+		getProgramDataFunc: func(ctx context.Context) (*serviceability.ProgramData, error) {
+			return &serviceability.ProgramData{
+				Contributors: []serviceability.Contributor{
+					{
+						PubKey: contributorPK,
+						Owner:  ownerPubkey,
+						Code:   "CONTRIB",
+					},
+				},
+				Devices: []serviceability.Device{
+					{
+						PubKey:            devicePK1,
+						Owner:             ownerPubkey,
+						Status:            serviceability.DeviceStatusActivated,
+						DeviceType:        serviceability.DeviceDeviceTypeHybrid,
+						Code:              "DEV1",
+						PublicIp:          publicIP1,
+						ContributorPubKey: contributorPK,
+						ExchangePubKey:    metroPK,
+					},
+					{
+						PubKey:            devicePK2,
+						Owner:             ownerPubkey,
+						Status:            serviceability.DeviceStatusActivated,
+						DeviceType:        serviceability.DeviceDeviceTypeHybrid,
+						Code:              "DEV2",
+						PublicIp:          publicIP2,
+						ContributorPubKey: contributorPK,
+						ExchangePubKey:    metroPK,
+					},
+				},
+				Links: []serviceability.Link{
+					{
+						PubKey:            linkPK,
+						Owner:             ownerPubkey,
+						Status:            serviceability.LinkStatusActivated,
+						Code:              "LINK1",
+						TunnelNet:         tunnelNet,
+						ContributorPubKey: contributorPK,
+						SideAPubKey:       devicePK1,
+						SideZPubKey:       devicePK2,
+						SideAIfaceName:    "eth0",
+						SideZIfaceName:    "eth1",
+						LinkType:          serviceability.LinkLinkTypeWAN,
+						DelayNs:           1000000,
+						JitterNs:          50000,
+					},
+				},
+				Exchanges: []serviceability.Exchange{
+					{PubKey: metroPK, Code: "METRO1", Name: "Test Metro"},
+				},
+			}, nil
+		},
+	}
+
+	geoipStore, err := newMockGeoIPStore(t)
+	require.NoError(t, err)
+	t.Cleanup(func() { geoipStore.db.Close() })
+
+	svcView, err := dzsvc.NewView(dzsvc.ViewConfig{
+		Logger:            laketesting.NewLogger(),
+		Clock:             clockwork.NewFakeClock(),
+		ServiceabilityRPC: svcMockRPC,
+		RefreshInterval:   time.Second,
+		ClickHouse:        db,
+	})
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	_, err = svcView.Refresh(ctx)
+	require.NoError(t, err)
+
+	// Set up telemetry RPC to return samples with NextSampleIndex
+	originPK := solana.PublicKeyFromBytes(devicePK1[:])
+	targetPK := solana.PublicKeyFromBytes(devicePK2[:])
+	linkPKPubKey := solana.PublicKeyFromBytes(linkPK[:])
+	return svcView, originPK, targetPK, linkPKPubKey
+}
+
+// TestLake_TelemetryLatency_View_TimeoutKeepsEarlierEpochSamples asserts the classifier
+// change at the call site, which the pure-function test cannot reach.
+//
+// epochsToFetch is current-first, so epoch N is fetched before N-1. A fetch error that
+// looks like context.DeadlineExceeded, which every http.Client timeout does, used to
+// return from the worker goroutine. That return sits before the append, so epoch N's
+// samples were already in hand and got discarded, and the refresh still reported
+// success.
+//
+// Reverting view_device.go to the error-shape branch must fail this test. No other mock
+// in this file returns a non-nil fetch error, so before this the call-site behaviour was
+// never exercised at all.
+func TestLake_TelemetryLatency_View_TimeoutKeepsEarlierEpochSamples(t *testing.T) {
+	t.Parallel()
+
+	const env = "fixture-env"
+	db := testClient(t)
+	svcView, originPK, targetPK, linkPKPubKey := latencyFixture(t, db)
+
+	// A real Client.Timeout error, so this keeps matching whatever net/http returns.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(500 * time.Millisecond)
+	}))
+	defer srv.Close()
+	_, timeoutErr := (&http.Client{Timeout: 20 * time.Millisecond}).Get(srv.URL)
+	require.Error(t, timeoutErr)
+	require.True(t, errors.Is(timeoutErr, context.DeadlineExceeded),
+		"precondition: the injected error must look like context.DeadlineExceeded")
+
+	startTsMicro := uint64(time.Now().Add(-1 * time.Hour).UnixMicro())
+	rpc := &mockTelemetryRPCWithIncrementalSamples{
+		getSamplesFunc: func(o, tgt, l solana.PublicKey, epoch uint64, existingMaxIdx int) (*telemetry.DeviceLatencySamplesHeader, int, []uint32, error) {
+			if o != originPK || tgt != targetPK || l != linkPKPubKey {
+				return nil, 0, nil, telemetry.ErrAccountNotFound
+			}
+			if epoch == 99 {
+				return nil, 0, nil, timeoutErr
+			}
+			return &telemetry.DeviceLatencySamplesHeader{
+				StartTimestampMicroseconds:   startTsMicro,
+				SamplingIntervalMicroseconds: 100_000,
+				NextSampleIndex:              3,
+			}, 0, []uint32{5000, 6000, 7000}, nil
+		},
+	}
+
+	view, err := NewView(ViewConfig{
+		Logger:                 laketesting.NewLogger(),
+		Clock:                  clockwork.NewFakeClock(),
+		TelemetryRPC:           rpc,
+		EpochRPC:               &mockEpochRPCWithEpoch{epoch: 100},
+		MaxConcurrency:         32,
+		InternetLatencyAgentPK: solana.MustPublicKeyFromBase58("So11111111111111111111111111111111111111112"),
+		InternetDataProviders:  []string{"test-provider"},
+		ClickHouse:             db,
+		Serviceability:         svcView,
+		RefreshInterval:        time.Second,
+		DZEnv:                  env,
+	})
+	require.NoError(t, err)
+
+	before := testutil.ToFloat64(metrics.TelemetryFetchSkipped.WithLabelValues(env, "device_link"))
+
+	ctx := context.Background()
+	_, err = view.Refresh(ctx)
+	require.NoError(t, err, "one circuit timing out must not fail the refresh")
+
+	conn, err := db.Conn(ctx)
+	require.NoError(t, err)
+	defer conn.Close()
+	rows, err := conn.Query(ctx, "SELECT count() FROM fact_dz_device_link_latency WHERE epoch = 100")
+	require.NoError(t, err)
+	require.True(t, rows.Next())
+	var n uint64
+	require.NoError(t, rows.Scan(&n))
+	rows.Close()
+	require.EqualValues(t, 3, n,
+		"epoch 100's samples were collected before epoch 99 timed out and must still be written; "+
+			"0 means the timeout was read as shutdown and the goroutine returned before the append")
+
+	after := testutil.ToFloat64(metrics.TelemetryFetchSkipped.WithLabelValues(env, "device_link"))
+	require.Greater(t, after, before, "the skipped fetch must be counted under dz_env=%s", env)
 }
