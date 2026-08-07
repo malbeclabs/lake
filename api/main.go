@@ -693,6 +693,7 @@ func main() {
 			r.Get("/api/topology/simulate-link-addition", api.GetSimulateLinkAddition)
 			r.Get("/api/topology/metro-connectivity", api.GetMetroConnectivity)
 			r.Get("/api/topology/metro-path-latency", api.GetMetroPathLatency)
+			r.Get("/api/topology/route-series", api.GetRouteSeries)
 			r.Get("/api/topology/metro-path-detail", api.GetMetroPathDetail)
 			r.Get("/api/topology/metro-paths", api.GetMetroPaths)
 			r.Get("/api/topology/metro-device-paths", api.GetMetroDevicePaths)
