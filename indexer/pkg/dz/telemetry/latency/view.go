@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gagliardetto/solana-go"
@@ -291,4 +292,17 @@ func (v *View) WaitReady(ctx context.Context) error {
 	case <-ctx.Done():
 		return fmt.Errorf("context cancelled while waiting for telemetry view: %w", ctx.Err())
 	}
+}
+
+// noteSkip records a skipped fetch for the per-refresh summary. Both fan-outs call it
+// from the same place, the arm that counts an unclassified error, so the two cannot
+// drift: a previous version of this accounting sat in the wrong branch on one path and
+// silenced that path's summary entirely.
+//
+// It stores a copy of err rather than the caller's variable, so the retained error
+// cannot be affected by later loop iterations.
+func noteSkip(count *atomic.Int64, first *atomic.Pointer[error], err error) {
+	count.Add(1)
+	e := err
+	first.CompareAndSwap(nil, &e)
 }

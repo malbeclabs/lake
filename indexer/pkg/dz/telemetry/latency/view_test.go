@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1989,4 +1992,110 @@ func TestLake_TelemetryLatency_View_TimeoutKeepsEarlierEpochSamples(t *testing.T
 
 	after := testutil.ToFloat64(metrics.TelemetryFetchSkipped.WithLabelValues(env, "device_link"))
 	require.Greater(t, after, before, "the skipped fetch must be counted under dz_env=%s", env)
+}
+
+// capturingHandler records the records a logger emits, so a test can assert on log
+// output as well as on metrics. The bug this exists for was invisible to a
+// counter-only assertion: the accounting for the per-refresh summary sat in the wrong
+// branch, so the counter still moved and the summary WARN never fired.
+type capturingHandler struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (h *capturingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *capturingHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, r.Clone())
+	return nil
+}
+func (h *capturingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *capturingHandler) WithGroup(string) slog.Handler      { return h }
+
+// find returns the first record at the given level whose message contains msg.
+func (h *capturingHandler) find(level slog.Level, msg string) (slog.Record, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, r := range h.records {
+		if r.Level == level && strings.Contains(r.Message, msg) {
+			return r, true
+		}
+	}
+	return slog.Record{}, false
+}
+
+// TestLake_TelemetryLatency_View_SkippedFetchesReachOneWarn asserts the operator-facing
+// half of the skip accounting: a skipped fetch must produce exactly one WARN for the
+// refresh, carrying the count and a real error.
+//
+// Asserting the counter is not enough. The accounting that feeds this summary once sat in
+// a branch that only runs when err == nil, so the counter moved, the summary never fired,
+// and device-link fetch failures reached no WARN at all. Every metric assertion still
+// passed.
+func TestLake_TelemetryLatency_View_SkippedFetchesReachOneWarn(t *testing.T) {
+	t.Parallel()
+
+	db := testClient(t)
+	svcView, originPK, targetPK, linkPKPubKey := latencyFixture(t, db)
+
+	capture := &capturingHandler{}
+	injected := errors.New("Too many requests for a specific RPC call")
+
+	rpc := &mockTelemetryRPCWithIncrementalSamples{
+		getSamplesFunc: func(o, tgt, l solana.PublicKey, epoch uint64, existingMaxIdx int) (*telemetry.DeviceLatencySamplesHeader, int, []uint32, error) {
+			if o != originPK || tgt != targetPK || l != linkPKPubKey {
+				return nil, 0, nil, telemetry.ErrAccountNotFound
+			}
+			return nil, 0, nil, injected
+		},
+	}
+
+	view, err := NewView(ViewConfig{
+		Logger:                 slog.New(capture),
+		Clock:                  clockwork.NewFakeClock(),
+		TelemetryRPC:           rpc,
+		EpochRPC:               &mockEpochRPCWithEpoch{epoch: 100},
+		MaxConcurrency:         32,
+		InternetLatencyAgentPK: solana.MustPublicKeyFromBase58("So11111111111111111111111111111111111111112"),
+		InternetDataProviders:  []string{"test-provider"},
+		ClickHouse:             db,
+		Serviceability:         svcView,
+		RefreshInterval:        time.Second,
+		DZEnv:                  "fixture-env",
+	})
+	require.NoError(t, err)
+
+	_, err = view.Refresh(context.Background())
+	require.NoError(t, err)
+
+	rec, ok := capture.find(slog.LevelWarn, "sample fetches skipped")
+	require.True(t, ok, "no summary WARN was emitted for a skipped fetch; "+
+		"the per-fetch line is Debug, so without this the failure is invisible at WARN")
+
+	var skipped int64
+	var firstErr string
+	rec.Attrs(func(a slog.Attr) bool {
+		switch a.Key {
+		case "skipped":
+			skipped = a.Value.Int64()
+		case "first_error":
+			firstErr = a.Value.String()
+		}
+		return true
+	})
+	require.Positive(t, skipped, "the summary WARN must carry a non-zero skip count")
+	require.Contains(t, firstErr, "Too many requests",
+		"the summary WARN must carry the real first error, not <nil>")
+
+	// Exactly one summary line per source per refresh, not one per fetch.
+	capture.mu.Lock()
+	var warns int
+	for _, r := range capture.records {
+		if r.Level == slog.LevelWarn && strings.Contains(r.Message, "sample fetches skipped") {
+			warns++
+		}
+	}
+	capture.mu.Unlock()
+	require.Equal(t, 1, warns, "expected one summary WARN for device-link, got %d", warns)
 }

@@ -154,8 +154,7 @@ func (v *View) refreshInternetMetroLatencySamples(ctx context.Context, metros []
 								v.log.Debug("telemetry/internet-metro: sample fetch failed, skipping until next refresh",
 									"origin_metro_pk", originMetroPK, "target_metro_pk", targetMetroPK,
 									"data_provider", dataProvider, "epoch", epoch, "error", err)
-								skipped.Add(1)
-								firstSkipErr.CompareAndSwap(nil, &err)
+								noteSkip(&skipped, &firstSkipErr, err)
 								continue
 							}
 						}

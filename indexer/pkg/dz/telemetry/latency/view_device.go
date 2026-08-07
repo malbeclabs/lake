@@ -135,12 +135,11 @@ func (v *View) refreshDeviceLinkTelemetrySamples(ctx context.Context, devices []
 								v.log.Debug("telemetry/device-link: sample fetch failed, skipping until next refresh",
 									"origin_device_pk", originDevicePK, "target_device_pk", targetDevicePK,
 									"link_pk", linkPKStr, "epoch", epoch, "error", err)
+								noteSkip(&skipped, &firstSkipErr, err)
 								continue
 							}
 						}
 						if hdr == nil {
-							skipped.Add(1)
-							firstSkipErr.CompareAndSwap(nil, &err)
 							continue
 						}
 
