@@ -45,3 +45,40 @@ func TestParseRoutePairs(t *testing.T) {
 		}
 	})
 }
+
+func TestSumHopsAtBucket(t *testing.T) {
+	t.Run("sums correctly when all hops are present", func(t *testing.T) {
+		nodes := []string{"a", "b", "c"}
+		links := map[string]float64{
+			"a:b": 1.5,
+			"b:c": 2.5,
+		}
+		sum, ok := sumHopsAtBucket(nodes, links)
+		if !ok {
+			t.Fatal("expected ok=true")
+		}
+		if sum != 4.0 {
+			t.Errorf("sum = %v, want 4.0", sum)
+		}
+	})
+
+	t.Run("reports not-ok when a hop is missing", func(t *testing.T) {
+		nodes := []string{"a", "b", "c"}
+		links := map[string]float64{
+			"a:b": 1.5,
+			// "b:c" missing
+		}
+		if _, ok := sumHopsAtBucket(nodes, links); ok {
+			t.Error("expected ok=false for a missing hop")
+		}
+	})
+
+	t.Run("reports not-ok for a path with fewer than 2 nodes", func(t *testing.T) {
+		if _, ok := sumHopsAtBucket([]string{"a"}, map[string]float64{}); ok {
+			t.Error("expected ok=false for a path with fewer than 2 nodes")
+		}
+		if _, ok := sumHopsAtBucket(nil, map[string]float64{}); ok {
+			t.Error("expected ok=false for a nil path")
+		}
+	})
+}

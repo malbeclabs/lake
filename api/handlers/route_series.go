@@ -61,6 +61,24 @@ func parseRoutePairs(raw string) ([][2]string, error) {
 	return out, nil
 }
 
+// sumHopsAtBucket returns the summed RTT across every hop in nodes, and ok=false
+// when any hop is missing from links — callers must report zero rather than a
+// short sum, which would understate the route.
+func sumHopsAtBucket(nodes []string, links map[string]float64) (float64, bool) {
+	if len(nodes) < 2 {
+		return 0, false
+	}
+	var sum float64
+	for h := 1; h < len(nodes); h++ {
+		v, ok := links[nodes[h-1]+":"+nodes[h]]
+		if !ok {
+			return 0, false
+		}
+		sum += v
+	}
+	return sum, true
+}
+
 // GetRouteSeries returns 7 days of hourly DZ-vs-internet latency for the
 // requested metro pairs. Not page-cached: it serves a small, user-chosen set.
 func (a *API) GetRouteSeries(w http.ResponseWriter, r *http.Request) {
@@ -105,7 +123,7 @@ func (a *API) FetchRouteSeries(ctx context.Context, pairs [][2]string) (*RouteSe
 	// Hourly measured RTT per link.
 	linkQuery := `
 		SELECT
-			toStartOfHour(r.bucket_ts) AS ts,
+			toStartOfHour(r.bucket_ts, 'UTC') AS ts,
 			l.side_a_pk,
 			l.side_z_pk,
 			sum(r.a_avg_rtt_us * r.a_samples + r.z_avg_rtt_us * r.z_samples) / greatest(sum(r.a_samples + r.z_samples), 1) / 1000.0 AS rtt_ms
@@ -144,7 +162,7 @@ func (a *API) FetchRouteSeries(ctx context.Context, pairs [][2]string) (*RouteSe
 	// Hourly internet RTT per metro pair.
 	inetQuery := `
 		SELECT
-			toStartOfHour(f.event_ts) AS ts,
+			toStartOfHour(f.event_ts, 'UTC') AS ts,
 			least(ma.code, mz.code) AS m1,
 			greatest(ma.code, mz.code) AS m2,
 			avg(f.rtt_us) / 1000.0 AS rtt_ms
@@ -194,20 +212,10 @@ func (a *API) FetchRouteSeries(ctx context.Context, pairs [][2]string) (*RouteSe
 		for i := 167; i >= 0; i-- {
 			ts := end.Add(-time.Duration(i) * time.Hour)
 			pt := RouteSeriesPoint{TS: ts}
-			if links := hourly[ts]; links != nil && len(nodes) >= 2 {
-				var sum float64
-				complete := true
-				for h := 1; h < len(nodes); h++ {
-					v, ok := links[nodes[h-1]+":"+nodes[h]]
-					if !ok {
-						complete = false
-						break
-					}
-					sum += v
-				}
+			if links := hourly[ts]; links != nil {
 				// A bucket missing any hop is left at zero rather than reported
 				// short — the frontend renders gaps as breaks in the line.
-				if complete {
+				if sum, ok := sumHopsAtBucket(nodes, links); ok {
 					pt.DZMs = sum
 				}
 			}
