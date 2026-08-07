@@ -1,5 +1,66 @@
 import { describe, expect, it } from 'vitest'
-import { orientPath, pairKeyOf, resolveRoute } from './routes-page'
+import { orientPath, pairKeyOf, resolveRoute, routeFigures } from './routes-page'
+import type { MetroPathLatency } from '@/lib/api'
+
+/** A fully-measured route; individual tests override the fields they care about. */
+function latency(over: Partial<MetroPathLatency> = {}): MetroPathLatency {
+  return {
+    fromMetroPK: 'p1',
+    fromMetroCode: 'tyo',
+    toMetroPK: 'p2',
+    toMetroCode: 'lon',
+    pathLatencyMs: 200,
+    measuredLatencyMs: 210.5,
+    measuredP95Ms: 220.25,
+    measuredJitterMs: 0.029,
+    partiallyCommitted: false,
+    pathMetros: ['tyo', 'fra', 'lon'],
+    hopCount: 3,
+    bottleneckBwGbps: 100,
+    internetLatencyMs: 259.76,
+    internetP95Ms: 272.06,
+    internetJitterMs: 2.568,
+    improvementPct: 23,
+    measuredImprovementPct: 19,
+    ...over,
+  }
+}
+
+describe('routeFigures', () => {
+  it('shows every figure on a fully-measured route', () => {
+    const f = routeFigures(latency())
+    expect(f.tiles.map((t) => [t.label, t.value])).toEqual([
+      ['DoubleZero mean', '210.50 ms'],
+      ['DoubleZero p95', '220.25 ms'],
+      // 3 dp: 2 dp would flatten a typical sub-0.1 ms jitter to one significant figure.
+      ['DoubleZero jitter', '0.029 ms'],
+      ['Internet mean', '259.76 ms'],
+      ['Internet p95', '272.06 ms'],
+      ['Internet jitter', '2.568 ms'],
+    ])
+    expect(f.improvementPct).toBe(19)
+    expect(f.footnote).toBeNull()
+  })
+
+  // The mean is a commitment on these routes, so it must be labelled as one, and
+  // an improvement computed from it must not be shown at all.
+  it('marks the mean as contracted and withholds improvement when partiallyCommitted', () => {
+    const f = routeFigures(latency({ partiallyCommitted: true, measuredP95Ms: 0, measuredJitterMs: 0 }))
+    expect(f.tiles[0]).toEqual({ label: 'DoubleZero mean (contracted)', value: '210.50 ms' })
+    expect(f.tiles[1].value).toBeNull()
+    expect(f.tiles[2].value).toBeNull()
+    expect(f.improvementPct).toBeNull()
+    expect(f.footnote).toContain('withheld')
+  })
+
+  // The internet side carries no partiallyCommitted-style flag, so 0 is the only
+  // signal that a figure is absent. It must never print as "0.00 ms".
+  it('renders an unmeasured internet figure as absent, not as zero', () => {
+    const f = routeFigures(latency({ internetP95Ms: 0, internetJitterMs: 0 }))
+    expect(f.tiles[4].value).toBeNull()
+    expect(f.tiles[5].value).toBeNull()
+  })
+})
 
 describe('orientPath', () => {
   // The API emits both directions of a pair and builds its slice from a Go map,
@@ -43,6 +104,17 @@ describe('resolveRoute', () => {
 
   it('reports an anchor that collides with the other endpoint as unavailable', () => {
     expect(resolveRoute({ from: 'ohio', to: 'chi' }).unavailable).toBe(true)
+  })
+
+  // Reachable only by URL. The cancellation argument in the Ohio note is false
+  // here — the two access legs differ — so the route must be refused, not shown
+  // with the note printed twice.
+  it('refuses a route with the same off-net endpoint at both ends', () => {
+    const r = resolveRoute({ from: 'ohio', to: 'ohio', fromAnchor: 'pit', toAnchor: 'chi' })
+    expect(r.unavailable).toBe(true)
+    expect(r.pairKey).toBeNull()
+    expect(r.notes).toHaveLength(1)
+    expect(r.notes[0]).toContain('both ends')
   })
 
   it('is case-insensitive', () => {

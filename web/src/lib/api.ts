@@ -4500,7 +4500,10 @@ export interface MetroPathLatency {
   internetP95Ms: number
   /** 0 when unmeasured — the internet side has no partiallyCommitted-style flag. */
   internetJitterMs: number
+  /** vs internet, from the contracted pathLatencyMs. */
   improvementPct: number | null
+  /** vs internet, from measuredLatencyMs. Separate basis, so the two pages stay self-consistent. */
+  measuredImprovementPct: number | null
 }
 
 export interface MetroPathLatencyResponse {

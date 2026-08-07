@@ -75,6 +75,22 @@ export function pairKeyOf(a: string, b: string): string {
 export function resolveRoute(route: SelectedRoute): ResolvedRoute {
   const from = resolveEndpoint(route.from, route.fromAnchor)
   const to = resolveEndpoint(route.to, route.toAnchor)
+
+  // Same off-net location at both ends — the UI blocks this, but a URL can ask
+  // for it (?routes=ohio@pit-ohio@chi). Its note argues the access leg cancels
+  // between the two paths, which is untrue here because the two legs differ, and
+  // the card would report pit↔chi under an Ohio→Ohio heading. Refuse instead.
+  if (from.offNet && from.offNet === to.offNet) {
+    return {
+      route,
+      fromMetro: from.metroCode,
+      toMetro: to.metroCode,
+      notes: [`${from.offNet.label} is at both ends of this route, so there is nothing to compare.`],
+      unavailable: true,
+      pairKey: null,
+    }
+  }
+
   const notes = [from.offNet?.note, to.offNet?.note].filter(Boolean) as string[]
 
   // Either side unresolvable, or both sides land on the same metro (e.g. an
@@ -89,13 +105,61 @@ export function resolveRoute(route: SelectedRoute): ResolvedRoute {
   return { route, fromMetro: from.metroCode, toMetro: to.metroCode, notes, unavailable, pairKey }
 }
 
-function fmtMs(ms: number): string {
-  return `${ms.toFixed(2)} ms`
+function fmtMs(ms: number, dp = 2): string {
+  return `${ms.toFixed(dp)} ms`
 }
 
 /** 0 means the figure was never measured, so render it as absent, not as zero. */
-function orAbsent(ms: number): string | null {
-  return ms > 0 ? fmtMs(ms) : null
+function orAbsent(ms: number, dp = 2): string | null {
+  return ms > 0 ? fmtMs(ms, dp) : null
+}
+
+export const CONTRACTED_NOTE =
+  'One or more hops had no recent measurements, so this route shows its contracted latency ' +
+  'rather than a measured one. The improvement figure is withheld, because it would be ' +
+  'comparing a commitment against a measurement.'
+
+export type RouteFigures = {
+  tiles: { label: string; value: string | null }[]
+  improvementPct: number | null
+  footnote: string | null
+}
+
+/**
+ * Decides what every figure on a route card shows.
+ *
+ * All the suppression rules live here because they are not uniform, and getting
+ * one wrong prints something that is not a measurement:
+ *
+ *  - `partiallyCommitted` means a hop had no recent samples and the API
+ *    substituted the contracted figure. p95 and jitter arrive as 0 and are
+ *    blanked. The mean is real, but it is a commitment rather than an
+ *    observation, so it is shown with a label that says so. The improvement is
+ *    withheld entirely — a percentage comparing a commitment against a measured
+ *    internet figure is not a claim we can stand behind.
+ *  - the public-internet side has no equivalent flag, so 0 is the only signal
+ *    that one of its figures is absent.
+ *
+ * Jitter renders at 3 dp because a typical per-hop figure is around 0.03 ms,
+ * which 2 dp flattens to a single significant figure.
+ */
+export function routeFigures(l: MetroPathLatency): RouteFigures {
+  const partial = l.partiallyCommitted
+  return {
+    tiles: [
+      {
+        label: partial ? 'DoubleZero mean (contracted)' : 'DoubleZero mean',
+        value: orAbsent(l.measuredLatencyMs),
+      },
+      { label: 'DoubleZero p95', value: partial ? null : orAbsent(l.measuredP95Ms) },
+      { label: 'DoubleZero jitter', value: partial ? null : orAbsent(l.measuredJitterMs, 3) },
+      { label: 'Internet mean', value: orAbsent(l.internetLatencyMs) },
+      { label: 'Internet p95', value: orAbsent(l.internetP95Ms) },
+      { label: 'Internet jitter', value: orAbsent(l.internetJitterMs, 3) },
+    ],
+    improvementPct: partial ? null : l.measuredImprovementPct,
+    footnote: partial ? CONTRACTED_NOTE : null,
+  }
 }
 
 /**
@@ -194,8 +258,11 @@ function RouteCard({
   labelFor,
   metroPkFor,
   latency,
+  latencyPending,
+  latencyError,
   series,
   seriesPending,
+  seriesError,
   onRemove,
   onAnchorChange,
 }: {
@@ -203,8 +270,11 @@ function RouteCard({
   labelFor: (id: string) => string
   metroPkFor: (metroCode: string | null) => string | null
   latency: MetroPathLatency | null
+  latencyPending: boolean
+  latencyError: boolean
   series: { dz: number[]; internet: number[] } | null
   seriesPending: boolean
+  seriesError: boolean
   onRemove: () => void
   onAnchorChange: (side: 'from' | 'to', anchor: string) => void
 }) {
@@ -212,11 +282,8 @@ function RouteCard({
   const fromOffNet = OFF_NET_ENDPOINTS.find((e) => e.id === route.from)
   const toOffNet = OFF_NET_ENDPOINTS.find((e) => e.id === route.to)
 
-  // p95 and jitter are absent — not zero — when a hop had no recent samples and
-  // the route fell back to its contracted figure. Rendering "0.00 ms" there
-  // would read as a real measurement.
-  const partial = latency?.partiallyCommitted ?? false
-  const tier = getImprovementTier(latency?.improvementPct ?? null)
+  const figures = latency ? routeFigures(latency) : null
+  const tier = getImprovementTier(figures?.improvementPct ?? null)
 
   return (
     <div className="bg-card border border-border rounded-lg p-4">
@@ -270,22 +337,29 @@ function RouteCard({
             </span>
           )}
         </div>
-      ) : !latency ? (
+      ) : !latency && latencyError ? (
+        // Distinct from "no path": an unreachable endpoint must never be reported
+        // to a customer as DoubleZero having no route between two of its metros.
+        // Guarded on !latency so a failed background refetch does not hide figures
+        // we already hold.
+        <div className="mt-3 text-sm text-muted-foreground">
+          Couldn&apos;t load latency data. Try again in a moment.
+        </div>
+      ) : !latency && latencyPending ? (
+        <div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading latency…
+        </div>
+      ) : !latency || !figures ? (
         <div className="mt-3 text-sm text-muted-foreground">
           No DoubleZero path between these metros.
         </div>
       ) : (
         <>
           <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-            <Stat label="DoubleZero mean" value={fmtMs(latency.measuredLatencyMs)} />
-            <Stat label="DoubleZero p95" value={partial ? null : fmtMs(latency.measuredP95Ms)} />
-            <Stat label="DoubleZero jitter" value={partial ? null : fmtMs(latency.measuredJitterMs)} />
-            {/* Suppression is asymmetric: on the DoubleZero side partiallyCommitted
-                is the signal and p95/jitter are 0 when it is set; on the internet
-                side there is no such flag, so 0 is the only signal for absent. */}
-            <Stat label="Internet mean" value={orAbsent(latency.internetLatencyMs)} />
-            <Stat label="Internet p95" value={orAbsent(latency.internetP95Ms)} />
-            <Stat label="Internet jitter" value={orAbsent(latency.internetJitterMs)} />
+            {figures.tiles.map((t) => (
+              <Stat key={t.label} label={t.label} value={t.value} />
+            ))}
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
@@ -294,8 +368,8 @@ function RouteCard({
                 Improvement
               </div>
               <div className={cn('text-lg font-bold tabular-nums', TIER_PCT_TEXT[tier])}>
-                {latency.improvementPct !== null
-                  ? `${latency.improvementPct > 0 ? '+' : ''}${latency.improvementPct.toFixed(1)}%`
+                {figures.improvementPct !== null
+                  ? `${figures.improvementPct > 0 ? '+' : ''}${figures.improvementPct.toFixed(1)}%`
                   : '—'}
               </div>
             </div>
@@ -317,15 +391,19 @@ function RouteCard({
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">
                 7 days
               </div>
-              {/* Sparkline renders "no history" for two empty series. Showing that
-                  while the 7-day query is still in flight reads as "DoubleZero has
-                  no data" at exactly the wrong moment, so wait for the query. */}
-              {seriesPending ? (
+              {/* Sparkline renders "no history" for two empty series. Reaching that
+                  while the query is in flight or has failed would tell a customer
+                  DoubleZero has no measurement history, so both states are named. */}
+              {!series && (seriesPending || seriesError) ? (
                 <div
-                  className="flex items-center justify-center text-muted-foreground"
+                  className="flex items-center justify-center text-xs text-muted-foreground"
                   style={{ width: 220, height: 40 }}
                 >
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  {seriesError ? (
+                    'history unavailable'
+                  ) : (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  )}
                 </div>
               ) : (
                 <Sparkline dz={series?.dz ?? []} internet={series?.internet ?? []} />
@@ -334,10 +412,8 @@ function RouteCard({
           </div>
 
           <div className="mt-3 space-y-1">
-            {partial && (
-              <p className="text-xs text-muted-foreground">
-                One or more hops had no recent measurements; this route shows contracted latency.
-              </p>
+            {figures.footnote && (
+              <p className="text-xs text-muted-foreground">{figures.footnote}</p>
             )}
             {[fromMetro, toMetro].map((code) => {
               const pk = metroPkFor(code)
@@ -355,18 +431,20 @@ export function RoutesPage() {
   // --- URL state -----------------------------------------------------------
   const [searchParams, setSearchParams] = useSearchParams()
 
-  const routes: SelectedRoute[] = useMemo(() => {
+  const { routes, truncated } = useMemo(() => {
     const raw = searchParams.get('routes')
-    if (!raw) return []
+    if (!raw) return { routes: [] as SelectedRoute[], truncated: false }
     // parseRouteToken returns null for a malformed token. Drop those rather than
     // coercing — a corrupted shared link must not render as a plausible-but-wrong
     // route, which is the same failure the Zurich N/A rule exists to prevent.
-    return raw
+    const parsed = raw
       .split(',')
       .filter(Boolean)
       .map(parseRouteToken)
       .filter((r): r is NonNullable<ReturnType<typeof parseRouteToken>> => r !== null)
-      .slice(0, MAX_ROUTES)
+    // Truncation is reported, not silent: otherwise the recipient of a shared
+    // link sees a different set of routes than the sender and cannot tell.
+    return { routes: parsed.slice(0, MAX_ROUTES), truncated: parsed.length > MAX_ROUTES }
   }, [searchParams])
 
   const setRoutes = useCallback(
@@ -391,11 +469,19 @@ export function RoutesPage() {
     staleTime: 300000,
   })
 
-  const { data: latencyData } = useQuery({
+  const {
+    data: latencyData,
+    isPending: latencyPending,
+    error: latencyQueryError,
+  } = useQuery({
     queryKey: ['metro-path-latency', 'latency'],
     queryFn: () => fetchMetroPathLatency('latency'),
     staleTime: 60000,
   })
+
+  // The endpoint also returns 200 with an `error` body on a backend failure, so
+  // check both. Either way the card must not fall through to "no path".
+  const latencyError = Boolean(latencyQueryError) || Boolean(latencyData?.error)
 
   const resolved = useMemo(() => routes.map(resolveRoute), [routes])
 
@@ -404,7 +490,11 @@ export function RoutesPage() {
     [resolved],
   )
 
-  const { data: seriesData, isPending: seriesIsPending } = useQuery({
+  const {
+    data: seriesData,
+    isPending: seriesIsPending,
+    error: seriesQueryError,
+  } = useQuery({
     queryKey: ['route-series', pairKeys.join(',')],
     queryFn: () => fetchRouteSeries(pairKeys),
     enabled: pairKeys.length > 0,
@@ -412,7 +502,8 @@ export function RoutesPage() {
   })
 
   // A disabled query reports isPending, so gate on there being something to fetch.
-  const seriesPending = pairKeys.length > 0 && seriesIsPending
+  const seriesError = Boolean(seriesQueryError) || Boolean(seriesData?.error)
+  const seriesPending = pairKeys.length > 0 && seriesIsPending && !seriesError
 
   const latencyByPair = useMemo(() => {
     const map = new Map<string, MetroPathLatency>()
@@ -495,6 +586,13 @@ export function RoutesPage() {
           Round-trip latency between metros, measured over the DoubleZero network and the public
           internet.
         </p>
+        <p className="mt-1 text-xs text-muted-foreground max-w-4xl">
+          Figures are averages over the last 24 hours; the spark lines show the last 7 days by the
+          hour. The public-internet figures are measured end to end. The DoubleZero p95 and jitter
+          are sums of each hop&apos;s own p95 and mean jitter — percentiles and jitter do not add,
+          so those two figures are higher than what a packet actually sees. The bias runs against
+          DoubleZero.
+        </p>
 
         {/* Selection */}
         <div className="flex flex-wrap items-end gap-2 mt-4">
@@ -520,9 +618,10 @@ export function RoutesPage() {
             <Plus className="h-3 w-3" />
             Add route
           </button>
-          {atLimit && (
+          {(atLimit || truncated) && (
             <span className="text-xs text-muted-foreground pb-1.5">
-              Showing the maximum of {MAX_ROUTES} routes. Remove one to add another.
+              Showing the maximum of {MAX_ROUTES} routes
+              {truncated ? '; this link asked for more.' : '. Remove one to add another.'}
             </span>
           )}
         </div>
@@ -545,8 +644,11 @@ export function RoutesPage() {
                 labelFor={labelFor}
                 metroPkFor={metroPkFor}
                 latency={r.pairKey ? (latencyByPair.get(r.pairKey) ?? null) : null}
+                latencyPending={latencyPending}
+                latencyError={latencyError}
                 series={r.pairKey ? (seriesByPair.get(r.pairKey) ?? null) : null}
                 seriesPending={seriesPending}
+                seriesError={seriesError}
                 onRemove={() => setRoutes(routes.filter((_, idx) => idx !== i))}
                 onAnchorChange={(side, anchor) =>
                   setRoutes(
