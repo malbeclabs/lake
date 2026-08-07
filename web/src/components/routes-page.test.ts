@@ -1,5 +1,24 @@
 import { describe, expect, it } from 'vitest'
-import { pairKeyOf, resolveRoute } from './routes-page'
+import { orientPath, pairKeyOf, resolveRoute } from './routes-page'
+
+describe('orientPath', () => {
+  // The API emits both directions of a pair and builds its slice from a Go map,
+  // so an undirected lookup returns either one at random. The displayed path must
+  // still read from the origin the customer picked, on every load.
+  it('keeps a path that already starts at the route origin', () => {
+    expect(orientPath(['tyo', 'fra', 'lon'], 'tyo', 'tyo')).toEqual(['tyo', 'fra', 'lon'])
+  })
+
+  it('reverses a path that arrived the other way round', () => {
+    expect(orientPath(['lon', 'fra', 'tyo'], 'lon', 'tyo')).toEqual(['tyo', 'fra', 'lon'])
+  })
+
+  it('compares case-insensitively and does not mutate the input', () => {
+    const path = ['TYO', 'fra', 'lon']
+    expect(orientPath(path, 'TYO', 'tyo')).toEqual(['TYO', 'fra', 'lon'])
+    expect(path).toEqual(['TYO', 'fra', 'lon'])
+  })
+})
 
 describe('resolveRoute', () => {
   it('keys an on-net route lexicographically, whichever way round it was picked', () => {

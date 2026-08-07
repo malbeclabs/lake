@@ -98,6 +98,20 @@ function orAbsent(ms: number): string | null {
   return ms > 0 ? fmtMs(ms) : null
 }
 
+/**
+ * Orients an API path so it reads from the origin the customer picked.
+ *
+ * The latency lookup is keyed undirected (see `pairKeyOf`) — that is what stops
+ * a route's DoubleZero and internet figures coming from different anchors — but
+ * the API emits both directions of every pair and builds its slice by ranging a
+ * Go map, so which one wins the lookup is chance. Without this, the same shared
+ * link renders "tyo ─ fra ─ lon" on one load and "lon ─ fra ─ tyo" on the next.
+ * Figures are direction-symmetric, so only the display order needs fixing.
+ */
+export function orientPath(pathMetros: string[], apiFrom: string, routeFrom: string): string[] {
+  return apiFrom.toLowerCase() === routeFrom.toLowerCase() ? pathMetros : [...pathMetros].reverse()
+}
+
 /** One measured figure, or an em dash when the figure is absent. */
 function Stat({ label, value }: { label: string; value: string | null }) {
   return (
@@ -181,6 +195,7 @@ function RouteCard({
   metroPkFor,
   latency,
   series,
+  seriesPending,
   onRemove,
   onAnchorChange,
 }: {
@@ -189,6 +204,7 @@ function RouteCard({
   metroPkFor: (metroCode: string | null) => string | null
   latency: MetroPathLatency | null
   series: { dz: number[]; internet: number[] } | null
+  seriesPending: boolean
   onRemove: () => void
   onAnchorChange: (side: 'from' | 'to', anchor: string) => void
 }) {
@@ -293,13 +309,27 @@ function RouteCard({
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">
                 Path
               </div>
-              <div className="font-mono text-sm truncate">{latency.pathMetros.join(' ─ ')}</div>
+              <div className="font-mono text-sm truncate">
+                {orientPath(latency.pathMetros, latency.fromMetroCode, fromMetro ?? '').join(' ─ ')}
+              </div>
             </div>
             <div className="ml-auto">
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">
                 7 days
               </div>
-              <Sparkline dz={series?.dz ?? []} internet={series?.internet ?? []} />
+              {/* Sparkline renders "no history" for two empty series. Showing that
+                  while the 7-day query is still in flight reads as "DoubleZero has
+                  no data" at exactly the wrong moment, so wait for the query. */}
+              {seriesPending ? (
+                <div
+                  className="flex items-center justify-center text-muted-foreground"
+                  style={{ width: 220, height: 40 }}
+                >
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                </div>
+              ) : (
+                <Sparkline dz={series?.dz ?? []} internet={series?.internet ?? []} />
+              )}
             </div>
           </div>
 
@@ -312,7 +342,7 @@ function RouteCard({
             {[fromMetro, toMetro].map((code) => {
               const pk = metroPkFor(code)
               if (!pk || !code) return null
-              return <FacilityDisclosure key={code} metroPk={pk} metroLabel={code.toUpperCase()} />
+              return <FacilityDisclosure key={code} metroPk={pk} metroLabel={labelFor(code)} />
             })}
           </div>
         </>
@@ -342,8 +372,10 @@ export function RoutesPage() {
   const setRoutes = useCallback(
     (next: SelectedRoute[]) => {
       const tokens = next.map((r) => formatRouteToken(r.from, r.to, r.fromAnchor, r.toAnchor))
-      // Replace the whole param so a shared link reproduces the view exactly.
-      setSearchParams(tokens.length ? { routes: tokens.join(',') } : {})
+      // Replace the whole param so a shared link reproduces the view exactly, and
+      // replace the history entry so Back leaves the page rather than walking
+      // back through every intermediate route list.
+      setSearchParams(tokens.length ? { routes: tokens.join(',') } : {}, { replace: true })
     },
     [setSearchParams],
   )
@@ -372,12 +404,15 @@ export function RoutesPage() {
     [resolved],
   )
 
-  const { data: seriesData } = useQuery({
+  const { data: seriesData, isPending: seriesIsPending } = useQuery({
     queryKey: ['route-series', pairKeys.join(',')],
     queryFn: () => fetchRouteSeries(pairKeys),
     enabled: pairKeys.length > 0,
     staleTime: 300000,
   })
+
+  // A disabled query reports isPending, so gate on there being something to fetch.
+  const seriesPending = pairKeys.length > 0 && seriesIsPending
 
   const latencyByPair = useMemo(() => {
     const map = new Map<string, MetroPathLatency>()
@@ -511,6 +546,7 @@ export function RoutesPage() {
                 metroPkFor={metroPkFor}
                 latency={r.pairKey ? (latencyByPair.get(r.pairKey) ?? null) : null}
                 series={r.pairKey ? (seriesByPair.get(r.pairKey) ?? null) : null}
+                seriesPending={seriesPending}
                 onRemove={() => setRoutes(routes.filter((_, idx) => idx !== i))}
                 onAnchorChange={(side, anchor) =>
                   setRoutes(
