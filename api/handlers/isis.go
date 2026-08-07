@@ -1700,7 +1700,9 @@ type MetroPathLatency struct {
 	HopCount           int      `json:"hopCount"`
 	BottleneckBwGbps   float64  `json:"bottleneckBwGbps"`
 	InternetLatencyMs  float64  `json:"internetLatencyMs"`
-	ImprovementPct     *float64 `json:"improvementPct"` // vs internet, computed from measured latency
+	InternetP95Ms      float64  `json:"internetP95Ms"`    // 95th percentile of internet samples (ms)
+	InternetJitterMs   float64  `json:"internetJitterMs"` // mean |IPDV| of internet samples (ms)
+	ImprovementPct     *float64 `json:"improvementPct"`   // vs internet, computed from measured latency
 }
 
 // MetroPathLatencyResponse is the response for the metro path latency endpoint
@@ -1824,7 +1826,12 @@ func (a *API) FetchMetroPathLatencyData(ctx context.Context, optimize string, wi
 		SELECT
 			least(ma.code, mz.code) AS metro1,
 			greatest(ma.code, mz.code) AS metro2,
-			round(avg(f.rtt_us) / 1000.0, 2) AS avg_rtt_ms
+			round(avg(f.rtt_us) / 1000.0, 2) AS avg_rtt_ms,
+			round(quantile(0.95)(f.rtt_us) / 1000.0, 2) AS p95_rtt_ms,
+			-- ipdv_us is nullable; avg skips nulls and yields NULL over an
+			-- all-null group. Fold that to 0 here so the column stays Float64 and
+			-- an unmeasured pair reads as absent rather than failing the scan.
+			round(ifNull(avg(abs(f.ipdv_us)), 0) / 1000.0, 3) AS jitter_ms
 		FROM fact_dz_internet_metro_latency f
 		JOIN dz_metros_current ma ON f.origin_metro_pk = ma.pk
 		JOIN dz_metros_current mz ON f.target_metro_pk = mz.pk
@@ -1841,26 +1848,20 @@ func (a *API) FetchMetroPathLatencyData(ctx context.Context, optimize string, wi
 		defer rows.Close()
 		for rows.Next() {
 			var metro1, metro2 string
-			var avgRttMs float64
-			if err := rows.Scan(&metro1, &metro2, &avgRttMs); err != nil {
+			var avgRttMs, p95RttMs, jitterMs float64
+			if err := rows.Scan(&metro1, &metro2, &avgRttMs, &p95RttMs, &jitterMs); err != nil {
 				return nil, fmt.Errorf("failed to scan internet latency row: %w", err)
 			}
-			// Update both directions in pathMap
-			key1 := metro1 + ":" + metro2
-			key2 := metro2 + ":" + metro1
-			if p, ok := pathMap[key1]; ok {
-				p.InternetLatencyMs = avgRttMs
-				basis := p.MeasuredLatencyMs
-				if basis <= 0 {
-					basis = p.PathLatencyMs
+			// The pair is stored under both orderings and the internet figures are
+			// direction-agnostic, so both entries get the same values.
+			for _, key := range [2]string{metro1 + ":" + metro2, metro2 + ":" + metro1} {
+				p, ok := pathMap[key]
+				if !ok {
+					continue
 				}
-				if avgRttMs > 0 && basis > 0 {
-					pct := (avgRttMs - basis) / avgRttMs * 100
-					p.ImprovementPct = &pct
-				}
-			}
-			if p, ok := pathMap[key2]; ok {
 				p.InternetLatencyMs = avgRttMs
+				p.InternetP95Ms = p95RttMs
+				p.InternetJitterMs = jitterMs
 				basis := p.MeasuredLatencyMs
 				if basis <= 0 {
 					basis = p.PathLatencyMs

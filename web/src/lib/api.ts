@@ -4496,6 +4496,10 @@ export interface MetroPathLatency {
   hopCount: number
   bottleneckBwGbps: number
   internetLatencyMs: number
+  /** 0 when unmeasured — the internet side has no partiallyCommitted-style flag. */
+  internetP95Ms: number
+  /** 0 when unmeasured — the internet side has no partiallyCommitted-style flag. */
+  internetJitterMs: number
   improvementPct: number | null
 }
 

@@ -93,6 +93,11 @@ function fmtMs(ms: number): string {
   return `${ms.toFixed(2)} ms`
 }
 
+/** 0 means the figure was never measured, so render it as absent, not as zero. */
+function orAbsent(ms: number): string | null {
+  return ms > 0 ? fmtMs(ms) : null
+}
+
 /** One measured figure, or an em dash when the figure is absent. */
 function Stat({ label, value }: { label: string; value: string | null }) {
   return (
@@ -259,12 +264,12 @@ function RouteCard({
             <Stat label="DoubleZero mean" value={fmtMs(latency.measuredLatencyMs)} />
             <Stat label="DoubleZero p95" value={partial ? null : fmtMs(latency.measuredP95Ms)} />
             <Stat label="DoubleZero jitter" value={partial ? null : fmtMs(latency.measuredJitterMs)} />
-            <Stat
-              label="Internet mean"
-              value={latency.internetLatencyMs > 0 ? fmtMs(latency.internetLatencyMs) : null}
-            />
-            <Stat label="Internet p95" value={null} />
-            <Stat label="Internet jitter" value={null} />
+            {/* Suppression is asymmetric: on the DoubleZero side partiallyCommitted
+                is the signal and p95/jitter are 0 when it is set; on the internet
+                side there is no such flag, so 0 is the only signal for absent. */}
+            <Stat label="Internet mean" value={orAbsent(latency.internetLatencyMs)} />
+            <Stat label="Internet p95" value={orAbsent(latency.internetP95Ms)} />
+            <Stat label="Internet jitter" value={orAbsent(latency.internetJitterMs)} />
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
@@ -304,10 +309,6 @@ function RouteCard({
                 One or more hops had no recent measurements; this route shows contracted latency.
               </p>
             )}
-            <p className="text-xs text-muted-foreground">
-              Public-internet p95 and jitter are not measured, so only the mean round-trip is
-              reported for that side.
-            </p>
             {[fromMetro, toMetro].map((code) => {
               const pk = metroPkFor(code)
               if (!pk || !code) return null
