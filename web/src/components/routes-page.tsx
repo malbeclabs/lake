@@ -368,7 +368,7 @@ function RouteCard({
                 Improvement
               </div>
               <div className={cn('text-lg font-bold tabular-nums', TIER_PCT_TEXT[tier])}>
-                {figures.improvementPct !== null
+                {figures.improvementPct != null
                   ? `${figures.improvementPct > 0 ? '+' : ''}${figures.improvementPct.toFixed(1)}%`
                   : '—'}
               </div>
@@ -587,7 +587,7 @@ export function RoutesPage() {
           internet.
         </p>
         <p className="mt-1 text-xs text-muted-foreground max-w-4xl">
-          Figures are averages over the last 24 hours; the spark lines show the last 7 days by the
+          Figures cover the last 24 hours; the spark lines show the last 7 days by the
           hour. The public-internet figures are measured end to end. The DoubleZero p95 and jitter
           are sums of each hop&apos;s own p95 and mean jitter — percentiles and jitter do not add,
           so those two figures are higher than what a packet actually sees. The bias runs against
