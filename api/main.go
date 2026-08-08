@@ -474,10 +474,23 @@ func main() {
 		corsOrigins = strings.Split(origins, ",")
 	}
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   corsOrigins,
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Content-Type", "Authorization", "X-DZ-Env"},
-		ExposedHeaders:   []string{"X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"},
+		AllowedOrigins: corsOrigins,
+		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		// Mcp-Session-Id, MCP-Protocol-Version, and Last-Event-ID are required by
+		// the MCP Streamable HTTP transport. A browser-based MCP client cannot
+		// send them unless they are allowed here.
+		AllowedHeaders: []string{
+			"Content-Type", "Authorization", "X-DZ-Env",
+			"Mcp-Session-Id", "MCP-Protocol-Version", "Last-Event-ID",
+		},
+		// Mcp-Session-Id must be exposed or a browser client cannot read the
+		// session ID off the InitializeResult, and the spec requires it to be
+		// echoed on every subsequent request. Without this, sessions are
+		// impossible from a browser even though the server issues the header.
+		ExposedHeaders: []string{
+			"X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset",
+			"Mcp-Session-Id",
+		},
 		AllowCredentials: false,
 		MaxAge:           300,
 	}))

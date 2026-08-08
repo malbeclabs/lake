@@ -9,8 +9,14 @@
 #
 # About DoubleZero: https://doublezero.xyz
 
-# Content Signals: we permit search indexing, AI input (RAG / grounding),
-# and AI training on this content.
+# Content Signals (Cloudflare standard — https://contentsignals.org)
+#   search   = yes : building a search index and returning links and excerpts
+#   ai-input = yes : using this content as model input (RAG, grounding, answers)
+#   ai-train = yes : training or fine-tuning AI models
+#
+# All three are granted. This is public network telemetry and we want it used.
+# The directive is repeated in each group below, because it is scoped to its
+# group and robots.txt groups do not inherit from one another.
 User-agent: *
 Content-Signal: search=yes, ai-input=yes, ai-train=yes
 Allow: /
