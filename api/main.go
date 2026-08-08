@@ -182,8 +182,18 @@ func spaHandler(staticDir, assetBucketURL string) http.HandlerFunc {
 				}
 			}
 
-			// For static assets, try fetching from S3 bucket if configured
 			ext := strings.ToLower(filepath.Ext(r.URL.Path))
+
+			// Agent discovery resources must 404 when absent rather than falling
+			// through to index.html. Clients probing for these treat any 200 as
+			// "supported", so an HTML fallback makes every check look like a pass.
+			if strings.HasPrefix(r.URL.Path, "/.well-known/") || ext == ".txt" || ext == ".xml" {
+				setNoCacheHeaders(w)
+				http.NotFound(w, r)
+				return
+			}
+
+			// For static assets, try fetching from S3 bucket if configured
 			if staticExtensions[ext] {
 				// Extract asset name (e.g., "assets/index-abc123.js" from "/assets/index-abc123.js")
 				assetName := strings.TrimPrefix(r.URL.Path, "/assets/")
@@ -484,6 +494,14 @@ func main() {
 			w.Header().Set("X-Frame-Options", "DENY")
 			w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 
+			// Advertise agent discovery resources on document responses. Agents
+			// that read headers can find the MCP server without fetching /llms.txt.
+			if r.URL.Path == "/" {
+				w.Header().Add("Link", `</.well-known/mcp.json>; rel="service-desc"; type="application/json"`)
+				w.Header().Add("Link", `</.well-known/api-catalog>; rel="api-catalog"; type="application/linkset+json"`)
+				w.Header().Add("Link", `</llms.txt>; rel="describedby"; type="text/plain"`)
+			}
+
 			next.ServeHTTP(w, r)
 		})
 	})
@@ -753,6 +771,11 @@ func main() {
 	mcpHandler := api.InitMCP()
 	r.Handle("/api/mcp", mcpHandler)
 	r.Handle("/api/mcp/*", mcpHandler)
+
+	// Agent discovery. These must be registered before the SPA catch-all so
+	// they are not shadowed by the index.html fallback.
+	r.Get("/.well-known/mcp.json", api.GetMCPServerCard)
+	r.Get("/.well-known/api-catalog", api.GetAPICatalog)
 
 	// Serve static files from the web dist directory
 	webDir := os.Getenv("WEB_DIST_DIR")
