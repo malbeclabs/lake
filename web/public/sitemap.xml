@@ -33,10 +33,6 @@
     <changefreq>daily</changefreq>
   </url>
   <url>
-    <loc>https://data.doublezero.xyz/dz/edge/scoreboard</loc>
-    <changefreq>daily</changefreq>
-  </url>
-  <url>
     <loc>https://data.doublezero.xyz/dz/facilities</loc>
     <changefreq>daily</changefreq>
   </url>
@@ -50,10 +46,6 @@
   </url>
   <url>
     <loc>https://data.doublezero.xyz/dz/geoloc/users</loc>
-    <changefreq>daily</changefreq>
-  </url>
-  <url>
-    <loc>https://data.doublezero.xyz/dz/hyperliquid</loc>
     <changefreq>daily</changefreq>
   </url>
   <url>
@@ -78,14 +70,6 @@
   </url>
   <url>
     <loc>https://data.doublezero.xyz/dz/multicast-groups</loc>
-    <changefreq>daily</changefreq>
-  </url>
-  <url>
-    <loc>https://data.doublezero.xyz/dz/publisher-check</loc>
-    <changefreq>daily</changefreq>
-  </url>
-  <url>
-    <loc>https://data.doublezero.xyz/dz/shreds</loc>
     <changefreq>daily</changefreq>
   </url>
   <url>
@@ -117,10 +101,6 @@
     <changefreq>daily</changefreq>
   </url>
   <url>
-    <loc>https://data.doublezero.xyz/dz/shreds/seats</loc>
-    <changefreq>daily</changefreq>
-  </url>
-  <url>
     <loc>https://data.doublezero.xyz/dz/shreds/subscribers</loc>
     <changefreq>daily</changefreq>
   </url>
@@ -129,19 +109,11 @@
     <changefreq>daily</changefreq>
   </url>
   <url>
-    <loc>https://data.doublezero.xyz/incidents</loc>
+    <loc>https://data.doublezero.xyz/ops/incidents/devices</loc>
     <changefreq>daily</changefreq>
   </url>
   <url>
-    <loc>https://data.doublezero.xyz/incidents/devices</loc>
-    <changefreq>daily</changefreq>
-  </url>
-  <url>
-    <loc>https://data.doublezero.xyz/incidents/links</loc>
-    <changefreq>daily</changefreq>
-  </url>
-  <url>
-    <loc>https://data.doublezero.xyz/performance</loc>
+    <loc>https://data.doublezero.xyz/ops/incidents/links</loc>
     <changefreq>daily</changefreq>
   </url>
   <url>
@@ -201,15 +173,15 @@
     <changefreq>daily</changefreq>
   </url>
   <url>
-    <loc>https://data.doublezero.xyz/topology</loc>
-    <changefreq>daily</changefreq>
-  </url>
-  <url>
     <loc>https://data.doublezero.xyz/topology/globe</loc>
     <changefreq>daily</changefreq>
   </url>
   <url>
     <loc>https://data.doublezero.xyz/topology/graph</loc>
+    <changefreq>daily</changefreq>
+  </url>
+  <url>
+    <loc>https://data.doublezero.xyz/topology/maintenance</loc>
     <changefreq>daily</changefreq>
   </url>
   <url>
@@ -226,14 +198,6 @@
   </url>
   <url>
     <loc>https://data.doublezero.xyz/topology/redundancy</loc>
-    <changefreq>daily</changefreq>
-  </url>
-  <url>
-    <loc>https://data.doublezero.xyz/traffic</loc>
-    <changefreq>daily</changefreq>
-  </url>
-  <url>
-    <loc>https://data.doublezero.xyz/traffic/dashboard</loc>
     <changefreq>daily</changefreq>
   </url>
   <url>

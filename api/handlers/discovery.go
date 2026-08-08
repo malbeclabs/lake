@@ -6,7 +6,14 @@ import (
 )
 
 // baseURL reconstructs the public origin for the current request. The service
-// runs behind Cloudflare, so the forwarded proto is authoritative when present.
+// runs behind Cloudflare, which terminates TLS, so the forwarded proto is
+// authoritative when present.
+//
+// The host comes from r.Host only. Cloudflare preserves the original Host
+// header and does not set X-Forwarded-Host, so honoring that header would gain
+// nothing while letting a client dictate the URLs in these documents. Both
+// responses are cached with a public max-age, so a spoofed host could be
+// served on to other agents by an intermediary cache.
 func baseURL(r *http.Request) string {
 	scheme := "http"
 	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
@@ -15,12 +22,7 @@ func baseURL(r *http.Request) string {
 		scheme = "https"
 	}
 
-	host := r.Header.Get("X-Forwarded-Host")
-	if host == "" {
-		host = r.Host
-	}
-
-	return scheme + "://" + host
+	return scheme + "://" + r.Host
 }
 
 // MCPServerCard describes the MCP server for automated discovery. The format

@@ -56,6 +56,15 @@ const (
 	defaultMetricsAddr = "0.0.0.0:0"
 )
 
+// isDocumentRequest reports whether a path serves the SPA HTML document, as
+// opposed to an API response, a discovery document, or a static asset.
+func isDocumentRequest(p string) bool {
+	if strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/.well-known/") {
+		return false
+	}
+	return filepath.Ext(p) == ""
+}
+
 // spaHandler serves static files and falls back to index.html for SPA routing.
 // If assetBucketURL is set, missing assets are fetched from the bucket and cached locally.
 func spaHandler(staticDir, assetBucketURL string) http.HandlerFunc {
@@ -495,8 +504,11 @@ func main() {
 			w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 
 			// Advertise agent discovery resources on document responses. Agents
-			// that read headers can find the MCP server without fetching /llms.txt.
-			if r.URL.Path == "/" {
+			// that read headers can find the MCP server without fetching
+			// /llms.txt. Every SPA route serves the same HTML shell, so this
+			// covers agents that land deeper than "/" as well as those that
+			// follow the client-side redirect from "/" to "/status".
+			if isDocumentRequest(r.URL.Path) {
 				w.Header().Add("Link", `</.well-known/mcp.json>; rel="service-desc"; type="application/json"`)
 				w.Header().Add("Link", `</.well-known/api-catalog>; rel="api-catalog"; type="application/linkset+json"`)
 				w.Header().Add("Link", `</llms.txt>; rel="describedby"; type="text/plain"`)
@@ -774,8 +786,15 @@ func main() {
 
 	// Agent discovery. These must be registered before the SPA catch-all so
 	// they are not shadowed by the index.html fallback.
+	//
+	// HEAD is registered alongside GET because discovery scanners and link
+	// checkers routinely probe with HEAD first, and chi answers 405 for a
+	// method it has no route for. Go suppresses the response body for HEAD,
+	// so the same handler serves both.
 	r.Get("/.well-known/mcp.json", api.GetMCPServerCard)
+	r.Head("/.well-known/mcp.json", api.GetMCPServerCard)
 	r.Get("/.well-known/api-catalog", api.GetAPICatalog)
+	r.Head("/.well-known/api-catalog", api.GetAPICatalog)
 
 	// Serve static files from the web dist directory
 	webDir := os.Getenv("WEB_DIST_DIR")
@@ -790,7 +809,12 @@ func main() {
 		if assetBucketURL != "" {
 			slog.Info("asset bucket fallback enabled", "url", assetBucketURL)
 		}
-		r.Get("/*", spaHandler(webDir, assetBucketURL))
+		staticHandler := spaHandler(webDir, assetBucketURL)
+		r.Get("/*", staticHandler)
+		// Without this, HEAD on any static path answers 405, including
+		// /robots.txt, /llms.txt, and /sitemap.xml. Scanners that probe with
+		// HEAD would read those as unsupported.
+		r.Head("/*", staticHandler)
 	}
 
 	port := os.Getenv("PORT")

@@ -65,13 +65,16 @@ func TestGetMCPServerCard(t *testing.T) {
 		assert.NotContains(t, names, "execute_cypher")
 	})
 
-	t.Run("honors forwarded host", func(t *testing.T) {
+	t.Run("ignores a spoofed forwarded host", func(t *testing.T) {
 		t.Parallel()
 
+		// These documents are cached with a public max-age, so honoring a
+		// client-supplied host would let an intermediary cache serve other
+		// agents a card pointing at an attacker's endpoint.
 		req := httptest.NewRequest(http.MethodGet, "/.well-known/mcp.json", nil)
-		req.Host = "internal:8080"
+		req.Host = "data.doublezero.xyz"
 		req.Header.Set("X-Forwarded-Proto", "https")
-		req.Header.Set("X-Forwarded-Host", "data.doublezero.xyz")
+		req.Header.Set("X-Forwarded-Host", "evil.example.com")
 		rec := httptest.NewRecorder()
 
 		api.GetMCPServerCard(rec, req)
@@ -80,6 +83,22 @@ func TestGetMCPServerCard(t *testing.T) {
 		var card handlers.MCPServerCard
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &card))
 		assert.Equal(t, "https://data.doublezero.xyz/api/mcp", card.Endpoint)
+		assert.NotContains(t, card.Endpoint, "evil.example.com")
+		assert.NotContains(t, card.Documentation, "evil.example.com")
+	})
+
+	t.Run("api catalog ignores a spoofed forwarded host", func(t *testing.T) {
+		t.Parallel()
+
+		req := httptest.NewRequest(http.MethodGet, "/.well-known/api-catalog", nil)
+		req.Host = "data.doublezero.xyz"
+		req.Header.Set("X-Forwarded-Proto", "https")
+		req.Header.Set("X-Forwarded-Host", "evil.example.com")
+		rec := httptest.NewRecorder()
+
+		api.GetAPICatalog(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		assert.NotContains(t, rec.Body.String(), "evil.example.com")
 	})
 }
 

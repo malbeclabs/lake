@@ -14,8 +14,9 @@
 User-agent: *
 Content-Signal: search=yes, ai-input=yes, ai-train=yes
 Allow: /
-
-# Operational and per-session views. Not useful to index.
+# Incident history is public network health data.
+Allow: /ops/incidents
+# Operational tooling and per-session views. Not useful to index.
 Disallow: /ops/
 Disallow: /settings
 Disallow: /query/sessions
@@ -24,7 +25,12 @@ Disallow: /dz/permission-audit
 Disallow: /dz/tenants
 
 # Named AI agents and crawlers, listed explicitly to state intent.
-# These are covered by the wildcard above; naming them removes any ambiguity.
+#
+# The rules below are duplicated from the wildcard group on purpose. robots.txt
+# groups are NOT additive: a crawler uses only the most specific group matching
+# its name, so a named group inherits nothing from `User-agent: *`. Omitting
+# these Disallow lines would exempt every agent named here from all of them.
+# Keep the two groups in sync.
 User-agent: ClaudeBot
 User-agent: Claude-User
 User-agent: Claude-SearchBot
@@ -47,5 +53,12 @@ User-agent: Bytespider
 User-agent: YouBot
 Content-Signal: search=yes, ai-input=yes, ai-train=yes
 Allow: /
+Allow: /ops/incidents
+Disallow: /ops/
+Disallow: /settings
+Disallow: /query/sessions
+Disallow: /chat/sessions
+Disallow: /dz/permission-audit
+Disallow: /dz/tenants
 
 Sitemap: https://data.doublezero.xyz/sitemap.xml

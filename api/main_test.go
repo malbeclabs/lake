@@ -80,4 +80,44 @@ func TestSPAHandlerAgentDiscovery(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("HEAD on an existing file succeeds", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodHead, "/robots.txt", nil)
+		rec := httptest.NewRecorder()
+
+		handler(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("HEAD /robots.txt = %d, want %d", rec.Code, http.StatusOK)
+		}
+	})
+}
+
+// TestIsDocumentRequest covers which responses carry the discovery Link
+// headers. API and well-known paths must not, or agents would follow a Link
+// header on a JSON response back to itself.
+func TestIsDocumentRequest(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"/", true},
+		{"/status", true},
+		{"/topology/map", true},
+		{"/dz/shreds/scoreboard", true},
+		{"/api/config", false},
+		{"/api/mcp", false},
+		{"/.well-known/mcp.json", false},
+		{"/robots.txt", false},
+		{"/llms.txt", false},
+		{"/sitemap.xml", false},
+		{"/assets/index-abc123.js", false},
+		{"/favicon.ico", false},
+	}
+
+	for _, tt := range tests {
+		if got := isDocumentRequest(tt.path); got != tt.want {
+			t.Errorf("isDocumentRequest(%q) = %v, want %v", tt.path, got, tt.want)
+		}
+	}
 }
