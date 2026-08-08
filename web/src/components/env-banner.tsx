@@ -1,7 +1,6 @@
 import { useEnv } from '@/contexts/EnvContext'
 
 const envColors: Record<string, string> = {
-  devnet: 'bg-amber-500/90 text-black',
   testnet: 'bg-purple-500/90 text-white',
 }
 
