@@ -223,7 +223,6 @@ func main() {
 	metricsAddrFlag := flag.String("metrics-addr", defaultMetricsAddr, "Address to listen on for prometheus metrics")
 	useRemoteFlag := flag.Bool("use-remote", false, "Use remote proxy database (e.g., lake_remote) instead of local data")
 	noWorkerFlag := flag.Bool("no-worker", false, "Disable embedded page cache worker (for prod where it runs standalone)")
-	noDevnetFlag := flag.Bool("no-devnet", false, "Disable devnet database connection")
 	noTestnetFlag := flag.Bool("no-testnet", false, "Disable testnet database connection")
 	verboseFlag := flag.Bool("v", false, "Verbose logging (debug level)")
 	flag.Parse()
@@ -235,9 +234,6 @@ func main() {
 	// Set env vars so config.Load() picks them up (flags take precedence over env)
 	if *useRemoteFlag {
 		os.Setenv("CLICKHOUSE_USE_REMOTE", "true")
-	}
-	if *noDevnetFlag {
-		os.Setenv("CLICKHOUSE_NO_DEVNET", "true")
 	}
 	if *noTestnetFlag {
 		os.Setenv("CLICKHOUSE_NO_TESTNET", "true")

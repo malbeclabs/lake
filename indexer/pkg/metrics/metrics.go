@@ -66,8 +66,8 @@ var (
 	// this counter a circuit that keeps failing under-collects with no signal. See
 	// classifyFetchErr in indexer/pkg/dz/telemetry/latency for what counts as a skip.
 	//
-	// dz_env is required because one indexer process serves mainnet, devnet and testnet
-	// together. Without it a devnet blip and a real mainnet under-collect are the same
+	// dz_env is required because one indexer process serves mainnet and testnet
+	// together. Without it a testnet blip and a real mainnet under-collect are the same
 	// series, and an operator who mutes the first also mutes the second.
 	TelemetryFetchSkipped = promauto.NewCounterVec(
 		prometheus.CounterOpts{
@@ -245,7 +245,7 @@ var (
 )
 
 // RecordInfluxQuery records metrics for an InfluxDB query.
-// dzEnv is the DZ network environment (e.g. "mainnet-beta", "testnet", "devnet").
+// dzEnv is the DZ network environment (e.g. "mainnet-beta", "testnet").
 // queryType describes the kind of query (e.g. "interface_usage", "baseline_in_errors", "backfill").
 func RecordInfluxQuery(dzEnv, queryType string, duration time.Duration, rows int, err error) {
 	status := "success"
