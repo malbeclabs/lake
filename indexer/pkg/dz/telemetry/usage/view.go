@@ -156,7 +156,7 @@ type ViewConfig struct {
 	RefreshInterval time.Duration
 	QueryWindow     time.Duration // How far back the initial refresh (empty table) and a beyond-horizon skip (see maxCatchupHorizon) start from
 	QueryChunk      time.Duration // Max time span of a single InfluxDB query; larger windows are split into chunks
-	DZEnv           string        // DZ network environment (e.g. "mainnet-beta", "testnet", "devnet")
+	DZEnv           string        // DZ network environment (e.g. "mainnet-beta", "testnet")
 }
 
 // defaultQueryChunk is the shipping QueryChunk: nothing outside this package

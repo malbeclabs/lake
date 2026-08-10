@@ -12,7 +12,6 @@ type DZEnv string
 
 const (
 	EnvMainnet DZEnv = "mainnet-beta"
-	EnvDevnet  DZEnv = "devnet"
 	EnvTestnet DZEnv = "testnet"
 )
 
@@ -33,7 +32,6 @@ func TelemetryDatabaseForEnv(env DZEnv) string {
 // ValidEnvs contains all recognized environment values.
 var ValidEnvs = map[DZEnv]bool{
 	EnvMainnet: true,
-	EnvDevnet:  true,
 	EnvTestnet: true,
 }
 
@@ -54,10 +52,10 @@ func EnvFromContext(ctx context.Context) DZEnv {
 
 // BuildEnvContext returns the agent system prompt context for the given environment.
 // All agent queries run against the mainnet database by default. For other environments,
-// the agent uses fully-qualified table names (e.g., lake_devnet.dim_devices_current).
+// the agent uses fully-qualified table names (e.g., lake_testnet.dim_devices_current).
 func BuildEnvContext(env DZEnv, mainnetDB string) string {
 	if env == EnvMainnet {
-		return fmt.Sprintf("You are querying the mainnet-beta environment (database: `%s`). Other DZ environments are available: devnet (`lake_devnet`), testnet (`lake_testnet`). To query these, use fully-qualified `database.table` syntax (e.g., `lake_devnet.dim_devices_current`).", mainnetDB)
+		return fmt.Sprintf("You are querying the mainnet-beta environment (database: `%s`). Other DZ environments are available: devnet (`lake_devnet`), testnet (`lake_testnet`). To query these, use fully-qualified `database.table` syntax (e.g., `lake_testnet.dim_devices_current`).", mainnetDB)
 	}
 
 	// For non-mainnet envs, tell the agent to USE the environment's database
