@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/malbeclabs/lake/utils/pkg/redact"
 )
 
 // Inserter is the subset of ClickHouse connection methods needed to write
@@ -118,7 +119,12 @@ func buildRecord(workflow, activity, network string, start time.Time, result Ref
 	}
 	if err != nil {
 		rec.Status = "error"
-		msg := err.Error()
+		// Redact before storing, not only before logging. solana-go puts the full
+		// endpoint URL in its error text, and this column is readable through
+		// /api/sql/query and the hosted MCP, so an RPC error would otherwise persist
+		// the endpoint's API key for the row's whole TTL. The slog handler already
+		// applies this to log output; the database sink was missed.
+		msg := redact.Error(err)
 		rec.ErrorMessage = &msg
 	} else {
 		rec.Status = "success"
