@@ -71,6 +71,38 @@ var (
 		[]string{"pool"},
 	)
 
+	// Flex-algo divergence: how far the unicast topology has drifted from
+	// algo 0. A link that goes live without a topology tag shows up here on
+	// the next page-cache refresh, which is the point — otherwise it is
+	// invisible until someone notices a route got slower.
+	FlexAlgoExcludedLinks = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "doublezero_lake_flexalgo_excluded_links",
+			Help: "Activated links outside the unicast topology (untagged or drained)",
+		},
+	)
+
+	FlexAlgoDivergingPairs = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "doublezero_lake_flexalgo_diverging_metro_pairs",
+			Help: "Metro pairs whose unicast path is slower than their multicast path",
+		},
+	)
+
+	FlexAlgoUnreachablePairs = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "doublezero_lake_flexalgo_unicast_unreachable_metro_pairs",
+			Help: "Metro pairs multicast can reach and unicast cannot",
+		},
+	)
+
+	FlexAlgoMaxDeltaMs = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "doublezero_lake_flexalgo_max_delta_ms",
+			Help: "Largest contracted latency a metro pair pays for using unicast instead of multicast",
+		},
+	)
+
 	// ClickHouse query metrics
 	ClickHouseQueriesTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{

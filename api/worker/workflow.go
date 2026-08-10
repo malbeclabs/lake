@@ -134,6 +134,13 @@ const publisherCheckEveryN = 4
 // absorbing the external ~10s poller that previously ran the query ~6,500×/day.
 const validatorsListingEveryN = 2
 
+// algoDivergenceEveryN slows the flex-algo divergence refresh. It runs two
+// full all-pairs path computations over two separately loaded graphs, and its
+// inputs are link topology tags, which change when someone changes them and
+// not otherwise. Every 10th slow cycle (~5 min at the default 30s interval) is
+// far inside the window in which anyone would act on an untagged link.
+const algoDivergenceEveryN = 10
+
 // dueThisCycle reports whether an entry with the given cadence refreshes on the
 // given zero-based cycle. everyN <= 1 means every cycle.
 func dueThisCycle(everyN, cycle int) bool {
@@ -191,6 +198,9 @@ func (a *Activities) entries() []cacheEntry {
 				return nil, &refreshError{"nil response"}
 			}
 			return resp, nil
+		}},
+		{name: "flex-algo divergence", key: "algo_divergence", everyN: algoDivergenceEveryN, fn: func(ctx context.Context) (any, error) {
+			return api.FetchAlgoDivergenceData(ctx)
 		}},
 		{name: "link history", key: "link_history:24h:72", fn: func(ctx context.Context) (any, error) {
 			return api.FetchLinkHistoryData(ctx, "24h", 72)
@@ -311,7 +321,7 @@ func (a *Activities) RefreshCaches(ctx context.Context, cycle int) error {
 	for _, strategy := range metroPathLatencyStrategies {
 		g.Go(func() error {
 			a.refresh(gctx, "metro path latency:"+strategy, "metro_path_latency:"+strategy, func(ctx context.Context) (any, error) {
-				return a.API.FetchMetroPathLatencyData(ctx, strategy, 0)
+				return a.API.FetchMetroPathLatencyData(ctx, strategy, "", 0)
 			}, shuttingDown, errBatchDeadline)
 			return nil
 		})

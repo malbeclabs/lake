@@ -1714,9 +1714,13 @@ type MetroPathLatency struct {
 
 // MetroPathLatencyResponse is the response for the metro path latency endpoint
 type MetroPathLatencyResponse struct {
-	Optimize string             `json:"optimize"` // "hops", "latency", or "bandwidth"
-	Paths    []MetroPathLatency `json:"paths"`
-	Summary  struct {
+	Optimize string `json:"optimize"` // "hops", "latency", or "bandwidth"
+	// Service names the link set the paths were computed over: "unicast" for
+	// the flex-algo topology, "multicast" for algo 0. It is echoed because the
+	// two answers differ on real routes and a figure is meaningless without it.
+	Service string             `json:"service"`
+	Paths   []MetroPathLatency `json:"paths"`
+	Summary struct {
 		TotalPairs        int     `json:"totalPairs"`
 		PairsWithInternet int     `json:"pairsWithInternet"`
 		AvgImprovementPct float64 `json:"avgImprovementPct"`
@@ -1737,8 +1741,15 @@ func (a *API) GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try cache first (cache only holds mainnet data)
-	if isMainnet(r.Context()) {
+	service := r.URL.Query().Get("service")
+	if !validPathService(service) {
+		writeJSON(w, MetroPathLatencyResponse{Error: "service must be 'unicast' or 'multicast'"})
+		return
+	}
+
+	// Only the default link set is cached, so the cached figures keep the basis
+	// every existing caller already reads. A service request computes fresh.
+	if service == "" && isMainnet(r.Context()) {
 		if data, err := a.readPageCache(r.Context(), "metro_path_latency:"+optimize); err == nil {
 			w.Header().Set("X-Cache", "HIT")
 			w.Header().Set("Content-Type", "application/json")
@@ -1751,28 +1762,34 @@ func (a *API) GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	response, err := a.FetchMetroPathLatencyData(ctx, optimize, 0)
+	response, err := a.FetchMetroPathLatencyData(ctx, optimize, service, 0)
 	if err != nil {
 		logError("metro path latency error", "error", err)
-		writeJSON(w, MetroPathLatencyResponse{Optimize: optimize, Paths: []MetroPathLatency{}, Error: err.Error()})
+		writeJSON(w, MetroPathLatencyResponse{Optimize: optimize, Service: service, Paths: []MetroPathLatency{}, Error: err.Error()})
 		return
 	}
 
 	writeJSON(w, response)
 }
 
-// FetchMetroPathLatencyData fetches metro path latency data for the given optimization strategy.
-// Used by both the handler and the cache.
-func (a *API) FetchMetroPathLatencyData(ctx context.Context, optimize string, window time.Duration) (*MetroPathLatencyResponse, error) {
+// FetchMetroPathLatencyData fetches metro path latency data for the given
+// optimization strategy. Used by both the handler and the cache.
+//
+// service selects the link set: "unicast" for the flex-algo topology,
+// "multicast" or "" for algo 0. The two answers differ on any pair whose best
+// path crosses a link the unicast topology leaves out — see GetAlgoDivergence
+// for which pairs those are today.
+func (a *API) FetchMetroPathLatencyData(ctx context.Context, optimize, service string, window time.Duration) (*MetroPathLatencyResponse, error) {
 	start := time.Now()
 
-	g, err := a.loadTopologyGraph(ctx, "")
+	g, err := a.loadTopologyGraph(ctx, service)
 	if err != nil {
 		return nil, fmt.Errorf("loading topology graph: %w", err)
 	}
 
 	response := &MetroPathLatencyResponse{
 		Optimize: optimize,
+		Service:  service,
 		Paths:    []MetroPathLatency{},
 	}
 
@@ -1958,6 +1975,14 @@ func (a *API) GetMetroPathDetail(w http.ResponseWriter, r *http.Request) {
 		optimize = "latency"
 	}
 
+	// The drill-down has to walk the same link set as the matrix that opened
+	// it, or the hop list contradicts the total it is explaining.
+	service := r.URL.Query().Get("service")
+	if !validPathService(service) {
+		writeJSON(w, MetroPathDetailResponse{Error: "service must be 'unicast' or 'multicast'"})
+		return
+	}
+
 	start := time.Now()
 
 	response := MetroPathDetailResponse{
@@ -1968,7 +1993,7 @@ func (a *API) GetMetroPathDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load in-memory topology graph with committed latency
-	g, err := a.loadTopologyGraph(ctx, "")
+	g, err := a.loadTopologyGraph(ctx, service)
 	if err != nil {
 		logError("metro path detail graph load error", "error", err)
 		response.Error = err.Error()
