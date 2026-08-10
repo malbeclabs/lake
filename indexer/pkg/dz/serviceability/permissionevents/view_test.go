@@ -741,12 +741,10 @@ func TestLake_PermissionEvents_View_ChunkBudgetScalesWithFetchRate(t *testing.T)
 		return v
 	}
 
-	// Worst-case contention: the limiter is view-wide, so a chunk can complete at a
-	// fraction of the configured rate when other accounts drain through it.
 	fast := newAt(100)
 	slow := newAt(10)
-	wantFast := time.Duration(float64(scanChunkSize*maxConcurrentFetches)/100*float64(time.Second)) + drainCommitReserve
-	wantSlow := time.Duration(float64(scanChunkSize*maxConcurrentFetches)/10*float64(time.Second)) + drainCommitReserve
+	wantFast := time.Duration(float64(scanChunkSize)/100*float64(time.Second)) + drainCommitReserve
+	wantSlow := time.Duration(float64(scanChunkSize)/10*float64(time.Second)) + drainCommitReserve
 
 	require.Equal(t, wantFast, fast.chunkBudget(scanChunkSize))
 	require.Equal(t, wantSlow, slow.chunkBudget(scanChunkSize))
@@ -757,6 +755,69 @@ func TestLake_PermissionEvents_View_ChunkBudgetScalesWithFetchRate(t *testing.T)
 	require.Less(t, fast.chunkBudget(1), fast.chunkBudget(scanChunkSize))
 	// The reserve is always at least the insert+checkpoint cost.
 	require.GreaterOrEqual(t, fast.chunkBudget(0), drainCommitReserve)
+
+	// The cost is the uncontended one. Reserving for worst-case contention instead
+	// (× maxConcurrentFetches) rejected every cycle holding between the two figures,
+	// and put the whole 300s activity window out of reach below about 7.4/s.
+	require.Less(t, slow.chunkBudget(scanChunkSize), 5*time.Minute,
+		"a 10/s rate must be able to drain a chunk inside the activity window")
+}
+
+// TestLake_PermissionEvents_View_PaginationReservesWhatTheChunkLoopDemands: the two
+// deadline checks in a drain have to agree on one number. When pagination guaranteed a
+// flat 30s while the chunk loop demanded chunkBudget(200) — 110s at the default rate
+// with the old worst-case factor — a cycle exiting pagination anywhere in that band
+// paged its whole backlog and then took the zero-progress error branch, having indexed
+// nothing. The gap was invisible to the other budget tests because they run at
+// testFetchesPerSecond, where the two thresholds collapse to the same value.
+func TestLake_PermissionEvents_View_PaginationReservesWhatTheChunkLoopDemands(t *testing.T) {
+	t.Parallel()
+
+	rpc := newFakeRPC(t, seqSlots(1, scanChunkSize), rowlessIxData())
+	ch := testClient(t)
+
+	start := time.Now()
+	clock := clockwork.NewFakeClockAt(start)
+
+	// 100/s: a full chunk needs 200/100 = 2s of fetching plus the 30s commit reserve.
+	// The band is deliberately narrow, because its width is also what the second half of
+	// this test spends waiting on the real limiter.
+	const perSecond = 100
+	view, err := NewView(ViewConfig{
+		Logger: laketesting.NewLogger(), Clock: clock, RPC: rpc,
+		ProgramID: testProgramID, RefreshInterval: time.Second, ClickHouse: ch,
+		FetchesPerSecond: perSecond,
+	})
+	require.NoError(t, err)
+	want := time.Duration(float64(scanChunkSize)/perSecond*float64(time.Second)) + drainCommitReserve
+	require.Equal(t, want, view.chunkBudget(scanChunkSize))
+
+	// Land inside the old band: more than the flat 30s pagination reserve, less than
+	// what a chunk needs. Pagination must refuse here rather than page everything and
+	// leave the chunk loop to error.
+	inBand := drainCommitReserve + (want-drainCommitReserve)/2
+	require.Greater(t, inBand, drainCommitReserve)
+	require.Less(t, inBand, want)
+
+	ctx, cancel := context.WithDeadline(context.Background(), start.Add(inBand))
+	defer cancel()
+	_, err = view.Refresh(ctx)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "pagination",
+		"the phase that cannot fit a chunk must be the one that says so")
+	require.ErrorContains(t, err, "fetches/second",
+		"the message must name the rate the requirement came from")
+	require.EqualValues(t, 0, rpc.decodes.Load(),
+		"no chunk may be started when pagination already knows it cannot finish one")
+
+	// Above the requirement the same backlog drains in full, so the reserve is a real
+	// threshold rather than a blanket refusal.
+	rpc.decodes.Store(0)
+	ctx2, cancel2 := context.WithDeadline(context.Background(), clock.Now().Add(10*time.Minute))
+	defer cancel2()
+	_, err = view.Refresh(ctx2)
+	require.NoError(t, err)
+	require.EqualValues(t, scanChunkSize, rpc.decodes.Load())
 }
 
 // TestLake_PermissionEvents_View_PartialCycleAlwaysReportsAFrontier: a partial cycle

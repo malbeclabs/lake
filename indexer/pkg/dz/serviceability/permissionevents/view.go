@@ -53,10 +53,6 @@ const (
 	// fetch time itself is not fixed — it follows the configured fetch rate — so the
 	// full requirement is computed per chunk by View.chunkBudget.
 	drainCommitReserve = 30 * time.Second
-	// drainBudgetMargin is the pagination-phase reserve. Signature pagination is not
-	// paced by the fetch limiter (it is getSignaturesForAddress, not getTransaction),
-	// so a fixed reserve is still the right shape there.
-	drainBudgetMargin = 30 * time.Second
 	// notFoundSkipSlotLag is how far below the newest fetched signature a not-found
 	// transaction must sit before it is skipped as pruned history. A getTransaction
 	// null near the tip is usually a load-balanced backend lagging finalization — a
@@ -101,6 +97,11 @@ func (cfg *ViewConfig) Validate() error {
 	}
 	if cfg.RefreshInterval <= 0 {
 		return errors.New("refresh interval must be greater than 0")
+	}
+	// A negative rate is not a slower drain, it is a limiter that refuses every
+	// reservation. Zero is the documented "use the package default".
+	if cfg.FetchesPerSecond < 0 {
+		return errors.New("fetches per second must not be negative")
 	}
 	if cfg.Clock == nil {
 		cfg.Clock = clockwork.NewRealClock()
@@ -331,8 +332,10 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 
 	v.markReady()
 	// "partial" = every account made progress but at least one stopped at the refresh
-	// budget with backlog left. A drain that stays partial forever is a stalled drain —
-	// the metric is what keeps that visible, since each cycle reports success.
+	// budget with backlog left. A drain that stays partial forever is a stalled drain,
+	// and it stays visible because the run is recorded with status="partial" (see
+	// result.Partial above), which never advances the staleness clock. The metric is the
+	// same signal in Prometheus.
 	if totalPending > 0 {
 		metrics.ViewRefreshTotal.WithLabelValues(metricSource, "partial").Inc()
 		v.log.Info("serviceability/permission-events: drain stopped at refresh budget",
@@ -533,23 +536,28 @@ func (v *View) drainAccount(ctx context.Context, pda solana.PublicKey, resume Hi
 		chunk := sigs[start:min(start+scanChunkSize, len(sigs))]
 
 		// Stop when too little of the deadline remains to decode, insert, and checkpoint
-		// this chunk. Progress so far is committed, so stopping with progress is a
-		// success — the next refresh continues from the cursor. Stopping with none is an
-		// error so a persistently starved account escalates instead of no-op succeeding.
+		// this chunk. Progress so far is committed, so stopping with progress returns no
+		// error and the refresh is recorded as partial; the next cycle continues from the
+		// cursor. Stopping with none is an error so a persistently starved account
+		// escalates instead of no-op succeeding.
 		//
 		// The requirement is derived from the chunk rather than fixed, because pacing put
 		// the fetch rate in charge of how long a chunk takes (see chunkBudget). A fixed
 		// reserve sized for unpaced fetches would let the drain start a chunk it cannot
-		// finish, and the overrun is silent: rate.Limiter.Wait refuses a reservation that
-		// would outlast the deadline rather than blocking, returning "would exceed context
-		// deadline", which classifies transient on the "context deadline" substring and so
-		// takes the stop-with-progress path below — reporting success after fetching a
-		// chunk's worth of transactions that commit nothing.
+		// finish: rate.Limiter.Wait refuses a reservation that would outlast the deadline
+		// rather than blocking, returning "would exceed context deadline", which
+		// classifies transient on the "context deadline" substring and so takes the
+		// stop-with-progress path below, having fetched a chunk's worth of transactions
+		// that commit nothing.
 		if deadline, ok := ctx.Deadline(); ok && deadline.Sub(v.cfg.Clock.Now()) < v.chunkBudget(len(chunk)) {
 			res.pending = len(sigs) - start
 			if start == 0 {
-				return res, fmt.Errorf("refresh budget exhausted before first chunk (%d signatures pending, %s needed)",
-					len(sigs), v.chunkBudget(len(chunk)))
+				// Name the rate as well as the requirement. This branch is also where a
+				// misconfigured rate lands, and the two causes read identically without it:
+				// a genuinely starved backlog and a rate too low to move one chunk in the
+				// window. Below roughly 0.74/s no chunk fits a 300s activity at all.
+				return res, fmt.Errorf("refresh budget exhausted before first chunk (%d signatures pending, %s needed at %g fetches/second)",
+					len(sigs), v.chunkBudget(len(chunk)), float64(v.fetchLimiter.Limit()))
 			}
 			v.log.Info("serviceability/permission-events: account drain stopping at refresh budget",
 				"permission_pk", pda.String(), "processed", start, "pending", res.pending)
@@ -617,24 +625,26 @@ func (v *View) drainAccount(ctx context.Context, pda solana.PublicKey, resume Hi
 
 // chunkBudget is how much of the refresh deadline a chunk of n signatures needs:
 // the time pacing alone will take to fetch them, plus drainCommitReserve for the
-// insert and checkpoint that follow.
+// insert and checkpoint that follow. Both drain phases test this one number, so
+// pagination never hands the chunk loop a backlog the chunk loop then refuses.
 //
-// The fetch term assumes worst-case contention. The limiter is view-wide, so up to
-// maxConcurrentFetches accounts can be draining chunks through it at once and each
-// one's chunk then completes at a fraction of the configured rate — 200 signatures
-// at 25/s is 8s alone but 80s against nine other draining accounts. Sizing for the
-// uncontended case is what would let a chunk start and then overrun.
-//
-// This can exceed the whole activity window at a very low configured rate, in which
-// case the zero-progress branch reports "budget exhausted before first chunk" every
-// cycle. That is the honest outcome: a rate that cannot move one chunk per window is
-// a misconfiguration, and it should be loud rather than silently draining nothing.
+// The fetch term is the uncontended cost. The limiter is view-wide, so a chunk drained
+// alongside others finishes slower than this — 200 signatures at 25/s is 8s alone and
+// up to 80s against nine other draining accounts. Reserving for that worst case
+// instead is what an earlier version did, and it costs more than it buys: it rejects
+// every cycle holding between 8s and 80s of deadline, which is most of them, and it
+// puts the whole activity window out of reach below about 7.4/s. What it buys is only
+// avoiding one chunk of wasted fetches, because an overrun is no longer silent — the
+// limiter refuses a reservation that would outlast the deadline, the chunk's rows are
+// dropped uncommitted, and the cycle reports partial (with progress) or errors (with
+// none). Contention also varies during a chunk, so no static factor is right; the
+// uncontended cost is at least the honest lower bound with a visible failure.
 func (v *View) chunkBudget(n int) time.Duration {
-	rate := float64(v.fetchLimiter.Limit())
-	if rate <= 0 {
+	perSecond := float64(v.fetchLimiter.Limit())
+	if perSecond <= 0 {
 		return drainCommitReserve
 	}
-	fetch := time.Duration(float64(n) * float64(maxConcurrentFetches) / rate * float64(time.Second))
+	fetch := time.Duration(float64(n) / perSecond * float64(time.Second))
 	return fetch + drainCommitReserve
 }
 
@@ -655,13 +665,6 @@ func (v *View) fetchAccountSignatures(ctx context.Context, pda solana.PublicKey,
 	var allSigs []*rpc.TransactionSignature
 	var beforeSig solana.Signature
 	for {
-		// Pagination cost is O(remaining backlog) and yields nothing processable until it
-		// reaches the cursor (pages are newest-first, chunks drain oldest-first), so a
-		// backlog whose pagination alone fills the window must fail fast here rather than
-		// burn the whole activity before the zero-progress check.
-		if deadline, ok := ctx.Deadline(); ok && deadline.Sub(v.cfg.Clock.Now()) < drainBudgetMargin {
-			return nil, fmt.Errorf("refresh budget exhausted during signature pagination (%d signatures paged)", len(allSigs))
-		}
 		opts := &rpc.GetSignaturesForAddressOpts{Commitment: rpc.CommitmentFinalized, Limit: &limit}
 		if !untilSig.IsZero() {
 			opts.Until = untilSig
@@ -678,6 +681,25 @@ func (v *View) fetchAccountSignatures(ctx context.Context, pda solana.PublicKey,
 		}
 		allSigs = append(allSigs, page...)
 		beforeSig = page[len(page)-1].Signature
+
+		// Pagination costs O(remaining backlog) and yields nothing processable until it
+		// reaches the cursor: pages come newest-first and chunks drain oldest-first. A
+		// truncated page set is not usable either, because oldest-first over the newest
+		// N signatures would checkpoint the cursor past the older ones it never saw. So
+		// pagination either completes or fails, and it fails as soon as the deadline can
+		// no longer fit a chunk of the backlog already discovered.
+		//
+		// The reserve is the same chunkBudget the chunk loop tests, over the same count.
+		// The two phases agreeing on one number is what stops a cycle from paging an
+		// entire backlog and then erroring with no chunk started.
+		//
+		// The check sits after the first page, not before: an account with nothing new
+		// costs one request and succeeds no matter how little deadline is left.
+		reserve := v.chunkBudget(min(len(allSigs), scanChunkSize))
+		if deadline, ok := ctx.Deadline(); ok && deadline.Sub(v.cfg.Clock.Now()) < reserve {
+			return nil, fmt.Errorf("refresh budget exhausted during signature pagination (%d signatures paged, %s needed to drain a chunk of them at %g fetches/second)",
+				len(allSigs), reserve, float64(v.fetchLimiter.Limit()))
+		}
 	}
 	return allSigs, nil
 }
