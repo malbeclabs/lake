@@ -25,14 +25,17 @@ import (
 
 // ExcludedLink is an activated link that carries multicast but not unicast.
 type ExcludedLink struct {
-	Code        string  `json:"code"`
-	FromMetro   string  `json:"fromMetro"`
-	ToMetro     string  `json:"toMetro"`
-	RttMs       float64 `json:"rttMs"`
-	Drained     bool    `json:"drained"`
-	EverTagged  bool    `json:"everTagged"`
-	ExcludedAt  string  `json:"excludedAt"`
-	ExcludedFor string  `json:"excludedFor"`
+	Code      string  `json:"code"`
+	FromMetro string  `json:"fromMetro"`
+	ToMetro   string  `json:"toMetro"`
+	RttMs     float64 `json:"rttMs"`
+	Drained   bool    `json:"drained"`
+	// EverIncluded is false when the link was never in the unicast set at
+	// all. A link drained from its first snapshot is never included even
+	// though it carries a tag, so this is not the same as "never tagged".
+	EverIncluded bool   `json:"everIncluded"`
+	ExcludedAt   string `json:"excludedAt"`
+	ExcludedFor  string `json:"excludedFor"`
 }
 
 // AlgoDivergencePair is a metro pair whose unicast path is longer than its
@@ -230,8 +233,10 @@ func (a *API) excludedLinks(ctx context.Context) ([]ExcludedLink, int, error) {
 			COALESCE(mz.code, '') AS to_metro,
 			l.committed_rtt_ns / 1000000.0 AS rtt_ms,
 			l.unicast_drained AS drained,
-			COALESCE(toUnixTimestamp(e.last_included_ts), 0) AS last_included_unix,
-			COALESCE(toUnixTimestamp(e.since_ts), 0) AS since_unix
+			-- toUnixTimestamp yields UInt32, which the driver will not scan into
+			-- an int64. A missing join row leaves the epoch, which is 0 here.
+			toInt64(toUnixTimestamp(e.last_included_ts)) AS last_included_unix,
+			toInt64(toUnixTimestamp(e.since_ts)) AS since_unix
 		FROM dz_links_current l
 		JOIN dz_devices_current da ON da.pk = l.side_a_pk
 		JOIN dz_devices_current dz ON dz.pk = l.side_z_pk
@@ -268,7 +273,7 @@ func (a *API) excludedLinks(ctx context.Context) ([]ExcludedLink, int, error) {
 		l.ToMetro = toM
 		l.RttMs = round2(l.RttMs)
 		l.Drained = drained == 1
-		l.EverTagged = lastInc > 0
+		l.EverIncluded = lastInc > 0
 		if sinceUnix > 0 {
 			since := time.Unix(sinceUnix, 0).UTC()
 			l.ExcludedAt = since.Format(time.RFC3339)

@@ -116,8 +116,8 @@ function ExcludedLinksTable({ data }: { data: AlgoDivergenceResponse }) {
               </td>
               <td className="px-4 py-2.5 text-sm">
                 {l.drained ? 'drained' : 'no topology tag'}
-                {!l.everTagged && (
-                  <span className="text-muted-foreground"> · never tagged</span>
+                {!l.everIncluded && (
+                  <span className="text-muted-foreground"> · never in the topology</span>
                 )}
               </td>
               <td className="px-4 py-2.5 text-sm tabular-nums" title={l.excludedAt}>

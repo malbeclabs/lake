@@ -4544,8 +4544,9 @@ export interface AlgoDivergenceLink {
   toMetro: string
   rttMs: number
   drained: boolean
-  /** True when the link once carried a topology tag and later lost it. */
-  everTagged: boolean
+  /** False when the link was never in the unicast set — note a link drained
+   *  from the start is never included even while it carries a tag. */
+  everIncluded: boolean
   /** RFC3339, or empty when the history does not reach back far enough. */
   excludedAt: string
   excludedFor: string
