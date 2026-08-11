@@ -23,7 +23,7 @@ const multicastDeliveryEntityCoverageNote = "Current observed route state is lim
 // fails with ErrAcquireConnTimeout, which is not a source-unavailable error
 // and so surfaces as a 500 — to this endpoint and to every other handler
 // sharing the env pool. The bound is 60% of the env pool's MaxOpenConns
-// (6 of the 10-conn devnet/testnet pools, 60 of mainnet's 100), leaving the
+// (6 of the 10-conn testnet pool, 60 of mainnet's 100), leaving the
 // rest for other endpoints on the same pool (same rationale and shape as
 // maxConcurrentPublisherCheckLive).
 //

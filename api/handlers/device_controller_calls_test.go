@@ -108,20 +108,20 @@ func TestGetDeviceControllerCalls_SourceUnavailableReturnsNoData(t *testing.T) {
 
 func TestGetDeviceControllerCalls_ReadsControllerEnvSourceDB(t *testing.T) {
 	api := apitesting.NewTestAPI(t, testChDB)
-	api.EnvDatabases["devnet"] = api.Database
-	api.EnvDBs["devnet"] = api.DB
+	api.EnvDatabases["testnet"] = api.Database
+	api.EnvDBs["testnet"] = api.DB
 	insertControllerCallTestDevice(t, api, "dev-controller-env-source", "DEV-CONTROLLER-ENV")
-	resetControllerCallsTable(t, api, "telemetry_devnet")
-	resetControllerCallsTable(t, api, "devnet")
+	resetControllerCallsTable(t, api, "telemetry_testnet")
+	resetControllerCallsTable(t, api, "testnet")
 
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	end := start.Add(time.Hour)
-	insertControllerCallEvents(t, api, "telemetry_devnet", "dev-controller-env-source", start.Add(10*time.Minute), start.Add(20*time.Minute))
-	insertControllerCallEvents(t, api, "devnet", "dev-controller-env-source", start.Add(50*time.Minute))
+	insertControllerCallEvents(t, api, "telemetry_testnet", "dev-controller-env-source", start.Add(10*time.Minute), start.Add(20*time.Minute))
+	insertControllerCallEvents(t, api, "testnet", "dev-controller-env-source", start.Add(50*time.Minute))
 
 	url := fmt.Sprintf("/api/dz/devices/dev-controller-env-source/controller-calls?start_time=%d&end_time=%d&bucket=30m", start.Unix(), end.Unix())
 	req := withDevicePK(httptest.NewRequest(http.MethodGet, url, nil), "dev-controller-env-source")
-	req = req.WithContext(handlers.ContextWithEnv(req.Context(), handlers.EnvDevnet))
+	req = req.WithContext(handlers.ContextWithEnv(req.Context(), handlers.EnvTestnet))
 	rr := httptest.NewRecorder()
 	api.GetDeviceControllerCalls(rr, req)
 	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
@@ -167,10 +167,10 @@ func TestGetDeviceControllerCalls_DoesNotReadTelemetrySourceDB(t *testing.T) {
 
 func TestGetDeviceControllerCalls_StoppedUnlatchesAfterHistoryWindow(t *testing.T) {
 	api := apitesting.NewTestAPI(t, testChDB)
-	api.EnvDatabases["devnet"] = api.Database
-	api.EnvDBs["devnet"] = api.DB
+	api.EnvDatabases["testnet"] = api.Database
+	api.EnvDBs["testnet"] = api.DB
 	insertControllerCallTestDevice(t, api, "dev-controller-unlatch", "DEV-CONTROLLER-UNLATCH")
-	resetControllerCallsTable(t, api, "devnet")
+	resetControllerCallsTable(t, api, "testnet")
 
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	end := start.Add(74 * time.Hour)
@@ -179,11 +179,11 @@ func TestGetDeviceControllerCalls_StoppedUnlatchesAfterHistoryWindow(t *testing.
 		INSERT INTO %[1]s.controller_grpc_getconfig_success
 		SELECT toDateTime64('%[2]s', 3), 'dev-controller-unlatch'
 		FROM numbers(4001)
-	`, "`devnet`", historyTS)))
+	`, "`testnet`", historyTS)))
 
 	url := fmt.Sprintf("/api/dz/devices/dev-controller-unlatch/controller-calls?start_time=%d&end_time=%d&bucket=30m", start.Unix(), end.Unix())
 	req := withDevicePK(httptest.NewRequest(http.MethodGet, url, nil), "dev-controller-unlatch")
-	req = req.WithContext(handlers.ContextWithEnv(req.Context(), handlers.EnvDevnet))
+	req = req.WithContext(handlers.ContextWithEnv(req.Context(), handlers.EnvTestnet))
 	rr := httptest.NewRecorder()
 	api.GetDeviceControllerCalls(rr, req)
 	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
@@ -199,18 +199,18 @@ func TestGetDeviceControllerCalls_StoppedUnlatchesAfterHistoryWindow(t *testing.
 
 func TestGetDeviceControllerCalls_GapUsesLastCallBeforeBucketEnd(t *testing.T) {
 	api := apitesting.NewTestAPI(t, testChDB)
-	api.EnvDatabases["devnet"] = api.Database
-	api.EnvDBs["devnet"] = api.DB
+	api.EnvDatabases["testnet"] = api.Database
+	api.EnvDBs["testnet"] = api.DB
 	insertControllerCallTestDevice(t, api, "dev-controller-gap", "DEV-CONTROLLER-GAP")
-	resetControllerCallsTable(t, api, "devnet")
+	resetControllerCallsTable(t, api, "testnet")
 
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	end := start.Add(time.Minute)
-	insertControllerCallEvents(t, api, "devnet", "dev-controller-gap", start.Add(-10*time.Second), start.Add(45*time.Second))
+	insertControllerCallEvents(t, api, "testnet", "dev-controller-gap", start.Add(-10*time.Second), start.Add(45*time.Second))
 
 	url := fmt.Sprintf("/api/dz/devices/dev-controller-gap/controller-calls?start_time=%d&end_time=%d&bucket=30s", start.Unix(), end.Unix())
 	req := withDevicePK(httptest.NewRequest(http.MethodGet, url, nil), "dev-controller-gap")
-	req = req.WithContext(handlers.ContextWithEnv(req.Context(), handlers.EnvDevnet))
+	req = req.WithContext(handlers.ContextWithEnv(req.Context(), handlers.EnvTestnet))
 	rr := httptest.NewRecorder()
 	api.GetDeviceControllerCalls(rr, req)
 	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())

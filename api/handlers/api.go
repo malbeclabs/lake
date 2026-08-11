@@ -99,7 +99,7 @@ func (a *API) publisherCheckLiveSem() chan struct{} {
 // multicastDeliveryQuerySem lazily builds the concurrency-bounding semaphore
 // for the request's env, so a zero-value API (used widely in tests) needs no
 // constructor change. The bound is sized from the env pool's MaxOpenConns
-// (see multicastDeliveryQuerySemSize): devnet/testnet pools are 10 conns,
+// (see multicastDeliveryQuerySemSize): the testnet pool is 10 conns,
 // mainnet is 100, and one shared counter sized for the smallest pool would
 // throttle mainnet an order of magnitude below its capacity.
 func (a *API) multicastDeliveryQuerySem(ctx context.Context) chan struct{} {
