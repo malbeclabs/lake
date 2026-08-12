@@ -3274,6 +3274,13 @@ func pathMetroCodes(nodes []string, g *kspGraph) []string {
 	return out
 }
 
+// probeArrived filters raw latency samples down to the probes that came back,
+// for a query that aliases fact_dz_device_link_latency as f. Every measured
+// figure the route page shows must apply it. The card and the chart under it
+// describe the same route, so a lost probe counted in one and not the other puts
+// two contradicting numbers in front of one reader.
+const probeArrived = `NOT f.loss AND f.rtt_us > 0`
+
 // linkMeasuredMap returns observed per-link latency keyed by "devicePK:devicePK"
 // in both directions, over the given window (0 defaults to 24h).
 //
@@ -3301,14 +3308,18 @@ func (a *API) linkMeasuredMap(ctx context.Context, window time.Duration) (map[st
 			l.side_a_pk,
 			l.side_z_pk,
 			round(avg(f.rtt_us) / 1000.0, 3) AS avg_rtt_ms,
-			round(quantile(0.95)(f.rtt_us) / 1000.0, 3) AS p95_rtt_ms,
-			round(avg(abs(f.ipdv_us)) / 1000.0, 3) AS avg_jitter_ms,
+			-- quantileExact, to match the internet p95 this figure is shown
+			-- beside. The approximate variant is not reproducible run to run.
+			round(quantileExact(0.95)(f.rtt_us) / 1000.0, 3) AS p95_rtt_ms,
+			-- ipdv_us is nullable; avg skips nulls and yields NULL over an
+			-- all-null group, which fails the scan into a float64. A link down
+			-- to one surviving probe has no IPDV at all, so fold NULL to 0.
+			round(ifNull(avg(abs(f.ipdv_us)), 0) / 1000.0, 3) AS avg_jitter_ms,
 			count() AS sample_count
 		FROM fact_dz_device_link_latency f FINAL
 		JOIN dz_links_current l ON f.link_pk = l.pk
 		WHERE f.event_ts >= now() - toIntervalSecond($1)
-		  AND NOT f.loss
-		  AND f.rtt_us > 0
+		  AND ` + probeArrived + `
 		  AND l.side_a_pk != ''
 		  AND l.side_z_pk != ''
 		GROUP BY l.side_a_pk, l.side_z_pk

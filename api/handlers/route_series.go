@@ -124,16 +124,21 @@ func (a *API) FetchRouteSeries(ctx context.Context, pairs [][2]string) (*RouteSe
 		pathByPair[a1+"-"+b1] = mp.Path.Nodes
 	}
 
-	// Hourly measured RTT per link.
+	// Hourly measured RTT per link, over the probes that arrived. This must
+	// match linkMeasuredMap: the card and the chart under it read the same
+	// route, so a lost probe counted in one and not the other makes the two
+	// disagree in front of the reader. See linkMeasuredMap for why the rollup
+	// cannot be used here.
 	linkQuery := `
 		SELECT
-			toStartOfHour(r.bucket_ts, 'UTC') AS ts,
+			toStartOfHour(f.event_ts, 'UTC') AS ts,
 			l.side_a_pk,
 			l.side_z_pk,
-			sum(r.a_avg_rtt_us * r.a_samples + r.z_avg_rtt_us * r.z_samples) / greatest(sum(r.a_samples + r.z_samples), 1) / 1000.0 AS rtt_ms
-		FROM dz_links_current l
-		JOIN link_rollup_5m r FINAL ON l.pk = r.link_pk
-		WHERE r.bucket_ts >= now() - INTERVAL 7 DAY
+			avg(f.rtt_us) / 1000.0 AS rtt_ms
+		FROM fact_dz_device_link_latency f FINAL
+		JOIN dz_links_current l ON f.link_pk = l.pk
+		WHERE f.event_ts >= now() - INTERVAL 7 DAY
+		  AND ` + probeArrived + `
 		  AND l.side_a_pk != '' AND l.side_z_pk != ''
 		GROUP BY ts, l.side_a_pk, l.side_z_pk
 	`
