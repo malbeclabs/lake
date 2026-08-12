@@ -48,9 +48,9 @@ type kalshiEntries struct {
 func (e kalshiEntries) empty() bool { return len(e.ordered) == 0 }
 
 // inClause returns the SQL predicate restricting a race to configured feeds, or "" if none are
-// configured. Every race pairs one tob_* DoubleZero feed with one competing feed, and DZ feeds
-// are never configured entries (loadKalshiScoreboardEntries rejects them), so requiring either
-// side to be in the set is equivalent to requiring the non-DZ side to be configured.
+// configured. Every counted race pairs one DoubleZero feed with one competing feed, and DZ
+// feeds are never configured entries (loadKalshiScoreboardEntries rejects them), so requiring
+// either side to be in the set is equivalent to requiring the non-DZ side to be configured.
 func (e kalshiEntries) inClause() string {
 	if e.empty() {
 		return ""
@@ -80,10 +80,38 @@ func (e kalshiEntries) display(feed string) string {
 	return e.label(feed)
 }
 
-// isKalshiDZFeed reports whether a feed is one of DoubleZero's own edge publisher arms. The
-// capture's source ids for the DZ multicast lanes are tob_-prefixed by convention, matching
-// the predicate used in SQL.
-func isKalshiDZFeed(feed string) bool { return strings.HasPrefix(feed, "tob_") }
+// kalshiDZFeedPrefixes are the capture source-id prefixes for DoubleZero's own edge publisher
+// lanes: tob_ is the top-of-book lane, mbp_ the market-by-price lanes.
+//
+// Both belong to DoubleZero, and both appear in the feed race — an MBP source emits the shared
+// BBO observation on every derived top-of-book change, so it races the venue's public feed just
+// as the top-of-book lane does. Matching only tob_ would silently drop every mbp_-vs-public
+// race from the counts and, worse, classify an mbp_ lane as a competitor. This mirrors the
+// operational dashboards' `dz_class` variable (`tob_,mbp_` in
+// infra/grafana/dashboards/kalshi-bbo-feed-race.json), which is the definition the numbers on
+// this page have to agree with.
+var kalshiDZFeedPrefixes = []string{"tob_", "mbp_"}
+
+// isKalshiDZFeed reports whether a feed is one of DoubleZero's own edge publisher lanes.
+func isKalshiDZFeed(feed string) bool {
+	for _, p := range kalshiDZFeedPrefixes {
+		if strings.HasPrefix(feed, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// kalshiIsDZSQL returns the SQL predicate matching DoubleZero's own feeds on a column, the
+// exact counterpart of isKalshiDZFeed. Keeping the two derived from one prefix list stops the
+// Go-side labelling and the SQL-side bucketing from drifting apart.
+func kalshiIsDZSQL(col string) string {
+	terms := make([]string, len(kalshiDZFeedPrefixes))
+	for i, p := range kalshiDZFeedPrefixes {
+		terms[i] = fmt.Sprintf("startsWith(%s,'%s')", col, p)
+	}
+	return "(" + strings.Join(terms, " OR ") + ")"
+}
 
 // loadKalshiScoreboardEntries reads the enabled scoreboard feeds from Postgres, in display
 // order. Zero configured rows is not an error — it is the deliberate "nothing configured yet"
@@ -116,12 +144,12 @@ func (a *API) loadKalshiScoreboardEntries(ctx context.Context) (kalshiEntries, e
 			slog.Warn("kalshi scoreboard entry skipped: unsafe feed id", "feed", feed)
 			continue
 		}
-		// tob_ feeds are DoubleZero's own; the allow-list clause relies on them never being
-		// configured entries (see inClause). A tob_ config row would broaden the clause to
-		// match races against unconfigured competitors, leaking their raw feed ids into the
+		// tob_/mbp_ feeds are DoubleZero's own; the allow-list clause relies on them never
+		// being configured entries (see inClause). Such a config row would broaden the clause
+		// to match races against unconfigured competitors, leaking their raw feed ids into the
 		// payload, so it is dropped rather than trusted.
 		if isKalshiDZFeed(feed) {
-			slog.Warn("kalshi scoreboard entry skipped: tob_ feed not allowed", "feed", feed)
+			slog.Warn("kalshi scoreboard entry skipped: DoubleZero feed not allowed", "feed", feed)
 			continue
 		}
 		e.ordered = append(e.ordered, kalshiEntry{Feed: feed, Label: label})
@@ -323,17 +351,18 @@ func (a *API) FetchKalshiScoreboardData(ctx context.Context, window, symbol stri
 		FROM (
 			SELECT measurement_node_id, location_code,
 				%[1]s AS rk,
-				if(startsWith(feed,'tob_'), loser_feed, feed) AS competitor,
-				if(startsWith(feed,'tob_'), 1, 0) AS dz_won,
+				if(%[5]s, loser_feed, feed) AS competitor,
+				if(%[5]s, 1, 0) AS dz_won,
 				-- Per-event lead, NOT a window quantile: the percentiles above are computed
 				-- here rather than read from the table.
 				lead_time_ms AS lead_ms
 			FROM %[2]s.kalshi_bbo_feed_race_summary
 			WHERE feed != loser_feed
-			  AND (startsWith(feed,'tob_') != startsWith(loser_feed,'tob_')) %[3]s
+			  AND (%[5]s != %[6]s) %[3]s
 			  AND event_ts >= now() - INTERVAL %[4]s
 		)
-		GROUP BY competitor, measurement_node_id WITH ROLLUP`, kalshiRaceKeyTuple, db, filter, interval)
+		GROUP BY competitor, measurement_node_id WITH ROLLUP`,
+		kalshiRaceKeyTuple, db, filter, interval, kalshiIsDZSQL("feed"), kalshiIsDZSQL("loser_feed"))
 
 	type stat struct {
 		wins, losses     uint64
@@ -500,19 +529,21 @@ func (a *API) fetchKalshiRecentRaces(ctx context.Context, entries kalshiEntries,
 			symbol,
 			location_code,
 			feed AS winner_feed,
-			startsWith(feed,'tob_') AS is_dz,
+			%[5]s AS is_dz,
 			argMin(loser_feed, lead_time_ms) AS runner_up_feed,
 			min(lead_time_ms) AS lead_ms
-		FROM %s.kalshi_bbo_feed_race_summary
-		-- Only DoubleZero-vs-competitor matchups (exactly one side is a tob_* DZ feed) — a
-		-- DZ-vs-DZ pairing would otherwise flood the grid with the WS/FIX arm comparison,
-		-- which is a transport question, not a race against the venue's public feed.
+		FROM %[1]s.kalshi_bbo_feed_race_summary
+		-- Only DoubleZero-vs-competitor matchups (exactly one side is a DZ feed) — a DZ-vs-DZ
+		-- pairing would otherwise flood the grid with lane-against-lane comparisons, which are
+		-- a transport question, not a race against the venue's public feed.
 		WHERE feed != loser_feed
-		  AND (startsWith(feed,'tob_') != startsWith(loser_feed,'tob_')) %s %s
+		  AND (%[5]s != %[6]s) %[2]s %[3]s
 		  AND event_ts >= now() - INTERVAL 15 MINUTE
 		GROUP BY capture_run_id, measurement_node_id, symbol, source_ts_ms, bbo_hash, location_code, feed
 		ORDER BY max_event_ts DESC
-		LIMIT %d BY symbol`, db, kalshiRecentRaceSymbolFilter(), entries.inClause(), perSymbol)
+		LIMIT %[4]d BY symbol`,
+		db, kalshiRecentRaceSymbolFilter(), entries.inClause(), perSymbol,
+		kalshiIsDZSQL("feed"), kalshiIsDZSQL("loser_feed"))
 	rows, err := a.envDB(ctx).Query(ctx, q)
 	if err != nil {
 		return nil, err

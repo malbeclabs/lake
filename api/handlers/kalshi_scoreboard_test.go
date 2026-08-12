@@ -15,6 +15,7 @@ import (
 
 const (
 	kalshiDZFeed     = "tob_lashay_1"
+	kalshiDZMbpFeed  = "mbp_lashay_2"
 	kalshiPublicFeed = "kalshi_perps_public"
 )
 
@@ -279,16 +280,60 @@ func TestKalshiScoreboard_ExcludesDZvsDZ(t *testing.T) {
 	assert.EqualValues(t, 1, resp.TotalRaces, "a DZ-vs-DZ pairing must not be counted as a race")
 }
 
-// A tob_ row in the allow-list would broaden the SQL allow-list clause to match races against
-// feeds nobody configured, leaking their raw ids into the payload. The loader drops it.
+// A DoubleZero row in the allow-list would broaden the SQL allow-list clause to match races
+// against feeds nobody configured, leaking their raw ids into the payload. The loader drops
+// it — for the market-by-price lanes as well as the top-of-book one.
 func TestKalshiScoreboard_RejectsDZFeedConfigRow(t *testing.T) {
+	for _, dzFeed := range []string{kalshiDZFeed, kalshiDZMbpFeed} {
+		t.Run(dzFeed, func(t *testing.T) {
+			api := newKalshiTestAPI(t)
+			createKalshiFeedsTable(t, api)
+			seedKalshiEntry(t, api, dzFeed, "Should Be Ignored", 0)
+			insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 10, 1, dzFeed, "some_unconfigured_feed", 1.0)
+
+			resp, err := api.FetchKalshiScoreboardData(t.Context(), "24h", "")
+			require.NoError(t, err)
+			assert.Empty(t, resp.Competitors)
+			assert.EqualValues(t, 0, resp.TotalRaces)
+		})
+	}
+}
+
+// The market-by-price lanes are DoubleZero's too: an MBP source emits the shared BBO
+// observation on every derived top-of-book change, so it races the public feed exactly as the
+// top-of-book lane does. Classifying mbp_ as a competitor would both drop these races from the
+// counts and invert who is credited with the win — the dashboards' dz_class is `tob_,mbp_`.
+func TestKalshiScoreboard_TreatsMbpLaneAsDoubleZero(t *testing.T) {
 	api := newKalshiTestAPI(t)
 	createKalshiFeedsTable(t, api)
-	seedKalshiEntry(t, api, kalshiDZFeed, "Should Be Ignored", 0)
-	insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 10, 1, kalshiDZFeed, "some_unconfigured_feed", 1.0)
+	seedKalshiEntry(t, api, kalshiPublicFeed, "Public API", 0)
+
+	// The MBP lane beats the public feed twice and loses once.
+	insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 10, 1, kalshiDZMbpFeed, kalshiPublicFeed, 1.0)
+	insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 20, 2, kalshiDZMbpFeed, kalshiPublicFeed, 3.0)
+	insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 30, 3, kalshiPublicFeed, kalshiDZMbpFeed, 0.5)
 
 	resp, err := api.FetchKalshiScoreboardData(t.Context(), "24h", "")
 	require.NoError(t, err)
-	assert.Empty(t, resp.Competitors)
-	assert.EqualValues(t, 0, resp.TotalRaces)
+
+	assert.EqualValues(t, 3, resp.TotalRaces, "mbp_ races must be counted")
+	assert.InDelta(t, 100.0*2/3, resp.DZWinSharePct, 0.1)
+	require.Len(t, resp.Competitors, 1)
+	assert.Equal(t, kalshiPublicFeed, resp.Competitors[0].Feed, "the public feed is the competitor, not the mbp_ lane")
+}
+
+// A win by an mbp_ lane must read as DoubleZero in the live grid, not as a raw source id.
+func TestKalshiScoreboard_LabelsMbpWinnerAsDoubleZero(t *testing.T) {
+	api := newKalshiTestAPI(t)
+	createKalshiFeedsTable(t, api)
+	seedKalshiEntry(t, api, kalshiPublicFeed, "Public API", 0)
+
+	insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 10, 1, kalshiDZMbpFeed, kalshiPublicFeed, 1.0)
+
+	resp, err := api.FetchKalshiScoreboardData(t.Context(), "24h", "")
+	require.NoError(t, err)
+	require.Len(t, resp.RecentRaces, 1)
+	assert.True(t, resp.RecentRaces[0].IsDZ)
+	assert.Equal(t, "DoubleZero", resp.RecentRaces[0].WinnerLabel)
+	assert.Equal(t, "Public API", resp.RecentRaces[0].RunnerUpLabel)
 }
