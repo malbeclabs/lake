@@ -1,17 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { divergenceHeadline } from './flexalgo-divergence-text'
+import { divergenceHeadline, excludedForText } from './flexalgo-divergence-text'
 import type { AlgoDivergenceResponse } from '@/lib/api'
 
 function summary(
   over: Partial<AlgoDivergenceResponse['summary']> = {}
 ): AlgoDivergenceResponse['summary'] {
   return {
-    activatedLinks: 165,
+    // The figures the deployed endpoint returns, so a reader comparing the
+    // fixture against the report does not find two different answers.
+    activatedLinks: 164,
     excludedLinks: 3,
     multicastPairs: 378,
-    divergingPairs: 49,
+    divergingPairs: 33,
     unreachablePairs: 0,
-    maxDeltaMs: 76.85,
+    maxDeltaMs: 77.11,
     ...over,
   }
 }
@@ -19,9 +21,9 @@ function summary(
 describe('divergenceHeadline', () => {
   it('reports the cost, not just the count of untagged links', () => {
     const out = divergenceHeadline(summary())
-    expect(out).toContain('3 of 165 activated links')
-    expect(out).toContain('49 of 378 metro pairs')
-    expect(out).toContain('76.85 ms')
+    expect(out).toContain('3 of 164 activated links')
+    expect(out).toContain('33 of 378 metro pairs')
+    expect(out).toContain('77.11 ms')
   })
 
   it('says the network is consistent when nothing is excluded', () => {
@@ -42,5 +44,22 @@ describe('divergenceHeadline', () => {
   it('calls out pairs unicast cannot reach at all', () => {
     const out = divergenceHeadline(summary({ unreachablePairs: 2 }))
     expect(out).toContain('2 of them with no unicast path at all')
+  })
+})
+
+describe('excludedForText', () => {
+  it('states a plain age for a link that was once in the topology', () => {
+    expect(excludedForText({ everIncluded: true, excludedFor: '89d' })).toBe('89d')
+  })
+
+  // The API dates such a link from the oldest snapshot it holds, not from the
+  // moment it left, so the age is bounded by retention. A bare "18h" beside
+  // "never in the topology" reads as a regression from this morning.
+  it('marks the age as a floor when the link was never in the topology', () => {
+    expect(excludedForText({ everIncluded: false, excludedFor: '18h' })).toBe('at least 18h')
+  })
+
+  it('reports no age at all rather than an empty cell', () => {
+    expect(excludedForText({ everIncluded: false, excludedFor: '' })).toBe('—')
   })
 })

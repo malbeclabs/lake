@@ -95,10 +95,13 @@ func (a *API) GetAlgoDivergence(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp)
 }
 
-// FetchAlgoDivergenceData computes the report and publishes its headline
-// figures as gauges. Used by both the handler and the page cache; the cache
-// refresh is what makes an untagged link visible without anyone opening the
-// page.
+// FetchAlgoDivergenceData computes the report. Used by both the handler and the
+// page cache; the cache refresh is what makes an untagged link visible without
+// anyone opening the page.
+//
+// Computing publishes nothing. The gauges are written by
+// PublishAlgoDivergenceMetrics, which only the worker calls — see the note on
+// metrics.FlexAlgoExcludedLinks for why a handler must not write them.
 func (a *API) FetchAlgoDivergenceData(ctx context.Context) (*AlgoDivergenceResponse, error) {
 	multicast, err := a.loadTopologyGraph(ctx, "multicast")
 	if err != nil {
@@ -134,12 +137,20 @@ func (a *API) FetchAlgoDivergenceData(ctx context.Context) (*AlgoDivergenceRespo
 	resp.Summary.ActivatedLinks = activated
 	resp.Summary.ExcludedLinks = len(links)
 
+	return resp, nil
+}
+
+// PublishAlgoDivergenceMetrics publishes the headline figures as gauges.
+//
+// Separate from the computation, and called only from the worker refresh, which
+// runs over mainnet alone. The gauges carry no environment label, so anything
+// that answers a caller-chosen environment must not write them.
+func PublishAlgoDivergenceMetrics(resp *AlgoDivergenceResponse) {
 	metrics.FlexAlgoExcludedLinks.Set(float64(resp.Summary.ExcludedLinks))
 	metrics.FlexAlgoDivergingPairs.Set(float64(resp.Summary.DivergingPairs))
 	metrics.FlexAlgoUnreachablePairs.Set(float64(resp.Summary.UnreachablePairs))
 	metrics.FlexAlgoMaxDeltaMs.Set(resp.Summary.MaxDeltaMs)
-
-	return resp, nil
+	metrics.FlexAlgoLastRefresh.Set(float64(time.Now().Unix()))
 }
 
 // divergingPairs compares the best path between every metro pair on the two
@@ -205,6 +216,19 @@ func divergingPairs(multicast, unicast *kspGraph) ([]AlgoDivergencePair, int) {
 // run: for a link that was tagged and then untagged it is the untagging, and
 // for one that was never tagged it falls out as the first snapshot of all,
 // because last_included_ts is the zero time and every snapshot follows it.
+//
+// That second case makes excluded_since a floor rather than an event: it is
+// bounded below by how far dim_dz_links_history reaches, not by when the link
+// left the topology. Production holds months, a preview environment holds days,
+// so the same link honestly reports "out for 18h" on a branch and "out since
+// May" on production. EverIncluded is false exactly when the date is a floor,
+// and the UI must not print a bare duration in that case.
+//
+// The link set and the metric both match loadTopologyGraph: same
+// committed_rtt_ns sentinel, and isis_delay_override_ns wins where it is set.
+// Otherwise this table would report a different number from the one the same
+// link contributes to the pair deltas, and "3 of 164" would count against a
+// denominator the 378 pairs were never measured on.
 func (a *API) excludedLinks(ctx context.Context) ([]ExcludedLink, int, error) {
 	const query = `
 		WITH included AS (
@@ -231,7 +255,7 @@ func (a *API) excludedLinks(ctx context.Context) ([]ExcludedLink, int, error) {
 			l.code AS code,
 			COALESCE(ma.code, '') AS from_metro,
 			COALESCE(mz.code, '') AS to_metro,
-			l.committed_rtt_ns / 1000000.0 AS rtt_ms,
+			if(l.isis_delay_override_ns > 0, l.isis_delay_override_ns, l.committed_rtt_ns) / 1000000.0 AS rtt_ms,
 			l.unicast_drained AS drained,
 			-- toUnixTimestamp yields UInt32, which the driver will not scan into
 			-- an int64. A missing join row leaves the epoch, which is 0 here.
@@ -244,6 +268,7 @@ func (a *API) excludedLinks(ctx context.Context) ([]ExcludedLink, int, error) {
 		LEFT JOIN dz_metros_current mz ON mz.pk = dz.metro_pk
 		LEFT JOIN excluded_since e ON e.entity_id = l.entity_id
 		WHERE l.status = 'activated'
+		  AND l.committed_rtt_ns != 1000000000
 		  AND (l.link_topologies = '[]' OR l.link_topologies = '' OR l.unicast_drained = 1)
 		ORDER BY rtt_ms DESC
 	`
@@ -286,7 +311,11 @@ func (a *API) excludedLinks(ctx context.Context) ([]ExcludedLink, int, error) {
 	}
 
 	var activated uint64
-	row := a.envDB(ctx).QueryRow(ctx, `SELECT count() FROM dz_links_current WHERE status = 'activated'`)
+	row := a.envDB(ctx).QueryRow(ctx, `
+		SELECT count()
+		FROM dz_links_current
+		WHERE status = 'activated'
+		  AND committed_rtt_ns != 1000000000`)
 	if err := row.Scan(&activated); err != nil {
 		return nil, 0, fmt.Errorf("counting activated links: %w", err)
 	}

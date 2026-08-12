@@ -1747,9 +1747,11 @@ func (a *API) GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Only the default link set is cached, so the cached figures keep the basis
-	// every existing caller already reads. A service request computes fresh.
-	if service == "" && isMainnet(r.Context()) {
+	// Only algo 0 is cached, so the cached figures keep the basis every existing
+	// caller already reads. "multicast" names that same link set — loadTopologyGraph
+	// filters for "unicast" alone — so it is served from the cache too rather
+	// than recomputing an identical graph for five times the latency.
+	if canonicalPathService(service) == "multicast" && isMainnet(r.Context()) {
 		if data, err := a.readPageCache(r.Context(), "metro_path_latency:"+optimize); err == nil {
 			w.Header().Set("X-Cache", "HIT")
 			w.Header().Set("Content-Type", "application/json")
@@ -1765,7 +1767,7 @@ func (a *API) GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 	response, err := a.FetchMetroPathLatencyData(ctx, optimize, service, 0)
 	if err != nil {
 		logError("metro path latency error", "error", err)
-		writeJSON(w, MetroPathLatencyResponse{Optimize: optimize, Service: service, Paths: []MetroPathLatency{}, Error: err.Error()})
+		writeJSON(w, MetroPathLatencyResponse{Optimize: optimize, Service: canonicalPathService(service), Paths: []MetroPathLatency{}, Error: err.Error()})
 		return
 	}
 
@@ -1789,7 +1791,7 @@ func (a *API) FetchMetroPathLatencyData(ctx context.Context, optimize, service s
 
 	response := &MetroPathLatencyResponse{
 		Optimize: optimize,
-		Service:  service,
+		Service:  canonicalPathService(service),
 		Paths:    []MetroPathLatency{},
 	}
 
@@ -1946,9 +1948,14 @@ type MetroPathDetailHop struct {
 
 // MetroPathDetailResponse is the response for the metro path detail endpoint
 type MetroPathDetailResponse struct {
-	FromMetroCode     string               `json:"fromMetroCode"`
-	ToMetroCode       string               `json:"toMetroCode"`
-	Optimize          string               `json:"optimize"`
+	FromMetroCode string `json:"fromMetroCode"`
+	ToMetroCode   string `json:"toMetroCode"`
+	Optimize      string `json:"optimize"`
+	// Service names the link set these hops were walked over, echoed for the
+	// same reason as on MetroPathLatencyResponse: the two bases disagree on a
+	// diverging pair, so a hop list means nothing without saying which one
+	// produced it.
+	Service           string               `json:"service"`
 	TotalLatencyMs    float64              `json:"totalLatencyMs"`
 	TotalHops         int                  `json:"totalHops"`
 	BottleneckBwGbps  float64              `json:"bottleneckBwGbps"`
@@ -1989,6 +1996,7 @@ func (a *API) GetMetroPathDetail(w http.ResponseWriter, r *http.Request) {
 		FromMetroCode: fromCode,
 		ToMetroCode:   toCode,
 		Optimize:      optimize,
+		Service:       canonicalPathService(service),
 		Hops:          []MetroPathDetailHop{},
 	}
 

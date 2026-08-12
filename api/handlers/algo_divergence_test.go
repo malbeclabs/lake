@@ -145,3 +145,40 @@ func TestDivergingPairsIgnoresEqualCostAlternatives(t *testing.T) {
 		t.Errorf("diverging pairs = %+v, want none: both sets reach fra-lon in 10 ms", pairs)
 	}
 }
+
+// A metro with two devices, both one equal-cost hop from the far metro. The
+// matrix and the drill-down each pick a best path independently, so with the
+// device lists in Go map order they can settle on different arms and the hop
+// list ends up explaining a total it did not produce. The metrics are equal, so
+// nothing in the figures gives the disagreement away.
+//
+// Repeated because map order is random per call: one pass can agree by luck.
+func TestMetroPathDetailPicksTheSameArmAsTheMatrix(t *testing.T) {
+	g := &kspGraph{Adj: make(map[string][]kspEdge), Nodes: make(map[string]kspNodeInfo)}
+	node := func(pk, metro string) {
+		g.Nodes[pk] = kspNodeInfo{PK: pk, Code: pk, MetroPK: "metro-" + metro, MetroCode: metro}
+	}
+	edge := func(a, b string, metric uint32) {
+		g.Adj[a] = append(g.Adj[a], kspEdge{To: b, Metric: metric})
+		g.Adj[b] = append(g.Adj[b], kspEdge{To: a, Metric: metric})
+	}
+	node("lax-1", "lax")
+	node("lax-2", "lax")
+	node("nyc-1", "nyc")
+	edge("lax-1", "nyc-1", 60_000)
+	edge("lax-2", "nyc-1", 60_000)
+
+	for i := range 50 {
+		matrix := computeMetroPairPaths(g)
+		if len(matrix) != 1 {
+			t.Fatalf("metro pairs = %d, want 1", len(matrix))
+		}
+		detail := computeMetroPathDetail(g, "lax", "nyc")
+		if detail == nil {
+			t.Fatal("no detail path")
+		}
+		if got, want := detail.Path.Nodes[0], matrix[0].Path.Nodes[0]; got != want {
+			t.Fatalf("pass %d: drill-down starts at %s, matrix at %s — same pair, different arm", i, got, want)
+		}
+	}
+}

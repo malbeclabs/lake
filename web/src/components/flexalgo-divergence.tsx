@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react'
 import { fetchAlgoDivergence } from '@/lib/api'
 import type { AlgoDivergenceResponse } from '@/lib/api'
-import { divergenceHeadline } from './flexalgo-divergence-text'
+import { divergenceHeadline, excludedForText } from './flexalgo-divergence-text'
 
 /**
  * What the unicast topology costs against algo 0.
@@ -120,8 +120,15 @@ function ExcludedLinksTable({ data }: { data: AlgoDivergenceResponse }) {
                   <span className="text-muted-foreground"> · never in the topology</span>
                 )}
               </td>
-              <td className="px-4 py-2.5 text-sm tabular-nums" title={l.excludedAt}>
-                {l.excludedFor || '—'}
+              <td
+                className="px-4 py-2.5 text-sm tabular-nums"
+                title={
+                  l.everIncluded
+                    ? l.excludedAt
+                    : `${l.excludedAt} is the oldest snapshot held, not the moment the link left the topology`
+                }
+              >
+                {excludedForText(l)}
               </td>
             </tr>
           ))}

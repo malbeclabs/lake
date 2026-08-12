@@ -4,6 +4,24 @@ import type { AlgoDivergenceResponse } from '@/lib/api'
 // mixing component and non-component exports breaks Fast Refresh.
 
 /**
+ * How long a link has been out of the unicast topology.
+ *
+ * When the link was never in it, the API's date is the oldest snapshot the
+ * history holds rather than the moment the link left, so the age is a floor and
+ * has to read as one. Production holds months and a preview holds days, which is
+ * why the same link can honestly report "at least 18h" on a branch and "at least
+ * 89d" on production. A bare "18h" beside "never in the topology" reads as a
+ * regression from this morning and sends somebody chasing it.
+ */
+export function excludedForText(l: {
+  everIncluded: boolean
+  excludedFor: string
+}): string {
+  if (!l.excludedFor) return '—'
+  return l.everIncluded ? l.excludedFor : `at least ${l.excludedFor}`
+}
+
+/**
  * States the finding in one sentence, because the number that matters is not
  * how many links are untagged but how far they move real routes.
  */

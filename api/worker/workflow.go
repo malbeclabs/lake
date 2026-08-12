@@ -200,7 +200,15 @@ func (a *Activities) entries() []cacheEntry {
 			return resp, nil
 		}},
 		{name: "flex-algo divergence", key: "algo_divergence", everyN: algoDivergenceEveryN, fn: func(ctx context.Context) (any, error) {
-			return api.FetchAlgoDivergenceData(ctx)
+			resp, err := api.FetchAlgoDivergenceData(ctx)
+			if err != nil {
+				return nil, err
+			}
+			// The only caller that publishes. This refresh runs over mainnet
+			// alone, and the gauges carry no environment label — see
+			// handlers.PublishAlgoDivergenceMetrics.
+			handlers.PublishAlgoDivergenceMetrics(resp)
+			return resp, nil
 		}},
 		{name: "link history", key: "link_history:24h:72", fn: func(ctx context.Context) (any, error) {
 			return api.FetchLinkHistoryData(ctx, "24h", 72)

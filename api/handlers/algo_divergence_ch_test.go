@@ -105,3 +105,52 @@ func TestExcludedLinksReportsDrained(t *testing.T) {
 	// tag or no tag.
 	assert.False(t, links[0].EverIncluded)
 }
+
+// seedLinkSnapshotMetric writes a link snapshot carrying an IS-IS delay
+// override, which is what the graph prices the link at when it is set.
+func seedLinkSnapshotMetric(t *testing.T, api *handlers.API, entityID, code, sideA, sideZ string, rttNs, overrideNs int64, topologies string, ts time.Time) {
+	t.Helper()
+	err := api.DB.Exec(t.Context(), `INSERT INTO dim_dz_links_history (
+		entity_id, snapshot_ts, ingested_at, op_id, is_deleted,
+		pk, code, link_type, status, contributor_pk, side_a_pk, side_z_pk,
+		bandwidth_bps, committed_rtt_ns, isis_delay_override_ns, link_topologies, unicast_drained
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+		entityID, ts, ts, "00000000-0000-0000-0000-000000000009", uint8(0),
+		entityID, code, "WAN", "activated", "contrib-1", sideA, sideZ,
+		int64(10_000_000_000), rttNs, overrideNs, topologies, uint8(0),
+	)
+	require.NoError(t, err)
+}
+
+// The table and the pair deltas have to describe the same network. The graph
+// prices a link at isis_delay_override_ns where one is set and drops links
+// carrying the committed_rtt_ns sentinel altogether, so a table built on raw
+// committed_rtt_ns over every activated link would print one number next to a
+// link that contributes another, and count "3 of N" against a denominator the
+// pairs were never measured on.
+func TestExcludedLinksMatchesTheGraphMetricAndLinkSet(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+
+	seedMetro(t, api, "metro-fra", "fra")
+	seedMetro(t, api, "metro-tyo", "tyo")
+	seedDeviceMetadata(t, api, "dev-fra", "DEV-FRA", "switch", "contrib-1", "metro-fra", 10, "activated")
+	seedDeviceMetadata(t, api, "dev-tyo", "DEV-TYO", "switch", "contrib-1", "metro-tyo", 10, "activated")
+
+	ts := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+
+	// Committed 100ms, overridden to 60ms. The graph routes on 60.
+	seedLinkSnapshotMetric(t, api, "link-override", "fra-tyo-o", "dev-fra", "dev-tyo", 100_000_000, 60_000_000, `[]`, ts)
+
+	// The committed_rtt_ns sentinel. loadTopologyGraph drops these, so this
+	// link is in no pair's path and must be in neither the list nor the total.
+	seedLinkSnapshotMetric(t, api, "link-sentinel", "fra-tyo-s", "dev-fra", "dev-tyo", 1_000_000_000, 0, `[]`, ts)
+
+	links, activated, err := api.ExportExcludedLinks(t.Context())
+	require.NoError(t, err)
+
+	require.Len(t, links, 1, "the sentinel link must not be reported: %+v", links)
+	assert.Equal(t, "fra-tyo-o", links[0].Code)
+	assert.InDelta(t, 60.0, links[0].RttMs, 0.001, "must report the metric the graph routes on")
+	assert.Equal(t, 1, activated, "the activated total must count the links the graph keeps")
+}
