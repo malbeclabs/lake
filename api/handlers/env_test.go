@@ -24,8 +24,8 @@ func TestEnvFromContext(t *testing.T) {
 
 	t.Run("round-trips with ContextWithEnv", func(t *testing.T) {
 		t.Parallel()
-		ctx := handlers.ContextWithEnv(context.Background(), handlers.EnvDevnet)
-		assert.Equal(t, handlers.EnvDevnet, handlers.EnvFromContext(ctx))
+		ctx := handlers.ContextWithEnv(context.Background(), handlers.EnvTestnet)
+		assert.Equal(t, handlers.EnvTestnet, handlers.EnvFromContext(ctx))
 
 		ctx = handlers.ContextWithEnv(context.Background(), handlers.EnvTestnet)
 		assert.Equal(t, handlers.EnvTestnet, handlers.EnvFromContext(ctx))
@@ -42,7 +42,6 @@ func TestDatabaseForEnvFromContext(t *testing.T) {
 	// Set up env databases for the test
 	api.EnvDatabases = map[string]string{
 		"mainnet-beta": "lake_mainnet",
-		"devnet":       "lake_devnet",
 		"testnet":      "lake_testnet",
 	}
 	api.Database = "lake_mainnet"
@@ -53,7 +52,6 @@ func TestDatabaseForEnvFromContext(t *testing.T) {
 		expected string
 	}{
 		{"mainnet", handlers.EnvMainnet, "lake_mainnet"},
-		{"devnet", handlers.EnvDevnet, "lake_devnet"},
 		{"testnet", handlers.EnvTestnet, "lake_testnet"},
 	}
 
@@ -73,17 +71,17 @@ func TestBuildEnvContext(t *testing.T) {
 		result := handlers.BuildEnvContext(handlers.EnvMainnet, "default")
 		assert.NotEmpty(t, result)
 		assert.Contains(t, result, "mainnet-beta")
-		assert.Contains(t, result, "lake_devnet")
+		assert.Contains(t, result, "lake_testnet")
 		assert.Contains(t, result, "lake_testnet")
 		assert.Contains(t, result, "database.table")
 	})
 
-	t.Run("devnet requires database prefix", func(t *testing.T) {
+	t.Run("testnet requires database prefix", func(t *testing.T) {
 		t.Parallel()
-		result := handlers.BuildEnvContext(handlers.EnvDevnet, "default")
+		result := handlers.BuildEnvContext(handlers.EnvTestnet, "default")
 		assert.NotEmpty(t, result)
-		assert.Contains(t, result, "devnet")
-		assert.Contains(t, result, "lake_devnet.")
+		assert.Contains(t, result, "testnet")
+		assert.Contains(t, result, "lake_testnet.")
 		assert.Contains(t, result, "MUST prefix")
 		assert.Contains(t, result, "Neo4j graph queries")
 	})
@@ -91,8 +89,8 @@ func TestBuildEnvContext(t *testing.T) {
 	t.Run("different envs produce different context", func(t *testing.T) {
 		t.Parallel()
 		mainnet := handlers.BuildEnvContext(handlers.EnvMainnet, "default")
-		devnet := handlers.BuildEnvContext(handlers.EnvDevnet, "default")
-		assert.NotEqual(t, mainnet, devnet)
+		testnetCtx := handlers.BuildEnvContext(handlers.EnvTestnet, "default")
+		assert.NotEqual(t, mainnet, testnetCtx)
 	})
 }
 
@@ -105,7 +103,7 @@ func TestEnvMiddleware(t *testing.T) {
 		queryEnv    string
 		expectedEnv handlers.DZEnv
 	}{
-		{"header present devnet", "devnet", "", handlers.EnvDevnet},
+		{"header present testnet", "testnet", "", handlers.EnvTestnet},
 		{"header present testnet", "testnet", "", handlers.EnvTestnet},
 		{"header present mainnet", "mainnet-beta", "", handlers.EnvMainnet},
 		{"header missing defaults to mainnet", "", "", handlers.EnvMainnet},
@@ -113,13 +111,13 @@ func TestEnvMiddleware(t *testing.T) {
 
 		// Query-string fallback fires when the header is missing or invalid.
 		{"query fallback testnet, no header", "", "testnet", handlers.EnvTestnet},
-		{"query fallback devnet, no header", "", "devnet", handlers.EnvDevnet},
+		{"query fallback testnet, no header", "", "testnet", handlers.EnvTestnet},
 		{"query fallback mainnet, no header", "", "mainnet-beta", handlers.EnvMainnet},
 		{"invalid header falls through to query", "invalid-env", "testnet", handlers.EnvTestnet},
 		{"invalid query defaults to mainnet", "", "invalid-env", handlers.EnvMainnet},
 
 		// Header wins when both are present.
-		{"header wins over conflicting query", "devnet", "testnet", handlers.EnvDevnet},
+		{"header wins over conflicting query", "testnet", "mainnet-beta", handlers.EnvTestnet},
 	}
 
 	for _, tt := range tests {
@@ -162,7 +160,7 @@ func TestRequireNeo4jMiddleware(t *testing.T) {
 	t.Run("returns 503 for non-mainnet", func(t *testing.T) {
 		t.Parallel()
 		req := httptest.NewRequest("GET", "/test", nil)
-		ctx := handlers.ContextWithEnv(req.Context(), handlers.EnvDevnet)
+		ctx := handlers.ContextWithEnv(req.Context(), handlers.EnvTestnet)
 		req = req.WithContext(ctx)
 		rr := httptest.NewRecorder()
 		handler.ServeHTTP(rr, req)
@@ -192,7 +190,7 @@ func TestValidEnvs(t *testing.T) {
 	t.Run("known envs are valid", func(t *testing.T) {
 		t.Parallel()
 		require.True(t, handlers.ValidEnvs[handlers.EnvMainnet])
-		require.True(t, handlers.ValidEnvs[handlers.EnvDevnet])
+		require.True(t, handlers.ValidEnvs[handlers.EnvTestnet])
 		require.True(t, handlers.ValidEnvs[handlers.EnvTestnet])
 	})
 

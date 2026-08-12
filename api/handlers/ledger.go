@@ -93,10 +93,14 @@ func FetchLedgerData(ctx context.Context, rpcURL string) (*LedgerResponse, error
 		return err
 	})
 
+	// getSupply is best-effort and deliberately outside this group's error path.
+	// It costs ~6.4s against an endpoint where every other call here takes ~45ms, so
+	// letting it return an error cancels gctx and discards five already-finished
+	// results to report nothing. Its own failure now costs only the supply fields,
+	// which keep their last known value.
 	g.Go(func() error {
-		var err error
-		supply, err = client.GetSupply(gctx)
-		return err
+		supply = cachedSupply(gctx, client)
+		return nil
 	})
 
 	g.Go(func() error {
@@ -132,6 +136,14 @@ func FetchLedgerData(ctx context.Context, rpcURL string) (*LedgerResponse, error
 		if totalSec > 0 {
 			tps = float64(totalTxn) / float64(totalSec)
 		}
+	}
+
+	// supply is nil when getSupply has never succeeded since startup. Report zero
+	// rather than fail: every other field on this response is present and useful.
+	var totalSupplySOL, circulatingSupplySOL float64
+	if supply != nil {
+		totalSupplySOL = float64(supply.Value.Total) / 1e9
+		circulatingSupplySOL = float64(supply.Value.Circulating) / 1e9
 	}
 
 	// Skip rate
@@ -173,8 +185,8 @@ func FetchLedgerData(ctx context.Context, rpcURL string) (*LedgerResponse, error
 
 		TPS: tps,
 
-		TotalSupply:       float64(supply.Value.Total) / 1e9,
-		CirculatingSupply: float64(supply.Value.Circulating) / 1e9,
+		TotalSupply:       totalSupplySOL,
+		CirculatingSupply: circulatingSupplySOL,
 
 		InflationTotal:      inflation.Total * 100,
 		InflationValidator:  inflation.Validator * 100,

@@ -54,6 +54,29 @@ var (
 		},
 	)
 
+	// TelemetryFetchSkipped counts telemetry sample fetches the latency indexer
+	// dropped on an unclassified RPC error, by env and source.
+	//
+	// A skip is recoverable only while its epoch stays in the fetch window, which is
+	// the current epoch and the one before it. Past that, roughly two days, nothing
+	// re-fetches it and only the admin backfill can recover the samples. So a rising
+	// rate is time-limited, not merely cosmetic.
+	//
+	// Nothing else records these skips: the refresh still reports success, so without
+	// this counter a circuit that keeps failing under-collects with no signal. See
+	// classifyFetchErr in indexer/pkg/dz/telemetry/latency for what counts as a skip.
+	//
+	// dz_env is required because one indexer process serves mainnet and testnet
+	// together. Without it a testnet blip and a real mainnet under-collect are the same
+	// series, and an operator who mutes the first also mutes the second.
+	TelemetryFetchSkipped = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "doublezero_data_indexer_telemetry_fetch_skipped_total",
+			Help: "Telemetry sample fetches skipped on an unclassified RPC error, by env and source.",
+		},
+		[]string{"dz_env", "source"},
+	)
+
 	ViewRefreshDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "doublezero_data_indexer_view_refresh_duration_seconds",
@@ -222,7 +245,7 @@ var (
 )
 
 // RecordInfluxQuery records metrics for an InfluxDB query.
-// dzEnv is the DZ network environment (e.g. "mainnet-beta", "testnet", "devnet").
+// dzEnv is the DZ network environment (e.g. "mainnet-beta", "testnet").
 // queryType describes the kind of query (e.g. "interface_usage", "baseline_in_errors", "backfill").
 func RecordInfluxQuery(dzEnv, queryType string, duration time.Duration, rows int, err error) {
 	status := "success"

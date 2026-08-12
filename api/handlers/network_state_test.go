@@ -157,7 +157,7 @@ func decodeNetworkStateResponse(t *testing.T, rr *httptest.ResponseRecorder) han
 }
 
 func TestGetNetworkState_EmptyTelemetryReturnsKnownGap(t *testing.T) {
-	for _, env := range []handlers.DZEnv{handlers.EnvMainnet, handlers.EnvDevnet, handlers.EnvTestnet} {
+	for _, env := range []handlers.DZEnv{handlers.EnvMainnet, handlers.EnvTestnet, handlers.EnvTestnet} {
 		t.Run(string(env), func(t *testing.T) {
 			api := apitesting.NewTestAPI(t, testChDB)
 			api.EnvDatabases[string(env)] = api.Database
