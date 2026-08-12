@@ -12,6 +12,7 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
+	"github.com/malbeclabs/lake/utils/pkg/docsfetch"
 )
 
 var errNoPgPool = errors.New("postgres not configured")
@@ -56,6 +57,14 @@ type API struct {
 	Neo4jClient   neo4j.Client
 	Neo4jDatabase string
 
+	// DZCLI runs the doublezero CLI (nil = exec the real binary on the host).
+	// Tests inject a stub; check_edge_access uses it to read onchain state.
+	DZCLI DZCLIRunner
+
+	// DocsSource reads public docs pages (nil = GitHub raw malbeclabs/docs).
+	// Tests inject a client pointed at a local httptest server.
+	DocsSource *docsfetch.Client
+
 	// Build info
 	BuildVersion string
 	BuildCommit  string
@@ -99,7 +108,7 @@ func (a *API) publisherCheckLiveSem() chan struct{} {
 // multicastDeliveryQuerySem lazily builds the concurrency-bounding semaphore
 // for the request's env, so a zero-value API (used widely in tests) needs no
 // constructor change. The bound is sized from the env pool's MaxOpenConns
-// (see multicastDeliveryQuerySemSize): devnet/testnet pools are 10 conns,
+// (see multicastDeliveryQuerySemSize): the testnet pool is 10 conns,
 // mainnet is 100, and one shared counter sized for the smallest pool would
 // throttle mainnet an order of magnitude below its capacity.
 func (a *API) multicastDeliveryQuerySem(ctx context.Context) chan struct{} {

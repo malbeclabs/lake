@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gagliardetto/solana-go"
@@ -18,6 +19,56 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/metrics"
 	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
+
+// fetchOutcome classifies a telemetry sample-fetch error. Both the device-link
+// and internet-metro fan-outs need the same three-way split, so it lives here
+// rather than being spelled out (and drifting) at each call site.
+type fetchOutcome int
+
+const (
+	// fetchAbort means the refresh context is done — worker shutdown or the refresh
+	// deadline — so stop and record nothing. Shutdown is not a collection failure and
+	// must not be counted as one.
+	fetchAbort fetchOutcome = iota
+	// fetchExpectedMiss means there is simply no telemetry account for this
+	// circuit/epoch. Routine and very common — not worth counting.
+	fetchExpectedMiss
+	// fetchUnclassified is any other error. The circuit resumes from its own stored
+	// max sample index, so the next refresh re-fetches what this one missed — but only
+	// while the epoch is still in the fetch window (current and current-1). Past that,
+	// roughly two days, only the admin backfill recovers it. So the skip must be
+	// counted and logged: the refresh still reports success, and an uncounted skip lets
+	// a failing circuit under-collect with no signal anywhere.
+	fetchUnclassified
+)
+
+// classifyFetchErr decides what a sample-fetch error means. The context decides
+// shutdown, never the error's shape.
+//
+// The invariant: an http.Client timeout also satisfies
+// errors.Is(err, context.DeadlineExceeded). Keying the abort on the error therefore
+// reads a slow endpoint as shutdown and returns from the worker goroutine, and that
+// return sits before the append of everything already collected for the circuit. The
+// refresh still reports success, so the cycle looks clean with a hole in it.
+//
+// This has not fired in production. The deployed client timeout and the activity
+// StartToCloseTimeout are both 5 minutes and the HTTP request starts later, so the
+// context always expired first and the abort was genuine. It bites as soon as the
+// client timeout drops below the activity deadline, which the SDK bump in #757 does
+// (10s), or when Refresh runs from a context with no deadline.
+//
+// A live context therefore means the fetch genuinely failed: count it, log it, and let
+// the circuit resume from its stored max sample index. Only a cancelled or expired
+// context aborts, and the loop's own select on ctx.Done handles that first.
+func classifyFetchErr(ctx context.Context, err error) fetchOutcome {
+	if ctx.Err() != nil {
+		return fetchAbort
+	}
+	if errors.Is(err, telemetry.ErrAccountNotFound) {
+		return fetchExpectedMiss
+	}
+	return fetchUnclassified
+}
 
 type TelemetryRPC interface {
 	GetDeviceLatencySamplesTail(ctx context.Context, originDevicePK, targetDevicePK, linkPK solana.PublicKey, epoch uint64, existingMaxIdx int) (*telemetry.DeviceLatencySamplesHeader, int, []uint32, error)
@@ -241,4 +292,17 @@ func (v *View) WaitReady(ctx context.Context) error {
 	case <-ctx.Done():
 		return fmt.Errorf("context cancelled while waiting for telemetry view: %w", ctx.Err())
 	}
+}
+
+// noteSkip records a skipped fetch for the per-refresh summary. Both fan-outs call it
+// from the same place, the arm that counts an unclassified error, so the two cannot
+// drift: a previous version of this accounting sat in the wrong branch on one path and
+// silenced that path's summary entirely.
+//
+// It stores a copy of err rather than the caller's variable, so the retained error
+// cannot be affected by later loop iterations.
+func noteSkip(count *atomic.Int64, first *atomic.Pointer[error], err error) {
+	count.Add(1)
+	e := err
+	first.CompareAndSwap(nil, &e)
 }

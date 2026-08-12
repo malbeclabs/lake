@@ -284,6 +284,8 @@ The API exposes an MCP (Model Context Protocol) server at `/api/mcp` for use wit
 | `execute_cypher` | Run Cypher queries against Neo4j (topology, paths) |
 | `get_schema` | Get database schema (tables, columns, types) |
 | `read_docs` | Read DoubleZero documentation |
+| `get_onboarding_runbook` | Guided onboarding walkthrough; omit `service` to list. Catalog is GitHub raw `docs/runbooks.md` |
+| `check_edge_access` | Check identity pubkey + receiving IP against `dz_access_passes_current` |
 
 ### Claude Desktop
 
