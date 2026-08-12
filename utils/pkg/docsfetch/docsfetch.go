@@ -16,6 +16,13 @@ import (
 // DefaultBase is the public docs tree on malbeclabs/docs@main.
 const DefaultBase = "https://raw.githubusercontent.com/malbeclabs/docs/main/docs/"
 
+// MaxPageBytes bounds a fetched page: content past this is dropped and marked
+// truncated, so an oversized document cannot flood the model's context.
+const MaxPageBytes = 10000
+
+// truncationMarker is appended when a page exceeds MaxPageBytes.
+const truncationMarker = "\n\n... (truncated)"
+
 // validPage restricts page slugs so callers cannot traverse out of the docs tree.
 var validPage = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9\-]*$`)
 
@@ -75,12 +82,15 @@ func (c *Client) Read(ctx context.Context, page string) (content, source string,
 		return "", "", fmt.Errorf("failed to fetch docs: %w", doErr)
 	}
 	defer resp.Body.Close()
-	body, readErr := io.ReadAll(resp.Body)
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, MaxPageBytes+1))
 	if readErr != nil {
 		return "", "", fmt.Errorf("failed to read response: %w", readErr)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return "", "", fmt.Errorf("docs page not found: %s (status %d)", page, resp.StatusCode)
+	}
+	if len(body) > MaxPageBytes {
+		return string(body[:MaxPageBytes]) + truncationMarker, url, nil
 	}
 	return string(body), url, nil
 }

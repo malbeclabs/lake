@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -46,6 +47,21 @@ func TestRead_InvalidPage(t *testing.T) {
 	_, _, err := c.Read(context.Background(), "../../../etc/passwd")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid page name")
+}
+
+func TestRead_TruncatesOversizedPage(t *testing.T) {
+	t.Parallel()
+	big := strings.Repeat("a", MaxPageBytes+5000)
+	public := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(big))
+	}))
+	t.Cleanup(public.Close)
+
+	c := &Client{HTTP: public.Client(), Base: public.URL + "/"}
+	content, _, err := c.Read(context.Background(), "huge-page")
+	require.NoError(t, err)
+	assert.Len(t, content, MaxPageBytes+len(truncationMarker))
+	assert.True(t, strings.HasSuffix(content, truncationMarker))
 }
 
 func TestRead_NotFound(t *testing.T) {
