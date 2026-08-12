@@ -7131,11 +7131,19 @@ export interface KalshiRace {
   lead_ms: number
 }
 
-export interface KalshiEdgeLatency {
-  window: string
+export interface KalshiFeedLatency {
+  feed: string
+  label: string
+  is_dz: boolean
   p50_ms: number
   p90_ms: number
   p99_ms: number
+  samples: number
+}
+
+export interface KalshiPathLatency {
+  window: string
+  feeds: KalshiFeedLatency[]
   generated_at: string
 }
 
@@ -7149,7 +7157,7 @@ export interface KalshiScoreboardResponse {
   nodes: KalshiNode[]
   recent_races: KalshiRace[]
   prices?: Record<string, number>
-  edge_latency?: KalshiEdgeLatency
+  path_latency?: KalshiPathLatency
 }
 
 export async function fetchKalshiScoreboard(

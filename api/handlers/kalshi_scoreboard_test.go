@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/malbeclabs/lake/api/handlers"
 	apitesting "github.com/malbeclabs/lake/api/testing"
@@ -14,8 +15,8 @@ import (
 )
 
 const (
-	kalshiDZFeed     = "tob_lashay_1"
-	kalshiDZMbpFeed  = "mbp_lashay_2"
+	kalshiDZFeed     = "tob_edge_kalshi_perps"
+	kalshiDZMbpFeed  = "mbp_edge_kalshi_perps"
 	kalshiPublicFeed = "kalshi_perps_public"
 )
 
@@ -273,7 +274,7 @@ func TestKalshiScoreboard_ExcludesDZvsDZ(t *testing.T) {
 	seedKalshiEntry(t, api, kalshiPublicFeed, "Public API", 0)
 
 	insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 10, 1, kalshiDZFeed, kalshiPublicFeed, 1.0)
-	insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 20, 2, "tob_lashay_1_ws", "tob_lashay_1_fix", 0.2)
+	insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 20, 2, "tob_edge_kalshi_perps_ws", "tob_edge_kalshi_perps_fix", 0.2)
 
 	resp, err := api.FetchKalshiScoreboardData(t.Context(), "24h", "")
 	require.NoError(t, err)
@@ -336,4 +337,87 @@ func TestKalshiScoreboard_LabelsMbpWinnerAsDoubleZero(t *testing.T) {
 	assert.True(t, resp.RecentRaces[0].IsDZ)
 	assert.Equal(t, "DoubleZero", resp.RecentRaces[0].WinnerLabel)
 	assert.Equal(t, "Public API", resp.RecentRaces[0].RunnerUpLabel)
+}
+
+// createKalshiObservationsTable creates the columns the path-latency query reads.
+func createKalshiObservationsTable(t *testing.T, api *handlers.API) {
+	t.Helper()
+	ctx := t.Context()
+	db := "`" + api.FeedsDB + "`"
+	require.NoError(t, api.DB.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", db)))
+	require.NoError(t, api.DB.Exec(ctx, fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s.kalshi_bbo_observations (
+			measurement_node_id String,
+			location_code LowCardinality(String),
+			source LowCardinality(String),
+			symbol LowCardinality(String),
+			source_ts_ms UInt64,
+			recv_ts_ns UInt64,
+			source_id UInt16,
+			channel_id UInt8
+		) ENGINE = MergeTree
+		ORDER BY (measurement_node_id, symbol, source_ts_ms, source, recv_ts_ns)
+	`, db)))
+}
+
+// insertObservation records `source` seeing symbol's update stamped sourceTsMs, latencyMs later.
+func insertObservation(t *testing.T, api *handlers.API, source string, sourceID uint16, channelID uint8, symbol string, sourceTsMs uint64, latencyMs float64) {
+	t.Helper()
+	ctx := t.Context()
+	db := "`" + api.FeedsDB + "`"
+	require.NoError(t, api.DB.Exec(ctx, fmt.Sprintf(`
+		INSERT INTO %s.kalshi_bbo_observations
+		(measurement_node_id, location_code, source, symbol, source_ts_ms, recv_ts_ns, source_id, channel_id)
+		VALUES ('cmh-rec1', 'cmh', '%s', '%s', %d, toUInt64(%d) * 1000000 + %d, %d, %d)
+	`, db, source, symbol, sourceTsMs, sourceTsMs, int64(latencyMs*1e6), sourceID, channelID)))
+}
+
+// The headline: each feed measured against the venue's own timestamp, never against each other.
+func TestKalshiPathLatency_PerFeed(t *testing.T) {
+	api := newKalshiTestAPI(t)
+	createKalshiObservationsTable(t, api)
+	seedKalshiEntry(t, api, kalshiPublicFeed, "Public API", 0)
+
+	// recv_ts_ns must land inside the 24h window, so anchor source_ts_ms at now.
+	nowMs := uint64(time.Now().UnixMilli())
+	for i, lat := range []float64{2, 4, 6} {
+		insertObservation(t, api, kalshiDZFeed, 3, 101, "KXBTCPERP", nowMs+uint64(i), lat)
+	}
+	for i, lat := range []float64{500, 520, 540} {
+		insertObservation(t, api, kalshiPublicFeed, 9, 0, "KXBTCPERP", nowMs+uint64(i), lat)
+	}
+
+	pl, err := api.FetchKalshiPathLatency(t.Context())
+	require.NoError(t, err)
+	require.Len(t, pl.Feeds, 2)
+
+	// DoubleZero first, then the configured competitors in order.
+	assert.True(t, pl.Feeds[0].IsDZ)
+	assert.Equal(t, "DoubleZero", pl.Feeds[0].Label)
+	assert.InDelta(t, 4.0, pl.Feeds[0].P50Ms, 0.01)
+	assert.EqualValues(t, 3, pl.Feeds[0].Samples)
+
+	assert.False(t, pl.Feeds[1].IsDZ)
+	assert.Equal(t, "Public API", pl.Feeds[1].Label)
+	assert.InDelta(t, 520.0, pl.Feeds[1].P50Ms, 0.01)
+}
+
+// The FIX arm stamps source_ts_ms from a different clock than the WS arm and the public feed,
+// so averaging it into DoubleZero's latency would report a number that means nothing. The
+// market-by-price lanes are excluded for the same reason, even though they count in the race.
+func TestKalshiPathLatency_ExcludesIncomparableClocks(t *testing.T) {
+	api := newKalshiTestAPI(t)
+	createKalshiObservationsTable(t, api)
+	seedKalshiEntry(t, api, kalshiPublicFeed, "Public API", 0)
+
+	nowMs := uint64(time.Now().UnixMilli())
+	insertObservation(t, api, kalshiDZFeed, 3, 101, "KXBTCPERP", nowMs, 5)      // WS arm
+	insertObservation(t, api, kalshiDZFeed, 3, 1, "KXBTCPERP", nowMs+1, 900)    // FIX arm
+	insertObservation(t, api, kalshiDZMbpFeed, 4, 1, "KXBTCPERP", nowMs+2, 800) // MBP lane
+
+	pl, err := api.FetchKalshiPathLatency(t.Context())
+	require.NoError(t, err)
+	require.Len(t, pl.Feeds, 1, "only the WS arm has a comparable source timestamp")
+	assert.InDelta(t, 5.0, pl.Feeds[0].P50Ms, 0.01)
+	assert.EqualValues(t, 1, pl.Feeds[0].Samples)
 }

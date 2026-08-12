@@ -31,49 +31,55 @@ const kalshiL2WindowMinutes = 15
 
 // kalshiL2Lane describes a known market-by-price source. Order here is display order.
 //
+// The ids follow the capture's `[[sources]].id`, which since infra#2254 is named after the
+// DoubleZero ledger group code with the plane suffix hoisted to the front
+// (edge-kalshi-sports-mbp -> mbp_edge_kalshi_sports_<league>). They were `*_lashay_*` before
+// that rename.
+//
 // An unlisted source is NOT dropped — it renders under its raw id in the "Other" category
-// (see kalshiL2LaneFor). A new lane added by the publisher must show up on the page by
-// itself; requiring a code change to see it would make the page quietly under-report exactly
-// when someone is checking whether a new lane works.
+// (see kalshiL2LaneFor). That is what keeps this list from being a correctness dependency: a
+// new lane added by the publisher, or another round of renaming, shows up on the page by
+// itself. Requiring a code change to see a lane would make the page quietly under-report
+// exactly when someone is checking whether a new lane works.
 var kalshiL2Lanes = []struct{ Source, Label, Category string }{
-	{"mbp_lashay_2", "Perpetual Futures", "Perps"},
+	{"mbp_edge_kalshi_perps", "Perpetual Futures", "Perps"},
 
-	{"mbp_sports_nfl", "NFL", "Football"},
-	{"mbp_sports_ncaaf", "NCAA Football", "Football"},
-	{"mbp_sports_cfl", "CFL", "Football"},
-	{"mbp_sports_football_other", "Football (other)", "Football"},
+	{"mbp_edge_kalshi_sports_nfl", "NFL", "Football"},
+	{"mbp_edge_kalshi_sports_ncaaf", "NCAA Football", "Football"},
+	{"mbp_edge_kalshi_sports_cfl", "CFL", "Football"},
+	{"mbp_edge_kalshi_sports_football_other", "Football (other)", "Football"},
 
-	{"mbp_sports_nba", "NBA", "Basketball"},
-	{"mbp_sports_wnba", "WNBA", "Basketball"},
-	{"mbp_sports_ncaamb", "NCAA Men's Basketball", "Basketball"},
-	{"mbp_sports_ncaawb", "NCAA Women's Basketball", "Basketball"},
-	{"mbp_sports_basketball_other", "Basketball (other)", "Basketball"},
+	{"mbp_edge_kalshi_sports_nba", "NBA", "Basketball"},
+	{"mbp_edge_kalshi_sports_wnba", "WNBA", "Basketball"},
+	{"mbp_edge_kalshi_sports_ncaamb", "NCAA Men's Basketball", "Basketball"},
+	{"mbp_edge_kalshi_sports_ncaawb", "NCAA Women's Basketball", "Basketball"},
+	{"mbp_edge_kalshi_sports_basketball_other", "Basketball (other)", "Basketball"},
 
-	{"mbp_sports_mlb", "MLB", "Baseball"},
-	{"mbp_sports_npb", "NPB", "Baseball"},
-	{"mbp_sports_kbo", "KBO", "Baseball"},
-	{"mbp_sports_baseball_other", "Baseball (other)", "Baseball"},
+	{"mbp_edge_kalshi_sports_mlb", "MLB", "Baseball"},
+	{"mbp_edge_kalshi_sports_npb", "NPB", "Baseball"},
+	{"mbp_edge_kalshi_sports_kbo", "KBO", "Baseball"},
+	{"mbp_edge_kalshi_sports_baseball_other", "Baseball (other)", "Baseball"},
 
-	{"mbp_sports_nhl", "NHL", "Hockey"},
+	{"mbp_edge_kalshi_sports_nhl", "NHL", "Hockey"},
 
-	{"mbp_sports_epl", "Premier League", "Soccer"},
-	{"mbp_sports_laliga", "LaLiga", "Soccer"},
-	{"mbp_sports_seriea", "Serie A", "Soccer"},
-	{"mbp_sports_bundesliga", "Bundesliga", "Soccer"},
-	{"mbp_sports_ligue1", "Ligue 1", "Soccer"},
-	{"mbp_sports_ucl", "Champions League", "Soccer"},
-	{"mbp_sports_mls", "MLS", "Soccer"},
-	{"mbp_sports_ligamx", "Liga MX", "Soccer"},
-	{"mbp_sports_worldcup", "World Cup", "Soccer"},
-	{"mbp_sports_soccer", "Soccer (other)", "Soccer"},
+	{"mbp_edge_kalshi_sports_epl", "Premier League", "Soccer"},
+	{"mbp_edge_kalshi_sports_laliga", "LaLiga", "Soccer"},
+	{"mbp_edge_kalshi_sports_seriea", "Serie A", "Soccer"},
+	{"mbp_edge_kalshi_sports_bundesliga", "Bundesliga", "Soccer"},
+	{"mbp_edge_kalshi_sports_ligue1", "Ligue 1", "Soccer"},
+	{"mbp_edge_kalshi_sports_ucl", "Champions League", "Soccer"},
+	{"mbp_edge_kalshi_sports_mls", "MLS", "Soccer"},
+	{"mbp_edge_kalshi_sports_ligamx", "Liga MX", "Soccer"},
+	{"mbp_edge_kalshi_sports_worldcup", "World Cup", "Soccer"},
+	{"mbp_edge_kalshi_sports_soccer", "Soccer (other)", "Soccer"},
 
-	{"mbp_sports_golf", "Golf", "Other"},
-	{"mbp_sports_tennis", "Tennis", "Other"},
-	{"mbp_sports_esports", "Esports", "Other"},
-	{"mbp_sports_combat", "Combat Sports", "Other"},
-	{"mbp_sports_cricket", "Cricket", "Other"},
-	{"mbp_sports_motorsport", "Motorsport", "Other"},
-	{"mbp_sports_other", "Other", "Other"},
+	{"mbp_edge_kalshi_sports_golf", "Golf", "Other"},
+	{"mbp_edge_kalshi_sports_tennis", "Tennis", "Other"},
+	{"mbp_edge_kalshi_sports_esports", "Esports", "Other"},
+	{"mbp_edge_kalshi_sports_combat", "Combat Sports", "Other"},
+	{"mbp_edge_kalshi_sports_cricket", "Cricket", "Other"},
+	{"mbp_edge_kalshi_sports_motorsport", "Motorsport", "Other"},
+	{"mbp_edge_kalshi_sports_other", "Other", "Other"},
 }
 
 // kalshiL2LaneFor returns the label, category, and display order for a source. Unknown sources

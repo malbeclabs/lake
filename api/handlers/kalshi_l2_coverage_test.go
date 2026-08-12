@@ -92,20 +92,20 @@ func TestKalshiL2Coverage_LaneStats(t *testing.T) {
 
 	// Three level updates with depths 4, 6, 8, plus one reset, one clear, one snapshot_end,
 	// and one gap-flagged message.
-	insertLevel(t, api, "mbp_sports_nfl", 1, 100, "level_update", 4, "ready", 10)
-	insertLevel(t, api, "mbp_sports_nfl", 1, 100, "level_update", 6, "ready", 9)
-	insertLevel(t, api, "mbp_sports_nfl", 1, 100, "level_update", 8, "ready", 8)
-	insertLevel(t, api, "mbp_sports_nfl", 1, 100, "instrument_reset", 0, "awaiting_snapshot", 7)
-	insertLevel(t, api, "mbp_sports_nfl", 1, 100, "book_clear", 0, "ready", 6)
-	insertLevel(t, api, "mbp_sports_nfl", 1, 100, "snapshot_end", 8, "ready", 5)
-	insertLevel(t, api, "mbp_sports_nfl", 1, 100, "level_update", 8, "gap", 4)
+	insertLevel(t, api, "mbp_edge_kalshi_sports_nfl", 1, 100, "level_update", 4, "ready", 10)
+	insertLevel(t, api, "mbp_edge_kalshi_sports_nfl", 1, 100, "level_update", 6, "ready", 9)
+	insertLevel(t, api, "mbp_edge_kalshi_sports_nfl", 1, 100, "level_update", 8, "ready", 8)
+	insertLevel(t, api, "mbp_edge_kalshi_sports_nfl", 1, 100, "instrument_reset", 0, "awaiting_snapshot", 7)
+	insertLevel(t, api, "mbp_edge_kalshi_sports_nfl", 1, 100, "book_clear", 0, "ready", 6)
+	insertLevel(t, api, "mbp_edge_kalshi_sports_nfl", 1, 100, "snapshot_end", 8, "ready", 5)
+	insertLevel(t, api, "mbp_edge_kalshi_sports_nfl", 1, 100, "level_update", 8, "gap", 4)
 
 	resp, err := api.FetchKalshiL2Coverage(t.Context())
 	require.NoError(t, err)
 	require.Len(t, resp.Lanes, 1)
 
 	l := resp.Lanes[0]
-	assert.Equal(t, "mbp_sports_nfl", l.Source)
+	assert.Equal(t, "mbp_edge_kalshi_sports_nfl", l.Source)
 	assert.Equal(t, "NFL", l.Label)
 	assert.Equal(t, "Football", l.Category)
 	assert.Equal(t, "cmh", l.LocationCode)
@@ -133,15 +133,15 @@ func TestKalshiL2Coverage_SeparatesChannels(t *testing.T) {
 	createKalshiMbpLevelsTable(t, api)
 
 	// The same instrument_id on two channels of one source: two lanes, one instrument each.
-	insertLevel(t, api, "mbp_lashay_2", 1, 7, "level_update", 5, "ready", 10)
-	insertLevel(t, api, "mbp_lashay_2", 101, 7, "level_update", 5, "ready", 10)
+	insertLevel(t, api, "mbp_edge_kalshi_perps", 1, 7, "level_update", 5, "ready", 10)
+	insertLevel(t, api, "mbp_edge_kalshi_perps", 101, 7, "level_update", 5, "ready", 10)
 
 	resp, err := api.FetchKalshiL2Coverage(t.Context())
 	require.NoError(t, err)
 	require.Len(t, resp.Lanes, 2, "the two arms must be reported separately")
 
 	for _, l := range resp.Lanes {
-		assert.Equal(t, "mbp_lashay_2", l.Source)
+		assert.Equal(t, "mbp_edge_kalshi_perps", l.Source)
 		assert.EqualValues(t, 1, l.Instruments)
 	}
 	// Sorted by channel id within a lane.
@@ -155,12 +155,12 @@ func TestKalshiL2Coverage_ReportsUnknownLane(t *testing.T) {
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	createKalshiMbpLevelsTable(t, api)
 
-	insertLevel(t, api, "mbp_sports_pickleball", 1, 1, "level_update", 3, "ready", 10)
+	insertLevel(t, api, "mbp_edge_kalshi_sports_pickleball", 1, 1, "level_update", 3, "ready", 10)
 
 	resp, err := api.FetchKalshiL2Coverage(t.Context())
 	require.NoError(t, err)
 	require.Len(t, resp.Lanes, 1)
-	assert.Equal(t, "mbp_sports_pickleball", resp.Lanes[0].Label, "unknown lanes fall back to the raw source id")
+	assert.Equal(t, "mbp_edge_kalshi_sports_pickleball", resp.Lanes[0].Label, "unknown lanes fall back to the raw source id")
 	assert.Equal(t, "Other", resp.Lanes[0].Category)
 }
 
@@ -170,8 +170,8 @@ func TestKalshiL2Coverage_ExcludesOutsideWindow(t *testing.T) {
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	createKalshiMbpLevelsTable(t, api)
 
-	insertLevel(t, api, "mbp_sports_nfl", 1, 100, "level_update", 5, "ready", 10)
-	insertLevel(t, api, "mbp_sports_nfl", 1, 100, "level_update", 5, "ready", 60*60) // an hour ago
+	insertLevel(t, api, "mbp_edge_kalshi_sports_nfl", 1, 100, "level_update", 5, "ready", 10)
+	insertLevel(t, api, "mbp_edge_kalshi_sports_nfl", 1, 100, "level_update", 5, "ready", 60*60) // an hour ago
 
 	resp, err := api.FetchKalshiL2Coverage(t.Context())
 	require.NoError(t, err)

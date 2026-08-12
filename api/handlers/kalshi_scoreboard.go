@@ -245,14 +245,35 @@ type KalshiRace struct {
 	LeadMs        float64   `json:"lead_ms"`
 }
 
-// KalshiEdgeLatency is DoubleZero's venue-to-receive latency on the edge multicast feed
-// (p50/p90/p99 in ms) over a fixed 24h window.
-type KalshiEdgeLatency struct {
-	Window      string    `json:"window"`
-	P50Ms       float64   `json:"p50_ms"`
-	P90Ms       float64   `json:"p90_ms"`
-	P99Ms       float64   `json:"p99_ms"`
-	GeneratedAt time.Time `json:"generated_at"`
+// KalshiFeedLatency is one feed's venue-to-receive path latency (p50/p90/p99 in ms).
+type KalshiFeedLatency struct {
+	Feed    string  `json:"feed"`
+	Label   string  `json:"label"`
+	IsDZ    bool    `json:"is_dz"`
+	P50Ms   float64 `json:"p50_ms"`
+	P90Ms   float64 `json:"p90_ms"`
+	P99Ms   float64 `json:"p99_ms"`
+	Samples uint64  `json:"samples"`
+}
+
+// KalshiPathLatency is the venue-timestamp-to-receive latency of each feed over a fixed 24h
+// window — the page's headline comparison.
+//
+// This is the methodology-independent measurement, and it is the headline for a reason. The
+// obvious alternative — the recv-to-recv margin behind the race win rate — is contaminated:
+// the venue's public perps WebSocket delivers on a batched cadence of roughly a second, so the
+// difference between the two feeds' arrival times largely measures THAT cadence rather than
+// any path advantage. kalshi#40 measured ~500 ms margins with a p05-p95 spread of ~2 ms: two
+// tight clusters, which is the signature of a fixed offset, not of a propagation race.
+//
+// Path latency avoids the problem entirely because it never pairs the two feeds: each side is
+// measured against the venue's own timestamp for the same update, so the number does not
+// depend on the race pairing at all. See the "How to read this dashboard" panel in
+// infra/grafana/dashboards/kalshi-edge-advantage.json.
+type KalshiPathLatency struct {
+	Window      string              `json:"window"`
+	Feeds       []KalshiFeedLatency `json:"feeds"`
+	GeneratedAt time.Time           `json:"generated_at"`
 }
 
 // KalshiScoreboardResponse is the API response.
@@ -267,13 +288,13 @@ type KalshiScoreboardResponse struct {
 	RecentRaces   []KalshiRace       `json:"recent_races"`
 	// Prices is the latest BBO mid price per recent-race symbol (live, for the grid).
 	Prices map[string]float64 `json:"prices,omitempty"`
-	// EdgeLatency is DoubleZero's venue-to-receive feed latency (24h); nil until the
-	// background refresher computes it (the query is too heavy for the request path).
-	EdgeLatency *KalshiEdgeLatency `json:"edge_latency,omitempty"`
+	// PathLatency is the per-feed venue-to-receive latency (24h) — the headline comparison;
+	// nil until the background refresher computes it (too heavy for the request path).
+	PathLatency *KalshiPathLatency `json:"path_latency,omitempty"`
 }
 
 const (
-	kalshiEdgeLatencyCacheKey = "kalshi_edge_latency"
+	kalshiPathLatencyCacheKey = "kalshi_path_latency"
 	kalshiScoreboardCacheBase = "kalshi_scoreboard"
 )
 
@@ -502,12 +523,12 @@ func (a *API) FetchKalshiScoreboardData(ctx context.Context, window, symbol stri
 		resp.Prices = prices
 	}
 
-	// Attach the background-refreshed 24h edge latency (best-effort; absent until the slow
-	// refresher has populated the cache).
-	if raw, err := a.readPageCache(ctx, kalshiEdgeLatencyCacheKey); err == nil && len(raw) > 0 {
-		var el KalshiEdgeLatency
-		if json.Unmarshal(raw, &el) == nil {
-			resp.EdgeLatency = &el
+	// Attach the background-refreshed 24h path latency (best-effort; absent until the slow
+	// refresher has populated the cache). This is the page's headline number.
+	if raw, err := a.readPageCache(ctx, kalshiPathLatencyCacheKey); err == nil && len(raw) > 0 {
+		var pl KalshiPathLatency
+		if json.Unmarshal(raw, &pl) == nil {
+			resp.PathLatency = &pl
 		}
 	}
 
@@ -629,13 +650,15 @@ func (a *API) fetchKalshiPrices(ctx context.Context) (map[string]float64, error)
 	return out, rows.Err()
 }
 
-// kalshiEdgeWSArmFilter restricts a scan to the WebSocket arm of the DoubleZero edge publisher.
+// kalshiEdgeWSArmFilter restricts DoubleZero's side of the latency comparison to the WebSocket
+// arm of the edge publisher.
 //
-// This is load-bearing, not a detail: the two prod publisher arms egress to the same multicast
+// This is load-bearing, not a detail: the two prod perps arms egress to the same multicast
 // group and share a `source` and `source_id`, differing only by channel_id, and their
-// source_ts_ms values come from DIFFERENT clocks — WS carries the orderbook-delta timestamp,
-// FIX the header-52 SendingTime. A venue-to-receive latency computed across both arms silently
-// mixes two clocks and reports a number that means nothing.
+// source_ts_ms values come from DIFFERENT clocks — WS carries the venue's orderbook-delta
+// timestamp, FIX the header-52 SendingTime. Only the WS arm's clock is the same quantity the
+// public feed stamps, which is the entire reason this comparison is methodology-independent; a
+// latency averaged across both arms silently mixes two clocks and means nothing.
 //
 // The WS host moved from channel_id 2 to 101 on 2026-08-09, when the perps fleet adopted
 // `publisher index = channel_id / 100, instrument set = channel_id % 100`. Rows written before
@@ -644,45 +667,105 @@ func (a *API) fetchKalshiPrices(ctx context.Context) (map[string]float64, error)
 // 20260809000001_xtransport_race_mv_ws_channel_101.sql migration prescribes. FIX is unchanged
 // at 1. The assignment is operator-set publisher config (Ansible host_vars), not
 // schema-enforced, so a further renumbering must be followed here.
-const kalshiEdgeWSArmFilter = "AND source_id = 3 AND channel_id IN (2, 101)"
+const kalshiEdgeWSArmFilter = "source_id = 3 AND channel_id IN (2, 101)"
 
-// FetchKalshiEdgeLatency computes DoubleZero's venue-to-receive latency (p50/p90/p99 in ms)
-// over the last 24h on the edge multicast feed, from the raw observations table.
+// FetchKalshiPathLatency computes each feed's venue-to-receive latency (p50/p90/p99 in ms) over
+// the last 24h from the raw observations table: for one venue update, how long until this feed
+// delivered it. See KalshiPathLatency for why this, not the race margin, is the headline.
 //
-// Scoped to the WS arm (see kalshiEdgeWSArmFilter). There is a single vantage point today, so
-// unlike the Hyperliquid composite stat there is no first-arrival-across-feeds reduction to
-// make — this is the latency of one arm at one metro, and it is labelled as such.
+// Only feeds whose source_ts_ms is known to carry the venue's own timestamp are included —
+// DoubleZero's WS arm (see kalshiEdgeWSArmFilter) and the configured comparison feeds. The FIX
+// arm and the market-by-price lanes are deliberately absent: they are DoubleZero's feeds and
+// they count in the race, but their source-timestamp provenance is not the same quantity, so
+// including them would reintroduce exactly the clock-mixing this metric exists to avoid.
 //
 // This is a heavy full-day scan over the proxied table — it must run on a slow background
 // cadence, never in the request path or the 60s page-cache loop.
-func (a *API) FetchKalshiEdgeLatency(ctx context.Context) (*KalshiEdgeLatency, error) {
-	db := fmt.Sprintf("`%s`", a.FeedsDB)
-	q := fmt.Sprintf(`
-		SELECT
-			toFloat64(quantileTDigest(0.5)((toInt64(recv_ts_ns) - toInt64(source_ts_ms) * 1000000) / 1e6)),
-			toFloat64(quantileTDigest(0.9)((toInt64(recv_ts_ns) - toInt64(source_ts_ms) * 1000000) / 1e6)),
-			toFloat64(quantileTDigest(0.99)((toInt64(recv_ts_ns) - toInt64(source_ts_ms) * 1000000) / 1e6))
-		FROM %[1]s.kalshi_bbo_observations
-		WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalHour(24)))
-		  AND startsWith(source, 'tob_')
-		  AND source_ts_ms > 0 %[2]s`, db, kalshiEdgeWSArmFilter)
-	var p50, p90, p99 float64
-	if err := a.envDB(ctx).QueryRow(ctx, q).Scan(&p50, &p90, &p99); err != nil {
+func (a *API) FetchKalshiPathLatency(ctx context.Context) (*KalshiPathLatency, error) {
+	entries, err := a.loadKalshiScoreboardEntries(ctx)
+	if err != nil {
 		return nil, err
 	}
-	return &KalshiEdgeLatency{
-		Window: "24h", P50Ms: p50, P90Ms: p90, P99Ms: p99, GeneratedAt: time.Now().UTC(),
-	}, nil
+	db := fmt.Sprintf("`%s`", a.FeedsDB)
+
+	// Competitor sides come from the allow-list; with none configured there is nothing to
+	// compare DoubleZero against, but its own latency is still worth reporting.
+	competitorPredicate := "0"
+	if !entries.empty() {
+		quoted := make([]string, 0, len(entries.ordered))
+		for _, en := range entries.ordered {
+			quoted = append(quoted, "'"+en.Feed+"'")
+		}
+		competitorPredicate = "source IN (" + strings.Join(quoted, ", ") + ")"
+	}
+
+	// The inner GROUP BY collapses repeated observations of one venue update per feed to its
+	// earliest arrival, so a feed that redelivers the same update cannot pad its own
+	// distribution. This mirrors the `d` CTE in the operational dashboard's latency table.
+	q := fmt.Sprintf(`
+		WITH d AS (
+			SELECT source, symbol, source_ts_ms, min(recv_ts_ns) AS r
+			FROM %[1]s.kalshi_bbo_observations
+			WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalHour(24)))
+			  AND source_ts_ms > 0
+			  AND ((%[2]s) OR (%[3]s))
+			GROUP BY source, symbol, source_ts_ms
+		)
+		SELECT source,
+			ifNotFinite(toFloat64(quantileTDigest(0.5)((toInt64(r) - toInt64(source_ts_ms) * 1000000) / 1e6)), 0),
+			ifNotFinite(toFloat64(quantileTDigest(0.9)((toInt64(r) - toInt64(source_ts_ms) * 1000000) / 1e6)), 0),
+			ifNotFinite(toFloat64(quantileTDigest(0.99)((toInt64(r) - toInt64(source_ts_ms) * 1000000) / 1e6)), 0),
+			count() AS samples
+		FROM d
+		GROUP BY source
+		SETTINGS max_bytes_before_external_group_by = 2000000000`,
+		db, kalshiEdgeWSArmFilter, competitorPredicate)
+
+	rows, err := a.envDB(ctx).Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := &KalshiPathLatency{Window: "24h", Feeds: []KalshiFeedLatency{}, GeneratedAt: time.Now().UTC()}
+	var dz []KalshiFeedLatency
+	byFeed := map[string]KalshiFeedLatency{}
+	for rows.Next() {
+		var f KalshiFeedLatency
+		if err := rows.Scan(&f.Feed, &f.P50Ms, &f.P90Ms, &f.P99Ms, &f.Samples); err != nil {
+			return nil, err
+		}
+		f.IsDZ = isKalshiDZFeed(f.Feed)
+		if f.IsDZ {
+			f.Label = "DoubleZero"
+			dz = append(dz, f)
+			continue
+		}
+		f.Label = entries.label(f.Feed)
+		byFeed[f.Feed] = f
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// DoubleZero first, then the competitors in configured order.
+	out.Feeds = append(out.Feeds, dz...)
+	for _, en := range entries.ordered {
+		if f, ok := byFeed[en.Feed]; ok {
+			out.Feeds = append(out.Feeds, f)
+		}
+	}
+	return out, nil
 }
 
 // StartKalshiBackgroundRefresher periodically computes the Kalshi views that are too heavy for
 // the page-cache worker and writes them to the page cache (Postgres) so all replicas share
 // them and the request path never runs a multi-day scan:
-//   - the edge feed latency,
+//   - the per-feed path latency,
 //   - the 24h and 7d scoreboards (the 1h scoreboard stays on the ordinary page-cache worker),
 //   - the sports L2 coverage view.
 //
-// Each computation gets its own timeout so a slow one can't starve the others; the edge
+// Each computation gets its own timeout so a slow one can't starve the others; the path
 // latency is refreshed first so the 24h/7d scoreboards pick up its freshly-cached value.
 func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 	const interval = 10 * time.Minute
@@ -690,13 +773,13 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 	refreshLatency := func() {
 		rctx, cancel := context.WithTimeout(ctx, runTimeout)
 		defer cancel()
-		val, err := a.FetchKalshiEdgeLatency(rctx)
+		val, err := a.FetchKalshiPathLatency(rctx)
 		if err != nil {
-			slog.Warn("kalshi edge latency refresh failed", "error", err)
+			slog.Warn("kalshi path latency refresh failed", "error", err)
 			return
 		}
-		if err := a.WritePageCache(ctx, kalshiEdgeLatencyCacheKey, val); err != nil {
-			slog.Warn("kalshi edge latency cache write failed", "error", err)
+		if err := a.WritePageCache(ctx, kalshiPathLatencyCacheKey, val); err != nil {
+			slog.Warn("kalshi path latency cache write failed", "error", err)
 		}
 	}
 	refreshScoreboard := func(window string) {

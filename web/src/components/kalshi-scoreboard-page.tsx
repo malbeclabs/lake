@@ -41,10 +41,13 @@ function symbolDisplay(sym: string): string {
   return m ? m[1] : sym
 }
 
-// Vantage-point facility metadata (keyed by location_code), plus the row display order.
-// Only cmh exists today (the near-venue baseline recorder); the table is built to grow.
+// Vantage-point facility metadata (keyed by location_code), plus the row display order. cmh is
+// the near-venue baseline recorder; was and dub were added as the capture fleet grew. An
+// unlisted metro still renders — it falls back to its raw code and sorts last.
 const VANTAGE_INFO: Record<string, { facility: string; city: string; order: number }> = {
   cmh: { facility: 'AWS us-east-2', city: 'Columbus, OH', order: 0 },
+  was: { facility: 'AWS us-east-1', city: 'Ashburn, VA', order: 1 },
+  dub: { facility: 'AWS eu-west-1', city: 'Dublin, IE', order: 2 },
 }
 function vantageOrder(locationCode: string): number {
   return VANTAGE_INFO[locationCode]?.order ?? 99
@@ -237,15 +240,83 @@ export function KalshiScoreboardPage() {
 
         {data && !unconfigured && (
           <>
-            {/* Hero stats — 3 columns: description+stats | metrics | gauge */}
-            <div className="mb-8 flex flex-col rounded-lg border border-border bg-card lg:flex-row">
-              {/* Left: description + summary stats */}
+            {/* Hero — path latency per feed. This is the headline because it never pairs the
+                two feeds: each is measured against the venue's own timestamp for the same
+                update, so the number does not depend on the race pairing at all. */}
+            <div className="mb-6 rounded-lg border border-border bg-card p-4 sm:p-6">
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                Path latency from the venue's own timestamp to arrival, per feed — how long each
+                path takes to deliver the same order-book update. Measured across{' '}
+                {data.nodes.length} vantage {data.nodes.length === 1 ? 'point' : 'points'} over{' '}
+                {data.path_latency?.window ?? '24h'}.
+              </p>
+
+              {data.path_latency && data.path_latency.feeds.length > 0 ? (
+                <div className="mt-5 overflow-x-auto">
+                  <table className="min-w-full">
+                    <thead>
+                      <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                        <th className="whitespace-nowrap py-2 pr-4 font-medium">Feed</th>
+                        <th className="whitespace-nowrap px-4 py-2 text-right font-medium">p50</th>
+                        <th className="whitespace-nowrap px-4 py-2 text-right font-medium">p90</th>
+                        <th className="whitespace-nowrap px-4 py-2 text-right font-medium">p99</th>
+                        <th className="whitespace-nowrap py-2 pl-4 text-right font-medium">Samples</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.path_latency.feeds.map((f) => (
+                        <tr key={f.feed} className="border-b border-border last:border-b-0">
+                          <td className="whitespace-nowrap py-3 pr-4">
+                            <span className="flex items-center gap-1.5 text-sm font-medium">
+                              <span
+                                className="inline-block h-2 w-2 shrink-0 rounded-full"
+                                style={{ backgroundColor: f.is_dz ? DZ_COLOR : COMPETITOR_COLORS[0] }}
+                              />
+                              {f.label}
+                            </span>
+                            <span className="text-xs text-muted-foreground">{f.feed}</span>
+                          </td>
+                          {([f.p50_ms, f.p90_ms, f.p99_ms] as const).map((v, i) => (
+                            <td
+                              key={i}
+                              className={`whitespace-nowrap px-4 py-3 text-right tabular-nums ${
+                                i === 0 ? 'text-xl font-semibold sm:text-2xl' : 'text-sm text-muted-foreground'
+                              }`}
+                            >
+                              {lead(v)}
+                            </td>
+                          ))}
+                          <td className="whitespace-nowrap py-3 pl-4 text-right text-sm tabular-nums text-muted-foreground">
+                            {f.samples.toLocaleString()}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="mt-5 text-sm text-muted-foreground">
+                  Path latency is computed on a background refresh and is not available yet.
+                </div>
+              )}
+            </div>
+
+            {/* Race win rate — kept, but below the headline and with its caveat attached. */}
+            <div className="mb-6 flex flex-col rounded-lg border border-border bg-card lg:flex-row">
               <div className="flex min-w-0 flex-1 flex-col justify-between p-4 sm:p-6">
-                <p className="text-sm leading-relaxed text-muted-foreground">
-                  Scoreboard benchmarks Kalshi best-bid/offer delivery speed, comparing DoubleZero's
-                  edge multicast feed against the venue's public API — who delivers each order-book
-                  update first, measured across {data.nodes.length} vantage {data.nodes.length === 1 ? 'point' : 'points'}.
-                </p>
+                <div>
+                  <div className="text-sm font-medium">Delivery race</div>
+                  <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                    Which feed delivered each update first, and by how much.
+                  </p>
+                  <p className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-relaxed text-muted-foreground">
+                    <span className="font-medium text-amber-500">Read this as a distribution, not as a lead.</span>{' '}
+                    The venue's public feed delivers on a batched cadence of roughly a second, so the
+                    gap between the two arrival times largely measures that cadence rather than a path
+                    advantage. A margin that clusters tightly is a fixed offset, not a race. The path
+                    latency above is the comparison that does not depend on the pairing.
+                  </p>
+                </div>
                 <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-border pt-4">
                   <div>
                     <div className="mb-1 text-xs text-muted-foreground">Head-to-head races</div>
@@ -255,35 +326,10 @@ export function KalshiScoreboardPage() {
                     <div className="mb-1 text-xs text-muted-foreground">Vantage points</div>
                     <div className="text-xl font-semibold tabular-nums sm:text-2xl">{data.nodes.length}</div>
                   </div>
-                  {data.edge_latency && (
-                    <div className="w-full">
-                      <div className="mb-1.5 text-xs text-muted-foreground">
-                        Edge feed latency{' '}
-                        <span className="text-muted-foreground/60">
-                          (venue timestamp → receive, DoubleZero WebSocket arm, {data.edge_latency.window})
-                        </span>
-                      </div>
-                      <div className="flex gap-5">
-                        {([
-                          ['p50', data.edge_latency.p50_ms],
-                          ['p90', data.edge_latency.p90_ms],
-                          ['p99', data.edge_latency.p99_ms],
-                        ] as const).map(([label, v]) => (
-                          <div key={label}>
-                            <div className="text-xl font-semibold tabular-nums sm:text-2xl">
-                              {Math.round(v)}
-                              <span className="ml-1 text-xs font-normal text-muted-foreground">ms</span>
-                            </div>
-                            <div className="text-xs text-muted-foreground">{label}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
                 </div>
               </div>
 
-              {/* Middle: win rate + per-competitor leads */}
+              {/* Middle: win rate + per-competitor margins */}
               <div className="flex min-w-0 flex-1 flex-col justify-center gap-4 border-t border-border p-4 sm:p-6 lg:border-l lg:border-t-0">
                 <div className="pb-2">
                   <div className="mb-1.5 flex items-center justify-between">
