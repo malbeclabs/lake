@@ -132,11 +132,7 @@ func buildRecord(workflow, activity, network string, start time.Time, result Ref
 	switch {
 	case err != nil:
 		rec.Status = "error"
-		// Redact before storing, not only before logging. solana-go puts the full
-		// endpoint URL in its error text, and this column is readable through
-		// /api/sql/query and the hosted MCP, so an RPC error would otherwise persist
-		// the endpoint's API key for the row's whole TTL. The slog handler already
-		// applies this to log output; the database sink was missed.
+		// hide endpoint url from caller since solana-go puts the the whole string in the error message
 		msg := redact.Error(err)
 		rec.ErrorMessage = &msg
 	case result.Partial:
