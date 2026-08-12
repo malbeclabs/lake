@@ -363,13 +363,18 @@ func createKalshiObservationsTable(t *testing.T, api *handlers.API) {
 // insertObservation records `source` seeing symbol's update stamped sourceTsMs, latencyMs later.
 func insertObservation(t *testing.T, api *handlers.API, source string, sourceID uint16, channelID uint8, symbol string, sourceTsMs uint64, latencyMs float64) {
 	t.Helper()
+	insertObservationAt(t, api, "cmh", source, sourceID, channelID, symbol, sourceTsMs, latencyMs)
+}
+
+func insertObservationAt(t *testing.T, api *handlers.API, metro, source string, sourceID uint16, channelID uint8, symbol string, sourceTsMs uint64, latencyMs float64) {
+	t.Helper()
 	ctx := t.Context()
 	db := "`" + api.FeedsDB + "`"
 	require.NoError(t, api.DB.Exec(ctx, fmt.Sprintf(`
 		INSERT INTO %s.kalshi_bbo_observations
 		(measurement_node_id, location_code, source, symbol, source_ts_ms, recv_ts_ns, source_id, channel_id)
-		VALUES ('cmh-rec1', 'cmh', '%s', '%s', %d, toUInt64(%d) * 1000000 + %d, %d, %d)
-	`, db, source, symbol, sourceTsMs, sourceTsMs, int64(latencyMs*1e6), sourceID, channelID)))
+		VALUES ('%s-rec1', '%s', '%s', '%s', %d, toUInt64(%d) * 1000000 + %d, %d, %d)
+	`, db, metro, metro, source, symbol, sourceTsMs, sourceTsMs, int64(latencyMs*1e6), sourceID, channelID)))
 }
 
 // The headline: each feed measured against the venue's own timestamp, never against each other.
@@ -391,15 +396,44 @@ func TestKalshiPathLatency_PerFeed(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, pl.Feeds, 2)
 
-	// DoubleZero first, then the configured competitors in order.
+	// Within a vantage, DoubleZero first, then the configured competitors in order.
 	assert.True(t, pl.Feeds[0].IsDZ)
 	assert.Equal(t, "DoubleZero", pl.Feeds[0].Label)
+	assert.Equal(t, "cmh", pl.Feeds[0].LocationCode)
 	assert.InDelta(t, 4.0, pl.Feeds[0].P50Ms, 0.01)
 	assert.EqualValues(t, 3, pl.Feeds[0].Samples)
 
 	assert.False(t, pl.Feeds[1].IsDZ)
 	assert.Equal(t, "Public API", pl.Feeds[1].Label)
+	assert.Equal(t, "cmh", pl.Feeds[1].LocationCode)
 	assert.InDelta(t, 520.0, pl.Feeds[1].P50Ms, 0.01)
+}
+
+// Latency is a property of a path, and a path ends somewhere. Without the metro in the group
+// key the inner min() collapses every vantage into one row per update and reports fleet-wide
+// first arrival instead — a different quantity that flatters the best-connected vantage.
+func TestKalshiPathLatency_PerVantage(t *testing.T) {
+	api := newKalshiTestAPI(t)
+	createKalshiObservationsTable(t, api)
+	seedKalshiEntry(t, api, kalshiPublicFeed, "Public API", 0)
+
+	nowMs := uint64(time.Now().UnixMilli())
+	// One update, seen by DoubleZero at three vantages with very different latencies.
+	insertObservationAt(t, api, "cmh", kalshiDZFeed, 3, 101, "KXBTCPERP", nowMs, 5)
+	insertObservationAt(t, api, "was", kalshiDZFeed, 3, 101, "KXBTCPERP", nowMs, 25)
+	insertObservationAt(t, api, "dub", kalshiDZFeed, 3, 101, "KXBTCPERP", nowMs, 60)
+
+	pl, err := api.FetchKalshiPathLatency(t.Context())
+	require.NoError(t, err)
+	require.Len(t, pl.Feeds, 3, "one row per (feed, vantage), not one collapsed row")
+
+	byMetro := map[string]handlers.KalshiFeedLatency{}
+	for _, f := range pl.Feeds {
+		byMetro[f.LocationCode] = f
+	}
+	assert.InDelta(t, 5.0, byMetro["cmh"].P50Ms, 0.01)
+	assert.InDelta(t, 25.0, byMetro["was"].P50Ms, 0.01)
+	assert.InDelta(t, 60.0, byMetro["dub"].P50Ms, 0.01)
 }
 
 // The FIX arm stamps source_ts_ms from a different clock than the WS arm and the public feed,
@@ -411,9 +445,11 @@ func TestKalshiPathLatency_ExcludesIncomparableClocks(t *testing.T) {
 	seedKalshiEntry(t, api, kalshiPublicFeed, "Public API", 0)
 
 	nowMs := uint64(time.Now().UnixMilli())
-	insertObservation(t, api, kalshiDZFeed, 3, 101, "KXBTCPERP", nowMs, 5)      // WS arm
-	insertObservation(t, api, kalshiDZFeed, 3, 1, "KXBTCPERP", nowMs+1, 900)    // FIX arm
-	insertObservation(t, api, kalshiDZMbpFeed, 4, 1, "KXBTCPERP", nowMs+2, 800) // MBP lane
+	insertObservation(t, api, kalshiDZFeed, 3, 101, "KXBTCPERP", nowMs, 5)   // WS arm
+	insertObservation(t, api, kalshiDZFeed, 3, 1, "KXBTCPERP", nowMs+1, 900) // FIX arm
+	// The MBP lane carries source_id 3 too — production does, so source_id alone cannot
+	// discriminate the lanes and the tob_ prefix is what actually excludes this row.
+	insertObservationAt(t, api, "cmh", kalshiDZMbpFeed, 3, 101, "KXBTCPERP", nowMs+2, 800)
 
 	pl, err := api.FetchKalshiPathLatency(t.Context())
 	require.NoError(t, err)

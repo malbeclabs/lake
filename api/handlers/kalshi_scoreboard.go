@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -245,15 +246,17 @@ type KalshiRace struct {
 	LeadMs        float64   `json:"lead_ms"`
 }
 
-// KalshiFeedLatency is one feed's venue-to-receive path latency (p50/p90/p99 in ms).
+// KalshiFeedLatency is one feed's venue-to-receive path latency at one vantage point
+// (p50/p90/p99 in ms).
 type KalshiFeedLatency struct {
-	Feed    string  `json:"feed"`
-	Label   string  `json:"label"`
-	IsDZ    bool    `json:"is_dz"`
-	P50Ms   float64 `json:"p50_ms"`
-	P90Ms   float64 `json:"p90_ms"`
-	P99Ms   float64 `json:"p99_ms"`
-	Samples uint64  `json:"samples"`
+	Feed         string  `json:"feed"`
+	Label        string  `json:"label"`
+	LocationCode string  `json:"location_code"`
+	IsDZ         bool    `json:"is_dz"`
+	P50Ms        float64 `json:"p50_ms"`
+	P90Ms        float64 `json:"p90_ms"`
+	P99Ms        float64 `json:"p99_ms"`
+	Samples      uint64  `json:"samples"`
 }
 
 // KalshiPathLatency is the venue-timestamp-to-receive latency of each feed over a fixed 24h
@@ -667,7 +670,10 @@ func (a *API) fetchKalshiPrices(ctx context.Context) (map[string]float64, error)
 // 20260809000001_xtransport_race_mv_ws_channel_101.sql migration prescribes. FIX is unchanged
 // at 1. The assignment is operator-set publisher config (Ansible host_vars), not
 // schema-enforced, so a further renumbering must be followed here.
-const kalshiEdgeWSArmFilter = "source_id = 3 AND channel_id IN (2, 101)"
+// The startsWith(source,'tob_') term is NOT redundant with source_id: production carries
+// source_id = 3 on BOTH the top-of-book and the market-by-price perps lanes, so source_id
+// alone selects two feeds, not one. The prefix is what actually discriminates them.
+const kalshiEdgeWSArmFilter = "startsWith(source, 'tob_') AND source_id = 3 AND channel_id IN (2, 101)"
 
 // FetchKalshiPathLatency computes each feed's venue-to-receive latency (p50/p90/p99 in ms) over
 // the last 24h from the raw observations table: for one venue update, how long until this feed
@@ -699,25 +705,32 @@ func (a *API) FetchKalshiPathLatency(ctx context.Context) (*KalshiPathLatency, e
 		competitorPredicate = "source IN (" + strings.Join(quoted, ", ") + ")"
 	}
 
-	// The inner GROUP BY collapses repeated observations of one venue update per feed to its
-	// earliest arrival, so a feed that redelivers the same update cannot pad its own
-	// distribution. This mirrors the `d` CTE in the operational dashboard's latency table.
+	// Grouped by location_code, not just by feed. Without the metro in the key the inner
+	// min(recv_ts_ns) collapses all vantage points into one row per update and silently
+	// measures FLEET-WIDE FIRST ARRIVAL — "whichever recorder saw it first" — which is a
+	// different quantity that flatters whichever feed happens to have the best-connected
+	// vantage. Latency is a property of a path, and a path ends somewhere.
+	//
+	// The inner GROUP BY still collapses repeated observations of one venue update at one
+	// vantage to its earliest arrival, so a feed that redelivers the same update cannot pad
+	// its own distribution. This mirrors the `d` CTE in the operational dashboard's latency
+	// table.
 	q := fmt.Sprintf(`
 		WITH d AS (
-			SELECT source, symbol, source_ts_ms, min(recv_ts_ns) AS r
+			SELECT source, location_code, symbol, source_ts_ms, min(recv_ts_ns) AS r
 			FROM %[1]s.kalshi_bbo_observations
 			WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalHour(24)))
 			  AND source_ts_ms > 0
 			  AND ((%[2]s) OR (%[3]s))
-			GROUP BY source, symbol, source_ts_ms
+			GROUP BY source, location_code, symbol, source_ts_ms
 		)
-		SELECT source,
+		SELECT source, location_code,
 			ifNotFinite(toFloat64(quantileTDigest(0.5)((toInt64(r) - toInt64(source_ts_ms) * 1000000) / 1e6)), 0),
 			ifNotFinite(toFloat64(quantileTDigest(0.9)((toInt64(r) - toInt64(source_ts_ms) * 1000000) / 1e6)), 0),
 			ifNotFinite(toFloat64(quantileTDigest(0.99)((toInt64(r) - toInt64(source_ts_ms) * 1000000) / 1e6)), 0),
 			count() AS samples
 		FROM d
-		GROUP BY source
+		GROUP BY source, location_code
 		SETTINGS max_bytes_before_external_group_by = 2000000000`,
 		db, kalshiEdgeWSArmFilter, competitorPredicate)
 
@@ -728,33 +741,40 @@ func (a *API) FetchKalshiPathLatency(ctx context.Context) (*KalshiPathLatency, e
 	defer rows.Close()
 
 	out := &KalshiPathLatency{Window: "24h", Feeds: []KalshiFeedLatency{}, GeneratedAt: time.Now().UTC()}
-	var dz []KalshiFeedLatency
-	byFeed := map[string]KalshiFeedLatency{}
 	for rows.Next() {
 		var f KalshiFeedLatency
-		if err := rows.Scan(&f.Feed, &f.P50Ms, &f.P90Ms, &f.P99Ms, &f.Samples); err != nil {
+		if err := rows.Scan(&f.Feed, &f.LocationCode, &f.P50Ms, &f.P90Ms, &f.P99Ms, &f.Samples); err != nil {
 			return nil, err
 		}
 		f.IsDZ = isKalshiDZFeed(f.Feed)
 		if f.IsDZ {
 			f.Label = "DoubleZero"
-			dz = append(dz, f)
-			continue
+		} else {
+			f.Label = entries.label(f.Feed)
 		}
-		f.Label = entries.label(f.Feed)
-		byFeed[f.Feed] = f
+		out.Feeds = append(out.Feeds, f)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
-	// DoubleZero first, then the competitors in configured order.
-	out.Feeds = append(out.Feeds, dz...)
-	for _, en := range entries.ordered {
-		if f, ok := byFeed[en.Feed]; ok {
-			out.Feeds = append(out.Feeds, f)
-		}
+	// Grouped by vantage, DoubleZero first within each so the two paths sit adjacent and are
+	// read against each other rather than across metros — the comparison is only meaningful
+	// between feeds measured at the same place.
+	order := map[string]int{}
+	for i, en := range entries.ordered {
+		order[en.Feed] = i + 1
 	}
+	sort.Slice(out.Feeds, func(i, j int) bool {
+		a, b := out.Feeds[i], out.Feeds[j]
+		if a.LocationCode != b.LocationCode {
+			return a.LocationCode < b.LocationCode
+		}
+		if order[a.Feed] != order[b.Feed] {
+			return order[a.Feed] < order[b.Feed]
+		}
+		return a.Feed < b.Feed
+	})
 	return out, nil
 }
 

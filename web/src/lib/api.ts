@@ -7134,6 +7134,7 @@ export interface KalshiRace {
 export interface KalshiFeedLatency {
   feed: string
   label: string
+  location_code: string
   is_dz: boolean
   p50_ms: number
   p90_ms: number

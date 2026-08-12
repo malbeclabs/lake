@@ -245,9 +245,10 @@ export function KalshiScoreboardPage() {
                 update, so the number does not depend on the race pairing at all. */}
             <div className="mb-6 rounded-lg border border-border bg-card p-4 sm:p-6">
               <p className="text-sm leading-relaxed text-muted-foreground">
-                Path latency from the venue's own timestamp to arrival, per feed — how long each
-                path takes to deliver the same order-book update. Measured across{' '}
-                {data.nodes.length} vantage {data.nodes.length === 1 ? 'point' : 'points'} over{' '}
+                Path latency from the venue's own timestamp to arrival, per feed at each vantage
+                point — how long each path takes to deliver the same order-book update. Compare
+                rows within a vantage: the two paths end in the same place, so only there is the
+                difference a property of the path rather than of the location. Window:{' '}
                 {data.path_latency?.window ?? '24h'}.
               </p>
 
@@ -256,7 +257,8 @@ export function KalshiScoreboardPage() {
                   <table className="min-w-full">
                     <thead>
                       <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                        <th className="whitespace-nowrap py-2 pr-4 font-medium">Feed</th>
+                        <th className="whitespace-nowrap py-2 pr-4 font-medium">Vantage</th>
+                        <th className="whitespace-nowrap px-4 py-2 font-medium">Feed</th>
                         <th className="whitespace-nowrap px-4 py-2 text-right font-medium">p50</th>
                         <th className="whitespace-nowrap px-4 py-2 text-right font-medium">p90</th>
                         <th className="whitespace-nowrap px-4 py-2 text-right font-medium">p99</th>
@@ -265,8 +267,14 @@ export function KalshiScoreboardPage() {
                     </thead>
                     <tbody>
                       {data.path_latency.feeds.map((f) => (
-                        <tr key={f.feed} className="border-b border-border last:border-b-0">
+                        <tr key={`${f.location_code}:${f.feed}`} className="border-b border-border last:border-b-0">
                           <td className="whitespace-nowrap py-3 pr-4">
+                            <div className="text-sm font-medium uppercase">{f.location_code}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {VANTAGE_INFO[f.location_code]?.city ?? ''}
+                            </div>
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3">
                             <span className="flex items-center gap-1.5 text-sm font-medium">
                               <span
                                 className="inline-block h-2 w-2 shrink-0 rounded-full"
