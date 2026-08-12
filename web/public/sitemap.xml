@@ -53,14 +53,6 @@
     <changefreq>daily</changefreq>
   </url>
   <url>
-    <loc>https://data.doublezero.xyz/dz/kalshi/scoreboard</loc>
-    <changefreq>daily</changefreq>
-  </url>
-  <url>
-    <loc>https://data.doublezero.xyz/dz/kalshi/l2</loc>
-    <changefreq>daily</changefreq>
-  </url>
-  <url>
     <loc>https://data.doublezero.xyz/dz/ledger</loc>
     <changefreq>daily</changefreq>
   </url>

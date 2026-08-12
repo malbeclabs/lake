@@ -141,6 +141,22 @@ func TestKalshiScoreboard_NoConfiguredFeeds(t *testing.T) {
 	assert.Empty(t, resp.Competitors)
 	assert.Empty(t, resp.Nodes)
 	assert.EqualValues(t, 0, resp.TotalRaces)
+	// The UI must be told this is an unconfigured environment rather than having to infer it
+	// from empty slices, which a capture outage would produce just as well.
+	assert.True(t, resp.Unconfigured)
+}
+
+// A configured environment whose window simply held no races must NOT be reported as
+// unconfigured — that is the distinction the flag exists to preserve.
+func TestKalshiScoreboard_ConfiguredButNoRaces(t *testing.T) {
+	api := newKalshiTestAPI(t)
+	createKalshiFeedsTable(t, api)
+	seedKalshiEntry(t, api, kalshiPublicFeed, "Public API", 0)
+
+	resp, err := api.FetchKalshiScoreboardData(t.Context(), "24h", "")
+	require.NoError(t, err)
+	assert.False(t, resp.Unconfigured)
+	assert.EqualValues(t, 0, resp.TotalRaces)
 }
 
 func TestKalshiScoreboard_HeadlineAndCompetitors(t *testing.T) {

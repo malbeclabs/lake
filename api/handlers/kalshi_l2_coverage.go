@@ -23,10 +23,15 @@ import (
 // kalshiL2CoverageCacheKey is the page-cache key written by StartKalshiBackgroundRefresher.
 const kalshiL2CoverageCacheKey = "kalshi_l2_coverage"
 
-// kalshiL2WindowMinutes bounds every coverage scan. kalshi_mbp_levels is level-grain (one row
-// per wire message, dozens per snapshot cycle per instrument) and carries no TTL, so the
-// window is the only thing keeping this query bounded. Rates are derived from it, so changing
-// it changes nothing about correctness.
+// kalshiL2WindowMinutes is the interval the rates are averaged over. Rates are derived from
+// it, so changing it changes nothing about correctness.
+//
+// It does NOT bound the scan the way a leading-key predicate would. kalshi_mbp_levels sorts by
+// (measurement_node_id, source, channel_id, symbol, instrument_id, recv_ts_ns) and partitions
+// by toDate(recv_ts_ns), so a recv_ts_ns predicate prunes to the day's partition and no
+// further: mid-day this reads most of a day of a level-grain, TTL-less table to answer a
+// fifteen-minute question, over a remoteSecure() proxy. That is why this view is owned by the
+// background refresher and served from cache rather than run per request.
 const kalshiL2WindowMinutes = 15
 
 // kalshiL2Lane describes a known market-by-price source. Order here is display order.
@@ -120,6 +125,12 @@ type KalshiL2Lane struct {
 	Clears         uint64 `json:"clears"`
 	SnapshotCycles uint64 `json:"snapshot_cycles"`
 
+	// Seen reports whether this lane produced any message inside the coverage window. A
+	// configured lane that has gone silent is reported with Seen=false and zeroed stats
+	// rather than being omitted — see the roster merge in FetchKalshiL2Coverage.
+	Seen bool `json:"seen"`
+
+	// LastSeen is the newest message in the window; the zero time when Seen is false.
 	LastSeen time.Time `json:"last_seen"`
 }
 
@@ -216,12 +227,44 @@ func (a *API) FetchKalshiL2Coverage(ctx context.Context) (*KalshiL2CoverageRespo
 		l.MessagesPerSec = float64(messages) / windowSecs
 		l.LevelUpdatesPerSec = float64(levelUpdates) / windowSecs
 		l.LastSeen = time.Unix(0, int64(lastRecvNs)).UTC()
+		l.Seen = true
 		label, category, order := kalshiL2LaneFor(l.Source)
 		l.Label, l.Category = label, category
 		out = append(out, ordered{lane: l, order: order})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+
+	// Merge in the configured roster. Lanes are discovered from rows inside the window, so a
+	// lane that stops publishing does not go quiet in this list — it DISAPPEARS from it, and
+	// the page then looks healthy (fewer lanes, nothing flagged) in precisely the failure mode
+	// this view exists to catch: the capture process still reports healthy while its multicast
+	// membership is gone and the counters have frozen. Emitting every known lane, with Seen
+	// false when the window held nothing, keeps the row on screen to be noticed.
+	//
+	// This covers the lanes named in kalshiL2Lanes. A lane that is neither listed there nor
+	// present in the window is still invisible; the roster is the only record of what ought to
+	// be publishing, since the capture's source list lives in Ansible, not in the data.
+	if len(out) > 0 {
+		present := map[string]bool{}
+		for _, o := range out {
+			present[o.lane.Source] = true
+		}
+		for i, known := range kalshiL2Lanes {
+			if present[known.Source] {
+				continue
+			}
+			out = append(out, ordered{
+				order: i,
+				lane: KalshiL2Lane{
+					Source:   known.Source,
+					Label:    known.Label,
+					Category: known.Category,
+					Seen:     false,
+				},
+			})
+		}
 	}
 
 	// Stable display order: configured lane order, then source (so unknown lanes, which all

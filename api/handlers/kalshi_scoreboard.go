@@ -294,6 +294,11 @@ type KalshiScoreboardResponse struct {
 	// PathLatency is the per-feed venue-to-receive latency (24h) — the headline comparison;
 	// nil until the background refresher computes it (too heavy for the request path).
 	PathLatency *KalshiPathLatency `json:"path_latency,omitempty"`
+	// Unconfigured reports that no comparison feed is configured in this environment, as
+	// distinct from a configured one that simply had no races in the window. The UI cannot
+	// tell those apart from empty slices, and guessing turns a capture outage into "nothing
+	// is configured yet" — a wrong diagnosis at the worst moment.
+	Unconfigured bool `json:"unconfigured,omitempty"`
 }
 
 const (
@@ -305,13 +310,14 @@ const (
 // to compute — the proxied summary table is absent (e.g. local dev) or no feeds are
 // configured. Returning this instead of an error keeps the page-cache refresher caching a
 // clean payload rather than logging every cycle.
-func emptyKalshiScoreboard(window string) *KalshiScoreboardResponse {
+func emptyKalshiScoreboard(window string, unconfigured bool) *KalshiScoreboardResponse {
 	return &KalshiScoreboardResponse{
-		Window:      window,
-		GeneratedAt: time.Now().UTC(),
-		Competitors: []KalshiCompetitor{},
-		Nodes:       []KalshiNode{},
-		RecentRaces: []KalshiRace{},
+		Window:       window,
+		GeneratedAt:  time.Now().UTC(),
+		Competitors:  []KalshiCompetitor{},
+		Nodes:        []KalshiNode{},
+		RecentRaces:  []KalshiRace{},
+		Unconfigured: unconfigured,
 	}
 }
 
@@ -329,7 +335,7 @@ func (a *API) FetchKalshiScoreboardData(ctx context.Context, window, symbol stri
 	// return an empty-but-valid response so the page-cache refresher caches a clean empty
 	// payload instead of logging an error every cycle.
 	if !a.kalshiFeedsTableExists(ctx) {
-		return emptyKalshiScoreboard(window), nil
+		return emptyKalshiScoreboard(window, false), nil
 	}
 
 	entries, err := a.loadKalshiScoreboardEntries(ctx)
@@ -337,7 +343,11 @@ func (a *API) FetchKalshiScoreboardData(ctx context.Context, window, symbol stri
 		return nil, err
 	}
 	if entries.empty() {
-		return emptyKalshiScoreboard(window), nil
+		// No competitor to race, but DoubleZero's own path latency is still measured and
+		// still meaningful, so attach it rather than dropping the one number that survives.
+		resp := emptyKalshiScoreboard(window, true)
+		a.attachKalshiPathLatency(ctx, resp)
+		return resp, nil
 	}
 
 	filter := entries.inClause()
@@ -526,16 +536,22 @@ func (a *API) FetchKalshiScoreboardData(ctx context.Context, window, symbol stri
 		resp.Prices = prices
 	}
 
-	// Attach the background-refreshed 24h path latency (best-effort; absent until the slow
-	// refresher has populated the cache). This is the page's headline number.
-	if raw, err := a.readPageCache(ctx, kalshiPathLatencyCacheKey); err == nil && len(raw) > 0 {
-		var pl KalshiPathLatency
-		if json.Unmarshal(raw, &pl) == nil {
-			resp.PathLatency = &pl
-		}
-	}
+	a.attachKalshiPathLatency(ctx, resp)
 
 	return resp, nil
+}
+
+// attachKalshiPathLatency copies the background-refreshed 24h path latency onto a response.
+// Best-effort: absent until the slow refresher has populated the cache.
+func (a *API) attachKalshiPathLatency(ctx context.Context, resp *KalshiScoreboardResponse) {
+	raw, err := a.readPageCache(ctx, kalshiPathLatencyCacheKey)
+	if err != nil || len(raw) == 0 {
+		return
+	}
+	var pl KalshiPathLatency
+	if json.Unmarshal(raw, &pl) == nil {
+		resp.PathLatency = &pl
+	}
 }
 
 // fetchKalshiRecentRaces returns the most recent races per symbol (one row per race, winner +
@@ -626,6 +642,16 @@ func (a *API) kalshiFeedsTableExists(ctx context.Context) bool {
 	return n == 1
 }
 
+// kalshiObservationsTableExists reports whether the proxied observations table is queryable.
+func (a *API) kalshiObservationsTableExists(ctx context.Context) bool {
+	var n uint8
+	q := fmt.Sprintf("EXISTS TABLE `%s`.kalshi_bbo_observations", a.FeedsDB)
+	if err := a.envDB(ctx).QueryRow(ctx, q).Scan(&n); err != nil {
+		return false
+	}
+	return n == 1
+}
+
 // fetchKalshiPrices returns the latest BBO mid price per recent-race symbol — a cheap
 // latest-observation lookup used to show a live price next to each symbol's races.
 // Price = (bid_px_raw + ask_px_raw)/2 * 10^price_exp.
@@ -688,6 +714,12 @@ const kalshiEdgeWSArmFilter = "startsWith(source, 'tob_') AND source_id = 3 AND 
 // This is a heavy full-day scan over the proxied table — it must run on a slow background
 // cadence, never in the request path or the 60s page-cache loop.
 func (a *API) FetchKalshiPathLatency(ctx context.Context) (*KalshiPathLatency, error) {
+	// Same degrade-to-empty guard as the scoreboard and L2 views: without it an environment
+	// that does not proxy the observations table logs a refresh failure every 10 minutes
+	// forever, which is the noise those guards exist to prevent.
+	if !a.kalshiObservationsTableExists(ctx) {
+		return &KalshiPathLatency{Window: "24h", Feeds: []KalshiFeedLatency{}, GeneratedAt: time.Now().UTC()}, nil
+	}
 	entries, err := a.loadKalshiScoreboardEntries(ctx)
 	if err != nil {
 		return nil, err

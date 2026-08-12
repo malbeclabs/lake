@@ -8,8 +8,15 @@ import { fetchKalshiL2Coverage, type KalshiL2CoverageResponse, type KalshiL2Lane
 // so a lane can never be silently dropped by the UI.
 const CATEGORY_ORDER = ['Perps', 'Football', 'Basketball', 'Baseball', 'Hockey', 'Soccer', 'Other']
 
-// A lane whose last message is older than this is called out. It is not necessarily a fault —
-// a league out of season has nothing to publish — so it is labelled "quiet", not "down".
+// A lane whose last message is this much older than the payload is called out. It is not
+// necessarily a fault — a league out of season has nothing to publish — so it is labelled
+// "quiet", not "down".
+//
+// Measured against the payload's own generated_at, NOT wall clock. This view is served
+// cache-first from an entry the background refresher rewrites every 10 minutes, so by wall
+// clock a perfectly healthy lane is routinely five to ten minutes stale and every row would
+// render quiet for most of each cycle — an alarm that is always on, which is the same as no
+// alarm at all.
 const QUIET_AFTER_MS = 5 * 60 * 1000
 
 function rate(n: number): string {
@@ -34,9 +41,9 @@ function channelLabel(channelID: number): string {
   return `ch ${channelID}`
 }
 
-function LaneRow({ lane, now }: { lane: KalshiL2Lane; now: number }) {
+function LaneRow({ lane, asOf }: { lane: KalshiL2Lane; asOf: number }) {
   const lastSeen = new Date(lane.last_seen).getTime()
-  const quiet = now - lastSeen > QUIET_AFTER_MS
+  const quiet = lane.seen && asOf - lastSeen > QUIET_AFTER_MS
   const faults = lane.gaps + lane.resets
   return (
     <tr className="border-b border-border transition-colors last:border-b-0 hover:bg-muted/50">
@@ -47,10 +54,19 @@ function LaneRow({ lane, now }: { lane: KalshiL2Lane; now: number }) {
         </div>
       </td>
       <td className="whitespace-nowrap px-3 py-3 text-right text-sm tabular-nums sm:px-4">
-        <span className={quiet ? 'text-amber-500' : 'text-muted-foreground'}>
-          {relAge(lastSeen, now)}
-        </span>
-        {quiet && <div className="text-[11px] text-amber-500/70">quiet</div>}
+        {lane.seen ? (
+          <>
+            <span className={quiet ? 'text-amber-500' : 'text-muted-foreground'}>
+              {relAge(lastSeen, asOf)}
+            </span>
+            {quiet && <div className="text-[11px] text-amber-500/70">quiet</div>}
+          </>
+        ) : (
+          <>
+            <span className="text-amber-500">—</span>
+            <div className="text-[11px] text-amber-500/70">no data in window</div>
+          </>
+        )}
       </td>
       <td className="whitespace-nowrap px-3 py-3 text-right text-sm tabular-nums sm:px-4">
         {rate(lane.level_updates_per_sec)}
@@ -113,15 +129,22 @@ export function KalshiL2Page() {
     return [...known, ...extra].map((category) => ({ category, lanes: byCategory.get(category) ?? [] }))
   }, [data?.lanes])
 
+  // asOf is when the payload was computed, not now: every staleness judgement below is made
+  // relative to the data's own clock (see QUIET_AFTER_MS).
+  const asOf = useMemo(
+    () => (data?.generated_at ? new Date(data.generated_at).getTime() : Date.now()),
+    [data?.generated_at],
+  )
+
   const totals = useMemo(() => {
     const lanes = data?.lanes ?? []
     return {
       lanes: lanes.length,
       instruments: lanes.reduce((sum, l) => sum + l.instruments, 0),
       updatesPerSec: lanes.reduce((sum, l) => sum + l.level_updates_per_sec, 0),
-      quiet: lanes.filter((l) => now - new Date(l.last_seen).getTime() > QUIET_AFTER_MS).length,
+      quiet: lanes.filter((l) => !l.seen || asOf - new Date(l.last_seen).getTime() > QUIET_AFTER_MS).length,
     }
-  }, [data?.lanes, now])
+  }, [data?.lanes, asOf])
 
   return (
     <div className="flex-1 overflow-auto">
@@ -132,6 +155,7 @@ export function KalshiL2Page() {
           subtitle={
             <span className="flex items-center gap-2 text-xs text-muted-foreground/50">
               <span>last {data?.window_minutes ?? 15} min</span>
+              {data?.generated_at && <span>· computed {relAge(asOf, now)}</span>}
             </span>
           }
         />
@@ -209,7 +233,7 @@ export function KalshiL2Page() {
                     </thead>
                     <tbody>
                       {section.lanes.map((lane) => (
-                        <LaneRow key={`${lane.source}:${lane.channel_id}`} lane={lane} now={now} />
+                        <LaneRow key={`${lane.source}:${lane.channel_id}`} lane={lane} asOf={asOf} />
                       ))}
                     </tbody>
                   </table>

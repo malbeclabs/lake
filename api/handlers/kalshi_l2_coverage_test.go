@@ -102,9 +102,11 @@ func TestKalshiL2Coverage_LaneStats(t *testing.T) {
 
 	resp, err := api.FetchKalshiL2Coverage(t.Context())
 	require.NoError(t, err)
-	require.Len(t, resp.Lanes, 1)
 
-	l := resp.Lanes[0]
+	// The response also carries the silent lanes of the configured roster; select the one
+	// this test published to.
+	l := lanesBySource(resp.Lanes)["mbp_edge_kalshi_sports_nfl"]
+	assert.True(t, l.Seen)
 	assert.Equal(t, "mbp_edge_kalshi_sports_nfl", l.Source)
 	assert.Equal(t, "NFL", l.Label)
 	assert.Equal(t, "Football", l.Category)
@@ -138,15 +140,19 @@ func TestKalshiL2Coverage_SeparatesChannels(t *testing.T) {
 
 	resp, err := api.FetchKalshiL2Coverage(t.Context())
 	require.NoError(t, err)
-	require.Len(t, resp.Lanes, 2, "the two arms must be reported separately")
-
+	arms := []handlers.KalshiL2Lane{}
 	for _, l := range resp.Lanes {
-		assert.Equal(t, "mbp_edge_kalshi_perps", l.Source)
+		if l.Source == "mbp_edge_kalshi_perps" && l.Seen {
+			arms = append(arms, l)
+		}
+	}
+	require.Len(t, arms, 2, "the two arms must be reported separately")
+	for _, l := range arms {
 		assert.EqualValues(t, 1, l.Instruments)
 	}
 	// Sorted by channel id within a lane.
-	assert.EqualValues(t, 1, resp.Lanes[0].ChannelID)
-	assert.EqualValues(t, 101, resp.Lanes[1].ChannelID)
+	assert.EqualValues(t, 1, arms[0].ChannelID)
+	assert.EqualValues(t, 101, arms[1].ChannelID)
 }
 
 // A lane the publisher adds without a matching entry in kalshiL2Lanes must still be reported —
@@ -159,9 +165,43 @@ func TestKalshiL2Coverage_ReportsUnknownLane(t *testing.T) {
 
 	resp, err := api.FetchKalshiL2Coverage(t.Context())
 	require.NoError(t, err)
-	require.Len(t, resp.Lanes, 1)
-	assert.Equal(t, "mbp_edge_kalshi_sports_pickleball", resp.Lanes[0].Label, "unknown lanes fall back to the raw source id")
-	assert.Equal(t, "Other", resp.Lanes[0].Category)
+	seen := lanesBySource(resp.Lanes)
+	require.Contains(t, seen, "mbp_edge_kalshi_sports_pickleball")
+	assert.Equal(t, "mbp_edge_kalshi_sports_pickleball", seen["mbp_edge_kalshi_sports_pickleball"].Label,
+		"unknown lanes fall back to the raw source id")
+	assert.Equal(t, "Other", seen["mbp_edge_kalshi_sports_pickleball"].Category)
+}
+
+func lanesBySource(lanes []handlers.KalshiL2Lane) map[string]handlers.KalshiL2Lane {
+	m := map[string]handlers.KalshiL2Lane{}
+	for _, l := range lanes {
+		m[l.Source] = l
+	}
+	return m
+}
+
+// A lane that stops publishing must stay on the page. Lanes are discovered from rows inside
+// the window, so without the roster merge a silent lane simply vanishes — and the page then
+// looks healthy in exactly the failure mode it exists to catch.
+func TestKalshiL2Coverage_KeepsSilentLaneVisible(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createKalshiMbpLevelsTable(t, api)
+
+	// Only NFL is publishing; every other configured lane is silent.
+	insertLevel(t, api, "mbp_edge_kalshi_sports_nfl", 1, 100, "level_update", 4, "ready", 10)
+
+	resp, err := api.FetchKalshiL2Coverage(t.Context())
+	require.NoError(t, err)
+	bySource := lanesBySource(resp.Lanes)
+
+	require.Contains(t, bySource, "mbp_edge_kalshi_sports_nba")
+	nba := bySource["mbp_edge_kalshi_sports_nba"]
+	assert.False(t, nba.Seen, "a silent configured lane is reported, not omitted")
+	assert.Zero(t, nba.MessagesPerSec)
+	assert.True(t, nba.LastSeen.IsZero())
+	assert.Equal(t, "NBA", nba.Label)
+
+	assert.True(t, bySource["mbp_edge_kalshi_sports_nfl"].Seen)
 }
 
 // Rows older than the coverage window must not contribute; the window is what keeps this scan
@@ -175,6 +215,6 @@ func TestKalshiL2Coverage_ExcludesOutsideWindow(t *testing.T) {
 
 	resp, err := api.FetchKalshiL2Coverage(t.Context())
 	require.NoError(t, err)
-	require.Len(t, resp.Lanes, 1)
-	assert.InDelta(t, 1.0/900.0, resp.Lanes[0].LevelUpdatesPerSec, 1e-9)
+	nfl := lanesBySource(resp.Lanes)["mbp_edge_kalshi_sports_nfl"]
+	assert.InDelta(t, 1.0/900.0, nfl.LevelUpdatesPerSec, 1e-9)
 }

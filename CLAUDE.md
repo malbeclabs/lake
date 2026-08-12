@@ -145,9 +145,12 @@ The migration creates the table **empty on purpose** — rows are environment co
 inserted out of band, so they never live in this repository. An unseeded environment renders
 an empty scoreboard, which is also the expected local-dev state.
 
-DoubleZero's own feeds are never config rows: they are matched by the `tob_` prefix, and a
-`tob_` row is rejected by the loader (it would broaden the allow-list clause to races against
-unconfigured competitors, leaking their feed ids into the payload).
+DoubleZero's own feeds are never config rows: they are matched by the `tob_` (top-of-book) and
+`mbp_` (market-by-price) prefixes, and a row for either is rejected by the loader with a WARN
+(it would broaden the allow-list clause to races against unconfigured competitors, leaking
+their feed ids into the payload). Both prefixes are DoubleZero's — an MBP source emits the
+shared BBO observation on every derived top-of-book change, so it races the venue's public feed
+exactly as the top-of-book lane does.
 
 ## Logging Levels
 

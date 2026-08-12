@@ -7159,6 +7159,7 @@ export interface KalshiScoreboardResponse {
   recent_races: KalshiRace[]
   prices?: Record<string, number>
   path_latency?: KalshiPathLatency
+  unconfigured?: boolean
 }
 
 export async function fetchKalshiScoreboard(
@@ -7191,6 +7192,7 @@ export interface KalshiL2Lane {
   resets: number
   clears: number
   snapshot_cycles: number
+  seen: boolean
   last_seen: string
 }
 

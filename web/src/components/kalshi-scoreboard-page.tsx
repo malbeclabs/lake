@@ -145,18 +145,27 @@ export function KalshiScoreboardPage() {
   const [error, setError] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
 
-  const load = useCallback(async () => {
+  // `alive` is checked before every state write, not just the clock tick. Window switches
+  // change request cost by orders of magnitude — an uncached 1h live query can take a minute
+  // while 24h is served from cache in milliseconds — so without this the older in-flight
+  // response lands last and leaves the page showing a window the user already navigated away
+  // from, with the other button still highlighted.
+  const load = useCallback(async (alive: () => boolean) => {
     try {
-      setData(await fetchKalshiScoreboard(timeWindow))
+      const next = await fetchKalshiScoreboard(timeWindow)
+      if (!alive()) return
+      setData(next)
       setError(null)
     } catch (e) {
+      if (!alive()) return
       setError(e instanceof Error ? e.message : 'Failed to load')
     }
   }, [timeWindow])
 
   useEffect(() => {
     let active = true
-    const run = () => { void load() }
+    const alive = () => active
+    const run = () => { void load(alive) }
     run()
     const poll = setInterval(run, 15000)
     const tick = setInterval(() => active && setNow(Date.now()), 5000)
@@ -190,9 +199,11 @@ export function KalshiScoreboardPage() {
     return m
   }, [data?.recent_races])
 
-  // No configured feeds is the expected state before an operator seeds the allow-list, and the
-  // expected local-dev state. Say so rather than rendering a scoreboard of zeroes.
-  const unconfigured = data != null && data.competitors.length === 0 && data.total_races === 0
+  // Reported by the API, never inferred: empty slices alone cannot distinguish "no feed is
+  // configured" from "the capture is down", and guessing would announce the former during the
+  // latter. The path-latency hero is computed independently over a fixed 24h, so it still
+  // renders when the race half has nothing to show.
+  const unconfigured = data?.unconfigured === true
 
   return (
     <div className="flex-1 overflow-auto">
@@ -233,12 +244,13 @@ export function KalshiScoreboardPage() {
           <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">Loading…</div>
         )}
         {unconfigured && (
-          <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
-            No comparison feeds are configured for this environment yet, so there is nothing to race.
+          <div className="mb-6 rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
+            No comparison feeds are configured for this environment, so there is nothing to race.
+            Path latency below is unaffected.
           </div>
         )}
 
-        {data && !unconfigured && (
+        {data && (
           <>
             {/* Hero — path latency per feed. This is the headline because it never pairs the
                 two feeds: each is measured against the venue's own timestamp for the same
@@ -309,6 +321,8 @@ export function KalshiScoreboardPage() {
               )}
             </div>
 
+            {!unconfigured && (
+            <>
             {/* Race win rate — kept, but below the headline and with its caveat attached. */}
             <div className="mb-6 flex flex-col rounded-lg border border-border bg-card lg:flex-row">
               <div className="flex min-w-0 flex-1 flex-col justify-between p-4 sm:p-6">
@@ -505,6 +519,8 @@ export function KalshiScoreboardPage() {
                 </div>
               </div>
             ))}
+            </>
+            )}
           </>
         )}
       </div>
