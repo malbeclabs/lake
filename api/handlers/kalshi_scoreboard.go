@@ -1,0 +1,749 @@
+package handlers
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"regexp"
+	"strings"
+	"time"
+
+	"golang.org/x/sync/errgroup"
+)
+
+// The Kalshi scoreboard is the sibling of the Hyperliquid one (hyperliquid_scoreboard.go) and
+// reads tables written by the same capture fleet into the same `feeds` database. It is a
+// separate implementation rather than a shared one because the two summary tables have
+// different grains, and four differences drive every query in this file:
+//
+//  1. kalshi_bbo_feed_race_summary stores per-event `lead_time_ms` — one row per (race, losing
+//     feed) — and has no total_events/events_won/lead_time_p50_ms/lead_time_p95_ms/feed_type
+//     columns. Win rate is a count of distinct race keys; p50/p95 are quantiles over rows.
+//  2. Its refreshable MV never emits winner-only rows, so there is no loser_feed = '' case.
+//  3. capture_run_id is part of its sorting key, so the dedup tuple is one column wider than
+//     Hyperliquid's raceKeyTuple.
+//  4. source_ts_ms is a DIFFERENT clock per transport arm (WS carries the orderbook-delta
+//     timestamp, FIX the header-52 SendingTime), so any venue-to-receive latency must be
+//     scoped to one arm. See the Kalshi capture's 20260721000001_bbo_xtransport_race_mv.sql.
+
+// kalshiFeedRe bounds feed ids to characters safe to inline into ClickHouse SQL. Config rows
+// are operator-managed rather than user input, but the values are concatenated into queries,
+// so anything outside this set is dropped rather than trusted.
+var kalshiFeedRe = regexp.MustCompile(`^[A-Za-z0-9:_.-]{1,64}$`)
+
+// kalshiEntry is one configured scoreboard feed.
+type kalshiEntry struct{ Feed, Label string }
+
+// kalshiEntries is the scoreboard's configured feed allow-list, loaded from Postgres. Only
+// feeds present here are raced, counted, or displayed, so a feed is added, removed, or
+// reordered by changing rows — no code change and no deploy.
+type kalshiEntries struct {
+	ordered []kalshiEntry     // display order
+	labels  map[string]string // feed -> label
+}
+
+// empty reports whether any feed is configured.
+func (e kalshiEntries) empty() bool { return len(e.ordered) == 0 }
+
+// inClause returns the SQL predicate restricting a race to configured feeds, or "" if none are
+// configured. Every race pairs one tob_* DoubleZero feed with one competing feed, and DZ feeds
+// are never configured entries (loadKalshiScoreboardEntries rejects them), so requiring either
+// side to be in the set is equivalent to requiring the non-DZ side to be configured.
+func (e kalshiEntries) inClause() string {
+	if e.empty() {
+		return ""
+	}
+	quoted := make([]string, 0, len(e.ordered))
+	for _, en := range e.ordered {
+		quoted = append(quoted, "'"+en.Feed+"'")
+	}
+	in := strings.Join(quoted, ", ")
+	return fmt.Sprintf("AND (feed IN (%[1]s) OR loser_feed IN (%[1]s))", in)
+}
+
+// label maps a raw feed to its configured display label (falls back to the raw name).
+func (e kalshiEntries) label(feed string) string {
+	if l, ok := e.labels[feed]; ok {
+		return l
+	}
+	return feed
+}
+
+// display returns "DoubleZero" for any tob_ DZ feed, else the configured label. Used so a
+// competitor-won recent race reads "<Label> … vs DoubleZero", not a raw tob_ id.
+func (e kalshiEntries) display(feed string) string {
+	if isKalshiDZFeed(feed) {
+		return "DoubleZero"
+	}
+	return e.label(feed)
+}
+
+// isKalshiDZFeed reports whether a feed is one of DoubleZero's own edge publisher arms. The
+// capture's source ids for the DZ multicast lanes are tob_-prefixed by convention, matching
+// the predicate used in SQL.
+func isKalshiDZFeed(feed string) bool { return strings.HasPrefix(feed, "tob_") }
+
+// loadKalshiScoreboardEntries reads the enabled scoreboard feeds from Postgres, in display
+// order. Zero configured rows is not an error — it is the deliberate "nothing configured yet"
+// state and returns a clean empty set with a nil error. A genuine load failure (query, scan,
+// or row iteration) returns a non-nil error instead of degrading to an empty set: the caller
+// must not treat a Postgres blip as "zero feeds configured", or the background refresher and
+// page-cache worker would overwrite the last-good cached payload with an empty one. Logged at
+// WARN, never ERROR — ERROR pages on-call.
+func (a *API) loadKalshiScoreboardEntries(ctx context.Context) (kalshiEntries, error) {
+	e := kalshiEntries{labels: map[string]string{}}
+	if a.PgPool == nil {
+		return e, nil
+	}
+	rows, err := a.PgPool.Query(ctx, `
+		SELECT feed, label FROM kalshi_scoreboard_entry
+		WHERE enabled ORDER BY display_order, feed`)
+	if err != nil {
+		slog.Warn("kalshi scoreboard entry load failed", "error", err)
+		return kalshiEntries{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var feed, label string
+		if err := rows.Scan(&feed, &label); err != nil {
+			slog.Warn("kalshi scoreboard entry scan failed", "error", err)
+			return kalshiEntries{}, err
+		}
+		// A malformed feed would be inlined into SQL; drop it and keep serving the rest.
+		if !kalshiFeedRe.MatchString(feed) {
+			slog.Warn("kalshi scoreboard entry skipped: unsafe feed id", "feed", feed)
+			continue
+		}
+		// tob_ feeds are DoubleZero's own; the allow-list clause relies on them never being
+		// configured entries (see inClause). A tob_ config row would broaden the clause to
+		// match races against unconfigured competitors, leaking their raw feed ids into the
+		// payload, so it is dropped rather than trusted.
+		if isKalshiDZFeed(feed) {
+			slog.Warn("kalshi scoreboard entry skipped: tob_ feed not allowed", "feed", feed)
+			continue
+		}
+		e.ordered = append(e.ordered, kalshiEntry{Feed: feed, Label: label})
+		e.labels[feed] = label
+	}
+	if err := rows.Err(); err != nil {
+		slog.Warn("kalshi scoreboard entry iteration failed", "error", err)
+		return kalshiEntries{}, err
+	}
+	return e, nil
+}
+
+// kalshiWindows maps window params to ClickHouse interval expressions.
+var kalshiWindows = map[string]string{
+	"1h":  "1 HOUR",
+	"24h": "24 HOUR",
+	"7d":  "7 DAY",
+}
+
+// kalshiRaceKeyTuple is the summary table's ReplacingMergeTree sorting key. The remote
+// materialized view refreshes on overlapping windows, so each logical race appears as several
+// rows that only FINAL (or a uniq over this key) collapses. Counting distinct keys dedups
+// without paying FINAL's merge cost. Win rates are ratios and lead-time percentiles are
+// duplicate-insensitive, so dropping FINAL keeps them correct.
+//
+// Unlike Hyperliquid's raceKeyTuple this includes capture_run_id, which is in the Kalshi
+// table's ORDER BY: a capture restart mints a new run id for the same (symbol, source_ts_ms,
+// bbo_hash), and those are genuinely distinct races, not duplicates to collapse.
+//
+// uniqCombined (not uniqExact) and quantileTDigest (not quantileExact) keep aggregation state
+// bounded at ~KB per group; the exact variants buffer state proportional to the window's race
+// count and trip the ClickHouse OvercommitTracker on the memory-constrained proxy instance.
+// At scoreboard scale their sub-1% error is invisible, and they are exact at the small
+// cardinalities the unit tests assert.
+const kalshiRaceKeyTuple = "(measurement_node_id, capture_run_id, symbol, source_ts_ms, bbo_hash, feed, loser_feed)"
+
+// kalshiRecentRaceSymbols are the perps tickers shown in the recent-races grid, in display
+// order. The scoreboard aggregations race every symbol the configured feeds carry; this list
+// only bounds the live grid, which needs a stable, small set of columns.
+var kalshiRecentRaceSymbols = []string{
+	"KXBTCPERP", "KXETHPERP", "KXSOLPERP", "KXHYPEPERP",
+	"KXXRPPERP", "KXDOGEPERP", "KXLTCPERP", "KXLINKPERP",
+}
+
+func kalshiRecentRaceSymbolFilter() string {
+	quoted := make([]string, len(kalshiRecentRaceSymbols))
+	for i, s := range kalshiRecentRaceSymbols {
+		quoted[i] = "'" + s + "'"
+	}
+	return "AND symbol IN (" + strings.Join(quoted, ", ") + ")"
+}
+
+var kalshiSymbolRe = regexp.MustCompile(`^[A-Za-z0-9:_.-]{1,32}$`)
+
+// sanitizeKalshiSymbol returns the symbol if safe to inline, else "".
+func sanitizeKalshiSymbol(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.EqualFold(s, "all") || !kalshiSymbolRe.MatchString(s) {
+		return ""
+	}
+	return s
+}
+
+// KalshiCompetitor is DoubleZero's head-to-head record vs one competing feed.
+type KalshiCompetitor struct {
+	Feed      string  `json:"feed"`
+	Label     string  `json:"label"`
+	DZWinPct  float64 `json:"dz_win_pct"`
+	LeadP50Ms float64 `json:"lead_p50_ms"`
+	LeadP95Ms float64 `json:"lead_p95_ms"`
+	Races     uint64  `json:"races"`
+}
+
+// KalshiNode is the per-vantage breakdown.
+type KalshiNode struct {
+	MeasurementNodeID string             `json:"measurement_node_id"`
+	LocationCode      string             `json:"location_code"`
+	DZWinSharePct     float64            `json:"dz_win_share_pct"`
+	TotalRaces        uint64             `json:"total_races"`
+	Competitors       []KalshiCompetitor `json:"competitors"`
+}
+
+// KalshiRace is one recent race for the live grid.
+type KalshiRace struct {
+	EventTs       time.Time `json:"event_ts"`
+	Symbol        string    `json:"symbol"`
+	LocationCode  string    `json:"location_code"`
+	WinnerFeed    string    `json:"winner_feed"`
+	WinnerLabel   string    `json:"winner_label"`
+	IsDZ          bool      `json:"is_dz"`
+	RunnerUpFeed  string    `json:"runner_up_feed"`
+	RunnerUpLabel string    `json:"runner_up_label"`
+	LeadMs        float64   `json:"lead_ms"`
+}
+
+// KalshiEdgeLatency is DoubleZero's venue-to-receive latency on the edge multicast feed
+// (p50/p90/p99 in ms) over a fixed 24h window.
+type KalshiEdgeLatency struct {
+	Window      string    `json:"window"`
+	P50Ms       float64   `json:"p50_ms"`
+	P90Ms       float64   `json:"p90_ms"`
+	P99Ms       float64   `json:"p99_ms"`
+	GeneratedAt time.Time `json:"generated_at"`
+}
+
+// KalshiScoreboardResponse is the API response.
+type KalshiScoreboardResponse struct {
+	Window        string             `json:"window"`
+	Symbol        string             `json:"symbol,omitempty"`
+	GeneratedAt   time.Time          `json:"generated_at"`
+	DZWinSharePct float64            `json:"dz_win_share_pct"`
+	TotalRaces    uint64             `json:"total_races"`
+	Competitors   []KalshiCompetitor `json:"competitors"`
+	Nodes         []KalshiNode       `json:"nodes"`
+	RecentRaces   []KalshiRace       `json:"recent_races"`
+	// Prices is the latest BBO mid price per recent-race symbol (live, for the grid).
+	Prices map[string]float64 `json:"prices,omitempty"`
+	// EdgeLatency is DoubleZero's venue-to-receive feed latency (24h); nil until the
+	// background refresher computes it (the query is too heavy for the request path).
+	EdgeLatency *KalshiEdgeLatency `json:"edge_latency,omitempty"`
+}
+
+const (
+	kalshiEdgeLatencyCacheKey = "kalshi_edge_latency"
+	kalshiScoreboardCacheBase = "kalshi_scoreboard"
+)
+
+// emptyKalshiScoreboard is the empty-but-valid response served when the scoreboard has nothing
+// to compute — the proxied summary table is absent (e.g. local dev) or no feeds are
+// configured. Returning this instead of an error keeps the page-cache refresher caching a
+// clean payload rather than logging every cycle.
+func emptyKalshiScoreboard(window string) *KalshiScoreboardResponse {
+	return &KalshiScoreboardResponse{
+		Window:      window,
+		GeneratedAt: time.Now().UTC(),
+		Competitors: []KalshiCompetitor{},
+		Nodes:       []KalshiNode{},
+		RecentRaces: []KalshiRace{},
+	}
+}
+
+// FetchKalshiScoreboardData computes the aggregated scoreboard for a window and optional
+// symbol. Empty symbol means all symbols.
+func (a *API) FetchKalshiScoreboardData(ctx context.Context, window, symbol string) (*KalshiScoreboardResponse, error) {
+	interval, ok := kalshiWindows[window]
+	if !ok {
+		window = "1h"
+		interval = kalshiWindows[window]
+	}
+	symbol = sanitizeKalshiSymbol(symbol)
+
+	// Guard: if the feeds summary table doesn't exist (e.g. local dev without the proxy),
+	// return an empty-but-valid response so the page-cache refresher caches a clean empty
+	// payload instead of logging an error every cycle.
+	if !a.kalshiFeedsTableExists(ctx) {
+		return emptyKalshiScoreboard(window), nil
+	}
+
+	entries, err := a.loadKalshiScoreboardEntries(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if entries.empty() {
+		return emptyKalshiScoreboard(window), nil
+	}
+
+	filter := entries.inClause()
+	if symbol != "" {
+		filter += fmt.Sprintf(" AND symbol = '%s'", symbol)
+	}
+	db := fmt.Sprintf("`%s`", a.FeedsDB)
+
+	resp := &KalshiScoreboardResponse{
+		Window:      window,
+		Symbol:      symbol,
+		GeneratedAt: time.Now().UTC(),
+		Competitors: []KalshiCompetitor{},
+		Nodes:       []KalshiNode{},
+		RecentRaces: []KalshiRace{},
+	}
+
+	// Single scan grouped per (competitor, node) WITH ROLLUP: the (competitor, node) rows give
+	// the per-vantage breakdown and the rolled-up (competitor) rows give per-competitor
+	// totals, so the per-competitor stats come from the same scan instead of a second
+	// full-table scan. A race key includes measurement_node_id, so races partition cleanly by
+	// node — the ROLLUP counts are exact and the headline is derivable by summing per-node
+	// cells. One query (vs two) also refreshes atomically on the memory-constrained proxy
+	// ClickHouse: it succeeds or retries as a unit.
+	q := fmt.Sprintf(`
+		SELECT competitor, measurement_node_id, any(location_code) AS location_code,
+			uniqCombinedIf(rk, dz_won = 1) AS dz_wins,
+			uniqCombinedIf(rk, dz_won = 0) AS dz_losses,
+			-- ifNotFinite guards the empty-set case: when DZ won zero races in a
+			-- (competitor, node) cell, quantileTDigestIf over no rows returns NaN, which fails
+			-- JSON encoding of the whole response (and poisons the page cache). Coalesce to 0
+			-- so a swept cell serializes cleanly.
+			ifNotFinite(toFloat64(quantileTDigestIf(0.5)(lead_ms, dz_won = 1)), 0) AS lead_p50,
+			ifNotFinite(toFloat64(quantileTDigestIf(0.95)(lead_ms, dz_won = 1)), 0) AS lead_p95
+		FROM (
+			SELECT measurement_node_id, location_code,
+				%[1]s AS rk,
+				if(startsWith(feed,'tob_'), loser_feed, feed) AS competitor,
+				if(startsWith(feed,'tob_'), 1, 0) AS dz_won,
+				-- Per-event lead, NOT a window quantile: the percentiles above are computed
+				-- here rather than read from the table.
+				lead_time_ms AS lead_ms
+			FROM %[2]s.kalshi_bbo_feed_race_summary
+			WHERE feed != loser_feed
+			  AND (startsWith(feed,'tob_') != startsWith(loser_feed,'tob_')) %[3]s
+			  AND event_ts >= now() - INTERVAL %[4]s
+		)
+		GROUP BY competitor, measurement_node_id WITH ROLLUP`, kalshiRaceKeyTuple, db, filter, interval)
+
+	type stat struct {
+		wins, losses     uint64
+		leadP50, leadP95 float64
+	}
+	type nodeAgg struct {
+		loc    string
+		byFeed map[string]stat
+	}
+	// byFeed holds per-competitor totals (ROLLUP rows where node == ""); nodeMap holds
+	// per-node cells.
+	byFeed := map[string]stat{}
+	nodeMap := map[string]*nodeAgg{}
+	var nodeOrder []string
+	var recent []KalshiRace
+	var prices map[string]float64
+
+	// The main ROLLUP scan, the recent-races scan, and the live-price lookup are three
+	// independent ClickHouse reads; run them concurrently so their latencies overlap rather
+	// than stack under the request timeout. gctx cancels the siblings if either hard-fails.
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		rows, err := a.envDB(gctx).Query(gctx, q)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var competitor, node, loc string
+			var s stat
+			if err := rows.Scan(&competitor, &node, &loc, &s.wins, &s.losses, &s.leadP50, &s.leadP95); err != nil {
+				return err
+			}
+			switch {
+			case competitor == "":
+				// Grand-total ROLLUP row; the headline is derived from per-node cells instead.
+				continue
+			case node == "":
+				byFeed[competitor] = s
+			default:
+				na, ok := nodeMap[node]
+				if !ok {
+					na = &nodeAgg{loc: loc, byFeed: map[string]stat{}}
+					nodeMap[node] = na
+					nodeOrder = append(nodeOrder, node)
+				}
+				na.byFeed[competitor] = s
+			}
+		}
+		return rows.Err()
+	})
+	g.Go(func() error {
+		r, err := a.fetchKalshiRecentRaces(gctx, entries, 10)
+		if err != nil {
+			return err
+		}
+		recent = r
+		return nil
+	})
+	g.Go(func() error {
+		// Best-effort: a live-price lookup failure must not fail the whole scoreboard.
+		if p, err := a.fetchKalshiPrices(gctx); err == nil {
+			prices = p
+		}
+		return nil
+	})
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	// Emit competitors in configured order.
+	for _, c := range entries.ordered {
+		s, ok := byFeed[c.Feed]
+		if !ok {
+			continue
+		}
+		races := s.wins + s.losses
+		var winPct float64
+		if races > 0 {
+			winPct = 100.0 * float64(s.wins) / float64(races)
+		}
+		resp.Competitors = append(resp.Competitors, KalshiCompetitor{
+			Feed:      c.Feed,
+			Label:     c.Label,
+			DZWinPct:  winPct,
+			LeadP50Ms: s.leadP50,
+			LeadP95Ms: s.leadP95,
+			Races:     races,
+		})
+	}
+
+	var globalWins, globalRaces uint64
+	for _, node := range nodeOrder {
+		na := nodeMap[node]
+		n := KalshiNode{
+			MeasurementNodeID: node,
+			LocationCode:      na.loc,
+			Competitors:       []KalshiCompetitor{},
+		}
+		var wins, races uint64
+		for _, c := range entries.ordered {
+			s, ok := na.byFeed[c.Feed]
+			if !ok {
+				continue
+			}
+			r := s.wins + s.losses
+			var winPct float64
+			if r > 0 {
+				winPct = 100.0 * float64(s.wins) / float64(r)
+			}
+			n.Competitors = append(n.Competitors, KalshiCompetitor{
+				Feed: c.Feed, Label: c.Label, DZWinPct: winPct,
+				LeadP50Ms: s.leadP50, LeadP95Ms: s.leadP95, Races: r,
+			})
+			wins += s.wins
+			races += r
+		}
+		n.TotalRaces = races
+		if races > 0 {
+			n.DZWinSharePct = 100.0 * float64(wins) / float64(races)
+		}
+		resp.Nodes = append(resp.Nodes, n)
+		globalWins += wins
+		globalRaces += races
+	}
+
+	// Headline derived from the per-node totals (no extra scan).
+	resp.TotalRaces = globalRaces
+	if globalRaces > 0 {
+		resp.DZWinSharePct = 100.0 * float64(globalWins) / float64(globalRaces)
+	}
+
+	if recent != nil {
+		resp.RecentRaces = recent
+	}
+	if prices != nil {
+		resp.Prices = prices
+	}
+
+	// Attach the background-refreshed 24h edge latency (best-effort; absent until the slow
+	// refresher has populated the cache).
+	if raw, err := a.readPageCache(ctx, kalshiEdgeLatencyCacheKey); err == nil && len(raw) > 0 {
+		var el KalshiEdgeLatency
+		if json.Unmarshal(raw, &el) == nil {
+			resp.EdgeLatency = &el
+		}
+	}
+
+	return resp, nil
+}
+
+// fetchKalshiRecentRaces returns the most recent races per symbol (one row per race, winner +
+// closest competitor + lead) for the live grid.
+func (a *API) fetchKalshiRecentRaces(ctx context.Context, entries kalshiEntries, perSymbol int) ([]KalshiRace, error) {
+	if perSymbol <= 0 || perSymbol > 50 {
+		perSymbol = 10
+	}
+	// 15 min so the covered symbols fill a full column despite the MV's refresh lag; LIMIT n
+	// BY symbol then keeps only the newest n per symbol.
+	db := fmt.Sprintf("`%s`", a.FeedsDB)
+	q := fmt.Sprintf(`
+		SELECT
+			max(event_ts) AS max_event_ts,
+			symbol,
+			location_code,
+			feed AS winner_feed,
+			startsWith(feed,'tob_') AS is_dz,
+			argMin(loser_feed, lead_time_ms) AS runner_up_feed,
+			min(lead_time_ms) AS lead_ms
+		FROM %s.kalshi_bbo_feed_race_summary
+		-- Only DoubleZero-vs-competitor matchups (exactly one side is a tob_* DZ feed) — a
+		-- DZ-vs-DZ pairing would otherwise flood the grid with the WS/FIX arm comparison,
+		-- which is a transport question, not a race against the venue's public feed.
+		WHERE feed != loser_feed
+		  AND (startsWith(feed,'tob_') != startsWith(loser_feed,'tob_')) %s %s
+		  AND event_ts >= now() - INTERVAL 15 MINUTE
+		GROUP BY capture_run_id, measurement_node_id, symbol, source_ts_ms, bbo_hash, location_code, feed
+		ORDER BY max_event_ts DESC
+		LIMIT %d BY symbol`, db, kalshiRecentRaceSymbolFilter(), entries.inClause(), perSymbol)
+	rows, err := a.envDB(ctx).Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []KalshiRace{}
+	for rows.Next() {
+		var r KalshiRace
+		var isDZ uint8
+		if err := rows.Scan(&r.EventTs, &r.Symbol, &r.LocationCode, &r.WinnerFeed, &isDZ, &r.RunnerUpFeed, &r.LeadMs); err != nil {
+			return nil, err
+		}
+		r.IsDZ = isDZ == 1
+		r.WinnerLabel = entries.display(r.WinnerFeed)
+		r.RunnerUpLabel = entries.display(r.RunnerUpFeed)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// kalshiScoreboardCacheKey returns the cache key for a cacheable request shape, or "". A symbol
+// filter is a non-default view and is never cached. Each supported window has its own cached
+// key: the 1h view is refreshed by the page-cache worker; the heavier 24h/7d views are
+// refreshed on a slow background cadence (StartKalshiBackgroundRefresher) so they are served
+// from cache instead of running a multi-day scan on the request path.
+func kalshiScoreboardCacheKey(r *http.Request) string {
+	if r.URL.Query().Get("symbol") != "" {
+		return ""
+	}
+	window := strings.TrimSpace(r.URL.Query().Get("window"))
+	if window == "" {
+		window = "1h"
+	}
+	if _, ok := kalshiWindows[window]; !ok {
+		return ""
+	}
+	return kalshiScoreboardWindowKey(window)
+}
+
+// kalshiScoreboardWindowKey is the page-cache key for a given window. The 1h key is populated
+// by the page-cache worker; 24h/7d get suffixed keys populated by the background refresher.
+func kalshiScoreboardWindowKey(window string) string {
+	if window == "1h" {
+		return kalshiScoreboardCacheBase
+	}
+	return kalshiScoreboardCacheBase + ":" + window
+}
+
+// kalshiFeedsTableExists reports whether the proxied summary table is queryable.
+func (a *API) kalshiFeedsTableExists(ctx context.Context) bool {
+	var n uint8
+	q := fmt.Sprintf("EXISTS TABLE `%s`.kalshi_bbo_feed_race_summary", a.FeedsDB)
+	if err := a.envDB(ctx).QueryRow(ctx, q).Scan(&n); err != nil {
+		return false
+	}
+	return n == 1
+}
+
+// fetchKalshiPrices returns the latest BBO mid price per recent-race symbol — a cheap
+// latest-observation lookup used to show a live price next to each symbol's races.
+// Price = (bid_px_raw + ask_px_raw)/2 * 10^price_exp.
+func (a *API) fetchKalshiPrices(ctx context.Context) (map[string]float64, error) {
+	db := fmt.Sprintf("`%s`", a.FeedsDB)
+	q := fmt.Sprintf(`
+		SELECT symbol, argMax((bid_px_raw + ask_px_raw) / 2 * pow(10, price_exp), recv_ts_ns) AS price
+		FROM %s.kalshi_bbo_observations
+		WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(1))) %s
+		GROUP BY symbol`, db, kalshiRecentRaceSymbolFilter())
+	rows, err := a.envDB(ctx).Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]float64{}
+	for rows.Next() {
+		var sym string
+		var price float64
+		if err := rows.Scan(&sym, &price); err != nil {
+			return nil, err
+		}
+		out[sym] = price
+	}
+	return out, rows.Err()
+}
+
+// kalshiEdgeWSArmFilter restricts a scan to the WebSocket arm of the DoubleZero edge publisher.
+//
+// This is load-bearing, not a detail: the two prod publisher arms egress to the same multicast
+// group and share a `source` and `source_id`, differing only by channel_id, and their
+// source_ts_ms values come from DIFFERENT clocks — WS carries the orderbook-delta timestamp,
+// FIX the header-52 SendingTime. A venue-to-receive latency computed across both arms silently
+// mixes two clocks and reports a number that means nothing.
+//
+// The WS host moved from channel_id 2 to 101 on 2026-08-09, when the perps fleet adopted
+// `publisher index = channel_id / 100, instrument set = channel_id % 100`. Rows written before
+// that carry 2, so a window spanning the cut reads both values for one host and the predicate
+// has to be IN (2, 101) — exactly what the capture's
+// 20260809000001_xtransport_race_mv_ws_channel_101.sql migration prescribes. FIX is unchanged
+// at 1. The assignment is operator-set publisher config (Ansible host_vars), not
+// schema-enforced, so a further renumbering must be followed here.
+const kalshiEdgeWSArmFilter = "AND source_id = 3 AND channel_id IN (2, 101)"
+
+// FetchKalshiEdgeLatency computes DoubleZero's venue-to-receive latency (p50/p90/p99 in ms)
+// over the last 24h on the edge multicast feed, from the raw observations table.
+//
+// Scoped to the WS arm (see kalshiEdgeWSArmFilter). There is a single vantage point today, so
+// unlike the Hyperliquid composite stat there is no first-arrival-across-feeds reduction to
+// make — this is the latency of one arm at one metro, and it is labelled as such.
+//
+// This is a heavy full-day scan over the proxied table — it must run on a slow background
+// cadence, never in the request path or the 60s page-cache loop.
+func (a *API) FetchKalshiEdgeLatency(ctx context.Context) (*KalshiEdgeLatency, error) {
+	db := fmt.Sprintf("`%s`", a.FeedsDB)
+	q := fmt.Sprintf(`
+		SELECT
+			toFloat64(quantileTDigest(0.5)((toInt64(recv_ts_ns) - toInt64(source_ts_ms) * 1000000) / 1e6)),
+			toFloat64(quantileTDigest(0.9)((toInt64(recv_ts_ns) - toInt64(source_ts_ms) * 1000000) / 1e6)),
+			toFloat64(quantileTDigest(0.99)((toInt64(recv_ts_ns) - toInt64(source_ts_ms) * 1000000) / 1e6))
+		FROM %[1]s.kalshi_bbo_observations
+		WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalHour(24)))
+		  AND startsWith(source, 'tob_')
+		  AND source_ts_ms > 0 %[2]s`, db, kalshiEdgeWSArmFilter)
+	var p50, p90, p99 float64
+	if err := a.envDB(ctx).QueryRow(ctx, q).Scan(&p50, &p90, &p99); err != nil {
+		return nil, err
+	}
+	return &KalshiEdgeLatency{
+		Window: "24h", P50Ms: p50, P90Ms: p90, P99Ms: p99, GeneratedAt: time.Now().UTC(),
+	}, nil
+}
+
+// StartKalshiBackgroundRefresher periodically computes the Kalshi views that are too heavy for
+// the page-cache worker and writes them to the page cache (Postgres) so all replicas share
+// them and the request path never runs a multi-day scan:
+//   - the edge feed latency,
+//   - the 24h and 7d scoreboards (the 1h scoreboard stays on the ordinary page-cache worker),
+//   - the sports L2 coverage view.
+//
+// Each computation gets its own timeout so a slow one can't starve the others; the edge
+// latency is refreshed first so the 24h/7d scoreboards pick up its freshly-cached value.
+func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
+	const interval = 10 * time.Minute
+	const runTimeout = 3 * time.Minute
+	refreshLatency := func() {
+		rctx, cancel := context.WithTimeout(ctx, runTimeout)
+		defer cancel()
+		val, err := a.FetchKalshiEdgeLatency(rctx)
+		if err != nil {
+			slog.Warn("kalshi edge latency refresh failed", "error", err)
+			return
+		}
+		if err := a.WritePageCache(ctx, kalshiEdgeLatencyCacheKey, val); err != nil {
+			slog.Warn("kalshi edge latency cache write failed", "error", err)
+		}
+	}
+	refreshScoreboard := func(window string) {
+		rctx, cancel := context.WithTimeout(ctx, runTimeout)
+		defer cancel()
+		val, err := a.FetchKalshiScoreboardData(rctx, window, "")
+		if err != nil {
+			slog.Warn("kalshi scoreboard refresh failed", "window", window, "error", err)
+			return
+		}
+		if err := a.WritePageCache(ctx, kalshiScoreboardWindowKey(window), val); err != nil {
+			slog.Warn("kalshi scoreboard cache write failed", "window", window, "error", err)
+		}
+	}
+	refreshL2 := func() {
+		rctx, cancel := context.WithTimeout(ctx, runTimeout)
+		defer cancel()
+		val, err := a.FetchKalshiL2Coverage(rctx)
+		if err != nil {
+			slog.Warn("kalshi l2 coverage refresh failed", "error", err)
+			return
+		}
+		if err := a.WritePageCache(ctx, kalshiL2CoverageCacheKey, val); err != nil {
+			slog.Warn("kalshi l2 coverage cache write failed", "error", err)
+		}
+	}
+	refresh := func() {
+		refreshLatency()
+		refreshScoreboard("24h")
+		refreshScoreboard("7d")
+		refreshL2()
+	}
+	go func() {
+		refresh()
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				refresh()
+			}
+		}
+	}()
+}
+
+// GetKalshiScoreboard serves the Kalshi BBO scoreboard.
+func (a *API) GetKalshiScoreboard(w http.ResponseWriter, r *http.Request) {
+	if isMainnet(r.Context()) {
+		if key := kalshiScoreboardCacheKey(r); key != "" {
+			if data, err := a.readPageCache(r.Context(), key); err == nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("X-Cache", "HIT")
+				_, _ = w.Write(data)
+				return
+			}
+		}
+	}
+	w.Header().Set("X-Cache", "MISS")
+
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+
+	window := strings.TrimSpace(r.URL.Query().Get("window"))
+	if _, ok := kalshiWindows[window]; !ok {
+		window = "1h"
+	}
+	symbol := r.URL.Query().Get("symbol")
+
+	// FetchKalshiScoreboardData already degrades to an empty-but-valid response when the proxy
+	// table is absent or no feeds are configured, so no separate existence check is needed
+	// here — that avoids a redundant EXISTS TABLE round-trip per uncached request.
+	resp, err := a.FetchKalshiScoreboardData(ctx, window, symbol)
+	if err != nil {
+		logError("KalshiScoreboard error", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, resp)
+}

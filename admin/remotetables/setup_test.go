@@ -58,14 +58,24 @@ func TestDiscoverProxyableTablesSkipsMaterializedViewInnerTables(t *testing.T) {
 }
 
 func TestExternalRemoteTablesIncludesFeeds(t *testing.T) {
-	found := false
+	// Every feeds table an API handler reads must be proxied here, or the handler degrades to
+	// its empty state in every environment that relies on this setup.
+	want := []string{
+		"hyperliquid_bbo_feed_race_summary",
+		"hyperliquid_bbo_observations",
+		"kalshi_bbo_feed_race_summary",
+		"kalshi_bbo_observations",
+		"kalshi_mbp_levels",
+	}
+	have := map[string]bool{}
 	for _, e := range externalRemoteTables {
-		if e.RemoteDB == "feeds" && e.RemoteTable == "hyperliquid_bbo_feed_race_summary" {
-			found = true
-			break
+		if e.RemoteDB == "feeds" {
+			have[e.RemoteTable] = true
 		}
 	}
-	if !found {
-		t.Fatal("externalRemoteTables missing feeds.hyperliquid_bbo_feed_race_summary")
+	for _, table := range want {
+		if !have[table] {
+			t.Errorf("externalRemoteTables missing feeds.%s", table)
+		}
 	}
 }
