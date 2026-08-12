@@ -58,10 +58,7 @@ type runbookRef struct {
 	Title   string
 }
 
-// runbookListItem matches:
-//
-//	- `service` — [Title](page.md)
-//	- [Title](page.md)
+// runbookListItem matches "- `service` — [Title](page.md)" or "- [Title](page.md)".
 var runbookListItem = regexp.MustCompile("(?m)^[\\t ]*[-*][\\t ]+(?:`([a-zA-Z0-9][a-zA-Z0-9\\-]*)`[\\t ]*[—–-]+[\\t ]+)?\\[([^\\]]+)\\]\\(([^)]+)\\)")
 
 var fencedBlock = regexp.MustCompile("(?s)```.*?```")
