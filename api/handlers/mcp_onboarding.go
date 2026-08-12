@@ -59,6 +59,10 @@ Runbook:
 
 // runbookIndexPage is the docs slug the MCP reads from GitHub raw to discover
 // runbooks. Add a walkthrough by linking it on that file; do not edit lake.
+//
+// Docs dependency: the index page ships separately in malbeclabs/docs
+// (https://github.com/malbeclabs/docs/pull/197) and cannot merge in this PR.
+// Until it is live, loadRunbookCatalog serves the embedded fallback catalog.
 const runbookIndexPage = "runbooks"
 
 type runbookRef struct {
@@ -75,6 +79,11 @@ var fencedBlock = regexp.MustCompile("(?s)```.*?```")
 func (a *API) loadRunbookCatalog(ctx context.Context) ([]runbookRef, error) {
 	content, _, err := a.docsSource().Read(ctx, runbookIndexPage)
 	if err != nil {
+		// The live index is not published until malbeclabs/docs#197 merges;
+		// serve the embedded fallback catalog so the tool works either way.
+		if refs := embeddedRunbookCatalog(); len(refs) > 0 {
+			return refs, nil
+		}
 		return nil, fmt.Errorf("failed to load runbook index: %w", err)
 	}
 	refs := parseRunbookIndex(content)
@@ -82,6 +91,28 @@ func (a *API) loadRunbookCatalog(ctx context.Context) ([]runbookRef, error) {
 		return nil, fmt.Errorf("runbook index %q has no runbook links", runbookIndexPage)
 	}
 	return refs, nil
+}
+
+// embeddedRunbookCatalog lists the fallback runbooks compiled into lake, so
+// the catalog (not just runbook bodies) survives the docs index being absent.
+func embeddedRunbookCatalog() []runbookRef {
+	entries, err := runbooks.RunbooksFS.ReadDir(".")
+	if err != nil {
+		return nil
+	}
+	var out []runbookRef
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".md") {
+			continue
+		}
+		page := strings.TrimSuffix(name, ".md")
+		if !docsfetch.ValidPage(page) {
+			continue
+		}
+		out = append(out, runbookRef{Service: page, Page: page})
+	}
+	return out
 }
 
 func catalogServices(refs []runbookRef) []string {
