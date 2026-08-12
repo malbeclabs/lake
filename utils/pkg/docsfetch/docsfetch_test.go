@@ -4,8 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,18 +17,6 @@ func TestValidPage(t *testing.T) {
 	assert.False(t, ValidPage("../etc/passwd"))
 	assert.False(t, ValidPage("foo/bar"))
 	assert.False(t, ValidPage(""))
-}
-
-func TestRead_LocalDir(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "edge-runbook.md"), []byte("# Edge\n"), 0o644))
-
-	c := &Client{LocalDir: dir}
-	content, source, err := c.Read(context.Background(), "edge-runbook")
-	require.NoError(t, err)
-	assert.Equal(t, "# Edge\n", content)
-	assert.Equal(t, filepath.Join(dir, "edge-runbook.md"), source)
 }
 
 func TestRead_PublicDocs(t *testing.T) {
@@ -60,4 +46,17 @@ func TestRead_InvalidPage(t *testing.T) {
 	_, _, err := c.Read(context.Background(), "../../../etc/passwd")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid page name")
+}
+
+func TestRead_NotFound(t *testing.T) {
+	t.Parallel()
+	public := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(public.Close)
+
+	c := &Client{HTTP: public.Client(), Base: public.URL + "/"}
+	_, _, err := c.Read(context.Background(), "missing-page")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "docs page not found")
 }

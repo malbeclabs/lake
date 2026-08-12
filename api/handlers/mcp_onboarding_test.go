@@ -6,8 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -83,12 +82,22 @@ const testRunbookIndex = `# Runbooks
 
 func withRunbookDocs(t *testing.T, files map[string]string) {
 	t.Helper()
-	dir := t.TempDir()
-	for name, body := range files {
-		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644))
-	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/")
+		body, ok := files[name]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+
 	prev := handlers.DocsSource
-	handlers.DocsSource = &docsfetch.Client{LocalDir: dir}
+	handlers.DocsSource = &docsfetch.Client{
+		HTTP: srv.Client(),
+		Base: srv.URL + "/",
+	}
 	t.Cleanup(func() { handlers.DocsSource = prev })
 }
 

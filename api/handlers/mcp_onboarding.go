@@ -19,11 +19,14 @@ import (
 )
 
 // Onboarding tools live on the single DoubleZero MCP (this server). Runbook
-// markdown stays in public malbeclabs/docs; we fetch it. A small embed is only
-// a fallback for mockup pages not published yet.
+// markdown stays in public malbeclabs/docs; we fetch it via GitHub raw. A small
+// embed is only a fallback for pages not published yet.
 //
 //   - get_onboarding_runbook: entrypoint on "walk me through connecting…"
 //   - check_edge_access: reads dz_access_passes_current (owner pubkey + receiving IP)
+
+// DocsSource fetches runbook markdown from GitHub raw. Tests may replace it.
+var DocsSource = docsfetch.FromEnv()
 
 // onboardingPreamble tells the agent how to drive a runbook. Returned with the
 // runbook so the guidance travels with the data, client-agnostically.

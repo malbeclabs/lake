@@ -1,6 +1,5 @@
 // Package docsfetch loads DoubleZero documentation from the public
-// malbeclabs/docs repo (raw GitHub). An optional local checkout can override
-// that for development. Lake does not host runbooks; it only reads them.
+// malbeclabs/docs repo via raw GitHub. Lake does not host runbooks; it only reads them.
 package docsfetch
 
 import (
@@ -9,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -26,15 +24,14 @@ func ValidPage(name string) bool {
 	return validPage.MatchString(name)
 }
 
-// Client reads markdown pages from an optional local directory, then the public docs URL.
+// Client reads markdown pages from the public docs GitHub raw URL.
 type Client struct {
-	HTTP     *http.Client
-	LocalDir string
-	Base     string
+	HTTP *http.Client
+	Base string
 }
 
-// FromEnv builds a Client from DZ_DOCS_DIR (optional local malbeclabs/docs/docs
-// checkout) and DZ_DOCS_BASE_URL (defaults to the public GitHub raw tree).
+// FromEnv builds a Client. DZ_DOCS_BASE_URL overrides the default GitHub raw base
+// (used in tests); production uses DefaultBase.
 func FromEnv() *Client {
 	base := strings.TrimSpace(os.Getenv("DZ_DOCS_BASE_URL"))
 	if base == "" {
@@ -44,14 +41,12 @@ func FromEnv() *Client {
 		base += "/"
 	}
 	return &Client{
-		HTTP:     &http.Client{Timeout: 15 * time.Second},
-		LocalDir: strings.TrimSpace(os.Getenv("DZ_DOCS_DIR")),
-		Base:     base,
+		HTTP: &http.Client{Timeout: 15 * time.Second},
+		Base: base,
 	}
 }
 
-// Read returns the markdown for page (without ".md"). LocalDir is tried first
-// when set; otherwise the public docs base is fetched.
+// Read returns the markdown for page (without ".md") from GitHub raw.
 func (c *Client) Read(ctx context.Context, page string) (content, source string, err error) {
 	page = strings.TrimSpace(page)
 	if page == "" {
@@ -59,17 +54,6 @@ func (c *Client) Read(ctx context.Context, page string) (content, source string,
 	}
 	if !ValidPage(page) {
 		return "", "", fmt.Errorf("invalid page name: %s", page)
-	}
-
-	if c.LocalDir != "" {
-		path := filepath.Join(c.LocalDir, page+".md")
-		data, readErr := os.ReadFile(path)
-		if readErr == nil {
-			return string(data), path, nil
-		}
-		if !os.IsNotExist(readErr) {
-			return "", "", fmt.Errorf("local docs %s: %w", path, readErr)
-		}
 	}
 
 	base := c.Base

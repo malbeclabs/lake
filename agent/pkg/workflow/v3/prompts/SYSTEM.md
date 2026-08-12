@@ -47,10 +47,9 @@ Use for:
 **IMPORTANT**: Use `read_docs` for questions about what DZ *is* or how to *use* it. Use `execute_sql`/`execute_cypher` for questions about actual network *data* (metrics, status, validators, etc.).
 
 Examples:
-- "What is DoubleZero?" → `read_docs`
-- "How do I connect to a feed?" → `read_docs` or `get_onboarding_runbook`
+- "What is DoubleZero?" → `read_docs` (page: index or architecture)
 - "How many validators are on DZ?" → `execute_sql` (query database)
-- "Why isn't my tunnel connecting?" → `read_docs`
+- "Why isn't my tunnel connecting?" → `read_docs` (page: troubleshooting)
 - "Show me tunnel status" → `execute_sql` (query database)
 
 ### execute_sql (ClickHouse)

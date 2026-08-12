@@ -95,7 +95,7 @@ export function MCPDocsPage() {
                 </tr>
                 <tr>
                   <td className="px-4 py-2 font-mono text-xs">execute_cypher</td>
-                  <td className="px-4 py-2 text-muted-foreground">Query Neo4j for topology, paths, and connectivity (mainnet only)</td>
+                  <td className="px-4 py-2 text-muted-foreground">Query Neo4j for topology, paths, and connectivity</td>
                 </tr>
                 <tr>
                   <td className="px-4 py-2 font-mono text-xs">get_schema</td>
