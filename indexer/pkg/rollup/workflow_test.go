@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
+	"go.temporal.io/sdk/workflow"
 )
 
 // backfillChunkStarts returns the WindowStart of every chunk a backfill over
@@ -74,6 +75,33 @@ func TestBackfillRollupWorkflow_FailedChunkMustNotBeSilentlySkipped(t *testing.T
 	// this the test would also pass if every chunk failed.
 	require.Contains(t, err.Error(), "1 of 3 chunks failed",
 		"only the middle chunk should fail; the others must still run, got: %v", err)
+}
+
+// TestComputeRollupWorkflow_KeepsLoopingWhenActivitiesFail pins the other half of
+// runIteration's contract. Before the error had a return value the property was
+// structural; now a discarded error is the only thing holding it, and a discarded
+// error reads like a bug. Someone "fixing" it to `return err` would stop the live
+// rollup on the first ClickHouse blip, with nothing in CI to say so.
+func TestComputeRollupWorkflow_KeepsLoopingWhenActivitiesFail(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+
+	a := &Activities{}
+	env.RegisterActivity(a)
+
+	// Every cycle fails, for the whole run.
+	blip := errors.New("clickhouse connection reset by peer")
+	env.OnActivity(a.RollupLinks, mock.Anything, mock.Anything).Return(0, blip)
+	env.OnActivity(a.RollupDeviceInterfaces, mock.Anything, mock.Anything).Return(0, blip)
+
+	// Two cycles from the continue-as-new boundary, so the run reaches it quickly.
+	env.ExecuteWorkflow(ComputeRollupWorkflow, continueAsNewThreshold-2)
+
+	require.True(t, env.IsWorkflowCompleted())
+	var continueAsNew *workflow.ContinueAsNewError
+	require.ErrorAs(t, env.GetWorkflowError(), &continueAsNew,
+		"the live rollup must keep looping through activity failures and continue as new, got: %v",
+		env.GetWorkflowError())
 }
 
 // TestBackfillRollupWorkflow_NamesEveryFailedWindow pins what the operator can
