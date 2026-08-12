@@ -4479,31 +4479,44 @@ export async function fetchLatencyHistory(
 // Metro path latency types (path-based DZ vs Internet comparison)
 export type PathOptimizeMode = 'hops' | 'latency' | 'bandwidth'
 
+/**
+ * One metro pair from /api/topology/metro-path-latency.
+ *
+ * Every field below the first block is optional, and that is not defensive
+ * typing: the default request is answered from the `page_cache` table in
+ * Postgres, which a worker of any age may have written. A web deploy reaches
+ * readers before the next worker refresh does, so for that window the browser
+ * holds a new bundle reading a payload that predates these fields. Declaring
+ * them present made `undefined.toFixed()` take the whole page down through the
+ * error boundary. Keep them optional so the compiler makes every reader say
+ * what it shows when the figure has not arrived yet.
+ */
 export interface MetroPathLatency {
   fromMetroPK: string
   fromMetroCode: string
   toMetroPK: string
   toMetroCode: string
   pathLatencyMs: number
-  /** Observed sum of per-hop RTT. Falls back to the contracted figure when partiallyCommitted. */
-  measuredLatencyMs: number
-  /** 0 when partiallyCommitted — absent, not zero. */
-  measuredP95Ms: number
-  /** 0 when partiallyCommitted — absent, not zero. */
-  measuredJitterMs: number
-  partiallyCommitted: boolean
-  pathMetros: string[]
   hopCount: number
   bottleneckBwGbps: number
   internetLatencyMs: number
-  /** 0 when unmeasured — the internet side has no partiallyCommitted-style flag. */
-  internetP95Ms: number
-  /** 0 when unmeasured — the internet side has no partiallyCommitted-style flag. */
-  internetJitterMs: number
   /** vs internet, from the contracted pathLatencyMs. */
   improvementPct: number | null
+
+  /** Observed sum of per-hop RTT. Falls back to the contracted figure when partiallyCommitted. */
+  measuredLatencyMs?: number
+  /** 0 when partiallyCommitted — absent, not zero. */
+  measuredP95Ms?: number
+  /** 0 when partiallyCommitted — absent, not zero. */
+  measuredJitterMs?: number
+  partiallyCommitted?: boolean
+  pathMetros?: string[]
+  /** 0 when unmeasured — the internet side has no partiallyCommitted-style flag. */
+  internetP95Ms?: number
+  /** 0 when unmeasured — the internet side has no partiallyCommitted-style flag. */
+  internetJitterMs?: number
   /** vs internet, from measuredLatencyMs. Separate basis, so the two pages stay self-consistent. */
-  measuredImprovementPct: number | null
+  measuredImprovementPct?: number | null
 }
 
 export interface MetroPathLatencyResponse {
