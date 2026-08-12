@@ -61,7 +61,7 @@ const testRunbookIndex = `# Runbooks
 ## Index
 
 - ` + "`feed-a`" + ` — [Feed A + Edge Connect](feed-a-runbook.md)
-- ` + "`dz-edge-subscriber`" + ` — [Edge subscriber](dz-edge-subscriber.md)
+- ` + "`feed-b`" + ` — [Feed B](feed-b-runbook.md)
 `
 
 // withRunbookDocs serves files from a local httptest server and returns a docs
@@ -94,7 +94,7 @@ func TestMCPHandler_GetOnboardingRunbook_ListsCatalog(t *testing.T) {
 	available, ok := output["available_runbooks"].([]any)
 	require.True(t, ok, "expected available_runbooks array")
 	assert.Contains(t, available, "feed-a")
-	assert.Contains(t, available, "dz-edge-subscriber")
+	assert.Contains(t, available, "feed-b")
 	assert.Empty(t, output["service"])
 }
 
@@ -118,20 +118,18 @@ func TestMCPHandler_GetOnboardingRunbook_FromLocalDocs(t *testing.T) {
 	assert.Contains(t, output["source"], "feed-a-runbook.md")
 }
 
-func TestMCPHandler_GetOnboardingRunbook_EmbeddedFallback(t *testing.T) {
+func TestMCPHandler_GetOnboardingRunbook_MissingPageIsError(t *testing.T) {
 	t.Parallel()
-	// Index is local; the runbook page is missing so loadRunbook falls back to embed.
+	// Index lists a page that is not published yet — no embed fallback.
 	api := &handlers.API{DocsSource: withRunbookDocs(t, map[string]string{"runbooks.md": testRunbookIndex})}
 	handler, sessionID := mcpSession(t, api)
 
-	output := callToolOutput(t, handler, sessionID, "get_onboarding_runbook", map[string]any{
-		"service": "dz-edge-subscriber",
+	response := callTool(t, handler, sessionID, "get_onboarding_runbook", map[string]any{
+		"service": "feed-b",
 	})
-	assert.Equal(t, "dz-edge-subscriber", output["service"])
-	runbook, ok := output["runbook"].(string)
+	result, ok := response["result"].(map[string]any)
 	require.True(t, ok)
-	assert.Contains(t, runbook, "tiredsolid")
-	assert.Equal(t, "embed:dz-edge-subscriber.md", output["source"])
+	assert.True(t, result["isError"].(bool))
 }
 
 func TestMCPHandler_GetOnboardingRunbook_UnknownService(t *testing.T) {
@@ -160,23 +158,15 @@ func TestMCPHandler_GetOnboardingRunbook_InvalidService(t *testing.T) {
 	assert.True(t, result["isError"].(bool))
 }
 
-func TestMCPHandler_GetOnboardingRunbook_MissingIndexFallsBackToEmbeds(t *testing.T) {
+func TestMCPHandler_GetOnboardingRunbook_MissingIndexIsError(t *testing.T) {
 	t.Parallel()
-	// Docs server has neither the index nor any runbook page (the state until
-	// malbeclabs/docs#197 is live): the embedded catalog keeps the tool working.
 	api := &handlers.API{DocsSource: withRunbookDocs(t, nil)}
 	handler, sessionID := mcpSession(t, api)
 
-	output := callToolOutput(t, handler, sessionID, "get_onboarding_runbook", map[string]any{})
-	available, ok := output["available_runbooks"].([]any)
-	require.True(t, ok, "expected available_runbooks array")
-	assert.Contains(t, available, "dz-edge-subscriber")
-
-	output = callToolOutput(t, handler, sessionID, "get_onboarding_runbook", map[string]any{
-		"service": "dz-edge-subscriber",
-	})
-	assert.Equal(t, "embed:dz-edge-subscriber.md", output["source"])
-	assert.Contains(t, output["runbook"], "tiredsolid")
+	response := callTool(t, handler, sessionID, "get_onboarding_runbook", map[string]any{})
+	result, ok := response["result"].(map[string]any)
+	require.True(t, ok)
+	assert.True(t, result["isError"].(bool))
 }
 
 func TestMCPHandler_CheckEdgeAccess_NoPassIsPending(t *testing.T) {

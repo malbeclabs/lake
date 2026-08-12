@@ -13,14 +13,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/malbeclabs/lake/api/handlers/runbooks"
 	"github.com/malbeclabs/lake/utils/pkg/docsfetch"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // Onboarding tools live on the single DoubleZero MCP (this server). Runbook
-// markdown stays in public malbeclabs/docs; we fetch it via GitHub raw. A small
-// embed is only a fallback for pages not published yet.
+// markdown stays in public malbeclabs/docs; we fetch it via GitHub raw.
 //
 //   - get_onboarding_runbook: entrypoint on "walk me through connecting…"
 //   - check_edge_access: runs `doublezero access-pass get` (user payer + receiving IP)
@@ -62,7 +60,6 @@ Runbook:
 //
 // Docs dependency: the index page ships separately in malbeclabs/docs
 // (https://github.com/malbeclabs/docs/pull/197) and cannot merge in this PR.
-// Until it is live, loadRunbookCatalog serves the embedded fallback catalog.
 const runbookIndexPage = "runbooks"
 
 type runbookRef struct {
@@ -79,11 +76,6 @@ var fencedBlock = regexp.MustCompile("(?s)```.*?```")
 func (a *API) loadRunbookCatalog(ctx context.Context) ([]runbookRef, error) {
 	content, _, err := a.docsSource().Read(ctx, runbookIndexPage)
 	if err != nil {
-		// The live index is not published until malbeclabs/docs#197 merges;
-		// serve the embedded fallback catalog so the tool works either way.
-		if refs := embeddedRunbookCatalog(); len(refs) > 0 {
-			return refs, nil
-		}
 		return nil, fmt.Errorf("failed to load runbook index: %w", err)
 	}
 	refs := parseRunbookIndex(content)
@@ -91,28 +83,6 @@ func (a *API) loadRunbookCatalog(ctx context.Context) ([]runbookRef, error) {
 		return nil, fmt.Errorf("runbook index %q has no runbook links", runbookIndexPage)
 	}
 	return refs, nil
-}
-
-// embeddedRunbookCatalog lists the fallback runbooks compiled into lake, so
-// the catalog (not just runbook bodies) survives the docs index being absent.
-func embeddedRunbookCatalog() []runbookRef {
-	entries, err := runbooks.RunbooksFS.ReadDir(".")
-	if err != nil {
-		return nil
-	}
-	var out []runbookRef
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".md") {
-			continue
-		}
-		page := strings.TrimSuffix(name, ".md")
-		if !docsfetch.ValidPage(page) {
-			continue
-		}
-		out = append(out, runbookRef{Service: page, Page: page})
-	}
-	return out
 }
 
 func catalogServices(refs []runbookRef) []string {
@@ -251,16 +221,7 @@ func (a *API) registerGetOnboardingRunbookTool(server *mcp.Server) {
 }
 
 func (a *API) loadRunbook(ctx context.Context, page string) (content, source string, err error) {
-	content, source, err = a.docsSource().Read(ctx, page)
-	if err == nil {
-		return content, source, nil
-	}
-	// Fallback: mockup embed (e.g. dz-edge-subscriber not yet in docs).
-	embedded, embErr := runbooks.RunbooksFS.ReadFile(page + ".md")
-	if embErr != nil {
-		return "", "", err
-	}
-	return string(embedded), "embed:" + page + ".md", nil
+	return a.docsSource().Read(ctx, page)
 }
 
 // CheckEdgeAccessInput is the input for the check_edge_access tool.
