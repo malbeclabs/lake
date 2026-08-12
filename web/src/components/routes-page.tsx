@@ -979,11 +979,17 @@ export function RoutesPage() {
           care about and every route between them is compared.
         </p>
         <p className="mt-1 text-xs text-muted-foreground max-w-4xl">
-          Figures cover the last 24 hours; a route opened as a card also shows the last 7 days by
-          the hour. The public-internet figures are measured end to end. The DoubleZero p95 and jitter
-          are sums of each hop&apos;s own p95 and mean jitter — percentiles and jitter do not add,
-          so those two figures are higher than what a packet actually sees. The bias runs against
-          DoubleZero.
+          Figures cover the last 24 hours and every one of them is round-trip; a route opened as a
+          card also shows the last 7 days by the hour. The public-internet figures are measured end
+          to end. The DoubleZero p95 and jitter are sums of each hop&apos;s own p95 and mean jitter
+          — percentiles and jitter do not add, so those two figures are higher than what a packet
+          actually sees. The bias runs against DoubleZero.
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground max-w-4xl">
+          DoubleZero routes here follow every activated link, which is the set multicast forwards
+          over. Unicast follows a smaller set and is slower on some routes. The public-internet
+          column is a unicast probe, because the public internet carries no multicast, and it is
+          what you pay today to reach the same place.
         </p>
 
         {/* Selection */}
