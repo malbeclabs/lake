@@ -311,7 +311,7 @@ func (a *Activities) RefreshCaches(ctx context.Context, cycle int) error {
 	for _, strategy := range metroPathLatencyStrategies {
 		g.Go(func() error {
 			a.refresh(gctx, "metro path latency:"+strategy, "metro_path_latency:"+strategy, func(ctx context.Context) (any, error) {
-				return a.API.FetchMetroPathLatencyData(ctx, strategy)
+				return a.API.FetchMetroPathLatencyData(ctx, strategy, 0)
 			}, shuttingDown, errBatchDeadline)
 			return nil
 		})
