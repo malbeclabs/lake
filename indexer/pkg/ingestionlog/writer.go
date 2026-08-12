@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/malbeclabs/lake/utils/pkg/redact"
 )
 
 // Inserter is the subset of ClickHouse connection methods needed to write
@@ -131,7 +132,8 @@ func buildRecord(workflow, activity, network string, start time.Time, result Ref
 	switch {
 	case err != nil:
 		rec.Status = "error"
-		msg := err.Error()
+		// hide endpoint url from caller since solana-go puts the the whole string in the error message
+		msg := redact.Error(err)
 		rec.ErrorMessage = &msg
 	case result.Partial:
 		rec.Status = "partial"

@@ -52,7 +52,7 @@ func isDefaultLinkThresholds(p incidentQueryParams) bool {
 		p.DiscardsThreshold == 1 &&
 		p.CarrierThreshold == 1 &&
 		p.CoalesceGapMin == 180 &&
-		rollupBucketMinutes(p.Duration) == 5
+		p.Duration <= 8*24*time.Hour
 }
 
 // buildLinkIncidentsViewQuery builds a simple query against the link_incidents_v view.
@@ -214,7 +214,8 @@ func buildLinkIncidentsQuery(p incidentQueryParams) (string, []any) {
 			bucketExpr("bucket_ts"), linkSource, lookbackArg))
 	}
 
-	// No data: missing rows
+	// The calendar steps 5 minutes whatever the range, so the island stage below
+	// gives no_data its own 5-minute step instead of the re-bucketed one.
 	if p.TypeFilter == "all" || p.TypeFilter == "no_data" {
 		noDataSource := "link_rollup_5m FINAL"
 		if p.UseRaw {
@@ -225,19 +226,20 @@ func buildLinkIncidentsQuery(p incidentQueryParams) (string, []any) {
 			toFloat64(1) AS metric_value,
 			'no_data' AS incident_type
 		FROM (
-			SELECT DISTINCT link_pk FROM %s
+			SELECT link_pk, min(bucket_ts) AS first_seen FROM %s
 			WHERE bucket_ts >= now() - INTERVAL %s SECOND - INTERVAL 1 HOUR
 			  AND provisioning = false
+			GROUP BY link_pk
 		) al
 		CROSS JOIN (
 			SELECT toDateTime(toStartOfFiveMinutes(now() - INTERVAL %s SECOND)) + number * 300 AS bucket_ts
 			FROM numbers(toUInt64(dateDiff('second', now() - INTERVAL %s SECOND, now()) / 300))
 		) e
-		LEFT JOIN (
+		LEFT ANTI JOIN (
 			SELECT link_pk, bucket_ts FROM %s
 			WHERE bucket_ts >= now() - INTERVAL %s SECOND
 		) a ON al.link_pk = a.link_pk AND e.bucket_ts = a.bucket_ts
-		WHERE a.bucket_ts IS NULL`,
+		WHERE e.bucket_ts >= al.first_seen`,
 			noDataSource, lookbackArg, lookbackArg, lookbackArg, noDataSource, lookbackArg))
 	}
 
@@ -289,12 +291,13 @@ WITH
 above AS (%s
 ),
 
--- Gap-and-island: group consecutive above-threshold buckets
+-- Gap-and-island: group consecutive above-threshold buckets. no_data steps 5
+-- minutes even when the other types are re-bucketed coarser.
 islands AS (
 	SELECT entity_pk, incident_type, bucket_ts, metric_value,
 		bucket_ts - toIntervalSecond(row_number() OVER (
 			PARTITION BY entity_pk, incident_type ORDER BY bucket_ts
-		) * %s * 60) AS island_grp
+		) * if(incident_type = 'no_data', 5, %s) * 60) AS island_grp
 	FROM above
 ),
 
@@ -302,11 +305,12 @@ islands AS (
 raw_incidents AS (
 	SELECT entity_pk, incident_type, island_grp,
 		min(bucket_ts) AS started_at,
-		max(bucket_ts) + toIntervalSecond(%s * 60) AS ended_at,
+		max(bucket_ts) + toIntervalSecond(if(incident_type = 'no_data', 5, %s) * 60) AS ended_at,
 		max(metric_value) AS peak_value,
 		count() AS bucket_count
 	FROM islands
 	GROUP BY entity_pk, incident_type, island_grp
+	HAVING NOT (incident_type = 'no_data' AND count() < 3)
 ),
 
 -- Coalesce nearby incidents
@@ -512,7 +516,7 @@ func isDefaultDeviceThresholds(p incidentQueryParams) bool {
 		p.DiscardsThreshold == 1 &&
 		p.CarrierThreshold == 1 &&
 		p.CoalesceGapMin == 180 &&
-		rollupBucketMinutes(p.Duration) == 5 &&
+		p.Duration <= 8*24*time.Hour &&
 		!p.IncludeLinkIntfs
 }
 
@@ -622,28 +626,29 @@ func buildDeviceIncidentsQuery(p incidentQueryParams) (string, []any) {
 			bucketExpr("bucket_ts"), ct.expr, ct.name, lookbackArg, linkFilter, threshArg))
 	}
 
-	// No data for devices: missing rollup rows
+	// See buildLinkIncidentsQuery for the 5-minute calendar and the island step.
 	if p.TypeFilter == "all" || p.TypeFilter == "no_data" {
 		aboveParts = append(aboveParts, fmt.Sprintf(`
 		SELECT ad.device_pk AS entity_pk, e.bucket_ts AS bucket_ts,
 			toFloat64(1) AS metric_value,
 			'no_data' AS incident_type
 		FROM (
-			SELECT DISTINCT device_pk FROM device_interface_rollup_5m FINAL
+			SELECT device_pk, min(bucket_ts) AS first_seen FROM device_interface_rollup_5m FINAL
 			WHERE bucket_ts >= now() - INTERVAL %s SECOND - INTERVAL 1 HOUR
 			  %s
+			GROUP BY device_pk
 		) ad
 		CROSS JOIN (
 			SELECT toDateTime(toStartOfFiveMinutes(now() - INTERVAL %s SECOND)) + number * 300 AS bucket_ts
 			FROM numbers(toUInt64(dateDiff('second', now() - INTERVAL %s SECOND, now()) / 300))
 		) e
-		LEFT JOIN (
+		LEFT ANTI JOIN (
 			SELECT device_pk, bucket_ts FROM device_interface_rollup_5m FINAL
 			WHERE bucket_ts >= now() - INTERVAL %s SECOND
 			  %s
 			GROUP BY device_pk, bucket_ts
 		) a ON ad.device_pk = a.device_pk AND e.bucket_ts = a.bucket_ts
-		WHERE a.bucket_ts IS NULL`,
+		WHERE e.bucket_ts >= ad.first_seen`,
 			lookbackArg, linkFilter, lookbackArg, lookbackArg, lookbackArg, linkFilter))
 	}
 
@@ -698,18 +703,19 @@ islands AS (
 	SELECT entity_pk, incident_type, bucket_ts, metric_value,
 		bucket_ts - toIntervalSecond(row_number() OVER (
 			PARTITION BY entity_pk, incident_type ORDER BY bucket_ts
-		) * %s * 60) AS island_grp
+		) * if(incident_type = 'no_data', 5, %s) * 60) AS island_grp
 	FROM above
 ),
 
 raw_incidents AS (
 	SELECT entity_pk, incident_type, island_grp,
 		min(bucket_ts) AS started_at,
-		max(bucket_ts) + toIntervalSecond(%s * 60) AS ended_at,
+		max(bucket_ts) + toIntervalSecond(if(incident_type = 'no_data', 5, %s) * 60) AS ended_at,
 		max(metric_value) AS peak_value,
 		count() AS bucket_count
 	FROM islands
 	GROUP BY entity_pk, incident_type, island_grp
+	HAVING NOT (incident_type = 'no_data' AND count() < 3)
 ),
 
 numbered AS (

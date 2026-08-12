@@ -3,6 +3,7 @@ package handlers
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -184,4 +185,31 @@ func TestBuildDrainedLinksInfo(t *testing.T) {
 			}
 		}
 	})
+}
+
+// A 7-day range re-buckets the threshold types to 15 minutes. The no_data
+// calendar always steps 5 minutes, so it must keep a 5-minute island step
+// instead of dropping out of the query.
+func TestIncidentsQueryKeepsNoDataOnCoarseBuckets(t *testing.T) {
+	t.Parallel()
+	p := incidentQueryParams{
+		Duration:          7 * 24 * time.Hour,
+		LossThreshold:     10,
+		ErrorsThreshold:   50, // non-default, so neither builder takes its view
+		FCSThreshold:      1,
+		DiscardsThreshold: 1,
+		CarrierThreshold:  1,
+		CoalesceGapMin:    180,
+		TypeFilter:        "all",
+	}
+	linkQuery, _ := buildLinkIncidentsQuery(p)
+	deviceQuery, _ := buildDeviceIncidentsQuery(p)
+
+	for name, query := range map[string]string{"links": linkQuery, "devices": deviceQuery} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, 15, rollupBucketMinutes(p.Duration))
+			assert.Contains(t, query, "'no_data' AS incident_type")
+			assert.Equal(t, 2, strings.Count(query, "if(incident_type = 'no_data', 5,"))
+		})
+	}
 }
