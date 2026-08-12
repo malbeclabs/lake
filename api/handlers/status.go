@@ -1627,6 +1627,8 @@ type DeviceHourStatus struct {
 	// ISIS state
 	ISISOverload    bool `json:"isis_overload,omitempty"`    // true when device is in ISIS overload state
 	ISISUnreachable bool `json:"isis_unreachable,omitempty"` // true when device is unreachable in ISIS topology
+	// Telemetry coverage
+	MissingSubBuckets int `json:"missing_sub_buckets,omitempty"` // 5-minute source buckets with no data inside this display bucket
 }
 
 type DeviceHistory struct {
