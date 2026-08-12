@@ -52,7 +52,7 @@ func isDefaultLinkThresholds(p incidentQueryParams) bool {
 		p.DiscardsThreshold == 1 &&
 		p.CarrierThreshold == 1 &&
 		p.CoalesceGapMin == 180 &&
-		rollupBucketMinutes(p.Duration) == 5
+		p.Duration <= 8*24*time.Hour
 }
 
 // buildLinkIncidentsViewQuery builds a simple query against the link_incidents_v view.
@@ -214,8 +214,8 @@ func buildLinkIncidentsQuery(p incidentQueryParams) (string, []any) {
 			bucketExpr("bucket_ts"), linkSource, lookbackArg))
 	}
 
-	// The calendar below steps 5 minutes, so islands only line up at that bucket size.
-	// join_use_nulls is 0, so an unmatched LEFT JOIN row carries 1970-01-01, not NULL.
+	// The calendar steps 5 minutes, so the island detection only lines up at that
+	// bucket size. Coarser ranges take the view, which is 5-minute based.
 	if (p.TypeFilter == "all" || p.TypeFilter == "no_data") && bucketMin == 5 {
 		noDataSource := "link_rollup_5m FINAL"
 		if p.UseRaw {
@@ -226,19 +226,20 @@ func buildLinkIncidentsQuery(p incidentQueryParams) (string, []any) {
 			toFloat64(1) AS metric_value,
 			'no_data' AS incident_type
 		FROM (
-			SELECT DISTINCT link_pk FROM %s
+			SELECT link_pk, min(bucket_ts) AS first_seen FROM %s
 			WHERE bucket_ts >= now() - INTERVAL %s SECOND - INTERVAL 1 HOUR
 			  AND provisioning = false
+			GROUP BY link_pk
 		) al
 		CROSS JOIN (
 			SELECT toDateTime(toStartOfFiveMinutes(now() - INTERVAL %s SECOND)) + number * 300 AS bucket_ts
 			FROM numbers(toUInt64(dateDiff('second', now() - INTERVAL %s SECOND, now()) / 300))
 		) e
-		LEFT JOIN (
+		LEFT ANTI JOIN (
 			SELECT link_pk, bucket_ts FROM %s
 			WHERE bucket_ts >= now() - INTERVAL %s SECOND
 		) a ON al.link_pk = a.link_pk AND e.bucket_ts = a.bucket_ts
-		WHERE a.bucket_ts = toDateTime(0)`,
+		WHERE e.bucket_ts >= al.first_seen`,
 			noDataSource, lookbackArg, lookbackArg, lookbackArg, noDataSource, lookbackArg))
 	}
 
@@ -308,6 +309,7 @@ raw_incidents AS (
 		count() AS bucket_count
 	FROM islands
 	GROUP BY entity_pk, incident_type, island_grp
+	HAVING NOT (incident_type = 'no_data' AND count() < 3)
 ),
 
 -- Coalesce nearby incidents
@@ -359,7 +361,6 @@ LEFT JOIN dz_metros_current ma ON da.metro_pk = ma.pk
 LEFT JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
 LEFT JOIN dz_contributors_current cc ON l.contributor_pk = cc.pk
 WHERE c.ended_at >= now() - INTERVAL %s SECOND
-  AND NOT (c.incident_type = 'no_data' AND c.total_buckets < 3)
   %s
 ORDER BY c.started_at DESC`,
 		aboveCTE,
@@ -514,7 +515,7 @@ func isDefaultDeviceThresholds(p incidentQueryParams) bool {
 		p.DiscardsThreshold == 1 &&
 		p.CarrierThreshold == 1 &&
 		p.CoalesceGapMin == 180 &&
-		rollupBucketMinutes(p.Duration) == 5 &&
+		p.Duration <= 8*24*time.Hour &&
 		!p.IncludeLinkIntfs
 }
 
@@ -631,21 +632,22 @@ func buildDeviceIncidentsQuery(p incidentQueryParams) (string, []any) {
 			toFloat64(1) AS metric_value,
 			'no_data' AS incident_type
 		FROM (
-			SELECT DISTINCT device_pk FROM device_interface_rollup_5m FINAL
+			SELECT device_pk, min(bucket_ts) AS first_seen FROM device_interface_rollup_5m FINAL
 			WHERE bucket_ts >= now() - INTERVAL %s SECOND - INTERVAL 1 HOUR
 			  %s
+			GROUP BY device_pk
 		) ad
 		CROSS JOIN (
 			SELECT toDateTime(toStartOfFiveMinutes(now() - INTERVAL %s SECOND)) + number * 300 AS bucket_ts
 			FROM numbers(toUInt64(dateDiff('second', now() - INTERVAL %s SECOND, now()) / 300))
 		) e
-		LEFT JOIN (
+		LEFT ANTI JOIN (
 			SELECT device_pk, bucket_ts FROM device_interface_rollup_5m FINAL
 			WHERE bucket_ts >= now() - INTERVAL %s SECOND
 			  %s
 			GROUP BY device_pk, bucket_ts
 		) a ON ad.device_pk = a.device_pk AND e.bucket_ts = a.bucket_ts
-		WHERE a.bucket_ts = toDateTime(0)`,
+		WHERE e.bucket_ts >= ad.first_seen`,
 			lookbackArg, linkFilter, lookbackArg, lookbackArg, lookbackArg, linkFilter))
 	}
 
@@ -712,6 +714,7 @@ raw_incidents AS (
 		count() AS bucket_count
 	FROM islands
 	GROUP BY entity_pk, incident_type, island_grp
+	HAVING NOT (incident_type = 'no_data' AND count() < 3)
 ),
 
 numbered AS (
@@ -758,7 +761,6 @@ LEFT JOIN dz_devices_current d ON c.entity_pk = d.pk
 LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 LEFT JOIN dz_contributors_current cc ON d.contributor_pk = cc.pk
 WHERE c.ended_at >= now() - INTERVAL %s SECOND
-  AND NOT (c.incident_type = 'no_data' AND c.total_buckets < 3)
   %s
 ORDER BY c.started_at DESC`,
 		aboveCTE,

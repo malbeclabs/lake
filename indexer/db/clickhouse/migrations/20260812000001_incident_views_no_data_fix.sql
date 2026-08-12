@@ -33,19 +33,20 @@ above AS (
         toFloat64(1) AS metric_value,
         'no_data' AS incident_type
     FROM (
-        SELECT DISTINCT link_pk FROM link_rollup_5m FINAL
+        SELECT link_pk, min(bucket_ts) AS first_seen FROM link_rollup_5m FINAL
         WHERE bucket_ts >= now() - INTERVAL 8 DAY - INTERVAL 1 HOUR
           AND provisioning = false
+        GROUP BY link_pk
     ) al
     CROSS JOIN (
         SELECT toDateTime(toStartOfFiveMinutes(now() - INTERVAL 8 DAY)) + number * 300 AS bucket_ts
         FROM numbers(toUInt64(dateDiff('second', now() - INTERVAL 8 DAY, now()) / 300))
     ) e
-    LEFT JOIN (
+    LEFT ANTI JOIN (
         SELECT link_pk, bucket_ts FROM link_rollup_5m FINAL
         WHERE bucket_ts >= now() - INTERVAL 8 DAY
     ) a ON al.link_pk = a.link_pk AND e.bucket_ts = a.bucket_ts
-    WHERE a.bucket_ts = toDateTime(0)
+    WHERE e.bucket_ts >= al.first_seen
 
     UNION ALL
 
@@ -114,6 +115,7 @@ raw_incidents AS (
         count() AS bucket_count
     FROM islands
     GROUP BY entity_pk, incident_type, island_grp
+    HAVING NOT (incident_type = 'no_data' AND count() < 3)
 ),
 
 -- Coalesce nearby incidents (gap < 180 min)
@@ -164,7 +166,6 @@ LEFT JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
 LEFT JOIN dz_metros_current ma ON da.metro_pk = ma.pk
 LEFT JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
 LEFT JOIN dz_contributors_current cc ON l.contributor_pk = cc.pk
-WHERE NOT (c.incident_type = 'no_data' AND c.total_buckets < 3)
 ORDER BY c.started_at DESC;
 
 
@@ -226,21 +227,22 @@ above AS (
         toFloat64(1) AS metric_value,
         'no_data' AS incident_type
     FROM (
-        SELECT DISTINCT device_pk FROM device_interface_rollup_5m FINAL
+        SELECT device_pk, min(bucket_ts) AS first_seen FROM device_interface_rollup_5m FINAL
         WHERE bucket_ts >= now() - INTERVAL 8 DAY - INTERVAL 1 HOUR
           AND link_pk = ''
+        GROUP BY device_pk
     ) ad
     CROSS JOIN (
         SELECT toDateTime(toStartOfFiveMinutes(now() - INTERVAL 8 DAY)) + number * 300 AS bucket_ts
         FROM numbers(toUInt64(dateDiff('second', now() - INTERVAL 8 DAY, now()) / 300))
     ) e
-    LEFT JOIN (
+    LEFT ANTI JOIN (
         SELECT device_pk, bucket_ts FROM device_interface_rollup_5m FINAL
         WHERE bucket_ts >= now() - INTERVAL 8 DAY
           AND link_pk = ''
         GROUP BY device_pk, bucket_ts
     ) a ON ad.device_pk = a.device_pk AND e.bucket_ts = a.bucket_ts
-    WHERE a.bucket_ts = toDateTime(0)
+    WHERE e.bucket_ts >= ad.first_seen
 
     UNION ALL
 
@@ -283,6 +285,7 @@ raw_incidents AS (
         count() AS bucket_count
     FROM islands
     GROUP BY entity_pk, incident_type, island_grp
+    HAVING NOT (incident_type = 'no_data' AND count() < 3)
 ),
 
 numbered AS (
@@ -328,8 +331,8 @@ FROM coalesced c
 LEFT JOIN dz_devices_current d ON c.entity_pk = d.pk
 LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 LEFT JOIN dz_contributors_current cc ON d.contributor_pk = cc.pk
-WHERE NOT (c.incident_type = 'no_data' AND c.total_buckets < 3)
 ORDER BY c.started_at DESC;
+
 
 -- +goose Down
 

@@ -15,6 +15,35 @@ import (
 // side, so 3 would miss it. Two missing is 10 minutes of the default 20-minute square.
 const partialDataMinMissingBuckets = 2
 
+// expectedSubBuckets returns how many 5-minute rollup buckets one display bucket holds.
+// Raw mode re-buckets in the source query, so coverage is not measurable there.
+func expectedSubBuckets(params bucketParams) int {
+	if params.UseRaw {
+		return 0
+	}
+	return params.BucketMinutes / 5
+}
+
+// missingSubBuckets returns how many 5-minute buckets the display bucket lacks.
+func missingSubBuckets(expected int, row *interfaceRollupRow) int {
+	if expected <= 0 || int(row.SubBuckets) >= expected {
+		return 0
+	}
+	return expected - int(row.SubBuckets)
+}
+
+// applyPartialData downgrades a healthy bucket that is missing enough of its source
+// buckets to count as a telemetry gap, and reports whether it did.
+func applyPartialData(status string, missing int, isCollecting bool) (string, bool) {
+	if missing < partialDataMinMissingBuckets || isCollecting {
+		return status, false
+	}
+	if status == "healthy" {
+		status = "degraded"
+	}
+	return status, true
+}
+
 // fetchLinkHistoryFromRollup performs the link history data fetch using rollup tables.
 // filters is optional server-side search filtering.
 func (a *API) fetchLinkHistoryFromRollup(ctx context.Context, timeRange string, requestedBuckets int, filters ...statusFilter) (*LinkHistoryResponse, error) {
@@ -415,11 +444,7 @@ func (a *API) fetchDeviceHistoryFromRollup(ctx context.Context, timeRange string
 	bucketDuration := time.Duration(params.BucketMinutes) * time.Minute
 	now := time.Now().UTC()
 
-	// Raw mode re-buckets in the source query, so sub-bucket coverage is always 1 there.
-	expectedSubBuckets := 0
-	if !params.UseRaw {
-		expectedSubBuckets = params.BucketMinutes / 5
-	}
+	expectedSub := expectedSubBuckets(params)
 
 	var (
 		deviceMeta map[string]*statusDeviceMeta
@@ -569,15 +594,11 @@ func (a *API) fetchDeviceHistoryFromRollup(ctx context.Context, timeRange string
 					issueReasons["no_probes"] = true
 				}
 
-				missingSubBuckets := 0
-				if expectedSubBuckets > 0 && int(row.SubBuckets) < expectedSubBuckets {
-					missingSubBuckets = expectedSubBuckets - int(row.SubBuckets)
-				}
-				if missingSubBuckets >= partialDataMinMissingBuckets && !isCollecting {
+				missing := missingSubBuckets(expectedSub, row)
+				var partial bool
+				status, partial = applyPartialData(status, missing, isCollecting)
+				if partial {
 					issueReasons["partial_data"] = true
-					if status == "healthy" {
-						status = "degraded"
-					}
 				}
 
 				hourStatuses = append(hourStatuses, DeviceHourStatus{
@@ -594,7 +615,7 @@ func (a *API) fetchDeviceHistoryFromRollup(ctx context.Context, timeRange string
 					NoProbes:           noProbes,
 					ISISOverload:       row.ISISOverload,
 					ISISUnreachable:    row.ISISUnreachable,
-					MissingSubBuckets:  missingSubBuckets,
+					MissingSubBuckets:  missing,
 				})
 			} else {
 				drainStatus := ""
@@ -1067,6 +1088,7 @@ func (a *API) fetchSingleDeviceHistoryFromRollup(ctx context.Context, devicePK s
 	params.UseRaw = isRawSource(ctx)
 	bucketDuration := time.Duration(params.BucketMinutes) * time.Minute
 	now := time.Now().UTC()
+	expectedSub := expectedSubBuckets(params)
 
 	var (
 		meta     *statusDeviceMeta
@@ -1128,6 +1150,9 @@ func (a *API) fetchSingleDeviceHistoryFromRollup(ctx context.Context, devicePK s
 				status = "disabled"
 			}
 
+			missing := missingSubBuckets(expectedSub, row)
+			status, _ = applyPartialData(status, missing, isCollecting)
+
 			hours = append(hours, DeviceHourStatus{
 				Hour:               key,
 				Status:             status,
@@ -1141,6 +1166,7 @@ func (a *API) fetchSingleDeviceHistoryFromRollup(ctx context.Context, devicePK s
 				DrainStatus:        drainStatus,
 				ISISOverload:       row.ISISOverload,
 				ISISUnreachable:    row.ISISUnreachable,
+				MissingSubBuckets:  missing,
 			})
 		} else {
 			drainStatus := ""
