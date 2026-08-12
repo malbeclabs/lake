@@ -3232,8 +3232,8 @@ type linkMeasured struct {
 }
 
 // sumMeasuredAlongPath accumulates observed per-hop latency across the device
-// sequence Dijkstra selected. Returns partial=true when any hop lacks rollup
-// samples, in which case every returned value falls back to the contracted
+// sequence Dijkstra selected. Returns partial=true when any hop has no probe
+// that arrived, in which case every returned value falls back to the contracted
 // figure for the whole path — a partial sum would understate the route, which
 // is the dangerous direction for a customer-facing number.
 //
@@ -3276,6 +3276,22 @@ func pathMetroCodes(nodes []string, g *kspGraph) []string {
 
 // linkMeasuredMap returns observed per-link latency keyed by "devicePK:devicePK"
 // in both directions, over the given window (0 defaults to 24h).
+//
+// This reads the raw samples rather than link_rollup_5m because the rollup's RTT
+// aggregates count lost probes. A lost probe carries rtt_us = 0, and the rollup
+// averages it in as a very fast sample: the rollup defines loss as
+// `f.loss OR f.rtt_us = 0` for its loss_pct column but never excludes those rows
+// from avg_rtt or p95_rtt (indexer/pkg/rollup/activities.go). The same bug was
+// fixed in dz_vs_internet_latency_comparison by
+// 20250316000001_fix_latency_comparison_exclude_loss.sql and never carried
+// forward to the rollup tables that landed six days later.
+//
+// The deflation is one-directional in DoubleZero's favour, because the internet
+// side has no loss column and so gets no matching discount, and it grows exactly
+// when a link is having a bad hour. A link losing every probe reports 0 ms, which
+// makes a dead hop look like a free one. Excluding the lost probes here leaves a
+// link with no surviving samples out of the map entirely, so the path is reported
+// as partial instead of fast.
 func (a *API) linkMeasuredMap(ctx context.Context, window time.Duration) (map[string]linkMeasured, error) {
 	if window <= 0 {
 		window = 24 * time.Hour
@@ -3284,13 +3300,15 @@ func (a *API) linkMeasuredMap(ctx context.Context, window time.Duration) (map[st
 		SELECT
 			l.side_a_pk,
 			l.side_z_pk,
-			round(sum(r.a_avg_rtt_us * r.a_samples + r.z_avg_rtt_us * r.z_samples) / greatest(sum(r.a_samples + r.z_samples), 1) / 1000.0, 3) AS avg_rtt_ms,
-			round(sum(r.a_p95_rtt_us * r.a_samples + r.z_p95_rtt_us * r.z_samples) / greatest(sum(r.a_samples + r.z_samples), 1) / 1000.0, 3) AS p95_rtt_ms,
-			round(sum(r.a_avg_jitter_us * r.a_samples + r.z_avg_jitter_us * r.z_samples) / greatest(sum(r.a_samples + r.z_samples), 1) / 1000.0, 3) AS avg_jitter_ms,
-			sum(r.a_samples + r.z_samples) AS sample_count
-		FROM dz_links_current l
-		JOIN link_rollup_5m r FINAL ON l.pk = r.link_pk
-		WHERE r.bucket_ts >= now() - toIntervalSecond($1)
+			round(avg(f.rtt_us) / 1000.0, 3) AS avg_rtt_ms,
+			round(quantile(0.95)(f.rtt_us) / 1000.0, 3) AS p95_rtt_ms,
+			round(avg(abs(f.ipdv_us)) / 1000.0, 3) AS avg_jitter_ms,
+			count() AS sample_count
+		FROM fact_dz_device_link_latency f FINAL
+		JOIN dz_links_current l ON f.link_pk = l.pk
+		WHERE f.event_ts >= now() - toIntervalSecond($1)
+		  AND NOT f.loss
+		  AND f.rtt_us > 0
 		  AND l.side_a_pk != ''
 		  AND l.side_z_pk != ''
 		GROUP BY l.side_a_pk, l.side_z_pk
