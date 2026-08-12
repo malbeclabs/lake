@@ -12,6 +12,7 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
+	"github.com/malbeclabs/lake/utils/pkg/docsfetch"
 )
 
 var errNoPgPool = errors.New("postgres not configured")
@@ -59,6 +60,10 @@ type API struct {
 	// DZCLI runs the doublezero CLI (nil = exec the real binary on the host).
 	// Tests inject a stub; check_edge_access uses it to read onchain state.
 	DZCLI DZCLIRunner
+
+	// DocsSource reads public docs pages (nil = GitHub raw malbeclabs/docs).
+	// Tests inject a client pointed at a local httptest server.
+	DocsSource *docsfetch.Client
 
 	// Build info
 	BuildVersion string

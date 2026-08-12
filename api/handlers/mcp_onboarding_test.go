@@ -64,7 +64,9 @@ const testRunbookIndex = `# Runbooks
 - ` + "`dz-edge-subscriber`" + ` — [Edge subscriber](dz-edge-subscriber.md)
 `
 
-func withRunbookDocs(t *testing.T, files map[string]string) {
+// withRunbookDocs serves files from a local httptest server and returns a docs
+// client pointed at it, for injection via API.DocsSource.
+func withRunbookDocs(t *testing.T, files map[string]string) *docsfetch.Client {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(r.URL.Path, "/")
@@ -77,17 +79,15 @@ func withRunbookDocs(t *testing.T, files map[string]string) {
 	}))
 	t.Cleanup(srv.Close)
 
-	prev := handlers.DocsSource
-	handlers.DocsSource = &docsfetch.Client{
+	return &docsfetch.Client{
 		HTTP: srv.Client(),
 		Base: srv.URL + "/",
 	}
-	t.Cleanup(func() { handlers.DocsSource = prev })
 }
 
 func TestMCPHandler_GetOnboardingRunbook_ListsCatalog(t *testing.T) {
-	withRunbookDocs(t, map[string]string{"runbooks.md": testRunbookIndex})
-	api := &handlers.API{}
+	t.Parallel()
+	api := &handlers.API{DocsSource: withRunbookDocs(t, map[string]string{"runbooks.md": testRunbookIndex})}
 	handler, sessionID := mcpSession(t, api)
 
 	output := callToolOutput(t, handler, sessionID, "get_onboarding_runbook", map[string]any{})
@@ -99,12 +99,11 @@ func TestMCPHandler_GetOnboardingRunbook_ListsCatalog(t *testing.T) {
 }
 
 func TestMCPHandler_GetOnboardingRunbook_FromLocalDocs(t *testing.T) {
-	withRunbookDocs(t, map[string]string{
+	t.Parallel()
+	api := &handlers.API{DocsSource: withRunbookDocs(t, map[string]string{
 		"runbooks.md":       testRunbookIndex,
 		"feed-a-runbook.md": "# Feed A + Edge Connect — runbook\n\nLet an AI walk you through this page.\n",
-	})
-
-	api := &handlers.API{}
+	})}
 	handler, sessionID := mcpSession(t, api)
 
 	output := callToolOutput(t, handler, sessionID, "get_onboarding_runbook", map[string]any{
@@ -120,10 +119,9 @@ func TestMCPHandler_GetOnboardingRunbook_FromLocalDocs(t *testing.T) {
 }
 
 func TestMCPHandler_GetOnboardingRunbook_EmbeddedFallback(t *testing.T) {
+	t.Parallel()
 	// Index is local; the runbook page is missing so loadRunbook falls back to embed.
-	withRunbookDocs(t, map[string]string{"runbooks.md": testRunbookIndex})
-
-	api := &handlers.API{}
+	api := &handlers.API{DocsSource: withRunbookDocs(t, map[string]string{"runbooks.md": testRunbookIndex})}
 	handler, sessionID := mcpSession(t, api)
 
 	output := callToolOutput(t, handler, sessionID, "get_onboarding_runbook", map[string]any{
@@ -137,8 +135,8 @@ func TestMCPHandler_GetOnboardingRunbook_EmbeddedFallback(t *testing.T) {
 }
 
 func TestMCPHandler_GetOnboardingRunbook_UnknownService(t *testing.T) {
-	withRunbookDocs(t, map[string]string{"runbooks.md": testRunbookIndex})
-	api := &handlers.API{}
+	t.Parallel()
+	api := &handlers.API{DocsSource: withRunbookDocs(t, map[string]string{"runbooks.md": testRunbookIndex})}
 	handler, sessionID := mcpSession(t, api)
 
 	response := callTool(t, handler, sessionID, "get_onboarding_runbook", map[string]any{
@@ -150,8 +148,8 @@ func TestMCPHandler_GetOnboardingRunbook_UnknownService(t *testing.T) {
 }
 
 func TestMCPHandler_GetOnboardingRunbook_InvalidService(t *testing.T) {
-	withRunbookDocs(t, map[string]string{"runbooks.md": testRunbookIndex})
-	api := &handlers.API{}
+	t.Parallel()
+	api := &handlers.API{DocsSource: withRunbookDocs(t, map[string]string{"runbooks.md": testRunbookIndex})}
 	handler, sessionID := mcpSession(t, api)
 
 	response := callTool(t, handler, sessionID, "get_onboarding_runbook", map[string]any{
@@ -163,11 +161,8 @@ func TestMCPHandler_GetOnboardingRunbook_InvalidService(t *testing.T) {
 }
 
 func TestMCPHandler_GetOnboardingRunbook_MissingIndex(t *testing.T) {
-	prev := handlers.DocsSource
-	handlers.DocsSource = &docsfetch.Client{}
-	t.Cleanup(func() { handlers.DocsSource = prev })
-
-	api := &handlers.API{}
+	t.Parallel()
+	api := &handlers.API{DocsSource: withRunbookDocs(t, nil)}
 	handler, sessionID := mcpSession(t, api)
 	response := callTool(t, handler, sessionID, "get_onboarding_runbook", map[string]any{})
 	result, ok := response["result"].(map[string]any)
@@ -283,6 +278,7 @@ func TestMCPHandler_CheckEdgeAccess_MissingInput(t *testing.T) {
 }
 
 func TestMCPHandler_GetOnboardingRunbook_RemoteDocs(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/runbooks.md":
@@ -295,14 +291,10 @@ func TestMCPHandler_GetOnboardingRunbook_RemoteDocs(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	prev := handlers.DocsSource
-	handlers.DocsSource = &docsfetch.Client{
+	api := &handlers.API{DocsSource: &docsfetch.Client{
 		HTTP: srv.Client(),
 		Base: srv.URL + "/",
-	}
-	t.Cleanup(func() { handlers.DocsSource = prev })
-
-	api := &handlers.API{}
+	}}
 	handler, sessionID := mcpSession(t, api)
 	output := callToolOutput(t, handler, sessionID, "get_onboarding_runbook", map[string]any{
 		"service": "feed-a",

@@ -46,7 +46,7 @@ func (a *API) createMCPServer(r *http.Request) *mcp.Server {
 	a.registerExecuteSQLTool(server, r)
 	registerReadDocsTool(server)
 	a.registerGetSchemaTool(server, r)
-	registerGetOnboardingRunbookTool(server)
+	a.registerGetOnboardingRunbookTool(server)
 	a.registerCheckEdgeAccessTool(server, r)
 
 	// Only add Cypher tool for mainnet-beta (where Neo4j is available)

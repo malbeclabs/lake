@@ -26,8 +26,17 @@ import (
 //   - check_edge_access: runs `doublezero access-pass get` (user payer + receiving IP)
 //     against onchain state, which is the source of truth for access passes
 
-// DocsSource fetches runbook markdown from GitHub raw. Tests may replace it.
-var DocsSource = docsfetch.FromEnv()
+// defaultDocsSource fetches docs markdown from GitHub raw. It is read-only;
+// tests inject their own client via API.DocsSource instead of mutating this.
+var defaultDocsSource = docsfetch.FromEnv()
+
+// docsSource returns the docs client to read runbooks and docs pages with.
+func (a *API) docsSource() *docsfetch.Client {
+	if a.DocsSource != nil {
+		return a.DocsSource
+	}
+	return defaultDocsSource
+}
 
 // onboardingPreamble tells the agent how to drive a runbook. Returned with the
 // runbook so the guidance travels with the data, client-agnostically.
@@ -63,8 +72,8 @@ var runbookListItem = regexp.MustCompile("(?m)^[\\t ]*[-*][\\t ]+(?:`([a-zA-Z0-9
 
 var fencedBlock = regexp.MustCompile("(?s)```.*?```")
 
-func loadRunbookCatalog(ctx context.Context) ([]runbookRef, error) {
-	content, _, err := DocsSource.Read(ctx, runbookIndexPage)
+func (a *API) loadRunbookCatalog(ctx context.Context) ([]runbookRef, error) {
+	content, _, err := a.docsSource().Read(ctx, runbookIndexPage)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load runbook index: %w", err)
 	}
@@ -167,14 +176,14 @@ type GetOnboardingRunbookOutput struct {
 	Runbook           string   `json:"runbook"`
 }
 
-func registerGetOnboardingRunbookTool(server *mcp.Server) {
+func (a *API) registerGetOnboardingRunbookTool(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_onboarding_runbook",
 		Title:       "Get Onboarding Runbook",
 		Description: "Start a guided onboarding walkthrough for connecting to a DoubleZero service. Call this whenever a user asks to be walked through, set up, connect to, or onboard onto a DoubleZero service. Returns a step-by-step runbook from DoubleZero docs plus instructions for how to guide the user through it. Omit 'service' to list available runbooks.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input GetOnboardingRunbookInput) (*mcp.CallToolResult, GetOnboardingRunbookOutput, error) {
-		catalog, err := loadRunbookCatalog(ctx)
+		catalog, err := a.loadRunbookCatalog(ctx)
 		if err != nil {
 			return nil, GetOnboardingRunbookOutput{}, err
 		}
@@ -193,7 +202,7 @@ func registerGetOnboardingRunbookTool(server *mcp.Server) {
 			return nil, GetOnboardingRunbookOutput{}, fmt.Errorf("unknown runbook %q (available: %s)", service, strings.Join(available, ", "))
 		}
 
-		content, source, err := loadRunbook(ctx, page)
+		content, source, err := a.loadRunbook(ctx, page)
 		if err != nil {
 			return nil, GetOnboardingRunbookOutput{}, err
 		}
@@ -210,8 +219,8 @@ func registerGetOnboardingRunbookTool(server *mcp.Server) {
 	})
 }
 
-func loadRunbook(ctx context.Context, page string) (content, source string, err error) {
-	content, source, err = DocsSource.Read(ctx, page)
+func (a *API) loadRunbook(ctx context.Context, page string) (content, source string, err error) {
+	content, source, err = a.docsSource().Read(ctx, page)
 	if err == nil {
 		return content, source, nil
 	}
