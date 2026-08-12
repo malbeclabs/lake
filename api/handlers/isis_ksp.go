@@ -493,6 +493,15 @@ func computeMetroPairPaths(g *kspGraph) []metroPairPath {
 	metroCodes := make([]string, 0, len(metroDevices))
 	for code := range metroDevices {
 		metroCodes = append(metroCodes, code)
+		// The device lists were built by ranging a Go map, so their order is
+		// random per call. Equal-cost paths are common (many links share a
+		// committed RTT), and the tie-break below keeps whichever candidate it
+		// saw first — so without this sort the chosen ECMP arm varies per call.
+		// That used to be harmless because tied paths have identical metrics,
+		// but the measured figures and the sparkline are derived from the
+		// specific device sequence, and are computed by two independent calls
+		// to this function. Sorting makes both land on the same arm.
+		slices.Sort(metroDevices[code])
 	}
 	slices.Sort(metroCodes)
 

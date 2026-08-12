@@ -77,6 +77,21 @@ var (
 		[]string{"dz_env", "source"},
 	)
 
+	// EscrowEventsSkippedTx counts escrow transactions the indexer skipped because the
+	// RPC would not serve them: a getTransaction null for a finalized, listed signature
+	// far enough below the tip to be pruned history. Each skip is an audit row no
+	// automatic path recovers, so a sustained non-zero rate means upstream retention is
+	// dropping events and a re-backfill against an archival node is warranted.
+	//
+	// Only the pruned case is counted. Every other fetch error fails its chunk and is
+	// retried, so it never reaches here.
+	EscrowEventsSkippedTx = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "doublezero_data_indexer_escrow_events_skipped_tx_total",
+			Help: "Escrow transactions skipped because the RPC could not serve them",
+		},
+	)
+
 	ViewRefreshDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "doublezero_data_indexer_view_refresh_duration_seconds",
