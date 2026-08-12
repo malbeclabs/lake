@@ -214,9 +214,9 @@ func buildLinkIncidentsQuery(p incidentQueryParams) (string, []any) {
 			bucketExpr("bucket_ts"), linkSource, lookbackArg))
 	}
 
-	// The calendar steps 5 minutes, so the island detection only lines up at that
-	// bucket size. Coarser ranges take the view, which is 5-minute based.
-	if (p.TypeFilter == "all" || p.TypeFilter == "no_data") && bucketMin == 5 {
+	// The calendar steps 5 minutes whatever the range, so the island stage below
+	// gives no_data its own 5-minute step instead of the re-bucketed one.
+	if p.TypeFilter == "all" || p.TypeFilter == "no_data" {
 		noDataSource := "link_rollup_5m FINAL"
 		if p.UseRaw {
 			noDataSource = linkSource
@@ -291,12 +291,13 @@ WITH
 above AS (%s
 ),
 
--- Gap-and-island: group consecutive above-threshold buckets
+-- Gap-and-island: group consecutive above-threshold buckets. no_data steps 5
+-- minutes even when the other types are re-bucketed coarser.
 islands AS (
 	SELECT entity_pk, incident_type, bucket_ts, metric_value,
 		bucket_ts - toIntervalSecond(row_number() OVER (
 			PARTITION BY entity_pk, incident_type ORDER BY bucket_ts
-		) * %s * 60) AS island_grp
+		) * if(incident_type = 'no_data', 5, %s) * 60) AS island_grp
 	FROM above
 ),
 
@@ -304,7 +305,7 @@ islands AS (
 raw_incidents AS (
 	SELECT entity_pk, incident_type, island_grp,
 		min(bucket_ts) AS started_at,
-		max(bucket_ts) + toIntervalSecond(%s * 60) AS ended_at,
+		max(bucket_ts) + toIntervalSecond(if(incident_type = 'no_data', 5, %s) * 60) AS ended_at,
 		max(metric_value) AS peak_value,
 		count() AS bucket_count
 	FROM islands
@@ -625,8 +626,8 @@ func buildDeviceIncidentsQuery(p incidentQueryParams) (string, []any) {
 			bucketExpr("bucket_ts"), ct.expr, ct.name, lookbackArg, linkFilter, threshArg))
 	}
 
-	// See buildLinkIncidentsQuery for the bucket size gate and the zero-date test.
-	if (p.TypeFilter == "all" || p.TypeFilter == "no_data") && bucketMin == 5 {
+	// See buildLinkIncidentsQuery for the 5-minute calendar and the island step.
+	if p.TypeFilter == "all" || p.TypeFilter == "no_data" {
 		aboveParts = append(aboveParts, fmt.Sprintf(`
 		SELECT ad.device_pk AS entity_pk, e.bucket_ts AS bucket_ts,
 			toFloat64(1) AS metric_value,
@@ -702,14 +703,14 @@ islands AS (
 	SELECT entity_pk, incident_type, bucket_ts, metric_value,
 		bucket_ts - toIntervalSecond(row_number() OVER (
 			PARTITION BY entity_pk, incident_type ORDER BY bucket_ts
-		) * %s * 60) AS island_grp
+		) * if(incident_type = 'no_data', 5, %s) * 60) AS island_grp
 	FROM above
 ),
 
 raw_incidents AS (
 	SELECT entity_pk, incident_type, island_grp,
 		min(bucket_ts) AS started_at,
-		max(bucket_ts) + toIntervalSecond(%s * 60) AS ended_at,
+		max(bucket_ts) + toIntervalSecond(if(incident_type = 'no_data', 5, %s) * 60) AS ended_at,
 		max(metric_value) AS peak_value,
 		count() AS bucket_count
 	FROM islands
