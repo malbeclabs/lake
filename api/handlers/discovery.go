@@ -73,7 +73,7 @@ func (a *API) GetMCPServerCard(w http.ResponseWriter, r *http.Request) {
 		},
 		{
 			Name:        "check_edge_access",
-			Description: "Check whether an identity pubkey is authorized for a receiving IP via access passes.",
+			Description: "Check whether a user payer pubkey is authorized for a receiving IP via onchain access passes.",
 		},
 	}
 

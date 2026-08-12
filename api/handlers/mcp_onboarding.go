@@ -2,19 +2,18 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"os/exec"
 	"path"
 	"regexp"
 	"strings"
 	"time"
 
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/malbeclabs/lake/api/handlers/runbooks"
-	"github.com/malbeclabs/lake/api/metrics"
 	"github.com/malbeclabs/lake/utils/pkg/docsfetch"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -24,7 +23,8 @@ import (
 // embed is only a fallback for pages not published yet.
 //
 //   - get_onboarding_runbook: entrypoint on "walk me through connecting…"
-//   - check_edge_access: reads dz_access_passes_current (owner pubkey + receiving IP)
+//   - check_edge_access: runs `doublezero access-pass get` (user payer + receiving IP)
+//     against onchain state, which is the source of truth for access passes
 
 // DocsSource fetches runbook markdown from GitHub raw. Tests may replace it.
 var DocsSource = docsfetch.FromEnv()
@@ -225,7 +225,7 @@ func loadRunbook(ctx context.Context, page string) (content, source string, err 
 
 // CheckEdgeAccessInput is the input for the check_edge_access tool.
 type CheckEdgeAccessInput struct {
-	Pubkey   string `json:"pubkey" jsonschema:"The DoubleZero identity pubkey (output of 'doublezero address')"`
+	Pubkey   string `json:"pubkey" jsonschema:"The user payer pubkey of the access pass (for self-service passes this is the wallet from 'doublezero address')"`
 	PublicIP string `json:"public_ip" jsonschema:"The public IPv4 address the user will receive the feed on"`
 }
 
@@ -245,20 +245,23 @@ type edgeAccessPass struct {
 	TypeTag  string
 }
 
+// DZCLIRunner runs the doublezero CLI with the given args and returns its
+// stdout. The API's DZCLI field lets tests inject one; nil means exec the real
+// binary on the host.
+type DZCLIRunner func(ctx context.Context, args ...string) ([]byte, error)
+
 func (a *API) registerCheckEdgeAccessTool(server *mcp.Server, r *http.Request) {
-	env := EnvFromContext(r.Context())
 	clientIP := GetIPFromRequest(r)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "check_edge_access",
 		Title:       "Check Edge Access",
-		Description: "Check whether a DoubleZero identity pubkey is authorized for a given receiving IP by looking up access passes. Pass the pubkey from 'doublezero address' and the public IPv4 the user will receive on. Returns status 'active' if a connected pass covers that IP (exact match or 0.0.0.0), otherwise 'pending'.",
+		Description: "Check whether a DoubleZero user payer pubkey is authorized for a given receiving IP by looking up its access pass onchain (via the doublezero CLI). Pass the user payer pubkey and the public IPv4 the user will receive on. Returns status 'active' if a connected pass covers that IP (exact match or 0.0.0.0), otherwise 'pending'.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input CheckEdgeAccessInput) (*mcp.CallToolResult, CheckEdgeAccessOutput, error) {
 		if errMsg := CheckRateLimit(QueryRateLimiter, clientIP); errMsg != "" {
 			return nil, CheckEdgeAccessOutput{}, errors.New(errMsg)
 		}
-		ctx = ContextWithEnv(ctx, env)
 
 		pubkey := strings.TrimSpace(input.Pubkey)
 		ip := strings.TrimSpace(input.PublicIP)
@@ -279,56 +282,58 @@ func (a *API) registerCheckEdgeAccessTool(server *mcp.Server, r *http.Request) {
 	})
 }
 
-func (a *API) accessPassDB(ctx context.Context) driver.Conn {
-	if conn, ok := a.EnvDBs[string(EnvFromContext(ctx))]; ok && conn != nil {
-		return conn
+// runDoubleZeroCLI executes the doublezero CLI on the API host and returns its
+// stdout. CLI errors carry the command's stderr so the caller sees the real cause.
+func runDoubleZeroCLI(ctx context.Context, args ...string) ([]byte, error) {
+	out, err := exec.CommandContext(ctx, "doublezero", args...).Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return nil, fmt.Errorf("doublezero %s: %s", strings.Join(args, " "), strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return nil, fmt.Errorf("doublezero CLI: %w", err)
 	}
-	if a.PublicQueryDB != nil {
-		return a.PublicQueryDB
-	}
-	return a.DB
+	return out, nil
 }
 
-func (a *API) lookupEdgeAccessPass(ctx context.Context, pubkey, publicIP string) (*edgeAccessPass, error) {
-	db := a.accessPassDB(ctx)
-	if db == nil {
-		return nil, errors.New("clickhouse not configured")
+// lookupEdgeAccessPass mirrors `doublezero access-pass get --user-payer X
+// --client-ip Y`. Onchain state is the source of truth for access passes; the
+// CLI resolves the 0.0.0.0 (any-IP) wildcard itself and errors with "Access
+// Pass not found" on a miss. Returns (nil, nil) when no pass exists.
+func (a *API) lookupEdgeAccessPass(ctx context.Context, userPayer, publicIP string) (*edgeAccessPass, error) {
+	run := a.DZCLI
+	if run == nil {
+		run = runDoubleZeroCLI
 	}
 
-	queryCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	start := time.Now()
-	var pass edgeAccessPass
-	err := db.QueryRow(queryCtx, `
-		SELECT pk, client_ip, status, type_tag
-		FROM dz_access_passes_current
-		WHERE owner_pubkey = ?
-		  AND (client_ip = ? OR client_ip = '0.0.0.0')
-		ORDER BY
-		  if(status = 'expired', 1, 0) ASC,
-		  if(client_ip = ?, 0, 1) ASC
-		LIMIT 1
-	`, pubkey, publicIP, publicIP).Scan(&pass.PK, &pass.ClientIP, &pass.Status, &pass.TypeTag)
-	duration := time.Since(start)
-	metrics.RecordClickHouseQuery("mcp_edge_access", duration, err)
+	out, err := run(ctx, "access-pass", "get", "--user-payer", userPayer, "--client-ip", publicIP, "--json")
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if strings.Contains(strings.ToLower(err.Error()), "access pass not found") {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("access pass lookup failed: %w", err)
 	}
-	if pass.PK == "" {
-		return nil, nil
+
+	var pass struct {
+		Account  string `json:"account"`
+		Type     string `json:"type"`
+		ClientIP string `json:"client_ip"`
+		Status   string `json:"status"`
 	}
-	return &pass, nil
+	if err := json.Unmarshal(out, &pass); err != nil {
+		return nil, fmt.Errorf("unexpected access-pass get output: %w", err)
+	}
+	return &edgeAccessPass{PK: pass.Account, ClientIP: pass.ClientIP, Status: pass.Status, TypeTag: pass.Type}, nil
 }
 
 func classifyEdgeAccess(pubkey, publicIP string, pass *edgeAccessPass) CheckEdgeAccessOutput {
 	if pass == nil {
 		return CheckEdgeAccessOutput{
 			Status: "pending",
-			Message: fmt.Sprintf("%s has no access pass for %s (or 0.0.0.0). Issue a pass for this identity+IP and recharge credits, then re-check.",
+			Message: fmt.Sprintf("%s has no access pass for %s (or 0.0.0.0). Issue a pass for this user payer+IP and recharge credits, then re-check.",
 				pubkey, publicIP),
 		}
 	}

@@ -56,6 +56,10 @@ type API struct {
 	Neo4jClient   neo4j.Client
 	Neo4jDatabase string
 
+	// DZCLI runs the doublezero CLI (nil = exec the real binary on the host).
+	// Tests inject a stub; check_edge_access uses it to read onchain state.
+	DZCLI DZCLIRunner
+
 	// Build info
 	BuildVersion string
 	BuildCommit  string

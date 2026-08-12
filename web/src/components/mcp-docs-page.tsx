@@ -111,7 +111,7 @@ export function MCPDocsPage() {
                 </tr>
                 <tr>
                   <td className="px-4 py-2 font-mono text-xs">check_edge_access</td>
-                  <td className="px-4 py-2 text-muted-foreground">Check identity pubkey + receiving IP against access passes</td>
+                  <td className="px-4 py-2 text-muted-foreground">Check user payer pubkey + receiving IP against onchain access passes</td>
                 </tr>
               </tbody>
             </table>
