@@ -46,6 +46,26 @@ function latency(over: Partial<MetroPathLatency> = {}): MetroPathLatency {
   }
 }
 
+/**
+ * What `/api/topology/metro-path-latency` returned from the page_cache on
+ * staging on 2026-08-12, after the web deploy and before the worker refreshed:
+ * exactly these keys and no others. Written as a cast because the point of the
+ * test is a payload the type says cannot happen, arriving anyway.
+ */
+function stalePayload(): MetroPathLatency {
+  return {
+    fromMetroPK: 'p1',
+    fromMetroCode: 'dfw',
+    toMetroPK: 'p2',
+    toMetroCode: 'fra',
+    pathLatencyMs: 109.41,
+    hopCount: 7,
+    bottleneckBwGbps: 10,
+    internetLatencyMs: 124.74,
+    improvementPct: 12.29,
+  } as MetroPathLatency
+}
+
 describe('routeFigures', () => {
   it('shows every figure on a fully-measured route', () => {
     const f = routeFigures(latency())
@@ -96,6 +116,19 @@ describe('routeFigures', () => {
 
   it('reports an internet side with no samples as unmeasured', () => {
     expect(routeFigures(latency({ internetLatencyMs: 0 })).internetMeasured).toBe(false)
+  })
+
+  // Every figure blanks rather than throwing on a payload that predates the
+  // measured fields. This is not hypothetical: the default request is answered
+  // from the page_cache table, and a web deploy reaches readers before the next
+  // worker refresh does. On staging that window put `undefined.toFixed()` into
+  // a matrix cell and the error boundary took the whole table with it.
+  it('blanks every figure on a payload that predates the measured fields', () => {
+    const f = routeFigures(stalePayload())
+    expect(f.tiles.map((t) => t.value)).toEqual([null, null, null, '124.74 ms', null, null])
+    expect(f.improvementPct).toBeNull()
+    expect(f.savedMs).toBeNull()
+    expect(f.footnote).toBeNull()
   })
 })
 
@@ -247,6 +280,12 @@ describe('cellFor', () => {
     expect(cellFor(route, latency({ internetLatencyMs: 0 }), false, false)).toEqual({
       kind: 'not-measured',
     })
+  })
+
+  // Not 'withheld': nothing was suppressed here, the figure has not arrived.
+  // The cell that crashed on staging was this one.
+  it('reads a payload predating the measured fields as still loading', () => {
+    expect(cellFor(route, stalePayload(), false, false)).toEqual({ kind: 'loading' })
   })
 
   // Distinct from 'not-measured': there is an internet figure here, it is the

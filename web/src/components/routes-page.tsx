@@ -116,9 +116,13 @@ function fmtMs(ms: number, dp = 2): string {
   return `${ms.toFixed(dp)} ms`
 }
 
-/** 0 means the figure was never measured, so render it as absent, not as zero. */
-function orAbsent(ms: number, dp = 2): string | null {
-  return ms > 0 ? fmtMs(ms, dp) : null
+/**
+ * 0 means the figure was never measured, so render it as absent, not as zero.
+ * Undefined means the payload predates the field (see `MetroPathLatency`) and
+ * reads as absent for the same reason: we have no measurement to show.
+ */
+function orAbsent(ms: number | undefined, dp = 2): string | null {
+  return ms != null && ms > 0 ? fmtMs(ms, dp) : null
 }
 
 export const CONTRACTED_NOTE =
@@ -159,9 +163,12 @@ export type RouteFigures = {
  * which 2 dp flattens to a single significant figure.
  */
 export function routeFigures(l: MetroPathLatency): RouteFigures {
-  const partial = l.partiallyCommitted
+  const partial = l.partiallyCommitted === true
   const internetMeasured = l.internetLatencyMs > 0
-  const improvementPct = partial ? null : l.measuredImprovementPct
+  const measured = l.measuredLatencyMs ?? 0
+  // `?? null` folds "the payload predates this field" into the same answer as
+  // "the API withheld it": either way there is no percentage to state.
+  const improvementPct = partial ? null : (l.measuredImprovementPct ?? null)
   return {
     tiles: [
       {
@@ -176,8 +183,8 @@ export function routeFigures(l: MetroPathLatency): RouteFigures {
     ],
     improvementPct,
     savedMs:
-      improvementPct !== null && internetMeasured && l.measuredLatencyMs > 0
-        ? l.internetLatencyMs - l.measuredLatencyMs
+      improvementPct !== null && internetMeasured && measured > 0
+        ? l.internetLatencyMs - measured
         : null,
     internetMeasured,
     footnote: partial ? CONTRACTED_NOTE : null,
@@ -194,7 +201,12 @@ export function routeFigures(l: MetroPathLatency): RouteFigures {
  * link renders "tyo ─ fra ─ lon" on one load and "lon ─ fra ─ tyo" on the next.
  * Figures are direction-symmetric, so only the display order needs fixing.
  */
-export function orientPath(pathMetros: string[], apiFrom: string, routeFrom: string): string[] {
+export function orientPath(
+  pathMetros: string[] | undefined,
+  apiFrom: string,
+  routeFrom: string,
+): string[] {
+  if (!pathMetros) return []
   return apiFrom.toLowerCase() === routeFrom.toLowerCase() ? pathMetros : [...pathMetros].reverse()
 }
 
@@ -375,6 +387,13 @@ export function cellFor(
   if (!latency && error) return { kind: 'error' }
   if (!latency && pending) return { kind: 'loading' }
   if (!latency) return { kind: 'no-path' }
+
+  // A payload written before these fields existed (see `MetroPathLatency`)
+  // holds no figure yet, which is not the same fact as one we withheld. The
+  // next worker refresh fills it in, so it reads as still loading — saying
+  // "a hop reports a contracted figure" here would state a reason that is not
+  // the true one.
+  if (latency.measuredImprovementPct === undefined) return { kind: 'loading' }
 
   const figures = routeFigures(latency)
   if (!figures.internetMeasured) return { kind: 'not-measured' }
@@ -675,7 +694,8 @@ function RouteCard({
                 Path
               </div>
               <div className="font-mono text-sm truncate">
-                {orientPath(latency.pathMetros, latency.fromMetroCode, fromMetro ?? '').join(' ─ ')}
+                {orientPath(latency.pathMetros, latency.fromMetroCode, fromMetro ?? '').join(' ─ ') ||
+                  '—'}
               </div>
             </div>
             <div className="ml-auto">
