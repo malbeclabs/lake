@@ -1860,7 +1860,13 @@ export interface SinglePath {
 }
 
 // PathService selects which IS-IS topology a path is resolved through:
-// 'unicast' constrains to flex-algo 128 (topology-tagged links); 'multicast' uses algo 0 (all links).
+// 'unicast' constrains to the flex-algo topology (topology-tagged links that
+// are not drained); 'multicast' uses algo 0 (all activated links). The two
+// answer differently wherever a link sits outside the topology — see
+// /api/topology/algo-divergence for which routes those are.
+//
+// Endpoints that default to algo 0 treat an omitted service as 'multicast',
+// and only that default is held in the page cache.
 export type PathService = 'unicast' | 'multicast'
 
 export interface MultiPathResponse {
@@ -4521,6 +4527,10 @@ export interface MetroPathLatency {
 
 export interface MetroPathLatencyResponse {
   optimize: PathOptimizeMode
+  /** Echoes the link set used. The API canonicalises the default to
+   *  'multicast', so it never sends an empty string. Absent only from a
+   *  page-cached payload written by a worker that predates the field. */
+  service?: PathService
   paths: MetroPathLatency[]
   summary: {
     totalPairs: number
@@ -4531,10 +4541,62 @@ export interface MetroPathLatencyResponse {
   error?: string
 }
 
-export async function fetchMetroPathLatency(optimize: PathOptimizeMode = 'latency'): Promise<MetroPathLatencyResponse> {
-  const res = await apiFetch(`/api/topology/metro-path-latency?optimize=${optimize}`)
+export async function fetchMetroPathLatency(
+  optimize: PathOptimizeMode = 'latency',
+  service?: PathService
+): Promise<MetroPathLatencyResponse> {
+  const suffix = service ? `&service=${service}` : ''
+  const res = await apiFetch(`/api/topology/metro-path-latency?optimize=${optimize}${suffix}`)
   if (!res.ok) {
     throw new Error('Failed to fetch metro path latency')
+  }
+  return res.json()
+}
+
+export interface AlgoDivergenceLink {
+  code: string
+  fromMetro: string
+  toMetro: string
+  rttMs: number
+  drained: boolean
+  /** False when the link was never in the unicast set — note a link drained
+   *  from the start is never included even while it carries a tag. */
+  everIncluded: boolean
+  /** RFC3339, or empty when the history does not reach back far enough. */
+  excludedAt: string
+  excludedFor: string
+}
+
+export interface AlgoDivergencePair {
+  fromMetro: string
+  toMetro: string
+  multicastMs: number
+  unicastMs: number
+  deltaMs: number
+  deltaPct: number
+  multicastPath: string[]
+  unicastPath: string[]
+  /** False when unicast has no path at all. The unicast fields are then absent, not zero. */
+  unicastReachable: boolean
+}
+
+export interface AlgoDivergenceResponse {
+  excludedLinks: AlgoDivergenceLink[]
+  pairs: AlgoDivergencePair[]
+  summary: {
+    activatedLinks: number
+    excludedLinks: number
+    multicastPairs: number
+    divergingPairs: number
+    unreachablePairs: number
+    maxDeltaMs: number
+  }
+}
+
+export async function fetchAlgoDivergence(): Promise<AlgoDivergenceResponse> {
+  const res = await apiFetch('/api/topology/algo-divergence')
+  if (!res.ok) {
+    throw new Error('Failed to fetch flex-algo divergence')
   }
   return res.json()
 }
@@ -4579,6 +4641,9 @@ export interface MetroPathDetailResponse {
   fromMetroCode: string
   toMetroCode: string
   optimize: PathOptimizeMode
+  /** Echoes the link set the hops were walked over. Same shape and same reason
+   *  as on MetroPathLatencyResponse. */
+  service?: PathService
   totalLatencyMs: number
   totalHops: number
   bottleneckBwGbps: number
@@ -4591,9 +4656,11 @@ export interface MetroPathDetailResponse {
 export async function fetchMetroPathDetail(
   from: string,
   to: string,
-  optimize: PathOptimizeMode = 'latency'
+  optimize: PathOptimizeMode = 'latency',
+  service?: PathService
 ): Promise<MetroPathDetailResponse> {
-  const res = await apiFetch(`/api/topology/metro-path-detail?from=${from}&to=${to}&optimize=${optimize}`)
+  const suffix = service ? `&service=${service}` : ''
+  const res = await apiFetch(`/api/topology/metro-path-detail?from=${from}&to=${to}&optimize=${optimize}${suffix}`)
   if (!res.ok) {
     throw new Error('Failed to fetch metro path detail')
   }

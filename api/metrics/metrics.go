@@ -71,6 +71,58 @@ var (
 		[]string{"pool"},
 	)
 
+	// Flex-algo divergence: how far the unicast topology has drifted from
+	// algo 0. A link that goes live without a topology tag shows up here on
+	// the next page-cache refresh, which is the point — otherwise it is
+	// invisible until someone notices a route got slower.
+	//
+	// Written only by the worker refresh, over mainnet (see
+	// PublishAlgoDivergenceMetrics). The handler must not write them: it
+	// answers whatever environment the caller names in X-DZ-Env, and these
+	// gauges carry no env label, so a single ?env=testnet request would leave
+	// testnet's numbers here for an alert to read as mainnet.
+	//
+	// All four register at 0, and 0 excluded links is also what a clean
+	// network reads. Alert on FlexAlgoLastRefresh as well, or the rule cannot
+	// tell healthy from never-computed for the ~5 minutes after a restart.
+	FlexAlgoExcludedLinks = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "doublezero_lake_flexalgo_excluded_links",
+			Help: "Activated links outside the unicast topology (untagged or drained)",
+		},
+	)
+
+	FlexAlgoDivergingPairs = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "doublezero_lake_flexalgo_diverging_metro_pairs",
+			Help: "Metro pairs whose unicast path is slower than their multicast path",
+		},
+	)
+
+	FlexAlgoUnreachablePairs = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "doublezero_lake_flexalgo_unicast_unreachable_metro_pairs",
+			Help: "Metro pairs multicast can reach and unicast cannot",
+		},
+	)
+
+	FlexAlgoMaxDeltaMs = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "doublezero_lake_flexalgo_max_delta_ms",
+			Help: "Largest contracted latency a metro pair pays for using unicast instead of multicast",
+		},
+	)
+
+	// Freshness for the four gauges above. Stays 0 until the first successful
+	// refresh, so a rule can require the numbers to have been computed at all
+	// before it trusts a zero.
+	FlexAlgoLastRefresh = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "doublezero_lake_flexalgo_last_refresh_timestamp_seconds",
+			Help: "Unix time of the last successful flex-algo divergence refresh",
+		},
+	)
+
 	// ClickHouse query metrics
 	ClickHouseQueriesTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
