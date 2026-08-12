@@ -601,6 +601,7 @@ func TestMCPHandler_GetSchema(t *testing.T) {
 }
 
 func TestMCPHandler_ReadDocs(t *testing.T) {
+	t.Parallel()
 	api := &handlers.API{}
 	handler, sessionID := mcpSession(t, api)
 
@@ -626,6 +627,7 @@ func TestMCPHandler_ReadDocs(t *testing.T) {
 }
 
 func TestMCPHandler_ReadDocs_InvalidPage(t *testing.T) {
+	t.Parallel()
 	api := &handlers.API{}
 	handler, sessionID := mcpSession(t, api)
 
