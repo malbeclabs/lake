@@ -76,6 +76,81 @@ func TestBackfillRollupWorkflow_FailedChunkMustNotBeSilentlySkipped(t *testing.T
 		"only the middle chunk should fail; the others must still run, got: %v", err)
 }
 
+// TestBackfillRollupWorkflow_NamesEveryFailedWindow pins what the operator can
+// act on. Failures need not be contiguous, so reporting the range they sit in
+// means re-running the chunks that succeeded between them — and the error string
+// is all the operator who ran the CLI sees, since the per-window logs stay in the
+// worker.
+func TestBackfillRollupWorkflow_NamesEveryFailedWindow(t *testing.T) {
+	const chunkSize = time.Hour
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	span := 4 * chunkSize
+
+	chunkStarts := backfillChunkStarts(start, span, chunkSize)
+	require.Len(t, chunkStarts, 4, "the failures must be non-contiguous to prove the point")
+
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+
+	a := &Activities{}
+	env.RegisterActivity(a)
+
+	// The first and last chunks fail; the two in the middle succeed.
+	firstAndLast := mock.MatchedBy(func(in BackfillChunkInput) bool {
+		return in.WindowStart.Equal(chunkStarts[0]) || in.WindowStart.Equal(chunkStarts[3])
+	})
+	env.OnActivity(a.RollupLinks, mock.Anything, firstAndLast).
+		Return(0, errors.New("clickhouse connection reset by peer"))
+	env.OnActivity(a.RollupLinks, mock.Anything, mock.Anything).Return(1, nil)
+	env.OnActivity(a.RollupDeviceInterfaces, mock.Anything, mock.Anything).Return(1, nil)
+
+	env.ExecuteWorkflow(BackfillRollupWorkflow, BackfillInput{
+		StartTime: start,
+		EndTime:   start.Add(span),
+		ChunkSize: chunkSize,
+	})
+
+	require.True(t, env.IsWorkflowCompleted())
+	err := env.GetWorkflowError()
+	require.Error(t, err)
+
+	require.Contains(t, err.Error(), "2 of 4 chunks failed", "got: %v", err)
+	for _, i := range []int{0, 3} {
+		require.Contains(t, err.Error(), chunkStarts[i].Format(time.RFC3339),
+			"every failed window must be named, got: %v", err)
+	}
+	// The windows that succeeded must not appear: naming them sends the operator
+	// back over data that is already correct.
+	for _, i := range []int{1, 2} {
+		require.NotContains(t, err.Error(), chunkStarts[i].Format(time.RFC3339),
+			"a window that succeeded must not be listed for re-run, got: %v", err)
+	}
+}
+
+// TestBackfillRollupWorkflow_ZeroChunksIsNotSuccess covers the empty range. The
+// CLI validates only that a start was given (admin/cmd/admin/main.go), so a
+// reversed range — or one the live-overlap cap moves the end behind — would
+// otherwise print "rollup backfill complete" for a run that computed nothing.
+func TestBackfillRollupWorkflow_ZeroChunksIsNotSuccess(t *testing.T) {
+	start := time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC)
+
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	env.RegisterActivity(&Activities{})
+
+	env.ExecuteWorkflow(BackfillRollupWorkflow, BackfillInput{
+		StartTime: start,
+		EndTime:   start.Add(-24 * time.Hour), // reversed
+		ChunkSize: time.Hour,
+	})
+
+	require.True(t, env.IsWorkflowCompleted())
+	err := env.GetWorkflowError()
+	require.Error(t, err, "a backfill that covered nothing must not report success")
+	require.Contains(t, err.Error(), "no chunks",
+		"the error must say the range was empty, got: %v", err)
+}
+
 // TestBackfillRollupWorkflow_CancellationStillReportsGaps covers the shutdown
 // path. A chunk that failed while the context was live is a gap whether or not
 // the run is later cancelled, so the cancellation must not throw that away — an
