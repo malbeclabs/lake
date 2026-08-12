@@ -214,8 +214,9 @@ func buildLinkIncidentsQuery(p incidentQueryParams) (string, []any) {
 			bucketExpr("bucket_ts"), linkSource, lookbackArg))
 	}
 
-	// No data: missing rows
-	if p.TypeFilter == "all" || p.TypeFilter == "no_data" {
+	// The calendar below steps 5 minutes, so islands only line up at that bucket size.
+	// join_use_nulls is 0, so an unmatched LEFT JOIN row carries 1970-01-01, not NULL.
+	if (p.TypeFilter == "all" || p.TypeFilter == "no_data") && bucketMin == 5 {
 		noDataSource := "link_rollup_5m FINAL"
 		if p.UseRaw {
 			noDataSource = linkSource
@@ -237,7 +238,7 @@ func buildLinkIncidentsQuery(p incidentQueryParams) (string, []any) {
 			SELECT link_pk, bucket_ts FROM %s
 			WHERE bucket_ts >= now() - INTERVAL %s SECOND
 		) a ON al.link_pk = a.link_pk AND e.bucket_ts = a.bucket_ts
-		WHERE a.bucket_ts IS NULL`,
+		WHERE a.bucket_ts = toDateTime(0)`,
 			noDataSource, lookbackArg, lookbackArg, lookbackArg, noDataSource, lookbackArg))
 	}
 
@@ -358,6 +359,7 @@ LEFT JOIN dz_metros_current ma ON da.metro_pk = ma.pk
 LEFT JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
 LEFT JOIN dz_contributors_current cc ON l.contributor_pk = cc.pk
 WHERE c.ended_at >= now() - INTERVAL %s SECOND
+  AND NOT (c.incident_type = 'no_data' AND c.total_buckets < 3)
   %s
 ORDER BY c.started_at DESC`,
 		aboveCTE,
@@ -622,8 +624,8 @@ func buildDeviceIncidentsQuery(p incidentQueryParams) (string, []any) {
 			bucketExpr("bucket_ts"), ct.expr, ct.name, lookbackArg, linkFilter, threshArg))
 	}
 
-	// No data for devices: missing rollup rows
-	if p.TypeFilter == "all" || p.TypeFilter == "no_data" {
+	// See buildLinkIncidentsQuery for the bucket size gate and the zero-date test.
+	if (p.TypeFilter == "all" || p.TypeFilter == "no_data") && bucketMin == 5 {
 		aboveParts = append(aboveParts, fmt.Sprintf(`
 		SELECT ad.device_pk AS entity_pk, e.bucket_ts AS bucket_ts,
 			toFloat64(1) AS metric_value,
@@ -643,7 +645,7 @@ func buildDeviceIncidentsQuery(p incidentQueryParams) (string, []any) {
 			  %s
 			GROUP BY device_pk, bucket_ts
 		) a ON ad.device_pk = a.device_pk AND e.bucket_ts = a.bucket_ts
-		WHERE a.bucket_ts IS NULL`,
+		WHERE a.bucket_ts = toDateTime(0)`,
 			lookbackArg, linkFilter, lookbackArg, lookbackArg, lookbackArg, linkFilter))
 	}
 
@@ -756,6 +758,7 @@ LEFT JOIN dz_devices_current d ON c.entity_pk = d.pk
 LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 LEFT JOIN dz_contributors_current cc ON d.contributor_pk = cc.pk
 WHERE c.ended_at >= now() - INTERVAL %s SECOND
+  AND NOT (c.incident_type = 'no_data' AND c.total_buckets < 3)
   %s
 ORDER BY c.started_at DESC`,
 		aboveCTE,

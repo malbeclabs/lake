@@ -731,6 +731,9 @@ type interfaceRollupRow struct {
 
 	// User context (for user traffic queries)
 	UserPK string
+
+	// Distinct 5-minute source buckets behind this display bucket; always 1 in raw mode.
+	SubBuckets uint64
 }
 
 // queryInterfaceRollup reads device_interface_rollup_5m FINAL with re-bucketing.
@@ -843,7 +846,9 @@ func queryInterfaceRollup(ctx context.Context, db driver.Conn, params bucketPara
 			max(isis_unreachable) as isis_unreachable,
 			max(status IN ('soft-drained', 'hard-drained')) as was_drained,
 			-- User context
-			anyIf(user_pk, user_pk != '') as user_pk
+			anyIf(user_pk, user_pk != '') as user_pk,
+			-- Source bucket coverage
+			uniqExact(bucket_ts) as sub_buckets
 		FROM %s
 		WHERE %s
 		GROUP BY display_bucket, %s
@@ -893,7 +898,7 @@ func queryInterfaceRollup(ctx context.Context, db driver.Conn, params bucketPara
 			&r.AvgInPps, &r.P50InPps, &r.P90InPps, &r.P95InPps, &r.P99InPps, &r.MaxInPps,
 			&r.AvgOutPps, &r.P50OutPps, &r.P90OutPps, &r.P95OutPps, &r.P99OutPps, &r.MaxOutPps,
 			&r.Status, &r.ISISOverload, &r.ISISUnreachable, &r.WasDrained,
-			&r.UserPK,
+			&r.UserPK, &r.SubBuckets,
 		); err != nil {
 			return nil, fmt.Errorf("interface rollup scan: %w", err)
 		}

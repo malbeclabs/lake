@@ -11,6 +11,10 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// A 20-minute gap that straddles a square boundary leaves only 2 missing on each
+// side, so 3 would miss it. Two missing is 10 minutes of the default 20-minute square.
+const partialDataMinMissingBuckets = 2
+
 // fetchLinkHistoryFromRollup performs the link history data fetch using rollup tables.
 // filters is optional server-side search filtering.
 func (a *API) fetchLinkHistoryFromRollup(ctx context.Context, timeRange string, requestedBuckets int, filters ...statusFilter) (*LinkHistoryResponse, error) {
@@ -411,6 +415,12 @@ func (a *API) fetchDeviceHistoryFromRollup(ctx context.Context, timeRange string
 	bucketDuration := time.Duration(params.BucketMinutes) * time.Minute
 	now := time.Now().UTC()
 
+	// Raw mode re-buckets in the source query, so sub-bucket coverage is always 1 there.
+	expectedSubBuckets := 0
+	if !params.UseRaw {
+		expectedSubBuckets = params.BucketMinutes / 5
+	}
+
 	var (
 		deviceMeta map[string]*statusDeviceMeta
 		intfRows   []interfaceRollupRow
@@ -559,6 +569,17 @@ func (a *API) fetchDeviceHistoryFromRollup(ctx context.Context, timeRange string
 					issueReasons["no_probes"] = true
 				}
 
+				missingSubBuckets := 0
+				if expectedSubBuckets > 0 && int(row.SubBuckets) < expectedSubBuckets {
+					missingSubBuckets = expectedSubBuckets - int(row.SubBuckets)
+				}
+				if missingSubBuckets >= partialDataMinMissingBuckets && !isCollecting {
+					issueReasons["partial_data"] = true
+					if status == "healthy" {
+						status = "degraded"
+					}
+				}
+
 				hourStatuses = append(hourStatuses, DeviceHourStatus{
 					Hour:               key,
 					Status:             status,
@@ -573,6 +594,7 @@ func (a *API) fetchDeviceHistoryFromRollup(ctx context.Context, timeRange string
 					NoProbes:           noProbes,
 					ISISOverload:       row.ISISOverload,
 					ISISUnreachable:    row.ISISUnreachable,
+					MissingSubBuckets:  missingSubBuckets,
 				})
 			} else {
 				drainStatus := ""
