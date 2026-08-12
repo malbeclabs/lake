@@ -51,11 +51,19 @@ func validPathService(service string) bool {
 // and "multicast" are the same set (algo 0), so both answer "multicast": a
 // reader of the payload should not have to know that a blank field meant algo 0,
 // and the two must not read as different bases for the same numbers.
+//
+// A service this function does not know is returned unchanged rather than folded
+// into "multicast". validPathService gates every caller today, so nothing else
+// reaches here, but the two have to be edited together: a third service added to
+// the validator alone would otherwise be labelled multicast and served the algo-0
+// cache entry, which is wrong data rather than a visible failure.
 func canonicalPathService(service string) string {
-	if service == "unicast" {
-		return "unicast"
+	switch service {
+	case "", "multicast":
+		return "multicast"
+	default:
+		return service
 	}
-	return "multicast"
 }
 
 // loadTopologyGraph loads the device/link topology from ClickHouse into memory.

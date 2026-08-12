@@ -4527,8 +4527,10 @@ export interface MetroPathLatency {
 
 export interface MetroPathLatencyResponse {
   optimize: PathOptimizeMode
-  /** Echoes the link set used. Empty for the default (algo 0). */
-  service: PathService | ''
+  /** Echoes the link set used. The API canonicalises the default to
+   *  'multicast', so it never sends an empty string. Absent only from a
+   *  page-cached payload written by a worker that predates the field. */
+  service?: PathService
   paths: MetroPathLatency[]
   summary: {
     totalPairs: number
@@ -4639,6 +4641,9 @@ export interface MetroPathDetailResponse {
   fromMetroCode: string
   toMetroCode: string
   optimize: PathOptimizeMode
+  /** Echoes the link set the hops were walked over. Same shape and same reason
+   *  as on MetroPathLatencyResponse. */
+  service?: PathService
   totalLatencyMs: number
   totalHops: number
   bottleneckBwGbps: number

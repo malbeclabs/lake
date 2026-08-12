@@ -6,8 +6,11 @@ function summary(
   over: Partial<AlgoDivergenceResponse['summary']> = {}
 ): AlgoDivergenceResponse['summary'] {
   return {
-    // The figures the deployed endpoint returns, so a reader comparing the
-    // fixture against the report does not find two different answers.
+    // Plausible figures, not a record of what an environment returned. These are
+    // live counts on a network that changes daily: links deactivate and metros
+    // leave the graph, so a fixture chased against the endpoint goes stale within
+    // a day and its drift then reads like a regression. What the tests below pin
+    // is how the sentence is assembled from a summary, never today's numbers.
     activatedLinks: 164,
     excludedLinks: 3,
     multicastPairs: 378,
