@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"reflect"
 	"regexp"
@@ -44,8 +43,10 @@ func (a *API) createMCPServer(r *http.Request) *mcp.Server {
 
 	// Register tools
 	a.registerExecuteSQLTool(server, r)
-	registerReadDocsTool(server)
+	a.registerReadDocsTool(server)
 	a.registerGetSchemaTool(server, r)
+	a.registerGetOnboardingRunbookTool(server)
+	a.registerCheckEdgeAccessTool(server, r)
 
 	// Only add Cypher tool for mainnet-beta (where Neo4j is available)
 	if a.Neo4jClient != nil && env == EnvMainnet {
@@ -331,58 +332,22 @@ type ReadDocsOutput struct {
 	Content string `json:"content"`
 }
 
-// docsBaseURL is the base URL for fetching raw documentation from GitHub.
-const docsBaseURL = "https://raw.githubusercontent.com/malbeclabs/docs/main/docs/"
-
-func registerReadDocsTool(server *mcp.Server) {
+func (a *API) registerReadDocsTool(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "read_docs",
 		Title:       "Read Docs",
 		Description: "Read DoubleZero documentation to answer questions about concepts, architecture, setup, troubleshooting, or how the network works. Use this when users ask 'what is DZ', 'how do I set up', 'why isn't X working', or similar conceptual/procedural questions. Available pages include: index, architecture, setup, troubleshooting, connect, connect-multicast, contribute, contribute-overview, contribute-operations, users-overview, paying-fees, multicast-admin.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ReadDocsInput) (*mcp.CallToolResult, ReadDocsOutput, error) {
-		page := strings.TrimSpace(input.Page)
-		if page == "" {
-			return nil, ReadDocsOutput{}, errors.New("page is required")
-		}
-
-		// Validate page name format to prevent path traversal
-		// Allow alphanumeric and hyphens only (docs use slug format)
-		if !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9\-]*$`).MatchString(page) {
-			return nil, ReadDocsOutput{}, fmt.Errorf("invalid page name: %s", page)
-		}
-
-		// Fetch docs
-		url := docsBaseURL + page + ".md"
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		// docsfetch validates the slug (path traversal) and truncates at its
+		// 10k page bound.
+		content, _, err := a.docsSource().Read(ctx, strings.TrimSpace(input.Page))
 		if err != nil {
-			return nil, ReadDocsOutput{}, fmt.Errorf("failed to create request: %w", err)
-		}
-
-		resp, err := http.DefaultClient.Do(httpReq)
-		if err != nil {
-			return nil, ReadDocsOutput{}, fmt.Errorf("failed to fetch docs: %w", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, ReadDocsOutput{}, fmt.Errorf("docs page not found: %s (status %d)", page, resp.StatusCode)
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, ReadDocsOutput{}, fmt.Errorf("failed to read response: %w", err)
-		}
-
-		content := string(body)
-
-		// Truncate if too long
-		if len(content) > 10000 {
-			content = content[:10000] + "\n\n... (truncated)"
+			return nil, ReadDocsOutput{}, err
 		}
 
 		return nil, ReadDocsOutput{
-			Page:    page,
+			Page:    strings.TrimSpace(input.Page),
 			Content: content,
 		}, nil
 	})

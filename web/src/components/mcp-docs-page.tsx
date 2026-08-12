@@ -105,6 +105,14 @@ export function MCPDocsPage() {
                   <td className="px-4 py-2 font-mono text-xs">read_docs</td>
                   <td className="px-4 py-2 text-muted-foreground">Read DoubleZero documentation</td>
                 </tr>
+                <tr>
+                  <td className="px-4 py-2 font-mono text-xs">get_onboarding_runbook</td>
+                  <td className="px-4 py-2 text-muted-foreground">Guided onboarding. Omit service to list. Catalog is GitHub raw docs/runbooks.md.</td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-2 font-mono text-xs">check_edge_access</td>
+                  <td className="px-4 py-2 text-muted-foreground">Check user payer pubkey + receiving IP against onchain access passes</td>
+                </tr>
               </tbody>
             </table>
           </div>

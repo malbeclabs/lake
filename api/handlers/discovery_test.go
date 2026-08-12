@@ -58,6 +58,8 @@ func TestGetMCPServerCard(t *testing.T) {
 		assert.Contains(t, names, "get_schema")
 		assert.Contains(t, names, "execute_sql")
 		assert.Contains(t, names, "read_docs")
+		assert.Contains(t, names, "get_onboarding_runbook")
+		assert.Contains(t, names, "check_edge_access")
 
 		// execute_cypher is only registered when Neo4j is configured on
 		// mainnet-beta. Neo4jClient is nil here, so advertising it would point
