@@ -4485,10 +4485,25 @@ export interface MetroPathLatency {
   toMetroPK: string
   toMetroCode: string
   pathLatencyMs: number
+  /** Observed sum of per-hop RTT. Falls back to the contracted figure when partiallyCommitted. */
+  measuredLatencyMs: number
+  /** 0 when partiallyCommitted — absent, not zero. */
+  measuredP95Ms: number
+  /** 0 when partiallyCommitted — absent, not zero. */
+  measuredJitterMs: number
+  partiallyCommitted: boolean
+  pathMetros: string[]
   hopCount: number
   bottleneckBwGbps: number
   internetLatencyMs: number
+  /** 0 when unmeasured — the internet side has no partiallyCommitted-style flag. */
+  internetP95Ms: number
+  /** 0 when unmeasured — the internet side has no partiallyCommitted-style flag. */
+  internetJitterMs: number
+  /** vs internet, from the contracted pathLatencyMs. */
   improvementPct: number | null
+  /** vs internet, from measuredLatencyMs. Separate basis, so the two pages stay self-consistent. */
+  measuredImprovementPct: number | null
 }
 
 export interface MetroPathLatencyResponse {
@@ -4507,6 +4522,31 @@ export async function fetchMetroPathLatency(optimize: PathOptimizeMode = 'latenc
   const res = await apiFetch(`/api/topology/metro-path-latency?optimize=${optimize}`)
   if (!res.ok) {
     throw new Error('Failed to fetch metro path latency')
+  }
+  return res.json()
+}
+
+export interface RouteSeriesPoint {
+  ts: string
+  dzMs: number
+  internetMs: number
+}
+
+export interface RouteSeries {
+  fromMetroCode: string
+  toMetroCode: string
+  points: RouteSeriesPoint[]
+}
+
+export interface RouteSeriesResponse {
+  series: RouteSeries[]
+  error?: string
+}
+
+export async function fetchRouteSeries(pairs: string[]): Promise<RouteSeriesResponse> {
+  const res = await apiFetch(`/api/topology/route-series?pairs=${encodeURIComponent(pairs.join(','))}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch route series')
   }
   return res.json()
 }
