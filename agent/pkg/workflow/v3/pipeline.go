@@ -3,16 +3,14 @@ package v3
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/malbeclabs/lake/agent/pkg/workflow"
+	"github.com/malbeclabs/lake/utils/pkg/docsfetch"
 )
 
 // queryMarkerPattern matches [Q1], [Q2], etc. - markers that should only appear
@@ -765,106 +763,55 @@ func formatCypherQueryResults(queries []CypherQueryInput, results []workflow.Exe
 	return sb.String()
 }
 
-// docsBaseURL is the base URL for fetching raw documentation from GitHub.
-const docsBaseURL = "https://raw.githubusercontent.com/malbeclabs/docs/main/docs/"
-
-// readDocs handles the read_docs tool - fetches documentation from GitHub.
+// readDocs handles the read_docs tool — fetches from local docs checkout and/or GitHub.
 func (p *Workflow) readDocs(ctx context.Context, params map[string]any, onProgress workflow.ProgressCallback) (string, error) {
 	input, err := ParseReadDocsInput(params)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse read_docs input: %w", err)
 	}
 
-	p.logInfo("workflow: reading docs", "page", input.Page)
+	page := input.Page
 
-	// Emit read_docs started event
+	p.logInfo("workflow: reading docs", "page", page)
+
 	if onProgress != nil {
 		onProgress(workflow.Progress{
 			Stage:    workflow.StageReadDocsStarted,
-			DocsPage: input.Page,
+			DocsPage: page,
 		})
 	}
 
-	// Build URL and fetch
-	url := docsBaseURL + input.Page + ".md"
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	content, _, err := docsfetch.FromEnv().Read(ctx, page)
 	if err != nil {
-		// Emit read_docs complete with error
 		if onProgress != nil {
 			onProgress(workflow.Progress{
 				Stage:     workflow.StageReadDocsComplete,
-				DocsPage:  input.Page,
+				DocsPage:  page,
 				DocsError: err.Error(),
 			})
 		}
-		return "", fmt.Errorf("failed to create request: %w", err)
+		return "", err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		// Emit read_docs complete with error
-		if onProgress != nil {
-			onProgress(workflow.Progress{
-				Stage:     workflow.StageReadDocsComplete,
-				DocsPage:  input.Page,
-				DocsError: err.Error(),
-			})
-		}
-		return "", fmt.Errorf("failed to fetch docs: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		errMsg := fmt.Sprintf("docs page not found: %s (status %d)", input.Page, resp.StatusCode)
-		// Emit read_docs complete with error
-		if onProgress != nil {
-			onProgress(workflow.Progress{
-				Stage:     workflow.StageReadDocsComplete,
-				DocsPage:  input.Page,
-				DocsError: errMsg,
-			})
-		}
-		return "", errors.New(errMsg)
+	if len(content) > 50000 {
+		content = content[:50000] + "\n\n... (truncated)"
 	}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		// Emit read_docs complete with error
-		if onProgress != nil {
-			onProgress(workflow.Progress{
-				Stage:     workflow.StageReadDocsComplete,
-				DocsPage:  input.Page,
-				DocsError: err.Error(),
-			})
-		}
-		return "", fmt.Errorf("failed to read response: %w", err)
-	}
+	p.logInfo("workflow: docs fetched", "page", page, "length", len(content))
 
-	content := string(body)
-
-	// Truncate if too long (docs shouldn't be huge, but just in case)
-	if len(content) > 10000 {
-		content = content[:10000] + "\n\n... (truncated)"
-	}
-
-	p.logInfo("workflow: docs fetched", "page", input.Page, "length", len(content))
-
-	// Emit read_docs complete
 	if onProgress != nil {
-		// Truncate content for progress (just first 200 chars)
 		progressContent := content
 		if len(progressContent) > 200 {
 			progressContent = progressContent[:200] + "..."
 		}
 		onProgress(workflow.Progress{
 			Stage:       workflow.StageReadDocsComplete,
-			DocsPage:    input.Page,
+			DocsPage:    page,
 			DocsContent: progressContent,
 		})
 	}
 
-	return fmt.Sprintf("# Documentation: %s\n\n%s", input.Page, content), nil
+	return fmt.Sprintf("# Documentation: %s\n\n%s", page, content), nil
 }
 
 // RunWithCheckpoint executes the workflow with checkpoint callbacks for durability.

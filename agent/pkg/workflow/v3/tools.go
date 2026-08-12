@@ -72,7 +72,7 @@ var (
 	// ReadDocsTool allows the model to read DoubleZero documentation.
 	ReadDocsTool = Tool{
 		Name:        "read_docs",
-		Description: "Read DoubleZero documentation to answer questions about concepts, architecture, setup, troubleshooting, or how the network works. Use this when users ask 'what is DZ', 'how do I set up', 'why isn't X working', or similar conceptual/procedural questions. Available pages include: index, architecture, setup, troubleshooting, connect, connect-multicast, contribute, contribute-overview, contribute-operations, users-overview, paying-fees, multicast-admin.",
+		Description: "Read DoubleZero documentation to answer questions about concepts, architecture, setup, troubleshooting, or how the network works. Use this when users ask 'what is DZ', 'how do I set up', 'why isn't X working', or similar conceptual/procedural questions.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {

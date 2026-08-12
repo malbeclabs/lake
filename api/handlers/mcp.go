@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"reflect"
 	"regexp"
@@ -15,8 +14,13 @@ import (
 	commonprompts "github.com/malbeclabs/lake/agent/pkg/workflow/prompts"
 
 	"github.com/malbeclabs/lake/api/metrics"
+	"github.com/malbeclabs/lake/utils/pkg/docsfetch"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// DocsSource is the documentation reader for read_docs and get_onboarding_runbook.
+// Tests may replace it. Runbooks continue to live in malbeclabs/docs; this only fetches.
+var DocsSource = docsfetch.FromEnv()
 
 // InitMCP initializes the MCP server and returns the HTTP handler.
 // This should be called once during startup.
@@ -36,7 +40,7 @@ func (a *API) createMCPServer(r *http.Request) *mcp.Server {
 		Title:   "DoubleZero Data",
 		Version: "1.0.0",
 	}, &mcp.ServerOptions{
-		Instructions: "IMPORTANT: Always call get_schema before writing SQL or Cypher queries to understand the available tables, columns, and their types. Do not assume table or column names. All tools are read-only and can be called concurrently.",
+		Instructions: "For onboarding or walking a user through connecting to a DoubleZero service, call get_onboarding_runbook first (omit service to list; the list comes from GitHub raw docs/runbooks.md). For conceptual/setup docs, call read_docs. Always call get_schema before writing SQL or Cypher. Do not assume table or column names. All tools are read-only and can be called concurrently.",
 	})
 
 	ctx := r.Context()
@@ -46,6 +50,8 @@ func (a *API) createMCPServer(r *http.Request) *mcp.Server {
 	a.registerExecuteSQLTool(server, r)
 	registerReadDocsTool(server)
 	a.registerGetSchemaTool(server, r)
+	registerGetOnboardingRunbookTool(server)
+	a.registerCheckEdgeAccessTool(server, r)
 
 	// Only add Cypher tool for mainnet-beta (where Neo4j is available)
 	if a.Neo4jClient != nil && env == EnvMainnet {
@@ -331,14 +337,11 @@ type ReadDocsOutput struct {
 	Content string `json:"content"`
 }
 
-// docsBaseURL is the base URL for fetching raw documentation from GitHub.
-const docsBaseURL = "https://raw.githubusercontent.com/malbeclabs/docs/main/docs/"
-
 func registerReadDocsTool(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "read_docs",
 		Title:       "Read Docs",
-		Description: "Read DoubleZero documentation to answer questions about concepts, architecture, setup, troubleshooting, or how the network works. Use this when users ask 'what is DZ', 'how do I set up', 'why isn't X working', or similar conceptual/procedural questions. Available pages include: index, architecture, setup, troubleshooting, connect, connect-multicast, contribute, contribute-overview, contribute-operations, users-overview, paying-fees, multicast-admin.",
+		Description: "Read DoubleZero documentation to answer questions about concepts, architecture, setup, troubleshooting, or how the network works. Use this when users ask 'what is DZ', 'how do I set up', 'why isn't X working', or similar conceptual/procedural questions. For a guided onboarding walkthrough, prefer get_onboarding_runbook.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ReadDocsInput) (*mcp.CallToolResult, ReadDocsOutput, error) {
 		page := strings.TrimSpace(input.Page)
@@ -346,39 +349,14 @@ func registerReadDocsTool(server *mcp.Server) {
 			return nil, ReadDocsOutput{}, errors.New("page is required")
 		}
 
-		// Validate page name format to prevent path traversal
-		// Allow alphanumeric and hyphens only (docs use slug format)
-		if !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9\-]*$`).MatchString(page) {
-			return nil, ReadDocsOutput{}, fmt.Errorf("invalid page name: %s", page)
-		}
-
-		// Fetch docs
-		url := docsBaseURL + page + ".md"
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		content, _, err := DocsSource.Read(ctx, page)
 		if err != nil {
-			return nil, ReadDocsOutput{}, fmt.Errorf("failed to create request: %w", err)
+			return nil, ReadDocsOutput{}, err
 		}
 
-		resp, err := http.DefaultClient.Do(httpReq)
-		if err != nil {
-			return nil, ReadDocsOutput{}, fmt.Errorf("failed to fetch docs: %w", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, ReadDocsOutput{}, fmt.Errorf("docs page not found: %s (status %d)", page, resp.StatusCode)
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, ReadDocsOutput{}, fmt.Errorf("failed to read response: %w", err)
-		}
-
-		content := string(body)
-
-		// Truncate if too long
-		if len(content) > 10000 {
-			content = content[:10000] + "\n\n... (truncated)"
+		// Truncate very large pages; runbooks are typically ~10–20k.
+		if len(content) > 50000 {
+			content = content[:50000] + "\n\n... (truncated)"
 		}
 
 		return nil, ReadDocsOutput{

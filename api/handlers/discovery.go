@@ -67,6 +67,14 @@ func (a *API) GetMCPServerCard(w http.ResponseWriter, r *http.Request) {
 			Name:        "read_docs",
 			Description: "DoubleZero documentation for conceptual, setup, and troubleshooting questions.",
 		},
+		{
+			Name:        "get_onboarding_runbook",
+			Description: "Guided onboarding runbook for connecting to a DoubleZero service. Omit service to list. Catalog is GitHub raw docs/runbooks.md.",
+		},
+		{
+			Name:        "check_edge_access",
+			Description: "Check whether an identity pubkey is authorized for a receiving IP via access passes.",
+		},
 	}
 
 	if a.Neo4jClient != nil && EnvFromContext(r.Context()) == EnvMainnet {

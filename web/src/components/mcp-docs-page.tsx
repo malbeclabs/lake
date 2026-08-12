@@ -95,7 +95,7 @@ export function MCPDocsPage() {
                 </tr>
                 <tr>
                   <td className="px-4 py-2 font-mono text-xs">execute_cypher</td>
-                  <td className="px-4 py-2 text-muted-foreground">Query Neo4j for topology, paths, and connectivity</td>
+                  <td className="px-4 py-2 text-muted-foreground">Query Neo4j for topology, paths, and connectivity (mainnet only)</td>
                 </tr>
                 <tr>
                   <td className="px-4 py-2 font-mono text-xs">get_schema</td>
@@ -104,6 +104,14 @@ export function MCPDocsPage() {
                 <tr>
                   <td className="px-4 py-2 font-mono text-xs">read_docs</td>
                   <td className="px-4 py-2 text-muted-foreground">Read DoubleZero documentation</td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-2 font-mono text-xs">get_onboarding_runbook</td>
+                  <td className="px-4 py-2 text-muted-foreground">Guided onboarding. Omit service to list. Catalog is GitHub raw docs/runbooks.md.</td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-2 font-mono text-xs">check_edge_access</td>
+                  <td className="px-4 py-2 text-muted-foreground">Check identity pubkey + receiving IP against access passes</td>
                 </tr>
               </tbody>
             </table>
