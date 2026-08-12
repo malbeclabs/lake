@@ -36,7 +36,9 @@ func TestRouteSeriesAgreesWithTheCard(t *testing.T) {
 	seedProbe(t, api, base.Add(8*time.Second), 8, "dev-lax", "dev-nyc", "link-1", 0, 0, true)
 	seedProbe(t, api, base.Add(9*time.Second), 9, "dev-lax", "dev-nyc", "link-1", 0, 0, true)
 
-	card, err := api.FetchMetroPathLatencyData(t.Context(), "latency", 0)
+	// Empty service, to match FetchRouteSeries: both must walk the same link
+	// set, or they disagree for a reason this test is not about.
+	card, err := api.FetchMetroPathLatencyData(t.Context(), "latency", "", 0)
 	require.NoError(t, err)
 
 	var cardMs float64

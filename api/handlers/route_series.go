@@ -109,6 +109,13 @@ func (a *API) GetRouteSeries(w http.ResponseWriter, r *http.Request) {
 // sums per-hop rollup RTT per bucket along the path Dijkstra selected; the
 // internet side comes straight from fact_dz_internet_metro_latency.
 func (a *API) FetchRouteSeries(ctx context.Context, pairs [][2]string) (*RouteSeriesResponse, error) {
+	// Algo 0, deliberately, and this basis must move with the matrix rather than
+	// on its own. The customer page draws this line under a card fed by
+	// FetchMetroPathLatencyData; the two link sets differ by up to 77 ms on
+	// fra↔tyo, so pointing the matrix at unicast while the series stayed here
+	// would put a line under a card that disagrees with it. Switching the page
+	// is those two together, never one — see GetAlgoDivergence for the pairs it
+	// moves.
 	g, err := a.loadTopologyGraph(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("loading topology graph: %w", err)

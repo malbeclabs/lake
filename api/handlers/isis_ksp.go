@@ -47,6 +47,25 @@ func validPathService(service string) bool {
 	return service == "" || service == "unicast" || service == "multicast"
 }
 
+// canonicalPathService names the link set a response was computed over. Empty
+// and "multicast" are the same set (algo 0), so both answer "multicast": a
+// reader of the payload should not have to know that a blank field meant algo 0,
+// and the two must not read as different bases for the same numbers.
+//
+// A service this function does not know is returned unchanged rather than folded
+// into "multicast". validPathService gates every caller today, so nothing else
+// reaches here, but the two have to be edited together: a third service added to
+// the validator alone would otherwise be labelled multicast and served the algo-0
+// cache entry, which is wrong data rather than a visible failure.
+func canonicalPathService(service string) string {
+	switch service {
+	case "", "multicast":
+		return "multicast"
+	default:
+		return service
+	}
+}
+
 // loadTopologyGraph loads the device/link topology from ClickHouse into memory.
 // Edge weights use isis_delay_override_ns (if set) or committed_rtt_ns, converted
 // to microseconds, as the metric.
@@ -573,6 +592,14 @@ func computeMetroPathDetail(g *kspGraph, fromCode, toCode string) *metroPairPath
 	if len(fromDevices) == 0 || len(toDevices) == 0 {
 		return nil
 	}
+
+	// Both lists came out of a Go map, so their order is random per call, and
+	// the tie-break below keeps whichever equal-cost candidate it saw first.
+	// computeMetroPairPaths sorts for this reason; without the same sort here
+	// the drill-down can land on a different arm than the total it explains,
+	// and print a hop list that contradicts its own figure.
+	slices.Sort(fromDevices)
+	slices.Sort(toDevices)
 
 	var bestPath *kspPath
 	for _, d1 := range fromDevices {

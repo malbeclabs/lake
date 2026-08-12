@@ -75,3 +75,22 @@ func TestPathMetroCodes(t *testing.T) {
 		}
 	})
 }
+
+// TestCanonicalPathService pins that only the algo-0 aliases collapse. The
+// canonical name selects the page cache (`== "multicast"` gates the hit) and
+// labels the basis in the payload, so folding an unrecognised service into
+// multicast would serve the algo-0 answer under another name. validPathService
+// keeps those out today, which is exactly why the pair must fail visibly if only
+// one of them learns a new service.
+func TestCanonicalPathService(t *testing.T) {
+	for in, want := range map[string]string{
+		"":          "multicast",
+		"multicast": "multicast",
+		"unicast":   "unicast",
+		"anycast":   "anycast", // unknown: not multicast, so it cannot take that cache entry
+	} {
+		if got := canonicalPathService(in); got != want {
+			t.Errorf("canonicalPathService(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
