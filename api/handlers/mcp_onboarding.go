@@ -252,7 +252,7 @@ func (a *API) registerCheckEdgeAccessTool(server *mcp.Server, r *http.Request) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "check_edge_access",
 		Title:       "Check Edge Access",
-		Description: "Check whether a DoubleZero identity pubkey is authorized for a given receiving IP by looking up access passes. Pass the pubkey from 'doublezero address' and the public IPv4 the user will receive on. Returns status 'active' if a non-expired pass covers that IP (exact match or 0.0.0.0), otherwise 'pending'.",
+		Description: "Check whether a DoubleZero identity pubkey is authorized for a given receiving IP by looking up access passes. Pass the pubkey from 'doublezero address' and the public IPv4 the user will receive on. Returns status 'active' if a connected pass covers that IP (exact match or 0.0.0.0), otherwise 'pending'.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input CheckEdgeAccessInput) (*mcp.CallToolResult, CheckEdgeAccessOutput, error) {
 		if errMsg := CheckRateLimit(QueryRateLimiter, clientIP); errMsg != "" {
@@ -337,13 +337,24 @@ func classifyEdgeAccess(pubkey, publicIP string, pass *edgeAccessPass) CheckEdge
 		ClientIP: pass.ClientIP,
 		TypeTag:  pass.TypeTag,
 	}
-	if strings.EqualFold(pass.Status, "expired") {
+	// Status vocabulary is the serviceability AccessPassStatus enum:
+	// requested | connected | disconnected | expired. Only connected authorizes.
+	switch strings.TrimSuffix(strings.ToLower(pass.Status), " (deprecated)") {
+	case "connected":
+		out.Status = "active"
+		out.Message = fmt.Sprintf("%s is authorized for %s (access pass %s, connected). Proceed to subscribe.",
+			pubkey, publicIP, pass.PK)
+	case "requested":
+		out.Status = "pending"
+		out.Message = fmt.Sprintf("Access pass %s for %s on %s is requested and waiting to be approved. Re-check once it is connected.",
+			pass.PK, pubkey, publicIP)
+	case "expired":
 		out.Status = "pending"
 		out.Message = fmt.Sprintf("Access pass %s for %s on %s is expired. Renew it, then re-check.", pass.PK, pubkey, publicIP)
-		return out
+	default: // disconnected or an unknown future status
+		out.Status = "pending"
+		out.Message = fmt.Sprintf("Access pass %s for %s on %s has status %q, not connected. Resolve that, then re-check.",
+			pass.PK, pubkey, publicIP, pass.Status)
 	}
-	out.Status = "active"
-	out.Message = fmt.Sprintf("%s is authorized for %s (access pass %s, %s). Proceed to subscribe.",
-		pubkey, publicIP, pass.PK, pass.Status)
 	return out
 }

@@ -34,6 +34,30 @@ func TestClassifyEdgeAccess(t *testing.T) {
 		assert.Contains(t, out.Message, "expired")
 	})
 
+	t.Run("requested pass is pending", func(t *testing.T) {
+		t.Parallel()
+		out := classifyEdgeAccess(pubkey, ip, &edgeAccessPass{
+			PK:       "pass1",
+			ClientIP: ip,
+			Status:   "requested",
+			TypeTag:  "edge_seat",
+		})
+		assert.Equal(t, "pending", out.Status)
+		assert.Contains(t, out.Message, "waiting to be approved")
+	})
+
+	t.Run("disconnected pass is pending", func(t *testing.T) {
+		t.Parallel()
+		out := classifyEdgeAccess(pubkey, ip, &edgeAccessPass{
+			PK:       "pass1",
+			ClientIP: ip,
+			Status:   "Disconnected",
+			TypeTag:  "edge_seat",
+		})
+		assert.Equal(t, "pending", out.Status)
+		assert.Contains(t, out.Message, "Disconnected")
+	})
+
 	t.Run("connected exact IP is active", func(t *testing.T) {
 		t.Parallel()
 		out := classifyEdgeAccess(pubkey, ip, &edgeAccessPass{
