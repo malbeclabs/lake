@@ -79,6 +79,12 @@ func main() {
 	}
 }
 
+// envVarSuffix converts a DZ env name into the suffix used by per-env environment
+// variables: mainnet-beta becomes MAINNET_BETA.
+func envVarSuffix(env string) string {
+	return strings.ToUpper(strings.ReplaceAll(env, "-", "_"))
+}
+
 func run() error {
 	verboseFlag := flag.Bool("verbose", false, "enable verbose (debug) logging")
 	enablePprofFlag := flag.Bool("enable-pprof", false, "enable pprof server")
@@ -107,6 +113,17 @@ func run() error {
 
 	// Indexer configuration
 	dzEnvFlag := flag.String("dz-env", config.EnvMainnetBeta, "DZ ledger environment (devnet, testnet, mainnet-beta)")
+	// The SDK's per-env LedgerPublicRPCURL is a shared endpoint whose API key ships as
+	// a public constant, so every SDK consumer draws on one quota and lake can neither
+	// attribute nor defend its own share. This points one env at a dedicated endpoint.
+	//
+	// It is not the only way in, and the difference matters. NetworkConfigForEnv applies
+	// the bare DZ_LEDGER_RPC_URL to *every* env after its per-env switch, so setting
+	// that name redirects the secondary networks too — they would then query this
+	// endpoint with their own program IDs, read zero accounts, and stall on the
+	// refusing-to-write-snapshot guard. This flag and the per-env
+	// DZ_LEDGER_RPC_URL_<ENV> name are the two that scope to one env.
+	dzLedgerRPCURLFlag := flag.String("dz-ledger-rpc-url", "", "DZ ledger RPC endpoint for this env (empty = the per-env DZ_LEDGER_RPC_URL_<ENV>, then the SDK default)")
 	solanaEnvFlag := flag.String("solana-env", config.SolanaEnvMainnetBeta, "solana environment (devnet, testnet, mainnet-beta)")
 	refreshIntervalFlag := flag.Duration("cache-ttl", defaultRefreshInterval, "cache TTL duration")
 	maxConcurrencyFlag := flag.Int("max-concurrency", defaultMaxConcurrency, "maximum number of concurrent operations")
@@ -177,6 +194,12 @@ func run() error {
 	}
 	if envDZEnv := os.Getenv("DZ_ENV"); envDZEnv != "" {
 		*dzEnvFlag = envDZEnv
+	}
+	// Deliberately the per-env name, matching what the secondary networks use. The bare
+	// DZ_LEDGER_RPC_URL is already consumed by the SDK for every env, so reading it here
+	// would add nothing and would imply a scoping this process cannot provide.
+	if v := os.Getenv("DZ_LEDGER_RPC_URL_" + envVarSuffix(*dzEnvFlag)); v != "" {
+		*dzLedgerRPCURLFlag = v
 	}
 
 	// Override Neo4j flags with environment variables if set
@@ -270,6 +293,14 @@ func run() error {
 		return fmt.Errorf("failed to get network config: %w", err)
 	}
 
+	// Redirect every DZ ledger read for this env, not just one client: dzRPCClient
+	// (serviceability, geolocation), permissionEventsRawRPC, and the shreds client
+	// all read this one field, and a dedicated endpoint should serve all of lake's
+	// ledger traffic. Same assignment the secondary-env path makes.
+	if *dzLedgerRPCURLFlag != "" {
+		networkConfig.LedgerPublicRPCURL = *dzLedgerRPCURLFlag
+	}
+
 	var solanaNetworkConfig *config.SolanaNetworkConfig
 	if solanaEnabled {
 		solanaNetworkConfig, err = config.SolanaNetworkConfigForEnv(*solanaEnvFlag)
@@ -287,6 +318,9 @@ func run() error {
 		"solana_enabled", solanaEnabled,
 		"geoip_enabled", geoipEnabled,
 		"neo4j_enabled", neo4jEnabled,
+		// Whether lake is on its own ledger endpoint or the SDK's shared public one.
+		// A boolean, never the URL: these endpoints carry their API key in the path.
+		"dedicated_ledger_rpc", *dzLedgerRPCURLFlag != "",
 	)
 
 	// Set up signal handling with detailed logging

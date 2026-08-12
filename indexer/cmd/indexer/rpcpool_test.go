@@ -108,3 +108,26 @@ func TestLedgerClientPoolMatchesFanOut(t *testing.T) {
 	}
 	t.Logf("fanOut=%d serviceTime=%s elapsed=%s peakServerConcurrency=%d", fanOut, serviceTime, elapsed, peak)
 }
+
+// TestEnvVarSuffix pins the per-env variable naming. A wrong mapping fails silently:
+// the variable is simply never found, the endpoint override never applies, and the
+// indexer keeps using the shared public URL with no error anywhere.
+func TestEnvVarSuffix(t *testing.T) {
+	t.Parallel()
+
+	for env, want := range map[string]string{
+		"mainnet-beta": "MAINNET_BETA",
+		"testnet":      "TESTNET",
+		"devnet":       "DEVNET",
+	} {
+		if got := envVarSuffix(env); got != want {
+			t.Errorf("envVarSuffix(%q) = %q, want %q", env, got, want)
+		}
+	}
+
+	// The secondary path hardcodes DZ_LEDGER_RPC_URL_TESTNET, so the primary path's
+	// derived name must agree with it for testnet.
+	if got := "DZ_LEDGER_RPC_URL_" + envVarSuffix("testnet"); got != "DZ_LEDGER_RPC_URL_TESTNET" {
+		t.Errorf("derived name %q disagrees with the secondary path's hardcoded name", got)
+	}
+}
