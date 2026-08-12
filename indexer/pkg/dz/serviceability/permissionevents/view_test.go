@@ -13,6 +13,7 @@ import (
 
 	"github.com/gagliardetto/solana-go"
 	solanarpc "github.com/gagliardetto/solana-go/rpc"
+	soljsonrpc "github.com/gagliardetto/solana-go/rpc/jsonrpc"
 	"github.com/jonboulle/clockwork"
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	"github.com/malbeclabs/lake/utils/pkg/dberror"
@@ -218,15 +219,22 @@ func (f *fakeRPC) addAccount(t *testing.T, pda solana.PublicKey, slots []uint64,
 	}
 }
 
+// testFetchesPerSecond effectively disables getTransaction pacing. The fake RPC has
+// no rate limit to respect, and the production default (25/s) would add tens of
+// seconds to the multi-hundred-signature drain tests for no coverage. The pacing
+// itself is covered by TestLake_PermissionEvents_View_PacesTransactionFetches.
+const testFetchesPerSecond = 1e6
+
 func newTestView(t *testing.T, ch clickhouse.Client, rpc *fakeRPC) *View {
 	t.Helper()
 	view, err := NewView(ViewConfig{
-		Logger:          laketesting.NewLogger(),
-		Clock:           clockwork.NewRealClock(),
-		RPC:             rpc,
-		ProgramID:       testProgramID,
-		RefreshInterval: time.Second,
-		ClickHouse:      ch,
+		Logger:           laketesting.NewLogger(),
+		Clock:            clockwork.NewRealClock(),
+		RPC:              rpc,
+		ProgramID:        testProgramID,
+		RefreshInterval:  time.Second,
+		ClickHouse:       ch,
+		FetchesPerSecond: testFetchesPerSecond,
 	})
 	require.NoError(t, err)
 	return view
@@ -430,6 +438,125 @@ func TestLake_PermissionEvents_View_FailedChunkKeepsCursorAndBackfillsOnRetry(t 
 	require.EqualValues(t, 10, factDistinctSlots(t, ch))
 }
 
+// TestLake_PermissionEvents_View_PacesTransactionFetches: the concurrency semaphore
+// bounds in-flight calls but not request rate, which is what a per-method provider
+// limit actually measures. The view-wide limiter must hold the drain to
+// FetchesPerSecond so we stay under the limit instead of discovering it.
+func TestLake_PermissionEvents_View_PacesTransactionFetches(t *testing.T) {
+	t.Parallel()
+
+	const (
+		fetches         = 40
+		perSecond       = 20
+		burst           = maxConcurrentFetches
+		wantMinDuration = (fetches - burst) * time.Second / perSecond
+	)
+
+	rpc := newFakeRPC(t, seqSlots(1, fetches), rowlessIxData())
+	ch := testClient(t)
+	view, err := NewView(ViewConfig{
+		Logger:           laketesting.NewLogger(),
+		Clock:            clockwork.NewRealClock(),
+		RPC:              rpc,
+		ProgramID:        testProgramID,
+		RefreshInterval:  time.Second,
+		ClickHouse:       ch,
+		FetchesPerSecond: perSecond,
+	})
+	require.NoError(t, err)
+
+	start := time.Now()
+	_, err = view.Refresh(context.Background())
+	elapsed := time.Since(start)
+
+	require.NoError(t, err)
+	require.EqualValues(t, fetches, rpc.decodes.Load(), "every signature must still be fetched")
+	// The burst is spent immediately; the remainder is paced at perSecond.
+	require.GreaterOrEqual(t, elapsed, wantMinDuration,
+		"drain finished in %v — faster than %d fetches/s allows, so pacing is not applied", elapsed, perSecond)
+}
+
+// TestLake_PermissionEvents_View_ThrottledChunkStopsWithProgressAndResumes is the
+// catch-up-livelock regression. A rate-limited getTransaction (RPCPool answers a
+// throttled call with an *RPCError carrying HTTP 429 in its code field) used to
+// abort the whole refresh cycle, so an account with a backlog committed only its
+// first chunk per cycle and was recorded as a failure. With the drain cycle running
+// every ~27min and a backlog growing faster than one chunk, the account could never
+// catch up: prod sat 3h26m behind and widening.
+//
+// An upstream throttle is a budget exhaustion, not a fault — the same shape the
+// deadline check already handles. Committed chunks are durable, so the drain must
+// stop, report the honest committed frontier, and resume from the cursor next cycle.
+func TestLake_PermissionEvents_View_ThrottledChunkStopsWithProgressAndResumes(t *testing.T) {
+	t.Parallel()
+
+	total := uint64(2 * scanChunkSize)
+	rpc := newFakeRPC(t, seqSlots(1, total), createPermissionIxData())
+	// Throttle a signature in the second chunk: the first commits, the second cannot.
+	throttled := mkSig(scanChunkSize + 50)
+	rpc.txErrs[throttled] = &soljsonrpc.RPCError{
+		Code:    429,
+		Message: "Too many requests for a specific RPC call",
+	}
+	require.True(t, dberror.IsTransient(rpc.txErrs[throttled]),
+		"the injected error must classify as transient, else the test proves nothing")
+
+	ch := testClient(t)
+	view := newTestView(t, ch, rpc)
+
+	res, err := view.Refresh(context.Background())
+	require.NoError(t, err,
+		"a throttle after committed progress is a budget stop, not a cycle failure")
+	require.True(t, res.Partial,
+		"a cycle that stopped with backlog left must record status=partial, not success — "+
+			"the staleness alert reads the last successful run's finished_at")
+	require.EqualValues(t, scanChunkSize, factRowCount(t, ch),
+		"the first chunk must stay committed")
+
+	_, slot, found := accountCursor(t, ch, testPDA.String())
+	require.True(t, found)
+	require.EqualValues(t, scanChunkSize, slot, "cursor must sit at the committed chunk boundary")
+
+	// Freshness must not overstate: with backlog pending the frontier is the committed
+	// chunk's block time, not now — this is what feeds the ingest-staleness alert.
+	require.NotNil(t, res.SourceMaxEventTS)
+	require.True(t, res.SourceMaxEventTS.Equal(time.Unix(1753200000+int64(scanChunkSize), 0)),
+		"partial-progress freshness must be the committed frontier, got %v", res.SourceMaxEventTS)
+
+	// Throttle lifts; the next cycle drains the remainder from the cursor.
+	delete(rpc.txErrs, throttled)
+	res, err = view.Refresh(context.Background())
+	require.NoError(t, err)
+	require.False(t, res.Partial,
+		"a converged cycle must report success so the staleness clock resets")
+	require.EqualValues(t, total, factRowCount(t, ch))
+	require.EqualValues(t, total, factDistinctSlots(t, ch), "no signature may be skipped or double-counted")
+	_, slot, found = accountCursor(t, ch, testPDA.String())
+	require.True(t, found)
+	require.EqualValues(t, total, slot)
+}
+
+// TestLake_PermissionEvents_View_ThrottledFirstChunkStillErrors pins the guard on the
+// graceful-stop path above: an account that is throttled before committing anything
+// has made no progress, so it must still surface an error. Otherwise a persistently
+// throttled account would no-op succeed forever and the staleness signal would be the
+// only thing left.
+func TestLake_PermissionEvents_View_ThrottledFirstChunkStillErrors(t *testing.T) {
+	t.Parallel()
+
+	rpc := newFakeRPC(t, seqSlots(1, 10), createPermissionIxData())
+	rpc.txErrs[mkSig(5)] = &soljsonrpc.RPCError{
+		Code:    429,
+		Message: "Too many requests for a specific RPC call",
+	}
+	ch := testClient(t)
+	view := newTestView(t, ch, rpc)
+
+	_, err := view.Refresh(context.Background())
+	require.Error(t, err, "zero-progress throttle must still escalate")
+	require.EqualValues(t, 0, factRowCount(t, ch))
+}
+
 // TestLake_PermissionEvents_View_RefusesChunkWhenBudgetExhausted: when the
 // context deadline is too close to safely decode and commit a chunk, the drain
 // stops before starting one and reports an error (no silent no-op success).
@@ -466,12 +593,13 @@ func TestLake_PermissionEvents_View_BudgetStopWithProgressResumesNextRefresh(t *
 	rpc.onDecode = func() { clock.Advance(100 * time.Millisecond) }
 
 	view, err := NewView(ViewConfig{
-		Logger:          laketesting.NewLogger(),
-		Clock:           clock,
-		RPC:             rpc,
-		ProgramID:       testProgramID,
-		RefreshInterval: time.Second,
-		ClickHouse:      ch,
+		Logger:           laketesting.NewLogger(),
+		Clock:            clock,
+		RPC:              rpc,
+		ProgramID:        testProgramID,
+		RefreshInterval:  time.Second,
+		ClickHouse:       ch,
+		FetchesPerSecond: testFetchesPerSecond,
 	})
 	require.NoError(t, err)
 
@@ -522,12 +650,13 @@ func TestLake_PermissionEvents_View_PaginationRespectsBudget(t *testing.T) {
 	rpc.onSigPage = func() { clock.Advance(20 * time.Second) }
 
 	view, err := NewView(ViewConfig{
-		Logger:          laketesting.NewLogger(),
-		Clock:           clock,
-		RPC:             rpc,
-		ProgramID:       testProgramID,
-		RefreshInterval: time.Second,
-		ClickHouse:      ch,
+		Logger:           laketesting.NewLogger(),
+		Clock:            clock,
+		RPC:              rpc,
+		ProgramID:        testProgramID,
+		RefreshInterval:  time.Second,
+		ClickHouse:       ch,
+		FetchesPerSecond: testFetchesPerSecond,
 	})
 	require.NoError(t, err)
 
@@ -587,4 +716,143 @@ func TestLake_PermissionEvents_View_ResumesFromFactHighWaterMark(t *testing.T) {
 	require.EqualValues(t, 10, rpc.decodes.Load(),
 		"only signatures newer than the fact high-water mark may be fetched")
 	require.EqualValues(t, 11, factRowCount(t, ch))
+}
+
+// TestLake_PermissionEvents_View_ChunkBudgetScalesWithFetchRate: pacing put the
+// fetch rate in charge of how long a chunk takes, so the deadline reserve has to
+// follow it. A fixed reserve lets the drain start a chunk it cannot finish, and the
+// overrun is silent — rate.Limiter.Wait refuses a reservation that would outlast the
+// deadline and returns "would exceed context deadline", which classifies transient
+// and so takes the stop-with-progress path, reporting success after fetching a
+// chunk's worth of transactions that commit nothing.
+func TestLake_PermissionEvents_View_ChunkBudgetScalesWithFetchRate(t *testing.T) {
+	t.Parallel()
+
+	ch := testClient(t)
+	rpc := newFakeRPC(t, seqSlots(1, 10), rowlessIxData())
+
+	newAt := func(perSecond float64) *View {
+		v, err := NewView(ViewConfig{
+			Logger: laketesting.NewLogger(), Clock: clockwork.NewRealClock(), RPC: rpc,
+			ProgramID: testProgramID, RefreshInterval: time.Second, ClickHouse: ch,
+			FetchesPerSecond: perSecond,
+		})
+		require.NoError(t, err)
+		return v
+	}
+
+	fast := newAt(100)
+	slow := newAt(10)
+	wantFast := time.Duration(float64(scanChunkSize)/100*float64(time.Second)) + drainCommitReserve
+	wantSlow := time.Duration(float64(scanChunkSize)/10*float64(time.Second)) + drainCommitReserve
+
+	require.Equal(t, wantFast, fast.chunkBudget(scanChunkSize))
+	require.Equal(t, wantSlow, slow.chunkBudget(scanChunkSize))
+	require.Greater(t, slow.chunkBudget(scanChunkSize), fast.chunkBudget(scanChunkSize),
+		"a slower fetch rate must reserve more of the deadline, not the same fixed amount")
+
+	// A short final chunk must not be charged for a full one.
+	require.Less(t, fast.chunkBudget(1), fast.chunkBudget(scanChunkSize))
+	// The reserve is always at least the insert+checkpoint cost.
+	require.GreaterOrEqual(t, fast.chunkBudget(0), drainCommitReserve)
+
+	// The cost is the uncontended one. Reserving for worst-case contention instead
+	// (× maxConcurrentFetches) rejected every cycle holding between the two figures,
+	// and put the whole 300s activity window out of reach below about 7.4/s.
+	require.Less(t, slow.chunkBudget(scanChunkSize), 5*time.Minute,
+		"a 10/s rate must be able to drain a chunk inside the activity window")
+}
+
+// TestLake_PermissionEvents_View_PaginationReservesWhatTheChunkLoopDemands: the two
+// deadline checks in a drain have to agree on one number. When pagination guaranteed a
+// flat 30s while the chunk loop demanded chunkBudget(200) — 110s at the default rate
+// with the old worst-case factor — a cycle exiting pagination anywhere in that band
+// paged its whole backlog and then took the zero-progress error branch, having indexed
+// nothing. The gap was invisible to the other budget tests because they run at
+// testFetchesPerSecond, where the two thresholds collapse to the same value.
+func TestLake_PermissionEvents_View_PaginationReservesWhatTheChunkLoopDemands(t *testing.T) {
+	t.Parallel()
+
+	rpc := newFakeRPC(t, seqSlots(1, scanChunkSize), rowlessIxData())
+	ch := testClient(t)
+
+	start := time.Now()
+	clock := clockwork.NewFakeClockAt(start)
+
+	// 100/s: a full chunk needs 200/100 = 2s of fetching plus the 30s commit reserve.
+	// The band is deliberately narrow, because its width is also what the second half of
+	// this test spends waiting on the real limiter.
+	const perSecond = 100
+	view, err := NewView(ViewConfig{
+		Logger: laketesting.NewLogger(), Clock: clock, RPC: rpc,
+		ProgramID: testProgramID, RefreshInterval: time.Second, ClickHouse: ch,
+		FetchesPerSecond: perSecond,
+	})
+	require.NoError(t, err)
+	want := time.Duration(float64(scanChunkSize)/perSecond*float64(time.Second)) + drainCommitReserve
+	require.Equal(t, want, view.chunkBudget(scanChunkSize))
+
+	// Land inside the old band: more than the flat 30s pagination reserve, less than
+	// what a chunk needs. Pagination must refuse here rather than page everything and
+	// leave the chunk loop to error.
+	inBand := drainCommitReserve + (want-drainCommitReserve)/2
+	require.Greater(t, inBand, drainCommitReserve)
+	require.Less(t, inBand, want)
+
+	ctx, cancel := context.WithDeadline(context.Background(), start.Add(inBand))
+	defer cancel()
+	_, err = view.Refresh(ctx)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "pagination",
+		"the phase that cannot fit a chunk must be the one that says so")
+	require.ErrorContains(t, err, "fetches/second",
+		"the message must name the rate the requirement came from")
+	require.EqualValues(t, 0, rpc.decodes.Load(),
+		"no chunk may be started when pagination already knows it cannot finish one")
+
+	// Above the requirement the same backlog drains in full, so the reserve is a real
+	// threshold rather than a blanket refusal.
+	rpc.decodes.Store(0)
+	ctx2, cancel2 := context.WithDeadline(context.Background(), clock.Now().Add(10*time.Minute))
+	defer cancel2()
+	_, err = view.Refresh(ctx2)
+	require.NoError(t, err)
+	require.EqualValues(t, scanChunkSize, rpc.decodes.Load())
+}
+
+// TestLake_PermissionEvents_View_PartialCycleAlwaysReportsAFrontier: a partial cycle
+// whose committedTip stays zero reports no freshness value at all — Refresh's switch
+// leaves SourceMaxEventTS nil — so the run lands as a clean success with nothing to
+// show how far behind it is. The tip must come from the newest dated signature in the
+// chunk, not only its last element.
+func TestLake_PermissionEvents_View_PartialCycleAlwaysReportsAFrontier(t *testing.T) {
+	t.Parallel()
+
+	total := uint64(2 * scanChunkSize)
+	rpc := newFakeRPC(t, seqSlots(1, total), createPermissionIxData())
+
+	// The first chunk's newest signature carries no block time, as the RPC returns for
+	// states it cannot date. Earlier entries in that chunk are still dated.
+	for _, h := range rpc.histories {
+		for _, e := range h {
+			if e.Slot == scanChunkSize {
+				e.BlockTime = nil
+			}
+		}
+	}
+	// Throttle into the second chunk so the cycle stops with progress.
+	rpc.txErrs[mkSig(scanChunkSize+50)] = &soljsonrpc.RPCError{
+		Code: 429, Message: "Too many requests for a specific RPC call",
+	}
+
+	ch := testClient(t)
+	view := newTestView(t, ch, rpc)
+
+	res, err := view.Refresh(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, res.SourceMaxEventTS,
+		"a partial cycle must report a frontier even when its last committed signature is undated")
+	// Slot scanChunkSize is undated, so the frontier falls back to scanChunkSize-1.
+	require.True(t, res.SourceMaxEventTS.Equal(time.Unix(1753200000+int64(scanChunkSize)-1, 0)),
+		"frontier should be the newest dated signature in the committed chunk, got %v", res.SourceMaxEventTS)
 }
