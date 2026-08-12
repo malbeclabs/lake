@@ -43,6 +43,18 @@ type RefreshResult struct {
 	// SourceMaxEventTS is the latest source timestamp in the ingested batch.
 	// For snapshot-based views, this is typically the fetchedAt time.
 	SourceMaxEventTS *time.Time
+
+	// Partial marks a run that completed without error but knowingly left work
+	// undone — a drain that banked its committed chunks and stopped, expecting the
+	// next cycle to continue. Such a run is recorded as status="partial" rather than
+	// "success".
+	//
+	// The distinction is load-bearing for staleness alerting, which asks for the last
+	// successful run's finished_at. A partial cycle that reported "success" reset that
+	// clock while the data it covers stayed hours behind, so a drain that never
+	// converged looked healthy indefinitely. Reporting the honest source timestamp is
+	// not sufficient on its own: nothing currently reads source_max_event_ts.
+	Partial bool
 }
 
 // record writes a single ingestion run to ClickHouse. Errors are logged but
@@ -116,11 +128,14 @@ func buildRecord(workflow, activity, network string, start time.Time, result Ref
 	if result.RowsAffected > 0 {
 		rec.RowsAffected = &result.RowsAffected
 	}
-	if err != nil {
+	switch {
+	case err != nil:
 		rec.Status = "error"
 		msg := err.Error()
 		rec.ErrorMessage = &msg
-	} else {
+	case result.Partial:
+		rec.Status = "partial"
+	default:
 		rec.Status = "success"
 	}
 	return rec
