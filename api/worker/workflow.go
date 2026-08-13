@@ -136,6 +136,18 @@ type cacheEntry struct {
 // for data this slow-moving; the cached-or-live readers cap staleness independently.
 const publisherCheckEveryN = 4
 
+// validatorsListingEveryN refreshes the validators listing every other
+// slow cycle (~60s at the default 30s interval), matching the UI's ~60s poll and
+// absorbing the external ~10s poller that previously ran the query ~6,500×/day.
+const validatorsListingEveryN = 2
+
+// algoDivergenceEveryN slows the flex-algo divergence refresh. It runs two
+// full all-pairs path computations over two separately loaded graphs, and its
+// inputs are link topology tags, which change when someone changes them and
+// not otherwise. Every 10th slow cycle (~5 min at the default 30s interval) is
+// far inside the window in which anyone would act on an untagged link.
+const algoDivergenceEveryN = 10
+
 // dueThisCycle reports whether an entry with the given cadence refreshes on the
 // given zero-based cycle. everyN <= 1 means every cycle.
 func dueThisCycle(everyN, cycle int) bool {
@@ -214,6 +226,17 @@ func (a *Activities) entries() []cacheEntry {
 			}
 			return resp, nil
 		}},
+		{name: "flex-algo divergence", key: "algo_divergence", everyN: algoDivergenceEveryN, fn: func(ctx context.Context) (any, error) {
+			resp, err := api.FetchAlgoDivergenceData(ctx)
+			if err != nil {
+				return nil, err
+			}
+			// The only caller that publishes. This refresh runs over mainnet
+			// alone, and the gauges carry no environment label — see
+			// handlers.PublishAlgoDivergenceMetrics.
+			handlers.PublishAlgoDivergenceMetrics(resp)
+			return resp, nil
+		}},
 		{name: "link history", key: "link_history:24h:72", fn: func(ctx context.Context) (any, error) {
 			return api.FetchLinkHistoryData(ctx, "24h", 72)
 		}},
@@ -267,6 +290,13 @@ func (a *Activities) entries() []cacheEntry {
 		}},
 		{name: "geo validators", key: "geo_validators", fn: func(ctx context.Context) (any, error) {
 			return api.FetchGeoValidatorsData(ctx, "", "")
+		}},
+		// The unfiltered stake-desc validators listing is polled continuously by the
+		// UI (limit=100) and an external consumer (limit=900). Cache the complete
+		// set every other slow cycle (~60s) so the handler can slice any requested
+		// page out of it — its stake/geo data moves on slow timescales.
+		{name: "validators", key: handlers.ValidatorsPageCacheKey, everyN: validatorsListingEveryN, fn: func(ctx context.Context) (any, error) {
+			return api.FetchValidatorsData(ctx)
 		}},
 		{name: "multicast health summaries", key: handlers.MulticastHealthSummariesCacheKey, fn: func(ctx context.Context) (any, error) {
 			return api.FetchMulticastHealthSummariesData(ctx, handlers.ShredGroupPK)
@@ -375,7 +405,7 @@ func (a *Activities) RefreshCaches(ctx context.Context, cycle int) error {
 	for _, strategy := range metroPathLatencyStrategies {
 		g.Go(func() error {
 			a.refresh(gctx, "metro path latency:"+strategy, "metro_path_latency:"+strategy, func(ctx context.Context) (any, error) {
-				return a.API.FetchMetroPathLatencyData(ctx, strategy)
+				return a.API.FetchMetroPathLatencyData(ctx, strategy, "", 0)
 			}, 0, shuttingDown, errBatchDeadline)
 			return nil
 		})

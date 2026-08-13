@@ -148,6 +148,7 @@ func (s *MetroHistorySchema) PayloadColumns() []string {
 		"total_initialized_devices:INTEGER",
 		"current_epoch:BIGINT",
 		"current_usdc_price_dollars:INTEGER",
+		"retransmit_only_enabled:BOOLEAN",
 	}
 }
 
@@ -159,6 +160,7 @@ func (s *MetroHistorySchema) ToRow(m MetroHistoryRow) []any {
 		m.TotalInitializedDevices,
 		m.CurrentEpoch,
 		m.CurrentUSDCPriceDollars,
+		m.RetransmitOnlyEnabled,
 	}
 }
 

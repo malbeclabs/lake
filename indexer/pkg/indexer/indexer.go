@@ -147,12 +147,13 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 	var permissionEventsView *permissionevents.View
 	if cfg.PermissionEventsRPC != nil && !cfg.ServiceabilityProgramID.IsZero() {
 		permissionEventsView, err = permissionevents.NewView(permissionevents.ViewConfig{
-			Logger:          cfg.Logger,
-			Clock:           cfg.Clock,
-			RPC:             cfg.PermissionEventsRPC,
-			ProgramID:       cfg.ServiceabilityProgramID,
-			RefreshInterval: cfg.RefreshInterval,
-			ClickHouse:      cfg.ClickHouse,
+			Logger:           cfg.Logger,
+			Clock:            cfg.Clock,
+			RPC:              cfg.PermissionEventsRPC,
+			ProgramID:        cfg.ServiceabilityProgramID,
+			RefreshInterval:  cfg.RefreshInterval,
+			ClickHouse:       cfg.ClickHouse,
+			FetchesPerSecond: cfg.PermissionEventsFetchesPerSecond,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create permission events view: %w", err)
@@ -171,6 +172,7 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 		ClickHouse:             cfg.ClickHouse,
 		Serviceability:         svcView,
 		RefreshInterval:        cfg.RefreshInterval,
+		DZEnv:                  cfg.DZEnv,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create telemetry view: %w", err)
@@ -281,6 +283,7 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 			Region:      cfg.MrouteS3Region,
 			KeyPrefix:   cfg.MrouteS3KeyPrefix,
 			EndpointURL: cfg.MrouteS3EndpointURL,
+			Logger:      cfg.Logger,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create mroute S3 source: %w", err)
@@ -307,6 +310,7 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 			Region:      cfg.MSDPS3Region,
 			KeyPrefix:   cfg.MSDPS3KeyPrefix,
 			EndpointURL: cfg.MSDPS3EndpointURL,
+			Logger:      cfg.Logger,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create MSDP S3 source: %w", err)

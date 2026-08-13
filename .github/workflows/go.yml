@@ -49,7 +49,14 @@ jobs:
         working-directory: dev/controlcenter/ui
       - run: bun run build
         working-directory: dev/controlcenter/ui
-      - run: go test -v ./...
+      # -p bounds how many packages run at once. ~20 packages start their own
+      # database container, so the GOMAXPROCS default (16 on this runner) had 16
+      # ClickHouse/Postgres/Neo4j servers each sizing thread pools and caches for
+      # the whole machine, which is what pushed container-backed tests toward
+      # their handler deadlines. Fewer packages at once means more CPU per
+      # container, and costs nothing in wall time: one package's critical path
+      # bounds the suite (390s at -p 6 vs 402s at the default).
+      - run: go test -race -v -p 6 ./...
   evals-short:
     runs-on: ubuntu-latest
     needs: go-build

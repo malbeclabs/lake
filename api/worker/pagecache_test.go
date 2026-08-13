@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/malbeclabs/lake/api/handlers"
 )
 
 // capHandler records emitted records so tests can assert on log level.
@@ -230,6 +232,15 @@ func TestDueThisCycle(t *testing.T) {
 		require.True(t, ok, "topology entry must exist")
 		require.LessOrEqual(t, topo.everyN, 1, "topology must refresh every cycle")
 
+		vals, ok := byKey[handlers.ValidatorsPageCacheKey]
+		require.True(t, ok, "validators entry must exist")
+		require.Equal(t, validatorsListingEveryN, vals.everyN)
+		require.Equal(t, 2, vals.everyN)
+		// Due on cycles 0, 2, 4, ... (~60s at the default 30s interval).
+		for _, cycle := range []int{0, 1, 2, 3, 4, 5} {
+			require.Equal(t, cycle%2 == 0, dueThisCycle(vals.everyN, cycle), "validators cycle %d", cycle)
+		}
+
 		// Model the RefreshCaches gate: publisher_check is due only on cycles 0,4,8;
 		// topology is due every cycle.
 		for _, cycle := range []int{0, 1, 2, 3, 4, 5, 8} {
@@ -259,4 +270,30 @@ func TestWriteFailureEscalation(t *testing.T) {
 	*recs = nil
 	a.recordWriteFailure("topology", "topology", err)
 	require.Zero(t, countLevel(*recs, slog.LevelError))
+}
+
+// TestValidatorsCacheBound pins that the handler's staleness gate can never reject
+// a healthy validators cache entry, at any refresh interval an operator can set.
+//
+// The gate is a dead-worker backstop, so rejecting healthy entries has no upside and
+// a large downside: every rejection sends a request back to the ~13 CPU-sec live
+// query, which is the cost the cache exists to avoid. A bound derived from the
+// *default* interval looks fine in CI and silently degrades once the interval is
+// raised, so the invariant is asserted against the configurable maximum instead.
+//
+// This lives in api/worker because it is the only package that sees both sides:
+// api/worker imports api/handlers, not the reverse.
+func TestValidatorsCacheBound(t *testing.T) {
+	t.Parallel()
+
+	// Worst-case age of a healthy entry: a full refresh cadence at the slowest
+	// permitted interval, plus the longest a refresh activity may itself take.
+	worstCadence := time.Duration(validatorsListingEveryN) * maxRefreshInterval
+	worstHealthyAge := worstCadence + maxActivityTimeout
+
+	require.Greater(t, handlers.ValidatorsCacheStaleAfter, worstHealthyAge,
+		"handlers.ValidatorsCacheStaleAfter (%s) must exceed the worst-case healthy entry age "+
+			"(%s cadence + %s refresh); otherwise raising PAGE_CACHE_REFRESH_INTERVAL silently "+
+			"sends validators listing traffic back to the live query",
+		handlers.ValidatorsCacheStaleAfter, worstCadence, maxActivityTimeout)
 }

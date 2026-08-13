@@ -12,6 +12,7 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
+	"github.com/malbeclabs/lake/utils/pkg/docsfetch"
 )
 
 var errNoPgPool = errors.New("postgres not configured")
@@ -56,6 +57,14 @@ type API struct {
 	Neo4jClient   neo4j.Client
 	Neo4jDatabase string
 
+	// DZCLI runs the doublezero CLI (nil = exec the real binary on the host).
+	// Tests inject a stub; check_edge_access uses it to read onchain state.
+	DZCLI DZCLIRunner
+
+	// DocsSource reads public docs pages (nil = GitHub raw malbeclabs/docs).
+	// Tests inject a client pointed at a local httptest server.
+	DocsSource *docsfetch.Client
+
 	// Build info
 	BuildVersion string
 	BuildCommit  string
@@ -74,6 +83,17 @@ type API struct {
 	pubCheckSF      singleflight.Group
 	pubCheckSem     chan struct{}
 	pubCheckSemOnce sync.Once
+
+	// mcastQuerySems bounds the aggregate ClickHouse query fan-out of the
+	// device multicast-delivery handler, keyed by env because the pools it
+	// protects are per-env with very different sizes (see
+	// multicastDeliveryQuerySem). Values are chan struct{} semaphores.
+	mcastQuerySems sync.Map
+
+	// scalarCache holds per-env TTL-cached scalars (network total stake, current
+	// cluster slot) that dashboard handlers previously recomputed per request. Its
+	// zero value is ready to use, so a directly-constructed API needs no change.
+	scalarCache scalarCache
 }
 
 // publisherCheckLiveSem lazily builds the concurrency-bounding semaphore so a
@@ -83,6 +103,27 @@ func (a *API) publisherCheckLiveSem() chan struct{} {
 		a.pubCheckSem = make(chan struct{}, maxConcurrentPublisherCheckLive)
 	})
 	return a.pubCheckSem
+}
+
+// multicastDeliveryQuerySem lazily builds the concurrency-bounding semaphore
+// for the request's env, so a zero-value API (used widely in tests) needs no
+// constructor change. The bound is sized from the env pool's MaxOpenConns
+// (see multicastDeliveryQuerySemSize): the testnet pool is 10 conns,
+// mainnet is 100, and one shared counter sized for the smallest pool would
+// throttle mainnet an order of magnitude below its capacity.
+func (a *API) multicastDeliveryQuerySem(ctx context.Context) chan struct{} {
+	env := string(EnvFromContext(ctx))
+	if sem, ok := a.mcastQuerySems.Load(env); ok {
+		return sem.(chan struct{})
+	}
+	size := maxConcurrentMulticastDeliveryQueries
+	if conn := a.envDB(ctx); conn != nil {
+		if pool := conn.Stats().MaxOpenConns; pool > 0 {
+			size = multicastDeliveryQuerySemSize(pool)
+		}
+	}
+	sem, _ := a.mcastQuerySems.LoadOrStore(env, make(chan struct{}, size))
+	return sem.(chan struct{})
 }
 
 // envDB returns the ClickHouse connection for the environment in the context.

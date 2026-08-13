@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/malbeclabs/lake/api/handlers"
 	apitesting "github.com/malbeclabs/lake/api/testing"
+	"github.com/malbeclabs/lake/indexer"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -76,92 +78,48 @@ func setupRollupTables(t *testing.T, api *handlers.API) {
 	}
 }
 
+// setupIncidentViews applies the incident view definitions from the real
+// migrations. Reading them here rather than copying the DDL keeps the fixture
+// from drifting away from what production runs.
 func setupIncidentViews(t *testing.T, api *handlers.API) {
 	ctx := t.Context()
 
-	linkViewDDL := `CREATE OR REPLACE VIEW link_incidents_v AS
-WITH
-above AS (
-    SELECT link_pk AS entity_pk, bucket_ts, greatest(a_loss_pct, z_loss_pct) AS metric_value, 'packet_loss' AS incident_type
-    FROM link_rollup_5m FINAL WHERE bucket_ts >= now() - INTERVAL 8 DAY AND provisioning = false AND greatest(a_loss_pct, z_loss_pct) >= 10
-    UNION ALL
-    SELECT link_pk AS entity_pk, bucket_ts, toFloat64(1) AS metric_value, 'isis_down' AS incident_type
-    FROM link_rollup_5m FINAL WHERE bucket_ts >= now() - INTERVAL 8 DAY AND isis_down = true AND provisioning = false
-    UNION ALL
-    SELECT al.link_pk AS entity_pk, e.bucket_ts AS bucket_ts, toFloat64(1) AS metric_value, 'no_data' AS incident_type
-    FROM (SELECT DISTINCT link_pk FROM link_rollup_5m FINAL WHERE bucket_ts >= now() - INTERVAL 8 DAY - INTERVAL 1 HOUR AND provisioning = false) al
-    CROSS JOIN (SELECT toDateTime(toStartOfFiveMinutes(now() - INTERVAL 8 DAY)) + number * 300 AS bucket_ts FROM numbers(toUInt64(dateDiff('second', now() - INTERVAL 8 DAY, now()) / 300))) e
-    LEFT JOIN (SELECT link_pk, bucket_ts FROM link_rollup_5m FINAL WHERE bucket_ts >= now() - INTERVAL 8 DAY) a ON al.link_pk = a.link_pk AND e.bucket_ts = a.bucket_ts
-    WHERE a.bucket_ts IS NULL
-    UNION ALL
-    SELECT link_pk AS entity_pk, bucket_ts, toFloat64(sum(in_errors + out_errors)) AS metric_value, 'errors' AS incident_type FROM device_interface_rollup_5m FINAL WHERE bucket_ts >= now() - INTERVAL 8 DAY AND link_pk != '' GROUP BY link_pk, bucket_ts HAVING metric_value >= 1
-    UNION ALL
-    SELECT link_pk AS entity_pk, bucket_ts, toFloat64(sum(in_fcs_errors)) AS metric_value, 'fcs' AS incident_type FROM device_interface_rollup_5m FINAL WHERE bucket_ts >= now() - INTERVAL 8 DAY AND link_pk != '' GROUP BY link_pk, bucket_ts HAVING metric_value >= 1
-    UNION ALL
-    SELECT link_pk AS entity_pk, bucket_ts, toFloat64(sum(in_discards + out_discards)) AS metric_value, 'discards' AS incident_type FROM device_interface_rollup_5m FINAL WHERE bucket_ts >= now() - INTERVAL 8 DAY AND link_pk != '' GROUP BY link_pk, bucket_ts HAVING metric_value >= 1
-    UNION ALL
-    SELECT link_pk AS entity_pk, bucket_ts, toFloat64(sum(carrier_transitions)) AS metric_value, 'carrier' AS incident_type FROM device_interface_rollup_5m FINAL WHERE bucket_ts >= now() - INTERVAL 8 DAY AND link_pk != '' GROUP BY link_pk, bucket_ts HAVING metric_value >= 1
-),
-islands AS (SELECT entity_pk, incident_type, bucket_ts, metric_value, bucket_ts - toIntervalSecond(row_number() OVER (PARTITION BY entity_pk, incident_type ORDER BY bucket_ts) * 5 * 60) AS island_grp FROM above),
-raw_incidents AS (SELECT entity_pk, incident_type, island_grp, min(bucket_ts) AS started_at, max(bucket_ts) + toIntervalSecond(5 * 60) AS ended_at, max(metric_value) AS peak_value, count() AS bucket_count FROM islands GROUP BY entity_pk, incident_type, island_grp),
-numbered AS (SELECT *, lagInFrame(ended_at) OVER (PARTITION BY entity_pk, incident_type ORDER BY started_at) AS prev_ended_at FROM raw_incidents),
-coalesce_groups AS (SELECT *, sum(if(prev_ended_at IS NULL OR dateDiff('minute', prev_ended_at, started_at) >= 180, 1, 0)) OVER (PARTITION BY entity_pk, incident_type ORDER BY started_at) AS coalesce_grp FROM numbered),
-coalesced AS (SELECT entity_pk, incident_type, min(started_at) AS started_at, max(ended_at) AS ended_at, max(peak_value) AS peak_value, sum(bucket_count) AS total_buckets FROM coalesce_groups GROUP BY entity_pk, incident_type, coalesce_grp)
-SELECT c.entity_pk, c.incident_type, c.started_at,
-    if(c.ended_at >= now() - toIntervalMinute(15), toDateTime('1970-01-01 00:00:00'), c.ended_at) AS ended_at,
-    c.ended_at >= now() - toIntervalMinute(15) AS is_ongoing, c.peak_value, c.total_buckets,
-    dateDiff('second', c.started_at, if(c.ended_at >= now() - toIntervalMinute(15), now(), c.ended_at)) AS duration_seconds,
-    COALESCE(l.code, '') AS link_code, COALESCE(l.link_type, '') AS link_type, COALESCE(l.status, '') AS status,
-    COALESCE(ma.code, '') AS side_a_metro, COALESCE(mz.code, '') AS side_z_metro, COALESCE(cc.code, '') AS contributor_code
-FROM coalesced c
-LEFT JOIN dz_links_current l ON c.entity_pk = l.pk
-LEFT JOIN dz_devices_current da ON l.side_a_pk = da.pk
-LEFT JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
-LEFT JOIN dz_metros_current ma ON da.metro_pk = ma.pk
-LEFT JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
-LEFT JOIN dz_contributors_current cc ON l.contributor_pk = cc.pk
-ORDER BY c.started_at DESC`
+	entries, err := indexer.ClickHouseMigrationsFS.ReadDir("db/clickhouse/migrations")
+	require.NoError(t, err)
 
-	deviceViewDDL := `CREATE OR REPLACE VIEW device_incidents_v AS
-WITH
-above AS (
-    SELECT device_pk AS entity_pk, bucket_ts, toFloat64(sum(in_errors + out_errors)) AS metric_value, 'errors' AS incident_type FROM device_interface_rollup_5m FINAL WHERE bucket_ts >= now() - INTERVAL 8 DAY AND link_pk = '' GROUP BY device_pk, bucket_ts HAVING metric_value >= 1
-    UNION ALL
-    SELECT device_pk AS entity_pk, bucket_ts, toFloat64(sum(in_fcs_errors)) AS metric_value, 'fcs' AS incident_type FROM device_interface_rollup_5m FINAL WHERE bucket_ts >= now() - INTERVAL 8 DAY AND link_pk = '' GROUP BY device_pk, bucket_ts HAVING metric_value >= 1
-    UNION ALL
-    SELECT device_pk AS entity_pk, bucket_ts, toFloat64(sum(in_discards + out_discards)) AS metric_value, 'discards' AS incident_type FROM device_interface_rollup_5m FINAL WHERE bucket_ts >= now() - INTERVAL 8 DAY AND link_pk = '' GROUP BY device_pk, bucket_ts HAVING metric_value >= 1
-    UNION ALL
-    SELECT device_pk AS entity_pk, bucket_ts, toFloat64(sum(carrier_transitions)) AS metric_value, 'carrier' AS incident_type FROM device_interface_rollup_5m FINAL WHERE bucket_ts >= now() - INTERVAL 8 DAY AND link_pk = '' GROUP BY device_pk, bucket_ts HAVING metric_value >= 1
-    UNION ALL
-    SELECT ad.device_pk AS entity_pk, e.bucket_ts AS bucket_ts, toFloat64(1) AS metric_value, 'no_data' AS incident_type
-    FROM (SELECT DISTINCT device_pk FROM device_interface_rollup_5m FINAL WHERE bucket_ts >= now() - INTERVAL 8 DAY - INTERVAL 1 HOUR AND link_pk = '') ad
-    CROSS JOIN (SELECT toDateTime(toStartOfFiveMinutes(now() - INTERVAL 8 DAY)) + number * 300 AS bucket_ts FROM numbers(toUInt64(dateDiff('second', now() - INTERVAL 8 DAY, now()) / 300))) e
-    LEFT JOIN (SELECT device_pk, bucket_ts FROM device_interface_rollup_5m FINAL WHERE bucket_ts >= now() - INTERVAL 8 DAY AND link_pk = '' GROUP BY device_pk, bucket_ts) a ON ad.device_pk = a.device_pk AND e.bucket_ts = a.bucket_ts
-    WHERE a.bucket_ts IS NULL
-    UNION ALL
-    SELECT device_pk AS entity_pk, bucket_ts, toFloat64(1) AS metric_value, 'isis_overload' AS incident_type FROM device_interface_rollup_5m FINAL WHERE bucket_ts >= now() - INTERVAL 8 DAY AND isis_overload = true AND link_pk = '' GROUP BY device_pk, bucket_ts
-    UNION ALL
-    SELECT device_pk AS entity_pk, bucket_ts, toFloat64(1) AS metric_value, 'isis_unreachable' AS incident_type FROM device_interface_rollup_5m FINAL WHERE bucket_ts >= now() - INTERVAL 8 DAY AND isis_unreachable = true AND link_pk = '' GROUP BY device_pk, bucket_ts
-),
-islands AS (SELECT entity_pk, incident_type, bucket_ts, metric_value, bucket_ts - toIntervalSecond(row_number() OVER (PARTITION BY entity_pk, incident_type ORDER BY bucket_ts) * 5 * 60) AS island_grp FROM above),
-raw_incidents AS (SELECT entity_pk, incident_type, island_grp, min(bucket_ts) AS started_at, max(bucket_ts) + toIntervalSecond(5 * 60) AS ended_at, max(metric_value) AS peak_value, count() AS bucket_count FROM islands GROUP BY entity_pk, incident_type, island_grp),
-numbered AS (SELECT *, lagInFrame(ended_at) OVER (PARTITION BY entity_pk, incident_type ORDER BY started_at) AS prev_ended_at FROM raw_incidents),
-coalesce_groups AS (SELECT *, sum(if(prev_ended_at IS NULL OR dateDiff('minute', prev_ended_at, started_at) >= 180, 1, 0)) OVER (PARTITION BY entity_pk, incident_type ORDER BY started_at) AS coalesce_grp FROM numbered),
-coalesced AS (SELECT entity_pk, incident_type, min(started_at) AS started_at, max(ended_at) AS ended_at, max(peak_value) AS peak_value, sum(bucket_count) AS total_buckets FROM coalesce_groups GROUP BY entity_pk, incident_type, coalesce_grp)
-SELECT c.entity_pk, c.incident_type, c.started_at,
-    if(c.ended_at >= now() - toIntervalMinute(15), toDateTime('1970-01-01 00:00:00'), c.ended_at) AS ended_at,
-    c.ended_at >= now() - toIntervalMinute(15) AS is_ongoing, c.peak_value, c.total_buckets,
-    dateDiff('second', c.started_at, if(c.ended_at >= now() - toIntervalMinute(15), now(), c.ended_at)) AS duration_seconds,
-    COALESCE(d.code, '') AS device_code, COALESCE(d.device_type, '') AS device_type, COALESCE(d.status, '') AS status,
-    COALESCE(m.code, '') AS metro, COALESCE(cc.code, '') AS contributor_code
-FROM coalesced c
-LEFT JOIN dz_devices_current d ON c.entity_pk = d.pk
-LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
-LEFT JOIN dz_contributors_current cc ON d.contributor_pk = cc.pk
-ORDER BY c.started_at DESC`
+	var names []string
+	for _, e := range entries {
+		if strings.Contains(e.Name(), "incident_views") {
+			names = append(names, e.Name())
+		}
+	}
+	require.NotEmpty(t, names, "no incident view migrations found")
+	sort.Strings(names)
 
-	require.NoError(t, api.DB.Exec(ctx, linkViewDDL))
-	require.NoError(t, api.DB.Exec(ctx, deviceViewDDL))
+	for _, name := range names {
+		body, err := indexer.ClickHouseMigrationsFS.ReadFile("db/clickhouse/migrations/" + name)
+		require.NoError(t, err)
+		for _, stmt := range incidentViewStatements(string(body)) {
+			require.NoError(t, api.DB.Exec(ctx, stmt), "migration %s", name)
+		}
+	}
+}
+
+// incidentViewStatements returns the CREATE statements in a migration's Up section.
+func incidentViewStatements(migration string) []string {
+	up := migration
+	if i := strings.Index(up, "-- +goose Down"); i >= 0 {
+		up = up[:i]
+	}
+	up = strings.TrimPrefix(strings.TrimSpace(up), "-- +goose Up")
+
+	var out []string
+	for _, stmt := range strings.Split(up, ";") {
+		if strings.Contains(stmt, "CREATE OR REPLACE VIEW") {
+			out = append(out, strings.TrimSpace(stmt))
+		}
+	}
+	return out
 }
 
 func insertBaseMetadata(t *testing.T, api *handlers.API) {
@@ -636,4 +594,67 @@ func TestLinkIncidentsRollupVsRaw(t *testing.T) {
 		assert.Equal(t, *rollupInc.EndedAt, *rawInc.EndedAt, "ended_at should match")
 	}
 	assert.Equal(t, rollupInc.LinkCode, rawInc.LinkCode, "link_code should match")
+}
+
+// TestGetDeviceIncidents_NoDataGapLength checks that only a sustained gap in the
+// interface rollup raises a no_data incident. The minimum runs per gap, so blips
+// that the 180-minute coalesce would otherwise chain together stay suppressed.
+func TestGetDeviceIncidents_NoDataGapLength(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	ctx := t.Context()
+
+	seedMetro(t, api, "metro-a", "NYC")
+	seedContributor(t, api, "contrib-1", "acme")
+
+	// Bucket indexes each device is missing, over a continuous 3-hour run.
+	devices := map[string][]int{
+		"dev-gap4":  {10, 11, 12, 13}, // 20 minutes, one gap
+		"dev-gap2":  {10, 11},         // 10 minutes, below the minimum
+		"dev-blips": {5, 17, 29},      // three single blips an hour apart
+	}
+	for pk := range devices {
+		seedDeviceMetadata(t, api, pk, strings.ToUpper(pk), "router", "contrib-1", "metro-a", 10, "activated")
+	}
+
+	const totalBuckets = 36
+	baseTime := time.Now().UTC().Truncate(5 * time.Minute).Add(-3 * time.Hour)
+	for pk, holes := range devices {
+		missing := make(map[int]bool, len(holes))
+		for _, h := range holes {
+			missing[h] = true
+		}
+		for i := range totalBuckets {
+			if missing[i] {
+				continue
+			}
+			ts := baseTime.Add(time.Duration(i*5) * time.Minute)
+			require.NoError(t, api.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
+				(bucket_ts, device_pk, intf, link_pk, ingested_at) VALUES ($1, $2, 'Ethernet1', '', now())`, ts, pk))
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/incidents/devices?range=6h&type=no_data", nil)
+	rr := httptest.NewRecorder()
+	api.GetDeviceIncidents(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp handlers.DeviceIncidentsResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+
+	byDevice := map[string][]handlers.DeviceIncident{}
+	for _, inc := range resp.Active {
+		if inc.IncidentType == "no_data" {
+			byDevice[inc.DevicePK] = append(byDevice[inc.DevicePK], inc)
+		}
+	}
+
+	require.Len(t, byDevice["dev-gap4"], 1, "a 20-minute gap raises one incident")
+	assert.Empty(t, byDevice["dev-gap2"], "a 10-minute gap stays below the minimum")
+	assert.Empty(t, byDevice["dev-blips"], "single-bucket blips never reach the minimum")
+
+	gap := byDevice["dev-gap4"][0]
+	assert.Equal(t, baseTime.Add(50*time.Minute).Format(time.RFC3339), gap.StartedAt)
+	require.NotNil(t, gap.DurationSeconds)
+	assert.Equal(t, int64(20*60), *gap.DurationSeconds, "duration matches the gap, not a coalesced span")
 }

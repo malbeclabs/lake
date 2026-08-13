@@ -5,15 +5,35 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/malbeclabs/lake/indexer/pkg/dz/statecollect"
+	"github.com/malbeclabs/lake/utils/pkg/dberror"
 )
+
+// maxConcurrentFetches bounds in-flight per-device S3 reads, matching the limit
+// used by the serviceability and shreds views.
+const maxConcurrentFetches = 10
+
+// deviceFetchRetry bounds retries for transient S3 failures, covering both the
+// device listing and each per-device read. The fetch is all-or-nothing (see
+// Store.Sync), so without a retry one blip among the hundreds of calls a cycle
+// makes aborts the whole thing — and nothing above retries either, since
+// Activities.refresh returns nil to Temporal. dberror.IsTransient treats
+// context errors as non-transient, so a cancelled activity aborts immediately
+// rather than retrying into its deadline.
+var deviceFetchRetry = dberror.RetryConfig{
+	MaxAttempts: 3,
+	BaseBackoff: 100 * time.Millisecond,
+	MaxBackoff:  time.Second,
+}
 
 // SnapshotKind is the state-collect kind name for mroute dumps. It matches the
 // key used by the telemetry state-ingest server when it presigns the
@@ -31,6 +51,9 @@ type S3SourceConfig struct {
 	// finding the latest per device. Three covers clock skew and the
 	// midnight-UTC boundary; tests can shorten this.
 	LookbackDays int
+
+	// Logger is optional; it defaults to slog.Default().
+	Logger *slog.Logger
 }
 
 // S3Source implements Source against an S3 bucket populated by the telemetry
@@ -39,6 +62,7 @@ type S3SourceConfig struct {
 //	<KeyPrefix>/snapshots/<SnapshotKind>/device=<pubkey>/date=YYYY-MM-DD/hour=HH/<ts>.json
 type S3Source struct {
 	client       *s3.Client
+	log          *slog.Logger
 	bucket       string
 	keyPrefix    string // already stripped of trailing slash; empty when no prefix
 	lookbackDays int
@@ -58,6 +82,10 @@ func NewS3Source(ctx context.Context, cfg S3SourceConfig) (*S3Source, error) {
 		cfg.LookbackDays = 3
 	}
 
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
+
 	awsCfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(cfg.Region))
 	if err != nil {
 		return nil, fmt.Errorf("mroute: load AWS config: %w", err)
@@ -74,6 +102,7 @@ func NewS3Source(ctx context.Context, cfg S3SourceConfig) (*S3Source, error) {
 
 	return &S3Source{
 		client:       s3.NewFromConfig(awsCfg, clientOpts...),
+		log:          cfg.Logger,
 		bucket:       cfg.Bucket,
 		keyPrefix:    strings.TrimRight(cfg.KeyPrefix, "/"),
 		lookbackDays: cfg.LookbackDays,
@@ -94,20 +123,76 @@ func (s *S3Source) snapshotsPrefix() string {
 // window. Each S3 object is a statecollect.Envelope; this method unwraps
 // it so callers receive only the inner Arista JSON in Dump.RawJSON.
 func (s *S3Source) FetchLatest(ctx context.Context) ([]*Dump, error) {
-	devices, err := s.listDevicePubkeys(ctx)
+	devices, err := dberror.Retry(ctx, deviceFetchRetry, func() ([]string, error) {
+		return s.listDevicePubkeys(ctx)
+	})
 	if err != nil {
 		return nil, err
 	}
 
 	now := time.Now().UTC()
-	var dumps []*Dump
-	for _, pubkey := range devices {
+
+	// Per-device reads are independent. Collect by device index so the result
+	// order tracks the device listing regardless of completion order.
+	perDevice := make([]*Dump, len(devices))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(maxConcurrentFetches)
+	for i, pubkey := range devices {
+		g.Go(func() error {
+			// errgroup still invokes every function queued behind SetLimit
+			// after the group context is cancelled. The AWS SDK rejects the
+			// call on a cancelled context anyway; returning here makes the
+			// skip explicit instead of relying on that.
+			if err := gctx.Err(); err != nil {
+				return err
+			}
+			dump, err := s.fetchDevice(gctx, pubkey, now)
+			if err != nil {
+				return err
+			}
+			perDevice[i] = dump
+			return nil
+		})
+	}
+	// One failed device aborts the whole fetch: Store.Sync writes with
+	// MissingMeansDeleted=true, so returning a partial device set would
+	// tombstone the devices whose reads failed.
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	dumps := make([]*Dump, 0, len(perDevice))
+	var stale []string
+	for i, d := range perDevice {
+		if d == nil {
+			stale = append(stale, devices[i])
+			continue
+		}
+		dumps = append(dumps, d)
+	}
+	// A device whose prefix exists but holds no snapshot in the lookback window
+	// is dropped here, and MissingMeansDeleted=true then tombstones its rows.
+	// That is the intended outcome for a device that stopped uploading — its
+	// state is no longer current — but it is the one path where rows disappear
+	// without an error, so name the devices rather than let them vanish.
+	if len(stale) > 0 {
+		s.log.Warn("mroute: devices have no snapshot in the lookback window, their prior state will be tombstoned",
+			"lookback_days", s.lookbackDays, "count", len(stale), "devices", strings.Join(stale, ","))
+	}
+	return dumps, nil
+}
+
+// fetchDevice reads the latest snapshot for one device, retrying transient S3
+// failures. A nil Dump with a nil error means the device has no snapshot in the
+// lookback window.
+func (s *S3Source) fetchDevice(ctx context.Context, pubkey string, now time.Time) (*Dump, error) {
+	return dberror.Retry(ctx, deviceFetchRetry, func() (*Dump, error) {
 		key, keyTS, err := s.latestKeyForDevice(ctx, pubkey, now)
 		if err != nil {
 			return nil, err
 		}
 		if key == "" {
-			continue
+			return nil, nil
 		}
 		body, err := s.getObject(ctx, key)
 		if err != nil {
@@ -136,15 +221,14 @@ func (s *S3Source) FetchLatest(ctx context.Context) ([]*Dump, error) {
 			}
 		}
 
-		dumps = append(dumps, &Dump{
+		return &Dump{
 			FetchedAt:    time.Now().UTC(),
 			SnapshotTS:   snapTS,
 			DevicePubkey: devicePK,
 			RawJSON:      env.Data,
 			FileName:     key,
-		})
-	}
-	return dumps, nil
+		}, nil
+	})
 }
 
 // listDevicePubkeys uses delimiter listing to enumerate the device=<pubkey>

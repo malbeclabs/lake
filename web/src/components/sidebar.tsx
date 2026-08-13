@@ -20,6 +20,7 @@ import {
   Radio,
   Search,
   Route,
+  Waypoints,
   Map,
   Network,
   Shield,
@@ -95,6 +96,7 @@ const { resolvedTheme, setTheme } = useTheme()
   const isPerformanceDzVsInternet = location.pathname === '/performance/dz-vs-internet'
   const isPerformanceLinkLatency = location.pathname === '/performance/link-latency'
   const isPerformancePathLatency = location.pathname === '/performance/path-latency'
+  const isPerformanceRoutes = location.pathname === '/performance/routes'
 
   // Traffic sub-routes
   const isTrafficDashboard = location.pathname === '/traffic/overview'
@@ -469,6 +471,14 @@ const { resolvedTheme, setTheme } = useTheme()
                   <Link to="/performance/path-latency" className={subNavItemClass(isPerformancePathLatency)}>
                     <Route className="h-4 w-4" />
                     Path Latency
+                  </Link>
+                )}
+                {/* Both this and Path Latency need the topology graph, so both
+                    sit behind the same gate. */}
+                {hasNeo4j && (
+                  <Link to="/performance/routes" className={subNavItemClass(isPerformanceRoutes)}>
+                    <Waypoints className="h-4 w-4" />
+                    Route Latency
                   </Link>
                 )}
               </>

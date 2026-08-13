@@ -252,6 +252,21 @@ func SetupClickHouseForTest(t *testing.T, db *ClickHouseDB) (driver.Conn, string
 	return testConn, databaseName
 }
 
+// skipTemplateTable reports whether a system.tables row in the template
+// database should be excluded when cloning its schema.
+//
+// Dot-prefixed names are ClickHouse internals, never part of the migrated
+// schema. A materialized view's own CREATE recreates its ".inner_id.<uuid>"
+// storage table, so cloning that row is at best redundant. It is also unsafe:
+// dz_device_interface_ips is a REFRESHABLE materialized view, so the template
+// database — which outlives every test — rebuilds it into a transient
+// ".tmp.inner_id.<uuid>" table once a minute and swaps it in. A clone whose
+// system.tables read lands inside that window sees the transient row with an
+// empty create_table_query and fails with "code: 62, Empty query".
+func skipTemplateTable(name string) bool {
+	return name == "goose_db_version" || strings.HasPrefix(name, ".")
+}
+
 // SetupClickHouseWithMigrationsForTest creates a per-test ClickHouse database
 // with full schema migrations and returns the direct connection and database name.
 func SetupClickHouseWithMigrationsForTest(t *testing.T, db *ClickHouseDB) (driver.Conn, string) {
@@ -285,7 +300,7 @@ func SetupClickHouseWithMigrationsForTest(t *testing.T, db *ClickHouseDB) (drive
 	for rows.Next() {
 		var name, engineFull, createQuery string
 		require.NoError(t, rows.Scan(&name, &engineFull, &createQuery))
-		if name == "goose_db_version" {
+		if skipTemplateTable(name) {
 			continue
 		}
 		cloneQuery := strings.Replace(createQuery, fmt.Sprintf("%s.", templateDB), fmt.Sprintf("%s.", databaseName), -1)

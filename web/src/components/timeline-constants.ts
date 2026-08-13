@@ -1,12 +1,12 @@
 import type { ActionFilter } from '@/lib/api'
 
 export type Category = 'state_change' | 'packet_loss' | 'errors' | 'fcs' | 'discards' | 'carrier' | 'no_data' | 'isis_down' | 'isis_overload' | 'isis_unreachable'
-export type EntityType = 'device' | 'link' | 'metro' | 'contributor' | 'user' | 'validator' | 'gossip_node'
+export type EntityType = 'device' | 'link' | 'metro' | 'contributor' | 'user' | 'feed' | 'validator' | 'gossip_node'
 export type DZFilter = 'on_dz' | 'off_dz' | 'all'
 export type MinStakeOption = '0' | '0.01' | '0.05' | '0.1' | '0.5' | '1' | '1.5' | '2'
 
 export const ALL_ACTIONS: ActionFilter[] = ['added', 'removed', 'changed', 'alerting', 'resolved']
-export const ALL_DZ_ENTITIES: EntityType[] = ['device', 'link', 'metro', 'contributor', 'user']
+export const ALL_DZ_ENTITIES: EntityType[] = ['device', 'link', 'metro', 'contributor', 'user', 'feed']
 export const ALL_SOLANA_ENTITIES: EntityType[] = ['validator', 'gossip_node']
 export const ALL_ENTITY_TYPES: EntityType[] = [...ALL_DZ_ENTITIES, ...ALL_SOLANA_ENTITIES]
 export const DEFAULT_ENTITY_TYPES: EntityType[] = ALL_ENTITY_TYPES.filter(e => e !== 'gossip_node')

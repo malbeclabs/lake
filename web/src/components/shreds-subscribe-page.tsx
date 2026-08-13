@@ -28,6 +28,7 @@ import {
 import { useShredAccounts, useUsdcBalance } from '@/hooks/use-shred-accounts'
 import { useShredTransaction, type TransactionStatus } from '@/hooks/use-shred-transaction'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { RetransmitOnlyBadge } from './retransmit-only-badge'
 
 // ---------------------------------------------------------------------------
 // Status indicator component
@@ -149,7 +150,12 @@ function DevicePicker({
                   }`}
                 >
                   <td className="px-4 py-2.5 text-sm font-mono">{d.device_code || d.device_key.slice(0, 8)}</td>
-                  <td className="px-4 py-2.5 text-sm">{d.metro_code}</td>
+                  <td className="px-4 py-2.5 text-sm">
+                    <span className="inline-flex items-center gap-1.5">
+                      {d.metro_code}
+                      <RetransmitOnlyBadge enabled={d.retransmit_only_enabled} />
+                    </span>
+                  </td>
                   <td className="px-4 py-2.5 text-sm tabular-nums text-right">
                     ${d.total_price_dollars}
                   </td>
@@ -340,9 +346,12 @@ export function ShredsSubscribePage() {
                     <span className="font-mono font-medium">{selectedDevice.device_code}</span>
                     <span className="text-muted-foreground ml-2">({selectedDevice.metro_code})</span>
                   </div>
-                  <div>
-                    <span className="text-muted-foreground">Price:</span>{' '}
-                    <span className="font-medium">${selectedDevice.total_price_dollars} / epoch</span>
+                  <div className="flex items-center gap-2">
+                    <RetransmitOnlyBadge enabled={selectedDevice.retransmit_only_enabled} />
+                    <span>
+                      <span className="text-muted-foreground">Price:</span>{' '}
+                      <span className="font-medium">${selectedDevice.total_price_dollars} / epoch</span>
+                    </span>
                   </div>
                 </div>
 

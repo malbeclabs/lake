@@ -26,12 +26,14 @@ import type {
   MetroPathDetailResponse,
   MetroPathDetailHop,
   PathOptimizeMode,
+  PathService,
 } from '@/lib/api'
 import { ErrorState } from '@/components/ui/error-state'
 import { useDelayedLoading } from '@/hooks/use-delayed-loading'
 import { PageHeader } from '@/components/page-header'
 import { cn } from '@/lib/utils'
 import { SmallDropdown } from '@/components/topology/TimeRangeSelector'
+import { ServiceToggle } from '@/components/topology/ServiceToggle'
 
 const DEBOUNCE_MS = 150
 
@@ -532,6 +534,13 @@ export function PathLatencyPage() {
   const optimizeParam = searchParams.get('optimize') as PathOptimizeMode | null
   const optimizeMode: PathOptimizeMode = optimizeParam || 'latency'
 
+  // Multicast is the default because it is the link set every figure on this
+  // page has always used. The request omits the param in that case so the page
+  // cache still serves it; only unicast costs a fresh computation.
+  const serviceMode: PathService =
+    searchParams.get('service') === 'unicast' ? 'unicast' : 'multicast'
+  const serviceParam = serviceMode === 'unicast' ? 'unicast' : undefined
+
   const fromCodeParam = searchParams.get('from')
   const toCodeParam = searchParams.get('to')
 
@@ -657,8 +666,8 @@ export function PathLatencyPage() {
   )
 
   const { data: pathLatencyData, isLoading: pathLatencyLoading } = useQuery({
-    queryKey: ['metro-path-latency', optimizeMode],
-    queryFn: () => fetchMetroPathLatency(optimizeMode),
+    queryKey: ['metro-path-latency', optimizeMode, serviceMode],
+    queryFn: () => fetchMetroPathLatency(optimizeMode, serviceParam),
     staleTime: 60000,
   })
 
@@ -682,6 +691,7 @@ export function PathLatencyPage() {
       selectedPathLatency?.fromMetroCode,
       selectedPathLatency?.toMetroCode,
       optimizeMode,
+      serviceMode,
     ],
     queryFn: () => {
       if (!selectedPathLatency) return Promise.resolve(null)
@@ -689,6 +699,7 @@ export function PathLatencyPage() {
         selectedPathLatency.fromMetroCode,
         selectedPathLatency.toMetroCode,
         optimizeMode,
+        serviceParam,
       )
     },
     staleTime: 60000,
@@ -788,7 +799,23 @@ export function PathLatencyPage() {
                   { value: 'hops', label: 'Optimize: Hops' },
                   { value: 'bandwidth', label: 'Optimize: Bandwidth' },
                 ]}
-                onChange={(v) => setSearchParams({ optimize: v })}
+                onChange={(v) =>
+                  setSearchParams((prev) => {
+                    prev.set('optimize', v)
+                    return prev
+                  })
+                }
+              />
+              <ServiceToggle
+                value={serviceMode}
+                onChange={(v) =>
+                  setSearchParams((prev) => {
+                    // Multicast is the default, so it leaves no param behind.
+                    if (v === 'multicast') prev.delete('service')
+                    else prev.set('service', v)
+                    return prev
+                  })
+                }
               />
               <button
                 onClick={handleExport}
@@ -802,7 +829,10 @@ export function PathLatencyPage() {
         />
 
         <p className="mt-2 text-sm text-muted-foreground">
-          End-to-end path latency across the DZ network vs public internet.
+          End-to-end path latency across the DZ network vs public internet.{' '}
+          {serviceMode === 'unicast'
+            ? 'Unicast paths use only links in the flex-algo topology.'
+            : 'Multicast paths use every activated link (algo 0).'}
         </p>
 
         {/* Summary cards */}

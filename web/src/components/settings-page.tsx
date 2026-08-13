@@ -272,7 +272,7 @@ export function SettingsPage() {
                   <div className="flex-1">
                     <div className="text-sm font-medium text-foreground">{e}</div>
                     <div className="text-xs text-muted-foreground">
-                      {e === 'mainnet-beta' ? 'DoubleZero production deployment' : e === 'devnet' ? 'DoubleZero devnet deployment' : 'DoubleZero testnet deployment'}
+                      {e === 'mainnet-beta' ? 'DoubleZero production deployment' : 'DoubleZero testnet deployment'}
                     </div>
                   </div>
                   {env === e && (

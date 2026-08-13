@@ -23,8 +23,25 @@ func (v *View) BackfillForTimeRange(ctx context.Context, startTime, endTime time
 		return nil, fmt.Errorf("start time (%s) must be before end time (%s)", startTime, endTime)
 	}
 
-	// Query baseline counters from ClickHouse (or InfluxDB if not available)
-	baselines, err := v.queryBaselineCountersFromClickHouse(ctx, startTime)
+	// Serialize with the refresh loop: both read and write the shared baseline
+	// cache/watermark. In production backfill runs in a standalone admin process
+	// that never starts the refresh loop, but taking the lock keeps the cache
+	// invariant enforced in code rather than by that call-site convention. Note
+	// the lock spans the InfluxDB query and ClickHouse insert: if this is ever
+	// called from a long-lived service sharing a View with the refresh loop, a
+	// multi-day backfill would block every live refresh for its duration.
+	v.refreshMu.Lock()
+	defer v.refreshMu.Unlock()
+
+	// Query baseline counters from ClickHouse (or InfluxDB if not available).
+	// chMaxTime is nil: the guard's forward gate compares ClickHouse's global max
+	// event_ts against the watermark, but during a historical backfill that max
+	// is the live indexer's realtime data, far past every chunk — gating on it
+	// would defeat the chunk-to-chunk carry entirely. Skipping the gate is safe
+	// here because each backfill process starts with a nil cache and processes
+	// one contiguous ascending range, so a cache hit only ever lands exactly at
+	// the previous chunk's end.
+	baselines, err := v.queryBaselineCountersFromClickHouse(ctx, startTime, nil)
 	if err != nil {
 		v.log.Warn("telemetry/usage: failed to query baseline counters from clickhouse for backfill", "error", err)
 		// Fall back to empty baselines - sparse counters may have incorrect deltas for first measurement
@@ -61,6 +78,15 @@ func (v *View) BackfillForTimeRange(ctx context.Context, startTime, endTime time
 	v.log.Info("telemetry/usage: backfill queried influxdb", "rows", len(rows), "duration", queryDuration.String())
 
 	if len(rows) == 0 {
+		// A chunk with zero InfluxDB rows (old/gappy historical data) still must
+		// advance the watermark, or it goes stale mid-backfill and stops tracking
+		// the data end the cached baselines represent. Nothing changed through
+		// endTime, so the start-of-window baselines are also the end-of-window
+		// state: merge them and advance. On a cache hit, baselines ALIASES
+		// v.baselineCache, so this merges the maps into themselves — safe because
+		// mergeBaselineMap only overwrites existing keys (no insert/delete while
+		// ranging), leaving the merge a pure no-op that advances the watermark.
+		v.updateBaselineCache(baselines, endTime)
 		return &BackfillResult{
 			StartTime:    startTime,
 			EndTime:      endTime,
@@ -71,12 +97,25 @@ func (v *View) BackfillForTimeRange(ctx context.Context, startTime, endTime time
 
 	// Convert rows to InterfaceUsage
 	// Pass nil for alreadyWritten - backfill relies on ReplacingMergeTree for deduplication
-	usage, _, err := v.convertRowsToUsage(rows, baselines, linkLookup, nil)
+	usage, endBaselines, err := v.convertRowsToUsage(rows, baselines, linkLookup, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert rows for backfill: %w", err)
 	}
 
+	// carryBaselines carries this chunk's end-of-window baselines forward so the
+	// next contiguous backfill chunk reuses them instead of re-running the
+	// expensive historical ClickHouse scan (which timed out repeatedly during the
+	// June backfill). The admin backfill loop processes ascending contiguous
+	// chunks in one process, so the next chunk's startTime == this chunk's endTime
+	// hits the watermark cache in queryBaselineCountersFromClickHouse. A
+	// non-contiguous backward call simply misses the cache and re-queries — a safe
+	// fallback (see the guard's doc for the forward-jump caveat). Done only after
+	// the rows are durably in ClickHouse (mirrors Refresh), so a failed insert
+	// can't leave the cache holding unpersisted values.
+	carryBaselines := func() { v.updateBaselineCache(endBaselines, endTime) }
+
 	if len(usage) == 0 {
+		carryBaselines()
 		return &BackfillResult{
 			StartTime:    startTime,
 			EndTime:      endTime,
@@ -89,6 +128,7 @@ func (v *View) BackfillForTimeRange(ctx context.Context, startTime, endTime time
 	if err := v.store.InsertInterfaceUsage(ctx, usage); err != nil {
 		return nil, fmt.Errorf("failed to insert backfill data: %w", err)
 	}
+	carryBaselines()
 
 	return &BackfillResult{
 		StartTime:    startTime,

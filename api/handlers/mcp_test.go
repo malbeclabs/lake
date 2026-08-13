@@ -95,6 +95,7 @@ func TestMCPHandler_Initialize(t *testing.T) {
 	serverInfo, ok := result["serverInfo"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "doublezero", serverInfo["name"])
+	assert.Equal(t, "DoubleZero Data", serverInfo["title"])
 	assert.Equal(t, "1.0.0", serverInfo["version"])
 }
 
@@ -165,6 +166,8 @@ func TestMCPHandler_ListTools(t *testing.T) {
 	assert.True(t, toolNames["execute_sql"], "should have execute_sql tool")
 	assert.True(t, toolNames["read_docs"], "should have read_docs tool")
 	assert.True(t, toolNames["get_schema"], "should have get_schema tool")
+	assert.True(t, toolNames["get_onboarding_runbook"], "should have get_onboarding_runbook tool")
+	assert.True(t, toolNames["check_edge_access"], "should have check_edge_access tool")
 	// execute_cypher only available on mainnet with Neo4j
 }
 

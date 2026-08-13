@@ -11,7 +11,7 @@ import (
 
 // BackfillPermissionEventsInput configures the permission events backfill.
 type BackfillPermissionEventsInput struct {
-	Truncate bool // If true, truncate the fact table + scan cursor before backfilling.
+	Truncate bool // If true, truncate the fact table + scan/account cursors before backfilling.
 }
 
 // BackfillPermissionEventsWorkflow re-scans all serviceability transaction history
@@ -45,7 +45,10 @@ func BackfillPermissionEventsWorkflow(ctx temporalworkflow.Context, input Backfi
 	return nil
 }
 
-// TruncatePermissionEvents truncates the permission events fact table and its scan cursor.
+// TruncatePermissionEvents truncates the permission events fact table and both cursors.
+// The per-account cursor must reset with the fact table: left behind, it would sit
+// stale-newer than the re-derived high-water marks and make the steady-state watch skip
+// everything below it — a silent gap if the subsequent backfill is interrupted.
 func (a *Activities) TruncatePermissionEvents(ctx context.Context) error {
 	if a.PermissionEvents == nil {
 		return fmt.Errorf("permission events view not configured")
@@ -54,11 +57,14 @@ func (a *Activities) TruncatePermissionEvents(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("get ClickHouse connection: %w", err)
 	}
-	if err := conn.Exec(ctx, "TRUNCATE TABLE fact_dz_permission_events"); err != nil {
-		return fmt.Errorf("truncate fact_dz_permission_events: %w", err)
-	}
-	if err := conn.Exec(ctx, "TRUNCATE TABLE dz_permission_events_scan_cursor"); err != nil {
-		return fmt.Errorf("truncate dz_permission_events_scan_cursor: %w", err)
+	for _, table := range []string{
+		"fact_dz_permission_events",
+		"dz_permission_events_scan_cursor",
+		"dz_permission_events_account_cursor",
+	} {
+		if err := conn.Exec(ctx, "TRUNCATE TABLE "+table); err != nil {
+			return fmt.Errorf("truncate %s: %w", table, err)
+		}
 	}
 	return nil
 }

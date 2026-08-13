@@ -47,6 +47,10 @@ type Config struct {
 	// transaction history for Permission-management instructions.
 	ServiceabilityProgramID solana.PublicKey
 	PermissionEventsRPC     permissionevents.SolanaRPC
+	// PermissionEventsFetchesPerSecond paces the audit indexer's getTransaction
+	// calls to stay under the endpoint's per-method rate limit. Zero uses the
+	// package default; raise or lower it per endpoint.
+	PermissionEventsFetchesPerSecond float64
 
 	// Geolocation RPC configuration (optional).
 	GeolocationRPC dzgeoloc.GeolocationRPC

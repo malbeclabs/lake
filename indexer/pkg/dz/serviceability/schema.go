@@ -164,12 +164,18 @@ func (s *UserSchema) PayloadColumns() []string {
 		"publishers:VARCHAR",
 		"subscribers:VARCHAR",
 		"bgp_status:VARCHAR",
+		"feed_pks:VARCHAR",
 	}
 }
 
 func (s *UserSchema) ToRow(u User) []any {
 	publishersJSON, _ := json.Marshal(u.Publishers)
 	subscribersJSON, _ := json.Marshal(u.Subscribers)
+	feedPKs := u.FeedPKs
+	if feedPKs == nil {
+		feedPKs = []string{}
+	}
+	feedPKsJSON, _ := json.Marshal(feedPKs)
 	return []any{
 		u.PK,
 		u.OwnerPubkey,
@@ -183,6 +189,7 @@ func (s *UserSchema) ToRow(u User) []any {
 		string(publishersJSON),
 		string(subscribersJSON),
 		u.BgpStatus,
+		string(feedPKsJSON),
 	}
 }
 
@@ -472,12 +479,18 @@ func (s *AccessPassSchema) PayloadColumns() []string {
 		"mgroup_pub_allowlist:VARCHAR",
 		"mgroup_sub_allowlist:VARCHAR",
 		"flags:INTEGER",
+		"feed_seats:VARCHAR",
 	}
 }
 
 func (s *AccessPassSchema) ToRow(ap AccessPass) []any {
 	pubAllowlistJSON, _ := json.Marshal(ap.MGroupPubAllowlist)
 	subAllowlistJSON, _ := json.Marshal(ap.MGroupSubAllowlist)
+	feedSeats := ap.FeedSeats
+	if feedSeats == nil {
+		feedSeats = []FeedSeat{}
+	}
+	feedSeatsJSON, _ := json.Marshal(feedSeats)
 	return []any{
 		ap.PK,
 		ap.OwnerPubkey,
@@ -493,11 +506,53 @@ func (s *AccessPassSchema) ToRow(ap AccessPass) []any {
 		string(pubAllowlistJSON),
 		string(subAllowlistJSON),
 		ap.Flags,
+		string(feedSeatsJSON),
 	}
 }
 
 func (s *AccessPassSchema) GetPrimaryKey(ap AccessPass) string {
 	return ap.PK
+}
+
+// FeedSchema defines the schema for feeds (serviceability SKU catalog entries)
+type FeedSchema struct{}
+
+func (s *FeedSchema) Name() string {
+	return "dz_feeds"
+}
+
+func (s *FeedSchema) PrimaryKeyColumns() []string {
+	return []string{"pk:VARCHAR"}
+}
+
+func (s *FeedSchema) PayloadColumns() []string {
+	return []string{
+		"owner_pubkey:VARCHAR",
+		"code:VARCHAR",
+		"name:VARCHAR",
+		"metro_pk:VARCHAR",
+		"groups:VARCHAR",
+	}
+}
+
+func (s *FeedSchema) ToRow(f Feed) []any {
+	groups := f.Groups
+	if groups == nil {
+		groups = []string{}
+	}
+	groupsJSON, _ := json.Marshal(groups)
+	return []any{
+		f.PK,
+		f.OwnerPubkey,
+		f.Code,
+		f.Name,
+		f.MetroPK,
+		string(groupsJSON),
+	}
+}
+
+func (s *FeedSchema) GetPrimaryKey(f Feed) string {
+	return f.PK
 }
 
 var (
@@ -512,6 +567,7 @@ var (
 	tenantSchema          = &TenantSchema{}
 	accessPassSchema      = &AccessPassSchema{}
 	topologySchema        = &TopologySchema{}
+	feedSchema            = &FeedSchema{}
 )
 
 func NewContributorDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
@@ -556,4 +612,8 @@ func NewAccessPassDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, err
 
 func NewTopologyDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
 	return dataset.NewDimensionType2Dataset(log, topologySchema)
+}
+
+func NewFeedDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
+	return dataset.NewDimensionType2Dataset(log, feedSchema)
 }

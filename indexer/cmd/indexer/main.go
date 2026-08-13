@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
@@ -8,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -31,6 +34,7 @@ import (
 	"github.com/malbeclabs/doublezero/tools/maxmind/pkg/metrodb"
 	"github.com/malbeclabs/doublezero/tools/solana/pkg/rpc"
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/serviceability/permissionevents"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/malbeclabs/lake/indexer/pkg/dzingest"
 	"github.com/malbeclabs/lake/indexer/pkg/indexer"
@@ -75,6 +79,12 @@ func main() {
 	}
 }
 
+// envVarSuffix converts a DZ env name into the suffix used by per-env environment
+// variables: mainnet-beta becomes MAINNET_BETA.
+func envVarSuffix(env string) string {
+	return strings.ToUpper(strings.ReplaceAll(env, "-", "_"))
+}
+
 func run() error {
 	verboseFlag := flag.Bool("verbose", false, "enable verbose (debug) logging")
 	enablePprofFlag := flag.Bool("enable-pprof", false, "enable pprof server")
@@ -103,9 +113,21 @@ func run() error {
 
 	// Indexer configuration
 	dzEnvFlag := flag.String("dz-env", config.EnvMainnetBeta, "DZ ledger environment (devnet, testnet, mainnet-beta)")
+	// The SDK's per-env LedgerPublicRPCURL is a shared endpoint whose API key ships as
+	// a public constant, so every SDK consumer draws on one quota and lake can neither
+	// attribute nor defend its own share. This points one env at a dedicated endpoint.
+	//
+	// It is not the only way in, and the difference matters. NetworkConfigForEnv applies
+	// the bare DZ_LEDGER_RPC_URL to *every* env after its per-env switch, so setting
+	// that name redirects the secondary networks too — they would then query this
+	// endpoint with their own program IDs, read zero accounts, and stall on the
+	// refusing-to-write-snapshot guard. This flag and the per-env
+	// DZ_LEDGER_RPC_URL_<ENV> name are the two that scope to one env.
+	dzLedgerRPCURLFlag := flag.String("dz-ledger-rpc-url", "", "DZ ledger RPC endpoint for this env (empty = the per-env DZ_LEDGER_RPC_URL_<ENV>, then the SDK default)")
 	solanaEnvFlag := flag.String("solana-env", config.SolanaEnvMainnetBeta, "solana environment (devnet, testnet, mainnet-beta)")
 	refreshIntervalFlag := flag.Duration("cache-ttl", defaultRefreshInterval, "cache TTL duration")
 	maxConcurrencyFlag := flag.Int("max-concurrency", defaultMaxConcurrency, "maximum number of concurrent operations")
+	permissionEventsFetchesPerSecondFlag := flag.Float64("permission-events-fetches-per-second", 0, "cap on permission-events getTransaction calls per second (0 = package default). Lower it if the ledger endpoint rate-limits the audit drain. The floor is roughly 1/s: below that no 200-signature chunk fits the activity timeout, and every cycle reports budget exhaustion with the configured rate named.")
 	deviceUsageQueryWindowFlag := flag.Duration("device-usage-query-window", defaultDeviceUsageInfluxQueryWindow, "Query window for device usage (default: 1 hour)")
 	deviceUsageRefreshIntervalFlag := flag.Duration("device-usage-refresh-interval", defaultDeviceUsageRefreshInterval, "Refresh interval for device usage (default: 5 minutes)")
 	mockDeviceUsageFlag := flag.Bool("mock-device-usage", false, "Use mock data for device usage instead of InfluxDB (for testing/staging)")
@@ -136,9 +158,7 @@ func run() error {
 	noRollupFlag := flag.Bool("no-rollup", false, "Disable the embedded rollup worker (Temporal-based health bucket computation)")
 	noDZIngestFlag := flag.Bool("no-dz-ingest", false, "Disable the embedded DZ mainnet ingest worker (Temporal-based raw data collection)")
 	noSolIngestFlag := flag.Bool("no-sol-ingest", false, "Disable the embedded Solana ingest worker (Temporal-based raw data collection)")
-	noDevnetFlag := flag.Bool("no-devnet", false, "Disable the devnet secondary network indexer")
 	noTestnetFlag := flag.Bool("no-testnet", false, "Disable the testnet secondary network indexer")
-	noInfluxDevnetFlag := flag.Bool("no-influx-devnet", false, "Disable InfluxDB ingestion for devnet (or set NO_INFLUX_DEVNET=true env var)")
 	noInfluxTestnetFlag := flag.Bool("no-influx-testnet", false, "Disable InfluxDB ingestion for testnet (or set NO_INFLUX_TESTNET=true env var)")
 
 	// Remote tables configuration
@@ -174,6 +194,12 @@ func run() error {
 	}
 	if envDZEnv := os.Getenv("DZ_ENV"); envDZEnv != "" {
 		*dzEnvFlag = envDZEnv
+	}
+	// Deliberately the per-env name, matching what the secondary networks use. The bare
+	// DZ_LEDGER_RPC_URL is already consumed by the SDK for every env, so reading it here
+	// would add nothing and would imply a scoping this process cannot provide.
+	if v := os.Getenv("DZ_LEDGER_RPC_URL_" + envVarSuffix(*dzEnvFlag)); v != "" {
+		*dzLedgerRPCURLFlag = v
 	}
 
 	// Override Neo4j flags with environment variables if set
@@ -248,9 +274,6 @@ func run() error {
 	if os.Getenv("MOCK_DEVICE_USAGE") == "true" {
 		*mockDeviceUsageFlag = true
 	}
-	if os.Getenv("NO_INFLUX_DEVNET") == "true" {
-		*noInfluxDevnetFlag = true
-	}
 	if os.Getenv("NO_INFLUX_TESTNET") == "true" {
 		*noInfluxTestnetFlag = true
 	}
@@ -270,6 +293,14 @@ func run() error {
 		return fmt.Errorf("failed to get network config: %w", err)
 	}
 
+	// Redirect every DZ ledger read for this env, not just one client: dzRPCClient
+	// (serviceability, geolocation), permissionEventsRawRPC, and the shreds client
+	// all read this one field, and a dedicated endpoint should serve all of lake's
+	// ledger traffic. Same assignment the secondary-env path makes.
+	if *dzLedgerRPCURLFlag != "" {
+		networkConfig.LedgerPublicRPCURL = *dzLedgerRPCURLFlag
+	}
+
 	var solanaNetworkConfig *config.SolanaNetworkConfig
 	if solanaEnabled {
 		solanaNetworkConfig, err = config.SolanaNetworkConfigForEnv(*solanaEnvFlag)
@@ -287,6 +318,9 @@ func run() error {
 		"solana_enabled", solanaEnabled,
 		"geoip_enabled", geoipEnabled,
 		"neo4j_enabled", neo4jEnabled,
+		// Whether lake is on its own ledger endpoint or the SDK's shared public one.
+		// A boolean, never the URL: these endpoints carry their API key in the path.
+		"dedicated_ledger_rpc", *dzLedgerRPCURLFlag != "",
 	)
 
 	// Set up signal handling with detailed logging
@@ -333,7 +367,17 @@ func run() error {
 		}()
 	}
 
-	dzRPCClient := rpc.NewWithRetries(networkConfig.LedgerPublicRPCURL, nil)
+	// The connection pool must match the fan-out that shares this client. The SDK's
+	// per-request timeout bounds total wall time, queue wait included, so a pool
+	// smaller than the fan-out turns one slow backend into terminal timeouts: 64
+	// goroutines through 9 connections is ~7 waves, making each request's wall time
+	// roughly 7x the server's service time, and a timed-out request is not retried
+	// (isRetryableJSONRPC rejects context errors before any other check).
+	//
+	// This does not increase exposure to the endpoint's rate limits, which are counted
+	// per method per source IP over a rolling window: the same requests land in the
+	// window either way, just less spread out.
+	dzRPCClient := rpc.New(networkConfig.LedgerPublicRPCURL, rpc.Options{MaxConnsPerHost: *maxConcurrencyFlag})
 	defer dzRPCClient.Close()
 	serviceabilityClient := serviceability.New(dzRPCClient, networkConfig.ServiceabilityProgramID)
 	telemetryClient := telemetry.New(log, dzRPCClient, nil, networkConfig.TelemetryProgramID)
@@ -343,7 +387,11 @@ func run() error {
 	// reads serviceability transaction history (getSignaturesForAddress + getTransaction).
 	// Retrying client so a transient RPC error on getTransaction doesn't drop a
 	// permission event from the audit trail (the refresh fails and retries instead).
-	permissionEventsRawRPC := rpc.NewWithRetries(networkConfig.LedgerPublicRPCURL, nil)
+	// Pool sized to this view's own peak, which is higher than it looks: concurrent
+	// account drains paginate signatures while decodeSem separately caps in-flight
+	// getTransaction, and the two overlap.
+	permissionEventsRawRPC := rpc.New(networkConfig.LedgerPublicRPCURL,
+		rpc.Options{MaxConnsPerHost: permissionevents.MaxConcurrentRPCRequests})
 
 	// Shreds subscription client (mainnet-beta and testnet only, not devnet).
 	// Mainnet uses Solana proper RPC; testnet uses the DZ ledger RPC.
@@ -576,9 +624,10 @@ func run() error {
 		GeoIPResolver: geoIPResolver,
 
 		// Serviceability configuration
-		ServiceabilityRPC:       serviceabilityClient,
-		ServiceabilityProgramID: networkConfig.ServiceabilityProgramID,
-		PermissionEventsRPC:     permissionEventsRawRPC,
+		ServiceabilityRPC:                serviceabilityClient,
+		ServiceabilityProgramID:          networkConfig.ServiceabilityProgramID,
+		PermissionEventsRPC:              permissionEventsRawRPC,
+		PermissionEventsFetchesPerSecond: *permissionEventsFetchesPerSecondFlag,
 
 		// Geolocation configuration
 		GeolocationRPC: geolocationClient,
@@ -728,10 +777,10 @@ func run() error {
 		log.Info("sol ingest worker disabled", "no_sol_ingest", *noSolIngestFlag, "solana_configured", idx.Solana() != nil)
 	}
 
-	// Start secondary network indexers (devnet, testnet).
+	// Start the secondary network indexer (testnet).
 	// These run lightweight DZ ingest workflows (serviceability + telemetry only).
-	// Enabled by default; disable with --no-devnet / --no-testnet.
-	// Database names default to lake_devnet / lake_testnet but can be overridden via env vars.
+	// Enabled by default; disable with --no-testnet.
+	// The database name defaults to lake_testnet but can be overridden via env var.
 	type secondaryEnvConfig struct {
 		database       string
 		dzLedgerRPCURL string
@@ -739,46 +788,40 @@ func run() error {
 		noInflux       bool
 		mrouteS3Bucket string // empty = mroute ingest disabled for this env
 		msdpS3Bucket   string // empty = MSDP ingest disabled for this env
+		// fetchesPerSecond overrides the permission-events getTransaction pace for
+		// this env; 0 inherits the primary --permission-events-fetches-per-second.
+		fetchesPerSecond float64
 	}
 	secondaryEnvs := map[string]secondaryEnvConfig{
-		"devnet":  {database: "lake_devnet"},
 		"testnet": {database: "lake_testnet"},
-	}
-	if db := os.Getenv("CLICKHOUSE_DATABASE_DEVNET"); db != "" {
-		cfg := secondaryEnvs["devnet"]
-		cfg.database = db
-		secondaryEnvs["devnet"] = cfg
 	}
 	if db := os.Getenv("CLICKHOUSE_DATABASE_TESTNET"); db != "" {
 		cfg := secondaryEnvs["testnet"]
 		cfg.database = db
 		secondaryEnvs["testnet"] = cfg
 	}
-	if rpcURL := os.Getenv("DZ_LEDGER_RPC_URL_DEVNET"); rpcURL != "" {
-		cfg := secondaryEnvs["devnet"]
-		cfg.dzLedgerRPCURL = rpcURL
-		secondaryEnvs["devnet"] = cfg
-	}
 	if rpcURL := os.Getenv("DZ_LEDGER_RPC_URL_TESTNET"); rpcURL != "" {
 		cfg := secondaryEnvs["testnet"]
 		cfg.dzLedgerRPCURL = rpcURL
 		secondaryEnvs["testnet"] = cfg
 	}
+	for _, env := range []string{"devnet", "testnet"} {
+		v := os.Getenv("PERMISSION_EVENTS_FETCHES_PER_SECOND_" + strings.ToUpper(env))
+		if v == "" {
+			continue
+		}
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil || f < 0 {
+			return fmt.Errorf("invalid PERMISSION_EVENTS_FETCHES_PER_SECOND_%s %q", strings.ToUpper(env), v)
+		}
+		cfg := secondaryEnvs[env]
+		cfg.fetchesPerSecond = f
+		secondaryEnvs[env] = cfg
+	}
 	if rpcURL := os.Getenv("SOLANA_RPC_URL_TESTNET"); rpcURL != "" {
 		cfg := secondaryEnvs["testnet"]
 		cfg.solanaRPCURL = rpcURL
 		secondaryEnvs["testnet"] = cfg
-	}
-	// Uncomment for devnet shred oracle instance.
-	// if rpcURL := os.Getenv("SOLANA_RPC_URL_DEVNET"); rpcURL != "" {
-	// 	cfg := secondaryEnvs["devnet"]
-	// 	cfg.solanaRPCURL = rpcURL
-	// 	secondaryEnvs["devnet"] = cfg
-	// }
-	if *noInfluxDevnetFlag {
-		cfg := secondaryEnvs["devnet"]
-		cfg.noInflux = true
-		secondaryEnvs["devnet"] = cfg
 	}
 	if *noInfluxTestnetFlag {
 		cfg := secondaryEnvs["testnet"]
@@ -789,28 +832,15 @@ func run() error {
 	// enables the relevant ingest for that secondary network. Region and
 	// key-prefix reuse the global --{mroute,msdp}-s3-{region,key-prefix}
 	// flags.
-	if b := os.Getenv("MROUTE_S3_BUCKET_DEVNET"); b != "" {
-		cfg := secondaryEnvs["devnet"]
-		cfg.mrouteS3Bucket = b
-		secondaryEnvs["devnet"] = cfg
-	}
 	if b := os.Getenv("MROUTE_S3_BUCKET_TESTNET"); b != "" {
 		cfg := secondaryEnvs["testnet"]
 		cfg.mrouteS3Bucket = b
 		secondaryEnvs["testnet"] = cfg
 	}
-	if b := os.Getenv("MSDP_S3_BUCKET_DEVNET"); b != "" {
-		cfg := secondaryEnvs["devnet"]
-		cfg.msdpS3Bucket = b
-		secondaryEnvs["devnet"] = cfg
-	}
 	if b := os.Getenv("MSDP_S3_BUCKET_TESTNET"); b != "" {
 		cfg := secondaryEnvs["testnet"]
 		cfg.msdpS3Bucket = b
 		secondaryEnvs["testnet"] = cfg
-	}
-	if *noDevnetFlag {
-		delete(secondaryEnvs, "devnet")
 	}
 	if *noTestnetFlag {
 		delete(secondaryEnvs, "testnet")
@@ -829,32 +859,37 @@ func run() error {
 			}
 
 			if err := startSecondaryNetwork(ctx, logger.New(*verboseFlag), env, secondaryNetworkConfig{
-				clickhouseAddr:             *clickhouseAddrFlag,
-				clickhouseDatabase:         envCfg.database,
-				dzLedgerRPCURL:             envCfg.dzLedgerRPCURL,
-				solanaRPCURL:               envCfg.solanaRPCURL,
-				clickhouseUsername:         *clickhouseUsernameFlag,
-				clickhousePassword:         *clickhousePasswordFlag,
-				clickhouseSecure:           *clickhouseSecureFlag,
-				refreshInterval:            *refreshIntervalFlag,
-				maxConcurrency:             *maxConcurrencyFlag,
-				migrationsEnable:           *migrationsEnableFlag,
-				createDatabase:             true,
-				skipReadyWait:              *skipReadyWaitFlag,
-				isisS3Bucket:               "doublezero-" + env + "-isis-db",
-				isisS3Region:               *isisS3RegionFlag,
-				mrouteS3Bucket:             envCfg.mrouteS3Bucket,
-				mrouteS3Region:             *mrouteS3RegionFlag,
-				mrouteS3KeyPrefix:          *mrouteS3KeyPrefixFlag,
-				msdpS3Bucket:               envCfg.msdpS3Bucket,
-				msdpS3Region:               *msdpS3RegionFlag,
-				msdpS3KeyPrefix:            *msdpS3KeyPrefixFlag,
-				influxURL:                  secondaryInfluxURL,
-				influxToken:                secondaryInfluxToken,
-				influxOrg:                  influxOrg,
-				influxBucket:               secondaryInfluxBucket,
-				deviceUsageRefreshInterval: *deviceUsageRefreshIntervalFlag,
-				deviceUsageQueryWindow:     deviceUsageQueryWindow,
+				clickhouseAddr:     *clickhouseAddrFlag,
+				clickhouseDatabase: envCfg.database,
+				dzLedgerRPCURL:     envCfg.dzLedgerRPCURL,
+				solanaRPCURL:       envCfg.solanaRPCURL,
+				// Inherit the primary dial unless this env overrides it. Without this the
+				// flag this PR adds would only reach mainnet-beta, leaving devnet and
+				// testnet pinned at the package default — and testnet carries the
+				// high-volume Permission PDA.
+				permissionEventsFetchesPerSecond: cmp.Or(envCfg.fetchesPerSecond, *permissionEventsFetchesPerSecondFlag),
+				clickhouseUsername:               *clickhouseUsernameFlag,
+				clickhousePassword:               *clickhousePasswordFlag,
+				clickhouseSecure:                 *clickhouseSecureFlag,
+				refreshInterval:                  *refreshIntervalFlag,
+				maxConcurrency:                   *maxConcurrencyFlag,
+				migrationsEnable:                 *migrationsEnableFlag,
+				createDatabase:                   true,
+				skipReadyWait:                    *skipReadyWaitFlag,
+				isisS3Bucket:                     "doublezero-" + env + "-isis-db",
+				isisS3Region:                     *isisS3RegionFlag,
+				mrouteS3Bucket:                   envCfg.mrouteS3Bucket,
+				mrouteS3Region:                   *mrouteS3RegionFlag,
+				mrouteS3KeyPrefix:                *mrouteS3KeyPrefixFlag,
+				msdpS3Bucket:                     envCfg.msdpS3Bucket,
+				msdpS3Region:                     *msdpS3RegionFlag,
+				msdpS3KeyPrefix:                  *msdpS3KeyPrefixFlag,
+				influxURL:                        secondaryInfluxURL,
+				influxToken:                      secondaryInfluxToken,
+				influxOrg:                        influxOrg,
+				influxBucket:                     secondaryInfluxBucket,
+				deviceUsageRefreshInterval:       *deviceUsageRefreshIntervalFlag,
+				deviceUsageQueryWindow:           deviceUsageQueryWindow,
 			}); err != nil {
 				log.Error("secondary network indexer failed", "env", env, "error", err)
 			}
@@ -927,6 +962,12 @@ type secondaryNetworkConfig struct {
 	// endpoint instead of the DZ ledger.
 	solanaRPCURL string
 
+	// permissionEventsFetchesPerSecond paces the audit indexer's getTransaction
+	// calls for this network. Defaults to the primary flag value so one dial covers
+	// every env, and is overridable per env because the limits are enforced per
+	// method per source IP and every env shares this cluster's single egress.
+	permissionEventsFetchesPerSecond float64
+
 	// ISIS configuration (optional).
 	isisS3Bucket string
 	isisS3Region string
@@ -953,7 +994,7 @@ type secondaryNetworkConfig struct {
 }
 
 // startSecondaryNetwork starts a lightweight indexer for a non-primary DZ
-// network (e.g. devnet, testnet). It only runs serviceability and telemetry
+// network (e.g. testnet). It only runs serviceability and telemetry
 // latency — Solana, GeoIP, Neo4j, ISIS, and rollup are mainnet-only.
 func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cfg secondaryNetworkConfig) error {
 	log = log.With("dz_env", env)
@@ -998,7 +1039,8 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 	}
 	secondaryIngestionLog := ingestionlog.NewWriter(secondaryChConn, log)
 
-	dzRPCClient := rpc.NewWithRetries(networkConfig.LedgerPublicRPCURL, nil)
+	// Pool sized to this network's fan-out; see the primary path for why.
+	dzRPCClient := rpc.New(networkConfig.LedgerPublicRPCURL, rpc.Options{MaxConnsPerHost: cfg.maxConcurrency})
 	defer dzRPCClient.Close()
 	serviceabilityClient := serviceability.New(dzRPCClient, networkConfig.ServiceabilityProgramID)
 	telemetryClient := telemetry.New(log, dzRPCClient, nil, networkConfig.TelemetryProgramID)
@@ -1007,7 +1049,11 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 	// Raw Solana RPC on the DZ ledger for the permission-events audit indexer.
 	// Retrying client so a transient RPC error on getTransaction doesn't drop a
 	// permission event from the audit trail (the refresh fails and retries instead).
-	permissionEventsRawRPC := rpc.NewWithRetries(networkConfig.LedgerPublicRPCURL, nil)
+	// Pool sized to this view's own peak, which is higher than it looks: concurrent
+	// account drains paginate signatures while decodeSem separately caps in-flight
+	// getTransaction, and the two overlap.
+	permissionEventsRawRPC := rpc.New(networkConfig.LedgerPublicRPCURL,
+		rpc.Options{MaxConnsPerHost: permissionevents.MaxConcurrentRPCRequests})
 
 	// Shreds subscription client (testnet only, not devnet).
 	var shredsClient *shreds.Client
@@ -1046,17 +1092,18 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 			Password: cfg.clickhousePassword,
 			Secure:   cfg.clickhouseSecure,
 		},
-		RefreshInterval:         cfg.refreshInterval,
-		MaxConcurrency:          cfg.maxConcurrency,
-		ServiceabilityRPC:       serviceabilityClient,
-		ServiceabilityProgramID: networkConfig.ServiceabilityProgramID,
-		PermissionEventsRPC:     permissionEventsRawRPC,
-		GeolocationRPC:          geolocationClient,
-		TelemetryRPC:            telemetryClient,
-		DZEpochRPC:              dzRPCClient,
-		InternetLatencyAgentPK:  networkConfig.InternetLatencyCollectorPK,
-		InternetDataProviders:   telemetryconfig.InternetTelemetryDataProviders,
-		SkipReadyWait:           cfg.skipReadyWait,
+		RefreshInterval:                  cfg.refreshInterval,
+		MaxConcurrency:                   cfg.maxConcurrency,
+		ServiceabilityRPC:                serviceabilityClient,
+		ServiceabilityProgramID:          networkConfig.ServiceabilityProgramID,
+		PermissionEventsRPC:              permissionEventsRawRPC,
+		PermissionEventsFetchesPerSecond: cfg.permissionEventsFetchesPerSecond,
+		GeolocationRPC:                   geolocationClient,
+		TelemetryRPC:                     telemetryClient,
+		DZEpochRPC:                       dzRPCClient,
+		InternetLatencyAgentPK:           networkConfig.InternetLatencyCollectorPK,
+		InternetDataProviders:            telemetryconfig.InternetTelemetryDataProviders,
+		SkipReadyWait:                    cfg.skipReadyWait,
 
 		// Device usage configuration.
 		DeviceUsageInfluxClient:      influxDBClient,

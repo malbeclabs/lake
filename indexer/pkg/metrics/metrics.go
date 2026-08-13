@@ -21,7 +21,7 @@ var (
 	ViewRefreshTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "doublezero_data_indexer_view_refresh_total",
-			Help: "Total number of view refreshes",
+			Help: "Total number of view refreshes (status: success, partial, error, panic; partial = stopped at the refresh budget with backlog pending)",
 		},
 		[]string{"view_type", "status"},
 	)
@@ -39,6 +39,57 @@ var (
 			Help: "Total validator-rewards leaf-export fetches from S3 by HTTP outcome (ok, not_found, forbidden, error)",
 		},
 		[]string{"status"},
+	)
+
+	// PermissionEventsSkippedTx counts transactions the permission-events indexer skipped
+	// because the RPC would not serve them (getTransaction not-found for a finalized,
+	// listed signature — pruned or inconsistent upstream history). Each skip is a
+	// potentially missing audit row that no automatic path recovers (the backfill skips
+	// them identically); a sustained non-zero rate means upstream retention is dropping
+	// events and a manual re-backfill against an archival node is warranted.
+	PermissionEventsSkippedTx = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "doublezero_data_indexer_permission_events_skipped_tx_total",
+			Help: "Permission-events transactions skipped because the RPC could not serve them",
+		},
+	)
+
+	// TelemetryFetchSkipped counts telemetry sample fetches the latency indexer
+	// dropped on an unclassified RPC error, by env and source.
+	//
+	// A skip is recoverable only while its epoch stays in the fetch window, which is
+	// the current epoch and the one before it. Past that, roughly two days, nothing
+	// re-fetches it and only the admin backfill can recover the samples. So a rising
+	// rate is time-limited, not merely cosmetic.
+	//
+	// Nothing else records these skips: the refresh still reports success, so without
+	// this counter a circuit that keeps failing under-collects with no signal. See
+	// classifyFetchErr in indexer/pkg/dz/telemetry/latency for what counts as a skip.
+	//
+	// dz_env is required because one indexer process serves mainnet and testnet
+	// together. Without it a testnet blip and a real mainnet under-collect are the same
+	// series, and an operator who mutes the first also mutes the second.
+	TelemetryFetchSkipped = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "doublezero_data_indexer_telemetry_fetch_skipped_total",
+			Help: "Telemetry sample fetches skipped on an unclassified RPC error, by env and source.",
+		},
+		[]string{"dz_env", "source"},
+	)
+
+	// EscrowEventsSkippedTx counts escrow transactions the indexer skipped because the
+	// RPC would not serve them: a getTransaction null for a finalized, listed signature
+	// far enough below the tip to be pruned history. Each skip is an audit row no
+	// automatic path recovers, so a sustained non-zero rate means upstream retention is
+	// dropping events and a re-backfill against an archival node is warranted.
+	//
+	// Only the pruned case is counted. Every other fetch error fails its chunk and is
+	// retried, so it never reaches here.
+	EscrowEventsSkippedTx = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "doublezero_data_indexer_escrow_events_skipped_tx_total",
+			Help: "Escrow transactions skipped because the RPC could not serve them",
+		},
 	)
 
 	ViewRefreshDuration = promauto.NewHistogramVec(
@@ -149,10 +200,67 @@ var (
 		},
 		[]string{"dz_env"},
 	)
+
+	// ClickHouseBaselineQueryTotal counts sparse-counter baseline cache misses:
+	// each increment is a refresh/backfill that bypassed the in-memory watermark
+	// cache and attempted the ClickHouse scan. In steady state this should fire
+	// only on indexer restart per env; a high rate means the watermark cache is
+	// not hitting.
+	ClickHouseBaselineQueryTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "doublezero_data_indexer_clickhouse_baseline_query_total",
+			Help: "Total sparse-counter baseline cache misses (watermark cache bypassed, ClickHouse scan attempted)",
+		},
+		[]string{"dz_env"},
+	)
+
+	// TelemetryUsageWatermarkTimestampSeconds is the telemetry-usage ingest
+	// watermark (ClickHouse max event_ts), published at the top of every refresh
+	// including ones that later fail. Alert on `time() - <this>` — #740's 22.6h of
+	// zero ingest was otherwise invisible until the 24h horizon ERROR.
+	//
+	// An absolute timestamp rather than a pre-computed lag: a lag gauge freezes at
+	// its last value once the refresh stops running or starts failing before this
+	// point, which is exactly the outage it exists to catch.
+	//
+	// One series per dz_env (a single pod publishes every env it runs); an env with
+	// no rows yet has no watermark and so no series.
+	TelemetryUsageWatermarkTimestampSeconds = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "doublezero_data_indexer_telemetry_usage_watermark_timestamp_seconds",
+			Help: "Unix timestamp of the telemetry-usage ingest watermark (max event_ts)",
+		},
+		[]string{"dz_env"},
+	)
+
+	// ClickHousePrevRTTQueryTotal counts previous-RTT cache misses that hit
+	// ClickHouse: kind=bounded is the prevRTTLookback-bounded seed scan,
+	// kind=fallback is the unbounded per-circuit scan for circuits the bounded
+	// pass missed. In steady state both should be ~0 except around indexer
+	// restart; a sustained rate means the carry-forward cache is not hitting.
+	ClickHousePrevRTTQueryTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "doublezero_data_indexer_clickhouse_prev_rtt_query_total",
+			Help: "Previous-RTT cache misses that hit ClickHouse (kind=bounded|fallback)",
+		},
+		[]string{"dz_env", "table", "kind"}, // table: device_link|internet_metro
+	)
+
+	// ClickHousePrevRTTFallbackCircuitsTotal counts the circuits resolved via
+	// the unbounded fallback pass. Queries alone can't distinguish one quiet
+	// circuit from pathological new-circuit churn; a high circuits-to-queries
+	// ratio flags the latter.
+	ClickHousePrevRTTFallbackCircuitsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "doublezero_data_indexer_clickhouse_prev_rtt_fallback_circuits_total",
+			Help: "Circuits resolved via the unbounded previous-RTT fallback query",
+		},
+		[]string{"dz_env", "table"},
+	)
 )
 
 // RecordInfluxQuery records metrics for an InfluxDB query.
-// dzEnv is the DZ network environment (e.g. "mainnet-beta", "testnet", "devnet").
+// dzEnv is the DZ network environment (e.g. "mainnet-beta", "testnet").
 // queryType describes the kind of query (e.g. "interface_usage", "baseline_in_errors", "backfill").
 func RecordInfluxQuery(dzEnv, queryType string, duration time.Duration, rows int, err error) {
 	status := "success"

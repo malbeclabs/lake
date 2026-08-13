@@ -34,7 +34,7 @@ func (a *API) NewDBQuerier() *DBQuerier {
 
 // Query executes a SQL query and returns the result.
 // Agent queries always run against the mainnet database. To query other
-// environments, use fully-qualified table names (e.g., lake_devnet.dim_devices_current).
+// environments, use fully-qualified table names (e.g., lake_testnet.dim_devices_current).
 func (q *DBQuerier) Query(ctx context.Context, sql string) (workflow.QueryResult, error) {
 	sql = strings.TrimSuffix(strings.TrimSpace(sql), ";")
 

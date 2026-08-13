@@ -4,6 +4,7 @@ import { Loader2, Network, AlertCircle } from 'lucide-react'
 import { fetchTopologies } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { handleRowClick } from '@/lib/utils'
+import { FlexAlgoDivergence } from '@/components/flexalgo-divergence'
 
 export function TopologiesPage() {
   const navigate = useNavigate()
@@ -86,6 +87,8 @@ export function TopologiesPage() {
             </tbody>
           </table>
         </div>
+
+        <FlexAlgoDivergence />
       </div>
     </div>
   )

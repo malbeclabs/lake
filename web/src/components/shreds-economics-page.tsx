@@ -240,16 +240,19 @@ function computeEconomics(seats: ShredClientSeat[]): Economics {
   );
   const mrr = epochRevenue * EPOCHS_PER_MONTH;
   const arr = mrr * 12;
+  // Escrow-held aggregates sum across escrows (total funds in the system).
   const totalEscrow = seats.reduce(
-    (sum, s) => sum + s.total_usdc_balance / USDC_SCALE,
+    (sum, s) => sum + s.all_escrows_usdc_balance / USDC_SCALE,
     0,
   );
 
+  // Survival is per-escrow: a seat covers next epoch only if its largest single
+  // escrow meets the price, matching what the oracle actually charges.
   const surviving = seats.filter(
-    (s) => s.total_usdc_balance / USDC_SCALE >= s.price_per_epoch_dollars,
+    (s) => s.spendable_usdc_balance / USDC_SCALE >= s.price_per_epoch_dollars,
   );
   const atRisk = seats.filter(
-    (s) => s.total_usdc_balance / USDC_SCALE < s.price_per_epoch_dollars,
+    (s) => s.spendable_usdc_balance / USDC_SCALE < s.price_per_epoch_dollars,
   );
   const nextEpochRevenue = surviving.reduce(
     (sum, s) => sum + s.price_per_epoch_dollars,
@@ -264,7 +267,7 @@ function computeEconomics(seats: ShredClientSeat[]): Economics {
     const m = metroMap.get(s.metro_code) ?? { seats: 0, revenue: 0, escrow: 0 };
     m.seats++;
     m.revenue += s.price_per_epoch_dollars;
-    m.escrow += s.total_usdc_balance / USDC_SCALE;
+    m.escrow += s.all_escrows_usdc_balance / USDC_SCALE;
     metroMap.set(s.metro_code, m);
   }
   const metroBreakdown: MetroStat[] = Array.from(metroMap.entries())
@@ -303,7 +306,7 @@ function computeEconomics(seats: ShredClientSeat[]): Economics {
   ];
   const bucketCounts = bucketDefs.map(() => 0);
   for (const s of seats) {
-    const bal = s.total_usdc_balance / USDC_SCALE;
+    const bal = s.spendable_usdc_balance / USDC_SCALE;
     const runway =
       s.price_per_epoch_dollars > 0
         ? Math.floor(bal / s.price_per_epoch_dollars)
@@ -338,13 +341,13 @@ function computeEconomics(seats: ShredClientSeat[]): Economics {
         0,
       );
       const fEscrow = fSeats.reduce(
-        (sum, s) => sum + s.total_usdc_balance / USDC_SCALE,
+        (sum, s) => sum + s.all_escrows_usdc_balance / USDC_SCALE,
         0,
       );
       const runways = fSeats.map((s) =>
         s.price_per_epoch_dollars > 0
           ? Math.floor(
-              s.total_usdc_balance / USDC_SCALE / s.price_per_epoch_dollars,
+              s.spendable_usdc_balance / USDC_SCALE / s.price_per_epoch_dollars,
             )
           : 999,
       );

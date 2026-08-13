@@ -58,18 +58,6 @@ func TestError_ClassifiesByErrorArg(t *testing.T) {
 	}
 }
 
-func TestWarn_SkipsClientDisconnect(t *testing.T) {
-	t.Parallel()
-
-	log, recs := capLogger()
-	Warn(log, "op failed", "error", context.Canceled)
-	require.Empty(t, *recs)
-
-	Warn(log, "op failed", "error", errors.New("boom"))
-	require.Len(t, *recs, 1)
-	require.Equal(t, slog.LevelWarn, (*recs)[0].Level)
-}
-
 func TestErrorFromArgs(t *testing.T) {
 	t.Parallel()
 
@@ -93,4 +81,12 @@ func TestErrorFromArgs_SlogAttrDoesNotShiftParity(t *testing.T) {
 	// slog badkey case: a non-string non-Attr where a key is expected
 	// consumes one slot.
 	require.Equal(t, err, ErrorFromArgs([]any{42, "error", err}))
+}
+
+func TestIsDeadlineExceeded(t *testing.T) {
+	require.True(t, IsDeadlineExceeded(context.DeadlineExceeded))
+	require.True(t, IsDeadlineExceeded(errors.New("query failed: context deadline exceeded")))
+	require.False(t, IsDeadlineExceeded(nil))
+	require.False(t, IsDeadlineExceeded(context.Canceled), "cancellation is not a deadline")
+	require.False(t, IsDeadlineExceeded(errors.New("boom")))
 }

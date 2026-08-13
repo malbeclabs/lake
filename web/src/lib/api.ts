@@ -2322,7 +2322,13 @@ export interface SinglePath {
 }
 
 // PathService selects which IS-IS topology a path is resolved through:
-// 'unicast' constrains to flex-algo 128 (topology-tagged links); 'multicast' uses algo 0 (all links).
+// 'unicast' constrains to the flex-algo topology (topology-tagged links that
+// are not drained); 'multicast' uses algo 0 (all activated links). The two
+// answer differently wherever a link sits outside the topology — see
+// /api/topology/algo-divergence for which routes those are.
+//
+// Endpoints that default to algo 0 treat an omitted service as 'multicast',
+// and only that default is held in the page cache.
 export type PathService = 'unicast' | 'multicast'
 
 export interface MultiPathResponse {
@@ -3657,7 +3663,9 @@ export interface WorkflowRun {
 
 // Get a workflow run by ID
 export async function getWorkflow(workflowId: string): Promise<WorkflowRun | null> {
-  const res = await apiFetch(`/api/workflows/${workflowId}`)
+  const anonParam = getAnonymousIdParam()
+  const url = anonParam ? `/api/workflows/${workflowId}?${anonParam}` : `/api/workflows/${workflowId}`
+  const res = await apiFetch(url)
   if (res.status === 404) {
     return null
   }
@@ -3669,7 +3677,9 @@ export async function getWorkflow(workflowId: string): Promise<WorkflowRun | nul
 
 // Get the latest workflow for a session (running, completed, or failed)
 export async function getLatestWorkflowForSession(sessionId: string): Promise<WorkflowRun | null> {
-  const res = await apiFetch(`/api/sessions/${sessionId}/workflow`)
+  const anonParam = getAnonymousIdParam()
+  const url = anonParam ? `/api/sessions/${sessionId}/workflow?${anonParam}` : `/api/sessions/${sessionId}/workflow`
+  const res = await apiFetch(url)
   if (res.status === 204 || res.status === 404) {
     return null // No workflow
   }
@@ -3705,7 +3715,11 @@ export async function reconnectToWorkflow(
   callbacks: WorkflowReconnectCallbacks,
   signal?: AbortSignal
 ): Promise<void> {
-  const res = await apiFetch(`/api/workflows/${workflowId}/stream`, { signal })
+  const anonParam = getAnonymousIdParam()
+  const url = anonParam
+    ? `/api/workflows/${workflowId}/stream?${anonParam}`
+    : `/api/workflows/${workflowId}/stream`
+  const res = await apiFetch(url, { signal })
 
   if (!res.ok) {
     if (res.status === 404) {
@@ -4634,7 +4648,7 @@ export interface TimelineEvent {
 export interface EntityChangeDetails {
   change_type: 'created' | 'updated' | 'deleted'
   changes?: FieldChange[]
-  entity?: DeviceEntity | LinkEntity | MetroEntity | ContributorEntity | UserEntity
+  entity?: DeviceEntity | LinkEntity | MetroEntity | ContributorEntity | UserEntity | FeedEntity
 }
 
 export interface FieldChange {
@@ -4704,6 +4718,16 @@ export interface UserEntity {
   device_pk: string
   tunnel_id: number
   device_code?: string
+  metro_code?: string
+}
+
+export interface FeedEntity {
+  pk: string
+  owner_pubkey: string
+  code: string
+  name: string
+  metro_pk: string
+  groups: string
   metro_code?: string
 }
 
@@ -4923,6 +4947,18 @@ export async function fetchLatencyHistory(
 // Metro path latency types (path-based DZ vs Internet comparison)
 export type PathOptimizeMode = 'hops' | 'latency' | 'bandwidth'
 
+/**
+ * One metro pair from /api/topology/metro-path-latency.
+ *
+ * Every field below the first block is optional, and that is not defensive
+ * typing: the default request is answered from the `page_cache` table in
+ * Postgres, which a worker of any age may have written. A web deploy reaches
+ * readers before the next worker refresh does, so for that window the browser
+ * holds a new bundle reading a payload that predates these fields. Declaring
+ * them present made `undefined.toFixed()` take the whole page down through the
+ * error boundary. Keep them optional so the compiler makes every reader say
+ * what it shows when the figure has not arrived yet.
+ */
 export interface MetroPathLatency {
   fromMetroPK: string
   fromMetroCode: string
@@ -4932,11 +4968,31 @@ export interface MetroPathLatency {
   hopCount: number
   bottleneckBwGbps: number
   internetLatencyMs: number
+  /** vs internet, from the contracted pathLatencyMs. */
   improvementPct: number | null
+
+  /** Observed sum of per-hop RTT. Falls back to the contracted figure when partiallyCommitted. */
+  measuredLatencyMs?: number
+  /** 0 when partiallyCommitted — absent, not zero. */
+  measuredP95Ms?: number
+  /** 0 when partiallyCommitted — absent, not zero. */
+  measuredJitterMs?: number
+  partiallyCommitted?: boolean
+  pathMetros?: string[]
+  /** 0 when unmeasured — the internet side has no partiallyCommitted-style flag. */
+  internetP95Ms?: number
+  /** 0 when unmeasured — the internet side has no partiallyCommitted-style flag. */
+  internetJitterMs?: number
+  /** vs internet, from measuredLatencyMs. Separate basis, so the two pages stay self-consistent. */
+  measuredImprovementPct?: number | null
 }
 
 export interface MetroPathLatencyResponse {
   optimize: PathOptimizeMode
+  /** Echoes the link set used. The API canonicalises the default to
+   *  'multicast', so it never sends an empty string. Absent only from a
+   *  page-cached payload written by a worker that predates the field. */
+  service?: PathService
   paths: MetroPathLatency[]
   summary: {
     totalPairs: number
@@ -4947,10 +5003,87 @@ export interface MetroPathLatencyResponse {
   error?: string
 }
 
-export async function fetchMetroPathLatency(optimize: PathOptimizeMode = 'latency'): Promise<MetroPathLatencyResponse> {
-  const res = await apiFetch(`/api/topology/metro-path-latency?optimize=${optimize}`)
+export async function fetchMetroPathLatency(
+  optimize: PathOptimizeMode = 'latency',
+  service?: PathService
+): Promise<MetroPathLatencyResponse> {
+  const suffix = service ? `&service=${service}` : ''
+  const res = await apiFetch(`/api/topology/metro-path-latency?optimize=${optimize}${suffix}`)
   if (!res.ok) {
     throw new Error('Failed to fetch metro path latency')
+  }
+  return res.json()
+}
+
+export interface AlgoDivergenceLink {
+  code: string
+  fromMetro: string
+  toMetro: string
+  rttMs: number
+  drained: boolean
+  /** False when the link was never in the unicast set — note a link drained
+   *  from the start is never included even while it carries a tag. */
+  everIncluded: boolean
+  /** RFC3339, or empty when the history does not reach back far enough. */
+  excludedAt: string
+  excludedFor: string
+}
+
+export interface AlgoDivergencePair {
+  fromMetro: string
+  toMetro: string
+  multicastMs: number
+  unicastMs: number
+  deltaMs: number
+  deltaPct: number
+  multicastPath: string[]
+  unicastPath: string[]
+  /** False when unicast has no path at all. The unicast fields are then absent, not zero. */
+  unicastReachable: boolean
+}
+
+export interface AlgoDivergenceResponse {
+  excludedLinks: AlgoDivergenceLink[]
+  pairs: AlgoDivergencePair[]
+  summary: {
+    activatedLinks: number
+    excludedLinks: number
+    multicastPairs: number
+    divergingPairs: number
+    unreachablePairs: number
+    maxDeltaMs: number
+  }
+}
+
+export async function fetchAlgoDivergence(): Promise<AlgoDivergenceResponse> {
+  const res = await apiFetch('/api/topology/algo-divergence')
+  if (!res.ok) {
+    throw new Error('Failed to fetch flex-algo divergence')
+  }
+  return res.json()
+}
+
+export interface RouteSeriesPoint {
+  ts: string
+  dzMs: number
+  internetMs: number
+}
+
+export interface RouteSeries {
+  fromMetroCode: string
+  toMetroCode: string
+  points: RouteSeriesPoint[]
+}
+
+export interface RouteSeriesResponse {
+  series: RouteSeries[]
+  error?: string
+}
+
+export async function fetchRouteSeries(pairs: string[]): Promise<RouteSeriesResponse> {
+  const res = await apiFetch(`/api/topology/route-series?pairs=${encodeURIComponent(pairs.join(','))}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch route series')
   }
   return res.json()
 }
@@ -4970,6 +5103,9 @@ export interface MetroPathDetailResponse {
   fromMetroCode: string
   toMetroCode: string
   optimize: PathOptimizeMode
+  /** Echoes the link set the hops were walked over. Same shape and same reason
+   *  as on MetroPathLatencyResponse. */
+  service?: PathService
   totalLatencyMs: number
   totalHops: number
   bottleneckBwGbps: number
@@ -4982,9 +5118,11 @@ export interface MetroPathDetailResponse {
 export async function fetchMetroPathDetail(
   from: string,
   to: string,
-  optimize: PathOptimizeMode = 'latency'
+  optimize: PathOptimizeMode = 'latency',
+  service?: PathService
 ): Promise<MetroPathDetailResponse> {
-  const res = await apiFetch(`/api/topology/metro-path-detail?from=${from}&to=${to}&optimize=${optimize}`)
+  const suffix = service ? `&service=${service}` : ''
+  const res = await apiFetch(`/api/topology/metro-path-detail?from=${from}&to=${to}&optimize=${optimize}${suffix}`)
   if (!res.ok) {
     throw new Error('Failed to fetch metro path detail')
   }
@@ -6244,7 +6382,11 @@ export interface ShredClientSeat {
   has_price_override: number
   override_usdc_price_dollars: number
   escrow_count: number
-  total_usdc_balance: number
+  // Largest single escrow balance (micro-USDC). Activation/renewal is per-escrow,
+  // so this — not the sum — decides whether the seat covers the per-epoch price.
+  spendable_usdc_balance: number
+  // Sum across all escrows (micro-USDC); informational, cannot be spent as one charge.
+  all_escrows_usdc_balance: number
   price_per_epoch_dollars: number
   funding_authority_key: string
   user_pk: string
@@ -6940,6 +7082,8 @@ export interface ShredDevice {
   granted_seats: number
   capacity: number
   available_seats: number
+  /** Metro-level: 1 when every device in the metro serves the retransmit group only. */
+  retransmit_only_enabled: number
 }
 
 export async function fetchShredDevices(params: {
@@ -7204,7 +7348,8 @@ export interface AccessPassShredsSeat {
   funded_epoch: number
   active_epoch: number
   escrow_count: number
-  total_usdc_balance: number
+  spendable_usdc_balance: number
+  all_escrows_usdc_balance: number
   price_per_epoch_dollars: number
   funding_authority_key: string
 }
