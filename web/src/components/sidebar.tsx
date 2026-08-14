@@ -54,7 +54,7 @@ export function Sidebar() {
   const location = useLocation()
   const navigate = useNavigate()
   const { features } = useEnv()
-  const { user, isAuthenticated } = useAuth()
+  const { user } = useAuth()
   const shredsDefaultPath = '/dz/shreds/scoreboard'
   const hasNeo4j = features.neo4j !== false
   const hasSolana = features.solana !== false
@@ -68,6 +68,8 @@ export function Sidebar() {
   // Internal only (unannounced venue) — gated to allowed-domain Google users.
   const showHyperliquid = user?.is_internal_user === true
   const showPermissionAudit = user?.is_internal_user === true
+  // External Hex app — only useful to allowed-domain (doublezero/malbeclabs) users.
+  const showDataDesk = user?.is_internal_user === true
 const { resolvedTheme, setTheme } = useTheme()
   const { updateAvailable, reload } = useVersionCheck()
 
@@ -292,7 +294,7 @@ const { resolvedTheme, setTheme } = useTheme()
           >
             <MessageSquare className="h-4 w-4" />
           </button>
-          {isAuthenticated && (
+          {showDataDesk && (
             <a
               href={DATA_DESK_URL}
               target="_blank"
@@ -535,7 +537,7 @@ const { resolvedTheme, setTheme } = useTheme()
               </>
             )}
 
-            {isAuthenticated && (
+            {showDataDesk && (
               <a
                 href={DATA_DESK_URL}
                 target="_blank"
