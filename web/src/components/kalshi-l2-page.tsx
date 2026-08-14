@@ -130,10 +130,11 @@ export function KalshiL2Page() {
   }, [data?.lanes])
 
   // asOf is when the payload was computed, not now: every staleness judgement below is made
-  // relative to the data's own clock (see QUIET_AFTER_MS).
+  // relative to the data's own clock (see QUIET_AFTER_MS). With no payload clock we fall back to
+  // the ticking `now` state rather than reading Date.now() during render.
   const asOf = useMemo(
-    () => (data?.generated_at ? new Date(data.generated_at).getTime() : Date.now()),
-    [data?.generated_at],
+    () => (data?.generated_at ? new Date(data.generated_at).getTime() : now),
+    [data?.generated_at, now],
   )
 
   const totals = useMemo(() => {
