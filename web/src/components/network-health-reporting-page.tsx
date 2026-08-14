@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, keepPreviousData, type UseQueryResult } from '@tanstack/react-query'
@@ -46,6 +47,7 @@ import {
   type NetworkHealthDowntimeRow,
   type NetworkHealthTsPoint,
   type NetworkHealthCountPoint,
+  type NetworkHealthWindow,
   type NHOverview,
   type NHLatencyGroup,
   type NHCapacityGroup,
@@ -104,8 +106,9 @@ const DEFS = {
   activeMetros: 'Metros with at least one active device at the end of the window.',
   drainTiming:
     'How quickly a failed link was taken out of service (drained) and how long it stayed drained. Measured from telemetry and status changes.',
-  timeToDrain: 'Minutes from a link going down to it being soft-drained (taken out of service).',
-  timeDrained: 'Minutes a link stayed soft-drained, from the drain until it was returned to service.',
+  timeToDrain: 'Minutes from a link failing to it being drained (soft or hard), meaning taken out of service.',
+  timeDrained:
+    'Minutes a link stayed drained (soft or hard), from the drain until it was returned to service.',
   timeToUndrain:
     'Minutes from when a drained link came back healthy to when it was actually returned to service. Long times mean healthy capacity sat out of service.',
   drainWithin30m: 'Share of link failures where the link was drained within 30 minutes of failing.',
@@ -126,14 +129,6 @@ const DEFS = {
   linkOverCommitted: 'Share of 5-minute buckets where the measured RTT was above the committed value.',
   linkDrift:
     'Measured average RTT minus the committed value, in ms and as a percent of committed. Positive means the link is measuring slower than its onchain commitment.',
-  linkTrend:
-    'Daily user throughput on this link over the window (average and peak per day), against the link\'s provisioned bandwidth (dashed line). A capacity-planning view.',
-  linkBandwidth: 'The link\'s provisioned bandwidth (capacity) from its onchain configuration.',
-  linkIncidents:
-    'Every incident recorded on this link in the window (any type: IS-IS down, carrier, packet loss, errors, discards, FCS), with when it started and how long it lasted. Use it to line an interface-error spike up with a failure.',
-  linkErrors:
-    'Errors + discards and carrier flaps on this link\'s interfaces over the window, so you can see exactly when they happened and match them to the traffic trend and incidents.',
-  linkPeakUtil: 'The highest 5-minute throughput on this link in the window, as a share of its provisioned bandwidth.',
   capacity: 'User seats in use versus configured seat capacity across activated devices. Low utilization means headroom to grow.',
   deviceSlots:
     'Devices with the most user slots in use: unicast, multicast-subscriber, and multicast-publisher seats, against the device\'s configured max_users cap.',
@@ -158,19 +153,10 @@ const DEFS = {
     'Recorded root cause for incident tickets in this window (maintenance excluded), with each cause as a share of incidents that have a cause. Self-resolved incidents cleared on their own with no operator action and are shown separately below the charted causes.',
   opsNoTicket:
     'Link failures detected from telemetry that had no matching ticket in the window, by affected link and overlapping time. These are the clearest candidates to file a ticket for.',
-  adjacencies: 'Established IS-IS neighbor adjacencies for this device.',
-  intfErrors: 'Per-interface error, discard, FCS, and carrier-transition totals over the window, split by direction (in/out). Rising counts are an early sign of degrading optics, fiber, or congestion (out-discards).',
-  deviceThroughput: 'Total egress across this device\'s onchain interfaces (link sides + user tunnels), averaged and peak per bucket. Unregistered ports (e.g. local test interfaces) are excluded, so test spikes do not appear; link traffic on a transit device still does. The DIA line sums only this device\'s Direct Internet Access interfaces, so you can see how much of the total is internet-bound.',
-  trafficByIntf: 'Which interfaces carry the most traffic on this device, the link each belongs to, and where packets are being discarded. DIA (Direct Internet Access) interfaces are included and labeled with their committed rate (CIR). Use it to trace where a spike enters or leaves the device and to find congestion.',
-  metroLatency: 'Round-trip time from this metro to other metros: DoubleZero versus the public internet.',
-  metroValidators: 'Validators connected via devices in this metro, and their total activated stake.',
-  cDowntime: "Total failure hours across this contributor's links (each failure capped at 24h).",
   availabilityLink:
     "Each link's time in the window split three ways, as a percent of the window: available (up), maintenance (intentionally drained, taken out of service e.g. for maintenance), and down (a fault: link down or high loss). Intentional maintenance drain counts as down here, and is shown as its own segment so planned maintenance is not mistaken for a fault. Currently soft- or hard-drained links are included, so a link fully out for maintenance shows near the top as mostly drained. Least available first. For total fault-hours with maintenance excluded, see \"Most failure time\" in Operations; a link parked in maintenance ranks low here but does not appear there.",
   availabilityDevice:
     "Device reachability over the window, as a percent of time. This is the page's true-outage signal: a device is counted unreachable only when it has no working path at all. Available: at least one of its links is working. Unreachable: a fault leaves every activated link down (IS-IS down or 10%+ loss). Maintenance: reachable-blocked only because every link was intentionally drained (soft- or hard-drained) with no fault on any link, so this is planned, not an outage. One link down while others are up does not lower the device. Ranked by unreachable (fault) time, so a device out only for maintenance is not counted as least available.",
-  linkAvailabilitySummary:
-    "This link's time in the window split the same 3 ways as the network rankings above. Down here is the same fault time as the failure hours above; the two should closely match.",
   outageSummary:
     'Link and device failures in this window: how many, total failure-hours, and how many distinct links/devices were affected. The count and the failure-hours are measured independently, so a near match between the two numbers is coincidence. Detected from telemetry, independent of whether a ticket was filed.',
   mostDowntime: 'Total hours each link or device was actually down from a fault in this window, biggest total first, summed from failure episodes on the 5-minute link rollups (an episode is IS-IS down or 10% or more loss lasting at least 10 minutes). This counts hours, not a percentage of the window. It differs from "Least available", which is a percent of the window and counts intentional maintenance drain as down; here maintenance is excluded and only real faults count, so the two rank different links and devices. These bars are uncapped totals, so they can exceed the per-failure 24h cap used in the failure summary.',
@@ -337,7 +323,7 @@ function NetworkView({
           impactful) and each tile shows its own loading. */}
       <HeadlineStrip overview={overviewQ} outages={outagesQ} impactful={impactfulQ} />
       <KeyFacts overview={overviewQ} impactful={impactfulQ} capacity={capacityQ} latency={latencyQ} scoped={scoped} />
-      <GroupBoundary query={overviewQ} title="Throughput over time" info={DEFS.throughputChart} height={300}>
+      <GroupBoundary query={overviewQ} title="Throughput over time" info={DEFS.throughputChart} height={300} sources={['throughput_ts']}>
         {(o) => <TrendsSection points={o.throughput_ts} onRange={onRange} />}
       </GroupBoundary>
 
@@ -346,15 +332,15 @@ function NetworkView({
         subtitle="The latency the network committed to versus what it delivered, and which links and devices were least available."
       />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <GroupBoundary query={availQ} title="Least available links" info={DEFS.availabilityLink}>
+        <GroupBoundary query={availQ} title="Least available links" info={DEFS.availabilityLink} sources={['link_availability']}>
           {(g) => <LinkAvailabilityPanel rows={g.link_availability ?? []} />}
         </GroupBoundary>
-        <GroupBoundary query={availQ} title="Least available devices" info={DEFS.availabilityDevice}>
+        <GroupBoundary query={availQ} title="Least available devices" info={DEFS.availabilityDevice} sources={['device_availability']}>
           {(g) => <DeviceAvailabilityPanel rows={g.device_availability ?? []} />}
         </GroupBoundary>
       </div>
       <div className="mb-6">
-        <GroupBoundary query={latencyQ} title="Committed vs measured latency" info={DEFS.perfLinks} height={200}>
+        <GroupBoundary query={latencyQ} title="Committed vs measured latency" info={DEFS.perfLinks} height={200} sources={['latency_links']}>
           {(g) => <PerfLinksPanel rows={g.latency_links ?? []} />}
         </GroupBoundary>
       </div>
@@ -364,20 +350,20 @@ function NetworkView({
         subtitle="Which links and devices are filling up, and where DIA uplinks stand against their committed rate."
       />
       <div className="mb-6">
-        <GroupBoundary query={capacityQ} title="Links carrying the most traffic" info={DEFS.topLinks}>
+        <GroupBoundary query={capacityQ} title="Links carrying the most traffic" info={DEFS.topLinks} sources={['top_links']}>
           {(g) => <TopLinksPanel rows={g.top_links ?? []} />}
         </GroupBoundary>
       </div>
       <div className="mb-6">
-        <GroupBoundary query={capacityQ} title="Fullest devices (user slots)" info={DEFS.deviceSlots}>
+        <GroupBoundary query={capacityQ} title="Fullest devices (user slots)" info={DEFS.deviceSlots} sources={['device_slots']}>
           {(g) => <DeviceSlotsPanel rows={g.device_slots ?? []} />}
         </GroupBoundary>
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <GroupBoundary query={capacityQ} title="Fullest links (capacity planning)" info={DEFS.capacityLinks}>
+        <GroupBoundary query={capacityQ} title="Fullest links (capacity planning)" info={DEFS.capacityLinks} sources={['fullest_links']}>
           {(g) => <CapacityPanel rows={g.capacity_links ?? []} />}
         </GroupBoundary>
-        <GroupBoundary query={capacityQ} title="DIA interfaces (capacity vs bandwidth)" info={DEFS.dia}>
+        <GroupBoundary query={capacityQ} title="DIA interfaces (capacity vs bandwidth)" info={DEFS.dia} sources={['dia_interfaces']}>
           {(g) => <DiaPanel rows={g.dia_interfaces ?? []} />}
         </GroupBoundary>
       </div>
@@ -389,42 +375,44 @@ function NetworkView({
       {/* MIXED groups under one band: outages, tickets and drain interleave, so
           each panel gates on its own group (never the whole band). */}
       <div className="mb-6">
-        <GroupBoundary query={outagesQ} title="Link failures over time" info={DEFS.outagesChart}>
+        <GroupBoundary query={outagesQ} title="Link failures over time" info={DEFS.outagesChart} sources={['outages_ts']}>
           {(g) => <OutagesOverTimePanel rows={g.outages_ts ?? []} />}
         </GroupBoundary>
       </div>
       <div className="mb-6">
-        <GroupBoundary query={outagesQ} title="Failure summary" info={DEFS.outageSummary}>
+        <GroupBoundary query={outagesQ} title="Failure summary" info={DEFS.outageSummary} sources={['outage_summary']}>
           {(g) => <OutageSummaryStrip summary={g.outage_summary} prev={g.prev?.outage_summary} />}
         </GroupBoundary>
       </div>
       <div className="mb-6">
-        <GroupBoundary query={ticketsQ} title="Incidents" info={DEFS.opsMgmt}>
+        {/* The incidents figures include outage-to-ticket coverage, so they also
+            rest on the outage list the tickets group scans. */}
+        <GroupBoundary query={ticketsQ} title="Incidents" info={DEFS.opsMgmt} sources={['ops_tickets', 'outage_list']}>
           {(g) => <IncidentsStrip tickets={g.ops_tickets} prev={g.prev} />}
         </GroupBoundary>
       </div>
       <div className="mb-6">
-        <GroupBoundary query={ticketsQ} title="Maintenance" info={DEFS.maintenance}>
+        <GroupBoundary query={ticketsQ} title="Maintenance" info={DEFS.maintenance} sources={['ops_tickets']}>
           {(g) => <MaintenanceStrip tickets={g.ops_tickets} prev={g.prev} />}
         </GroupBoundary>
       </div>
       <div className="mb-6">
-        <GroupBoundary query={outagesQ} title="Most failure time" info={DEFS.mostDowntime}>
+        <GroupBoundary query={outagesQ} title="Most failure time" info={DEFS.mostDowntime} sources={['downtime_links', 'downtime_devices']}>
           {(g) => <MostDowntimePanel links={g.downtime_links ?? []} devices={g.downtime_devices ?? []} />}
         </GroupBoundary>
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <GroupBoundary query={drainQ} title="Drain & undrain timing" info={DEFS.drainTiming}>
+        <GroupBoundary query={drainQ} title="Drain & undrain timing" info={DEFS.drainTiming} sources={['contrib_link_pks', 'link_down_events', 'status_changes']}>
           {(g) => (
             <DrainTimingPanel dt={g.drain_timing} prev={g.prev} deferred={deferred} deferredLoading={deferredPending} />
           )}
         </GroupBoundary>
-        <GroupBoundary query={outagesQ} title="Link failures by duration" info={DEFS.durationHist}>
+        <GroupBoundary query={outagesQ} title="Link failures by duration" info={DEFS.durationHist} sources={['reliability', 'degraded_links']}>
           {(g) => <ReliabilityPanel rel={g.reliability} prev={g.prev?.reliability} />}
         </GroupBoundary>
       </div>
       <div className="mb-6">
-        <GroupBoundary query={outagesQ} title="Interface errors & carrier flaps" info={DEFS.hotspots}>
+        <GroupBoundary query={outagesQ} title="Interface errors & carrier flaps" info={DEFS.hotspots} sources={['error_hotspots']}>
           {(g) => <HotspotsPanel rows={g.error_hotspots ?? []} />}
         </GroupBoundary>
       </div>
@@ -436,29 +424,44 @@ function NetworkView({
 
 // --- Progressive-loading primitives ---
 //
+// A group payload lists the panel queries that failed in `degraded` (the backend
+// panel names, see nhPanels in api/handlers/network_health.go). The fields those
+// panels fill hold a zero value, so any panel reading one of them must render as
+// unavailable rather than draw that zero as a measurement. `sources` names the
+// panels one rendered panel reads, so a failed query degrades only the panels
+// that depend on it.
+export function panelDegraded(degraded: string[] | undefined, sources: string[] | undefined): boolean {
+  if (!degraded?.length || !sources?.length) return false
+  return sources.some((s) => degraded.includes(s))
+}
+
 // GroupBoundary renders loading/error/data for one group query. Loading shows a
 // muted skeleton inside the same bordered section the real panel uses (so layout
 // doesn't jump); a resolved-but-errored payload (data.error) reads as
-// unavailable, matching the old data.error check. Only one branch renders at a
+// unavailable, matching the old data.error check, as does a payload whose
+// `degraded` names one of this panel's sources. Only one branch renders at a
 // time, so a panel's own SectionTitle never double-renders with the shell's.
-function GroupBoundary<T extends { error?: string }>({
+export function GroupBoundary<T extends { error?: string; degraded?: string[] }>({
   query,
   title,
   info,
-  bare = false,
   height = 120,
+  sources,
   children,
 }: {
   query: UseQueryResult<T>
   title?: string
   info?: string
-  bare?: boolean
   height?: number
+  // Backend panel names this panel's data comes from. Several call sites share
+  // one group query, so the check is per panel, not per query.
+  sources?: string[]
   children: (data: T) => React.ReactNode
 }) {
-  if (query.isPending) return <PanelLoading title={title} info={info} bare={bare} height={height} />
+  if (query.isPending) return <PanelLoading title={title} info={info} height={height} />
   if (query.error || !query.data || query.data.error)
-    return <PanelUnavailable title={title} info={info} bare={bare} message={query.data?.error} />
+    return <PanelUnavailable title={title} info={info} message={query.data?.error} />
+  if (panelDegraded(query.data.degraded, sources)) return <PanelUnavailable title={title} info={info} />
   // On a window change keepPreviousData keeps the prior data visible; dim it
   // while the new window is in flight.
   //
@@ -476,15 +479,12 @@ function GroupBoundary<T extends { error?: string }>({
 function PanelShell({
   title,
   info,
-  bare,
   children,
 }: {
   title?: string
   info?: string
-  bare?: boolean
   children: React.ReactNode
 }) {
-  if (bare) return <div className="mb-6">{children}</div>
   return (
     <section className="rounded-lg border border-border p-4">
       {title && <SectionTitle title={title} info={info} />}
@@ -496,16 +496,14 @@ function PanelShell({
 function PanelLoading({
   title,
   info,
-  bare,
   height = 120,
 }: {
   title?: string
   info?: string
-  bare?: boolean
   height?: number
 }) {
   return (
-    <PanelShell title={title} info={info} bare={bare}>
+    <PanelShell title={title} info={info}>
       <div className="animate-pulse space-y-2" style={{ minHeight: height }} aria-busy="true">
         <div className="h-3 w-1/3 rounded bg-muted" />
         <div className="h-3 w-2/3 rounded bg-muted" />
@@ -521,16 +519,14 @@ function PanelLoading({
 function PanelUnavailable({
   title,
   info,
-  bare,
   message,
 }: {
   title?: string
   info?: string
-  bare?: boolean
   message?: string
 }) {
   return (
-    <PanelShell title={title} info={info} bare={bare}>
+    <PanelShell title={title} info={info}>
       <div className="flex items-center gap-2 text-sm text-muted-foreground py-6">
         <AlertCircle className="h-4 w-4 text-amber-500" />
         <span>Couldn't load this section.{message ? ` ${message}` : ''}</span>
@@ -556,7 +552,7 @@ function UnavailableTile({ label, info }: { label: string; info?: string }) {
 // One headline tile bound to its own group query. StatCard's built-in
 // value===undefined skeleton covers the pending state; a failed group shows a
 // muted "—" tile instead of spinning forever.
-function HeadlineStat<T extends { error?: string }>({
+function HeadlineStat<T extends { error?: string; degraded?: string[] }>({
   q,
   pick,
   delta,
@@ -565,6 +561,7 @@ function HeadlineStat<T extends { error?: string }>({
   format,
   decimals,
   goodDirection,
+  sources,
   unavailable,
 }: {
   q: UseQueryResult<T>
@@ -575,12 +572,16 @@ function HeadlineStat<T extends { error?: string }>({
   format: 'number' | 'bandwidth'
   decimals?: number
   goodDirection?: 'up' | 'down' | 'neutral'
+  // Backend panel names this tile's figure comes from, so a failed panel that
+  // did not set the group error shows the muted tile instead of its zero.
+  sources?: string[]
   // Some groups return a successful payload that is still unusable (e.g. a
   // scoped impactful query that could not compute), flagged by their own field.
   // Render the muted tile for those too, so a failed compute does not show 0.
   unavailable?: (d: T) => boolean | undefined
 }) {
   if (q.error || q.data?.error) return <UnavailableTile label={label} info={info} />
+  if (panelDegraded(q.data?.degraded, sources)) return <UnavailableTile label={label} info={info} />
   if (q.data && unavailable?.(q.data)) return <UnavailableTile label={label} info={info} />
   const value = q.data ? pick(q.data) : undefined
   const d = q.data && delta ? delta(q.data) : undefined
@@ -619,6 +620,7 @@ function HeadlineStrip({
           decimals={1}
           goodDirection="up"
           info={DEFS.peak}
+          sources={['throughput_ts']}
           pick={(o) => o.headline.peak_bps}
           delta={(o) => deltaOrUndef(o.headline.deltas, 'peak_bps')}
         />
@@ -628,6 +630,7 @@ function HeadlineStrip({
           format="number"
           goodDirection="down"
           info={DEFS.outages}
+          sources={['reliability']}
           pick={(g) => g.outage_count}
           delta={(g) => g.outage_count_delta ?? undefined}
         />
@@ -638,6 +641,7 @@ function HeadlineStrip({
           decimals={1}
           goodDirection="down"
           info={DEFS.impactfulDowntime}
+          sources={['impactful']}
           pick={(g) => g.impactful_downtime_hours}
           delta={(g) => g.impactful_downtime_delta ?? undefined}
           unavailable={(g) => g.unavailable}
@@ -648,6 +652,7 @@ function HeadlineStrip({
           format="number"
           goodDirection="neutral"
           info={DEFS.activeLinks}
+          sources={['active_links']}
           pick={(o) => o.headline.active_links}
           delta={(o) => deltaOrUndef(o.headline.deltas, 'active_links')}
         />
@@ -661,11 +666,25 @@ function HeadlineStrip({
   )
 }
 
+// Both payloads carry the window the server resolved. On a range change
+// keepPreviousData can hand back the previous window's impactful figure while
+// overview already reports the new one, which would divide the old failure hours
+// by the new window length. Compares start and end, not days: two different
+// custom ranges can share a day count.
+export function sameNHWindow(
+  a: NetworkHealthWindow | undefined,
+  b: NetworkHealthWindow | undefined,
+): boolean {
+  return !!a && !!b && a.start === b.start && a.end === b.end
+}
+
 // Traffic-weighted availability, derived on the frontend from the Overview active
 // link count and the traffic-weighted failure hours (same formula the server used:
-// 1 - impactful_hours / (active_links x window_hours)).
-function deriveAvailability(o: NHOverview | undefined, imp: NHImpactful | undefined): number | null {
+// 1 - impactful_hours / (active_links x window_hours)). Null unless both payloads
+// describe the same window, so the two sides of the ratio always agree.
+export function deriveAvailability(o: NHOverview | undefined, imp: NHImpactful | undefined): number | null {
   if (!o || !imp || imp.unavailable) return null
+  if (!sameNHWindow(o.window, imp.window)) return null
   const windowHours = o.window.days * 24
   const activeLinks = o.headline.active_links
   if (activeLinks > 0 && windowHours > 0) {
@@ -676,10 +695,37 @@ function deriveAvailability(o: NHOverview | undefined, imp: NHImpactful | undefi
   return null
 }
 
+// Label for the traffic-weighted availability stat. A window mismatch reads as
+// loading only while it can still resolve on its own: a fetch is in flight, or
+// keepPreviousData is holding the previous window's payload (stale). A mismatch
+// between two settled payloads is not transient: a repeatedly failing impactful
+// refresh makes the worker keep its last good blob, whose window then stays
+// behind the overview's for as long as the failure lasts, so that case reads as
+// the dash. The dash also covers the cases with genuinely no figure to derive:
+// no active links, or an impactful payload that could not compute.
+export function availabilityText(
+  o: NHOverview | undefined,
+  imp: NHImpactful | undefined,
+  stale: boolean,
+  fetching = false,
+): string {
+  const a = deriveAvailability(o, imp)
+  if (a !== null) return `${a}%`
+  if (fetching && o && imp && !imp.unavailable && !sameNHWindow(o.window, imp.window)) return 'loading...'
+  return stale ? 'loading...' : '—'
+}
+
 // A single inline fact that renders its own group's loading/unavailable state.
-function statText<T extends { error?: string }>(q: UseQueryResult<T>, fmt: (d: T) => string): string {
+// sources names the backend panels the fact is read from, so a panel that failed
+// without setting the group error reads as unavailable rather than as its zero.
+function statText<T extends { error?: string; degraded?: string[] }>(
+  q: UseQueryResult<T>,
+  fmt: (d: T) => string,
+  sources?: string[],
+): string {
   if (q.isPending) return 'loading...'
   if (q.error || !q.data || q.data.error) return 'unavailable'
+  if (panelDegraded(q.data.degraded, sources)) return 'unavailable'
   return fmt(q.data)
 }
 
@@ -698,52 +744,62 @@ function KeyFacts({
 }) {
   const o = overview.data
   // Traffic-weighted availability cross-reads two groups (overview + impactful);
-  // show loading until both resolve and unavailable if either failed.
+  // show loading until both resolve and unavailable if either failed. It divides
+  // by the active link count, so a failed active_links panel makes it unavailable
+  // too.
   const availValue =
     overview.isPending || impactful.isPending
       ? 'loading...'
-      : overview.error || impactful.error || o?.error || impactful.data?.error
+      : overview.error || impactful.error || o?.error || impactful.data?.error || panelDegraded(o?.degraded, ['active_links'])
         ? 'unavailable'
-        : (() => {
-            const a = deriveAvailability(o, impactful.data)
-            return a === null ? '—' : `${a}%`
-          })()
+        : availabilityText(
+            o,
+            impactful.data,
+            overview.isPlaceholderData || impactful.isPlaceholderData,
+            overview.isFetching || impactful.isFetching,
+          )
 
-  const freshInfo = o
-    ? `${DEFS.freshness} The feed last advanced at ${o.freshness.feed_max} UTC; on the cached view the "behind" minutes are frozen at cache time, so compute the live lag from that timestamp.`
-    : DEFS.freshness
+  // The IS-IS and freshness labels read the same figures their values do, so a
+  // failed panel drops them to the bare label rather than "all healthy" / "0/0".
+  const isisOk = !panelDegraded(o?.degraded, ['isis'])
+  const freshOk = !panelDegraded(o?.degraded, ['freshness'])
+
+  const freshInfo =
+    o && freshOk
+      ? `${DEFS.freshness} The feed last advanced at ${o.freshness.feed_max} UTC; on the cached view the "behind" minutes are frozen at cache time, so compute the live lag from that timestamp.`
+      : DEFS.freshness
 
   return (
     <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground mb-8">
       <Stat label="traffic-weighted availability" value={availValue} info={DEFS.availability} />
       <Stat
         label="of seat capacity used"
-        value={statText(capacity, (g) => (g.capacity.util_pct === null ? '—' : `${g.capacity.util_pct}%`))}
+        value={statText(capacity, (g) => (g.capacity.util_pct === null ? '—' : `${g.capacity.util_pct}%`), ['seat_capacity'])}
         info={DEFS.capacity}
       />
       <Stat
         label="links within committed RTT"
-        value={statText(latency, (g) => (g.sla.total === 0 ? '—' : `${g.sla.within} of ${g.sla.total}`))}
+        value={statText(latency, (g) => (g.sla.total === 0 ? '—' : `${g.sla.within} of ${g.sla.total}`), ['sla'])}
         info={DEFS.sla}
       />
-      <Stat label="active devices" value={statText(overview, (g) => g.headline.active_devices.toLocaleString())} info={DEFS.activeDevices} />
+      <Stat label="active devices" value={statText(overview, (g) => g.headline.active_devices.toLocaleString(), ['active_devices'])} info={DEFS.activeDevices} />
       {!scoped && (
         <>
-          <Stat label="active metros" value={statText(overview, (g) => g.headline.active_metros.toLocaleString())} info={DEFS.activeMetros} />
-          <Stat label="less latency jitter than internet" value={statText(overview, (g) => `${g.headline.jitter_improve_pct}%`)} info={DEFS.jitter} />
-          <Stat label="avg packet loss on DoubleZero" value={statText(overview, (g) => `${g.headline.dz_loss_pct}%`)} info={DEFS.loss} />
+          <Stat label="active metros" value={statText(overview, (g) => g.headline.active_metros.toLocaleString(), ['metros'])} info={DEFS.activeMetros} />
+          <Stat label="less latency jitter than internet" value={statText(overview, (g) => `${g.headline.jitter_improve_pct}%`, ['latency_vs_internet'])} info={DEFS.jitter} />
+          <Stat label="avg packet loss on DoubleZero" value={statText(overview, (g) => `${g.headline.dz_loss_pct}%`, ['latency_vs_internet'])} info={DEFS.loss} />
           <Stat
             label={
-              o
+              o && isisOk
                 ? `IS-IS devices ${o.isis.overloaded === 0 && o.isis.unreachable === 0 ? 'all healthy' : 'flagged'}`
                 : 'IS-IS devices'
             }
-            value={statText(overview, (g) => `${g.isis.overloaded} overloaded, ${g.isis.unreachable} unreachable of ${g.isis.devices}`)}
+            value={statText(overview, (g) => `${g.isis.overloaded} overloaded, ${g.isis.unreachable} unreachable of ${g.isis.devices}`, ['isis'])}
             info={DEFS.isis}
           />
           <Stat
-            label={o ? `behind · ${o.freshness.devices_fresh}/${o.freshness.devices_active} devices reporting` : 'telemetry freshness'}
-            value={statText(overview, (g) => `telemetry ${Math.round(g.freshness.lag_seconds / 60)}m`)}
+            label={o && freshOk ? `behind · ${o.freshness.devices_fresh}/${o.freshness.devices_active} devices reporting` : 'telemetry freshness'}
+            value={statText(overview, (g) => `telemetry ${Math.round(g.freshness.lag_seconds / 60)}m`, ['freshness'])}
             info={freshInfo}
           />
         </>
@@ -756,14 +812,18 @@ function KeyFacts({
 // breadth), independent of any ticket. Ticket data lives in the separate
 // INCIDENTS and MAINTENANCE sections below, so no metric is shown twice. Same
 // visual language as HeadlineStrip/KeyFacts (StatCard grid).
-function OutageSummaryStrip({
+export function OutageSummaryStrip({
   summary,
   prev,
 }: {
   summary: NetworkHealthOutageSummary | null | undefined
   prev?: NetworkHealthOutageSummary | null
 }) {
-  if (!summary) return null
+  // A null summary means the server could not compute this panel: a successful
+  // query always returns a struct, zeroed for a quiet window. Render the same
+  // unavailable frame GroupBoundary uses, so the panel does not vanish (this
+  // strip is a GroupBoundary child, and returning null drops its whole section).
+  if (!summary) return <PanelUnavailable title="Failure summary" info={DEFS.outageSummary} />
   return (
     <section className="rounded-lg border border-border p-4 mb-6">
       <SectionTitle title="Failure summary" info={DEFS.outageSummary} />
@@ -910,7 +970,10 @@ function MaintenanceStrip({ tickets, prev }: { tickets: NetworkHealthTickets | n
   )
 }
 
-// Display labels for the root-cause enum. Passthrough for any future value.
+// Display labels for the root-cause enum. Covers every token the backend
+// publishes (nhRootCauseTokens in api/handlers/network_health.go) plus the
+// "other" catch-all it maps unrecognised upstream values to. Passthrough for any
+// future value.
 const ROOT_CAUSE_LABELS: Record<string, string> = {
   self_resolved: 'Self-resolved',
   network_external: 'External network',
@@ -919,9 +982,14 @@ const ROOT_CAUSE_LABELS: Record<string, string> = {
   hardware: 'Hardware',
   carrier: 'Carrier',
   false_positive: 'False positive',
+  duplicate: 'Duplicate',
+  software: 'Software',
+  dz_managed: 'DoubleZero managed',
+  human_error: 'Human error',
+  other: 'Other',
 }
 
-function rootCauseLabel(cause: string): string {
+export function rootCauseLabel(cause: string): string {
   return ROOT_CAUSE_LABELS[cause] ?? cause
 }
 
@@ -929,7 +997,7 @@ function rootCauseLabel(cause: string): string {
 // scaled to the largest count; self-resolved incidents (cleared on their own,
 // no operator action) are shown as a separate muted line so they do not read
 // as a fault category.
-function RootCauseBreakdown({ causes }: { causes: NetworkHealthRootCause[] }) {
+export function RootCauseBreakdown({ causes }: { causes: NetworkHealthRootCause[] }) {
   if (causes.length === 0) return null
   const real = causes.filter((c) => c.cause !== 'self_resolved')
   const selfResolved = causes.find((c) => c.cause === 'self_resolved')
@@ -968,7 +1036,7 @@ function RootCauseBreakdown({ causes }: { causes: NetworkHealthRootCause[] }) {
   )
 }
 
-function DrainTimingPanel({
+export function DrainTimingPanel({
   dt,
   prev,
   deferred,
@@ -988,7 +1056,7 @@ function DrainTimingPanel({
     <section className="rounded-lg border border-border p-4">
       <SectionTitle title="Drain & undrain timing" info={DEFS.drainTiming} />
       <p className="text-xs text-muted-foreground mb-4">
-        {dt.drains} drains, {dt.undrains} undrains; {dt.events_with_drain} of {dt.outage_count} link-down events
+        {dt.drains} drains, {dt.undrains} undrains; {dt.events_with_drain} of {dt.outage_count} link failures
         had a matching drain
         {undrainPending
           ? '.'
@@ -1195,7 +1263,6 @@ function LinkBarChart({
   kind,
   unit,
   color = BAR.blue,
-  refLine,
   emptyLabel = 'No links in this window.',
   labelWidth = 52,
 }: {
@@ -1203,7 +1270,6 @@ function LinkBarChart({
   kind: 'link' | 'device'
   unit?: string
   color?: string
-  refLine?: number
   emptyLabel?: string
   labelWidth?: number
 }) {
@@ -1236,7 +1302,6 @@ function LinkBarChart({
             )
           }}
         />
-        {refLine !== undefined && <ReferenceLine x={refLine} stroke="#64748b" strokeDasharray="4 4" strokeOpacity={0.7} />}
         <Bar
           dataKey="value"
           fill={color}
@@ -1519,9 +1584,34 @@ function CapacityPanel({ rows }: { rows: NetworkHealthCapacityLink[] }) {
   )
 }
 
+// The server nulls a row's percentage when the row has no denominator (a device
+// with max_users 0, a DIA interface with no port speed). Those rows render as
+// unknown, never as 0 or as a full bar.
+export function hasKnownDenominator(pct: number | null | undefined, denom: number): boolean {
+  return pct !== null && pct !== undefined && denom > 0
+}
+
+// One device-slot row: seats in use, and the three segment widths as a share of
+// the max_users cap. widths is null when the device has no cap set, where a
+// share of the cap has no meaning.
+export function deviceSlotRow(d: NetworkHealthDeviceSlots): {
+  known: boolean
+  used: number
+  widths: { unicast: string; sub: string; pub: string } | null
+} {
+  const used = d.unicast + d.mcast_sub + d.mcast_pub
+  if (!hasKnownDenominator(d.used_pct, d.max_users)) return { known: false, used, widths: null }
+  const seg = (n: number) => `${((100 * n) / d.max_users).toFixed(1)}%`
+  return {
+    known: true,
+    used,
+    widths: { unicast: seg(d.unicast), sub: seg(d.mcast_sub), pub: seg(d.mcast_pub) },
+  }
+}
+
 // Segmented per-device meter: user slots in use (unicast, multicast sub,
 // multicast pub) vs the device's max_users cap.
-function DeviceSlotsPanel({ rows }: { rows: NetworkHealthDeviceSlots[] }) {
+export function DeviceSlotsPanel({ rows }: { rows: NetworkHealthDeviceSlots[] }) {
   return (
     <section className="rounded-lg border border-border p-4">
       <SectionTitle title="Fullest devices (user slots)" info={DEFS.deviceSlots} />
@@ -1529,9 +1619,8 @@ function DeviceSlotsPanel({ rows }: { rows: NetworkHealthDeviceSlots[] }) {
       <ChartLegend items={[[BAR.blue, 'Unicast'], [BAR.amber, 'Multicast subscriber'], [BAR.slate, 'Multicast publisher']]} />
       <div className="space-y-2">
         {rows.map((d) => {
-          const denom = d.max_users || 1
-          const seg = (n: number) => `${(100 * n / denom).toFixed(1)}%`
-          const used = d.unicast + d.mcast_sub + d.mcast_pub
+          const { known, used, widths } = deviceSlotRow(d)
+          const seats = `Unicast ${d.unicast}, Multicast subscriber ${d.mcast_sub}, Multicast publisher ${d.mcast_pub}.`
           return (
             <div
               key={d.pk}
@@ -1540,15 +1629,19 @@ function DeviceSlotsPanel({ rows }: { rows: NetworkHealthDeviceSlots[] }) {
               <DeviceLink pk={d.pk} className="truncate text-muted-foreground">{d.code}</DeviceLink>
               <div
                 className="relative h-3 rounded-sm bg-muted/30 overflow-hidden"
-                title={`Unicast ${d.unicast}, Multicast subscriber ${d.mcast_sub}, Multicast publisher ${d.mcast_pub}. ${used} of ${d.max_users} max.`}
+                title={known ? `${seats} ${used} of ${d.max_users} max.` : `${seats} No max_users cap set.`}
               >
-                <div className="absolute inset-y-0" style={{ left: 0, width: seg(d.unicast), background: BAR.blue }} title={`Unicast ${d.unicast}`} />
-                <div className="absolute inset-y-0" style={{ left: seg(d.unicast), width: seg(d.mcast_sub), background: BAR.amber }} title={`Multicast subscriber ${d.mcast_sub}`} />
-                <div
-                  className="absolute inset-y-0"
-                  style={{ left: `calc(${seg(d.unicast)} + ${seg(d.mcast_sub)})`, width: seg(d.mcast_pub), background: BAR.slate }}
-                  title={`Multicast publisher ${d.mcast_pub}`}
-                />
+                {widths && (
+                  <>
+                    <div className="absolute inset-y-0" style={{ left: 0, width: widths.unicast, background: BAR.blue }} title={`Unicast ${d.unicast}`} />
+                    <div className="absolute inset-y-0" style={{ left: widths.unicast, width: widths.sub, background: BAR.amber }} title={`Multicast subscriber ${d.mcast_sub}`} />
+                    <div
+                      className="absolute inset-y-0"
+                      style={{ left: `calc(${widths.unicast} + ${widths.sub})`, width: widths.pub, background: BAR.slate }}
+                      title={`Multicast publisher ${d.mcast_pub}`}
+                    />
+                  </>
+                )}
               </div>
               <span className="text-right tabular-nums text-muted-foreground whitespace-nowrap">
                 <span style={{ color: BAR.blue }}>{d.unicast}</span>
@@ -1557,7 +1650,7 @@ function DeviceSlotsPanel({ rows }: { rows: NetworkHealthDeviceSlots[] }) {
                 {' / '}
                 <span style={{ color: BAR.slate }}>{d.mcast_pub}</span>
                 {' of '}
-                {d.max_users}
+                {known ? d.max_users : <span className="text-muted-foreground/60">no cap</span>}
               </span>
             </div>
           )
@@ -1568,23 +1661,39 @@ function DeviceSlotsPanel({ rows }: { rows: NetworkHealthDeviceSlots[] }) {
   )
 }
 
+// DIA rows split by whether the server could compute a utilization for them. An
+// interface whose port speed is missing has no denominator and arrives with
+// util_pct null; charting it as 0% would draw a busy interface as the idlest
+// one. Unknown rows are listed instead of dropped, because the server already
+// applied its row limit and a dropped row is not replaced by the next one.
+export function splitDiaRows(rows: NetworkHealthDiaInterface[]): {
+  measured: NetworkHealthDiaInterface[]
+  unknown: NetworkHealthDiaInterface[]
+} {
+  const measured: NetworkHealthDiaInterface[] = []
+  const unknown: NetworkHealthDiaInterface[] = []
+  for (const d of rows) {
+    if (hasKnownDenominator(d.util_pct, d.port_gbps)) measured.push(d)
+    else unknown.push(d)
+  }
+  return { measured, unknown }
+}
+
 // Direct Internet Access interfaces: P50/P99 outbound utilization as a percent
 // of provisioned capacity (CIR when set, else port speed), so headroom is
 // obvious without having to hold an unknown committed rate in your head.
 // Fullest first (by P99 utilization). The absolute Gbps and which capacity
 // figure applied still surface in the row sub / hover tooltip.
 function DiaPanel({ rows }: { rows: NetworkHealthDiaInterface[] }) {
-  const data = rows
+  const { measured, unknown } = splitDiaRows(rows)
+  const data = measured
     .map((d) => {
-      const denomGbps = d.port_gbps
-      const p50Util = denomGbps > 0 ? (d.p50_gbps / denomGbps) * 100 : 0
-      const p99Util = d.util_pct ?? 0
       const cirNote = d.cir_gbps > 0 ? ` · CIR ${d.cir_gbps} G` : ''
       return {
         label: `${d.device} ${d.intf}`,
-        a: p50Util,
-        b: p99Util,
-        sub: `P99 ${d.p99_gbps.toFixed(1)} G of ${denomGbps.toFixed(1)} G port speed${cirNote}`,
+        a: (d.p50_gbps / d.port_gbps) * 100,
+        b: d.util_pct!,
+        sub: `P99 ${d.p99_gbps.toFixed(1)} G of ${d.port_gbps.toFixed(1)} G port speed${cirNote}`,
         pk: d.device_pk,
       }
     })
@@ -1598,6 +1707,28 @@ function DiaPanel({ rows }: { rows: NetworkHealthDiaInterface[] }) {
         snapshot refreshed roughly monthly, so a recently changed interface may lag.
       </p>
       <GroupedBarChart rows={data} kind="device" unit="%" refLine={100} />
+      {unknown.length > 0 && (
+        <div className="mt-3 border-t border-border pt-3">
+          <p className="text-xs text-muted-foreground mb-2">
+            Port speed not reported, so utilization cannot be computed for these interfaces.
+          </p>
+          <ul className="space-y-1">
+            {unknown.map((d) => (
+              <li
+                key={`${d.device_pk}-${d.intf}`}
+                className="grid grid-cols-[1fr_auto] items-baseline gap-3 text-xs text-muted-foreground"
+              >
+                <span className="truncate">
+                  {d.device} {d.intf}
+                </span>
+                <span className="text-right tabular-nums whitespace-nowrap">
+                  P99 {d.p99_gbps.toFixed(1)} G
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </section>
   )
 }

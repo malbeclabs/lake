@@ -1362,19 +1362,15 @@ export async function fetchStatus(): Promise<StatusResponse> {
 
 export interface NetworkHealthDeltas {
   peak_bps: number | null
-  outage_count: number | null
   active_links: number | null
-  // Percent change of impactful downtime hours vs the prior window. Optional so
-  // the frontend type-checks even if the backend field lands slightly later.
-  impactful_downtime?: number | null
 }
 
+// The outage and impactful-downtime headline tiles come from the Outages and
+// Impactful groups, so they are not mirrored on the Overview headline.
 export interface NetworkHealthHeadline {
   peak_bps: number
   jitter_improve_pct: number
   dz_loss_pct: number
-  outage_count: number
-  impactful_downtime_hours: number
   active_links: number
   active_devices: number
   active_metros: number
@@ -1696,6 +1692,14 @@ export async function fetchNetworkHealthDeferred(
 // below is a SUBSET of the full network-health payload (same field names / JSON tags), plus
 // its own prior-window values where its panels show a "vs prior" delta and an
 // optional `error` string (same convention across every group endpoint).
+//
+// `degraded` lists the panel queries that failed inside the group (the panel
+// names the backend records in nhPanels, e.g. "link_availability", "sla",
+// "top_links"). The fields those panels fill carry a zero value, so a panel
+// whose source is named here renders unavailable instead of drawing that zero;
+// its siblings in the same group still render their real data. It is omitted
+// when every panel succeeded. `error` is set only when a CRITICAL panel failed
+// and marks the whole group unavailable.
 
 // Overview: the cheap headline signals + throughput chart + the contributor list
 // that feeds the scope dropdown. The Outages group owns the headline outage
@@ -1709,18 +1713,21 @@ export interface NHOverview {
   throughput_ts: NetworkHealthTsPoint[]
   contributors: NetworkHealthContributor[]
   generated_at: string
+  degraded?: string[]
   error?: string
 }
 
 export interface NHAvailabilityGroup {
   link_availability: NetworkHealthAvailability[]
   device_availability: NetworkHealthAvailability[]
+  degraded?: string[]
   error?: string
 }
 
 export interface NHLatencyGroup {
   latency_links: NetworkHealthPerfLink[]
   sla: NetworkHealthSla
+  degraded?: string[]
   error?: string
 }
 
@@ -1730,6 +1737,7 @@ export interface NHCapacityGroup {
   dia_interfaces: NetworkHealthDiaInterface[]
   top_links: NetworkHealthTrafficLink[]
   capacity_links: NetworkHealthCapacityLink[]
+  degraded?: string[]
   error?: string
 }
 
@@ -1748,6 +1756,7 @@ export interface NHOutagesGroup {
     outage_summary: NetworkHealthOutageSummary | null
     reliability: NetworkHealthReliabilityPrev
   }
+  degraded?: string[]
   error?: string
 }
 
@@ -1756,6 +1765,7 @@ export interface NHDrainGroup {
   // prev is the prior-window drain-timing figures directly (the backend emits the
   // bare NHDrainTiming under `prev`, not a wrapper), used for the panel deltas.
   prev?: NetworkHealthDrainTiming | null
+  degraded?: string[]
   error?: string
 }
 
@@ -1764,6 +1774,7 @@ export interface NHTicketsGroup {
   // prev is the prior-window ticket aggregate directly (bare NHTickets under
   // `prev`), used for the incidents/maintenance deltas.
   prev?: NetworkHealthTickets | null
+  degraded?: string[]
   error?: string
 }
 
@@ -1777,6 +1788,7 @@ export interface NHImpactful {
   impactful_downtime_delta: number | null
   unavailable?: boolean
   prev?: { impactful_downtime_hours: number }
+  degraded?: string[]
   error?: string
 }
 

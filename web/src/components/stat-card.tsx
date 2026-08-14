@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Info } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
-import { deltaColorClass, toneColorClass, formatDelta } from './stat-card-utils'
+import { deltaColorClass, formatDelta } from './stat-card-utils'
 
 interface StatCardPeer {
   label: string
@@ -21,11 +21,6 @@ interface StatCardProps {
   // fall is green (e.g. outages). 'neutral': no good direction, delta stays
   // muted (e.g. active links).
   goodDirection?: 'up' | 'down' | 'neutral'
-  // Optional grade on the value itself: good=green, warn=amber, bad=red. Used
-  // for a metric that is a genuine self-fact grade on the entity's own view
-  // (e.g. a contributor's share of self-reported incidents), never a
-  // cross-entity ranking.
-  tone?: 'good' | 'warn' | 'bad'
   max?: number // Optional maximum to display as "value / max"
   href?: string // Optional link to entity listing page
   peer?: StatCardPeer // Optional second stat shown side-by-side in the same card
@@ -105,10 +100,6 @@ function formatValue(
   }
 }
 
-// Render a delta with its sign. 'pct' (default) is a percent-change of the value
-// versus the prior window ("+3.20%"); 'pp' is a percentage-POINT change for rate
-// metrics that are themselves percentages ("+3.2 pp"), so the two are not
-// confused. Exported for MiniStat, which reuses the same formatting.
 function StatCardContent({
   label,
   value,
@@ -116,10 +107,9 @@ function StatCardContent({
   decimals,
   delta,
   goodDirection = 'up',
-  tone,
   max,
   info,
-}: Pick<StatCardProps, 'label' | 'value' | 'format' | 'decimals' | 'delta' | 'goodDirection' | 'tone' | 'max' | 'info'>) {
+}: Pick<StatCardProps, 'label' | 'value' | 'format' | 'decimals' | 'delta' | 'goodDirection' | 'max' | 'info'>) {
   const animatedValue = useAnimatedNumber(value)
   const isLoading = value === undefined
   const [showSkeleton, setShowSkeleton] = useState(false)
@@ -146,7 +136,7 @@ function StatCardContent({
           )
         ) : (
           <span className="inline-flex items-baseline gap-2">
-            <span className={`tabular-nums ${tone ? toneColorClass(tone) : ''}`}>
+            <span className="tabular-nums">
               {formatValue(animatedValue, format, decimals)}
               {max !== undefined && (
                 <span className="text-muted-foreground">/{formatValue(max, format, decimals)}</span>
@@ -174,17 +164,17 @@ function StatCardContent({
   )
 }
 
-export function StatCard({ label, value, format, decimals, delta, goodDirection, tone, max, href, peer, info }: StatCardProps) {
+export function StatCard({ label, value, format, decimals, delta, goodDirection, max, href, peer, info }: StatCardProps) {
   if (peer) {
     return (
       <div className="rounded-[0.3rem] bg-muted/50 p-2 lg:p-4 flex items-stretch divide-x divide-border">
         <div className="flex-1 text-center pr-2 lg:pr-4">
           {href ? (
             <Link to={href} className="block hover:text-foreground transition-colors">
-              <StatCardContent label={label} value={value} format={format} decimals={decimals} delta={delta} goodDirection={goodDirection} tone={tone} max={max} info={info} />
+              <StatCardContent label={label} value={value} format={format} decimals={decimals} delta={delta} goodDirection={goodDirection} max={max} info={info} />
             </Link>
           ) : (
-            <StatCardContent label={label} value={value} format={format} decimals={decimals} delta={delta} goodDirection={goodDirection} tone={tone} max={max} info={info} />
+            <StatCardContent label={label} value={value} format={format} decimals={decimals} delta={delta} goodDirection={goodDirection} max={max} info={info} />
           )}
         </div>
         <div className="flex-1 text-center pl-2 lg:pl-4">
@@ -201,7 +191,7 @@ export function StatCard({ label, value, format, decimals, delta, goodDirection,
   }
 
   const content = (
-    <StatCardContent label={label} value={value} format={format} decimals={decimals} delta={delta} goodDirection={goodDirection} tone={tone} max={max} info={info} />
+    <StatCardContent label={label} value={value} format={format} decimals={decimals} delta={delta} goodDirection={goodDirection} max={max} info={info} />
   )
 
   if (href) {
