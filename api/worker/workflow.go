@@ -36,6 +36,12 @@ const (
 	// when the activity is running close to its StartToCloseTimeout budget.
 	slowRefreshThreshold = 10 * time.Second
 
+	// retryAttemptMargin pads a failed attempt's observed cost when checking
+	// whether the parent activity still has room for a second attempt (see
+	// retryBudget). It absorbs the variance between two runs of the same query;
+	// a normal entry refreshes well inside it (see slowRefreshThreshold).
+	retryAttemptMargin = 10 * time.Second
+
 	// Defaults for the per-environment load-shaping knobs (see loadRefreshConfig).
 	// Prod runs these against ClickHouse Cloud; staging overrides them lower/longer
 	// to spread load across its smaller self-hosted ClickHouse.
@@ -43,8 +49,21 @@ const (
 	defaultRefreshConcurrency = 8
 	defaultActivityTimeout    = 3 * time.Minute
 	// defaultRefreshTimeout is the per-entry refresh context deadline, applied
-	// when a cacheEntry does not set its own timeout.
+	// when a cacheEntry does not set its own timeout. It is also the ceiling for
+	// every entry in the slow batch (see TestEntryTimeoutsFitTheirActivityBudget):
+	// an entry that needs longer belongs in heavyEntries.
 	defaultRefreshTimeout = 60 * time.Second
+
+	// nhHeavyRefreshTimeout is the per-entry budget for the two heavy Network
+	// Health groups. Their queries run under max_execution_time = 170 (see
+	// handlers' networkHealthDeferredQuerySettings) plus decode and write.
+	nhHeavyRefreshTimeout = 180 * time.Second
+	// heavyActivityHeadroom is what RefreshHeavyCaches keeps above its slowest
+	// entry, so an entry that exhausts its own budget records its own failure
+	// instead of being cancelled by the activity deadline first.
+	heavyActivityHeadroom = 60 * time.Second
+	// heavyActivityTimeout is RefreshHeavyCaches's StartToCloseTimeout.
+	heavyActivityTimeout = nhHeavyRefreshTimeout + heavyActivityHeadroom
 
 	// continueAsNewTargetWindow bounds workflow history: PageCacheWorkflow
 	// continues-as-new after roughly this much wall-clock regardless of the
@@ -86,7 +105,9 @@ func (p PageCacheParams) withDefaults() PageCacheParams {
 		p.ActivityTimeout = defaultActivityTimeout
 	}
 	if p.ContinueAsNewThreshold <= 0 {
-		p.ContinueAsNewThreshold = max(int(continueAsNewTargetWindow/p.RefreshInterval), 1)
+		// Floor of 2: the loop skips the heavy refresh on its final iteration, so a
+		// single-iteration window would never run one at all.
+		p.ContinueAsNewThreshold = max(int(continueAsNewTargetWindow/p.RefreshInterval), 2)
 	}
 	return p
 }
@@ -105,6 +126,13 @@ var (
 	// contention. Phrased as a timeout so dberror classifies it transient and it
 	// escalates only at transientErrorAfterFailures (a blip shouldn't page).
 	errFastRefreshDeadline = errors.New("page-cache fast refresh deadline exceeded")
+
+	// errHeavyRefreshDeadline: a heavy Network Health entry (RefreshHeavyCaches)
+	// hit the heavy activity's StartToCloseTimeout, i.e. it overran its own
+	// budget plus heavyActivityHeadroom. Phrased as a timeout so it escalates at
+	// transientErrorAfterFailures, matching errFastRefreshDeadline: the entry is
+	// slow, not starved, and the last good blob is still served.
+	errHeavyRefreshDeadline = errors.New("page-cache heavy refresh deadline exceeded")
 )
 
 // cacheEntry defines a single cache key to refresh. everyN sets a slow-refresh
@@ -118,8 +146,8 @@ type cacheEntry struct {
 	everyN int
 	fn     func(ctx context.Context) (any, error)
 	// timeout overrides the per-refresh context deadline. Zero means the default
-	// (see refresh). The two heavy Network Health groups (impactful, deferred)
-	// set it to 180s so their max_execution_time=170 queries can finish and cache.
+	// (see refresh). Only heavyEntries set it: they run in their own activity,
+	// which is the one with budget for a timeout above defaultRefreshTimeout.
 	timeout time.Duration
 }
 
@@ -168,33 +196,50 @@ type Activities struct {
 	RefreshConcurrency int
 	// esc escalates consecutive refresh failures per cache key from WARN to
 	// ERROR (zero value: errorAfterFailures / transientErrorAfterFailures).
-	esc     logger.Escalator
-	writeMu sync.Mutex // serializes WritePageCache calls to avoid Postgres OOM from concurrent large JSONB upserts
+	esc logger.Escalator
+	// degradedEsc escalates a Network Health refresh that succeeded but could not
+	// compute every panel. Set in the Activities literal (see pagecache.go): a
+	// degraded panel is a served-degraded condition, not a terminal one, so it
+	// escalates far later than a failed refresh.
+	degradedEsc logger.Escalator
+	writeMu     sync.Mutex // serializes WritePageCache calls to avoid Postgres OOM from concurrent large JSONB upserts
+}
+
+// nhDegradedErrorAfter is the consecutive-cycle count at which a Network Health
+// group that keeps reporting a degraded panel escalates to ERROR: ~10 minutes at
+// the default 30s refresh interval. A brief hole self-heals and the blob is still
+// written, so it must not page on the first cycle; a panel that stays dark does.
+const nhDegradedErrorAfter = 20
+
+// nhDegraded escalates a partially-failed Network Health refresh under its own
+// counter, keyed separately from the entry's query leg. The blob is still
+// written, so the healthy panels stay fresh; a panel that keeps failing pages
+// once the streak crosses the threshold.
+func (a *Activities) nhDegraded(name, key string, panels []string) {
+	if len(panels) == 0 {
+		a.degradedEsc.Reset(key + ":degraded")
+		return
+	}
+	a.degradedEsc.Fail(a.Log, key+":degraded", "cache refresh degraded", "cache", name, "panels", panels)
+}
+
+// nhOutcome turns one Network Health group's payload into a refresh outcome.
+// errMsg is the group's Error, meaning a critical panel failed: it becomes a
+// refreshError so the last good blob is kept instead of caching zeros, and the
+// entry's own escalator owns that alert. Otherwise the blob is written and any
+// degraded panels escalate under their own, much later counter, so one failure
+// still produces at most one alert-bearing line.
+func (a *Activities) nhOutcome(name, key, errMsg string, degraded []string) error {
+	if errMsg != "" {
+		return &refreshError{errMsg}
+	}
+	a.nhDegraded(name, key, degraded)
+	return nil
 }
 
 func (a *Activities) entries() []cacheEntry {
 	api := a.API
 	return []cacheEntry{
-		// The two heavy Network Health groups are scheduled FIRST so they start at
-		// the head of the concurrency-limited batch and have the whole activity
-		// budget to finish their 170s queries, rather than being cut when scheduled
-		// last. Their per-entry timeout is 180s (see cacheEntry.timeout).
-		{name: "network health impactful", key: handlers.NetworkHealthImpactfulCacheKey, timeout: 180 * time.Second, fn: func(ctx context.Context) (any, error) {
-			start, end := handlers.DefaultNetworkHealthWindow()
-			resp := api.FetchNetworkHealthImpactfulData(ctx, start, end, "")
-			if resp.Error != "" {
-				return nil, &refreshError{resp.Error}
-			}
-			return resp, nil
-		}},
-		{name: "network health deferred", key: handlers.NetworkHealthDeferredCacheKey, timeout: 180 * time.Second, fn: func(ctx context.Context) (any, error) {
-			start, end := handlers.DefaultNetworkHealthWindow()
-			resp := api.FetchNetworkHealthDeferredData(ctx, start, end, "")
-			if resp.Error != "" {
-				return nil, &refreshError{resp.Error}
-			}
-			return resp, nil
-		}},
 		{name: "topology", key: "topology", fn: func(ctx context.Context) (any, error) {
 			resp, err := api.FetchTopologyData(ctx)
 			if err != nil {
@@ -314,49 +359,67 @@ func (a *Activities) entries() []cacheEntry {
 		// Network Health is split into independent data-source-group caches so the
 		// page loads progressively and no slow group blocks another. Each group is a
 		// strict subset of the old monolith, so each refreshes faster than the single
-		// entry did. Only the headline-critical groups (overview: throughput/peak;
-		// outages: reliability; impactful; deferred) return a refreshError on a
-		// critical failure so their last-good blob is kept; the rest always write. See
-		// pageCacheRefreshConcurrency for the aggregate-load guardrail.
+		// entry did. Every group reports two things: resp.Error, set when a CRITICAL
+		// panel failed, which becomes a refreshError so the last-good blob is kept
+		// instead of caching zeros; and resp.Degraded, the panels that failed without
+		// invalidating the rest, which still writes but escalates under its own
+		// counter (see nhDegraded). The two heavy groups (impactful, deferred)
+		// refresh in their own activity, see heavyEntries.
 		{name: "network health overview", key: handlers.NetworkHealthOverviewCacheKey, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()
 			resp := api.FetchNetworkHealthOverviewData(ctx, start, end, "")
-			if resp.Error != "" {
-				return nil, &refreshError{resp.Error}
+			if err := a.nhOutcome("network health overview", handlers.NetworkHealthOverviewCacheKey, resp.Error, resp.Degraded); err != nil {
+				return nil, err
 			}
 			return resp, nil
 		}},
 		{name: "network health availability", key: handlers.NetworkHealthAvailabilityCacheKey, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()
-			return api.FetchNetworkHealthAvailabilityData(ctx, start, end, ""), nil
+			resp := api.FetchNetworkHealthAvailabilityData(ctx, start, end, "")
+			if err := a.nhOutcome("network health availability", handlers.NetworkHealthAvailabilityCacheKey, resp.Error, resp.Degraded); err != nil {
+				return nil, err
+			}
+			return resp, nil
 		}},
 		{name: "network health latency", key: handlers.NetworkHealthLatencyCacheKey, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()
-			return api.FetchNetworkHealthLatencyData(ctx, start, end, ""), nil
+			resp := api.FetchNetworkHealthLatencyData(ctx, start, end, "")
+			if err := a.nhOutcome("network health latency", handlers.NetworkHealthLatencyCacheKey, resp.Error, resp.Degraded); err != nil {
+				return nil, err
+			}
+			return resp, nil
 		}},
 		{name: "network health capacity", key: handlers.NetworkHealthCapacityCacheKey, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()
-			return api.FetchNetworkHealthCapacityData(ctx, start, end, ""), nil
+			resp := api.FetchNetworkHealthCapacityData(ctx, start, end, "")
+			if err := a.nhOutcome("network health capacity", handlers.NetworkHealthCapacityCacheKey, resp.Error, resp.Degraded); err != nil {
+				return nil, err
+			}
+			return resp, nil
 		}},
 		{name: "network health outages", key: handlers.NetworkHealthOutagesCacheKey, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()
 			resp := api.FetchNetworkHealthOutagesData(ctx, start, end, "")
-			if resp.Error != "" {
-				return nil, &refreshError{resp.Error}
+			if err := a.nhOutcome("network health outages", handlers.NetworkHealthOutagesCacheKey, resp.Error, resp.Degraded); err != nil {
+				return nil, err
 			}
 			return resp, nil
 		}},
 		{name: "network health drain", key: handlers.NetworkHealthDrainCacheKey, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()
-			return api.FetchNetworkHealthDrainData(ctx, start, end, ""), nil
+			resp := api.FetchNetworkHealthDrainData(ctx, start, end, "")
+			if err := a.nhOutcome("network health drain", handlers.NetworkHealthDrainCacheKey, resp.Error, resp.Degraded); err != nil {
+				return nil, err
+			}
+			return resp, nil
 		}},
 		{name: "network health tickets", key: handlers.NetworkHealthTicketsCacheKey, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()
 			resp := api.FetchNetworkHealthTicketsData(ctx, start, end, "")
 			// A transient ops-API outage sets resp.Error; keep the last-good blob
 			// instead of caching an empty aggregate (like overview/outages/impactful).
-			if resp.Error != "" {
-				return nil, &refreshError{resp.Error}
+			if err := a.nhOutcome("network health tickets", handlers.NetworkHealthTicketsCacheKey, resp.Error, resp.Degraded); err != nil {
+				return nil, err
 			}
 			return resp, nil
 		}},
@@ -370,7 +433,35 @@ type refreshError struct{ msg string }
 
 func (e *refreshError) Error() string { return e.msg }
 
-// RefreshCaches refreshes all page cache entries, writing results to Postgres.
+// batchConcurrency is the in-flight limit for the slow batch: the configured
+// concurrency minus the heavy entries' share. RefreshHeavyCaches runs alongside
+// this batch, so reserving their slots keeps the aggregate in-flight entry count
+// against ClickHouse at the configured value rather than above it. Floored at 1
+// so the minimum concurrency setting still refreshes.
+//
+// The reservation is unconditional rather than tracking live heavy occupancy.
+// The workflow no longer awaits the heavy run inside its loop, so a slow scan
+// spans several cycles and overlaps several batches; the batch's width is what
+// keeps that from oversubscribing ClickHouse. Reclaiming the two slots while the
+// scans are idle would shorten a batch that is already far shorter than the
+// refresh interval, and only at the price of making the heavy entries queue
+// behind batch entries for a shared limiter, which would eat the
+// heavyActivityHeadroom that lets them record their own failures.
+func (a *Activities) batchConcurrency() int {
+	limit := a.RefreshConcurrency
+	if limit <= 0 {
+		limit = defaultRefreshConcurrency
+	}
+	if n := limit - len(a.heavyEntries()); n >= 1 {
+		limit = n
+	}
+	return limit
+}
+
+// RefreshCaches refreshes the slow-batch page cache entries, writing results to
+// Postgres. The heavy Network Health scans are not in this batch (see
+// heavyEntries), so every entry here fits defaultRefreshTimeout and the batch
+// still refreshes within the cycle.
 //
 // Concurrency history: 2-wide was too slow (each entry refreshed only every few
 // minutes); fully unbounded (~28 entries) oversubscribed ClickHouse (~55
@@ -379,10 +470,7 @@ func (e *refreshError) Error() string { return e.msg }
 // while still refreshing the batch within the cycle.
 func (a *Activities) RefreshCaches(ctx context.Context, cycle int) error {
 	start := time.Now()
-	limit := a.RefreshConcurrency
-	if limit <= 0 {
-		limit = defaultRefreshConcurrency
-	}
+	limit := a.batchConcurrency()
 	// Distinguish a real worker shutdown (deploy) from an activity-deadline
 	// cancellation so tail-entry starvation under the StartToCloseTimeout is
 	// counted rather than silently swallowed as "shutdown".
@@ -418,10 +506,9 @@ func (a *Activities) RefreshCaches(ctx context.Context, cycle int) error {
 	// cache entries every refresh cycle. That oversubscribed ClickHouse badly
 	// enough to saturate the cluster and starve the network-default view's own
 	// queries (see .superpowers/sdd/stabilize-report.md). Scoped requests now
-	// always fall back to a live compute: each group handler reads its
-	// per-contributor cache key first, MISSes, and computes that group live
-	// under its deadline — slower per-contributor page loads, but it does not
-	// compete with the default view for cluster capacity.
+	// always fall back to a live compute: each group handler computes the scoped
+	// view live under its deadline — slower per-contributor page loads, but it
+	// does not compete with the default view for cluster capacity.
 	_ = g.Wait()
 	a.Log.Info("page cache refresh complete", "duration", time.Since(start).Round(time.Millisecond))
 	return nil
@@ -471,12 +558,62 @@ func (a *Activities) RefreshLatestCaches(ctx context.Context) error {
 	return nil
 }
 
+// heavyEntries are the two Network Health groups whose ClickHouse scans need
+// longer than the slow batch's per-entry ceiling (defaultRefreshTimeout). They
+// refresh in their own activity so a 180s scan cannot consume the batch's
+// StartToCloseTimeout: inside the batch they left it zero headroom, so a slow
+// scan was cut by the activity deadline (recorded as batch starvation, both
+// against the scan itself and against whichever entries had not run, never as
+// its own failure) and stretched every other page's refresh cadence by up to
+// 180s.
+func (a *Activities) heavyEntries() []cacheEntry {
+	api := a.API
+	return []cacheEntry{
+		{name: "network health impactful", key: handlers.NetworkHealthImpactfulCacheKey, timeout: nhHeavyRefreshTimeout, fn: func(ctx context.Context) (any, error) {
+			start, end := handlers.DefaultNetworkHealthWindow()
+			resp := api.FetchNetworkHealthImpactfulData(ctx, start, end, "")
+			if err := a.nhOutcome("network health impactful", handlers.NetworkHealthImpactfulCacheKey, resp.Error, resp.Degraded); err != nil {
+				return nil, err
+			}
+			return resp, nil
+		}},
+		{name: "network health deferred", key: handlers.NetworkHealthDeferredCacheKey, timeout: nhHeavyRefreshTimeout, fn: func(ctx context.Context) (any, error) {
+			start, end := handlers.DefaultNetworkHealthWindow()
+			resp := api.FetchNetworkHealthDeferredData(ctx, start, end, "")
+			if err := a.nhOutcome("network health deferred", handlers.NetworkHealthDeferredCacheKey, resp.Error, resp.Degraded); err != nil {
+				return nil, err
+			}
+			return resp, nil
+		}},
+	}
+}
+
+// RefreshHeavyCaches refreshes the heavy Network Health entries under their own
+// StartToCloseTimeout (heavyActivityTimeout), which sits heavyActivityHeadroom
+// above their per-entry budget. PageCacheWorkflow starts it alongside the batch
+// and never awaits it inside the loop, so it runs on its own cadence instead of
+// dictating the cycle; a new run starts only once the previous one has finished,
+// so two heavy runs never overlap each other.
+func (a *Activities) RefreshHeavyCaches(ctx context.Context) error {
+	shuttingDown := workerStopping(ctx)
+	g, gctx := errgroup.WithContext(ctx)
+	for _, entry := range a.heavyEntries() {
+		g.Go(func() error {
+			a.refresh(gctx, entry.name, entry.key, entry.fn, entry.timeout, shuttingDown, errHeavyRefreshDeadline)
+			return nil
+		})
+	}
+	_ = g.Wait()
+	return nil
+}
+
 // refresh runs one cache entry's fetch under a per-attempt context deadline and
 // writes the result. timeout overrides that deadline when > 0; otherwise
 // defaultRefreshTimeout applies. deadlineErr is the sentinel recorded when the
 // parent (activity) context is cancelled by its own deadline rather than a
 // worker shutdown; it selects the escalation cadence (errBatchDeadline for the
-// slow batch, errFastRefreshDeadline for the fast loop).
+// slow batch, errFastRefreshDeadline for the fast loop, errHeavyRefreshDeadline
+// for the heavy one).
 func (a *Activities) refresh(parentCtx context.Context, name, key string, fn func(context.Context) (any, error), timeout time.Duration, shuttingDown func() bool, deadlineErr error) {
 	start := time.Now()
 	var queryDuration, writeDuration time.Duration
@@ -504,8 +641,11 @@ func (a *Activities) refresh(parentCtx context.Context, name, key string, fn fun
 				a.interrupted(name, key, err, shuttingDown, deadlineErr)
 				return
 			}
-			// Query error or timeout. Retry once before counting as a failure.
-			if attempt < maxAttempts-1 {
+			// Query error or timeout. Retry once before counting as a failure,
+			// but only when the parent still has room for a second attempt:
+			// otherwise the retry is cut by the activity deadline and recorded as
+			// deadline starvation instead of this entry's own failure.
+			if attempt < maxAttempts-1 && hasBudgetFor(parentCtx, retryBudget(queryDuration, timeout)) {
 				a.Log.Warn("cache refresh failed, retrying", "cache", name, "attempt", attempt+1, "error", err)
 				continue
 			}
@@ -548,13 +688,31 @@ func (a *Activities) refresh(parentCtx context.Context, name, key string, fn fun
 	}
 }
 
+// hasBudgetFor reports whether ctx has at least d left. A context without a
+// deadline is unlimited.
+func hasBudgetFor(ctx context.Context, d time.Duration) bool {
+	dl, ok := ctx.Deadline()
+	return !ok || time.Until(dl) >= d
+}
+
+// retryBudget is how much of the parent activity's budget a second attempt
+// needs: what the failed attempt actually cost plus retryAttemptMargin, capped
+// at the entry's own timeout since no attempt can run longer than that. Gating
+// on the full timeout instead denies the retry to an entry that failed in
+// milliseconds with most of the budget still on the clock, and a.esc.Reset only
+// runs on success, so that skipped retry is recorded as a failure.
+func retryBudget(attemptCost, timeout time.Duration) time.Duration {
+	return min(attemptCost+retryAttemptMargin, timeout)
+}
+
 // interrupted handles a refresh cut short because its parent context was
 // cancelled. A genuine worker shutdown (deploy) is benign and not counted;
 // otherwise the activity ran out of its StartToCloseTimeout and this entry is
 // being starved — count it (as deadlineErr) so it surfaces/escalates rather than
 // hiding as "shutdown". deadlineErr selects the escalation cadence per cadence
-// (errBatchDeadline: strict, for the slow batch; errFastRefreshDeadline: transient,
-// for the self-healing fast loop). cause is the underlying fn error, if any, and
+// (errBatchDeadline: strict, for the slow batch; errFastRefreshDeadline and
+// errHeavyRefreshDeadline: transient, for the self-healing fast and heavy
+// activities). cause is the underlying fn error, if any, and
 // is attached as a log attribute only (not wrapped into the classification error).
 func (a *Activities) interrupted(name, key string, cause error, shuttingDown func() bool, deadlineErr error) {
 	if shuttingDown == nil || shuttingDown() {
@@ -615,7 +773,41 @@ func PageCacheWorkflow(ctx temporalworkflow.Context, iteration int, p PageCacheP
 	}
 	fastCtx := temporalworkflow.WithActivityOptions(ctx, fastActOpts)
 
+	// RefreshHeavyCaches carries the two 180s Network Health scans. Its budget is
+	// their per-entry timeout plus heavyActivityHeadroom, so an entry that exhausts
+	// its own budget records its own failure instead of being cancelled by the
+	// activity deadline at the same instant. The headroom is also the window in
+	// which an entry that fails early can still take its second attempt (see
+	// refresh's retryBudget gate).
+	heavyActOpts := temporalworkflow.ActivityOptions{
+		StartToCloseTimeout: heavyActivityTimeout,
+		RetryPolicy: &temporal.RetryPolicy{
+			MaximumAttempts: 1,
+		},
+	}
+	heavyCtx := temporalworkflow.WithActivityOptions(ctx, heavyActOpts)
+
+	// heavy is the outstanding RefreshHeavyCaches run. It is started at the top of
+	// a cycle and never awaited inside the loop, so the cycle period stays
+	// batch + sleep window: a heavy scan that runs to its 240s budget refreshes
+	// its own two blobs later without stretching every other page cache's refresh
+	// interval with it. Its slots against ClickHouse stay reserved for as long as
+	// it runs, across cycle boundaries (see batchConcurrency).
+	var heavy temporalworkflow.Future
+
 	for iteration < p.ContinueAsNewThreshold {
+		// Only one heavy run at a time: a scan still going from an earlier cycle
+		// keeps this cycle from starting a second copy. The final iteration starts
+		// none at all: the drain below would then block on a scan started moments
+		// earlier, stalling every page cache (including the 3s latest-slots one)
+		// for up to the heavy budget. Skipping one heavy refresh per
+		// continue-as-new window costs far less than that stall. Scheduling this
+		// activity needs no version guard for the same reason the cycle argument
+		// below does not: Start terminates and restarts the workflow on deploy.
+		if iteration+1 < p.ContinueAsNewThreshold && heavyRefreshDue(heavy) {
+			heavy = temporalworkflow.ExecuteActivity(heavyCtx, (*Activities).RefreshHeavyCaches)
+		}
+
 		// iteration doubles as the slow-refresh cycle counter (see publisherCheckEveryN).
 		// It resets to 0 at each continue-as-new boundary; carrying it across would
 		// require threading it through NewContinueAsNewError for no real benefit, so
@@ -651,5 +843,22 @@ func PageCacheWorkflow(ctx temporalworkflow.Context, iteration int, p PageCacheP
 		}
 	}
 
+	// Drain the outstanding heavy run before continuing as new. A pending activity
+	// is cancelled at the continue-as-new boundary, which would cut a scan
+	// mid-flight, record it as a failure, and leave both heavy blobs unwritten for
+	// that cycle. This is the only place the loop waits on it, and the run it waits
+	// on started at least one cycle back (the last iteration starts none), so it
+	// has already had a full cycle to finish.
+	if heavy != nil {
+		_ = heavy.Get(ctx, nil)
+	}
+
 	return temporalworkflow.NewContinueAsNewError(ctx, PageCacheWorkflow, 0, p)
+}
+
+// heavyRefreshDue reports whether a new RefreshHeavyCaches run may start: only
+// when none is outstanding. heavy is nil before the first run. Future.IsReady
+// resolves from workflow history, so this decision replays deterministically.
+func heavyRefreshDue(heavy temporalworkflow.Future) bool {
+	return heavy == nil || heavy.IsReady()
 }

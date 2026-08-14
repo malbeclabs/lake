@@ -49,9 +49,7 @@ func TestServeNHGroupQueuesUnderConcurrentScopedLoad(t *testing.T) {
 			// (no DB needed) and goes straight to the live-compute semaphore.
 			req = req.WithContext(ContextWithEnv(req.Context(), EnvTestnet))
 			rw := httptest.NewRecorder()
-			a.serveNHGroup(rw, req,
-				"k", func(string) string { return "ck" },
-				fetch, nhGroupDeadline)
+			a.serveNHGroup(rw, req, "k", fetch, nhGroupDeadline)
 			switch rw.Code {
 			case http.StatusServiceUnavailable:
 				atomic.AddInt32(&got503, 1)
@@ -68,6 +66,139 @@ func TestServeNHGroupQueuesUnderConcurrentScopedLoad(t *testing.T) {
 	}
 	if got200 != n {
 		t.Fatalf("expected %d served (200), got %d", n, got200)
+	}
+}
+
+// TestServeNHGroupShedsWithoutRunningQuery pins the shed contract every group
+// endpoint inherits from serveNHGroup: a request whose deadline expires while
+// queued is answered 503 and its query never starts, so a saturated pool is
+// never driven deeper by the requests waiting on it.
+func TestServeNHGroupShedsWithoutRunningQuery(t *testing.T) {
+	// Fill every slot so the request must queue.
+	for i := 0; i < cap(nhLiveComputeSem); i++ {
+		nhLiveComputeSem <- struct{}{}
+	}
+	defer func() {
+		for i := 0; i < cap(nhLiveComputeSem); i++ {
+			<-nhLiveComputeSem
+		}
+	}()
+
+	var ran atomic.Bool
+	fetch := func(ctx context.Context, start, end time.Time, contrib string) any {
+		ran.Store(true)
+		return map[string]any{}
+	}
+
+	a := &API{}
+	// testnet env => isMainnet false => no cache read, so a nil PgPool is never
+	// touched and the request goes straight to the live-compute semaphore.
+	req := httptest.NewRequest(http.MethodGet, "/api/network-health/capacity?days=29", nil)
+	req = req.WithContext(ContextWithEnv(req.Context(), EnvTestnet))
+	rw := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		a.serveNHGroup(rw, req, "k", fetch, 100*time.Millisecond)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("queued request parked past its deadline instead of shedding")
+	}
+
+	if rw.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 for a queued request past its deadline, got %d", rw.Code)
+	}
+	if ran.Load() {
+		t.Fatal("a shed request must not launch its query")
+	}
+}
+
+// TestNetworkHealthDeferredBoundsQueueWait is the regression guard for the
+// /deferred handler acquiring a live-compute slot on the raw request context.
+// The server sets WriteTimeout 0 and there is no request-timeout middleware, so
+// a request whose context carries no deadline used to park a goroutine on the
+// semaphore for as long as the client held the connection open: with the 4 slots
+// saturated, queued requests accumulated at the rate they arrived and every
+// freed slot was immediately re-taken.
+//
+// With the deadline built before the acquire (matching serveNHGroup), the wait
+// is bounded by the group deadline and an over-budget request is shed with 503
+// without launching a query. Both branches were separately wrong, so both are
+// covered.
+func TestNetworkHealthDeferredBoundsQueueWait(t *testing.T) {
+	// A short stand-in for nhHeavyGroupDeadline; the real 170s is the same code
+	// path, just slower to observe.
+	const deadline = 150 * time.Millisecond
+
+	for _, tc := range []struct {
+		name   string
+		target string
+	}{
+		{"network-wide", "/api/network-health/deferred?days=29"},
+		{"contributor-scoped", "/api/network-health/deferred?days=29&contributor=dgt"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Fill every slot so the request must queue.
+			for i := 0; i < cap(nhLiveComputeSem); i++ {
+				nhLiveComputeSem <- struct{}{}
+			}
+			defer func() {
+				for i := 0; i < cap(nhLiveComputeSem); i++ {
+					<-nhLiveComputeSem
+				}
+			}()
+
+			// No deadline on the request context: the client is still connected
+			// and waiting, which is the case that used to park forever. Cancelled
+			// on the way out so a regression unblocks rather than leaking.
+			reqCtx, cancel := context.WithCancel(ContextWithEnv(context.Background(), EnvTestnet))
+			defer cancel()
+
+			a := &API{}
+			req := httptest.NewRequest(http.MethodGet, tc.target, nil).WithContext(reqCtx)
+			rw := httptest.NewRecorder()
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				// testnet env => isMainnet false => no cache read, so a nil
+				// PgPool is never touched; the request goes straight to the
+				// live-compute semaphore.
+				a.serveNHDeferred(rw, req, deadline)
+			}()
+
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatalf("queued /deferred request parked past its %s deadline instead of shedding", deadline)
+			}
+
+			if rw.Code != http.StatusServiceUnavailable {
+				t.Fatalf("expected 503 for a queued request past its deadline, got %d", rw.Code)
+			}
+			if got := rw.Header().Get("Retry-After"); got != "5" {
+				t.Fatalf("expected Retry-After 5, got %q", got)
+			}
+			if got := rw.Header().Get("X-Cache"); got != "MISS" {
+				t.Fatalf("expected X-Cache MISS, got %q", got)
+			}
+		})
+	}
+}
+
+// TestNetworkHealthDeferredUsesHeavyDeadline pins that /deferred and /impactful
+// share one budget: the handler is a thin wrapper so the deadline cannot drift
+// back to a hand-copied literal.
+func TestNetworkHealthDeferredUsesHeavyDeadline(t *testing.T) {
+	if nhHeavyGroupDeadline <= nhGroupDeadline {
+		t.Fatalf("heavy group deadline %s must exceed the fast group deadline %s", nhHeavyGroupDeadline, nhGroupDeadline)
+	}
+	if nhHeavyGroupDeadline != 170*time.Second {
+		t.Fatalf("heavy group deadline %s must match networkHealthDeferredQuerySettings' max_execution_time of 170s", nhHeavyGroupDeadline)
 	}
 }
 

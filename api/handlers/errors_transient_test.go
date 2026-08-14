@@ -41,6 +41,12 @@ func TestLogError_DowngradesTransientToWarn(t *testing.T) {
 		// Genuine failures still escalate to ERROR (still page).
 		{"syntax error", errors.New("Code: 62. DB::Exception: Syntax error"), true, slog.LevelError},
 		{"generic error", errors.New("boom"), true, slog.LevelError},
+		// A ClickHouse memory-limit breach carries none of the transient keywords,
+		// so it lands at ERROR. That is why the Network Health panel logs go
+		// through logWarn instead: this is the documented failure mode of a heavy
+		// panel scan, and it degrades to a panel marked unavailable rather than a
+		// terminal failure (see nhGo in network_health.go).
+		{"ch memory limit", errors.New("Code: 241. DB::Exception: Memory limit (total) exceeded: would use 2.00 GiB, while executing"), true, slog.LevelError},
 		// Client disconnects are dropped entirely (not logged).
 		{"client cancel", context.Canceled, false, 0},
 		// A deadline is the handler's own budget expiring (net/http never sets

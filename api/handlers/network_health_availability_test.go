@@ -113,6 +113,8 @@ func TestNetworkHealthAvailability_ThreeWaySplit(t *testing.T) {
 			assert.InDelta(t, c.wantDrainedHours, link.DrainedHours, 0.001)
 			assert.InDelta(t, c.wantOutageHours, link.OutageHours, 0.001)
 			assert.Equal(t, "NYC ↔ LAX", link.Metros)
+			assert.Empty(t, resp.Degraded, "a healthy window must not name a panel")
+			assert.Empty(t, resp.Error)
 
 			// The link's two endpoint devices are on no other link, so their
 			// availability should match the link's exactly.
@@ -128,6 +130,17 @@ func TestNetworkHealthAvailability_ThreeWaySplit(t *testing.T) {
 			assert.InDelta(t, c.wantAvailPct, devZ.AvailPct, 0.001)
 		})
 	}
+}
+
+// insertAvailBucketAt inserts one link_rollup_5m row with an explicit
+// ingested_at, so a later row deterministically supersedes an earlier one under
+// the table's ReplacingMergeTree(ingested_at) version.
+func insertAvailBucketAt(t *testing.T, api *handlers.API, ts time.Time, linkPK string, isisDown bool, ingestedAt time.Time) {
+	t.Helper()
+	require.NoError(t, api.DB.Exec(t.Context(),
+		`INSERT INTO link_rollup_5m (bucket_ts, link_pk, ingested_at, a_loss_pct, z_loss_pct, a_samples, z_samples, status, isis_down, provisioning)
+		 VALUES ($1, $2, $3, 0, 0, 100, 100, 'activated', $4, false)`,
+		ts, linkPK, ingestedAt, isisDown))
 }
 
 // insertAvailLossBuckets inserts n consecutive 5-minute link_rollup_5m rows
@@ -403,6 +416,84 @@ func TestNetworkHealthOutages_EpisodeReconstruction(t *testing.T) {
 	assert.Equal(t, uint64(2), sumCountPoints(resp.OutagesOverTime), "only sustained episodes appear on the timeline")
 	assert.True(t, hasCountAt(resp.OutagesOverTime, tRun3), "run3's episode starts at its first down bucket")
 	assert.True(t, hasCountAt(resp.OutagesOverTime, tRun2), "run2's episode starts at its first down bucket")
+
+	// The drain panel counts the same failures the headline tile does: one
+	// definition, one outage_count.
+	drain := api.FetchNetworkHealthDrainData(ctx, start, end, "")
+	assert.Equal(t, int(resp.OutageCount), drain.DrainTiming.OutageCount,
+		"the drain panel's outage_count must equal the Outages group's")
+
+	// A healthy window names no panel and reports no error.
+	assert.Empty(t, resp.Degraded)
+	assert.Empty(t, resp.Error)
+	assert.Empty(t, drain.Degraded)
+	assert.Empty(t, drain.Error)
+}
+
+// TestNetworkHealthDrainEventsMatchOutageDefinition pins the shared outage
+// definition across the two panels that publish outage_count. The drain panel
+// used to reconstruct link failures from a different query: isis_down only, no
+// duration floor, no provisioning filter and no FINAL. Loss-only failures were
+// invisible to it while the headline tile counted them.
+func TestNetworkHealthDrainEventsMatchOutageDefinition(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupRollupTables(t, api)
+	insertBaseMetadata(t, api)
+	ctx := t.Context()
+
+	now := time.Now().UTC().Truncate(5 * time.Minute)
+	start := now.Add(-2 * time.Hour)
+	end := now.Add(2 * time.Hour)
+
+	base := now.Add(-90 * time.Minute)
+	// Counts: 3 contiguous isis_down buckets.
+	insertAvailBuckets(t, api, base, "dm-isis", 3, "activated", true, false)
+	// Counts: 3 contiguous loss-only buckets (isis_down = 0, loss >= 10).
+	insertAvailLossBuckets(t, api, base, "dm-loss", 3, 20.0)
+	// Excluded: a single bucket is below the 10-minute sustained floor.
+	insertAvailBuckets(t, api, base, "dm-blip", 1, "activated", true, false)
+	// Excluded: provisioning buckets are not failures.
+	insertAvailBuckets(t, api, base, "dm-prov", 3, "activated", true, true)
+
+	outages := api.FetchNetworkHealthOutagesData(ctx, start, end, "")
+	drain := api.FetchNetworkHealthDrainData(ctx, start, end, "")
+
+	assert.Equal(t, uint64(2), outages.OutageCount, "isis-down run + loss-only run")
+	assert.Equal(t, 2, drain.DrainTiming.OutageCount,
+		"the drain panel must see the loss-only failure and drop the blip and the provisioning run")
+	assert.Equal(t, int(outages.OutageCount), drain.DrainTiming.OutageCount)
+}
+
+// TestNetworkHealthOutageDefinitionUsesFinal guards the missing-FINAL class of
+// bug for every caller of the shared episode CTE at once: link_rollup_5m is a
+// replacing table, so a superseded row must not supply a stale isis_down.
+func TestNetworkHealthOutageDefinitionUsesFinal(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupRollupTables(t, api)
+	insertBaseMetadata(t, api)
+	ctx := t.Context()
+
+	now := time.Now().UTC().Truncate(5 * time.Minute)
+	start := now.Add(-2 * time.Hour)
+	end := now.Add(2 * time.Hour)
+	base := now.Add(-60 * time.Minute)
+
+	// Write 3 down buckets, then supersede the same (bucket_ts, link_pk) keys with
+	// clean rows carrying a later ingested_at (the table's replacing version).
+	// FINAL must resolve to the later rows, leaving no episode.
+	for i := range 3 {
+		ts := base.Add(time.Duration(i*5) * time.Minute)
+		insertAvailBucketAt(t, api, ts, "final-link", true, now.Add(-2*time.Hour))
+		insertAvailBucketAt(t, api, ts, "final-link", false, now.Add(-1*time.Hour))
+	}
+
+	outages := api.FetchNetworkHealthOutagesData(ctx, start, end, "")
+	assert.Equal(t, uint64(0), outages.OutageCount, "a superseded down bucket must not count")
+
+	drain := api.FetchNetworkHealthDrainData(ctx, start, end, "")
+	assert.Equal(t, 0, drain.DrainTiming.OutageCount, "the drain panel dedups the same way")
 }
 
 // TestNetworkHealthImpactful_Weighting drives FetchNetworkHealthImpactfulData and
@@ -417,6 +508,9 @@ func TestNetworkHealthOutages_EpisodeReconstruction(t *testing.T) {
 //     (dropped from the metric graph, so never primary).
 //
 // Only primary (1200s) + hightraffic (600s) count -> 1800s = 0.5h.
+//
+// The episodes come from the shared outage definition (nhOutEpisodeCTE), so a
+// sub-floor blip and a provisioning run on the counted primary link add nothing.
 func TestNetworkHealthImpactful_Weighting(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPIBare(t, testChDB)
@@ -457,6 +551,11 @@ func TestNetworkHealthImpactful_Weighting(t *testing.T) {
 	insertAvailBuckets(t, api, base, "imp-backup", 2, "activated", true, false)   // excluded
 	insertAvailBuckets(t, api, base, "imp-lowtraf", 2, "activated", true, false)  // excluded
 	insertAvailBuckets(t, api, base, "imp-sentinel", 2, "activated", true, false) // excluded
+
+	// Separate episodes on the primary link that the shared definition drops: one
+	// bucket is below the 10-minute floor, and provisioning buckets are not failures.
+	insertAvailBuckets(t, api, base.Add(-30*time.Minute), "imp-primary", 1, "activated", true, false)
+	insertAvailBuckets(t, api, base.Add(-80*time.Minute), "imp-primary", 2, "activated", true, true)
 
 	// Pre-outage traffic (60 min before the outage start). hightraffic carries
 	// 5Mbps (>= 1Mbps -> impactful); lowtraffic carries 0.5Mbps (idle -> excluded).
@@ -543,9 +642,86 @@ func TestNetworkHealthScopeIsolation(t *testing.T) {
 	assert.Nil(t, drainEmpty.DrainTiming.TimeToDrainP50Min)
 	assert.Nil(t, drainEmpty.DrainTiming.DrainWithin30mPct)
 	require.NotNil(t, drainEmpty.Prev)
+	// Owning no links is a real, empty answer, not a failed query: it must not be
+	// reported as unavailable (which would freeze the cache and hide the panel).
+	assert.Empty(t, drainEmpty.Error, "a zero-link scope is not a failure")
+	assert.Empty(t, drainEmpty.Degraded)
 	// Unscoped, the drain event is visible, proving the empty result is scoping.
 	drainAll := api.FetchNetworkHealthDrainData(ctx, start, end, "")
 	assert.GreaterOrEqual(t, drainAll.DrainTiming.Drains, 1, "the drain event is visible network-wide")
+}
+
+// TestNetworkHealthScopeCrossOwnedLink pins how the two kinds of scope differ.
+// A link's contributor and its endpoint devices' contributors are independent
+// (58 of 161 activated links on mainnet are cross-owned), so the link panels
+// scope on link ownership and the device panels scope on DEVICE ownership.
+//
+// Here CX2 owns the link, but one endpoint device belongs to CX1. That device's
+// fault time is CX1's, and it must appear in CX1's device panels even though CX1
+// owns no link at all. This is the invariant that makes the device queries'
+// outer-join scoping correct: scoping those CTEs by link ownership instead would
+// silently drop the device from its owner's view.
+func TestNetworkHealthScopeCrossOwnedLink(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupRollupTables(t, api)
+	insertBaseMetadata(t, api)
+	ctx := t.Context()
+
+	now := time.Now().UTC().Truncate(5 * time.Minute)
+	start := now.Add(-2 * time.Hour)
+	end := now.Add(2 * time.Hour)
+
+	require.NoError(t, api.DB.Exec(ctx,
+		`INSERT INTO dz_contributors_current (pk, code, name) VALUES ('cx1', 'CX1', 'Edge Owner'), ('cx2', 'CX2', 'Link Owner')`))
+	require.NoError(t, api.DB.Exec(ctx,
+		`INSERT INTO dz_devices_current (pk, code, device_type, metro_pk, contributor_pk, status) VALUES
+			('dev-cx1-edge', 'DEV-CX1-EDGE', 'router', 'metro-nyc', 'cx1', 'activated'),
+			('dev-cx2-core', 'DEV-CX2-CORE', 'router', 'metro-lax', 'cx2', 'activated')`))
+	require.NoError(t, api.DB.Exec(ctx,
+		`INSERT INTO dz_links_current (pk, code, status, link_type, side_a_pk, side_z_pk, contributor_pk) VALUES
+			('link-cx2', 'LINK-CX2', 'activated', 'WAN', 'dev-cx2-core', 'dev-cx1-edge', 'cx2')`))
+
+	// One sustained failure (4 buckets = 20 min, above the 10-minute floor).
+	insertAvailBuckets(t, api, now.Add(-60*time.Minute), "link-cx2", 4, "activated", true, false)
+
+	// CX1 owns no links: its LINK panels stay empty.
+	availCX1 := api.FetchNetworkHealthAvailabilityData(ctx, start, end, "CX1")
+	assert.Nil(t, findAvailability(availCX1.LinkAvailability, "LINK-CX2"),
+		"a link owned by CX2 must not appear in CX1's link availability")
+
+	// ...but its DEVICE is unreachable for the whole window, and that is CX1's fact.
+	dev := findAvailability(availCX1.DeviceAvailability, "DEV-CX1-EDGE")
+	require.NotNil(t, dev, "CX1's device must appear in CX1's device availability even though CX2 owns the link")
+	assert.Equal(t, float64(100), dev.OutagePct, "the device has a fault-down link and no working link")
+
+	outCX1 := api.FetchNetworkHealthOutagesData(ctx, start, end, "CX1")
+	require.NotNil(t, outCX1.OutageSummary)
+	assert.Equal(t, uint64(0), outCX1.OutageSummary.LinkOutages, "CX1 owns no link, so it has no link outage")
+	assert.Equal(t, uint64(1), outCX1.OutageSummary.DeviceOutages, "CX1's device outage is CX1's")
+	assert.Equal(t, uint64(1), outCX1.OutageSummary.DevicesAffected)
+	var sawDevice bool
+	for _, r := range outCX1.DowntimeDevices {
+		if r.Code == "DEV-CX1-EDGE" {
+			sawDevice = true
+		}
+	}
+	assert.True(t, sawDevice, "CX1's device must appear in CX1's device downtime ranking")
+	for _, r := range outCX1.DowntimeLinks {
+		assert.NotEqual(t, "LINK-CX2", r.Code, "CX2's link must not appear in CX1's link downtime ranking")
+	}
+
+	// The link owner sees the mirror image: the link, plus only its own device.
+	availCX2 := api.FetchNetworkHealthAvailabilityData(ctx, start, end, "CX2")
+	require.NotNil(t, findAvailability(availCX2.LinkAvailability, "LINK-CX2"), "CX2 owns the link")
+	require.NotNil(t, findAvailability(availCX2.DeviceAvailability, "DEV-CX2-CORE"), "CX2 owns this endpoint")
+	assert.Nil(t, findAvailability(availCX2.DeviceAvailability, "DEV-CX1-EDGE"),
+		"CX1's device must not leak into CX2's device availability")
+
+	outCX2 := api.FetchNetworkHealthOutagesData(ctx, start, end, "CX2")
+	require.NotNil(t, outCX2.OutageSummary)
+	assert.Equal(t, uint64(1), outCX2.OutageSummary.LinkOutages, "CX2 owns the failed link")
+	assert.Equal(t, uint64(1), outCX2.OutageSummary.DeviceOutages, "only CX2's own endpoint counts here")
 }
 
 // TestNetworkHealthDeltas pins the sign and magnitude of the current-vs-prior
@@ -587,6 +763,10 @@ func TestNetworkHealthDeltas(t *testing.T) {
 
 	imp := api.FetchNetworkHealthImpactfulData(ctx, start, end, "")
 	assert.False(t, imp.Unavailable)
+	assert.Empty(t, imp.Degraded, "a healthy window must not name a panel")
+	assert.Empty(t, imp.Error)
+	assert.Empty(t, out.Degraded)
+	assert.Empty(t, out.Error)
 	assert.InDelta(t, 0.3, imp.ImpactfulDowntimeHours, 0.001, "implink 1200s current -> 0.3h")
 	require.NotNil(t, imp.Prev)
 	assert.InDelta(t, 0.2, imp.Prev.ImpactfulDowntimeHours, 0.001, "implink 600s prior -> 0.2h")

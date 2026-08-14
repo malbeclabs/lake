@@ -28,9 +28,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -40,25 +42,42 @@ const (
 	// blob from an older shape is never served (it would crash the newer frontend).
 	// The bare route /api/network-health serves the Overview group (see
 	// GetNetworkHealth), so its key stands in for the old monolith key.
-	NetworkHealthOverviewCacheKey     = "network_health_overview_30d_v1"
+	NetworkHealthOverviewCacheKey     = "network_health_overview_30d_v2"
 	NetworkHealthAvailabilityCacheKey = "network_health_availability_30d_v1"
 	NetworkHealthLatencyCacheKey      = "network_health_latency_30d_v1"
 	NetworkHealthCapacityCacheKey     = "network_health_capacity_30d_v1"
 	NetworkHealthOutagesCacheKey      = "network_health_outages_30d_v1"
-	NetworkHealthDrainCacheKey        = "network_health_drain_30d_v1"
-	NetworkHealthTicketsCacheKey      = "network_health_tickets_30d_v1"
+	NetworkHealthDrainCacheKey        = "network_health_drain_30d_v2"
+	NetworkHealthTicketsCacheKey      = "network_health_tickets_30d_v2"
 	NetworkHealthImpactfulCacheKey    = "network_health_impactful_30d_v1"
 	// NetworkHealthDeferredCacheKey is the page_cache key for the default 30d
 	// deferred payload (the slow undrain/recovery-health figures, split out of the
 	// main page so the main page loads without waiting on the heavy scan).
-	NetworkHealthDeferredCacheKey = "network_health_deferred_30d_v1"
-	// networkHealthContributorCacheKeyInfix separates a group's version suffix
-	// from the contributor code in a per-contributor cache key (see nhContribKey).
-	networkHealthContributorCacheKeyInfix = "_c_"
+	NetworkHealthDeferredCacheKey = "network_health_deferred_30d_v2"
 	// NetworkHealthDefaultDays is the default (and cached) window length.
 	NetworkHealthDefaultDays = 30
 
 	networkHealthMaxDays = 92
+	// nhOpsTicketsMaxLookback bounds how far back the ops-management pagination
+	// walks. The ops API is newest-first with no date filter, so a window
+	// positioned in the past is paged through everything newer than it. The widest
+	// window the page can request ending now is networkHealthMaxDays plus its
+	// equal-length prior window (184 days), so this floor leaves every reachable
+	// window untouched and refuses only windows that would page the whole stream.
+	nhOpsTicketsMaxLookback = 200 * 24 * time.Hour
+
+	// nhOpsUsersCacheTTL bounds staleness of the memoized ops /users registry (up
+	// to 20 paged requests per call). It maps user pubkey -> contributor, changes
+	// on human timescales, and is re-fetched by the cache worker every refresh
+	// cycle (30s), so a few minutes of staleness is invisible and removes ~90% of
+	// the calls.
+	nhOpsUsersCacheTTL = 5 * time.Minute
+
+	// nhOpsUsersFetchTimeout bounds the detached miss-path registry fetch so a
+	// collapsed run cannot hang after the winning caller disconnects (see
+	// cachedOpsUsers).
+	nhOpsUsersFetchTimeout = 20 * time.Second
+
 	// max_memory_usage caps each query at ~2 GiB so a single heavy query errors
 	// (and degrades to an empty panel via nhGo) instead of breaching the server
 	// total memory limit and taking down sibling queries. Public-page safety.
@@ -99,15 +118,70 @@ const (
 	throughputMaxThreads = ", max_threads = 4"
 )
 
+// nhPanels records which panel queries failed inside one group's errgroup so the
+// group reports a partial payload instead of publishing a failed query's zero.
+// A panel named in Degraded renders as unavailable on the page; a critical panel
+// additionally sets the group's Error, which tells the cache worker to keep the
+// last good blob.
+type nhPanels struct {
+	mu       sync.Mutex
+	failed   []string
+	critical bool
+}
+
+// fail records one failed panel. critical marks a panel whose absence makes the
+// whole group's figures misleading rather than merely incomplete.
+func (p *nhPanels) fail(panel string, critical bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.failed = append(p.failed, panel)
+	if critical {
+		p.critical = true
+	}
+}
+
+// list returns the failed panel names sorted, or nil when none failed.
+func (p *nhPanels) list() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.failed) == 0 {
+		return nil
+	}
+	out := append([]string(nil), p.failed...)
+	sort.Strings(out)
+	return out
+}
+
+// criticalFailed reports whether any critical panel failed.
+func (p *nhPanels) criticalFailed() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.critical
+}
+
 // nhGo runs one panel query concurrently as best-effort. If it fails or times out
-// (e.g. a heavy scan hitting max_execution_time on the remote proxy) the error is
-// logged with the panel name and the goroutine returns nil, so a single slow or
-// broken panel degrades to an empty box instead of cancelling every sibling query
-// and blanking the whole report. The panel name makes the failure diagnosable.
-func nhGo(g *errgroup.Group, panel string, fn func() error) {
+// (e.g. a heavy scan hitting max_execution_time on the remote proxy) the panel is
+// recorded on p and the goroutine returns nil, so a single slow or broken panel
+// degrades to a panel marked unavailable instead of cancelling every sibling query
+// and blanking the whole report. The line logs at WARN: the alert for a sustained
+// failure is owned by the cache worker's escalator (api/worker/workflow.go), which
+// is the layer that knows the refresh cadence.
+func nhGo(g *errgroup.Group, p *nhPanels, panel string, fn func() error) {
+	nhRun(g, p, panel, false, fn)
+}
+
+// nhGoCritical is nhGo for a panel whose failure also sets the group's Error, so
+// the payload reads as unavailable rather than as a real zero and the cache
+// worker keeps the last good blob.
+func nhGoCritical(g *errgroup.Group, p *nhPanels, panel string, fn func() error) {
+	nhRun(g, p, panel, true, fn)
+}
+
+func nhRun(g *errgroup.Group, p *nhPanels, panel string, critical bool, fn func() error) {
 	g.Go(func() error {
 		if err := fn(); err != nil {
-			logError("network health panel failed", "panel", panel, "error", err)
+			p.fail(panel, critical)
+			logWarn("network health panel failed", "panel", panel, "critical", critical, "error", err)
 		}
 		return nil
 	})
@@ -117,10 +191,15 @@ func nhGo(g *errgroup.Group, panel string, fn func() error) {
 // own endpoint + cache blob (see the *CacheKey constants and the Get* handlers).
 // Every group is a subset of the old monolith payload; nothing is dropped and no
 // field is owned by more than one group. Each group carries the resolved window
-// (so the frontend can label it), a generated_at stamp, and an optional error
-// (set only on the non-scoped path for the headline-critical groups, so the cache
-// worker keeps the last good blob instead of caching zeros — see the worker
-// entries in api/worker/workflow.go).
+// (so the frontend can label it), a generated_at stamp, the names of any panels
+// that could not be computed (Degraded), and an optional error.
+//
+// Degraded names a panel whose query failed, so the frontend renders that panel
+// as unavailable instead of drawing a failed query's zero as a real measurement.
+// Error is set when a CRITICAL panel of the group failed (see nhGoCritical), on
+// the scoped path as well as the network-wide one; the cache worker turns it into
+// a refreshError so the last good blob is kept instead of caching zeros — see the
+// worker entries in api/worker/workflow.go.
 
 // NHOverview is the Overview group: the headline signals plus trend context. It
 // deliberately does NOT own the outage/impactful headline tiles (those come from
@@ -135,6 +214,7 @@ type NHOverview struct {
 	Throughput   []NHTsPoint     `json:"throughput_ts"`
 	Contributors []NHContributor `json:"contributors"`
 	GeneratedAt  string          `json:"generated_at"`
+	Degraded     []string        `json:"degraded,omitempty"`
 	Error        string          `json:"error,omitempty"`
 }
 
@@ -144,6 +224,7 @@ type NHAvailabilityGroup struct {
 	LinkAvailability   []NHAvailability `json:"link_availability"`
 	DeviceAvailability []NHAvailability `json:"device_availability"`
 	GeneratedAt        string           `json:"generated_at"`
+	Degraded           []string         `json:"degraded,omitempty"`
 	Error              string           `json:"error,omitempty"`
 }
 
@@ -154,6 +235,7 @@ type NHLatencyGroup struct {
 	LatencyLinks []NHPerfLink `json:"latency_links"`
 	Sla          NHSla        `json:"sla"`
 	GeneratedAt  string       `json:"generated_at"`
+	Degraded     []string     `json:"degraded,omitempty"`
 	Error        string       `json:"error,omitempty"`
 }
 
@@ -168,6 +250,7 @@ type NHCapacityGroup struct {
 	TopLinks      []NHTrafficLink  `json:"top_links"`
 	CapacityLinks []NHCapacityLink `json:"capacity_links"`
 	GeneratedAt   string           `json:"generated_at"`
+	Degraded      []string         `json:"degraded,omitempty"`
 	Error         string           `json:"error,omitempty"`
 }
 
@@ -189,6 +272,7 @@ type NHOutagesGroup struct {
 	ErrorHotspots    []NHErrorHotspot `json:"error_hotspots"`
 	Prev             *NHOutagesPrev   `json:"prev"`
 	GeneratedAt      string           `json:"generated_at"`
+	Degraded         []string         `json:"degraded,omitempty"`
 	Error            string           `json:"error,omitempty"`
 }
 
@@ -207,6 +291,7 @@ type NHDrainGroup struct {
 	DrainTiming NHDrainTiming  `json:"drain_timing"`
 	Prev        *NHDrainTiming `json:"prev"`
 	GeneratedAt string         `json:"generated_at"`
+	Degraded    []string       `json:"degraded,omitempty"`
 	Error       string         `json:"error,omitempty"`
 }
 
@@ -217,6 +302,7 @@ type NHTicketsGroup struct {
 	OpsTickets  *NHTickets `json:"ops_tickets"`
 	Prev        *NHTickets `json:"prev"`
 	GeneratedAt string     `json:"generated_at"`
+	Degraded    []string   `json:"degraded,omitempty"`
 	Error       string     `json:"error,omitempty"`
 }
 
@@ -230,6 +316,7 @@ type NHImpactful struct {
 	Prev                   *NHImpactfulPrev `json:"prev"`
 	Unavailable            bool             `json:"unavailable"`
 	GeneratedAt            string           `json:"generated_at"`
+	Degraded               []string         `json:"degraded,omitempty"`
 	Error                  string           `json:"error,omitempty"`
 }
 
@@ -298,10 +385,11 @@ type NHTickets struct {
 	// ticket. Lets an operator see WHICH outages went unfiled, not just how many.
 	NoTicketOutages []NHNoTicketOutage `json:"no_ticket_outages"`
 
-	// RootCauses is the incident root-cause breakdown over the window: one row
-	// per fixed root-cause enum token (self_resolved, network_external,
-	// fiber_cut, configuration, hardware, carrier, false_positive), sorted by
-	// count descending. Enum tokens only, so the text-free public contract holds.
+	// RootCauses is the incident root-cause breakdown over the window: one row per
+	// fixed root-cause enum token plus "other" for anything outside that set,
+	// sorted by count descending. nhRootCauseTokens is the token list; do not
+	// restate it here, so the two cannot drift. Enum tokens only, so the text-free
+	// public contract holds.
 	RootCauses []NHRootCauseCount `json:"root_causes"`
 }
 
@@ -311,6 +399,31 @@ type NHRootCauseCount struct {
 	Cause string   `json:"cause"`
 	Count int      `json:"count"`
 	Pct   *float64 `json:"pct"`
+}
+
+// nhRootCauseTokens is the fixed root-cause enum published by
+// /network-health/tickets: the eleven snake_case tokens the ops-management API
+// emits. The root_cause field is operator-entered upstream, so anything outside
+// this set is counted under nhRootCauseOther rather than published verbatim on a
+// public page.
+var nhRootCauseTokens = map[string]bool{
+	"self_resolved": true, "network_external": true, "fiber_cut": true,
+	"configuration": true, "hardware": true, "carrier": true, "false_positive": true,
+	"duplicate": true, "software": true, "dz_managed": true, "human_error": true,
+}
+
+// nhRootCauseOther is the catch-all bucket for an unrecognised upstream cause.
+const nhRootCauseOther = "other"
+
+// nhRootCause maps an upstream root_cause to a published enum token.
+// Unrecognised values collapse to nhRootCauseOther so the incident still counts
+// toward the breakdown denominator without its text reaching the public payload.
+func nhRootCause(raw string) string {
+	t := strings.ToLower(strings.TrimSpace(raw))
+	if nhRootCauseTokens[t] {
+		return t
+	}
+	return nhRootCauseOther
 }
 
 // NHNoTicketOutage is one telemetry-derived outage that has no matching ops
@@ -506,6 +619,7 @@ type NHDeferred struct {
 	UndrainUnavailable  bool        `json:"undrain_unavailable"`
 	MatchedUndrains     int         `json:"matched_undrains"`
 	Prev                *NHDeferred `json:"prev,omitempty"`
+	Degraded            []string    `json:"degraded,omitempty"`
 	Error               string      `json:"error,omitempty"`
 }
 
@@ -539,25 +653,24 @@ type NHWindow struct {
 	Label string `json:"label"`
 }
 
+// NHHeadline carries only the figures the Overview group owns. The outage and
+// impactful-downtime headline tiles are owned by the Outages and Impactful
+// groups (see the NHOverview doc comment), so they are not mirrored here.
 type NHHeadline struct {
-	PeakBps                float64  `json:"peak_bps"`
-	JitterImprovePct       float64  `json:"jitter_improve_pct"`
-	DzLossPct              float64  `json:"dz_loss_pct"`
-	OutageCount            uint64   `json:"outage_count"`
-	ImpactfulDowntimeHours float64  `json:"impactful_downtime_hours"`
-	ActiveLinks            uint64   `json:"active_links"`
-	ActiveDevices          uint64   `json:"active_devices"`
-	ActiveMetros           uint64   `json:"active_metros"`
-	Deltas                 NHDeltas `json:"deltas"`
+	PeakBps          float64  `json:"peak_bps"`
+	JitterImprovePct float64  `json:"jitter_improve_pct"`
+	DzLossPct        float64  `json:"dz_loss_pct"`
+	ActiveLinks      uint64   `json:"active_links"`
+	ActiveDevices    uint64   `json:"active_devices"`
+	ActiveMetros     uint64   `json:"active_metros"`
+	Deltas           NHDeltas `json:"deltas"`
 }
 
 // NHDeltas are percentage changes versus the previous equal-length window.
 // nil means the prior value was zero/unavailable (no delta shown).
 type NHDeltas struct {
-	PeakBps           *float64 `json:"peak_bps"`
-	OutageCount       *float64 `json:"outage_count"`
-	ActiveLinks       *float64 `json:"active_links"`
-	ImpactfulDowntime *float64 `json:"impactful_downtime"`
+	PeakBps     *float64 `json:"peak_bps"`
+	ActiveLinks *float64 `json:"active_links"`
 }
 
 type NHReliability struct {
@@ -612,9 +725,14 @@ type NHDowntimeRow struct {
 
 // nhGroupDeadline is the live-compute deadline for the fast groups (cache MISS
 // or a non-default window). Matches the old monolith's 35s request budget; each
-// group is a strict subset so it finishes well inside it. Impactful uses its own
-// 170s deadline (see GetNetworkHealthImpactful), like /deferred.
+// group is a strict subset so it finishes well inside it. The two heavy groups
+// use nhHeavyGroupDeadline instead.
 const nhGroupDeadline = 35 * time.Second
+
+// nhHeavyGroupDeadline is the live-compute deadline for the two heavy groups
+// (impactful, deferred). Their queries run under max_execution_time = 170 (see
+// networkHealthDeferredQuerySettings), so the request budget matches.
+const nhHeavyGroupDeadline = 170 * time.Second
 
 // nhLiveComputeSem bounds concurrent LIVE (cache-miss or non-default-window)
 // Network Health computes across all group handlers to 4, matching the worker's
@@ -655,13 +773,13 @@ func nhWriteLiveUnavailable(w http.ResponseWriter) {
 }
 
 // serveNHGroup collapses the shared handler body for every Network Health group
-// endpoint: resolve the window, then serve the per-contributor or network-wide
-// precomputed blob on a cache HIT (default window, mainnet), else compute live
-// under the deadline. contribKey builds this group's per-contributor cache key;
-// fetch computes this group's payload for the resolved window + scope.
+// endpoint: resolve the window, then serve the network-wide precomputed blob on
+// a cache HIT (default window, mainnet), else compute live under the deadline.
+// Contributor-scoped views are never precomputed and always compute live. fetch
+// computes this group's payload for the resolved window + scope.
 func (a *API) serveNHGroup(
 	w http.ResponseWriter, r *http.Request,
-	defaultKey string, contribKey func(code string) string,
+	defaultKey string,
 	fetch func(ctx context.Context, start, end time.Time, contrib string) any,
 	deadline time.Duration,
 ) {
@@ -687,25 +805,13 @@ func (a *API) serveNHGroup(
 		}
 		defer release()
 		w.Header().Set("X-Cache", "MISS")
-		resp := fetch(ctx, start, end, contrib)
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			logError("failed to encode network health group response", "key", defaultKey, "error", err)
-		}
+		writeJSON(w, fetch(ctx, start, end, contrib))
 	}
 
-	// Contributor scope re-scopes the whole one-pager. The default window is
-	// precomputed per contributor by the worker (mainnet only); serve that on HIT,
-	// else compute live. The code is a bound parameter (no interpolation).
+	// Contributor scope re-scopes the whole one-pager and is never precomputed
+	// (see api/worker/workflow.go), so it always computes live. The code is a
+	// bound parameter (no interpolation).
 	if code := r.URL.Query().Get("contributor"); code != "" {
-		if cacheable && isMainnet(r.Context()) {
-			if data, err := a.readPageCache(r.Context(), contribKey(code)); err == nil {
-				w.Header().Set("Content-Type", "application/json")
-				w.Header().Set("X-Cache", "HIT")
-				_, _ = w.Write(data)
-				return
-			}
-		}
 		writeLive(code)
 		return
 	}
@@ -726,7 +832,7 @@ func (a *API) serveNHGroup(
 // is repurposed to Overview (backward-compatible); the other groups have their
 // own /api/network-health/<group> routes. Public endpoint.
 func (a *API) GetNetworkHealth(w http.ResponseWriter, r *http.Request) {
-	a.serveNHGroup(w, r, NetworkHealthOverviewCacheKey, NetworkHealthOverviewContributorCacheKey,
+	a.serveNHGroup(w, r, NetworkHealthOverviewCacheKey,
 		func(ctx context.Context, start, end time.Time, contrib string) any {
 			return a.FetchNetworkHealthOverviewData(ctx, start, end, contrib)
 		}, nhGroupDeadline)
@@ -734,7 +840,7 @@ func (a *API) GetNetworkHealth(w http.ResponseWriter, r *http.Request) {
 
 // GetNetworkHealthAvailability serves the Availability group. Public endpoint.
 func (a *API) GetNetworkHealthAvailability(w http.ResponseWriter, r *http.Request) {
-	a.serveNHGroup(w, r, NetworkHealthAvailabilityCacheKey, NetworkHealthAvailabilityContributorCacheKey,
+	a.serveNHGroup(w, r, NetworkHealthAvailabilityCacheKey,
 		func(ctx context.Context, start, end time.Time, contrib string) any {
 			return a.FetchNetworkHealthAvailabilityData(ctx, start, end, contrib)
 		}, nhGroupDeadline)
@@ -742,7 +848,7 @@ func (a *API) GetNetworkHealthAvailability(w http.ResponseWriter, r *http.Reques
 
 // GetNetworkHealthLatency serves the Latency group. Public endpoint.
 func (a *API) GetNetworkHealthLatency(w http.ResponseWriter, r *http.Request) {
-	a.serveNHGroup(w, r, NetworkHealthLatencyCacheKey, NetworkHealthLatencyContributorCacheKey,
+	a.serveNHGroup(w, r, NetworkHealthLatencyCacheKey,
 		func(ctx context.Context, start, end time.Time, contrib string) any {
 			return a.FetchNetworkHealthLatencyData(ctx, start, end, contrib)
 		}, nhGroupDeadline)
@@ -750,7 +856,7 @@ func (a *API) GetNetworkHealthLatency(w http.ResponseWriter, r *http.Request) {
 
 // GetNetworkHealthCapacity serves the Capacity group. Public endpoint.
 func (a *API) GetNetworkHealthCapacity(w http.ResponseWriter, r *http.Request) {
-	a.serveNHGroup(w, r, NetworkHealthCapacityCacheKey, NetworkHealthCapacityContributorCacheKey,
+	a.serveNHGroup(w, r, NetworkHealthCapacityCacheKey,
 		func(ctx context.Context, start, end time.Time, contrib string) any {
 			return a.FetchNetworkHealthCapacityData(ctx, start, end, contrib)
 		}, nhGroupDeadline)
@@ -758,7 +864,7 @@ func (a *API) GetNetworkHealthCapacity(w http.ResponseWriter, r *http.Request) {
 
 // GetNetworkHealthOutages serves the Outages group. Public endpoint.
 func (a *API) GetNetworkHealthOutages(w http.ResponseWriter, r *http.Request) {
-	a.serveNHGroup(w, r, NetworkHealthOutagesCacheKey, NetworkHealthOutagesContributorCacheKey,
+	a.serveNHGroup(w, r, NetworkHealthOutagesCacheKey,
 		func(ctx context.Context, start, end time.Time, contrib string) any {
 			return a.FetchNetworkHealthOutagesData(ctx, start, end, contrib)
 		}, nhGroupDeadline)
@@ -766,7 +872,7 @@ func (a *API) GetNetworkHealthOutages(w http.ResponseWriter, r *http.Request) {
 
 // GetNetworkHealthDrain serves the Drain group. Public endpoint.
 func (a *API) GetNetworkHealthDrain(w http.ResponseWriter, r *http.Request) {
-	a.serveNHGroup(w, r, NetworkHealthDrainCacheKey, NetworkHealthDrainContributorCacheKey,
+	a.serveNHGroup(w, r, NetworkHealthDrainCacheKey,
 		func(ctx context.Context, start, end time.Time, contrib string) any {
 			return a.FetchNetworkHealthDrainData(ctx, start, end, contrib)
 		}, nhGroupDeadline)
@@ -777,7 +883,7 @@ func (a *API) GetNetworkHealthDrain(w http.ResponseWriter, r *http.Request) {
 // deadline), this dedicated endpoint always fetches: the external pagination is
 // capped to 20s internally and no longer blocks any other panel. Public endpoint.
 func (a *API) GetNetworkHealthTickets(w http.ResponseWriter, r *http.Request) {
-	a.serveNHGroup(w, r, NetworkHealthTicketsCacheKey, NetworkHealthTicketsContributorCacheKey,
+	a.serveNHGroup(w, r, NetworkHealthTicketsCacheKey,
 		func(ctx context.Context, start, end time.Time, contrib string) any {
 			return a.FetchNetworkHealthTicketsData(ctx, start, end, contrib)
 		}, nhGroupDeadline)
@@ -787,80 +893,29 @@ func (a *API) GetNetworkHealthTickets(w http.ResponseWriter, r *http.Request) {
 // its heavy scan live under a longer 170s deadline so it never blocks the fast
 // groups. Public endpoint.
 func (a *API) GetNetworkHealthImpactful(w http.ResponseWriter, r *http.Request) {
-	a.serveNHGroup(w, r, NetworkHealthImpactfulCacheKey, NetworkHealthImpactfulContributorCacheKey,
+	a.serveNHGroup(w, r, NetworkHealthImpactfulCacheKey,
 		func(ctx context.Context, start, end time.Time, contrib string) any {
 			return a.FetchNetworkHealthImpactfulData(ctx, start, end, contrib)
-		}, 170*time.Second)
+		}, nhHeavyGroupDeadline)
 }
 
 // GetNetworkHealthDeferred serves the deferred (slow undrain) portion of the
 // Network Health drain-timing panel. It is split from GetNetworkHealth so the
 // main page loads without waiting on the heavy recovery-health scan; the
 // frontend fetches this endpoint separately and fills in the undrain figures
-// when they arrive. Mirrors GetNetworkHealth's window + contributor + cache-HIT
-// logic, but computes live under a longer 170s deadline. Public endpoint.
+// when they arrive. Public endpoint.
 func (a *API) GetNetworkHealthDeferred(w http.ResponseWriter, r *http.Request) {
-	start, end, cacheable := networkHealthWindow(
-		r.URL.Query().Get("start"),
-		r.URL.Query().Get("end"),
-		r.URL.Query().Get("days"),
-	)
+	a.serveNHDeferred(w, r, nhHeavyGroupDeadline)
+}
 
-	// Contributor scope: serve the per-contributor precomputed deferred payload on
-	// HIT (mainnet only), else compute live under the long deadline.
-	if code := r.URL.Query().Get("contributor"); code != "" {
-		if cacheable && isMainnet(r.Context()) {
-			if data, err := a.readPageCache(r.Context(), NetworkHealthDeferredContributorCacheKey(code)); err == nil {
-				w.Header().Set("Content-Type", "application/json")
-				w.Header().Set("X-Cache", "HIT")
-				_, _ = w.Write(data)
-				return
-			}
-		}
-
-		// Bound concurrent live computes (see nhLiveComputeSem); shed with 503.
-		release, ok := nhAcquireLive(r.Context())
-		if !ok {
-			nhWriteLiveUnavailable(w)
-			return
-		}
-		defer release()
-		w.Header().Set("X-Cache", "MISS")
-		ctx, cancel := context.WithTimeout(r.Context(), 170*time.Second)
-		defer cancel()
-		resp := a.FetchNetworkHealthDeferredData(ctx, start, end, code)
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			logError("failed to encode network health deferred contributor response", "error", err)
-		}
-		return
-	}
-
-	// Default view is precomputed by the worker; serve from cache (mainnet only).
-	if cacheable && isMainnet(r.Context()) {
-		if data, err := a.readPageCache(r.Context(), NetworkHealthDeferredCacheKey); err == nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("X-Cache", "HIT")
-			_, _ = w.Write(data)
-			return
-		}
-	}
-
-	// Bound concurrent live computes (see nhLiveComputeSem); shed with 503.
-	release, ok := nhAcquireLive(r.Context())
-	if !ok {
-		nhWriteLiveUnavailable(w)
-		return
-	}
-	defer release()
-	w.Header().Set("X-Cache", "MISS")
-	ctx, cancel := context.WithTimeout(r.Context(), 170*time.Second)
-	defer cancel()
-	resp := a.FetchNetworkHealthDeferredData(ctx, start, end, "")
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		logError("failed to encode network health deferred response", "error", err)
-	}
+// serveNHDeferred is GetNetworkHealthDeferred with the live-compute deadline as
+// a parameter, so tests can exercise the queue wait without waiting out the real
+// budget. The body is serveNHGroup's, under the longer heavy-group deadline.
+func (a *API) serveNHDeferred(w http.ResponseWriter, r *http.Request, deadline time.Duration) {
+	a.serveNHGroup(w, r, NetworkHealthDeferredCacheKey,
+		func(ctx context.Context, start, end time.Time, contrib string) any {
+			return a.FetchNetworkHealthDeferredData(ctx, start, end, contrib)
+		}, deadline)
 }
 
 // networkHealthWindow resolves the reporting window. If start+end are both given
@@ -901,72 +956,6 @@ func DefaultNetworkHealthWindow() (time.Time, time.Time) {
 	return end.AddDate(0, 0, -NetworkHealthDefaultDays), end
 }
 
-// nhContribKey builds one contributor's default-window (30d) cache key for a
-// group, so each per-contributor key carries the same version suffix as its
-// group's network-wide key and invalidates together with that group's shape.
-func nhContribKey(base, code string) string {
-	return base + networkHealthContributorCacheKeyInfix + code
-}
-
-// Per-group per-contributor cache-key builders (see nhContribKey).
-func NetworkHealthOverviewContributorCacheKey(code string) string {
-	return nhContribKey(NetworkHealthOverviewCacheKey, code)
-}
-func NetworkHealthAvailabilityContributorCacheKey(code string) string {
-	return nhContribKey(NetworkHealthAvailabilityCacheKey, code)
-}
-func NetworkHealthLatencyContributorCacheKey(code string) string {
-	return nhContribKey(NetworkHealthLatencyCacheKey, code)
-}
-func NetworkHealthCapacityContributorCacheKey(code string) string {
-	return nhContribKey(NetworkHealthCapacityCacheKey, code)
-}
-func NetworkHealthOutagesContributorCacheKey(code string) string {
-	return nhContribKey(NetworkHealthOutagesCacheKey, code)
-}
-func NetworkHealthDrainContributorCacheKey(code string) string {
-	return nhContribKey(NetworkHealthDrainCacheKey, code)
-}
-func NetworkHealthTicketsContributorCacheKey(code string) string {
-	return nhContribKey(NetworkHealthTicketsCacheKey, code)
-}
-func NetworkHealthImpactfulContributorCacheKey(code string) string {
-	return nhContribKey(NetworkHealthImpactfulCacheKey, code)
-}
-
-// NetworkHealthDeferredContributorCacheKey is the page_cache key for one
-// contributor's default-window (30d) deferred payload.
-func NetworkHealthDeferredContributorCacheKey(code string) string {
-	return nhContribKey(NetworkHealthDeferredCacheKey, code)
-}
-
-// FetchActiveContributorCodes returns the codes of contributors that have at
-// least one activated link or device. Used by the cache-refresh worker to
-// decide which per-contributor Network Health caches are worth precomputing —
-// a contributor record with no live network footprint would never be visited
-// by a scoped request, so refreshing its cache would just waste a cycle.
-func (a *API) FetchActiveContributorCodes(ctx context.Context) ([]string, error) {
-	q := `SELECT DISTINCT c.code FROM dz_contributors_current c
-		WHERE c.code != '' AND (
-			c.pk IN (SELECT contributor_pk FROM dz_links_current WHERE status = 'activated')
-			OR c.pk IN (SELECT contributor_pk FROM dz_devices_current WHERE status = 'activated')
-		)` + networkHealthQuerySettings
-	rows, err := a.envDB(ctx).Query(ctx, q)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var codes []string
-	for rows.Next() {
-		var code string
-		if err := rows.Scan(&code); err != nil {
-			return nil, err
-		}
-		codes = append(codes, code)
-	}
-	return codes, rows.Err()
-}
-
 func parseNHTime(s string) (time.Time, bool) {
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
 		return t.UTC(), true
@@ -1004,24 +993,26 @@ func nhPriorWindow(start, end time.Time) (time.Time, time.Time) {
 
 // fetchContribLinkPKs resolves the link pks owned by contrib for scoping the
 // drain-timing scans to one contributor's links. The bool reports whether the
-// scans should run at all:
-//   - contrib == ""             -> (nil, true):   network-wide, no link filter.
-//   - contrib set, links found  -> (pks, true):   filter to those link pks.
-//   - contrib set, zero links   -> (nil, false):  scoped to nothing; caller must
+// scans should run at all, and the error separates a failed lookup from a
+// contributor that genuinely owns no links:
+//   - contrib == ""             -> (nil, true, nil):   network-wide, no link filter.
+//   - contrib set, links found  -> (pks, true, nil):   filter to those link pks.
+//   - contrib set, zero links   -> (nil, false, nil):  scoped to nothing; caller must
 //     return an empty result, NOT fall back to a network-wide scan.
-//   - contrib set, query error  -> (nil, false):  cannot scope safely; same as above.
+//   - contrib set, query error  -> (nil, false, err):  cannot scope safely; caller
+//     must report the failure instead of publishing that empty result as a fact.
 //
 // The false case is what keeps a scoped request from silently leaking network-wide
 // data when the contributor owns no links or the pk lookup fails.
-func (a *API) fetchContribLinkPKs(ctx context.Context, contrib string) ([]string, bool) {
+func (a *API) fetchContribLinkPKs(ctx context.Context, contrib string) ([]string, bool, error) {
 	if contrib == "" {
-		return nil, true
+		return nil, true, nil
 	}
 	rows, err := a.envDB(ctx).Query(ctx,
 		`SELECT pk FROM dz_links_current WHERE contributor_pk IN (SELECT pk FROM dz_contributors_current WHERE code = ?)`+networkHealthQuerySettings, contrib)
 	if err != nil {
-		logError("network health: resolve contributor link pks failed", "error", err, "contributor", contrib)
-		return nil, false
+		logWarn("network health: resolve contributor link pks failed", "error", err, "contributor", contrib)
+		return nil, false, err
 	}
 	var pks []string
 	for rows.Next() {
@@ -1032,9 +1023,9 @@ func (a *API) fetchContribLinkPKs(ctx context.Context, contrib string) ([]string
 	}
 	rows.Close()
 	if len(pks) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
-	return pks, true
+	return pks, true, nil
 }
 
 // fetchImpactfulDowntime computes impact-weighted downtime (hours) over [s, e):
@@ -1050,32 +1041,18 @@ func (a *API) fetchContribLinkPKs(ctx context.Context, contrib string) ([]string
 // committed-RTT) path for its metro-pair, i.e. the one actually carrying traffic.
 func (a *API) fetchImpactfulDowntime(ctx context.Context, s, e time.Time, contrib string) (float64, error) {
 	scoped := contrib != ""
-	impScopeJoin, impScopeFilter := "", ""
-	if scoped {
-		impScopeJoin = " JOIN dz_links_current l ON l.pk = r.link_pk"
-		impScopeFilter = " AND l.contributor_pk IN (SELECT pk FROM dz_contributors_current WHERE code = ?)"
-	}
 	// Bounded pre-outage scan (preserves the exact "traffic in the 60 min before
 	// the outage" semantics without an unbounded 30-day LEFT JOIN): the outage
 	// episodes come from link_rollup_5m (~a few hundred links), and both
 	// device_interface_rollup_5m scans are pruned to those outage links (olinks)
 	// and to the data-derived pre-outage span, so the correlated 60-min-pre-window
-	// join runs over a tiny slice. Episodes carry the A1 >= 2-bucket (>= 10 min)
-	// minimum.
-	q := `WITH outb AS (
-		SELECT r.link_pk AS link_pk, r.bucket_ts AS bucket_ts
-		FROM link_rollup_5m r FINAL` + impScopeJoin + `
-		WHERE r.bucket_ts >= ? AND r.bucket_ts < ? AND r.provisioning = false
-		  AND r.status = 'activated' AND (r.isis_down = 1 OR greatest(r.a_loss_pct, r.z_loss_pct) >= 10)` + impScopeFilter + `),
-	isl AS (
-		SELECT link_pk, bucket_ts,
-		  bucket_ts - toIntervalSecond(row_number() OVER (PARTITION BY link_pk ORDER BY bucket_ts) * 300) AS grp
-		FROM outb),
-	epi AS (
-		SELECT link_pk, grp, min(bucket_ts) AS started_at, least(count() * 300, 86400) AS capped, count() AS nbuckets
-		FROM isl GROUP BY link_pk, grp),
+	// join runs over a tiny slice. The episodes come from the shared outage
+	// definition (nhOutEpisodeCTE), so this headline figure counts the same
+	// failures as the outage and drain panels.
+	q := nhOutEpisodeCTE(scoped, false) + `,
 	outages AS (
-		SELECT link_pk, started_at, capped FROM epi WHERE nbuckets >= 2),
+		SELECT link_pk, started_at, least(dur_s, 86400) AS capped
+		FROM epi WHERE dur_s >= ` + nhSustainedOutageSQL + `),
 	olinks AS (SELECT DISTINCT link_pk FROM outages),
 	span AS (SELECT min(started_at) - INTERVAL 60 MINUTE AS pre_lo, max(started_at) AS pre_hi FROM outages),
 	ri AS (
@@ -1173,21 +1150,21 @@ func (a *API) FetchNetworkHealthOverviewData(ctx context.Context, start, end tim
 	linksByCode := map[string]uint64{}
 	devicesByCode := map[string]uint64{}
 	// throughput_ts is the only headline-critical panel in this group (peak +
-	// trend). Only one goroutine writes throughputErr, read after Wait — no lock.
-	var throughputErr error
+	// trend); everything else degrades to an unavailable panel.
+	panels := &nhPanels{}
 
 	g := new(errgroup.Group)
 	g.SetLimit(10)
 
 	// --- Headline: active counts as-of window end ---
-	g.Go(func() error {
+	nhGo(g, panels, "active_devices", func() error {
 		q := `SELECT count() FROM (
 			SELECT pk, argMax(status, snapshot_ts) AS st, argMax(is_deleted, snapshot_ts) AS del, argMax(contributor_pk, snapshot_ts) AS cpk
 			FROM dim_dz_devices_history WHERE snapshot_ts <= ? GROUP BY pk
 		) WHERE st = 'activated' AND del = 0` + cHist + networkHealthQuerySettings
 		return a.scanUint(ctx, &resp.Headline.ActiveDevices, q, withC(end)...)
 	})
-	g.Go(func() error {
+	nhGo(g, panels, "active_links", func() error {
 		q := `SELECT count() FROM (
 			SELECT pk, argMax(status, snapshot_ts) AS st, argMax(is_deleted, snapshot_ts) AS del, argMax(contributor_pk, snapshot_ts) AS cpk
 			FROM dim_dz_links_history WHERE snapshot_ts <= ? GROUP BY pk
@@ -1195,7 +1172,7 @@ func (a *API) FetchNetworkHealthOverviewData(ctx context.Context, start, end tim
 		return a.scanUint(ctx, &resp.Headline.ActiveLinks, q, withC(end)...)
 	})
 	if !scoped {
-		g.Go(func() error {
+		nhGo(g, panels, "metros", func() error {
 			q := `SELECT count() FROM (
 				SELECT pk, argMax(is_deleted, snapshot_ts) AS del
 				FROM dim_dz_metros_history WHERE snapshot_ts <= ? GROUP BY pk
@@ -1203,7 +1180,7 @@ func (a *API) FetchNetworkHealthOverviewData(ctx context.Context, start, end tim
 			return a.scanUint(ctx, &resp.Headline.ActiveMetros, q, end)
 		})
 	}
-	g.Go(func() error {
+	nhGo(g, panels, "active_links_prior", func() error {
 		q := `SELECT count() FROM (
 			SELECT pk, argMax(status, snapshot_ts) AS st, argMax(is_deleted, snapshot_ts) AS del, argMax(contributor_pk, snapshot_ts) AS cpk
 			FROM dim_dz_links_history WHERE snapshot_ts <= ? GROUP BY pk
@@ -1212,18 +1189,16 @@ func (a *API) FetchNetworkHealthOverviewData(ctx context.Context, start, end tim
 	})
 
 	// --- Headline: peak throughput (current from the trend scan; prior for delta) ---
-	g.Go(func() error {
+	nhGoCritical(g, panels, "throughput_ts", func() error {
 		ts, peak, err := a.fetchThroughputTS(ctx, start, end, intervalSec, contrib)
 		if err != nil {
-			logError("network health critical panel failed", "panel", "throughput_ts", "error", err)
-			throughputErr = err
-			return nil
+			return err
 		}
 		resp.Throughput = ts
 		resp.Headline.PeakBps = peak
 		return nil
 	})
-	nhGo(g, "peak_prior", func() error {
+	nhGo(g, panels, "peak_prior", func() error {
 		_, peak, err := a.fetchThroughputTS(ctx, priorStart, priorEnd, nhIntervalSeconds(priorStart, priorEnd), contrib)
 		if err != nil {
 			return err
@@ -1234,7 +1209,7 @@ func (a *API) FetchNetworkHealthOverviewData(ctx context.Context, start, end tim
 
 	// --- Headline: latency improvement vs internet (point-in-time, network-only) ---
 	if !scoped {
-		g.Go(func() error {
+		nhGo(g, panels, "latency_vs_internet", func() error {
 			q := `SELECT
 				round(avgIf(jitter_improvement_pct, origin_metro != '' AND target_metro != ''), 2),
 				round(avgIf(dz_loss_pct, origin_metro != '' AND target_metro != ''), 2)
@@ -1249,7 +1224,7 @@ func (a *API) FetchNetworkHealthOverviewData(ctx context.Context, start, end tim
 		})
 
 		// --- IS-IS + telemetry freshness (point-in-time, network-only) ---
-		g.Go(func() error {
+		nhGo(g, panels, "isis", func() error {
 			q := `SELECT countIf(overload = 1), countIf(node_unreachable = 1), count()
 			FROM isis_devices_current` + networkHealthQuerySettings
 			if err := a.envDB(ctx).QueryRow(ctx, q).Scan(&resp.Isis.Overloaded, &resp.Isis.Unreachable, &resp.Isis.Devices); err != nil {
@@ -1257,7 +1232,7 @@ func (a *API) FetchNetworkHealthOverviewData(ctx context.Context, start, end tim
 			}
 			return a.envDB(ctx).QueryRow(ctx, `SELECT count() FROM isis_adjacencies_current`+networkHealthQuerySettings).Scan(&resp.Isis.Adjacencies)
 		})
-		g.Go(func() error {
+		nhGo(g, panels, "freshness", func() error {
 			var feedMax time.Time
 			if err := a.envDB(ctx).QueryRow(ctx,
 				`SELECT max(event_ts), toInt64(dateDiff('second', max(event_ts), now()))
@@ -1276,7 +1251,7 @@ func (a *API) FetchNetworkHealthOverviewData(ctx context.Context, start, end tim
 
 		// --- Contributor list (footprint only) for the filter dropdown. The
 		// per-contributor OUTAGE breakdown lives in the Outages group. ---
-		g.Go(func() error {
+		nhGo(g, panels, "contributors", func() error {
 			q := `SELECT c.code, count()
 			FROM dz_links_current AS l
 			LEFT JOIN dz_contributors_current AS c ON c.pk = l.contributor_pk
@@ -1284,7 +1259,7 @@ func (a *API) FetchNetworkHealthOverviewData(ctx context.Context, start, end tim
 			GROUP BY c.code` + networkHealthQuerySettings
 			return a.scanCodeCount(ctx, linksByCode, q)
 		})
-		g.Go(func() error {
+		nhGo(g, panels, "contributor_devices", func() error {
 			q := `SELECT c.code, count()
 			FROM dz_devices_current AS d
 			LEFT JOIN dz_contributors_current AS c ON c.pk = d.contributor_pk
@@ -1294,9 +1269,7 @@ func (a *API) FetchNetworkHealthOverviewData(ctx context.Context, start, end tim
 		})
 	}
 
-	if err := g.Wait(); err != nil {
-		logError("network health overview: partial data", "error", err)
-	}
+	_ = g.Wait()
 
 	// Deltas vs prior window (peak/active-links; outage/impactful deltas are owned
 	// by the Outages/Impactful groups).
@@ -1326,9 +1299,9 @@ func (a *API) FetchNetworkHealthOverviewData(ctx context.Context, start, end tim
 		}
 	}
 
-	if !scoped && throughputErr != nil {
+	resp.Degraded = panels.list()
+	if panels.criticalFailed() {
 		// Generic client-facing message; the raw DB error is logged, not exposed.
-		logError("network health overview: throughput_ts failed", "error", throughputErr)
 		resp.Error = "network health overview data temporarily unavailable"
 	}
 	return resp
@@ -1344,9 +1317,10 @@ func (a *API) FetchNetworkHealthAvailabilityData(ctx context.Context, start, end
 		DeviceAvailability: []NHAvailability{},
 	}
 
+	panels := &nhPanels{}
 	g := new(errgroup.Group)
 	g.SetLimit(10)
-	nhGo(g, "link_availability", func() error {
+	nhGo(g, panels, "link_availability", func() error {
 		rows, err := a.fetchLinkAvailability(ctx, start, end, contrib)
 		if err != nil {
 			return err
@@ -1354,7 +1328,7 @@ func (a *API) FetchNetworkHealthAvailabilityData(ctx context.Context, start, end
 		resp.LinkAvailability = rows
 		return nil
 	})
-	nhGo(g, "device_availability", func() error {
+	nhGo(g, panels, "device_availability", func() error {
 		rows, err := a.fetchDeviceAvailability(ctx, start, end, contrib)
 		if err != nil {
 			return err
@@ -1362,9 +1336,8 @@ func (a *API) FetchNetworkHealthAvailabilityData(ctx context.Context, start, end
 		resp.DeviceAvailability = rows
 		return nil
 	})
-	if err := g.Wait(); err != nil {
-		logError("network health availability: partial data", "error", err)
-	}
+	_ = g.Wait()
+	resp.Degraded = panels.list()
 	return resp
 }
 
@@ -1389,9 +1362,10 @@ func (a *API) FetchNetworkHealthLatencyData(ctx context.Context, start, end time
 		return args
 	}
 
+	panels := &nhPanels{}
 	g := new(errgroup.Group)
 	g.SetLimit(10)
-	nhGo(g, "latency_links", func() error {
+	nhGo(g, panels, "latency_links", func() error {
 		rows, err := a.fetchLatencyLinks(ctx, start, end, contrib)
 		if err != nil {
 			return err
@@ -1399,7 +1373,7 @@ func (a *API) FetchNetworkHealthLatencyData(ctx context.Context, start, end time
 		resp.LatencyLinks = rows
 		return nil
 	})
-	g.Go(func() error {
+	nhGo(g, panels, "sla", func() error {
 		q := `SELECT countIf(observed_us <= committed_us), count() FROM (
 			SELECT l.pk AS pk, l.committed_rtt_ns / 1000.0 AS committed_us,
 				avg((r.a_avg_rtt_us + r.z_avg_rtt_us) / 2) AS observed_us
@@ -1416,9 +1390,8 @@ func (a *API) FetchNetworkHealthLatencyData(ctx context.Context, start, end time
 		resp.Sla.WithinPct = pctPtr(int(resp.Sla.Within), int(resp.Sla.Total))
 		return nil
 	})
-	if err := g.Wait(); err != nil {
-		logError("network health latency: partial data", "error", err)
-	}
+	_ = g.Wait()
+	resp.Degraded = panels.list()
 	return resp
 }
 
@@ -1447,10 +1420,11 @@ func (a *API) FetchNetworkHealthCapacityData(ctx context.Context, start, end tim
 		return args
 	}
 
+	panels := &nhPanels{}
 	g := new(errgroup.Group)
 	g.SetLimit(10)
 	// --- Seat capacity utilization (point-in-time) ---
-	g.Go(func() error {
+	nhGo(g, panels, "seat_capacity", func() error {
 		q := `SELECT sum(unicast_users_count), sum(max_users)
 			FROM dz_devices_current WHERE status = 'activated'` + cDevBare + networkHealthQuerySettings
 		var users uint64
@@ -1466,7 +1440,7 @@ func (a *API) FetchNetworkHealthCapacityData(ctx context.Context, start, end tim
 		}
 		return nil
 	})
-	nhGo(g, "device_slots", func() error {
+	nhGo(g, panels, "device_slots", func() error {
 		rows, err := a.fetchDeviceSlots(ctx, contrib)
 		if err != nil {
 			return err
@@ -1474,7 +1448,7 @@ func (a *API) FetchNetworkHealthCapacityData(ctx context.Context, start, end tim
 		resp.DeviceSlots = rows
 		return nil
 	})
-	nhGo(g, "dia_interfaces", func() error {
+	nhGo(g, panels, "dia_interfaces", func() error {
 		rows, err := a.fetchDiaInterfaces(ctx, start, end, contrib)
 		if err != nil {
 			return err
@@ -1482,7 +1456,7 @@ func (a *API) FetchNetworkHealthCapacityData(ctx context.Context, start, end tim
 		resp.DiaInterfaces = rows
 		return nil
 	})
-	nhGo(g, "top_links", func() error {
+	nhGo(g, panels, "top_links", func() error {
 		rows, err := a.fetchTopLinks(ctx, start, end, contrib)
 		if err != nil {
 			return err
@@ -1490,7 +1464,7 @@ func (a *API) FetchNetworkHealthCapacityData(ctx context.Context, start, end tim
 		resp.TopLinks = rows
 		return nil
 	})
-	nhGo(g, "fullest_links", func() error {
+	nhGo(g, panels, "fullest_links", func() error {
 		rows, err := a.fetchFullestLinks(ctx, start, end, contrib)
 		if err != nil {
 			return err
@@ -1498,9 +1472,8 @@ func (a *API) FetchNetworkHealthCapacityData(ctx context.Context, start, end tim
 		resp.CapacityLinks = rows
 		return nil
 	})
-	if err := g.Wait(); err != nil {
-		logError("network health capacity: partial data", "error", err)
-	}
+	_ = g.Wait()
+	resp.Degraded = panels.list()
 	return resp
 }
 
@@ -1536,44 +1509,30 @@ func (a *API) FetchNetworkHealthOutagesData(ctx context.Context, start, end time
 	}
 
 	var priorOutages uint64
-	// reliability is the only headline-critical panel in this group. Single writer,
-	// read after Wait — no lock needed.
-	var reliabilityErr error
+	// reliability is the only headline-critical panel in this group: it feeds the
+	// outage headline tile and every sentence in the reliability panel, so a zero
+	// from it reads as "nothing failed". Every other panel here degrades on its
+	// own so one failed scan cannot blank the group.
+	panels := &nhPanels{}
 
-	// Shared outage-episode CTE (contiguous isis_down/high-loss buckets collapsed
-	// into episodes via the row_number island trick; each episode's duration is
-	// buckets*300s). Same definition used across the page.
-	outEpisodeScopeJoin, outEpisodeScopeFilter := "", ""
-	if scoped {
-		outEpisodeScopeJoin = " JOIN dz_links_current l ON l.pk = r.link_pk"
-		outEpisodeScopeFilter = " AND l.contributor_pk IN (SELECT pk FROM dz_contributors_current WHERE code = ?)"
-	}
-	outEpisodeCTE := `WITH outb AS (
-			SELECT r.link_pk AS link_pk, r.bucket_ts AS bucket_ts
-			FROM link_rollup_5m r FINAL` + outEpisodeScopeJoin + `
-			WHERE r.bucket_ts >= ? AND r.bucket_ts < ? AND r.provisioning = false
-			  AND r.status = 'activated' AND (r.isis_down = 1 OR greatest(r.a_loss_pct, r.z_loss_pct) >= 10)` + outEpisodeScopeFilter + `),
-		isl AS (
-			SELECT link_pk, bucket_ts,
-			  bucket_ts - toIntervalSecond(row_number() OVER (PARTITION BY link_pk ORDER BY bucket_ts) * 300) AS grp
-			FROM outb),
-		epi AS (
-			SELECT link_pk, count() * 300 AS dur_s FROM isl GROUP BY link_pk, grp)`
+	// The shared outage-episode definition (see nhOutEpisodeCTE), so the count
+	// published here and the one the Drain group publishes come from one rule.
+	outEpisodeCTE := nhOutEpisodeCTE(scoped, false)
 
 	g := new(errgroup.Group)
 	g.SetLimit(10)
 
 	// --- Reliability (headline-critical): outages, distinct links, capped downtime, histogram ---
-	g.Go(func() error {
+	nhGoCritical(g, panels, "reliability", func() error {
 		// The epi CTE carries ALL episodes (no >= 2-bucket floor). The sustained
-		// headline metrics gate on dur_s >= 600 (>= 10 min) so they stay de-saturated,
-		// while the duration histogram counts ALL episodes so the <= 5-minute flap
-		// bucket populates.
+		// headline metrics gate on dur_s >= nhSustainedOutageSeconds (>= 10 min) so
+		// they stay de-saturated, while the duration histogram counts ALL episodes so
+		// the <= 5-minute flap bucket populates.
 		q := outEpisodeCTE + `
 			SELECT
-			countIf(dur_s >= 600),
-			uniqExactIf(link_pk, dur_s >= 600),
-			round(sumIf(least(dur_s, 86400), dur_s >= 600) / 3600, 1),
+			countIf(dur_s >= ` + nhSustainedOutageSQL + `),
+			uniqExactIf(link_pk, dur_s >= ` + nhSustainedOutageSQL + `),
+			round(sumIf(least(dur_s, 86400), dur_s >= ` + nhSustainedOutageSQL + `) / 3600, 1),
 			countIf(dur_s <= 300),
 			countIf(dur_s > 300 AND dur_s <= 900),
 			countIf(dur_s > 900 AND dur_s <= 3600),
@@ -1586,9 +1545,7 @@ func (a *API) FetchNetworkHealthOutagesData(ctx context.Context, start, end time
 		var downtime float64
 		if err := row.Scan(&count, &distinct, &downtime,
 			&h.FlapLE5m, &h.Short5to15m, &h.Medium15to60m, &h.Sustained1to24h, &h.ChronicGt24h); err != nil {
-			logError("network health critical panel failed", "panel", "reliability", "error", err)
-			reliabilityErr = err
-			return nil
+			return err
 		}
 		resp.Reliability.OutageCount = count
 		resp.Reliability.DistinctLinks = distinct
@@ -1598,11 +1555,11 @@ func (a *API) FetchNetworkHealthOutagesData(ctx context.Context, start, end time
 		return nil
 	})
 	// Prior outage count + capped downtime (for the delta). Same shared CTE, gated
-	// on dur_s >= 600 to match the sustained OutageCount above.
-	g.Go(func() error {
+	// on the sustained floor to match the OutageCount above.
+	nhGo(g, panels, "reliability_prior", func() error {
 		q := outEpisodeCTE + `
-			SELECT countIf(dur_s >= 600),
-			round(sumIf(least(dur_s, 86400), dur_s >= 600) / 3600, 1)
+			SELECT countIf(dur_s >= ` + nhSustainedOutageSQL + `),
+			round(sumIf(least(dur_s, 86400), dur_s >= ` + nhSustainedOutageSQL + `) / 3600, 1)
 			FROM epi` + networkHealthQuerySettings
 		var cnt uint64
 		var downtime float64
@@ -1616,7 +1573,10 @@ func (a *API) FetchNetworkHealthOutagesData(ctx context.Context, start, end time
 	})
 
 	// --- Reliability: degraded links (loss but not down) ---
-	g.Go(func() error {
+	// One sentence in the reliability panel, which already names degraded_links
+	// among its sources, so a failure here renders that panel unavailable without
+	// touching the rest of the group.
+	nhGo(g, panels, "degraded_links", func() error {
 		q := `SELECT uniqExact(link_pk) FROM link_rollup_5m
 			WHERE bucket_ts >= ? AND bucket_ts < ?
 			  AND status = 'activated' AND isis_down = 0
@@ -1624,7 +1584,7 @@ func (a *API) FetchNetworkHealthOutagesData(ctx context.Context, start, end time
 		return a.scanUint(ctx, &resp.Reliability.DegradedLinks, q, withC(start, end)...)
 	})
 
-	nhGo(g, "outage_summary", func() error {
+	nhGo(g, panels, "outage_summary", func() error {
 		s, err := a.fetchOutageSummary(ctx, start, end, contrib)
 		if err != nil {
 			return err
@@ -1632,7 +1592,7 @@ func (a *API) FetchNetworkHealthOutagesData(ctx context.Context, start, end time
 		resp.OutageSummary = s
 		return nil
 	})
-	nhGo(g, "outage_summary_prev", func() error {
+	nhGo(g, panels, "outage_summary_prev", func() error {
 		s, err := a.fetchOutageSummary(ctx, priorStart, priorEnd, contrib)
 		if err != nil {
 			return err
@@ -1640,7 +1600,7 @@ func (a *API) FetchNetworkHealthOutagesData(ctx context.Context, start, end time
 		resp.Prev.OutageSummary = s
 		return nil
 	})
-	nhGo(g, "downtime_links", func() error {
+	nhGo(g, panels, "downtime_links", func() error {
 		rows, err := a.fetchDowntimeLinks(ctx, start, end, contrib)
 		if err != nil {
 			return err
@@ -1648,7 +1608,7 @@ func (a *API) FetchNetworkHealthOutagesData(ctx context.Context, start, end time
 		resp.DowntimeLinks = rows
 		return nil
 	})
-	nhGo(g, "downtime_devices", func() error {
+	nhGo(g, panels, "downtime_devices", func() error {
 		rows, err := a.fetchDowntimeDevices(ctx, start, end, contrib)
 		if err != nil {
 			return err
@@ -1656,7 +1616,7 @@ func (a *API) FetchNetworkHealthOutagesData(ctx context.Context, start, end time
 		resp.DowntimeDevices = rows
 		return nil
 	})
-	nhGo(g, "outages_ts", func() error {
+	nhGo(g, panels, "outages_ts", func() error {
 		ts, err := a.fetchOutagesTS(ctx, start, end, intervalSec, contrib)
 		if err != nil {
 			return err
@@ -1664,7 +1624,7 @@ func (a *API) FetchNetworkHealthOutagesData(ctx context.Context, start, end time
 		resp.OutagesOverTime = ts
 		return nil
 	})
-	nhGo(g, "error_hotspots", func() error {
+	nhGo(g, panels, "error_hotspots", func() error {
 		rows, err := a.fetchErrorHotspots(ctx, start, end, contrib)
 		if err != nil {
 			return err
@@ -1673,15 +1633,13 @@ func (a *API) FetchNetworkHealthOutagesData(ctx context.Context, start, end time
 		return nil
 	})
 
-	if err := g.Wait(); err != nil {
-		logError("network health outages: partial data", "error", err)
-	}
+	_ = g.Wait()
 
 	resp.OutageCountDelta = pctDelta(float64(resp.OutageCount), float64(priorOutages))
 
-	if !scoped && reliabilityErr != nil {
+	resp.Degraded = panels.list()
+	if panels.criticalFailed() {
 		// Generic client-facing message; the raw DB error is logged, not exposed.
-		logError("network health outages: reliability failed", "error", reliabilityErr)
 		resp.Error = "network health outages data temporarily unavailable"
 	}
 	return resp
@@ -1697,10 +1655,26 @@ func (a *API) FetchNetworkHealthDrainData(ctx context.Context, start, end time.T
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 
-	contribLinkPKs, ok := a.fetchContribLinkPKs(ctx, contrib)
+	// Every current-window figure is derived in Go from the union of the two
+	// current scans, so a missing scan silently changes every number rather than
+	// emptying a list: those two are critical. The two prior-window scans feed only
+	// the vs-prior deltas, so a failure there degrades the delta and leaves the
+	// current-window figures published.
+	panels := &nhPanels{}
+
+	contribLinkPKs, ok, err := a.fetchContribLinkPKs(ctx, contrib)
+	if err != nil {
+		// The pk lookup failed, so the scope cannot be resolved: report the failure
+		// instead of publishing "0 drains, 0 undrains" for this contributor.
+		panels.fail("contrib_link_pks", true)
+		resp.Prev = &NHDrainTiming{}
+		resp.Degraded = panels.list()
+		resp.Error = "network health drain data temporarily unavailable"
+		return resp
+	}
 	if !ok {
-		// Scoped request that resolves to no links (or the pk lookup failed):
-		// return an empty result rather than falling back to a network-wide scan.
+		// Scoped request that resolves to no links: return an empty result rather
+		// than falling back to a network-wide scan. Not an error.
 		resp.Prev = &NHDrainTiming{}
 		return resp
 	}
@@ -1710,7 +1684,7 @@ func (a *API) FetchNetworkHealthDrainData(ctx context.Context, start, end time.T
 
 	g := new(errgroup.Group)
 	g.SetLimit(10)
-	nhGo(g, "link_down_events", func() error {
+	nhGoCritical(g, panels, "link_down_events", func() error {
 		evs, err := a.fetchLinkDownEvents(ctx, start, end, contribLinkPKs)
 		if err != nil {
 			return err
@@ -1718,7 +1692,7 @@ func (a *API) FetchNetworkHealthDrainData(ctx context.Context, start, end time.T
 		events = evs
 		return nil
 	})
-	nhGo(g, "status_changes", func() error {
+	nhGoCritical(g, panels, "status_changes", func() error {
 		chs, err := a.fetchStatusChanges(ctx, start, end, contribLinkPKs)
 		if err != nil {
 			return err
@@ -1726,7 +1700,7 @@ func (a *API) FetchNetworkHealthDrainData(ctx context.Context, start, end time.T
 		changes = chs
 		return nil
 	})
-	nhGo(g, "link_down_events_prev", func() error {
+	nhGo(g, panels, "link_down_events_prev", func() error {
 		evs, err := a.fetchLinkDownEvents(ctx, priorStart, priorEnd, contribLinkPKs)
 		if err != nil {
 			return err
@@ -1734,7 +1708,7 @@ func (a *API) FetchNetworkHealthDrainData(ctx context.Context, start, end time.T
 		priorEvents = evs
 		return nil
 	})
-	nhGo(g, "status_changes_prev", func() error {
+	nhGo(g, panels, "status_changes_prev", func() error {
 		chs, err := a.fetchStatusChanges(ctx, priorStart, priorEnd, contribLinkPKs)
 		if err != nil {
 			return err
@@ -1742,9 +1716,7 @@ func (a *API) FetchNetworkHealthDrainData(ctx context.Context, start, end time.T
 		priorChanges = chs
 		return nil
 	})
-	if err := g.Wait(); err != nil {
-		logError("network health drain: partial data", "error", err)
-	}
+	_ = g.Wait()
 
 	// The undrain (recovery-health) figures are NOT computed here; they are served
 	// from the deferred endpoint. TimeToUndrain* stay nil (MatchedUndrains still
@@ -1753,19 +1725,63 @@ func (a *API) FetchNetworkHealthDrainData(ctx context.Context, start, end time.T
 	resp.DrainTiming = dt
 	dtPrev, _ := computeDrainTiming(priorEvents, priorChanges)
 	resp.Prev = &dtPrev
+
+	resp.Degraded = panels.list()
+	if panels.criticalFailed() {
+		// Generic client-facing message; the raw DB error is logged, not exposed.
+		resp.Error = "network health drain data temporarily unavailable"
+	}
 	return resp
 }
 
 // FetchNetworkHealthTicketsData computes the Tickets group: the public ops-
 // management aggregate for the current and prior windows, split from one union
-// fetch over the ops API. resolveContributorScope + filterTicketsByContributor
-// scope it when contrib is set. Text-free by construction.
+// fetch over the ops API. The fetch's lower bound (priorStart) is enforced by the
+// paging loop; its upper bound (end) is enforced here by splitTicketsByWindow, so
+// the ticket counts and the outage figures beside them cover the same window.
+// resolveContributorScope + filterTicketsByContributor scope it when contrib is
+// set, and the scope is resolved BEFORE the fetch so an unknown contributor code
+// costs no upstream calls. Windows reaching further back than
+// nhOpsTicketsMaxLookback are refused rather than paged. Text-free by
+// construction.
 func (a *API) FetchNetworkHealthTicketsData(ctx context.Context, start, end time.Time, contrib string) *NHTicketsGroup {
 	priorStart, _ := nhPriorWindow(start, end)
 	scoped := contrib != ""
 	resp := &NHTicketsGroup{
 		Window:      nhWindow(start, end),
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	// The ops API is newest-first with no date filter, so the paging loop walks
+	// back from now to priorStart. Refuse a window that would walk further than
+	// the widest window the page can ask for, rather than truncating the fetch and
+	// publishing an undercount with no signal.
+	if time.Since(priorStart) > nhOpsTicketsMaxLookback {
+		logWarn("network health: ops tickets window predates the lookback floor",
+			"prior_start", priorStart.UTC().Format(time.RFC3339), "max_lookback", nhOpsTicketsMaxLookback)
+		resp.Degraded = []string{"ops_tickets"}
+		resp.Error = "network health: ops ticket history only reaches back " +
+			strconv.Itoa(int(nhOpsTicketsMaxLookback/(24*time.Hour))) + " days"
+		return resp
+	}
+
+	// Resolve the contributor scope first: an unknown code fails here, before the
+	// pagination spends up to maxPages credentialed round trips on tickets that
+	// would then be filtered away.
+	outageContrib := ""
+	scopePubkey := ""
+	var cscope *nhContributorScope
+	if scoped {
+		s, err := a.resolveContributorScope(ctx, contrib)
+		if err != nil {
+			logWarn("network health: resolve contributor scope for tickets failed", "error", err, "contributor", contrib)
+			resp.Degraded = []string{"contributor_scope"}
+			resp.Error = "network health: ops tickets unavailable"
+			return resp
+		}
+		cscope = s
+		outageContrib = contrib
+		scopePubkey = cscope.pubkey
 	}
 
 	// Cap the external pagination loop independently of the caller's deadline.
@@ -1775,47 +1791,54 @@ func (a *API) FetchNetworkHealthTicketsData(ctx context.Context, start, end time
 	// priorStart. The current and prior sets are split in Go (no second round-trip).
 	tickets, err := a.fetchOpsTicketsSince(tctx, priorStart)
 	if err != nil {
-		logError("network health: ops tickets fetch failed", "error", err)
+		logWarn("network health: ops tickets fetch failed", "error", err)
 		// Surface the failure so GroupBoundary shows the unavailable state and the
 		// worker keeps the last-good blob, rather than the panels silently vanishing.
+		resp.Degraded = []string{"ops_tickets"}
 		resp.Error = "network health: ops tickets unavailable"
 		return resp
 	}
 	if tickets == nil {
 		return resp // no API key configured (silent empty, not an error)
 	}
-
-	outageContrib := ""
-	scopePubkey := ""
 	if scoped {
-		cscope, err := a.resolveContributorScope(ctx, contrib)
-		if err != nil {
-			logError("network health: resolve contributor scope for tickets failed", "error", err, "contributor", contrib)
+		tickets = filterTicketsByContributor(tickets, cscope)
+	}
+
+	var degraded []string
+
+	// A dropped ticket is a missing count, so say so instead of publishing a quiet
+	// undercount: name the panel once the dropped set is material, and report the
+	// group unavailable when the whole fetch is unusable (an upstream timestamp
+	// format change) so the worker keeps the last good blob. Both gates run after
+	// the contributor filter, so the share alone would fire on a single malformed
+	// row in a small scope; the absolute floor keeps that from hiding a handful of
+	// correct tickets.
+	split := splitTicketsByWindow(tickets, priorStart, start, end)
+	if split.undated > 0 {
+		logWarn("network health: ops tickets dropped with unparseable created_at",
+			"count", split.undated, "total", len(tickets))
+		material := split.undated >= nhTicketUndatedDegradeMin &&
+			float64(split.undated) >= nhTicketUndatedDegradeShare*float64(len(tickets))
+		if material {
+			degraded = append(degraded, "ops_tickets")
+		}
+		if material && split.undated == len(tickets) {
+			resp.Degraded = []string{"ops_tickets"}
 			resp.Error = "network health: ops tickets unavailable"
 			return resp
 		}
-		tickets = filterTicketsByContributor(tickets, cscope)
-		outageContrib = contrib
-		scopePubkey = cscope.pubkey
 	}
 
-	// Split tickets into current (created >= start) and prior (priorStart <= created < start).
-	var curTickets, priorTickets []nhRawTicket
-	for _, t := range tickets {
-		ct, ok := nhParseTicketTime(&t.CreatedAt)
-		switch {
-		case !ok || !ct.Before(start):
-			curTickets = append(curTickets, t)
-		case !ct.Before(priorStart):
-			priorTickets = append(priorTickets, t)
-		}
-	}
-
-	// One wider outage-list scan over [priorStart, end), partitioned in Go.
+	// One wider outage-list scan over [priorStart, end), partitioned in Go. It is
+	// the denominator of the coverage figures, so a failure leaves those figures
+	// zeroed: name the panel so the coverage figures read as unavailable, without
+	// blanking the ticket counts and maintenance figures that computed fine.
 	outs, err := a.fetchOutageListForTickets(ctx, priorStart, end, outageContrib)
 	if err != nil {
-		logError("network health: outage list for tickets failed", "error", err)
+		logWarn("network health panel failed", "panel", "outage_list", "critical", false, "error", err)
 		outs = nil
+		degraded = append(degraded, "outage_list")
 	}
 	var curOuts, priorOuts []nhOutage
 	for _, o := range outs {
@@ -1826,15 +1849,77 @@ func (a *API) FetchNetworkHealthTicketsData(ctx context.Context, start, end time
 		}
 	}
 
-	userContrib, err := a.fetchOpsUsers(ctx)
+	userContrib, err := a.cachedOpsUsers(ctx)
 	if err != nil {
-		logError("network health: ops users fetch failed", "error", err)
+		logWarn("network health panel failed", "panel", "ops_users", "critical", false, "error", err)
+		degraded = append(degraded, "ops_users")
 	}
-	curAgg := computeTicketAggregates(curTickets, curOuts, userContrib, scopePubkey)
+	curAgg := computeTicketAggregates(split.cur, split.cover, curOuts, userContrib, scopePubkey)
 	resp.OpsTickets = &curAgg
-	priorAgg := computeTicketAggregates(priorTickets, priorOuts, userContrib, scopePubkey)
+	priorAgg := computeTicketAggregates(split.prior, split.cover, priorOuts, userContrib, scopePubkey)
 	resp.Prev = &priorAgg
+	sort.Strings(degraded)
+	resp.Degraded = degraded
 	return resp
+}
+
+// nhTicketCoverTolerance is how far a ticket's incident interval may sit outside
+// an outage's interval and still count as covering it (see the overlap check in
+// computeTicketAggregates). It bounds interval distance, not filing time.
+const nhTicketCoverTolerance = 30 * time.Minute
+
+// nhTicketUndatedDegradeShare is the dropped share of a fetch (tickets whose
+// created_at does not parse) at which the ticket figures are reported as
+// incomplete rather than published as an undercount.
+const nhTicketUndatedDegradeShare = 0.05
+
+// nhTicketUndatedDegradeMin is the absolute number of dropped tickets that must
+// accompany the share before the ticket figures are reported as incomplete. A
+// contributor-scoped fetch holds only that contributor's tickets, so the share on
+// its own would blank a dozen correct tickets over one malformed row.
+const nhTicketUndatedDegradeMin = 3
+
+// nhTicketSplit is one ops-API fetch partitioned into the reporting windows.
+// cur/prior are the counted sets, each bounded by its own window. cover is every
+// dated ticket in the fetch and is used ONLY for outage coverage, never for a
+// published count.
+type nhTicketSplit struct {
+	cur, prior []nhRawTicket
+	cover      []nhRawTicket
+	undated    int
+}
+
+// splitTicketsByWindow partitions tickets by created_at (filing time) into the
+// current window [start, end) and the prior window [priorStart, start). The ops
+// API has no date filter, so the fetch returns everything newer than priorStart
+// and the upper bound is applied here. A ticket whose created_at does not parse
+// cannot be placed in either window, so it is dropped and counted in undated
+// rather than counted as current.
+//
+// cover collects every dated ticket regardless of window, including tickets filed
+// after end. computeTicketAggregates matches coverage on the ticket's incident
+// interval (start_at/end_at), not on created_at, so a ticket filed hours or days
+// after an outage still covers it; bounding cover by filing time would report
+// those outages as unfiled.
+func splitTicketsByWindow(tickets []nhRawTicket, priorStart, start, end time.Time) nhTicketSplit {
+	var sp nhTicketSplit
+	for _, t := range tickets {
+		ct, ok := nhParseTicketTime(&t.CreatedAt)
+		if !ok {
+			sp.undated++
+			continue
+		}
+		sp.cover = append(sp.cover, t)
+		switch {
+		case ct.Before(priorStart):
+			// Older than the union window the fetch was asked for.
+		case ct.Before(start):
+			sp.prior = append(sp.prior, t)
+		case ct.Before(end):
+			sp.cur = append(sp.cur, t)
+		}
+	}
+	return sp
 }
 
 // FetchNetworkHealthImpactfulData computes the Impactful group: impact-weighted
@@ -1854,12 +1939,11 @@ func (a *API) FetchNetworkHealthImpactfulData(ctx context.Context, start, end ti
 
 	cur, err := a.fetchImpactfulDowntime(ctx, start, end, contrib)
 	if err != nil {
-		logError("network health critical panel failed", "panel", "impactful", "error", err)
+		logWarn("network health panel failed", "panel", "impactful", "critical", true, "error", err)
 		resp.Unavailable = true
-		if !scoped {
-			// Generic client-facing message; the raw DB error is logged above, not exposed.
-			resp.Error = "network health impactful data temporarily unavailable"
-		}
+		resp.Degraded = []string{"impactful"}
+		// Generic client-facing message; the raw DB error is logged above, not exposed.
+		resp.Error = "network health impactful data temporarily unavailable"
 		return resp
 	}
 	resp.ImpactfulDowntimeHours = cur
@@ -1868,7 +1952,8 @@ func (a *API) FetchNetworkHealthImpactfulData(ctx context.Context, start, end ti
 	// live scoped request never pays a second heavy run. Strictly best-effort.
 	if !scoped {
 		if prior, err := a.fetchImpactfulDowntime(ctx, priorStart, priorEnd, contrib); err != nil {
-			logError("network health: prior impactful (best-effort) failed", "error", err)
+			logWarn("network health panel failed", "panel", "impactful_prior", "critical", false, "error", err)
+			resp.Degraded = []string{"impactful_prior"}
 		} else {
 			resp.Prev.ImpactfulDowntimeHours = prior
 			resp.ImpactfulDowntimeDelta = pctDelta(cur, prior)
@@ -1921,30 +2006,19 @@ func pctDelta(cur, prior float64) *float64 {
 	return &d
 }
 
-// fetchLinkDownEvents reconstructs link-down incidents (runs of isis_down buckets
-// on activated links) in the window. linkPKs optionally restricts to a set of links.
+// fetchLinkDownEvents reconstructs the window's link failures as intervals, from
+// the same episode definition the Outages group publishes as outage_count (see
+// nhOutEpisodeCTE): sustained episodes only, loss-only failures included,
+// provisioning excluded, FINAL-deduped. linkPKs optionally restricts to a set of
+// links.
 func (a *API) fetchLinkDownEvents(ctx context.Context, start, end time.Time, linkPKs []string) ([]nhEvent, error) {
-	filter := ""
 	args := []any{start, end}
 	if linkPKs != nil {
-		filter = " AND link_pk IN ?"
 		args = append(args, linkPKs)
 	}
-	q := `SELECT link_pk, min(bucket_ts) AS started_at, max(bucket_ts) + INTERVAL 5 MINUTE AS ended_at
-		FROM (
-			SELECT link_pk, bucket_ts,
-				sum(is_start) OVER (PARTITION BY link_pk ORDER BY bucket_ts
-					ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS eid
-			FROM (
-				SELECT link_pk, bucket_ts,
-					if(dateDiff('second',
-						lagInFrame(bucket_ts) OVER (PARTITION BY link_pk ORDER BY bucket_ts),
-						bucket_ts) > 300, 1, 0) AS is_start
-				FROM link_rollup_5m
-				WHERE bucket_ts >= ? AND bucket_ts < ? AND isis_down = 1 AND status = 'activated'` + filter + `
-			)
-		)
-		GROUP BY link_pk, eid` + networkHealthQuerySettings
+	q := nhOutEpisodeCTE(false, linkPKs != nil) + `
+		SELECT link_pk, started_at, ended_at FROM epi
+		WHERE dur_s >= ` + nhSustainedOutageSQL + networkHealthQuerySettings
 	rows, err := a.envDB(ctx).Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -1989,6 +2063,12 @@ func (a *API) fetchStatusChanges(ctx context.Context, start, end time.Time, link
 	return out, rows.Err()
 }
 
+// nhDrainedStatus reports whether a link status means the link is intentionally
+// out of service. Both drain levels count, matching nhAvailStateCountIfs.
+func nhDrainedStatus(s string) bool {
+	return s == "soft-drained" || s == "hard-drained"
+}
+
 // computeDrainTiming pairs each link-down event with the drain that followed and
 // the undrain after that, and summarizes the durations. Mirrors the ops-report
 // reconcile.match_drains / drain_timing logic (without the recovery-point refinement).
@@ -1996,18 +2076,23 @@ func computeDrainTiming(events []nhEvent, changes []nhChange) (NHDrainTiming, []
 	// Build a per-link timeline of drain/undrain transitions.
 	type tev struct {
 		ts    time.Time
-		drain bool // true = drained, false = undrained (soft-drained -> activated)
+		drain bool // true = entered a drained state, false = left one
 	}
 	timeline := map[string][]tev{}
 	drainsByLink := map[string][]time.Time{}
 	var drains, undrains int
 	for _, c := range changes {
+		// Entering drained from any non-drained status is one drain; leaving it for
+		// any non-drained status is one undrain. A change of drain LEVEL inside a
+		// drained run (soft <-> hard) is neither, so it neither strands the open
+		// drain nor counts a second one.
+		was, now := nhDrainedStatus(c.prev), nhDrainedStatus(c.next)
 		switch {
-		case c.next == "soft-drained":
+		case !was && now:
 			timeline[c.linkPK] = append(timeline[c.linkPK], tev{ts: c.ts, drain: true})
 			drainsByLink[c.linkPK] = append(drainsByLink[c.linkPK], c.ts)
 			drains++
-		case c.prev == "soft-drained" && c.next == "activated":
+		case was && !now:
 			timeline[c.linkPK] = append(timeline[c.linkPK], tev{ts: c.ts, drain: false})
 			undrains++
 		}
@@ -2196,28 +2281,41 @@ func (a *API) fetchRecoveryHealth(ctx context.Context, matches []nhDrainMatch) (
 func (a *API) FetchNetworkHealthDeferredData(ctx context.Context, start, end time.Time, contrib string) *NHDeferred {
 	priorStart, priorEnd := nhPriorWindow(start, end)
 
-	contribLinkPKs, ok := a.fetchContribLinkPKs(ctx, contrib)
-
 	out := &NHDeferred{}
 
+	contribLinkPKs, ok, err := a.fetchContribLinkPKs(ctx, contrib)
+	if err != nil {
+		// The pk lookup failed, so the scope cannot be resolved: report the failure
+		// instead of publishing empty undrain figures for this contributor.
+		out.Prev = &NHDeferred{}
+		out.UndrainUnavailable = true
+		out.Degraded = []string{"contrib_link_pks"}
+		out.Error = "network health deferred data temporarily unavailable"
+		return out
+	}
 	if !ok {
-		// Scoped request that resolves to no links (or the pk lookup failed):
-		// return an empty result rather than falling back to a network-wide scan.
+		// Scoped request that resolves to no links: return an empty result rather
+		// than falling back to a network-wide scan. Not an error.
 		out.Prev = &NHDeferred{}
 		return out
 	}
 
-	// Current window: reconstruct drain->undrain pairs, then measure recovery.
-	events, evErr := a.fetchLinkDownEvents(ctx, start, end, contribLinkPKs)
+	// Current window: reconstruct drain->undrain pairs, then measure recovery. The
+	// pairs come from the status changes alone (computeDrainTiming derives matches
+	// from transitions, not from link-down events), so no event scan runs here.
 	changes, chErr := a.fetchStatusChanges(ctx, start, end, contribLinkPKs)
-	_, matches := computeDrainTiming(events, changes)
+	_, matches := computeDrainTiming(nil, changes)
 	out.MatchedUndrains = len(matches)
-	if evErr != nil || chErr != nil {
+	var degraded []string
+	if chErr != nil {
+		logWarn("network health panel failed", "panel", "status_changes", "critical", true, "error", chErr)
 		out.UndrainUnavailable = true
+		degraded = append(degraded, "status_changes")
 		out.Error = "network health deferred: drain-timing inputs failed"
 	} else if ttu, err := a.fetchRecoveryHealth(ctx, matches); err != nil {
-		logError("network health deferred: undrain timing (recovery health) failed", "error", err)
+		logWarn("network health panel failed", "panel", "recovery_health", "critical", len(matches) > 0, "error", err)
 		out.UndrainUnavailable = true
+		degraded = append(degraded, "recovery_health")
 		if len(matches) > 0 {
 			// Generic client-facing message; the raw DB error is logged above, not exposed.
 			out.Error = "network health deferred data temporarily unavailable"
@@ -2230,20 +2328,24 @@ func (a *API) FetchNetworkHealthDeferredData(ctx context.Context, start, end tim
 	// Prior window (for the section delta). Strictly best-effort: a prior failure
 	// only marks the prior figures unavailable and never sets out.Error.
 	prev := &NHDeferred{}
-	priorEvents, pevErr := a.fetchLinkDownEvents(ctx, priorStart, priorEnd, contribLinkPKs)
 	priorChanges, pchErr := a.fetchStatusChanges(ctx, priorStart, priorEnd, contribLinkPKs)
-	_, priorMatches := computeDrainTiming(priorEvents, priorChanges)
+	_, priorMatches := computeDrainTiming(nil, priorChanges)
 	prev.MatchedUndrains = len(priorMatches)
-	if pevErr != nil || pchErr != nil {
+	if pchErr != nil {
+		logWarn("network health panel failed", "panel", "status_changes_prev", "critical", false, "error", pchErr)
 		prev.UndrainUnavailable = true
+		degraded = append(degraded, "status_changes_prev")
 	} else if ttuPrev, err := a.fetchRecoveryHealth(ctx, priorMatches); err != nil {
-		logError("network health deferred: prior undrain timing (best-effort) failed", "error", err)
+		logWarn("network health panel failed", "panel", "recovery_health_prev", "critical", false, "error", err)
 		prev.UndrainUnavailable = true
+		degraded = append(degraded, "recovery_health_prev")
 	} else {
 		prev.TimeToUndrainP50Min = medianMinutes(ttuPrev)
 		prev.TimeToUndrainMaxMin = maxMinutes(ttuPrev)
 	}
 	out.Prev = prev
+	sort.Strings(degraded)
+	out.Degraded = degraded
 
 	return out
 }
@@ -2348,7 +2450,7 @@ func (a *API) fetchOpsTicketsSince(ctx context.Context, since time.Time) ([]nhRa
 			if page == 0 {
 				return nil, err
 			}
-			logError("network health: ops tickets pagination stopped early", "error", err, "page", page, "collected", len(out))
+			logWarn("network health: ops tickets pagination stopped early", "error", err, "page", page, "collected", len(out))
 			break
 		}
 		var env struct {
@@ -2360,7 +2462,7 @@ func (a *API) fetchOpsTicketsSince(ctx context.Context, since time.Time) ([]nhRa
 			if page == 0 {
 				return nil, err
 			}
-			logError("network health: ops tickets pagination stopped early (bad json)", "error", err, "page", page, "collected", len(out))
+			logWarn("network health: ops tickets pagination stopped early (bad json)", "error", err, "page", page, "collected", len(out))
 			break
 		}
 		tickets := env.Data.Tickets
@@ -2378,6 +2480,63 @@ func (a *API) fetchOpsTicketsSince(ctx context.Context, since time.Time) ([]nhRa
 		}
 	}
 	return out, nil
+}
+
+// opsUsersCache memoizes the ops-management /users registry for
+// nhOpsUsersCacheTTL. The registry is up to 20 paged credentialed requests and
+// was re-fetched on every tickets computation (every worker refresh cycle plus
+// every live request). Concurrent misses collapse into one run via singleflight.
+// The zero value is ready to use, so a directly-constructed API needs no
+// initialization and each test's API starts cold.
+type opsUsersCache struct {
+	mu      sync.Mutex
+	users   map[string]string
+	expires time.Time
+	sf      singleflight.Group
+}
+
+// cachedOpsUsers returns the ops /users registry, re-fetching it only when the
+// cached copy has expired. An EMPTY registry is never cached: empty means the
+// registry was unavailable (no API key, or a first-page failure) and pinning it
+// would publish "unavailable" for SelfReportedPct for the whole TTL.
+func (a *API) cachedOpsUsers(ctx context.Context) (map[string]string, error) {
+	a.opsUsersCache.mu.Lock()
+	if len(a.opsUsersCache.users) > 0 && time.Now().Before(a.opsUsersCache.expires) {
+		users := a.opsUsersCache.users
+		a.opsUsersCache.mu.Unlock()
+		return users, nil
+	}
+	a.opsUsersCache.mu.Unlock()
+
+	// The collapsed miss-path fetch must not be tied to the winning caller's
+	// context: with a plain Do the shared fetch inherits the winner's ctx, so one
+	// caller's disconnect would fail every collapsed waiter. Detach with
+	// WithoutCancel under its own deadline and select on the caller's ctx via
+	// DoChan (same pattern as cachedScalar).
+	ch := a.opsUsersCache.sf.DoChan("ops_users", func() (any, error) {
+		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), nhOpsUsersFetchTimeout)
+		defer cancel()
+		users, err := a.fetchOpsUsers(fctx)
+		if err != nil {
+			return map[string]string{}, err
+		}
+		if len(users) > 0 {
+			a.opsUsersCache.mu.Lock()
+			a.opsUsersCache.users = users
+			a.opsUsersCache.expires = time.Now().Add(nhOpsUsersCacheTTL)
+			a.opsUsersCache.mu.Unlock()
+		}
+		return users, nil
+	})
+	select {
+	case res := <-ch:
+		if res.Err != nil {
+			return map[string]string{}, res.Err
+		}
+		return res.Val.(map[string]string), nil
+	case <-ctx.Done():
+		return map[string]string{}, ctx.Err()
+	}
 }
 
 // fetchOpsUsers pages the ops-management /users registry and returns a map of
@@ -2404,7 +2563,7 @@ func (a *API) fetchOpsUsers(ctx context.Context) (map[string]string, error) {
 			if page == 0 {
 				return map[string]string{}, err
 			}
-			logError("network health: ops users pagination stopped early", "error", err, "page", page)
+			logWarn("network health: ops users pagination stopped early", "error", err, "page", page)
 			break
 		}
 		var env struct {
@@ -2417,7 +2576,7 @@ func (a *API) fetchOpsUsers(ctx context.Context) (map[string]string, error) {
 			if page == 0 {
 				return map[string]string{}, err
 			}
-			logError("network health: ops users pagination stopped early (bad json)", "error", err, "page", page)
+			logWarn("network health: ops users pagination stopped early (bad json)", "error", err, "page", page)
 			break
 		}
 		if len(env.Data) == 0 {
@@ -2475,7 +2634,7 @@ func (a *API) resolveContributorScope(ctx context.Context, code string) (*nhCont
 		}
 		rows.Close()
 	} else {
-		logError("network health: resolve contributor link codes failed", "error", err, "contributor", code)
+		logWarn("network health: resolve contributor link codes failed", "error", err, "contributor", code)
 	}
 	if rows, err := a.envDB(ctx).Query(ctx,
 		`SELECT code FROM dz_devices_current WHERE contributor_pk = ?`+networkHealthQuerySettings, pk); err == nil {
@@ -2487,7 +2646,7 @@ func (a *API) resolveContributorScope(ctx context.Context, code string) (*nhCont
 		}
 		rows.Close()
 	} else {
-		logError("network health: resolve contributor device codes failed", "error", err, "contributor", code)
+		logWarn("network health: resolve contributor device codes failed", "error", err, "contributor", code)
 	}
 	return scope, nil
 }
@@ -2533,30 +2692,14 @@ func filterTicketsByContributor(tickets []nhRawTicket, scope *nhContributorScope
 // own (filtered) tickets. Episodes are derived from link_rollup_5m (full
 // window) rather than the ~8-day-capped incident view.
 func (a *API) fetchOutageListForTickets(ctx context.Context, start, end time.Time, contrib string) ([]nhOutage, error) {
-	scopeFilter := ""
 	args := []any{start, end}
-	if contrib != "" {
-		scopeFilter = " AND l.contributor_pk IN (SELECT pk FROM dz_contributors_current WHERE code = ?)"
-	}
-	q := `WITH outb AS (
-			SELECT link_pk, bucket_ts
-			FROM link_rollup_5m FINAL
-			WHERE bucket_ts >= ? AND bucket_ts < ? AND provisioning = false
-			  AND status = 'activated' AND (isis_down = 1 OR greatest(a_loss_pct, z_loss_pct) >= 10)),
-		isl AS (
-			SELECT link_pk, bucket_ts,
-			  bucket_ts - toIntervalSecond(row_number() OVER (PARTITION BY link_pk ORDER BY bucket_ts) * 300) AS grp
-			FROM outb),
-		epi AS (
-			SELECT link_pk, min(bucket_ts) AS started_at, max(bucket_ts) + toIntervalSecond(300) AS ended_at
-			FROM isl GROUP BY link_pk, grp HAVING count() >= 2)
-		SELECT epi.link_pk, coalesce(l.code, ''), epi.started_at, epi.ended_at
-		FROM epi JOIN dz_links_current l ON l.pk = epi.link_pk
-		WHERE 1 = 1` + scopeFilter
 	if contrib != "" {
 		args = append(args, contrib)
 	}
-	q += networkHealthQuerySettings
+	q := nhOutEpisodeCTE(contrib != "", false) + `
+		SELECT epi.link_pk, coalesce(lk.code, ''), epi.started_at, epi.ended_at
+		FROM epi JOIN dz_links_current lk ON lk.pk = epi.link_pk
+		WHERE epi.dur_s >= ` + nhSustainedOutageSQL + networkHealthQuerySettings
 	rows, err := a.envDB(ctx).Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -2600,7 +2743,12 @@ func nhParseTicketTime(s *string) (time.Time, bool) {
 // the incident metrics to incidents ABOUT that contributor (its own
 // contributor_pubkey) so that another contributor's self-filed incident on a
 // shared link does not leak into this contributor's numbers.
-func computeTicketAggregates(tickets []nhRawTicket, outages []nhOutage, userContrib map[string]string, scopePubkey string) NHTickets {
+//
+// tickets is the counted set (the window's tickets). coverTickets is every
+// fetched ticket and is used ONLY to index outage coverage: the match runs on the
+// ticket's incident interval, so a ticket filed after the window end still covers
+// an outage inside it without entering any published count.
+func computeTicketAggregates(tickets, coverTickets []nhRawTicket, outages []nhOutage, userContrib map[string]string, scopePubkey string) NHTickets {
 	agg := NHTickets{Total: len(tickets)}
 
 	// Timing accumulators. resp/reso are INCIDENTS ONLY (maintenance is scheduled
@@ -2641,7 +2789,7 @@ func computeTicketAggregates(tickets []nhRawTicket, outages []nhOutage, userCont
 		case "incident":
 			agg.Incidents++
 			if t.RootCause != nil && *t.RootCause != "" {
-				rootCauseCounts[*t.RootCause]++
+				rootCauseCounts[nhRootCause(*t.RootCause)]++
 				incidentsWithCause++
 			}
 			if hasStart && hasCreated {
@@ -2709,9 +2857,9 @@ func computeTicketAggregates(tickets []nhRawTicket, outages []nhOutage, userCont
 	})
 
 	// Coverage: outages matched to any ticket by affected-link code + time overlap.
-	const tol = 30 * time.Minute
+	const tol = nhTicketCoverTolerance
 	byCode := map[string][]nhRawTicket{}
-	for _, t := range tickets {
+	for _, t := range coverTickets {
 		for _, l := range t.AffectedLinks {
 			if l.Code != "" {
 				byCode[l.Code] = append(byCode[l.Code], t)
@@ -2725,6 +2873,15 @@ func computeTicketAggregates(tickets []nhRawTicket, outages []nhOutage, userCont
 		for _, t := range byCode[o.linkCode] {
 			tStart, ok := nhParseTicketTime(t.StartAt)
 			if !ok {
+				// No parseable start_at: anchor the interval to the outage so a
+				// ticket naming this link still covers it, bounded by the ticket's
+				// own filing time so it cannot cover an outage that began after it
+				// was filed. Every cover ticket has a parseable created_at (see
+				// splitTicketsByWindow).
+				createdT, okCreated := nhParseTicketTime(&t.CreatedAt)
+				if !okCreated || o.start.After(createdT.Add(tol)) {
+					continue
+				}
 				tStart = o.start
 			}
 			tEnd, ok := nhParseTicketTime(t.EndAt)
@@ -2834,24 +2991,14 @@ func (a *API) fetchThroughputTS(ctx context.Context, start, end time.Time, sec i
 }
 
 func (a *API) fetchOutagesTS(ctx context.Context, start, end time.Time, sec int, contrib string) ([]NHCountPoint, error) {
-	scopeJoin, scopeFilter, args := "", "", []any{start, end}
+	args := []any{start, end}
 	if contrib != "" {
-		scopeJoin = " JOIN dz_links_current l ON l.pk = r.link_pk"
-		scopeFilter = " AND l.contributor_pk IN (SELECT pk FROM dz_contributors_current WHERE code = ?)"
 		args = append(args, contrib)
 	}
-	q := `WITH outb AS (
-			SELECT r.link_pk AS link_pk, r.bucket_ts AS bucket_ts
-			FROM link_rollup_5m r FINAL` + scopeJoin + `
-			WHERE r.bucket_ts >= ? AND r.bucket_ts < ? AND r.provisioning = false
-			  AND r.status = 'activated' AND (r.isis_down = 1 OR greatest(r.a_loss_pct, r.z_loss_pct) >= 10)` + scopeFilter + `),
-		isl AS (
-			SELECT link_pk, bucket_ts,
-			  bucket_ts - toIntervalSecond(row_number() OVER (PARTITION BY link_pk ORDER BY bucket_ts) * 300) AS grp
-			FROM outb),
-		epi AS (SELECT link_pk, min(bucket_ts) AS started_at FROM isl GROUP BY link_pk, grp HAVING count() >= 2)
+	q := nhOutEpisodeCTE(contrib != "", false) + `
 		SELECT toStartOfInterval(started_at, INTERVAL ` + strconv.Itoa(sec) + ` SECOND) AS t, count()
-		FROM epi GROUP BY t ORDER BY t` + networkHealthQuerySettings
+		FROM epi WHERE dur_s >= ` + nhSustainedOutageSQL + `
+		GROUP BY t ORDER BY t` + networkHealthQuerySettings
 	rows, err := a.envDB(ctx).Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -3025,6 +3172,58 @@ func (a *API) fetchFullestLinks(ctx context.Context, start, end time.Time, contr
 	return out, rows.Err()
 }
 
+// nhSustainedOutageSeconds is the sustained-failure floor: an outage episode
+// must span at least two 5-minute buckets (>= 10 minutes) to count as a link
+// failure. nhSustainedOutageSQL is the same value for inlining into a query.
+const nhSustainedOutageSeconds = 600
+
+var nhSustainedOutageSQL = strconv.Itoa(nhSustainedOutageSeconds)
+
+// nhOutageBucketPredicate is the shared definition of an outage bucket: an
+// activated link_rollup_5m bucket that is IS-IS down or above the loss
+// threshold. alias qualifies the column references ("" for an unaliased FROM).
+func nhOutageBucketPredicate(alias string) string {
+	c := ""
+	if alias != "" {
+		c = alias + "."
+	}
+	return c + "status = 'activated' AND (" + c + "isis_down = 1 OR greatest(" + c + "a_loss_pct, " + c + "z_loss_pct) >= 10)"
+}
+
+// nhOutEpisodeCTE builds the shared outage-episode CTE over [start, end): outage
+// buckets (nhOutageBucketPredicate, non-provisioning, FINAL-deduped) collapsed
+// into contiguous episodes by the row_number island trick. epi carries one row
+// per episode: link_pk, started_at, ended_at and dur_s = buckets*300. scoped adds
+// a contributor-code filter INSIDE the CTE; byLinkPKs adds an explicit pk-list
+// filter. Placeholders bind in order: start, end, then the contributor code when
+// scoped, then the pk list when byLinkPKs. Callers gate on
+// dur_s >= nhSustainedOutageSeconds for the sustained set; the ungated CTE also
+// carries the sub-floor flaps the duration histogram counts.
+func nhOutEpisodeCTE(scoped, byLinkPKs bool) string {
+	join, filter := "", ""
+	if scoped {
+		join = " JOIN dz_links_current sl ON sl.pk = r.link_pk"
+		filter = " AND sl.contributor_pk IN (SELECT pk FROM dz_contributors_current WHERE code = ?)"
+	}
+	if byLinkPKs {
+		filter += " AND r.link_pk IN ?"
+	}
+	return `WITH outb AS (
+			SELECT r.link_pk AS link_pk, r.bucket_ts AS bucket_ts
+			FROM link_rollup_5m r FINAL` + join + `
+			WHERE r.bucket_ts >= ? AND r.bucket_ts < ? AND r.provisioning = false
+			  AND ` + nhOutageBucketPredicate("r") + filter + `),
+		isl AS (
+			SELECT link_pk, bucket_ts,
+			  bucket_ts - toIntervalSecond(row_number() OVER (PARTITION BY link_pk ORDER BY bucket_ts) * 300) AS grp
+			FROM outb),
+		epi AS (
+			SELECT link_pk, min(bucket_ts) AS started_at,
+			  max(bucket_ts) + toIntervalSecond(300) AS ended_at,
+			  count() * 300 AS dur_s
+			FROM isl GROUP BY link_pk, grp)`
+}
+
 // nhAvailStateCountIfs is the shared bucket-classification snippet for the
 // availability 3-way split, used by fetchLinkAvailability, fetchDeviceAvailability,
 // and the single-link view. A bucket is 5 minutes of link_rollup_5m. See the
@@ -3159,13 +3358,10 @@ func (a *API) fetchDeviceAvailability(ctx context.Context, start, end time.Time,
 // derived from link_rollup_5m over the full window (the incident views cap to
 // ~8 days), using the unified outage definition shared across the page.
 func (a *API) fetchOutageSummary(ctx context.Context, start, end time.Time, contrib string) (*NHOutageSummary, error) {
-	linkScopeJoin, linkScopeFilter := "", ""
 	devScopeFilter := ""
 	linkArgs := []any{start, end}
 	devArgs := []any{start, end}
 	if contrib != "" {
-		linkScopeJoin = " JOIN dz_links_current l ON l.pk = r.link_pk"
-		linkScopeFilter = " AND l.contributor_pk IN (SELECT pk FROM dz_contributors_current WHERE code = ?)"
 		devScopeFilter = " AND d.contributor_pk IN (SELECT pk FROM dz_contributors_current WHERE code = ?)"
 		linkArgs = append(linkArgs, contrib)
 		devArgs = append(devArgs, contrib)
@@ -3173,18 +3369,9 @@ func (a *API) fetchOutageSummary(ctx context.Context, start, end time.Time, cont
 	var s NHOutageSummary
 	var linkHours float64
 	// Link outages: distinct episodes from link_rollup_5m over the full window.
-	linkQ := `WITH outb AS (
-			SELECT r.link_pk AS link_pk, r.bucket_ts AS bucket_ts
-			FROM link_rollup_5m r FINAL` + linkScopeJoin + `
-			WHERE r.bucket_ts >= ? AND r.bucket_ts < ? AND r.provisioning = false
-			  AND r.status = 'activated' AND (r.isis_down = 1 OR greatest(r.a_loss_pct, r.z_loss_pct) >= 10)` + linkScopeFilter + `),
-		isl AS (
-			SELECT link_pk, bucket_ts,
-			  bucket_ts - toIntervalSecond(row_number() OVER (PARTITION BY link_pk ORDER BY bucket_ts) * 300) AS grp
-			FROM outb),
-		epi AS (SELECT link_pk, count() * 300 AS dur_s FROM isl GROUP BY link_pk, grp HAVING count() >= 2)
+	linkQ := nhOutEpisodeCTE(contrib != "", false) + `
 		SELECT count(), round(sum(least(dur_s, 86400)) / 3600, 0), uniqExact(link_pk)
-		FROM epi` + networkHealthQuerySettings
+		FROM epi WHERE dur_s >= ` + nhSustainedOutageSQL + networkHealthQuerySettings
 	if err := a.envDB(ctx).QueryRow(ctx, linkQ, linkArgs...).
 		Scan(&s.LinkOutages, &linkHours, &s.LinksAffected); err != nil {
 		return nil, err
@@ -3196,7 +3383,7 @@ func (a *API) fetchOutageSummary(ctx context.Context, start, end time.Time, cont
 			SELECT link_pk, bucket_ts
 			FROM link_rollup_5m FINAL
 			WHERE bucket_ts >= ? AND bucket_ts < ? AND provisioning = false
-			  AND status = 'activated' AND (isis_down = 1 OR greatest(a_loss_pct, z_loss_pct) >= 10)),
+			  AND ` + nhOutageBucketPredicate("") + `),
 		dev_buckets AS (
 			SELECT l.side_a_pk AS dev, o.bucket_ts AS bucket_ts
 			FROM outb o JOIN dz_links_current l ON l.pk = o.link_pk WHERE l.status = 'activated'
@@ -3228,34 +3415,23 @@ func (a *API) fetchOutageSummary(ctx context.Context, start, end time.Time, cont
 // distinct contiguous outage episodes (gaps between outage buckets split them),
 // found with the standard row_number island trick.
 func (a *API) fetchDowntimeLinks(ctx context.Context, start, end time.Time, contrib string) ([]NHDowntimeRow, error) {
-	scope, args := "", []any{start, end}
+	args := []any{start, end}
 	if contrib != "" {
-		scope = " AND l.contributor_pk IN (SELECT pk FROM dz_contributors_current WHERE code = ?)"
+		args = append(args, contrib)
 	}
-	q := `WITH outb AS (
-		SELECT link_pk, bucket_ts
-		FROM link_rollup_5m FINAL
-		WHERE bucket_ts >= ? AND bucket_ts < ? AND provisioning = false
-		  AND status = 'activated' AND (isis_down = 1 OR greatest(a_loss_pct, z_loss_pct) >= 10)),
-	  isl AS (
-		SELECT link_pk, bucket_ts,
-		  bucket_ts - toIntervalSecond(row_number() OVER (PARTITION BY link_pk ORDER BY bucket_ts) * 300) AS grp
-		FROM outb),
-	  ep AS (SELECT link_pk, grp, count() AS b FROM isl GROUP BY link_pk, grp HAVING b >= 2),
-	  epi AS (SELECT link_pk, sum(b) AS buckets, count() AS episodes FROM ep GROUP BY link_pk)
+	q := nhOutEpisodeCTE(contrib != "", false) + `,
+	  tot AS (SELECT link_pk, sum(dur_s) / 300 AS buckets, count() AS episodes
+	          FROM epi WHERE dur_s >= ` + nhSustainedOutageSQL + ` GROUP BY link_pk)
 	  SELECT l.pk, l.code, concat(ma.code, ' ↔ ', mz.code) AS metros,
-	         epi.episodes AS outages, round(epi.buckets * 5 / 60, 1) AS hrs
-	  FROM epi
-	  JOIN dz_links_current l ON l.pk = epi.link_pk
+	         tot.episodes AS outages, round(tot.buckets * 5 / 60, 1) AS hrs
+	  FROM tot
+	  JOIN dz_links_current l ON l.pk = tot.link_pk
 	  JOIN dz_devices_current da ON da.pk = l.side_a_pk
 	  JOIN dz_devices_current dz ON dz.pk = l.side_z_pk
 	  JOIN dz_metros_current ma ON ma.pk = da.metro_pk
 	  JOIN dz_metros_current mz ON mz.pk = dz.metro_pk
-	  WHERE l.status = 'activated'` + scope + `
+	  WHERE l.status = 'activated'
 	  ORDER BY hrs DESC LIMIT 10` + networkHealthQuerySettings
-	if contrib != "" {
-		args = append(args, contrib)
-	}
 	rows, err := a.envDB(ctx).Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -3287,7 +3463,7 @@ func (a *API) fetchDowntimeDevices(ctx context.Context, start, end time.Time, co
 		SELECT link_pk, bucket_ts
 		FROM link_rollup_5m FINAL
 		WHERE bucket_ts >= ? AND bucket_ts < ? AND provisioning = false
-		  AND status = 'activated' AND (isis_down = 1 OR greatest(a_loss_pct, z_loss_pct) >= 10)),
+		  AND ` + nhOutageBucketPredicate("") + `),
 	  dev_buckets AS (
 		SELECT l.side_a_pk AS dev, o.bucket_ts AS bucket_ts
 		FROM outb o JOIN dz_links_current l ON l.pk = o.link_pk WHERE l.status = 'activated'

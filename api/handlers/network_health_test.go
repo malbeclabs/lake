@@ -76,6 +76,18 @@ func TestNHTicketsNoFreeText(t *testing.T) {
 	for _, rc := range tk.RootCauses {
 		assertKeysAllowed(t, "NHRootCauseCount", rc, rootCauseAllowed)
 	}
+
+	// The key-name walk above cannot see a free-text VALUE, so also assert that a
+	// cause produced from operator-entered upstream text stays inside the enum.
+	free := "fibre cut in MRS, see ticket 4412"
+	produced := computeTicketAggregates(
+		[]nhRawTicket{{ID: "1", Type: "incident", Status: "open", CreatedAt: "2026-06-10T10:00:00Z", RootCause: &free}},
+		nil, nil, map[string]string{}, "")
+	for _, rc := range produced.RootCauses {
+		if !nhRootCauseTokens[rc.Cause] && rc.Cause != nhRootCauseOther {
+			t.Errorf("NHRootCauseCount published a free-text cause %q", rc.Cause)
+		}
+	}
 }
 
 // TestComputeTicketAggregates sanity-checks the aggregation: type/severity
@@ -105,7 +117,7 @@ func TestComputeTicketAggregates(t *testing.T) {
 		{linkCode: "ams-fra", start: mustTime("2026-06-10T10:10:00Z"), end: mustTime("2026-06-10T10:40:00Z")},
 		{linkCode: "nyc-chi", start: mustTime("2026-06-12T00:00:00Z"), end: mustTime("2026-06-12T00:30:00Z")},
 	}
-	agg := computeTicketAggregates(tickets, outages, userContrib, "")
+	agg := computeTicketAggregates(tickets, tickets, outages, userContrib, "")
 	if agg.Total != 4 || agg.Incidents != 3 || agg.Maintenance != 1 {
 		t.Errorf("volume: %+v", agg)
 	}
@@ -147,7 +159,7 @@ func TestComputeTicketAggregates(t *testing.T) {
 
 	// With an empty user registry (fetch failed) the percentage is unavailable
 	// (nil) rather than mislabeling every incident as DoubleZero.
-	aggNoUsers := computeTicketAggregates(tickets, outages, map[string]string{}, "")
+	aggNoUsers := computeTicketAggregates(tickets, tickets, outages, map[string]string{}, "")
 	if aggNoUsers.SelfReportedPct != nil {
 		t.Errorf("self-reported pct should be nil when user registry is empty: %+v", aggNoUsers.SelfReportedPct)
 	}
@@ -157,7 +169,7 @@ func TestComputeTicketAggregates(t *testing.T) {
 	// must not leak in. That one incident was filed by a C-jump user, so
 	// self-reported is 1/1 = 100%. (This is the Teraswitch-style bug: a scoped
 	// view must not count another contributor's self-filed incident.)
-	aggScoped := computeTicketAggregates(tickets, outages, userContrib, "C-jump")
+	aggScoped := computeTicketAggregates(tickets, tickets, outages, userContrib, "C-jump")
 	if aggScoped.Incidents != 1 {
 		t.Errorf("scoped incidents should be 1 (only about C-jump): %+v", aggScoped)
 	}
@@ -166,10 +178,238 @@ func TestComputeTicketAggregates(t *testing.T) {
 	}
 	// A contributor with no self-filed incidents (scope C-x: incident "1" filed
 	// by a blank/DoubleZero creator) reads 0%, never inflated.
-	aggScopedX := computeTicketAggregates(tickets, outages, userContrib, "C-x")
+	aggScopedX := computeTicketAggregates(tickets, tickets, outages, userContrib, "C-x")
 	if aggScopedX.Incidents != 1 || aggScopedX.SelfReportedCount != 0 ||
 		aggScopedX.SelfReportedPct == nil || *aggScopedX.SelfReportedPct != 0 {
 		t.Errorf("scoped C-x self-reported should be 0/1=0%%: %+v", aggScopedX)
+	}
+}
+
+// TestComputeTicketAggregates_CoverageSliceIsNotCounted verifies the coverage
+// carve-out: a ticket filed just after the window end covers an outage that
+// started inside the window, but must never enter Total/Incidents/Sev1. Without
+// it the strict upper bound would report an outage as unfiled purely because its
+// ticket landed minutes after midnight.
+func TestComputeTicketAggregates_CoverageSliceIsNotCounted(t *testing.T) {
+	sev1 := "sev1"
+	inWindow := nhRawTicket{ID: "in", Type: "incident", Status: "open",
+		CreatedAt: "2026-06-20T10:00:00Z"}
+	lateFiled := nhRawTicket{ID: "late", Type: "incident", Severity: &sev1, Status: "open",
+		StartAt: strptr("2026-06-29T23:50:00Z"), EndAt: strptr("2026-06-30T00:20:00Z"),
+		CreatedAt:     "2026-06-30T00:10:00Z",
+		AffectedLinks: []OpsTicketEntity{{Code: "ams-fra"}}}
+	outages := []nhOutage{
+		{linkCode: "ams-fra", start: mustTime("2026-06-29T23:50:00Z"), end: mustTime("2026-06-30T00:05:00Z")},
+	}
+
+	agg := computeTicketAggregates([]nhRawTicket{inWindow}, []nhRawTicket{inWindow, lateFiled},
+		outages, map[string]string{}, "")
+
+	assert.Equal(t, 1, agg.Total, "the late-filed ticket must not be counted")
+	assert.Equal(t, 1, agg.Incidents)
+	assert.Equal(t, 0, agg.Sev1, "the late-filed ticket's severity must not be counted")
+	assert.Equal(t, 1, agg.OutagesWithTicket, "the late-filed ticket still covers the outage")
+	assert.Equal(t, 0, agg.OutagesNoTicket)
+	assert.Empty(t, agg.NoTicketOutages)
+
+	// Without the coverage slice the same outage reads as unfiled.
+	strict := computeTicketAggregates([]nhRawTicket{inWindow}, []nhRawTicket{inWindow},
+		outages, map[string]string{}, "")
+	assert.Equal(t, 1, strict.OutagesNoTicket)
+}
+
+// TestComputeTicketAggregates_UnparseableStartAtBoundedByCreatedAt pins the bound
+// on the start_at fallback. A cover ticket whose start_at does not parse anchors
+// its interval to the outage under test, which would otherwise match every outage
+// on every link the ticket lists, across the whole fetch. The ticket's own
+// created_at bounds it: an outage that began after the ticket was filed cannot be
+// the one it reports.
+func TestComputeTicketAggregates_UnparseableStartAtBoundedByCreatedAt(t *testing.T) {
+	badStart := "2026-06-20"
+	cover := nhRawTicket{ID: "cover", Type: "incident", Status: "open",
+		StartAt: &badStart, CreatedAt: "2026-06-20T12:00:00Z",
+		AffectedLinks: []OpsTicketEntity{{Code: "ams-fra"}}}
+	outages := []nhOutage{
+		{linkPK: "pk-before", linkCode: "ams-fra",
+			start: mustTime("2026-06-20T09:00:00Z"), end: mustTime("2026-06-20T09:30:00Z")},
+		{linkPK: "pk-after", linkCode: "ams-fra",
+			start: mustTime("2026-06-25T09:00:00Z"), end: mustTime("2026-06-25T09:30:00Z")},
+	}
+
+	agg := computeTicketAggregates(nil, []nhRawTicket{cover}, outages, map[string]string{}, "")
+
+	assert.Equal(t, 1, agg.OutagesWithTicket, "the outage that predates the filing stays covered")
+	assert.Equal(t, 1, agg.OutagesNoTicket, "an outage five days after the filing is not covered by it")
+	require.Len(t, agg.NoTicketOutages, 1)
+	assert.Equal(t, "pk-after", agg.NoTicketOutages[0].LinkPK)
+}
+
+// TestNHSplitTicketsByWindow pins the ops-ticket window split: the upper bound at
+// end is half-open, the lower bound at priorStart is inclusive, and a ticket
+// whose created_at does not parse is dropped rather than defaulted into the
+// current window.
+func TestNHSplitTicketsByWindow(t *testing.T) {
+	priorStart := mustTime("2026-05-03T00:00:00Z")
+	start := mustTime("2026-06-01T00:00:00Z")
+	end := mustTime("2026-06-30T00:00:00Z")
+
+	ticket := func(id, created string) nhRawTicket {
+		return nhRawTicket{ID: id, Type: "incident", CreatedAt: created}
+	}
+
+	cases := []struct {
+		name       string
+		created    string
+		wantCur    bool
+		wantPrior  bool
+		wantUndate bool
+	}{
+		{name: "before_prior_start", created: "2026-05-02T23:59:59Z"},
+		{name: "exactly_prior_start", created: "2026-05-03T00:00:00Z", wantPrior: true},
+		{name: "one_second_before_start", created: "2026-05-31T23:59:59Z", wantPrior: true},
+		{name: "exactly_start", created: "2026-06-01T00:00:00Z", wantCur: true},
+		{name: "one_second_before_end", created: "2026-06-29T23:59:59Z", wantCur: true},
+		{name: "exactly_end", created: "2026-06-30T00:00:00Z"},
+		{name: "after_end", created: "2026-07-05T00:00:00Z"},
+		{name: "empty_created_at", created: "", wantUndate: true},
+		{name: "unparseable_created_at", created: "not-a-date", wantUndate: true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			sp := splitTicketsByWindow([]nhRawTicket{ticket(c.name, c.created)}, priorStart, start, end)
+			assert.Equal(t, c.wantCur, len(sp.cur) == 1, "cur: %+v", sp.cur)
+			assert.Equal(t, c.wantPrior, len(sp.prior) == 1, "prior: %+v", sp.prior)
+			if c.wantUndate {
+				assert.Equal(t, 1, sp.undated)
+			} else {
+				assert.Equal(t, 0, sp.undated)
+			}
+		})
+	}
+
+	t.Run("coverage_is_unbounded_by_filing_time", func(t *testing.T) {
+		sp := splitTicketsByWindow([]nhRawTicket{
+			ticket("in", "2026-06-15T00:00:00Z"),
+			ticket("late", "2026-06-30T00:10:00Z"),
+			ticket("much-later", "2026-08-14T09:00:00Z"),
+			ticket("older-than-prior-start", "2026-04-01T00:00:00Z"),
+		}, priorStart, start, end)
+		require.Len(t, sp.cur, 1)
+		assert.Equal(t, "in", sp.cur[0].ID)
+		assert.Empty(t, sp.prior)
+		assert.Len(t, sp.cover, 4, "every dated ticket can cover an outage: %+v", sp.cover)
+	})
+
+	t.Run("undated_tickets_are_not_in_cover", func(t *testing.T) {
+		sp := splitTicketsByWindow([]nhRawTicket{
+			ticket("in", "2026-06-15T00:00:00Z"),
+			ticket("bad", "not-a-date"),
+		}, priorStart, start, end)
+		assert.Equal(t, 1, sp.undated)
+		require.Len(t, sp.cover, 1)
+		assert.Equal(t, "in", sp.cover[0].ID)
+	})
+}
+
+// TestNHTicketFiledAfterWindowCoversOutage pins that filing lag is not a coverage
+// bound. Coverage is matched on the ticket's incident interval, so a ticket filed
+// after the window closed still covers an outage inside it and the outage must not
+// be published as unfiled. The historical case is the worst one: every ticket for
+// a window months in the past was filed after that window ended.
+func TestNHTicketFiledAfterWindowCoversOutage(t *testing.T) {
+	rfc := func(t time.Time) string { return t.UTC().Format(time.RFC3339) }
+
+	run := func(start, end, filed time.Time) NHTickets {
+		priorStart, _ := nhPriorWindow(start, end)
+		outStart, outEnd := end.Add(-2*time.Hour), end.Add(-time.Hour)
+		tickets := []nhRawTicket{
+			{ID: "in", Type: "incident", Status: "open", CreatedAt: rfc(start.Add(time.Hour))},
+			{ID: "late", Type: "incident", Status: "open", CreatedAt: rfc(filed),
+				StartAt: strptr(rfc(outStart)), EndAt: strptr(rfc(outEnd)),
+				AffectedLinks: []OpsTicketEntity{{Code: "ams-fra"}}},
+		}
+		sp := splitTicketsByWindow(tickets, priorStart, start, end)
+		outs := []nhOutage{{linkPK: "pk-1", linkCode: "ams-fra", start: outStart, end: outEnd}}
+		return computeTicketAggregates(sp.cur, sp.cover, outs, map[string]string{}, "")
+	}
+
+	t.Run("default_window_filed_next_morning", func(t *testing.T) {
+		end := time.Now().UTC().Truncate(24 * time.Hour)
+		agg := run(end.AddDate(0, 0, -30), end, end.Add(8*time.Hour))
+		assert.Equal(t, 1, agg.OutagesWithTicket, "a ticket filed after midnight still covers")
+		assert.Equal(t, 0, agg.OutagesNoTicket)
+		assert.Empty(t, agg.NoTicketOutages)
+		assert.Equal(t, 1, agg.Total, "the late-filed ticket must not be counted")
+	})
+
+	t.Run("historical_window_filed_months_later", func(t *testing.T) {
+		end := time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -90)
+		agg := run(end.AddDate(0, 0, -30), end, time.Now().UTC())
+		assert.Equal(t, 1, agg.OutagesWithTicket, "a ticket filed after a past window still covers it")
+		assert.Equal(t, 0, agg.OutagesNoTicket)
+		assert.Empty(t, agg.NoTicketOutages)
+		assert.Equal(t, 1, agg.Total)
+	})
+}
+
+// TestNHRootCauseAllowlist pins the published root-cause enum: each of the eleven
+// tokens the ops-management API emits maps to itself (case/whitespace normalised)
+// and anything else buckets as "other" instead of reaching the public payload
+// verbatim. An allowlist short of the upstream enum relabels real causes
+// ("duplicate" is the 5th most common cause in the live stream) as "other".
+func TestNHRootCauseAllowlist(t *testing.T) {
+	upstream := []string{
+		"self_resolved", "network_external", "carrier", "fiber_cut", "duplicate",
+		"configuration", "hardware", "false_positive", "software", "dz_managed",
+		"human_error",
+	}
+	for _, token := range upstream {
+		assert.Equal(t, token, nhRootCause(token), "upstream token %q must publish as itself", token)
+	}
+	assert.Len(t, nhRootCauseTokens, len(upstream), "the allowlist is exactly the upstream enum")
+
+	cases := []struct{ in, want string }{
+		{"Carrier", "carrier"},
+		{" carrier ", "carrier"},
+		{"DZ_Managed", "dz_managed"},
+		{"fibre cut in MRS, see ticket 4412", nhRootCauseOther},
+		{"", nhRootCauseOther},
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.want, nhRootCause(c.in), "root cause %q", c.in)
+	}
+}
+
+// TestComputeTicketAggregates_RootCauseBucketsUnknown verifies an operator-entered
+// root cause is bucketed as "other" rather than published verbatim, that
+// case-variants merge into one row, and that bucketing does not change the
+// denominator every published share is computed against.
+func TestComputeTicketAggregates_RootCauseBucketsUnknown(t *testing.T) {
+	rcLower, rcUpper := "carrier", "Carrier"
+	rcFree := "fibre cut in MRS, see ticket 4412"
+	tickets := []nhRawTicket{
+		{ID: "1", Type: "incident", Status: "open", CreatedAt: "2026-06-10T10:00:00Z", RootCause: &rcLower},
+		{ID: "2", Type: "incident", Status: "open", CreatedAt: "2026-06-11T10:00:00Z", RootCause: &rcUpper},
+		{ID: "3", Type: "incident", Status: "open", CreatedAt: "2026-06-12T10:00:00Z", RootCause: &rcFree},
+	}
+	agg := computeTicketAggregates(tickets, tickets, nil, map[string]string{}, "")
+
+	require.Len(t, agg.RootCauses, 2, "carrier + other: %+v", agg.RootCauses)
+	assert.Equal(t, "carrier", agg.RootCauses[0].Cause)
+	assert.Equal(t, 2, agg.RootCauses[0].Count)
+	assert.Equal(t, nhRootCauseOther, agg.RootCauses[1].Cause)
+	assert.Equal(t, 1, agg.RootCauses[1].Count)
+
+	// The denominator still counts all three caused incidents.
+	require.NotNil(t, agg.RootCauses[0].Pct)
+	assert.InDelta(t, 66.7, *agg.RootCauses[0].Pct, 0.05)
+	require.NotNil(t, agg.RootCauses[1].Pct)
+	assert.InDelta(t, 33.3, *agg.RootCauses[1].Pct, 0.05)
+
+	for _, rc := range agg.RootCauses {
+		assert.True(t, nhRootCauseTokens[rc.Cause] || rc.Cause == nhRootCauseOther,
+			"published cause %q escaped the allowlist", rc.Cause)
 	}
 }
 
@@ -499,6 +739,38 @@ func TestNHGroupJSONShape(t *testing.T) {
 		assert.True(t, has, "prev must carry impactful_downtime_hours")
 	})
 
+	// Degraded is additive and omitted when empty, so a blob written before this
+	// field existed still decodes, and a healthy payload does not gain a key.
+	t.Run("degraded", func(t *testing.T) {
+		clean := nhJSONMap(t, NHOutagesGroup{})
+		_, hasClean := clean["degraded"]
+		assert.False(t, hasClean, "degraded must be omitted when no panel failed")
+
+		m := nhJSONMap(t, NHOutagesGroup{Degraded: []string{"outage_summary"}})
+		got, ok := m["degraded"].([]any)
+		require.True(t, ok, "degraded must be an array")
+		assert.Equal(t, []any{"outage_summary"}, got)
+	})
+
+	// Overview: the headline owns only its own figures. The outage and impactful
+	// tiles come from the Outages and Impactful groups, so the headline copies
+	// (which were never assigned and always published 0/null) must stay retired.
+	t.Run("overview headline", func(t *testing.T) {
+		m := nhJSONMap(t, NHOverview{})
+		headline, ok := m["headline"].(map[string]any)
+		require.True(t, ok, "headline must be an object")
+		assertKeysAllowed(t, "headline", headline, map[string]bool{
+			"peak_bps": true, "jitter_improve_pct": true, "dz_loss_pct": true,
+			"active_links": true, "active_devices": true, "active_metros": true,
+			"deltas": true,
+		})
+		deltas, ok := headline["deltas"].(map[string]any)
+		require.True(t, ok, "headline.deltas must be an object")
+		assertKeysAllowed(t, "headline.deltas", deltas, map[string]bool{
+			"peak_bps": true, "active_links": true,
+		})
+	})
+
 	// Deferred: prev is the bare NHDeferred with time_to_undrain_p50_min.
 	t.Run("deferred", func(t *testing.T) {
 		m := nhJSONMap(t, NHDeferred{
@@ -593,6 +865,93 @@ func TestComputeDrainTiming(t *testing.T) {
 		assert.Empty(t, matches)
 		assert.Nil(t, dt.TimeDrainedP50Min)
 		assert.Nil(t, dt.TimeDrainedMaxMin)
+	})
+
+	// hard-drained is a drained state too: an activated -> hard-drained ->
+	// activated cycle is one drain and one undrain, with its duration measured.
+	t.Run("hard_drain_cycle", func(t *testing.T) {
+		changes := []nhChange{
+			{linkPK: "L1", prev: "activated", next: "hard-drained", ts: mustTime("2026-06-29T09:02:00Z")},
+			{linkPK: "L1", prev: "hard-drained", next: "activated", ts: mustTime("2026-06-29T09:32:00Z")},
+		}
+		dt, matches := computeDrainTiming(nil, changes)
+		assert.Equal(t, 1, dt.Drains)
+		assert.Equal(t, 1, dt.Undrains)
+		assert.Equal(t, 1, dt.MatchedUndrains)
+		require.Len(t, matches, 1)
+		require.NotNil(t, dt.TimeDrainedP50Min)
+		assert.Equal(t, float64(30), *dt.TimeDrainedP50Min)
+	})
+
+	// A change of drain LEVEL inside one drained run is neither a drain nor an
+	// undrain: soft -> hard must not strand the open drain, and the duration is
+	// measured from the FIRST entry into drained.
+	t.Run("soft_then_hard_then_activated", func(t *testing.T) {
+		t0 := mustTime("2026-06-10T10:00:00Z")
+		changes := []nhChange{
+			{linkPK: "L1", prev: "activated", next: "soft-drained", ts: t0},
+			{linkPK: "L1", prev: "soft-drained", next: "hard-drained", ts: t0.Add(10 * time.Minute)},
+			{linkPK: "L1", prev: "hard-drained", next: "activated", ts: t0.Add(40 * time.Minute)},
+		}
+		dt, matches := computeDrainTiming(nil, changes)
+		assert.Equal(t, 1, dt.Drains, "a level change is not a second drain")
+		assert.Equal(t, 1, dt.Undrains)
+		require.Len(t, matches, 1)
+		require.NotNil(t, dt.TimeDrainedP50Min)
+		assert.Equal(t, float64(40), *dt.TimeDrainedP50Min, "measured from the soft drain")
+	})
+
+	// The reverse level change (hard -> soft) must not double-count the drain.
+	t.Run("hard_then_soft_no_double_count", func(t *testing.T) {
+		t0 := mustTime("2026-06-10T10:00:00Z")
+		changes := []nhChange{
+			{linkPK: "L1", prev: "activated", next: "hard-drained", ts: t0},
+			{linkPK: "L1", prev: "hard-drained", next: "soft-drained", ts: t0.Add(5 * time.Minute)},
+			{linkPK: "L1", prev: "soft-drained", next: "activated", ts: t0.Add(20 * time.Minute)},
+		}
+		dt, _ := computeDrainTiming(nil, changes)
+		assert.Equal(t, 1, dt.Drains)
+		assert.Equal(t, 1, dt.Undrains)
+	})
+
+	// An undrain whose drain opened before the window still counts as an undrain
+	// (the link genuinely returned to service), with no duration sample.
+	t.Run("undrain_without_opening_drain", func(t *testing.T) {
+		changes := []nhChange{
+			{linkPK: "L1", prev: "hard-drained", next: "activated", ts: mustTime("2026-07-23T13:51:00Z")},
+		}
+		dt, matches := computeDrainTiming(nil, changes)
+		assert.Equal(t, 0, dt.Drains)
+		assert.Equal(t, 1, dt.Undrains)
+		assert.Equal(t, 0, dt.MatchedUndrains)
+		assert.Empty(t, matches)
+		assert.Nil(t, dt.TimeDrainedP50Min)
+	})
+
+	// A drain still open at the window edge, with a level change inside it, is
+	// one drain and no undrain — never a second invented drain.
+	t.Run("drain_still_open_across_levels", func(t *testing.T) {
+		t0 := mustTime("2026-08-12T10:00:00Z")
+		changes := []nhChange{
+			{linkPK: "L1", prev: "activated", next: "soft-drained", ts: t0},
+			{linkPK: "L1", prev: "soft-drained", next: "hard-drained", ts: t0.Add(15 * time.Minute)},
+		}
+		dt, matches := computeDrainTiming(nil, changes)
+		assert.Equal(t, 1, dt.Drains)
+		assert.Equal(t, 0, dt.Undrains)
+		assert.Empty(t, matches)
+		assert.Nil(t, dt.TimeDrainedP50Min)
+	})
+
+	// A link's first-ever transition has an empty previous status, which is not a
+	// drained state, so entering soft-drained from it still counts as a drain.
+	t.Run("empty_previous_status_still_drains", func(t *testing.T) {
+		changes := []nhChange{
+			{linkPK: "L1", prev: "", next: "soft-drained", ts: mustTime("2026-06-10T10:00:00Z")},
+		}
+		dt, _ := computeDrainTiming(nil, changes)
+		assert.Equal(t, 1, dt.Drains)
+		assert.Equal(t, 0, dt.Undrains)
 	})
 
 	// No events and no changes: every timing pointer is nil and the pct (0/0)
