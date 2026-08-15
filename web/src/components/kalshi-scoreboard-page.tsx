@@ -11,6 +11,13 @@ const WINDOWS = ['1h', '24h', '7d'] as const
 
 const DZ_COLOR = '#34d399' // emerald-400 — DoubleZero
 
+// The path-latency hero comes from its own cache entry, rewritten by a 10-minute background
+// job. That entry has no expiry: if the refresh starts failing it only logs a WARN and the last
+// good value keeps being served indefinitely, under the page's own "updated 12s ago" — which
+// vouches for the race half, not for these numbers. Past three missed cycles the hero says so
+// itself rather than presenting hours-old latencies as current.
+const PATH_LATENCY_STALE_MS = 30 * 60 * 1000
+
 function pct(n: number): string {
   return `${n.toFixed(1)}%`
 }
@@ -180,6 +187,15 @@ export function KalshiScoreboardPage() {
     return `${Math.round(age / 60)}m ago`
   }, [data?.generated_at, now])
 
+  // The hero's own clock, independent of the payload's (see PATH_LATENCY_STALE_MS).
+  const pathLatencyAge = useMemo(() => {
+    const ts = data?.path_latency?.generated_at
+    if (!ts) return null
+    const ms = new Date(ts).getTime()
+    if (Number.isNaN(ms)) return null
+    return { text: relAge(ms, now), stale: now - ms > PATH_LATENCY_STALE_MS }
+  }, [data?.path_latency?.generated_at, now])
+
   // Global competitor set drives the per-vantage table columns (stable order).
   const competitorCols = data?.competitors ?? []
 
@@ -263,6 +279,14 @@ export function KalshiScoreboardPage() {
                 difference a property of the path rather than of the location. Window:{' '}
                 {data.path_latency?.window ?? '24h'}.
               </p>
+
+              {pathLatencyAge && (
+                <p className={`mt-2 text-xs ${pathLatencyAge.stale ? 'text-amber-500' : 'text-muted-foreground/70'}`}>
+                  Measured {pathLatencyAge.text}
+                  {pathLatencyAge.stale &&
+                    ' — the background refresh has not landed in a while, so these numbers are older than the rest of the page.'}
+                </p>
+              )}
 
               {data.path_latency && data.path_latency.feeds.length > 0 ? (
                 <div className="mt-5 overflow-x-auto">

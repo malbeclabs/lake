@@ -149,14 +149,10 @@ func emptyKalshiL2Coverage() *KalshiL2CoverageResponse {
 	}
 }
 
-// kalshiL2TableExists reports whether the proxied level table is queryable.
-func (a *API) kalshiL2TableExists(ctx context.Context) bool {
-	var n uint8
-	q := fmt.Sprintf("EXISTS TABLE `%s`.kalshi_mbp_levels", a.FeedsDB)
-	if err := a.envDB(ctx).QueryRow(ctx, q).Scan(&n); err != nil {
-		return false
-	}
-	return n == 1
+// kalshiL2TableExists reports whether the proxied level table is queryable. A probe failure is
+// an error, not an absent table — see kalshiTableExists.
+func (a *API) kalshiL2TableExists(ctx context.Context) (bool, error) {
+	return a.kalshiTableExists(ctx, "kalshi_mbp_levels")
 }
 
 // FetchKalshiL2Coverage aggregates the market-by-price lanes over the coverage window.
@@ -171,7 +167,11 @@ func (a *API) kalshiL2TableExists(ctx context.Context) bool {
 // publisher-clock differences as feed latency. If a latency column is ever added to this page
 // it must filter source_ts_kind = 'venue'.
 func (a *API) FetchKalshiL2Coverage(ctx context.Context) (*KalshiL2CoverageResponse, error) {
-	if !a.kalshiL2TableExists(ctx) {
+	exists, err := a.kalshiL2TableExists(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
 		return emptyKalshiL2Coverage(), nil
 	}
 

@@ -180,12 +180,21 @@ var kalshiWindows = map[string]string{
 // table's ORDER BY: a capture restart mints a new run id for the same (symbol, source_ts_ms,
 // bbo_hash), and those are genuinely distinct races, not duplicates to collapse.
 //
+// It deliberately excludes feed and loser_feed, which are in the table's ORDER BY but are NOT
+// part of the race identity. The summary writes one pairwise row per (race, winner, LOSER) —
+// the winner is related to each loser, losers are never related to each other. With two
+// DoubleZero lanes racing (tob_ and mbp_), that asymmetry counts a DoubleZero loss once per
+// lane (public > tob_, public > mbp_ are two rows) and a DoubleZero win once per race (the
+// tob_ > mbp_ row is dropped as DZ-vs-DZ), so keying on the feed pair systematically
+// understates the win rate. Keying on the race alone collapses both loss rows into the one
+// race they describe.
+//
 // uniqCombined (not uniqExact) and quantileTDigest (not quantileExact) keep aggregation state
 // bounded at ~KB per group; the exact variants buffer state proportional to the window's race
 // count and trip the ClickHouse OvercommitTracker on the memory-constrained proxy instance.
 // At scoreboard scale their sub-1% error is invisible, and they are exact at the small
 // cardinalities the unit tests assert.
-const kalshiRaceKeyTuple = "(measurement_node_id, capture_run_id, symbol, source_ts_ms, bbo_hash, feed, loser_feed)"
+const kalshiRaceKeyTuple = "(measurement_node_id, capture_run_id, symbol, source_ts_ms, bbo_hash)"
 
 // kalshiRecentRaceSymbols are the perps tickers shown in the recent-races grid, in display
 // order. The scoreboard aggregations race every symbol the configured feeds carry; this list
@@ -333,8 +342,13 @@ func (a *API) FetchKalshiScoreboardData(ctx context.Context, window, symbol stri
 
 	// Guard: if the feeds summary table doesn't exist (e.g. local dev without the proxy),
 	// return an empty-but-valid response so the page-cache refresher caches a clean empty
-	// payload instead of logging an error every cycle.
-	if !a.kalshiFeedsTableExists(ctx) {
+	// payload instead of logging an error every cycle. A failed probe is an error, not an
+	// absent table — see kalshiTableExists.
+	exists, err := a.kalshiFeedsTableExists(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
 		return emptyKalshiScoreboard(window, false), nil
 	}
 
@@ -609,8 +623,13 @@ func (a *API) fetchKalshiRecentRaces(ctx context.Context, entries kalshiEntries,
 // key: the 1h view is refreshed by the page-cache worker; the heavier 24h/7d views are
 // refreshed on a slow background cadence (StartKalshiBackgroundRefresher) so they are served
 // from cache instead of running a multi-day scan on the request path.
+//
+// Cacheability is decided on the SANITIZED symbol, the same value the query is built from, not
+// on the raw param: `symbol=all` (and a symbol of whitespace, or one the pattern rejects) is
+// the all-symbols view the cache holds, so testing the raw param would push exactly that view
+// onto the request path — a 7-day scan the background refresher exists to keep off it.
 func kalshiScoreboardCacheKey(r *http.Request) string {
-	if r.URL.Query().Get("symbol") != "" {
+	if sanitizeKalshiSymbol(r.URL.Query().Get("symbol")) != "" {
 		return ""
 	}
 	window := strings.TrimSpace(r.URL.Query().Get("window"))
@@ -632,24 +651,31 @@ func kalshiScoreboardWindowKey(window string) string {
 	return kalshiScoreboardCacheBase + ":" + window
 }
 
-// kalshiFeedsTableExists reports whether the proxied summary table is queryable.
-func (a *API) kalshiFeedsTableExists(ctx context.Context) bool {
+// kalshiTableExists reports whether a proxied table is queryable.
+//
+// A probe failure is returned, never folded into "absent". The absent case degrades to an
+// empty-but-valid payload with a nil error, which the background refresher and the page-cache
+// worker then write over the last-good entry — so swallowing a connection blip here would
+// blank the 24h/7d and L2 views for a full refresh interval, with nothing logged and the page
+// reporting "no data" rather than an error. Propagating the error leaves the previous entry
+// in place instead.
+func (a *API) kalshiTableExists(ctx context.Context, table string) (bool, error) {
 	var n uint8
-	q := fmt.Sprintf("EXISTS TABLE `%s`.kalshi_bbo_feed_race_summary", a.FeedsDB)
+	q := fmt.Sprintf("EXISTS TABLE `%s`.%s", a.FeedsDB, table)
 	if err := a.envDB(ctx).QueryRow(ctx, q).Scan(&n); err != nil {
-		return false
+		return false, err
 	}
-	return n == 1
+	return n == 1, nil
+}
+
+// kalshiFeedsTableExists reports whether the proxied summary table is queryable.
+func (a *API) kalshiFeedsTableExists(ctx context.Context) (bool, error) {
+	return a.kalshiTableExists(ctx, "kalshi_bbo_feed_race_summary")
 }
 
 // kalshiObservationsTableExists reports whether the proxied observations table is queryable.
-func (a *API) kalshiObservationsTableExists(ctx context.Context) bool {
-	var n uint8
-	q := fmt.Sprintf("EXISTS TABLE `%s`.kalshi_bbo_observations", a.FeedsDB)
-	if err := a.envDB(ctx).QueryRow(ctx, q).Scan(&n); err != nil {
-		return false
-	}
-	return n == 1
+func (a *API) kalshiObservationsTableExists(ctx context.Context) (bool, error) {
+	return a.kalshiTableExists(ctx, "kalshi_bbo_observations")
 }
 
 // fetchKalshiPrices returns the latest BBO mid price per recent-race symbol — a cheap
@@ -716,8 +742,13 @@ const kalshiEdgeWSArmFilter = "startsWith(source, 'tob_') AND source_id = 3 AND 
 func (a *API) FetchKalshiPathLatency(ctx context.Context) (*KalshiPathLatency, error) {
 	// Same degrade-to-empty guard as the scoreboard and L2 views: without it an environment
 	// that does not proxy the observations table logs a refresh failure every 10 minutes
-	// forever, which is the noise those guards exist to prevent.
-	if !a.kalshiObservationsTableExists(ctx) {
+	// forever, which is the noise those guards exist to prevent. A failed probe still
+	// propagates, so a blip cannot blank the cached hero — see kalshiTableExists.
+	exists, err := a.kalshiObservationsTableExists(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
 		return &KalshiPathLatency{Window: "24h", Feeds: []KalshiFeedLatency{}, GeneratedAt: time.Now().UTC()}, nil
 	}
 	entries, err := a.loadKalshiScoreboardEntries(ctx)

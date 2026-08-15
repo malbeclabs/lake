@@ -339,6 +339,36 @@ func TestKalshiScoreboard_TreatsMbpLaneAsDoubleZero(t *testing.T) {
 	assert.Equal(t, kalshiPublicFeed, resp.Competitors[0].Feed, "the public feed is the competitor, not the mbp_ lane")
 }
 
+// With both DoubleZero lanes racing, a race DoubleZero LOSES writes one pairwise row per lane
+// (the winner is related to each loser) while a race it WINS writes a single DZ-vs-competitor
+// row (the tob_-vs-mbp_ row is dropped as DZ-vs-DZ). Counting rows rather than races therefore
+// counted every loss twice and understated the win rate — one won and one lost race must read
+// 50%, not 33%. See kalshiRaceKeyTuple.
+func TestKalshiScoreboard_CountsDualLaneLossOnce(t *testing.T) {
+	api := newKalshiTestAPI(t)
+	createKalshiFeedsTable(t, api)
+	seedKalshiEntry(t, api, kalshiPublicFeed, "Public API", 0)
+
+	// Race 1: the public feed wins it, beating both DoubleZero lanes.
+	insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 10, 1, kalshiPublicFeed, kalshiDZFeed, 0.5)
+	insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 10, 1, kalshiPublicFeed, kalshiDZMbpFeed, 0.6)
+
+	// Race 2: the tob_ lane wins it, beating the public feed and the mbp_ lane.
+	insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 20, 2, kalshiDZFeed, kalshiPublicFeed, 1.0)
+	insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 20, 2, kalshiDZFeed, kalshiDZMbpFeed, 0.1)
+
+	resp, err := api.FetchKalshiScoreboardData(t.Context(), "24h", "")
+	require.NoError(t, err)
+
+	assert.EqualValues(t, 2, resp.TotalRaces, "two races, not one row per losing lane")
+	assert.InDelta(t, 50.0, resp.DZWinSharePct, 0.1)
+	require.Len(t, resp.Competitors, 1)
+	assert.EqualValues(t, 2, resp.Competitors[0].Races)
+	assert.InDelta(t, 50.0, resp.Competitors[0].DZWinPct, 0.1)
+	require.Len(t, resp.Nodes, 1)
+	assert.EqualValues(t, 2, resp.Nodes[0].TotalRaces)
+}
+
 // A win by an mbp_ lane must read as DoubleZero in the live grid, not as a raw source id.
 func TestKalshiScoreboard_LabelsMbpWinnerAsDoubleZero(t *testing.T) {
 	api := newKalshiTestAPI(t)

@@ -62,9 +62,12 @@ function LaneRow({ lane, asOf }: { lane: KalshiL2Lane; asOf: number }) {
             {quiet && <div className="text-[11px] text-amber-500/70">quiet</div>}
           </>
         ) : (
+          // Neutral, not amber: a roster lane with nothing in the window is most often a league
+          // out of season, which is not a fault. A lane that WAS publishing and stopped is the
+          // failure this page exists to catch, and that one is flagged as quiet above.
           <>
-            <span className="text-amber-500">—</span>
-            <div className="text-[11px] text-amber-500/70">no data in window</div>
+            <span className="text-muted-foreground">—</span>
+            <div className="text-[11px] text-muted-foreground/70">no data in window</div>
           </>
         )}
       </td>
@@ -139,11 +142,30 @@ export function KalshiL2Page() {
 
   const totals = useMemo(() => {
     const lanes = data?.lanes ?? []
+
+    // Instruments are counted per instrument SET, not per lane. A lane is one (source,
+    // channel_id) pair and instrument_id is unique only within a channel, so the API cannot
+    // collapse the arms — but the two publisher arms of one source carry the SAME instruments
+    // (channel_id / 100 is the publisher index, channel_id % 100 the instrument set), so
+    // summing lanes reports twice the real coverage for every dual-arm lane. Take the widest
+    // arm within each set, then sum the sets.
+    const perSet = new Map<string, number>()
+    for (const l of lanes) {
+      const key = `${l.source}:${l.channel_id % 100}`
+      perSet.set(key, Math.max(perSet.get(key) ?? 0, l.instruments))
+    }
+
+    // A lane that never published in the window is not the same thing as one that went silent:
+    // most of the roster is out of season at any time, and folding them together would leave
+    // this tile reading ~20 year-round, which is an alarm that is always on. Only lanes that
+    // were heard from and then stopped are "quiet" — the same rule LaneRow uses. Never-seen
+    // lanes get their own count so a lane that never started after a deploy is still visible.
     return {
       lanes: lanes.length,
-      instruments: lanes.reduce((sum, l) => sum + l.instruments, 0),
+      instruments: [...perSet.values()].reduce((sum, n) => sum + n, 0),
       updatesPerSec: lanes.reduce((sum, l) => sum + l.level_updates_per_sec, 0),
-      quiet: lanes.filter((l) => !l.seen || asOf - new Date(l.last_seen).getTime() > QUIET_AFTER_MS).length,
+      quiet: lanes.filter((l) => l.seen && asOf - new Date(l.last_seen).getTime() > QUIET_AFTER_MS).length,
+      neverSeen: lanes.filter((l) => !l.seen).length,
     }
   }, [data?.lanes, asOf])
 
@@ -204,6 +226,11 @@ export function KalshiL2Page() {
                   <div className={`text-xl font-semibold tabular-nums sm:text-2xl ${totals.quiet > 0 ? 'text-amber-500' : ''}`}>
                     {totals.quiet}
                   </div>
+                  {totals.neverSeen > 0 && (
+                    <div className="mt-0.5 text-[11px] text-muted-foreground/70">
+                      {totals.neverSeen} never seen in window
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
