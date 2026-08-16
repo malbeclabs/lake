@@ -379,13 +379,21 @@ func (a *API) FetchKalshiScoreboardData(ctx context.Context, window, symbol stri
 		RecentRaces: []KalshiRace{},
 	}
 
-	// Single scan grouped per (competitor, node) WITH ROLLUP: the (competitor, node) rows give
-	// the per-vantage breakdown and the rolled-up (competitor) rows give per-competitor
-	// totals, so the per-competitor stats come from the same scan instead of a second
-	// full-table scan. A race key includes measurement_node_id, so races partition cleanly by
-	// node — the ROLLUP counts are exact and the headline is derivable by summing per-node
-	// cells. One query (vs two) also refreshes atomically on the memory-constrained proxy
-	// ClickHouse: it succeeds or retries as a unit.
+	// Single scan grouped per (competitor, node) WITH CUBE: the (competitor, node) rows give the
+	// per-vantage breakdown, the (competitor) rows the per-competitor totals, the (node) rows
+	// the per-vantage totals and the grand-total row the headline — all from one scan instead of
+	// one per level. One query (vs several) also refreshes atomically on the memory-constrained
+	// proxy ClickHouse: it succeeds or retries as a unit.
+	//
+	// CUBE rather than ROLLUP because the node and headline totals must be counted, not summed
+	// from the per-competitor cells. The summary relates a race winner to each loser and never
+	// two losers to each other, so with more than one configured competitor the per-competitor
+	// cells overlap asymmetrically: a race DoubleZero wins against N competitors leaves N rows
+	// (one per competitor) while a race it loses leaves one (the competitor-vs-competitor pairs
+	// are dropped by the DZ-vs-competitor filter). Summing the cells would therefore count a win
+	// once per competitor and a loss once per race, overstating the win rate — the mirror of the
+	// dual-lane undercount kalshiRaceKeyTuple documents. uniqCombinedIf over the race key at each
+	// level counts each race once no matter how many competitors it involved.
 	q := fmt.Sprintf(`
 		SELECT competitor, measurement_node_id, any(location_code) AS location_code,
 			uniqCombinedIf(rk, dz_won = 1) AS dz_wins,
@@ -409,7 +417,7 @@ func (a *API) FetchKalshiScoreboardData(ctx context.Context, window, symbol stri
 			  AND (%[5]s != %[6]s) %[3]s
 			  AND event_ts >= now() - INTERVAL %[4]s
 		)
-		GROUP BY competitor, measurement_node_id WITH ROLLUP`,
+		GROUP BY competitor, measurement_node_id WITH CUBE`,
 		kalshiRaceKeyTuple, db, filter, interval, kalshiIsDZSQL("feed"), kalshiIsDZSQL("loser_feed"))
 
 	type stat struct {
@@ -417,18 +425,22 @@ func (a *API) FetchKalshiScoreboardData(ctx context.Context, window, symbol stri
 		leadP50, leadP95 float64
 	}
 	type nodeAgg struct {
-		loc    string
+		loc string
+		// total is the node's own CUBE row (races counted once across competitors), not the sum
+		// of byFeed.
+		total  stat
 		byFeed map[string]stat
 	}
-	// byFeed holds per-competitor totals (ROLLUP rows where node == ""); nodeMap holds
-	// per-node cells.
+	// byFeed holds per-competitor totals (CUBE rows where node == ""); nodeMap holds the
+	// per-node cells and each node's total; grand is the all-competitors, all-nodes row.
 	byFeed := map[string]stat{}
 	nodeMap := map[string]*nodeAgg{}
 	var nodeOrder []string
+	var grand stat
 	var recent []KalshiRace
 	var prices map[string]float64
 
-	// The main ROLLUP scan, the recent-races scan, and the live-price lookup are three
+	// The main CUBE scan, the recent-races scan, and the live-price lookup are three
 	// independent ClickHouse reads; run them concurrently so their latencies overlap rather
 	// than stack under the request timeout. gctx cancels the siblings if either hard-fails.
 	g, gctx := errgroup.WithContext(ctx)
@@ -438,6 +450,16 @@ func (a *API) FetchKalshiScoreboardData(ctx context.Context, window, symbol stri
 			return err
 		}
 		defer rows.Close()
+		// A node's total row can arrive before any of its cells, so both branches create it.
+		nodeFor := func(node, loc string) *nodeAgg {
+			na, ok := nodeMap[node]
+			if !ok {
+				na = &nodeAgg{loc: loc, byFeed: map[string]stat{}}
+				nodeMap[node] = na
+				nodeOrder = append(nodeOrder, node)
+			}
+			return na
+		}
 		for rows.Next() {
 			var competitor, node, loc string
 			var s stat
@@ -445,19 +467,14 @@ func (a *API) FetchKalshiScoreboardData(ctx context.Context, window, symbol stri
 				return err
 			}
 			switch {
+			case competitor == "" && node == "":
+				grand = s
 			case competitor == "":
-				// Grand-total ROLLUP row; the headline is derived from per-node cells instead.
-				continue
+				nodeFor(node, loc).total = s
 			case node == "":
 				byFeed[competitor] = s
 			default:
-				na, ok := nodeMap[node]
-				if !ok {
-					na = &nodeAgg{loc: loc, byFeed: map[string]stat{}}
-					nodeMap[node] = na
-					nodeOrder = append(nodeOrder, node)
-				}
-				na.byFeed[competitor] = s
+				nodeFor(node, loc).byFeed[competitor] = s
 			}
 		}
 		return rows.Err()
@@ -502,7 +519,6 @@ func (a *API) FetchKalshiScoreboardData(ctx context.Context, window, symbol stri
 		})
 	}
 
-	var globalWins, globalRaces uint64
 	for _, node := range nodeOrder {
 		na := nodeMap[node]
 		n := KalshiNode{
@@ -510,7 +526,6 @@ func (a *API) FetchKalshiScoreboardData(ctx context.Context, window, symbol stri
 			LocationCode:      na.loc,
 			Competitors:       []KalshiCompetitor{},
 		}
-		var wins, races uint64
 		for _, c := range entries.ordered {
 			s, ok := na.byFeed[c.Feed]
 			if !ok {
@@ -525,22 +540,20 @@ func (a *API) FetchKalshiScoreboardData(ctx context.Context, window, symbol stri
 				Feed: c.Feed, Label: c.Label, DZWinPct: winPct,
 				LeadP50Ms: s.leadP50, LeadP95Ms: s.leadP95, Races: r,
 			})
-			wins += s.wins
-			races += r
 		}
-		n.TotalRaces = races
-		if races > 0 {
-			n.DZWinSharePct = 100.0 * float64(wins) / float64(races)
+		// From the node's own CUBE row: a race against several competitors counts once here,
+		// though it appears in each competitor's cell above.
+		n.TotalRaces = na.total.wins + na.total.losses
+		if n.TotalRaces > 0 {
+			n.DZWinSharePct = 100.0 * float64(na.total.wins) / float64(n.TotalRaces)
 		}
 		resp.Nodes = append(resp.Nodes, n)
-		globalWins += wins
-		globalRaces += races
 	}
 
-	// Headline derived from the per-node totals (no extra scan).
-	resp.TotalRaces = globalRaces
-	if globalRaces > 0 {
-		resp.DZWinSharePct = 100.0 * float64(globalWins) / float64(globalRaces)
+	// Headline from the grand-total CUBE row, for the same reason.
+	resp.TotalRaces = grand.wins + grand.losses
+	if resp.TotalRaces > 0 {
+		resp.DZWinSharePct = 100.0 * float64(grand.wins) / float64(resp.TotalRaces)
 	}
 
 	if recent != nil {

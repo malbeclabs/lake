@@ -18,6 +18,7 @@ const (
 	kalshiDZFeed     = "tob_edge_kalshi_perps"
 	kalshiDZMbpFeed  = "mbp_edge_kalshi_perps"
 	kalshiPublicFeed = "kalshi_perps_public"
+	kalshiOtherFeed  = "kalshi_perps_thirdparty"
 )
 
 // createKalshiFeedsTable creates kalshi_bbo_feed_race_summary in the feeds DB, matching the
@@ -367,6 +368,43 @@ func TestKalshiScoreboard_CountsDualLaneLossOnce(t *testing.T) {
 	assert.InDelta(t, 50.0, resp.Competitors[0].DZWinPct, 0.1)
 	require.Len(t, resp.Nodes, 1)
 	assert.EqualValues(t, 2, resp.Nodes[0].TotalRaces)
+}
+
+// Configuring a second competing feed is a row insert, not a deploy, so the totals have to
+// survive it: a race DoubleZero wins appears in every competitor's cell but is still one race,
+// while a race it loses leaves a single row (the competitor-vs-competitor pair is not a
+// DoubleZero race). Summing the cells would count the win twice and the loss once.
+func TestKalshiScoreboard_CountsMultiCompetitorRaceOnce(t *testing.T) {
+	api := newKalshiTestAPI(t)
+	createKalshiFeedsTable(t, api)
+	seedKalshiEntry(t, api, kalshiPublicFeed, "Public API", 0)
+	seedKalshiEntry(t, api, kalshiOtherFeed, "Third Party", 1)
+
+	// Race 1: the tob_ lane wins it, beating both competitors.
+	insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 10, 1, kalshiDZFeed, kalshiPublicFeed, 1.0)
+	insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 10, 1, kalshiDZFeed, kalshiOtherFeed, 1.2)
+
+	// Race 2: the public feed wins it, beating DoubleZero and the other competitor.
+	insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 20, 2, kalshiPublicFeed, kalshiDZFeed, 0.5)
+	insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 20, 2, kalshiPublicFeed, kalshiOtherFeed, 0.3)
+
+	resp, err := api.FetchKalshiScoreboardData(t.Context(), "24h", "")
+	require.NoError(t, err)
+
+	assert.EqualValues(t, 2, resp.TotalRaces, "two races, not one row per competitor")
+	assert.InDelta(t, 50.0, resp.DZWinSharePct, 0.1)
+	require.Len(t, resp.Nodes, 1)
+	assert.EqualValues(t, 2, resp.Nodes[0].TotalRaces)
+	assert.InDelta(t, 50.0, resp.Nodes[0].DZWinSharePct, 0.1)
+
+	// The per-competitor cells still read as DoubleZero's record against that one feed.
+	require.Len(t, resp.Competitors, 2)
+	assert.Equal(t, kalshiPublicFeed, resp.Competitors[0].Feed)
+	assert.EqualValues(t, 2, resp.Competitors[0].Races)
+	assert.InDelta(t, 50.0, resp.Competitors[0].DZWinPct, 0.1)
+	assert.Equal(t, kalshiOtherFeed, resp.Competitors[1].Feed)
+	assert.EqualValues(t, 1, resp.Competitors[1].Races)
+	assert.InDelta(t, 100.0, resp.Competitors[1].DZWinPct, 0.1)
 }
 
 // A win by an mbp_ lane must read as DoubleZero in the live grid, not as a raw source id.
