@@ -7102,6 +7102,114 @@ export async function fetchHyperliquidScoreboard(
   return res.json()
 }
 
+export interface KalshiCompetitor {
+  feed: string
+  label: string
+  dz_win_pct: number
+  lead_p50_ms: number
+  lead_p95_ms: number
+  races: number
+}
+
+export interface KalshiNode {
+  measurement_node_id: string
+  location_code: string
+  dz_win_share_pct: number
+  total_races: number
+  competitors: KalshiCompetitor[]
+}
+
+export interface KalshiRace {
+  event_ts: string
+  symbol: string
+  location_code: string
+  winner_feed: string
+  winner_label: string
+  is_dz: boolean
+  runner_up_feed: string
+  runner_up_label: string
+  lead_ms: number
+}
+
+export interface KalshiFeedLatency {
+  feed: string
+  label: string
+  location_code: string
+  is_dz: boolean
+  p50_ms: number
+  p90_ms: number
+  p99_ms: number
+  samples: number
+}
+
+export interface KalshiPathLatency {
+  window: string
+  feeds: KalshiFeedLatency[]
+  generated_at: string
+}
+
+export interface KalshiScoreboardResponse {
+  window: string
+  symbol?: string
+  generated_at: string
+  dz_win_share_pct: number
+  total_races: number
+  competitors: KalshiCompetitor[]
+  nodes: KalshiNode[]
+  recent_races: KalshiRace[]
+  prices?: Record<string, number>
+  path_latency?: KalshiPathLatency
+  unconfigured?: boolean
+}
+
+export async function fetchKalshiScoreboard(
+  window: string = '24h',
+  symbol?: string,
+): Promise<KalshiScoreboardResponse> {
+  const params = new URLSearchParams()
+  params.set('window', window)
+  if (symbol && symbol !== 'all') params.set('symbol', symbol)
+  const res = await apiFetch(`/api/dz/kalshi/scoreboard?${params}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch kalshi scoreboard')
+  }
+  return res.json()
+}
+
+export interface KalshiL2Lane {
+  source: string
+  label: string
+  category: string
+  channel_id: number
+  location_code: string
+  messages_per_sec: number
+  level_updates_per_sec: number
+  instruments: number
+  depth_p50: number
+  depth_p95: number
+  depth_max: number
+  gaps: number
+  resets: number
+  clears: number
+  snapshot_cycles: number
+  seen: boolean
+  last_seen: string
+}
+
+export interface KalshiL2CoverageResponse {
+  generated_at: string
+  window_minutes: number
+  lanes: KalshiL2Lane[]
+}
+
+export async function fetchKalshiL2Coverage(): Promise<KalshiL2CoverageResponse> {
+  const res = await apiFetch('/api/dz/kalshi/l2-coverage')
+  if (!res.ok) {
+    throw new Error('Failed to fetch kalshi L2 coverage')
+  }
+  return res.json()
+}
+
 // Serviceability permission audit trail (internal only).
 export interface PermissionAuditEvent {
   eventTs: string

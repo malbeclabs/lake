@@ -403,6 +403,7 @@ func main() {
 		// The composite feed latency and the 24h/7d scoreboards are too heavy for the 60s
 		// page-cache loop; refresh them on a slow cadence here (writes to the shared page cache).
 		api.StartHyperliquidBackgroundRefresher(workerCtx)
+		api.StartKalshiBackgroundRefresher(workerCtx)
 	}
 
 	// Start metrics server
@@ -651,6 +652,8 @@ func main() {
 		r.Get("/api/dz/edge/scoreboard", api.GetEdgeScoreboard)
 		// Internal only (unannounced venue): allowed-domain Google users only.
 		r.With(handlers.RequireInternalDomain).Get("/api/dz/hyperliquid/scoreboard", api.GetHyperliquidScoreboard)
+		r.With(handlers.RequireInternalDomain).Get("/api/dz/kalshi/scoreboard", api.GetKalshiScoreboard)
+		r.With(handlers.RequireInternalDomain).Get("/api/dz/kalshi/l2-coverage", api.GetKalshiL2Coverage)
 		// Serviceability permission audit trail (internal only: allowed-domain Google users).
 		r.With(handlers.RequireInternalDomain).Get("/api/dz/permission-audit", api.GetPermissionAudit)
 		r.Get("/api/dz/tenants", api.GetTenants)
