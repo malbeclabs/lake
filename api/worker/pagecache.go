@@ -106,32 +106,17 @@ func Start(ctx context.Context, cfg Config) error {
 
 // pageCacheStartOptions returns the start options for the page-cache workflow.
 //
-// Both policy fields are load-bearing, and the deploy contract rests on them.
-// PageCacheWorkflow deliberately schedules its activities without
-// workflow.GetVersion guards, so any change to the sequence of commands the loop
-// emits — adding or removing an activity call, reshaping the cycle — cannot be
-// replayed against a run whose history the previous deploy's code wrote: every
-// workflow task panics with a nondeterminism error, Temporal retries workflow
-// tasks indefinitely, and the refresh loop never runs again. What makes that safe
-// is that a deploy always gets a *fresh run*. (Cache entries themselves are
-// enumerated inside the activities, so adding a page is replay-neutral; it is the
-// workflow loop that must not diverge.)
+// PageCacheWorkflow schedules its activities with no workflow.GetVersion guards,
+// so a run whose history the previous deploy wrote cannot be replayed by new code:
+// the workflow task panics, Temporal retries it indefinitely, and refreshes stop
+// for good. Every deploy therefore needs a fresh run.
 //
-// TERMINATE_EXISTING has the server terminate any running execution as part of the
-// start call, so there is no conflict and no window between a terminate and a
-// start. It needs Temporal >= 1.24; staging and prod run 1.26.2.
-//
-// WorkflowExecutionErrorWhenAlreadyStarted is the other half, not a tripwire. When
-// it is false — the SDK default — the SDK converts the server's
-// WorkflowExecutionAlreadyStarted error into a handle on the *still-running*
-// execution and returns no error, so the worker silently adopts the old run's
-// history. That is how staging's page cache sat wedged for six hours while still
-// logging "workflow started" on every restart. A conflict policy alone does not
-// fix it: FAIL, the server-side default, is swallowed into a stale handle exactly
-// the same way. Keep both fields.
-//
-// WorkflowIDReusePolicy is deliberately unset: its default, ALLOW_DUPLICATE, is
-// what we want once the prior run has completed.
+// Both fields are required for that. TERMINATE_EXISTING has the server terminate
+// any running execution as part of the start; without
+// WorkflowExecutionErrorWhenAlreadyStarted the SDK would still turn an
+// already-started error into a handle on that execution and return no error,
+// silently adopting its history — which is what wedged staging for six hours. A
+// conflict policy of FAIL is swallowed the same way.
 func pageCacheStartOptions() temporalclient.StartWorkflowOptions {
 	return temporalclient.StartWorkflowOptions{
 		ID:                                       WorkflowID,
@@ -142,9 +127,8 @@ func pageCacheStartOptions() temporalclient.StartWorkflowOptions {
 }
 
 // startPageCacheWorkflow starts a fresh page-cache run, terminating any run left
-// over from a previous deploy. The logged run ID is the only thing that
-// distinguishes a fresh run from an adopted one, so it is what makes the
-// "workflow started" line verifiable.
+// over from a previous deploy. The logged run ID is what distinguishes a fresh run
+// from an adopted one.
 func startPageCacheWorkflow(ctx context.Context, tc temporalclient.Client, log *slog.Logger, params PageCacheParams) (temporalclient.WorkflowRun, error) {
 	run, err := tc.ExecuteWorkflow(ctx, pageCacheStartOptions(), PageCacheWorkflow, 0, params)
 	if err != nil {
