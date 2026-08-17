@@ -34,6 +34,7 @@ import {
   Sun,
   Moon,
   Layers,
+  CandlestickChart,
   BookOpen,
   ArrowRightLeft,
   Puzzle,
@@ -67,6 +68,7 @@ export function Sidebar() {
   const showGeoloc = user?.is_internal_user === true
   // Internal only (unannounced venue) — gated to allowed-domain Google users.
   const showHyperliquid = user?.is_internal_user === true
+  const showKalshi = user?.is_internal_user === true
   const showPermissionAudit = user?.is_internal_user === true
   // External Hex app — only useful to allowed-domain (doublezero/malbeclabs) users.
   const showDataDesk = user?.is_internal_user === true
@@ -80,6 +82,7 @@ const { resolvedTheme, setTheme } = useTheme()
   const isOpsIncidentsLinksRoute = location.pathname === '/ops/incidents/links'
   const isOpsIncidentsDevicesRoute = location.pathname === '/ops/incidents/devices'
   const isOpsMaintenanceRoute = location.pathname === '/ops/maintenance'
+  const isNetworkHealthReportingRoute = location.pathname === '/ops/network-health-reporting'
   const isChatRoute = location.pathname.startsWith('/chat')
   const isChatSessions = location.pathname === '/chat/sessions'
   const isTopologyRoute = location.pathname === '/topology' || location.pathname.startsWith('/topology/')
@@ -131,7 +134,10 @@ const { resolvedTheme, setTheme } = useTheme()
   const isHyperliquidScoreboardRoute = location.pathname === '/dz/hyperliquid/scoreboard'
   const isPermissionAuditRoute = location.pathname === '/dz/permission-audit'
   const isHyperliquidRoute = location.pathname.startsWith('/dz/hyperliquid')
-  const isEdgeRoute = isShredsRoute || isHyperliquidRoute
+  const isKalshiScoreboardRoute = location.pathname === '/dz/kalshi/scoreboard'
+  const isKalshiL2Route = location.pathname === '/dz/kalshi/l2'
+  const isKalshiRoute = location.pathname.startsWith('/dz/kalshi')
+  const isEdgeRoute = isShredsRoute || isHyperliquidRoute || isKalshiRoute
   const isGeolocRoute = location.pathname.startsWith('/dz/geoloc/')
   const isGeolocProbesRoute = location.pathname.startsWith('/dz/geoloc/probes')
   const isGeolocUsersRoute = location.pathname.startsWith('/dz/geoloc/users')
@@ -590,6 +596,13 @@ const { resolvedTheme, setTheme } = useTheme()
               <CalendarClock className="h-4 w-4" />
               Maintenance
             </Link>
+            <Link
+              to="/ops/network-health-reporting"
+              className={navItemClass(isNetworkHealthReportingRoute)}
+            >
+              <BarChart3 className="h-4 w-4" />
+              Network Health Reporting
+            </Link>
           </div>
         </div>
 
@@ -638,6 +651,24 @@ const { resolvedTheme, setTheme } = useTheme()
                   <>
                     <Link to="/dz/hyperliquid/scoreboard" className={subNavItemClass(isHyperliquidScoreboardRoute)}>
                       Scoreboard
+                    </Link>
+                  </>
+                )}
+              </>
+            )}
+            {showKalshi && (
+              <>
+                <Link to="/dz/kalshi/scoreboard" className={isKalshiRoute ? navItemExpandedClass : navItemClass(false)}>
+                  <CandlestickChart className="h-4 w-4" />
+                  Kalshi
+                </Link>
+                {isKalshiRoute && (
+                  <>
+                    <Link to="/dz/kalshi/scoreboard" className={subNavItemClass(isKalshiScoreboardRoute)}>
+                      Scoreboard
+                    </Link>
+                    <Link to="/dz/kalshi/l2" className={subNavItemClass(isKalshiL2Route)}>
+                      Sports L2
                     </Link>
                   </>
                 )}

@@ -28,6 +28,7 @@ import { TopologyPage } from '@/components/topology-page'
 import { PathCalculatorPage } from '@/components/path-calculator-page'
 import { RedundancyReportPage } from '@/components/redundancy-report-page'
 import { MetroConnectivityPage } from '@/components/metro-connectivity-page'
+import { NetworkHealthReportingPage } from '@/components/network-health-reporting-page'
 import { DzVsInternetPage } from '@/components/dz-vs-internet-page'
 import { PathLatencyPage } from '@/components/path-latency-page'
 import { RoutesPage } from '@/components/routes-page'
@@ -69,6 +70,8 @@ import { ShredsRewardsDetailPage } from '@/components/shreds-rewards-detail-page
 import { PublisherCheckPage } from './components/publisher-check-page'
 import { EdgeScoreboardPage } from './components/edge-scoreboard-page'
 import { HyperliquidScoreboardPage } from './components/hyperliquid-scoreboard-page'
+import { KalshiScoreboardPage } from './components/kalshi-scoreboard-page'
+import { KalshiL2Page } from './components/kalshi-l2-page'
 import { PermissionAuditPage } from './components/permission-audit-page'
 import { MulticastGroupDetailPage } from '@/components/multicast-group-detail-page'
 import { AccessPassesPage } from '@/components/access-passes-page'
@@ -688,6 +691,7 @@ function AppContent() {
             <Route path="/ops/incidents/links" element={<IncidentsPage />} />
             <Route path="/ops/incidents/devices" element={<IncidentsPage />} />
             <Route path="/ops/maintenance" element={<MaintenanceCalendarPage />} />
+            <Route path="/ops/network-health-reporting" element={<NetworkHealthReportingPage />} />
 
 
             {/* Settings */}
@@ -741,6 +745,9 @@ function AppContent() {
             <Route path="/dz/edge/scoreboard" element={<Navigate to="/dz/shreds/scoreboard" replace />} />
             <Route path="/dz/hyperliquid" element={<Navigate to="/dz/hyperliquid/scoreboard" replace />} />
             <Route path="/dz/hyperliquid/scoreboard" element={<HyperliquidScoreboardPage />} />
+            <Route path="/dz/kalshi" element={<Navigate to="/dz/kalshi/scoreboard" replace />} />
+            <Route path="/dz/kalshi/scoreboard" element={<KalshiScoreboardPage />} />
+            <Route path="/dz/kalshi/l2" element={<KalshiL2Page />} />
             <Route path="/dz/permission-audit" element={<PermissionAuditPage />} />
 
             {/* Geolocation routes */}

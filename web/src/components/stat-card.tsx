@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { Info } from 'lucide-react'
+import { Tooltip } from '@/components/ui/tooltip'
+import { deltaColorClass, formatDelta } from './stat-card-utils'
 
 interface StatCardPeer {
   label: string
@@ -13,9 +16,15 @@ interface StatCardProps {
   format: 'number' | 'stake' | 'bandwidth' | 'percent'
   decimals?: number // Override default decimal places for the format
   delta?: number // Optional delta value to show change (percentage points for percent format)
+  // Which delta direction is "good" for this metric, so the delta color reads
+  // correctly. 'up' (default): a rise is green (e.g. throughput). 'down': a
+  // fall is green (e.g. outages). 'neutral': no good direction, delta stays
+  // muted (e.g. active links).
+  goodDirection?: 'up' | 'down' | 'neutral'
   max?: number // Optional maximum to display as "value / max"
   href?: string // Optional link to entity listing page
   peer?: StatCardPeer // Optional second stat shown side-by-side in the same card
+  info?: string // Optional explanation shown in a hover tooltip next to the label
 }
 
 function useAnimatedNumber(target: number | undefined, duration = 500) {
@@ -91,19 +100,16 @@ function formatValue(
   }
 }
 
-function formatDelta(delta: number): string {
-  const sign = delta >= 0 ? '+' : ''
-  return `${sign}${delta.toFixed(2)}%`
-}
-
 function StatCardContent({
   label,
   value,
   format,
   decimals,
   delta,
+  goodDirection = 'up',
   max,
-}: Pick<StatCardProps, 'label' | 'value' | 'format' | 'decimals' | 'delta' | 'max'>) {
+  info,
+}: Pick<StatCardProps, 'label' | 'value' | 'format' | 'decimals' | 'delta' | 'goodDirection' | 'max' | 'info'>) {
   const animatedValue = useAnimatedNumber(value)
   const isLoading = value === undefined
   const [showSkeleton, setShowSkeleton] = useState(false)
@@ -137,31 +143,38 @@ function StatCardContent({
               )}
             </span>
             {showDelta && (
-              <span
-                className={`text-sm font-normal ${delta > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}
-              >
+              <span className={`text-sm font-normal ${deltaColorClass(delta, goodDirection)}`}>
                 {formatDelta(delta)}
               </span>
             )}
           </span>
         )}
       </div>
-      <div className="text-sm text-muted-foreground">{label}</div>
+      <div className="text-sm text-muted-foreground inline-flex items-center gap-1">
+        {label}
+        {info && (
+          <Tooltip content={info}>
+            <span className="cursor-help text-muted-foreground/60 hover:text-foreground">
+              <Info className="h-3 w-3" />
+            </span>
+          </Tooltip>
+        )}
+      </div>
     </>
   )
 }
 
-export function StatCard({ label, value, format, decimals, delta, max, href, peer }: StatCardProps) {
+export function StatCard({ label, value, format, decimals, delta, goodDirection, max, href, peer, info }: StatCardProps) {
   if (peer) {
     return (
       <div className="rounded-[0.3rem] bg-muted/50 p-2 lg:p-4 flex items-stretch divide-x divide-border">
         <div className="flex-1 text-center pr-2 lg:pr-4">
           {href ? (
             <Link to={href} className="block hover:text-foreground transition-colors">
-              <StatCardContent label={label} value={value} format={format} decimals={decimals} delta={delta} max={max} />
+              <StatCardContent label={label} value={value} format={format} decimals={decimals} delta={delta} goodDirection={goodDirection} max={max} info={info} />
             </Link>
           ) : (
-            <StatCardContent label={label} value={value} format={format} decimals={decimals} delta={delta} max={max} />
+            <StatCardContent label={label} value={value} format={format} decimals={decimals} delta={delta} goodDirection={goodDirection} max={max} info={info} />
           )}
         </div>
         <div className="flex-1 text-center pl-2 lg:pl-4">
@@ -178,7 +191,7 @@ export function StatCard({ label, value, format, decimals, delta, max, href, pee
   }
 
   const content = (
-    <StatCardContent label={label} value={value} format={format} decimals={decimals} delta={delta} max={max} />
+    <StatCardContent label={label} value={value} format={format} decimals={decimals} delta={delta} goodDirection={goodDirection} max={max} info={info} />
   )
 
   if (href) {

@@ -1356,6 +1356,480 @@ export async function fetchStatus(): Promise<StatusResponse> {
   return res.json()
 }
 
+// --- Network Health Reporting ---
+// A public, windowed report of how the network performed. Facts only: the UI
+// presents these numbers neutrally and never ranks or grades contributors.
+
+export interface NetworkHealthDeltas {
+  peak_bps: number | null
+  active_links: number | null
+}
+
+// The outage and impactful-downtime headline tiles come from the Outages and
+// Impactful groups, so they are not mirrored on the Overview headline.
+export interface NetworkHealthHeadline {
+  peak_bps: number
+  jitter_improve_pct: number
+  dz_loss_pct: number
+  active_links: number
+  active_devices: number
+  active_metros: number
+  deltas: NetworkHealthDeltas
+}
+
+export interface NetworkHealthDrainTiming {
+  outage_count: number
+  events_with_drain: number
+  drains: number
+  undrains: number
+  time_to_drain_p50_min: number | null
+  time_to_drain_max_min: number | null
+  time_drained_p50_min: number | null
+  time_drained_max_min: number | null
+  time_to_undrain_p50_min: number | null
+  time_to_undrain_max_min: number | null
+  drain_within_30m_pct: number | null
+  // Undrains that matched a recovered link (a healthy link returned to service).
+  // The undrain timing stats are computed only over these matched pairs.
+  matched_undrains: number
+  // True when the recovery-health signal the undrain stats depend on could not
+  // be fetched this window, so undrain timing is unavailable rather than zero.
+  undrain_unavailable?: boolean
+}
+
+export interface NetworkHealthDurationHistogram {
+  flap_le5m: number
+  short_5_15m: number
+  medium_15_60m: number
+  sustained_1_24h: number
+  chronic_gt24h: number
+}
+
+export interface NetworkHealthReliability {
+  outage_count: number
+  distinct_links: number
+  capped_downtime_hours: number
+  degraded_links: number
+  duration_histogram: NetworkHealthDurationHistogram
+}
+
+export interface NetworkHealthContributor {
+  code: string
+  outages: number
+  capped_downtime_hours: number
+  distinct_links: number
+  links: number
+  devices: number
+}
+
+export interface NetworkHealthWindow {
+  start: string
+  end: string
+  days: number
+  label: string
+}
+
+export interface NetworkHealthSla {
+  within: number
+  total: number
+  within_pct: number | null
+}
+
+export interface NetworkHealthCapacity {
+  unicast_users: number
+  max_users: number
+  util_pct: number | null
+}
+
+export interface NetworkHealthDeviceSlots {
+  pk: string
+  code: string
+  unicast: number
+  mcast_sub: number
+  mcast_pub: number
+  max_users: number
+  used_pct: number | null
+}
+
+export interface NetworkHealthDiaInterface {
+  device_pk: string
+  device: string
+  intf: string
+  port_gbps: number
+  cir_gbps: number
+  p50_gbps: number
+  p99_gbps: number
+  util_pct: number | null
+  denom: string
+}
+
+export interface NetworkHealthIsis {
+  overloaded: number
+  unreachable: number
+  devices: number
+  adjacencies: number
+}
+
+export interface NetworkHealthFreshness {
+  feed_max: string
+  lag_seconds: number
+  devices_fresh: number
+  devices_active: number
+}
+
+export interface NetworkHealthTsPoint {
+  t: string
+  avg_bps: number
+  max_bps: number
+}
+
+export interface NetworkHealthCountPoint {
+  t: string
+  count: number
+}
+
+export interface NetworkHealthTrafficLink {
+  link_pk: string
+  link_code: string
+  side_a_metro: string
+  side_z_metro: string
+  status: string
+  avg_gbps: number
+  max_gbps: number
+}
+
+export interface NetworkHealthCapacityLink {
+  link_pk: string
+  link_code: string
+  side_a_metro: string
+  side_z_metro: string
+  bandwidth_gbps: number
+  peak_gbps: number
+  util_pct: number
+  p50_util: number
+  p99_util: number
+}
+
+export interface NetworkHealthPerfLink {
+  link_pk: string
+  link_code: string
+  side_a_metro: string
+  side_z_metro: string
+  committed_ms: number
+  measured_avg_ms: number
+  measured_max_ms: number
+  over_committed_pct: number
+  drift_ms: number
+  drift_pct: number
+  // When the link carries an IS-IS delay override, committed_ms (and the drift /
+  // over-committed figures) reflect the override, not the raw onchain value.
+  // raw_committed_ms is the untouched onchain commitment. Optional so the type
+  // checks even if the backend field lands slightly later.
+  raw_committed_ms?: number
+  overridden?: boolean
+}
+
+export interface NetworkHealthErrorHotspot {
+  device_pk: string
+  device_code: string
+  errors: number
+  carrier_flaps: number
+}
+
+// One entity's time-based 3-way state split over the window (see the Go
+// NHAvailability doc comment): avail_pct + drained_pct + outage_pct sum to
+// 100 of the classified (non-provisioning) buckets. Drain counts as
+// unavailable but is broken out as its own segment rather than folded into
+// outage_pct, so a heavily soft-drained link doesn't read as if it had a fault.
+export interface NetworkHealthAvailability {
+  pk: string
+  code: string
+  metros?: string
+  avail_pct: number
+  drained_pct: number
+  outage_pct: number
+  avail_hours: number
+  outage_hours: number
+  drained_hours: number
+}
+
+// One recorded root cause and how many incident tickets in the window carried
+// it. cause is the raw enum (self_resolved, network_external, fiber_cut,
+// configuration, hardware, carrier, false_positive); pct is its share of
+// incidents that have a cause.
+export interface NetworkHealthRootCause {
+  cause: string
+  count: number
+  pct: number | null
+}
+
+// One telemetry-detected outage in the window that had no matching ops ticket:
+// the affected link, when it started (RFC3339), and how long it lasted (hours).
+// link_pk is present when the link resolved to an onchain pubkey, so the
+// frontend can link through to its detail page; absent means render plain text.
+export interface NetworkHealthNoTicketOutage {
+  link_code: string
+  link_pk?: string
+  start_ts: string
+  hours: number
+}
+
+export interface NetworkHealthTickets {
+  total: number
+  incidents: number
+  maintenance: number
+  sev1: number
+  sev2: number
+  sev3: number
+  // Incident timing (incidents only; maintenance is scheduled ahead of time and
+  // is excluded so it does not drag these negative).
+  response_p50_min: number | null
+  resolution_p50_min: number | null
+  closed_incidents: number
+  // Who filed each incident, by ticket creator resolved through the ops user
+  // registry. self_reported = a contributor filed it; doublezero_filed = a
+  // DoubleZero staff account filed it. self_reported_pct is null when the user
+  // registry could not be fetched (frontend then shows "unavailable").
+  self_reported_count: number
+  doublezero_filed_count: number
+  self_reported_pct: number | null
+  // Scheduled maintenance timing (present in the contract for completeness; the
+  // maintenance section shows counts and notes that timing is not tracked).
+  maintenance_lead_p50_min: number | null
+  maintenance_duration_p50_min: number | null
+  closed_maintenance: number
+  root_causes: NetworkHealthRootCause[]
+  outage_count: number
+  outages_with_ticket: number
+  outages_no_ticket: number
+  no_ticket_share_pct: number | null
+  // Telemetry-detected outages in the window with no matching ticket, one row
+  // per affected link + overlapping episode. Present alongside the count/share
+  // above; optional so an older backend that omits it still type-checks.
+  no_ticket_outages?: NetworkHealthNoTicketOutage[]
+}
+
+// Network-wide (or contributor-scoped) outage total for the window, split by
+// entity kind. outage_hours is the link outage-hours total (uncapped; a fact,
+// not the headline's capped figure).
+export interface NetworkHealthOutageSummary {
+  link_outages: number
+  outage_hours: number
+  links_affected: number
+  device_outages: number
+  devices_affected: number
+}
+
+// One entity's outage-hours total over the window, ranked by hours descending.
+// pk lets the frontend link through to the entity's drill-down page. metros
+// holds the metro pair for links ("ams ↔ lon") or the single metro for devices.
+export interface NetworkHealthDowntimeRow {
+  pk: string
+  code: string
+  metros?: string
+  outages: number
+  hours: number
+}
+
+// Prior-window (previous equal-length period) reliability values that back the
+// "vs prior" deltas on the Outages-by-duration caption. outage_count and
+// capped_downtime_hours mirror the current-window reliability figures. Emitted
+// by the Outages group under prev.reliability every refresh.
+export interface NetworkHealthReliabilityPrev {
+  outage_count: number
+  capped_downtime_hours: number
+}
+
+export interface NetworkHealthParams {
+  days?: number
+  start?: string // YYYY-MM-DD
+  end?: string // YYYY-MM-DD
+}
+
+function networkHealthQuery(p: NetworkHealthParams): URLSearchParams {
+  const qs = new URLSearchParams()
+  if (p.start && p.end) {
+    qs.set('start', p.start)
+    qs.set('end', p.end)
+  } else if (p.days && p.days !== 30) {
+    qs.set('days', String(p.days))
+  }
+  return qs
+}
+
+// The undrain-timing slice of drain timing, fetched separately because its
+// recovery-health query is slow. The main network-health payload renders
+// immediately; this loads in parallel and fills in the two undrain MiniStats.
+export interface NetworkHealthDeferred {
+  time_to_undrain_p50_min: number | null
+  time_to_undrain_max_min: number | null
+  undrain_unavailable?: boolean
+  matched_undrains: number
+  // Prior-window values so the undrain MiniStats can show a "vs prior" delta.
+  prev?: NetworkHealthDeferred
+  error?: string
+}
+
+export async function fetchNetworkHealthDeferred(
+  p: NetworkHealthParams = {},
+  contributor = '',
+): Promise<NetworkHealthDeferred> {
+  const qs = networkHealthQuery(p)
+  if (contributor) qs.set('contributor', contributor)
+  const s = qs.toString()
+  const res = await fetchWithRetry(`/api/network-health/deferred${s ? `?${s}` : ''}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch network health undrain timing')
+  }
+  return res.json()
+}
+
+// --- Network health, per-data-source groups (progressive loading) ---
+//
+// The single /api/network-health payload is split into independent group
+// endpoints so the page loads progressively: each group fetches + caches on its
+// own, and a slow or failed group only affects its own panels. Every group type
+// below is a SUBSET of the full network-health payload (same field names / JSON tags), plus
+// its own prior-window values where its panels show a "vs prior" delta and an
+// optional `error` string (same convention across every group endpoint).
+//
+// `degraded` lists the panel queries that failed inside the group (the panel
+// names the backend records in nhPanels, e.g. "link_availability", "sla",
+// "top_links"). The fields those panels fill carry a zero value, so a panel
+// whose source is named here renders unavailable instead of drawing that zero;
+// its siblings in the same group still render their real data. It is omitted
+// when every panel succeeded. `error` is set only when a CRITICAL panel failed
+// and marks the whole group unavailable.
+
+// Overview: the cheap headline signals + throughput chart + the contributor list
+// that feeds the scope dropdown. The Outages group owns the headline outage
+// count and the Impactful endpoint owns impactful downtime, so this headline is
+// read together with those two (each tile loads with its own group).
+export interface NHOverview {
+  window: NetworkHealthWindow
+  headline: NetworkHealthHeadline
+  isis: NetworkHealthIsis
+  freshness: NetworkHealthFreshness
+  throughput_ts: NetworkHealthTsPoint[]
+  contributors: NetworkHealthContributor[]
+  generated_at: string
+  degraded?: string[]
+  error?: string
+}
+
+export interface NHAvailabilityGroup {
+  link_availability: NetworkHealthAvailability[]
+  device_availability: NetworkHealthAvailability[]
+  degraded?: string[]
+  error?: string
+}
+
+export interface NHLatencyGroup {
+  latency_links: NetworkHealthPerfLink[]
+  sla: NetworkHealthSla
+  degraded?: string[]
+  error?: string
+}
+
+export interface NHCapacityGroup {
+  capacity: NetworkHealthCapacity
+  device_slots: NetworkHealthDeviceSlots[]
+  dia_interfaces: NetworkHealthDiaInterface[]
+  top_links: NetworkHealthTrafficLink[]
+  capacity_links: NetworkHealthCapacityLink[]
+  degraded?: string[]
+  error?: string
+}
+
+export interface NHOutagesGroup {
+  // Headline outage count (sustained outages >= 10 min) + its prior-window
+  // percent-change delta, cross-read by the headline row.
+  outage_count: number
+  outage_count_delta: number | null
+  reliability: NetworkHealthReliability
+  outage_summary: NetworkHealthOutageSummary | null
+  downtime_links: NetworkHealthDowntimeRow[]
+  downtime_devices: NetworkHealthDowntimeRow[]
+  outages_ts: NetworkHealthCountPoint[]
+  error_hotspots: NetworkHealthErrorHotspot[]
+  prev?: {
+    outage_summary: NetworkHealthOutageSummary | null
+    reliability: NetworkHealthReliabilityPrev
+  }
+  degraded?: string[]
+  error?: string
+}
+
+export interface NHDrainGroup {
+  drain_timing: NetworkHealthDrainTiming
+  // prev is the prior-window drain-timing figures directly (the backend emits the
+  // bare NHDrainTiming under `prev`, not a wrapper), used for the panel deltas.
+  prev?: NetworkHealthDrainTiming | null
+  degraded?: string[]
+  error?: string
+}
+
+export interface NHTicketsGroup {
+  ops_tickets: NetworkHealthTickets | null
+  // prev is the prior-window ticket aggregate directly (bare NHTickets under
+  // `prev`), used for the incidents/maintenance deltas.
+  prev?: NetworkHealthTickets | null
+  degraded?: string[]
+  error?: string
+}
+
+// Impactful downtime is the heaviest query, so it has its own deferred endpoint
+// (mirrors /deferred). Impact-weighted availability is derived on the frontend
+// from Overview.headline.active_links + this impactful_downtime_hours (the
+// backend does not emit it); see deriveAvailability.
+export interface NHImpactful {
+  window: NetworkHealthWindow
+  impactful_downtime_hours: number
+  impactful_downtime_delta: number | null
+  unavailable?: boolean
+  prev?: { impactful_downtime_hours: number }
+  degraded?: string[]
+  error?: string
+}
+
+// Shared fetcher for a group endpoint. Mirrors fetchNetworkHealthDeferred:
+// builds the same window query string, threads the
+// optional contributor scope, and reuses fetchWithRetry.
+async function fetchNHGroup<T>(
+  path: string,
+  p: NetworkHealthParams,
+  contributor: string,
+): Promise<T> {
+  const qs = networkHealthQuery(p)
+  if (contributor) qs.set('contributor', contributor)
+  const s = qs.toString()
+  const base = path ? `/api/network-health/${path}` : '/api/network-health'
+  const res = await fetchWithRetry(`${base}${s ? `?${s}` : ''}`)
+  if (!res.ok) {
+    throw new Error(`Failed to fetch network health: ${path || 'overview'}`)
+  }
+  return res.json()
+}
+
+// Overview is served by the bare /api/network-health route (repurposed from the
+// old monolith); the rest hang off named sub-paths.
+export const fetchNHOverview = (p: NetworkHealthParams = {}, c = '') =>
+  fetchNHGroup<NHOverview>('', p, c)
+export const fetchNHAvailability = (p: NetworkHealthParams = {}, c = '') =>
+  fetchNHGroup<NHAvailabilityGroup>('availability', p, c)
+export const fetchNHLatency = (p: NetworkHealthParams = {}, c = '') =>
+  fetchNHGroup<NHLatencyGroup>('latency', p, c)
+export const fetchNHCapacity = (p: NetworkHealthParams = {}, c = '') =>
+  fetchNHGroup<NHCapacityGroup>('capacity', p, c)
+export const fetchNHOutages = (p: NetworkHealthParams = {}, c = '') =>
+  fetchNHGroup<NHOutagesGroup>('outages', p, c)
+export const fetchNHDrain = (p: NetworkHealthParams = {}, c = '') =>
+  fetchNHGroup<NHDrainGroup>('drain', p, c)
+export const fetchNHTickets = (p: NetworkHealthParams = {}, c = '') =>
+  fetchNHGroup<NHTicketsGroup>('tickets', p, c)
+export const fetchNHImpactful = (p: NetworkHealthParams = {}, c = '') =>
+  fetchNHGroup<NHImpactful>('impactful', p, c)
+
 // Link history types for status timeline
 export interface LinkHourStatus {
   hour: string
@@ -7098,6 +7572,114 @@ export async function fetchHyperliquidScoreboard(
   const res = await apiFetch(`/api/dz/hyperliquid/scoreboard?${params}`)
   if (!res.ok) {
     throw new Error('Failed to fetch hyperliquid scoreboard')
+  }
+  return res.json()
+}
+
+export interface KalshiCompetitor {
+  feed: string
+  label: string
+  dz_win_pct: number
+  lead_p50_ms: number
+  lead_p95_ms: number
+  races: number
+}
+
+export interface KalshiNode {
+  measurement_node_id: string
+  location_code: string
+  dz_win_share_pct: number
+  total_races: number
+  competitors: KalshiCompetitor[]
+}
+
+export interface KalshiRace {
+  event_ts: string
+  symbol: string
+  location_code: string
+  winner_feed: string
+  winner_label: string
+  is_dz: boolean
+  runner_up_feed: string
+  runner_up_label: string
+  lead_ms: number
+}
+
+export interface KalshiFeedLatency {
+  feed: string
+  label: string
+  location_code: string
+  is_dz: boolean
+  p50_ms: number
+  p90_ms: number
+  p99_ms: number
+  samples: number
+}
+
+export interface KalshiPathLatency {
+  window: string
+  feeds: KalshiFeedLatency[]
+  generated_at: string
+}
+
+export interface KalshiScoreboardResponse {
+  window: string
+  symbol?: string
+  generated_at: string
+  dz_win_share_pct: number
+  total_races: number
+  competitors: KalshiCompetitor[]
+  nodes: KalshiNode[]
+  recent_races: KalshiRace[]
+  prices?: Record<string, number>
+  path_latency?: KalshiPathLatency
+  unconfigured?: boolean
+}
+
+export async function fetchKalshiScoreboard(
+  window: string = '24h',
+  symbol?: string,
+): Promise<KalshiScoreboardResponse> {
+  const params = new URLSearchParams()
+  params.set('window', window)
+  if (symbol && symbol !== 'all') params.set('symbol', symbol)
+  const res = await apiFetch(`/api/dz/kalshi/scoreboard?${params}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch kalshi scoreboard')
+  }
+  return res.json()
+}
+
+export interface KalshiL2Lane {
+  source: string
+  label: string
+  category: string
+  channel_id: number
+  location_code: string
+  messages_per_sec: number
+  level_updates_per_sec: number
+  instruments: number
+  depth_p50: number
+  depth_p95: number
+  depth_max: number
+  gaps: number
+  resets: number
+  clears: number
+  snapshot_cycles: number
+  seen: boolean
+  last_seen: string
+}
+
+export interface KalshiL2CoverageResponse {
+  generated_at: string
+  window_minutes: number
+  lanes: KalshiL2Lane[]
+}
+
+export async function fetchKalshiL2Coverage(): Promise<KalshiL2CoverageResponse> {
+  const res = await apiFetch('/api/dz/kalshi/l2-coverage')
+  if (!res.ok) {
+    throw new Error('Failed to fetch kalshi L2 coverage')
   }
   return res.json()
 }

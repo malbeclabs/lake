@@ -116,6 +116,42 @@ Add caching when a page runs expensive queries, has a common default view, and 3
 
 An entry may cache a complete result set and slice request-shaped pages out of it, so hit eligibility doesn't depend on the `limit` a client happens to send (see `sliceCachedValidators`). Cap the cached row count and fall through to the live query when the entry doesn't hold the whole set.
 
+## Kalshi Scoreboard Feed Config
+
+The competing feeds shown on the Kalshi scoreboard are **not** in code — they live in the
+Postgres table `kalshi_scoreboard_entry` (`feed`, `label`, `display_order`, `enabled`).
+Only enabled rows are raced, counted, or displayed; a feed with no row never appears.
+
+Add, remove, or reorder a feed by changing rows — no code change, no deploy.
+
+**These statements are run by a human operator against the target environment.** They are
+recorded here as a runbook, not as something to execute automatically: do not run them, or
+any other write against this table, from an agent session unless explicitly asked to.
+
+```sql
+-- stop showing a feed
+UPDATE kalshi_scoreboard_entry SET enabled = FALSE, updated_at = NOW() WHERE feed = '<feed>';
+-- start showing a feed
+INSERT INTO kalshi_scoreboard_entry (feed, label, display_order, enabled)
+VALUES ('<feed>', '<label>', <n>, TRUE)
+ON CONFLICT (feed) DO UPDATE SET enabled = TRUE, label = EXCLUDED.label,
+    display_order = EXCLUDED.display_order, updated_at = NOW();
+```
+
+Changes take effect on the next cache refresh with no restart: about 60s for the 1h view
+(page-cache worker) and about 10min for the 24h/7d views (background refresher).
+
+The migration creates the table **empty on purpose** — rows are environment config and are
+inserted out of band, so they never live in this repository. An unseeded environment renders
+an empty scoreboard, which is also the expected local-dev state.
+
+DoubleZero's own feeds are never config rows: they are matched by the `tob_` (top-of-book) and
+`mbp_` (market-by-price) prefixes, and a row for either is rejected by the loader with a WARN
+(it would broaden the allow-list clause to races against unconfigured competitors, leaking
+their feed ids into the payload). Both prefixes are DoubleZero's — an MBP source emits the
+shared BBO observation on every derived top-of-book change, so it races the venue's public feed
+exactly as the top-of-book lane does.
+
 ## Logging Levels
 
 ERROR-level log lines page on-call (alerts fire on `level="ERR"` — prod → `#alerts`, staging → `#alerts-l2`). Reserve raw `.Error(...)` calls for genuinely-actionable terminal failures: process/component death, startup failures, panics, config errors.

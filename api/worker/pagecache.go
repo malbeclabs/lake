@@ -13,6 +13,7 @@ import (
 	"go.temporal.io/sdk/worker"
 
 	"github.com/malbeclabs/lake/api/handlers"
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
 // Config configures the page cache worker.
@@ -56,10 +57,16 @@ func Start(ctx context.Context, cfg Config) error {
 	log.Info("page-cache: temporal connected", "host", temporalHost, "namespace", temporalNS)
 
 	// Register workflows and activities
+	// degradedEsc's thresholds are set here, before the first Fail, because
+	// logger.Escalator reads them without its mutex.
 	activities := &Activities{
 		Log:                log.With("component", "page-cache"),
 		API:                cfg.API,
 		RefreshConcurrency: concurrency,
+		degradedEsc: logger.Escalator{
+			ErrorAfter:          nhDegradedErrorAfter,
+			TransientErrorAfter: nhDegradedErrorAfter,
+		},
 	}
 
 	w := worker.New(tc, TaskQueue, worker.Options{})

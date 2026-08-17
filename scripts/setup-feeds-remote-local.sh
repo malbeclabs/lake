@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Point the local ClickHouse `feeds` tables at production via a remoteSecure() proxy, so the
-# API serves real production Hyperliquid data locally — the equivalent of what
-# setup-remote-tables.sh does for shreds, but using the dedicated feeds_reader credentials.
+# API serves real production market-data-feed capture data (Hyperliquid and Kalshi) locally —
+# the equivalent of what setup-remote-tables.sh does for shreds, but using the dedicated
+# feeds_reader credentials.
 #
 # Reads FEEDS_CH_* from .env. Re-run after recreating the local cluster.
 # Usage: ./scripts/setup-feeds-remote-local.sh
@@ -22,7 +23,16 @@ LOCAL_ADDR="${LOCAL_HOST%%:*}"
 LOCAL_PORT="${LOCAL_HOST##*:}"
 
 # summary feeds the scoreboard; observations feeds the composite-latency hero stat.
-TABLES=("hyperliquid_bbo_feed_race_summary" "hyperliquid_bbo_observations")
+# Kalshi's capture writes into the same `feeds` database, so its tables proxy the same way:
+# the race summary feeds the Kalshi scoreboard, observations feed its prices and edge latency,
+# and mbp_levels feeds the sports L2 coverage page.
+TABLES=(
+  "hyperliquid_bbo_feed_race_summary"
+  "hyperliquid_bbo_observations"
+  "kalshi_bbo_feed_race_summary"
+  "kalshi_bbo_observations"
+  "kalshi_mbp_levels"
+)
 
 clickhouse client --host "$LOCAL_ADDR" --port "$LOCAL_PORT" --query "CREATE DATABASE IF NOT EXISTS feeds"
 for TABLE in "${TABLES[@]}"; do
