@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	enumspb "go.temporal.io/api/enums/v1"
 	temporalclient "go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 
@@ -73,16 +74,12 @@ func Start(ctx context.Context, cfg Config) error {
 	w.RegisterWorkflow(PageCacheWorkflow)
 	w.RegisterActivity(activities)
 
-	// Terminate any existing workflow from a previous deploy, then start fresh.
-	_ = tc.TerminateWorkflow(ctx, WorkflowID, "", "restarting on deploy")
-	run, err := tc.ExecuteWorkflow(ctx, temporalclient.StartWorkflowOptions{
-		ID:        WorkflowID,
-		TaskQueue: TaskQueue,
-	}, PageCacheWorkflow, 0, params)
+	// Terminate any existing workflow from a previous deploy and start fresh, in
+	// one atomic server-side call.
+	run, err := startPageCacheWorkflow(ctx, tc, log, params)
 	if err != nil {
-		return fmt.Errorf("page-cache: failed to start workflow: %w", err)
+		return err
 	}
-	log.Info("page-cache: workflow started", "id", WorkflowID)
 
 	// Watch the workflow in the background so failures surface in logs.
 	// Suppress "terminated" errors — a new deploy terminates the previous
@@ -105,6 +102,52 @@ func Start(ctx context.Context, cfg Config) error {
 	case err := <-errCh:
 		return err
 	}
+}
+
+// pageCacheStartOptions returns the start options for the page-cache workflow.
+//
+// The conflict policy is the load-bearing part. Adding or reordering a cached
+// page changes the sequence of activities the workflow schedules, so a run whose
+// history was written by the previous deploy's code cannot be replayed by the new
+// code: every workflow task panics with a nondeterminism error, Temporal retries
+// workflow tasks indefinitely, and the refresh loop never runs again. The deploy
+// contract is therefore to always start a fresh run.
+//
+// TERMINATE_EXISTING has the server terminate any running execution as part of the
+// start call. Doing it client-side instead — TerminateWorkflow, then
+// ExecuteWorkflow — can race, and with no conflict policy set the default is to
+// hand back the still-running execution and no error, so the new worker silently
+// adopts the old run's history. That is how staging's page cache sat wedged for
+// six hours while still logging "workflow started" on every restart.
+//
+// WorkflowExecutionErrorWhenAlreadyStarted keeps that silent-adopt mode from
+// coming back: TERMINATE_EXISTING means there is never a conflict, so this never
+// fires in normal operation, but if a future edit drops the policy ExecuteWorkflow
+// errors instead of returning a stale run.
+//
+// WorkflowIDReusePolicy is deliberately unset: its default (ALLOW_DUPLICATE) is
+// what we want for a prior run that already completed, and the deprecated
+// TERMINATE_IF_RUNNING cannot be combined with a conflict policy.
+func pageCacheStartOptions() temporalclient.StartWorkflowOptions {
+	return temporalclient.StartWorkflowOptions{
+		ID:                                       WorkflowID,
+		TaskQueue:                                TaskQueue,
+		WorkflowIDConflictPolicy:                 enumspb.WORKFLOW_ID_CONFLICT_POLICY_TERMINATE_EXISTING,
+		WorkflowExecutionErrorWhenAlreadyStarted: true,
+	}
+}
+
+// startPageCacheWorkflow starts a fresh page-cache run, terminating any run left
+// over from a previous deploy. The logged run ID is the only thing that
+// distinguishes a fresh run from an adopted one, so it is what makes the
+// "workflow started" line verifiable.
+func startPageCacheWorkflow(ctx context.Context, tc temporalclient.Client, log *slog.Logger, params PageCacheParams) (temporalclient.WorkflowRun, error) {
+	run, err := tc.ExecuteWorkflow(ctx, pageCacheStartOptions(), PageCacheWorkflow, 0, params)
+	if err != nil {
+		return nil, fmt.Errorf("page-cache: failed to start workflow: %w", err)
+	}
+	log.Info("page-cache: workflow started", "id", WorkflowID, "run_id", run.GetRunID())
+	return run, nil
 }
 
 // temporalLogger adapts slog to Temporal's log interface.

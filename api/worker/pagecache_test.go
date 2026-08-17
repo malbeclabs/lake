@@ -10,6 +10,9 @@ import (
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	enumspb "go.temporal.io/api/enums/v1"
+	temporalclient "go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/mocks"
 	"go.temporal.io/sdk/testsuite"
 	temporalworkflow "go.temporal.io/sdk/workflow"
 
@@ -792,4 +795,65 @@ func TestNetworkHealthOutcome(t *testing.T) {
 func TestNetworkHealthDegradedThresholdAboveDefault(t *testing.T) {
 	require.Greater(t, nhDegradedErrorAfter, errorAfterFailures)
 	require.Greater(t, nhDegradedErrorAfter, transientErrorAfterFailures)
+}
+
+// TestPageCacheStartOptionsRestartAtomically pins the deploy contract: the start
+// itself terminates any run left by the previous deploy. Adding or reordering a
+// cached page changes what the workflow schedules, so replaying an older run's
+// history against new code panics on every workflow task forever — dropping the
+// conflict policy is exactly what reintroduces that wedge.
+func TestPageCacheStartOptionsRestartAtomically(t *testing.T) {
+	opts := pageCacheStartOptions()
+
+	require.Equal(t, WorkflowID, opts.ID)
+	require.Equal(t, TaskQueue, opts.TaskQueue)
+	require.Equal(t, enumspb.WORKFLOW_ID_CONFLICT_POLICY_TERMINATE_EXISTING, opts.WorkflowIDConflictPolicy,
+		"a running execution must be terminated by the start call, not adopted")
+	require.True(t, opts.WorkflowExecutionErrorWhenAlreadyStarted,
+		"if the conflict policy ever stops applying, the start must fail loudly instead of returning the stale run")
+	require.Equal(t, enumspb.WORKFLOW_ID_REUSE_POLICY_UNSPECIFIED, opts.WorkflowIDReusePolicy,
+		"the deprecated TERMINATE_IF_RUNNING reuse policy cannot be combined with a conflict policy")
+}
+
+// TestStartPageCacheWorkflowProducesFreshRun models a redeploy: two starts
+// against the same workflow ID must yield two different run IDs, and each must
+// log its own, so "workflow started" can be told apart from "attached to the
+// previous deploy's run".
+func TestStartPageCacheWorkflowProducesFreshRun(t *testing.T) {
+	tc := &mocks.Client{}
+	var gotOpts []temporalclient.StartWorkflowOptions
+	for _, runID := range []string{"run-1", "run-2"} {
+		run := &mocks.WorkflowRun{}
+		run.On("GetRunID").Return(runID)
+		tc.On("ExecuteWorkflow", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+			Run(func(args mock.Arguments) {
+				gotOpts = append(gotOpts, args.Get(1).(temporalclient.StartWorkflowOptions))
+			}).
+			Return(run, nil).Once()
+	}
+
+	params := PageCacheParams{}.withDefaults()
+	var runIDs []string
+	for range 2 {
+		log, recs := capLogger()
+		run, err := startPageCacheWorkflow(context.Background(), tc, log, params)
+		require.NoError(t, err)
+
+		rec, ok := findRecord(*recs, "page-cache: workflow started")
+		require.True(t, ok, "a start must be attributable to a run")
+		loggedRunID, ok := recordAttr(rec, "run_id")
+		require.True(t, ok, "run_id is what makes the start line verifiable")
+		require.Equal(t, run.GetRunID(), loggedRunID)
+		runIDs = append(runIDs, run.GetRunID())
+	}
+
+	require.Equal(t, []string{"run-1", "run-2"}, runIDs, "a redeploy must produce a fresh run")
+	require.Len(t, gotOpts, 2)
+	for _, o := range gotOpts {
+		require.Equal(t, enumspb.WORKFLOW_ID_CONFLICT_POLICY_TERMINATE_EXISTING, o.WorkflowIDConflictPolicy)
+	}
+	for _, c := range tc.Calls {
+		require.NotEqual(t, "TerminateWorkflow", c.Method,
+			"the restart is atomic; a separate terminate call is the race that wedged staging")
+	}
 }

@@ -116,6 +116,10 @@ Add caching when a page runs expensive queries, has a common default view, and 3
 
 An entry may cache a complete result set and slice request-shaped pages out of it, so hit eligibility doesn't depend on the `limit` a client happens to send (see `sliceCachedValidators`). Cap the cached row count and fall through to the live query when the entry doesn't hold the whole set.
 
+Refreshes are driven by a long-running Temporal workflow (`api/worker/`). Adding, removing, or reordering a cached page changes the sequence of activities that workflow schedules, which is replay-breaking — what makes it safe is that every deploy starts a **fresh run**: `pageCacheStartOptions` sets `WorkflowIDConflictPolicy: TERMINATE_EXISTING`, so the server terminates the previous deploy's run as part of the start call. Don't reintroduce a separate `TerminateWorkflow` call, and don't relax the policy; a start that adopts a running execution replays old history against new code and every workflow task panics forever.
+
+Two operational notes: prod runs `lake-api` at two replicas and each pod runs the embedded worker, so a deploy logs two `page-cache: workflow started` lines with different `run_id`s — last one wins, and that is expected. And terminating the workflow by hand does **not** restore the cache: `ExecuteWorkflow` is only called at process startup, so a manual terminate needs a pod restart after it.
+
 ## Kalshi Scoreboard Feed Config
 
 The competing feeds shown on the Kalshi scoreboard are **not** in code — they live in the
