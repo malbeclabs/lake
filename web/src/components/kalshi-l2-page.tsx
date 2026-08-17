@@ -1,0 +1,276 @@
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Layers } from 'lucide-react'
+import { PageHeader } from './page-header'
+import { fetchKalshiL2Coverage, type KalshiL2CoverageResponse, type KalshiL2Lane } from '@/lib/api'
+
+// Section order. Lanes arrive pre-sorted from the API; this only groups them into cards and
+// keeps a stable order for categories. An unrecognised category still renders, appended last,
+// so a lane can never be silently dropped by the UI.
+const CATEGORY_ORDER = ['Perps', 'Football', 'Basketball', 'Baseball', 'Hockey', 'Soccer', 'Other']
+
+// A lane whose last message is this much older than the payload is called out. It is not
+// necessarily a fault — a league out of season has nothing to publish — so it is labelled
+// "quiet", not "down".
+//
+// Measured against the payload's own generated_at, NOT wall clock. This view is served
+// cache-first from an entry the background refresher rewrites every 10 minutes, so by wall
+// clock a perfectly healthy lane is routinely five to ten minutes stale and every row would
+// render quiet for most of each cycle — an alarm that is always on, which is the same as no
+// alarm at all.
+const QUIET_AFTER_MS = 5 * 60 * 1000
+
+function rate(n: number): string {
+  if (n === 0) return '0'
+  if (n < 1) return n.toFixed(2)
+  if (n < 100) return n.toFixed(1)
+  return Math.round(n).toLocaleString()
+}
+
+function relAge(tsMs: number, nowMs: number): string {
+  const age = Math.round((nowMs - tsMs) / 1000)
+  if (age < 5) return 'just now'
+  if (age < 60) return `${age}s ago`
+  if (age < 3600) return `${Math.round(age / 60)}m ago`
+  return `${Math.round(age / 3600)}h ago`
+}
+
+// The FIX/WS split is per publisher host: publisher index = channel_id / 100, instrument set =
+// channel_id % 100. Sports lanes each carry their own instrument set, so the raw id is the
+// honest label here rather than a guessed transport name.
+function channelLabel(channelID: number): string {
+  return `ch ${channelID}`
+}
+
+function LaneRow({ lane, asOf }: { lane: KalshiL2Lane; asOf: number }) {
+  const lastSeen = new Date(lane.last_seen).getTime()
+  const quiet = lane.seen && asOf - lastSeen > QUIET_AFTER_MS
+  const faults = lane.gaps + lane.resets
+  return (
+    <tr className="border-b border-border transition-colors last:border-b-0 hover:bg-muted/50">
+      <td className="px-3 py-3 sm:px-4">
+        <div className="text-sm font-medium">{lane.label}</div>
+        <div className="text-xs text-muted-foreground">
+          {lane.source} · {channelLabel(lane.channel_id)} · {lane.location_code}
+        </div>
+      </td>
+      <td className="whitespace-nowrap px-3 py-3 text-right text-sm tabular-nums sm:px-4">
+        {lane.seen ? (
+          <>
+            <span className={quiet ? 'text-amber-500' : 'text-muted-foreground'}>
+              {relAge(lastSeen, asOf)}
+            </span>
+            {quiet && <div className="text-[11px] text-amber-500/70">quiet</div>}
+          </>
+        ) : (
+          // Neutral, not amber: a roster lane with nothing in the window is most often a league
+          // out of season, which is not a fault. A lane that WAS publishing and stopped is the
+          // failure this page exists to catch, and that one is flagged as quiet above.
+          <>
+            <span className="text-muted-foreground">—</span>
+            <div className="text-[11px] text-muted-foreground/70">no data in window</div>
+          </>
+        )}
+      </td>
+      <td className="whitespace-nowrap px-3 py-3 text-right text-sm tabular-nums sm:px-4">
+        {rate(lane.level_updates_per_sec)}
+        <span className="ml-1 text-xs text-muted-foreground">/s</span>
+        <div className="text-[11px] text-muted-foreground/70">{rate(lane.messages_per_sec)}/s all msgs</div>
+      </td>
+      <td className="whitespace-nowrap px-3 py-3 text-right text-sm tabular-nums sm:px-4">
+        {lane.instruments.toLocaleString()}
+      </td>
+      <td className="whitespace-nowrap px-3 py-3 text-right text-sm tabular-nums sm:px-4">
+        {lane.depth_p50.toFixed(1)}
+        <span className="ml-1 text-muted-foreground">({lane.depth_p95.toFixed(1)})</span>
+        <div className="text-[11px] text-muted-foreground/70">max {lane.depth_max.toLocaleString()}</div>
+      </td>
+      <td className="whitespace-nowrap px-3 py-3 text-right text-sm tabular-nums sm:px-4">
+        {lane.snapshot_cycles.toLocaleString()}
+      </td>
+      <td className="whitespace-nowrap px-3 py-3 text-right text-sm tabular-nums sm:px-4">
+        <span className={faults > 0 ? 'text-amber-500' : ''}>{faults.toLocaleString()}</span>
+        <div className="text-[11px] text-muted-foreground/70">
+          {lane.gaps.toLocaleString()} gap · {lane.resets.toLocaleString()} reset · {lane.clears.toLocaleString()} clear
+        </div>
+      </td>
+    </tr>
+  )
+}
+
+export function KalshiL2Page() {
+  const [data, setData] = useState<KalshiL2CoverageResponse | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [now, setNow] = useState(() => Date.now())
+
+  const load = useCallback(async () => {
+    try {
+      setData(await fetchKalshiL2Coverage())
+      setError(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load')
+    }
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    const run = () => { void load() }
+    run()
+    const poll = setInterval(run, 30000)
+    const tick = setInterval(() => active && setNow(Date.now()), 5000)
+    return () => { active = false; clearInterval(poll); clearInterval(tick) }
+  }, [load])
+
+  const sections = useMemo(() => {
+    const byCategory = new Map<string, KalshiL2Lane[]>()
+    for (const lane of data?.lanes ?? []) {
+      const list = byCategory.get(lane.category)
+      if (list) list.push(lane)
+      else byCategory.set(lane.category, [lane])
+    }
+    const known = CATEGORY_ORDER.filter((c) => byCategory.has(c))
+    const extra = [...byCategory.keys()].filter((c) => !CATEGORY_ORDER.includes(c)).sort()
+    return [...known, ...extra].map((category) => ({ category, lanes: byCategory.get(category) ?? [] }))
+  }, [data?.lanes])
+
+  // asOf is when the payload was computed, not now: every staleness judgement below is made
+  // relative to the data's own clock (see QUIET_AFTER_MS). With no payload clock we fall back to
+  // the ticking `now` state rather than reading Date.now() during render.
+  const asOf = useMemo(
+    () => (data?.generated_at ? new Date(data.generated_at).getTime() : now),
+    [data?.generated_at, now],
+  )
+
+  const totals = useMemo(() => {
+    const lanes = data?.lanes ?? []
+
+    // Instruments are counted per instrument SET, not per lane. A lane is one (source,
+    // channel_id) pair and instrument_id is unique only within a channel, so the API cannot
+    // collapse the arms — but the two publisher arms of one source carry the SAME instruments
+    // (channel_id / 100 is the publisher index, channel_id % 100 the instrument set), so
+    // summing lanes reports twice the real coverage for every dual-arm lane. Take the widest
+    // arm within each set, then sum the sets.
+    const perSet = new Map<string, number>()
+    for (const l of lanes) {
+      const key = `${l.source}:${l.channel_id % 100}`
+      perSet.set(key, Math.max(perSet.get(key) ?? 0, l.instruments))
+    }
+
+    // A lane that never published in the window is not the same thing as one that went silent:
+    // most of the roster is out of season at any time, and folding them together would leave
+    // this tile reading ~20 year-round, which is an alarm that is always on. Only lanes that
+    // were heard from and then stopped are "quiet" — the same rule LaneRow uses. Never-seen
+    // lanes get their own count so a lane that never started after a deploy is still visible.
+    return {
+      lanes: lanes.length,
+      instruments: [...perSet.values()].reduce((sum, n) => sum + n, 0),
+      updatesPerSec: lanes.reduce((sum, l) => sum + l.level_updates_per_sec, 0),
+      quiet: lanes.filter((l) => l.seen && asOf - new Date(l.last_seen).getTime() > QUIET_AFTER_MS).length,
+      neverSeen: lanes.filter((l) => !l.seen).length,
+    }
+  }, [data?.lanes, asOf])
+
+  return (
+    <div className="flex-1 overflow-auto">
+      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-8">
+        <PageHeader
+          icon={Layers}
+          title="Kalshi Sports L2"
+          subtitle={
+            <span className="flex items-center gap-2 text-xs text-muted-foreground/50">
+              <span>last {data?.window_minutes ?? 15} min</span>
+              {data?.generated_at && <span>· computed {relAge(asOf, now)}</span>}
+            </span>
+          }
+        />
+
+        {error && (
+          <div className="rounded-lg border border-border bg-card p-6 text-sm text-red-500">{error}</div>
+        )}
+        {!data && !error && (
+          <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">Loading…</div>
+        )}
+
+        {data && data.lanes.length === 0 && (
+          <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
+            No market-by-price messages recorded in the last {data.window_minutes} minutes.
+          </div>
+        )}
+
+        {data && data.lanes.length > 0 && (
+          <>
+            <div className="mb-8 rounded-lg border border-border bg-card p-4 sm:p-6">
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                Coverage of the market-by-price lanes DoubleZero's Kalshi edge publisher carries.
+                These markets have no public comparison feed, so this reports what the lanes are
+                delivering — update rates, instrument counts, real book depth, and faults — rather
+                than a head-to-head race. Rates are averaged over the last {data.window_minutes} minutes.
+              </p>
+              <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-border pt-4">
+                <div>
+                  <div className="mb-1 text-xs text-muted-foreground">Lanes</div>
+                  <div className="text-xl font-semibold tabular-nums sm:text-2xl">{totals.lanes}</div>
+                </div>
+                <div className="sm:border-l sm:border-border sm:pl-6">
+                  <div className="mb-1 text-xs text-muted-foreground">Instruments</div>
+                  <div className="text-xl font-semibold tabular-nums sm:text-2xl">{totals.instruments.toLocaleString()}</div>
+                </div>
+                <div className="sm:border-l sm:border-border sm:pl-6">
+                  <div className="mb-1 text-xs text-muted-foreground">Level updates</div>
+                  <div className="text-xl font-semibold tabular-nums sm:text-2xl">
+                    {rate(totals.updatesPerSec)}
+                    <span className="ml-1 text-xs font-normal text-muted-foreground">/s</span>
+                  </div>
+                </div>
+                <div className="sm:border-l sm:border-border sm:pl-6">
+                  <div className="mb-1 text-xs text-muted-foreground">Quiet lanes</div>
+                  <div className={`text-xl font-semibold tabular-nums sm:text-2xl ${totals.quiet > 0 ? 'text-amber-500' : ''}`}>
+                    {totals.quiet}
+                  </div>
+                  {totals.neverSeen > 0 && (
+                    <div className="mt-0.5 text-[11px] text-muted-foreground/70">
+                      {totals.neverSeen} never seen in window
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {sections.map((section) => (
+              <div key={section.category} className="mb-6 overflow-hidden rounded-lg border border-border bg-card">
+                <div className="border-b border-border px-4 py-3 text-sm font-medium text-muted-foreground">
+                  {section.category}
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full">
+                    <thead>
+                      <tr className="border-b border-border text-left text-sm text-muted-foreground">
+                        <th className="whitespace-nowrap px-3 py-3 font-medium sm:px-4">Lane</th>
+                        <th className="whitespace-nowrap px-3 py-3 text-right font-medium sm:px-4">Last message</th>
+                        <th className="whitespace-nowrap px-3 py-3 text-right font-medium sm:px-4">
+                          Level updates
+                          <span className="block text-xs font-normal">per second</span>
+                        </th>
+                        <th className="whitespace-nowrap px-3 py-3 text-right font-medium sm:px-4">Instruments</th>
+                        <th className="whitespace-nowrap px-3 py-3 text-right font-medium sm:px-4">
+                          Book depth
+                          <span className="block text-xs font-normal">p50 (p95)</span>
+                        </th>
+                        <th className="whitespace-nowrap px-3 py-3 text-right font-medium sm:px-4">Snapshots</th>
+                        <th className="whitespace-nowrap px-3 py-3 text-right font-medium sm:px-4">Faults</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {section.lanes.map((lane) => (
+                        <LaneRow key={`${lane.source}:${lane.channel_id}`} lane={lane} asOf={asOf} />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}

@@ -318,6 +318,9 @@ func (a *Activities) entries() []cacheEntry {
 		{name: "hyperliquid scoreboard", key: "hyperliquid_scoreboard", fn: func(ctx context.Context) (any, error) {
 			return api.FetchHyperliquidScoreboardData(ctx, "1h", "")
 		}},
+		{name: "kalshi scoreboard", key: "kalshi_scoreboard", fn: func(ctx context.Context) (any, error) {
+			return api.FetchKalshiScoreboardData(ctx, "1h", "")
+		}},
 		{name: "bulk link metrics", key: "bulk_link_metrics", fn: func(ctx context.Context) (any, error) {
 			return api.FetchBulkLinkMetricsData(ctx)
 		}},
