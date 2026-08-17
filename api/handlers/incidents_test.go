@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestIsDefaultIncidentsRequest(t *testing.T) {
@@ -202,8 +203,10 @@ func TestIncidentsQueryKeepsNoDataOnCoarseBuckets(t *testing.T) {
 		CoalesceGapMin:    180,
 		TypeFilter:        "all",
 	}
-	linkQuery, _ := buildLinkIncidentsQuery(p)
-	deviceQuery, _ := buildDeviceIncidentsQuery(p)
+	linkQuery, _, err := buildLinkIncidentsQuery(p)
+	require.NoError(t, err)
+	deviceQuery, _, err := buildDeviceIncidentsQuery(p)
+	require.NoError(t, err)
 
 	for name, query := range map[string]string{"links": linkQuery, "devices": deviceQuery} {
 		t.Run(name, func(t *testing.T) {
