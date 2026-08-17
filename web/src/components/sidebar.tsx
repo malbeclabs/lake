@@ -40,11 +40,16 @@ import {
   Puzzle,
   Warehouse,
   KeyRound,
+  LayoutDashboard,
+  ExternalLink,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/use-theme'
 import { useVersionCheck } from '@/hooks/use-version-check'
 import { UserPopover } from './auth/UserPopover'
+
+const DATA_DESK_URL =
+  'https://app.hex.tech/019b9014-0444-7004-89ee-902b1d683a84/app/Data-Desk-03478PHx7f5XsBBdtF2qpE/latest'
 
 export function Sidebar() {
   const location = useLocation()
@@ -65,6 +70,8 @@ export function Sidebar() {
   const showHyperliquid = user?.is_internal_user === true
   const showKalshi = user?.is_internal_user === true
   const showPermissionAudit = user?.is_internal_user === true
+  // External Hex app — only useful to allowed-domain (doublezero/malbeclabs) users.
+  const showDataDesk = user?.is_internal_user === true
 const { resolvedTheme, setTheme } = useTheme()
   const { updateAvailable, reload } = useVersionCheck()
 
@@ -293,6 +300,17 @@ const { resolvedTheme, setTheme } = useTheme()
           >
             <MessageSquare className="h-4 w-4" />
           </button>
+          {showDataDesk && (
+            <a
+              href={DATA_DESK_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={collapsedIconClass(false)}
+              title="Data Desk"
+            >
+              <LayoutDashboard className="h-4 w-4" />
+            </a>
+          )}
           {/* Divider */}
           <div className="w-6 border-t border-border/50 my-2" />
 
@@ -523,6 +541,19 @@ const { resolvedTheme, setTheme } = useTheme()
                   History
                 </Link>
               </>
+            )}
+
+            {showDataDesk && (
+              <a
+                href={DATA_DESK_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={navItemClass(false)}
+              >
+                <LayoutDashboard className="h-4 w-4" />
+                <span className="flex-1 text-left">Data Desk</span>
+                <ExternalLink className="h-3 w-3 opacity-60" />
+              </a>
             )}
 
             <button
