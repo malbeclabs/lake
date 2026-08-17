@@ -75,6 +75,7 @@ const { resolvedTheme, setTheme } = useTheme()
   const isOpsIncidentsLinksRoute = location.pathname === '/ops/incidents/links'
   const isOpsIncidentsDevicesRoute = location.pathname === '/ops/incidents/devices'
   const isOpsMaintenanceRoute = location.pathname === '/ops/maintenance'
+  const isNetworkHealthReportingRoute = location.pathname === '/ops/network-health-reporting'
   const isChatRoute = location.pathname.startsWith('/chat')
   const isChatSessions = location.pathname === '/chat/sessions'
   const isTopologyRoute = location.pathname === '/topology' || location.pathname.startsWith('/topology/')
@@ -563,6 +564,13 @@ const { resolvedTheme, setTheme } = useTheme()
             <Link to="/ops/maintenance" className={navItemClass(isOpsMaintenanceRoute)}>
               <CalendarClock className="h-4 w-4" />
               Maintenance
+            </Link>
+            <Link
+              to="/ops/network-health-reporting"
+              className={navItemClass(isNetworkHealthReportingRoute)}
+            >
+              <BarChart3 className="h-4 w-4" />
+              Network Health Reporting
             </Link>
           </div>
         </div>

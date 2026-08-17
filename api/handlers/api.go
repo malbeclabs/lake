@@ -94,6 +94,11 @@ type API struct {
 	// cluster slot) that dashboard handlers previously recomputed per request. Its
 	// zero value is ready to use, so a directly-constructed API needs no change.
 	scalarCache scalarCache
+
+	// opsUsersCache holds the TTL-cached ops-management /users registry that the
+	// Network Health tickets aggregate previously re-paged on every computation
+	// (see cachedOpsUsers). Its zero value is ready to use.
+	opsUsersCache opsUsersCache
 }
 
 // publisherCheckLiveSem lazily builds the concurrency-bounding semaphore so a

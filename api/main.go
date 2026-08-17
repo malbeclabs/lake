@@ -671,6 +671,19 @@ func main() {
 		r.Get("/api/dz/field-values", api.GetFieldValues)
 		r.Get("/api/dz/ledger", api.GetDZLedger)
 
+		// Network Health Reporting (public, windowed network-performance report).
+		// Split into independent data-source-group endpoints so the page loads
+		// progressively; the bare route serves the Overview group.
+		r.Get("/api/network-health", api.GetNetworkHealth)
+		r.Get("/api/network-health/availability", api.GetNetworkHealthAvailability)
+		r.Get("/api/network-health/latency", api.GetNetworkHealthLatency)
+		r.Get("/api/network-health/capacity", api.GetNetworkHealthCapacity)
+		r.Get("/api/network-health/outages", api.GetNetworkHealthOutages)
+		r.Get("/api/network-health/drain", api.GetNetworkHealthDrain)
+		r.Get("/api/network-health/tickets", api.GetNetworkHealthTickets)
+		r.Get("/api/network-health/impactful", api.GetNetworkHealthImpactful)
+		r.Get("/api/network-health/deferred", api.GetNetworkHealthDeferred)
+
 		// Geolocation routes (internal only)
 		r.Group(func(r chi.Router) {
 			r.Use(handlers.RequireInternalDomain)
