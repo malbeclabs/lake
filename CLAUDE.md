@@ -116,6 +116,10 @@ Add caching when a page runs expensive queries, has a common default view, and 3
 
 An entry may cache a complete result set and slice request-shaped pages out of it, so hit eligibility doesn't depend on the `limit` a client happens to send (see `sliceCachedValidators`). Cap the cached row count and fall through to the live query when the entry doesn't hold the whole set.
 
+Refreshes are driven by a long-running Temporal workflow (`api/worker/`). `PageCacheWorkflow` schedules its activities with no `workflow.GetVersion` guards, so any change to the sequence of commands the loop emits — adding or removing an activity call, reshaping the refresh cycle — is replay-breaking against the previous deploy's run. What makes that safe is that every deploy starts a **fresh run**: `pageCacheStartOptions` sets `WorkflowIDConflictPolicy: TERMINATE_EXISTING` *and* `WorkflowExecutionErrorWhenAlreadyStarted: true`. Both are required — with the flag false the SDK turns an already-started error into a handle on the still-running execution and returns no error, which is how a deploy silently adopted the old run and panicked on replay for six hours. Don't relax either, and don't reintroduce a separate `TerminateWorkflow` call. Adding a cached *page* is not replay-breaking by itself: entries are enumerated inside the activities, not scheduled by the workflow.
+
+Three operational notes. A rolling deploy still overlaps workers on one task queue, so an old pod can pick up the fresh run's first workflow task and write old-shaped history — the same wedge from a different cause; versioning the task queue by build SHA is the open follow-up. Terminating the workflow by hand does **not** restore the cache: `ExecuteWorkflow` runs only at process startup, so a manual terminate needs a pod restart after it. And prod runs `lake-api` at two replicas, each with an embedded worker, so a deploy logs two `page-cache: workflow started` lines with different `run_id`s — last one wins, and that is expected.
+
 ## Kalshi Scoreboard Feed Config
 
 The competing feeds shown on the Kalshi scoreboard are **not** in code — they live in the
