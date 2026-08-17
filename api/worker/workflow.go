@@ -797,14 +797,18 @@ func PageCacheWorkflow(ctx temporalworkflow.Context, iteration int, p PageCacheP
 
 	for iteration < p.ContinueAsNewThreshold {
 		// Only one heavy run at a time: a scan still going from an earlier cycle
-		// keeps this cycle from starting a second copy. The final iteration starts
-		// none at all: the drain below would then block on a scan started moments
-		// earlier, stalling every page cache (including the 3s latest-slots one)
-		// for up to the heavy budget. Skipping one heavy refresh per
-		// continue-as-new window costs far less than that stall. Scheduling this
-		// activity needs no version guard for the same reason the cycle argument
-		// below does not: Start terminates and restarts the workflow on deploy.
-		if iteration+1 < p.ContinueAsNewThreshold && heavyRefreshDue(heavy) {
+		// keeps this cycle from starting a second copy. We also stop starting runs
+		// within heavyStartLeadCycles of the continue-as-new boundary, so the run
+		// the drain below waits on has already had its full budget to finish. The
+		// drain then returns at once instead of stalling every page cache (the 3s
+		// latest-slots one included) for the run's remaining budget — a run started
+		// on the second-to-last cycle would otherwise leave the drain blocking for
+		// nearly the whole heavy budget, every continue-as-new window. Skipping the
+		// heavy refresh for those last few cycles costs far less than that stall.
+		// Scheduling this activity needs no version guard for the same reason the
+		// cycle argument below does not: Start terminates and restarts the workflow
+		// on deploy.
+		if heavyStartDue(iteration, p.ContinueAsNewThreshold, p.RefreshInterval) && heavyRefreshDue(heavy) {
 			heavy = temporalworkflow.ExecuteActivity(heavyCtx, (*Activities).RefreshHeavyCaches)
 		}
 
@@ -846,9 +850,10 @@ func PageCacheWorkflow(ctx temporalworkflow.Context, iteration int, p PageCacheP
 	// Drain the outstanding heavy run before continuing as new. A pending activity
 	// is cancelled at the continue-as-new boundary, which would cut a scan
 	// mid-flight, record it as a failure, and leave both heavy blobs unwritten for
-	// that cycle. This is the only place the loop waits on it, and the run it waits
-	// on started at least one cycle back (the last iteration starts none), so it
-	// has already had a full cycle to finish.
+	// that cycle. The start guard above stops launching runs within
+	// heavyStartLeadCycles of the boundary, so the run this waits on has already
+	// had its full budget to finish: heavy.Get returns without blocking rather than
+	// stalling the latest-slots refresh for the run's remaining budget.
 	if heavy != nil {
 		_ = heavy.Get(ctx, nil)
 	}
@@ -861,4 +866,36 @@ func PageCacheWorkflow(ctx temporalworkflow.Context, iteration int, p PageCacheP
 // resolves from workflow history, so this decision replays deterministically.
 func heavyRefreshDue(heavy temporalworkflow.Future) bool {
 	return heavy == nil || heavy.IsReady()
+}
+
+// heavyStartLeadCycles is how many refresh cycles before the continue-as-new
+// boundary PageCacheWorkflow stops starting heavy runs. A RefreshHeavyCaches run
+// takes up to heavyActivityTimeout to resolve; over the cycle period (rounded up)
+// that is how many cycles a run needs to be guaranteed done. Starting no run
+// within this many cycles of the boundary means the run the end-of-loop drain
+// waits on has already resolved, so the drain never blocks the workflow coroutine
+// (and the 3s latest-slots refresh with it). Floored at 1 so the final iteration
+// is always skipped.
+func heavyStartLeadCycles(refreshInterval time.Duration) int {
+	if refreshInterval <= 0 {
+		return 1
+	}
+	lead := int((heavyActivityTimeout + refreshInterval - 1) / refreshInterval)
+	if lead < 1 {
+		lead = 1
+	}
+	return lead
+}
+
+// heavyStartDue reports whether a new heavy run may start at this iteration: only
+// when at least heavyStartLeadCycles cycles remain before the threshold, so the
+// run finishes within its budget before the drain. The lead is capped at
+// threshold-1 so a window too short to fit a full run before the boundary still
+// starts one at iteration 0 rather than never refreshing the heavy blobs.
+func heavyStartDue(iteration, threshold int, refreshInterval time.Duration) bool {
+	lead := heavyStartLeadCycles(refreshInterval)
+	if lead > threshold-1 {
+		lead = threshold - 1
+	}
+	return iteration+lead < threshold
 }

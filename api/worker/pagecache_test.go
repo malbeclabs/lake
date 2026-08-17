@@ -572,13 +572,14 @@ func TestRefreshRecordsOwnFailureWhenParentHasHeadroom(t *testing.T) {
 }
 
 // TestPageCacheWorkflowSchedulesHeavyRefresh pins that RefreshHeavyCaches is
-// executed, once per cycle, alongside the slow batch, and that the last cycle
-// before continue-as-new starts none. The two heavy Network Health blobs are
-// refreshed nowhere else, so an activity that exists but is never scheduled would
-// freeze both at whatever the last in-batch refresh wrote, with no failing test
-// and no log line to say so. Starting one on the final cycle is the other
-// failure: the drain below the loop would then block on a scan started moments
-// earlier, freezing every page cache for up to the heavy budget.
+// executed alongside the slow batch, and that no run is started within
+// heavyStartLeadCycles of the continue-as-new boundary. The two heavy Network
+// Health blobs are refreshed nowhere else, so an activity that exists but is never
+// scheduled would freeze both at whatever the last in-batch refresh wrote, with no
+// failing test and no log line to say so. Starting one too close to the boundary
+// is the other failure: the drain below the loop would then block on an unfinished
+// scan, freezing every page cache (the 3s latest-slots one included) for up to the
+// heavy budget.
 func TestPageCacheWorkflowSchedulesHeavyRefresh(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
@@ -589,7 +590,9 @@ func TestPageCacheWorkflowSchedulesHeavyRefresh(t *testing.T) {
 	env.OnActivity(a.RefreshLatestCaches, mock.Anything).Return(nil)
 	env.OnActivity(a.RefreshHeavyCaches, mock.Anything).Return(nil)
 
-	const cycles = 3
+	// A window longer than the trailing lead so both the "starts" and the
+	// "stops before the boundary" halves are exercised.
+	const cycles = 12
 	env.ExecuteWorkflow(PageCacheWorkflow, 0, PageCacheParams{
 		RefreshInterval:        defaultRefreshInterval,
 		ActivityTimeout:        defaultActivityTimeout,
@@ -603,10 +606,11 @@ func TestPageCacheWorkflowSchedulesHeavyRefresh(t *testing.T) {
 
 	env.AssertActivityNumberOfCalls(t, "RefreshCaches", cycles)
 	// A heavy run that finishes inside its cycle is restarted on the next one, so
-	// the two heavy blobs keep the batch's cadence whenever the scans are quick.
-	// Every cycle but the last starts one; the last leaves the drain nothing fresh
-	// to wait on.
-	env.AssertActivityNumberOfCalls(t, "RefreshHeavyCaches", cycles-1)
+	// with an instant-returning mock one starts every cycle until the trailing
+	// lead. The last heavyStartLeadCycles cycles start none, so the run the drain
+	// waits on has already finished.
+	lead := heavyStartLeadCycles(defaultRefreshInterval)
+	env.AssertActivityNumberOfCalls(t, "RefreshHeavyCaches", cycles-lead)
 }
 
 // fakeFuture stands in for a workflow.Future so the heavy-run gate is testable
@@ -626,6 +630,41 @@ func TestHeavyRefreshDue(t *testing.T) {
 	require.True(t, heavyRefreshDue(nil), "the first cycle has nothing outstanding")
 	require.True(t, heavyRefreshDue(fakeFuture{ready: true}), "a finished run is restarted next cycle")
 	require.False(t, heavyRefreshDue(fakeFuture{ready: false}), "an outstanding run must not be started twice")
+}
+
+// TestHeavyStartDue pins the boundary rule that keeps the end-of-loop drain from
+// blocking: a heavy run may only start when at least heavyStartLeadCycles cycles
+// remain, so it has finished within its budget by the time the drain waits on it.
+func TestHeavyStartDue(t *testing.T) {
+	t.Parallel()
+
+	// Default cadence: 240s heavy budget over a 30s cycle rounds up to 8 cycles.
+	require.Equal(t, 8, heavyStartLeadCycles(defaultRefreshInterval))
+	// A longer interval needs fewer cycles; the ceil keeps it from rounding to 0.
+	require.Equal(t, 1, heavyStartLeadCycles(heavyActivityTimeout))
+	require.Equal(t, 2, heavyStartLeadCycles(heavyActivityTimeout/2+time.Second))
+	require.Equal(t, 1, heavyStartLeadCycles(0), "a nonsensical interval floors at one skipped cycle")
+
+	const threshold = 60
+	lead := heavyStartLeadCycles(defaultRefreshInterval)
+
+	// Starts early, and the LAST cycle that starts one still leaves >= the heavy
+	// budget of fast-refresh windows before the drain at the boundary.
+	lastStart := threshold - lead - 1
+	require.True(t, heavyStartDue(0, threshold, defaultRefreshInterval))
+	require.True(t, heavyStartDue(lastStart, threshold, defaultRefreshInterval))
+	require.GreaterOrEqual(t,
+		time.Duration(threshold-1-lastStart)*defaultRefreshInterval, heavyActivityTimeout,
+		"the last heavy run started must have its full budget before the drain")
+
+	// Stops within the lead of the boundary.
+	require.False(t, heavyStartDue(lastStart+1, threshold, defaultRefreshInterval))
+	require.False(t, heavyStartDue(threshold-1, threshold, defaultRefreshInterval))
+
+	// A window shorter than the lead still starts one run (iteration 0) and skips
+	// the final iteration, degrading to the old single-cycle-skip behavior.
+	require.True(t, heavyStartDue(0, 2, defaultRefreshInterval))
+	require.False(t, heavyStartDue(1, 2, defaultRefreshInterval))
 }
 
 // TestPageCacheWorkflowHeavyDoesNotBlockCycles pins that a slow heavy scan no
