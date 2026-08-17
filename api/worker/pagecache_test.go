@@ -797,11 +797,10 @@ func TestNetworkHealthDegradedThresholdAboveDefault(t *testing.T) {
 	require.Greater(t, nhDegradedErrorAfter, transientErrorAfterFailures)
 }
 
-// TestPageCacheStartOptionsRestartAtomically pins the deploy contract: the start
-// itself terminates any run left by the previous deploy. Adding or reordering a
-// cached page changes what the workflow schedules, so replaying an older run's
-// history against new code panics on every workflow task forever — dropping the
-// conflict policy is exactly what reintroduces that wedge.
+// TestPageCacheStartOptionsRestartAtomically pins the deploy contract documented on
+// pageCacheStartOptions: a deploy gets a fresh run, never the previous deploy's.
+// Both policy fields are required — dropping either one restores the silent-adopt
+// path that wedged the refresh loop indefinitely.
 func TestPageCacheStartOptionsRestartAtomically(t *testing.T) {
 	opts := pageCacheStartOptions()
 
@@ -810,16 +809,18 @@ func TestPageCacheStartOptionsRestartAtomically(t *testing.T) {
 	require.Equal(t, enumspb.WORKFLOW_ID_CONFLICT_POLICY_TERMINATE_EXISTING, opts.WorkflowIDConflictPolicy,
 		"a running execution must be terminated by the start call, not adopted")
 	require.True(t, opts.WorkflowExecutionErrorWhenAlreadyStarted,
-		"if the conflict policy ever stops applying, the start must fail loudly instead of returning the stale run")
+		"without this the SDK turns an already-started error into a handle on the running execution")
 	require.Equal(t, enumspb.WORKFLOW_ID_REUSE_POLICY_UNSPECIFIED, opts.WorkflowIDReusePolicy,
-		"the deprecated TERMINATE_IF_RUNNING reuse policy cannot be combined with a conflict policy")
+		"the default ALLOW_DUPLICATE is what we want once the prior run has completed")
 }
 
-// TestStartPageCacheWorkflowProducesFreshRun models a redeploy: two starts
-// against the same workflow ID must yield two different run IDs, and each must
-// log its own, so "workflow started" can be told apart from "attached to the
-// previous deploy's run".
-func TestStartPageCacheWorkflowProducesFreshRun(t *testing.T) {
+// TestStartPageCacheWorkflowStartsAndLogsItsRun covers what a mocked client can:
+// each start issues a fresh start request carrying the atomic conflict policy (so a
+// redeploy never short-circuits into the existing run), and logs that start's own
+// run ID — the only thing that tells a fresh run apart from an adopted one. Fresh
+// run *IDs* are allocated by the server, which the mock does not model; that half
+// is pinned by the options test above.
+func TestStartPageCacheWorkflowStartsAndLogsItsRun(t *testing.T) {
 	tc := &mocks.Client{}
 	var gotOpts []temporalclient.StartWorkflowOptions
 	for _, runID := range []string{"run-1", "run-2"} {
@@ -833,7 +834,6 @@ func TestStartPageCacheWorkflowProducesFreshRun(t *testing.T) {
 	}
 
 	params := PageCacheParams{}.withDefaults()
-	var runIDs []string
 	for range 2 {
 		log, recs := capLogger()
 		run, err := startPageCacheWorkflow(context.Background(), tc, log, params)
@@ -844,16 +844,27 @@ func TestStartPageCacheWorkflowProducesFreshRun(t *testing.T) {
 		loggedRunID, ok := recordAttr(rec, "run_id")
 		require.True(t, ok, "run_id is what makes the start line verifiable")
 		require.Equal(t, run.GetRunID(), loggedRunID)
-		runIDs = append(runIDs, run.GetRunID())
 	}
 
-	require.Equal(t, []string{"run-1", "run-2"}, runIDs, "a redeploy must produce a fresh run")
-	require.Len(t, gotOpts, 2)
+	require.Len(t, gotOpts, 2, "a redeploy must issue its own start request")
 	for _, o := range gotOpts {
 		require.Equal(t, enumspb.WORKFLOW_ID_CONFLICT_POLICY_TERMINATE_EXISTING, o.WorkflowIDConflictPolicy)
 	}
-	for _, c := range tc.Calls {
-		require.NotEqual(t, "TerminateWorkflow", c.Method,
-			"the restart is atomic; a separate terminate call is the race that wedged staging")
-	}
+}
+
+// TestStartPageCacheWorkflowWrapsStartFailure keeps the "page-cache:" prefix on the
+// start error. Start returns it verbatim, and its only reader is a bare
+// slog.Error in api/main.go, so an unattributed SDK error would land in the logs
+// with nothing naming the component that died.
+func TestStartPageCacheWorkflowWrapsStartFailure(t *testing.T) {
+	tc := &mocks.Client{}
+	tc.On("ExecuteWorkflow", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, errors.New("already started"))
+
+	log, recs := capLogger()
+	run, err := startPageCacheWorkflow(context.Background(), tc, log, PageCacheParams{}.withDefaults())
+	require.Nil(t, run)
+	require.ErrorContains(t, err, "page-cache: failed to start workflow")
+	require.ErrorContains(t, err, "already started")
+	require.Empty(t, *recs, "a failed start must not log that the workflow started")
 }

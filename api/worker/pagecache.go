@@ -106,28 +106,32 @@ func Start(ctx context.Context, cfg Config) error {
 
 // pageCacheStartOptions returns the start options for the page-cache workflow.
 //
-// The conflict policy is the load-bearing part. Adding or reordering a cached
-// page changes the sequence of activities the workflow schedules, so a run whose
-// history was written by the previous deploy's code cannot be replayed by the new
-// code: every workflow task panics with a nondeterminism error, Temporal retries
-// workflow tasks indefinitely, and the refresh loop never runs again. The deploy
-// contract is therefore to always start a fresh run.
+// Both policy fields are load-bearing, and the deploy contract rests on them.
+// PageCacheWorkflow deliberately schedules its activities without
+// workflow.GetVersion guards, so any change to the sequence of commands the loop
+// emits — adding or removing an activity call, reshaping the cycle — cannot be
+// replayed against a run whose history the previous deploy's code wrote: every
+// workflow task panics with a nondeterminism error, Temporal retries workflow
+// tasks indefinitely, and the refresh loop never runs again. What makes that safe
+// is that a deploy always gets a *fresh run*. (Cache entries themselves are
+// enumerated inside the activities, so adding a page is replay-neutral; it is the
+// workflow loop that must not diverge.)
 //
 // TERMINATE_EXISTING has the server terminate any running execution as part of the
-// start call. Doing it client-side instead — TerminateWorkflow, then
-// ExecuteWorkflow — can race, and with no conflict policy set the default is to
-// hand back the still-running execution and no error, so the new worker silently
-// adopts the old run's history. That is how staging's page cache sat wedged for
-// six hours while still logging "workflow started" on every restart.
+// start call, so there is no conflict and no window between a terminate and a
+// start. It needs Temporal >= 1.24; staging and prod run 1.26.2.
 //
-// WorkflowExecutionErrorWhenAlreadyStarted keeps that silent-adopt mode from
-// coming back: TERMINATE_EXISTING means there is never a conflict, so this never
-// fires in normal operation, but if a future edit drops the policy ExecuteWorkflow
-// errors instead of returning a stale run.
+// WorkflowExecutionErrorWhenAlreadyStarted is the other half, not a tripwire. When
+// it is false — the SDK default — the SDK converts the server's
+// WorkflowExecutionAlreadyStarted error into a handle on the *still-running*
+// execution and returns no error, so the worker silently adopts the old run's
+// history. That is how staging's page cache sat wedged for six hours while still
+// logging "workflow started" on every restart. A conflict policy alone does not
+// fix it: FAIL, the server-side default, is swallowed into a stale handle exactly
+// the same way. Keep both fields.
 //
-// WorkflowIDReusePolicy is deliberately unset: its default (ALLOW_DUPLICATE) is
-// what we want for a prior run that already completed, and the deprecated
-// TERMINATE_IF_RUNNING cannot be combined with a conflict policy.
+// WorkflowIDReusePolicy is deliberately unset: its default, ALLOW_DUPLICATE, is
+// what we want once the prior run has completed.
 func pageCacheStartOptions() temporalclient.StartWorkflowOptions {
 	return temporalclient.StartWorkflowOptions{
 		ID:                                       WorkflowID,
