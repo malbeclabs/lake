@@ -38,6 +38,7 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/minio v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/neo4j v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
+	go.temporal.io/api v1.63.0
 	go.temporal.io/sdk v1.46.0
 	golang.org/x/mod v0.36.0
 	golang.org/x/sync v0.21.0
@@ -171,7 +172,6 @@ require (
 	go.opentelemetry.io/otel v1.44.0 // indirect
 	go.opentelemetry.io/otel/metric v1.44.0 // indirect
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
-	go.temporal.io/api v1.63.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/ratelimit v0.3.1 // indirect
 	go.uber.org/zap v1.28.0 // indirect

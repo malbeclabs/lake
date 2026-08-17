@@ -43,6 +43,10 @@ func rollupBucketMinutes(d time.Duration) int {
 	return 5
 }
 
+// incidentsViewLookback is the window link_incidents_v and device_incidents_v scan
+// (INTERVAL 8 DAY in the view definitions).
+const incidentsViewLookback = 8 * 24 * time.Hour
+
 // isDefaultLinkThresholds returns true if the params use default thresholds that match
 // the link_incidents_v view (loss ≥ 10%, counters ≥ 1, coalesce gap 180 min, bucket 5 min).
 func isDefaultLinkThresholds(p incidentQueryParams) bool {
@@ -56,7 +60,9 @@ func isDefaultLinkThresholds(p incidentQueryParams) bool {
 }
 
 // buildLinkIncidentsViewQuery builds a simple query against the link_incidents_v view.
-func buildLinkIncidentsViewQuery(p incidentQueryParams) (string, []any) {
+// It reports false if a filter references a value the view does not expose, in which case
+// the caller must use the JOIN-based query instead.
+func buildLinkIncidentsViewQuery(p incidentQueryParams) (string, []any, bool) {
 	startSecs := int64(p.Duration.Seconds())
 	var args []any
 	argIdx := 1
@@ -76,7 +82,10 @@ func buildLinkIncidentsViewQuery(p incidentQueryParams) (string, []any) {
 		typeClause = fmt.Sprintf("AND incident_type = %s", typeArg)
 	}
 
-	filterClauses, filterArgs := buildLinkFilterClauses(p.Filters, argIdx)
+	filterClauses, filterArgs, ok := buildLinkFilterClauses(p.Filters, argIdx, linkViewFilterColumns)
+	if !ok {
+		return "", nil, false
+	}
 	args = append(args, filterArgs...)
 
 	query := fmt.Sprintf(`
@@ -91,22 +100,35 @@ WHERE (ended_at >= now() - INTERVAL %s SECOND OR is_ongoing)
 ORDER BY started_at DESC`,
 		startArg, typeClause, filterClauses)
 
-	return query, args
+	return query, args, true
 }
 
 // buildLinkIncidentsQuery builds a single SQL query that detects all link incident types
 // using UNION ALL across rollup tables, with gap-and-island detection, coalescing,
 // min-duration filtering, and metadata JOINs all in SQL.
-func buildLinkIncidentsQuery(p incidentQueryParams) (string, []any) {
-	// Use the view for default thresholds (not in raw mode)
-	if isDefaultLinkThresholds(p) && !p.UseRaw {
-		return buildLinkIncidentsViewQuery(p)
+func buildLinkIncidentsQuery(p incidentQueryParams) (string, []any, error) {
+	// Use the view for default thresholds (not in raw mode), unless a filter references a
+	// value the view does not expose (device codes), which only the query below can match.
+	viewEligible := isDefaultLinkThresholds(p) && !p.UseRaw
+	if viewEligible {
+		if query, args, ok := buildLinkIncidentsViewQuery(p); ok {
+			return query, args, nil
+		}
 	}
 
 	bucketMin := rollupBucketMinutes(p.Duration)
 	startSecs := int64(p.Duration.Seconds())
 	// Add 1 day lookback so incidents starting before the window get their true start
 	lookbackSecs := int64((p.Duration + 24*time.Hour).Seconds())
+
+	if viewEligible {
+		// Fell back from link_incidents_v because a filter needs the JOINs below. Match the
+		// view's window and bucket size, so applying a device filter cannot change which
+		// incidents exist (a link dark longer than the shorter lookback yields no no_data
+		// rows at all) or how their peaks aggregate (coarser buckets sum more per bucket).
+		lookbackSecs = int64(incidentsViewLookback.Seconds())
+		bucketMin = 5
+	}
 
 	var aboveParts []string
 	var args []any
@@ -273,13 +295,17 @@ func buildLinkIncidentsQuery(p incidentQueryParams) (string, []any) {
 	}
 
 	if len(aboveParts) == 0 {
-		return "", nil
+		return "", nil, nil
 	}
 
 	aboveCTE := strings.Join(aboveParts, "\n\n\tUNION ALL\n")
 
-	// Build filter clauses for metadata
-	filterClauses, filterArgs := buildLinkFilterClauses(p.Filters, argIdx)
+	// This query JOINs every dimension table, so it can express any filter. Refuse the
+	// request rather than run it unfiltered if that ever stops being true.
+	filterClauses, filterArgs, ok := buildLinkFilterClauses(p.Filters, argIdx, linkJoinFilterColumns)
+	if !ok {
+		return "", nil, fmt.Errorf("link incident filters cannot be applied to the rollup query")
+	}
 	args = append(args, filterArgs...)
 	argIdx += len(filterArgs)
 
@@ -372,42 +398,99 @@ ORDER BY c.started_at DESC`,
 		filterClauses,
 	)
 
-	return query, args
+	return query, args, nil
 }
 
-// buildLinkFilterClauses builds WHERE clauses for link incident metadata filtering.
-func buildLinkFilterClauses(filters []IncidentFilter, startArgIdx int) (string, []any) {
+// linkFilterColumns names the SQL expression each link filter type compares against.
+// The JOIN-based rollup query and the flattened link_incidents_v view name the same
+// values differently, so each caller passes the mapping valid in its own scope.
+type linkFilterColumns struct {
+	metroA      string
+	metroZ      string
+	link        string
+	contributor string
+	deviceA     string
+	deviceZ     string
+}
+
+// linkJoinFilterColumns are the JOIN aliases of buildLinkIncidentsQuery's CTE query.
+var linkJoinFilterColumns = linkFilterColumns{
+	metroA:      "ma.code",
+	metroZ:      "mz.code",
+	link:        "l.code",
+	contributor: "cc.code",
+	deviceA:     "da.code",
+	deviceZ:     "dz.code",
+}
+
+// linkViewFilterColumns are the flattened columns of link_incidents_v, which has no JOINs.
+// deviceA/deviceZ are empty because the view exposes no device codes, which is what makes
+// buildLinkFilterClauses report a device filter as unexpressible on this path.
+var linkViewFilterColumns = linkFilterColumns{
+	metroA:      "side_a_metro",
+	metroZ:      "side_z_metro",
+	link:        "link_code",
+	contributor: "contributor_code",
+}
+
+// buildLinkFilterClauses builds WHERE clauses for link incident metadata filtering, using
+// the column names valid in the caller's query scope. It reports false if the scope does
+// not expose a value being filtered on, meaning that query cannot answer the request.
+func buildLinkFilterClauses(filters []IncidentFilter, startArgIdx int, cols linkFilterColumns) (string, []any, bool) {
 	var clauses []string
 	var args []any
 	argIdx := startArgIdx
 
 	for _, f := range filters {
+		var filterCols []string
 		switch f.Type {
 		case "metro":
-			clauses = append(clauses, fmt.Sprintf("AND (ma.code = $%d OR mz.code = $%d)", argIdx, argIdx))
-			args = append(args, f.Value)
-			argIdx++
+			filterCols = []string{cols.metroA, cols.metroZ}
 		case "link":
-			clauses = append(clauses, fmt.Sprintf("AND l.code = $%d", argIdx))
-			args = append(args, f.Value)
-			argIdx++
+			filterCols = []string{cols.link}
 		case "contributor":
-			clauses = append(clauses, fmt.Sprintf("AND cc.code = $%d", argIdx))
-			args = append(args, f.Value)
-			argIdx++
+			filterCols = []string{cols.contributor}
 		case "device":
-			clauses = append(clauses, fmt.Sprintf("AND (da.code = $%d OR dz.code = $%d)", argIdx, argIdx))
-			args = append(args, f.Value)
-			argIdx++
+			filterCols = []string{cols.deviceA, cols.deviceZ}
+		default:
+			continue
 		}
+
+		clause, ok := incidentFilterClause(filterCols, argIdx)
+		if !ok {
+			return "", nil, false
+		}
+		clauses = append(clauses, clause)
+		args = append(args, f.Value)
+		argIdx++
 	}
 
-	return strings.Join(clauses, "\n  "), args
+	return strings.Join(clauses, "\n  "), args, true
+}
+
+// incidentFilterClause renders "AND col = $n", or "AND (colA = $n OR colZ = $n)" for a
+// value a link carries on both sides — one arg compared against each column. It reports
+// false if the scope leaves any of the columns empty, i.e. does not expose the value.
+func incidentFilterClause(cols []string, argIdx int) (string, bool) {
+	comparisons := make([]string, 0, len(cols))
+	for _, col := range cols {
+		if col == "" {
+			return "", false
+		}
+		comparisons = append(comparisons, fmt.Sprintf("%s = $%d", col, argIdx))
+	}
+	if len(comparisons) == 1 {
+		return "AND " + comparisons[0], true
+	}
+	return "AND (" + strings.Join(comparisons, " OR ") + ")", true
 }
 
 // fetchLinkIncidentsFromRollup executes the single rollup query and scans into LinkIncident structs.
 func fetchLinkIncidentsFromRollup(ctx context.Context, conn driver.Conn, p incidentQueryParams) ([]LinkIncident, error) {
-	query, args := buildLinkIncidentsQuery(p)
+	query, args, err := buildLinkIncidentsQuery(p)
+	if err != nil {
+		return nil, err
+	}
 	if query == "" {
 		return nil, nil
 	}
@@ -521,7 +604,9 @@ func isDefaultDeviceThresholds(p incidentQueryParams) bool {
 }
 
 // buildDeviceIncidentsViewQuery builds a simple query against the device_incidents_v view.
-func buildDeviceIncidentsViewQuery(p incidentQueryParams) (string, []any) {
+// It reports false if a filter references a value the view does not expose, in which case
+// the caller must use the JOIN-based query instead.
+func buildDeviceIncidentsViewQuery(p incidentQueryParams) (string, []any, bool) {
 	startSecs := int64(p.Duration.Seconds())
 	var args []any
 	argIdx := 1
@@ -541,7 +626,10 @@ func buildDeviceIncidentsViewQuery(p incidentQueryParams) (string, []any) {
 		typeClause = fmt.Sprintf("AND incident_type = %s", typeArg)
 	}
 
-	filterClauses, filterArgs := buildDeviceFilterClauses(p.Filters, argIdx)
+	filterClauses, filterArgs, ok := buildDeviceFilterClauses(p.Filters, argIdx, deviceViewFilterColumns)
+	if !ok {
+		return "", nil, false
+	}
 	args = append(args, filterArgs...)
 
 	query := fmt.Sprintf(`
@@ -556,19 +644,29 @@ WHERE (ended_at >= now() - INTERVAL %s SECOND OR is_ongoing)
 ORDER BY started_at DESC`,
 		startArg, typeClause, filterClauses)
 
-	return query, args
+	return query, args, true
 }
 
 // buildDeviceIncidentsQuery builds a single SQL query that detects all device incident types.
-func buildDeviceIncidentsQuery(p incidentQueryParams) (string, []any) {
+func buildDeviceIncidentsQuery(p incidentQueryParams) (string, []any, error) {
 	// Use the view for default thresholds
-	if isDefaultDeviceThresholds(p) {
-		return buildDeviceIncidentsViewQuery(p)
+	viewEligible := isDefaultDeviceThresholds(p)
+	if viewEligible {
+		if query, args, ok := buildDeviceIncidentsViewQuery(p); ok {
+			return query, args, nil
+		}
 	}
 
 	bucketMin := rollupBucketMinutes(p.Duration)
 	startSecs := int64(p.Duration.Seconds())
 	lookbackSecs := int64((p.Duration + 24*time.Hour).Seconds())
+
+	if viewEligible {
+		// Fell back from device_incidents_v; match its window and bucket size for the same
+		// reason as buildLinkIncidentsQuery.
+		lookbackSecs = int64(incidentsViewLookback.Seconds())
+		bucketMin = 5
+	}
 
 	var aboveParts []string
 	var args []any
@@ -681,13 +779,17 @@ func buildDeviceIncidentsQuery(p incidentQueryParams) (string, []any) {
 	}
 
 	if len(aboveParts) == 0 {
-		return "", nil
+		return "", nil, nil
 	}
 
 	aboveCTE := strings.Join(aboveParts, "\n\n\tUNION ALL\n")
 
-	// Build filter clauses for device metadata
-	filterClauses, filterArgs := buildDeviceFilterClauses(p.Filters, argIdx)
+	// This query JOINs every dimension table, so it can express any filter. Refuse the
+	// request rather than run it unfiltered if that ever stops being true.
+	filterClauses, filterArgs, ok := buildDeviceFilterClauses(p.Filters, argIdx, deviceJoinFilterColumns)
+	if !ok {
+		return "", nil, fmt.Errorf("device incident filters cannot be applied to the rollup query")
+	}
 	args = append(args, filterArgs...)
 	argIdx += len(filterArgs)
 
@@ -772,38 +874,70 @@ ORDER BY c.started_at DESC`,
 		filterClauses,
 	)
 
-	return query, args
+	return query, args, nil
 }
 
-// buildDeviceFilterClauses builds WHERE clauses for device incident metadata filtering.
-func buildDeviceFilterClauses(filters []IncidentFilter, startArgIdx int) (string, []any) {
+// deviceFilterColumns names the SQL expression each device filter type compares against,
+// for the same reason as linkFilterColumns.
+type deviceFilterColumns struct {
+	metro       string
+	device      string
+	contributor string
+}
+
+// deviceJoinFilterColumns are the JOIN aliases of buildDeviceIncidentsQuery's CTE query.
+var deviceJoinFilterColumns = deviceFilterColumns{
+	metro:       "m.code",
+	device:      "d.code",
+	contributor: "cc.code",
+}
+
+// deviceViewFilterColumns are the flattened columns of device_incidents_v, which has no JOINs.
+var deviceViewFilterColumns = deviceFilterColumns{
+	metro:       "metro",
+	device:      "device_code",
+	contributor: "contributor_code",
+}
+
+// buildDeviceFilterClauses builds WHERE clauses for device incident metadata filtering,
+// with the same scope handling as buildLinkFilterClauses. device_incidents_v exposes all
+// three values today, so the view path never loses a filter.
+func buildDeviceFilterClauses(filters []IncidentFilter, startArgIdx int, cols deviceFilterColumns) (string, []any, bool) {
 	var clauses []string
 	var args []any
 	argIdx := startArgIdx
 
 	for _, f := range filters {
+		var filterCols []string
 		switch f.Type {
 		case "metro":
-			clauses = append(clauses, fmt.Sprintf("AND m.code = $%d", argIdx))
-			args = append(args, f.Value)
-			argIdx++
+			filterCols = []string{cols.metro}
 		case "device":
-			clauses = append(clauses, fmt.Sprintf("AND d.code = $%d", argIdx))
-			args = append(args, f.Value)
-			argIdx++
+			filterCols = []string{cols.device}
 		case "contributor":
-			clauses = append(clauses, fmt.Sprintf("AND cc.code = $%d", argIdx))
-			args = append(args, f.Value)
-			argIdx++
+			filterCols = []string{cols.contributor}
+		default:
+			continue
 		}
+
+		clause, ok := incidentFilterClause(filterCols, argIdx)
+		if !ok {
+			return "", nil, false
+		}
+		clauses = append(clauses, clause)
+		args = append(args, f.Value)
+		argIdx++
 	}
 
-	return strings.Join(clauses, "\n  "), args
+	return strings.Join(clauses, "\n  "), args, true
 }
 
 // fetchDeviceIncidentsFromRollup executes the single rollup query and scans into DeviceIncident structs.
 func fetchDeviceIncidentsFromRollup(ctx context.Context, conn driver.Conn, p incidentQueryParams) ([]DeviceIncident, error) {
-	query, args := buildDeviceIncidentsQuery(p)
+	query, args, err := buildDeviceIncidentsQuery(p)
+	if err != nil {
+		return nil, err
+	}
 	if query == "" {
 		return nil, nil
 	}

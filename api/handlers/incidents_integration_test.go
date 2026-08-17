@@ -658,3 +658,183 @@ func TestGetDeviceIncidents_NoDataGapLength(t *testing.T) {
 	require.NotNil(t, gap.DurationSeconds)
 	assert.Equal(t, int64(20*60), *gap.DurationSeconds, "duration matches the gap, not a coalesced span")
 }
+
+// getLinkIncidents issues a link incidents request and decodes the response.
+func getLinkIncidents(t *testing.T, api *handlers.API, url string) handlers.LinkIncidentsResponse {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, url, nil)
+	rr := httptest.NewRecorder()
+	api.GetLinkIncidents(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+	var resp handlers.LinkIncidentsResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+	return resp
+}
+
+// getDeviceIncidents issues a device incidents request and decodes the response.
+func getDeviceIncidents(t *testing.T, api *handlers.API, url string) handlers.DeviceIncidentsResponse {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, url, nil)
+	rr := httptest.NewRecorder()
+	api.GetDeviceIncidents(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+	var resp handlers.DeviceIncidentsResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+	return resp
+}
+
+func linkIncidentCodes(resp handlers.LinkIncidentsResponse, incidentType string) []string {
+	var codes []string
+	for _, inc := range resp.Active {
+		if inc.IncidentType == incidentType {
+			codes = append(codes, inc.LinkCode)
+		}
+	}
+	return codes
+}
+
+func deviceIncidentCodes(resp handlers.DeviceIncidentsResponse, incidentType string) []string {
+	var codes []string
+	for _, inc := range resp.Active {
+		if inc.IncidentType == incidentType {
+			codes = append(codes, inc.DeviceCode)
+		}
+	}
+	return codes
+}
+
+// seedTwoIncidentLinks seeds two links in disjoint metros with different contributors,
+// both with a packet loss incident, so a filter that matches the wrong column or matches
+// nothing at all is distinguishable from one that filters correctly.
+func seedTwoIncidentLinks(t *testing.T, api *handlers.API) {
+	t.Helper()
+
+	seedMetro(t, api, "metro-nyc", "NYC")
+	seedMetro(t, api, "metro-lax", "LAX")
+	seedMetro(t, api, "metro-fra", "FRA")
+	seedMetro(t, api, "metro-sin", "SIN")
+	seedContributor(t, api, "contrib-1", "CONTRIB1")
+	seedContributor(t, api, "contrib-2", "CONTRIB2")
+	seedDeviceMetadata(t, api, "dev-nyc", "NYC-CORE-01", "router", "contrib-1", "metro-nyc", 10, "activated")
+	seedDeviceMetadata(t, api, "dev-lax", "LAX-CORE-01", "router", "contrib-1", "metro-lax", 10, "activated")
+	seedDeviceMetadata(t, api, "dev-fra", "FRA-CORE-01", "router", "contrib-2", "metro-fra", 10, "activated")
+	seedDeviceMetadata(t, api, "dev-sin", "SIN-CORE-01", "router", "contrib-2", "metro-sin", 10, "activated")
+	seedLinkMetadata(t, api, "link-1", "NYC-LAX-001", "WAN", "contrib-1", "dev-nyc", "dev-lax", 10_000_000_000, 20_000_000, "activated")
+	seedLinkMetadata(t, api, "link-2", "FRA-SIN-002", "WAN", "contrib-2", "dev-fra", "dev-sin", 10_000_000_000, 20_000_000, "activated")
+
+	// 8 consecutive 5-min buckets of packet loss on both links, above the view's 10%.
+	baseTime := time.Now().UTC().Add(-2 * time.Hour)
+	for i := range 8 {
+		ts := baseTime.Add(time.Duration(i*5) * time.Minute)
+		seedLinkRollup(t, api, ts, "link-1", 100, 100, 25, 15, 10, 10, "activated", false, false)
+		seedLinkRollup(t, api, ts, "link-2", 100, 100, 25, 15, 10, 10, "activated", false, false)
+	}
+}
+
+// TestGetLinkIncidents_ViewPathFilters covers filtering on the default-threshold path,
+// which reads link_incidents_v and has no JOINs. Referencing a JOIN alias there (cc.code)
+// made every filtered incidents request fail with a ClickHouse identifier error. The API
+// is built with the real migrations, so the column names are checked against the shipped
+// view definition rather than a copy.
+func TestGetLinkIncidents_ViewPathFilters(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedTwoIncidentLinks(t, api)
+
+	// No threshold overrides, so these requests take the link_incidents_v path.
+	tests := []struct {
+		name   string
+		filter string
+	}{
+		{"side a metro", "metro:NYC"},
+		{"side z metro", "metro:LAX"},
+		{"link", "link:NYC-LAX-001"},
+		{"contributor", "contributor:CONTRIB1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := getLinkIncidents(t, api, "/api/incidents/links?range=6h&type=packet_loss&min_duration=5&filter="+tt.filter)
+			codes := linkIncidentCodes(resp, "packet_loss")
+			assert.Contains(t, codes, "NYC-LAX-001", "filter %q should match its own link", tt.filter)
+			assert.NotContains(t, codes, "FRA-SIN-002", "filter %q should exclude the other link", tt.filter)
+		})
+	}
+
+	t.Run("unfiltered returns both links", func(t *testing.T) {
+		codes := linkIncidentCodes(getLinkIncidents(t, api, "/api/incidents/links?range=6h&type=packet_loss&min_duration=5"), "packet_loss")
+		assert.Contains(t, codes, "NYC-LAX-001")
+		assert.Contains(t, codes, "FRA-SIN-002")
+	})
+}
+
+// TestGetLinkIncidents_DeviceFilterFallback covers the one link filter the view cannot
+// express: link_incidents_v has no device codes, so device-filtered requests fall back to
+// the JOIN-based query.
+func TestGetLinkIncidents_DeviceFilterFallback(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedTwoIncidentLinks(t, api)
+
+	for _, tt := range []struct {
+		name   string
+		filter string
+	}{
+		{"side a device", "device:NYC-CORE-01"},
+		{"side z device", "device:LAX-CORE-01"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			codes := linkIncidentCodes(getLinkIncidents(t, api, "/api/incidents/links?range=6h&type=packet_loss&min_duration=5&filter="+tt.filter), "packet_loss")
+			assert.Contains(t, codes, "NYC-LAX-001", "filter %q should match its own link", tt.filter)
+			assert.NotContains(t, codes, "FRA-SIN-002", "filter %q should exclude the other link", tt.filter)
+		})
+	}
+}
+
+// TestGetDeviceIncidents_ViewPathFilters is the device_incidents_v counterpart, which had
+// the same alias-into-a-JOIN-less-query defect.
+func TestGetDeviceIncidents_ViewPathFilters(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+
+	seedMetro(t, api, "metro-nyc", "NYC")
+	seedMetro(t, api, "metro-fra", "FRA")
+	seedContributor(t, api, "contrib-1", "CONTRIB1")
+	seedContributor(t, api, "contrib-2", "CONTRIB2")
+	seedDeviceMetadata(t, api, "dev-nyc", "NYC-CORE-01", "router", "contrib-1", "metro-nyc", 10, "activated")
+	seedDeviceMetadata(t, api, "dev-fra", "FRA-CORE-01", "router", "contrib-2", "metro-fra", 10, "activated")
+
+	// Device-only interface counters (link_pk = ''), errors on both devices.
+	baseTime := time.Now().UTC().Add(-2 * time.Hour)
+	for i := range 8 {
+		ts := baseTime.Add(time.Duration(i*5) * time.Minute)
+		seedInterfaceRollup(t, api, ts, "dev-nyc", "Loopback0", "", "", 25, 0, 1000, "up")
+		seedInterfaceRollup(t, api, ts, "dev-fra", "Loopback0", "", "", 25, 0, 1000, "up")
+	}
+
+	tests := []struct {
+		name   string
+		filter string
+	}{
+		{"metro", "metro:NYC"},
+		{"device", "device:NYC-CORE-01"},
+		{"contributor", "contributor:CONTRIB1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := getDeviceIncidents(t, api, "/api/incidents/devices?range=6h&type=errors&min_duration=5&filter="+tt.filter)
+			codes := deviceIncidentCodes(resp, "errors")
+			assert.Contains(t, codes, "NYC-CORE-01", "filter %q should match its own device", tt.filter)
+			assert.NotContains(t, codes, "FRA-CORE-01", "filter %q should exclude the other device", tt.filter)
+		})
+	}
+
+	t.Run("unfiltered returns both devices", func(t *testing.T) {
+		codes := deviceIncidentCodes(getDeviceIncidents(t, api, "/api/incidents/devices?range=6h&type=errors&min_duration=5"), "errors")
+		assert.Contains(t, codes, "NYC-CORE-01")
+		assert.Contains(t, codes, "FRA-CORE-01")
+	})
+}

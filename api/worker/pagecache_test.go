@@ -10,6 +10,9 @@ import (
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	enumspb "go.temporal.io/api/enums/v1"
+	temporalclient "go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/mocks"
 	"go.temporal.io/sdk/testsuite"
 	temporalworkflow "go.temporal.io/sdk/workflow"
 
@@ -792,4 +795,70 @@ func TestNetworkHealthOutcome(t *testing.T) {
 func TestNetworkHealthDegradedThresholdAboveDefault(t *testing.T) {
 	require.Greater(t, nhDegradedErrorAfter, errorAfterFailures)
 	require.Greater(t, nhDegradedErrorAfter, transientErrorAfterFailures)
+}
+
+// TestPageCacheStartOptionsRestartAtomically pins both policy fields: dropping
+// either one lets a start adopt the previous deploy's run.
+func TestPageCacheStartOptionsRestartAtomically(t *testing.T) {
+	opts := pageCacheStartOptions()
+
+	require.Equal(t, WorkflowID, opts.ID)
+	require.Equal(t, TaskQueue, opts.TaskQueue)
+	require.Equal(t, enumspb.WORKFLOW_ID_CONFLICT_POLICY_TERMINATE_EXISTING, opts.WorkflowIDConflictPolicy,
+		"a running execution must be terminated by the start call, not adopted")
+	require.True(t, opts.WorkflowExecutionErrorWhenAlreadyStarted,
+		"without this the SDK turns an already-started error into a handle on the running execution")
+	require.Equal(t, enumspb.WORKFLOW_ID_REUSE_POLICY_UNSPECIFIED, opts.WorkflowIDReusePolicy,
+		"the default ALLOW_DUPLICATE is what we want once the prior run has completed")
+}
+
+// TestStartPageCacheWorkflowStartsAndLogsItsRun simulates a redeploy: each start
+// issues its own request and logs that start's run ID. Run IDs are allocated by the
+// server, which a mock cannot model, so the fresh-run guarantee itself is pinned by
+// the options test above.
+func TestStartPageCacheWorkflowStartsAndLogsItsRun(t *testing.T) {
+	tc := &mocks.Client{}
+	var gotOpts []temporalclient.StartWorkflowOptions
+	for _, runID := range []string{"run-1", "run-2"} {
+		run := &mocks.WorkflowRun{}
+		run.On("GetRunID").Return(runID)
+		tc.On("ExecuteWorkflow", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+			Run(func(args mock.Arguments) {
+				gotOpts = append(gotOpts, args.Get(1).(temporalclient.StartWorkflowOptions))
+			}).
+			Return(run, nil).Once()
+	}
+
+	params := PageCacheParams{}.withDefaults()
+	for range 2 {
+		log, recs := capLogger()
+		run, err := startPageCacheWorkflow(context.Background(), tc, log, params)
+		require.NoError(t, err)
+
+		rec, ok := findRecord(*recs, "page-cache: workflow started")
+		require.True(t, ok, "a start must be attributable to a run")
+		loggedRunID, ok := recordAttr(rec, "run_id")
+		require.True(t, ok, "run_id is what makes the start line verifiable")
+		require.Equal(t, run.GetRunID(), loggedRunID)
+	}
+
+	require.Len(t, gotOpts, 2, "a redeploy must issue its own start request")
+	for _, o := range gotOpts {
+		require.Equal(t, enumspb.WORKFLOW_ID_CONFLICT_POLICY_TERMINATE_EXISTING, o.WorkflowIDConflictPolicy)
+	}
+}
+
+// TestStartPageCacheWorkflowWrapsStartFailure keeps the "page-cache:" prefix on the
+// start error: Start returns it verbatim, and its only reader logs it as-is.
+func TestStartPageCacheWorkflowWrapsStartFailure(t *testing.T) {
+	tc := &mocks.Client{}
+	tc.On("ExecuteWorkflow", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, errors.New("already started"))
+
+	log, recs := capLogger()
+	run, err := startPageCacheWorkflow(context.Background(), tc, log, PageCacheParams{}.withDefaults())
+	require.Nil(t, run)
+	require.ErrorContains(t, err, "page-cache: failed to start workflow")
+	require.ErrorContains(t, err, "already started")
+	require.Empty(t, *recs, "a failed start must not log that the workflow started")
 }

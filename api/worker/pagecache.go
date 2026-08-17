@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	enumspb "go.temporal.io/api/enums/v1"
 	temporalclient "go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 
@@ -73,16 +74,10 @@ func Start(ctx context.Context, cfg Config) error {
 	w.RegisterWorkflow(PageCacheWorkflow)
 	w.RegisterActivity(activities)
 
-	// Terminate any existing workflow from a previous deploy, then start fresh.
-	_ = tc.TerminateWorkflow(ctx, WorkflowID, "", "restarting on deploy")
-	run, err := tc.ExecuteWorkflow(ctx, temporalclient.StartWorkflowOptions{
-		ID:        WorkflowID,
-		TaskQueue: TaskQueue,
-	}, PageCacheWorkflow, 0, params)
+	run, err := startPageCacheWorkflow(ctx, tc, log, params)
 	if err != nil {
-		return fmt.Errorf("page-cache: failed to start workflow: %w", err)
+		return err
 	}
-	log.Info("page-cache: workflow started", "id", WorkflowID)
 
 	// Watch the workflow in the background so failures surface in logs.
 	// Suppress "terminated" errors — a new deploy terminates the previous
@@ -105,6 +100,33 @@ func Start(ctx context.Context, cfg Config) error {
 	case err := <-errCh:
 		return err
 	}
+}
+
+// pageCacheStartOptions returns the start options for the page-cache workflow. A
+// deploy must always get a fresh run, since the workflow carries no GetVersion
+// guards. Both fields are needed for that: with
+// WorkflowExecutionErrorWhenAlreadyStarted unset, the SDK turns an already-started
+// error into a handle on the running execution and returns no error, so the
+// conflict policy alone can still adopt the previous deploy's run.
+func pageCacheStartOptions() temporalclient.StartWorkflowOptions {
+	return temporalclient.StartWorkflowOptions{
+		ID:                                       WorkflowID,
+		TaskQueue:                                TaskQueue,
+		WorkflowIDConflictPolicy:                 enumspb.WORKFLOW_ID_CONFLICT_POLICY_TERMINATE_EXISTING,
+		WorkflowExecutionErrorWhenAlreadyStarted: true,
+	}
+}
+
+// startPageCacheWorkflow starts a fresh page-cache run, terminating any run left
+// over from a previous deploy. The run ID is logged because it is the only way to
+// tell a fresh run from an adopted one.
+func startPageCacheWorkflow(ctx context.Context, tc temporalclient.Client, log *slog.Logger, params PageCacheParams) (temporalclient.WorkflowRun, error) {
+	run, err := tc.ExecuteWorkflow(ctx, pageCacheStartOptions(), PageCacheWorkflow, 0, params)
+	if err != nil {
+		return nil, fmt.Errorf("page-cache: failed to start workflow: %w", err)
+	}
+	log.Info("page-cache: workflow started", "id", WorkflowID, "run_id", run.GetRunID())
+	return run, nil
 }
 
 // temporalLogger adapts slog to Temporal's log interface.
