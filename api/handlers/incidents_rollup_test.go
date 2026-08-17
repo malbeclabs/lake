@@ -261,7 +261,8 @@ func TestBuildLinkIncidentsQuery_FilterScope(t *testing.T) {
 			p := defaultLinkParams()
 			p.Filters = []IncidentFilter{f}
 
-			query, args := buildLinkIncidentsQuery(p)
+			query, args, err := buildLinkIncidentsQuery(p)
+			require.NoError(t, err)
 			assert.Contains(t, query, "FROM link_incidents_v")
 			assert.Equal(t, []any{int64(21600), f.Value}, args)
 			assertNoJoinAliases(t, query)
@@ -273,7 +274,8 @@ func TestBuildLinkIncidentsQuery_FilterScope(t *testing.T) {
 		p := defaultLinkParams()
 		p.Filters = []IncidentFilter{{Type: "device", Value: "NYC-CORE-01"}}
 
-		query, args := buildLinkIncidentsQuery(p)
+		query, args, err := buildLinkIncidentsQuery(p)
+		require.NoError(t, err)
 		assert.NotContains(t, query, "link_incidents_v", "link view exposes no device codes")
 		assert.Contains(t, query, "LEFT JOIN dz_devices_current da ON l.side_a_pk = da.pk")
 		assert.Contains(t, query, "AND (da.code = $8 OR dz.code = $8)")
@@ -286,7 +288,8 @@ func TestBuildLinkIncidentsQuery_FilterScope(t *testing.T) {
 		p.UseRaw = true
 		p.Filters = []IncidentFilter{{Type: "contributor", Value: "CONTRIB1"}}
 
-		query, _ := buildLinkIncidentsQuery(p)
+		query, _, err := buildLinkIncidentsQuery(p)
+		require.NoError(t, err)
 		assert.NotContains(t, query, "link_incidents_v")
 		assert.Contains(t, query, "AND cc.code = $")
 	})
@@ -307,7 +310,8 @@ func TestBuildDeviceIncidentsQuery_FilterScope(t *testing.T) {
 			p := defaultDeviceParams()
 			p.Filters = []IncidentFilter{f}
 
-			query, args := buildDeviceIncidentsQuery(p)
+			query, args, err := buildDeviceIncidentsQuery(p)
+			require.NoError(t, err)
 			assert.Contains(t, query, "FROM device_incidents_v")
 			assert.Equal(t, []any{int64(21600), f.Value}, args)
 			assertNoJoinAliases(t, query)
@@ -320,7 +324,8 @@ func TestBuildDeviceIncidentsQuery_FilterScope(t *testing.T) {
 		p.ErrorsThreshold = 50
 		p.Filters = []IncidentFilter{{Type: "metro", Value: "NYC"}}
 
-		query, args := buildDeviceIncidentsQuery(p)
+		query, args, err := buildDeviceIncidentsQuery(p)
+		require.NoError(t, err)
 		assert.NotContains(t, query, "device_incidents_v")
 		assert.Contains(t, query, "AND m.code = $")
 		assert.Contains(t, args, "NYC")
@@ -346,4 +351,64 @@ func TestLinkFilterColumnsCoverEveryFilterType(t *testing.T) {
 			assert.Empty(t, viewClauses, "unexpressible filter %q must emit no clause", filterType)
 		}
 	}
+}
+
+// TestBuildLinkIncidentsQuery_FallbackMatchesViewWindow pins the device-filter fallback to
+// the view's 8-day lookback and 5-minute buckets. Otherwise adding a device filter changes
+// which incidents exist — a link dark longer than the shorter lookback contributes no
+// no_data rows at all — and inflates counter peaks by aggregating coarser buckets.
+func TestBuildLinkIncidentsQuery_FallbackMatchesViewWindow(t *testing.T) {
+	t.Parallel()
+	const viewLookbackSecs = int64(8 * 24 * 60 * 60)
+	deviceFilter := []IncidentFilter{{Type: "device", Value: "NYC-CORE-01"}}
+
+	t.Run("default range", func(t *testing.T) {
+		t.Parallel()
+		p := defaultLinkParams()
+		p.Duration = 24 * time.Hour
+		p.Filters = deviceFilter
+
+		query, args, err := buildLinkIncidentsQuery(p)
+		require.NoError(t, err)
+		assert.Equal(t, viewLookbackSecs, args[0], "lookback should match link_incidents_v, not Duration+24h")
+		assert.Equal(t, int64(24*60*60), args[1], "the display window is still the requested range")
+		assert.NotContains(t, query, "INTERVAL 15 MINUTE")
+	})
+
+	t.Run("7d range keeps 5-minute buckets", func(t *testing.T) {
+		t.Parallel()
+		p := defaultLinkParams()
+		p.Duration = 7 * 24 * time.Hour
+		p.Filters = deviceFilter
+		require.Equal(t, 15, rollupBucketMinutes(p.Duration), "unpinned, this range re-buckets coarser")
+
+		query, args, err := buildLinkIncidentsQuery(p)
+		require.NoError(t, err)
+		assert.Equal(t, viewLookbackSecs, args[0])
+		assert.NotContains(t, query, "INTERVAL 15 MINUTE")
+	})
+
+	t.Run("non-default thresholds keep the request's own window", func(t *testing.T) {
+		t.Parallel()
+		p := defaultLinkParams()
+		p.Duration = 24 * time.Hour
+		p.LossThreshold = 20
+		p.Filters = deviceFilter
+
+		_, args, err := buildLinkIncidentsQuery(p)
+		require.NoError(t, err)
+		assert.Equal(t, int64(48*60*60), args[0], "a non-default request never had the view to match")
+	})
+
+	t.Run("raw source keeps the request's own window", func(t *testing.T) {
+		t.Parallel()
+		p := defaultLinkParams()
+		p.Duration = 24 * time.Hour
+		p.UseRaw = true
+		p.Filters = deviceFilter
+
+		_, args, err := buildLinkIncidentsQuery(p)
+		require.NoError(t, err)
+		assert.Equal(t, int64(48*60*60), args[0])
+	})
 }
