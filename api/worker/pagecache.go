@@ -74,8 +74,6 @@ func Start(ctx context.Context, cfg Config) error {
 	w.RegisterWorkflow(PageCacheWorkflow)
 	w.RegisterActivity(activities)
 
-	// Terminate any existing workflow from a previous deploy and start fresh, in
-	// one atomic server-side call.
 	run, err := startPageCacheWorkflow(ctx, tc, log, params)
 	if err != nil {
 		return err
@@ -104,19 +102,12 @@ func Start(ctx context.Context, cfg Config) error {
 	}
 }
 
-// pageCacheStartOptions returns the start options for the page-cache workflow.
-//
-// PageCacheWorkflow schedules its activities with no workflow.GetVersion guards,
-// so a run whose history the previous deploy wrote cannot be replayed by new code:
-// the workflow task panics, Temporal retries it indefinitely, and refreshes stop
-// for good. Every deploy therefore needs a fresh run.
-//
-// Both fields are required for that. TERMINATE_EXISTING has the server terminate
-// any running execution as part of the start; without
-// WorkflowExecutionErrorWhenAlreadyStarted the SDK would still turn an
-// already-started error into a handle on that execution and return no error,
-// silently adopting its history — which is what wedged staging for six hours. A
-// conflict policy of FAIL is swallowed the same way.
+// pageCacheStartOptions returns the start options for the page-cache workflow. A
+// deploy must always get a fresh run, since the workflow carries no GetVersion
+// guards. Both fields are needed for that: with
+// WorkflowExecutionErrorWhenAlreadyStarted unset, the SDK turns an already-started
+// error into a handle on the running execution and returns no error, so the
+// conflict policy alone can still adopt the previous deploy's run.
 func pageCacheStartOptions() temporalclient.StartWorkflowOptions {
 	return temporalclient.StartWorkflowOptions{
 		ID:                                       WorkflowID,
@@ -127,8 +118,8 @@ func pageCacheStartOptions() temporalclient.StartWorkflowOptions {
 }
 
 // startPageCacheWorkflow starts a fresh page-cache run, terminating any run left
-// over from a previous deploy. The logged run ID is what distinguishes a fresh run
-// from an adopted one.
+// over from a previous deploy. The run ID is logged because it is the only way to
+// tell a fresh run from an adopted one.
 func startPageCacheWorkflow(ctx context.Context, tc temporalclient.Client, log *slog.Logger, params PageCacheParams) (temporalclient.WorkflowRun, error) {
 	run, err := tc.ExecuteWorkflow(ctx, pageCacheStartOptions(), PageCacheWorkflow, 0, params)
 	if err != nil {

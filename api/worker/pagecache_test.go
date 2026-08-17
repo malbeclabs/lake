@@ -797,10 +797,8 @@ func TestNetworkHealthDegradedThresholdAboveDefault(t *testing.T) {
 	require.Greater(t, nhDegradedErrorAfter, transientErrorAfterFailures)
 }
 
-// TestPageCacheStartOptionsRestartAtomically pins the deploy contract documented on
-// pageCacheStartOptions: a deploy gets a fresh run, never the previous deploy's.
-// Both policy fields are required — dropping either one restores the silent-adopt
-// path that wedged the refresh loop indefinitely.
+// TestPageCacheStartOptionsRestartAtomically pins both policy fields: dropping
+// either one lets a start adopt the previous deploy's run.
 func TestPageCacheStartOptionsRestartAtomically(t *testing.T) {
 	opts := pageCacheStartOptions()
 
@@ -814,12 +812,10 @@ func TestPageCacheStartOptionsRestartAtomically(t *testing.T) {
 		"the default ALLOW_DUPLICATE is what we want once the prior run has completed")
 }
 
-// TestStartPageCacheWorkflowStartsAndLogsItsRun covers what a mocked client can:
-// each start issues a fresh start request carrying the atomic conflict policy (so a
-// redeploy never short-circuits into the existing run), and logs that start's own
-// run ID — the only thing that tells a fresh run apart from an adopted one. Fresh
-// run *IDs* are allocated by the server, which the mock does not model; that half
-// is pinned by the options test above.
+// TestStartPageCacheWorkflowStartsAndLogsItsRun simulates a redeploy: each start
+// issues its own request and logs that start's run ID. Run IDs are allocated by the
+// server, which a mock cannot model, so the fresh-run guarantee itself is pinned by
+// the options test above.
 func TestStartPageCacheWorkflowStartsAndLogsItsRun(t *testing.T) {
 	tc := &mocks.Client{}
 	var gotOpts []temporalclient.StartWorkflowOptions
@@ -853,9 +849,7 @@ func TestStartPageCacheWorkflowStartsAndLogsItsRun(t *testing.T) {
 }
 
 // TestStartPageCacheWorkflowWrapsStartFailure keeps the "page-cache:" prefix on the
-// start error. Start returns it verbatim, and its only reader is a bare
-// slog.Error in api/main.go, so an unattributed SDK error would land in the logs
-// with nothing naming the component that died.
+// start error: Start returns it verbatim, and its only reader logs it as-is.
 func TestStartPageCacheWorkflowWrapsStartFailure(t *testing.T) {
 	tc := &mocks.Client{}
 	tc.On("ExecuteWorkflow", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
