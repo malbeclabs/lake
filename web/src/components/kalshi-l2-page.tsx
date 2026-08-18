@@ -155,17 +155,38 @@ export function KalshiL2Page() {
       perSet.set(key, Math.max(perSet.get(key) ?? 0, l.instruments))
     }
 
+    // Every tile below is per LANE, while a row is per (lane, vantage): the same stream
+    // recorded at two vantages is two rows, so summing rows would report the recording
+    // fan-out as if it were traffic. Rates take the widest vantage rather than the sum —
+    // each vantage sees the same publisher, so the largest is the best observation of it
+    // and a lossy vantage cannot inflate the total. Counts are of distinct lanes.
+    const ratePerLane = new Map<string, number>()
+    const seenByLane = new Map<string, { seen: boolean; lastSeen: number }>()
+    for (const l of lanes) {
+      const key = `${l.source}:${l.channel_id}`
+      ratePerLane.set(key, Math.max(ratePerLane.get(key) ?? 0, l.level_updates_per_sec))
+      // A lane counts as seen if ANY vantage heard it, and its freshness is the newest
+      // vantage: one dead recorder must not make a live lane read as quiet.
+      const prev = seenByLane.get(key)
+      const lastSeen = l.seen ? new Date(l.last_seen).getTime() : 0
+      seenByLane.set(key, {
+        seen: (prev?.seen ?? false) || l.seen,
+        lastSeen: Math.max(prev?.lastSeen ?? 0, lastSeen),
+      })
+    }
+
     // A lane that never published in the window is not the same thing as one that went silent:
     // most of the roster is out of season at any time, and folding them together would leave
     // this tile reading ~20 year-round, which is an alarm that is always on. Only lanes that
     // were heard from and then stopped are "quiet" — the same rule LaneRow uses. Never-seen
     // lanes get their own count so a lane that never started after a deploy is still visible.
+    const byLane = [...seenByLane.values()]
     return {
-      lanes: lanes.length,
+      lanes: seenByLane.size,
       instruments: [...perSet.values()].reduce((sum, n) => sum + n, 0),
-      updatesPerSec: lanes.reduce((sum, l) => sum + l.level_updates_per_sec, 0),
-      quiet: lanes.filter((l) => l.seen && asOf - new Date(l.last_seen).getTime() > QUIET_AFTER_MS).length,
-      neverSeen: lanes.filter((l) => !l.seen).length,
+      updatesPerSec: [...ratePerLane.values()].reduce((sum, n) => sum + n, 0),
+      quiet: byLane.filter((l) => l.seen && asOf - l.lastSeen > QUIET_AFTER_MS).length,
+      neverSeen: byLane.filter((l) => !l.seen).length,
     }
   }, [data?.lanes, asOf])
 
@@ -261,7 +282,11 @@ export function KalshiL2Page() {
                     </thead>
                     <tbody>
                       {section.lanes.map((lane) => (
-                        <LaneRow key={`${lane.source}:${lane.channel_id}`} lane={lane} asOf={asOf} />
+                        <LaneRow
+                          key={`${lane.source}:${lane.channel_id}:${lane.measurement_node_id}`}
+                          lane={lane}
+                          asOf={asOf}
+                        />
                       ))}
                     </tbody>
                   </table>
