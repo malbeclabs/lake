@@ -9,12 +9,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// capturingHandler records the level of the last log record it handled.
-type capturingHandler struct{ last slog.Level }
+// capturingHandler records the level of the last log record it handled, and
+// every record it handled, so tests can assert on either.
+type capturingHandler struct {
+	last    slog.Level
+	records []slog.Record
+}
 
 func (h *capturingHandler) Enabled(context.Context, slog.Level) bool { return true }
 func (h *capturingHandler) Handle(_ context.Context, r slog.Record) error {
 	h.last = r.Level
+	h.records = append(h.records, r)
 	return nil
 }
 func (h *capturingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }

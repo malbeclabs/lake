@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 
+	enumspb "go.temporal.io/api/enums/v1"
 	temporalclient "go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 
@@ -77,16 +78,10 @@ func Start(ctx context.Context, cfg Config) error {
 	RegisterWorkflows(w)
 	w.RegisterActivity(activities)
 
-	// Terminate any existing workflow from a previous deploy, then start fresh.
-	_ = tc.TerminateWorkflow(ctx, wfID, "", "restarting on deploy")
-	run, err := tc.ExecuteWorkflow(ctx, temporalclient.StartWorkflowOptions{
-		ID:        wfID,
-		TaskQueue: tq,
-	}, SolIngestWorkflow, 0)
+	run, err := startWorkflow(ctx, tc, log, cfg.Network)
 	if err != nil {
-		return fmt.Errorf("solingest: failed to start workflow: %w", err)
+		return err
 	}
-	log.Info("solingest: workflow started", "id", wfID)
 
 	go func() {
 		current := run
@@ -114,6 +109,34 @@ func Start(ctx context.Context, cfg Config) error {
 	case err := <-errCh:
 		return err
 	}
+}
+
+// deployStartOptions returns the start options for the Solana ingest workflow. A
+// deploy must always get a fresh run, since the workflow carries no GetVersion
+// guards. Both fields are needed for that: with
+// WorkflowExecutionErrorWhenAlreadyStarted unset, the SDK turns an already-started
+// error into a handle on the running execution and returns no error, so the
+// conflict policy alone can still adopt the previous deploy's run.
+func deployStartOptions(network string) temporalclient.StartWorkflowOptions {
+	return temporalclient.StartWorkflowOptions{
+		ID:                                       workflowID(network),
+		TaskQueue:                                taskQueue(network),
+		WorkflowIDConflictPolicy:                 enumspb.WORKFLOW_ID_CONFLICT_POLICY_TERMINATE_EXISTING,
+		WorkflowExecutionErrorWhenAlreadyStarted: true,
+	}
+}
+
+// startWorkflow starts a fresh Solana ingest run, terminating any run left over
+// from a previous deploy. The run ID is logged because it is the only way to tell
+// a fresh run from an adopted one.
+func startWorkflow(ctx context.Context, tc temporalclient.Client, log *slog.Logger, network string) (temporalclient.WorkflowRun, error) {
+	opts := deployStartOptions(network)
+	run, err := tc.ExecuteWorkflow(ctx, opts, SolIngestWorkflow, 0)
+	if err != nil {
+		return nil, fmt.Errorf("solingest: failed to start workflow: %w", err)
+	}
+	log.Info("solingest: workflow started", "id", opts.ID, "run_id", run.GetRunID())
+	return run, nil
 }
 
 // temporalLogger adapts slog to Temporal's log interface.

@@ -120,6 +120,12 @@ Refreshes are driven by a long-running Temporal workflow (`api/worker/`). `PageC
 
 Three operational notes. A rolling deploy still overlaps workers on one task queue, so an old pod can pick up the fresh run's first workflow task and write old-shaped history — the same wedge from a different cause; versioning the task queue by build SHA is the open follow-up. Terminating the workflow by hand does **not** restore the cache: `ExecuteWorkflow` runs only at process startup, so a manual terminate needs a pod restart after it. And prod runs `lake-api` at two replicas, each with an embedded worker, so a deploy logs two `page-cache: workflow started` lines with different `run_id`s — last one wins, and that is expected.
 
+## Temporal Workflow Restarts on Deploy
+
+Every long-running workflow started under a fixed ID at process startup must restart on deploy, and none of them carry `workflow.GetVersion` guards — so an adopted run replays the previous deploy's history against new code, fails every workflow task, and retries forever without converging. The four sites are `api/worker.pageCacheStartOptions`, `dzingest.deployStartOptions`, `solingest.deployStartOptions`, and `rollup.computeRollupStartOptions`; each sets `WorkflowIDConflictPolicy: TERMINATE_EXISTING` *and* `WorkflowExecutionErrorWhenAlreadyStarted: true`, and each logs the returned `run_id` so a start line is falsifiable.
+
+Both fields are required. With the flag false the SDK converts the server's already-started error into a handle on the running execution and returns no error, so the conflict policy alone is swallowed. Don't relax either, and don't reintroduce a separate `TerminateWorkflow` call before the start — the server terminates atomically as part of the start, so a preceding client-side terminate only adds a `NotFound` on every clean start. A fifth workflow of this shape follows the same pattern; per-run-ID workflows (the `admin` backfills) do not, since they never collide.
+
 ## Kalshi Scoreboard Feed Config
 
 The competing feeds shown on the Kalshi scoreboard are **not** in code — they live in the
