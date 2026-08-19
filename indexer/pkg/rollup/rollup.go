@@ -144,10 +144,14 @@ func Start(ctx context.Context, cfg Config) error {
 // computeRollupStartOptions returns the start options for the compute-rollup
 // workflow. A deploy must always get a fresh run: the workflow carries no
 // GetVersion guards, so replaying a previous deploy's history against new worker
-// code raises non-determinism errors. Both fields are needed for that: with
-// WorkflowExecutionErrorWhenAlreadyStarted unset, the SDK turns an already-started
-// error into a handle on the running execution and returns no error, so the
-// conflict policy alone can still adopt the previous deploy's run.
+// code raises non-determinism errors. The conflict policy is what delivers that:
+// the server terminates any running execution as part of the start, atomically.
+// Keep WorkflowExecutionErrorWhenAlreadyStarted set too — without the conflict
+// policy the server's default is to fail an already-started start, and with the
+// flag unset the SDK turns that failure into a handle on the previous deploy's
+// still-running run and returns no error, which is how the same start silently
+// wedged the page cache for six hours (#776). The flag makes a start that is not
+// fresh fail loudly instead.
 func computeRollupStartOptions(network string) temporalclient.StartWorkflowOptions {
 	return temporalclient.StartWorkflowOptions{
 		ID:                                       workflowID(network),

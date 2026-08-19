@@ -48,16 +48,16 @@ func TestDeployStartOptionsRestartAtomically(t *testing.T) {
 	require.Equal(t, enumspb.WORKFLOW_ID_CONFLICT_POLICY_TERMINATE_EXISTING, opts.WorkflowIDConflictPolicy,
 		"a running execution must be terminated by the start call, not adopted")
 	require.True(t, opts.WorkflowExecutionErrorWhenAlreadyStarted,
-		"without this the SDK turns an already-started error into a handle on the running execution")
+		"a start that is not fresh must fail loudly, not return a handle on the running execution")
 	require.Equal(t, enumspb.WORKFLOW_ID_REUSE_POLICY_UNSPECIFIED, opts.WorkflowIDReusePolicy,
 		"the default ALLOW_DUPLICATE is what we want once the prior run has completed")
 }
 
-// TestStartWorkflowStartsAndLogsItsRun simulates a redeploy: each start issues
+// TestStartSolIngestWorkflowStartsAndLogsItsRun simulates a redeploy: each start issues
 // its own request and logs that start's run ID. Run IDs are allocated by the
 // server, which a mock cannot model, so the fresh-run guarantee itself is pinned
 // by the options test above.
-func TestStartWorkflowStartsAndLogsItsRun(t *testing.T) {
+func TestStartSolIngestWorkflowStartsAndLogsItsRun(t *testing.T) {
 	tc := &mocks.Client{}
 	var gotOpts []temporalclient.StartWorkflowOptions
 	for _, runID := range []string{"run-1", "run-2"} {
@@ -72,7 +72,7 @@ func TestStartWorkflowStartsAndLogsItsRun(t *testing.T) {
 
 	for range 2 {
 		h := &capturingHandler{}
-		run, err := startWorkflow(context.Background(), tc, slog.New(h), "mainnet-beta")
+		run, err := startSolIngestWorkflow(context.Background(), tc, slog.New(h), "mainnet-beta")
 		require.NoError(t, err)
 
 		rec, ok := findRecord(h.records, "solingest: workflow started")

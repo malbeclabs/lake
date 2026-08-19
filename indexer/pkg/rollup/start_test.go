@@ -48,7 +48,7 @@ func TestComputeRollupStartOptionsRestartAtomically(t *testing.T) {
 	require.Equal(t, enumspb.WORKFLOW_ID_CONFLICT_POLICY_TERMINATE_EXISTING, opts.WorkflowIDConflictPolicy,
 		"a running execution must be terminated by the start call, not adopted")
 	require.True(t, opts.WorkflowExecutionErrorWhenAlreadyStarted,
-		"without this the SDK turns an already-started error into a handle on the running execution")
+		"a start that is not fresh must fail loudly, not return a handle on the running execution")
 	require.Equal(t, enumspb.WORKFLOW_ID_REUSE_POLICY_UNSPECIFIED, opts.WorkflowIDReusePolicy,
 		"the default ALLOW_DUPLICATE is what we want once the prior run has completed")
 }
