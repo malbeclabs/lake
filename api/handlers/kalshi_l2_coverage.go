@@ -106,6 +106,12 @@ type KalshiL2Lane struct {
 	ChannelID    uint8  `json:"channel_id"`
 	LocationCode string `json:"location_code"`
 
+	// MeasurementNodeID completes this row's identity. A lane recorded from several
+	// vantages is several rows, one per vantage — see the GROUP BY in
+	// FetchKalshiL2Coverage. location_code alone is not a key: two recorders can share a
+	// metro, and the rates would merge with no way to see it had happened.
+	MeasurementNodeID string `json:"measurement_node_id"`
+
 	// Rates over the coverage window.
 	MessagesPerSec     float64 `json:"messages_per_sec"`
 	LevelUpdatesPerSec float64 `json:"level_updates_per_sec"`
@@ -157,10 +163,23 @@ func (a *API) kalshiL2TableExists(ctx context.Context) (bool, error) {
 
 // FetchKalshiL2Coverage aggregates the market-by-price lanes over the coverage window.
 //
-// Grouped by (source, channel_id), never by source alone: prod's two publisher arms share one
-// multicast group and one port triple and differ only by channel_id, and instrument_id is
-// unique only within a channel. Collapsing the arms would merge two independent delta streams
-// and double-count their instruments.
+// Grouped by (source, channel_id, measurement_node_id), and each of the three is
+// load-bearing:
+//
+//   - never by source alone: prod's two publisher arms share one multicast group and one port
+//     triple and differ only by channel_id, and instrument_id is unique only within a channel.
+//     Collapsing the arms would merge two independent delta streams and double-count their
+//     instruments.
+//   - never without the vantage: one lane recorded at several vantages is several INDEPENDENT
+//     observations of the same stream. Without measurement_node_id in the key they collapse
+//     into one row whose rates are their SUM — three vantages of perps would report treble the
+//     real message rate — and any(location_code) would name one of them arbitrarily, so the
+//     merge is invisible in the output. Recording is cmh-only today precisely because this
+//     was wrong (malbeclabs/infra, kalshi_feed_capture_cmh.yml), which is what makes adding a
+//     vantage safe now.
+//
+// measurement_node_id rather than location_code: two recorders can share a metro, and that is
+// the case the location column cannot represent.
 //
 // No latency is derived from source_ts_ns here. Its meaning is chosen by source_ts_kind
 // (`venue` / `publisher_capture` / `none`), so an unfiltered delta silently reports
@@ -180,6 +199,7 @@ func (a *API) FetchKalshiL2Coverage(ctx context.Context) (*KalshiL2CoverageRespo
 		SELECT
 			source,
 			channel_id,
+			measurement_node_id,
 			any(location_code) AS location_code,
 			count() AS messages,
 			countIf(msg_type = 'level_update') AS level_updates,
@@ -196,7 +216,7 @@ func (a *API) FetchKalshiL2Coverage(ctx context.Context) (*KalshiL2CoverageRespo
 			max(recv_ts_ns) AS last_recv_ts_ns
 		FROM %[1]s.kalshi_mbp_levels
 		WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(%[2]d)))
-		GROUP BY source, channel_id`, db, kalshiL2WindowMinutes)
+		GROUP BY source, channel_id, measurement_node_id`, db, kalshiL2WindowMinutes)
 
 	rows, err := a.envDB(ctx).Query(ctx, q)
 	if err != nil {
@@ -216,7 +236,7 @@ func (a *API) FetchKalshiL2Coverage(ctx context.Context) (*KalshiL2CoverageRespo
 		var messages, levelUpdates uint64
 		var lastRecvNs uint64
 		if err := rows.Scan(
-			&l.Source, &l.ChannelID, &l.LocationCode,
+			&l.Source, &l.ChannelID, &l.MeasurementNodeID, &l.LocationCode,
 			&messages, &levelUpdates, &l.Instruments,
 			&l.DepthP50, &l.DepthP95, &l.DepthMax,
 			&l.Gaps, &l.Resets, &l.Clears, &l.SnapshotCycles,
@@ -277,7 +297,10 @@ func (a *API) FetchKalshiL2Coverage(ctx context.Context) (*KalshiL2CoverageRespo
 		if out[i].lane.Source != out[j].lane.Source {
 			return out[i].lane.Source < out[j].lane.Source
 		}
-		return out[i].lane.ChannelID < out[j].lane.ChannelID
+		if out[i].lane.ChannelID != out[j].lane.ChannelID {
+			return out[i].lane.ChannelID < out[j].lane.ChannelID
+		}
+		return out[i].lane.MeasurementNodeID < out[j].lane.MeasurementNodeID
 	})
 	for _, o := range out {
 		resp.Lanes = append(resp.Lanes, o.lane)
