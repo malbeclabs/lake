@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"errors"
 	"log/slog"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/proto"
 	"github.com/getsentry/sentry-go"
 
 	"github.com/malbeclabs/lake/utils/pkg/dberror"
@@ -46,6 +48,24 @@ func logWarn(msg string, args ...any) {
 		return
 	}
 	slog.Default().Warn(msg, args...)
+}
+
+// isMissingTable reports whether err is ClickHouse refusing a query because the
+// table is not there for this connection: code 60 (UNKNOWN_TABLE), or code 497
+// (NOT_ENOUGH_PRIVILEGES), which is what a table outside the read-only user's
+// grants looks like.
+//
+// Neither is actionable on the request path. A table whose migration ships with
+// the indexer does not exist for an API pod rolled out ahead of it, and an env
+// whose database the indexer never writes will not have it at all. Both are
+// deploy-time dependency races, so a handler should answer with an empty result
+// at WARN instead of letting a query error page on-call.
+//
+// geo_concentration.go and geo_validators.go inline the same pair of codes;
+// they predate this helper.
+func isMissingTable(err error) bool {
+	var chErr *proto.Exception
+	return errors.As(err, &chErr) && (chErr.Code == 60 || chErr.Code == 497)
 }
 
 // internalError logs the full error internally and returns a user-safe message.

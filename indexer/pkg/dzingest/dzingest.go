@@ -24,6 +24,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/dz/serviceability/permissionevents"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/escrowevents"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/feedsubscription"
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
@@ -44,6 +45,7 @@ type Config struct {
 	Geolocation      *dzgeoloc.View         // optional
 	Shreds           *dzshreds.View         // optional
 	EscrowEvents     *escrowevents.View     // optional
+	FeedSubscription *feedsubscription.View // optional
 	PermissionEvents *permissionevents.View // optional
 	TelemLatency     *dztelemlatency.View
 	TelemUsage       *dztelemusage.View // optional
@@ -94,6 +96,7 @@ func Start(ctx context.Context, cfg Config) error {
 		Geolocation:      cfg.Geolocation,
 		Shreds:           cfg.Shreds,
 		EscrowEvents:     cfg.EscrowEvents,
+		FeedSubscription: cfg.FeedSubscription,
 		PermissionEvents: cfg.PermissionEvents,
 		TelemLatency:     cfg.TelemLatency,
 		TelemUsage:       cfg.TelemUsage,

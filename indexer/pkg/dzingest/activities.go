@@ -15,6 +15,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/dz/serviceability/permissionevents"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/escrowevents"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/feedsubscription"
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
@@ -33,6 +34,7 @@ type Activities struct {
 	Geolocation      *dzgeoloc.View         // nil when geolocation is not configured
 	Shreds           *dzshreds.View         // nil when shreds is not configured
 	EscrowEvents     *escrowevents.View     // nil when shreds is not configured
+	FeedSubscription *feedsubscription.View // nil when shreds is not configured
 	PermissionEvents *permissionevents.View // nil when permission events indexing is not configured
 	TelemLatency     *dztelemlatency.View
 	TelemUsage       *dztelemusage.View // nil when InfluxDB is not configured
@@ -109,15 +111,46 @@ func (a *Activities) RefreshGeolocation(ctx context.Context) error {
 
 // RefreshShreds fetches shred subscription program state from RPC
 // and writes it to ClickHouse dimension tables. No-op if shreds is not configured.
+//
+// It also refreshes the feed-subscription program's FeedDistribution accounts.
+// Those are a separate program and would read better as their own activity, but
+// adding an activity changes the command sequence DZIngestWorkflow emits, which
+// breaks replay against the previous deploy's run. Unlike PageCacheWorkflow,
+// dzingest does not guarantee a fresh run per deploy: dzingest.go calls
+// TerminateWorkflow and ignores the result, then starts the workflow without
+// WorkflowIDConflictPolicy or WorkflowExecutionErrorWhenAlreadyStarted, so a
+// deploy can adopt the still-running old run. An activity body is not part of
+// workflow history, so extending this one is invisible to replay. Split it out
+// once dzingest adopts pageCacheStartOptions' shape: tracked in
+// malbeclabs/lake#778.
 func (a *Activities) RefreshShreds(ctx context.Context) error {
 	if a.Shreds == nil {
 		a.IngestionLog.WrapSkipped(ctx, "dzingest", "RefreshShreds", a.Network)
 		return nil
 	}
 	return a.refresh(ctx, "RefreshShreds", func() (ingestionlog.RefreshResult, error) {
-		result, err := a.Shreds.Refresh(ctx)
-		if err != nil {
-			return result, fmt.Errorf("shreds refresh: %w", err)
+		result, shredsErr := a.Shreds.Refresh(ctx)
+
+		// The two reads are of different programs and share nothing, so the feed
+		// read runs whether or not the shreds read succeeded. Returning early on
+		// shredsErr would have made a shreds outage silently stop feed indexing
+		// too, for no reason beyond the order of these lines.
+		//
+		// The feed failure escalates on its own counter rather than being
+		// returned: reporting it here would page under the name "RefreshShreds"
+		// for a shreds refresh that in fact succeeded. A cancelled context is the
+		// one case worth skipping, since the fetch cannot succeed and the
+		// escalator would only be recording the shutdown.
+		if a.FeedSubscription != nil && ctx.Err() == nil {
+			feedResult, feedErr := a.FeedSubscription.Refresh(ctx)
+			a.FeedSubscription.Escalate(feedErr)
+			if feedErr == nil {
+				result.RowsAffected += feedResult.RowsAffected
+			}
+		}
+
+		if shredsErr != nil {
+			return result, fmt.Errorf("shreds refresh: %w", shredsErr)
 		}
 		return result, nil
 	})
