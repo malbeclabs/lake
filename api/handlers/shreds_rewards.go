@@ -53,8 +53,37 @@ func tokenScaleSQL(col string) string {
 // P2Z = the epoch's 2Z pool. slotsCol is the leader_slots column; leafMintExpr
 // resolves the leaf's reward mint. T.total_leader_slots is the legacy fallback
 // denominator.
+// clientProportionSQL resolves a client's reward proportion in basis points,
+// falling back to default_proportion and then to the legacy 3500. A missing
+// client row reads as 0 through the LEFT JOIN, which is why the zero checks are
+// nested rather than a single coalesce.
+const clientProportionSQL = `if(C.proportion > 0, C.proportion, if(C.default_proportion > 0, C.default_proportion, 3500))`
+
+// validatorShareBpsSQL and clientShareBpsSQL are the two sides of one split.
+//
+// The onchain distribute weights a leaf by `leader_slots * (MAX -
+// client_proportion)` for the publisher branch and `leader_slots *
+// client_proportion` for the client branch, over the same denominator — see
+// try_validator_share_pre_burn in the shred-subscription program. So a
+// validator and the client team it ran are paid complementary shares of the
+// same pool, and swapping these two expressions is the whole difference between
+// the two reward streams.
+var (
+	validatorShareBpsSQL = "toFloat64(10000 - " + clientProportionSQL + ")"
+	clientShareBpsSQL    = "toFloat64(" + clientProportionSQL + ")"
+)
+
+// earnedWholeAndTokenSQL is the publisher (validator) side of the split.
 func earnedWholeAndTokenSQL(slotsCol, leafMintExpr string) (earnedWhole, tokenSymbol string) {
-	propFactor := `toFloat64(10000 - if(C.proportion > 0, C.proportion, if(C.default_proportion > 0, C.default_proportion, 3500)))`
+	return earnedWholeAndTokenForShareSQL(slotsCol, leafMintExpr, validatorShareBpsSQL)
+}
+
+// earnedWholeAndTokenForShareSQL builds the per-leaf reward for whichever side
+// of the split shareBps selects. Everything but that weight is identical between
+// the two, so they share one body: a drift between them would show up as the two
+// streams disagreeing about the same pool.
+func earnedWholeAndTokenForShareSQL(slotsCol, leafMintExpr, shareBps string) (earnedWhole, tokenSymbol string) {
+	propFactor := shareBps
 	tokenPool := fmt.Sprintf(`if(P.reward_mint = '' OR P.reward_mint = '%s', toFloat64(P.tokens_received_2z) * 0.9, toFloat64(P.distributed_amount))`, rewardMint2Z)
 	twoZPool := `toFloat64(P2Z.tokens_received_2z) * 0.9`
 	denomP := `nullIf(if(P.accumulated_slots_scaled > 0, toFloat64(P.accumulated_slots_scaled), toFloat64(if(P.total_leader_slots > 0, P.total_leader_slots, T.total_leader_slots)) * 10000.0), 0)`
@@ -87,14 +116,54 @@ type ShredsRewardsRow struct {
 	EpochTokens map[uint64]string `json:"epoch_tokens"`
 }
 
+// ShredsClientRewardsRow is a single row of the client-team rewards list: the
+// same leaves as the validator list, grouped by the client a validator published
+// under rather than by the validator itself.
+//
+// The validator-identity columns (vote pubkey, stake, DZ IP) have no meaning for
+// a team spanning many validators, so this is a sibling type rather than the same
+// row with three fields left blank. Validators is the distinct node count.
+type ShredsClientRewardsRow struct {
+	ClientID   uint16 `json:"client_id"`
+	ClientName string `json:"client_name"`
+	// Validators is how many nodes published under this client in the newest
+	// funded epoch, not how many ever did. A validator runs one client at a time
+	// and switches, so a lifetime count would both overstate the current
+	// headcount and count a switcher under every client it ever used.
+	Validators uint64 `json:"validators"`
+	// TotalEarned2Z is the client team's OWN reward, not the earnings of the
+	// validators that ran it. Onchain the two are complementary shares of one
+	// pool: the validator is weighted by slots * (MAX - client_proportion) and the
+	// client team by slots * client_proportion, over the same denominator (see
+	// try_validator_share_pre_burn in the shred-subscription program). At today's
+	// flat 3500 a team receives 35% where its validators receive 65%.
+	//
+	// 2Z-denominated, matching the validator list. That also keeps it exact: for
+	// 2Z one journal plays both the publisher and client roles, while a non-2Z
+	// token can have a separate client journal that lake does not yet distinguish.
+	//
+	// There is deliberately no claimable figure. Claim state is indexed per
+	// (epoch, node, client) as the validator's claim on its own leaf, and nothing
+	// records whether a client team has claimed its share, so any number here
+	// would assert something unknown.
+	TotalEarned2Z float64 `json:"total_earned_2z"`
+}
+
 // ShredsRewardsResponse is the full response for GET /api/dz/shreds/rewards.
+//
+// Exactly one of Validators and Clients carries rows, chosen by the `group`
+// query param; the other is an empty array. The epoch fields describe the
+// columns both groupings share.
 type ShredsRewardsResponse struct {
-	CurrentSolanaEpoch   uint64             `json:"current_solana_epoch"`
-	LatestFinalizedEpoch uint64             `json:"latest_finalized_epoch"`
-	EpochColumns         []uint64           `json:"epoch_columns"`
-	Validators           []ShredsRewardsRow `json:"validators"`
+	CurrentSolanaEpoch   uint64                   `json:"current_solana_epoch"`
+	LatestFinalizedEpoch uint64                   `json:"latest_finalized_epoch"`
+	EpochColumns         []uint64                 `json:"epoch_columns"`
+	Validators           []ShredsRewardsRow       `json:"validators"`
+	Clients              []ShredsClientRewardsRow `json:"clients"`
 	// Total is the count of distinct validators matching the (search) filter,
-	// before limit/offset — used by the client to render the page count.
+	// before limit/offset — used by the client to render the page count. In
+	// client-team grouping it is simply the number of client rows returned,
+	// since that view is unpaginated and unfiltered.
 	Total int `json:"total"`
 }
 
@@ -173,6 +242,76 @@ const shredsRewardsCacheKey = "shreds_rewards"
 // request — otherwise every page load misses the cache and runs the full query.
 const shredsRewardsDefaultLimit = 100
 
+// shredsRewardsEarningsCTE is the shared front half of both rewards queries: it
+// resolves each leaf's reward token, values it against the right per-(epoch,
+// token) pool, and flags whether the epoch is inside the recent window.
+//
+// Both the per-validator and per-client lists aggregate the SAME leaf rows and
+// differ only in their GROUP BY key, so this text lives in one place. Duplicating
+// it would let the two groupings drift, and a drift shows up as two different
+// totals for the same underlying rewards.
+//
+// The caller appends its own aggregate CTE and final SELECT. client_id is
+// projected for the per-client grouping; the per-validator query ignores it.
+func shredsRewardsEarningsCTE(leafMintExpr, earnedWhole, poolMintExpr, tokenSymbol string) string {
+	return fmt.Sprintf(`		WITH epoch_totals AS (
+			SELECT subscription_epoch, sum(leader_slots) AS total_leader_slots
+			FROM dim_dz_shred_validator_rewards_leaves_current
+			GROUP BY subscription_epoch
+		),
+		recent_epochs AS (
+			SELECT subscription_epoch AS solana_epoch
+			FROM dim_dz_shred_distribution_2z_pool_current
+			WHERE tokens_received_2z > 0
+			GROUP BY subscription_epoch
+			ORDER BY subscription_epoch DESC
+			LIMIT 10
+		),
+		leaves_tok AS (
+			SELECT
+				L.node_id AS node_id,
+				L.subscription_epoch AS subscription_epoch,
+				L.leader_slots AS leader_slots,
+				L.client_id AS client_id,
+				%[1]s AS leaf_mint,
+				coalesce(S.is_claimable, 0) AS is_claimable
+			FROM dim_dz_shred_validator_rewards_leaves_current L
+			LEFT JOIN dim_dz_shred_validator_leaf_distribution_status_current S
+				ON S.subscription_epoch = L.subscription_epoch
+			   AND S.node_id = L.node_id
+			   AND S.client_id = L.client_id
+		),
+		earnings AS (
+			SELECT
+				lt.node_id AS node_id,
+				lt.client_id AS client_id,
+				lt.subscription_epoch AS subscription_epoch,
+				lt.leaf_mint AS leaf_mint,
+				-- token_symbol and earned carry a 2Z-equivalent fallback for
+				-- claimable non-2Z leaves with no own-token pool yet; see
+				-- earnedWholeAndTokenSQL.
+				%[4]s AS token_symbol,
+				%[2]s AS earned,
+				lt.is_claimable AS is_claimable,
+				if(R.solana_epoch IS NULL, 0, 1) AS is_recent
+			FROM leaves_tok lt
+			INNER JOIN dim_dz_shred_distribution_2z_pool_current P
+				ON P.subscription_epoch = lt.subscription_epoch
+			   AND %[3]s = lt.leaf_mint
+			-- The epoch's 2Z pool, for the 2Z-equivalent fallback.
+			LEFT JOIN dim_dz_shred_distribution_2z_pool_current P2Z
+				ON P2Z.subscription_epoch = lt.subscription_epoch
+			   AND P2Z.reward_mint = '%[5]s'
+			INNER JOIN epoch_totals T
+				ON T.subscription_epoch = lt.subscription_epoch
+			LEFT JOIN dim_dz_shred_distribution_client_proportions_current C
+				ON C.subscription_epoch = lt.subscription_epoch
+			   AND C.client_id = lt.client_id
+			LEFT JOIN recent_epochs R
+				ON R.solana_epoch = lt.subscription_epoch
+		),`, leafMintExpr, earnedWhole, poolMintExpr, tokenSymbol, rewardMint2Z)
+}
+
 // shredsRewardsDefaultSort / Order are the canonical default ordering the web
 // sends on the first-page view. A request carrying these explicit values is
 // equivalent to the param-less default and is served from the page cache.
@@ -192,6 +331,7 @@ func (a *API) GetShredsRewards(w http.ResponseWriter, r *http.Request) {
 	search := strings.TrimSpace(q.Get("search"))
 	sortField := strings.TrimSpace(q.Get("sort"))
 	order := strings.TrimSpace(q.Get("order"))
+	groupByClient := strings.EqualFold(strings.TrimSpace(q.Get("group")), "client")
 
 	limit := shredsRewardsDefaultLimit
 	limitProvided := false
@@ -218,6 +358,24 @@ func (a *API) GetShredsRewards(w http.ResponseWriter, r *http.Request) {
 	// always sends explicit sort/order/limit/offset, so we match the canonical
 	// default *values* (not just absent params) — anything else is a custom view
 	// and bypasses the cache.
+	// Client-team grouping returns at most one row per registered client (ten
+	// today), so it needs no pagination and no page-cache entry: measured at
+	// ~65ms against production. It must also never read the cache, whose entry
+	// holds the validator-shaped payload.
+	if groupByClient {
+		resp, err := a.computeShredsClientRewards(ctx, sortField, order)
+		if err != nil {
+			logError("shreds client rewards query failed", "error", err)
+			http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			logError("shreds client rewards encode failed", "error", err)
+		}
+		return
+	}
+
 	isDefault := search == "" &&
 		(sortField == "" || sortField == shredsRewardsDefaultSort) &&
 		(order == "" || order == shredsRewardsDefaultOrder) &&
@@ -262,45 +420,9 @@ func (a *API) computeShredsRewards(ctx context.Context, search, sortField, order
 	// epoch starting from its launch epoch. `associated_dz_epoch` is the
 	// parent revenue-distribution program's epoch counter (different,
 	// slower) and is NOT the Solana epoch.
-	start := time.Now()
-	epochRows, err := a.envDB(ctx).Query(ctx, `
-		SELECT subscription_epoch
-		FROM dim_dz_shred_distribution_2z_pool_current
-		WHERE tokens_received_2z > 0
-		GROUP BY subscription_epoch
-		ORDER BY subscription_epoch DESC
-		LIMIT 10
-	`)
-	metrics.RecordClickHouseQuery("shreds_rewards:epochs", time.Since(start), err)
+	epochColumns, currentSolanaEpoch, latestFinalized, err := a.shredsRewardsEpochHeader(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("shreds rewards epoch query: %w", err)
-	}
-	var epochColumns []uint64
-	for epochRows.Next() {
-		var e uint64
-		if err := epochRows.Scan(&e); err != nil {
-			epochRows.Close()
-			return nil, fmt.Errorf("shreds rewards epoch scan: %w", err)
-		}
-		epochColumns = append(epochColumns, e)
-	}
-	epochRows.Close()
-
-	// Current Solana epoch (from vote accounts) and latest finalized DZ epoch
-	// (newest non-zero distribution).
-	var currentSolanaEpochRaw int64
-	if err := a.envDB(ctx).QueryRow(ctx,
-		`SELECT coalesce(max(epoch), 0) FROM solana_vote_accounts_current`,
-	).Scan(&currentSolanaEpochRaw); err != nil {
-		logError("shreds rewards current epoch query failed", "error", err)
-	}
-	var currentSolanaEpoch uint64
-	if currentSolanaEpochRaw > 0 {
-		currentSolanaEpoch = uint64(currentSolanaEpochRaw)
-	}
-	var latestFinalized uint64
-	if len(epochColumns) > 0 {
-		latestFinalized = epochColumns[0]
+		return nil, err
 	}
 
 	// Per-leaf reward token: the journal that accumulated the leaf, recorded on
@@ -316,62 +438,7 @@ func (a *API) computeShredsRewards(ctx context.Context, search, sortField, order
 	// than via `IN (SELECT ...)` inside a sumIf/groupArrayIf: the ClickHouse
 	// analyzer's CTE-column scoping breaks when a CTE is referenced from
 	// inside an aggregate's filter expression.
-	query := fmt.Sprintf(`
-		WITH epoch_totals AS (
-			SELECT subscription_epoch, sum(leader_slots) AS total_leader_slots
-			FROM dim_dz_shred_validator_rewards_leaves_current
-			GROUP BY subscription_epoch
-		),
-		recent_epochs AS (
-			SELECT subscription_epoch AS solana_epoch
-			FROM dim_dz_shred_distribution_2z_pool_current
-			WHERE tokens_received_2z > 0
-			GROUP BY subscription_epoch
-			ORDER BY subscription_epoch DESC
-			LIMIT 10
-		),
-		leaves_tok AS (
-			SELECT
-				L.node_id AS node_id,
-				L.subscription_epoch AS subscription_epoch,
-				L.leader_slots AS leader_slots,
-				L.client_id AS client_id,
-				%[1]s AS leaf_mint,
-				coalesce(S.is_claimable, 0) AS is_claimable
-			FROM dim_dz_shred_validator_rewards_leaves_current L
-			LEFT JOIN dim_dz_shred_validator_leaf_distribution_status_current S
-				ON S.subscription_epoch = L.subscription_epoch
-			   AND S.node_id = L.node_id
-			   AND S.client_id = L.client_id
-		),
-		earnings AS (
-			SELECT
-				lt.node_id AS node_id,
-				lt.subscription_epoch AS subscription_epoch,
-				lt.leaf_mint AS leaf_mint,
-				-- token_symbol and earned carry a 2Z-equivalent fallback for
-				-- claimable non-2Z leaves with no own-token pool yet; see
-				-- earnedWholeAndTokenSQL.
-				%[4]s AS token_symbol,
-				%[2]s AS earned,
-				lt.is_claimable AS is_claimable,
-				if(R.solana_epoch IS NULL, 0, 1) AS is_recent
-			FROM leaves_tok lt
-			INNER JOIN dim_dz_shred_distribution_2z_pool_current P
-				ON P.subscription_epoch = lt.subscription_epoch
-			   AND %[3]s = lt.leaf_mint
-			-- The epoch's 2Z pool, for the 2Z-equivalent fallback.
-			LEFT JOIN dim_dz_shred_distribution_2z_pool_current P2Z
-				ON P2Z.subscription_epoch = lt.subscription_epoch
-			   AND P2Z.reward_mint = '%[5]s'
-			INNER JOIN epoch_totals T
-				ON T.subscription_epoch = lt.subscription_epoch
-			LEFT JOIN dim_dz_shred_distribution_client_proportions_current C
-				ON C.subscription_epoch = lt.subscription_epoch
-			   AND C.client_id = lt.client_id
-			LEFT JOIN recent_epochs R
-				ON R.solana_epoch = lt.subscription_epoch
-		),
+	query := shredsRewardsEarningsCTE(leafMintExpr, earnedWholeList, poolMintExpr, tokenSymList) + fmt.Sprintf(`
 		per_validator AS (
 			SELECT
 				node_id AS pv_node_id,
@@ -419,7 +486,7 @@ func (a *API) computeShredsRewards(ctx context.Context, search, sortField, order
 		tokenSymList, rewardMint2Z, rewardMint2Z,
 		whereClause, sortSQL, limit, offset)
 
-	start = time.Now()
+	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query, args...)
 	metrics.RecordClickHouseQuery("shreds_rewards", time.Since(start), err)
 	if err != nil {
@@ -519,6 +586,7 @@ func (a *API) computeShredsRewards(ctx context.Context, search, sortField, order
 		LatestFinalizedEpoch: latestFinalized,
 		EpochColumns:         epochColumns,
 		Validators:           validators,
+		Clients:              []ShredsClientRewardsRow{},
 		Total:                int(total),
 	}, nil
 }
@@ -770,4 +838,166 @@ func (a *API) GetShredsRewardsDetail(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		logError("failed to encode shreds rewards detail", "error", err)
 	}
+}
+
+// shredsRewardsEpochHeader returns the epoch columns both rewards groupings
+// share: the up-to-10 newest Solana epochs with a funded 2Z pool, the current
+// Solana epoch, and the newest finalized one. Shared so the two lists cannot
+// disagree about which epochs they are showing.
+func (a *API) shredsRewardsEpochHeader(ctx context.Context) ([]uint64, uint64, uint64, error) {
+	start := time.Now()
+	epochRows, err := a.envDB(ctx).Query(ctx, `
+		SELECT subscription_epoch
+		FROM dim_dz_shred_distribution_2z_pool_current
+		WHERE tokens_received_2z > 0
+		GROUP BY subscription_epoch
+		ORDER BY subscription_epoch DESC
+		LIMIT 10
+	`)
+	metrics.RecordClickHouseQuery("shreds_rewards:epochs", time.Since(start), err)
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("shreds rewards epoch query: %w", err)
+	}
+	var epochColumns []uint64
+	for epochRows.Next() {
+		var e uint64
+		if err := epochRows.Scan(&e); err != nil {
+			epochRows.Close()
+			return nil, 0, 0, fmt.Errorf("shreds rewards epoch scan: %w", err)
+		}
+		epochColumns = append(epochColumns, e)
+	}
+	epochRows.Close()
+
+	// Current Solana epoch (from vote accounts) and latest finalized DZ epoch
+	// (newest non-zero distribution).
+	var currentSolanaEpochRaw int64
+	if err := a.envDB(ctx).QueryRow(ctx,
+		`SELECT coalesce(max(epoch), 0) FROM solana_vote_accounts_current`,
+	).Scan(&currentSolanaEpochRaw); err != nil {
+		logError("shreds rewards current epoch query failed", "error", err)
+	}
+	var currentSolanaEpoch uint64
+	if currentSolanaEpochRaw > 0 {
+		currentSolanaEpoch = uint64(currentSolanaEpochRaw)
+	}
+	var latestFinalized uint64
+	if len(epochColumns) > 0 {
+		latestFinalized = epochColumns[0]
+	}
+	if epochColumns == nil {
+		epochColumns = []uint64{}
+	}
+	return epochColumns, currentSolanaEpoch, latestFinalized, nil
+}
+
+// buildShredsClientRewardsSort maps the list's sortable columns to SQL for the
+// client-team grouping. The web sends the same sort/order params as the
+// validator list; only these four columns exist in that view.
+func buildShredsClientRewardsSort(field, order string) string {
+	dir := "DESC"
+	if strings.EqualFold(order, "asc") {
+		dir = "ASC"
+	}
+	switch field {
+	case "client_name":
+		return "client_name " + dir + ", total_earned_2z DESC"
+	case "validators":
+		return "validators " + dir + ", total_earned_2z DESC"
+	default:
+		return "total_earned_2z " + dir + ", client_id ASC"
+	}
+}
+
+// computeShredsClientRewards returns the rewards list grouped by client team
+// instead of by validator. A validator publishing under several clients has its
+// leaves split across those teams here, where the per-validator list sums them
+// into one row (lake#784); 420 of 528 validators are in that position.
+//
+// Both figures are 2Z-denominated, matching the validator list: a team whose
+// validators picked different reward tokens shows only its 2Z-denominated share,
+// exactly as a single validator does. No per-epoch breakdown is returned because
+// the list page has no per-epoch columns; the validator detail page owns that.
+//
+// There is no search or pagination: the result is one row per client that has
+// ever earned, ten today.
+func (a *API) computeShredsClientRewards(ctx context.Context, sortField, order string) (*ShredsRewardsResponse, error) {
+	epochColumns, currentSolanaEpoch, latestFinalized, err := a.shredsRewardsEpochHeader(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	leafMintExpr := fmt.Sprintf(`if(S.node_id != '' AND S.journal_mint_key != '', S.journal_mint_key, '%s')`, rewardMint2Z)
+	poolMintExpr := fmt.Sprintf(`if(P.reward_mint != '', P.reward_mint, '%s')`, rewardMint2Z)
+	// The client side of the split, not the validator side. This one expression is
+	// the whole difference between "what the validators running this client
+	// earned" and "what this client team earned".
+	earnedWhole, tokenSym := earnedWholeAndTokenForShareSQL("lt.leader_slots", "lt.leaf_mint", clientShareBpsSQL)
+
+	query := shredsRewardsEarningsCTE(leafMintExpr, earnedWhole, poolMintExpr, tokenSym) + fmt.Sprintf(`
+		per_client AS (
+			SELECT
+				client_id AS pc_client_id,
+				-- Nodes publishing under this client in the newest funded epoch,
+				-- not every node that ever did. A validator runs one client at a
+				-- time and switches between them, so a lifetime count reads as a
+				-- current headcount while being several times larger: Jito Labs
+				-- has 432 nodes all-time against 68 in the latest epoch. Counting
+				-- lifetime also double-counts a switcher under every client it
+				-- ever used, so the column would sum to about twice the number of
+				-- validators that exist.
+				uniqExactIf(node_id, subscription_epoch = %[2]d) AS validators,
+				sumIf(coalesce(earned, 0), token_symbol = '2Z') AS total_earned_2z
+			FROM earnings
+			GROUP BY client_id
+		)
+		SELECT
+			toUInt16(pc.pc_client_id) AS client_id,
+			-- A client's leaves can land before its registry row is indexed, so
+			-- fall back to the id rather than rendering a blank team name.
+			if(coalesce(C2.short_description, '') != '', C2.short_description, concat('Client ', toString(pc.pc_client_id))) AS client_name,
+			toUInt64(pc.validators) AS validators,
+			pc.total_earned_2z AS total_earned_2z
+		FROM per_client pc
+		LEFT JOIN dim_dz_shred_validator_client_rewards_current C2
+			ON C2.client_id = pc.pc_client_id
+		ORDER BY %[1]s
+		-- The registry can hold more than one row per client_id across rebuilds;
+		-- collapse so a team cannot appear twice.
+		LIMIT 1 BY client_id
+	`, buildShredsClientRewardsSort(sortField, order), latestFinalized)
+
+	start := time.Now()
+	rows, err := a.envDB(ctx).Query(ctx, query)
+	metrics.RecordClickHouseQuery("shreds_rewards:clients", time.Since(start), err)
+	if err != nil {
+		return nil, fmt.Errorf("shreds client rewards query: %w", err)
+	}
+	defer rows.Close()
+
+	clients := make([]ShredsClientRewardsRow, 0)
+	for rows.Next() {
+		var row ShredsClientRewardsRow
+		if err := rows.Scan(
+			&row.ClientID,
+			&row.ClientName,
+			&row.Validators,
+			&row.TotalEarned2Z,
+		); err != nil {
+			return nil, fmt.Errorf("shreds client rewards scan: %w", err)
+		}
+		clients = append(clients, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("shreds client rewards rows iteration: %w", err)
+	}
+
+	return &ShredsRewardsResponse{
+		CurrentSolanaEpoch:   currentSolanaEpoch,
+		LatestFinalizedEpoch: latestFinalized,
+		EpochColumns:         epochColumns,
+		Validators:           []ShredsRewardsRow{},
+		Clients:              clients,
+		Total:                len(clients),
+	}, nil
 }
