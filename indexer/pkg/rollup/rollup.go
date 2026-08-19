@@ -112,20 +112,7 @@ func Start(ctx context.Context, cfg Config) error {
 	}
 
 	// Watch the workflow in the background so failures surface in logs.
-	go func() {
-		current := run
-		for {
-			if err := current.Get(ctx, nil); err != nil {
-				if ctx.Err() != nil {
-					return
-				}
-				log.Warn("rollup: workflow interrupted, reattaching", "id", wfID, "error", err)
-				current = tc.GetWorkflow(ctx, wfID, "")
-			} else {
-				return
-			}
-		}
-	}()
+	go watchWorkflow(ctx, tc, log, wfID, run)
 
 	log.Info("rollup: starting worker", "task_queue", tq)
 
@@ -142,16 +129,9 @@ func Start(ctx context.Context, cfg Config) error {
 }
 
 // computeRollupStartOptions returns the start options for the compute-rollup
-// workflow. A deploy must always get a fresh run: the workflow carries no
-// GetVersion guards, so replaying a previous deploy's history against new worker
-// code raises non-determinism errors. The conflict policy is what delivers that:
-// the server terminates any running execution as part of the start, atomically.
-// Keep WorkflowExecutionErrorWhenAlreadyStarted set too — without the conflict
-// policy the server's default is to fail an already-started start, and with the
-// flag unset the SDK turns that failure into a handle on the previous deploy's
-// still-running run and returns no error, which is how the same start silently
-// wedged the page cache for six hours (#776). The flag makes a start that is not
-// fresh fail loudly instead.
+// workflow. Both fields are load-bearing and neither may be relaxed — see
+// "Temporal Workflow Restarts on Deploy" in CLAUDE.md for what each one does and
+// what silently breaks without it.
 func computeRollupStartOptions(network string) temporalclient.StartWorkflowOptions {
 	return temporalclient.StartWorkflowOptions{
 		ID:                                       workflowID(network),
@@ -159,6 +139,30 @@ func computeRollupStartOptions(network string) temporalclient.StartWorkflowOptio
 		WorkflowIDConflictPolicy:                 enumspb.WORKFLOW_ID_CONFLICT_POLICY_TERMINATE_EXISTING,
 		WorkflowExecutionErrorWhenAlreadyStarted: true,
 	}
+}
+
+// watchWorkflow surfaces workflow failures in logs, reattaching to the workflow
+// ID's current run when the one it was watching ends. It returns on a terminated
+// run rather than reattaching: a terminate that no start followed leaves the same
+// closed run as current, whose Get errors immediately, so reattaching to it spins
+// at RPC speed. The deploy case needs no reattach either — this process's own
+// start terminated the previous run, and a new process watches the new one.
+func watchWorkflow(ctx context.Context, tc temporalclient.Client, log *slog.Logger, wfID string, run temporalclient.WorkflowRun) {
+	current := run
+	for {
+		err := current.Get(ctx, nil)
+		if err == nil || ctx.Err() != nil || isWorkflowTerminated(err) {
+			return
+		}
+		log.Warn("rollup: workflow interrupted, reattaching", "id", wfID, "error", err)
+		current = tc.GetWorkflow(ctx, wfID, "")
+	}
+}
+
+// isWorkflowTerminated reports whether err is a run that was terminated rather
+// than one that failed.
+func isWorkflowTerminated(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "terminated")
 }
 
 // startComputeRollupWorkflow starts a fresh compute-rollup run, terminating any
