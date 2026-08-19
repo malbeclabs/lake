@@ -16,6 +16,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/dz/serviceability/permissionevents"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/escrowevents"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/feedsubscription"
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	mcpgeoip "github.com/malbeclabs/lake/indexer/pkg/geoip"
@@ -32,6 +33,7 @@ type Indexer struct {
 	geoloc           *dzgeoloc.View
 	shreds           *dzshreds.View
 	escrowEvents     *escrowevents.View
+	feedSubscription *feedsubscription.View
 	permissionEvents *permissionevents.View
 	graphStore       *dzgraph.Store
 	telemLatency     *dztelemlatency.View
@@ -139,6 +141,26 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create escrow events view: %w", err)
+		}
+	}
+
+	// Initialize feed-subscription view (optional, depends on shreds + the
+	// feed-subscription RPC). Gated on shredsView like the escrow-events view
+	// above it: the refresh only ever runs inside Activities.RefreshShreds,
+	// which is itself a no-op when shreds is not configured, so a view built
+	// without shreds would never be refreshed.
+	// The program is deployed on Solana mainnet-beta only; elsewhere
+	// getProgramAccounts returns an empty list and the table stays empty.
+	var feedSubscriptionView *feedsubscription.View
+	if shredsView != nil && cfg.FeedSubscriptionRPC != nil {
+		feedSubscriptionView, err = feedsubscription.NewView(feedsubscription.ViewConfig{
+			Logger:     cfg.Logger,
+			RPC:        cfg.FeedSubscriptionRPC,
+			ProgramID:  feedsubscription.ProgramID,
+			ClickHouse: cfg.ClickHouse,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create feed subscription view: %w", err)
 		}
 	}
 
@@ -351,6 +373,7 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 		geoloc:           geolocView,
 		shreds:           shredsView,
 		escrowEvents:     escrowEventsView,
+		feedSubscription: feedSubscriptionView,
 		permissionEvents: permissionEventsView,
 		graphStore:       graphStore,
 		telemLatency:     telemView,
@@ -483,6 +506,11 @@ func (i *Indexer) Shreds() *dzshreds.View {
 // EscrowEvents returns the escrow events view, or nil if not configured.
 func (i *Indexer) EscrowEvents() *escrowevents.View {
 	return i.escrowEvents
+}
+
+// FeedSubscription returns the feed-subscription view, or nil if not configured.
+func (i *Indexer) FeedSubscription() *feedsubscription.View {
+	return i.feedSubscription
 }
 
 // PermissionEvents returns the permission events audit view, or nil if not configured.

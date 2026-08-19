@@ -6521,6 +6521,28 @@ export async function fetchShredEpochRevenue(limit = 20): Promise<ShredEpochReve
   return res.json()
 }
 
+export interface ShredFeedRevenue {
+  feed_key: string
+  code: string
+  name: string
+  year: number
+  month: number
+  collected_usdc: number
+  collected_dollars: number
+}
+
+// codePrefix filters on the feed's code (e.g. 'solana-shreds'). The
+// feed-subscription program is shared by every DoubleZero feed product, so a
+// page showing one product's economics has to say which one it wants. An empty
+// prefix returns every feed. Feeds whose label has not landed carry no code and
+// are always returned, so revenue is never hidden by a late label.
+export async function fetchShredFeedRevenue(codePrefix = ''): Promise<ShredFeedRevenue[]> {
+  const qs = codePrefix ? `?code_prefix=${encodeURIComponent(codePrefix)}` : ''
+  const res = await fetchWithRetry(`/api/dz/shreds/feed-revenue${qs}`)
+  if (!res.ok) throw new Error('Failed to fetch shred feed revenue')
+  return res.json()
+}
+
 export interface ShredSubscriberHistory {
   epoch: number
   active_seats: number
