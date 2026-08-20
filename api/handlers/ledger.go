@@ -102,25 +102,25 @@ func slotDurationFromSamples(samples []solana.PerformanceSample, fallback float6
 	return d
 }
 
-func GetDZLedgerRPCURL() string {
+func dzLedgerRPCURL() string {
 	if url := os.Getenv("DZ_LEDGER_RPC_URL"); url != "" {
 		return url
 	}
 	return defaultDZLedgerRPCURL
 }
 
-func GetSolanaRPCURL() string {
+func solanaRPCURL() string {
 	return solana.GetRPCURL()
 }
 
 // FetchDZLedgerData fetches ledger telemetry for the DoubleZero ledger.
 func FetchDZLedgerData(ctx context.Context) (*LedgerResponse, error) {
-	return fetchLedgerData(ctx, GetDZLedgerRPCURL(), dzFallbackSlotDurationSec)
+	return fetchLedgerData(ctx, dzLedgerRPCURL(), dzFallbackSlotDurationSec)
 }
 
 // FetchSolanaLedgerData fetches ledger telemetry for Solana.
 func FetchSolanaLedgerData(ctx context.Context) (*LedgerResponse, error) {
-	return fetchLedgerData(ctx, GetSolanaRPCURL(), solanaFallbackSlotDurationSec)
+	return fetchLedgerData(ctx, solanaRPCURL(), solanaFallbackSlotDurationSec)
 }
 
 // fetchLedgerData fetches ledger telemetry from the given RPC URL. URL and fallback are
