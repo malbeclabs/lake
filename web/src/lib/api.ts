@@ -6607,6 +6607,7 @@ export interface LedgerResponse {
   slots_in_epoch: number
   epoch_pct: number
   epoch_eta_sec: number
+  slot_duration_sec: number
   absolute_slot: number
   block_height: number
   transaction_count: number
