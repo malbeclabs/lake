@@ -120,6 +120,29 @@ Refreshes are driven by a long-running Temporal workflow (`api/worker/`). `PageC
 
 Three operational notes. A rolling deploy still overlaps workers on one task queue, so an old pod can pick up the fresh run's first workflow task and write old-shaped history — the same wedge from a different cause; versioning the task queue by build SHA is the open follow-up. Terminating the workflow by hand does **not** restore the cache: `ExecuteWorkflow` runs only at process startup, so a manual terminate needs a pod restart after it. And prod runs `lake-api` at two replicas, each with an embedded worker, so a deploy logs two `page-cache: workflow started` lines with different `run_id`s — last one wins, and that is expected.
 
+### Refresh cadence
+
+An entry sets `cacheEntry.every` (`api/worker/workflow.go`) to refresh less often than every
+cycle. It is a **wall-clock duration**, gated on the age of that key's own `page_cache.updated_at`
+row — deliberately not a cycle count: the cycle period is configured per environment (prod ~68s,
+staging ~4 min) and shortens as entries leave the every-cycle path, so a count would mean a
+different staleness in each environment and drift as entries are added. The duration is a floor,
+not a period — actual spacing is `[every, every + one cycle period)`.
+
+Set it from how stale the view may be, not from how expensive it is. A day-aligned or long-window
+aggregate (Network Health, the 24h scoreboard aggregates, the metro-pair latency comparison) can
+take minutes; anything backing a live tail or point-in-time status stays every-cycle.
+
+An entry whose payload reports the window it was computed over sets `dayAligned` as well, so it
+refreshes as soon as its blob predates the current window. Without it, two groups on different
+cadences describe different windows for up to a cadence after midnight UTC, and the Network Health
+page refuses to combine payloads whose windows disagree.
+
+A failed refresh writes nothing, so `updated_at` does not advance and the entry is due again on the
+next cycle — escalation counters keep running at the cycle rate whatever the cadence. The one
+exception is a refresh that writes *and* reports a problem (a degraded Network Health panel), which
+is why `degradedEsc` sets `ErrorAfterDuration`.
+
 ## Temporal Workflow Restarts on Deploy
 
 Every long-running workflow started under a fixed ID at process startup must restart on deploy, and none of them carry `workflow.GetVersion` guards — so an adopted run replays the previous deploy's history against new code, fails every workflow task, and retries forever without converging. There are four such sites: `api/worker.pageCacheStartOptions`, `dzingest.deployStartOptions`, `solingest.deployStartOptions`, and `rollup.computeRollupStartOptions`. Each sets `WorkflowIDConflictPolicy: TERMINATE_EXISTING` *and* `WorkflowExecutionErrorWhenAlreadyStarted: true`, and each logs the returned `run_id` so a start line is falsifiable. Any new workflow of this shape must do the same; per-run-ID workflows (the `admin` backfills) need none of it, since they never collide.
@@ -516,7 +539,7 @@ ERROR-level log lines page on-call (alerts fire on `level="ERR"` — prod → `#
 Any log call that can carry a transient, not-found, client-cancel, or lifecycle error must go through a classification helper from `utils/pkg/logger`:
 
 - `logger.Error(log, msg, args...)` — one-shot failures: logs transient causes (`utils/pkg/dberror.IsTransient`: connection blips, timeouts, rate limits) and disconnect-class context errors at WARN, everything else at ERROR; it never drops a line. `api/handlers.logError` wraps this and additionally skips client disconnects entirely (on a request path the caller is gone).
-- `logger.Escalator` — periodic/background loops (view refreshes, workflow iterations, cache refreshes): `Fail` logs WARN below a consecutive-failure threshold and ERROR at/above (default 3, transient 10), `Reset` on success. A single blip stays at WARN; sustained failure still pages.
+- `logger.Escalator` — periodic/background loops (view refreshes, workflow iterations, cache refreshes): `Fail` logs WARN below a consecutive-failure threshold and ERROR at/above (default 3, transient 10), `Reset` on success. A single blip stays at WARN; sustained failure still pages. Set `ErrorAfterDuration` when the interval between `Fail` calls is not fixed, so a count alone doesn't describe how long a failure has lasted; it escalates on elapsed time as well, never later than the count would. It reads the wall clock, so never set it from Temporal workflow code.
 
 One failure produces at most one alert-bearing line, owned by the layer with the escalation context: a layer above an escalation-gated log (e.g. a Temporal workflow observing an activity that already self-escalates via `logger.Escalator`) must not re-report the same failure at ERROR — it doubles the page without adding information. Re-report at WARN if the outer layer carries a distinct, useful cause (e.g. a StartToClose timeout shape).
 

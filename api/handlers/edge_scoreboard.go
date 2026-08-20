@@ -247,7 +247,9 @@ func filterSlotsSince(slots []EdgeScoreboardSlotRace, sinceSlot uint64, limit in
 
 // GetEdgeScoreboard returns aggregated win rate / completeness data for DZ Edge nodes.
 func (a *API) GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
-	// Try to serve from cache for default (window=1h) requests.
+	// Try to serve from cache for default-shape requests. "Default" here means
+	// what edgeScoreboardCacheKey accepts — an omitted or 24h window, no slot
+	// bounds — which is the shape the page-cache worker writes.
 	if isMainnet(r.Context()) {
 		if cacheKey := edgeScoreboardCacheKey(r); cacheKey != "" {
 			if data, err := a.readPageCache(r.Context(), cacheKey); err == nil {

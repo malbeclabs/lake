@@ -95,7 +95,7 @@ const (
 	// before the cached-or-live path ignores it and runs live. The page-cache worker
 	// deliberately keeps its last payload on failure, so without this cap a stalled
 	// worker could serve arbitrarily old data with no signal. Set to ~3× the
-	// effective slow-batch cadence (everyN=4 × 30s ≈ 2 min).
+	// entry's refresh cadence (the worker's publisherCheckInterval, 2 min).
 	publisherCheckStaleAfter = 6 * time.Minute
 
 	// maxConcurrentPublisherCheckLive bounds simultaneous live runs of the heavy

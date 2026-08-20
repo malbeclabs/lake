@@ -135,54 +135,125 @@ var (
 	errHeavyRefreshDeadline = errors.New("page-cache heavy refresh deadline exceeded")
 )
 
-// cacheEntry defines a single cache key to refresh. everyN sets a slow-refresh
-// cadence: the entry refreshes only on every Nth slow cycle (everyN <= 1, the
-// zero value, means every cycle). Keeping the cadence on the entry itself — rather
-// than in a side map keyed by string — removes the drift hazard where a renamed
-// key silently reverts to every-cycle refresh.
+// cacheEntry defines a single cache key to refresh. every sets a refresh
+// cadence: the minimum wall-clock spacing between two refreshes of this key
+// (zero, the default, means every cycle). Keeping the cadence on the entry
+// itself — rather than in a side map keyed by string — removes the drift hazard
+// where a renamed key silently reverts to every-cycle refresh.
+//
+// The cadence is a duration and not a cycle count on purpose. The cycle period is
+// not a constant: it is configured per environment (prod runs ~68s, staging ~4
+// min) and it shortens as entries are taken off the every-cycle path, so the same
+// cycle count would mean a different staleness in each environment and would
+// drift as this file changes. A duration means what it says everywhere. It is a
+// floor, not a period: the gate is evaluated once per cycle, so actual spacing
+// lands in [every, every + one cycle period).
 type cacheEntry struct {
-	name   string
-	key    string
-	everyN int
-	fn     func(ctx context.Context) (any, error)
+	name  string
+	key   string
+	every time.Duration
+	fn    func(ctx context.Context) (any, error)
 	// timeout overrides the per-refresh context deadline. Zero means the default
 	// (see refresh). Only heavyEntries set it: they run in their own activity,
 	// which is the one with budget for a timeout above defaultRefreshTimeout.
 	timeout time.Duration
 }
 
-// publisherCheckEveryN slows the publisher_check refresh. It reads
-// shredder.publisher_shred_stats, the heaviest recurring query on the shared
-// ClickHouse, yet its data only changes on epoch timescales (~2 days) — refreshing
-// every 4th cycle (~2 min at the default 30s interval) removes it from the 30s
-// treadmill with no user-visible staleness. edge_scoreboard also reads that table
-// but backs a live-tail view, so it stays at every cycle.
-//
-// Tradeoff: the failure counters advance only once per due cycle, so a persistently
-// broken refresh takes ~4× longer to cross the escalation thresholds (~6 min for a
-// strict cause, ~20 min for a transient one) than an every-cycle entry. Acceptable
-// for data this slow-moving; the cached-or-live readers cap staleness independently.
-const publisherCheckEveryN = 4
+// Per-entry refresh cadences (see cacheEntry.every). Each answers a product
+// question — how stale may this view be? — not a technical one, so the reasoning
+// is recorded next to the value.
+const (
+	// publisherCheckInterval slows the publisher_check refresh. It reads
+	// shredder.publisher_shred_stats, the heaviest recurring query on the shared
+	// ClickHouse, yet its data only changes on epoch timescales (~2 days).
+	// edge_scoreboard also reads that table but backs a live-tail view, so it
+	// keeps its own much shorter cadence.
+	publisherCheckInterval = 2 * time.Minute
 
-// validatorsListingEveryN refreshes the validators listing every other
-// slow cycle (~60s at the default 30s interval), matching the UI's ~60s poll and
-// absorbing the external ~10s poller that previously ran the query ~6,500×/day.
-const validatorsListingEveryN = 2
+	// validatorsListingInterval matches the UI's ~60s poll and absorbs the
+	// external ~10s poller that previously ran the query ~6,500×/day.
+	validatorsListingInterval = 60 * time.Second
 
-// algoDivergenceEveryN slows the flex-algo divergence refresh. It runs two
-// full all-pairs path computations over two separately loaded graphs, and its
-// inputs are link topology tags, which change when someone changes them and
-// not otherwise. Every 10th slow cycle (~5 min at the default 30s interval) is
-// far inside the window in which anyone would act on an untagged link.
-const algoDivergenceEveryN = 10
+	// algoDivergenceInterval slows the flex-algo divergence refresh. It runs two
+	// full all-pairs path computations over two separately loaded graphs, and its
+	// inputs are link topology tags, which change when someone changes them and
+	// not otherwise — far inside the window in which anyone would act on an
+	// untagged link.
+	algoDivergenceInterval = 5 * time.Minute
 
-// dueThisCycle reports whether an entry with the given cadence refreshes on the
-// given zero-based cycle. everyN <= 1 means every cycle.
-func dueThisCycle(everyN, cycle int) bool {
-	if everyN <= 1 {
+	// networkHealthOverviewInterval covers the one Network Health group that
+	// carries point-in-time tiles (telemetry freshness against now(), ISIS
+	// device/adjacency state). Those tiles are a few CPU-seconds of the group's
+	// ~200; the rest is its two 30-day scans, which is what the cadence is for.
+	// Five minutes keeps the tiles fresher than the cycle staging already ships.
+	networkHealthOverviewInterval = 5 * time.Minute
+
+	// networkHealthHistoryInterval covers the purely-historical Network Health
+	// groups. DefaultNetworkHealthWindow is day-aligned at both ends, so within a
+	// day the only thing that changes their answer is late-arriving rollup rows
+	// and advancing FINAL dedup state.
+	networkHealthHistoryInterval = 30 * time.Minute
+
+	// latencyComparisonInterval slows the metro-pair DZ-vs-internet comparison.
+	// It averages over a long window — a comparison table, not a live tail — and
+	// its view is the single most expensive thing the page cache reads, scanned
+	// twice per cycle (here and by overview's latency_vs_internet panel).
+	latencyComparisonInterval = 30 * time.Minute
+
+	// edgeScoreboardInterval slows the two 24h edge-scoreboard aggregates, which
+	// have the worst read-per-query of anything the API runs. The live tail is
+	// unaffected: it is served by the separate edge_scoreboard:latest* entries on
+	// the fast cadence.
+	edgeScoreboardInterval = 5 * time.Minute
+)
+
+// dueForRefresh reports whether an entry with cadence every is due, given when
+// its blob was last written and the current time. A zero updatedAt means the key
+// has never been written (or its age could not be read), which is always due.
+func dueForRefresh(every time.Duration, updatedAt, now time.Time) bool {
+	if every <= 0 || updatedAt.IsZero() {
 		return true
 	}
-	return cycle%everyN == 0
+	return now.Sub(updatedAt) >= every
+}
+
+// dueEntries splits a batch into the entries to refresh now and the count held
+// back by their cadence, from one batched read of page_cache.updated_at. Entries
+// without a cadence are always due, so a batch that sets none reads nothing.
+//
+// A failed refresh does not write, so updated_at does not advance and the entry
+// is due again on the very next cycle: the escalation counters on the refresh
+// itself keep running at the cycle rate no matter how large every is.
+//
+// Fail-open on a read error: a Postgres blip must not be able to freeze every
+// cadenced entry for as long as it lasts.
+func (a *Activities) dueEntries(ctx context.Context, entries []cacheEntry) (due []cacheEntry, skipped int) {
+	keys := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.every > 0 {
+			keys = append(keys, e.key)
+		}
+	}
+	if len(keys) == 0 {
+		return entries, 0
+	}
+
+	ages, err := a.API.PageCacheAges(ctx, keys)
+	if err != nil {
+		a.Log.Warn("cache cadence age read failed; refreshing every entry", "error", err)
+		return entries, 0
+	}
+
+	now := time.Now()
+	due = make([]cacheEntry, 0, len(entries))
+	for _, e := range entries {
+		if dueForRefresh(e.every, ages[e.key], now) {
+			due = append(due, e)
+			continue
+		}
+		skipped++
+	}
+	return due, skipped
 }
 
 // Activities holds the logger and API deps for the refresh activity.
@@ -205,11 +276,20 @@ type Activities struct {
 	writeMu     sync.Mutex // serializes WritePageCache calls to avoid Postgres OOM from concurrent large JSONB upserts
 }
 
-// nhDegradedErrorAfter is the consecutive-cycle count at which a Network Health
-// group that keeps reporting a degraded panel escalates to ERROR: ~10 minutes at
-// the default 30s refresh interval. A brief hole self-heals and the blob is still
-// written, so it must not page on the first cycle; a panel that stays dark does.
+// nhDegradedErrorAfter is the consecutive-refresh count at which a Network Health
+// group that keeps reporting a degraded panel escalates to ERROR. A brief hole
+// self-heals and the blob is still written, so it must not page on the first
+// refresh; a panel that stays dark does.
 const nhDegradedErrorAfter = 20
+
+// nhDegradedErrorWindow is how long a dark panel may persist before escalating,
+// whichever threshold is crossed first. The count alone no longer describes a
+// duration: a degraded refresh deliberately writes its blob (so the healthy
+// panels stay fresh), which advances updated_at and puts the entry to sleep for a
+// full cadence — at networkHealthHistoryInterval that would be 10 hours to page,
+// against the ~10 minutes the count was chosen for. This is the only counter with
+// that problem; a failed refresh writes nothing, so it is due again next cycle.
+const nhDegradedErrorWindow = 10 * time.Minute
 
 // nhDegraded escalates a partially-failed Network Health refresh under its own
 // counter, keyed separately from the entry's query leg. The blob is still
@@ -271,7 +351,7 @@ func (a *Activities) entries() []cacheEntry {
 			}
 			return resp, nil
 		}},
-		{name: "flex-algo divergence", key: "algo_divergence", everyN: algoDivergenceEveryN, fn: func(ctx context.Context) (any, error) {
+		{name: "flex-algo divergence", key: "algo_divergence", every: algoDivergenceInterval, fn: func(ctx context.Context) (any, error) {
 			resp, err := api.FetchAlgoDivergenceData(ctx)
 			if err != nil {
 				return nil, err
@@ -288,7 +368,7 @@ func (a *Activities) entries() []cacheEntry {
 		{name: "device history", key: "device_history:24h:72", fn: func(ctx context.Context) (any, error) {
 			return api.FetchDeviceHistoryData(ctx, "24h", 72)
 		}},
-		{name: "latency comparison", key: "latency_comparison", fn: func(ctx context.Context) (any, error) {
+		{name: "latency comparison", key: "latency_comparison", every: latencyComparisonInterval, fn: func(ctx context.Context) (any, error) {
 			return api.FetchLatencyComparisonData(ctx)
 		}},
 		{name: "dz ledger", key: "dz_ledger", fn: func(ctx context.Context) (any, error) {
@@ -303,16 +383,16 @@ func (a *Activities) entries() []cacheEntry {
 		{name: "stake overview", key: "stake_overview", fn: func(ctx context.Context) (any, error) {
 			return api.FetchStakeOverviewData(ctx)
 		}},
-		{name: "publisher check", key: "publisher_check", everyN: publisherCheckEveryN, fn: func(ctx context.Context) (any, error) {
+		{name: "publisher check", key: "publisher_check", every: publisherCheckInterval, fn: func(ctx context.Context) (any, error) {
 			return api.FetchPublisherCheckData(ctx, "", handlers.DefaultPublisherCheckEpochs, 0)
 		}},
 		{name: "shreds rewards", key: "shreds_rewards", fn: func(ctx context.Context) (any, error) {
 			return api.FetchShredsRewardsData(ctx)
 		}},
-		{name: "edge scoreboard", key: "edge_scoreboard", fn: func(ctx context.Context) (any, error) {
+		{name: "edge scoreboard", key: "edge_scoreboard", every: edgeScoreboardInterval, fn: func(ctx context.Context) (any, error) {
 			return api.FetchEdgeScoreboardData(ctx, "24h", false, 0, 0, 1000)
 		}},
-		{name: "edge scoreboard (leaders)", key: "edge_scoreboard:leaders", fn: func(ctx context.Context) (any, error) {
+		{name: "edge scoreboard (leaders)", key: "edge_scoreboard:leaders", every: edgeScoreboardInterval, fn: func(ctx context.Context) (any, error) {
 			return api.FetchEdgeScoreboardData(ctx, "24h", true, 0, 0, 1000)
 		}},
 		{name: "hyperliquid scoreboard", key: "hyperliquid_scoreboard", fn: func(ctx context.Context) (any, error) {
@@ -341,9 +421,9 @@ func (a *Activities) entries() []cacheEntry {
 		}},
 		// The unfiltered stake-desc validators listing is polled continuously by the
 		// UI (limit=100) and an external consumer (limit=900). Cache the complete
-		// set every other slow cycle (~60s) so the handler can slice any requested
-		// page out of it — its stake/geo data moves on slow timescales.
-		{name: "validators", key: handlers.ValidatorsPageCacheKey, everyN: validatorsListingEveryN, fn: func(ctx context.Context) (any, error) {
+		// set so the handler can slice any requested page out of it — its stake/geo
+		// data moves on slow timescales.
+		{name: "validators", key: handlers.ValidatorsPageCacheKey, every: validatorsListingInterval, fn: func(ctx context.Context) (any, error) {
 			return api.FetchValidatorsData(ctx)
 		}},
 		{name: "edge multicast", key: handlers.EdgeMulticastCacheKey, fn: func(ctx context.Context) (any, error) {
@@ -371,7 +451,7 @@ func (a *Activities) entries() []cacheEntry {
 		// invalidating the rest, which still writes but escalates under its own
 		// counter (see nhDegraded). The two heavy groups (impactful, deferred)
 		// refresh in their own activity, see heavyEntries.
-		{name: "network health overview", key: handlers.NetworkHealthOverviewCacheKey, fn: func(ctx context.Context) (any, error) {
+		{name: "network health overview", key: handlers.NetworkHealthOverviewCacheKey, every: networkHealthOverviewInterval, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()
 			resp := api.FetchNetworkHealthOverviewData(ctx, start, end, "")
 			if err := a.nhOutcome("network health overview", handlers.NetworkHealthOverviewCacheKey, resp.Error, resp.Degraded); err != nil {
@@ -379,7 +459,7 @@ func (a *Activities) entries() []cacheEntry {
 			}
 			return resp, nil
 		}},
-		{name: "network health availability", key: handlers.NetworkHealthAvailabilityCacheKey, fn: func(ctx context.Context) (any, error) {
+		{name: "network health availability", key: handlers.NetworkHealthAvailabilityCacheKey, every: networkHealthHistoryInterval, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()
 			resp := api.FetchNetworkHealthAvailabilityData(ctx, start, end, "")
 			if err := a.nhOutcome("network health availability", handlers.NetworkHealthAvailabilityCacheKey, resp.Error, resp.Degraded); err != nil {
@@ -387,7 +467,7 @@ func (a *Activities) entries() []cacheEntry {
 			}
 			return resp, nil
 		}},
-		{name: "network health latency", key: handlers.NetworkHealthLatencyCacheKey, fn: func(ctx context.Context) (any, error) {
+		{name: "network health latency", key: handlers.NetworkHealthLatencyCacheKey, every: networkHealthHistoryInterval, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()
 			resp := api.FetchNetworkHealthLatencyData(ctx, start, end, "")
 			if err := a.nhOutcome("network health latency", handlers.NetworkHealthLatencyCacheKey, resp.Error, resp.Degraded); err != nil {
@@ -395,7 +475,7 @@ func (a *Activities) entries() []cacheEntry {
 			}
 			return resp, nil
 		}},
-		{name: "network health capacity", key: handlers.NetworkHealthCapacityCacheKey, fn: func(ctx context.Context) (any, error) {
+		{name: "network health capacity", key: handlers.NetworkHealthCapacityCacheKey, every: networkHealthHistoryInterval, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()
 			resp := api.FetchNetworkHealthCapacityData(ctx, start, end, "")
 			if err := a.nhOutcome("network health capacity", handlers.NetworkHealthCapacityCacheKey, resp.Error, resp.Degraded); err != nil {
@@ -403,7 +483,7 @@ func (a *Activities) entries() []cacheEntry {
 			}
 			return resp, nil
 		}},
-		{name: "network health outages", key: handlers.NetworkHealthOutagesCacheKey, fn: func(ctx context.Context) (any, error) {
+		{name: "network health outages", key: handlers.NetworkHealthOutagesCacheKey, every: networkHealthHistoryInterval, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()
 			resp := api.FetchNetworkHealthOutagesData(ctx, start, end, "")
 			if err := a.nhOutcome("network health outages", handlers.NetworkHealthOutagesCacheKey, resp.Error, resp.Degraded); err != nil {
@@ -411,7 +491,7 @@ func (a *Activities) entries() []cacheEntry {
 			}
 			return resp, nil
 		}},
-		{name: "network health drain", key: handlers.NetworkHealthDrainCacheKey, fn: func(ctx context.Context) (any, error) {
+		{name: "network health drain", key: handlers.NetworkHealthDrainCacheKey, every: networkHealthHistoryInterval, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()
 			resp := api.FetchNetworkHealthDrainData(ctx, start, end, "")
 			if err := a.nhOutcome("network health drain", handlers.NetworkHealthDrainCacheKey, resp.Error, resp.Degraded); err != nil {
@@ -419,7 +499,7 @@ func (a *Activities) entries() []cacheEntry {
 			}
 			return resp, nil
 		}},
-		{name: "network health tickets", key: handlers.NetworkHealthTicketsCacheKey, fn: func(ctx context.Context) (any, error) {
+		{name: "network health tickets", key: handlers.NetworkHealthTicketsCacheKey, every: networkHealthHistoryInterval, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()
 			resp := api.FetchNetworkHealthTicketsData(ctx, start, end, "")
 			// A transient ops-API outage sets resp.Error; keep the last-good blob
@@ -474,7 +554,7 @@ func (a *Activities) batchConcurrency() int {
 // concurrent queries pegged the node, timeouts + per-entry retries amplified the
 // storm). A bounded limit keeps in-flight queries near what ClickHouse can run
 // while still refreshing the batch within the cycle.
-func (a *Activities) RefreshCaches(ctx context.Context, cycle int) error {
+func (a *Activities) RefreshCaches(ctx context.Context) error {
 	start := time.Now()
 	limit := a.batchConcurrency()
 	// Distinguish a real worker shutdown (deploy) from an activity-deadline
@@ -482,13 +562,12 @@ func (a *Activities) RefreshCaches(ctx context.Context, cycle int) error {
 	// counted rather than silently swallowed as "shutdown".
 	shuttingDown := workerStopping(ctx)
 
+	due, skipped := a.dueEntries(ctx, a.entries())
+
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(limit)
 
-	for _, entry := range a.entries() {
-		if !dueThisCycle(entry.everyN, cycle) {
-			continue
-		}
+	for _, entry := range due {
 		g.Go(func() error {
 			a.refresh(gctx, entry.name, entry.key, entry.fn, entry.timeout, shuttingDown, errBatchDeadline)
 			return nil
@@ -516,7 +595,14 @@ func (a *Activities) RefreshCaches(ctx context.Context, cycle int) error {
 	// view live under its deadline — slower per-contributor page loads, but it
 	// does not compete with the default view for cluster capacity.
 	_ = g.Wait()
-	a.Log.Info("page cache refresh complete", "duration", time.Since(start).Round(time.Millisecond))
+	// refreshed/skipped make the cadence gate observable: successful refreshes log
+	// at DEBUG (suppressed in prod), so without these counts there is no evidence
+	// of what a cycle actually did — and no way to tell a working gate from one
+	// skipping everything.
+	a.Log.Info("page cache refresh complete",
+		"duration", time.Since(start).Round(time.Millisecond),
+		"refreshed", len(due)+len(metroPathLatencyStrategies),
+		"skipped", skipped)
 	return nil
 }
 
@@ -575,7 +661,7 @@ func (a *Activities) RefreshLatestCaches(ctx context.Context) error {
 func (a *Activities) heavyEntries() []cacheEntry {
 	api := a.API
 	return []cacheEntry{
-		{name: "network health impactful", key: handlers.NetworkHealthImpactfulCacheKey, timeout: nhHeavyRefreshTimeout, fn: func(ctx context.Context) (any, error) {
+		{name: "network health impactful", key: handlers.NetworkHealthImpactfulCacheKey, every: networkHealthHistoryInterval, timeout: nhHeavyRefreshTimeout, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()
 			resp := api.FetchNetworkHealthImpactfulData(ctx, start, end, "")
 			if err := a.nhOutcome("network health impactful", handlers.NetworkHealthImpactfulCacheKey, resp.Error, resp.Degraded); err != nil {
@@ -583,7 +669,7 @@ func (a *Activities) heavyEntries() []cacheEntry {
 			}
 			return resp, nil
 		}},
-		{name: "network health deferred", key: handlers.NetworkHealthDeferredCacheKey, timeout: nhHeavyRefreshTimeout, fn: func(ctx context.Context) (any, error) {
+		{name: "network health deferred", key: handlers.NetworkHealthDeferredCacheKey, every: networkHealthHistoryInterval, timeout: nhHeavyRefreshTimeout, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()
 			resp := api.FetchNetworkHealthDeferredData(ctx, start, end, "")
 			if err := a.nhOutcome("network health deferred", handlers.NetworkHealthDeferredCacheKey, resp.Error, resp.Degraded); err != nil {
@@ -599,11 +685,15 @@ func (a *Activities) heavyEntries() []cacheEntry {
 // above their per-entry budget. PageCacheWorkflow starts it alongside the batch
 // and never awaits it inside the loop, so it runs on its own cadence instead of
 // dictating the cycle; a new run starts only once the previous one has finished,
-// so two heavy runs never overlap each other.
+// so two heavy runs never overlap each other. Both entries also carry a refresh
+// cadence, so a run that starts before either is due costs one age read and
+// returns — cheaper than gating the activity's scheduling, which is bound up with
+// the continue-as-new drain (see heavyStartDue).
 func (a *Activities) RefreshHeavyCaches(ctx context.Context) error {
 	shuttingDown := workerStopping(ctx)
+	due, _ := a.dueEntries(ctx, a.heavyEntries())
 	g, gctx := errgroup.WithContext(ctx)
-	for _, entry := range a.heavyEntries() {
+	for _, entry := range due {
 		g.Go(func() error {
 			a.refresh(gctx, entry.name, entry.key, entry.fn, entry.timeout, shuttingDown, errHeavyRefreshDeadline)
 			return nil
@@ -811,25 +901,23 @@ func PageCacheWorkflow(ctx temporalworkflow.Context, iteration int, p PageCacheP
 		// on the second-to-last cycle would otherwise leave the drain blocking for
 		// nearly the whole heavy budget, every continue-as-new window. Skipping the
 		// heavy refresh for those last few cycles costs far less than that stall.
-		// Scheduling this activity needs no version guard for the same reason the
-		// cycle argument below does not: Start terminates and restarts the workflow
-		// on deploy.
+		// Scheduling this activity needs no version guard: Start terminates and
+		// restarts the workflow on deploy.
 		if heavyStartDue(iteration, p.ContinueAsNewThreshold, p.RefreshInterval) && heavyRefreshDue(heavy) {
 			heavy = temporalworkflow.ExecuteActivity(heavyCtx, (*Activities).RefreshHeavyCaches)
 		}
 
-		// iteration doubles as the slow-refresh cycle counter (see publisherCheckEveryN).
-		// It resets to 0 at each continue-as-new boundary; carrying it across would
-		// require threading it through NewContinueAsNewError for no real benefit, so
-		// we accept the worst case of one early publisher_check refresh per
-		// continue-as-new (~every 30 min).
-		//
-		// The cycle argument was added to RefreshCaches without a version guard, which
-		// is safe under our deploy model: Start terminates and restarts the workflow
-		// (see pagecache.go), the Go SDK doesn't compare activity inputs on replay, and
-		// during a rolling deploy a mixed-version worker either zero-fills the missing
-		// arg (old code) or drops the extra one (new code) — no history divergence.
-		_ = temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshCaches, iteration).Get(ctx, nil)
+		// RefreshCaches takes no cycle counter: per-entry cadence is a wall-clock
+		// duration checked against page_cache.updated_at inside the activity (see
+		// cacheEntry.every), which keeps this loop out of the freshness contract and
+		// survives the continue-as-new reset that used to cost one early
+		// publisher_check refresh per window. Dropping the argument needs no version
+		// guard under our deploy model: Start terminates and restarts the workflow
+		// (see pagecache.go), the Go SDK doesn't compare activity inputs on replay,
+		// and during a rolling deploy a mixed-version worker either zero-fills the
+		// missing arg (old code) or drops the extra one (new code) — no history
+		// divergence.
+		_ = temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshCaches).Get(ctx, nil)
 
 		iteration++
 		if iteration < p.ContinueAsNewThreshold {

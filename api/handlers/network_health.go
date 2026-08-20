@@ -951,6 +951,12 @@ func networkHealthWindow(startStr, endStr, daysStr string) (time.Time, time.Time
 }
 
 // DefaultNetworkHealthWindow is the window the cache worker precomputes.
+//
+// Both boundaries are day-aligned, so the window moves once per day and excludes
+// everything since midnight. Within a day, the only thing that can change a
+// purely-historical group's answer is a late-arriving rollup row or advancing
+// FINAL dedup state — which is why those groups refresh on a cadence rather than
+// every cycle (see the worker's networkHealthHistoryInterval).
 func DefaultNetworkHealthWindow() (time.Time, time.Time) {
 	end := time.Now().UTC().Truncate(24 * time.Hour)
 	return end.AddDate(0, 0, -NetworkHealthDefaultDays), end
@@ -1122,6 +1128,13 @@ func (a *API) fetchImpactfulDowntime(ctx context.Context, s, e time.Time, contri
 // telemetry freshness, the throughput time series, and the contributor list that
 // backs the filter dropdown. Reuses the existing per-metric fetchers unchanged.
 // Called by the handler (cache miss) and the cache-refresh worker.
+//
+// A panel added here is not free: latency_vs_internet and the throughput series
+// are ~95% of this group's ClickHouse cost, and this group alone is the most
+// expensive thing the page cache refreshes. The two point-in-time panels
+// (freshness, isis) are what keeps the group on a short cadence at all; the rest
+// reads the day-aligned window (see DefaultNetworkHealthWindow) and does not
+// change between refreshes.
 func (a *API) FetchNetworkHealthOverviewData(ctx context.Context, start, end time.Time, contrib string) *NHOverview {
 	priorStart, priorEnd := nhPriorWindow(start, end)
 	scoped := contrib != ""
