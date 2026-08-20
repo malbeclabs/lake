@@ -102,12 +102,10 @@ func Start(ctx context.Context, cfg Config) error {
 	}
 }
 
-// pageCacheStartOptions returns the start options for the page-cache workflow. A
-// deploy must always get a fresh run, since the workflow carries no GetVersion
-// guards. Both fields are needed for that: with
-// WorkflowExecutionErrorWhenAlreadyStarted unset, the SDK turns an already-started
-// error into a handle on the running execution and returns no error, so the
-// conflict policy alone can still adopt the previous deploy's run.
+// pageCacheStartOptions returns the start options for the page-cache workflow.
+// Both fields are load-bearing and neither may be relaxed — see "Temporal
+// Workflow Restarts on Deploy" in CLAUDE.md for what each one does and what
+// silently breaks without it.
 func pageCacheStartOptions() temporalclient.StartWorkflowOptions {
 	return temporalclient.StartWorkflowOptions{
 		ID:                                       WorkflowID,
