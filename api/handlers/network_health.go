@@ -491,6 +491,12 @@ type NHIsis struct {
 
 // NHFreshness lets a viewer date the data (a trust signal). Coverage is measured
 // relative to the feed's own latest timestamp, not wall-clock.
+//
+// LagSeconds is computed when the panel runs and served verbatim from the cached
+// blob, so it understates real lag by however old that blob is — up to the
+// overview entry's refresh cadence (the worker's networkHealthOverviewInterval).
+// Fine for a coverage signal measured in hours; not a source for anything that
+// needs the lag to the second.
 type NHFreshness struct {
 	FeedMax       string `json:"feed_max"`
 	LagSeconds    int64  `json:"lag_seconds"`

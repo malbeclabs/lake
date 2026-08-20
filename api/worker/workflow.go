@@ -152,7 +152,16 @@ type cacheEntry struct {
 	name  string
 	key   string
 	every time.Duration
-	fn    func(ctx context.Context) (any, error)
+	// dayAligned marks an entry whose payload is computed over the day-aligned
+	// window from handlers.DefaultNetworkHealthWindow. Such an entry is also due
+	// as soon as its blob predates the current window's end, whatever every says.
+	// Without that, two groups on different cadences would describe different
+	// windows for up to a full cadence after midnight UTC — and the frontend
+	// refuses to combine payloads whose windows disagree, so the page's
+	// traffic-weighted availability stat would blank out every night (see
+	// deriveAvailability in network-health-reporting-page.tsx).
+	dayAligned bool
+	fn         func(ctx context.Context) (any, error)
 	// timeout overrides the per-refresh context deadline. Zero means the default
 	// (see refresh). Only heavyEntries set it: they run in their own activity,
 	// which is the one with budget for a timeout above defaultRefreshTimeout.
@@ -207,14 +216,33 @@ const (
 	edgeScoreboardInterval = 5 * time.Minute
 )
 
-// dueForRefresh reports whether an entry with cadence every is due, given when
-// its blob was last written and the current time. A zero updatedAt means the key
-// has never been written (or its age could not be read), which is always due.
-func dueForRefresh(every time.Duration, updatedAt, now time.Time) bool {
-	if every <= 0 || updatedAt.IsZero() {
+// cacheAgesEscalationKey is the escalator key for the cadence gate's own age
+// read, separate from every cache key so a gate outage is one alert rather than
+// one per entry.
+const cacheAgesEscalationKey = "page_cache:ages"
+
+// cacheAgeReadTimeout bounds the cadence gate's page_cache read. It runs at the
+// head of every batch on the pgx pool the request path shares, so an unbounded
+// read would let a saturated pool consume the whole activity budget before a
+// single refresh started — recording every entry as batch starvation, which pages.
+// A few seconds is far more than the read needs; anything slower is the fail-open
+// case (see dueEntries).
+const cacheAgeReadTimeout = 5 * time.Second
+
+// dueForRefresh reports whether an entry is due, given when its blob was last
+// written, the current time, and the end of the current day-aligned Network
+// Health window. A zero updatedAt means the key has never been written (or its
+// age could not be read), which is always due.
+func dueForRefresh(e cacheEntry, updatedAt, now, windowEnd time.Time) bool {
+	if e.every <= 0 || updatedAt.IsZero() {
 		return true
 	}
-	return now.Sub(updatedAt) >= every
+	// A blob written before the current window's end describes yesterday's
+	// window, whatever the cadence says (see cacheEntry.dayAligned).
+	if e.dayAligned && updatedAt.Before(windowEnd) {
+		return true
+	}
+	return now.Sub(updatedAt) >= e.every
 }
 
 // dueEntries splits a batch into the entries to refresh now and the count held
@@ -225,8 +253,10 @@ func dueForRefresh(every time.Duration, updatedAt, now time.Time) bool {
 // is due again on the very next cycle: the escalation counters on the refresh
 // itself keep running at the cycle rate no matter how large every is.
 //
-// Fail-open on a read error: a Postgres blip must not be able to freeze every
-// cadenced entry for as long as it lasts.
+// Fail-open on a read error or a slow read: a Postgres problem must not be able
+// to freeze every cadenced entry for as long as it lasts. A sustained one still
+// pages, because it silently reverts every cadence to every-cycle refresh — the
+// cost this gate exists to remove — and nothing else reports it.
 func (a *Activities) dueEntries(ctx context.Context, entries []cacheEntry) (due []cacheEntry, skipped int) {
 	keys := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -238,16 +268,20 @@ func (a *Activities) dueEntries(ctx context.Context, entries []cacheEntry) (due 
 		return entries, 0
 	}
 
-	ages, err := a.API.PageCacheAges(ctx, keys)
+	readCtx, cancel := context.WithTimeout(ctx, cacheAgeReadTimeout)
+	ages, err := a.API.PageCacheAges(readCtx, keys)
+	cancel()
 	if err != nil {
-		a.Log.Warn("cache cadence age read failed; refreshing every entry", "error", err)
+		a.esc.Fail(a.Log, cacheAgesEscalationKey, "cache cadence age read failed; refreshing every entry", "error", err)
 		return entries, 0
 	}
+	a.esc.Reset(cacheAgesEscalationKey)
 
 	now := time.Now()
+	_, windowEnd := handlers.DefaultNetworkHealthWindow()
 	due = make([]cacheEntry, 0, len(entries))
 	for _, e := range entries {
-		if dueForRefresh(e.every, ages[e.key], now) {
+		if dueForRefresh(e, ages[e.key], now, windowEnd) {
 			due = append(due, e)
 			continue
 		}
@@ -276,19 +310,26 @@ type Activities struct {
 	writeMu     sync.Mutex // serializes WritePageCache calls to avoid Postgres OOM from concurrent large JSONB upserts
 }
 
-// nhDegradedErrorAfter is the consecutive-refresh count at which a Network Health
-// group that keeps reporting a degraded panel escalates to ERROR. A brief hole
-// self-heals and the blob is still written, so it must not page on the first
-// refresh; a panel that stays dark does.
+// nhDegradedErrorAfter keeps a Network Health group that reports a degraded panel
+// off the Escalator's default count of 3. A brief hole self-heals and the blob is
+// still written, so it must not page early; nhDegradedErrorWindow is what decides
+// when it does. This value only binds an every-cycle group — every group has a
+// cadence today, and at 5 minutes or more the window is always reached first.
 const nhDegradedErrorAfter = 20
 
-// nhDegradedErrorWindow is how long a dark panel may persist before escalating,
-// whichever threshold is crossed first. The count alone no longer describes a
-// duration: a degraded refresh deliberately writes its blob (so the healthy
-// panels stay fresh), which advances updated_at and puts the entry to sleep for a
-// full cadence — at networkHealthHistoryInterval that would be 10 hours to page,
-// against the ~10 minutes the count was chosen for. This is the only counter with
-// that problem; a failed refresh writes nothing, so it is due again next cycle.
+// nhDegradedErrorWindow is how long a run of degraded refreshes must last before
+// escalating, whichever threshold is crossed first. A count alone no longer
+// describes a duration: a degraded refresh deliberately writes its blob (so the
+// healthy panels stay fresh), which advances updated_at and puts the entry to
+// sleep for a full cadence, so 20 counts would be 10 hours at
+// networkHealthHistoryInterval. This is the only counter with that problem; a
+// failed refresh writes nothing, so it is due again next cycle.
+//
+// Escalation still cannot beat the sampling rate: a run's elapsed time is only
+// measured when the entry next refreshes, so a dark panel pages on the first
+// degraded refresh at or after this long from the run's start — ~10 minutes for
+// the overview group, ~30 for the 30-minute ones. Setting it below one cadence
+// buys nothing.
 const nhDegradedErrorWindow = 10 * time.Minute
 
 // nhDegraded escalates a partially-failed Network Health refresh under its own
@@ -451,7 +492,7 @@ func (a *Activities) entries() []cacheEntry {
 		// invalidating the rest, which still writes but escalates under its own
 		// counter (see nhDegraded). The two heavy groups (impactful, deferred)
 		// refresh in their own activity, see heavyEntries.
-		{name: "network health overview", key: handlers.NetworkHealthOverviewCacheKey, every: networkHealthOverviewInterval, fn: func(ctx context.Context) (any, error) {
+		{name: "network health overview", key: handlers.NetworkHealthOverviewCacheKey, dayAligned: true, every: networkHealthOverviewInterval, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()
 			resp := api.FetchNetworkHealthOverviewData(ctx, start, end, "")
 			if err := a.nhOutcome("network health overview", handlers.NetworkHealthOverviewCacheKey, resp.Error, resp.Degraded); err != nil {
@@ -459,7 +500,7 @@ func (a *Activities) entries() []cacheEntry {
 			}
 			return resp, nil
 		}},
-		{name: "network health availability", key: handlers.NetworkHealthAvailabilityCacheKey, every: networkHealthHistoryInterval, fn: func(ctx context.Context) (any, error) {
+		{name: "network health availability", key: handlers.NetworkHealthAvailabilityCacheKey, dayAligned: true, every: networkHealthHistoryInterval, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()
 			resp := api.FetchNetworkHealthAvailabilityData(ctx, start, end, "")
 			if err := a.nhOutcome("network health availability", handlers.NetworkHealthAvailabilityCacheKey, resp.Error, resp.Degraded); err != nil {
@@ -467,7 +508,7 @@ func (a *Activities) entries() []cacheEntry {
 			}
 			return resp, nil
 		}},
-		{name: "network health latency", key: handlers.NetworkHealthLatencyCacheKey, every: networkHealthHistoryInterval, fn: func(ctx context.Context) (any, error) {
+		{name: "network health latency", key: handlers.NetworkHealthLatencyCacheKey, dayAligned: true, every: networkHealthHistoryInterval, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()
 			resp := api.FetchNetworkHealthLatencyData(ctx, start, end, "")
 			if err := a.nhOutcome("network health latency", handlers.NetworkHealthLatencyCacheKey, resp.Error, resp.Degraded); err != nil {
@@ -475,7 +516,7 @@ func (a *Activities) entries() []cacheEntry {
 			}
 			return resp, nil
 		}},
-		{name: "network health capacity", key: handlers.NetworkHealthCapacityCacheKey, every: networkHealthHistoryInterval, fn: func(ctx context.Context) (any, error) {
+		{name: "network health capacity", key: handlers.NetworkHealthCapacityCacheKey, dayAligned: true, every: networkHealthHistoryInterval, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()
 			resp := api.FetchNetworkHealthCapacityData(ctx, start, end, "")
 			if err := a.nhOutcome("network health capacity", handlers.NetworkHealthCapacityCacheKey, resp.Error, resp.Degraded); err != nil {
@@ -483,7 +524,7 @@ func (a *Activities) entries() []cacheEntry {
 			}
 			return resp, nil
 		}},
-		{name: "network health outages", key: handlers.NetworkHealthOutagesCacheKey, every: networkHealthHistoryInterval, fn: func(ctx context.Context) (any, error) {
+		{name: "network health outages", key: handlers.NetworkHealthOutagesCacheKey, dayAligned: true, every: networkHealthHistoryInterval, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()
 			resp := api.FetchNetworkHealthOutagesData(ctx, start, end, "")
 			if err := a.nhOutcome("network health outages", handlers.NetworkHealthOutagesCacheKey, resp.Error, resp.Degraded); err != nil {
@@ -491,7 +532,7 @@ func (a *Activities) entries() []cacheEntry {
 			}
 			return resp, nil
 		}},
-		{name: "network health drain", key: handlers.NetworkHealthDrainCacheKey, every: networkHealthHistoryInterval, fn: func(ctx context.Context) (any, error) {
+		{name: "network health drain", key: handlers.NetworkHealthDrainCacheKey, dayAligned: true, every: networkHealthHistoryInterval, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()
 			resp := api.FetchNetworkHealthDrainData(ctx, start, end, "")
 			if err := a.nhOutcome("network health drain", handlers.NetworkHealthDrainCacheKey, resp.Error, resp.Degraded); err != nil {
@@ -499,7 +540,7 @@ func (a *Activities) entries() []cacheEntry {
 			}
 			return resp, nil
 		}},
-		{name: "network health tickets", key: handlers.NetworkHealthTicketsCacheKey, every: networkHealthHistoryInterval, fn: func(ctx context.Context) (any, error) {
+		{name: "network health tickets", key: handlers.NetworkHealthTicketsCacheKey, dayAligned: true, every: networkHealthHistoryInterval, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()
 			resp := api.FetchNetworkHealthTicketsData(ctx, start, end, "")
 			// A transient ops-API outage sets resp.Error; keep the last-good blob
@@ -595,13 +636,14 @@ func (a *Activities) RefreshCaches(ctx context.Context) error {
 	// view live under its deadline — slower per-contributor page loads, but it
 	// does not compete with the default view for cluster capacity.
 	_ = g.Wait()
-	// refreshed/skipped make the cadence gate observable: successful refreshes log
+	// attempted/skipped make the cadence gate observable: successful refreshes log
 	// at DEBUG (suppressed in prod), so without these counts there is no evidence
 	// of what a cycle actually did — and no way to tell a working gate from one
-	// skipping everything.
+	// skipping everything. They count entries run, not entries written; a failed
+	// refresh reports itself (see recordFailure).
 	a.Log.Info("page cache refresh complete",
 		"duration", time.Since(start).Round(time.Millisecond),
-		"refreshed", len(due)+len(metroPathLatencyStrategies),
+		"attempted", len(due)+len(metroPathLatencyStrategies),
 		"skipped", skipped)
 	return nil
 }
@@ -661,7 +703,7 @@ func (a *Activities) RefreshLatestCaches(ctx context.Context) error {
 func (a *Activities) heavyEntries() []cacheEntry {
 	api := a.API
 	return []cacheEntry{
-		{name: "network health impactful", key: handlers.NetworkHealthImpactfulCacheKey, every: networkHealthHistoryInterval, timeout: nhHeavyRefreshTimeout, fn: func(ctx context.Context) (any, error) {
+		{name: "network health impactful", key: handlers.NetworkHealthImpactfulCacheKey, dayAligned: true, every: networkHealthHistoryInterval, timeout: nhHeavyRefreshTimeout, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()
 			resp := api.FetchNetworkHealthImpactfulData(ctx, start, end, "")
 			if err := a.nhOutcome("network health impactful", handlers.NetworkHealthImpactfulCacheKey, resp.Error, resp.Degraded); err != nil {
@@ -669,7 +711,7 @@ func (a *Activities) heavyEntries() []cacheEntry {
 			}
 			return resp, nil
 		}},
-		{name: "network health deferred", key: handlers.NetworkHealthDeferredCacheKey, every: networkHealthHistoryInterval, timeout: nhHeavyRefreshTimeout, fn: func(ctx context.Context) (any, error) {
+		{name: "network health deferred", key: handlers.NetworkHealthDeferredCacheKey, dayAligned: true, every: networkHealthHistoryInterval, timeout: nhHeavyRefreshTimeout, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()
 			resp := api.FetchNetworkHealthDeferredData(ctx, start, end, "")
 			if err := a.nhOutcome("network health deferred", handlers.NetworkHealthDeferredCacheKey, resp.Error, resp.Degraded); err != nil {

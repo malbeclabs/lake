@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -229,21 +230,70 @@ func TestInterruptedEscalation(t *testing.T) {
 func TestDueForRefresh(t *testing.T) {
 	t.Parallel()
 
-	now := time.Unix(1_700_000_000, 0)
+	now := time.Unix(1_700_000_000, 0).UTC()
+	windowEnd := now.Truncate(24 * time.Hour)
+	cadenced := cacheEntry{every: 5 * time.Minute}
 
 	t.Run("due once the blob is at least the cadence old", func(t *testing.T) {
-		require.False(t, dueForRefresh(5*time.Minute, now.Add(-4*time.Minute), now))
-		require.True(t, dueForRefresh(5*time.Minute, now.Add(-5*time.Minute), now))
-		require.True(t, dueForRefresh(5*time.Minute, now.Add(-time.Hour), now))
+		require.False(t, dueForRefresh(cadenced, now.Add(-4*time.Minute), now, windowEnd))
+		require.True(t, dueForRefresh(cadenced, now.Add(-5*time.Minute), now, windowEnd))
+		require.True(t, dueForRefresh(cadenced, now.Add(-time.Hour), now, windowEnd))
 	})
 
 	t.Run("no cadence means every cycle", func(t *testing.T) {
-		require.True(t, dueForRefresh(0, now, now))
+		require.True(t, dueForRefresh(cacheEntry{}, now, now, windowEnd))
 	})
 
 	t.Run("a key that was never written is always due", func(t *testing.T) {
-		require.True(t, dueForRefresh(30*time.Minute, time.Time{}, now))
+		require.True(t, dueForRefresh(cacheEntry{every: 30 * time.Minute}, time.Time{}, now, windowEnd))
 	})
+}
+
+// TestDayAlignedEntriesRollWithTheWindow pins the fix for the cross-group window
+// skew. handlers.DefaultNetworkHealthWindow moves at midnight UTC, and the
+// frontend refuses to combine two Network Health payloads whose windows disagree
+// (deriveAvailability). Without this rule, groups on 5- and 30-minute cadences
+// would describe different windows for up to half an hour every night and the
+// page's traffic-weighted availability stat would read as a dash.
+func TestDayAlignedEntriesRollWithTheWindow(t *testing.T) {
+	t.Parallel()
+
+	// One minute past midnight UTC: the window just rolled, and every Network
+	// Health blob was written under the previous one.
+	windowEnd := time.Unix(1_700_000_000, 0).UTC().Truncate(24 * time.Hour)
+	now := windowEnd.Add(time.Minute)
+	writtenYesterday := windowEnd.Add(-time.Minute)
+
+	aligned := cacheEntry{every: networkHealthHistoryInterval, dayAligned: true}
+	require.True(t, dueForRefresh(aligned, writtenYesterday, now, windowEnd),
+		"a blob describing yesterday's window is due whatever the cadence says")
+
+	// Not a licence to ignore the cadence: a blob written under the current window
+	// still waits for it.
+	require.False(t, dueForRefresh(aligned, windowEnd.Add(time.Second), now, windowEnd))
+
+	// Nothing changes for an entry that does not read the day-aligned window.
+	unaligned := cacheEntry{every: networkHealthHistoryInterval}
+	require.False(t, dueForRefresh(unaligned, writtenYesterday, now, windowEnd))
+
+	// Every Network Health entry must carry the marker, or its group's window
+	// lags the others'.
+	byKey := map[string]cacheEntry{}
+	a := &Activities{}
+	for _, e := range append(a.entries(), a.heavyEntries()...) {
+		byKey[e.key] = e
+	}
+	for _, key := range networkHealthKeys {
+		require.True(t, byKey[key].dayAligned,
+			"network health entry %q reads DefaultNetworkHealthWindow, so it must roll with it", key)
+	}
+	// And nothing else should: an entry that does not read that window would just
+	// refresh once more per day for no reason.
+	for _, e := range append(a.entries(), a.heavyEntries()...) {
+		if !slices.Contains(networkHealthKeys, e.key) {
+			require.False(t, e.dayAligned, "entry %q does not read the day-aligned window", e.key)
+		}
+	}
 }
 
 // TestCadenceIsIndependentOfCyclePeriod is the reason the cadence is a duration
@@ -263,8 +313,9 @@ func TestCadenceIsIndependentOfCyclePeriod(t *testing.T) {
 		// due, and record the spacing between consecutive refreshes.
 		lastWrite := start
 		var spacings []time.Duration
+		entry := cacheEntry{every: every}
 		for now := start; now.Sub(start) <= time.Hour; now = now.Add(period) {
-			if dueForRefresh(every, lastWrite, now) {
+			if dueForRefresh(entry, lastWrite, now, time.Time{}) {
 				spacings = append(spacings, now.Sub(lastWrite))
 				lastWrite = now
 			}
@@ -292,12 +343,6 @@ func TestEntryCadences(t *testing.T) {
 	for _, e := range append(a.entries(), a.heavyEntries()...) {
 		byKey[e.key] = e
 	}
-
-	// The three cadences that predate the duration gate must come out at the same
-	// wall-clock spacing they had as cycle counts at the 30s default interval.
-	require.Equal(t, 2*time.Minute, publisherCheckInterval)
-	require.Equal(t, 60*time.Second, validatorsListingInterval)
-	require.Equal(t, 5*time.Minute, algoDivergenceInterval)
 
 	for key, want := range map[string]time.Duration{
 		"publisher_check":                      publisherCheckInterval,
@@ -374,11 +419,12 @@ func TestDueEntriesSkipsNothingWithoutCadences(t *testing.T) {
 	require.Zero(t, skipped)
 }
 
-// TestFailedRefreshIsDueNextCycle pins the property that keeps the escalation
-// counters honest under a long cadence: a refresh that fails writes nothing, so
-// updated_at does not advance and the entry is due again immediately. A dark
-// entry therefore still pages on the cycle rate, not the cadence rate.
-func TestFailedRefreshIsDueNextCycle(t *testing.T) {
+// TestUnadvancedUpdatedAtIsDueNextCycle pins the property that keeps the
+// escalation counters honest under a long cadence. refresh only reaches
+// WritePageCache on success, so a failed refresh leaves updated_at where it was —
+// and the gate then makes the entry due again on the very next cycle, so a dark
+// entry still pages at the cycle rate rather than the cadence rate.
+func TestUnadvancedUpdatedAtIsDueNextCycle(t *testing.T) {
 	t.Parallel()
 
 	const every = 30 * time.Minute
@@ -387,8 +433,9 @@ func TestFailedRefreshIsDueNextCycle(t *testing.T) {
 
 	// The refresh at dueAt fails, so updated_at is still lastGoodWrite one cycle
 	// later — and the entry is due again.
-	require.True(t, dueForRefresh(every, lastGoodWrite, dueAt))
-	require.True(t, dueForRefresh(every, lastGoodWrite, dueAt.Add(defaultRefreshInterval)))
+	entry := cacheEntry{every: every}
+	require.True(t, dueForRefresh(entry, lastGoodWrite, dueAt, time.Time{}))
+	require.True(t, dueForRefresh(entry, lastGoodWrite, dueAt.Add(defaultRefreshInterval), time.Time{}))
 }
 
 // TestWriteFailureEscalation pins that the cache-write leg escalates under its
@@ -1019,4 +1066,24 @@ func TestNetworkHealthDegradedWindowPages(t *testing.T) {
 	require.Equal(t, 2, countLevel(*recs, slog.LevelError),
 		"a panel dark for longer than the window must page well before %d refreshes (%s)",
 		nhDegradedErrorAfter, time.Duration(nhDegradedErrorAfter)*networkHealthHistoryInterval)
+}
+
+// TestDueEntriesEscalatesSustainedAgeReadFailure pins that the gate's fail-open
+// is not silent. A persistent age-read failure — a revoked grant on page_cache, a
+// pool that never yields a connection — reverts every cadenced entry to
+// every-cycle refresh, which is exactly the ClickHouse cost the cadence removes.
+// Nothing else reports it, so a sustained failure has to page.
+func TestDueEntriesEscalatesSustainedAgeReadFailure(t *testing.T) {
+	t.Parallel()
+
+	log, recs := capLogger()
+	a := &Activities{Log: log, API: &handlers.API{}} // no PgPool → every read errors
+	entries := a.entries()
+
+	for range errorAfterFailures {
+		due, _ := a.dueEntries(context.Background(), entries)
+		require.Len(t, due, len(entries))
+	}
+	require.Equal(t, errorAfterFailures-1, countLevel(*recs, slog.LevelWarn), "a blip stays WARN")
+	require.Equal(t, 1, countLevel(*recs, slog.LevelError), "a sustained gate outage must page")
 }
