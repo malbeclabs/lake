@@ -21,9 +21,9 @@ type LedgerResponse struct {
 	EpochPct     float64 `json:"epoch_pct"`
 	EpochETASec  float64 `json:"epoch_eta_sec"`
 
-	// SlotDurationSec is the chain's current slot time, measured from the recent
-	// performance samples. EpochETASec is derived from it, and the web derives
-	// "epoch started N ago" from it too, so both figures come from one number.
+	// SlotDurationSec is the slot time this response's epoch figures were computed at,
+	// published so a consumer converting slots to wall-clock derives it from here
+	// rather than assuming a rate of its own.
 	SlotDurationSec float64 `json:"slot_duration_sec"`
 
 	// Chain state
@@ -57,31 +57,30 @@ type LedgerResponse struct {
 
 const defaultDZLedgerRPCURL = "https://doublezero-mainnet-beta.rpcpool.com/db336024-e7a8-46b1-80e5-352dd77060ab"
 
-// Bounds on a slot duration measured from the performance samples. Outside them the
-// reading is not a slot rate at all — the chain is paused, or a node is replaying
-// history rather than keeping up with it — and the caller's fallback is used instead.
+// Bounds on a measured slot duration. A reading outside them is not a slot rate at
+// all: the chain is paused, or a node is replaying history rather than keeping up
+// with it.
 const (
-	// Below SIMD-0525's terminal 200ms stage, so a future sub-200ms stage needs no edit.
+	// Set well under any slot time a Solana-compatible chain has targeted, so that a
+	// chain speeding up does not need an edit here to keep being measured.
 	minSlotDurationSec = 0.150
 	maxSlotDurationSec = 1.0
 )
 
-// Fallbacks, used only when the chain's own slot rate cannot be measured from the
-// performance samples — empty, or out of plausible bounds. This is a rarely-hit path
-// and these are approximations by design: they do not need to track their chain
-// precisely, they need to be sane.
+// Fallbacks for a chain whose slot rate cannot be measured. Approximations by design:
+// this path is rarely reached, so these need to be plausible rather than current.
 const (
-	// The DoubleZero ledger's *observed* rate, not its 400ms target, which it beats by
-	// ~8%: it lands 432k-slot epochs in ~44h. Basis: the note on fallbackSlotDuration in
-	// malbeclabs/doublezero controlplane/telemetry/internal/telemetry/epoch.go.
+	// The DoubleZero ledger's *observed* rate, which runs ahead of its nominal target —
+	// do not "correct" this to the nominal figure. Basis: the note on
+	// fallbackSlotDuration in malbeclabs/doublezero
+	// controlplane/telemetry/internal/telemetry/epoch.go.
 	dzFallbackSlotDurationSec = 0.370
 
-	// Solana's SIMD-0525 stage as of the 350ms gate, effective epoch 1020 (2026-08-21).
+	// Tracks whichever SIMD-0525 stage Solana is on, so it wants a bump per stage.
 	solanaFallbackSlotDurationSec = 0.350
 )
 
-// slotDurationFromSamples derives the chain's slot time from the performance samples,
-// falling back to the caller's per-chain constant when they cannot support a reading.
+// slotDurationFromSamples derives the chain's slot time from the performance samples.
 //
 // agave's SamplePerformanceService populates NumSlots as the delta of the highest slot
 // across the sample window — a slot *index* delta, so skipped slots are counted. That is
@@ -124,13 +123,10 @@ func FetchSolanaLedgerData(ctx context.Context) (*LedgerResponse, error) {
 	return fetchLedgerData(ctx, GetSolanaRPCURL(), solanaFallbackSlotDurationSec)
 }
 
-// fetchLedgerData fetches ledger telemetry from the given RPC URL. Each chain's URL and
-// its fallback slot duration are paired by the two exported wrappers above rather than
-// at each call site, since a mismatched pair compiles and would have the same chain
-// report two different ETAs depending on whether the page cache was warm.
-//
-// fallbackSlotDurationSec is the slot time to assume when it cannot be measured from
-// the performance samples.
+// fetchLedgerData fetches ledger telemetry from the given RPC URL. URL and fallback are
+// paired by the wrappers above rather than at each call site: a mismatched pair compiles,
+// and would have one chain report two different ETAs depending on whether the page cache
+// was warm.
 func fetchLedgerData(ctx context.Context, rpcURL string, fallbackSlotDurationSec float64) (*LedgerResponse, error) {
 	client := solana.NewClient(rpcURL)
 
@@ -222,9 +218,7 @@ func fetchLedgerData(ctx context.Context, rpcURL string, fallbackSlotDurationSec
 		epochPct = float64(epochInfo.SlotIndex) / float64(epochInfo.SlotsInEpoch) * 100
 	}
 
-	// ETA in seconds, at the chain's own measured slot rate. A fixed 0.4s put mainnet's
-	// 350ms epochs ~6h long, and the DZ ledger — which runs ~8% ahead of its own 400ms
-	// target — up to ~4h long right after a rollover.
+	// ETA in seconds
 	slotDurationSec := slotDurationFromSamples(perfSamples, fallbackSlotDurationSec)
 	remainingSlots := epochInfo.SlotsInEpoch - epochInfo.SlotIndex
 	epochETASec := float64(remainingSlots) * slotDurationSec

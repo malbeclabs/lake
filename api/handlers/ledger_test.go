@@ -33,13 +33,15 @@ func TestSlotDurationFromSamples(t *testing.T) {
 		fallback float64
 		want     float64
 	}{
-		// Derivation. Ten 60s samples in each case, so the window is 600s.
-		{"solana pre-gate 400ms", samples(10, 60, 150), solanaFallbackSlotDurationSec, 0.400},
-		{"solana testnet 200ms", samples(10, 60, 300), solanaFallbackSlotDurationSec, 0.200},
-		{"solana devnet 300ms", samples(10, 60, 200), solanaFallbackSlotDurationSec, 0.300},
-		{"solana mainnet post-gate 350ms", samples(10, 60, 171), solanaFallbackSlotDurationSec, 0.351},
-		// The case that motivates the change: the DZ ledger beats its own 400ms target.
-		{"dz ledger measured ~367ms", samples(10, 60, 163), dzFallbackSlotDurationSec, 0.368},
+		// Derivation, across the spread of rates these chains run at. Ten 60s samples
+		// in each case, so the window is 600s.
+		{"400ms chain", samples(10, 60, 150), solanaFallbackSlotDurationSec, 0.400},
+		{"300ms chain", samples(10, 60, 200), solanaFallbackSlotDurationSec, 0.300},
+		{"200ms chain", samples(10, 60, 300), solanaFallbackSlotDurationSec, 0.200},
+		// Nothing snaps to a round figure: a chain that misses its target is reported
+		// at the rate it actually runs at, which is the whole point of measuring.
+		{"350ms chain", samples(10, 60, 171), solanaFallbackSlotDurationSec, 0.351},
+		{"chain at an untargeted rate", samples(10, 60, 163), dzFallbackSlotDurationSec, 0.368},
 		// A node that has only just started sampling still reports its real rate.
 		{"a single sample is enough", samples(1, 60, 150), solanaFallbackSlotDurationSec, 0.400},
 
@@ -55,7 +57,7 @@ func TestSlotDurationFromSamples(t *testing.T) {
 			want:     600.0 / 1650.0, // ~0.364, not the 0.38 a per-sample mean gives
 		},
 
-		// Guardrails, each falling back to whatever the caller passed.
+		// Guardrails.
 		{"no samples falls back", nil, solanaFallbackSlotDurationSec, solanaFallbackSlotDurationSec},
 		{"zero slots falls back", samples(10, 60, 0), dzFallbackSlotDurationSec, dzFallbackSlotDurationSec},
 		// 600s / 6000 slots = 0.1s: a node replaying history, not keeping up with it.
@@ -112,9 +114,9 @@ func ledgerBackend(t *testing.T, slotIndex, slotsInEpoch, numSlotsPerSample uint
 	return srv
 }
 
-// TestFetchLedgerData_EpochETAUsesMeasuredSlotDuration: the ETA must track the chain's
-// real slot rate. A chain running twice as fast finishes its epoch in half the time —
-// under the old fixed 0.4s both reported the same number.
+// TestFetchLedgerData_EpochETAUsesMeasuredSlotDuration: a chain running twice as fast
+// finishes its epoch in half the time. Under the fixed constant this replaced, both
+// reported the same number.
 func TestFetchLedgerData_EpochETAUsesMeasuredSlotDuration(t *testing.T) {
 	resetSupplyCache()
 

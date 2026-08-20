@@ -85,8 +85,7 @@ function EpochProgress({ data }: { data: LedgerResponse | undefined }) {
 
   const pct = data.epoch_pct
   const remaining = formatDuration(data.epoch_eta_sec)
-  // Same slot time the API used for epoch_eta_sec, so both figures agree. The 0.4
-  // fallback only covers a page-cache row written before the field existed.
+  // The fallback only covers a page-cache row written by a deploy predating the field.
   const started = formatDuration(data.slot_index * (data.slot_duration_sec || 0.4))
 
   return (
