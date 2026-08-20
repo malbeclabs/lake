@@ -140,19 +140,8 @@ func TestFetchLedgerData_SlowSupplyDoesNotSinkTheResponse(t *testing.T) {
 			fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"result":{"epoch":700,"slotIndex":100,`+
 				`"slotsInEpoch":432000,"absoluteSlot":300000000,"blockHeight":280000000,"transactionCount":9}}`)
 		case "getRecentPerformanceSamples":
-			// Ten samples, so the span clears minSampleSpanSec and the slot duration is
-			// measured rather than falling back: 600s / 1500 slots = 0.4s.
-			fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"result":[`+
-				`{"numTransactions":6000,"samplePeriodSecs":60,"numSlots":150,"slot":10},`+
-				`{"numTransactions":6000,"samplePeriodSecs":60,"numSlots":150,"slot":9},`+
-				`{"numTransactions":6000,"samplePeriodSecs":60,"numSlots":150,"slot":8},`+
-				`{"numTransactions":6000,"samplePeriodSecs":60,"numSlots":150,"slot":7},`+
-				`{"numTransactions":6000,"samplePeriodSecs":60,"numSlots":150,"slot":6},`+
-				`{"numTransactions":6000,"samplePeriodSecs":60,"numSlots":150,"slot":5},`+
-				`{"numTransactions":6000,"samplePeriodSecs":60,"numSlots":150,"slot":4},`+
-				`{"numTransactions":6000,"samplePeriodSecs":60,"numSlots":150,"slot":3},`+
-				`{"numTransactions":6000,"samplePeriodSecs":60,"numSlots":150,"slot":2},`+
-				`{"numTransactions":6000,"samplePeriodSecs":60,"numSlots":150,"slot":1}]}`)
+			fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"result":[{"numTransactions":6000,"samplePeriodSecs":60,`+
+				`"numSlots":150,"slot":1}]}`)
 		case "getInflationRate":
 			fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"result":{"total":0.05,"validator":0.045,"foundation":0.005,"epoch":700}}`)
 		case "getVersion":
@@ -165,7 +154,7 @@ func TestFetchLedgerData_SlowSupplyDoesNotSinkTheResponse(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := FetchLedgerData(context.Background(), srv.URL, SolanaFallbackSlotDurationSec)
+	got, err := fetchLedgerData(context.Background(), srv.URL, solanaFallbackSlotDurationSec)
 	require.NoError(t, err,
 		"a failing getSupply must not fail the whole response; before this it cancelled "+
 			"five already-finished sibling calls through errgroup.WithContext")

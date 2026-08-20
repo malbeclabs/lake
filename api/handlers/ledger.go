@@ -58,31 +58,26 @@ type LedgerResponse struct {
 const defaultDZLedgerRPCURL = "https://doublezero-mainnet-beta.rpcpool.com/db336024-e7a8-46b1-80e5-352dd77060ab"
 
 // Bounds on a slot duration measured from the performance samples. Outside them the
-// reading is not a slot rate — the chain is paused, or the sample window is too short
-// to be anything but RPC latency and commitment jitter — and the caller's fallback is
-// used instead.
+// reading is not a slot rate at all — the chain is paused, or a node is replaying
+// history rather than keeping up with it — and the caller's fallback is used instead.
 const (
 	// Below SIMD-0525's terminal 200ms stage, so a future sub-200ms stage needs no edit.
 	minSlotDurationSec = 0.150
 	maxSlotDurationSec = 1.0
-	// Ten 60s samples span ~600s, so this only bites when an endpoint returns a
-	// partial set.
-	minSampleSpanSec = 300
 )
 
 // Fallbacks, used only when the chain's own slot rate cannot be measured from the
-// performance samples — empty, too short a span, or out of plausible bounds. This is a
-// rarely-hit path and these are approximations by design: they do not need to track
-// their chain precisely, they need to be sane.
+// performance samples — empty, or out of plausible bounds. This is a rarely-hit path
+// and these are approximations by design: they do not need to track their chain
+// precisely, they need to be sane.
 const (
 	// The DoubleZero ledger's *observed* rate, not its 400ms target, which it beats by
 	// ~8%: it lands 432k-slot epochs in ~44h. Basis: the note on fallbackSlotDuration in
-	// malbeclabs/doublezero controlplane/telemetry/internal/telemetry/epoch.go. Not 0.400.
-	DZFallbackSlotDurationSec = 0.370
+	// malbeclabs/doublezero controlplane/telemetry/internal/telemetry/epoch.go.
+	dzFallbackSlotDurationSec = 0.370
 
 	// Solana's SIMD-0525 stage as of the 350ms gate, effective epoch 1020 (2026-08-21).
-	// Not 0.400 — that is the pre-gate value this issue was filed to stop using.
-	SolanaFallbackSlotDurationSec = 0.350
+	solanaFallbackSlotDurationSec = 0.350
 )
 
 // slotDurationFromSamples derives the chain's slot time from the performance samples,
@@ -98,7 +93,7 @@ func slotDurationFromSamples(samples []solana.PerformanceSample, fallback float6
 		totalSec += s.SamplePeriodSec
 		totalSlots += s.NumSlots
 	}
-	if totalSec < minSampleSpanSec || totalSlots == 0 {
+	if totalSlots == 0 {
 		return fallback
 	}
 	d := float64(totalSec) / float64(totalSlots)
@@ -119,12 +114,24 @@ func GetSolanaRPCURL() string {
 	return solana.GetRPCURL()
 }
 
-// FetchLedgerData fetches ledger telemetry from the given RPC URL.
+// FetchDZLedgerData fetches ledger telemetry for the DoubleZero ledger.
+func FetchDZLedgerData(ctx context.Context) (*LedgerResponse, error) {
+	return fetchLedgerData(ctx, GetDZLedgerRPCURL(), dzFallbackSlotDurationSec)
+}
+
+// FetchSolanaLedgerData fetches ledger telemetry for Solana.
+func FetchSolanaLedgerData(ctx context.Context) (*LedgerResponse, error) {
+	return fetchLedgerData(ctx, GetSolanaRPCURL(), solanaFallbackSlotDurationSec)
+}
+
+// fetchLedgerData fetches ledger telemetry from the given RPC URL. Each chain's URL and
+// its fallback slot duration are paired by the two exported wrappers above rather than
+// at each call site, since a mismatched pair compiles and would have the same chain
+// report two different ETAs depending on whether the page cache was warm.
 //
-// fallbackSlotDurationSec is the chain's slot time to assume when it cannot be measured
-// from the performance samples; pass DZFallbackSlotDurationSec or
-// SolanaFallbackSlotDurationSec.
-func FetchLedgerData(ctx context.Context, rpcURL string, fallbackSlotDurationSec float64) (*LedgerResponse, error) {
+// fallbackSlotDurationSec is the slot time to assume when it cannot be measured from
+// the performance samples.
+func fetchLedgerData(ctx context.Context, rpcURL string, fallbackSlotDurationSec float64) (*LedgerResponse, error) {
 	client := solana.NewClient(rpcURL)
 
 	var (
@@ -273,7 +280,7 @@ func (a *API) GetDZLedger(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
-	resp, err := FetchLedgerData(ctx, GetDZLedgerRPCURL(), DZFallbackSlotDurationSec)
+	resp, err := FetchDZLedgerData(ctx)
 	if err != nil {
 		logError("DZ ledger RPC request failed", "error", err)
 		w.Header().Set("Content-Type", "application/json")
@@ -297,7 +304,7 @@ func (a *API) GetSolanaLedger(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
-	resp, err := FetchLedgerData(ctx, GetSolanaRPCURL(), SolanaFallbackSlotDurationSec)
+	resp, err := FetchSolanaLedgerData(ctx)
 	if err != nil {
 		logError("Solana ledger RPC request failed", "error", err)
 		w.Header().Set("Content-Type", "application/json")

@@ -25,10 +25,7 @@ func samples(n int, periodSec, numSlots uint64) []solana.PerformanceSample {
 	return out
 }
 
-// TestSlotDurationFromSamples covers the derivation and every guardrail. The whole
-// point of the change is that one hardcoded 0.4 cannot be right for two chains, so
-// the fallback cases assert against both per-chain constants: a shared default would
-// pass one of them and fail the other.
+// TestSlotDurationFromSamples covers the derivation and every guardrail.
 func TestSlotDurationFromSamples(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -36,13 +33,15 @@ func TestSlotDurationFromSamples(t *testing.T) {
 		fallback float64
 		want     float64
 	}{
-		// Derivation. Ten 60s samples in each case, so the span is 600s.
-		{"solana pre-gate 400ms", samples(10, 60, 150), SolanaFallbackSlotDurationSec, 0.400},
-		{"solana testnet 200ms", samples(10, 60, 300), SolanaFallbackSlotDurationSec, 0.200},
-		{"solana devnet 300ms", samples(10, 60, 200), SolanaFallbackSlotDurationSec, 0.300},
-		{"solana mainnet post-gate 350ms", samples(10, 60, 171), SolanaFallbackSlotDurationSec, 0.351},
+		// Derivation. Ten 60s samples in each case, so the window is 600s.
+		{"solana pre-gate 400ms", samples(10, 60, 150), solanaFallbackSlotDurationSec, 0.400},
+		{"solana testnet 200ms", samples(10, 60, 300), solanaFallbackSlotDurationSec, 0.200},
+		{"solana devnet 300ms", samples(10, 60, 200), solanaFallbackSlotDurationSec, 0.300},
+		{"solana mainnet post-gate 350ms", samples(10, 60, 171), solanaFallbackSlotDurationSec, 0.351},
 		// The case that motivates the change: the DZ ledger beats its own 400ms target.
-		{"dz ledger measured ~367ms", samples(10, 60, 163), DZFallbackSlotDurationSec, 0.368},
+		{"dz ledger measured ~367ms", samples(10, 60, 163), dzFallbackSlotDurationSec, 0.368},
+		// A node that has only just started sampling still reports its real rate.
+		{"a single sample is enough", samples(1, 60, 150), solanaFallbackSlotDurationSec, 0.400},
 
 		// Summed across the window, not averaged per sample: uneven samples must
 		// weight by their own period.
@@ -52,29 +51,22 @@ func TestSlotDurationFromSamples(t *testing.T) {
 				samples(9, 60, 150), // 540s / 1350 slots
 				solana.PerformanceSample{SamplePeriodSec: 60, NumSlots: 300}, // one fast sample
 			),
-			fallback: SolanaFallbackSlotDurationSec,
+			fallback: solanaFallbackSlotDurationSec,
 			want:     600.0 / 1650.0, // ~0.364, not the 0.38 a per-sample mean gives
 		},
 
-		// Guardrails. Each falls back to whatever the caller passed.
-		{"no samples falls back (dz)", nil, DZFallbackSlotDurationSec, DZFallbackSlotDurationSec},
-		{"no samples falls back (solana)", nil, SolanaFallbackSlotDurationSec, SolanaFallbackSlotDurationSec},
-		{"zero slots falls back (dz)", samples(10, 60, 0), DZFallbackSlotDurationSec, DZFallbackSlotDurationSec},
-		{"zero slots falls back (solana)", samples(10, 60, 0), SolanaFallbackSlotDurationSec, SolanaFallbackSlotDurationSec},
-		{"span under 300s falls back (dz)", samples(1, 60, 150), DZFallbackSlotDurationSec, DZFallbackSlotDurationSec},
-		{"span under 300s falls back (solana)", samples(1, 60, 150), SolanaFallbackSlotDurationSec, SolanaFallbackSlotDurationSec},
-		// 600s / 6000 slots = 0.1s, below the floor.
-		{"below the floor falls back (dz)", samples(10, 60, 600), DZFallbackSlotDurationSec, DZFallbackSlotDurationSec},
-		{"below the floor falls back (solana)", samples(10, 60, 600), SolanaFallbackSlotDurationSec, SolanaFallbackSlotDurationSec},
+		// Guardrails, each falling back to whatever the caller passed.
+		{"no samples falls back", nil, solanaFallbackSlotDurationSec, solanaFallbackSlotDurationSec},
+		{"zero slots falls back", samples(10, 60, 0), dzFallbackSlotDurationSec, dzFallbackSlotDurationSec},
+		// 600s / 6000 slots = 0.1s: a node replaying history, not keeping up with it.
+		{"below the floor falls back", samples(10, 60, 600), solanaFallbackSlotDurationSec, solanaFallbackSlotDurationSec},
 		// A chain that advanced one slot in 600s is stalled, not running at 600s/slot.
-		{"above the ceiling falls back (dz)", samples(1, 600, 1), DZFallbackSlotDurationSec, DZFallbackSlotDurationSec},
-		{"above the ceiling falls back (solana)", samples(1, 600, 1), SolanaFallbackSlotDurationSec, SolanaFallbackSlotDurationSec},
+		{"above the ceiling falls back", samples(1, 600, 1), dzFallbackSlotDurationSec, dzFallbackSlotDurationSec},
 
 		// Inclusive bounds: an off-by-one here silently discards legitimate readings.
 		// Each fallback differs from the expected reading, so a rejected bound fails.
-		{"exactly the floor is accepted", samples(10, 60, 400), SolanaFallbackSlotDurationSec, minSlotDurationSec},
-		{"exactly the ceiling is accepted", samples(10, 60, 60), SolanaFallbackSlotDurationSec, maxSlotDurationSec},
-		{"exactly the minimum span is accepted", samples(5, 60, 150), SolanaFallbackSlotDurationSec, 0.400},
+		{"exactly the floor is accepted", samples(10, 60, 400), solanaFallbackSlotDurationSec, minSlotDurationSec},
+		{"exactly the ceiling is accepted", samples(10, 60, 60), solanaFallbackSlotDurationSec, maxSlotDurationSec},
 	}
 
 	for _, tt := range tests {
@@ -129,8 +121,8 @@ func TestFetchLedgerData_EpochETAUsesMeasuredSlotDuration(t *testing.T) {
 	const slotIndex, slotsInEpoch = 32000, 432000
 
 	// 600s / 1500 slots = 0.4s.
-	slow, err := FetchLedgerData(context.Background(),
-		ledgerBackend(t, slotIndex, slotsInEpoch, 150).URL, SolanaFallbackSlotDurationSec)
+	slow, err := fetchLedgerData(context.Background(),
+		ledgerBackend(t, slotIndex, slotsInEpoch, 150).URL, solanaFallbackSlotDurationSec)
 	require.NoError(t, err)
 	require.InDelta(t, 0.4, slow.SlotDurationSec, 0.0001)
 	require.InDelta(t, float64(slotsInEpoch-slotIndex)*slow.SlotDurationSec, slow.EpochETASec, 0.01)
@@ -138,8 +130,8 @@ func TestFetchLedgerData_EpochETAUsesMeasuredSlotDuration(t *testing.T) {
 	resetSupplyCache()
 
 	// 600s / 3000 slots = 0.2s.
-	fast, err := FetchLedgerData(context.Background(),
-		ledgerBackend(t, slotIndex, slotsInEpoch, 300).URL, SolanaFallbackSlotDurationSec)
+	fast, err := fetchLedgerData(context.Background(),
+		ledgerBackend(t, slotIndex, slotsInEpoch, 300).URL, solanaFallbackSlotDurationSec)
 	require.NoError(t, err)
 	require.InDelta(t, 0.2, fast.SlotDurationSec, 0.0001)
 	require.InDelta(t, slow.EpochETASec/2, fast.EpochETASec, 0.01,
@@ -154,14 +146,14 @@ func TestFetchLedgerData_UnusableSamplesUseTheCallersFallback(t *testing.T) {
 		name     string
 		fallback float64
 	}{
-		{"dz", DZFallbackSlotDurationSec},
-		{"solana", SolanaFallbackSlotDurationSec},
+		{"dz", dzFallbackSlotDurationSec},
+		{"solana", solanaFallbackSlotDurationSec},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			resetSupplyCache()
 
 			// numSlots of 0 is the shape a chain reports when the field is unpopulated.
-			got, err := FetchLedgerData(context.Background(),
+			got, err := fetchLedgerData(context.Background(),
 				ledgerBackend(t, 32000, 432000, 0).URL, tt.fallback)
 			require.NoError(t, err)
 			require.InDelta(t, tt.fallback, got.SlotDurationSec, 0.0001)
