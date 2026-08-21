@@ -740,6 +740,25 @@ func (a *API) fetchKalshiPrices(ctx context.Context) (map[string]float64, error)
 // alone selects two feeds, not one. The prefix is what actually discriminates them.
 const kalshiEdgeWSArmFilter = "startsWith(source, 'tob_') AND source_id = 3 AND channel_id IN (2, 101)"
 
+// KalshiLatencyMinSamples is the smallest 24h sample count a (feed, vantage) row needs before
+// its percentiles are published.
+//
+// A percentile needs a distribution behind it. Over five observations p99 IS the maximum of five
+// observations, and the row renders as p50 = p90 = p99 — one value repeated three times, sitting
+// in the same table as a row backed by fifteen million. Nothing in the number says which is
+// which, so the reader compares them.
+//
+// Observed on mainnet: four `cmh` sources with five samples each reported 0.3 ms against the
+// 23 ms the same vantage measures on the perps lane it actually carries. That reads as a
+// hundredfold path advantage rather than as an unmeasured feed, which is the worst direction for
+// this metric to be wrong in — it flatters DoubleZero.
+//
+// A thousand is chosen to sit far below anything real and far above noise: a live vantage on a
+// live feed logs millions of observations in 24h (the three perps vantages carry ~15.4M each),
+// while a producer that has just started, or one writing by mistake, carries single digits. It is
+// not a statistical threshold for p99 precision; it is the line between "measured" and "not".
+const KalshiLatencyMinSamples = 1000
+
 // FetchKalshiPathLatency computes each feed's venue-to-receive latency (p50/p90/p99 in ms) over
 // the last 24h from the raw observations table: for one venue update, how long until this feed
 // delivered it. See KalshiPathLatency for why this, not the race margin, is the headline.
@@ -833,6 +852,22 @@ func (a *API) FetchKalshiPathLatency(ctx context.Context) (*KalshiPathLatency, e
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+
+	// Dropped in Go rather than with a HAVING clause so the dropped rows can be named. A row
+	// falling below the floor usually means a producer that just started or one writing where it
+	// should not be, and both are worth seeing — silently returning fewer rows than the table
+	// holds would read as "that vantage carries nothing".
+	kept := out.Feeds[:0]
+	for _, f := range out.Feeds {
+		if f.Samples >= KalshiLatencyMinSamples {
+			kept = append(kept, f)
+			continue
+		}
+		slog.Info("kalshi path latency: row below the sample floor, not published",
+			"feed", f.Feed, "location_code", f.LocationCode, "samples", f.Samples,
+			"min_samples", KalshiLatencyMinSamples, "p50_ms", f.P50Ms)
+	}
+	out.Feeds = kept
 
 	// Grouped by vantage, DoubleZero first within each so the two paths sit adjacent and are
 	// read against each other rather than across metros — the comparison is only meaningful

@@ -461,6 +461,28 @@ func insertObservationAt(t *testing.T, api *handlers.API, metro, source string, 
 	`, db, metro, metro, source, symbol, sourceTsMs, sourceTsMs, int64(latencyMs*1e6), sourceID, channelID)))
 }
 
+// insertObservationBurst writes n observations of one source at one vantage, each stamped at a
+// distinct source_ts_ms so the query's inner GROUP BY cannot collapse them, all at the same
+// latency. Bursts rather than single rows because a (feed, vantage) row below
+// handlers.KalshiLatencyMinSamples is not published at all — a percentile assertion has to be
+// made on a row the report would actually show.
+func insertObservationBurst(t *testing.T, api *handlers.API, metro, source string, sourceID uint16, channelID uint8, symbol string, baseMs uint64, n int, latencyMs float64) {
+	t.Helper()
+	db := "`" + api.FeedsDB + "`"
+	require.NoError(t, api.DB.Exec(t.Context(), fmt.Sprintf(`
+		INSERT INTO %s.kalshi_bbo_observations
+		(measurement_node_id, location_code, source, symbol, source_ts_ms, recv_ts_ns, source_id, channel_id)
+		SELECT '%s-rec1', '%s', '%s', '%s',
+		       %d + number,
+		       (toUInt64(%d) + number) * 1000000 + %d,
+		       %d, %d
+		FROM numbers(%d)
+	`, db, metro, metro, source, symbol, baseMs, baseMs, int64(latencyMs*1e6), sourceID, channelID, n)))
+}
+
+// enough is a burst size that clears the sample floor with room to spare.
+var enough = int(handlers.KalshiLatencyMinSamples) + 100
+
 // The headline: each feed measured against the venue's own timestamp, never against each other.
 func TestKalshiPathLatency_PerFeed(t *testing.T) {
 	api := newKalshiTestAPI(t)
@@ -470,10 +492,10 @@ func TestKalshiPathLatency_PerFeed(t *testing.T) {
 	// recv_ts_ns must land inside the 24h window, so anchor source_ts_ms at now.
 	nowMs := uint64(time.Now().UnixMilli())
 	for i, lat := range []float64{2, 4, 6} {
-		insertObservation(t, api, kalshiDZFeed, 3, 101, "KXBTCPERP", nowMs+uint64(i), lat)
+		insertObservationBurst(t, api, "cmh", kalshiDZFeed, 3, 101, "KXBTCPERP", nowMs+uint64(i*enough), enough, lat)
 	}
 	for i, lat := range []float64{500, 520, 540} {
-		insertObservation(t, api, kalshiPublicFeed, 9, 0, "KXBTCPERP", nowMs+uint64(i), lat)
+		insertObservationBurst(t, api, "cmh", kalshiPublicFeed, 9, 0, "KXBTCPERP", nowMs+uint64(i*enough), enough, lat)
 	}
 
 	pl, err := api.FetchKalshiPathLatency(t.Context())
@@ -485,7 +507,7 @@ func TestKalshiPathLatency_PerFeed(t *testing.T) {
 	assert.Equal(t, "DoubleZero", pl.Feeds[0].Label)
 	assert.Equal(t, "cmh", pl.Feeds[0].LocationCode)
 	assert.InDelta(t, 4.0, pl.Feeds[0].P50Ms, 0.01)
-	assert.EqualValues(t, 3, pl.Feeds[0].Samples)
+	assert.EqualValues(t, 3*enough, pl.Feeds[0].Samples)
 
 	assert.False(t, pl.Feeds[1].IsDZ)
 	assert.Equal(t, "Public API", pl.Feeds[1].Label)
@@ -503,9 +525,9 @@ func TestKalshiPathLatency_PerVantage(t *testing.T) {
 
 	nowMs := uint64(time.Now().UnixMilli())
 	// One update, seen by DoubleZero at three vantages with very different latencies.
-	insertObservationAt(t, api, "cmh", kalshiDZFeed, 3, 101, "KXBTCPERP", nowMs, 5)
-	insertObservationAt(t, api, "was", kalshiDZFeed, 3, 101, "KXBTCPERP", nowMs, 25)
-	insertObservationAt(t, api, "dub", kalshiDZFeed, 3, 101, "KXBTCPERP", nowMs, 60)
+	insertObservationBurst(t, api, "cmh", kalshiDZFeed, 3, 101, "KXBTCPERP", nowMs, enough, 5)
+	insertObservationBurst(t, api, "was", kalshiDZFeed, 3, 101, "KXBTCPERP", nowMs, enough, 25)
+	insertObservationBurst(t, api, "dub", kalshiDZFeed, 3, 101, "KXBTCPERP", nowMs, enough, 60)
 
 	pl, err := api.FetchKalshiPathLatency(t.Context())
 	require.NoError(t, err)
@@ -529,15 +551,39 @@ func TestKalshiPathLatency_ExcludesIncomparableClocks(t *testing.T) {
 	seedKalshiEntry(t, api, kalshiPublicFeed, "Public API", 0)
 
 	nowMs := uint64(time.Now().UnixMilli())
-	insertObservation(t, api, kalshiDZFeed, 3, 101, "KXBTCPERP", nowMs, 5)   // WS arm
-	insertObservation(t, api, kalshiDZFeed, 3, 1, "KXBTCPERP", nowMs+1, 900) // FIX arm
+	// Every arm gets a burst that clears the sample floor, so a single surviving row can only
+	// be the clock filter's doing and not the floor's.
+	insertObservationBurst(t, api, "cmh", kalshiDZFeed, 3, 101, "KXBTCPERP", nowMs, enough, 5)                // WS arm
+	insertObservationBurst(t, api, "cmh", kalshiDZFeed, 3, 1, "KXBTCPERP", nowMs+uint64(enough), enough, 900) // FIX arm
 	// The MBP lane carries source_id 3 too — production does, so source_id alone cannot
 	// discriminate the lanes and the tob_ prefix is what actually excludes this row.
-	insertObservationAt(t, api, "cmh", kalshiDZMbpFeed, 3, 101, "KXBTCPERP", nowMs+2, 800)
+	insertObservationBurst(t, api, "cmh", kalshiDZMbpFeed, 3, 101, "KXBTCPERP", nowMs+uint64(2*enough), enough, 800)
 
 	pl, err := api.FetchKalshiPathLatency(t.Context())
 	require.NoError(t, err)
 	require.Len(t, pl.Feeds, 1, "only the WS arm has a comparable source timestamp")
 	assert.InDelta(t, 5.0, pl.Feeds[0].P50Ms, 0.01)
-	assert.EqualValues(t, 1, pl.Feeds[0].Samples)
+	assert.EqualValues(t, enough, pl.Feeds[0].Samples)
+}
+
+// A handful of observations cannot carry a percentile, and the report puts them in the same table
+// as a row backed by millions. Measured on mainnet: four sources with five samples each reported
+// 0.3 ms at a vantage whose real lane measures 23 ms — a hundredfold advantage that was really an
+// unmeasured feed.
+func TestKalshiPathLatency_DropsRowsBelowSampleFloor(t *testing.T) {
+	api := newKalshiTestAPI(t)
+	createKalshiObservationsTable(t, api)
+	seedKalshiEntry(t, api, kalshiPublicFeed, "Public API", 0)
+
+	nowMs := uint64(time.Now().UnixMilli())
+	insertObservationBurst(t, api, "cmh", kalshiDZFeed, 3, 101, "KXBTCPERP", nowMs, enough, 23)
+	// The same vantage, a source that has written a handful of rows at an implausible latency.
+	insertObservationBurst(t, api, "cmh", "tob_edge_kalshi_sports_nba", 3, 101, "KXBTCPERP", nowMs+uint64(enough), 5, 0.3)
+
+	pl, err := api.FetchKalshiPathLatency(t.Context())
+	require.NoError(t, err)
+
+	require.Len(t, pl.Feeds, 1, "the five-sample row is not published")
+	assert.Equal(t, kalshiDZFeed, pl.Feeds[0].Feed)
+	assert.InDelta(t, 23.0, pl.Feeds[0].P50Ms, 0.01)
 }
