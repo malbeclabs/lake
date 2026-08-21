@@ -8,6 +8,7 @@ import { CopyableText } from './copyable-text'
 import { handleRowClick } from '@/lib/utils'
 import {
   fetchEdgeMulticast,
+  type EdgeMulticastChannelInstance,
   type EdgeMulticastGroup,
   type EdgeMulticastPublisher,
   type EdgeMulticastSequenceHealth,
@@ -244,17 +245,22 @@ function PublisherCell({
 }
 
 // One publisher, one line. Everything on it is per member: its own rate, its own bucket age, its
-// own verdict against the floor — none of which survives the group roll-up above.
+// own recorded sequence series, its own verdict against the floor — none of which survives the
+// group roll-up above.
 function PublisherLineRow({
   line,
   asOf,
+  showLastHeard,
+  showSequence,
+  sequenceAsOfAge,
   floorBps,
-  columns,
 }: {
   line: EdgeMulticastPublisher
   asOf: number
+  showLastHeard: boolean
+  showSequence: boolean
+  sequenceAsOfAge?: number
   floorBps: number
-  columns: number
 }) {
   const age = ageSecs(line.observed_at, asOf)
   const stale = age === undefined || age > STALE_AFTER_SECS
@@ -277,7 +283,16 @@ function PublisherLineRow({
           worth having on the line. */}
       <td className="pl-8 pr-3 py-1.5 whitespace-nowrap">
         <span className="inline-flex items-center gap-2">
-          <CopyableText text={line.dz_ip || line.client_ip} className="font-mono text-xs" />
+          {/* The address links to the ledger User behind it: a source that is gapping is a
+              question about that account — its tunnel, its device, its access pass — and this
+              page already holds the pk. stopPropagation because the row click opens the group. */}
+          <Link
+            to={`/dz/users/${line.user_pk}`}
+            onClick={(e) => e.stopPropagation()}
+            className="font-mono text-xs hover:underline"
+          >
+            {line.dz_ip || line.client_ip}
+          </Link>
           {/* The classification rides with the identity rather than in the Subscribers column:
               a publisher line has nothing to say about that side of the group. */}
           {label && <span className="text-muted-foreground">{label}</span>}
@@ -317,8 +332,15 @@ function PublisherLineRow({
           <span className={stale ? 'text-amber-500' : 'text-muted-foreground'}>{formatAge(age)}</span>
         )}
       </td>
-      {/* The remaining columns belong to the group, not to one of its publishers. */}
-      <td className="px-3 py-1.5" colSpan={columns - 7} />
+      {/* "Heard" is per group — the recorders' own plane, with nothing to say about one
+          publisher — but a sequence series is per publisher, so that column is filled in. */}
+      {showLastHeard && <td className="px-3 py-1.5" />}
+      {showSequence && (
+        <td className="px-3 py-1.5 whitespace-nowrap">
+          <PublisherSequenceCell sequence={line.sequence} asOfAge={sequenceAsOfAge} />
+        </td>
+      )}
+      <td className="px-3 py-1.5" />
     </tr>
   )
 }
@@ -389,14 +411,79 @@ function LastHeardCell({ group, now }: { group: EdgeMulticastGroup; now: number 
   )
 }
 
-// The sequence column. It reports the recorded wire protocol's own counters — one series per
-// channel instance — and it is the only column here that can say "the feed lost data", as opposed
-// to "a member of it is quiet".
-//
-// The count is instances, not messages: "gapped 1/4" is one series of four with a discontinuity,
-// which is a different call to action from all four. Gap counts are BOOKS, never gap-marked
-// messages — see KalshiL2Lane, which documents why the message count is a duration rather than a
-// fault count.
+// One channel instance as a tooltip line. Gap counts are BOOKS, never gap-marked messages — see
+// KalshiL2Lane, which documents why the message count is a duration rather than a fault count.
+function sequenceInstanceLine(i: EdgeMulticastChannelInstance): string {
+  const from = i.publisher_source_ip ? `${i.publisher_source_ip} ` : ''
+  return (
+    `${from}ch${i.channel_id} @${i.node} (${i.capture_source}): ${i.messages.toLocaleString()} msgs, ` +
+    `${i.gap_books.toLocaleString()} book(s) gapped, ${i.resets.toLocaleString()} resets, ` +
+    `${i.snapshot_cycles.toLocaleString()} snapshot cycles`
+  )
+}
+
+// The badge, shared by the group roll-up and the publisher lines. One instance per tooltip line:
+// these are the only tooltips on the page with a list in them, and run together as a paragraph
+// they are unreadable.
+function SequenceBadge({ status, count, detail }: { status: string; count: string; detail: string }) {
+  return (
+    <Tooltip content={detail} className="whitespace-pre-line">
+      <span className="inline-flex items-center gap-1.5">
+        <span
+          className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
+            SEQUENCE_BADGE[status] ?? 'bg-muted text-muted-foreground'
+          }`}
+        >
+          {status}
+        </span>
+        {count && <span className="text-xs text-muted-foreground tabular-nums">{count}</span>}
+      </span>
+    </Tooltip>
+  )
+}
+
+// The sequence verdict for ONE publisher: the recorded wire protocol's own counters for the series
+// it emitted, and the only thing on this page that can say "this path lost data" as opposed to
+// "this member is quiet". A series is owned by one path — two paths carrying one channel cannot
+// share a counter — so this, not the group cell, is where the verdict belongs.
+function PublisherSequenceCell({
+  sequence,
+  asOfAge,
+}: {
+  sequence?: EdgeMulticastSequenceHealth
+  asOfAge?: number
+}) {
+  // Nothing was recorded from this publisher's address. Not a verdict of any kind, so no badge:
+  // the group cell says how many series were attributed and how many were not.
+  if (!sequence || sequence.instances.length === 0) {
+    return <span className="text-muted-foreground">—</span>
+  }
+
+  const total = sequence.instances.length
+  const bad = sequence.gapped + sequence.stalled
+  const detail = [
+    ...sequence.instances.map(sequenceInstanceLine),
+    asOfAge === undefined
+      ? ''
+      : `folded from the L2 coverage refresher, computed ${formatAge(asOfAge)}`,
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  return (
+    <SequenceBadge
+      status={sequence.status}
+      count={bad > 0 ? `${bad}/${total}` : total > 1 ? String(total) : ''}
+      detail={detail}
+    />
+  )
+}
+
+// The group's sequence cell, which is a ROLL-UP and says so: the count is publishers, because that
+// is the grain a series has, and the verdict per publisher is on the publisher lines the row
+// expands into. It stays on the group row for two reasons — the lines are collapsed by default on
+// anything but the smallest groups, and a series recorded from an address no publisher of this
+// group carries has no line to sit on and would otherwise go unreported.
 function SequenceCell({
   sequence,
   asOfAge,
@@ -408,16 +495,18 @@ function SequenceCell({
     return <span className="text-muted-foreground">—</span>
   }
 
-  const total = sequence.instances.length
-  const bad = sequence.gapped + sequence.stalled
+  const instances = sequence.instances.length
+  const publishers = sequence.publishers ?? 0
+  const badPublishers = (sequence.publishers_gapped ?? 0) + (sequence.publishers_stalled ?? 0)
+  const unattributed = sequence.unattributed ?? 0
   const detail = [
-    `${total} channel instance${total === 1 ? '' : 's'} — (capture source, channel, recording node)`,
-    ...sequence.instances.map(
-      (i) =>
-        `${i.capture_source} ch${i.channel_id} @${i.node}: ${i.messages.toLocaleString()} msgs, ` +
-        `${i.gap_books.toLocaleString()} book(s) gapped, ${i.resets.toLocaleString()} resets, ` +
-        `${i.snapshot_cycles.toLocaleString()} snapshot cycles`,
-    ),
+    publishers > 0
+      ? `${publishers} publisher${publishers === 1 ? '' : 's'}, ${instances} channel instance${instances === 1 ? '' : 's'} — expand the row for the verdict per publisher`
+      : `${instances} channel instance${instances === 1 ? '' : 's'}`,
+    unattributed > 0
+      ? `${unattributed} recorded from an address no publisher of this group carries, so ${unattributed === 1 ? 'it has' : 'they have'} no line of ${unattributed === 1 ? 'its' : 'their'} own`
+      : '',
+    ...sequence.instances.map(sequenceInstanceLine),
     asOfAge === undefined
       ? ''
       : `folded from the L2 coverage refresher, computed ${formatAge(asOfAge)}`,
@@ -425,24 +514,16 @@ function SequenceCell({
     .filter(Boolean)
     .join('\n')
 
-  // One instance per line: this is the one tooltip on the page with a list in it, and run
-  // together as a paragraph it is unreadable.
-  return (
-    <Tooltip content={detail} className="whitespace-pre-line">
-      <span className="inline-flex items-center gap-1.5">
-        <span
-          className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
-            SEQUENCE_BADGE[sequence.status] ?? 'bg-muted text-muted-foreground'
-          }`}
-        >
-          {sequence.status}
-        </span>
-        <span className="text-xs text-muted-foreground tabular-nums">
-          {bad > 0 ? `${bad}/${total}` : total}
-        </span>
-      </span>
-    </Tooltip>
-  )
+  // Publishers where they are known, instances where nothing was attributed: a count of series is
+  // still better than no count, and it is what the tooltip's first line says it is.
+  const count =
+    publishers > 0
+      ? badPublishers > 0
+        ? `${badPublishers}/${publishers}`
+        : String(publishers)
+      : `${sequence.gapped + sequence.stalled > 0 ? `${sequence.gapped + sequence.stalled}/` : ''}${instances}`
+
+  return <SequenceBadge status={sequence.status} count={count} detail={detail} />
 }
 
 // Rates carry a tilde when the group's publishers also publish elsewhere from the same tunnel:
@@ -560,8 +641,10 @@ function GroupRow({
           key={`${group.pk}-${line.user_pk}`}
           line={line}
           asOf={asOf}
+          showLastHeard={showLastHeard}
+          showSequence={showSequence}
+          sequenceAsOfAge={sequenceAsOfAge}
           floorBps={floorBps}
-          columns={columns}
         />
       ))}
     {expanded && hidden > 0 && (
@@ -596,8 +679,9 @@ function ServiceSection({
   floorBps: number
   onOpen: (e: React.MouseEvent, pk: string) => void
 }) {
-  // The publisher lines fill the first seven columns and blank the rest, so the count has to
-  // match the header exactly — a mismatch silently shifts every group column one to the left.
+  // Only the truncation notice spans the table now; the publisher lines carry a cell per column,
+  // so the count still has to match the header exactly — a mismatch silently shifts every group
+  // column one to the left.
   const columns = 8 + (showLastHeard ? 1 : 0) + (showSequence ? 1 : 0)
   const silent = service.groups.filter((g) => g.silent).length
 
@@ -777,10 +861,12 @@ export function EdgeMulticastPage() {
           {showSequence && (
             <>
               {' '}
-              “Sequence” is the recorded wire protocol's own counters, one series per channel instance —
-              (source IP, channel, recording node) — and the only column here that can say the feed lost
-              data rather than that a member went quiet. Gap counts are books, never gap-marked messages.
-              It is folded from the L2 coverage refresher, so it is minutes older than the rest of the row.
+              “Sequence” is the recorded wire protocol's own counters, and the only column here that
+              can say the feed lost data rather than that a member went quiet. A series is owned by one
+              channel instance — (source IP, channel, recording node) — so the verdict sits on the
+              publisher that emitted it, and the group cell is a roll-up over its publishers. Gap counts
+              are books, never gap-marked messages. It is folded from the L2 coverage refresher, so it is
+              minutes older than the rest of the row.
             </>
           )}
         </p>

@@ -39,7 +39,7 @@ func newEdgeMulticastTestAPI(t *testing.T) *handlers.API {
 // kalshiL2CoverageKey mirrors the unexported page-cache key in kalshi_l2_coverage.go. If that
 // constant's version is bumped without this one, the sequence tests stop exercising the fold and
 // start asserting the absent case, which still passes — so bump both.
-const kalshiL2CoverageKey = "kalshi_l2_coverage:v2"
+const kalshiL2CoverageKey = "kalshi_l2_coverage:v3"
 
 // seedL2Coverage writes a coverage payload for the sequence column to fold, and removes it again
 // afterwards.
@@ -692,6 +692,107 @@ func insertEdgeMulticastCapturePublisher(t *testing.T, api *handlers.API, groupP
 		VALUES (now() - INTERVAL 1 MINUTE, 'dev-ams1', 'Tunnel509', 509, 'user-kpub', 5000000, 0, now())`))
 }
 
+// insertEdgeMulticastCapturePublisher2 adds a second publisher to a capture group, so the
+// per-publisher sequence attribution has two lines to tell apart.
+func insertEdgeMulticastCapturePublisher2(t *testing.T, api *handlers.API, groupPK string) {
+	t.Helper()
+	ctx := t.Context()
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_users_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id, publishers, subscribers)
+		VALUES ('user-kpub2', now(), now(), generateUUIDv4(), 0, 12, 'user-kpub2', 'pubkey-kpub2', 'activated',
+		        'multicast', '10.0.0.10', '10.0.0.10', 'dev-ams1', 510, ?, '[]')`,
+		fmt.Sprintf(`["%s"]`, groupPK)))
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO device_interface_rollup_5m
+			(bucket_ts, device_pk, intf, user_tunnel_id, user_pk, max_in_bps, max_out_bps, ingested_at)
+		VALUES (now() - INTERVAL 1 MINUTE, 'dev-ams1', 'Tunnel510', 510, 'user-kpub2', 4000000, 0, now())`))
+}
+
+// A sequence series belongs to ONE publisher: each path keeps its own counters, so one can gap
+// while its peer is intact. The old roll-up could only say "this group gapped", which on a
+// two-publisher feed names neither the healthy path nor the broken one.
+func TestGetEdgeMulticast_SequenceIsPerPublisher(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertEdgeMulticastCaptureGroups(t, api)
+	insertEdgeMulticastCapturePublisher(t, api, "group-k")
+	insertEdgeMulticastCapturePublisher2(t, api, "group-k")
+
+	asOf := time.Now().UTC()
+	seedL2Coverage(t, api, asOf,
+		// 10.0.0.9's series is intact; 10.0.0.10's gapped. Same group, same capture source,
+		// same recording node: the address is the only thing that separates them.
+		handlers.KalshiL2Lane{
+			Source: "mbp_edge_kalshi_sports_nfl", ChannelID: 1, MeasurementNodeID: "cmh-rec1",
+			PublisherSourceIP: "10.0.0.9", Messages: 2000, Seen: true, LastSeen: asOf.Add(-time.Second),
+		},
+		handlers.KalshiL2Lane{
+			Source: "mbp_edge_kalshi_sports_nfl", ChannelID: 1, MeasurementNodeID: "cmh-rec1",
+			PublisherSourceIP: "10.0.0.10", Messages: 1900, GapBooks: 4, Resets: 3, Seen: true,
+			LastSeen: asOf.Add(-time.Second),
+		},
+	)
+
+	g := findEdgeMulticastGroup(t, getEdgeMulticast(t, api), "edge-kalshi-sports-mbp")
+
+	require.Len(t, g.PublisherLines, 2)
+	byIP := map[string]handlers.EdgeMulticastPublisher{}
+	for _, l := range g.PublisherLines {
+		byIP[l.DZIP] = l
+	}
+
+	intact := byIP["10.0.0.9"]
+	require.NotNil(t, intact.Sequence, "the series is reported on the line that emitted it")
+	assert.Equal(t, "ok", intact.Sequence.Status)
+	assert.Zero(t, intact.Sequence.Gapped)
+
+	broken := byIP["10.0.0.10"]
+	require.NotNil(t, broken.Sequence)
+	assert.Equal(t, "gapped", broken.Sequence.Status)
+	assert.Equal(t, 1, broken.Sequence.Gapped)
+	require.Len(t, broken.Sequence.Instances, 1)
+	assert.Equal(t, uint64(4), broken.Sequence.Instances[0].GapBooks)
+	assert.Equal(t, "10.0.0.10", broken.Sequence.Instances[0].PublisherSourceIP)
+
+	// The roll-up still answers the group-level question, and now counts publishers as well as
+	// series: one of two publishers is broken, not "the group is broken".
+	require.NotNil(t, g.Sequence)
+	assert.Equal(t, "gapped", g.Sequence.Status)
+	assert.Equal(t, 2, g.Sequence.Publishers)
+	assert.Equal(t, 1, g.Sequence.PublishersGapped)
+	assert.Equal(t, 0, g.Sequence.Unattributed)
+}
+
+// A recorded series whose source address matches no publisher in the ledger has no line to sit on.
+// It is counted on the roll-up rather than dropped: silently discarding a recorded gap is the one
+// outcome this column must not have.
+func TestGetEdgeMulticast_SequenceUnattributedSeries(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertEdgeMulticastCaptureGroups(t, api)
+	insertEdgeMulticastCapturePublisher(t, api, "group-k")
+
+	asOf := time.Now().UTC()
+	seedL2Coverage(t, api, asOf,
+		handlers.KalshiL2Lane{
+			Source: "mbp_edge_kalshi_sports_nfl", ChannelID: 1, MeasurementNodeID: "cmh-rec1",
+			PublisherSourceIP: "10.9.9.9", Messages: 900, GapBooks: 2, Seen: true,
+			LastSeen: asOf.Add(-time.Second),
+		},
+	)
+
+	g := findEdgeMulticastGroup(t, getEdgeMulticast(t, api), "edge-kalshi-sports-mbp")
+
+	require.Len(t, g.PublisherLines, 1)
+	assert.Nil(t, g.PublisherLines[0].Sequence, "nothing recorded from this publisher's address")
+	require.NotNil(t, g.Sequence)
+	assert.Equal(t, 1, g.Sequence.Unattributed)
+	assert.Equal(t, 0, g.Sequence.Publishers)
+	assert.Equal(t, "gapped", g.Sequence.Status, "the gap is still reported, just not on a line")
+}
+
 // The recorder half of the verdict. Every recording node on a group receives the same feed, so a
 // node writing down a fraction of what its peers do is not hearing it — a fault the publisher
 // counters cannot see, because they are per tunnel and sum every group the tunnel carries.
@@ -753,12 +854,14 @@ func TestGetEdgeMulticast_SequenceHealthFromL2Cache(t *testing.T) {
 	seedL2Coverage(t, api, asOf,
 		handlers.KalshiL2Lane{
 			Source: "mbp_edge_kalshi_sports_nfl", ChannelID: 1, MeasurementNodeID: "cmh-rec1",
-			LocationCode: "cmh", Messages: 1000, Seen: true, LastSeen: asOf.Add(-2 * time.Second),
+			PublisherSourceIP: "10.0.0.9", LocationCode: "cmh", Messages: 1000, Seen: true,
+			LastSeen: asOf.Add(-2 * time.Second),
 		},
 		handlers.KalshiL2Lane{
 			Source: "mbp_edge_kalshi_sports_nba", ChannelID: 2, MeasurementNodeID: "cmh-rec1",
-			LocationCode: "cmh", Messages: 500, GapBooks: 3, GapMessages: 158912, Resets: 2,
-			SnapshotCycles: 1, Seen: true, LastSeen: asOf.Add(-1 * time.Second),
+			PublisherSourceIP: "10.0.0.9", LocationCode: "cmh", Messages: 500, GapBooks: 3,
+			GapMessages: 158912, Resets: 2, SnapshotCycles: 1, Seen: true,
+			LastSeen: asOf.Add(-1 * time.Second),
 		},
 		// A configured capture source that produced nothing in the window. It says nothing
 		// about a sequence series and must not become an 'ok' instance.
@@ -799,7 +902,8 @@ func TestGetEdgeMulticast_SequenceStalledSeries(t *testing.T) {
 	seedL2Coverage(t, api, asOf,
 		handlers.KalshiL2Lane{
 			Source: "mbp_edge_kalshi_sports_nfl", ChannelID: 1, MeasurementNodeID: "cmh-rec1",
-			Messages: 1000, Seen: true, LastSeen: asOf.Add(-10 * time.Minute),
+			PublisherSourceIP: "10.0.0.9", Messages: 1000, Seen: true,
+			LastSeen: asOf.Add(-10 * time.Minute),
 		},
 	)
 

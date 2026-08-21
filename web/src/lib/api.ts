@@ -7704,6 +7704,9 @@ export interface KalshiL2Lane {
   label: string
   category: string
   channel_id: number
+  /** The address the datagrams were sent from: what makes a lane a channel instance rather than a
+   *  channel. Empty on a lane nothing was heard from. */
+  publisher_source_ip: string
   location_code: string
   measurement_node_id: string
   messages: number
@@ -7771,6 +7774,9 @@ export interface EdgeMulticastPublisher {
   /** Feeds several groups from one tunnel, so bps cannot be attributed to this group alone. */
   multi_group: boolean
   observed_at?: string
+  /** This publisher's own recorded sequence series — the grain a series has, since one belongs to
+   *  one path. Absent unless a recorder wrote something from this publisher's address. */
+  sequence?: EdgeMulticastSequenceHealth
 }
 
 /** One recording node's view of one group on the application plane. */
@@ -7785,8 +7791,10 @@ export interface EdgeMulticastCaptureNode {
   lagging: boolean
 }
 
-/** One recorded sequence series: one Channel ID of one capture source at one recording node. */
+/** One recorded sequence series: one Channel ID from one source address at one recording node. */
 export interface EdgeMulticastChannelInstance {
+  /** The address the datagrams came from — the field that makes this a channel instance. */
+  publisher_source_ip?: string
   capture_source: string
   channel_id: number
   node: string
@@ -7802,11 +7810,19 @@ export interface EdgeMulticastChannelInstance {
   status: string
 }
 
-/** Sequence-counter health for a group, rolled up worst-first over its channel instances. */
+/** Sequence health over a set of channel instances, worst-first: one publisher's own series on a
+ *  publisher line, the group's roll-up over all of them on the group. */
 export interface EdgeMulticastSequenceHealth {
   status: string
+  /** Instances in each state. */
   gapped: number
   stalled: number
+  /** The same tally per publisher, on the group roll-up only. */
+  publishers?: number
+  publishers_gapped?: number
+  publishers_stalled?: number
+  /** Instances whose source address matched no publisher line, so they have no row of their own. */
+  unattributed?: number
   instances: EdgeMulticastChannelInstance[]
 }
 
@@ -7830,7 +7846,8 @@ export interface EdgeMulticastGroup {
   /** Per-node application-plane view; absent for a group no capture covers. */
   capture_nodes?: EdgeMulticastCaptureNode[]
   capture_nodes_lagging?: number
-  /** Recorded sequence series; absent unless a recorder runs the Edge wire protocol here. */
+  /** Roll-up of the group's recorded sequence series; absent unless a recorder runs the Edge wire
+   *  protocol here. The verdict itself is per publisher — see EdgeMulticastPublisher.sequence. */
   sequence?: EdgeMulticastSequenceHealth
   ingress_bps: number
   /** Subscriber-side total. Not rendered: per-tunnel counters sum every group a subscriber joins. */

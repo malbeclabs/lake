@@ -12,23 +12,38 @@ import (
 // Edge wire protocol and have a recorder behind them, whether the recorded sequence series is
 // intact.
 //
-// # The grain, and what the capture schema can actually key on
+// # The grain: a sequence series belongs to one publisher
 //
-// Sequencing keys on the CHANNEL INSTANCE — (source IP address, Channel ID, destination port) —
-// because redundant paths carrying one channel run as separate publishers on separate hosts and
-// cannot share a counter (edge-feed-spec/GLOSSARY.md, Transport). Two of those three fields are
-// not in kalshi_mbp_levels: it carries the capture source id, the Channel ID and the recording
-// node, and no source IP or port anywhere. So the key here is (capture source, Channel ID,
-// recording node).
+// Sequencing keys on the CHANNEL INSTANCE — "one path's view of one channel, keyed (source IP
+// address, Channel ID, destination port)" — and a subscriber "MUST key gap detection and recovery
+// state" on that tuple, "never the channel", because redundant paths carrying one channel run as
+// separate processes on separate hosts and cannot share a counter (edge-feed-spec/GLOSSARY.md,
+// Transport).
 //
-// That resolves the same set today and it is not luck: the capture source id maps 1:1 onto a
-// multicast group and its port role, and prod's two publisher paths for a group share the group,
-// the port triple and the source-IP-bearing tunnel — they differ ONLY by Channel ID, which is
-// exactly what kalshi_l2_coverage.go's GROUP BY documents. The limit worth writing down is the
-// case that would break it: two paths sharing a Channel ID with different source IP addresses
-// would fold into one row here, and a gap on one of them would read as a gap on both. Nothing in
-// lake can resolve a source IP to a recorded series, the same gap that stops
-// edge_multicast_class.go from deriving the market-data recorders.
+// kalshi_mbp_levels carries the source address, as `publisher_source_ip`: the arm axis is a column
+// in that schema on purpose, so that the arms are separable by construction rather than by
+// remembering to filter. So the key here is (source IP address, Channel ID, recording node), and
+// each series is reported on the publisher line whose address the datagrams carried — matched
+// against the ledger's dz_ip, which is the join the fabric's own source attribution already makes
+// ("source_address matches the publisher user's dz_ip", enriched_ip_mroute).
+//
+// Two folds in that key are deliberate:
+//
+//   - The destination port is folded. Only `Sequence Number` is per port role; `Reset Count`, the
+//     manifest and the channel state they govern span the three ports one publisher serves a
+//     channel on, and what this column carries is the book-level fault and recovery counters, not
+//     raw sequence numbers. Splitting by port would scatter a book's gap, its reset and its
+//     snapshot cycle across three rows that each look like they are missing something.
+//   - The recording node is NOT folded. Two vantages of one instance are two independent
+//     observations, and merging them hides a recorder that is missing the feed.
+//
+// The limit worth writing down is now a narrow one: an instance whose source address matches no
+// publisher in the ledger has no line to sit on. It is counted as Unattributed on the group
+// roll-up rather than dropped, because silently discarding a recorded gap is the one outcome this
+// column must not have. Two paths sharing a Channel ID are no longer that case — collapsing the
+// perps arms onto a single channel id (malbeclabs/kalshi#86: settled, timing gated) is a non-event
+// here, and on the sports plane, where channel_id names the league and never was an arm
+// discriminator, there was nothing to fold in the first place.
 //
 // # Why this reads a cache and never queries
 //
@@ -41,7 +56,9 @@ import (
 // Adding a second copy of it to a page that refreshes every 30 seconds would be the same scan
 // again, and worse, the two pages could then disagree about the same feed. This folds the
 // refresher's own cached payload in instead: no query, no scan, and the number on this column is
-// by construction the number /dz/kalshi/l2 shows. The cost is staleness, up to one refresher
+// by construction the number /dz/kalshi/l2 shows. The source address rides along in that payload
+// for the same reason — it is one more GROUP BY key on a scan that is already happening, not a
+// second read. The cost is staleness, up to one refresher
 // interval, which is why SequenceAsOf is in the payload rather than left implicit.
 //
 // A cache miss is the normal state in local dev and while the refresher has never run. It yields
@@ -67,9 +84,14 @@ const (
 	edgeMulticastSeqStalled = "stalled"
 )
 
-// EdgeMulticastChannelInstance is one recorded sequence series: one Channel ID of one capture
-// source as one recording node saw it.
+// EdgeMulticastChannelInstance is one recorded sequence series: one Channel ID from one source
+// address as one recording node saw it.
 type EdgeMulticastChannelInstance struct {
+	// PublisherSourceIP is the address the datagrams came from, and the field that makes this a
+	// channel instance rather than a channel. Empty only on a payload written before the
+	// refresher carried it, in which case the series has no publisher to be reported on.
+	PublisherSourceIP string `json:"publisher_source_ip,omitempty"`
+
 	CaptureSource string `json:"capture_source"`
 	ChannelID     uint8  `json:"channel_id"`
 	Node          string `json:"node"`
@@ -97,7 +119,9 @@ type EdgeMulticastChannelInstance struct {
 	Status   string    `json:"status"`
 }
 
-// EdgeMulticastSequenceHealth is the group's roll-up over its channel instances.
+// EdgeMulticastSequenceHealth is sequence health over a set of channel instances: one publisher's
+// own series where it hangs off a publisher line, the group's roll-up over all of them where it
+// hangs off the group.
 type EdgeMulticastSequenceHealth struct {
 	// Status is the worst of the instances: gapped, then stalled, then ok.
 	Status string `json:"status"`
@@ -106,6 +130,20 @@ type EdgeMulticastSequenceHealth struct {
 	// 4" rather than implying the whole group is broken.
 	Gapped  int `json:"gapped"`
 	Stalled int `json:"stalled"`
+
+	// The same tally at the grain the verdict belongs to, set on the group roll-up only. A group
+	// carrying one series per publisher makes these identical to the instance counts; a group
+	// whose publishers each carry several channels does not, and "1 of 2 publishers" is then a
+	// different call to action from "1 of 8 series".
+	Publishers        int `json:"publishers,omitempty"`
+	PublishersGapped  int `json:"publishers_gapped,omitempty"`
+	PublishersStalled int `json:"publishers_stalled,omitempty"`
+
+	// Unattributed is how many instances matched no publisher line, so their verdict has no row
+	// of its own: a recorded source address the ledger does not carry as a publisher of this
+	// group. Counted rather than dropped — the roll-up is the only place left that can report
+	// them.
+	Unattributed int `json:"unattributed,omitempty"`
 
 	// Instances are sorted worst-first, so a reader who only looks at the first one is looking
 	// at the one that matters.
@@ -147,6 +185,8 @@ func (a *API) edgeMulticastSequenceHealth(ctx context.Context, captureSources ed
 			continue
 		}
 		inst := EdgeMulticastChannelInstance{
+			PublisherSourceIP: lane.PublisherSourceIP,
+
 			CaptureSource:  lane.Source,
 			ChannelID:      lane.ChannelID,
 			Node:           lane.MeasurementNodeID,
@@ -214,6 +254,9 @@ func finishEdgeMulticastSequenceHealth(health *EdgeMulticastSequenceHealth) {
 		if a.GapBooks != b.GapBooks {
 			return a.GapBooks > b.GapBooks
 		}
+		if a.PublisherSourceIP != b.PublisherSourceIP {
+			return a.PublisherSourceIP < b.PublisherSourceIP
+		}
 		if a.CaptureSource != b.CaptureSource {
 			return a.CaptureSource < b.CaptureSource
 		}
@@ -229,5 +272,61 @@ func finishEdgeMulticastSequenceHealth(health *EdgeMulticastSequenceHealth) {
 		health.Status = edgeMulticastSeqStalled
 	default:
 		health.Status = edgeMulticastSeqOK
+	}
+}
+
+// attachEdgeMulticastSequenceHealth reports each channel instance on the publisher line that
+// emitted it, and leaves the group roll-up counting publishers rather than series.
+//
+// Matched on the recorded source address against the ledger's dz_ip. That is the publisher's
+// tunnel address, which is what the datagrams carry and what the recorders' allow-lists are
+// written in; client_ip is the box's own public address and never appears on the wire here.
+//
+// Runs over every publisher, before edgeMulticastPublisherLineCap truncates the list, so which
+// lines the payload happens to carry cannot change any verdict. A faulted line the cap then hid
+// would take its badge off screen with it, leaving only the roll-up — unreachable today, since the
+// only groups with a recorded series have two publishers each against a cap of twelve.
+func attachEdgeMulticastSequenceHealth(lines []EdgeMulticastPublisher, health *EdgeMulticastSequenceHealth) {
+	if health == nil {
+		return
+	}
+
+	byDZIP := make(map[string]int, len(lines))
+	for i, line := range lines {
+		// A publisher with no tunnel address cannot be the source of anything recorded, and
+		// must not become the line an empty PublisherSourceIP lands on.
+		if line.DZIP == "" {
+			continue
+		}
+		// One tunnel address per publisher, so first-wins only fires on a ledger that has
+		// issued one dz_ip twice.
+		if _, dup := byDZIP[line.DZIP]; !dup {
+			byDZIP[line.DZIP] = i
+		}
+	}
+
+	per := map[int]*EdgeMulticastSequenceHealth{}
+	for _, inst := range health.Instances {
+		i, ok := byDZIP[inst.PublisherSourceIP]
+		if !ok {
+			health.Unattributed++
+			continue
+		}
+		if per[i] == nil {
+			per[i] = &EdgeMulticastSequenceHealth{}
+		}
+		per[i].Instances = append(per[i].Instances, inst)
+	}
+
+	for i, h := range per {
+		finishEdgeMulticastSequenceHealth(h)
+		lines[i].Sequence = h
+		health.Publishers++
+		switch h.Status {
+		case edgeMulticastSeqGapped:
+			health.PublishersGapped++
+		case edgeMulticastSeqStalled:
+			health.PublishersStalled++
+		}
 	}
 }

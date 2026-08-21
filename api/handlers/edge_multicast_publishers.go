@@ -77,7 +77,11 @@ const edgeMulticastMinParityNodes = 2
 // (and the page-cache entry) by three orders of magnitude for a list nobody scrolls. The lines
 // are sorted worst-first, so the cap keeps exactly the ones an operator opened the page for, and
 // PublisherLinesTotal reports what was left out. The VERDICT is never affected: it is computed
-// over every publisher before the cap is applied.
+// over every publisher before the cap is applied, and so is the sequence attribution.
+//
+// It does not reach the groups that carry a recorded sequence series: those are the market-by-price
+// groups, two publishers each. The shreds groups, which are the only ones the cap bites on, run
+// Turbine rather than the Edge wire protocol and have no series at all.
 const edgeMulticastPublisherLineCap = 12
 
 // The four states a publisher line can carry. 'thin' is the state this file exists to name: a
@@ -118,6 +122,12 @@ type EdgeMulticastPublisher struct {
 	// ObservedAt is the bucket behind Bps. Per line rather than per group: one stale publisher
 	// among fresh ones is a fact about that publisher.
 	ObservedAt *time.Time `json:"observed_at,omitempty"`
+
+	// Sequence is this publisher's own recorded sequence series — the grain a series has, since
+	// one belongs to one path and two paths cannot share a counter. Nil when no recorder wrote
+	// anything from this publisher's address, which is every group without a capture behind it.
+	// See edge_multicast_sequence.go.
+	Sequence *EdgeMulticastSequenceHealth `json:"sequence,omitempty"`
 }
 
 // EdgeMulticastCaptureNode is one recording node's view of one group on the application plane.

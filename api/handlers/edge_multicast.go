@@ -190,10 +190,14 @@ type EdgeMulticastGroup struct {
 	// one group receive the same feed, so a node far under the median is not hearing it.
 	CaptureNodesLagging int `json:"capture_nodes_lagging,omitempty"`
 
-	// Sequence is the recorded sequence series' health, per channel instance — nil for a group
-	// with no recorder running the Edge wire protocol behind it, which is every group except
-	// the market-by-price ones today. See edge_multicast_sequence.go for the grain and for why
-	// it is folded from the L2 refresher's cache instead of queried.
+	// Sequence is the roll-up of the group's recorded sequence series — nil for a group with no
+	// recorder running the Edge wire protocol behind it, which is every group except the
+	// market-by-price ones today.
+	//
+	// A roll-up, and not the verdict: a series belongs to one publisher, so the verdict lives on
+	// EdgeMulticastPublisher.Sequence, one per line. This exists because the lines are collapsed
+	// by default and because an instance whose source address matches no publisher would
+	// otherwise have nowhere to be reported. See edge_multicast_sequence.go.
 	Sequence *EdgeMulticastSequenceHealth `json:"sequence,omitempty"`
 
 	// IngressBps is the sum of the publishers' measured receive rate at their tunnels — what
@@ -513,6 +517,10 @@ func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership
 	out.PublisherLinesTotal = len(lines)
 	out.PublishersBelowFloor = stats.belowFloor()
 	out.PublishersPublishing = stats.publishing
+	// Also before the truncation: each recorded series is reported on the line that emitted it,
+	// and the roll-up counts publishers rather than series.
+	out.Sequence = sequence
+	attachEdgeMulticastSequenceHealth(lines, out.Sequence)
 	out.PublisherLines = lines
 	if len(out.PublisherLines) > edgeMulticastPublisherLineCap {
 		out.PublisherLines = out.PublisherLines[:edgeMulticastPublisherLineCap]
@@ -520,7 +528,6 @@ func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership
 
 	out.CaptureNodes = edgeMulticastCaptureNodes(lh.nodeObs())
 	out.CaptureNodesLagging = edgeMulticastLaggingNodes(out.CaptureNodes)
-	out.Sequence = sequence
 
 	// Silent stays sourced from the counters and is NOT crossed with LastHeard. The app-plane
 	// signal is receive-side: a recorder outage and a publisher outage produce the same absence,
