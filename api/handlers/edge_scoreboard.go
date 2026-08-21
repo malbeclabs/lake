@@ -251,12 +251,10 @@ func (a *API) GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 	// what edgeScoreboardCacheKey accepts — an omitted or 24h window, no slot
 	// bounds — which is the shape the page-cache worker writes.
 	//
-	// Note the two paths disagree on an *omitted* window: this cache serves 24h
-	// while the live path below falls back to 1h, so the same request answers
-	// differently on HIT and MISS. Latent today (the web client always sends
-	// window), but a caller that omits it gets 24h data up to one refresh cadence
-	// old. Aligning them changes what such a caller receives either way, so it is
-	// left as-is here rather than folded into a cadence change.
+	// The two paths disagree on an *omitted* window: this cache serves 24h while the
+	// live path below falls back to 1h, so the same request answers differently on
+	// HIT and MISS. Latent — the web client always sends window — and aligning them
+	// changes what such a caller receives either way, so it is left as-is.
 	if isMainnet(r.Context()) {
 		if cacheKey := edgeScoreboardCacheKey(r); cacheKey != "" {
 			if data, err := a.readPageCache(r.Context(), cacheKey); err == nil {

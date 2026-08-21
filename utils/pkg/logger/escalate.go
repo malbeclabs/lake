@@ -46,10 +46,9 @@ type Escalator struct {
 	TransientErrorAfter int
 	// ErrorAfterDuration escalates to ERROR once the current unbroken run of
 	// failures for a key has lasted at least this long, whichever threshold is
-	// crossed first. Zero disables it. Use it when the interval between Fail
-	// calls is not fixed, so a count alone does not describe how long a failure
-	// has actually been going (e.g. a page-cache entry whose refresh cadence is a
-	// wall-clock duration): it can only make escalation earlier, never later.
+	// crossed first. Zero disables it. Set it when the interval between Fail calls
+	// is not fixed, so a count alone does not describe how long a failure has
+	// lasted; it can only make escalation earlier, never later.
 	//
 	// It reads the wall clock, so set it only from activity or loop code — never
 	// from Temporal workflow code, where a clock read breaks replay determinism.

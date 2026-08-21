@@ -1104,11 +1104,10 @@ func (a *API) GetLatencyComparison(w http.ResponseWriter, r *http.Request) {
 // Used by both the handler and the cache.
 //
 // This and Network Health's latency_vs_internet panel are the two readers of
-// dz_vs_internet_latency_comparison, the most expensive view the page cache
-// touches, and both used to scan it once per refresh cycle. Both now refresh on a
-// cadence (see the worker's latencyComparisonInterval), which cannot push traffic
-// onto the live path below: GetLatencyComparison serves the cached blob with no
-// age gate.
+// dz_vs_internet_latency_comparison, the most expensive view the page cache touches.
+// Both are now on a cadence (see the worker's latencyComparisonInterval), which
+// cannot push traffic onto the live path below: GetLatencyComparison serves the
+// cached blob with no age gate.
 func (a *API) FetchLatencyComparisonData(ctx context.Context) (*LatencyComparisonResponse, error) {
 	start := time.Now()
 

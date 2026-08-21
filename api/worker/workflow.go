@@ -141,25 +141,20 @@ var (
 // itself — rather than in a side map keyed by string — removes the drift hazard
 // where a renamed key silently reverts to every-cycle refresh.
 //
-// The cadence is a duration and not a cycle count on purpose. The cycle period is
-// not a constant: it is configured per environment (prod runs ~68s, staging ~4
-// min) and it shortens as entries are taken off the every-cycle path, so the same
-// cycle count would mean a different staleness in each environment and would
-// drift as this file changes. A duration means what it says everywhere. It is a
-// floor, not a period: the gate is evaluated once per cycle, so actual spacing
-// lands in [every, every + one cycle period).
+// A duration rather than a cycle count because the cycle period is not a
+// constant: it is configured per environment (prod ~68s, staging ~4 min) and
+// shortens as entries leave the every-cycle path, so one count would mean a
+// different staleness in each. It is a floor, not a period — the gate is checked
+// once per cycle, so actual spacing lands in [every, every + one cycle period).
 type cacheEntry struct {
 	name  string
 	key   string
 	every time.Duration
-	// dayAligned marks an entry whose payload is computed over the day-aligned
-	// window from handlers.DefaultNetworkHealthWindow. Such an entry is also due
-	// as soon as its blob predates the current window's end, whatever every says.
-	// Without that, two groups on different cadences would describe different
-	// windows for up to a full cadence after midnight UTC — and the frontend
-	// refuses to combine payloads whose windows disagree, so the page's
-	// traffic-weighted availability stat would blank out every night (see
-	// deriveAvailability in network-health-reporting-page.tsx).
+	// dayAligned entries read handlers.DefaultNetworkHealthWindow and are also due
+	// once their blob predates the current window's end, whatever every says.
+	// Otherwise groups on different cadences describe different windows after
+	// midnight UTC, and the frontend blanks its traffic-weighted availability stat
+	// when two payloads disagree (deriveAvailability, network-health-reporting-page.tsx).
 	dayAligned bool
 	fn         func(ctx context.Context) (any, error)
 	// timeout overrides the per-refresh context deadline. Zero means the default
@@ -168,71 +163,54 @@ type cacheEntry struct {
 	timeout time.Duration
 }
 
-// Per-entry refresh cadences (see cacheEntry.every). Each answers a product
-// question — how stale may this view be? — not a technical one, so the reasoning
-// is recorded next to the value.
+// Per-entry refresh cadences (see cacheEntry.every). Each answers how stale the
+// view may be, not how expensive it is.
 const (
-	// publisherCheckInterval slows the publisher_check refresh. It reads
-	// shredder.publisher_shred_stats, the heaviest recurring query on the shared
-	// ClickHouse, yet its data only changes on epoch timescales (~2 days).
-	// edge_scoreboard also reads that table but backs a live-tail view, so it
-	// keeps its own much shorter cadence.
+	// publisher_check reads shredder.publisher_shred_stats, the heaviest recurring
+	// query on the shared ClickHouse, but its data moves on epoch timescales (~2 days).
 	publisherCheckInterval = 2 * time.Minute
 
-	// validatorsListingInterval matches the UI's ~60s poll and absorbs the
-	// external ~10s poller that previously ran the query ~6,500×/day.
+	// Matches the UI's ~60s poll and absorbs the external ~10s poller that
+	// previously ran the query ~6,500×/day.
 	validatorsListingInterval = 60 * time.Second
 
-	// algoDivergenceInterval slows the flex-algo divergence refresh. It runs two
-	// full all-pairs path computations over two separately loaded graphs, and its
-	// inputs are link topology tags, which change when someone changes them and
-	// not otherwise — far inside the window in which anyone would act on an
-	// untagged link.
+	// Two full all-pairs path computations over two graphs, keyed off link topology
+	// tags — which change when someone changes them and not otherwise.
 	algoDivergenceInterval = 5 * time.Minute
 
-	// networkHealthOverviewInterval covers the one Network Health group that
-	// carries point-in-time tiles (telemetry freshness against now(), ISIS
-	// device/adjacency state). Those tiles are a few CPU-seconds of the group's
-	// ~200; the rest is its two 30-day scans, which is what the cadence is for.
-	// Five minutes keeps the tiles fresher than the cycle staging already ships.
+	// The only Network Health group with point-in-time tiles (telemetry freshness,
+	// ISIS state). Those are a few CPU-seconds of the group's ~200, so the cadence
+	// is short enough for them and still sheds its two 30-day scans.
 	networkHealthOverviewInterval = 5 * time.Minute
 
-	// networkHealthHistoryInterval covers the purely-historical Network Health
-	// groups. DefaultNetworkHealthWindow is day-aligned at both ends, so within a
-	// day the only thing that changes their answer is late-arriving rollup rows
-	// and advancing FINAL dedup state.
+	// The purely-historical Network Health groups: DefaultNetworkHealthWindow is
+	// day-aligned at both ends, so within a day only late-arriving rollup rows and
+	// advancing FINAL dedup state change their answer.
 	networkHealthHistoryInterval = 30 * time.Minute
 
-	// latencyComparisonInterval slows the metro-pair DZ-vs-internet comparison.
-	// It averages over a long window — a comparison table, not a live tail — and
-	// its view is the single most expensive thing the page cache reads, scanned
-	// twice per cycle (here and by overview's latency_vs_internet panel).
+	// A long-window comparison table, not a live tail — and the most expensive view
+	// the page cache reads, scanned twice per cycle (also by overview's
+	// latency_vs_internet panel).
 	latencyComparisonInterval = 30 * time.Minute
 
-	// edgeScoreboardInterval slows the two 24h edge-scoreboard aggregates, which
-	// have the worst read-per-query of anything the API runs. The live tail is
-	// unaffected: it is served by the separate edge_scoreboard:latest* entries on
-	// the fast cadence.
+	// The two 24h aggregates, which have the worst read-per-query of anything the
+	// API runs. The live tail is unaffected — separate edge_scoreboard:latest*
+	// entries on the fast cadence serve it.
 	edgeScoreboardInterval = 5 * time.Minute
 )
 
-// cacheAgesEscalationKey is the escalator key for the cadence gate's own age
-// read, separate from every cache key so a gate outage is one alert rather than
-// one per entry.
+// cacheAgesEscalationKey keys the gate's own age read, so a gate outage is one
+// alert rather than one per entry.
 const cacheAgesEscalationKey = "page_cache:ages"
 
-// cacheAgeReadTimeout bounds the cadence gate's page_cache read. It runs at the
-// head of every batch on the pgx pool the request path shares, so an unbounded
-// read would let a saturated pool consume the whole activity budget before a
-// single refresh started — recording every entry as batch starvation, which pages.
-// A few seconds is far more than the read needs; anything slower is the fail-open
-// case (see dueEntries).
+// cacheAgeReadTimeout bounds the gate's page_cache read, which runs at the head of
+// every batch on the pgx pool the request path shares. Unbounded, a saturated pool
+// would consume the whole activity budget before any refresh started, recording
+// every entry as batch starvation — which pages. Slower than this is fail-open.
 const cacheAgeReadTimeout = 5 * time.Second
 
-// dueForRefresh reports whether an entry is due, given when its blob was last
-// written, the current time, and the end of the current day-aligned Network
-// Health window. A zero updatedAt means the key has never been written (or its
-// age could not be read), which is always due.
+// dueForRefresh reports whether an entry is due. A zero updatedAt means the key
+// has never been written, which is always due.
 func dueForRefresh(e cacheEntry, updatedAt, now, windowEnd time.Time) bool {
 	if e.every <= 0 || updatedAt.IsZero() {
 		return true
@@ -245,18 +223,16 @@ func dueForRefresh(e cacheEntry, updatedAt, now, windowEnd time.Time) bool {
 	return now.Sub(updatedAt) >= e.every
 }
 
-// dueEntries splits a batch into the entries to refresh now and the count held
-// back by their cadence, from one batched read of page_cache.updated_at. Entries
-// without a cadence are always due, so a batch that sets none reads nothing.
+// dueEntries splits a batch by cadence, from one batched read of
+// page_cache.updated_at. A batch whose entries set no cadence reads nothing.
 //
-// A failed refresh does not write, so updated_at does not advance and the entry
-// is due again on the very next cycle: the escalation counters on the refresh
-// itself keep running at the cycle rate no matter how large every is.
+// A failed refresh does not write, so updated_at does not advance and the entry is
+// due again next cycle: the refresh's own escalation counters keep running at the
+// cycle rate however large every is.
 //
-// Fail-open on a read error or a slow read: a Postgres problem must not be able
-// to freeze every cadenced entry for as long as it lasts. A sustained one still
-// pages, because it silently reverts every cadence to every-cycle refresh — the
-// cost this gate exists to remove — and nothing else reports it.
+// Fail-open on a read error or a slow read, so a Postgres problem cannot freeze
+// every cadenced entry. A sustained one still pages: it silently reverts every
+// cadence to every-cycle refresh, and nothing else reports that.
 func (a *Activities) dueEntries(ctx context.Context, entries []cacheEntry) (due []cacheEntry, skipped int) {
 	keys := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -310,20 +286,17 @@ type Activities struct {
 	writeMu     sync.Mutex // serializes WritePageCache calls to avoid Postgres OOM from concurrent large JSONB upserts
 }
 
-// nhDegradedErrorAfter keeps a Network Health group that reports a degraded panel
-// off the Escalator's default count of 3. A brief hole self-heals and the blob is
-// still written, so it must not page early; nhDegradedErrorWindow is what decides
-// when it does. This value only binds an every-cycle group — every group has a
-// cadence today, and at 5 minutes or more the window is always reached first.
+// nhDegradedErrorAfter keeps a degraded Network Health panel off the Escalator's
+// default count of 3: the blob is still written, so a brief hole must not page.
+// It only binds an every-cycle group — at any cadence the window below wins.
 const nhDegradedErrorAfter = 20
 
 // nhDegradedErrorWindow is how long a run of degraded refreshes must last before
-// escalating, whichever threshold is crossed first. A count alone no longer
-// describes a duration: a degraded refresh deliberately writes its blob (so the
-// healthy panels stay fresh), which advances updated_at and puts the entry to
-// sleep for a full cadence, so 20 counts would be 10 hours at
-// networkHealthHistoryInterval. This is the only counter with that problem; a
-// failed refresh writes nothing, so it is due again next cycle.
+// escalating, whichever threshold is crossed first. A count no longer describes a
+// duration here: a degraded refresh writes its blob (so the healthy panels stay
+// fresh), which advances updated_at and sleeps the entry for a full cadence — 20
+// counts would be 10 hours at networkHealthHistoryInterval. It is the only counter
+// with that problem; a failed refresh writes nothing, so it is due again next cycle.
 //
 // Escalation still cannot beat the sampling rate: a run's elapsed time is only
 // measured when the entry next refreshes, so a dark panel pages on the first
@@ -636,11 +609,9 @@ func (a *Activities) RefreshCaches(ctx context.Context) error {
 	// view live under its deadline — slower per-contributor page loads, but it
 	// does not compete with the default view for cluster capacity.
 	_ = g.Wait()
-	// attempted/skipped make the cadence gate observable: successful refreshes log
-	// at DEBUG (suppressed in prod), so without these counts there is no evidence
-	// of what a cycle actually did — and no way to tell a working gate from one
-	// skipping everything. They count entries run, not entries written; a failed
-	// refresh reports itself (see recordFailure).
+	// Successful refreshes log at DEBUG (suppressed in prod), so these counts are
+	// the only evidence of what a cycle did. They count entries run, not written —
+	// a failed refresh reports itself (see recordFailure).
 	a.Log.Info("page cache refresh complete",
 		"duration", time.Since(start).Round(time.Millisecond),
 		"attempted", len(due)+len(metroPathLatencyStrategies),
@@ -727,10 +698,9 @@ func (a *Activities) heavyEntries() []cacheEntry {
 // above their per-entry budget. PageCacheWorkflow starts it alongside the batch
 // and never awaits it inside the loop, so it runs on its own cadence instead of
 // dictating the cycle; a new run starts only once the previous one has finished,
-// so two heavy runs never overlap each other. Both entries also carry a refresh
-// cadence, so a run that starts before either is due costs one age read and
-// returns — cheaper than gating the activity's scheduling, which is bound up with
-// the continue-as-new drain (see heavyStartDue).
+// so two heavy runs never overlap each other. Both entries carry a cadence, so a
+// run started before either is due costs one age read and returns — cheaper than
+// gating the scheduling, which is bound up with the continue-as-new drain.
 func (a *Activities) RefreshHeavyCaches(ctx context.Context) error {
 	shuttingDown := workerStopping(ctx)
 	due, _ := a.dueEntries(ctx, a.heavyEntries())
@@ -949,16 +919,13 @@ func PageCacheWorkflow(ctx temporalworkflow.Context, iteration int, p PageCacheP
 			heavy = temporalworkflow.ExecuteActivity(heavyCtx, (*Activities).RefreshHeavyCaches)
 		}
 
-		// RefreshCaches takes no cycle counter: per-entry cadence is a wall-clock
-		// duration checked against page_cache.updated_at inside the activity (see
-		// cacheEntry.every), which keeps this loop out of the freshness contract and
-		// survives the continue-as-new reset that used to cost one early
-		// publisher_check refresh per window. Dropping the argument needs no version
-		// guard under our deploy model: Start terminates and restarts the workflow
-		// (see pagecache.go), the Go SDK doesn't compare activity inputs on replay,
-		// and during a rolling deploy a mixed-version worker either zero-fills the
-		// missing arg (old code) or drops the extra one (new code) — no history
-		// divergence.
+		// No cycle counter: cadence is checked against page_cache.updated_at inside
+		// the activity (see cacheEntry.every), which keeps this loop out of the
+		// freshness contract and survives the continue-as-new reset. Dropping the
+		// argument needs no version guard — Start terminates and restarts the workflow
+		// (see pagecache.go), the Go SDK doesn't compare activity inputs on replay, and
+		// a mixed-version worker during a rolling deploy either zero-fills the missing
+		// arg (old code) or drops the extra one (new code).
 		_ = temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshCaches).Get(ctx, nil)
 
 		iteration++

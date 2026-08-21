@@ -201,15 +201,12 @@ func (a *API) readPageCacheWithAge(ctx context.Context, key string) (json.RawMes
 	return data, updatedAt, nil
 }
 
-// PageCacheAges returns the last-write time of each of the given keys that is
-// present in page_cache, in one round trip. Keys with no row are absent from the
-// map: a never-written entry has no age, and the refresh cadence treats that as
-// due (see the worker's dueForRefresh).
+// PageCacheAges returns the last-write time of each given key present in
+// page_cache, in one round trip. Keys with no row are absent from the map.
 //
-// updated_at is the age of what users are actually served and is shared by every
-// API replica, which is why the cadence gate reads it rather than keeping
-// per-pod state: each replica runs its own page-cache worker, so per-pod state
-// would let one entry refresh once per cycle per replica.
+// The refresh cadence gates on updated_at rather than per-pod state because every
+// API replica runs its own page-cache worker: per-pod state would let one entry
+// refresh once per cycle per replica.
 func (a *API) PageCacheAges(ctx context.Context, keys []string) (map[string]time.Time, error) {
 	if a.PgPool == nil {
 		return nil, errNoPgPool
