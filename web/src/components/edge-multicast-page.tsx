@@ -45,11 +45,11 @@ function PlaneCell({ plane }: { plane?: string }) {
   return <span className="font-mono text-xs text-muted-foreground">{plane}</span>
 }
 
+// The three states `health` can carry. Silent is the only red on the page, and it is the one
+// state that means "look at this lane": publishers were measured and none of them sent anything.
 const HEALTH_BADGE: Record<string, string> = {
   healthy: 'bg-emerald-500/15 text-emerald-500',
-  degraded: 'bg-amber-500/15 text-amber-500',
-  unhealthy: 'bg-red-500/15 text-red-500',
-  disconnected: 'bg-sky-500/15 text-sky-500',
+  silent: 'bg-red-500/15 text-red-500',
   unknown: 'bg-muted text-muted-foreground',
 }
 
@@ -67,13 +67,29 @@ function formatAge(secs: number): string {
   return `${Math.round(secs / 3600)}h ago`
 }
 
-function HealthBadge({ status }: { status: string }) {
-  if (!status) return <span className="text-muted-foreground">—</span>
-  return (
-    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${HEALTH_BADGE[status] ?? HEALTH_BADGE.unknown}`}>
-      {status}
+// The badge states whether publishers are sending; the tooltip carries the control-plane
+// reconciliation breakdown, which is per-member and never rolls up to a group verdict — a
+// customer with BGP down and one publisher missing from a device snapshot both live in there.
+function HealthBadge({ group }: { group: EdgeMulticastGroup }) {
+  if (!group.health) return <span className="text-muted-foreground">—</span>
+
+  const c = group.health_counts
+  const detail = [
+    c.unhealthy > 0 ? `${c.unhealthy} unhealthy` : '',
+    c.degraded > 0 ? `${c.degraded} degraded` : '',
+    c.disconnected > 0 ? `${c.disconnected} with BGP down` : '',
+    c.healthy > 0 ? `${c.healthy} reconciled` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
+
+  const badge = (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${HEALTH_BADGE[group.health] ?? HEALTH_BADGE.unknown}`}>
+      {group.health}
     </span>
   )
+  if (!detail) return badge
+  return <Tooltip content={`Control plane, per member: ${detail}`}>{badge}</Tooltip>
 }
 
 // PublisherCell is the point of the page. Three states, and the third is not a failure:
@@ -110,7 +126,6 @@ function PublisherCell({ group, stale }: { group: EdgeMulticastGroup; stale: boo
           {publishers.active}
           <span className="text-muted-foreground">/{publishers.total}</span>
         </span>
-        {group.silent && <span className="text-[10px] font-medium text-red-500 uppercase">silent</span>}
       </span>
     </Tooltip>
   )
@@ -255,7 +270,7 @@ function GroupRow({
           onClick={(e) => e.stopPropagation()}
           className="inline-flex"
         >
-          <HealthBadge status={group.health} />
+          <HealthBadge group={group} />
         </Link>
       </td>
     </tr>

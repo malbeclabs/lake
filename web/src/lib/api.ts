@@ -7780,7 +7780,9 @@ export interface EdgeMulticastGroup {
   last_heard_lanes?: number
   /** Publishers exist, counters read zero: the lane went quiet. */
   silent: boolean
+  /** Traffic verdict: 'healthy' (publishers sending) | 'silent' | 'unknown' | '' (no publishers). */
   health: string
+  /** Per-member control-plane reconciliation breakdown. Does not set `health`. */
   health_counts: MulticastHealthStatusCounts
 }
 

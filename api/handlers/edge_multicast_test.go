@@ -160,7 +160,35 @@ func TestGetEdgeMulticast_GroupsByFeed(t *testing.T) {
 	assert.Equal(t, uint64(2), g.HealthCounts.Total, "one row per member in the rate view")
 	assertEdgeMulticastRoleInvariant(t, g.Publishers, "publishers")
 	assertEdgeMulticastRoleInvariant(t, g.Subscribers, "subscribers")
-	assert.NotEmpty(t, g.Health)
+	assert.Equal(t, "healthy", g.Health, "a publisher moving data is the whole verdict")
+}
+
+// The verdict is the counter plane's publisher signal and not the control-plane roll-up. A group
+// whose members are all flagged unhealthy by reconciliation still reads healthy while its
+// publishers are sending: on mainnet a publisher drops out of one device's mroute snapshot for a
+// cycle constantly, and a worst-of over hundreds of members is red permanently.
+func TestGetEdgeMulticast_VerdictIgnoresControlPlaneRollup(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertMulticastHealthFixtures(t, api)
+	insertEdgeMulticastFeed(t, api)
+	// Take the publisher's BGP down: reconciliation reports 'disconnected' for it, which the
+	// old worst-of ranked above healthy. The counters still show it sending.
+	// A newer snapshot of the same publisher; dz_users_current takes the latest per entity_id,
+	// so this is the same member with its BGP session reported down.
+	require.NoError(t, api.DB.Exec(t.Context(), `
+		INSERT INTO dim_dz_users_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id, publishers, subscribers, bgp_status)
+		VALUES ('user-pub', now() + INTERVAL 2 SECOND, now() + INTERVAL 2 SECOND, generateUUIDv4(), 0, 9,
+		        'user-pub', 'pubkey-pub', 'activated', 'multicast', '10.0.0.1', '10.0.0.1', 'dev-ams1', 501, '["group-1"]', '[]', 'down')`))
+
+	resp := getEdgeMulticast(t, api)
+	g := findEdgeMulticastService(t, resp, "test-feed").Groups[0]
+
+	assert.Equal(t, 1, g.Publishers.Active, "the counters are unchanged")
+	assert.Equal(t, "healthy", g.Health)
+	assert.Positive(t, g.HealthCounts.Disconnected, "the control-plane detail is still reported, just not as the verdict")
 }
 
 func TestGetEdgeMulticast_UnmanagedGroupIsListedAndSilent(t *testing.T) {
@@ -185,6 +213,7 @@ func TestGetEdgeMulticast_UnmanagedGroupIsListedAndSilent(t *testing.T) {
 	assert.Equal(t, 0, g.Publishers.Active)
 	assert.Equal(t, 1, g.Publishers.Idle)
 	assert.True(t, g.Silent, "publisher present, counters read zero")
+	assert.Equal(t, "silent", g.Health, "the one state worth acting on")
 	assert.Zero(t, g.IngressBps)
 }
 
@@ -204,6 +233,7 @@ func TestGetEdgeMulticast_NoTelemetryIsNotSilent(t *testing.T) {
 	assert.Equal(t, 0, g.Publishers.Idle)
 	assert.Equal(t, 1, g.Publishers.Unknown, "unmeasured members fall into Unknown, keeping the parts summing to Total")
 	assert.False(t, g.Silent, "no data is not the same claim as no traffic")
+	assert.Equal(t, "unknown", g.Health, "nothing measured the publisher: a monitoring gap, not a verdict")
 }
 
 func TestGetEdgeMulticast_SubscriberClassification(t *testing.T) {

@@ -198,11 +198,22 @@ type EdgeMulticastGroup struct {
 	// every telemetry gap.
 	Silent bool `json:"silent"`
 
-	// Health is the worst per-user verdict present, ranked by the same severity order the
-	// per-group Health tab sorts by (unhealthy → degraded → unknown → disconnected → healthy),
-	// with HealthCounts carrying the breakdown. Deliberately the existing scale rather than a
-	// new one, so a group cannot read healthy here and unhealthy one click deeper.
-	Health       string                      `json:"health"`
+	// Health is the lane's verdict, and it is a traffic verdict: a group is healthy when its
+	// publishers are moving data. 'healthy' / 'silent' / 'unknown' / "" (no publishers), the
+	// same three states PublisherCell renders, so the row cannot contradict itself.
+	//
+	// It is deliberately NOT the control-plane reconciliation verdict. That one is a worst-of
+	// over every member, and on this page it is red permanently for two independent reasons:
+	// a single publisher whose (S,G) is missing from one device's mroute snapshot flips to
+	// 'unhealthy' for a cycle (6 of 767 on edge-solana-shreds at any given moment, always a
+	// different six), and every group carries customers with BGP down, which ranks 'disconnected'
+	// over 'healthy'. Measured on mainnet: zero of the nine edge groups could ever read healthy.
+	// A badge that is always red says nothing about the lane it is supposed to describe.
+	Health string `json:"health"`
+
+	// HealthCounts is the control-plane reconciliation breakdown for the group's members. It no
+	// longer sets Health — it is the drill-down the badge's tooltip shows and the Health tab
+	// paginates, kept so a reader who wants per-member state can see it is there.
 	HealthCounts MulticastHealthStatusCounts `json:"health_counts"`
 }
 
@@ -404,7 +415,6 @@ func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership
 		TrafficAmbiguous:     m.publishersMultiGroup > 0,
 		ObservedAt:           r.newest,
 		HealthCounts:         r.counts,
-		Health:               worstEdgeMulticastHealth(r.counts),
 	}
 	out.Publishers.Unknown = max(0, out.Publishers.Total-out.Publishers.Active-out.Publishers.Idle)
 	out.Subscribers.Unknown = max(0, out.Subscribers.Total-out.Subscribers.Active-out.Subscribers.Idle)
@@ -429,6 +439,10 @@ func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership
 	// Silent needs evidence, not absence of it: publishers exist, at least one of them has a
 	// rate row in the window, and none of those rows carried traffic.
 	out.Silent = out.Publishers.Total > 0 && out.Publishers.Active == 0 && out.Publishers.Idle > 0
+
+	// After the Unknown remainders above: the verdict partitions the ledger's publishers, not
+	// just the ones the rate view had a row for.
+	out.Health = edgeMulticastVerdict(out.Publishers)
 	return out
 }
 
@@ -448,22 +462,30 @@ func edgeMulticastRoleCounts(split edgeMulticastMemberSplit, active, idle int) E
 	}
 }
 
-// worstEdgeMulticastHealth collapses the per-user verdicts to the most actionable one present,
-// in the order healthStatusSeverityOrderSQL ranks them. Empty when the group has no rows.
-func worstEdgeMulticastHealth(c MulticastHealthStatusCounts) string {
+// edgeMulticastVerdict is the group's verdict, derived from the publisher side of the counter
+// plane and nothing else: publishers moving data is what makes a lane healthy.
+//
+// Reads the publisher counts after Unknown has been filled in, so the three states partition the
+// ledger's publishers rather than only the ones the rate view returned a row for:
+//
+//	healthy — at least one publisher moved a byte in the freshest bucket
+//	silent  — publishers were measured and none of them did (the actionable state)
+//	unknown — publishers exist and nothing measured any of them: a monitoring gap
+//	""      — no publishers at all, e.g. a group provisioned before anyone joined it
+//
+// Subscribers are deliberately not consulted. A subscriber that receives nothing is either a
+// customer who stopped listening or a customer with BGP down; neither is a fault in the lane,
+// and letting either paint the row would reproduce the always-red badge this replaced.
+func edgeMulticastVerdict(pubs EdgeMulticastRoleCounts) string {
 	switch {
-	case c.Unhealthy > 0:
-		return "unhealthy"
-	case c.Degraded > 0:
-		return "degraded"
-	case c.Unknown > 0:
-		return "unknown"
-	case c.Disconnected > 0:
-		return "disconnected"
-	case c.Healthy > 0:
+	case pubs.Total == 0:
+		return ""
+	case pubs.Active > 0:
 		return "healthy"
+	case pubs.Idle > 0:
+		return "silent"
 	}
-	return ""
+	return "unknown"
 }
 
 // queryEdgeMulticastFeeds reads the feed catalog: which groups each feed carries and in how
