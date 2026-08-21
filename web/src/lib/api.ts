@@ -7706,6 +7706,7 @@ export interface KalshiL2Lane {
   channel_id: number
   location_code: string
   measurement_node_id: string
+  messages: number
   messages_per_sec: number
   level_updates_per_sec: number
   instruments: number

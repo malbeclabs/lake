@@ -21,7 +21,18 @@ import (
 // Ansible group_vars). Nothing pages on it. A frozen last-seen is what makes it visible.
 
 // kalshiL2CoverageCacheKey is the page-cache key written by StartKalshiBackgroundRefresher.
-const kalshiL2CoverageCacheKey = "kalshi_l2_coverage"
+//
+// The key carries a version, and it MUST be bumped in the same commit as any change to the
+// shape of the payload. The entry lives in Postgres and so outlives the deploy: without a bump
+// the new bundle reads a row written by the old binary, and the table dereferences the fields
+// it expects unguarded (lane.gap_books.toLocaleString()), which takes the whole SPA to the
+// app-wide error boundary rather than this one page. Nothing ages the row out either — only
+// the 10-minute background refresher rewrites it, last of its four refreshes, and it skips the
+// write entirely while the L2 query is failing, so a stale-shaped row survives for exactly as
+// long as the view it monitors is unhealthy. A miss falls through to the live query below.
+//
+// v2: `gaps` split into `gap_messages`/`gap_books`, `messages` added.
+const kalshiL2CoverageCacheKey = "kalshi_l2_coverage:v2"
 
 // kalshiL2WindowMinutes is the interval the rates are averaged over. Rates are derived from
 // it, so changing it changes nothing about correctness.
@@ -111,6 +122,13 @@ type KalshiL2Lane struct {
 	// FetchKalshiL2Coverage. location_code alone is not a key: two recorders can share a
 	// metro, and the rates would merge with no way to see it had happened.
 	MeasurementNodeID string `json:"measurement_node_id"`
+
+	// Messages is the raw count over the coverage window, from which MessagesPerSec is
+	// derived. It is emitted because it is the denominator GapMessages is only meaningful
+	// against: a gap-marked count means nothing without the total it is a share of, and
+	// reconstructing that total from the rate makes the caller agree with this handler
+	// about the window length.
+	Messages uint64 `json:"messages"`
 
 	// Rates over the coverage window.
 	MessagesPerSec     float64 `json:"messages_per_sec"`
@@ -257,18 +275,18 @@ func (a *API) FetchKalshiL2Coverage(ctx context.Context) (*KalshiL2CoverageRespo
 	var out []ordered
 	for rows.Next() {
 		var l KalshiL2Lane
-		var messages, levelUpdates uint64
+		var levelUpdates uint64
 		var lastRecvNs uint64
 		if err := rows.Scan(
 			&l.Source, &l.ChannelID, &l.MeasurementNodeID, &l.LocationCode,
-			&messages, &levelUpdates, &l.Instruments,
+			&l.Messages, &levelUpdates, &l.Instruments,
 			&l.DepthP50, &l.DepthP95, &l.DepthMax,
 			&l.GapMessages, &l.GapBooks, &l.Resets, &l.Clears, &l.SnapshotCycles,
 			&lastRecvNs,
 		); err != nil {
 			return nil, err
 		}
-		l.MessagesPerSec = float64(messages) / windowSecs
+		l.MessagesPerSec = float64(l.Messages) / windowSecs
 		l.LevelUpdatesPerSec = float64(levelUpdates) / windowSecs
 		l.LastSeen = time.Unix(0, int64(lastRecvNs)).UTC()
 		l.Seen = true

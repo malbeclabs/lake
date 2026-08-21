@@ -121,7 +121,9 @@ func TestKalshiL2Coverage_LaneStats(t *testing.T) {
 	assert.EqualValues(t, 1, l.GapMessages)
 	assert.EqualValues(t, 1, l.GapBooks)
 
-	// 7 messages / 4 of them level updates, over a 15-minute (900s) window.
+	// 7 messages / 4 of them level updates, over a 15-minute (900s) window. Messages is the
+	// count the rate is derived from and the denominator of the un-anchored share.
+	assert.EqualValues(t, 7, l.Messages)
 	assert.InDelta(t, 7.0/900.0, l.MessagesPerSec, 1e-9)
 	assert.InDelta(t, 4.0/900.0, l.LevelUpdatesPerSec, 1e-9)
 
@@ -131,11 +133,9 @@ func TestKalshiL2Coverage_LaneStats(t *testing.T) {
 	assert.GreaterOrEqual(t, l.DepthP50, 6.0)
 }
 
-// A long recovery on ONE book must not read as many faults. This is the defect the
-// gap_books column exists for: `gap_messages` counts every message that arrives while a
-// book is un-anchored, so it grows with the message rate and the recovery duration rather
-// than with the number of things that went wrong. Measured in production, 22 real
-// discontinuities on the perps lane produced 158,912 gap-marked messages.
+// A long recovery on ONE book must not read as many faults: gap_messages grows with the
+// message rate and the recovery duration rather than with the number of things that went
+// wrong. See KalshiL2Lane for the production measurement behind the split.
 func TestKalshiL2Coverage_GapBooksCountsBooksNotMessages(t *testing.T) {
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	createKalshiMbpLevelsTable(t, api)
@@ -157,6 +157,9 @@ func TestKalshiL2Coverage_GapBooksCountsBooksNotMessages(t *testing.T) {
 	assert.EqualValues(t, 2, l.GapBooks, "fault count: distinct books affected, not messages")
 	// The point of the pair: they must not be interchangeable.
 	assert.NotEqual(t, l.GapMessages, l.GapBooks)
+	// And the share the page renders is gap_messages over this total, computed with no
+	// reference to the window length.
+	assert.EqualValues(t, 8, l.Messages)
 }
 
 // instrument_id is unique only WITHIN a channel_id, and prod's two publisher arms share a
