@@ -258,12 +258,25 @@ threshold on the verdict (not a change to the counts, which stay strict), and it
 decision rather than a quiet default.
 
 The **Sequence** column is separate from that verdict and reports the recorded wire protocol's own
-counters, one series per channel instance. Sequencing keys on `(source IP address, Channel ID,
-destination port)`; `kalshi_mbp_levels` carries none of the source IP or port, so the key used is
-`(capture source, Channel ID, recording node)` — which resolves the same set today because prod's
-two publisher paths for a group differ only by Channel ID. Two paths sharing a Channel ID with
-different source IPs would fold into one row and under-report; that limit is written down in
-`api/handlers/edge_multicast_sequence.go` rather than papered over.
+counters. **A series belongs to one publisher, so the verdict sits on the publisher line**: each path
+runs its own counters and one can gap while its peer is intact, which a group-level cell can only
+report as "this group gapped" — naming neither the broken path nor the healthy one.
+
+Sequencing keys on the channel instance, `(source IP address, Channel ID, destination port)`.
+`kalshi_mbp_levels` carries the source address as `publisher_source_ip` — the arm axis is a column in
+the capture schema on purpose — so the key here is `(source IP address, Channel ID, recording node)`,
+matched against the ledger's `dz_ip` to find the line. Two folds are deliberate: the destination port
+(only `Sequence Number` is per port; `Reset Count`, the manifest and the book-level counters this
+column carries span the three ports) and never the recording node (two vantages are two independent
+observations). A series whose address matches no publisher of the group is counted as
+`unattributed` on the group roll-up rather than dropped.
+
+Publisher lines also carry the ledger's **`bgp_status`**, and `down` renders as an error on the line.
+That is not a reversal of the rule that the control-plane roll-up must not paint the row: what that
+rule rejects is a worst-of over every *member*, where customers with BGP down turned every group red.
+A publisher with no session cannot be sending the feed it is registered to send. It deliberately does
+not move the group verdict — the ledger snapshot and the rate bucket are minutes apart, so a publisher
+can read `down` while its tunnel still moved bytes, and both are shown.
 
 That column **folds the L2 coverage refresher's cached payload and runs no query of its own**.
 `kalshi_mbp_levels` is level-grain and TTL-less, and a fifteen-minute question reads most of a day

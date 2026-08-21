@@ -793,6 +793,45 @@ func TestGetEdgeMulticast_SequenceUnattributedSeries(t *testing.T) {
 	assert.Equal(t, "gapped", g.Sequence.Status, "the gap is still reported, just not on a line")
 }
 
+// A publisher with no BGP session cannot be sending the feed it is registered to send, and the
+// line says so. It deliberately does NOT move the group's verdict: the ledger snapshot and the
+// counter bucket are minutes apart, so a publisher can read 'down' while its tunnel still moved
+// bytes, and the reader is given both rather than one overruling the other.
+func TestGetEdgeMulticast_PublisherBGPDown(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertMulticastHealthFixtures(t, api)
+	insertEdgeMulticastFeed(t, api)
+
+	// A newer snapshot of the same publisher with its session down. dz_users_current takes the
+	// latest row per entity_id, so this is the same member, not a second one.
+	require.NoError(t, api.DB.Exec(t.Context(), `
+		INSERT INTO dim_dz_users_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id, publishers, subscribers, bgp_status)
+		VALUES ('user-pub', now() + INTERVAL 2 SECOND, now() + INTERVAL 2 SECOND, generateUUIDv4(), 0, 21,
+		        'user-pub', 'pubkey-pub', 'activated', 'multicast', '10.0.0.1', '10.0.0.1', 'dev-ams1', 501, '["group-1"]', '[]', 'down')`))
+
+	g := findEdgeMulticastGroup(t, getEdgeMulticast(t, api), "edge-test-feed")
+
+	require.Len(t, g.PublisherLines, 1)
+	assert.Equal(t, "down", g.PublisherLines[0].BGPStatus, "the line carries the session state")
+	assert.Equal(t, "publishing", g.PublisherLines[0].Status, "the counters are unchanged")
+	assert.Equal(t, "healthy", g.Health, "a ledger snapshot minutes from the bucket does not overrule it")
+}
+
+// The common case, so the field cannot quietly start reporting 'down' for everyone.
+func TestGetEdgeMulticast_PublisherBGPUp(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertMulticastHealthFixtures(t, api)
+	insertEdgeMulticastFeed(t, api)
+
+	g := findEdgeMulticastGroup(t, getEdgeMulticast(t, api), "edge-test-feed")
+	require.Len(t, g.PublisherLines, 1)
+	assert.NotEqual(t, "down", g.PublisherLines[0].BGPStatus)
+}
+
 // The recorder half of the verdict. Every recording node on a group receives the same feed, so a
 // node writing down a fraction of what its peers do is not hearing it — a fault the publisher
 // counters cannot see, because they are per tunnel and sum every group the tunnel carries.

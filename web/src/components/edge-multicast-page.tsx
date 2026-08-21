@@ -45,6 +45,12 @@ const STALE_AFTER_SECS = 15 * 60
 //
 // The payload's own age is in the header, so the two can always be reconciled.
 
+// Where a drill-down out of this page comes back to. Every detail page in the app reads
+// `state.back` (use-back-link.ts) and otherwise falls back to its own list page — so without this,
+// a reader who opened a publisher from here would be sent to /dz/users on the way out, a page they
+// were never on.
+const EDGE_MULTICAST_BACK = { back: { to: '/dz/edge/multicast', label: 'Edge Multicast' } }
+
 // Keyed by feed family — the feed code without its plane suffix — because the API groups the
 // planes of one product into a single section and gives each row a Plane instead.
 const SERVICE_LABELS: Record<string, string> = {
@@ -288,6 +294,7 @@ function PublisherLineRow({
               page already holds the pk. stopPropagation because the row click opens the group. */}
           <Link
             to={`/dz/users/${line.user_pk}`}
+            state={EDGE_MULTICAST_BACK}
             onClick={(e) => e.stopPropagation()}
             className="font-mono text-xs hover:underline"
           >
@@ -306,16 +313,30 @@ function PublisherLineRow({
         {line.tunnel_id ? <span className="text-xs"> tun {line.tunnel_id}</span> : null}
       </td>
       <td className="px-3 py-1.5 whitespace-nowrap">
-        <Tooltip content={statusDetail}>
-          <span className="inline-flex items-center gap-1.5">
-            <span
-              className={`inline-block h-1.5 w-1.5 rounded-full ${PUBLISHER_DOT[line.status] ?? PUBLISHER_DOT.unknown}`}
-            />
-            <span className={line.status === 'publishing' ? 'text-muted-foreground' : ''}>
-              {line.status}
+        <span className="inline-flex items-center gap-2">
+          <Tooltip content={statusDetail}>
+            <span className="inline-flex items-center gap-1.5">
+              <span
+                className={`inline-block h-1.5 w-1.5 rounded-full ${PUBLISHER_DOT[line.status] ?? PUBLISHER_DOT.unknown}`}
+              />
+              <span className={line.status === 'publishing' ? 'text-muted-foreground' : ''}>
+                {line.status}
+              </span>
             </span>
-          </span>
-        </Tooltip>
+          </Tooltip>
+          {/* A publisher with no BGP session cannot be sending the feed it is registered to send.
+              Rendered next to the counter verdict rather than replacing it, because the two can
+              legitimately disagree: the ledger snapshot and the rate bucket are minutes apart, so
+              a publisher can read 'down' here while its tunnel still moved bytes. */}
+          {line.bgp_status === 'down' && (
+            <Tooltip content="BGP session down in the ledger: this publisher has no session to send the feed over. The counter verdict beside it is measured minutes apart, so the two can disagree.">
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-red-500/15 text-red-500 text-[10px] font-medium">
+                <AlertCircle className="h-3 w-3" />
+                BGP down
+              </span>
+            </Tooltip>
+          )}
+        </span>
       </td>
       <td className="px-3 py-1.5" />
       <td className="px-3 py-1.5 text-right whitespace-nowrap">
@@ -628,6 +649,7 @@ function GroupRow({
             publisher list, which is the more common next step. */}
         <Link
           to={`/dz/multicast-groups/${group.pk}?tab=health`}
+          state={EDGE_MULTICAST_BACK}
           onClick={(e) => e.stopPropagation()}
           className="inline-flex"
         >
@@ -794,7 +816,7 @@ export function EdgeMulticastPage() {
   const onOpen = (e: React.MouseEvent, pk: string) => {
     // The group page's publishers tab carries the per-source rows and the per-member traffic
     // chart — the drill-down this table exists to hand off to.
-    handleRowClick(e, `/dz/multicast-groups/${pk}?tab=publishers`, navigate)
+    handleRowClick(e, `/dz/multicast-groups/${pk}?tab=publishers`, navigate, EDGE_MULTICAST_BACK)
   }
 
   if (isLoading) {

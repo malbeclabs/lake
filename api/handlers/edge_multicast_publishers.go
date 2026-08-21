@@ -119,6 +119,21 @@ type EdgeMulticastPublisher struct {
 	// is what makes Bps un-attributable to this group alone.
 	MultiGroup bool `json:"multi_group"`
 
+	// BGPStatus is the ledger's view of this publisher's BGP session: 'up', 'down' or 'unknown'.
+	//
+	// On a PUBLISHER, 'down' is a fault and the line says so. That is not a contradiction of the
+	// rule that the control-plane roll-up must not paint the row: what that rule rejects is a
+	// worst-of over every MEMBER, where a customer with BGP down — which is the customer's own
+	// problem and the steady state for dozens of them — turned every group red. A publisher with
+	// no session cannot be sending the feed it is registered to send, and there is exactly one
+	// line it belongs on.
+	//
+	// It deliberately does not move the group's verdict. What the counters measure is whether
+	// traffic is flowing, and a publisher can read 'down' here while its tunnel is still moving
+	// bytes in the last visible bucket — the ledger snapshot and the counter rollup are minutes
+	// apart. So the two are reported side by side on the line and the reader gets both.
+	BGPStatus string `json:"bgp_status,omitempty"`
+
 	// ObservedAt is the bucket behind Bps. Per line rather than per group: one stale publisher
 	// among fresh ones is a fact about that publisher.
 	ObservedAt *time.Time `json:"observed_at,omitempty"`
@@ -241,6 +256,7 @@ func (a *API) queryEdgeMulticastPublisherLines(ctx context.Context, groupPKs []s
 				dz_ip,
 				device_pk,
 				tunnel_id,
+				bgp_status,
 				length(arrayDistinct(arrayConcat(
 					JSONExtract(publishers, 'Array(String)'),
 					JSONExtract(subscribers, 'Array(String)')
@@ -266,6 +282,7 @@ func (a *API) queryEdgeMulticastPublisherLines(ctx context.Context, groupPKs []s
 			l.dz_ip,
 			COALESCE(d.code, '') AS device_code,
 			l.tunnel_id,
+			l.bgp_status AS bgp_status,
 			l.group_span > 1 AS multi_group,
 			r.has_rate AS has_rate,
 			r.bps AS bps,
@@ -293,7 +310,7 @@ func (a *API) queryEdgeMulticastPublisherLines(ctx context.Context, groupPKs []s
 		var bps *float64
 		var bucket *time.Time
 		if err := rows.Scan(&groupPK, &line.UserPK, &line.ClientIP, &line.DZIP,
-			&line.DeviceCode, &line.TunnelID, &multiGroup, &hasRate, &bps, &bucket); err != nil {
+			&line.DeviceCode, &line.TunnelID, &line.BGPStatus, &multiGroup, &hasRate, &bps, &bucket); err != nil {
 			return nil, err
 		}
 		line.MultiGroup = multiGroup

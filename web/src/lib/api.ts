@@ -7773,6 +7773,8 @@ export interface EdgeMulticastPublisher {
   status: string
   /** Feeds several groups from one tunnel, so bps cannot be attributed to this group alone. */
   multi_group: boolean
+  /** Ledger BGP session: 'up' | 'down' | 'unknown'. 'down' on a publisher is a fault. */
+  bgp_status?: string
   observed_at?: string
   /** This publisher's own recorded sequence series — the grain a series has, since one belongs to
    *  one path. Absent unless a recorder wrote something from this publisher's address. */
