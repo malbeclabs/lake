@@ -201,8 +201,8 @@ func (a *API) readPageCacheWithAge(ctx context.Context, key string) (json.RawMes
 	return data, updatedAt, nil
 }
 
-// PageCacheAges returns the last-write time of each given key present in
-// page_cache, in one round trip. Keys with no row are absent from the map.
+// PageCacheAges reads many keys' last-write times in one round trip. A key with no
+// row is absent from the map, not zero.
 //
 // The refresh cadence gates on updated_at rather than per-pod state because every
 // API replica runs its own page-cache worker: per-pod state would let one entry
