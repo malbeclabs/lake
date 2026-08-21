@@ -960,7 +960,14 @@ func networkHealthWindow(startStr, endStr, daysStr string) (time.Time, time.Time
 // since midnight — which is why the purely-historical groups refresh on a cadence
 // rather than every cycle (see the worker's networkHealthHistoryInterval).
 func DefaultNetworkHealthWindow() (time.Time, time.Time) {
-	end := time.Now().UTC().Truncate(24 * time.Hour)
+	return NetworkHealthWindowAt(time.Now())
+}
+
+// NetworkHealthWindowAt is DefaultNetworkHealthWindow as of a given instant, for a
+// caller that needs the window and the current time to agree on which side of
+// midnight UTC they are (see the worker's dueEntries).
+func NetworkHealthWindowAt(t time.Time) (time.Time, time.Time) {
+	end := t.UTC().Truncate(24 * time.Hour)
 	return end.AddDate(0, 0, -NetworkHealthDefaultDays), end
 }
 

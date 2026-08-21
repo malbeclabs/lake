@@ -253,8 +253,10 @@ func (a *Activities) dueEntries(ctx context.Context, entries []cacheEntry) (due 
 	}
 	a.esc.Reset(cacheAgesEscalationKey)
 
+	// One clock read for both, so the cadence check and the window boundary cannot
+	// land on opposite sides of midnight UTC.
 	now := time.Now()
-	_, windowEnd := handlers.DefaultNetworkHealthWindow()
+	_, windowEnd := handlers.NetworkHealthWindowAt(now)
 	due = make([]cacheEntry, 0, len(entries))
 	for _, e := range entries {
 		if dueForRefresh(e, ages[e.key], now, windowEnd) {
