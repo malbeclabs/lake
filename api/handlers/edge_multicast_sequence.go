@@ -18,7 +18,8 @@ import (
 // address, Channel ID, destination port)" — and a subscriber "MUST key gap detection and recovery
 // state" on that tuple, "never the channel", because redundant paths carrying one channel run as
 // separate processes on separate hosts and cannot share a counter (edge-feed-spec/GLOSSARY.md,
-// Transport).
+// Transport). market-by-price/spec.md says it per field at 3.1.0 — Sequence Number is minted "per
+// channel instance", Reset Count per (source, channel) — in its Redundant Channel Instances section.
 //
 // kalshi_mbp_levels carries the source address, as `publisher_source_ip`: the arm axis is a column
 // in that schema on purpose, so that the arms are separable by construction rather than by
