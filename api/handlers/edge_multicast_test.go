@@ -155,8 +155,7 @@ func TestGetEdgeMulticast_GroupsByFeed(t *testing.T) {
 	assert.InDelta(t, 10_000_000, g.EgressBps, 1, "subscriber TX is the group's egress")
 	assert.False(t, g.TrafficAmbiguous, "single-group publisher attributes cleanly")
 	assert.Equal(t, 0, g.PublishersMultiGroup)
-	require.NotNil(t, g.ObservedAt)
-	require.NotNil(t, g.ObservedAgeSeconds)
+	require.NotNil(t, g.ObservedAt, "the newest bucket's timestamp; the page computes the age from it")
 	assert.Equal(t, uint64(2), g.HealthCounts.Total, "one row per member in the rate view")
 	assertEdgeMulticastRoleInvariant(t, g.Publishers, "publishers")
 	assertEdgeMulticastRoleInvariant(t, g.Subscribers, "subscribers")
@@ -394,8 +393,7 @@ func TestGetEdgeMulticast_LastHeardFromCaptureTables(t *testing.T) {
 	require.NotNil(t, k.LastHeard, "the sports lanes map to their group by naming convention")
 	assert.Equal(t, "kalshi_bbo_observations", k.LastHeardSource)
 	assert.Equal(t, 2, k.LastHeardLanes, "two league lanes folded into one group timestamp")
-	require.NotNil(t, k.LastHeardAgeSecs)
-	assert.Less(t, *k.LastHeardAgeSecs, 300.0)
+	assert.Less(t, time.Since(*k.LastHeard), 5*time.Minute, "the page ages this against its own clock")
 
 	s := findEdgeMulticastGroup(t, resp, "edge-solana-shreds")
 	require.NotNil(t, s.LastHeard, "the 'dz' feed alias resolves to the shreds group")
@@ -414,6 +412,71 @@ func TestGetEdgeMulticast_LastHeardFromCaptureTables(t *testing.T) {
 // A group outside the product's naming convention is not on this page at all, even when a feed
 // row claims it — that is the qa-payments case on mainnet, where a non-product feed carries the
 // mg0* groups.
+// A member that both publishes into a group and subscribes to it gets mode 'P+S', and the rate
+// view hands that row the EGRESS rate — ur_max_out_bps — because it picks the direction by mode.
+// So a P+S row says nothing about whether the member is publishing. Counting it on the publisher
+// side inverted the page in both directions: RPF means the member does not receive its own group
+// back, so max_out reads 0 and the row rendered Idle, hence Silent and a red lane while the
+// publisher was sending.
+func TestGetEdgeMulticast_PublisherSubscriberIsNotCountedAsPublisher(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertEdgeMulticastFeed(t, api)
+	ctx := t.Context()
+
+	// Its own group, so the assertions below are about this one member and nothing else.
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_multicast_groups_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
+		VALUES ('group-ps', now(), now(), generateUUIDv4(), 0, 1, 'group-ps', '', 'edge-ps-lane', '233.0.0.3', 100000000, 'activated', 0, 0)`))
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_users_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id, publishers, subscribers)
+		VALUES ('user-ps', now(), now(), generateUUIDv4(), 0, 1, 'user-ps', 'pubkey-ps', 'activated', 'multicast', '10.0.0.5', '10.0.0.5', 'dev-ams1', 505, '["group-ps"]', '["group-ps"]')`))
+	// Sending 10 Mbps, receiving nothing back — the RPF case, and exactly the shape that used to
+	// render as a silent lane.
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO device_interface_rollup_5m
+			(bucket_ts, device_pk, intf, user_tunnel_id, user_pk, max_in_bps, max_out_bps, ingested_at)
+		VALUES (now() - INTERVAL 1 MINUTE, 'dev-ams1', 'Tunnel505', 505, 'user-ps', 10000000, 0, now())`))
+
+	g := findEdgeMulticastGroup(t, getEdgeMulticast(t, api), "edge-ps-lane")
+
+	assert.Equal(t, 1, g.Publishers.Total)
+	assert.Equal(t, 0, g.Publishers.Active)
+	assert.Equal(t, 0, g.Publishers.Idle, "a P+S row's rate is egress and cannot answer for the send side")
+	assert.Equal(t, 1, g.Publishers.Unknown, "unmeasured, which is the true statement")
+	assert.False(t, g.Silent, "the publisher was never measured, so nothing here says it went quiet")
+	assert.Equal(t, "unknown", g.Health)
+	assert.Zero(t, g.IngressBps, "ingress comes from mode P alone; 0 here is visibly unmeasured")
+	assert.Equal(t, 1, g.Subscribers.Total, "the member still counts on the side its rate speaks for")
+	assertEdgeMulticastRoleInvariant(t, g.Publishers, "publishers")
+}
+
+// A feed row whose `groups` is '[]' — sold in a metro where the group is not provisioned yet — is
+// still a metro the feed is sold in. arrayJoin over an empty array drops the row, so counting
+// metros downstream of one lost it and the section header claimed fewer metros than the catalog.
+func TestGetEdgeMulticast_MetroCountKeepsGrouplessCatalogRows(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertEdgeMulticastFeed(t, api)
+	// A third metro for the same feed family, with no group listed yet.
+	require.NoError(t, api.DB.Exec(t.Context(), `
+		INSERT INTO dim_dz_feeds_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, code, name, metro_pk, groups)
+		VALUES ('feed-lax', now(), now(), generateUUIDv4(), 0, 3, 'feed-lax', 'owner-dz', 'test-feed', 'test-feed-lax', 'metro-lax', '[]')`))
+
+	resp := getEdgeMulticast(t, api)
+	svc := findEdgeMulticastService(t, resp, "test-feed")
+
+	assert.Equal(t, 3, svc.MetroCount, "every metro row counts, group or no group")
+	require.Len(t, svc.Groups, 1, "and the group union is unchanged")
+	assert.Equal(t, "edge-test-lane", svc.Groups[0].Code)
+}
+
 func TestGetEdgeMulticast_NonEdgeGroupsExcluded(t *testing.T) {
 	api := newEdgeMulticastTestAPI(t)
 	insertMulticastTestData(t, api)
@@ -424,6 +487,14 @@ func TestGetEdgeMulticast_NonEdgeGroupsExcluded(t *testing.T) {
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
 		VALUES ('group-qa', now(), now(), generateUUIDv4(), 0, 1, 'group-qa', '', 'mg02', '233.0.0.90', 1000000000, 'activated', 0, 0)`))
+	// A code that starts with the letters but not with the prefix. Without the hyphen in
+	// edgeMulticastGroupCodePrefix this lands in the unclaimed section, flagged silent, with
+	// nothing on the page to explain why it is there.
+	require.NoError(t, api.DB.Exec(t.Context(), `
+		INSERT INTO dim_dz_multicast_groups_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
+		VALUES ('group-edgecase', now(), now(), generateUUIDv4(), 0, 1, 'group-edgecase', '', 'edgecase-lab', '233.0.0.91', 1000000000, 'activated', 0, 0)`))
 	require.NoError(t, api.DB.Exec(t.Context(), `
 		INSERT INTO dim_dz_feeds_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
@@ -435,6 +506,7 @@ func TestGetEdgeMulticast_NonEdgeGroupsExcluded(t *testing.T) {
 		assert.NotEqual(t, "qa-payments", s.Code, "a non-product feed must not open a section")
 		for _, g := range s.Groups {
 			assert.NotEqual(t, "mg02", g.Code, "a group outside the edge- namespace is not on this page")
+			assert.NotEqual(t, "edgecase-lab", g.Code, "the prefix is 'edge-', not 'edge'")
 		}
 	}
 }

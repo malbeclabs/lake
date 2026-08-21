@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
 import { AlertCircle, Loader2, Radio } from 'lucide-react'
@@ -22,6 +22,21 @@ import { fetchEdgeMulticast, type EdgeMulticastGroup, type EdgeMulticastService 
 // pipeline lag: the normal steady state is 5-10 minutes behind, so a threshold much tighter than
 // this would mark healthy lanes stale for most of every cycle.
 const STALE_AFTER_SECS = 15 * 60
+
+// Ages are computed here, from the payload's timestamps, and against two different clocks on
+// purpose. The endpoint is served cache-first and rewritten once per refresh interval, so an age
+// computed server-side at fetch time would be served unchanged for the rest of that interval.
+//
+//   - The counter columns are read against the payload's own generated_at. What they measure is
+//     how far behind the rollup pipeline was when the numbers were computed — a property of the
+//     data. Reading them against wall clock would add the cache's age to the pipeline's lag and
+//     mark healthy lanes stale for most of every cycle, which is the alarm-always-on failure
+//     mode kalshi-l2-page.tsx documents for the same reason.
+//   - "Heard" is read against wall clock, ticking. That column exists to answer "is this lane
+//     alive right now", and a recorder that stopped just after a refresh must not keep reading
+//     "1s ago" until the next one. It ages in front of the reader, as it should.
+//
+// The payload's own age is in the header, so the two can always be reconciled.
 
 // Keyed by feed family — the feed code without its plane suffix — because the API groups the
 // planes of one product into a single section and gives each row a Plane instead.
@@ -65,6 +80,15 @@ function formatAge(secs: number): string {
   if (secs < 60) return `${Math.round(secs)}s ago`
   if (secs < 3600) return `${Math.round(secs / 60)}m ago`
   return `${Math.round(secs / 3600)}h ago`
+}
+
+// Seconds between an ISO timestamp and the given clock. Negative ages (a bucket stamped slightly
+// ahead of the payload, or a clock skewed browser) clamp to 0 rather than rendering "-3s ago".
+function ageSecs(iso: string | undefined, nowMs: number): number | undefined {
+  if (!iso) return undefined
+  const t = new Date(iso).getTime()
+  if (Number.isNaN(t)) return undefined
+  return Math.max(0, (nowMs - t) / 1000)
 }
 
 // The badge states whether publishers are sending; the tooltip carries the control-plane
@@ -170,8 +194,9 @@ function SubscriberCell({ group }: { group: EdgeMulticastGroup }) {
 // The application-plane column: when a recorder last actually received something on this group.
 // It is the only number on the page that can be seconds old — but it is receive-side, so a blank
 // is "no capture covers this group", never "the lane is dead".
-function LastHeardCell({ group }: { group: EdgeMulticastGroup }) {
-  if (group.last_heard_age_seconds === undefined) {
+function LastHeardCell({ group, now }: { group: EdgeMulticastGroup; now: number }) {
+  const age = ageSecs(group.last_heard, now)
+  if (age === undefined) {
     return <span className="text-muted-foreground">—</span>
   }
   const lanes = group.last_heard_lanes ?? 1
@@ -187,7 +212,7 @@ function LastHeardCell({ group }: { group: EdgeMulticastGroup }) {
   return (
     <Tooltip content={detail}>
       <span className="tabular-nums">
-        {formatAge(group.last_heard_age_seconds)}
+        {formatAge(age)}
         {lanes > 1 && <span className="text-muted-foreground text-xs"> ×{lanes}</span>}
       </span>
     </Tooltip>
@@ -214,14 +239,18 @@ function RateCell({ bps, ambiguous, stale }: { bps: number; ambiguous: boolean; 
 
 function GroupRow({
   group,
+  asOf,
+  now,
   showLastHeard,
   onOpen,
 }: {
   group: EdgeMulticastGroup
+  asOf: number
+  now: number
   showLastHeard: boolean
   onOpen: (e: React.MouseEvent, pk: string) => void
 }) {
-  const age = group.observed_age_seconds
+  const age = ageSecs(group.observed_at, asOf)
   const stale = age === undefined || age > STALE_AFTER_SECS
 
   return (
@@ -259,7 +288,7 @@ function GroupRow({
       </td>
       {showLastHeard && (
         <td className="px-4 py-3 text-sm text-right whitespace-nowrap">
-          <LastHeardCell group={group} />
+          <LastHeardCell group={group} now={now} />
         </td>
       )}
       <td className="px-4 py-3 text-sm">
@@ -279,10 +308,14 @@ function GroupRow({
 
 function ServiceSection({
   service,
+  asOf,
+  now,
   showLastHeard,
   onOpen,
 }: {
   service: EdgeMulticastService
+  asOf: number
+  now: number
   showLastHeard: boolean
   onOpen: (e: React.MouseEvent, pk: string) => void
 }) {
@@ -321,7 +354,14 @@ function ServiceSection({
           </thead>
           <tbody>
             {service.groups.map((g) => (
-              <GroupRow key={`${service.code}-${g.pk}`} group={g} showLastHeard={showLastHeard} onOpen={onOpen} />
+              <GroupRow
+                key={`${service.code}-${g.pk}`}
+                group={g}
+                asOf={asOf}
+                now={now}
+                showLastHeard={showLastHeard}
+                onOpen={onOpen}
+              />
             ))}
           </tbody>
         </table>
@@ -338,6 +378,22 @@ export function EdgeMulticastPage() {
     queryFn: fetchEdgeMulticast,
     refetchInterval: 30000,
   })
+
+  // A ticking clock rather than Date.now() during render, so the "Heard" column keeps ageing
+  // between refetches instead of freezing at whatever the last render saw.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const tick = setInterval(() => setNow(Date.now()), 5000)
+    return () => clearInterval(tick)
+  }, [])
+
+  // When the payload was computed. Judgements about the counter data are made against this and
+  // not against wall clock — see the note at the top of the file. With no payload clock yet, fall
+  // back to the ticking one.
+  const asOf = useMemo(
+    () => (data?.generated_at ? new Date(data.generated_at).getTime() : now),
+    [data?.generated_at, now],
+  )
 
   const { groupCount, silentCount } = useMemo(() => {
     const services = data?.services ?? []
@@ -389,11 +445,16 @@ export function EdgeMulticastPage() {
           title="Edge Multicast"
           count={groupCount}
           subtitle={
-            silentCount > 0 ? (
-              <span className="text-sm text-red-500">
-                {silentCount} silent group{silentCount === 1 ? '' : 's'}
-              </span>
-            ) : undefined
+            <span className="flex items-center gap-2 text-sm">
+              {silentCount > 0 && (
+                <span className="text-red-500">
+                  {silentCount} silent group{silentCount === 1 ? '' : 's'}
+                </span>
+              )}
+              {data?.generated_at && (
+                <span className="text-xs text-muted-foreground/50">computed {formatAge(ageSecs(data.generated_at, now) ?? 0)}</span>
+              )}
+            </span>
           }
         />
 
@@ -416,7 +477,14 @@ export function EdgeMulticastPage() {
 
         <div className="space-y-6">
           {(data?.services ?? []).map((s) => (
-            <ServiceSection key={s.code} service={s} showLastHeard={data?.last_heard_available ?? false} onOpen={onOpen} />
+            <ServiceSection
+              key={s.code}
+              service={s}
+              asOf={asOf}
+              now={now}
+              showLastHeard={data?.last_heard_available ?? false}
+              onOpen={onOpen}
+            />
           ))}
           {(data?.services ?? []).length === 0 && (
             <div className="border border-border rounded-lg bg-card px-4 py-8 text-center text-muted-foreground">

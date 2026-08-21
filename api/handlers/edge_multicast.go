@@ -68,7 +68,10 @@ const EdgeMulticastCacheKey = "edge_multicast"
 // The lab and partner groups (mbone, rebop, tiredsolid, sentrynet, jito-shredstream, …) are
 // excluded by the same rule. They are visible on /dz/multicast-groups, which is the every-group
 // view; this page is the product view.
-const edgeMulticastGroupCodePrefix = "edge"
+// The hyphen is part of the prefix: without it startsWith also matches a code like
+// 'edgecase-lab', which would land an unrelated group in the unclaimed section flagged silent,
+// with nothing on the page to say why it is there.
+const edgeMulticastGroupCodePrefix = "edge-"
 
 // edgeMulticastPlanes maps the plane suffix a lane's ledger code carries to its display label.
 // A lane is one plane of one product: market-by-price, market-by-order, or top-of-book. The
@@ -171,17 +174,20 @@ type EdgeMulticastGroup struct {
 	TrafficAmbiguous     bool `json:"traffic_ambiguous"`
 
 	// ObservedAt is the newest rate bucket backing any number above; nil when no member has a
-	// bucket in the window. ObservedAgeSeconds is its age at response time — the honest answer
-	// to "how live is this?", which the UI shows next to every rate.
-	ObservedAt         *time.Time `json:"observed_at,omitempty"`
-	ObservedAgeSeconds *float64   `json:"observed_age_seconds,omitempty"`
+	// bucket in the window.
+	//
+	// The age is NOT precomputed here, and that matters on a cache-first endpoint: an age taken
+	// at fetch time is served unchanged for the rest of the refresh interval — 30s by default,
+	// up to ten minutes by env — so it silently understates itself by up to one interval. The
+	// page subtracts from GeneratedAt (for judgements about the data) or from wall clock (for
+	// "is it alive now"), the way kalshi_l2_coverage.go leaves last_seen to the page.
+	ObservedAt *time.Time `json:"observed_at,omitempty"`
 
 	// LastHeard is the newest application-plane observation attributed to this group: a message
 	// a recording node actually received, not a device counter. Where it exists it can answer
 	// "did anything arrive in the last few seconds", which the five-minute rollups above
 	// structurally cannot. Nil when no capture covers the group, which is most of them.
-	LastHeard        *time.Time `json:"last_heard,omitempty"`
-	LastHeardAgeSecs *float64   `json:"last_heard_age_seconds,omitempty"`
+	LastHeard *time.Time `json:"last_heard,omitempty"`
 
 	// LastHeardSource names the table behind the timestamp, so a reader can tell a Kalshi
 	// observation from a shred race. Empty when LastHeard is nil.
@@ -360,7 +366,7 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 
 	byService := map[string][]EdgeMulticastGroup{}
 	for _, g := range groups {
-		row := buildEdgeMulticastGroup(g, membership[g.PK], rates[g.PK], lastHeard[g.PK], now)
+		row := buildEdgeMulticastGroup(g, membership[g.PK], rates[g.PK], lastHeard[g.PK])
 		codes := feeds.byGroup[g.PK]
 		if len(codes) == 0 {
 			codes = []string{edgeMulticastUnclaimedService}
@@ -399,7 +405,7 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 // the remainder rather than read: a member the view dropped (no health row at all) is exactly
 // as unknown as one it marked 'no_data', and folding both into the remainder keeps the parts
 // summing to Total whatever the view does.
-func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership, r edgeMulticastRates, lh edgeMulticastLastHeard, now time.Time) EdgeMulticastGroup {
+func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership, r edgeMulticastRates, lh edgeMulticastLastHeard) EdgeMulticastGroup {
 	out := EdgeMulticastGroup{
 		PK:                   g.PK,
 		Code:                 g.Code,
@@ -419,15 +425,9 @@ func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership
 	out.Publishers.Unknown = max(0, out.Publishers.Total-out.Publishers.Active-out.Publishers.Idle)
 	out.Subscribers.Unknown = max(0, out.Subscribers.Total-out.Subscribers.Active-out.Subscribers.Idle)
 
-	if r.newest != nil {
-		age := now.Sub(*r.newest).Seconds()
-		out.ObservedAgeSeconds = &age
-	}
 	if !lh.at.IsZero() {
 		at := lh.at
-		age := now.Sub(at).Seconds()
 		out.LastHeard = &at
-		out.LastHeardAgeSecs = &age
 		out.LastHeardSource = lh.source
 		out.LastHeardLanes = lh.lanes
 	}
@@ -493,12 +493,18 @@ func edgeMulticastVerdict(pubs EdgeMulticastRoleCounts) string {
 //
 // Both aggregates are taken per feed FAMILY — the feed code with its plane suffix stripped, so
 // the two planes of one product form one section — across every one of its metro rows, and that
-// matters in both directions. The group set is a UNION because a feed's rows do not all list the same
-// groups — solana-shreds-full names three groups in some metros and five across the catalog, so
-// reading any one row would under-report it. The metro count is a DISTINCT over metro_pk for the
-// same reason in reverse: arrayJoin multiplies each metro row by its group count, so counting
-// anything but distinct metros would multiply a 30-metro feed by its five groups and claim 90.
-// Taking it over the family also means two planes sold in overlapping metros are counted once.
+// matters in both directions. The group set is a UNION because a feed's rows do not all list the
+// same groups — solana-shreds-full names three groups in some metros and five across the catalog,
+// so reading any one row would under-report it. The metro count is a DISTINCT over metro_pk for
+// the same reason in reverse: a feed sold in 30 metros with five groups must read 30, not 150,
+// and two planes sold in overlapping metros are counted once.
+//
+// Neither aggregate goes through arrayJoin, and that is deliberate: arrayJoin over an empty array
+// drops the row, so a catalog row whose `groups` is '[]' — a feed sold in a metro where the group
+// is not provisioned yet — would vanish before being counted and the section header would claim
+// fewer metros than the catalog sells. That is the same "the feed comes before the group" case the
+// prefix scoping exists for, in the other direction. Flattening the arrays inside the aggregate
+// keeps every row in the metro count while still unioning the groups.
 func (a *API) queryEdgeMulticastFeeds(ctx context.Context) (edgeMulticastFeedGroups, error) {
 	out := edgeMulticastFeedGroups{
 		byGroup:     map[string][]string{},
@@ -508,17 +514,16 @@ func (a *API) queryEdgeMulticastFeeds(ctx context.Context) (edgeMulticastFeedGro
 		SELECT
 			feed_family,
 			uniqExact(metro_pk) AS metro_count,
-			groupUniqArray(group_pk) AS group_pks
+			arrayDistinct(arrayFilter(x -> x != '', arrayFlatten(groupArray(group_pks)))) AS group_pks
 		FROM (
 			SELECT
 				-- The plane suffix is stripped here rather than in Go so both aggregates below
 				-- are already family-scoped. The pattern comes from edgeMulticastPlanes.
 				replaceRegexpOne(code, '%s', '') AS feed_family,
 				metro_pk,
-				arrayJoin(JSONExtract(groups, 'Array(String)')) AS group_pk
+				JSONExtract(groups, 'Array(String)') AS group_pks
 			FROM dz_feeds_current
 		)
-		WHERE group_pk != ''
 		GROUP BY feed_family
 		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0
 	`, edgeMulticastPlaneSuffixSQL())
@@ -681,9 +686,23 @@ func edgeMulticastSplitFrom(v [5]uint64) edgeMulticastMemberSplit {
 // queryEdgeMulticastRates rolls the per-user rate view up per group.
 //
 // One pass over health_multicast_user_rate for the whole fleet (~280ms on mainnet), grouped by
-// mode so publisher and subscriber rates never mix. A P+S user counts on both sides; its rate is
-// the view's reconciled side (egress), so it adds to EgressBps only — attributing it to ingress
-// as well would double-count the one measurement it has.
+// mode so publisher and subscriber rates never mix.
+//
+// A P+S member counts on the SUBSCRIBER side only, and that is a correctness fix rather than a
+// simplification. The view hands out one rate per row and picks the direction by mode: 'P' reads
+// ur_max_in_bps (what the member sends), 'S' and 'P+S' read ur_max_out_bps (what its tunnel
+// sends out). So a P+S row's rate says nothing about whether that member is publishing. Counting
+// it on the publisher side inverted the page's headline in both directions: RPF means a member
+// does not receive its own group back, so a group whose only publisher also subscribes reads
+// max_out = 0 — the view marks it 'group_idle' — and the row rendered Active=0, Idle=1, hence
+// Silent and a red lane while the publisher was sending; a P+S member with egress but no publish
+// traffic rendered healthy. Excluded from the tally, those members fall into Publishers.Unknown,
+// which is the true statement: nothing here measured their send side.
+//
+// IngressBps stays sourced from mode 'P' alone for the same reason. A group published only by
+// P+S members therefore reports 0 ingress and Unknown publishers — visibly unmeasured, rather
+// than confidently wrong. Carrying the publisher rate alongside observed_bps_5m in the view is
+// what would fix it properly, and that is an indexer change.
 func (a *API) queryEdgeMulticastRates(ctx context.Context) (map[string]edgeMulticastRates, error) {
 	query := `
 		SELECT
@@ -718,7 +737,7 @@ func (a *API) queryEdgeMulticastRates(ctx context.Context) (map[string]edgeMulti
 		}
 
 		agg := out[groupPK]
-		if mode == "P" || mode == "P+S" {
+		if mode == "P" {
 			agg.pubActive += int(active)
 			agg.pubIdle += int(idle)
 		}

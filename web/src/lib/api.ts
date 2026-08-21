@@ -7770,11 +7770,10 @@ export interface EdgeMulticastGroup {
   publishers_multi_group: number
   /** Rates are per-tunnel upper bounds when set — a publisher feeds several groups. */
   traffic_ambiguous: boolean
+  /** Newest rate bucket behind the row. The page computes the age — see EdgeMulticastGroup.ObservedAt. */
   observed_at?: string
-  observed_age_seconds?: number
   /** Newest application-plane observation: a message a recorder actually received. */
   last_heard?: string
-  last_heard_age_seconds?: number
   last_heard_source?: string
   /** Capture sources folded into last_heard; >1 means a dead lane may not move it. */
   last_heard_lanes?: number
