@@ -62,6 +62,27 @@ func insertKalshiRace(t *testing.T, api *handlers.API, node, loc, symbol string,
 	`, db, node, node, loc, symbol, srcTs, hash, winner, loser, leadMs)))
 }
 
+// insertKalshiRaces inserts n races of one (winner, loser) pairing, each with its own
+// (source_ts_ms, bbo_hash) so kalshiRaceKeyTuple counts them as distinct races. Two calls sharing
+// baseTs/baseHash therefore describe the SAME n races seen by two pairings — which is how a
+// dual-lane or multi-competitor race is written.
+//
+// Bursts rather than single rows because a vantage below handlers.KalshiVantageMinRaces is not
+// published: an assertion about a vantage row has to be made on a vantage the scoreboard shows.
+func insertKalshiRaces(t *testing.T, api *handlers.API, node, loc, symbol string, baseTs, baseHash uint64, n int, winner, loser string, leadMs float64) {
+	t.Helper()
+	db := "`" + api.FeedsDB + "`"
+	require.NoError(t, api.DB.Exec(t.Context(), fmt.Sprintf(`
+		INSERT INTO %s.kalshi_bbo_feed_race_summary
+		(event_ts, measurement_node_id, capture_run_id, host, location_code, symbol, source_ts_ms, bbo_hash, feed, loser_feed, lead_time_ms)
+		SELECT now64(9), '%s', 'run1', '%s', '%s', '%s', %d + number, %d + number, '%s', '%s', %f
+		FROM numbers(%d)
+	`, db, node, node, loc, symbol, baseTs, baseHash, winner, loser, leadMs, n)))
+}
+
+// enoughRaces is a burst size that clears the vantage floor.
+var enoughRaces = int(handlers.KalshiVantageMinRaces)
+
 // seedKalshiEntry inserts a configured competing feed into the Postgres allow-list.
 func seedKalshiEntry(t *testing.T, api *handlers.API, feed, label string, order int) {
 	t.Helper()
@@ -195,11 +216,11 @@ func TestKalshiScoreboard_PerNode(t *testing.T) {
 	createKalshiFeedsTable(t, api)
 	seedKalshiEntry(t, api, kalshiPublicFeed, "Public API", 0)
 
-	// cmh: DZ wins both. tyo: DZ wins 1, loses 1.
-	insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXETHPERP", 10, 1, kalshiDZFeed, kalshiPublicFeed, 2.0)
-	insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXETHPERP", 20, 2, kalshiDZFeed, kalshiPublicFeed, 2.0)
-	insertKalshiRace(t, api, "tyo-rec1", "tyo", "KXETHPERP", 30, 3, kalshiDZFeed, kalshiPublicFeed, 1.0)
-	insertKalshiRace(t, api, "tyo-rec1", "tyo", "KXETHPERP", 40, 4, kalshiPublicFeed, kalshiDZFeed, 1.0)
+	// cmh: DZ wins every race. tyo: DZ wins half and loses half.
+	insertKalshiRaces(t, api, "cmh-rec1", "cmh", "KXETHPERP", 10, 1, enoughRaces, kalshiDZFeed, kalshiPublicFeed, 2.0)
+	insertKalshiRaces(t, api, "tyo-rec1", "tyo", "KXETHPERP", 10, 1, enoughRaces, kalshiDZFeed, kalshiPublicFeed, 1.0)
+	insertKalshiRaces(t, api, "tyo-rec1", "tyo", "KXETHPERP",
+		uint64(10+enoughRaces), uint64(1+enoughRaces), enoughRaces, kalshiPublicFeed, kalshiDZFeed, 1.0)
 
 	resp, err := api.FetchKalshiScoreboardData(t.Context(), "24h", "")
 	require.NoError(t, err)
@@ -350,24 +371,27 @@ func TestKalshiScoreboard_CountsDualLaneLossOnce(t *testing.T) {
 	createKalshiFeedsTable(t, api)
 	seedKalshiEntry(t, api, kalshiPublicFeed, "Public API", 0)
 
-	// Race 1: the public feed wins it, beating both DoubleZero lanes.
-	insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 10, 1, kalshiPublicFeed, kalshiDZFeed, 0.5)
-	insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 10, 1, kalshiPublicFeed, kalshiDZMbpFeed, 0.6)
+	// Set 1: the public feed wins each race, beating both DoubleZero lanes. Both calls share
+	// the key base, so each iteration is ONE race written as two pairwise rows.
+	insertKalshiRaces(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 10, 1, enoughRaces, kalshiPublicFeed, kalshiDZFeed, 0.5)
+	insertKalshiRaces(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 10, 1, enoughRaces, kalshiPublicFeed, kalshiDZMbpFeed, 0.6)
 
-	// Race 2: the tob_ lane wins it, beating the public feed and the mbp_ lane.
-	insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 20, 2, kalshiDZFeed, kalshiPublicFeed, 1.0)
-	insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 20, 2, kalshiDZFeed, kalshiDZMbpFeed, 0.1)
+	// Set 2: the tob_ lane wins each race, beating the public feed and the mbp_ lane.
+	base := uint64(10 + enoughRaces)
+	insertKalshiRaces(t, api, "cmh-rec1", "cmh", "KXBTCPERP", base, base, enoughRaces, kalshiDZFeed, kalshiPublicFeed, 1.0)
+	insertKalshiRaces(t, api, "cmh-rec1", "cmh", "KXBTCPERP", base, base, enoughRaces, kalshiDZFeed, kalshiDZMbpFeed, 0.1)
 
 	resp, err := api.FetchKalshiScoreboardData(t.Context(), "24h", "")
 	require.NoError(t, err)
 
-	assert.EqualValues(t, 2, resp.TotalRaces, "two races, not one row per losing lane")
+	races := uint64(2 * enoughRaces)
+	assert.EqualValues(t, races, resp.TotalRaces, "one race per iteration, not one row per losing lane")
 	assert.InDelta(t, 50.0, resp.DZWinSharePct, 0.1)
 	require.Len(t, resp.Competitors, 1)
-	assert.EqualValues(t, 2, resp.Competitors[0].Races)
+	assert.EqualValues(t, races, resp.Competitors[0].Races)
 	assert.InDelta(t, 50.0, resp.Competitors[0].DZWinPct, 0.1)
 	require.Len(t, resp.Nodes, 1)
-	assert.EqualValues(t, 2, resp.Nodes[0].TotalRaces)
+	assert.EqualValues(t, races, resp.Nodes[0].TotalRaces)
 }
 
 // Configuring a second competing feed is a row insert, not a deploy, so the totals have to
@@ -380,31 +404,59 @@ func TestKalshiScoreboard_CountsMultiCompetitorRaceOnce(t *testing.T) {
 	seedKalshiEntry(t, api, kalshiPublicFeed, "Public API", 0)
 	seedKalshiEntry(t, api, kalshiOtherFeed, "Third Party", 1)
 
-	// Race 1: the tob_ lane wins it, beating both competitors.
-	insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 10, 1, kalshiDZFeed, kalshiPublicFeed, 1.0)
-	insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 10, 1, kalshiDZFeed, kalshiOtherFeed, 1.2)
+	// Set 1: the tob_ lane wins each race, beating both competitors.
+	insertKalshiRaces(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 10, 1, enoughRaces, kalshiDZFeed, kalshiPublicFeed, 1.0)
+	insertKalshiRaces(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 10, 1, enoughRaces, kalshiDZFeed, kalshiOtherFeed, 1.2)
 
-	// Race 2: the public feed wins it, beating DoubleZero and the other competitor.
-	insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 20, 2, kalshiPublicFeed, kalshiDZFeed, 0.5)
-	insertKalshiRace(t, api, "cmh-rec1", "cmh", "KXBTCPERP", 20, 2, kalshiPublicFeed, kalshiOtherFeed, 0.3)
+	// Set 2: the public feed wins each race, beating DoubleZero and the other competitor.
+	base := uint64(10 + enoughRaces)
+	insertKalshiRaces(t, api, "cmh-rec1", "cmh", "KXBTCPERP", base, base, enoughRaces, kalshiPublicFeed, kalshiDZFeed, 0.5)
+	insertKalshiRaces(t, api, "cmh-rec1", "cmh", "KXBTCPERP", base, base, enoughRaces, kalshiPublicFeed, kalshiOtherFeed, 0.3)
 
 	resp, err := api.FetchKalshiScoreboardData(t.Context(), "24h", "")
 	require.NoError(t, err)
 
-	assert.EqualValues(t, 2, resp.TotalRaces, "two races, not one row per competitor")
+	races := uint64(2 * enoughRaces)
+	assert.EqualValues(t, races, resp.TotalRaces, "one race per iteration, not one row per competitor")
 	assert.InDelta(t, 50.0, resp.DZWinSharePct, 0.1)
 	require.Len(t, resp.Nodes, 1)
-	assert.EqualValues(t, 2, resp.Nodes[0].TotalRaces)
+	assert.EqualValues(t, races, resp.Nodes[0].TotalRaces)
 	assert.InDelta(t, 50.0, resp.Nodes[0].DZWinSharePct, 0.1)
 
 	// The per-competitor cells still read as DoubleZero's record against that one feed.
 	require.Len(t, resp.Competitors, 2)
 	assert.Equal(t, kalshiPublicFeed, resp.Competitors[0].Feed)
-	assert.EqualValues(t, 2, resp.Competitors[0].Races)
+	assert.EqualValues(t, races, resp.Competitors[0].Races)
 	assert.InDelta(t, 50.0, resp.Competitors[0].DZWinPct, 0.1)
 	assert.Equal(t, kalshiOtherFeed, resp.Competitors[1].Feed)
-	assert.EqualValues(t, 1, resp.Competitors[1].Races)
+	assert.EqualValues(t, enoughRaces, resp.Competitors[1].Races, "only the races DoubleZero raced it in")
 	assert.InDelta(t, 100.0, resp.Competitors[1].DZWinPct, 0.1)
+}
+
+// The vantage dimension is discovered from the data, so a recorder that wrote a handful of races
+// became a row with a win rate beside vantages backed by millions. Measured on mainnet: a
+// fabricated node carrying 8 to 40 races per competitor sat next to one carrying 1.17 billion
+// observations.
+func TestKalshiScoreboard_DropsVantageBelowRaceFloor(t *testing.T) {
+	api := newKalshiTestAPI(t)
+	createKalshiFeedsTable(t, api)
+	seedKalshiEntry(t, api, kalshiPublicFeed, "Public API", 0)
+
+	insertKalshiRaces(t, api, "aws-was-mn-recorder1", "was", "KXBTCPERP", 10, 1, enoughRaces, kalshiDZFeed, kalshiPublicFeed, 2.0)
+	// A vantage with three races: a 100% win share that means nothing.
+	base := uint64(10 + enoughRaces)
+	insertKalshiRaces(t, api, "cmh-rec1", "cmh", "KXBTCPERP", base, base, 3, kalshiDZFeed, kalshiPublicFeed, 0.3)
+
+	resp, err := api.FetchKalshiScoreboardData(t.Context(), "24h", "")
+	require.NoError(t, err)
+
+	require.Len(t, resp.Nodes, 1, "the three-race vantage is not published")
+	assert.Equal(t, "aws-was-mn-recorder1", resp.Nodes[0].MeasurementNodeID)
+
+	// Dropped from the breakdown only. The headline counts every race the fleet ran, which is
+	// true however they spread across vantages — understating it to hide a thin row would trade
+	// one wrong number for another.
+	assert.EqualValues(t, enoughRaces+3, resp.TotalRaces)
 }
 
 // A win by an mbp_ lane must read as DoubleZero in the live grid, not as a raw source id.
@@ -442,23 +494,6 @@ func createKalshiObservationsTable(t *testing.T, api *handlers.API) {
 		) ENGINE = MergeTree
 		ORDER BY (measurement_node_id, symbol, source_ts_ms, source, recv_ts_ns)
 	`, db)))
-}
-
-// insertObservation records `source` seeing symbol's update stamped sourceTsMs, latencyMs later.
-func insertObservation(t *testing.T, api *handlers.API, source string, sourceID uint16, channelID uint8, symbol string, sourceTsMs uint64, latencyMs float64) {
-	t.Helper()
-	insertObservationAt(t, api, "cmh", source, sourceID, channelID, symbol, sourceTsMs, latencyMs)
-}
-
-func insertObservationAt(t *testing.T, api *handlers.API, metro, source string, sourceID uint16, channelID uint8, symbol string, sourceTsMs uint64, latencyMs float64) {
-	t.Helper()
-	ctx := t.Context()
-	db := "`" + api.FeedsDB + "`"
-	require.NoError(t, api.DB.Exec(ctx, fmt.Sprintf(`
-		INSERT INTO %s.kalshi_bbo_observations
-		(measurement_node_id, location_code, source, symbol, source_ts_ms, recv_ts_ns, source_id, channel_id)
-		VALUES ('%s-rec1', '%s', '%s', '%s', %d, toUInt64(%d) * 1000000 + %d, %d, %d)
-	`, db, metro, metro, source, symbol, sourceTsMs, sourceTsMs, int64(latencyMs*1e6), sourceID, channelID)))
 }
 
 // insertObservationBurst writes n observations of one source at one vantage, each stamped at a

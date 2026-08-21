@@ -547,6 +547,15 @@ func (a *API) FetchKalshiScoreboardData(ctx context.Context, window, symbol stri
 		if n.TotalRaces > 0 {
 			n.DZWinSharePct = 100.0 * float64(na.total.wins) / float64(n.TotalRaces)
 		}
+		if n.TotalRaces < KalshiVantageMinRaces {
+			// Logged by name: a vantage below the floor is either a recorder that just came
+			// up — worth knowing it is there and not yet counted — or one writing where it
+			// should not be, which is worth knowing for a different reason.
+			slog.Info("kalshi scoreboard: vantage below the race floor, not published",
+				"measurement_node_id", node, "location_code", na.loc,
+				"races", n.TotalRaces, "min_races", KalshiVantageMinRaces)
+			continue
+		}
 		resp.Nodes = append(resp.Nodes, n)
 	}
 
@@ -758,6 +767,32 @@ const kalshiEdgeWSArmFilter = "startsWith(source, 'tob_') AND source_id = 3 AND 
 // while a producer that has just started, or one writing by mistake, carries single digits. It is
 // not a statistical threshold for p99 precision; it is the line between "measured" and "not".
 const KalshiLatencyMinSamples = 1000
+
+// KalshiVantageMinRaces is the smallest race count a vantage needs before it is published as a
+// row of the per-vantage breakdown.
+//
+// Same defect as KalshiLatencyMinSamples, in the metric next to it: the vantage dimension is
+// discovered from the data — every measurement_node_id present in the race summary becomes a row
+// — so a recorder that wrote a handful of races renders a win rate and lead percentiles beside a
+// vantage backed by millions. A 100% win share over eight races is not a result.
+//
+// Applied to the vantage dimension and NOT to the competitor dimension, which is the meaningful
+// distinction: competitors are an operator allow-list (kalshi_scoreboard_entry), so a competitor
+// with few races was deliberately configured and is worth seeing thin. A vantage nobody
+// configured is worth seeing only once it has measured something.
+//
+// A hundred sits about two orders of magnitude below the smallest plausible live vantage even in
+// the shortest window this serves (1h): the venue's public perps feed delivers on a roughly
+// one-second cadence, so a live pairing produces thousands of races an hour. It is a floor
+// against fabricated and just-started recorders, not a statistical threshold — worth re-checking
+// against the real per-vantage distribution, which needs the feeds service (lake proxies it
+// read-only and the public user cannot see it).
+//
+// Thin vantages are dropped from the breakdown only. Their races still count in the headline and
+// in the per-competitor totals, which come from separate CUBE rows: "the fleet raced N times" is
+// true regardless of how the races spread across vantages, and understating it to hide a thin row
+// would trade one wrong number for another.
+const KalshiVantageMinRaces = 100
 
 // FetchKalshiPathLatency computes each feed's venue-to-receive latency (p50/p90/p99 in ms) over
 // the last 24h from the raw observations table: for one venue update, how long until this feed
