@@ -31,12 +31,12 @@ const kalshiL2CompletenessCacheKey = "kalshi_l2_completeness:v1"
 // kalshiL2CompletenessDays is how many days back the view reports, today included.
 //
 // ponytail: this rescans every day in the window on every refresh, over a level-grain table
-// through a remoteSecure() proxy. It is affordable while recording is one perps lane and it is
-// not affordable at sports scale (27.46 Mbps on the wire, malbeclabs/infra
-// kalshi_feed_capture_cmh.yml). A completed day never changes, so the upgrade is to compute
-// each day once and keep the row — an AggregatingMergeTree fed on insert in the capture's
-// schema, or a daily job writing Postgres here. Do that before sports recording is enabled
-// (malbeclabs/kalshi#214), not after.
+// through a remoteSecure() proxy. Sports recording is ALREADY on (malbeclabs/infra#2309, cmh,
+// perps and all thirty-one sports lanes since 2026-08-18), and that roster is 27.46 Mbps on the
+// wire, so this is past affordable rather than approaching it. A completed day never changes, so
+// the upgrade is to compute each day once and keep the row — an AggregatingMergeTree fed on
+// insert in the capture's schema, or a daily job writing Postgres here. The window is 14 days to
+// keep the scan bounded until that lands; widen it only after.
 const kalshiL2CompletenessDays = 14
 
 // KalshiL2Day is one day of captured level data, aggregated across lanes.

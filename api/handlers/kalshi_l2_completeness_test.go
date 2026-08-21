@@ -48,8 +48,8 @@ func getCompleteness(t *testing.T, api *handlers.API) handlers.KalshiL2Completen
 	return resp
 }
 
-// An absent proxy table must degrade to an empty 200, the state every environment is in until
-// record_levels is enabled (malbeclabs/infra#2334).
+// An absent proxy table must degrade to an empty 200. That is local dev and any environment
+// whose ClickHouse has no capture tables; prod has recorded levels since 2026-08-18.
 func TestKalshiL2Completeness_MissingTable(t *testing.T) {
 	api := apitesting.NewTestAPIBare(t, testChDB)
 
