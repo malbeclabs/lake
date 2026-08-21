@@ -7755,6 +7755,36 @@ export interface EdgeMulticastRoleCounts {
   class_derived: number
 }
 
+/** One publisher of one group, as its own line — the grain the health verdict is taken at. */
+export interface EdgeMulticastPublisher {
+  user_pk: string
+  client_ip: string
+  dz_ip?: string
+  device_code?: string
+  tunnel_id: number
+  /** 'recorder' | 'internal_probe' | 'customer' — same tiers as the subscriber split. */
+  class: string
+  /** Measured send rate; null when nothing measured it. Upper bound when multi_group. */
+  bps: number | null
+  /** 'publishing' (at/above the floor) | 'thin' (non-zero, below it) | 'idle' | 'unknown'. */
+  status: string
+  /** Feeds several groups from one tunnel, so bps cannot be attributed to this group alone. */
+  multi_group: boolean
+  observed_at?: string
+}
+
+/** One recording node's view of one group on the application plane. */
+export interface EdgeMulticastCaptureNode {
+  node: string
+  /** Observations written down in the window. Comparable between nodes on this group only. */
+  samples: number
+  last_heard: string
+  /** samples / median(samples) over the group's nodes. */
+  share_of_median: number
+  /** Below the parity floor with enough peers to say so: this node is missing the feed. */
+  lagging: boolean
+}
+
 export interface EdgeMulticastGroup {
   pk: string
   code: string
@@ -7765,6 +7795,16 @@ export interface EdgeMulticastGroup {
   plane?: string
   publishers: EdgeMulticastRoleCounts
   subscribers: EdgeMulticastRoleCounts
+  /** Worst-first, capped server-side; publisher_lines_total is the count before the cap. */
+  publisher_lines: EdgeMulticastPublisher[]
+  publisher_lines_total: number
+  /** Publishers not clearing publisher_floor_bps, idle ones included. Counted over all of them. */
+  publishers_below_floor: number
+  /** Publishers measured at or above the floor. */
+  publishers_publishing: number
+  /** Per-node application-plane view; absent for a group no capture covers. */
+  capture_nodes?: EdgeMulticastCaptureNode[]
+  capture_nodes_lagging?: number
   ingress_bps: number
   egress_bps: number
   publishers_multi_group: number
@@ -7774,12 +7814,15 @@ export interface EdgeMulticastGroup {
   observed_at?: string
   /** Newest application-plane observation: a message a recorder actually received. */
   last_heard?: string
-  last_heard_source?: string
-  /** Capture sources folded into last_heard; >1 means a dead lane may not move it. */
-  last_heard_lanes?: number
+  last_heard_table?: string
+  /** Capture sources folded into last_heard; >1 means one dead capture source may not move it. */
+  last_heard_capture_sources?: number
   /** Publishers exist, counters read zero: the lane went quiet. */
   silent: boolean
-  /** Traffic verdict: 'healthy' (publishers sending) | 'silent' | 'unknown' | '' (no publishers). */
+  /**
+   * Traffic verdict over two per-member checks — every publisher above the floor, every recording
+   * node hearing its share: 'healthy' | 'thin' | 'skewed' | 'silent' | 'unknown' | '' (none).
+   */
   health: string
   /** Per-member control-plane reconciliation breakdown. Does not set `health`. */
   health_counts: MulticastHealthStatusCounts
@@ -7795,6 +7838,8 @@ export interface EdgeMulticastService {
 export interface EdgeMulticastResponse {
   generated_at: string
   rate_grain_minutes: number
+  /** The per-publisher floor the verdict applies, so the UI never hardcodes a second copy. */
+  publisher_floor_bps: number
   /** False when no capture table was queryable — the column is hidden rather than blank. */
   last_heard_available: boolean
   services: EdgeMulticastService[]

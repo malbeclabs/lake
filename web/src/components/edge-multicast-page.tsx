@@ -1,16 +1,21 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
-import { AlertCircle, Loader2, Radio } from 'lucide-react'
+import { AlertCircle, ChevronDown, ChevronRight, Loader2, Radio } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { PageHeader } from './page-header'
 import { CopyableText } from './copyable-text'
 import { handleRowClick } from '@/lib/utils'
-import { fetchEdgeMulticast, type EdgeMulticastGroup, type EdgeMulticastService } from '@/lib/api'
+import {
+  fetchEdgeMulticast,
+  type EdgeMulticastGroup,
+  type EdgeMulticastPublisher,
+  type EdgeMulticastService,
+} from '@/lib/api'
 
 // One screen for every multicast group in the Edge product — the groups whose ledger code carries
 // the `edge-` prefix — showing who publishes, who receives, and whether anything is flowing. The per-group pages already answer this one group at a time; the
-// question that needs a fleet view is "is any lane silent right now".
+// question that needs a fleet view is "is any feed silent right now".
 //
 // Everything about freshness on this page is deliberate. Rates come from five-minute counter
 // rollups that land several minutes late, so a green dot here means "traffic in the last bucket
@@ -20,7 +25,7 @@ import { fetchEdgeMulticast, type EdgeMulticastGroup, type EdgeMulticastService 
 
 // Past this age the rate columns stop asserting anything. Two rollup grains plus the observed
 // pipeline lag: the normal steady state is 5-10 minutes behind, so a threshold much tighter than
-// this would mark healthy lanes stale for most of every cycle.
+// this would mark healthy feeds stale for most of every cycle.
 const STALE_AFTER_SECS = 15 * 60
 
 // Ages are computed here, from the payload's timestamps, and against two different clocks on
@@ -30,9 +35,9 @@ const STALE_AFTER_SECS = 15 * 60
 //   - The counter columns are read against the payload's own generated_at. What they measure is
 //     how far behind the rollup pipeline was when the numbers were computed — a property of the
 //     data. Reading them against wall clock would add the cache's age to the pipeline's lag and
-//     mark healthy lanes stale for most of every cycle, which is the alarm-always-on failure
+//     mark healthy feeds stale for most of every cycle, which is the alarm-always-on failure
 //     mode kalshi-l2-page.tsx documents for the same reason.
-//   - "Heard" is read against wall clock, ticking. That column exists to answer "is this lane
+//   - "Heard" is read against wall clock, ticking. That column exists to answer "is this feed
 //     alive right now", and a recorder that stopped just after a refresh must not keep reading
 //     "1s ago" until the next one. It ages in front of the reader, as it should.
 //
@@ -53,19 +58,41 @@ function serviceLabel(code: string): string {
   return SERVICE_LABELS[code] ?? code
 }
 
-// The plane a lane carries. Monospaced and dimmed rather than a coloured badge: it identifies the
+// The plane a group carries. Monospaced and dimmed rather than a coloured badge: it identifies the
 // row, it does not signal anything, and a badge here would compete with the health column.
 function PlaneCell({ plane }: { plane?: string }) {
   if (!plane) return <span className="text-muted-foreground">—</span>
   return <span className="font-mono text-xs text-muted-foreground">{plane}</span>
 }
 
-// The three states `health` can carry. Silent is the only red on the page, and it is the one
-// state that means "look at this lane": publishers were measured and none of them sent anything.
+// The five states `health` can carry. Silent is the only red: publishers were measured and none
+// of them sent anything. 'thin' (a publisher under the floor) and 'skewed' (a recorder far behind
+// its peers) are amber — a real fault in one member of a feed that is otherwise flowing, which is
+// a different call to action than a dead feed.
 const HEALTH_BADGE: Record<string, string> = {
   healthy: 'bg-emerald-500/15 text-emerald-500',
+  thin: 'bg-amber-500/15 text-amber-500',
+  skewed: 'bg-amber-500/15 text-amber-500',
   silent: 'bg-red-500/15 text-red-500',
   unknown: 'bg-muted text-muted-foreground',
+}
+
+// Per-publisher line states, dot colour. 'thin' and 'idle' are what the group-level dot used to
+// hide: both are publishers failing the floor, and one of them next to a healthy peer is exactly
+// the case this page could not previously show.
+const PUBLISHER_DOT: Record<string, string> = {
+  publishing: 'bg-emerald-500',
+  thin: 'bg-amber-500',
+  idle: 'bg-red-500',
+  unknown: 'bg-muted-foreground',
+}
+
+// How a member's classification reads on a publisher line. Only the DoubleZero ones are labelled:
+// 'customer' is the default nothing has asserted, and printing it on every line would present a
+// guess as a fact — the same reason the subscriber tooltip says how much is actually classified.
+const CLASS_LABEL: Record<string, string> = {
+  recorder: 'DZ recorder',
+  internal_probe: 'DZ probe',
 }
 
 function formatBps(bps: number): string {
@@ -91,14 +118,28 @@ function ageSecs(iso: string | undefined, nowMs: number): number | undefined {
   return Math.max(0, (nowMs - t) / 1000)
 }
 
-// The badge states whether publishers are sending; the tooltip carries the control-plane
-// reconciliation breakdown, which is per-member and never rolls up to a group verdict — a
-// customer with BGP down and one publisher missing from a device snapshot both live in there.
-function HealthBadge({ group }: { group: EdgeMulticastGroup }) {
+// The badge carries the verdict; the tooltip says which of the two checks produced it and then
+// the control-plane reconciliation breakdown, which is per-member and never rolls up to a group
+// verdict — a customer with BGP down and one publisher missing from a device snapshot both live
+// in there.
+function HealthBadge({ group, floorBps }: { group: EdgeMulticastGroup; floorBps: number }) {
   if (!group.health) return <span className="text-muted-foreground">—</span>
 
+  const lagging = (group.capture_nodes ?? []).filter((n) => n.lagging)
+  const verdict = {
+    healthy: `every publisher above ${formatBps(floorBps)}${
+      (group.capture_nodes?.length ?? 0) > 1 ? '; recorders all within range of each other' : ''
+    }`,
+    thin: `${group.publishers_below_floor} of ${group.publisher_lines_total} publisher(s) below ${formatBps(floorBps)}`,
+    skewed: lagging.length
+      ? `publishers fine; ${lagging.map((n) => `${n.node} at ${Math.round(n.share_of_median * 100)}% of the group median`).join(', ')}`
+      : 'a recording node is behind its peers',
+    silent: 'publishers were measured and none of them moved a byte',
+    unknown: 'no counter row for any publisher: a monitoring gap, not an outage',
+  }[group.health]
+
   const c = group.health_counts
-  const detail = [
+  const controlPlane = [
     c.unhealthy > 0 ? `${c.unhealthy} unhealthy` : '',
     c.degraded > 0 ? `${c.degraded} degraded` : '',
     c.disconnected > 0 ? `${c.disconnected} with BGP down` : '',
@@ -107,51 +148,163 @@ function HealthBadge({ group }: { group: EdgeMulticastGroup }) {
     .filter(Boolean)
     .join(' · ')
 
+  const detail = [verdict, controlPlane ? `Control plane, per member: ${controlPlane}` : '']
+    .filter(Boolean)
+    .join(' — ')
+
   const badge = (
     <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${HEALTH_BADGE[group.health] ?? HEALTH_BADGE.unknown}`}>
       {group.health}
     </span>
   )
   if (!detail) return badge
-  return <Tooltip content={`Control plane, per member: ${detail}`}>{badge}</Tooltip>
+  return <Tooltip content={detail}>{badge}</Tooltip>
 }
 
-// PublisherCell is the point of the page. Three states, and the third is not a failure:
-//   active  — at least one publisher moved traffic in the last visible bucket
-//   silent  — publishers are registered, their counters read zero
-//   unknown — nothing measured them, which is a monitoring gap, not an outage
-function PublisherCell({ group, stale }: { group: EdgeMulticastGroup; stale: boolean }) {
+// PublisherCell is the point of the page, and it counts publishers CLEARING THE FLOOR rather
+// than publishers with a non-zero counter. The distinction is the whole reason the per-publisher
+// lines exist: a tunnel carrying protocol overhead and no product used to count as active here.
+//
+//   green — every publisher is above the floor
+//   amber — some are, some are not: the feed is flowing and one of its publishers is not
+//   red   — publishers are registered and every counter reads zero
+//   grey  — nothing measured them, a monitoring gap rather than an outage
+//
+// Clicking the cell expands the group's publisher lines, which is where "which one" is answered.
+function PublisherCell({
+  group,
+  stale,
+  floorBps,
+  expanded,
+  onToggle,
+}: {
+  group: EdgeMulticastGroup
+  stale: boolean
+  floorBps: number
+  expanded: boolean
+  onToggle: () => void
+}) {
   const { publishers } = group
   if (publishers.total === 0) {
     return <span className="text-muted-foreground">—</span>
   }
 
+  const below = group.publishers_below_floor
   const dot = group.silent
     ? 'bg-red-500'
-    : publishers.active > 0
-      ? stale
-        ? 'bg-muted-foreground'
+    : stale || group.publishers_publishing === 0
+      ? 'bg-muted-foreground'
+      : below > 0
+        ? 'bg-amber-500'
         : 'bg-emerald-500'
-      : 'bg-muted-foreground'
 
   const detail = [
-    `${publishers.active} publishing`,
-    publishers.idle > 0 ? `${publishers.idle} registered but idle` : '',
+    `${group.publishers_publishing} above ${formatBps(floorBps)}`,
+    below > 0 ? `${below} below it` : '',
     publishers.unknown > 0 ? `${publishers.unknown} with no counter data` : '',
+    'click to list them',
   ]
     .filter(Boolean)
     .join(' · ')
 
   return (
     <Tooltip content={detail}>
-      <span className="inline-flex items-center gap-1.5 tabular-nums">
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          onToggle()
+        }}
+        className="inline-flex items-center gap-1.5 tabular-nums hover:text-foreground"
+      >
+        {expanded ? (
+          <ChevronDown className="h-3 w-3 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="h-3 w-3 text-muted-foreground" />
+        )}
         <span className={`inline-block h-2 w-2 rounded-full ${dot}`} />
         <span>
-          {publishers.active}
+          {group.publishers_publishing}
           <span className="text-muted-foreground">/{publishers.total}</span>
         </span>
-      </span>
+      </button>
     </Tooltip>
+  )
+}
+
+// One publisher, one line. Everything on it is per member: its own rate, its own bucket age, its
+// own verdict against the floor — none of which survives the group roll-up above.
+function PublisherLineRow({
+  line,
+  asOf,
+  floorBps,
+  columns,
+}: {
+  line: EdgeMulticastPublisher
+  asOf: number
+  floorBps: number
+  columns: number
+}) {
+  const age = ageSecs(line.observed_at, asOf)
+  const stale = age === undefined || age > STALE_AFTER_SECS
+  const label = CLASS_LABEL[line.class]
+
+  const statusDetail =
+    line.status === 'thin'
+      ? `below the ${formatBps(floorBps)} floor: the tunnel is moving something, not the product`
+      : line.status === 'idle'
+        ? 'counter read zero in the last visible bucket'
+        : line.status === 'unknown'
+          ? 'no counter row for this publisher: nothing measured it'
+          : `at or above the ${formatBps(floorBps)} floor`
+
+  return (
+    <tr className="border-b border-border/50 last:border-b-0 bg-muted/20 text-xs">
+      <td className="pl-10 pr-4 py-1.5 whitespace-nowrap">
+        <span className="inline-flex items-center gap-2">
+          <CopyableText text={line.client_ip} className="font-mono text-xs" />
+          {/* The classification rides with the identity rather than in the Subscribers column:
+              a publisher line has nothing to say about that side of the group. */}
+          {label && <span className="text-muted-foreground">{label}</span>}
+        </span>
+      </td>
+      <td className="px-4 py-1.5 whitespace-nowrap font-mono text-muted-foreground">
+        {line.device_code || '—'}
+      </td>
+      <td className="px-4 py-1.5 whitespace-nowrap text-muted-foreground">
+        {line.tunnel_id ? `tun ${line.tunnel_id}` : '—'}
+      </td>
+      <td className="px-4 py-1.5 whitespace-nowrap">
+        <Tooltip content={statusDetail}>
+          <span className="inline-flex items-center gap-1.5">
+            <span
+              className={`inline-block h-1.5 w-1.5 rounded-full ${PUBLISHER_DOT[line.status] ?? PUBLISHER_DOT.unknown}`}
+            />
+            <span className={line.status === 'publishing' ? 'text-muted-foreground' : ''}>
+              {line.status}
+            </span>
+          </span>
+        </Tooltip>
+      </td>
+      <td className="px-4 py-1.5" />
+      <td className="px-4 py-1.5 text-right whitespace-nowrap">
+        {line.bps === null ? (
+          <span className="text-muted-foreground">no data</span>
+        ) : (
+          <RateCell bps={line.bps} ambiguous={line.multi_group} stale={stale} />
+        )}
+      </td>
+      <td className="px-4 py-1.5" />
+      <td className="px-4 py-1.5 text-right whitespace-nowrap">
+        {age === undefined ? (
+          <span className="text-muted-foreground">—</span>
+        ) : (
+          <span className={stale ? 'text-amber-500' : 'text-muted-foreground'}>{formatAge(age)}</span>
+        )}
+      </td>
+      {/* The remaining columns belong to the group, not to one of its publishers. */}
+      <td className="px-4 py-1.5" colSpan={columns - 8} />
+    </tr>
   )
 }
 
@@ -193,17 +346,17 @@ function SubscriberCell({ group }: { group: EdgeMulticastGroup }) {
 
 // The application-plane column: when a recorder last actually received something on this group.
 // It is the only number on the page that can be seconds old — but it is receive-side, so a blank
-// is "no capture covers this group", never "the lane is dead".
+// is "no capture covers this group", never "the feed is dead".
 function LastHeardCell({ group, now }: { group: EdgeMulticastGroup; now: number }) {
   const age = ageSecs(group.last_heard, now)
   if (age === undefined) {
     return <span className="text-muted-foreground">—</span>
   }
-  const lanes = group.last_heard_lanes ?? 1
+  const captureSources = group.last_heard_capture_sources ?? 1
   const detail = [
-    `from ${group.last_heard_source}`,
-    lanes > 1
-      ? `max over ${lanes} capture lanes — one dead lane does not move this; see the Kalshi L2 page for per-lane detail`
+    `from ${group.last_heard_table}`,
+    captureSources > 1
+      ? `max over ${captureSources} capture sources — one dead capture source does not move this; see the Kalshi L2 page for the per-capture-source detail`
       : '',
   ]
     .filter(Boolean)
@@ -213,7 +366,9 @@ function LastHeardCell({ group, now }: { group: EdgeMulticastGroup; now: number 
     <Tooltip content={detail}>
       <span className="tabular-nums">
         {formatAge(age)}
-        {lanes > 1 && <span className="text-muted-foreground text-xs"> ×{lanes}</span>}
+        {captureSources > 1 && (
+          <span className="text-muted-foreground text-xs"> ×{captureSources}</span>
+        )}
       </span>
     </Tooltip>
   )
@@ -237,23 +392,36 @@ function RateCell({ bps, ambiguous, stale }: { bps: number; ambiguous: boolean; 
   )
 }
 
+// A group's publisher lines are open by default while the whole published set fits on screen —
+// the market-data feeds have two publishers and that IS the view someone opens this page for. The
+// shreds groups have hundreds, so they start collapsed rather than burying every other row.
+const PUBLISHER_LINES_OPEN_BELOW = 5
+
 function GroupRow({
   group,
   asOf,
   now,
   showLastHeard,
+  floorBps,
+  columns,
   onOpen,
 }: {
   group: EdgeMulticastGroup
   asOf: number
   now: number
   showLastHeard: boolean
+  floorBps: number
+  columns: number
   onOpen: (e: React.MouseEvent, pk: string) => void
 }) {
   const age = ageSecs(group.observed_at, asOf)
   const stale = age === undefined || age > STALE_AFTER_SECS
+  const lines = group.publisher_lines ?? []
+  const [expanded, setExpanded] = useState(lines.length > 0 && lines.length < PUBLISHER_LINES_OPEN_BELOW)
+  const hidden = group.publisher_lines_total - lines.length
 
   return (
+    <>
     <tr
       className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
       onClick={(e) => onOpen(e, group.pk)}
@@ -268,7 +436,13 @@ function GroupRow({
         <PlaneCell plane={group.plane} />
       </td>
       <td className="px-4 py-3 text-sm">
-        <PublisherCell group={group} stale={stale} />
+        <PublisherCell
+          group={group}
+          stale={stale}
+          floorBps={floorBps}
+          expanded={expanded}
+          onToggle={() => setExpanded((v) => !v)}
+        />
       </td>
       <td className="px-4 py-3 text-sm">
         <SubscriberCell group={group} />
@@ -299,10 +473,30 @@ function GroupRow({
           onClick={(e) => e.stopPropagation()}
           className="inline-flex"
         >
-          <HealthBadge group={group} />
+          <HealthBadge group={group} floorBps={floorBps} />
         </Link>
       </td>
     </tr>
+    {expanded &&
+      lines.map((line) => (
+        <PublisherLineRow
+          key={`${group.pk}-${line.user_pk}`}
+          line={line}
+          asOf={asOf}
+          floorBps={floorBps}
+          columns={columns}
+        />
+      ))}
+    {expanded && hidden > 0 && (
+      <tr className="border-b border-border/50 bg-muted/20 text-xs">
+        {/* Worst-first ordering is what makes this safe to truncate: everything failing the
+            floor is above the cut. */}
+        <td className="pl-10 pr-4 py-1.5 text-muted-foreground" colSpan={columns}>
+          +{hidden} more publisher{hidden === 1 ? '' : 's'}, all above the floor
+        </td>
+      </tr>
+    )}
+    </>
   )
 }
 
@@ -311,14 +505,19 @@ function ServiceSection({
   asOf,
   now,
   showLastHeard,
+  floorBps,
   onOpen,
 }: {
   service: EdgeMulticastService
   asOf: number
   now: number
   showLastHeard: boolean
+  floorBps: number
   onOpen: (e: React.MouseEvent, pk: string) => void
 }) {
+  // The publisher lines fill the first eight columns and blank the rest, so the count has to
+  // match the header exactly — a mismatch silently shifts every group column one to the left.
+  const columns = showLastHeard ? 10 : 9
   const silent = service.groups.filter((g) => g.silent).length
 
   return (
@@ -360,6 +559,8 @@ function ServiceSection({
                 asOf={asOf}
                 now={now}
                 showLastHeard={showLastHeard}
+                floorBps={floorBps}
+                columns={columns}
                 onOpen={onOpen}
               />
             ))}
@@ -483,6 +684,7 @@ export function EdgeMulticastPage() {
               asOf={asOf}
               now={now}
               showLastHeard={data?.last_heard_available ?? false}
+              floorBps={data?.publisher_floor_bps ?? 0}
               onOpen={onOpen}
             />
           ))}

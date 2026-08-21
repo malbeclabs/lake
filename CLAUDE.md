@@ -158,9 +158,9 @@ an empty scoreboard, which is also the expected local-dev state.
 DoubleZero's own feeds are never config rows: they are matched by the `tob_` (top-of-book) and
 `mbp_` (market-by-price) prefixes, and a row for either is rejected by the loader with a WARN
 (it would broaden the allow-list clause to races against unconfigured competitors, leaking
-their feed ids into the payload). Both prefixes are DoubleZero's — an MBP source emits the
+their feed ids into the payload). Both prefixes are DoubleZero's — an MBP publisher emits the
 shared BBO observation on every derived top-of-book change, so it races the venue's public feed
-exactly as the top-of-book lane does.
+exactly as the top-of-book feed does.
 
 ## Multicast Member Classification
 
@@ -208,6 +208,61 @@ config, differs between mainnet and testnet, and is inserted out of band, so it 
 repository. The Kalshi and Hyperliquid recorders can only be classified this way: the feeds tables
 identify them by `measurement_node_id`, a hostname with no IP anywhere in that schema and no table
 in lake to resolve it through.
+
+## Edge Market Data Vocabulary
+
+The canonical vocabulary for anything Edge market data — venues, feeds, publishers, channels — is
+**[edge-feed-spec/GLOSSARY.md](https://github.com/malbeclabs/edge-feed-spec/blob/main/GLOSSARY.md)**,
+and that file is the authority: a definition there overrides any local one. It binds specs, docs,
+plans, comments, identifiers, CLI flags, config keys, metric names and log fields alike, so it
+applies to Go identifiers and JSON field names in this repo, not just to prose.
+
+The violations that keep appearing here:
+
+| Do not write | Write | Why |
+| --- | --- | --- |
+| `lane` | `feed` (the traffic) or `path` (a redundant route) | banned outright |
+| `source` bare | `capture source`, `source_ts`, `source IP address`, `upstream source` | several unrelated things share the prefix, so the qualifier is mandatory |
+| `stream` (our traffic) | `feed` | `snapshot stream` / `delta stream` are the two exceptions |
+| `arm` (any sense) | `path`, `branch`, or set/clear | banned outright; `ARM64` is a proper noun and survives |
+| `epoch` (our own spans) | `era` | `Unix epoch` is the exception |
+| `roster`, `active set` | `published set` | |
+
+Two shapes recur in this codebase and are both correct: a foreign column name we do not own stays
+as it is (`kalshi_bbo_observations.source`, aliased to `capture_source` in the projection), and a
+ledger string is never renamed by search-and-replace — a `code` that stops matching its live group
+fails silently, so renames sequence behind the ledger.
+
+## Edge Multicast Health
+
+`/dz/edge/multicast` grades a group with two per-member checks, both in
+`api/handlers/edge_multicast_publishers.go`, not with an "is anyone sending" rollup:
+
+1. **Publisher floor.** Every publisher must clear `edgeMulticastPublisherFloorBps` (1 Kbps) on its
+   own tunnel counter. Below it — trickle or zero — the group reads `thin`. The feeds on this page
+   run at megabits, so a kilobit is overhead with no product behind it.
+2. **Capture-node parity.** Recording nodes on one group receive the same feed, so each node's
+   sample count must stay within `edgeMulticastNodeParityFloor` (half) of the group's median. A node
+   under it reads `skewed`.
+
+Verdicts rank worst-first: `silent` (nothing sending) → `thin` → `skewed` → `unknown` (nothing
+measured) → `healthy`. A publisher fault outranks a receiver fault, and an unmeasured publisher
+never forces a verdict — one device's telemetry gap is not a fault in the feed.
+
+**"Every publisher" means every publisher, including the validator fan-in groups.** Measured on
+mainnet: the two Kalshi perps groups have 2 publishers each, both above the floor; `edge-solana-shreds`
+has 767, of which 605 clear the floor, 3 are thin and 149 are idle. So the shreds and root rows read
+`thin` as their steady state — a validator that is not sending is normal there, and the old verdict
+called the same group healthy. If that reads as noise rather than signal, the fix is a share
+threshold on the verdict (not a change to the counts, which stay strict), and it needs a product
+decision rather than a quiet default.
+
+Parity is measured on the **application plane** (`kalshi_bbo_observations`,
+`slot_feed_race_summary_v2`) and cannot move to the counters. Interface counters are per tunnel: a
+recorder subscribed to several groups reports the sum against each, so on mainnet the Tokyo recorder
+reads 232 Mbps against a group whose entire ingress is 3.6 Mbps. Every Kalshi recorder is
+multi-group, so a counter-based parity check would be permanently wrong on exactly the feeds it
+exists for.
 
 ## Logging Levels
 

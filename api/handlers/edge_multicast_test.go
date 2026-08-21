@@ -66,7 +66,7 @@ func promoteTestGroupToEdge(t *testing.T, api *handlers.API, entityID, code stri
 // has to come from a DISTINCT over rows rather than from a column.
 func insertEdgeMulticastFeed(t *testing.T, api *handlers.API) {
 	t.Helper()
-	promoteTestGroupToEdge(t, api, "group-1", "edge-test-lane")
+	promoteTestGroupToEdge(t, api, "group-1", "edge-test-feed")
 	require.NoError(t, api.DB.Exec(t.Context(), `
 		INSERT INTO dim_dz_feeds_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
@@ -77,7 +77,7 @@ func insertEdgeMulticastFeed(t *testing.T, api *handlers.API) {
 }
 
 // insertEdgeMulticastUnclaimedGroup adds a group no feed row claims, plus a publisher whose
-// tunnel carries zero traffic — the silent-lane case.
+// tunnel carries zero traffic — the silent-feed case.
 func insertEdgeMulticastUnclaimedGroup(t *testing.T, api *handlers.API) {
 	t.Helper()
 	ctx := t.Context()
@@ -85,7 +85,7 @@ func insertEdgeMulticastUnclaimedGroup(t *testing.T, api *handlers.API) {
 		INSERT INTO dim_dz_multicast_groups_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
-		VALUES ('group-2', now(), now(), generateUUIDv4(), 0, 1, 'group-2', '', 'edge-lab-lane', '233.0.0.2', 100000000, 'activated', 0, 0)`))
+		VALUES ('group-2', now(), now(), generateUUIDv4(), 0, 1, 'group-2', '', 'edge-lab-feed', '233.0.0.2', 100000000, 'activated', 0, 0)`))
 	require.NoError(t, api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_users_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
@@ -144,7 +144,7 @@ func TestGetEdgeMulticast_GroupsByFeed(t *testing.T) {
 	require.Len(t, svc.Groups, 1)
 
 	g := svc.Groups[0]
-	assert.Equal(t, "edge-test-lane", g.Code)
+	assert.Equal(t, "edge-test-feed", g.Code)
 	assert.Equal(t, "233.0.0.1", g.MulticastIP)
 	assert.Equal(t, 1, g.Publishers.Total)
 	assert.Equal(t, 1, g.Publishers.Active)
@@ -207,7 +207,7 @@ func TestGetEdgeMulticast_UnmanagedGroupIsListedAndSilent(t *testing.T) {
 	require.Len(t, last.Groups, 1)
 
 	g := last.Groups[0]
-	assert.Equal(t, "edge-lab-lane", g.Code)
+	assert.Equal(t, "edge-lab-feed", g.Code)
 	assert.Equal(t, 1, g.Publishers.Total)
 	assert.Equal(t, 0, g.Publishers.Active)
 	assert.Equal(t, 1, g.Publishers.Idle)
@@ -325,7 +325,7 @@ func TestGetEdgeMulticast_MalformedClassRowIsSkipped(t *testing.T) {
 }
 
 // insertEdgeMulticastCaptureGroups adds two groups whose codes the capture sources name: the
-// Kalshi sports market-by-price lane and the Solana shreds group.
+// Kalshi sports market-by-price plane and the Solana shreds group.
 func insertEdgeMulticastCaptureGroups(t *testing.T, api *handlers.API) {
 	t.Helper()
 	require.NoError(t, api.DB.Exec(t.Context(), `
@@ -361,18 +361,18 @@ func TestGetEdgeMulticast_LastHeardAbsentWithoutCaptureTables(t *testing.T) {
 	assert.False(t, resp.LastHeardAvailable, "no capture table is queryable")
 	g := findEdgeMulticastService(t, resp, "test-feed").Groups[0]
 	assert.Nil(t, g.LastHeard)
-	assert.Empty(t, g.LastHeardSource)
+	assert.Empty(t, g.LastHeardTable)
 }
 
 func TestGetEdgeMulticast_LastHeardFromCaptureTables(t *testing.T) {
 	api := newEdgeMulticastTestAPI(t)
 	insertMulticastTestData(t, api)
-	promoteTestGroupToEdge(t, api, "group-1", "edge-test-lane")
+	promoteTestGroupToEdge(t, api, "group-1", "edge-test-feed")
 	insertEdgeMulticastCaptureGroups(t, api)
 	createKalshiObservationsTable(t, api)
 	createShredderTables(t, api)
 
-	// Two league lanes of the same Kalshi group, so the fold factor is observable.
+	// Two league capture sources of the same Kalshi group, so the fold factor is observable.
 	nowMs := uint64(time.Now().UnixMilli())
 	insertObservation(t, api, "mbp_edge_kalshi_sports_nfl", 3, 2, "KXNFLGAME", nowMs, 1)
 	insertObservation(t, api, "mbp_edge_kalshi_sports_nba", 3, 2, "KXNBAGAME", nowMs, 1)
@@ -390,18 +390,18 @@ func TestGetEdgeMulticast_LastHeardFromCaptureTables(t *testing.T) {
 	assert.True(t, resp.LastHeardAvailable)
 
 	k := findEdgeMulticastGroup(t, resp, "edge-kalshi-sports-mbp")
-	require.NotNil(t, k.LastHeard, "the sports lanes map to their group by naming convention")
-	assert.Equal(t, "kalshi_bbo_observations", k.LastHeardSource)
-	assert.Equal(t, 2, k.LastHeardLanes, "two league lanes folded into one group timestamp")
+	require.NotNil(t, k.LastHeard, "the sports capture sources map to their group by naming convention")
+	assert.Equal(t, "kalshi_bbo_observations", k.LastHeardTable)
+	assert.Equal(t, 2, k.LastHeardCaptureSources, "two league capture sources folded into one group timestamp")
 	assert.Less(t, time.Since(*k.LastHeard), 5*time.Minute, "the page ages this against its own clock")
 
 	s := findEdgeMulticastGroup(t, resp, "edge-solana-shreds")
 	require.NotNil(t, s.LastHeard, "the 'dz' feed alias resolves to the shreds group")
-	assert.Equal(t, "slot_feed_race_summary_v2", s.LastHeardSource)
-	assert.Equal(t, 1, s.LastHeardLanes)
+	assert.Equal(t, "slot_feed_race_summary_v2", s.LastHeardTable)
+	assert.Equal(t, 1, s.LastHeardCaptureSources)
 
 	// The competitor observation was dropped, not bucketed into some group.
-	other := findEdgeMulticastGroup(t, resp, "edge-test-lane")
+	other := findEdgeMulticastGroup(t, resp, "edge-test-feed")
 	assert.Nil(t, other.LastHeard)
 
 	// App-plane silence never sets Silent: it is receive-side, so it cannot tell a dead
@@ -416,7 +416,7 @@ func TestGetEdgeMulticast_LastHeardFromCaptureTables(t *testing.T) {
 // view hands that row the EGRESS rate — ur_max_out_bps — because it picks the direction by mode.
 // So a P+S row says nothing about whether the member is publishing. Counting it on the publisher
 // side inverted the page in both directions: RPF means the member does not receive its own group
-// back, so max_out reads 0 and the row rendered Idle, hence Silent and a red lane while the
+// back, so max_out reads 0 and the row rendered Idle, hence Silent and a red feed while the
 // publisher was sending.
 func TestGetEdgeMulticast_PublisherSubscriberIsNotCountedAsPublisher(t *testing.T) {
 	api := newEdgeMulticastTestAPI(t)
@@ -429,20 +429,20 @@ func TestGetEdgeMulticast_PublisherSubscriberIsNotCountedAsPublisher(t *testing.
 		INSERT INTO dim_dz_multicast_groups_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
-		VALUES ('group-ps', now(), now(), generateUUIDv4(), 0, 1, 'group-ps', '', 'edge-ps-lane', '233.0.0.3', 100000000, 'activated', 0, 0)`))
+		VALUES ('group-ps', now(), now(), generateUUIDv4(), 0, 1, 'group-ps', '', 'edge-ps-feed', '233.0.0.3', 100000000, 'activated', 0, 0)`))
 	require.NoError(t, api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_users_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id, publishers, subscribers)
 		VALUES ('user-ps', now(), now(), generateUUIDv4(), 0, 1, 'user-ps', 'pubkey-ps', 'activated', 'multicast', '10.0.0.5', '10.0.0.5', 'dev-ams1', 505, '["group-ps"]', '["group-ps"]')`))
 	// Sending 10 Mbps, receiving nothing back — the RPF case, and exactly the shape that used to
-	// render as a silent lane.
+	// render as a silent feed.
 	require.NoError(t, api.DB.Exec(ctx, `
 		INSERT INTO device_interface_rollup_5m
 			(bucket_ts, device_pk, intf, user_tunnel_id, user_pk, max_in_bps, max_out_bps, ingested_at)
 		VALUES (now() - INTERVAL 1 MINUTE, 'dev-ams1', 'Tunnel505', 505, 'user-ps', 10000000, 0, now())`))
 
-	g := findEdgeMulticastGroup(t, getEdgeMulticast(t, api), "edge-ps-lane")
+	g := findEdgeMulticastGroup(t, getEdgeMulticast(t, api), "edge-ps-feed")
 
 	assert.Equal(t, 1, g.Publishers.Total)
 	assert.Equal(t, 0, g.Publishers.Active)
@@ -474,7 +474,7 @@ func TestGetEdgeMulticast_MetroCountKeepsGrouplessCatalogRows(t *testing.T) {
 
 	assert.Equal(t, 3, svc.MetroCount, "every metro row counts, group or no group")
 	require.Len(t, svc.Groups, 1, "and the group union is unchanged")
-	assert.Equal(t, "edge-test-lane", svc.Groups[0].Code)
+	assert.Equal(t, "edge-test-feed", svc.Groups[0].Code)
 }
 
 func TestGetEdgeMulticast_NonEdgeGroupsExcluded(t *testing.T) {
@@ -556,4 +556,161 @@ func TestEdgeMulticastPlaneAbsentOnSolanaGroups(t *testing.T) {
 
 	g := findEdgeMulticastGroup(t, getEdgeMulticast(t, api), "edge-solana-shreds")
 	assert.Empty(t, g.Plane, "edge-solana-shreds is not plane-split")
+}
+
+// insertEdgeMulticastPublisher adds one more publisher to group-1 with the rate given, so the
+// per-publisher checks can be exercised against a group that already has a healthy one.
+func insertEdgeMulticastPublisher(t *testing.T, api *handlers.API, id, clientIP string, tunnel int, bps int64) {
+	t.Helper()
+	ctx := t.Context()
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_users_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id, publishers, subscribers)
+		VALUES (?, now(), now(), generateUUIDv4(), 0, 7, ?, 'pubkey-pub2', 'activated', 'multicast', ?, ?, 'dev-ams1', ?, '["group-1"]', '[]')`,
+		id, id, clientIP, clientIP, tunnel))
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO device_interface_rollup_5m
+			(bucket_ts, device_pk, intf, user_tunnel_id, user_pk, max_in_bps, max_out_bps, ingested_at)
+		VALUES (now() - INTERVAL 1 MINUTE, 'dev-ams1', ?, ?, ?, ?, 0, now())`,
+		fmt.Sprintf("Tunnel%d", tunnel), tunnel, id, bps))
+}
+
+// The lines are the grain the verdict is taken at, so the payload has to carry them: identity,
+// rate, bucket and per-member status for each publisher, not just a count.
+func TestGetEdgeMulticast_PublisherLines(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertMulticastHealthFixtures(t, api)
+	insertEdgeMulticastFeed(t, api)
+
+	g := findEdgeMulticastGroup(t, getEdgeMulticast(t, api), "edge-test-feed")
+
+	require.Len(t, g.PublisherLines, 1)
+	assert.Equal(t, 1, g.PublisherLinesTotal)
+	line := g.PublisherLines[0]
+	assert.Equal(t, "10.0.0.1", line.ClientIP)
+	assert.Equal(t, "ams001-dz001", line.DeviceCode, "the device code comes from the ledger, not the rate view")
+	assert.Equal(t, int32(501), line.TunnelID)
+	assert.Equal(t, "publishing", line.Status)
+	assert.Equal(t, "customer", line.Class, "nothing has classified this box: the default, and a weak claim")
+	require.NotNil(t, line.Bps)
+	assert.InDelta(t, 10_000_000, *line.Bps, 1)
+	assert.False(t, line.MultiGroup, "one group, so the counter attributes cleanly")
+	require.NotNil(t, line.ObservedAt, "the bucket is per line: one stale publisher among fresh ones is a fact")
+
+	assert.Equal(t, 1, g.PublishersPublishing)
+	assert.Equal(t, 0, g.PublishersBelowFloor)
+	assert.Equal(t, "healthy", g.Health)
+}
+
+// A publisher whose tunnel carries a trickle is NOT a publishing publisher. This is the case the
+// old verdict scored as healthy: it only asked whether the counter was non-zero, so 200 bps of
+// protocol overhead and 2.4 Mbps of product were the same answer.
+func TestGetEdgeMulticast_ThinPublisherIsNotHealthy(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertMulticastHealthFixtures(t, api)
+	insertEdgeMulticastFeed(t, api)
+	insertEdgeMulticastPublisher(t, api, "user-pub2", "10.0.0.7", 507, 200)
+
+	g := findEdgeMulticastGroup(t, getEdgeMulticast(t, api), "edge-test-feed")
+
+	assert.Equal(t, "thin", g.Health, "one publisher below the floor is a fault in the feed")
+	assert.Equal(t, 1, g.PublishersPublishing)
+	assert.Equal(t, 1, g.PublishersBelowFloor)
+	assert.False(t, g.Silent, "the other publisher is sending, so the feed did not go quiet")
+
+	require.Len(t, g.PublisherLines, 2)
+	assert.Equal(t, "thin", g.PublisherLines[0].Status, "worst first, so the cap can never hide the fault")
+	assert.Equal(t, "10.0.0.7", g.PublisherLines[0].ClientIP)
+	assert.Equal(t, "publishing", g.PublisherLines[1].Status)
+	assert.Equal(t, 2, g.Publishers.Active, "the group counts still report both counters as non-zero")
+}
+
+// A dead publisher next to a live one is the same verdict as a thin one — zero is below the floor
+// — and specifically NOT 'silent', which is reserved for a feed where nothing is sending at all.
+func TestGetEdgeMulticast_IdlePublisherBesideALiveOneIsThin(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertMulticastHealthFixtures(t, api)
+	insertEdgeMulticastFeed(t, api)
+	insertEdgeMulticastPublisher(t, api, "user-pub2", "10.0.0.8", 508, 0)
+
+	g := findEdgeMulticastGroup(t, getEdgeMulticast(t, api), "edge-test-feed")
+
+	assert.Equal(t, "thin", g.Health)
+	assert.Equal(t, 1, g.PublishersBelowFloor)
+	assert.False(t, g.Silent)
+	require.Len(t, g.PublisherLines, 2)
+	assert.Equal(t, "idle", g.PublisherLines[0].Status)
+	assert.Equal(t, "10.0.0.8", g.PublisherLines[0].ClientIP)
+}
+
+// insertEdgeMulticastCapturePublisher gives a capture group a publisher above the floor, so the
+// parity half of the verdict is not masked by the publisher half.
+func insertEdgeMulticastCapturePublisher(t *testing.T, api *handlers.API, groupPK string) {
+	t.Helper()
+	ctx := t.Context()
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_users_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id, publishers, subscribers)
+		VALUES ('user-kpub', now(), now(), generateUUIDv4(), 0, 11, 'user-kpub', 'pubkey-kpub', 'activated',
+		        'multicast', '10.0.0.9', '10.0.0.9', 'dev-ams1', 509, ?, '[]')`,
+		fmt.Sprintf(`["%s"]`, groupPK)))
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO device_interface_rollup_5m
+			(bucket_ts, device_pk, intf, user_tunnel_id, user_pk, max_in_bps, max_out_bps, ingested_at)
+		VALUES (now() - INTERVAL 1 MINUTE, 'dev-ams1', 'Tunnel509', 509, 'user-kpub', 5000000, 0, now())`))
+}
+
+// The recorder half of the verdict. Every recording node on a group receives the same feed, so a
+// node writing down a fraction of what its peers do is not hearing it — a fault the publisher
+// counters cannot see, because they are per tunnel and sum every group the tunnel carries.
+func TestGetEdgeMulticast_CaptureNodeParity(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertEdgeMulticastCaptureGroups(t, api)
+	insertEdgeMulticastCapturePublisher(t, api, "group-k")
+	createKalshiObservationsTable(t, api)
+
+	nowMs := uint64(time.Now().UnixMilli())
+	// cmh hears the feed; was hears a twentieth of it.
+	for i := range 20 {
+		insertObservationAt(t, api, "cmh", "mbp_edge_kalshi_sports_nfl", 3, 2, "KXNFLGAME", nowMs+uint64(i), 1)
+	}
+	insertObservationAt(t, api, "was", "mbp_edge_kalshi_sports_nfl", 3, 2, "KXNFLGAME", nowMs, 1)
+
+	g := findEdgeMulticastGroup(t, getEdgeMulticast(t, api), "edge-kalshi-sports-mbp")
+
+	assert.Equal(t, 1, g.PublishersPublishing, "the publisher side is clean, so the verdict is about the recorders")
+	require.Len(t, g.CaptureNodes, 2)
+	assert.Equal(t, "was-rec1", g.CaptureNodes[0].Node, "the node behind its peers sorts first")
+	assert.True(t, g.CaptureNodes[0].Lagging)
+	assert.Less(t, g.CaptureNodes[0].ShareOfMedian, 0.5)
+	assert.Equal(t, "cmh-rec1", g.CaptureNodes[1].Node)
+	assert.False(t, g.CaptureNodes[1].Lagging)
+	assert.Equal(t, 1, g.CaptureNodesLagging)
+	assert.Equal(t, "skewed", g.Health)
+}
+
+// One node has nothing to be compared against. Calling that feed skewed on the strength of a
+// single sample would be a claim the data does not carry, so parity stays silent and the
+// publisher check decides.
+func TestGetEdgeMulticast_SingleCaptureNodeIsNeverSkewed(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertEdgeMulticastCaptureGroups(t, api)
+	insertEdgeMulticastCapturePublisher(t, api, "group-k")
+	createKalshiObservationsTable(t, api)
+
+	insertObservationAt(t, api, "cmh", "mbp_edge_kalshi_sports_nfl", 3, 2, "KXNFLGAME", uint64(time.Now().UnixMilli()), 1)
+
+	g := findEdgeMulticastGroup(t, getEdgeMulticast(t, api), "edge-kalshi-sports-mbp")
+
+	require.Len(t, g.CaptureNodes, 1)
+	assert.False(t, g.CaptureNodes[0].Lagging)
+	assert.Equal(t, 0, g.CaptureNodesLagging)
+	assert.Equal(t, "healthy", g.Health)
 }
