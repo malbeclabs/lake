@@ -10,6 +10,7 @@ import {
   fetchEdgeMulticast,
   type EdgeMulticastGroup,
   type EdgeMulticastPublisher,
+  type EdgeMulticastSequenceHealth,
   type EdgeMulticastService,
 } from '@/lib/api'
 
@@ -65,7 +66,7 @@ function PlaneCell({ plane }: { plane?: string }) {
   return <span className="font-mono text-xs text-muted-foreground">{plane}</span>
 }
 
-// The five states `health` can carry. Silent is the only red: publishers were measured and none
+// The five states `health` can carry. Silent is the only red here: publishers were measured and none
 // of them sent anything. 'thin' (a publisher under the floor) and 'skewed' (a recorder far behind
 // its peers) are amber — a real fault in one member of a feed that is otherwise flowing, which is
 // a different call to action than a dead feed.
@@ -93,6 +94,16 @@ const PUBLISHER_DOT: Record<string, string> = {
 const CLASS_LABEL: Record<string, string> = {
   recorder: 'DZ recorder',
   internal_probe: 'DZ probe',
+}
+
+// Sequence-counter states. A gap is recorded data loss on the wire protocol — the one thing on
+// this page that is a fault in the FEED itself rather than in one member of it — so it gets the
+// red. 'stalled' is amber: the series stopped advancing, which is either a dead publisher path or
+// a dead recorder, and this column cannot tell those apart.
+const SEQUENCE_BADGE: Record<string, string> = {
+  ok: 'bg-emerald-500/15 text-emerald-500',
+  gapped: 'bg-red-500/15 text-red-500',
+  stalled: 'bg-amber-500/15 text-amber-500',
 }
 
 function formatBps(bps: number): string {
@@ -260,21 +271,26 @@ function PublisherLineRow({
 
   return (
     <tr className="border-b border-border/50 last:border-b-0 bg-muted/20 text-xs">
-      <td className="pl-10 pr-4 py-1.5 whitespace-nowrap">
+      {/* The DoubleZero address first, because that is the source IP address the datagrams
+          carry and the one the recorders and the allow-lists talk about. The client IP is the
+          box's own public address — the key the operator override table uses — and both are
+          worth having on the line. */}
+      <td className="pl-8 pr-3 py-1.5 whitespace-nowrap">
         <span className="inline-flex items-center gap-2">
-          <CopyableText text={line.client_ip} className="font-mono text-xs" />
+          <CopyableText text={line.dz_ip || line.client_ip} className="font-mono text-xs" />
           {/* The classification rides with the identity rather than in the Subscribers column:
               a publisher line has nothing to say about that side of the group. */}
           {label && <span className="text-muted-foreground">{label}</span>}
         </span>
       </td>
-      <td className="px-4 py-1.5 whitespace-nowrap font-mono text-muted-foreground">
-        {line.device_code || '—'}
+      <td className="px-3 py-1.5 whitespace-nowrap">
+        <CopyableText text={line.client_ip} className="font-mono text-xs text-muted-foreground" />
       </td>
-      <td className="px-4 py-1.5 whitespace-nowrap text-muted-foreground">
-        {line.tunnel_id ? `tun ${line.tunnel_id}` : '—'}
+      <td className="px-3 py-1.5 whitespace-nowrap text-muted-foreground">
+        <span className="font-mono">{line.device_code || '—'}</span>
+        {line.tunnel_id ? <span className="text-xs"> tun {line.tunnel_id}</span> : null}
       </td>
-      <td className="px-4 py-1.5 whitespace-nowrap">
+      <td className="px-3 py-1.5 whitespace-nowrap">
         <Tooltip content={statusDetail}>
           <span className="inline-flex items-center gap-1.5">
             <span
@@ -286,16 +302,15 @@ function PublisherLineRow({
           </span>
         </Tooltip>
       </td>
-      <td className="px-4 py-1.5" />
-      <td className="px-4 py-1.5 text-right whitespace-nowrap">
+      <td className="px-3 py-1.5" />
+      <td className="px-3 py-1.5 text-right whitespace-nowrap">
         {line.bps === null ? (
           <span className="text-muted-foreground">no data</span>
         ) : (
           <RateCell bps={line.bps} ambiguous={line.multi_group} stale={stale} />
         )}
       </td>
-      <td className="px-4 py-1.5" />
-      <td className="px-4 py-1.5 text-right whitespace-nowrap">
+      <td className="px-3 py-1.5 text-right whitespace-nowrap">
         {age === undefined ? (
           <span className="text-muted-foreground">—</span>
         ) : (
@@ -303,7 +318,7 @@ function PublisherLineRow({
         )}
       </td>
       {/* The remaining columns belong to the group, not to one of its publishers. */}
-      <td className="px-4 py-1.5" colSpan={columns - 8} />
+      <td className="px-3 py-1.5" colSpan={columns - 7} />
     </tr>
   )
 }
@@ -374,6 +389,62 @@ function LastHeardCell({ group, now }: { group: EdgeMulticastGroup; now: number 
   )
 }
 
+// The sequence column. It reports the recorded wire protocol's own counters — one series per
+// channel instance — and it is the only column here that can say "the feed lost data", as opposed
+// to "a member of it is quiet".
+//
+// The count is instances, not messages: "gapped 1/4" is one series of four with a discontinuity,
+// which is a different call to action from all four. Gap counts are BOOKS, never gap-marked
+// messages — see KalshiL2Lane, which documents why the message count is a duration rather than a
+// fault count.
+function SequenceCell({
+  sequence,
+  asOfAge,
+}: {
+  sequence?: EdgeMulticastSequenceHealth
+  asOfAge?: number
+}) {
+  if (!sequence || sequence.instances.length === 0) {
+    return <span className="text-muted-foreground">—</span>
+  }
+
+  const total = sequence.instances.length
+  const bad = sequence.gapped + sequence.stalled
+  const detail = [
+    `${total} channel instance${total === 1 ? '' : 's'} — (capture source, channel, recording node)`,
+    ...sequence.instances.map(
+      (i) =>
+        `${i.capture_source} ch${i.channel_id} @${i.node}: ${i.messages.toLocaleString()} msgs, ` +
+        `${i.gap_books.toLocaleString()} book(s) gapped, ${i.resets.toLocaleString()} resets, ` +
+        `${i.snapshot_cycles.toLocaleString()} snapshot cycles`,
+    ),
+    asOfAge === undefined
+      ? ''
+      : `folded from the L2 coverage refresher, computed ${formatAge(asOfAge)}`,
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  // One instance per line: this is the one tooltip on the page with a list in it, and run
+  // together as a paragraph it is unreadable.
+  return (
+    <Tooltip content={detail} className="whitespace-pre-line">
+      <span className="inline-flex items-center gap-1.5">
+        <span
+          className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
+            SEQUENCE_BADGE[sequence.status] ?? 'bg-muted text-muted-foreground'
+          }`}
+        >
+          {sequence.status}
+        </span>
+        <span className="text-xs text-muted-foreground tabular-nums">
+          {bad > 0 ? `${bad}/${total}` : total}
+        </span>
+      </span>
+    </Tooltip>
+  )
+}
+
 // Rates carry a tilde when the group's publishers also publish elsewhere from the same tunnel:
 // counters are per interface, so the figure is an upper bound for this group. Hiding that would
 // present a shared measurement as a per-group one.
@@ -402,6 +473,8 @@ function GroupRow({
   asOf,
   now,
   showLastHeard,
+  showSequence,
+  sequenceAsOfAge,
   floorBps,
   columns,
   onOpen,
@@ -410,6 +483,8 @@ function GroupRow({
   asOf: number
   now: number
   showLastHeard: boolean
+  showSequence: boolean
+  sequenceAsOfAge?: number
   floorBps: number
   columns: number
   onOpen: (e: React.MouseEvent, pk: string) => void
@@ -426,16 +501,16 @@ function GroupRow({
       className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
       onClick={(e) => onOpen(e, group.pk)}
     >
-      <td className="px-4 py-3 whitespace-nowrap">
+      <td className="px-3 py-3 whitespace-nowrap">
         <CopyableText text={group.code} className="font-mono text-sm" />
       </td>
-      <td className="px-4 py-3 whitespace-nowrap">
+      <td className="px-3 py-3 whitespace-nowrap">
         <CopyableText text={group.multicast_ip} className="font-mono text-sm text-muted-foreground" />
       </td>
-      <td className="px-4 py-3 text-sm whitespace-nowrap">
+      <td className="px-3 py-3 text-sm whitespace-nowrap">
         <PlaneCell plane={group.plane} />
       </td>
-      <td className="px-4 py-3 text-sm">
+      <td className="px-3 py-3 text-sm">
         <PublisherCell
           group={group}
           stale={stale}
@@ -444,16 +519,13 @@ function GroupRow({
           onToggle={() => setExpanded((v) => !v)}
         />
       </td>
-      <td className="px-4 py-3 text-sm">
+      <td className="px-3 py-3 text-sm">
         <SubscriberCell group={group} />
       </td>
-      <td className="px-4 py-3 text-sm text-right">
+      <td className="px-3 py-3 text-sm text-right">
         <RateCell bps={group.ingress_bps} ambiguous={group.traffic_ambiguous} stale={stale} />
       </td>
-      <td className="px-4 py-3 text-sm text-right">
-        <RateCell bps={group.egress_bps} ambiguous={group.traffic_ambiguous} stale={stale} />
-      </td>
-      <td className="px-4 py-3 text-sm text-right whitespace-nowrap">
+      <td className="px-3 py-3 text-sm text-right whitespace-nowrap">
         {age === undefined ? (
           <span className="text-muted-foreground">no data</span>
         ) : (
@@ -461,11 +533,16 @@ function GroupRow({
         )}
       </td>
       {showLastHeard && (
-        <td className="px-4 py-3 text-sm text-right whitespace-nowrap">
+        <td className="px-3 py-3 text-sm text-right whitespace-nowrap">
           <LastHeardCell group={group} now={now} />
         </td>
       )}
-      <td className="px-4 py-3 text-sm">
+      {showSequence && (
+        <td className="px-3 py-3 text-sm whitespace-nowrap">
+          <SequenceCell sequence={group.sequence} asOfAge={sequenceAsOfAge} />
+        </td>
+      )}
+      <td className="px-3 py-3 text-sm">
         {/* Straight to the reconciliation view for this group — the row itself opens the
             publisher list, which is the more common next step. */}
         <Link
@@ -491,7 +568,7 @@ function GroupRow({
       <tr className="border-b border-border/50 bg-muted/20 text-xs">
         {/* Worst-first ordering is what makes this safe to truncate: everything failing the
             floor is above the cut. */}
-        <td className="pl-10 pr-4 py-1.5 text-muted-foreground" colSpan={columns}>
+        <td className="pl-8 pr-3 py-1.5 text-muted-foreground" colSpan={columns}>
           +{hidden} more publisher{hidden === 1 ? '' : 's'}, all above the floor
         </td>
       </tr>
@@ -505,6 +582,8 @@ function ServiceSection({
   asOf,
   now,
   showLastHeard,
+  showSequence,
+  sequenceAsOfAge,
   floorBps,
   onOpen,
 }: {
@@ -512,12 +591,14 @@ function ServiceSection({
   asOf: number
   now: number
   showLastHeard: boolean
+  showSequence: boolean
+  sequenceAsOfAge?: number
   floorBps: number
   onOpen: (e: React.MouseEvent, pk: string) => void
 }) {
-  // The publisher lines fill the first eight columns and blank the rest, so the count has to
+  // The publisher lines fill the first seven columns and blank the rest, so the count has to
   // match the header exactly — a mismatch silently shifts every group column one to the left.
-  const columns = showLastHeard ? 10 : 9
+  const columns = 8 + (showLastHeard ? 1 : 0) + (showSequence ? 1 : 0)
   const silent = service.groups.filter((g) => g.silent).length
 
   return (
@@ -539,16 +620,16 @@ function ServiceSection({
         <table className="w-full">
           <thead>
             <tr className="text-sm text-left text-muted-foreground border-b border-border">
-              <th className="px-4 py-2 font-medium">Group</th>
-              <th className="px-4 py-2 font-medium">Multicast IP</th>
-              <th className="px-4 py-2 font-medium">Plane</th>
-              <th className="px-4 py-2 font-medium">Publishers</th>
-              <th className="px-4 py-2 font-medium">Subscribers</th>
-              <th className="px-4 py-2 font-medium text-right">Ingress</th>
-              <th className="px-4 py-2 font-medium text-right">Egress</th>
-              <th className="px-4 py-2 font-medium text-right">Measured</th>
-              {showLastHeard && <th className="px-4 py-2 font-medium text-right">Heard</th>}
-              <th className="px-4 py-2 font-medium">Health</th>
+              <th className="px-3 py-2 font-medium">Group</th>
+              <th className="px-3 py-2 font-medium">Multicast IP</th>
+              <th className="px-3 py-2 font-medium">Plane</th>
+              <th className="px-3 py-2 font-medium">Publishers</th>
+              <th className="px-3 py-2 font-medium">Subscribers</th>
+              <th className="px-3 py-2 font-medium text-right">Ingress</th>
+              <th className="px-3 py-2 font-medium text-right">Measured</th>
+              {showLastHeard && <th className="px-3 py-2 font-medium text-right">Heard</th>}
+              {showSequence && <th className="px-3 py-2 font-medium">Sequence</th>}
+              <th className="px-3 py-2 font-medium">Health</th>
             </tr>
           </thead>
           <tbody>
@@ -559,6 +640,8 @@ function ServiceSection({
                 asOf={asOf}
                 now={now}
                 showLastHeard={showLastHeard}
+                showSequence={showSequence}
+                sequenceAsOfAge={sequenceAsOfAge}
                 floorBps={floorBps}
                 columns={columns}
                 onOpen={onOpen}
@@ -595,6 +678,18 @@ export function EdgeMulticastPage() {
     () => (data?.generated_at ? new Date(data.generated_at).getTime() : now),
     [data?.generated_at, now],
   )
+
+  // The sequence column exists only where a recorder runs the Edge wire protocol, which today is
+  // the market-by-price groups alone. Dropped entirely rather than rendered as a screenful of
+  // dashes, the same rule the Heard column follows.
+  const showSequence = useMemo(
+    () => (data?.services ?? []).some((s) => s.groups.some((g) => (g.sequence?.instances.length ?? 0) > 0)),
+    [data],
+  )
+
+  // Read against wall clock, ticking: this measures how stale the refresher's cached numbers are,
+  // which keeps ageing whether or not this page refetches.
+  const sequenceAsOfAge = ageSecs(data?.sequence_as_of, now)
 
   const { groupCount, silentCount } = useMemo(() => {
     const services = data?.services ?? []
@@ -662,9 +757,14 @@ export function EdgeMulticastPage() {
         <p className="text-xs text-muted-foreground mb-6 max-w-3xl">
           Rates are {data?.rate_grain_minutes ?? 5}-minute counter rollups measured at each member's tunnel and
           land a few minutes behind wall clock — the “Measured” column is the age of the newest bucket behind
-          the row. A group is <span className="text-red-500 font-medium">silent</span> when its publishers are
-          registered and their counters read zero; a group with no counter data is left blank rather than
-          called down.
+          the row. Health is taken per member, not per group: a feed is healthy when every publisher clears{' '}
+          {formatBps(data?.publisher_floor_bps ?? 0)} and every recording node hears a share of the feed
+          comparable with its peers. It reads{' '}
+          <span className="text-amber-500 font-medium">thin</span> when a publisher is below that floor,{' '}
+          <span className="text-amber-500 font-medium">skewed</span> when a recorder is far behind the others,
+          and <span className="text-red-500 font-medium">silent</span> when publishers are registered and not
+          one of them moved a byte. A group with no counter data is left blank rather than called down. Click a
+          Publishers cell to list that group's publishers one line each.
           {data?.last_heard_available && (
             <>
               {' '}
@@ -672,6 +772,15 @@ export function EdgeMulticastPage() {
               message on the group, seconds rather than minutes old. It covers only the groups with a
               capture behind them, it is receive-side — a silent recorder looks the same as a silent
               publisher — and it never sets the silent flag for that reason.
+            </>
+          )}
+          {showSequence && (
+            <>
+              {' '}
+              “Sequence” is the recorded wire protocol's own counters, one series per channel instance —
+              (source IP, channel, recording node) — and the only column here that can say the feed lost
+              data rather than that a member went quiet. Gap counts are books, never gap-marked messages.
+              It is folded from the L2 coverage refresher, so it is minutes older than the rest of the row.
             </>
           )}
         </p>
@@ -684,6 +793,8 @@ export function EdgeMulticastPage() {
               asOf={asOf}
               now={now}
               showLastHeard={data?.last_heard_available ?? false}
+              showSequence={showSequence}
+              sequenceAsOfAge={sequenceAsOfAge}
               floorBps={data?.publisher_floor_bps ?? 0}
               onOpen={onOpen}
             />

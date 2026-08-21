@@ -190,10 +190,22 @@ type EdgeMulticastGroup struct {
 	// one group receive the same feed, so a node far under the median is not hearing it.
 	CaptureNodesLagging int `json:"capture_nodes_lagging,omitempty"`
 
+	// Sequence is the recorded sequence series' health, per channel instance — nil for a group
+	// with no recorder running the Edge wire protocol behind it, which is every group except
+	// the market-by-price ones today. See edge_multicast_sequence.go for the grain and for why
+	// it is folded from the L2 refresher's cache instead of queried.
+	Sequence *EdgeMulticastSequenceHealth `json:"sequence,omitempty"`
+
 	// IngressBps is the sum of the publishers' measured receive rate at their tunnels — what
 	// the network is taking in for this group. EgressBps is the sum over subscribers of what
-	// their tunnels send out, so it scales with fan-out and is many times ingress on a healthy
-	// group. Both are upper bounds when TrafficAmbiguous is set.
+	// their tunnels send out. Both are upper bounds when TrafficAmbiguous is set.
+	//
+	// The fleet page renders ingress only. EgressBps scales with fan-out and, because the
+	// counters are per tunnel, a subscriber on several groups adds the same figure to each of
+	// them: on mainnet the perps groups read ~878 Mbps of egress against 3.6 Mbps of ingress,
+	// which is the sports traffic on the same tunnels rather than anything about this group. It
+	// stays in the payload as a raw measurement for API callers and is deliberately not on
+	// screen, where a 240x number invites exactly the wrong reading.
 	IngressBps float64 `json:"ingress_bps"`
 	EgressBps  float64 `json:"egress_bps"`
 
@@ -285,6 +297,12 @@ type EdgeMulticastResponse struct {
 	// normal state in local dev, where the proxied feeds and shredder tables do not exist. The
 	// UI drops the column rather than rendering a screenful of blanks.
 	LastHeardAvailable bool `json:"last_heard_available"`
+
+	// SequenceAsOf is when the sequence-counter numbers were computed, which is NOT GeneratedAt:
+	// they are folded from the L2 coverage refresher's cache and are up to one refresher
+	// interval (ten minutes) older than the rest of the payload. Nil when no group has any.
+	// Carried so the column can age itself instead of borrowing this payload's freshness.
+	SequenceAsOf *time.Time `json:"sequence_as_of,omitempty"`
 
 	Services []EdgeMulticastService `json:"services"`
 }
@@ -394,10 +412,18 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 	// the lake database. The rest of the payload is complete and correct without it, so a
 	// failure costs one column instead of the page — and the worker must still be able to
 	// cache the good part. WARN, never ERROR: nothing here is worth paging on.
-	lastHeard, lastHeardAvailable, err := a.queryEdgeMulticastLastHeard(ctx, groups)
+	captureSources := newEdgeMulticastCaptureSourceMap(groups)
+	lastHeard, lastHeardAvailable, err := a.queryEdgeMulticastLastHeard(ctx, captureSources)
 	if err != nil {
 		slog.Warn("edge multicast app-plane last-heard unavailable", "error", err)
 		lastHeard, lastHeardAvailable = nil, false
+	}
+
+	// Same contract, and this one reads no ClickHouse at all: a miss costs the column.
+	sequence, sequenceAsOf, err := a.edgeMulticastSequenceHealth(ctx, captureSources)
+	if err != nil {
+		slog.Warn("edge multicast sequence health unavailable", "error", err)
+		sequence = nil
 	}
 
 	now := time.Now().UTC()
@@ -408,10 +434,14 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 		LastHeardAvailable: lastHeardAvailable,
 		Services:           []EdgeMulticastService{},
 	}
+	if !sequenceAsOf.IsZero() {
+		at := sequenceAsOf
+		resp.SequenceAsOf = &at
+	}
 
 	byService := map[string][]EdgeMulticastGroup{}
 	for _, g := range groups {
-		row := buildEdgeMulticastGroup(g, membership[g.PK], rates[g.PK], lastHeard[g.PK], publisherLines[g.PK])
+		row := buildEdgeMulticastGroup(g, membership[g.PK], rates[g.PK], lastHeard[g.PK], publisherLines[g.PK], sequence[g.PK])
 		codes := feeds.byGroup[g.PK]
 		if len(codes) == 0 {
 			codes = []string{edgeMulticastUnclaimedService}
@@ -450,7 +480,7 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 // the remainder rather than read: a member the view dropped (no health row at all) is exactly
 // as unknown as one it marked 'no_data', and folding both into the remainder keeps the parts
 // summing to Total whatever the view does.
-func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership, r edgeMulticastRates, lh edgeMulticastLastHeard, lines []EdgeMulticastPublisher) EdgeMulticastGroup {
+func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership, r edgeMulticastRates, lh edgeMulticastLastHeard, lines []EdgeMulticastPublisher, sequence *EdgeMulticastSequenceHealth) EdgeMulticastGroup {
 	out := EdgeMulticastGroup{
 		PK:                   g.PK,
 		Code:                 g.Code,
@@ -490,6 +520,7 @@ func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership
 
 	out.CaptureNodes = edgeMulticastCaptureNodes(lh.nodeObs())
 	out.CaptureNodesLagging = edgeMulticastLaggingNodes(out.CaptureNodes)
+	out.Sequence = sequence
 
 	// Silent stays sourced from the counters and is NOT crossed with LastHeard. The app-plane
 	// signal is receive-side: a recorder outage and a publisher outage produce the same absence,

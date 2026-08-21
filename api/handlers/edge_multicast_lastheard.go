@@ -180,8 +180,7 @@ func (m edgeMulticastCaptureSourceMap) resolve(captureSource string) string {
 // an absent table has to leave the rest of the page intact — so a leg that cannot run yields
 // nothing and the caller carries on. The returned bool reports whether ANY leg was queryable, so
 // the UI can drop the column entirely rather than render a screen of blanks.
-func (a *API) queryEdgeMulticastLastHeard(ctx context.Context, groups []MulticastDeliveryGroup) (map[string]edgeMulticastLastHeard, bool, error) {
-	captureSources := newEdgeMulticastCaptureSourceMap(groups)
+func (a *API) queryEdgeMulticastLastHeard(ctx context.Context, captureSources edgeMulticastCaptureSourceMap) (map[string]edgeMulticastLastHeard, bool, error) {
 	out := map[string]edgeMulticastLastHeard{}
 	available := false
 

@@ -1,6 +1,7 @@
 package handlers_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -26,7 +27,33 @@ func newEdgeMulticastTestAPI(t *testing.T) *handlers.API {
 	api := apitesting.NewTestAPIAll(t, testChDB, testPgDB, nil, nil)
 	_, err := api.PgPool.Exec(t.Context(), "TRUNCATE multicast_member_class")
 	require.NoError(t, err)
+	// The sequence column is folded from the L2 coverage refresher's cache entry, which lives in
+	// the same shared Postgres. Cleared here and after every write below so one test's coverage
+	// payload cannot put a Sequence on another test's groups. The key is spelled out rather than
+	// exported: same call the publisher-check tests make for theirs.
+	_, err = api.PgPool.Exec(t.Context(), `DELETE FROM page_cache WHERE key = $1`, kalshiL2CoverageKey)
+	require.NoError(t, err)
 	return api
+}
+
+// kalshiL2CoverageKey mirrors the unexported page-cache key in kalshi_l2_coverage.go. If that
+// constant's version is bumped without this one, the sequence tests stop exercising the fold and
+// start asserting the absent case, which still passes — so bump both.
+const kalshiL2CoverageKey = "kalshi_l2_coverage:v2"
+
+// seedL2Coverage writes a coverage payload for the sequence column to fold, and removes it again
+// afterwards.
+func seedL2Coverage(t *testing.T, api *handlers.API, generatedAt time.Time, lanes ...handlers.KalshiL2Lane) {
+	t.Helper()
+	require.NoError(t, api.WritePageCache(t.Context(), kalshiL2CoverageKey, handlers.KalshiL2CoverageResponse{
+		GeneratedAt:   generatedAt,
+		WindowMinutes: 15,
+		Lanes:         lanes,
+	}))
+	t.Cleanup(func() {
+		_, err := api.PgPool.Exec(context.Background(), `DELETE FROM page_cache WHERE key = $1`, kalshiL2CoverageKey)
+		require.NoError(t, err)
+	})
 }
 
 // assertEdgeMulticastRoleInvariant checks the two decompositions of a role's Total that the API
@@ -713,4 +740,84 @@ func TestGetEdgeMulticast_SingleCaptureNodeIsNeverSkewed(t *testing.T) {
 	assert.False(t, g.CaptureNodes[0].Lagging)
 	assert.Equal(t, 0, g.CaptureNodesLagging)
 	assert.Equal(t, "healthy", g.Health)
+}
+
+// The sequence column: one recorded series per channel instance, folded from the L2 coverage
+// refresher's cache so this page never runs that scan itself and the two can never disagree.
+func TestGetEdgeMulticast_SequenceHealthFromL2Cache(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertEdgeMulticastCaptureGroups(t, api)
+
+	asOf := time.Now().UTC()
+	seedL2Coverage(t, api, asOf,
+		handlers.KalshiL2Lane{
+			Source: "mbp_edge_kalshi_sports_nfl", ChannelID: 1, MeasurementNodeID: "cmh-rec1",
+			LocationCode: "cmh", Messages: 1000, Seen: true, LastSeen: asOf.Add(-2 * time.Second),
+		},
+		handlers.KalshiL2Lane{
+			Source: "mbp_edge_kalshi_sports_nba", ChannelID: 2, MeasurementNodeID: "cmh-rec1",
+			LocationCode: "cmh", Messages: 500, GapBooks: 3, GapMessages: 158912, Resets: 2,
+			SnapshotCycles: 1, Seen: true, LastSeen: asOf.Add(-1 * time.Second),
+		},
+		// A configured capture source that produced nothing in the window. It says nothing
+		// about a sequence series and must not become an 'ok' instance.
+		handlers.KalshiL2Lane{Source: "mbp_edge_kalshi_sports_wnba", ChannelID: 3, Seen: false},
+		// A source no group on this page claims is dropped, not bucketed.
+		handlers.KalshiL2Lane{Source: "kalshi_public_api", Messages: 9, Seen: true, LastSeen: asOf},
+	)
+
+	resp := getEdgeMulticast(t, api)
+	require.NotNil(t, resp.SequenceAsOf, "the column ages against the refresher's clock, not this payload's")
+	assert.WithinDuration(t, asOf, *resp.SequenceAsOf, time.Second)
+
+	k := findEdgeMulticastGroup(t, resp, "edge-kalshi-sports-mbp")
+	require.NotNil(t, k.Sequence)
+	assert.Equal(t, "gapped", k.Sequence.Status, "worst of the instances")
+	assert.Equal(t, 1, k.Sequence.Gapped)
+	assert.Equal(t, 0, k.Sequence.Stalled)
+	require.Len(t, k.Sequence.Instances, 2, "the unseen source and the unclaimed one are both out")
+	assert.Equal(t, uint64(3), k.Sequence.Instances[0].GapBooks, "worst first")
+	assert.Equal(t, uint8(2), k.Sequence.Instances[0].ChannelID)
+	assert.Equal(t, "cmh-rec1", k.Sequence.Instances[0].Node)
+	assert.Equal(t, "ok", k.Sequence.Instances[1].Status)
+
+	// A group with no recorder running the wire protocol carries no column at all.
+	s := findEdgeMulticastGroup(t, resp, "edge-solana-shreds")
+	assert.Nil(t, s.Sequence)
+}
+
+// A series with no gaps that stopped advancing is not 'ok'. Staleness is measured against the
+// coverage payload's own clock: read against wall clock it would inherit the refresher's lag and
+// mark healthy series stalled for most of every cycle.
+func TestGetEdgeMulticast_SequenceStalledSeries(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertEdgeMulticastCaptureGroups(t, api)
+
+	asOf := time.Now().UTC()
+	seedL2Coverage(t, api, asOf,
+		handlers.KalshiL2Lane{
+			Source: "mbp_edge_kalshi_sports_nfl", ChannelID: 1, MeasurementNodeID: "cmh-rec1",
+			Messages: 1000, Seen: true, LastSeen: asOf.Add(-10 * time.Minute),
+		},
+	)
+
+	k := findEdgeMulticastGroup(t, getEdgeMulticast(t, api), "edge-kalshi-sports-mbp")
+	require.NotNil(t, k.Sequence)
+	assert.Equal(t, "stalled", k.Sequence.Status)
+	assert.Equal(t, 1, k.Sequence.Stalled)
+	assert.Zero(t, k.Sequence.Gapped)
+}
+
+// No cache entry is the normal state in local dev and before the refresher's first run. It costs
+// the column and nothing else — the page must not fail, and must not claim 'ok'.
+func TestGetEdgeMulticast_SequenceAbsentWithoutL2Cache(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertEdgeMulticastCaptureGroups(t, api)
+
+	resp := getEdgeMulticast(t, api)
+	assert.Nil(t, resp.SequenceAsOf)
+	assert.Nil(t, findEdgeMulticastGroup(t, resp, "edge-kalshi-sports-mbp").Sequence)
 }

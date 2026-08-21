@@ -257,6 +257,22 @@ called the same group healthy. If that reads as noise rather than signal, the fi
 threshold on the verdict (not a change to the counts, which stay strict), and it needs a product
 decision rather than a quiet default.
 
+The **Sequence** column is separate from that verdict and reports the recorded wire protocol's own
+counters, one series per channel instance. Sequencing keys on `(source IP address, Channel ID,
+destination port)`; `kalshi_mbp_levels` carries none of the source IP or port, so the key used is
+`(capture source, Channel ID, recording node)` — which resolves the same set today because prod's
+two publisher paths for a group differ only by Channel ID. Two paths sharing a Channel ID with
+different source IPs would fold into one row and under-report; that limit is written down in
+`api/handlers/edge_multicast_sequence.go` rather than papered over.
+
+That column **folds the L2 coverage refresher's cached payload and runs no query of its own**.
+`kalshi_mbp_levels` is level-grain and TTL-less, and a fifteen-minute question reads most of a day
+through a `remoteSecure()` proxy (~135M rows), which is why `kalshi_l2_coverage.go` owns that scan on
+a ten-minute refresher. Re-running it on a page that polls every 30s would be the same scan again and
+would let the two pages disagree about one feed. The cost is staleness, so `sequence_as_of` is in the
+payload and the column ages against it. A cache miss costs the column, never the page. Gap counts are
+**books**, never gap-marked messages — the message count is a duration that scales with traffic.
+
 Parity is measured on the **application plane** (`kalshi_bbo_observations`,
 `slot_feed_race_summary_v2`) and cannot move to the counters. Interface counters are per tunnel: a
 recorder subscribed to several groups reports the sum against each, so on mainnet the Tokyo recorder

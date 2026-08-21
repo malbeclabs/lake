@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -172,4 +173,59 @@ func TestEdgeMulticastMedian(t *testing.T) {
 	in := []float64{3, 1, 2}
 	edgeMulticastMedian(in)
 	assert.Equal(t, []float64{3, 1, 2}, in)
+}
+
+// Sequence-counter grading. The gap check is unconditional; staleness is measured against the
+// coverage payload's own clock, which is what keeps a ten-minute-old cache from marking every
+// series stalled.
+func TestEdgeMulticastSequenceStatus(t *testing.T) {
+	t.Parallel()
+
+	asOf := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	assert.Equal(t, edgeMulticastSeqGapped, edgeMulticastSequenceStatus(1, asOf, asOf))
+	assert.Equal(t, edgeMulticastSeqGapped, edgeMulticastSequenceStatus(1, asOf.Add(-time.Hour), asOf),
+		"a gap outranks staleness: it is the fault, the other is the symptom")
+	assert.Equal(t, edgeMulticastSeqOK, edgeMulticastSequenceStatus(0, asOf.Add(-30*time.Second), asOf))
+	assert.Equal(t, edgeMulticastSeqOK, edgeMulticastSequenceStatus(0, asOf.Add(-edgeMulticastSequenceStaleSecs*time.Second), asOf),
+		"exactly at the bound is still advancing")
+	assert.Equal(t, edgeMulticastSeqStalled, edgeMulticastSequenceStatus(0, asOf.Add(-5*time.Minute), asOf))
+	assert.Equal(t, edgeMulticastSeqStalled, edgeMulticastSequenceStatus(0, time.Time{}, asOf),
+		"no timestamp at all is not evidence of a healthy series")
+}
+
+// The roll-up is worst-first and the counts are per instance, so the badge can say "1 of 4"
+// instead of implying a whole group is broken.
+func TestFinishEdgeMulticastSequenceHealth(t *testing.T) {
+	t.Parallel()
+
+	health := &EdgeMulticastSequenceHealth{Instances: []EdgeMulticastChannelInstance{
+		{CaptureSource: "mbp_a", ChannelID: 1, Node: "cmh-rec1", Status: edgeMulticastSeqOK},
+		{CaptureSource: "mbp_a", ChannelID: 2, Node: "cmh-rec1", Status: edgeMulticastSeqStalled},
+		{CaptureSource: "mbp_a", ChannelID: 3, Node: "cmh-rec1", GapBooks: 2, Status: edgeMulticastSeqGapped},
+		{CaptureSource: "mbp_a", ChannelID: 4, Node: "was-rec1", GapBooks: 9, Status: edgeMulticastSeqGapped},
+	}}
+	finishEdgeMulticastSequenceHealth(health)
+
+	assert.Equal(t, edgeMulticastSeqGapped, health.Status)
+	assert.Equal(t, 2, health.Gapped)
+	assert.Equal(t, 1, health.Stalled)
+	got := make([]uint8, 0, len(health.Instances))
+	for _, i := range health.Instances {
+		got = append(got, i.ChannelID)
+	}
+	assert.Equal(t, []uint8{4, 3, 2, 1}, got, "most gapped books first, then stalled, then ok")
+
+	stalledOnly := &EdgeMulticastSequenceHealth{Instances: []EdgeMulticastChannelInstance{
+		{Status: edgeMulticastSeqOK},
+		{Status: edgeMulticastSeqStalled},
+	}}
+	finishEdgeMulticastSequenceHealth(stalledOnly)
+	assert.Equal(t, edgeMulticastSeqStalled, stalledOnly.Status)
+
+	allOK := &EdgeMulticastSequenceHealth{Instances: []EdgeMulticastChannelInstance{
+		{Status: edgeMulticastSeqOK},
+		{Status: edgeMulticastSeqOK},
+	}}
+	finishEdgeMulticastSequenceHealth(allOK)
+	assert.Equal(t, edgeMulticastSeqOK, allOK.Status)
 }

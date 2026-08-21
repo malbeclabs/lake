@@ -7785,6 +7785,31 @@ export interface EdgeMulticastCaptureNode {
   lagging: boolean
 }
 
+/** One recorded sequence series: one Channel ID of one capture source at one recording node. */
+export interface EdgeMulticastChannelInstance {
+  capture_source: string
+  channel_id: number
+  node: string
+  location_code?: string
+  messages: number
+  /** Distinct books that gapped in the window — the fault count. Never gap_messages, which
+   *  scales with traffic rather than with reliability. */
+  gap_books: number
+  resets: number
+  snapshot_cycles: number
+  last_seen: string
+  /** 'ok' | 'gapped' | 'stalled'. */
+  status: string
+}
+
+/** Sequence-counter health for a group, rolled up worst-first over its channel instances. */
+export interface EdgeMulticastSequenceHealth {
+  status: string
+  gapped: number
+  stalled: number
+  instances: EdgeMulticastChannelInstance[]
+}
+
 export interface EdgeMulticastGroup {
   pk: string
   code: string
@@ -7805,7 +7830,10 @@ export interface EdgeMulticastGroup {
   /** Per-node application-plane view; absent for a group no capture covers. */
   capture_nodes?: EdgeMulticastCaptureNode[]
   capture_nodes_lagging?: number
+  /** Recorded sequence series; absent unless a recorder runs the Edge wire protocol here. */
+  sequence?: EdgeMulticastSequenceHealth
   ingress_bps: number
+  /** Subscriber-side total. Not rendered: per-tunnel counters sum every group a subscriber joins. */
   egress_bps: number
   publishers_multi_group: number
   /** Rates are per-tunnel upper bounds when set — a publisher feeds several groups. */
@@ -7840,6 +7868,9 @@ export interface EdgeMulticastResponse {
   rate_grain_minutes: number
   /** The per-publisher floor the verdict applies, so the UI never hardcodes a second copy. */
   publisher_floor_bps: number
+  /** When the sequence numbers were computed — up to ten minutes older than generated_at, since
+   *  they are folded from the L2 coverage refresher's cache. Absent when no group has any. */
+  sequence_as_of?: string
   /** False when no capture table was queryable — the column is hidden rather than blank. */
   last_heard_available: boolean
   services: EdgeMulticastService[]
