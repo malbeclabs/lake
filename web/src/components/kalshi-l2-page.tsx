@@ -44,7 +44,13 @@ function channelLabel(channelID: number): string {
 function LaneRow({ lane, asOf }: { lane: KalshiL2Lane; asOf: number }) {
   const lastSeen = new Date(lane.last_seen).getTime()
   const quiet = lane.seen && asOf - lastSeen > QUIET_AFTER_MS
-  const faults = lane.gaps + lane.resets
+  // Books, not messages: gap_messages is a recovery DURATION scaled by the message rate, so
+  // it cannot be compared between lanes and must never be shown as a fault count. The
+  // measurement behind that is on KalshiL2Lane (api/handlers/kalshi_l2_coverage.go).
+  const faults = lane.gap_books + lane.resets
+  // The duration half, kept but labelled as what it is: the share of messages that arrived
+  // while their book was un-anchored.
+  const unanchoredPct = lane.messages > 0 ? (100 * lane.gap_messages) / lane.messages : 0
   return (
     <tr className="border-b border-border transition-colors last:border-b-0 hover:bg-muted/50">
       <td className="px-3 py-3 sm:px-4">
@@ -90,8 +96,14 @@ function LaneRow({ lane, asOf }: { lane: KalshiL2Lane; asOf: number }) {
       <td className="whitespace-nowrap px-3 py-3 text-right text-sm tabular-nums sm:px-4">
         <span className={faults > 0 ? 'text-amber-500' : ''}>{faults.toLocaleString()}</span>
         <div className="text-[11px] text-muted-foreground/70">
-          {lane.gaps.toLocaleString()} gap · {lane.resets.toLocaleString()} reset · {lane.clears.toLocaleString()} clear
+          {lane.gap_books.toLocaleString()} gapped · {lane.resets.toLocaleString()} reset ·{' '}
+          {lane.clears.toLocaleString()} clear
         </div>
+        {lane.gap_messages > 0 && (
+          <div className="text-[11px] text-muted-foreground/70">
+            {unanchoredPct.toFixed(1)}% un-anchored
+          </div>
+        )}
       </td>
     </tr>
   )

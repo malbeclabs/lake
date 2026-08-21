@@ -7706,13 +7706,15 @@ export interface KalshiL2Lane {
   channel_id: number
   location_code: string
   measurement_node_id: string
+  messages: number
   messages_per_sec: number
   level_updates_per_sec: number
   instruments: number
   depth_p50: number
   depth_p95: number
   depth_max: number
-  gaps: number
+  gap_messages: number
+  gap_books: number
   resets: number
   clears: number
   snapshot_cycles: number

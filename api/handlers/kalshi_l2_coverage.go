@@ -21,7 +21,18 @@ import (
 // Ansible group_vars). Nothing pages on it. A frozen last-seen is what makes it visible.
 
 // kalshiL2CoverageCacheKey is the page-cache key written by StartKalshiBackgroundRefresher.
-const kalshiL2CoverageCacheKey = "kalshi_l2_coverage"
+//
+// The key carries a version, and it MUST be bumped in the same commit as any change to the
+// shape of the payload. The entry lives in Postgres and so outlives the deploy: without a bump
+// the new bundle reads a row written by the old binary, and the table dereferences the fields
+// it expects unguarded (lane.gap_books.toLocaleString()), which takes the whole SPA to the
+// app-wide error boundary rather than this one page. Nothing ages the row out either — only
+// the 10-minute background refresher rewrites it, last of its four refreshes, and it skips the
+// write entirely while the L2 query is failing, so a stale-shaped row survives for exactly as
+// long as the view it monitors is unhealthy. A miss falls through to the live query below.
+//
+// v2: `gaps` split into `gap_messages`/`gap_books`, `messages` added.
+const kalshiL2CoverageCacheKey = "kalshi_l2_coverage:v2"
 
 // kalshiL2WindowMinutes is the interval the rates are averaged over. Rates are derived from
 // it, so changing it changes nothing about correctness.
@@ -112,6 +123,13 @@ type KalshiL2Lane struct {
 	// metro, and the rates would merge with no way to see it had happened.
 	MeasurementNodeID string `json:"measurement_node_id"`
 
+	// Messages is the raw count over the coverage window, from which MessagesPerSec is
+	// derived. It is emitted because it is the denominator GapMessages is only meaningful
+	// against: a gap-marked count means nothing without the total it is a share of, and
+	// reconstructing that total from the rate makes the caller agree with this handler
+	// about the window length.
+	Messages uint64 `json:"messages"`
+
 	// Rates over the coverage window.
 	MessagesPerSec     float64 `json:"messages_per_sec"`
 	LevelUpdatesPerSec float64 `json:"level_updates_per_sec"`
@@ -126,7 +144,28 @@ type KalshiL2Lane struct {
 	DepthMax uint32  `json:"depth_max"`
 
 	// Fault and lifecycle counters.
-	Gaps           uint64 `json:"gaps"`
+	//
+	// **GapMessages is a DURATION, not a fault count, and must never be displayed as one.**
+	// It counts every message that arrived while its book was un-anchored, so one gap
+	// event inflates it by the message rate times the seconds until the next snapshot
+	// re-anchors the book. Measured on perps: 22 real discontinuities in five minutes
+	// produced 158,912 gap-marked messages — a factor of ~2,400. Worse than the size, it
+	// scales with TRAFFIC rather than with reliability, so a busy lane looks thousands of
+	// times worse than a quiet one at identical loss, which is exactly the comparison a
+	// coverage page exists to support.
+	//
+	// GapBooks is the count to show: how many distinct books gapped at all in the window.
+	// It is one number per affected instrument no matter how long the recovery took, and
+	// it does not move with the message rate.
+	//
+	// Neither is the transition count, which is what a true event count would be. That
+	// needs a per-instrument window function over every row in the window (~135M at
+	// current rates), and this query is already the heavy one the background refresher
+	// exists to keep off the request path. GapBooks is the cheap upper-bound-per-book
+	// approximation: it undercounts a book that gapped repeatedly, and that is the
+	// deliberate trade.
+	GapMessages    uint64 `json:"gap_messages"`
+	GapBooks       uint64 `json:"gap_books"`
 	Resets         uint64 `json:"resets"`
 	Clears         uint64 `json:"clears"`
 	SnapshotCycles uint64 `json:"snapshot_cycles"`
@@ -209,7 +248,10 @@ func (a *API) FetchKalshiL2Coverage(ctx context.Context) (*KalshiL2CoverageRespo
 			ifNotFinite(toFloat64(quantileTDigestIf(0.5)(book_levels_after, msg_type = 'level_update')), 0) AS depth_p50,
 			ifNotFinite(toFloat64(quantileTDigestIf(0.95)(book_levels_after, msg_type = 'level_update')), 0) AS depth_p95,
 			maxIf(book_levels_after, msg_type = 'level_update') AS depth_max,
-			countIf(status_after = 'gap') AS gaps,
+			countIf(status_after = 'gap') AS gap_messages,
+			-- Distinct books affected, which is what the page shows. instrument_id is unique
+			-- only within a channel and this groups by channel, so the count is well defined.
+			uniqCombinedIf(instrument_id, status_after = 'gap') AS gap_books,
 			countIf(msg_type = 'instrument_reset') AS resets,
 			countIf(msg_type = 'book_clear') AS clears,
 			countIf(msg_type = 'snapshot_end') AS snapshot_cycles,
@@ -233,18 +275,18 @@ func (a *API) FetchKalshiL2Coverage(ctx context.Context) (*KalshiL2CoverageRespo
 	var out []ordered
 	for rows.Next() {
 		var l KalshiL2Lane
-		var messages, levelUpdates uint64
+		var levelUpdates uint64
 		var lastRecvNs uint64
 		if err := rows.Scan(
 			&l.Source, &l.ChannelID, &l.MeasurementNodeID, &l.LocationCode,
-			&messages, &levelUpdates, &l.Instruments,
+			&l.Messages, &levelUpdates, &l.Instruments,
 			&l.DepthP50, &l.DepthP95, &l.DepthMax,
-			&l.Gaps, &l.Resets, &l.Clears, &l.SnapshotCycles,
+			&l.GapMessages, &l.GapBooks, &l.Resets, &l.Clears, &l.SnapshotCycles,
 			&lastRecvNs,
 		); err != nil {
 			return nil, err
 		}
-		l.MessagesPerSec = float64(messages) / windowSecs
+		l.MessagesPerSec = float64(l.Messages) / windowSecs
 		l.LevelUpdatesPerSec = float64(levelUpdates) / windowSecs
 		l.LastSeen = time.Unix(0, int64(lastRecvNs)).UTC()
 		l.Seen = true
