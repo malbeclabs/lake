@@ -41,10 +41,28 @@ function channelLabel(channelID: number): string {
   return `ch ${channelID}`
 }
 
-function LaneRow({ lane, asOf }: { lane: KalshiL2Lane; asOf: number }) {
+function LaneRow({
+  lane,
+  asOf,
+  windowSecs,
+}: {
+  lane: KalshiL2Lane
+  asOf: number
+  windowSecs: number
+}) {
   const lastSeen = new Date(lane.last_seen).getTime()
   const quiet = lane.seen && asOf - lastSeen > QUIET_AFTER_MS
-  const faults = lane.gaps + lane.resets
+  // **Books, not messages.** lane.gap_messages counts every message that arrived while a
+  // book was un-anchored, so it is the recovery DURATION times the message rate — 22 real
+  // discontinuities on perps read as 158,912. It also scales with traffic rather than with
+  // reliability, which makes it useless for the one thing this table is for: comparing
+  // lanes. gap_books is one count per affected book regardless of how long recovery took.
+  const faults = lane.gap_books + lane.resets
+  // The duration half, kept but labelled as what it is: the share of messages that arrived
+  // while their book was un-anchored.
+  const unanchoredPct = lane.messages_per_sec > 0
+    ? (100 * lane.gap_messages) / (lane.messages_per_sec * windowSecs)
+    : 0
   return (
     <tr className="border-b border-border transition-colors last:border-b-0 hover:bg-muted/50">
       <td className="px-3 py-3 sm:px-4">
@@ -90,8 +108,14 @@ function LaneRow({ lane, asOf }: { lane: KalshiL2Lane; asOf: number }) {
       <td className="whitespace-nowrap px-3 py-3 text-right text-sm tabular-nums sm:px-4">
         <span className={faults > 0 ? 'text-amber-500' : ''}>{faults.toLocaleString()}</span>
         <div className="text-[11px] text-muted-foreground/70">
-          {lane.gaps.toLocaleString()} gap · {lane.resets.toLocaleString()} reset · {lane.clears.toLocaleString()} clear
+          {lane.gap_books.toLocaleString()} book · {lane.resets.toLocaleString()} reset ·{' '}
+          {lane.clears.toLocaleString()} clear
         </div>
+        {lane.gap_messages > 0 && (
+          <div className="text-[11px] text-muted-foreground/70">
+            {unanchoredPct.toFixed(1)}% un-anchored
+          </div>
+        )}
       </td>
     </tr>
   )
@@ -286,6 +310,7 @@ export function KalshiL2Page() {
                           key={`${lane.source}:${lane.channel_id}:${lane.measurement_node_id}`}
                           lane={lane}
                           asOf={asOf}
+                          windowSecs={(data.window_minutes ?? 15) * 60}
                         />
                       ))}
                     </tbody>

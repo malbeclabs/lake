@@ -7663,7 +7663,8 @@ export interface KalshiL2Lane {
   depth_p50: number
   depth_p95: number
   depth_max: number
-  gaps: number
+  gap_messages: number
+  gap_books: number
   resets: number
   clears: number
   snapshot_cycles: number

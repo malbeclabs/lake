@@ -126,7 +126,28 @@ type KalshiL2Lane struct {
 	DepthMax uint32  `json:"depth_max"`
 
 	// Fault and lifecycle counters.
-	Gaps           uint64 `json:"gaps"`
+	//
+	// **GapMessages is a DURATION, not a fault count, and must never be displayed as one.**
+	// It counts every message that arrived while its book was un-anchored, so one gap
+	// event inflates it by the message rate times the seconds until the next snapshot
+	// re-anchors the book. Measured on perps: 22 real discontinuities in five minutes
+	// produced 158,912 gap-marked messages — a factor of ~2,400. Worse than the size, it
+	// scales with TRAFFIC rather than with reliability, so a busy lane looks thousands of
+	// times worse than a quiet one at identical loss, which is exactly the comparison a
+	// coverage page exists to support.
+	//
+	// GapBooks is the count to show: how many distinct books gapped at all in the window.
+	// It is one number per affected instrument no matter how long the recovery took, and
+	// it does not move with the message rate.
+	//
+	// Neither is the transition count, which is what a true event count would be. That
+	// needs a per-instrument window function over every row in the window (~135M at
+	// current rates), and this query is already the heavy one the background refresher
+	// exists to keep off the request path. GapBooks is the cheap upper-bound-per-book
+	// approximation: it undercounts a book that gapped repeatedly, and that is the
+	// deliberate trade.
+	GapMessages    uint64 `json:"gap_messages"`
+	GapBooks       uint64 `json:"gap_books"`
 	Resets         uint64 `json:"resets"`
 	Clears         uint64 `json:"clears"`
 	SnapshotCycles uint64 `json:"snapshot_cycles"`
@@ -209,7 +230,10 @@ func (a *API) FetchKalshiL2Coverage(ctx context.Context) (*KalshiL2CoverageRespo
 			ifNotFinite(toFloat64(quantileTDigestIf(0.5)(book_levels_after, msg_type = 'level_update')), 0) AS depth_p50,
 			ifNotFinite(toFloat64(quantileTDigestIf(0.95)(book_levels_after, msg_type = 'level_update')), 0) AS depth_p95,
 			maxIf(book_levels_after, msg_type = 'level_update') AS depth_max,
-			countIf(status_after = 'gap') AS gaps,
+			countIf(status_after = 'gap') AS gap_messages,
+			-- Distinct books affected, which is what the page shows. instrument_id is unique
+			-- only within a channel and this groups by channel, so the count is well defined.
+			uniqCombinedIf(instrument_id, status_after = 'gap') AS gap_books,
 			countIf(msg_type = 'instrument_reset') AS resets,
 			countIf(msg_type = 'book_clear') AS clears,
 			countIf(msg_type = 'snapshot_end') AS snapshot_cycles,
@@ -239,7 +263,7 @@ func (a *API) FetchKalshiL2Coverage(ctx context.Context) (*KalshiL2CoverageRespo
 			&l.Source, &l.ChannelID, &l.MeasurementNodeID, &l.LocationCode,
 			&messages, &levelUpdates, &l.Instruments,
 			&l.DepthP50, &l.DepthP95, &l.DepthMax,
-			&l.Gaps, &l.Resets, &l.Clears, &l.SnapshotCycles,
+			&l.GapMessages, &l.GapBooks, &l.Resets, &l.Clears, &l.SnapshotCycles,
 			&lastRecvNs,
 		); err != nil {
 			return nil, err
