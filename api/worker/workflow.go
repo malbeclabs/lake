@@ -346,6 +346,9 @@ func (a *Activities) entries() []cacheEntry {
 		{name: "validators", key: handlers.ValidatorsPageCacheKey, everyN: validatorsListingEveryN, fn: func(ctx context.Context) (any, error) {
 			return api.FetchValidatorsData(ctx)
 		}},
+		{name: "edge multicast", key: handlers.EdgeMulticastCacheKey, fn: func(ctx context.Context) (any, error) {
+			return api.FetchEdgeMulticastData(ctx)
+		}},
 		{name: "multicast health summaries", key: handlers.MulticastHealthSummariesCacheKey, fn: func(ctx context.Context) (any, error) {
 			return api.FetchMulticastHealthSummariesData(ctx, handlers.ShredGroupPK)
 		}},
