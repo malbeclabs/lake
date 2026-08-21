@@ -156,6 +156,53 @@ their feed ids into the payload). Both prefixes are DoubleZero's — an MBP sour
 shared BBO observation on every derived top-of-book change, so it races the venue's public feed
 exactly as the top-of-book lane does.
 
+## Multicast Member Classification
+
+Which multicast subscribers are DoubleZero's own recorders is **not** in code — it lives in the
+Postgres table `multicast_member_class` (`client_ip`, `class`, `label`, `note`, `enabled`), with
+`class` one of `recorder`, `internal_probe`, `customer`.
+
+A member is classified in three tiers: an enabled row here wins outright, then the derived signal
+(the Solana capture hosts in `edgeNodeIPs`, which the edge scoreboard already maintains for geoip),
+then `customer` as the default. The default is "nobody has said otherwise", not a verified fact,
+which is why the API also reports how many members each count actually knows about
+(`class_asserted` / `class_derived`).
+
+Keyed on `client_ip` and not on the user pk: DoubleZero user accounts are torn down and recreated
+constantly, so a pk-keyed row goes stale within hours. Owner pubkey is stable but far too coarse —
+one wallet owns recorders, probes and lab boxes at once. Do **not** reintroduce an owner-based rule:
+the first version of this page used one and matched 515 wallets, because every validator publishing
+shreds owns a publisher in a feed-backed group.
+
+An asserted row wins even when it says `customer` — that is the escape hatch for a decommissioned
+capture box, and it is the only tier an operator can change without a deploy.
+
+**These statements are run by a human operator against the target environment.** They are recorded
+here as a runbook, not as something to execute automatically: do not run them, or any other write
+against this table, from an agent session unless explicitly asked to.
+
+```sql
+-- classify a box as a DoubleZero recorder
+INSERT INTO multicast_member_class (client_ip, class, label)
+VALUES ('<client_ip>', 'recorder', '<hostname>')
+ON CONFLICT (client_ip) DO UPDATE SET class = EXCLUDED.class,
+    label = EXCLUDED.label, enabled = TRUE, updated_at = NOW();
+
+-- a decommissioned recorder handed back to a customer
+UPDATE multicast_member_class SET class = 'customer', updated_at = NOW() WHERE client_ip = '<client_ip>';
+
+-- stop asserting anything about a box (falls back to the derived signal)
+UPDATE multicast_member_class SET enabled = FALSE, updated_at = NOW() WHERE client_ip = '<client_ip>';
+```
+
+Changes take effect on the next page-cache refresh (about 60s) with no restart.
+
+The migration creates the table **empty on purpose** — which boxes are DoubleZero's is environment
+config, differs between mainnet and testnet, and is inserted out of band, so it never lives in this
+repository. The Kalshi and Hyperliquid recorders can only be classified this way: the feeds tables
+identify them by `measurement_node_id`, a hostname with no IP anywhere in that schema and no table
+in lake to resolve it through.
+
 ## Logging Levels
 
 ERROR-level log lines page on-call (alerts fire on `level="ERR"` — prod → `#alerts`, staging → `#alerts-l2`). Reserve raw `.Error(...)` calls for genuinely-actionable terminal failures: process/component death, startup failures, panics, config errors.

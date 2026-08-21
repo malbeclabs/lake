@@ -69,6 +69,9 @@ export function Sidebar() {
   // Internal only (unannounced venue) — gated to allowed-domain Google users.
   const showHyperliquid = user?.is_internal_user === true
   const showKalshi = user?.is_internal_user === true
+  // Cross-service multicast overview: names subscribers and separates operator-run receivers
+  // from paying ones, so it stays with the other internal edge views.
+  const showEdgeMulticast = user?.is_internal_user === true
   const showPermissionAudit = user?.is_internal_user === true
   // External Hex app — only useful to allowed-domain (doublezero/malbeclabs) users.
   const showDataDesk = user?.is_internal_user === true
@@ -137,7 +140,8 @@ const { resolvedTheme, setTheme } = useTheme()
   const isKalshiScoreboardRoute = location.pathname === '/dz/kalshi/scoreboard'
   const isKalshiL2Route = location.pathname === '/dz/kalshi/l2'
   const isKalshiRoute = location.pathname.startsWith('/dz/kalshi')
-  const isEdgeRoute = isShredsRoute || isHyperliquidRoute || isKalshiRoute
+  const isEdgeMulticastRoute = location.pathname === '/dz/edge/multicast'
+  const isEdgeRoute = isShredsRoute || isHyperliquidRoute || isKalshiRoute || isEdgeMulticastRoute
   const isGeolocRoute = location.pathname.startsWith('/dz/geoloc/')
   const isGeolocProbesRoute = location.pathname.startsWith('/dz/geoloc/probes')
   const isGeolocUsersRoute = location.pathname.startsWith('/dz/geoloc/users')
@@ -612,6 +616,12 @@ const { resolvedTheme, setTheme } = useTheme()
             <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Edge</span>
           </div>
           <div className="space-y-1">
+            {showEdgeMulticast && (
+              <Link to="/dz/edge/multicast" className={navItemClass(isEdgeMulticastRoute)}>
+                <Radio className="h-4 w-4" />
+                Multicast
+              </Link>
+            )}
             <Link to={shredsDefaultPath} className={isShredsRoute ? navItemExpandedClass : navItemClass(false)}>
               <Puzzle className="h-4 w-4" />
               Shreds

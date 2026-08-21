@@ -7685,6 +7685,77 @@ export async function fetchKalshiL2Coverage(): Promise<KalshiL2CoverageResponse>
   return res.json()
 }
 
+// Edge multicast overview: every multicast group carrying an edge service, grouped by feed.
+export interface EdgeMulticastRoleCounts {
+  total: number
+  active: number
+  idle: number
+  /** No counter row in the window — "cannot say", not "down". */
+  unknown: number
+  /** DoubleZero capture boxes. */
+  recorders: number
+  /** DoubleZero measurement/lab receivers that record nothing. */
+  internal_probes: number
+  /** Everyone else, including members nothing has classified. */
+  customers: number
+  /** How many of the classifications above are asserted by an operator row. */
+  class_asserted: number
+  /** How many are derived from the known capture-host list. */
+  class_derived: number
+}
+
+export interface EdgeMulticastGroup {
+  pk: string
+  code: string
+  multicast_ip: string
+  status: string
+  max_bandwidth: number
+  /** MBP / MBO / TOP, from the code's suffix; absent when the group is not plane-split. */
+  plane?: string
+  publishers: EdgeMulticastRoleCounts
+  subscribers: EdgeMulticastRoleCounts
+  ingress_bps: number
+  egress_bps: number
+  publishers_multi_group: number
+  /** Rates are per-tunnel upper bounds when set — a publisher feeds several groups. */
+  traffic_ambiguous: boolean
+  observed_at?: string
+  observed_age_seconds?: number
+  /** Newest application-plane observation: a message a recorder actually received. */
+  last_heard?: string
+  last_heard_age_seconds?: number
+  last_heard_source?: string
+  /** Capture sources folded into last_heard; >1 means a dead lane may not move it. */
+  last_heard_lanes?: number
+  /** Publishers exist, counters read zero: the lane went quiet. */
+  silent: boolean
+  health: string
+  health_counts: MulticastHealthStatusCounts
+}
+
+export interface EdgeMulticastService {
+  code: string
+  managed: boolean
+  metro_count: number
+  groups: EdgeMulticastGroup[]
+}
+
+export interface EdgeMulticastResponse {
+  generated_at: string
+  rate_grain_minutes: number
+  /** False when no capture table was queryable — the column is hidden rather than blank. */
+  last_heard_available: boolean
+  services: EdgeMulticastService[]
+}
+
+export async function fetchEdgeMulticast(): Promise<EdgeMulticastResponse> {
+  const res = await apiFetch('/api/dz/edge/multicast')
+  if (!res.ok) {
+    throw new Error('Failed to fetch edge multicast overview')
+  }
+  return res.json()
+}
+
 // Serviceability permission audit trail (internal only).
 export interface PermissionAuditEvent {
   eventTs: string
