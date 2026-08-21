@@ -126,7 +126,6 @@ const { resolvedTheme, setTheme } = useTheme()
   const isShredsSeatsRoute = location.pathname === '/dz/shreds/subscribers'
   const isShredsDevicesRoute = location.pathname === '/dz/shreds/devices'
   const isShredsEscrowEventsRoute = location.pathname === '/dz/shreds/activity'
-  const isShredsEconomicsRoute = location.pathname === '/dz/shreds/economics'
   const isShredsRewardsRoute =
     location.pathname === '/dz/shreds/rewards' ||
     location.pathname.startsWith('/dz/shreds/rewards/')
@@ -635,9 +634,6 @@ const { resolvedTheme, setTheme } = useTheme()
                 </Link>
                 <Link to="/dz/shreds/activity" className={subNavItemClass(isShredsEscrowEventsRoute)}>
                   Activity
-                </Link>
-                <Link to="/dz/shreds/economics" className={subNavItemClass(isShredsEconomicsRoute)}>
-                  Economics
                 </Link>
               </>
             )}
