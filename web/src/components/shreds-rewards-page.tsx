@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import {
   fetchShredsRewards,
+  type ShredsClientRewardsRow,
   type ShredsRewardsParams,
   type ShredsRewardsRow,
 } from '@/lib/api'
@@ -35,6 +36,16 @@ const SORT_FIELDS: ReadonlySet<string> = new Set<SortField>([
   'activated_stake',
   'total_earned_2z',
   'immediately_claimable_2z',
+])
+
+// Client-team mode has its own sortable columns: the validator identity columns
+// it replaces (name, stake) do not exist there.
+type ClientSortField = 'client_name' | 'validators' | 'total_earned_2z'
+
+const CLIENT_SORT_FIELDS: ReadonlySet<string> = new Set<ClientSortField>([
+  'client_name',
+  'validators',
+  'total_earned_2z',
 ])
 
 function truncatePK(pk: string): string {
@@ -86,10 +97,17 @@ export function ShredsRewardsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
 
+  const groupByClient = searchParams.get('group') === 'client'
+
   const page = Math.max(1, parseInt(searchParams.get('page') || '1') || 1)
   const offset = (page - 1) * PAGE_SIZE
   const rawSort = searchParams.get('sort') || 'total_earned_2z'
-  const sortField: SortField = (SORT_FIELDS.has(rawSort) ? rawSort : 'total_earned_2z') as SortField
+  const validSorts = groupByClient ? CLIENT_SORT_FIELDS : SORT_FIELDS
+  // A sort carried over from the other mode falls back to the default rather
+  // than being sent to an endpoint that does not know that column.
+  const sortField = (validSorts.has(rawSort) ? rawSort : 'total_earned_2z') as
+    | SortField
+    | ClientSortField
   const sortDirection: SortDirection =
     searchParams.get('order') === 'asc' ? 'asc' : 'desc'
 
@@ -98,15 +116,20 @@ export function ShredsRewardsPage() {
 
   const searchFilters = useMemo(() => parseSearchFilters(searchParam), [searchParam])
 
+  // Client mode returns one row per client team (ten today), so it sends no
+  // search, limit or offset — the server ignores them there anyway.
   const queryParams: ShredsRewardsParams = useMemo(
-    () => ({
-      search: searchParam || undefined,
-      sort: sortField,
-      order: sortDirection,
-      limit: PAGE_SIZE,
-      offset,
-    }),
-    [searchParam, sortField, sortDirection, offset],
+    () =>
+      groupByClient
+        ? { group: 'client', sort: sortField, order: sortDirection }
+        : {
+            search: searchParam || undefined,
+            sort: sortField,
+            order: sortDirection,
+            limit: PAGE_SIZE,
+            offset,
+          },
+    [groupByClient, searchParam, sortField, sortDirection, offset],
   )
 
   const { data, isLoading, error } = useQuery({
@@ -117,7 +140,7 @@ export function ShredsRewardsPage() {
   })
 
   const handleSort = useCallback(
-    (field: SortField) => {
+    (field: SortField | ClientSortField) => {
       setSearchParams((prev) => {
         const p = new URLSearchParams(prev)
         if (p.get('sort') === field || (!p.get('sort') && field === 'total_earned_2z')) {
@@ -175,7 +198,24 @@ export function ShredsRewardsPage() {
     })
   }, [setSearchParams])
 
-  const SortIcon = ({ field }: { field: SortField }) => {
+  const setGroup = useCallback(
+    (next: 'validator' | 'client') => {
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        if (next === 'client') p.set('group', 'client')
+        else p.delete('group')
+        // Sort, search and page all belong to the mode being left behind.
+        p.delete('sort')
+        p.delete('order')
+        p.delete('search')
+        p.delete('page')
+        return p
+      })
+    },
+    [setSearchParams],
+  )
+
+  const SortIcon = ({ field }: { field: SortField | ClientSortField }) => {
     if (sortField !== field) return null
     return sortDirection === 'asc' ? (
       <ChevronUp className="inline h-3 w-3 ml-0.5" />
@@ -185,6 +225,7 @@ export function ShredsRewardsPage() {
   }
 
   const validators = data?.validators ?? []
+  const clients: ShredsClientRewardsRow[] = data?.clients ?? []
   // The API returns the true total of matching validators (before limit/offset),
   // so the pagination footer can show the real page count. Fall back to the
   // full-page heuristic only if total is missing (e.g. an older API).
@@ -241,6 +282,7 @@ export function ShredsRewardsPage() {
             ) : undefined
           }
           actions={
+            groupByClient ? undefined : (
             <form
               onSubmit={handleSearchSubmit}
               className="w-full sm:w-96 flex items-stretch gap-2"
@@ -273,17 +315,63 @@ export function ShredsRewardsPage() {
                 </button>
               )}
             </form>
+            )
           }
         />
 
+        <div className="mb-4 inline-flex rounded-md border border-border overflow-hidden text-sm">
+          <button
+            type="button"
+            onClick={() => setGroup('validator')}
+            aria-pressed={!groupByClient}
+            className={cn(
+              'px-3 py-1.5 transition-colors',
+              !groupByClient
+                ? 'bg-accent text-accent-foreground'
+                : 'hover:bg-muted text-muted-foreground',
+            )}
+          >
+            Validators
+          </button>
+          <button
+            type="button"
+            onClick={() => setGroup('client')}
+            aria-pressed={groupByClient}
+            className={cn(
+              'px-3 py-1.5 border-l border-border transition-colors',
+              groupByClient
+                ? 'bg-accent text-accent-foreground'
+                : 'hover:bg-muted text-muted-foreground',
+            )}
+          >
+            Client teams
+          </button>
+        </div>
+
         <div className="mb-4 rounded-lg bg-muted/50 px-4 py-3 text-xs xxs:text-sm text-muted-foreground">
-          $2Z earnings for validators publishing shreds via DoubleZero. Claimable
-          rewards are those that have not yet been paid out by the on-chain claim
-          journal. Select a validator to see its full per-epoch history.
+          {groupByClient ? (
+            <>
+              Each client team's own $2Z rewards. A team and the validators
+              running it are paid complementary shares of the same pool, so these
+              are not the validator figures regrouped — at the current split a
+              team receives 35% where its validators receive 65%. Attribution
+              follows the client a validator was running when the slots were
+              earned. No claimable column: claim state is recorded against a
+              validator's leaf, and nothing records a client team's own claim.
+            </>
+          ) : (
+            <>
+              $2Z earnings for validators publishing shreds via DoubleZero.
+              Claimable rewards are those that have not yet been paid out by the
+              on-chain claim journal. Select a validator to see its full per-epoch
+              history.
+            </>
+          )}
         </div>
 
         <div className="border border-border rounded-lg overflow-hidden bg-card">
           <div className="overflow-x-auto">
+            {!groupByClient && (
             <table className="min-w-full">
               <thead>
                 <tr className="text-sm text-left text-muted-foreground border-b border-border">
@@ -391,8 +479,17 @@ export function ShredsRewardsPage() {
                 )}
               </tbody>
             </table>
+            )}
+            {groupByClient && (
+              <ClientRewardsTable
+                clients={clients}
+                sortField={sortField}
+                sortDirection={sortDirection}
+                onSort={handleSort}
+              />
+            )}
           </div>
-          {(total > PAGE_SIZE || offset > 0) && (
+          {!groupByClient && (total > PAGE_SIZE || offset > 0) && (
             <Pagination
               total={total}
               limit={PAGE_SIZE}
@@ -403,5 +500,97 @@ export function ShredsRewardsPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+// ClientRewardsTable lists one row per client team. It has no row link and no
+// pagination: there is no per-client detail page, and the list is one row per
+// client that has ever earned — ten today.
+function ClientRewardsTable({
+  clients,
+  sortField,
+  sortDirection,
+  onSort,
+}: {
+  clients: ShredsClientRewardsRow[]
+  sortField: string
+  sortDirection: SortDirection
+  onSort: (field: ClientSortField) => void
+}) {
+  const thClass =
+    'px-4 py-3 font-medium cursor-pointer select-none hover:text-foreground transition-colors whitespace-nowrap'
+  const thRight = `${thClass} text-right`
+
+  const SortIcon = ({ field }: { field: ClientSortField }) => {
+    if (sortField !== field) return null
+    return sortDirection === 'asc' ? (
+      <ChevronUp className="inline h-3 w-3 ml-0.5" />
+    ) : (
+      <ChevronDown className="inline h-3 w-3 ml-0.5" />
+    )
+  }
+
+  return (
+    <table className="min-w-full">
+      <thead>
+        <tr className="text-sm text-left text-muted-foreground border-b border-border">
+          <th
+            className={cn(thClass, 'sticky left-0 bg-card z-10')}
+            onClick={() => onSort('client_name')}
+          >
+            Client
+            <SortIcon field="client_name" />
+          </th>
+          <th
+            className={thRight}
+            onClick={() => onSort('validators')}
+            title="Validators publishing under this client in the latest finalized epoch. A validator runs one client at a time, so this is a current headcount, not every validator that ever used the client."
+          >
+            Validators
+            <SortIcon field="validators" />
+          </th>
+          <th
+            className={thRight}
+            onClick={() => onSort('total_earned_2z')}
+            title="The client team's own share of the reward pool, not the earnings of the validators that ran it. The two are complementary shares of the same pool."
+          >
+            All-time
+            <SortIcon field="total_earned_2z" />
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {clients.length === 0 ? (
+          <tr>
+            <td
+              colSpan={3}
+              className="px-4 py-12 text-center text-muted-foreground"
+            >
+              No client teams have earned rewards yet
+            </td>
+          </tr>
+        ) : (
+          clients.map((c) => (
+            <tr
+              key={c.client_id}
+              className="border-b border-border last:border-b-0"
+            >
+              <td
+                className="sticky left-0 bg-card px-4 py-3 text-sm font-medium"
+                title={`Client ID ${c.client_id}`}
+              >
+                {c.client_name}
+              </td>
+              <td className="px-4 py-3 text-sm tabular-nums text-right">
+                {c.validators.toLocaleString('en-US')}
+              </td>
+              <td className="px-4 py-3 text-sm tabular-nums text-right">
+                {format2Z(c.total_earned_2z)}
+              </td>
+            </tr>
+          ))
+        )}
+      </tbody>
+    </table>
   )
 }

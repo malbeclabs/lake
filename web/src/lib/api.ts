@@ -6521,6 +6521,28 @@ export async function fetchShredEpochRevenue(limit = 20): Promise<ShredEpochReve
   return res.json()
 }
 
+export interface ShredFeedRevenue {
+  feed_key: string
+  code: string
+  name: string
+  year: number
+  month: number
+  collected_usdc: number
+  collected_dollars: number
+}
+
+// codePrefix filters on the feed's code (e.g. 'solana-shreds'). The
+// feed-subscription program is shared by every DoubleZero feed product, so a
+// page showing one product's economics has to say which one it wants. An empty
+// prefix returns every feed. Feeds whose label has not landed carry no code and
+// are always returned, so revenue is never hidden by a late label.
+export async function fetchShredFeedRevenue(codePrefix = ''): Promise<ShredFeedRevenue[]> {
+  const qs = codePrefix ? `?code_prefix=${encodeURIComponent(codePrefix)}` : ''
+  const res = await fetchWithRetry(`/api/dz/shreds/feed-revenue${qs}`)
+  if (!res.ok) throw new Error('Failed to fetch shred feed revenue')
+  return res.json()
+}
+
 export interface ShredSubscriberHistory {
   epoch: number
   active_seats: number
@@ -7444,21 +7466,47 @@ export interface ShredsRewardsRow {
   epoch_tokens: Record<string, string>
 }
 
+// One client team's own rewards, over the same leaves as the validator list.
+//
+// total_earned_2z is the client team's share, not its validators' earnings: the
+// two are complementary sides of one pool, weighted by client_proportion and its
+// complement. There is no claimable figure, because nothing records whether a
+// client team has claimed — the indexed claim state belongs to the validator's
+// leaf.
+export interface ShredsClientRewardsRow {
+  client_id: number
+  client_name: string
+  validators: number
+  total_earned_2z: number
+}
+
 export interface ShredsRewardsResponse {
   current_solana_epoch: number
   latest_finalized_epoch: number
   epoch_columns: number[]
+  // Exactly one of these carries rows, chosen by the `group` param; the other
+  // is an empty array.
   validators: ShredsRewardsRow[]
+  clients: ShredsClientRewardsRow[]
   // Total distinct validators matching the filter, before limit/offset.
   total: number
 }
 
 export interface ShredsRewardsParams {
   search?: string
-  sort?: 'validator_name' | 'activated_stake' | 'total_earned_2z' | 'immediately_claimable_2z'
+  sort?:
+    | 'validator_name'
+    | 'activated_stake'
+    | 'total_earned_2z'
+    | 'immediately_claimable_2z'
+    | 'client_name'
+    | 'validators'
   order?: 'asc' | 'desc'
   limit?: number
   offset?: number
+  // Client grouping ignores search, limit and offset: it returns one row per
+  // client that has earned, which no caller needs to page through.
+  group?: 'client'
 }
 
 export async function fetchShredsRewards(
@@ -7470,6 +7518,7 @@ export async function fetchShredsRewards(
   if (params.order) q.set('order', params.order)
   if (params.limit != null) q.set('limit', String(params.limit))
   if (params.offset != null) q.set('offset', String(params.offset))
+  if (params.group) q.set('group', params.group)
   const qs = q.toString()
   const res = await apiFetch(`/api/dz/shreds/rewards${qs ? `?${qs}` : ''}`)
   if (!res.ok) throw new Error('Failed to fetch shreds rewards')
@@ -7657,13 +7706,15 @@ export interface KalshiL2Lane {
   channel_id: number
   location_code: string
   measurement_node_id: string
+  messages: number
   messages_per_sec: number
   level_updates_per_sec: number
   instruments: number
   depth_p50: number
   depth_p95: number
   depth_max: number
-  gaps: number
+  gap_messages: number
+  gap_books: number
   resets: number
   clears: number
   snapshot_cycles: number

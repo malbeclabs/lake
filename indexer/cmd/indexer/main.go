@@ -687,6 +687,9 @@ func run() error {
 		idxCfg.ShredsRawRPC = shredsRawRPC
 		idxCfg.ShredsProgramID = shreds.ProgramID
 		idxCfg.EscrowEventsRPC = shredsRawRPC
+		// Same endpoint as the shreds read: the feed-subscription program lives
+		// on whichever cluster this env's shreds RPC points at.
+		idxCfg.FeedSubscriptionRPC = shredsRawRPC
 	}
 	idx, err := indexer.New(ctx, idxCfg)
 	if err != nil {
@@ -736,6 +739,7 @@ func run() error {
 				Geolocation:      idx.Geolocation(),
 				Shreds:           idx.Shreds(),
 				EscrowEvents:     idx.EscrowEvents(),
+				FeedSubscription: idx.FeedSubscription(),
 				PermissionEvents: idx.PermissionEvents(),
 				TelemLatency:     idx.TelemLatency(),
 				TelemUsage:       idx.TelemUsage(),
@@ -1135,6 +1139,7 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 		secondaryIdxCfg.ShredsRawRPC = secondaryShredsRawRPC
 		secondaryIdxCfg.ShredsProgramID = shreds.ProgramID
 		secondaryIdxCfg.EscrowEventsRPC = secondaryShredsRawRPC
+		secondaryIdxCfg.FeedSubscriptionRPC = secondaryShredsRawRPC
 	}
 	idx, err := indexer.New(ctx, secondaryIdxCfg)
 	if err != nil {
@@ -1165,6 +1170,7 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 		Geolocation:      idx.Geolocation(),
 		Shreds:           idx.Shreds(),
 		EscrowEvents:     idx.EscrowEvents(),
+		FeedSubscription: idx.FeedSubscription(),
 		PermissionEvents: idx.PermissionEvents(),
 		TelemLatency:     idx.TelemLatency(),
 		TelemUsage:       idx.TelemUsage(),

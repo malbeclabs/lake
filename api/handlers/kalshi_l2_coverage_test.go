@@ -115,9 +115,15 @@ func TestKalshiL2Coverage_LaneStats(t *testing.T) {
 	assert.EqualValues(t, 1, l.Resets)
 	assert.EqualValues(t, 1, l.Clears)
 	assert.EqualValues(t, 1, l.SnapshotCycles)
-	assert.EqualValues(t, 1, l.Gaps)
+	// One message arrived gap-flagged, on one instrument: the duration measure and the
+	// book count agree here because the fixture has a single un-anchored message. They
+	// diverge on real data, which is the whole reason both exist — see KalshiL2Lane.
+	assert.EqualValues(t, 1, l.GapMessages)
+	assert.EqualValues(t, 1, l.GapBooks)
 
-	// 7 messages / 4 of them level updates, over a 15-minute (900s) window.
+	// 7 messages / 4 of them level updates, over a 15-minute (900s) window. Messages is the
+	// count the rate is derived from and the denominator of the un-anchored share.
+	assert.EqualValues(t, 7, l.Messages)
 	assert.InDelta(t, 7.0/900.0, l.MessagesPerSec, 1e-9)
 	assert.InDelta(t, 4.0/900.0, l.LevelUpdatesPerSec, 1e-9)
 
@@ -125,6 +131,35 @@ func TestKalshiL2Coverage_LaneStats(t *testing.T) {
 	// carry depth 0 and must not drag the median down.
 	assert.InDelta(t, 8.0, l.DepthMax, 0.001)
 	assert.GreaterOrEqual(t, l.DepthP50, 6.0)
+}
+
+// A long recovery on ONE book must not read as many faults: gap_messages grows with the
+// message rate and the recovery duration rather than with the number of things that went
+// wrong. See KalshiL2Lane for the production measurement behind the split.
+func TestKalshiL2Coverage_GapBooksCountsBooksNotMessages(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createKalshiMbpLevelsTable(t, api)
+
+	// Instrument 100 spends six messages un-anchored; instrument 101 spends one. Two books
+	// gapped, seven messages arrived gapped.
+	for i := 0; i < 6; i++ {
+		insertLevel(t, api, "mbp_edge_kalshi_sports_nfl", 1, 100, "level_update", 4, "gap", 10)
+	}
+	insertLevel(t, api, "mbp_edge_kalshi_sports_nfl", 1, 101, "level_update", 4, "gap", 9)
+	// And a third book that never gapped, so it must not be counted.
+	insertLevel(t, api, "mbp_edge_kalshi_sports_nfl", 1, 102, "level_update", 4, "ready", 8)
+
+	resp, err := api.FetchKalshiL2Coverage(t.Context())
+	require.NoError(t, err)
+	l := lanesBySource(resp.Lanes)["mbp_edge_kalshi_sports_nfl"]
+
+	assert.EqualValues(t, 7, l.GapMessages, "duration measure: every message that arrived un-anchored")
+	assert.EqualValues(t, 2, l.GapBooks, "fault count: distinct books affected, not messages")
+	// The point of the pair: they must not be interchangeable.
+	assert.NotEqual(t, l.GapMessages, l.GapBooks)
+	// And the share the page renders is gap_messages over this total, computed with no
+	// reference to the window length.
+	assert.EqualValues(t, 8, l.Messages)
 }
 
 // instrument_id is unique only WITHIN a channel_id, and prod's two publisher arms share a
