@@ -437,7 +437,11 @@ func TestKalshiScoreboard_CountsMultiCompetitorRaceOnce(t *testing.T) {
 // became a row with a win rate beside vantages backed by millions. Measured on mainnet: a
 // fabricated node carrying 8 to 40 races per competitor sat next to one carrying 1.17 billion
 // observations.
-func TestKalshiScoreboard_DropsVantageBelowRaceFloor(t *testing.T) {
+//
+// The row stays and carries its race count; the win rate is what the page withholds. Removing the
+// row emptied the breakdown whenever every vantage was thin — the 1h view of a fleet racing sixty
+// times an hour — and an empty table reads as a broken capture rather than as thin vantages.
+func TestKalshiScoreboard_ThinVantageKeepsItsRow(t *testing.T) {
 	api := newKalshiTestAPI(t)
 	createKalshiFeedsTable(t, api)
 	seedKalshiEntry(t, api, kalshiPublicFeed, "Public API", 0)
@@ -450,12 +454,19 @@ func TestKalshiScoreboard_DropsVantageBelowRaceFloor(t *testing.T) {
 	resp, err := api.FetchKalshiScoreboardData(t.Context(), "24h", "")
 	require.NoError(t, err)
 
-	require.Len(t, resp.Nodes, 1, "the three-race vantage is not published")
-	assert.Equal(t, "aws-was-mn-recorder1", resp.Nodes[0].MeasurementNodeID)
+	assert.EqualValues(t, handlers.KalshiVantageMinRaces, resp.MinRaces, "the threshold travels with the payload")
+	require.Len(t, resp.Nodes, 2, "both vantages are reported; the page decides what to print")
 
-	// Dropped from the breakdown only. The headline counts every race the fleet ran, which is
-	// true however they spread across vantages — understating it to hide a thin row would trade
-	// one wrong number for another.
+	byNode := map[string]handlers.KalshiNode{}
+	for _, n := range resp.Nodes {
+		byNode[n.MeasurementNodeID] = n
+	}
+	assert.GreaterOrEqual(t, byNode["aws-was-mn-recorder1"].TotalRaces, uint64(handlers.KalshiVantageMinRaces))
+	assert.EqualValues(t, 3, byNode["cmh-rec1"].TotalRaces)
+	assert.Less(t, byNode["cmh-rec1"].TotalRaces, resp.MinRaces)
+
+	// The headline counts every race the fleet ran, which is true however they spread across
+	// vantages.
 	assert.EqualValues(t, enoughRaces+3, resp.TotalRaces)
 }
 
@@ -605,20 +616,59 @@ func TestKalshiPathLatency_ExcludesIncomparableClocks(t *testing.T) {
 // as a row backed by millions. Measured on mainnet: four sources with five samples each reported
 // 0.3 ms at a vantage whose real lane measures 23 ms — a hundredfold advantage that was really an
 // unmeasured feed.
-func TestKalshiPathLatency_DropsRowsBelowSampleFloor(t *testing.T) {
+//
+// The thin row is kept and marked by its sample count rather than filtered out. Filtering emptied
+// the table in low-volume environments, where "no data" reads as a broken refresher, and it could
+// drop one side of a pairing and leave the other standing alone at that vantage.
+func TestKalshiPathLatency_ThinRowKeepsItsPlace(t *testing.T) {
 	api := newKalshiTestAPI(t)
 	createKalshiObservationsTable(t, api)
 	seedKalshiEntry(t, api, kalshiPublicFeed, "Public API", 0)
 
 	nowMs := uint64(time.Now().UnixMilli())
 	insertObservationBurst(t, api, "cmh", kalshiDZFeed, 3, 101, "KXBTCPERP", nowMs, enough, 23)
-	// The same vantage, a source that has written a handful of rows at an implausible latency.
-	insertObservationBurst(t, api, "cmh", "tob_edge_kalshi_sports_nba", 3, 101, "KXBTCPERP", nowMs+uint64(enough), 5, 0.3)
+	// The same vantage, a competitor that has written a handful of rows at an implausible latency.
+	insertObservationBurst(t, api, "cmh", kalshiPublicFeed, 9, 0, "KXBTCPERP", nowMs+uint64(enough), 5, 0.3)
 
 	pl, err := api.FetchKalshiPathLatency(t.Context())
 	require.NoError(t, err)
 
-	require.Len(t, pl.Feeds, 1, "the five-sample row is not published")
+	// The threshold travels in the payload so the page cannot hold a second copy of it.
+	assert.EqualValues(t, handlers.KalshiLatencyMinSamples, pl.MinSamples)
+
+	require.Len(t, pl.Feeds, 2, "both sides of the pairing are still reported")
+	bySide := map[string]handlers.KalshiFeedLatency{}
+	for _, f := range pl.Feeds {
+		bySide[f.Feed] = f
+	}
+	assert.InDelta(t, 23.0, bySide[kalshiDZFeed].P50Ms, 0.01)
+	assert.GreaterOrEqual(t, bySide[kalshiDZFeed].Samples, uint64(handlers.KalshiLatencyMinSamples))
+	// Its count is what marks it, and it is below the published threshold — which is the whole
+	// signal the page needs to withhold the percentile.
+	assert.EqualValues(t, 5, bySide[kalshiPublicFeed].Samples)
+	assert.Less(t, bySide[kalshiPublicFeed].Samples, pl.MinSamples)
+}
+
+// A sample floor is a volume proxy, and the mainnet row it was written for was not thin by
+// nature: every tob_ source is labelled DoubleZero, so a sports lane updating about once a second
+// clears a thousand samples in seventeen minutes and then reads as a solid sub-millisecond
+// DoubleZero row beside the real perps one. It does not belong in this table at all — only the
+// perps symbols carry the venue orderbook stamp this metric is defined against.
+func TestKalshiPathLatency_ExcludesSymbolsWithoutTheVenueClock(t *testing.T) {
+	api := newKalshiTestAPI(t)
+	createKalshiObservationsTable(t, api)
+	seedKalshiEntry(t, api, kalshiPublicFeed, "Public API", 0)
+
+	nowMs := uint64(time.Now().UnixMilli())
+	insertObservationBurst(t, api, "cmh", kalshiDZFeed, 3, 101, "KXBTCPERP", nowMs, enough, 23)
+	// Well past the sample floor, and still not a path latency: a sports lane at a sports symbol.
+	insertObservationBurst(t, api, "cmh", "tob_edge_kalshi_sports_nfl", 3, 101, "KXNFLGAME",
+		nowMs+uint64(enough), enough, 0.3)
+
+	pl, err := api.FetchKalshiPathLatency(t.Context())
+	require.NoError(t, err)
+
+	require.Len(t, pl.Feeds, 1, "the sports lane is out of scope, not merely thin")
 	assert.Equal(t, kalshiDZFeed, pl.Feeds[0].Feed)
 	assert.InDelta(t, 23.0, pl.Feeds[0].P50Ms, 0.01)
 }
