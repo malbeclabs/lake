@@ -58,7 +58,6 @@ Read-only JSON. Select an environment with the `X-DZ-Env` header: `mainnet-beta`
 - [Publishers](https://data.doublezero.xyz/dz/shreds/publishers): Validators publishing shreds, and whether a given validator is publishing.
 - [Subscribers](https://data.doublezero.xyz/dz/shreds/subscribers): Shreds subscribers.
 - [Activity](https://data.doublezero.xyz/dz/shreds/activity): Shreds activity over time.
-- [Economics](https://data.doublezero.xyz/dz/shreds/economics): Shreds economics.
 - [Rewards](https://data.doublezero.xyz/dz/shreds/rewards): Shreds rewards.
 
 ## Network entities

@@ -81,10 +81,6 @@
     <changefreq>daily</changefreq>
   </url>
   <url>
-    <loc>https://data.doublezero.xyz/dz/shreds/economics</loc>
-    <changefreq>daily</changefreq>
-  </url>
-  <url>
     <loc>https://data.doublezero.xyz/dz/shreds/funders</loc>
     <changefreq>daily</changefreq>
   </url>
