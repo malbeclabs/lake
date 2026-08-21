@@ -866,6 +866,8 @@ func (a *API) FetchKalshiPathLatency(ctx context.Context) (*KalshiPathLatency, e
 func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 	const interval = 10 * time.Minute
 	const runTimeout = 3 * time.Minute
+	const completenessInterval = time.Hour
+	const completenessTimeout = 10 * time.Minute
 	refreshLatency := func() {
 		rctx, cancel := context.WithTimeout(ctx, runTimeout)
 		defer cancel()
@@ -902,6 +904,22 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 			slog.Warn("kalshi l2 coverage cache write failed", "error", err)
 		}
 	}
+	// Per-day completeness runs on its own, slower ticker. A completed day never changes, and
+	// this query rescans every day in its window, so putting it on the 10-minute loop would
+	// repeat the most expensive scan on this page 144 times a day to learn nothing. Hourly is
+	// still well inside the cadence anyone reads a catalog at.
+	refreshCompleteness := func() {
+		rctx, cancel := context.WithTimeout(ctx, completenessTimeout)
+		defer cancel()
+		val, err := a.FetchKalshiL2Completeness(rctx)
+		if err != nil {
+			slog.Warn("kalshi l2 completeness refresh failed", "error", err)
+			return
+		}
+		if err := a.WritePageCache(ctx, kalshiL2CompletenessCacheKey, val); err != nil {
+			slog.Warn("kalshi l2 completeness cache write failed", "error", err)
+		}
+	}
 	refresh := func() {
 		refreshLatency()
 		refreshScoreboard("24h")
@@ -918,6 +936,19 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 				return
 			case <-t.C:
 				refresh()
+			}
+		}
+	}()
+	go func() {
+		refreshCompleteness()
+		t := time.NewTicker(completenessInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				refreshCompleteness()
 			}
 		}
 	}()

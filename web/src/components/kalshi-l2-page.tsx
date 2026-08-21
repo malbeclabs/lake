@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Layers } from 'lucide-react'
 import { PageHeader } from './page-header'
-import { fetchKalshiL2Coverage, type KalshiL2CoverageResponse, type KalshiL2Lane } from '@/lib/api'
+import {
+  fetchKalshiL2Completeness,
+  fetchKalshiL2Coverage,
+  type KalshiL2CompletenessResponse,
+  type KalshiL2CoverageResponse,
+  type KalshiL2Day,
+  type KalshiL2Lane,
+} from '@/lib/api'
 
 // Section order. Lanes arrive pre-sorted from the API; this only groups them into cards and
 // keeps a stable order for categories. An unrecognised category still renders, appended last,
@@ -109,8 +116,109 @@ function LaneRow({ lane, asOf }: { lane: KalshiL2Lane; asOf: number }) {
   )
 }
 
+// UTC, because the day is a UTC calendar day (the table's partition key) and the browser's
+// local day would relabel every row for anyone west of Greenwich.
+function utcTime(iso: string): string {
+  const d = new Date(iso)
+  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
+}
+
+// A day is only sellable as history if every book that moved stayed anchored and had a snapshot
+// inside the day to replay from. Today is neither: it is still being written, so it is labelled
+// rather than judged.
+//
+// A clean verdict is NOT a claim that the capture was up all day. Nothing in the data separates
+// a closed market from a dead socket, so no coverage figure is derived from it — see the header
+// of api/handlers/kalshi_l2_completeness.go. First and last message are shown for that reason.
+function verdictOf(day: KalshiL2Day, today: string): { label: string; className: string } {
+  if (day.day >= today) return { label: 'in progress', className: 'text-muted-foreground' }
+  if (day.gapped_instruments > 0 || day.unanchored_instruments > 0) {
+    return { label: 'incomplete', className: 'text-amber-500' }
+  }
+  return { label: 'replayable', className: 'text-emerald-500' }
+}
+
+function CompletenessTable({ data }: { data: KalshiL2CompletenessResponse }) {
+  const today = useMemo(() => new Date(data.generated_at).toISOString().slice(0, 10), [data.generated_at])
+  return (
+    <div className="mb-6 overflow-hidden rounded-lg border border-border bg-card">
+      <div className="border-b border-border px-4 py-3">
+        <div className="text-sm font-medium text-muted-foreground">Daily completeness</div>
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground/70">
+          Whether each day's captured levels can be replayed into a book, which is what makes a
+          day usable as history. A gapped book has a hole in its delta stream. A book with no
+          snapshot in the day cannot start a replay from that day alone. Last {data.day_count} days.
+        </p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full">
+          <thead>
+            <tr className="border-b border-border text-left text-sm text-muted-foreground">
+              <th className="whitespace-nowrap px-3 py-3 font-medium sm:px-4">Day</th>
+              <th className="whitespace-nowrap px-3 py-3 text-right font-medium sm:px-4">Lanes</th>
+              <th className="whitespace-nowrap px-3 py-3 text-right font-medium sm:px-4">Instruments</th>
+              <th className="whitespace-nowrap px-3 py-3 text-right font-medium sm:px-4">
+                Gapped
+                <span className="block text-xs font-normal">books</span>
+              </th>
+              <th className="whitespace-nowrap px-3 py-3 text-right font-medium sm:px-4">
+                No snapshot
+                <span className="block text-xs font-normal">books</span>
+              </th>
+              <th className="whitespace-nowrap px-3 py-3 text-right font-medium sm:px-4">Messages</th>
+              <th className="whitespace-nowrap px-3 py-3 text-right font-medium sm:px-4">
+                First / last
+                <span className="block text-xs font-normal">UTC</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.days.map((day) => {
+              const verdict = verdictOf(day, today)
+              return (
+                <tr key={day.day} className="border-b border-border transition-colors last:border-b-0 hover:bg-muted/50">
+                  <td className="whitespace-nowrap px-3 py-3 sm:px-4">
+                    <div className="text-sm font-medium tabular-nums">{day.day}</div>
+                    <div className={`text-[11px] ${verdict.className}`}>{verdict.label}</div>
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-3 text-right text-sm tabular-nums sm:px-4">
+                    {day.lanes.toLocaleString()}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-3 text-right text-sm tabular-nums sm:px-4">
+                    {day.instruments.toLocaleString()}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-3 text-right text-sm tabular-nums sm:px-4">
+                    <span className={day.gapped_instruments > 0 ? 'text-amber-500' : ''}>
+                      {day.gapped_instruments.toLocaleString()}
+                    </span>
+                    {day.gap_lanes.length > 0 && (
+                      <div className="text-[11px] text-muted-foreground/70">{day.gap_lanes.join(', ')}</div>
+                    )}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-3 text-right text-sm tabular-nums sm:px-4">
+                    <span className={day.unanchored_instruments > 0 ? 'text-amber-500' : ''}>
+                      {day.unanchored_instruments.toLocaleString()}
+                    </span>
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-3 text-right text-sm tabular-nums sm:px-4">
+                    {day.messages.toLocaleString()}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-3 text-right text-sm tabular-nums sm:px-4">
+                    {utcTime(day.first_message)} – {utcTime(day.last_message)}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 export function KalshiL2Page() {
   const [data, setData] = useState<KalshiL2CoverageResponse | null>(null)
+  const [days, setDays] = useState<KalshiL2CompletenessResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
 
@@ -123,14 +231,24 @@ export function KalshiL2Page() {
     }
   }, [])
 
+  // Loaded separately and its failure is not this page's error: the coverage view is what the
+  // page is for, and it must still render when the heavier daily query times out.
+  const loadDays = useCallback(async () => {
+    try {
+      setDays(await fetchKalshiL2Completeness())
+    } catch {
+      setDays(null)
+    }
+  }, [])
+
   useEffect(() => {
     let active = true
-    const run = () => { void load() }
+    const run = () => { void load(); void loadDays() }
     run()
     const poll = setInterval(run, 30000)
     const tick = setInterval(() => active && setNow(Date.now()), 5000)
     return () => { active = false; clearInterval(poll); clearInterval(tick) }
-  }, [load])
+  }, [load, loadDays])
 
   const sections = useMemo(() => {
     const byCategory = new Map<string, KalshiL2Lane[]>()
@@ -267,6 +385,8 @@ export function KalshiL2Page() {
                 </div>
               </div>
             </div>
+
+            {days && days.days.length > 0 && <CompletenessTable data={days} />}
 
             {sections.map((section) => (
               <div key={section.category} className="mb-6 overflow-hidden rounded-lg border border-border bg-card">

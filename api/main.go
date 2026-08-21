@@ -654,6 +654,7 @@ func main() {
 		r.With(handlers.RequireInternalDomain).Get("/api/dz/hyperliquid/scoreboard", api.GetHyperliquidScoreboard)
 		r.With(handlers.RequireInternalDomain).Get("/api/dz/kalshi/scoreboard", api.GetKalshiScoreboard)
 		r.With(handlers.RequireInternalDomain).Get("/api/dz/kalshi/l2-coverage", api.GetKalshiL2Coverage)
+		r.With(handlers.RequireInternalDomain).Get("/api/dz/kalshi/l2-completeness", api.GetKalshiL2Completeness)
 		// Serviceability permission audit trail (internal only: allowed-domain Google users).
 		r.With(handlers.RequireInternalDomain).Get("/api/dz/permission-audit", api.GetPermissionAudit)
 		r.Get("/api/dz/tenants", api.GetTenants)
