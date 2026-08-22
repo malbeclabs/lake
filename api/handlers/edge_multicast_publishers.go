@@ -130,6 +130,10 @@ type EdgeMulticastPublisher struct {
 	// BGPStatus above, which is the ledger's word: see edge_multicast_bgp.go for why both.
 	BGPSession *EdgeMulticastBGPSession `json:"bgp_session,omitempty"`
 
+	// BGPRtt is the client agent's own report of the round trip to its device — the only
+	// measurement of the access path that exists. Nil when no report carries a live RTT.
+	BGPRtt *EdgeMulticastBGPRtt `json:"bgp_rtt,omitempty"`
+
 	// MsgPerSec is what the recorders actually received from this path, per second over the
 	// observation window, nil when no recorder saw it. Unlike Bps it is per group rather than
 	// per tunnel, so it is the one delivery figure on the line that needs no caveat.

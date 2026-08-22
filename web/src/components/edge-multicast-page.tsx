@@ -9,6 +9,7 @@ import { handleRowClick } from '@/lib/utils'
 import {
   fetchEdgeMulticast,
   type EdgeMulticastChannelInstance,
+  type EdgeMulticastBGPRtt,
   type EdgeMulticastBGPSession,
   type EdgeMulticastGroup,
   type EdgeMulticastPathParity,
@@ -147,6 +148,13 @@ function formatBps(bps: number): string {
   if (bps >= 1e6) return `${(bps / 1e6).toFixed(1)} Mbps`
   if (bps >= 1e3) return `${(bps / 1e3).toFixed(1)} Kbps`
   return `${bps.toFixed(0)} bps`
+}
+
+// Sub-millisecond paths are the normal case here, so milliseconds with two decimals is the unit
+// that carries information; anything slower rounds to one.
+function formatRtt(nanos: number): string {
+  const ms = nanos / 1e6
+  return ms < 10 ? `${ms.toFixed(2)} ms` : `${ms.toFixed(1)} ms`
 }
 
 function formatAge(secs: number): string {
@@ -337,6 +345,7 @@ function PublisherLineRow({
           deviceCode={line.device_code}
           tunnelId={line.tunnel_id}
           session={line.bgp_session}
+          rtt={line.bgp_rtt}
           ledgerStatus={line.bgp_status}
           now={now}
         />
@@ -447,19 +456,24 @@ function PeerParityCell({ parity }: { parity?: EdgeMulticastPathParity }) {
 // up and how many times it has bounced. A session up for an hour after 200 flaps is a different
 // call to action from one that came up once, and the ledger reports both as 'up'.
 //
-// This is deliberately NOT latency. There is no client-to-device RTT in lake or in the telemetry
-// mirror — the latency tables are device-to-device across the backbone and metro-to-metro over the
-// public internet — so a last-mile figure here would have to be invented.
+// The RTT beside it comes from a third place again: the client agent writes the smoothed BGP TCP
+// RTT into its own serviceability account, and lake keeps the series in fact_dz_user_bgp_rtt. It is
+// the only measurement of the access path that exists — the latency tables are device-to-device
+// across the backbone and metro-to-metro over the public internet, neither of which touches the
+// tunnel. It ages on its own clock, written on a status change or a ~6-hourly keepalive, so hours
+// old is normal and the tooltip says so rather than letting a latency figure read as current.
 function DZDCell({
   deviceCode,
   tunnelId,
   session,
+  rtt,
   ledgerStatus,
   now,
 }: {
   deviceCode?: string
   tunnelId: number
   session?: EdgeMulticastBGPSession
+  rtt?: EdgeMulticastBGPRtt
   ledgerStatus?: string
   now: number
 }) {
@@ -479,19 +493,27 @@ function DZDCell({
       ].join(' · ')
     : 'no device telemetry for this (device, tunnel): the badge is the ledger\'s word, which is a snapshot minutes old'
 
+  // The RTT is the client's report and ages on its own clock: the agent writes it on a status
+  // change or its ~6-hourly keepalive, so an age of hours is normal and is not a stale page. Said
+  // out loud, because a latency figure with no age on it reads as current.
+  const rttDetail = rtt
+    ? `${formatRtt(rtt.nanos)} round trip to the device, as the client agent reported it onchain ${formatAge(ageSecs(rtt.observed_at, now) ?? 0)} with the session ${rtt.status} — written on a status change or a ~6-hourly keepalive, so hours old is expected`
+    : ''
+
   return (
-    <Tooltip content={detail}>
+    <Tooltip content={[detail, rttDetail].filter(Boolean).join('\n')} className="whitespace-pre-line">
       <span className="inline-flex flex-col leading-tight">
         <span className="font-mono text-xs text-muted-foreground">
           {deviceCode || '—'}
           {tunnelId ? <span className="text-[10px]"> tun {tunnelId}</span> : null}
         </span>
-        {label && (
+        {(label || rtt) && (
           <span className={`text-[10px] ${down ? 'text-red-500' : 'text-muted-foreground/70'}`}>
             {label}
             {/* Flaps only when there are some to report: a 1 on every healthy line is noise, and
                 this column is already carrying two facts. */}
             {session && session.flaps > 1 ? ` · ${session.flaps} flaps` : ''}
+            {rtt && <span className="tabular-nums">{label ? ' · ' : ''}{formatRtt(rtt.nanos)}</span>}
           </span>
         )}
       </span>
@@ -1065,9 +1087,11 @@ export function EdgeMulticastPage() {
           Rates are {data?.rate_grain_minutes ?? 5}-minute counter rollups measured at each member's tunnel and
           land a few minutes behind wall clock — the “Measured” column is the age of the newest bucket behind
           the row, shown as the small figure under the rate it describes. “DZD” is the DoubleZero device a path attaches
-          to and what that device says about its BGP session — state, uptime and flap count, from
-          telemetry rather than the ledger snapshot, which is why it can disagree with it. It is not
-          latency: no client-to-device RTT exists in this data. “Health” and “Sequence” are per PUBLISHER and the group row carries neither: a badge over a
+          to, what that device says about its BGP session — state, uptime and flap count, from
+          telemetry rather than the ledger snapshot, which is why it can disagree with it — and the
+          round trip to that device, which the client agent measures on its own BGP socket and
+          writes onchain. That last figure is written on a status change or a ~6-hourly keepalive,
+          so it is a property of the path and not a live signal; its age is in the tooltip. “Health” and “Sequence” are per PUBLISHER and the group row carries neither: a badge over a
           feed with one dead path and one live one describes neither of them. Click a Publishers cell to list a
           group's publishers, one line each, and read the verdicts there. A publisher is{' '}
           <span className="text-emerald-500 font-medium">healthy</span> when it clears{' '}

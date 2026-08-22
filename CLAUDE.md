@@ -306,11 +306,31 @@ carries what one word cannot — session uptime and `established_transitions`. A
 hour after 200 flaps and one that came up once both read `up` in the ledger. Neither moves the
 publisher verdict, for the reason already given above.
 
-**It is not latency, and there is nowhere to get latency from.** No client-to-device RTT exists in
-lake or in the telemetry mirror: `fact_dz_device_link_latency` is device-to-device across the
-backbone, `fact_dz_internet_metro_latency` is metro-to-metro over the public internet, and the
-telemetry tables carry interface, ISIS, transceiver and BGP state with no timing of the access path.
-A last-mile figure on this column needs producer-side measurement first.
+The **round trip** on the same column comes from a third place: the client agent writes the
+smoothed BGP TCP RTT — read from the kernel's `tcp_info` for the BGP socket — into its own
+serviceability `User` account as `BgpRttNs`, and lake keeps the series in **`fact_dz_user_bgp_rtt`**
+(`dz_user_bgp_rtt_current` for the newest per user). It is the only measurement of the access path
+that exists: `fact_dz_device_link_latency` is device-to-device across the backbone,
+`fact_dz_internet_metro_latency` is metro-to-metro over the public internet, and the telemetry
+mirror carries no timing of the user tunnel at all.
+
+Three things about it are load-bearing:
+
+- **It is a fact, not a dimension column.** `attrs_hash` covers every payload column of
+  `dim_dz_users_history`, so a hashed rtt would mint a history row per user on every onchain
+  rewrite — the churn `20260708000001` refused for `last_bgp_reported_at` — and an unhashed one
+  would freeze at whatever value was current when some other attribute last changed. There is no
+  non-hashed-column mechanism in `DimensionType2Dataset` today, and this needs none.
+- **It is keyed on the onchain write**, `(user_pk, reported_at_slot)`, not on the observation. The
+  agent submits only on a BGP status change or its ~6-hourly keepalive while the indexer polls
+  every 60s, so the table grows with reports and `ReplacingMergeTree` collapses the re-observations.
+- **It can be hours old, and that is normal.** It is a property of the path, not a live signal, and
+  the UI carries its age for that reason. A report whose session was down carries a cleared rtt;
+  the fact keeps it, and the page drops it rather than rendering 0.00 ms.
+
+The fact's **column order is part of the contract**: `WriteBatch` issues a bare `INSERT` with no
+column list, so the migration and `dzsvc.userBGPRTTRow` must match position for position. That is
+what `TestLake_Serviceability_UserBGPRTT_RowLandsInItsColumns` exists to catch.
 
 ### Row order
 

@@ -7773,6 +7773,16 @@ export interface EdgeMulticastBGPSession {
   observed_at: string
 }
 
+/** The smoothed BGP TCP RTT between a client box and its DoubleZero device, from the
+ *  serviceability User account via fact_dz_user_bgp_rtt. */
+export interface EdgeMulticastBGPRtt {
+  nanos: number
+  /** When the indexer first saw this report, not when the agent measured it. */
+  observed_at: string
+  /** The session state the same report carried. */
+  status: string
+}
+
 /** One publisher path measured against its redundant peers, at the recorders that saw both. */
 export interface EdgeMulticastPathParity {
   /** (capture source, recording node) pairs where another path carried the same feed. */
@@ -7805,6 +7815,10 @@ export interface EdgeMulticastPublisher {
   /** What the DEVICE says about this publisher's BGP session, from telemetry rather than the
    *  ledger — distinct from bgp_status, and both are shown. Absent when the mirror has no row. */
   bgp_session?: EdgeMulticastBGPSession
+  /** The client agent's own report of the round trip to its device — the only measurement of the
+   *  access path that exists. Written onchain on a status change or a ~6-hourly keepalive, so it
+   *  can be hours old; read it as a property of the path, not as a live signal. */
+  bgp_rtt?: EdgeMulticastBGPRtt
   /** What the recorders received from this path, per second. Per GROUP, unlike bps, which is
    *  per tunnel — the one delivery figure on the line that needs no caveat. */
   msg_per_sec?: number

@@ -31,13 +31,18 @@ import (
 // which the device sets to `USER-<tunnel_id>`. Keyed with the device pubkey, that is exactly the
 // (device, tunnel) pair every publisher line already carries.
 //
-// # What this is NOT
+// # The RTT beside it
 //
-// It is not latency. There is no client-to-device RTT anywhere in lake or in the telemetry mirror:
-// fact_dz_device_link_latency is device-to-device across the backbone, fact_dz_internet_metro_latency
-// is metro-to-metro over the public internet, and the telemetry tables carry interface, ISIS,
-// transceiver and BGP state with no timing of the access path at all. Putting a last-mile RTT on
-// this column needs the producer side to measure and export it first.
+// The access-path latency does NOT come from here — the telemetry mirror carries no timing of the
+// user tunnel. It comes from the serviceability User account, where the client agent writes the
+// smoothed BGP TCP RTT it reads out of the kernel's tcp_info for the BGP socket, and lake keeps it
+// in fact_dz_user_bgp_rtt (see the indexer migration for why a fact and not a dimension column).
+//
+// So the two halves of this column are two different reports of one session, from opposite ends:
+// the device says whether the session is established and how often it has bounced, the client says
+// how far away the device is. They age very differently — telemetry is ~30s, the onchain report is
+// written on a status change or a ~6-hourly keepalive — which is why the RTT carries its own
+// observation time and must be read as a property of the path rather than as a live signal.
 
 // edgeMulticastBGPUserPeerVRF is the network instance user sessions are peered in, and
 // edgeMulticastBGPUserDescPrefix is the description the device writes for them.
@@ -138,6 +143,66 @@ func (a *API) queryEdgeMulticastBGPSessions(ctx context.Context) (map[edgeMultic
 		}
 		s.ObservedAt = s.ObservedAt.UTC()
 		out[edgeMulticastBGPKey{devicePK: devicePK, tunnelID: *tunnelID}] = s
+	}
+	return out, rows.Err()
+}
+
+// EdgeMulticastBGPRtt is the client agent's own report of the round trip to its device.
+type EdgeMulticastBGPRtt struct {
+	// Nanos is the smoothed BGP TCP RTT. Reported as zero by the contract when the session is
+	// down, and such a report is not surfaced — see queryEdgeMulticastBGPRtt.
+	Nanos uint64 `json:"nanos"`
+
+	// ObservedAt is when the indexer first saw this report, not when the agent took the
+	// measurement. The gap between them is bounded by the agent's keepalive, not by the poll
+	// loop, so this can legitimately be hours old and the UI has to say so.
+	ObservedAt time.Time `json:"observed_at"`
+
+	// Status is the session state the same report carried, so a reader can tell a live
+	// measurement from the last one taken before a flap.
+	Status string `json:"status"`
+}
+
+// queryEdgeMulticastBGPRtt reads the newest onchain RTT report per user.
+//
+// Keyed by user pk rather than by (device, tunnel): this is the ledger's own account and the pk is
+// what identifies it, where the telemetry side has only the device's free-text description.
+//
+// A report whose session was down carries a cleared RTT, and it is dropped here rather than shown
+// as 0.00 ms. The fact keeps it — the report happened and the series should show the session
+// going down — but a zero on this column would read as an impossibly fast path.
+func (a *API) queryEdgeMulticastBGPRtt(ctx context.Context) (map[string]EdgeMulticastBGPRtt, error) {
+	var exists uint8
+	if err := a.envDB(ctx).QueryRow(ctx, "EXISTS TABLE dz_user_bgp_rtt_current").Scan(&exists); err != nil {
+		return nil, err
+	}
+	if exists != 1 {
+		return nil, nil
+	}
+
+	query := `
+		SELECT user_pk, bgp_rtt_ns, bgp_status, event_ts
+		FROM dz_user_bgp_rtt_current
+		WHERE bgp_rtt_ns > 0
+		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0`
+
+	start := time.Now()
+	rows, err := a.envDB(ctx).Query(ctx, query)
+	metrics.RecordClickHouseQuery("edge_multicast_bgp_rtt", time.Since(start), err)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[string]EdgeMulticastBGPRtt{}
+	for rows.Next() {
+		var userPK string
+		var r EdgeMulticastBGPRtt
+		if err := rows.Scan(&userPK, &r.Nanos, &r.Status, &r.ObservedAt); err != nil {
+			return nil, err
+		}
+		r.ObservedAt = r.ObservedAt.UTC()
+		out[userPK] = r
 	}
 	return out, rows.Err()
 }

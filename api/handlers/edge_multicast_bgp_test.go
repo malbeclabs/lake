@@ -151,3 +151,95 @@ func TestGetEdgeMulticast_PublisherLinesReadByClientIP(t *testing.T) {
 		[]string{g.PublisherLines[0].ClientIP, g.PublisherLines[1].ClientIP},
 		"read in address order: .9 before .10, which a string compare reverses")
 }
+
+// The RTT half of the DZD column. It comes from the ledger's own account rather than from device
+// telemetry, so it has its own table, its own key and its own freshness — and its own way of
+// being absent.
+
+func createUserBGPRttView(t *testing.T, api *handlers.API) {
+	t.Helper()
+	ctx := t.Context()
+	require.NoError(t, api.DB.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS fact_dz_user_bgp_rtt (
+			event_ts DateTime64(3), ingested_at DateTime64(3),
+			user_pk String, device_pk String, client_ip String, dz_ip String,
+			tunnel_id Int32, reported_at_slot UInt64, up_at_slot UInt64,
+			bgp_status String, bgp_rtt_ns UInt64
+		) ENGINE = ReplacingMergeTree(ingested_at) ORDER BY (user_pk, reported_at_slot)`))
+	require.NoError(t, api.DB.Exec(ctx, `
+		CREATE OR REPLACE VIEW dz_user_bgp_rtt_current AS
+		WITH ranked AS (
+			SELECT *, row_number() OVER (PARTITION BY user_pk ORDER BY reported_at_slot DESC, ingested_at DESC) AS rn
+			FROM fact_dz_user_bgp_rtt
+		)
+		SELECT event_ts, ingested_at, user_pk, device_pk, client_ip, dz_ip, tunnel_id,
+		       reported_at_slot, up_at_slot, bgp_status, bgp_rtt_ns
+		FROM ranked WHERE rn = 1`))
+	t.Cleanup(func() {
+		require.NoError(t, api.DB.Exec(context.Background(), "DROP VIEW IF EXISTS dz_user_bgp_rtt_current"))
+		require.NoError(t, api.DB.Exec(context.Background(), "DROP TABLE IF EXISTS fact_dz_user_bgp_rtt"))
+	})
+}
+
+func insertUserBGPRtt(t *testing.T, api *handlers.API, userPK, status string, rttNs, slot uint64, ago time.Duration) {
+	t.Helper()
+	require.NoError(t, api.DB.Exec(t.Context(), `
+		INSERT INTO fact_dz_user_bgp_rtt
+			(event_ts, ingested_at, user_pk, device_pk, client_ip, dz_ip, tunnel_id,
+			 reported_at_slot, up_at_slot, bgp_status, bgp_rtt_ns)
+		VALUES (now64(3) - ?, now64(3), ?, 'dev-ams1', '10.0.0.9', '10.0.0.9', 509, ?, ?, ?, ?)`,
+		uint64(ago.Seconds()), userPK, slot, slot, status, rttNs))
+}
+
+// The newest report wins, and it reaches the line keyed on the user pk.
+func TestGetEdgeMulticast_BGPRttIsTheNewestReport(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertEdgeMulticastCaptureGroups(t, api)
+	insertEdgeMulticastCapturePublisher(t, api, "group-k") // user-kpub
+	createUserBGPRttView(t, api)
+
+	insertUserBGPRtt(t, api, "user-kpub", "up", 900_000, 900_100, 8*time.Hour)
+	insertUserBGPRtt(t, api, "user-kpub", "up", 428_000, 900_500, 2*time.Hour)
+
+	g := findEdgeMulticastGroup(t, getEdgeMulticast(t, api), "edge-kalshi-sports-mbp")
+	require.Len(t, g.PublisherLines, 1)
+	rtt := g.PublisherLines[0].BGPRtt
+	require.NotNil(t, rtt)
+	assert.EqualValues(t, 428_000, rtt.Nanos, "the report at the higher slot is the current one")
+	assert.Equal(t, "up", rtt.Status)
+	assert.WithinDuration(t, time.Now().Add(-2*time.Hour), rtt.ObservedAt, time.Minute,
+		"the age travels with it: this figure is written on a keepalive and hours old is normal")
+}
+
+// A report whose session was down carries a cleared rtt. It stays in the fact — the report
+// happened — and must not reach the page as a 0.00 ms path.
+func TestGetEdgeMulticast_BGPRttClearedByADownReportIsNotShown(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertEdgeMulticastCaptureGroups(t, api)
+	insertEdgeMulticastCapturePublisher(t, api, "group-k")
+	createUserBGPRttView(t, api)
+
+	insertUserBGPRtt(t, api, "user-kpub", "up", 428_000, 900_100, 8*time.Hour)
+	insertUserBGPRtt(t, api, "user-kpub", "down", 0, 900_500, time.Hour)
+
+	g := findEdgeMulticastGroup(t, getEdgeMulticast(t, api), "edge-kalshi-sports-mbp")
+	require.Len(t, g.PublisherLines, 1)
+	assert.Nil(t, g.PublisherLines[0].BGPRtt,
+		"a cleared rtt is the absence of a measurement, never an impossibly fast path")
+}
+
+// The table is absent in local dev and in every test that does not create it. That costs the
+// figure and nothing else.
+func TestGetEdgeMulticast_BGPRttAbsentTableCostsOnlyTheFigure(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertEdgeMulticastCaptureGroups(t, api)
+	insertEdgeMulticastCapturePublisher(t, api, "group-k")
+
+	g := findEdgeMulticastGroup(t, getEdgeMulticast(t, api), "edge-kalshi-sports-mbp")
+	require.Len(t, g.PublisherLines, 1)
+	assert.Nil(t, g.PublisherLines[0].BGPRtt)
+	assert.NotEmpty(t, g.PublisherLines[0].DeviceCode, "the rest of the cell is unaffected")
+}
