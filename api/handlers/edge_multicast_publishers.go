@@ -119,6 +119,15 @@ type EdgeMulticastPublisher struct {
 	// is what makes Bps un-attributable to this group alone.
 	MultiGroup bool `json:"multi_group"`
 
+	// devicePK is unexported: it is the join key for the device-side BGP session and has no
+	// business on the wire, where DeviceCode is the readable form of the same thing.
+	devicePK string
+
+	// BGPSession is what the device itself says about this publisher's session, nil when the
+	// telemetry mirror is absent or has no row for the (device, tunnel) pair. Distinct from
+	// BGPStatus above, which is the ledger's word: see edge_multicast_bgp.go for why both.
+	BGPSession *EdgeMulticastBGPSession `json:"bgp_session,omitempty"`
+
 	// MsgPerSec is what the recorders actually received from this path, per second over the
 	// observation window, nil when no recorder saw it. Unlike Bps it is per group rather than
 	// per tunnel, so it is the one delivery figure on the line that needs no caveat.
@@ -300,6 +309,7 @@ func (a *API) queryEdgeMulticastPublisherLines(ctx context.Context, groupPKs []s
 			l.client_ip,
 			l.dz_ip,
 			l.owner_pubkey,
+			l.device_pk,
 			COALESCE(d.code, '') AS device_code,
 			l.tunnel_id,
 			l.bgp_status AS bgp_status,
@@ -328,13 +338,15 @@ func (a *API) queryEdgeMulticastPublisherLines(ctx context.Context, groupPKs []s
 		var multiGroup bool
 		var hasRate uint8
 		var ownerPubkey string
+		var devicePK string
 		var bps *float64
 		var bucket *time.Time
 		if err := rows.Scan(&groupPK, &line.UserPK, &line.ClientIP, &line.DZIP, &ownerPubkey,
-			&line.DeviceCode, &line.TunnelID, &line.BGPStatus, &multiGroup, &hasRate, &bps, &bucket); err != nil {
+			&devicePK, &line.DeviceCode, &line.TunnelID, &line.BGPStatus, &multiGroup, &hasRate, &bps, &bucket); err != nil {
 			return nil, err
 		}
 		line.MultiGroup = multiGroup
+		line.devicePK = devicePK
 		// No row, or a row the view itself marked no_data: both are "nothing measured this
 		// publisher", and neither may be presented as a rate of zero.
 		if hasRate == 1 {

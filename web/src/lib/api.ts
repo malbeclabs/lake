@@ -7760,6 +7760,19 @@ export interface EdgeMulticastRoleCounts {
   class_derived: number
 }
 
+/** The DoubleZero device's own view of a publisher's BGP session. Not latency: no client-to-device
+ *  RTT exists in lake or in the telemetry mirror. */
+export interface EdgeMulticastBGPSession {
+  /** 'ESTABLISHED' | 'ACTIVE' | 'CONNECT' | 'IDLE'. */
+  state: string
+  /** established_transitions: a lifetime total on this device, never a rate. */
+  flaps: number
+  /** When the session last came up; absent when the device has never established it. */
+  established_at?: string
+  /** The telemetry sample this came from. */
+  observed_at: string
+}
+
 /** One publisher path measured against its redundant peers, at the recorders that saw both. */
 export interface EdgeMulticastPathParity {
   /** (capture source, recording node) pairs where another path carried the same feed. */
@@ -7789,6 +7802,9 @@ export interface EdgeMulticastPublisher {
    *  'stalled' | 'behind' | 'unknown' | 'healthy'. BGP status is shown beside it, never folded
    *  into it. */
   health?: string
+  /** What the DEVICE says about this publisher's BGP session, from telemetry rather than the
+   *  ledger — distinct from bgp_status, and both are shown. Absent when the mirror has no row. */
+  bgp_session?: EdgeMulticastBGPSession
   /** What the recorders received from this path, per second. Per GROUP, unlike bps, which is
    *  per tunnel — the one delivery figure on the line that needs no caveat. */
   msg_per_sec?: number

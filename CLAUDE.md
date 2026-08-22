@@ -277,6 +277,26 @@ and can legitimately disagree; and **a series whose gaps were never counted**, w
 `behind` sits last of the faults because it is the mildest of them — the path is delivering, just
 less of the feed than its peer.
 
+### The DZD column
+
+`edge_multicast_bgp.go` reads the DoubleZero device's own view of each publisher's BGP session from
+`telemetry_<env>.bgp_neighbors_latest`. User sessions are `network_instance = 'vrf1'`, `peer_type =
+'EXTERNAL'`, addressed on a link-local /31 that appears nowhere else in this schema — what makes
+them addressable is `description`, which the device sets to `USER-<tunnel_id>`. With the device
+pubkey that is exactly the (device, tunnel) pair every publisher line already carries.
+
+It is shown **beside** `dz_users_current.bgp_status`, not instead of it. The ledger word is written
+by the client agent and read out of a snapshot minutes old; this is the device, ~30s fresh, and it
+carries what one word cannot — session uptime and `established_transitions`. A session up for an
+hour after 200 flaps and one that came up once both read `up` in the ledger. Neither moves the
+publisher verdict, for the reason already given above.
+
+**It is not latency, and there is nowhere to get latency from.** No client-to-device RTT exists in
+lake or in the telemetry mirror: `fact_dz_device_link_latency` is device-to-device across the
+backbone, `fact_dz_internet_metro_latency` is metro-to-metro over the public internet, and the
+telemetry tables carry interface, ISIS, transceiver and BGP state with no timing of the access path.
+A last-mile figure on this column needs producer-side measurement first.
+
 ### Path parity
 
 `behind` comes from `edgeMulticastPathParity`: a publisher path measured against the other paths of

@@ -9,6 +9,7 @@ import { handleRowClick } from '@/lib/utils'
 import {
   fetchEdgeMulticast,
   type EdgeMulticastChannelInstance,
+  type EdgeMulticastBGPSession,
   type EdgeMulticastGroup,
   type EdgeMulticastPathParity,
   type EdgeMulticastPublisher,
@@ -67,12 +68,6 @@ function serviceLabel(code: string): string {
   return SERVICE_LABELS[code] ?? code
 }
 
-// The plane a group carries. Monospaced and dimmed rather than a coloured badge: it identifies the
-// row, it does not signal anything, and a badge here would compete with the health column.
-function PlaneCell({ plane }: { plane?: string }) {
-  if (!plane) return <span className="text-muted-foreground">—</span>
-  return <span className="font-mono text-xs text-muted-foreground">{plane}</span>
-}
 
 
 // Per-publisher line states, dot colour. 'thin' and 'idle' are what the group-level dot used to
@@ -259,6 +254,7 @@ function PublisherCell({
 function PublisherLineRow({
   line,
   asOf,
+  now,
   showLastHeard,
   showSequence,
   showObservations,
@@ -267,6 +263,7 @@ function PublisherLineRow({
 }: {
   line: EdgeMulticastPublisher
   asOf: number
+  now: number
   showLastHeard: boolean
   showSequence: boolean
   showObservations: boolean
@@ -318,9 +315,14 @@ function PublisherLineRow({
           <span className="text-muted-foreground">—</span>
         )}
       </td>
-      <td className="px-3 py-1.5 whitespace-nowrap text-muted-foreground">
-        <span className="font-mono">{line.device_code || '—'}</span>
-        {line.tunnel_id ? <span className="text-xs"> tun {line.tunnel_id}</span> : null}
+      <td className="px-3 py-1.5 whitespace-nowrap">
+        <DZDCell
+          deviceCode={line.device_code}
+          tunnelId={line.tunnel_id}
+          session={line.bgp_session}
+          ledgerStatus={line.bgp_status}
+          now={now}
+        />
       </td>
       <td className="px-3 py-1.5 whitespace-nowrap">
         <span className="inline-flex items-center gap-2">
@@ -334,18 +336,9 @@ function PublisherLineRow({
               </span>
             </span>
           </Tooltip>
-          {/* A publisher with no BGP session cannot be sending the feed it is registered to send.
-              Rendered next to the counter verdict rather than replacing it, because the two can
-              legitimately disagree: the ledger snapshot and the rate bucket are minutes apart, so
-              a publisher can read 'down' here while its tunnel still moved bytes. */}
-          {line.bgp_status === 'down' && (
-            <Tooltip content="BGP session down in the ledger: this publisher has no session to send the feed over. The counter verdict beside it is measured minutes apart, so the two can disagree.">
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-red-500/15 text-red-500 text-[10px] font-medium">
-                <AlertCircle className="h-3 w-3" />
-                BGP down
-              </span>
-            </Tooltip>
-          )}
+          {/* The BGP badge that used to sit here moved into the DZD cell, where the device's own
+              view of the session lives. Two BGP markers three columns apart was the duplication
+              that pushed this table past the viewport. */}
         </span>
       </td>
       <td className="px-3 py-1.5" />
@@ -355,6 +348,9 @@ function PublisherLineRow({
         ) : (
           <RateCell bps={line.bps} ambiguous={line.multi_group} stale={stale} />
         )}
+        <div className="text-[10px] text-muted-foreground/70">
+          {age === undefined ? '—' : <span className={stale ? 'text-amber-500' : undefined}>{formatAge(age)}</span>}
+        </div>
       </td>
       {showObservations && (
         <td className="px-3 py-1.5 text-right whitespace-nowrap">
@@ -366,13 +362,6 @@ function PublisherLineRow({
           <PeerParityCell parity={line.path_parity} />
         </td>
       )}
-      <td className="px-3 py-1.5 text-right whitespace-nowrap">
-        {age === undefined ? (
-          <span className="text-muted-foreground">—</span>
-        ) : (
-          <span className={stale ? 'text-amber-500' : 'text-muted-foreground'}>{formatAge(age)}</span>
-        )}
-      </td>
       {/* "Heard" is per group — the recorders' own plane, with nothing to say about one
           publisher — but a sequence series is per publisher, so that column is filled in. */}
       {showLastHeard && <td className="px-3 py-1.5" />}
@@ -428,6 +417,66 @@ function PeerParityCell({ parity }: { parity?: EdgeMulticastPathParity }) {
     >
       <span className={`tabular-nums ${behind ? 'text-amber-500' : 'text-muted-foreground'}`}>
         {parity.worst_ratio.toFixed(3)}
+      </span>
+    </Tooltip>
+  )
+}
+
+// The DoubleZero device a path attaches to, and what that device says about its BGP session.
+//
+// Session state comes from telemetry — the device's own view, sampled every 30s — while the badge
+// the ledger writes is minutes old and is one word. Both are here because they can legitimately
+// disagree, and the device's view carries what the ledger's cannot: how long the session has been
+// up and how many times it has bounced. A session up for an hour after 200 flaps is a different
+// call to action from one that came up once, and the ledger reports both as 'up'.
+//
+// This is deliberately NOT latency. There is no client-to-device RTT in lake or in the telemetry
+// mirror — the latency tables are device-to-device across the backbone and metro-to-metro over the
+// public internet — so a last-mile figure here would have to be invented.
+function DZDCell({
+  deviceCode,
+  tunnelId,
+  session,
+  ledgerStatus,
+  now,
+}: {
+  deviceCode?: string
+  tunnelId: number
+  session?: EdgeMulticastBGPSession
+  ledgerStatus?: string
+  now: number
+}) {
+  const established = session?.established_at ? ageSecs(session.established_at, now) : undefined
+  // The device is the authority when it has a row; the ledger word is the fallback for a publisher
+  // the telemetry mirror has nothing for, and it never silently stands in for a reading.
+  const down = session ? session.state !== 'ESTABLISHED' : ledgerStatus === 'down'
+  const label = session ? session.state.toLowerCase() : ledgerStatus === 'down' ? 'bgp down' : ''
+
+  const detail = session
+    ? [
+        `session ${session.state.toLowerCase()} on the device`,
+        established === undefined ? 'never established' : `up ${formatAge(established).replace(' ago', '')}`,
+        `${session.flaps.toLocaleString()} established transition(s) over this session's life on the device — a total, not a rate`,
+        `ledger says ${ledgerStatus || 'unknown'}`,
+        `device telemetry ${formatAge(ageSecs(session.observed_at, now) ?? 0)}`,
+      ].join(' · ')
+    : 'no device telemetry for this (device, tunnel): the badge is the ledger\'s word, which is a snapshot minutes old'
+
+  return (
+    <Tooltip content={detail}>
+      <span className="inline-flex flex-col leading-tight">
+        <span className="font-mono text-xs text-muted-foreground">
+          {deviceCode || '—'}
+          {tunnelId ? <span className="text-[10px]"> tun {tunnelId}</span> : null}
+        </span>
+        {label && (
+          <span className={`text-[10px] ${down ? 'text-red-500' : 'text-muted-foreground/70'}`}>
+            {label}
+            {/* Flaps only when there are some to report: a 1 on every healthy line is noise, and
+                this column is already carrying two facts. */}
+            {session && session.flaps > 1 ? ` · ${session.flaps} flaps` : ''}
+          </span>
+        )}
       </span>
     </Tooltip>
   )
@@ -692,9 +741,11 @@ function GroupRow({
       <td className="px-3 py-3 whitespace-nowrap">
         <CopyableText text={group.multicast_ip} className="font-mono text-sm text-muted-foreground" />
       </td>
-      <td className="px-3 py-3 text-sm whitespace-nowrap">
-        <PlaneCell plane={group.plane} />
-      </td>
+      {/* DZD is per publisher: which DoubleZero device a path attaches to, and what that device
+          says about its session. A group spans several, so the cell is empty here. The plane the
+          group carries used to live in this column and is gone — it was the last three characters
+          of the code two columns to the left. */}
+      <td className="px-3 py-3" />
       <td className="px-3 py-3 text-sm">
         <PublisherCell
           group={group}
@@ -707,21 +758,24 @@ function GroupRow({
       <td className="px-3 py-3 text-sm">
         <RecorderCell group={group} />
       </td>
-      <td className="px-3 py-3 text-sm text-right">
+      {/* The bucket age rides under the rate rather than in a column of its own. It is a property
+          of that number and of nothing else on the row, and a whole column for it was pushing the
+          verdicts off the right edge of the table. */}
+      <td className="px-3 py-3 text-sm text-right whitespace-nowrap">
         <RateCell bps={group.ingress_bps} ambiguous={group.traffic_ambiguous} stale={stale} />
+        <div className="text-[10px] text-muted-foreground/70">
+          {age === undefined ? (
+            'no data'
+          ) : (
+            <span className={stale ? 'text-amber-500' : undefined}>{formatAge(age)}</span>
+          )}
+        </div>
       </td>
       {/* Msg/s and Peer are per PATH and the group row carries neither. Summing recorded message
           rates over a group's paths would double the feed — redundant paths carry the same
           traffic — and a parity ratio has no meaning until you name which path it is about. */}
       {showObservations && <td className="px-3 py-3" />}
       {showObservations && <td className="px-3 py-3" />}
-      <td className="px-3 py-3 text-sm text-right whitespace-nowrap">
-        {age === undefined ? (
-          <span className="text-muted-foreground">no data</span>
-        ) : (
-          <span className={stale ? 'text-amber-500' : 'text-muted-foreground'}>{formatAge(age)}</span>
-        )}
-      </td>
       {showLastHeard && (
         <td className="px-3 py-3 text-sm text-right whitespace-nowrap">
           <LastHeardCell group={group} now={now} />
@@ -757,6 +811,7 @@ function GroupRow({
           key={`${group.pk}-${line.user_pk}`}
           line={line}
           asOf={asOf}
+          now={now}
           showLastHeard={showLastHeard}
           showSequence={showSequence}
           showObservations={showObservations}
@@ -801,7 +856,7 @@ function ServiceSection({
   // Only the truncation notice spans the table now; the publisher lines carry a cell per column,
   // so the count still has to match the header exactly — a mismatch silently shifts every group
   // column one to the left.
-  const columns = 8 + (showObservations ? 2 : 0) + (showLastHeard ? 1 : 0) + (showSequence ? 1 : 0)
+  const columns = 7 + (showObservations ? 2 : 0) + (showLastHeard ? 1 : 0) + (showSequence ? 1 : 0)
   const silent = service.groups.filter((g) => g.silent).length
 
   return (
@@ -819,19 +874,23 @@ function ServiceSection({
           </span>
         )}
       </div>
-      <div className="overflow-x-auto">
+      {/* Vertical before horizontal. A section is capped and scrolls down with its header pinned,
+          which keeps the shreds groups — twelve publisher lines each — from pushing every section
+          below them off the screen. overflow-x stays as the fallback for a narrow viewport, but
+          the column set is now meant to fit: the plane badge duplicated the code, Measured folded
+          into the rate it describes, and the ledger's BGP marker joined the device's own in DZD. */}
+      <div className="overflow-auto max-h-[70vh]">
         <table className="w-full">
-          <thead>
+          <thead className="sticky top-0 z-10 bg-card">
             <tr className="text-sm text-left text-muted-foreground border-b border-border">
               <th className="px-3 py-2 font-medium">Group</th>
               <th className="px-3 py-2 font-medium">Multicast IP</th>
-              <th className="px-3 py-2 font-medium">Plane</th>
+              <th className="px-3 py-2 font-medium">DZD</th>
               <th className="px-3 py-2 font-medium">Publishers</th>
               <th className="px-3 py-2 font-medium">Recorders</th>
               <th className="px-3 py-2 font-medium text-right">Ingress</th>
               {showObservations && <th className="px-3 py-2 font-medium text-right">Msg/s</th>}
               {showObservations && <th className="px-3 py-2 font-medium text-right">Peer</th>}
-              <th className="px-3 py-2 font-medium text-right">Measured</th>
               {showLastHeard && <th className="px-3 py-2 font-medium text-right">Heard</th>}
               {showSequence && <th className="px-3 py-2 font-medium">Sequence</th>}
               <th className="px-3 py-2 font-medium">Health</th>
@@ -976,7 +1035,10 @@ export function EdgeMulticastPage() {
         <p className="text-xs text-muted-foreground mb-6 max-w-3xl">
           Rates are {data?.rate_grain_minutes ?? 5}-minute counter rollups measured at each member's tunnel and
           land a few minutes behind wall clock — the “Measured” column is the age of the newest bucket behind
-          the row. “Health” and “Sequence” are per PUBLISHER and the group row carries neither: a badge over a
+          the row, shown under the rate it describes. “DZD” is the DoubleZero device a path attaches
+          to and what that device says about its BGP session — state, uptime and flap count, from
+          telemetry rather than the ledger snapshot, which is why it can disagree with it. It is not
+          latency: no client-to-device RTT exists in this data. “Health” and “Sequence” are per PUBLISHER and the group row carries neither: a badge over a
           feed with one dead path and one live one describes neither of them. Click a Publishers cell to list a
           group's publishers, one line each, and read the verdicts there. A publisher is{' '}
           <span className="text-emerald-500 font-medium">healthy</span> when it clears{' '}

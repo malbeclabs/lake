@@ -471,6 +471,14 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 	// than the page.
 	pathParity, pathRates := a.edgeMulticastObservationStats(ctx, captureSources)
 
+	// The device-side BGP session. One round trip for the fleet, and an absent telemetry mirror
+	// or a failed read costs the column rather than the page — same contract as last-heard.
+	bgpSessions, err := a.queryEdgeMulticastBGPSessions(ctx)
+	if err != nil {
+		slog.Warn("edge multicast bgp sessions unavailable", "error", err)
+		bgpSessions = nil
+	}
+
 	now := time.Now().UTC()
 	resp := &EdgeMulticastResponse{
 		GeneratedAt:        now,
@@ -486,7 +494,7 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 
 	byService := map[string][]EdgeMulticastGroup{}
 	for _, g := range groups {
-		row := buildEdgeMulticastGroup(g, membership[g.PK], rates[g.PK], lastHeard[g.PK], publisherLines[g.PK], sequence[g.PK], pathParity, pathRates)
+		row := buildEdgeMulticastGroup(g, membership[g.PK], rates[g.PK], lastHeard[g.PK], publisherLines[g.PK], sequence[g.PK], pathParity, pathRates, bgpSessions)
 		codes := feeds.byGroup[g.PK]
 		if len(codes) == 0 {
 			codes = []string{edgeMulticastUnclaimedService}
@@ -525,7 +533,7 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 // the remainder rather than read: a member the view dropped (no health row at all) is exactly
 // as unknown as one it marked 'no_data', and folding both into the remainder keeps the parts
 // summing to Total whatever the view does.
-func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership, r edgeMulticastRates, lh edgeMulticastLastHeard, lines []EdgeMulticastPublisher, sequence *EdgeMulticastSequenceHealth, pathParity map[edgeMulticastPathKey]*EdgeMulticastPathParity, pathRates map[edgeMulticastPathKey]float64) EdgeMulticastGroup {
+func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership, r edgeMulticastRates, lh edgeMulticastLastHeard, lines []EdgeMulticastPublisher, sequence *EdgeMulticastSequenceHealth, pathParity map[edgeMulticastPathKey]*EdgeMulticastPathParity, pathRates map[edgeMulticastPathKey]float64, bgpSessions map[edgeMulticastBGPKey]EdgeMulticastBGPSession) EdgeMulticastGroup {
 	out := EdgeMulticastGroup{
 		PK:                   g.PK,
 		Code:                 g.Code,
@@ -569,6 +577,12 @@ func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership
 	for i := range lines {
 		// Keyed on the tunnel address, the same join the series attribution makes: it is
 		// what the datagrams carry and what the recorder wrote down.
+		if s, ok := bgpSessions[edgeMulticastBGPKey{
+			devicePK: lines[i].devicePK, tunnelID: lines[i].TunnelID,
+		}]; ok {
+			session := s
+			lines[i].BGPSession = &session
+		}
 		if lines[i].DZIP != "" {
 			key := edgeMulticastPathKey{groupPK: g.PK, ip: lines[i].DZIP}
 			lines[i].PathParity = pathParity[key]
