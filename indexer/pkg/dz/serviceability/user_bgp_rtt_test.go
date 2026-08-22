@@ -35,6 +35,23 @@ func newBGPRTTStore(t *testing.T) (*Store, func() any) {
 	return store, query
 }
 
+// eventTS is the surviving event_ts for one report, which is what the page ages against.
+func bgpRTTEventTS(t *testing.T, store *Store, userPK string, slot uint64) time.Time {
+	t.Helper()
+	conn, err := store.GetClickHouse().Conn(t.Context())
+	require.NoError(t, err)
+	defer conn.Close()
+	rows, err := conn.Query(t.Context(), `
+		SELECT event_ts FROM fact_dz_user_bgp_rtt FINAL
+		WHERE user_pk = ? AND reported_at_slot = ?`, userPK, slot)
+	require.NoError(t, err)
+	defer rows.Close()
+	require.True(t, rows.Next(), "the report must be there to be checked")
+	var at time.Time
+	require.NoError(t, rows.Scan(&at))
+	return at.UTC()
+}
+
 func bgpUser(pk string, tunnel uint16, status string, rttNs, reportedSlot uint64) User {
 	return User{
 		PK: pk, OwnerPubkey: testPK(2), Status: "activated", Kind: "multicast",
@@ -106,6 +123,15 @@ func TestLake_Serviceability_UserBGPRTT_ReobservationCollapses(t *testing.T) {
 		base.Add(4*time.Minute)))
 
 	require.EqualValues(t, 2, count(), "three observations of one report are one row; the new report is the second")
+
+	// And the surviving row still says when the report was FIRST seen. The dedup version is
+	// ingested_at, so the third observation is the row that wins; stamping event_ts with the poll
+	// clock would leave it reading 12:02 — two minutes of age for a report the page is supposed to
+	// be able to show as hours old.
+	require.Equal(t, base, bgpRTTEventTS(t, store, userPK, 900_123),
+		"a re-observed report keeps the event_ts of its first observation")
+	require.Equal(t, base.Add(4*time.Minute), bgpRTTEventTS(t, store, userPK, 900_500),
+		"a report seen for the first time is stamped with that observation")
 }
 
 // A user the agent has never reported for contributes nothing. Its rtt would be a zero that reads

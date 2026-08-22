@@ -7911,8 +7911,10 @@ export interface EdgeMulticastGroup {
   publishers: EdgeMulticastRoleCounts
   subscribers: EdgeMulticastRoleCounts
   /** How many publisher lines landed in each verdict — a count of lines, not a verdict over them.
-   *  Tallied before the display cap, and what a collapsed group has in place of a badge. */
-  publisher_verdicts: EdgeMulticastPublisherVerdicts
+   *  Tallied before the display cap, and what a collapsed group has in place of a badge.
+   *  Optional because page_cache rows outlive a deploy: a payload written before this field
+   *  existed, or one an old pod rewrites mid-rollout, arrives without it. */
+  publisher_verdicts?: EdgeMulticastPublisherVerdicts
   /** Worst-first, capped server-side; publisher_lines_total is the count before the cap. */
   publisher_lines: EdgeMulticastPublisher[]
   publisher_lines_total: number

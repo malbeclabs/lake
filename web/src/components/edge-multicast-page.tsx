@@ -14,6 +14,7 @@ import {
   type EdgeMulticastGroup,
   type EdgeMulticastPathParity,
   type EdgeMulticastPublisher,
+  type EdgeMulticastPublisherVerdicts,
   type EdgeMulticastSequenceHealth,
   type EdgeMulticastService,
 } from '@/lib/api'
@@ -107,10 +108,24 @@ const PUBLISHER_HEALTH_BADGE: Record<string, string> = {
   unknown: 'bg-muted text-muted-foreground',
 }
 
+// The zero tally, for a payload that predates the field. Every count is zero, so `measured` is
+// zero and the cell reads grey — "nothing measured these lines", which is exactly true of a payload
+// that never carried the tally.
+const EMPTY_PUBLISHER_VERDICTS: EdgeMulticastPublisherVerdicts = {
+  healthy: 0,
+  thin: 0,
+  gapped: 0,
+  stalled: 0,
+  behind: 0,
+  silent: 0,
+  unrecorded: 0,
+  unknown: 0,
+}
+
 // What each verdict means, spelled out: the badge is one word and the difference between "nothing
 // measured it" and "it measured zero" is the difference between a monitoring gap and an outage.
 const PUBLISHER_HEALTH_DETAIL: Record<string, string> = {
-  healthy: 'above the floor, and its recorded series is intact',
+  healthy: 'above the floor, and nothing was found wrong in what was recorded of it',
   thin: 'the tunnel is moving something, not the product',
   stalled: 'its recorded series stopped advancing: a dead path or a dead recorder',
   behind: 'this path is delivering less of the feed than its redundant peer, at the same recorder',
@@ -207,7 +222,11 @@ function PublisherCell({
   }
 
   const below = group.publishers_below_floor
-  const v = group.publisher_verdicts
+  // Defaulted, and not for tidiness: page_cache rows outlive a deploy and an old pod can rewrite
+  // the old shape mid-rollout, so a payload with no publisher_verdicts is a recurring state rather
+  // than a one-off migration. Reading a field off undefined here throws past this page's boundary
+  // and into the root one, replacing the whole app with the error fallback.
+  const v = group.publisher_verdicts ?? EMPTY_PUBLISHER_VERDICTS
   const faulted = v.thin + v.gapped + v.stalled + v.behind + v.silent
   // Measured is healthy plus faulted: a line nothing measured cannot colour the cell either way.
   const measured = v.healthy + faulted
@@ -397,7 +416,7 @@ function PublisherLineRow({
         </td>
       )}
       <td className="px-3 py-1.5">
-        <PublisherHealthBadge health={line.health} parity={line.path_parity} />
+        <PublisherHealthBadge health={line.health} parity={line.path_parity} sequence={line.sequence} />
       </td>
     </tr>
   )
@@ -531,17 +550,29 @@ function DZDCell({
 function PublisherHealthBadge({
   health,
   parity,
+  sequence,
 }: {
   health?: string
   parity?: EdgeMulticastPathParity
+  sequence?: EdgeMulticastSequenceHealth
 }) {
   if (!health) return <span className="text-muted-foreground">—</span>
   // The ratio earns its place only on the verdict it produced: everywhere else it is a passing
   // number nobody is asking about, and this column has one job.
-  const detail =
+  let detail =
     health === 'behind' && parity
       ? `${PUBLISHER_HEALTH_DETAIL.behind} — ${(parity.worst_ratio * 100).toFixed(1)}% of its peer on ${parity.worst_source ?? 'that feed'}${parity.worst_node ? ` at ${parity.worst_node}` : ''}, ${parity.behind} of ${parity.compared} compared`
       : (PUBLISHER_HEALTH_DETAIL[health] ?? health)
+  // 'healthy' on a plane with no gap marker is a weaker statement than on one with it, and the
+  // difference is not visible in the word. Said here rather than folded into the verdict: there is
+  // no state between healthy and a fault, and inventing one would paint every top-of-book line
+  // permanently non-green for a reason that is a property of the plane, not of the path.
+  if (health === 'healthy' && sequence && (sequence.gaps_unmeasured ?? 0) > 0) {
+    detail +=
+      sequence.gaps_unmeasured === sequence.instances.length
+        ? ' — its series is advancing, and this plane writes no gap marker, so loss was never checked'
+        : ' — some of its series are on a plane with no gap marker, where loss was never checked'
+  }
   return (
     <Tooltip content={detail}>
       <span
@@ -1126,7 +1157,8 @@ export function EdgeMulticastPage() {
             neither: a badge over a feed with one dead path and one live one describes neither of them.
             Expand a group's Publishers cell to read the verdicts, one line per publisher. A publisher is{' '}
             <span className="text-emerald-500 font-medium">healthy</span> when it clears{' '}
-            {formatBps(data?.publisher_floor_bps ?? 0)} and its recorded series is intact,{' '}
+            {formatBps(data?.publisher_floor_bps ?? 0)} and nothing was found wrong in what was
+            recorded of it,{' '}
             <span className="text-amber-500 font-medium">thin</span> below that floor,{' '}
             <span className="text-red-500 font-medium">silent</span> when its counter read zero, and{' '}
             <span className="text-muted-foreground font-medium">unknown</span> when nothing measured it — a

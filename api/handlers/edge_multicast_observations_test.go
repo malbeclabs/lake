@@ -399,6 +399,24 @@ func TestEdgeMulticastPathParity_FloorBoundary(t *testing.T) {
 	assert.Equal(t, 1, fail["group-t|10.0.0.10"].Behind, "97%% does not")
 }
 
+// Below a few hundred messages the ratio is noise: one message is a percent or more, where the
+// floor leaves two. An off-hours league, or a path that came up inside the window, would otherwise
+// read 'behind' — and one failed pair is enough to mark the whole line.
+func TestEdgeMulticastPathParity_TrickleIsNotJudged(t *testing.T) {
+	parity := handlers.EdgeMulticastPathParityForTest(parityGroups, []handlers.EdgeMulticastObservationSeries{
+		obsSeries("tob_edge_kalshi_sports_ncaamb", "cmh-rec1", "10.0.0.9", 15, 5),
+		obsSeries("tob_edge_kalshi_sports_ncaamb", "cmh-rec1", "10.0.0.10", 115, 4),
+	})
+	assert.Empty(t, parity, "4 messages against 5 is not a 20%% deficit, it is no measurement")
+
+	// And the floor is on the BEST path of the pair, so a real deficit at volume still lands.
+	judged := handlers.EdgeMulticastPathParityForTest(parityGroups, []handlers.EdgeMulticastObservationSeries{
+		obsSeries("tob_edge_kalshi_sports_ncaamb", "cmh-rec1", "10.0.0.9", 15, 600),
+		obsSeries("tob_edge_kalshi_sports_ncaamb", "cmh-rec1", "10.0.0.10", 115, 480),
+	})
+	assert.Equal(t, 1, judged["group-t|10.0.0.10"].Behind)
+}
+
 // A box publishes into several groups, and a path that is behind on one of them must not mark that
 // box's line on another. Parity is keyed on (group, publisher) for exactly this.
 func TestEdgeMulticastPathParity_IsScopedToTheGroup(t *testing.T) {

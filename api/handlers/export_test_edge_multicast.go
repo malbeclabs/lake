@@ -36,3 +36,20 @@ func EdgeMulticastPathRatesForTest(groups []EdgeMulticastGroupForTest, series []
 	}
 	return out
 }
+
+// EdgeMulticastPublisherHealthForTest exposes the per-publisher verdict to the external test
+// package. The verdict is pure — a line plus whether the group has any recorded series at all —
+// and its ranking is the page's whole contract, so it is worth pinning without a database in the
+// way.
+func EdgeMulticastPublisherHealthForTest(line EdgeMulticastPublisher, groupHasSeries bool) string {
+	return edgeMulticastPublisherHealth(line, groupHasSeries)
+}
+
+// EdgeMulticastPublisherStatus values, for tests that need to build a line in a given counter
+// state without importing the constants.
+const (
+	EdgeMulticastPubPublishingForTest = edgeMulticastPubPublishing
+	EdgeMulticastPubThinForTest       = edgeMulticastPubThin
+	EdgeMulticastPubIdleForTest       = edgeMulticastPubIdle
+	EdgeMulticastPubUnknownForTest    = edgeMulticastPubUnknown
+)

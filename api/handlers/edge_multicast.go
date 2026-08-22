@@ -465,16 +465,34 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 	}
 
 	// Same contract, and this one reads no ClickHouse at all: a miss costs the column.
-	sequence, sequenceAsOf, err := a.edgeMulticastSequenceHealth(ctx, captureSources)
-	if err != nil {
-		slog.Warn("edge multicast sequence health unavailable", "error", err)
-		sequence = nil
-	}
+	//
+	// Mainnet only, and the gate is not about cost. Both folded payloads are written by the
+	// Kalshi refresher, which runs with no environment in its context and therefore always
+	// reads mainnet, while the keys carry no environment either. The group key they resolve
+	// through is the multicast address, and both networks allocate their groups out of the same
+	// 233.84.178.0/24 — testnet already holds .3, .4, .9 and .1, which on mainnet are the two
+	// Kalshi perps groups, edge-solana-shreds1 and edge-solana-shreds. Nothing leaks today only
+	// because testnet's single edge- group sits on .10, which mainnet does not use; the first
+	// testnet edge- group on a mainnet address would attach mainnet Kalshi series to it. An
+	// environment gate is the honest fix — a payload computed for one network cannot describe
+	// another — and it costs testnet nothing it has data for.
+	var sequence map[string]*EdgeMulticastSequenceHealth
+	var sequenceAsOf time.Time
+	var pathParity map[edgeMulticastPathKey]*EdgeMulticastPathParity
+	var pathRates map[edgeMulticastPathKey]float64
+	if isMainnet(ctx) {
+		var err error
+		sequence, sequenceAsOf, err = a.edgeMulticastSequenceHealth(ctx, captureSources)
+		if err != nil {
+			slog.Warn("edge multicast sequence health unavailable", "error", err)
+			sequence = nil
+		}
 
-	// Path parity and the recorded message rate come out of the same cached payload the
-	// top-of-book series do, so they cost no query either, and a miss costs the checks rather
-	// than the page.
-	pathParity, pathRates := a.edgeMulticastObservationStats(ctx, captureSources)
+		// Path parity and the recorded message rate come out of the same cached payload the
+		// top-of-book series do, so they cost no query either, and a miss costs the checks
+		// rather than the page.
+		pathParity, pathRates = a.edgeMulticastObservationStats(ctx, captureSources)
+	}
 
 	// The device-side BGP session. One round trip for the fleet, and an absent telemetry mirror
 	// or a failed read costs the column rather than the page — same contract as last-heard.

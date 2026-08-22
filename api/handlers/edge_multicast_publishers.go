@@ -413,8 +413,16 @@ const (
 //
 // A series whose gaps were never counted. The top-of-book plane records no gap marker, so its
 // instances arrive with GapsMeasured false and a zero gap count that is an absence rather than a
-// reading. Letting that zero produce 'healthy' would be the page asserting something nothing
-// measured — such a series can still reach 'stalled', which is graded on staleness alone.
+// reading. Such a series still reaches 'stalled', which is graded on staleness alone — but its
+// zero gap count is not read as a pass, and 'healthy' over it is the weaker claim "nothing was
+// found wrong in what was recorded", not "the series is intact". The badge's tooltip says which of
+// the two it is, from GapsUnmeasured on the line's own series.
+//
+// It is deliberately not a separate verdict. There is no state between 'healthy' and a fault, and
+// minting one would paint every top-of-book line permanently non-green over a property of the
+// plane rather than of the path — a product decision, not a default to take here. What the page
+// does instead is carry the distinction where it is measured: the Sequence column reads
+// 'advancing' rather than 'ok' for those series.
 //
 // groupHasSeries closes the same hole one level out. 'healthy' here means the floor AND an intact
 // series, so a publisher with NO series has only half of it, and returning 'healthy' anyway put a
@@ -428,13 +436,16 @@ const (
 // series for while its peers on the group have one.
 func edgeMulticastPublisherHealth(line EdgeMulticastPublisher, groupHasSeries bool) string {
 	switch line.Status {
-	case edgeMulticastPubUnknown:
-		return edgeMulticastPubHealthUnknown
 	case edgeMulticastPubIdle:
 		return edgeMulticastPubHealthSilent
 	case edgeMulticastPubThin:
 		return edgeMulticastPubHealthThin
 	}
+	// The recorded planes are read BEFORE the counter's own absence, because the ranking says so
+	// and because they are independent measurements: a series gapping at a recorder is a finding
+	// whether or not the rate view has a row for the tunnel that sent it. Returning 'unknown'
+	// first hid exactly that case, and 'unknown' is excluded from Faulted(), so the collapsed
+	// group's dot went grey over a gapping feed.
 	if seq := line.Sequence; seq != nil {
 		if seq.Gapped > 0 {
 			return edgeMulticastPubHealthGapped
@@ -448,6 +459,13 @@ func edgeMulticastPublisherHealth(line EdgeMulticastPublisher, groupHasSeries bo
 	if p := line.PathParity; p != nil && p.Compared > 0 && p.Behind > 0 {
 		return edgeMulticastPubHealthBehind
 	}
+	// Nothing measured the counter, and the recorded planes had nothing to say either. Ranked
+	// below the faults and above 'healthy': not a fault, and not a clean bill of health.
+	if line.Status == edgeMulticastPubUnknown {
+		return edgeMulticastPubHealthUnknown
+	}
+	// 'unrecorded' is about a publisher that IS clearing the floor, so it sits below the unknown
+	// check rather than above it: a publisher nothing measured is not "sending and unrecorded".
 	if groupHasSeries && (line.Sequence == nil || len(line.Sequence.Instances) == 0) {
 		return edgeMulticastPubHealthUnrecorded
 	}

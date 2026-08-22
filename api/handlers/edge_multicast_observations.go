@@ -140,7 +140,10 @@ func (a *API) FetchEdgeMulticastObservations(ctx context.Context) (*EdgeMulticas
 			measurement_node_id,
 			any(location_code) AS location_code,
 			count() AS messages,
-			toUInt64(max(reset_count)) - toUInt64(min(reset_count)) AS resets,
+			-- Cast the DIFFERENCE, not the operands: ClickHouse promotes UInt64 - UInt64 to
+			-- Int64 so the result can go negative, and the scan into a uint64 then fails and
+			-- takes the whole refresh with it. max >= min here by construction.
+			toUInt64(max(reset_count) - min(reset_count)) AS resets,
 			max(recv_ts_ns) AS last_recv_ts_ns
 		FROM %[1]s.kalshi_bbo_observations
 		WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(%[2]d)))
@@ -192,6 +195,19 @@ func (a *API) FetchEdgeMulticastObservations(ctx context.Context) (*EdgeMulticas
 // question anyway: not "is this recorder keeping up" but "is this path delivering what its peer
 // is".
 const edgeMulticastPathParityFloor = 0.98
+
+// edgeMulticastPathParityMinMessages is how much traffic the BEST path of a pair must have carried
+// in the window before the ratio is allowed to produce a verdict.
+//
+// The 98% floor is only meaningful when a single message is small against it. At 500 messages one
+// message is 0.2%, a tenth of the slack the floor leaves; at the other end of the scale the sports
+// capture sources run 669 to 400,000 messages per fifteen minutes, and a market-by-price instance
+// was measured at 4. Without a floor those 4 messages against a peer's 5 read as 'behind', and a
+// line reads 'behind' when ANY of its pairs fails — the sports groups compare 29 to 33 capture
+// sources at one node, so one off-hours league, or a path that came up inside the window, flips the
+// whole line. Skipping the pair rather than passing it: nothing was measured, and the page says so
+// by leaving Peer blank.
+const edgeMulticastPathParityMinMessages = 500
 
 // EdgeMulticastPathParity is one publisher path measured against the other paths of the same feed.
 type EdgeMulticastPathParity struct {
@@ -276,9 +292,10 @@ func edgeMulticastPathParity(series []EdgeMulticastObservationSeries, captureSou
 				best = t.messages
 			}
 		}
-		if best == 0 {
-			// Every path silent here. That is the counter plane's finding, not this
-			// check's, and a 0/0 ratio would report it as perfect parity.
+		if best < edgeMulticastPathParityMinMessages {
+			// Too little traffic for the ratio to mean anything — including best == 0,
+			// where every path is silent here. That is the counter plane's finding, not
+			// this check's, and a 0/0 ratio would report it as perfect parity.
 			continue
 		}
 		for pathKey, t := range paths {

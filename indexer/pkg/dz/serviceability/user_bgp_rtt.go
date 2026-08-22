@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse/dataset"
 )
 
@@ -68,14 +69,19 @@ func NewUserBGPRTTDataset(log *slog.Logger) (*dataset.FactDataset, error) {
 
 // userBGPRTTRow renders one user's current report.
 //
+// Two clocks, and they are different questions. event_ts is when this REPORT was first seen, which
+// is what an age on the page has to be measured from; observedAt is this poll, and it is the dedup
+// version, so the newest write of a report wins. Passing the poll clock for both is what made a
+// six-hour-old keepalive render as seconds old.
+//
 // Order must match the PHYSICAL column order of fact_dz_user_bgp_rtt, not Columns(): WriteBatch
 // issues a bare `INSERT INTO <table>` with no column list, so the batch is positional. That is why
 // event_ts leads here while Columns() does not declare it at all — the same shape
 // permissionevents.ToRow uses, and the reason its migration says the table's column order is part
 // of the contract.
-func userBGPRTTRow(u User, observedAt time.Time) []any {
+func userBGPRTTRow(u User, reportSeenAt, observedAt time.Time) []any {
 	return []any{
-		observedAt,          // event_ts
+		reportSeenAt,        // event_ts
 		observedAt,          // ingested_at
 		u.PK,                // user_pk
 		u.DevicePK,          // device_pk
@@ -106,11 +112,61 @@ func usersWithBGPReport(users []User) []User {
 	return out
 }
 
+// userBGPRTTKey identifies one onchain report: the fact's unique key.
+type userBGPRTTKey struct {
+	userPK string
+	slot   uint64
+}
+
+// firstSeenUserBGPRTT is when each of these reports was first observed, for the reports already in
+// the table.
+//
+// This is what keeps event_ts meaning "when this report appeared" instead of "when we last looked".
+// The indexer re-observes an unchanged report every 60s while the agent writes one every ~6 hours,
+// and the dedup version is ingested_at, so stamping event_ts with the poll clock on every write
+// leaves the surviving row carrying the newest poll — a keepalive from six hours ago reading as
+// seconds old on a page whose whole point is that the figure can be hours old.
+//
+// Keyed on (user_pk, reported_at_slot), which is the fact's own unique key, and read with min() so
+// it survives whatever the merge has or has not collapsed yet. The IN prunes on the primary key,
+// and the table is small by construction — it grows with onchain writes, not with polls.
+func (s *Store) firstSeenUserBGPRTT(ctx context.Context, conn clickhouse.Connection, users []User) (map[userBGPRTTKey]time.Time, error) {
+	pks := make([]string, 0, len(users))
+	for _, u := range users {
+		pks = append(pks, u.PK)
+	}
+	rows, err := conn.Query(ctx, `
+		SELECT user_pk, reported_at_slot, min(event_ts)
+		FROM fact_dz_user_bgp_rtt
+		WHERE user_pk IN (?)
+		GROUP BY user_pk, reported_at_slot`, pks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[userBGPRTTKey]time.Time{}
+	for rows.Next() {
+		var key userBGPRTTKey
+		var at time.Time
+		if err := rows.Scan(&key.userPK, &key.slot, &at); err != nil {
+			return nil, err
+		}
+		out[key] = at.UTC()
+	}
+	return out, rows.Err()
+}
+
 // WriteUserBGPRTT appends the current BGP report for every user that has one.
 //
 // Every snapshot re-writes the same rows for users whose report has not changed; the unique key is
 // the report, so ReplacingMergeTree collapses them and the table grows with onchain writes rather
 // than with the poll loop.
+//
+// A re-observation carries the event_ts of the FIRST observation, not this poll's clock, so the
+// column keeps describing the report rather than the loop that keeps finding it. A failed read-back
+// is not fatal: the write proceeds with this poll's clock, which is the old behaviour and costs
+// freshness on the age rather than the series.
 func (s *Store) WriteUserBGPRTT(ctx context.Context, users []User, observedAt time.Time) error {
 	reported := usersWithBGPReport(users)
 	s.log.Debug("serviceability/store: writing user bgp rtt",
@@ -130,8 +186,20 @@ func (s *Store) WriteUserBGPRTT(ctx context.Context, users []User, observedAt ti
 	}
 	defer conn.Close()
 
+	firstSeen, err := s.firstSeenUserBGPRTT(ctx, conn, reported)
+	if err != nil {
+		s.log.Warn("serviceability/store: user bgp rtt first-seen read failed, stamping this poll",
+			"error", err)
+		firstSeen = nil
+	}
+
 	if err := d.WriteBatch(ctx, conn, len(reported), func(i int) ([]any, error) {
-		return userBGPRTTRow(reported[i], observedAt), nil
+		u := reported[i]
+		at := observedAt
+		if seen, ok := firstSeen[userBGPRTTKey{userPK: u.PK, slot: u.LastBgpReportedAt}]; ok {
+			at = seen
+		}
+		return userBGPRTTRow(u, at, observedAt), nil
 	}); err != nil {
 		return fmt.Errorf("failed to write user bgp rtt to ClickHouse: %w", err)
 	}

@@ -283,12 +283,20 @@ is the whole truth there.
 The group's Publishers cell counts publishers **above the floor**, which is the same thing the
 lines' own status word says, so the row cannot contradict itself. It briefly counted `healthy`
 instead and rendered `0/2` beside two lines that both said `publishing`. The per-line verdicts
-still drive the cell's dot, so a group whose only fault is a gapped series does not read green. A publisher moving no bytes outranks one moving too few, and both outrank a recorded gap
+still drive the cell's dot, so a group whose only fault is a gapped series does not read green. The
+recorded planes are read **before** the counter's own absence: a series gapping at a recorder is a
+finding whether or not the rate view has a row for the tunnel that sent it, and `unknown` returning
+first hid exactly that — it is excluded from `Faulted()`, so the collapsed group's dot went grey
+over a feed losing data. A publisher moving no bytes outranks one moving too few, and both outrank a recorded gap
 — `thin` says the tunnel carries overhead and no product, a larger failure than a series that lost
 some of a feed it is otherwise delivering. Two things stay out of it: **BGP status**, which keeps
 its own marker beside the verdict because the ledger snapshot and the rate bucket are minutes apart
-and can legitimately disagree; and **a series whose gaps were never counted**, which can reach
-`stalled` but never `healthy`, since its zero gap count is an absence rather than a reading.
+and can legitimately disagree; and **a series whose gaps were never counted**, whose zero gap count
+is an absence rather than a reading — it still reaches `stalled`, graded on staleness alone, and the
+`healthy` over it is the weaker claim "nothing was found wrong in what was recorded", which the
+badge's tooltip spells out from `GapsUnmeasured`. It is deliberately not a verdict of its own: there
+is no state between `healthy` and a fault, and minting one would paint every top-of-book line
+permanently non-green over a property of the plane rather than of the path.
 `behind` sits last of the faults because it is the mildest of them — the path is delivering, just
 less of the feed than its peer.
 
@@ -327,6 +335,11 @@ Three things about it are load-bearing:
 - **It can be hours old, and that is normal.** It is a property of the path, not a live signal, and
   the UI carries its age for that reason. A report whose session was down carries a cleared rtt;
   the fact keeps it, and the page drops it rather than rendering 0.00 ms.
+- **`event_ts` is the FIRST observation of a report, and the write path reads it back to keep it
+  there.** The dedup version is `ingested_at`, so a poll clock stamped into `event_ts` would leave
+  the surviving row carrying the newest of the 60s re-observations — a six-hour-old keepalive
+  rendering as seconds old, which is the exact opposite of the point above.
+  `TestLake_Serviceability_UserBGPRTT_ReobservationCollapses` asserts it.
 
 The fact's **column order is part of the contract**: `WriteBatch` issues a bare `INSERT` with no
 column list, so the migration and `dzsvc.userBGPRTTRow` must match position for position. That is
@@ -361,6 +374,12 @@ minutes the two Kalshi paths agree **to the message** on all 29 sports capture s
 0.9985-1.0000 on perps. Compared against the **best** peer, never the mean — a mean over a pair
 sinks with the faulty path and would report both at roughly 1.0 when one is broken. A path with no
 peer at that node, or a pair where every path is silent, records neither a pass nor a fail.
+
+The tight floor needs a **volume floor** under it: `edgeMulticastPathParityMinMessages` (500 over
+the window), applied to the best path of the pair. Below a few hundred messages one message is a
+percent or more where the floor leaves two, so 4 messages against 5 — measured on a market-by-price
+instance — would read `behind`, and one failed pair marks the whole line across the 29-33 capture
+sources a sports node compares. Under the floor the pair records nothing, not a pass.
 
 This is the check that reaches what capture-node parity cannot. That one needs two recorders
 (`edgeMulticastMinParityNodes`) and the sports capture runs on one, so it is inert on every sports
@@ -443,6 +462,13 @@ for top-of-book the way it does for market-by-price; it is not work this repo ca
 
 The cost of both legs is staleness, so `sequence_as_of` is in the payload — the **older** of the two
 legs — and the column ages against it. A cache miss costs that plane's rows, never the page.
+
+Both folded payloads are **mainnet only**, gated on `isMainnet(ctx)` in `FetchEdgeMulticastData`.
+The refresher runs with no environment in context, so it always computes mainnet, and the keys carry
+no environment either — while the group key they resolve through is the multicast address, and both
+networks allocate out of the same `233.84.178.0/24`. Testnet already holds `.3`, `.4`, `.9` and `.1`,
+which on mainnet are the two Kalshi perps groups and the two shreds groups; nothing leaks today only
+because testnet's single `edge-` group sits on `.10`.
 
 ### What the page is about
 
