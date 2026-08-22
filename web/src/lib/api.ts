@@ -7760,6 +7760,18 @@ export interface EdgeMulticastRoleCounts {
   class_derived: number
 }
 
+/** One publisher path measured against its redundant peers, at the recorders that saw both. */
+export interface EdgeMulticastPathParity {
+  /** (capture source, recording node) pairs where another path carried the same feed. */
+  compared: number
+  /** How many of those fell below the parity floor. */
+  behind: number
+  /** This path's message count over the best path's, at its worst pair. */
+  worst_ratio: number
+  worst_source?: string
+  worst_node?: string
+}
+
 /** One publisher of one group, as its own line — the grain the health verdict is taken at. */
 export interface EdgeMulticastPublisher {
   user_pk: string
@@ -7774,8 +7786,14 @@ export interface EdgeMulticastPublisher {
   /** 'publishing' (at/above the floor) | 'thin' (non-zero, below it) | 'idle' | 'unknown'. */
   status: string
   /** This publisher's own verdict, worst-of its own signals: 'silent' | 'thin' | 'gapped' |
-   *  'stalled' | 'unknown' | 'healthy'. BGP status is shown beside it, never folded into it. */
+   *  'stalled' | 'behind' | 'unknown' | 'healthy'. BGP status is shown beside it, never folded
+   *  into it. */
   health?: string
+  /** What the recorders received from this path, per second. Per GROUP, unlike bps, which is
+   *  per tunnel — the one delivery figure on the line that needs no caveat. */
+  msg_per_sec?: number
+  /** This path measured against the other paths of the same feed; absent when it had no peer. */
+  path_parity?: EdgeMulticastPathParity
   /** Feeds several groups from one tunnel, so bps cannot be attributed to this group alone. */
   multi_group: boolean
   /** Ledger BGP session: 'up' | 'down' | 'unknown'. 'down' on a publisher is a fault. */
@@ -7838,6 +7856,17 @@ export interface EdgeMulticastSequenceHealth {
   instances: EdgeMulticastChannelInstance[]
 }
 
+/** Per-line verdict tally for one group. The fields sum to the group's publisher total. */
+export interface EdgeMulticastPublisherVerdicts {
+  healthy: number
+  thin: number
+  gapped: number
+  stalled: number
+  behind: number
+  silent: number
+  unknown: number
+}
+
 export interface EdgeMulticastGroup {
   pk: string
   code: string
@@ -7848,6 +7877,9 @@ export interface EdgeMulticastGroup {
   plane?: string
   publishers: EdgeMulticastRoleCounts
   subscribers: EdgeMulticastRoleCounts
+  /** How many publisher lines landed in each verdict — a count of lines, not a verdict over them.
+   *  Tallied before the display cap, and what a collapsed group has in place of a badge. */
+  publisher_verdicts: EdgeMulticastPublisherVerdicts
   /** Worst-first, capped server-side; publisher_lines_total is the count before the cap. */
   publisher_lines: EdgeMulticastPublisher[]
   publisher_lines_total: number

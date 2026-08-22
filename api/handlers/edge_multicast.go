@@ -153,6 +153,25 @@ type EdgeMulticastRoleCounts struct {
 	ClassDerived  int `json:"class_derived"`
 }
 
+// EdgeMulticastPublisherVerdicts is how many of a group's publisher lines landed in each state.
+// The fields sum to the group's publisher total.
+type EdgeMulticastPublisherVerdicts struct {
+	Healthy int `json:"healthy"`
+	Thin    int `json:"thin"`
+	Gapped  int `json:"gapped"`
+	Stalled int `json:"stalled"`
+	Behind  int `json:"behind"`
+	Silent  int `json:"silent"`
+	Unknown int `json:"unknown"`
+}
+
+// Faulted is every line that is not healthy and not merely unmeasured. Unknown is excluded on
+// purpose: a publisher nothing measured is a monitoring gap, and counting it as a fault is the
+// same mistake as painting a group red for one device's missing telemetry.
+func (v EdgeMulticastPublisherVerdicts) Faulted() int {
+	return v.Thin + v.Gapped + v.Stalled + v.Behind + v.Silent
+}
+
 // EdgeMulticastGroup is one multicast group as this page sees it.
 type EdgeMulticastGroup struct {
 	PK           string `json:"pk"`
@@ -186,6 +205,16 @@ type EdgeMulticastGroup struct {
 	// arithmetic that goes wrong the first time the ledger and the rate view disagree about who
 	// exists.
 	PublishersPublishing int `json:"publishers_publishing"`
+
+	// PublisherVerdicts tallies the per-line verdicts. It is what a COLLAPSED group has instead
+	// of a health badge: the badge moved to the lines, and without this a group nobody expanded
+	// would summarise itself on the counter plane alone and read clean while one of its series
+	// was gapping.
+	//
+	// It is a count of lines, not a verdict over them — the distinction the page turns on. And
+	// it is tallied over every publisher before edgeMulticastPublisherLineCap truncates the
+	// list, so what the payload happens to carry cannot change it.
+	PublisherVerdicts EdgeMulticastPublisherVerdicts `json:"publisher_verdicts"`
 
 	// CaptureNodes is the application plane's per-node view of this group: what each recording
 	// node wrote down in the window, and how that compares with its peers. Empty for a group no
@@ -437,6 +466,11 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 		sequence = nil
 	}
 
+	// Path parity and the recorded message rate come out of the same cached payload the
+	// top-of-book series do, so they cost no query either, and a miss costs the checks rather
+	// than the page.
+	pathParity, pathRates := a.edgeMulticastObservationStats(ctx, captureSources)
+
 	now := time.Now().UTC()
 	resp := &EdgeMulticastResponse{
 		GeneratedAt:        now,
@@ -452,7 +486,7 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 
 	byService := map[string][]EdgeMulticastGroup{}
 	for _, g := range groups {
-		row := buildEdgeMulticastGroup(g, membership[g.PK], rates[g.PK], lastHeard[g.PK], publisherLines[g.PK], sequence[g.PK])
+		row := buildEdgeMulticastGroup(g, membership[g.PK], rates[g.PK], lastHeard[g.PK], publisherLines[g.PK], sequence[g.PK], pathParity, pathRates)
 		codes := feeds.byGroup[g.PK]
 		if len(codes) == 0 {
 			codes = []string{edgeMulticastUnclaimedService}
@@ -491,7 +525,7 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 // the remainder rather than read: a member the view dropped (no health row at all) is exactly
 // as unknown as one it marked 'no_data', and folding both into the remainder keeps the parts
 // summing to Total whatever the view does.
-func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership, r edgeMulticastRates, lh edgeMulticastLastHeard, lines []EdgeMulticastPublisher, sequence *EdgeMulticastSequenceHealth) EdgeMulticastGroup {
+func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership, r edgeMulticastRates, lh edgeMulticastLastHeard, lines []EdgeMulticastPublisher, sequence *EdgeMulticastSequenceHealth, pathParity map[edgeMulticastPathKey]*EdgeMulticastPathParity, pathRates map[edgeMulticastPathKey]float64) EdgeMulticastGroup {
 	out := EdgeMulticastGroup{
 		PK:                   g.PK,
 		Code:                 g.Code,
@@ -530,9 +564,35 @@ func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership
 	attachEdgeMulticastSequenceHealth(lines, out.Sequence)
 
 	// After the attachment, never before: a line's verdict folds the series it owns, and the
-	// series only reaches the line above.
+	// series only reaches the line above. Tallied here, over the full list, so the cap below
+	// cannot change what a collapsed group reports about itself.
 	for i := range lines {
+		// Keyed on the tunnel address, the same join the series attribution makes: it is
+		// what the datagrams carry and what the recorder wrote down.
+		if lines[i].DZIP != "" {
+			key := edgeMulticastPathKey{groupPK: g.PK, ip: lines[i].DZIP}
+			lines[i].PathParity = pathParity[key]
+			if rate, ok := pathRates[key]; ok {
+				lines[i].MsgPerSec = &rate
+			}
+		}
 		lines[i].Health = edgeMulticastPublisherHealth(lines[i])
+		switch lines[i].Health {
+		case edgeMulticastPubHealthy:
+			out.PublisherVerdicts.Healthy++
+		case edgeMulticastPubHealthThin:
+			out.PublisherVerdicts.Thin++
+		case edgeMulticastPubHealthGapped:
+			out.PublisherVerdicts.Gapped++
+		case edgeMulticastPubHealthStalled:
+			out.PublisherVerdicts.Stalled++
+		case edgeMulticastPubHealthBehind:
+			out.PublisherVerdicts.Behind++
+		case edgeMulticastPubHealthSilent:
+			out.PublisherVerdicts.Silent++
+		case edgeMulticastPubHealthUnknown:
+			out.PublisherVerdicts.Unknown++
+		}
 	}
 	out.PublisherLines = lines
 	if len(out.PublisherLines) > edgeMulticastPublisherLineCap {

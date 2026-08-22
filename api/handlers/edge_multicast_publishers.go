@@ -119,6 +119,16 @@ type EdgeMulticastPublisher struct {
 	// is what makes Bps un-attributable to this group alone.
 	MultiGroup bool `json:"multi_group"`
 
+	// MsgPerSec is what the recorders actually received from this path, per second over the
+	// observation window, nil when no recorder saw it. Unlike Bps it is per group rather than
+	// per tunnel, so it is the one delivery figure on the line that needs no caveat.
+	MsgPerSec *float64 `json:"msg_per_sec,omitempty"`
+
+	// PathParity is this publisher measured against the other paths of the same feed, nil when
+	// there was no peer to compare it with. See edgeMulticastPathParity for why this reaches
+	// feeds that capture-node parity structurally cannot.
+	PathParity *EdgeMulticastPathParity `json:"path_parity,omitempty"`
+
 	// Health is this publisher's own verdict, and the reason the group row no longer carries one:
 	// a feed with one dead publisher and one live one rolls up to a single badge that describes
 	// neither. Worst-of over the signals that belong to THIS member — see
@@ -358,16 +368,18 @@ const (
 	edgeMulticastPubHealthThin    = "thin"
 	edgeMulticastPubHealthGapped  = "gapped"
 	edgeMulticastPubHealthStalled = "stalled"
+	edgeMulticastPubHealthBehind  = "behind"
 	edgeMulticastPubHealthUnknown = "unknown"
 	edgeMulticastPubHealthy       = "healthy"
 )
 
 // edgeMulticastPublisherHealth grades one publisher line.
 //
-// Ranking, worst-first: silent, thin, gapped, stalled, unknown, healthy. A publisher moving no
-// bytes outranks one moving too few, and both outrank a recorded gap: 'thin' says the tunnel is
+// Ranking, worst-first: silent, thin, gapped, stalled, behind, unknown, healthy. A publisher moving
+// no bytes outranks one moving too few, and both outrank a recorded gap: 'thin' says the tunnel is
 // carrying overhead and no product, which is a larger failure than a series that lost some of a
-// feed it is otherwise delivering.
+// feed it is otherwise delivering. 'behind' sits last of the faults because it is the mildest
+// statement of the four — the path is delivering, just less of the feed than its peer is.
 //
 // Two things are deliberately NOT folded in.
 //
@@ -396,6 +408,11 @@ func edgeMulticastPublisherHealth(line EdgeMulticastPublisher) string {
 		if seq.Stalled > 0 {
 			return edgeMulticastPubHealthStalled
 		}
+	}
+	// Compared > 0 is the guard that matters: a path with no peer has no parity verdict, and
+	// zero-of-zero must not read as passing the check.
+	if p := line.PathParity; p != nil && p.Compared > 0 && p.Behind > 0 {
+		return edgeMulticastPubHealthBehind
 	}
 	return edgeMulticastPubHealthy
 }

@@ -10,6 +10,7 @@ import {
   fetchEdgeMulticast,
   type EdgeMulticastChannelInstance,
   type EdgeMulticastGroup,
+  type EdgeMulticastPathParity,
   type EdgeMulticastPublisher,
   type EdgeMulticastSequenceHealth,
   type EdgeMulticastService,
@@ -101,6 +102,7 @@ const PUBLISHER_HEALTH_BADGE: Record<string, string> = {
   healthy: 'bg-emerald-500/15 text-emerald-500',
   thin: 'bg-amber-500/15 text-amber-500',
   stalled: 'bg-amber-500/15 text-amber-500',
+  behind: 'bg-amber-500/15 text-amber-500',
   gapped: 'bg-red-500/15 text-red-500',
   silent: 'bg-red-500/15 text-red-500',
   unknown: 'bg-muted text-muted-foreground',
@@ -112,6 +114,7 @@ const PUBLISHER_HEALTH_DETAIL: Record<string, string> = {
   healthy: 'above the floor, and its recorded series is intact',
   thin: 'the tunnel is moving something, not the product',
   stalled: 'its recorded series stopped advancing: a dead path or a dead recorder',
+  behind: 'this path is delivering less of the feed than its redundant peer, at the same recorder',
   gapped: 'its recorded series lost data on the wire',
   silent: 'its counter read zero in the last visible bucket',
   unknown: 'no counter row for this publisher: nothing measured it',
@@ -167,9 +170,14 @@ function ageSecs(iso: string | undefined, nowMs: number): number | undefined {
 // lines exist: a tunnel carrying protocol overhead and no product used to count as active here.
 //
 //   green — every publisher is above the floor
-//   amber — some are, some are not: the feed is flowing and one of its publishers is not
-//   red   — publishers are registered and every counter reads zero
+//   amber — at least one line is faulted: the feed is flowing and one of its publishers is not
+//   red   — every line is silent: publishers are registered and no counter moved
 //   grey  — nothing measured them, a monitoring gap rather than an outage
+//
+// The colour reads the per-LINE verdicts, not the floor tally alone, and that is the whole point:
+// the health badge moved to the lines, so a group nobody expanded would otherwise summarise itself
+// on the counter plane and read clean while one of its series was gapping. It stays a count of
+// lines with a colour, never a verdict word — the verdict belongs to the publisher.
 //
 // Clicking the cell expands the group's publisher lines, which is where "which one" is answered.
 function PublisherCell({
@@ -191,19 +199,31 @@ function PublisherCell({
   }
 
   const below = group.publishers_below_floor
-  const dot = group.silent
-    ? 'bg-red-500'
-    : stale || group.publishers_publishing === 0
+  const v = group.publisher_verdicts
+  const faulted = v.thin + v.gapped + v.stalled + v.behind + v.silent
+  // Measured is healthy plus faulted: a line nothing measured cannot colour the cell either way.
+  const measured = v.healthy + faulted
+  const dot =
+    measured === 0 || stale
       ? 'bg-muted-foreground'
-      : below > 0
-        ? 'bg-amber-500'
-        : 'bg-emerald-500'
+      : v.silent === measured
+        ? 'bg-red-500'
+        : faulted > 0
+          ? 'bg-amber-500'
+          : 'bg-emerald-500'
 
   const detail = [
-    `${group.publishers_publishing} above ${formatBps(floorBps)}`,
-    below > 0 ? `${below} below it` : '',
-    publishers.unknown > 0 ? `${publishers.unknown} with no counter data` : '',
-    'click to list them',
+    `${v.healthy} of ${publishers.total} publisher(s) healthy`,
+    v.silent > 0 ? `${v.silent} silent` : '',
+    v.thin > 0 ? `${v.thin} below ${formatBps(floorBps)}` : '',
+    v.gapped > 0 ? `${v.gapped} with a gapped series` : '',
+    v.stalled > 0 ? `${v.stalled} with a stalled series` : '',
+    v.behind > 0 ? `${v.behind} behind their redundant peer` : '',
+    v.unknown > 0 ? `${v.unknown} with no counter data — not a fault, nothing measured them` : '',
+    below > 0 && below !== v.thin + v.silent
+      ? `${below} below the floor on the counter plane`
+      : '',
+    'click to list them, one verdict each',
   ]
     .filter(Boolean)
     .join(' · ')
@@ -225,7 +245,7 @@ function PublisherCell({
         )}
         <span className={`inline-block h-2 w-2 rounded-full ${dot}`} />
         <span>
-          {group.publishers_publishing}
+          {v.healthy}
           <span className="text-muted-foreground">/{publishers.total}</span>
         </span>
       </button>
@@ -335,6 +355,12 @@ function PublisherLineRow({
         )}
       </td>
       <td className="px-3 py-1.5 text-right whitespace-nowrap">
+        <MsgRateCell msgPerSec={line.msg_per_sec} />
+      </td>
+      <td className="px-3 py-1.5 text-right whitespace-nowrap">
+        <PeerParityCell parity={line.path_parity} />
+      </td>
+      <td className="px-3 py-1.5 text-right whitespace-nowrap">
         {age === undefined ? (
           <span className="text-muted-foreground">—</span>
         ) : (
@@ -350,9 +376,54 @@ function PublisherLineRow({
         </td>
       )}
       <td className="px-3 py-1.5">
-        <PublisherHealthBadge health={line.health} />
+        <PublisherHealthBadge health={line.health} parity={line.path_parity} />
       </td>
     </tr>
+  )
+}
+
+// What the recorders actually received from this path, per second.
+//
+// It sits next to the counter rate rather than replacing it because the two answer different
+// questions and fail differently. The counter is per tunnel and minutes late — an upper bound that
+// a multi-group publisher shares across its groups. This is per group and comes from the far end,
+// so it is what arrived rather than what was sent, and it is blank for any feed with no recorder
+// behind it. Neither is redundant with the other.
+function MsgRateCell({ msgPerSec }: { msgPerSec?: number }) {
+  if (msgPerSec === undefined) {
+    return <span className="text-muted-foreground">—</span>
+  }
+  const text = msgPerSec >= 100 ? msgPerSec.toFixed(0) : msgPerSec.toFixed(1)
+  return (
+    <Tooltip content="messages the recorders received from this path, per second over the observation window — per group, unlike the counter rate beside it">
+      <span className="tabular-nums text-muted-foreground">{text}</span>
+    </Tooltip>
+  )
+}
+
+// This path's delivery against its redundant peer, at the recorder that saw both.
+//
+// The number is the point, not a badge: redundant paths carry the same feed, so anything below 1
+// is this path losing something its peer did not, and the eye should be able to scan the column
+// for a digit that is not a 1. An em dash means there was no peer to compare against, which is not
+// a pass.
+function PeerParityCell({ parity }: { parity?: EdgeMulticastPathParity }) {
+  if (!parity || parity.compared === 0) {
+    return <span className="text-muted-foreground">—</span>
+  }
+  const behind = parity.behind > 0
+  return (
+    <Tooltip
+      content={
+        behind
+          ? `behind its peer on ${parity.behind} of ${parity.compared} compared, worst ${parity.worst_source ?? ''}${parity.worst_node ? ` at ${parity.worst_node}` : ''}`
+          : `level with its peer across ${parity.compared} compared`
+      }
+    >
+      <span className={`tabular-nums ${behind ? 'text-amber-500' : 'text-muted-foreground'}`}>
+        {parity.worst_ratio.toFixed(3)}
+      </span>
+    </Tooltip>
   )
 }
 
@@ -363,10 +434,22 @@ function PublisherLineRow({
 // keeps its own marker in the Publishers cell — the ledger snapshot and the rate bucket are
 // minutes apart, so a publisher can read 'down' there while its tunnel still moved bytes, and both
 // statements are worth having separately.
-function PublisherHealthBadge({ health }: { health?: string }) {
+function PublisherHealthBadge({
+  health,
+  parity,
+}: {
+  health?: string
+  parity?: EdgeMulticastPathParity
+}) {
   if (!health) return <span className="text-muted-foreground">—</span>
+  // The ratio earns its place only on the verdict it produced: everywhere else it is a passing
+  // number nobody is asking about, and this column has one job.
+  const detail =
+    health === 'behind' && parity
+      ? `${PUBLISHER_HEALTH_DETAIL.behind} — ${(parity.worst_ratio * 100).toFixed(1)}% of its peer on ${parity.worst_source ?? 'that feed'}${parity.worst_node ? ` at ${parity.worst_node}` : ''}, ${parity.behind} of ${parity.compared} compared`
+      : (PUBLISHER_HEALTH_DETAIL[health] ?? health)
   return (
-    <Tooltip content={PUBLISHER_HEALTH_DETAIL[health] ?? health}>
+    <Tooltip content={detail}>
       <span
         className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
           PUBLISHER_HEALTH_BADGE[health] ?? 'bg-muted text-muted-foreground'
@@ -378,27 +461,28 @@ function PublisherHealthBadge({ health }: { health?: string }) {
   )
 }
 
-// Subscribers are split by whose box it is. The counts are only as good as the classification
-// behind them, so the tooltip says how many are actually known — asserted by an operator or
-// derived from the capture-host list — versus merely defaulted to customer.
-function SubscriberCell({ group }: { group: EdgeMulticastGroup }) {
+// This page is about the feed and the publishers that fill it, not about who buys it. What the
+// subscriber side still owes it is the measurement apparatus: how many of a group's receivers are
+// DoubleZero's own boxes, because those are the recorders every application-plane signal on the
+// row — Heard, Sequence, Msg/s, Peer — is measured at. The customer split stays in the payload for
+// the drill-down and is deliberately not on screen.
+function RecorderCell({ group }: { group: EdgeMulticastGroup }) {
   const { subscribers } = group
   if (subscribers.total === 0) {
     return <span className="text-muted-foreground">—</span>
   }
 
-  const dz = subscribers.recorders + subscribers.internal_probes + subscribers.doublezero
+  // 'doublezero' is the wallet tier: ours, kind not asserted. Counted here because a box we run
+  // that receives the feed is apparatus either way; the tooltip keeps the distinction visible.
+  const ours = subscribers.recorders + subscribers.internal_probes + subscribers.doublezero
   const known = subscribers.class_asserted + subscribers.class_derived
   const detail = [
-    `${subscribers.customers} customer(s)`,
-    `${subscribers.recorders} recorder(s)`,
+    `${subscribers.recorders} asserted recorder(s)`,
     subscribers.internal_probes > 0 ? `${subscribers.internal_probes} internal probe(s)` : '',
-    // Spelled out rather than added to the recorder count: the wallet tier knows the box is
-    // DoubleZero's and does not know what it does with the feed.
     subscribers.doublezero > 0
-      ? `${subscribers.doublezero} DoubleZero-operated (kind not asserted)`
+      ? `${subscribers.doublezero} DoubleZero-operated, kind not asserted`
       : '',
-    `${subscribers.active} receiving traffic`,
+    `${subscribers.total - ours} other receiver(s)`,
     known === 0
       ? 'nothing is classified: every member defaults to customer'
       : `${known} of ${subscribers.total} classified (${subscribers.class_asserted} asserted, ${subscribers.class_derived} derived)`,
@@ -409,11 +493,8 @@ function SubscriberCell({ group }: { group: EdgeMulticastGroup }) {
   return (
     <Tooltip content={detail}>
       <span className="tabular-nums">
-        {subscribers.total}
-        <span className="text-muted-foreground text-xs">
-          {' '}
-          ({subscribers.customers} cust{dz > 0 ? ` / ${dz} DZ` : ''})
-        </span>
+        {ours === 0 ? <span className="text-muted-foreground">none</span> : ours}
+        <span className="text-muted-foreground text-xs"> /{subscribers.total}</span>
       </span>
     </Tooltip>
   )
@@ -616,11 +697,16 @@ function GroupRow({
         />
       </td>
       <td className="px-3 py-3 text-sm">
-        <SubscriberCell group={group} />
+        <RecorderCell group={group} />
       </td>
       <td className="px-3 py-3 text-sm text-right">
         <RateCell bps={group.ingress_bps} ambiguous={group.traffic_ambiguous} stale={stale} />
       </td>
+      {/* Msg/s and Peer are per PATH and the group row carries neither. Summing recorded message
+          rates over a group's paths would double the feed — redundant paths carry the same
+          traffic — and a parity ratio has no meaning until you name which path it is about. */}
+      <td className="px-3 py-3" />
+      <td className="px-3 py-3" />
       <td className="px-3 py-3 text-sm text-right whitespace-nowrap">
         {age === undefined ? (
           <span className="text-muted-foreground">no data</span>
@@ -704,7 +790,7 @@ function ServiceSection({
   // Only the truncation notice spans the table now; the publisher lines carry a cell per column,
   // so the count still has to match the header exactly — a mismatch silently shifts every group
   // column one to the left.
-  const columns = 8 + (showLastHeard ? 1 : 0) + (showSequence ? 1 : 0)
+  const columns = 10 + (showLastHeard ? 1 : 0) + (showSequence ? 1 : 0)
   const silent = service.groups.filter((g) => g.silent).length
 
   return (
@@ -730,8 +816,10 @@ function ServiceSection({
               <th className="px-3 py-2 font-medium">Multicast IP</th>
               <th className="px-3 py-2 font-medium">Plane</th>
               <th className="px-3 py-2 font-medium">Publishers</th>
-              <th className="px-3 py-2 font-medium">Subscribers</th>
+              <th className="px-3 py-2 font-medium">Recorders</th>
               <th className="px-3 py-2 font-medium text-right">Ingress</th>
+              <th className="px-3 py-2 font-medium text-right">Msg/s</th>
+              <th className="px-3 py-2 font-medium text-right">Peer</th>
               <th className="px-3 py-2 font-medium text-right">Measured</th>
               {showLastHeard && <th className="px-3 py-2 font-medium text-right">Heard</th>}
               {showSequence && <th className="px-3 py-2 font-medium">Sequence</th>}
@@ -873,6 +961,13 @@ export function EdgeMulticastPage() {
           <span className="text-muted-foreground font-medium">unknown</span> when nothing measured it — which is
           a monitoring gap, never an outage. The group's own cell reports only what no line can: series recorded
           from an address no publisher of the group carries.
+          {' '}This page is about the feed and the publishers that fill it: “Recorders” counts the
+          DoubleZero boxes receiving the group, which is the apparatus every application-plane
+          column here is measured at, and the customer split is left to the group's own page.
+          “Msg/s” and “Peer” come from those recorders and are per PATH — a recorded message rate
+          per group rather than the per-tunnel counter beside it, and each path's delivery against
+          its redundant peer at the recorder that saw both. Anything below 1 in “Peer” is this path
+          losing something its peer did not.
           {data?.last_heard_available && (
             <>
               {' '}

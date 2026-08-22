@@ -260,13 +260,46 @@ consequences to keep in view: a collapsed group shows no verdict at all (lines a
 `PUBLISHER_LINES_OPEN_BELOW`), and `skewed` has no line to sit on, since capture-node parity is a
 statement about a group's recorders and no single publisher owns it.
 
-The per-publisher ranking is worst-first: `silent`, `thin`, `gapped`, `stalled`, `unknown`,
-`healthy`. A publisher moving no bytes outranks one moving too few, and both outrank a recorded gap
+What a **collapsed** group has instead of a badge is `publisher_verdicts`, a tally of how many
+lines landed in each state — a count of lines, not a verdict over them. It drives the Publishers
+cell's dot, and it reads the per-line verdicts rather than the floor tally alone: without that, a
+group nobody expanded would summarise itself on the counter plane and read clean while one of its
+series was gapping. It is tallied before `edgeMulticastPublisherLineCap`, so what the payload
+happens to carry cannot change it.
+
+The per-publisher ranking is worst-first: `silent`, `thin`, `gapped`, `stalled`, `behind`,
+`unknown`, `healthy`. A publisher moving no bytes outranks one moving too few, and both outrank a recorded gap
 — `thin` says the tunnel carries overhead and no product, a larger failure than a series that lost
 some of a feed it is otherwise delivering. Two things stay out of it: **BGP status**, which keeps
 its own marker beside the verdict because the ledger snapshot and the rate bucket are minutes apart
 and can legitimately disagree; and **a series whose gaps were never counted**, which can reach
 `stalled` but never `healthy`, since its zero gap count is an absence rather than a reading.
+`behind` sits last of the faults because it is the mildest of them — the path is delivering, just
+less of the feed than its peer.
+
+### Path parity
+
+`behind` comes from `edgeMulticastPathParity`: a publisher path measured against the other paths of
+the same capture source **at the same recording node**, below `edgeMulticastPathParityFloor` (98%).
+
+Two things are in the key and one is deliberately out. The **recording node is in it**, so a
+recorder that is behind on everything cancels out of the ratio instead of reading as a fault in
+both paths. The **channel is not**: the two paths of a feed publish it on different channel ids —
+mainnet runs a +100 offset, sports on 10-49 against 110-149, perps on 1 against 101 — so keying on
+channel would put each path in a group of one and compare nothing. Counts are summed across
+channels per path for the same reason.
+
+The floor is tight because there is no legitimate spread to leave room for: measured over fifteen
+minutes the two Kalshi paths agree **to the message** on all 29 sports capture sources and run
+0.9985-1.0000 on perps. Compared against the **best** peer, never the mean — a mean over a pair
+sinks with the faulty path and would report both at roughly 1.0 when one is broken. A path with no
+peer at that node, or a pair where every path is silent, records neither a pass nor a fail.
+
+This is the check that reaches what capture-node parity cannot. That one needs two recorders
+(`edgeMulticastMinParityNodes`) and the sports capture runs on one, so it is inert on every sports
+group; and where it can fire, its floor is half the median against a real fault of 0.3%. It is
+still the only recorder-side signal, so it stays — but it no longer paints anything, since the
+group verdict it feeds is not rendered.
 
 The two checks behind it, both in `api/handlers/edge_multicast_publishers.go`, are not an
 "is anyone sending" rollup:
@@ -343,6 +376,22 @@ for top-of-book the way it does for market-by-price; it is not work this repo ca
 
 The cost of both legs is staleness, so `sequence_as_of` is in the payload — the **older** of the two
 legs — and the column ages against it. A cache miss costs that plane's rows, never the page.
+
+### What the page is about
+
+The subject is the **feed and the publishers that fill it**, not who buys it. The subscriber side
+is on screen only as **Recorders** — how many of a group's receivers are DoubleZero's own boxes —
+because those are the apparatus every application-plane column is measured at (Heard, Sequence,
+Msg/s, Peer). The customer split stays in the payload for the group's own page and is deliberately
+not rendered here.
+
+Two per-path columns come from the observations payload and cost no query: **Msg/s**, the recorded
+message rate, and **Peer**, the parity ratio. Msg/s sits beside the counter rate rather than
+replacing it — the counter is per tunnel, minutes late, and an upper bound a multi-group publisher
+shares across its groups; this is per group, from the far end, so it is what arrived rather than
+what was sent, and it is blank for any feed with no recorder behind it. Neither figure is on the
+group row: summing recorded rates over a group's paths would double the feed, since redundant paths
+carry the same traffic, and a parity ratio means nothing until you name which path it is about.
 
 Parity is measured on the **application plane** (`kalshi_bbo_observations`,
 `slot_feed_race_summary_v2`) and cannot move to the counters. Interface counters are per tunnel: a

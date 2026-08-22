@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -251,24 +252,32 @@ func (a *API) foldKalshiL2Coverage(ctx context.Context, captureSources edgeMulti
 	return coverage.GeneratedAt.UTC()
 }
 
-// foldEdgeMulticastTOBSequence adds the top-of-book series, and returns the payload's own clock.
+// foldEdgeMulticastTOBSequence adds the top-of-book series out of the observations payload, and
+// returns that payload's own clock.
 //
 // Every instance it produces carries GapsMeasured = false. That is the whole difference between
 // the two legs and it is not a shortfall to be papered over: this plane has no gap marker to
 // count, so the series can say it is advancing and cannot say it lost nothing.
 func (a *API) foldEdgeMulticastTOBSequence(ctx context.Context, captureSources edgeMulticastCaptureSourceMap, out map[string]*EdgeMulticastSequenceHealth) time.Time {
-	data, err := a.readPageCache(ctx, edgeMulticastTOBSequenceCacheKey)
+	data, err := a.readPageCache(ctx, edgeMulticastObservationsCacheKey)
 	if err != nil {
 		return time.Time{}
 	}
 
-	var payload EdgeMulticastTOBSequenceResponse
+	var payload EdgeMulticastObservationsResponse
 	if err := json.Unmarshal(data, &payload); err != nil {
 		slog.Warn("edge multicast sequence health: tob sequence cache did not parse", "error", err)
 		return time.Time{}
 	}
 
 	for _, series := range payload.Series {
+		// Top-of-book only. The market-by-price rows in this payload are here for the parity
+		// check; their Sequence series comes from kalshi_l2_coverage.go, which has a gap
+		// marker this table does not carry. Folding both would let one column disagree with
+		// itself about one feed.
+		if !strings.HasPrefix(series.Source, edgeMulticastTOBSourcePrefix) {
+			continue
+		}
 		// The destination address first: it is what the datagrams were addressed to. The
 		// capture source name is the fallback, for a recorder payload that predates
 		// raw_meta carrying the address.
