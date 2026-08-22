@@ -1083,57 +1083,6 @@ export function EdgeMulticastPage() {
           }
         />
 
-        <p className="text-xs text-muted-foreground mb-6 max-w-3xl">
-          Rates are {data?.rate_grain_minutes ?? 5}-minute counter rollups measured at each member's tunnel and
-          land a few minutes behind wall clock — the “Measured” column is the age of the newest bucket behind
-          the row, shown as the small figure under the rate it describes. “DZD” is the DoubleZero device a path attaches
-          to, what that device says about its BGP session — state, uptime and flap count, from
-          telemetry rather than the ledger snapshot, which is why it can disagree with it — and the
-          round trip to that device, which the client agent measures on its own BGP socket and
-          writes onchain. That last figure is written on a status change or a ~6-hourly keepalive,
-          so it is a property of the path and not a live signal; its age is in the tooltip. “Health” and “Sequence” are per PUBLISHER and the group row carries neither: a badge over a
-          feed with one dead path and one live one describes neither of them. Click a Publishers cell to list a
-          group's publishers, one line each, and read the verdicts there. A publisher is{' '}
-          <span className="text-emerald-500 font-medium">healthy</span> when it clears{' '}
-          {formatBps(data?.publisher_floor_bps ?? 0)} and its recorded series is intact,{' '}
-          <span className="text-amber-500 font-medium">thin</span> when it is below that floor,{' '}
-          <span className="text-red-500 font-medium">silent</span> when its counter read zero, and{' '}
-          <span className="text-muted-foreground font-medium">unknown</span> when nothing measured it — which is
-          a monitoring gap, never an outage. The group's own cell reports only what no line can: series recorded
-          from an address no publisher of the group carries.
-          {' '}This page is about the feed and the publishers that fill it, so what “Subscribers”
-          is for is the DoubleZero count beside the total: those boxes are the apparatus every
-          application-plane column here is measured at, and a group with none of them has no
-          application-plane signal at all. It says subscribers and not recorders because that is
-          what the number is — with no operator rows, every DoubleZero box here is matched by owner
-          wallet, which establishes whose box it is and cannot say whether it records.
-          “Msg/s” and “Peer” come from those recorders and are per PATH — a recorded message rate
-          per group rather than the per-tunnel counter beside it, and each path's delivery against
-          its redundant peer at the recorder that saw both. Anything below 1 in “Peer” is this path
-          losing something its peer did not.
-          {data?.last_heard_available && (
-            <>
-              {' '}
-              “Heard” is a different measurement altogether: when a recording node last received a
-              message on the group, seconds rather than minutes old. It covers only the groups with a
-              capture behind them, it is receive-side — a silent recorder looks the same as a silent
-              publisher — and it never sets the silent flag for that reason.
-            </>
-          )}
-          {showSequence && (
-            <>
-              {' '}
-              “Sequence” is the recorded wire protocol's own counters, and the only column here that
-              can say the feed lost data rather than that a member went quiet. A series is owned by one
-              channel instance — (source IP, channel, recording node) — so the verdict sits on the
-              publisher that emitted it. Gap counts are books, never gap-marked messages. It is folded from background refreshers, so it is
-              minutes older than the rest of the row. On the top-of-book plane the recorder writes no gap
-              marker, so those series read “advancing” — the counters move and nothing checked them for
-              loss — rather than the market-by-price rows' gap-checked “ok”.
-            </>
-          )}
-        </p>
-
         <div className="space-y-6">
           {(data?.services ?? []).map((s) => (
             <ServiceSection
@@ -1153,6 +1102,72 @@ export function EdgeMulticastPage() {
             <div className="border border-border rounded-lg bg-card px-4 py-8 text-center text-muted-foreground">
               No multicast groups found
             </div>
+          )}
+        </div>
+
+        <div className="mt-8 pt-4 border-t border-border max-w-3xl text-xs text-muted-foreground leading-relaxed space-y-1.5">
+          <div className="font-medium text-foreground">How to read this table</div>
+          <p>
+            <span className="text-foreground">Ingress</span> is a {data?.rate_grain_minutes ?? 5}-minute
+            counter rollup measured at each member's tunnel, so it lands minutes behind wall clock; the small
+            figure under a rate is the age of the newest bucket behind it.
+          </p>
+          <p>
+            <span className="text-foreground">DZD</span> is the DoubleZero device a path attaches to, with
+            that device's own view of the BGP session — state, uptime and flap count, from telemetry rather
+            than the ledger snapshot, which is why the two can disagree — and the round trip the client agent
+            measures on its own BGP socket and writes onchain. That figure is written on a status change or a
+            ~6-hourly keepalive, so it is a property of the path and not a live signal; its age is in the
+            tooltip.
+          </p>
+          <p>
+            <span className="text-foreground">Health</span> and{' '}
+            <span className="text-foreground">Sequence</span> are per publisher and the group row carries
+            neither: a badge over a feed with one dead path and one live one describes neither of them.
+            Expand a group's Publishers cell to read the verdicts, one line per publisher. A publisher is{' '}
+            <span className="text-emerald-500 font-medium">healthy</span> when it clears{' '}
+            {formatBps(data?.publisher_floor_bps ?? 0)} and its recorded series is intact,{' '}
+            <span className="text-amber-500 font-medium">thin</span> below that floor,{' '}
+            <span className="text-red-500 font-medium">silent</span> when its counter read zero, and{' '}
+            <span className="text-muted-foreground font-medium">unknown</span> when nothing measured it — a
+            monitoring gap, never an outage.
+          </p>
+          <p>
+            <span className="text-foreground">Subscribers</span> earns its column for the DoubleZero count
+            beside the total: those boxes are the apparatus every application-plane column here is measured
+            at, and a group with none of them has no application-plane signal at all. It says subscribers and
+            not recorders because a box is matched by owner wallet, which establishes whose box it is and
+            cannot say whether it records.
+          </p>
+          {showObservations && (
+            <p>
+              <span className="text-foreground">Msg/s</span> and{' '}
+              <span className="text-foreground">Peer</span> come from those recorders and are per path: a
+              recorded message rate per group rather than the per-tunnel counter beside it, and each path's
+              delivery against its redundant peer at the recorder that saw both. Anything below 1 in Peer is
+              this path losing something its peer did not.
+            </p>
+          )}
+          {data?.last_heard_available && (
+            <p>
+              <span className="text-foreground">Heard</span> is when a recording node last received a message
+              on the group — seconds rather than minutes old, and only for the groups with a capture behind
+              them. It is receive-side, so a silent recorder looks the same as a silent publisher, and it
+              never sets the silent flag for that reason.
+            </p>
+          )}
+          {showSequence && (
+            <p>
+              <span className="text-foreground">Sequence</span> is the recorded wire protocol's own counters,
+              and the only column here that can say the feed lost data rather than that a member went quiet.
+              A series belongs to one channel instance — (source IP, channel, recording node) — so its
+              verdict sits on the publisher that emitted it, and the group's own cell reports only what no
+              line can: series recorded from an address no publisher of the group carries. Gap counts are
+              books, never gap-marked messages, and the column is folded from background refreshers, so it is
+              minutes older than the rest of the row. The top-of-book plane carries no gap marker, so those
+              series read “advancing” — the counters move and nothing checked them for loss — rather than the
+              market-by-price rows' gap-checked “ok”.
+            </p>
           )}
         </div>
       </div>
