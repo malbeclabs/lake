@@ -290,7 +290,7 @@ function PublisherLineRow({
           goes under Multicast IP, which is the column's role on this table: the group row holds
           the destination address, the publisher line holds the source IP address its datagrams
           carry, which is what the recorders and the allow-lists talk about. */}
-      <td className="pl-8 pr-3 py-1.5 whitespace-nowrap">
+      <td className="pl-8 pr-3 py-1.5 whitespace-nowrap leading-tight">
         <span className="inline-flex items-center gap-2">
           {/* The address links to the ledger User behind it: a source that is gapping is a
               question about that account — its tunnel, its device, its access pass — and this
@@ -307,13 +307,17 @@ function PublisherLineRow({
               a publisher line has nothing to say about that side of the group. */}
           {label && <span className="text-muted-foreground">{label}</span>}
         </span>
-      </td>
-      <td className="px-3 py-1.5 whitespace-nowrap">
-        {line.dz_ip ? (
-          <CopyableText text={line.dz_ip} className="font-mono text-xs text-muted-foreground" />
-        ) : (
-          <span className="text-muted-foreground">—</span>
-        )}
+        {/* The tunnel address under the box's own, in one column. They are the two names for one
+            path and were never worth a column each: the client IP is what an operator recognises
+            and the key the override table uses, the DZ IP is what the datagrams carry and what
+            the recorders and the sequence attribution match on. */}
+        <div className="mt-0.5">
+          {line.dz_ip ? (
+            <CopyableText text={line.dz_ip} className="font-mono text-[10px] text-muted-foreground/70" />
+          ) : (
+            <span className="text-[10px] text-muted-foreground/70">no tunnel address</span>
+          )}
+        </div>
       </td>
       <td className="px-3 py-1.5 whitespace-nowrap">
         <DZDCell
@@ -516,28 +520,31 @@ function PublisherHealthBadge({
   )
 }
 
-// This page is about the feed and the publishers that fill it, not about who buys it. What the
-// subscriber side still owes it is the measurement apparatus: how many of a group's receivers are
-// DoubleZero's own boxes, because those are the recorders every application-plane signal on the
-// row — Heard, Sequence, Msg/s, Peer — is measured at. The customer split stays in the payload for
-// the drill-down and is deliberately not on screen.
-function RecorderCell({ group }: { group: EdgeMulticastGroup }) {
+// Who receives the group. The page is about the feed rather than about who buys it, so what this
+// column is FOR is the DoubleZero count: those boxes are the apparatus every application-plane
+// signal on the row — Heard, Sequence, Msg/s, Peer — is measured at, and a group with none of them
+// has no application-plane signal at all.
+//
+// It says "subscribers" and not "recorders" because that is what the number is. With the override
+// table unseeded, every DoubleZero box here is matched by the operator-wallet tier, which
+// establishes whose box it is and cannot say whether it records — so labelling the count
+// "recorders" asserts something nothing has established. The tooltip keeps the tiers apart.
+function SubscriberCell({ group }: { group: EdgeMulticastGroup }) {
   const { subscribers } = group
   if (subscribers.total === 0) {
     return <span className="text-muted-foreground">—</span>
   }
 
-  // 'doublezero' is the wallet tier: ours, kind not asserted. Counted here because a box we run
-  // that receives the feed is apparatus either way; the tooltip keeps the distinction visible.
   const ours = subscribers.recorders + subscribers.internal_probes + subscribers.doublezero
   const known = subscribers.class_asserted + subscribers.class_derived
   const detail = [
-    `${subscribers.recorders} asserted recorder(s)`,
+    `${subscribers.total} subscriber(s)`,
+    subscribers.recorders > 0 ? `${subscribers.recorders} asserted recorder(s)` : '',
     subscribers.internal_probes > 0 ? `${subscribers.internal_probes} internal probe(s)` : '',
     subscribers.doublezero > 0
       ? `${subscribers.doublezero} DoubleZero-operated, kind not asserted`
       : '',
-    `${subscribers.total - ours} other receiver(s)`,
+    `${subscribers.active} receiving traffic`,
     known === 0
       ? 'nothing is classified: every member defaults to customer'
       : `${known} of ${subscribers.total} classified (${subscribers.class_asserted} asserted, ${subscribers.class_derived} derived)`,
@@ -548,8 +555,8 @@ function RecorderCell({ group }: { group: EdgeMulticastGroup }) {
   return (
     <Tooltip content={detail}>
       <span className="tabular-nums">
-        {ours === 0 ? <span className="text-muted-foreground">none</span> : ours}
-        <span className="text-muted-foreground text-xs"> /{subscribers.total}</span>
+        {subscribers.total}
+        {ours > 0 && <span className="text-muted-foreground text-xs"> ({ours} DZ)</span>}
       </span>
     </Tooltip>
   )
@@ -735,11 +742,11 @@ function GroupRow({
       className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
       onClick={(e) => onOpen(e, group.pk)}
     >
-      <td className="px-3 py-3 whitespace-nowrap">
+      <td className="px-3 py-3 whitespace-nowrap leading-tight">
         <CopyableText text={group.code} className="font-mono text-sm" />
-      </td>
-      <td className="px-3 py-3 whitespace-nowrap">
-        <CopyableText text={group.multicast_ip} className="font-mono text-sm text-muted-foreground" />
+        <div className="mt-0.5">
+          <CopyableText text={group.multicast_ip} className="font-mono text-[10px] text-muted-foreground/70" />
+        </div>
       </td>
       {/* DZD is per publisher: which DoubleZero device a path attaches to, and what that device
           says about its session. A group spans several, so the cell is empty here. The plane the
@@ -756,7 +763,7 @@ function GroupRow({
         />
       </td>
       <td className="px-3 py-3 text-sm">
-        <RecorderCell group={group} />
+        <SubscriberCell group={group} />
       </td>
       {/* The bucket age rides under the rate rather than in a column of its own. It is a property
           of that number and of nothing else on the row, and a whole column for it was pushing the
@@ -856,7 +863,7 @@ function ServiceSection({
   // Only the truncation notice spans the table now; the publisher lines carry a cell per column,
   // so the count still has to match the header exactly — a mismatch silently shifts every group
   // column one to the left.
-  const columns = 7 + (showObservations ? 2 : 0) + (showLastHeard ? 1 : 0) + (showSequence ? 1 : 0)
+  const columns = 6 + (showObservations ? 2 : 0) + (showLastHeard ? 1 : 0) + (showSequence ? 1 : 0)
   const silent = service.groups.filter((g) => g.silent).length
 
   return (
@@ -883,15 +890,20 @@ function ServiceSection({
         <table className="w-full">
           <thead className="sticky top-0 z-10 bg-card">
             <tr className="text-sm text-left text-muted-foreground border-b border-border">
-              <th className="px-3 py-2 font-medium">Group</th>
-              {/* Two things, one column, because the rows are two grains: the group row carries the
-                  destination address the feed is sent to, and a publisher line carries the source
-                  address its datagrams leave with. The header names both rather than naming the
-                  group's and letting the line's read as a mislabel. */}
-              <th className="px-3 py-2 font-medium whitespace-nowrap">Multicast IP / DZ IP</th>
+              {/* One column, two grains. A group row is a feed and carries the destination address
+                  it is sent to; a publisher line is a path and carries the source address its
+                  datagrams leave with. Identity over address in both cases, so the pair reads the
+                  same way down the column, and the subtitle names both rather than naming one and
+                  letting the other read as a mislabel. */}
+              <th className="px-3 py-2 font-medium whitespace-nowrap leading-tight">
+                Group / Path
+                <div className="text-[10px] font-normal text-muted-foreground/70">
+                  multicast IP / DZ IP
+                </div>
+              </th>
               <th className="px-3 py-2 font-medium">DZD</th>
               <th className="px-3 py-2 font-medium">Publishers</th>
-              <th className="px-3 py-2 font-medium">Recorders</th>
+              <th className="px-3 py-2 font-medium">Subscribers</th>
               <th className="px-3 py-2 font-medium text-right">Ingress</th>
               {showObservations && <th className="px-3 py-2 font-medium text-right">Msg/s</th>}
               {showObservations && <th className="px-3 py-2 font-medium text-right">Peer</th>}
@@ -1039,7 +1051,7 @@ export function EdgeMulticastPage() {
         <p className="text-xs text-muted-foreground mb-6 max-w-3xl">
           Rates are {data?.rate_grain_minutes ?? 5}-minute counter rollups measured at each member's tunnel and
           land a few minutes behind wall clock — the “Measured” column is the age of the newest bucket behind
-          the row, shown under the rate it describes. “DZD” is the DoubleZero device a path attaches
+          the row, shown as the small figure under the rate it describes. “DZD” is the DoubleZero device a path attaches
           to and what that device says about its BGP session — state, uptime and flap count, from
           telemetry rather than the ledger snapshot, which is why it can disagree with it. It is not
           latency: no client-to-device RTT exists in this data. “Health” and “Sequence” are per PUBLISHER and the group row carries neither: a badge over a
@@ -1052,9 +1064,12 @@ export function EdgeMulticastPage() {
           <span className="text-muted-foreground font-medium">unknown</span> when nothing measured it — which is
           a monitoring gap, never an outage. The group's own cell reports only what no line can: series recorded
           from an address no publisher of the group carries.
-          {' '}This page is about the feed and the publishers that fill it: “Recorders” counts the
-          DoubleZero boxes receiving the group, which is the apparatus every application-plane
-          column here is measured at, and the customer split is left to the group's own page.
+          {' '}This page is about the feed and the publishers that fill it, so what “Subscribers”
+          is for is the DoubleZero count beside the total: those boxes are the apparatus every
+          application-plane column here is measured at, and a group with none of them has no
+          application-plane signal at all. It says subscribers and not recorders because that is
+          what the number is — with no operator rows, every DoubleZero box here is matched by owner
+          wallet, which establishes whose box it is and cannot say whether it records.
           “Msg/s” and “Peer” come from those recorders and are per PATH — a recorded message rate
           per group rather than the per-tunnel counter beside it, and each path's delivery against
           its redundant peer at the recorder that saw both. Anything below 1 in “Peer” is this path

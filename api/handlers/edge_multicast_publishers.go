@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
+	"net"
 	"sort"
 	"time"
 
@@ -464,8 +466,10 @@ func edgeMulticastClassOf(clientIP, ownerPubkey string, recorders, probes, asser
 	return string(multicastMemberCustomer)
 }
 
-// sortEdgeMulticastPublisherLines orders lines worst-first, which is what makes the line cap
-// safe: the publishers that fail the floor are the ones that survive truncation.
+// sortEdgeMulticastPublisherLines orders lines worst-first. This is the SELECTION order, not the
+// display order: it is what makes the line cap safe, because the publishers that fail the floor
+// are the ones that survive truncation. The kept subset is re-sorted by client IP for display —
+// see sortEdgeMulticastPublisherLinesByAddress.
 //
 // Within a status the lower rate sorts first, and client_ip breaks the remaining ties so the
 // order is stable across refreshes — an unstable order on a 30s-polling page reshuffles rows
@@ -564,4 +568,31 @@ func edgeMulticastLaggingNodes(nodes []EdgeMulticastCaptureNode) int {
 		}
 	}
 	return n
+}
+
+// sortEdgeMulticastPublisherLinesByAddress puts the lines in the order a reader looks for them:
+// by the box's own public address, ascending.
+//
+// Applied to the KEPT lines only, after the worst-first cap has chosen them. Selecting and
+// displaying are two different orderings and conflating them would break one or the other — sort
+// by address before the cap and truncation keeps an arbitrary twelve, with the faults as likely to
+// be cut as not, while the notice underneath still claims everything dropped was above the floor.
+//
+// Compared as addresses and not as strings. Dotted-quad text sorts 148.51.120.152 before
+// 148.51.120.6, which is exactly the pair of Kalshi publishers on one group, so a string sort
+// would read as scrambled on the feeds this page exists for. Unparseable values keep a stable
+// string order rather than bunching at one end.
+func sortEdgeMulticastPublisherLinesByAddress(lines []EdgeMulticastPublisher) {
+	sort.SliceStable(lines, func(i, j int) bool {
+		a, b := net.ParseIP(lines[i].ClientIP), net.ParseIP(lines[j].ClientIP)
+		if a == nil || b == nil {
+			return lines[i].ClientIP < lines[j].ClientIP
+		}
+		if c := bytes.Compare(a.To16(), b.To16()); c != 0 {
+			return c < 0
+		}
+		// One box can hold several users of one group. The tunnel keeps them apart, and keeps
+		// the order stable across refreshes.
+		return lines[i].TunnelID < lines[j].TunnelID
+	})
 }

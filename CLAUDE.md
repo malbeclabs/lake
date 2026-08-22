@@ -297,6 +297,18 @@ backbone, `fact_dz_internet_metro_latency` is metro-to-metro over the public int
 telemetry tables carry interface, ISIS, transceiver and BGP state with no timing of the access path.
 A last-mile figure on this column needs producer-side measurement first.
 
+### Row order
+
+Groups read alphabetically by ledger code within their feed section. Publisher lines read by
+**client IP**, ascending, compared as addresses and not as strings — dotted-quad text sorts
+`148.51.120.152` before `148.51.120.6`, which is exactly the pair of Kalshi publishers on one
+group.
+
+That is the DISPLAY order, applied to the kept lines after `edgeMulticastPublisherLineCap` has
+already truncated. Selection stays worst-first and must: sort by address before the cap and
+truncation keeps an arbitrary twelve, with the faults as likely to be cut as not, while the notice
+underneath still claims everything dropped was above the floor.
+
 ### Path parity
 
 `behind` comes from `edgeMulticastPathParity`: a publisher path measured against the other paths of
@@ -400,10 +412,15 @@ legs — and the column ages against it. A cache miss costs that plane's rows, n
 ### What the page is about
 
 The subject is the **feed and the publishers that fill it**, not who buys it. The subscriber side
-is on screen only as **Recorders** — how many of a group's receivers are DoubleZero's own boxes —
-because those are the apparatus every application-plane column is measured at (Heard, Sequence,
-Msg/s, Peer). The customer split stays in the payload for the group's own page and is deliberately
-not rendered here.
+earns its column for one reason: the **DoubleZero count** beside the total, because those boxes are
+the apparatus every application-plane column is measured at (Heard, Sequence, Msg/s, Peer), and a
+group with none of them has no application-plane signal at all.
+
+The column says **Subscribers**, not "Recorders", and that is not cosmetic. With
+`multicast_member_class` unseeded, every DoubleZero box on it is matched by the operator-wallet
+tier, which establishes whose box it is and explicitly cannot say whether it records — so
+"recorders" would assert what no tier has established. The customer breakdown stays in the tooltip
+and in the payload rather than on the row.
 
 Two per-path columns come from the observations payload and cost no query: **Msg/s**, the recorded
 message rate, and **Peer**, the parity ratio. Both are dropped entirely when that payload is

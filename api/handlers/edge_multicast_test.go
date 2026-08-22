@@ -716,9 +716,17 @@ func TestGetEdgeMulticast_ThinPublisherIsNotHealthy(t *testing.T) {
 	assert.False(t, g.Silent, "the other publisher is sending, so the feed did not go quiet")
 
 	require.Len(t, g.PublisherLines, 2)
-	assert.Equal(t, "thin", g.PublisherLines[0].Status, "worst first, so the cap can never hide the fault")
-	assert.Equal(t, "10.0.0.7", g.PublisherLines[0].ClientIP)
-	assert.Equal(t, "publishing", g.PublisherLines[1].Status)
+	// Found by address, not by position: lines are READ in address order and only CHOSEN
+	// worst-first, and what this test is about is the verdict on the line, not where it sits.
+	// TestGetEdgeMulticast_PublisherLinesReadByClientIP owns the ordering.
+	byIP := edgeMulticastLinesByClientIP(g.PublisherLines)
+	require.Contains(t, byIP, "10.0.0.7")
+	assert.Equal(t, "thin", byIP["10.0.0.7"].Status)
+	for ip, line := range byIP {
+		if ip != "10.0.0.7" {
+			assert.Equal(t, "publishing", line.Status)
+		}
+	}
 	assert.Equal(t, 2, g.Publishers.Active, "the group counts still report both counters as non-zero")
 }
 
@@ -737,8 +745,20 @@ func TestGetEdgeMulticast_IdlePublisherBesideALiveOneIsThin(t *testing.T) {
 	assert.Equal(t, 1, g.PublishersBelowFloor)
 	assert.False(t, g.Silent)
 	require.Len(t, g.PublisherLines, 2)
-	assert.Equal(t, "idle", g.PublisherLines[0].Status)
-	assert.Equal(t, "10.0.0.8", g.PublisherLines[0].ClientIP)
+	byIP := edgeMulticastLinesByClientIP(g.PublisherLines)
+	require.Contains(t, byIP, "10.0.0.8")
+	assert.Equal(t, "idle", byIP["10.0.0.8"].Status)
+}
+
+// edgeMulticastLinesByClientIP indexes publisher lines by the box's address. Tests that care about
+// one line's verdict look it up rather than indexing into the slice: display order is by address
+// and selection order is worst-first, so a position is not a stable way to name a publisher.
+func edgeMulticastLinesByClientIP(lines []handlers.EdgeMulticastPublisher) map[string]handlers.EdgeMulticastPublisher {
+	out := make(map[string]handlers.EdgeMulticastPublisher, len(lines))
+	for _, l := range lines {
+		out[l.ClientIP] = l
+	}
+	return out
 }
 
 // insertEdgeMulticastCapturePublisher gives a capture group a publisher above the floor, so the

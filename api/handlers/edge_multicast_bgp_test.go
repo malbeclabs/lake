@@ -129,3 +129,25 @@ func TestGetEdgeMulticast_DZDAbsentTelemetryCostsOnlyTheColumn(t *testing.T) {
 	assert.NotEmpty(t, g.PublisherLines[0].Health, "the rest of the line is unaffected")
 	assert.NotEmpty(t, g.PublisherLines[0].DeviceCode)
 }
+
+// Selection and display are two different orderings: worst-first chooses which lines survive the
+// cap, client IP is how the survivors are read. Both have to hold at once.
+func TestGetEdgeMulticast_PublisherLinesReadByClientIP(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertEdgeMulticastCaptureGroups(t, api)
+	// 10.0.0.9 is the healthy one and 10.0.0.10 is idle, so worst-first would put .10 on top.
+	// Address order is the opposite, and .10 sorting before .9 is also what a string compare
+	// would get wrong.
+	insertEdgeMulticastCapturePublisher(t, api, "group-k")
+	insertEdgeMulticastCapturePublisher2(t, api, "group-k")
+	require.NoError(t, api.DB.Exec(t.Context(), `
+		ALTER TABLE device_interface_rollup_5m UPDATE max_out_bps = 0
+		WHERE user_pk = 'user-kpub2' SETTINGS mutations_sync = 2`))
+
+	g := findEdgeMulticastGroup(t, getEdgeMulticast(t, api), "edge-kalshi-sports-mbp")
+	require.Len(t, g.PublisherLines, 2)
+	assert.Equal(t, []string{"10.0.0.9", "10.0.0.10"},
+		[]string{g.PublisherLines[0].ClientIP, g.PublisherLines[1].ClientIP},
+		"read in address order: .9 before .10, which a string compare reverses")
+}

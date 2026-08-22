@@ -189,9 +189,10 @@ type EdgeMulticastGroup struct {
 
 	// PublisherLines is this group's publishers one line each — the grain the verdict is
 	// actually taken at, since a feed with one live publisher and one dead one rolls up
-	// identically to a healthy one. Sorted worst-first and capped at
-	// edgeMulticastPublisherLineCap; PublisherLinesTotal is the count before the cap, so a
-	// truncated list says so instead of reading as the whole published set.
+	// identically to a healthy one. Chosen worst-first and capped at
+	// edgeMulticastPublisherLineCap, then ordered by client IP for reading;
+	// PublisherLinesTotal is the count before the cap, so a truncated list says so instead of
+	// reading as the whole published set.
 	PublisherLines      []EdgeMulticastPublisher `json:"publisher_lines"`
 	PublisherLinesTotal int                      `json:"publisher_lines_total"`
 
@@ -608,10 +609,13 @@ func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership
 			out.PublisherVerdicts.Unknown++
 		}
 	}
+	// Worst-first chose which lines survive the cap; client IP is how they are read. Sorting
+	// after the truncation is what keeps both true at once.
 	out.PublisherLines = lines
 	if len(out.PublisherLines) > edgeMulticastPublisherLineCap {
 		out.PublisherLines = out.PublisherLines[:edgeMulticastPublisherLineCap]
 	}
+	sortEdgeMulticastPublisherLinesByAddress(out.PublisherLines)
 
 	out.CaptureNodes = edgeMulticastCaptureNodes(lh.nodeObs())
 	out.CaptureNodesLagging = edgeMulticastLaggingNodes(out.CaptureNodes)
