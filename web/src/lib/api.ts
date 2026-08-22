@@ -7799,7 +7799,7 @@ export interface EdgeMulticastPublisher {
   /** 'publishing' (at/above the floor) | 'thin' (non-zero, below it) | 'idle' | 'unknown'. */
   status: string
   /** This publisher's own verdict, worst-of its own signals: 'silent' | 'thin' | 'gapped' |
-   *  'stalled' | 'behind' | 'unknown' | 'healthy'. BGP status is shown beside it, never folded
+   *  'stalled' | 'behind' | 'unrecorded' | 'unknown' | 'healthy'. BGP status is shown beside it, never folded
    *  into it. */
   health?: string
   /** What the DEVICE says about this publisher's BGP session, from telemetry rather than the
@@ -7880,6 +7880,9 @@ export interface EdgeMulticastPublisherVerdicts {
   stalled: number
   behind: number
   silent: number
+  /** Above the floor with no recorded series while peers on the group have one: missing coverage,
+   *  not a fault. */
+  unrecorded: number
   unknown: number
 }
 

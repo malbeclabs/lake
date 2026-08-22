@@ -162,12 +162,16 @@ type EdgeMulticastPublisherVerdicts struct {
 	Stalled int `json:"stalled"`
 	Behind  int `json:"behind"`
 	Silent  int `json:"silent"`
-	Unknown int `json:"unknown"`
+
+	// Unrecorded is clearing the floor with no recorded series while peers on the group have
+	// one. Not a fault and not counted as one — it is missing coverage.
+	Unrecorded int `json:"unrecorded"`
+	Unknown    int `json:"unknown"`
 }
 
-// Faulted is every line that is not healthy and not merely unmeasured. Unknown is excluded on
-// purpose: a publisher nothing measured is a monitoring gap, and counting it as a fault is the
-// same mistake as painting a group red for one device's missing telemetry.
+// Faulted is every line that is not healthy and not merely unmeasured. Unknown and Unrecorded are
+// excluded on purpose: a publisher nothing measured is a monitoring gap, and counting it as a fault
+// is the same mistake as painting a group red for one device's missing telemetry.
 func (v EdgeMulticastPublisherVerdicts) Faulted() int {
 	return v.Thin + v.Gapped + v.Stalled + v.Behind + v.Silent
 }
@@ -575,6 +579,9 @@ func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership
 	// After the attachment, never before: a line's verdict folds the series it owns, and the
 	// series only reaches the line above. Tallied here, over the full list, so the cap below
 	// cannot change what a collapsed group reports about itself.
+	// Whether this group has any recorded series at all, which is what makes "this publisher
+	// has none" a statement about coverage rather than about a plane nobody records.
+	groupHasSeries := sequence != nil && len(sequence.Instances) > 0
 	for i := range lines {
 		// Keyed on the tunnel address, the same join the series attribution makes: it is
 		// what the datagrams carry and what the recorder wrote down.
@@ -591,7 +598,7 @@ func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership
 				lines[i].MsgPerSec = &rate
 			}
 		}
-		lines[i].Health = edgeMulticastPublisherHealth(lines[i])
+		lines[i].Health = edgeMulticastPublisherHealth(lines[i], groupHasSeries)
 		switch lines[i].Health {
 		case edgeMulticastPubHealthy:
 			out.PublisherVerdicts.Healthy++
@@ -605,6 +612,8 @@ func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership
 			out.PublisherVerdicts.Behind++
 		case edgeMulticastPubHealthSilent:
 			out.PublisherVerdicts.Silent++
+		case edgeMulticastPubHealthUnrecorded:
+			out.PublisherVerdicts.Unrecorded++
 		case edgeMulticastPubHealthUnknown:
 			out.PublisherVerdicts.Unknown++
 		}

@@ -383,13 +383,18 @@ const (
 	edgeMulticastPubHealthGapped  = "gapped"
 	edgeMulticastPubHealthStalled = "stalled"
 	edgeMulticastPubHealthBehind  = "behind"
-	edgeMulticastPubHealthUnknown = "unknown"
-	edgeMulticastPubHealthy       = "healthy"
+
+	// edgeMulticastPubHealthUnrecorded is "sending, and nothing wrote down what it sent". It
+	// exists because 'healthy' on this page means the floor AND an intact series, and a
+	// publisher with no series has only half of that. See edgeMulticastPublisherHealth.
+	edgeMulticastPubHealthUnrecorded = "unrecorded"
+	edgeMulticastPubHealthUnknown    = "unknown"
+	edgeMulticastPubHealthy          = "healthy"
 )
 
 // edgeMulticastPublisherHealth grades one publisher line.
 //
-// Ranking, worst-first: silent, thin, gapped, stalled, behind, unknown, healthy. A publisher moving
+// Ranking, worst-first: silent, thin, gapped, stalled, behind, unrecorded, unknown, healthy. A publisher moving
 // no bytes outranks one moving too few, and both outrank a recorded gap: 'thin' says the tunnel is
 // carrying overhead and no product, which is a larger failure than a series that lost some of a
 // feed it is otherwise delivering. 'behind' sits last of the faults because it is the mildest
@@ -406,7 +411,18 @@ const (
 // instances arrive with GapsMeasured false and a zero gap count that is an absence rather than a
 // reading. Letting that zero produce 'healthy' would be the page asserting something nothing
 // measured — such a series can still reach 'stalled', which is graded on staleness alone.
-func edgeMulticastPublisherHealth(line EdgeMulticastPublisher) string {
+//
+// groupHasSeries closes the same hole one level out. 'healthy' here means the floor AND an intact
+// series, so a publisher with NO series has only half of it, and returning 'healthy' anyway put a
+// measured, gapping feed beside an unmeasured one and made the unmeasured one look the better of
+// the two. It only applies where the group has series to be missing from: the shreds groups run
+// Turbine and have no recorded wire protocol at all, so there is nothing to be uncovered by and
+// 'healthy' is the whole truth there.
+//
+// The two tail states are not faults, and the difference between them matters: 'unknown' is no
+// counter row at all, 'unrecorded' is a publisher clearing the floor that no recorder wrote a
+// series for while its peers on the group have one.
+func edgeMulticastPublisherHealth(line EdgeMulticastPublisher, groupHasSeries bool) string {
 	switch line.Status {
 	case edgeMulticastPubUnknown:
 		return edgeMulticastPubHealthUnknown
@@ -427,6 +443,9 @@ func edgeMulticastPublisherHealth(line EdgeMulticastPublisher) string {
 	// zero-of-zero must not read as passing the check.
 	if p := line.PathParity; p != nil && p.Compared > 0 && p.Behind > 0 {
 		return edgeMulticastPubHealthBehind
+	}
+	if groupHasSeries && (line.Sequence == nil || len(line.Sequence.Instances) == 0) {
+		return edgeMulticastPubHealthUnrecorded
 	}
 	return edgeMulticastPubHealthy
 }

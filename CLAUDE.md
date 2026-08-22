@@ -268,7 +268,22 @@ series was gapping. It is tallied before `edgeMulticastPublisherLineCap`, so wha
 happens to carry cannot change it.
 
 The per-publisher ranking is worst-first: `silent`, `thin`, `gapped`, `stalled`, `behind`,
-`unknown`, `healthy`. A publisher moving no bytes outranks one moving too few, and both outrank a recorded gap
+`unrecorded`, `unknown`, `healthy`. The last two are not faults and are not counted as such; the
+difference between them matters — `unknown` is no counter row at all, `unrecorded` is a publisher
+clearing the floor that no recorder wrote a series for **while its peers on the group have one**.
+
+`unrecorded` exists because `healthy` here means the floor AND an intact series, so a publisher
+with no series has only half of it. Returning `healthy` anyway put a measured, gapping feed beside
+an unmeasured one and made the unmeasured one look the better of the two — observed on the Kalshi
+sports pair, where `-mbp` read `gapped` and `-tob` read `healthy` for no reason other than that
+nothing measures gaps on the top-of-book plane. It applies only where the group has series to be
+missing from: the shreds groups run Turbine, have no recorded wire protocol at all, and `healthy`
+is the whole truth there.
+
+The group's Publishers cell counts publishers **above the floor**, which is the same thing the
+lines' own status word says, so the row cannot contradict itself. It briefly counted `healthy`
+instead and rendered `0/2` beside two lines that both said `publishing`. The per-line verdicts
+still drive the cell's dot, so a group whose only fault is a gapped series does not read green. A publisher moving no bytes outranks one moving too few, and both outrank a recorded gap
 — `thin` says the tunnel carries overhead and no product, a larger failure than a series that lost
 some of a feed it is otherwise delivering. Two things stay out of it: **BGP status**, which keeps
 its own marker beside the verdict because the ledger snapshot and the rate bucket are minutes apart

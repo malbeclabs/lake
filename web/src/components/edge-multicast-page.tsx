@@ -98,6 +98,9 @@ const PUBLISHER_HEALTH_BADGE: Record<string, string> = {
   thin: 'bg-amber-500/15 text-amber-500',
   stalled: 'bg-amber-500/15 text-amber-500',
   behind: 'bg-amber-500/15 text-amber-500',
+  // Not a fault. Grey with unknown, because both are "we cannot say" — but they are
+  // different kinds of cannot-say and the label has to keep them apart.
+  unrecorded: 'bg-muted text-muted-foreground',
   gapped: 'bg-red-500/15 text-red-500',
   silent: 'bg-red-500/15 text-red-500',
   unknown: 'bg-muted text-muted-foreground',
@@ -110,6 +113,8 @@ const PUBLISHER_HEALTH_DETAIL: Record<string, string> = {
   thin: 'the tunnel is moving something, not the product',
   stalled: 'its recorded series stopped advancing: a dead path or a dead recorder',
   behind: 'this path is delivering less of the feed than its redundant peer, at the same recorder',
+  unrecorded:
+    'above the floor, and no recorder wrote a sequence series for it while other publishers of this group have one — missing coverage, not a fault',
   gapped: 'its recorded series lost data on the wire',
   silent: 'its counter read zero in the last visible bucket',
   unknown: 'no counter row for this publisher: nothing measured it',
@@ -208,12 +213,16 @@ function PublisherCell({
           : 'bg-emerald-500'
 
   const detail = [
-    `${v.healthy} of ${publishers.total} publisher(s) healthy`,
+    `${group.publishers_publishing} of ${publishers.total} publisher(s) above ${formatBps(floorBps)}`,
+    `${v.healthy} healthy overall`,
     v.silent > 0 ? `${v.silent} silent` : '',
     v.thin > 0 ? `${v.thin} below ${formatBps(floorBps)}` : '',
     v.gapped > 0 ? `${v.gapped} with a gapped series` : '',
     v.stalled > 0 ? `${v.stalled} with a stalled series` : '',
     v.behind > 0 ? `${v.behind} behind their redundant peer` : '',
+    v.unrecorded > 0
+      ? `${v.unrecorded} with no recorded series while peers on this group have one`
+      : '',
     v.unknown > 0 ? `${v.unknown} with no counter data — not a fault, nothing measured them` : '',
     below > 0 && below !== v.thin + v.silent
       ? `${below} below the floor on the counter plane`
@@ -239,8 +248,12 @@ function PublisherCell({
           <ChevronRight className="h-3 w-3 text-muted-foreground" />
         )}
         <span className={`inline-block h-2 w-2 rounded-full ${dot}`} />
+        {/* The count is publishers ABOVE THE FLOOR, which is what the lines' own status word
+            says, so the row cannot contradict itself — a group reading 0/2 beside two lines that
+            both say 'publishing' is what this replaced. The per-line verdicts still colour the
+            dot, so a group whose only fault is a gapped series does not read green. */}
         <span>
-          {v.healthy}
+          {group.publishers_publishing}
           <span className="text-muted-foreground">/{publishers.total}</span>
         </span>
       </button>

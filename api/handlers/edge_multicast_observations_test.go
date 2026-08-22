@@ -459,3 +459,47 @@ func TestEdgeMulticastPathRates_ZeroWindowYieldsNothing(t *testing.T) {
 	}, 0)
 	assert.Empty(t, rates)
 }
+
+// A publisher with no recorded series cannot read 'healthy' while its peers on the same group have
+// one. That is missing coverage, and calling it healthy put a measured, gapping feed beside an
+// unmeasured one and made the unmeasured one look the better of the two.
+func TestGetEdgeMulticast_PublisherWithNoSeriesIsUnrecorded(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertEdgeMulticastCaptureGroups(t, api)
+	insertEdgeMulticastCapturePublisher(t, api, "group-k")  // 10.0.0.9
+	insertEdgeMulticastCapturePublisher2(t, api, "group-k") // 10.0.0.10
+
+	asOf := time.Now().UTC()
+	// Only one of the two publishers has a series, and it is intact.
+	seedL2Coverage(t, api, asOf, handlers.KalshiL2Lane{
+		Source: "mbp_edge_kalshi_sports_nfl", ChannelID: 1, MeasurementNodeID: "cmh-rec1",
+		PublisherSourceIP: "10.0.0.9", Messages: 1200, Seen: true, LastSeen: asOf.Add(-time.Second),
+	})
+
+	g := findEdgeMulticastGroup(t, getEdgeMulticast(t, api), "edge-kalshi-sports-mbp")
+	byIP := map[string]handlers.EdgeMulticastPublisher{}
+	for _, l := range g.PublisherLines {
+		byIP[l.DZIP] = l
+	}
+	assert.Equal(t, "healthy", byIP["10.0.0.9"].Health, "measured and intact")
+	assert.Equal(t, "unrecorded", byIP["10.0.0.10"].Health,
+		"its peer has a series and it has none: coverage, not health")
+	assert.Equal(t, 1, g.PublisherVerdicts.Unrecorded)
+	assert.Zero(t, g.PublisherVerdicts.Faulted(), "missing coverage is not a fault")
+}
+
+// And the case that must NOT change: a group nothing records at all. The shreds groups run Turbine
+// and have no wire protocol behind them, so there is nothing to be uncovered by.
+func TestGetEdgeMulticast_NoSeriesAnywhereStaysHealthy(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertEdgeMulticastCaptureGroups(t, api)
+	insertEdgeMulticastCapturePublisher(t, api, "group-k")
+
+	g := findEdgeMulticastGroup(t, getEdgeMulticast(t, api), "edge-kalshi-sports-mbp")
+	require.Len(t, g.PublisherLines, 1)
+	assert.Equal(t, "healthy", g.PublisherLines[0].Health,
+		"no series on the group at all: clearing the floor is the whole truth")
+	assert.Zero(t, g.PublisherVerdicts.Unrecorded)
+}
