@@ -884,7 +884,11 @@ function ServiceSection({
           <thead className="sticky top-0 z-10 bg-card">
             <tr className="text-sm text-left text-muted-foreground border-b border-border">
               <th className="px-3 py-2 font-medium">Group</th>
-              <th className="px-3 py-2 font-medium">Multicast IP</th>
+              {/* Two things, one column, because the rows are two grains: the group row carries the
+                  destination address the feed is sent to, and a publisher line carries the source
+                  address its datagrams leave with. The header names both rather than naming the
+                  group's and letting the line's read as a mislabel. */}
+              <th className="px-3 py-2 font-medium whitespace-nowrap">Multicast IP / DZ IP</th>
               <th className="px-3 py-2 font-medium">DZD</th>
               <th className="px-3 py-2 font-medium">Publishers</th>
               <th className="px-3 py-2 font-medium">Recorders</th>
