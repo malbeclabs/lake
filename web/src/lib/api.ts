@@ -7750,11 +7750,13 @@ export interface EdgeMulticastRoleCounts {
   recorders: number
   /** DoubleZero measurement/lab receivers that record nothing. */
   internal_probes: number
+  /** DoubleZero-operated, kind not asserted: matched by owner wallet, which cannot say which. */
+  doublezero: number
   /** Everyone else, including members nothing has classified. */
   customers: number
   /** How many of the classifications above are asserted by an operator row. */
   class_asserted: number
-  /** How many are derived from the known capture-host list. */
+  /** How many are derived from the capture-host list or the operator-wallet list. */
   class_derived: number
 }
 
@@ -7765,12 +7767,15 @@ export interface EdgeMulticastPublisher {
   dz_ip?: string
   device_code?: string
   tunnel_id: number
-  /** 'recorder' | 'internal_probe' | 'customer' — same tiers as the subscriber split. */
+  /** 'recorder' | 'internal_probe' | 'doublezero' | 'customer' — same tiers as the subscriber split. */
   class: string
   /** Measured send rate; null when nothing measured it. Upper bound when multi_group. */
   bps: number | null
   /** 'publishing' (at/above the floor) | 'thin' (non-zero, below it) | 'idle' | 'unknown'. */
   status: string
+  /** This publisher's own verdict, worst-of its own signals: 'silent' | 'thin' | 'gapped' |
+   *  'stalled' | 'unknown' | 'healthy'. BGP status is shown beside it, never folded into it. */
+  health?: string
   /** Feeds several groups from one tunnel, so bps cannot be attributed to this group alone. */
   multi_group: boolean
   /** Ledger BGP session: 'up' | 'down' | 'unknown'. 'down' on a publisher is a fault. */
@@ -7810,6 +7815,9 @@ export interface EdgeMulticastChannelInstance {
   last_seen: string
   /** 'ok' | 'gapped' | 'stalled'. */
   status: string
+  /** Whether gap_books is a reading or an absence. False on the top-of-book plane, which has no
+   *  gap marker to count — an 'ok' there means "advancing", not "lost nothing". */
+  gaps_measured: boolean
 }
 
 /** Sequence health over a set of channel instances, worst-first: one publisher's own series on a
@@ -7825,6 +7833,8 @@ export interface EdgeMulticastSequenceHealth {
   publishers_stalled?: number
   /** Instances whose source address matched no publisher line, so they have no row of their own. */
   unattributed?: number
+  /** Instances from a plane with no gap marker, whose 'ok' is the weaker "advancing" claim. */
+  gaps_unmeasured?: number
   instances: EdgeMulticastChannelInstance[]
 }
 

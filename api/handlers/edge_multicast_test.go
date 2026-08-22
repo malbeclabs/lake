@@ -61,7 +61,7 @@ func seedL2Coverage(t *testing.T, api *handlers.API, generatedAt time.Time, lane
 func assertEdgeMulticastRoleInvariant(t *testing.T, role handlers.EdgeMulticastRoleCounts, what string) {
 	t.Helper()
 	assert.Equal(t, role.Total, role.Active+role.Idle+role.Unknown, "%s: active+idle+unknown must equal total", what)
-	assert.Equal(t, role.Total, role.Recorders+role.InternalProbes+role.Customers, "%s: classes must equal total", what)
+	assert.Equal(t, role.Total, role.Recorders+role.InternalProbes+role.DoubleZero+role.Customers, "%s: classes must equal total", what)
 }
 
 // classifyMember asserts an operator classification for one member IP.
@@ -332,6 +332,73 @@ func TestGetEdgeMulticast_DerivedRecorderAndOverride(t *testing.T) {
 	assert.Equal(t, 1, g.Subscribers.ClassAsserted)
 	assert.Zero(t, g.Subscribers.ClassDerived, "the derived row is superseded, not double-counted")
 	assertEdgeMulticastRoleInvariant(t, g.Subscribers, "derived recorder overridden")
+}
+
+// The second derived tier is the operator-wallet allow-list. It is what classifies the market-data
+// receivers, which the capture-host map structurally cannot reach — and it stops at "ours", because
+// one wallet holds recorders, probes and lab boxes at once.
+func TestGetEdgeMulticast_OperatorWalletDerivedClass(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertEdgeMulticastFeed(t, api)
+
+	// From doubleZeroOperatorWallets. Spelled out rather than read from the package so a wallet
+	// removed from that list fails this test instead of silently taking its coverage with it.
+	const operatorWallet = "DZfHfcCXTLwgZeCRKQ1FL1UuwAwFAZM93g86NMYpfYan"
+	// Not a capture host: the point is that the wallet classifies it and the IP map cannot.
+	require.NoError(t, api.DB.Exec(t.Context(), `
+		INSERT INTO dim_dz_users_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id, publishers, subscribers)
+		VALUES ('user-dz', now(), now(), generateUUIDv4(), 0, 1, 'user-dz', '`+operatorWallet+`', 'activated', 'multicast', '10.0.0.5', '10.0.0.5', 'dev-nyc1', 506, '[]', '["group-1"]')`))
+
+	g := findEdgeMulticastService(t, getEdgeMulticast(t, api), "test-feed").Groups[0]
+	assert.Equal(t, 1, g.Subscribers.DoubleZero, "the wallet says whose box it is")
+	assert.Zero(t, g.Subscribers.Recorders, "and does not say it records: the wallet cannot tell")
+	assert.Equal(t, 1, g.Subscribers.ClassDerived, "a wallet match is a known classification")
+	assert.Zero(t, g.Subscribers.ClassAsserted)
+	assertEdgeMulticastRoleInvariant(t, g.Subscribers, "wallet-derived member")
+
+	// Asserted still beats derived downwards. Without this the escape hatch would not reach a
+	// box we handed back, since the wallet keeps matching until the ledger account is torn down.
+	classifyMember(t, api, "10.0.0.5", "customer")
+	g = findEdgeMulticastService(t, getEdgeMulticast(t, api), "test-feed").Groups[0]
+	assert.Zero(t, g.Subscribers.DoubleZero, "an operator row saying customer wins over the wallet")
+	assert.Equal(t, 1, g.Subscribers.ClassAsserted)
+	assert.Zero(t, g.Subscribers.ClassDerived, "superseded, not double-counted")
+	assertEdgeMulticastRoleInvariant(t, g.Subscribers, "wallet-derived member overridden")
+
+	// And upwards: naming the kind is the whole reason the asserted tier exists.
+	classifyMember(t, api, "10.0.0.5", "recorder")
+	g = findEdgeMulticastService(t, getEdgeMulticast(t, api), "test-feed").Groups[0]
+	assert.Equal(t, 1, g.Subscribers.Recorders)
+	assert.Zero(t, g.Subscribers.DoubleZero, "a member is counted in exactly one class")
+	assertEdgeMulticastRoleInvariant(t, g.Subscribers, "wallet-derived member promoted")
+}
+
+// A publisher line carries the same tiers as the subscriber split, so a DoubleZero-run publisher
+// is labelled on its own line rather than reading as a customer of its own feed.
+func TestGetEdgeMulticast_PublisherLineCarriesWalletClass(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertEdgeMulticastFeed(t, api)
+
+	const operatorWallet = "DZfHfcCXTLwgZeCRKQ1FL1UuwAwFAZM93g86NMYpfYan"
+	require.NoError(t, api.DB.Exec(t.Context(), `
+		INSERT INTO dim_dz_users_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id, publishers, subscribers)
+		VALUES ('user-dzp', now(), now(), generateUUIDv4(), 0, 1, 'user-dzp', '`+operatorWallet+`', 'activated', 'multicast', '10.0.0.6', '10.0.0.6', 'dev-nyc1', 507, '["group-1"]', '[]')`))
+
+	g := findEdgeMulticastService(t, getEdgeMulticast(t, api), "test-feed").Groups[0]
+	var found bool
+	for _, line := range g.PublisherLines {
+		if line.ClientIP == "10.0.0.6" {
+			found = true
+			assert.Equal(t, "doublezero", line.Class)
+		}
+	}
+	assert.True(t, found, "the wallet-owned publisher has a line")
 }
 
 // A malformed row would be inlined into a ClickHouse IN list. It is dropped, and the rest of the

@@ -164,24 +164,39 @@ exactly as the top-of-book feed does.
 
 ## Multicast Member Classification
 
-Which multicast subscribers are DoubleZero's own recorders is **not** in code — it lives in the
-Postgres table `multicast_member_class` (`client_ip`, `class`, `label`, `note`, `enabled`), with
-`class` one of `recorder`, `internal_probe`, `customer`.
+Which multicast subscribers are DoubleZero's own recorders is settled in **four tiers**, and only
+the top one can be changed without a deploy. In precedence order:
 
-A member is classified in three tiers: an enabled row here wins outright, then the derived signal
-(the Solana capture hosts in `edgeNodeIPs`, which the edge scoreboard already maintains for geoip),
-then `customer` as the default. The default is "nobody has said otherwise", not a verified fact,
-which is why the API also reports how many members each count actually knows about
-(`class_asserted` / `class_derived`).
+1. **Asserted.** An enabled row in the Postgres table `multicast_member_class` (`client_ip`,
+   `class`, `label`, `note`, `enabled`), with `class` one of `recorder`, `internal_probe`,
+   `customer`. Wins outright.
+2. **Derived, capture host.** The Solana capture hosts in `edgeNodeIPs`, which the edge scoreboard
+   already maintains for geoip. Classifies as `recorder`.
+3. **Derived, operator wallet.** `doubleZeroOperatorWallets` in `edge_multicast_class.go`, an
+   explicit allow-list of the ledger owner pubkeys DoubleZero runs its own boxes under. Classifies
+   as `doublezero` and **never** as `recorder` — see below.
+4. **Default:** `customer`, which means "nobody has said otherwise", not a verified fact. That is
+   why the API also reports how many members each count actually knows about (`class_asserted` /
+   `class_derived`; the wallet tier counts as derived).
 
-Keyed on `client_ip` and not on the user pk: DoubleZero user accounts are torn down and recreated
-constantly, so a pk-keyed row goes stale within hours. Owner pubkey is stable but far too coarse —
-one wallet owns recorders, probes and lab boxes at once. Do **not** reintroduce an owner-based rule:
-the first version of this page used one and matched 515 wallets, because every validator publishing
-shreds owns a publisher in a feed-backed group.
+Tier 3 is not the owner-based rule that was removed, and the distinction is the whole point. The
+removed one *inferred*: it asked whether a member's owner published into any feed-backed group,
+which every shreds validator does, so it matched 515 wallets and got `mbone` wrong 6 times out of 6.
+This one *names* specific wallets, so it is an assertion in a Go literal, the same kind of thing
+`edgeNodeIPs` is. Do not replace it with a rule over wallets — not the vanity `DZ` prefix, which is
+unenforced and mintable, and not anything derived from what a wallet publishes or owns.
+
+Tier 3 stops at "ours" because owner pubkey is stable but far too coarse: one wallet owns recorders,
+probes and lab boxes at once. Naming the kind is the asserted tier's job, and `doublezero` is a
+separate count from `recorders` on the payload so the page never claims a box records when nothing
+has said it does.
+
+Rows are keyed on `client_ip` and not on the user pk: DoubleZero user accounts are torn down and
+recreated constantly, so a pk-keyed row goes stale within hours.
 
 An asserted row wins even when it says `customer` — that is the escape hatch for a decommissioned
-capture box, and it is the only tier an operator can change without a deploy.
+capture box, and it reaches both derived tiers. It matters more against the wallet tier than against
+the host map: a wallet keeps matching until the ledger account itself is torn down.
 
 **These statements are run by a human operator against the target environment.** They are recorded
 here as a runbook, not as something to execute automatically: do not run them, or any other write
@@ -205,9 +220,11 @@ Changes take effect on the next page-cache refresh (about 60s) with no restart.
 
 The migration creates the table **empty on purpose** — which boxes are DoubleZero's is environment
 config, differs between mainnet and testnet, and is inserted out of band, so it never lives in this
-repository. The Kalshi and Hyperliquid recorders can only be classified this way: the feeds tables
-identify them by `measurement_node_id`, a hostname with no IP anywhere in that schema and no table
-in lake to resolve it through.
+repository. An unseeded environment now still labels the DoubleZero boxes through the wallet tier;
+what it cannot do is call any of them a `recorder` specifically. For the Kalshi and Hyperliquid
+recorders an asserted row is the only way to get that far: the feeds tables identify them by
+`measurement_node_id`, a hostname with no IP anywhere in that schema and no table in lake to
+resolve it through.
 
 ## Edge Market Data Vocabulary
 
@@ -235,8 +252,24 @@ fails silently, so renames sequence behind the ledger.
 
 ## Edge Multicast Health
 
-`/dz/edge/multicast` grades a group with two per-member checks, both in
-`api/handlers/edge_multicast_publishers.go`, not with an "is anyone sending" rollup:
+**The verdict lives on the publisher line, and the group row carries none.** A badge over a feed
+with one dead path and one live one describes neither, so `Health` and `Sequence` are per publisher
+(`edgeMulticastPublisherHealth`); the group row identifies and counts, and its Sequence cell reports
+only what no line can — series recorded from an address no publisher of the group carries. Two
+consequences to keep in view: a collapsed group shows no verdict at all (lines auto-expand below
+`PUBLISHER_LINES_OPEN_BELOW`), and `skewed` has no line to sit on, since capture-node parity is a
+statement about a group's recorders and no single publisher owns it.
+
+The per-publisher ranking is worst-first: `silent`, `thin`, `gapped`, `stalled`, `unknown`,
+`healthy`. A publisher moving no bytes outranks one moving too few, and both outrank a recorded gap
+— `thin` says the tunnel carries overhead and no product, a larger failure than a series that lost
+some of a feed it is otherwise delivering. Two things stay out of it: **BGP status**, which keeps
+its own marker beside the verdict because the ledger snapshot and the rate bucket are minutes apart
+and can legitimately disagree; and **a series whose gaps were never counted**, which can reach
+`stalled` but never `healthy`, since its zero gap count is an absence rather than a reading.
+
+The two checks behind it, both in `api/handlers/edge_multicast_publishers.go`, are not an
+"is anyone sending" rollup:
 
 1. **Publisher floor.** Every publisher must clear `edgeMulticastPublisherFloorBps` (1 Kbps) on its
    own tunnel counter. Below it — trickle or zero — the group reads `thin`. The feeds on this page
@@ -245,9 +278,12 @@ fails silently, so renames sequence behind the ledger.
    sample count must stay within `edgeMulticastNodeParityFloor` (half) of the group's median. A node
    under it reads `skewed`.
 
-Verdicts rank worst-first: `silent` (nothing sending) → `thin` → `skewed` → `unknown` (nothing
-measured) → `healthy`. A publisher fault outranks a receiver fault, and an unmeasured publisher
-never forces a verdict — one device's telemetry gap is not a fault in the feed.
+The group-level roll-up those two checks produce is **still in the payload** as
+`EdgeMulticastGroup.Health` — it is what `capture_nodes_lagging` and `skewed` feed, and the only
+place parity can be reported at all — but the page no longer renders it as a badge. Its verdicts
+rank worst-first: `silent` (nothing sending) → `thin` → `skewed` → `unknown` (nothing measured) →
+`healthy`. A publisher fault outranks a receiver fault, and an unmeasured publisher never forces a
+verdict — one device's telemetry gap is not a fault in the feed.
 
 **"Every publisher" means every publisher, including the validator fan-in groups.** Measured on
 mainnet: the two Kalshi perps groups have 2 publishers each, both above the floor; `edge-solana-shreds`
@@ -278,13 +314,35 @@ A publisher with no session cannot be sending the feed it is registered to send.
 not move the group verdict — the ledger snapshot and the rate bucket are minutes apart, so a publisher
 can read `down` while its tunnel still moved bytes, and both are shown.
 
-That column **folds the L2 coverage refresher's cached payload and runs no query of its own**.
-`kalshi_mbp_levels` is level-grain and TTL-less, and a fifteen-minute question reads most of a day
-through a `remoteSecure()` proxy (~135M rows), which is why `kalshi_l2_coverage.go` owns that scan on
-a ten-minute refresher. Re-running it on a page that polls every 30s would be the same scan again and
-would let the two pages disagree about one feed. The cost is staleness, so `sequence_as_of` is in the
-payload and the column ages against it. A cache miss costs the column, never the page. Gap counts are
-**books**, never gap-marked messages — the message count is a duration that scales with traffic.
+That column **folds cached refresher payloads and runs no query of its own**, and it has two legs.
+
+**Market-by-price** comes from `kalshi_l2_coverage.go`. `kalshi_mbp_levels` is level-grain and
+TTL-less, and a fifteen-minute question reads most of a day through a `remoteSecure()` proxy
+(~135M rows), which is why that file owns the scan on a ten-minute refresher. Re-running it on a
+page that polls every 30s would be the same scan again and would let the two pages disagree about
+one feed. Gap counts are **books**, never gap-marked messages — the message count is a duration
+that scales with traffic.
+
+**Top-of-book** comes from `edge_multicast_tob_sequence.go`, on the same refresher and the same
+fifteen-minute window (measured: 3.8s over every `tob_` capture source). It reads
+`kalshi_bbo_observations`, which carries the wire protocol's `sequence` and `reset_count` on every
+row plus a `raw_meta` JSON object holding `publisher_source_ip`, `multicast_group` and `port`. The
+address in `raw_meta` is the primary group key — it is the destination the datagrams carried, where
+the capture source name is a convention that has been renamed once already — with the name as
+fallback.
+
+That leg **cannot count gaps, and must not pretend to**. There is no gap marker on this plane, and
+the obvious substitute is wrong by construction: `kalshi_bbo_observations` holds one row per change
+to the top of the book, so a wire message that did not move the BBO legitimately leaves a hole in
+the numbering. Measured on mainnet, one instance carried 23,846 rows across a sequence span of
+24,553 — about 3% "missing" with nothing wrong. A count-versus-span test would paint every healthy
+top-of-book series permanently red. So those instances carry `gaps_measured: false`, the roll-up
+counts them in `gaps_unmeasured`, and the badge reads **`advancing`** rather than `ok`: the counters
+move and nothing checked them for loss. Closing that half needs the producer to emit a gap marker
+for top-of-book the way it does for market-by-price; it is not work this repo can do.
+
+The cost of both legs is staleness, so `sequence_as_of` is in the payload — the **older** of the two
+legs — and the column ages against it. A cache miss costs that plane's rows, never the page.
 
 Parity is measured on the **application plane** (`kalshi_bbo_observations`,
 `slot_feed_race_summary_v2`) and cannot move to the counters. Interface counters are per tunnel: a

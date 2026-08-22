@@ -132,17 +132,23 @@ type EdgeMulticastRoleCounts struct {
 	// here alongside a member that genuinely went away.
 	Unknown int `json:"unknown"`
 
-	// Recorders, InternalProbes and Customers split the same Total by whose box it is — see
-	// edge_multicast_class.go for how a member is classified and why owner identity cannot do
-	// it. The three always sum to Total; Customers absorbs every member nothing speaks for.
+	// Recorders, InternalProbes, DoubleZero and Customers split the same Total by whose box it
+	// is — see edge_multicast_class.go for how a member is classified. The four always sum to
+	// Total; Customers absorbs every member nothing speaks for.
 	Recorders      int `json:"recorders"`
 	InternalProbes int `json:"internal_probes"`
-	Customers      int `json:"customers"`
+
+	// DoubleZero is "ours, kind unknown": matched by the operator-wallet tier, which establishes
+	// whose box it is and cannot go further, because one wallet holds recorders, probes and lab
+	// boxes at once. Kept as its own count rather than folded into Recorders so the page never
+	// claims a box records when nothing has said it does.
+	DoubleZero int `json:"doublezero"`
+	Customers  int `json:"customers"`
 
 	// ClassAsserted and ClassDerived are how many of those classifications are actually known:
-	// asserted by an operator row, or derived from the capture-host list. Total minus the two
-	// is the remainder that merely defaulted to customer, which is a much weaker claim and has
-	// to stay visibly weaker on screen.
+	// asserted by an operator row, or derived from the capture-host list or the operator-wallet
+	// list. Total minus the two is the remainder that merely defaulted to customer, which is a
+	// much weaker claim and has to stay visibly weaker on screen.
 	ClassAsserted int `json:"class_asserted"`
 	ClassDerived  int `json:"class_derived"`
 }
@@ -349,11 +355,12 @@ type edgeMulticastFeedGroups struct {
 // edgeMulticastMemberSplit is the ledger-side count for one side of a group, already split by
 // classification.
 type edgeMulticastMemberSplit struct {
-	total     int
-	recorders int
-	probes    int
-	asserted  int
-	derived   int
+	total      int
+	recorders  int
+	probes     int
+	doublezero int
+	asserted   int
+	derived    int
 }
 
 // edgeMulticastMembership is the ledger-side count for one group.
@@ -521,6 +528,12 @@ func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership
 	// and the roll-up counts publishers rather than series.
 	out.Sequence = sequence
 	attachEdgeMulticastSequenceHealth(lines, out.Sequence)
+
+	// After the attachment, never before: a line's verdict folds the series it owns, and the
+	// series only reaches the line above.
+	for i := range lines {
+		lines[i].Health = edgeMulticastPublisherHealth(lines[i])
+	}
 	out.PublisherLines = lines
 	if len(out.PublisherLines) > edgeMulticastPublisherLineCap {
 		out.PublisherLines = out.PublisherLines[:edgeMulticastPublisherLineCap]
@@ -544,7 +557,7 @@ func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership
 }
 
 // edgeMulticastRoleCounts assembles one side of a group from its ledger split and its measured
-// activity. Customers is the remainder rather than a counted value, so the three classes cannot
+// activity. Customers is the remainder rather than a counted value, so the four classes cannot
 // drift out of sync with Total whatever the classification tiers do.
 func edgeMulticastRoleCounts(split edgeMulticastMemberSplit, active, idle int) EdgeMulticastRoleCounts {
 	return EdgeMulticastRoleCounts{
@@ -553,7 +566,8 @@ func edgeMulticastRoleCounts(split edgeMulticastMemberSplit, active, idle int) E
 		Idle:           idle,
 		Recorders:      split.recorders,
 		InternalProbes: split.probes,
-		Customers:      max(0, split.total-split.recorders-split.probes),
+		DoubleZero:     split.doublezero,
+		Customers:      max(0, split.total-split.recorders-split.probes-split.doublezero),
 		ClassAsserted:  split.asserted,
 		ClassDerived:   split.derived,
 	}
@@ -708,7 +722,18 @@ func (a *API) queryEdgeMulticastMembership(ctx context.Context, classes multicas
 	isRecorder := multicastMemberIPPredicate("client_ip", classes.recorderIPs)
 	isProbe := multicastMemberIPPredicate("client_ip", classes.probeIPs)
 	isAsserted := multicastMemberIPPredicate("client_ip", classes.assertedIPs)
-	isDerived := multicastMemberIPPredicate("client_ip", classes.derivedIPs)
+	isHostDerived := multicastMemberIPPredicate("client_ip", classes.derivedIPs)
+
+	// The wallet tier applies only where the two IP tiers are silent, which is the precedence
+	// rule spelled out in SQL: an asserted row wins over everything, the capture-host map wins
+	// over the wallet, and the wallet only fills in the rest.
+	isWalletDerived := fmt.Sprintf("(%s) AND NOT (%s) AND NOT (%s)",
+		multicastMemberWalletPredicate("owner_pubkey", classes.operatorWallets), isAsserted, isHostDerived)
+
+	// class_derived counts both derived tiers: a member the wallet list names is known to be
+	// ours, and the tooltip's "how much of this split is actually known" would understate it
+	// otherwise.
+	isDerived := fmt.Sprintf("(%s) OR (%s)", isHostDerived, isWalletDerived)
 
 	query := fmt.Sprintf(`
 		WITH membership AS (
@@ -716,6 +741,7 @@ func (a *API) queryEdgeMulticastMembership(ctx context.Context, classes multicas
 				arrayJoin(JSONExtract(publishers, 'Array(String)')) AS group_pk,
 				'P' AS role,
 				client_ip,
+				owner_pubkey,
 				length(arrayDistinct(arrayConcat(
 					JSONExtract(publishers, 'Array(String)'),
 					JSONExtract(subscribers, 'Array(String)')
@@ -727,6 +753,7 @@ func (a *API) queryEdgeMulticastMembership(ctx context.Context, classes multicas
 				arrayJoin(JSONExtract(subscribers, 'Array(String)')) AS group_pk,
 				'S' AS role,
 				client_ip,
+				owner_pubkey,
 				length(arrayDistinct(arrayConcat(
 					JSONExtract(publishers, 'Array(String)'),
 					JSONExtract(subscribers, 'Array(String)')
@@ -737,20 +764,22 @@ func (a *API) queryEdgeMulticastMembership(ctx context.Context, classes multicas
 		SELECT
 			group_pk,
 			countIf(role = 'P') AS pub_total,
-			countIf(role = 'P' AND %[1]s) AS pub_recorders,
-			countIf(role = 'P' AND %[2]s) AS pub_probes,
-			countIf(role = 'P' AND %[3]s) AS pub_asserted,
-			countIf(role = 'P' AND %[4]s) AS pub_derived,
+			countIf(role = 'P' AND (%[1]s)) AS pub_recorders,
+			countIf(role = 'P' AND (%[2]s)) AS pub_probes,
+			countIf(role = 'P' AND (%[5]s)) AS pub_doublezero,
+			countIf(role = 'P' AND (%[3]s)) AS pub_asserted,
+			countIf(role = 'P' AND (%[4]s)) AS pub_derived,
 			countIf(role = 'S') AS sub_total,
-			countIf(role = 'S' AND %[1]s) AS sub_recorders,
-			countIf(role = 'S' AND %[2]s) AS sub_probes,
-			countIf(role = 'S' AND %[3]s) AS sub_asserted,
-			countIf(role = 'S' AND %[4]s) AS sub_derived,
+			countIf(role = 'S' AND (%[1]s)) AS sub_recorders,
+			countIf(role = 'S' AND (%[2]s)) AS sub_probes,
+			countIf(role = 'S' AND (%[5]s)) AS sub_doublezero,
+			countIf(role = 'S' AND (%[3]s)) AS sub_asserted,
+			countIf(role = 'S' AND (%[4]s)) AS sub_derived,
 			countIf(role = 'P' AND group_span > 1) AS publishers_multi_group
 		FROM membership
 		GROUP BY group_pk
 		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0
-	`, isRecorder, isProbe, isAsserted, isDerived)
+	`, isRecorder, isProbe, isAsserted, isDerived, isWalletDerived)
 
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query)
@@ -762,11 +791,11 @@ func (a *API) queryEdgeMulticastMembership(ctx context.Context, classes multicas
 	out := map[string]edgeMulticastMembership{}
 	for rows.Next() {
 		var groupPK string
-		var pub, sub [5]uint64
+		var pub, sub [6]uint64
 		var multiGroup uint64
 		if err := rows.Scan(&groupPK,
-			&pub[0], &pub[1], &pub[2], &pub[3], &pub[4],
-			&sub[0], &sub[1], &sub[2], &sub[3], &sub[4],
+			&pub[0], &pub[1], &pub[2], &pub[3], &pub[4], &pub[5],
+			&sub[0], &sub[1], &sub[2], &sub[3], &sub[4], &sub[5],
 			&multiGroup); err != nil {
 			return nil, err
 		}
@@ -779,15 +808,16 @@ func (a *API) queryEdgeMulticastMembership(ctx context.Context, classes multicas
 	return out, rows.Err()
 }
 
-// edgeMulticastSplitFrom maps the (total, recorders, probes, asserted, derived) tuple the query
-// returns in that fixed order.
-func edgeMulticastSplitFrom(v [5]uint64) edgeMulticastMemberSplit {
+// edgeMulticastSplitFrom maps the (total, recorders, probes, doublezero, asserted, derived) tuple
+// the query returns in that fixed order.
+func edgeMulticastSplitFrom(v [6]uint64) edgeMulticastMemberSplit {
 	return edgeMulticastMemberSplit{
-		total:     int(v[0]),
-		recorders: int(v[1]),
-		probes:    int(v[2]),
-		asserted:  int(v[3]),
-		derived:   int(v[4]),
+		total:      int(v[0]),
+		recorders:  int(v[1]),
+		probes:     int(v[2]),
+		doublezero: int(v[3]),
+		asserted:   int(v[4]),
+		derived:    int(v[5]),
 	}
 }
 

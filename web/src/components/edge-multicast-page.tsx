@@ -73,17 +73,6 @@ function PlaneCell({ plane }: { plane?: string }) {
   return <span className="font-mono text-xs text-muted-foreground">{plane}</span>
 }
 
-// The five states `health` can carry. Silent is the only red here: publishers were measured and none
-// of them sent anything. 'thin' (a publisher under the floor) and 'skewed' (a recorder far behind
-// its peers) are amber — a real fault in one member of a feed that is otherwise flowing, which is
-// a different call to action than a dead feed.
-const HEALTH_BADGE: Record<string, string> = {
-  healthy: 'bg-emerald-500/15 text-emerald-500',
-  thin: 'bg-amber-500/15 text-amber-500',
-  skewed: 'bg-amber-500/15 text-amber-500',
-  silent: 'bg-red-500/15 text-red-500',
-  unknown: 'bg-muted text-muted-foreground',
-}
 
 // Per-publisher line states, dot colour. 'thin' and 'idle' are what the group-level dot used to
 // hide: both are publishers failing the floor, and one of them next to a healthy peer is exactly
@@ -101,6 +90,31 @@ const PUBLISHER_DOT: Record<string, string> = {
 const CLASS_LABEL: Record<string, string> = {
   recorder: 'DZ recorder',
   internal_probe: 'DZ probe',
+  // Matched by owner wallet, which establishes whose box it is and stops there — one wallet holds
+  // recorders, probes and lab boxes at once. The label has to stop there too.
+  doublezero: 'DZ',
+}
+
+// Per-publisher verdicts. Same palette as the group badge used to use, minus 'skewed', which is a
+// statement about a group's recorders and belongs to no single publisher.
+const PUBLISHER_HEALTH_BADGE: Record<string, string> = {
+  healthy: 'bg-emerald-500/15 text-emerald-500',
+  thin: 'bg-amber-500/15 text-amber-500',
+  stalled: 'bg-amber-500/15 text-amber-500',
+  gapped: 'bg-red-500/15 text-red-500',
+  silent: 'bg-red-500/15 text-red-500',
+  unknown: 'bg-muted text-muted-foreground',
+}
+
+// What each verdict means, spelled out: the badge is one word and the difference between "nothing
+// measured it" and "it measured zero" is the difference between a monitoring gap and an outage.
+const PUBLISHER_HEALTH_DETAIL: Record<string, string> = {
+  healthy: 'above the floor, and its recorded series is intact',
+  thin: 'the tunnel is moving something, not the product',
+  stalled: 'its recorded series stopped advancing: a dead path or a dead recorder',
+  gapped: 'its recorded series lost data on the wire',
+  silent: 'its counter read zero in the last visible bucket',
+  unknown: 'no counter row for this publisher: nothing measured it',
 }
 
 // Sequence-counter states. A gap is recorded data loss on the wire protocol — the one thing on
@@ -111,6 +125,17 @@ const SEQUENCE_BADGE: Record<string, string> = {
   ok: 'bg-emerald-500/15 text-emerald-500',
   gapped: 'bg-red-500/15 text-red-500',
   stalled: 'bg-amber-500/15 text-amber-500',
+  // Top-of-book: the series is advancing and nothing checked it for loss, because that plane
+  // records no gap marker. Outlined rather than filled, so a glance down the column cannot read
+  // it as the same clean bill of health the market-by-price rows carry.
+  advancing: 'border border-emerald-500/40 text-emerald-500',
+}
+
+// What to call an 'ok' whose gap count was never taken. Every instance behind the badge has to be
+// unmeasured for this: a mixed set is still reporting a real zero for the half that was checked.
+function sequenceLabel(status: string, total: number, gapsUnmeasured: number): string {
+  if (status === 'ok' && total > 0 && gapsUnmeasured === total) return 'advancing'
+  return status
 }
 
 function formatBps(bps: number): string {
@@ -136,48 +161,6 @@ function ageSecs(iso: string | undefined, nowMs: number): number | undefined {
   return Math.max(0, (nowMs - t) / 1000)
 }
 
-// The badge carries the verdict; the tooltip says which of the two checks produced it and then
-// the control-plane reconciliation breakdown, which is per-member and never rolls up to a group
-// verdict — a customer with BGP down and one publisher missing from a device snapshot both live
-// in there.
-function HealthBadge({ group, floorBps }: { group: EdgeMulticastGroup; floorBps: number }) {
-  if (!group.health) return <span className="text-muted-foreground">—</span>
-
-  const lagging = (group.capture_nodes ?? []).filter((n) => n.lagging)
-  const verdict = {
-    healthy: `every publisher above ${formatBps(floorBps)}${
-      (group.capture_nodes?.length ?? 0) > 1 ? '; recorders all within range of each other' : ''
-    }`,
-    thin: `${group.publishers_below_floor} of ${group.publisher_lines_total} publisher(s) below ${formatBps(floorBps)}`,
-    skewed: lagging.length
-      ? `publishers fine; ${lagging.map((n) => `${n.node} at ${Math.round(n.share_of_median * 100)}% of the group median`).join(', ')}`
-      : 'a recording node is behind its peers',
-    silent: 'publishers were measured and none of them moved a byte',
-    unknown: 'no counter row for any publisher: a monitoring gap, not an outage',
-  }[group.health]
-
-  const c = group.health_counts
-  const controlPlane = [
-    c.unhealthy > 0 ? `${c.unhealthy} unhealthy` : '',
-    c.degraded > 0 ? `${c.degraded} degraded` : '',
-    c.disconnected > 0 ? `${c.disconnected} with BGP down` : '',
-    c.healthy > 0 ? `${c.healthy} reconciled` : '',
-  ]
-    .filter(Boolean)
-    .join(' · ')
-
-  const detail = [verdict, controlPlane ? `Control plane, per member: ${controlPlane}` : '']
-    .filter(Boolean)
-    .join(' — ')
-
-  const badge = (
-    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${HEALTH_BADGE[group.health] ?? HEALTH_BADGE.unknown}`}>
-      {group.health}
-    </span>
-  )
-  if (!detail) return badge
-  return <Tooltip content={detail}>{badge}</Tooltip>
-}
 
 // PublisherCell is the point of the page, and it counts publishers CLEARING THE FLOOR rather
 // than publishers with a non-zero counter. The distinction is the whole reason the per-publisher
@@ -283,10 +266,11 @@ function PublisherLineRow({
 
   return (
     <tr className="border-b border-border/50 last:border-b-0 bg-muted/20 text-xs">
-      {/* The DoubleZero address first, because that is the source IP address the datagrams
-          carry and the one the recorders and the allow-lists talk about. The client IP is the
-          box's own public address — the key the operator override table uses — and both are
-          worth having on the line. */}
+      {/* The client IP first, because that is the box — its own public address, the key the
+          operator override table uses, and what an operator recognises. The DoubleZero address
+          goes under Multicast IP, which is the column's role on this table: the group row holds
+          the destination address, the publisher line holds the source IP address its datagrams
+          carry, which is what the recorders and the allow-lists talk about. */}
       <td className="pl-8 pr-3 py-1.5 whitespace-nowrap">
         <span className="inline-flex items-center gap-2">
           {/* The address links to the ledger User behind it: a source that is gapping is a
@@ -298,7 +282,7 @@ function PublisherLineRow({
             onClick={(e) => e.stopPropagation()}
             className="font-mono text-xs hover:underline"
           >
-            {line.dz_ip || line.client_ip}
+            {line.client_ip}
           </Link>
           {/* The classification rides with the identity rather than in the Subscribers column:
               a publisher line has nothing to say about that side of the group. */}
@@ -306,7 +290,11 @@ function PublisherLineRow({
         </span>
       </td>
       <td className="px-3 py-1.5 whitespace-nowrap">
-        <CopyableText text={line.client_ip} className="font-mono text-xs text-muted-foreground" />
+        {line.dz_ip ? (
+          <CopyableText text={line.dz_ip} className="font-mono text-xs text-muted-foreground" />
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
       </td>
       <td className="px-3 py-1.5 whitespace-nowrap text-muted-foreground">
         <span className="font-mono">{line.device_code || '—'}</span>
@@ -361,8 +349,32 @@ function PublisherLineRow({
           <PublisherSequenceCell sequence={line.sequence} asOfAge={sequenceAsOfAge} />
         </td>
       )}
-      <td className="px-3 py-1.5" />
+      <td className="px-3 py-1.5">
+        <PublisherHealthBadge health={line.health} />
+      </td>
     </tr>
+  )
+}
+
+// The verdict for ONE publisher, which is where it belongs: a group badge over a feed with one
+// dead publisher and one live one describes neither of them.
+//
+// It folds the counter status and the publisher's own sequence series. It does NOT fold BGP, which
+// keeps its own marker in the Publishers cell — the ledger snapshot and the rate bucket are
+// minutes apart, so a publisher can read 'down' there while its tunnel still moved bytes, and both
+// statements are worth having separately.
+function PublisherHealthBadge({ health }: { health?: string }) {
+  if (!health) return <span className="text-muted-foreground">—</span>
+  return (
+    <Tooltip content={PUBLISHER_HEALTH_DETAIL[health] ?? health}>
+      <span
+        className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
+          PUBLISHER_HEALTH_BADGE[health] ?? 'bg-muted text-muted-foreground'
+        }`}
+      >
+        {health}
+      </span>
+    </Tooltip>
   )
 }
 
@@ -375,12 +387,17 @@ function SubscriberCell({ group }: { group: EdgeMulticastGroup }) {
     return <span className="text-muted-foreground">—</span>
   }
 
-  const dz = subscribers.recorders + subscribers.internal_probes
+  const dz = subscribers.recorders + subscribers.internal_probes + subscribers.doublezero
   const known = subscribers.class_asserted + subscribers.class_derived
   const detail = [
     `${subscribers.customers} customer(s)`,
     `${subscribers.recorders} recorder(s)`,
     subscribers.internal_probes > 0 ? `${subscribers.internal_probes} internal probe(s)` : '',
+    // Spelled out rather than added to the recorder count: the wallet tier knows the box is
+    // DoubleZero's and does not know what it does with the feed.
+    subscribers.doublezero > 0
+      ? `${subscribers.doublezero} DoubleZero-operated (kind not asserted)`
+      : '',
     `${subscribers.active} receiving traffic`,
     known === 0
       ? 'nothing is classified: every member defaults to customer'
@@ -436,9 +453,14 @@ function LastHeardCell({ group, now }: { group: EdgeMulticastGroup; now: number 
 // KalshiL2Lane, which documents why the message count is a duration rather than a fault count.
 function sequenceInstanceLine(i: EdgeMulticastChannelInstance): string {
   const from = i.publisher_source_ip ? `${i.publisher_source_ip} ` : ''
+  const head = `${from}ch${i.channel_id} @${i.node} (${i.capture_source}): ${i.messages.toLocaleString()} msgs`
+  // Without a gap marker there is no book-level fault count and no snapshot cycle to report, so
+  // the line says what was NOT measured instead of printing zeros that would read as findings.
+  if (!i.gaps_measured) {
+    return `${head}, ${i.resets.toLocaleString()} resets — gap counting not available on this plane`
+  }
   return (
-    `${from}ch${i.channel_id} @${i.node} (${i.capture_source}): ${i.messages.toLocaleString()} msgs, ` +
-    `${i.gap_books.toLocaleString()} book(s) gapped, ${i.resets.toLocaleString()} resets, ` +
+    `${head}, ${i.gap_books.toLocaleString()} book(s) gapped, ${i.resets.toLocaleString()} resets, ` +
     `${i.snapshot_cycles.toLocaleString()} snapshot cycles`
   )
 }
@@ -484,68 +506,40 @@ function PublisherSequenceCell({
   const bad = sequence.gapped + sequence.stalled
   const detail = [
     ...sequence.instances.map(sequenceInstanceLine),
-    asOfAge === undefined
-      ? ''
-      : `folded from the L2 coverage refresher, computed ${formatAge(asOfAge)}`,
+    asOfAge === undefined ? '' : `computed ${formatAge(asOfAge)}`,
   ]
     .filter(Boolean)
     .join('\n')
 
   return (
     <SequenceBadge
-      status={sequence.status}
+      status={sequenceLabel(sequence.status, total, sequence.gaps_unmeasured ?? 0)}
       count={bad > 0 ? `${bad}/${total}` : total > 1 ? String(total) : ''}
       detail={detail}
     />
   )
 }
 
-// The group's sequence cell, which is a ROLL-UP and says so: the count is publishers, because that
-// is the grain a series has, and the verdict per publisher is on the publisher lines the row
-// expands into. It stays on the group row for two reasons — the lines are collapsed by default on
-// anything but the smallest groups, and a series recorded from an address no publisher of this
-// group carries has no line to sit on and would otherwise go unreported.
-function SequenceCell({
-  sequence,
-  asOfAge,
-}: {
-  sequence?: EdgeMulticastSequenceHealth
-  asOfAge?: number
-}) {
-  if (!sequence || sequence.instances.length === 0) {
+// What is left on the group row once the verdict moves to the publisher lines: the series that
+// have no line to sit on. A series recorded from an address no publisher of this group carries is
+// the one thing the per-publisher view structurally cannot show, and dropping it silently is the
+// outcome this column exists to prevent.
+function UnattributedSequenceCell({ sequence }: { sequence?: EdgeMulticastSequenceHealth }) {
+  const unattributed = sequence?.unattributed ?? 0
+  if (unattributed === 0) {
     return <span className="text-muted-foreground">—</span>
   }
-
-  const instances = sequence.instances.length
-  const publishers = sequence.publishers ?? 0
-  const badPublishers = (sequence.publishers_gapped ?? 0) + (sequence.publishers_stalled ?? 0)
-  const unattributed = sequence.unattributed ?? 0
-  const detail = [
-    publishers > 0
-      ? `${publishers} publisher${publishers === 1 ? '' : 's'}, ${instances} channel instance${instances === 1 ? '' : 's'} — expand the row for the verdict per publisher`
-      : `${instances} channel instance${instances === 1 ? '' : 's'}`,
-    unattributed > 0
-      ? `${unattributed} recorded from an address no publisher of this group carries, so ${unattributed === 1 ? 'it has' : 'they have'} no line of ${unattributed === 1 ? 'its' : 'their'} own`
-      : '',
-    ...sequence.instances.map(sequenceInstanceLine),
-    asOfAge === undefined
-      ? ''
-      : `folded from the L2 coverage refresher, computed ${formatAge(asOfAge)}`,
-  ]
-    .filter(Boolean)
-    .join('\n')
-
-  // Publishers where they are known, instances where nothing was attributed: a count of series is
-  // still better than no count, and it is what the tooltip's first line says it is.
-  const count =
-    publishers > 0
-      ? badPublishers > 0
-        ? `${badPublishers}/${publishers}`
-        : String(publishers)
-      : `${sequence.gapped + sequence.stalled > 0 ? `${sequence.gapped + sequence.stalled}/` : ''}${instances}`
-
-  return <SequenceBadge status={sequence.status} count={count} detail={detail} />
+  return (
+    <Tooltip
+      content={`${unattributed} recorded series from ${unattributed === 1 ? 'an address' : 'addresses'} no publisher of this group carries, so ${unattributed === 1 ? 'it has' : 'they have'} no line of ${unattributed === 1 ? 'its' : 'their'} own`}
+    >
+      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/15 text-amber-500">
+        {unattributed} unattributed
+      </span>
+    </Tooltip>
+  )
 }
+
 
 // Rates carry a tilde when the group's publishers also publish elsewhere from the same tunnel:
 // counters are per interface, so the figure is an upper bound for this group. Hiding that would
@@ -639,21 +633,27 @@ function GroupRow({
           <LastHeardCell group={group} now={now} />
         </td>
       )}
+      {/* Sequence and Health are per PUBLISHER and the group row carries neither. A series is
+          owned by one publisher and a floor is cleared by one publisher, so a badge here is a
+          worst-of that names nobody — on a two-publisher feed with one path dead it reads the
+          same as a feed with one path merely quiet. The group row identifies and counts; the
+          lines it expands into carry the verdicts. What the group cell still has to report is
+          what no line can: series recorded from an address no publisher of this group carries. */}
       {showSequence && (
         <td className="px-3 py-3 text-sm whitespace-nowrap">
-          <SequenceCell sequence={group.sequence} asOfAge={sequenceAsOfAge} />
+          <UnattributedSequenceCell sequence={group.sequence} />
         </td>
       )}
       <td className="px-3 py-3 text-sm">
-        {/* Straight to the reconciliation view for this group — the row itself opens the
-            publisher list, which is the more common next step. */}
+        {/* The row click opens the group; this keeps the direct route to its reconciliation
+            view, which is the drill-down the verdict used to hang off. */}
         <Link
           to={`/dz/multicast-groups/${group.pk}?tab=health`}
           state={EDGE_MULTICAST_BACK}
           onClick={(e) => e.stopPropagation()}
-          className="inline-flex"
+          className="text-xs text-muted-foreground hover:text-foreground hover:underline"
         >
-          <HealthBadge group={group} floorBps={floorBps} />
+          reconcile
         </Link>
       </td>
     </tr>
@@ -863,14 +863,16 @@ export function EdgeMulticastPage() {
         <p className="text-xs text-muted-foreground mb-6 max-w-3xl">
           Rates are {data?.rate_grain_minutes ?? 5}-minute counter rollups measured at each member's tunnel and
           land a few minutes behind wall clock — the “Measured” column is the age of the newest bucket behind
-          the row. Health is taken per member, not per group: a feed is healthy when every publisher clears{' '}
-          {formatBps(data?.publisher_floor_bps ?? 0)} and every recording node hears a share of the feed
-          comparable with its peers. It reads{' '}
-          <span className="text-amber-500 font-medium">thin</span> when a publisher is below that floor,{' '}
-          <span className="text-amber-500 font-medium">skewed</span> when a recorder is far behind the others,
-          and <span className="text-red-500 font-medium">silent</span> when publishers are registered and not
-          one of them moved a byte. A group with no counter data is left blank rather than called down. Click a
-          Publishers cell to list that group's publishers one line each.
+          the row. “Health” and “Sequence” are per PUBLISHER and the group row carries neither: a badge over a
+          feed with one dead path and one live one describes neither of them. Click a Publishers cell to list a
+          group's publishers, one line each, and read the verdicts there. A publisher is{' '}
+          <span className="text-emerald-500 font-medium">healthy</span> when it clears{' '}
+          {formatBps(data?.publisher_floor_bps ?? 0)} and its recorded series is intact,{' '}
+          <span className="text-amber-500 font-medium">thin</span> when it is below that floor,{' '}
+          <span className="text-red-500 font-medium">silent</span> when its counter read zero, and{' '}
+          <span className="text-muted-foreground font-medium">unknown</span> when nothing measured it — which is
+          a monitoring gap, never an outage. The group's own cell reports only what no line can: series recorded
+          from an address no publisher of the group carries.
           {data?.last_heard_available && (
             <>
               {' '}
@@ -886,9 +888,10 @@ export function EdgeMulticastPage() {
               “Sequence” is the recorded wire protocol's own counters, and the only column here that
               can say the feed lost data rather than that a member went quiet. A series is owned by one
               channel instance — (source IP, channel, recording node) — so the verdict sits on the
-              publisher that emitted it, and the group cell is a roll-up over its publishers. Gap counts
-              are books, never gap-marked messages. It is folded from the L2 coverage refresher, so it is
-              minutes older than the rest of the row.
+              publisher that emitted it. Gap counts are books, never gap-marked messages. It is folded from background refreshers, so it is
+              minutes older than the rest of the row. On the top-of-book plane the recorder writes no gap
+              marker, so those series read “advancing” — the counters move and nothing checked them for
+              loss — rather than the market-by-price rows' gap-checked “ok”.
             </>
           )}
         </p>

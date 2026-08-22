@@ -902,11 +902,27 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 			slog.Warn("kalshi l2 coverage cache write failed", "error", err)
 		}
 	}
+	// The top-of-book sequence leg of /dz/edge/multicast. Same cadence and same window as the
+	// L2 coverage one so the two halves of that column describe the same span, and last in the
+	// cycle because it is the only one no page falls back to a live query for.
+	refreshTOBSequence := func() {
+		rctx, cancel := context.WithTimeout(ctx, runTimeout)
+		defer cancel()
+		val, err := a.FetchEdgeMulticastTOBSequence(rctx)
+		if err != nil {
+			slog.Warn("edge multicast tob sequence refresh failed", "error", err)
+			return
+		}
+		if err := a.WritePageCache(ctx, edgeMulticastTOBSequenceCacheKey, val); err != nil {
+			slog.Warn("edge multicast tob sequence cache write failed", "error", err)
+		}
+	}
 	refresh := func() {
 		refreshLatency()
 		refreshScoreboard("24h")
 		refreshScoreboard("7d")
 		refreshL2()
+		refreshTOBSequence()
 	}
 	go func() {
 		refresh()

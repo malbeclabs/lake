@@ -116,6 +116,12 @@ func (l edgeMulticastLastHeard) nodeObs() []edgeMulticastNodeObs {
 type edgeMulticastCaptureSourceMap struct {
 	exact    map[string]string // full capture source id -> group pk
 	prefixes []edgeMulticastCaptureSourcePrefix
+
+	// byMulticastIP resolves a group from its destination address. The top-of-book sequence
+	// leg carries that address on every row (raw_meta.multicast_group), which is a stronger
+	// key than any capture source name: it is what the datagrams were addressed to, where the
+	// name is a convention that has been renamed once already.
+	byMulticastIP map[string]string
 }
 
 type edgeMulticastCaptureSourcePrefix struct {
@@ -126,10 +132,13 @@ type edgeMulticastCaptureSourcePrefix struct {
 // newEdgeMulticastCaptureSourceMap registers, for every group, the ways a capture source can
 // name it.
 func newEdgeMulticastCaptureSourceMap(groups []MulticastDeliveryGroup) edgeMulticastCaptureSourceMap {
-	m := edgeMulticastCaptureSourceMap{exact: map[string]string{}}
+	m := edgeMulticastCaptureSourceMap{exact: map[string]string{}, byMulticastIP: map[string]string{}}
 	byCode := map[string]string{}
 	for _, g := range groups {
 		byCode[g.Code] = g.PK
+		if g.MulticastIP != "" {
+			m.byMulticastIP[g.MulticastIP] = g.PK
+		}
 		// The shreds feeds name their group outright.
 		m.exact[g.Code] = g.PK
 
@@ -161,6 +170,13 @@ func newEdgeMulticastCaptureSourceMap(groups []MulticastDeliveryGroup) edgeMulti
 // resolve returns the group pk a capture source id belongs to, or "" when nothing claims it. An
 // unclaimed capture source is dropped rather than bucketed: a capture source with no group is not
 // a group, and this page has no row to show it in.
+// resolveMulticastIP returns the group pk that owns a destination address, or "" for an address
+// no group on this page carries. Callers fall back to resolve() on the capture source name: an
+// older recorder payload may not carry the address at all.
+func (m edgeMulticastCaptureSourceMap) resolveMulticastIP(ip string) string {
+	return m.byMulticastIP[ip]
+}
+
 func (m edgeMulticastCaptureSourceMap) resolve(captureSource string) string {
 	if pk, ok := m.exact[captureSource]; ok {
 		return pk

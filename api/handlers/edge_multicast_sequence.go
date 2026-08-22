@@ -116,6 +116,14 @@ type EdgeMulticastChannelInstance struct {
 	Resets         uint64 `json:"resets"`
 	SnapshotCycles uint64 `json:"snapshot_cycles"`
 
+	// GapsMeasured says whether GapBooks is a reading or an absence. True on the
+	// market-by-price plane, where the recorder writes a gap marker this can count. False on
+	// top-of-book, where there is no marker and the row grain (one row per change to the top of
+	// the book) makes a sequence-versus-row-count test structurally wrong — see
+	// edge_multicast_tob_sequence.go. A zero GapBooks with this false is "not checked", and the
+	// UI has to render it as something other than a clean bill of health.
+	GapsMeasured bool `json:"gaps_measured"`
+
 	LastSeen time.Time `json:"last_seen"`
 	Status   string    `json:"status"`
 }
@@ -146,23 +154,59 @@ type EdgeMulticastSequenceHealth struct {
 	// them.
 	Unattributed int `json:"unattributed,omitempty"`
 
+	// GapsUnmeasured is how many of these instances came from a plane with no gap marker, so
+	// their 'ok' means "advancing", not "lost nothing". Carried so the badge can say which kind
+	// of ok it is rather than letting the top-of-book rows borrow the market-by-price rows'
+	// stronger claim.
+	GapsUnmeasured int `json:"gaps_unmeasured,omitempty"`
+
 	// Instances are sorted worst-first, so a reader who only looks at the first one is looking
 	// at the one that matters.
 	Instances []EdgeMulticastChannelInstance `json:"instances"`
 }
 
-// edgeMulticastSequenceHealth folds the L2 coverage refresher's cached payload into per-group
-// sequence health.
+// edgeMulticastSequenceHealth folds the two cached refresher payloads into per-group sequence
+// health: the L2 coverage one for market-by-price, and the top-of-book one.
 //
-// Returns (nil, zero time, nil) when there is nothing to fold — no cache entry, an entry that
-// does not parse, or no lane that resolves to a group on this page. All three are "no column",
-// never an error: this signal is additive to the page and must not be able to fail it.
+// Returns (nil, zero time, nil) when there is nothing to fold — no cache entries, entries that do
+// not parse, or nothing that resolves to a group on this page. All of those are "no column",
+// never an error: this signal is additive to the page and must not be able to fail it. One leg
+// missing costs that plane's rows and leaves the other's intact.
+//
+// The reported as-of is the OLDER of the two legs. They run on one refresher today, so the two
+// stamps are seconds apart; taking the older one means that if they ever diverge, the column ages
+// against the staler half rather than flattering itself with the fresher.
 func (a *API) edgeMulticastSequenceHealth(ctx context.Context, captureSources edgeMulticastCaptureSourceMap) (map[string]*EdgeMulticastSequenceHealth, time.Time, error) {
+	out := map[string]*EdgeMulticastSequenceHealth{}
+	var asOf time.Time
+	note := func(at time.Time) {
+		if at.IsZero() {
+			return
+		}
+		if asOf.IsZero() || at.Before(asOf) {
+			asOf = at
+		}
+	}
+
+	note(a.foldKalshiL2Coverage(ctx, captureSources, out))
+	note(a.foldEdgeMulticastTOBSequence(ctx, captureSources, out))
+
+	if len(out) == 0 {
+		return nil, time.Time{}, nil
+	}
+	for _, health := range out {
+		finishEdgeMulticastSequenceHealth(health)
+	}
+	return out, asOf.UTC(), nil
+}
+
+// foldKalshiL2Coverage adds the market-by-price series, and returns the payload's own clock.
+func (a *API) foldKalshiL2Coverage(ctx context.Context, captureSources edgeMulticastCaptureSourceMap, out map[string]*EdgeMulticastSequenceHealth) time.Time {
 	data, err := a.readPageCache(ctx, kalshiL2CoverageCacheKey)
 	if err != nil {
 		// A miss, which is the normal state before the refresher's first run and in local
 		// dev. Not logged: the page says so by dropping the column.
-		return nil, time.Time{}, nil
+		return time.Time{}
 	}
 
 	var coverage KalshiL2CoverageResponse
@@ -170,10 +214,9 @@ func (a *API) edgeMulticastSequenceHealth(ctx context.Context, captureSources ed
 		// A shape mismatch means the cache key was not bumped alongside a payload change,
 		// which is a deploy-time bug worth a line — but not this page's failure.
 		slog.Warn("edge multicast sequence health: l2 coverage cache did not parse", "error", err)
-		return nil, time.Time{}, nil
+		return time.Time{}
 	}
 
-	out := map[string]*EdgeMulticastSequenceHealth{}
 	for _, lane := range coverage.Lanes {
 		// An unseen lane is a configured capture source that produced nothing in the window,
 		// carried by the coverage payload as a placeholder with zeroed stats. It says
@@ -198,20 +241,64 @@ func (a *API) edgeMulticastSequenceHealth(ctx context.Context, captureSources ed
 			SnapshotCycles: lane.SnapshotCycles,
 			LastSeen:       lane.LastSeen.UTC(),
 			Status:         edgeMulticastSequenceStatus(lane.GapBooks, lane.LastSeen, coverage.GeneratedAt),
+			GapsMeasured:   true,
 		}
 		if out[groupPK] == nil {
 			out[groupPK] = &EdgeMulticastSequenceHealth{}
 		}
 		out[groupPK].Instances = append(out[groupPK].Instances, inst)
 	}
-	if len(out) == 0 {
-		return nil, time.Time{}, nil
+	return coverage.GeneratedAt.UTC()
+}
+
+// foldEdgeMulticastTOBSequence adds the top-of-book series, and returns the payload's own clock.
+//
+// Every instance it produces carries GapsMeasured = false. That is the whole difference between
+// the two legs and it is not a shortfall to be papered over: this plane has no gap marker to
+// count, so the series can say it is advancing and cannot say it lost nothing.
+func (a *API) foldEdgeMulticastTOBSequence(ctx context.Context, captureSources edgeMulticastCaptureSourceMap, out map[string]*EdgeMulticastSequenceHealth) time.Time {
+	data, err := a.readPageCache(ctx, edgeMulticastTOBSequenceCacheKey)
+	if err != nil {
+		return time.Time{}
 	}
 
-	for _, health := range out {
-		finishEdgeMulticastSequenceHealth(health)
+	var payload EdgeMulticastTOBSequenceResponse
+	if err := json.Unmarshal(data, &payload); err != nil {
+		slog.Warn("edge multicast sequence health: tob sequence cache did not parse", "error", err)
+		return time.Time{}
 	}
-	return out, coverage.GeneratedAt.UTC(), nil
+
+	for _, series := range payload.Series {
+		// The destination address first: it is what the datagrams were addressed to. The
+		// capture source name is the fallback, for a recorder payload that predates
+		// raw_meta carrying the address.
+		groupPK := captureSources.resolveMulticastIP(series.MulticastGroup)
+		if groupPK == "" {
+			groupPK = captureSources.resolve(series.Source)
+		}
+		if groupPK == "" {
+			continue
+		}
+		inst := EdgeMulticastChannelInstance{
+			PublisherSourceIP: series.PublisherSourceIP,
+			CaptureSource:     series.Source,
+			ChannelID:         series.ChannelID,
+			Node:              series.Node,
+			LocationCode:      series.LocationCode,
+			Messages:          series.Messages,
+			Resets:            series.Resets,
+			LastSeen:          series.LastSeen.UTC(),
+			// Graded on staleness alone. Passing a zero gap count is not a claim that the
+			// count is zero — GapsMeasured is what carries that, and it is false here.
+			Status:       edgeMulticastSequenceStatus(0, series.LastSeen, payload.GeneratedAt),
+			GapsMeasured: false,
+		}
+		if out[groupPK] == nil {
+			out[groupPK] = &EdgeMulticastSequenceHealth{}
+		}
+		out[groupPK].Instances = append(out[groupPK].Instances, inst)
+	}
+	return payload.GeneratedAt.UTC()
 }
 
 // edgeMulticastSequenceStatus grades one series.
@@ -238,6 +325,9 @@ func finishEdgeMulticastSequenceHealth(health *EdgeMulticastSequenceHealth) {
 		edgeMulticastSeqOK:      2,
 	}
 	for _, inst := range health.Instances {
+		if !inst.GapsMeasured {
+			health.GapsUnmeasured++
+		}
 		switch inst.Status {
 		case edgeMulticastSeqGapped:
 			health.Gapped++

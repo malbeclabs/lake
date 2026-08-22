@@ -119,6 +119,12 @@ type EdgeMulticastPublisher struct {
 	// is what makes Bps un-attributable to this group alone.
 	MultiGroup bool `json:"multi_group"`
 
+	// Health is this publisher's own verdict, and the reason the group row no longer carries one:
+	// a feed with one dead publisher and one live one rolls up to a single badge that describes
+	// neither. Worst-of over the signals that belong to THIS member — see
+	// edgeMulticastPublisherHealth for the ranking and for what is deliberately left out of it.
+	Health string `json:"health,omitempty"`
+
 	// BGPStatus is the ledger's view of this publisher's BGP session: 'up', 'down' or 'unknown'.
 	//
 	// On a PUBLISHER, 'down' is a fault and the line says so. That is not a contradiction of the
@@ -244,8 +250,10 @@ func (a *API) queryEdgeMulticastPublisherLines(ctx context.Context, groupPKs []s
 		return out, nil
 	}
 
-	recorders := edgeMulticastIPSet(classes.recorderIPs)
-	probes := edgeMulticastIPSet(classes.probeIPs)
+	recorders := edgeMulticastKeySet(classes.recorderIPs)
+	probes := edgeMulticastKeySet(classes.probeIPs)
+	asserted := edgeMulticastKeySet(classes.assertedIPs)
+	wallets := edgeMulticastKeySet(classes.operatorWallets)
 
 	query := `
 		WITH ledger AS (
@@ -254,6 +262,7 @@ func (a *API) queryEdgeMulticastPublisherLines(ctx context.Context, groupPKs []s
 				pk,
 				client_ip,
 				dz_ip,
+				owner_pubkey,
 				device_pk,
 				tunnel_id,
 				bgp_status,
@@ -280,6 +289,7 @@ func (a *API) queryEdgeMulticastPublisherLines(ctx context.Context, groupPKs []s
 			l.pk,
 			l.client_ip,
 			l.dz_ip,
+			l.owner_pubkey,
 			COALESCE(d.code, '') AS device_code,
 			l.tunnel_id,
 			l.bgp_status AS bgp_status,
@@ -307,9 +317,10 @@ func (a *API) queryEdgeMulticastPublisherLines(ctx context.Context, groupPKs []s
 		var line EdgeMulticastPublisher
 		var multiGroup bool
 		var hasRate uint8
+		var ownerPubkey string
 		var bps *float64
 		var bucket *time.Time
-		if err := rows.Scan(&groupPK, &line.UserPK, &line.ClientIP, &line.DZIP,
+		if err := rows.Scan(&groupPK, &line.UserPK, &line.ClientIP, &line.DZIP, &ownerPubkey,
 			&line.DeviceCode, &line.TunnelID, &line.BGPStatus, &multiGroup, &hasRate, &bps, &bucket); err != nil {
 			return nil, err
 		}
@@ -320,7 +331,7 @@ func (a *API) queryEdgeMulticastPublisherLines(ctx context.Context, groupPKs []s
 			line.Bps = bps
 		}
 		line.Status = edgeMulticastPublisherStatus(line.Bps)
-		line.Class = edgeMulticastClassOf(line.ClientIP, recorders, probes)
+		line.Class = edgeMulticastClassOf(line.ClientIP, ownerPubkey, recorders, probes, asserted, wallets)
 		// A zero bucket is a LEFT JOIN default rather than a reading, and must not be
 		// rendered as "measured at the Unix epoch".
 		if hasRate == 1 && bucket != nil && !bucket.IsZero() && bucket.Unix() > 0 {
@@ -339,25 +350,87 @@ func (a *API) queryEdgeMulticastPublisherLines(ctx context.Context, groupPKs []s
 	return out, nil
 }
 
-// edgeMulticastIPSet indexes a resolved class list for per-line lookups. The class resolution
-// itself stays in edge_multicast_class.go; this is only the shape change from list to set.
-func edgeMulticastIPSet(ips []string) map[string]struct{} {
-	out := make(map[string]struct{}, len(ips))
-	for _, ip := range ips {
-		out[ip] = struct{}{}
+// The verdicts a publisher line can carry, worst-first. They reuse the group vocabulary where the
+// meaning carries over; 'skewed' does not appear, because capture-node parity is a statement about
+// the recorders of a group and no single publisher owns it.
+const (
+	edgeMulticastPubHealthSilent  = "silent"
+	edgeMulticastPubHealthThin    = "thin"
+	edgeMulticastPubHealthGapped  = "gapped"
+	edgeMulticastPubHealthStalled = "stalled"
+	edgeMulticastPubHealthUnknown = "unknown"
+	edgeMulticastPubHealthy       = "healthy"
+)
+
+// edgeMulticastPublisherHealth grades one publisher line.
+//
+// Ranking, worst-first: silent, thin, gapped, stalled, unknown, healthy. A publisher moving no
+// bytes outranks one moving too few, and both outrank a recorded gap: 'thin' says the tunnel is
+// carrying overhead and no product, which is a larger failure than a series that lost some of a
+// feed it is otherwise delivering.
+//
+// Two things are deliberately NOT folded in.
+//
+// BGP status. A publisher with no session cannot be sending, but the ledger snapshot and the rate
+// bucket are minutes apart, so a publisher can read 'down' while its tunnel still moved bytes in
+// the last visible bucket. Both are shown on the line and the reader gets both, which is the same
+// call the group verdict made for the same reason.
+//
+// A series whose gaps were never counted. The top-of-book plane records no gap marker, so its
+// instances arrive with GapsMeasured false and a zero gap count that is an absence rather than a
+// reading. Letting that zero produce 'healthy' would be the page asserting something nothing
+// measured — such a series can still reach 'stalled', which is graded on staleness alone.
+func edgeMulticastPublisherHealth(line EdgeMulticastPublisher) string {
+	switch line.Status {
+	case edgeMulticastPubUnknown:
+		return edgeMulticastPubHealthUnknown
+	case edgeMulticastPubIdle:
+		return edgeMulticastPubHealthSilent
+	case edgeMulticastPubThin:
+		return edgeMulticastPubHealthThin
+	}
+	if seq := line.Sequence; seq != nil {
+		if seq.Gapped > 0 {
+			return edgeMulticastPubHealthGapped
+		}
+		if seq.Stalled > 0 {
+			return edgeMulticastPubHealthStalled
+		}
+	}
+	return edgeMulticastPubHealthy
+}
+
+// edgeMulticastKeySet indexes a resolved class list for per-line lookups — client IPs for the
+// two IP tiers, owner pubkeys for the wallet tier. The class resolution itself stays in
+// edge_multicast_class.go; this is only the shape change from list to set.
+func edgeMulticastKeySet(keys []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		out[k] = struct{}{}
 	}
 	return out
 }
 
 // edgeMulticastClassOf applies the same precedence the group counts use: a recorder, then a
-// probe, then the default. The default is "nobody has said otherwise", which is why the payload
-// also carries how many members are actually classified.
-func edgeMulticastClassOf(clientIP string, recorders, probes map[string]struct{}) string {
+// probe, then an asserted row that said 'customer', then the operator wallet, then the default.
+//
+// The asserted check sits ahead of the wallet on purpose and is the only reason it exists here:
+// a row asserting 'customer' over one of our own wallets is the escape hatch for a box we handed
+// back, and without this it would fall through and be relabelled 'doublezero'. The final default
+// is "nobody has said otherwise", which is why the payload also carries how many members are
+// actually classified.
+func edgeMulticastClassOf(clientIP, ownerPubkey string, recorders, probes, asserted, wallets map[string]struct{}) string {
 	if _, ok := recorders[clientIP]; ok {
 		return string(multicastMemberRecorder)
 	}
 	if _, ok := probes[clientIP]; ok {
 		return string(multicastMemberProbe)
+	}
+	if _, ok := asserted[clientIP]; ok {
+		return string(multicastMemberCustomer)
+	}
+	if _, ok := wallets[ownerPubkey]; ok {
+		return string(multicastMemberDoubleZero)
 	}
 	return string(multicastMemberCustomer)
 }
