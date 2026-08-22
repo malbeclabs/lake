@@ -261,6 +261,7 @@ function PublisherLineRow({
   asOf,
   showLastHeard,
   showSequence,
+  showObservations,
   sequenceAsOfAge,
   floorBps,
 }: {
@@ -268,6 +269,7 @@ function PublisherLineRow({
   asOf: number
   showLastHeard: boolean
   showSequence: boolean
+  showObservations: boolean
   sequenceAsOfAge?: number
   floorBps: number
 }) {
@@ -354,12 +356,16 @@ function PublisherLineRow({
           <RateCell bps={line.bps} ambiguous={line.multi_group} stale={stale} />
         )}
       </td>
-      <td className="px-3 py-1.5 text-right whitespace-nowrap">
-        <MsgRateCell msgPerSec={line.msg_per_sec} />
-      </td>
-      <td className="px-3 py-1.5 text-right whitespace-nowrap">
-        <PeerParityCell parity={line.path_parity} />
-      </td>
+      {showObservations && (
+        <td className="px-3 py-1.5 text-right whitespace-nowrap">
+          <MsgRateCell msgPerSec={line.msg_per_sec} />
+        </td>
+      )}
+      {showObservations && (
+        <td className="px-3 py-1.5 text-right whitespace-nowrap">
+          <PeerParityCell parity={line.path_parity} />
+        </td>
+      )}
       <td className="px-3 py-1.5 text-right whitespace-nowrap">
         {age === undefined ? (
           <span className="text-muted-foreground">—</span>
@@ -651,6 +657,7 @@ function GroupRow({
   now,
   showLastHeard,
   showSequence,
+  showObservations,
   sequenceAsOfAge,
   floorBps,
   columns,
@@ -661,6 +668,7 @@ function GroupRow({
   now: number
   showLastHeard: boolean
   showSequence: boolean
+  showObservations: boolean
   sequenceAsOfAge?: number
   floorBps: number
   columns: number
@@ -705,8 +713,8 @@ function GroupRow({
       {/* Msg/s and Peer are per PATH and the group row carries neither. Summing recorded message
           rates over a group's paths would double the feed — redundant paths carry the same
           traffic — and a parity ratio has no meaning until you name which path it is about. */}
-      <td className="px-3 py-3" />
-      <td className="px-3 py-3" />
+      {showObservations && <td className="px-3 py-3" />}
+      {showObservations && <td className="px-3 py-3" />}
       <td className="px-3 py-3 text-sm text-right whitespace-nowrap">
         {age === undefined ? (
           <span className="text-muted-foreground">no data</span>
@@ -751,6 +759,7 @@ function GroupRow({
           asOf={asOf}
           showLastHeard={showLastHeard}
           showSequence={showSequence}
+          showObservations={showObservations}
           sequenceAsOfAge={sequenceAsOfAge}
           floorBps={floorBps}
         />
@@ -774,6 +783,7 @@ function ServiceSection({
   now,
   showLastHeard,
   showSequence,
+  showObservations,
   sequenceAsOfAge,
   floorBps,
   onOpen,
@@ -783,6 +793,7 @@ function ServiceSection({
   now: number
   showLastHeard: boolean
   showSequence: boolean
+  showObservations: boolean
   sequenceAsOfAge?: number
   floorBps: number
   onOpen: (e: React.MouseEvent, pk: string) => void
@@ -790,7 +801,7 @@ function ServiceSection({
   // Only the truncation notice spans the table now; the publisher lines carry a cell per column,
   // so the count still has to match the header exactly — a mismatch silently shifts every group
   // column one to the left.
-  const columns = 10 + (showLastHeard ? 1 : 0) + (showSequence ? 1 : 0)
+  const columns = 8 + (showObservations ? 2 : 0) + (showLastHeard ? 1 : 0) + (showSequence ? 1 : 0)
   const silent = service.groups.filter((g) => g.silent).length
 
   return (
@@ -818,8 +829,8 @@ function ServiceSection({
               <th className="px-3 py-2 font-medium">Publishers</th>
               <th className="px-3 py-2 font-medium">Recorders</th>
               <th className="px-3 py-2 font-medium text-right">Ingress</th>
-              <th className="px-3 py-2 font-medium text-right">Msg/s</th>
-              <th className="px-3 py-2 font-medium text-right">Peer</th>
+              {showObservations && <th className="px-3 py-2 font-medium text-right">Msg/s</th>}
+              {showObservations && <th className="px-3 py-2 font-medium text-right">Peer</th>}
               <th className="px-3 py-2 font-medium text-right">Measured</th>
               {showLastHeard && <th className="px-3 py-2 font-medium text-right">Heard</th>}
               {showSequence && <th className="px-3 py-2 font-medium">Sequence</th>}
@@ -835,6 +846,7 @@ function ServiceSection({
                 now={now}
                 showLastHeard={showLastHeard}
                 showSequence={showSequence}
+                showObservations={showObservations}
                 sequenceAsOfAge={sequenceAsOfAge}
                 floorBps={floorBps}
                 columns={columns}
@@ -878,6 +890,19 @@ export function EdgeMulticastPage() {
   // dashes, the same rule the Heard column follows.
   const showSequence = useMemo(
     () => (data?.services ?? []).some((s) => s.groups.some((g) => (g.sequence?.instances.length ?? 0) > 0)),
+    [data],
+  )
+
+  // Msg/s and Peer come from the observations refresher, and its payload can be absent — a new
+  // cache key is empty until the first cycle after a deploy, and a feed with no recorder behind it
+  // never gets one at all. Dropped entirely rather than rendered as two columns of dashes, the
+  // same rule Heard and Sequence follow. Keyed on msg_per_sec because every path the refresher saw
+  // has one, where path_parity needs a peer to exist.
+  const showObservations = useMemo(
+    () =>
+      (data?.services ?? []).some((s) =>
+        s.groups.some((g) => (g.publisher_lines ?? []).some((l) => l.msg_per_sec !== undefined)),
+      ),
     [data],
   )
 
@@ -1000,6 +1025,7 @@ export function EdgeMulticastPage() {
               now={now}
               showLastHeard={data?.last_heard_available ?? false}
               showSequence={showSequence}
+              showObservations={showObservations}
               sequenceAsOfAge={sequenceAsOfAge}
               floorBps={data?.publisher_floor_bps ?? 0}
               onOpen={onOpen}

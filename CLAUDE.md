@@ -386,7 +386,12 @@ Msg/s, Peer). The customer split stays in the payload for the group's own page a
 not rendered here.
 
 Two per-path columns come from the observations payload and cost no query: **Msg/s**, the recorded
-message rate, and **Peer**, the parity ratio. Msg/s sits beside the counter rate rather than
+message rate, and **Peer**, the parity ratio. Both are dropped entirely when that payload is
+absent, the same rule Heard and Sequence follow — a missing cache costs the columns, never the
+page. That is not a rare state: `page_cache` survives a pod restart, so a **newly added** cache key
+is the one entry a deploy leaves empty, and it stays empty until the refresh chain reaches it.
+`StartKalshiBackgroundRefresher` is serial with a three-minute timeout per step, which is why the
+observations leg runs **first** — it is the cheapest and the only one with no live-query fallback. Msg/s sits beside the counter rate rather than
 replacing it — the counter is per tunnel, minutes late, and an upper bound a multi-group publisher
 shares across its groups; this is per group, from the far end, so it is what arrived rather than
 what was sent, and it is blank for any feed with no recorder behind it. Neither figure is on the
