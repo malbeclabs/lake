@@ -1,0 +1,79 @@
+package handlers_test
+
+import (
+	"testing"
+	"time"
+
+	"github.com/malbeclabs/lake/api/handlers"
+	"github.com/stretchr/testify/assert"
+)
+
+// The per-publisher verdict and its ranking. Nothing tested this function, and the ordering is the
+// page's whole contract: the badge moved off the group precisely so that one dead path among live
+// ones could be named, which only works if the worst thing about a line is what the line says.
+
+func pubLine(status string, seq *handlers.EdgeMulticastSequenceHealth, parity *handlers.EdgeMulticastPathParity) handlers.EdgeMulticastPublisher {
+	return handlers.EdgeMulticastPublisher{Status: status, Sequence: seq, PathParity: parity}
+}
+
+func seqHealth(status string, gapped, stalled int, instances int) *handlers.EdgeMulticastSequenceHealth {
+	h := &handlers.EdgeMulticastSequenceHealth{Status: status, Gapped: gapped, Stalled: stalled}
+	for range instances {
+		h.Instances = append(h.Instances, handlers.EdgeMulticastChannelInstance{
+			Messages: 10, LastSeen: time.Now().UTC(), Status: status,
+		})
+	}
+	return h
+}
+
+// The counter plane's two faults outrank everything: a publisher moving no bytes, and one moving
+// too few, are worse than anything a recorder can report about what did arrive.
+func TestEdgeMulticastPublisherHealth_CounterFaultsWin(t *testing.T) {
+	gapped := seqHealth("gapped", 1, 0, 1)
+
+	assert.Equal(t, "silent",
+		handlers.EdgeMulticastPublisherHealthForTest(pubLine(handlers.EdgeMulticastPubIdleForTest, gapped, nil), true))
+	assert.Equal(t, "thin",
+		handlers.EdgeMulticastPublisherHealthForTest(pubLine(handlers.EdgeMulticastPubThinForTest, gapped, nil), true))
+}
+
+// The one this exists for: a publisher nothing measured on the counter plane, whose series is
+// gapping. 'unknown' used to win by position, and Faulted() excludes it, so the collapsed group's
+// dot went grey over a feed that was losing data.
+func TestEdgeMulticastPublisherHealth_SeriesOutranksAnUnmeasuredCounter(t *testing.T) {
+	assert.Equal(t, "gapped", handlers.EdgeMulticastPublisherHealthForTest(
+		pubLine(handlers.EdgeMulticastPubUnknownForTest, seqHealth("gapped", 1, 0, 1), nil), true))
+	assert.Equal(t, "stalled", handlers.EdgeMulticastPublisherHealthForTest(
+		pubLine(handlers.EdgeMulticastPubUnknownForTest, seqHealth("stalled", 0, 1, 1), nil), true))
+	assert.Equal(t, "behind", handlers.EdgeMulticastPublisherHealthForTest(
+		pubLine(handlers.EdgeMulticastPubUnknownForTest, nil,
+			&handlers.EdgeMulticastPathParity{Compared: 2, Behind: 1, WorstRatio: 0.4}), true))
+}
+
+// With nothing to say on either plane, 'unknown' is still the answer — a monitoring gap, and it
+// must not be dressed up as either a fault or a clean bill of health.
+func TestEdgeMulticastPublisherHealth_UnknownWhenNothingMeasured(t *testing.T) {
+	assert.Equal(t, "unknown",
+		handlers.EdgeMulticastPublisherHealthForTest(pubLine(handlers.EdgeMulticastPubUnknownForTest, nil, nil), true))
+
+	// And an unmeasured publisher is not 'unrecorded': that word is about a publisher that IS
+	// clearing the floor and has no series behind it.
+	assert.Equal(t, "unknown", handlers.EdgeMulticastPublisherHealthForTest(
+		pubLine(handlers.EdgeMulticastPubUnknownForTest, seqHealth("ok", 0, 0, 0), nil), true))
+}
+
+// A path with no peer has no parity verdict. Zero of zero compared must not read as passing.
+func TestEdgeMulticastPublisherHealth_ParityNeedsAPeer(t *testing.T) {
+	assert.Equal(t, "healthy", handlers.EdgeMulticastPublisherHealthForTest(
+		pubLine(handlers.EdgeMulticastPubPublishingForTest, seqHealth("ok", 0, 0, 1),
+			&handlers.EdgeMulticastPathParity{Compared: 0, Behind: 0, WorstRatio: 1}), true))
+}
+
+// 'unrecorded' only where the group has series to be missing from. On a group with none — the
+// shreds groups run Turbine and record no wire protocol at all — clearing the floor is the whole
+// truth.
+func TestEdgeMulticastPublisherHealth_Unrecorded(t *testing.T) {
+	line := pubLine(handlers.EdgeMulticastPubPublishingForTest, nil, nil)
+	assert.Equal(t, "unrecorded", handlers.EdgeMulticastPublisherHealthForTest(line, true))
+	assert.Equal(t, "healthy", handlers.EdgeMulticastPublisherHealthForTest(line, false))
+}

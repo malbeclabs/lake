@@ -38,15 +38,25 @@ func createKalshiMbpLevelsTable(t *testing.T, api *handlers.API) {
 			recv_ts_ns UInt64,
 			recv_ts_kind LowCardinality(String),
 			book_levels_after UInt32,
-			status_after LowCardinality(String)
+			status_after LowCardinality(String),
+			publisher_source_ip LowCardinality(String)
 		) ENGINE = MergeTree
 		PARTITION BY toDate(fromUnixTimestamp64Nano(toInt64(recv_ts_ns)))
 		ORDER BY (measurement_node_id, source, channel_id, symbol, instrument_id, recv_ts_ns)
 	`, db)))
 }
 
-// insertLevel inserts one market-by-price wire message, recorded `agoSecs` ago.
+// insertLevel inserts one market-by-price wire message, recorded `agoSecs` ago, from the default
+// publisher address.
 func insertLevel(t *testing.T, api *handlers.API, source string, channelID, instrumentID uint32, msgType string, depth uint32, statusAfter string, agoSecs int) {
+	t.Helper()
+	insertLevelFrom(t, api, "148.51.121.69", source, channelID, instrumentID, msgType, depth, statusAfter, agoSecs)
+}
+
+// insertLevelFrom is insertLevel with the publishing address spelled out. The address is what makes
+// a row a channel instance rather than a channel, so every test that cares about two publishers on
+// one channel goes through this.
+func insertLevelFrom(t *testing.T, api *handlers.API, publisherSourceIP, source string, channelID, instrumentID uint32, msgType string, depth uint32, statusAfter string, agoSecs int) {
 	t.Helper()
 	ctx := t.Context()
 	db := "`" + api.FeedsDB + "`"
@@ -54,11 +64,11 @@ func insertLevel(t *testing.T, api *handlers.API, source string, channelID, inst
 		INSERT INTO %s.kalshi_mbp_levels
 		(capture_run_id, measurement_node_id, host, location_code, source, symbol, channel_id,
 		 instrument_id, source_id, msg_type, source_ts_ns, source_ts_kind, recv_ts_ns,
-		 recv_ts_kind, book_levels_after, status_after)
+		 recv_ts_kind, book_levels_after, status_after, publisher_source_ip)
 		VALUES ('run1', 'cmh-rec1', 'cmh-rec1', 'cmh', '%s', 'KXNFLGAME', %d, %d, 3, '%s', 0,
 		        'venue', toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalSecond(%d))),
-		        'kernel_udp_software', %d, '%s')
-	`, db, source, channelID, instrumentID, msgType, agoSecs, depth, statusAfter)))
+		        'kernel_udp_software', %d, '%s', '%s')
+	`, db, source, channelID, instrumentID, msgType, agoSecs, depth, statusAfter, publisherSourceIP)))
 }
 
 func TestGetKalshiL2Coverage_MissingTable(t *testing.T) {

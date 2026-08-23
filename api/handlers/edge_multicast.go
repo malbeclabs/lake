@@ -18,7 +18,7 @@ import (
 // actually flowing right now.
 //
 // The three existing multicast views answer this one group at a time (/dz/multicast-groups/{pk}).
-// The question this page exists for is the fleet one — "is any lane silent?" — which nobody can
+// The question this page exists for is the fleet one — "is any feed silent?" — which nobody can
 // answer by opening nine tabs.
 //
 // # What "traffic" means here, and what it does not
@@ -49,14 +49,14 @@ import (
 // bucket" is a true and useful statement even at five-minute grain; Silent reports exactly that.
 
 // EdgeMulticastCacheKey is the page-cache key written by the page-cache worker. The fleet
-// aggregate runs three grouped queries over health_multicast_user_rate and dz_users_current
-// (~350ms together on mainnet), which is cheap enough to serve live but wasteful to repeat per
-// viewer on a page that refreshes on a timer.
+// aggregate runs four grouped queries over health_multicast_user_rate and dz_users_current
+// (~350ms together on mainnet, the per-publisher read included), which is cheap enough to serve
+// live but wasteful to repeat per viewer on a page that refreshes on a timer.
 const EdgeMulticastCacheKey = "edge_multicast"
 
 // edgeMulticastGroupCodePrefix is what makes a multicast group part of the Edge product: its
 // ledger code. Membership in the product is a naming convention (`edge-<venue>-<product>-<plane>`
-// for the market-data lanes, `edge-solana-*` for shreds), not something the feed catalog decides.
+// for the market-data feeds, `edge-solana-*` for shreds), not something the feed catalog decides.
 //
 // Scoping by prefix rather than by "some feed row lists it" gets two cases right that the catalog
 // gets wrong. A group provisioned onchain before its feed exists — edge-solana-shreds1 on mainnet
@@ -73,14 +73,15 @@ const EdgeMulticastCacheKey = "edge_multicast"
 // with nothing on the page to say why it is there.
 const edgeMulticastGroupCodePrefix = "edge-"
 
-// edgeMulticastPlanes maps the plane suffix a lane's ledger code carries to its display label.
-// A lane is one plane of one product: market-by-price, market-by-order, or top-of-book. The
+// edgeMulticastPlanes maps the plane suffix a group's ledger code carries to its display label.
+// A plane is one feed spec of one product line: market-by-price, market-by-order, or top-of-book.
+// The
 // suffix is the only place that distinction is recorded, on both the group code
 // (edge-kalshi-perps-mbp) and the feed code (kalshi-perps-mbp).
 //
 // mbo has no group on mainnet yet and is listed anyway: the suffix set is what the feed catalog
 // and the capture source ids are built from, so a plane missing here would silently collapse into
-// its product's section with a blank column instead of showing up as a lane of its own.
+// its product line's section with a blank column instead of showing up as a plane of its own.
 var edgeMulticastPlanes = map[string]string{
 	"mbp": "MBP",
 	"mbo": "MBO",
@@ -131,19 +132,48 @@ type EdgeMulticastRoleCounts struct {
 	// here alongside a member that genuinely went away.
 	Unknown int `json:"unknown"`
 
-	// Recorders, InternalProbes and Customers split the same Total by whose box it is — see
-	// edge_multicast_class.go for how a member is classified and why owner identity cannot do
-	// it. The three always sum to Total; Customers absorbs every member nothing speaks for.
+	// Recorders, InternalProbes, DoubleZero and Customers split the same Total by whose box it
+	// is — see edge_multicast_class.go for how a member is classified. The four always sum to
+	// Total; Customers absorbs every member nothing speaks for.
 	Recorders      int `json:"recorders"`
 	InternalProbes int `json:"internal_probes"`
-	Customers      int `json:"customers"`
+
+	// DoubleZero is "ours, kind unknown": matched by the operator-wallet tier, which establishes
+	// whose box it is and cannot go further, because one wallet holds recorders, probes and lab
+	// boxes at once. Kept as its own count rather than folded into Recorders so the page never
+	// claims a box records when nothing has said it does.
+	DoubleZero int `json:"doublezero"`
+	Customers  int `json:"customers"`
 
 	// ClassAsserted and ClassDerived are how many of those classifications are actually known:
-	// asserted by an operator row, or derived from the capture-host list. Total minus the two
-	// is the remainder that merely defaulted to customer, which is a much weaker claim and has
-	// to stay visibly weaker on screen.
+	// asserted by an operator row, or derived from the capture-host list or the operator-wallet
+	// list. Total minus the two is the remainder that merely defaulted to customer, which is a
+	// much weaker claim and has to stay visibly weaker on screen.
 	ClassAsserted int `json:"class_asserted"`
 	ClassDerived  int `json:"class_derived"`
+}
+
+// EdgeMulticastPublisherVerdicts is how many of a group's publisher lines landed in each state.
+// The fields sum to the group's publisher total.
+type EdgeMulticastPublisherVerdicts struct {
+	Healthy int `json:"healthy"`
+	Thin    int `json:"thin"`
+	Gapped  int `json:"gapped"`
+	Stalled int `json:"stalled"`
+	Behind  int `json:"behind"`
+	Silent  int `json:"silent"`
+
+	// Unrecorded is clearing the floor with no recorded series while peers on the group have
+	// one. Not a fault and not counted as one — it is missing coverage.
+	Unrecorded int `json:"unrecorded"`
+	Unknown    int `json:"unknown"`
+}
+
+// Faulted is every line that is not healthy and not merely unmeasured. Unknown and Unrecorded are
+// excluded on purpose: a publisher nothing measured is a monitoring gap, and counting it as a fault
+// is the same mistake as painting a group red for one device's missing telemetry.
+func (v EdgeMulticastPublisherVerdicts) Faulted() int {
+	return v.Thin + v.Gapped + v.Stalled + v.Behind + v.Silent
 }
 
 // EdgeMulticastGroup is one multicast group as this page sees it.
@@ -161,10 +191,65 @@ type EdgeMulticastGroup struct {
 	Publishers  EdgeMulticastRoleCounts `json:"publishers"`
 	Subscribers EdgeMulticastRoleCounts `json:"subscribers"`
 
+	// PublisherLines is this group's publishers one line each — the grain the verdict is
+	// actually taken at, since a feed with one live publisher and one dead one rolls up
+	// identically to a healthy one. Chosen worst-first and capped at
+	// edgeMulticastPublisherLineCap, then ordered by client IP for reading;
+	// PublisherLinesTotal is the count before the cap, so a truncated list says so instead of
+	// reading as the whole published set.
+	PublisherLines      []EdgeMulticastPublisher `json:"publisher_lines"`
+	PublisherLinesTotal int                      `json:"publisher_lines_total"`
+
+	// PublishersBelowFloor is how many publishers are not clearing
+	// edgeMulticastPublisherFloorBps — idle ones included, since zero is below any floor.
+	// Counted over every publisher, never over the capped list.
+	PublishersBelowFloor int `json:"publishers_below_floor"`
+
+	// PublishersPublishing is the complement: publishers measured at or above the floor. Carried
+	// explicitly rather than left for the UI to derive from Total minus the remainders, which is
+	// arithmetic that goes wrong the first time the ledger and the rate view disagree about who
+	// exists.
+	PublishersPublishing int `json:"publishers_publishing"`
+
+	// PublisherVerdicts tallies the per-line verdicts. It is what a COLLAPSED group has instead
+	// of a health badge: the badge moved to the lines, and without this a group nobody expanded
+	// would summarise itself on the counter plane alone and read clean while one of its series
+	// was gapping.
+	//
+	// It is a count of lines, not a verdict over them — the distinction the page turns on. And
+	// it is tallied over every publisher before edgeMulticastPublisherLineCap truncates the
+	// list, so what the payload happens to carry cannot change it.
+	PublisherVerdicts EdgeMulticastPublisherVerdicts `json:"publisher_verdicts"`
+
+	// CaptureNodes is the application plane's per-node view of this group: what each recording
+	// node wrote down in the window, and how that compares with its peers. Empty for a group no
+	// capture covers, which is most of them.
+	CaptureNodes []EdgeMulticastCaptureNode `json:"capture_nodes,omitempty"`
+
+	// CaptureNodesLagging is how many of those nodes are below the parity floor — recorders on
+	// one group receive the same feed, so a node far under the median is not hearing it.
+	CaptureNodesLagging int `json:"capture_nodes_lagging,omitempty"`
+
+	// Sequence is the roll-up of the group's recorded sequence series — nil for a group with no
+	// recorder running the Edge wire protocol behind it, which is every group except the
+	// market-by-price ones today.
+	//
+	// A roll-up, and not the verdict: a series belongs to one publisher, so the verdict lives on
+	// EdgeMulticastPublisher.Sequence, one per line. This exists because the lines are collapsed
+	// by default and because an instance whose source address matches no publisher would
+	// otherwise have nowhere to be reported. See edge_multicast_sequence.go.
+	Sequence *EdgeMulticastSequenceHealth `json:"sequence,omitempty"`
+
 	// IngressBps is the sum of the publishers' measured receive rate at their tunnels — what
 	// the network is taking in for this group. EgressBps is the sum over subscribers of what
-	// their tunnels send out, so it scales with fan-out and is many times ingress on a healthy
-	// group. Both are upper bounds when TrafficAmbiguous is set.
+	// their tunnels send out. Both are upper bounds when TrafficAmbiguous is set.
+	//
+	// The fleet page renders ingress only. EgressBps scales with fan-out and, because the
+	// counters are per tunnel, a subscriber on several groups adds the same figure to each of
+	// them: on mainnet the perps groups read ~878 Mbps of egress against 3.6 Mbps of ingress,
+	// which is the sports traffic on the same tunnels rather than anything about this group. It
+	// stays in the payload as a raw measurement for API callers and is deliberately not on
+	// screen, where a 240x number invites exactly the wrong reading.
 	IngressBps float64 `json:"ingress_bps"`
 	EgressBps  float64 `json:"egress_bps"`
 
@@ -189,14 +274,15 @@ type EdgeMulticastGroup struct {
 	// structurally cannot. Nil when no capture covers the group, which is most of them.
 	LastHeard *time.Time `json:"last_heard,omitempty"`
 
-	// LastHeardSource names the table behind the timestamp, so a reader can tell a Kalshi
+	// LastHeardTable names the proxied table behind the timestamp, so a reader can tell a Kalshi
 	// observation from a shred race. Empty when LastHeard is nil.
-	LastHeardSource string `json:"last_heard_source,omitempty"`
+	LastHeardTable string `json:"last_heard_table,omitempty"`
 
-	// LastHeardLanes is how many capture sources were folded into that one timestamp. Above 1
-	// it is a max over lanes and a single dead lane does NOT move it — the Kalshi sports groups
-	// carry dozens of league lanes each. The per-lane view is /dz/kalshi/l2.
-	LastHeardLanes int `json:"last_heard_lanes,omitempty"`
+	// LastHeardCaptureSources is how many capture sources were folded into that one timestamp.
+	// Above 1 it is a max over them and a single dead one does NOT move it — the Kalshi sports
+	// groups carry dozens of league capture sources each. The per-capture-source view is
+	// /dz/kalshi/l2.
+	LastHeardCaptureSources int `json:"last_heard_capture_sources,omitempty"`
 
 	// Silent is the page's headline signal: the group has publishers and not one of them moved
 	// a byte in the freshest bucket. False when publishers are active OR when there is no rate
@@ -204,9 +290,10 @@ type EdgeMulticastGroup struct {
 	// every telemetry gap.
 	Silent bool `json:"silent"`
 
-	// Health is the lane's verdict, and it is a traffic verdict: a group is healthy when its
-	// publishers are moving data. 'healthy' / 'silent' / 'unknown' / "" (no publishers), the
-	// same three states PublisherCell renders, so the row cannot contradict itself.
+	// Health is the feed's verdict, and it is a traffic verdict over two per-member checks:
+	// every publisher clears edgeMulticastPublisherFloorBps, and every recording node on the
+	// group hears a share of the feed comparable with its peers. 'healthy' / 'thin' / 'skewed' /
+	// 'silent' / 'unknown' / "" (no publishers) — see edgeMulticastVerdict.
 	//
 	// It is deliberately NOT the control-plane reconciliation verdict. That one is a worst-of
 	// over every member, and on this page it is red permanently for two independent reasons:
@@ -214,7 +301,7 @@ type EdgeMulticastGroup struct {
 	// 'unhealthy' for a cycle (6 of 767 on edge-solana-shreds at any given moment, always a
 	// different six), and every group carries customers with BGP down, which ranks 'disconnected'
 	// over 'healthy'. Measured on mainnet: zero of the nine edge groups could ever read healthy.
-	// A badge that is always red says nothing about the lane it is supposed to describe.
+	// A badge that is always red says nothing about the feed it is supposed to describe.
 	Health string `json:"health"`
 
 	// HealthCounts is the control-plane reconciliation breakdown for the group's members. It no
@@ -245,10 +332,21 @@ type EdgeMulticastResponse struct {
 	// observed age it is what stops a five-minute average being read as an instantaneous rate.
 	RateGrainMinutes int `json:"rate_grain_minutes"`
 
+	// PublisherFloorBps is the per-publisher floor the verdict applies, carried in the payload
+	// so the UI states the threshold it is judging against instead of hardcoding a second copy
+	// of it that can drift.
+	PublisherFloorBps int `json:"publisher_floor_bps"`
+
 	// LastHeardAvailable is false when no application-plane table was queryable at all — the
 	// normal state in local dev, where the proxied feeds and shredder tables do not exist. The
 	// UI drops the column rather than rendering a screenful of blanks.
 	LastHeardAvailable bool `json:"last_heard_available"`
+
+	// SequenceAsOf is when the sequence-counter numbers were computed, which is NOT GeneratedAt:
+	// they are folded from the L2 coverage refresher's cache and are up to one refresher
+	// interval (ten minutes) older than the rest of the payload. Nil when no group has any.
+	// Carried so the column can age itself instead of borrowing this payload's freshness.
+	SequenceAsOf *time.Time `json:"sequence_as_of,omitempty"`
 
 	Services []EdgeMulticastService `json:"services"`
 }
@@ -291,11 +389,12 @@ type edgeMulticastFeedGroups struct {
 // edgeMulticastMemberSplit is the ledger-side count for one side of a group, already split by
 // classification.
 type edgeMulticastMemberSplit struct {
-	total     int
-	recorders int
-	probes    int
-	asserted  int
-	derived   int
+	total      int
+	recorders  int
+	probes     int
+	doublezero int
+	asserted   int
+	derived    int
 }
 
 // edgeMulticastMembership is the ledger-side count for one group.
@@ -317,9 +416,9 @@ type edgeMulticastRates struct {
 	counts     MulticastHealthStatusCounts
 }
 
-// FetchEdgeMulticastData builds the fleet overview. Three queries, none of them per group: the
-// catalog, the ledger membership, and the rate/health rollup. Adding a group or a feed changes
-// no code and adds no round-trip.
+// FetchEdgeMulticastData builds the fleet overview. Four queries, none of them per group: the
+// catalog, the ledger membership, the rate/health rollup, and the per-publisher read. Adding a
+// group or a feed changes no code and adds no round-trip.
 func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastResponse, error) {
 	// Loaded before the membership query and allowed to fail it: serving the page with the
 	// override table unread would silently recount every asserted recorder as a customer,
@@ -344,29 +443,90 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 	if err != nil {
 		return nil, err
 	}
+	groupPKs := make([]string, 0, len(groups))
+	for _, g := range groups {
+		groupPKs = append(groupPKs, g.PK)
+	}
+	publisherLines, err := a.queryEdgeMulticastPublisherLines(ctx, groupPKs, classes)
+	if err != nil {
+		return nil, err
+	}
 
 	// Optional, and deliberately non-fatal. Unlike the three queries above, this one reads
 	// proxied tables that are legitimately absent in local dev and may blip independently of
 	// the lake database. The rest of the payload is complete and correct without it, so a
 	// failure costs one column instead of the page — and the worker must still be able to
 	// cache the good part. WARN, never ERROR: nothing here is worth paging on.
-	lastHeard, lastHeardAvailable, err := a.queryEdgeMulticastLastHeard(ctx, groups)
+	captureSources := newEdgeMulticastCaptureSourceMap(groups)
+	lastHeard, lastHeardAvailable, err := a.queryEdgeMulticastLastHeard(ctx, captureSources)
 	if err != nil {
 		slog.Warn("edge multicast app-plane last-heard unavailable", "error", err)
 		lastHeard, lastHeardAvailable = nil, false
+	}
+
+	// Same contract, and this one reads no ClickHouse at all: a miss costs the column.
+	//
+	// Mainnet only, and the gate is not about cost. Both folded payloads are written by the
+	// Kalshi refresher, which runs with no environment in its context and therefore always
+	// reads mainnet, while the keys carry no environment either. The group key they resolve
+	// through is the multicast address, and both networks allocate their groups out of the same
+	// 233.84.178.0/24. The collision is live, not hypothetical: testnet's edge-solana-retrans has
+	// sat on 233.84.178.17 — mainnet's edge-kalshi-sports-tob — continuously since 2026-07-23, so
+	// before this gate testnet rendered mainnet Kalshi series on a Solana retransmit group.
+	// testnet's edge-solana-root collides too, on .12 (mainnet's edge-solana-retrans-eu), and is
+	// harmless only because both folded payloads read Kalshi tables and have nothing to attach
+	// there. An environment gate is the honest fix — a payload computed for one network cannot
+	// describe another — and it costs testnet nothing it has data for.
+	var sequence map[string]*EdgeMulticastSequenceHealth
+	var sequenceAsOf time.Time
+	var pathParity map[edgeMulticastPathKey]*EdgeMulticastPathParity
+	var pathRates map[edgeMulticastPathKey]float64
+	if isMainnet(ctx) {
+		var err error
+		sequence, sequenceAsOf, err = a.edgeMulticastSequenceHealth(ctx, captureSources)
+		if err != nil {
+			slog.Warn("edge multicast sequence health unavailable", "error", err)
+			sequence = nil
+		}
+
+		// Path parity and the recorded message rate come out of the same cached payload the
+		// top-of-book series do, so they cost no query either, and a miss costs the checks
+		// rather than the page.
+		pathParity, pathRates = a.edgeMulticastObservationStats(ctx, captureSources)
+	}
+
+	// The device-side BGP session. One round trip for the fleet, and an absent telemetry mirror
+	// or a failed read costs the column rather than the page — same contract as last-heard.
+	bgpSessions, err := a.queryEdgeMulticastBGPSessions(ctx)
+	if err != nil {
+		slog.Warn("edge multicast bgp sessions unavailable", "error", err)
+		bgpSessions = nil
+	}
+
+	// The access-path RTT, from the ledger rather than from telemetry. Same contract: a missing
+	// table or a failed read costs the figure, never the page.
+	bgpRtt, err := a.queryEdgeMulticastBGPRtt(ctx)
+	if err != nil {
+		slog.Warn("edge multicast bgp rtt unavailable", "error", err)
+		bgpRtt = nil
 	}
 
 	now := time.Now().UTC()
 	resp := &EdgeMulticastResponse{
 		GeneratedAt:        now,
 		RateGrainMinutes:   edgeMulticastRateGrainMinutes,
+		PublisherFloorBps:  edgeMulticastPublisherFloorBps,
 		LastHeardAvailable: lastHeardAvailable,
 		Services:           []EdgeMulticastService{},
+	}
+	if !sequenceAsOf.IsZero() {
+		at := sequenceAsOf
+		resp.SequenceAsOf = &at
 	}
 
 	byService := map[string][]EdgeMulticastGroup{}
 	for _, g := range groups {
-		row := buildEdgeMulticastGroup(g, membership[g.PK], rates[g.PK], lastHeard[g.PK])
+		row := buildEdgeMulticastGroup(g, membership[g.PK], rates[g.PK], lastHeard[g.PK], publisherLines[g.PK], sequence[g.PK], pathParity, pathRates, bgpSessions, bgpRtt)
 		codes := feeds.byGroup[g.PK]
 		if len(codes) == 0 {
 			codes = []string{edgeMulticastUnclaimedService}
@@ -399,13 +559,13 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 	return resp, nil
 }
 
-// buildEdgeMulticastGroup merges the three sources for one group.
+// buildEdgeMulticastGroup merges the four inputs for one group.
 //
 // Totals come from the ledger and the breakdown from the rate view, so Unknown is computed as
 // the remainder rather than read: a member the view dropped (no health row at all) is exactly
 // as unknown as one it marked 'no_data', and folding both into the remainder keeps the parts
 // summing to Total whatever the view does.
-func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership, r edgeMulticastRates, lh edgeMulticastLastHeard) EdgeMulticastGroup {
+func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership, r edgeMulticastRates, lh edgeMulticastLastHeard, lines []EdgeMulticastPublisher, sequence *EdgeMulticastSequenceHealth, pathParity map[edgeMulticastPathKey]*EdgeMulticastPathParity, pathRates map[edgeMulticastPathKey]float64, bgpSessions map[edgeMulticastBGPKey]EdgeMulticastBGPSession, bgpRtt map[string]EdgeMulticastBGPRtt) EdgeMulticastGroup {
 	out := EdgeMulticastGroup{
 		PK:                   g.PK,
 		Code:                 g.Code,
@@ -428,13 +588,81 @@ func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership
 	if !lh.at.IsZero() {
 		at := lh.at
 		out.LastHeard = &at
-		out.LastHeardSource = lh.source
-		out.LastHeardLanes = lh.lanes
+		out.LastHeardTable = lh.table
+		out.LastHeardCaptureSources = lh.captureSources
 	}
+
+	// The floor check is tallied over every publisher and the list is truncated afterwards, so
+	// the verdict is the same whatever the cap is set to.
+	stats := edgeMulticastPublisherStatsOf(lines)
+	out.PublisherLinesTotal = len(lines)
+	out.PublishersBelowFloor = stats.belowFloor()
+	out.PublishersPublishing = stats.publishing
+	// Also before the truncation: each recorded series is reported on the line that emitted it,
+	// and the roll-up counts publishers rather than series.
+	out.Sequence = sequence
+	attachEdgeMulticastSequenceHealth(lines, out.Sequence)
+
+	// After the attachment, never before: a line's verdict folds the series it owns, and the
+	// series only reaches the line above. Tallied here, over the full list, so the cap below
+	// cannot change what a collapsed group reports about itself.
+	// Whether this group has any recorded series at all, which is what makes "this publisher
+	// has none" a statement about coverage rather than about a plane nobody records.
+	groupHasSeries := sequence != nil && len(sequence.Instances) > 0
+	for i := range lines {
+		// Keyed on the tunnel address, the same join the series attribution makes: it is
+		// what the datagrams carry and what the recorder wrote down.
+		if r, ok := bgpRtt[lines[i].UserPK]; ok {
+			rtt := r
+			lines[i].BGPRtt = &rtt
+		}
+		if s, ok := bgpSessions[edgeMulticastBGPKey{
+			devicePK: lines[i].devicePK, tunnelID: lines[i].TunnelID,
+		}]; ok {
+			session := s
+			lines[i].BGPSession = &session
+		}
+		if lines[i].DZIP != "" {
+			key := edgeMulticastPathKey{groupPK: g.PK, ip: lines[i].DZIP}
+			lines[i].PathParity = pathParity[key]
+			if rate, ok := pathRates[key]; ok {
+				lines[i].MsgPerSec = &rate
+			}
+		}
+		lines[i].Health = edgeMulticastPublisherHealth(lines[i], groupHasSeries)
+		switch lines[i].Health {
+		case edgeMulticastPubHealthy:
+			out.PublisherVerdicts.Healthy++
+		case edgeMulticastPubHealthThin:
+			out.PublisherVerdicts.Thin++
+		case edgeMulticastPubHealthGapped:
+			out.PublisherVerdicts.Gapped++
+		case edgeMulticastPubHealthStalled:
+			out.PublisherVerdicts.Stalled++
+		case edgeMulticastPubHealthBehind:
+			out.PublisherVerdicts.Behind++
+		case edgeMulticastPubHealthSilent:
+			out.PublisherVerdicts.Silent++
+		case edgeMulticastPubHealthUnrecorded:
+			out.PublisherVerdicts.Unrecorded++
+		case edgeMulticastPubHealthUnknown:
+			out.PublisherVerdicts.Unknown++
+		}
+	}
+	// Worst-first chose which lines survive the cap; client IP is how they are read. Sorting
+	// after the truncation is what keeps both true at once.
+	out.PublisherLines = lines
+	if len(out.PublisherLines) > edgeMulticastPublisherLineCap {
+		out.PublisherLines = out.PublisherLines[:edgeMulticastPublisherLineCap]
+	}
+	sortEdgeMulticastPublisherLinesByAddress(out.PublisherLines)
+
+	out.CaptureNodes = edgeMulticastCaptureNodes(lh.nodeObs())
+	out.CaptureNodesLagging = edgeMulticastLaggingNodes(out.CaptureNodes)
 
 	// Silent stays sourced from the counters and is NOT crossed with LastHeard. The app-plane
 	// signal is receive-side: a recorder outage and a publisher outage produce the same absence,
-	// so letting it set Silent would report a dead recorder as a dead lane.
+	// so letting it set Silent would report a dead recorder as a dead feed.
 	//
 	// Silent needs evidence, not absence of it: publishers exist, at least one of them has a
 	// rate row in the window, and none of those rows carried traffic.
@@ -442,12 +670,12 @@ func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership
 
 	// After the Unknown remainders above: the verdict partitions the ledger's publishers, not
 	// just the ones the rate view had a row for.
-	out.Health = edgeMulticastVerdict(out.Publishers)
+	out.Health = edgeMulticastVerdict(out.Publishers, stats, out.CaptureNodesLagging)
 	return out
 }
 
 // edgeMulticastRoleCounts assembles one side of a group from its ledger split and its measured
-// activity. Customers is the remainder rather than a counted value, so the three classes cannot
+// activity. Customers is the remainder rather than a counted value, so the four classes cannot
 // drift out of sync with Total whatever the classification tiers do.
 func edgeMulticastRoleCounts(split edgeMulticastMemberSplit, active, idle int) EdgeMulticastRoleCounts {
 	return EdgeMulticastRoleCounts{
@@ -456,36 +684,48 @@ func edgeMulticastRoleCounts(split edgeMulticastMemberSplit, active, idle int) E
 		Idle:           idle,
 		Recorders:      split.recorders,
 		InternalProbes: split.probes,
-		Customers:      max(0, split.total-split.recorders-split.probes),
+		DoubleZero:     split.doublezero,
+		Customers:      max(0, split.total-split.recorders-split.probes-split.doublezero),
 		ClassAsserted:  split.asserted,
 		ClassDerived:   split.derived,
 	}
 }
 
-// edgeMulticastVerdict is the group's verdict, derived from the publisher side of the counter
-// plane and nothing else: publishers moving data is what makes a lane healthy.
+// edgeMulticastVerdict is the group's verdict, taken over two per-member checks and nothing else:
+// every publisher is above the floor, and every recording node hears its share of the feed.
 //
-// Reads the publisher counts after Unknown has been filled in, so the three states partition the
-// ledger's publishers rather than only the ones the rate view returned a row for:
-//
-//	healthy — at least one publisher moved a byte in the freshest bucket
-//	silent  — publishers were measured and none of them did (the actionable state)
+//	silent  — publishers were measured and not one of them moved a byte (the actionable state)
+//	thin    — at least one publisher is below edgeMulticastPublisherFloorBps, idle ones included
+//	skewed  — publishers are all above the floor, but a recording node is far under its peers
 //	unknown — publishers exist and nothing measured any of them: a monitoring gap
+//	healthy — every measured publisher clears the floor and no node is lagging
 //	""      — no publishers at all, e.g. a group provisioned before anyone joined it
 //
-// Subscribers are deliberately not consulted. A subscriber that receives nothing is either a
-// customer who stopped listening or a customer with BGP down; neither is a fault in the lane,
-// and letting either paint the row would reproduce the always-red badge this replaced.
-func edgeMulticastVerdict(pubs EdgeMulticastRoleCounts) string {
+// Ordered worst-first on purpose, and the two halves are not symmetric. A failed floor check is
+// a statement about the feed's publishers and outranks a parity gap, which is a statement about
+// one receiver; reporting 'skewed' while a publisher sits at zero would name the smaller problem.
+//
+// Two things it deliberately does not do. It does not consult SUBSCRIBERS: one that receives
+// nothing is a customer who stopped listening or a customer with BGP down, neither of which is a
+// fault in the feed, and letting either paint the row is how the always-red badge this replaced
+// came about. And it does not let an UNMEASURED publisher force a verdict — with some publishers
+// measured and above the floor, a peer with no counter row leaves the feed healthy and shows up
+// as 'unknown' on its own line. A telemetry gap on one device is not a fault in the feed, and
+// treating it as one puts every feed in amber whenever the rollup pipeline hiccups.
+func edgeMulticastVerdict(pubs EdgeMulticastRoleCounts, stats edgeMulticastPublisherStats, laggingNodes int) string {
 	switch {
 	case pubs.Total == 0:
 		return ""
-	case pubs.Active > 0:
-		return "healthy"
-	case pubs.Idle > 0:
+	case stats.measured() == 0:
+		return "unknown"
+	case stats.publishing == 0 && stats.thin == 0:
 		return "silent"
+	case stats.belowFloor() > 0:
+		return "thin"
+	case laggingNodes > 0:
+		return "skewed"
 	}
-	return "unknown"
+	return "healthy"
 }
 
 // queryEdgeMulticastFeeds reads the feed catalog: which groups each feed carries and in how
@@ -600,7 +840,18 @@ func (a *API) queryEdgeMulticastMembership(ctx context.Context, classes multicas
 	isRecorder := multicastMemberIPPredicate("client_ip", classes.recorderIPs)
 	isProbe := multicastMemberIPPredicate("client_ip", classes.probeIPs)
 	isAsserted := multicastMemberIPPredicate("client_ip", classes.assertedIPs)
-	isDerived := multicastMemberIPPredicate("client_ip", classes.derivedIPs)
+	isHostDerived := multicastMemberIPPredicate("client_ip", classes.derivedIPs)
+
+	// The wallet tier applies only where the two IP tiers are silent, which is the precedence
+	// rule spelled out in SQL: an asserted row wins over everything, the capture-host map wins
+	// over the wallet, and the wallet only fills in the rest.
+	isWalletDerived := fmt.Sprintf("(%s) AND NOT (%s) AND NOT (%s)",
+		multicastMemberWalletPredicate("owner_pubkey", classes.operatorWallets), isAsserted, isHostDerived)
+
+	// class_derived counts both derived tiers: a member the wallet list names is known to be
+	// ours, and the tooltip's "how much of this split is actually known" would understate it
+	// otherwise.
+	isDerived := fmt.Sprintf("(%s) OR (%s)", isHostDerived, isWalletDerived)
 
 	query := fmt.Sprintf(`
 		WITH membership AS (
@@ -608,6 +859,7 @@ func (a *API) queryEdgeMulticastMembership(ctx context.Context, classes multicas
 				arrayJoin(JSONExtract(publishers, 'Array(String)')) AS group_pk,
 				'P' AS role,
 				client_ip,
+				owner_pubkey,
 				length(arrayDistinct(arrayConcat(
 					JSONExtract(publishers, 'Array(String)'),
 					JSONExtract(subscribers, 'Array(String)')
@@ -619,6 +871,7 @@ func (a *API) queryEdgeMulticastMembership(ctx context.Context, classes multicas
 				arrayJoin(JSONExtract(subscribers, 'Array(String)')) AS group_pk,
 				'S' AS role,
 				client_ip,
+				owner_pubkey,
 				length(arrayDistinct(arrayConcat(
 					JSONExtract(publishers, 'Array(String)'),
 					JSONExtract(subscribers, 'Array(String)')
@@ -629,20 +882,22 @@ func (a *API) queryEdgeMulticastMembership(ctx context.Context, classes multicas
 		SELECT
 			group_pk,
 			countIf(role = 'P') AS pub_total,
-			countIf(role = 'P' AND %[1]s) AS pub_recorders,
-			countIf(role = 'P' AND %[2]s) AS pub_probes,
-			countIf(role = 'P' AND %[3]s) AS pub_asserted,
-			countIf(role = 'P' AND %[4]s) AS pub_derived,
+			countIf(role = 'P' AND (%[1]s)) AS pub_recorders,
+			countIf(role = 'P' AND (%[2]s)) AS pub_probes,
+			countIf(role = 'P' AND (%[5]s)) AS pub_doublezero,
+			countIf(role = 'P' AND (%[3]s)) AS pub_asserted,
+			countIf(role = 'P' AND (%[4]s)) AS pub_derived,
 			countIf(role = 'S') AS sub_total,
-			countIf(role = 'S' AND %[1]s) AS sub_recorders,
-			countIf(role = 'S' AND %[2]s) AS sub_probes,
-			countIf(role = 'S' AND %[3]s) AS sub_asserted,
-			countIf(role = 'S' AND %[4]s) AS sub_derived,
+			countIf(role = 'S' AND (%[1]s)) AS sub_recorders,
+			countIf(role = 'S' AND (%[2]s)) AS sub_probes,
+			countIf(role = 'S' AND (%[5]s)) AS sub_doublezero,
+			countIf(role = 'S' AND (%[3]s)) AS sub_asserted,
+			countIf(role = 'S' AND (%[4]s)) AS sub_derived,
 			countIf(role = 'P' AND group_span > 1) AS publishers_multi_group
 		FROM membership
 		GROUP BY group_pk
 		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0
-	`, isRecorder, isProbe, isAsserted, isDerived)
+	`, isRecorder, isProbe, isAsserted, isDerived, isWalletDerived)
 
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query)
@@ -654,11 +909,11 @@ func (a *API) queryEdgeMulticastMembership(ctx context.Context, classes multicas
 	out := map[string]edgeMulticastMembership{}
 	for rows.Next() {
 		var groupPK string
-		var pub, sub [5]uint64
+		var pub, sub [6]uint64
 		var multiGroup uint64
 		if err := rows.Scan(&groupPK,
-			&pub[0], &pub[1], &pub[2], &pub[3], &pub[4],
-			&sub[0], &sub[1], &sub[2], &sub[3], &sub[4],
+			&pub[0], &pub[1], &pub[2], &pub[3], &pub[4], &pub[5],
+			&sub[0], &sub[1], &sub[2], &sub[3], &sub[4], &sub[5],
 			&multiGroup); err != nil {
 			return nil, err
 		}
@@ -671,15 +926,16 @@ func (a *API) queryEdgeMulticastMembership(ctx context.Context, classes multicas
 	return out, rows.Err()
 }
 
-// edgeMulticastSplitFrom maps the (total, recorders, probes, asserted, derived) tuple the query
-// returns in that fixed order.
-func edgeMulticastSplitFrom(v [5]uint64) edgeMulticastMemberSplit {
+// edgeMulticastSplitFrom maps the (total, recorders, probes, doublezero, asserted, derived) tuple
+// the query returns in that fixed order.
+func edgeMulticastSplitFrom(v [6]uint64) edgeMulticastMemberSplit {
 	return edgeMulticastMemberSplit{
-		total:     int(v[0]),
-		recorders: int(v[1]),
-		probes:    int(v[2]),
-		asserted:  int(v[3]),
-		derived:   int(v[4]),
+		total:      int(v[0]),
+		recorders:  int(v[1]),
+		probes:     int(v[2]),
+		doublezero: int(v[3]),
+		asserted:   int(v[4]),
+		derived:    int(v[5]),
 	}
 }
 
@@ -695,7 +951,7 @@ func edgeMulticastSplitFrom(v [5]uint64) edgeMulticastMemberSplit {
 // it on the publisher side inverted the page's headline in both directions: RPF means a member
 // does not receive its own group back, so a group whose only publisher also subscribes reads
 // max_out = 0 — the view marks it 'group_idle' — and the row rendered Active=0, Idle=1, hence
-// Silent and a red lane while the publisher was sending; a P+S member with egress but no publish
+// Silent and a red feed while the publisher was sending; a P+S member with egress but no publish
 // traffic rendered healthy. Excluded from the tally, those members fall into Publishers.Unknown,
 // which is the true statement: nothing here measured their send side.
 //
