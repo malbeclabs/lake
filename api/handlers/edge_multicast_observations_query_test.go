@@ -1,0 +1,135 @@
+package handlers_test
+
+import (
+	"fmt"
+	"testing"
+
+	"github.com/malbeclabs/lake/api/handlers"
+	apitesting "github.com/malbeclabs/lake/api/testing"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// The observations query itself, against a real table.
+//
+// Every other test on this leg seeds the cached payload directly, which exercises the folding and
+// none of the read. That left the column names, both raw_meta keys and the reset arithmetic
+// unverified — and a break there is invisible from the page: the refresher WARNs, showObservations
+// drops Msg/s and Peer, and the row reads exactly like a feed with no recorder behind it while
+// `behind` and `unrecorded` quietly stop being computed. The market-by-price leg has a live-query
+// fixture for the same reason.
+
+// insertBBOObservation records one top-of-book change as `node` saw it, `agoSecs` ago, with the
+// addressing the query reads out of raw_meta.
+func insertBBOObservation(t *testing.T, api *handlers.API, node, source, multicastGroup, publisherSourceIP string, channelID uint8, sequence uint64, resetCount uint8, agoSecs int) {
+	t.Helper()
+	db := "`" + api.FeedsDB + "`"
+	rawMeta := fmt.Sprintf(
+		`{"publisher_source_ip":"%s","multicast_group":"%s","port":%d}`,
+		publisherSourceIP, multicastGroup, 20000+int(channelID))
+	require.NoError(t, api.DB.Exec(t.Context(), fmt.Sprintf(`
+		INSERT INTO %s.kalshi_bbo_observations
+		(measurement_node_id, location_code, source, symbol, source_ts_ms, recv_ts_ns, source_id,
+		 channel_id, sequence, reset_count, raw_meta)
+		VALUES ('%s', 'cmh', '%s', 'KXNFLGAME', 0,
+		        toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalSecond(%d))), 3,
+		        %d, %d, %d, '%s')
+	`, db, node, source, agoSecs, channelID, sequence, resetCount, rawMeta)))
+}
+
+func seriesByKey(series []handlers.EdgeMulticastObservationSeries) map[string]handlers.EdgeMulticastObservationSeries {
+	out := map[string]handlers.EdgeMulticastObservationSeries{}
+	for _, s := range series {
+		out[fmt.Sprintf("%s|%s|%d|%s", s.Source, s.PublisherSourceIP, s.ChannelID, s.Node)] = s
+	}
+	return out
+}
+
+// An absent table is the local-dev and never-proxied state. It costs the columns, never the refresh.
+func TestFetchEdgeMulticastObservations_MissingTable(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	// Deliberately no table.
+
+	resp, err := api.FetchEdgeMulticastObservations(t.Context())
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Empty(t, resp.Series)
+	assert.Equal(t, 15, resp.WindowMinutes)
+}
+
+// The grain: one series per (source, multicast group, publisher address, channel, recording node).
+// Two paths of one feed at one node are two rows, which is what path parity compares; two nodes
+// seeing one path are two rows, which is what keeps a recorder missing the feed visible.
+func TestFetchEdgeMulticastObservations_Grain(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createKalshiObservationsTable(t, api)
+
+	const group = "233.84.178.3"
+	const pathA = "148.51.121.69"
+	const pathB = "148.51.120.6"
+
+	// Path A at cmh: three messages, reset_count walking 4 -> 6.
+	insertBBOObservation(t, api, "cmh-rec1", "tob_edge_kalshi_perps", group, pathA, 1, 100, 4, 30)
+	insertBBOObservation(t, api, "cmh-rec1", "tob_edge_kalshi_perps", group, pathA, 1, 101, 5, 20)
+	insertBBOObservation(t, api, "cmh-rec1", "tob_edge_kalshi_perps", group, pathA, 1, 102, 6, 10)
+	// Its redundant peer at the same node, on the +100 channel: two messages, no reset.
+	insertBBOObservation(t, api, "cmh-rec1", "tob_edge_kalshi_perps", group, pathB, 101, 700, 2, 25)
+	insertBBOObservation(t, api, "cmh-rec1", "tob_edge_kalshi_perps", group, pathB, 101, 701, 2, 15)
+	// Path A again, at a second recorder.
+	insertBBOObservation(t, api, "dub-rec1", "tob_edge_kalshi_perps", group, pathA, 1, 100, 4, 22)
+
+	resp, err := api.FetchEdgeMulticastObservations(t.Context())
+	require.NoError(t, err)
+	require.Len(t, resp.Series, 3, "two paths at one node plus one of them at a second node")
+
+	by := seriesByKey(resp.Series)
+
+	a := by["tob_edge_kalshi_perps|"+pathA+"|1|cmh-rec1"]
+	assert.EqualValues(t, 3, a.Messages)
+	assert.EqualValues(t, 2, a.Resets, "resets are how far reset_count advanced, not its value")
+	assert.Equal(t, group, a.MulticastGroup, "the destination address comes out of raw_meta")
+	assert.Equal(t, "cmh", a.LocationCode)
+	assert.False(t, a.LastSeen.IsZero(), "the newest recv_ts_ns is what the staleness grade reads")
+
+	b := by["tob_edge_kalshi_perps|"+pathB+"|101|cmh-rec1"]
+	assert.EqualValues(t, 2, b.Messages)
+	assert.EqualValues(t, 0, b.Resets)
+
+	second := by["tob_edge_kalshi_perps|"+pathA+"|1|dub-rec1"]
+	assert.EqualValues(t, 1, second.Messages)
+}
+
+// Both planes are read — top-of-book becomes Sequence series and market-by-price feeds parity only
+// — and nothing else is. A capture source outside the two prefixes is not an Edge feed.
+func TestFetchEdgeMulticastObservations_PlanePrefixes(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createKalshiObservationsTable(t, api)
+
+	insertBBOObservation(t, api, "cmh-rec1", "tob_edge_kalshi_perps", "233.84.178.3", "148.51.121.69", 1, 1, 0, 10)
+	insertBBOObservation(t, api, "cmh-rec1", "mbp_edge_kalshi_perps", "233.84.178.4", "148.51.121.69", 1, 1, 0, 10)
+	insertBBOObservation(t, api, "cmh-rec1", "kalshi_public_api", "", "", 0, 1, 0, 10)
+
+	resp, err := api.FetchEdgeMulticastObservations(t.Context())
+	require.NoError(t, err)
+
+	sources := map[string]bool{}
+	for _, s := range resp.Series {
+		sources[s.Source] = true
+	}
+	assert.True(t, sources["tob_edge_kalshi_perps"])
+	assert.True(t, sources["mbp_edge_kalshi_perps"])
+	assert.False(t, sources["kalshi_public_api"], "the venue's own feed is not an Edge publisher")
+}
+
+// Outside the window there is no series at all, rather than a zeroed one: an empty result is the
+// absence of a reading, and a zero would be a claim that nothing arrived.
+func TestFetchEdgeMulticastObservations_WindowBounded(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createKalshiObservationsTable(t, api)
+
+	insertBBOObservation(t, api, "cmh-rec1", "tob_edge_kalshi_perps", "233.84.178.3", "148.51.121.69", 1, 1, 0, 16*60)
+
+	resp, err := api.FetchEdgeMulticastObservations(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, resp.Series)
+}

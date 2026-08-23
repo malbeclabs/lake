@@ -902,7 +902,32 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 			slog.Warn("kalshi l2 coverage cache write failed", "error", err)
 		}
 	}
+	// The observations-plane leg of /dz/edge/multicast: the top-of-book sequence series and the
+	// path-parity counts. Same cadence and same window as the L2 coverage one so the two halves
+	// of the Sequence column describe the same span.
+	//
+	// It runs FIRST, and that ordering is load-bearing. This chain is serial and every other step
+	// has a three-minute timeout, so anything at the back of it can be many minutes behind a pod
+	// start — and unlike the others, no page falls back to a live query for this one, so until it
+	// lands its columns are simply absent. The page_cache table survives a restart, which hides
+	// the problem for every entry that already exists and exposes it for a newly added key: after
+	// the deploy that introduced this one, the columns stayed empty for a whole cycle. Cheapest
+	// step in the chain (2-4s against mainnet) and the only one with nothing to fall back on, so
+	// it goes at the front.
+	refreshObservations := func() {
+		rctx, cancel := context.WithTimeout(ctx, runTimeout)
+		defer cancel()
+		val, err := a.FetchEdgeMulticastObservations(rctx)
+		if err != nil {
+			slog.Warn("edge multicast observations refresh failed", "error", err)
+			return
+		}
+		if err := a.WritePageCache(ctx, edgeMulticastObservationsCacheKey, val); err != nil {
+			slog.Warn("edge multicast observations cache write failed", "error", err)
+		}
+	}
 	refresh := func() {
+		refreshObservations()
 		refreshLatency()
 		refreshScoreboard("24h")
 		refreshScoreboard("7d")

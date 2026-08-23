@@ -7704,6 +7704,9 @@ export interface KalshiL2Lane {
   label: string
   category: string
   channel_id: number
+  /** The address the datagrams were sent from: what makes a lane a channel instance rather than a
+   *  channel. Empty on a lane nothing was heard from. */
+  publisher_source_ip: string
   location_code: string
   measurement_node_id: string
   messages: number
@@ -7747,12 +7750,154 @@ export interface EdgeMulticastRoleCounts {
   recorders: number
   /** DoubleZero measurement/lab receivers that record nothing. */
   internal_probes: number
+  /** DoubleZero-operated, kind not asserted: matched by owner wallet, which cannot say which. */
+  doublezero: number
   /** Everyone else, including members nothing has classified. */
   customers: number
   /** How many of the classifications above are asserted by an operator row. */
   class_asserted: number
-  /** How many are derived from the known capture-host list. */
+  /** How many are derived from the capture-host list or the operator-wallet list. */
   class_derived: number
+}
+
+/** The DoubleZero device's own view of a publisher's BGP session. Not latency: no client-to-device
+ *  RTT exists in lake or in the telemetry mirror. */
+export interface EdgeMulticastBGPSession {
+  /** 'ESTABLISHED' | 'ACTIVE' | 'CONNECT' | 'IDLE'. */
+  state: string
+  /** established_transitions: a lifetime total on this device, never a rate. */
+  flaps: number
+  /** When the session last came up; absent when the device has never established it. */
+  established_at?: string
+  /** The telemetry sample this came from. */
+  observed_at: string
+}
+
+/** The smoothed BGP TCP RTT between a client box and its DoubleZero device, from the
+ *  serviceability User account via fact_dz_user_bgp_rtt. */
+export interface EdgeMulticastBGPRtt {
+  nanos: number
+  /** When the indexer first saw this report, not when the agent measured it. */
+  observed_at: string
+  /** The session state the same report carried. */
+  status: string
+}
+
+/** One publisher path measured against its redundant peers, at the recorders that saw both. */
+export interface EdgeMulticastPathParity {
+  /** (capture source, recording node) pairs where another path carried the same feed. */
+  compared: number
+  /** How many of those fell below the parity floor. */
+  behind: number
+  /** This path's message count over the best path's, at its worst pair. */
+  worst_ratio: number
+  worst_source?: string
+  worst_node?: string
+}
+
+/** One publisher of one group, as its own line — the grain the health verdict is taken at. */
+export interface EdgeMulticastPublisher {
+  user_pk: string
+  client_ip: string
+  dz_ip?: string
+  device_code?: string
+  tunnel_id: number
+  /** 'recorder' | 'internal_probe' | 'doublezero' | 'customer' — same tiers as the subscriber split. */
+  class: string
+  /** Measured send rate; null when nothing measured it. Upper bound when multi_group. */
+  bps: number | null
+  /** 'publishing' (at/above the floor) | 'thin' (non-zero, below it) | 'idle' | 'unknown'. */
+  status: string
+  /** This publisher's own verdict, worst-of its own signals: 'silent' | 'thin' | 'gapped' |
+   *  'stalled' | 'behind' | 'unrecorded' | 'unknown' | 'healthy'. BGP status is shown beside it, never folded
+   *  into it. */
+  health?: string
+  /** What the DEVICE says about this publisher's BGP session, from telemetry rather than the
+   *  ledger — distinct from bgp_status, and both are shown. Absent when the mirror has no row. */
+  bgp_session?: EdgeMulticastBGPSession
+  /** The client agent's own report of the round trip to its device — the only measurement of the
+   *  access path that exists. Written onchain on a status change or a ~6-hourly keepalive, so it
+   *  can be hours old; read it as a property of the path, not as a live signal. */
+  bgp_rtt?: EdgeMulticastBGPRtt
+  /** What the recorders received from this path, per second. Per GROUP, unlike bps, which is
+   *  per tunnel — the one delivery figure on the line that needs no caveat. */
+  msg_per_sec?: number
+  /** This path measured against the other paths of the same feed; absent when it had no peer. */
+  path_parity?: EdgeMulticastPathParity
+  /** Feeds several groups from one tunnel, so bps cannot be attributed to this group alone. */
+  multi_group: boolean
+  /** Ledger BGP session: 'up' | 'down' | 'unknown'. 'down' on a publisher is a fault. */
+  bgp_status?: string
+  observed_at?: string
+  /** This publisher's own recorded sequence series — the grain a series has, since one belongs to
+   *  one path. Absent unless a recorder wrote something from this publisher's address. */
+  sequence?: EdgeMulticastSequenceHealth
+}
+
+/** One recording node's view of one group on the application plane. */
+export interface EdgeMulticastCaptureNode {
+  node: string
+  /** Observations written down in the window. Comparable between nodes on this group only. */
+  samples: number
+  last_heard: string
+  /** samples / median(samples) over the group's nodes. */
+  share_of_median: number
+  /** Below the parity floor with enough peers to say so: this node is missing the feed. */
+  lagging: boolean
+}
+
+/** One recorded sequence series: one Channel ID from one source address at one recording node. */
+export interface EdgeMulticastChannelInstance {
+  /** The address the datagrams came from — the field that makes this a channel instance. */
+  publisher_source_ip?: string
+  capture_source: string
+  channel_id: number
+  node: string
+  location_code?: string
+  messages: number
+  /** Distinct books that gapped in the window — the fault count. Never gap_messages, which
+   *  scales with traffic rather than with reliability. */
+  gap_books: number
+  resets: number
+  snapshot_cycles: number
+  last_seen: string
+  /** 'ok' | 'gapped' | 'stalled'. */
+  status: string
+  /** Whether gap_books is a reading or an absence. False on the top-of-book plane, which has no
+   *  gap marker to count — an 'ok' there means "advancing", not "lost nothing". */
+  gaps_measured: boolean
+}
+
+/** Sequence health over a set of channel instances, worst-first: one publisher's own series on a
+ *  publisher line, the group's roll-up over all of them on the group. */
+export interface EdgeMulticastSequenceHealth {
+  status: string
+  /** Instances in each state. */
+  gapped: number
+  stalled: number
+  /** The same tally per publisher, on the group roll-up only. */
+  publishers?: number
+  publishers_gapped?: number
+  publishers_stalled?: number
+  /** Instances whose source address matched no publisher line, so they have no row of their own. */
+  unattributed?: number
+  /** Instances from a plane with no gap marker, whose 'ok' is the weaker "advancing" claim. */
+  gaps_unmeasured?: number
+  instances: EdgeMulticastChannelInstance[]
+}
+
+/** Per-line verdict tally for one group. The fields sum to the group's publisher total. */
+export interface EdgeMulticastPublisherVerdicts {
+  healthy: number
+  thin: number
+  gapped: number
+  stalled: number
+  behind: number
+  silent: number
+  /** Above the floor with no recorded series while peers on the group have one: missing coverage,
+   *  not a fault. */
+  unrecorded: number
+  unknown: number
 }
 
 export interface EdgeMulticastGroup {
@@ -7765,7 +7910,26 @@ export interface EdgeMulticastGroup {
   plane?: string
   publishers: EdgeMulticastRoleCounts
   subscribers: EdgeMulticastRoleCounts
+  /** How many publisher lines landed in each verdict — a count of lines, not a verdict over them.
+   *  Tallied before the display cap, and what a collapsed group has in place of a badge.
+   *  Optional because page_cache rows outlive a deploy: a payload written before this field
+   *  existed, or one an old pod rewrites mid-rollout, arrives without it. */
+  publisher_verdicts?: EdgeMulticastPublisherVerdicts
+  /** Worst-first, capped server-side; publisher_lines_total is the count before the cap. */
+  publisher_lines: EdgeMulticastPublisher[]
+  publisher_lines_total: number
+  /** Publishers not clearing publisher_floor_bps, idle ones included. Counted over all of them. */
+  publishers_below_floor: number
+  /** Publishers measured at or above the floor. */
+  publishers_publishing: number
+  /** Per-node application-plane view; absent for a group no capture covers. */
+  capture_nodes?: EdgeMulticastCaptureNode[]
+  capture_nodes_lagging?: number
+  /** Roll-up of the group's recorded sequence series; absent unless a recorder runs the Edge wire
+   *  protocol here. The verdict itself is per publisher — see EdgeMulticastPublisher.sequence. */
+  sequence?: EdgeMulticastSequenceHealth
   ingress_bps: number
+  /** Subscriber-side total. Not rendered: per-tunnel counters sum every group a subscriber joins. */
   egress_bps: number
   publishers_multi_group: number
   /** Rates are per-tunnel upper bounds when set — a publisher feeds several groups. */
@@ -7774,12 +7938,15 @@ export interface EdgeMulticastGroup {
   observed_at?: string
   /** Newest application-plane observation: a message a recorder actually received. */
   last_heard?: string
-  last_heard_source?: string
-  /** Capture sources folded into last_heard; >1 means a dead lane may not move it. */
-  last_heard_lanes?: number
+  last_heard_table?: string
+  /** Capture sources folded into last_heard; >1 means one dead capture source may not move it. */
+  last_heard_capture_sources?: number
   /** Publishers exist, counters read zero: the lane went quiet. */
   silent: boolean
-  /** Traffic verdict: 'healthy' (publishers sending) | 'silent' | 'unknown' | '' (no publishers). */
+  /**
+   * Traffic verdict over two per-member checks — every publisher above the floor, every recording
+   * node hearing its share: 'healthy' | 'thin' | 'skewed' | 'silent' | 'unknown' | '' (none).
+   */
   health: string
   /** Per-member control-plane reconciliation breakdown. Does not set `health`. */
   health_counts: MulticastHealthStatusCounts
@@ -7795,6 +7962,11 @@ export interface EdgeMulticastService {
 export interface EdgeMulticastResponse {
   generated_at: string
   rate_grain_minutes: number
+  /** The per-publisher floor the verdict applies, so the UI never hardcodes a second copy. */
+  publisher_floor_bps: number
+  /** When the sequence numbers were computed — up to ten minutes older than generated_at, since
+   *  they are folded from the L2 coverage refresher's cache. Absent when no group has any. */
+  sequence_as_of?: string
   /** False when no capture table was queryable — the column is hidden rather than blank. */
   last_heard_available: boolean
   services: EdgeMulticastService[]

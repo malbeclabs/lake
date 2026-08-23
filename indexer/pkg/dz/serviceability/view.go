@@ -141,6 +141,21 @@ type User struct {
 	// BgpStatus is the onchain BGP session status as last reported by the
 	// device agent: always one of "up" | "down" | "unknown".
 	BgpStatus string
+	// BgpRttNs is the smoothed BGP TCP RTT in nanoseconds the agent last reported,
+	// read from the kernel's tcp_info for the BGP socket — the only measurement of
+	// the client-to-device access path that exists anywhere. Cleared to 0 by the
+	// contract when the session goes down.
+	//
+	// LastBgpReportedAt and LastBgpUpAt are the slots of that write and of the last
+	// transition to up.
+	//
+	// None of the three is in UserSchema.PayloadColumns(), and that is the point:
+	// they change on the agent's ~6-hourly keepalive, attrs_hash covers every payload
+	// column, and hashing them would churn the users dimension forever (see
+	// 20260708000001). They are carried here only to feed fact_dz_user_bgp_rtt.
+	BgpRttNs          uint64
+	LastBgpUpAt       uint64
+	LastBgpReportedAt uint64
 	// FeedPKs are the base58 EdgeSeat feeds whose per-feed seats this user
 	// consumed at connect (a user may hold seats on multiple feeds); empty for
 	// non-EdgeSeat/unicast users.
@@ -438,6 +453,13 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		return result, fmt.Errorf("failed to replace users: %w", err)
 	}
 
+	// The BGP RTT series rides the same snapshot but lands in a fact table rather than the
+	// users dimension, so it cannot churn it. Keyed on the onchain write, so re-observing an
+	// unchanged report is a no-op after the merge.
+	if err := v.store.WriteUserBGPRTT(ctx, users, v.cfg.Clock.Now().UTC()); err != nil {
+		return result, fmt.Errorf("failed to write user bgp rtt: %w", err)
+	}
+
 	if err := v.store.ReplaceMetros(ctx, metros); err != nil {
 		return result, fmt.Errorf("failed to replace metros: %w", err)
 	}
@@ -602,7 +624,11 @@ func convertUsers(onchain []serviceability.User) []User {
 			Publishers:  publishers,
 			Subscribers: subscribers,
 			BgpStatus:   bgpStatusString(user.BgpStatus),
-			FeedPKs:     feedPKs,
+			// Not part of the dimension row — see the field comments.
+			BgpRttNs:          user.BgpRttNs,
+			LastBgpUpAt:       user.LastBgpUpAt,
+			LastBgpReportedAt: user.LastBgpReportedAt,
+			FeedPKs:           feedPKs,
 		}
 	}
 	return result
