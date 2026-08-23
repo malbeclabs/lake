@@ -268,9 +268,12 @@ series was gapping. It is tallied before `edgeMulticastPublisherLineCap`, so wha
 happens to carry cannot change it.
 
 The per-publisher ranking is worst-first: `silent`, `thin`, `gapped`, `stalled`, `behind`,
-`unrecorded`, `unknown`, `healthy`. The last two are not faults and are not counted as such; the
-difference between them matters — `unknown` is no counter row at all, `unrecorded` is a publisher
-clearing the floor that no recorder wrote a series for **while its peers on the group have one**.
+`unknown`, `unrecorded`, `healthy`. The two states between the faults and `healthy` are not faults
+and are not counted as such; the difference between them matters — `unknown` is no counter row at
+all, `unrecorded` is a publisher clearing the floor that no recorder wrote a series for **while its
+peers on the group have one**. `unknown` is graded first of the two, because a publisher nothing
+measured is not "sending and unrecorded"; `TestEdgeMulticastPublisherHealth_UnknownWhenNothingMeasured`
+pins it.
 
 `unrecorded` exists because `healthy` here means the floor AND an intact series, so a publisher
 with no series has only half of it. Returning `healthy` anyway put a measured, gapping feed beside
@@ -466,9 +469,12 @@ legs — and the column ages against it. A cache miss costs that plane's rows, n
 Both folded payloads are **mainnet only**, gated on `isMainnet(ctx)` in `FetchEdgeMulticastData`.
 The refresher runs with no environment in context, so it always computes mainnet, and the keys carry
 no environment either — while the group key they resolve through is the multicast address, and both
-networks allocate out of the same `233.84.178.0/24`. Testnet already holds `.3`, `.4`, `.9` and `.1`,
-which on mainnet are the two Kalshi perps groups and the two shreds groups; nothing leaks today only
-because testnet's single `edge-` group sits on `.10`.
+networks allocate out of the same `233.84.178.0/24`. The gate closed a **live** leak, not a latent
+one: testnet has three activated `edge-` groups, and `edge-solana-retrans` has sat on
+`233.84.178.17` — mainnet's `edge-kalshi-sports-tob` — continuously since 2026-07-23, so testnet was
+rendering mainnet Kalshi series on a Solana retransmit group. `edge-solana-root` collides too, on
+`.12` (mainnet's `edge-solana-retrans-eu`), and is harmless only because both folded payloads read
+Kalshi tables and have nothing to attach there.
 
 ### What the page is about
 

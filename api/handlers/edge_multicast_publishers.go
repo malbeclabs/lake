@@ -398,7 +398,7 @@ const (
 
 // edgeMulticastPublisherHealth grades one publisher line.
 //
-// Ranking, worst-first: silent, thin, gapped, stalled, behind, unrecorded, unknown, healthy. A publisher moving
+// Ranking, worst-first: silent, thin, gapped, stalled, behind, unknown, unrecorded, healthy. A publisher moving
 // no bytes outranks one moving too few, and both outrank a recorded gap: 'thin' says the tunnel is
 // carrying overhead and no product, which is a larger failure than a series that lost some of a
 // feed it is otherwise delivering. 'behind' sits last of the faults because it is the mildest

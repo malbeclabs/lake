@@ -470,12 +470,13 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 	// Kalshi refresher, which runs with no environment in its context and therefore always
 	// reads mainnet, while the keys carry no environment either. The group key they resolve
 	// through is the multicast address, and both networks allocate their groups out of the same
-	// 233.84.178.0/24 — testnet already holds .3, .4, .9 and .1, which on mainnet are the two
-	// Kalshi perps groups, edge-solana-shreds1 and edge-solana-shreds. Nothing leaks today only
-	// because testnet's single edge- group sits on .10, which mainnet does not use; the first
-	// testnet edge- group on a mainnet address would attach mainnet Kalshi series to it. An
-	// environment gate is the honest fix — a payload computed for one network cannot describe
-	// another — and it costs testnet nothing it has data for.
+	// 233.84.178.0/24. The collision is live, not hypothetical: testnet's edge-solana-retrans has
+	// sat on 233.84.178.17 — mainnet's edge-kalshi-sports-tob — continuously since 2026-07-23, so
+	// before this gate testnet rendered mainnet Kalshi series on a Solana retransmit group.
+	// testnet's edge-solana-root collides too, on .12 (mainnet's edge-solana-retrans-eu), and is
+	// harmless only because both folded payloads read Kalshi tables and have nothing to attach
+	// there. An environment gate is the honest fix — a payload computed for one network cannot
+	// describe another — and it costs testnet nothing it has data for.
 	var sequence map[string]*EdgeMulticastSequenceHealth
 	var sequenceAsOf time.Time
 	var pathParity map[edgeMulticastPathKey]*EdgeMulticastPathParity
