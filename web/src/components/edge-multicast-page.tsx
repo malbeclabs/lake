@@ -919,7 +919,7 @@ function RecorderLossTimeline({
   const windowEnd = new Date(win.endMs).toISOString().slice(11, 19)
 
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className="flex flex-col gap-px border-t border-border/60 pt-0.5">
       {recorders.map((r) => (
         <RecorderLossRow
           key={r.node}
@@ -936,7 +936,7 @@ function RecorderLossTimeline({
         />
       ))}
       {/* Set apart from the rows above: those are observations, this is what they add up to. */}
-      <div className="mt-0.5 border-t border-border/60 pt-0.5">
+      <div className="mt-px border-t border-border/60 pt-px">
         <RecorderLossRow
           label="2+"
           episodes={simultaneous}
@@ -1023,10 +1023,13 @@ function GapTimeline({
 
   return (
     <Tooltip content={lines.join('\n')} className="whitespace-pre-line">
-      {/* Indented by the recorder labels' width so this strip and the per-recorder ones below it
-          start at the same pixel — otherwise they are two axes rather than one. */}
+      {/* Labelled, and labelled with what it MEASURES rather than with a vantage: this row is time
+          the publisher's books spent un-anchored, and the rows below it are messages a recorder did
+          not receive. Left unlabelled among labelled rows it read as their total or as a fourth
+          recorder, and it is neither — different plane, different unit, and recorded at one node
+          where those are three. Same indent so the two still share one axis. */}
       <div className="flex items-center gap-1.5">
-        <span className="w-8 shrink-0" />
+        <span className="text-[9px] w-8 shrink-0 text-right text-muted-foreground">book</span>
         <GapMarks episodes={episodes} window={win} />
       </div>
     </Tooltip>
@@ -1069,7 +1072,7 @@ function PublisherSequenceCell({
     .join('\n')
 
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-0.5">
       <SequenceBadge
         status={sequenceLabel(sequence.status, total, sequence.gaps_unmeasured ?? 0)}
         // Two numbers with two meanings shared one slot: '6/31' is faults over series, and a bare
