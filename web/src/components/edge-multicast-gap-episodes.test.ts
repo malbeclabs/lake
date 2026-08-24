@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mergeGapEpisodes } from './edge-multicast-gap-episodes'
+import { gapEpisodeStats, mergeGapEpisodes } from './edge-multicast-gap-episodes'
 import type { EdgeMulticastChannelInstance } from '@/lib/api'
 
 function instance(
@@ -79,5 +79,55 @@ describe('mergeGapEpisodes', () => {
     mergeGapEpisodes([first, second])
     expect(first.gap_episodes).toEqual([{ start: 100, seconds: 3 }])
     expect(second.gap_episodes).toEqual([{ start: 101, seconds: 5 }])
+  })
+})
+
+describe('gapEpisodeStats', () => {
+  // A 900s window ending at this instant, so "since last gap" is checkable by hand.
+  const windowEnd = 1_756_000_000_000
+  const endSec = windowEnd / 1000
+
+  it('reports a clean window as fully gap-free', () => {
+    const s = gapEpisodeStats([], 900, windowEnd)
+    expect(s.gapFree).toBe(1)
+    expect(s.perHour).toBe(0)
+    expect(s.worstRecoverySeconds).toBe(0)
+    // Never gapped and just recovered must not render the same. Undefined is the difference.
+    expect(s.sinceLastSeconds).toBeUndefined()
+  })
+
+  it('derives the operational figures from the episodes and the window alone', () => {
+    const s = gapEpisodeStats(
+      [
+        { start: endSec - 600, seconds: 5 },
+        { start: endSec - 120, seconds: 3 },
+      ],
+      900,
+      windowEnd,
+    )
+    expect(s.episodes).toBe(2)
+    expect(s.lostSeconds).toBe(8)
+    // 8 of 900 seconds carried a gap.
+    expect(s.gapFree).toBeCloseTo(1 - 8 / 900, 6)
+    // Two episodes in a quarter hour extrapolates to eight an hour.
+    expect(s.perHour).toBeCloseTo(8, 6)
+    // The window ends 120s after the last episode started, and it ran 3s.
+    expect(s.sinceLastSeconds).toBe(117)
+    // A book stays un-anchored until a snapshot re-anchors it, so the longest episode is the
+    // worst recovery the window saw.
+    expect(s.worstRecoverySeconds).toBe(5)
+  })
+
+  it('never reports a negative gap-free share', () => {
+    // The payload's clock and its window can disagree. A saturated 0 is wrong; a negative
+    // percentage on the page is worse.
+    const s = gapEpisodeStats([{ start: endSec - 100, seconds: 500 }], 100, windowEnd)
+    expect(s.gapFree).toBe(0)
+  })
+
+  it('is inert on a zero-width window', () => {
+    const s = gapEpisodeStats([{ start: endSec, seconds: 1 }], 0, windowEnd)
+    expect(s.gapFree).toBe(0)
+    expect(s.perHour).toBe(0)
   })
 })
