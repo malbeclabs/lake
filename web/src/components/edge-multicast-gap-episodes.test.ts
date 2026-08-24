@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { gapEpisodeStats, mergeGapEpisodes } from './edge-multicast-gap-episodes'
+import { gapEpisodeStats, mergeGapEpisodes, sequenceLoss } from './edge-multicast-gap-episodes'
 import type { EdgeMulticastChannelInstance } from '@/lib/api'
 
 function instance(
@@ -129,5 +129,49 @@ describe('gapEpisodeStats', () => {
     const s = gapEpisodeStats([{ start: endSec, seconds: 1 }], 0, windowEnd)
     expect(s.gapFree).toBe(0)
     expect(s.perHour).toBe(0)
+  })
+})
+
+describe('sequenceLoss', () => {
+  it('sums a line across its instances and derives the rates', () => {
+    const s = sequenceLoss(
+      [
+        instance({ updates_received: 900_000, updates_missing: 90, seq_gap_events: 30, max_gap_messages: 4, p99_gap_messages: 3 }),
+        instance({ channel_id: 2, updates_received: 100_000, updates_missing: 10, seq_gap_events: 5, max_gap_messages: 6, p99_gap_messages: 5 }),
+      ],
+      900,
+    )
+    expect(s?.received).toBe(1_000_000)
+    expect(s?.missing).toBe(100)
+    expect(s?.events).toBe(35)
+    // Parts per million of what should have arrived: received + missing, not received.
+    expect(s?.ppm).toBeCloseTo((100 / 1_000_100) * 1e6, 3)
+    // 100 missing over a fifteen-minute window.
+    expect(s?.perMinute).toBeCloseTo(100 / 15, 6)
+    // A line is as bad as its worst series.
+    expect(s?.maxGap).toBe(6)
+    expect(s?.p99Gap).toBe(5)
+  })
+
+  it('is undefined when nothing measured it', () => {
+    // Top-of-book rows carry no per-instrument sequence. Reporting 0 ppm for them would be the
+    // false clean bill of health the whole column refuses to give.
+    expect(sequenceLoss([instance()], 900)).toBeUndefined()
+    expect(sequenceLoss([instance({ updates_received: 0, updates_missing: 0 })], 900)).toBeUndefined()
+  })
+
+  it('reports a measured clean line as zero rather than absent', () => {
+    const s = sequenceLoss([instance({ updates_received: 500, updates_missing: 0 })], 900)
+    expect(s?.ppm).toBe(0)
+    expect(s?.missing).toBe(0)
+  })
+
+  it('ignores an instance with no denominator while keeping one that has it', () => {
+    const s = sequenceLoss(
+      [instance(), instance({ channel_id: 2, updates_received: 100, updates_missing: 1 })],
+      900,
+    )
+    expect(s?.received).toBe(100)
+    expect(s?.missing).toBe(1)
   })
 })

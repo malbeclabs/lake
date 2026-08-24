@@ -72,3 +72,49 @@ export function gapEpisodeStats(episodes: GapEpisode[], windowSecs: number, wind
     worstRecoverySeconds: episodes.reduce((n, e) => Math.max(n, e.seconds), 0),
   }
 }
+
+/** Update loss over a publisher line, summed across its channel instances. */
+export type SequenceLoss = {
+  received: number
+  missing: number
+  events: number
+  /** Loss as parts per million of the updates that should have arrived. */
+  ppm: number
+  /** Missing updates per minute of the window. */
+  perMinute: number
+  /** Worst single break, in messages, and the same with one outlier unable to speak for the
+   *  window. The p99 is the MAX of the instances' own p99s, not a percentile over percentiles:
+   *  a line is as bad as its worst series, and re-deriving a true p99 would need the raw breaks. */
+  maxGap: number
+  p99Gap: number
+}
+
+/**
+ * Sums a line's per-instrument sequence loss.
+ *
+ * Returns undefined when nothing on the line measured it — no denominator, so no rate. That is a
+ * different statement from a measured zero, and the two must not render alike: top-of-book series
+ * carry no per-instrument sequence at all, and reporting 0 ppm for them would be the same false
+ * clean bill of health the gap timeline refuses to give.
+ */
+export function sequenceLoss(
+  instances: EdgeMulticastChannelInstance[],
+  windowSecs: number,
+): SequenceLoss | undefined {
+  const measured = instances.filter((i) => (i.updates_received ?? 0) > 0)
+  if (measured.length === 0) {
+    return undefined
+  }
+  const received = measured.reduce((n, i) => n + (i.updates_received ?? 0), 0)
+  const missing = measured.reduce((n, i) => n + (i.updates_missing ?? 0), 0)
+  const expected = received + missing
+  return {
+    received,
+    missing,
+    events: measured.reduce((n, i) => n + (i.seq_gap_events ?? 0), 0),
+    ppm: expected > 0 ? (missing / expected) * 1e6 : 0,
+    perMinute: windowSecs > 0 ? missing / (windowSecs / 60) : 0,
+    maxGap: measured.reduce((n, i) => Math.max(n, i.max_gap_messages ?? 0), 0),
+    p99Gap: measured.reduce((n, i) => Math.max(n, i.p99_gap_messages ?? 0), 0),
+  }
+}
