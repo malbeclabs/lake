@@ -83,3 +83,10 @@ func EdgeMulticastNodeCoverageForTest(groups []EdgeMulticastGroupForTest, series
 	}
 	return edgeMulticastNodeCoverage(series, newEdgeMulticastCaptureSourceMap(catalog))
 }
+
+// EdgeMulticastRecorderLossFoldForTest exposes the recorder-loss fold to the external test
+// package. The fold is pure and carries the rule the page is judged on — a loss at one recorder is
+// its branch, a loss at two or more is not — so it is worth testing without a database in the way.
+func EdgeMulticastRecorderLossFoldForTest(series []EdgeMulticastRecorderLossSeries) (map[string][]EdgeMulticastRecorderLoss, map[string][]KalshiL2GapEpisode) {
+	return edgeMulticastRecorderLossFold(series)
+}

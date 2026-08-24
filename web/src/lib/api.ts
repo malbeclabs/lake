@@ -7914,6 +7914,17 @@ export interface EdgeMulticastChannelInstance {
   capture_source_quiet?: boolean
 }
 
+/** One recording node's loss on a publisher line, measured against its peers on the same path. */
+export interface EdgeMulticastRecorderLoss {
+  node: string
+  location_code?: string
+  /** Reference sequences this node did not record, and what it is a share of. The reference is
+   *  the UNION of what the nodes recorded, so a message no node received is not in it. */
+  missing: number
+  reference_seqs: number
+  episodes?: GapEpisode[]
+}
+
 /** Sequence health over a set of channel instances, worst-first: one publisher's own series on a
  *  publisher line, the group's roll-up over all of them on the group. */
 export interface EdgeMulticastSequenceHealth {
@@ -7927,6 +7938,12 @@ export interface EdgeMulticastSequenceHealth {
   publishers_stalled?: number
   /** Instances whose source address matched no publisher line, so they have no row of their own. */
   unattributed?: number
+  /** Each recording node measured against its peers on the same path, worst-first, and the
+   *  seconds two or more of them lost at once. Present only where the path has more than one
+   *  recorder — market-by-price runs a single node on every group, so this is top-of-book today.
+   *  Absent means "no peer to measure against", never "measured clean". */
+  recorder_loss?: EdgeMulticastRecorderLoss[]
+  recorder_loss_simultaneous?: GapEpisode[]
   /** Instances from a plane with no gap marker, whose 'ok' is the weaker "advancing" claim. */
   gaps_unmeasured?: number
   /** Distinct recording nodes behind the gap-measured instances. One means a single vantage: a

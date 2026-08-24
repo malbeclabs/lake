@@ -216,6 +216,18 @@ type EdgeMulticastSequenceHealth struct {
 	// this bounds is whose loss the page may call it.
 	GapNodes int `json:"gap_nodes,omitempty"`
 
+	// RecorderLoss is each recording node measured against its peers on the same path, and
+	// RecorderLossSimultaneous the seconds two or more of them lost at once. Set on a publisher
+	// line only, and only where the path has more than one recorder — market-by-price runs a
+	// single node on every group, so this is a top-of-book signal today.
+	//
+	// It answers what the per-line gap timeline structurally cannot: whether a loss is the path's
+	// or one recorder's. A mark on one node's line and clear track on its peers' is that node's
+	// branch; a mark on several at the same second is not, and that is the only thing this plane
+	// can say about loss upstream of the recorders.
+	RecorderLoss             []EdgeMulticastRecorderLoss `json:"recorder_loss,omitempty"`
+	RecorderLossSimultaneous []KalshiL2GapEpisode        `json:"recorder_loss_simultaneous,omitempty"`
+
 	// GapsUnmeasured is how many of these instances came from a plane with no gap marker, so
 	// their 'ok' means "advancing", not "lost nothing". Carried so the badge can say which kind
 	// of ok it is rather than letting the top-of-book rows borrow the market-by-price rows'
@@ -225,6 +237,143 @@ type EdgeMulticastSequenceHealth struct {
 	// Instances are sorted worst-first, so a reader who only looks at the first one is looking
 	// at the one that matters.
 	Instances []EdgeMulticastChannelInstance `json:"instances"`
+}
+
+// EdgeMulticastRecorderLoss is one recording node's loss on a publisher line, folded across the
+// channels that publisher carries on the group.
+type EdgeMulticastRecorderLoss struct {
+	Node         string `json:"node"`
+	LocationCode string `json:"location_code,omitempty"`
+
+	// Missing is reference sequences this node did not record, and ReferenceSeqs what it is a
+	// share of. Summed over the line's channels.
+	Missing       uint64 `json:"missing"`
+	ReferenceSeqs uint64 `json:"reference_seqs"`
+
+	Episodes []KalshiL2GapEpisode `json:"episodes,omitempty"`
+}
+
+// edgeMulticastRecorderLossFold turns the cached per-(path, node) series into per-publisher-line
+// recorder loss, plus the line every reader actually asks for: where SEVERAL recorders lost at the
+// same second.
+//
+// Simultaneity is computed per PATH and only then unioned. Merging the nodes' seconds first would
+// call it simultaneous when one node lost on one channel and another node on a different one — two
+// unrelated losses that happen to share a clock reading. Perps carries one channel per publisher so
+// the two agree there; a publisher with several would not.
+//
+// Two or more is the threshold, and the ceiling is not "all of them". The reference is the union of
+// what the nodes recorded, so a second in which EVERY node lost cannot exist: the message would be
+// in nobody's set and therefore in no reference. What several nodes losing at once does say is that
+// the cause is not one node's branch — which is the question the per-node lines leave open.
+func edgeMulticastRecorderLossFold(series []EdgeMulticastRecorderLossSeries) (map[string][]EdgeMulticastRecorderLoss, map[string][]KalshiL2GapEpisode) {
+	type pathKey struct {
+		pub     string
+		group   string
+		channel uint8
+	}
+
+	byLine := map[string]map[string]*EdgeMulticastRecorderLoss{}
+	// Seconds each node lost in, per path, so simultaneity is asked at the grain it means
+	// something at.
+	byPath := map[pathKey]map[string]map[uint32]bool{}
+
+	for _, s := range series {
+		if s.PublisherSourceIP == "" || s.Node == "" {
+			continue
+		}
+		if byLine[s.PublisherSourceIP] == nil {
+			byLine[s.PublisherSourceIP] = map[string]*EdgeMulticastRecorderLoss{}
+		}
+		node := byLine[s.PublisherSourceIP][s.Node]
+		if node == nil {
+			node = &EdgeMulticastRecorderLoss{Node: s.Node, LocationCode: s.LocationCode}
+			byLine[s.PublisherSourceIP][s.Node] = node
+		}
+		node.Missing += s.Missing
+		node.ReferenceSeqs += s.ReferenceSeqs
+
+		pk := pathKey{s.PublisherSourceIP, s.MulticastGroup, s.ChannelID}
+		if byPath[pk] == nil {
+			byPath[pk] = map[string]map[uint32]bool{}
+		}
+		secs := map[uint32]bool{}
+		for _, e := range s.Episodes {
+			for i := uint32(0); i < e.Seconds; i++ {
+				secs[uint32(e.Start)+i] = true
+			}
+		}
+		byPath[pk][s.Node] = secs
+	}
+
+	// Per-node episodes, re-collapsed from the union across the line's channels.
+	out := map[string][]EdgeMulticastRecorderLoss{}
+	perLineSecs := map[string]map[string]map[uint32]bool{}
+	for pk, nodes := range byPath {
+		if perLineSecs[pk.pub] == nil {
+			perLineSecs[pk.pub] = map[string]map[uint32]bool{}
+		}
+		for node, secs := range nodes {
+			if perLineSecs[pk.pub][node] == nil {
+				perLineSecs[pk.pub][node] = map[uint32]bool{}
+			}
+			for sec := range secs {
+				perLineSecs[pk.pub][node][sec] = true
+			}
+		}
+	}
+	for pub, nodes := range byLine {
+		lines := make([]EdgeMulticastRecorderLoss, 0, len(nodes))
+		for name, node := range nodes {
+			flat := make([]uint32, 0, len(perLineSecs[pub][name]))
+			for sec := range perLineSecs[pub][name] {
+				flat = append(flat, sec)
+			}
+			node.Episodes = collapseKalshiL2GapSeconds(flat)
+			lines = append(lines, *node)
+		}
+		// Worst first, then by name: a reader who looks at one line looks at the one that
+		// matters, and the order cannot shuffle between polls of an unchanged payload.
+		sort.Slice(lines, func(i, j int) bool {
+			if lines[i].Missing != lines[j].Missing {
+				return lines[i].Missing > lines[j].Missing
+			}
+			return lines[i].Node < lines[j].Node
+		})
+		out[pub] = lines
+	}
+
+	// The global line, per path and then unioned.
+	simul := map[string][]KalshiL2GapEpisode{}
+	simulSecs := map[string]map[uint32]bool{}
+	for pk, nodes := range byPath {
+		if len(nodes) < 2 {
+			continue
+		}
+		count := map[uint32]int{}
+		for _, secs := range nodes {
+			for sec := range secs {
+				count[sec]++
+			}
+		}
+		for sec, n := range count {
+			if n < 2 {
+				continue
+			}
+			if simulSecs[pk.pub] == nil {
+				simulSecs[pk.pub] = map[uint32]bool{}
+			}
+			simulSecs[pk.pub][sec] = true
+		}
+	}
+	for pub, secs := range simulSecs {
+		flat := make([]uint32, 0, len(secs))
+		for sec := range secs {
+			flat = append(flat, sec)
+		}
+		simul[pub] = collapseKalshiL2GapSeconds(flat)
+	}
+	return out, simul
 }
 
 // edgeMulticastSequenceHealth folds the two cached refresher payloads into per-group sequence
@@ -568,7 +717,7 @@ func finishEdgeMulticastSequenceHealth(health *EdgeMulticastSequenceHealth) {
 // lines the payload happens to carry cannot change any verdict. A faulted line the cap then hid
 // would take its badge off screen with it, leaving only the roll-up — unreachable today, since the
 // only groups with a recorded series have two publishers each against a cap of twelve.
-func attachEdgeMulticastSequenceHealth(lines []EdgeMulticastPublisher, health *EdgeMulticastSequenceHealth) {
+func attachEdgeMulticastSequenceHealth(lines []EdgeMulticastPublisher, health *EdgeMulticastSequenceHealth, recorderLoss map[string][]EdgeMulticastRecorderLoss, recorderLossSimul map[string][]KalshiL2GapEpisode) {
 	if health == nil {
 		return
 	}
@@ -602,6 +751,10 @@ func attachEdgeMulticastSequenceHealth(lines []EdgeMulticastPublisher, health *E
 
 	for i, h := range per {
 		finishEdgeMulticastSequenceHealth(h)
+		// Keyed on the tunnel address, the same join the instances above make. A line with no
+		// entry keeps nil, which is "no peer to be measured against" and not "measured clean".
+		h.RecorderLoss = recorderLoss[lines[i].DZIP]
+		h.RecorderLossSimultaneous = recorderLossSimul[lines[i].DZIP]
 		lines[i].Sequence = h
 		health.Publishers++
 		switch h.Status {

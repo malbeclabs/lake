@@ -10,6 +10,7 @@ import { handleRowClick } from '@/lib/utils'
 import {
   fetchEdgeMulticast,
   type EdgeMulticastChannelInstance,
+  type GapEpisode,
   type EdgeMulticastBGPRtt,
   type EdgeMulticastBGPSession,
   type EdgeMulticastGroup,
@@ -817,6 +818,134 @@ const GAP_TOOLTIP_MAX_LINES = 8
 /** The axis gap episodes are drawn on: the payload's own clock and how wide its window is. */
 type GapWindow = { endMs: number; secs: number }
 
+// The track and its marks. Shared by every strip on the page so they are all the same axis: a
+// per-recorder line and the publisher's own gap timeline are only comparable if one pixel means
+// the same second in both.
+function GapMarks({
+  episodes,
+  window: win,
+  emphasis,
+}: {
+  episodes: GapEpisode[]
+  window: GapWindow
+  emphasis?: boolean
+}) {
+  const spanMs = win.secs * 1000
+  const startMs = win.endMs - spanMs
+  return (
+    <div
+      className="relative h-1.5 rounded-sm bg-muted overflow-hidden shrink-0"
+      style={{ width: GAP_STRIP_WIDTH }}
+    >
+      {episodes.map((e) => {
+        // Clamped both ends. An episode can hang off the left edge when the payload's clock and
+        // its own window disagree by a second, and a negative offset would draw the mark outside
+        // the track instead of at its start.
+        const offset = ((e.start * 1000 - startMs) / spanMs) * GAP_STRIP_WIDTH
+        const left = Math.min(Math.max(offset, 0), GAP_STRIP_WIDTH - GAP_MARK_MIN_WIDTH)
+        const width = Math.max((e.seconds / win.secs) * GAP_STRIP_WIDTH, GAP_MARK_MIN_WIDTH)
+        return (
+          <div
+            key={e.start}
+            className={`absolute inset-y-0 ${emphasis ? 'bg-amber-500' : 'bg-red-500'}`}
+            style={{ left, width: Math.min(width, GAP_STRIP_WIDTH - left) }}
+          />
+        )
+      })}
+    </div>
+  )
+}
+
+// One labelled strip: the recorder's name, then its losses on the shared axis.
+//
+// The label is inside the row rather than in a tooltip because these lines exist to be COMPARED —
+// "was lost here and its peers did not" is unreadable if you have to hover each one to learn which
+// is which.
+function RecorderLossRow({
+  label,
+  episodes,
+  window: win,
+  detail,
+  emphasis,
+}: {
+  label: string
+  episodes: GapEpisode[]
+  window: GapWindow
+  detail: string
+  emphasis?: boolean
+}) {
+  return (
+    <Tooltip content={detail} className="whitespace-pre-line">
+      <div className="flex items-center gap-1.5">
+        <span
+          className={`text-[9px] tabular-nums w-8 shrink-0 text-right ${
+            emphasis ? 'text-foreground font-medium' : 'text-muted-foreground'
+          }`}
+        >
+          {label}
+        </span>
+        <GapMarks episodes={episodes} window={win} emphasis={emphasis} />
+      </div>
+    </Tooltip>
+  )
+}
+
+// Every recorder of a path on one axis, plus the line that says whether a loss was one recorder's
+// or not.
+//
+// The last row is seconds where TWO OR MORE recorders lost at once. It is not "all of them", and
+// that ceiling is a property of the measurement rather than a choice: the reference is the union of
+// what the nodes recorded, so a message none of them received is in nobody's set and can never be
+// reported missing. Several at once is as close as this plane gets to naming a loss upstream of the
+// recorders, and one node alone is its branch.
+function RecorderLossTimeline({
+  sequence,
+  window: win,
+}: {
+  sequence: EdgeMulticastSequenceHealth
+  window: GapWindow
+}) {
+  const recorders = sequence.recorder_loss ?? []
+  // One recorder is no comparison at all, and a single labelled strip would imply there was one.
+  if (recorders.length < 2) {
+    return null
+  }
+  const simultaneous = sequence.recorder_loss_simultaneous ?? []
+  const windowEnd = new Date(win.endMs).toISOString().slice(11, 19)
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      {recorders.map((r) => (
+        <RecorderLossRow
+          key={r.node}
+          label={r.location_code || r.node}
+          episodes={r.episodes ?? []}
+          window={win}
+          detail={
+            `${r.node}: ${r.missing.toLocaleString()} of ${r.reference_seqs.toLocaleString()} ` +
+            `messages its peers recorded\n` +
+            (r.missing === 0
+              ? 'recorded everything the others did'
+              : `${(r.episodes ?? []).length} episode(s) over the ${Math.round(win.secs / 60)}m to ${windowEnd}Z`)
+          }
+        />
+      ))}
+      <RecorderLossRow
+        label="2+"
+        episodes={simultaneous}
+        window={win}
+        emphasis
+        detail={
+          simultaneous.length === 0
+            ? 'no second in which two or more recorders lost at once — every loss above is one recorder\'s own branch'
+            : `${simultaneous.length} episode(s) where two or more recorders lost at the same second: not one branch's fault.\n` +
+              'A loss no recorder saw cannot appear here — the reference is what someone recorded.'
+        }
+      />
+    </div>
+  )
+}
+
 function GapTimeline({
   instances,
   window: win,
@@ -832,8 +961,6 @@ function GapTimeline({
   }
 
   const episodes = mergeGapEpisodes(instances)
-  const spanMs = win.secs * 1000
-  const startMs = win.endMs - spanMs
   const totalSecs = episodes.reduce((n, e) => n + e.seconds, 0)
   // Anchored to the window's own right edge, never to "the last 15 minutes". The axis ends at the
   // refresher's clock, which can be ten minutes old, and a relative phrase here would claim a
@@ -888,25 +1015,11 @@ function GapTimeline({
 
   return (
     <Tooltip content={lines.join('\n')} className="whitespace-pre-line">
-      <div
-        className="relative h-1.5 rounded-sm bg-muted overflow-hidden"
-        style={{ width: GAP_STRIP_WIDTH }}
-      >
-        {episodes.map((e) => {
-          // Clamped both ends. An episode can hang off the left edge when the payload's clock
-          // and its own window disagree by a second, and a negative offset would draw the mark
-          // outside the track instead of at its start.
-          const offset = ((e.start * 1000 - startMs) / spanMs) * GAP_STRIP_WIDTH
-          const left = Math.min(Math.max(offset, 0), GAP_STRIP_WIDTH - GAP_MARK_MIN_WIDTH)
-          const width = Math.max((e.seconds / win.secs) * GAP_STRIP_WIDTH, GAP_MARK_MIN_WIDTH)
-          return (
-            <div
-              key={e.start}
-              className="absolute inset-y-0 bg-red-500"
-              style={{ left, width: Math.min(width, GAP_STRIP_WIDTH - left) }}
-            />
-          )
-        })}
+      {/* Indented by the recorder labels' width so this strip and the per-recorder ones below it
+          start at the same pixel — otherwise they are two axes rather than one. */}
+      <div className="flex items-center gap-1.5">
+        <span className="w-8 shrink-0" />
+        <GapMarks episodes={episodes} window={win} />
       </div>
     </Tooltip>
   )
@@ -963,6 +1076,9 @@ function PublisherSequenceCell({
           would leave the reader with two badges and no way to tell whether the feed itself lost
           anything. */}
       {gapWindow && <GapTimeline instances={sequence.instances} window={gapWindow} />}
+      {/* Below the line's own strip and on the same axis: one row per recorder, then the row that
+          says whether a loss was one recorder's branch or something upstream of all of them. */}
+      {gapWindow && <RecorderLossTimeline sequence={sequence} window={gapWindow} />}
     </div>
   )
 }

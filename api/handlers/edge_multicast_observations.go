@@ -50,7 +50,8 @@ import (
 // how far behind the recorder's own clock it is, and how many resets it took. Closing the gap
 // half needs the producer to emit a gap marker for top-of-book the way it does for
 // market-by-price, and that is not work this repository can do.
-const edgeMulticastObservationsCacheKey = "edge_multicast_observations:v1"
+// v2: `recorder_loss` added, each recording node measured against its peers.
+const edgeMulticastObservationsCacheKey = "edge_multicast_observations:v2"
 
 // edgeMulticastObservationsWindowMinutes matches kalshiL2WindowMinutes so the two legs of the
 // Sequence column describe the same span. Measured on mainnet: 4.3s over every mbp_ and tob_
@@ -101,11 +102,128 @@ type EdgeMulticastObservationSeries struct {
 	LastSeen time.Time `json:"last_seen"`
 }
 
+// EdgeMulticastRecorderLossSeries is one recording node's view of one path's numbering: which of
+// the sequence numbers SOMEONE recorded that node did not.
+//
+// This is the only loss measurement on the top-of-book plane, and it works where an absolute one
+// cannot. A row here exists only where the top of the book CHANGED, so a wire message that moved
+// nothing legitimately leaves a hole — which is why this file refuses to count gaps against the
+// span. Comparing recorders is immune to that: a message that never moved the BBO is absent at
+// EVERY node, so it never enters the reference, while a datagram lost on one node's branch is
+// present at the others and shows up as that node's alone.
+//
+// The reference is the UNION of what the nodes recorded, and that bounds the claim in one specific
+// way: a message no node received is not in it and cannot be reported. So this measures loss
+// BETWEEN recorders — a branch, a host, a receive path — and is structurally unable to see a loss
+// upstream of where the paths fan out. Simultaneous loss at several nodes is the closest thing to
+// that signal, and it is carried separately for exactly that reason.
+type EdgeMulticastRecorderLossSeries struct {
+	MulticastGroup    string `json:"multicast_group,omitempty"`
+	PublisherSourceIP string `json:"publisher_source_ip,omitempty"`
+	ChannelID         uint8  `json:"channel_id"`
+	Node              string `json:"node"`
+	LocationCode      string `json:"location_code,omitempty"`
+
+	// Missing is how many reference sequences this node did not record, and ReferenceSeqs is
+	// what it is a share of. Both are per (path, node) over the window.
+	Missing       uint64 `json:"missing"`
+	ReferenceSeqs uint64 `json:"reference_seqs"`
+
+	// Episodes is when, at one entry per contiguous run of seconds. Stamped with the recv time
+	// of the node that DID record the message — this node has no clock reading for something it
+	// never received, and the recording node's is the only timestamp the loss has.
+	Episodes []KalshiL2GapEpisode `json:"episodes,omitempty"`
+}
+
+// edgeMulticastRecorderLossCap bounds the seconds array per (path, node), one entry per second of
+// the window. The window's own second count is the ceiling, so a node that lost something in every
+// second of the window fills it exactly and drops nothing.
+const edgeMulticastRecorderLossCap = edgeMulticastObservationsWindowMinutes * 60
+
+// fetchEdgeMulticastRecorderLoss measures each recording node against its peers on the same path.
+//
+// The shape is a three-step: collapse to one row per (path, sequence) carrying which nodes saw it,
+// derive each path's node universe from that, then emit one row per node that is missing from a
+// sequence its peers recorded. The universe is derived rather than configured because it has to be
+// what actually records this path today — a node added or removed is then a fact about the data
+// rather than a deploy.
+//
+// A path recorded at ONE node produces nothing at all, which is correct and not a gap in coverage:
+// with no peer there is no reference, and every hole in its numbering is the plane's own legitimate
+// hole. Market-by-price is single-node on every group today, so this signal exists only for
+// top-of-book — where perps runs three vantages.
+func (a *API) fetchEdgeMulticastRecorderLoss(ctx context.Context) ([]EdgeMulticastRecorderLossSeries, error) {
+	db := fmt.Sprintf("`%s`", a.FeedsDB)
+	q := fmt.Sprintf(`
+		WITH per_seq AS (
+			SELECT
+				JSONExtractString(raw_meta, 'multicast_group') AS multicast_group,
+				JSONExtractString(raw_meta, 'publisher_source_ip') AS publisher_source_ip,
+				channel_id,
+				sequence,
+				groupUniqArray(measurement_node_id) AS nodes,
+				min(recv_ts_ns) AS first_recv,
+				any(location_code) AS location_code
+			FROM %[1]s.kalshi_bbo_observations
+			WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(%[2]d)))
+			  AND source LIKE '%[3]s%%'
+			GROUP BY multicast_group, publisher_source_ip, channel_id, sequence
+		),
+		universe AS (
+			SELECT
+				multicast_group, publisher_source_ip, channel_id,
+				arrayDistinct(arrayFlatten(groupArray(nodes))) AS all_nodes,
+				count() AS reference_seqs
+			FROM per_seq
+			GROUP BY multicast_group, publisher_source_ip, channel_id
+		)
+		SELECT
+			p.multicast_group,
+			p.publisher_source_ip,
+			p.channel_id,
+			node,
+			any(p.location_code) AS location_code,
+			count() AS missing,
+			any(u.reference_seqs) AS reference_seqs,
+			groupUniqArray(%[4]d)(toUInt32(intDiv(p.first_recv, 1000000000))) AS seconds
+		FROM per_seq AS p
+		INNER JOIN universe AS u
+			ON p.multicast_group = u.multicast_group
+			AND p.publisher_source_ip = u.publisher_source_ip
+			AND p.channel_id = u.channel_id
+		ARRAY JOIN arrayFilter(x -> NOT has(p.nodes, x), u.all_nodes) AS node
+		GROUP BY p.multicast_group, p.publisher_source_ip, p.channel_id, node`,
+		db, edgeMulticastObservationsWindowMinutes, edgeMulticastTOBSourcePrefix, edgeMulticastRecorderLossCap)
+
+	rows, err := a.envDB(ctx).Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []EdgeMulticastRecorderLossSeries
+	for rows.Next() {
+		var s EdgeMulticastRecorderLossSeries
+		var seconds []uint32
+		if err := rows.Scan(&s.MulticastGroup, &s.PublisherSourceIP, &s.ChannelID, &s.Node,
+			&s.LocationCode, &s.Missing, &s.ReferenceSeqs, &seconds); err != nil {
+			return nil, err
+		}
+		s.Episodes = collapseKalshiL2GapSeconds(seconds)
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // EdgeMulticastObservationsResponse is what the refresher caches.
 type EdgeMulticastObservationsResponse struct {
 	GeneratedAt   time.Time                        `json:"generated_at"`
 	WindowMinutes int                              `json:"window_minutes"`
 	Series        []EdgeMulticastObservationSeries `json:"series"`
+
+	// RecorderLoss is each recording node measured against its peers on the same path. Empty for
+	// a path with one recorder, which has no peer to be measured against.
+	RecorderLoss []EdgeMulticastRecorderLossSeries `json:"recorder_loss,omitempty"`
 }
 
 // FetchEdgeMulticastObservations aggregates the recorded series over the coverage window.
@@ -176,6 +294,16 @@ func (a *API) FetchEdgeMulticastObservations(ctx context.Context) (*EdgeMulticas
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+
+	// Additive to this payload, and a failure costs the recorder strips rather than the series
+	// every other column on the page is folded from. Not fatal for the same reason the columns it
+	// feeds are optional: a missing measurement must never be able to take the page with it.
+	loss, err := a.fetchEdgeMulticastRecorderLoss(ctx)
+	if err != nil {
+		slog.Warn("edge multicast recorder loss unavailable", "error", err)
+	} else {
+		out.RecorderLoss = loss
 	}
 	return out, nil
 }
@@ -621,10 +749,13 @@ func (a *API) edgeMulticastObservationStats(ctx context.Context, captureSources 
 		slog.Warn("edge multicast observation stats: cache did not parse", "error", err)
 		return edgeMulticastObservationStatsResult{}, time.Time{}
 	}
+	loss, simultaneous := edgeMulticastRecorderLossFold(payload.RecorderLoss)
 	return edgeMulticastObservationStatsResult{
-		parity:   edgeMulticastPathParity(payload.Series, captureSources),
-		rates:    edgeMulticastPathRates(payload.Series, captureSources, payload.WindowMinutes),
-		recorder: edgeMulticastNodeCoverage(payload.Series, captureSources),
+		parity:            edgeMulticastPathParity(payload.Series, captureSources),
+		rates:             edgeMulticastPathRates(payload.Series, captureSources, payload.WindowMinutes),
+		recorder:          edgeMulticastNodeCoverage(payload.Series, captureSources),
+		recorderLoss:      loss,
+		recorderLossSimul: simultaneous,
 	}, payload.GeneratedAt.UTC()
 }
 
@@ -635,4 +766,9 @@ type edgeMulticastObservationStatsResult struct {
 	parity   map[edgeMulticastPathKey]*EdgeMulticastPathParity
 	rates    map[edgeMulticastPathKey]float64
 	recorder map[string]*EdgeMulticastRecorderCoverage
+
+	// Both keyed on the publisher's tunnel address, the same join the sequence series make
+	// against the ledger's dz_ip.
+	recorderLoss      map[string][]EdgeMulticastRecorderLoss
+	recorderLossSimul map[string][]KalshiL2GapEpisode
 }
