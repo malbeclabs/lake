@@ -416,9 +416,14 @@ carries the reconcile link, for the reason the publisher verdicts do not: a node
 is a statement about the vantage, and no line owns it. That is what `skewed` was always trying to
 say.
 
-Two things bound it. A node is listed only when it is behind on **every path of the group it
+Three things bound it. A node is listed only when it is behind on **every path of the group it
 records** — a deficit confined to one path IS that path's finding and `Peer` already carries it on
-that line, so repeating it here would name the recorder for what a publisher's branch did. And
+that line, so repeating it here would name the recorder for what a publisher's branch did. It also
+passes the same **share gate** as the path check, `edgeMulticastPathParityFaulted`: breadth and
+share answer different questions, and breadth alone is not enough, because a node short at one
+capture source is short on both paths there and clears the every-path test on two comparisons out of
+the ~58 a sports group makes — turning the group row amber over a single market while every
+publisher line stays green. And
 `edgeMulticastNodeCoverageFloor` is 0.95, looser than the path floor and not by taste: the window is
 fifteen minutes with no exclusion of its trailing edge and every node is filtered by one clock, so a
 recorder whose ingest lags reads as a deficit of exactly that lag — at 0.98 an eighteen-second lag

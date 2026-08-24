@@ -503,7 +503,17 @@ func edgeMulticastNodeCoverage(series []EdgeMulticastObservationSeries, captureS
 	for groupPK, nodes := range nodesPerGroup {
 		cov := &EdgeMulticastRecorderCoverage{Nodes: len(nodes)}
 		for node, t := range tallies[groupPK] {
+			// Two gates, and they answer different questions. Breadth — behind on every path
+			// it records — is what separates a bad vantage from a bad path. Share is what
+			// separates a fault from a transient: a node short at ONE capture source is short
+			// on both paths there and clears the breadth test on two comparisons out of the
+			// ~58 a sports group makes, which would turn the group row amber over a single
+			// market while every publisher line stayed green. Same gate as the sibling check,
+			// for the same reason: a reading is not a finding until it is more than an outlier.
 			if len(t.behindPaths) == 0 || len(t.behindPaths) != len(t.comparedPaths) {
+				continue
+			}
+			if !edgeMulticastPathParityFaulted(t.behind, t.compared) {
 				continue
 			}
 			cov.Lagging = append(cov.Lagging, EdgeMulticastLaggingRecorder{

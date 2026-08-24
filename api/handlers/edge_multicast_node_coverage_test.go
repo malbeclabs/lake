@@ -1,6 +1,7 @@
 package handlers_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/malbeclabs/lake/api/handlers"
@@ -55,6 +56,51 @@ func TestEdgeMulticastNodeCoverage_ShortOnOnePathIsNotTheRecorder(t *testing.T) 
 
 	require.Contains(t, cov, "group-t")
 	assert.Empty(t, cov["group-t"].Lagging, "one path short at one node is the path, not the node")
+}
+
+// Breadth alone is not enough. A node short at ONE capture source is short on both paths there, so
+// it clears the every-path test on two comparisons out of the ~58 a sports group makes — and the
+// group row would go amber over a single market while every publisher line stayed green. The share
+// gate is the same one the path check carries, for the same reason.
+func TestEdgeMulticastNodeCoverage_OneCaptureSourceIsNotALaggingRecorder(t *testing.T) {
+	series := []handlers.EdgeMulticastObservationSeries{}
+	for i := range 29 {
+		src := fmt.Sprintf("tob_edge_kalshi_sports_%d", i)
+		mine := uint64(20000)
+		if i == 3 {
+			mine = 15000
+		}
+		series = append(series,
+			// The reference vantage, level on everything.
+			obsSeries(src, "dub-rec1", "10.0.0.9", 10, 20000),
+			obsSeries(src, "dub-rec1", "10.0.0.10", 110, 20000),
+			// One capture source short at this one, on both paths.
+			obsSeries(src, "cmh-rec1", "10.0.0.9", 10, mine),
+			obsSeries(src, "cmh-rec1", "10.0.0.10", 110, mine))
+	}
+	cov := handlers.EdgeMulticastNodeCoverageForTest(parityGroups, series)
+
+	require.Contains(t, cov, "group-t")
+	assert.Empty(t, cov["group-t"].Lagging, "two comparisons of fifty-eight is a transient, not a bad vantage")
+}
+
+// And the same node short across the feed still fires: a recorder losing is indiscriminate, so it
+// is behind nearly everywhere rather than at one market.
+func TestEdgeMulticastNodeCoverage_ShortAcrossTheFeedStillFires(t *testing.T) {
+	series := []handlers.EdgeMulticastObservationSeries{}
+	for i := range 29 {
+		src := fmt.Sprintf("tob_edge_kalshi_sports_%d", i)
+		series = append(series,
+			obsSeries(src, "dub-rec1", "10.0.0.9", 10, 20000),
+			obsSeries(src, "dub-rec1", "10.0.0.10", 110, 20000),
+			obsSeries(src, "cmh-rec1", "10.0.0.9", 10, 18000),
+			obsSeries(src, "cmh-rec1", "10.0.0.10", 110, 18000))
+	}
+	cov := handlers.EdgeMulticastNodeCoverageForTest(parityGroups, series)
+
+	require.Len(t, cov["group-t"].Lagging, 1)
+	assert.Equal(t, "cmh-rec1", cov["group-t"].Lagging[0].Node)
+	assert.Equal(t, 58, cov["group-t"].Lagging[0].Behind)
 }
 
 // One recorder is no comparison. Neither a pass nor a fault may be recorded for it — the same
