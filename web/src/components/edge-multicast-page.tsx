@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
 import { AlertCircle, ChevronDown, ChevronRight, Loader2, Radio } from 'lucide-react'
-import { mergeGapEpisodes } from './edge-multicast-gap-episodes'
+import { gapEpisodeStats, mergeGapEpisodes } from './edge-multicast-gap-episodes'
 import { Tooltip } from '@/components/ui/tooltip'
 import { PageHeader } from './page-header'
 import { CopyableText } from './copyable-text'
@@ -746,11 +746,24 @@ function GapTimeline({
     .toISOString()
     .slice(11, 19)}Z`
 
+  const stats = gapEpisodeStats(episodes, win.secs, win.endMs)
+
+  // The operational read, all of it derived from the episodes and the window. There is deliberately
+  // no loss percentage here: an episode is time a book spent un-anchored, not a count of datagrams
+  // that failed to arrive, and the recorder's gap marker cannot supply the denominator one would
+  // need. The wire sequence could, but measured on mainnet its holes are identical on both
+  // redundant paths of every sports feed — a property of the numbering, not of the network — so it
+  // is not a loss rate until that is resolved.
   const lines =
     episodes.length === 0
-      ? [`no loss recorded over ${windowLabel}`]
+      ? [`no loss recorded over ${windowLabel}`, `gap-free ${(stats.gapFree * 100).toFixed(1)}%`]
       : [
-          `${episodes.length} episode(s), ${totalSecs}s losing over ${windowLabel}`,
+          `${stats.episodes} episode(s), ${totalSecs}s losing over ${windowLabel}`,
+          `gap-free ${(stats.gapFree * 100).toFixed(1)}% · ${stats.perHour.toFixed(1)} gaps/h`,
+          `worst recovery ${stats.worstRecoverySeconds}s` +
+            (stats.sinceLastSeconds === undefined
+              ? ''
+              : ` · last gap ${formatAge(stats.sinceLastSeconds)}`),
           ...episodes
             .slice(0, GAP_TOOLTIP_MAX_LINES)
             .map(
@@ -1324,7 +1337,12 @@ export function EdgeMulticastPage() {
               axis: every publisher line of a group is drawn on one axis, so a mark on one line and a
               clear track on the other says the redundant path covered the loss and the feed itself lost
               nothing. An empty track is a measured clean run; a line with no strip at all was never
-              measured for gaps.
+              measured for gaps. Its tooltip carries the operational read — gap-free share, gaps per
+              hour, worst recovery, time since the last one — and deliberately no loss percentage: an
+              episode is time a book spent un-anchored, not a count of datagrams that failed to
+              arrive. The wire sequence could supply that count, but its holes are identical on both
+              redundant paths of every sports feed, which makes them a property of the numbering
+              rather than of the network.
             </p>
           )}
         </div>
