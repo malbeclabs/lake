@@ -23,6 +23,19 @@ import (
 // addressing the query reads out of raw_meta.
 func insertBBOObservation(t *testing.T, api *handlers.API, node, source, multicastGroup, publisherSourceIP string, channelID uint8, sequence uint64, resetCount uint8, agoSecs int) {
 	t.Helper()
+	insertBBOObservationAtReset(t, api, node, "cmh", source, multicastGroup, publisherSourceIP, channelID, sequence, resetCount, agoSecs)
+}
+
+// insertBBOObservationAt is insertBBOObservation with the recording node's own metro spelled out.
+// The metro is a property of the node, and a test that cannot vary it cannot catch a query that
+// labels every node with one arbitrary one.
+func insertBBOObservationAt(t *testing.T, api *handlers.API, node, location, source, multicastGroup, publisherSourceIP string, channelID uint8, sequence uint64, agoSecs int) {
+	t.Helper()
+	insertBBOObservationAtReset(t, api, node, location, source, multicastGroup, publisherSourceIP, channelID, sequence, 0, agoSecs)
+}
+
+func insertBBOObservationAtReset(t *testing.T, api *handlers.API, node, location, source, multicastGroup, publisherSourceIP string, channelID uint8, sequence uint64, resetCount uint8, agoSecs int) {
+	t.Helper()
 	db := "`" + api.FeedsDB + "`"
 	rawMeta := fmt.Sprintf(
 		`{"publisher_source_ip":"%s","multicast_group":"%s","port":%d}`,
@@ -31,10 +44,10 @@ func insertBBOObservation(t *testing.T, api *handlers.API, node, source, multica
 		INSERT INTO %s.kalshi_bbo_observations
 		(measurement_node_id, location_code, source, symbol, source_ts_ms, recv_ts_ns, source_id,
 		 channel_id, sequence, reset_count, raw_meta)
-		VALUES ('%s', 'cmh', '%s', 'KXNFLGAME', 0,
+		VALUES ('%s', '%s', '%s', 'KXNFLGAME', 0,
 		        toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalSecond(%d))), 3,
 		        %d, %d, %d, '%s')
-	`, db, node, source, agoSecs, channelID, sequence, resetCount, rawMeta)))
+	`, db, node, location, source, agoSecs, channelID, sequence, resetCount, rawMeta)))
 }
 
 func seriesByKey(series []handlers.EdgeMulticastObservationSeries) map[string]handlers.EdgeMulticastObservationSeries {
@@ -168,6 +181,30 @@ func TestEdgeMulticastRecorderLossQuery_CleanRecorderStillGetsARow(t *testing.T)
 	assert.EqualValues(t, 0, byNode["cmh-rec1"].Missing, "it recorded everything")
 	assert.Empty(t, byNode["cmh-rec1"].Episodes)
 	assert.EqualValues(t, 3, byNode["cmh-rec1"].ReferenceSeqs)
+}
+
+// Each row carries its OWN node's metro. Resolving it inside the per-sequence group instead makes
+// it an any() over a group that spans every node, which labels all three lines with one arbitrary
+// metro — cmh/cmh/cmh — and the comparison the strip exists for cannot be read at all.
+func TestEdgeMulticastRecorderLossQuery_EachRowCarriesItsOwnMetro(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createKalshiObservationsTable(t, api)
+
+	const group, pub = "233.84.178.3", "148.51.121.69"
+	insertBBOObservationAt(t, api, "cmh-rec1", "cmh", "tob_edge_kalshi_perps", group, pub, 1, 100, 30)
+	insertBBOObservationAt(t, api, "cmh-rec1", "cmh", "tob_edge_kalshi_perps", group, pub, 1, 101, 30)
+	insertBBOObservationAt(t, api, "dub-rec1", "dub", "tob_edge_kalshi_perps", group, pub, 1, 100, 30)
+
+	resp, err := api.FetchEdgeMulticastObservations(t.Context())
+	require.NoError(t, err)
+
+	byNode := map[string]string{}
+	for _, s := range resp.RecorderLoss {
+		byNode[s.Node] = s.LocationCode
+	}
+	require.Len(t, byNode, 2)
+	assert.Equal(t, "cmh", byNode["cmh-rec1"])
+	assert.Equal(t, "dub", byNode["dub-rec1"], "not the other node's metro")
 }
 
 // A path with one recorder has no peer to be measured against, so it produces nothing at all —

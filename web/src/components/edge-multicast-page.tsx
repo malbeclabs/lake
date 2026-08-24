@@ -847,7 +847,7 @@ function GapMarks({
         return (
           <div
             key={e.start}
-            className={`absolute inset-y-0 ${emphasis ? 'bg-amber-500' : 'bg-red-500'}`}
+            className={`absolute inset-y-0 ${emphasis ? 'bg-violet-600' : 'bg-red-500'}`}
             style={{ left, width: Math.min(width, GAP_STRIP_WIDTH - left) }}
           />
         )
@@ -877,9 +877,14 @@ function RecorderLossRow({
   return (
     <Tooltip content={detail} className="whitespace-pre-line">
       <div className="flex items-center gap-1.5">
+        {/* Violet rather than a hotter red or amber, and the difference is categorical rather than
+            severity. Amber on this page means degraded, so it read as a MILDER fault than the red
+            lines above it — the exact inversion: a loss several recorders share is the one thing
+            here that cannot be blamed on a single branch. A different family says "different kind
+            of statement" instead of "same statement, less of it". */}
         <span
           className={`text-[9px] tabular-nums w-8 shrink-0 text-right ${
-            emphasis ? 'text-foreground font-medium' : 'text-muted-foreground'
+            emphasis ? 'text-violet-600 font-medium' : 'text-muted-foreground'
           }`}
         >
           {label}
@@ -930,18 +935,21 @@ function RecorderLossTimeline({
           }
         />
       ))}
-      <RecorderLossRow
-        label="2+"
-        episodes={simultaneous}
-        window={win}
-        emphasis
-        detail={
-          simultaneous.length === 0
-            ? 'no second in which two or more recorders lost at once — every loss above is one recorder\'s own branch'
-            : `${simultaneous.length} episode(s) where two or more recorders lost at the same second: not one branch's fault.\n` +
-              'A loss no recorder saw cannot appear here — the reference is what someone recorded.'
-        }
-      />
+      {/* Set apart from the rows above: those are observations, this is what they add up to. */}
+      <div className="mt-0.5 border-t border-border/60 pt-0.5">
+        <RecorderLossRow
+          label="2+"
+          episodes={simultaneous}
+          window={win}
+          emphasis
+          detail={
+            simultaneous.length === 0
+              ? 'no second in which two or more recorders lost at once — every loss above is one recorder\'s own branch'
+              : `${simultaneous.length} episode(s) where two or more recorders lost at the same second: not one branch's fault.\n` +
+                'A loss no recorder saw cannot appear here — the reference is what someone recorded.'
+          }
+        />
+      </div>
     </div>
   )
 }

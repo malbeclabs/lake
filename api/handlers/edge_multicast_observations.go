@@ -167,8 +167,7 @@ func (a *API) fetchEdgeMulticastRecorderLoss(ctx context.Context) ([]EdgeMultica
 				channel_id,
 				sequence,
 				groupUniqArray(measurement_node_id) AS nodes,
-				min(recv_ts_ns) AS first_recv,
-				any(location_code) AS location_code
+				min(recv_ts_ns) AS first_recv
 			FROM %[1]s.kalshi_bbo_observations
 			WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(%[2]d)))
 			  AND source LIKE '%[3]s%%'
@@ -181,13 +180,24 @@ func (a *API) fetchEdgeMulticastRecorderLoss(ctx context.Context) ([]EdgeMultica
 				count() AS reference_seqs
 			FROM per_seq
 			GROUP BY multicast_group, publisher_source_ip, channel_id
+		),
+		-- The metro is a property of the NODE, so it is resolved per node and joined on.
+		-- Carrying it through per_seq instead makes it an any() over a group that spans every
+		-- node of a sequence, which yields one arbitrary metro repeated on all three rows: the
+		-- labels then read cmh/cmh/cmh and the comparison the strip exists for is unreadable.
+		node_loc AS (
+			SELECT measurement_node_id AS loc_node, min(location_code) AS location_code
+			FROM %[1]s.kalshi_bbo_observations
+			WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(%[2]d)))
+			  AND source LIKE '%[3]s%%'
+			GROUP BY measurement_node_id
 		)
 		SELECT
 			p.multicast_group,
 			p.publisher_source_ip,
 			p.channel_id,
 			node,
-			any(p.location_code) AS location_code,
+			any(nl.location_code) AS location_code,
 			countIf(NOT has(p.nodes, node)) AS missing,
 			any(u.reference_seqs) AS reference_seqs,
 			groupUniqArrayIf(%[4]d)(toUInt32(intDiv(p.first_recv, 1000000000)), NOT has(p.nodes, node)) AS seconds
@@ -197,6 +207,7 @@ func (a *API) fetchEdgeMulticastRecorderLoss(ctx context.Context) ([]EdgeMultica
 			AND p.publisher_source_ip = u.publisher_source_ip
 			AND p.channel_id = u.channel_id
 		ARRAY JOIN u.all_nodes AS node
+		INNER JOIN node_loc AS nl ON node = nl.loc_node
 		WHERE length(u.all_nodes) > 1
 		GROUP BY p.multicast_group, p.publisher_source_ip, p.channel_id, node`,
 		db, edgeMulticastObservationsWindowMinutes, edgeMulticastTOBSourcePrefix, edgeMulticastRecorderLossCap)
