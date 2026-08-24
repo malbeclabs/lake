@@ -7703,6 +7703,19 @@ export async function fetchKalshiScoreboard(
   return res.json()
 }
 
+/** One contiguous run of seconds in which a channel instance recorded gap-marked messages.
+ *
+ *  The unit a loss timeline is drawn in. Neither counter can stand in for it: gap_messages is a
+ *  duration that scales with traffic, and gap_books SATURATES on a small-instrument feed — perps
+ *  carries 13 and a single lost datagram un-anchors most of them, so it pins at 13/13 and reads as
+ *  total failure where the truth was ~10 losses of a few seconds each. */
+export interface GapEpisode {
+  /** First second of the run, Unix SECONDS (not millis) UTC. */
+  start: number
+  /** Run length in seconds, never zero. */
+  seconds: number
+}
+
 export interface KalshiL2Lane {
   source: string
   label: string
@@ -7722,6 +7735,8 @@ export interface KalshiL2Lane {
   depth_max: number
   gap_messages: number
   gap_books: number
+  /** The same loss on a time axis. Absent on a clean lane and on an unseen one. */
+  gap_episodes?: GapEpisode[]
   resets: number
   clears: number
   snapshot_cycles: number
@@ -7862,6 +7877,10 @@ export interface EdgeMulticastChannelInstance {
   /** Distinct books that gapped in the window — the fault count. Never gap_messages, which
    *  scales with traffic rather than with reliability. */
   gap_books: number
+  /** The same loss on a time axis: when this series was losing, not just how much. Absent on a
+   *  clean series AND on the top-of-book plane, which has no gap marker — gaps_measured is what
+   *  separates those two, and an empty timeline must never be drawn as clean without it. */
+  gap_episodes?: GapEpisode[]
   resets: number
   snapshot_cycles: number
   last_seen: string
@@ -7971,6 +7990,10 @@ export interface EdgeMulticastResponse {
   /** When the sequence numbers were computed — up to ten minutes older than generated_at, since
    *  they are folded from the L2 coverage refresher's cache. Absent when no group has any. */
   sequence_as_of?: string
+  /** Width of the window the gap episodes were measured over. With sequence_as_of it is the axis
+   *  they are drawn on: (sequence_as_of - this, sequence_as_of]. Absent when nothing folded any,
+   *  which is also the signal to draw no timeline. */
+  gap_window_seconds?: number
   /** False when no capture table was queryable — the column is hidden rather than blank. */
   last_heard_available: boolean
   services: EdgeMulticastService[]

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
 import { AlertCircle, ChevronDown, ChevronRight, Loader2, Radio } from 'lucide-react'
+import { mergeGapEpisodes } from './edge-multicast-gap-episodes'
 import { Tooltip } from '@/components/ui/tooltip'
 import { PageHeader } from './page-header'
 import { CopyableText } from './copyable-text'
@@ -299,6 +300,7 @@ function PublisherLineRow({
   showSequence,
   showObservations,
   sequenceAsOfAge,
+  gapWindow,
   floorBps,
 }: {
   line: EdgeMulticastPublisher
@@ -308,6 +310,7 @@ function PublisherLineRow({
   showSequence: boolean
   showObservations: boolean
   sequenceAsOfAge?: number
+  gapWindow?: GapWindow
   floorBps: number
 }) {
   const age = ageSecs(line.observed_at, asOf)
@@ -412,7 +415,11 @@ function PublisherLineRow({
       {showLastHeard && <td className="px-3 py-1.5" />}
       {showSequence && (
         <td className="px-3 py-1.5 whitespace-nowrap">
-          <PublisherSequenceCell sequence={line.sequence} asOfAge={sequenceAsOfAge} />
+          <PublisherSequenceCell
+            sequence={line.sequence}
+            asOfAge={sequenceAsOfAge}
+            gapWindow={gapWindow}
+          />
         </td>
       )}
       <td className="px-3 py-1.5">
@@ -694,6 +701,93 @@ function SequenceBadge({ status, count, detail }: { status: string; count: strin
   )
 }
 
+// The loss timeline for one publisher line.
+//
+// GAP_STRIP_WIDTH is fixed in pixels rather than fluid, and that is the whole point: every
+// publisher line of a group draws its episodes on the SAME axis, so the reader sees whether the
+// two paths of a feed lost data at the same moment or at different ones. Measured on mainnet the
+// answer was "different ones, always" — 10 seconds of loss on one Kalshi perps path, 64 on the
+// other, not one second on both — which the counters cannot express and a shared axis shows
+// without a word. A percentage width would rescale per row (the column is content-sized) and
+// destroy exactly that comparison.
+const GAP_STRIP_WIDTH = 96
+// A 3-second episode on a 15-minute axis is a third of a pixel. An invisible loss is worse than an
+// overstated one, so the mark is deliberately wider than the truth it stands for.
+const GAP_MARK_MIN_WIDTH = 2
+// Tooltip lines, not episodes: a busy path can carry dozens and a tooltip that runs off the
+// viewport reports nothing at all. The count in the header stays exact.
+const GAP_TOOLTIP_MAX_LINES = 8
+
+/** The axis gap episodes are drawn on: the payload's own clock and how wide its window is. */
+type GapWindow = { endMs: number; secs: number }
+
+function GapTimeline({
+  instances,
+  window: win,
+}: {
+  instances: EdgeMulticastChannelInstance[]
+  window: GapWindow
+}) {
+  // Nothing on this line was measured for gaps, so there is no axis to draw. Rendering an empty
+  // strip here would be the clean bill of health the whole Sequence column refuses to give the
+  // top-of-book plane.
+  if (!instances.some((i) => i.gaps_measured)) {
+    return null
+  }
+
+  const episodes = mergeGapEpisodes(instances)
+  const spanMs = win.secs * 1000
+  const startMs = win.endMs - spanMs
+  const totalSecs = episodes.reduce((n, e) => n + e.seconds, 0)
+  // Anchored to the window's own right edge, never to "the last 15 minutes". The axis ends at the
+  // refresher's clock, which can be ten minutes old, and a relative phrase here would claim a
+  // freshness the rest of this column is careful not to.
+  const windowLabel = `the ${Math.round(win.secs / 60)}m to ${new Date(win.endMs)
+    .toISOString()
+    .slice(11, 19)}Z`
+
+  const lines =
+    episodes.length === 0
+      ? [`no loss recorded over ${windowLabel}`]
+      : [
+          `${episodes.length} episode(s), ${totalSecs}s losing over ${windowLabel}`,
+          ...episodes
+            .slice(0, GAP_TOOLTIP_MAX_LINES)
+            .map(
+              (e) =>
+                `${new Date(e.start * 1000).toISOString().slice(11, 19)}Z for ${e.seconds}s`,
+            ),
+          episodes.length > GAP_TOOLTIP_MAX_LINES
+            ? `+${episodes.length - GAP_TOOLTIP_MAX_LINES} more`
+            : '',
+        ].filter(Boolean)
+
+  return (
+    <Tooltip content={lines.join('\n')} className="whitespace-pre-line">
+      <div
+        className="relative h-1.5 rounded-sm bg-muted overflow-hidden"
+        style={{ width: GAP_STRIP_WIDTH }}
+      >
+        {episodes.map((e) => {
+          // Clamped both ends. An episode can hang off the left edge when the payload's clock
+          // and its own window disagree by a second, and a negative offset would draw the mark
+          // outside the track instead of at its start.
+          const offset = ((e.start * 1000 - startMs) / spanMs) * GAP_STRIP_WIDTH
+          const left = Math.min(Math.max(offset, 0), GAP_STRIP_WIDTH - GAP_MARK_MIN_WIDTH)
+          const width = Math.max((e.seconds / win.secs) * GAP_STRIP_WIDTH, GAP_MARK_MIN_WIDTH)
+          return (
+            <div
+              key={e.start}
+              className="absolute inset-y-0 bg-red-500"
+              style={{ left, width: Math.min(width, GAP_STRIP_WIDTH - left) }}
+            />
+          )
+        })}
+      </div>
+    </Tooltip>
+  )
+}
+
 // The sequence verdict for ONE publisher: the recorded wire protocol's own counters for the series
 // it emitted, and the only thing on this page that can say "this path lost data" as opposed to
 // "this member is quiet". A series is owned by one path — two paths carrying one channel cannot
@@ -701,9 +795,11 @@ function SequenceBadge({ status, count, detail }: { status: string; count: strin
 function PublisherSequenceCell({
   sequence,
   asOfAge,
+  gapWindow,
 }: {
   sequence?: EdgeMulticastSequenceHealth
   asOfAge?: number
+  gapWindow?: GapWindow
 }) {
   // Nothing was recorded from this publisher's address. Not a verdict of any kind, so no badge:
   // the group cell says how many series were attributed and how many were not.
@@ -721,11 +817,18 @@ function PublisherSequenceCell({
     .join('\n')
 
   return (
-    <SequenceBadge
-      status={sequenceLabel(sequence.status, total, sequence.gaps_unmeasured ?? 0)}
-      count={bad > 0 ? `${bad}/${total}` : total > 1 ? String(total) : ''}
-      detail={detail}
-    />
+    <div className="flex flex-col gap-1">
+      <SequenceBadge
+        status={sequenceLabel(sequence.status, total, sequence.gaps_unmeasured ?? 0)}
+        count={bad > 0 ? `${bad}/${total}` : total > 1 ? String(total) : ''}
+        detail={detail}
+      />
+      {/* The strip is drawn for a CLEAN series too, not only a gapped one. An empty track beside
+          a marked one is the comparison — "this path held while its peer dropped" — and hiding it
+          would leave the reader with two badges and no way to tell whether the feed itself lost
+          anything. */}
+      {gapWindow && <GapTimeline instances={sequence.instances} window={gapWindow} />}
+    </div>
   )
 }
 
@@ -781,6 +884,7 @@ function GroupRow({
   showSequence,
   showObservations,
   sequenceAsOfAge,
+  gapWindow,
   floorBps,
   columns,
   onOpen,
@@ -792,6 +896,7 @@ function GroupRow({
   showSequence: boolean
   showObservations: boolean
   sequenceAsOfAge?: number
+  gapWindow?: GapWindow
   floorBps: number
   columns: number
   onOpen: (e: React.MouseEvent, pk: string) => void
@@ -889,6 +994,7 @@ function GroupRow({
           showSequence={showSequence}
           showObservations={showObservations}
           sequenceAsOfAge={sequenceAsOfAge}
+          gapWindow={gapWindow}
           floorBps={floorBps}
         />
       ))}
@@ -913,6 +1019,7 @@ function ServiceSection({
   showSequence,
   showObservations,
   sequenceAsOfAge,
+  gapWindow,
   floorBps,
   onOpen,
 }: {
@@ -923,6 +1030,7 @@ function ServiceSection({
   showSequence: boolean
   showObservations: boolean
   sequenceAsOfAge?: number
+  gapWindow?: GapWindow
   floorBps: number
   onOpen: (e: React.MouseEvent, pk: string) => void
 }) {
@@ -989,6 +1097,7 @@ function ServiceSection({
                 showSequence={showSequence}
                 showObservations={showObservations}
                 sequenceAsOfAge={sequenceAsOfAge}
+                gapWindow={gapWindow}
                 floorBps={floorBps}
                 columns={columns}
                 onOpen={onOpen}
@@ -1050,6 +1159,18 @@ export function EdgeMulticastPage() {
   // Read against wall clock, ticking: this measures how stale the refresher's cached numbers are,
   // which keeps ageing whether or not this page refetches.
   const sequenceAsOfAge = ageSecs(data?.sequence_as_of, now)
+  // The axis for every loss strip on the page, built once. Both halves are required: the as-of is
+  // the right edge and the width is the span, and either one alone would put the episodes
+  // somewhere arbitrary. Undefined when the payload carries no window, which is the signal to draw
+  // no timeline at all rather than one of a guessed width.
+  const gapWindow = useMemo<GapWindow | undefined>(() => {
+    const secs = data?.gap_window_seconds
+    if (!data?.sequence_as_of || !secs) {
+      return undefined
+    }
+    const endMs = new Date(data.sequence_as_of).getTime()
+    return Number.isNaN(endMs) ? undefined : { endMs, secs }
+  }, [data?.sequence_as_of, data?.gap_window_seconds])
 
   const { groupCount, silentCount } = useMemo(() => {
     const services = data?.services ?? []
@@ -1125,6 +1246,7 @@ export function EdgeMulticastPage() {
               showSequence={showSequence}
               showObservations={showObservations}
               sequenceAsOfAge={sequenceAsOfAge}
+              gapWindow={gapWindow}
               floorBps={data?.publisher_floor_bps ?? 0}
               onOpen={onOpen}
             />
@@ -1198,7 +1320,11 @@ export function EdgeMulticastPage() {
               books, never gap-marked messages, and the column is folded from background refreshers, so it is
               minutes older than the rest of the row. The top-of-book plane carries no gap marker, so those
               series read “advancing” — the counters move and nothing checked them for loss — rather than the
-              market-by-price rows' gap-checked “ok”.
+              market-by-price rows' gap-checked “ok”. The strip under the badge is the same loss on a time
+              axis: every publisher line of a group is drawn on one axis, so a mark on one line and a
+              clear track on the other says the redundant path covered the loss and the feed itself lost
+              nothing. An empty track is a measured clean run; a line with no strip at all was never
+              measured for gaps.
             </p>
           )}
         </div>

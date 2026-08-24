@@ -71,6 +71,45 @@ func insertLevelFrom(t *testing.T, api *handlers.API, publisherSourceIP, source 
 	`, db, source, channelID, instrumentID, msgType, agoSecs, depth, statusAfter, publisherSourceIP)))
 }
 
+// The timeline comes out of the same scan the counters do, and only gap-marked rows reach it. The
+// two losses are ten minutes apart on purpose: adjacent seconds would be at the mercy of which side
+// of a second boundary each INSERT landed on, and the run logic is pinned in the unit test instead.
+func TestKalshiL2Coverage_GapEpisodesCoverOnlyGappedRows(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createKalshiMbpLevelsTable(t, api)
+
+	insertLevelFrom(t, api, "148.51.120.6", "mbp_edge_kalshi_perps", 101, 7, "level_update", 5, "gap", 600)
+	insertLevelFrom(t, api, "148.51.120.6", "mbp_edge_kalshi_perps", 101, 7, "level_update", 5, "gap", 60)
+	insertLevelFrom(t, api, "148.51.120.6", "mbp_edge_kalshi_perps", 101, 7, "level_update", 5, "ready", 30)
+	// The redundant path carried the same feed and lost nothing. Its EMPTY timeline is the
+	// comparison the strip exists to draw, so it must come back seen-and-clean rather than absent.
+	insertLevelFrom(t, api, "148.51.121.69", "mbp_edge_kalshi_perps", 1, 7, "level_update", 5, "ready", 60)
+
+	resp, err := api.FetchKalshiL2Coverage(t.Context())
+	require.NoError(t, err)
+
+	byIP := map[string]handlers.KalshiL2Lane{}
+	for _, l := range resp.Lanes {
+		if l.Seen {
+			byIP[l.PublisherSourceIP] = l
+		}
+	}
+	require.Len(t, byIP, 2, "two paths of one feed, told apart by their source address")
+
+	gapped := byIP["148.51.120.6"]
+	require.Len(t, gapped.GapEpisodes, 2, "two losses, ten minutes apart, are two episodes")
+	assert.Equal(t, uint32(1), gapped.GapEpisodes[0].Seconds)
+	assert.Equal(t, uint32(1), gapped.GapEpisodes[1].Seconds)
+	assert.Less(t, gapped.GapEpisodes[0].Start, gapped.GapEpisodes[1].Start, "time order")
+	assert.InDelta(t, 540, gapped.GapEpisodes[1].Start-gapped.GapEpisodes[0].Start, 2,
+		"the gap between them is the 540s between the two inserts")
+	assert.Equal(t, uint64(1), gapped.GapBooks, "the counter still counts the one book")
+
+	clean := byIP["148.51.121.69"]
+	assert.Empty(t, clean.GapEpisodes, "a path that lost nothing records no episode")
+	assert.Equal(t, uint64(0), clean.GapBooks)
+}
+
 func TestGetKalshiL2Coverage_MissingTable(t *testing.T) {
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	// Do NOT create the table -> handler must degrade to empty 200, not 500.

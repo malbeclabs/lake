@@ -111,6 +111,21 @@ type EdgeMulticastChannelInstance struct {
 	// two pages cannot tell different stories about one feed.
 	GapBooks uint64 `json:"gap_books"`
 
+	// GapEpisodes is the same loss on a time axis: the contiguous runs of seconds this series
+	// was recording gap-marked messages, from the same cached payload GapBooks comes from.
+	//
+	// It is what makes the two paths of a feed comparable at all. GapBooks saturates on a
+	// small-instrument feed and says nothing about WHEN, so two lines both reading "13 books"
+	// look like one failure when measured on mainnet they were disjoint in time — 10 seconds of
+	// loss on one path, 64 on the other, and not one second on both. The counter cannot express
+	// that; a shared time axis shows it without a word.
+	//
+	// Empty on a clean series, and empty on the top-of-book plane, which has no gap marker at
+	// all. Those two are NOT the same thing and GapsMeasured is what separates them: an empty
+	// timeline drawn under a false GapsMeasured would be the same clean bill of health this
+	// struct already refuses to give.
+	GapEpisodes []KalshiL2GapEpisode `json:"gap_episodes,omitempty"`
+
 	// Resets and SnapshotCycles are the recovery side: an `instrument_reset` re-anchors one
 	// book, a `snapshot_end` completes a cycle. A series with gaps and no cycles is not
 	// recovering.
@@ -177,7 +192,7 @@ type EdgeMulticastSequenceHealth struct {
 // The reported as-of is the OLDER of the two legs. They run on one refresher today, so the two
 // stamps are seconds apart; taking the older one means that if they ever diverge, the column ages
 // against the staler half rather than flattering itself with the fresher.
-func (a *API) edgeMulticastSequenceHealth(ctx context.Context, captureSources edgeMulticastCaptureSourceMap) (map[string]*EdgeMulticastSequenceHealth, time.Time, error) {
+func (a *API) edgeMulticastSequenceHealth(ctx context.Context, captureSources edgeMulticastCaptureSourceMap) (map[string]*EdgeMulticastSequenceHealth, time.Time, int, error) {
 	out := map[string]*EdgeMulticastSequenceHealth{}
 	var asOf time.Time
 	note := func(at time.Time) {
@@ -189,25 +204,32 @@ func (a *API) edgeMulticastSequenceHealth(ctx context.Context, captureSources ed
 		}
 	}
 
-	note(a.foldKalshiL2Coverage(ctx, captureSources, out))
+	at, gapWindowSecs := a.foldKalshiL2Coverage(ctx, captureSources, out)
+	note(at)
 	note(a.foldEdgeMulticastTOBSequence(ctx, captureSources, out))
 
 	if len(out) == 0 {
-		return nil, time.Time{}, nil
+		return nil, time.Time{}, 0, nil
 	}
 	for _, health := range out {
 		finishEdgeMulticastSequenceHealth(health)
 	}
-	return out, asOf.UTC(), nil
+	return out, asOf.UTC(), gapWindowSecs, nil
 }
 
-// foldKalshiL2Coverage adds the market-by-price series, and returns the payload's own clock.
-func (a *API) foldKalshiL2Coverage(ctx context.Context, captureSources edgeMulticastCaptureSourceMap, out map[string]*EdgeMulticastSequenceHealth) time.Time {
+// foldKalshiL2Coverage adds the market-by-price series, and returns the payload's own clock
+// alongside the width of the window its gap episodes are stamped inside.
+//
+// The window travels with the episodes because a run of seconds is meaningless without the frame
+// it is drawn in: the consumer needs (as-of - window, as-of] to place a start on an axis, and
+// reading the width from a second copy of kalshiL2WindowMinutes on the far side would let the
+// axis and the data disagree the first time the window changes.
+func (a *API) foldKalshiL2Coverage(ctx context.Context, captureSources edgeMulticastCaptureSourceMap, out map[string]*EdgeMulticastSequenceHealth) (time.Time, int) {
 	data, err := a.readPageCache(ctx, kalshiL2CoverageCacheKey)
 	if err != nil {
 		// A miss, which is the normal state before the refresher's first run and in local
 		// dev. Not logged: the page says so by dropping the column.
-		return time.Time{}
+		return time.Time{}, 0
 	}
 
 	var coverage KalshiL2CoverageResponse
@@ -215,7 +237,7 @@ func (a *API) foldKalshiL2Coverage(ctx context.Context, captureSources edgeMulti
 		// A shape mismatch means the cache key was not bumped alongside a payload change,
 		// which is a deploy-time bug worth a line — but not this page's failure.
 		slog.Warn("edge multicast sequence health: l2 coverage cache did not parse", "error", err)
-		return time.Time{}
+		return time.Time{}, 0
 	}
 
 	for _, lane := range coverage.Lanes {
@@ -238,6 +260,7 @@ func (a *API) foldKalshiL2Coverage(ctx context.Context, captureSources edgeMulti
 			LocationCode:   lane.LocationCode,
 			Messages:       lane.Messages,
 			GapBooks:       lane.GapBooks,
+			GapEpisodes:    lane.GapEpisodes,
 			Resets:         lane.Resets,
 			SnapshotCycles: lane.SnapshotCycles,
 			LastSeen:       lane.LastSeen.UTC(),
@@ -249,7 +272,7 @@ func (a *API) foldKalshiL2Coverage(ctx context.Context, captureSources edgeMulti
 		}
 		out[groupPK].Instances = append(out[groupPK].Instances, inst)
 	}
-	return coverage.GeneratedAt.UTC()
+	return coverage.GeneratedAt.UTC(), coverage.WindowMinutes * 60
 }
 
 // foldEdgeMulticastTOBSequence adds the top-of-book series out of the observations payload, and

@@ -39,7 +39,7 @@ func newEdgeMulticastTestAPI(t *testing.T) *handlers.API {
 // kalshiL2CoverageKey mirrors the unexported page-cache key in kalshi_l2_coverage.go. If that
 // constant's version is bumped without this one, the sequence tests stop exercising the fold and
 // start asserting the absent case, which still passes — so bump both.
-const kalshiL2CoverageKey = "kalshi_l2_coverage:v3"
+const kalshiL2CoverageKey = "kalshi_l2_coverage:v4"
 
 // seedL2Coverage writes a coverage payload for the sequence column to fold, and removes it again
 // afterwards.
@@ -971,6 +971,63 @@ func TestGetEdgeMulticast_SingleCaptureNodeIsNeverSkewed(t *testing.T) {
 
 // The sequence column: one recorded series per channel instance, folded from the L2 coverage
 // refresher's cache so this page never runs that scan itself and the two can never disagree.
+// The loss timeline reaches the publisher's series, and the axis it is drawn on reaches the payload.
+//
+// Both halves are asserted because either one alone is useless: episodes carry an absolute start, so
+// without the window's width the consumer has a right edge and no span and every mark lands at an
+// arbitrary offset. The width travels with the data rather than being read from a second copy of the
+// constant on the far side, which is what would let the axis and the episodes disagree.
+func TestGetEdgeMulticast_GapEpisodesAndWindowReachThePayload(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertEdgeMulticastCaptureGroups(t, api)
+
+	asOf := time.Now().UTC()
+	start := asOf.Add(-5 * time.Minute).Unix()
+	seedL2Coverage(t, api, asOf,
+		handlers.KalshiL2Lane{
+			Source: "mbp_edge_kalshi_sports_nba", ChannelID: 2, MeasurementNodeID: "cmh-rec1",
+			PublisherSourceIP: "10.0.0.9", LocationCode: "cmh", Messages: 500, GapBooks: 3,
+			Seen: true, LastSeen: asOf.Add(-1 * time.Second),
+			GapEpisodes: []handlers.KalshiL2GapEpisode{{Start: start, Seconds: 4}},
+		},
+	)
+
+	resp := getEdgeMulticast(t, api)
+	assert.Equal(t, 900, resp.GapWindowSeconds, "the fifteen-minute coverage window, in seconds")
+
+	k := findEdgeMulticastGroup(t, resp, "edge-kalshi-sports-mbp")
+	require.NotNil(t, k.Sequence)
+	require.Len(t, k.Sequence.Instances, 1)
+	require.Len(t, k.Sequence.Instances[0].GapEpisodes, 1)
+	assert.Equal(t, start, k.Sequence.Instances[0].GapEpisodes[0].Start)
+	assert.Equal(t, uint32(4), k.Sequence.Instances[0].GapEpisodes[0].Seconds)
+}
+
+// A top-of-book series has no gap marker, so it must carry no timeline. An empty one drawn under a
+// true GapsMeasured would be the clean bill of health this column refuses to give that plane.
+func TestGetEdgeMulticast_TopOfBookCarriesNoGapTimeline(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertEdgeMulticastCaptureGroups(t, api)
+
+	// Attached by destination address, which is how the top-of-book leg resolves a series to a
+	// group. The fixture's group happens to be the market-by-price one; what this test is about is
+	// the PLANE the series came from, and that is carried by the tob_ prefix on the capture source.
+	asOf := time.Now().UTC()
+	seedObservations(t, api, asOf, handlers.EdgeMulticastObservationSeries{
+		Source: "tob_edge_kalshi_sports_nfl", ChannelID: 2, Node: "cmh-rec1", LocationCode: "cmh",
+		PublisherSourceIP: "10.0.0.9", MulticastGroup: "233.0.0.10", Messages: 900,
+		LastSeen: asOf.Add(-1 * time.Second),
+	})
+
+	k := findEdgeMulticastGroup(t, getEdgeMulticast(t, api), "edge-kalshi-sports-mbp")
+	require.NotNil(t, k.Sequence)
+	require.Len(t, k.Sequence.Instances, 1)
+	assert.False(t, k.Sequence.Instances[0].GapsMeasured)
+	assert.Empty(t, k.Sequence.Instances[0].GapEpisodes, "no marker to count means no timeline")
+}
+
 func TestGetEdgeMulticast_SequenceHealthFromL2Cache(t *testing.T) {
 	api := newEdgeMulticastTestAPI(t)
 	insertMulticastTestData(t, api)

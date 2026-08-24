@@ -348,6 +348,12 @@ type EdgeMulticastResponse struct {
 	// Carried so the column can age itself instead of borrowing this payload's freshness.
 	SequenceAsOf *time.Time `json:"sequence_as_of,omitempty"`
 
+	// GapWindowSeconds is how wide the window the gap episodes were measured over is, and it
+	// makes SequenceAsOf into an axis: the episodes sit inside (SequenceAsOf - this, SequenceAsOf].
+	// Zero when nothing folded any, which is also the signal to draw no timeline at all — an
+	// axis with no width would put every episode on top of every other one.
+	GapWindowSeconds int `json:"gap_window_seconds,omitempty"`
+
 	Services []EdgeMulticastService `json:"services"`
 }
 
@@ -479,14 +485,16 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 	// describe another — and it costs testnet nothing it has data for.
 	var sequence map[string]*EdgeMulticastSequenceHealth
 	var sequenceAsOf time.Time
+	var gapWindowSecs int
 	var pathParity map[edgeMulticastPathKey]*EdgeMulticastPathParity
 	var pathRates map[edgeMulticastPathKey]float64
 	if isMainnet(ctx) {
 		var err error
-		sequence, sequenceAsOf, err = a.edgeMulticastSequenceHealth(ctx, captureSources)
+		sequence, sequenceAsOf, gapWindowSecs, err = a.edgeMulticastSequenceHealth(ctx, captureSources)
 		if err != nil {
 			slog.Warn("edge multicast sequence health unavailable", "error", err)
 			sequence = nil
+			gapWindowSecs = 0
 		}
 
 		// Path parity and the recorded message rate come out of the same cached payload the
@@ -517,6 +525,7 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 		RateGrainMinutes:   edgeMulticastRateGrainMinutes,
 		PublisherFloorBps:  edgeMulticastPublisherFloorBps,
 		LastHeardAvailable: lastHeardAvailable,
+		GapWindowSeconds:   gapWindowSecs,
 		Services:           []EdgeMulticastService{},
 	}
 	if !sequenceAsOf.IsZero() {
