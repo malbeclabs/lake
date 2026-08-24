@@ -7866,6 +7866,10 @@ export interface EdgeMulticastChannelInstance {
   /** Whether gap_books is a reading or an absence. False on the top-of-book plane, which has no
    *  gap marker to count — an 'ok' there means "advancing", not "lost nothing". */
   gaps_measured: boolean
+  /** Stalled, but every other path recording this capture source at this node went quiet with it,
+   *  so the silence is the source's and not this path's. The status stays 'stalled'; this is what
+   *  keeps it out of the tally. */
+  capture_source_quiet?: boolean
 }
 
 /** Sequence health over a set of channel instances, worst-first: one publisher's own series on a
@@ -7883,6 +7887,9 @@ export interface EdgeMulticastSequenceHealth {
   unattributed?: number
   /** Instances from a plane with no gap marker, whose 'ok' is the weaker "advancing" claim. */
   gaps_unmeasured?: number
+  /** Instances stalled only because their capture source stopped producing on every path at once.
+   *  Counted apart from stalled: it is a statement about the feed's upstream, not about a path. */
+  capture_source_quiet?: number
   instances: EdgeMulticastChannelInstance[]
 }
 

@@ -1,5 +1,7 @@
 package handlers
 
+import "time"
+
 // EdgeMulticastGroupForTest describes one group to EdgeMulticastPathParityForTest.
 type EdgeMulticastGroupForTest struct {
 	PK          string
@@ -53,3 +55,19 @@ const (
 	EdgeMulticastPubIdleForTest       = edgeMulticastPubIdle
 	EdgeMulticastPubUnknownForTest    = edgeMulticastPubUnknown
 )
+
+// EdgeMulticastSequenceHealthForTest grades a set of channel instances the way the fold does:
+// each instance's status from its own last-seen against the payload's clock, then the quiet-
+// capture-source demotion, then the tally. Exposed because those three steps are one contract —
+// the demotion only means anything through what the tally does with it — and because both are
+// pure, so pinning them needs no database.
+func EdgeMulticastSequenceHealthForTest(instances []EdgeMulticastChannelInstance, asOf time.Time) *EdgeMulticastSequenceHealth {
+	health := &EdgeMulticastSequenceHealth{}
+	for _, inst := range instances {
+		inst.Status = edgeMulticastSequenceStatus(inst.GapBooks, inst.LastSeen, asOf)
+		health.Instances = append(health.Instances, inst)
+	}
+	demoteEdgeMulticastQuietCaptureSources(health)
+	finishEdgeMulticastSequenceHealth(health)
+	return health
+}

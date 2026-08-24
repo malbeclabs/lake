@@ -573,6 +573,12 @@ function PublisherHealthBadge({
         ? ' — its series is advancing, and this plane writes no gap marker, so loss was never checked'
         : ' — some of its series are on a plane with no gap marker, where loss was never checked'
   }
+  // Silence excused as the capture source's is still silence, and the verdict does not show it.
+  // Said here for the same reason the line above is: it qualifies the reading without minting a
+  // state between healthy and a fault.
+  if (health === 'healthy' && sequence && (sequence.capture_source_quiet ?? 0) > 0) {
+    detail += `; ${sequence.capture_source_quiet} of its series are quiet at a capture source that went quiet on every path`
+  }
   return (
     <Tooltip content={detail}>
       <span
@@ -663,6 +669,12 @@ function LastHeardCell({ group, now }: { group: EdgeMulticastGroup; now: number 
 function sequenceInstanceLine(i: EdgeMulticastChannelInstance): string {
   const from = i.publisher_source_ip ? `${i.publisher_source_ip} ` : ''
   const head = `${from}ch${i.channel_id} @${i.node} (${i.capture_source}): ${i.messages.toLocaleString()} msgs`
+  // A stall every path at this vantage shares is the capture source going quiet — a market that
+  // closed, not a path that died — and the line has to say which of the two it is, because the
+  // status word next to it still reads 'stalled'.
+  if (i.capture_source_quiet) {
+    return `${head} — quiet, and so is every other path on this source: the venue, not this path`
+  }
   // Without a gap marker there is no book-level fault count and no snapshot cycle to report, so
   // the line says what was NOT measured instead of printing zeros that would read as findings.
   if (!i.gaps_measured) {
@@ -713,8 +725,12 @@ function PublisherSequenceCell({
 
   const total = sequence.instances.length
   const bad = sequence.gapped + sequence.stalled
+  const quiet = sequence.capture_source_quiet ?? 0
   const detail = [
     ...sequence.instances.map(sequenceInstanceLine),
+    quiet > 0
+      ? `${quiet} of ${total} quiet at a capture source that went quiet on every path — not counted against this path`
+      : '',
     asOfAge === undefined ? '' : `computed ${formatAge(asOfAge)}`,
   ]
     .filter(Boolean)
@@ -723,7 +739,10 @@ function PublisherSequenceCell({
   return (
     <SequenceBadge
       status={sequenceLabel(sequence.status, total, sequence.gaps_unmeasured ?? 0)}
-      count={bad > 0 ? `${bad}/${total}` : total > 1 ? String(total) : ''}
+      // Two numbers with two meanings shared one slot: '6/31' is faults over series, and a bare
+      // '3' was the series count — which reads as three faults. The multiplier is how this page
+      // already says "over N of them" in the Heard column, so a count with no faults takes it.
+      count={bad > 0 ? `${bad}/${total}` : total > 1 ? `×${total}` : ''}
       detail={detail}
     />
   )

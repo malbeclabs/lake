@@ -429,6 +429,22 @@ column carries span the three ports) and never the recording node (two vantages 
 observations). A series whose address matches no publisher of the group is counted as
 `unattributed` on the group roll-up rather than dropped.
 
+**A stall every path shares is the capture source's, not the path's.** An instance goes `stalled`
+after two minutes of silence, which on a per-event feed is usually nobody's fault — a sports
+capture source is one market, and a market that closes mid-window goes quiet on every path at once.
+Measured on mainnet: both paths of `edge-kalshi-sports-tob` read `stalled 1/29` on the same
+instance, and that verdict outranks `behind`, so it hid the one finding on the row that *was* about
+the path. `demoteEdgeMulticastQuietCaptureSources` flags those instances `capture_source_quiet` and
+the tally counts them apart from `stalled`, leaving the status word to the faults.
+
+It keys on `(capture source, recording node)` — the path-parity key, for the same two reasons: the
+node is in it so a recorder that went quiet on everything is not read as the venue, and the channel
+is out of it because the two paths publish under different channel ids and would never meet. A
+vantage with one path records nothing either way; there is no telling a dead path from a quiet
+source there. The guard that makes the rule safe is that a path is only excused at one capture
+source **while it is delivering at another** — without it, a feed that stopped everywhere would
+find every path quiet at every source and read as advancing while nothing advanced at all.
+
 Publisher lines also carry the ledger's **`bgp_status`**, and `down` renders as an error on the line.
 That is not a reversal of the rule that the control-plane roll-up must not paint the row: what that
 rule rejects is a worst-of over every *member*, where customers with BGP down turned every group red.

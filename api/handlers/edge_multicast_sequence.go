@@ -125,6 +125,13 @@ type EdgeMulticastChannelInstance struct {
 	// UI has to render it as something other than a clean bill of health.
 	GapsMeasured bool `json:"gaps_measured"`
 
+	// CaptureSourceQuiet marks a stalled series whose silence belongs to the capture source
+	// rather than to this path: every other path recording that source at the same node went
+	// quiet with it. Set by demoteEdgeMulticastQuietCaptureSources, which documents the rule.
+	// The Status stays 'stalled' — the reading is unchanged and only its attribution is — and
+	// the tally is what reads this flag.
+	CaptureSourceQuiet bool `json:"capture_source_quiet,omitempty"`
+
 	LastSeen time.Time `json:"last_seen"`
 	Status   string    `json:"status"`
 }
@@ -148,6 +155,12 @@ type EdgeMulticastSequenceHealth struct {
 	Publishers        int `json:"publishers,omitempty"`
 	PublishersGapped  int `json:"publishers_gapped,omitempty"`
 	PublishersStalled int `json:"publishers_stalled,omitempty"`
+
+	// CaptureSourceQuiet is how many instances are stalled only because their capture source
+	// stopped producing on every path at once. Counted apart from Stalled and deliberately not
+	// folded into it: it is a statement about the feed's upstream, not about a path, and the
+	// verdict it would otherwise mint outranks the findings that ARE about the path.
+	CaptureSourceQuiet int `json:"capture_source_quiet,omitempty"`
 
 	// Unattributed is how many instances matched no publisher line, so their verdict has no row
 	// of its own: a recorded source address the ledger does not carry as a publisher of this
@@ -196,6 +209,9 @@ func (a *API) edgeMulticastSequenceHealth(ctx context.Context, captureSources ed
 		return nil, time.Time{}, nil
 	}
 	for _, health := range out {
+		// Before the tally, and at the group grain on purpose: the demotion needs the other
+		// paths of the group, which the per-publisher split below no longer has.
+		demoteEdgeMulticastQuietCaptureSources(health)
 		finishEdgeMulticastSequenceHealth(health)
 	}
 	return out, asOf.UTC(), nil
@@ -326,6 +342,88 @@ func edgeMulticastSequenceStatus(gapBooks uint64, lastSeen, asOf time.Time) stri
 	return edgeMulticastSeqOK
 }
 
+// demoteEdgeMulticastQuietCaptureSources tells a path that stopped delivering apart from a capture
+// source that stopped producing.
+//
+// A stalled instance says one thing on its own: this series recorded nothing over the last couple
+// of minutes of the window. It does not say whose silence it is, and on a per-event feed it is
+// usually nobody's — a sports capture source is one market, and a market that closes mid-window
+// goes quiet on every path at once. Measured on mainnet: both paths of edge-kalshi-sports-tob read
+// 'stalled 1/29' on the same instance, which is the signature of a market ending rather than of a
+// path or a recorder dying. 'stalled' then outranked 'behind' on the publisher line and hid the one
+// finding on that row which was about the path.
+//
+// So the call needs a peer, exactly as path parity does, and it keys the same way for the same
+// reasons: the recording node IS in the key, because a node that went quiet on everything is the
+// node's silence and not the source's; the channel is NOT, because the two paths of a feed publish
+// it under different channel ids and keying on channel would put each path in a group of one.
+//
+// A path is quiet at a (capture source, node) when every instance it has there is stalled. When
+// every path there is quiet the capture source is what went silent, and those instances are
+// flagged; when one path is still delivering, the stalled ones are a fault of their own and keep
+// it. A vantage with a single path records nothing either way — there is nothing there to tell a
+// dead path from a quiet source with, and guessing in either direction is worse than letting the
+// stall stand.
+//
+// The guard that makes the whole thing safe is aliveSomewhere: a path may only be excused at one
+// capture source if it is delivering at another. Without it a feed that stopped everywhere — every
+// market closed, or the venue down — would find every path quiet at every source, demote all of
+// them, and read as advancing while nothing advanced at all.
+func demoteEdgeMulticastQuietCaptureSources(health *EdgeMulticastSequenceHealth) {
+	type pathTally struct{ stalled, total int }
+
+	byVantage := map[edgeMulticastPathParityKey]map[string]*pathTally{}
+	aliveSomewhere := map[string]bool{}
+	for _, inst := range health.Instances {
+		// No source address is no path: an instance that cannot be attributed to one cannot
+		// be compared against the others, and must not stand in as a peer for them either.
+		if inst.PublisherSourceIP == "" {
+			continue
+		}
+		if inst.Status != edgeMulticastSeqStalled {
+			aliveSomewhere[inst.PublisherSourceIP] = true
+		}
+		key := edgeMulticastPathParityKey{source: inst.CaptureSource, node: inst.Node}
+		if byVantage[key] == nil {
+			byVantage[key] = map[string]*pathTally{}
+		}
+		tally := byVantage[key][inst.PublisherSourceIP]
+		if tally == nil {
+			tally = &pathTally{}
+			byVantage[key][inst.PublisherSourceIP] = tally
+		}
+		tally.total++
+		if inst.Status == edgeMulticastSeqStalled {
+			tally.stalled++
+		}
+	}
+
+	quiet := map[edgeMulticastPathParityKey]bool{}
+	for key, paths := range byVantage {
+		if len(paths) < 2 {
+			continue
+		}
+		all := true
+		for _, tally := range paths {
+			if tally.stalled != tally.total {
+				all = false
+				break
+			}
+		}
+		quiet[key] = all
+	}
+
+	for i := range health.Instances {
+		inst := &health.Instances[i]
+		if inst.Status != edgeMulticastSeqStalled || !aliveSomewhere[inst.PublisherSourceIP] {
+			continue
+		}
+		if quiet[edgeMulticastPathParityKey{source: inst.CaptureSource, node: inst.Node}] {
+			inst.CaptureSourceQuiet = true
+		}
+	}
+}
+
 // finishEdgeMulticastSequenceHealth tallies the instance states and rolls them up worst-first.
 func finishEdgeMulticastSequenceHealth(health *EdgeMulticastSequenceHealth) {
 	rank := map[string]int{
@@ -341,13 +439,22 @@ func finishEdgeMulticastSequenceHealth(health *EdgeMulticastSequenceHealth) {
 		case edgeMulticastSeqGapped:
 			health.Gapped++
 		case edgeMulticastSeqStalled:
-			health.Stalled++
+			if inst.CaptureSourceQuiet {
+				health.CaptureSourceQuiet++
+			} else {
+				health.Stalled++
+			}
 		}
 	}
 	sort.SliceStable(health.Instances, func(i, j int) bool {
 		a, b := health.Instances[i], health.Instances[j]
 		if rank[a.Status] != rank[b.Status] {
 			return rank[a.Status] < rank[b.Status]
+		}
+		// A stall the capture source owns is not a finding about this path, so it reads under
+		// the ones that are.
+		if a.CaptureSourceQuiet != b.CaptureSourceQuiet {
+			return !a.CaptureSourceQuiet
 		}
 		// Most gapped books first within a state, then a stable key: the payload is polled
 		// every 30s and a shifting order under the reader's cursor is its own bug.
