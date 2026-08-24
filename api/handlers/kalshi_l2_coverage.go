@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"time"
@@ -34,7 +35,8 @@ import (
 // v2: `gaps` split into `gap_messages`/`gap_books`, `messages` added.
 // v3: `publisher_source_ip` added, and the lane grain is the channel instance with it.
 // v4: `gap_episodes` added, the per-instance loss timeline.
-const kalshiL2CoverageCacheKey = "kalshi_l2_coverage:v4"
+// v5: the per-instrument sequence loss counters added.
+const kalshiL2CoverageCacheKey = "kalshi_l2_coverage:v5"
 
 // kalshiL2WindowMinutes is the interval the rates are averaged over. Rates are derived from
 // it, so changing it changes nothing about correctness.
@@ -248,6 +250,44 @@ type KalshiL2Lane struct {
 	// unseen one — see KalshiL2GapEpisode for why the counters above cannot be drawn instead.
 	GapEpisodes []KalshiL2GapEpisode `json:"gap_episodes,omitempty"`
 
+	// The per-instrument sequence loss counters: how many delta updates never arrived, measured
+	// on the ONLY counter in this schema that can answer it.
+	//
+	// `per_instrument_seq` is dense per (path, instrument, reset generation), so a hole in it is
+	// an update that did not arrive. Two other candidates were measured and rejected:
+	//
+	//   - `frame_sequence` looks like the obvious one and is not. It is dense per (publisher,
+	//     channel, port), but measured on mainnet its holes are IDENTICAL on both redundant paths
+	//     of every sports feed — 193 against 192, 180 against 180 — and two independent paths do
+	//     not lose the same datagrams. Whatever those holes are, they are a property of the
+	//     numbering. Reading them as loss reports ~12% on 29 healthy sports feeds.
+	//   - `status_after = 'gap'`, which the timeline is built on, counts TIME a book spent
+	//     un-anchored rather than updates lost, and has no denominator at all.
+	//
+	// The per-instrument counter passes the test the other two fail: golf reads zero on both
+	// paths where frame_sequence claimed 11.6%, and the paths DIFFER wherever there is loss —
+	// perps at 36 against 9 over the same window — which is what independent per-path loss looks
+	// like.
+	//
+	// UpdatesReceived is the denominator and the two are only meaningful together: expected is
+	// received + missing, and a lane with no updates at all has no rate rather than a rate of
+	// zero. Level updates only — snapshot messages carry no per-instrument sequence to lose.
+	UpdatesReceived uint64 `json:"updates_received"`
+	UpdatesMissing  uint64 `json:"updates_missing"`
+
+	// SeqGapEvents is the number of discontinuities, which is what a "gaps per hour" is built
+	// from. It is NOT the episode count on the timeline: an episode is a stretch of wall-clock
+	// time a book was un-anchored, this is a break in the numbering, and one break can leave a
+	// book un-anchored for seconds while a whole burst of them lands inside one episode.
+	SeqGapEvents uint64 `json:"seq_gap_events"`
+
+	// The shape of the losses, in messages. MaxGapMessages is the worst single break and
+	// P99GapMessages the same figure with one outlier unable to speak for the window. Measured
+	// on mainnet these run 1-6 and 1-5.4 respectively; a sudden order-of-magnitude change is the
+	// signal, not the absolute number.
+	MaxGapMessages uint32  `json:"max_gap_messages"`
+	P99GapMessages float64 `json:"p99_gap_messages"`
+
 	// Seen reports whether this lane produced any message inside the coverage window. A
 	// configured lane that has gone silent is reported with Seen=false and zeroed stats
 	// rather than being omitted — see the roster merge in FetchKalshiL2Coverage.
@@ -276,6 +316,96 @@ func emptyKalshiL2Coverage() *KalshiL2CoverageResponse {
 // an error, not an absent table — see kalshiTableExists.
 func (a *API) kalshiL2TableExists(ctx context.Context) (bool, error) {
 	return a.kalshiTableExists(ctx, "kalshi_mbp_levels")
+}
+
+// kalshiL2LaneKey identifies one channel instance at one vantage: the grain both queries in this
+// file group by, and the join key between them.
+type kalshiL2LaneKey struct {
+	source    string
+	channelID uint8
+	publisher string
+	node      string
+}
+
+// kalshiL2SequenceLoss is what the loss query returns for one channel instance.
+type kalshiL2SequenceLoss struct {
+	received uint64
+	missing  uint64
+	events   uint64
+	maxGap   uint32
+	p99Gap   float64
+}
+
+// fetchKalshiL2SequenceLoss measures update loss from the per-instrument sequence.
+//
+// A SECOND query rather than more aggregates on the first, because the two do not share a shape:
+// this one filters to level updates, needs a window function to see each instrument's numbering in
+// order, and would otherwise drag the depth and lifecycle counters through a sort they do not need.
+// Measured on mainnet it costs 1.5s against the coverage query's 1.8s, on the same ten-minute
+// refresher — cheap enough not to be worth folding them into one unreadable pass.
+//
+// Two things in the PARTITION BY are load-bearing:
+//
+//   - instrument_id, because the counter is per book. Without it the numbering of thirteen books
+//     interleaves into one sequence full of holes that are not losses.
+//   - reset_count, because a reset starts the numbering again. Without it the step back to zero
+//     reads as a jump of the whole sequence space.
+//
+// The delta is taken in Int64 on purpose. per_instrument_seq is UInt32 and an unsigned subtraction
+// underflows to ~4 billion the moment a value goes backwards, which would then be counted as four
+// billion missing messages. In Int64 a backwards step is negative, fails the d > 1 test, and is
+// dropped — which is the right answer for a reset the partition key did not already separate.
+func (a *API) fetchKalshiL2SequenceLoss(ctx context.Context) (map[kalshiL2LaneKey]kalshiL2SequenceLoss, error) {
+	db := fmt.Sprintf("`%s`", a.FeedsDB)
+	q := fmt.Sprintf(`
+		SELECT
+			source,
+			channel_id,
+			publisher_source_ip,
+			measurement_node_id,
+			count() AS updates_received,
+			toUInt64(sum(if(d > 1, d - 1, 0))) AS updates_missing,
+			toUInt64(countIf(d > 1)) AS seq_gap_events,
+			toUInt32(max(if(d > 1, d - 1, 0))) AS max_gap_messages,
+			toFloat64(ifNotFinite(quantileIf(0.99)(d - 1, d > 1), 0)) AS p99_gap_messages
+		FROM (
+			SELECT
+				source,
+				channel_id,
+				publisher_source_ip,
+				measurement_node_id,
+				toInt64(assumeNotNull(per_instrument_seq)) - lagInFrame(
+					toInt64(assumeNotNull(per_instrument_seq)), 1,
+					toInt64(assumeNotNull(per_instrument_seq))
+				) OVER (
+					PARTITION BY source, channel_id, publisher_source_ip,
+						measurement_node_id, instrument_id, reset_count
+					ORDER BY per_instrument_seq
+				) AS d
+			FROM %[1]s.kalshi_mbp_levels
+			WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(%[2]d)))
+			  AND msg_type = 'level_update'
+			  AND per_instrument_seq IS NOT NULL
+		)
+		GROUP BY source, channel_id, publisher_source_ip, measurement_node_id`, db, kalshiL2WindowMinutes)
+
+	rows, err := a.envDB(ctx).Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[kalshiL2LaneKey]kalshiL2SequenceLoss{}
+	for rows.Next() {
+		var k kalshiL2LaneKey
+		var v kalshiL2SequenceLoss
+		if err := rows.Scan(&k.source, &k.channelID, &k.publisher, &k.node,
+			&v.received, &v.missing, &v.events, &v.maxGap, &v.p99Gap); err != nil {
+			return nil, err
+		}
+		out[k] = v
+	}
+	return out, rows.Err()
 }
 
 // FetchKalshiL2Coverage aggregates the market-by-price lanes over the coverage window.
@@ -361,6 +491,15 @@ func (a *API) FetchKalshiL2Coverage(ctx context.Context) (*KalshiL2CoverageRespo
 		WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(%[2]d)))
 		GROUP BY source, channel_id, publisher_source_ip, measurement_node_id`, db, kalshiL2WindowMinutes, kalshiL2GapSecondsCap)
 
+	// Before the scan, so a lane can be filled in as it is read. A failure here costs the loss
+	// counters and not the page: they are additive to a view whose subject is coverage, and a lane
+	// with a zero denominator reports no rate rather than a rate of zero.
+	sequenceLoss, err := a.fetchKalshiL2SequenceLoss(ctx)
+	if err != nil {
+		slog.Warn("kalshi l2 coverage: sequence loss unavailable", "error", err)
+		sequenceLoss = nil
+	}
+
 	rows, err := a.envDB(ctx).Query(ctx, q)
 	if err != nil {
 		return nil, err
@@ -393,6 +532,10 @@ func (a *API) FetchKalshiL2Coverage(ctx context.Context) (*KalshiL2CoverageRespo
 		l.LevelUpdatesPerSec = float64(levelUpdates) / windowSecs
 		l.LastSeen = time.Unix(0, int64(lastRecvNs)).UTC()
 		l.Seen = true
+		if loss, ok := sequenceLoss[kalshiL2LaneKey{l.Source, l.ChannelID, l.PublisherSourceIP, l.MeasurementNodeID}]; ok {
+			l.UpdatesReceived, l.UpdatesMissing = loss.received, loss.missing
+			l.SeqGapEvents, l.MaxGapMessages, l.P99GapMessages = loss.events, loss.maxGap, loss.p99Gap
+		}
 		label, category, order := kalshiL2LaneFor(l.Source)
 		l.Label, l.Category = label, category
 		out = append(out, ordered{lane: l, order: order})

@@ -133,6 +133,20 @@ type EdgeMulticastChannelInstance struct {
 	// struct already refuses to give.
 	GapEpisodes []KalshiL2GapEpisode `json:"gap_episodes,omitempty"`
 
+	// The per-instrument sequence loss counters, folded from the same payload. This is the only
+	// signal on the page that counts MESSAGES lost rather than time spent un-anchored, and it is
+	// the one a loss rate can be built from — see KalshiL2Lane, which records the two counters
+	// that look like they could stand in for it and cannot.
+	//
+	// UpdatesReceived is the denominator: expected is received + missing, and a series with no
+	// updates at all has no rate rather than a rate of zero. Zero on the top-of-book plane, whose
+	// rows carry no per-instrument sequence.
+	UpdatesReceived uint64  `json:"updates_received,omitempty"`
+	UpdatesMissing  uint64  `json:"updates_missing,omitempty"`
+	SeqGapEvents    uint64  `json:"seq_gap_events,omitempty"`
+	MaxGapMessages  uint32  `json:"max_gap_messages,omitempty"`
+	P99GapMessages  float64 `json:"p99_gap_messages,omitempty"`
+
 	// Resets and SnapshotCycles are the recovery side: an `instrument_reset` re-anchors one
 	// book, a `snapshot_end` completes a cycle. A series with gaps and no cycles is not
 	// recovering.
@@ -289,14 +303,21 @@ func (a *API) foldKalshiL2Coverage(ctx context.Context, captureSources edgeMulti
 		inst := EdgeMulticastChannelInstance{
 			PublisherSourceIP: lane.PublisherSourceIP,
 
-			CaptureSource:  lane.Source,
-			ChannelID:      lane.ChannelID,
-			Node:           lane.MeasurementNodeID,
-			LocationCode:   lane.LocationCode,
-			Messages:       lane.Messages,
-			GapBooks:       lane.GapBooks,
-			GapMessages:    lane.GapMessages,
-			GapEpisodes:    lane.GapEpisodes,
+			CaptureSource: lane.Source,
+			ChannelID:     lane.ChannelID,
+			Node:          lane.MeasurementNodeID,
+			LocationCode:  lane.LocationCode,
+			Messages:      lane.Messages,
+			GapBooks:      lane.GapBooks,
+			GapMessages:   lane.GapMessages,
+			GapEpisodes:   lane.GapEpisodes,
+
+			UpdatesReceived: lane.UpdatesReceived,
+			UpdatesMissing:  lane.UpdatesMissing,
+			SeqGapEvents:    lane.SeqGapEvents,
+			MaxGapMessages:  lane.MaxGapMessages,
+			P99GapMessages:  lane.P99GapMessages,
+
 			Resets:         lane.Resets,
 			SnapshotCycles: lane.SnapshotCycles,
 			LastSeen:       lane.LastSeen.UTC(),

@@ -39,7 +39,7 @@ func newEdgeMulticastTestAPI(t *testing.T) *handlers.API {
 // kalshiL2CoverageKey mirrors the unexported page-cache key in kalshi_l2_coverage.go. If that
 // constant's version is bumped without this one, the sequence tests stop exercising the fold and
 // start asserting the absent case, which still passes — so bump both.
-const kalshiL2CoverageKey = "kalshi_l2_coverage:v4"
+const kalshiL2CoverageKey = "kalshi_l2_coverage:v5"
 
 // seedL2Coverage writes a coverage payload for the sequence column to fold, and removes it again
 // afterwards.

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
 import { AlertCircle, ChevronDown, ChevronRight, Loader2, Radio } from 'lucide-react'
-import { gapEpisodeStats, mergeGapEpisodes } from './edge-multicast-gap-episodes'
+import { gapEpisodeStats, mergeGapEpisodes, sequenceLoss } from './edge-multicast-gap-episodes'
 import { Tooltip } from '@/components/ui/tooltip'
 import { PageHeader } from './page-header'
 import { CopyableText } from './copyable-text'
@@ -843,19 +843,34 @@ function GapTimeline({
     .slice(11, 19)}Z`
 
   const stats = gapEpisodeStats(episodes, win.secs, win.endMs)
+  const loss = sequenceLoss(instances, win.secs)
 
-  // The operational read, all of it derived from the episodes and the window. There is deliberately
-  // no loss percentage here: an episode is time a book spent un-anchored, not a count of datagrams
-  // that failed to arrive, and the recorder's gap marker cannot supply the denominator one would
-  // need. The wire sequence could, but measured on mainnet its holes are identical on both
-  // redundant paths of every sports feed — a property of the numbering, not of the network — so it
-  // is not a loss rate until that is resolved.
+  // Two different measurements, kept apart on purpose. The episodes are TIME a book spent
+  // un-anchored — that is what the strip draws, and what gap-free and recovery are about. The loss
+  // figures are MESSAGES that never arrived, from the per-instrument sequence, and they are the
+  // only ones a rate can be built from. A break in the numbering and a stretch of un-anchored time
+  // are not the same event and their counts legitimately differ: one break can leave a book
+  // un-anchored for seconds, and a burst of them lands inside one episode.
+  const lossLines = loss
+    ? [
+        `${loss.ppm.toFixed(1)} ppm lost · ${loss.missing.toLocaleString()} of ` +
+          `${(loss.received + loss.missing).toLocaleString()} updates`,
+        `${loss.perMinute.toFixed(1)} missing/min · ${((loss.events * 3600) / win.secs).toFixed(1)} seq gaps/h`,
+        `worst break ${loss.maxGap} msg · p99 ${loss.p99Gap.toFixed(1)} msg`,
+      ]
+    : []
+
   const lines =
     episodes.length === 0
-      ? [`no loss recorded over ${windowLabel}`, `gap-free ${(stats.gapFree * 100).toFixed(1)}%`]
+      ? [
+          `no loss recorded over ${windowLabel}`,
+          `gap-free ${(stats.gapFree * 100).toFixed(1)}%`,
+          ...lossLines,
+        ]
       : [
           `${stats.episodes} episode(s), ${totalSecs}s losing over ${windowLabel}`,
-          `gap-free ${(stats.gapFree * 100).toFixed(1)}% · ${stats.perHour.toFixed(1)} gaps/h`,
+          `gap-free ${(stats.gapFree * 100).toFixed(1)}%`,
+          ...lossLines,
           `worst recovery ${stats.worstRecoverySeconds}s` +
             (stats.sinceLastSeconds === undefined
               ? ''
@@ -1507,12 +1522,12 @@ export function EdgeMulticastPage() {
               axis: every publisher line of a group is drawn on one axis, so a mark on one line and a
               clear track on the other says the redundant path covered the loss and the feed itself lost
               nothing. An empty track is a measured clean run; a line with no strip at all was never
-              measured for gaps. Its tooltip carries the operational read — gap-free share, gaps per
-              hour, worst recovery, time since the last one — and deliberately no loss percentage: an
-              episode is time a book spent un-anchored, not a count of datagrams that failed to
-              arrive. The wire sequence could supply that count, but its holes are identical on both
-              redundant paths of every sports feed, which makes them a property of the numbering
-              rather than of the network.
+              measured for gaps. Its tooltip carries two measurements that are deliberately not mixed:
+              the episodes are TIME a book spent un-anchored, which is what the strip draws and what
+              gap-free and recovery describe; the loss figures are MESSAGES that never arrived,
+              counted from the per-instrument sequence, which is the only counter here that carries a
+              denominator. Their event counts legitimately differ — one break in the numbering can
+              leave a book un-anchored for seconds, and a burst of them lands inside one episode.
             </p>
           )}
         </div>

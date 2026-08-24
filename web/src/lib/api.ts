@@ -7733,6 +7733,14 @@ export interface KalshiL2Lane {
   gap_books: number
   /** The same loss on a time axis. Absent on a clean lane and on an unseen one. */
   gap_episodes?: GapEpisode[]
+  /** Per-instrument sequence loss: delta updates that never arrived. updates_received is the
+   *  denominator — expected is received + missing — and a lane with no updates has no rate rather
+   *  than a rate of zero. */
+  updates_received: number
+  updates_missing: number
+  seq_gap_events: number
+  max_gap_messages: number
+  p99_gap_messages: number
   resets: number
   clears: number
   snapshot_cycles: number
@@ -7884,6 +7892,14 @@ export interface EdgeMulticastChannelInstance {
    *  clean series AND on the top-of-book plane, which has no gap marker — gaps_measured is what
    *  separates those two, and an empty timeline must never be drawn as clean without it. */
   gap_episodes?: GapEpisode[]
+  /** Per-instrument sequence loss: the only signal here that counts MESSAGES lost rather than time
+   *  spent un-anchored. Absent on the top-of-book plane, whose rows carry no per-instrument
+   *  sequence. updates_received is the denominator. */
+  updates_received?: number
+  updates_missing?: number
+  seq_gap_events?: number
+  max_gap_messages?: number
+  p99_gap_messages?: number
   resets: number
   snapshot_cycles: number
   last_seen: string
