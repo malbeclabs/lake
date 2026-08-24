@@ -33,7 +33,8 @@ import (
 //
 // v2: `gaps` split into `gap_messages`/`gap_books`, `messages` added.
 // v3: `publisher_source_ip` added, and the lane grain is the channel instance with it.
-const kalshiL2CoverageCacheKey = "kalshi_l2_coverage:v3"
+// v4: `gap_episodes` added, the per-instance loss timeline.
+const kalshiL2CoverageCacheKey = "kalshi_l2_coverage:v4"
 
 // kalshiL2WindowMinutes is the interval the rates are averaged over. Rates are derived from
 // it, so changing it changes nothing about correctness.
@@ -45,6 +46,68 @@ const kalshiL2CoverageCacheKey = "kalshi_l2_coverage:v3"
 // fifteen-minute question, over a remoteSecure() proxy. That is why this view is owned by the
 // background refresher and served from cache rather than run per request.
 const kalshiL2WindowMinutes = 15
+
+// kalshiL2GapSecondsCap bounds the array groupUniqArray builds per channel instance. One entry
+// per WHOLE SECOND in which the instance recorded a gap-marked message, so the window's own
+// second count is the true ceiling rather than an arbitrary truncation: a path losing data for
+// every second of the window fills it exactly and drops nothing.
+const kalshiL2GapSecondsCap = kalshiL2WindowMinutes * 60
+
+// KalshiL2GapEpisode is one contiguous run of seconds in which a channel instance recorded
+// gap-marked messages: when the loss started and how long it went on.
+//
+// This is the unit a timeline has to be drawn in, and neither counter on the lane can stand in
+// for it. GapMessages is a duration that scales with traffic (see KalshiL2Lane). GapBooks
+// SATURATES: perps carries 13 instruments and a lost datagram on the delta port un-anchors most
+// of them at once, so it pins at 13/13 after a single episode and reads as total failure where
+// the truth was ~10 losses of 3-8 seconds each. Measured 2026-08-24 on mainnet. Feeds with
+// hundreds of instruments do not saturate, which is exactly why the count cannot be compared
+// across feeds and the episode can.
+//
+// The (start, seconds) run encoding is LOSSLESS over whole seconds — the set it came from is
+// recoverable by expanding each run. That is deliberate: asking "were BOTH paths of this feed
+// losing in the same second", the only question whose answer means the feed itself lost data,
+// is an intersection over those sets, and it stays computable from the cached payload without
+// going back to the table.
+type KalshiL2GapEpisode struct {
+	// Start is the first second of the run, Unix seconds UTC. Not a formatted time: the
+	// consumer draws it on an axis, and the payload's own window is the frame.
+	Start int64 `json:"start"`
+
+	// Seconds is the run length, never zero — a one-second episode is {Start, 1}.
+	Seconds uint32 `json:"seconds"`
+}
+
+// collapseKalshiL2GapSeconds folds a set of seconds into contiguous runs.
+//
+// It sorts in place: groupUniqArray returns no order, and two adjacent seconds that arrive
+// apart would otherwise become two episodes instead of one. Duplicates are tolerated rather
+// than assumed away — the aggregate dedups today, and a caller that changes to groupArray
+// should not silently start emitting zero-length runs.
+func collapseKalshiL2GapSeconds(secs []uint32) []KalshiL2GapEpisode {
+	if len(secs) == 0 {
+		return nil
+	}
+	sort.Slice(secs, func(i, j int) bool { return secs[i] < secs[j] })
+
+	out := make([]KalshiL2GapEpisode, 0, 8)
+	start, prev := secs[0], secs[0]
+	flush := func() {
+		out = append(out, KalshiL2GapEpisode{Start: int64(start), Seconds: prev - start + 1})
+	}
+	for _, s := range secs[1:] {
+		switch {
+		case s == prev:
+		case s == prev+1:
+			prev = s
+		default:
+			flush()
+			start, prev = s, s
+		}
+	}
+	flush()
+	return out
+}
 
 // kalshiL2Lane describes a known market-by-price source. Order here is display order.
 //
@@ -180,6 +243,11 @@ type KalshiL2Lane struct {
 	Clears         uint64 `json:"clears"`
 	SnapshotCycles uint64 `json:"snapshot_cycles"`
 
+	// GapEpisodes is the same loss, on a time axis: the contiguous runs of seconds this
+	// instance was recording gap-marked messages. Empty on a clean instance, and empty on an
+	// unseen one — see KalshiL2GapEpisode for why the counters above cannot be drawn instead.
+	GapEpisodes []KalshiL2GapEpisode `json:"gap_episodes,omitempty"`
+
 	// Seen reports whether this lane produced any message inside the coverage window. A
 	// configured lane that has gone silent is reported with Seen=false and zeroed stats
 	// rather than being omitted — see the roster merge in FetchKalshiL2Coverage.
@@ -279,13 +347,19 @@ func (a *API) FetchKalshiL2Coverage(ctx context.Context) (*KalshiL2CoverageRespo
 			-- Distinct books affected, which is what the page shows. instrument_id is unique
 			-- only within a channel and this groups by channel, so the count is well defined.
 			uniqCombinedIf(instrument_id, status_after = 'gap') AS gap_books,
+			-- The same loss on a time axis, sparse: one entry per whole second that carried a
+			-- gap-marked message. One more aggregate over rows this query already scans, so it
+			-- adds no scan and no round trip — measured at 1.8s for every source on mainnet,
+			-- against 3.8s for the top-of-book leg that runs beside it. Sparse because loss is
+			-- rare: the worst instance on the fleet held 89 of 900 seconds.
+			groupUniqArrayIf(%[3]d)(toUInt32(intDiv(recv_ts_ns, 1000000000)), status_after = 'gap') AS gap_seconds,
 			countIf(msg_type = 'instrument_reset') AS resets,
 			countIf(msg_type = 'book_clear') AS clears,
 			countIf(msg_type = 'snapshot_end') AS snapshot_cycles,
 			max(recv_ts_ns) AS last_recv_ts_ns
 		FROM %[1]s.kalshi_mbp_levels
 		WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(%[2]d)))
-		GROUP BY source, channel_id, publisher_source_ip, measurement_node_id`, db, kalshiL2WindowMinutes)
+		GROUP BY source, channel_id, publisher_source_ip, measurement_node_id`, db, kalshiL2WindowMinutes, kalshiL2GapSecondsCap)
 
 	rows, err := a.envDB(ctx).Query(ctx, q)
 	if err != nil {
@@ -304,15 +378,17 @@ func (a *API) FetchKalshiL2Coverage(ctx context.Context) (*KalshiL2CoverageRespo
 		var l KalshiL2Lane
 		var levelUpdates uint64
 		var lastRecvNs uint64
+		var gapSeconds []uint32
 		if err := rows.Scan(
 			&l.Source, &l.ChannelID, &l.PublisherSourceIP, &l.MeasurementNodeID, &l.LocationCode,
 			&l.Messages, &levelUpdates, &l.Instruments,
 			&l.DepthP50, &l.DepthP95, &l.DepthMax,
-			&l.GapMessages, &l.GapBooks, &l.Resets, &l.Clears, &l.SnapshotCycles,
+			&l.GapMessages, &l.GapBooks, &gapSeconds, &l.Resets, &l.Clears, &l.SnapshotCycles,
 			&lastRecvNs,
 		); err != nil {
 			return nil, err
 		}
+		l.GapEpisodes = collapseKalshiL2GapSeconds(gapSeconds)
 		l.MessagesPerSec = float64(l.Messages) / windowSecs
 		l.LevelUpdatesPerSec = float64(levelUpdates) / windowSecs
 		l.LastSeen = time.Unix(0, int64(lastRecvNs)).UTC()
