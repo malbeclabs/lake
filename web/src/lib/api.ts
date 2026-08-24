@@ -7666,6 +7666,8 @@ export interface KalshiFeedLatency {
 }
 
 export interface KalshiPathLatency {
+  /** Sample count below which a row's percentiles are withheld and its count shown instead. */
+  min_samples: number
   window: string
   feeds: KalshiFeedLatency[]
   generated_at: string
@@ -7677,6 +7679,8 @@ export interface KalshiScoreboardResponse {
   generated_at: string
   dz_win_share_pct: number
   total_races: number
+  /** Race count below which a win share or lead is withheld and the count shown instead. */
+  min_races: number
   competitors: KalshiCompetitor[]
   nodes: KalshiNode[]
   recent_races: KalshiRace[]
