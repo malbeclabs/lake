@@ -133,3 +133,54 @@ func TestFetchEdgeMulticastObservations_WindowBounded(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, resp.Series)
 }
+
+// Every recorder of a path gets a row, including one that recorded everything its peers did.
+//
+// This is the case the obvious query drops. Emitting only nodes that lost something leaves the
+// clean line out, and the clean line IS the comparison: "was lost 267" means nothing without
+// "cmh lost 0" beside it, and a window where one node alone lost anything would render no
+// comparison at all.
+func TestEdgeMulticastRecorderLossQuery_CleanRecorderStillGetsARow(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createKalshiObservationsTable(t, api)
+
+	const group, pub = "233.84.178.3", "148.51.121.69"
+	// cmh records all three. was misses the middle one.
+	for _, seq := range []uint64{100, 101, 102} {
+		insertBBOObservation(t, api, "cmh-rec1", "tob_edge_kalshi_perps", group, pub, 1, seq, 0, 30)
+	}
+	insertBBOObservation(t, api, "was-rec1", "tob_edge_kalshi_perps", group, pub, 1, 100, 0, 30)
+	insertBBOObservation(t, api, "was-rec1", "tob_edge_kalshi_perps", group, pub, 1, 102, 0, 30)
+
+	resp, err := api.FetchEdgeMulticastObservations(t.Context())
+	require.NoError(t, err)
+
+	byNode := map[string]handlers.EdgeMulticastRecorderLossSeries{}
+	for _, s := range resp.RecorderLoss {
+		byNode[s.Node] = s
+	}
+	require.Len(t, byNode, 2, "both recorders, not only the one that lost")
+
+	assert.EqualValues(t, 1, byNode["was-rec1"].Missing, "sequence 101")
+	assert.EqualValues(t, 3, byNode["was-rec1"].ReferenceSeqs, "the union of what the two recorded")
+	assert.Len(t, byNode["was-rec1"].Episodes, 1)
+
+	assert.EqualValues(t, 0, byNode["cmh-rec1"].Missing, "it recorded everything")
+	assert.Empty(t, byNode["cmh-rec1"].Episodes)
+	assert.EqualValues(t, 3, byNode["cmh-rec1"].ReferenceSeqs)
+}
+
+// A path with one recorder has no peer to be measured against, so it produces nothing at all —
+// every hole in its numbering is the top-of-book plane's own legitimate hole, not a loss.
+func TestEdgeMulticastRecorderLossQuery_LoneRecorderProducesNothing(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createKalshiObservationsTable(t, api)
+
+	for _, seq := range []uint64{100, 105, 110} {
+		insertBBOObservation(t, api, "cmh-rec1", "tob_edge_kalshi_sports_nfl", "233.84.178.17", "148.51.120.152", 2, seq, 0, 30)
+	}
+
+	resp, err := api.FetchEdgeMulticastObservations(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, resp.RecorderLoss, "no peer, no reference, no claim")
+}

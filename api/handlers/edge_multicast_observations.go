@@ -143,10 +143,15 @@ const edgeMulticastRecorderLossCap = edgeMulticastObservationsWindowMinutes * 60
 // fetchEdgeMulticastRecorderLoss measures each recording node against its peers on the same path.
 //
 // The shape is a three-step: collapse to one row per (path, sequence) carrying which nodes saw it,
-// derive each path's node universe from that, then emit one row per node that is missing from a
-// sequence its peers recorded. The universe is derived rather than configured because it has to be
-// what actually records this path today — a node added or removed is then a fact about the data
-// rather than a deploy.
+// derive each path's node universe from that, then emit one row per node of that universe. The
+// universe is derived rather than configured because it has to be what actually records this path
+// today — a node added or removed is then a fact about the data rather than a deploy.
+//
+// EVERY node gets a row, including one that recorded everything its peers did. Emitting only the
+// nodes that lost something is the obvious query and it breaks the display: the clean line is the
+// whole comparison. A reader looking at "was lost 267" needs "cmh lost 0" beside it to conclude the
+// loss is was's branch — without it the row is just a number with nothing to be worse than, and a
+// window in which one node alone lost anything would render no comparison at all.
 //
 // A path recorded at ONE node produces nothing at all, which is correct and not a gap in coverage:
 // with no peer there is no reference, and every hole in its numbering is the plane's own legitimate
@@ -183,15 +188,16 @@ func (a *API) fetchEdgeMulticastRecorderLoss(ctx context.Context) ([]EdgeMultica
 			p.channel_id,
 			node,
 			any(p.location_code) AS location_code,
-			count() AS missing,
+			countIf(NOT has(p.nodes, node)) AS missing,
 			any(u.reference_seqs) AS reference_seqs,
-			groupUniqArray(%[4]d)(toUInt32(intDiv(p.first_recv, 1000000000))) AS seconds
+			groupUniqArrayIf(%[4]d)(toUInt32(intDiv(p.first_recv, 1000000000)), NOT has(p.nodes, node)) AS seconds
 		FROM per_seq AS p
 		INNER JOIN universe AS u
 			ON p.multicast_group = u.multicast_group
 			AND p.publisher_source_ip = u.publisher_source_ip
 			AND p.channel_id = u.channel_id
-		ARRAY JOIN arrayFilter(x -> NOT has(p.nodes, x), u.all_nodes) AS node
+		ARRAY JOIN u.all_nodes AS node
+		WHERE length(u.all_nodes) > 1
 		GROUP BY p.multicast_group, p.publisher_source_ip, p.channel_id, node`,
 		db, edgeMulticastObservationsWindowMinutes, edgeMulticastTOBSourcePrefix, edgeMulticastRecorderLossCap)
 
