@@ -15,6 +15,7 @@ import {
   type EdgeMulticastPathParity,
   type EdgeMulticastPublisher,
   type EdgeMulticastPublisherVerdicts,
+  type EdgeMulticastRecorderCoverage,
   type EdgeMulticastSequenceHealth,
   type EdgeMulticastService,
 } from '@/lib/api'
@@ -841,6 +842,35 @@ function RateCell({ bps, ambiguous, stale }: { bps: number; ambiguous: boolean; 
   )
 }
 
+// The one finding on this page that belongs to no publisher line: a recording node that is short
+// on every path of a group is the vantage, not the feed.
+//
+// It sits on the group row for exactly the reason the publisher verdicts do not — a per-line badge
+// would have to repeat the same node fault on every line of the group, naming the feed for
+// something the feed did not do. This is what 'skewed' was always trying to say on the counter
+// plane, said where the numbers are exact: recorded message counts against the best-placed
+// recorder, rather than sample counts against half the median.
+function RecorderCoverageBadge({ coverage }: { coverage?: EdgeMulticastRecorderCoverage }) {
+  const lagging = coverage?.lagging ?? []
+  if (!coverage || lagging.length === 0) return null
+  const detail = lagging
+    .map(
+      (l) =>
+        `${l.node}: ${(l.worst_ratio * 100).toFixed(1)}% of the best-placed recorder${l.worst_source ? ` on ${l.worst_source}` : ''}, behind on ${l.behind} of ${l.compared} compared`,
+    )
+    .concat(
+      'Short on every path of this group it records, so this is the recorder or its last hop rather than one publisher’s path — a deficit confined to one path is reported as Peer on that line instead.',
+    )
+    .join('\n')
+  return (
+    <Tooltip content={detail} className="whitespace-pre-line">
+      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/15 text-amber-500">
+        {lagging.length}/{coverage.nodes} recorders
+      </span>
+    </Tooltip>
+  )
+}
+
 // A group's publisher lines are open by default while the whole published set fits on screen —
 // the market-data feeds have two publishers and that IS the view someone opens this page for. The
 // shreds groups have hundreds, so they start collapsed rather than burying every other row.
@@ -941,8 +971,10 @@ function GroupRow({
         </td>
       )}
       <td className="px-3 py-3 text-sm">
-        {/* The row click opens the group; this keeps the direct route to its reconciliation
-            view, which is the drill-down the verdict used to hang off. */}
+        {/* The receiver-side badge and the reconciliation link share this cell. The group verdict
+            that used to live here was a worst-of over every publisher and named nobody, which is
+            why it went; this one names a recorder, which no line can. */}
+        <RecorderCoverageBadge coverage={group.recorder_coverage} />{' '}
         <Link
           to={`/dz/multicast-groups/${group.pk}?tab=health`}
           state={EDGE_MULTICAST_BACK}

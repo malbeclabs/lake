@@ -387,8 +387,27 @@ sources a sports node compares. Under the floor the pair records nothing, not a 
 This is the check that reaches what capture-node parity cannot. That one needs two recorders
 (`edgeMulticastMinParityNodes`) and the sports capture runs on one, so it is inert on every sports
 group; and where it can fire, its floor is half the median against a real fault of 0.3%. It is
-still the only recorder-side signal, so it stays — but it no longer paints anything, since the
-group verdict it feeds is not rendered.
+still the only recorder-side signal ON THE COUNTER PLANE, so it stays — but it no longer paints
+anything, since the group verdict it feeds is not rendered.
+
+**The rendered recorder-side signal is `recorder_coverage`**, computed by `edgeMulticastNodeCoverage`
+on the observations plane, where the counts are exact. It is the transpose of path parity — that one
+fixes the vantage and compares the paths, this one fixes the path and compares the vantages — and
+the pair is what makes either result attributable: a deficit in both is a path short at one
+recorder, a deficit only in this one is the recorder. It sits on the **group row**, in the cell that
+carries the reconcile link, for the reason the publisher verdicts do not: a node short on every path
+is a statement about the vantage, and no line owns it. That is what `skewed` was always trying to
+say.
+
+Two things bound it. A node is listed only when it is behind on **every path of the group it
+records** — a deficit confined to one path IS that path's finding and `Peer` already carries it on
+that line, so repeating it here would name the recorder for what a publisher's branch did. And
+`edgeMulticastNodeCoverageFloor` is 0.95, looser than the path floor and not by taste: the window is
+fifteen minutes with no exclusion of its trailing edge and every node is filtered by one clock, so a
+recorder whose ingest lags reads as a deficit of exactly that lag — at 0.98 an eighteen-second lag
+would report as loss. Measured on mainnet, two healthy recorders of one feed agreed to 0.1% over a
+minute while the one genuinely dropping sat at 0.915 in every minute of the window, so the floor has
+room to work in.
 
 The two checks behind it, both in `api/handlers/edge_multicast_publishers.go`, are not an
 "is anyone sending" rollup:

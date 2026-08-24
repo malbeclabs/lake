@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 
 	"github.com/malbeclabs/lake/api/metrics"
@@ -319,6 +320,175 @@ func edgeMulticastPathParity(series []EdgeMulticastObservationSeries, captureSou
 	return out
 }
 
+// EdgeMulticastRecorderCoverage is the group's recording nodes measured against each other: how
+// many there are, and which of them are recording less of the feed than the best-placed one.
+//
+// This is the receiver-side statement, and it belongs to the group rather than to any publisher
+// line — a node that is short on every path is the vantage, not the feed, and no single path owns
+// that fact. It is the same thing capture-node parity says on the counter plane, computed where
+// the numbers are exact instead: recorded message counts per node, rather than sample counts
+// against half the median.
+type EdgeMulticastRecorderCoverage struct {
+	// Nodes is how many recording nodes wrote anything for this group in the window.
+	Nodes int `json:"nodes"`
+
+	// Lagging is worst-first, and empty when every node keeps up. A node with nothing to be
+	// compared against is absent from it rather than counted as passing.
+	Lagging []EdgeMulticastLaggingRecorder `json:"lagging,omitempty"`
+}
+
+// EdgeMulticastLaggingRecorder is one recording node against the best-placed one.
+type EdgeMulticastLaggingRecorder struct {
+	Node string `json:"node"`
+
+	// WorstRatio is its worst showing across the instances it was compared on, and
+	// Behind/Compared how many of those it failed. One bad capture source out of thirty is a
+	// different call to action from thirty out of thirty.
+	WorstRatio  float64 `json:"worst_ratio"`
+	Behind      int     `json:"behind"`
+	Compared    int     `json:"compared"`
+	WorstSource string  `json:"worst_source,omitempty"`
+}
+
+// edgeMulticastNodeCoverageFloor is how far below the best-placed recorder a recording node may sit
+// before the group says so.
+//
+// Looser than the path floor, and not by taste. The window is fifteen minutes with no exclusion of
+// its trailing edge and every node's rows are filtered by one clock, so a recorder whose ingest
+// lags reads as a deficit of exactly that lag — at 0.98 an eighteen-second lag would report as
+// loss. Five percent buys about forty-five seconds of it, and the floor still has room to work in:
+// measured on mainnet two healthy recorders of one feed agreed to 0.1% over a minute (17,020
+// against 17,020) while the one that was genuinely dropping sat at 0.915 sustained across every
+// minute of the window.
+const edgeMulticastNodeCoverageFloor = 0.95
+
+// edgeMulticastNodeCoverageKey addresses one recorded instance every node should see identically:
+// one capture source carried by one publisher path. It is the transpose of the path-parity key —
+// that one fixes the vantage and compares the paths, this one fixes the path and compares the
+// vantages — and the pair of them is why either result can be attributed at all. A deficit that
+// shows up in both is a path that is short at one recorder; a deficit only here is the recorder.
+type edgeMulticastNodeCoverageKey struct {
+	source string
+	path   edgeMulticastPathKey
+}
+
+// edgeMulticastNodeCoverage measures every recording node against its peers, per group.
+//
+// Same shape as edgeMulticastPathParity and the same three refusals: a node absent from an
+// instance is not compared rather than counted behind, an instance with one node records nothing
+// either way, and an instance under the message floor is skipped so a handful of messages cannot
+// mint a ratio. Compared against the BEST node for the same reason: the question is whether
+// anything recorded more of this feed than I did, and a mean sinks with the faulty node.
+func edgeMulticastNodeCoverage(series []EdgeMulticastObservationSeries, captureSources edgeMulticastCaptureSourceMap) map[string]*EdgeMulticastRecorderCoverage {
+	byInstance := map[edgeMulticastNodeCoverageKey]map[string]uint64{}
+	nodesPerGroup := map[string]map[string]struct{}{}
+	for _, s := range series {
+		if s.PublisherSourceIP == "" || s.Node == "" {
+			continue
+		}
+		groupPK := edgeMulticastSeriesGroup(s, captureSources)
+		if groupPK == "" {
+			continue
+		}
+		if nodesPerGroup[groupPK] == nil {
+			nodesPerGroup[groupPK] = map[string]struct{}{}
+		}
+		nodesPerGroup[groupPK][s.Node] = struct{}{}
+
+		key := edgeMulticastNodeCoverageKey{
+			source: s.Source,
+			path:   edgeMulticastPathKey{groupPK: groupPK, ip: s.PublisherSourceIP},
+		}
+		if byInstance[key] == nil {
+			byInstance[key] = map[string]uint64{}
+		}
+		// Summed across channels, the same fold the path check makes: one node records all of
+		// them and a per-channel split would compare a node against itself.
+		byInstance[key][s.Node] += s.Messages
+	}
+
+	// The paths are tracked as sets and not just counted, because the claim this makes is not
+	// "behind somewhere" — it is "behind on everything of this group it records", which is what
+	// separates a bad vantage from a bad path. A deficit confined to one path IS the path's
+	// finding and Peer already carries it on that line; repeating it here as a node fault would
+	// name the recorder for something a publisher did.
+	type nodeTally struct {
+		worstRatio    float64
+		worstSource   string
+		behind        int
+		compared      int
+		comparedPaths map[string]struct{}
+		behindPaths   map[string]struct{}
+	}
+	tallies := map[string]map[string]*nodeTally{}
+	for key, nodes := range byInstance {
+		if len(nodes) < 2 {
+			continue
+		}
+		var best uint64
+		for _, messages := range nodes {
+			if messages > best {
+				best = messages
+			}
+		}
+		if best < edgeMulticastPathParityMinMessages {
+			continue
+		}
+		for node, messages := range nodes {
+			if tallies[key.path.groupPK] == nil {
+				tallies[key.path.groupPK] = map[string]*nodeTally{}
+			}
+			t := tallies[key.path.groupPK][node]
+			if t == nil {
+				t = &nodeTally{
+					worstRatio:    1,
+					comparedPaths: map[string]struct{}{},
+					behindPaths:   map[string]struct{}{},
+				}
+				tallies[key.path.groupPK][node] = t
+			}
+			ratio := float64(messages) / float64(best)
+			t.compared++
+			t.comparedPaths[key.path.ip] = struct{}{}
+			if ratio < edgeMulticastNodeCoverageFloor {
+				t.behind++
+				t.behindPaths[key.path.ip] = struct{}{}
+			}
+			if ratio < t.worstRatio {
+				t.worstRatio = ratio
+				t.worstSource = key.source
+			}
+		}
+	}
+
+	out := map[string]*EdgeMulticastRecorderCoverage{}
+	for groupPK, nodes := range nodesPerGroup {
+		cov := &EdgeMulticastRecorderCoverage{Nodes: len(nodes)}
+		for node, t := range tallies[groupPK] {
+			if len(t.behindPaths) == 0 || len(t.behindPaths) != len(t.comparedPaths) {
+				continue
+			}
+			cov.Lagging = append(cov.Lagging, EdgeMulticastLaggingRecorder{
+				Node:        node,
+				WorstRatio:  t.worstRatio,
+				Behind:      t.behind,
+				Compared:    t.compared,
+				WorstSource: t.worstSource,
+			})
+		}
+		// Worst-first, then by name: the payload is polled every 30s and a list that reorders
+		// itself under the reader is its own bug.
+		sort.Slice(cov.Lagging, func(i, j int) bool {
+			if cov.Lagging[i].WorstRatio != cov.Lagging[j].WorstRatio {
+				return cov.Lagging[i].WorstRatio < cov.Lagging[j].WorstRatio
+			}
+			return cov.Lagging[i].Node < cov.Lagging[j].Node
+		})
+		out[groupPK] = cov
+	}
+	return out
+}
+
 // edgeMulticastSeriesGroup resolves one recorded series to its group: the destination address the
 // datagrams carried, with the capture source name as the fallback for a recorder payload that
 // predates raw_meta carrying the address. Same precedence as the sequence fold.
@@ -393,17 +563,28 @@ func edgeMulticastPathRates(series []EdgeMulticastObservationSeries, captureSour
 // separate stamp from SequenceAsOf on purpose: that one is the OLDER of the two sequence legs, so
 // borrowing it would let the market-by-price leg's staleness grey out figures it has nothing to
 // do with.
-func (a *API) edgeMulticastObservationStats(ctx context.Context, captureSources edgeMulticastCaptureSourceMap) (map[edgeMulticastPathKey]*EdgeMulticastPathParity, map[edgeMulticastPathKey]float64, time.Time) {
+func (a *API) edgeMulticastObservationStats(ctx context.Context, captureSources edgeMulticastCaptureSourceMap) (edgeMulticastObservationStatsResult, time.Time) {
 	data, err := a.readPageCache(ctx, edgeMulticastObservationsCacheKey)
 	if err != nil {
-		return nil, nil, time.Time{}
+		return edgeMulticastObservationStatsResult{}, time.Time{}
 	}
 	var payload EdgeMulticastObservationsResponse
 	if err := json.Unmarshal(data, &payload); err != nil {
 		slog.Warn("edge multicast observation stats: cache did not parse", "error", err)
-		return nil, nil, time.Time{}
+		return edgeMulticastObservationStatsResult{}, time.Time{}
 	}
-	return edgeMulticastPathParity(payload.Series, captureSources),
-		edgeMulticastPathRates(payload.Series, captureSources, payload.WindowMinutes),
-		payload.GeneratedAt.UTC()
+	return edgeMulticastObservationStatsResult{
+		parity:   edgeMulticastPathParity(payload.Series, captureSources),
+		rates:    edgeMulticastPathRates(payload.Series, captureSources, payload.WindowMinutes),
+		recorder: edgeMulticastNodeCoverage(payload.Series, captureSources),
+	}, payload.GeneratedAt.UTC()
+}
+
+// edgeMulticastObservationStatsResult is what one read of the observations payload yields: the
+// path check, the recorded rate, and the recorder check. Grouped into a struct because they are
+// three views of one cache entry and returning them separately grew a signature nobody could read.
+type edgeMulticastObservationStatsResult struct {
+	parity   map[edgeMulticastPathKey]*EdgeMulticastPathParity
+	rates    map[edgeMulticastPathKey]float64
+	recorder map[string]*EdgeMulticastRecorderCoverage
 }

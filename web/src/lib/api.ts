@@ -7907,6 +7907,24 @@ export interface EdgeMulticastPublisherVerdicts {
   unknown: number
 }
 
+/** One recording node measured against the best-placed one on the same instances. */
+export interface EdgeMulticastLaggingRecorder {
+  node: string
+  /** Its worst showing across the instances it was compared on. */
+  worst_ratio: number
+  behind: number
+  compared: number
+  worst_source?: string
+}
+
+/** The group's recording nodes against each other — the receiver-side finding, which belongs to
+ *  the group because a node short on every path is a statement about the vantage, not the feed.
+ *  Absent when nothing is behind, or when fewer than two nodes recorded the group. */
+export interface EdgeMulticastRecorderCoverage {
+  nodes: number
+  lagging?: EdgeMulticastLaggingRecorder[]
+}
+
 export interface EdgeMulticastGroup {
   pk: string
   code: string
@@ -7929,6 +7947,8 @@ export interface EdgeMulticastGroup {
   publishers_below_floor: number
   /** Publishers measured at or above the floor. */
   publishers_publishing: number
+  /** Recording nodes of this group that are behind the best-placed one. Absent when none are. */
+  recorder_coverage?: EdgeMulticastRecorderCoverage
   /** Per-node application-plane view; absent for a group no capture covers. */
   capture_nodes?: EdgeMulticastCaptureNode[]
   capture_nodes_lagging?: number

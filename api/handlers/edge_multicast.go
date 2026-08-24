@@ -240,6 +240,13 @@ type EdgeMulticastGroup struct {
 	// otherwise have nowhere to be reported. See edge_multicast_sequence.go.
 	Sequence *EdgeMulticastSequenceHealth `json:"sequence,omitempty"`
 
+	// RecorderCoverage is the group's recording nodes measured against each other, present only
+	// when one of them is behind. It is the receiver-side finding, and it is on the group for the
+	// reason the publisher verdicts are not: a node short on every path is a statement about the
+	// vantage, and no path owns it. Nil where fewer than two nodes recorded the group, which is
+	// no comparison rather than a pass. See edge_multicast_observations.go.
+	RecorderCoverage *EdgeMulticastRecorderCoverage `json:"recorder_coverage,omitempty"`
+
 	// IngressBps is the sum of the publishers' measured receive rate at their tunnels — what
 	// the network is taking in for this group. EgressBps is the sum over subscribers of what
 	// their tunnels send out. Both are upper bounds when TrafficAmbiguous is set.
@@ -486,8 +493,7 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 	// describe another — and it costs testnet nothing it has data for.
 	var sequence map[string]*EdgeMulticastSequenceHealth
 	var sequenceAsOf time.Time
-	var pathParity map[edgeMulticastPathKey]*EdgeMulticastPathParity
-	var pathRates map[edgeMulticastPathKey]float64
+	var observations edgeMulticastObservationStatsResult
 	var observationsAsOf time.Time
 	if isMainnet(ctx) {
 		var err error
@@ -500,7 +506,7 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 		// Path parity and the recorded message rate come out of the same cached payload the
 		// top-of-book series do, so they cost no query either, and a miss costs the checks
 		// rather than the page.
-		pathParity, pathRates, observationsAsOf = a.edgeMulticastObservationStats(ctx, captureSources)
+		observations, observationsAsOf = a.edgeMulticastObservationStats(ctx, captureSources)
 	}
 
 	// The device-side BGP session. One round trip for the fleet, and an absent telemetry mirror
@@ -538,7 +544,7 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 
 	byService := map[string][]EdgeMulticastGroup{}
 	for _, g := range groups {
-		row := buildEdgeMulticastGroup(g, membership[g.PK], rates[g.PK], lastHeard[g.PK], publisherLines[g.PK], sequence[g.PK], pathParity, pathRates, bgpSessions, bgpRtt)
+		row := buildEdgeMulticastGroup(g, membership[g.PK], rates[g.PK], lastHeard[g.PK], publisherLines[g.PK], sequence[g.PK], observations, bgpSessions, bgpRtt)
 		codes := feeds.byGroup[g.PK]
 		if len(codes) == 0 {
 			codes = []string{edgeMulticastUnclaimedService}
@@ -577,7 +583,7 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 // the remainder rather than read: a member the view dropped (no health row at all) is exactly
 // as unknown as one it marked 'no_data', and folding both into the remainder keeps the parts
 // summing to Total whatever the view does.
-func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership, r edgeMulticastRates, lh edgeMulticastLastHeard, lines []EdgeMulticastPublisher, sequence *EdgeMulticastSequenceHealth, pathParity map[edgeMulticastPathKey]*EdgeMulticastPathParity, pathRates map[edgeMulticastPathKey]float64, bgpSessions map[edgeMulticastBGPKey]EdgeMulticastBGPSession, bgpRtt map[string]EdgeMulticastBGPRtt) EdgeMulticastGroup {
+func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership, r edgeMulticastRates, lh edgeMulticastLastHeard, lines []EdgeMulticastPublisher, sequence *EdgeMulticastSequenceHealth, observations edgeMulticastObservationStatsResult, bgpSessions map[edgeMulticastBGPKey]EdgeMulticastBGPSession, bgpRtt map[string]EdgeMulticastBGPRtt) EdgeMulticastGroup {
 	out := EdgeMulticastGroup{
 		PK:                   g.PK,
 		Code:                 g.Code,
@@ -596,6 +602,13 @@ func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership
 	}
 	out.Publishers.Unknown = max(0, out.Publishers.Total-out.Publishers.Active-out.Publishers.Idle)
 	out.Subscribers.Unknown = max(0, out.Subscribers.Total-out.Subscribers.Active-out.Subscribers.Idle)
+
+	// The receiver-side statement, on the row that owns it. A node short on every path of a group
+	// is the vantage rather than the feed, and no publisher line can carry that — the same reason
+	// 'skewed' never had a line to sit on.
+	if cov := observations.recorder[g.PK]; cov != nil && len(cov.Lagging) > 0 {
+		out.RecorderCoverage = cov
+	}
 
 	if !lh.at.IsZero() {
 		at := lh.at
@@ -636,8 +649,8 @@ func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership
 		}
 		if lines[i].DZIP != "" {
 			key := edgeMulticastPathKey{groupPK: g.PK, ip: lines[i].DZIP}
-			lines[i].PathParity = pathParity[key]
-			if rate, ok := pathRates[key]; ok {
+			lines[i].PathParity = observations.parity[key]
+			if rate, ok := observations.rates[key]; ok {
 				lines[i].MsgPerSec = &rate
 			}
 		}

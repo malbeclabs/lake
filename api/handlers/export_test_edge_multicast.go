@@ -71,3 +71,15 @@ func EdgeMulticastSequenceHealthForTest(instances []EdgeMulticastChannelInstance
 	finishEdgeMulticastSequenceHealth(health)
 	return health
 }
+
+// EdgeMulticastNodeCoverageForTest exposes the recorder-side check to the external test package,
+// keyed by group pk. Same shape as EdgeMulticastPathParityForTest and for the same reason: the
+// measurement is pure, and the pair of checks only means anything if each is pinned against the
+// case the other is meant to catch.
+func EdgeMulticastNodeCoverageForTest(groups []EdgeMulticastGroupForTest, series []EdgeMulticastObservationSeries) map[string]*EdgeMulticastRecorderCoverage {
+	catalog := make([]MulticastDeliveryGroup, 0, len(groups))
+	for _, g := range groups {
+		catalog = append(catalog, MulticastDeliveryGroup{PK: g.PK, Code: g.Code, MulticastIP: g.MulticastIP})
+	}
+	return edgeMulticastNodeCoverage(series, newEdgeMulticastCaptureSourceMap(catalog))
+}
