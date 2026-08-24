@@ -482,6 +482,20 @@ for top-of-book the way it does for market-by-price; it is not work this repo ca
 The cost of both legs is staleness, so `sequence_as_of` is in the payload — the **older** of the two
 legs — and the column ages against it. A cache miss costs that plane's rows, never the page.
 
+**Msg/s and Peer carry `observations_as_of`, a separate stamp, and it is not an accident.** They are
+folded from the observations cache entry, which has its own clock; `sequence_as_of` reports the
+older of the two *sequence* legs, so reading it there would dim two columns over the
+market-by-price leg's staleness — a payload they do not come from.
+`TestGetEdgeMulticast_ObservationsCarryTheirOwnAsOf` pins the pair.
+
+Past `STALE_AFTER_SECS` (15 minutes, against a refresher that runs every 10) the three folded
+columns say so: the header carries the age in amber and the values below it dim. Until that existed
+the age lived only inside the Sequence tooltip and nowhere at all for Msg/s and Peer, so a refresher
+that died left the page asserting a verdict indefinitely with no visible tell — `readPageCache` does
+not check `updated_at`, and the sequence folds do not use `readPageCacheWithAge`. An **absent** stamp
+is deliberately not staleness: that is a payload written before the API carried the clock, and
+dimming over it would invent the reading rather than report it.
+
 Both folded payloads are **mainnet only**, gated on `isMainnet(ctx)` in `FetchEdgeMulticastData`.
 The refresher runs with no environment in context, so it always computes mainnet, and the keys carry
 no environment either — while the group key they resolve through is the multicast address, and both

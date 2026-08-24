@@ -299,6 +299,7 @@ function PublisherLineRow({
   showSequence,
   showObservations,
   sequenceAsOfAge,
+  observationsAsOfAge,
   floorBps,
 }: {
   line: EdgeMulticastPublisher
@@ -308,6 +309,7 @@ function PublisherLineRow({
   showSequence: boolean
   showObservations: boolean
   sequenceAsOfAge?: number
+  observationsAsOfAge?: number
   floorBps: number
 }) {
   const age = ageSecs(line.observed_at, asOf)
@@ -399,12 +401,12 @@ function PublisherLineRow({
       </td>
       {showObservations && (
         <td className="px-3 py-1.5 text-right whitespace-nowrap">
-          <MsgRateCell msgPerSec={line.msg_per_sec} />
+          <MsgRateCell msgPerSec={line.msg_per_sec} asOfAge={observationsAsOfAge} />
         </td>
       )}
       {showObservations && (
         <td className="px-3 py-1.5 text-right whitespace-nowrap">
-          <PeerParityCell parity={line.path_parity} />
+          <PeerParityCell parity={line.path_parity} asOfAge={observationsAsOfAge} />
         </td>
       )}
       {/* "Heard" is per group — the recorders' own plane, with nothing to say about one
@@ -429,14 +431,53 @@ function PublisherLineRow({
 // a multi-group publisher shares across its groups. This is per group and comes from the far end,
 // so it is what arrived rather than what was sent, and it is blank for any feed with no recorder
 // behind it. Neither is redundant with the other.
-function MsgRateCell({ msgPerSec }: { msgPerSec?: number }) {
+// Msg/s, Peer and Sequence are folded from refresher payloads on a ten-minute cycle, so past
+// STALE_AFTER_SECS one of them has missed a cycle and what it shows is a reading nobody has
+// re-taken. Until this existed the age lived only inside the Sequence tooltip and nowhere at all
+// for the other two, so a dead refresher left the page asserting a verdict indefinitely with no
+// visible tell.
+//
+// An ABSENT stamp is not staleness. It is a payload written before the API carried that clock, and
+// dimming a column over it would be inventing the reading — the opposite of the point. That is why
+// this does not follow the rate cells' `age === undefined` rule: their undefined means "no bucket",
+// which IS the absence of a measurement.
+function payloadStale(asOfAge?: number): boolean {
+  return asOfAge !== undefined && asOfAge > STALE_AFTER_SECS
+}
+
+// The tail every one of those tooltips carries, so the number always says when it was taken.
+function computedLine(asOfAge?: number): string {
+  if (asOfAge === undefined) return ''
+  if (!payloadStale(asOfAge)) return ` — computed ${formatAge(asOfAge)}`
+  return ` — computed ${formatAge(asOfAge)}, past the ${Math.round(STALE_AFTER_SECS / 60)}-minute refresh cycle: nobody has re-taken this reading`
+}
+
+// A payload-level clock stamps a whole column at once, so the header is where it belongs — saying
+// it per row would repeat one fact on every line. The cells below dim, which is the same two-part
+// treatment the Ingress column already gives a rate bucket that missed its window.
+function ColumnHeader({ label, asOfAge }: { label: string; asOfAge?: number }) {
+  if (!payloadStale(asOfAge)) return <>{label}</>
+  return (
+    <Tooltip content={`this column is folded from a refresher payload computed ${formatAge(asOfAge!)}, past its ${Math.round(STALE_AFTER_SECS / 60)}-minute cycle — the numbers below are the last reading taken, not a current one`}>
+      <span className="text-amber-500">
+        {label} <span className="text-[10px] font-normal">{formatAge(asOfAge!)}</span>
+      </span>
+    </Tooltip>
+  )
+}
+
+function MsgRateCell({ msgPerSec, asOfAge }: { msgPerSec?: number; asOfAge?: number }) {
   if (msgPerSec === undefined) {
     return <span className="text-muted-foreground">—</span>
   }
   const text = msgPerSec >= 100 ? msgPerSec.toFixed(0) : msgPerSec.toFixed(1)
   return (
-    <Tooltip content="messages the recorders received from this path, per second over the observation window — per group, unlike the counter rate beside it">
-      <span className="tabular-nums text-muted-foreground">{text}</span>
+    <Tooltip
+      content={`messages the recorders received from this path, per second over the observation window — per group, unlike the counter rate beside it${computedLine(asOfAge)}`}
+    >
+      <span className={`tabular-nums text-muted-foreground${payloadStale(asOfAge) ? ' opacity-50' : ''}`}>
+        {text}
+      </span>
     </Tooltip>
   )
 }
@@ -447,7 +488,7 @@ function MsgRateCell({ msgPerSec }: { msgPerSec?: number }) {
 // is this path losing something its peer did not, and the eye should be able to scan the column
 // for a digit that is not a 1. An em dash means there was no peer to compare against, which is not
 // a pass.
-function PeerParityCell({ parity }: { parity?: EdgeMulticastPathParity }) {
+function PeerParityCell({ parity, asOfAge }: { parity?: EdgeMulticastPathParity; asOfAge?: number }) {
   if (!parity || parity.compared === 0) {
     return <span className="text-muted-foreground">—</span>
   }
@@ -455,12 +496,14 @@ function PeerParityCell({ parity }: { parity?: EdgeMulticastPathParity }) {
   return (
     <Tooltip
       content={
-        behind
+        (behind
           ? `behind its peer on ${parity.behind} of ${parity.compared} compared, worst ${parity.worst_source ?? ''}${parity.worst_node ? ` at ${parity.worst_node}` : ''}`
-          : `level with its peer across ${parity.compared} compared`
+          : `level with its peer across ${parity.compared} compared`) + computedLine(asOfAge)
       }
     >
-      <span className={`tabular-nums ${behind ? 'text-amber-500' : 'text-muted-foreground'}`}>
+      <span
+        className={`tabular-nums ${behind ? 'text-amber-500' : 'text-muted-foreground'}${payloadStale(asOfAge) ? ' opacity-50' : ''}`}
+      >
         {parity.worst_ratio.toFixed(3)}
       </span>
     </Tooltip>
@@ -689,10 +732,20 @@ function sequenceInstanceLine(i: EdgeMulticastChannelInstance): string {
 // The badge, shared by the group roll-up and the publisher lines. One instance per tooltip line:
 // these are the only tooltips on the page with a list in them, and run together as a paragraph
 // they are unreadable.
-function SequenceBadge({ status, count, detail }: { status: string; count: string; detail: string }) {
+function SequenceBadge({
+  status,
+  count,
+  detail,
+  stale,
+}: {
+  status: string
+  count: string
+  detail: string
+  stale?: boolean
+}) {
   return (
     <Tooltip content={detail} className="whitespace-pre-line">
-      <span className="inline-flex items-center gap-1.5">
+      <span className={`inline-flex items-center gap-1.5${stale ? ' opacity-50' : ''}`}>
         <span
           className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
             SEQUENCE_BADGE[status] ?? 'bg-muted text-muted-foreground'
@@ -731,7 +784,7 @@ function PublisherSequenceCell({
     quiet > 0
       ? `${quiet} of ${total} quiet at a capture source that went quiet on every path — not counted against this path`
       : '',
-    asOfAge === undefined ? '' : `computed ${formatAge(asOfAge)}`,
+    asOfAge === undefined ? '' : computedLine(asOfAge).replace(/^ — /, ''),
   ]
     .filter(Boolean)
     .join('\n')
@@ -744,6 +797,7 @@ function PublisherSequenceCell({
       // already says "over N of them" in the Heard column, so a count with no faults takes it.
       count={bad > 0 ? `${bad}/${total}` : total > 1 ? `×${total}` : ''}
       detail={detail}
+      stale={payloadStale(asOfAge)}
     />
   )
 }
@@ -800,6 +854,7 @@ function GroupRow({
   showSequence,
   showObservations,
   sequenceAsOfAge,
+  observationsAsOfAge,
   floorBps,
   columns,
   onOpen,
@@ -811,6 +866,7 @@ function GroupRow({
   showSequence: boolean
   showObservations: boolean
   sequenceAsOfAge?: number
+  observationsAsOfAge?: number
   floorBps: number
   columns: number
   onOpen: (e: React.MouseEvent, pk: string) => void
@@ -908,6 +964,7 @@ function GroupRow({
           showSequence={showSequence}
           showObservations={showObservations}
           sequenceAsOfAge={sequenceAsOfAge}
+          observationsAsOfAge={observationsAsOfAge}
           floorBps={floorBps}
         />
       ))}
@@ -932,6 +989,7 @@ function ServiceSection({
   showSequence,
   showObservations,
   sequenceAsOfAge,
+  observationsAsOfAge,
   floorBps,
   onOpen,
 }: {
@@ -942,6 +1000,7 @@ function ServiceSection({
   showSequence: boolean
   showObservations: boolean
   sequenceAsOfAge?: number
+  observationsAsOfAge?: number
   floorBps: number
   onOpen: (e: React.MouseEvent, pk: string) => void
 }) {
@@ -990,10 +1049,22 @@ function ServiceSection({
               <th className="px-3 py-2 font-medium">Publishers</th>
               <th className="px-3 py-2 font-medium">Subscribers</th>
               <th className="px-3 py-2 font-medium text-right">Ingress</th>
-              {showObservations && <th className="px-3 py-2 font-medium text-right">Msg/s</th>}
-              {showObservations && <th className="px-3 py-2 font-medium text-right">Peer</th>}
+              {showObservations && (
+                <th className="px-3 py-2 font-medium text-right">
+                  <ColumnHeader label="Msg/s" asOfAge={observationsAsOfAge} />
+                </th>
+              )}
+              {showObservations && (
+                <th className="px-3 py-2 font-medium text-right">
+                  <ColumnHeader label="Peer" asOfAge={observationsAsOfAge} />
+                </th>
+              )}
               {showLastHeard && <th className="px-3 py-2 font-medium text-right">Heard</th>}
-              {showSequence && <th className="px-3 py-2 font-medium">Sequence</th>}
+              {showSequence && (
+                <th className="px-3 py-2 font-medium">
+                  <ColumnHeader label="Sequence" asOfAge={sequenceAsOfAge} />
+                </th>
+              )}
               <th className="px-3 py-2 font-medium">Health</th>
             </tr>
           </thead>
@@ -1008,6 +1079,7 @@ function ServiceSection({
                 showSequence={showSequence}
                 showObservations={showObservations}
                 sequenceAsOfAge={sequenceAsOfAge}
+                observationsAsOfAge={observationsAsOfAge}
                 floorBps={floorBps}
                 columns={columns}
                 onOpen={onOpen}
@@ -1069,6 +1141,7 @@ export function EdgeMulticastPage() {
   // Read against wall clock, ticking: this measures how stale the refresher's cached numbers are,
   // which keeps ageing whether or not this page refetches.
   const sequenceAsOfAge = ageSecs(data?.sequence_as_of, now)
+  const observationsAsOfAge = ageSecs(data?.observations_as_of, now)
 
   const { groupCount, silentCount } = useMemo(() => {
     const services = data?.services ?? []
@@ -1144,6 +1217,7 @@ export function EdgeMulticastPage() {
               showSequence={showSequence}
               showObservations={showObservations}
               sequenceAsOfAge={sequenceAsOfAge}
+              observationsAsOfAge={observationsAsOfAge}
               floorBps={data?.publisher_floor_bps ?? 0}
               onOpen={onOpen}
             />

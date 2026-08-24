@@ -7974,6 +7974,9 @@ export interface EdgeMulticastResponse {
   /** When the sequence numbers were computed — up to ten minutes older than generated_at, since
    *  they are folded from the L2 coverage refresher's cache. Absent when no group has any. */
   sequence_as_of?: string
+  /** When the recorded message rate and the parity ratio were computed. A different cache entry
+   *  from the sequence legs, with its own clock, so those two columns age against this. */
+  observations_as_of?: string
   /** False when no capture table was queryable — the column is hidden rather than blank. */
   last_heard_available: boolean
   services: EdgeMulticastService[]

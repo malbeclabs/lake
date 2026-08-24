@@ -387,16 +387,23 @@ func edgeMulticastPathRates(series []EdgeMulticastObservationSeries, captureSour
 //
 // Nil maps on a miss or a shape mismatch, the same contract the sequence fold has — these signals
 // are additive to the page and must not be able to fail it.
-func (a *API) edgeMulticastObservationStats(ctx context.Context, captureSources edgeMulticastCaptureSourceMap) (map[edgeMulticastPathKey]*EdgeMulticastPathParity, map[edgeMulticastPathKey]float64) {
+// The payload's own clock comes back with it. Both figures it produces are as old as the refresher
+// left them, and the two columns they fill have to age against that rather than against the
+// response they are folded into — the same contract the sequence legs already carry. It is a
+// separate stamp from SequenceAsOf on purpose: that one is the OLDER of the two sequence legs, so
+// borrowing it would let the market-by-price leg's staleness grey out figures it has nothing to
+// do with.
+func (a *API) edgeMulticastObservationStats(ctx context.Context, captureSources edgeMulticastCaptureSourceMap) (map[edgeMulticastPathKey]*EdgeMulticastPathParity, map[edgeMulticastPathKey]float64, time.Time) {
 	data, err := a.readPageCache(ctx, edgeMulticastObservationsCacheKey)
 	if err != nil {
-		return nil, nil
+		return nil, nil, time.Time{}
 	}
 	var payload EdgeMulticastObservationsResponse
 	if err := json.Unmarshal(data, &payload); err != nil {
 		slog.Warn("edge multicast observation stats: cache did not parse", "error", err)
-		return nil, nil
+		return nil, nil, time.Time{}
 	}
 	return edgeMulticastPathParity(payload.Series, captureSources),
-		edgeMulticastPathRates(payload.Series, captureSources, payload.WindowMinutes)
+		edgeMulticastPathRates(payload.Series, captureSources, payload.WindowMinutes),
+		payload.GeneratedAt.UTC()
 }

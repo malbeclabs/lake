@@ -189,6 +189,35 @@ func TestGetEdgeMulticast_BothSequenceLegsFoldTogether(t *testing.T) {
 	require.NotNil(t, resp.SequenceAsOf, "one column, one as-of, taken from the older leg")
 }
 
+// The two folded payloads are separate cache entries with separate clocks, and the columns they
+// fill have to age against their own. SequenceAsOf is the OLDER of the two sequence legs, so if
+// Msg/s and Peer read it they would dim over the market-by-price leg's staleness — a payload they
+// do not come from and cannot be made stale by.
+func TestGetEdgeMulticast_ObservationsCarryTheirOwnAsOf(t *testing.T) {
+	api := tobTestAPI(t)
+	insertEdgeMulticastCapturePublisher3(t, api, "group-k")
+	fresh := time.Now().UTC()
+	lagging := fresh.Add(-30 * time.Minute)
+
+	seedL2Coverage(t, api, lagging, handlers.KalshiL2Lane{
+		Source: "mbp_edge_kalshi_sports_nfl", ChannelID: 1, MeasurementNodeID: "cmh-rec1",
+		PublisherSourceIP: "10.0.0.11", Messages: 900, Seen: true,
+		LastSeen: lagging.Add(-time.Second),
+	})
+	seedObservations(t, api, fresh, handlers.EdgeMulticastObservationSeries{
+		Source: "tob_edge_kalshi_sports_nfl", MulticastGroup: "233.0.0.12",
+		PublisherSourceIP: "10.0.0.9", ChannelID: 110, Node: "cmh-rec1",
+		Messages: 1200, LastSeen: fresh.Add(-time.Second),
+	})
+
+	resp := getEdgeMulticast(t, api)
+
+	require.NotNil(t, resp.SequenceAsOf)
+	assert.WithinDuration(t, lagging, *resp.SequenceAsOf, time.Second, "the older of the two sequence legs")
+	require.NotNil(t, resp.ObservationsAsOf)
+	assert.WithinDuration(t, fresh, *resp.ObservationsAsOf, time.Second, "its own clock, not the sequence roll-up's")
+}
+
 // insertEdgeMulticastCapturePublisher3 adds a publisher to a third group, so a test can exercise
 // both sequence legs at once without the two planes sharing a publisher line.
 func insertEdgeMulticastCapturePublisher3(t *testing.T, api *handlers.API, groupPK string) {

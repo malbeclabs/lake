@@ -348,6 +348,13 @@ type EdgeMulticastResponse struct {
 	// Carried so the column can age itself instead of borrowing this payload's freshness.
 	SequenceAsOf *time.Time `json:"sequence_as_of,omitempty"`
 
+	// ObservationsAsOf is the same for the recorded message rate and the parity ratio, which are
+	// folded from the observations refresher's own cache entry. Separate from SequenceAsOf
+	// because it is a different entry with a different clock, and because SequenceAsOf reports
+	// the older of the two sequence legs — reusing it would age these columns against a payload
+	// they do not come from.
+	ObservationsAsOf *time.Time `json:"observations_as_of,omitempty"`
+
 	Services []EdgeMulticastService `json:"services"`
 }
 
@@ -481,6 +488,7 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 	var sequenceAsOf time.Time
 	var pathParity map[edgeMulticastPathKey]*EdgeMulticastPathParity
 	var pathRates map[edgeMulticastPathKey]float64
+	var observationsAsOf time.Time
 	if isMainnet(ctx) {
 		var err error
 		sequence, sequenceAsOf, err = a.edgeMulticastSequenceHealth(ctx, captureSources)
@@ -492,7 +500,7 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 		// Path parity and the recorded message rate come out of the same cached payload the
 		// top-of-book series do, so they cost no query either, and a miss costs the checks
 		// rather than the page.
-		pathParity, pathRates = a.edgeMulticastObservationStats(ctx, captureSources)
+		pathParity, pathRates, observationsAsOf = a.edgeMulticastObservationStats(ctx, captureSources)
 	}
 
 	// The device-side BGP session. One round trip for the fleet, and an absent telemetry mirror
@@ -522,6 +530,10 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 	if !sequenceAsOf.IsZero() {
 		at := sequenceAsOf
 		resp.SequenceAsOf = &at
+	}
+	if !observationsAsOf.IsZero() {
+		at := observationsAsOf
+		resp.ObservationsAsOf = &at
 	}
 
 	byService := map[string][]EdgeMulticastGroup{}
