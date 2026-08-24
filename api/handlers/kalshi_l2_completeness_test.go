@@ -176,3 +176,23 @@ func TestKalshiL2Completeness_BookGappedInEveryVantageCountsOnce(t *testing.T) {
 	assert.EqualValues(t, 1, day.UnanchoredInstruments)
 	assert.Equal(t, []string{"Perpetual Futures"}, day.GapLanes)
 }
+
+// The scan width is a parameter so one query serves both the full and the partial refresh. A
+// three-day scan must not return a day outside it, and it still reports the view's window rather
+// than its own width — the partial payload is an argument to the merge, not an answer.
+func TestKalshiL2Completeness_ScanWidthBoundsTheDays(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createKalshiMbpLevelsTable(t, api)
+
+	insertLevelAt(t, api, "cmh-rec1", "mbp_edge_kalshi_perps", 1, 100, "snapshot_end", "ready", 0)
+	insertLevelAt(t, api, "cmh-rec1", "mbp_edge_kalshi_perps", 1, 100, "snapshot_end", "ready", 5)
+
+	full, err := api.FetchKalshiL2Completeness(t.Context(), 7)
+	require.NoError(t, err)
+	require.Len(t, full.Days, 2)
+
+	partial, err := api.FetchKalshiL2Completeness(t.Context(), 3)
+	require.NoError(t, err)
+	require.Len(t, partial.Days, 1, "the day five back is outside a three-day scan")
+	assert.Equal(t, full.DayCount, partial.DayCount, "DayCount is the view's window, not the scan's")
+}

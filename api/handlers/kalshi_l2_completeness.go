@@ -2,8 +2,10 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"time"
 )
 
@@ -36,20 +38,27 @@ const kalshiL2CompletenessCacheKey = "kalshi_l2_completeness:v1"
 // recorded it" rather than "it is gone", and reporting a shorter one hides days that are still
 // sellable. If the capture's TTL moves, move this with it.
 //
-// ponytail: this rescans every day in the window on every refresh, over a level-grain table
-// through a remoteSecure() proxy. Sports recording is on (malbeclabs/infra#2309, cmh, perps and
-// all thirty-one sports lanes since 2026-08-18) and that roster is 27.46 Mbps on the wire, so
-// the window holds ~90B rows. Measured 2026-08-24: a single-column count() over 14 days on prod
-// read 215 GB in 13.2s, and this query reads seven columns and can skip no granule.
-//
-// What keeps it affordable is that the TTL caps the window: the scan is flat from here, not
-// growing. What makes it wasteful is that six of the seven partitions are finished and
-// immutable, and it re-reads them hourly to learn nothing. The upgrade is to refresh today and
-// yesterday only and carry the older days from the cached payload — the page cache is already
-// the store, so it needs no new table. Tracked in malbeclabs/kalshi#214. Do it before widening
-// this window or before the refresh stops fitting its budget, which the escalator on
-// refreshCompleteness will report.
+// The scan is the expensive thing on this page: sports recording is on (malbeclabs/infra#2309,
+// cmh, perps and all thirty-one sports lanes since 2026-08-18), that roster is 27.46 Mbps on the
+// wire, and the window holds ~90B rows. Measured on prod 2026-08-24, a single-column count()
+// over the window read 215 GB in 13.2s, and this query reads seven columns and can skip no
+// granule. So a refresh reads only the days that can still change and carries the rest forward
+// — see kalshiL2CompletenessRefreshDays and mergeKalshiL2Days.
 const kalshiL2CompletenessDays = 7
+
+// kalshiL2CompletenessRefreshDays is how many days an incremental refresh re-reads: today and
+// the two before it. The days behind it are carried forward from the cached payload unchanged,
+// which is what keeps the hourly cost at three partitions instead of seven.
+//
+// Two days behind today rather than one, because a day's partition can still gain rows after
+// midnight — a recorder catching up, or a replay written late. Past that the row is frozen: a
+// day older than the lookback is never re-read, so if it was wrong when it was written it stays
+// wrong until the capture's 7-day TTL trims it off the end of the window. That is the trade the
+// flat cost buys, and the TTL is what bounds it.
+//
+// A refresh that has no usable cached payload to merge onto scans the whole window instead —
+// see completenessMergeBase.
+const kalshiL2CompletenessRefreshDays = 3
 
 // completenessLiveTimeout bounds a collapsed live scan. It matches the refresher's budget
 // rather than a browser's patience: the scan is the same one either way, and a caller that
@@ -132,7 +141,11 @@ func emptyKalshiL2Completeness() *KalshiL2CompletenessResponse {
 //  4. (day) — sum the lanes. Different channels carry different instrument sets, so summing is
 //     right at this step and only at this step. Summing vantages is never right, which is why
 //     they are gone by step 3.
-func (a *API) FetchKalshiL2Completeness(ctx context.Context) (*KalshiL2CompletenessResponse, error) {
+//
+// days is how far back to scan, today included. It is the scan's width, not the view's: the
+// returned DayCount always reports the window the page shows, because a partial payload is only
+// ever an argument to mergeKalshiL2Days and is never served on its own.
+func (a *API) FetchKalshiL2Completeness(ctx context.Context, days int) (*KalshiL2CompletenessResponse, error) {
 	exists, err := a.kalshiL2TableExists(ctx)
 	if err != nil {
 		return nil, err
@@ -210,7 +223,7 @@ func (a *API) FetchKalshiL2Completeness(ctx context.Context) (*KalshiL2Completen
 			groupUniqArrayIf(source, gapped > 0) AS gap_sources
 		FROM per_lane
 		GROUP BY day
-		ORDER BY day DESC`, db, kalshiL2CompletenessDays)
+		ORDER BY day DESC`, db, days)
 
 	rows, err := a.envDB(ctx).Query(ctx, q)
 	if err != nil {
@@ -249,6 +262,73 @@ func (a *API) FetchKalshiL2Completeness(ctx context.Context) (*KalshiL2Completen
 	return resp, nil
 }
 
+// completenessMergeBase returns the cached payload when an incremental refresh may build on
+// it, and nil when the refresh has to scan the whole window instead.
+//
+// Three things disqualify it, and each one means the cheap scan would leave a hole rather than
+// save work:
+//
+//   - No row at all: a cold Postgres, or a bumped cache key. There is nothing to carry forward.
+//   - Older than a day: the partial scan starts at today-2, so any day between that and the
+//     cached payload's newest was scanned by neither. The refresher runs hourly, so a cache
+//     this old means the process was down, and a full scan is the answer that cannot be wrong.
+//   - A different DayCount: the window constant moved without a key bump, so the cached days
+//     describe a window this payload no longer reports.
+func (a *API) completenessMergeBase(ctx context.Context) *KalshiL2CompletenessResponse {
+	data, updatedAt, err := a.readPageCacheWithAge(ctx, kalshiL2CompletenessCacheKey)
+	if err != nil {
+		return nil
+	}
+	if time.Since(updatedAt) > 24*time.Hour {
+		return nil
+	}
+	var cached KalshiL2CompletenessResponse
+	if err := json.Unmarshal(data, &cached); err != nil {
+		return nil
+	}
+	if cached.DayCount != kalshiL2CompletenessDays {
+		return nil
+	}
+	return &cached
+}
+
+// mergeKalshiL2Days lays a partial scan over the previous payload: a freshly scanned day
+// replaces the cached one for the same date, and a cached day the scan did not cover carries
+// forward unchanged. Newest first, like the query's own order.
+//
+// Both sides are filtered by date, not just trimmed by count. A day that has fallen out of the
+// window is a day whose rows the capture has already deleted, and trimming by count alone would
+// keep it whenever the payload holds fewer than a full window — leaving the page reporting a
+// clean, "replayable" day whose data no longer exists. That is the one failure this view must
+// not have, so the cutoff is applied to the fresh side too, cheap as that check is.
+func mergeKalshiL2Days(fresh, cached *KalshiL2CompletenessResponse) *KalshiL2CompletenessResponse {
+	cutoff := fresh.GeneratedAt.UTC().
+		AddDate(0, 0, -(kalshiL2CompletenessDays - 1)).Format(time.DateOnly)
+
+	out := &KalshiL2CompletenessResponse{
+		GeneratedAt: fresh.GeneratedAt,
+		DayCount:    kalshiL2CompletenessDays,
+		Days:        make([]KalshiL2Day, 0, len(fresh.Days)+len(cached.Days)),
+	}
+	scanned := make(map[string]bool, len(fresh.Days))
+	for _, d := range fresh.Days {
+		scanned[d.Day] = true
+		if d.Day >= cutoff {
+			out.Days = append(out.Days, d)
+		}
+	}
+	for _, d := range cached.Days {
+		if !scanned[d.Day] && d.Day >= cutoff {
+			out.Days = append(out.Days, d)
+		}
+	}
+	sort.Slice(out.Days, func(i, j int) bool { return out.Days[i].Day > out.Days[j].Day })
+	if len(out.Days) > kalshiL2CompletenessDays {
+		out.Days = out.Days[:kalshiL2CompletenessDays]
+	}
+	return out
+}
+
 // GetKalshiL2Completeness serves the per-day completeness view.
 //
 // Cache-first in every environment, and the cache is the only path that should normally run:
@@ -275,7 +355,7 @@ func (a *API) GetKalshiL2Completeness(w http.ResponseWriter, r *http.Request) {
 	ch := a.l2CompletenessSF.DoChan("", func() (any, error) {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), completenessLiveTimeout)
 		defer cancel()
-		return a.FetchKalshiL2Completeness(ctx)
+		return a.FetchKalshiL2Completeness(ctx, kalshiL2CompletenessDays)
 	})
 	select {
 	case res := <-ch:

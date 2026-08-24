@@ -920,13 +920,28 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 	refreshCompleteness := func() {
 		rctx, cancel := context.WithTimeout(ctx, completenessTimeout)
 		defer cancel()
-		val, err := a.FetchKalshiL2Completeness(rctx)
+
+		// Read the previous payload first, because it decides how wide this scan has to be.
+		// Six of the seven partitions in the window are finished and immutable, so with a
+		// payload to carry them forward this reads three days instead of seven. Without one
+		// it reads the whole window, which is also what the first refresh after a deploy or
+		// a key bump does.
+		base := a.completenessMergeBase(rctx)
+		days := kalshiL2CompletenessDays
+		if base != nil {
+			days = kalshiL2CompletenessRefreshDays
+		}
+		val, err := a.FetchKalshiL2Completeness(rctx, days)
 		if err == nil {
+			if base != nil {
+				val = mergeKalshiL2Days(val, base)
+			}
 			err = a.WritePageCache(ctx, kalshiL2CompletenessCacheKey, val)
 		}
 		if err != nil {
 			completenessEsc.Fail(slog.Default(), "kalshi_l2_completeness",
-				"kalshi l2 completeness refresh failed", "error", err)
+				"kalshi l2 completeness refresh failed",
+				"error", err, "scanned_days", days)
 			return
 		}
 		completenessEsc.Reset("kalshi_l2_completeness")
