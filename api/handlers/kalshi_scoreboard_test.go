@@ -512,6 +512,19 @@ func createKalshiObservationsTable(t *testing.T, api *handlers.API) {
 	`, db)))
 }
 
+// insertObservation records `source` seeing symbol's update stamped sourceTsMs, latencyMs later.
+// Single rows are enough for the callers that count observations rather than assert a percentile
+// — the sample floor gates the latency report only. Use insertObservationBurst for that one.
+func insertObservation(t *testing.T, api *handlers.API, source string, sourceID uint16, channelID uint8, symbol string, sourceTsMs uint64, latencyMs float64) {
+	t.Helper()
+	insertObservationAt(t, api, "cmh", source, sourceID, channelID, symbol, sourceTsMs, latencyMs)
+}
+
+func insertObservationAt(t *testing.T, api *handlers.API, metro, source string, sourceID uint16, channelID uint8, symbol string, sourceTsMs uint64, latencyMs float64) {
+	t.Helper()
+	insertObservationBurst(t, api, metro, source, sourceID, channelID, symbol, sourceTsMs, 1, latencyMs)
+}
+
 // insertObservationBurst writes n observations of one source at one vantage, each stamped at a
 // distinct source_ts_ms so the query's inner GROUP BY cannot collapse them, all at the same
 // latency. Bursts rather than single rows because a (feed, vantage) row below
