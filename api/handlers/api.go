@@ -201,6 +201,36 @@ func (a *API) readPageCacheWithAge(ctx context.Context, key string) (json.RawMes
 	return data, updatedAt, nil
 }
 
+// PageCacheAges reads many keys' last-write times in one round trip. A key with no
+// row is absent from the map, not zero.
+//
+// The refresh cadence gates on updated_at rather than per-pod state because every
+// API replica runs its own page-cache worker: per-pod state would let one entry
+// refresh once per cycle per replica.
+func (a *API) PageCacheAges(ctx context.Context, keys []string) (map[string]time.Time, error) {
+	if a.PgPool == nil {
+		return nil, errNoPgPool
+	}
+	rows, err := a.PgPool.Query(ctx,
+		`SELECT key, updated_at FROM page_cache WHERE key = ANY($1)`, keys,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	ages := make(map[string]time.Time, len(keys))
+	for rows.Next() {
+		var key string
+		var updatedAt time.Time
+		if err := rows.Scan(&key, &updatedAt); err != nil {
+			return nil, err
+		}
+		ages[key] = updatedAt
+	}
+	return ages, rows.Err()
+}
+
 // WritePageCache upserts a cache entry in Postgres.
 func (a *API) WritePageCache(ctx context.Context, key string, value any) error {
 	if a.PgPool == nil {

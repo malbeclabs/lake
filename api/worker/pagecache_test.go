@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -223,57 +224,218 @@ func TestInterruptedEscalation(t *testing.T) {
 	})
 }
 
-// TestDueThisCycle pins the per-entry slow-refresh cadence: an everyN=4 entry
-// (publisher_check) refreshes on cycles 0, 4, 8 and is skipped otherwise, while
-// default (everyN<=1) entries refresh every cycle.
-func TestDueThisCycle(t *testing.T) {
-	t.Run("everyN=4 refreshes on multiples of 4 only", func(t *testing.T) {
-		for cycle := 0; cycle <= 12; cycle++ {
-			want := cycle%4 == 0 // cycles 0, 4, 8, 12
-			require.Equal(t, want, dueThisCycle(4, cycle), "cycle %d", cycle)
-		}
+// TestDueForRefresh pins the age gate: cadence is a wall-clock floor on the
+// spacing between two refreshes of a key, evaluated against the last time its
+// blob was written.
+func TestDueForRefresh(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_700_000_000, 0).UTC()
+	windowEnd := now.Truncate(24 * time.Hour)
+	cadenced := cacheEntry{every: 5 * time.Minute}
+
+	t.Run("due once the blob is at least the cadence old", func(t *testing.T) {
+		require.False(t, dueForRefresh(cadenced, now.Add(-4*time.Minute), now, windowEnd))
+		require.True(t, dueForRefresh(cadenced, now.Add(-5*time.Minute), now, windowEnd))
+		require.True(t, dueForRefresh(cadenced, now.Add(-time.Hour), now, windowEnd))
 	})
 
-	t.Run("default cadence refreshes every cycle", func(t *testing.T) {
-		for cycle := 0; cycle <= 12; cycle++ {
-			require.True(t, dueThisCycle(0, cycle), "everyN=0, cycle %d", cycle)
-			require.True(t, dueThisCycle(1, cycle), "everyN=1, cycle %d", cycle)
-		}
+	t.Run("no cadence means every cycle", func(t *testing.T) {
+		require.True(t, dueForRefresh(cacheEntry{}, now, now, windowEnd))
 	})
 
-	t.Run("publisher_check carries everyN=4 on its entry; others default", func(t *testing.T) {
-		// entries() does not dereference a.API at construction, so a bare Activities
-		// is safe. Cadence lives on the entry, so a rename can't orphan it.
-		byKey := map[string]cacheEntry{}
-		for _, e := range (&Activities{}).entries() {
-			byKey[e.key] = e
-		}
-
-		pub, ok := byKey["publisher_check"]
-		require.True(t, ok, "publisher_check entry must exist")
-		require.Equal(t, publisherCheckEveryN, pub.everyN)
-		require.Equal(t, 4, pub.everyN)
-
-		topo, ok := byKey["topology"]
-		require.True(t, ok, "topology entry must exist")
-		require.LessOrEqual(t, topo.everyN, 1, "topology must refresh every cycle")
-
-		vals, ok := byKey[handlers.ValidatorsPageCacheKey]
-		require.True(t, ok, "validators entry must exist")
-		require.Equal(t, validatorsListingEveryN, vals.everyN)
-		require.Equal(t, 2, vals.everyN)
-		// Due on cycles 0, 2, 4, ... (~60s at the default 30s interval).
-		for _, cycle := range []int{0, 1, 2, 3, 4, 5} {
-			require.Equal(t, cycle%2 == 0, dueThisCycle(vals.everyN, cycle), "validators cycle %d", cycle)
-		}
-
-		// Model the RefreshCaches gate: publisher_check is due only on cycles 0,4,8;
-		// topology is due every cycle.
-		for _, cycle := range []int{0, 1, 2, 3, 4, 5, 8} {
-			require.Equal(t, cycle%4 == 0, dueThisCycle(pub.everyN, cycle), "publisher_check cycle %d", cycle)
-			require.True(t, dueThisCycle(topo.everyN, cycle), "topology cycle %d", cycle)
-		}
+	t.Run("a key that was never written is always due", func(t *testing.T) {
+		require.True(t, dueForRefresh(cacheEntry{every: 30 * time.Minute}, time.Time{}, now, windowEnd))
 	})
+}
+
+// TestDayAlignedEntriesRollWithTheWindow pins the fix for the cross-group window
+// skew. handlers.DefaultNetworkHealthWindow moves at midnight UTC, and the
+// frontend refuses to combine two Network Health payloads whose windows disagree
+// (deriveAvailability). Without this rule, groups on 5- and 30-minute cadences
+// would describe different windows for up to half an hour every night and the
+// page's traffic-weighted availability stat would read as a dash.
+func TestDayAlignedEntriesRollWithTheWindow(t *testing.T) {
+	t.Parallel()
+
+	// One minute past midnight UTC: the window just rolled, and every Network
+	// Health blob was written under the previous one.
+	windowEnd := time.Unix(1_700_000_000, 0).UTC().Truncate(24 * time.Hour)
+	now := windowEnd.Add(time.Minute)
+	writtenYesterday := windowEnd.Add(-time.Minute)
+
+	aligned := cacheEntry{every: networkHealthHistoryInterval, dayAligned: true}
+	require.True(t, dueForRefresh(aligned, writtenYesterday, now, windowEnd),
+		"a blob describing yesterday's window is due whatever the cadence says")
+
+	// Not a licence to ignore the cadence: a blob written under the current window
+	// still waits for it.
+	require.False(t, dueForRefresh(aligned, windowEnd.Add(time.Second), now, windowEnd))
+
+	// Nothing changes for an entry that does not read the day-aligned window.
+	unaligned := cacheEntry{every: networkHealthHistoryInterval}
+	require.False(t, dueForRefresh(unaligned, writtenYesterday, now, windowEnd))
+
+	// Every Network Health entry must carry the marker, or its group's window
+	// lags the others'.
+	byKey := map[string]cacheEntry{}
+	a := &Activities{}
+	for _, e := range append(a.entries(), a.heavyEntries()...) {
+		byKey[e.key] = e
+	}
+	for _, key := range networkHealthKeys {
+		require.True(t, byKey[key].dayAligned,
+			"network health entry %q reads DefaultNetworkHealthWindow, so it must roll with it", key)
+	}
+	// And nothing else should: an entry that does not read that window would just
+	// refresh once more per day for no reason.
+	for _, e := range append(a.entries(), a.heavyEntries()...) {
+		if !slices.Contains(networkHealthKeys, e.key) {
+			require.False(t, e.dayAligned, "entry %q does not read the day-aligned window", e.key)
+		}
+	}
+}
+
+// TestCadenceIsIndependentOfCyclePeriod is the reason the cadence is a duration
+// and not a cycle count. The cycle period is configured per environment (prod
+// ~68s, staging ~4 min) and shortens as entries are taken off the every-cycle
+// path; a cycle count would mean a different staleness in each environment and
+// would drift as entries are added. Under the age gate, a 5-minute cadence is
+// five minutes at every period — and never *below* five, whatever the period.
+func TestCadenceIsIndependentOfCyclePeriod(t *testing.T) {
+	t.Parallel()
+
+	const every = 5 * time.Minute
+	start := time.Unix(1_700_000_000, 0)
+
+	for _, period := range []time.Duration{minRefreshInterval, 30 * time.Second, 68 * time.Second, 4 * time.Minute} {
+		// Walk the cycles of a one-hour window, refreshing whenever the gate says
+		// due, and record the spacing between consecutive refreshes.
+		lastWrite := start
+		var spacings []time.Duration
+		entry := cacheEntry{every: every}
+		for now := start; now.Sub(start) <= time.Hour; now = now.Add(period) {
+			if dueForRefresh(entry, lastWrite, now, time.Time{}) {
+				spacings = append(spacings, now.Sub(lastWrite))
+				lastWrite = now
+			}
+		}
+		require.NotEmpty(t, spacings, "period %s: the entry must refresh at all", period)
+		for _, gap := range spacings {
+			require.GreaterOrEqual(t, gap, every,
+				"period %s: cadence is a floor, so no gap may be shorter than it", period)
+			require.Less(t, gap, every+period,
+				"period %s: the gate is checked once per cycle, so a gap may only overshoot by one period", period)
+		}
+	}
+}
+
+// TestEntryCadences pins the per-entry cadences. Cadence lives on the entry, so a
+// rename cannot orphan it — but a value can still be edited by accident, and
+// these are the values the CPU win is made of.
+func TestEntryCadences(t *testing.T) {
+	t.Parallel()
+
+	// entries() does not dereference a.API at construction, so a bare Activities
+	// is safe.
+	a := &Activities{}
+	byKey := map[string]cacheEntry{}
+	for _, e := range append(a.entries(), a.heavyEntries()...) {
+		byKey[e.key] = e
+	}
+
+	for key, want := range map[string]time.Duration{
+		"publisher_check":                      publisherCheckInterval,
+		handlers.ValidatorsPageCacheKey:        validatorsListingInterval,
+		"algo_divergence":                      algoDivergenceInterval,
+		"latency_comparison":                   latencyComparisonInterval,
+		"edge_scoreboard":                      edgeScoreboardInterval,
+		"edge_scoreboard:leaders":              edgeScoreboardInterval,
+		handlers.NetworkHealthOverviewCacheKey: networkHealthOverviewInterval,
+	} {
+		e, ok := byKey[key]
+		require.True(t, ok, "entry %q must exist", key)
+		require.Equal(t, want, e.every, "entry %q cadence", key)
+	}
+
+	// The purely-historical Network Health groups share one cadence.
+	for _, key := range []string{
+		handlers.NetworkHealthAvailabilityCacheKey,
+		handlers.NetworkHealthLatencyCacheKey,
+		handlers.NetworkHealthCapacityCacheKey,
+		handlers.NetworkHealthOutagesCacheKey,
+		handlers.NetworkHealthDrainCacheKey,
+		handlers.NetworkHealthTicketsCacheKey,
+		handlers.NetworkHealthImpactfulCacheKey,
+		handlers.NetworkHealthDeferredCacheKey,
+	} {
+		e, ok := byKey[key]
+		require.True(t, ok, "entry %q must exist", key)
+		require.Equal(t, networkHealthHistoryInterval, e.every, "entry %q cadence", key)
+	}
+
+	// Views that must track the live network keep every-cycle refresh.
+	for _, key := range []string{"topology", "status", "incidents"} {
+		e, ok := byKey[key]
+		require.True(t, ok, "entry %q must exist", key)
+		require.Zero(t, e.every, "entry %q must refresh every cycle", key)
+	}
+
+	// The fast-cadence entries are refreshed by their own activity, which does
+	// not consult the gate: a cadence set there would be silently ignored.
+	for _, e := range a.latestEntries() {
+		require.Zero(t, e.every, "fast-cadence entry %q must not carry a cadence", e.key)
+	}
+}
+
+// TestDueEntriesFailsOpen pins that a Postgres problem cannot freeze the cache.
+// The gate's only input is page_cache.updated_at; if that read fails, skipping
+// every cadenced entry would hold the whole cache stale for as long as the
+// failure lasts, so everything is treated as due instead.
+func TestDueEntriesFailsOpen(t *testing.T) {
+	t.Parallel()
+
+	log, recs := capLogger()
+	// No PgPool configured → PageCacheAges returns an error.
+	a := &Activities{Log: log, API: &handlers.API{}}
+	entries := a.entries()
+
+	due, skipped := a.dueEntries(context.Background(), "batch", entries)
+	require.Len(t, due, len(entries), "a failed age read must refresh everything")
+	require.Zero(t, skipped)
+	require.Equal(t, 1, countLevel(*recs, slog.LevelWarn), "and must say so")
+}
+
+// TestDueEntriesSkipsNothingWithoutCadences pins that a batch whose entries carry
+// no cadence reads no ages at all — the fast and heavy paths must not pay for a
+// Postgres round trip they cannot use. A nil API would panic on a read.
+func TestDueEntriesSkipsNothingWithoutCadences(t *testing.T) {
+	t.Parallel()
+
+	a := &Activities{}
+	entries := a.latestEntries()
+	due, skipped := a.dueEntries(context.Background(), "batch", entries)
+	require.Len(t, due, len(entries))
+	require.Zero(t, skipped)
+}
+
+// TestUnadvancedUpdatedAtIsDueNextCycle pins the property that keeps the
+// escalation counters honest under a long cadence. refresh only reaches
+// WritePageCache on success, so a failed refresh leaves updated_at where it was —
+// and the gate then makes the entry due again on the very next cycle, so a dark
+// entry still pages at the cycle rate rather than the cadence rate.
+func TestUnadvancedUpdatedAtIsDueNextCycle(t *testing.T) {
+	t.Parallel()
+
+	const every = 30 * time.Minute
+	lastGoodWrite := time.Unix(1_700_000_000, 0)
+	dueAt := lastGoodWrite.Add(every)
+
+	// The refresh at dueAt fails, so updated_at is still lastGoodWrite one cycle
+	// later — and the entry is due again.
+	entry := cacheEntry{every: every}
+	require.True(t, dueForRefresh(entry, lastGoodWrite, dueAt, time.Time{}))
+	require.True(t, dueForRefresh(entry, lastGoodWrite, dueAt.Add(defaultRefreshInterval), time.Time{}))
 }
 
 // TestWriteFailureEscalation pins that the cache-write leg escalates under its
@@ -312,9 +474,10 @@ func TestWriteFailureEscalation(t *testing.T) {
 func TestValidatorsCacheBound(t *testing.T) {
 	t.Parallel()
 
-	// Worst-case age of a healthy entry: a full refresh cadence at the slowest
-	// permitted interval, plus the longest a refresh activity may itself take.
-	worstCadence := time.Duration(validatorsListingEveryN) * maxRefreshInterval
+	// Worst-case age of a healthy entry: the entry's cadence, plus the one cycle
+	// the age gate may overshoot it by at the slowest permitted interval, plus the
+	// longest a refresh activity may itself take.
+	worstCadence := validatorsListingInterval + maxRefreshInterval
 	worstHealthyAge := worstCadence + maxActivityTimeout
 
 	require.Greater(t, handlers.ValidatorsCacheStaleAfter, worstHealthyAge,
@@ -425,6 +588,11 @@ func TestBatchConcurrencyReservesHeavyShare(t *testing.T) {
 	})
 }
 
+// topologyEntry is a stand-in slow-batch entry for the refresh() tests.
+func topologyEntry(fn func(context.Context) (any, error), timeout time.Duration) cacheEntry {
+	return cacheEntry{name: "topology", key: "topology", fn: fn, timeout: timeout}
+}
+
 // TestRefreshRetriesOnlyWithBudget pins that maxAttempts is honest: the second
 // attempt runs only when the activity has room for it (see retryBudget).
 // Retrying inside the last seconds of the budget just converts this entry's own
@@ -445,7 +613,7 @@ func TestRefreshRetriesOnlyWithBudget(t *testing.T) {
 		calls := 0
 		parent, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		a.refresh(parent, "topology", "topology", failing(&calls), 10*time.Millisecond, notStopping, errBatchDeadline)
+		a.refresh(parent, topologyEntry(failing(&calls), 10*time.Millisecond), notStopping, errBatchDeadline)
 		require.Equal(t, 2, calls)
 	})
 
@@ -453,7 +621,7 @@ func TestRefreshRetriesOnlyWithBudget(t *testing.T) {
 		log, _ := capLogger()
 		a := &Activities{Log: log}
 		calls := 0
-		a.refresh(context.Background(), "topology", "topology", failing(&calls), 10*time.Millisecond, notStopping, errBatchDeadline)
+		a.refresh(context.Background(), topologyEntry(failing(&calls), 10*time.Millisecond), notStopping, errBatchDeadline)
 		require.Equal(t, 2, calls)
 	})
 
@@ -463,7 +631,7 @@ func TestRefreshRetriesOnlyWithBudget(t *testing.T) {
 		calls := 0
 		parent, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
-		a.refresh(parent, "topology", "topology", failing(&calls), time.Second, notStopping, errBatchDeadline)
+		a.refresh(parent, topologyEntry(failing(&calls), time.Second), notStopping, errBatchDeadline)
 		require.Equal(t, 1, calls)
 		require.Equal(t, 1, countLevel(*recs, slog.LevelWarn), "the failure is still counted, just not retried")
 	})
@@ -480,7 +648,7 @@ func TestRefreshRetriesOnlyWithBudget(t *testing.T) {
 		parent, cancel := context.WithTimeout(context.Background(), remaining)
 		defer cancel()
 		require.Less(t, remaining, defaultRefreshTimeout, "the point of the case: less than a full entry budget left")
-		a.refresh(parent, "topology", "topology", failing(&calls), defaultRefreshTimeout, notStopping, errBatchDeadline)
+		a.refresh(parent, topologyEntry(failing(&calls), defaultRefreshTimeout), notStopping, errBatchDeadline)
 		require.Equal(t, 2, calls)
 	})
 }
@@ -560,7 +728,7 @@ func TestRefreshRecordsOwnFailureWhenParentHasHeadroom(t *testing.T) {
 	parent, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	a.refresh(parent, "network health deferred", "nh_deferred", stalls, 20*time.Millisecond, notStopping, errHeavyRefreshDeadline)
+	a.refresh(parent, cacheEntry{name: "network health deferred", key: "nh_deferred", fn: stalls, timeout: 20 * time.Millisecond}, notStopping, errHeavyRefreshDeadline)
 
 	rec, ok := findRecord(*recs, "cache refresh failed")
 	require.True(t, ok, "an over-budget entry must record a failure")
@@ -572,6 +740,47 @@ func TestRefreshRecordsOwnFailureWhenParentHasHeadroom(t *testing.T) {
 	require.NotErrorIs(t, err, errHeavyRefreshDeadline,
 		"with headroom the activity deadline has not fired, so this is not starvation")
 	require.Zero(t, countLevel(*recs, slog.LevelError), "a single slow cycle must not page")
+}
+
+// TestRefreshDiscardsStraddlingDayAlignedWrite pins the fix for the window-skew
+// hole the dayAligned marker alone left open. updated_at is stamped at write time,
+// but the payload's window is fixed when the fetch starts — so a fetch crossing
+// midnight UTC produces a previous-window payload with a post-boundary updated_at,
+// which the gate reads as current and holds for a full cadence. That is exactly the
+// skew the marker exists to prevent, so the write is dropped instead.
+func TestRefreshDiscardsStraddlingDayAlignedWrite(t *testing.T) {
+	t.Run("the straddle predicate", func(t *testing.T) {
+		t.Parallel()
+
+		beforeMidnight := time.Date(2026, 8, 24, 23, 59, 50, 0, time.UTC)
+		afterMidnight := time.Date(2026, 8, 25, 0, 0, 10, 0, time.UTC)
+
+		require.True(t, windowMovedDuring(beforeMidnight, afterMidnight))
+		require.False(t, windowMovedDuring(beforeMidnight, beforeMidnight.Add(time.Second)),
+			"two instants inside one day must compare equal, or every refresh is discarded")
+		require.False(t, windowMovedDuring(afterMidnight, afterMidnight.Add(time.Hour)))
+
+		// Why the discard is necessary: the blob a straddling write would leave behind
+		// reads as not-due, so it would hold the previous window for a full cadence.
+		require.False(t, dueForRefresh(
+			cacheEntry{every: networkHealthHistoryInterval, dayAligned: true},
+			afterMidnight, afterMidnight.Add(time.Minute), windowEndAt(afterMidnight)))
+	})
+
+	t.Run("an unstraddled refresh still writes", func(t *testing.T) {
+		t.Parallel()
+
+		// A nil-PgPool API fails the write, which is how the attempt is observable.
+		log, recs := capLogger()
+		a := &Activities{Log: log, API: &handlers.API{}}
+		a.refresh(context.Background(), cacheEntry{
+			name: "network health outages", key: "nh_outages", dayAligned: true,
+			fn: func(context.Context) (any, error) { return "payload", nil },
+		}, func() bool { return false }, errBatchDeadline)
+
+		_, ok := findRecord(*recs, "cache write failed")
+		require.True(t, ok, "the discard must not fire on a refresh inside one window")
+	})
 }
 
 // TestPageCacheWorkflowSchedulesHeavyRefresh pins that RefreshHeavyCaches is
@@ -589,7 +798,7 @@ func TestPageCacheWorkflowSchedulesHeavyRefresh(t *testing.T) {
 
 	a := &Activities{}
 	env.RegisterActivity(a)
-	env.OnActivity(a.RefreshCaches, mock.Anything, mock.Anything).Return(nil)
+	env.OnActivity(a.RefreshCaches, mock.Anything).Return(nil)
 	env.OnActivity(a.RefreshLatestCaches, mock.Anything).Return(nil)
 	env.OnActivity(a.RefreshHeavyCaches, mock.Anything).Return(nil)
 
@@ -698,7 +907,7 @@ func TestPageCacheWorkflowHeavyDoesNotBlockCycles(t *testing.T) {
 
 	const cycles = 3
 	var batches atomic.Int32
-	env.OnActivity(a.RefreshCaches, mock.Anything, mock.Anything).Return(func(ctx context.Context, cycle int) error {
+	env.OnActivity(a.RefreshCaches, mock.Anything).Return(func(ctx context.Context) error {
 		if batches.Add(1) == cycles {
 			// Release after the loop has reached its drain, so a workflow that
 			// skipped the drain would finish with the scan still in flight.
@@ -777,6 +986,29 @@ func TestNetworkHealthOutcome(t *testing.T) {
 		log, recs := capLogger()
 		a := &Activities{Log: log}
 		require.NoError(t, a.nhOutcome("network health outages", "outages", "", []string{"error_hotspots"}))
+		require.Equal(t, 1, countLevel(*recs, slog.LevelWarn))
+	})
+
+	t.Run("a hard failure clears the degraded run clock", func(t *testing.T) {
+		// The degraded clock would otherwise keep running through an outage the
+		// entry's own escalator is already paging for, so the first partially
+		// recovered refresh would escalate on a duration belonging to the hard
+		// failure — a fresh page as the group improves.
+		log, recs := capLogger()
+		now := time.Unix(1_700_000_000, 0)
+		a := newActivities(log, nil, defaultRefreshConcurrency)
+		a.degradedEsc.Now = func() time.Time { return now }
+
+		require.NoError(t, a.nhOutcome("network health outages", "outages", "", []string{"error_hotspots"}),
+			"a degraded refresh starts the run clock")
+
+		now = now.Add(3 * time.Hour)
+		require.Error(t, a.nhOutcome("network health outages", "outages", "unavailable", nil))
+
+		*recs = nil
+		require.NoError(t, a.nhOutcome("network health outages", "outages", "", []string{"error_hotspots"}))
+		require.Zero(t, countLevel(*recs, slog.LevelError),
+			"recovery to degraded-only must not page on the outage's duration")
 		require.Equal(t, 1, countLevel(*recs, slog.LevelWarn))
 	})
 
@@ -861,4 +1093,98 @@ func TestStartPageCacheWorkflowWrapsStartFailure(t *testing.T) {
 	require.ErrorContains(t, err, "page-cache: failed to start workflow")
 	require.ErrorContains(t, err, "already started")
 	require.Empty(t, *recs, "a failed start must not log that the workflow started")
+}
+
+// TestNewActivitiesPinsDegradedEscalation pins the escalation policy the worker
+// actually constructs. The count alone stopped describing a duration once the
+// Network Health groups took a cadence: a degraded refresh writes its blob, so the
+// entry then sleeps for a full cadence and 20 due refreshes would be 10 hours at
+// networkHealthHistoryInterval. The window is what bounds it instead.
+func TestNewActivitiesPinsDegradedEscalation(t *testing.T) {
+	t.Parallel()
+
+	log, _ := capLogger()
+	a := newActivities(log, nil, defaultRefreshConcurrency)
+
+	require.Equal(t, nhDegradedErrorAfter, a.degradedEsc.ErrorAfter)
+	require.Equal(t, nhDegradedErrorAfter, a.degradedEsc.TransientErrorAfter)
+	require.Equal(t, nhDegradedErrorWindow, a.degradedEsc.ErrorAfterDuration)
+	require.Less(t, nhDegradedErrorWindow, networkHealthHistoryInterval,
+		"the window must fire before a single cadence elapses, or it buys nothing")
+	require.Equal(t, defaultRefreshConcurrency, a.RefreshConcurrency)
+}
+
+// TestNetworkHealthDegradedWindowPages is the end-to-end version: a group on the
+// slowest cadence that keeps reporting a dark panel must page on its second
+// degraded refresh — the first one at or past nhDegradedErrorWindow into the run —
+// not after nhDegradedErrorAfter of them.
+func TestNetworkHealthDegradedWindowPages(t *testing.T) {
+	t.Parallel()
+
+	log, recs := capLogger()
+	now := time.Unix(1_700_000_000, 0)
+	a := newActivities(log, nil, defaultRefreshConcurrency)
+	a.degradedEsc.Now = func() time.Time { return now }
+
+	// One degraded refresh per cadence, as a slowed entry actually behaves.
+	for range 3 {
+		a.nhDegraded("network health outages", "outages", []string{"error_hotspots"})
+		now = now.Add(networkHealthHistoryInterval)
+	}
+	require.Equal(t, 1, countLevel(*recs, slog.LevelWarn), "the first refresh of a run must not page")
+	require.Equal(t, 2, countLevel(*recs, slog.LevelError),
+		"a panel dark for longer than the window must page well before %d refreshes (%s)",
+		nhDegradedErrorAfter, time.Duration(nhDegradedErrorAfter)*networkHealthHistoryInterval)
+}
+
+// TestDueEntriesEscalatesSustainedAgeReadFailure pins that the gate's fail-open
+// is not silent. A persistent age-read failure — a revoked grant on page_cache, a
+// pool that never yields a connection — reverts every cadenced entry to
+// every-cycle refresh, which is exactly the ClickHouse cost the cadence removes.
+// Nothing else reports it, so a sustained failure has to page.
+func TestDueEntriesEscalatesSustainedAgeReadFailure(t *testing.T) {
+	t.Parallel()
+
+	log, recs := capLogger()
+	a := &Activities{Log: log, API: &handlers.API{}} // no PgPool → every read errors
+	entries := a.entries()
+
+	for range errorAfterFailures {
+		due, _ := a.dueEntries(context.Background(), "batch", entries)
+		require.Len(t, due, len(entries))
+	}
+	require.Equal(t, errorAfterFailures-1, countLevel(*recs, slog.LevelWarn), "a blip stays WARN")
+	require.Equal(t, 1, countLevel(*recs, slog.LevelError), "a sustained gate outage must page")
+
+	// The heavy activity runs its own gate read — and now returns in milliseconds
+	// whenever neither entry is due, so it reads nearly every cycle. Its streak is
+	// counted separately, so it has to reach ERROR on its own.
+	*recs = nil
+	heavy := a.heavyEntries()
+	for range errorAfterFailures {
+		due, _ := a.dueEntries(context.Background(), "heavy", heavy)
+		require.Len(t, due, len(heavy))
+	}
+	require.Equal(t, 1, countLevel(*recs, slog.LevelError), "the heavy caller must page on its own streak")
+}
+
+// TestDueEntriesKeysEscalationPerCaller pins that one caller's success cannot reset
+// the other's failure streak. Both gate reads share an Activities and its escalator,
+// so a shared key would let a healthy batch read mask a persistently failing heavy
+// one — every cadence silently reverting to every-cycle ClickHouse load at WARN.
+func TestDueEntriesKeysEscalationPerCaller(t *testing.T) {
+	t.Parallel()
+
+	log, recs := capLogger()
+	a := &Activities{Log: log}
+
+	// Reset stands in for a successful read by the other caller.
+	for range errorAfterFailures - 1 {
+		a.esc.Fail(log, cacheAgesEscalationKey+":heavy", "cache cadence age read failed")
+		a.esc.Reset(cacheAgesEscalationKey + ":batch")
+	}
+	require.Zero(t, countLevel(*recs, slog.LevelError))
+	a.esc.Fail(log, cacheAgesEscalationKey+":heavy", "cache cadence age read failed")
+	require.Equal(t, 1, countLevel(*recs, slog.LevelError),
+		"a batch success must not reset the heavy streak")
 }
