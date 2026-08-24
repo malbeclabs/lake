@@ -292,10 +292,10 @@ func (a *Activities) entries() []cacheEntry {
 			return api.FetchLatencyComparisonData(ctx)
 		}},
 		{name: "dz ledger", key: "dz_ledger", fn: func(ctx context.Context) (any, error) {
-			return handlers.FetchLedgerData(ctx, handlers.GetDZLedgerRPCURL())
+			return handlers.FetchDZLedgerData(ctx)
 		}},
 		{name: "solana ledger", key: "solana_ledger", fn: func(ctx context.Context) (any, error) {
-			return handlers.FetchLedgerData(ctx, handlers.GetSolanaRPCURL())
+			return handlers.FetchSolanaLedgerData(ctx)
 		}},
 		{name: "validator perf", key: "validator_perf", fn: func(ctx context.Context) (any, error) {
 			return api.FetchValidatorPerfData(ctx)

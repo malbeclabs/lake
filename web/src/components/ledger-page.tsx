@@ -85,7 +85,8 @@ function EpochProgress({ data }: { data: LedgerResponse | undefined }) {
 
   const pct = data.epoch_pct
   const remaining = formatDuration(data.epoch_eta_sec)
-  const started = formatDuration(data.slot_index * 0.4)
+  // The fallback only covers a page-cache row written by a deploy predating the field.
+  const started = formatDuration(data.slot_index * (data.slot_duration_sec || 0.4))
 
   return (
     <Card title="Epoch">
