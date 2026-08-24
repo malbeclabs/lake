@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
 // The Kalshi scoreboard is the sibling of the Hyperliquid one (hyperliquid_scoreboard.go) and
@@ -908,17 +910,26 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 	// this query rescans every day in its window, so putting it on the 10-minute loop would
 	// repeat the most expensive scan on this page 144 times a day to learn nothing. Hourly is
 	// still well inside the cadence anyone reads a catalog at.
+	//
+	// Failures escalate rather than logging a flat WARN. A permanently broken refresh here is
+	// invisible otherwise: the page keeps serving the last cached row with X-Cache: HIT, and
+	// readPageCache has no age check, so a stale catalog looks healthy. The failure this is
+	// most likely to be is the scan outgrowing its budget, which is exactly the thing the
+	// ponytail note on kalshiL2CompletenessDays predicts and which nobody would be told about.
+	var completenessEsc logger.Escalator
 	refreshCompleteness := func() {
 		rctx, cancel := context.WithTimeout(ctx, completenessTimeout)
 		defer cancel()
 		val, err := a.FetchKalshiL2Completeness(rctx)
+		if err == nil {
+			err = a.WritePageCache(ctx, kalshiL2CompletenessCacheKey, val)
+		}
 		if err != nil {
-			slog.Warn("kalshi l2 completeness refresh failed", "error", err)
+			completenessEsc.Fail(slog.Default(), "kalshi_l2_completeness",
+				"kalshi l2 completeness refresh failed", "error", err)
 			return
 		}
-		if err := a.WritePageCache(ctx, kalshiL2CompletenessCacheKey, val); err != nil {
-			slog.Warn("kalshi l2 completeness cache write failed", "error", err)
-		}
+		completenessEsc.Reset("kalshi_l2_completeness")
 	}
 	refresh := func() {
 		refreshLatency()

@@ -39,6 +39,11 @@ const kalshiL2CompletenessCacheKey = "kalshi_l2_completeness:v1"
 // keep the scan bounded until that lands; widen it only after.
 const kalshiL2CompletenessDays = 14
 
+// completenessLiveTimeout bounds a collapsed live scan. It matches the refresher's budget
+// rather than a browser's patience: the scan is the same one either way, and a caller that
+// gives up first leaves it running for the next.
+const completenessLiveTimeout = 10 * time.Minute
+
 // KalshiL2Day is one day of captured level data, aggregated across lanes.
 type KalshiL2Day struct {
 	// Day is the UTC calendar day, YYYY-MM-DD. It is the table's partition key, so it is also
@@ -50,12 +55,14 @@ type KalshiL2Day struct {
 
 	// Instruments is summed across lanes, never counted across them: instrument_id is unique
 	// only within a channel_id, so a global distinct count would merge two channels' books
-	// into one number. Within a lane it is the widest vantage rather than the sum, because two
-	// recorders of one lane are two observations of the same instrument set.
+	// into one number. Within a lane it is the distinct books seen by any vantage, not the sum
+	// over vantages, because two recorders of one lane are two observations of one book set.
 	Instruments uint64 `json:"instruments"`
 
-	// GappedInstruments is how many books ran un-anchored at some point in the day. Any value
-	// above zero means a replay of that book has a hole, so the day is not clean.
+	// GappedInstruments is how many books ran un-anchored at some point in the day, in every
+	// vantage that recorded them. Any value above zero means a replay of that book has a hole
+	// no recorder can fill, so the day is not clean. A book that one recorder gapped and
+	// another held is not counted: the replay takes it from the recorder that held it.
 	//
 	// This is a count of books and not of gap events, for the reason recorded on
 	// KalshiL2Lane.GapMessages: the message-grain count is a recovery duration scaled by
@@ -63,8 +70,9 @@ type KalshiL2Day struct {
 	GappedInstruments uint64 `json:"gapped_instruments"`
 
 	// UnanchoredInstruments is how many books moved during the day with no snapshot_end inside
-	// it. A replay of those cannot start from this day's data alone; it has to carry state in
-	// from an earlier day, which is what makes a single-day export of them unusable on its own.
+	// it in any vantage. A replay of those cannot start from this day's data alone; it has to
+	// carry state in from an earlier day, which is what makes a single-day export of them
+	// unusable on its own.
 	UnanchoredInstruments uint64 `json:"unanchored_instruments"`
 
 	// Messages is the row count, the size proxy for what a day's export would carry.
@@ -97,18 +105,21 @@ func emptyKalshiL2Completeness() *KalshiL2CompletenessResponse {
 
 // FetchKalshiL2Completeness aggregates captured level data by day.
 //
-// Three grains, and the order of the two roll-ups is the whole correctness argument:
+// Four grains, and the order of the roll-ups is the whole correctness argument:
 //
-//  1. (day, source, channel_id, measurement_node_id) — the raw grain, one row per lane per
-//     vantage. Counting instruments any higher than this merges channels, and instrument_id is
-//     unique only within a channel.
-//  2. (day, source, channel_id) — collapse the vantages by MAX, not by sum. Several recorders
-//     of one lane see one publisher, so the widest is the best observation of it and a lossy
-//     recorder cannot inflate the day. Summing here would report the recording fan-out as
-//     traffic, which is the same mistake FetchKalshiL2Coverage avoids by keeping the vantage in
-//     its key.
-//  3. (day) — sum the lanes. Different channels carry different instrument sets, so summing is
-//     right at this step and only at this step.
+//  1. (day, source, channel_id, measurement_node_id, instrument_id) — one row per book per
+//     vantage. The fault flags are set here, where they describe one recorder's capture of one
+//     book, which is the only grain at which they mean anything.
+//  2. (day, source, channel_id, instrument_id) — collapse the vantages per book. A book counts
+//     as gapped only when EVERY vantage gapped it, and as anchored when ANY vantage anchored
+//     it, because a replay can take each book from whichever recorder captured it cleanly.
+//     Collapsing faults at the lane grain instead would let one lossy redundant recorder mark a
+//     lane incomplete that another recorder captured whole.
+//  3. (day, source, channel_id) — count the books. Counting instruments any higher than this
+//     merges channels, and instrument_id is unique only within a channel.
+//  4. (day) — sum the lanes. Different channels carry different instrument sets, so summing is
+//     right at this step and only at this step. Summing vantages is never right, which is why
+//     they are gone by step 3.
 func (a *API) FetchKalshiL2Completeness(ctx context.Context) (*KalshiL2CompletenessResponse, error) {
 	exists, err := a.kalshiL2TableExists(ctx)
 	if err != nil {
@@ -120,16 +131,16 @@ func (a *API) FetchKalshiL2Completeness(ctx context.Context) (*KalshiL2Completen
 
 	db := fmt.Sprintf("`%s`", a.FeedsDB)
 	q := fmt.Sprintf(`
-		WITH per_vantage AS (
+		WITH per_book_vantage AS (
 			SELECT
 				toDate(fromUnixTimestamp64Nano(toInt64(recv_ts_ns))) AS day,
 				source,
 				channel_id,
 				measurement_node_id,
+				instrument_id,
 				count() AS messages,
-				uniqExact(instrument_id) AS instruments,
-				uniqExactIf(instrument_id, status_after = 'gap') AS gapped,
-				uniqExactIf(instrument_id, msg_type = 'snapshot_end') AS anchored,
+				max(status_after = 'gap') AS gapped,
+				max(msg_type = 'snapshot_end') AS anchored,
 				min(recv_ts_ns) AS first_ns,
 				max(recv_ts_ns) AS last_ns
 			FROM %[1]s.kalshi_mbp_levels
@@ -137,23 +148,39 @@ func (a *API) FetchKalshiL2Completeness(ctx context.Context) (*KalshiL2Completen
 			-- start of the window is widened back to DateTime64 before it is converted.
 			WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(toDateTime64(
 				toStartOfDay(now64(9)) - toIntervalDay(%[2]d - 1), 9)))
-			GROUP BY day, source, channel_id, measurement_node_id
+			GROUP BY day, source, channel_id, measurement_node_id, instrument_id
+		),
+		per_book AS (
+			SELECT
+				day,
+				source,
+				channel_id,
+				instrument_id,
+				-- min over the vantages: gapped only if no recorder held the book anchored.
+				min(gapped) AS gapped,
+				-- max over the vantages: one snapshot anywhere starts a replay.
+				max(anchored) AS anchored,
+				-- The widest vantage of this book, not the sum: several recorders of one lane
+				-- are several observations of one publisher, so summing would report the
+				-- recording fan-out as traffic.
+				max(messages) AS messages,
+				min(first_ns) AS first_ns,
+				max(last_ns) AS last_ns
+			FROM per_book_vantage
+			GROUP BY day, source, channel_id, instrument_id
 		),
 		per_lane AS (
 			SELECT
 				day,
 				source,
 				channel_id,
-				max(messages) AS messages,
-				max(instruments) AS instruments,
-				max(gapped) AS gapped,
-				-- anchored <= instruments holds per vantage, so the max of each keeps the
-				-- difference below non-negative. greatest() guards it anyway: the two maxima
-				-- can come from different vantages.
-				max(anchored) AS anchored,
+				count() AS instruments,
+				countIf(gapped > 0) AS gapped,
+				countIf(anchored = 0) AS unanchored,
+				sum(messages) AS messages,
 				min(first_ns) AS first_ns,
 				max(last_ns) AS last_ns
-			FROM per_vantage
+			FROM per_book
 			GROUP BY day, source, channel_id
 		)
 		SELECT
@@ -165,7 +192,7 @@ func (a *API) FetchKalshiL2Completeness(ctx context.Context) (*KalshiL2Completen
 			sum(messages) AS messages_total,
 			sum(instruments) AS instruments_total,
 			sum(gapped) AS gapped_total,
-			sum(greatest(toInt64(instruments) - toInt64(anchored), 0)) AS unanchored_total,
+			sum(unanchored) AS unanchored_total,
 			min(first_ns) AS first_ns,
 			max(last_ns) AS last_ns,
 			groupUniqArrayIf(source, gapped > 0) AS gap_sources
@@ -184,19 +211,17 @@ func (a *API) FetchKalshiL2Completeness(ctx context.Context) (*KalshiL2Completen
 		var (
 			d          KalshiL2Day
 			day        time.Time
-			unanchored int64
 			firstNs    uint64
 			lastNs     uint64
 			gapSources []string
 		)
 		if err := rows.Scan(
 			&day, &d.Lanes, &d.Messages, &d.Instruments, &d.GappedInstruments,
-			&unanchored, &firstNs, &lastNs, &gapSources,
+			&d.UnanchoredInstruments, &firstNs, &lastNs, &gapSources,
 		); err != nil {
 			return nil, err
 		}
 		d.Day = day.Format(time.DateOnly)
-		d.UnanchoredInstruments = uint64(unanchored)
 		d.FirstMessage = time.Unix(0, int64(firstNs)).UTC()
 		d.LastMessage = time.Unix(0, int64(lastNs)).UTC()
 		d.GapLanes = make([]string, 0, len(gapSources))
@@ -214,27 +239,40 @@ func (a *API) FetchKalshiL2Completeness(ctx context.Context) (*KalshiL2Completen
 
 // GetKalshiL2Completeness serves the per-day completeness view.
 //
-// Cache-first, and the cache is the normal path: the live query rescans the whole window. See
-// kalshiL2CompletenessDays.
+// Cache-first in every environment, and the cache is the only path that should normally run:
+// the live query rescans the whole window (see kalshiL2CompletenessDays). The cached row is not
+// env-specific — envDB falls back to the mainnet connection for every other env, so a
+// non-mainnet request would run the identical scan and get the identical answer. Gating the
+// read on mainnet, as the coverage handler does, would send every staging and preview request
+// live.
+//
+// The refresher fills the cache at process start, so a miss means no Postgres, a just-bumped
+// key, or an unreadable row. Those still run live rather than returning empty, so local dev
+// without Postgres shows real data, but they are collapsed: one scan serves every waiter.
 func (a *API) GetKalshiL2Completeness(w http.ResponseWriter, r *http.Request) {
-	if isMainnet(r.Context()) {
-		if data, err := a.readPageCache(r.Context(), kalshiL2CompletenessCacheKey); err == nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("X-Cache", "HIT")
-			_, _ = w.Write(data)
-			return
-		}
+	if data, err := a.readPageCache(r.Context(), kalshiL2CompletenessCacheKey); err == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Cache", "HIT")
+		_, _ = w.Write(data)
+		return
 	}
 	w.Header().Set("X-Cache", "MISS")
 
-	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
-	defer cancel()
-
-	resp, err := a.FetchKalshiL2Completeness(ctx)
-	if err != nil {
-		logError("KalshiL2Completeness error", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	// Detached from the winning caller's context for the reason recorded on pubCheckSF: a
+	// plain Do would let one caller's disconnect cancel the shared scan and 500 every waiter.
+	ch := a.l2CompletenessSF.DoChan("", func() (any, error) {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), completenessLiveTimeout)
+		defer cancel()
+		return a.FetchKalshiL2Completeness(ctx)
+	})
+	select {
+	case res := <-ch:
+		if res.Err != nil {
+			logError("KalshiL2Completeness error", "error", res.Err)
+			http.Error(w, res.Err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, res.Val.(*KalshiL2CompletenessResponse))
+	case <-r.Context().Done():
 	}
-	writeJSON(w, resp)
 }

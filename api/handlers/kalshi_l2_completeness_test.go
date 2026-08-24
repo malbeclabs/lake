@@ -139,3 +139,40 @@ func TestKalshiL2Completeness_DayOrderAndWindow(t *testing.T) {
 	require.Len(t, resp.Days, 2)
 	assert.Greater(t, resp.Days[0].Day, resp.Days[1].Day)
 }
+
+// A lossy redundant recorder must not mark a lane incomplete. Book 100 gapped on rec2 and
+// stayed anchored on rec1, and book 200 was snapshotted only by rec2 — a replay takes each book
+// from whichever recorder held it, so the day is clean. Collapsing the fault counts at the lane
+// grain instead of per book would report 1 gapped and 1 unanchored here and call a sellable day
+// unsellable.
+func TestKalshiL2Completeness_LossyVantageDoesNotFailTheLane(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createKalshiMbpLevelsTable(t, api)
+
+	insertLevelAt(t, api, "cmh-rec1", "mbp_edge_kalshi_perps", 1, 100, "snapshot_end", "ready", 0)
+	insertLevelAt(t, api, "cmh-rec2", "mbp_edge_kalshi_perps", 1, 100, "level_update", "gap", 0)
+	insertLevelAt(t, api, "cmh-rec1", "mbp_edge_kalshi_perps", 1, 200, "level_update", "ready", 0)
+	insertLevelAt(t, api, "cmh-rec2", "mbp_edge_kalshi_perps", 1, 200, "snapshot_end", "ready", 0)
+
+	day := dayOf(t, getCompleteness(t, api), 0)
+	assert.EqualValues(t, 2, day.Instruments)
+	assert.EqualValues(t, 0, day.GappedInstruments)
+	assert.EqualValues(t, 0, day.UnanchoredInstruments)
+	assert.Empty(t, day.GapLanes)
+}
+
+// The other direction: a book no recorder held is counted once, not once per recorder.
+func TestKalshiL2Completeness_BookGappedInEveryVantageCountsOnce(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createKalshiMbpLevelsTable(t, api)
+
+	for _, node := range []string{"cmh-rec1", "cmh-rec2"} {
+		insertLevelAt(t, api, node, "mbp_edge_kalshi_perps", 1, 100, "level_update", "gap", 0)
+	}
+
+	day := dayOf(t, getCompleteness(t, api), 0)
+	assert.EqualValues(t, 1, day.Instruments)
+	assert.EqualValues(t, 1, day.GappedInstruments)
+	assert.EqualValues(t, 1, day.UnanchoredInstruments)
+	assert.Equal(t, []string{"Perpetual Futures"}, day.GapLanes)
+}

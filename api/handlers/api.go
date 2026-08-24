@@ -84,6 +84,12 @@ type API struct {
 	pubCheckSem     chan struct{}
 	pubCheckSemOnce sync.Once
 
+	// l2CompletenessSF collapses concurrent cache misses on the Kalshi per-day
+	// completeness view into one scan of its 14-day window. Misses are rare (the
+	// refresher fills the cache at startup) but the scan is the most expensive
+	// query on that page, so it must never run once per request.
+	l2CompletenessSF singleflight.Group
+
 	// mcastQuerySems bounds the aggregate ClickHouse query fan-out of the
 	// device multicast-delivery handler, keyed by env because the pools it
 	// protects are per-env with very different sizes (see

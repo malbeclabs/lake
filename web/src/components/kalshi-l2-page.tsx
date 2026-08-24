@@ -146,8 +146,9 @@ function CompletenessTable({ data }: { data: KalshiL2CompletenessResponse }) {
         <div className="text-sm font-medium text-muted-foreground">Daily completeness</div>
         <p className="mt-1 text-xs leading-relaxed text-muted-foreground/70">
           Whether each day's captured levels can be replayed into a book, which is what makes a
-          day usable as history. A gapped book has a hole in its delta stream. A book with no
-          snapshot in the day cannot start a replay from that day alone. Last {data.day_count} days.
+          day usable as history. A gapped book has a hole in its delta stream that no recorder of
+          that lane can fill. A book with no snapshot in the day cannot start a replay from that
+          day alone. Last {data.day_count} days.
         </p>
       </div>
       <div className="overflow-x-auto">
@@ -232,23 +233,28 @@ export function KalshiL2Page() {
   }, [])
 
   // Loaded separately and its failure is not this page's error: the coverage view is what the
-  // page is for, and it must still render when the heavier daily query times out.
+  // page is for, and it must still render when the heavier daily query times out. A failed poll
+  // keeps the payload it already had — the table is a catalog of finished days, so the last one
+  // read is still true, and blanking it would turn a blip into a missing section.
   const loadDays = useCallback(async () => {
     try {
       setDays(await fetchKalshiL2Completeness())
     } catch {
-      setDays(null)
+      // keep the previous payload
     }
   }, [])
 
+  // The coverage view is a live 15-minute average and polls. The daily table is not: the server
+  // recomputes it hourly, so re-fetching it every 30s would only re-serve the same cached row.
+  useEffect(() => { void loadDays() }, [loadDays])
+
   useEffect(() => {
     let active = true
-    const run = () => { void load(); void loadDays() }
-    run()
-    const poll = setInterval(run, 30000)
+    void load()
+    const poll = setInterval(() => { void load() }, 30000)
     const tick = setInterval(() => active && setNow(Date.now()), 5000)
     return () => { active = false; clearInterval(poll); clearInterval(tick) }
-  }, [load, loadDays])
+  }, [load])
 
   const sections = useMemo(() => {
     const byCategory = new Map<string, KalshiL2Lane[]>()
@@ -347,6 +353,8 @@ export function KalshiL2Page() {
           </div>
         )}
 
+        {days && days.days.length > 0 && <CompletenessTable data={days} />}
+
         {data && data.lanes.length > 0 && (
           <>
             <div className="mb-8 rounded-lg border border-border bg-card p-4 sm:p-6">
@@ -385,8 +393,6 @@ export function KalshiL2Page() {
                 </div>
               </div>
             </div>
-
-            {days && days.days.length > 0 && <CompletenessTable data={days} />}
 
             {sections.map((section) => (
               <div key={section.category} className="mb-6 overflow-hidden rounded-lg border border-border bg-card">
