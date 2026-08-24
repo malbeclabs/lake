@@ -23,12 +23,14 @@ import (
 // wall-clock coverage percentage here would be a number with no meaning. First and last message
 // per day are reported instead, and the operator reads them.
 
-// kalshiL2CompletenessCacheKey is the page-cache key written by StartKalshiBackgroundRefresher.
+// KalshiL2CompletenessCacheKey is the page-cache key. It is refreshed by the page-cache worker
+// (api/worker, heavyEntries) rather than by StartKalshiBackgroundRefresher, so the cadence is
+// gated on this row's own updated_at and two API replicas cannot each refresh it.
 //
 // Bump the version in the same commit as any change to the payload shape. The entry lives in
 // Postgres and outlives the deploy, so an unbumped key hands a new bundle a row written by the
 // old binary — see the same note on kalshiL2CoverageCacheKey for what that costs.
-const kalshiL2CompletenessCacheKey = "kalshi_l2_completeness:v1"
+const KalshiL2CompletenessCacheKey = "kalshi_l2_completeness:v1"
 
 // kalshiL2CompletenessDays is how many days back the view reports, today included.
 //
@@ -275,7 +277,7 @@ func (a *API) FetchKalshiL2Completeness(ctx context.Context, days int) (*KalshiL
 //   - A different DayCount: the window constant moved without a key bump, so the cached days
 //     describe a window this payload no longer reports.
 func (a *API) completenessMergeBase(ctx context.Context) *KalshiL2CompletenessResponse {
-	data, updatedAt, err := a.readPageCacheWithAge(ctx, kalshiL2CompletenessCacheKey)
+	data, updatedAt, err := a.readPageCacheWithAge(ctx, KalshiL2CompletenessCacheKey)
 	if err != nil {
 		return nil
 	}
@@ -329,6 +331,30 @@ func mergeKalshiL2Days(fresh, cached *KalshiL2CompletenessResponse) *KalshiL2Com
 	return out
 }
 
+// RefreshKalshiL2Completeness computes the payload the cache entry should hold. The page-cache
+// worker calls it and writes what it returns (api/worker, heavyEntries).
+//
+// It reads the previous payload first, because that decides how wide the scan has to be. Six of
+// the seven partitions in the window are finished and immutable, so with a payload to carry them
+// forward this reads three days instead of seven. Without one it reads the whole window — a
+// first run, a bumped key, or a gap longer than a day. A deploy is NOT one of those: page_cache
+// lives in Postgres and outlives the process, so the entry keeps its base across a restart.
+func (a *API) RefreshKalshiL2Completeness(ctx context.Context) (*KalshiL2CompletenessResponse, error) {
+	base := a.completenessMergeBase(ctx)
+	days := kalshiL2CompletenessDays
+	if base != nil {
+		days = kalshiL2CompletenessRefreshDays
+	}
+	fresh, err := a.FetchKalshiL2Completeness(ctx, days)
+	if err != nil {
+		return nil, err
+	}
+	if base == nil {
+		return fresh, nil
+	}
+	return mergeKalshiL2Days(fresh, base), nil
+}
+
 // GetKalshiL2Completeness serves the per-day completeness view.
 //
 // Cache-first in every environment, and the cache is the only path that should normally run:
@@ -342,7 +368,7 @@ func mergeKalshiL2Days(fresh, cached *KalshiL2CompletenessResponse) *KalshiL2Com
 // key, or an unreadable row. Those still run live rather than returning empty, so local dev
 // without Postgres shows real data, but they are collapsed: one scan serves every waiter.
 func (a *API) GetKalshiL2Completeness(w http.ResponseWriter, r *http.Request) {
-	if data, err := a.readPageCache(r.Context(), kalshiL2CompletenessCacheKey); err == nil {
+	if data, err := a.readPageCache(r.Context(), KalshiL2CompletenessCacheKey); err == nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Cache", "HIT")
 		_, _ = w.Write(data)

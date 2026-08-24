@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
-
-	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
 // The Kalshi scoreboard is the sibling of the Hyperliquid one (hyperliquid_scoreboard.go) and
@@ -943,11 +941,15 @@ func (a *API) FetchKalshiPathLatency(ctx context.Context) (*KalshiPathLatency, e
 //
 // Each computation gets its own timeout so a slow one can't starve the others; the path
 // latency is refreshed first so the 24h/7d scoreboards pick up its freshly-cached value.
+//
+// A refresh that reads its own previous payload does NOT belong here. This ticker is per-pod
+// and prod runs lake-api at two replicas, so both would run it and could merge onto each
+// other's stale base; the page-cache worker's cadence gates on the entry's own updated_at,
+// which is shared. That is why the per-day completeness view is a worker entry (api/worker,
+// heavyEntries) and not a fifth closure below.
 func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 	const interval = 10 * time.Minute
 	const runTimeout = 3 * time.Minute
-	const completenessInterval = time.Hour
-	const completenessTimeout = 10 * time.Minute
 	refreshLatency := func() {
 		rctx, cancel := context.WithTimeout(ctx, runTimeout)
 		defer cancel()
@@ -1008,46 +1010,6 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 			slog.Warn("edge multicast observations cache write failed", "error", err)
 		}
 	}
-	// Per-day completeness runs on its own, slower ticker. A completed day never changes, and
-	// this query rescans every day in its window, so putting it on the 10-minute loop would
-	// repeat the most expensive scan on this page 144 times a day to learn nothing. Hourly is
-	// still well inside the cadence anyone reads a catalog at.
-	//
-	// Failures escalate rather than logging a flat WARN. A permanently broken refresh here is
-	// invisible otherwise: the page keeps serving the last cached row with X-Cache: HIT, and
-	// readPageCache has no age check, so a stale catalog looks healthy. The failure this is
-	// most likely to be is the scan outgrowing its budget, which is exactly the thing the
-	// ponytail note on kalshiL2CompletenessDays predicts and which nobody would be told about.
-	var completenessEsc logger.Escalator
-	refreshCompleteness := func() {
-		rctx, cancel := context.WithTimeout(ctx, completenessTimeout)
-		defer cancel()
-
-		// Read the previous payload first, because it decides how wide this scan has to be.
-		// Six of the seven partitions in the window are finished and immutable, so with a
-		// payload to carry them forward this reads three days instead of seven. Without one
-		// it reads the whole window, which is also what the first refresh after a deploy or
-		// a key bump does.
-		base := a.completenessMergeBase(rctx)
-		days := kalshiL2CompletenessDays
-		if base != nil {
-			days = kalshiL2CompletenessRefreshDays
-		}
-		val, err := a.FetchKalshiL2Completeness(rctx, days)
-		if err == nil {
-			if base != nil {
-				val = mergeKalshiL2Days(val, base)
-			}
-			err = a.WritePageCache(ctx, kalshiL2CompletenessCacheKey, val)
-		}
-		if err != nil {
-			completenessEsc.Fail(slog.Default(), "kalshi_l2_completeness",
-				"kalshi l2 completeness refresh failed",
-				"error", err, "scanned_days", days)
-			return
-		}
-		completenessEsc.Reset("kalshi_l2_completeness")
-	}
 	refresh := func() {
 		refreshObservations()
 		refreshLatency()
@@ -1065,19 +1027,6 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 				return
 			case <-t.C:
 				refresh()
-			}
-		}
-	}()
-	go func() {
-		refreshCompleteness()
-		t := time.NewTicker(completenessInterval)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				refreshCompleteness()
 			}
 		}
 	}()
