@@ -30,14 +30,26 @@ const kalshiL2CompletenessCacheKey = "kalshi_l2_completeness:v1"
 
 // kalshiL2CompletenessDays is how many days back the view reports, today included.
 //
+// It is 7 because feeds.kalshi_mbp_levels carries `TTL toDate(recv_ts_ns) + toIntervalDay(7)`,
+// so seven days is the whole record that exists. The two numbers have to stay equal: reporting
+// a longer window renders rows for days the capture already deleted, which reads as "we never
+// recorded it" rather than "it is gone", and reporting a shorter one hides days that are still
+// sellable. If the capture's TTL moves, move this with it.
+//
 // ponytail: this rescans every day in the window on every refresh, over a level-grain table
-// through a remoteSecure() proxy. Sports recording is ALREADY on (malbeclabs/infra#2309, cmh,
-// perps and all thirty-one sports lanes since 2026-08-18), and that roster is 27.46 Mbps on the
-// wire, so this is past affordable rather than approaching it. A completed day never changes, so
-// the upgrade is to compute each day once and keep the row — an AggregatingMergeTree fed on
-// insert in the capture's schema, or a daily job writing Postgres here. The window is 14 days to
-// keep the scan bounded until that lands; widen it only after.
-const kalshiL2CompletenessDays = 14
+// through a remoteSecure() proxy. Sports recording is on (malbeclabs/infra#2309, cmh, perps and
+// all thirty-one sports lanes since 2026-08-18) and that roster is 27.46 Mbps on the wire, so
+// the window holds ~90B rows. Measured 2026-08-24: a single-column count() over 14 days on prod
+// read 215 GB in 13.2s, and this query reads seven columns and can skip no granule.
+//
+// What keeps it affordable is that the TTL caps the window: the scan is flat from here, not
+// growing. What makes it wasteful is that six of the seven partitions are finished and
+// immutable, and it re-reads them hourly to learn nothing. The upgrade is to refresh today and
+// yesterday only and carry the older days from the cached payload — the page cache is already
+// the store, so it needs no new table. Tracked in malbeclabs/kalshi#214. Do it before widening
+// this window or before the refresh stops fitting its budget, which the escalator on
+// refreshCompleteness will report.
+const kalshiL2CompletenessDays = 7
 
 // completenessLiveTimeout bounds a collapsed live scan. It matches the refresher's budget
 // rather than a browser's patience: the scan is the same one either way, and a caller that

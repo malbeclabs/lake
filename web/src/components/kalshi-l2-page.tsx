@@ -148,7 +148,9 @@ function CompletenessTable({ data }: { data: KalshiL2CompletenessResponse }) {
           Whether each day's captured levels can be replayed into a book, which is what makes a
           day usable as history. A gapped book has a hole in its delta stream that no recorder of
           that lane can fill. A book with no snapshot in the day cannot start a replay from that
-          day alone. Last {data.day_count} days.
+          day alone. The capture keeps {data.day_count} days and deletes the rest, so this is the
+          whole record that exists — a day drops off this table {data.day_count} days after it is
+          recorded, whether or not it was sold.
         </p>
       </div>
       <div className="overflow-x-auto">
