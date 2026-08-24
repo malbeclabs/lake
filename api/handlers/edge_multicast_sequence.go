@@ -111,6 +111,14 @@ type EdgeMulticastChannelInstance struct {
 	// two pages cannot tell different stories about one feed.
 	GapBooks uint64 `json:"gap_books"`
 
+	// GapMessages is how many messages arrived while a book was un-anchored. It is a DURATION
+	// and not a fault count — 22 real discontinuities produced 158,912 of them on perps — so it
+	// is never displayed as one and never sizes a badge. It is carried for one thing: over
+	// Messages it is a loss RATE, which is the only severity this column can express. GapBooks
+	// saturates at the channel's instrument count, so on a perps channel carrying thirteen
+	// books, thirteen gapped and one gapped print the same badge.
+	GapMessages uint64 `json:"gap_messages,omitempty"`
+
 	// Resets and SnapshotCycles are the recovery side: an `instrument_reset` re-anchors one
 	// book, a `snapshot_end` completes a cycle. A series with gaps and no cycles is not
 	// recovering.
@@ -167,6 +175,18 @@ type EdgeMulticastSequenceHealth struct {
 	// group. Counted rather than dropped — the roll-up is the only place left that can report
 	// them.
 	Unattributed int `json:"unattributed,omitempty"`
+
+	// GapNodes is how many distinct recording nodes contributed a gap-measured instance here.
+	//
+	// One means the gap finding has a single vantage, and that is a limit on what it can say
+	// rather than a detail: comparing the two paths at one recorder exonerates the recorder's
+	// HOST, and nothing more. It cannot tell a path that lost data end to end from a path whose
+	// last hop into that one recorder lost it. Measured on mainnet — a publisher read 13 books
+	// gapped at the only node recording market-by-price, while on the plane that does have three
+	// vantages the same path arrived intact at a second one, which placed the loss on the branch
+	// and not on the path. The verdict stays 'gapped' either way, because data was lost; what
+	// this bounds is whose loss the page may call it.
+	GapNodes int `json:"gap_nodes,omitempty"`
 
 	// GapsUnmeasured is how many of these instances came from a plane with no gap marker, so
 	// their 'ok' means "advancing", not "lost nothing". Carried so the badge can say which kind
@@ -254,6 +274,7 @@ func (a *API) foldKalshiL2Coverage(ctx context.Context, captureSources edgeMulti
 			LocationCode:   lane.LocationCode,
 			Messages:       lane.Messages,
 			GapBooks:       lane.GapBooks,
+			GapMessages:    lane.GapMessages,
 			Resets:         lane.Resets,
 			SnapshotCycles: lane.SnapshotCycles,
 			LastSeen:       lane.LastSeen.UTC(),
@@ -431,9 +452,12 @@ func finishEdgeMulticastSequenceHealth(health *EdgeMulticastSequenceHealth) {
 		edgeMulticastSeqStalled: 1,
 		edgeMulticastSeqOK:      2,
 	}
+	gapNodes := map[string]struct{}{}
 	for _, inst := range health.Instances {
 		if !inst.GapsMeasured {
 			health.GapsUnmeasured++
+		} else {
+			gapNodes[inst.Node] = struct{}{}
 		}
 		switch inst.Status {
 		case edgeMulticastSeqGapped:
@@ -446,6 +470,7 @@ func finishEdgeMulticastSequenceHealth(health *EdgeMulticastSequenceHealth) {
 			}
 		}
 	}
+	health.GapNodes = len(gapNodes)
 	sort.SliceStable(health.Instances, func(i, j int) bool {
 		a, b := health.Instances[i], health.Instances[j]
 		if rank[a.Status] != rank[b.Status] {

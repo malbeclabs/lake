@@ -220,11 +220,44 @@ type EdgeMulticastPathParity struct {
 	// Behind is how many of those fell below the floor.
 	Behind int `json:"behind"`
 
+	// Faulted is whether that is enough to call the path behind, and it is not simply
+	// Behind > 0. See edgeMulticastPathParityFaulted for why one failing pair out of thirty is
+	// not a path finding. The page reads THIS rather than re-deriving it, so the verdict, the
+	// badge and the colour of the ratio cannot disagree.
+	Faulted bool `json:"faulted"`
+
 	// WorstRatio is this path's message count over the best path's, at its worst pair, and
 	// WorstSource names that pair's capture source.
 	WorstRatio  float64 `json:"worst_ratio"`
 	WorstSource string  `json:"worst_source,omitempty"`
 	WorstNode   string  `json:"worst_node,omitempty"`
+}
+
+// edgeMulticastPathParityBehindShare is how much of a path's comparisons must fail before the path
+// is called behind.
+//
+// One failing pair marks a whole line, and a sports node compares 29-33 capture sources, so without
+// this the verdict is decided by the single flakiest market on the feed. That is the same
+// one-instance sensitivity the stalled verdict had, and the same shape of fix: a reading is not a
+// finding until it is more than an outlier.
+//
+// A quarter, and the two ends of the range are what set it. A path with ONE comparison — every
+// perps group — still fires at 1 of 1, so nothing that was already reportable stops being
+// reportable. And a genuine deficit is not shy: loss on a branch is indiscriminate, so a path
+// dropping enough to clear the 2% floor at all clears it nearly everywhere, while a market opening
+// or closing a few seconds out of step with its peer clears it at exactly one capture source.
+// Measured on mainnet, sports read 0.988 and 0.967 on the two paths at once — arithmetically
+// impossible from one systematic deficit, since the better path of each pair is 1.0 by
+// construction, and the signature of per-source noise near the volume floor instead.
+const edgeMulticastPathParityBehindShare = 0.25
+
+// edgeMulticastPathParityFaulted is the gate above, applied. Compared == 0 is no comparison and
+// never a fault.
+func edgeMulticastPathParityFaulted(behind, compared int) bool {
+	if compared == 0 || behind == 0 {
+		return false
+	}
+	return float64(behind)/float64(compared) >= edgeMulticastPathParityBehindShare
 }
 
 // edgeMulticastPathParityKey identifies one comparison: the paths of one capture source as one
@@ -316,6 +349,11 @@ func edgeMulticastPathParity(series []EdgeMulticastObservationSeries, captureSou
 				p.WorstNode = key.node
 			}
 		}
+	}
+	// Once every pair is in: the share is over the path's whole comparison set, so it cannot be
+	// decided while that set is still being built.
+	for _, p := range out {
+		p.Faulted = edgeMulticastPathParityFaulted(p.Behind, p.Compared)
 	}
 	return out
 }

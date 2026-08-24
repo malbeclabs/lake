@@ -454,9 +454,12 @@ func edgeMulticastPublisherHealth(line EdgeMulticastPublisher, groupHasSeries bo
 			return edgeMulticastPubHealthStalled
 		}
 	}
-	// Compared > 0 is the guard that matters: a path with no peer has no parity verdict, and
-	// zero-of-zero must not read as passing the check.
-	if p := line.PathParity; p != nil && p.Compared > 0 && p.Behind > 0 {
+	// Both guards the check needs, and it is not Behind > 0: a path with no peer has no verdict,
+	// and one failing pair out of thirty is an outlier rather than a finding. Recomputed from the
+	// counts rather than read off PathParity.Faulted so that a line assembled anywhere — a test, a
+	// future caller — cannot get a verdict the counts do not support by leaving a bool unset. The
+	// payload field the page reads comes from this same function.
+	if p := line.PathParity; p != nil && edgeMulticastPathParityFaulted(p.Behind, p.Compared) {
 		return edgeMulticastPubHealthBehind
 	}
 	// Nothing measured the counter, and the recorded planes had nothing to say either. Ranked

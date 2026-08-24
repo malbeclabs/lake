@@ -117,3 +117,53 @@ func TestEdgeMulticastSequence_QuietSourceDoesNotExcuseAGap(t *testing.T) {
 	assert.Equal(t, 1, health.Stalled, "its peer is not quiet, so the stall is the path's own")
 	assert.Equal(t, 0, health.CaptureSourceQuiet)
 }
+
+// GapNodes bounds what a gap finding may be attributed to. One vantage clears the recorder's HOST
+// and nothing more: the branch into that recorder is upstream of a path-versus-path comparison
+// there and downstream of everything else, so a loss on it reads exactly like a loss on the path.
+// Observed on mainnet — 13 books gapped at the only node recording market-by-price, while the plane
+// with three vantages found that same path intact at another node.
+func TestEdgeMulticastSequence_GapNodesCountsTheVantages(t *testing.T) {
+	gapped := func(pubIP, node string) handlers.EdgeMulticastChannelInstance {
+		i := quietInstance(pubIP, "mbp_edge_kalshi_perps", 101, node, fresh())
+		i.GapBooks = 13
+		i.GapMessages = 7600
+		i.GapsMeasured = true
+		return i
+	}
+	clean := func(pubIP, node string) handlers.EdgeMulticastChannelInstance {
+		i := quietInstance(pubIP, "mbp_edge_kalshi_perps", 1, node, fresh())
+		i.GapsMeasured = true
+		return i
+	}
+
+	// Both paths at one recorder: the host is cleared, the branch into it is not.
+	one := handlers.EdgeMulticastSequenceHealthForTest([]handlers.EdgeMulticastChannelInstance{
+		gapped("148.51.120.6", "cmh-rec1"),
+		clean("148.51.121.69", "cmh-rec1"),
+	}, quietAsOf)
+	assert.Equal(t, "gapped", one.Status, "data was lost either way")
+	assert.Equal(t, 1, one.GapNodes)
+
+	// A second vantage is what makes the finding attributable.
+	two := handlers.EdgeMulticastSequenceHealthForTest([]handlers.EdgeMulticastChannelInstance{
+		gapped("148.51.120.6", "cmh-rec1"),
+		clean("148.51.121.69", "cmh-rec1"),
+		clean("148.51.120.6", "dub-rec1"),
+		clean("148.51.121.69", "dub-rec1"),
+	}, quietAsOf)
+	assert.Equal(t, 2, two.GapNodes)
+}
+
+// A plane with no gap marker contributes no vantage: its instances cannot corroborate a gap they
+// are structurally unable to measure.
+func TestEdgeMulticastSequence_GapNodesIgnoresTheUnmeasuredPlane(t *testing.T) {
+	mbp := quietInstance("148.51.120.6", "mbp_edge_kalshi_perps", 101, "cmh-rec1", fresh())
+	mbp.GapBooks = 3
+	mbp.GapsMeasured = true
+	tob := quietInstance("148.51.120.6", "tob_edge_kalshi_perps", 101, "dub-rec1", fresh())
+
+	health := handlers.EdgeMulticastSequenceHealthForTest([]handlers.EdgeMulticastChannelInstance{mbp, tob}, quietAsOf)
+	assert.Equal(t, 1, health.GapNodes, "the top-of-book vantage counts no gaps and corroborates none")
+	assert.Equal(t, 1, health.GapsUnmeasured)
+}

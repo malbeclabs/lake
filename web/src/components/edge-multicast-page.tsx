@@ -483,6 +483,14 @@ function MsgRateCell({ msgPerSec, asOfAge }: { msgPerSec?: number; asOfAge?: num
   )
 }
 
+// The invariant: the digit shown is never better than the measurement. Rounding to three places
+// printed a 0.9797 as "0.980" beside a badge saying it was under the 0.98 floor — the cell and the
+// verdict contradicting each other over the third decimal. Truncating toward zero cannot do that:
+// what it prints is always a value the path did at least reach.
+function parityRatioText(ratio: number): string {
+  return (Math.floor(ratio * 1000) / 1000).toFixed(3)
+}
+
 // This path's delivery against its redundant peer, at the recorder that saw both.
 //
 // The number is the point, not a badge: redundant paths carry the same feed, so anything below 1
@@ -493,19 +501,24 @@ function PeerParityCell({ parity, asOfAge }: { parity?: EdgeMulticastPathParity;
   if (!parity || parity.compared === 0) {
     return <span className="text-muted-foreground">—</span>
   }
-  const behind = parity.behind > 0
+  // The colour follows the VERDICT, not the raw count: a single failing pair out of thirty leaves
+  // the line healthy, and an amber ratio beside a healthy badge is the same contradiction the
+  // rounding used to produce one column over.
+  const behind = parity.faulted ?? parity.behind > 0
   return (
     <Tooltip
       content={
         (behind
           ? `behind its peer on ${parity.behind} of ${parity.compared} compared, worst ${parity.worst_source ?? ''}${parity.worst_node ? ` at ${parity.worst_node}` : ''}`
-          : `level with its peer across ${parity.compared} compared`) + computedLine(asOfAge)
+          : parity.behind > 0
+            ? `under the floor on ${parity.behind} of ${parity.compared} compared — too few to call the path behind, and the kind of outlier a market opening or closing out of step produces`
+            : `level with its peer across ${parity.compared} compared`) + computedLine(asOfAge)
       }
     >
       <span
         className={`tabular-nums ${behind ? 'text-amber-500' : 'text-muted-foreground'}${payloadStale(asOfAge) ? ' opacity-50' : ''}`}
       >
-        {parity.worst_ratio.toFixed(3)}
+        {parityRatioText(parity.worst_ratio)}
       </span>
     </Tooltip>
   )
@@ -620,6 +633,15 @@ function PublisherHealthBadge({
   // Silence excused as the capture source's is still silence, and the verdict does not show it.
   // Said here for the same reason the line above is: it qualifies the reading without minting a
   // state between healthy and a fault.
+  // A gap measured at ONE recorder cannot name whose loss it is. Comparing the two paths there
+  // clears the recorder's host and nothing more — the branch into that recorder is upstream of the
+  // comparison and downstream of everything else. Observed on mainnet: 13 books gapped at the only
+  // node recording market-by-price, while the plane with three vantages found the same path intact
+  // at another, placing the loss on the branch. The verdict stands, the claim is narrowed.
+  if (health === 'gapped' && sequence && (sequence.gap_nodes ?? 0) < 2) {
+    detail +=
+      ' — measured at one recorder, so a loss on the branch into it reads the same as a loss on the path'
+  }
   if (health === 'healthy' && sequence && (sequence.capture_source_quiet ?? 0) > 0) {
     detail += `; ${sequence.capture_source_quiet} of its series are quiet at a capture source that went quiet on every path`
   }
@@ -724,8 +746,16 @@ function sequenceInstanceLine(i: EdgeMulticastChannelInstance): string {
   if (!i.gaps_measured) {
     return `${head}, ${i.resets.toLocaleString()} resets — gap counting not available on this plane`
   }
+  // The loss RATE, not the gap-message count, and only where there were gaps. gap_books saturates
+  // at the channel's instrument count — thirteen of thirteen and one of thirteen print the same
+  // badge — so this is the only severity the line can carry. gap_messages alone is a duration and
+  // stays out of sight.
+  const rate =
+    i.gap_books > 0 && i.messages > 0 && i.gap_messages
+      ? `, ${((i.gap_messages / i.messages) * 100).toFixed(2)}% of messages arrived un-anchored`
+      : ''
   return (
-    `${head}, ${i.gap_books.toLocaleString()} book(s) gapped, ${i.resets.toLocaleString()} resets, ` +
+    `${head}, ${i.gap_books.toLocaleString()} book(s) gapped${rate}, ${i.resets.toLocaleString()} resets, ` +
     `${i.snapshot_cycles.toLocaleString()} snapshot cycles`
   )
 }
@@ -784,6 +814,9 @@ function PublisherSequenceCell({
     ...sequence.instances.map(sequenceInstanceLine),
     quiet > 0
       ? `${quiet} of ${total} quiet at a capture source that went quiet on every path — not counted against this path`
+      : '',
+    sequence.gapped > 0 && (sequence.gap_nodes ?? 0) < 2
+      ? 'gaps measured at one recorder: a loss on the branch into it cannot be told from a loss on the path'
       : '',
     asOfAge === undefined ? '' : computedLine(asOfAge).replace(/^ — /, ''),
   ]

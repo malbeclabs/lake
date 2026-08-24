@@ -62,6 +62,21 @@ func TestEdgeMulticastPublisherHealth_UnknownWhenNothingMeasured(t *testing.T) {
 		pubLine(handlers.EdgeMulticastPubUnknownForTest, seqHealth("ok", 0, 0, 0), nil), true))
 }
 
+// The share gate, from the verdict's side. The ratio is reported either way; what the count decides
+// is whether it is a finding about the path.
+func TestEdgeMulticastPublisherHealth_OneFailingPairIsNotBehind(t *testing.T) {
+	line := func(behind, compared int) handlers.EdgeMulticastPublisher {
+		return pubLine(handlers.EdgeMulticastPubPublishingForTest, seqHealth("ok", 0, 0, 1),
+			&handlers.EdgeMulticastPathParity{Compared: compared, Behind: behind, WorstRatio: 0.96})
+	}
+	assert.Equal(t, "healthy", handlers.EdgeMulticastPublisherHealthForTest(line(1, 29), true),
+		"one market out of twenty-nine is an outlier, not a path finding")
+	assert.Equal(t, "behind", handlers.EdgeMulticastPublisherHealthForTest(line(12, 29), true),
+		"a deficit across the feed is")
+	assert.Equal(t, "behind", handlers.EdgeMulticastPublisherHealthForTest(line(1, 1), true),
+		"and a feed with one comparison still fires on it")
+}
+
 // A path with no peer has no parity verdict. Zero of zero compared must not read as passing.
 func TestEdgeMulticastPublisherHealth_ParityNeedsAPeer(t *testing.T) {
 	assert.Equal(t, "healthy", handlers.EdgeMulticastPublisherHealthForTest(

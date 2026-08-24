@@ -365,6 +365,71 @@ func TestEdgeMulticastPathParity_ComparesAcrossChannelOffset(t *testing.T) {
 	assert.Equal(t, "tob_edge_kalshi_sports_nfl", parity["group-t|10.0.0.10"].WorstSource)
 }
 
+// sportsPairs builds one capture source per market, both paths at one node, with the market at
+// index `odd` carrying a small volume and a twenty-message shortfall on the second path — the shape
+// a market that opened a few seconds out of step with its peer leaves just above the volume floor.
+func sportsPairs(markets, odd int) []handlers.EdgeMulticastObservationSeries {
+	series := []handlers.EdgeMulticastObservationSeries{}
+	for i := range markets {
+		src := fmt.Sprintf("tob_edge_kalshi_sports_%d", i)
+		peer, mine := uint64(20000), uint64(20000)
+		if i == odd {
+			peer, mine = 600, 580
+		}
+		series = append(series,
+			obsSeries(src, "cmh-rec1", "10.0.0.9", 10, peer),
+			obsSeries(src, "cmh-rec1", "10.0.0.10", 110, mine))
+	}
+	return series
+}
+
+// A sports node compares 29-33 capture sources, and the verdict used to be decided by the flakiest
+// one of them. The reading stands — the pair really is under the floor — but one market out of
+// twenty-nine is an outlier, and calling the path behind over it is the same one-instance
+// sensitivity the stalled verdict had.
+func TestEdgeMulticastPathParity_OneFailingPairIsNotAFinding(t *testing.T) {
+	parity := handlers.EdgeMulticastPathParityForTest(parityGroups, sportsPairs(29, 7))
+
+	p := parity["group-t|10.0.0.10"]
+	require.NotNil(t, p)
+	assert.Equal(t, 29, p.Compared)
+	assert.Equal(t, 1, p.Behind, "the pair is under the floor and stays counted")
+	assert.False(t, p.Faulted, "one market of twenty-nine does not make the path behind")
+	assert.InDelta(t, 0.9667, p.WorstRatio, 0.001, "and the ratio is still reported")
+}
+
+// The other end of the same rule: a path with ONE comparison — every perps group — still fires on
+// it. The gate must not quietly retire the verdict on the feeds that only ever had one pair.
+func TestEdgeMulticastPathParity_LonePairStillFires(t *testing.T) {
+	parity := handlers.EdgeMulticastPathParityForTest(parityGroups, []handlers.EdgeMulticastObservationSeries{
+		obsSeries("tob_edge_kalshi_perps", "cmh-rec1", "10.0.0.9", 1, 20000),
+		obsSeries("tob_edge_kalshi_perps", "cmh-rec1", "10.0.0.10", 101, 19000),
+	})
+
+	p := parity["group-t|10.0.0.10"]
+	require.NotNil(t, p)
+	assert.Equal(t, 1, p.Compared)
+	assert.True(t, p.Faulted, "one of one is the whole feed, not an outlier")
+}
+
+// And a real branch deficit is not shy: loss is indiscriminate, so it clears the floor nearly
+// everywhere rather than at one market. That is the case the gate has to let through.
+func TestEdgeMulticastPathParity_ABroadDeficitStillFires(t *testing.T) {
+	series := []handlers.EdgeMulticastObservationSeries{}
+	for i := range 29 {
+		src := fmt.Sprintf("tob_edge_kalshi_sports_%d", i)
+		series = append(series,
+			obsSeries(src, "cmh-rec1", "10.0.0.9", 10, 20000),
+			obsSeries(src, "cmh-rec1", "10.0.0.10", 110, 19000))
+	}
+	parity := handlers.EdgeMulticastPathParityForTest(parityGroups, series)
+
+	p := parity["group-t|10.0.0.10"]
+	require.NotNil(t, p)
+	assert.Equal(t, 29, p.Behind)
+	assert.True(t, p.Faulted)
+}
+
 // A path with no peer at that node has nothing to be measured against, and neither a pass nor a
 // fail may be recorded for it.
 func TestEdgeMulticastPathParity_LonePathIsNotJudged(t *testing.T) {

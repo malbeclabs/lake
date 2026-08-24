@@ -7785,6 +7785,9 @@ export interface EdgeMulticastBGPRtt {
 
 /** One publisher path measured against its redundant peers, at the recorders that saw both. */
 export interface EdgeMulticastPathParity {
+  /** Whether `behind` fired: not simply behind > 0, since one failing pair out of thirty is an
+   *  outlier rather than a path finding. Read this rather than re-deriving the rule. */
+  faulted?: boolean
   /** (capture source, recording node) pairs where another path carried the same feed. */
   compared: number
   /** How many of those fell below the parity floor. */
@@ -7858,6 +7861,10 @@ export interface EdgeMulticastChannelInstance {
   /** Distinct books that gapped in the window — the fault count. Never gap_messages, which
    *  scales with traffic rather than with reliability. */
   gap_books: number
+  /** Messages that arrived while a book was un-anchored. A DURATION, never a fault count — over
+   *  messages it is a loss rate, which is the only severity this column can express, because
+   *  gap_books saturates at the channel's instrument count. */
+  gap_messages?: number
   resets: number
   snapshot_cycles: number
   last_seen: string
@@ -7887,6 +7894,9 @@ export interface EdgeMulticastSequenceHealth {
   unattributed?: number
   /** Instances from a plane with no gap marker, whose 'ok' is the weaker "advancing" claim. */
   gaps_unmeasured?: number
+  /** Distinct recording nodes behind the gap-measured instances. One means a single vantage: a
+   *  loss on the branch into that recorder cannot be told apart from a loss on the path. */
+  gap_nodes?: number
   /** Instances stalled only because their capture source stopped producing on every path at once.
    *  Counted apart from stalled: it is a statement about the feed's upstream, not about a path. */
   capture_source_quiet?: number

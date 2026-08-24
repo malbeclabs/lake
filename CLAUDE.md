@@ -384,6 +384,23 @@ percent or more where the floor leaves two, so 4 messages against 5 — measured
 instance — would read `behind`, and one failed pair marks the whole line across the 29-33 capture
 sources a sports node compares. Under the floor the pair records nothing, not a pass.
 
+The volume floor was not enough on its own, so a **share gate** sits over the verdict:
+`edgeMulticastPathParityBehindShare` (a quarter), applied as `Behind / Compared` by
+`edgeMulticastPathParityFaulted`. One failing pair out of twenty-nine is an outlier, not a finding
+about the path, and it was deciding the verdict for the whole line. Both ends of the range set the
+number: a path with ONE comparison — every perps group — still fires at 1 of 1, and a genuine
+deficit is not shy, since loss on a branch is indiscriminate and clears the 2% floor nearly
+everywhere rather than at a single market. What tipped it off is that sports read `0.988` and
+`0.967` on the two paths **at once**, which one systematic deficit cannot produce: the better path
+of each pair is 1.0 by construction, so each path is losing at a different capture source — the
+signature of per-source noise near the volume floor. The verdict, the badge and the colour of the
+ratio all read `Faulted` rather than re-deriving the rule, so they cannot disagree; the ratio itself
+is still printed either way, and the tooltip says how many pairs were under the floor.
+
+The ratio is printed **truncated toward zero**, never rounded: the digit shown must never be better
+than the measurement. Rounding to three places printed a 0.9797 as `0.980` beside a badge saying it
+was under the 0.98 floor.
+
 This is the check that reaches what capture-node parity cannot. That one needs two recorders
 (`edgeMulticastMinParityNodes`) and the sports capture runs on one, so it is inert on every sports
 group; and where it can fire, its floor is half the median against a real fault of 0.3%. It is
@@ -438,6 +455,24 @@ The **Sequence** column is separate from that verdict and reports the recorded w
 counters. **A series belongs to one publisher, so the verdict sits on the publisher line**: each path
 runs its own counters and one can gap while its peer is intact, which a group-level cell can only
 report as "this group gapped" — naming neither the broken path nor the healthy one.
+
+**A gap measured at one recorder cannot name whose loss it is**, and `GapNodes` on the sequence
+health is what bounds the claim. Comparing the two paths at a single node clears that recorder's
+HOST and nothing more: the branch into it is upstream of that comparison and downstream of
+everything else, so a loss on the branch reads exactly like a loss on the path. This is not
+hypothetical — a publisher read 13 books gapped at the only node recording market-by-price, and the
+plane that does have three vantages found the same path intact at a second one, placing the loss on
+the branch. Market-by-price is recorded at **one** node on every group today, so every gap this page
+reports is single-vantage; the verdict stays `gapped`, because data was lost either way, and what
+narrows is the sentence the tooltip is allowed to say. The real fix is a second market-by-price
+recorder, which is not work this repo can do.
+
+The tooltip also carries `gap_messages / messages` as a **loss rate** where there were gaps. That is
+not the banned display of `gap_messages` as a fault count — a rate is not a count, and it is the
+only severity available, because `gap_books` saturates at the channel's instrument count: on a perps
+channel carrying thirteen books, thirteen gapped and one gapped print the same badge. It stays in
+the tooltip rather than on the badge, which is where changing what the column asserts would need a
+product decision.
 
 Sequencing keys on the channel instance, `(source IP address, Channel ID, destination port)`.
 `kalshi_mbp_levels` carries the source address as `publisher_source_ip` — the arm axis is a column in
