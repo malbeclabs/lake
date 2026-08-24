@@ -989,6 +989,29 @@ func TestNetworkHealthOutcome(t *testing.T) {
 		require.Equal(t, 1, countLevel(*recs, slog.LevelWarn))
 	})
 
+	t.Run("a hard failure clears the degraded run clock", func(t *testing.T) {
+		// The degraded clock would otherwise keep running through an outage the
+		// entry's own escalator is already paging for, so the first partially
+		// recovered refresh would escalate on a duration belonging to the hard
+		// failure — a fresh page as the group improves.
+		log, recs := capLogger()
+		now := time.Unix(1_700_000_000, 0)
+		a := newActivities(log, nil, defaultRefreshConcurrency)
+		a.degradedEsc.Now = func() time.Time { return now }
+
+		require.NoError(t, a.nhOutcome("network health outages", "outages", "", []string{"error_hotspots"}),
+			"a degraded refresh starts the run clock")
+
+		now = now.Add(3 * time.Hour)
+		require.Error(t, a.nhOutcome("network health outages", "outages", "unavailable", nil))
+
+		*recs = nil
+		require.NoError(t, a.nhOutcome("network health outages", "outages", "", []string{"error_hotspots"}))
+		require.Zero(t, countLevel(*recs, slog.LevelError),
+			"recovery to degraded-only must not page on the outage's duration")
+		require.Equal(t, 1, countLevel(*recs, slog.LevelWarn))
+	})
+
 	t.Run("healthy refresh is silent", func(t *testing.T) {
 		log, recs := capLogger()
 		a := &Activities{Log: log}

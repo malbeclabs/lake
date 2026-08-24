@@ -332,11 +332,15 @@ const nhDegradedErrorWindow = 10 * time.Minute
 // once the streak crosses the threshold.
 func (a *Activities) nhDegraded(name, key string, panels []string) {
 	if len(panels) == 0 {
-		a.degradedEsc.Reset(key + ":degraded")
+		a.degradedEsc.Reset(degradedKey(key))
 		return
 	}
-	a.degradedEsc.Fail(a.Log, key+":degraded", "cache refresh degraded", "cache", name, "panels", panels)
+	a.degradedEsc.Fail(a.Log, degradedKey(key), "cache refresh degraded", "cache", name, "panels", panels)
 }
+
+// degradedKey names the degraded counter for a cache key, kept in one place so a
+// Reset and a Fail cannot drift onto different keys and silently split the run.
+func degradedKey(key string) string { return key + ":degraded" }
 
 // nhOutcome turns one Network Health group's payload into a refresh outcome.
 // errMsg is the group's Error, meaning a critical panel failed: it becomes a
@@ -346,6 +350,12 @@ func (a *Activities) nhDegraded(name, key string, panels []string) {
 // still produces at most one alert-bearing line.
 func (a *Activities) nhOutcome(name, key, errMsg string, degraded []string) error {
 	if errMsg != "" {
+		// Clear the degraded run as well. Its clock would otherwise keep running
+		// through an outage the entry's own escalator is already paging for, so the
+		// first partially-recovered refresh would escalate on a duration belonging to
+		// the hard failure — a fresh page as the group improves. A group that flaps
+		// still pages, via that hard-failure counter.
+		a.degradedEsc.Reset(degradedKey(key))
 		return &refreshError{errMsg}
 	}
 	a.nhDegraded(name, key, degraded)
