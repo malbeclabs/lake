@@ -495,9 +495,14 @@ It keys on `(capture source, recording node)` — the path-parity key, for the s
 node is in it so a recorder that went quiet on everything is not read as the venue, and the channel
 is out of it because the two paths publish under different channel ids and would never meet. A
 vantage with one path records nothing either way; there is no telling a dead path from a quiet
-source there. The guard that makes the rule safe is that a path is only excused at one capture
-source **while it is delivering at another** — without it, a feed that stopped everywhere would
-find every path quiet at every source and read as advancing while nothing advanced at all.
+source there. The guard that makes the rule safe is that a path is only excused at a capture source
+**while it is itself delivering at that vantage** — `(path, recording node)`, not the path alone.
+Two failures need it and they need different halves. A feed that stopped everywhere would otherwise
+find every path quiet at every source and read as advancing while nothing advanced. And a recording
+node that stops ingesting mid-window is the same shape one level down: every series it holds goes
+stale together, so every pair at that vantage is quiet on both paths — keyed on the path alone the
+paths still look alive, because they are delivering at the *other* recorders, and a dead recorder
+gets excused as the venue. `TestEdgeMulticastSequence_ADeadRecorderIsNotAQuietVenue` pins it.
 
 Publisher lines also carry the ledger's **`bgp_status`**, and `down` renders as an error on the line.
 That is not a reversal of the rule that the control-plane roll-up must not paint the row: what that

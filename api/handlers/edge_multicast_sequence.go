@@ -386,15 +386,22 @@ func edgeMulticastSequenceStatus(gapBooks uint64, lastSeen, asOf time.Time) stri
 // dead path from a quiet source with, and guessing in either direction is worse than letting the
 // stall stand.
 //
-// The guard that makes the whole thing safe is aliveSomewhere: a path may only be excused at one
-// capture source if it is delivering at another. Without it a feed that stopped everywhere — every
-// market closed, or the venue down — would find every path quiet at every source, demote all of
-// them, and read as advancing while nothing advanced at all.
+// The guard that makes the whole thing safe is aliveHere: a path may only be excused at a capture
+// source if it is itself delivering at THAT VANTAGE. Two failures need it, and they need different
+// halves of it. A feed that stopped everywhere — every market closed, or the venue down — would
+// otherwise find every path quiet at every source and demote all of it, reading as advancing while
+// nothing advanced. And a recording node that stops ingesting mid-window is the same shape one
+// level down: every series it holds goes stale together, so every vantage-local pair is quiet on
+// both paths. Keyed on the path alone the paths still look alive — they are delivering at the OTHER
+// recorders — and a dead recorder would be excused as the venue going quiet, which is precisely the
+// attribution this function exists to get right.
 func demoteEdgeMulticastQuietCaptureSources(health *EdgeMulticastSequenceHealth) {
 	type pathTally struct{ stalled, total int }
 
+	// Keyed on (path, vantage), not on the path: see aliveHere in the comment above.
+	type pathAtNode struct{ ip, node string }
 	byVantage := map[edgeMulticastPathParityKey]map[string]*pathTally{}
-	aliveSomewhere := map[string]bool{}
+	aliveHere := map[pathAtNode]bool{}
 	for _, inst := range health.Instances {
 		// No source address is no path: an instance that cannot be attributed to one cannot
 		// be compared against the others, and must not stand in as a peer for them either.
@@ -402,7 +409,7 @@ func demoteEdgeMulticastQuietCaptureSources(health *EdgeMulticastSequenceHealth)
 			continue
 		}
 		if inst.Status != edgeMulticastSeqStalled {
-			aliveSomewhere[inst.PublisherSourceIP] = true
+			aliveHere[pathAtNode{ip: inst.PublisherSourceIP, node: inst.Node}] = true
 		}
 		key := edgeMulticastPathParityKey{source: inst.CaptureSource, node: inst.Node}
 		if byVantage[key] == nil {
@@ -436,7 +443,7 @@ func demoteEdgeMulticastQuietCaptureSources(health *EdgeMulticastSequenceHealth)
 
 	for i := range health.Instances {
 		inst := &health.Instances[i]
-		if inst.Status != edgeMulticastSeqStalled || !aliveSomewhere[inst.PublisherSourceIP] {
+		if inst.Status != edgeMulticastSeqStalled || !aliveHere[pathAtNode{ip: inst.PublisherSourceIP, node: inst.Node}] {
 			continue
 		}
 		if quiet[edgeMulticastPathParityKey{source: inst.CaptureSource, node: inst.Node}] {

@@ -101,6 +101,29 @@ func TestEdgeMulticastSequence_AFeedStoppedEverywhereStaysStalled(t *testing.T) 
 	assert.Equal(t, 0, health.CaptureSourceQuiet)
 }
 
+// A recording node that stops ingesting mid-window is the failure the aliveness guard has to catch
+// one level below the dead feed: every series that node holds goes stale together, so every pair at
+// that vantage is quiet on both paths and looks exactly like the venue going quiet. What tells them
+// apart is where the paths are alive — and it has to be THAT vantage, because a path delivering at
+// another recorder says nothing about this one. Keyed on the path alone this read
+// stalled=0, capture_source_quiet=4, with the lines reporting 'advancing' over a dead recorder.
+func TestEdgeMulticastSequence_ADeadRecorderIsNotAQuietVenue(t *testing.T) {
+	health := handlers.EdgeMulticastSequenceHealthForTest([]handlers.EdgeMulticastChannelInstance{
+		// node-a stopped: everything it holds is stale, on both paths.
+		quietInstance("148.51.121.209", "tob_edge_kalshi_perps", 1, "node-a", stale()),
+		quietInstance("148.51.120.152", "tob_edge_kalshi_perps", 101, "node-a", stale()),
+		quietInstance("148.51.121.209", "tob_edge_kalshi_sports_nfl", 10, "node-a", stale()),
+		quietInstance("148.51.120.152", "tob_edge_kalshi_sports_nfl", 110, "node-a", stale()),
+		// The same two paths, delivering fine at another recorder.
+		quietInstance("148.51.121.209", "tob_edge_kalshi_perps", 1, "node-b", fresh()),
+		quietInstance("148.51.120.152", "tob_edge_kalshi_perps", 101, "node-b", fresh()),
+	}, quietAsOf)
+
+	assert.Equal(t, "stalled", health.Status, "a dead recorder is not the venue going quiet")
+	assert.Equal(t, 4, health.Stalled)
+	assert.Zero(t, health.CaptureSourceQuiet)
+}
+
 // A gapped series is a fault of its own and outranks the whole question: the quiet source excuses
 // silence, never loss.
 func TestEdgeMulticastSequence_QuietSourceDoesNotExcuseAGap(t *testing.T) {

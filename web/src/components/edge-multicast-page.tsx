@@ -883,7 +883,13 @@ function RateCell({ bps, ambiguous, stale }: { bps: number; ambiguous: boolean; 
 // something the feed did not do. This is what 'skewed' was always trying to say on the counter
 // plane, said where the numbers are exact: recorded message counts against the best-placed
 // recorder, rather than sample counts against half the median.
-function RecorderCoverageBadge({ coverage }: { coverage?: EdgeMulticastRecorderCoverage }) {
+function RecorderCoverageBadge({
+  coverage,
+  asOfAge,
+}: {
+  coverage?: EdgeMulticastRecorderCoverage
+  asOfAge?: number
+}) {
   const lagging = coverage?.lagging ?? []
   if (!coverage || lagging.length === 0) return null
   const detail = lagging
@@ -893,11 +899,17 @@ function RecorderCoverageBadge({ coverage }: { coverage?: EdgeMulticastRecorderC
     )
     .concat(
       'Short on every path of this group it records, so this is the recorder or its last hop rather than one publisher’s path — a deficit confined to one path is reported as Peer on that line instead.',
+      // Folded from the same cache entry Msg/s and Peer are, so it ages with them: an amber
+      // verdict that cannot go stale is a verdict that outlives the refresher that produced it.
+      computedLine(asOfAge).replace(/^ — /, ''),
     )
+    .filter(Boolean)
     .join('\n')
   return (
     <Tooltip content={detail} className="whitespace-pre-line">
-      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/15 text-amber-500">
+      <span
+        className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/15 text-amber-500${payloadStale(asOfAge) ? ' opacity-50' : ''}`}
+      >
         {lagging.length}/{coverage.nodes} recorders
       </span>
     </Tooltip>
@@ -1007,7 +1019,7 @@ function GroupRow({
         {/* The receiver-side badge and the reconciliation link share this cell. The group verdict
             that used to live here was a worst-of over every publisher and named nobody, which is
             why it went; this one names a recorder, which no line can. */}
-        <RecorderCoverageBadge coverage={group.recorder_coverage} />{' '}
+        <RecorderCoverageBadge coverage={group.recorder_coverage} asOfAge={observationsAsOfAge} />{' '}
         <Link
           to={`/dz/multicast-groups/${group.pk}?tab=health`}
           state={EDGE_MULTICAST_BACK}
