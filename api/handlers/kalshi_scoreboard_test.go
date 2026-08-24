@@ -486,7 +486,9 @@ func TestKalshiScoreboard_LabelsMbpWinnerAsDoubleZero(t *testing.T) {
 	assert.Equal(t, "Public API", resp.RecentRaces[0].RunnerUpLabel)
 }
 
-// createKalshiObservationsTable creates the columns the path-latency query reads.
+// createKalshiObservationsTable creates the columns the path-latency query reads, plus the three
+// the edge multicast observations query reads: the wire protocol's own sequence and reset_count,
+// and the raw_meta JSON that carries the channel instance's addressing.
 func createKalshiObservationsTable(t *testing.T, api *handlers.API) {
 	t.Helper()
 	ctx := t.Context()
@@ -501,7 +503,10 @@ func createKalshiObservationsTable(t *testing.T, api *handlers.API) {
 			source_ts_ms UInt64,
 			recv_ts_ns UInt64,
 			source_id UInt16,
-			channel_id UInt8
+			channel_id UInt8,
+			sequence UInt64,
+			reset_count UInt8,
+			raw_meta String
 		) ENGINE = MergeTree
 		ORDER BY (measurement_node_id, symbol, source_ts_ms, source, recv_ts_ns)
 	`, db)))
