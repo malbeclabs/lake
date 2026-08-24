@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -202,4 +203,100 @@ func TestEscalator_ConcurrentFailReset(t *testing.T) {
 	}
 	require.Equal(t, DefaultErrorAfter-1, countLevel(*recs, slog.LevelWarn))
 	require.Equal(t, 1, countLevel(*recs, slog.LevelError))
+}
+
+// fakeClock is a manually advanced clock for the ErrorAfterDuration tests, so
+// they pin the window without sleeping.
+type fakeClock struct{ now time.Time }
+
+func (c *fakeClock) Now() time.Time          { return c.now }
+func (c *fakeClock) advance(d time.Duration) { c.now = c.now.Add(d) }
+
+func TestEscalator_ErrorAfterDurationEscalatesOnTime(t *testing.T) {
+	t.Parallel()
+
+	// The count is far out of reach, so only the window can escalate. This is
+	// the page-cache degraded-panel case: a refresh that writes its blob sleeps
+	// for a full cadence afterwards, so the count alone no longer describes how
+	// long the panel has actually been dark.
+	log, recs := capLogger()
+	clock := &fakeClock{now: time.Unix(1_700_000_000, 0)}
+	esc := Escalator{ErrorAfter: 1000, TransientErrorAfter: 1000, ErrorAfterDuration: 10 * time.Minute, Now: clock.Now}
+	err := errors.New("boom")
+
+	esc.Fail(log, "k", "degraded", "error", err)
+	require.Zero(t, countLevel(*recs, slog.LevelError), "a run's first failure has lasted zero time")
+
+	clock.advance(9 * time.Minute)
+	esc.Fail(log, "k", "degraded", "error", err)
+	require.Zero(t, countLevel(*recs, slog.LevelError), "inside the window must stay WARN")
+
+	clock.advance(time.Minute)
+	esc.Fail(log, "k", "degraded", "error", err)
+	require.Equal(t, 1, countLevel(*recs, slog.LevelError), "a run that has lasted the window must page")
+
+	// The line reports how long the run has been failing.
+	rec := (*recs)[len(*recs)-1]
+	var got any
+	rec.Attrs(func(a slog.Attr) bool {
+		if a.Key == "failing_for" {
+			got = a.Value.Any()
+		}
+		return true
+	})
+	require.Equal(t, 10*time.Minute, got)
+}
+
+func TestEscalator_CountStillWinsWhenItFiresFirst(t *testing.T) {
+	t.Parallel()
+
+	// ErrorAfterDuration can only make escalation earlier, never later: a key
+	// failing every cycle still pages on the count long before the window.
+	log, recs := capLogger()
+	clock := &fakeClock{now: time.Unix(1_700_000_000, 0)}
+	esc := Escalator{ErrorAfterDuration: time.Hour, Now: clock.Now}
+	err := errors.New("boom")
+
+	for range DefaultErrorAfter {
+		clock.advance(time.Second)
+		esc.Fail(log, "k", "refresh failed", "error", err)
+	}
+	require.Equal(t, 1, countLevel(*recs, slog.LevelError))
+}
+
+func TestEscalator_ResetClearsRunStart(t *testing.T) {
+	t.Parallel()
+
+	// A success in the middle of a long outage must restart the clock, or the
+	// next single blip would page immediately.
+	log, recs := capLogger()
+	clock := &fakeClock{now: time.Unix(1_700_000_000, 0)}
+	esc := Escalator{ErrorAfter: 1000, TransientErrorAfter: 1000, ErrorAfterDuration: 10 * time.Minute, Now: clock.Now}
+	err := errors.New("boom")
+
+	esc.Fail(log, "k", "degraded", "error", err)
+	clock.advance(time.Hour)
+	esc.Reset("k")
+	esc.Fail(log, "k", "degraded", "error", err)
+	require.Zero(t, countLevel(*recs, slog.LevelError), "reset must restart the run clock")
+
+	clock.advance(10 * time.Minute)
+	esc.Fail(log, "k", "degraded", "error", err)
+	require.Equal(t, 1, countLevel(*recs, slog.LevelError))
+}
+
+func TestEscalator_ZeroValueReadsNoClock(t *testing.T) {
+	t.Parallel()
+
+	// The zero value must stay usable from Temporal workflow code, where a
+	// clock read breaks replay determinism. Now would panic if it were read.
+	log, recs := capLogger()
+	esc := Escalator{Now: func() time.Time { panic("clock read without ErrorAfterDuration") }}
+
+	esc.Fail(log, "k", "refresh failed", "error", errors.New("boom"))
+	require.Equal(t, 1, countLevel(*recs, slog.LevelWarn))
+	(*recs)[0].Attrs(func(a slog.Attr) bool {
+		require.NotEqual(t, "failing_for", a.Key, "no window configured, no duration attribute")
+		return true
+	})
 }

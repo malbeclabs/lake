@@ -198,9 +198,15 @@ var kalshiWindows = map[string]string{
 // cardinalities the unit tests assert.
 const kalshiRaceKeyTuple = "(measurement_node_id, capture_run_id, symbol, source_ts_ms, bbo_hash)"
 
-// kalshiRecentRaceSymbols are the perps tickers shown in the recent-races grid, in display
-// order. The scoreboard aggregations race every symbol the configured feeds carry; this list
-// only bounds the live grid, which needs a stable, small set of columns.
+// kalshiRecentRaceSymbols are the perps tickers, in display order. They bound two things: the
+// recent-races grid, which needs a stable, small set of columns, and the path-latency table,
+// which needs them for a stronger reason — those are the symbols whose source_ts_ms is the
+// venue's orderbook stamp, the one quantity that metric is defined against. The race and win-rate
+// aggregations are NOT bounded by this list; they race every symbol the configured feeds carry.
+//
+// Adding a venue lane means adding it here. That is a real staleness edge and the lesser one: a
+// missing ticker under-reports a table that says how many samples back every row, while a lane
+// with a different clock in it reports a latency that is not a latency.
 var kalshiRecentRaceSymbols = []string{
 	"KXBTCPERP", "KXETHPERP", "KXSOLPERP", "KXHYPEPERP",
 	"KXXRPPERP", "KXDOGEPERP", "KXLTCPERP", "KXLINKPERP",
@@ -285,21 +291,29 @@ type KalshiFeedLatency struct {
 // depend on the race pairing at all. See the "How to read this dashboard" panel in
 // infra/grafana/dashboards/kalshi-edge-advantage.json.
 type KalshiPathLatency struct {
-	Window      string              `json:"window"`
-	Feeds       []KalshiFeedLatency `json:"feeds"`
-	GeneratedAt time.Time           `json:"generated_at"`
+	Window string              `json:"window"`
+	Feeds  []KalshiFeedLatency `json:"feeds"`
+
+	// MinSamples is KalshiLatencyMinSamples, carried in the payload so the page renders the same
+	// threshold the handler documents rather than a second copy of the number.
+	MinSamples  uint64    `json:"min_samples"`
+	GeneratedAt time.Time `json:"generated_at"`
 }
 
 // KalshiScoreboardResponse is the API response.
 type KalshiScoreboardResponse struct {
-	Window        string             `json:"window"`
-	Symbol        string             `json:"symbol,omitempty"`
-	GeneratedAt   time.Time          `json:"generated_at"`
-	DZWinSharePct float64            `json:"dz_win_share_pct"`
-	TotalRaces    uint64             `json:"total_races"`
-	Competitors   []KalshiCompetitor `json:"competitors"`
-	Nodes         []KalshiNode       `json:"nodes"`
-	RecentRaces   []KalshiRace       `json:"recent_races"`
+	Window        string    `json:"window"`
+	Symbol        string    `json:"symbol,omitempty"`
+	GeneratedAt   time.Time `json:"generated_at"`
+	DZWinSharePct float64   `json:"dz_win_share_pct"`
+	TotalRaces    uint64    `json:"total_races"`
+
+	// MinRaces is KalshiVantageMinRaces: below it the page shows a race count instead of a win
+	// share or a lead, for a vantage row and for a (vantage, competitor) cell alike.
+	MinRaces    uint64             `json:"min_races"`
+	Competitors []KalshiCompetitor `json:"competitors"`
+	Nodes       []KalshiNode       `json:"nodes"`
+	RecentRaces []KalshiRace       `json:"recent_races"`
 	// Prices is the latest BBO mid price per recent-race symbol (live, for the grid).
 	Prices map[string]float64 `json:"prices,omitempty"`
 	// PathLatency is the per-feed venue-to-receive latency (24h) — the headline comparison;
@@ -325,6 +339,7 @@ func emptyKalshiScoreboard(window string, unconfigured bool) *KalshiScoreboardRe
 	return &KalshiScoreboardResponse{
 		Window:       window,
 		GeneratedAt:  time.Now().UTC(),
+		MinRaces:     KalshiVantageMinRaces,
 		Competitors:  []KalshiCompetitor{},
 		Nodes:        []KalshiNode{},
 		RecentRaces:  []KalshiRace{},
@@ -376,6 +391,7 @@ func (a *API) FetchKalshiScoreboardData(ctx context.Context, window, symbol stri
 		Window:      window,
 		Symbol:      symbol,
 		GeneratedAt: time.Now().UTC(),
+		MinRaces:    KalshiVantageMinRaces,
 		Competitors: []KalshiCompetitor{},
 		Nodes:       []KalshiNode{},
 		RecentRaces: []KalshiRace{},
@@ -742,6 +758,59 @@ func (a *API) fetchKalshiPrices(ctx context.Context) (map[string]float64, error)
 // alone selects two feeds, not one. The prefix is what actually discriminates them.
 const kalshiEdgeWSArmFilter = "startsWith(source, 'tob_') AND source_id = 3 AND channel_id IN (2, 101)"
 
+// KalshiLatencyMinSamples is the sample count below which a (feed, vantage) row's percentiles
+// are not presented as a measurement. It is a DISPLAY threshold, published in the payload: the
+// row is still returned, and the page shows its sample count in place of the percentiles.
+//
+// Filtering the row out instead was worse in four ways, all of them the same mistake — removing
+// the evidence along with the number. An empty table cannot explain itself ("no data available"
+// reads as a broken capture); dropping one side of a pairing leaves the other side alone at that
+// vantage, which is a one-sided comparison in the flattering direction; and a row that vanishes
+// when the reader switches window reads as a recorder going down. Marking keeps every row, and
+// what is withheld is only the number that cannot be computed.
+//
+// A percentile needs a distribution behind it. Over five observations p99 IS the maximum of five
+// observations, and the row renders as p50 = p90 = p99 — one value repeated three times, sitting
+// in the same table as a row backed by fifteen million. Nothing in the number says which is
+// which, so the reader compares them.
+//
+// Observed on mainnet: four `cmh` sources with five samples each reported 0.3 ms against the
+// 23 ms the same vantage measures on the perps lane it actually carries. That reads as a
+// hundredfold path advantage rather than as an unmeasured feed, which is the worst direction for
+// this metric to be wrong in — it flatters DoubleZero.
+//
+// A thousand is chosen to sit far below anything real and far above noise: a live vantage on a
+// live feed logs millions of observations in 24h (the three perps vantages carry ~15.4M each),
+// while a producer that has just started, or one writing by mistake, carries single digits. It is
+// not a statistical threshold for p99 precision; it is the line between "measured" and "not".
+//
+// It is deliberately NOT the guard against a feed that does not belong in this table. A sample
+// count is a volume proxy, and a spurious producer crosses any volume floor by staying up: a
+// sports lane updating about once a second passes a thousand in seventeen minutes and then reads
+// as a solid sub-millisecond DoubleZero row. Provenance is enforced separately, by scoping the
+// query to the symbols whose source_ts_ms is the venue's own orderbook clock — see the symbol
+// filter in FetchKalshiPathLatency.
+const KalshiLatencyMinSamples = 1000
+
+// KalshiVantageMinRaces is the race count below which a win share or a lead percentile is not
+// presented as a measurement. Like KalshiLatencyMinSamples it is a display threshold published in
+// the payload, and for the same reasons — see that comment.
+//
+// It applies at two grains, because the defect exists at both: a vantage's own total (a recorder
+// that wrote a handful of races became a row with a win rate beside vantages backed by millions)
+// and each (vantage, competitor) cell inside a published row (a vantage with 3000 races against
+// one feed and 4 against a freshly configured one showed the second as a lead figure with nothing
+// saying what it rested on).
+//
+// A hundred sits about two orders of magnitude below the smallest plausible live vantage even in
+// the shortest window this serves (1h): the venue's public perps feed delivers on a roughly
+// one-second cadence, so a live pairing produces thousands of races an hour. It stays an absolute
+// count rather than a rate scaled by window, and that is defensible now that nothing is removed:
+// the statement is "fewer than a hundred races cannot carry a percentile", which is true of the
+// 1h window and of a ?symbol= split for the same reason it is true of 7d. What changes between
+// windows is whether the number is shown, not whether the vantage exists.
+const KalshiVantageMinRaces = 100
+
 // FetchKalshiPathLatency computes each feed's venue-to-receive latency (p50/p90/p99 in ms) over
 // the last 24h from the raw observations table: for one venue update, how long until this feed
 // delivered it. See KalshiPathLatency for why this, not the race margin, is the headline.
@@ -751,6 +820,14 @@ const kalshiEdgeWSArmFilter = "startsWith(source, 'tob_') AND source_id = 3 AND 
 // arm and the market-by-price lanes are deliberately absent: they are DoubleZero's feeds and
 // they count in the race, but their source-timestamp provenance is not the same quantity, so
 // including them would reintroduce exactly the clock-mixing this metric exists to avoid.
+//
+// Scoped to the perps symbols for the same reason, and this is the part the arm filter alone does
+// not cover. isKalshiDZFeed labels every tob_ source "DoubleZero" and the arm predicate admits
+// any of them, so a sports lane recorded at some vantage lands in this table as a DoubleZero row
+// — observed on mainnet reading 0.3 ms beside the real 23 ms perps row at the same vantage. The
+// clock is why: only the perps orderbook feed's source_ts_ms is the venue stamp this metric is
+// defined against. A sample floor cannot substitute for the symbol scope, since a spurious
+// producer clears any volume threshold simply by staying up.
 //
 // This is a heavy full-day scan over the proxied table — it must run on a slow background
 // cadence, never in the request path or the 60s page-cache loop.
@@ -764,7 +841,7 @@ func (a *API) FetchKalshiPathLatency(ctx context.Context) (*KalshiPathLatency, e
 		return nil, err
 	}
 	if !exists {
-		return &KalshiPathLatency{Window: "24h", Feeds: []KalshiFeedLatency{}, GeneratedAt: time.Now().UTC()}, nil
+		return &KalshiPathLatency{Window: "24h", Feeds: []KalshiFeedLatency{}, MinSamples: KalshiLatencyMinSamples, GeneratedAt: time.Now().UTC()}, nil
 	}
 	entries, err := a.loadKalshiScoreboardEntries(ctx)
 	if err != nil {
@@ -800,6 +877,7 @@ func (a *API) FetchKalshiPathLatency(ctx context.Context) (*KalshiPathLatency, e
 			WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalHour(24)))
 			  AND source_ts_ms > 0
 			  AND ((%[2]s) OR (%[3]s))
+			  %[4]s
 			GROUP BY source, location_code, symbol, source_ts_ms
 		)
 		SELECT source, location_code,
@@ -810,7 +888,7 @@ func (a *API) FetchKalshiPathLatency(ctx context.Context) (*KalshiPathLatency, e
 		FROM d
 		GROUP BY source, location_code
 		SETTINGS max_bytes_before_external_group_by = 2000000000`,
-		db, kalshiEdgeWSArmFilter, competitorPredicate)
+		db, kalshiEdgeWSArmFilter, competitorPredicate, kalshiRecentRaceSymbolFilter())
 
 	rows, err := a.envDB(ctx).Query(ctx, q)
 	if err != nil {
@@ -818,7 +896,7 @@ func (a *API) FetchKalshiPathLatency(ctx context.Context) (*KalshiPathLatency, e
 	}
 	defer rows.Close()
 
-	out := &KalshiPathLatency{Window: "24h", Feeds: []KalshiFeedLatency{}, GeneratedAt: time.Now().UTC()}
+	out := &KalshiPathLatency{Window: "24h", Feeds: []KalshiFeedLatency{}, MinSamples: KalshiLatencyMinSamples, GeneratedAt: time.Now().UTC()}
 	for rows.Next() {
 		var f KalshiFeedLatency
 		if err := rows.Scan(&f.Feed, &f.LocationCode, &f.P50Ms, &f.P90Ms, &f.P99Ms, &f.Samples); err != nil {
@@ -906,6 +984,30 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 			slog.Warn("kalshi l2 coverage cache write failed", "error", err)
 		}
 	}
+	// The observations-plane leg of /dz/edge/multicast: the top-of-book sequence series and the
+	// path-parity counts. Same cadence and same window as the L2 coverage one so the two halves
+	// of the Sequence column describe the same span.
+	//
+	// It runs FIRST, and that ordering is load-bearing. This chain is serial and every other step
+	// has a three-minute timeout, so anything at the back of it can be many minutes behind a pod
+	// start — and unlike the others, no page falls back to a live query for this one, so until it
+	// lands its columns are simply absent. The page_cache table survives a restart, which hides
+	// the problem for every entry that already exists and exposes it for a newly added key: after
+	// the deploy that introduced this one, the columns stayed empty for a whole cycle. Cheapest
+	// step in the chain (2-4s against mainnet) and the only one with nothing to fall back on, so
+	// it goes at the front.
+	refreshObservations := func() {
+		rctx, cancel := context.WithTimeout(ctx, runTimeout)
+		defer cancel()
+		val, err := a.FetchEdgeMulticastObservations(rctx)
+		if err != nil {
+			slog.Warn("edge multicast observations refresh failed", "error", err)
+			return
+		}
+		if err := a.WritePageCache(ctx, edgeMulticastObservationsCacheKey, val); err != nil {
+			slog.Warn("edge multicast observations cache write failed", "error", err)
+		}
+	}
 	// Per-day completeness runs on its own, slower ticker. A completed day never changes, and
 	// this query rescans every day in its window, so putting it on the 10-minute loop would
 	// repeat the most expensive scan on this page 144 times a day to learn nothing. Hourly is
@@ -947,6 +1049,7 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 		completenessEsc.Reset("kalshi_l2_completeness")
 	}
 	refresh := func() {
+		refreshObservations()
 		refreshLatency()
 		refreshScoreboard("24h")
 		refreshScoreboard("7d")

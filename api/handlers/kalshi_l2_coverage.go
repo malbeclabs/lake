@@ -32,7 +32,8 @@ import (
 // long as the view it monitors is unhealthy. A miss falls through to the live query below.
 //
 // v2: `gaps` split into `gap_messages`/`gap_books`, `messages` added.
-const kalshiL2CoverageCacheKey = "kalshi_l2_coverage:v2"
+// v3: `publisher_source_ip` added, and the lane grain is the channel instance with it.
+const kalshiL2CoverageCacheKey = "kalshi_l2_coverage:v3"
 
 // kalshiL2WindowMinutes is the interval the rates are averaged over. Rates are derived from
 // it, so changing it changes nothing about correctness.
@@ -122,6 +123,15 @@ type KalshiL2Lane struct {
 	ChannelID    uint8  `json:"channel_id"`
 	LocationCode string `json:"location_code"`
 
+	// PublisherSourceIP is the tunnel address these datagrams were sent from, and it is what
+	// makes this row a CHANNEL INSTANCE rather than a channel: a sequence series, a `Reset
+	// Count` and a snapshot cycle are owned by "one path's view of one channel, keyed (source
+	// IP address, Channel ID, destination port)", and a subscriber MUST key gap detection on
+	// that rather than on the channel (edge-feed-spec/GLOSSARY.md, Transport). Empty on an
+	// unseen lane, which was heard from nowhere, and empty on a row the capture wrote before
+	// the column existed.
+	PublisherSourceIP string `json:"publisher_source_ip"`
+
 	// MeasurementNodeID completes this row's identity. A lane recorded from several
 	// vantages is several rows, one per vantage — see the GROUP BY in
 	// FetchKalshiL2Coverage. location_code alone is not a key: two recorders can share a
@@ -207,13 +217,18 @@ func (a *API) kalshiL2TableExists(ctx context.Context) (bool, error) {
 
 // FetchKalshiL2Coverage aggregates the market-by-price lanes over the coverage window.
 //
-// Grouped by (source, channel_id, measurement_node_id), and each of the three is
-// load-bearing:
+// Grouped by (source, channel_id, publisher_source_ip, measurement_node_id), and each of the four
+// is load-bearing:
 //
 //   - never by source alone: prod's two publisher arms share one multicast group and one port
-//     triple and differ only by channel_id, and instrument_id is unique only within a channel.
-//     Collapsing the arms would merge two independent delta streams and double-count their
-//     instruments.
+//     triple, and instrument_id is unique only within a channel. Collapsing the arms would merge
+//     two independent delta streams and double-count their instruments.
+//   - never without publisher_source_ip: that is the field the wire protocol says owns the
+//     sequence series, and channel_id only happens to separate the arms today. It is the arm
+//     axis by design in the capture schema (kalshi-capture's 20260805000001_mbp_levels.sql), so
+//     keying on it means a deployment that puts both arms on one channel_id — the perps collapse
+//     to a single id, settled in malbeclabs/kalshi#86 — stays two rows here instead of folding
+//     into one whose gap count belongs to neither publisher.
 //   - never without the vantage: one lane recorded at several vantages is several INDEPENDENT
 //     observations of the same stream. Without measurement_node_id in the key they collapse
 //     into one row whose rates are their SUM — three vantages of perps would report treble the
@@ -224,6 +239,17 @@ func (a *API) kalshiL2TableExists(ctx context.Context) (bool, error) {
 //
 // measurement_node_id rather than location_code: two recorders can share a metro, and that is
 // the case the location column cannot represent.
+//
+// The three port roles of one channel are deliberately NOT in the key. Only `Sequence Number` is
+// per port; `Reset Count`, `Manifest Seq` and the channel state they govern span the three ports
+// one publisher serves a channel on, and this view carries those recovery counters rather than
+// raw sequence numbers — splitting by port would scatter a book's gap, its reset and its snapshot
+// cycle across three rows that each look like they are missing something.
+//
+// publisher_source_ip costs one more column read and one more GROUP BY key over rows this query
+// already scans; it adds no scan and no pruning. It is NOT in the table's sort key — the header
+// on 20260805000001_mbp_levels.sql says it is, and the ORDER BY there does not carry it — so it
+// could not prune anything even if a predicate were put on it. Nothing here filters on it.
 //
 // No latency is derived from source_ts_ns here. Its meaning is chosen by source_ts_kind
 // (`venue` / `publisher_capture` / `none`), so an unfiltered delta silently reports
@@ -243,6 +269,7 @@ func (a *API) FetchKalshiL2Coverage(ctx context.Context) (*KalshiL2CoverageRespo
 		SELECT
 			source,
 			channel_id,
+			publisher_source_ip,
 			measurement_node_id,
 			any(location_code) AS location_code,
 			count() AS messages,
@@ -263,7 +290,7 @@ func (a *API) FetchKalshiL2Coverage(ctx context.Context) (*KalshiL2CoverageRespo
 			max(recv_ts_ns) AS last_recv_ts_ns
 		FROM %[1]s.kalshi_mbp_levels
 		WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(%[2]d)))
-		GROUP BY source, channel_id, measurement_node_id`, db, kalshiL2WindowMinutes)
+		GROUP BY source, channel_id, publisher_source_ip, measurement_node_id`, db, kalshiL2WindowMinutes)
 
 	rows, err := a.envDB(ctx).Query(ctx, q)
 	if err != nil {
@@ -283,7 +310,7 @@ func (a *API) FetchKalshiL2Coverage(ctx context.Context) (*KalshiL2CoverageRespo
 		var levelUpdates uint64
 		var lastRecvNs uint64
 		if err := rows.Scan(
-			&l.Source, &l.ChannelID, &l.MeasurementNodeID, &l.LocationCode,
+			&l.Source, &l.ChannelID, &l.PublisherSourceIP, &l.MeasurementNodeID, &l.LocationCode,
 			&l.Messages, &levelUpdates, &l.Instruments,
 			&l.DepthP50, &l.DepthP95, &l.DepthMax,
 			&l.GapMessages, &l.GapBooks, &l.Resets, &l.Clears, &l.SnapshotCycles,
@@ -335,8 +362,8 @@ func (a *API) FetchKalshiL2Coverage(ctx context.Context) (*KalshiL2CoverageRespo
 	}
 
 	// Stable display order: configured lane order, then source (so unknown lanes, which all
-	// share the fallback order, stay deterministic), then channel id so the two arms of one
-	// lane sit together.
+	// share the fallback order, stay deterministic), then channel id and source address so the
+	// arms of one lane sit together.
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].order != out[j].order {
 			return out[i].order < out[j].order
@@ -346,6 +373,9 @@ func (a *API) FetchKalshiL2Coverage(ctx context.Context) (*KalshiL2CoverageRespo
 		}
 		if out[i].lane.ChannelID != out[j].lane.ChannelID {
 			return out[i].lane.ChannelID < out[j].lane.ChannelID
+		}
+		if out[i].lane.PublisherSourceIP != out[j].lane.PublisherSourceIP {
+			return out[i].lane.PublisherSourceIP < out[j].lane.PublisherSourceIP
 		}
 		return out[i].lane.MeasurementNodeID < out[j].lane.MeasurementNodeID
 	})

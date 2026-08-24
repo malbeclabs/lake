@@ -491,6 +491,11 @@ type NHIsis struct {
 
 // NHFreshness lets a viewer date the data (a trust signal). Coverage is measured
 // relative to the feed's own latest timestamp, not wall-clock.
+//
+// LagSeconds is computed when the panel runs and served verbatim from the cached
+// blob, so it understates real lag by up to the overview entry's refresh cadence
+// (the worker's networkHealthOverviewInterval). Fine for a coverage signal measured
+// in hours, not for anything needing the lag to the second.
 type NHFreshness struct {
 	FeedMax       string `json:"feed_max"`
 	LagSeconds    int64  `json:"lag_seconds"`
@@ -950,9 +955,19 @@ func networkHealthWindow(startStr, endStr, daysStr string) (time.Time, time.Time
 	return start, end, days == NetworkHealthDefaultDays
 }
 
-// DefaultNetworkHealthWindow is the window the cache worker precomputes.
+// DefaultNetworkHealthWindow is the window the cache worker precomputes. Both
+// boundaries are day-aligned, so it moves once per day and excludes everything
+// since midnight — which is why the purely-historical groups refresh on a cadence
+// rather than every cycle (see the worker's networkHealthHistoryInterval).
 func DefaultNetworkHealthWindow() (time.Time, time.Time) {
-	end := time.Now().UTC().Truncate(24 * time.Hour)
+	return NetworkHealthWindowAt(time.Now())
+}
+
+// NetworkHealthWindowAt is DefaultNetworkHealthWindow as of a given instant, for a
+// caller that needs the window and the current time to agree on which side of
+// midnight UTC they are (see the worker's dueEntries).
+func NetworkHealthWindowAt(t time.Time) (time.Time, time.Time) {
+	end := t.UTC().Truncate(24 * time.Hour)
 	return end.AddDate(0, 0, -NetworkHealthDefaultDays), end
 }
 
@@ -1122,6 +1137,10 @@ func (a *API) fetchImpactfulDowntime(ctx context.Context, s, e time.Time, contri
 // telemetry freshness, the throughput time series, and the contributor list that
 // backs the filter dropdown. Reuses the existing per-metric fetchers unchanged.
 // Called by the handler (cache miss) and the cache-refresh worker.
+//
+// A panel added here is not free: this is the most expensive group the page cache
+// refreshes, and latency_vs_internet plus the throughput series are ~95% of it.
+// Only the point-in-time panels (freshness, isis) need the group's short cadence.
 func (a *API) FetchNetworkHealthOverviewData(ctx context.Context, start, end time.Time, contrib string) *NHOverview {
 	priorStart, priorEnd := nhPriorWindow(start, end)
 	scoped := contrib != ""

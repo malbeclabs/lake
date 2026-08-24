@@ -423,7 +423,7 @@ export function KalshiL2Page() {
                     <tbody>
                       {section.lanes.map((lane) => (
                         <LaneRow
-                          key={`${lane.source}:${lane.channel_id}:${lane.measurement_node_id}`}
+                          key={`${lane.source}:${lane.channel_id}:${lane.publisher_source_ip}:${lane.measurement_node_id}`}
                           lane={lane}
                           asOf={asOf}
                         />

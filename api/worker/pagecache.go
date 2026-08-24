@@ -58,17 +58,7 @@ func Start(ctx context.Context, cfg Config) error {
 	log.Info("page-cache: temporal connected", "host", temporalHost, "namespace", temporalNS)
 
 	// Register workflows and activities
-	// degradedEsc's thresholds are set here, before the first Fail, because
-	// logger.Escalator reads them without its mutex.
-	activities := &Activities{
-		Log:                log.With("component", "page-cache"),
-		API:                cfg.API,
-		RefreshConcurrency: concurrency,
-		degradedEsc: logger.Escalator{
-			ErrorAfter:          nhDegradedErrorAfter,
-			TransientErrorAfter: nhDegradedErrorAfter,
-		},
-	}
+	activities := newActivities(log, cfg.API, concurrency)
 
 	w := worker.New(tc, TaskQueue, worker.Options{})
 	w.RegisterWorkflow(PageCacheWorkflow)
@@ -125,6 +115,25 @@ func startPageCacheWorkflow(ctx context.Context, tc temporalclient.Client, log *
 	}
 	log.Info("page-cache: workflow started", "id", WorkflowID, "run_id", run.GetRunID())
 	return run, nil
+}
+
+// newActivities builds the activity struct with the escalation policy the page
+// cache depends on. Extracted from Start so tests exercise the same construction
+// the worker uses rather than a hand-rolled literal that can drift from it.
+//
+// degradedEsc's thresholds are set here, before the first Fail, because
+// logger.Escalator reads them without its mutex.
+func newActivities(log *slog.Logger, api *handlers.API, concurrency int) *Activities {
+	return &Activities{
+		Log:                log.With("component", "page-cache"),
+		API:                api,
+		RefreshConcurrency: concurrency,
+		degradedEsc: logger.Escalator{
+			ErrorAfter:          nhDegradedErrorAfter,
+			TransientErrorAfter: nhDegradedErrorAfter,
+			ErrorAfterDuration:  nhDegradedErrorWindow,
+		},
+	}
 }
 
 // temporalLogger adapts slog to Temporal's log interface.

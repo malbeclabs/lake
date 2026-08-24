@@ -154,7 +154,7 @@ func TestFetchLedgerData_SlowSupplyDoesNotSinkTheResponse(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := FetchLedgerData(context.Background(), srv.URL)
+	got, err := fetchLedgerData(context.Background(), srv.URL, solanaFallbackSlotDurationSec)
 	require.NoError(t, err,
 		"a failing getSupply must not fail the whole response; before this it cancelled "+
 			"five already-finished sibling calls through errgroup.WithContext")
@@ -164,6 +164,8 @@ func TestFetchLedgerData_SlowSupplyDoesNotSinkTheResponse(t *testing.T) {
 	require.EqualValues(t, 700, got.Epoch, "epoch came from a call that succeeded in ~45ms")
 	require.EqualValues(t, 300000000, got.AbsoluteSlot)
 	require.InDelta(t, 100.0, got.TPS, 0.01)
+	require.InDelta(t, 0.4, got.SlotDurationSec, 0.0001, "60s over 150 slots, measured not assumed")
+	require.InDelta(t, float64(432000-100)*0.4, got.EpochETASec, 0.01)
 	require.Equal(t, "2.0.0", got.NodeVersion)
 	require.InDelta(t, 5.0, got.InflationTotal, 0.0001, "reported as a percentage")
 
