@@ -94,8 +94,14 @@ const (
 	// publisherCheckStaleAfter caps how old a cached publisher_check payload may be
 	// before the cached-or-live path ignores it and runs live. The page-cache worker
 	// deliberately keeps its last payload on failure, so without this cap a stalled
-	// worker could serve arbitrarily old data with no signal. Set to ~3× the
-	// entry's refresh cadence (the worker's publisherCheckInterval, 2 min).
+	// worker could serve arbitrarily old data with no signal.
+	//
+	// It does NOT bound the worst healthy age the way ValidatorsCacheStaleAfter does:
+	// that is publisherCheckInterval plus one cycle period plus the refresh itself,
+	// which exceeds this cap once PAGE_CACHE_REFRESH_INTERVAL is above ~2.5 min
+	// (staging runs ~4 min). A default-shape request then goes live, which is the
+	// heaviest recurring query on the shared ClickHouse. Raising the cap is a
+	// staleness-vs-load call for this specific view, so it is left alone here.
 	publisherCheckStaleAfter = 6 * time.Minute
 
 	// maxConcurrentPublisherCheckLive bounds simultaneous live runs of the heavy

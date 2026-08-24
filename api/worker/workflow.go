@@ -194,13 +194,18 @@ const (
 	latencyComparisonInterval = 30 * time.Minute
 
 	// The two 24h aggregates, which have the worst read-per-query of anything the
-	// API runs. The live tail is unaffected — separate edge_scoreboard:latest*
-	// entries on the fast cadence serve it.
+	// API runs. The live tail polls the separate edge_scoreboard:latest* entries on
+	// the fast cadence, but it *seeds* from this blob, so a client's cursor can start
+	// further back than the latest payload covers — see GetEdgeScoreboard's coverage
+	// guard, which is what keeps those slots from being skipped.
 	edgeScoreboardInterval = 5 * time.Minute
 )
 
 // cacheAgesEscalationKey keys the gate's own age read, so a gate outage is one
-// alert rather than one per entry.
+// alert rather than one per entry. Suffixed per caller: the batch and heavy
+// activities each run their own read, and a shared key would let either one's
+// success reset the other's failure streak — holding a real gate outage at WARN
+// while every cadence silently reverts to every-cycle refresh.
 const cacheAgesEscalationKey = "page_cache:ages"
 
 // cacheAgeReadTimeout bounds the gate's page_cache read, which runs at the head of
@@ -208,6 +213,19 @@ const cacheAgesEscalationKey = "page_cache:ages"
 // would consume the whole activity budget before any refresh started, recording
 // every entry as batch starvation — which pages. Slower than this is fail-open.
 const cacheAgeReadTimeout = 5 * time.Second
+
+// windowEndAt is the end of the day-aligned Network Health window covering t.
+func windowEndAt(t time.Time) time.Time {
+	_, end := handlers.NetworkHealthWindowAt(t)
+	return end
+}
+
+// windowMovedDuring reports whether the day-aligned window rolled between the start
+// and end of a fetch, i.e. the fetch crossed midnight UTC and its result describes
+// the window that was current when it started rather than the one current now.
+func windowMovedDuring(fetchStart, fetchEnd time.Time) bool {
+	return !windowEndAt(fetchStart).Equal(windowEndAt(fetchEnd))
+}
 
 // dueForRefresh reports whether an entry is due. A zero updatedAt means the key
 // has never been written, which is always due.
@@ -233,7 +251,7 @@ func dueForRefresh(e cacheEntry, updatedAt, now, windowEnd time.Time) bool {
 // Fail-open on a read error or a slow read, so a Postgres problem cannot freeze
 // every cadenced entry. A sustained one still pages: it silently reverts every
 // cadence to every-cycle refresh, and nothing else reports that.
-func (a *Activities) dueEntries(ctx context.Context, entries []cacheEntry) (due []cacheEntry, skipped int) {
+func (a *Activities) dueEntries(ctx context.Context, caller string, entries []cacheEntry) (due []cacheEntry, skipped int) {
 	keys := make([]string, 0, len(entries))
 	for _, e := range entries {
 		if e.every > 0 {
@@ -248,15 +266,16 @@ func (a *Activities) dueEntries(ctx context.Context, entries []cacheEntry) (due 
 	ages, err := a.API.PageCacheAges(readCtx, keys)
 	cancel()
 	if err != nil {
-		a.esc.Fail(a.Log, cacheAgesEscalationKey, "cache cadence age read failed; refreshing every entry", "error", err)
+		a.esc.Fail(a.Log, cacheAgesEscalationKey+":"+caller, "cache cadence age read failed; refreshing every entry",
+			"caller", caller, "error", err)
 		return entries, 0
 	}
-	a.esc.Reset(cacheAgesEscalationKey)
+	a.esc.Reset(cacheAgesEscalationKey + ":" + caller)
 
 	// One clock read for both, so the cadence check and the window boundary cannot
 	// land on opposite sides of midnight UTC.
 	now := time.Now()
-	_, windowEnd := handlers.NetworkHealthWindowAt(now)
+	windowEnd := windowEndAt(now)
 	due = make([]cacheEntry, 0, len(entries))
 	for _, e := range entries {
 		if dueForRefresh(e, ages[e.key], now, windowEnd) {
@@ -578,14 +597,14 @@ func (a *Activities) RefreshCaches(ctx context.Context) error {
 	// counted rather than silently swallowed as "shutdown".
 	shuttingDown := workerStopping(ctx)
 
-	due, skipped := a.dueEntries(ctx, a.entries())
+	due, skipped := a.dueEntries(ctx, "batch", a.entries())
 
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(limit)
 
 	for _, entry := range due {
 		g.Go(func() error {
-			a.refresh(gctx, entry.name, entry.key, entry.fn, entry.timeout, shuttingDown, errBatchDeadline)
+			a.refresh(gctx, entry, shuttingDown, errBatchDeadline)
 			return nil
 		})
 	}
@@ -593,9 +612,13 @@ func (a *Activities) RefreshCaches(ctx context.Context) error {
 	// Metro path latency: one fetch per strategy, each written to its own key
 	for _, strategy := range metroPathLatencyStrategies {
 		g.Go(func() error {
-			a.refresh(gctx, "metro path latency:"+strategy, "metro_path_latency:"+strategy, func(ctx context.Context) (any, error) {
-				return a.API.FetchMetroPathLatencyData(ctx, strategy, "", 0)
-			}, 0, shuttingDown, errBatchDeadline)
+			a.refresh(gctx, cacheEntry{
+				name: "metro path latency:" + strategy,
+				key:  "metro_path_latency:" + strategy,
+				fn: func(ctx context.Context) (any, error) {
+					return a.API.FetchMetroPathLatencyData(ctx, strategy, "", 0)
+				},
+			}, shuttingDown, errBatchDeadline)
 			return nil
 		})
 	}
@@ -657,7 +680,7 @@ func (a *Activities) RefreshLatestCaches(ctx context.Context) error {
 	g, gctx := errgroup.WithContext(ctx)
 	for _, entry := range a.latestEntries() {
 		g.Go(func() error {
-			a.refresh(gctx, entry.name, entry.key, entry.fn, entry.timeout, shuttingDown, errFastRefreshDeadline)
+			a.refresh(gctx, entry, shuttingDown, errFastRefreshDeadline)
 			return nil
 		})
 	}
@@ -705,11 +728,11 @@ func (a *Activities) heavyEntries() []cacheEntry {
 // gating the scheduling, which is bound up with the continue-as-new drain.
 func (a *Activities) RefreshHeavyCaches(ctx context.Context) error {
 	shuttingDown := workerStopping(ctx)
-	due, _ := a.dueEntries(ctx, a.heavyEntries())
+	due, _ := a.dueEntries(ctx, "heavy", a.heavyEntries())
 	g, gctx := errgroup.WithContext(ctx)
 	for _, entry := range due {
 		g.Go(func() error {
-			a.refresh(gctx, entry.name, entry.key, entry.fn, entry.timeout, shuttingDown, errHeavyRefreshDeadline)
+			a.refresh(gctx, entry, shuttingDown, errHeavyRefreshDeadline)
 			return nil
 		})
 	}
@@ -724,10 +747,12 @@ func (a *Activities) RefreshHeavyCaches(ctx context.Context) error {
 // worker shutdown; it selects the escalation cadence (errBatchDeadline for the
 // slow batch, errFastRefreshDeadline for the fast loop, errHeavyRefreshDeadline
 // for the heavy one).
-func (a *Activities) refresh(parentCtx context.Context, name, key string, fn func(context.Context) (any, error), timeout time.Duration, shuttingDown func() bool, deadlineErr error) {
+func (a *Activities) refresh(parentCtx context.Context, e cacheEntry, shuttingDown func() bool, deadlineErr error) {
 	start := time.Now()
+	name, key := e.name, e.key
 	var queryDuration, writeDuration time.Duration
 
+	timeout := e.timeout
 	if timeout <= 0 {
 		timeout = defaultRefreshTimeout
 	}
@@ -742,7 +767,7 @@ func (a *Activities) refresh(parentCtx context.Context, name, key string, fn fun
 
 		ctx, cancel := context.WithTimeout(parentCtx, timeout)
 		queryStart := time.Now()
-		result, err := fn(ctx)
+		result, err := e.fn(ctx)
 		queryDuration = time.Since(queryStart)
 		cancel()
 
@@ -764,6 +789,17 @@ func (a *Activities) refresh(parentCtx context.Context, name, key string, fn fun
 		}
 
 		a.esc.Reset(key)
+
+		// A dayAligned entry computes its window when the fetch starts. If the fetch
+		// straddled midnight UTC the result describes the previous window, and writing
+		// it would stamp updated_at past the new boundary — which the gate reads as
+		// current, holding the stale window for a full cadence. Discarding leaves
+		// updated_at where it was, so the gate re-fires next cycle. Not a failure: the
+		// fetch worked, so the escalator stays reset.
+		if e.dayAligned && windowMovedDuring(queryStart, time.Now()) {
+			a.Log.Info("cache refresh discarded, window moved mid-refresh", "cache", name)
+			return
+		}
 
 		writeStart := time.Now()
 		a.writeMu.Lock()

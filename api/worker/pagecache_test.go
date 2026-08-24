@@ -400,7 +400,7 @@ func TestDueEntriesFailsOpen(t *testing.T) {
 	a := &Activities{Log: log, API: &handlers.API{}}
 	entries := a.entries()
 
-	due, skipped := a.dueEntries(context.Background(), entries)
+	due, skipped := a.dueEntries(context.Background(), "batch", entries)
 	require.Len(t, due, len(entries), "a failed age read must refresh everything")
 	require.Zero(t, skipped)
 	require.Equal(t, 1, countLevel(*recs, slog.LevelWarn), "and must say so")
@@ -414,7 +414,7 @@ func TestDueEntriesSkipsNothingWithoutCadences(t *testing.T) {
 
 	a := &Activities{}
 	entries := a.latestEntries()
-	due, skipped := a.dueEntries(context.Background(), entries)
+	due, skipped := a.dueEntries(context.Background(), "batch", entries)
 	require.Len(t, due, len(entries))
 	require.Zero(t, skipped)
 }
@@ -588,6 +588,11 @@ func TestBatchConcurrencyReservesHeavyShare(t *testing.T) {
 	})
 }
 
+// topologyEntry is a stand-in slow-batch entry for the refresh() tests.
+func topologyEntry(fn func(context.Context) (any, error), timeout time.Duration) cacheEntry {
+	return cacheEntry{name: "topology", key: "topology", fn: fn, timeout: timeout}
+}
+
 // TestRefreshRetriesOnlyWithBudget pins that maxAttempts is honest: the second
 // attempt runs only when the activity has room for it (see retryBudget).
 // Retrying inside the last seconds of the budget just converts this entry's own
@@ -608,7 +613,7 @@ func TestRefreshRetriesOnlyWithBudget(t *testing.T) {
 		calls := 0
 		parent, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		a.refresh(parent, "topology", "topology", failing(&calls), 10*time.Millisecond, notStopping, errBatchDeadline)
+		a.refresh(parent, topologyEntry(failing(&calls), 10*time.Millisecond), notStopping, errBatchDeadline)
 		require.Equal(t, 2, calls)
 	})
 
@@ -616,7 +621,7 @@ func TestRefreshRetriesOnlyWithBudget(t *testing.T) {
 		log, _ := capLogger()
 		a := &Activities{Log: log}
 		calls := 0
-		a.refresh(context.Background(), "topology", "topology", failing(&calls), 10*time.Millisecond, notStopping, errBatchDeadline)
+		a.refresh(context.Background(), topologyEntry(failing(&calls), 10*time.Millisecond), notStopping, errBatchDeadline)
 		require.Equal(t, 2, calls)
 	})
 
@@ -626,7 +631,7 @@ func TestRefreshRetriesOnlyWithBudget(t *testing.T) {
 		calls := 0
 		parent, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
-		a.refresh(parent, "topology", "topology", failing(&calls), time.Second, notStopping, errBatchDeadline)
+		a.refresh(parent, topologyEntry(failing(&calls), time.Second), notStopping, errBatchDeadline)
 		require.Equal(t, 1, calls)
 		require.Equal(t, 1, countLevel(*recs, slog.LevelWarn), "the failure is still counted, just not retried")
 	})
@@ -643,7 +648,7 @@ func TestRefreshRetriesOnlyWithBudget(t *testing.T) {
 		parent, cancel := context.WithTimeout(context.Background(), remaining)
 		defer cancel()
 		require.Less(t, remaining, defaultRefreshTimeout, "the point of the case: less than a full entry budget left")
-		a.refresh(parent, "topology", "topology", failing(&calls), defaultRefreshTimeout, notStopping, errBatchDeadline)
+		a.refresh(parent, topologyEntry(failing(&calls), defaultRefreshTimeout), notStopping, errBatchDeadline)
 		require.Equal(t, 2, calls)
 	})
 }
@@ -723,7 +728,7 @@ func TestRefreshRecordsOwnFailureWhenParentHasHeadroom(t *testing.T) {
 	parent, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	a.refresh(parent, "network health deferred", "nh_deferred", stalls, 20*time.Millisecond, notStopping, errHeavyRefreshDeadline)
+	a.refresh(parent, cacheEntry{name: "network health deferred", key: "nh_deferred", fn: stalls, timeout: 20 * time.Millisecond}, notStopping, errHeavyRefreshDeadline)
 
 	rec, ok := findRecord(*recs, "cache refresh failed")
 	require.True(t, ok, "an over-budget entry must record a failure")
@@ -735,6 +740,47 @@ func TestRefreshRecordsOwnFailureWhenParentHasHeadroom(t *testing.T) {
 	require.NotErrorIs(t, err, errHeavyRefreshDeadline,
 		"with headroom the activity deadline has not fired, so this is not starvation")
 	require.Zero(t, countLevel(*recs, slog.LevelError), "a single slow cycle must not page")
+}
+
+// TestRefreshDiscardsStraddlingDayAlignedWrite pins the fix for the window-skew
+// hole the dayAligned marker alone left open. updated_at is stamped at write time,
+// but the payload's window is fixed when the fetch starts — so a fetch crossing
+// midnight UTC produces a previous-window payload with a post-boundary updated_at,
+// which the gate reads as current and holds for a full cadence. That is exactly the
+// skew the marker exists to prevent, so the write is dropped instead.
+func TestRefreshDiscardsStraddlingDayAlignedWrite(t *testing.T) {
+	t.Run("the straddle predicate", func(t *testing.T) {
+		t.Parallel()
+
+		beforeMidnight := time.Date(2026, 8, 24, 23, 59, 50, 0, time.UTC)
+		afterMidnight := time.Date(2026, 8, 25, 0, 0, 10, 0, time.UTC)
+
+		require.True(t, windowMovedDuring(beforeMidnight, afterMidnight))
+		require.False(t, windowMovedDuring(beforeMidnight, beforeMidnight.Add(time.Second)),
+			"two instants inside one day must compare equal, or every refresh is discarded")
+		require.False(t, windowMovedDuring(afterMidnight, afterMidnight.Add(time.Hour)))
+
+		// Why the discard is necessary: the blob a straddling write would leave behind
+		// reads as not-due, so it would hold the previous window for a full cadence.
+		require.False(t, dueForRefresh(
+			cacheEntry{every: networkHealthHistoryInterval, dayAligned: true},
+			afterMidnight, afterMidnight.Add(time.Minute), windowEndAt(afterMidnight)))
+	})
+
+	t.Run("an unstraddled refresh still writes", func(t *testing.T) {
+		t.Parallel()
+
+		// A nil-PgPool API fails the write, which is how the attempt is observable.
+		log, recs := capLogger()
+		a := &Activities{Log: log, API: &handlers.API{}}
+		a.refresh(context.Background(), cacheEntry{
+			name: "network health outages", key: "nh_outages", dayAligned: true,
+			fn: func(context.Context) (any, error) { return "payload", nil },
+		}, func() bool { return false }, errBatchDeadline)
+
+		_, ok := findRecord(*recs, "cache write failed")
+		require.True(t, ok, "the discard must not fire on a refresh inside one window")
+	})
 }
 
 // TestPageCacheWorkflowSchedulesHeavyRefresh pins that RefreshHeavyCaches is
@@ -1081,9 +1127,41 @@ func TestDueEntriesEscalatesSustainedAgeReadFailure(t *testing.T) {
 	entries := a.entries()
 
 	for range errorAfterFailures {
-		due, _ := a.dueEntries(context.Background(), entries)
+		due, _ := a.dueEntries(context.Background(), "batch", entries)
 		require.Len(t, due, len(entries))
 	}
 	require.Equal(t, errorAfterFailures-1, countLevel(*recs, slog.LevelWarn), "a blip stays WARN")
 	require.Equal(t, 1, countLevel(*recs, slog.LevelError), "a sustained gate outage must page")
+
+	// The heavy activity runs its own gate read — and now returns in milliseconds
+	// whenever neither entry is due, so it reads nearly every cycle. Its streak is
+	// counted separately, so it has to reach ERROR on its own.
+	*recs = nil
+	heavy := a.heavyEntries()
+	for range errorAfterFailures {
+		due, _ := a.dueEntries(context.Background(), "heavy", heavy)
+		require.Len(t, due, len(heavy))
+	}
+	require.Equal(t, 1, countLevel(*recs, slog.LevelError), "the heavy caller must page on its own streak")
+}
+
+// TestDueEntriesKeysEscalationPerCaller pins that one caller's success cannot reset
+// the other's failure streak. Both gate reads share an Activities and its escalator,
+// so a shared key would let a healthy batch read mask a persistently failing heavy
+// one — every cadence silently reverting to every-cycle ClickHouse load at WARN.
+func TestDueEntriesKeysEscalationPerCaller(t *testing.T) {
+	t.Parallel()
+
+	log, recs := capLogger()
+	a := &Activities{Log: log}
+
+	// Reset stands in for a successful read by the other caller.
+	for range errorAfterFailures - 1 {
+		a.esc.Fail(log, cacheAgesEscalationKey+":heavy", "cache cadence age read failed")
+		a.esc.Reset(cacheAgesEscalationKey + ":batch")
+	}
+	require.Zero(t, countLevel(*recs, slog.LevelError))
+	a.esc.Fail(log, cacheAgesEscalationKey+":heavy", "cache cadence age read failed")
+	require.Equal(t, 1, countLevel(*recs, slog.LevelError),
+		"a batch success must not reset the heavy streak")
 }
