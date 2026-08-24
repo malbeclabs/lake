@@ -202,10 +202,10 @@ const (
 )
 
 // cacheAgesEscalationKey keys the gate's own age read, so a gate outage is one
-// alert rather than one per entry. Suffixed per caller: the batch and heavy
-// activities each run their own read, and a shared key would let either one's
-// success reset the other's failure streak — holding a real gate outage at WARN
-// while every cadence silently reverts to every-cycle refresh.
+// alert rather than one per entry. Suffixed per caller because the batch and heavy
+// activities each run their own read: on a shared key either one's success would
+// reset the other's streak, holding a real outage at WARN while every cadence
+// silently reverts to every-cycle refresh.
 const cacheAgesEscalationKey = "page_cache:ages"
 
 // cacheAgeReadTimeout bounds the gate's page_cache read, which runs at the head of
@@ -221,8 +221,8 @@ func windowEndAt(t time.Time) time.Time {
 }
 
 // windowMovedDuring reports whether the day-aligned window rolled between the start
-// and end of a fetch, i.e. the fetch crossed midnight UTC and its result describes
-// the window that was current when it started rather than the one current now.
+// and end of a fetch — i.e. the fetch crossed midnight UTC, so its result describes
+// the window current when it started rather than the current one.
 func windowMovedDuring(fetchStart, fetchEnd time.Time) bool {
 	return !windowEndAt(fetchStart).Equal(windowEndAt(fetchEnd))
 }
@@ -350,11 +350,11 @@ func degradedKey(key string) string { return key + ":degraded" }
 // still produces at most one alert-bearing line.
 func (a *Activities) nhOutcome(name, key, errMsg string, degraded []string) error {
 	if errMsg != "" {
-		// Clear the degraded run as well. Its clock would otherwise keep running
-		// through an outage the entry's own escalator is already paging for, so the
-		// first partially-recovered refresh would escalate on a duration belonging to
-		// the hard failure — a fresh page as the group improves. A group that flaps
-		// still pages, via that hard-failure counter.
+		// Clear the degraded run too: its clock would otherwise keep running through an
+		// outage this entry's own escalator already pages for, and the first partially
+		// recovered refresh would escalate on a duration belonging to the hard failure —
+		// a fresh page as the group improves. A flapping group still pages, through that
+		// hard-failure counter.
 		a.degradedEsc.Reset(degradedKey(key))
 		return &refreshError{errMsg}
 	}
@@ -800,12 +800,11 @@ func (a *Activities) refresh(parentCtx context.Context, e cacheEntry, shuttingDo
 
 		a.esc.Reset(key)
 
-		// A dayAligned entry computes its window when the fetch starts. If the fetch
-		// straddled midnight UTC the result describes the previous window, and writing
-		// it would stamp updated_at past the new boundary — which the gate reads as
-		// current, holding the stale window for a full cadence. Discarding leaves
-		// updated_at where it was, so the gate re-fires next cycle. Not a failure: the
-		// fetch worked, so the escalator stays reset.
+		// A dayAligned entry fixes its window when the fetch starts, so a fetch that
+		// straddled midnight UTC holds the previous one. Writing it would stamp
+		// updated_at past the new boundary, which the gate reads as current — the stale
+		// window then survives a full cadence. Discarding leaves updated_at where it
+		// was, so the gate re-fires next cycle. Not a failure: the fetch worked.
 		if e.dayAligned && windowMovedDuring(queryStart, time.Now()) {
 			a.Log.Info("cache refresh discarded, window moved mid-refresh", "cache", name)
 			return

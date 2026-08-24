@@ -96,12 +96,12 @@ const (
 	// deliberately keeps its last payload on failure, so without this cap a stalled
 	// worker could serve arbitrarily old data with no signal.
 	//
-	// It does NOT bound the worst healthy age the way ValidatorsCacheStaleAfter does:
-	// that is publisherCheckInterval plus one cycle period plus the refresh itself,
-	// which exceeds this cap once PAGE_CACHE_REFRESH_INTERVAL is above ~2.5 min
-	// (staging runs ~4 min). A default-shape request then goes live, which is the
-	// heaviest recurring query on the shared ClickHouse. Raising the cap is a
-	// staleness-vs-load call for this specific view, so it is left alone here.
+	// Unlike ValidatorsCacheStaleAfter this does NOT bound the worst healthy age —
+	// publisherCheckInterval plus one cycle period plus the refresh exceeds it once
+	// PAGE_CACHE_REFRESH_INTERVAL is above ~2.5 min, and staging runs ~4 min. A
+	// default-shape request then goes live, which is the heaviest recurring query on
+	// the shared ClickHouse. Raising the cap is a staleness-vs-load call for this
+	// view, so it is left alone.
 	publisherCheckStaleAfter = 6 * time.Minute
 
 	// maxConcurrentPublisherCheckLive bounds simultaneous live runs of the heavy

@@ -220,13 +220,12 @@ func edgeScoreboardLatestCacheKey(r *http.Request) string {
 // The cached payload is DESC (latest first) with multiple rows per slot (one per feed/host),
 // so we collect all matching rows, then sort ASC by slot, then cap by distinct slot count.
 // cachedCoversCursor reports whether the cached latest-slots payload still holds
-// everything after sinceSlot. It has to be checked separately from CurrentSlot:
-// the payload is a fixed-width window of recent slots, so a cursor that has fallen
-// behind its oldest slot would be answered with a payload missing the slots in
-// between — and since the response is ascending and the client advances past what
-// it receives, those slots would never be delivered and nothing would log. A
-// client seeded from the 24h blob starts that far back whenever the blob is older
-// than the latest payload's span (see the worker's edgeScoreboardInterval).
+// everything after sinceSlot. CurrentSlot alone does not answer that: the payload
+// is a fixed-width window, so a cursor behind its oldest slot would be served a
+// payload missing the slots in between — and the client advances past what it
+// receives, so they would never be delivered and nothing would log. A client seeded
+// from the 24h blob is that far back whenever the blob outlives the payload's span
+// (see the worker's edgeScoreboardInterval).
 func cachedCoversCursor(slots []EdgeScoreboardSlotRace, sinceSlot uint64) bool {
 	if len(slots) == 0 {
 		return false
@@ -237,8 +236,8 @@ func cachedCoversCursor(slots []EdgeScoreboardSlotRace, sinceSlot uint64) bool {
 			oldest = s.Slot
 		}
 	}
-	// The response carries slots strictly after sinceSlot, so coverage is complete
-	// only when the very next slot is in the payload.
+	// The response carries slots strictly after sinceSlot, so the next one must be in
+	// the payload.
 	return sinceSlot+1 >= oldest
 }
 
