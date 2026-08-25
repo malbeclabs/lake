@@ -175,12 +175,12 @@ func TestEdgeMulticastRecorderLossQuery_CleanRecorderStillGetsARow(t *testing.T)
 	require.Len(t, byNode, 2, "both recorders, not only the one that lost")
 
 	assert.EqualValues(t, 1, byNode["was-rec1"].Missing, "sequence 101")
-	assert.EqualValues(t, 3, byNode["was-rec1"].ReferenceSeqs, "the union of what the two recorded")
+	assert.EqualValues(t, 3, byNode["was-rec1"].ReferenceMessages, "the union of what the two recorded")
 	assert.Len(t, byNode["was-rec1"].Episodes, 1)
 
 	assert.EqualValues(t, 0, byNode["cmh-rec1"].Missing, "it recorded everything")
 	assert.Empty(t, byNode["cmh-rec1"].Episodes)
-	assert.EqualValues(t, 3, byNode["cmh-rec1"].ReferenceSeqs)
+	assert.EqualValues(t, 3, byNode["cmh-rec1"].ReferenceMessages)
 }
 
 // Each row carries its OWN node's metro. Resolving it inside the per-sequence group instead makes

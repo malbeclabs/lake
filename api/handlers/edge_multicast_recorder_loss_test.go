@@ -20,7 +20,7 @@ func lossSeries(node string, channel uint8, missing uint64, secs ...uint32) hand
 	return handlers.EdgeMulticastRecorderLossSeries{
 		MulticastGroup: "233.84.178.3", PublisherSourceIP: "148.51.121.69",
 		ChannelID: channel, Node: node, LocationCode: node[:3],
-		Missing: missing, ReferenceSeqs: 1000, Episodes: eps,
+		Missing: missing, ReferenceMessages: 1000, Episodes: eps,
 	}
 }
 

@@ -255,10 +255,10 @@ type EdgeMulticastRecorderLoss struct {
 	Node         string `json:"node"`
 	LocationCode string `json:"location_code,omitempty"`
 
-	// Missing is reference sequences this node did not record, and ReferenceSeqs what it is a
-	// share of. Summed over the line's channels.
-	Missing       uint64 `json:"missing"`
-	ReferenceSeqs uint64 `json:"reference_seqs"`
+	// Missing is how many messages this node is short of the best-placed recorder, and
+	// ReferenceMessages what that recorder received. Summed over the line's channels.
+	Missing           uint64 `json:"missing"`
+	ReferenceMessages uint64 `json:"reference_messages"`
 
 	Episodes []KalshiL2GapEpisode `json:"episodes,omitempty"`
 }
@@ -317,7 +317,7 @@ func edgeMulticastRecorderLossFold(series []EdgeMulticastRecorderLossSeries) (ma
 			byLine[lk][s.Node] = node
 		}
 		node.Missing += s.Missing
-		node.ReferenceSeqs += s.ReferenceSeqs
+		node.ReferenceMessages += s.ReferenceMessages
 
 		pk := pathKey{lk, s.MulticastGroup, s.ChannelID}
 		if byPath[pk] == nil {

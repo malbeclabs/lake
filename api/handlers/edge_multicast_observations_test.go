@@ -16,7 +16,7 @@ import (
 // about both: the series reaching the right publisher line, and the verdict staying honest about
 // what was never measured.
 
-const observationsKey = "edge_multicast_observations:v2"
+const observationsKey = "edge_multicast_observations:v3"
 
 // seedObservations writes the cached payload the page folds, standing in for the refresher.
 // seedObservationsWithRecorderLoss is seedObservations with the recorder-loss half of the payload
