@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/malbeclabs/lake/api/metrics"
@@ -157,6 +158,64 @@ const edgeMulticastRecorderLossCap = edgeMulticastObservationsWindowMinutes * 60
 // networkHealthQuerySettings, which exists for the same reason.
 const edgeMulticastRecorderLossSettings = " SETTINGS max_memory_usage = 2000000000, max_bytes_before_external_group_by = 1000000000"
 
+// quoteSQLStrings renders a string slice as a SQL literal list.
+//
+// The values here come from the database's own `source` column, not from a request, so this is
+// about correctness rather than injection: a capture source has been renamed once already
+// (the `*_lashay_*` era) and nothing stops the next convention from carrying a quote. Doubling
+// them keeps a rename from turning into a syntax error at the worst possible moment.
+func quoteSQLStrings(vals []string) string {
+	quoted := make([]string, 0, len(vals))
+	for _, v := range vals {
+		quoted = append(quoted, "'"+strings.ReplaceAll(v, "'", "''")+"'")
+	}
+	return strings.Join(quoted, ", ")
+}
+
+// edgeMulticastRecorderLossSources returns the capture sources recorded at MORE THAN ONE node in
+// the window — the only ones a recorder comparison can be made on at all.
+//
+// It exists to keep the per-sequence aggregate off the other 28. Measured on mainnet: of the 29
+// top-of-book sources, one (perps) has three recorders and the rest have one, and those 28
+// contribute 954k of the 1.7M (path, sequence) groups the main query would otherwise build. They
+// can never produce a row — every path of theirs fails `length(all_nodes) > 1` at the end — so the
+// work is pure waste.
+//
+// The reason it is a SEPARATE query rather than a filter inside the main one is measured, not
+// stylistic: as a path-tuple `IN`, or as a `source IN (SELECT ...)` subquery, ClickHouse built the
+// full aggregate before either could prune and the memory did not move. Explicit literals in the
+// WHERE do prune.
+//
+// This is cheap: it groups by source rather than by sequence, so its state is one entry per source
+// holding three node ids.
+func (a *API) edgeMulticastRecorderLossSources(ctx context.Context) ([]string, error) {
+	db := fmt.Sprintf("`%s`", a.FeedsDB)
+	q := fmt.Sprintf(`
+		SELECT source
+		FROM %[1]s.kalshi_bbo_observations
+		WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(%[2]d)))
+		  AND source LIKE '%[3]s%%'
+		GROUP BY source
+		HAVING uniqExact(measurement_node_id) > 1`,
+		db, edgeMulticastObservationsWindowMinutes, edgeMulticastTOBSourcePrefix)
+
+	rows, err := a.envDB(ctx).Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // fetchEdgeMulticastRecorderLoss measures each recording node against its peers on the same path.
 //
 // The shape is a three-step: collapse to one row per (path, sequence) carrying which nodes saw it,
@@ -174,7 +233,12 @@ const edgeMulticastRecorderLossSettings = " SETTINGS max_memory_usage = 20000000
 // with no peer there is no reference, and every hole in its numbering is the plane's own legitimate
 // hole. Market-by-price is single-node on every group today, so this signal exists only for
 // top-of-book — where perps runs three vantages.
-func (a *API) fetchEdgeMulticastRecorderLoss(ctx context.Context) ([]EdgeMulticastRecorderLossSeries, error) {
+func (a *API) fetchEdgeMulticastRecorderLoss(ctx context.Context, sources []string) ([]EdgeMulticastRecorderLossSeries, error) {
+	// No source has a second recorder, so there is nothing any comparison could be made on. Not
+	// an error and not an unavailable measurement: an empty result is the honest answer.
+	if len(sources) == 0 {
+		return nil, nil
+	}
 	db := fmt.Sprintf("`%s`", a.FeedsDB)
 	q := fmt.Sprintf(`
 		WITH per_seq AS (
@@ -187,7 +251,7 @@ func (a *API) fetchEdgeMulticastRecorderLoss(ctx context.Context) ([]EdgeMultica
 				min(recv_ts_ns) AS first_recv
 			FROM %[1]s.kalshi_bbo_observations
 			WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(%[2]d)))
-			  AND source LIKE '%[3]s%%'
+			  AND source IN (%[3]s)
 			GROUP BY multicast_group, publisher_source_ip, channel_id, sequence
 		),
 		universe AS (
@@ -206,7 +270,7 @@ func (a *API) fetchEdgeMulticastRecorderLoss(ctx context.Context) ([]EdgeMultica
 			SELECT measurement_node_id AS loc_node, min(location_code) AS location_code
 			FROM %[1]s.kalshi_bbo_observations
 			WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(%[2]d)))
-			  AND source LIKE '%[3]s%%'
+			  AND source IN (%[3]s)
 			GROUP BY measurement_node_id
 		)
 		SELECT
@@ -227,7 +291,7 @@ func (a *API) fetchEdgeMulticastRecorderLoss(ctx context.Context) ([]EdgeMultica
 		INNER JOIN node_loc AS nl ON node = nl.loc_node
 		WHERE length(u.all_nodes) > 1
 		GROUP BY p.multicast_group, p.publisher_source_ip, p.channel_id, node`+edgeMulticastRecorderLossSettings,
-		db, edgeMulticastObservationsWindowMinutes, edgeMulticastTOBSourcePrefix, edgeMulticastRecorderLossCap)
+		db, edgeMulticastObservationsWindowMinutes, quoteSQLStrings(sources), edgeMulticastRecorderLossCap)
 
 	rows, err := a.envDB(ctx).Query(ctx, q)
 	if err != nil {
@@ -342,7 +406,13 @@ func (a *API) FetchEdgeMulticastObservations(ctx context.Context) (*EdgeMulticas
 	// Additive to this payload, and a failure costs the recorder strips rather than the series
 	// every other column on the page is folded from. Not fatal for the same reason the columns it
 	// feeds are optional: a missing measurement must never be able to take the page with it.
-	loss, err := a.fetchEdgeMulticastRecorderLoss(ctx)
+	sources, err := a.edgeMulticastRecorderLossSources(ctx)
+	if err != nil {
+		slog.Warn("edge multicast recorder loss unavailable", "error", err)
+		out.RecorderLossUnavailable = true
+		return out, nil
+	}
+	loss, err := a.fetchEdgeMulticastRecorderLoss(ctx, sources)
 	if err != nil {
 		slog.Warn("edge multicast recorder loss unavailable", "error", err)
 		out.RecorderLossUnavailable = true
