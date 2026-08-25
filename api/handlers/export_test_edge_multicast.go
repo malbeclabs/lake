@@ -90,3 +90,10 @@ func EdgeMulticastNodeCoverageForTest(groups []EdgeMulticastGroupForTest, series
 func EdgeMulticastRecorderLossFoldForTest(series []EdgeMulticastRecorderLossSeries) (map[string][]EdgeMulticastRecorderLoss, map[string][]KalshiL2GapEpisode) {
 	return edgeMulticastRecorderLossFold(series)
 }
+
+// EdgeMulticastAllPathsGappedForTest exposes the "every path lost at once" intersection to the
+// external test package. It is the only sequence finding that belongs to the group rather than to a
+// line, so its keying is worth pinning without a database in the way.
+func EdgeMulticastAllPathsGappedForTest(instances []EdgeMulticastChannelInstance) []KalshiL2GapEpisode {
+	return edgeMulticastAllPathsGapped(instances)
+}

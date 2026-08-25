@@ -7947,6 +7947,10 @@ export interface EdgeMulticastSequenceHealth {
   /** The comparison was attempted and failed. Distinct from an absent recorder_loss, which means
    *  the path has no peer to be measured against — render "not measured", never nothing. */
   recorder_loss_unavailable?: boolean
+  /** Seconds every path of this feed lost data at once, on the GROUP roll-up only. Non-empty means
+   *  the redundancy failed and the feed itself lost data — the one sequence statement no publisher
+   *  line can make. */
+  all_paths_gapped?: GapEpisode[]
   /** Instances from a plane with no gap marker, whose 'ok' is the weaker "advancing" claim. */
   gaps_unmeasured?: number
   /** Distinct recording nodes behind the gap-measured instances. One means a single vantage: a

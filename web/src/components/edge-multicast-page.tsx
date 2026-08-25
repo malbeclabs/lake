@@ -923,9 +923,20 @@ function RecorderLossTimeline({
     )
   }
 
-  // One recorder is no comparison at all, and a single labelled strip would imply there was one.
+  // One recorder is no comparison at all. Saying so is not decoration: an empty row here read as
+  // "the feature is broken" to the first person who looked at a sports group, because three states
+  // — compared, failed, and nothing to compare — had only two renderings between them. It is also
+  // an operational fact worth seeing, and the same one GapNodes bounds: with a single vantage, a
+  // gap on this feed cannot be attributed to the path rather than to that recorder's own branch.
   if (recorders.length < 2) {
-    return null
+    return (
+      <div className="flex items-center gap-1.5 border-t border-border/60 pt-0.5">
+        <span className="text-[9px] w-8 shrink-0 text-right text-muted-foreground">rec</span>
+        <span className="text-[9px] text-muted-foreground">
+          {recorders.length === 1 ? 'one vantage, nothing to compare' : 'no peer to compare'}
+        </span>
+      </div>
+    )
   }
   const simultaneous = sequence.recorder_loss_simultaneous ?? []
   const windowEnd = new Date(win.endMs).toISOString().slice(11, 19)
@@ -1110,8 +1121,44 @@ function PublisherSequenceCell({
 // have no line to sit on. A series recorded from an address no publisher of this group carries is
 // the one thing the per-publisher view structurally cannot show, and dropping it silently is the
 // outcome this column exists to prevent.
-function UnattributedSequenceCell({ sequence }: { sequence?: EdgeMulticastSequenceHealth }) {
+function UnattributedSequenceCell({
+  sequence,
+  window: win,
+}: {
+  sequence?: EdgeMulticastSequenceHealth
+  window?: GapWindow
+}) {
   const unattributed = sequence?.unattributed ?? 0
+  const allPaths = sequence?.all_paths_gapped ?? []
+
+  // The redundancy failed. This outranks the unattributed count because it is the only thing on
+  // this page that says the FEED lost data rather than one of its paths: A protects B, so a gap on
+  // one path is covered and a gap on both is not. Measured on mainnet it is rare — 22 seconds in
+  // six hours against 167 where a single path lost — so a badge here is a finding, not noise.
+  if (allPaths.length > 0) {
+    const lost = allPaths.reduce((n, e) => n + e.seconds, 0)
+    const detail = [
+      `${allPaths.length} episode(s), ${lost}s in which EVERY path of this feed was losing at once`,
+      'A gap on one path is covered by its peer; a gap on both is data the feed did not deliver.',
+      ...allPaths
+        .slice(0, GAP_TOOLTIP_MAX_LINES)
+        .map((e) => `${new Date(e.start * 1000).toISOString().slice(11, 19)}Z for ${e.seconds}s`),
+      allPaths.length > GAP_TOOLTIP_MAX_LINES
+        ? `+${allPaths.length - GAP_TOOLTIP_MAX_LINES} more`
+        : '',
+    ].filter(Boolean)
+    return (
+      <div className="flex flex-col gap-1">
+        <Tooltip content={detail.join('\n')} className="whitespace-pre-line">
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-red-500/15 text-red-500">
+            all paths lost {lost}s
+          </span>
+        </Tooltip>
+        {win && <GapMarks episodes={allPaths} window={win} />}
+      </div>
+    )
+  }
+
   if (unattributed === 0) {
     return <span className="text-muted-foreground">—</span>
   }
@@ -1284,7 +1331,7 @@ function GroupRow({
           what no line can: series recorded from an address no publisher of this group carries. */}
       {showSequence && (
         <td className="px-3 py-3 text-sm whitespace-nowrap">
-          <UnattributedSequenceCell sequence={group.sequence} />
+          <UnattributedSequenceCell sequence={group.sequence} window={gapWindow} />
         </td>
       )}
       <td className="px-3 py-3 text-sm">
@@ -1666,7 +1713,19 @@ export function EdgeMulticastPage() {
               gap-free and recovery describe; the loss figures are MESSAGES that never arrived,
               counted from the per-instrument sequence, which is the only counter here that carries a
               denominator. Their event counts legitimately differ — one break in the numbering can
-              leave a book un-anchored for seconds, and a burst of them lands inside one episode.
+              leave a book un-anchored for seconds, and a burst of them lands inside one episode. A
+              line with one recorder says so instead of drawing nothing: with a single vantage a gap
+              cannot be attributed to the path rather than to that recorder's own branch.
+            </p>
+          )}
+          {showSequence && (
+            <p>
+              On the GROUP row, <span className="text-foreground">all paths lost</span> is the only
+              sequence finding no publisher line can make. A feed travels two redundant paths, so a
+              gap on one is covered by its peer and reports as that path's own; a gap on BOTH at the
+              same second is data the feed did not deliver. It intersects per capture source and per
+              recording node before reporting, so two unrelated losses at two markets — or one
+              recorder that stopped ingesting everything at once — do not read as a shared outage.
             </p>
           )}
         </div>

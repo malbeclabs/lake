@@ -233,6 +233,11 @@ type EdgeMulticastSequenceHealth struct {
 	// and conflating them is how a query that died on every cycle went unnoticed.
 	RecorderLossUnavailable bool `json:"recorder_loss_unavailable,omitempty"`
 
+	// AllPathsGapped is the seconds every path of this feed lost data at once, set on the GROUP
+	// roll-up only. Non-empty means the redundancy failed and the feed itself lost data — the one
+	// sequence statement no publisher line can make, since a line only ever sees its own loss.
+	AllPathsGapped []KalshiL2GapEpisode `json:"all_paths_gapped,omitempty"`
+
 	// GapsUnmeasured is how many of these instances came from a plane with no gap marker, so
 	// their 'ok' means "advancing", not "lost nothing". Carried so the badge can say which kind
 	// of ok it is rather than letting the top-of-book rows borrow the market-by-price rows'
@@ -649,8 +654,93 @@ func demoteEdgeMulticastQuietCaptureSources(health *EdgeMulticastSequenceHealth)
 	}
 }
 
+// edgeMulticastAllPathsGapped is the seconds in which EVERY path of a feed lost data at once.
+//
+// This is the one sequence finding that belongs to the group and to no line, which is why it lives
+// here rather than on a publisher: a path can only report its own loss, and "A lost while B held"
+// is the redundancy working. What no line can say is that A and B lost together — and that is the
+// only case where the FEED lost data rather than one of its paths.
+//
+// Keyed on (capture source, recording node) before intersecting, for the same two reasons
+// edgeMulticastPathParity is: the node has to be in the key or a recorder that stopped ingesting
+// looks like every path failing at once, and the capture source has to be in it or two unrelated
+// losses at two different markets in the same second read as one shared outage. The channel is NOT
+// in the key — the paths of a feed publish it under different channel ids, so keying on it would
+// put each path alone and intersect nothing.
+//
+// Measured on mainnet over six hours of edge-kalshi-perps-mbp: 22 seconds where both paths lost
+// together, against 83 and 84 where only one did. Rare enough to mean something, common enough to
+// be worth a badge.
+func edgeMulticastAllPathsGapped(instances []EdgeMulticastChannelInstance) []KalshiL2GapEpisode {
+	type vantage struct {
+		source string
+		node   string
+	}
+	// Per vantage, per publisher, the seconds that publisher was losing.
+	byVantage := map[vantage]map[string]map[uint32]bool{}
+	for _, inst := range instances {
+		// Only the plane that measures gaps at all. A top-of-book series has no marker, so its
+		// empty episode list is an absence of measurement and must not count as "held".
+		if !inst.GapsMeasured || inst.PublisherSourceIP == "" {
+			continue
+		}
+		v := vantage{inst.CaptureSource, inst.Node}
+		if byVantage[v] == nil {
+			byVantage[v] = map[string]map[uint32]bool{}
+		}
+		if byVantage[v][inst.PublisherSourceIP] == nil {
+			byVantage[v][inst.PublisherSourceIP] = map[uint32]bool{}
+		}
+		for _, e := range inst.GapEpisodes {
+			for i := uint32(0); i < e.Seconds; i++ {
+				byVantage[v][inst.PublisherSourceIP][uint32(e.Start)+i] = true
+			}
+		}
+	}
+
+	shared := map[uint32]bool{}
+	for _, publishers := range byVantage {
+		// One path at a vantage cannot fail "together" with anything. Recording nothing here is
+		// deliberate: a single-path group has no redundancy to lose, and claiming otherwise would
+		// turn every ordinary gap into a feed outage.
+		if len(publishers) < 2 {
+			continue
+		}
+		var first map[uint32]bool
+		for _, secs := range publishers {
+			if first == nil {
+				first = secs
+				continue
+			}
+			next := map[uint32]bool{}
+			for sec := range first {
+				if secs[sec] {
+					next[sec] = true
+				}
+			}
+			first = next
+		}
+		for sec := range first {
+			shared[sec] = true
+		}
+	}
+	if len(shared) == 0 {
+		return nil
+	}
+	flat := make([]uint32, 0, len(shared))
+	for sec := range shared {
+		flat = append(flat, sec)
+	}
+	return collapseKalshiL2GapSeconds(flat)
+}
+
 // finishEdgeMulticastSequenceHealth tallies the instance states and rolls them up worst-first.
 func finishEdgeMulticastSequenceHealth(health *EdgeMulticastSequenceHealth) {
+	// Computed over every instance the roll-up holds, before any per-publisher split. On a
+	// per-publisher health this is always empty, which is correct — one path cannot fail together
+	// with itself — so the same call is safe on both grains.
+	health.AllPathsGapped = edgeMulticastAllPathsGapped(health.Instances)
+
 	rank := map[string]int{
 		edgeMulticastSeqGapped:  0,
 		edgeMulticastSeqStalled: 1,
