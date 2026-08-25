@@ -2,6 +2,7 @@ package handlers_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/malbeclabs/lake/api/handlers"
 	"github.com/stretchr/testify/assert"
@@ -100,4 +101,36 @@ func TestEdgeMulticastRecorderLoss_UnattributedSeriesIsDropped(t *testing.T) {
 	s.PublisherSourceIP = ""
 	loss, _ := handlers.EdgeMulticastRecorderLossFoldForTest([]handlers.EdgeMulticastRecorderLossSeries{s})
 	assert.Empty(t, loss)
+}
+
+// A failed measurement must reach the publisher line as a FAILURE, not as an absence.
+//
+// This is the case production hit: the query died on every ten-minute cycle and the page rendered
+// exactly what a single-recorder path renders — nothing — so a broken measurement was
+// indistinguishable from an inapplicable one for as long as nobody read the API's logs.
+func TestGetEdgeMulticast_RecorderLossUnavailableReachesTheLine(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertEdgeMulticastCaptureGroups(t, api)
+	insertEdgeMulticastCapturePublisher(t, api, "group-k")
+
+	asOf := time.Now().UTC()
+	seedObservationsWithRecorderLoss(t, api, asOf, true, handlers.EdgeMulticastObservationSeries{
+		Source: "tob_edge_kalshi_sports_nfl", ChannelID: 2, Node: "cmh-rec1", LocationCode: "cmh",
+		PublisherSourceIP: "10.0.0.9", MulticastGroup: "233.0.0.10", Messages: 900,
+		LastSeen: asOf.Add(-1 * time.Second),
+	})
+
+	k := findEdgeMulticastGroup(t, getEdgeMulticast(t, api), "edge-kalshi-sports-mbp")
+	require.NotNil(t, k.Sequence)
+	found := false
+	for _, line := range k.PublisherLines {
+		if line.Sequence != nil {
+			assert.True(t, line.Sequence.RecorderLossUnavailable,
+				"a failed comparison is carried, not dropped")
+			assert.Empty(t, line.Sequence.RecorderLoss)
+			found = true
+		}
+	}
+	require.True(t, found, "no publisher line carried a sequence")
 }

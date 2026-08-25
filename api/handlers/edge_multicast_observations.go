@@ -140,6 +140,23 @@ type EdgeMulticastRecorderLossSeries struct {
 // second of the window fills it exactly and drops nothing.
 const edgeMulticastRecorderLossCap = edgeMulticastObservationsWindowMinutes * 60
 
+// edgeMulticastRecorderLossSettings bounds this query's memory and lets its GROUP BY spill to
+// disk rather than dying.
+//
+// It is needed because the per-sequence aggregate is genuinely large: one group per (path,
+// sequence) over the window, measured at 1.7M groups across the 29 top-of-book capture sources,
+// and it wanted more than 1.2 GiB. Unbounded, it competed for the server's whole budget and lost
+// — in production it failed on every ten-minute cycle with `(total) memory limit exceeded: would
+// use 7.20 GiB`, which cost the strips silently because this measurement is additive and its
+// failure is a WARN. With the spill it completes in 3-6s inside 700 MiB.
+//
+// Narrowing the scan was tried first and does not help: 28 of the 29 sources have a single
+// recorder and can never produce a comparison, but filtering them out — by path tuple or by a
+// source IN subquery — left the memory unchanged, because the cost is the aggregate's group count
+// and ClickHouse builds it before either filter can prune. Same shape and same numbers as
+// networkHealthQuerySettings, which exists for the same reason.
+const edgeMulticastRecorderLossSettings = " SETTINGS max_memory_usage = 2000000000, max_bytes_before_external_group_by = 1000000000"
+
 // fetchEdgeMulticastRecorderLoss measures each recording node against its peers on the same path.
 //
 // The shape is a three-step: collapse to one row per (path, sequence) carrying which nodes saw it,
@@ -209,7 +226,7 @@ func (a *API) fetchEdgeMulticastRecorderLoss(ctx context.Context) ([]EdgeMultica
 		ARRAY JOIN u.all_nodes AS node
 		INNER JOIN node_loc AS nl ON node = nl.loc_node
 		WHERE length(u.all_nodes) > 1
-		GROUP BY p.multicast_group, p.publisher_source_ip, p.channel_id, node`,
+		GROUP BY p.multicast_group, p.publisher_source_ip, p.channel_id, node`+edgeMulticastRecorderLossSettings,
 		db, edgeMulticastObservationsWindowMinutes, edgeMulticastTOBSourcePrefix, edgeMulticastRecorderLossCap)
 
 	rows, err := a.envDB(ctx).Query(ctx, q)
@@ -241,6 +258,15 @@ type EdgeMulticastObservationsResponse struct {
 	// RecorderLoss is each recording node measured against its peers on the same path. Empty for
 	// a path with one recorder, which has no peer to be measured against.
 	RecorderLoss []EdgeMulticastRecorderLossSeries `json:"recorder_loss,omitempty"`
+
+	// RecorderLossUnavailable says the measurement was ATTEMPTED and failed, which is a different
+	// statement from an empty RecorderLoss and has to be carried separately.
+	//
+	// Without it the two render alike — no strips — and that is how a query dying on every cycle
+	// looked exactly like a feed with one recorder for as long as nobody read the API's logs. The
+	// page owes the reader "not measured" here, the same distinction the Sequence column already
+	// makes between a gap-checked ok and an advancing one.
+	RecorderLossUnavailable bool `json:"recorder_loss_unavailable,omitempty"`
 }
 
 // FetchEdgeMulticastObservations aggregates the recorded series over the coverage window.
@@ -319,6 +345,7 @@ func (a *API) FetchEdgeMulticastObservations(ctx context.Context) (*EdgeMulticas
 	loss, err := a.fetchEdgeMulticastRecorderLoss(ctx)
 	if err != nil {
 		slog.Warn("edge multicast recorder loss unavailable", "error", err)
+		out.RecorderLossUnavailable = true
 	} else {
 		out.RecorderLoss = loss
 	}
@@ -768,11 +795,12 @@ func (a *API) edgeMulticastObservationStats(ctx context.Context, captureSources 
 	}
 	loss, simultaneous := edgeMulticastRecorderLossFold(payload.RecorderLoss)
 	return edgeMulticastObservationStatsResult{
-		parity:            edgeMulticastPathParity(payload.Series, captureSources),
-		rates:             edgeMulticastPathRates(payload.Series, captureSources, payload.WindowMinutes),
-		recorder:          edgeMulticastNodeCoverage(payload.Series, captureSources),
-		recorderLoss:      loss,
-		recorderLossSimul: simultaneous,
+		recorderLossUnavailable: payload.RecorderLossUnavailable,
+		parity:                  edgeMulticastPathParity(payload.Series, captureSources),
+		rates:                   edgeMulticastPathRates(payload.Series, captureSources, payload.WindowMinutes),
+		recorder:                edgeMulticastNodeCoverage(payload.Series, captureSources),
+		recorderLoss:            loss,
+		recorderLossSimul:       simultaneous,
 	}, payload.GeneratedAt.UTC()
 }
 
@@ -788,4 +816,7 @@ type edgeMulticastObservationStatsResult struct {
 	// against the ledger's dz_ip.
 	recorderLoss      map[string][]EdgeMulticastRecorderLoss
 	recorderLossSimul map[string][]KalshiL2GapEpisode
+
+	// recorderLossUnavailable distinguishes a failed measurement from an absent one.
+	recorderLossUnavailable bool
 }

@@ -911,6 +911,18 @@ function RecorderLossTimeline({
   window: GapWindow
 }) {
   const recorders = sequence.recorder_loss ?? []
+
+  // Attempted and failed is not the same as never applicable, and rendering both as nothing is how
+  // a query dying on every refresh cycle stayed invisible. Say so instead.
+  if (sequence.recorder_loss_unavailable) {
+    return (
+      <div className="flex items-center gap-1.5 border-t border-border/60 pt-0.5">
+        <span className="text-[9px] w-8 shrink-0 text-right text-muted-foreground">rec</span>
+        <span className="text-[9px] text-amber-600">not measured</span>
+      </div>
+    )
+  }
+
   // One recorder is no comparison at all, and a single labelled strip would imply there was one.
   if (recorders.length < 2) {
     return null

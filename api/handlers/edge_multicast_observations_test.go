@@ -19,6 +19,23 @@ import (
 const observationsKey = "edge_multicast_observations:v2"
 
 // seedObservations writes the cached payload the page folds, standing in for the refresher.
+// seedObservationsWithRecorderLoss is seedObservations with the recorder-loss half of the payload
+// spelled out: whether the comparison failed. The plain helper leaves it false, which is the
+// "measured, nothing to compare" case.
+func seedObservationsWithRecorderLoss(t *testing.T, api *handlers.API, generatedAt time.Time, unavailable bool, series ...handlers.EdgeMulticastObservationSeries) {
+	t.Helper()
+	require.NoError(t, api.WritePageCache(t.Context(), observationsKey, handlers.EdgeMulticastObservationsResponse{
+		GeneratedAt:             generatedAt,
+		WindowMinutes:           15,
+		Series:                  series,
+		RecorderLossUnavailable: unavailable,
+	}))
+	t.Cleanup(func() {
+		_, err := api.PgPool.Exec(context.Background(), `DELETE FROM page_cache WHERE key = $1`, observationsKey)
+		require.NoError(t, err)
+	})
+}
+
 func seedObservations(t *testing.T, api *handlers.API, generatedAt time.Time, series ...handlers.EdgeMulticastObservationSeries) {
 	t.Helper()
 	require.NoError(t, api.WritePageCache(t.Context(), observationsKey, handlers.EdgeMulticastObservationsResponse{

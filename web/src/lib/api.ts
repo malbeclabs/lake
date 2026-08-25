@@ -7944,6 +7944,9 @@ export interface EdgeMulticastSequenceHealth {
    *  Absent means "no peer to measure against", never "measured clean". */
   recorder_loss?: EdgeMulticastRecorderLoss[]
   recorder_loss_simultaneous?: GapEpisode[]
+  /** The comparison was attempted and failed. Distinct from an absent recorder_loss, which means
+   *  the path has no peer to be measured against — render "not measured", never nothing. */
+  recorder_loss_unavailable?: boolean
   /** Instances from a plane with no gap marker, whose 'ok' is the weaker "advancing" claim. */
   gaps_unmeasured?: number
   /** Distinct recording nodes behind the gap-measured instances. One means a single vantage: a

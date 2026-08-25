@@ -228,6 +228,11 @@ type EdgeMulticastSequenceHealth struct {
 	RecorderLoss             []EdgeMulticastRecorderLoss `json:"recorder_loss,omitempty"`
 	RecorderLossSimultaneous []KalshiL2GapEpisode        `json:"recorder_loss_simultaneous,omitempty"`
 
+	// RecorderLossUnavailable says the comparison was attempted and failed. Rendered as "not
+	// measured" rather than as nothing: an absent strip and a failed one are different claims,
+	// and conflating them is how a query that died on every cycle went unnoticed.
+	RecorderLossUnavailable bool `json:"recorder_loss_unavailable,omitempty"`
+
 	// GapsUnmeasured is how many of these instances came from a plane with no gap marker, so
 	// their 'ok' means "advancing", not "lost nothing". Carried so the badge can say which kind
 	// of ok it is rather than letting the top-of-book rows borrow the market-by-price rows'
@@ -717,7 +722,7 @@ func finishEdgeMulticastSequenceHealth(health *EdgeMulticastSequenceHealth) {
 // lines the payload happens to carry cannot change any verdict. A faulted line the cap then hid
 // would take its badge off screen with it, leaving only the roll-up — unreachable today, since the
 // only groups with a recorded series have two publishers each against a cap of twelve.
-func attachEdgeMulticastSequenceHealth(lines []EdgeMulticastPublisher, health *EdgeMulticastSequenceHealth, recorderLoss map[string][]EdgeMulticastRecorderLoss, recorderLossSimul map[string][]KalshiL2GapEpisode) {
+func attachEdgeMulticastSequenceHealth(lines []EdgeMulticastPublisher, health *EdgeMulticastSequenceHealth, recorderLoss map[string][]EdgeMulticastRecorderLoss, recorderLossSimul map[string][]KalshiL2GapEpisode, recorderLossUnavailable bool) {
 	if health == nil {
 		return
 	}
@@ -755,6 +760,7 @@ func attachEdgeMulticastSequenceHealth(lines []EdgeMulticastPublisher, health *E
 		// entry keeps nil, which is "no peer to be measured against" and not "measured clean".
 		h.RecorderLoss = recorderLoss[lines[i].DZIP]
 		h.RecorderLossSimultaneous = recorderLossSimul[lines[i].DZIP]
+		h.RecorderLossUnavailable = recorderLossUnavailable
 		lines[i].Sequence = h
 		health.Publishers++
 		switch h.Status {
