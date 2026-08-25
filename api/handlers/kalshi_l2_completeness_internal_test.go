@@ -101,3 +101,37 @@ func TestMergeKalshiL2Days_TrimsToTheWindow(t *testing.T) {
 
 	assert.Len(t, got.Days, kalshiL2CompletenessDays)
 }
+
+// Every pass reads today and yesterday, and one older day of the window on rotation. What the
+// rotation has to guarantee is coverage: over a full cycle of passes, every day in the window
+// gets re-read, so no day of the payload is ever frozen at whatever it said when first written.
+func TestCompletenessScanDays_RotationCoversTheWindow(t *testing.T) {
+	base := time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC)
+	rotating := kalshiL2CompletenessDays - kalshiL2CompletenessLiveDays
+
+	seen := map[string]bool{}
+	for h := range rotating {
+		now := base.Add(time.Duration(h) * time.Hour)
+		days := completenessScanDays(now)
+		require.Len(t, days, kalshiL2CompletenessLiveDays+1)
+		assert.Equal(t, "2026-08-25", days[0], "today is always read")
+		assert.Equal(t, "2026-08-24", days[1], "yesterday is always read")
+		assert.NotContains(t, days[:kalshiL2CompletenessLiveDays], days[2],
+			"the rotating day is not one of the two the pass already reads")
+		seen[days[2]] = true
+	}
+
+	for i := kalshiL2CompletenessLiveDays; i < kalshiL2CompletenessDays; i++ {
+		day := base.AddDate(0, 0, -i).Format(time.DateOnly)
+		assert.True(t, seen[day], "%s is never re-read", day)
+	}
+	assert.Len(t, seen, rotating, "the rotation reads a day it did not need to")
+}
+
+// The rotation is read off the clock so nothing has to be stored, which only works if the two
+// API replicas agree: they pick the same day for the same hour, whichever of them runs the pass.
+func TestCompletenessScanDays_SameHourSameDays(t *testing.T) {
+	at := time.Date(2026, 8, 25, 9, 17, 0, 0, time.UTC)
+	assert.Equal(t, completenessScanDays(at), completenessScanDays(at.Add(31*time.Minute)))
+	assert.NotEqual(t, completenessScanDays(at), completenessScanDays(at.Add(time.Hour)))
+}

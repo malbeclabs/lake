@@ -744,12 +744,13 @@ func (a *Activities) heavyEntries() []cacheEntry {
 		//
 		// It takes nhHeavyRefreshTimeout rather than a budget of its own, deliberately: this
 		// activity's timeout feeds heavyStartLeadCycles, so an entry that raises it shrinks
-		// the window in which any heavy run may start. The usual refresh reads three
-		// day-partitions and fits with room. The exception is the full-window pass a first
-		// run or a bumped key does — seven partitions of a level-grain table — which has
-		// never been measured and may not fit. If it does not, it fails visibly and
-		// escalates rather than corrupting anything, and the fix is to size a budget here
-		// from the observed duration and pay the lead-cycle cost knowingly.
+		// the window in which any heavy run may start.
+		//
+		// Every pass reads three day-partitions, first run included — there is no full-window
+		// pass to size for. Measured on prod 2026-08-25, the seven-partition query ran past
+		// 250s, so a cold cache builds the window up over several passes instead. The refresh
+		// also stops before a day it cannot finish inside this budget, so what a slow day
+		// costs is one fewer day in the payload, never a pass that writes nothing.
 		{name: "kalshi l2 completeness", key: handlers.KalshiL2CompletenessCacheKey, every: kalshiL2CompletenessInterval, timeout: nhHeavyRefreshTimeout, fn: func(ctx context.Context) (any, error) {
 			return api.RefreshKalshiL2Completeness(ctx)
 		}},
