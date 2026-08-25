@@ -263,6 +263,17 @@ type EdgeMulticastRecorderLoss struct {
 	Episodes []KalshiL2GapEpisode `json:"episodes,omitempty"`
 }
 
+// edgeMulticastRecorderLossLineKey identifies one publisher line: its destination group and the
+// address it publishes from.
+//
+// The group is in it because a publisher serves several — the top-of-book and market-by-price
+// halves of a feed are two addresses carried on one tunnel — and both planes are now compared, so
+// keying on the publisher alone would total its losses across its groups and print that total on
+// every one of its rows.
+func edgeMulticastRecorderLossLineKey(multicastGroup, publisherSourceIP string) string {
+	return multicastGroup + "|" + publisherSourceIP
+}
+
 // edgeMulticastRecorderLossFold turns the cached per-(path, node) series into per-publisher-line
 // recorder loss, plus the line every reader actually asks for: where SEVERAL recorders lost at the
 // same second.
@@ -278,7 +289,7 @@ type EdgeMulticastRecorderLoss struct {
 // the cause is not one node's branch — which is the question the per-node lines leave open.
 func edgeMulticastRecorderLossFold(series []EdgeMulticastRecorderLossSeries) (map[string][]EdgeMulticastRecorderLoss, map[string][]KalshiL2GapEpisode) {
 	type pathKey struct {
-		pub     string
+		line    string
 		group   string
 		channel uint8
 	}
@@ -292,18 +303,23 @@ func edgeMulticastRecorderLossFold(series []EdgeMulticastRecorderLossSeries) (ma
 		if s.PublisherSourceIP == "" || s.Node == "" {
 			continue
 		}
-		if byLine[s.PublisherSourceIP] == nil {
-			byLine[s.PublisherSourceIP] = map[string]*EdgeMulticastRecorderLoss{}
+		// Keyed on (destination group, publisher), not on the publisher alone. One publisher
+		// serves several groups — the tob and mbp halves of a feed are two addresses on one
+		// tunnel — and this table now carries both planes, so keying on the address alone would
+		// sum a publisher's losses across its groups and show the total on each of its rows.
+		lk := edgeMulticastRecorderLossLineKey(s.MulticastGroup, s.PublisherSourceIP)
+		if byLine[lk] == nil {
+			byLine[lk] = map[string]*EdgeMulticastRecorderLoss{}
 		}
-		node := byLine[s.PublisherSourceIP][s.Node]
+		node := byLine[lk][s.Node]
 		if node == nil {
 			node = &EdgeMulticastRecorderLoss{Node: s.Node, LocationCode: s.LocationCode}
-			byLine[s.PublisherSourceIP][s.Node] = node
+			byLine[lk][s.Node] = node
 		}
 		node.Missing += s.Missing
 		node.ReferenceSeqs += s.ReferenceSeqs
 
-		pk := pathKey{s.PublisherSourceIP, s.MulticastGroup, s.ChannelID}
+		pk := pathKey{lk, s.MulticastGroup, s.ChannelID}
 		if byPath[pk] == nil {
 			byPath[pk] = map[string]map[uint32]bool{}
 		}
@@ -320,15 +336,15 @@ func edgeMulticastRecorderLossFold(series []EdgeMulticastRecorderLossSeries) (ma
 	out := map[string][]EdgeMulticastRecorderLoss{}
 	perLineSecs := map[string]map[string]map[uint32]bool{}
 	for pk, nodes := range byPath {
-		if perLineSecs[pk.pub] == nil {
-			perLineSecs[pk.pub] = map[string]map[uint32]bool{}
+		if perLineSecs[pk.line] == nil {
+			perLineSecs[pk.line] = map[string]map[uint32]bool{}
 		}
 		for node, secs := range nodes {
-			if perLineSecs[pk.pub][node] == nil {
-				perLineSecs[pk.pub][node] = map[uint32]bool{}
+			if perLineSecs[pk.line][node] == nil {
+				perLineSecs[pk.line][node] = map[uint32]bool{}
 			}
 			for sec := range secs {
-				perLineSecs[pk.pub][node][sec] = true
+				perLineSecs[pk.line][node][sec] = true
 			}
 		}
 	}
@@ -370,10 +386,10 @@ func edgeMulticastRecorderLossFold(series []EdgeMulticastRecorderLossSeries) (ma
 			if n < 2 {
 				continue
 			}
-			if simulSecs[pk.pub] == nil {
-				simulSecs[pk.pub] = map[uint32]bool{}
+			if simulSecs[pk.line] == nil {
+				simulSecs[pk.line] = map[uint32]bool{}
 			}
-			simulSecs[pk.pub][sec] = true
+			simulSecs[pk.line][sec] = true
 		}
 	}
 	for pub, secs := range simulSecs {
@@ -812,7 +828,7 @@ func finishEdgeMulticastSequenceHealth(health *EdgeMulticastSequenceHealth) {
 // lines the payload happens to carry cannot change any verdict. A faulted line the cap then hid
 // would take its badge off screen with it, leaving only the roll-up — unreachable today, since the
 // only groups with a recorded series have two publishers each against a cap of twelve.
-func attachEdgeMulticastSequenceHealth(lines []EdgeMulticastPublisher, health *EdgeMulticastSequenceHealth, recorderLoss map[string][]EdgeMulticastRecorderLoss, recorderLossSimul map[string][]KalshiL2GapEpisode, recorderLossUnavailable bool) {
+func attachEdgeMulticastSequenceHealth(lines []EdgeMulticastPublisher, health *EdgeMulticastSequenceHealth, multicastGroup string, recorderLoss map[string][]EdgeMulticastRecorderLoss, recorderLossSimul map[string][]KalshiL2GapEpisode, recorderLossUnavailable bool) {
 	if health == nil {
 		return
 	}
@@ -848,8 +864,9 @@ func attachEdgeMulticastSequenceHealth(lines []EdgeMulticastPublisher, health *E
 		finishEdgeMulticastSequenceHealth(h)
 		// Keyed on the tunnel address, the same join the instances above make. A line with no
 		// entry keeps nil, which is "no peer to be measured against" and not "measured clean".
-		h.RecorderLoss = recorderLoss[lines[i].DZIP]
-		h.RecorderLossSimultaneous = recorderLossSimul[lines[i].DZIP]
+		lk := edgeMulticastRecorderLossLineKey(multicastGroup, lines[i].DZIP)
+		h.RecorderLoss = recorderLoss[lk]
+		h.RecorderLossSimultaneous = recorderLossSimul[lk]
 		h.RecorderLossUnavailable = recorderLossUnavailable
 		lines[i].Sequence = h
 		health.Publishers++

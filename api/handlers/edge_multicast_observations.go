@@ -175,11 +175,17 @@ func quoteSQLStrings(vals []string) string {
 // edgeMulticastRecorderLossSources returns the capture sources recorded at MORE THAN ONE node in
 // the window — the only ones a recorder comparison can be made on at all.
 //
-// It exists to keep the per-sequence aggregate off the other 28. Measured on mainnet: of the 29
-// top-of-book sources, one (perps) has three recorders and the rest have one, and those 28
-// contribute 954k of the 1.7M (path, sequence) groups the main query would otherwise build. They
-// can never produce a row — every path of theirs fails `length(all_nodes) > 1` at the end — so the
-// work is pure waste.
+// Both planes are read. This table carries the top-of-book series AND the BBO observations a
+// market-by-price publisher derives, and perps runs three recorders on each, so both can be
+// compared. That is unlike the Sequence column, where the two planes come from different tables
+// and only one has a gap marker: here the measurement is the same on both — which sequence numbers
+// a node recorded that its peers did — and needs no marker at all.
+//
+// It exists to keep the per-sequence aggregate off the sources that cannot answer. Measured on
+// mainnet: perps has three recorders on each plane and all 56 sports sources have one, and those
+// contribute the bulk of the (path, sequence) groups the main query would otherwise build. They can
+// never produce a row — every path of theirs fails `length(all_nodes) > 1` at the end — so the work
+// is pure waste.
 //
 // The reason it is a SEPARATE query rather than a filter inside the main one is measured, not
 // stylistic: as a path-tuple `IN`, or as a `source IN (SELECT ...)` subquery, ClickHouse built the
@@ -194,10 +200,10 @@ func (a *API) edgeMulticastRecorderLossSources(ctx context.Context) ([]string, e
 		SELECT source
 		FROM %[1]s.kalshi_bbo_observations
 		WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(%[2]d)))
-		  AND source LIKE '%[3]s%%'
+		  AND (source LIKE '%[3]s%%' OR source LIKE '%[4]s%%')
 		GROUP BY source
 		HAVING uniqExact(measurement_node_id) > 1`,
-		db, edgeMulticastObservationsWindowMinutes, edgeMulticastTOBSourcePrefix)
+		db, edgeMulticastObservationsWindowMinutes, edgeMulticastTOBSourcePrefix, edgeMulticastMBPSourcePrefix)
 
 	rows, err := a.envDB(ctx).Query(ctx, q)
 	if err != nil {

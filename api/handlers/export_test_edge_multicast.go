@@ -91,6 +91,12 @@ func EdgeMulticastRecorderLossFoldForTest(series []EdgeMulticastRecorderLossSeri
 	return edgeMulticastRecorderLossFold(series)
 }
 
+// EdgeMulticastRecorderLossLineKeyForTest builds the key the fold's maps are addressed by, so a
+// test does not have to hardcode the separator.
+func EdgeMulticastRecorderLossLineKeyForTest(multicastGroup, publisherSourceIP string) string {
+	return edgeMulticastRecorderLossLineKey(multicastGroup, publisherSourceIP)
+}
+
 // EdgeMulticastAllPathsGappedForTest exposes the "every path lost at once" intersection to the
 // external test package. It is the only sequence finding that belongs to the group rather than to a
 // line, so its keying is worth pinning without a database in the way.

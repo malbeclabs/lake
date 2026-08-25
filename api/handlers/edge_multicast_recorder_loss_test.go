@@ -27,12 +27,13 @@ func lossSeries(node string, channel uint8, missing uint64, secs ...uint32) hand
 // One recorder losing while its peers do not is that recorder's branch, and the global row must
 // stay empty — that emptiness is the finding, not an absence of data.
 func TestEdgeMulticastRecorderLoss_OneNodeAloneIsItsOwnBranch(t *testing.T) {
+	key := handlers.EdgeMulticastRecorderLossLineKeyForTest("233.84.178.3", "148.51.121.69")
 	loss, simul := handlers.EdgeMulticastRecorderLossFoldForTest([]handlers.EdgeMulticastRecorderLossSeries{
 		lossSeries("was-rec1", 1, 293, 100, 101, 200),
 		lossSeries("cmh-rec1", 1, 0),
 	})
 
-	lines := loss["148.51.121.69"]
+	lines := loss[key]
 	require.Len(t, lines, 2)
 	assert.Equal(t, "was-rec1", lines[0].Node, "worst first")
 	assert.EqualValues(t, 293, lines[0].Missing)
@@ -41,18 +42,19 @@ func TestEdgeMulticastRecorderLoss_OneNodeAloneIsItsOwnBranch(t *testing.T) {
 	require.Len(t, lines[0].Episodes, 2)
 	assert.EqualValues(t, 2, lines[0].Episodes[0].Seconds)
 
-	assert.Empty(t, simul["148.51.121.69"], "nothing was lost at two recorders at once")
+	assert.Empty(t, simul[key], "nothing was lost at two recorders at once")
 }
 
 // Two recorders losing in the same second is not one branch's fault, and that is the whole point of
 // the global row.
 func TestEdgeMulticastRecorderLoss_TwoNodesAtOnceIsNotABranch(t *testing.T) {
+	key := handlers.EdgeMulticastRecorderLossLineKeyForTest("233.84.178.3", "148.51.121.69")
 	_, simul := handlers.EdgeMulticastRecorderLossFoldForTest([]handlers.EdgeMulticastRecorderLossSeries{
 		lossSeries("was-rec1", 1, 10, 100, 101, 300),
 		lossSeries("cmh-rec1", 1, 5, 101, 400),
 	})
 
-	eps := simul["148.51.121.69"]
+	eps := simul[key]
 	require.Len(t, eps, 1, "only second 101 had two recorders losing")
 	assert.EqualValues(t, 101, eps[0].Start)
 	assert.EqualValues(t, 1, eps[0].Seconds)
@@ -62,32 +64,35 @@ func TestEdgeMulticastRecorderLoss_TwoNodesAtOnceIsNotABranch(t *testing.T) {
 // unrelated losses that happen to share a clock reading, and calling that simultaneous would blame
 // the feed for a coincidence.
 func TestEdgeMulticastRecorderLoss_SimultaneityIsPerPath(t *testing.T) {
+	key := handlers.EdgeMulticastRecorderLossLineKeyForTest("233.84.178.3", "148.51.121.69")
 	_, simul := handlers.EdgeMulticastRecorderLossFoldForTest([]handlers.EdgeMulticastRecorderLossSeries{
 		lossSeries("was-rec1", 1, 10, 100),
 		lossSeries("cmh-rec1", 101, 10, 100),
 	})
-	assert.Empty(t, simul["148.51.121.69"], "different channels are different paths")
+	assert.Empty(t, simul[key], "different channels are different paths")
 }
 
 // A path recorded at one node has no peer to be measured against, so the global row records
 // nothing rather than recording a clean run.
 func TestEdgeMulticastRecorderLoss_LoneRecorderHasNoComparison(t *testing.T) {
+	key := handlers.EdgeMulticastRecorderLossLineKeyForTest("233.84.178.3", "148.51.121.69")
 	loss, simul := handlers.EdgeMulticastRecorderLossFoldForTest([]handlers.EdgeMulticastRecorderLossSeries{
 		lossSeries("cmh-rec1", 1, 7, 100),
 	})
-	assert.Len(t, loss["148.51.121.69"], 1)
-	assert.Empty(t, simul["148.51.121.69"])
+	assert.Len(t, loss[key], 1)
+	assert.Empty(t, simul[key])
 }
 
 // A publisher carrying several channels folds each node's seconds across them, so one row per
 // recorder rather than one per recorder per channel.
 func TestEdgeMulticastRecorderLoss_FoldsChannelsIntoOneRowPerRecorder(t *testing.T) {
+	key := handlers.EdgeMulticastRecorderLossLineKeyForTest("233.84.178.3", "148.51.121.69")
 	loss, _ := handlers.EdgeMulticastRecorderLossFoldForTest([]handlers.EdgeMulticastRecorderLossSeries{
 		lossSeries("was-rec1", 1, 3, 100),
 		lossSeries("was-rec1", 101, 4, 500),
 		lossSeries("cmh-rec1", 1, 0),
 	})
-	lines := loss["148.51.121.69"]
+	lines := loss[key]
 	require.Len(t, lines, 2)
 	assert.Equal(t, "was-rec1", lines[0].Node)
 	assert.EqualValues(t, 7, lines[0].Missing, "summed over the channels")
@@ -133,4 +138,30 @@ func TestGetEdgeMulticast_RecorderLossUnavailableReachesTheLine(t *testing.T) {
 		}
 	}
 	require.True(t, found, "no publisher line carried a sequence")
+}
+
+// One publisher, two groups: the losses must stay on their own rows.
+//
+// The top-of-book and market-by-price halves of a feed are two destination addresses carried on one
+// tunnel, so the same publisher appears in both — and this table carries both planes. Keyed on the
+// publisher alone, its losses would be summed across its groups and the total printed on each of
+// its rows, which reads as double the loss on two feeds instead of the real loss on each.
+func TestEdgeMulticastRecorderLoss_OnePublisherTwoGroupsStaySeparate(t *testing.T) {
+	tob := lossSeries("was-rec1", 1, 5, 100)
+	tob.MulticastGroup = "233.84.178.3"
+	mbp := lossSeries("was-rec1", 101, 40, 700, 701)
+	mbp.MulticastGroup = "233.84.178.4"
+
+	loss, _ := handlers.EdgeMulticastRecorderLossFoldForTest(
+		[]handlers.EdgeMulticastRecorderLossSeries{tob, mbp})
+
+	tobKey := handlers.EdgeMulticastRecorderLossLineKeyForTest("233.84.178.3", "148.51.121.69")
+	mbpKey := handlers.EdgeMulticastRecorderLossLineKeyForTest("233.84.178.4", "148.51.121.69")
+
+	require.Len(t, loss[tobKey], 1)
+	require.Len(t, loss[mbpKey], 1)
+	assert.EqualValues(t, 5, loss[tobKey][0].Missing, "the tob row carries only tob's loss")
+	assert.EqualValues(t, 40, loss[mbpKey][0].Missing, "the mbp row carries only mbp's loss")
+	assert.Len(t, loss[tobKey][0].Episodes, 1)
+	assert.Len(t, loss[mbpKey][0].Episodes, 1, "700 and 701 are contiguous")
 }
