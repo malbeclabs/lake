@@ -71,6 +71,7 @@ import { EdgeScoreboardPage } from './components/edge-scoreboard-page'
 import { HyperliquidScoreboardPage } from './components/hyperliquid-scoreboard-page'
 import { KalshiScoreboardPage } from './components/kalshi-scoreboard-page'
 import { KalshiL2Page } from './components/kalshi-l2-page'
+import { InternalOnly } from './components/internal-only'
 import { EdgeMulticastPage } from './components/edge-multicast-page'
 import { PermissionAuditPage } from './components/permission-audit-page'
 import { MulticastGroupDetailPage } from '@/components/multicast-group-detail-page'
@@ -744,18 +745,22 @@ function AppContent() {
             <Route path="/dz/shreds/rewards/:nodeId" element={<ShredsRewardsDetailPage />} />
             {/* Subscribe page hidden for now — see shreds-subscribe-page.tsx */}
             <Route path="/dz/edge/scoreboard" element={<Navigate to="/dz/shreds/scoreboard" replace />} />
-            <Route path="/dz/edge/multicast" element={<EdgeMulticastPage />} />
+            {/* Internal-only pages. The sidebar hides these behind `user?.is_internal_user`
+                and that only ever hid the nav entry — the URL still rendered the page, and on
+                an unannounced venue the page is the disclosure. A new page whose sidebar entry
+                is gated goes in InternalOnly here too, or the two disagree again. */}
+            <Route path="/dz/edge/multicast" element={<InternalOnly><EdgeMulticastPage /></InternalOnly>} />
             <Route path="/dz/hyperliquid" element={<Navigate to="/dz/hyperliquid/scoreboard" replace />} />
-            <Route path="/dz/hyperliquid/scoreboard" element={<HyperliquidScoreboardPage />} />
+            <Route path="/dz/hyperliquid/scoreboard" element={<InternalOnly><HyperliquidScoreboardPage /></InternalOnly>} />
             <Route path="/dz/kalshi" element={<Navigate to="/dz/kalshi/scoreboard" replace />} />
-            <Route path="/dz/kalshi/scoreboard" element={<KalshiScoreboardPage />} />
-            <Route path="/dz/kalshi/l2" element={<KalshiL2Page />} />
-            <Route path="/dz/permission-audit" element={<PermissionAuditPage />} />
+            <Route path="/dz/kalshi/scoreboard" element={<InternalOnly><KalshiScoreboardPage /></InternalOnly>} />
+            <Route path="/dz/kalshi/l2" element={<InternalOnly><KalshiL2Page /></InternalOnly>} />
+            <Route path="/dz/permission-audit" element={<InternalOnly><PermissionAuditPage /></InternalOnly>} />
 
             {/* Geolocation routes */}
-            <Route path="/dz/geoloc/probes" element={<GeolocProbesPage />} />
-            <Route path="/dz/geoloc/users" element={<GeolocUsersPage />} />
-            <Route path="/dz/geoloc/explorer" element={<GeolocExplorerPage />} />
+            <Route path="/dz/geoloc/probes" element={<InternalOnly><GeolocProbesPage /></InternalOnly>} />
+            <Route path="/dz/geoloc/users" element={<InternalOnly><GeolocUsersPage /></InternalOnly>} />
+            <Route path="/dz/geoloc/explorer" element={<InternalOnly><GeolocExplorerPage /></InternalOnly>} />
 
             {/* Solana entity routes */}
             <Route path="/solana/overview" element={<SolanaOverviewPage />} />
