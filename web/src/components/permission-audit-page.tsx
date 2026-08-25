@@ -11,7 +11,6 @@ import { CopyableText } from '@/components/copyable-text'
 const LEDGER_RPC_URL_BY_ENV: Record<string, string> = {
   'mainnet-beta': 'https://doublezero-mainnet-beta.rpcpool.com/db336024-e7a8-46b1-80e5-352dd77060ab',
   testnet: 'https://doublezerolocalnet.rpcpool.com/8a4fd3f4-0977-449f-88c7-63d4b0f10f16',
-  devnet: 'https://doublezerolocalnet.rpcpool.com/8a4fd3f4-0977-449f-88c7-63d4b0f10f16',
 }
 
 function txExplorerUrl(txSignature: string, env: string): string {

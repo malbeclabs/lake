@@ -10,9 +10,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/malbeclabs/lake/api/handlers/dberror"
 	"github.com/malbeclabs/lake/api/metrics"
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
+	"github.com/malbeclabs/lake/utils/pkg/dberror"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
@@ -1687,22 +1687,40 @@ func (a *API) GetMetroConnectivity(w http.ResponseWriter, r *http.Request) {
 
 // MetroPathLatency represents path-based latency between two metros
 type MetroPathLatency struct {
-	FromMetroPK       string   `json:"fromMetroPK"`
-	FromMetroCode     string   `json:"fromMetroCode"`
-	ToMetroPK         string   `json:"toMetroPK"`
-	ToMetroCode       string   `json:"toMetroCode"`
-	PathLatencyMs     float64  `json:"pathLatencyMs"`     // Sum of link metrics along path (in ms)
-	HopCount          int      `json:"hopCount"`          // Number of hops
-	BottleneckBwGbps  float64  `json:"bottleneckBwGbps"`  // Min bandwidth along path (Gbps)
-	InternetLatencyMs float64  `json:"internetLatencyMs"` // Internet latency for comparison (0 if not available)
-	ImprovementPct    *float64 `json:"improvementPct"`    // Improvement vs internet (nil if no internet data)
+	FromMetroPK        string   `json:"fromMetroPK"`
+	FromMetroCode      string   `json:"fromMetroCode"`
+	ToMetroPK          string   `json:"toMetroPK"`
+	ToMetroCode        string   `json:"toMetroCode"`
+	PathLatencyMs      float64  `json:"pathLatencyMs"`      // Contracted: sum of link metrics along path (ms)
+	MeasuredLatencyMs  float64  `json:"measuredLatencyMs"`  // Observed: sum of per-hop rollup RTT (ms)
+	MeasuredP95Ms      float64  `json:"measuredP95Ms"`      // Sum of per-hop p95 (conservative; percentiles are not additive)
+	MeasuredJitterMs   float64  `json:"measuredJitterMs"`   // Sum of per-hop avg jitter (ms)
+	PartiallyCommitted bool     `json:"partiallyCommitted"` // true when a hop lacked samples and measured fell back to contracted
+	PathMetros         []string `json:"pathMetros"`         // metros traversed, e.g. ["tyo","fra","lon"]
+	HopCount           int      `json:"hopCount"`
+	BottleneckBwGbps   float64  `json:"bottleneckBwGbps"`
+	InternetLatencyMs  float64  `json:"internetLatencyMs"`
+	InternetP95Ms      float64  `json:"internetP95Ms"`    // 95th percentile of internet samples (ms)
+	InternetJitterMs   float64  `json:"internetJitterMs"` // mean |IPDV| of internet samples (ms)
+	ImprovementPct     *float64 `json:"improvementPct"`   // vs internet, from contracted PathLatencyMs
+	// MeasuredImprovementPct is the same comparison against MeasuredLatencyMs.
+	// It is a separate field rather than a change of basis on ImprovementPct
+	// because the internal path-latency page displays contracted figures beside
+	// that badge; measured and contracted differ by up to tens of milliseconds,
+	// so one basis cannot serve both pages without one of them showing a
+	// percentage that cannot be reproduced from any number next to it.
+	MeasuredImprovementPct *float64 `json:"measuredImprovementPct"`
 }
 
 // MetroPathLatencyResponse is the response for the metro path latency endpoint
 type MetroPathLatencyResponse struct {
-	Optimize string             `json:"optimize"` // "hops", "latency", or "bandwidth"
-	Paths    []MetroPathLatency `json:"paths"`
-	Summary  struct {
+	Optimize string `json:"optimize"` // "hops", "latency", or "bandwidth"
+	// Service names the link set the paths were computed over: "unicast" for
+	// the flex-algo topology, "multicast" for algo 0. It is echoed because the
+	// two answers differ on real routes and a figure is meaningless without it.
+	Service string             `json:"service"`
+	Paths   []MetroPathLatency `json:"paths"`
+	Summary struct {
 		TotalPairs        int     `json:"totalPairs"`
 		PairsWithInternet int     `json:"pairsWithInternet"`
 		AvgImprovementPct float64 `json:"avgImprovementPct"`
@@ -1723,8 +1741,17 @@ func (a *API) GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try cache first (cache only holds mainnet data)
-	if isMainnet(r.Context()) {
+	service := r.URL.Query().Get("service")
+	if !validPathService(service) {
+		writeJSON(w, MetroPathLatencyResponse{Error: "service must be 'unicast' or 'multicast'"})
+		return
+	}
+
+	// Only algo 0 is cached, so the cached figures keep the basis every existing
+	// caller already reads. "multicast" names that same link set — loadTopologyGraph
+	// filters for "unicast" alone — so it is served from the cache too rather
+	// than recomputing an identical graph for five times the latency.
+	if canonicalPathService(service) == "multicast" && isMainnet(r.Context()) {
 		if data, err := a.readPageCache(r.Context(), "metro_path_latency:"+optimize); err == nil {
 			w.Header().Set("X-Cache", "HIT")
 			w.Header().Set("Content-Type", "application/json")
@@ -1737,59 +1764,86 @@ func (a *API) GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	response, err := a.FetchMetroPathLatencyData(ctx, optimize)
+	response, err := a.FetchMetroPathLatencyData(ctx, optimize, service, 0)
 	if err != nil {
 		logError("metro path latency error", "error", err)
-		writeJSON(w, MetroPathLatencyResponse{Optimize: optimize, Paths: []MetroPathLatency{}, Error: err.Error()})
+		writeJSON(w, MetroPathLatencyResponse{Optimize: optimize, Service: canonicalPathService(service), Paths: []MetroPathLatency{}, Error: err.Error()})
 		return
 	}
 
 	writeJSON(w, response)
 }
 
-// FetchMetroPathLatencyData fetches metro path latency data for the given optimization strategy.
-// Used by both the handler and the cache.
-func (a *API) FetchMetroPathLatencyData(ctx context.Context, optimize string) (*MetroPathLatencyResponse, error) {
+// FetchMetroPathLatencyData fetches metro path latency data for the given
+// optimization strategy. Used by both the handler and the cache.
+//
+// service selects the link set: "unicast" for the flex-algo topology,
+// "multicast" or "" for algo 0. The two answers differ on any pair whose best
+// path crosses a link the unicast topology leaves out — see GetAlgoDivergence
+// for which pairs those are today.
+func (a *API) FetchMetroPathLatencyData(ctx context.Context, optimize, service string, window time.Duration) (*MetroPathLatencyResponse, error) {
 	start := time.Now()
 
-	g, err := a.loadTopologyGraph(ctx, "")
+	g, err := a.loadTopologyGraph(ctx, service)
 	if err != nil {
 		return nil, fmt.Errorf("loading topology graph: %w", err)
 	}
 
 	response := &MetroPathLatencyResponse{
 		Optimize: optimize,
+		Service:  canonicalPathService(service),
 		Paths:    []MetroPathLatency{},
 	}
 
 	// Compute best paths between all metro pairs using in-memory Dijkstra
 	metroPaths := computeMetroPairPaths(g)
 
+	measured, err := a.linkMeasuredMap(ctx, window)
+	if err != nil {
+		return nil, fmt.Errorf("loading measured link latency: %w", err)
+	}
+
 	// Build map of metro paths
 	pathMap := make(map[string]*MetroPathLatency)
 	for _, mp := range metroPaths {
+		mRtt, mP95, mJitter, partial := sumMeasuredAlongPath(mp.Path.Nodes, measured, mp.Path.TotalMetric)
+		metros := pathMetroCodes(mp.Path.Nodes, g)
 		path := &MetroPathLatency{
-			FromMetroPK:      mp.FromMetroPK,
-			FromMetroCode:    mp.FromMetroCode,
-			ToMetroPK:        mp.ToMetroPK,
-			ToMetroCode:      mp.ToMetroCode,
-			PathLatencyMs:    float64(mp.Path.TotalMetric) / 1000.0, // Convert microseconds to milliseconds
-			HopCount:         mp.HopCount,
-			BottleneckBwGbps: float64(mp.BottleneckBps) / 1e9, // Convert bps to Gbps
+			FromMetroPK:        mp.FromMetroPK,
+			FromMetroCode:      mp.FromMetroCode,
+			ToMetroPK:          mp.ToMetroPK,
+			ToMetroCode:        mp.ToMetroCode,
+			PathLatencyMs:      float64(mp.Path.TotalMetric) / 1000.0, // Convert microseconds to milliseconds
+			MeasuredLatencyMs:  mRtt,
+			MeasuredP95Ms:      mP95,
+			MeasuredJitterMs:   mJitter,
+			PartiallyCommitted: partial,
+			PathMetros:         metros,
+			HopCount:           mp.HopCount,
+			BottleneckBwGbps:   float64(mp.BottleneckBps) / 1e9, // Convert bps to Gbps
 		}
 
 		// Store in map for both directions
 		key1 := mp.FromMetroCode + ":" + mp.ToMetroCode
 		key2 := mp.ToMetroCode + ":" + mp.FromMetroCode
 		pathMap[key1] = path
+		reversed := make([]string, len(metros))
+		for i, c := range metros {
+			reversed[len(metros)-1-i] = c
+		}
 		pathMap[key2] = &MetroPathLatency{
-			FromMetroPK:      mp.ToMetroPK,
-			FromMetroCode:    mp.ToMetroCode,
-			ToMetroPK:        mp.FromMetroPK,
-			ToMetroCode:      mp.FromMetroCode,
-			PathLatencyMs:    path.PathLatencyMs,
-			HopCount:         path.HopCount,
-			BottleneckBwGbps: path.BottleneckBwGbps,
+			FromMetroPK:        mp.ToMetroPK,
+			FromMetroCode:      mp.ToMetroCode,
+			ToMetroPK:          mp.FromMetroPK,
+			ToMetroCode:        mp.FromMetroCode,
+			PathLatencyMs:      path.PathLatencyMs,
+			MeasuredLatencyMs:  path.MeasuredLatencyMs,
+			MeasuredP95Ms:      path.MeasuredP95Ms,
+			MeasuredJitterMs:   path.MeasuredJitterMs,
+			PartiallyCommitted: path.PartiallyCommitted,
+			PathMetros:         reversed,
+			HopCount:           path.HopCount,
+			BottleneckBwGbps:   path.BottleneckBwGbps,
 		}
 	}
 
@@ -1798,7 +1852,12 @@ func (a *API) FetchMetroPathLatencyData(ctx context.Context, optimize string) (*
 		SELECT
 			least(ma.code, mz.code) AS metro1,
 			greatest(ma.code, mz.code) AS metro2,
-			round(avg(f.rtt_us) / 1000.0, 2) AS avg_rtt_ms
+			round(avg(f.rtt_us) / 1000.0, 2) AS avg_rtt_ms,
+			round(quantileExact(0.95)(f.rtt_us) / 1000.0, 2) AS p95_rtt_ms,
+			-- ipdv_us is nullable; avg skips nulls and yields NULL over an
+			-- all-null group. Fold that to 0 here so the column stays Float64 and
+			-- an unmeasured pair reads as absent rather than failing the scan.
+			round(ifNull(avg(abs(f.ipdv_us)), 0) / 1000.0, 3) AS jitter_ms
 		FROM fact_dz_internet_metro_latency f
 		JOIN dz_metros_current ma ON f.origin_metro_pk = ma.pk
 		JOIN dz_metros_current mz ON f.target_metro_pk = mz.pk
@@ -1815,25 +1874,31 @@ func (a *API) FetchMetroPathLatencyData(ctx context.Context, optimize string) (*
 		defer rows.Close()
 		for rows.Next() {
 			var metro1, metro2 string
-			var avgRttMs float64
-			if err := rows.Scan(&metro1, &metro2, &avgRttMs); err != nil {
+			var avgRttMs, p95RttMs, jitterMs float64
+			if err := rows.Scan(&metro1, &metro2, &avgRttMs, &p95RttMs, &jitterMs); err != nil {
 				return nil, fmt.Errorf("failed to scan internet latency row: %w", err)
 			}
-			// Update both directions in pathMap
-			key1 := metro1 + ":" + metro2
-			key2 := metro2 + ":" + metro1
-			if p, ok := pathMap[key1]; ok {
+			// The pair is stored under both orderings and the internet figures are
+			// direction-agnostic, so both entries get the same values.
+			for _, key := range [2]string{metro1 + ":" + metro2, metro2 + ":" + metro1} {
+				p, ok := pathMap[key]
+				if !ok {
+					continue
+				}
 				p.InternetLatencyMs = avgRttMs
+				p.InternetP95Ms = p95RttMs
+				p.InternetJitterMs = jitterMs
 				if avgRttMs > 0 && p.PathLatencyMs > 0 {
 					pct := (avgRttMs - p.PathLatencyMs) / avgRttMs * 100
 					p.ImprovementPct = &pct
 				}
-			}
-			if p, ok := pathMap[key2]; ok {
-				p.InternetLatencyMs = avgRttMs
-				if avgRttMs > 0 && p.PathLatencyMs > 0 {
-					pct := (avgRttMs - p.PathLatencyMs) / avgRttMs * 100
-					p.ImprovementPct = &pct
+				measuredBasis := p.MeasuredLatencyMs
+				if measuredBasis <= 0 {
+					measuredBasis = p.PathLatencyMs
+				}
+				if avgRttMs > 0 && measuredBasis > 0 {
+					pct := (avgRttMs - measuredBasis) / avgRttMs * 100
+					p.MeasuredImprovementPct = &pct
 				}
 			}
 		}
@@ -1883,9 +1948,14 @@ type MetroPathDetailHop struct {
 
 // MetroPathDetailResponse is the response for the metro path detail endpoint
 type MetroPathDetailResponse struct {
-	FromMetroCode     string               `json:"fromMetroCode"`
-	ToMetroCode       string               `json:"toMetroCode"`
-	Optimize          string               `json:"optimize"`
+	FromMetroCode string `json:"fromMetroCode"`
+	ToMetroCode   string `json:"toMetroCode"`
+	Optimize      string `json:"optimize"`
+	// Service names the link set these hops were walked over, echoed for the
+	// same reason as on MetroPathLatencyResponse: the two bases disagree on a
+	// diverging pair, so a hop list means nothing without saying which one
+	// produced it.
+	Service           string               `json:"service"`
 	TotalLatencyMs    float64              `json:"totalLatencyMs"`
 	TotalHops         int                  `json:"totalHops"`
 	BottleneckBwGbps  float64              `json:"bottleneckBwGbps"`
@@ -1912,17 +1982,26 @@ func (a *API) GetMetroPathDetail(w http.ResponseWriter, r *http.Request) {
 		optimize = "latency"
 	}
 
+	// The drill-down has to walk the same link set as the matrix that opened
+	// it, or the hop list contradicts the total it is explaining.
+	service := r.URL.Query().Get("service")
+	if !validPathService(service) {
+		writeJSON(w, MetroPathDetailResponse{Error: "service must be 'unicast' or 'multicast'"})
+		return
+	}
+
 	start := time.Now()
 
 	response := MetroPathDetailResponse{
 		FromMetroCode: fromCode,
 		ToMetroCode:   toCode,
 		Optimize:      optimize,
+		Service:       canonicalPathService(service),
 		Hops:          []MetroPathDetailHop{},
 	}
 
 	// Load in-memory topology graph with committed latency
-	g, err := a.loadTopologyGraph(ctx, "")
+	g, err := a.loadTopologyGraph(ctx, service)
 	if err != nil {
 		logError("metro path detail graph load error", "error", err)
 		response.Error = err.Error()
@@ -3175,4 +3254,127 @@ func (a *API) GetMetroDevicePaths(w http.ResponseWriter, r *http.Request) {
 	slog.Info("GetMetroDevicePaths completed", "from", response.FromMetroCode, "to", response.ToMetroCode, "pairs", response.TotalPairs, "duration", duration)
 
 	writeJSON(w, response)
+}
+
+// linkMeasured holds observed latency for one link over the query window.
+type linkMeasured struct {
+	AvgRttMs    float64
+	P95RttMs    float64
+	AvgJitterMs float64
+	SampleCount uint64
+}
+
+// sumMeasuredAlongPath accumulates observed per-hop latency across the device
+// sequence Dijkstra selected. Returns partial=true when any hop has no probe
+// that arrived, in which case every returned value falls back to the contracted
+// figure for the whole path — a partial sum would understate the route, which
+// is the dangerous direction for a customer-facing number.
+//
+// p95 is a sum of per-hop p95s, which overestimates the true end-to-end p95
+// (percentiles are not additive). That bias is conservative for DoubleZero, so
+// it is the safe approximation to publish.
+func sumMeasuredAlongPath(nodes []string, m map[string]linkMeasured, committedUs uint32) (rtt, p95, jitter float64, partial bool) {
+	if len(nodes) < 2 {
+		return float64(committedUs) / 1000.0, 0, 0, true
+	}
+	for i := 1; i < len(nodes); i++ {
+		data, ok := m[nodes[i-1]+":"+nodes[i]]
+		if !ok || data.SampleCount == 0 {
+			return float64(committedUs) / 1000.0, 0, 0, true
+		}
+		rtt += data.AvgRttMs
+		p95 += data.P95RttMs
+		jitter += data.AvgJitterMs
+	}
+	return rtt, p95, jitter, false
+}
+
+// pathMetroCodes reduces a device path to the metros it traverses, collapsing
+// consecutive devices in the same metro. This is what the UI renders as
+// "tyo — fra — lon" so a reader can audit the composed figure.
+func pathMetroCodes(nodes []string, g *kspGraph) []string {
+	out := make([]string, 0, len(nodes))
+	for _, pk := range nodes {
+		info, ok := g.Nodes[pk]
+		if !ok || info.MetroCode == "" {
+			continue
+		}
+		if len(out) > 0 && out[len(out)-1] == info.MetroCode {
+			continue
+		}
+		out = append(out, info.MetroCode)
+	}
+	return out
+}
+
+// probeArrived filters raw latency samples down to the probes that came back,
+// for a query that aliases fact_dz_device_link_latency as f. Every measured
+// figure the route page shows must apply it. The card and the chart under it
+// describe the same route, so a lost probe counted in one and not the other puts
+// two contradicting numbers in front of one reader.
+const probeArrived = `NOT f.loss AND f.rtt_us > 0`
+
+// linkMeasuredMap returns observed per-link latency keyed by "devicePK:devicePK"
+// in both directions, over the given window (0 defaults to 24h).
+//
+// This reads the raw samples rather than link_rollup_5m because the rollup's RTT
+// aggregates count lost probes. A lost probe carries rtt_us = 0, and the rollup
+// averages it in as a very fast sample: the rollup defines loss as
+// `f.loss OR f.rtt_us = 0` for its loss_pct column but never excludes those rows
+// from avg_rtt or p95_rtt (indexer/pkg/rollup/activities.go). The same bug was
+// fixed in dz_vs_internet_latency_comparison by
+// 20250316000001_fix_latency_comparison_exclude_loss.sql and never carried
+// forward to the rollup tables that landed six days later.
+//
+// The deflation is one-directional in DoubleZero's favour, because the internet
+// side has no loss column and so gets no matching discount, and it grows exactly
+// when a link is having a bad hour. A link losing every probe reports 0 ms, which
+// makes a dead hop look like a free one. Excluding the lost probes here leaves a
+// link with no surviving samples out of the map entirely, so the path is reported
+// as partial instead of fast.
+func (a *API) linkMeasuredMap(ctx context.Context, window time.Duration) (map[string]linkMeasured, error) {
+	if window <= 0 {
+		window = 24 * time.Hour
+	}
+	query := `
+		SELECT
+			l.side_a_pk,
+			l.side_z_pk,
+			round(avg(f.rtt_us) / 1000.0, 3) AS avg_rtt_ms,
+			-- quantileExact, to match the internet p95 this figure is shown
+			-- beside. The approximate variant is not reproducible run to run.
+			round(quantileExact(0.95)(f.rtt_us) / 1000.0, 3) AS p95_rtt_ms,
+			-- ipdv_us is nullable; avg skips nulls and yields NULL over an
+			-- all-null group, which fails the scan into a float64. A link down
+			-- to one surviving probe has no IPDV at all, so fold NULL to 0.
+			round(ifNull(avg(abs(f.ipdv_us)), 0) / 1000.0, 3) AS avg_jitter_ms,
+			count() AS sample_count
+		FROM fact_dz_device_link_latency f FINAL
+		JOIN dz_links_current l ON f.link_pk = l.pk
+		WHERE f.event_ts >= now() - toIntervalSecond($1)
+		  AND ` + probeArrived + `
+		  AND l.side_a_pk != ''
+		  AND l.side_z_pk != ''
+		GROUP BY l.side_a_pk, l.side_z_pk
+	`
+	rows, err := a.envDB(ctx).Query(ctx, query, int64(window.Seconds()))
+	if err != nil {
+		return nil, fmt.Errorf("linkMeasuredMap query: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]linkMeasured)
+	for rows.Next() {
+		var sideA, sideZ string
+		var d linkMeasured
+		if err := rows.Scan(&sideA, &sideZ, &d.AvgRttMs, &d.P95RttMs, &d.AvgJitterMs, &d.SampleCount); err != nil {
+			return nil, fmt.Errorf("linkMeasuredMap scan: %w", err)
+		}
+		out[sideA+":"+sideZ] = d
+		out[sideZ+":"+sideA] = d
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("linkMeasuredMap rows: %w", err)
+	}
+	return out, nil
 }

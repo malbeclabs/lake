@@ -219,6 +219,28 @@ func edgeScoreboardLatestCacheKey(r *http.Request) string {
 // filterSlotsSince returns slots with slot > sinceSlot, in ASC order, capped at limit.
 // The cached payload is DESC (latest first) with multiple rows per slot (one per feed/host),
 // so we collect all matching rows, then sort ASC by slot, then cap by distinct slot count.
+// cachedCoversCursor reports whether the cached latest-slots payload still holds
+// everything after sinceSlot. CurrentSlot alone does not answer that: the payload
+// is a fixed-width window, so a cursor behind its oldest slot would be served a
+// payload missing the slots in between — and the client advances past what it
+// receives, so they would never be delivered and nothing would log. A client seeded
+// from the 24h blob is that far back whenever the blob outlives the payload's span
+// (see the worker's edgeScoreboardInterval).
+func cachedCoversCursor(slots []EdgeScoreboardSlotRace, sinceSlot uint64) bool {
+	if len(slots) == 0 {
+		return false
+	}
+	oldest := slots[0].Slot
+	for _, s := range slots[1:] {
+		if s.Slot < oldest {
+			oldest = s.Slot
+		}
+	}
+	// The response carries slots strictly after sinceSlot, so the next one must be in
+	// the payload.
+	return sinceSlot+1 >= oldest
+}
+
 func filterSlotsSince(slots []EdgeScoreboardSlotRace, sinceSlot uint64, limit int) []EdgeScoreboardSlotRace {
 	out := make([]EdgeScoreboardSlotRace, 0, len(slots))
 	for _, s := range slots {
@@ -247,7 +269,14 @@ func filterSlotsSince(slots []EdgeScoreboardSlotRace, sinceSlot uint64, limit in
 
 // GetEdgeScoreboard returns aggregated win rate / completeness data for DZ Edge nodes.
 func (a *API) GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
-	// Try to serve from cache for default (window=1h) requests.
+	// Try to serve from cache for default-shape requests. "Default" here means
+	// what edgeScoreboardCacheKey accepts — an omitted or 24h window, no slot
+	// bounds — which is the shape the page-cache worker writes.
+	//
+	// The two paths disagree on an *omitted* window: this cache serves 24h while the
+	// live path below falls back to 1h, so the same request answers differently on
+	// HIT and MISS. Latent — the web client always sends window — and aligning them
+	// changes what such a caller receives either way, so it is left as-is.
 	if isMainnet(r.Context()) {
 		if cacheKey := edgeScoreboardCacheKey(r); cacheKey != "" {
 			if data, err := a.readPageCache(r.Context(), cacheKey); err == nil {
@@ -291,7 +320,8 @@ func (a *API) GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 		if cacheKey := edgeScoreboardLatestCacheKey(r); cacheKey != "" {
 			if data, err := a.readPageCache(r.Context(), cacheKey); err == nil {
 				var cached EdgeScoreboardResponse
-				if err := json.Unmarshal(data, &cached); err == nil && cached.CurrentSlot >= sinceSlot {
+				if err := json.Unmarshal(data, &cached); err == nil && cached.CurrentSlot >= sinceSlot &&
+					cachedCoversCursor(cached.RecentSlots, sinceSlot) {
 					trimmed := filterSlotsSince(cached.RecentSlots, sinceSlot, slotLimit)
 					resp := cached
 					resp.RecentSlots = trimmed
@@ -669,8 +699,9 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 	if !cursorMode {
 
 		// Group P: publisher / publishing-shred / stake-% headline numbers.
-		// Reads the publisher_check page-cache entry (refreshed by the worker every 30s)
-		// and derives the three values from it. The previous in-place query (q1d) ran
+		// Reads the publisher_check page-cache entry (refreshed by the worker on a slow
+		// cadence, ~every 2 min; see publisherCheckInterval) and derives the three values
+		// from it. The previous in-place query (q1d) ran
 		// sequentially before this errgroup and consumed most of the deadline budget in
 		// prod, surfacing as "context deadline exceeded" on q1d / q8 in the worker.
 		g.Go(func() error {

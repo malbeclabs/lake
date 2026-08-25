@@ -9,10 +9,12 @@ import (
 	"strings"
 	"time"
 
+	enumspb "go.temporal.io/api/enums/v1"
 	temporalclient "go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 
 	"github.com/malbeclabs/lake/api/handlers"
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
 // Config configures the page cache worker.
@@ -56,26 +58,16 @@ func Start(ctx context.Context, cfg Config) error {
 	log.Info("page-cache: temporal connected", "host", temporalHost, "namespace", temporalNS)
 
 	// Register workflows and activities
-	activities := &Activities{
-		Log:                log.With("component", "page-cache"),
-		API:                cfg.API,
-		RefreshConcurrency: concurrency,
-	}
+	activities := newActivities(log, cfg.API, concurrency)
 
 	w := worker.New(tc, TaskQueue, worker.Options{})
 	w.RegisterWorkflow(PageCacheWorkflow)
 	w.RegisterActivity(activities)
 
-	// Terminate any existing workflow from a previous deploy, then start fresh.
-	_ = tc.TerminateWorkflow(ctx, WorkflowID, "", "restarting on deploy")
-	run, err := tc.ExecuteWorkflow(ctx, temporalclient.StartWorkflowOptions{
-		ID:        WorkflowID,
-		TaskQueue: TaskQueue,
-	}, PageCacheWorkflow, 0, params)
+	run, err := startPageCacheWorkflow(ctx, tc, log, params)
 	if err != nil {
-		return fmt.Errorf("page-cache: failed to start workflow: %w", err)
+		return err
 	}
-	log.Info("page-cache: workflow started", "id", WorkflowID)
 
 	// Watch the workflow in the background so failures surface in logs.
 	// Suppress "terminated" errors — a new deploy terminates the previous
@@ -97,6 +89,50 @@ func Start(ctx context.Context, cfg Config) error {
 		return nil
 	case err := <-errCh:
 		return err
+	}
+}
+
+// pageCacheStartOptions returns the start options for the page-cache workflow.
+// Both fields are load-bearing and neither may be relaxed — see "Temporal
+// Workflow Restarts on Deploy" in CLAUDE.md for what each one does and what
+// silently breaks without it.
+func pageCacheStartOptions() temporalclient.StartWorkflowOptions {
+	return temporalclient.StartWorkflowOptions{
+		ID:                                       WorkflowID,
+		TaskQueue:                                TaskQueue,
+		WorkflowIDConflictPolicy:                 enumspb.WORKFLOW_ID_CONFLICT_POLICY_TERMINATE_EXISTING,
+		WorkflowExecutionErrorWhenAlreadyStarted: true,
+	}
+}
+
+// startPageCacheWorkflow starts a fresh page-cache run, terminating any run left
+// over from a previous deploy. The run ID is logged because it is the only way to
+// tell a fresh run from an adopted one.
+func startPageCacheWorkflow(ctx context.Context, tc temporalclient.Client, log *slog.Logger, params PageCacheParams) (temporalclient.WorkflowRun, error) {
+	run, err := tc.ExecuteWorkflow(ctx, pageCacheStartOptions(), PageCacheWorkflow, 0, params)
+	if err != nil {
+		return nil, fmt.Errorf("page-cache: failed to start workflow: %w", err)
+	}
+	log.Info("page-cache: workflow started", "id", WorkflowID, "run_id", run.GetRunID())
+	return run, nil
+}
+
+// newActivities builds the activity struct with the escalation policy the page
+// cache depends on. Extracted from Start so tests exercise the same construction
+// the worker uses rather than a hand-rolled literal that can drift from it.
+//
+// degradedEsc's thresholds are set here, before the first Fail, because
+// logger.Escalator reads them without its mutex.
+func newActivities(log *slog.Logger, api *handlers.API, concurrency int) *Activities {
+	return &Activities{
+		Log:                log.With("component", "page-cache"),
+		API:                api,
+		RefreshConcurrency: concurrency,
+		degradedEsc: logger.Escalator{
+			ErrorAfter:          nhDegradedErrorAfter,
+			TransientErrorAfter: nhDegradedErrorAfter,
+			ErrorAfterDuration:  nhDegradedErrorWindow,
+		},
 	}
 }
 

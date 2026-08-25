@@ -190,9 +190,9 @@ func TestRenderParentIssueBody(t *testing.T) {
 	plan := &Plan{ID: uuid.New(), Name: "Decom sea-dz01", Environment: "mainnet-beta", Status: "approved"}
 	children := []SyncedIssue{
 		{IsParent: true, ContributorCode: "tracking", IssueURL: "https://github.com/malbeclabs/infra/issues/1"},
-		{ContributorCode: "rockawayx", IssueURL: "https://github.com/malbeclabs/infra/issues/2"},
+		{Kind: string(kindContributor), ContributorCode: "rockawayx", IssueURL: "https://github.com/malbeclabs/infra/issues/2"},
 		// A malicious contributor code with a newline must not break the list.
-		{ContributorCode: "jump\nevil", IssueURL: "https://github.com/malbeclabs/infra/issues/3"},
+		{Kind: string(kindContributor), ContributorCode: "jump\nevil", IssueURL: "https://github.com/malbeclabs/infra/issues/3"},
 	}
 	body := renderParentIssueBody(plan, children, "https://data.malbeclabs.com/topology/planner?plan=x")
 

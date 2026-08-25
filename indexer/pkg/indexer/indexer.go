@@ -16,6 +16,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/dz/serviceability/permissionevents"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/escrowevents"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/feedsubscription"
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	mcpgeoip "github.com/malbeclabs/lake/indexer/pkg/geoip"
@@ -32,6 +33,7 @@ type Indexer struct {
 	geoloc           *dzgeoloc.View
 	shreds           *dzshreds.View
 	escrowEvents     *escrowevents.View
+	feedSubscription *feedsubscription.View
 	permissionEvents *permissionevents.View
 	graphStore       *dzgraph.Store
 	telemLatency     *dztelemlatency.View
@@ -142,17 +144,38 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 		}
 	}
 
+	// Initialize feed-subscription view (optional, depends on shreds + the
+	// feed-subscription RPC). Gated on shredsView like the escrow-events view
+	// above it: the refresh only ever runs inside Activities.RefreshShreds,
+	// which is itself a no-op when shreds is not configured, so a view built
+	// without shreds would never be refreshed.
+	// The program is deployed on Solana mainnet-beta only; elsewhere
+	// getProgramAccounts returns an empty list and the table stays empty.
+	var feedSubscriptionView *feedsubscription.View
+	if shredsView != nil && cfg.FeedSubscriptionRPC != nil {
+		feedSubscriptionView, err = feedsubscription.NewView(feedsubscription.ViewConfig{
+			Logger:     cfg.Logger,
+			RPC:        cfg.FeedSubscriptionRPC,
+			ProgramID:  feedsubscription.ProgramID,
+			ClickHouse: cfg.ClickHouse,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create feed subscription view: %w", err)
+		}
+	}
+
 	// Initialize permission events audit view (optional, requires the serviceability
 	// program id + a raw Solana RPC on the DZ ledger).
 	var permissionEventsView *permissionevents.View
 	if cfg.PermissionEventsRPC != nil && !cfg.ServiceabilityProgramID.IsZero() {
 		permissionEventsView, err = permissionevents.NewView(permissionevents.ViewConfig{
-			Logger:          cfg.Logger,
-			Clock:           cfg.Clock,
-			RPC:             cfg.PermissionEventsRPC,
-			ProgramID:       cfg.ServiceabilityProgramID,
-			RefreshInterval: cfg.RefreshInterval,
-			ClickHouse:      cfg.ClickHouse,
+			Logger:           cfg.Logger,
+			Clock:            cfg.Clock,
+			RPC:              cfg.PermissionEventsRPC,
+			ProgramID:        cfg.ServiceabilityProgramID,
+			RefreshInterval:  cfg.RefreshInterval,
+			ClickHouse:       cfg.ClickHouse,
+			FetchesPerSecond: cfg.PermissionEventsFetchesPerSecond,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create permission events view: %w", err)
@@ -171,6 +194,7 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 		ClickHouse:             cfg.ClickHouse,
 		Serviceability:         svcView,
 		RefreshInterval:        cfg.RefreshInterval,
+		DZEnv:                  cfg.DZEnv,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create telemetry view: %w", err)
@@ -281,6 +305,7 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 			Region:      cfg.MrouteS3Region,
 			KeyPrefix:   cfg.MrouteS3KeyPrefix,
 			EndpointURL: cfg.MrouteS3EndpointURL,
+			Logger:      cfg.Logger,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create mroute S3 source: %w", err)
@@ -307,6 +332,7 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 			Region:      cfg.MSDPS3Region,
 			KeyPrefix:   cfg.MSDPS3KeyPrefix,
 			EndpointURL: cfg.MSDPS3EndpointURL,
+			Logger:      cfg.Logger,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create MSDP S3 source: %w", err)
@@ -347,6 +373,7 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 		geoloc:           geolocView,
 		shreds:           shredsView,
 		escrowEvents:     escrowEventsView,
+		feedSubscription: feedSubscriptionView,
 		permissionEvents: permissionEventsView,
 		graphStore:       graphStore,
 		telemLatency:     telemView,
@@ -479,6 +506,11 @@ func (i *Indexer) Shreds() *dzshreds.View {
 // EscrowEvents returns the escrow events view, or nil if not configured.
 func (i *Indexer) EscrowEvents() *escrowevents.View {
 	return i.escrowEvents
+}
+
+// FeedSubscription returns the feed-subscription view, or nil if not configured.
+func (i *Indexer) FeedSubscription() *feedsubscription.View {
+	return i.feedSubscription
 }
 
 // PermissionEvents returns the permission events audit view, or nil if not configured.

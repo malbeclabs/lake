@@ -109,9 +109,68 @@ func (s *Store) SetScanCursor(ctx context.Context, programPK string, cur ScanCur
 	return nil
 }
 
+// GetAccountCursors returns the durable per-account resume cursor for every Permission
+// PDA that has one. Unlike the fact-derived high-water marks, these advance through
+// transactions that decode to zero audit rows (a Permission PDA is also referenced by
+// non-permission serviceability instructions), so a large row-less backlog still drains.
+func (s *Store) GetAccountCursors(ctx context.Context) (map[string]HighWaterMark, error) {
+	conn, err := s.cfg.ClickHouse.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ClickHouse connection: %w", err)
+	}
+
+	// ReplacingMergeTree: the highest updated_at row per PDA is the current cursor.
+	// Chunks can commit within the same millisecond (updated_at's resolution), so break
+	// ties by last_slot — per-account cursor slots only ever advance within one ledger,
+	// while updated_at stays authoritative across ledger resets (where slots restart low).
+	const query = `
+		SELECT permission_pk,
+		       argMax(last_tx_signature, (updated_at, last_slot)),
+		       argMax(last_slot, (updated_at, last_slot))
+		FROM dz_permission_events_account_cursor
+		GROUP BY permission_pk
+	`
+	rows, err := conn.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query account cursors: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]HighWaterMark)
+	for rows.Next() {
+		var pk string
+		var cur HighWaterMark
+		if err := rows.Scan(&pk, &cur.TxSignature, &cur.Slot); err != nil {
+			return nil, fmt.Errorf("failed to scan account cursor row: %w", err)
+		}
+		result[pk] = cur
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating account cursors: %w", err)
+	}
+	return result, nil
+}
+
+// SetAccountCursor records the newest fully-processed signature/slot for a Permission PDA.
+func (s *Store) SetAccountCursor(ctx context.Context, permissionPK string, cur HighWaterMark) error {
+	conn, err := s.cfg.ClickHouse.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get ClickHouse connection: %w", err)
+	}
+	const query = `
+		INSERT INTO dz_permission_events_account_cursor
+			(permission_pk, last_tx_signature, last_slot, updated_at)
+		VALUES (?, ?, ?, ?)
+	`
+	if err := conn.Exec(ctx, query, permissionPK, cur.TxSignature, cur.Slot, time.Now().UTC()); err != nil {
+		return fmt.Errorf("failed to write account cursor: %w", err)
+	}
+	return nil
+}
+
 // GetHighWaterMarks returns the newest indexed signature/slot per Permission PDA, derived
-// from the fact table. Every permission event for a PDA lands in the fact table, so
-// max(slot) per permission_pk is where the per-account watch resumes.
+// from the fact table. Kept as the resume fallback for accounts indexed before the durable
+// account cursor existed; GetAccountCursors is authoritative once a cursor row is written.
 func (s *Store) GetHighWaterMarks(ctx context.Context) (map[string]HighWaterMark, error) {
 	conn, err := s.cfg.ClickHouse.Conn(ctx)
 	if err != nil {

@@ -1,36 +1,24 @@
 package handlers
 
 import (
-	"context"
 	"errors"
-	"io"
 	"log/slog"
-	"strings"
-	"syscall"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/proto"
 	"github.com/getsentry/sentry-go"
 
-	"github.com/malbeclabs/lake/api/handlers/dberror"
+	"github.com/malbeclabs/lake/utils/pkg/dberror"
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 	"github.com/malbeclabs/lake/utils/pkg/redact"
 )
 
-// isClientDisconnect returns true if the error is caused by the client
-// disconnecting: context cancellation, deadline exceeded, broken pipe,
-// connection reset, or unexpected EOF.
-func isClientDisconnect(err error) bool {
-	if errors.Is(err, context.Canceled) ||
-		errors.Is(err, context.DeadlineExceeded) ||
-		errors.Is(err, syscall.EPIPE) ||
-		errors.Is(err, syscall.ECONNRESET) ||
-		errors.Is(err, io.ErrUnexpectedEOF) {
-		return true
-	}
-	// Some drivers (e.g. neo4j) wrap context errors without using Go's
-	// standard error wrapping, so errors.Is fails. Fall back to checking
-	// the error message.
-	msg := err.Error()
-	return strings.Contains(msg, "context canceled") ||
-		strings.Contains(msg, "context deadline exceeded")
+// isCallerGone reports whether err means nobody is left to serve, so dropping
+// the log line loses nothing. A deadline is deliberately excluded: net/http
+// never sets one on r.Context(), so on a request path it is a handler's own
+// budget (e.g. multicastDeliveryRequestTimeout) expiring, and dropping it turns
+// a 500 into a silent one.
+func isCallerGone(err error) bool {
+	return logger.IsClientDisconnect(err) && !logger.IsDeadlineExceeded(err)
 }
 
 // logError logs a handler error, silently skipping client disconnects.
@@ -42,55 +30,56 @@ func isClientDisconnect(err error) bool {
 // log at ERROR. Sustained outages are caught elsewhere (the page-cache
 // consecutive-failure threshold and the lake-api-down/crash-loop alerts).
 func logError(msg string, args ...any) {
-	if hasClientDisconnect(args) {
+	// Request path: a client disconnect means the caller is gone — skip the
+	// log line entirely rather than warn. A handler's own expired deadline is
+	// not that (see isCallerGone) and lands at WARN via logger.Error.
+	if err := logger.ErrorFromArgs(args); err != nil && isCallerGone(err) {
 		return
 	}
-	if err := errorFromArgs(args); err != nil && dberror.IsTransient(err) {
-		slog.Warn(msg, args...)
-		return
-	}
-	slog.Error(msg, args...)
+	logger.Error(slog.Default(), msg, args...)
 }
 
-// logWarn logs at WARN level, silently skipping client disconnects.
+// logWarn logs at WARN level, silently skipping client disconnects. Like
+// logError it keeps a handler's own expired deadline (see isCallerGone):
+// several handlers bound themselves with context.WithTimeout and no SQL-side
+// cap, so that line is the only signal the request ran out of budget.
 func logWarn(msg string, args ...any) {
-	if hasClientDisconnect(args) {
+	if err := logger.ErrorFromArgs(args); err != nil && isCallerGone(err) {
 		return
 	}
-	slog.Warn(msg, args...)
+	slog.Default().Warn(msg, args...)
 }
 
-// errorFromArgs returns the value of the first "error" key in a slog-style
-// args slice, or nil if none is present.
-func errorFromArgs(args []any) error {
-	for i := 0; i+1 < len(args); i += 2 {
-		if args[i] == "error" {
-			if err, ok := args[i+1].(error); ok {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// hasClientDisconnect reports whether args contains an "error" key whose
-// value is a client-disconnect error (context cancellation, broken pipe, etc.).
-func hasClientDisconnect(args []any) bool {
-	err := errorFromArgs(args)
-	return err != nil && isClientDisconnect(err)
+// isMissingTable reports whether err is ClickHouse refusing a query because the
+// table is not there for this connection: code 60 (UNKNOWN_TABLE), or code 497
+// (NOT_ENOUGH_PRIVILEGES), which is what a table outside the read-only user's
+// grants looks like.
+//
+// Neither is actionable on the request path. A table whose migration ships with
+// the indexer does not exist for an API pod rolled out ahead of it, and an env
+// whose database the indexer never writes will not have it at all. Both are
+// deploy-time dependency races, so a handler should answer with an empty result
+// at WARN instead of letting a query error page on-call.
+//
+// geo_concentration.go and geo_validators.go inline the same pair of codes;
+// they predate this helper.
+func isMissingTable(err error) bool {
+	var chErr *proto.Exception
+	return errors.As(err, &chErr) && (chErr.Code == 60 || chErr.Code == 497)
 }
 
 // internalError logs the full error internally and returns a user-safe message.
 // The returned message does not contain sensitive information like credentials,
 // hostnames, or query details.
 func internalError(operation string, err error) string {
-	if isClientDisconnect(err) {
+	if isCallerGone(err) {
 		return operation
 	}
 
-	// Transient (self-healing) causes aren't actionable — log at WARN and skip
-	// the Sentry capture so a momentary hiccup neither pages nor opens an issue.
-	if dberror.IsTransient(err) {
+	// Transient (self-healing) causes and a handler's own expired deadline
+	// aren't actionable — log at WARN and skip the Sentry capture so a momentary
+	// hiccup neither pages nor opens an issue.
+	if dberror.IsTransient(err) || logger.IsDeadlineExceeded(err) {
 		slog.Warn(operation, "error", err)
 		return operation
 	}

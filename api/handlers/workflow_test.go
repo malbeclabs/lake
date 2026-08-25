@@ -276,12 +276,13 @@ func TestGetWorkflow_HTTPHandler(t *testing.T) {
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
-	// Create session and workflow
+	// Create session owned by an account and a workflow
+	account := createTestAccount(t, ctx, api)
 	sessionID := uuid.New()
 	_, err := api.PgPool.Exec(ctx, `
-		INSERT INTO sessions (id, type, name, content)
-		VALUES ($1, 'chat', 'Test Session', '[]')
-	`, sessionID)
+		INSERT INTO sessions (id, type, name, content, account_id)
+		VALUES ($1, 'chat', 'Test Session', '[]', $2)
+	`, sessionID, account.ID)
 	require.NoError(t, err)
 
 	run, err := api.CreateWorkflowRun(ctx, sessionID, "Test question")
@@ -290,6 +291,7 @@ func TestGetWorkflow_HTTPHandler(t *testing.T) {
 	// Test HTTP handler
 	req := httptest.NewRequest(http.MethodGet, "/api/workflows/"+run.ID.String(), nil)
 	req = withChiURLParams(req, map[string]string{"id": run.ID.String()})
+	req = withAccount(req, account)
 
 	rr := httptest.NewRecorder()
 	api.GetWorkflow(rr, req)
@@ -330,12 +332,13 @@ func TestGetWorkflowForSession_HTTPHandler(t *testing.T) {
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
-	// Create session and workflow
+	// Create session owned by an account and a workflow
+	account := createTestAccount(t, ctx, api)
 	sessionID := uuid.New()
 	_, err := api.PgPool.Exec(ctx, `
-		INSERT INTO sessions (id, type, name, content)
-		VALUES ($1, 'chat', 'Test Session', '[]')
-	`, sessionID)
+		INSERT INTO sessions (id, type, name, content, account_id)
+		VALUES ($1, 'chat', 'Test Session', '[]', $2)
+	`, sessionID, account.ID)
 	require.NoError(t, err)
 
 	run, err := api.CreateWorkflowRun(ctx, sessionID, "Test question")
@@ -344,6 +347,7 @@ func TestGetWorkflowForSession_HTTPHandler(t *testing.T) {
 	// Test HTTP handler
 	req := httptest.NewRequest(http.MethodGet, "/api/sessions/"+sessionID.String()+"/workflow", nil)
 	req = withChiURLParams(req, map[string]string{"id": sessionID.String()})
+	req = withAccount(req, account)
 
 	rr := httptest.NewRecorder()
 	api.GetWorkflowForSession(rr, req)
@@ -360,16 +364,18 @@ func TestGetWorkflowForSession_NoWorkflow(t *testing.T) {
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
-	// Create session without workflow
+	// Create session (owned) without workflow
+	account := createTestAccount(t, ctx, api)
 	sessionID := uuid.New()
 	_, err := api.PgPool.Exec(ctx, `
-		INSERT INTO sessions (id, type, name, content)
-		VALUES ($1, 'chat', 'Test Session', '[]')
-	`, sessionID)
+		INSERT INTO sessions (id, type, name, content, account_id)
+		VALUES ($1, 'chat', 'Test Session', '[]', $2)
+	`, sessionID, account.ID)
 	require.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/sessions/"+sessionID.String()+"/workflow", nil)
 	req = withChiURLParams(req, map[string]string{"id": sessionID.String()})
+	req = withAccount(req, account)
 
 	rr := httptest.NewRecorder()
 	api.GetWorkflowForSession(rr, req)
@@ -382,12 +388,13 @@ func TestGetWorkflowForSession_RunningOnly(t *testing.T) {
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
-	// Create session
+	// Create session owned by an account
+	account := createTestAccount(t, ctx, api)
 	sessionID := uuid.New()
 	_, err := api.PgPool.Exec(ctx, `
-		INSERT INTO sessions (id, type, name, content)
-		VALUES ($1, 'chat', 'Test Session', '[]')
-	`, sessionID)
+		INSERT INTO sessions (id, type, name, content, account_id)
+		VALUES ($1, 'chat', 'Test Session', '[]', $2)
+	`, sessionID, account.ID)
 	require.NoError(t, err)
 
 	// Create and complete a workflow
@@ -399,6 +406,7 @@ func TestGetWorkflowForSession_RunningOnly(t *testing.T) {
 	// Request with status=running filter
 	req := httptest.NewRequest(http.MethodGet, "/api/sessions/"+sessionID.String()+"/workflow?status=running", nil)
 	req = withChiURLParams(req, map[string]string{"id": sessionID.String()})
+	req = withAccount(req, account)
 
 	rr := httptest.NewRecorder()
 	api.GetWorkflowForSession(rr, req)
@@ -409,6 +417,7 @@ func TestGetWorkflowForSession_RunningOnly(t *testing.T) {
 	// Without filter, should return the completed workflow
 	req = httptest.NewRequest(http.MethodGet, "/api/sessions/"+sessionID.String()+"/workflow", nil)
 	req = withChiURLParams(req, map[string]string{"id": sessionID.String()})
+	req = withAccount(req, account)
 
 	rr = httptest.NewRecorder()
 	api.GetWorkflowForSession(rr, req)

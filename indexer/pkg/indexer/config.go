@@ -15,6 +15,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/dz/serviceability/permissionevents"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/escrowevents"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/feedsubscription"
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
@@ -47,6 +48,10 @@ type Config struct {
 	// transaction history for Permission-management instructions.
 	ServiceabilityProgramID solana.PublicKey
 	PermissionEventsRPC     permissionevents.SolanaRPC
+	// PermissionEventsFetchesPerSecond paces the audit indexer's getTransaction
+	// calls to stay under the endpoint's per-method rate limit. Zero uses the
+	// package default; raise or lower it per endpoint.
+	PermissionEventsFetchesPerSecond float64
 
 	// Geolocation RPC configuration (optional).
 	GeolocationRPC dzgeoloc.GeolocationRPC
@@ -69,6 +74,10 @@ type Config struct {
 	ShredsRawRPC    dzshreds.ShredsRawRPC
 	ShredsProgramID solana.PublicKey
 	EscrowEventsRPC escrowevents.SolanaRPC // optional, for fetching escrow transaction history
+	// FeedSubscriptionRPC reads the feed-subscription program. It is the same
+	// endpoint as ShredsRawRPC; the field exists so the view can be built
+	// without reaching into the shreds view's config.
+	FeedSubscriptionRPC feedsubscription.RawRPC
 
 	// Solana configuration.
 	SolanaRPC sol.SolanaRPC

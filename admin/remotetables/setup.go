@@ -28,9 +28,7 @@ var externalRemoteTables = []struct {
 	{"shredder_qa", "slot_feed_race_summary"},
 	{"shredder_qa", "slot_feed_race_summary_v2"},
 	{"mainnet-beta", "location_offsets"},
-	{"devnet", "location_offsets"},
 	{"testnet", "location_offsets"},
-	{"devnet", "controller_grpc_getconfig_success"},
 	{"testnet", "controller_grpc_getconfig_success"},
 	{"mainnet-beta", "controller_grpc_getconfig_success"},
 	{"dzdp", "offsets"},
@@ -38,12 +36,14 @@ var externalRemoteTables = []struct {
 	{"dzdp", "location_state"},
 	{"feeds", "hyperliquid_bbo_feed_race_summary"},
 	{"feeds", "hyperliquid_bbo_observations"},
+	{"feeds", "kalshi_bbo_feed_race_summary"},
+	{"feeds", "kalshi_bbo_observations"},
+	{"feeds", "kalshi_mbp_levels"},
 }
 
 // externalRemoteDatabases lists remote databases to mirror in full, discovering
 // tables dynamically. Migration-tracking tables (goose_db_version) are skipped.
 var externalRemoteDatabases = []string{
-	"telemetry_devnet",
 	"telemetry_testnet",
 	"telemetry_mainnet_beta",
 }

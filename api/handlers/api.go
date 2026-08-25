@@ -4,10 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/sync/singleflight"
+
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
+	"github.com/malbeclabs/lake/utils/pkg/docsfetch"
 )
 
 var errNoPgPool = errors.New("postgres not configured")
@@ -52,6 +57,14 @@ type API struct {
 	Neo4jClient   neo4j.Client
 	Neo4jDatabase string
 
+	// DZCLI runs the doublezero CLI (nil = exec the real binary on the host).
+	// Tests inject a stub; check_edge_access uses it to read onchain state.
+	DZCLI DZCLIRunner
+
+	// DocsSource reads public docs pages (nil = GitHub raw malbeclabs/docs).
+	// Tests inject a client pointed at a local httptest server.
+	DocsSource *docsfetch.Client
+
 	// Build info
 	BuildVersion string
 	BuildCommit  string
@@ -62,6 +75,60 @@ type API struct {
 
 	// OnSlackInstallationChange is called when a Slack installation changes.
 	OnSlackInstallationChange func(teamID string)
+
+	// Guards for live publisher-check runs (see fetchPublisherCheckLive):
+	// pubCheckSF collapses concurrent identical default-shape misses into one
+	// query; pubCheckSem bounds the aggregate number of concurrent live runs so
+	// the load isn't gated only by the client-controllable per-IP rate-limit key.
+	pubCheckSF      singleflight.Group
+	pubCheckSem     chan struct{}
+	pubCheckSemOnce sync.Once
+
+	// mcastQuerySems bounds the aggregate ClickHouse query fan-out of the
+	// device multicast-delivery handler, keyed by env because the pools it
+	// protects are per-env with very different sizes (see
+	// multicastDeliveryQuerySem). Values are chan struct{} semaphores.
+	mcastQuerySems sync.Map
+
+	// scalarCache holds per-env TTL-cached scalars (network total stake, current
+	// cluster slot) that dashboard handlers previously recomputed per request. Its
+	// zero value is ready to use, so a directly-constructed API needs no change.
+	scalarCache scalarCache
+
+	// opsUsersCache holds the TTL-cached ops-management /users registry that the
+	// Network Health tickets aggregate previously re-paged on every computation
+	// (see cachedOpsUsers). Its zero value is ready to use.
+	opsUsersCache opsUsersCache
+}
+
+// publisherCheckLiveSem lazily builds the concurrency-bounding semaphore so a
+// zero-value API (used widely in tests) needs no constructor change.
+func (a *API) publisherCheckLiveSem() chan struct{} {
+	a.pubCheckSemOnce.Do(func() {
+		a.pubCheckSem = make(chan struct{}, maxConcurrentPublisherCheckLive)
+	})
+	return a.pubCheckSem
+}
+
+// multicastDeliveryQuerySem lazily builds the concurrency-bounding semaphore
+// for the request's env, so a zero-value API (used widely in tests) needs no
+// constructor change. The bound is sized from the env pool's MaxOpenConns
+// (see multicastDeliveryQuerySemSize): the testnet pool is 10 conns,
+// mainnet is 100, and one shared counter sized for the smallest pool would
+// throttle mainnet an order of magnitude below its capacity.
+func (a *API) multicastDeliveryQuerySem(ctx context.Context) chan struct{} {
+	env := string(EnvFromContext(ctx))
+	if sem, ok := a.mcastQuerySems.Load(env); ok {
+		return sem.(chan struct{})
+	}
+	size := maxConcurrentMulticastDeliveryQueries
+	if conn := a.envDB(ctx); conn != nil {
+		if pool := conn.Stats().MaxOpenConns; pool > 0 {
+			size = multicastDeliveryQuerySemSize(pool)
+		}
+	}
+	sem, _ := a.mcastQuerySems.LoadOrStore(env, make(chan struct{}, size))
+	return sem.(chan struct{})
 }
 
 // envDB returns the ClickHouse connection for the environment in the context.
@@ -115,6 +182,53 @@ func (a *API) readPageCache(ctx context.Context, key string) (json.RawMessage, e
 		return nil, err
 	}
 	return data, nil
+}
+
+// readPageCacheWithAge reads a cached JSON value along with its last-write time,
+// so callers can reject a stale payload (see fetchPublisherCheckCachedOrLive).
+func (a *API) readPageCacheWithAge(ctx context.Context, key string) (json.RawMessage, time.Time, error) {
+	if a.PgPool == nil {
+		return nil, time.Time{}, errNoPgPool
+	}
+	var data json.RawMessage
+	var updatedAt time.Time
+	err := a.PgPool.QueryRow(ctx,
+		`SELECT data, updated_at FROM page_cache WHERE key = $1`, key,
+	).Scan(&data, &updatedAt)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	return data, updatedAt, nil
+}
+
+// PageCacheAges reads many keys' last-write times in one round trip. A key with no
+// row is absent from the map, not zero.
+//
+// The refresh cadence gates on updated_at rather than per-pod state because every
+// API replica runs its own page-cache worker: per-pod state would let one entry
+// refresh once per cycle per replica.
+func (a *API) PageCacheAges(ctx context.Context, keys []string) (map[string]time.Time, error) {
+	if a.PgPool == nil {
+		return nil, errNoPgPool
+	}
+	rows, err := a.PgPool.Query(ctx,
+		`SELECT key, updated_at FROM page_cache WHERE key = ANY($1)`, keys,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	ages := make(map[string]time.Time, len(keys))
+	for rows.Next() {
+		var key string
+		var updatedAt time.Time
+		if err := rows.Scan(&key, &updatedAt); err != nil {
+			return nil, err
+		}
+		ages[key] = updatedAt
+	}
+	return ages, rows.Err()
 }
 
 // WritePageCache upserts a cache entry in Postgres.

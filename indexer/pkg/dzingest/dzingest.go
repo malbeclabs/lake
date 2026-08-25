@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 
+	enumspb "go.temporal.io/api/enums/v1"
 	temporalclient "go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 
@@ -24,9 +25,11 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/dz/serviceability/permissionevents"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/escrowevents"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/feedsubscription"
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
+	"github.com/malbeclabs/lake/utils/pkg/dberror"
 )
 
 // Config configures the DZ ingest worker.
@@ -43,6 +46,7 @@ type Config struct {
 	Geolocation      *dzgeoloc.View         // optional
 	Shreds           *dzshreds.View         // optional
 	EscrowEvents     *escrowevents.View     // optional
+	FeedSubscription *feedsubscription.View // optional
 	PermissionEvents *permissionevents.View // optional
 	TelemLatency     *dztelemlatency.View
 	TelemUsage       *dztelemusage.View // optional
@@ -93,6 +97,7 @@ func Start(ctx context.Context, cfg Config) error {
 		Geolocation:      cfg.Geolocation,
 		Shreds:           cfg.Shreds,
 		EscrowEvents:     cfg.EscrowEvents,
+		FeedSubscription: cfg.FeedSubscription,
 		PermissionEvents: cfg.PermissionEvents,
 		TelemLatency:     cfg.TelemLatency,
 		TelemUsage:       cfg.TelemUsage,
@@ -109,31 +114,12 @@ func Start(ctx context.Context, cfg Config) error {
 	RegisterWorkflows(w)
 	w.RegisterActivity(activities)
 
-	// Terminate any existing workflow from a previous deploy, then start fresh.
-	_ = tc.TerminateWorkflow(ctx, wfID, "", "restarting on deploy")
-	run, err := tc.ExecuteWorkflow(ctx, temporalclient.StartWorkflowOptions{
-		ID:        wfID,
-		TaskQueue: tq,
-	}, DZIngestWorkflow, 0)
+	run, err := startDZIngestWorkflow(ctx, tc, log, cfg.Network)
 	if err != nil {
-		return fmt.Errorf("dzingest: failed to start workflow: %w", err)
+		return err
 	}
-	log.Info("dzingest: workflow started", "id", wfID)
 
-	go func() {
-		current := run
-		for {
-			if err := current.Get(ctx, nil); err != nil {
-				if ctx.Err() != nil {
-					return
-				}
-				log.Warn("dzingest: workflow interrupted, reattaching", "id", wfID, "error", err)
-				current = tc.GetWorkflow(ctx, wfID, "")
-			} else {
-				return
-			}
-		}
-	}()
+	go watchWorkflow(ctx, tc, log, wfID, run)
 
 	log.Info("dzingest: starting worker", "task_queue", tq)
 
@@ -146,6 +132,56 @@ func Start(ctx context.Context, cfg Config) error {
 	case err := <-errCh:
 		return err
 	}
+}
+
+// deployStartOptions returns the start options for the DZ ingest workflow. Both
+// fields are load-bearing and neither may be relaxed — see "Temporal Workflow
+// Restarts on Deploy" in CLAUDE.md for what each one does and what silently
+// breaks without it.
+func deployStartOptions(network string) temporalclient.StartWorkflowOptions {
+	return temporalclient.StartWorkflowOptions{
+		ID:                                       workflowID(network),
+		TaskQueue:                                taskQueue(network),
+		WorkflowIDConflictPolicy:                 enumspb.WORKFLOW_ID_CONFLICT_POLICY_TERMINATE_EXISTING,
+		WorkflowExecutionErrorWhenAlreadyStarted: true,
+	}
+}
+
+// watchWorkflow surfaces workflow failures in logs, reattaching to the workflow
+// ID's current run when the one it was watching ends. It returns on a terminated
+// run rather than reattaching: a terminate that no start followed leaves the same
+// closed run as current, whose Get errors immediately, so reattaching to it spins
+// at RPC speed. The deploy case needs no reattach either — this process's own
+// start terminated the previous run, and a new process watches the new one.
+func watchWorkflow(ctx context.Context, tc temporalclient.Client, log *slog.Logger, wfID string, run temporalclient.WorkflowRun) {
+	current := run
+	for {
+		err := current.Get(ctx, nil)
+		if err == nil || ctx.Err() != nil || isWorkflowTerminated(err) {
+			return
+		}
+		log.Warn("dzingest: workflow interrupted, reattaching", "id", wfID, "error", err)
+		current = tc.GetWorkflow(ctx, wfID, "")
+	}
+}
+
+// isWorkflowTerminated reports whether err is a run that was terminated rather
+// than one that failed.
+func isWorkflowTerminated(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "terminated")
+}
+
+// startDZIngestWorkflow starts a fresh DZ ingest run, terminating any run left
+// over from a previous deploy. The run ID is logged because it is the only way to
+// tell a fresh run from an adopted one.
+func startDZIngestWorkflow(ctx context.Context, tc temporalclient.Client, log *slog.Logger, network string) (temporalclient.WorkflowRun, error) {
+	opts := deployStartOptions(network)
+	run, err := tc.ExecuteWorkflow(ctx, opts, DZIngestWorkflow, 0)
+	if err != nil {
+		return nil, fmt.Errorf("dzingest: failed to start workflow: %w", err)
+	}
+	log.Info("dzingest: workflow started", "id", opts.ID, "run_id", run.GetRunID())
+	return run, nil
 }
 
 // temporalLogger adapts slog to Temporal's log interface.
@@ -176,7 +212,34 @@ func (l *temporalLogger) Error(msg string, keyvals ...any) {
 		l.log.Warn(msg, keyvals...)
 		return
 	}
+	// The periodic DZ ingest activities return nil to Temporal (see
+	// activities.refresh), so they never reach this "Activity error." log. The
+	// manual backfill activities do return their error, and BackfillRefresh
+	// shares the permission-events near-tip not-found gate — a transient-by-
+	// design condition (dberror.ErrTransient) that would otherwise page an
+	// attended backfill. Demote transient causes to WARN; non-transient
+	// failures still log ERROR. Mirrors the rollup worker's temporalLogger.
+	if msg == "Activity error." && isTransientActivityError(keyvals) {
+		l.log.Warn(msg, keyvals...)
+		return
+	}
 	l.log.Error(msg, keyvals...)
+}
+
+// isTransientActivityError reports whether Temporal's activity-error keyvals
+// carry an Error that dberror classifies as transient (a self-healing upstream
+// blip, or one explicitly marked with dberror.ErrTransient). At the "Activity
+// error." log site the Error keyval is the raw error the activity returned.
+func isTransientActivityError(keyvals []any) bool {
+	for i := 0; i+1 < len(keyvals); i += 2 {
+		if keyvals[i] != "Error" {
+			continue
+		}
+		if err, ok := keyvals[i+1].(error); ok {
+			return dberror.IsTransient(err)
+		}
+	}
+	return false
 }
 
 // hasBenignTaskProcessingError reports whether Temporal's "Task processing

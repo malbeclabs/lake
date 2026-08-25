@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 
+	enumspb "go.temporal.io/api/enums/v1"
 	temporalclient "go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 	"github.com/malbeclabs/lake/indexer/pkg/sol"
 	"github.com/malbeclabs/lake/indexer/pkg/validatorsapp"
+	"github.com/malbeclabs/lake/utils/pkg/dberror"
 )
 
 // Config configures the Solana ingest worker.
@@ -76,31 +78,12 @@ func Start(ctx context.Context, cfg Config) error {
 	RegisterWorkflows(w)
 	w.RegisterActivity(activities)
 
-	// Terminate any existing workflow from a previous deploy, then start fresh.
-	_ = tc.TerminateWorkflow(ctx, wfID, "", "restarting on deploy")
-	run, err := tc.ExecuteWorkflow(ctx, temporalclient.StartWorkflowOptions{
-		ID:        wfID,
-		TaskQueue: tq,
-	}, SolIngestWorkflow, 0)
+	run, err := startSolIngestWorkflow(ctx, tc, log, cfg.Network)
 	if err != nil {
-		return fmt.Errorf("solingest: failed to start workflow: %w", err)
+		return err
 	}
-	log.Info("solingest: workflow started", "id", wfID)
 
-	go func() {
-		current := run
-		for {
-			if err := current.Get(ctx, nil); err != nil {
-				if ctx.Err() != nil {
-					return
-				}
-				log.Warn("solingest: workflow interrupted, reattaching", "id", wfID, "error", err)
-				current = tc.GetWorkflow(ctx, wfID, "")
-			} else {
-				return
-			}
-		}
-	}()
+	go watchWorkflow(ctx, tc, log, wfID, run)
 
 	log.Info("solingest: starting worker", "task_queue", tq)
 
@@ -113,6 +96,56 @@ func Start(ctx context.Context, cfg Config) error {
 	case err := <-errCh:
 		return err
 	}
+}
+
+// deployStartOptions returns the start options for the Solana ingest workflow.
+// Both fields are load-bearing and neither may be relaxed — see "Temporal
+// Workflow Restarts on Deploy" in CLAUDE.md for what each one does and what
+// silently breaks without it.
+func deployStartOptions(network string) temporalclient.StartWorkflowOptions {
+	return temporalclient.StartWorkflowOptions{
+		ID:                                       workflowID(network),
+		TaskQueue:                                taskQueue(network),
+		WorkflowIDConflictPolicy:                 enumspb.WORKFLOW_ID_CONFLICT_POLICY_TERMINATE_EXISTING,
+		WorkflowExecutionErrorWhenAlreadyStarted: true,
+	}
+}
+
+// watchWorkflow surfaces workflow failures in logs, reattaching to the workflow
+// ID's current run when the one it was watching ends. It returns on a terminated
+// run rather than reattaching: a terminate that no start followed leaves the same
+// closed run as current, whose Get errors immediately, so reattaching to it spins
+// at RPC speed. The deploy case needs no reattach either — this process's own
+// start terminated the previous run, and a new process watches the new one.
+func watchWorkflow(ctx context.Context, tc temporalclient.Client, log *slog.Logger, wfID string, run temporalclient.WorkflowRun) {
+	current := run
+	for {
+		err := current.Get(ctx, nil)
+		if err == nil || ctx.Err() != nil || isWorkflowTerminated(err) {
+			return
+		}
+		log.Warn("solingest: workflow interrupted, reattaching", "id", wfID, "error", err)
+		current = tc.GetWorkflow(ctx, wfID, "")
+	}
+}
+
+// isWorkflowTerminated reports whether err is a run that was terminated rather
+// than one that failed.
+func isWorkflowTerminated(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "terminated")
+}
+
+// startSolIngestWorkflow starts a fresh Solana ingest run, terminating any run
+// left over from a previous deploy. The run ID is logged because it is the only
+// way to tell a fresh run from an adopted one.
+func startSolIngestWorkflow(ctx context.Context, tc temporalclient.Client, log *slog.Logger, network string) (temporalclient.WorkflowRun, error) {
+	opts := deployStartOptions(network)
+	run, err := tc.ExecuteWorkflow(ctx, opts, SolIngestWorkflow, 0)
+	if err != nil {
+		return nil, fmt.Errorf("solingest: failed to start workflow: %w", err)
+	}
+	log.Info("solingest: workflow started", "id", opts.ID, "run_id", run.GetRunID())
+	return run, nil
 }
 
 // temporalLogger adapts slog to Temporal's log interface.
@@ -143,7 +176,37 @@ func (l *temporalLogger) Error(msg string, keyvals ...any) {
 		l.log.Warn(msg, keyvals...)
 		return
 	}
+	// Temporal logs "Activity error." at ERROR on every failed attempt,
+	// including non-final ones the activity's retry policy will recover. These
+	// activities write to ClickHouse and return their errors to Temporal, so a
+	// transient connection blip (a native-TLS read: EOF from ClickHouse Cloud)
+	// self-heals on retry but still trips the aggregate level="ERR" pager.
+	// Demote to WARN; a sustained failure still pages via the workflow-side
+	// Escalator, which observes the frequent activities (solana/geoip/
+	// validatorsapp) enough times per run to reach its threshold, and observes
+	// the once-per-run block production activity at a dedicated threshold of 1
+	// (see workflow.go). Mirrors the rollup worker's temporalLogger.
+	if msg == "Activity error." && isTransientActivityError(keyvals) {
+		l.log.Warn(msg, keyvals...)
+		return
+	}
 	l.log.Error(msg, keyvals...)
+}
+
+// isTransientActivityError reports whether Temporal's activity-error keyvals
+// carry an Error that dberror classifies as transient (a self-healing upstream
+// blip the activity's retry policy will recover). At the "Activity error." log
+// site the Error keyval is the raw error the activity returned.
+func isTransientActivityError(keyvals []any) bool {
+	for i := 0; i+1 < len(keyvals); i += 2 {
+		if keyvals[i] != "Error" {
+			continue
+		}
+		if err, ok := keyvals[i+1].(error); ok {
+			return dberror.IsTransient(err)
+		}
+	}
+	return false
 }
 
 // hasBenignTaskProcessingError reports whether Temporal's "Task processing

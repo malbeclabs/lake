@@ -811,3 +811,257 @@ func TestGetShredsRewardsDetail_PendingState(t *testing.T) {
 	assert.Equal(t, handlers.ClaimStatePending, resp.Epochs[0].State, "unfunded epoch is pending, not distributed")
 	assert.Nil(t, resp.Epochs[0].IsClaimable, "no live journal row → is_claimable nil")
 }
+
+// insertClientRegistry adds display names for the given client ids.
+func insertClientRegistry(t *testing.T, api *handlers.API, rows string) {
+	t.Helper()
+	require.NoError(t, api.DB.Exec(t.Context(), `
+		INSERT INTO dim_dz_shred_validator_client_rewards_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, client_id, manager_key, short_description)
+		VALUES `+rows))
+}
+
+// insertMultiClientLeaves seeds one validator splitting its slots across two
+// clients in one epoch: 30 slots on client 1 and 70 on client 2, against a
+// 1e12-base-unit (10000 whole 2Z) pool with a 3500 client proportion. Earnings
+// work out to 1755 for client 1 and 4095 for client 2, summing to the 5850 the
+// node earns in total — the same numbers TestGetShredsRewards_MultiClientValidator
+// pins from the validator side.
+func insertMultiClientLeaves(t *testing.T, api *handlers.API) {
+	t.Helper()
+	ctx := t.Context()
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_validator_rewards_leaves_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, associated_dz_epoch, node_id, leader_slots, client_id, leaf_index)
+		VALUES
+		('200-X-c1', now(), now(), generateUUIDv4(), 0, 1, 200, 20, 'node-X', 30, 1, 0),
+		('200-X-c2', now(), now(), generateUUIDv4(), 0, 2, 200, 20, 'node-X', 70, 2, 1)
+	`))
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_distribution_2z_pool_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, tokens_received_2z)
+		VALUES ('epoch-200', now(), now(), generateUUIDv4(), 0, 1, 200, 1000000000000)
+	`))
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_distribution_client_proportions_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, client_id, proportion, default_proportion)
+		VALUES
+		('p-200-1', now(), now(), generateUUIDv4(), 0, 1, 200, 1, 3500, 3500),
+		('p-200-2', now(), now(), generateUUIDv4(), 0, 2, 200, 2, 3500, 3500)
+	`))
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_validator_leaf_distribution_status_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, node_id, client_id, is_claimable, journal_mint_key)
+		VALUES
+		('s-200-X-c1', now(), now(), generateUUIDv4(), 0, 1, 200, 'node-X', 1, 1, ''),
+		('s-200-X-c2', now(), now(), generateUUIDv4(), 0, 2, 200, 'node-X', 2, 0, '')
+	`))
+}
+
+// group=client regroups the same leaves by client team instead of by node, so a
+// validator publishing under two clients is split rather than collapsed. This is
+// the point of the whole feature (lake#784).
+func TestGetShredsRewards_GroupByClient(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertMultiClientLeaves(t, api)
+	insertClientRegistry(t, api, `
+		('c-1', now(), now(), generateUUIDv4(), 0, 1, 'client-pk-1', 1, 'mgr-1', 'Agave'),
+		('c-2', now(), now(), generateUUIDv4(), 0, 2, 'client-pk-2', 2, 'mgr-2', 'Firedancer')`)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/rewards?group=client", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredsRewards(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+	resp := decodeShredsRewards(t, rr.Body.Bytes())
+
+	assert.Empty(t, resp.Validators, "client mode must not also return validator rows")
+	require.Len(t, resp.Clients, 2)
+
+	// Ordered by all-time earnings descending, so client 2 leads on 70 slots.
+	fd, agave := resp.Clients[0], resp.Clients[1]
+	assert.Equal(t, uint16(2), fd.ClientID)
+	assert.Equal(t, "Firedancer", fd.ClientName)
+	// 4095 was the validators' 65% share of client 2's leaf; the client team's own
+	// share is the complementary 35%: 4095 * 3500/6500.
+	assert.InDelta(t, 4095.0*3500/6500, fd.TotalEarned2Z, 1e-6)
+	assert.Equal(t, uint64(1), fd.Validators)
+
+	assert.Equal(t, uint16(1), agave.ClientID)
+	assert.Equal(t, "Agave", agave.ClientName)
+	assert.InDelta(t, 1755.0*3500/6500, agave.TotalEarned2Z, 1e-6)
+	assert.Equal(t, uint64(1), agave.Validators)
+}
+
+// The two groupings are complementary shares of one pool, not the same number
+// regrouped: onchain a leaf is weighted by slots * (MAX - client_proportion) for
+// the validator and slots * client_proportion for the client team. So their
+// all-time totals must stand in exactly that ratio over the same leaves — at the
+// flat 3500 proportion, 35/65.
+//
+// This replaces an earlier assertion that the two totals were equal, which was
+// only true while the client view was showing the validators' share regrouped.
+func TestGetShredsRewards_GroupByClientIsComplementaryShare(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertMultiClientLeaves(t, api)
+	insertClientRegistry(t, api, `
+		('c-1', now(), now(), generateUUIDv4(), 0, 1, 'client-pk-1', 1, 'mgr-1', 'Agave'),
+		('c-2', now(), now(), generateUUIDv4(), 0, 2, 'client-pk-2', 2, 'mgr-2', 'Firedancer')`)
+
+	get := func(query string) handlers.ShredsRewardsResponse {
+		req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/rewards"+query, nil)
+		rr := httptest.NewRecorder()
+		api.GetShredsRewards(rr, req)
+		require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+		return decodeShredsRewards(t, rr.Body.Bytes())
+	}
+
+	var validatorTotal, clientTotal float64
+	for _, v := range get("").Validators {
+		validatorTotal += v.TotalEarned2Z
+	}
+	for _, c := range get("?group=client").Clients {
+		clientTotal += c.TotalEarned2Z
+	}
+
+	require.NotZero(t, validatorTotal, "fixture must produce earnings for the ratio to mean anything")
+	assert.InDelta(t, validatorTotal*3500/6500, clientTotal, 1e-6,
+		"the client teams' share must be the complement of the validators' over the same leaves")
+	assert.Less(t, clientTotal, validatorTotal,
+		"at a 3500 proportion the client teams receive less than their validators")
+}
+
+// A client's leaves can land before its registry row is indexed. Such a team
+// must still appear with its earnings rather than vanish or render blank.
+func TestGetShredsRewards_GroupByClientUnregisteredFallback(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertMultiClientLeaves(t, api)
+	// Register client 1 only; client 2 has no registry row.
+	insertClientRegistry(t, api, `
+		('c-1', now(), now(), generateUUIDv4(), 0, 1, 'client-pk-1', 1, 'mgr-1', 'Agave')`)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/rewards?group=client", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredsRewards(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+	resp := decodeShredsRewards(t, rr.Body.Bytes())
+
+	require.Len(t, resp.Clients, 2, "an unregistered client must still be listed")
+	unregistered := resp.Clients[0]
+	assert.Equal(t, uint16(2), unregistered.ClientID)
+	assert.Equal(t, "Client 2", unregistered.ClientName, "falls back to the id, never a blank label")
+	assert.InDelta(t, 4095.0*3500/6500, unregistered.TotalEarned2Z, 1e-6)
+}
+
+// An empty result must serialise as [], not null.
+func TestGetShredsRewards_GroupByClientEmpty(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/rewards?group=client", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredsRewards(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+	assert.Contains(t, rr.Body.String(), `"clients":[]`)
+}
+
+// The default grouping is unchanged, so every existing caller keeps its shape.
+func TestGetShredsRewards_DefaultGroupingStillValidators(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertShredsRewardsTestData(t, api)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/rewards", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredsRewards(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+	resp := decodeShredsRewards(t, rr.Body.Bytes())
+	assert.NotEmpty(t, resp.Validators)
+	assert.Empty(t, resp.Clients, "validator mode must not populate the client rows")
+}
+
+// The Validators column counts nodes publishing under a client in the newest
+// funded epoch, not every node that ever did. A validator runs one client at a
+// time and switches between them, so a lifetime count reads as a current
+// headcount while being much larger — in production Jito Labs has 432 nodes
+// all-time against 68 in the latest epoch — and it counts a switcher under every
+// client it ever used, so the column would sum to about twice the number of
+// validators that exist.
+//
+// All-time earnings stay all-time, which is the other half of the contract: a
+// client whose validators have all left still earned what it earned. The two
+// clients here separate the halves — client 2 has no current validators and must
+// still report its past earnings.
+//
+// Fixture: epoch 300 has one 50-slot leaf on each client, so its 10000-token
+// pool splits evenly at 2925 each (10000 * 0.65 * 0.9 * 50/100). Epoch 301, the
+// newest funded epoch, has only client 1's leaf, which takes the whole 5850.
+func TestGetShredsRewards_GroupByClientCountsCurrentValidatorsOnly(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	ctx := t.Context()
+
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_validator_rewards_leaves_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, associated_dz_epoch, node_id, leader_slots, client_id, leaf_index)
+		VALUES
+		('300-gone',  now(), now(), generateUUIDv4(), 0, 1, 300, 30, 'node-gone', 50, 2, 0),
+		('300-stays', now(), now(), generateUUIDv4(), 0, 2, 300, 30, 'node-stays', 50, 1, 1),
+		('301-stays', now(), now(), generateUUIDv4(), 0, 3, 301, 31, 'node-stays', 50, 1, 0)
+	`))
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_distribution_2z_pool_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, tokens_received_2z)
+		VALUES
+		('epoch-300', now(), now(), generateUUIDv4(), 0, 1, 300, 1000000000000),
+		('epoch-301', now(), now(), generateUUIDv4(), 0, 2, 301, 1000000000000)
+	`))
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_distribution_client_proportions_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, client_id, proportion, default_proportion)
+		VALUES
+		('p-300-1', now(), now(), generateUUIDv4(), 0, 1, 300, 1, 3500, 3500),
+		('p-300-2', now(), now(), generateUUIDv4(), 0, 2, 300, 2, 3500, 3500),
+		('p-301-1', now(), now(), generateUUIDv4(), 0, 3, 301, 1, 3500, 3500)
+	`))
+	insertClientRegistry(t, api, `
+		('c-1', now(), now(), generateUUIDv4(), 0, 1, 'client-pk-1', 1, 'mgr-1', 'Agave'),
+		('c-2', now(), now(), generateUUIDv4(), 0, 2, 'client-pk-2', 2, 'mgr-2', 'Firedancer')`)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/rewards?group=client", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredsRewards(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+	resp := decodeShredsRewards(t, rr.Body.Bytes())
+
+	byName := map[string]handlers.ShredsClientRewardsRow{}
+	for _, c := range resp.Clients {
+		byName[c.ClientName] = c
+	}
+	require.Len(t, byName, 2)
+
+	current := byName["Agave"]
+	assert.Equal(t, uint64(1), current.Validators, "node-stays published in epoch 301")
+	assert.InDelta(t, (2925.0+5850.0)*3500/6500, current.TotalEarned2Z, 1e-6)
+
+	departed := byName["Firedancer"]
+	assert.Equal(t, uint64(0), departed.Validators,
+		"node-gone last published in epoch 300, so it is not a current validator")
+	assert.InDelta(t, 2925.0*3500/6500, departed.TotalEarned2Z, 1e-6,
+		"a client with no current validators still reports what it earned")
+}

@@ -41,8 +41,19 @@ func TestLogError_DowngradesTransientToWarn(t *testing.T) {
 		// Genuine failures still escalate to ERROR (still page).
 		{"syntax error", errors.New("Code: 62. DB::Exception: Syntax error"), true, slog.LevelError},
 		{"generic error", errors.New("boom"), true, slog.LevelError},
+		// A ClickHouse memory-limit breach carries none of the transient keywords,
+		// so it lands at ERROR. That is why the Network Health panel logs go
+		// through logWarn instead: this is the documented failure mode of a heavy
+		// panel scan, and it degrades to a panel marked unavailable rather than a
+		// terminal failure (see nhGo in network_health.go).
+		{"ch memory limit", errors.New("Code: 241. DB::Exception: Memory limit (total) exceeded: would use 2.00 GiB, while executing"), true, slog.LevelError},
 		// Client disconnects are dropped entirely (not logged).
 		{"client cancel", context.Canceled, false, 0},
+		// A deadline is the handler's own budget expiring (net/http never sets
+		// one on r.Context()), so it stays visible at WARN. Dropping it made an
+		// overrun return a 500 with no log line at all.
+		{"handler deadline", context.DeadlineExceeded, true, slog.LevelWarn},
+		{"wrapped handler deadline", errors.New("query failed: context deadline exceeded"), true, slog.LevelWarn},
 	}
 
 	for _, tt := range tests {
@@ -74,4 +85,32 @@ func TestInternalError_DowngradesTransientToWarn(t *testing.T) {
 	internalError("fetch failed", errors.New("unexpected boom"))
 	require.Len(t, recs, 1)
 	require.Equal(t, slog.LevelError, recs[0].Level, "genuine → ERROR")
+}
+
+func TestInternalError_HandlerDeadlineWarns(t *testing.T) {
+	var recs []slog.Record
+	prev := slog.Default()
+	slog.SetDefault(slog.New(levelRecorder{&recs}))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	internalError("fetch failed", context.DeadlineExceeded)
+	require.Len(t, recs, 1, "a handler's own deadline must not be dropped as a disconnect")
+	require.Equal(t, slog.LevelWarn, recs[0].Level)
+}
+
+func TestLogWarn_KeepsHandlerDeadline(t *testing.T) {
+	var recs []slog.Record
+	prev := slog.Default()
+	slog.SetDefault(slog.New(levelRecorder{&recs}))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	// Several handlers bound themselves with context.WithTimeout and no SQL-side
+	// cap, so this WARN is the only signal the request ran out of budget.
+	logWarn("served stale", "error", context.DeadlineExceeded)
+	require.Len(t, recs, 1)
+	require.Equal(t, slog.LevelWarn, recs[0].Level)
+
+	recs = nil
+	logWarn("served stale", "error", context.Canceled)
+	require.Empty(t, recs, "the caller is gone: nothing to log")
 }

@@ -4,8 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sync"
-	"sync/atomic"
+	"time"
 
 	dzgeoloc "github.com/malbeclabs/lake/indexer/pkg/dz/geolocation"
 	dzgraph "github.com/malbeclabs/lake/indexer/pkg/dz/graph"
@@ -16,19 +15,15 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/dz/serviceability/permissionevents"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/escrowevents"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/feedsubscription"
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
+	"github.com/malbeclabs/lake/indexer/pkg/metrics"
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
-
-// errorAfterFailures is the number of consecutive failed refreshes after
-// which we escalate the log to ERROR. Below the threshold, transient
-// failures (deploys, ClickHouse restarts, InfluxDB rate limits) log at WARN.
-// At ~60s per workflow iteration, 3 means ~3 minutes of sustained failure
-// before paging anyone.
-const errorAfterFailures = 3
 
 // Activities holds dependencies for DZ ingest activities.
 type Activities struct {
@@ -39,6 +34,7 @@ type Activities struct {
 	Geolocation      *dzgeoloc.View         // nil when geolocation is not configured
 	Shreds           *dzshreds.View         // nil when shreds is not configured
 	EscrowEvents     *escrowevents.View     // nil when shreds is not configured
+	FeedSubscription *feedsubscription.View // nil when shreds is not configured
 	PermissionEvents *permissionevents.View // nil when permission events indexing is not configured
 	TelemLatency     *dztelemlatency.View
 	TelemUsage       *dztelemusage.View // nil when InfluxDB is not configured
@@ -50,14 +46,18 @@ type Activities struct {
 	MSDPSource       msdp.Source        // nil when MSDP ingest is not enabled
 	MSDPStore        *msdp.Store        // nil when MSDP ingest is not enabled
 
-	// failures tracks consecutive-failure counts per activity name.
-	// map[string]*atomic.Int32; populated lazily.
-	failures sync.Map
+	// esc escalates consecutive refresh failures per activity from WARN to
+	// ERROR. At ~60s per workflow iteration, the default thresholds mean ~3
+	// minutes of sustained failure before paging anyone (~10 for transient
+	// causes: deploys, ClickHouse restarts, InfluxDB rate limits — the gRPC
+	// ResourceExhausted error classifies as a rate limit).
+	esc logger.Escalator
 }
 
 // refresh runs fn under the IngestionLog wrapper and tracks consecutive
 // failures per activity. On error, increments the counter and logs at WARN
-// below errorAfterFailures, ERROR at/above. On success, resets the counter.
+// below the escalation threshold, ERROR at/above. On success, resets the
+// counter.
 //
 // Always returns nil to Temporal. Transient failures (in-flight ClickHouse
 // during a pod restart, InfluxDB rate limits, brief network blips) don't
@@ -69,32 +69,16 @@ type Activities struct {
 func (a *Activities) refresh(ctx context.Context, name string, fn func() (ingestionlog.RefreshResult, error)) error {
 	err := a.IngestionLog.Wrap(ctx, "dzingest", name, a.Network, fn)
 	if err != nil {
-		n := a.incFailures(name)
-		args := []any{"activity", name, "consecutive_failures", n, "error", err}
+		args := []any{"activity", name, "error", err}
 		// Annotate the well-known InfluxDB rate-limit cause for readability.
 		if status.Code(err) == codes.ResourceExhausted {
 			args = append(args, "cause", "influxdb_rate_limit")
 		}
-		if n >= errorAfterFailures {
-			a.Log.Error("activity refresh failed", args...)
-		} else {
-			a.Log.Warn("activity refresh failed", args...)
-		}
+		a.esc.Fail(a.Log, name, "activity refresh failed", args...)
 		return nil
 	}
-	a.resetFailures(name)
+	a.esc.Reset(name)
 	return nil
-}
-
-func (a *Activities) incFailures(name string) int32 {
-	v, _ := a.failures.LoadOrStore(name, &atomic.Int32{})
-	return v.(*atomic.Int32).Add(1)
-}
-
-func (a *Activities) resetFailures(name string) {
-	if v, ok := a.failures.Load(name); ok {
-		v.(*atomic.Int32).Store(0)
-	}
 }
 
 // RefreshServiceability fetches the latest DZ serviceability state from RPC
@@ -127,15 +111,46 @@ func (a *Activities) RefreshGeolocation(ctx context.Context) error {
 
 // RefreshShreds fetches shred subscription program state from RPC
 // and writes it to ClickHouse dimension tables. No-op if shreds is not configured.
+//
+// It also refreshes the feed-subscription program's FeedDistribution accounts.
+// Those are a separate program and would read better as their own activity, but
+// adding an activity changes the command sequence DZIngestWorkflow emits, which
+// breaks replay against the previous deploy's run. Unlike PageCacheWorkflow,
+// dzingest does not guarantee a fresh run per deploy: dzingest.go calls
+// TerminateWorkflow and ignores the result, then starts the workflow without
+// WorkflowIDConflictPolicy or WorkflowExecutionErrorWhenAlreadyStarted, so a
+// deploy can adopt the still-running old run. An activity body is not part of
+// workflow history, so extending this one is invisible to replay. Split it out
+// once dzingest adopts pageCacheStartOptions' shape: tracked in
+// malbeclabs/lake#778.
 func (a *Activities) RefreshShreds(ctx context.Context) error {
 	if a.Shreds == nil {
 		a.IngestionLog.WrapSkipped(ctx, "dzingest", "RefreshShreds", a.Network)
 		return nil
 	}
 	return a.refresh(ctx, "RefreshShreds", func() (ingestionlog.RefreshResult, error) {
-		result, err := a.Shreds.Refresh(ctx)
-		if err != nil {
-			return result, fmt.Errorf("shreds refresh: %w", err)
+		result, shredsErr := a.Shreds.Refresh(ctx)
+
+		// The two reads are of different programs and share nothing, so the feed
+		// read runs whether or not the shreds read succeeded. Returning early on
+		// shredsErr would have made a shreds outage silently stop feed indexing
+		// too, for no reason beyond the order of these lines.
+		//
+		// The feed failure escalates on its own counter rather than being
+		// returned: reporting it here would page under the name "RefreshShreds"
+		// for a shreds refresh that in fact succeeded. A cancelled context is the
+		// one case worth skipping, since the fetch cannot succeed and the
+		// escalator would only be recording the shutdown.
+		if a.FeedSubscription != nil && ctx.Err() == nil {
+			feedResult, feedErr := a.FeedSubscription.Refresh(ctx)
+			a.FeedSubscription.Escalate(feedErr)
+			if feedErr == nil {
+				result.RowsAffected += feedResult.RowsAffected
+			}
+		}
+
+		if shredsErr != nil {
+			return result, fmt.Errorf("shreds refresh: %w", shredsErr)
 		}
 		return result, nil
 	})
@@ -245,14 +260,14 @@ func (a *Activities) SyncIPMroute(ctx context.Context) error {
 		a.IngestionLog.WrapSkipped(ctx, "dzingest", "SyncIPMroute", a.Network)
 		return nil
 	}
-	return a.refresh(ctx, "SyncIPMroute", func() (ingestionlog.RefreshResult, error) {
+	return a.refresh(ctx, "SyncIPMroute", a.observeSync("mroute", func() (ingestionlog.RefreshResult, error) {
 		var result ingestionlog.RefreshResult
 		dumps, err := a.MrouteSource.FetchLatest(ctx)
 		if err != nil {
 			return result, fmt.Errorf("mroute fetch: %w", err)
 		}
 		return result, a.MrouteStore.Sync(ctx, dumps)
-	})
+	}))
 }
 
 // SyncMSDP fetches per-device `show ip msdp ...` snapshots from S3
@@ -264,14 +279,37 @@ func (a *Activities) SyncMSDP(ctx context.Context) error {
 		a.IngestionLog.WrapSkipped(ctx, "dzingest", "SyncMSDP", a.Network)
 		return nil
 	}
-	return a.refresh(ctx, "SyncMSDP", func() (ingestionlog.RefreshResult, error) {
+	return a.refresh(ctx, "SyncMSDP", a.observeSync("msdp", func() (ingestionlog.RefreshResult, error) {
 		var result ingestionlog.RefreshResult
 		dumps, err := a.MSDPSource.FetchLatest(ctx)
 		if err != nil {
 			return result, fmt.Errorf("msdp fetch: %w", err)
 		}
 		return result, a.MSDPStore.Sync(ctx, dumps)
-	})
+	}))
+}
+
+// observeSync records the view-refresh metrics and a duration log line for the
+// state-collect syncs. Unlike the other activities, these have no view layer of
+// their own to report from, so without this their runtime — and the headroom
+// left under the activity's StartToCloseTimeout — is invisible outside the
+// ingestion log table.
+func (a *Activities) observeSync(viewType string, fn func() (ingestionlog.RefreshResult, error)) func() (ingestionlog.RefreshResult, error) {
+	return func() (ingestionlog.RefreshResult, error) {
+		start := time.Now()
+		result, err := fn()
+		duration := time.Since(start)
+
+		status := "success"
+		if err != nil {
+			status = "error"
+		}
+		metrics.ViewRefreshTotal.WithLabelValues(viewType, status).Inc()
+		metrics.ViewRefreshDuration.WithLabelValues(viewType).Observe(duration.Seconds())
+		a.Log.Info(viewType+": sync completed", "duration", duration.String(), "status", status)
+
+		return result, err
+	}
 }
 
 func (a *Activities) fetchISISData(ctx context.Context) ([]isis.LSP, error) {

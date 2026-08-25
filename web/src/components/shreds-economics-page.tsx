@@ -24,12 +24,15 @@ import {
   fetchShredClientSeats,
   fetchShredsOverview,
   fetchShredEpochRevenue,
+  fetchShredFeedRevenue,
   fetchShredSubscriberHistory,
   fetchSwapRate,
   type ShredClientSeat,
+  type ShredFeedRevenue,
 } from "@/lib/api";
 import { PageHeader } from "./page-header";
 import { CopyableText } from "./copyable-text";
+import { isShredsFeedRow, SHREDS_FEED_CODE_PREFIX } from "./shreds-feed-scope";
 import { SmallDropdown } from "./topology/TimeRangeSelector";
 
 // Helpers
@@ -240,16 +243,19 @@ function computeEconomics(seats: ShredClientSeat[]): Economics {
   );
   const mrr = epochRevenue * EPOCHS_PER_MONTH;
   const arr = mrr * 12;
+  // Escrow-held aggregates sum across escrows (total funds in the system).
   const totalEscrow = seats.reduce(
-    (sum, s) => sum + s.total_usdc_balance / USDC_SCALE,
+    (sum, s) => sum + s.all_escrows_usdc_balance / USDC_SCALE,
     0,
   );
 
+  // Survival is per-escrow: a seat covers next epoch only if its largest single
+  // escrow meets the price, matching what the oracle actually charges.
   const surviving = seats.filter(
-    (s) => s.total_usdc_balance / USDC_SCALE >= s.price_per_epoch_dollars,
+    (s) => s.spendable_usdc_balance / USDC_SCALE >= s.price_per_epoch_dollars,
   );
   const atRisk = seats.filter(
-    (s) => s.total_usdc_balance / USDC_SCALE < s.price_per_epoch_dollars,
+    (s) => s.spendable_usdc_balance / USDC_SCALE < s.price_per_epoch_dollars,
   );
   const nextEpochRevenue = surviving.reduce(
     (sum, s) => sum + s.price_per_epoch_dollars,
@@ -264,7 +270,7 @@ function computeEconomics(seats: ShredClientSeat[]): Economics {
     const m = metroMap.get(s.metro_code) ?? { seats: 0, revenue: 0, escrow: 0 };
     m.seats++;
     m.revenue += s.price_per_epoch_dollars;
-    m.escrow += s.total_usdc_balance / USDC_SCALE;
+    m.escrow += s.all_escrows_usdc_balance / USDC_SCALE;
     metroMap.set(s.metro_code, m);
   }
   const metroBreakdown: MetroStat[] = Array.from(metroMap.entries())
@@ -303,7 +309,7 @@ function computeEconomics(seats: ShredClientSeat[]): Economics {
   ];
   const bucketCounts = bucketDefs.map(() => 0);
   for (const s of seats) {
-    const bal = s.total_usdc_balance / USDC_SCALE;
+    const bal = s.spendable_usdc_balance / USDC_SCALE;
     const runway =
       s.price_per_epoch_dollars > 0
         ? Math.floor(bal / s.price_per_epoch_dollars)
@@ -338,13 +344,13 @@ function computeEconomics(seats: ShredClientSeat[]): Economics {
         0,
       );
       const fEscrow = fSeats.reduce(
-        (sum, s) => sum + s.total_usdc_balance / USDC_SCALE,
+        (sum, s) => sum + s.all_escrows_usdc_balance / USDC_SCALE,
         0,
       );
       const runways = fSeats.map((s) =>
         s.price_per_epoch_dollars > 0
           ? Math.floor(
-              s.total_usdc_balance / USDC_SCALE / s.price_per_epoch_dollars,
+              s.spendable_usdc_balance / USDC_SCALE / s.price_per_epoch_dollars,
             )
           : 999,
       );
@@ -438,6 +444,255 @@ function StatGroup({
   );
 }
 
+const MONTH_LABELS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+function monthLabel(year: number, month: number): string {
+  // month is 1-12 on the wire, matching the on-chain field.
+  return `${MONTH_LABELS[month - 1] ?? month} ${year}`;
+}
+
+// Feed-subscription revenue is allocated per calendar month. Seat revenue is
+// charged per epoch. The two grains stay apart on purpose: dividing a month total
+// by the epochs in it would put a modelled figure next to observed ones.
+//
+// A month here is the month revenue is allocated to, not the month the cash
+// arrived. The program splits one subscription payment across the calendar months
+// the subscription covers, so a payment taken today lands partly on this month
+// and partly on the next, and a month that has not started can already hold a
+// balance. Only the all-time total is cash: the current month and anything after
+// it are still being allocated to, and this section marks them as such rather
+// than showing a future month as a settled figure.
+function FeedSubscriptionsSection({
+  rows,
+  twoZPriceUSD,
+}: {
+  rows: ShredFeedRevenue[];
+  twoZPriceUSD: number | undefined;
+}) {
+  const summary = useMemo(() => {
+    const allTime = rows.reduce((sum, r) => sum + r.collected_dollars, 0);
+
+    // One integer per (year, month), so ordering and "is this month over yet"
+    // are the same comparison.
+    const now = new Date();
+    const currentYear = now.getUTCFullYear();
+    const currentMonth = now.getUTCMonth() + 1;
+    const currentKey = currentYear * 12 + currentMonth;
+
+    let currentMonthAllocated = 0;
+    let allocatedAhead = 0;
+
+    const byMonthMap = new Map<
+      string,
+      { label: string; sortKey: number; collected: number; partial: boolean }
+    >();
+    for (const r of rows) {
+      const sortKey = r.year * 12 + r.month;
+      if (sortKey === currentKey) currentMonthAllocated += r.collected_dollars;
+      if (sortKey > currentKey) allocatedAhead += r.collected_dollars;
+
+      const key = `${r.year}-${r.month}`;
+      const entry =
+        byMonthMap.get(key) ??
+        {
+          label: monthLabel(r.year, r.month),
+          sortKey,
+          collected: 0,
+          // The current month and everything after it keep taking allocations.
+          partial: sortKey >= currentKey,
+        };
+      entry.collected += r.collected_dollars;
+      byMonthMap.set(key, entry);
+    }
+    const byMonth = [...byMonthMap.values()].sort((a, b) => a.sortKey - b.sortKey);
+
+    const byFeedMap = new Map<
+      string,
+      { feedKey: string; code: string; name: string; monthsAllocated: number; collected: number }
+    >();
+    for (const r of rows) {
+      const entry =
+        byFeedMap.get(r.feed_key) ??
+        { feedKey: r.feed_key, code: r.code, name: r.name, monthsAllocated: 0, collected: 0 };
+      // Calendar months this feed has revenue allocated to. Not months of
+      // subscription bought, and deliberately not named as if it were: one month
+      // bought on the 19th lands on two calendar months, so the same single
+      // purchase would count 1 or 2 depending on the day it was made. Deriving
+      // months bought would need the subscription price, which is on neither
+      // dz_feeds_current nor the access pass's feed seats.
+      //
+      // Months with an account but no revenue are excluded, so a feed that has
+      // taken nothing reads 0 rather than matching its neighbours.
+      if (r.collected_dollars > 0) entry.monthsAllocated += 1;
+      entry.collected += r.collected_dollars;
+      // A later row may carry the label when an earlier one did not.
+      if (!entry.code && r.code) entry.code = r.code;
+      if (!entry.name && r.name) entry.name = r.name;
+      byFeedMap.set(r.feed_key, entry);
+    }
+    const byFeed = [...byFeedMap.values()].sort((a, b) => b.collected - a.collected);
+
+    return {
+      allTime,
+      currentMonthAllocated,
+      currentMonthLabel: monthLabel(currentYear, currentMonth),
+      allocatedAhead,
+      byMonth,
+      byFeed,
+    };
+  }, [rows]);
+
+  return (
+    <section>
+      <SectionTitle>Shreds Feed Subscriptions</SectionTitle>
+      <StatGroup
+        stats={[
+          {
+            label: "Collected",
+            value: (
+              <>
+                {formatUSDC(summary.allTime)}
+                <TwoZHint usdc={summary.allTime} twoZPriceUSD={twoZPriceUSD} />
+              </>
+            ),
+            sub: "all time, cash collected",
+            accent: "green",
+          },
+          {
+            label: `Allocated to ${summary.currentMonthLabel}`,
+            value: (
+              <>
+                {formatUSDC(summary.currentMonthAllocated)}
+                <TwoZHint usdc={summary.currentMonthAllocated} twoZPriceUSD={twoZPriceUSD} />
+              </>
+            ),
+            sub: "partial, accrues to month end",
+            accent: "blue",
+          },
+          {
+            // Without this tile the months ahead are invisible in the numbers and
+            // only show up as a bar for a month that has not started.
+            label: "Allocated Ahead",
+            value: (
+              <>
+                {formatUSDC(summary.allocatedAhead)}
+                <TwoZHint usdc={summary.allocatedAhead} twoZPriceUSD={twoZPriceUSD} />
+              </>
+            ),
+            sub: "collected, covers later months",
+          },
+          {
+            label: "Paying Feeds",
+            value: (
+              <span className="tabular-nums">
+                {summary.byFeed.filter((f) => f.collected > 0).length}
+              </span>
+            ),
+            sub: `${summary.byFeed.length} shreds feeds with a distribution account`,
+          },
+        ]}
+      />
+
+      <div className="mt-4 rounded-lg border border-border bg-card px-5 py-5">
+        <div className="text-[10px] font-medium text-muted-foreground/50 uppercase tracking-widest mb-4">
+          Allocated by month
+        </div>
+        <ResponsiveContainer width="100%" height={192}>
+          <BarChart
+            data={summary.byMonth}
+            barCategoryGap="20%"
+            margin={{ top: 0, right: 12, left: 0, bottom: 0 }}
+          >
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+            <XAxis
+              dataKey="label"
+              tickLine={false}
+              axisLine={false}
+              tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+              dy={6}
+            />
+            <YAxis
+              tickLine={false}
+              axisLine={false}
+              tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+              width={48}
+            />
+            <Tooltip
+              cursor={{ fill: "var(--muted)", opacity: 0.4 }}
+              content={({ active, payload, label }) => {
+                if (!active || !payload?.length) return null;
+                const partial = Boolean(payload[0].payload?.partial);
+                return (
+                  <div className="bg-card border border-border rounded-lg px-3 py-2 text-xs shadow-xl">
+                    <div className="font-medium mb-1">{label}</div>
+                    <div className="tabular-nums">
+                      {formatUSDC(Number(payload[0].value))}
+                    </div>
+                    {partial && (
+                      <div className="text-muted-foreground mt-1">still accruing</div>
+                    )}
+                  </div>
+                );
+              }}
+            />
+            <Bar dataKey="collected" radius={[3, 3, 0, 0]}>
+              {summary.byMonth.map((m) => (
+                // Unfinished months are dimmed: a solid bar reads as a settled
+                // total, and a month that has not started would read as revenue
+                // already earned.
+                <Cell key={m.label} fill="#22c55e" fillOpacity={m.partial ? 0.35 : 0.8} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+        <div className="text-[11px] text-muted-foreground/40 mt-3">
+          One payment is split across the calendar months its subscription covers,
+          so the faded months are still filling in. Sum every month for cash
+          collected to date.
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-lg border border-border bg-card overflow-x-auto">
+        <table className="min-w-160 w-full text-sm">
+          <thead>
+            <tr className="text-xs text-muted-foreground border-b border-border bg-muted/30">
+              <th className="px-4 py-3 text-left font-medium uppercase tracking-wider">Feed</th>
+              <th className="px-4 py-3 text-left font-medium uppercase tracking-wider">Code</th>
+              <th
+                className="px-4 py-3 text-right font-medium uppercase tracking-wider"
+                title="Calendar months with revenue allocated to them, not months of subscription bought. One month bought mid-month lands on two calendar months."
+              >
+                Months Allocated
+              </th>
+              <th className="px-4 py-3 text-right font-medium uppercase tracking-wider">Collected</th>
+            </tr>
+          </thead>
+          <tbody>
+            {summary.byFeed.map((f) => (
+              <tr key={f.feedKey} className="border-b border-border/50 last:border-0">
+                <td className="px-4 py-3">
+                  <div className="flex flex-col gap-0.5">
+                    <span>{f.name || "unnamed feed"}</span>
+                    <CopyableText text={f.feedKey} className="text-xs text-muted-foreground">
+                      {truncatePK(f.feedKey)}
+                    </CopyableText>
+                  </div>
+                </td>
+                <td className="px-4 py-3 text-muted-foreground">{f.code || "—"}</td>
+                <td className="px-4 py-3 text-right tabular-nums">{f.monthsAllocated}</td>
+                <td className="px-4 py-3 text-right tabular-nums">{formatUSDC(f.collected)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 // Main page
 
 export function ShredsEconomicsPage() {
@@ -468,6 +723,16 @@ export function ShredsEconomicsPage() {
   const { data: epochRevenueHistory } = useQuery({
     queryKey: ["shreds-epoch-revenue"],
     queryFn: () => fetchShredEpochRevenue(12),
+    refetchInterval: 60_000,
+  });
+
+  // The feed-subscription program serves every DoubleZero feed product, so this
+  // page asks for the shreds feeds by code, then holds the same rule on the way
+  // in. See isShredsFeedRow for why it is enforced twice.
+  const { data: feedRevenue } = useQuery({
+    queryKey: ["shreds-feed-revenue", SHREDS_FEED_CODE_PREFIX],
+    queryFn: () => fetchShredFeedRevenue(SHREDS_FEED_CODE_PREFIX),
+    select: (rows) => rows.filter(isShredsFeedRow),
     refetchInterval: 60_000,
   });
 
@@ -553,9 +818,12 @@ export function ShredsEconomicsPage() {
         </div>
 
         <div className="space-y-8">
-          {/* Revenue Overview */}
+          {/* Seat revenue. Titled for what it measures rather than "Revenue
+              Overview": with a second revenue block on the page, a reader had no
+              way to tell which figures covered which payment system, and these
+              tiles are seats only. */}
           <section>
-            <SectionTitle>Revenue Overview</SectionTitle>
+            <SectionTitle>Seat Revenue &mdash; CLI payments</SectionTitle>
             <StatGroup
               stats={[
                 {
@@ -612,6 +880,29 @@ export function ShredsEconomicsPage() {
               ]}
             />
           </section>
+
+          {/* Feed Subscriptions. Hidden until a feed has a distribution
+              account, so an environment without the program on chain — testnet,
+              local dev — looks exactly as it did before. */}
+          {feedRevenue && feedRevenue.length > 0 && (
+            <>
+              {/* The two blocks are not summed anywhere on this page, and the
+                  reason is not obvious from looking at them: seat revenue is a
+                  per-epoch charge shown as a forward run-rate, feed revenue is
+                  actual USDC allocated to calendar months. Adding them would mix
+                  a projection with a settled figure. Saying so beats leaving a
+                  reader to guess which number is "the" revenue. */}
+              <div className="rounded-lg bg-muted/50 px-4 py-3 text-xs xxs:text-sm text-muted-foreground">
+                Shreds revenue is moving from per-epoch seat payments to feed
+                subscriptions, and both are live during the transition. The two
+                blocks are deliberately not added together: seat figures are a
+                run-rate projected from the current epoch's charges, while feed
+                figures are USDC already collected and allocated to calendar
+                months.
+              </div>
+              <FeedSubscriptionsSection rows={feedRevenue} twoZPriceUSD={twoZPriceUSD} />
+            </>
+          )}
 
           {/* Next Epoch Forecast */}
           <section>

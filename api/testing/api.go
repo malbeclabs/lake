@@ -30,6 +30,29 @@ func NewTestAPIBare(t *testing.T, chDB *ClickHouseDB) *handlers.API {
 	return api
 }
 
+// NewTestAPIBarePg creates an isolated *handlers.API with a bare per-test ClickHouse
+// database (no ClickHouse migrations — the test creates the tables it needs) plus a
+// PostgreSQL pool with migrations applied. Use it for handlers that read both a
+// test-created ClickHouse table and Postgres-backed config.
+func NewTestAPIBarePg(t *testing.T, chDB *ClickHouseDB, pgDB *DB) *handlers.API {
+	t.Helper()
+	conn, dbName := SetupClickHouseForTest(t, chDB)
+	api := &handlers.API{
+		DB:            conn,
+		PublicQueryDB: conn,
+		EnvDBs:        map[string]driver.Conn{},
+		EnvDatabases:  map[string]string{},
+		Database:      dbName,
+		ShredderDB:    dbName,
+		PublisherDB:   dbName,
+		DZDPDB:        "dzdp",
+		FeedsDB:       dbName,
+		PgPool:        SetupPostgresForTest(t, pgDB),
+	}
+	api.Manager = handlers.NewWorkflowManager(api)
+	return api
+}
+
 // NewTestAPI creates an isolated *handlers.API for a single test with a
 // per-test ClickHouse database (with full schema migrations).
 // This is the most common test setup pattern.
@@ -81,6 +104,7 @@ func NewTestAPIAll(t *testing.T, chDB *ClickHouseDB, pgDB *DB, neo4jDB *Neo4jDB,
 		api.PublicQueryDB = conn
 		api.Database = dbName
 		api.ShredderDB = dbName
+		api.PublisherDB = dbName
 		api.DZDPDB = "dzdp"
 		api.FeedsDB = dbName
 	}

@@ -1128,7 +1128,7 @@ const (
 //
 // The client's previous approach — PATCHing each change's seq one at a time —
 // collides with the non-deferrable UNIQUE(plan_id, seq) constraint (migration
-// 00016) whenever a change's target seq is still held by another row that
+// 00018) whenever a change's target seq is still held by another row that
 // hasn't been moved out of the way yet (e.g. swapping positions 1 and 2 tries
 // to set #1's seq to #2's current seq before #2 has moved), producing a 500
 // from UpdatePlanChange (which only handles 23514/ErrNoRows).

@@ -665,9 +665,10 @@ export function DeviceStatusTimelines({
           : derived.issueReasons
       const hasIssues = issueReasons.length > 0
 
-      // Devices with only no_data or no_probes are shown based on health filter (no separate issue toggle)
+      // Devices with only no_data, partial_data or no_probes are shown based on health filter (no separate issue toggle)
       const hasOnlyNoData =
-        issueReasons.length > 0 && issueReasons.every((r) => r === 'no_data' || r === 'no_probes')
+        issueReasons.length > 0 &&
+        issueReasons.every((r) => r === 'no_data' || r === 'partial_data' || r === 'no_probes')
       const matchesIssue = hasOnlyNoData
         ? true
         : hasIssues

@@ -298,6 +298,11 @@ func (a *API) GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 	var groupPK string
 	err := a.envDB(ctx).QueryRow(ctx,
 		`SELECT pk FROM dz_multicast_groups_current WHERE pk = ? OR code = ?`, pkOrCode, pkOrCode).Scan(&groupPK)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Unknown group pk/code is an ordinary 404, not an error — don't log/page.
+		http.Error(w, "multicast group not found", http.StatusNotFound)
+		return
+	}
 	if err != nil {
 		logError("multicast group members group query error", "error", err)
 		http.Error(w, "multicast group not found", http.StatusNotFound)
@@ -355,12 +360,18 @@ func (a *API) GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 	countArgs = append(countArgs, filterArgs...)
 	countArgs = append(countArgs, filterArgs...)
 
-	// Full CTE for data query — includes gossip/vote/leader joins for sorting
-	dataCTE := `
+	// Full CTE for data query — includes gossip/vote/leader joins for sorting.
+	// The current cluster slot is a slow-changing scalar served from a short-TTL
+	// per-env cache instead of re-deriving max(cluster_slot) per request.
+	currentSlot, err := a.cachedCurrentSlot(ctx)
+	if err != nil {
+		logError("multicast group members current slot query error", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	dataCTE := fmt.Sprintf(`
 		WITH current_slot_info AS (
-			SELECT max(cluster_slot) as slot
-			FROM fact_solana_vote_account_activity
-			WHERE event_ts >= now() - INTERVAL 2 MINUTE
+			SELECT %[1]d as slot
 		),
 		epoch_info AS (
 			SELECT
@@ -417,7 +428,7 @@ func (a *API) GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 					OR has(JSONExtract(u.subscribers, 'Array(String)'), ?)
 				)
 		)
-	`
+	`, currentSlot)
 	dataBaseArgs := []any{groupPK, groupPK, groupPK, groupPK, groupPK, groupPK, groupPK}
 
 	orderBy := sort.OrderByClause(multicastMemberSortFields)
@@ -593,11 +604,9 @@ func (a *API) GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 			for ip := range clientIPToMembers {
 				clientIPs = append(clientIPs, ip)
 			}
-			leaderQuery := `
+			leaderQuery := fmt.Sprintf(`
 				WITH current AS (
-					SELECT max(cluster_slot) as slot
-					FROM fact_solana_vote_account_activity
-					WHERE event_ts >= now() - INTERVAL 2 MINUTE
+					SELECT %[1]d as slot
 				),
 				epoch_info AS (
 					SELECT
@@ -619,7 +628,7 @@ func (a *API) GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 				JOIN solana_gossip_nodes_current g ON g.pubkey = ls.node_pubkey
 				CROSS JOIN epoch_info ei
 				WHERE g.gossip_ip IN (?)
-			`
+			`, currentSlot)
 			rows, err := a.envDB(ctx).Query(ctx, leaderQuery, clientIPs)
 			if err != nil {
 				lr.err = err
@@ -728,6 +737,11 @@ func (a *API) GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 	var groupPK string
 	err := a.envDB(ctx).QueryRow(ctx,
 		`SELECT pk FROM dz_multicast_groups_current WHERE pk = ? OR code = ?`, pkOrCode, pkOrCode).Scan(&groupPK)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Unknown group pk/code is an ordinary 404, not an error — don't log/page.
+		http.Error(w, "multicast group not found", http.StatusNotFound)
+		return
+	}
 	if err != nil {
 		logError("multicast group traffic group query error", "error", err)
 		http.Error(w, "multicast group not found", http.StatusNotFound)

@@ -33,6 +33,8 @@ var v1EdgeShredsClientSeatsContractFields = struct {
 		"has_price_override",
 		"override_usdc_price_dollars",
 		"escrow_count",
+		"spendable_usdc_balance",
+		"all_escrows_usdc_balance",
 		"total_usdc_balance",
 		"price_per_epoch_dollars",
 		"funding_authority_key",
@@ -115,6 +117,9 @@ func TestV1EdgeShredsClientSeats_WithData(t *testing.T) {
 	assert.Equal(t, uint64(948), resp.Items[0].FundedEpoch)
 	assert.Equal(t, uint32(1), resp.Items[0].EscrowCount)
 	assert.Equal(t, uint8(0), resp.Items[0].HasPriceOverride)
+	// Single escrow: spendable == all-escrows == deprecated total alias == the one balance.
+	assert.Equal(t, "50.000000", resp.Items[0].SpendableUSDCBalance)
+	assert.Equal(t, "50.000000", resp.Items[0].AllEscrowsUSDCBalance)
 	assert.Equal(t, "50.000000", resp.Items[0].TotalUSDCBalance)
 
 	// seat-2 has the price override.

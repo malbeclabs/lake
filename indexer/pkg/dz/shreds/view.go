@@ -18,6 +18,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/validatorrewards"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 	"github.com/malbeclabs/lake/indexer/pkg/metrics"
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
 // Row types for ClickHouse dimension tables.
@@ -68,6 +69,7 @@ type MetroHistoryRow struct {
 	TotalInitializedDevices uint16
 	CurrentEpoch            uint64
 	CurrentUSDCPriceDollars uint16
+	RetransmitOnlyEnabled   bool
 }
 
 type DeviceHistoryRow struct {
@@ -183,6 +185,10 @@ type View struct {
 	// per-epoch validator-rewards merkle leaves from the off-chain S3 export.
 	s3Client  *validatorrewards.S3Client
 	leafStore *validatorrewards.Store
+
+	// esc escalates consecutive refresh failures from WARN to ERROR so a
+	// single blip doesn't page on-call (see logger.Escalator).
+	esc logger.Escalator
 }
 
 func NewView(cfg ViewConfig) (*View, error) {
@@ -261,12 +267,11 @@ func (v *View) safeRefresh(ctx context.Context) {
 		}
 	}()
 
-	if _, err := v.Refresh(ctx); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return
-		}
-		v.log.Error("shreds: refresh failed", "error", err)
+	_, err := v.Refresh(ctx)
+	if err != nil && errors.Is(err, context.Canceled) {
+		return
 	}
+	v.esc.Observe(v.log, "refresh", "shreds: refresh failed", err)
 }
 
 func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) {
@@ -664,6 +669,7 @@ func convertMetroHistories(metros []shreds.KeyedMetroHistory) []MetroHistoryRow 
 			TotalInitializedDevices: m.TotalInitializedDevices,
 			CurrentEpoch:            currentEpoch,
 			CurrentUSDCPriceDollars: currentPrice,
+			RetransmitOnlyEnabled:   m.IsRetransmitOnlyEnabled(),
 		}
 	}
 	return rows

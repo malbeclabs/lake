@@ -1,0 +1,83 @@
+# DoubleZero Data
+
+> Public telemetry and analytics for the DoubleZero network. DoubleZero is a protocol for building and operating high-performance, permissionless networks. This site publishes the network's operational data: device and link health, path latency, topology, traffic, shreds delivery, outages, and validator stake distribution.
+
+All data on this site is public. No authentication is required to read it. Requests are rate limited per IP.
+
+## Query this data directly
+
+Agents should use the Model Context Protocol server rather than scraping the web UI. It exposes the underlying databases directly.
+
+- [MCP endpoint](https://data.doublezero.xyz/api/mcp): Streamable HTTP transport. No authentication.
+- [Server card](https://data.doublezero.xyz/.well-known/mcp.json): Machine-readable server description.
+- [Setup guide](https://data.doublezero.xyz/docs/mcp): How to connect a client.
+
+Tools:
+
+- `get_schema`: Table and column definitions. Call this first. Do not guess table or column names.
+- `execute_sql`: Read-only SQL against ClickHouse. Telemetry, latency, traffic, shreds, stake, and status.
+- `execute_cypher`: Read-only Cypher against Neo4j. Topology, path finding, reachability, and metro-to-metro latency. Available on mainnet-beta only.
+- `read_docs`: DoubleZero documentation for conceptual and setup questions.
+
+Use `execute_cypher` for path and reachability questions. SQL holds only directly connected pairs, so multi-hop paths must come from the graph.
+
+## HTTP API
+
+Read-only JSON. Select an environment with the `X-DZ-Env` header: `mainnet-beta` (default), `testnet`, or `devnet`.
+
+- [Catalog](https://data.doublezero.xyz/api/catalog): Data catalog.
+- [Status](https://data.doublezero.xyz/api/status): Current network status.
+- [Stats](https://data.doublezero.xyz/api/stats): Summary statistics.
+- [Devices](https://data.doublezero.xyz/api/dz/devices): Network devices.
+- [Links](https://data.doublezero.xyz/api/dz/links): Network links.
+- [Timeline](https://data.doublezero.xyz/api/timeline): Network event timeline.
+- [Config](https://data.doublezero.xyz/api/config): Environment and feature flags.
+
+## Network health
+
+- [Network Status](https://data.doublezero.xyz/status): Device, link, and metro health.
+- [Link Incidents](https://data.doublezero.xyz/ops/incidents/links): Link incident history.
+- [Device Incidents](https://data.doublezero.xyz/ops/incidents/devices): Device incident history.
+- [Methodology](https://data.doublezero.xyz/status/methodology): How these measurements are taken.
+- [Timeline](https://data.doublezero.xyz/timeline): Network event timeline.
+
+## Topology and performance
+
+- [Topology Map](https://data.doublezero.xyz/topology/map): Live map of the network.
+- [Topology Globe](https://data.doublezero.xyz/topology/globe): Globe view.
+- [Path Calculator](https://data.doublezero.xyz/topology/path-calculator): Latency between any two points.
+- [Redundancy](https://data.doublezero.xyz/topology/redundancy): Redundancy analysis.
+- [Metro Connectivity](https://data.doublezero.xyz/topology/metro-connectivity): Connectivity between metros.
+- [DoubleZero vs Internet](https://data.doublezero.xyz/performance/dz-vs-internet): Latency compared to the public internet.
+- [Path Latency](https://data.doublezero.xyz/performance/path-latency): Measured path latency.
+- [Traffic](https://data.doublezero.xyz/traffic/overview): Network traffic.
+
+## Shreds
+
+- [Shreds Scoreboard](https://data.doublezero.xyz/dz/shreds/scoreboard): Live shreds delivery scoreboard.
+- [Publishers](https://data.doublezero.xyz/dz/shreds/publishers): Validators publishing shreds, and whether a given validator is publishing.
+- [Subscribers](https://data.doublezero.xyz/dz/shreds/subscribers): Shreds subscribers.
+- [Activity](https://data.doublezero.xyz/dz/shreds/activity): Shreds activity over time.
+- [Rewards](https://data.doublezero.xyz/dz/shreds/rewards): Shreds rewards.
+
+## Network entities
+
+- [Devices](https://data.doublezero.xyz/dz/devices): DoubleZero devices.
+- [Links](https://data.doublezero.xyz/dz/links): DoubleZero links.
+- [Metros](https://data.doublezero.xyz/dz/metros): Metro locations.
+- [Facilities](https://data.doublezero.xyz/dz/facilities): Facilities.
+- [Contributors](https://data.doublezero.xyz/dz/contributors): Network contributors.
+- [Users](https://data.doublezero.xyz/dz/users): Network users.
+- [Multicast Groups](https://data.doublezero.xyz/dz/multicast-groups): Multicast groups.
+
+## Solana
+
+- [Validators](https://data.doublezero.xyz/solana/validators): Solana validators.
+- [Overview](https://data.doublezero.xyz/solana/overview): Solana network overview.
+- [Gossip Nodes](https://data.doublezero.xyz/solana/gossip-nodes): Gossip nodes.
+
+## About DoubleZero
+
+- [DoubleZero](https://doublezero.xyz): Main site.
+- [Documentation](https://doublezero.xyz/docs): Network documentation.
+- [Whitepaper](https://doublezero.xyz/whitepaper.pdf): Technical whitepaper.

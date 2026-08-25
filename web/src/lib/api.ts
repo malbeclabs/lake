@@ -1356,6 +1356,480 @@ export async function fetchStatus(): Promise<StatusResponse> {
   return res.json()
 }
 
+// --- Network Health Reporting ---
+// A public, windowed report of how the network performed. Facts only: the UI
+// presents these numbers neutrally and never ranks or grades contributors.
+
+export interface NetworkHealthDeltas {
+  peak_bps: number | null
+  active_links: number | null
+}
+
+// The outage and impactful-downtime headline tiles come from the Outages and
+// Impactful groups, so they are not mirrored on the Overview headline.
+export interface NetworkHealthHeadline {
+  peak_bps: number
+  jitter_improve_pct: number
+  dz_loss_pct: number
+  active_links: number
+  active_devices: number
+  active_metros: number
+  deltas: NetworkHealthDeltas
+}
+
+export interface NetworkHealthDrainTiming {
+  outage_count: number
+  events_with_drain: number
+  drains: number
+  undrains: number
+  time_to_drain_p50_min: number | null
+  time_to_drain_max_min: number | null
+  time_drained_p50_min: number | null
+  time_drained_max_min: number | null
+  time_to_undrain_p50_min: number | null
+  time_to_undrain_max_min: number | null
+  drain_within_30m_pct: number | null
+  // Undrains that matched a recovered link (a healthy link returned to service).
+  // The undrain timing stats are computed only over these matched pairs.
+  matched_undrains: number
+  // True when the recovery-health signal the undrain stats depend on could not
+  // be fetched this window, so undrain timing is unavailable rather than zero.
+  undrain_unavailable?: boolean
+}
+
+export interface NetworkHealthDurationHistogram {
+  flap_le5m: number
+  short_5_15m: number
+  medium_15_60m: number
+  sustained_1_24h: number
+  chronic_gt24h: number
+}
+
+export interface NetworkHealthReliability {
+  outage_count: number
+  distinct_links: number
+  capped_downtime_hours: number
+  degraded_links: number
+  duration_histogram: NetworkHealthDurationHistogram
+}
+
+export interface NetworkHealthContributor {
+  code: string
+  outages: number
+  capped_downtime_hours: number
+  distinct_links: number
+  links: number
+  devices: number
+}
+
+export interface NetworkHealthWindow {
+  start: string
+  end: string
+  days: number
+  label: string
+}
+
+export interface NetworkHealthSla {
+  within: number
+  total: number
+  within_pct: number | null
+}
+
+export interface NetworkHealthCapacity {
+  unicast_users: number
+  max_users: number
+  util_pct: number | null
+}
+
+export interface NetworkHealthDeviceSlots {
+  pk: string
+  code: string
+  unicast: number
+  mcast_sub: number
+  mcast_pub: number
+  max_users: number
+  used_pct: number | null
+}
+
+export interface NetworkHealthDiaInterface {
+  device_pk: string
+  device: string
+  intf: string
+  port_gbps: number
+  cir_gbps: number
+  p50_gbps: number
+  p99_gbps: number
+  util_pct: number | null
+  denom: string
+}
+
+export interface NetworkHealthIsis {
+  overloaded: number
+  unreachable: number
+  devices: number
+  adjacencies: number
+}
+
+export interface NetworkHealthFreshness {
+  feed_max: string
+  lag_seconds: number
+  devices_fresh: number
+  devices_active: number
+}
+
+export interface NetworkHealthTsPoint {
+  t: string
+  avg_bps: number
+  max_bps: number
+}
+
+export interface NetworkHealthCountPoint {
+  t: string
+  count: number
+}
+
+export interface NetworkHealthTrafficLink {
+  link_pk: string
+  link_code: string
+  side_a_metro: string
+  side_z_metro: string
+  status: string
+  avg_gbps: number
+  max_gbps: number
+}
+
+export interface NetworkHealthCapacityLink {
+  link_pk: string
+  link_code: string
+  side_a_metro: string
+  side_z_metro: string
+  bandwidth_gbps: number
+  peak_gbps: number
+  util_pct: number
+  p50_util: number
+  p99_util: number
+}
+
+export interface NetworkHealthPerfLink {
+  link_pk: string
+  link_code: string
+  side_a_metro: string
+  side_z_metro: string
+  committed_ms: number
+  measured_avg_ms: number
+  measured_max_ms: number
+  over_committed_pct: number
+  drift_ms: number
+  drift_pct: number
+  // When the link carries an IS-IS delay override, committed_ms (and the drift /
+  // over-committed figures) reflect the override, not the raw onchain value.
+  // raw_committed_ms is the untouched onchain commitment. Optional so the type
+  // checks even if the backend field lands slightly later.
+  raw_committed_ms?: number
+  overridden?: boolean
+}
+
+export interface NetworkHealthErrorHotspot {
+  device_pk: string
+  device_code: string
+  errors: number
+  carrier_flaps: number
+}
+
+// One entity's time-based 3-way state split over the window (see the Go
+// NHAvailability doc comment): avail_pct + drained_pct + outage_pct sum to
+// 100 of the classified (non-provisioning) buckets. Drain counts as
+// unavailable but is broken out as its own segment rather than folded into
+// outage_pct, so a heavily soft-drained link doesn't read as if it had a fault.
+export interface NetworkHealthAvailability {
+  pk: string
+  code: string
+  metros?: string
+  avail_pct: number
+  drained_pct: number
+  outage_pct: number
+  avail_hours: number
+  outage_hours: number
+  drained_hours: number
+}
+
+// One recorded root cause and how many incident tickets in the window carried
+// it. cause is the raw enum (self_resolved, network_external, fiber_cut,
+// configuration, hardware, carrier, false_positive); pct is its share of
+// incidents that have a cause.
+export interface NetworkHealthRootCause {
+  cause: string
+  count: number
+  pct: number | null
+}
+
+// One telemetry-detected outage in the window that had no matching ops ticket:
+// the affected link, when it started (RFC3339), and how long it lasted (hours).
+// link_pk is present when the link resolved to an onchain pubkey, so the
+// frontend can link through to its detail page; absent means render plain text.
+export interface NetworkHealthNoTicketOutage {
+  link_code: string
+  link_pk?: string
+  start_ts: string
+  hours: number
+}
+
+export interface NetworkHealthTickets {
+  total: number
+  incidents: number
+  maintenance: number
+  sev1: number
+  sev2: number
+  sev3: number
+  // Incident timing (incidents only; maintenance is scheduled ahead of time and
+  // is excluded so it does not drag these negative).
+  response_p50_min: number | null
+  resolution_p50_min: number | null
+  closed_incidents: number
+  // Who filed each incident, by ticket creator resolved through the ops user
+  // registry. self_reported = a contributor filed it; doublezero_filed = a
+  // DoubleZero staff account filed it. self_reported_pct is null when the user
+  // registry could not be fetched (frontend then shows "unavailable").
+  self_reported_count: number
+  doublezero_filed_count: number
+  self_reported_pct: number | null
+  // Scheduled maintenance timing (present in the contract for completeness; the
+  // maintenance section shows counts and notes that timing is not tracked).
+  maintenance_lead_p50_min: number | null
+  maintenance_duration_p50_min: number | null
+  closed_maintenance: number
+  root_causes: NetworkHealthRootCause[]
+  outage_count: number
+  outages_with_ticket: number
+  outages_no_ticket: number
+  no_ticket_share_pct: number | null
+  // Telemetry-detected outages in the window with no matching ticket, one row
+  // per affected link + overlapping episode. Present alongside the count/share
+  // above; optional so an older backend that omits it still type-checks.
+  no_ticket_outages?: NetworkHealthNoTicketOutage[]
+}
+
+// Network-wide (or contributor-scoped) outage total for the window, split by
+// entity kind. outage_hours is the link outage-hours total (uncapped; a fact,
+// not the headline's capped figure).
+export interface NetworkHealthOutageSummary {
+  link_outages: number
+  outage_hours: number
+  links_affected: number
+  device_outages: number
+  devices_affected: number
+}
+
+// One entity's outage-hours total over the window, ranked by hours descending.
+// pk lets the frontend link through to the entity's drill-down page. metros
+// holds the metro pair for links ("ams ↔ lon") or the single metro for devices.
+export interface NetworkHealthDowntimeRow {
+  pk: string
+  code: string
+  metros?: string
+  outages: number
+  hours: number
+}
+
+// Prior-window (previous equal-length period) reliability values that back the
+// "vs prior" deltas on the Outages-by-duration caption. outage_count and
+// capped_downtime_hours mirror the current-window reliability figures. Emitted
+// by the Outages group under prev.reliability every refresh.
+export interface NetworkHealthReliabilityPrev {
+  outage_count: number
+  capped_downtime_hours: number
+}
+
+export interface NetworkHealthParams {
+  days?: number
+  start?: string // YYYY-MM-DD
+  end?: string // YYYY-MM-DD
+}
+
+function networkHealthQuery(p: NetworkHealthParams): URLSearchParams {
+  const qs = new URLSearchParams()
+  if (p.start && p.end) {
+    qs.set('start', p.start)
+    qs.set('end', p.end)
+  } else if (p.days && p.days !== 30) {
+    qs.set('days', String(p.days))
+  }
+  return qs
+}
+
+// The undrain-timing slice of drain timing, fetched separately because its
+// recovery-health query is slow. The main network-health payload renders
+// immediately; this loads in parallel and fills in the two undrain MiniStats.
+export interface NetworkHealthDeferred {
+  time_to_undrain_p50_min: number | null
+  time_to_undrain_max_min: number | null
+  undrain_unavailable?: boolean
+  matched_undrains: number
+  // Prior-window values so the undrain MiniStats can show a "vs prior" delta.
+  prev?: NetworkHealthDeferred
+  error?: string
+}
+
+export async function fetchNetworkHealthDeferred(
+  p: NetworkHealthParams = {},
+  contributor = '',
+): Promise<NetworkHealthDeferred> {
+  const qs = networkHealthQuery(p)
+  if (contributor) qs.set('contributor', contributor)
+  const s = qs.toString()
+  const res = await fetchWithRetry(`/api/network-health/deferred${s ? `?${s}` : ''}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch network health undrain timing')
+  }
+  return res.json()
+}
+
+// --- Network health, per-data-source groups (progressive loading) ---
+//
+// The single /api/network-health payload is split into independent group
+// endpoints so the page loads progressively: each group fetches + caches on its
+// own, and a slow or failed group only affects its own panels. Every group type
+// below is a SUBSET of the full network-health payload (same field names / JSON tags), plus
+// its own prior-window values where its panels show a "vs prior" delta and an
+// optional `error` string (same convention across every group endpoint).
+//
+// `degraded` lists the panel queries that failed inside the group (the panel
+// names the backend records in nhPanels, e.g. "link_availability", "sla",
+// "top_links"). The fields those panels fill carry a zero value, so a panel
+// whose source is named here renders unavailable instead of drawing that zero;
+// its siblings in the same group still render their real data. It is omitted
+// when every panel succeeded. `error` is set only when a CRITICAL panel failed
+// and marks the whole group unavailable.
+
+// Overview: the cheap headline signals + throughput chart + the contributor list
+// that feeds the scope dropdown. The Outages group owns the headline outage
+// count and the Impactful endpoint owns impactful downtime, so this headline is
+// read together with those two (each tile loads with its own group).
+export interface NHOverview {
+  window: NetworkHealthWindow
+  headline: NetworkHealthHeadline
+  isis: NetworkHealthIsis
+  freshness: NetworkHealthFreshness
+  throughput_ts: NetworkHealthTsPoint[]
+  contributors: NetworkHealthContributor[]
+  generated_at: string
+  degraded?: string[]
+  error?: string
+}
+
+export interface NHAvailabilityGroup {
+  link_availability: NetworkHealthAvailability[]
+  device_availability: NetworkHealthAvailability[]
+  degraded?: string[]
+  error?: string
+}
+
+export interface NHLatencyGroup {
+  latency_links: NetworkHealthPerfLink[]
+  sla: NetworkHealthSla
+  degraded?: string[]
+  error?: string
+}
+
+export interface NHCapacityGroup {
+  capacity: NetworkHealthCapacity
+  device_slots: NetworkHealthDeviceSlots[]
+  dia_interfaces: NetworkHealthDiaInterface[]
+  top_links: NetworkHealthTrafficLink[]
+  capacity_links: NetworkHealthCapacityLink[]
+  degraded?: string[]
+  error?: string
+}
+
+export interface NHOutagesGroup {
+  // Headline outage count (sustained outages >= 10 min) + its prior-window
+  // percent-change delta, cross-read by the headline row.
+  outage_count: number
+  outage_count_delta: number | null
+  reliability: NetworkHealthReliability
+  outage_summary: NetworkHealthOutageSummary | null
+  downtime_links: NetworkHealthDowntimeRow[]
+  downtime_devices: NetworkHealthDowntimeRow[]
+  outages_ts: NetworkHealthCountPoint[]
+  error_hotspots: NetworkHealthErrorHotspot[]
+  prev?: {
+    outage_summary: NetworkHealthOutageSummary | null
+    reliability: NetworkHealthReliabilityPrev
+  }
+  degraded?: string[]
+  error?: string
+}
+
+export interface NHDrainGroup {
+  drain_timing: NetworkHealthDrainTiming
+  // prev is the prior-window drain-timing figures directly (the backend emits the
+  // bare NHDrainTiming under `prev`, not a wrapper), used for the panel deltas.
+  prev?: NetworkHealthDrainTiming | null
+  degraded?: string[]
+  error?: string
+}
+
+export interface NHTicketsGroup {
+  ops_tickets: NetworkHealthTickets | null
+  // prev is the prior-window ticket aggregate directly (bare NHTickets under
+  // `prev`), used for the incidents/maintenance deltas.
+  prev?: NetworkHealthTickets | null
+  degraded?: string[]
+  error?: string
+}
+
+// Impactful downtime is the heaviest query, so it has its own deferred endpoint
+// (mirrors /deferred). Impact-weighted availability is derived on the frontend
+// from Overview.headline.active_links + this impactful_downtime_hours (the
+// backend does not emit it); see deriveAvailability.
+export interface NHImpactful {
+  window: NetworkHealthWindow
+  impactful_downtime_hours: number
+  impactful_downtime_delta: number | null
+  unavailable?: boolean
+  prev?: { impactful_downtime_hours: number }
+  degraded?: string[]
+  error?: string
+}
+
+// Shared fetcher for a group endpoint. Mirrors fetchNetworkHealthDeferred:
+// builds the same window query string, threads the
+// optional contributor scope, and reuses fetchWithRetry.
+async function fetchNHGroup<T>(
+  path: string,
+  p: NetworkHealthParams,
+  contributor: string,
+): Promise<T> {
+  const qs = networkHealthQuery(p)
+  if (contributor) qs.set('contributor', contributor)
+  const s = qs.toString()
+  const base = path ? `/api/network-health/${path}` : '/api/network-health'
+  const res = await fetchWithRetry(`${base}${s ? `?${s}` : ''}`)
+  if (!res.ok) {
+    throw new Error(`Failed to fetch network health: ${path || 'overview'}`)
+  }
+  return res.json()
+}
+
+// Overview is served by the bare /api/network-health route (repurposed from the
+// old monolith); the rest hang off named sub-paths.
+export const fetchNHOverview = (p: NetworkHealthParams = {}, c = '') =>
+  fetchNHGroup<NHOverview>('', p, c)
+export const fetchNHAvailability = (p: NetworkHealthParams = {}, c = '') =>
+  fetchNHGroup<NHAvailabilityGroup>('availability', p, c)
+export const fetchNHLatency = (p: NetworkHealthParams = {}, c = '') =>
+  fetchNHGroup<NHLatencyGroup>('latency', p, c)
+export const fetchNHCapacity = (p: NetworkHealthParams = {}, c = '') =>
+  fetchNHGroup<NHCapacityGroup>('capacity', p, c)
+export const fetchNHOutages = (p: NetworkHealthParams = {}, c = '') =>
+  fetchNHGroup<NHOutagesGroup>('outages', p, c)
+export const fetchNHDrain = (p: NetworkHealthParams = {}, c = '') =>
+  fetchNHGroup<NHDrainGroup>('drain', p, c)
+export const fetchNHTickets = (p: NetworkHealthParams = {}, c = '') =>
+  fetchNHGroup<NHTicketsGroup>('tickets', p, c)
+export const fetchNHImpactful = (p: NetworkHealthParams = {}, c = '') =>
+  fetchNHGroup<NHImpactful>('impactful', p, c)
+
 // Link history types for status timeline
 export interface LinkHourStatus {
   hour: string
@@ -2151,7 +2625,13 @@ export interface SinglePath {
 }
 
 // PathService selects which IS-IS topology a path is resolved through:
-// 'unicast' constrains to flex-algo 128 (topology-tagged links); 'multicast' uses algo 0 (all links).
+// 'unicast' constrains to the flex-algo topology (topology-tagged links that
+// are not drained); 'multicast' uses algo 0 (all activated links). The two
+// answer differently wherever a link sits outside the topology — see
+// /api/topology/algo-divergence for which routes those are.
+//
+// Endpoints that default to algo 0 treat an omitted service as 'multicast',
+// and only that default is held in the page cache.
 export type PathService = 'unicast' | 'multicast'
 
 export interface MultiPathResponse {
@@ -3486,7 +3966,9 @@ export interface WorkflowRun {
 
 // Get a workflow run by ID
 export async function getWorkflow(workflowId: string): Promise<WorkflowRun | null> {
-  const res = await apiFetch(`/api/workflows/${workflowId}`)
+  const anonParam = getAnonymousIdParam()
+  const url = anonParam ? `/api/workflows/${workflowId}?${anonParam}` : `/api/workflows/${workflowId}`
+  const res = await apiFetch(url)
   if (res.status === 404) {
     return null
   }
@@ -3498,7 +3980,9 @@ export async function getWorkflow(workflowId: string): Promise<WorkflowRun | nul
 
 // Get the latest workflow for a session (running, completed, or failed)
 export async function getLatestWorkflowForSession(sessionId: string): Promise<WorkflowRun | null> {
-  const res = await apiFetch(`/api/sessions/${sessionId}/workflow`)
+  const anonParam = getAnonymousIdParam()
+  const url = anonParam ? `/api/sessions/${sessionId}/workflow?${anonParam}` : `/api/sessions/${sessionId}/workflow`
+  const res = await apiFetch(url)
   if (res.status === 204 || res.status === 404) {
     return null // No workflow
   }
@@ -3534,7 +4018,11 @@ export async function reconnectToWorkflow(
   callbacks: WorkflowReconnectCallbacks,
   signal?: AbortSignal
 ): Promise<void> {
-  const res = await apiFetch(`/api/workflows/${workflowId}/stream`, { signal })
+  const anonParam = getAnonymousIdParam()
+  const url = anonParam
+    ? `/api/workflows/${workflowId}/stream?${anonParam}`
+    : `/api/workflows/${workflowId}/stream`
+  const res = await apiFetch(url, { signal })
 
   if (!res.ok) {
     if (res.status === 404) {
@@ -4463,7 +4951,7 @@ export interface TimelineEvent {
 export interface EntityChangeDetails {
   change_type: 'created' | 'updated' | 'deleted'
   changes?: FieldChange[]
-  entity?: DeviceEntity | LinkEntity | MetroEntity | ContributorEntity | UserEntity
+  entity?: DeviceEntity | LinkEntity | MetroEntity | ContributorEntity | UserEntity | FeedEntity
 }
 
 export interface FieldChange {
@@ -4533,6 +5021,16 @@ export interface UserEntity {
   device_pk: string
   tunnel_id: number
   device_code?: string
+  metro_code?: string
+}
+
+export interface FeedEntity {
+  pk: string
+  owner_pubkey: string
+  code: string
+  name: string
+  metro_pk: string
+  groups: string
   metro_code?: string
 }
 
@@ -4752,6 +5250,18 @@ export async function fetchLatencyHistory(
 // Metro path latency types (path-based DZ vs Internet comparison)
 export type PathOptimizeMode = 'hops' | 'latency' | 'bandwidth'
 
+/**
+ * One metro pair from /api/topology/metro-path-latency.
+ *
+ * Every field below the first block is optional, and that is not defensive
+ * typing: the default request is answered from the `page_cache` table in
+ * Postgres, which a worker of any age may have written. A web deploy reaches
+ * readers before the next worker refresh does, so for that window the browser
+ * holds a new bundle reading a payload that predates these fields. Declaring
+ * them present made `undefined.toFixed()` take the whole page down through the
+ * error boundary. Keep them optional so the compiler makes every reader say
+ * what it shows when the figure has not arrived yet.
+ */
 export interface MetroPathLatency {
   fromMetroPK: string
   fromMetroCode: string
@@ -4761,11 +5271,31 @@ export interface MetroPathLatency {
   hopCount: number
   bottleneckBwGbps: number
   internetLatencyMs: number
+  /** vs internet, from the contracted pathLatencyMs. */
   improvementPct: number | null
+
+  /** Observed sum of per-hop RTT. Falls back to the contracted figure when partiallyCommitted. */
+  measuredLatencyMs?: number
+  /** 0 when partiallyCommitted — absent, not zero. */
+  measuredP95Ms?: number
+  /** 0 when partiallyCommitted — absent, not zero. */
+  measuredJitterMs?: number
+  partiallyCommitted?: boolean
+  pathMetros?: string[]
+  /** 0 when unmeasured — the internet side has no partiallyCommitted-style flag. */
+  internetP95Ms?: number
+  /** 0 when unmeasured — the internet side has no partiallyCommitted-style flag. */
+  internetJitterMs?: number
+  /** vs internet, from measuredLatencyMs. Separate basis, so the two pages stay self-consistent. */
+  measuredImprovementPct?: number | null
 }
 
 export interface MetroPathLatencyResponse {
   optimize: PathOptimizeMode
+  /** Echoes the link set used. The API canonicalises the default to
+   *  'multicast', so it never sends an empty string. Absent only from a
+   *  page-cached payload written by a worker that predates the field. */
+  service?: PathService
   paths: MetroPathLatency[]
   summary: {
     totalPairs: number
@@ -4776,10 +5306,87 @@ export interface MetroPathLatencyResponse {
   error?: string
 }
 
-export async function fetchMetroPathLatency(optimize: PathOptimizeMode = 'latency'): Promise<MetroPathLatencyResponse> {
-  const res = await apiFetch(`/api/topology/metro-path-latency?optimize=${optimize}`)
+export async function fetchMetroPathLatency(
+  optimize: PathOptimizeMode = 'latency',
+  service?: PathService
+): Promise<MetroPathLatencyResponse> {
+  const suffix = service ? `&service=${service}` : ''
+  const res = await apiFetch(`/api/topology/metro-path-latency?optimize=${optimize}${suffix}`)
   if (!res.ok) {
     throw new Error('Failed to fetch metro path latency')
+  }
+  return res.json()
+}
+
+export interface AlgoDivergenceLink {
+  code: string
+  fromMetro: string
+  toMetro: string
+  rttMs: number
+  drained: boolean
+  /** False when the link was never in the unicast set — note a link drained
+   *  from the start is never included even while it carries a tag. */
+  everIncluded: boolean
+  /** RFC3339, or empty when the history does not reach back far enough. */
+  excludedAt: string
+  excludedFor: string
+}
+
+export interface AlgoDivergencePair {
+  fromMetro: string
+  toMetro: string
+  multicastMs: number
+  unicastMs: number
+  deltaMs: number
+  deltaPct: number
+  multicastPath: string[]
+  unicastPath: string[]
+  /** False when unicast has no path at all. The unicast fields are then absent, not zero. */
+  unicastReachable: boolean
+}
+
+export interface AlgoDivergenceResponse {
+  excludedLinks: AlgoDivergenceLink[]
+  pairs: AlgoDivergencePair[]
+  summary: {
+    activatedLinks: number
+    excludedLinks: number
+    multicastPairs: number
+    divergingPairs: number
+    unreachablePairs: number
+    maxDeltaMs: number
+  }
+}
+
+export async function fetchAlgoDivergence(): Promise<AlgoDivergenceResponse> {
+  const res = await apiFetch('/api/topology/algo-divergence')
+  if (!res.ok) {
+    throw new Error('Failed to fetch flex-algo divergence')
+  }
+  return res.json()
+}
+
+export interface RouteSeriesPoint {
+  ts: string
+  dzMs: number
+  internetMs: number
+}
+
+export interface RouteSeries {
+  fromMetroCode: string
+  toMetroCode: string
+  points: RouteSeriesPoint[]
+}
+
+export interface RouteSeriesResponse {
+  series: RouteSeries[]
+  error?: string
+}
+
+export async function fetchRouteSeries(pairs: string[]): Promise<RouteSeriesResponse> {
+  const res = await apiFetch(`/api/topology/route-series?pairs=${encodeURIComponent(pairs.join(','))}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch route series')
   }
   return res.json()
 }
@@ -4799,6 +5406,9 @@ export interface MetroPathDetailResponse {
   fromMetroCode: string
   toMetroCode: string
   optimize: PathOptimizeMode
+  /** Echoes the link set the hops were walked over. Same shape and same reason
+   *  as on MetroPathLatencyResponse. */
+  service?: PathService
   totalLatencyMs: number
   totalHops: number
   bottleneckBwGbps: number
@@ -4811,9 +5421,11 @@ export interface MetroPathDetailResponse {
 export async function fetchMetroPathDetail(
   from: string,
   to: string,
-  optimize: PathOptimizeMode = 'latency'
+  optimize: PathOptimizeMode = 'latency',
+  service?: PathService
 ): Promise<MetroPathDetailResponse> {
-  const res = await apiFetch(`/api/topology/metro-path-detail?from=${from}&to=${to}&optimize=${optimize}`)
+  const suffix = service ? `&service=${service}` : ''
+  const res = await apiFetch(`/api/topology/metro-path-detail?from=${from}&to=${to}&optimize=${optimize}${suffix}`)
   if (!res.ok) {
     throw new Error('Failed to fetch metro path detail')
   }
@@ -6254,7 +6866,11 @@ export interface ShredClientSeat {
   has_price_override: number
   override_usdc_price_dollars: number
   escrow_count: number
-  total_usdc_balance: number
+  // Largest single escrow balance (micro-USDC). Activation/renewal is per-escrow,
+  // so this — not the sum — decides whether the seat covers the per-epoch price.
+  spendable_usdc_balance: number
+  // Sum across all escrows (micro-USDC); informational, cannot be spent as one charge.
+  all_escrows_usdc_balance: number
   price_per_epoch_dollars: number
   funding_authority_key: string
   user_pk: string
@@ -6377,6 +6993,28 @@ export async function fetchShredEpochRevenue(limit = 20): Promise<ShredEpochReve
   return res.json()
 }
 
+export interface ShredFeedRevenue {
+  feed_key: string
+  code: string
+  name: string
+  year: number
+  month: number
+  collected_usdc: number
+  collected_dollars: number
+}
+
+// codePrefix filters on the feed's code (e.g. 'solana-shreds'). The
+// feed-subscription program is shared by every DoubleZero feed product, so a
+// page showing one product's economics has to say which one it wants. An empty
+// prefix returns every feed. Feeds whose label has not landed carry no code and
+// are always returned, so revenue is never hidden by a late label.
+export async function fetchShredFeedRevenue(codePrefix = ''): Promise<ShredFeedRevenue[]> {
+  const qs = codePrefix ? `?code_prefix=${encodeURIComponent(codePrefix)}` : ''
+  const res = await fetchWithRetry(`/api/dz/shreds/feed-revenue${qs}`)
+  if (!res.ok) throw new Error('Failed to fetch shred feed revenue')
+  return res.json()
+}
+
 export interface ShredSubscriberHistory {
   epoch: number
   active_seats: number
@@ -6441,6 +7079,8 @@ export interface LedgerResponse {
   slots_in_epoch: number
   epoch_pct: number
   epoch_eta_sec: number
+  // Absent on a page-cache row written by a deploy predating the field.
+  slot_duration_sec?: number
   absolute_slot: number
   block_height: number
   transaction_count: number
@@ -6950,6 +7590,8 @@ export interface ShredDevice {
   granted_seats: number
   capacity: number
   available_seats: number
+  /** Metro-level: 1 when every device in the metro serves the retransmit group only. */
+  retransmit_only_enabled: number
 }
 
 export async function fetchShredDevices(params: {
@@ -7214,7 +7856,8 @@ export interface AccessPassShredsSeat {
   funded_epoch: number
   active_epoch: number
   escrow_count: number
-  total_usdc_balance: number
+  spendable_usdc_balance: number
+  all_escrows_usdc_balance: number
   price_per_epoch_dollars: number
   funding_authority_key: string
 }
@@ -7297,21 +7940,47 @@ export interface ShredsRewardsRow {
   epoch_tokens: Record<string, string>
 }
 
+// One client team's own rewards, over the same leaves as the validator list.
+//
+// total_earned_2z is the client team's share, not its validators' earnings: the
+// two are complementary sides of one pool, weighted by client_proportion and its
+// complement. There is no claimable figure, because nothing records whether a
+// client team has claimed — the indexed claim state belongs to the validator's
+// leaf.
+export interface ShredsClientRewardsRow {
+  client_id: number
+  client_name: string
+  validators: number
+  total_earned_2z: number
+}
+
 export interface ShredsRewardsResponse {
   current_solana_epoch: number
   latest_finalized_epoch: number
   epoch_columns: number[]
+  // Exactly one of these carries rows, chosen by the `group` param; the other
+  // is an empty array.
   validators: ShredsRewardsRow[]
+  clients: ShredsClientRewardsRow[]
   // Total distinct validators matching the filter, before limit/offset.
   total: number
 }
 
 export interface ShredsRewardsParams {
   search?: string
-  sort?: 'validator_name' | 'activated_stake' | 'total_earned_2z' | 'immediately_claimable_2z'
+  sort?:
+    | 'validator_name'
+    | 'activated_stake'
+    | 'total_earned_2z'
+    | 'immediately_claimable_2z'
+    | 'client_name'
+    | 'validators'
   order?: 'asc' | 'desc'
   limit?: number
   offset?: number
+  // Client grouping ignores search, limit and offset: it returns one row per
+  // client that has earned, which no caller needs to page through.
+  group?: 'client'
 }
 
 export async function fetchShredsRewards(
@@ -7323,6 +7992,7 @@ export async function fetchShredsRewards(
   if (params.order) q.set('order', params.order)
   if (params.limit != null) q.set('limit', String(params.limit))
   if (params.offset != null) q.set('offset', String(params.offset))
+  if (params.group) q.set('group', params.group)
   const qs = q.toString()
   const res = await apiFetch(`/api/dz/shreds/rewards${qs ? `?${qs}` : ''}`)
   if (!res.ok) throw new Error('Failed to fetch shreds rewards')
@@ -7425,6 +8095,365 @@ export async function fetchHyperliquidScoreboard(
   const res = await apiFetch(`/api/dz/hyperliquid/scoreboard?${params}`)
   if (!res.ok) {
     throw new Error('Failed to fetch hyperliquid scoreboard')
+  }
+  return res.json()
+}
+
+export interface KalshiCompetitor {
+  feed: string
+  label: string
+  dz_win_pct: number
+  lead_p50_ms: number
+  lead_p95_ms: number
+  races: number
+}
+
+export interface KalshiNode {
+  measurement_node_id: string
+  location_code: string
+  dz_win_share_pct: number
+  total_races: number
+  competitors: KalshiCompetitor[]
+}
+
+export interface KalshiRace {
+  event_ts: string
+  symbol: string
+  location_code: string
+  winner_feed: string
+  winner_label: string
+  is_dz: boolean
+  runner_up_feed: string
+  runner_up_label: string
+  lead_ms: number
+}
+
+export interface KalshiFeedLatency {
+  feed: string
+  label: string
+  location_code: string
+  is_dz: boolean
+  p50_ms: number
+  p90_ms: number
+  p99_ms: number
+  samples: number
+}
+
+export interface KalshiPathLatency {
+  /** Sample count below which a row's percentiles are withheld and its count shown instead. */
+  min_samples: number
+  window: string
+  feeds: KalshiFeedLatency[]
+  generated_at: string
+}
+
+export interface KalshiScoreboardResponse {
+  window: string
+  symbol?: string
+  generated_at: string
+  dz_win_share_pct: number
+  total_races: number
+  /** Race count below which a win share or lead is withheld and the count shown instead. */
+  min_races: number
+  competitors: KalshiCompetitor[]
+  nodes: KalshiNode[]
+  recent_races: KalshiRace[]
+  prices?: Record<string, number>
+  path_latency?: KalshiPathLatency
+  unconfigured?: boolean
+}
+
+export async function fetchKalshiScoreboard(
+  window: string = '24h',
+  symbol?: string,
+): Promise<KalshiScoreboardResponse> {
+  const params = new URLSearchParams()
+  params.set('window', window)
+  if (symbol && symbol !== 'all') params.set('symbol', symbol)
+  const res = await apiFetch(`/api/dz/kalshi/scoreboard?${params}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch kalshi scoreboard')
+  }
+  return res.json()
+}
+
+export interface KalshiL2Lane {
+  source: string
+  label: string
+  category: string
+  channel_id: number
+  /** The address the datagrams were sent from: what makes a lane a channel instance rather than a
+   *  channel. Empty on a lane nothing was heard from. */
+  publisher_source_ip: string
+  location_code: string
+  measurement_node_id: string
+  messages: number
+  messages_per_sec: number
+  level_updates_per_sec: number
+  instruments: number
+  depth_p50: number
+  depth_p95: number
+  depth_max: number
+  gap_messages: number
+  gap_books: number
+  resets: number
+  clears: number
+  snapshot_cycles: number
+  seen: boolean
+  last_seen: string
+}
+
+export interface KalshiL2CoverageResponse {
+  generated_at: string
+  window_minutes: number
+  lanes: KalshiL2Lane[]
+}
+
+export async function fetchKalshiL2Coverage(): Promise<KalshiL2CoverageResponse> {
+  const res = await apiFetch('/api/dz/kalshi/l2-coverage')
+  if (!res.ok) {
+    throw new Error('Failed to fetch kalshi L2 coverage')
+  }
+  return res.json()
+}
+
+// Edge multicast overview: every multicast group carrying an edge service, grouped by feed.
+export interface EdgeMulticastRoleCounts {
+  total: number
+  active: number
+  idle: number
+  /** No counter row in the window — "cannot say", not "down". */
+  unknown: number
+  /** DoubleZero capture boxes. */
+  recorders: number
+  /** DoubleZero measurement/lab receivers that record nothing. */
+  internal_probes: number
+  /** DoubleZero-operated, kind not asserted: matched by owner wallet, which cannot say which. */
+  doublezero: number
+  /** Everyone else, including members nothing has classified. */
+  customers: number
+  /** How many of the classifications above are asserted by an operator row. */
+  class_asserted: number
+  /** How many are derived from the capture-host list or the operator-wallet list. */
+  class_derived: number
+}
+
+/** The DoubleZero device's own view of a publisher's BGP session. Not latency: no client-to-device
+ *  RTT exists in lake or in the telemetry mirror. */
+export interface EdgeMulticastBGPSession {
+  /** 'ESTABLISHED' | 'ACTIVE' | 'CONNECT' | 'IDLE'. */
+  state: string
+  /** established_transitions: a lifetime total on this device, never a rate. */
+  flaps: number
+  /** When the session last came up; absent when the device has never established it. */
+  established_at?: string
+  /** The telemetry sample this came from. */
+  observed_at: string
+}
+
+/** The smoothed BGP TCP RTT between a client box and its DoubleZero device, from the
+ *  serviceability User account via fact_dz_user_bgp_rtt. */
+export interface EdgeMulticastBGPRtt {
+  nanos: number
+  /** When the indexer first saw this report, not when the agent measured it. */
+  observed_at: string
+  /** The session state the same report carried. */
+  status: string
+}
+
+/** One publisher path measured against its redundant peers, at the recorders that saw both. */
+export interface EdgeMulticastPathParity {
+  /** (capture source, recording node) pairs where another path carried the same feed. */
+  compared: number
+  /** How many of those fell below the parity floor. */
+  behind: number
+  /** This path's message count over the best path's, at its worst pair. */
+  worst_ratio: number
+  worst_source?: string
+  worst_node?: string
+}
+
+/** One publisher of one group, as its own line — the grain the health verdict is taken at. */
+export interface EdgeMulticastPublisher {
+  user_pk: string
+  client_ip: string
+  dz_ip?: string
+  device_code?: string
+  tunnel_id: number
+  /** 'recorder' | 'internal_probe' | 'doublezero' | 'customer' — same tiers as the subscriber split. */
+  class: string
+  /** Measured send rate; null when nothing measured it. Upper bound when multi_group. */
+  bps: number | null
+  /** 'publishing' (at/above the floor) | 'thin' (non-zero, below it) | 'idle' | 'unknown'. */
+  status: string
+  /** This publisher's own verdict, worst-of its own signals: 'silent' | 'thin' | 'gapped' |
+   *  'stalled' | 'behind' | 'unrecorded' | 'unknown' | 'healthy'. BGP status is shown beside it, never folded
+   *  into it. */
+  health?: string
+  /** What the DEVICE says about this publisher's BGP session, from telemetry rather than the
+   *  ledger — distinct from bgp_status, and both are shown. Absent when the mirror has no row. */
+  bgp_session?: EdgeMulticastBGPSession
+  /** The client agent's own report of the round trip to its device — the only measurement of the
+   *  access path that exists. Written onchain on a status change or a ~6-hourly keepalive, so it
+   *  can be hours old; read it as a property of the path, not as a live signal. */
+  bgp_rtt?: EdgeMulticastBGPRtt
+  /** What the recorders received from this path, per second. Per GROUP, unlike bps, which is
+   *  per tunnel — the one delivery figure on the line that needs no caveat. */
+  msg_per_sec?: number
+  /** This path measured against the other paths of the same feed; absent when it had no peer. */
+  path_parity?: EdgeMulticastPathParity
+  /** Feeds several groups from one tunnel, so bps cannot be attributed to this group alone. */
+  multi_group: boolean
+  /** Ledger BGP session: 'up' | 'down' | 'unknown'. 'down' on a publisher is a fault. */
+  bgp_status?: string
+  observed_at?: string
+  /** This publisher's own recorded sequence series — the grain a series has, since one belongs to
+   *  one path. Absent unless a recorder wrote something from this publisher's address. */
+  sequence?: EdgeMulticastSequenceHealth
+}
+
+/** One recording node's view of one group on the application plane. */
+export interface EdgeMulticastCaptureNode {
+  node: string
+  /** Observations written down in the window. Comparable between nodes on this group only. */
+  samples: number
+  last_heard: string
+  /** samples / median(samples) over the group's nodes. */
+  share_of_median: number
+  /** Below the parity floor with enough peers to say so: this node is missing the feed. */
+  lagging: boolean
+}
+
+/** One recorded sequence series: one Channel ID from one source address at one recording node. */
+export interface EdgeMulticastChannelInstance {
+  /** The address the datagrams came from — the field that makes this a channel instance. */
+  publisher_source_ip?: string
+  capture_source: string
+  channel_id: number
+  node: string
+  location_code?: string
+  messages: number
+  /** Distinct books that gapped in the window — the fault count. Never gap_messages, which
+   *  scales with traffic rather than with reliability. */
+  gap_books: number
+  resets: number
+  snapshot_cycles: number
+  last_seen: string
+  /** 'ok' | 'gapped' | 'stalled'. */
+  status: string
+  /** Whether gap_books is a reading or an absence. False on the top-of-book plane, which has no
+   *  gap marker to count — an 'ok' there means "advancing", not "lost nothing". */
+  gaps_measured: boolean
+}
+
+/** Sequence health over a set of channel instances, worst-first: one publisher's own series on a
+ *  publisher line, the group's roll-up over all of them on the group. */
+export interface EdgeMulticastSequenceHealth {
+  status: string
+  /** Instances in each state. */
+  gapped: number
+  stalled: number
+  /** The same tally per publisher, on the group roll-up only. */
+  publishers?: number
+  publishers_gapped?: number
+  publishers_stalled?: number
+  /** Instances whose source address matched no publisher line, so they have no row of their own. */
+  unattributed?: number
+  /** Instances from a plane with no gap marker, whose 'ok' is the weaker "advancing" claim. */
+  gaps_unmeasured?: number
+  instances: EdgeMulticastChannelInstance[]
+}
+
+/** Per-line verdict tally for one group. The fields sum to the group's publisher total. */
+export interface EdgeMulticastPublisherVerdicts {
+  healthy: number
+  thin: number
+  gapped: number
+  stalled: number
+  behind: number
+  silent: number
+  /** Above the floor with no recorded series while peers on the group have one: missing coverage,
+   *  not a fault. */
+  unrecorded: number
+  unknown: number
+}
+
+export interface EdgeMulticastGroup {
+  pk: string
+  code: string
+  multicast_ip: string
+  status: string
+  max_bandwidth: number
+  /** MBP / MBO / TOP, from the code's suffix; absent when the group is not plane-split. */
+  plane?: string
+  publishers: EdgeMulticastRoleCounts
+  subscribers: EdgeMulticastRoleCounts
+  /** How many publisher lines landed in each verdict — a count of lines, not a verdict over them.
+   *  Tallied before the display cap, and what a collapsed group has in place of a badge.
+   *  Optional because page_cache rows outlive a deploy: a payload written before this field
+   *  existed, or one an old pod rewrites mid-rollout, arrives without it. */
+  publisher_verdicts?: EdgeMulticastPublisherVerdicts
+  /** Worst-first, capped server-side; publisher_lines_total is the count before the cap. */
+  publisher_lines: EdgeMulticastPublisher[]
+  publisher_lines_total: number
+  /** Publishers not clearing publisher_floor_bps, idle ones included. Counted over all of them. */
+  publishers_below_floor: number
+  /** Publishers measured at or above the floor. */
+  publishers_publishing: number
+  /** Per-node application-plane view; absent for a group no capture covers. */
+  capture_nodes?: EdgeMulticastCaptureNode[]
+  capture_nodes_lagging?: number
+  /** Roll-up of the group's recorded sequence series; absent unless a recorder runs the Edge wire
+   *  protocol here. The verdict itself is per publisher — see EdgeMulticastPublisher.sequence. */
+  sequence?: EdgeMulticastSequenceHealth
+  ingress_bps: number
+  /** Subscriber-side total. Not rendered: per-tunnel counters sum every group a subscriber joins. */
+  egress_bps: number
+  publishers_multi_group: number
+  /** Rates are per-tunnel upper bounds when set — a publisher feeds several groups. */
+  traffic_ambiguous: boolean
+  /** Newest rate bucket behind the row. The page computes the age — see EdgeMulticastGroup.ObservedAt. */
+  observed_at?: string
+  /** Newest application-plane observation: a message a recorder actually received. */
+  last_heard?: string
+  last_heard_table?: string
+  /** Capture sources folded into last_heard; >1 means one dead capture source may not move it. */
+  last_heard_capture_sources?: number
+  /** Publishers exist, counters read zero: the lane went quiet. */
+  silent: boolean
+  /**
+   * Traffic verdict over two per-member checks — every publisher above the floor, every recording
+   * node hearing its share: 'healthy' | 'thin' | 'skewed' | 'silent' | 'unknown' | '' (none).
+   */
+  health: string
+  /** Per-member control-plane reconciliation breakdown. Does not set `health`. */
+  health_counts: MulticastHealthStatusCounts
+}
+
+export interface EdgeMulticastService {
+  code: string
+  managed: boolean
+  metro_count: number
+  groups: EdgeMulticastGroup[]
+}
+
+export interface EdgeMulticastResponse {
+  generated_at: string
+  rate_grain_minutes: number
+  /** The per-publisher floor the verdict applies, so the UI never hardcodes a second copy. */
+  publisher_floor_bps: number
+  /** When the sequence numbers were computed — up to ten minutes older than generated_at, since
+   *  they are folded from the L2 coverage refresher's cache. Absent when no group has any. */
+  sequence_as_of?: string
+  /** False when no capture table was queryable — the column is hidden rather than blank. */
+  last_heard_available: boolean
+  services: EdgeMulticastService[]
+}
+
+export async function fetchEdgeMulticast(): Promise<EdgeMulticastResponse> {
+  const res = await apiFetch('/api/dz/edge/multicast')
+  if (!res.ok) {
+    throw new Error('Failed to fetch edge multicast overview')
   }
   return res.json()
 }

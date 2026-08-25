@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/malbeclabs/lake/agent/pkg/workflow"
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 	"github.com/slack-go/slack/slackevents"
 	slackmdgo "github.com/snormore/slackmd/slackgo"
 )
@@ -35,6 +36,10 @@ type Processor struct {
 	// Per-thread locks to ensure messages in the same thread are processed sequentially
 	threadLocks   map[string]*threadLockEntry
 	threadLocksMu sync.Mutex
+
+	// chatErrs escalates consecutive ChatStream failures so a sustained agent
+	// outage still pages even when individual causes classify transient.
+	chatErrs logger.Escalator
 }
 
 // threadLockEntry holds a mutex and tracks when it was last used
@@ -413,7 +418,13 @@ func (p *Processor) ProcessMessage(
 	result, err := p.chatRunner.ChatStream(ctx, txt, history, sessionID, onProgress)
 	if err != nil {
 		AgentErrorsTotal.WithLabelValues("workflow", "api").Inc()
-		p.log.Error("API error", "error", err, "message_ts", ev.TimeStamp, "envelope_id", eventID)
+		if logger.IsCanceled(err) {
+			// Caller/shutdown cancellation says nothing about agent health —
+			// warn without counting toward escalation.
+			p.log.Warn("API error", "error", err, "message_ts", ev.TimeStamp, "envelope_id", eventID)
+		} else {
+			p.chatErrs.Fail(p.log, "chat", "API error", "error", err, "message_ts", ev.TimeStamp, "envelope_id", eventID)
+		}
 
 		p.MarkResponded(messageKey)
 
@@ -428,6 +439,7 @@ func (p *Processor) ProcessMessage(
 		MessagesPostedTotal.WithLabelValues("error", "api").Inc()
 		return
 	}
+	p.chatErrs.Reset("chat")
 
 	reply := strings.TrimSpace(result.Answer)
 	if reply == "" {

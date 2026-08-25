@@ -28,8 +28,10 @@ import { TopologyPage } from '@/components/topology-page'
 import { PathCalculatorPage } from '@/components/path-calculator-page'
 import { RedundancyReportPage } from '@/components/redundancy-report-page'
 import { MetroConnectivityPage } from '@/components/metro-connectivity-page'
+import { NetworkHealthReportingPage } from '@/components/network-health-reporting-page'
 import { DzVsInternetPage } from '@/components/dz-vs-internet-page'
 import { PathLatencyPage } from '@/components/path-latency-page'
+import { RoutesPage } from '@/components/routes-page'
 import { LinkLatencyPage } from '@/pages/link-latency-page'
 import { TrafficPage } from '@/pages/traffic-page'
 import { TrafficDashboardPage } from '@/pages/traffic-dashboard-page'
@@ -63,12 +65,14 @@ import { GeolocProbesPage } from '@/components/geoloc-probes-page'
 import { GeolocUsersPage } from '@/components/geoloc-users-page'
 import { GeolocExplorerPage } from '@/components/geoloc-explorer-page'
 import { ShredsSeatsPage, ShredsFundersPage, ShredsDevicesPage, ShredsEscrowEventsPage } from '@/components/shreds-page'
-import { ShredsEconomicsPage } from '@/components/shreds-economics-page'
 import { ShredsRewardsPage } from '@/components/shreds-rewards-page'
 import { ShredsRewardsDetailPage } from '@/components/shreds-rewards-detail-page'
 import { PublisherCheckPage } from './components/publisher-check-page'
 import { EdgeScoreboardPage } from './components/edge-scoreboard-page'
 import { HyperliquidScoreboardPage } from './components/hyperliquid-scoreboard-page'
+import { KalshiScoreboardPage } from './components/kalshi-scoreboard-page'
+import { KalshiL2Page } from './components/kalshi-l2-page'
+import { EdgeMulticastPage } from './components/edge-multicast-page'
 import { PermissionAuditPage } from './components/permission-audit-page'
 import { MulticastGroupDetailPage } from '@/components/multicast-group-detail-page'
 import { AccessPassesPage } from '@/components/access-passes-page'
@@ -661,6 +665,7 @@ function AppContent() {
             <Route path="/performance/dz-vs-internet" element={<DzVsInternetPage />} />
             <Route path="/performance/link-latency" element={<LinkLatencyPage />} />
             <Route path="/performance/path-latency" element={<PathLatencyPage />} />
+            <Route path="/performance/routes" element={<RoutesPage />} />
 
             {/* Traffic routes */}
             <Route path="/traffic" element={<Navigate to="/traffic/overview" replace />} />
@@ -688,6 +693,7 @@ function AppContent() {
             <Route path="/ops/incidents/links" element={<IncidentsPage />} />
             <Route path="/ops/incidents/devices" element={<IncidentsPage />} />
             <Route path="/ops/maintenance" element={<MaintenanceCalendarPage />} />
+            <Route path="/ops/network-health-reporting" element={<NetworkHealthReportingPage />} />
 
 
             {/* Settings */}
@@ -734,13 +740,18 @@ function AppContent() {
             <Route path="/dz/shreds/funders" element={<ShredsFundersPage />} />
             <Route path="/dz/shreds/devices" element={<ShredsDevicesPage />} />
             <Route path="/dz/shreds/activity" element={<ShredsEscrowEventsPage />} />
-            <Route path="/dz/shreds/economics" element={<ShredsEconomicsPage />} />
+            {/* Economics page hidden for now — see shreds-economics-page.tsx */}
+            <Route path="/dz/shreds/economics" element={<Navigate to="/dz/shreds/scoreboard" replace />} />
             <Route path="/dz/shreds/rewards" element={<ShredsRewardsPage />} />
             <Route path="/dz/shreds/rewards/:nodeId" element={<ShredsRewardsDetailPage />} />
             {/* Subscribe page hidden for now — see shreds-subscribe-page.tsx */}
             <Route path="/dz/edge/scoreboard" element={<Navigate to="/dz/shreds/scoreboard" replace />} />
+            <Route path="/dz/edge/multicast" element={<EdgeMulticastPage />} />
             <Route path="/dz/hyperliquid" element={<Navigate to="/dz/hyperliquid/scoreboard" replace />} />
             <Route path="/dz/hyperliquid/scoreboard" element={<HyperliquidScoreboardPage />} />
+            <Route path="/dz/kalshi" element={<Navigate to="/dz/kalshi/scoreboard" replace />} />
+            <Route path="/dz/kalshi/scoreboard" element={<KalshiScoreboardPage />} />
+            <Route path="/dz/kalshi/l2" element={<KalshiL2Page />} />
             <Route path="/dz/permission-audit" element={<PermissionAuditPage />} />
 
             {/* Geolocation routes */}

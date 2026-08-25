@@ -34,7 +34,7 @@ func New(cfg Config) (*Server, error) {
 	mux.Handle("/healthz", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		if _, err := w.Write([]byte("ok\n")); err != nil {
-			s.log.Error("failed to write healthz response", "error", err)
+			s.log.Warn("failed to write healthz response", "error", err)
 		}
 	}))
 	mux.Handle("/readyz", http.HandlerFunc(s.readyzHandler))
@@ -89,14 +89,14 @@ func (s *Server) readyzHandler(w http.ResponseWriter, r *http.Request) {
 		s.log.Debug("readyz: indexer not ready")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		if _, err := w.Write([]byte("indexer not ready\n")); err != nil {
-			s.log.Error("failed to write readyz response", "error", err)
+			s.log.Warn("failed to write readyz response", "error", err)
 		}
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write([]byte("ok\n")); err != nil {
-		s.log.Error("failed to write readyz response", "error", err)
+		s.log.Warn("failed to write readyz response", "error", err)
 	}
 }
 
@@ -104,6 +104,6 @@ func (s *Server) versionHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(s.cfg.VersionInfo); err != nil {
-		s.log.Error("failed to write version response", "error", err)
+		s.log.Warn("failed to write version response", "error", err)
 	}
 }

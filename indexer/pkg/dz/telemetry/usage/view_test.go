@@ -1,7 +1,11 @@
 package dztelemusage
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,6 +137,69 @@ func TestLake_TelemetryUsage_View_ViewConfig_Validate(t *testing.T) {
 		err := cfg.Validate()
 		require.NoError(t, err)
 		require.Equal(t, 1*time.Hour, cfg.QueryWindow)
+	})
+
+	t.Run("returns error when query chunk defeats the baseline cache", func(t *testing.T) {
+		t.Parallel()
+		mockDB := testClient(t)
+
+		cfg := ViewConfig{
+			Logger:          laketesting.NewLogger(),
+			ClickHouse:      mockDB,
+			InfluxDB:        &mockInfluxDBClient{},
+			Bucket:          "test-bucket",
+			RefreshInterval: time.Second,
+			// refreshOverlap (5m) + 2×10m = 25m ≥ baselineCacheMaxLag (20m): the
+			// capped-refresh lag must stay strictly below the cache guard's
+			// backward bound.
+			QueryChunk: 10 * time.Minute,
+		}
+		err := cfg.Validate()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "too large for the baseline cache")
+	})
+
+	// The direction that actually breaks the activity deadline. A chunk below
+	// refreshOverlap splits a capped refresh into 4+ Flux sub-queries — 4m gives
+	// 4×4m + 2m = 18m against the 15m deadline — while passing every other check
+	// here, and WorstCaseRefreshFluxBudget (computed at the shipping chunk) would
+	// not see it.
+	t.Run("rejects a query chunk below the overlap", func(t *testing.T) {
+		t.Parallel()
+		mockDB := testClient(t)
+
+		cfg := ViewConfig{
+			Logger:          laketesting.NewLogger(),
+			ClickHouse:      mockDB,
+			InfluxDB:        &mockInfluxDBClient{},
+			Bucket:          "test-bucket",
+			RefreshInterval: time.Second,
+			QueryChunk:      4 * time.Minute,
+		}
+		err := cfg.Validate()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "must be at least refreshOverlap")
+	})
+
+	t.Run("returns error when query window defeats the empty-span age-out", func(t *testing.T) {
+		t.Parallel()
+		mockDB := testClient(t)
+
+		cfg := ViewConfig{
+			Logger:          laketesting.NewLogger(),
+			ClickHouse:      mockDB,
+			InfluxDB:        &mockInfluxDBClient{},
+			Bucket:          "test-bucket",
+			RefreshInterval: time.Second,
+			// The age-out fires at watermark age > QueryWindow + one capped
+			// span (10m with the default chunk), but the horizon skip
+			// intercepts at 24h first: 23h55m leaves the age-out unreachable,
+			// so a genuine source gap would pin ingest at the horizon forever.
+			QueryWindow: 24*time.Hour - 5*time.Minute,
+		}
+		err := cfg.Validate()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "must stay below maxCatchupHorizon")
 	})
 
 	t.Run("sets default clock when nil", func(t *testing.T) {
@@ -1448,4 +1515,1162 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 		require.NotNil(t, usage[2].InOctetsDelta)
 		require.Equal(t, int64(1000200-1000100), *usage[2].InOctetsDelta) // 100, not 500200
 	})
+}
+
+// captureIntfCounterWindows returns a View whose InfluxDB mock records the
+// [start, end) of every QueryIntfCounters sub-query so tests can assert the
+// span a refresh actually queried. The mock returns no rows, so Refresh
+// completes without exercising the convert/insert path (not what these tests
+// cover).
+func captureIntfCounterWindows(t *testing.T, clock clockwork.Clock, chunk time.Duration) (*View, *[][2]time.Time) {
+	t.Helper()
+	windows := &[][2]time.Time{}
+	influx := &mockInfluxDBClient{
+		queryIntfCountersFunc: func(_ context.Context, s, e time.Time) ([]map[string]any, error) {
+			*windows = append(*windows, [2]time.Time{s, e})
+			return nil, nil
+		},
+	}
+	view, err := NewView(ViewConfig{
+		Logger:          laketesting.NewLogger(),
+		Clock:           clock,
+		ClickHouse:      testClient(t),
+		InfluxDB:        influx,
+		Bucket:          "test-bucket",
+		RefreshInterval: time.Second,
+		QueryWindow:     time.Hour,
+		QueryChunk:      chunk,
+	})
+	require.NoError(t, err)
+	return view, windows
+}
+
+// seedMaxTime inserts a single interface-counter row at event_ts=ts so the next
+// refresh reads ts as maxTime (the ingest watermark).
+func seedMaxTime(t *testing.T, v *View, ts time.Time) {
+	t.Helper()
+	dev, intf := "seed-device", "eth0"
+	err := v.store.InsertInterfaceUsage(context.Background(), []InterfaceUsage{{
+		Time:     ts.UTC(),
+		DevicePK: &dev,
+		Intf:     &intf,
+	}})
+	require.NoError(t, err)
+}
+
+// span returns the overall [start, end) covered by the recorded sub-query
+// windows (first start, last end).
+func span(t *testing.T, windows [][2]time.Time) (time.Time, time.Time) {
+	t.Helper()
+	require.NotEmpty(t, windows, "expected at least one InfluxDB sub-query")
+	return windows[0][0], windows[len(windows)-1][1]
+}
+
+// Regression for #708: an incremental refresh (maxTime inside the query window)
+// must query PAST maxTime, not stop at it. The catch-up cap is anchored at
+// maxTime, so the span is refreshOverlap behind maxTime plus one QueryChunk of
+// new data. On the buggy code the cap was anchored at queryStart (= maxTime −
+// overlap) and equalled the overlap, so queryEnd landed exactly at maxTime and
+// no new data was ever ingested.
+func TestLake_TelemetryUsage_View_Refresh_IncrementalQueriesPastMaxTime(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClock()
+	now := clock.Now()
+	// event_ts is DateTime64(3); align the seed so it round-trips exactly.
+	// 30m stale: inside the 1h window, far enough behind that the catch-up cap
+	// binds.
+	maxTime := now.Add(-30 * time.Minute).Truncate(time.Millisecond)
+
+	view, windows := captureIntfCounterWindows(t, clock, chunk)
+	seedMaxTime(t, view, maxTime)
+
+	_, err := view.Refresh(t.Context())
+	require.NoError(t, err)
+
+	start, end := span(t, *windows)
+	require.Equal(t, maxTime.Add(-refreshOverlap).UTC(), start.UTC(),
+		"refresh must re-read the overlap behind maxTime")
+	require.Equal(t, maxTime.Add(maxCatchupChunks*chunk).UTC(), end.UTC(),
+		"refresh must query maxCatchupChunks PAST maxTime (the #708 regression)")
+	require.True(t, end.After(maxTime), "queryEnd must advance past maxTime")
+	// overlap + two chunks = 3 chunk-sized sub-queries.
+	require.Len(t, *windows, 3)
+}
+
+// Successive refreshes must make monotonic forward progress — the sawtooth is
+// gone. A refresh behind by more than the cap advances exactly the capped two
+// chunks; once within the cap it reads through to now. Re-seeding the
+// watermark to the prior queryEnd stands in for the insert that advances
+// maxTime in production.
+func TestLake_TelemetryUsage_View_Refresh_AdvancesMonotonically(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClock()
+	now := clock.Now()
+	// event_ts is DateTime64(3); align the seed so it round-trips exactly.
+	// 12m stale: beyond the 10m cap, so the first refresh is capped.
+	maxTime := now.Add(-12 * time.Minute).Truncate(time.Millisecond)
+
+	view, windows := captureIntfCounterWindows(t, clock, chunk)
+	seedMaxTime(t, view, maxTime)
+
+	_, err := view.Refresh(t.Context())
+	require.NoError(t, err)
+	_, end1 := span(t, *windows)
+	require.Equal(t, maxTime.Add(maxCatchupChunks*chunk).UTC(), end1.UTC(),
+		"a capped refresh advances exactly maxCatchupChunks chunks")
+
+	// Simulate the insert advancing the watermark to the first refresh's end.
+	*windows = nil
+	seedMaxTime(t, view, end1)
+
+	_, err = view.Refresh(t.Context())
+	require.NoError(t, err)
+	_, end2 := span(t, *windows)
+	require.Equal(t, now.UTC(), end2.UTC(), "within the cap, a refresh reads through to now")
+	require.True(t, end2.After(end1), "progress must be monotonic")
+}
+
+// The catch-up cap (the #665 memory bound) is preserved when maxTime is older
+// than the query window or absent: the span covers exactly maxCatchupChunks
+// chunks of new data, regardless of how far behind maxTime is. Since #718 a
+// maxTime older than the query window (but within maxCatchupHorizon) anchors
+// the catch-up at maxTime itself — the old jump to the window start silently
+// dropped [maxTime, now−QueryWindow).
+func TestLake_TelemetryUsage_View_Refresh_CatchupCapPreserved(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+
+	t.Run("maxTime older than query window", func(t *testing.T) {
+		t.Parallel()
+		clock := clockwork.NewFakeClock()
+		now := clock.Now()
+		// Outside the 1h query window, inside the 24h horizon.
+		maxTime := now.Add(-90 * time.Minute).Truncate(time.Millisecond)
+
+		view, windows := captureIntfCounterWindows(t, clock, chunk)
+		seedMaxTime(t, view, maxTime)
+
+		_, err := view.Refresh(t.Context())
+		require.NoError(t, err)
+
+		start, end := span(t, *windows)
+		require.Equal(t, maxTime.Add(-refreshOverlap).UTC(), start.UTC(),
+			"catch-up starts at the watermark, not the window start (the #718 data loss)")
+		require.Equal(t, maxTime.Add(maxCatchupChunks*chunk).UTC(), end.UTC(),
+			"catch-up ingests exactly maxCatchupChunks chunks")
+		// overlap + two chunks = 3 chunk-sized sub-queries.
+		require.Len(t, *windows, 3)
+	})
+
+	t.Run("empty table", func(t *testing.T) {
+		t.Parallel()
+		clock := clockwork.NewFakeClock()
+		now := clock.Now()
+		windowStart := now.Add(-time.Hour)
+
+		view, windows := captureIntfCounterWindows(t, clock, chunk)
+
+		_, err := view.Refresh(t.Context())
+		require.NoError(t, err)
+
+		start, end := span(t, *windows)
+		require.Equal(t, windowStart.UTC(), start.UTC())
+		require.Equal(t, windowStart.Add(maxCatchupChunks*chunk).UTC(), end.UTC())
+	})
+}
+
+// When maxTime + QueryChunk is beyond now, the refresh must clamp queryEnd to
+// now rather than overshooting into the future.
+func TestLake_TelemetryUsage_View_Refresh_UncappedTailClampsToNow(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClock()
+	now := clock.Now()
+	maxTime := now.Add(-3 * time.Minute) // maxTime + 5m chunk > now
+
+	view, windows := captureIntfCounterWindows(t, clock, chunk)
+	seedMaxTime(t, view, maxTime)
+
+	_, err := view.Refresh(t.Context())
+	require.NoError(t, err)
+
+	_, end := span(t, *windows)
+	require.Equal(t, now.UTC(), end.UTC(), "queryEnd must clamp to now, never past it")
+}
+
+// Regression for #713: while catching up (maxTime far behind now) the refresh
+// must keep the overlap re-read AND extend the forward cap, covering
+// [maxTime−overlap, maxTime+2·chunk). The overlap cannot be traded for new
+// data even though its rows dedup out: the re-read seeds non-sparse counter
+// baselines for keys whose latest row is behind the global maxTime (see
+// TestLake_TelemetryUsage_View_Refresh_CatchupEmitsFirstRowOfLaggingKey).
+// Convergence comes from the second chunk instead.
+func TestLake_TelemetryUsage_View_Refresh_CatchupKeepsOverlapAndExtendsCap(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClock()
+	now := clock.Now()
+	// 30m stale: inside the 1h query window, far beyond the 10m cap.
+	maxTime := now.Add(-30 * time.Minute).Truncate(time.Millisecond)
+
+	view, windows := captureIntfCounterWindows(t, clock, chunk)
+	seedMaxTime(t, view, maxTime)
+
+	_, err := view.Refresh(t.Context())
+	require.NoError(t, err)
+
+	start, end := span(t, *windows)
+	require.Equal(t, maxTime.Add(-refreshOverlap).UTC(), start.UTC(),
+		"catch-up must keep the overlap re-read — it seeds non-sparse baselines and catches late arrivals")
+	require.Equal(t, maxTime.Add(maxCatchupChunks*chunk).UTC(), end.UTC(),
+		"catch-up must ingest maxCatchupChunks chunks past maxTime")
+	// overlap + two chunks = 3 chunk-sized sub-queries.
+	require.Len(t, *windows, 3)
+}
+
+// The throughput inequality from #713: catch-up only converges if
+// net_gain / cycle_time > 1 at a MODELED cycle time, not just per-refresh
+// advancement. Model the prod incident: watermark ~58m stale, each refresh
+// costs ~5m of wall clock (the measured cadence). With the 2-chunk cap the net
+// gain is 10m per 5m cycle, so lag must pay down ~5m per cycle until the cap
+// no longer binds, then hold at the refresh cadence. On the buggy code (1-chunk
+// cap) net gain equalled cycle time and this loop stayed pinned at ~58m
+// forever.
+func TestLake_TelemetryUsage_View_Refresh_CatchupConvergesUnderModeledCycleTime(t *testing.T) {
+	t.Parallel()
+
+	const (
+		chunk     = 5 * time.Minute
+		cycleTime = 5 * time.Minute // measured prod refresh cadence (#713)
+	)
+	clock := clockwork.NewFakeClock()
+	maxTime := clock.Now().Add(-58 * time.Minute).Truncate(time.Millisecond)
+
+	view, windows := captureIntfCounterWindows(t, clock, chunk)
+	seedMaxTime(t, view, maxTime)
+
+	// 58m → converged at −5m net per capped cycle needs ~10 cycles; run a few
+	// more to verify lag holds (does not re-grow) once the cap stops binding.
+	for cycle := 0; cycle < 13; cycle++ {
+		*windows = nil
+		_, err := view.Refresh(t.Context())
+		require.NoError(t, err)
+
+		_, end := span(t, *windows)
+		require.True(t, end.After(maxTime), "watermark must advance every cycle (cycle %d)", cycle)
+
+		// Stand-in for the insert advancing maxTime to the ingested end.
+		maxTime = end
+		seedMaxTime(t, view, maxTime)
+		clock.Advance(cycleTime)
+	}
+
+	lag := clock.Now().Sub(maxTime)
+	require.LessOrEqual(t, lag, cycleTime,
+		"lag must converge to the refresh cadence and hold, got %s", lag)
+}
+
+// Regression for #718: a watermark gap larger than QueryWindow (but within
+// maxCatchupHorizon) must be caught up, not skipped. On the buggy code
+// queryStart jumped to now−QueryWindow and [maxTime, now−QueryWindow) was
+// permanently dropped — staging lost ~30% of its interface-counter rows this
+// way. Model a 2h ingest outage at the measured prod cycle time and assert the
+// reads cover the whole gap contiguously until lag converges. The source has a
+// row every minute across the whole timeline, so every span yields inserts:
+// usage is never empty, sourceEmptyThrough is never set, and progress is
+// carried by the real ClickHouse watermark alone.
+func TestLake_TelemetryUsage_View_Refresh_GapBeyondQueryWindowIsCaughtUpNotSkipped(t *testing.T) {
+	t.Parallel()
+
+	const (
+		chunk     = 5 * time.Minute
+		cycleTime = 5 * time.Minute // measured prod refresh cadence (#713)
+	)
+	clock := clockwork.NewFakeClockAt(time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC))
+	maxTime := clock.Now().Add(-2 * time.Hour)
+	const dev, intf = "gap-device", "eth0"
+
+	windows := &[][2]time.Time{}
+	influx := &mockInfluxDBClient{
+		queryIntfCountersFunc: func(_ context.Context, s, e time.Time) ([]map[string]any, error) {
+			*windows = append(*windows, [2]time.Time{s, e})
+			var out []map[string]any
+			for ts, k := maxTime.Add(-time.Hour), int64(0); ts.Before(e); ts, k = ts.Add(time.Minute), k+1 {
+				if !ts.Before(s) {
+					out = append(out, map[string]any{
+						"time":       ts.UTC().Format(time.RFC3339Nano),
+						"dzd_pubkey": dev,
+						"intf":       intf,
+						"in-octets":  1000 + k,
+					})
+				}
+			}
+			return out, nil
+		},
+	}
+	view, err := NewView(ViewConfig{
+		Logger:          laketesting.NewLogger(),
+		Clock:           clock,
+		ClickHouse:      testClient(t),
+		InfluxDB:        influx,
+		Bucket:          "test-bucket",
+		RefreshInterval: time.Second,
+		QueryWindow:     time.Hour,
+		QueryChunk:      chunk,
+	})
+	require.NoError(t, err)
+	// The row at maxTime (minute 60 on the mock's grid) is already written —
+	// it defines the ingest watermark the outage left behind.
+	seedUsageRow(t, view, dev, intf, maxTime, 1060)
+
+	prevEnd := maxTime
+	// A capped cycle advances the watermark ~9m (last 1m-grid row inside the
+	// 10m cap) while the clock advances 5m, so 120m of lag pays down ~4m per
+	// cycle: ~28 capped cycles, then a few more to verify lag holds once the
+	// cap stops binding.
+	for cycle := 0; cycle < 33; cycle++ {
+		*windows = nil
+		_, err := view.Refresh(t.Context())
+		require.NoError(t, err)
+
+		start, end := span(t, *windows)
+		require.False(t, start.After(prevEnd),
+			"cycle %d: read must start at or before the previous end — a later start is a silently skipped span", cycle)
+		require.True(t, end.After(prevEnd), "cycle %d: watermark must advance", cycle)
+
+		prevEnd = end
+		clock.Advance(cycleTime)
+	}
+
+	lag := clock.Now().Sub(prevEnd)
+	require.LessOrEqual(t, lag, cycleTime,
+		"a 2h gap must fully converge to the refresh cadence, got lag %s", lag)
+}
+
+// The catch-up divergence WARN must mean "cycles are ingesting rows but lag
+// still is not decreasing" — a genuine throughput problem (cycle time at or
+// above the capped span). A source outage also grows lag on capped cycles, but
+// with the opposite cause (no rows, cheapest cycles there are) and a separate
+// bound (the sourceEmptyThrough age-out), so empty cycles must not fire it.
+func TestLake_TelemetryUsage_View_Refresh_CatchupDivergenceWarn(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	const warnMsg = "catch-up lag is not decreasing"
+
+	newViewWithLogBuffer := func(t *testing.T, clock clockwork.Clock, influx InfluxDBClient) (*View, *bytes.Buffer) {
+		t.Helper()
+		var logBuf bytes.Buffer
+		view, err := NewView(ViewConfig{
+			Logger:          slog.New(slog.NewTextHandler(&logBuf, nil)),
+			Clock:           clock,
+			ClickHouse:      testClient(t),
+			InfluxDB:        influx,
+			Bucket:          "test-bucket",
+			RefreshInterval: time.Second,
+			QueryWindow:     time.Hour,
+			QueryChunk:      chunk,
+		})
+		require.NoError(t, err)
+		return view, &logBuf
+	}
+
+	t.Run("fires when ingesting cycles cannot pay lag down", func(t *testing.T) {
+		t.Parallel()
+		clock := clockwork.NewFakeClockAt(time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC))
+		maxTime := clock.Now().Add(-30 * time.Minute)
+		const dev, intf = "slow-device", "eth0"
+
+		// Row-per-minute source: every capped cycle ingests rows, but a 15m
+		// cycle time exceeds the 10m capped span so lag grows every cycle.
+		influx := &mockInfluxDBClient{
+			queryIntfCountersFunc: func(_ context.Context, s, e time.Time) ([]map[string]any, error) {
+				var out []map[string]any
+				for ts, k := maxTime.Add(-time.Hour), int64(0); ts.Before(e); ts, k = ts.Add(time.Minute), k+1 {
+					if !ts.Before(s) {
+						out = append(out, map[string]any{
+							"time":       ts.UTC().Format(time.RFC3339Nano),
+							"dzd_pubkey": dev,
+							"intf":       intf,
+							"in-octets":  1000 + k,
+						})
+					}
+				}
+				return out, nil
+			},
+		}
+		view, logBuf := newViewWithLogBuffer(t, clock, influx)
+		seedUsageRow(t, view, dev, intf, maxTime, 1060)
+
+		_, err := view.Refresh(t.Context())
+		require.NoError(t, err)
+		require.NotContains(t, logBuf.String(), warnMsg,
+			"the first capped cycle has no previous lag to compare against")
+
+		clock.Advance(15 * time.Minute)
+		_, err = view.Refresh(t.Context())
+		require.NoError(t, err)
+		require.Contains(t, logBuf.String(), warnMsg,
+			"consecutive ingesting capped cycles with growing lag must WARN")
+	})
+
+	t.Run("stays quiet through a source outage", func(t *testing.T) {
+		t.Parallel()
+		clock := clockwork.NewFakeClock()
+		maxTime := clock.Now().Add(-30 * time.Minute).Truncate(time.Millisecond)
+
+		// Empty source, fast cycles: every span is capped and anchored at the
+		// watermark, lag grows by the cycle time each cycle — for the wrong
+		// reason (no rows), so the WARN must not fire.
+		view, logBuf := newViewWithLogBuffer(t, clock, &mockInfluxDBClient{})
+		seedMaxTime(t, view, maxTime)
+
+		for cycle := 0; cycle < 3; cycle++ {
+			_, err := view.Refresh(t.Context())
+			require.NoError(t, err)
+			clock.Advance(5 * time.Minute)
+		}
+		require.NotContains(t, logBuf.String(), warnMsg,
+			"empty cycles say nothing about cycle-time throughput and must not feed the divergence comparison")
+	})
+}
+
+// The only remaining skip-ahead (#718): a watermark older than
+// maxCatchupHorizon jumps to now−QueryWindow — logging the dropped span at
+// ERROR — and the capped read proceeds from the window start.
+func TestLake_TelemetryUsage_View_Refresh_SkipsOnlyBeyondCatchupHorizon(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClock()
+	now := clock.Now()
+	windowStart := now.Add(-time.Hour)
+
+	view, windows := captureIntfCounterWindows(t, clock, chunk)
+	seedMaxTime(t, view, now.Add(-maxCatchupHorizon-time.Hour).Truncate(time.Millisecond)) // 25h stale
+
+	_, err := view.Refresh(t.Context())
+	require.NoError(t, err)
+
+	start, end := span(t, *windows)
+	require.Equal(t, windowStart.UTC(), start.UTC(),
+		"beyond the horizon the refresh skips to the window start")
+	require.Equal(t, windowStart.Add(maxCatchupChunks*chunk).UTC(), end.UTC(),
+		"the capped span still binds after the skip")
+	require.Len(t, *windows, maxCatchupChunks)
+}
+
+// Removing the jump (#718) must not let a genuine source data gap pin
+// catch-up: a capped span that returned zero rows AND has aged out of
+// QueryWindow held nothing for the full late-arrival window, so the next
+// refresh anchors past it instead of re-reading the same span forever
+// (maxTime only advances on insert).
+func TestLake_TelemetryUsage_View_Refresh_EmptyCappedSpanAdvancesAnchor(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClock()
+	now := clock.Now()
+	// 2h stale: the capped span [maxTime−5m, maxTime+10m) ends well before
+	// now−QueryWindow (1h), so it has aged out of the late-arrival window.
+	maxTime := now.Add(-2 * time.Hour).Truncate(time.Millisecond)
+
+	view, windows := captureIntfCounterWindows(t, clock, chunk) // mock returns zero rows
+	seedMaxTime(t, view, maxTime)
+
+	_, err := view.Refresh(t.Context())
+	require.NoError(t, err)
+	_, end1 := span(t, *windows)
+	require.Equal(t, maxTime.Add(maxCatchupChunks*chunk).UTC(), end1.UTC())
+
+	// maxTime is unchanged (nothing was inserted), but the aged-out capped
+	// span was proven empty — the next refresh must anchor at its end, not
+	// re-read it.
+	*windows = nil
+	_, err = view.Refresh(t.Context())
+	require.NoError(t, err)
+
+	start2, end2 := span(t, *windows)
+	require.Equal(t, end1.Add(-refreshOverlap).UTC(), start2.UTC(),
+		"next refresh anchors at the proven-empty span's end (minus the standard overlap)")
+	require.Equal(t, end1.Add(maxCatchupChunks*chunk).UTC(), end2.UTC(),
+		"gap traversal proceeds one capped span per cycle")
+}
+
+// A capped span that is empty but still within QueryWindow must NOT advance
+// the anchor: it may only be empty *yet* (source stall), and a writer that
+// replays buffered data with past timestamps within QueryWindow must lose
+// nothing. The span is re-read every cycle until it ages out.
+func TestLake_TelemetryUsage_View_Refresh_EmptyYoungCappedSpanKeepsAnchor(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClock()
+	now := clock.Now()
+	// 30m stale: capped (beyond the 10m cap) but the span end (maxTime+10m =
+	// now−20m) is still inside the 1h late-arrival window.
+	maxTime := now.Add(-30 * time.Minute).Truncate(time.Millisecond)
+
+	view, windows := captureIntfCounterWindows(t, clock, chunk)
+	seedMaxTime(t, view, maxTime)
+
+	_, err := view.Refresh(t.Context())
+	require.NoError(t, err)
+
+	*windows = nil
+	_, err = view.Refresh(t.Context())
+	require.NoError(t, err)
+
+	start2, _ := span(t, *windows)
+	require.Equal(t, maxTime.Add(-refreshOverlap).UTC(), start2.UTC(),
+		"an empty span still within QueryWindow must be re-read, not skipped — buffered data may yet be replayed into it")
+}
+
+// The anchor advance keys on zero INGESTIBLE rows, not zero raw rows: an
+// aged-out capped span whose only rows are overlap re-reads that dedup out
+// (already written) produces nothing to insert and must still advance —
+// otherwise the pin the advance exists to break would persist whenever the
+// overlap contains data.
+func TestLake_TelemetryUsage_View_Refresh_DedupedOnlyAgedSpanAdvancesAnchor(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClockAt(time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC))
+	now := clock.Now()
+	maxTime := now.Add(-2 * time.Hour) // aged out of the 1h QueryWindow
+	const dev, intf = "dedup-device", "eth0"
+
+	// InfluxDB holds only the row a previous refresh already wrote; the
+	// overlap re-read returns it and it dedups out.
+	windows := &[][2]time.Time{}
+	influx := &mockInfluxDBClient{
+		queryIntfCountersFunc: func(_ context.Context, s, e time.Time) ([]map[string]any, error) {
+			*windows = append(*windows, [2]time.Time{s, e})
+			if !maxTime.Before(s) && maxTime.Before(e) {
+				return []map[string]any{{
+					"time":       maxTime.UTC().Format(time.RFC3339Nano),
+					"dzd_pubkey": dev,
+					"intf":       intf,
+					"in-octets":  int64(1000),
+				}}, nil
+			}
+			return nil, nil
+		},
+	}
+	view, err := NewView(ViewConfig{
+		Logger:          laketesting.NewLogger(),
+		Clock:           clock,
+		ClickHouse:      testClient(t),
+		InfluxDB:        influx,
+		Bucket:          "test-bucket",
+		RefreshInterval: time.Second,
+		QueryWindow:     time.Hour,
+		QueryChunk:      chunk,
+	})
+	require.NoError(t, err)
+	seedUsageRow(t, view, dev, intf, maxTime, 1000)
+
+	_, err = view.Refresh(t.Context())
+	require.NoError(t, err)
+
+	// Nothing was inserted (the only row deduped out), but the aged-out span
+	// [maxTime, maxTime+10m) was proven to hold nothing ingestible — the next
+	// refresh must anchor past it.
+	*windows = nil
+	_, err = view.Refresh(t.Context())
+	require.NoError(t, err)
+
+	start2, _ := span(t, *windows)
+	require.Equal(t, maxTime.Add(maxCatchupChunks*chunk).Add(-refreshOverlap).UTC(), start2.UTC(),
+		"a deduped-only aged span must advance the anchor like a zero-row one")
+}
+
+// An UNCAPPED empty window (steady state) must not advance the anchor: the
+// window isn't pinned (it grows with now), and keeping the watermark
+// maximizes the late-arrival re-read.
+func TestLake_TelemetryUsage_View_Refresh_EmptyUncappedWindowKeepsAnchor(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClock()
+	maxTime := clock.Now().Add(-3 * time.Minute).Truncate(time.Millisecond)
+
+	view, windows := captureIntfCounterWindows(t, clock, chunk)
+	seedMaxTime(t, view, maxTime)
+
+	_, err := view.Refresh(t.Context())
+	require.NoError(t, err)
+
+	clock.Advance(2 * time.Minute)
+	*windows = nil
+	_, err = view.Refresh(t.Context())
+	require.NoError(t, err)
+
+	start2, _ := span(t, *windows)
+	require.Equal(t, maxTime.Add(-refreshOverlap).UTC(), start2.UTC(),
+		"an uncapped empty window must keep anchoring at the watermark")
+}
+
+// Regression for the #714 review: a catch-up refresh must not swallow the
+// first new row of a key whose latest written row is behind the global
+// maxTime — the norm for an unsynchronized multi-device fleet. Non-sparse
+// counters (in-octets, …) have no ClickHouse baseline; their delta continuity
+// depends on the overlap re-read returning each key's already-written rows,
+// which seed lastKnownValues/firstRowSeen via the dedup path. If catch-up
+// starts the read at maxTime instead of maxTime−overlap, the lagging key's
+// first new row is consumed as a baseline and never inserted, silently
+// undercounting its traffic across the whole recovered region.
+func TestLake_TelemetryUsage_View_Refresh_CatchupEmitsFirstRowOfLaggingKey(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClockAt(time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC))
+	now := clock.Now()
+	// Deep catch-up: 30m stale, far beyond the 10m cap.
+	maxTime := now.Add(-30 * time.Minute)
+	// lag-device's latest written row is 2m behind the global maxTime (set by
+	// fast-device), inside the overlap.
+	lagTime := maxTime.Add(-2 * time.Minute)
+
+	const fastDev, lagDev, intf = "fast-device", "lag-device", "eth0"
+
+	influxRow := func(ts time.Time, dev string, inOctets int64) map[string]any {
+		return map[string]any{
+			"time":       ts.UTC().Format(time.RFC3339Nano),
+			"dzd_pubkey": dev,
+			"intf":       intf,
+			"in-octets":  inOctets,
+		}
+	}
+	// InfluxDB holds the rows a previous refresh already wrote (returned by
+	// the overlap re-read, they dedup out) plus one new row per device.
+	influxRows := []map[string]any{
+		influxRow(lagTime, lagDev, 1000),
+		influxRow(maxTime, fastDev, 5000),
+		influxRow(maxTime.Add(time.Minute), lagDev, 1500),
+		influxRow(maxTime.Add(time.Minute), fastDev, 5600),
+	}
+	influx := &mockInfluxDBClient{
+		queryIntfCountersFunc: func(_ context.Context, s, e time.Time) ([]map[string]any, error) {
+			var out []map[string]any
+			for _, r := range influxRows {
+				ts, err := time.Parse(time.RFC3339Nano, r["time"].(string))
+				if err != nil {
+					return nil, err
+				}
+				if !ts.Before(s) && ts.Before(e) {
+					out = append(out, r)
+				}
+			}
+			return out, nil
+		},
+	}
+
+	view, err := NewView(ViewConfig{
+		Logger:          laketesting.NewLogger(),
+		Clock:           clock,
+		ClickHouse:      testClient(t),
+		InfluxDB:        influx,
+		Bucket:          "test-bucket",
+		RefreshInterval: time.Second,
+		QueryWindow:     time.Hour,
+		QueryChunk:      chunk,
+	})
+	require.NoError(t, err)
+
+	// Seed ClickHouse with what the previous refresh already wrote.
+	seedUsageRow(t, view, lagDev, intf, lagTime, 1000)
+	seedUsageRow(t, view, fastDev, intf, maxTime, 5000)
+
+	_, err = view.Refresh(t.Context())
+	require.NoError(t, err)
+
+	// lag-device's new row must be inserted with its delta computed against
+	// the re-read overlap row (1500−1000), not swallowed as a baseline.
+	lagDeltas := queryInOctetsDeltas(t, view, lagDev, maxTime)
+	require.Len(t, lagDeltas, 1, "lag-device's first new row must be emitted, not consumed as a baseline")
+	delta, ok := lagDeltas[maxTime.Add(time.Minute).UTC()]
+	require.True(t, ok, "expected lag-device row at maxTime+1m, got %v", lagDeltas)
+	require.NotNil(t, delta)
+	require.Equal(t, int64(500), *delta)
+
+	// fast-device (the key that defines the global maxTime) also emits its new
+	// row with a correct delta.
+	fastDeltas := queryInOctetsDeltas(t, view, fastDev, maxTime.Add(time.Second))
+	require.Len(t, fastDeltas, 1)
+	delta, ok = fastDeltas[maxTime.Add(time.Minute).UTC()]
+	require.True(t, ok, "expected fast-device row at maxTime+1m, got %v", fastDeltas)
+	require.NotNil(t, delta)
+	require.Equal(t, int64(600), *delta)
+}
+
+// seedUsageRow inserts an interface-counter row with an in-octets value, as a
+// previous refresh would have written it.
+func seedUsageRow(t *testing.T, v *View, dev, intf string, ts time.Time, inOctets int64) {
+	t.Helper()
+	err := v.store.InsertInterfaceUsage(context.Background(), []InterfaceUsage{{
+		Time:     ts.UTC(),
+		DevicePK: &dev,
+		Intf:     &intf,
+		InOctets: &inOctets,
+	}})
+	require.NoError(t, err)
+}
+
+// queryInOctetsDeltas returns event_ts → in_octets_delta for the device's rows
+// at or after since.
+func queryInOctetsDeltas(t *testing.T, v *View, dev string, since time.Time) map[time.Time]*int64 {
+	t.Helper()
+	ctx := context.Background()
+	conn, err := v.cfg.ClickHouse.Conn(ctx)
+	require.NoError(t, err)
+	rows, err := conn.Query(ctx,
+		"SELECT event_ts, in_octets_delta FROM fact_dz_device_interface_counters WHERE device_pk = ? AND event_ts >= ?",
+		dev, since.UTC())
+	require.NoError(t, err)
+	defer rows.Close()
+	out := map[time.Time]*int64{}
+	for rows.Next() {
+		var ts time.Time
+		var delta *int64
+		require.NoError(t, rows.Scan(&ts, &delta))
+		out[ts.UTC()] = delta
+	}
+	require.NoError(t, rows.Err())
+	return out
+}
+
+// adaptiveSpanView builds a View whose InfluxDB mock returns whatever respond says
+// for each sub-query, with log output captured so the new WARNs can be asserted.
+func adaptiveSpanView(
+	t *testing.T,
+	clock clockwork.Clock,
+	chunk time.Duration,
+	respond func(s, e time.Time) ([]map[string]any, error),
+) (*View, *bytes.Buffer) {
+	t.Helper()
+	var logBuf bytes.Buffer
+	influx := &mockInfluxDBClient{
+		queryIntfCountersFunc: func(_ context.Context, s, e time.Time) ([]map[string]any, error) {
+			return respond(s, e)
+		},
+	}
+	view, err := NewView(ViewConfig{
+		Logger:          slog.New(slog.NewTextHandler(&logBuf, nil)),
+		Clock:           clock,
+		ClickHouse:      testClient(t),
+		InfluxDB:        influx,
+		Bucket:          "test-bucket",
+		RefreshInterval: time.Second,
+		QueryWindow:     time.Hour,
+		QueryChunk:      chunk,
+	})
+	require.NoError(t, err)
+	return view, &logBuf
+}
+
+// Regression for #740: a failed capped cycle used to re-query the IDENTICAL window
+// forever, since maxTime only advances on a successful insert (staging: ~22.6h
+// across 76 cycles). A window that has actually repeated now halves the span, so
+// the retry is cheaper and the window moves. With the insert never landing,
+// queryStart is frozen and queryEnd is watermark + span — so the span sequence IS
+// the window sequence.
+//
+// The first failure is a free pass — it could still be followed by a success that
+// moves the watermark — after which every consecutive failure halves (see
+// adjustCatchupSpan).
+func TestLake_TelemetryUsage_View_Refresh_FailedCappedCycleShrinksWindow(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClock()
+	// 30m stale: inside the 1h query window, past the 10m ceiling, so every cycle
+	// is capped.
+	maxTime := clock.Now().Add(-30 * time.Minute).Truncate(time.Millisecond)
+
+	view, logBuf := adaptiveSpanView(t, clock, chunk, func(_, _ time.Time) ([]map[string]any, error) {
+		return nil, context.DeadlineExceeded
+	})
+	seedMaxTime(t, view, maxTime)
+
+	require.Equal(t, maxCatchupChunks*chunk, view.catchupSpan, "a fresh view starts at the ceiling")
+
+	spans := []time.Duration{}
+	for cycle := 0; cycle < 10; cycle++ {
+		_, err := view.Refresh(t.Context())
+		require.Error(t, err, "cycle %d must fail (the induced slow source)", cycle)
+		spans = append(spans, view.catchupSpan)
+	}
+
+	// One free failure, then halving to the floor by cycle 5 and held there.
+	require.Equal(t, []time.Duration{
+		10 * time.Minute,
+		5 * time.Minute,
+		150 * time.Second,
+		75 * time.Second,
+		minCatchupSpan,
+		minCatchupSpan,
+		minCatchupSpan,
+		minCatchupSpan,
+		minCatchupSpan,
+		minCatchupSpan,
+	}, spans)
+	require.Contains(t, logBuf.String(), "halving the catch-up span",
+		"each shrink must WARN — on an environment whose metrics are not scraped this is the only per-cycle signal")
+}
+
+// A repeated window shrinks whatever the cause: #740 surfaced as both a wrapped
+// context.DeadlineExceeded and a bare Flux iterator error, so cause-specific
+// detection would have missed the case that actually froze staging.
+func TestLake_TelemetryUsage_View_Refresh_NonDeadlineFailureShrinksWindow(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClock()
+	maxTime := clock.Now().Add(-30 * time.Minute).Truncate(time.Millisecond)
+
+	view, _ := adaptiveSpanView(t, clock, chunk, func(_, _ time.Time) ([]map[string]any, error) {
+		return nil, errors.New("error iterating flux intf counters results")
+	})
+	seedMaxTime(t, view, maxTime)
+
+	for i := 0; i < 2; i++ {
+		_, err := view.Refresh(t.Context())
+		require.Error(t, err)
+	}
+	require.Equal(t, chunk, view.catchupSpan, "a repeated window must shrink on a non-deadline cause too")
+}
+
+// The #740 acceptance criterion: an induced slow environment must still make
+// forward progress. This source fails any cycle costing more than the budget
+// affords, so the ceiling window always dies and the shrink has to find one that
+// fits.
+func TestLake_TelemetryUsage_View_Refresh_InducedSlowSourceMakesProgress(t *testing.T) {
+	t.Parallel()
+
+	const (
+		chunk = 5 * time.Minute
+		// Affords overlap + one chunk (10m) but not overlap + two (15m).
+		affordable = 11 * time.Minute
+		dev, intf  = "slow-device", "eth0"
+	)
+	clock := clockwork.NewFakeClockAt(time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC))
+	maxTime := clock.Now().Add(-30 * time.Minute)
+
+	// Charged per sub-query, reset per cycle by the loop below.
+	var spent time.Duration
+	view, logBuf := adaptiveSpanView(t, clock, chunk, func(s, e time.Time) ([]map[string]any, error) {
+		spent += e.Sub(s)
+		if spent > affordable {
+			return nil, context.DeadlineExceeded
+		}
+		// Row-per-minute source, so a cycle that fits actually ingests.
+		var out []map[string]any
+		for ts, k := maxTime.Add(-time.Hour), int64(0); ts.Before(e); ts, k = ts.Add(time.Minute), k+1 {
+			if !ts.Before(s) {
+				out = append(out, map[string]any{
+					"time":       ts.UTC().Format(time.RFC3339Nano),
+					"dzd_pubkey": dev,
+					"intf":       intf,
+					"in-octets":  1000 + k,
+				})
+			}
+		}
+		return out, nil
+	})
+	seedUsageRow(t, view, dev, intf, maxTime, 1060)
+
+	var ingested int
+	for cycle := 0; cycle < 6 && ingested == 0; cycle++ {
+		spent = 0
+		res, err := view.Refresh(t.Context())
+		if err != nil {
+			continue
+		}
+		ingested = int(res.RowsAffected)
+		if ingested == 0 {
+			continue // succeeded but ingested nothing: SourceMaxEventTS is nil by design
+		}
+		require.NotNil(t, res.SourceMaxEventTS)
+		require.True(t, res.SourceMaxEventTS.After(maxTime),
+			"a cycle that fits must advance the watermark past where it froze")
+	}
+	require.NotZero(t, ingested, "catch-up must find a window that fits within a few cycles")
+	require.Contains(t, logBuf.String(), "halving the catch-up span")
+}
+
+// Recovery is additive, not a jump back to the ceiling: returning in one step
+// re-triggers the failure that caused the shrink and settles into a fail/succeed
+// oscillation paying a full failed cycle every other cycle.
+func TestLake_TelemetryUsage_View_Refresh_SuccessAdditivelyRestoresCatchupSpan(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClock()
+	// 30m stale and never advancing (no rows), so every cycle stays capped and the
+	// span is the only thing that moves. Inside the 1h window, so the empty span
+	// does not age out and shift the anchor.
+	maxTime := clock.Now().Add(-30 * time.Minute).Truncate(time.Millisecond)
+
+	cycle := 0
+	view, _ := adaptiveSpanView(t, clock, chunk, func(_, _ time.Time) ([]map[string]any, error) {
+		if cycle < 2 {
+			return nil, context.DeadlineExceeded
+		}
+		return nil, nil
+	})
+	seedMaxTime(t, view, maxTime)
+
+	// Two failures on the same window to trigger one halving.
+	for ; cycle < 2; cycle++ {
+		_, err := view.Refresh(t.Context())
+		require.Error(t, err)
+	}
+	require.Equal(t, chunk, view.catchupSpan)
+
+	// +1m per successful capped cycle, clamped at the ceiling and then held.
+	wantMinutes := []int{6, 7, 8, 9, 10, 10, 10}
+	for i, m := range wantMinutes {
+		_, err := view.Refresh(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, time.Duration(m)*time.Minute, view.catchupSpan,
+			"recovery must be additive (cycle %d)", i)
+	}
+}
+
+// An uncapped window ends at now, so it can never repeat. A blip there must not
+// perturb the span, or an unrelated outage would leave catch-up crippled for the
+// ~9 cycles additive recovery takes.
+func TestLake_TelemetryUsage_View_Refresh_UncappedFailureKeepsCatchupSpan(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClock()
+	// 3m stale: queryEnd clamps to now and the cap does not bind.
+	maxTime := clock.Now().Add(-3 * time.Minute).Truncate(time.Millisecond)
+
+	view, logBuf := adaptiveSpanView(t, clock, chunk, func(_, _ time.Time) ([]map[string]any, error) {
+		return nil, context.DeadlineExceeded
+	})
+	seedMaxTime(t, view, maxTime)
+
+	for i := 0; i < 3; i++ {
+		_, err := view.Refresh(t.Context())
+		require.Error(t, err)
+	}
+	require.Equal(t, maxCatchupChunks*chunk, view.catchupSpan,
+		"an uncapped failure must leave the span at the ceiling")
+	require.NotContains(t, logBuf.String(), "halving the catch-up span")
+}
+
+// The repeated-window signal fires only once the span has bottomed out AND the
+// window is repeating. Both conditions matter: a repeat alone is benign, since a
+// capped span the source has no rows in SUCCEEDS and the identical window is
+// re-read until it ages out of QueryWindow. WARNing there would tell on-call to
+// escalate a state the design already bounds.
+func TestLake_TelemetryUsage_View_Refresh_RepeatedWindowWarnsOnlyAtFloor(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	const capMsg = "capping catch-up window"
+
+	// cappingWarned reports whether any capping line was logged at WARN.
+	cappingWarned := func(logBuf *bytes.Buffer) bool {
+		for _, line := range strings.Split(logBuf.String(), "\n") {
+			if strings.Contains(line, capMsg) && strings.Contains(line, "level=WARN") {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("warns once pinned at the floor", func(t *testing.T) {
+		t.Parallel()
+		clock := clockwork.NewFakeClock()
+		maxTime := clock.Now().Add(-30 * time.Minute).Truncate(time.Millisecond)
+
+		view, logBuf := adaptiveSpanView(t, clock, chunk, func(_, _ time.Time) ([]map[string]any, error) {
+			return nil, context.DeadlineExceeded
+		})
+		seedMaxTime(t, view, maxTime)
+
+		// The span moves on all but the first of these, so the window cannot repeat
+		// past the escalation threshold while there is still room to shrink.
+		for i := 0; i < 8; i++ {
+			_, err := view.Refresh(t.Context())
+			require.Error(t, err)
+			require.LessOrEqual(t, view.sameWindowCycles, sameWindowWarnAfter,
+				"the walk-down keeps moving the window (cycle %d)", i)
+		}
+		require.Equal(t, minCatchupSpan, view.catchupSpan, "the walk-down must reach the floor")
+		require.False(t, cappingWarned(logBuf), "the walk-down alone must not escalate")
+
+		// Pinned at the floor, the window now repeats without bound.
+		_, err := view.Refresh(t.Context())
+		require.Error(t, err)
+		require.Equal(t, sameWindowWarnAfter+1, view.sameWindowCycles)
+		require.True(t, cappingWarned(logBuf),
+			"a window pinned at the floor must escalate the capping log to WARN")
+		require.Contains(t, logBuf.String(), "sameWindowCycles=4",
+			"the capping log must report the repeat count")
+	})
+
+	t.Run("stays quiet through an empty source stall", func(t *testing.T) {
+		t.Parallel()
+		clock := clockwork.NewFakeClock()
+		// Inside the 1h window, so the empty span never ages out and
+		// sourceEmptyThrough never advances. Every cycle is capped, succeeds with
+		// zero rows and leaves both the ceiling span and maxTime alone — an
+		// identical window every cycle, for a wholly benign reason.
+		maxTime := clock.Now().Add(-30 * time.Minute).Truncate(time.Millisecond)
+
+		view, logBuf := adaptiveSpanView(t, clock, chunk, func(_, _ time.Time) ([]map[string]any, error) {
+			return nil, nil
+		})
+		seedMaxTime(t, view, maxTime)
+
+		for i := 0; i < sameWindowWarnAfter+3; i++ {
+			_, err := view.Refresh(t.Context())
+			require.NoError(t, err)
+			clock.Advance(time.Minute)
+		}
+		require.Greater(t, view.sameWindowCycles, sameWindowWarnAfter,
+			"the window really does repeat here — only the floor gate keeps this quiet")
+		require.Equal(t, maxCatchupChunks*chunk, view.catchupSpan, "successful cycles hold the ceiling")
+		require.False(t, cappingWarned(logBuf),
+			"a repeated window with the span at its ceiling is a source stall, not a stuck catch-up")
+	})
+}
+
+// The shrink trigger, tested directly on the state machine so the cases that
+// matter need no ClickHouse container.
+//
+// Two properties are load-bearing. A lone failure must not shrink: otherwise the
+// steady-state span tracks the failure RATE (fixed point at k minutes for k
+// successes per failure), so a ~50% rate uncorrelated with span size walks it to
+// the floor and makes catch-up diverge where the pre-#740 fixed span converged.
+// And the trigger must be the failure streak, not window identity — the initial
+// full refresh and the horizon-skip cycle slide both window ends every cycle, so
+// an identity trigger can never fire on the most expensive cycle in the system.
+func TestLake_TelemetryUsage_View_adjustCatchupSpan(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	const ceiling = maxCatchupChunks * chunk
+	fluxErr := errors.New("error iterating flux intf counters results")
+
+	tests := []struct {
+		name       string
+		span       time.Duration
+		priorFails int
+		sameWindow int
+		capped     bool
+		err        error
+		want       time.Duration
+		wantStreak int
+	}{
+		{"uncapped failure leaves the span alone and does not count", ceiling, 0, 1, false, context.DeadlineExceeded, ceiling, 0},
+		{"first capped failure does not shrink", ceiling, 0, 1, true, context.DeadlineExceeded, ceiling, 1},
+		{"second consecutive capped failure shrinks", ceiling, 1, 2, true, context.DeadlineExceeded, chunk, 2},
+		// The regression the streak trigger exists for: on a sliding window anchor
+		// (initial refresh, horizon skip) sameWindowCycles is pinned at 1 forever.
+		{"shrinks on a sliding anchor, where the window never repeats", ceiling, 1, 1, true, context.DeadlineExceeded, chunk, 2},
+		{"shrinks on a non-deadline cause too", ceiling, 1, 1, true, fluxErr, chunk, 2},
+		{"shutdown neither shrinks nor counts", ceiling, 1, 9, true, context.Canceled, ceiling, 1},
+		{"shrink stops at the floor", 75 * time.Second, 1, 1, true, context.DeadlineExceeded, minCatchupSpan, 2},
+		{"already at the floor", minCatchupSpan, 9, 9, true, context.DeadlineExceeded, minCatchupSpan, 10},
+		{"success recovers additively and clears the streak", chunk, 5, 1, true, nil, chunk + minCatchupSpan, 0},
+		{"success clamps at the ceiling", ceiling - 30*time.Second, 0, 1, true, nil, ceiling, 0},
+		{"success at the ceiling holds", ceiling, 0, 1, true, nil, ceiling, 0},
+		{"uncapped success holds the span but clears the streak", chunk, 5, 1, false, nil, chunk, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			v := &View{
+				log:                       laketesting.NewLogger(),
+				cfg:                       ViewConfig{QueryChunk: chunk},
+				catchupSpan:               tt.span,
+				consecutiveCappedFailures: tt.priorFails,
+				sameWindowCycles:          tt.sameWindow,
+			}
+			v.adjustCatchupSpan(tt.capped, tt.err)
+			require.Equal(t, tt.want, v.catchupSpan, "span")
+			require.Equal(t, tt.wantStreak, v.consecutiveCappedFailures, "failure streak")
+		})
+	}
+}
+
+// An intermittent failure rate must not drag the span down. Halving on every
+// failure gave the span a fixed point at the failure rate rather than at what a
+// cycle can afford, so an alternating fail/succeed pattern walked it to the floor
+// and catch-up diverged.
+func TestLake_TelemetryUsage_View_adjustCatchupSpan_IntermittentFailureHoldsCeiling(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	const ceiling = maxCatchupChunks * chunk
+
+	v := &View{
+		log:         laketesting.NewLogger(),
+		cfg:         ViewConfig{QueryChunk: chunk},
+		catchupSpan: ceiling,
+	}
+	// F,S,S repeated: the intervening success clears the streak, so no failure is
+	// ever the second in a row.
+	for i := 0; i < 30; i++ {
+		var err error
+		if i%3 == 0 {
+			err = context.DeadlineExceeded
+		}
+		v.adjustCatchupSpan(true, err)
+	}
+	require.Equal(t, ceiling, v.catchupSpan,
+		"an intermittent failure rate must leave the span at the ceiling, not tie it to the failure rate")
+}
+
+// The gap the failure-streak trigger closes: on an empty table the window is
+// anchored at now−QueryWindow, so both ends slide every cycle and it never
+// repeats — a window-identity trigger could never shrink here. This is the most
+// expensive cycle in the system (0 ClickHouse baselines, so the InfluxDB baseline
+// fallback lands on top of three chunked reads), and it is the one path every
+// other adaptive-span test misses, since they all seed a watermark.
+func TestLake_TelemetryUsage_View_Refresh_InitialRefreshShrinksDespiteSlidingWindow(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 5 * time.Minute
+	clock := clockwork.NewFakeClock()
+
+	// No seedMaxTime: maxTime is nil, so queryStart is the query-window start.
+	view, logBuf := adaptiveSpanView(t, clock, chunk, func(_, _ time.Time) ([]map[string]any, error) {
+		return nil, context.DeadlineExceeded
+	})
+
+	spans := []time.Duration{}
+	for cycle := 0; cycle < 5; cycle++ {
+		_, err := view.Refresh(t.Context())
+		require.Error(t, err)
+		spans = append(spans, view.catchupSpan)
+		// Advance so the window genuinely slides between cycles.
+		clock.Advance(90 * time.Second)
+	}
+
+	require.Equal(t, []time.Duration{
+		10 * time.Minute,
+		5 * time.Minute,
+		150 * time.Second,
+		75 * time.Second,
+		minCatchupSpan,
+	}, spans, "the sliding window must still walk the span down to the floor")
+	require.Equal(t, 1, view.sameWindowCycles,
+		"the window never repeats here — which is exactly why the trigger cannot be window identity")
+	require.Contains(t, logBuf.String(), "halving the catch-up span")
 }

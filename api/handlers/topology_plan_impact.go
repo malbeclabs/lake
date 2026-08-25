@@ -327,13 +327,6 @@ func edgeLinkPK(g *kspGraph, from, to string) string {
 	return ""
 }
 
-func metroPairKey(a, b string) string {
-	if b < a {
-		a, b = b, a
-	}
-	return a + "|" + b
-}
-
 func indexMetroPaths(paths []metroPairPath) map[string]metroPairPath {
 	out := make(map[string]metroPairPath, len(paths))
 	for _, p := range paths {

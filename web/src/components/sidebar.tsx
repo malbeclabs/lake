@@ -20,6 +20,7 @@ import {
   Radio,
   Search,
   Route,
+  Waypoints,
   Map,
   Network,
   Shield,
@@ -34,16 +35,22 @@ import {
   Sun,
   Moon,
   Layers,
+  CandlestickChart,
   BookOpen,
   ArrowRightLeft,
   Puzzle,
   Warehouse,
   KeyRound,
+  LayoutDashboard,
+  ExternalLink,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/use-theme'
 import { useVersionCheck } from '@/hooks/use-version-check'
 import { UserPopover } from './auth/UserPopover'
+
+const DATA_DESK_URL =
+  'https://app.hex.tech/019b9014-0444-7004-89ee-902b1d683a84/app/Data-Desk-03478PHx7f5XsBBdtF2qpE/latest'
 
 export function Sidebar() {
   const location = useLocation()
@@ -62,8 +69,14 @@ export function Sidebar() {
   const showGeoloc = user?.is_internal_user === true
   // Internal only (unannounced venue) — gated to allowed-domain Google users.
   const showHyperliquid = user?.is_internal_user === true
+  const showKalshi = user?.is_internal_user === true
+  // Cross-service multicast overview: names subscribers and separates operator-run receivers
+  // from paying ones, so it stays with the other internal edge views.
+  const showEdgeMulticast = user?.is_internal_user === true
   const showPermissionAudit = user?.is_internal_user === true
   const showPlanner = user?.is_internal_user === true
+  // External Hex app — only useful to allowed-domain (doublezero/malbeclabs) users.
+  const showDataDesk = user?.is_internal_user === true
 const { resolvedTheme, setTheme } = useTheme()
   const { updateAvailable, reload } = useVersionCheck()
 
@@ -74,6 +87,7 @@ const { resolvedTheme, setTheme } = useTheme()
   const isOpsIncidentsLinksRoute = location.pathname === '/ops/incidents/links'
   const isOpsIncidentsDevicesRoute = location.pathname === '/ops/incidents/devices'
   const isOpsMaintenanceRoute = location.pathname === '/ops/maintenance'
+  const isNetworkHealthReportingRoute = location.pathname === '/ops/network-health-reporting'
   const isChatRoute = location.pathname.startsWith('/chat')
   const isChatSessions = location.pathname === '/chat/sessions'
   const isTopologyRoute = location.pathname === '/topology' || location.pathname.startsWith('/topology/')
@@ -97,6 +111,7 @@ const { resolvedTheme, setTheme } = useTheme()
   const isPerformanceDzVsInternet = location.pathname === '/performance/dz-vs-internet'
   const isPerformanceLinkLatency = location.pathname === '/performance/link-latency'
   const isPerformancePathLatency = location.pathname === '/performance/path-latency'
+  const isPerformanceRoutes = location.pathname === '/performance/routes'
 
   // Traffic sub-routes
   const isTrafficDashboard = location.pathname === '/traffic/overview'
@@ -117,7 +132,6 @@ const { resolvedTheme, setTheme } = useTheme()
   const isShredsSeatsRoute = location.pathname === '/dz/shreds/subscribers'
   const isShredsDevicesRoute = location.pathname === '/dz/shreds/devices'
   const isShredsEscrowEventsRoute = location.pathname === '/dz/shreds/activity'
-  const isShredsEconomicsRoute = location.pathname === '/dz/shreds/economics'
   const isShredsRewardsRoute =
     location.pathname === '/dz/shreds/rewards' ||
     location.pathname.startsWith('/dz/shreds/rewards/')
@@ -125,7 +139,11 @@ const { resolvedTheme, setTheme } = useTheme()
   const isHyperliquidScoreboardRoute = location.pathname === '/dz/hyperliquid/scoreboard'
   const isPermissionAuditRoute = location.pathname === '/dz/permission-audit'
   const isHyperliquidRoute = location.pathname.startsWith('/dz/hyperliquid')
-  const isEdgeRoute = isShredsRoute || isHyperliquidRoute
+  const isKalshiScoreboardRoute = location.pathname === '/dz/kalshi/scoreboard'
+  const isKalshiL2Route = location.pathname === '/dz/kalshi/l2'
+  const isKalshiRoute = location.pathname.startsWith('/dz/kalshi')
+  const isEdgeMulticastRoute = location.pathname === '/dz/edge/multicast'
+  const isEdgeRoute = isShredsRoute || isHyperliquidRoute || isKalshiRoute || isEdgeMulticastRoute
   const isGeolocRoute = location.pathname.startsWith('/dz/geoloc/')
   const isGeolocProbesRoute = location.pathname.startsWith('/dz/geoloc/probes')
   const isGeolocUsersRoute = location.pathname.startsWith('/dz/geoloc/users')
@@ -288,6 +306,17 @@ const { resolvedTheme, setTheme } = useTheme()
           >
             <MessageSquare className="h-4 w-4" />
           </button>
+          {showDataDesk && (
+            <a
+              href={DATA_DESK_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={collapsedIconClass(false)}
+              title="Data Desk"
+            >
+              <LayoutDashboard className="h-4 w-4" />
+            </a>
+          )}
           {/* Divider */}
           <div className="w-6 border-t border-border/50 my-2" />
 
@@ -479,6 +508,14 @@ const { resolvedTheme, setTheme } = useTheme()
                     Path Latency
                   </Link>
                 )}
+                {/* Both this and Path Latency need the topology graph, so both
+                    sit behind the same gate. */}
+                {hasNeo4j && (
+                  <Link to="/performance/routes" className={subNavItemClass(isPerformanceRoutes)}>
+                    <Waypoints className="h-4 w-4" />
+                    Route Latency
+                  </Link>
+                )}
               </>
             )}
 
@@ -516,6 +553,19 @@ const { resolvedTheme, setTheme } = useTheme()
                   History
                 </Link>
               </>
+            )}
+
+            {showDataDesk && (
+              <a
+                href={DATA_DESK_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={navItemClass(false)}
+              >
+                <LayoutDashboard className="h-4 w-4" />
+                <span className="flex-1 text-left">Data Desk</span>
+                <ExternalLink className="h-3 w-3 opacity-60" />
+              </a>
             )}
 
             <button
@@ -558,6 +608,13 @@ const { resolvedTheme, setTheme } = useTheme()
               <CalendarClock className="h-4 w-4" />
               Maintenance
             </Link>
+            <Link
+              to="/ops/network-health-reporting"
+              className={navItemClass(isNetworkHealthReportingRoute)}
+            >
+              <BarChart3 className="h-4 w-4" />
+              Network Health Reporting
+            </Link>
           </div>
         </div>
 
@@ -567,6 +624,12 @@ const { resolvedTheme, setTheme } = useTheme()
             <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Edge</span>
           </div>
           <div className="space-y-1">
+            {showEdgeMulticast && (
+              <Link to="/dz/edge/multicast" className={navItemClass(isEdgeMulticastRoute)}>
+                <Radio className="h-4 w-4" />
+                Multicast
+              </Link>
+            )}
             <Link to={shredsDefaultPath} className={isShredsRoute ? navItemExpandedClass : navItemClass(false)}>
               <Puzzle className="h-4 w-4" />
               Shreds
@@ -591,9 +654,6 @@ const { resolvedTheme, setTheme } = useTheme()
                 <Link to="/dz/shreds/activity" className={subNavItemClass(isShredsEscrowEventsRoute)}>
                   Activity
                 </Link>
-                <Link to="/dz/shreds/economics" className={subNavItemClass(isShredsEconomicsRoute)}>
-                  Economics
-                </Link>
               </>
             )}
             {showHyperliquid && (
@@ -606,6 +666,24 @@ const { resolvedTheme, setTheme } = useTheme()
                   <>
                     <Link to="/dz/hyperliquid/scoreboard" className={subNavItemClass(isHyperliquidScoreboardRoute)}>
                       Scoreboard
+                    </Link>
+                  </>
+                )}
+              </>
+            )}
+            {showKalshi && (
+              <>
+                <Link to="/dz/kalshi/scoreboard" className={isKalshiRoute ? navItemExpandedClass : navItemClass(false)}>
+                  <CandlestickChart className="h-4 w-4" />
+                  Kalshi
+                </Link>
+                {isKalshiRoute && (
+                  <>
+                    <Link to="/dz/kalshi/scoreboard" className={subNavItemClass(isKalshiScoreboardRoute)}>
+                      Scoreboard
+                    </Link>
+                    <Link to="/dz/kalshi/l2" className={subNavItemClass(isKalshiL2Route)}>
+                      Sports L2
                     </Link>
                   </>
                 )}

@@ -2,16 +2,17 @@ package dztelemlatency
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gagliardetto/solana-go"
 	solanarpc "github.com/gagliardetto/solana-go/rpc"
 	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/telemetry"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/metrics"
 )
 
 type InternetMetroLatencySample struct {
@@ -47,6 +48,8 @@ func (v *View) refreshInternetMetroLatencySamples(ctx context.Context, metros []
 	var allSamples []InternetMetroLatencySample
 	var allHeaders []InternetMetroLatencySampleHeader
 	var samplesMu sync.Mutex
+	var skipped atomic.Int64
+	var firstSkipErr atomic.Pointer[error]
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, v.cfg.MaxConcurrency)
 	metrosProcessed := 0
@@ -141,13 +144,19 @@ func (v *View) refreshInternetMetroLatencySamples(ctx context.Context, metros []
 
 						samples, err := v.cfg.TelemetryRPC.GetInternetLatencySamples(ctx, dataProvider, originPK, targetPK, v.cfg.InternetLatencyAgentPK, epoch)
 						if err != nil {
-							if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+							switch classifyFetchErr(ctx, err) {
+							case fetchAbort:
 								return
-							}
-							if errors.Is(err, telemetry.ErrAccountNotFound) {
+							case fetchExpectedMiss:
+								continue
+							default:
+								metrics.TelemetryFetchSkipped.WithLabelValues(v.cfg.DZEnv, "internet_metro").Inc()
+								v.log.Debug("telemetry/internet-metro: sample fetch failed, skipping until next refresh",
+									"origin_metro_pk", originMetroPK, "target_metro_pk", targetMetroPK,
+									"data_provider", dataProvider, "epoch", epoch, "error", err)
+								noteSkip(&skipped, &firstSkipErr, err)
 								continue
 							}
-							continue
 						}
 
 						metroHasSamples = true
@@ -205,6 +214,16 @@ func (v *View) refreshInternetMetroLatencySamples(ctx context.Context, metros []
 
 done:
 	wg.Wait()
+
+	// One line per refresh, not per fetch. See view_device.go.
+	if n := skipped.Load(); n > 0 {
+		var first error
+		if ptr := firstSkipErr.Load(); ptr != nil {
+			first = *ptr
+		}
+		v.log.Warn("telemetry/internet-metro: sample fetches skipped, retried next refresh",
+			"skipped", n, "first_error", first)
+	}
 
 	// Append new samples to table (instead of replacing)
 	if len(allSamples) > 0 {

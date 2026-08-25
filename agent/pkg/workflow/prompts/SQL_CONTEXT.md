@@ -485,6 +485,8 @@ The `dz_multicast_groups_current` table stores multicast group metadata:
 - `subscribers` column: `["group_pk1","group_pk2"]` — groups this user subscribes to
 - Multicast users have `kind = 'multicast'`
 
+**Feeds (SKUs)** map a feed to a metro and its joinable multicast groups: `dz_feeds_current` has `pk`, `code`, `name`, `metro_pk` (joins `dz_metros_current.pk`), and `groups` (JSON array of multicast-group PKs). `dz_users_current.feed_pks` links a connected EdgeSeat user to its feeds (JSON array of feed PKs; a user may hold seats on multiple feeds) and is `'[]'` for non-EdgeSeat/unicast users, so filter unset feeds with `feed_pks != '[]'` and expand with `JSONExtract(feed_pks, 'Array(String)')`; `dz_access_passes_current.feed_seats` is a JSON array of per-feed seat billing (`feed_pk`, `max_users`, `current_users`, `window_end`, `terminates_at`, ...) on EdgeSeat passes.
+
 **Key ClickHouse JSON patterns:**
 ```sql
 -- Check if user is a publisher for a specific group

@@ -85,16 +85,30 @@ type WorkflowManager struct {
 	running   map[uuid.UUID]*runningWorkflow // workflowID -> running workflow
 	bySession map[uuid.UUID]uuid.UUID        // sessionID -> workflowID
 	serverID  string                         // Unique identifier for this server instance
+
+	// runFn launches background execution of a workflow. It defaults to
+	// runWorkflow and is overridable so tests can exercise the synchronous
+	// StartWorkflow path (session upsert, run creation) without spinning up the
+	// live workflow, which requires ClickHouse and an LLM client.
+	runFn func(ctx context.Context, rw *runningWorkflow, question string, history []workflow.ConversationMessage)
 }
 
 // NewWorkflowManager creates a new WorkflowManager bound to the given API.
 func NewWorkflowManager(api *API) *WorkflowManager {
-	return &WorkflowManager{
+	m := &WorkflowManager{
 		api:       api,
 		running:   make(map[uuid.UUID]*runningWorkflow),
 		bySession: make(map[uuid.UUID]uuid.UUID),
 		serverID:  uuid.NewString(),
 	}
+	m.runFn = m.runWorkflow
+	return m
+}
+
+// DisableBackgroundExecutionForTest replaces the background workflow runner with
+// a no-op so tests can call StartWorkflow without launching real execution.
+func (m *WorkflowManager) DisableBackgroundExecutionForTest() {
+	m.runFn = func(context.Context, *runningWorkflow, string, []workflow.ConversationMessage) {}
 }
 
 // SessionChatMessage represents a message in session content, matching the web's ChatMessage format.
@@ -305,6 +319,8 @@ func (m *WorkflowManager) StartWorkflow(
 	question string,
 	history []workflow.ConversationMessage,
 	format string,
+	accountID *uuid.UUID,
+	anonymousID *string,
 	env ...DZEnv,
 ) (uuid.UUID, error) {
 	ctx := context.Background()
@@ -315,8 +331,10 @@ func (m *WorkflowManager) StartWorkflow(
 		workflowEnv = env[0]
 	}
 
-	// Ensure session exists (auto-create if needed for workflow persistence)
-	if err := m.ensureSessionExists(ctx, sessionID); err != nil {
+	// Ensure session exists (auto-create if needed for workflow persistence),
+	// stamping the caller's identity so auto-created sessions are owned from the
+	// start and pass the ownership check on later reads.
+	if err := m.ensureSessionExists(ctx, sessionID, accountID, anonymousID); err != nil {
 		return uuid.Nil, fmt.Errorf("failed to ensure session exists: %w", err)
 	}
 
@@ -365,7 +383,7 @@ func (m *WorkflowManager) StartWorkflow(
 	m.mu.Unlock()
 
 	// Start workflow in background goroutine
-	go m.runWorkflow(workflowCtx, rw, question, history)
+	go m.runFn(workflowCtx, rw, question, history)
 
 	slog.Info("Started background workflow",
 		"workflow_id", run.ID,
@@ -1256,17 +1274,20 @@ func truncateLog(s string, n int) string {
 	return s[:n] + "..."
 }
 
-// ensureSessionExists creates a session if it doesn't already exist.
-// This allows workflows to be created even if the frontend hasn't persisted the session yet.
-func (m *WorkflowManager) ensureSessionExists(ctx context.Context, sessionID uuid.UUID) error {
+// ensureSessionExists creates a session if it doesn't already exist, owned by
+// the given account or anonymous ID (either may be nil for a truly anonymous
+// caller). This allows workflows to be created even if the frontend hasn't
+// persisted the session yet. If the session already exists, ON CONFLICT DO
+// NOTHING leaves its existing ownership untouched.
+func (m *WorkflowManager) ensureSessionExists(ctx context.Context, sessionID uuid.UUID, accountID *uuid.UUID, anonymousID *string) error {
 	slog.Info("ensureSessionExists called", "session_id", sessionID)
 
 	// Use INSERT ... ON CONFLICT DO NOTHING to avoid race conditions
 	result, err := m.api.PgPool.Exec(ctx, `
-		INSERT INTO sessions (id, type, name, content)
-		VALUES ($1, 'chat', 'Untitled', '[]')
+		INSERT INTO sessions (id, type, name, content, account_id, anonymous_id)
+		VALUES ($1, 'chat', 'Untitled', '[]', $2, $3)
 		ON CONFLICT (id) DO NOTHING
-	`, sessionID)
+	`, sessionID, accountID, anonymousID)
 	if err != nil {
 		logError("ensureSessionExists failed", "session_id", sessionID, "error", err)
 		return fmt.Errorf("failed to ensure session exists: %w", err)

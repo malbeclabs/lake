@@ -15,6 +15,8 @@ import (
 
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
+
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
 const processedEventsMaxAge = 1 * time.Hour
@@ -379,6 +381,14 @@ func (h *EventHandler) handleMessageEvent(ctx context.Context, ev *slackevents.M
 func (h *EventHandler) HandleSocketMode(ctx context.Context, client *socketmode.Client) error {
 	h.log.Info("bot running in socket mode (DMs and channel mentions, thread replies enabled)")
 
+	// connectErrs escalates consecutive connection errors: socketmode
+	// auto-reconnects on recoverable failures (broken egress, Slack-side
+	// blips), so a blip warns and a sustained run still reaches ERROR and
+	// pages. Fatal auth failures (invalid_auth, token_revoked) never reach
+	// this loop — slack-go aborts connect() and client.Run() returns an
+	// error on a different path.
+	var connectErrs logger.Escalator
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -400,8 +410,9 @@ func (h *EventHandler) HandleSocketMode(ctx context.Context, client *socketmode.
 				h.log.Info("socketmode: connecting")
 			case socketmode.EventTypeConnected:
 				h.log.Info("socketmode: connected")
+				connectErrs.Reset("connect")
 			case socketmode.EventTypeConnectionError:
-				h.log.Error("socketmode: connection error", "error", evt.Data)
+				connectErrs.Fail(h.log, "connect", "socketmode: connection error", "error", evt.Data)
 			case socketmode.EventTypeEventsAPI:
 				h.log.Info("socketmode: EventsAPI event received", "inner_event_type", func() string {
 					if e, ok := evt.Data.(slackevents.EventsAPIEvent); ok {
@@ -474,7 +485,7 @@ func (h *EventHandler) HandleHTTP(w http.ResponseWriter, r *http.Request, signin
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.log.Error("failed to read request body", "error", err)
+		h.log.Warn("failed to read request body", "error", err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -497,7 +508,7 @@ func (h *EventHandler) HandleHTTP(w http.ResponseWriter, r *http.Request, signin
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
 		if _, err := w.Write([]byte(challengeResp.Challenge)); err != nil {
-			h.log.Error("failed to write challenge response", "error", err)
+			h.log.Warn("failed to write challenge response", "error", err)
 		}
 		return
 	}
@@ -505,7 +516,7 @@ func (h *EventHandler) HandleHTTP(w http.ResponseWriter, r *http.Request, signin
 	// Parse event
 	event, err := slackevents.ParseEvent(json.RawMessage(body), slackevents.OptionNoVerifyToken())
 	if err != nil {
-		h.log.Error("failed to parse event", "error", err)
+		h.log.Warn("failed to parse event", "error", err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -552,7 +563,7 @@ func (h *EventHandler) HandleHTTP(w http.ResponseWriter, r *http.Request, signin
 		h.log.Info("not accepting new events, returning 503")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		if _, err := w.Write([]byte("Service is shutting down")); err != nil {
-			h.log.Error("failed to write shutdown response", "error", err)
+			h.log.Warn("failed to write shutdown response", "error", err)
 		}
 		return
 	}

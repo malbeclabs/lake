@@ -172,17 +172,10 @@ func Load() error {
 	}
 
 	// Build env -> database mapping.
-	// Devnet and testnet databases default to lake_devnet / lake_testnet
-	// unless overridden by env vars or disabled with CLICKHOUSE_NO_DEVNET / CLICKHOUSE_NO_TESTNET.
+	// The testnet database defaults to lake_testnet unless overridden by an env var
+	// or disabled with CLICKHOUSE_NO_TESTNET.
 	EnvDatabases = map[string]string{
 		"mainnet-beta": cfg.Database,
-	}
-	if os.Getenv("CLICKHOUSE_NO_DEVNET") != "true" {
-		devnetDB := os.Getenv("CLICKHOUSE_DATABASE_DEVNET")
-		if devnetDB == "" {
-			devnetDB = "lake_devnet"
-		}
-		EnvDatabases["devnet"] = devnetDB
 	}
 	if os.Getenv("CLICKHOUSE_NO_TESTNET") != "true" {
 		testnetDB := os.Getenv("CLICKHOUSE_DATABASE_TESTNET")
