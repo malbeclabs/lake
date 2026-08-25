@@ -30,7 +30,7 @@ import (
 // Bump the version in the same commit as any change to the payload shape. The entry lives in
 // Postgres and outlives the deploy, so an unbumped key hands a new bundle a row written by the
 // old binary — see the same note on kalshiL2CoverageCacheKey for what that costs.
-const KalshiL2CompletenessCacheKey = "kalshi_l2_completeness:v1"
+const KalshiL2CompletenessCacheKey = "kalshi_l2_completeness:v2"
 
 // kalshiL2CompletenessDays is how many days back the view reports, today included.
 //
@@ -101,6 +101,24 @@ type KalshiL2Day struct {
 	// Messages is the row count, the size proxy for what a day's export would carry.
 	Messages uint64 `json:"messages"`
 
+	// GapMessages is how many of those rows were recorded while their own book was out of
+	// sync, so they cannot be applied to a replay. Over Messages it is the share of the day's
+	// record that is unusable.
+	//
+	// This is the one place a gap is counted in messages rather than in books, and it does not
+	// contradict the rule recorded on KalshiL2Lane.GapMessages. What that rule rejects is a
+	// message count used as a fault MAGNITUDE, where it is a recovery duration scaled by
+	// traffic and makes a busy lane look thousands of times worse at identical loss. As a
+	// share of the same lane's own traffic it is scale-free, and it is the only figure here
+	// that says how much of a day was lost rather than how many books were touched.
+	//
+	// It exists because GappedInstruments on its own misleads, and by a lot. Measured on
+	// mainnet for 2026-08-24: 40.4% of books were touched by a gap and 0.300% of the record
+	// was lost, so the day is wide-and-shallow — a book loses ~700 messages out of ~94,000.
+	// The book count alone reads as "the day is 41% broken" when the day is 99.7% intact.
+	// Neither number is the answer on its own, so the page carries both.
+	GapMessages uint64 `json:"gap_messages"`
+
 	// First and last message of the day, from the capture host's clock (recv_ts_ns). Reported
 	// rather than turned into a coverage percentage — see the header on capture downtime.
 	FirstMessage time.Time `json:"first_message"`
@@ -157,6 +175,7 @@ func (a *API) fetchKalshiL2CompletenessDay(ctx context.Context, day string) (*Ka
 				channel_id,
 				instrument_id,
 				count() AS messages,
+				countIf(status_after = 'gap') AS gap_messages,
 				max(status_after = 'gap') AS gapped,
 				max(msg_type = 'snapshot_end') AS anchored,
 				min(recv_ts_ns) AS first_ns,
@@ -190,6 +209,13 @@ func (a *API) fetchKalshiL2CompletenessDay(ctx context.Context, day string) (*Ka
 				-- are several observations of one publisher, so summing would report the
 				-- recording fan-out as traffic.
 				max(messages) AS messages,
+				-- The least lossy vantage's loss, to pair with the most complete vantage's
+				-- record above. Both are "best available", which is how a replay reads a book:
+				-- it takes it from whichever recorder holds it best. They can be different
+				-- recorders, so the ratio these two feed is a best case and not one vantage's
+				-- record. Measured at three parts in a thousand of a day, with one recorder on
+				-- every sports lane, that is below anything the page distinguishes.
+				min(gap_messages) AS gap_messages,
 				-- The book's whole life, over every vantage.
 				min(first_ns) AS book_first_ns,
 				max(last_ns) AS book_last_ns,
@@ -226,6 +252,7 @@ func (a *API) fetchKalshiL2CompletenessDay(ctx context.Context, day string) (*Ka
 				) AS gapped,
 				countIf(anchored = 0) AS unanchored,
 				sum(messages) AS messages,
+				sum(gap_messages) AS gap_messages,
 				min(book_first_ns) AS first_ns,
 				max(book_last_ns) AS last_ns
 			FROM per_book
@@ -238,6 +265,7 @@ func (a *API) fetchKalshiL2CompletenessDay(ctx context.Context, day string) (*Ka
 			-- it aggregates resolves to itself here, and ClickHouse rejects the query as an
 			-- aggregate inside an aggregate.
 			sum(messages) AS messages_total,
+			sum(gap_messages) AS gap_messages_total,
 			sum(instruments) AS instruments_total,
 			sum(gapped) AS gapped_total,
 			sum(unanchored) AS unanchored_total,
@@ -264,8 +292,8 @@ func (a *API) fetchKalshiL2CompletenessDay(ctx context.Context, day string) (*Ka
 			gapSources []string
 		)
 		if err := rows.Scan(
-			&scanned, &d.Lanes, &d.Messages, &d.Instruments, &d.GappedInstruments,
-			&d.UnanchoredInstruments, &firstNs, &lastNs, &gapSources,
+			&scanned, &d.Lanes, &d.Messages, &d.GapMessages, &d.Instruments,
+			&d.GappedInstruments, &d.UnanchoredInstruments, &firstNs, &lastNs, &gapSources,
 		); err != nil {
 			return nil, err
 		}

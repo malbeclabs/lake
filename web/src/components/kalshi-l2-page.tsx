@@ -123,16 +123,39 @@ function utcTime(iso: string): string {
   return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
 }
 
-// A day is only sellable as history if every book that moved stayed anchored and had a snapshot
-// inside the day to replay from. Today is neither: it is still being written, so it is labelled
-// rather than judged.
+// A share of a total, as a percentage. Three decimals below a tenth of a percent, because the
+// figure this exists for sits there: the record lost to gaps measured 0.300% on 2026-08-24, and
+// rounding that to "0.3%" or "0%" is the difference between a readable number and no number.
+function share(n: number, total: number): string {
+  if (total === 0) return '—'
+  const pct = (n / total) * 100
+  if (pct === 0) return '0%'
+  return `${pct < 0.1 ? pct.toFixed(3) : pct.toFixed(1)}%`
+}
+
+// A day is only sellable as history if every book that moved had a snapshot inside the day to
+// replay from. Today is neither: it is still being written, so it is labelled rather than judged.
+//
+// Gaps are deliberately NOT a leg of this verdict, though they are the bigger number on the row.
+// Measured on mainnet for 2026-08-24, gaps touch 40.4% of books on an ordinary day, so a verdict
+// that goes amber on any gap at all goes amber every day — and a verdict that never changes is
+// not a verdict, it is a colour. The row reports how many books were touched and how much of the
+// record was lost, and those two carry it.
+//
+// Putting gaps back in needs a threshold on the lost-record share, and that is a product decision
+// about what a buyer will accept rather than something to default here. 0.300% is the steady
+// state, so any threshold has to sit above it to mean anything.
+//
+// A clean verdict is NOT a claim that the capture was up all day. Nothing in the data separates
+// a closed market from a dead socket, so no coverage figure is derived from it — see the header
+// of api/handlers/kalshi_l2_completeness.go. First and last message are shown for that reason.
 //
 // A clean verdict is NOT a claim that the capture was up all day. Nothing in the data separates
 // a closed market from a dead socket, so no coverage figure is derived from it — see the header
 // of api/handlers/kalshi_l2_completeness.go. First and last message are shown for that reason.
 function verdictOf(day: KalshiL2Day, today: string): { label: string; className: string } {
   if (day.day >= today) return { label: 'in progress', className: 'text-muted-foreground' }
-  if (day.gapped_instruments > 0 || day.unanchored_instruments > 0) {
+  if (day.unanchored_instruments > 0) {
     return { label: 'incomplete', className: 'text-amber-500' }
   }
   return { label: 'replayable', className: 'text-emerald-500' }
@@ -147,8 +170,10 @@ function CompletenessTable({ data }: { data: KalshiL2CompletenessResponse }) {
         <p className="mt-1 text-xs leading-relaxed text-muted-foreground/70">
           Whether each day's captured levels can be replayed into a book, which is what makes a
           day usable as history. A gapped book has a hole in its delta stream that no recorder of
-          that lane can fill. A book with no snapshot in the day cannot start a replay from that
-          day alone. The capture keeps {data.day_count} days and deletes the rest, so this is the
+          that lane can fill. Read the two gap figures together: gaps are wide and shallow, so a
+          large share of books is touched while a very small share of the record is lost, and
+          either number alone is misleading. A book with no snapshot in the day cannot start a
+          replay from that day alone. The capture keeps {data.day_count} days and deletes the rest, so this is the
           whole record that exists — a day drops off this table {data.day_count} days after it is
           recorded, whether or not it was sold.
         </p>
@@ -163,6 +188,10 @@ function CompletenessTable({ data }: { data: KalshiL2CompletenessResponse }) {
               <th className="whitespace-nowrap px-3 py-3 text-right font-medium sm:px-4">
                 Gapped
                 <span className="block text-xs font-normal">books</span>
+              </th>
+              <th className="whitespace-nowrap px-3 py-3 text-right font-medium sm:px-4">
+                Record lost
+                <span className="block text-xs font-normal">messages</span>
               </th>
               <th className="whitespace-nowrap px-3 py-3 text-right font-medium sm:px-4">
                 No snapshot
@@ -194,9 +223,20 @@ function CompletenessTable({ data }: { data: KalshiL2CompletenessResponse }) {
                     <span className={day.gapped_instruments > 0 ? 'text-amber-500' : ''}>
                       {day.gapped_instruments.toLocaleString()}
                     </span>
+                    <div className="text-[11px] text-muted-foreground/70">
+                      {share(day.gapped_instruments, day.instruments)} of books
+                    </div>
                     {day.gap_lanes.length > 0 && (
                       <div className="text-[11px] text-muted-foreground/70">{day.gap_lanes.join(', ')}</div>
                     )}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-3 text-right text-sm tabular-nums sm:px-4">
+                    <span className={day.gap_messages > 0 ? 'text-amber-500' : ''}>
+                      {share(day.gap_messages, day.messages)}
+                    </span>
+                    <div className="text-[11px] text-muted-foreground/70">
+                      {day.gap_messages.toLocaleString()}
+                    </div>
                   </td>
                   <td className="whitespace-nowrap px-3 py-3 text-right text-sm tabular-nums sm:px-4">
                     <span className={day.unanchored_instruments > 0 ? 'text-amber-500' : ''}>

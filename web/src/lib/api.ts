@@ -7756,6 +7756,7 @@ export interface KalshiL2Day {
   gapped_instruments: number
   unanchored_instruments: number
   messages: number
+  gap_messages: number
   first_message: string
   last_message: string
   gap_lanes: string[]

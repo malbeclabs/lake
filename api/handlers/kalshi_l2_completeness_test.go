@@ -220,6 +220,42 @@ func TestKalshiL2Completeness_CoveringVantageClearsAGap(t *testing.T) {
 	assert.Empty(t, day.GapLanes)
 }
 
+// The book count and the message count answer different questions and the page needs both: one
+// book touched out of two reads 50% of books, and one message lost out of four reads 25% of the
+// record. Measured on mainnet those two are 40.4% and 0.300%, so the pair is the whole point.
+func TestKalshiL2Completeness_CountsGappedMessagesAndBooks(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createKalshiMbpLevelsTable(t, api)
+
+	insertLevelAtHour(t, api, "cmh-rec1", "mbp_edge_kalshi_perps", 1, 100, "snapshot_end", "ready", 0, 1)
+	insertLevelAtHour(t, api, "cmh-rec1", "mbp_edge_kalshi_perps", 1, 100, "level_update", "gap", 0, 2)
+	insertLevelAtHour(t, api, "cmh-rec1", "mbp_edge_kalshi_perps", 1, 200, "snapshot_end", "ready", 0, 1)
+	insertLevelAtHour(t, api, "cmh-rec1", "mbp_edge_kalshi_perps", 1, 200, "level_update", "ready", 0, 2)
+
+	day := dayOf(t, getCompleteness(t, api), 0)
+	assert.EqualValues(t, 2, day.Instruments)
+	assert.EqualValues(t, 1, day.GappedInstruments, "one of the two books was touched")
+	assert.EqualValues(t, 4, day.Messages)
+	assert.EqualValues(t, 1, day.GapMessages, "one of the four messages is unusable")
+}
+
+// The loss comes from the least lossy vantage, to pair with the record from the most complete
+// one: a replay reads each book from whichever recorder holds it best, so a second recorder that
+// held the book clean means nothing was lost, however much the first recorder dropped.
+func TestKalshiL2Completeness_GapMessagesTakeTheBestVantage(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createKalshiMbpLevelsTable(t, api)
+
+	insertLevelAtHour(t, api, "cmh-rec1", "mbp_edge_kalshi_perps", 1, 100, "level_update", "gap", 0, 1)
+	insertLevelAtHour(t, api, "cmh-rec1", "mbp_edge_kalshi_perps", 1, 100, "level_update", "gap", 0, 20)
+	insertLevelAtHour(t, api, "cmh-rec2", "mbp_edge_kalshi_perps", 1, 100, "snapshot_end", "ready", 0, 1)
+	insertLevelAtHour(t, api, "cmh-rec2", "mbp_edge_kalshi_perps", 1, 100, "level_update", "ready", 0, 20)
+
+	day := dayOf(t, getCompleteness(t, api), 0)
+	assert.EqualValues(t, 0, day.GappedInstruments)
+	assert.EqualValues(t, 0, day.GapMessages)
+}
+
 // The scan width is a parameter so one query serves both the full and the partial refresh. A
 // three-day scan must not return a day outside it, and it still reports the view's window rather
 // than its own width — the partial payload is an argument to the merge, not an answer.
