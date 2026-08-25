@@ -63,6 +63,11 @@ const (
 	// instead of being cancelled by the activity deadline first.
 	heavyActivityHeadroom = 60 * time.Second
 	// heavyActivityTimeout is RefreshHeavyCaches's StartToCloseTimeout.
+	//
+	// Every heavy entry has to fit nhHeavyRefreshTimeout, not just its own budget:
+	// this feeds heavyStartLeadCycles, so raising it shrinks the window in which ANY
+	// heavy run may start before the continue-as-new drain. An entry that cannot be
+	// bounded under it does not belong here — bound the entry, not this.
 	heavyActivityTimeout = nhHeavyRefreshTimeout + heavyActivityHeadroom
 
 	// continueAsNewTargetWindow bounds workflow history: PageCacheWorkflow
@@ -177,6 +182,11 @@ const (
 	// Two full all-pairs path computations over two graphs, keyed off link topology
 	// tags — which change when someone changes them and not otherwise.
 	algoDivergenceInterval = 5 * time.Minute
+
+	// A per-day catalog of the captured Kalshi level record. Every day behind today is
+	// finished and cannot change, and today's row is read as a catalog rather than a
+	// live status, so an hour of staleness costs nothing.
+	kalshiL2CompletenessInterval = time.Hour
 
 	// The only Network Health group with point-in-time tiles (telemetry freshness,
 	// ISIS state). Those are a few CPU-seconds of the group's ~200, so the cadence
@@ -724,6 +734,25 @@ func (a *Activities) heavyEntries() []cacheEntry {
 				return nil, err
 			}
 			return resp, nil
+		}},
+		// A catalog of finished days: hourly is well inside the cadence anyone reads it at,
+		// and the six immutable partitions behind today are carried forward rather than
+		// rescanned. Here rather than on StartKalshiBackgroundRefresher's own ticker because
+		// the refresh is a read-merge-write of this key, and a per-pod ticker would run it
+		// once per replica — two scans an hour, and two pods able to merge onto each other's
+		// stale base. The cadence gate reads this key's updated_at, which is shared state.
+		//
+		// It takes nhHeavyRefreshTimeout rather than a budget of its own, deliberately: this
+		// activity's timeout feeds heavyStartLeadCycles, so an entry that raises it shrinks
+		// the window in which any heavy run may start.
+		//
+		// Every pass reads three day-partitions, first run included — there is no full-window
+		// pass to size for. Measured on prod 2026-08-25, the seven-partition query ran past
+		// 250s, so a cold cache builds the window up over several passes instead. The refresh
+		// also stops before a day it cannot finish inside this budget, so what a slow day
+		// costs is one fewer day in the payload, never a pass that writes nothing.
+		{name: "kalshi l2 completeness", key: handlers.KalshiL2CompletenessCacheKey, every: kalshiL2CompletenessInterval, timeout: nhHeavyRefreshTimeout, fn: func(ctx context.Context) (any, error) {
+			return api.RefreshKalshiL2Completeness(ctx)
 		}},
 	}
 }

@@ -941,6 +941,12 @@ func (a *API) FetchKalshiPathLatency(ctx context.Context) (*KalshiPathLatency, e
 //
 // Each computation gets its own timeout so a slow one can't starve the others; the path
 // latency is refreshed first so the 24h/7d scoreboards pick up its freshly-cached value.
+//
+// A refresh that reads its own previous payload does NOT belong here. This ticker is per-pod
+// and prod runs lake-api at two replicas, so both would run it and could merge onto each
+// other's stale base; the page-cache worker's cadence gates on the entry's own updated_at,
+// which is shared. That is why the per-day completeness view is a worker entry (api/worker,
+// heavyEntries) and not a fifth closure below.
 func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 	const interval = 10 * time.Minute
 	const runTimeout = 3 * time.Minute

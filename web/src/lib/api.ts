@@ -7745,6 +7745,37 @@ export async function fetchKalshiL2Coverage(): Promise<KalshiL2CoverageResponse>
   return res.json()
 }
 
+// Per-day completeness of the captured level record: whether a day's books can be replayed,
+// which is what makes a day sellable as history. Separate endpoint from coverage because it is
+// a different question over a different window, and a much heavier query (see
+// api/handlers/kalshi_l2_completeness.go).
+export interface KalshiL2Day {
+  day: string
+  lanes: number
+  instruments: number
+  gapped_instruments: number
+  unanchored_instruments: number
+  messages: number
+  gap_messages: number
+  first_message: string
+  last_message: string
+  gap_lanes: string[]
+}
+
+export interface KalshiL2CompletenessResponse {
+  generated_at: string
+  day_count: number
+  days: KalshiL2Day[]
+}
+
+export async function fetchKalshiL2Completeness(): Promise<KalshiL2CompletenessResponse> {
+  const res = await apiFetch('/api/dz/kalshi/l2-completeness')
+  if (!res.ok) {
+    throw new Error('Failed to fetch kalshi L2 completeness')
+  }
+  return res.json()
+}
+
 // Edge multicast overview: every multicast group carrying an edge service, grouped by feed.
 export interface EdgeMulticastRoleCounts {
   total: number
