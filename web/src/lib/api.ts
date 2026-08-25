@@ -7918,11 +7918,10 @@ export interface EdgeMulticastChannelInstance {
 export interface EdgeMulticastRecorderLoss {
   node: string
   location_code?: string
-  /** How many messages this node is short of the best-placed recorder on the same path, and what
-   *  that recorder received. Compared against the best peer, never the mean: a mean over a pair
-   *  sinks with its faulty half and reports both as roughly fine. */
+  /** Reference sequences this node did not record, and what it is a share of. The reference is
+   *  the UNION of what the nodes recorded, so a message no node received is not in it. */
   missing: number
-  reference_messages: number
+  reference_seqs: number
   episodes?: GapEpisode[]
 }
 

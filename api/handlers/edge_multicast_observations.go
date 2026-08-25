@@ -52,11 +52,7 @@ import (
 // half needs the producer to emit a gap marker for top-of-book the way it does for
 // market-by-price, and that is not work this repository can do.
 // v2: `recorder_loss` added, each recording node measured against its peers.
-// v3: recorder_loss moved from a per-sequence set difference to a per-bucket message-count
-//
-//	comparison against the best-placed recorder — `reference_seqs` became `reference_messages`
-//	and the episodes are bucket-aligned.
-const edgeMulticastObservationsCacheKey = "edge_multicast_observations:v3"
+const edgeMulticastObservationsCacheKey = "edge_multicast_observations:v2"
 
 // edgeMulticastObservationsWindowMinutes matches kalshiL2WindowMinutes so the two legs of the
 // Sequence column describe the same span. Measured on mainnet: 4.3s over every mbp_ and tob_
@@ -129,11 +125,10 @@ type EdgeMulticastRecorderLossSeries struct {
 	Node              string `json:"node"`
 	LocationCode      string `json:"location_code,omitempty"`
 
-	// Missing is how many messages this node is short of the best-placed recorder on the same
-	// path, and ReferenceMessages is what that best recorder received. Both are per (path, node)
-	// over the window, and only meaningful together.
-	Missing           uint64 `json:"missing"`
-	ReferenceMessages uint64 `json:"reference_messages"`
+	// Missing is how many reference sequences this node did not record, and ReferenceSeqs is
+	// what it is a share of. Both are per (path, node) over the window.
+	Missing       uint64 `json:"missing"`
+	ReferenceSeqs uint64 `json:"reference_seqs"`
 
 	// Episodes is when, at one entry per contiguous run of seconds. Stamped with the recv time
 	// of the node that DID record the message — this node has no clock reading for something it
@@ -141,14 +136,25 @@ type EdgeMulticastRecorderLossSeries struct {
 	Episodes []KalshiL2GapEpisode `json:"episodes,omitempty"`
 }
 
-// edgeMulticastRecorderLossSettings bounds this query's memory and lets its GROUP BY spill to disk
-// rather than dying.
+// edgeMulticastRecorderLossCap bounds the seconds array per (path, node), one entry per second of
+// the window. The window's own second count is the ceiling, so a node that lost something in every
+// second of the window fills it exactly and drops nothing.
+const edgeMulticastRecorderLossCap = edgeMulticastObservationsWindowMinutes * 60
+
+// edgeMulticastRecorderLossSettings bounds this query's memory and lets its GROUP BY spill to
+// disk rather than dying.
 //
-// The query no longer needs it: at the bucket grain it returns ~1,100 rows and completes inside
-// 300 MiB. It is kept as a ceiling because the thing it guards against is not the query's own size
-// but the environment's — the ceiling that killed the sequence-keyed version was `(total) memory
-// limit exceeded` on a shared 7.2 GiB proxy where other queries were already failing, and a query
-// with no bound of its own competes for all of it. Same shape and numbers as
+// It is needed because the per-sequence aggregate is genuinely large: one group per (path,
+// sequence) over the window, measured at 1.7M groups across the 29 top-of-book capture sources,
+// and it wanted more than 1.2 GiB. Unbounded, it competed for the server's whole budget and lost
+// — in production it failed on every ten-minute cycle with `(total) memory limit exceeded: would
+// use 7.20 GiB`, which cost the strips silently because this measurement is additive and its
+// failure is a WARN. With the spill it completes in 3-6s inside 700 MiB.
+//
+// Narrowing the scan was tried first and does not help: 28 of the 29 sources have a single
+// recorder and can never produce a comparison, but filtering them out — by path tuple or by a
+// source IN subquery — left the memory unchanged, because the cost is the aggregate's group count
+// and ClickHouse builds it before either filter can prune. Same shape and same numbers as
 // networkHealthQuerySettings, which exists for the same reason.
 const edgeMulticastRecorderLossSettings = " SETTINGS max_memory_usage = 2000000000, max_bytes_before_external_group_by = 1000000000"
 
@@ -216,39 +222,23 @@ func (a *API) edgeMulticastRecorderLossSources(ctx context.Context) ([]string, e
 	return out, rows.Err()
 }
 
-// edgeMulticastRecorderLossBucketSecs is the grain the comparison is made at, and it is chosen from
-// the DISPLAY: the strip is GAP_STRIP_WIDTH pixels wide for a fifteen-minute window, so one pixel
-// is already about nine seconds. Comparing per second computed a resolution the reader cannot see.
-//
-// It is also what makes the query affordable. Per second, keyed per sequence, the aggregate built
-// ~2M groups and wanted ~5 GiB — it died on every refresh against a proxy with 7.2 GiB shared. At
-// this grain it returns 1,092 rows and completes inside 300 MiB in the same place.
-//
-// And it removes a real source of noise rather than trading it away: a message arriving 12:00:00.999
-// at one recorder and 12:00:01.001 at another is not loss, but per-second bucketing counts it as a
-// deficit in one bucket and a surplus in the next. At ten seconds the boundary is crossed a tenth as
-// often against the same real signal.
-const edgeMulticastRecorderLossBucketSecs = 10
-
 // fetchEdgeMulticastRecorderLoss measures each recording node against its peers on the same path.
 //
-// The comparison is a MESSAGE COUNT per bucket, not a set difference over sequence numbers, and the
-// reference is the best-placed recorder rather than the union of what all of them saw. Both are
-// deliberate. The union needs one group per (path, sequence) to compute, which is the cost that made
-// the sequence-based version unaffordable; and the best peer is the reference this page already uses
-// for the receiver side (edgeMulticastNodeCoverage) — measured against the mean, a pair sinks with
-// its faulty half and reports both as roughly fine.
+// The shape is a three-step: collapse to one row per (path, sequence) carrying which nodes saw it,
+// derive each path's node universe from that, then emit one row per node of that universe. The
+// universe is derived rather than configured because it has to be what actually records this path
+// today — a node added or removed is then a fact about the data rather than a deploy.
 //
-// What it gives up is naming WHICH message a node missed, which nothing on the page displayed. What
-// it keeps is the two things that matter: how much each recorder is short, and when.
+// EVERY node gets a row, including one that recorded everything its peers did. Emitting only the
+// nodes that lost something is the obvious query and it breaks the display: the clean line is the
+// whole comparison. A reader looking at "was lost 267" needs "cmh lost 0" beside it to conclude the
+// loss is was's branch — without it the row is just a number with nothing to be worse than, and a
+// window in which one node alone lost anything would render no comparison at all.
 //
-// Both planes are read. This table carries the top-of-book series AND the BBO a market-by-price
-// publisher derives, and perps runs three recorders on each. Unlike the Sequence column, this needs
-// no gap marker and so has no reason to prefer a plane.
-//
-// A path recorded at ONE node produces nothing, which is correct rather than a coverage gap: with no
-// peer there is no reference. Sports runs single-node on both planes, so this is a perps signal
-// today.
+// A path recorded at ONE node produces nothing at all, which is correct and not a gap in coverage:
+// with no peer there is no reference, and every hole in its numbering is the plane's own legitimate
+// hole. Market-by-price is single-node on every group today, so this signal exists only for
+// top-of-book — where perps runs three vantages.
 func (a *API) fetchEdgeMulticastRecorderLoss(ctx context.Context, sources []string) ([]EdgeMulticastRecorderLossSeries, error) {
 	// No source has a second recorder, so there is nothing any comparison could be made on. Not
 	// an error and not an unavailable measurement: an empty result is the honest answer.
@@ -257,19 +247,57 @@ func (a *API) fetchEdgeMulticastRecorderLoss(ctx context.Context, sources []stri
 	}
 	db := fmt.Sprintf("`%s`", a.FeedsDB)
 	q := fmt.Sprintf(`
+		WITH per_seq AS (
+			SELECT
+				JSONExtractString(raw_meta, 'multicast_group') AS multicast_group,
+				JSONExtractString(raw_meta, 'publisher_source_ip') AS publisher_source_ip,
+				channel_id,
+				sequence,
+				groupUniqArray(measurement_node_id) AS nodes,
+				min(recv_ts_ns) AS first_recv
+			FROM %[1]s.kalshi_bbo_observations
+			WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(%[2]d)))
+			  AND source IN (%[3]s)
+			GROUP BY multicast_group, publisher_source_ip, channel_id, sequence
+		),
+		universe AS (
+			SELECT
+				multicast_group, publisher_source_ip, channel_id,
+				arrayDistinct(arrayFlatten(groupArray(nodes))) AS all_nodes,
+				count() AS reference_seqs
+			FROM per_seq
+			GROUP BY multicast_group, publisher_source_ip, channel_id
+		),
+		-- The metro is a property of the NODE, so it is resolved per node and joined on.
+		-- Carrying it through per_seq instead makes it an any() over a group that spans every
+		-- node of a sequence, which yields one arbitrary metro repeated on all three rows: the
+		-- labels then read cmh/cmh/cmh and the comparison the strip exists for is unreadable.
+		node_loc AS (
+			SELECT measurement_node_id AS loc_node, min(location_code) AS location_code
+			FROM %[1]s.kalshi_bbo_observations
+			WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(%[2]d)))
+			  AND source IN (%[3]s)
+			GROUP BY measurement_node_id
+		)
 		SELECT
-			JSONExtractString(raw_meta, 'multicast_group') AS multicast_group,
-			JSONExtractString(raw_meta, 'publisher_source_ip') AS publisher_source_ip,
-			channel_id,
-			measurement_node_id AS node,
-			any(location_code) AS location_code,
-			toUInt32(intDiv(intDiv(recv_ts_ns, 1000000000), %[4]d) * %[4]d) AS bucket,
-			count() AS seen
-		FROM %[1]s.kalshi_bbo_observations
-		WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(%[2]d)))
-		  AND source IN (%[3]s)
-		GROUP BY multicast_group, publisher_source_ip, channel_id, node, bucket`+edgeMulticastRecorderLossSettings,
-		db, edgeMulticastObservationsWindowMinutes, quoteSQLStrings(sources), edgeMulticastRecorderLossBucketSecs)
+			p.multicast_group,
+			p.publisher_source_ip,
+			p.channel_id,
+			node,
+			any(nl.location_code) AS location_code,
+			countIf(NOT has(p.nodes, node)) AS missing,
+			any(u.reference_seqs) AS reference_seqs,
+			groupUniqArrayIf(%[4]d)(toUInt32(intDiv(p.first_recv, 1000000000)), NOT has(p.nodes, node)) AS seconds
+		FROM per_seq AS p
+		INNER JOIN universe AS u
+			ON p.multicast_group = u.multicast_group
+			AND p.publisher_source_ip = u.publisher_source_ip
+			AND p.channel_id = u.channel_id
+		ARRAY JOIN u.all_nodes AS node
+		INNER JOIN node_loc AS nl ON node = nl.loc_node
+		WHERE length(u.all_nodes) > 1
+		GROUP BY p.multicast_group, p.publisher_source_ip, p.channel_id, node`+edgeMulticastRecorderLossSettings,
+		db, edgeMulticastObservationsWindowMinutes, quoteSQLStrings(sources), edgeMulticastRecorderLossCap)
 
 	rows, err := a.envDB(ctx).Query(ctx, q)
 	if err != nil {
@@ -277,104 +305,18 @@ func (a *API) fetchEdgeMulticastRecorderLoss(ctx context.Context, sources []stri
 	}
 	defer rows.Close()
 
-	type pathKey struct {
-		group   string
-		pub     string
-		channel uint8
-	}
-	type nodeAgg struct {
-		location string
-		total    uint64
-		byBucket map[uint32]uint64
-	}
-	paths := map[pathKey]map[string]*nodeAgg{}
+	var out []EdgeMulticastRecorderLossSeries
 	for rows.Next() {
-		var k pathKey
-		var node, location string
-		var bucket uint32
-		var seen uint64
-		if err := rows.Scan(&k.group, &k.pub, &k.channel, &node, &location, &bucket, &seen); err != nil {
+		var s EdgeMulticastRecorderLossSeries
+		var seconds []uint32
+		if err := rows.Scan(&s.MulticastGroup, &s.PublisherSourceIP, &s.ChannelID, &s.Node,
+			&s.LocationCode, &s.Missing, &s.ReferenceSeqs, &seconds); err != nil {
 			return nil, err
 		}
-		if paths[k] == nil {
-			paths[k] = map[string]*nodeAgg{}
-		}
-		agg := paths[k][node]
-		if agg == nil {
-			agg = &nodeAgg{location: location, byBucket: map[uint32]uint64{}}
-			paths[k][node] = agg
-		}
-		agg.total += seen
-		agg.byBucket[bucket] += seen
+		s.Episodes = collapseKalshiL2GapSeconds(seconds)
+		out = append(out, s)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	var out []EdgeMulticastRecorderLossSeries
-	for k, nodes := range paths {
-		// One recorder is no comparison. Emitting it would put a lone labelled strip on the page
-		// implying there was something to be measured against.
-		if len(nodes) < 2 {
-			continue
-		}
-		// The best-placed recorder, per bucket and over the window.
-		bestTotal := uint64(0)
-		bestInBucket := map[uint32]uint64{}
-		for _, agg := range nodes {
-			if agg.total > bestTotal {
-				bestTotal = agg.total
-			}
-			for b, n := range agg.byBucket {
-				if n > bestInBucket[b] {
-					bestInBucket[b] = n
-				}
-			}
-		}
-		for node, agg := range nodes {
-			s := EdgeMulticastRecorderLossSeries{
-				MulticastGroup:    k.group,
-				PublisherSourceIP: k.pub,
-				ChannelID:         k.channel,
-				Node:              node,
-				LocationCode:      agg.location,
-				ReferenceMessages: bestTotal,
-			}
-			if bestTotal > agg.total {
-				s.Missing = bestTotal - agg.total
-			}
-			var short []uint32
-			for b, best := range bestInBucket {
-				if agg.byBucket[b] < best {
-					short = append(short, b)
-				}
-			}
-			s.Episodes = edgeMulticastMergeBuckets(short, edgeMulticastRecorderLossBucketSecs)
-			out = append(out, s)
-		}
-	}
-	return out, nil
-}
-
-// edgeMulticastMergeBuckets turns bucket starts into episodes, merging adjacent buckets so a run of
-// them reads as one outage rather than as several.
-func edgeMulticastMergeBuckets(starts []uint32, width uint32) []KalshiL2GapEpisode {
-	if len(starts) == 0 {
-		return nil
-	}
-	sort.Slice(starts, func(i, j int) bool { return starts[i] < starts[j] })
-	out := make([]KalshiL2GapEpisode, 0, 4)
-	begin, end := starts[0], starts[0]+width
-	for _, b := range starts[1:] {
-		if b == end {
-			end = b + width
-			continue
-		}
-		out = append(out, KalshiL2GapEpisode{Start: int64(begin), Seconds: end - begin})
-		begin, end = b, b+width
-	}
-	out = append(out, KalshiL2GapEpisode{Start: int64(begin), Seconds: end - begin})
-	return out
+	return out, rows.Err()
 }
 
 // EdgeMulticastObservationsResponse is what the refresher caches.

@@ -950,7 +950,7 @@ function RecorderLossTimeline({
           episodes={r.episodes ?? []}
           window={win}
           detail={
-            `${r.node}: ${r.missing.toLocaleString()} of ${r.reference_messages.toLocaleString()} ` +
+            `${r.node}: ${r.missing.toLocaleString()} of ${r.reference_seqs.toLocaleString()} ` +
             `messages its peers recorded\n` +
             (r.missing === 0
               ? 'recorded everything the others did'
