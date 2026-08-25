@@ -18,6 +18,13 @@ import (
 // count, so both are parameters here where insertLevel (coverage tests) fixes them.
 func insertLevelAt(t *testing.T, api *handlers.API, node, source string, channelID, instrumentID uint32, msgType, statusAfter string, daysAgo int) {
 	t.Helper()
+	insertLevelAtHour(t, api, node, source, channelID, instrumentID, msgType, statusAfter, daysAgo, 12)
+}
+
+// insertLevelAtHour also fixes the hour, which the span tests need: whether one recorder's
+// record covers a book's whole life is a question about where its first and last rows sit.
+func insertLevelAtHour(t *testing.T, api *handlers.API, node, source string, channelID, instrumentID uint32, msgType, statusAfter string, daysAgo, hour int) {
+	t.Helper()
 	ctx := t.Context()
 	db := "`" + api.FeedsDB + "`"
 	require.NoError(t, api.DB.Exec(ctx, fmt.Sprintf(`
@@ -26,9 +33,9 @@ func insertLevelAt(t *testing.T, api *handlers.API, node, source string, channel
 		 instrument_id, source_id, msg_type, source_ts_ns, source_ts_kind, recv_ts_ns,
 		 recv_ts_kind, book_levels_after, status_after)
 		VALUES ('run1', '%s', '%s', 'cmh', '%s', 'KXNFLGAME', %d, %d, 3, '%s', 0, 'venue',
-		        toUInt64(toUnixTimestamp64Nano(toDateTime64(toStartOfDay(now64(9)) - toIntervalDay(%d) + toIntervalHour(12), 9))),
+		        toUInt64(toUnixTimestamp64Nano(toDateTime64(toStartOfDay(now64(9)) - toIntervalDay(%d) + toIntervalHour(%d), 9))),
 		        'kernel_udp_software', 4, '%s')
-	`, db, node, node, source, channelID, instrumentID, msgType, daysAgo, statusAfter)))
+	`, db, node, node, source, channelID, instrumentID, msgType, daysAgo, hour, statusAfter)))
 }
 
 func dayOf(t *testing.T, resp handlers.KalshiL2CompletenessResponse, i int) handlers.KalshiL2Day {
@@ -175,6 +182,42 @@ func TestKalshiL2Completeness_BookGappedInEveryVantageCountsOnce(t *testing.T) {
 	assert.EqualValues(t, 1, day.GappedInstruments)
 	assert.EqualValues(t, 1, day.UnanchoredInstruments)
 	assert.Equal(t, []string{"Perpetual Futures"}, day.GapLanes)
+}
+
+// A recorder that was only up for part of the day must not clear another recorder's gap. rec1
+// gapped book 100 across the whole day; rec2 holds it cleanly, but only from 18:00, so it has
+// no record of the hours rec1 marked. Nothing here holds the book end to end, and taking rec2's
+// clean word for the day would sell a hole.
+func TestKalshiL2Completeness_PartialVantageDoesNotClearAGap(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createKalshiMbpLevelsTable(t, api)
+
+	insertLevelAtHour(t, api, "cmh-rec1", "mbp_edge_kalshi_perps", 1, 100, "snapshot_end", "ready", 0, 1)
+	insertLevelAtHour(t, api, "cmh-rec1", "mbp_edge_kalshi_perps", 1, 100, "level_update", "gap", 0, 20)
+	insertLevelAtHour(t, api, "cmh-rec2", "mbp_edge_kalshi_perps", 1, 100, "level_update", "ready", 0, 18)
+	insertLevelAtHour(t, api, "cmh-rec2", "mbp_edge_kalshi_perps", 1, 100, "level_update", "ready", 0, 20)
+
+	day := dayOf(t, getCompleteness(t, api), 0)
+	assert.EqualValues(t, 1, day.Instruments)
+	assert.EqualValues(t, 1, day.GappedInstruments)
+	assert.Equal(t, []string{"Perpetual Futures"}, day.GapLanes)
+}
+
+// The same shape with the clean recorder covering the whole book reads clean. rec2 spans rec1's
+// first and last rows, so it holds a continuous record of the book and the gap is filled.
+func TestKalshiL2Completeness_CoveringVantageClearsAGap(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createKalshiMbpLevelsTable(t, api)
+
+	insertLevelAtHour(t, api, "cmh-rec1", "mbp_edge_kalshi_perps", 1, 100, "snapshot_end", "ready", 0, 1)
+	insertLevelAtHour(t, api, "cmh-rec1", "mbp_edge_kalshi_perps", 1, 100, "level_update", "gap", 0, 20)
+	insertLevelAtHour(t, api, "cmh-rec2", "mbp_edge_kalshi_perps", 1, 100, "level_update", "ready", 0, 1)
+	insertLevelAtHour(t, api, "cmh-rec2", "mbp_edge_kalshi_perps", 1, 100, "level_update", "ready", 0, 20)
+
+	day := dayOf(t, getCompleteness(t, api), 0)
+	assert.EqualValues(t, 1, day.Instruments)
+	assert.EqualValues(t, 0, day.GappedInstruments)
+	assert.Empty(t, day.GapLanes)
 }
 
 // The scan width is a parameter so one query serves both the full and the partial refresh. A

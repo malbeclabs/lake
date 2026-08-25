@@ -183,16 +183,33 @@ func (a *API) FetchKalshiL2Completeness(ctx context.Context, days int) (*KalshiL
 				source,
 				channel_id,
 				instrument_id,
-				-- min over the vantages: gapped only if no recorder held the book anchored.
-				min(gapped) AS gapped,
-				-- max over the vantages: one snapshot anywhere starts a replay.
+				-- max over the vantages, with no span test: a snapshot is an instant and not a
+				-- span, so any recorder's snapshot is a place a replay can start.
 				max(anchored) AS anchored,
 				-- The widest vantage of this book, not the sum: several recorders of one lane
 				-- are several observations of one publisher, so summing would report the
 				-- recording fan-out as traffic.
 				max(messages) AS messages,
-				min(first_ns) AS first_ns,
-				max(last_ns) AS last_ns
+				-- The book's whole life, over every vantage.
+				min(first_ns) AS book_first_ns,
+				max(last_ns) AS book_last_ns,
+				-- A recorder clears this book's gap only if its own rows span the book's whole
+				-- life. One that died before the gap, or joined after it, carries gapped = 0
+				-- because it was not there to see it, and letting absence veto another
+				-- recorder's marked gap calls a day replayable when nothing holds it end to
+				-- end. So the clean vantages are carried up as (start, -end) under one min():
+				-- that picks the earliest start and, among those, the latest end, and a
+				-- covering vantage has to hold both ends of the book, so if one exists it is
+				-- this one. The span test is settled a level up, where these are plain columns.
+				--
+				-- Two consequences worth naming. A lane with one recorder still reads on that
+				-- recorder's own record, since a single vantage covers itself and its downtime
+				-- is not in the data. And two clean part-day recorders that between them cover
+				-- the book still read gapped: stitching a replay across them would be sound
+				-- only if their spans met with no hole, which min and max over the pair cannot
+				-- tell apart from a hole. This view errs towards unsellable.
+				countIf(gapped = 0) AS clean_vantages,
+				minIf((first_ns, -toInt64(last_ns)), gapped = 0) AS widest_clean
 			FROM per_book_vantage
 			GROUP BY day, source, channel_id, instrument_id
 		),
@@ -202,11 +219,15 @@ func (a *API) FetchKalshiL2Completeness(ctx context.Context, days int) (*KalshiL
 				source,
 				channel_id,
 				count() AS instruments,
-				countIf(gapped > 0) AS gapped,
+				countIf(
+					clean_vantages = 0
+					OR widest_clean.1 > book_first_ns
+					OR -widest_clean.2 < book_last_ns
+				) AS gapped,
 				countIf(anchored = 0) AS unanchored,
 				sum(messages) AS messages,
-				min(first_ns) AS first_ns,
-				max(last_ns) AS last_ns
+				min(book_first_ns) AS first_ns,
+				max(book_last_ns) AS last_ns
 			FROM per_book
 			GROUP BY day, source, channel_id
 		)
