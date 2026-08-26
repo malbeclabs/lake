@@ -319,3 +319,7 @@ Lake supports user authentication with daily usage limits.
 | Anonymous | IP-based | 5 questions |
 
 Configure with `GOOGLE_CLIENT_ID`, `VITE_GOOGLE_CLIENT_ID`, and `AUTH_ALLOWED_DOMAINS` environment variables. See `.env.example` for details.
+
+## Maps
+
+Map surfaces render CARTO basemap tiles. Set `CARTO_API_KEY` on the API; it reaches the browser through `/api/config` and is therefore public — restrict it by origin at CARTO. Without a key, CARTO serves tiles with "API KEY REQUIRED" rendered into them.

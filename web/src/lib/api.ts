@@ -70,6 +70,7 @@ function getAuthHeaders(): Record<string, string> {
 // Public config from API
 export interface AppConfig {
   googleClientId?: string
+  cartoApiKey?: string
   sentryDsn?: string
   sentryEnvironment?: string
   slackEnabled?: boolean
@@ -111,6 +112,12 @@ export async function fetchConfig(): Promise<AppConfig> {
 
   cachedConfig = await response.json()
   return cachedConfig!
+}
+
+// The config fetched at startup, or null if that fetch hasn't landed or failed.
+// Synchronous, so first render can read it without an unkeyed pass — see basemap.ts.
+export function getCachedConfig(): AppConfig | null {
+  return cachedConfig
 }
 
 // Simple fetch wrapper that adds auth + env headers to all API requests.

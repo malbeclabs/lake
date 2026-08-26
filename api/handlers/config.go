@@ -9,7 +9,10 @@ import (
 
 // PublicConfig holds configuration that is safe to expose to the frontend
 type PublicConfig struct {
-	GoogleClientID    string          `json:"googleClientId,omitempty"`
+	GoogleClientID string `json:"googleClientId,omitempty"`
+	// CartoAPIKey is public by construction — it ships in the web bundle, so it is
+	// restricted by origin at CARTO rather than kept secret.
+	CartoAPIKey       string          `json:"cartoApiKey,omitempty"`
 	SentryDSN         string          `json:"sentryDsn,omitempty"`
 	SentryEnvironment string          `json:"sentryEnvironment,omitempty"`
 	SlackEnabled      bool            `json:"slackEnabled,omitempty"`
@@ -41,6 +44,7 @@ func (a *API) GetConfig(w http.ResponseWriter, r *http.Request) {
 
 	config := PublicConfig{
 		GoogleClientID:    os.Getenv("GOOGLE_CLIENT_ID"),
+		CartoAPIKey:       os.Getenv("CARTO_API_KEY"),
 		SentryDSN:         os.Getenv("SENTRY_DSN_WEB"),
 		SentryEnvironment: sentryEnv,
 		SlackEnabled:      os.Getenv("SLACK_CLIENT_ID") != "",

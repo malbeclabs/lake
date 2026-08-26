@@ -532,6 +532,24 @@ reads 232 Mbps against a group whose entire ingress is 3.6 Mbps. Every Kalshi re
 multi-group, so a counter-based parity check would be permanently wrong on exactly the feeds it
 exists for.
 
+## Basemap Tiles
+
+`web/src/lib/basemap.ts` owns the CARTO tile URL for every map surface. Two things must move
+together with it:
+
+- **The CSP in `api/main.go`** must allow the tile host in both `connect-src` and `img-src`. The
+  entry is a wildcard (`https://*.basemaps.cartocdn.com`), which matches `a.basemaps.cartocdn.com`
+  but **not** a bare `basemaps.cartocdn.com` — a host change that skips the CSP blocks every tile
+  with no error anywhere but the browser console.
+- **`CARTO_API_KEY`** on the API, surfaced to the browser through `/api/config`. It ships in the
+  bundle, so it is public by construction: it is a plaintext deployment value, not a sops secret,
+  and is restricted by origin at CARTO instead. One key is shared across environments; an origin
+  that is not registered there renders the watermark rather than erroring.
+
+Both failure modes are silent by construction, which is why the URL lives in one module: CARTO
+answers a keyless request with **HTTP 200 and a valid PNG** carrying `API KEY REQUIRED` burned
+into the image, so MapLibre sees a perfectly good tile and nothing logs.
+
 ## Logging Levels
 
 ERROR-level log lines page on-call (alerts fire on `level="ERR"` — prod → `#alerts`, staging → `#alerts-l2`). Reserve raw `.Error(...)` calls for genuinely-actionable terminal failures: process/component death, startup failures, panics, config errors.
