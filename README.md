@@ -322,4 +322,4 @@ Configure with `GOOGLE_CLIENT_ID`, `VITE_GOOGLE_CLIENT_ID`, and `AUTH_ALLOWED_DO
 
 ## Maps
 
-Map surfaces render CARTO basemap tiles. Set `CARTO_API_KEY` on the API; it reaches the browser through `/api/config` and is therefore public — restrict it by origin at CARTO. Without a key, CARTO serves tiles with "API KEY REQUIRED" rendered into them.
+Map surfaces render CARTO basemap tiles. Set `CARTO_API_KEY` on the API; it reaches the browser through `/api/config` and is therefore public. CARTO has no domain restriction for basemap keys, so the key is effectively disclosed — usage is bounded by CARTO's fair-use quota (5M tile requests per calendar month) and their right to revoke a key they see being abused. Without a key, CARTO serves tiles with "API KEY REQUIRED" rendered into them.

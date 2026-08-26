@@ -10,8 +10,9 @@ import (
 // PublicConfig holds configuration that is safe to expose to the frontend
 type PublicConfig struct {
 	GoogleClientID string `json:"googleClientId,omitempty"`
-	// CartoAPIKey is public by construction — it ships in the web bundle, so it is
-	// restricted by origin at CARTO rather than kept secret.
+	// CartoAPIKey is public by construction — it ships in the web bundle. CARTO has
+	// no domain restriction for basemap keys, so nothing scopes it: exposure is
+	// bounded by their fair-use quota and their right to revoke.
 	CartoAPIKey       string          `json:"cartoApiKey,omitempty"`
 	SentryDSN         string          `json:"sentryDsn,omitempty"`
 	SentryEnvironment string          `json:"sentryEnvironment,omitempty"`

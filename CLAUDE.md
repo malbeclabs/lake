@@ -542,9 +542,12 @@ together with it:
   but **not** a bare `basemaps.cartocdn.com` — a host change that skips the CSP blocks every tile
   with no error anywhere but the browser console.
 - **`CARTO_API_KEY`** on the API, surfaced to the browser through `/api/config`. It ships in the
-  bundle, so it is public by construction: it is a plaintext deployment value, not a sops secret,
-  and is restricted by origin at CARTO instead. One key is shared across environments; an origin
-  that is not registered there renders the watermark rather than erroring.
+  bundle, so it is public by construction: a plaintext deployment value, not a sops secret. Do not
+  file a follow-up to "restrict it" — CARTO has no domain/referer scoping for basemap keys (the
+  domain box on the request form is informational, verified by request), so nothing bounds the key
+  but CARTO's fair-use quota of 5M tile requests per calendar month and their right to revoke it.
+  One key is shared across environments. If the quota is ever burned by someone else's site, the
+  remedy is to rotate the key, or to proxy tiles through the API so it stops shipping to browsers.
 
 Both failure modes are silent by construction, which is why the URL lives in one module: CARTO
 answers a keyless request with **HTTP 200 and a valid PNG** carrying `API KEY REQUIRED` burned
