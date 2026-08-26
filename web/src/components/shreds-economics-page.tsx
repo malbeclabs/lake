@@ -63,6 +63,10 @@ function priceChipClass(price: number): string {
 }
 
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const MONTH_LONG = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
 
 // Helpers
 
@@ -92,15 +96,19 @@ function pct(n: number, of: number): number {
 // month is never shifted by the viewer's timezone.
 function monthName(key: string): string {
   const [year, month] = key.split('-')
-  const full = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December',
-  ]
-  return `${full[Number(month) - 1] ?? month} ${year}`
+  return `${MONTH_LONG[Number(month) - 1] ?? month} ${year}`
 }
 
-function monthShort(key: string): string {
-  return MONTH_SHORT[Number(key.split('-')[1]) - 1] ?? key
+function monthShort(key: string, withYear = false): string {
+  const [year, month] = key.split('-')
+  const name = MONTH_SHORT[Number(month) - 1] ?? key
+  return withYear ? `${name} ${year.slice(2)}` : name
+}
+
+// Whether the window spans more than one calendar year, in which case a bare
+// "Jan" would appear twice.
+function spansYears(months: { month: string }[]): boolean {
+  return new Set(months.map((m) => m.month.slice(0, 4))).size > 1
 }
 
 // "2026-08-26" -> "26 Aug 2026".
@@ -134,7 +142,6 @@ interface EconomicsView {
   metroSeat: number
   metroInvoiced: number
   metroTotal: number
-  maxMetroTotal: number
   peakSeats: number
   dailyRate: number
   daysLeft: number
@@ -189,8 +196,7 @@ function buildView(data: ShredsEconomics): EconomicsView {
     metroSeat,
     metroInvoiced,
     metroTotal: metroSeat + metroInvoiced,
-    maxMetroTotal: Math.max(1, ...data.metros.map((m) => m.seat_revenue + m.invoiced)),
-    peakSeats: Math.max(0, ...data.epochs.map((e) => e.seats)),
+    peakSeats: data.epochs.reduce((peak, e) => Math.max(peak, e.seats), 0),
     dailyRate,
     daysLeft,
     mrrSeat,
@@ -313,6 +319,8 @@ function TipRow({ label, value, color }: { label: string; value: string; color?:
 // A figure with the arithmetic behind it one click away. The run-rate is a
 // projection and the ARR is that projection annualized; neither should be read
 // as a settled number without the reader being able to see how it was reached.
+let tileSeq = 0
+
 function HeadlineTile({
   label,
   figure,
@@ -330,6 +338,7 @@ function HeadlineTile({
 }) {
   const [open, setOpen] = useState(false)
   const wrap = useRef<HTMLDivElement>(null)
+  const [panelId] = useState(() => `tile-explain-${(tileSeq += 1)}`)
 
   useEffect(() => {
     if (!open) return
@@ -355,6 +364,7 @@ function HeadlineTile({
           type="button"
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
+          aria-controls={panelId}
           aria-label={`How ${label} is calculated`}
           className="p-0.5 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted transition-colors"
         >
@@ -362,8 +372,10 @@ function HeadlineTile({
         </button>
         {open && (
           <div
-            role="tooltip"
-            className="absolute left-0 top-6 z-20 w-72 rounded-lg border border-border bg-popover p-3 shadow-xl"
+            id={panelId}
+            role="group"
+            aria-label={`How ${label} is calculated`}
+            className="absolute left-0 top-6 z-20 w-72 max-w-[calc(100vw-3rem)] rounded-lg border border-border bg-popover p-3 shadow-xl"
           >
             <div className="text-xs font-medium mb-2">{explain.title}</div>
             <div className="flex flex-col gap-1">
@@ -426,11 +438,12 @@ function RevenueByMonth({ view, colors }: { view: EconomicsView; colors: { seat:
   const [mode, setMode] = useState<'monthly' | 'cumulative'>('monthly')
   const cumulative = mode === 'cumulative'
 
+  const withYear = spansYears(view.months)
   const data = view.months.map((m) => {
     const total = cumulative ? m.cum : m.total
     return {
       key: m.month,
-      label: monthShort(m.month) + (m.open ? ' (open)' : m.future ? ' (booked)' : ''),
+      label: monthShort(m.month, withYear) + (m.open ? ' (open)' : m.future ? ' (booked)' : ''),
       seat: cumulative ? m.cumSeat : m.seat_revenue,
       invoice: cumulative ? m.cumInvoice : m.invoiced,
       total,
@@ -494,12 +507,12 @@ function RevenueByMonth({ view, colors }: { view: EconomicsView; colors: { seat:
                       <>
                         <TipRow
                           label={cumulative ? 'Seats to date' : 'Seats'}
-                          value={d.seat > 0 ? `${money(d.seat)} USDC` : 'not charged yet'}
-                          color={colors.seat}
+                          value={d.seat !== 0 ? `${money(d.seat)} USDC` : 'not charged yet'}
+                          color={d.seat < 0 ? 'var(--destructive)' : colors.seat}
                         />
                         <TipRow
                           label={cumulative ? 'Invoices to date' : 'Invoices'}
-                          value={d.invoice > 0 ? `${money(d.invoice)} USDC` : 'not billed yet'}
+                          value={d.invoice !== 0 ? `${money(d.invoice)} USDC` : 'not billed yet'}
                           color={colors.invoice}
                         />
                         <TipRow
@@ -557,7 +570,12 @@ function RevenueByMonth({ view, colors }: { view: EconomicsView; colors: { seat:
               <th className="px-4 py-3 text-right font-semibold uppercase tracking-[0.12em]">Per day</th>
               <th className="px-4 py-3 text-right font-semibold uppercase tracking-[0.12em]">Invoices</th>
               <th className="px-4 py-3 text-right font-semibold uppercase tracking-[0.12em]">Total revenue</th>
-              <th className="px-4 py-3 text-right font-semibold uppercase tracking-[0.12em]">Cumulative</th>
+              <th
+                className="px-4 py-3 text-right font-semibold uppercase tracking-[0.12em]"
+                title="Running total of the column to its left, so a month billed ahead carries its booked revenue too. The footer totals recognized months only."
+              >
+                Cumulative
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -587,12 +605,15 @@ function RevenueByMonth({ view, colors }: { view: EconomicsView; colors: { seat:
                       </>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-right tabular-nums" style={{ color: m.seat_revenue > 0 ? colors.seat : undefined }}>
-                    {m.seat_revenue > 0 ? money(m.seat_revenue) : <Dash />}
+                  <td
+                    className="px-4 py-3 text-right tabular-nums"
+                    style={{ color: m.seat_revenue < 0 ? 'var(--destructive)' : m.seat_revenue > 0 ? colors.seat : undefined }}
+                  >
+                    {m.seat_revenue !== 0 ? money(m.seat_revenue) : <Dash />}
                   </td>
-                  <td className="px-4 py-3 text-right tabular-nums">{m.perDay > 0 ? money(m.perDay) : <Dash />}</td>
-                  <td className="px-4 py-3 text-right tabular-nums" style={{ color: m.invoiced > 0 ? colors.invoice : undefined }}>
-                    {m.invoiced > 0 ? (
+                  <td className="px-4 py-3 text-right tabular-nums">{m.perDay !== 0 ? money(m.perDay) : <Dash />}</td>
+                  <td className="px-4 py-3 text-right tabular-nums" style={{ color: m.invoiced !== 0 ? colors.invoice : undefined }}>
+                    {m.invoiced !== 0 ? (
                       <>
                         {money(m.invoiced)}
                         <span className="block text-[11px] text-muted-foreground/60">{m.invoice_feeds} feeds</span>
@@ -601,7 +622,12 @@ function RevenueByMonth({ view, colors }: { view: EconomicsView; colors: { seat:
                       <Dash />
                     )}
                   </td>
-                  <td className="px-4 py-3 text-right tabular-nums font-medium">{money(m.total)}</td>
+                  <td
+                    className="px-4 py-3 text-right tabular-nums font-medium"
+                    style={m.total < 0 ? { color: 'var(--destructive)' } : undefined}
+                  >
+                    {money(m.total)}
+                  </td>
                   <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{money(m.cum)}</td>
                 </tr>
               ))}
@@ -612,7 +638,7 @@ function RevenueByMonth({ view, colors }: { view: EconomicsView; colors: { seat:
                 {view.recognized.length} months recognized
                 {view.bookedAhead > 0 && (
                   <span className="block text-[11px] font-normal text-muted-foreground/60">
-                    {money(view.bookedAhead)} booked ahead, not in totals
+                    {money(view.bookedAhead)} booked ahead, excluded from this row
                   </span>
                 )}
               </td>
@@ -675,8 +701,9 @@ function Metros({
       note={
         <>
           Both streams. Invoices reach a metro through the feed they bill, so a feed's metro carries its revenue. Live
-          is epoch <span className="font-mono">{data.current_epoch}</span>; revenue is {span}. Subscription seats do not
-          sum to the live total the way payers would: one payer holding seats in three metros counts in all three.
+          is epoch <span className="font-mono">{data.current_epoch}</span>; revenue is {span}, charged per epoch rather
+          than spread across days, so it runs slightly ahead of the monthly figures above. Subscription seats do not sum
+          to the live total the way payers would: one payer holding seats in three metros counts in all three.
         </>
       }
     >
@@ -791,10 +818,11 @@ function MetroRow({
 }) {
   const total = metro.seat_revenue + metro.invoiced
   const rate = metro.price * metro.live_seats
-  // A refunded metro nets out below zero. A negative bar width is not a valid
-  // declaration, and a dropped one renders full width, so it is floored here and
-  // the figure is labelled instead.
-  const share = Math.max(0, pct(total, view.maxMetroTotal))
+  // Share of all metro revenue: the same quantity the figure beside the bar
+  // reports, so the two cannot disagree. A refunded metro nets out below zero;
+  // a negative width is not a valid declaration and a dropped one renders full
+  // width, so it is floored here and the figure is labelled instead.
+  const share = Math.max(0, pct(total, view.metroTotal))
   const seatShare = total > 0 ? Math.max(0, pct(metro.seat_revenue, total)) : 0
   const invoiceShare = total > 0 ? Math.max(0, pct(metro.invoiced, total)) : 0
 
@@ -866,16 +894,22 @@ function MetroRow({
               {total < 0 ? 'refunded' : `${pct(total, view.metroTotal).toFixed(0)}%`}
             </span>
             <span className="h-1 w-16 shrink-0 rounded-full bg-muted overflow-hidden">
+              {/* A sliver still reads as present; rounding it to nothing would
+                  make a small metro look like it earned none at all. */}
               <span
                 className="block h-full rounded-full transition-[width] duration-700"
-                style={{ width: `${share}%`, background: colors.seat }}
+                style={{ width: share > 0 ? `max(2px, ${share}%)` : 0, background: colors.seat }}
               />
             </span>
           </span>
         </td>
       </tr>
-      <tr className="border-b border-border/60">
+      <tr className="border-b border-border/50">
         <td colSpan={7} className="p-0">
+          {/* A fixed cap, not a measured height: inside a table cell the
+              grid-rows and scrollHeight approaches both collapse to zero. 192px
+              clears the drawer's tallest state, which is the two rows the stats
+              wrap onto at the table's 720px minimum (~116px). */}
           <div
             className={cn(
               'overflow-hidden transition-[max-height] duration-300 ease-out',
@@ -894,7 +928,11 @@ function MetroRow({
                 value={rate > 0 ? money(rate * epochsPerMonth) : '0'}
                 sub="per month"
               />
-              <DrawerStat label="Subscription seats" value={String(metro.subscriptions)} sub={metro.subscriptions > 0 ? '' : 'none'} />
+              <DrawerStat
+            label="Subscription seats"
+            value={String(metro.subscriptions)}
+            sub={metro.subscriptions > 0 ? undefined : 'none'}
+          />
               <div className="flex-1 min-w-56">
                 <div className="flex h-1.5 gap-0.5 rounded-full overflow-hidden bg-muted mb-2">
                   <span style={{ width: `${seatShare}%`, background: colors.seat }} />
@@ -953,14 +991,14 @@ function Tag({ children, muted }: { children: React.ReactNode; muted?: boolean }
 
 function ChartSkeleton() {
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {[0, 1, 2].map((i) => (
-          <div key={i} className="h-40 rounded-lg border border-border bg-card animate-pulse" />
+          <div key={i} className="h-44 rounded-xl border border-border bg-card animate-pulse" />
         ))}
       </div>
-      <div className="h-96 rounded-lg border border-border bg-card animate-pulse" />
-      <div className="h-72 rounded-lg border border-border bg-card animate-pulse" />
+      <div className="h-96 rounded-xl border border-border bg-card animate-pulse" />
+      <div className="h-72 rounded-xl border border-border bg-card animate-pulse" />
     </div>
   )
 }
@@ -990,6 +1028,10 @@ export function ShredsEconomicsPage() {
   }
 
   const openMonth = view?.openMonth
+  const lastEpochDay = data?.epochs[data.epochs.length - 1]?.day
+  // The first load has its own empty state above; this covers a poll that fails
+  // afterwards, which would otherwise leave stale figures reading as current.
+  const stale = Boolean(error && data)
 
   return (
     <div className="flex-1 overflow-y-auto overflow-x-hidden">
@@ -1000,22 +1042,36 @@ export function ShredsEconomicsPage() {
           subtitle={
             data && (
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <span>Revenue, subscribers and pricing</span>
+                <span>Revenue by month and metro</span>
                 <span className="text-muted-foreground/40">&middot;</span>
-                <span>epoch {data.current_epoch} in flight</span>
+                <span>
+                  epoch {data.current_epoch} in flight
+                  {lastEpochDay && <> since {dayLabel(lastEpochDay)}</>}
+                </span>
                 <span className="text-muted-foreground/40">&middot;</span>
                 <span>recognized through {dayLabel(data.as_of)} UTC</span>
               </div>
             )
           }
           actions={
-            <button
-              onClick={refresh.onClick}
-              className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-              title="Refresh"
-            >
-              {refresh.spinning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            </button>
+            <>
+              {stale && (
+                <span
+                  className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400"
+                  title="The last refresh failed. These figures are the most recent that loaded."
+                >
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  Showing last loaded figures
+                </span>
+              )}
+              <button
+                onClick={refresh.onClick}
+                className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                title="Refresh"
+              >
+                {refresh.spinning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              </button>
+            </>
           }
         />
 
@@ -1023,7 +1079,7 @@ export function ShredsEconomicsPage() {
           <ChartSkeleton />
         ) : (
           <div className="space-y-6">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className={cn('grid grid-cols-1 gap-3', openMonth ? 'sm:grid-cols-3' : 'sm:grid-cols-2')}>
               {openMonth && (
                 <HeadlineTile
                   label={`${monthName(openMonth.month)} revenue`}

@@ -201,13 +201,6 @@ type ShredsEconomicsMetro struct {
 	Invoiced      float64 `json:"invoiced"`
 }
 
-// ShredsEconomicsPricePoint is one rate-card price and the metros on it.
-// Every priced metro appears, including those that have never sold a seat.
-type ShredsEconomicsPricePoint struct {
-	Price  float64  `json:"price"`
-	Metros []string `json:"metros"`
-}
-
 // ShredsEconomics is the whole shreds economics page.
 type ShredsEconomics struct {
 	// AsOf is the UTC day revenue is recognized through. Everything on the page
@@ -230,10 +223,9 @@ type ShredsEconomics struct {
 	SubscriptionsOpenedOn    string `json:"subscriptions_opened_on"` // YYYY-MM-DD
 	SubscriptionsOpenedEpoch uint64 `json:"subscriptions_opened_epoch"`
 
-	Months   []ShredsEconomicsMonth      `json:"months"`
-	Epochs   []ShredsEconomicsEpoch      `json:"epochs"`
-	Metros   []ShredsEconomicsMetro      `json:"metros"`
-	RateCard []ShredsEconomicsPricePoint `json:"rate_card"`
+	Months []ShredsEconomicsMonth `json:"months"`
+	Epochs []ShredsEconomicsEpoch `json:"epochs"`
+	Metros []ShredsEconomicsMetro `json:"metros"`
 }
 
 // GetShredsEconomics returns the shreds economics page in one payload.
@@ -247,7 +239,12 @@ func (a *API) GetShredsEconomics(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	months := defaultEconomicsMonths
-	if n, err := strconv.Atoi(r.URL.Query().Get("months")); err == nil && n > 0 && n <= maxEconomicsMonths {
+	if raw := r.URL.Query().Get("months"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > maxEconomicsMonths {
+			http.Error(w, fmt.Sprintf("months must be a whole number between 1 and %d", maxEconomicsMonths), http.StatusBadRequest)
+			return
+		}
 		months = n
 	}
 
@@ -282,7 +279,6 @@ func (a *API) FetchShredsEconomicsData(ctx context.Context, asOf time.Time, mont
 		Months:         []ShredsEconomicsMonth{},
 		Epochs:         []ShredsEconomicsEpoch{},
 		Metros:         []ShredsEconomicsMetro{},
-		RateCard:       []ShredsEconomicsPricePoint{},
 	}
 
 	epochs, err := a.economicsEpochSeries(ctx, windowStart, asOfDay)
@@ -306,13 +302,19 @@ func (a *API) FetchShredsEconomicsData(ctx context.Context, asOf time.Time, mont
 		resp.LiveSubscriptions = last.Subscriptions
 		resp.LiveSubscriptionPayers = subs[last.Epoch].payers
 	}
-	// The first epoch that ended with a subscription live. Everything left of it
-	// on the chart is a true zero.
+	// The first epoch that ended with a subscription live, reported only when the
+	// window actually saw the transition. A window opening after subscriptions
+	// began would otherwise name its own first epoch, which is a window boundary
+	// and not an opening: SubscriptionsOpenedOn is all-time, and the two must not
+	// describe different events.
 	for _, e := range epochs {
-		if e.Subscriptions > 0 {
-			resp.SubscriptionsOpenedEpoch = e.Epoch
-			break
+		if e.Subscriptions == 0 {
+			continue
 		}
+		if e.Epoch != epochs[0].Epoch {
+			resp.SubscriptionsOpenedEpoch = e.Epoch
+		}
+		break
 	}
 
 	if resp.Months, err = a.economicsMonths(ctx, windowStart, asOf, epochs); err != nil {
@@ -321,11 +323,8 @@ func (a *API) FetchShredsEconomicsData(ctx context.Context, asOf time.Time, mont
 	if resp.Metros, err = a.economicsMetros(ctx, windowStart, asOf); err != nil {
 		return nil, err
 	}
-	if resp.RateCard, err = a.economicsRateCard(ctx); err != nil {
+	if resp.MetrosPriced, err = a.economicsMetrosPriced(ctx); err != nil {
 		return nil, err
-	}
-	for _, p := range resp.RateCard {
-		resp.MetrosPriced += len(p.Metros)
 	}
 	// The live rate is what the seats charged in the current epoch cost at their
 	// metro's current price, so it is summed from the metro table rather than
@@ -853,10 +852,10 @@ func (a *API) economicsMetros(ctx context.Context, windowStart string, asOf time
 	return items, rows.Err()
 }
 
-// economicsRateCard returns the price points and the metros on each, highest
-// first. Every priced metro is listed, including the ones that have never sold
-// a seat: the card is what a seat would cost, not what one did.
-func (a *API) economicsRateCard(ctx context.Context) ([]ShredsEconomicsPricePoint, error) {
+// economicsMetrosPriced counts the metros carrying a rate-card price, including
+// the ones that have never sold a seat: the card is what a seat would cost, not
+// what one did. It is the denominator behind the metro table's "of N priced".
+func (a *API) economicsMetrosPriced(ctx context.Context) (int, error) {
 	query := `
 		WITH metro_rate AS (
 			SELECT exchange_key AS ek, argMax(current_usdc_price_dollars, snapshot_ts) AS price
@@ -864,31 +863,27 @@ func (a *API) economicsRateCard(ctx context.Context) ([]ShredsEconomicsPricePoin
 			GROUP BY exchange_key
 		),
 		metro_code AS (SELECT pk AS mpk, any(code) AS code FROM dz_metros_current GROUP BY pk)
-		SELECT toFloat64(mr.price) AS price, arraySort(groupArray(mc.code)) AS metros
+		SELECT toUInt32(count())
 		FROM metro_rate AS mr
 		INNER JOIN metro_code AS mc ON mc.mpk = mr.ek
 		WHERE mr.price > 0 AND mc.code != ''
-		GROUP BY price
-		ORDER BY price DESC
 	`
 
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query)
 	metrics.RecordClickHouseQuery("shreds", time.Since(start), err)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	defer rows.Close()
 
-	items := []ShredsEconomicsPricePoint{}
-	for rows.Next() {
-		var item ShredsEconomicsPricePoint
-		if err := rows.Scan(&item.Price, &item.Metros); err != nil {
-			return nil, err
+	var n uint32
+	if rows.Next() {
+		if err := rows.Scan(&n); err != nil {
+			return 0, err
 		}
-		items = append(items, item)
 	}
-	return items, rows.Err()
+	return int(n), rows.Err()
 }
 
 // economicsEpochDays is the mean gap between epoch starts in the window. The

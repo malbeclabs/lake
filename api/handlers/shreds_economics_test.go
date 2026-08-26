@@ -242,6 +242,8 @@ func TestShredsEconomics_SubscriptionsCountSeatsNotPayers(t *testing.T) {
 	assert.Equal(t, 1, resp.LiveSeats)
 	assert.Equal(t, 3, resp.LiveSubscriptions)
 	assert.Equal(t, 2, resp.LiveSubscriptionPayers)
+	// Epoch 950 ended with none live and 951 carries three, so the window saw the
+	// transition and can name the epoch it happened in.
 	assert.Equal(t, uint64(951), resp.SubscriptionsOpenedEpoch)
 	assert.Equal(t, "2026-08-20", resp.SubscriptionsOpenedOn)
 
@@ -315,24 +317,44 @@ func TestShredsEconomics_MetrosCarryBothStreams(t *testing.T) {
 	assert.NotContains(t, byMetro, "lon")
 }
 
-// The rate card is what a seat would cost, so it lists every priced metro,
-// including the ones with no revenue at all.
-func TestShredsEconomics_RateCardListsEveryPricedMetro(t *testing.T) {
+// The priced-metro count is what a seat would cost somewhere, so it counts every
+// metro carrying a price, including the ones with no revenue at all. lon has a
+// rate card and has never sold a seat; it counts here and not in the table.
+func TestShredsEconomics_MetrosPricedCountsUnsoldMetros(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	seedEconomics(t, api)
 
 	resp := fetchEconomics(t, api)
 
-	require.Len(t, resp.RateCard, 2)
-	// Highest price first.
-	assert.InDelta(t, 100.0, resp.RateCard[0].Price, 0.01)
-	assert.Equal(t, []string{"ams", "fra"}, resp.RateCard[0].Metros)
-	assert.InDelta(t, 60.0, resp.RateCard[1].Price, 0.01)
-	assert.Equal(t, []string{"lon"}, resp.RateCard[1].Metros)
-
 	assert.Equal(t, 3, resp.MetrosPriced)
 	assert.Equal(t, 15, resp.EpochsPerMonth)
+
+	metros := make([]string, 0, len(resp.Metros))
+	for _, m := range resp.Metros {
+		metros = append(metros, m.Metro)
+	}
+	assert.NotContains(t, metros, "lon")
+}
+
+// months= is validated rather than silently falling back: a caller asking for a
+// window the endpoint will not serve should be told, not handed a different one.
+func TestGetShredsEconomics_RejectsBadMonths(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+
+	for _, bad := range []string{"0", "-3", "99", "abc"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/economics?months="+bad, nil)
+		rr := httptest.NewRecorder()
+		api.GetShredsEconomics(rr, req)
+		assert.Equal(t, http.StatusBadRequest, rr.Code, "months=%s", bad)
+	}
+
+	// Absent still means the default.
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/economics", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredsEconomics(rr, req)
+	assert.Equal(t, http.StatusOK, rr.Code)
 }
 
 // An environment with none of the program's data answers 200 with empty lists
@@ -353,7 +375,6 @@ func TestGetShredsEconomics_EmptyIsNotNull(t *testing.T) {
 	assert.NotNil(t, resp.Months)
 	assert.NotNil(t, resp.Epochs)
 	assert.NotNil(t, resp.Metros)
-	assert.NotNil(t, resp.RateCard)
 	assert.Empty(t, resp.Epochs)
 	assert.Equal(t, "", resp.SubscriptionsOpenedOn, "no subscription has ever been sold")
 }

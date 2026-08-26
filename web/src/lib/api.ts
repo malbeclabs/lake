@@ -6580,11 +6580,6 @@ export interface ShredsEconomicsMetro {
   invoiced: number
 }
 
-export interface ShredsEconomicsPricePoint {
-  price: number
-  metros: string[]
-}
-
 export interface ShredsEconomics {
   as_of: string // YYYY-MM-DD, the day revenue is recognized through
   current_epoch: number
@@ -6596,11 +6591,11 @@ export interface ShredsEconomics {
   live_subscription_payers: number
   metros_priced: number
   subscriptions_opened_on: string // YYYY-MM-DD, empty before the first sale
+  // The epoch the transition happened in, 0 when the window opened after it.
   subscriptions_opened_epoch: number
   months: ShredsEconomicsMonth[]
   epochs: ShredsEconomicsEpoch[]
   metros: ShredsEconomicsMetro[]
-  rate_card: ShredsEconomicsPricePoint[]
 }
 
 export async function fetchShredsEconomics(months?: number): Promise<ShredsEconomics> {
