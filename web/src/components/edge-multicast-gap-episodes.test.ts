@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { gapEpisodeStats, mergeGapEpisodes, sequenceLoss } from './edge-multicast-gap-episodes'
+import {
+  completeness,
+  gapEpisodeStats,
+  mergeGapEpisodes,
+  sequenceLoss,
+} from './edge-multicast-gap-episodes'
 import type { EdgeMulticastChannelInstance } from '@/lib/api'
 
 function instance(
@@ -173,5 +178,53 @@ describe('sequenceLoss', () => {
     )
     expect(s?.received).toBe(100)
     expect(s?.missing).toBe(1)
+  })
+})
+
+describe('completeness', () => {
+  it('rolls the group up into ppm lost and unprotected seconds', () => {
+    const c = completeness({
+      status: 'gapped',
+      gapped: 1,
+      stalled: 0,
+      instances: [
+        instance({ updates_received: 900_000, updates_missing: 90 }),
+        instance({ channel_id: 2, updates_received: 100_000, updates_missing: 10 }),
+      ],
+      all_paths_gapped: [
+        { start: 100, seconds: 4 },
+        { start: 500, seconds: 2 },
+      ],
+    })
+    // Parts per million of what should have ARRIVED: received + missing, not received.
+    expect(c.ppm).toBeCloseTo((100 / 1_000_100) * 1e6, 3)
+    expect(c.missing).toBe(100)
+    expect(c.expected).toBe(1_000_100)
+    expect(c.unprotectedSeconds).toBe(6)
+  })
+
+  it('has no ppm when nothing measured it', () => {
+    // Top-of-book carries no per-instrument sequence, so a feed recorded only there has no
+    // completeness figure. Zero would read as a clean bill of health that nothing established.
+    const c = completeness({ status: 'ok', gapped: 0, stalled: 0, instances: [instance()] })
+    expect(c.ppm).toBeUndefined()
+    expect(c.unprotectedSeconds).toBe(0)
+  })
+
+  it('reports a measured clean feed as zero, not as absent', () => {
+    const c = completeness({
+      status: 'ok',
+      gapped: 0,
+      stalled: 0,
+      instances: [instance({ updates_received: 500, updates_missing: 0 })],
+    })
+    expect(c.ppm).toBe(0)
+  })
+
+  it('is empty for a group with no sequence at all', () => {
+    const c = completeness(undefined)
+    expect(c.ppm).toBeUndefined()
+    expect(c.missing).toBe(0)
+    expect(c.unprotectedSeconds).toBe(0)
   })
 })

@@ -1,4 +1,8 @@
-import type { EdgeMulticastChannelInstance, GapEpisode } from '@/lib/api'
+import type {
+  EdgeMulticastChannelInstance,
+  EdgeMulticastSequenceHealth,
+  GapEpisode,
+} from '@/lib/api'
 
 /**
  * Union of the gap episodes across one publisher line's channel instances.
@@ -116,5 +120,50 @@ export function sequenceLoss(
     perMinute: windowSecs > 0 ? missing / (windowSecs / 60) : 0,
     maxGap: measured.reduce((n, i) => Math.max(n, i.max_gap_messages ?? 0), 0),
     p99Gap: measured.reduce((n, i) => Math.max(n, i.p99_gap_messages ?? 0), 0),
+  }
+}
+
+/** What a group delivered, as one number plus the time it had no redundancy. */
+export type Completeness = {
+  /** Updates lost per million of what should have arrived, or undefined when nothing measured it —
+   *  no denominator, so no rate. Distinct from a measured zero. */
+  ppm?: number
+  missing: number
+  expected: number
+  /** Seconds in which EVERY path of the feed was losing at once. The only figure here that means
+   *  the feed itself lost data rather than one of its paths. */
+  unprotectedSeconds: number
+}
+
+/**
+ * Rolls a group's sequence health into the two numbers that answer "how is this feed doing".
+ *
+ * NOT the same measurement as the per-day completeness view on the Kalshi L2 page (#798), which
+ * asks whether the level-grain record for a whole DAY was captured, over a fourteen-day window.
+ * This one is live: message loss inside the current fifteen-minute window, on the multicast page.
+ * The two can disagree without either being wrong — a day can be captured end to end and still
+ * have lost updates inside it — so they are deliberately reported in different units, ppm here
+ * against a per-day percentage there.
+ *
+ * The page could already say WHERE something broke — which path, which recorder, which book — and
+ * could not say whether the feed delivered what it should have. These are the pieces that were
+ * already measured and scattered: per-instrument sequence loss, which is the only counter on the
+ * page with a real denominator, and the seconds every path lost together.
+ *
+ * Both come from the group roll-up, so this is arithmetic over the existing payload and costs no
+ * query. ppm is undefined rather than zero when nothing measured it: a top-of-book series carries no
+ * per-instrument sequence, so a feed recorded only on that plane has no completeness figure at all,
+ * and printing 0 ppm would be the false clean bill of health this page keeps refusing.
+ */
+export function completeness(sequence?: EdgeMulticastSequenceHealth): Completeness {
+  const instances = sequence?.instances ?? []
+  const received = instances.reduce((n, i) => n + (i.updates_received ?? 0), 0)
+  const missing = instances.reduce((n, i) => n + (i.updates_missing ?? 0), 0)
+  const expected = received + missing
+  return {
+    ppm: expected > 0 ? (missing / expected) * 1e6 : undefined,
+    missing,
+    expected,
+    unprotectedSeconds: (sequence?.all_paths_gapped ?? []).reduce((n, e) => n + e.seconds, 0),
   }
 }

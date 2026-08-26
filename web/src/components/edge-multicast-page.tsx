@@ -2,7 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
 import { AlertCircle, ChevronDown, ChevronRight, Loader2, Radio } from 'lucide-react'
-import { gapEpisodeStats, mergeGapEpisodes, sequenceLoss } from './edge-multicast-gap-episodes'
+import {
+  completeness,
+  gapEpisodeStats,
+  mergeGapEpisodes,
+  sequenceLoss,
+} from './edge-multicast-gap-episodes'
 import { Tooltip } from '@/components/ui/tooltip'
 import { PageHeader } from './page-header'
 import { CopyableText } from './copyable-text'
@@ -1144,16 +1149,24 @@ function UnattributedSequenceCell({
 }) {
   const unattributed = sequence?.unattributed ?? 0
   const allPaths = sequence?.all_paths_gapped ?? []
+  // The one figure that answers "did this feed deliver what it should have", as opposed to the
+  // per-path and per-recorder findings the lines below already carry. It belongs on the group row
+  // because completeness is a property of the FEED: a path losing while its peer holds costs the
+  // feed nothing, which is exactly what the redundancy is for.
+  const c = completeness(sequence)
 
   // The redundancy failed. This outranks the unattributed count because it is the only thing on
   // this page that says the FEED lost data rather than one of its paths: A protects B, so a gap on
   // one path is covered and a gap on both is not. Measured on mainnet it is rare — 22 seconds in
   // six hours against 167 where a single path lost — so a badge here is a finding, not noise.
   if (allPaths.length > 0) {
-    const lost = allPaths.reduce((n, e) => n + e.seconds, 0)
+    const lost = c.unprotectedSeconds
     const detail = [
       `${allPaths.length} episode(s), ${lost}s in which EVERY path of this feed was losing at once`,
       'A gap on one path is covered by its peer; a gap on both is data the feed did not deliver.',
+      c.ppm === undefined
+        ? ''
+        : `over the window: ${c.ppm.toFixed(1)} ppm lost — ${c.missing.toLocaleString()} of ${c.expected.toLocaleString()} updates`,
       ...allPaths
         .slice(0, GAP_TOOLTIP_MAX_LINES)
         .map((e) => `${new Date(e.start * 1000).toISOString().slice(11, 19)}Z for ${e.seconds}s`),
@@ -1174,7 +1187,28 @@ function UnattributedSequenceCell({
   }
 
   if (unattributed === 0) {
-    return <span className="text-muted-foreground">—</span>
+    // No shared loss and nothing unattributed, so the cell says how complete the feed was. A
+    // measured zero reads as such; an ABSENT measurement stays a dash, because a feed recorded only
+    // on the top-of-book plane carries no per-instrument sequence and has no completeness figure —
+    // printing 0 ppm there would be the clean bill of health this column refuses to give.
+    if (c.ppm === undefined) {
+      return <span className="text-muted-foreground">—</span>
+    }
+    return (
+      <Tooltip
+        content={
+          `${c.missing.toLocaleString()} of ${c.expected.toLocaleString()} updates never arrived at any recorder\n` +
+          'Every path of this feed held for the whole window, so nothing was lost that the redundancy did not cover.'
+        }
+        className="whitespace-pre-line"
+      >
+        <span
+          className={`text-xs tabular-nums ${c.ppm > 0 ? 'text-foreground' : 'text-muted-foreground'}`}
+        >
+          {c.ppm.toFixed(1)} ppm
+        </span>
+      </Tooltip>
+    )
   }
   return (
     <Tooltip
@@ -1191,7 +1225,36 @@ function UnattributedSequenceCell({
 // Rates carry a tilde when the group's publishers also publish elsewhere from the same tunnel:
 // counters are per interface, so the figure is an upper bound for this group. Hiding that would
 // present a shared measurement as a per-group one.
-function RateCell({ bps, ambiguous, stale }: { bps: number; ambiguous: boolean; stale: boolean }) {
+// The group's own rate, and only where the group can own it.
+//
+// `elsewhere` is what a shared counter renders as. A publisher that feeds several groups from one
+// tunnel reports the same figure against each of them, so on such a group this column carried a
+// number it could not attribute — repeated once per group and marked with a '~' that never went
+// away. The figure now lives once, on the publisher, in the block at the top of the section; here it
+// points there rather than restating it. Where a publisher serves only this group the bytes ARE the
+// group's, and the number is shown plainly, because there is no caveat to make.
+function RateCell({
+  bps,
+  ambiguous,
+  stale,
+  elsewhere,
+}: {
+  bps: number
+  ambiguous: boolean
+  stale: boolean
+  elsewhere?: boolean
+}) {
+  if (ambiguous && elsewhere && bps > 0) {
+    return (
+      <Tooltip content="This group's publishers each feed several groups from one tunnel, so the counter cannot be split between them. Per-publisher rates are at the top of this section; what this group received is in Msg/s, measured at the recorders.">
+        <span className="text-xs text-muted-foreground">per tunnel &uarr;</span>
+      </Tooltip>
+    )
+  }
+  return <RateCellInner bps={bps} ambiguous={ambiguous} stale={stale} />
+}
+
+function RateCellInner({ bps, ambiguous, stale }: { bps: number; ambiguous: boolean; stale: boolean }) {
   const body = (
     <span className={`tabular-nums ${stale ? 'text-muted-foreground' : ''}`}>
       {ambiguous && bps > 0 ? '~' : ''}
@@ -1318,7 +1381,12 @@ function GroupRow({
           of that number and of nothing else on the row, and a whole column for it was pushing the
           verdicts off the right edge of the table. */}
       <td className="px-3 py-3 text-sm text-right whitespace-nowrap">
-        <RateCell bps={group.ingress_bps} ambiguous={group.traffic_ambiguous} stale={stale} />
+        <RateCell
+          bps={group.ingress_bps}
+          ambiguous={group.traffic_ambiguous}
+          stale={stale}
+          elsewhere
+        />
         <div className="text-[10px] text-muted-foreground/70">
           {age === undefined ? (
             'no data'
@@ -1392,6 +1460,78 @@ function GroupRow({
   )
 }
 
+// Every publisher of a section, once, with the facts that belong to its TUNNEL.
+//
+// Those facts are not the group's. Ingress, the DZD device and tunnel, the access RTT and the BGP
+// session are properties of one publisher's tunnel — and a publisher that feeds several groups of a
+// feed, which is every Kalshi publisher serving the top-of-book and market-by-price halves from one
+// tunnel, had every one of them repeated on each group it appears in. Measured on mainnet the perps
+// section printed the same two rates FOUR times and marked all four as upper bounds, when there
+// were only ever two measurements and each was exact for the tunnel it described.
+//
+// It is also a demotion, and that is deliberate. The counter plane answers one question well — is
+// this tunnel moving anything at all — and every real finding on this page came from the
+// application plane instead: a recorder losing 8.2%, two paths gapping without overlap, a path
+// delivering 7% of its peer. The counter's one strong claim now sits here, once, and the group rows
+// carry the measurements that earned their space.
+//
+// Deduped on the DZ IP: it is the address the datagrams leave with, one per publisher, and the one
+// recorded series join back on. A publisher's tunnel figures are identical across its groups by
+// construction — one counter — so taking the first line it appears on is not a choice between
+// readings. First-seen order preserves the address ordering the API already applies per group.
+function SectionPublishers({ service, now }: { service: EdgeMulticastService; now: number }) {
+  const byPublisher = new Map<string, EdgeMulticastPublisher>()
+  for (const group of service.groups) {
+    for (const line of group.publisher_lines ?? []) {
+      const key = line.dz_ip || line.client_ip
+      if (key && !byPublisher.has(key)) byPublisher.set(key, line)
+    }
+  }
+  const lines = [...byPublisher.values()]
+  if (lines.length === 0) return null
+
+  return (
+    <div className="px-4 py-2 border-b border-border bg-muted/30">
+      <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
+        Publishers · one row per tunnel
+      </div>
+      <div className="flex flex-col gap-1">
+        {lines.map((line) => {
+          const age = ageSecs(line.observed_at, now)
+          return (
+            <div
+              key={line.dz_ip || line.client_ip}
+              className="flex flex-wrap items-center gap-x-4 gap-y-0.5 text-xs"
+            >
+              <span className="font-mono tabular-nums w-32 shrink-0">{line.dz_ip || '—'}</span>
+              <span className="font-mono tabular-nums text-muted-foreground w-32 shrink-0">
+                {line.client_ip}
+              </span>
+              <DZDCell
+                deviceCode={line.device_code}
+                tunnelId={line.tunnel_id}
+                session={line.bgp_session}
+                rtt={line.bgp_rtt}
+                ledgerStatus={line.bgp_status}
+                now={now}
+              />
+              {/* No '~' here, and that is the point. The caveat that number carried was never about
+                  the counter's accuracy — it was about which group its bytes could be attributed
+                  to. At the tunnel's own grain it is exact for what it measures. */}
+              <span className="tabular-nums w-24 shrink-0 text-right">
+                {line.bps === null || line.bps === undefined ? '—' : formatBps(line.bps)}
+              </span>
+              <span className="text-[10px] text-muted-foreground w-14 shrink-0">
+                {age === undefined ? '' : formatAge(age)}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function ServiceSection({
   service,
   asOf,
@@ -1438,6 +1578,7 @@ function ServiceSection({
           </span>
         )}
       </div>
+      <SectionPublishers service={service} now={now} />
       {/* Vertical before horizontal. A section is capped and scrolls down with its header pinned,
           which keeps the shreds groups — twelve publisher lines each — from pushing every section
           below them off the screen. overflow-x stays as the fallback for a narrow viewport, but
