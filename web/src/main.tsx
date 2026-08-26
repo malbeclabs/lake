@@ -48,7 +48,10 @@ window.addEventListener('unhandledrejection', (event) => {
 
 // Initialize Sentry and mount React
 async function init() {
-  // Fetch config from API (contains Sentry DSN)
+  // Fetch config from API (contains Sentry DSN, CARTO basemap key).
+  // Awaited before mounting on purpose: the map components read the cached
+  // config synchronously at first render (see lib/basemap.ts), so deferring
+  // this leaves the first paint unkeyed and flashes the CARTO watermark.
   try {
     const config = await fetchConfig()
 

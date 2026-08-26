@@ -2,9 +2,8 @@ import type { StyleSpecification } from 'maplibre-gl'
 import { getCachedConfig } from '@/lib/api'
 
 // CARTO basemap tiles. Every map surface reads its style from here so the URL —
-// host, style names, and the API key — lives in exactly one place. The host must
-// stay covered by the CARTO entries in api/main.go's CSP `connect-src`/`img-src`;
-// a provider or host change that skips the CSP silently blocks every tile.
+// host, style names, and the API key — lives in exactly one place. Changing the
+// host means changing the CSP `connect-src` in api/main.go with it.
 const ATTRIBUTION =
   '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
 
@@ -30,7 +29,7 @@ export function createBasemapStyle(isDark: boolean): StyleSpecification {
   if (!apiKey && !warnedMissingKey) {
     warnedMissingKey = true
     console.warn(
-      'No CARTO API key in /api/config (set CARTO_API_KEY on the API); basemap tiles will render an "API KEY REQUIRED" watermark.',
+      'No CARTO API key: /api/config carried none (set CARTO_API_KEY on the API) or the startup config fetch failed. Basemap tiles will render an "API KEY REQUIRED" watermark.',
     )
   }
   return {
