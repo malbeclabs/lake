@@ -90,3 +90,18 @@ func TestEdgeMulticastAllPathsGapped_SharedRunIsOneEpisode(t *testing.T) {
 	require.Len(t, got, 1)
 	assert.EqualValues(t, 3, got[0].Seconds)
 }
+
+// Section placement: a group no feed row claims is promoted out of the bottom bucket once its
+// publishers are moving traffic.
+func TestEdgeMulticastFamilyOf(t *testing.T) {
+	// Both planes of one product share a family, which is what puts them in one section.
+	assert.Equal(t, "edge-kalshi-elections",
+		handlers.EdgeMulticastFamilyOfForTest("edge-kalshi-elections-mbp"))
+	assert.Equal(t, "edge-kalshi-elections",
+		handlers.EdgeMulticastFamilyOfForTest("edge-kalshi-elections-tob"))
+	// A trailing segment that is NOT a plane is part of the name, not a suffix to strip: guessing
+	// otherwise would merge unrelated groups into one section.
+	assert.Equal(t, "edge-solana-shreds1",
+		handlers.EdgeMulticastFamilyOfForTest("edge-solana-shreds1"))
+	assert.Equal(t, "mbone", handlers.EdgeMulticastFamilyOfForTest("mbone"))
+}

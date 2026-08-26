@@ -64,7 +64,11 @@ const SERVICE_LABELS: Record<string, string> = {
   'solana-shreds-full': 'Solana Shreds',
   'kalshi-sports': 'Kalshi Sports',
   'kalshi-perps': 'Kalshi Perps',
-  'edge-unclaimed': 'Edge groups with no feed row',
+  // A group with no feed row but with publishers moving traffic gets its own section, keyed on the
+  // GROUP family rather than a feed family — hence the `edge-` prefix these carry and the others do
+  // not. The header still says the feed row is missing; only the placement changed.
+  'edge-kalshi-elections': 'Kalshi Elections',
+  'edge-unclaimed': 'Edge groups with neither a feed row nor traffic',
 }
 
 // An unlisted family renders under its own code rather than being dropped, so a product added to
@@ -254,6 +258,15 @@ function PublisherCell({
       ? `${v.unrecorded} with no recorded series while peers on this group have one`
       : '',
     v.unknown > 0 ? `${v.unknown} with no counter data — not a fault, nothing measured them` : '',
+    // The same caveat Ingress carries, on the number it is derived FROM. "Above the floor" is a
+    // statement about a tunnel counter, and a publisher that feeds several groups from one tunnel
+    // reports the sum against each of them — so on such a group the count is an upper bound, and
+    // clearing the floor is not evidence that THIS group is being fed. Measured on mainnet:
+    // edge-kalshi-elections-tob read 2/2 publishing and healthy while its publishers sent it
+    // nothing at all, the whole ~18.9 Mbps belonging to the mbp group on the same tunnels.
+    group.traffic_ambiguous
+      ? 'upper bound: at least one publisher feeds several groups from one tunnel, so clearing the floor does not attest to this group'
+      : '',
     below > 0 && below !== v.thin + v.silent
       ? `${below} below the floor on the counter plane`
       : '',
@@ -283,6 +296,7 @@ function PublisherCell({
             both say 'publishing' is what this replaced. The per-line verdicts still colour the
             dot, so a group whose only fault is a gapped series does not read green. */}
         <span>
+          {group.traffic_ambiguous && group.publishers_publishing > 0 ? '~' : ''}
           {group.publishers_publishing}
           <span className="text-muted-foreground">/{publishers.total}</span>
         </span>

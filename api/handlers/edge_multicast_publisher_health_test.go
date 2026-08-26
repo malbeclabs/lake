@@ -92,3 +92,41 @@ func TestEdgeMulticastPublisherHealth_Unrecorded(t *testing.T) {
 	assert.Equal(t, "unrecorded", handlers.EdgeMulticastPublisherHealthForTest(line, true))
 	assert.Equal(t, "healthy", handlers.EdgeMulticastPublisherHealthForTest(line, false))
 }
+
+// A shared tunnel counter cannot attest that THIS group is being fed, and a group with no
+// subscriber has no application plane that ever could. Both together are 'unknown' — nothing
+// measured this publisher here — and not 'healthy'.
+//
+// Measured on mainnet: edge-kalshi-elections-tob read 2/2 publishing and both lines healthy while
+// its publishers sent that plane nothing, the whole ~18.6 Mbps belonging to the mbp group on the
+// same two tunnels.
+func TestEdgeMulticastPublisherHealth_SharedCounterOnAnUnsubscribedGroupIsNotHealthy(t *testing.T) {
+	line := handlers.EdgeMulticastPublisher{
+		Status:     handlers.EdgeMulticastPubPublishingForTest,
+		MultiGroup: true,
+	}
+	assert.Equal(t, "unknown",
+		handlers.EdgeMulticastPublisherHealthUnsubscribedForTest(line, false),
+		"the counter measured a tunnel this group shares, and nothing can measure the group")
+
+	// Both conditions are required, and each on its own leaves 'healthy' standing.
+	solo := line
+	solo.MultiGroup = false
+	assert.Equal(t, "healthy", handlers.EdgeMulticastPublisherHealthUnsubscribedForTest(solo, false),
+		"a publisher serving only this group has attributable bytes")
+	assert.Equal(t, "healthy", handlers.EdgeMulticastPublisherHealthForTest(line, false),
+		"a group with subscribers keeps its counter-only healthy — what the shreds groups rely on")
+}
+
+// Evidence beats the guard: a recorded message rate is a per-group measurement, so a line carrying
+// one is measured no matter what the tunnel counter can or cannot attribute.
+func TestEdgeMulticastPublisherHealth_RecordedRateOutweighsTheSharedCounter(t *testing.T) {
+	rate := 42.0
+	line := handlers.EdgeMulticastPublisher{
+		Status:     handlers.EdgeMulticastPubPublishingForTest,
+		MultiGroup: true,
+		MsgPerSec:  &rate,
+	}
+	assert.Equal(t, "healthy",
+		handlers.EdgeMulticastPublisherHealthUnsubscribedForTest(line, false))
+}

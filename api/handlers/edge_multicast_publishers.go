@@ -434,7 +434,29 @@ const (
 // The two tail states are not faults, and the difference between them matters: 'unknown' is no
 // counter row at all, 'unrecorded' is a publisher clearing the floor that no recorder wrote a
 // series for while its peers on the group have one.
-func edgeMulticastPublisherHealth(line EdgeMulticastPublisher, groupHasSeries bool) string {
+//
+// groupHasSubscribers is the third input, and it exists for one specific false positive. Clearing
+// the floor is a statement about a TUNNEL, and a publisher that feeds several groups from one
+// tunnel reports the sum against each of them (MultiGroup) — so on such a group the counter cannot
+// attest that THIS group is being fed. Where the group also has no subscriber, nothing else can:
+// there is no recorder, so no series and no recorded rate will ever arrive to settle it. Both
+// together are 'unknown' in the sense the word already carries here — nothing measured this
+// publisher on this group — and returning 'healthy' instead is a claim with no evidence under it.
+//
+// Measured on mainnet: edge-kalshi-elections-tob read 2/2 publishing and both lines healthy while
+// its publishers sent that plane nothing at all (`[tob_perps] enabled = false` on both hosts, and
+// only `feed="mbp-sports"` in their metrics); the whole ~18.6 Mbps belonged to the mbp group on the
+// same two tunnels.
+//
+// Both conditions are load-bearing and the narrowness is the point. A publisher that serves only
+// this group HAS attributable bytes, so its 'healthy' stands even with no subscriber. And a group
+// with subscribers keeps its counter-only 'healthy' — which is what the shreds groups rely on,
+// where there is no recorded wire protocol at all and every one of the 532 root publishers is
+// MultiGroup. Guarding on the shared counter alone would have turned those green lines grey over a
+// property of the plane rather than of the path, which is the trade this file already refuses
+// elsewhere. Today the pair fires on two groups, edge-kalshi-elections-tob and jito-shredstream —
+// the only ones with publishers and no subscriber at all.
+func edgeMulticastPublisherHealth(line EdgeMulticastPublisher, groupHasSeries bool, groupHasSubscribers bool) string {
 	switch line.Status {
 	case edgeMulticastPubIdle:
 		return edgeMulticastPubHealthSilent
@@ -471,6 +493,14 @@ func edgeMulticastPublisherHealth(line EdgeMulticastPublisher, groupHasSeries bo
 	// check rather than above it: a publisher nothing measured is not "sending and unrecorded".
 	if groupHasSeries && (line.Sequence == nil || len(line.Sequence.Instances) == 0) {
 		return edgeMulticastPubHealthUnrecorded
+	}
+	// Ranked last of the tail states because it is the weakest reading of all: the counter measured
+	// a tunnel this group shares, and nothing exists that could measure the group. The series and
+	// rate checks are redundant under a zero subscriber count and kept anyway, so a line assembled
+	// by another caller cannot reach this return while carrying evidence.
+	noSignal := (line.Sequence == nil || len(line.Sequence.Instances) == 0) && line.MsgPerSec == nil
+	if line.MultiGroup && !groupHasSubscribers && noSignal {
+		return edgeMulticastPubHealthUnknown
 	}
 	return edgeMulticastPubHealthy
 }

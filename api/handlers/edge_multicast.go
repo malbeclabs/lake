@@ -111,10 +111,32 @@ func edgeMulticastPlaneSuffixSQL() string {
 	return "-(" + strings.Join(suffixes, "|") + ")$"
 }
 
-// edgeMulticastUnclaimedService is the bucket for an Edge group no feed row claims yet. Listed
-// last rather than dropped: a product group with no feed behind it is either new or misconfigured,
-// and both are things to notice.
+// edgeMulticastUnclaimedService is the bucket for an Edge group no feed row claims AND nothing is
+// publishing to. Listed last rather than dropped: a product group with neither a feed nor traffic
+// is either new or misconfigured, and both are things to notice.
+//
+// A group with no feed row but with publishers actually moving traffic does NOT land here — see
+// edgeMulticastFamilyOf. Burying an active feed at the bottom under a heading that reads like a
+// graveyard is the wrong call twice over: the reader looking for what is live cannot find it, and
+// the bucket stops meaning "nothing here works".
 const edgeMulticastUnclaimedService = "edge-unclaimed"
+
+// edgeMulticastFamilyOf strips a group code's plane suffix to get the family the two planes of one
+// product share — edge-kalshi-elections-mbp and -tob both give edge-kalshi-elections.
+//
+// It is how a group with no feed row still gets its own section. The section is keyed on the GROUP
+// code rather than on a feed code, and that difference is deliberate: nothing sells this yet, so
+// there is no feed family to name it after, and inventing one would put a commercial fact in the
+// payload that the ledger does not carry. Managed stays false, so the header still says the feed
+// row is missing — the group is promoted by activity, not reclassified as sold.
+func edgeMulticastFamilyOf(code string) string {
+	if i := strings.LastIndexByte(code, '-'); i >= 0 {
+		if _, ok := edgeMulticastPlanes[code[i+1:]]; ok {
+			return code[:i]
+		}
+	}
+	return code
+}
 
 // EdgeMulticastRoleCounts breaks one side of a group (publishers or subscribers) into what the
 // rate data says about it. Total comes from the ledger; the rest from the rate view.
@@ -555,7 +577,17 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 		row := buildEdgeMulticastGroup(g, membership[g.PK], rates[g.PK], lastHeard[g.PK], publisherLines[g.PK], sequence[g.PK], observations, bgpSessions, bgpRtt)
 		codes := feeds.byGroup[g.PK]
 		if len(codes) == 0 {
-			codes = []string{edgeMulticastUnclaimedService}
+			// Publishers above the floor is the only per-group liveness signal available here, and
+			// it is enough for PLACEMENT even though it is not enough for a verdict: the counter is
+			// per tunnel, so it cannot attest that this group is being fed, which is why
+			// edgeMulticastPublisherHealth withholds 'healthy' on exactly this shape. Deciding
+			// where a row is listed is a weaker claim than declaring it well — "worth looking at"
+			// rather than "working".
+			if row.PublishersPublishing > 0 {
+				codes = []string{edgeMulticastFamilyOf(g.Code)}
+			} else {
+				codes = []string{edgeMulticastUnclaimedService}
+			}
 		}
 		// A group shared by several feeds (the tob/mbp pair of one exchange does not share,
 		// but nothing stops it) is listed under each of them. Duplicating the row is right:
@@ -575,10 +607,24 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 		})
 	}
 
-	// Feed-backed services first, alphabetically; the unclaimed bucket last regardless of name.
+	// Three tiers, and the middle one is the point: feed-backed services first, then the groups no
+	// feed row claims but whose publishers are moving traffic, then the bucket of groups that are
+	// neither sold nor live. Sold first because that is the catalogue; live-but-unsold above dead
+	// because a reader scanning for what is running should not have to pass a heading that says
+	// nothing here has a feed.
+	tier := func(s EdgeMulticastService) int {
+		switch {
+		case s.Managed:
+			return 0
+		case s.Code != edgeMulticastUnclaimedService:
+			return 1
+		default:
+			return 2
+		}
+	}
 	sort.Slice(resp.Services, func(i, j int) bool {
-		if resp.Services[i].Managed != resp.Services[j].Managed {
-			return resp.Services[i].Managed
+		if a, b := tier(resp.Services[i]), tier(resp.Services[j]); a != b {
+			return a < b
 		}
 		return resp.Services[i].Code < resp.Services[j].Code
 	})
@@ -662,7 +708,7 @@ func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership
 				lines[i].MsgPerSec = &rate
 			}
 		}
-		lines[i].Health = edgeMulticastPublisherHealth(lines[i], groupHasSeries)
+		lines[i].Health = edgeMulticastPublisherHealth(lines[i], groupHasSeries, out.Subscribers.Total > 0)
 		switch lines[i].Health {
 		case edgeMulticastPubHealthy:
 			out.PublisherVerdicts.Healthy++

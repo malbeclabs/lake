@@ -44,7 +44,16 @@ func EdgeMulticastPathRatesForTest(groups []EdgeMulticastGroupForTest, series []
 // and its ranking is the page's whole contract, so it is worth pinning without a database in the
 // way.
 func EdgeMulticastPublisherHealthForTest(line EdgeMulticastPublisher, groupHasSeries bool) string {
-	return edgeMulticastPublisherHealth(line, groupHasSeries)
+	// Subscribed by default: every case this shim is used for is a group somebody records, which
+	// is the ordinary state. The unsubscribed case has its own shim below so it cannot be reached
+	// by accident.
+	return edgeMulticastPublisherHealth(line, groupHasSeries, true)
+}
+
+// EdgeMulticastPublisherHealthUnsubscribedForTest grades a line on a group with NO subscriber,
+// where a shared tunnel counter is the only evidence there is and nothing can ever settle it.
+func EdgeMulticastPublisherHealthUnsubscribedForTest(line EdgeMulticastPublisher, groupHasSeries bool) string {
+	return edgeMulticastPublisherHealth(line, groupHasSeries, false)
 }
 
 // EdgeMulticastPublisherStatus values, for tests that need to build a line in a given counter
@@ -102,4 +111,10 @@ func EdgeMulticastRecorderLossLineKeyForTest(multicastGroup, publisherSourceIP s
 // line, so its keying is worth pinning without a database in the way.
 func EdgeMulticastAllPathsGappedForTest(instances []EdgeMulticastChannelInstance) []KalshiL2GapEpisode {
 	return edgeMulticastAllPathsGapped(instances)
+}
+
+// EdgeMulticastFamilyOfForTest exposes the group-code family used to key a section for a group no
+// feed row claims.
+func EdgeMulticastFamilyOfForTest(code string) string {
+	return edgeMulticastFamilyOf(code)
 }
