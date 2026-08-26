@@ -44,9 +44,14 @@ const kalshiL2CoverageCacheKey = "kalshi_l2_coverage:v5"
 // It does NOT bound the scan the way a leading-key predicate would. kalshi_mbp_levels sorts by
 // (measurement_node_id, source, channel_id, symbol, instrument_id, recv_ts_ns) and partitions
 // by toDate(recv_ts_ns), so a recv_ts_ns predicate prunes to the day's partition and no
-// further: mid-day this reads most of a day of a level-grain, TTL-less table to answer a
-// fifteen-minute question, over a remoteSecure() proxy. That is why this view is owned by the
-// background refresher and served from cache rather than run per request.
+// further: mid-day this reads most of a day of a level-grain table to answer a fifteen-minute
+// question, over a remoteSecure() proxy. That is why this view is owned by the background
+// refresher and served from cache rather than run per request.
+//
+// The table is not TTL-less, as this note said until 2026-08-24: it carries
+// `TTL toDate(recv_ts_ns) + toIntervalDay(7)`. That bounds a day's partition but not this
+// query, which only ever reads the current one. It does bound the catalog view — see
+// kalshiL2CompletenessDays.
 const kalshiL2WindowMinutes = 15
 
 // kalshiL2GapSecondsCap bounds the array groupUniqArray builds per channel instance. One entry

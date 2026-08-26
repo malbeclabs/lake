@@ -302,7 +302,12 @@ export function KalshiScoreboardPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {data.path_latency.feeds.map((f) => (
+                      {data.path_latency.feeds.map((f) => {
+                        // Computed once per row: the threshold travels in the payload, so the
+                        // page cannot drift from the number the handler documents.
+                        const minSamples = data.path_latency?.min_samples ?? 0
+                        const thin = f.samples < minSamples
+                        return (
                         <tr key={`${f.location_code}:${f.feed}`} className="border-b border-border last:border-b-0">
                           <td className="whitespace-nowrap py-3 pr-4">
                             <div className="text-sm font-medium uppercase">{f.location_code}</div>
@@ -327,14 +332,33 @@ export function KalshiScoreboardPage() {
                                 i === 0 ? 'text-xl font-semibold sm:text-2xl' : 'text-sm text-muted-foreground'
                               }`}
                             >
-                              {lead(v)}
+                              {/* Thin rows keep their place and lose their number: over a
+                                  handful of samples p99 is just the maximum of a handful, and
+                                  printing it beside a row backed by millions invites the
+                                  comparison. Dropping the row instead would empty the table
+                                  and leave one side of a pairing standing alone. */}
+                              {thin ? (
+                                <span className="text-muted-foreground/50">—</span>
+                              ) : (
+                                lead(v)
+                              )}
                             </td>
                           ))}
-                          <td className="whitespace-nowrap py-3 pl-4 text-right text-sm tabular-nums text-muted-foreground">
+                          <td
+                            className={`whitespace-nowrap py-3 pl-4 text-right text-sm tabular-nums ${
+                              thin ? 'text-amber-500' : 'text-muted-foreground'
+                            }`}
+                            title={
+                              thin
+                                ? `Too few samples for a percentile: ${f.samples.toLocaleString()} of the ${minSamples.toLocaleString()} this table needs. Either the capture started recently or it is barely producing.`
+                                : undefined
+                            }
+                          >
                             {f.samples.toLocaleString()}
                           </td>
                         </tr>
-                      ))}
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -456,20 +480,43 @@ export function KalshiScoreboardPage() {
                                 </div>
                               </td>
                               <td className="px-3 py-3 text-right text-sm tabular-nums sm:px-4">
-                                <div className="mb-1.5">{pct(n.dz_win_share_pct)}</div>
-                                <WinBar value={n.dz_win_share_pct} />
+                                {/* Same rule as the latency table, applied to the win share. */}
+                                {n.total_races < data.min_races ? (
+                                  <span
+                                    className="text-amber-500"
+                                    title={`Too few races for a win rate: ${n.total_races.toLocaleString()} of the ${data.min_races.toLocaleString()} this table needs.`}
+                                  >
+                                    too few races
+                                  </span>
+                                ) : (
+                                  <>
+                                    <div className="mb-1.5">{pct(n.dz_win_share_pct)}</div>
+                                    <WinBar value={n.dz_win_share_pct} />
+                                  </>
+                                )}
                               </td>
                               {competitorCols.map((col) => {
                                 const c = byFeed.get(col.feed)
                                 return (
                                   <td key={col.feed} className="whitespace-nowrap px-3 py-3 text-right text-sm tabular-nums sm:px-4">
-                                    {c ? (
+                                    {/* A published vantage can still hold a thin cell: 3000
+                                        races against one feed and four against one configured
+                                        this morning. The cell carries its own count, so the
+                                        threshold is applied per cell and not per row. */}
+                                    {!c ? (
+                                      '—'
+                                    ) : c.races < data.min_races ? (
+                                      <span
+                                        className="text-amber-500"
+                                        title={`${c.races.toLocaleString()} race${c.races === 1 ? '' : 's'}, of the ${data.min_races.toLocaleString()} this table needs for a lead figure.`}
+                                      >
+                                        {c.races.toLocaleString()} race{c.races === 1 ? '' : 's'}
+                                      </span>
+                                    ) : (
                                       <>
                                         <span>+{lead(c.lead_p50_ms)}</span>{' '}
                                         <span className="text-muted-foreground">(+{lead(c.lead_p95_ms)})</span>
                                       </>
-                                    ) : (
-                                      '—'
                                     )}
                                   </td>
                                 )

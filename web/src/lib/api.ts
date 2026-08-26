@@ -6607,6 +6607,8 @@ export interface LedgerResponse {
   slots_in_epoch: number
   epoch_pct: number
   epoch_eta_sec: number
+  // Absent on a page-cache row written by a deploy predating the field.
+  slot_duration_sec?: number
   absolute_slot: number
   block_height: number
   transaction_count: number
@@ -7666,6 +7668,8 @@ export interface KalshiFeedLatency {
 }
 
 export interface KalshiPathLatency {
+  /** Sample count below which a row's percentiles are withheld and its count shown instead. */
+  min_samples: number
   window: string
   feeds: KalshiFeedLatency[]
   generated_at: string
@@ -7677,6 +7681,8 @@ export interface KalshiScoreboardResponse {
   generated_at: string
   dz_win_share_pct: number
   total_races: number
+  /** Race count below which a win share or lead is withheld and the count shown instead. */
+  min_races: number
   competitors: KalshiCompetitor[]
   nodes: KalshiNode[]
   recent_races: KalshiRace[]
@@ -7758,6 +7764,37 @@ export async function fetchKalshiL2Coverage(): Promise<KalshiL2CoverageResponse>
   const res = await apiFetch('/api/dz/kalshi/l2-coverage')
   if (!res.ok) {
     throw new Error('Failed to fetch kalshi L2 coverage')
+  }
+  return res.json()
+}
+
+// Per-day completeness of the captured level record: whether a day's books can be replayed,
+// which is what makes a day sellable as history. Separate endpoint from coverage because it is
+// a different question over a different window, and a much heavier query (see
+// api/handlers/kalshi_l2_completeness.go).
+export interface KalshiL2Day {
+  day: string
+  lanes: number
+  instruments: number
+  gapped_instruments: number
+  unanchored_instruments: number
+  messages: number
+  gap_messages: number
+  first_message: string
+  last_message: string
+  gap_lanes: string[]
+}
+
+export interface KalshiL2CompletenessResponse {
+  generated_at: string
+  day_count: number
+  days: KalshiL2Day[]
+}
+
+export async function fetchKalshiL2Completeness(): Promise<KalshiL2CompletenessResponse> {
+  const res = await apiFetch('/api/dz/kalshi/l2-completeness')
+  if (!res.ok) {
+    throw new Error('Failed to fetch kalshi L2 completeness')
   }
   return res.json()
 }

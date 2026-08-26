@@ -128,8 +128,8 @@ const (
 	// to track the cadence tightly.
 	//
 	// The bound must therefore exceed the worst-case age of a healthy entry:
-	// PAGE_CACHE_REFRESH_INTERVAL is clamped to 10 minutes and the validators entry
-	// refreshes every other cycle, so the cadence tops out at 20 minutes, plus up to
+	// validatorsListingInterval, plus the one cycle the cadence gate may overshoot it
+	// by (PAGE_CACHE_REFRESH_INTERVAL is clamped to 10 minutes), plus up to
 	// maxActivityTimeout for the refresh itself. A tighter bound (an earlier revision
 	// used 3 minutes, ~3× the *default* cadence) would silently send a growing share
 	// of every cycle back to the live query as soon as an operator raised the interval,
