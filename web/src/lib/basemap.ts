@@ -4,6 +4,7 @@ import { getCachedConfig } from '@/lib/api'
 // CARTO basemap tiles. Every map surface reads its style from here so the URL —
 // host, style names, and the API key — lives in exactly one place. Changing the
 // host means changing the CSP `connect-src` in api/main.go with it.
+
 const ATTRIBUTION =
   '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
 
