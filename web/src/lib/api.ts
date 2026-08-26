@@ -6543,6 +6543,73 @@ export async function fetchShredFeedRevenue(codePrefix = ''): Promise<ShredFeedR
   return res.json()
 }
 
+// Shreds Economics
+//
+// One payload for the whole page. Seat charges and feed invoices are summed on
+// it, so both are cut on the same window and the same as-of day server-side —
+// fetching them apart let one half answer for a different day than the other.
+
+export interface ShredsEconomicsMonth {
+  month: string // YYYY-MM
+  seat_revenue: number
+  invoiced: number
+  invoice_feeds: number
+  days: number // days of seat revenue recognized
+  days_in_month: number
+  seats: number // distinct client seats charged
+  subscriptions: number // subscription seats live at month end
+  open: boolean // the month in progress
+  future: boolean // billed ahead, nothing earned yet
+}
+
+export interface ShredsEconomicsEpoch {
+  epoch: number
+  day: string // YYYY-MM-DD, epoch start
+  seats: number
+  subscriptions: number // live at the epoch's end; the epoch in flight carries the live count
+  revenue: number
+}
+
+export interface ShredsEconomicsMetro {
+  metro: string
+  price: number // USDC per epoch, the rate card
+  devices: number
+  live_seats: number
+  subscriptions: number
+  seat_revenue: number
+  invoiced: number
+}
+
+export interface ShredsEconomicsPricePoint {
+  price: number
+  metros: string[]
+}
+
+export interface ShredsEconomics {
+  as_of: string // YYYY-MM-DD, the day revenue is recognized through
+  current_epoch: number
+  epoch_days: number // measured mean epoch length
+  epochs_per_month: number // the rate card's month, not the measured cadence
+  live_seats: number
+  live_seat_rate: number // USDC per epoch across the live seats
+  live_subscriptions: number
+  live_subscription_payers: number
+  metros_priced: number
+  subscriptions_opened_on: string // YYYY-MM-DD, empty before the first sale
+  subscriptions_opened_epoch: number
+  months: ShredsEconomicsMonth[]
+  epochs: ShredsEconomicsEpoch[]
+  metros: ShredsEconomicsMetro[]
+  rate_card: ShredsEconomicsPricePoint[]
+}
+
+export async function fetchShredsEconomics(months?: number): Promise<ShredsEconomics> {
+  const qs = months ? `?months=${months}` : ''
+  const res = await fetchWithRetry(`/api/dz/shreds/economics${qs}`)
+  if (!res.ok) throw new Error('Failed to fetch shreds economics')
+  return res.json()
+}
+
 export interface ShredSubscriberHistory {
   epoch: number
   active_seats: number
