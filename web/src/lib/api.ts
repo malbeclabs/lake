@@ -7538,10 +7538,6 @@ export interface ShredsRewardsEpochDetail {
   subscription_epoch: number
   leader_slots: number
   client_id: number
-  // The software client's registered name ("Jito Labs", "Firedancer", …),
-  // falling back to "Client <id>" for a leaf that lands before its registry row
-  // is indexed. A validator publishes under one client at a time and switches,
-  // so an epoch it switched in carries one row per client.
   client_name: string
   // Reward in whole units of token_symbol (the token the validator chose for
   // the epoch: 2Z, USDC, or wSOL).

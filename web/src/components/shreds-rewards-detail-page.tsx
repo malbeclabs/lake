@@ -69,9 +69,7 @@ export function ShredsRewardsDetailPage() {
     refetchInterval: 60_000,
   })
 
-  // This page runs its queries live — it has no page-cache entry — so its first
-  // load is the slowest thing in the section and the one most worth showing
-  // progress for. Delayed all the same, so a warm response doesn't flash.
+  // Show loading progress on first read.
   const showSkeleton = useDelayedLoading(isLoading)
   const showShimmer = useDelayedLoading(isFetching && !isLoading)
 
@@ -91,10 +89,6 @@ export function ShredsRewardsDetailPage() {
     return { all, claimable, hasClaimable }
   }, [data])
 
-  // No early return while loading. The URL already carries the node id, so the
-  // back link, the heading and the identity card are all real content that can
-  // be on screen from the first frame; only the figures and the epoch rows have
-  // to wait, and those get skeletons in place.
   if (error || (!data && !isLoading)) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -116,8 +110,6 @@ export function ShredsRewardsDetailPage() {
     )
   }
 
-  // Falls back to the id from the URL, so the heading names the validator
-  // before the request that carries its name has come back.
   const displayName = data?.validator_name?.trim() || truncatePK(nodeId)
   const epochs = data?.epochs ?? []
 
@@ -275,11 +267,6 @@ export function ShredsRewardsDetailPage() {
                     const statusStyle = claimStyle[bucket]
                     const statusLabel = claimLabel[bucket]
                     return (
-                      // The row grain is (epoch, client), not epoch: a validator
-                      // that switched software clients mid-epoch has one leaf per
-                      // client, so solana_epoch alone repeats — and it repeated
-                      // twice for roughly a quarter of this page's rows, which
-                      // React resolves by reusing one row's DOM for the other.
                       <tr
                         key={`${epoch.subscription_epoch}-${epoch.client_id}`}
                         className="border-b border-border last:border-b-0 hover:bg-muted/30 transition-colors"

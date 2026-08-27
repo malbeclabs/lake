@@ -441,9 +441,6 @@ func (a *Activities) entries() []cacheEntry {
 		{name: "publisher check", key: "publisher_check", every: publisherCheckInterval, fn: func(ctx context.Context) (any, error) {
 			return api.FetchPublisherCheckData(ctx, "", handlers.DefaultPublisherCheckEpochs, 0)
 		}},
-		// The complete unfiltered set, so the handler can slice any page of any
-		// sort out of it — turning a page or clicking a column header on the Edge
-		// Rewards page were the only shapes the old first-page-only entry missed.
 		{name: "shreds rewards", key: handlers.ShredsRewardsPageCacheKey, fn: func(ctx context.Context) (any, error) {
 			return api.FetchShredsRewardsData(ctx)
 		}},
