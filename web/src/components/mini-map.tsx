@@ -1,26 +1,8 @@
 import { useMemo } from 'react'
 import MapGL, { Marker } from 'react-map-gl/maplibre'
-import type { StyleSpecification } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { useTheme } from '@/hooks/use-theme'
-
-function createMapStyle(isDark: boolean): StyleSpecification {
-  const tileUrl = isDark
-    ? 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'
-    : 'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'
-  return {
-    version: 8,
-    sources: {
-      carto: {
-        type: 'raster',
-        tiles: [tileUrl],
-        tileSize: 256,
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-      },
-    },
-    layers: [{ id: 'carto-tiles', type: 'raster', source: 'carto' }],
-  }
-}
+import { createBasemapStyle } from '@/lib/basemap'
 
 interface MiniMapProps {
   lat: number
@@ -32,7 +14,7 @@ interface MiniMapProps {
 export function MiniMap({ lat, lng, zoom = 7, googleMapsHref }: MiniMapProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
-  const mapStyle = useMemo(() => createMapStyle(isDark), [isDark])
+  const mapStyle = useMemo(() => createBasemapStyle(isDark), [isDark])
 
   return (
     <div className="relative w-full h-full">
