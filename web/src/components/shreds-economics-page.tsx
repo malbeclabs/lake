@@ -475,7 +475,7 @@ function RevenueByMonth({ view, colors }: { view: EconomicsView; colors: { seat:
   return (
     <Panel
       title="Revenue by month"
-      note="Two streams, summed. Seats is the epoch charge on shred client seats; invoices are the monthly subscription billing, which began August 2026."
+      note="Each bar stacks both revenue streams. Seats are what shred clients pay each epoch. Invoices are the monthly subscription bill, which started in August 2026."
       actions={
         <>
           <Legend seat={colors.seat} invoice={colors.invoice} labels={['Seats', 'Invoices']} />
@@ -721,10 +721,11 @@ function Metros({
       title="Metros"
       note={
         <>
-          Both streams. Invoices reach a metro through the feed they bill, so a feed's metro carries its revenue. Live
-          is epoch <span className="font-mono">{data.current_epoch}</span>; revenue is {span}, charged per epoch rather
-          than spread across days, so it runs slightly ahead of the monthly figures above. Subscription seats do not sum
-          to the live total the way payers would: one payer holding seats in three metros counts in all three.
+          One row per metro, with both revenue streams. An invoice bills a feed, and each feed sits in one metro, so the
+          invoice lands there. The Live columns are epoch <span className="font-mono">{data.current_epoch}</span>, in
+          flight now. The Revenue columns cover {span}, and they count each epoch charge in full. The chart above
+          spreads a charge over the days it covers, so these totals run a little ahead of it. Subscriptions counts
+          seats, not payers: seats add up across metros, and one payer can hold seats in three.
         </>
       }
     >
