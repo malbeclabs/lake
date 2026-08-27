@@ -669,6 +669,7 @@ func main() {
 		r.Get("/api/dz/shreds/funders", api.GetShredFunders)
 		r.Get("/api/dz/shreds/escrow-events", api.GetShredEscrowEvents)
 		r.Get("/api/dz/shreds/devices", api.GetShredDevices)
+		r.Get("/api/dz/shreds/economics", api.GetShredsEconomics)
 		r.Get("/api/dz/shreds/epoch-revenue", api.GetShredEpochRevenue)
 		r.Get("/api/dz/shreds/feed-revenue", api.GetShredFeedRevenue)
 		r.Get("/api/dz/shreds/rewards", api.GetShredsRewards)
