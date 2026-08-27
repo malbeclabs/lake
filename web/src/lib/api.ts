@@ -70,6 +70,7 @@ function getAuthHeaders(): Record<string, string> {
 // Public config from API
 export interface AppConfig {
   googleClientId?: string
+  cartoApiKey?: string
   sentryDsn?: string
   sentryEnvironment?: string
   slackEnabled?: boolean

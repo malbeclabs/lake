@@ -1,37 +1,12 @@
 import { useMemo, useState, useCallback } from 'react'
 import MapGL, { Source, Layer } from 'react-map-gl/maplibre'
 import type { MapLayerMouseEvent } from 'react-map-gl/maplibre'
-import type { StyleSpecification } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { useQuery } from '@tanstack/react-query'
 import { useTheme } from '@/hooks/use-theme'
 import { Loader2, AlertCircle } from 'lucide-react'
 import { fetchGeolocExplorer } from '@/lib/api'
-
-/* ------------------------------------------------------------------ */
-/*  Map style                                                         */
-/* ------------------------------------------------------------------ */
-
-function createMapStyle(isDark: boolean): StyleSpecification {
-  const tileUrl = isDark
-    ? 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'
-    : 'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'
-  return {
-    version: 8,
-    sources: {
-      carto: {
-        type: 'raster',
-        tiles: [tileUrl],
-        tileSize: 256,
-        attribution:
-          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-      },
-    },
-    layers: [
-      { id: 'carto-tiles', type: 'raster', source: 'carto', minzoom: 0, maxzoom: 22 },
-    ],
-  }
-}
+import { createBasemapStyle } from '@/lib/basemap'
 
 /* ------------------------------------------------------------------ */
 /*  RTT helpers                                                       */
@@ -104,7 +79,7 @@ export function GeolocExplorerPage() {
   const devices = data?.devices ?? []
   const probes = data?.probes ?? []
   const targets = data?.targets ?? []
-  const mapStyle = useMemo(() => createMapStyle(isDark), [isDark])
+  const mapStyle = useMemo(() => createBasemapStyle(isDark), [isDark])
 
   // Set of probe PKs for distinguishing devices from geoprobes
   const probePKs = useMemo(() => new Set(probes.map((p) => p.pk)), [probes])
