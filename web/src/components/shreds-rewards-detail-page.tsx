@@ -1,12 +1,22 @@
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
-import { Loader2, AlertCircle, ArrowLeft, Trophy } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Trophy } from 'lucide-react'
 import { fetchShredsRewardsDetail } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { useDelayedLoading } from '@/hooks/use-delayed-loading'
 import { PageHeader } from './page-header'
 import { CopyableText } from './copyable-text'
 import { formatTokenAmount } from './shreds-rewards-format'
+import {
+  RewardsShimmerBar,
+  SkeletonCell,
+  SkeletonRows,
+} from './shreds-rewards-skeleton'
+
+// Enough placeholder rows to fill the fold. A validator's history runs to
+// dozens of epochs, so this deliberately under-promises rather than guessing.
+const SKELETON_ROWS = 10
 
 function truncatePK(pk: string): string {
   if (!pk) return ''
@@ -52,12 +62,18 @@ function FactCard({
 export function ShredsRewardsDetailPage() {
   const { nodeId = '' } = useParams<{ nodeId: string }>()
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, isFetching, error } = useQuery({
     queryKey: ['shreds-rewards-detail', nodeId],
     queryFn: () => fetchShredsRewardsDetail(nodeId),
     enabled: !!nodeId,
     refetchInterval: 60_000,
   })
+
+  // This page runs its queries live — it has no page-cache entry — so its first
+  // load is the slowest thing in the section and the one most worth showing
+  // progress for. Delayed all the same, so a warm response doesn't flash.
+  const showSkeleton = useDelayedLoading(isLoading)
+  const showShimmer = useDelayedLoading(isFetching && !isLoading)
 
   const totals = useMemo(() => {
     const all: Record<string, number> = {}
@@ -75,15 +91,11 @@ export function ShredsRewardsDetailPage() {
     return { all, claimable, hasClaimable }
   }, [data])
 
-  if (isLoading) {
-    return (
-      <div className="flex-1 flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    )
-  }
-
-  if (error || !data) {
+  // No early return while loading. The URL already carries the node id, so the
+  // back link, the heading and the identity card are all real content that can
+  // be on screen from the first frame; only the figures and the epoch rows have
+  // to wait, and those get skeletons in place.
+  if (error || (!data && !isLoading)) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center">
@@ -104,7 +116,10 @@ export function ShredsRewardsDetailPage() {
     )
   }
 
-  const displayName = data.validator_name?.trim() || truncatePK(data.node_id)
+  // Falls back to the id from the URL, so the heading names the validator
+  // before the request that carries its name has come back.
+  const displayName = data?.validator_name?.trim() || truncatePK(nodeId)
+  const epochs = data?.epochs ?? []
 
   return (
     <div className="flex-1 overflow-auto">
@@ -121,19 +136,22 @@ export function ShredsRewardsDetailPage() {
           title={displayName}
           subtitle={
             <span className="text-xs text-muted-foreground font-mono">
-              {truncatePK(data.node_id)}
+              {truncatePK(nodeId)}
             </span>
           }
         />
 
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-8">
+          {/* Identity is known from the URL, so it is never a skeleton. */}
           <FactCard label="Validator Identity">
-            <CopyableText text={data.node_id} className="text-xs">
-              <span className="font-mono">{truncatePK(data.node_id)}</span>
+            <CopyableText text={nodeId} className="text-xs">
+              <span className="font-mono">{truncatePK(nodeId)}</span>
             </CopyableText>
           </FactCard>
           <FactCard label="Vote ID">
-            {data.vote_pubkey ? (
+            {!data ? (
+              <SkeletonCell className="w-28" />
+            ) : data.vote_pubkey ? (
               <CopyableText text={data.vote_pubkey} className="text-xs">
                 <span className="font-mono">{truncatePK(data.vote_pubkey)}</span>
               </CopyableText>
@@ -141,25 +159,35 @@ export function ShredsRewardsDetailPage() {
               <span className="text-muted-foreground/60">—</span>
             )}
           </FactCard>
-          <FactCard label="Stake">{formatStake(data.activated_stake)}</FactCard>
+          <FactCard label="Stake">
+            {data ? formatStake(data.activated_stake) : <SkeletonCell className="w-20" />}
+          </FactCard>
           <FactCard label="DZ IP">
-            {data.dz_user_ip ? (
+            {!data ? (
+              <SkeletonCell className="w-24" />
+            ) : data.dz_user_ip ? (
               <span className="font-mono text-xs">{data.dz_user_ip}</span>
             ) : (
               <span className="text-muted-foreground/60">—</span>
             )}
           </FactCard>
-          <FactCard label="All-time Earned">{formatTokenTotals(totals.all)}</FactCard>
+          <FactCard label="All-time Earned">
+            {data ? formatTokenTotals(totals.all) : <SkeletonCell className="w-24" />}
+          </FactCard>
           <FactCard label="Immediately Claimable">
-            <span
-              className={cn(
-                totals.hasClaimable
-                  ? 'text-amber-500 dark:text-amber-400'
-                  : 'text-muted-foreground/60',
-              )}
-            >
-              {formatTokenTotals(totals.claimable)}
-            </span>
+            {!data ? (
+              <SkeletonCell className="w-24" />
+            ) : (
+              <span
+                className={cn(
+                  totals.hasClaimable
+                    ? 'text-amber-500 dark:text-amber-400'
+                    : 'text-muted-foreground/60',
+                )}
+              >
+                {formatTokenTotals(totals.claimable)}
+              </span>
+            )}
           </FactCard>
         </div>
 
@@ -169,6 +197,7 @@ export function ShredsRewardsDetailPage() {
         </div>
 
         <div className="border border-border rounded-lg overflow-hidden bg-card">
+          <RewardsShimmerBar show={showShimmer} />
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
@@ -194,7 +223,18 @@ export function ShredsRewardsDetailPage() {
                 </tr>
               </thead>
               <tbody>
-                {data.epochs.length === 0 ? (
+                {/* Checked before the empty case so an arriving history never
+                    flashes "No rewards recorded for this validator", which
+                    reads as a finding rather than as waiting. */}
+                {!data ? (
+                  showSkeleton && (
+                    <SkeletonRows
+                      rows={SKELETON_ROWS}
+                      widths={['w-12', 'w-12', 'w-16', 'w-24', 'w-20', 'w-16']}
+                      align={['left', 'left', 'right', 'left', 'right', 'left']}
+                    />
+                  )
+                ) : epochs.length === 0 ? (
                   <tr>
                     <td
                       colSpan={6}
@@ -204,7 +244,7 @@ export function ShredsRewardsDetailPage() {
                     </td>
                   </tr>
                 ) : (
-                  data.epochs.map((epoch) => {
+                  epochs.map((epoch) => {
                     // Drive the badge off the derived lifecycle `state`:
                     //   claimable   -> Claimable (claimable now)
                     //   distributed -> Paid (rewards already distributed)
