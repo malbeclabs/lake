@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import { useQuery, keepPreviousData } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { useSearchParams, Link, useNavigate } from 'react-router-dom'
 import {
   AlertCircle,
@@ -144,14 +144,27 @@ export function ShredsRewardsPage() {
   const { data, isLoading, isPlaceholderData, error } = useQuery({
     queryKey: ['shreds-rewards', queryParams],
     queryFn: () => fetchShredsRewards(queryParams),
-    placeholderData: keepPreviousData,
+    // Keep the previous page WITHIN a grouping, but never across one. Plain
+    // keepPreviousData carries the other mode's payload over, and the response
+    // holds rows for one grouping and an empty array for the other — while
+    // groupByClient flips the instant the URL does. The client table would then
+    // render against the validator payload's empty `clients` and state "No
+    // client teams have earned rewards yet" as a finished answer, at full
+    // opacity, until the real response landed. Returning undefined makes the
+    // switch a genuine load, which is what it is: a different table with
+    // different columns, not a stale version of this one.
+    placeholderData: (previous, previousQuery) => {
+      const previousGroup = (previousQuery?.queryKey?.[1] as ShredsRewardsParams | undefined)?.group
+      return previousGroup === queryParams.group ? previous : undefined
+    },
     refetchInterval: 60_000,
   })
 
-  // First visit: nothing on screen yet, so the table is replaced by a skeleton
-  // of itself. Page turn / re-sort: keepPreviousData holds the old rows, so the
-  // shimmer bar rides above them instead. Both are delayed, because a cached
-  // page usually arrives too fast for either to be anything but a flicker.
+  // First visit or a grouping switch: nothing valid on screen for this table, so
+  // it is replaced by a skeleton of itself. Page turn / re-sort: the previous
+  // page's rows stay readable, so the shimmer bar rides above them instead.
+  // Both are delayed, because a cached page usually arrives too fast for either
+  // to be anything but a flicker.
   const firstLoad = isLoading && !data
   const showSkeleton = useDelayedLoading(firstLoad)
   const showShimmer = useDelayedLoading(isPlaceholderData)

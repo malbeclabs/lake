@@ -125,6 +125,59 @@ describe('Edge Rewards list loading state', () => {
     expect(container.querySelectorAll('.animate-pulse')).toHaveLength(0)
   })
 
+  // Regression: keepPreviousData used to carry the validator payload across a
+  // grouping switch. Its `clients` is an empty array, and groupByClient flips
+  // the instant the URL does, so the client table rendered "No client teams
+  // have earned rewards yet" as a finished answer — at full opacity, because
+  // the placeholder dimming is delayed — until the real response arrived.
+  it('does not answer "no client teams" while the grouping switch is in flight', async () => {
+    const list = deferred<ShredsRewardsResponse>()
+    fetchShredsRewards.mockReturnValueOnce(list.promise)
+
+    const { container } = renderWithProviders(<ShredsRewardsPage />, '/dz/shreds/rewards')
+    list.resolve(listPayload())
+    expect(await screen.findByText('Alpha Validator')).toBeInTheDocument()
+
+    // Switch to Client teams; hold the response open.
+    const clients = deferred<ShredsRewardsResponse>()
+    fetchShredsRewards.mockReturnValueOnce(clients.promise)
+    await act(async () => {
+      screen.getByRole('button', { name: 'Client teams' }).click()
+    })
+
+    expect(screen.queryByText(/No client teams have earned rewards yet/)).not.toBeInTheDocument()
+    // The validator rows belong to the mode being left, so they must be gone too.
+    expect(screen.queryByText('Alpha Validator')).not.toBeInTheDocument()
+
+    await advancePastDelay()
+    expect(container.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0)
+
+    clients.resolve({
+      ...listPayload(),
+      validators: [],
+      clients: [{ client_id: 1, client_name: 'Jito Labs', validators: 68, total_earned_2z: 1234 }],
+      total: 1,
+    })
+    expect(await screen.findByText('Jito Labs')).toBeInTheDocument()
+  })
+
+  it('keeps the previous page readable while the next one loads', async () => {
+    const first = deferred<ShredsRewardsResponse>()
+    fetchShredsRewards.mockReturnValueOnce(first.promise)
+
+    renderWithProviders(<ShredsRewardsPage />, '/dz/shreds/rewards')
+    first.resolve({ ...listPayload(), total: 250 })
+    expect(await screen.findByText('Alpha Validator')).toBeInTheDocument()
+
+    // A page turn stays inside one grouping, so the old rows are a stale view of
+    // the same table and should stay on screen under the shimmer.
+    fetchShredsRewards.mockReturnValueOnce(deferred<ShredsRewardsResponse>().promise)
+    await act(async () => {
+      screen.getByRole('button', { name: 'Next page' }).click()
+    })
+    expect(screen.getByText('Alpha Validator')).toBeInTheDocument()
+  })
+
   it('does not flash skeletons for a response that arrives inside the delay', async () => {
     fetchShredsRewards.mockResolvedValue(listPayload())
 
