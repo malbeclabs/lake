@@ -114,12 +114,6 @@ export async function fetchConfig(): Promise<AppConfig> {
   return cachedConfig!
 }
 
-// The config fetched at startup, or null if that fetch hasn't landed or failed.
-// Synchronous, so first render can read it without an unkeyed pass — see basemap.ts.
-export function getCachedConfig(): AppConfig | null {
-  return cachedConfig
-}
-
 // Simple fetch wrapper that adds auth + env headers to all API requests.
 // Use this instead of bare fetch() for any /api/ call.
 export function apiFetch(url: string, options?: RequestInit): Promise<Response> {

@@ -8,6 +8,7 @@ import App from './App.tsx'
 import { ThemeProvider } from '@/hooks/use-theme'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { fetchConfig } from '@/lib/api'
+import { setBasemapApiKey } from '@/lib/basemap'
 
 // Handle chunk loading failures (stale tabs after deploys) by reloading the page
 // Uses sessionStorage to prevent infinite reload loops
@@ -49,11 +50,13 @@ window.addEventListener('unhandledrejection', (event) => {
 // Initialize Sentry and mount React
 async function init() {
   // Fetch config from API (contains Sentry DSN, CARTO basemap key).
-  // Awaited before mounting on purpose: the map components read the cached
-  // config synchronously at first render (see lib/basemap.ts), so deferring
-  // this leaves the first paint unkeyed and flashes the CARTO watermark.
+  // Awaited before mounting on purpose: the map components read the key
+  // synchronously at first render (see lib/basemap.ts), so deferring this
+  // leaves the first paint unkeyed and flashes the CARTO watermark.
   try {
     const config = await fetchConfig()
+
+    setBasemapApiKey(config.cartoApiKey)
 
     // Initialize Sentry if DSN is configured
     if (config.sentryDsn) {
