@@ -208,6 +208,22 @@ function buildView(data: ShredsEconomics): EconomicsView {
 
 // Shared pieces
 
+// Shimmer while a fetch is in flight, held back 200ms so a fast response never
+// flashes a loading bar. It stays up until the fetch clears rather than running
+// for a fixed time, so the bar's length is the wait's length.
+function useDebouncedShimmer(isFetching: boolean, delayMs = 200): boolean {
+  const [visible, setVisible] = useState(false)
+  useEffect(() => {
+    if (!isFetching) {
+      setVisible(false)
+      return
+    }
+    const t = setTimeout(() => setVisible(true), delayMs)
+    return () => clearTimeout(t)
+  }, [isFetching, delayMs])
+  return visible
+}
+
 function useRefreshButton(refetch: () => void, isFetching: boolean, minMs = 400) {
   const [spinning, setSpinning] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -668,6 +684,11 @@ function RevenueByMonth({ view, colors }: { view: EconomicsView; colors: { seat:
 
 const METRO_HEAD = 8
 
+// Rows the revenue table opens with: the default five recognized months plus the
+// two the subscription program is typically billed ahead into. Only the
+// skeleton's height depends on it, so being a month out costs nothing.
+const SKELETON_MONTH_ROWS = 7
+
 function Metros({
   data,
   view,
@@ -989,16 +1010,92 @@ function Tag({ children, muted }: { children: React.ReactNode; muted?: boolean }
   )
 }
 
-function ChartSkeleton() {
+function Bone({ className = '', style }: { className?: string; style?: React.CSSProperties }) {
+  return <div className={cn('rounded bg-muted animate-pulse', className)} style={style} />
+}
+
+// A panel outline with its header and a body of the given height, so the shape
+// on screen during the wait is the shape that arrives after it.
+function PanelSkeleton({ children }: { children: React.ReactNode }) {
+  return (
+    <section className="rounded-xl border border-border bg-card overflow-hidden shadow-sm">
+      <header className="px-5 sm:px-6 py-5 border-b border-border flex items-start justify-between gap-6">
+        <div className="flex flex-col gap-2 w-full max-w-md">
+          <Bone className="h-4 w-40" />
+          <Bone className="h-3 w-full max-w-sm" />
+        </div>
+        <Bone className="h-6 w-36 shrink-0" />
+      </header>
+      {children}
+    </section>
+  )
+}
+
+// twoLine matches the metro rows, whose Metro and Price cells carry a sub-line
+// and so stand about half again as tall as the revenue table's.
+function TableRowsSkeleton({ rows, twoLine = false }: { rows: number; twoLine?: boolean }) {
+  return (
+    <div className="divide-y divide-border/50">
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className={cn('flex items-start gap-4 px-4', twoLine ? 'py-3.5' : 'py-3.5')}>
+          <div className="flex flex-col gap-1.5 w-24">
+            <Bone className="h-3.5 w-full" />
+            {twoLine && <Bone className="h-2.5 w-3/4" />}
+          </div>
+          <div className="flex flex-col gap-1.5 w-20">
+            <Bone className="h-3.5 w-full" />
+            {twoLine && <Bone className="h-2.5 w-2/3" />}
+          </div>
+          <Bone className="h-3.5 flex-1" />
+          <Bone className="h-3.5 w-16" />
+          <Bone className="h-3.5 w-16" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function PageSkeleton() {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {[0, 1, 2].map((i) => (
-          <div key={i} className="h-44 rounded-xl border border-border bg-card animate-pulse" />
+          <div key={i} className="rounded-xl border border-border bg-card shadow-sm px-5 py-5 flex flex-col gap-3.5">
+            <Bone className="h-2.5 w-28" />
+            <Bone className="h-8 w-40" />
+            <Bone className="h-1 w-full" />
+            <div className="pt-3 border-t border-border/70 flex flex-col gap-2">
+              <Bone className="h-3 w-full" />
+              <Bone className="h-3 w-2/3" />
+            </div>
+          </div>
         ))}
       </div>
-      <div className="h-96 rounded-xl border border-border bg-card animate-pulse" />
-      <div className="h-72 rounded-xl border border-border bg-card animate-pulse" />
+
+      <PanelSkeleton>
+        <div className="px-5 sm:px-6 pt-6 pb-2">
+          {/* Bars of uneven height, so the wait reads as a chart rather than a
+              slab. The shape traces a real month series: a rise, a plateau, then
+              the open and booked months tailing off. */}
+          <div className="flex items-end gap-6 h-56">
+            {[62, 96, 78, 74, 70, 44, 18].map((h, i) => (
+              <div key={i} className="flex-1 flex items-end h-full">
+                <Bone className="w-full" style={{ height: `${h}%` }} />
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="border-t border-border">
+          <TableRowsSkeleton rows={SKELETON_MONTH_ROWS} />
+        </div>
+      </PanelSkeleton>
+
+      <PanelSkeleton>
+        <TableRowsSkeleton rows={METRO_HEAD} twoLine />
+        <div className="border-t border-border px-4 py-3">
+          <Bone className="h-3 w-40 mx-auto" />
+        </div>
+      </PanelSkeleton>
     </div>
   )
 }
@@ -1016,6 +1113,7 @@ export function ShredsEconomicsPage() {
   })
 
   const refresh = useRefreshButton(refetch, isFetching)
+  const shimmer = useDebouncedShimmer(isFetching)
   const view = useMemo(() => (data ? buildView(data) : null), [data])
 
   if (error && !data) {
@@ -1040,18 +1138,22 @@ export function ShredsEconomicsPage() {
           icon={Puzzle}
           title="Shreds Economics"
           subtitle={
-            data && (
-              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <span>Revenue by month and metro</span>
-                <span className="text-muted-foreground/40">&middot;</span>
-                <span>
-                  epoch {data.current_epoch} in flight
-                  {lastEpochDay && <> since {dayLabel(lastEpochDay)}</>}
-                </span>
-                <span className="text-muted-foreground/40">&middot;</span>
-                <span>recognized through {dayLabel(data.as_of)} UTC</span>
-              </div>
-            )
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span>Revenue by month and metro</span>
+              {data ? (
+                <>
+                  <span className="text-muted-foreground/40">&middot;</span>
+                  <span>
+                    epoch {data.current_epoch} in flight
+                    {lastEpochDay && <> since {dayLabel(lastEpochDay)}</>}
+                  </span>
+                  <span className="text-muted-foreground/40">&middot;</span>
+                  <span>recognized through {dayLabel(data.as_of)} UTC</span>
+                </>
+              ) : (
+                <span className="text-muted-foreground/60">loading the current epoch and window</span>
+              )}
+            </div>
           }
           actions={
             <>
@@ -1075,8 +1177,15 @@ export function ShredsEconomicsPage() {
           }
         />
 
+        {/* Loading shimmer */}
+        <div className="h-0.5 w-full overflow-hidden rounded-full mb-4">
+          {shimmer && (
+            <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
+          )}
+        </div>
+
         {!data || !view ? (
-          <ChartSkeleton />
+          <PageSkeleton />
         ) : (
           <div className="space-y-6">
             <div className={cn('grid grid-cols-1 gap-3', openMonth ? 'sm:grid-cols-3' : 'sm:grid-cols-2')}>
