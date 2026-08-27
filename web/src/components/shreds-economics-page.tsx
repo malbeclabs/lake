@@ -118,6 +118,40 @@ function dayLabel(iso: string): string {
   return `${Number(day)} ${MONTH_SHORT[Number(month) - 1] ?? month} ${year}`
 }
 
+// "2026-08-26" -> 26, and 0 for anything unparseable. Hand-parsed like the rest
+// so the viewer's timezone can never move the day.
+function dayOfMonth(iso: string): number {
+  return Number(iso?.split('-')[2]) || 0
+}
+
+// A day count is whole except when the catch-up term below is clipped mid-epoch.
+function dayCount(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toFixed(1)
+}
+
+// Days of the open month the seat projection still has to cover.
+//
+// month.days is accrual coverage, not elapsed days, so days_in_month - days is
+// not "the days still to run": it also counts every elapsed day that booked no
+// charge, and those are two different things. Days after the as-of date have not
+// happened and are projected. An elapsed day that booked nothing is only pending
+// while the epoch covering it is in flight; past that it earned nothing and
+// never will, so projecting it at the live rate would invent revenue that was
+// never charged. The catch-up is capped at one epoch's span for that reason.
+//
+// A missing as-of falls back to the booked days, which zeroes the catch-up and
+// leaves the projection covering the unbooked days alone.
+export function projectedDays(
+  month: Pick<MonthRow, 'days' | 'days_in_month'>,
+  asOf: string,
+  epochDays: number,
+): number {
+  const elapsed = Math.min(dayOfMonth(asOf) || month.days, month.days_in_month)
+  const ahead = Math.max(0, month.days_in_month - elapsed)
+  const pending = Math.min(Math.max(0, elapsed - month.days), Math.max(0, epochDays))
+  return ahead + pending
+}
+
 // View model
 
 interface MonthRow extends ShredsEconomicsMonth {
@@ -175,10 +209,10 @@ function buildView(data: ShredsEconomics): EconomicsView {
   const metroInvoiced = data.metros.reduce((sum, m) => sum + m.invoiced, 0)
 
   // Run-rate: the open month projected to its end. Seats are charged per epoch,
-  // so the days still to run are added at the rate the live seats imply.
+  // so the days the month has left are added at the rate the live seats imply.
   // Invoices are billed monthly and the open month is already whole.
   const dailyRate = data.epoch_days > 0 ? data.live_seat_rate / data.epoch_days : 0
-  const daysLeft = openMonth ? Math.max(0, openMonth.days_in_month - openMonth.days) : 0
+  const daysLeft = openMonth ? projectedDays(openMonth, data.as_of, data.epoch_days) : 0
   const mrrSeat = (openMonth?.seat_revenue ?? 0) + daysLeft * dailyRate
   const mrrInvoice = openMonth?.invoiced ?? 0
 
@@ -1238,7 +1272,7 @@ export function ShredsEconomicsPage() {
                   rows: [
                     { label: `Seats earned, ${openMonth?.days ?? 0} days`, value: money(openMonth?.seat_revenue ?? 0, 2) },
                     {
-                      label: `${view.daysLeft} days left at ${money(view.dailyRate, 2)} a day`,
+                      label: `${dayCount(view.daysLeft)} days left at ${money(view.dailyRate, 2)} a day`,
                       value: `+ ${money(view.daysLeft * view.dailyRate, 2)}`,
                     },
                     { label: 'Seats, projected to month end', value: money(view.mrrSeat, 2), emphasis: 'rule' },
