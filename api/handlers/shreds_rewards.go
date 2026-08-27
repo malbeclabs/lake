@@ -1015,7 +1015,11 @@ func (a *API) GetShredsRewardsDetail(w http.ResponseWriter, r *http.Request) {
 				'unknown'
 			) AS state
 		FROM dim_dz_shred_validator_rewards_leaves_current L
-		LEFT JOIN dim_dz_shred_validator_leaf_distribution_status_current S
+		LEFT JOIN (
+			SELECT subscription_epoch, node_id, client_id, is_claimable, journal_mint_key
+			FROM dim_dz_shred_validator_leaf_distribution_status_current
+			WHERE node_id = ?
+		) S
 			ON S.subscription_epoch = L.subscription_epoch
 		   AND S.node_id = L.node_id
 		   AND S.client_id = L.client_id
@@ -1044,7 +1048,7 @@ func (a *API) GetShredsRewardsDetail(w http.ResponseWriter, r *http.Request) {
 		ORDER BY L.subscription_epoch DESC, L.client_id ASC
 	`, poolMintExpr, leafMintExpr, tokenSym, earnedWhole, rewardMint2Z, shredClientNamesSQL)
 	start := time.Now()
-	rows, err := a.envDB(ctx).Query(ctx, detailQuery, nodeID)
+	rows, err := a.envDB(ctx).Query(ctx, detailQuery, nodeID, nodeID)
 	metrics.RecordClickHouseQuery("shreds_rewards_detail", time.Since(start), err)
 	if err != nil {
 		logError("shreds rewards detail query failed", "error", err)
