@@ -182,7 +182,7 @@ export function ShredsRewardsDetailPage() {
                   <th className="px-4 py-3 text-right font-medium uppercase tracking-wider">
                     Leader Slots
                   </th>
-                  <th className="px-4 py-3 text-right font-medium uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left font-medium uppercase tracking-wider">
                     Client
                   </th>
                   <th className="px-4 py-3 text-right font-medium uppercase tracking-wider">
@@ -235,8 +235,13 @@ export function ShredsRewardsDetailPage() {
                     const statusStyle = claimStyle[bucket]
                     const statusLabel = claimLabel[bucket]
                     return (
+                      // The row grain is (epoch, client), not epoch: a validator
+                      // that switched software clients mid-epoch has one leaf per
+                      // client, so solana_epoch alone repeats — and it repeated
+                      // twice for roughly a quarter of this page's rows, which
+                      // React resolves by reusing one row's DOM for the other.
                       <tr
-                        key={`${epoch.solana_epoch}-${epoch.subscription_epoch}`}
+                        key={`${epoch.subscription_epoch}-${epoch.client_id}`}
                         className="border-b border-border last:border-b-0 hover:bg-muted/30 transition-colors"
                       >
                         <td className="px-4 py-3 tabular-nums font-medium">
@@ -248,8 +253,11 @@ export function ShredsRewardsDetailPage() {
                         <td className="px-4 py-3 tabular-nums text-right">
                           {epoch.leader_slots.toLocaleString()}
                         </td>
-                        <td className="px-4 py-3 tabular-nums text-right text-muted-foreground">
-                          {epoch.client_id}
+                        <td
+                          className="px-4 py-3 text-muted-foreground"
+                          title={`Client ID ${epoch.client_id}`}
+                        >
+                          {epoch.client_name || `Client ${epoch.client_id}`}
                         </td>
                         <td className="px-4 py-3 tabular-nums text-right font-medium">
                           {formatTokenAmount(epoch.earned, epoch.token_symbol)}

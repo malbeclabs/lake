@@ -3,9 +3,11 @@ package handlers_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -354,6 +356,11 @@ func TestGetShredsRewards_DeduplicatesValidators(t *testing.T) {
 	}
 	assert.Equal(t, 1, seen["node-A"], "node-A must not be duplicated by the dz_users fan-out")
 	assert.Equal(t, 1, seen["node-B"])
+	// Total comes from count() OVER (), which counts the query's rows — so a
+	// fan-out that got past the identity joins would inflate it in step with the
+	// row count and stay invisible to the completeness check the page cache runs.
+	// This is the assertion that catches it.
+	assert.Equal(t, 2, resp.Total, "the total counts validators, not joined rows")
 }
 
 // TestGetShredsRewards_MultiClientValidator is the regression test for the bug
@@ -1064,4 +1071,484 @@ func TestGetShredsRewards_GroupByClientCountsCurrentValidatorsOnly(t *testing.T)
 		"node-gone last published in epoch 300, so it is not a current validator")
 	assert.InDelta(t, 2925.0*3500/6500, departed.TotalEarned2Z, 1e-6,
 		"a client with no current validators still reports what it earned")
+}
+
+// insertShredsRewardsManyEpochs seeds one validator (node-R) across `epochs`
+// consecutive funded epochs starting at `firstEpoch`, each with an identical pool
+// and the same 100 leader slots, so every epoch's earnings are the same 5850 whole
+// 2Z. The OLDEST epoch is the only claimable one — the reverse of the usual shape,
+// so a recency filter applied to the claimable total is immediately visible.
+func insertShredsRewardsManyEpochs(t *testing.T, api *handlers.API, firstEpoch, epochs int) {
+	t.Helper()
+	var leaves, pools, props, status []string
+	for i := range epochs {
+		e := firstEpoch + i
+		leaves = append(leaves, fmt.Sprintf(
+			`('l-%[1]d', now(), now(), generateUUIDv4(), 0, %[1]d, %[1]d, %[1]d, 'node-R', 100, 1, 0)`, e))
+		pools = append(pools, fmt.Sprintf(
+			`('pool-%[1]d', now(), now(), generateUUIDv4(), 0, %[1]d, %[1]d, 1000000000000)`, e))
+		props = append(props, fmt.Sprintf(
+			`('p-%[1]d', now(), now(), generateUUIDv4(), 0, %[1]d, %[1]d, 1, 3500, 3500)`, e))
+		// Only the oldest epoch's leaf is still claimable.
+		claimable := 0
+		if i == 0 {
+			claimable = 1
+		}
+		status = append(status, fmt.Sprintf(
+			`('s-%[1]d', now(), now(), generateUUIDv4(), 0, %[1]d, %[1]d, 'node-R', 1, %[2]d, '')`, e, claimable))
+	}
+	require.NoError(t, api.DB.Exec(t.Context(), `
+		INSERT INTO dim_dz_shred_validator_rewards_leaves_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, associated_dz_epoch, node_id, leader_slots, client_id, leaf_index)
+		VALUES `+strings.Join(leaves, ",")))
+	require.NoError(t, api.DB.Exec(t.Context(), `
+		INSERT INTO dim_dz_shred_distribution_2z_pool_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, tokens_received_2z)
+		VALUES `+strings.Join(pools, ",")))
+	require.NoError(t, api.DB.Exec(t.Context(), `
+		INSERT INTO dim_dz_shred_distribution_client_proportions_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, client_id, proportion, default_proportion)
+		VALUES `+strings.Join(props, ",")))
+	require.NoError(t, api.DB.Exec(t.Context(), `
+		INSERT INTO dim_dz_shred_validator_leaf_distribution_status_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, node_id, client_id, is_claimable, journal_mint_key)
+		VALUES `+strings.Join(status, ",")))
+}
+
+// TestGetShredsRewards_PerEpochMapCoversOnlyEpochColumns pins the is_recent
+// filter. It was expressed as `if(R.solana_epoch IS NULL, 0, 1)` over a LEFT JOIN
+// to a `LIMIT 10` CTE, which is always 1 — ClickHouse fills an unmatched LEFT JOIN
+// column with the type's default (0), never NULL. Every epoch a validator ever
+// earned in landed in the per-epoch maps, which on mainnet made them ~9× the size
+// they were meant to be and dominated the list payload.
+func TestGetShredsRewards_PerEpochMapCoversOnlyEpochColumns(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertShredsRewardsManyEpochs(t, api, 600, 14)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/rewards", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredsRewards(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+	resp := decodeShredsRewards(t, rr.Body.Bytes())
+
+	// 14 funded epochs, but the header carries the newest 10.
+	require.Len(t, resp.EpochColumns, 10)
+	assert.Equal(t, []uint64{613, 612, 611, 610, 609, 608, 607, 606, 605, 604}, resp.EpochColumns)
+
+	require.Len(t, resp.Validators, 1)
+	r := resp.Validators[0]
+	// The maps are keyed to the columns, so they hold exactly those 10 epochs —
+	// not all 14.
+	assert.Len(t, r.EpochEarnings, 10, "per-epoch earnings must not run past the epoch columns")
+	assert.Len(t, r.EpochTokens, 10)
+	for _, e := range resp.EpochColumns {
+		assert.InDelta(t, 5850.0, r.EpochEarnings[e], 1e-6, "epoch %d", e)
+	}
+	assert.NotContains(t, r.EpochEarnings, uint64(603), "epoch 603 is outside the columns")
+	assert.NotContains(t, r.EpochEarnings, uint64(600))
+
+	// All 14 epochs still count toward the all-time total, which is not windowed.
+	assert.InDelta(t, 14*5850.0, r.TotalEarned2Z, 1e-6)
+}
+
+// TestGetShredsRewards_ClaimableCountsEpochsOutsideTheColumns fixes the boundary
+// the per-epoch window must NOT be applied to. A leaf stays claimable until it is
+// distributed however old its epoch is — on mainnet 11,539 of 14,326 claimable
+// leaves sit outside the 10-epoch window — and the detail page derives its own
+// claimable figure from per-epoch state with no window at all, so windowing this
+// one would make the two pages disagree about the same validator.
+func TestGetShredsRewards_ClaimableCountsEpochsOutsideTheColumns(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	// Only epoch 600 — the oldest of 14, four epochs before the columns start — is
+	// claimable.
+	insertShredsRewardsManyEpochs(t, api, 600, 14)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/rewards", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredsRewards(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+	resp := decodeShredsRewards(t, rr.Body.Bytes())
+
+	require.Len(t, resp.Validators, 1)
+	assert.InDelta(t, 5850.0, resp.Validators[0].ImmediatelyClaimable2Z, 1e-6,
+		"a claimable leaf older than the epoch columns is still claimable")
+
+	// And the detail page agrees, which is the point of not windowing it.
+	dreq := withChiNodeIDParam(
+		httptest.NewRequest(http.MethodGet, "/api/dz/shreds/rewards/node-R", nil), "node-R")
+	drr := httptest.NewRecorder()
+	api.GetShredsRewardsDetail(drr, dreq)
+	require.Equal(t, http.StatusOK, drr.Code, "body=%s", drr.Body.String())
+	dresp := decodeShredsRewardsDetail(t, drr.Body.Bytes())
+
+	// 2Z only: the list column is 2Z-denominated, while the detail page breaks its
+	// total down per token, so a mixed-token validator's two figures are in
+	// different denominations by design. Summing the detail's 2Z leaves is the
+	// like-for-like comparison.
+	var detailClaimable2Z float64
+	for _, e := range dresp.Epochs {
+		if e.State == handlers.ClaimStateClaimable && e.TokenSymbol == "2Z" {
+			detailClaimable2Z += e.Earned
+		}
+	}
+	assert.InDelta(t, resp.Validators[0].ImmediatelyClaimable2Z, detailClaimable2Z, 1e-6,
+		"list and detail must report the same 2Z claimable total for one validator")
+}
+
+// TestGetShredsRewardsDetail_MultiClientEpochRows covers the row grain the page
+// renders. An epoch a validator switched software clients in produces one row per
+// client; both must come back, in a stable order, each naming its own client.
+func TestGetShredsRewardsDetail_MultiClientEpochRows(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertMultiClientLeaves(t, api)
+	insertClientRegistry(t, api, `
+		('c-1', now(), now(), generateUUIDv4(), 0, 1, 'client-pk-1', 1, 'mgr-1', 'Agave'),
+		('c-2', now(), now(), generateUUIDv4(), 0, 2, 'client-pk-2', 2, 'mgr-2', 'Firedancer')`)
+
+	req := withChiNodeIDParam(
+		httptest.NewRequest(http.MethodGet, "/api/dz/shreds/rewards/node-X", nil), "node-X")
+	rr := httptest.NewRecorder()
+	api.GetShredsRewardsDetail(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+	resp := decodeShredsRewardsDetail(t, rr.Body.Bytes())
+
+	require.Len(t, resp.Epochs, 2, "one row per (epoch, client), not per epoch")
+	// Ordered by epoch DESC then client_id ASC, so the two rows of one epoch keep
+	// a fixed order across the page's refetches.
+	assert.Equal(t, uint64(200), resp.Epochs[0].SubscriptionEpoch)
+	assert.Equal(t, uint64(200), resp.Epochs[1].SubscriptionEpoch)
+	assert.Equal(t, uint16(1), resp.Epochs[0].ClientID)
+	assert.Equal(t, uint16(2), resp.Epochs[1].ClientID)
+	// Each row names its own client rather than showing a bare id.
+	assert.Equal(t, "Agave", resp.Epochs[0].ClientName)
+	assert.Equal(t, "Firedancer", resp.Epochs[1].ClientName)
+	// (epoch, client) is unique, which is what lets the page key its rows on it.
+	assert.NotEqual(t, resp.Epochs[0].ClientID, resp.Epochs[1].ClientID)
+}
+
+// TestGetShredsRewardsDetail_UnregisteredClientFallsBackToID: a leaf can land
+// before its client's registry row is indexed, and the page must still name the
+// column something rather than rendering a blank.
+func TestGetShredsRewardsDetail_UnregisteredClientFallsBackToID(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertMultiClientLeaves(t, api)
+
+	req := withChiNodeIDParam(
+		httptest.NewRequest(http.MethodGet, "/api/dz/shreds/rewards/node-X", nil), "node-X")
+	rr := httptest.NewRecorder()
+	api.GetShredsRewardsDetail(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+	resp := decodeShredsRewardsDetail(t, rr.Body.Bytes())
+	require.Len(t, resp.Epochs, 2)
+	assert.Equal(t, "Client 1", resp.Epochs[0].ClientName)
+	assert.Equal(t, "Client 2", resp.Epochs[1].ClientName)
+}
+
+// insertShredsRewardsManyValidators seeds `n` validators over a single funded
+// epoch, each with a different slot count so total_earned_2z is strictly ordered,
+// and a name/vote/stake set that orders differently from the earnings — enough for
+// every sortable column to have something to say.
+//
+// Every validator's claimable amount is 0, which is the shape that matters for
+// paging: hundreds of rows tied on one sort key is the normal state of this list,
+// and it is exactly where an order without a tiebreaker starts dropping or
+// repeating rows between pages.
+func insertShredsRewardsManyValidators(t *testing.T, api *handlers.API, n int) {
+	t.Helper()
+	var leaves, votes, names []string
+	for i := range n {
+		node := fmt.Sprintf("node-%03d", i)
+		vote := fmt.Sprintf("vote-%03d", i)
+		leaves = append(leaves, fmt.Sprintf(
+			`('l-%[1]s', now(), now(), generateUUIDv4(), 0, %[2]d, 700, 70, '%[1]s', %[3]d, 1, %[2]d)`,
+			node, i+1, i+1))
+		votes = append(votes, fmt.Sprintf(
+			`('%[1]s', now(), now(), generateUUIDv4(), 0, %[3]d, '%[1]s', 700, '%[2]s', %[4]d, 'true', 0)`,
+			vote, node, i+1, (n-i)*1000000000))
+		// Half the validators have no validators.app row, so validator_name sorting
+		// has to order a block of empty strings too. The name counts DOWN as the
+		// earnings count up, so name order and earnings order disagree and a sort
+		// on one cannot pass by accidentally reproducing the other.
+		if i%2 == 0 {
+			label := fmt.Sprintf("Validator %03d", n-i)
+			names = append(names, fmt.Sprintf(
+				`('%[1]s', now(), now(), generateUUIDv4(), 0, %[2]d, '%[1]s', '%[3]s', '%[1]s')`,
+				vote, i+1, label))
+		}
+	}
+	require.NoError(t, api.DB.Exec(t.Context(), `
+		INSERT INTO dim_dz_shred_validator_rewards_leaves_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, associated_dz_epoch, node_id, leader_slots, client_id, leaf_index)
+		VALUES `+strings.Join(leaves, ",")))
+	require.NoError(t, api.DB.Exec(t.Context(), `
+		INSERT INTO dim_dz_shred_distribution_2z_pool_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, tokens_received_2z)
+		VALUES ('pool-700', now(), now(), generateUUIDv4(), 0, 1, 700, 1000000000000)`))
+	require.NoError(t, api.DB.Exec(t.Context(), `
+		INSERT INTO dim_dz_shred_distribution_client_proportions_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 subscription_epoch, client_id, proportion, default_proportion)
+		VALUES ('p-700-1', now(), now(), generateUUIDv4(), 0, 1, 700, 1, 3500, 3500)`))
+	require.NoError(t, api.DB.Exec(t.Context(), `
+		INSERT INTO dim_solana_vote_accounts_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 vote_pubkey, epoch, node_pubkey, activated_stake_lamports, epoch_vote_account, commission_percentage)
+		VALUES `+strings.Join(votes, ",")))
+	require.NoError(t, api.DB.Exec(t.Context(), `
+		INSERT INTO dim_validatorsapp_validators_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 account, name, vote_account)
+		VALUES `+strings.Join(names, ",")))
+}
+
+// shredsRewardsCacheMu serialises the tests that exercise the page cache.
+//
+// Every test in the package shares ONE Postgres database — SetupPostgresForTest
+// hands out a pool onto the same container DB — so page_cache is shared state
+// even though each test gets its own ClickHouse database. Two parallel tests
+// writing ShredsRewardsPageCacheKey would read each other's blob against their
+// own ClickHouse data. They still run in parallel with the rest of the suite;
+// only the handful that touch this key take turns.
+var shredsRewardsCacheMu sync.Mutex
+
+// seedShredsRewardsCache computes the complete set the way the page-cache worker
+// does and stores it under the real key, holding the cache lock for the rest of
+// the test. Pass nil to assert on the entry being ABSENT instead.
+func seedShredsRewardsCache(t *testing.T, api *handlers.API, complete *handlers.ShredsRewardsResponse) {
+	t.Helper()
+	shredsRewardsCacheMu.Lock()
+	t.Cleanup(shredsRewardsCacheMu.Unlock)
+
+	if complete == nil {
+		_, err := api.PgPool.Exec(t.Context(),
+			`DELETE FROM page_cache WHERE key = $1`, handlers.ShredsRewardsPageCacheKey)
+		require.NoError(t, err)
+		return
+	}
+	blob, err := json.Marshal(complete)
+	require.NoError(t, err)
+	_, err = api.PgPool.Exec(t.Context(),
+		`INSERT INTO page_cache (key, data, updated_at) VALUES ($1, $2, now())
+		 ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, updated_at = now()`,
+		handlers.ShredsRewardsPageCacheKey, blob)
+	require.NoError(t, err)
+}
+
+// TestGetShredsRewards_CachedPageMatchesLive is the invariant behind serving every
+// unfiltered page out of one cached complete set: for each sortable column,
+// direction and page, what the handler slices out of the cache must be exactly
+// what the live ClickHouse query would have returned.
+//
+// The two are separate implementations of one order — buildShredsRewardsSort in
+// SQL, sortShredsRewardsRows in Go — so nothing but this test stops them drifting.
+func TestGetShredsRewards_CachedPageMatchesLive(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPIAll(t, testChDB, testPgDB, nil, nil)
+	const validators = 25
+	insertShredsRewardsManyValidators(t, api, validators)
+
+	complete, err := api.FetchShredsRewardsData(t.Context())
+	require.NoError(t, err)
+	require.Len(t, complete.Validators, validators)
+	require.Equal(t, validators, complete.Total)
+
+	// Assert the fixture is the shape the sort cases need before trusting them: a
+	// block of distinct names and a block of empty ones. An earlier revision of the
+	// seeder emitted one identical name for every named validator, which left the
+	// validator_name cases passing on the tiebreaker alone and testing nothing.
+	// The seeder names every even-indexed validator, so of 25 there are 13 named
+	// and 12 empty, and the map holds one key per distinct name plus the empty one.
+	const named, unnamed = (validators + 1) / 2, validators / 2
+	names := map[string]int{}
+	for _, v := range complete.Validators {
+		names[v.ValidatorName]++
+	}
+	require.Equal(t, unnamed, names[""], "the unnamed half has no validators.app row")
+	require.Len(t, names, named+1, "every named validator must have a distinct name")
+
+	seedShredsRewardsCache(t, api, complete)
+
+	get := func(t *testing.T, query string) (handlers.ShredsRewardsResponse, string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/rewards?"+query, nil)
+		rr := httptest.NewRecorder()
+		api.GetShredsRewards(rr, req)
+		require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+		return decodeShredsRewards(t, rr.Body.Bytes()), rr.Header().Get("X-Cache")
+	}
+
+	for _, sortField := range []string{
+		"", "total_earned_2z", "validator_name", "activated_stake", "immediately_claimable_2z",
+	} {
+		for _, order := range []string{"desc", "asc"} {
+			for _, offset := range []int{0, 10, 20, 30} {
+				name := fmt.Sprintf("%s/%s/offset=%d", sortField, order, offset)
+				t.Run(name, func(t *testing.T) {
+					q := fmt.Sprintf("sort=%s&order=%s&limit=10&offset=%d", sortField, order, offset)
+					cached, hdr := get(t, q)
+					require.Equal(t, "HIT", hdr, "unfiltered pages must be served from the cache")
+
+					// The same request with a search term the data cannot match would
+					// take the live path but return nothing, so compare against the
+					// live computation directly instead.
+					live, err := api.ExportComputeShredsRewards(
+						t.Context(), "", sortField, order, 10, offset)
+					require.NoError(t, err)
+
+					require.Equal(t, len(live.Validators), len(cached.Validators), "page length")
+					for i := range live.Validators {
+						assert.Equal(t, live.Validators[i].NodeID, cached.Validators[i].NodeID,
+							"row %d of the page", i)
+					}
+					// Including offset=30, which is past the end of a 25-row set: the
+					// cached path knows the size without asking, and the live path
+					// recovers it rather than reporting the 0 its window aggregate
+					// had no row to ride on.
+					assert.Equal(t, live.Total, cached.Total)
+					assert.Equal(t, validators, cached.Total)
+				})
+			}
+		}
+	}
+}
+
+// TestGetShredsRewards_CachedPagesPartitionTheSet: paging through the cached set
+// must visit every validator exactly once. A sort with no total order lets ties
+// land differently in the queries that fetch two adjacent pages, which shows up as
+// a validator appearing on both pages or on neither — and this list's claimable
+// column is 0 for nearly every row.
+func TestGetShredsRewards_CachedPagesPartitionTheSet(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPIAll(t, testChDB, testPgDB, nil, nil)
+	const validators = 25
+	insertShredsRewardsManyValidators(t, api, validators)
+
+	complete, err := api.FetchShredsRewardsData(t.Context())
+	require.NoError(t, err)
+	seedShredsRewardsCache(t, api, complete)
+
+	// Every row is tied at 0 here, so this is the worst case for the tiebreaker.
+	seen := map[string]int{}
+	for offset := 0; offset < validators; offset += 10 {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf(
+			"/api/dz/shreds/rewards?sort=immediately_claimable_2z&order=desc&limit=10&offset=%d", offset), nil)
+		rr := httptest.NewRecorder()
+		api.GetShredsRewards(rr, req)
+		require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+		for _, v := range decodeShredsRewards(t, rr.Body.Bytes()).Validators {
+			seen[v.NodeID]++
+		}
+	}
+	require.Len(t, seen, validators, "every validator appears across the pages")
+	for node, times := range seen {
+		assert.Equal(t, 1, times, "%s appeared on more than one page", node)
+	}
+}
+
+// TestGetShredsRewards_SearchBypassesCache: a search changes which validators are
+// in the set, which is the one thing the cached complete set cannot answer.
+func TestGetShredsRewards_SearchBypassesCache(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPIAll(t, testChDB, testPgDB, nil, nil)
+	insertShredsRewardsManyValidators(t, api, 25)
+
+	complete, err := api.FetchShredsRewardsData(t.Context())
+	require.NoError(t, err)
+	seedShredsRewardsCache(t, api, complete)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/rewards?search=node:node-007", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredsRewards(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+	assert.Equal(t, "MISS", rr.Header().Get("X-Cache"))
+
+	resp := decodeShredsRewards(t, rr.Body.Bytes())
+	require.Len(t, resp.Validators, 1)
+	assert.Equal(t, "node-007", resp.Validators[0].NodeID)
+	assert.Equal(t, 1, resp.Total, "the total describes the filtered set")
+}
+
+// TestGetShredsRewards_MissingCacheFallsBackToLive: the key is a NEW one, so the
+// entry is absent on the deploy that introduces it and stays absent until the
+// refresh chain first reaches it — and page_cache survives a pod restart, so this
+// is the state the page ships in. It must serve live, not empty.
+func TestGetShredsRewards_MissingCacheFallsBackToLive(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPIAll(t, testChDB, testPgDB, nil, nil)
+	insertShredsRewardsManyValidators(t, api, 12)
+	seedShredsRewardsCache(t, api, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/rewards?limit=10&offset=10", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredsRewards(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+	assert.Equal(t, "MISS", rr.Header().Get("X-Cache"))
+	resp := decodeShredsRewards(t, rr.Body.Bytes())
+	assert.Len(t, resp.Validators, 2)
+	assert.Equal(t, 12, resp.Total)
+}
+
+// TestGetShredsRewards_PagePastEndStillReportsTotal covers the one shape where
+// count() OVER () has no row to ride on. The pager reads `total` to decide how
+// many pages exist, so reporting 0 for a page past the end collapses the footer
+// and leaves the reader an empty table with nothing saying the set is simply
+// shorter than the page they asked for.
+//
+// Both paths are checked because they recover it differently: the cached one from
+// the stored set, the live one by re-asking its own query for a single row.
+func TestGetShredsRewards_PagePastEndStillReportsTotal(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPIAll(t, testChDB, testPgDB, nil, nil)
+	const validators = 12
+	insertShredsRewardsManyValidators(t, api, validators)
+
+	t.Run("live", func(t *testing.T) {
+		// A search is the only shape that reaches the live path, and node-0 matches
+		// every one of node-000..node-011.
+		resp, err := api.ExportComputeShredsRewards(t.Context(), "node:node-0", "", "", 10, 100)
+		require.NoError(t, err)
+		assert.Empty(t, resp.Validators, "offset 100 is past the end")
+		assert.Equal(t, validators, resp.Total,
+			"the total describes the matching set, not the empty page")
+	})
+
+	t.Run("live/genuinely empty", func(t *testing.T) {
+		// No recovery to do here: nothing matches at any offset, so 0 is the answer
+		// rather than a lost count.
+		resp, err := api.ExportComputeShredsRewards(t.Context(), "node:nothing-matches", "", "", 10, 100)
+		require.NoError(t, err)
+		assert.Empty(t, resp.Validators)
+		assert.Equal(t, 0, resp.Total)
+	})
+
+	t.Run("cached", func(t *testing.T) {
+		complete, err := api.FetchShredsRewardsData(t.Context())
+		require.NoError(t, err)
+		seedShredsRewardsCache(t, api, complete)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/rewards?limit=10&offset=100", nil)
+		rr := httptest.NewRecorder()
+		api.GetShredsRewards(rr, req)
+
+		require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+		assert.Equal(t, "HIT", rr.Header().Get("X-Cache"))
+		resp := decodeShredsRewards(t, rr.Body.Bytes())
+		assert.Empty(t, resp.Validators)
+		assert.Equal(t, validators, resp.Total)
+	})
 }

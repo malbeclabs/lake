@@ -21,6 +21,14 @@ import (
 
 var gooseInit sync.Once
 
+// gooseUpMu serialises goose.Up. Every test shares one Postgres container and one
+// database, so parallel tests otherwise run the migration set against it
+// concurrently — two of them reach `CREATE TYPE account_type` at once and one dies
+// on a duplicate-key violation in pg_type, or reads goose_db_version before the
+// other has created it. Nothing about goose.Up is unsafe once it has run; the race
+// is only between concurrent first runs.
+var gooseUpMu sync.Mutex
+
 // DBConfig holds the PostgreSQL test container configuration.
 type DBConfig struct {
 	Database       string
@@ -135,7 +143,9 @@ func SetupPostgresForTest(t *testing.T, db *DB) *pgxpool.Pool {
 	sqlDB, err := sql.Open("pgx", db.connStr)
 	require.NoError(t, err, "failed to open database for migrations")
 
+	gooseUpMu.Lock()
 	err = goose.Up(sqlDB, "migrations")
+	gooseUpMu.Unlock()
 	require.NoError(t, err, "failed to run migrations")
 	sqlDB.Close()
 

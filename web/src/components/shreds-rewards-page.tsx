@@ -132,7 +132,7 @@ export function ShredsRewardsPage() {
     [groupByClient, searchParam, sortField, sortDirection, offset],
   )
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, isPlaceholderData, error } = useQuery({
     queryKey: ['shreds-rewards', queryParams],
     queryFn: () => fetchShredsRewards(queryParams),
     placeholderData: keepPreviousData,
@@ -270,13 +270,15 @@ export function ShredsRewardsPage() {
           title="Edge Rewards"
           subtitle={
             data?.current_solana_epoch ? (
-              <span className="text-sm text-muted-foreground">
+              <span className="text-sm text-muted-foreground inline-flex items-center gap-1.5">
                 Epoch {data.current_solana_epoch}
                 {data.latest_finalized_epoch != null && (
                   <span className="text-muted-foreground/50">
-                    {' '}
                     · last finalized {data.latest_finalized_epoch}
                   </span>
+                )}
+                {isPlaceholderData && (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 )}
               </span>
             ) : undefined
@@ -369,7 +371,15 @@ export function ShredsRewardsPage() {
           )}
         </div>
 
-        <div className="border border-border rounded-lg overflow-hidden bg-card">
+        {/* keepPreviousData leaves the old page on screen while the next one
+            loads, and isLoading stays false throughout — so without this a page
+            turn or a sort click looked like nothing had happened at all. */}
+        <div
+          className={cn(
+            'border border-border rounded-lg overflow-hidden bg-card transition-opacity',
+            isPlaceholderData && 'opacity-60',
+          )}
+        >
           <div className="overflow-x-auto">
             {!groupByClient && (
             <table className="min-w-full">
