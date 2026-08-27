@@ -317,6 +317,126 @@ func TestShredsEconomics_MetrosCarryBothStreams(t *testing.T) {
 	assert.NotContains(t, byMetro, "lon")
 }
 
+// A metro invoiced in the window still appears when nothing else touched it.
+// The row set used to be whatever the seat and subscription reads covered, with
+// invoices only left-joined on, so a customer whose pass lapsed after their
+// month was billed took that month's revenue out of the metro table and left the
+// footer short of the monthly totals.
+func TestShredsEconomics_InvoiceOnlyMetroStillAppears(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedEconomics(t, api)
+	ctx := t.Context()
+
+	// lon has a rate card, no seat charged in the window and no live pass, but
+	// its feed collected in August.
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_feed_distributions_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, feed_key, year, month, collected_usdc)
+		VALUES
+		('fd-lon-08b', now(), now(), generateUUIDv4(), 0, 9, 'fd-lon-08b', 'feed-lon', 2026, 8, 750000000)
+	`))
+
+	resp := fetchEconomics(t, api)
+
+	byMetro := map[string]handlers.ShredsEconomicsMetro{}
+	for _, m := range resp.Metros {
+		byMetro[m.Metro] = m
+	}
+	require.Contains(t, byMetro, "lon", "an invoiced metro must have a row")
+	lon := byMetro["lon"]
+	assert.InDelta(t, 750.0, lon.Invoiced, 0.01)
+	assert.Equal(t, 0, lon.LiveSeats)
+	assert.Equal(t, 0, lon.Subscriptions)
+	assert.InDelta(t, 0.0, lon.SeatRevenue, 0.01)
+	// It still carries its rate card.
+	assert.InDelta(t, 60.0, lon.Price, 0.01)
+
+	// And the two halves of the page agree on the money.
+	var metroInvoiced float64
+	for _, m := range resp.Metros {
+		metroInvoiced += m.Invoiced
+	}
+	var monthInvoiced float64
+	for _, m := range resp.Months {
+		if !m.Future {
+			monthInvoiced += m.Invoiced
+		}
+	}
+	assert.InDelta(t, monthInvoiced, metroInvoiced, 0.01,
+		"metro invoices must reconcile with the recognized months")
+}
+
+// An invoice on a feed whose serviceability label has not landed keeps its
+// revenue and lands under "unmapped", the same rule the monthly totals follow.
+// Requiring a shreds code here left the metro table short of those totals until
+// the label caught up.
+func TestShredsEconomics_UnlabelledInvoiceReconciles(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedEconomics(t, api)
+	ctx := t.Context()
+
+	// A distribution whose feed has no dz_feeds_current row at all.
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_feed_distributions_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, feed_key, year, month, collected_usdc)
+		VALUES
+		('fd-orphan-08', now(), now(), generateUUIDv4(), 0, 9, 'fd-orphan-08', 'feed-not-labelled-yet', 2026, 8, 250000000)
+	`))
+
+	resp := fetchEconomics(t, api)
+
+	var metroInvoiced float64
+	byMetro := map[string]handlers.ShredsEconomicsMetro{}
+	for _, m := range resp.Metros {
+		metroInvoiced += m.Invoiced
+		byMetro[m.Metro] = m
+	}
+	require.Contains(t, byMetro, "unmapped")
+	assert.InDelta(t, 250.0, byMetro["unmapped"].Invoiced, 0.01)
+
+	var monthInvoiced float64
+	for _, m := range resp.Months {
+		if !m.Future {
+			monthInvoiced += m.Invoiced
+		}
+	}
+	assert.InDelta(t, monthInvoiced, metroInvoiced, 0.01,
+		"an unlabelled feed's revenue must reconcile, not disappear")
+}
+
+// The optional halves fail on their own. Both the feed-distribution and access-
+// pass dimensions ship with the indexer, so an API pod rolled out ahead of it
+// reads tables that are not there; folded into the seat query, that returned no
+// metros at all and zeroed the live seat rate behind the run-rate tile.
+func TestShredsEconomics_MissingOptionalTableKeepsSeatData(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedEconomics(t, api)
+	ctx := t.Context()
+
+	require.NoError(t, api.DB.Exec(ctx, `DROP TABLE dim_dz_shred_feed_distributions_history`))
+	require.NoError(t, api.DB.Exec(ctx, `DROP VIEW dim_dz_shred_feed_distributions_current`))
+
+	resp := fetchEconomics(t, api)
+
+	byMetro := map[string]handlers.ShredsEconomicsMetro{}
+	for _, m := range resp.Metros {
+		byMetro[m.Metro] = m
+	}
+	require.Contains(t, byMetro, "fra", "seat data survives a missing invoice table")
+	assert.InDelta(t, 200.0, byMetro["fra"].SeatRevenue, 0.01)
+	assert.Equal(t, 1, byMetro["fra"].LiveSeats)
+	assert.Equal(t, 2, byMetro["fra"].Subscriptions)
+	assert.InDelta(t, 0.0, byMetro["fra"].Invoiced, 0.01, "the absent half reports nothing")
+
+	// The figure the run-rate tile is built on must still be real.
+	assert.InDelta(t, 100.0, resp.LiveSeatRate, 0.01)
+}
+
 // The priced-metro count is what a seat would cost somewhere, so it counts every
 // metro carrying a price, including the ones with no revenue at all. lon has a
 // rate card and has never sold a seat; it counts here and not in the table.

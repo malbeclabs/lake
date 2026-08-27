@@ -928,9 +928,10 @@ function MetroRow({
       <tr className="border-b border-border/50">
         <td colSpan={7} className="p-0">
           {/* A fixed cap, not a measured height: inside a table cell the
-              grid-rows and scrollHeight approaches both collapse to zero. 192px
-              clears the drawer's tallest state, which is the two rows the stats
-              wrap onto at the table's 720px minimum (~116px). */}
+              grid-rows and scrollHeight approaches both collapse to zero. The
+              drawer measures 66px wide open and 112px at the table's 720px
+              minimum, where the stats wrap to a second row, so 192px clears its
+              tallest state with room for another line. */}
           <div
             className={cn(
               'overflow-hidden transition-[max-height] duration-300 ease-out',
@@ -1074,9 +1075,9 @@ function PageSkeleton() {
 
       <PanelSkeleton>
         <div className="px-5 sm:px-6 pt-6 pb-2">
-          {/* Bars of uneven height, so the wait reads as a chart rather than a
-              slab. The shape traces a real month series: a rise, a plateau, then
-              the open and booked months tailing off. */}
+          {/* Uneven heights, so the wait reads as a chart rather than a slab.
+              The proportions are arbitrary and deliberately not derived from any
+              real month: nothing is known yet when this renders. */}
           <div className="flex items-end gap-6 h-56">
             {[62, 96, 78, 74, 70, 44, 18].map((h, i) => (
               <div key={i} className="flex-1 flex items-end h-full">

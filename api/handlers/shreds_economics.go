@@ -734,13 +734,78 @@ func (a *API) economicsMonthlyInvoiced(ctx context.Context, windowStart string) 
 // stay out of a table read as earnings to date. Invoices reach a metro through
 // the feed they bill, which carries the metro on dz_feeds_current.
 //
-// The join is a full outer one because the two streams do not cover the same
-// metros: a metro can hold subscriptions with no seat ever charged, and the
-// reverse.
+// It is three reads merged here rather than one join, because the two optional
+// halves ship with the indexer and the required half does not. Folded into one
+// statement, an absent feed-distribution or access-pass table failed the whole
+// query and returned no metros at all - taking seat revenue and the live seat
+// rate with it, which the run-rate tile then reported as zero while still
+// reading as current.
 func (a *API) economicsMetros(ctx context.Context, windowStart string, asOf time.Time) ([]ShredsEconomicsMetro, error) {
 	invoiceEnd := time.Date(asOf.Year(), asOf.Month(), 1, 0, 0, 0, 0, time.UTC).Format(time.DateOnly)
 	asOfDay := asOf.Format(time.DateOnly)
 
+	rows, err := a.economicsMetroSeats(ctx, windowStart, asOfDay)
+	if err != nil {
+		return nil, err
+	}
+	invoiced, err := a.economicsMetroInvoiced(ctx, windowStart, invoiceEnd)
+	if err != nil {
+		return nil, err
+	}
+	subs, err := a.economicsMetroSubscriptions(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// A metro invoiced in the window but holding no seat and no live
+	// subscription still earned that money, so the key set is the union of all
+	// three reads rather than whatever the seat side happened to cover.
+	for mk := range invoiced {
+		if _, ok := rows[mk]; !ok {
+			rows[mk] = &ShredsEconomicsMetro{}
+		}
+	}
+	for mk := range subs {
+		if _, ok := rows[mk]; !ok {
+			rows[mk] = &ShredsEconomicsMetro{}
+		}
+	}
+
+	items := make([]ShredsEconomicsMetro, 0, len(rows))
+	for mk, m := range rows {
+		m.Invoiced = invoiced[mk]
+		m.Subscriptions = subs[mk]
+		// The seat read returns every metro in the dimension so an invoiced one is
+		// never missing its name or price. Most have no activity at all, so a row
+		// is kept only where something happened.
+		if m.LiveSeats == 0 && m.Subscriptions == 0 && m.SeatRevenue == 0 && m.Invoiced == 0 {
+			continue
+		}
+		if m.Metro == "" {
+			// A seat whose device carries no metro, or an invoice on a feed whose
+			// serviceability label has not landed.
+			m.Metro = "unmapped"
+		}
+		items = append(items, *m)
+	}
+	slices.SortFunc(items, func(a, b ShredsEconomicsMetro) int {
+		if d := (b.SeatRevenue + b.Invoiced) - (a.SeatRevenue + a.Invoiced); d != 0 {
+			if d > 0 {
+				return 1
+			}
+			return -1
+		}
+		return strings.Compare(a.Metro, b.Metro)
+	})
+	return items, nil
+}
+
+// economicsMetroSeats returns every metro keyed by its ledger pk, carrying the
+// rate card and what its client seats were charged in the window.
+//
+// Every table it reads is one the page cannot render without, so a failure here
+// is a real failure rather than a missing column.
+func (a *API) economicsMetroSeats(ctx context.Context, windowStart, asOfDay string) (map[string]*ShredsEconomicsMetro, error) {
 	query := `
 		WITH ` + seatChargesCTE + `,` + epochBoundsCTE + `,
 		window_epochs AS (
@@ -757,7 +822,6 @@ func (a *API) economicsMetros(ctx context.Context, windowStart string, asOf time
 			GROUP BY exchange_key
 		),
 		metro_code AS (SELECT pk AS mpk, any(code) AS code FROM dz_metros_current GROUP BY pk),
-		feed_map AS (SELECT pk AS fpk, any(code) AS code, any(metro_pk) AS mpk FROM dz_feeds_current GROUP BY pk),
 		seat_agg AS (
 			SELECT
 				c.metro_key AS mk,
@@ -767,15 +831,108 @@ func (a *API) economicsMetros(ctx context.Context, windowStart string, asOf time
 			WHERE c.epoch IN (SELECT epoch FROM window_epochs)
 			GROUP BY mk
 		),
-		inv_agg AS (
-			SELECT fm.mpk AS mk, sum(fd.collected_usdc) / ? AS invoiced
-			FROM dim_dz_shred_feed_distributions_current AS fd
-			INNER JOIN feed_map AS fm ON fm.fpk = fd.feed_key
-			WHERE startsWith(fm.code, ?)
-			  AND makeDate(fd.year, fd.month, 1) >= toDate(?)
-			  AND makeDate(fd.year, fd.month, 1) <= toDate(?)
-			GROUP BY mk
-		),
+		-- Every known metro, plus the unnamed bucket a seat lands in when its
+		-- device carries no metro.
+		metro_keys AS (
+			SELECT mpk AS mk FROM metro_code
+			UNION DISTINCT
+			SELECT mk FROM seat_agg
+		)
+		SELECT
+			k.mk AS mk,
+			ifNull(mc.code, '') AS metro,
+			toFloat64(ifNull(mr.price, 0)) AS price,
+			toUInt32(ifNull(mr.devices, 0)) AS devices,
+			ifNull(sa.live_seats, 0) AS live_seats,
+			ifNull(sa.seat_usdc, 0) AS seat_revenue
+		FROM metro_keys AS k
+		LEFT JOIN metro_code AS mc ON mc.mpk = k.mk
+		LEFT JOIN metro_rate AS mr ON mr.ek = k.mk
+		LEFT JOIN seat_agg AS sa ON sa.mk = k.mk
+	`
+
+	start := time.Now()
+	dbRows, err := a.envDB(ctx).Query(ctx, query, windowStart, asOfDay)
+	metrics.RecordClickHouseQuery("shreds", time.Since(start), err)
+	if err != nil {
+		return nil, err
+	}
+	defer dbRows.Close()
+
+	out := map[string]*ShredsEconomicsMetro{}
+	for dbRows.Next() {
+		var (
+			mk            string
+			item          ShredsEconomicsMetro
+			devices, live uint32
+			seatRev       float64
+		)
+		if err := dbRows.Scan(&mk, &item.Metro, &item.Price, &devices, &live, &seatRev); err != nil {
+			return nil, err
+		}
+		item.Devices = int(devices)
+		item.LiveSeats = int(live)
+		item.SeatRevenue = seatRev
+		out[mk] = &item
+	}
+	return out, dbRows.Err()
+}
+
+// economicsMetroInvoiced sums the feed-subscription revenue allocated to each
+// metro over the window's recognized months, keyed by metro pk.
+//
+// A feed whose serviceability label has not landed keeps its revenue and lands
+// under the empty key, exactly as economicsMonthlyInvoiced keeps it: dropping it
+// would leave the metro table short of the monthly totals until a label caught
+// up. The two must agree, they are the same money.
+func (a *API) economicsMetroInvoiced(ctx context.Context, windowStart, invoiceEnd string) (map[string]float64, error) {
+	query := `
+		WITH feed_map AS (SELECT pk AS fpk, any(code) AS code, any(metro_pk) AS mpk FROM dz_feeds_current GROUP BY pk)
+		SELECT ifNull(fm.mpk, '') AS mk, sum(fd.collected_usdc) / ? AS invoiced
+		FROM dim_dz_shred_feed_distributions_current AS fd
+		LEFT JOIN feed_map AS fm ON fm.fpk = fd.feed_key
+		WHERE (ifNull(fm.code, '') = '' OR startsWith(ifNull(fm.code, ''), ?))
+		  AND makeDate(fd.year, fd.month, 1) >= toDate(?)
+		  AND makeDate(fd.year, fd.month, 1) <= toDate(?)
+		GROUP BY mk
+	`
+
+	start := time.Now()
+	dbRows, err := a.envDB(ctx).Query(ctx, query, int(usdcBaseUnitsPerDollar), ShredsFeedCodePrefix, windowStart, invoiceEnd)
+	metrics.RecordClickHouseQuery("shreds", time.Since(start), err)
+	if err != nil {
+		if isMissingTable(err) {
+			logWarn("shreds economics: metro invoices not available", "error", err)
+			return map[string]float64{}, nil
+		}
+		return nil, err
+	}
+	defer dbRows.Close()
+
+	out := map[string]float64{}
+	for dbRows.Next() {
+		var (
+			mk       string
+			invoiced float64
+		)
+		if err := dbRows.Scan(&mk, &invoiced); err != nil {
+			return nil, err
+		}
+		out[mk] = invoiced
+	}
+	return out, dbRows.Err()
+}
+
+// economicsMetroSubscriptions counts the Solana Shreds feed seats live in each
+// metro, keyed by metro pk.
+//
+// Unlike invoices this is strict about the label, matching
+// economicsSubscriptionSeries: an unlabelled feed cannot be shown to be a shreds
+// feed, and a seat count is a claim about what is live rather than money that
+// would otherwise vanish.
+func (a *API) economicsMetroSubscriptions(ctx context.Context) (map[string]int, error) {
+	query := `
+		WITH feed_map AS (SELECT pk AS fpk, any(code) AS code, any(metro_pk) AS mpk FROM dz_feeds_current GROUP BY pk),
 		pass_state AS (
 			SELECT
 				entity_id,
@@ -784,72 +941,39 @@ func (a *API) economicsMetros(ctx context.Context, windowStart string, asOf time
 			FROM dim_dz_access_passes_history
 			WHERE type_tag = 'edge_seat'
 			GROUP BY entity_id
-		),
-		sub_agg AS (
-			SELECT fm.mpk AS mk, toUInt32(count()) AS sub_seats
-			FROM pass_state AS p
-			ARRAY JOIN JSONExtractArrayRaw(p.fs) AS e
-			INNER JOIN feed_map AS fm ON fm.fpk = JSONExtractString(e, 'feed_pk')
-			WHERE p.del = 0 AND p.fs NOT IN ('', '[]') AND startsWith(fm.code, ?)
-			GROUP BY mk
 		)
-		SELECT
-			ifNull(mc.code, '') AS metro,
-			toFloat64(ifNull(mr.price, 0)) AS price,
-			toUInt32(ifNull(mr.devices, 0)) AS devices,
-			ifNull(sa.live_seats, 0) AS live_seats,
-			ifNull(sb.sub_seats, 0) AS subscriptions,
-			ifNull(sa.seat_usdc, 0) AS seat_revenue,
-			ifNull(ia.invoiced, 0) AS invoiced
-		FROM seat_agg AS sa
-		FULL OUTER JOIN sub_agg AS sb ON sb.mk = sa.mk
-		LEFT JOIN metro_code AS mc ON mc.mpk = coalesce(nullIf(sa.mk, ''), sb.mk)
-		LEFT JOIN metro_rate AS mr ON mr.ek = coalesce(nullIf(sa.mk, ''), sb.mk)
-		LEFT JOIN inv_agg AS ia ON ia.mk = coalesce(nullIf(sa.mk, ''), sb.mk)
-		-- A seat whose device carries no metro produces an unnamed row with
-		-- nothing on it. Drop it, but keep any row that has something to report.
-		WHERE metro != '' OR live_seats > 0 OR subscriptions > 0 OR seat_revenue != 0 OR invoiced != 0
-		ORDER BY seat_revenue + invoiced DESC, metro
+		SELECT fm.mpk AS mk, toUInt32(count()) AS sub_seats
+		FROM pass_state AS p
+		ARRAY JOIN JSONExtractArrayRaw(p.fs) AS e
+		INNER JOIN feed_map AS fm ON fm.fpk = JSONExtractString(e, 'feed_pk')
+		WHERE p.del = 0 AND p.fs NOT IN ('', '[]') AND startsWith(fm.code, ?)
+		GROUP BY mk
 	`
 
 	start := time.Now()
-	rows, err := a.envDB(ctx).Query(ctx, query,
-		windowStart, asOfDay, // window_epochs
-		int(usdcBaseUnitsPerDollar), ShredsFeedCodePrefix, windowStart, invoiceEnd, // inv_agg
-		ShredsFeedCodePrefix, // sub_agg
-	)
+	dbRows, err := a.envDB(ctx).Query(ctx, query, ShredsFeedCodePrefix)
 	metrics.RecordClickHouseQuery("shreds", time.Since(start), err)
 	if err != nil {
 		if isMissingTable(err) {
-			logWarn("shreds economics: metro breakdown not available", "error", err)
-			return []ShredsEconomicsMetro{}, nil
+			logWarn("shreds economics: metro subscriptions not available", "error", err)
+			return map[string]int{}, nil
 		}
 		return nil, err
 	}
-	defer rows.Close()
+	defer dbRows.Close()
 
-	items := []ShredsEconomicsMetro{}
-	for rows.Next() {
+	out := map[string]int{}
+	for dbRows.Next() {
 		var (
-			item             ShredsEconomicsMetro
-			devices          uint32
-			liveSeats, subs  uint32
-			seatRev, invoice float64
+			mk    string
+			seats uint32
 		)
-		if err := rows.Scan(&item.Metro, &item.Price, &devices, &liveSeats, &subs, &seatRev, &invoice); err != nil {
+		if err := dbRows.Scan(&mk, &seats); err != nil {
 			return nil, err
 		}
-		if item.Metro == "" {
-			item.Metro = "unmapped"
-		}
-		item.Devices = int(devices)
-		item.LiveSeats = int(liveSeats)
-		item.Subscriptions = int(subs)
-		item.SeatRevenue = seatRev
-		item.Invoiced = invoice
-		items = append(items, item)
+		out[mk] = int(seats)
 	}
-	return items, rows.Err()
+	return out, dbRows.Err()
 }
 
 // economicsMetrosPriced counts the metros carrying a rate-card price, including
