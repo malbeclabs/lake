@@ -2,7 +2,6 @@ import { useMemo, useEffect, useRef, useState, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import MapGL, { Source, Layer, Marker } from 'react-map-gl/maplibre'
 import type { MapRef, MapLayerMouseEvent, LngLatBoundsLike } from 'react-map-gl/maplibre'
-import type { StyleSpecification } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { useQuery } from '@tanstack/react-query'
 import { useTheme } from '@/hooks/use-theme'
@@ -13,6 +12,7 @@ import { topologyLinkToLinkInfo } from '@/components/shared/link-info-converters
 import { useActiveOpsTickets } from '@/hooks/use-ops-tickets'
 import { opsTicketUrl } from '@/lib/ops-api'
 import type { OpsTicket } from '@/lib/ops-api'
+import { createBasemapStyle } from '@/lib/basemap'
 
 // Path colors for multi-path visualization
 const PATH_COLORS = [
@@ -266,34 +266,6 @@ function calculateCurvedPath(
     points.push([lng, lat])
   }
   return points
-}
-
-// Create MapLibre style with CARTO basemap
-function createMapStyle(isDark: boolean): StyleSpecification {
-  const tileUrl = isDark
-    ? 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'
-    : 'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'
-
-  return {
-    version: 8,
-    sources: {
-      carto: {
-        type: 'raster',
-        tiles: [tileUrl],
-        tileSize: 256,
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-      },
-    },
-    layers: [
-      {
-        id: 'carto-tiles',
-        type: 'raster',
-        source: 'carto',
-        minzoom: 0,
-        maxzoom: 22,
-      },
-    ],
-  }
 }
 
 export function TopologyMap({ metros, devices, links, validators }: TopologyMapProps) {
@@ -906,7 +878,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   }, [devicesByMetro, metroMap])
 
   // Map style based on theme
-  const mapStyle = useMemo(() => createMapStyle(isDark), [isDark])
+  const mapStyle = useMemo(() => createBasemapStyle(isDark), [isDark])
 
   // Fit bounds to metros
   const fitBounds = useCallback(() => {
