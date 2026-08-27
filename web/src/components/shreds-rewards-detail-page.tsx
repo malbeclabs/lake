@@ -1,12 +1,22 @@
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
-import { Loader2, AlertCircle, ArrowLeft, Trophy } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Trophy } from 'lucide-react'
 import { fetchShredsRewardsDetail } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { useDelayedLoading } from '@/hooks/use-delayed-loading'
 import { PageHeader } from './page-header'
 import { CopyableText } from './copyable-text'
 import { formatTokenAmount } from './shreds-rewards-format'
+import {
+  RewardsShimmerBar,
+  SkeletonCell,
+  SkeletonRows,
+} from './shreds-rewards-skeleton'
+
+// Enough placeholder rows to fill the fold. A validator's history runs to
+// dozens of epochs, so this deliberately under-promises rather than guessing.
+const SKELETON_ROWS = 10
 
 function truncatePK(pk: string): string {
   if (!pk) return ''
@@ -52,12 +62,16 @@ function FactCard({
 export function ShredsRewardsDetailPage() {
   const { nodeId = '' } = useParams<{ nodeId: string }>()
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, isFetching, error } = useQuery({
     queryKey: ['shreds-rewards-detail', nodeId],
     queryFn: () => fetchShredsRewardsDetail(nodeId),
     enabled: !!nodeId,
     refetchInterval: 60_000,
   })
+
+  // Show loading progress on first read.
+  const showSkeleton = useDelayedLoading(isLoading)
+  const showShimmer = useDelayedLoading(isFetching && !isLoading)
 
   const totals = useMemo(() => {
     const all: Record<string, number> = {}
@@ -75,15 +89,7 @@ export function ShredsRewardsDetailPage() {
     return { all, claimable, hasClaimable }
   }, [data])
 
-  if (isLoading) {
-    return (
-      <div className="flex-1 flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    )
-  }
-
-  if (error || !data) {
+  if (error || (!data && !isLoading)) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center">
@@ -104,7 +110,8 @@ export function ShredsRewardsDetailPage() {
     )
   }
 
-  const displayName = data.validator_name?.trim() || truncatePK(data.node_id)
+  const displayName = data?.validator_name?.trim() || truncatePK(nodeId)
+  const epochs = data?.epochs ?? []
 
   return (
     <div className="flex-1 overflow-auto">
@@ -121,19 +128,22 @@ export function ShredsRewardsDetailPage() {
           title={displayName}
           subtitle={
             <span className="text-xs text-muted-foreground font-mono">
-              {truncatePK(data.node_id)}
+              {truncatePK(nodeId)}
             </span>
           }
         />
 
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-8">
+          {/* Identity is known from the URL, so it is never a skeleton. */}
           <FactCard label="Validator Identity">
-            <CopyableText text={data.node_id} className="text-xs">
-              <span className="font-mono">{truncatePK(data.node_id)}</span>
+            <CopyableText text={nodeId} className="text-xs">
+              <span className="font-mono">{truncatePK(nodeId)}</span>
             </CopyableText>
           </FactCard>
           <FactCard label="Vote ID">
-            {data.vote_pubkey ? (
+            {!data ? (
+              <SkeletonCell className="w-28" />
+            ) : data.vote_pubkey ? (
               <CopyableText text={data.vote_pubkey} className="text-xs">
                 <span className="font-mono">{truncatePK(data.vote_pubkey)}</span>
               </CopyableText>
@@ -141,25 +151,35 @@ export function ShredsRewardsDetailPage() {
               <span className="text-muted-foreground/60">—</span>
             )}
           </FactCard>
-          <FactCard label="Stake">{formatStake(data.activated_stake)}</FactCard>
+          <FactCard label="Stake">
+            {data ? formatStake(data.activated_stake) : <SkeletonCell className="w-20" />}
+          </FactCard>
           <FactCard label="DZ IP">
-            {data.dz_user_ip ? (
+            {!data ? (
+              <SkeletonCell className="w-24" />
+            ) : data.dz_user_ip ? (
               <span className="font-mono text-xs">{data.dz_user_ip}</span>
             ) : (
               <span className="text-muted-foreground/60">—</span>
             )}
           </FactCard>
-          <FactCard label="All-time Earned">{formatTokenTotals(totals.all)}</FactCard>
+          <FactCard label="All-time Earned">
+            {data ? formatTokenTotals(totals.all) : <SkeletonCell className="w-24" />}
+          </FactCard>
           <FactCard label="Immediately Claimable">
-            <span
-              className={cn(
-                totals.hasClaimable
-                  ? 'text-amber-500 dark:text-amber-400'
-                  : 'text-muted-foreground/60',
-              )}
-            >
-              {formatTokenTotals(totals.claimable)}
-            </span>
+            {!data ? (
+              <SkeletonCell className="w-24" />
+            ) : (
+              <span
+                className={cn(
+                  totals.hasClaimable
+                    ? 'text-amber-500 dark:text-amber-400'
+                    : 'text-muted-foreground/60',
+                )}
+              >
+                {formatTokenTotals(totals.claimable)}
+              </span>
+            )}
           </FactCard>
         </div>
 
@@ -169,6 +189,7 @@ export function ShredsRewardsDetailPage() {
         </div>
 
         <div className="border border-border rounded-lg overflow-hidden bg-card">
+          <RewardsShimmerBar show={showShimmer} />
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
@@ -182,7 +203,7 @@ export function ShredsRewardsDetailPage() {
                   <th className="px-4 py-3 text-right font-medium uppercase tracking-wider">
                     Leader Slots
                   </th>
-                  <th className="px-4 py-3 text-right font-medium uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left font-medium uppercase tracking-wider">
                     Client
                   </th>
                   <th className="px-4 py-3 text-right font-medium uppercase tracking-wider">
@@ -194,7 +215,18 @@ export function ShredsRewardsDetailPage() {
                 </tr>
               </thead>
               <tbody>
-                {data.epochs.length === 0 ? (
+                {/* Checked before the empty case so an arriving history never
+                    flashes "No rewards recorded for this validator", which
+                    reads as a finding rather than as waiting. */}
+                {!data ? (
+                  showSkeleton && (
+                    <SkeletonRows
+                      rows={SKELETON_ROWS}
+                      widths={['w-12', 'w-12', 'w-16', 'w-24', 'w-20', 'w-16']}
+                      align={['left', 'left', 'right', 'left', 'right', 'left']}
+                    />
+                  )
+                ) : epochs.length === 0 ? (
                   <tr>
                     <td
                       colSpan={6}
@@ -204,7 +236,7 @@ export function ShredsRewardsDetailPage() {
                     </td>
                   </tr>
                 ) : (
-                  data.epochs.map((epoch) => {
+                  epochs.map((epoch) => {
                     // Drive the badge off the derived lifecycle `state`:
                     //   claimable   -> Claimable (claimable now)
                     //   distributed -> Paid (rewards already distributed)
@@ -236,7 +268,7 @@ export function ShredsRewardsDetailPage() {
                     const statusLabel = claimLabel[bucket]
                     return (
                       <tr
-                        key={`${epoch.solana_epoch}-${epoch.subscription_epoch}`}
+                        key={`${epoch.subscription_epoch}-${epoch.client_id}`}
                         className="border-b border-border last:border-b-0 hover:bg-muted/30 transition-colors"
                       >
                         <td className="px-4 py-3 tabular-nums font-medium">
@@ -248,8 +280,11 @@ export function ShredsRewardsDetailPage() {
                         <td className="px-4 py-3 tabular-nums text-right">
                           {epoch.leader_slots.toLocaleString()}
                         </td>
-                        <td className="px-4 py-3 tabular-nums text-right text-muted-foreground">
-                          {epoch.client_id}
+                        <td
+                          className="px-4 py-3 text-muted-foreground"
+                          title={`Client ID ${epoch.client_id}`}
+                        >
+                          {epoch.client_name || `Client ${epoch.client_id}`}
                         </td>
                         <td className="px-4 py-3 tabular-nums text-right font-medium">
                           {formatTokenAmount(epoch.earned, epoch.token_symbol)}

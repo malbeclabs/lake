@@ -7539,6 +7539,7 @@ export interface ShredsRewardsEpochDetail {
   subscription_epoch: number
   leader_slots: number
   client_id: number
+  client_name: string
   // Reward in whole units of token_symbol (the token the validator chose for
   // the epoch: 2Z, USDC, or wSOL).
   earned: number

@@ -441,7 +441,7 @@ func (a *Activities) entries() []cacheEntry {
 		{name: "publisher check", key: "publisher_check", every: publisherCheckInterval, fn: func(ctx context.Context) (any, error) {
 			return api.FetchPublisherCheckData(ctx, "", handlers.DefaultPublisherCheckEpochs, 0)
 		}},
-		{name: "shreds rewards", key: "shreds_rewards", fn: func(ctx context.Context) (any, error) {
+		{name: "shreds rewards", key: handlers.ShredsRewardsPageCacheKey, fn: func(ctx context.Context) (any, error) {
 			return api.FetchShredsRewardsData(ctx)
 		}},
 		{name: "edge scoreboard", key: "edge_scoreboard", every: edgeScoreboardInterval, fn: func(ctx context.Context) (any, error) {
