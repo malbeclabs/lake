@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { projectedDays } from './shreds-economics-page'
+import { projectedDays } from './shreds-economics'
 
 // The seat side of Run-rate MRR is the open month's accrual plus the days it
 // has left at the live-seat rate. month.days is accrual coverage, not elapsed
