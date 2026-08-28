@@ -326,12 +326,10 @@ permanently non-green over a property of the plane rather than of the path.
 `behind` sits last of the faults because it is the mildest of them — the path is delivering, just
 less of the feed than its peer.
 
-### The DZD cell
+### The DZD column
 
-It renders in the section's **publishers block**, one row per tunnel, and not as a column on the
-group table — a BGP session belongs to a tunnel, and a publisher serves every plane of its feed from
-one tunnel, so as a column it printed the same cell once per group the tunnel feeds. See "Which
-grain each fact renders at" below.
+It renders on the publisher lines and nowhere else — a session belongs to a tunnel, and the group
+row spans several, so its cell there is empty. See "Which grain each fact renders at" below.
 
 `edge_multicast_bgp.go` reads the DoubleZero device's own view of each publisher's BGP session from
 `telemetry_<env>.bgp_neighbors_latest`. User sessions are `network_instance = 'vrf1'`, `peer_type =
@@ -537,9 +535,8 @@ stale together, so every pair at that vantage is quiet on both paths — keyed o
 paths still look alive, because they are delivering at the *other* recorders, and a dead recorder
 gets excused as the venue. `TestEdgeMulticastSequence_ADeadRecorderIsNotAQuietVenue` pins it.
 
-The publishers block also carries the ledger's **`bgp_status`** beside the device's own view, and
-`down` renders as an error there — on the tunnel row, since a session is a property of the tunnel.
-That is not a reversal of the rule that the control-plane roll-up must not paint the row: what that
+Publisher lines also carry the ledger's **`bgp_status`**, beside the device's own view in DZD, and
+`down` renders as an error there. That is not a reversal of the rule that the control-plane roll-up must not paint the row: what that
 rule rejects is a worst-of over every *member*, where customers with BGP down turned every group red.
 A publisher with no session cannot be sending the feed it is registered to send. It deliberately does
 not move the group verdict — the ledger snapshot and the rate bucket are minutes apart, so a publisher
@@ -620,13 +617,12 @@ is the one entry a deploy leaves empty, and it stays empty until the refresh cha
 `StartKalshiBackgroundRefresher` is serial with a three-minute timeout per step, which is why the
 observations leg runs **first** — it is the cheapest and the only one with no live-query fallback.
 
-Msg/s does not replace the counter rate, which reads once per tunnel in the section's publishers
-block: the counter is per tunnel, minutes late, and an upper bound a multi-group publisher shares
-across its groups, which is exactly why it is quoted at the tunnel's grain and not at the group's.
-This is per group, from the far end, so it is what arrived rather than what was sent, and it is blank
-for any feed with no recorder behind it. Neither figure is on the group row: summing recorded rates
-over a group's paths would double the feed, since redundant paths carry the same traffic, and a
-parity ratio means nothing until you name which path it is about.
+Msg/s sits beside the counter rate rather than replacing it — the counter is per tunnel, minutes
+late, and the same figure on every group that tunnel feeds; this is per group, from the far end, so
+it is what arrived rather than what was sent, and it is blank for any feed with no recorder behind
+it. Neither figure is on the group row: summing recorded rates over a group's paths would double the
+feed, since redundant paths carry the same traffic, and a parity ratio means nothing until you name
+which path it is about.
 
 Parity is measured on the **application plane** (`kalshi_bbo_observations`,
 `slot_feed_race_summary_v2`) and cannot move to the counters. Interface counters are per tunnel: a
@@ -637,26 +633,35 @@ exists for.
 
 ### Which grain each fact renders at
 
-Three grains, and nothing is printed at more than one of them.
+Every column is read at one grain, and the header says which. One table, two kinds of row: a group
+row, and the publisher lines it expands into.
 
-**The tunnel** — the section's publishers block, one row per tunnel: `Ingress` and its bucket age,
-`DZD` (device, tunnel id, device session, access RTT, ledger `bgp_status`), the member's class label,
-and the floor status word. All of these are read per interface, and a publisher serves every plane of
-its feed from ONE tunnel — both Kalshi halves from the same pair — so as table columns each of them
-printed once per group the tunnel feeds. Measured on mainnet, the perps section printed the same two
-rates four times.
+- **Per tunnel** — `DZD` (device, tunnel id, device session, access RTT, ledger `bgp_status`),
+  `Ingress` and its bucket age, and the floor status word. **On the lines only**; the group row
+  leaves all three blank. A counter is read per interface, so a group total would sum figures that
+  each already include the other groups their tunnel feeds — the cell that read `~18.6 Mbps` on a
+  group whose own ingress was nil.
+- **Per group** — the ledger code and multicast address, the publisher and subscriber counts,
+  `Heard`, unattributed series, `recorder_coverage`.
+- **Per path on that group** — `Msg/s`, `Peer`, `Sequence`, `Health`.
 
-**The group** — a table row: the ledger code and multicast address, the publisher and subscriber
-counts, `Heard`, unattributed series, `recorder_coverage`.
+A publisher serves every plane of its feed from ONE tunnel, so the per-tunnel columns read twice on
+a two-plane feed: the same DZD cell and the same rate, once per group. **That repetition is
+deliberate and cheaper than the alternative.** Hoisting those facts into a block above the table was
+tried for exactly one release: it added a header and a row per tunnel to every section while the
+lines below kept the whitespace the cells had left, so the same information occupied more space and
+the eye had to join the two by address. The same information in more space is not a simplification.
 
-**The path on that group** — an expanded publisher line: the client IP that joins it back to the
-block, `Msg/s`, `Peer`, `Sequence`, `Health`.
+What the hoist was actually for — not presenting a shared counter as a per-group measurement — is
+done by the **column header** instead. `Ingress` carries a `per tunnel` subtitle, said once for
+every cell under it, which is what replaced the `~` that used to sit on each. The tilde claimed the
+measurement was approximate; it is exact for the interface, and what was uncertain was only which
+group the bytes belonged to. The `~` survives where that uncertainty is still live: the group's
+Publishers count, where clearing the floor does not attest to THIS group.
 
-The group table therefore has **no DZD and no Ingress column**, and a publisher line carries no
-status word of its own. The line's `Health` badge is not that status word repeated: it is the
-composite verdict per (path, group), folding the floor together with what the recorders saw, so a
-floor fault still reaches every line the tunnel publishes on — by way of the only column that can
-also say the path gapped.
+The one thing a line does NOT repeat is its verdict: `Health` is per (path, group) and folds the
+floor status together with what the recorders saw, which is why a line can read `publishing` beside
+a `gapped` badge.
 
 ## Basemap Tiles
 
