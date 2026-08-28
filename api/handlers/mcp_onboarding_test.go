@@ -85,6 +85,41 @@ func withRunbookDocs(t *testing.T, files map[string]string) *docsfetch.Client {
 	}
 }
 
+// A runbook past the page bound must say so: an agent driving a half-runbook
+// otherwise walks the user through a procedure with the tail missing.
+func TestMCPHandler_GetOnboardingRunbook_ReportsTruncation(t *testing.T) {
+	t.Parallel()
+	api := &handlers.API{DocsSource: withRunbookDocs(t, map[string]string{
+		"runbooks.md":       testRunbookIndex,
+		"feed-a-runbook.md": strings.Repeat("a", docsfetch.MaxPageBytes+1),
+	})}
+	handler, sessionID := mcpSession(t, api)
+
+	output := callToolOutput(t, handler, sessionID, "get_onboarding_runbook", map[string]any{
+		"service": "feed-a",
+	})
+	assert.Equal(t, true, output["truncated"])
+	assert.Contains(t, output["runbook"], "truncated at")
+}
+
+func TestMCPHandler_ReadDocs_ReportsTruncation(t *testing.T) {
+	t.Parallel()
+	api := &handlers.API{DocsSource: withRunbookDocs(t, map[string]string{
+		"big.md":   strings.Repeat("a", docsfetch.MaxPageBytes+1),
+		"small.md": "# small",
+	})}
+	handler, sessionID := mcpSession(t, api)
+
+	big := callToolOutput(t, handler, sessionID, "read_docs", map[string]any{"page": "big"})
+	assert.Equal(t, true, big["truncated"])
+	assert.Contains(t, big["content"], "truncated at")
+	assert.Contains(t, big["source"], "big.md")
+
+	small := callToolOutput(t, handler, sessionID, "read_docs", map[string]any{"page": "small"})
+	assert.Nil(t, small["truncated"])
+	assert.Equal(t, "# small", small["content"])
+}
+
 func TestMCPHandler_GetOnboardingRunbook_ListsCatalog(t *testing.T) {
 	t.Parallel()
 	api := &handlers.API{DocsSource: withRunbookDocs(t, map[string]string{"runbooks.md": testRunbookIndex})}
