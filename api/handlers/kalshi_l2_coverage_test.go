@@ -39,7 +39,9 @@ func createKalshiMbpLevelsTable(t *testing.T, api *handlers.API) {
 			recv_ts_kind LowCardinality(String),
 			book_levels_after UInt32,
 			status_after LowCardinality(String),
-			publisher_source_ip LowCardinality(String)
+			publisher_source_ip LowCardinality(String),
+			per_instrument_seq Nullable(UInt32),
+			reset_count UInt8
 		) ENGINE = MergeTree
 		PARTITION BY toDate(fromUnixTimestamp64Nano(toInt64(recv_ts_ns)))
 		ORDER BY (measurement_node_id, source, channel_id, symbol, instrument_id, recv_ts_ns)
@@ -69,6 +71,147 @@ func insertLevelFrom(t *testing.T, api *handlers.API, publisherSourceIP, source 
 		        'venue', toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalSecond(%d))),
 		        'kernel_udp_software', %d, '%s', '%s')
 	`, db, source, channelID, instrumentID, msgType, agoSecs, depth, statusAfter, publisherSourceIP)))
+}
+
+// The timeline comes out of the same scan the counters do, and only gap-marked rows reach it. The
+// two losses are ten minutes apart on purpose: adjacent seconds would be at the mercy of which side
+// of a second boundary each INSERT landed on, and the run logic is pinned in the unit test instead.
+func TestKalshiL2Coverage_GapEpisodesCoverOnlyGappedRows(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createKalshiMbpLevelsTable(t, api)
+
+	insertLevelFrom(t, api, "148.51.120.6", "mbp_edge_kalshi_perps", 101, 7, "level_update", 5, "gap", 600)
+	insertLevelFrom(t, api, "148.51.120.6", "mbp_edge_kalshi_perps", 101, 7, "level_update", 5, "gap", 60)
+	insertLevelFrom(t, api, "148.51.120.6", "mbp_edge_kalshi_perps", 101, 7, "level_update", 5, "ready", 30)
+	// The redundant path carried the same feed and lost nothing. Its EMPTY timeline is the
+	// comparison the strip exists to draw, so it must come back seen-and-clean rather than absent.
+	insertLevelFrom(t, api, "148.51.121.69", "mbp_edge_kalshi_perps", 1, 7, "level_update", 5, "ready", 60)
+
+	resp, err := api.FetchKalshiL2Coverage(t.Context())
+	require.NoError(t, err)
+
+	byIP := map[string]handlers.KalshiL2Lane{}
+	for _, l := range resp.Lanes {
+		if l.Seen {
+			byIP[l.PublisherSourceIP] = l
+		}
+	}
+	require.Len(t, byIP, 2, "two paths of one feed, told apart by their source address")
+
+	gapped := byIP["148.51.120.6"]
+	require.Len(t, gapped.GapEpisodes, 2, "two losses, ten minutes apart, are two episodes")
+	assert.Equal(t, uint32(1), gapped.GapEpisodes[0].Seconds)
+	assert.Equal(t, uint32(1), gapped.GapEpisodes[1].Seconds)
+	assert.Less(t, gapped.GapEpisodes[0].Start, gapped.GapEpisodes[1].Start, "time order")
+	assert.InDelta(t, 540, gapped.GapEpisodes[1].Start-gapped.GapEpisodes[0].Start, 2,
+		"the gap between them is the 540s between the two inserts")
+	assert.Equal(t, uint64(1), gapped.GapBooks, "the counter still counts the one book")
+
+	clean := byIP["148.51.121.69"]
+	assert.Empty(t, clean.GapEpisodes, "a path that lost nothing records no episode")
+	assert.Equal(t, uint64(0), clean.GapBooks)
+}
+
+// insertLevelSeq writes one level update carrying its per-instrument sequence number, which is the
+// counter update loss is measured from. The other helpers leave it NULL, and the loss query skips
+// those rows — so a test that does not opt in here measures nothing rather than measuring zero.
+func insertLevelSeq(t *testing.T, api *handlers.API, publisherSourceIP, source string, channelID, instrumentID, seq uint32, agoSecs int) {
+	t.Helper()
+	db := "`" + api.FeedsDB + "`"
+	require.NoError(t, api.DB.Exec(t.Context(), fmt.Sprintf(`
+		INSERT INTO %s.kalshi_mbp_levels
+		(capture_run_id, measurement_node_id, host, location_code, source, symbol, channel_id,
+		 instrument_id, source_id, msg_type, source_ts_ns, source_ts_kind, recv_ts_ns,
+		 recv_ts_kind, book_levels_after, status_after, publisher_source_ip, per_instrument_seq,
+		 reset_count)
+		VALUES ('run1', 'cmh-rec1', 'cmh-rec1', 'cmh', '%s', 'KXNFLGAME', %d, %d, 3, 'level_update', 0,
+		        'venue', toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalSecond(%d))),
+		        'kernel_udp_software', 5, 'ready', '%s', %d, 0)
+	`, db, source, channelID, instrumentID, agoSecs, publisherSourceIP, seq)))
+}
+
+// Update loss is counted from the per-instrument sequence, per book and per path.
+//
+// The whole point of the counter is that it survives what frame_sequence cannot: measured on
+// mainnet, frame_sequence reports ~12% loss on sports feeds whose two independent paths are missing
+// the SAME numbers, which is the numbering having holes rather than the network dropping anything.
+func TestKalshiL2Coverage_UpdateLossFromPerInstrumentSequence(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createKalshiMbpLevelsTable(t, api)
+
+	// One path loses 4, 5 and 6 — a single break of three.
+	for _, seq := range []uint32{1, 2, 3, 7, 8} {
+		insertLevelSeq(t, api, "148.51.120.6", "mbp_edge_kalshi_perps", 101, 7, seq, 60)
+	}
+	// Its peer carries the same feed intact. Two paths differing is what real loss looks like.
+	for _, seq := range []uint32{1, 2, 3, 4, 5} {
+		insertLevelSeq(t, api, "148.51.121.69", "mbp_edge_kalshi_perps", 1, 7, seq, 60)
+	}
+
+	resp, err := api.FetchKalshiL2Coverage(t.Context())
+	require.NoError(t, err)
+
+	byIP := map[string]handlers.KalshiL2Lane{}
+	for _, l := range resp.Lanes {
+		if l.Seen {
+			byIP[l.PublisherSourceIP] = l
+		}
+	}
+	require.Len(t, byIP, 2)
+
+	lossy := byIP["148.51.120.6"]
+	assert.Equal(t, uint64(5), lossy.UpdatesReceived, "the denominator is what arrived")
+	assert.Equal(t, uint64(3), lossy.UpdatesMissing, "4, 5 and 6")
+	assert.Equal(t, uint64(1), lossy.SeqGapEvents, "one break, not three")
+	assert.Equal(t, uint32(3), lossy.MaxGapMessages)
+
+	clean := byIP["148.51.121.69"]
+	assert.Equal(t, uint64(5), clean.UpdatesReceived)
+	assert.Equal(t, uint64(0), clean.UpdatesMissing)
+	assert.Equal(t, uint64(0), clean.SeqGapEvents)
+}
+
+// A book's own numbering is what is dense; the channel's is not. Without instrument_id in the
+// partition the two books below interleave into one sequence riddled with holes that never happened.
+func TestKalshiL2Coverage_UpdateLossIsPerBook(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createKalshiMbpLevelsTable(t, api)
+
+	for _, seq := range []uint32{1, 2, 3} {
+		insertLevelSeq(t, api, "148.51.120.6", "mbp_edge_kalshi_perps", 101, 7, seq, 60)
+		insertLevelSeq(t, api, "148.51.120.6", "mbp_edge_kalshi_perps", 101, 9, seq, 60)
+	}
+
+	resp, err := api.FetchKalshiL2Coverage(t.Context())
+	require.NoError(t, err)
+	for _, l := range resp.Lanes {
+		if l.PublisherSourceIP == "148.51.120.6" && l.Seen {
+			assert.Equal(t, uint64(6), l.UpdatesReceived, "two books of three")
+			assert.Equal(t, uint64(0), l.UpdatesMissing, "each book's own numbering is intact")
+			return
+		}
+	}
+	t.Fatal("lane not found")
+}
+
+// A lane nothing carried a sequence for reports no loss AND no denominator, so the page can tell
+// "measured clean" from "not measured" — the same distinction the gap timeline makes.
+func TestKalshiL2Coverage_UpdateLossAbsentWithoutSequence(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createKalshiMbpLevelsTable(t, api)
+
+	insertLevelFrom(t, api, "148.51.120.6", "mbp_edge_kalshi_perps", 101, 7, "level_update", 5, "ready", 60)
+
+	resp, err := api.FetchKalshiL2Coverage(t.Context())
+	require.NoError(t, err)
+	for _, l := range resp.Lanes {
+		if l.PublisherSourceIP == "148.51.120.6" && l.Seen {
+			assert.Equal(t, uint64(0), l.UpdatesReceived, "no denominator, so no rate")
+			assert.Equal(t, uint64(0), l.UpdatesMissing)
+			return
+		}
+	}
+	t.Fatal("lane not found")
 }
 
 func TestGetKalshiL2Coverage_MissingTable(t *testing.T) {

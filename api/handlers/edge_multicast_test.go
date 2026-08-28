@@ -39,7 +39,7 @@ func newEdgeMulticastTestAPI(t *testing.T) *handlers.API {
 // kalshiL2CoverageKey mirrors the unexported page-cache key in kalshi_l2_coverage.go. If that
 // constant's version is bumped without this one, the sequence tests stop exercising the fold and
 // start asserting the absent case, which still passes — so bump both.
-const kalshiL2CoverageKey = "kalshi_l2_coverage:v3"
+const kalshiL2CoverageKey = "kalshi_l2_coverage:v5"
 
 // seedL2Coverage writes a coverage payload for the sequence column to fold, and removes it again
 // afterwards.
@@ -243,6 +243,64 @@ func TestGetEdgeMulticast_UnmanagedGroupIsListedAndSilent(t *testing.T) {
 	assert.Zero(t, g.IngressBps)
 }
 
+// insertEdgeMulticastLiveUnsoldGroup adds a group no feed row claims whose publisher IS moving the
+// product — the middle tier: live, unsold.
+func insertEdgeMulticastLiveUnsoldGroup(t *testing.T, api *handlers.API) {
+	t.Helper()
+	ctx := t.Context()
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_multicast_groups_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
+		VALUES ('group-3', now(), now(), generateUUIDv4(), 0, 1, 'group-3', '', 'edge-lab-live-tob', '233.0.0.3', 100000000, 'activated', 0, 0)`))
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_users_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id, publishers, subscribers)
+		VALUES ('user-live-pub', now(), now(), generateUUIDv4(), 0, 1, 'user-live-pub', 'pubkey-live', 'activated', 'multicast', '10.0.0.4', '10.0.0.4', 'dev-ams1', 504, '["group-3"]', '[]')`))
+	// A publisher's ingress is what the device receives FROM its tunnel, so the traffic goes in
+	// max_in_bps: 5 Mbps, well clear of the publisher floor.
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO device_interface_rollup_5m
+			(bucket_ts, device_pk, intf, user_tunnel_id, user_pk, max_in_bps, max_out_bps, ingested_at)
+		VALUES (now() - INTERVAL 1 MINUTE, 'dev-ams1', 'Tunnel504', 504, 'user-live-pub', 5000000, 0, now())`))
+}
+
+// A group promoted out of the bottom bucket by its own traffic is NOT reclassified as sold.
+//
+// Managed means "a feed row sells this", and the section code here is synthesised from the group's
+// own family because nothing sells it. Reading Managed off the code instead — anything that was not
+// the dead bucket — dropped the 'no feed row in the ledger' tell from the header and sorted the
+// section into the catalogue tier, which left the middle tier of the three-tier sort unreachable:
+// live-but-unsold has to sit above dead and below sold, and it can only do that if it says so.
+func TestGetEdgeMulticast_PromotedByActivityIsNotSold(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertMulticastHealthFixtures(t, api)
+	insertEdgeMulticastFeed(t, api)
+	insertEdgeMulticastLiveUnsoldGroup(t, api)
+
+	resp := getEdgeMulticast(t, api)
+
+	svc := findEdgeMulticastService(t, resp, "edge-lab-live")
+	assert.False(t, svc.Managed, "promoted by activity, not reclassified as sold")
+	assert.Zero(t, svc.MetroCount, "nothing sells it, so it is sold in nowhere")
+	require.Len(t, svc.Groups, 1)
+	assert.Equal(t, "edge-lab-live-tob", svc.Groups[0].Code, "the section is the family, the row is the group")
+
+	// Tiers: the catalogue first, the live-but-unsold section after it, and nothing in the dead
+	// bucket — this group's publisher is sending, so it never belonged there.
+	order := map[string]int{}
+	for i, s := range resp.Services {
+		order[s.Code] = i
+		assert.NotEqual(t, "edge-unclaimed", s.Code, "a live group is not listed as unclaimed")
+	}
+	sold, ok := order["test-feed"]
+	require.True(t, ok, "the feed-backed section is present")
+	assert.Less(t, sold, order["edge-lab-live"], "sold sorts above live-but-unsold")
+	assert.True(t, findEdgeMulticastService(t, resp, "test-feed").Managed, "and it still reads as sold")
+}
+
 func TestGetEdgeMulticast_NoTelemetryIsNotSilent(t *testing.T) {
 	api := newEdgeMulticastTestAPI(t)
 	insertMulticastTestData(t, api)
@@ -418,8 +476,9 @@ func TestGetEdgeMulticast_MalformedClassRowIsSkipped(t *testing.T) {
 	assertEdgeMulticastRoleInvariant(t, g.Subscribers, "subscribers")
 }
 
-// insertEdgeMulticastCaptureGroups adds two groups whose codes the capture sources name: the
-// Kalshi sports market-by-price plane and the Solana shreds group.
+// insertEdgeMulticastCaptureGroups adds two groups whose codes the capture sources name: the Kalshi
+// sports market-by-price plane, and a Solana group that must NOT come back — it is the fixture for
+// edgeMulticastExcludedPrefix as much as it is a second group.
 func insertEdgeMulticastCaptureGroups(t *testing.T, api *handlers.API) {
 	t.Helper()
 	require.NoError(t, api.DB.Exec(t.Context(), `
@@ -473,6 +532,9 @@ func TestGetEdgeMulticast_LastHeardFromCaptureTables(t *testing.T) {
 	// A competitor feed shares the table and must not be attributed to any group.
 	insertObservation(t, api, "kalshi_public_api", 9, 0, "KXNFLGAME", nowMs, 1)
 
+	// The shred race summary is present and populated on purpose: this page no longer reads it, and
+	// the assertion below is what pins that. A live table with rows in it is the only way to tell
+	// "the leg is gone" apart from "the fixture was never there".
 	require.NoError(t, api.DB.Exec(t.Context(), fmt.Sprintf(`
 		INSERT INTO `+"`%s`"+`.slot_feed_race_summary_v2
 			(event_ts, host, feed_type, epoch, slot, feed, loser_feed, total_shreds, shreds_won)
@@ -489,14 +551,17 @@ func TestGetEdgeMulticast_LastHeardFromCaptureTables(t *testing.T) {
 	assert.Equal(t, 2, k.LastHeardCaptureSources, "two league capture sources folded into one group timestamp")
 	assert.Less(t, time.Since(*k.LastHeard), 5*time.Minute, "the page ages this against its own clock")
 
-	s := findEdgeMulticastGroup(t, resp, "edge-solana-shreds")
-	require.NotNil(t, s.LastHeard, "the 'dz' feed alias resolves to the shreds group")
-	assert.Equal(t, "slot_feed_race_summary_v2", s.LastHeardTable)
-	assert.Equal(t, 1, s.LastHeardCaptureSources)
-
 	// The competitor observation was dropped, not bucketed into some group.
 	other := findEdgeMulticastGroup(t, resp, "edge-test-feed")
 	assert.Nil(t, other.LastHeard)
+
+	// No group takes its timestamp from the shred race, even though the table is queryable and has
+	// rows: the Solana groups are out of scope, so the leg that read it went with them.
+	for _, svc := range resp.Services {
+		for _, g := range svc.Groups {
+			assert.NotEqual(t, "slot_feed_race_summary_v2", g.LastHeardTable, "group %s", g.Code)
+		}
+	}
 
 	// App-plane silence never sets Silent: it is receive-side, so it cannot tell a dead
 	// recorder from a dead publisher.
@@ -643,13 +708,36 @@ func TestGetEdgeMulticast_PlanesShareOneSection(t *testing.T) {
 }
 
 // A group that carries no plane reports none, rather than borrowing the last segment of its code.
-func TestEdgeMulticastPlaneAbsentOnSolanaGroups(t *testing.T) {
+func TestEdgeMulticastPlaneAbsentOnUnsplitGroup(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	promoteTestGroupToEdge(t, api, "group-1", "edge-test-feed")
+	insertEdgeMulticastCaptureGroups(t, api)
+
+	g := findEdgeMulticastGroup(t, getEdgeMulticast(t, api), "edge-test-feed")
+	assert.Empty(t, g.Plane, "edge-test-feed is not plane-split")
+}
+
+// The Solana groups are out of scope for this page, and the exclusion is asserted at the handler
+// rather than trusted to the query: every column here is built for two publishers carrying one
+// product over redundant paths and recorded with sequence numbers, and none of it means the same
+// thing on a Turbine fan-in. A regression that let them back in would not error — it would quietly
+// re-add 700-odd publisher lines whose `thin` steady state was the page's loudest verdict.
+func TestGetEdgeMulticast_SolanaGroupsAreOutOfScope(t *testing.T) {
 	api := newEdgeMulticastTestAPI(t)
 	insertMulticastTestData(t, api)
 	insertEdgeMulticastCaptureGroups(t, api)
 
-	g := findEdgeMulticastGroup(t, getEdgeMulticast(t, api), "edge-solana-shreds")
-	assert.Empty(t, g.Plane, "edge-solana-shreds is not plane-split")
+	resp := getEdgeMulticast(t, api)
+	for _, s := range resp.Services {
+		for _, g := range s.Groups {
+			assert.NotContains(t, g.Code, "edge-solana",
+				"the Solana groups belong to /dz/multicast-groups")
+		}
+	}
+	// The Kalshi group inserted alongside it still arrives, so this is an exclusion and not an
+	// empty page.
+	findEdgeMulticastGroup(t, resp, "edge-kalshi-sports-mbp")
 }
 
 // insertEdgeMulticastPublisher adds one more publisher to group-1 with the rate given, so the
@@ -971,9 +1059,67 @@ func TestGetEdgeMulticast_SingleCaptureNodeIsNeverSkewed(t *testing.T) {
 
 // The sequence column: one recorded series per channel instance, folded from the L2 coverage
 // refresher's cache so this page never runs that scan itself and the two can never disagree.
+// The loss timeline reaches the publisher's series, and the axis it is drawn on reaches the payload.
+//
+// Both halves are asserted because either one alone is useless: episodes carry an absolute start, so
+// without the window's width the consumer has a right edge and no span and every mark lands at an
+// arbitrary offset. The width travels with the data rather than being read from a second copy of the
+// constant on the far side, which is what would let the axis and the episodes disagree.
+func TestGetEdgeMulticast_GapEpisodesAndWindowReachThePayload(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertEdgeMulticastCaptureGroups(t, api)
+
+	asOf := time.Now().UTC()
+	start := asOf.Add(-5 * time.Minute).Unix()
+	seedL2Coverage(t, api, asOf,
+		handlers.KalshiL2Lane{
+			Source: "mbp_edge_kalshi_sports_nba", ChannelID: 2, MeasurementNodeID: "cmh-rec1",
+			PublisherSourceIP: "10.0.0.9", LocationCode: "cmh", Messages: 500, GapBooks: 3,
+			Seen: true, LastSeen: asOf.Add(-1 * time.Second),
+			GapEpisodes: []handlers.KalshiL2GapEpisode{{Start: start, Seconds: 4}},
+		},
+	)
+
+	resp := getEdgeMulticast(t, api)
+	assert.Equal(t, 900, resp.GapWindowSeconds, "the fifteen-minute coverage window, in seconds")
+
+	k := findEdgeMulticastGroup(t, resp, "edge-kalshi-sports-mbp")
+	require.NotNil(t, k.Sequence)
+	require.Len(t, k.Sequence.Instances, 1)
+	require.Len(t, k.Sequence.Instances[0].GapEpisodes, 1)
+	assert.Equal(t, start, k.Sequence.Instances[0].GapEpisodes[0].Start)
+	assert.Equal(t, uint32(4), k.Sequence.Instances[0].GapEpisodes[0].Seconds)
+}
+
+// A top-of-book series has no gap marker, so it must carry no timeline. An empty one drawn under a
+// true GapsMeasured would be the clean bill of health this column refuses to give that plane.
+func TestGetEdgeMulticast_TopOfBookCarriesNoGapTimeline(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertEdgeMulticastCaptureGroups(t, api)
+
+	// Attached by destination address, which is how the top-of-book leg resolves a series to a
+	// group. The fixture's group happens to be the market-by-price one; what this test is about is
+	// the PLANE the series came from, and that is carried by the tob_ prefix on the capture source.
+	asOf := time.Now().UTC()
+	seedObservations(t, api, asOf, handlers.EdgeMulticastObservationSeries{
+		Source: "tob_edge_kalshi_sports_nfl", ChannelID: 2, Node: "cmh-rec1", LocationCode: "cmh",
+		PublisherSourceIP: "10.0.0.9", MulticastGroup: "233.0.0.10", Messages: 900,
+		LastSeen: asOf.Add(-1 * time.Second),
+	})
+
+	k := findEdgeMulticastGroup(t, getEdgeMulticast(t, api), "edge-kalshi-sports-mbp")
+	require.NotNil(t, k.Sequence)
+	require.Len(t, k.Sequence.Instances, 1)
+	assert.False(t, k.Sequence.Instances[0].GapsMeasured)
+	assert.Empty(t, k.Sequence.Instances[0].GapEpisodes, "no marker to count means no timeline")
+}
+
 func TestGetEdgeMulticast_SequenceHealthFromL2Cache(t *testing.T) {
 	api := newEdgeMulticastTestAPI(t)
 	insertMulticastTestData(t, api)
+	promoteTestGroupToEdge(t, api, "group-1", "edge-test-feed")
 	insertEdgeMulticastCaptureGroups(t, api)
 
 	asOf := time.Now().UTC()
@@ -1012,7 +1158,7 @@ func TestGetEdgeMulticast_SequenceHealthFromL2Cache(t *testing.T) {
 	assert.Equal(t, "ok", k.Sequence.Instances[1].Status)
 
 	// A group with no recorder running the wire protocol carries no column at all.
-	s := findEdgeMulticastGroup(t, resp, "edge-solana-shreds")
+	s := findEdgeMulticastGroup(t, resp, "edge-test-feed")
 	assert.Nil(t, s.Sequence)
 }
 

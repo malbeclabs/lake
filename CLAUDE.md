@@ -328,6 +328,9 @@ less of the feed than its peer.
 
 ### The DZD column
 
+It renders on the publisher lines and nowhere else — a session belongs to a tunnel, and the group
+row spans several, so its cell there is empty. See "Which grain each fact renders at" below.
+
 `edge_multicast_bgp.go` reads the DoubleZero device's own view of each publisher's BGP session from
 `telemetry_<env>.bgp_neighbors_latest`. User sessions are `network_instance = 'vrf1'`, `peer_type =
 'EXTERNAL'`, addressed on a link-local /31 that appears nowhere else in this schema — what makes
@@ -407,11 +410,52 @@ percent or more where the floor leaves two, so 4 messages against 5 — measured
 instance — would read `behind`, and one failed pair marks the whole line across the 29-33 capture
 sources a sports node compares. Under the floor the pair records nothing, not a pass.
 
+The volume floor was not enough on its own, so a **share gate** sits over the verdict:
+`edgeMulticastPathParityBehindShare` (a quarter), applied as `Behind / Compared` by
+`edgeMulticastPathParityFaulted`. One failing pair out of twenty-nine is an outlier, not a finding
+about the path, and it was deciding the verdict for the whole line. Both ends of the range set the
+number: a path with ONE comparison — every perps group — still fires at 1 of 1, and a genuine
+deficit is not shy, since loss on a branch is indiscriminate and clears the 2% floor nearly
+everywhere rather than at a single market. What tipped it off is that sports read `0.988` and
+`0.967` on the two paths **at once**, which one systematic deficit cannot produce: the better path
+of each pair is 1.0 by construction, so each path is losing at a different capture source — the
+signature of per-source noise near the volume floor. The verdict, the badge and the colour of the
+ratio all read `Faulted` rather than re-deriving the rule, so they cannot disagree; the ratio itself
+is still printed either way, and the tooltip says how many pairs were under the floor.
+
+The ratio is printed **truncated toward zero**, never rounded: the digit shown must never be better
+than the measurement. Rounding to three places printed a 0.9797 as `0.980` beside a badge saying it
+was under the 0.98 floor.
+
 This is the check that reaches what capture-node parity cannot. That one needs two recorders
 (`edgeMulticastMinParityNodes`) and the sports capture runs on one, so it is inert on every sports
 group; and where it can fire, its floor is half the median against a real fault of 0.3%. It is
-still the only recorder-side signal, so it stays — but it no longer paints anything, since the
-group verdict it feeds is not rendered.
+still the only recorder-side signal ON THE COUNTER PLANE, so it stays — but it no longer paints
+anything, since the group verdict it feeds is not rendered.
+
+**The rendered recorder-side signal is `recorder_coverage`**, computed by `edgeMulticastNodeCoverage`
+on the observations plane, where the counts are exact. It is the transpose of path parity — that one
+fixes the vantage and compares the paths, this one fixes the path and compares the vantages — and
+the pair is what makes either result attributable: a deficit in both is a path short at one
+recorder, a deficit only in this one is the recorder. It sits on the **group row**, in the cell that
+carries the reconcile link, for the reason the publisher verdicts do not: a node short on every path
+is a statement about the vantage, and no line owns it. That is what `skewed` was always trying to
+say.
+
+Three things bound it. A node is listed only when it is behind on **every path of the group it
+records** — a deficit confined to one path IS that path's finding and `Peer` already carries it on
+that line, so repeating it here would name the recorder for what a publisher's branch did. It also
+passes the same **share gate** as the path check, `edgeMulticastPathParityFaulted`: breadth and
+share answer different questions, and breadth alone is not enough, because a node short at one
+capture source is short on both paths there and clears the every-path test on two comparisons out of
+the ~58 a sports group makes — turning the group row amber over a single market while every
+publisher line stays green. And
+`edgeMulticastNodeCoverageFloor` is 0.95, looser than the path floor and not by taste: the window is
+fifteen minutes with no exclusion of its trailing edge and every node is filtered by one clock, so a
+recorder whose ingest lags reads as a deficit of exactly that lag — at 0.98 an eighteen-second lag
+would report as loss. Measured on mainnet, two healthy recorders of one feed agreed to 0.1% over a
+minute while the one genuinely dropping sat at 0.915 in every minute of the window, so the floor has
+room to work in.
 
 The two checks behind it, both in `api/handlers/edge_multicast_publishers.go`, are not an
 "is anyone sending" rollup:
@@ -443,6 +487,24 @@ counters. **A series belongs to one publisher, so the verdict sits on the publis
 runs its own counters and one can gap while its peer is intact, which a group-level cell can only
 report as "this group gapped" — naming neither the broken path nor the healthy one.
 
+**A gap measured at one recorder cannot name whose loss it is**, and `GapNodes` on the sequence
+health is what bounds the claim. Comparing the two paths at a single node clears that recorder's
+HOST and nothing more: the branch into it is upstream of that comparison and downstream of
+everything else, so a loss on the branch reads exactly like a loss on the path. This is not
+hypothetical — a publisher read 13 books gapped at the only node recording market-by-price, and the
+plane that does have three vantages found the same path intact at a second one, placing the loss on
+the branch. Market-by-price is recorded at **one** node on every group today, so every gap this page
+reports is single-vantage; the verdict stays `gapped`, because data was lost either way, and what
+narrows is the sentence the tooltip is allowed to say. The real fix is a second market-by-price
+recorder, which is not work this repo can do.
+
+The tooltip also carries `gap_messages / messages` as a **loss rate** where there were gaps. That is
+not the banned display of `gap_messages` as a fault count — a rate is not a count, and it is the
+only severity available, because `gap_books` saturates at the channel's instrument count: on a perps
+channel carrying thirteen books, thirteen gapped and one gapped print the same badge. It stays in
+the tooltip rather than on the badge, which is where changing what the column asserts would need a
+product decision.
+
 Sequencing keys on the channel instance, `(source IP address, Channel ID, destination port)`.
 `kalshi_mbp_levels` carries the source address as `publisher_source_ip` — the arm axis is a column in
 the capture schema on purpose — so the key here is `(source IP address, Channel ID, recording node)`,
@@ -452,14 +514,35 @@ column carries span the three ports) and never the recording node (two vantages 
 observations). A series whose address matches no publisher of the group is counted as
 `unattributed` on the group roll-up rather than dropped.
 
-Publisher lines also carry the ledger's **`bgp_status`**, and `down` renders as an error on the line.
-That is not a reversal of the rule that the control-plane roll-up must not paint the row: what that
+**A stall every path shares is the capture source's, not the path's.** An instance goes `stalled`
+after two minutes of silence, which on a per-event feed is usually nobody's fault — a sports
+capture source is one market, and a market that closes mid-window goes quiet on every path at once.
+Measured on mainnet: both paths of `edge-kalshi-sports-tob` read `stalled 1/29` on the same
+instance, and that verdict outranks `behind`, so it hid the one finding on the row that *was* about
+the path. `demoteEdgeMulticastQuietCaptureSources` flags those instances `capture_source_quiet` and
+the tally counts them apart from `stalled`, leaving the status word to the faults.
+
+It keys on `(capture source, recording node)` — the path-parity key, for the same two reasons: the
+node is in it so a recorder that went quiet on everything is not read as the venue, and the channel
+is out of it because the two paths publish under different channel ids and would never meet. A
+vantage with one path records nothing either way; there is no telling a dead path from a quiet
+source there. The guard that makes the rule safe is that a path is only excused at a capture source
+**while it is itself delivering at that vantage** — `(path, recording node)`, not the path alone.
+Two failures need it and they need different halves. A feed that stopped everywhere would otherwise
+find every path quiet at every source and read as advancing while nothing advanced. And a recording
+node that stops ingesting mid-window is the same shape one level down: every series it holds goes
+stale together, so every pair at that vantage is quiet on both paths — keyed on the path alone the
+paths still look alive, because they are delivering at the *other* recorders, and a dead recorder
+gets excused as the venue. `TestEdgeMulticastSequence_ADeadRecorderIsNotAQuietVenue` pins it.
+
+Publisher lines also carry the ledger's **`bgp_status`**, beside the device's own view in DZD, and
+`down` renders as an error there. That is not a reversal of the rule that the control-plane roll-up must not paint the row: what that
 rule rejects is a worst-of over every *member*, where customers with BGP down turned every group red.
 A publisher with no session cannot be sending the feed it is registered to send. It deliberately does
 not move the group verdict — the ledger snapshot and the rate bucket are minutes apart, so a publisher
 can read `down` while its tunnel still moved bytes, and both are shown.
 
-That column **folds cached refresher payloads and runs no query of its own**, and it has two legs.
+The **Sequence** column **folds cached refresher payloads and runs no query of its own**, and it has two legs.
 
 **Market-by-price** comes from `kalshi_l2_coverage.go`. `kalshi_mbp_levels` is level-grain and
 TTL-less, and a fifteen-minute question reads most of a day through a `remoteSecure()` proxy
@@ -488,6 +571,20 @@ for top-of-book the way it does for market-by-price; it is not work this repo ca
 
 The cost of both legs is staleness, so `sequence_as_of` is in the payload — the **older** of the two
 legs — and the column ages against it. A cache miss costs that plane's rows, never the page.
+
+**Msg/s and Peer carry `observations_as_of`, a separate stamp, and it is not an accident.** They are
+folded from the observations cache entry, which has its own clock; `sequence_as_of` reports the
+older of the two *sequence* legs, so reading it there would dim two columns over the
+market-by-price leg's staleness — a payload they do not come from.
+`TestGetEdgeMulticast_ObservationsCarryTheirOwnAsOf` pins the pair.
+
+Past `STALE_AFTER_SECS` (15 minutes, against a refresher that runs every 10) the three folded
+columns say so: the header carries the age in amber and the values below it dim. Until that existed
+the age lived only inside the Sequence tooltip and nowhere at all for Msg/s and Peer, so a refresher
+that died left the page asserting a verdict indefinitely with no visible tell — `readPageCache` does
+not check `updated_at`, and the sequence folds do not use `readPageCacheWithAge`. An **absent** stamp
+is deliberately not staleness: that is a payload written before the API carried the clock, and
+dimming over it would invent the reading rather than report it.
 
 Both folded payloads are **mainnet only**, gated on `isMainnet(ctx)` in `FetchEdgeMulticastData`.
 The refresher runs with no environment in context, so it always computes mainnet, and the keys carry
@@ -518,12 +615,14 @@ absent, the same rule Heard and Sequence follow — a missing cache costs the co
 page. That is not a rare state: `page_cache` survives a pod restart, so a **newly added** cache key
 is the one entry a deploy leaves empty, and it stays empty until the refresh chain reaches it.
 `StartKalshiBackgroundRefresher` is serial with a three-minute timeout per step, which is why the
-observations leg runs **first** — it is the cheapest and the only one with no live-query fallback. Msg/s sits beside the counter rate rather than
-replacing it — the counter is per tunnel, minutes late, and an upper bound a multi-group publisher
-shares across its groups; this is per group, from the far end, so it is what arrived rather than
-what was sent, and it is blank for any feed with no recorder behind it. Neither figure is on the
-group row: summing recorded rates over a group's paths would double the feed, since redundant paths
-carry the same traffic, and a parity ratio means nothing until you name which path it is about.
+observations leg runs **first** — it is the cheapest and the only one with no live-query fallback.
+
+Msg/s sits beside the counter rate rather than replacing it — the counter is per tunnel, minutes
+late, and the same figure on every group that tunnel feeds; this is per group, from the far end, so
+it is what arrived rather than what was sent, and it is blank for any feed with no recorder behind
+it. Neither figure is on the group row: summing recorded rates over a group's paths would double the
+feed, since redundant paths carry the same traffic, and a parity ratio means nothing until you name
+which path it is about.
 
 Parity is measured on the **application plane** (`kalshi_bbo_observations`,
 `slot_feed_race_summary_v2`) and cannot move to the counters. Interface counters are per tunnel: a
@@ -531,6 +630,38 @@ recorder subscribed to several groups reports the sum against each, so on mainne
 reads 232 Mbps against a group whose entire ingress is 3.6 Mbps. Every Kalshi recorder is
 multi-group, so a counter-based parity check would be permanently wrong on exactly the feeds it
 exists for.
+
+### Which grain each fact renders at
+
+Every column is read at one grain, and the header says which. One table, two kinds of row: a group
+row, and the publisher lines it expands into.
+
+- **Per tunnel** — `DZD` (device, tunnel id, device session, access RTT, ledger `bgp_status`),
+  `Ingress` and its bucket age, and the floor status word. **On the lines only**; the group row
+  leaves all three blank. A counter is read per interface, so a group total would sum figures that
+  each already include the other groups their tunnel feeds — the cell that read `~18.6 Mbps` on a
+  group whose own ingress was nil.
+- **Per group** — the ledger code and multicast address, the publisher and subscriber counts,
+  `Heard`, unattributed series, `recorder_coverage`.
+- **Per path on that group** — `Msg/s`, `Peer`, `Sequence`, `Health`.
+
+A publisher serves every plane of its feed from ONE tunnel, so the per-tunnel columns read twice on
+a two-plane feed: the same DZD cell and the same rate, once per group. **That repetition is
+deliberate and cheaper than the alternative.** Hoisting those facts into a block above the table was
+tried for exactly one release: it added a header and a row per tunnel to every section while the
+lines below kept the whitespace the cells had left, so the same information occupied more space and
+the eye had to join the two by address. The same information in more space is not a simplification.
+
+What the hoist was actually for — not presenting a shared counter as a per-group measurement — is
+done by the **column header** instead. `Ingress` carries a `per tunnel` subtitle, said once for
+every cell under it, which is what replaced the `~` that used to sit on each. The tilde claimed the
+measurement was approximate; it is exact for the interface, and what was uncertain was only which
+group the bytes belonged to. The `~` survives where that uncertainty is still live: the group's
+Publishers count, where clearing the floor does not attest to THIS group.
+
+The one thing a line does NOT repeat is its verdict: `Health` is per (path, group) and folds the
+floor status together with what the recorders saw, which is why a line can read `publishing` beside
+a `gapped` badge.
 
 ## Basemap Tiles
 

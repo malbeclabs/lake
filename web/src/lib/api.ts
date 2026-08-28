@@ -7765,6 +7765,19 @@ export async function fetchKalshiScoreboard(
   return res.json()
 }
 
+/** One contiguous run of seconds in which a channel instance recorded gap-marked messages.
+ *
+ *  The unit a loss timeline is drawn in. Neither counter can stand in for it: gap_messages is a
+ *  duration that scales with traffic, and gap_books SATURATES on a small-instrument feed — perps
+ *  carries 13 and a single lost datagram un-anchors most of them, so it pins at 13/13 and reads as
+ *  total failure where the truth was ~10 losses of a few seconds each. */
+export interface GapEpisode {
+  /** First second of the run, Unix SECONDS (not millis) UTC. */
+  start: number
+  /** Run length in seconds, never zero. */
+  seconds: number
+}
+
 export interface KalshiL2Lane {
   source: string
   label: string
@@ -7784,6 +7797,16 @@ export interface KalshiL2Lane {
   depth_max: number
   gap_messages: number
   gap_books: number
+  /** The same loss on a time axis. Absent on a clean lane and on an unseen one. */
+  gap_episodes?: GapEpisode[]
+  /** Per-instrument sequence loss: delta updates that never arrived. updates_received is the
+   *  denominator — expected is received + missing — and a lane with no updates has no rate rather
+   *  than a rate of zero. */
+  updates_received: number
+  updates_missing: number
+  seq_gap_events: number
+  max_gap_messages: number
+  p99_gap_messages: number
   resets: number
   clears: number
   snapshot_cycles: number
@@ -7882,6 +7905,9 @@ export interface EdgeMulticastBGPRtt {
 
 /** One publisher path measured against its redundant peers, at the recorders that saw both. */
 export interface EdgeMulticastPathParity {
+  /** Whether `behind` fired: not simply behind > 0, since one failing pair out of thirty is an
+   *  outlier rather than a path finding. Read this rather than re-deriving the rule. */
+  faulted?: boolean
   /** (capture source, recording node) pairs where another path carried the same feed. */
   compared: number
   /** How many of those fell below the parity floor. */
@@ -7955,6 +7981,22 @@ export interface EdgeMulticastChannelInstance {
   /** Distinct books that gapped in the window — the fault count. Never gap_messages, which
    *  scales with traffic rather than with reliability. */
   gap_books: number
+  /** Messages that arrived while a book was un-anchored. A DURATION, never a fault count — over
+   *  messages it is a loss rate, which is the only severity this column can express, because
+   *  gap_books saturates at the channel's instrument count. */
+  gap_messages?: number
+  /** The same loss on a time axis: when this series was losing, not just how much. Absent on a
+   *  clean series AND on the top-of-book plane, which has no gap marker — gaps_measured is what
+   *  separates those two, and an empty timeline must never be drawn as clean without it. */
+  gap_episodes?: GapEpisode[]
+  /** Per-instrument sequence loss: the only signal here that counts MESSAGES lost rather than time
+   *  spent un-anchored. Absent on the top-of-book plane, whose rows carry no per-instrument
+   *  sequence. updates_received is the denominator. */
+  updates_received?: number
+  updates_missing?: number
+  seq_gap_events?: number
+  max_gap_messages?: number
+  p99_gap_messages?: number
   resets: number
   snapshot_cycles: number
   last_seen: string
@@ -7963,6 +8005,21 @@ export interface EdgeMulticastChannelInstance {
   /** Whether gap_books is a reading or an absence. False on the top-of-book plane, which has no
    *  gap marker to count — an 'ok' there means "advancing", not "lost nothing". */
   gaps_measured: boolean
+  /** Stalled, but every other path recording this capture source at this node went quiet with it,
+   *  so the silence is the source's and not this path's. The status stays 'stalled'; this is what
+   *  keeps it out of the tally. */
+  capture_source_quiet?: boolean
+}
+
+/** One recording node's loss on a publisher line, measured against its peers on the same path. */
+export interface EdgeMulticastRecorderLoss {
+  node: string
+  location_code?: string
+  /** Reference sequences this node did not record, and what it is a share of. The reference is
+   *  the UNION of what the nodes recorded, so a message no node received is not in it. */
+  missing: number
+  reference_seqs: number
+  episodes?: GapEpisode[]
 }
 
 /** Sequence health over a set of channel instances, worst-first: one publisher's own series on a
@@ -7978,8 +8035,27 @@ export interface EdgeMulticastSequenceHealth {
   publishers_stalled?: number
   /** Instances whose source address matched no publisher line, so they have no row of their own. */
   unattributed?: number
+  /** Each recording node measured against its peers on the same path, worst-first, and the
+   *  seconds two or more of them lost at once. Present only where the path has more than one
+   *  recorder — market-by-price runs a single node on every group, so this is top-of-book today.
+   *  Absent means "no peer to measure against", never "measured clean". */
+  recorder_loss?: EdgeMulticastRecorderLoss[]
+  recorder_loss_simultaneous?: GapEpisode[]
+  /** The comparison was attempted and failed. Distinct from an absent recorder_loss, which means
+   *  the path has no peer to be measured against — render "not measured", never nothing. */
+  recorder_loss_unavailable?: boolean
+  /** Seconds every path of this feed lost data at once, on the GROUP roll-up only. Non-empty means
+   *  the redundancy failed and the feed itself lost data — the one sequence statement no publisher
+   *  line can make. */
+  all_paths_gapped?: GapEpisode[]
   /** Instances from a plane with no gap marker, whose 'ok' is the weaker "advancing" claim. */
   gaps_unmeasured?: number
+  /** Distinct recording nodes behind the gap-measured instances. One means a single vantage: a
+   *  loss on the branch into that recorder cannot be told apart from a loss on the path. */
+  gap_nodes?: number
+  /** Instances stalled only because their capture source stopped producing on every path at once.
+   *  Counted apart from stalled: it is a statement about the feed's upstream, not about a path. */
+  capture_source_quiet?: number
   instances: EdgeMulticastChannelInstance[]
 }
 
@@ -7995,6 +8071,24 @@ export interface EdgeMulticastPublisherVerdicts {
    *  not a fault. */
   unrecorded: number
   unknown: number
+}
+
+/** One recording node measured against the best-placed one on the same instances. */
+export interface EdgeMulticastLaggingRecorder {
+  node: string
+  /** Its worst showing across the instances it was compared on. */
+  worst_ratio: number
+  behind: number
+  compared: number
+  worst_source?: string
+}
+
+/** The group's recording nodes against each other — the receiver-side finding, which belongs to
+ *  the group because a node short on every path is a statement about the vantage, not the feed.
+ *  Absent when nothing is behind, or when fewer than two nodes recorded the group. */
+export interface EdgeMulticastRecorderCoverage {
+  nodes: number
+  lagging?: EdgeMulticastLaggingRecorder[]
 }
 
 export interface EdgeMulticastGroup {
@@ -8019,6 +8113,8 @@ export interface EdgeMulticastGroup {
   publishers_below_floor: number
   /** Publishers measured at or above the floor. */
   publishers_publishing: number
+  /** Recording nodes of this group that are behind the best-placed one. Absent when none are. */
+  recorder_coverage?: EdgeMulticastRecorderCoverage
   /** Per-node application-plane view; absent for a group no capture covers. */
   capture_nodes?: EdgeMulticastCaptureNode[]
   capture_nodes_lagging?: number
@@ -8064,6 +8160,13 @@ export interface EdgeMulticastResponse {
   /** When the sequence numbers were computed — up to ten minutes older than generated_at, since
    *  they are folded from the L2 coverage refresher's cache. Absent when no group has any. */
   sequence_as_of?: string
+  /** When the recorded message rate and the parity ratio were computed. A different cache entry
+   *  from the sequence legs, with its own clock, so those two columns age against this. */
+  observations_as_of?: string
+  /** Width of the window the gap episodes were measured over. With sequence_as_of it is the axis
+   *  they are drawn on: (sequence_as_of - this, sequence_as_of]. Absent when nothing folded any,
+   *  which is also the signal to draw no timeline. */
+  gap_window_seconds?: number
   /** False when no capture table was queryable — the column is hidden rather than blank. */
   last_heard_available: boolean
   services: EdgeMulticastService[]

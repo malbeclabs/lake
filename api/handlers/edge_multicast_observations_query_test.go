@@ -23,6 +23,19 @@ import (
 // addressing the query reads out of raw_meta.
 func insertBBOObservation(t *testing.T, api *handlers.API, node, source, multicastGroup, publisherSourceIP string, channelID uint8, sequence uint64, resetCount uint8, agoSecs int) {
 	t.Helper()
+	insertBBOObservationAtReset(t, api, node, "cmh", source, multicastGroup, publisherSourceIP, channelID, sequence, resetCount, agoSecs)
+}
+
+// insertBBOObservationAt is insertBBOObservation with the recording node's own metro spelled out.
+// The metro is a property of the node, and a test that cannot vary it cannot catch a query that
+// labels every node with one arbitrary one.
+func insertBBOObservationAt(t *testing.T, api *handlers.API, node, location, source, multicastGroup, publisherSourceIP string, channelID uint8, sequence uint64, agoSecs int) {
+	t.Helper()
+	insertBBOObservationAtReset(t, api, node, location, source, multicastGroup, publisherSourceIP, channelID, sequence, 0, agoSecs)
+}
+
+func insertBBOObservationAtReset(t *testing.T, api *handlers.API, node, location, source, multicastGroup, publisherSourceIP string, channelID uint8, sequence uint64, resetCount uint8, agoSecs int) {
+	t.Helper()
 	db := "`" + api.FeedsDB + "`"
 	rawMeta := fmt.Sprintf(
 		`{"publisher_source_ip":"%s","multicast_group":"%s","port":%d}`,
@@ -31,10 +44,10 @@ func insertBBOObservation(t *testing.T, api *handlers.API, node, source, multica
 		INSERT INTO %s.kalshi_bbo_observations
 		(measurement_node_id, location_code, source, symbol, source_ts_ms, recv_ts_ns, source_id,
 		 channel_id, sequence, reset_count, raw_meta)
-		VALUES ('%s', 'cmh', '%s', 'KXNFLGAME', 0,
+		VALUES ('%s', '%s', '%s', 'KXNFLGAME', 0,
 		        toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalSecond(%d))), 3,
 		        %d, %d, %d, '%s')
-	`, db, node, source, agoSecs, channelID, sequence, resetCount, rawMeta)))
+	`, db, node, location, source, agoSecs, channelID, sequence, resetCount, rawMeta)))
 }
 
 func seriesByKey(series []handlers.EdgeMulticastObservationSeries) map[string]handlers.EdgeMulticastObservationSeries {
@@ -132,4 +145,110 @@ func TestFetchEdgeMulticastObservations_WindowBounded(t *testing.T) {
 	resp, err := api.FetchEdgeMulticastObservations(t.Context())
 	require.NoError(t, err)
 	assert.Empty(t, resp.Series)
+}
+
+// Every recorder of a path gets a row, including one that recorded everything its peers did.
+//
+// This is the case the obvious query drops. Emitting only nodes that lost something leaves the
+// clean line out, and the clean line IS the comparison: "was lost 267" means nothing without
+// "cmh lost 0" beside it, and a window where one node alone lost anything would render no
+// comparison at all.
+func TestEdgeMulticastRecorderLossQuery_CleanRecorderStillGetsARow(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createKalshiObservationsTable(t, api)
+
+	const group, pub = "233.84.178.3", "148.51.121.69"
+	// cmh records all three. was misses the middle one.
+	for _, seq := range []uint64{100, 101, 102} {
+		insertBBOObservation(t, api, "cmh-rec1", "tob_edge_kalshi_perps", group, pub, 1, seq, 0, 30)
+	}
+	insertBBOObservation(t, api, "was-rec1", "tob_edge_kalshi_perps", group, pub, 1, 100, 0, 30)
+	insertBBOObservation(t, api, "was-rec1", "tob_edge_kalshi_perps", group, pub, 1, 102, 0, 30)
+
+	resp, err := api.FetchEdgeMulticastObservations(t.Context())
+	require.NoError(t, err)
+
+	byNode := map[string]handlers.EdgeMulticastRecorderLossSeries{}
+	for _, s := range resp.RecorderLoss {
+		byNode[s.Node] = s
+	}
+	require.Len(t, byNode, 2, "both recorders, not only the one that lost")
+
+	assert.EqualValues(t, 1, byNode["was-rec1"].Missing, "sequence 101")
+	assert.EqualValues(t, 3, byNode["was-rec1"].ReferenceSeqs, "the union of what the two recorded")
+	assert.Len(t, byNode["was-rec1"].Episodes, 1)
+
+	assert.EqualValues(t, 0, byNode["cmh-rec1"].Missing, "it recorded everything")
+	assert.Empty(t, byNode["cmh-rec1"].Episodes)
+	assert.EqualValues(t, 3, byNode["cmh-rec1"].ReferenceSeqs)
+}
+
+// Each row carries its OWN node's metro. Resolving it inside the per-sequence group instead makes
+// it an any() over a group that spans every node, which labels all three lines with one arbitrary
+// metro — cmh/cmh/cmh — and the comparison the strip exists for cannot be read at all.
+func TestEdgeMulticastRecorderLossQuery_EachRowCarriesItsOwnMetro(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createKalshiObservationsTable(t, api)
+
+	const group, pub = "233.84.178.3", "148.51.121.69"
+	insertBBOObservationAt(t, api, "cmh-rec1", "cmh", "tob_edge_kalshi_perps", group, pub, 1, 100, 30)
+	insertBBOObservationAt(t, api, "cmh-rec1", "cmh", "tob_edge_kalshi_perps", group, pub, 1, 101, 30)
+	insertBBOObservationAt(t, api, "dub-rec1", "dub", "tob_edge_kalshi_perps", group, pub, 1, 100, 30)
+
+	resp, err := api.FetchEdgeMulticastObservations(t.Context())
+	require.NoError(t, err)
+
+	byNode := map[string]string{}
+	for _, s := range resp.RecorderLoss {
+		byNode[s.Node] = s.LocationCode
+	}
+	require.Len(t, byNode, 2)
+	assert.Equal(t, "cmh", byNode["cmh-rec1"])
+	assert.Equal(t, "dub", byNode["dub-rec1"], "not the other node's metro")
+}
+
+// A path with one recorder has no peer to be measured against, so it produces nothing at all —
+// every hole in its numbering is the top-of-book plane's own legitimate hole, not a loss.
+func TestEdgeMulticastRecorderLossQuery_LoneRecorderProducesNothing(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createKalshiObservationsTable(t, api)
+
+	for _, seq := range []uint64{100, 105, 110} {
+		insertBBOObservation(t, api, "cmh-rec1", "tob_edge_kalshi_sports_nfl", "233.84.178.17", "148.51.120.152", 2, seq, 0, 30)
+	}
+
+	resp, err := api.FetchEdgeMulticastObservations(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, resp.RecorderLoss, "no peer, no reference, no claim")
+}
+
+// A reset restarts the numbering, so one window can hold the same sequence number twice — once per
+// generation — and the reference set is keyed on reset_count for that reason.
+//
+// Merged, the two datagrams become one row whose node set is the UNION of both, so a recorder that
+// missed the post-reset one reads as having seen it and the reference count loses a datagram. The
+// failure is silent and in the one direction this page must never fail in: a clean bill of health
+// over data that was lost. kalshi_l2_coverage.go keys its own gap detection the same way.
+func TestEdgeMulticastRecorderLossQuery_AResetIsANewGeneration(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createKalshiObservationsTable(t, api)
+
+	const group, pub = "233.84.178.3", "148.51.121.69"
+	// Generation 0: both recorders saw sequence 100. After the reset, only cmh did.
+	insertBBOObservation(t, api, "cmh-rec1", "tob_edge_kalshi_perps", group, pub, 1, 100, 0, 40)
+	insertBBOObservation(t, api, "was-rec1", "tob_edge_kalshi_perps", group, pub, 1, 100, 0, 40)
+	insertBBOObservation(t, api, "cmh-rec1", "tob_edge_kalshi_perps", group, pub, 1, 100, 1, 20)
+
+	resp, err := api.FetchEdgeMulticastObservations(t.Context())
+	require.NoError(t, err)
+
+	byNode := map[string]handlers.EdgeMulticastRecorderLossSeries{}
+	for _, s := range resp.RecorderLoss {
+		byNode[s.Node] = s
+	}
+	require.Len(t, byNode, 2)
+	assert.EqualValues(t, 2, byNode["cmh-rec1"].ReferenceSeqs, "two datagrams carrying one number")
+	assert.EqualValues(t, 0, byNode["cmh-rec1"].Missing)
+	assert.EqualValues(t, 1, byNode["was-rec1"].Missing, "the post-reset 100 it never recorded")
+	assert.Len(t, byNode["was-rec1"].Episodes, 1, "and the loss is placed in time")
 }

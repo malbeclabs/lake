@@ -434,7 +434,33 @@ const (
 // The two tail states are not faults, and the difference between them matters: 'unknown' is no
 // counter row at all, 'unrecorded' is a publisher clearing the floor that no recorder wrote a
 // series for while its peers on the group have one.
-func edgeMulticastPublisherHealth(line EdgeMulticastPublisher, groupHasSeries bool) string {
+//
+// groupHasSubscribers is the third input, and it exists for one specific false positive. Clearing
+// the floor is a statement about a TUNNEL, and a publisher that feeds several groups from one
+// tunnel reports the sum against each of them (MultiGroup) — so on such a group the counter cannot
+// attest that THIS group is being fed. Where the group also has no subscriber, nothing else can:
+// there is no recorder, so no series and no recorded rate will ever arrive to settle it. Both
+// together are 'unknown' in the sense the word already carries here — nothing measured this
+// publisher on this group — and returning 'healthy' instead is a claim with no evidence under it.
+//
+// Measured on mainnet: edge-kalshi-elections-tob read 2/2 publishing and both lines healthy while
+// its publishers sent that plane nothing at all (`[tob_perps] enabled = false` on both hosts, and
+// only `feed="mbp-sports"` in their metrics); the whole ~18.6 Mbps belonged to the mbp group on the
+// same two tunnels.
+//
+// Both conditions are load-bearing, and the second one still is now that the Solana groups are out
+// of scope — the reason has changed, not gone. It was the shreds shape: 532 root publishers, all
+// MultiGroup, no recorded wire protocol, legitimately green on counter-only evidence. What keeps it
+// now is that "no application-plane signal" is otherwise a TRANSIENT state. The observations payload
+// is a cache entry, and a newly-bumped key is empty until the refresh chain reaches it — so without
+// the subscriber requirement a cold cache would turn every Kalshi publisher grey at once, since all
+// of them are MultiGroup. A missing subscriber is structural: nobody receives this group, so nothing
+// will ever settle it.
+//
+// A publisher that serves only this group HAS attributable bytes, so its 'healthy' stands even with
+// no subscriber. Today the pair fires on edge-kalshi-elections-tob — the only group in scope with
+// publishers and no subscriber at all.
+func edgeMulticastPublisherHealth(line EdgeMulticastPublisher, groupHasSeries bool, groupHasSubscribers bool) string {
 	switch line.Status {
 	case edgeMulticastPubIdle:
 		return edgeMulticastPubHealthSilent
@@ -454,9 +480,12 @@ func edgeMulticastPublisherHealth(line EdgeMulticastPublisher, groupHasSeries bo
 			return edgeMulticastPubHealthStalled
 		}
 	}
-	// Compared > 0 is the guard that matters: a path with no peer has no parity verdict, and
-	// zero-of-zero must not read as passing the check.
-	if p := line.PathParity; p != nil && p.Compared > 0 && p.Behind > 0 {
+	// Both guards the check needs, and it is not Behind > 0: a path with no peer has no verdict,
+	// and one failing pair out of thirty is an outlier rather than a finding. Recomputed from the
+	// counts rather than read off PathParity.Faulted so that a line assembled anywhere — a test, a
+	// future caller — cannot get a verdict the counts do not support by leaving a bool unset. The
+	// payload field the page reads comes from this same function.
+	if p := line.PathParity; p != nil && edgeMulticastPathParityFaulted(p.Behind, p.Compared) {
 		return edgeMulticastPubHealthBehind
 	}
 	// Nothing measured the counter, and the recorded planes had nothing to say either. Ranked
@@ -468,6 +497,14 @@ func edgeMulticastPublisherHealth(line EdgeMulticastPublisher, groupHasSeries bo
 	// check rather than above it: a publisher nothing measured is not "sending and unrecorded".
 	if groupHasSeries && (line.Sequence == nil || len(line.Sequence.Instances) == 0) {
 		return edgeMulticastPubHealthUnrecorded
+	}
+	// Ranked last of the tail states because it is the weakest reading of all: the counter measured
+	// a tunnel this group shares, and nothing exists that could measure the group. The series and
+	// rate checks are redundant under a zero subscriber count and kept anyway, so a line assembled
+	// by another caller cannot reach this return while carrying evidence.
+	noSignal := (line.Sequence == nil || len(line.Sequence.Instances) == 0) && line.MsgPerSec == nil
+	if line.MultiGroup && !groupHasSubscribers && noSignal {
+		return edgeMulticastPubHealthUnknown
 	}
 	return edgeMulticastPubHealthy
 }

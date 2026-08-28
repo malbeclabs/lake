@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/malbeclabs/lake/api/metrics"
@@ -49,7 +51,8 @@ import (
 // how far behind the recorder's own clock it is, and how many resets it took. Closing the gap
 // half needs the producer to emit a gap marker for top-of-book the way it does for
 // market-by-price, and that is not work this repository can do.
-const edgeMulticastObservationsCacheKey = "edge_multicast_observations:v1"
+// v2: `recorder_loss` added, each recording node measured against its peers.
+const edgeMulticastObservationsCacheKey = "edge_multicast_observations:v2"
 
 // edgeMulticastObservationsWindowMinutes matches kalshiL2WindowMinutes so the two legs of the
 // Sequence column describe the same span. Measured on mainnet: 4.3s over every mbp_ and tob_
@@ -100,11 +103,248 @@ type EdgeMulticastObservationSeries struct {
 	LastSeen time.Time `json:"last_seen"`
 }
 
+// EdgeMulticastRecorderLossSeries is one recording node's view of one path's numbering: which of
+// the sequence numbers SOMEONE recorded that node did not.
+//
+// This is the only loss measurement on the top-of-book plane, and it works where an absolute one
+// cannot. A row here exists only where the top of the book CHANGED, so a wire message that moved
+// nothing legitimately leaves a hole — which is why this file refuses to count gaps against the
+// span. Comparing recorders is immune to that: a message that never moved the BBO is absent at
+// EVERY node, so it never enters the reference, while a datagram lost on one node's branch is
+// present at the others and shows up as that node's alone.
+//
+// The reference is the UNION of what the nodes recorded, and that bounds the claim in one specific
+// way: a message no node received is not in it and cannot be reported. So this measures loss
+// BETWEEN recorders — a branch, a host, a receive path — and is structurally unable to see a loss
+// upstream of where the paths fan out. Simultaneous loss at several nodes is the closest thing to
+// that signal, and it is carried separately for exactly that reason.
+type EdgeMulticastRecorderLossSeries struct {
+	MulticastGroup    string `json:"multicast_group,omitempty"`
+	PublisherSourceIP string `json:"publisher_source_ip,omitempty"`
+	ChannelID         uint8  `json:"channel_id"`
+	Node              string `json:"node"`
+	LocationCode      string `json:"location_code,omitempty"`
+
+	// Missing is how many reference sequences this node did not record, and ReferenceSeqs is
+	// what it is a share of. Both are per (path, node) over the window.
+	Missing       uint64 `json:"missing"`
+	ReferenceSeqs uint64 `json:"reference_seqs"`
+
+	// Episodes is when, at one entry per contiguous run of seconds. Stamped with the recv time
+	// of the node that DID record the message — this node has no clock reading for something it
+	// never received, and the recording node's is the only timestamp the loss has.
+	Episodes []KalshiL2GapEpisode `json:"episodes,omitempty"`
+}
+
+// edgeMulticastRecorderLossCap bounds the seconds array per (path, node), one entry per second of
+// the window. The window's own second count is the ceiling, so a node that lost something in every
+// second of the window fills it exactly and drops nothing.
+const edgeMulticastRecorderLossCap = edgeMulticastObservationsWindowMinutes * 60
+
+// edgeMulticastRecorderLossSettings bounds this query's memory and lets its GROUP BY spill to
+// disk rather than dying.
+//
+// It is needed because the per-sequence aggregate is genuinely large: one group per (path,
+// sequence) over the window, measured at 1.7M groups across the 29 top-of-book capture sources,
+// and it wanted more than 1.2 GiB. Unbounded, it competed for the server's whole budget and lost
+// — in production it failed on every ten-minute cycle with `(total) memory limit exceeded: would
+// use 7.20 GiB`, which cost the strips silently because this measurement is additive and its
+// failure is a WARN. With the spill it completes in 3-6s inside 700 MiB.
+//
+// Narrowing the scan was tried first and does not help: 28 of the 29 sources have a single
+// recorder and can never produce a comparison, but filtering them out — by path tuple or by a
+// source IN subquery — left the memory unchanged, because the cost is the aggregate's group count
+// and ClickHouse builds it before either filter can prune. Same shape and same numbers as
+// networkHealthQuerySettings, which exists for the same reason.
+const edgeMulticastRecorderLossSettings = " SETTINGS max_memory_usage = 2000000000, max_bytes_before_external_group_by = 1000000000"
+
+// quoteSQLStrings renders a string slice as a SQL literal list.
+//
+// The values here come from the database's own `source` column, not from a request, so this is
+// about correctness rather than injection: a capture source has been renamed once already
+// (the `*_lashay_*` era) and nothing stops the next convention from carrying a quote. Doubling
+// them keeps a rename from turning into a syntax error at the worst possible moment.
+func quoteSQLStrings(vals []string) string {
+	quoted := make([]string, 0, len(vals))
+	for _, v := range vals {
+		quoted = append(quoted, "'"+strings.ReplaceAll(v, "'", "''")+"'")
+	}
+	return strings.Join(quoted, ", ")
+}
+
+// edgeMulticastRecorderLossSources returns the capture sources recorded at MORE THAN ONE node in
+// the window — the only ones a recorder comparison can be made on at all.
+//
+// Both planes are read. This table carries the top-of-book series AND the BBO observations a
+// market-by-price publisher derives, and perps runs three recorders on each, so both can be
+// compared. That is unlike the Sequence column, where the two planes come from different tables
+// and only one has a gap marker: here the measurement is the same on both — which sequence numbers
+// a node recorded that its peers did — and needs no marker at all.
+//
+// It exists to keep the per-sequence aggregate off the sources that cannot answer. Measured on
+// mainnet: perps has three recorders on each plane and all 56 sports sources have one, and those
+// contribute the bulk of the (path, sequence) groups the main query would otherwise build. They can
+// never produce a row — every path of theirs fails `length(all_nodes) > 1` at the end — so the work
+// is pure waste.
+//
+// The reason it is a SEPARATE query rather than a filter inside the main one is measured, not
+// stylistic: as a path-tuple `IN`, or as a `source IN (SELECT ...)` subquery, ClickHouse built the
+// full aggregate before either could prune and the memory did not move. Explicit literals in the
+// WHERE do prune.
+//
+// This is cheap: it groups by source rather than by sequence, so its state is one entry per source
+// holding three node ids.
+func (a *API) edgeMulticastRecorderLossSources(ctx context.Context) ([]string, error) {
+	db := fmt.Sprintf("`%s`", a.FeedsDB)
+	q := fmt.Sprintf(`
+		SELECT source
+		FROM %[1]s.kalshi_bbo_observations
+		WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(%[2]d)))
+		  AND (source LIKE '%[3]s%%' OR source LIKE '%[4]s%%')
+		GROUP BY source
+		HAVING uniqExact(measurement_node_id) > 1`,
+		db, edgeMulticastObservationsWindowMinutes, edgeMulticastTOBSourcePrefix, edgeMulticastMBPSourcePrefix)
+
+	rows, err := a.envDB(ctx).Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// fetchEdgeMulticastRecorderLoss measures each recording node against its peers on the same path.
+//
+// The shape is a three-step: collapse to one row per (path, generation, sequence) carrying which
+// nodes saw it,
+// derive each path's node universe from that, then emit one row per node of that universe. The
+// universe is derived rather than configured because it has to be what actually records this path
+// today — a node added or removed is then a fact about the data rather than a deploy.
+//
+// EVERY node gets a row, including one that recorded everything its peers did. Emitting only the
+// nodes that lost something is the obvious query and it breaks the display: the clean line is the
+// whole comparison. A reader looking at "was lost 267" needs "cmh lost 0" beside it to conclude the
+// loss is was's branch — without it the row is just a number with nothing to be worse than, and a
+// window in which one node alone lost anything would render no comparison at all.
+//
+// A path recorded at ONE node produces nothing at all, which is correct and not a gap in coverage:
+// with no peer there is no reference, and every hole in its numbering is the plane's own legitimate
+// hole. Market-by-price is single-node on every group today, so this signal exists only for
+// top-of-book — where perps runs three vantages.
+func (a *API) fetchEdgeMulticastRecorderLoss(ctx context.Context, sources []string) ([]EdgeMulticastRecorderLossSeries, error) {
+	// No source has a second recorder, so there is nothing any comparison could be made on. Not
+	// an error and not an unavailable measurement: an empty result is the honest answer.
+	if len(sources) == 0 {
+		return nil, nil
+	}
+	db := fmt.Sprintf("`%s`", a.FeedsDB)
+	q := fmt.Sprintf(`
+		WITH per_seq AS (
+			SELECT
+				JSONExtractString(raw_meta, 'multicast_group') AS multicast_group,
+				JSONExtractString(raw_meta, 'publisher_source_ip') AS publisher_source_ip,
+				channel_id,
+				-- reset_count is in the key because a reset starts the numbering again, so one
+				-- window can hold the same sequence number from two generations. Merged, the
+				-- 'nodes' set becomes the union of the two, and a node that missed the second
+				-- datagram reads as having seen it — under-reporting loss, which is the one
+				-- direction this page must never fail in. kalshi_l2_coverage.go keys its own
+				-- gap detection the same way and for the same reason.
+				reset_count,
+				sequence,
+				groupUniqArray(measurement_node_id) AS nodes,
+				min(recv_ts_ns) AS first_recv
+			FROM %[1]s.kalshi_bbo_observations
+			WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(%[2]d)))
+			  AND source IN (%[3]s)
+			GROUP BY multicast_group, publisher_source_ip, channel_id, reset_count, sequence
+		),
+		universe AS (
+			SELECT
+				multicast_group, publisher_source_ip, channel_id,
+				arrayDistinct(arrayFlatten(groupArray(nodes))) AS all_nodes,
+				count() AS reference_seqs
+			FROM per_seq
+			GROUP BY multicast_group, publisher_source_ip, channel_id
+		),
+		-- The metro is a property of the NODE, so it is resolved per node and joined on.
+		-- Carrying it through per_seq instead makes it an any() over a group that spans every
+		-- node of a sequence, which yields one arbitrary metro repeated on all three rows: the
+		-- labels then read cmh/cmh/cmh and the comparison the strip exists for is unreadable.
+		node_loc AS (
+			SELECT measurement_node_id AS loc_node, min(location_code) AS location_code
+			FROM %[1]s.kalshi_bbo_observations
+			WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(%[2]d)))
+			  AND source IN (%[3]s)
+			GROUP BY measurement_node_id
+		)
+		SELECT
+			p.multicast_group,
+			p.publisher_source_ip,
+			p.channel_id,
+			node,
+			any(nl.location_code) AS location_code,
+			countIf(NOT has(p.nodes, node)) AS missing,
+			any(u.reference_seqs) AS reference_seqs,
+			groupUniqArrayIf(%[4]d)(toUInt32(intDiv(p.first_recv, 1000000000)), NOT has(p.nodes, node)) AS seconds
+		FROM per_seq AS p
+		INNER JOIN universe AS u
+			ON p.multicast_group = u.multicast_group
+			AND p.publisher_source_ip = u.publisher_source_ip
+			AND p.channel_id = u.channel_id
+		ARRAY JOIN u.all_nodes AS node
+		INNER JOIN node_loc AS nl ON node = nl.loc_node
+		WHERE length(u.all_nodes) > 1
+		GROUP BY p.multicast_group, p.publisher_source_ip, p.channel_id, node`+edgeMulticastRecorderLossSettings,
+		db, edgeMulticastObservationsWindowMinutes, quoteSQLStrings(sources), edgeMulticastRecorderLossCap)
+
+	rows, err := a.envDB(ctx).Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []EdgeMulticastRecorderLossSeries
+	for rows.Next() {
+		var s EdgeMulticastRecorderLossSeries
+		var seconds []uint32
+		if err := rows.Scan(&s.MulticastGroup, &s.PublisherSourceIP, &s.ChannelID, &s.Node,
+			&s.LocationCode, &s.Missing, &s.ReferenceSeqs, &seconds); err != nil {
+			return nil, err
+		}
+		s.Episodes = collapseKalshiL2GapSeconds(seconds)
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // EdgeMulticastObservationsResponse is what the refresher caches.
 type EdgeMulticastObservationsResponse struct {
 	GeneratedAt   time.Time                        `json:"generated_at"`
 	WindowMinutes int                              `json:"window_minutes"`
 	Series        []EdgeMulticastObservationSeries `json:"series"`
+
+	// RecorderLoss is each recording node measured against its peers on the same path. Empty for
+	// a path with one recorder, which has no peer to be measured against.
+	RecorderLoss []EdgeMulticastRecorderLossSeries `json:"recorder_loss,omitempty"`
+
+	// RecorderLossUnavailable says the measurement was ATTEMPTED and failed, which is a different
+	// statement from an empty RecorderLoss and has to be carried separately.
+	//
+	// Without it the two render alike — no strips — and that is how a query dying on every cycle
+	// looked exactly like a feed with one recorder for as long as nobody read the API's logs. The
+	// page owes the reader "not measured" here, the same distinction the Sequence column already
+	// makes between a gap-checked ok and an advancing one.
+	RecorderLossUnavailable bool `json:"recorder_loss_unavailable,omitempty"`
 }
 
 // FetchEdgeMulticastObservations aggregates the recorded series over the coverage window.
@@ -176,6 +416,23 @@ func (a *API) FetchEdgeMulticastObservations(ctx context.Context) (*EdgeMulticas
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+
+	// Additive to this payload, and a failure costs the recorder strips rather than the series
+	// every other column on the page is folded from. Not fatal for the same reason the columns it
+	// feeds are optional: a missing measurement must never be able to take the page with it.
+	sources, err := a.edgeMulticastRecorderLossSources(ctx)
+	if err != nil {
+		slog.Warn("edge multicast recorder loss unavailable", "error", err)
+		out.RecorderLossUnavailable = true
+		return out, nil
+	}
+	loss, err := a.fetchEdgeMulticastRecorderLoss(ctx, sources)
+	if err != nil {
+		slog.Warn("edge multicast recorder loss unavailable", "error", err)
+		out.RecorderLossUnavailable = true
+	} else {
+		out.RecorderLoss = loss
+	}
 	return out, nil
 }
 
@@ -219,11 +476,44 @@ type EdgeMulticastPathParity struct {
 	// Behind is how many of those fell below the floor.
 	Behind int `json:"behind"`
 
+	// Faulted is whether that is enough to call the path behind, and it is not simply
+	// Behind > 0. See edgeMulticastPathParityFaulted for why one failing pair out of thirty is
+	// not a path finding. The page reads THIS rather than re-deriving it, so the verdict, the
+	// badge and the colour of the ratio cannot disagree.
+	Faulted bool `json:"faulted"`
+
 	// WorstRatio is this path's message count over the best path's, at its worst pair, and
 	// WorstSource names that pair's capture source.
 	WorstRatio  float64 `json:"worst_ratio"`
 	WorstSource string  `json:"worst_source,omitempty"`
 	WorstNode   string  `json:"worst_node,omitempty"`
+}
+
+// edgeMulticastPathParityBehindShare is how much of a path's comparisons must fail before the path
+// is called behind.
+//
+// One failing pair marks a whole line, and a sports node compares 29-33 capture sources, so without
+// this the verdict is decided by the single flakiest market on the feed. That is the same
+// one-instance sensitivity the stalled verdict had, and the same shape of fix: a reading is not a
+// finding until it is more than an outlier.
+//
+// A quarter, and the two ends of the range are what set it. A path with ONE comparison — every
+// perps group — still fires at 1 of 1, so nothing that was already reportable stops being
+// reportable. And a genuine deficit is not shy: loss on a branch is indiscriminate, so a path
+// dropping enough to clear the 2% floor at all clears it nearly everywhere, while a market opening
+// or closing a few seconds out of step with its peer clears it at exactly one capture source.
+// Measured on mainnet, sports read 0.988 and 0.967 on the two paths at once — arithmetically
+// impossible from one systematic deficit, since the better path of each pair is 1.0 by
+// construction, and the signature of per-source noise near the volume floor instead.
+const edgeMulticastPathParityBehindShare = 0.25
+
+// edgeMulticastPathParityFaulted is the gate above, applied. Compared == 0 is no comparison and
+// never a fault.
+func edgeMulticastPathParityFaulted(behind, compared int) bool {
+	if compared == 0 || behind == 0 {
+		return false
+	}
+	return float64(behind)/float64(compared) >= edgeMulticastPathParityBehindShare
 }
 
 // edgeMulticastPathParityKey identifies one comparison: the paths of one capture source as one
@@ -316,6 +606,190 @@ func edgeMulticastPathParity(series []EdgeMulticastObservationSeries, captureSou
 			}
 		}
 	}
+	// Once every pair is in: the share is over the path's whole comparison set, so it cannot be
+	// decided while that set is still being built.
+	for _, p := range out {
+		p.Faulted = edgeMulticastPathParityFaulted(p.Behind, p.Compared)
+	}
+	return out
+}
+
+// EdgeMulticastRecorderCoverage is the group's recording nodes measured against each other: how
+// many there are, and which of them are recording less of the feed than the best-placed one.
+//
+// This is the receiver-side statement, and it belongs to the group rather than to any publisher
+// line — a node that is short on every path is the vantage, not the feed, and no single path owns
+// that fact. It is the same thing capture-node parity says on the counter plane, computed where
+// the numbers are exact instead: recorded message counts per node, rather than sample counts
+// against half the median.
+type EdgeMulticastRecorderCoverage struct {
+	// Nodes is how many recording nodes wrote anything for this group in the window.
+	Nodes int `json:"nodes"`
+
+	// Lagging is worst-first, and empty when every node keeps up. A node with nothing to be
+	// compared against is absent from it rather than counted as passing.
+	Lagging []EdgeMulticastLaggingRecorder `json:"lagging,omitempty"`
+}
+
+// EdgeMulticastLaggingRecorder is one recording node against the best-placed one.
+type EdgeMulticastLaggingRecorder struct {
+	Node string `json:"node"`
+
+	// WorstRatio is its worst showing across the instances it was compared on, and
+	// Behind/Compared how many of those it failed. One bad capture source out of thirty is a
+	// different call to action from thirty out of thirty.
+	WorstRatio  float64 `json:"worst_ratio"`
+	Behind      int     `json:"behind"`
+	Compared    int     `json:"compared"`
+	WorstSource string  `json:"worst_source,omitempty"`
+}
+
+// edgeMulticastNodeCoverageFloor is how far below the best-placed recorder a recording node may sit
+// before the group says so.
+//
+// Looser than the path floor, and not by taste. The window is fifteen minutes with no exclusion of
+// its trailing edge and every node's rows are filtered by one clock, so a recorder whose ingest
+// lags reads as a deficit of exactly that lag — at 0.98 an eighteen-second lag would report as
+// loss. Five percent buys about forty-five seconds of it, and the floor still has room to work in:
+// measured on mainnet two healthy recorders of one feed agreed to 0.1% over a minute (17,020
+// against 17,020) while the one that was genuinely dropping sat at 0.915 sustained across every
+// minute of the window.
+const edgeMulticastNodeCoverageFloor = 0.95
+
+// edgeMulticastNodeCoverageKey addresses one recorded instance every node should see identically:
+// one capture source carried by one publisher path. It is the transpose of the path-parity key —
+// that one fixes the vantage and compares the paths, this one fixes the path and compares the
+// vantages — and the pair of them is why either result can be attributed at all. A deficit that
+// shows up in both is a path that is short at one recorder; a deficit only here is the recorder.
+type edgeMulticastNodeCoverageKey struct {
+	source string
+	path   edgeMulticastPathKey
+}
+
+// edgeMulticastNodeCoverage measures every recording node against its peers, per group.
+//
+// Same shape as edgeMulticastPathParity and the same three refusals: a node absent from an
+// instance is not compared rather than counted behind, an instance with one node records nothing
+// either way, and an instance under the message floor is skipped so a handful of messages cannot
+// mint a ratio. Compared against the BEST node for the same reason: the question is whether
+// anything recorded more of this feed than I did, and a mean sinks with the faulty node.
+func edgeMulticastNodeCoverage(series []EdgeMulticastObservationSeries, captureSources edgeMulticastCaptureSourceMap) map[string]*EdgeMulticastRecorderCoverage {
+	byInstance := map[edgeMulticastNodeCoverageKey]map[string]uint64{}
+	nodesPerGroup := map[string]map[string]struct{}{}
+	for _, s := range series {
+		if s.PublisherSourceIP == "" || s.Node == "" {
+			continue
+		}
+		groupPK := edgeMulticastSeriesGroup(s, captureSources)
+		if groupPK == "" {
+			continue
+		}
+		if nodesPerGroup[groupPK] == nil {
+			nodesPerGroup[groupPK] = map[string]struct{}{}
+		}
+		nodesPerGroup[groupPK][s.Node] = struct{}{}
+
+		key := edgeMulticastNodeCoverageKey{
+			source: s.Source,
+			path:   edgeMulticastPathKey{groupPK: groupPK, ip: s.PublisherSourceIP},
+		}
+		if byInstance[key] == nil {
+			byInstance[key] = map[string]uint64{}
+		}
+		// Summed across channels, the same fold the path check makes: one node records all of
+		// them and a per-channel split would compare a node against itself.
+		byInstance[key][s.Node] += s.Messages
+	}
+
+	// The paths are tracked as sets and not just counted, because the claim this makes is not
+	// "behind somewhere" — it is "behind on everything of this group it records", which is what
+	// separates a bad vantage from a bad path. A deficit confined to one path IS the path's
+	// finding and Peer already carries it on that line; repeating it here as a node fault would
+	// name the recorder for something a publisher did.
+	type nodeTally struct {
+		worstRatio    float64
+		worstSource   string
+		behind        int
+		compared      int
+		comparedPaths map[string]struct{}
+		behindPaths   map[string]struct{}
+	}
+	tallies := map[string]map[string]*nodeTally{}
+	for key, nodes := range byInstance {
+		if len(nodes) < 2 {
+			continue
+		}
+		var best uint64
+		for _, messages := range nodes {
+			if messages > best {
+				best = messages
+			}
+		}
+		if best < edgeMulticastPathParityMinMessages {
+			continue
+		}
+		for node, messages := range nodes {
+			if tallies[key.path.groupPK] == nil {
+				tallies[key.path.groupPK] = map[string]*nodeTally{}
+			}
+			t := tallies[key.path.groupPK][node]
+			if t == nil {
+				t = &nodeTally{
+					worstRatio:    1,
+					comparedPaths: map[string]struct{}{},
+					behindPaths:   map[string]struct{}{},
+				}
+				tallies[key.path.groupPK][node] = t
+			}
+			ratio := float64(messages) / float64(best)
+			t.compared++
+			t.comparedPaths[key.path.ip] = struct{}{}
+			if ratio < edgeMulticastNodeCoverageFloor {
+				t.behind++
+				t.behindPaths[key.path.ip] = struct{}{}
+			}
+			if ratio < t.worstRatio {
+				t.worstRatio = ratio
+				t.worstSource = key.source
+			}
+		}
+	}
+
+	out := map[string]*EdgeMulticastRecorderCoverage{}
+	for groupPK, nodes := range nodesPerGroup {
+		cov := &EdgeMulticastRecorderCoverage{Nodes: len(nodes)}
+		for node, t := range tallies[groupPK] {
+			// Two gates, and they answer different questions. Breadth — behind on every path
+			// it records — is what separates a bad vantage from a bad path. Share is what
+			// separates a fault from a transient: a node short at ONE capture source is short
+			// on both paths there and clears the breadth test on two comparisons out of the
+			// ~58 a sports group makes, which would turn the group row amber over a single
+			// market while every publisher line stayed green. Same gate as the sibling check,
+			// for the same reason: a reading is not a finding until it is more than an outlier.
+			if len(t.behindPaths) == 0 || len(t.behindPaths) != len(t.comparedPaths) {
+				continue
+			}
+			if !edgeMulticastPathParityFaulted(t.behind, t.compared) {
+				continue
+			}
+			cov.Lagging = append(cov.Lagging, EdgeMulticastLaggingRecorder{
+				Node:        node,
+				WorstRatio:  t.worstRatio,
+				Behind:      t.behind,
+				Compared:    t.compared,
+				WorstSource: t.worstSource,
+			})
+		}
+		// Worst-first, then by name: the payload is polled every 30s and a list that reorders
+		// itself under the reader is its own bug.
+		sort.Slice(cov.Lagging, func(i, j int) bool {
+			if cov.Lagging[i].WorstRatio != cov.Lagging[j].WorstRatio {
+				return cov.Lagging[i].WorstRatio < cov.Lagging[j].WorstRatio
+			}
+			return cov.Lagging[i].Node < cov.Lagging[j].Node
+		})
+		out[groupPK] = cov
+	}
 	return out
 }
 
@@ -387,16 +861,46 @@ func edgeMulticastPathRates(series []EdgeMulticastObservationSeries, captureSour
 //
 // Nil maps on a miss or a shape mismatch, the same contract the sequence fold has — these signals
 // are additive to the page and must not be able to fail it.
-func (a *API) edgeMulticastObservationStats(ctx context.Context, captureSources edgeMulticastCaptureSourceMap) (map[edgeMulticastPathKey]*EdgeMulticastPathParity, map[edgeMulticastPathKey]float64) {
+// The payload's own clock comes back with it. Both figures it produces are as old as the refresher
+// left them, and the two columns they fill have to age against that rather than against the
+// response they are folded into — the same contract the sequence legs already carry. It is a
+// separate stamp from SequenceAsOf on purpose: that one is the OLDER of the two sequence legs, so
+// borrowing it would let the market-by-price leg's staleness grey out figures it has nothing to
+// do with.
+func (a *API) edgeMulticastObservationStats(ctx context.Context, captureSources edgeMulticastCaptureSourceMap) (edgeMulticastObservationStatsResult, time.Time) {
 	data, err := a.readPageCache(ctx, edgeMulticastObservationsCacheKey)
 	if err != nil {
-		return nil, nil
+		return edgeMulticastObservationStatsResult{}, time.Time{}
 	}
 	var payload EdgeMulticastObservationsResponse
 	if err := json.Unmarshal(data, &payload); err != nil {
 		slog.Warn("edge multicast observation stats: cache did not parse", "error", err)
-		return nil, nil
+		return edgeMulticastObservationStatsResult{}, time.Time{}
 	}
-	return edgeMulticastPathParity(payload.Series, captureSources),
-		edgeMulticastPathRates(payload.Series, captureSources, payload.WindowMinutes)
+	loss, simultaneous := edgeMulticastRecorderLossFold(payload.RecorderLoss)
+	return edgeMulticastObservationStatsResult{
+		recorderLossUnavailable: payload.RecorderLossUnavailable,
+		parity:                  edgeMulticastPathParity(payload.Series, captureSources),
+		rates:                   edgeMulticastPathRates(payload.Series, captureSources, payload.WindowMinutes),
+		recorder:                edgeMulticastNodeCoverage(payload.Series, captureSources),
+		recorderLoss:            loss,
+		recorderLossSimul:       simultaneous,
+	}, payload.GeneratedAt.UTC()
+}
+
+// edgeMulticastObservationStatsResult is what one read of the observations payload yields: the
+// path check, the recorded rate, and the recorder check. Grouped into a struct because they are
+// three views of one cache entry and returning them separately grew a signature nobody could read.
+type edgeMulticastObservationStatsResult struct {
+	parity   map[edgeMulticastPathKey]*EdgeMulticastPathParity
+	rates    map[edgeMulticastPathKey]float64
+	recorder map[string]*EdgeMulticastRecorderCoverage
+
+	// Both keyed on the publisher's tunnel address, the same join the sequence series make
+	// against the ledger's dz_ip.
+	recorderLoss      map[string][]EdgeMulticastRecorderLoss
+	recorderLossSimul map[string][]KalshiL2GapEpisode
+
+	// recorderLossUnavailable distinguishes a failed measurement from an absent one.
+	recorderLossUnavailable bool
 }
