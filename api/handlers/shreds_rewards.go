@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -167,9 +168,65 @@ type ShredsRewardsResponse struct {
 	Total int `json:"total"`
 }
 
+// shredClientNamesSQL is the shred client registry as exactly one row per
+// client_id. The registry can hold more than one row per id across rebuilds, so
+// joining the view directly would duplicate whatever it is joined to.
+const shredClientNamesSQL = `(
+			SELECT client_id, max(short_description) AS client_name
+			FROM dim_dz_shred_validator_client_rewards_current
+			GROUP BY client_id
+		)`
+
+// shredsRewardsIdentityJoins resolves the four identity columns the list carries
+// (vote pubkey, validator name, activated stake, DZ IP) as ONE row per node.
+//
+// Each source is collapsed to its join key first. That is not defensive tidying:
+// 785 activated dz_users share a client_ip with another user, so joining the view
+// directly turned 527 validators into 928 rows. `LIMIT 1 BY node_id` used to hide
+// that from the page, but a fanned-out set makes `count() OVER ()` count rows
+// rather than validators — and the count is what the pager and the complete-set
+// cache's completeness check both read.
+//
+// The aggregate aliases are deliberately not the source column names: ClickHouse
+// resolves an alias inside a sibling aggregate's arguments and rejects the query
+// as "aggregate function found inside another aggregate function".
+//
+// argMax orders on (stake, vote_pubkey) rather than stake alone so that a node
+// running two vote accounts of equal stake still resolves to one fixed answer.
+// Both the list and the detail header run this text, and a tie broken freely
+// would let them name different vote accounts for one validator on the same load.
+const shredsRewardsIdentityJoins = `
+		LEFT JOIN (
+			SELECT
+				node_pubkey,
+				argMax(vote_pubkey, (activated_stake_lamports, vote_pubkey)) AS va_vote_pubkey,
+				max(activated_stake_lamports) AS va_stake
+			FROM solana_vote_accounts_current
+			WHERE epoch_vote_account = 'true'
+			GROUP BY node_pubkey
+		) v ON v.node_pubkey = pv.pv_node_id
+		LEFT JOIN (
+			SELECT vote_account, max(name) AS vapp_name
+			FROM validatorsapp_validators_current
+			GROUP BY vote_account
+		) va ON va.vote_account = v.va_vote_pubkey
+		LEFT JOIN (
+			SELECT pubkey, max(gossip_ip) AS node_gossip_ip
+			FROM solana_gossip_nodes_current
+			GROUP BY pubkey
+		) g ON g.pubkey = pv.pv_node_id
+		LEFT JOIN (
+			SELECT client_ip
+			FROM dz_users_current
+			WHERE status = 'activated'
+			GROUP BY client_ip
+		) u ON u.client_ip = g.node_gossip_ip`
+
 // buildShredsRewardsSearch parses a comma-separated search expression into a
 // WHERE clause plus positional args. Supported field prefixes: name:, vote:,
 // node:. Free-text terms match across all three.
+//
+// Column names match the aliases shredsRewardsIdentityJoins exposes.
 func buildShredsRewardsSearch(search string) (string, []any) {
 	if search == "" {
 		return "", nil
@@ -187,11 +244,11 @@ func buildShredsRewardsSearch(search string) (string, []any) {
 			field, val := strings.ToLower(strings.TrimSpace(parts[0])), strings.TrimSpace(parts[1])
 			switch field {
 			case "name":
-				clauses = append(clauses, "positionCaseInsensitive(coalesce(va.name, ''), ?) > 0")
+				clauses = append(clauses, "positionCaseInsensitive(coalesce(va.vapp_name, ''), ?) > 0")
 				args = append(args, val)
 				continue
 			case "vote":
-				clauses = append(clauses, "positionCaseInsensitive(coalesce(v.vote_pubkey, ''), ?) > 0")
+				clauses = append(clauses, "positionCaseInsensitive(coalesce(v.va_vote_pubkey, ''), ?) > 0")
 				args = append(args, val)
 				continue
 			case "node":
@@ -202,8 +259,8 @@ func buildShredsRewardsSearch(search string) (string, []any) {
 		}
 		// Free text: match across name, vote pubkey, and node id.
 		clauses = append(clauses,
-			"(positionCaseInsensitive(coalesce(va.name, ''), ?) > 0 "+
-				"OR positionCaseInsensitive(coalesce(v.vote_pubkey, ''), ?) > 0 "+
+			"(positionCaseInsensitive(coalesce(va.vapp_name, ''), ?) > 0 "+
+				"OR positionCaseInsensitive(coalesce(v.va_vote_pubkey, ''), ?) > 0 "+
 				"OR positionCaseInsensitive(pv.pv_node_id, ?) > 0)")
 		args = append(args, f, f, f)
 	}
@@ -215,6 +272,15 @@ func buildShredsRewardsSearch(search string) (string, []any) {
 
 // buildShredsRewardsSort returns the ORDER BY fragment (without the keyword)
 // for the given sort field and direction.
+//
+// node_id is the final tiebreaker on every sort, and it is load-bearing rather
+// than tidy. Ties are the common case, not the exception: most validators have
+// never had a claimable leaf, so immediately_claimable_2z is 0 across hundreds of
+// rows. Without a total order ClickHouse may break those ties differently for the
+// request that fetches page 2 and the one that fetches page 3, so a validator can
+// show up on both or on neither. It is also what lets sortShredsRewardsRows — the
+// Go comparator that serves a page out of the complete-set cache — agree with this
+// clause row for row.
 func buildShredsRewardsSort(field, order string) string {
 	dir := "DESC"
 	if strings.EqualFold(order, "asc") {
@@ -222,24 +288,111 @@ func buildShredsRewardsSort(field, order string) string {
 	}
 	switch field {
 	case "validator_name":
-		return "validator_name " + dir + ", total_earned_2z DESC"
+		return "validator_name " + dir + ", total_earned_2z DESC, node_id ASC"
 	case "activated_stake":
-		return "activated_stake " + dir + ", total_earned_2z DESC"
+		return "activated_stake " + dir + ", total_earned_2z DESC, node_id ASC"
 	case "immediately_claimable_2z":
-		return "immediately_claimable_2z " + dir + ", total_earned_2z DESC"
+		return "immediately_claimable_2z " + dir + ", total_earned_2z DESC, node_id ASC"
 	default:
-		return "total_earned_2z " + dir
+		return "total_earned_2z " + dir + ", node_id ASC"
 	}
 }
 
-// shredsRewardsCacheKey is the Postgres page-cache key for the default-params
-// list response. Refreshed by the worker every ~30s.
-const shredsRewardsCacheKey = "shreds_rewards"
+// sortShredsRewardsRows orders rows in place exactly as buildShredsRewardsSort
+// orders them in ClickHouse, so a page sliced out of the cached complete set is
+// the page the live query would have returned.
+//
+// The two agree because every comparison here has a byte-for-byte SQL twin:
+// ClickHouse compares String columns bytewise and Go's `<` on string does the
+// same, the numeric columns are Float64/UInt64 on both sides, and node_id makes
+// the order total so no tie is left to either engine's discretion.
+func sortShredsRewardsRows(rows []ShredsRewardsRow, field, order string) {
+	asc := strings.EqualFold(order, "asc")
+	// The secondary key is total_earned_2z DESC and the final key node_id ASC,
+	// whichever way the primary key points — mirroring the SQL.
+	tieBreak := func(a, b ShredsRewardsRow) bool {
+		if a.TotalEarned2Z != b.TotalEarned2Z {
+			return a.TotalEarned2Z > b.TotalEarned2Z
+		}
+		return a.NodeID < b.NodeID
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
+		switch field {
+		case "validator_name":
+			if a.ValidatorName != b.ValidatorName {
+				if asc {
+					return a.ValidatorName < b.ValidatorName
+				}
+				return a.ValidatorName > b.ValidatorName
+			}
+		case "activated_stake":
+			if a.ActivatedStake != b.ActivatedStake {
+				if asc {
+					return a.ActivatedStake < b.ActivatedStake
+				}
+				return a.ActivatedStake > b.ActivatedStake
+			}
+		case "immediately_claimable_2z":
+			if a.ImmediatelyClaimable2Z != b.ImmediatelyClaimable2Z {
+				if asc {
+					return a.ImmediatelyClaimable2Z < b.ImmediatelyClaimable2Z
+				}
+				return a.ImmediatelyClaimable2Z > b.ImmediatelyClaimable2Z
+			}
+		default:
+			// total_earned_2z: the primary key IS the secondary key, so the
+			// direction applies here and only node_id is left to break ties.
+			if a.TotalEarned2Z != b.TotalEarned2Z {
+				if asc {
+					return a.TotalEarned2Z < b.TotalEarned2Z
+				}
+				return a.TotalEarned2Z > b.TotalEarned2Z
+			}
+			return a.NodeID < b.NodeID
+		}
+		return tieBreak(a, b)
+	})
+}
+
+// ShredsRewardsPageCacheKey is the Postgres page-cache key for the COMPLETE,
+// unfiltered validator rewards listing. The worker refreshes the whole set; the
+// handler sorts and slices whatever page a client asks for out of it, so paging
+// and re-sorting cost no ClickHouse query at all. Exported so the worker entry
+// and this handler share one definition (like ValidatorsPageCacheKey).
+//
+// Deliberately not the old "shreds_rewards" key, which held only the first page
+// of the default sort and was written to the client verbatim. The worker runs
+// inside the api pod, so during a rolling update a new pod would write the
+// complete set under a key an old pod still serves as-is — returning every
+// validator on page 1 and ignoring the request's limit and sort. A new key means
+// both versions simply miss and serve live for the rollout window.
+const ShredsRewardsPageCacheKey = "shreds_rewards:all"
+
+// shredsRewardsCacheMaxRows caps the row count the page-cache entry holds. The
+// mainnet set is ~530 validators today, so this is ~10x headroom; at ~250 bytes of
+// JSON per row it is ~1.2 MB worst case. Exceeding it disables the cache rather
+// than serving a truncated page — see sliceCachedShredsRewards.
+const shredsRewardsCacheMaxRows = 5000
+
+const (
+	// shredsRewardsCacheReadTimeout bounds the page-cache read so a Postgres
+	// slowdown cannot stall the endpoint for as long as clients are willing to
+	// wait. Falling through to the live query is the better failure mode.
+	shredsRewardsCacheReadTimeout = 2 * time.Second
+
+	// shredsRewardsCacheStaleAfter rejects a frozen entry. Refresh failures already
+	// escalate via logger.Escalator, so this only catches a worker that isn't
+	// running at all — a backstop, not a freshness mechanism, and therefore sized
+	// to never reject a healthy entry at any configurable refresh interval: the
+	// entry refreshes every cycle, PAGE_CACHE_REFRESH_INTERVAL is clamped to 10
+	// minutes, and the refresh itself gets up to the activity timeout.
+	shredsRewardsCacheStaleAfter = 45 * time.Minute
+)
 
 // shredsRewardsDefaultLimit is the page size for the default list view. It must
-// match the web client's PAGE_SIZE so the cached default-params entry (computed
-// with this limit by the refresh worker) is reusable for the page's first-page
-// request — otherwise every page load misses the cache and runs the full query.
+// match the web client's PAGE_SIZE so a first-page request lines up with the page
+// the client actually renders.
 const shredsRewardsDefaultLimit = 100
 
 // shredsRewardsEarningsCTE is the shared front half of both rewards queries: it
@@ -253,19 +406,11 @@ const shredsRewardsDefaultLimit = 100
 //
 // The caller appends its own aggregate CTE and final SELECT. client_id is
 // projected for the per-client grouping; the per-validator query ignores it.
-func shredsRewardsEarningsCTE(leafMintExpr, earnedWhole, poolMintExpr, tokenSymbol string) string {
+func shredsRewardsEarningsCTE(leafMintExpr, earnedWhole, poolMintExpr, tokenSymbol, isRecentExpr string) string {
 	return fmt.Sprintf(`		WITH epoch_totals AS (
 			SELECT subscription_epoch, sum(leader_slots) AS total_leader_slots
 			FROM dim_dz_shred_validator_rewards_leaves_current
 			GROUP BY subscription_epoch
-		),
-		recent_epochs AS (
-			SELECT subscription_epoch AS solana_epoch
-			FROM dim_dz_shred_distribution_2z_pool_current
-			WHERE tokens_received_2z > 0
-			GROUP BY subscription_epoch
-			ORDER BY subscription_epoch DESC
-			LIMIT 10
 		),
 		leaves_tok AS (
 			SELECT
@@ -293,7 +438,7 @@ func shredsRewardsEarningsCTE(leafMintExpr, earnedWhole, poolMintExpr, tokenSymb
 				%[4]s AS token_symbol,
 				%[2]s AS earned,
 				lt.is_claimable AS is_claimable,
-				if(R.solana_epoch IS NULL, 0, 1) AS is_recent
+				%[6]s AS is_recent
 			FROM leaves_tok lt
 			INNER JOIN dim_dz_shred_distribution_2z_pool_current P
 				ON P.subscription_epoch = lt.subscription_epoch
@@ -307,14 +452,37 @@ func shredsRewardsEarningsCTE(leafMintExpr, earnedWhole, poolMintExpr, tokenSymb
 			LEFT JOIN dim_dz_shred_distribution_client_proportions_current C
 				ON C.subscription_epoch = lt.subscription_epoch
 			   AND C.client_id = lt.client_id
-			LEFT JOIN recent_epochs R
-				ON R.solana_epoch = lt.subscription_epoch
-		),`, leafMintExpr, earnedWhole, poolMintExpr, tokenSymbol, rewardMint2Z)
+		),`, leafMintExpr, earnedWhole, poolMintExpr, tokenSymbol, rewardMint2Z, isRecentExpr)
+}
+
+// shredsRewardsRecentEpochSQL renders the earnings CTE's is_recent flag from the
+// epoch list the caller already resolved, rather than from a CTE joined into the
+// leaf set.
+//
+// The join it replaces was `LEFT JOIN recent_epochs R ON R.solana_epoch =
+// lt.subscription_epoch` with `if(R.solana_epoch IS NULL, 0, 1) AS is_recent`,
+// and it was always 1. A ClickHouse LEFT JOIN fills an unmatched row with the
+// column's default — 0 for a UInt — and not with NULL, so the IS NULL test never
+// fired and the CTE's own `LIMIT 10` decided nothing. Every leaf a validator ever
+// earned was flagged recent: measured on mainnet the per-epoch maps carried up to
+// 93 entries per row against the 10 intended, which was most of the bytes in a
+// 100-row page, spent on columns the page does not render.
+//
+// An IN over literals is exact, costs one join less, and cannot silently degrade
+// the same way — an empty epoch list renders a constant 0 rather than an empty IN.
+func shredsRewardsRecentEpochSQL(epochs []uint64) string {
+	if len(epochs) == 0 {
+		return "0"
+	}
+	ids := make([]string, len(epochs))
+	for i, e := range epochs {
+		ids[i] = strconv.FormatUint(e, 10)
+	}
+	return "if(lt.subscription_epoch IN (" + strings.Join(ids, ", ") + "), 1, 0)"
 }
 
 // shredsRewardsDefaultSort / Order are the canonical default ordering the web
-// sends on the first-page view. A request carrying these explicit values is
-// equivalent to the param-less default and is served from the page cache.
+// sends on the first-page view.
 const (
 	shredsRewardsDefaultSort  = "total_earned_2z"
 	shredsRewardsDefaultOrder = "desc"
@@ -334,9 +502,7 @@ func (a *API) GetShredsRewards(w http.ResponseWriter, r *http.Request) {
 	groupByClient := strings.EqualFold(strings.TrimSpace(q.Get("group")), "client")
 
 	limit := shredsRewardsDefaultLimit
-	limitProvided := false
 	if v := q.Get("limit"); v != "" {
-		limitProvided = true
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			if n > 500 {
 				n = 500
@@ -345,19 +511,18 @@ func (a *API) GetShredsRewards(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	offset := 0
-	offsetProvided := false
 	if v := q.Get("offset"); v != "" {
-		offsetProvided = true
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			offset = n
 		}
 	}
 
-	// Default-view requests are served from the page cache to keep the page
-	// snappy. The worker refreshes this entry on a 30s cadence. The web client
-	// always sends explicit sort/order/limit/offset, so we match the canonical
-	// default *values* (not just absent params) — anything else is a custom view
-	// and bypasses the cache.
+	// Unconditional, not HIT-only: the body depends on the env header, which is not
+	// in the URL (EnvMiddleware reads X-DZ-Env first, ?env= only as a fallback). On
+	// the HIT path alone, whether a shared cache can tell two envs apart would hinge
+	// on server cache state.
+	w.Header().Add("Vary", "X-DZ-Env")
+
 	// Client-team grouping returns at most one row per registered client (ten
 	// today), so it needs no pagination and no page-cache entry: measured at
 	// ~65ms against production. It must also never read the cache, whose entry
@@ -376,19 +541,24 @@ func (a *API) GetShredsRewards(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	isDefault := search == "" &&
-		(sortField == "" || sortField == shredsRewardsDefaultSort) &&
-		(order == "" || order == shredsRewardsDefaultOrder) &&
-		(!limitProvided || limit == shredsRewardsDefaultLimit) &&
-		(!offsetProvided || offset == 0)
-	if isDefault {
-		if data, err := a.readPageCache(r.Context(), shredsRewardsCacheKey); err == nil {
+	// The cache entry holds the complete unfiltered set, so ANY page of ANY sort
+	// can be served from it — which is the point: the page's own controls (turning
+	// a page, clicking a column header) used to be the only shapes that missed and
+	// therefore the slowest thing on it. Only a search bypasses the cache, because
+	// only a search changes which validators are in the set. The entry is written
+	// by the mainnet worker and carries no environment, so a non-mainnet request
+	// must not read it.
+	if search == "" && isMainnet(r.Context()) {
+		if page, ok := a.cachedShredsRewardsPage(r.Context(), sortField, order, limit, offset); ok {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
-			_, _ = w.Write(data)
+			if err := json.NewEncoder(w).Encode(page); err != nil {
+				logError("shreds rewards encode failed", "error", err)
+			}
 			return
 		}
 	}
+	w.Header().Set("X-Cache", "MISS")
 
 	resp, err := a.computeShredsRewards(ctx, search, sortField, order, limit, offset)
 	if err != nil {
@@ -401,6 +571,73 @@ func (a *API) GetShredsRewards(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		logError("shreds rewards encode failed", "error", err)
 	}
+}
+
+// cachedShredsRewardsPage reads the page-cache entry under its own deadline and
+// sorts/slices the requested page out of it, reporting false whenever the cache
+// can't answer: no entry, a read failure, an entry older than
+// shredsRewardsCacheStaleAfter, or a payload that isn't the complete set. Every
+// false falls through to the live query.
+func (a *API) cachedShredsRewardsPage(ctx context.Context, sortField, order string, limit, offset int) (*ShredsRewardsResponse, bool) {
+	readCtx, cancel := context.WithTimeout(ctx, shredsRewardsCacheReadTimeout)
+	defer cancel()
+
+	data, updatedAt, err := a.readPageCacheWithAge(readCtx, ShredsRewardsPageCacheKey)
+	if err != nil {
+		return nil, false
+	}
+	if age := time.Since(updatedAt); age > shredsRewardsCacheStaleAfter {
+		logWarn("shreds rewards: cached payload stale, running live",
+			"age", age.Round(time.Second), "max_age", shredsRewardsCacheStaleAfter)
+		return nil, false
+	}
+	return sliceCachedShredsRewards(data, sortField, order, limit, offset)
+}
+
+// sliceCachedShredsRewards returns the requested page of a cached rewards listing,
+// or false when the cached payload is not the complete set and therefore can't
+// answer an arbitrary page.
+//
+// Completeness is decided by Total (count() OVER () over the whole set, so it
+// reports the true row count even when the SELECT was capped) against the number
+// of rows actually stored. That check covers shredsRewardsCacheMaxRows being
+// exceeded and any future truncation, both of which fall through to the live query.
+//
+// An empty set is also treated as unusable rather than as a trivially complete
+// one: a single refresh that caught the dimension views mid-reload would otherwise
+// pin an empty listing as an authoritative answer for a whole refresh cycle.
+func sliceCachedShredsRewards(data []byte, sortField, order string, limit, offset int) (*ShredsRewardsResponse, bool) {
+	var cached ShredsRewardsResponse
+	if err := json.Unmarshal(data, &cached); err != nil {
+		return nil, false
+	}
+	if cached.Total == 0 || cached.Total > len(cached.Validators) {
+		return nil, false
+	}
+
+	// Safe to reorder in place: cached was decoded for this call alone. The stored
+	// blob is written in the default order, so any other sort is applied here
+	// rather than by keeping a copy per sort.
+	rows := cached.Validators
+	sortShredsRewardsRows(rows, sortField, order)
+
+	// Both bounds are clamped to the set, so a page past the end is an empty (but
+	// non-nil, hence still JSON "[]") slice rather than an out-of-range panic.
+	start := min(offset, len(rows))
+	end := min(start+limit, len(rows))
+
+	return &ShredsRewardsResponse{
+		CurrentSolanaEpoch:   cached.CurrentSolanaEpoch,
+		LatestFinalizedEpoch: cached.LatestFinalizedEpoch,
+		EpochColumns:         cached.EpochColumns,
+		Validators:           rows[start:end],
+		Clients:              []ShredsClientRewardsRow{},
+		// The whole-set count, independent of the page being served — which is what
+		// the pager reads. Unlike the live path this stays correct for a page past
+		// the end of the set, where the live query's count() OVER () rides on rows
+		// that aren't there; see computeShredsRewards.
+		Total: cached.Total,
+	}, true
 }
 
 // computeShredsRewards runs the rewards-list queries directly against
@@ -434,11 +671,15 @@ func (a *API) computeShredsRewards(ctx context.Context, search, sortField, order
 	poolMintExpr := fmt.Sprintf(`if(P.reward_mint != '', P.reward_mint, '%s')`, rewardMint2Z)
 	earnedWholeList, tokenSymList := earnedWholeAndTokenSQL("lt.leader_slots", "lt.leaf_mint")
 
-	// We compute the is_recent flag as a JOIN to the recent_epochs CTE rather
-	// than via `IN (SELECT ...)` inside a sumIf/groupArrayIf: the ClickHouse
-	// analyzer's CTE-column scoping breaks when a CTE is referenced from
-	// inside an aggregate's filter expression.
-	query := shredsRewardsEarningsCTE(leafMintExpr, earnedWholeList, poolMintExpr, tokenSymList) + fmt.Sprintf(`
+	// Built per (limit, offset) so the total-recovery path below can re-run this
+	// exact text for a single row. A count that shares the page query's own SQL
+	// cannot describe a different population than the page it is counting — the
+	// standalone count query this replaced had to restate the joins and the search
+	// filter, and every future edit to one would have had to be mirrored in the
+	// other or the pager would start disagreeing with the rows on screen.
+	buildQuery := func(limit, offset int) string {
+		return shredsRewardsEarningsCTE(leafMintExpr, earnedWholeList, poolMintExpr, tokenSymList,
+			shredsRewardsRecentEpochSQL(epochColumns)) + fmt.Sprintf(`
 		per_validator AS (
 			SELECT
 				node_id AS pv_node_id,
@@ -448,7 +689,14 @@ func (a *API) computeShredsRewards(ctx context.Context, search, sortField, order
 				-- counted here too — otherwise its claimable amount shows as "—".
 				-- Paid non-2Z leaves keep their own token and stay out of these.
 				sumIf(coalesce(earned, 0), token_symbol = '2Z') AS total_earned_2z,
-				sumIf(coalesce(earned, 0), is_claimable = 1 AND is_recent = 1 AND token_symbol = '2Z') AS immediately_claimable_2z,
+				-- Every claimable 2Z leaf, not just the ones inside the recent-epoch
+				-- window. A leaf stays claimable until it is distributed, however old
+				-- the epoch: on mainnet 11,539 of the 14,326 claimable leaves are
+				-- older than the 10 epochs the columns cover, so restricting this to
+				-- them would understate what a validator can claim by about 80%%. It
+				-- is also the figure the detail page derives from its per-epoch
+				-- state, and the two pages must not disagree about one validator.
+				sumIf(coalesce(earned, 0), is_claimable = 1 AND token_symbol = '2Z') AS immediately_claimable_2z,
 				groupArrayIf(subscription_epoch, is_recent = 1) AS recent_dz_epochs,
 				groupArrayIf(coalesce(earned, 0), is_recent = 1) AS recent_dz_earnings,
 				groupArrayIf(token_symbol, is_recent = 1) AS recent_dz_tokens
@@ -457,37 +705,29 @@ func (a *API) computeShredsRewards(ctx context.Context, search, sortField, order
 		)
 		SELECT
 			pv.pv_node_id AS node_id,
-			coalesce(v.vote_pubkey, '') AS vote_pubkey,
-			coalesce(va.name, '') AS validator_name,
-			toUInt64(coalesce(v.activated_stake_lamports, 0)) AS activated_stake,
+			coalesce(v.va_vote_pubkey, '') AS vote_pubkey,
+			coalesce(va.vapp_name, '') AS validator_name,
+			toUInt64(coalesce(v.va_stake, 0)) AS activated_stake,
 			coalesce(u.client_ip, '') AS dz_user_ip,
 			pv.total_earned_2z AS total_earned_2z,
 			pv.immediately_claimable_2z AS immediately_claimable_2z,
 			pv.recent_dz_epochs AS recent_dz_epochs,
 			pv.recent_dz_earnings AS recent_dz_earnings,
-			pv.recent_dz_tokens AS recent_dz_tokens
-		FROM per_validator pv
-		LEFT JOIN solana_vote_accounts_current v
-			ON v.node_pubkey = pv.pv_node_id AND v.epoch_vote_account = 'true'
-		LEFT JOIN validatorsapp_validators_current va
-			ON v.vote_pubkey = va.vote_account
-		LEFT JOIN solana_gossip_nodes_current g
-			ON g.pubkey = pv.pv_node_id
-		LEFT JOIN dz_users_current u
-			ON u.client_ip = g.gossip_ip AND u.status = 'activated'
-		%[7]s
-		ORDER BY %[8]s
-		-- Collapse to one row per validator: the gossip/dz_users joins can
-		-- fan out (e.g. multiple activated DZ users sharing a gossip IP),
-		-- which would otherwise duplicate a validator in the list.
-		LIMIT 1 BY node_id
-		LIMIT %[9]d OFFSET %[10]d
-	`, leafMintExpr, earnedWholeList, poolMintExpr,
-		tokenSymList, rewardMint2Z, rewardMint2Z,
-		whereClause, sortSQL, limit, offset)
+			pv.recent_dz_tokens AS recent_dz_tokens,
+			-- The whole-set count, so the pager needs no second query. The identity
+			-- joins are collapsed to one row per node (see
+			-- shredsRewardsIdentityJoins), which is what makes this a count of
+			-- validators rather than of joined rows.
+			count() OVER () AS total
+		FROM per_validator pv%[1]s
+		%[2]s
+		ORDER BY %[3]s
+		LIMIT %[4]d OFFSET %[5]d
+	`, shredsRewardsIdentityJoins, whereClause, sortSQL, limit, offset)
+	}
 
 	start := time.Now()
-	rows, err := a.envDB(ctx).Query(ctx, query, args...)
+	rows, err := a.envDB(ctx).Query(ctx, buildQuery(limit, offset), args...)
 	metrics.RecordClickHouseQuery("shreds_rewards", time.Since(start), err)
 	if err != nil {
 		return nil, fmt.Errorf("shreds rewards query: %w", err)
@@ -495,6 +735,10 @@ func (a *API) computeShredsRewards(ctx context.Context, search, sortField, order
 	defer rows.Close()
 
 	validators := make([]ShredsRewardsRow, 0)
+	// count() OVER () rides on the returned rows, so this is assigned only inside
+	// the loop and a page past the end of the set leaves it 0. Recovered below
+	// rather than left wrong (the wart validators.go still carries, #750).
+	var total uint64
 	for rows.Next() {
 		var row ShredsRewardsRow
 		var recentEpochs []uint64
@@ -511,6 +755,7 @@ func (a *API) computeShredsRewards(ctx context.Context, search, sortField, order
 			&recentEpochs,
 			&recentEarnings,
 			&recentTokens,
+			&total,
 		); err != nil {
 			return nil, fmt.Errorf("shreds rewards scan: %w", err)
 		}
@@ -535,50 +780,34 @@ func (a *API) computeShredsRewards(ctx context.Context, search, sortField, order
 		return nil, fmt.Errorf("shreds rewards rows iteration: %w", err)
 	}
 
-	if epochColumns == nil {
-		epochColumns = []uint64{}
+	// A page past the end of the set returned no rows, so it carried no window
+	// count either — and the pager reads that count to decide how many pages exist.
+	// Left at 0 the footer collapses and the reader is shown an empty table with
+	// nothing saying the set is merely shorter than the page they asked for. Ask
+	// the same query for one row at offset 0 to recover it.
+	//
+	// One extra query, in a case only reachable by paging a search past its last
+	// page: every unfiltered request is answered from the cached complete set,
+	// which knows the size without asking. A zero-row page at offset 0 needs no
+	// recovery — the set really is empty.
+	if len(validators) == 0 && offset > 0 {
+		var recovered uint64
+		rstart := time.Now()
+		rerr := a.envDB(ctx).QueryRow(ctx,
+			`SELECT toUInt64(max(total)) FROM (`+buildQuery(1, 0)+`)`, args...).Scan(&recovered)
+		metrics.RecordClickHouseQuery("shreds_rewards:count", time.Since(rstart), rerr)
+		if rerr != nil {
+			// The rows the caller asked for are already in hand; losing the page
+			// count is not worth failing the request over.
+			logWarn("shreds rewards: whole-set count recovery failed, reporting 0",
+				"error", rerr, "offset", offset)
+		} else {
+			total = recovered
+		}
 	}
 
-	// Total distinct validators matching the filter (before limit/offset), for
-	// the client's page count. Mirrors the page query's population — validators
-	// with at least one leaf in a funded (pooled) epoch, after the same search
-	// joins/filter — and countDistinct collapses the gossip/dz_users fan-out the
-	// way LIMIT 1 BY node_id does in the page query.
-	countQuery := fmt.Sprintf(`
-		WITH leaves_tok AS (
-			SELECT L.node_id AS node_id, L.subscription_epoch AS subscription_epoch, %[1]s AS leaf_mint
-			FROM dim_dz_shred_validator_rewards_leaves_current L
-			LEFT JOIN dim_dz_shred_validator_leaf_distribution_status_current S
-				ON S.subscription_epoch = L.subscription_epoch
-			   AND S.node_id = L.node_id
-			   AND S.client_id = L.client_id
-		),
-		per_validator AS (
-			SELECT lt.node_id AS pv_node_id
-			FROM leaves_tok lt
-			INNER JOIN dim_dz_shred_distribution_2z_pool_current P
-				ON P.subscription_epoch = lt.subscription_epoch
-			   AND %[2]s = lt.leaf_mint
-			GROUP BY lt.node_id
-		)
-		SELECT countDistinct(pv.pv_node_id)
-		FROM per_validator pv
-		LEFT JOIN solana_vote_accounts_current v
-			ON v.node_pubkey = pv.pv_node_id AND v.epoch_vote_account = 'true'
-		LEFT JOIN validatorsapp_validators_current va
-			ON v.vote_pubkey = va.vote_account
-		LEFT JOIN solana_gossip_nodes_current g
-			ON g.pubkey = pv.pv_node_id
-		LEFT JOIN dz_users_current u
-			ON u.client_ip = g.gossip_ip AND u.status = 'activated'
-		%[3]s
-	`, leafMintExpr, poolMintExpr, whereClause)
-	var total uint64
-	cstart := time.Now()
-	cerr := a.envDB(ctx).QueryRow(ctx, countQuery, args...).Scan(&total)
-	metrics.RecordClickHouseQuery("shreds_rewards:count", time.Since(cstart), cerr)
-	if cerr != nil {
-		return nil, fmt.Errorf("shreds rewards count query: %w", cerr)
+	if epochColumns == nil {
+		epochColumns = []uint64{}
 	}
 
 	return &ShredsRewardsResponse{
@@ -591,13 +820,15 @@ func (a *API) computeShredsRewards(ctx context.Context, search, sortField, order
 	}, nil
 }
 
-// FetchShredsRewardsData computes the default-params shreds rewards response
-// for the page-cache refresh worker. Returns the same payload the handler
-// would produce for an unparameterized GET /api/dz/shreds/rewards request.
+// FetchShredsRewardsData computes the COMPLETE unfiltered shreds rewards listing
+// for the page-cache worker, from which the handler sorts and slices whatever page
+// a client asks for. Measured at ~120ms for the full mainnet set (~530 rows), so
+// caching everything costs about what caching one page did.
 func (a *API) FetchShredsRewardsData(ctx context.Context) (*ShredsRewardsResponse, error) {
 	// Compute directly (NOT via GetShredsRewards) so the refresh worker never
 	// reads the page cache it is responsible for populating.
-	return a.computeShredsRewards(ctx, "", "", "", shredsRewardsDefaultLimit, 0)
+	return a.computeShredsRewards(ctx, "", shredsRewardsDefaultSort, shredsRewardsDefaultOrder,
+		shredsRewardsCacheMaxRows, 0)
 }
 
 // Claim-state values for ShredsRewardsEpochDetail.State. These let the page
@@ -641,6 +872,12 @@ type ShredsRewardsEpochDetail struct {
 	SubscriptionEpoch uint64 `json:"subscription_epoch"`
 	LeaderSlots       uint32 `json:"leader_slots"`
 	ClientID          uint16 `json:"client_id"`
+	// ClientName is the software client's registered name ("Jito Labs",
+	// "Firedancer", …), falling back to "Client <id>" when a leaf lands before the
+	// registry row is indexed. A validator publishes under one client at a time and
+	// switches, so an epoch it switched in carries a row per client — the bare id
+	// the page used to render named neither of them.
+	ClientName string `json:"client_name"`
 	// Earned is the reward in whole units of TokenSymbol (the token the
 	// validator chose for the epoch: 2Z, USDC, or wSOL).
 	Earned      float64 `json:"earned"`
@@ -677,26 +914,25 @@ func (a *API) GetShredsRewardsDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Header: vote pubkey, validator name, activated stake, DZ user IP.
-	// The single-row anchor carries the node_id so the LEFT JOINs have a real
-	// join key (ON v.node_pubkey = one.node_id); this returns zero values for
-	// unknown node_ids instead of erroring. Joining directly on a bound param
-	// (ON v.node_pubkey = ?) leaves no key relating the two tables, which
-	// ClickHouse rejects with "cannot determine join keys".
-	const headerQuery = `
+	//
+	// It runs the SAME identity joins as the list (shredsRewardsIdentityJoins), so
+	// the two pages cannot describe one validator differently — a node with two
+	// vote accounts would otherwise get whichever the list's argMax picked on one
+	// page and whichever the join happened to emit first on the other. That is also
+	// why the anchor names its column pv_node_id: it is what those joins key on.
+	//
+	// The single-row anchor carries the node_id so the LEFT JOINs have a real join
+	// key; this returns zero values for unknown node_ids instead of erroring.
+	// Joining directly on a bound param (ON v.node_pubkey = ?) leaves no key
+	// relating the two tables, which ClickHouse rejects with "cannot determine join
+	// keys".
+	headerQuery := `
 		SELECT
-			coalesce(v.vote_pubkey, ''),
-			coalesce(va.name, ''),
-			toUInt64(coalesce(v.activated_stake_lamports, 0)),
+			coalesce(v.va_vote_pubkey, ''),
+			coalesce(va.vapp_name, ''),
+			toUInt64(coalesce(v.va_stake, 0)),
 			coalesce(u.client_ip, '')
-		FROM (SELECT ? AS node_id) one
-		LEFT JOIN solana_vote_accounts_current v
-			ON v.node_pubkey = one.node_id AND v.epoch_vote_account = 'true'
-		LEFT JOIN validatorsapp_validators_current va
-			ON v.vote_pubkey = va.vote_account
-		LEFT JOIN solana_gossip_nodes_current g
-			ON g.pubkey = one.node_id
-		LEFT JOIN dz_users_current u
-			ON u.client_ip = g.gossip_ip AND u.status = 'activated'
+		FROM (SELECT ? AS pv_node_id) pv` + shredsRewardsIdentityJoins + `
 		LIMIT 1
 	`
 	if err := a.envDB(ctx).QueryRow(ctx, headerQuery, nodeID).Scan(
@@ -739,6 +975,9 @@ func (a *API) GetShredsRewardsDetail(w http.ResponseWriter, r *http.Request) {
 			L.subscription_epoch,
 			L.leader_slots,
 			L.client_id,
+			-- A leaf can land before its client's registry row is indexed, so fall
+			-- back to the id rather than rendering a blank name.
+			if(coalesce(CR.client_name, '') != '', CR.client_name, concat('Client ', toString(L.client_id))) AS client_name,
 			-- token_symbol and earned carry a 2Z-equivalent fallback: a claimable
 			-- USDC/wSOL leaf has no own-token pool yet (distributed_amount = 0), so
 			-- it is valued against the epoch's 2Z pool and labelled 2Z. See
@@ -776,7 +1015,11 @@ func (a *API) GetShredsRewardsDetail(w http.ResponseWriter, r *http.Request) {
 				'unknown'
 			) AS state
 		FROM dim_dz_shred_validator_rewards_leaves_current L
-		LEFT JOIN dim_dz_shred_validator_leaf_distribution_status_current S
+		LEFT JOIN (
+			SELECT subscription_epoch, node_id, client_id, is_claimable, journal_mint_key
+			FROM dim_dz_shred_validator_leaf_distribution_status_current
+			WHERE node_id = ?
+		) S
 			ON S.subscription_epoch = L.subscription_epoch
 		   AND S.node_id = L.node_id
 		   AND S.client_id = L.client_id
@@ -795,11 +1038,17 @@ func (a *API) GetShredsRewardsDetail(w http.ResponseWriter, r *http.Request) {
 		   AND C.client_id = L.client_id
 		LEFT JOIN journal_live_epochs JL
 			ON JL.subscription_epoch = L.subscription_epoch
+		LEFT JOIN %[6]s CR
+			ON CR.client_id = L.client_id
 		WHERE L.node_id = ?
-		ORDER BY L.subscription_epoch DESC
-	`, poolMintExpr, leafMintExpr, tokenSym, earnedWhole, rewardMint2Z)
+		-- client_id is part of the row grain, so it has to be part of the order:
+		-- an epoch a validator switched clients in returns two rows, and ordering
+		-- on the epoch alone leaves ClickHouse free to return them in either order
+		-- on each of the page's 60s refetches.
+		ORDER BY L.subscription_epoch DESC, L.client_id ASC
+	`, poolMintExpr, leafMintExpr, tokenSym, earnedWhole, rewardMint2Z, shredClientNamesSQL)
 	start := time.Now()
-	rows, err := a.envDB(ctx).Query(ctx, detailQuery, nodeID)
+	rows, err := a.envDB(ctx).Query(ctx, detailQuery, nodeID, nodeID)
 	metrics.RecordClickHouseQuery("shreds_rewards_detail", time.Since(start), err)
 	if err != nil {
 		logError("shreds rewards detail query failed", "error", err)
@@ -813,7 +1062,7 @@ func (a *API) GetShredsRewardsDetail(w http.ResponseWriter, r *http.Request) {
 		var hasStatus uint8
 		var isClaimable uint8
 		if err := rows.Scan(
-			&ed.SolanaEpoch, &ed.SubscriptionEpoch, &ed.LeaderSlots, &ed.ClientID,
+			&ed.SolanaEpoch, &ed.SubscriptionEpoch, &ed.LeaderSlots, &ed.ClientID, &ed.ClientName,
 			&ed.TokenSymbol, &ed.Earned, &hasStatus, &isClaimable, &ed.State,
 		); err != nil {
 			logError("shreds rewards detail scan failed", "error", err)
@@ -841,15 +1090,25 @@ func (a *API) GetShredsRewardsDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 // shredsRewardsEpochHeader returns the epoch columns both rewards groupings
-// share: the up-to-10 newest Solana epochs with a funded 2Z pool, the current
+// share: the up-to-10 newest Solana epochs with a funded pool, the current
 // Solana epoch, and the newest finalized one. Shared so the two lists cannot
-// disagree about which epochs they are showing.
+// disagree about which epochs they are showing — and so the earnings CTE's
+// is_recent flag is decided by the same list the columns are, rather than by a
+// second copy of the predicate.
+//
+// "Funded" is either leg of the same test earnedWholeAndTokenSQL applies per
+// leaf: a 2Z journal holds its balance in tokens_received_2z, while a USDC or
+// wSOL journal never does and is funded through distributed_amount. Reading only
+// the 2Z leg would drop an epoch rewarded entirely in another token out of the
+// columns, taking its earnings out of the per-epoch cells with them. Mainnet has
+// no such epoch today; the multi-token era began at epoch 968 and it is a shape
+// the data now allows.
 func (a *API) shredsRewardsEpochHeader(ctx context.Context) ([]uint64, uint64, uint64, error) {
 	start := time.Now()
 	epochRows, err := a.envDB(ctx).Query(ctx, `
 		SELECT subscription_epoch
 		FROM dim_dz_shred_distribution_2z_pool_current
-		WHERE tokens_received_2z > 0
+		WHERE tokens_received_2z > 0 OR distributed_amount > 0
 		GROUP BY subscription_epoch
 		ORDER BY subscription_epoch DESC
 		LIMIT 10
@@ -934,7 +1193,8 @@ func (a *API) computeShredsClientRewards(ctx context.Context, sortField, order s
 	// earned" and "what this client team earned".
 	earnedWhole, tokenSym := earnedWholeAndTokenForShareSQL("lt.leader_slots", "lt.leaf_mint", clientShareBpsSQL)
 
-	query := shredsRewardsEarningsCTE(leafMintExpr, earnedWhole, poolMintExpr, tokenSym) + fmt.Sprintf(`
+	query := shredsRewardsEarningsCTE(leafMintExpr, earnedWhole, poolMintExpr, tokenSym,
+		shredsRewardsRecentEpochSQL(epochColumns)) + fmt.Sprintf(`
 		per_client AS (
 			SELECT
 				client_id AS pc_client_id,
@@ -955,17 +1215,14 @@ func (a *API) computeShredsClientRewards(ctx context.Context, sortField, order s
 			toUInt16(pc.pc_client_id) AS client_id,
 			-- A client's leaves can land before its registry row is indexed, so
 			-- fall back to the id rather than rendering a blank team name.
-			if(coalesce(C2.short_description, '') != '', C2.short_description, concat('Client ', toString(pc.pc_client_id))) AS client_name,
+			if(coalesce(C2.client_name, '') != '', C2.client_name, concat('Client ', toString(pc.pc_client_id))) AS client_name,
 			toUInt64(pc.validators) AS validators,
 			pc.total_earned_2z AS total_earned_2z
 		FROM per_client pc
-		LEFT JOIN dim_dz_shred_validator_client_rewards_current C2
+		LEFT JOIN %[3]s C2
 			ON C2.client_id = pc.pc_client_id
 		ORDER BY %[1]s
-		-- The registry can hold more than one row per client_id across rebuilds;
-		-- collapse so a team cannot appear twice.
-		LIMIT 1 BY client_id
-	`, buildShredsClientRewardsSort(sortField, order), latestFinalized)
+	`, buildShredsClientRewardsSort(sortField, order), latestFinalized, shredClientNamesSQL)
 
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query)

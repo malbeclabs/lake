@@ -658,6 +658,27 @@ composite verdict per (path, group), folding the floor together with what the re
 floor fault still reaches every line the tunnel publishes on — by way of the only column that can
 also say the path gapped.
 
+## Basemap Tiles
+
+`web/src/lib/basemap.ts` owns the CARTO tile URL for every map surface. Two things must move
+together with it:
+
+- **The CSP in `api/main.go`** must allow the tile host in both `connect-src` and `img-src`. The
+  entry is a wildcard (`https://*.basemaps.cartocdn.com`), which matches `a.basemaps.cartocdn.com`
+  but **not** a bare `basemaps.cartocdn.com` — a host change that skips the CSP blocks every tile
+  with no error anywhere but the browser console.
+- **`CARTO_API_KEY`** on the API, surfaced to the browser through `/api/config`. It ships in the
+  bundle, so it is public by construction: a plaintext deployment value, not a sops secret. Do not
+  file a follow-up to "restrict it" — CARTO has no domain/referer scoping for basemap keys (the
+  domain box on the request form is informational, verified by request), so nothing bounds the key
+  but CARTO's fair-use quota of 5M tile requests per calendar month and their right to revoke it.
+  One key is shared across environments. If the quota is ever burned by someone else's site, the
+  remedy is to rotate the key, or to proxy tiles through the API so it stops shipping to browsers.
+
+Both failure modes are silent by construction, which is why the URL lives in one module: CARTO
+answers a keyless request with **HTTP 200 and a valid PNG** carrying `API KEY REQUIRED` burned
+into the image, so MapLibre sees a perfectly good tile and nothing logs.
+
 ## Logging Levels
 
 ERROR-level log lines page on-call (alerts fire on `level="ERR"` — prod → `#alerts`, staging → `#alerts-l2`). Reserve raw `.Error(...)` calls for genuinely-actionable terminal failures: process/component death, startup failures, panics, config errors.

@@ -495,7 +495,11 @@ func main() {
 	// Security headers middleware
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Content Security Policy for Google Sign-In and app resources
+			// Content Security Policy for Google Sign-In and app resources.
+			// connect-src is what gates map tiles: its CARTO entry must cover the
+			// host in web/src/lib/basemap.ts, and the wildcard matches a subdomain
+			// (a.basemaps.cartocdn.com) but not a bare basemaps.cartocdn.com. A host
+			// change that skips it blocks every tile with nothing but a console error.
 			csp := strings.Join([]string{
 				"default-src 'self'",
 				"script-src 'self' 'unsafe-inline' https://accounts.google.com https://static.cloudflareinsights.com",
@@ -665,6 +669,7 @@ func main() {
 		r.Get("/api/dz/shreds/funders", api.GetShredFunders)
 		r.Get("/api/dz/shreds/escrow-events", api.GetShredEscrowEvents)
 		r.Get("/api/dz/shreds/devices", api.GetShredDevices)
+		r.Get("/api/dz/shreds/economics", api.GetShredsEconomics)
 		r.Get("/api/dz/shreds/epoch-revenue", api.GetShredEpochRevenue)
 		r.Get("/api/dz/shreds/feed-revenue", api.GetShredFeedRevenue)
 		r.Get("/api/dz/shreds/rewards", api.GetShredsRewards)

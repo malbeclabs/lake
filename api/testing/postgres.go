@@ -21,6 +21,11 @@ import (
 
 var gooseInit sync.Once
 
+// gooseUpMu serialises goose.Up. Every test shares one Postgres container and one
+// database, so parallel tests otherwise run the migration set against it
+// concurrently and race each other.
+var gooseUpMu sync.Mutex
+
 // DBConfig holds the PostgreSQL test container configuration.
 type DBConfig struct {
 	Database       string
@@ -135,7 +140,9 @@ func SetupPostgresForTest(t *testing.T, db *DB) *pgxpool.Pool {
 	sqlDB, err := sql.Open("pgx", db.connStr)
 	require.NoError(t, err, "failed to open database for migrations")
 
+	gooseUpMu.Lock()
 	err = goose.Up(sqlDB, "migrations")
+	gooseUpMu.Unlock()
 	require.NoError(t, err, "failed to run migrations")
 	sqlDB.Close()
 

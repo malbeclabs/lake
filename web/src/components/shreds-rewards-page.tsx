@@ -1,8 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
-import { useQuery, keepPreviousData } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { useSearchParams, Link, useNavigate } from 'react-router-dom'
 import {
-  Loader2,
   AlertCircle,
   Search,
   X,
@@ -18,11 +17,21 @@ import {
   type ShredsRewardsRow,
 } from '@/lib/api'
 import { cn, handleRowClick } from '@/lib/utils'
+import { useDelayedLoading } from '@/hooks/use-delayed-loading'
 import { PageHeader } from './page-header'
 import { Pagination } from './pagination'
 import { format2Z } from './shreds-rewards-format'
+import {
+  RewardsShimmerBar,
+  SkeletonCell,
+  SkeletonRows,
+} from './shreds-rewards-skeleton'
 
 const PAGE_SIZE = 100
+
+// Enough placeholder rows to fill the fold on a normal window without
+// pretending to know how many rows are actually coming.
+const SKELETON_ROWS = 12
 
 type SortField =
   | 'validator_name'
@@ -132,12 +141,33 @@ export function ShredsRewardsPage() {
     [groupByClient, searchParam, sortField, sortDirection, offset],
   )
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, isPlaceholderData, error } = useQuery({
     queryKey: ['shreds-rewards', queryParams],
     queryFn: () => fetchShredsRewards(queryParams),
-    placeholderData: keepPreviousData,
+    // Keep the previous page WITHIN a grouping, but never across one. Plain
+    // keepPreviousData carries the other mode's payload over, and the response
+    // holds rows for one grouping and an empty array for the other — while
+    // groupByClient flips the instant the URL does. The client table would then
+    // render against the validator payload's empty `clients` and state "No
+    // client teams have earned rewards yet" as a finished answer, at full
+    // opacity, until the real response landed. Returning undefined makes the
+    // switch a genuine load, which is what it is: a different table with
+    // different columns, not a stale version of this one.
+    placeholderData: (previous, previousQuery) => {
+      const previousGroup = (previousQuery?.queryKey?.[1] as ShredsRewardsParams | undefined)?.group
+      return previousGroup === queryParams.group ? previous : undefined
+    },
     refetchInterval: 60_000,
   })
+
+  // First visit or a grouping switch: nothing valid on screen for this table, so
+  // it is replaced by a skeleton of itself. Page turn / re-sort: the previous
+  // page's rows stay readable, so the shimmer bar rides above them instead.
+  // Both are delayed, because a cached page usually arrives too fast for either
+  // to be anything but a flicker.
+  const firstLoad = isLoading && !data
+  const showSkeleton = useDelayedLoading(firstLoad)
+  const showShimmer = useDelayedLoading(isPlaceholderData)
 
   const handleSort = useCallback(
     (field: SortField | ClientSortField) => {
@@ -240,14 +270,10 @@ export function ShredsRewardsPage() {
   const thStatic = 'px-4 py-3 font-medium whitespace-nowrap'
   const thRight = `${thClass} text-right`
 
-  if (isLoading && !data) {
-    return (
-      <div className="flex-1 flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    )
-  }
-
+  // No early return for the first load: the header, the grouping toggle and the
+  // table's own column headers are all known before the data is, so rendering
+  // them immediately and filling only the rows with skeletons tells the reader
+  // what is arriving. A bare centred spinner told them nothing but "wait".
   if (error && !data) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -279,6 +305,8 @@ export function ShredsRewardsPage() {
                   </span>
                 )}
               </span>
+            ) : showSkeleton ? (
+              <SkeletonCell className="w-40" />
             ) : undefined
           }
           actions={
@@ -369,7 +397,17 @@ export function ShredsRewardsPage() {
           )}
         </div>
 
-        <div className="border border-border rounded-lg overflow-hidden bg-card">
+        {/* keepPreviousData leaves the old page on screen while the next one
+            loads, and isLoading stays false throughout — so without the bar and
+            the dimming, a page turn or a sort click looked like nothing had
+            happened at all. */}
+        <div
+          className={cn(
+            'border border-border rounded-lg overflow-hidden bg-card transition-opacity',
+            showShimmer && 'opacity-60',
+          )}
+        >
+          <RewardsShimmerBar show={showShimmer} />
           <div className="overflow-x-auto">
             {!groupByClient && (
             <table className="min-w-full">
@@ -409,7 +447,18 @@ export function ShredsRewardsPage() {
                 </tr>
               </thead>
               <tbody>
-                {validators.length === 0 ? (
+                {/* firstLoad is checked before the empty case so an arriving
+                    page never flashes "No validators have earned rewards yet"
+                    on its way in — that reads as an answer, not as waiting. */}
+                {firstLoad ? (
+                  showSkeleton && (
+                    <SkeletonRows
+                      rows={SKELETON_ROWS}
+                      widths={['w-32', 'w-24', 'w-14', 'w-24', 'w-16', 'w-16', 'w-4']}
+                      align={['left', 'left', 'right', 'left', 'right', 'right', 'right']}
+                    />
+                  )
+                ) : validators.length === 0 ? (
                   <tr>
                     <td
                       colSpan={7}
@@ -486,10 +535,12 @@ export function ShredsRewardsPage() {
                 sortField={sortField}
                 sortDirection={sortDirection}
                 onSort={handleSort}
+                firstLoad={firstLoad}
+                showSkeleton={showSkeleton}
               />
             )}
           </div>
-          {!groupByClient && (total > PAGE_SIZE || offset > 0) && (
+          {!groupByClient && !firstLoad && (total > PAGE_SIZE || offset > 0) && (
             <Pagination
               total={total}
               limit={PAGE_SIZE}
@@ -511,11 +562,15 @@ function ClientRewardsTable({
   sortField,
   sortDirection,
   onSort,
+  firstLoad,
+  showSkeleton,
 }: {
   clients: ShredsClientRewardsRow[]
   sortField: string
   sortDirection: SortDirection
   onSort: (field: ClientSortField) => void
+  firstLoad: boolean
+  showSkeleton: boolean
 }) {
   const thClass =
     'px-4 py-3 font-medium cursor-pointer select-none hover:text-foreground transition-colors whitespace-nowrap'
@@ -560,7 +615,15 @@ function ClientRewardsTable({
         </tr>
       </thead>
       <tbody>
-        {clients.length === 0 ? (
+        {firstLoad ? (
+          showSkeleton && (
+            <SkeletonRows
+              rows={SKELETON_ROWS}
+              widths={['w-28', 'w-10', 'w-16']}
+              align={['left', 'right', 'right']}
+            />
+          )
+        ) : clients.length === 0 ? (
           <tr>
             <td
               colSpan={3}
