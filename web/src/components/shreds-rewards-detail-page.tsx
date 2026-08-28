@@ -34,19 +34,6 @@ function formatTokenTotals(totals: Record<string, number>): string {
   return parts.length > 0 ? parts.join(' · ') : '—'
 }
 
-
-// The validator's name is deliberately NOT read out of the cached rewards
-// listing. react-query keeps that entry after the list unmounts and stops
-// refetching it, so its age is unbounded — the heading would assert a name
-// nothing is keeping current, beside epoch rows this page refetches every 60s.
-// Gating it on a freshness window is worse, not better: the heading would flip
-// from the name to the pubkey while the reader watched.
-//
-// So the heading is the truncated node id, which comes from the URL and cannot
-// go stale. Bringing the name back means fetching it under this page's own
-// refetch cycle; now that a search request is served from the page cache,
-// ?search=node:<id>&limit=1 is a cheap way to do that.
-
 function FactCard({
   label,
   children,
@@ -128,9 +115,7 @@ export function ShredsRewardsDetailPage() {
           <ArrowLeft className="h-3.5 w-3.5" />
           Edge Rewards
         </Link>
-        {/* No subtitle: the title IS the truncated node id, so a subtitle would
-            print the same pubkey twice side by side, and the Validator Identity
-            card below makes three. */}
+        {}
         <PageHeader icon={Trophy} title={displayName} />
 
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-8">
