@@ -62,6 +62,21 @@ func TestEdgeMulticastPublisherHealth_UnknownWhenNothingMeasured(t *testing.T) {
 		pubLine(handlers.EdgeMulticastPubUnknownForTest, seqHealth("ok", 0, 0, 0), nil), true))
 }
 
+// The share gate, from the verdict's side. The ratio is reported either way; what the count decides
+// is whether it is a finding about the path.
+func TestEdgeMulticastPublisherHealth_OneFailingPairIsNotBehind(t *testing.T) {
+	line := func(behind, compared int) handlers.EdgeMulticastPublisher {
+		return pubLine(handlers.EdgeMulticastPubPublishingForTest, seqHealth("ok", 0, 0, 1),
+			&handlers.EdgeMulticastPathParity{Compared: compared, Behind: behind, WorstRatio: 0.96})
+	}
+	assert.Equal(t, "healthy", handlers.EdgeMulticastPublisherHealthForTest(line(1, 29), true),
+		"one market out of twenty-nine is an outlier, not a path finding")
+	assert.Equal(t, "behind", handlers.EdgeMulticastPublisherHealthForTest(line(12, 29), true),
+		"a deficit across the feed is")
+	assert.Equal(t, "behind", handlers.EdgeMulticastPublisherHealthForTest(line(1, 1), true),
+		"and a feed with one comparison still fires on it")
+}
+
 // A path with no peer has no parity verdict. Zero of zero compared must not read as passing.
 func TestEdgeMulticastPublisherHealth_ParityNeedsAPeer(t *testing.T) {
 	assert.Equal(t, "healthy", handlers.EdgeMulticastPublisherHealthForTest(
@@ -76,4 +91,42 @@ func TestEdgeMulticastPublisherHealth_Unrecorded(t *testing.T) {
 	line := pubLine(handlers.EdgeMulticastPubPublishingForTest, nil, nil)
 	assert.Equal(t, "unrecorded", handlers.EdgeMulticastPublisherHealthForTest(line, true))
 	assert.Equal(t, "healthy", handlers.EdgeMulticastPublisherHealthForTest(line, false))
+}
+
+// A shared tunnel counter cannot attest that THIS group is being fed, and a group with no
+// subscriber has no application plane that ever could. Both together are 'unknown' — nothing
+// measured this publisher here — and not 'healthy'.
+//
+// Measured on mainnet: edge-kalshi-elections-tob read 2/2 publishing and both lines healthy while
+// its publishers sent that plane nothing, the whole ~18.6 Mbps belonging to the mbp group on the
+// same two tunnels.
+func TestEdgeMulticastPublisherHealth_SharedCounterOnAnUnsubscribedGroupIsNotHealthy(t *testing.T) {
+	line := handlers.EdgeMulticastPublisher{
+		Status:     handlers.EdgeMulticastPubPublishingForTest,
+		MultiGroup: true,
+	}
+	assert.Equal(t, "unknown",
+		handlers.EdgeMulticastPublisherHealthUnsubscribedForTest(line, false),
+		"the counter measured a tunnel this group shares, and nothing can measure the group")
+
+	// Both conditions are required, and each on its own leaves 'healthy' standing.
+	solo := line
+	solo.MultiGroup = false
+	assert.Equal(t, "healthy", handlers.EdgeMulticastPublisherHealthUnsubscribedForTest(solo, false),
+		"a publisher serving only this group has attributable bytes")
+	assert.Equal(t, "healthy", handlers.EdgeMulticastPublisherHealthForTest(line, false),
+		"a group with subscribers keeps its counter-only healthy — what the shreds groups rely on")
+}
+
+// Evidence beats the guard: a recorded message rate is a per-group measurement, so a line carrying
+// one is measured no matter what the tunnel counter can or cannot attribute.
+func TestEdgeMulticastPublisherHealth_RecordedRateOutweighsTheSharedCounter(t *testing.T) {
+	rate := 42.0
+	line := handlers.EdgeMulticastPublisher{
+		Status:     handlers.EdgeMulticastPubPublishingForTest,
+		MultiGroup: true,
+		MsgPerSec:  &rate,
+	}
+	assert.Equal(t, "healthy",
+		handlers.EdgeMulticastPublisherHealthUnsubscribedForTest(line, false))
 }

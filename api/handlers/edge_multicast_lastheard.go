@@ -29,46 +29,26 @@ import (
 // does not move the group's timestamp. LastHeardCaptureSources carries the fold factor so the UI
 // can say so and point at /dz/kalshi/l2, which is the per-capture-source view.
 //
-// COVERAGE IS PARTIAL BY CONSTRUCTION. Only the Kalshi groups and the five Solana groups have a
-// capture behind them. The lab and partner groups have no app-plane signal and never will, so
-// the column is empty for them and the counter-derived numbers stay the whole story.
-
-// edgeMulticastShredsFeedAlias maps a shredder feed id that predates the group-code naming
-// convention onto its group. Only 'dz' needs this: the retrans and root feeds already carry the
-// ledger code verbatim.
+// COVERAGE IS PARTIAL BY CONSTRUCTION. Only the Kalshi groups have a capture behind them. The lab
+// and partner groups have no app-plane signal and never will, so the column is empty for them and
+// the counter-derived numbers stay the whole story.
 //
-// The mapping is an inference from the edge scoreboard, which labels 'dz' as the leader-publish
-// path — the same path edge-solana-shreds carries. Nothing in the data proves the two are the
-// same thing, so it is one explicit literal here rather than a pattern quietly matching, and it
-// is the first thing to re-check if the largest group on the page ever shows a suspiciously
-// healthy timestamp.
-var edgeMulticastShredsFeedAlias = map[string]string{
-	"dz": "edge-solana-shreds",
-}
-
-// edgeMulticastShredsFeeds is the set queried from the race summary: the four feeds named after
-// their group plus the aliased one.
-var edgeMulticastShredsFeeds = []string{
-	"dz",
-	"edge-solana-root",
-	"edge-solana-retrans-amer",
-	"edge-solana-retrans-eu",
-	"edge-solana-retrans-apac",
-}
-
-// edgeMulticastShredsSlotWindow is how far back from the newest slot the race summary is read.
-// ~2000 slots is about thirteen minutes, enough that a healthy feed always has rows and short
-// enough that the scan stays inside the slot index.
-const edgeMulticastShredsSlotWindow = 2000
+// There used to be a second leg here reading the shred race summary for the five Solana groups. It
+// went with them when edgeMulticastExcludedPrefix took them off the page: `resolve` builds its
+// index from the group list this page loaded, so every race row it returned resolved to "" and was
+// dropped — a per-page-load query against the shredder database whose result reached nothing. Worse,
+// it set the `available` flag, so with the Kalshi proxy absent the page would have rendered the
+// column over a screen of blanks. `slot_feed_race_summary_v2` is still read by the edge scoreboard,
+// which is where the shred race belongs.
 
 // edgeMulticastLastHeard is one group's application-plane observation, folded over every capture
 // source and every recording node that reported it.
 type edgeMulticastLastHeard struct {
 	at time.Time
 
-	// table is the proxied table the winning timestamp came out of, so a reader can tell a BBO
-	// observation from a shred race. Not a capture source id: several capture sources fold into
-	// one of these.
+	// table is the proxied table the winning timestamp came out of, so a reader can tell which
+	// capture plane answered. Not a capture source id: several capture sources fold into one of
+	// these.
 	table          string
 	captureSources int
 
@@ -86,8 +66,8 @@ type edgeMulticastLastHeard struct {
 }
 
 // edgeMulticastNodeObs is what one recording node wrote down for one group inside the window.
-// Samples are comparable between nodes on the same group and nowhere else: a Kalshi feed counts
-// BBO observations, a Solana feed counts race rows.
+// Samples are comparable between nodes on the same group and nowhere else — they count whatever
+// that group's capture writes down, today a BBO observation.
 type edgeMulticastNodeObs struct {
 	node    string
 	samples uint64
@@ -133,13 +113,11 @@ type edgeMulticastCaptureSourcePrefix struct {
 // name it.
 func newEdgeMulticastCaptureSourceMap(groups []MulticastDeliveryGroup) edgeMulticastCaptureSourceMap {
 	m := edgeMulticastCaptureSourceMap{exact: map[string]string{}, byMulticastIP: map[string]string{}}
-	byCode := map[string]string{}
 	for _, g := range groups {
-		byCode[g.Code] = g.PK
 		if g.MulticastIP != "" {
 			m.byMulticastIP[g.MulticastIP] = g.PK
 		}
-		// The shreds feeds name their group outright.
+		// A capture source may name its group outright.
 		m.exact[g.Code] = g.PK
 
 		// Driven off edgeMulticastPlanes so a plane added there is understood here too: the
@@ -154,11 +132,6 @@ func newEdgeMulticastCaptureSourceMap(groups []MulticastDeliveryGroup) edgeMulti
 				prefix:  plane + "_" + strings.ReplaceAll(base, "-", "_"),
 				groupPK: g.PK,
 			})
-		}
-	}
-	for feed, code := range edgeMulticastShredsFeedAlias {
-		if pk, ok := byCode[code]; ok {
-			m.exact[feed] = pk
 		}
 	}
 	// Longest prefix first so a more specific capture source never loses to a shorter one that
@@ -191,11 +164,12 @@ func (m edgeMulticastCaptureSourceMap) resolve(captureSource string) string {
 
 // queryEdgeMulticastLastHeard collects the application-plane timestamps for every group it can.
 //
-// Two independent legs, each probe-guarded, each contributing whatever it can. The proxied feeds
-// and shredder tables are absent in local dev and in every test that does not create them, and
-// an absent table has to leave the rest of the page intact — so a leg that cannot run yields
-// nothing and the caller carries on. The returned bool reports whether ANY leg was queryable, so
-// the UI can drop the column entirely rather than render a screen of blanks.
+// Probe-guarded. The proxied feeds table is absent in local dev and in every test that does not
+// create it, and an absent table has to leave the rest of the page intact — so a leg that cannot
+// run yields nothing and the caller carries on. The returned bool reports whether the leg was
+// queryable, so the UI can drop the column entirely rather than render a screen of blanks. It is
+// kept as a bool rather than folded into len(out) because a queryable table with no rows is a
+// reading — every capture is down — where an absent one is not.
 func (a *API) queryEdgeMulticastLastHeard(ctx context.Context, captureSources edgeMulticastCaptureSourceMap) (map[string]edgeMulticastLastHeard, bool, error) {
 	out := map[string]edgeMulticastLastHeard{}
 	available := false
@@ -211,29 +185,7 @@ func (a *API) queryEdgeMulticastLastHeard(ctx context.Context, captureSources ed
 		}
 	}
 
-	shredsOK, err := a.shredderTableExists(ctx, "slot_feed_race_summary_v2")
-	if err != nil {
-		return nil, false, err
-	}
-	if shredsOK {
-		available = true
-		if err := a.collectShredsLastHeard(ctx, captureSources, out); err != nil {
-			return nil, false, err
-		}
-	}
-
 	return out, available, nil
-}
-
-// shredderTableExists is the shredder-database twin of kalshiTableExists, with the same contract:
-// a probe failure is an error, never folded into "absent".
-func (a *API) shredderTableExists(ctx context.Context, table string) (bool, error) {
-	var n uint8
-	q := fmt.Sprintf("EXISTS TABLE `%s`.%s", a.ShredderDB, table)
-	if err := a.envDB(ctx).QueryRow(ctx, q).Scan(&n); err != nil {
-		return false, err
-	}
-	return n == 1, nil
 }
 
 // collectKalshiLastHeard reads the newest BBO observation per DoubleZero capture source.
@@ -273,50 +225,6 @@ func (a *API) collectKalshiLastHeard(ctx context.Context, captureSources edgeMul
 		mergeEdgeMulticastLastHeard(out, captureSources.resolve(captureSource), captureSource,
 			at, "kalshi_bbo_observations",
 			edgeMulticastNodeObs{node: node, samples: samples, at: at})
-	}
-	return rows.Err()
-}
-
-// collectShredsLastHeard reads the newest race row per solana feed.
-//
-// Bounded by slot rather than by time: slot is the second sort-key column, so `slot >= max - N`
-// seeks the index instead of scanning the partition, and the max(slot) preamble is the same one
-// the edge scoreboard already runs every cycle. maxValidSlot is not optional — corrupted rows
-// near 2^64 would otherwise win the max and push the window past every real row.
-func (a *API) collectShredsLastHeard(ctx context.Context, captureSources edgeMulticastCaptureSourceMap, out map[string]edgeMulticastLastHeard) error {
-	quoted := make([]string, len(edgeMulticastShredsFeeds))
-	for i, f := range edgeMulticastShredsFeeds {
-		quoted[i] = "'" + f + "'"
-	}
-	db := fmt.Sprintf("`%s`", a.ShredderDB)
-	q := fmt.Sprintf(`
-		WITH (
-			SELECT max(slot) FROM %[1]s.slot_feed_race_summary_v2 WHERE slot < %[2]d
-		) AS newest_slot
-		SELECT feed, host, count() AS samples, max(event_ts) AS last_event_ts
-		FROM %[1]s.slot_feed_race_summary_v2
-		WHERE slot >= newest_slot - %[3]d AND slot < %[2]d
-			AND feed IN (%[4]s)
-		GROUP BY feed, host
-		SETTINGS max_execution_time = 20, timeout_before_checking_execution_speed = 0
-	`, db, maxValidSlot, edgeMulticastShredsSlotWindow, strings.Join(quoted, ","))
-
-	start := time.Now()
-	rows, err := a.envDB(ctx).Query(ctx, q)
-	metrics.RecordClickHouseQuery("edge_multicast_last_heard_shreds", time.Since(start), err)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var feed, host string
-		var samples uint64
-		var lastTS time.Time
-		if err := rows.Scan(&feed, &host, &samples, &lastTS); err != nil {
-			return err
-		}
-		mergeEdgeMulticastLastHeard(out, captureSources.resolve(feed), feed, lastTS.UTC(), "slot_feed_race_summary_v2",
-			edgeMulticastNodeObs{node: host, samples: samples, at: lastTS.UTC()})
 	}
 	return rows.Err()
 }

@@ -2,6 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
 import { AlertCircle, ChevronDown, ChevronRight, Loader2, Radio } from 'lucide-react'
+import {
+  completeness,
+  gapEpisodeStats,
+  mergeGapEpisodes,
+  sequenceLoss,
+} from './edge-multicast-gap-episodes'
 import { Tooltip } from '@/components/ui/tooltip'
 import { PageHeader } from './page-header'
 import { CopyableText } from './copyable-text'
@@ -9,19 +15,28 @@ import { handleRowClick } from '@/lib/utils'
 import {
   fetchEdgeMulticast,
   type EdgeMulticastChannelInstance,
+  type GapEpisode,
   type EdgeMulticastBGPRtt,
   type EdgeMulticastBGPSession,
   type EdgeMulticastGroup,
   type EdgeMulticastPathParity,
   type EdgeMulticastPublisher,
   type EdgeMulticastPublisherVerdicts,
+  type EdgeMulticastRecorderCoverage,
   type EdgeMulticastSequenceHealth,
   type EdgeMulticastService,
 } from '@/lib/api'
 
-// One screen for every multicast group in the Edge product — the groups whose ledger code carries
-// the `edge-` prefix — showing who publishes, who receives, and whether anything is flowing. The per-group pages already answer this one group at a time; the
-// question that needs a fleet view is "is any feed silent right now".
+// One screen for every Edge MARKET-DATA multicast group — the `edge-` prefix minus the Solana ones
+// — showing who publishes, who receives, and whether anything is flowing. The per-group pages
+// already answer this one group at a time; the question that needs a fleet view is "is any feed
+// silent right now".
+//
+// The Solana groups are out of scope rather than hidden, and the API says so: every measurement
+// here is built for two publishers carrying one product over redundant paths, recorded by nodes
+// running a wire protocol with sequence numbers, and not one column means the same thing on a
+// 772-publisher Turbine fan-in. They stay on /dz/multicast-groups, the every-group view. See
+// edgeMulticastExcludedPrefix for what keeping them cost the rest of this page.
 //
 // Everything about freshness on this page is deliberate. Rates come from five-minute counter
 // rollups that land several minutes late, so a green dot here means "traffic in the last bucket
@@ -58,10 +73,13 @@ const EDGE_MULTICAST_BACK = { back: { to: '/dz/edge/multicast', label: 'Edge Mul
 // Keyed by feed family — the feed code without its plane suffix — because the API groups the
 // planes of one product into a single section and gives each row a Plane instead.
 const SERVICE_LABELS: Record<string, string> = {
-  'solana-shreds-full': 'Solana Shreds',
   'kalshi-sports': 'Kalshi Sports',
   'kalshi-perps': 'Kalshi Perps',
-  'edge-unclaimed': 'Edge groups with no feed row',
+  // A group with no feed row but with publishers moving traffic gets its own section, keyed on the
+  // GROUP family rather than a feed family — hence the `edge-` prefix these carry and the others do
+  // not. The header still says the feed row is missing; only the placement changed.
+  'edge-kalshi-elections': 'Kalshi Elections',
+  'edge-unclaimed': 'Edge groups with neither a feed row nor traffic',
 }
 
 // An unlisted family renders under its own code rather than being dropped, so a product added to
@@ -251,6 +269,15 @@ function PublisherCell({
       ? `${v.unrecorded} with no recorded series while peers on this group have one`
       : '',
     v.unknown > 0 ? `${v.unknown} with no counter data — not a fault, nothing measured them` : '',
+    // The same caveat Ingress carries, on the number it is derived FROM. "Above the floor" is a
+    // statement about a tunnel counter, and a publisher that feeds several groups from one tunnel
+    // reports the sum against each of them — so on such a group the count is an upper bound, and
+    // clearing the floor is not evidence that THIS group is being fed. Measured on mainnet:
+    // edge-kalshi-elections-tob read 2/2 publishing and healthy while its publishers sent it
+    // nothing at all, the whole ~18.9 Mbps belonging to the mbp group on the same tunnels.
+    group.traffic_ambiguous
+      ? 'upper bound: at least one publisher feeds several groups from one tunnel, so clearing the floor does not attest to this group'
+      : '',
     below > 0 && below !== v.thin + v.silent
       ? `${below} below the floor on the counter plane`
       : '',
@@ -280,6 +307,7 @@ function PublisherCell({
             both say 'publishing' is what this replaced. The per-line verdicts still colour the
             dot, so a group whose only fault is a gapped series does not read green. */}
         <span>
+          {group.traffic_ambiguous && group.publishers_publishing > 0 ? '~' : ''}
           {group.publishers_publishing}
           <span className="text-muted-foreground">/{publishers.total}</span>
         </span>
@@ -288,9 +316,17 @@ function PublisherCell({
   )
 }
 
-// One publisher, one line. Everything on it is per member: its own rate, its own bucket age, its
-// own recorded sequence series, its own verdict against the floor — none of which survives the
-// group roll-up above.
+// One publisher, one line, and everything known about that path: the tunnel it leaves through and
+// what that tunnel is moving, then what the recorders received from it, how it compares with its
+// peer path, its own sequence series and its own verdict.
+//
+// The tunnel facts sat in a separate block above the table for one release, because they belong to
+// the interface and a publisher serves both planes of its feed from one — so on this table they read
+// twice, once per group the tunnel feeds. Splitting them out cost more than the repetition did: a
+// header and a row per tunnel above every section, while the lines below kept the whitespace the
+// cells had left behind. The same information in more space is not a simplification. What the split
+// was actually for — not claiming a shared counter as a per-group measurement — is done by the
+// Ingress column's subtitle instead, once for the column rather than once per cell.
 function PublisherLineRow({
   line,
   asOf,
@@ -299,6 +335,8 @@ function PublisherLineRow({
   showSequence,
   showObservations,
   sequenceAsOfAge,
+  observationsAsOfAge,
+  gapWindow,
   floorBps,
 }: {
   line: EdgeMulticastPublisher
@@ -308,8 +346,12 @@ function PublisherLineRow({
   showSequence: boolean
   showObservations: boolean
   sequenceAsOfAge?: number
+  observationsAsOfAge?: number
+  gapWindow?: GapWindow
   floorBps: number
 }) {
+  // Aged against the payload clock, not the wall clock: this number was computed when the payload
+  // was.
   const age = ageSecs(line.observed_at, asOf)
   const stale = age === undefined || age > STALE_AFTER_SECS
   const label = CLASS_LABEL[line.class]
@@ -369,29 +411,35 @@ function PublisherLineRow({
           now={now}
         />
       </td>
+      {/* The floor reading, in the column the group row counts it in, so a line and the count
+          above it say the same thing in the same place. It is not the Health badge repeated: that
+          one folds this together with what the recorders saw, and is the only column that can also
+          say the path gapped. */}
       <td className="px-3 py-1.5 whitespace-nowrap">
-        <span className="inline-flex items-center gap-2">
-          <Tooltip content={statusDetail}>
-            <span className="inline-flex items-center gap-1.5">
-              <span
-                className={`inline-block h-1.5 w-1.5 rounded-full ${PUBLISHER_DOT[line.status] ?? PUBLISHER_DOT.unknown}`}
-              />
-              <span className={line.status === 'publishing' ? 'text-muted-foreground' : ''}>
-                {line.status}
-              </span>
+        <Tooltip content={statusDetail}>
+          <span className="inline-flex items-center gap-1.5">
+            <span
+              className={`inline-block h-1.5 w-1.5 rounded-full ${PUBLISHER_DOT[line.status] ?? PUBLISHER_DOT.unknown}`}
+            />
+            <span className={line.status === 'publishing' ? 'text-muted-foreground' : ''}>
+              {line.status}
             </span>
-          </Tooltip>
-          {/* The BGP badge that used to sit here moved into the DZD cell, where the device's own
-              view of the session lives. Two BGP markers three columns apart was the duplication
-              that pushed this table past the viewport. */}
-        </span>
+          </span>
+        </Tooltip>
       </td>
+      {/* Subscribers is a count over the group and a single path has nothing to say in it. */}
       <td className="px-3 py-1.5" />
+      {/* No '~' on the number, and that is the point. The caveat the tilde carried was never about
+          the counter's accuracy — it was about which group the bytes could be attributed to, which
+          the column header now says once for every cell under it. At the tunnel's grain the figure
+          is exact for what it measures. */}
       <td className="px-3 py-1.5 text-right whitespace-nowrap">
-        {line.bps === null ? (
+        {line.bps === null || line.bps === undefined ? (
           <span className="text-muted-foreground">no data</span>
         ) : (
-          <RateCell bps={line.bps} ambiguous={line.multi_group} stale={stale} />
+          <span className={`tabular-nums ${stale ? 'text-muted-foreground' : ''}`}>
+            {formatBps(line.bps)}
+          </span>
         )}
         <div className="text-[10px] text-muted-foreground/70">
           {age === undefined ? '—' : <span className={stale ? 'text-amber-500' : undefined}>{formatAge(age)}</span>}
@@ -399,12 +447,12 @@ function PublisherLineRow({
       </td>
       {showObservations && (
         <td className="px-3 py-1.5 text-right whitespace-nowrap">
-          <MsgRateCell msgPerSec={line.msg_per_sec} />
+          <MsgRateCell msgPerSec={line.msg_per_sec} asOfAge={observationsAsOfAge} />
         </td>
       )}
       {showObservations && (
         <td className="px-3 py-1.5 text-right whitespace-nowrap">
-          <PeerParityCell parity={line.path_parity} />
+          <PeerParityCell parity={line.path_parity} asOfAge={observationsAsOfAge} />
         </td>
       )}
       {/* "Heard" is per group — the recorders' own plane, with nothing to say about one
@@ -412,7 +460,11 @@ function PublisherLineRow({
       {showLastHeard && <td className="px-3 py-1.5" />}
       {showSequence && (
         <td className="px-3 py-1.5 whitespace-nowrap">
-          <PublisherSequenceCell sequence={line.sequence} asOfAge={sequenceAsOfAge} />
+          <PublisherSequenceCell
+            sequence={line.sequence}
+            asOfAge={sequenceAsOfAge}
+            gapWindow={gapWindow}
+          />
         </td>
       )}
       <td className="px-3 py-1.5">
@@ -424,21 +476,68 @@ function PublisherLineRow({
 
 // What the recorders actually received from this path, per second.
 //
-// It sits next to the counter rate rather than replacing it because the two answer different
-// questions and fail differently. The counter is per tunnel and minutes late — an upper bound that
-// a multi-group publisher shares across its groups. This is per group and comes from the far end,
-// so it is what arrived rather than what was sent, and it is blank for any feed with no recorder
-// behind it. Neither is redundant with the other.
-function MsgRateCell({ msgPerSec }: { msgPerSec?: number }) {
+// It sits beside the counter rate rather than replacing it, because the two answer different
+// questions and fail differently. The counter is per tunnel and minutes late — the same figure on
+// every group that tunnel feeds, which is what its column header says and why this column exists.
+// This is per group and comes from the far end, so it is what arrived rather than what was sent, and
+// it is blank for any feed with no recorder behind it. Neither is redundant with the other.
+// Msg/s, Peer and Sequence are folded from refresher payloads on a ten-minute cycle, so past
+// STALE_AFTER_SECS one of them has missed a cycle and what it shows is a reading nobody has
+// re-taken. Until this existed the age lived only inside the Sequence tooltip and nowhere at all
+// for the other two, so a dead refresher left the page asserting a verdict indefinitely with no
+// visible tell.
+//
+// An ABSENT stamp is not staleness. It is a payload written before the API carried that clock, and
+// dimming a column over it would be inventing the reading — the opposite of the point. That is why
+// this does not follow the rate cells' `age === undefined` rule: their undefined means "no bucket",
+// which IS the absence of a measurement.
+function payloadStale(asOfAge?: number): boolean {
+  return asOfAge !== undefined && asOfAge > STALE_AFTER_SECS
+}
+
+// The tail every one of those tooltips carries, so the number always says when it was taken.
+function computedLine(asOfAge?: number): string {
+  if (asOfAge === undefined) return ''
+  if (!payloadStale(asOfAge)) return ` — computed ${formatAge(asOfAge)}`
+  return ` — computed ${formatAge(asOfAge)}, past the ${Math.round(STALE_AFTER_SECS / 60)}-minute refresh cycle: nobody has re-taken this reading`
+}
+
+// A payload-level clock stamps a whole column at once, so the header is where it belongs — saying
+// it per row would repeat one fact on every line. The cells below dim, which is the same two-part
+// treatment the Ingress column gives a rate bucket that missed its window.
+function ColumnHeader({ label, asOfAge }: { label: string; asOfAge?: number }) {
+  if (!payloadStale(asOfAge)) return <>{label}</>
+  return (
+    <Tooltip content={`this column is folded from a refresher payload computed ${formatAge(asOfAge!)}, past its ${Math.round(STALE_AFTER_SECS / 60)}-minute cycle — the numbers below are the last reading taken, not a current one`}>
+      <span className="text-amber-500">
+        {label} <span className="text-[10px] font-normal">{formatAge(asOfAge!)}</span>
+      </span>
+    </Tooltip>
+  )
+}
+
+function MsgRateCell({ msgPerSec, asOfAge }: { msgPerSec?: number; asOfAge?: number }) {
   if (msgPerSec === undefined) {
     return <span className="text-muted-foreground">—</span>
   }
   const text = msgPerSec >= 100 ? msgPerSec.toFixed(0) : msgPerSec.toFixed(1)
   return (
-    <Tooltip content="messages the recorders received from this path, per second over the observation window — per group, unlike the counter rate beside it">
-      <span className="tabular-nums text-muted-foreground">{text}</span>
+    <Tooltip
+      content={`messages the recorders received from this path, per second over the observation window — per group, unlike the counter rate beside it${computedLine(asOfAge)}`}
+    >
+      <span className={`tabular-nums text-muted-foreground${payloadStale(asOfAge) ? ' opacity-50' : ''}`}>
+        {text}
+      </span>
     </Tooltip>
   )
+}
+
+// The invariant: the digit shown is never better than the measurement. Rounding to three places
+// printed a 0.9797 as "0.980" beside a badge saying it was under the 0.98 floor — the cell and the
+// verdict contradicting each other over the third decimal. Truncating toward zero cannot do that:
+// what it prints is always a value the path did at least reach.
+function parityRatioText(ratio: number): string {
+  return (Math.floor(ratio * 1000) / 1000).toFixed(3)
 }
 
 // This path's delivery against its redundant peer, at the recorder that saw both.
@@ -447,21 +546,28 @@ function MsgRateCell({ msgPerSec }: { msgPerSec?: number }) {
 // is this path losing something its peer did not, and the eye should be able to scan the column
 // for a digit that is not a 1. An em dash means there was no peer to compare against, which is not
 // a pass.
-function PeerParityCell({ parity }: { parity?: EdgeMulticastPathParity }) {
+function PeerParityCell({ parity, asOfAge }: { parity?: EdgeMulticastPathParity; asOfAge?: number }) {
   if (!parity || parity.compared === 0) {
     return <span className="text-muted-foreground">—</span>
   }
-  const behind = parity.behind > 0
+  // The colour follows the VERDICT, not the raw count: a single failing pair out of thirty leaves
+  // the line healthy, and an amber ratio beside a healthy badge is the same contradiction the
+  // rounding used to produce one column over.
+  const behind = parity.faulted ?? parity.behind > 0
   return (
     <Tooltip
       content={
-        behind
+        (behind
           ? `behind its peer on ${parity.behind} of ${parity.compared} compared, worst ${parity.worst_source ?? ''}${parity.worst_node ? ` at ${parity.worst_node}` : ''}`
-          : `level with its peer across ${parity.compared} compared`
+          : parity.behind > 0
+            ? `under the floor on ${parity.behind} of ${parity.compared} compared — too few to call the path behind, and the kind of outlier a market opening or closing out of step produces`
+            : `level with its peer across ${parity.compared} compared`) + computedLine(asOfAge)
       }
     >
-      <span className={`tabular-nums ${behind ? 'text-amber-500' : 'text-muted-foreground'}`}>
-        {parity.worst_ratio.toFixed(3)}
+      <span
+        className={`tabular-nums ${behind ? 'text-amber-500' : 'text-muted-foreground'}${payloadStale(asOfAge) ? ' opacity-50' : ''}`}
+      >
+        {parityRatioText(parity.worst_ratio)}
       </span>
     </Tooltip>
   )
@@ -573,6 +679,21 @@ function PublisherHealthBadge({
         ? ' — its series is advancing, and this plane writes no gap marker, so loss was never checked'
         : ' — some of its series are on a plane with no gap marker, where loss was never checked'
   }
+  // Silence excused as the capture source's is still silence, and the verdict does not show it.
+  // Said here for the same reason the line above is: it qualifies the reading without minting a
+  // state between healthy and a fault.
+  // A gap measured at ONE recorder cannot name whose loss it is. Comparing the two paths there
+  // clears the recorder's host and nothing more — the branch into that recorder is upstream of the
+  // comparison and downstream of everything else. Observed on mainnet: 13 books gapped at the only
+  // node recording market-by-price, while the plane with three vantages found the same path intact
+  // at another, placing the loss on the branch. The verdict stands, the claim is narrowed.
+  if (health === 'gapped' && sequence && (sequence.gap_nodes ?? 0) < 2) {
+    detail +=
+      ' — measured at one recorder, so a loss on the branch into it reads the same as a loss on the path'
+  }
+  if (health === 'healthy' && sequence && (sequence.capture_source_quiet ?? 0) > 0) {
+    detail += `; ${sequence.capture_source_quiet} of its series are quiet at a capture source that went quiet on every path`
+  }
   return (
     <Tooltip content={detail}>
       <span
@@ -663,13 +784,27 @@ function LastHeardCell({ group, now }: { group: EdgeMulticastGroup; now: number 
 function sequenceInstanceLine(i: EdgeMulticastChannelInstance): string {
   const from = i.publisher_source_ip ? `${i.publisher_source_ip} ` : ''
   const head = `${from}ch${i.channel_id} @${i.node} (${i.capture_source}): ${i.messages.toLocaleString()} msgs`
+  // A stall every path at this vantage shares is the capture source going quiet — a market that
+  // closed, not a path that died — and the line has to say which of the two it is, because the
+  // status word next to it still reads 'stalled'.
+  if (i.capture_source_quiet) {
+    return `${head} — quiet, and so is every other path on this source: the venue, not this path`
+  }
   // Without a gap marker there is no book-level fault count and no snapshot cycle to report, so
   // the line says what was NOT measured instead of printing zeros that would read as findings.
   if (!i.gaps_measured) {
     return `${head}, ${i.resets.toLocaleString()} resets — gap counting not available on this plane`
   }
+  // The loss RATE, not the gap-message count, and only where there were gaps. gap_books saturates
+  // at the channel's instrument count — thirteen of thirteen and one of thirteen print the same
+  // badge — so this is the only severity the line can carry. gap_messages alone is a duration and
+  // stays out of sight.
+  const rate =
+    i.gap_books > 0 && i.messages > 0 && i.gap_messages
+      ? `, ${((i.gap_messages / i.messages) * 100).toFixed(2)}% of messages arrived un-anchored`
+      : ''
   return (
-    `${head}, ${i.gap_books.toLocaleString()} book(s) gapped, ${i.resets.toLocaleString()} resets, ` +
+    `${head}, ${i.gap_books.toLocaleString()} book(s) gapped${rate}, ${i.resets.toLocaleString()} resets, ` +
     `${i.snapshot_cycles.toLocaleString()} snapshot cycles`
   )
 }
@@ -677,10 +812,20 @@ function sequenceInstanceLine(i: EdgeMulticastChannelInstance): string {
 // The badge, shared by the group roll-up and the publisher lines. One instance per tooltip line:
 // these are the only tooltips on the page with a list in them, and run together as a paragraph
 // they are unreadable.
-function SequenceBadge({ status, count, detail }: { status: string; count: string; detail: string }) {
+function SequenceBadge({
+  status,
+  count,
+  detail,
+  stale,
+}: {
+  status: string
+  count: string
+  detail: string
+  stale?: boolean
+}) {
   return (
     <Tooltip content={detail} className="whitespace-pre-line">
-      <span className="inline-flex items-center gap-1.5">
+      <span className={`inline-flex items-center gap-1.5${stale ? ' opacity-50' : ''}`}>
         <span
           className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
             SEQUENCE_BADGE[status] ?? 'bg-muted text-muted-foreground'
@@ -694,6 +839,267 @@ function SequenceBadge({ status, count, detail }: { status: string; count: strin
   )
 }
 
+// The loss timeline for one publisher line.
+//
+// GAP_STRIP_WIDTH is fixed in pixels rather than fluid, and that is the whole point: every
+// publisher line of a group draws its episodes on the SAME axis, so the reader sees whether the
+// two paths of a feed lost data at the same moment or at different ones. Measured on mainnet the
+// answer was "different ones, always" — 10 seconds of loss on one Kalshi perps path, 64 on the
+// other, not one second on both — which the counters cannot express and a shared axis shows
+// without a word. A percentage width would rescale per row (the column is content-sized) and
+// destroy exactly that comparison.
+const GAP_STRIP_WIDTH = 96
+// A 3-second episode on a 15-minute axis is a third of a pixel. An invisible loss is worse than an
+// overstated one, so the mark is deliberately wider than the truth it stands for.
+const GAP_MARK_MIN_WIDTH = 2
+// Tooltip lines, not episodes: a busy path can carry dozens and a tooltip that runs off the
+// viewport reports nothing at all. The count in the header stays exact.
+const GAP_TOOLTIP_MAX_LINES = 8
+
+/** The axis gap episodes are drawn on: the payload's own clock and how wide its window is. */
+type GapWindow = { endMs: number; secs: number }
+
+// The track and its marks. Shared by every strip on the page so they are all the same axis: a
+// per-recorder line and the publisher's own gap timeline are only comparable if one pixel means
+// the same second in both.
+function GapMarks({
+  episodes,
+  window: win,
+  emphasis,
+}: {
+  episodes: GapEpisode[]
+  window: GapWindow
+  emphasis?: boolean
+}) {
+  const spanMs = win.secs * 1000
+  const startMs = win.endMs - spanMs
+  return (
+    <div
+      className="relative h-1.5 rounded-sm bg-muted overflow-hidden shrink-0"
+      style={{ width: GAP_STRIP_WIDTH }}
+    >
+      {episodes.map((e) => {
+        // Clamped both ends. An episode can hang off the left edge when the payload's clock and
+        // its own window disagree by a second, and a negative offset would draw the mark outside
+        // the track instead of at its start.
+        const offset = ((e.start * 1000 - startMs) / spanMs) * GAP_STRIP_WIDTH
+        const left = Math.min(Math.max(offset, 0), GAP_STRIP_WIDTH - GAP_MARK_MIN_WIDTH)
+        const width = Math.max((e.seconds / win.secs) * GAP_STRIP_WIDTH, GAP_MARK_MIN_WIDTH)
+        return (
+          <div
+            key={e.start}
+            className={`absolute inset-y-0 ${emphasis ? 'bg-violet-600' : 'bg-red-500'}`}
+            style={{ left, width: Math.min(width, GAP_STRIP_WIDTH - left) }}
+          />
+        )
+      })}
+    </div>
+  )
+}
+
+// One labelled strip: the recorder's name, then its losses on the shared axis.
+//
+// The label is inside the row rather than in a tooltip because these lines exist to be COMPARED —
+// "was lost here and its peers did not" is unreadable if you have to hover each one to learn which
+// is which.
+function RecorderLossRow({
+  label,
+  episodes,
+  window: win,
+  detail,
+  emphasis,
+}: {
+  label: string
+  episodes: GapEpisode[]
+  window: GapWindow
+  detail: string
+  emphasis?: boolean
+}) {
+  return (
+    <Tooltip content={detail} className="whitespace-pre-line">
+      <div className="flex items-center gap-1.5">
+        {/* Violet rather than a hotter red or amber, and the difference is categorical rather than
+            severity. Amber on this page means degraded, so it read as a MILDER fault than the red
+            lines above it — the exact inversion: a loss several recorders share is the one thing
+            here that cannot be blamed on a single branch. A different family says "different kind
+            of statement" instead of "same statement, less of it". */}
+        <span
+          className={`text-[9px] tabular-nums w-8 shrink-0 text-right ${
+            emphasis ? 'text-violet-600 font-medium' : 'text-muted-foreground'
+          }`}
+        >
+          {label}
+        </span>
+        <GapMarks episodes={episodes} window={win} emphasis={emphasis} />
+      </div>
+    </Tooltip>
+  )
+}
+
+// Every recorder of a path on one axis, plus the line that says whether a loss was one recorder's
+// or not.
+//
+// The last row is seconds where TWO OR MORE recorders lost at once. It is not "all of them", and
+// that ceiling is a property of the measurement rather than a choice: the reference is the union of
+// what the nodes recorded, so a message none of them received is in nobody's set and can never be
+// reported missing. Several at once is as close as this plane gets to naming a loss upstream of the
+// recorders, and one node alone is its branch.
+function RecorderLossTimeline({
+  sequence,
+  window: win,
+}: {
+  sequence: EdgeMulticastSequenceHealth
+  window: GapWindow
+}) {
+  const recorders = sequence.recorder_loss ?? []
+
+  // Attempted and failed is not the same as never applicable, and rendering both as nothing is how
+  // a query dying on every refresh cycle stayed invisible. Say so instead.
+  if (sequence.recorder_loss_unavailable) {
+    return (
+      <div className="flex items-center gap-1.5 border-t border-border/60 pt-0.5">
+        <span className="text-[9px] w-8 shrink-0 text-right text-muted-foreground">rec</span>
+        <span className="text-[9px] text-amber-600">not measured</span>
+      </div>
+    )
+  }
+
+  // One recorder is no comparison at all. Saying so is not decoration: an empty row here read as
+  // "the feature is broken" to the first person who looked at a sports group, because three states
+  // — compared, failed, and nothing to compare — had only two renderings between them. It is also
+  // an operational fact worth seeing, and the same one GapNodes bounds: with a single vantage, a
+  // gap on this feed cannot be attributed to the path rather than to that recorder's own branch.
+  if (recorders.length < 2) {
+    return (
+      <div className="flex items-center gap-1.5 border-t border-border/60 pt-0.5">
+        <span className="text-[9px] w-8 shrink-0 text-right text-muted-foreground">rec</span>
+        <span className="text-[9px] text-muted-foreground">
+          {recorders.length === 1 ? 'one vantage, nothing to compare' : 'no peer to compare'}
+        </span>
+      </div>
+    )
+  }
+  const simultaneous = sequence.recorder_loss_simultaneous ?? []
+  const windowEnd = new Date(win.endMs).toISOString().slice(11, 19)
+
+  return (
+    <div className="flex flex-col gap-px border-t border-border/60 pt-0.5">
+      {recorders.map((r) => (
+        <RecorderLossRow
+          key={r.node}
+          label={r.location_code || r.node}
+          episodes={r.episodes ?? []}
+          window={win}
+          detail={
+            `${r.node}: ${r.missing.toLocaleString()} of ${r.reference_seqs.toLocaleString()} ` +
+            `messages its peers recorded\n` +
+            (r.missing === 0
+              ? 'recorded everything the others did'
+              : `${(r.episodes ?? []).length} episode(s) over the ${Math.round(win.secs / 60)}m to ${windowEnd}Z`)
+          }
+        />
+      ))}
+      {/* Set apart from the rows above: those are observations, this is what they add up to. */}
+      <div className="mt-px border-t border-border/60 pt-px">
+        <RecorderLossRow
+          label="2+"
+          episodes={simultaneous}
+          window={win}
+          emphasis
+          detail={
+            simultaneous.length === 0
+              ? 'no second in which two or more recorders lost at once — every loss above is one recorder\'s own branch'
+              : `${simultaneous.length} episode(s) where two or more recorders lost at the same second: not one branch's fault.\n` +
+                'A loss no recorder saw cannot appear here — the reference is what someone recorded.'
+          }
+        />
+      </div>
+    </div>
+  )
+}
+
+function GapTimeline({
+  instances,
+  window: win,
+}: {
+  instances: EdgeMulticastChannelInstance[]
+  window: GapWindow
+}) {
+  // Nothing on this line was measured for gaps, so there is no axis to draw. Rendering an empty
+  // strip here would be the clean bill of health the whole Sequence column refuses to give the
+  // top-of-book plane.
+  if (!instances.some((i) => i.gaps_measured)) {
+    return null
+  }
+
+  const episodes = mergeGapEpisodes(instances)
+  const totalSecs = episodes.reduce((n, e) => n + e.seconds, 0)
+  // Anchored to the window's own right edge, never to "the last 15 minutes". The axis ends at the
+  // refresher's clock, which can be ten minutes old, and a relative phrase here would claim a
+  // freshness the rest of this column is careful not to.
+  const windowLabel = `the ${Math.round(win.secs / 60)}m to ${new Date(win.endMs)
+    .toISOString()
+    .slice(11, 19)}Z`
+
+  const stats = gapEpisodeStats(episodes, win.secs, win.endMs)
+  const loss = sequenceLoss(instances, win.secs)
+
+  // Two different measurements, kept apart on purpose. The episodes are TIME a book spent
+  // un-anchored — that is what the strip draws, and what gap-free and recovery are about. The loss
+  // figures are MESSAGES that never arrived, from the per-instrument sequence, and they are the
+  // only ones a rate can be built from. A break in the numbering and a stretch of un-anchored time
+  // are not the same event and their counts legitimately differ: one break can leave a book
+  // un-anchored for seconds, and a burst of them lands inside one episode.
+  const lossLines = loss
+    ? [
+        `${loss.ppm.toFixed(1)} ppm lost · ${loss.missing.toLocaleString()} of ` +
+          `${(loss.received + loss.missing).toLocaleString()} updates`,
+        `${loss.perMinute.toFixed(1)} missing/min · ${((loss.events * 3600) / win.secs).toFixed(1)} seq gaps/h`,
+        `worst break ${loss.maxGap} msg · p99 ${loss.p99Gap.toFixed(1)} msg`,
+      ]
+    : []
+
+  const lines =
+    episodes.length === 0
+      ? [
+          `no loss recorded over ${windowLabel}`,
+          `gap-free ${(stats.gapFree * 100).toFixed(1)}%`,
+          ...lossLines,
+        ]
+      : [
+          `${stats.episodes} episode(s), ${totalSecs}s losing over ${windowLabel}`,
+          `gap-free ${(stats.gapFree * 100).toFixed(1)}%`,
+          ...lossLines,
+          `worst recovery ${stats.worstRecoverySeconds}s` +
+            (stats.sinceLastSeconds === undefined
+              ? ''
+              : ` · last gap ${formatAge(stats.sinceLastSeconds)}`),
+          ...episodes
+            .slice(0, GAP_TOOLTIP_MAX_LINES)
+            .map(
+              (e) =>
+                `${new Date(e.start * 1000).toISOString().slice(11, 19)}Z for ${e.seconds}s`,
+            ),
+          episodes.length > GAP_TOOLTIP_MAX_LINES
+            ? `+${episodes.length - GAP_TOOLTIP_MAX_LINES} more`
+            : '',
+        ].filter(Boolean)
+
+  return (
+    <Tooltip content={lines.join('\n')} className="whitespace-pre-line">
+      {/* Labelled, and labelled with what it MEASURES rather than with a vantage: this row is time
+          the publisher's books spent un-anchored, and the rows below it are messages a recorder did
+          not receive. Left unlabelled among labelled rows it read as their total or as a fourth
+          recorder, and it is neither — different plane, different unit, and recorded at one node
+          where those are three. Same indent so the two still share one axis. */}
+      <div className="flex items-center gap-1.5">
+        <span className="text-[9px] w-8 shrink-0 text-right text-muted-foreground">book</span>
+        <GapMarks episodes={episodes} window={win} />
+      </div>
+    </Tooltip>
+  )
+}
+
 // The sequence verdict for ONE publisher: the recorded wire protocol's own counters for the series
 // it emitted, and the only thing on this page that can say "this path lost data" as opposed to
 // "this member is quiet". A series is owned by one path — two paths carrying one channel cannot
@@ -701,9 +1107,11 @@ function SequenceBadge({ status, count, detail }: { status: string; count: strin
 function PublisherSequenceCell({
   sequence,
   asOfAge,
+  gapWindow,
 }: {
   sequence?: EdgeMulticastSequenceHealth
   asOfAge?: number
+  gapWindow?: GapWindow
 }) {
   // Nothing was recorded from this publisher's address. Not a verdict of any kind, so no badge:
   // the group cell says how many series were attributed and how many were not.
@@ -713,19 +1121,40 @@ function PublisherSequenceCell({
 
   const total = sequence.instances.length
   const bad = sequence.gapped + sequence.stalled
+  const quiet = sequence.capture_source_quiet ?? 0
   const detail = [
     ...sequence.instances.map(sequenceInstanceLine),
-    asOfAge === undefined ? '' : `computed ${formatAge(asOfAge)}`,
+    quiet > 0
+      ? `${quiet} of ${total} quiet at a capture source that went quiet on every path — not counted against this path`
+      : '',
+    sequence.gapped > 0 && (sequence.gap_nodes ?? 0) < 2
+      ? 'gaps measured at one recorder: a loss on the branch into it cannot be told from a loss on the path'
+      : '',
+    asOfAge === undefined ? '' : computedLine(asOfAge).replace(/^ — /, ''),
   ]
     .filter(Boolean)
     .join('\n')
 
   return (
-    <SequenceBadge
-      status={sequenceLabel(sequence.status, total, sequence.gaps_unmeasured ?? 0)}
-      count={bad > 0 ? `${bad}/${total}` : total > 1 ? String(total) : ''}
-      detail={detail}
-    />
+    <div className="flex flex-col gap-0.5">
+      <SequenceBadge
+        status={sequenceLabel(sequence.status, total, sequence.gaps_unmeasured ?? 0)}
+        // Two numbers with two meanings shared one slot: '6/31' is faults over series, and a bare
+        // '3' was the series count — which reads as three faults. The multiplier is how this page
+        // already says "over N of them" in the Heard column, so a count with no faults takes it.
+        count={bad > 0 ? `${bad}/${total}` : total > 1 ? `×${total}` : ''}
+        detail={detail}
+        stale={payloadStale(asOfAge)}
+      />
+      {/* The strip is drawn for a CLEAN series too, not only a gapped one. An empty track beside
+          a marked one is the comparison — "this path held while its peer dropped" — and hiding it
+          would leave the reader with two badges and no way to tell whether the feed itself lost
+          anything. */}
+      {gapWindow && <GapTimeline instances={sequence.instances} window={gapWindow} />}
+      {/* Below the line's own strip and on the same axis: one row per recorder, then the row that
+          says whether a loss was one recorder's branch or something upstream of all of them. */}
+      {gapWindow && <RecorderLossTimeline sequence={sequence} window={gapWindow} />}
+    </div>
   )
 }
 
@@ -733,10 +1162,75 @@ function PublisherSequenceCell({
 // have no line to sit on. A series recorded from an address no publisher of this group carries is
 // the one thing the per-publisher view structurally cannot show, and dropping it silently is the
 // outcome this column exists to prevent.
-function UnattributedSequenceCell({ sequence }: { sequence?: EdgeMulticastSequenceHealth }) {
+function UnattributedSequenceCell({
+  sequence,
+  window: win,
+}: {
+  sequence?: EdgeMulticastSequenceHealth
+  window?: GapWindow
+}) {
   const unattributed = sequence?.unattributed ?? 0
+  const allPaths = sequence?.all_paths_gapped ?? []
+  // The one figure that answers "did this feed deliver what it should have", as opposed to the
+  // per-path and per-recorder findings the lines below already carry. It belongs on the group row
+  // because completeness is a property of the FEED: a path losing while its peer holds costs the
+  // feed nothing, which is exactly what the redundancy is for.
+  const c = completeness(sequence)
+
+  // The redundancy failed. This outranks the unattributed count because it is the only thing on
+  // this page that says the FEED lost data rather than one of its paths: A protects B, so a gap on
+  // one path is covered and a gap on both is not. Measured on mainnet it is rare — 22 seconds in
+  // six hours against 167 where a single path lost — so a badge here is a finding, not noise.
+  if (allPaths.length > 0) {
+    const lost = c.unprotectedSeconds
+    const detail = [
+      `${allPaths.length} episode(s), ${lost}s in which EVERY path of this feed was losing at once`,
+      'A gap on one path is covered by its peer; a gap on both is data the feed did not deliver.',
+      c.ppm === undefined
+        ? ''
+        : `over the window: ${c.ppm.toFixed(1)} ppm lost — ${c.missing.toLocaleString()} of ${c.expected.toLocaleString()} updates`,
+      ...allPaths
+        .slice(0, GAP_TOOLTIP_MAX_LINES)
+        .map((e) => `${new Date(e.start * 1000).toISOString().slice(11, 19)}Z for ${e.seconds}s`),
+      allPaths.length > GAP_TOOLTIP_MAX_LINES
+        ? `+${allPaths.length - GAP_TOOLTIP_MAX_LINES} more`
+        : '',
+    ].filter(Boolean)
+    return (
+      <div className="flex flex-col gap-1">
+        <Tooltip content={detail.join('\n')} className="whitespace-pre-line">
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-red-500/15 text-red-500">
+            all paths lost {lost}s
+          </span>
+        </Tooltip>
+        {win && <GapMarks episodes={allPaths} window={win} />}
+      </div>
+    )
+  }
+
   if (unattributed === 0) {
-    return <span className="text-muted-foreground">—</span>
+    // No shared loss and nothing unattributed, so the cell says how complete the feed was. A
+    // measured zero reads as such; an ABSENT measurement stays a dash, because a feed recorded only
+    // on the top-of-book plane carries no per-instrument sequence and has no completeness figure —
+    // printing 0 ppm there would be the clean bill of health this column refuses to give.
+    if (c.ppm === undefined) {
+      return <span className="text-muted-foreground">—</span>
+    }
+    return (
+      <Tooltip
+        content={
+          `${c.missing.toLocaleString()} of ${c.expected.toLocaleString()} updates never arrived at any recorder\n` +
+          'Every path of this feed held for the whole window, so nothing was lost that the redundancy did not cover.'
+        }
+        className="whitespace-pre-line"
+      >
+        <span
+          className={`text-xs tabular-nums ${c.ppm > 0 ? 'text-foreground' : 'text-muted-foreground'}`}
+        >
+          {c.ppm.toFixed(1)} ppm
+        </span>
+      </Tooltip>
+    )
   }
   return (
     <Tooltip
@@ -750,27 +1244,58 @@ function UnattributedSequenceCell({ sequence }: { sequence?: EdgeMulticastSequen
 }
 
 
-// Rates carry a tilde when the group's publishers also publish elsewhere from the same tunnel:
-// counters are per interface, so the figure is an upper bound for this group. Hiding that would
-// present a shared measurement as a per-group one.
-function RateCell({ bps, ambiguous, stale }: { bps: number; ambiguous: boolean; stale: boolean }) {
-  const body = (
-    <span className={`tabular-nums ${stale ? 'text-muted-foreground' : ''}`}>
-      {ambiguous && bps > 0 ? '~' : ''}
-      {formatBps(bps)}
-    </span>
-  )
-  if (!ambiguous) return body
+// The tilde-and-upper-bound rate cell that used to live here is gone. A counter read per interface
+// has no ambiguity to caveat once it is only ever printed at the tunnel's own grain, which is what
+// the Ingress header now says for the whole column; the '~' survives on the group's Publishers
+// count, where what is uncertain is not a rate but whether clearing the floor attests to THIS group.
+
+// The one finding on this page that belongs to no publisher line: a recording node that is short
+// on every path of a group is the vantage, not the feed.
+//
+// It sits on the group row for exactly the reason the publisher verdicts do not — a per-line badge
+// would have to repeat the same node fault on every line of the group, naming the feed for
+// something the feed did not do. This is what 'skewed' was always trying to say on the counter
+// plane, said where the numbers are exact: recorded message counts against the best-placed
+// recorder, rather than sample counts against half the median.
+function RecorderCoverageBadge({
+  coverage,
+  asOfAge,
+}: {
+  coverage?: EdgeMulticastRecorderCoverage
+  asOfAge?: number
+}) {
+  const lagging = coverage?.lagging ?? []
+  if (!coverage || lagging.length === 0) return null
+  const detail = lagging
+    .map(
+      (l) =>
+        `${l.node}: ${(l.worst_ratio * 100).toFixed(1)}% of the best-placed recorder${l.worst_source ? ` on ${l.worst_source}` : ''}, behind on ${l.behind} of ${l.compared} compared`,
+    )
+    .concat(
+      'Short on every path of this group it records, so this is the recorder or its last hop rather than one publisher’s path — a deficit confined to one path is reported as Peer on that line instead.',
+      // Folded from the same cache entry Msg/s and Peer are, so it ages with them: an amber
+      // verdict that cannot go stale is a verdict that outlives the refresher that produced it.
+      computedLine(asOfAge).replace(/^ — /, ''),
+    )
+    .filter(Boolean)
+    .join('\n')
   return (
-    <Tooltip content="Upper bound: at least one publisher feeds several groups from one tunnel, and interface counters cannot be split between them.">
-      {body}
+    <Tooltip content={detail} className="whitespace-pre-line">
+      <span
+        className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/15 text-amber-500${payloadStale(asOfAge) ? ' opacity-50' : ''}`}
+      >
+        {lagging.length}/{coverage.nodes} recorders
+      </span>
     </Tooltip>
   )
 }
 
-// A group's publisher lines are open by default while the whole published set fits on screen —
-// the market-data feeds have two publishers and that IS the view someone opens this page for. The
-// shreds groups have hundreds, so they start collapsed rather than burying every other row.
+// A group's publisher lines are open by default while the whole published set fits on screen — the
+// market-data feeds have two publishers and that IS the view someone opens this page for.
+//
+// Nothing in scope trips this today: the group with hundreds of lines was Solana shreds, which the
+// API now excludes. It stays as the guard for the next wide group rather than being removed, since
+// what it protects against is a section that buries every row below it.
 const PUBLISHER_LINES_OPEN_BELOW = 5
 
 function GroupRow({
@@ -781,6 +1306,8 @@ function GroupRow({
   showSequence,
   showObservations,
   sequenceAsOfAge,
+  observationsAsOfAge,
+  gapWindow,
   floorBps,
   columns,
   onOpen,
@@ -792,6 +1319,8 @@ function GroupRow({
   showSequence: boolean
   showObservations: boolean
   sequenceAsOfAge?: number
+  observationsAsOfAge?: number
+  gapWindow?: GapWindow
   floorBps: number
   columns: number
   onOpen: (e: React.MouseEvent, pk: string) => void
@@ -815,9 +1344,7 @@ function GroupRow({
         </div>
       </td>
       {/* DZD is per publisher: which DoubleZero device a path attaches to, and what that device
-          says about its session. A group spans several, so the cell is empty here. The plane the
-          group carries used to live in this column and is gone — it was the last three characters
-          of the code two columns to the left. */}
+          says about its session. A group spans several, so the cell is empty here. */}
       <td className="px-3 py-3" />
       <td className="px-3 py-3 text-sm">
         <PublisherCell
@@ -831,19 +1358,12 @@ function GroupRow({
       <td className="px-3 py-3 text-sm">
         <SubscriberCell group={group} />
       </td>
-      {/* The bucket age rides under the rate rather than in a column of its own. It is a property
-          of that number and of nothing else on the row, and a whole column for it was pushing the
-          verdicts off the right edge of the table. */}
-      <td className="px-3 py-3 text-sm text-right whitespace-nowrap">
-        <RateCell bps={group.ingress_bps} ambiguous={group.traffic_ambiguous} stale={stale} />
-        <div className="text-[10px] text-muted-foreground/70">
-          {age === undefined ? (
-            'no data'
-          ) : (
-            <span className={stale ? 'text-amber-500' : undefined}>{formatAge(age)}</span>
-          )}
-        </div>
-      </td>
+      {/* Ingress is per tunnel, as its header says, so the group row prints nothing in it. A
+          group's total would be a sum over counters that each already include traffic for the
+          other groups their tunnel feeds — the figure that read '~18.6 Mbps' on a group whose own
+          ingress was nil. The lines carry the measurement; what this GROUP received is Msg/s,
+          measured at the recorders. */}
+      <td className="px-3 py-3" />
       {/* Msg/s and Peer are per PATH and the group row carries neither. Summing recorded message
           rates over a group's paths would double the feed — redundant paths carry the same
           traffic — and a parity ratio has no meaning until you name which path it is about. */}
@@ -862,12 +1382,14 @@ function GroupRow({
           what no line can: series recorded from an address no publisher of this group carries. */}
       {showSequence && (
         <td className="px-3 py-3 text-sm whitespace-nowrap">
-          <UnattributedSequenceCell sequence={group.sequence} />
+          <UnattributedSequenceCell sequence={group.sequence} window={gapWindow} />
         </td>
       )}
       <td className="px-3 py-3 text-sm">
-        {/* The row click opens the group; this keeps the direct route to its reconciliation
-            view, which is the drill-down the verdict used to hang off. */}
+        {/* The receiver-side badge and the reconciliation link share this cell. The group verdict
+            that used to live here was a worst-of over every publisher and named nobody, which is
+            why it went; this one names a recorder, which no line can. */}
+        <RecorderCoverageBadge coverage={group.recorder_coverage} asOfAge={observationsAsOfAge} />{' '}
         <Link
           to={`/dz/multicast-groups/${group.pk}?tab=health`}
           state={EDGE_MULTICAST_BACK}
@@ -885,11 +1407,13 @@ function GroupRow({
           line={line}
           asOf={asOf}
           now={now}
+          floorBps={floorBps}
           showLastHeard={showLastHeard}
           showSequence={showSequence}
           showObservations={showObservations}
           sequenceAsOfAge={sequenceAsOfAge}
-          floorBps={floorBps}
+          observationsAsOfAge={observationsAsOfAge}
+          gapWindow={gapWindow}
         />
       ))}
     {expanded && hidden > 0 && (
@@ -913,6 +1437,8 @@ function ServiceSection({
   showSequence,
   showObservations,
   sequenceAsOfAge,
+  observationsAsOfAge,
+  gapWindow,
   floorBps,
   onOpen,
 }: {
@@ -923,6 +1449,8 @@ function ServiceSection({
   showSequence: boolean
   showObservations: boolean
   sequenceAsOfAge?: number
+  observationsAsOfAge?: number
+  gapWindow?: GapWindow
   floorBps: number
   onOpen: (e: React.MouseEvent, pk: string) => void
 }) {
@@ -948,8 +1476,8 @@ function ServiceSection({
         )}
       </div>
       {/* Vertical before horizontal. A section is capped and scrolls down with its header pinned,
-          which keeps the shreds groups — twelve publisher lines each — from pushing every section
-          below them off the screen. overflow-x stays as the fallback for a narrow viewport, but
+          so a service with many groups cannot push every section below it off the screen.
+          overflow-x stays as the fallback for a narrow viewport, but
           the column set is now meant to fit: the plane badge duplicated the code, Measured folded
           into the rate it describes, and the ledger's BGP marker joined the device's own in DZD. */}
       <div className="overflow-auto max-h-[70vh]">
@@ -970,11 +1498,32 @@ function ServiceSection({
               <th className="px-3 py-2 font-medium">DZD</th>
               <th className="px-3 py-2 font-medium">Publishers</th>
               <th className="px-3 py-2 font-medium">Subscribers</th>
-              <th className="px-3 py-2 font-medium text-right">Ingress</th>
-              {showObservations && <th className="px-3 py-2 font-medium text-right">Msg/s</th>}
-              {showObservations && <th className="px-3 py-2 font-medium text-right">Peer</th>}
+              {/* The subtitle is what keeps this column honest, and it is why the figure below it
+                  needs no per-row caveat. A counter is read per interface: the same number appears
+                  on every group its tunnel feeds, and it is exact for the tunnel and silent about
+                  the group. Saying that once in the header beats a '~' on every cell — the tilde
+                  claimed the measurement was approximate, when what is uncertain is only which
+                  group the bytes belonged to. */}
+              <th className="px-3 py-2 font-medium text-right whitespace-nowrap leading-tight">
+                Ingress
+                <div className="text-[10px] font-normal text-muted-foreground/70">per tunnel</div>
+              </th>
+              {showObservations && (
+                <th className="px-3 py-2 font-medium text-right">
+                  <ColumnHeader label="Msg/s" asOfAge={observationsAsOfAge} />
+                </th>
+              )}
+              {showObservations && (
+                <th className="px-3 py-2 font-medium text-right">
+                  <ColumnHeader label="Peer" asOfAge={observationsAsOfAge} />
+                </th>
+              )}
               {showLastHeard && <th className="px-3 py-2 font-medium text-right">Heard</th>}
-              {showSequence && <th className="px-3 py-2 font-medium">Sequence</th>}
+              {showSequence && (
+                <th className="px-3 py-2 font-medium">
+                  <ColumnHeader label="Sequence" asOfAge={sequenceAsOfAge} />
+                </th>
+              )}
               <th className="px-3 py-2 font-medium">Health</th>
             </tr>
           </thead>
@@ -989,6 +1538,8 @@ function ServiceSection({
                 showSequence={showSequence}
                 showObservations={showObservations}
                 sequenceAsOfAge={sequenceAsOfAge}
+                observationsAsOfAge={observationsAsOfAge}
+                gapWindow={gapWindow}
                 floorBps={floorBps}
                 columns={columns}
                 onOpen={onOpen}
@@ -1050,6 +1601,19 @@ export function EdgeMulticastPage() {
   // Read against wall clock, ticking: this measures how stale the refresher's cached numbers are,
   // which keeps ageing whether or not this page refetches.
   const sequenceAsOfAge = ageSecs(data?.sequence_as_of, now)
+  const observationsAsOfAge = ageSecs(data?.observations_as_of, now)
+  // The axis for every loss strip on the page, built once. Both halves are required: the as-of is
+  // the right edge and the width is the span, and either one alone would put the episodes
+  // somewhere arbitrary. Undefined when the payload carries no window, which is the signal to draw
+  // no timeline at all rather than one of a guessed width.
+  const gapWindow = useMemo<GapWindow | undefined>(() => {
+    const secs = data?.gap_window_seconds
+    if (!data?.sequence_as_of || !secs) {
+      return undefined
+    }
+    const endMs = new Date(data.sequence_as_of).getTime()
+    return Number.isNaN(endMs) ? undefined : { endMs, secs }
+  }, [data?.sequence_as_of, data?.gap_window_seconds])
 
   const { groupCount, silentCount } = useMemo(() => {
     const services = data?.services ?? []
@@ -1107,6 +1671,11 @@ export function EdgeMulticastPage() {
                   {silentCount} silent group{silentCount === 1 ? '' : 's'}
                 </span>
               )}
+              {/* Said out loud, because a page whose premise is "every group" and which quietly
+                  drops a family under-reports — the one failure this page is least allowed. */}
+              <Tooltip content="Every measurement here is built for two publishers carrying one product over redundant paths and recorded with sequence numbers. None of it means the same thing on a 772-publisher Turbine fan-in with no recorded wire protocol, so the Solana groups are scoped out. They are on /dz/multicast-groups, the every-group view.">
+                <span className="text-xs text-muted-foreground/50">market data only</span>
+              </Tooltip>
               {data?.generated_at && (
                 <span className="text-xs text-muted-foreground/50">computed {formatAge(ageSecs(data.generated_at, now) ?? 0)}</span>
               )}
@@ -1125,6 +1694,8 @@ export function EdgeMulticastPage() {
               showSequence={showSequence}
               showObservations={showObservations}
               sequenceAsOfAge={sequenceAsOfAge}
+              observationsAsOfAge={observationsAsOfAge}
+              gapWindow={gapWindow}
               floorBps={data?.publisher_floor_bps ?? 0}
               onOpen={onOpen}
             />
@@ -1137,11 +1708,23 @@ export function EdgeMulticastPage() {
         </div>
 
         <div className="mt-8 pt-4 border-t border-border max-w-3xl text-xs text-muted-foreground leading-relaxed space-y-1.5">
-          <div className="font-medium text-foreground">How to read this table</div>
+          <div className="font-medium text-foreground">How to read this page</div>
+          <p>
+            A row is a group; expanding its Publishers cell adds one line per path. Columns are read at
+            the grain their header gives: <span className="text-foreground">Ingress</span> and{' '}
+            <span className="text-foreground">DZD</span> are per tunnel and appear only on the lines, the
+            counts and <span className="text-foreground">Heard</span> are per group, and{' '}
+            <span className="text-foreground">Msg/s</span>, <span className="text-foreground">Peer</span>,{' '}
+            <span className="text-foreground">Sequence</span> and{' '}
+            <span className="text-foreground">Health</span> are per path on that group.
+          </p>
           <p>
             <span className="text-foreground">Ingress</span> is a {data?.rate_grain_minutes ?? 5}-minute
             counter rollup measured at each member's tunnel, so it lands minutes behind wall clock; the small
-            figure under a rate is the age of the newest bucket behind it.
+            figure under a rate is the age of the newest bucket behind it. It is read per interface: a
+            publisher that feeds several groups reports the same bytes against each of them, so the figure is
+            exact for the tunnel and says nothing about which group the bytes were for — which is why the
+            group row leaves it blank. What a group received is Msg/s, measured at the recorders.
           </p>
           <p>
             <span className="text-foreground">DZD</span> is the DoubleZero device a path attaches to, with
@@ -1198,7 +1781,28 @@ export function EdgeMulticastPage() {
               books, never gap-marked messages, and the column is folded from background refreshers, so it is
               minutes older than the rest of the row. The top-of-book plane carries no gap marker, so those
               series read “advancing” — the counters move and nothing checked them for loss — rather than the
-              market-by-price rows' gap-checked “ok”.
+              market-by-price rows' gap-checked “ok”. The strip under the badge is the same loss on a time
+              axis: every publisher line of a group is drawn on one axis, so a mark on one line and a
+              clear track on the other says the redundant path covered the loss and the feed itself lost
+              nothing. An empty track is a measured clean run; a line with no strip at all was never
+              measured for gaps. Its tooltip carries two measurements that are deliberately not mixed:
+              the episodes are TIME a book spent un-anchored, which is what the strip draws and what
+              gap-free and recovery describe; the loss figures are MESSAGES that never arrived,
+              counted from the per-instrument sequence, which is the only counter here that carries a
+              denominator. Their event counts legitimately differ — one break in the numbering can
+              leave a book un-anchored for seconds, and a burst of them lands inside one episode. A
+              line with one recorder says so instead of drawing nothing: with a single vantage a gap
+              cannot be attributed to the path rather than to that recorder's own branch.
+            </p>
+          )}
+          {showSequence && (
+            <p>
+              On the GROUP row, <span className="text-foreground">all paths lost</span> is the only
+              sequence finding no publisher line can make. A feed travels two redundant paths, so a
+              gap on one is covered by its peer and reports as that path's own; a gap on BOTH at the
+              same second is data the feed did not deliver. It intersects per capture source and per
+              recording node before reporting, so two unrelated losses at two markets — or one
+              recorder that stopped ingesting everything at once — do not read as a shared outage.
             </p>
           )}
         </div>

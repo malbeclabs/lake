@@ -16,9 +16,26 @@ import (
 // about both: the series reaching the right publisher line, and the verdict staying honest about
 // what was never measured.
 
-const observationsKey = "edge_multicast_observations:v1"
+const observationsKey = "edge_multicast_observations:v2"
 
 // seedObservations writes the cached payload the page folds, standing in for the refresher.
+// seedObservationsWithRecorderLoss is seedObservations with the recorder-loss half of the payload
+// spelled out: whether the comparison failed. The plain helper leaves it false, which is the
+// "measured, nothing to compare" case.
+func seedObservationsWithRecorderLoss(t *testing.T, api *handlers.API, generatedAt time.Time, unavailable bool, series ...handlers.EdgeMulticastObservationSeries) {
+	t.Helper()
+	require.NoError(t, api.WritePageCache(t.Context(), observationsKey, handlers.EdgeMulticastObservationsResponse{
+		GeneratedAt:             generatedAt,
+		WindowMinutes:           15,
+		Series:                  series,
+		RecorderLossUnavailable: unavailable,
+	}))
+	t.Cleanup(func() {
+		_, err := api.PgPool.Exec(context.Background(), `DELETE FROM page_cache WHERE key = $1`, observationsKey)
+		require.NoError(t, err)
+	})
+}
+
 func seedObservations(t *testing.T, api *handlers.API, generatedAt time.Time, series ...handlers.EdgeMulticastObservationSeries) {
 	t.Helper()
 	require.NoError(t, api.WritePageCache(t.Context(), observationsKey, handlers.EdgeMulticastObservationsResponse{
@@ -189,6 +206,35 @@ func TestGetEdgeMulticast_BothSequenceLegsFoldTogether(t *testing.T) {
 	require.NotNil(t, resp.SequenceAsOf, "one column, one as-of, taken from the older leg")
 }
 
+// The two folded payloads are separate cache entries with separate clocks, and the columns they
+// fill have to age against their own. SequenceAsOf is the OLDER of the two sequence legs, so if
+// Msg/s and Peer read it they would dim over the market-by-price leg's staleness — a payload they
+// do not come from and cannot be made stale by.
+func TestGetEdgeMulticast_ObservationsCarryTheirOwnAsOf(t *testing.T) {
+	api := tobTestAPI(t)
+	insertEdgeMulticastCapturePublisher3(t, api, "group-k")
+	fresh := time.Now().UTC()
+	lagging := fresh.Add(-30 * time.Minute)
+
+	seedL2Coverage(t, api, lagging, handlers.KalshiL2Lane{
+		Source: "mbp_edge_kalshi_sports_nfl", ChannelID: 1, MeasurementNodeID: "cmh-rec1",
+		PublisherSourceIP: "10.0.0.11", Messages: 900, Seen: true,
+		LastSeen: lagging.Add(-time.Second),
+	})
+	seedObservations(t, api, fresh, handlers.EdgeMulticastObservationSeries{
+		Source: "tob_edge_kalshi_sports_nfl", MulticastGroup: "233.0.0.12",
+		PublisherSourceIP: "10.0.0.9", ChannelID: 110, Node: "cmh-rec1",
+		Messages: 1200, LastSeen: fresh.Add(-time.Second),
+	})
+
+	resp := getEdgeMulticast(t, api)
+
+	require.NotNil(t, resp.SequenceAsOf)
+	assert.WithinDuration(t, lagging, *resp.SequenceAsOf, time.Second, "the older of the two sequence legs")
+	require.NotNil(t, resp.ObservationsAsOf)
+	assert.WithinDuration(t, fresh, *resp.ObservationsAsOf, time.Second, "its own clock, not the sequence roll-up's")
+}
+
 // insertEdgeMulticastCapturePublisher3 adds a publisher to a third group, so a test can exercise
 // both sequence legs at once without the two planes sharing a publisher line.
 func insertEdgeMulticastCapturePublisher3(t *testing.T, api *handlers.API, groupPK string) {
@@ -334,6 +380,71 @@ func TestEdgeMulticastPathParity_ComparesAcrossChannelOffset(t *testing.T) {
 	assert.Equal(t, 1, parity["group-t|10.0.0.10"].Behind, "half its peer's volume is behind by any floor")
 	assert.InDelta(t, 0.5, parity["group-t|10.0.0.10"].WorstRatio, 0.0001)
 	assert.Equal(t, "tob_edge_kalshi_sports_nfl", parity["group-t|10.0.0.10"].WorstSource)
+}
+
+// sportsPairs builds one capture source per market, both paths at one node, with the market at
+// index `odd` carrying a small volume and a twenty-message shortfall on the second path — the shape
+// a market that opened a few seconds out of step with its peer leaves just above the volume floor.
+func sportsPairs(markets, odd int) []handlers.EdgeMulticastObservationSeries {
+	series := []handlers.EdgeMulticastObservationSeries{}
+	for i := range markets {
+		src := fmt.Sprintf("tob_edge_kalshi_sports_%d", i)
+		peer, mine := uint64(20000), uint64(20000)
+		if i == odd {
+			peer, mine = 600, 580
+		}
+		series = append(series,
+			obsSeries(src, "cmh-rec1", "10.0.0.9", 10, peer),
+			obsSeries(src, "cmh-rec1", "10.0.0.10", 110, mine))
+	}
+	return series
+}
+
+// A sports node compares 29-33 capture sources, and the verdict used to be decided by the flakiest
+// one of them. The reading stands — the pair really is under the floor — but one market out of
+// twenty-nine is an outlier, and calling the path behind over it is the same one-instance
+// sensitivity the stalled verdict had.
+func TestEdgeMulticastPathParity_OneFailingPairIsNotAFinding(t *testing.T) {
+	parity := handlers.EdgeMulticastPathParityForTest(parityGroups, sportsPairs(29, 7))
+
+	p := parity["group-t|10.0.0.10"]
+	require.NotNil(t, p)
+	assert.Equal(t, 29, p.Compared)
+	assert.Equal(t, 1, p.Behind, "the pair is under the floor and stays counted")
+	assert.False(t, p.Faulted, "one market of twenty-nine does not make the path behind")
+	assert.InDelta(t, 0.9667, p.WorstRatio, 0.001, "and the ratio is still reported")
+}
+
+// The other end of the same rule: a path with ONE comparison — every perps group — still fires on
+// it. The gate must not quietly retire the verdict on the feeds that only ever had one pair.
+func TestEdgeMulticastPathParity_LonePairStillFires(t *testing.T) {
+	parity := handlers.EdgeMulticastPathParityForTest(parityGroups, []handlers.EdgeMulticastObservationSeries{
+		obsSeries("tob_edge_kalshi_perps", "cmh-rec1", "10.0.0.9", 1, 20000),
+		obsSeries("tob_edge_kalshi_perps", "cmh-rec1", "10.0.0.10", 101, 19000),
+	})
+
+	p := parity["group-t|10.0.0.10"]
+	require.NotNil(t, p)
+	assert.Equal(t, 1, p.Compared)
+	assert.True(t, p.Faulted, "one of one is the whole feed, not an outlier")
+}
+
+// And a real branch deficit is not shy: loss is indiscriminate, so it clears the floor nearly
+// everywhere rather than at one market. That is the case the gate has to let through.
+func TestEdgeMulticastPathParity_ABroadDeficitStillFires(t *testing.T) {
+	series := []handlers.EdgeMulticastObservationSeries{}
+	for i := range 29 {
+		src := fmt.Sprintf("tob_edge_kalshi_sports_%d", i)
+		series = append(series,
+			obsSeries(src, "cmh-rec1", "10.0.0.9", 10, 20000),
+			obsSeries(src, "cmh-rec1", "10.0.0.10", 110, 19000))
+	}
+	parity := handlers.EdgeMulticastPathParityForTest(parityGroups, series)
+
+	p := parity["group-t|10.0.0.10"]
+	require.NotNil(t, p)
+	assert.Equal(t, 29, p.Behind)
+	assert.True(t, p.Faulted)
 }
 
 // A path with no peer at that node has nothing to be measured against, and neither a pass nor a
