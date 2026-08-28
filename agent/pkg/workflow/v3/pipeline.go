@@ -3,16 +3,14 @@ package v3
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/malbeclabs/lake/agent/pkg/workflow"
+	"github.com/malbeclabs/lake/utils/pkg/docsfetch"
 )
 
 // queryMarkerPattern matches [Q1], [Q2], etc. - markers that should only appear
@@ -765,8 +763,9 @@ func formatCypherQueryResults(queries []CypherQueryInput, results []workflow.Exe
 	return sb.String()
 }
 
-// docsBaseURL is the base URL for fetching raw documentation from GitHub.
-const docsBaseURL = "https://raw.githubusercontent.com/malbeclabs/docs/main/docs/"
+// docsSource fetches documentation markdown. Shared with the MCP's read_docs so
+// both paths apply one page bound and one slug validation.
+var docsSource = docsfetch.FromEnv()
 
 // readDocs handles the read_docs tool - fetches documentation from GitHub.
 func (p *Workflow) readDocs(ctx context.Context, params map[string]any, onProgress workflow.ProgressCallback) (string, error) {
@@ -785,10 +784,7 @@ func (p *Workflow) readDocs(ctx context.Context, params map[string]any, onProgre
 		})
 	}
 
-	// Build URL and fetch
-	url := docsBaseURL + input.Page + ".md"
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	content, _, truncated, err := docsSource.Read(ctx, input.Page)
 	if err != nil {
 		// Emit read_docs complete with error
 		if onProgress != nil {
@@ -798,57 +794,10 @@ func (p *Workflow) readDocs(ctx context.Context, params map[string]any, onProgre
 				DocsError: err.Error(),
 			})
 		}
-		return "", fmt.Errorf("failed to create request: %w", err)
+		return "", err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		// Emit read_docs complete with error
-		if onProgress != nil {
-			onProgress(workflow.Progress{
-				Stage:     workflow.StageReadDocsComplete,
-				DocsPage:  input.Page,
-				DocsError: err.Error(),
-			})
-		}
-		return "", fmt.Errorf("failed to fetch docs: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		errMsg := fmt.Sprintf("docs page not found: %s (status %d)", input.Page, resp.StatusCode)
-		// Emit read_docs complete with error
-		if onProgress != nil {
-			onProgress(workflow.Progress{
-				Stage:     workflow.StageReadDocsComplete,
-				DocsPage:  input.Page,
-				DocsError: errMsg,
-			})
-		}
-		return "", errors.New(errMsg)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		// Emit read_docs complete with error
-		if onProgress != nil {
-			onProgress(workflow.Progress{
-				Stage:     workflow.StageReadDocsComplete,
-				DocsPage:  input.Page,
-				DocsError: err.Error(),
-			})
-		}
-		return "", fmt.Errorf("failed to read response: %w", err)
-	}
-
-	content := string(body)
-
-	// Truncate if too long (docs shouldn't be huge, but just in case)
-	if len(content) > 10000 {
-		content = content[:10000] + "\n\n... (truncated)"
-	}
-
-	p.logInfo("workflow: docs fetched", "page", input.Page, "length", len(content))
+	p.logInfo("workflow: docs fetched", "page", input.Page, "length", len(content), "truncated", truncated)
 
 	// Emit read_docs complete
 	if onProgress != nil {

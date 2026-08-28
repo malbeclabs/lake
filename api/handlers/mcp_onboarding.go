@@ -81,6 +81,7 @@ func (a *API) loadRunbookCatalog(ctx context.Context) ([]runbookRef, error) {
 	}
 	// A short catalog would reject real runbooks as unknown, so refuse it outright.
 	if truncated {
+		slog.Warn("runbook index truncated; get_onboarding_runbook is down", "page", runbookIndexPage)
 		return nil, fmt.Errorf("runbook index %q exceeded the page bound; catalog is incomplete", runbookIndexPage)
 	}
 	refs := parseRunbookIndex(content)
