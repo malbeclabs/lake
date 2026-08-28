@@ -1,8 +1,8 @@
 import { useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
 import { AlertCircle, ArrowLeft, Trophy } from 'lucide-react'
-import { fetchShredsRewardsDetail } from '@/lib/api'
+import { fetchShredsRewardsDetail, type ShredsRewardsResponse } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useDelayedLoading } from '@/hooks/use-delayed-loading'
 import { PageHeader } from './page-header'
@@ -34,12 +34,23 @@ function formatTokenTotals(totals: Record<string, number>): string {
   return parts.length > 0 ? parts.join(' · ') : '—'
 }
 
-function formatStake(lamports: number): string {
-  if (!lamports || lamports <= 0) return '—'
-  const sol = lamports / 1e9
-  if (sol >= 1e6) return `${(sol / 1e6).toFixed(2)}M SOL`
-  if (sol >= 1e3) return `${(sol / 1e3).toFixed(0)}K SOL`
-  return `${sol.toLocaleString(undefined, { maximumFractionDigits: 0 })} SOL`
+
+// The list query is keyed ['shreds-rewards', params], one entry per search/sort/
+// page/grouping combination, so this scans every cached listing rather than
+// guessing which params were in play.
+function useCachedValidatorName(nodeId: string): string {
+  const queryClient = useQueryClient()
+  return useMemo(() => {
+    if (!nodeId) return ''
+    const cached = queryClient.getQueriesData<ShredsRewardsResponse>({
+      queryKey: ['shreds-rewards'],
+    })
+    for (const [, listing] of cached) {
+      const name = listing?.validators?.find((v) => v.node_id === nodeId)?.validator_name?.trim()
+      if (name) return name
+    }
+    return ''
+  }, [queryClient, nodeId])
 }
 
 function FactCard({
@@ -89,6 +100,9 @@ export function ShredsRewardsDetailPage() {
     return { all, claimable, hasClaimable }
   }, [data])
 
+  // Above the early return: hooks cannot be called conditionally.
+  const cachedName = useCachedValidatorName(nodeId)
+
   if (error || (!data && !isLoading)) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -110,7 +124,7 @@ export function ShredsRewardsDetailPage() {
     )
   }
 
-  const displayName = data?.validator_name?.trim() || truncatePK(nodeId)
+  const displayName = cachedName || truncatePK(nodeId)
   const epochs = data?.epochs ?? []
 
   return (
@@ -123,13 +137,18 @@ export function ShredsRewardsDetailPage() {
           <ArrowLeft className="h-3.5 w-3.5" />
           Edge Rewards
         </Link>
+        {/* No subtitle when the title already IS the truncated node id: without a
+            name to head the page, the pubkey would otherwise print twice side by
+            side, and a third time in the Validator Identity card below. */}
         <PageHeader
           icon={Trophy}
           title={displayName}
           subtitle={
-            <span className="text-xs text-muted-foreground font-mono">
-              {truncatePK(nodeId)}
-            </span>
+            cachedName ? (
+              <span className="text-xs text-muted-foreground font-mono">
+                {truncatePK(nodeId)}
+              </span>
+            ) : undefined
           }
         />
 
@@ -139,29 +158,6 @@ export function ShredsRewardsDetailPage() {
             <CopyableText text={nodeId} className="text-xs">
               <span className="font-mono">{truncatePK(nodeId)}</span>
             </CopyableText>
-          </FactCard>
-          <FactCard label="Vote ID">
-            {!data ? (
-              <SkeletonCell className="w-28" />
-            ) : data.vote_pubkey ? (
-              <CopyableText text={data.vote_pubkey} className="text-xs">
-                <span className="font-mono">{truncatePK(data.vote_pubkey)}</span>
-              </CopyableText>
-            ) : (
-              <span className="text-muted-foreground/60">—</span>
-            )}
-          </FactCard>
-          <FactCard label="Stake">
-            {data ? formatStake(data.activated_stake) : <SkeletonCell className="w-20" />}
-          </FactCard>
-          <FactCard label="DZ IP">
-            {!data ? (
-              <SkeletonCell className="w-24" />
-            ) : data.dz_user_ip ? (
-              <span className="font-mono text-xs">{data.dz_user_ip}</span>
-            ) : (
-              <span className="text-muted-foreground/60">—</span>
-            )}
           </FactCard>
           <FactCard label="All-time Earned">
             {data ? formatTokenTotals(totals.all) : <SkeletonCell className="w-24" />}

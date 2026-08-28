@@ -2,9 +2,7 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -193,8 +191,6 @@ const shredClientNamesSQL = `(
 //
 // argMax orders on (stake, vote_pubkey) rather than stake alone so that a node
 // running two vote accounts of equal stake still resolves to one fixed answer.
-// Both the list and the detail header run this text, and a tie broken freely
-// would let them name different vote accounts for one validator on the same load.
 const shredsRewardsIdentityJoins = `
 		LEFT JOIN (
 			SELECT
@@ -888,13 +884,13 @@ type ShredsRewardsEpochDetail struct {
 
 // ShredsRewardsDetailResponse is the response body for the per-validator
 // drilldown endpoint. Epochs is newest first.
+//
+// The list keeps all four; it resolves every validator in one pass and is served
+// from the page cache. The web client reads the validator's name from that cached
+// listing for this page's heading.
 type ShredsRewardsDetailResponse struct {
-	NodeID         string                     `json:"node_id"`
-	VotePubkey     string                     `json:"vote_pubkey"`
-	ValidatorName  string                     `json:"validator_name"`
-	ActivatedStake uint64                     `json:"activated_stake"`
-	DZUserIP       string                     `json:"dz_user_ip"`
-	Epochs         []ShredsRewardsEpochDetail `json:"epochs"`
+	NodeID string                     `json:"node_id"`
+	Epochs []ShredsRewardsEpochDetail `json:"epochs"`
 }
 
 // GetShredsRewardsDetail returns the full per-epoch reward history for a
@@ -911,35 +907,6 @@ func (a *API) GetShredsRewardsDetail(w http.ResponseWriter, r *http.Request) {
 	resp := ShredsRewardsDetailResponse{
 		NodeID: nodeID,
 		Epochs: []ShredsRewardsEpochDetail{},
-	}
-
-	// Header: vote pubkey, validator name, activated stake, DZ user IP.
-	//
-	// It runs the SAME identity joins as the list (shredsRewardsIdentityJoins), so
-	// the two pages cannot describe one validator differently — a node with two
-	// vote accounts would otherwise get whichever the list's argMax picked on one
-	// page and whichever the join happened to emit first on the other. That is also
-	// why the anchor names its column pv_node_id: it is what those joins key on.
-	//
-	// The single-row anchor carries the node_id so the LEFT JOINs have a real join
-	// key; this returns zero values for unknown node_ids instead of erroring.
-	// Joining directly on a bound param (ON v.node_pubkey = ?) leaves no key
-	// relating the two tables, which ClickHouse rejects with "cannot determine join
-	// keys".
-	headerQuery := `
-		SELECT
-			coalesce(v.va_vote_pubkey, ''),
-			coalesce(va.vapp_name, ''),
-			toUInt64(coalesce(v.va_stake, 0)),
-			coalesce(u.client_ip, '')
-		FROM (SELECT ? AS pv_node_id) pv` + shredsRewardsIdentityJoins + `
-		LIMIT 1
-	`
-	if err := a.envDB(ctx).QueryRow(ctx, headerQuery, nodeID).Scan(
-		&resp.VotePubkey, &resp.ValidatorName, &resp.ActivatedStake, &resp.DZUserIP,
-	); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		// Tolerate missing rows; leave fields zero-valued.
-		logError("shreds rewards detail header scan failed", "error", err)
 	}
 
 	// Per-epoch rows. Mirrors the list query's earnings logic but restricted to

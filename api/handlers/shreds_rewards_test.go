@@ -629,12 +629,7 @@ func TestGetShredsRewardsDetail_FullHistory(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
 	resp := decodeShredsRewardsDetail(t, rr.Body.Bytes())
 
-	// Header fields should be populated from the seeded vote/validators/gossip rows.
 	assert.Equal(t, "node-A", resp.NodeID)
-	assert.Equal(t, "vote-A", resp.VotePubkey)
-	assert.Equal(t, "Alpha Validator", resp.ValidatorName)
-	assert.Equal(t, uint64(5000000000), resp.ActivatedStake)
-	assert.Equal(t, "203.0.113.10", resp.DZUserIP)
 
 	// Fixture seeds three epochs: subscription_epoch (== Solana epoch) 100, 101, 102.
 	require.Len(t, resp.Epochs, 3)
@@ -688,10 +683,6 @@ func TestGetShredsRewardsDetail_UnknownNode(t *testing.T) {
 	resp := decodeShredsRewardsDetail(t, rr.Body.Bytes())
 
 	assert.Equal(t, "node-ZZZ", resp.NodeID)
-	assert.Empty(t, resp.VotePubkey)
-	assert.Empty(t, resp.ValidatorName)
-	assert.Equal(t, uint64(0), resp.ActivatedStake)
-	assert.Empty(t, resp.DZUserIP)
 	assert.NotNil(t, resp.Epochs, "epochs should be a non-nil empty array")
 	assert.Empty(t, resp.Epochs)
 }

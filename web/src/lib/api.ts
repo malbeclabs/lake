@@ -7613,10 +7613,6 @@ export interface ShredsRewardsEpochDetail {
 
 export interface ShredsRewardsDetail {
   node_id: string
-  vote_pubkey: string
-  validator_name: string
-  activated_stake: number
-  dz_user_ip: string
   epochs: ShredsRewardsEpochDetail[]
 }
 
