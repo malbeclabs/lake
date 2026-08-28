@@ -139,8 +139,9 @@ type EdgeMulticastChannelInstance struct {
 	// that look like they could stand in for it and cannot.
 	//
 	// UpdatesReceived is the denominator: expected is received + missing, and a series with no
-	// updates at all has no rate rather than a rate of zero. Zero on the top-of-book plane, whose
-	// rows carry no per-instrument sequence.
+	// updates at all has no rate rather than a rate of zero. Omitted (omitempty) on the
+	// top-of-book plane, whose rows carry no per-instrument sequence — absent rather than a
+	// measured zero, which is the distinction completeness() reads to withhold a ppm figure.
 	UpdatesReceived uint64  `json:"updates_received,omitempty"`
 	UpdatesMissing  uint64  `json:"updates_missing,omitempty"`
 	SeqGapEvents    uint64  `json:"seq_gap_events,omitempty"`

@@ -243,6 +243,64 @@ func TestGetEdgeMulticast_UnmanagedGroupIsListedAndSilent(t *testing.T) {
 	assert.Zero(t, g.IngressBps)
 }
 
+// insertEdgeMulticastLiveUnsoldGroup adds a group no feed row claims whose publisher IS moving the
+// product — the middle tier: live, unsold.
+func insertEdgeMulticastLiveUnsoldGroup(t *testing.T, api *handlers.API) {
+	t.Helper()
+	ctx := t.Context()
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_multicast_groups_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
+		VALUES ('group-3', now(), now(), generateUUIDv4(), 0, 1, 'group-3', '', 'edge-lab-live-tob', '233.0.0.3', 100000000, 'activated', 0, 0)`))
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_users_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id, publishers, subscribers)
+		VALUES ('user-live-pub', now(), now(), generateUUIDv4(), 0, 1, 'user-live-pub', 'pubkey-live', 'activated', 'multicast', '10.0.0.4', '10.0.0.4', 'dev-ams1', 504, '["group-3"]', '[]')`))
+	// A publisher's ingress is what the device receives FROM its tunnel, so the traffic goes in
+	// max_in_bps: 5 Mbps, well clear of the publisher floor.
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO device_interface_rollup_5m
+			(bucket_ts, device_pk, intf, user_tunnel_id, user_pk, max_in_bps, max_out_bps, ingested_at)
+		VALUES (now() - INTERVAL 1 MINUTE, 'dev-ams1', 'Tunnel504', 504, 'user-live-pub', 5000000, 0, now())`))
+}
+
+// A group promoted out of the bottom bucket by its own traffic is NOT reclassified as sold.
+//
+// Managed means "a feed row sells this", and the section code here is synthesised from the group's
+// own family because nothing sells it. Reading Managed off the code instead — anything that was not
+// the dead bucket — dropped the 'no feed row in the ledger' tell from the header and sorted the
+// section into the catalogue tier, which left the middle tier of the three-tier sort unreachable:
+// live-but-unsold has to sit above dead and below sold, and it can only do that if it says so.
+func TestGetEdgeMulticast_PromotedByActivityIsNotSold(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertMulticastHealthFixtures(t, api)
+	insertEdgeMulticastFeed(t, api)
+	insertEdgeMulticastLiveUnsoldGroup(t, api)
+
+	resp := getEdgeMulticast(t, api)
+
+	svc := findEdgeMulticastService(t, resp, "edge-lab-live")
+	assert.False(t, svc.Managed, "promoted by activity, not reclassified as sold")
+	assert.Zero(t, svc.MetroCount, "nothing sells it, so it is sold in nowhere")
+	require.Len(t, svc.Groups, 1)
+	assert.Equal(t, "edge-lab-live-tob", svc.Groups[0].Code, "the section is the family, the row is the group")
+
+	// Tiers: the catalogue first, the live-but-unsold section after it, and nothing in the dead
+	// bucket — this group's publisher is sending, so it never belonged there.
+	order := map[string]int{}
+	for i, s := range resp.Services {
+		order[s.Code] = i
+		assert.NotEqual(t, "edge-unclaimed", s.Code, "a live group is not listed as unclaimed")
+	}
+	sold, ok := order["test-feed"]
+	require.True(t, ok, "the feed-backed section is present")
+	assert.Less(t, sold, order["edge-lab-live"], "sold sorts above live-but-unsold")
+	assert.True(t, findEdgeMulticastService(t, resp, "test-feed").Managed, "and it still reads as sold")
+}
+
 func TestGetEdgeMulticast_NoTelemetryIsNotSilent(t *testing.T) {
 	api := newEdgeMulticastTestAPI(t)
 	insertMulticastTestData(t, api)

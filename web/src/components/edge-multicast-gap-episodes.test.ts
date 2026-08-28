@@ -123,6 +123,18 @@ describe('gapEpisodeStats', () => {
     expect(s.worstRecoverySeconds).toBe(5)
   })
 
+  // The window end carries milliseconds and the seconds conversion FLOORS them. Rounding up moves
+  // the end of the window past where it is, which prints a longer quiet stretch since the last
+  // episode than was measured — the one direction an age must never err in.
+  it('floors a fractional window end rather than rounding it up', () => {
+    const endSec = 1_800_000_000
+    const episodes = [{ start: endSec - 120, seconds: 3 }]
+    // .900 of a second past the boundary: rounding would report 118s since the last episode.
+    expect(gapEpisodeStats(episodes, 900, endSec * 1000 + 900).sinceLastSeconds).toBe(117)
+    // .100 past it floors to the same second, so the two agree.
+    expect(gapEpisodeStats(episodes, 900, endSec * 1000 + 100).sinceLastSeconds).toBe(117)
+  })
+
   it('never reports a negative gap-free share', () => {
     // The payload's clock and its window can disagree. A saturated 0 is wrong; a negative
     // percentage on the page is worse.

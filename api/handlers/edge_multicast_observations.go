@@ -224,7 +224,8 @@ func (a *API) edgeMulticastRecorderLossSources(ctx context.Context) ([]string, e
 
 // fetchEdgeMulticastRecorderLoss measures each recording node against its peers on the same path.
 //
-// The shape is a three-step: collapse to one row per (path, sequence) carrying which nodes saw it,
+// The shape is a three-step: collapse to one row per (path, generation, sequence) carrying which
+// nodes saw it,
 // derive each path's node universe from that, then emit one row per node of that universe. The
 // universe is derived rather than configured because it has to be what actually records this path
 // today — a node added or removed is then a fact about the data rather than a deploy.
@@ -252,13 +253,20 @@ func (a *API) fetchEdgeMulticastRecorderLoss(ctx context.Context, sources []stri
 				JSONExtractString(raw_meta, 'multicast_group') AS multicast_group,
 				JSONExtractString(raw_meta, 'publisher_source_ip') AS publisher_source_ip,
 				channel_id,
+				-- reset_count is in the key because a reset starts the numbering again, so one
+				-- window can hold the same sequence number from two generations. Merged, the
+				-- 'nodes' set becomes the union of the two, and a node that missed the second
+				-- datagram reads as having seen it — under-reporting loss, which is the one
+				-- direction this page must never fail in. kalshi_l2_coverage.go keys its own
+				-- gap detection the same way and for the same reason.
+				reset_count,
 				sequence,
 				groupUniqArray(measurement_node_id) AS nodes,
 				min(recv_ts_ns) AS first_recv
 			FROM %[1]s.kalshi_bbo_observations
 			WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(%[2]d)))
 			  AND source IN (%[3]s)
-			GROUP BY multicast_group, publisher_source_ip, channel_id, sequence
+			GROUP BY multicast_group, publisher_source_ip, channel_id, reset_count, sequence
 		),
 		universe AS (
 			SELECT

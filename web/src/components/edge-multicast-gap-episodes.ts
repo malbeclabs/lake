@@ -72,7 +72,12 @@ export function gapEpisodeStats(episodes: GapEpisode[], windowSecs: number, wind
     // than a saturated one.
     gapFree: windowSecs > 0 ? Math.max(0, 1 - lostSeconds / windowSecs) : 0,
     perHour: windowSecs > 0 ? (episodes.length * 3600) / windowSecs : 0,
-    sinceLastSeconds: last ? Math.max(0, Math.round(windowEnd / 1000) - (last.start + last.seconds)) : undefined,
+    // Floored, never rounded. windowEnd carries milliseconds, and rounding it up puts the end of
+    // the window after where it is, which prints a longer quiet stretch since the last episode
+    // than was measured. The digit shown must never be better than the measurement.
+    sinceLastSeconds: last
+      ? Math.max(0, Math.floor(windowEnd / 1000) - (last.start + last.seconds))
+      : undefined,
     worstRecoverySeconds: episodes.reduce((n, e) => Math.max(n, e.seconds), 0),
   }
 }

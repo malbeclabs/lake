@@ -408,8 +408,9 @@ type EdgeMulticastResponse struct {
 	ObservationsAsOf *time.Time `json:"observations_as_of,omitempty"`
 	// GapWindowSeconds is how wide the window the gap episodes were measured over is, and it
 	// makes SequenceAsOf into an axis: the episodes sit inside (SequenceAsOf - this, SequenceAsOf].
-	// Zero when nothing folded any, which is also the signal to draw no timeline at all — an
-	// axis with no width would put every episode on top of every other one.
+	// Omitted (omitempty) when nothing folded any, which is also the signal to draw no timeline
+	// at all — an axis with no width would put every episode on top of every other one. The web
+	// type has it optional to match, so an absent field and a zero read the same there.
 	GapWindowSeconds int `json:"gap_window_seconds,omitempty"`
 
 	Services []EdgeMulticastService `json:"services"`
@@ -596,9 +597,18 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 	}
 
 	byService := map[string][]EdgeMulticastGroup{}
+	// Which section codes a FEED ROW claims. A code synthesised by edgeMulticastFamilyOf is
+	// deliberately absent: the group is promoted by activity, not reclassified as sold.
+	feedBacked := map[string]bool{}
 	for _, g := range groups {
 		row := buildEdgeMulticastGroup(g, membership[g.PK], rates[g.PK], lastHeard[g.PK], publisherLines[g.PK], sequence[g.PK], observations, bgpSessions, bgpRtt)
 		codes := feeds.byGroup[g.PK]
+		if len(codes) > 0 {
+			// A feed row claims this section, which is the only thing Managed may mean.
+			for _, code := range codes {
+				feedBacked[code] = true
+			}
+		}
 		if len(codes) == 0 {
 			// Publishers above the floor is the only per-group liveness signal available here, and
 			// it is enough for PLACEMENT even though it is not enough for a verdict: the counter is
@@ -623,8 +633,13 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 	for code, rows := range byService {
 		sort.Slice(rows, func(i, j int) bool { return rows[i].Code < rows[j].Code })
 		resp.Services = append(resp.Services, EdgeMulticastService{
-			Code:       code,
-			Managed:    code != edgeMulticastUnclaimedService,
+			Code: code,
+			// Managed is "a feed row sells this", not "this is not the dead bucket". Keyed on
+			// feedBacked and not on the code, because a section promoted by activity carries a
+			// code synthesised from the group's own family: reading it as managed dropped the
+			// 'no feed row in the ledger' tell from its header and sorted it into the catalogue
+			// tier, which left the middle tier below unreachable.
+			Managed:    feedBacked[code],
 			MetroCount: feeds.metroCounts[code],
 			Groups:     rows,
 		})

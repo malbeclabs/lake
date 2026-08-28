@@ -221,3 +221,34 @@ func TestEdgeMulticastRecorderLossQuery_LoneRecorderProducesNothing(t *testing.T
 	require.NoError(t, err)
 	assert.Empty(t, resp.RecorderLoss, "no peer, no reference, no claim")
 }
+
+// A reset restarts the numbering, so one window can hold the same sequence number twice — once per
+// generation — and the reference set is keyed on reset_count for that reason.
+//
+// Merged, the two datagrams become one row whose node set is the UNION of both, so a recorder that
+// missed the post-reset one reads as having seen it and the reference count loses a datagram. The
+// failure is silent and in the one direction this page must never fail in: a clean bill of health
+// over data that was lost. kalshi_l2_coverage.go keys its own gap detection the same way.
+func TestEdgeMulticastRecorderLossQuery_AResetIsANewGeneration(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createKalshiObservationsTable(t, api)
+
+	const group, pub = "233.84.178.3", "148.51.121.69"
+	// Generation 0: both recorders saw sequence 100. After the reset, only cmh did.
+	insertBBOObservation(t, api, "cmh-rec1", "tob_edge_kalshi_perps", group, pub, 1, 100, 0, 40)
+	insertBBOObservation(t, api, "was-rec1", "tob_edge_kalshi_perps", group, pub, 1, 100, 0, 40)
+	insertBBOObservation(t, api, "cmh-rec1", "tob_edge_kalshi_perps", group, pub, 1, 100, 1, 20)
+
+	resp, err := api.FetchEdgeMulticastObservations(t.Context())
+	require.NoError(t, err)
+
+	byNode := map[string]handlers.EdgeMulticastRecorderLossSeries{}
+	for _, s := range resp.RecorderLoss {
+		byNode[s.Node] = s
+	}
+	require.Len(t, byNode, 2)
+	assert.EqualValues(t, 2, byNode["cmh-rec1"].ReferenceSeqs, "two datagrams carrying one number")
+	assert.EqualValues(t, 0, byNode["cmh-rec1"].Missing)
+	assert.EqualValues(t, 1, byNode["was-rec1"].Missing, "the post-reset 100 it never recorded")
+	assert.Len(t, byNode["was-rec1"].Episodes, 1, "and the loss is placed in time")
+}
