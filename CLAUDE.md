@@ -326,7 +326,12 @@ permanently non-green over a property of the plane rather than of the path.
 `behind` sits last of the faults because it is the mildest of them — the path is delivering, just
 less of the feed than its peer.
 
-### The DZD column
+### The DZD cell
+
+It renders in the section's **publishers block**, one row per tunnel, and not as a column on the
+group table — a BGP session belongs to a tunnel, and a publisher serves every plane of its feed from
+one tunnel, so as a column it printed the same cell once per group the tunnel feeds. See "Which
+grain each fact renders at" below.
 
 `edge_multicast_bgp.go` reads the DoubleZero device's own view of each publisher's BGP session from
 `telemetry_<env>.bgp_neighbors_latest`. User sessions are `network_instance = 'vrf1'`, `peer_type =
@@ -532,14 +537,15 @@ stale together, so every pair at that vantage is quiet on both paths — keyed o
 paths still look alive, because they are delivering at the *other* recorders, and a dead recorder
 gets excused as the venue. `TestEdgeMulticastSequence_ADeadRecorderIsNotAQuietVenue` pins it.
 
-Publisher lines also carry the ledger's **`bgp_status`**, and `down` renders as an error on the line.
+The publishers block also carries the ledger's **`bgp_status`** beside the device's own view, and
+`down` renders as an error there — on the tunnel row, since a session is a property of the tunnel.
 That is not a reversal of the rule that the control-plane roll-up must not paint the row: what that
 rule rejects is a worst-of over every *member*, where customers with BGP down turned every group red.
 A publisher with no session cannot be sending the feed it is registered to send. It deliberately does
 not move the group verdict — the ledger snapshot and the rate bucket are minutes apart, so a publisher
 can read `down` while its tunnel still moved bytes, and both are shown.
 
-That column **folds cached refresher payloads and runs no query of its own**, and it has two legs.
+The **Sequence** column **folds cached refresher payloads and runs no query of its own**, and it has two legs.
 
 **Market-by-price** comes from `kalshi_l2_coverage.go`. `kalshi_mbp_levels` is level-grain and
 TTL-less, and a fifteen-minute question reads most of a day through a `remoteSecure()` proxy
@@ -612,12 +618,15 @@ absent, the same rule Heard and Sequence follow — a missing cache costs the co
 page. That is not a rare state: `page_cache` survives a pod restart, so a **newly added** cache key
 is the one entry a deploy leaves empty, and it stays empty until the refresh chain reaches it.
 `StartKalshiBackgroundRefresher` is serial with a three-minute timeout per step, which is why the
-observations leg runs **first** — it is the cheapest and the only one with no live-query fallback. Msg/s sits beside the counter rate rather than
-replacing it — the counter is per tunnel, minutes late, and an upper bound a multi-group publisher
-shares across its groups; this is per group, from the far end, so it is what arrived rather than
-what was sent, and it is blank for any feed with no recorder behind it. Neither figure is on the
-group row: summing recorded rates over a group's paths would double the feed, since redundant paths
-carry the same traffic, and a parity ratio means nothing until you name which path it is about.
+observations leg runs **first** — it is the cheapest and the only one with no live-query fallback.
+
+Msg/s does not replace the counter rate, which reads once per tunnel in the section's publishers
+block: the counter is per tunnel, minutes late, and an upper bound a multi-group publisher shares
+across its groups, which is exactly why it is quoted at the tunnel's grain and not at the group's.
+This is per group, from the far end, so it is what arrived rather than what was sent, and it is blank
+for any feed with no recorder behind it. Neither figure is on the group row: summing recorded rates
+over a group's paths would double the feed, since redundant paths carry the same traffic, and a
+parity ratio means nothing until you name which path it is about.
 
 Parity is measured on the **application plane** (`kalshi_bbo_observations`,
 `slot_feed_race_summary_v2`) and cannot move to the counters. Interface counters are per tunnel: a
@@ -625,6 +634,29 @@ recorder subscribed to several groups reports the sum against each, so on mainne
 reads 232 Mbps against a group whose entire ingress is 3.6 Mbps. Every Kalshi recorder is
 multi-group, so a counter-based parity check would be permanently wrong on exactly the feeds it
 exists for.
+
+### Which grain each fact renders at
+
+Three grains, and nothing is printed at more than one of them.
+
+**The tunnel** — the section's publishers block, one row per tunnel: `Ingress` and its bucket age,
+`DZD` (device, tunnel id, device session, access RTT, ledger `bgp_status`), the member's class label,
+and the floor status word. All of these are read per interface, and a publisher serves every plane of
+its feed from ONE tunnel — both Kalshi halves from the same pair — so as table columns each of them
+printed once per group the tunnel feeds. Measured on mainnet, the perps section printed the same two
+rates four times.
+
+**The group** — a table row: the ledger code and multicast address, the publisher and subscriber
+counts, `Heard`, unattributed series, `recorder_coverage`.
+
+**The path on that group** — an expanded publisher line: the client IP that joins it back to the
+block, `Msg/s`, `Peer`, `Sequence`, `Health`.
+
+The group table therefore has **no DZD and no Ingress column**, and a publisher line carries no
+status word of its own. The line's `Health` badge is not that status word repeated: it is the
+composite verdict per (path, group), folding the floor together with what the recorders saw, so a
+floor fault still reaches every line the tunnel publishes on — by way of the only column that can
+also say the path gapped.
 
 ## Logging Levels
 

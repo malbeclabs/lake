@@ -17,9 +17,6 @@ func TestEdgeMulticastCaptureSourceMap(t *testing.T) {
 		{PK: "pk-sports-tob", Code: "edge-kalshi-sports-tob"},
 		{PK: "pk-perps-mbp", Code: "edge-kalshi-perps-mbp"},
 		{PK: "pk-perps-tob", Code: "edge-kalshi-perps-tob"},
-		{PK: "pk-shreds", Code: "edge-solana-shreds"},
-		{PK: "pk-root", Code: "edge-solana-root"},
-		{PK: "pk-retrans-eu", Code: "edge-solana-retrans-eu"},
 		{PK: "pk-mbone", Code: "mbone"},
 	}
 	m := newEdgeMulticastCaptureSourceMap(groups)
@@ -35,12 +32,11 @@ func TestEdgeMulticastCaptureSourceMap(t *testing.T) {
 		{"mbp_edge_kalshi_perps", "pk-perps-mbp", "perps has no league suffix: exact prefix match"},
 		{"tob_edge_kalshi_perps_ws", "pk-perps-tob", "redundant paths fold into their feed's group"},
 		{"tob_edge_kalshi_perps_fix", "pk-perps-tob", "the other path, same group"},
-		{"edge-solana-root", "pk-root", "shred feeds name their group outright"},
-		{"edge-solana-retrans-eu", "pk-retrans-eu", "so do the retransmit feeds"},
-		{"dz", "pk-shreds", "the one alias that predates the convention"},
+		{"mbone", "pk-mbone", "a capture source may name its group outright, with no plane suffix"},
+		{"dz", "", "the shreds alias went with the Solana groups; nothing claims a bare feed id now"},
+		{"edge-solana-root", "", "and no Solana code reaches this map, since the page excludes them"},
 		{"jito", "", "a competitor feed is not a DoubleZero group"},
 		{"turbine", "", "neither is the public path"},
-		{"dz_rebop", "", "no evidence ties the per-validator rebroadcast to the rebop group"},
 		{"mbp_edge_hyperliquid_perps", "", "a plausible-looking capture source with no group behind it is dropped"},
 	} {
 		assert.Equal(t, tc.want, m.resolve(tc.captureSource), "%s: %s", tc.captureSource, tc.why)

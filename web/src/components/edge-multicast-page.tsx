@@ -27,9 +27,16 @@ import {
   type EdgeMulticastService,
 } from '@/lib/api'
 
-// One screen for every multicast group in the Edge product — the groups whose ledger code carries
-// the `edge-` prefix — showing who publishes, who receives, and whether anything is flowing. The per-group pages already answer this one group at a time; the
-// question that needs a fleet view is "is any feed silent right now".
+// One screen for every Edge MARKET-DATA multicast group — the `edge-` prefix minus the Solana ones
+// — showing who publishes, who receives, and whether anything is flowing. The per-group pages
+// already answer this one group at a time; the question that needs a fleet view is "is any feed
+// silent right now".
+//
+// The Solana groups are out of scope rather than hidden, and the API says so: every measurement
+// here is built for two publishers carrying one product over redundant paths, recorded by nodes
+// running a wire protocol with sequence numbers, and not one column means the same thing on a
+// 772-publisher Turbine fan-in. They stay on /dz/multicast-groups, the every-group view. See
+// edgeMulticastExcludedPrefix for what keeping them cost the rest of this page.
 //
 // Everything about freshness on this page is deliberate. Rates come from five-minute counter
 // rollups that land several minutes late, so a green dot here means "traffic in the last bucket
@@ -66,7 +73,6 @@ const EDGE_MULTICAST_BACK = { back: { to: '/dz/edge/multicast', label: 'Edge Mul
 // Keyed by feed family — the feed code without its plane suffix — because the API groups the
 // planes of one product into a single section and gives each row a Plane instead.
 const SERVICE_LABELS: Record<string, string> = {
-  'solana-shreds-full': 'Solana Shreds',
   'kalshi-sports': 'Kalshi Sports',
   'kalshi-perps': 'Kalshi Perps',
   // A group with no feed row but with publishers moving traffic gets its own section, keyed on the
@@ -310,45 +316,33 @@ function PublisherCell({
   )
 }
 
-// One publisher, one line. Everything on it is per member: its own rate, its own bucket age, its
-// own recorded sequence series, its own verdict against the floor — none of which survives the
-// group roll-up above.
+// One publisher on ONE group, carrying only what is true at that grain: what the recorders
+// received from this path, how it compares with its peer path, its own sequence series and its own
+// verdict.
+//
+// Everything that is a property of the TUNNEL instead — the counter rate and its bucket age, the
+// DZD device and session, the access RTT, the floor status — is in the publishers block at the top
+// of the section. A tunnel carries both planes of its feed, so on this table those facts were
+// printed once per group it publishes into: the same DZD cell and the same rate twice over, for one
+// measurement. The client IP stays in both places, because it is the key that joins them rather
+// than a reading.
 function PublisherLineRow({
   line,
-  asOf,
-  now,
   showLastHeard,
   showSequence,
   showObservations,
   sequenceAsOfAge,
   observationsAsOfAge,
   gapWindow,
-  floorBps,
 }: {
   line: EdgeMulticastPublisher
-  asOf: number
-  now: number
   showLastHeard: boolean
   showSequence: boolean
   showObservations: boolean
   sequenceAsOfAge?: number
   observationsAsOfAge?: number
   gapWindow?: GapWindow
-  floorBps: number
 }) {
-  const age = ageSecs(line.observed_at, asOf)
-  const stale = age === undefined || age > STALE_AFTER_SECS
-  const label = CLASS_LABEL[line.class]
-
-  const statusDetail =
-    line.status === 'thin'
-      ? `below the ${formatBps(floorBps)} floor: the tunnel is moving something, not the product`
-      : line.status === 'idle'
-        ? 'counter read zero in the last visible bucket'
-        : line.status === 'unknown'
-          ? 'no counter row for this publisher: nothing measured it'
-          : `at or above the ${formatBps(floorBps)} floor`
-
   return (
     <tr className="border-b border-border/50 last:border-b-0 bg-muted/20 text-xs">
       {/* The client IP first, because that is the box — its own public address, the key the
@@ -357,22 +351,19 @@ function PublisherLineRow({
           the destination address, the publisher line holds the source IP address its datagrams
           carry, which is what the recorders and the allow-lists talk about. */}
       <td className="pl-8 pr-3 py-1.5 whitespace-nowrap leading-tight">
-        <span className="inline-flex items-center gap-2">
-          {/* The address links to the ledger User behind it: a source that is gapping is a
-              question about that account — its tunnel, its device, its access pass — and this
-              page already holds the pk. stopPropagation because the row click opens the group. */}
-          <Link
-            to={`/dz/users/${line.user_pk}`}
-            state={EDGE_MULTICAST_BACK}
-            onClick={(e) => e.stopPropagation()}
-            className="font-mono text-xs hover:underline"
-          >
-            {line.client_ip}
-          </Link>
-          {/* The classification rides with the identity rather than in the Subscribers column:
-              a publisher line has nothing to say about that side of the group. */}
-          {label && <span className="text-muted-foreground">{label}</span>}
-        </span>
+        {/* The address links to the ledger User behind it: a source that is gapping is a question
+            about that account — its tunnel, its device, its access pass — and this page already
+            holds the pk. stopPropagation because the row click opens the group. The box's
+            classification used to ride alongside; it is a property of the box, so it reads once in
+            the block above, beside the tunnel it publishes from. */}
+        <Link
+          to={`/dz/users/${line.user_pk}`}
+          state={EDGE_MULTICAST_BACK}
+          onClick={(e) => e.stopPropagation()}
+          className="font-mono text-xs hover:underline"
+        >
+          {line.client_ip}
+        </Link>
         {/* The tunnel address under the box's own, in one column. They are the two names for one
             path and were never worth a column each: the client IP is what an operator recognises
             and the key the override table uses, the DZ IP is what the datagrams carry and what
@@ -385,44 +376,13 @@ function PublisherLineRow({
           )}
         </div>
       </td>
-      <td className="px-3 py-1.5 whitespace-nowrap">
-        <DZDCell
-          deviceCode={line.device_code}
-          tunnelId={line.tunnel_id}
-          session={line.bgp_session}
-          rtt={line.bgp_rtt}
-          ledgerStatus={line.bgp_status}
-          now={now}
-        />
-      </td>
-      <td className="px-3 py-1.5 whitespace-nowrap">
-        <span className="inline-flex items-center gap-2">
-          <Tooltip content={statusDetail}>
-            <span className="inline-flex items-center gap-1.5">
-              <span
-                className={`inline-block h-1.5 w-1.5 rounded-full ${PUBLISHER_DOT[line.status] ?? PUBLISHER_DOT.unknown}`}
-              />
-              <span className={line.status === 'publishing' ? 'text-muted-foreground' : ''}>
-                {line.status}
-              </span>
-            </span>
-          </Tooltip>
-          {/* The BGP badge that used to sit here moved into the DZD cell, where the device's own
-              view of the session lives. Two BGP markers three columns apart was the duplication
-              that pushed this table past the viewport. */}
-        </span>
-      </td>
+      {/* Publishers and Subscribers are counts over a group and a single path has nothing to say
+          in either. The floor status word that used to fill the first of them was the tunnel's own
+          reading, so it went to the block with the rate it is read off — and the composite verdict
+          in Health, which folds that floor together with what the recorders saw, is the statement
+          that is actually per (path, group). */}
       <td className="px-3 py-1.5" />
-      <td className="px-3 py-1.5 text-right whitespace-nowrap">
-        {line.bps === null ? (
-          <span className="text-muted-foreground">no data</span>
-        ) : (
-          <RateCell bps={line.bps} ambiguous={line.multi_group} stale={stale} />
-        )}
-        <div className="text-[10px] text-muted-foreground/70">
-          {age === undefined ? '—' : <span className={stale ? 'text-amber-500' : undefined}>{formatAge(age)}</span>}
-        </div>
-      </td>
+      <td className="px-3 py-1.5" />
       {showObservations && (
         <td className="px-3 py-1.5 text-right whitespace-nowrap">
           <MsgRateCell msgPerSec={line.msg_per_sec} asOfAge={observationsAsOfAge} />
@@ -454,11 +414,13 @@ function PublisherLineRow({
 
 // What the recorders actually received from this path, per second.
 //
-// It sits next to the counter rate rather than replacing it because the two answer different
-// questions and fail differently. The counter is per tunnel and minutes late — an upper bound that
-// a multi-group publisher shares across its groups. This is per group and comes from the far end,
-// so it is what arrived rather than what was sent, and it is blank for any feed with no recorder
-// behind it. Neither is redundant with the other.
+// It does not replace the counter rate in the publishers block, because the two answer different
+// questions and fail differently. That one is per tunnel and minutes late — an upper bound a
+// multi-group publisher shares across its groups, which is why it reads at the tunnel's grain and
+// not here. This is per group and comes from the far end, so it is what arrived rather than what was
+// sent, and it is blank for any feed with no recorder behind it. Neither is redundant with the
+// other; they are now one column apart on the page rather than side by side, at the grain each is
+// true at.
 // Msg/s, Peer and Sequence are folded from refresher payloads on a ten-minute cycle, so past
 // STALE_AFTER_SECS one of them has missed a cycle and what it shows is a reading nobody has
 // re-taken. Until this existed the age lived only inside the Sequence tooltip and nowhere at all
@@ -482,7 +444,7 @@ function computedLine(asOfAge?: number): string {
 
 // A payload-level clock stamps a whole column at once, so the header is where it belongs — saying
 // it per row would repeat one fact on every line. The cells below dim, which is the same two-part
-// treatment the Ingress column already gives a rate bucket that missed its window.
+// treatment the publishers block gives a rate bucket that missed its window.
 function ColumnHeader({ label, asOfAge }: { label: string; asOfAge?: number }) {
   if (!payloadStale(asOfAge)) return <>{label}</>
   return (
@@ -1222,52 +1184,10 @@ function UnattributedSequenceCell({
 }
 
 
-// Rates carry a tilde when the group's publishers also publish elsewhere from the same tunnel:
-// counters are per interface, so the figure is an upper bound for this group. Hiding that would
-// present a shared measurement as a per-group one.
-// The group's own rate, and only where the group can own it.
-//
-// `elsewhere` is what a shared counter renders as. A publisher that feeds several groups from one
-// tunnel reports the same figure against each of them, so on such a group this column carried a
-// number it could not attribute — repeated once per group and marked with a '~' that never went
-// away. The figure now lives once, on the publisher, in the block at the top of the section; here it
-// points there rather than restating it. Where a publisher serves only this group the bytes ARE the
-// group's, and the number is shown plainly, because there is no caveat to make.
-function RateCell({
-  bps,
-  ambiguous,
-  stale,
-  elsewhere,
-}: {
-  bps: number
-  ambiguous: boolean
-  stale: boolean
-  elsewhere?: boolean
-}) {
-  if (ambiguous && elsewhere && bps > 0) {
-    return (
-      <Tooltip content="This group's publishers each feed several groups from one tunnel, so the counter cannot be split between them. Per-publisher rates are at the top of this section; what this group received is in Msg/s, measured at the recorders.">
-        <span className="text-xs text-muted-foreground">per tunnel &uarr;</span>
-      </Tooltip>
-    )
-  }
-  return <RateCellInner bps={bps} ambiguous={ambiguous} stale={stale} />
-}
-
-function RateCellInner({ bps, ambiguous, stale }: { bps: number; ambiguous: boolean; stale: boolean }) {
-  const body = (
-    <span className={`tabular-nums ${stale ? 'text-muted-foreground' : ''}`}>
-      {ambiguous && bps > 0 ? '~' : ''}
-      {formatBps(bps)}
-    </span>
-  )
-  if (!ambiguous) return body
-  return (
-    <Tooltip content="Upper bound: at least one publisher feeds several groups from one tunnel, and interface counters cannot be split between them.">
-      {body}
-    </Tooltip>
-  )
-}
+// The tilde-and-upper-bound rate cell that used to live here is gone with the Ingress column. A
+// counter read per interface has no ambiguity to caveat once it is printed at the tunnel's own
+// grain, which is the only place it is printed now; the '~' survives on the group's Publishers
+// count, where what is uncertain is which group the bytes belonged to.
 
 // The one finding on this page that belongs to no publisher line: a recording node that is short
 // on every path of a group is the vantage, not the feed.
@@ -1310,9 +1230,12 @@ function RecorderCoverageBadge({
   )
 }
 
-// A group's publisher lines are open by default while the whole published set fits on screen —
-// the market-data feeds have two publishers and that IS the view someone opens this page for. The
-// shreds groups have hundreds, so they start collapsed rather than burying every other row.
+// A group's publisher lines are open by default while the whole published set fits on screen — the
+// market-data feeds have two publishers and that IS the view someone opens this page for.
+//
+// Nothing in scope trips this today: the group with hundreds of lines was Solana shreds, which the
+// API now excludes. It stays as the guard for the next wide group rather than being removed, since
+// what it protects against is a section that buries every row below it.
 const PUBLISHER_LINES_OPEN_BELOW = 5
 
 function GroupRow({
@@ -1360,11 +1283,6 @@ function GroupRow({
           <CopyableText text={group.multicast_ip} className="font-mono text-[10px] text-muted-foreground/70" />
         </div>
       </td>
-      {/* DZD is per publisher: which DoubleZero device a path attaches to, and what that device
-          says about its session. A group spans several, so the cell is empty here. The plane the
-          group carries used to live in this column and is gone — it was the last three characters
-          of the code two columns to the left. */}
-      <td className="px-3 py-3" />
       <td className="px-3 py-3 text-sm">
         <PublisherCell
           group={group}
@@ -1377,24 +1295,10 @@ function GroupRow({
       <td className="px-3 py-3 text-sm">
         <SubscriberCell group={group} />
       </td>
-      {/* The bucket age rides under the rate rather than in a column of its own. It is a property
-          of that number and of nothing else on the row, and a whole column for it was pushing the
-          verdicts off the right edge of the table. */}
-      <td className="px-3 py-3 text-sm text-right whitespace-nowrap">
-        <RateCell
-          bps={group.ingress_bps}
-          ambiguous={group.traffic_ambiguous}
-          stale={stale}
-          elsewhere
-        />
-        <div className="text-[10px] text-muted-foreground/70">
-          {age === undefined ? (
-            'no data'
-          ) : (
-            <span className={stale ? 'text-amber-500' : undefined}>{formatAge(age)}</span>
-          )}
-        </div>
-      </td>
+      {/* There is no Ingress column on this table any more. The counter is read per tunnel, so
+          the cell held a figure it could not attribute to this group and had already shrunk to a
+          pointer at the block that can — and a column whose every cell says "see above" is not a
+          column. What this group received is Msg/s on its lines, measured at the recorders. */}
       {/* Msg/s and Peer are per PATH and the group row carries neither. Summing recorded message
           rates over a group's paths would double the feed — redundant paths carry the same
           traffic — and a parity ratio has no meaning until you name which path it is about. */}
@@ -1436,15 +1340,12 @@ function GroupRow({
         <PublisherLineRow
           key={`${group.pk}-${line.user_pk}`}
           line={line}
-          asOf={asOf}
-          now={now}
           showLastHeard={showLastHeard}
           showSequence={showSequence}
           showObservations={showObservations}
           sequenceAsOfAge={sequenceAsOfAge}
           observationsAsOfAge={observationsAsOfAge}
           gapWindow={gapWindow}
-          floorBps={floorBps}
         />
       ))}
     {expanded && hidden > 0 && (
@@ -1462,74 +1363,204 @@ function GroupRow({
 
 // Every publisher of a section, once, with the facts that belong to its TUNNEL.
 //
-// Those facts are not the group's. Ingress, the DZD device and tunnel, the access RTT and the BGP
-// session are properties of one publisher's tunnel — and a publisher that feeds several groups of a
-// feed, which is every Kalshi publisher serving the top-of-book and market-by-price halves from one
-// tunnel, had every one of them repeated on each group it appears in. Measured on mainnet the perps
-// section printed the same two rates FOUR times and marked all four as upper bounds, when there
-// were only ever two measurements and each was exact for the tunnel it described.
+// Those facts are not the group's. Ingress, the DZD device and tunnel, the access RTT, the BGP
+// session, the box's classification and the verdict against the publisher floor are all read per
+// interface — and a publisher that feeds several groups of a feed, which is every Kalshi publisher
+// serving the top-of-book and market-by-price halves from one tunnel, had every one of them
+// repeated on each group it appears in. Measured on mainnet the perps section printed the same two
+// rates FOUR times and marked all four as upper bounds, when there were only ever two measurements
+// and each was exact for the tunnel it described.
 //
-// It is also a demotion, and that is deliberate. The counter plane answers one question well — is
-// this tunnel moving anything at all — and every real finding on this page came from the
+// This block is where they all live, and the table below now carries NONE of them: its DZD and
+// Ingress columns are gone and its publisher lines have shed the floor status word. Half a fix was
+// worse than either whole one — the block and the lines printed the same address, the same device,
+// the same rate and the same status word, and a two-group section read as though it held four
+// publishers. What an expanded line has left is what is genuinely per (path, group): what the
+// recorders received from it, how it compares with its peer path, its own sequence series and its
+// own verdict.
+//
+// It is also a demotion of the counter plane, and that is deliberate. It answers one question well
+// — is this tunnel moving anything at all — and every real finding on this page came from the
 // application plane instead: a recorder losing 8.2%, two paths gapping without overlap, a path
-// delivering 7% of its peer. The counter's one strong claim now sits here, once, and the group rows
-// carry the measurements that earned their space.
+// delivering 7% of its peer. The counter's one strong claim sits here, once, and the table carries
+// the measurements that earned their space.
+//
+// The two places join on the client IP, so both read it the same way: the box's own address first,
+// the tunnel address under it, ordered by client IP ascending and compared AS ADDRESSES — the same
+// order the API returns a group's lines in, so the eye can walk one list against the other.
 //
 // Deduped on the DZ IP: it is the address the datagrams leave with, one per publisher, and the one
 // recorded series join back on. A publisher's tunnel figures are identical across its groups by
 // construction — one counter — so taking the first line it appears on is not a choice between
-// readings. First-seen order preserves the address ordering the API already applies per group.
-function SectionPublishers({ service, now }: { service: EdgeMulticastService; now: number }) {
-  const byPublisher = new Map<string, EdgeMulticastPublisher>()
+// readings.
+//
+// The columns are labelled, which they were not while the same numbers were also on the table. A
+// row of two addresses, a device, a latency, a rate and an age with nothing naming any of them is
+// readable only by someone who already knows the shape, and this is now the only place any of them
+// appears.
+function SectionPublishers({
+  service,
+  asOf,
+  now,
+  floorBps,
+}: {
+  service: EdgeMulticastService
+  asOf: number
+  now: number
+  floorBps: number
+}) {
+  // Keyed on the tunnel address, so a publisher that feeds several groups of this section is one
+  // row. The first line wins and the fields taken off it are the ones that cannot differ between
+  // groups: everything here is read off the interface, not off the group.
+  const byTunnel = new Map<string, EdgeMulticastPublisher>()
   for (const group of service.groups) {
     for (const line of group.publisher_lines ?? []) {
       const key = line.dz_ip || line.client_ip
-      if (key && !byPublisher.has(key)) byPublisher.set(key, line)
+      if (key && !byTunnel.has(key)) byTunnel.set(key, line)
     }
   }
-  const lines = [...byPublisher.values()]
+  const lines = [...byTunnel.values()].sort((a, b) => compareAddresses(a.client_ip, b.client_ip))
   if (lines.length === 0) return null
 
   return (
     <div className="px-4 py-2 border-b border-border bg-muted/30">
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
-        Publishers · one row per tunnel
-      </div>
-      <div className="flex flex-col gap-1">
-        {lines.map((line) => {
-          const age = ageSecs(line.observed_at, now)
-          return (
-            <div
-              key={line.dz_ip || line.client_ip}
-              className="flex flex-wrap items-center gap-x-4 gap-y-0.5 text-xs"
-            >
-              <span className="font-mono tabular-nums w-32 shrink-0">{line.dz_ip || '—'}</span>
-              <span className="font-mono tabular-nums text-muted-foreground w-32 shrink-0">
-                {line.client_ip}
-              </span>
-              <DZDCell
-                deviceCode={line.device_code}
-                tunnelId={line.tunnel_id}
-                session={line.bgp_session}
-                rtt={line.bgp_rtt}
-                ledgerStatus={line.bgp_status}
-                now={now}
-              />
-              {/* No '~' here, and that is the point. The caveat that number carried was never about
-                  the counter's accuracy — it was about which group its bytes could be attributed
-                  to. At the tunnel's own grain it is exact for what it measures. */}
-              <span className="tabular-nums w-24 shrink-0 text-right">
-                {line.bps === null || line.bps === undefined ? '—' : formatBps(line.bps)}
-              </span>
-              <span className="text-[10px] text-muted-foreground w-14 shrink-0">
-                {age === undefined ? '' : formatAge(age)}
-              </span>
-            </div>
-          )
-        })}
-      </div>
+      <table className="text-xs">
+        <thead>
+          <tr className="text-left text-[10px] uppercase tracking-wide text-muted-foreground align-bottom">
+            <th className="pr-8 pb-1 font-normal">
+              Publisher
+              <div className="normal-case tracking-normal text-muted-foreground/70">
+                client IP / DZ IP · one row per tunnel
+              </div>
+            </th>
+            <th className="pr-8 pb-1 font-normal">DZD</th>
+            <th className="pr-8 pb-1 font-normal text-right">
+              Ingress
+              <div className="normal-case tracking-normal text-muted-foreground/70">per tunnel</div>
+            </th>
+            <th className="pb-1 font-normal">Floor</th>
+          </tr>
+        </thead>
+        <tbody>
+          {lines.map((line) => {
+            // Aged against the payload clock and not the wall clock, the same rule the rest of the
+            // counter plane follows: this number was computed when the payload was.
+            const age = ageSecs(line.observed_at, asOf)
+            const stale = age === undefined || age > STALE_AFTER_SECS
+            const label = CLASS_LABEL[line.class]
+            return (
+              <tr key={line.dz_ip || line.client_ip} className="align-top">
+                <td className="pr-8 py-0.5 whitespace-nowrap leading-tight">
+                  <span className="inline-flex items-center gap-2">
+                    {/* Links to the ledger User behind the address: a path that is gapping is a
+                        question about that account — its tunnel, its device, its access pass. */}
+                    <Link
+                      to={`/dz/users/${line.user_pk}`}
+                      state={EDGE_MULTICAST_BACK}
+                      className="font-mono hover:underline"
+                    >
+                      {line.client_ip}
+                    </Link>
+                    {label && <span className="text-muted-foreground">{label}</span>}
+                  </span>
+                  <div className="mt-0.5">
+                    {line.dz_ip ? (
+                      <CopyableText
+                        text={line.dz_ip}
+                        className="font-mono text-[10px] text-muted-foreground/70"
+                      />
+                    ) : (
+                      <span className="text-[10px] text-muted-foreground/70">no tunnel address</span>
+                    )}
+                  </div>
+                </td>
+                <td className="pr-8 py-0.5 whitespace-nowrap">
+                  <DZDCell
+                    deviceCode={line.device_code}
+                    tunnelId={line.tunnel_id}
+                    session={line.bgp_session}
+                    rtt={line.bgp_rtt}
+                    ledgerStatus={line.bgp_status}
+                    now={now}
+                  />
+                </td>
+                {/* No '~' here, and that is the point. The caveat that number carried was never
+                    about the counter's accuracy — it was about which group its bytes could be
+                    attributed to. At the tunnel's own grain it is exact for what it measures. */}
+                <td className="pr-8 py-0.5 text-right whitespace-nowrap tabular-nums">
+                  {line.bps === null || line.bps === undefined ? (
+                    <span className="text-muted-foreground">no data</span>
+                  ) : (
+                    <span className={stale ? 'text-muted-foreground' : undefined}>
+                      {formatBps(line.bps)}
+                    </span>
+                  )}
+                  <div className="text-[10px] text-muted-foreground/70">
+                    {age === undefined ? (
+                      '—'
+                    ) : (
+                      <span className={stale ? 'text-amber-500' : undefined}>{formatAge(age)}</span>
+                    )}
+                  </div>
+                </td>
+                <td className="py-0.5 whitespace-nowrap">
+                  <PublisherFloorCell status={line.status} floorBps={floorBps} />
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
     </div>
   )
+}
+
+// The tunnel's own verdict against the publisher floor: one tunnel, one counter, one reading,
+// whatever number of groups it feeds.
+//
+// It reads next to the rate it is derived from rather than on the group lines, where it was the
+// same word printed once per plane. The Health badge on a line is not this verdict repeated — it is
+// per (path, group) and folds this together with what the recorders saw, so a floor fault still
+// reaches every line the tunnel publishes on, by way of the only column that can also say the path
+// gapped.
+function PublisherFloorCell({ status, floorBps }: { status: string; floorBps: number }) {
+  const detail =
+    status === 'thin'
+      ? `below the ${formatBps(floorBps)} floor: the tunnel is moving something, not the product`
+      : status === 'idle'
+        ? 'counter read zero in the last visible bucket'
+        : status === 'unknown'
+          ? 'no counter row for this publisher: nothing measured it'
+          : `at or above the ${formatBps(floorBps)} floor`
+  return (
+    <Tooltip content={detail}>
+      <span className="inline-flex items-center gap-1.5">
+        <span
+          className={`inline-block h-1.5 w-1.5 rounded-full ${PUBLISHER_DOT[status] ?? PUBLISHER_DOT.unknown}`}
+        />
+        <span className={status === 'publishing' ? 'text-muted-foreground' : ''}>{status}</span>
+      </span>
+    </Tooltip>
+  )
+}
+
+// Addresses compare as addresses, never as text: dotted-quad strings sort 148.51.120.152 above
+// 148.51.120.6, and those two are the pair of Kalshi publishers on one group. Anything that is not
+// four octets falls back to a text compare rather than dropping the ordering altogether.
+function compareAddresses(a: string, b: string): number {
+  const octets = (v: string) => {
+    const parts = v.split('.')
+    if (parts.length !== 4) return undefined
+    const nums = parts.map((x) => Number(x))
+    return nums.some((n) => !Number.isInteger(n) || n < 0 || n > 255) ? undefined : nums
+  }
+  const oa = octets(a)
+  const ob = octets(b)
+  if (!oa || !ob) return a.localeCompare(b)
+  for (let i = 0; i < 4; i++) {
+    if (oa[i] !== ob[i]) return oa[i] - ob[i]
+  }
+  return 0
 }
 
 function ServiceSection({
@@ -1559,8 +1590,9 @@ function ServiceSection({
 }) {
   // Only the truncation notice spans the table now; the publisher lines carry a cell per column,
   // so the count still has to match the header exactly — a mismatch silently shifts every group
-  // column one to the left.
-  const columns = 6 + (showObservations ? 2 : 0) + (showLastHeard ? 1 : 0) + (showSequence ? 1 : 0)
+  // column one to the left. Four fixed columns since DZD and Ingress moved into the publishers
+  // block: Group/Path, Publishers, Subscribers, Health.
+  const columns = 4 + (showObservations ? 2 : 0) + (showLastHeard ? 1 : 0) + (showSequence ? 1 : 0)
   const silent = service.groups.filter((g) => g.silent).length
 
   return (
@@ -1578,10 +1610,10 @@ function ServiceSection({
           </span>
         )}
       </div>
-      <SectionPublishers service={service} now={now} />
+      <SectionPublishers service={service} asOf={asOf} now={now} floorBps={floorBps} />
       {/* Vertical before horizontal. A section is capped and scrolls down with its header pinned,
-          which keeps the shreds groups — twelve publisher lines each — from pushing every section
-          below them off the screen. overflow-x stays as the fallback for a narrow viewport, but
+          so a service with many groups cannot push every section below it off the screen.
+          overflow-x stays as the fallback for a narrow viewport, but
           the column set is now meant to fit: the plane badge duplicated the code, Measured folded
           into the rate it describes, and the ledger's BGP marker joined the device's own in DZD. */}
       <div className="overflow-auto max-h-[70vh]">
@@ -1599,10 +1631,8 @@ function ServiceSection({
                   multicast IP / DZ IP
                 </div>
               </th>
-              <th className="px-3 py-2 font-medium">DZD</th>
               <th className="px-3 py-2 font-medium">Publishers</th>
               <th className="px-3 py-2 font-medium">Subscribers</th>
-              <th className="px-3 py-2 font-medium text-right">Ingress</th>
               {showObservations && (
                 <th className="px-3 py-2 font-medium text-right">
                   <ColumnHeader label="Msg/s" asOfAge={observationsAsOfAge} />
@@ -1766,6 +1796,11 @@ export function EdgeMulticastPage() {
                   {silentCount} silent group{silentCount === 1 ? '' : 's'}
                 </span>
               )}
+              {/* Said out loud, because a page whose premise is "every group" and which quietly
+                  drops a family under-reports — the one failure this page is least allowed. */}
+              <Tooltip content="Every measurement here is built for two publishers carrying one product over redundant paths and recorded with sequence numbers. None of it means the same thing on a 772-publisher Turbine fan-in with no recorded wire protocol, so the Solana groups are scoped out. They are on /dz/multicast-groups, the every-group view.">
+                <span className="text-xs text-muted-foreground/50">market data only</span>
+              </Tooltip>
               {data?.generated_at && (
                 <span className="text-xs text-muted-foreground/50">computed {formatAge(ageSecs(data.generated_at, now) ?? 0)}</span>
               )}
@@ -1798,11 +1833,20 @@ export function EdgeMulticastPage() {
         </div>
 
         <div className="mt-8 pt-4 border-t border-border max-w-3xl text-xs text-muted-foreground leading-relaxed space-y-1.5">
-          <div className="font-medium text-foreground">How to read this table</div>
+          <div className="font-medium text-foreground">How to read this page</div>
+          <p>
+            Each section opens with its <span className="text-foreground">publishers</span>, one row per
+            tunnel, and everything there is a property of that tunnel rather than of any one group — a
+            publisher serves every plane of its feed from one tunnel, so those facts would otherwise be
+            printed once per group it feeds. The table under it is per group, and expanding a group's
+            Publishers cell adds a line per path with only what is true of that path on that group.
+          </p>
           <p>
             <span className="text-foreground">Ingress</span> is a {data?.rate_grain_minutes ?? 5}-minute
             counter rollup measured at each member's tunnel, so it lands minutes behind wall clock; the small
-            figure under a rate is the age of the newest bucket behind it.
+            figure under a rate is the age of the newest bucket behind it. It is read per interface, which is
+            why it is quoted per tunnel and never per group: a publisher that feeds several groups reports the
+            same bytes against each of them. What a group received is Msg/s, measured at the recorders.
           </p>
           <p>
             <span className="text-foreground">DZD</span> is the DoubleZero device a path attaches to, with

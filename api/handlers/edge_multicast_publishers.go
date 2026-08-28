@@ -448,14 +448,18 @@ const (
 // only `feed="mbp-sports"` in their metrics); the whole ~18.6 Mbps belonged to the mbp group on the
 // same two tunnels.
 //
-// Both conditions are load-bearing and the narrowness is the point. A publisher that serves only
-// this group HAS attributable bytes, so its 'healthy' stands even with no subscriber. And a group
-// with subscribers keeps its counter-only 'healthy' — which is what the shreds groups rely on,
-// where there is no recorded wire protocol at all and every one of the 532 root publishers is
-// MultiGroup. Guarding on the shared counter alone would have turned those green lines grey over a
-// property of the plane rather than of the path, which is the trade this file already refuses
-// elsewhere. Today the pair fires on two groups, edge-kalshi-elections-tob and jito-shredstream —
-// the only ones with publishers and no subscriber at all.
+// Both conditions are load-bearing, and the second one still is now that the Solana groups are out
+// of scope — the reason has changed, not gone. It was the shreds shape: 532 root publishers, all
+// MultiGroup, no recorded wire protocol, legitimately green on counter-only evidence. What keeps it
+// now is that "no application-plane signal" is otherwise a TRANSIENT state. The observations payload
+// is a cache entry, and a newly-bumped key is empty until the refresh chain reaches it — so without
+// the subscriber requirement a cold cache would turn every Kalshi publisher grey at once, since all
+// of them are MultiGroup. A missing subscriber is structural: nobody receives this group, so nothing
+// will ever settle it.
+//
+// A publisher that serves only this group HAS attributable bytes, so its 'healthy' stands even with
+// no subscriber. Today the pair fires on edge-kalshi-elections-tob — the only group in scope with
+// publishers and no subscriber at all.
 func edgeMulticastPublisherHealth(line EdgeMulticastPublisher, groupHasSeries bool, groupHasSubscribers bool) string {
 	switch line.Status {
 	case edgeMulticastPubIdle:

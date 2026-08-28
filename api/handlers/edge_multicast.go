@@ -73,10 +73,33 @@ const EdgeMulticastCacheKey = "edge_multicast"
 // with nothing on the page to say why it is there.
 const edgeMulticastGroupCodePrefix = "edge-"
 
+// edgeMulticastExcludedPrefix drops the Solana groups from this page, and it is a scope decision
+// rather than a filter for tidiness.
+//
+// Every measurement here is built for a market-data feed: two publishers carrying one product over
+// redundant paths, recorded by a handful of nodes running a wire protocol with sequence numbers.
+// Not one column means the same thing on shreds. It is a fan-in of 772 independent publishers with
+// no redundancy pairing to compare, it runs Turbine and has no recorded wire protocol at all — so
+// no Sequence, no gap marker, no loss rate and no recorder comparison — and `thin` is its steady
+// state, since a validator that is not sending is normal there (measured: 605 of 767 above the
+// floor, 149 idle, 3 thin).
+//
+// Keeping it cost the rest of the page precision. 'healthy' on shreds rests on the tunnel counter
+// alone, which is one of the two reasons the shared-counter guard in edgeMulticastPublisherHealth
+// is as narrow as it is: every one of the 532 edge-solana-root publishers also publishes into
+// edge-solana-shreds, so guarding on an unattributable counter alone would have greyed 532
+// legitimately-green lines. Removing shreds does NOT let that guard relax — the other reason is
+// still live, and it is written down where the guard is. The publisher line cap and the
+// groupHasSeries guard both exist largely for this shape too.
+//
+// Scoping to market data is the honest fix. The Solana groups are not unmonitored — they remain on
+// /dz/multicast-groups, the every-group view — and the page says what it excludes rather than
+// quietly under-reporting, which is the failure this file cares most about.
+const edgeMulticastExcludedPrefix = "edge-solana"
+
 // edgeMulticastPlanes maps the plane suffix a group's ledger code carries to its display label.
 // A plane is one feed spec of one product line: market-by-price, market-by-order, or top-of-book.
-// The
-// suffix is the only place that distinction is recorded, on both the group code
+// The suffix is the only place that distinction is recorded, on both the group code
 // (edge-kalshi-perps-mbp) and the feed code (kalshi-perps-mbp).
 //
 // mbo has no group on mainnet yet and is listed anyway: the suffix set is what the feed catalog
@@ -89,7 +112,7 @@ var edgeMulticastPlanes = map[string]string{
 }
 
 // edgeMulticastPlaneFor returns the display label for a code's plane, or "" when the code carries
-// none — the Solana groups, which are not split by plane.
+// none, which every group outside the plane-split market-data feeds does.
 func edgeMulticastPlaneFor(code string) string {
 	if i := strings.LastIndexByte(code, '-'); i >= 0 {
 		return edgeMulticastPlanes[code[i+1:]]
@@ -874,9 +897,10 @@ func (a *API) queryEdgeMulticastFeeds(ctx context.Context) (edgeMulticastFeedGro
 	return out, nil
 }
 
-// queryEdgeMulticastGroups reads the Edge product's multicast groups: every group whose ledger
-// code carries the product prefix, whether or not a feed claims it. See
-// edgeMulticastGroupCodePrefix for why the prefix and not the feed catalog decides.
+// queryEdgeMulticastGroups reads the Edge product's market-data multicast groups: every group whose
+// ledger code carries the product prefix and is not Solana. See edgeMulticastGroupCodePrefix for
+// why the prefix and not the feed catalog decides, and edgeMulticastExcludedPrefix for why the
+// Solana groups are out of scope rather than merely hidden.
 func (a *API) queryEdgeMulticastGroups(ctx context.Context) ([]MulticastDeliveryGroup, error) {
 	query := `
 		SELECT
@@ -887,10 +911,11 @@ func (a *API) queryEdgeMulticastGroups(ctx context.Context) ([]MulticastDelivery
 			COALESCE(status, '') AS status
 		FROM dz_multicast_groups_current
 		WHERE startsWith(COALESCE(code, ''), ?)
+		  AND NOT startsWith(COALESCE(code, ''), ?)
 		SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0
 	`
 	start := time.Now()
-	rows, err := a.envDB(ctx).Query(ctx, query, edgeMulticastGroupCodePrefix)
+	rows, err := a.envDB(ctx).Query(ctx, query, edgeMulticastGroupCodePrefix, edgeMulticastExcludedPrefix)
 	metrics.RecordClickHouseQuery("edge_multicast_groups", time.Since(start), err)
 	if err != nil {
 		return nil, err
