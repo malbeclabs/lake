@@ -1450,9 +1450,12 @@ func TestGetShredsRewards_CachedPagesPartitionTheSet(t *testing.T) {
 	}
 }
 
-// TestGetShredsRewards_SearchBypassesCache: a search changes which validators are
-// in the set, which is the one thing the cached complete set cannot answer.
-func TestGetShredsRewards_SearchBypassesCache(t *testing.T) {
+// TestGetShredsRewards_SearchServedFromCache: a search selects from exactly the
+// set the cached entry holds, so it is answered from the cache rather than by the
+// slowest query the page can make. Live, the search WHERE sits on top of
+// shredsRewardsIdentityJoins and overran the handler's 15s budget, so search
+// returned 500 and showed no data at all.
+func TestGetShredsRewards_SearchServedFromCache(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPIAll(t, testChDB, testPgDB, nil, nil)
 	insertShredsRewardsManyValidators(t, api, 25)
@@ -1465,12 +1468,68 @@ func TestGetShredsRewards_SearchBypassesCache(t *testing.T) {
 	rr := httptest.NewRecorder()
 	api.GetShredsRewards(rr, req)
 	require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
-	assert.Equal(t, "MISS", rr.Header().Get("X-Cache"))
+	assert.Equal(t, "HIT", rr.Header().Get("X-Cache"))
 
 	resp := decodeShredsRewards(t, rr.Body.Bytes())
 	require.Len(t, resp.Validators, 1)
 	assert.Equal(t, "node-007", resp.Validators[0].NodeID)
-	assert.Equal(t, 1, resp.Total, "the total describes the filtered set")
+	assert.Equal(t, 1, resp.Total, "the total describes the filtered set, which is what the pager reads")
+}
+
+// TestGetShredsRewards_CachedSearchMatchesLive is the invariant behind answering a
+// search from the cache: for every search shape the page can produce, what
+// matchShredsRewardsSearch selects in Go must be exactly what the SQL WHERE
+// selects in ClickHouse.
+//
+// The two are one predicate written twice — buildShredsRewardsSearch in SQL,
+// matchShredsRewardsSearch in Go — so nothing but this test stops them drifting.
+// Both paths stay reachable at runtime (a cache miss still serves live), so a
+// drift would show the same query returning different rows depending on cache
+// state.
+func TestGetShredsRewards_CachedSearchMatchesLive(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPIAll(t, testChDB, testPgDB, nil, nil)
+	const validators = 25
+	insertShredsRewardsManyValidators(t, api, validators)
+
+	complete, err := api.FetchShredsRewardsData(t.Context())
+	require.NoError(t, err)
+	require.Len(t, complete.Validators, validators)
+
+	// The blob the cache would hold, compared against the query directly. Neither
+	// side goes through page_cache or the handler: seedShredsRewardsCache holds a
+	// mutex until the test ends, so seeding twice to reach both paths deadlocks.
+	blob, err := json.Marshal(complete)
+	require.NoError(t, err)
+
+	ids := func(t *testing.T, resp *handlers.ShredsRewardsResponse) []string {
+		t.Helper()
+		out := make([]string, 0, len(resp.Validators))
+		for _, v := range resp.Validators {
+			out = append(out, v.NodeID)
+		}
+		return out
+	}
+
+	// Field-scoped, free text, case folding, multiple ANDed filters, a term that
+	// matches nothing, one that matches everything, and a bare colon.
+	for _, search := range []string{
+		"node:node-007", "node:NODE-007", "name:Validator", "name:validator",
+		"vote:vote-00", "node-01", "NODE-01",
+		"node:node-0,name:Validator", "node:node-007,name:nope",
+		"zzz-matches-nothing", "node:node", "unknownfield:node-007",
+	} {
+		t.Run(search, func(t *testing.T) {
+			live, err := api.ExportComputeShredsRewards(t.Context(), search, "", "", 500, 0)
+			require.NoError(t, err)
+
+			cached, ok := handlers.ExportSliceCachedShredsRewards(blob, search, "", "", 500, 0)
+			require.True(t, ok, "the seeded payload is the complete set")
+
+			require.Equal(t, live.Total, cached.Total, "search %q: totals disagree", search)
+			require.Equal(t, ids(t, live), ids(t, cached), "search %q: matched sets disagree", search)
+		})
+	}
 }
 
 // TestGetShredsRewards_MissingCacheFallsBackToLive: the key is a NEW one, so the

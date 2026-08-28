@@ -538,14 +538,21 @@ func (a *API) GetShredsRewards(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The cache entry holds the complete unfiltered set, so ANY page of ANY sort
-	// can be served from it — which is the point: the page's own controls (turning
-	// a page, clicking a column header) used to be the only shapes that missed and
-	// therefore the slowest thing on it. Only a search bypasses the cache, because
-	// only a search changes which validators are in the set. The entry is written
-	// by the mainnet worker and carries no environment, so a non-mainnet request
-	// must not read it.
-	if search == "" && isMainnet(r.Context()) {
-		if page, ok := a.cachedShredsRewardsPage(r.Context(), sortField, order, limit, offset); ok {
+	// AND any search can be served from it — which is the point: the page's own
+	// controls used to be the slowest thing on it.
+	//
+	// A search used to bypass this, on the reasoning that it changes which
+	// validators are in the set. It does, but the set it selects from is exactly
+	// what the entry holds, so the selection can be made here: matchShredsRewardsSearch
+	// applies the same predicate the SQL does. Bypassing was the worse half of the
+	// trade — the search WHERE sits on top of shredsRewardsIdentityJoins, so a
+	// search read ~51M rows, overran the handler's 15s budget and returned 500,
+	// which is to say search was the one control on this page that did not work.
+	//
+	// The entry is written by the mainnet worker and carries no environment, so a
+	// non-mainnet request must not read it.
+	if isMainnet(r.Context()) {
+		if page, ok := a.cachedShredsRewardsPage(r.Context(), search, sortField, order, limit, offset); ok {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			if err := json.NewEncoder(w).Encode(page); err != nil {
@@ -574,7 +581,7 @@ func (a *API) GetShredsRewards(w http.ResponseWriter, r *http.Request) {
 // can't answer: no entry, a read failure, an entry older than
 // shredsRewardsCacheStaleAfter, or a payload that isn't the complete set. Every
 // false falls through to the live query.
-func (a *API) cachedShredsRewardsPage(ctx context.Context, sortField, order string, limit, offset int) (*ShredsRewardsResponse, bool) {
+func (a *API) cachedShredsRewardsPage(ctx context.Context, search, sortField, order string, limit, offset int) (*ShredsRewardsResponse, bool) {
 	readCtx, cancel := context.WithTimeout(ctx, shredsRewardsCacheReadTimeout)
 	defer cancel()
 
@@ -587,7 +594,72 @@ func (a *API) cachedShredsRewardsPage(ctx context.Context, sortField, order stri
 			"age", age.Round(time.Second), "max_age", shredsRewardsCacheStaleAfter)
 		return nil, false
 	}
-	return sliceCachedShredsRewards(data, sortField, order, limit, offset)
+	return sliceCachedShredsRewards(data, search, sortField, order, limit, offset)
+}
+
+// asciiFoldLower lowercases A-Z and leaves every other byte alone, which is
+// exactly what ClickHouse's positionCaseInsensitive does.
+//
+// Not strings.ToLower: that case-folds Unicode too, so a validator named with a
+// non-ASCII capital would match here and not in the live query. The two paths
+// have to agree — a cache miss falls through to the live one mid-session.
+func asciiFoldLower(s string) string {
+	b := []byte(s)
+	for i := range b {
+		if b[i] >= 'A' && b[i] <= 'Z' {
+			b[i] += 'a' - 'A'
+		}
+	}
+	return string(b)
+}
+
+// matchShredsRewardsSearch reports whether a row satisfies a search expression,
+// mirroring buildShredsRewardsSearch clause for clause: comma-separated filters
+// ANDed together, each either field-scoped (name:, vote:, node:) or free text
+// matched across all three, all case-insensitive substring.
+//
+// It exists so a search can be answered from the cached complete set. The two
+// implementations are one predicate expressed twice, in Go and in SQL, so
+// TestGetShredsRewards_CachedSearchMatchesLive is what stops them drifting.
+func matchShredsRewardsSearch(row ShredsRewardsRow, search string) bool {
+	name := asciiFoldLower(row.ValidatorName)
+	vote := asciiFoldLower(row.VotePubkey)
+	node := asciiFoldLower(row.NodeID)
+
+	for _, f := range strings.Split(search, ",") {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		if parts := strings.SplitN(f, ":", 2); len(parts) == 2 {
+			field := asciiFoldLower(strings.TrimSpace(parts[0]))
+			val := asciiFoldLower(strings.TrimSpace(parts[1]))
+			switch field {
+			case "name":
+				if !strings.Contains(name, val) {
+					return false
+				}
+				continue
+			case "vote":
+				if !strings.Contains(vote, val) {
+					return false
+				}
+				continue
+			case "node":
+				if !strings.Contains(node, val) {
+					return false
+				}
+				continue
+			}
+		}
+		// Free text, matched against the filter as written — colon and all, the
+		// same string the SQL binds three times.
+		v := asciiFoldLower(f)
+		if !strings.Contains(name, v) && !strings.Contains(vote, v) && !strings.Contains(node, v) {
+			return false
+		}
+	}
+	return true
 }
 
 // sliceCachedShredsRewards returns the requested page of a cached rewards listing,
@@ -602,7 +674,7 @@ func (a *API) cachedShredsRewardsPage(ctx context.Context, sortField, order stri
 // An empty set is also treated as unusable rather than as a trivially complete
 // one: a single refresh that caught the dimension views mid-reload would otherwise
 // pin an empty listing as an authoritative answer for a whole refresh cycle.
-func sliceCachedShredsRewards(data []byte, sortField, order string, limit, offset int) (*ShredsRewardsResponse, bool) {
+func sliceCachedShredsRewards(data []byte, search, sortField, order string, limit, offset int) (*ShredsRewardsResponse, bool) {
 	var cached ShredsRewardsResponse
 	if err := json.Unmarshal(data, &cached); err != nil {
 		return nil, false
@@ -615,6 +687,28 @@ func sliceCachedShredsRewards(data []byte, sortField, order string, limit, offse
 	// blob is written in the default order, so any other sort is applied here
 	// rather than by keeping a copy per sort.
 	rows := cached.Validators
+
+	// A search filters the same complete set rather than bypassing it. The entry
+	// holds every validator, so which ones match is decidable here — and the live
+	// alternative was the slowest request the page could make: the search WHERE sits
+	// on top of shredsRewardsIdentityJoins, so it cost ~51M rows and blew the
+	// handler's 15s budget, returning 500 with no rows at all.
+	//
+	// Total then has to be the count of MATCHES, not of the whole set, because the
+	// pager reads it. The unfiltered path returns cached.Total for the same reason:
+	// both report the size of the set the page is showing.
+	total := cached.Total
+	if search != "" {
+		matched := make([]ShredsRewardsRow, 0, len(rows))
+		for _, row := range rows {
+			if matchShredsRewardsSearch(row, search) {
+				matched = append(matched, row)
+			}
+		}
+		rows = matched
+		total = len(matched)
+	}
+
 	sortShredsRewardsRows(rows, sortField, order)
 
 	// Both bounds are clamped to the set, so a page past the end is an empty (but
@@ -628,11 +722,12 @@ func sliceCachedShredsRewards(data []byte, sortField, order string, limit, offse
 		EpochColumns:         cached.EpochColumns,
 		Validators:           rows[start:end],
 		Clients:              []ShredsClientRewardsRow{},
-		// The whole-set count, independent of the page being served — which is what
-		// the pager reads. Unlike the live path this stays correct for a page past
-		// the end of the set, where the live query's count() OVER () rides on rows
-		// that aren't there; see computeShredsRewards.
-		Total: cached.Total,
+		// The count of the set being shown — the whole set, or the matches when a
+		// search narrowed it — independent of the page sliced out of it, which is
+		// what the pager reads. Unlike the live path this stays correct for a page
+		// past the end of the set, where the live query's count() OVER () rides on
+		// rows that aren't there; see computeShredsRewards.
+		Total: total,
 	}, true
 }
 
