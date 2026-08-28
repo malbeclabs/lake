@@ -85,8 +85,7 @@ func withRunbookDocs(t *testing.T, files map[string]string) *docsfetch.Client {
 	}
 }
 
-// A runbook past the page bound must say so: an agent driving a half-runbook
-// otherwise walks the user through a procedure with the tail missing.
+// A truncated runbook must say so on the output and in the content.
 func TestMCPHandler_GetOnboardingRunbook_ReportsTruncation(t *testing.T) {
 	t.Parallel()
 	api := &handlers.API{DocsSource: withRunbookDocs(t, map[string]string{
@@ -116,8 +115,22 @@ func TestMCPHandler_ReadDocs_ReportsTruncation(t *testing.T) {
 	assert.Contains(t, big["source"], "big.md")
 
 	small := callToolOutput(t, handler, sessionID, "read_docs", map[string]any{"page": "small"})
-	assert.Nil(t, small["truncated"])
+	assert.Equal(t, false, small["truncated"])
 	assert.Equal(t, "# small", small["content"])
+}
+
+func TestMCPHandler_GetOnboardingRunbook_RejectsTruncatedIndex(t *testing.T) {
+	t.Parallel()
+	api := &handlers.API{DocsSource: withRunbookDocs(t, map[string]string{
+		"runbooks.md": testRunbookIndex + strings.Repeat("\n", docsfetch.MaxPageBytes),
+	})}
+	handler, sessionID := mcpSession(t, api)
+
+	response := callTool(t, handler, sessionID, "get_onboarding_runbook", map[string]any{})
+	result := response["result"].(map[string]any)
+	require.True(t, result["isError"].(bool), "expected isError, got: %v", result)
+	text := result["content"].([]any)[0].(map[string]any)["text"].(string)
+	assert.Contains(t, text, "catalog is incomplete")
 }
 
 func TestMCPHandler_GetOnboardingRunbook_ListsCatalog(t *testing.T) {

@@ -16,9 +16,8 @@ import (
 // DefaultBase is the public docs tree on malbeclabs/docs@main.
 const DefaultBase = "https://raw.githubusercontent.com/malbeclabs/docs/main/docs/"
 
-// MaxPageBytes bounds a fetched page: content past this is dropped and marked
-// truncated, so an oversized document cannot flood the model's context. The
-// largest page in the docs tree is ~34 KB, so this leaves roughly 2x headroom.
+// MaxPageBytes bounds a fetched page so an oversized document cannot flood the
+// model's context; the largest docs page is ~34 KB.
 const MaxPageBytes = 65536
 
 // truncationMarker tells the model the page was cut and where the rest is, so

@@ -63,12 +63,10 @@ func TestRead_TruncatesOversizedPage(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, truncated)
 	assert.Equal(t, big[:MaxPageBytes], strings.TrimSuffix(content, truncationMarker(source)))
-	// The marker names the source so an agent can point the user at the rest.
-	assert.True(t, strings.HasSuffix(content, truncationMarker(source)))
+	assert.Contains(t, content, "truncated at 65536 bytes")
 	assert.Contains(t, content, "huge-page.md")
 }
 
-// The largest real docs page is ~34 KB; the old 10k bound cut it in half.
 func TestRead_LargestRealPageIsNotTruncated(t *testing.T) {
 	t.Parallel()
 	page := strings.Repeat("a", 34000)

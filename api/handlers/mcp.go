@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"reflect"
 	"regexp"
@@ -330,7 +331,7 @@ type ReadDocsInput struct {
 type ReadDocsOutput struct {
 	Page      string `json:"page"`
 	Source    string `json:"source,omitempty"`
-	Truncated bool   `json:"truncated,omitempty"`
+	Truncated bool   `json:"truncated"`
 	Content   string `json:"content"`
 }
 
@@ -342,13 +343,18 @@ func (a *API) registerReadDocsTool(server *mcp.Server) {
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ReadDocsInput) (*mcp.CallToolResult, ReadDocsOutput, error) {
 		// docsfetch validates the slug (path traversal) and bounds the page.
-		content, source, truncated, err := a.docsSource().Read(ctx, strings.TrimSpace(input.Page))
+		page := strings.TrimSpace(input.Page)
+		content, source, truncated, err := a.docsSource().Read(ctx, page)
 		if err != nil {
 			return nil, ReadDocsOutput{}, err
 		}
 
+		if truncated {
+			slog.Warn("docs page truncated", "page", page, "source", source)
+		}
+
 		return nil, ReadDocsOutput{
-			Page:      strings.TrimSpace(input.Page),
+			Page:      page,
 			Source:    source,
 			Truncated: truncated,
 			Content:   content,
