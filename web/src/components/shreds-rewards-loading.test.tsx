@@ -72,10 +72,6 @@ function listPayload(): ShredsRewardsResponse {
 function detailPayload(): ShredsRewardsDetail {
   return {
     node_id: 'node-A',
-    vote_pubkey: 'vote-A',
-    validator_name: 'Alpha Validator',
-    activated_stake: 5_000_000_000,
-    dz_user_ip: '203.0.113.10',
     epochs: [
       {
         solana_epoch: 1022,

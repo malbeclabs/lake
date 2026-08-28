@@ -2,9 +2,7 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -193,8 +191,6 @@ const shredClientNamesSQL = `(
 //
 // argMax orders on (stake, vote_pubkey) rather than stake alone so that a node
 // running two vote accounts of equal stake still resolves to one fixed answer.
-// Both the list and the detail header run this text, and a tie broken freely
-// would let them name different vote accounts for one validator on the same load.
 const shredsRewardsIdentityJoins = `
 		LEFT JOIN (
 			SELECT
@@ -542,14 +538,10 @@ func (a *API) GetShredsRewards(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The cache entry holds the complete unfiltered set, so ANY page of ANY sort
-	// can be served from it — which is the point: the page's own controls (turning
-	// a page, clicking a column header) used to be the only shapes that missed and
-	// therefore the slowest thing on it. Only a search bypasses the cache, because
-	// only a search changes which validators are in the set. The entry is written
-	// by the mainnet worker and carries no environment, so a non-mainnet request
-	// must not read it.
-	if search == "" && isMainnet(r.Context()) {
-		if page, ok := a.cachedShredsRewardsPage(r.Context(), sortField, order, limit, offset); ok {
+	// AND any search can be served from it — which is the point: the page's own
+	// controls used to be the slowest thing on it.
+	if isMainnet(r.Context()) {
+		if page, ok := a.cachedShredsRewardsPage(r.Context(), search, sortField, order, limit, offset); ok {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			if err := json.NewEncoder(w).Encode(page); err != nil {
@@ -578,7 +570,7 @@ func (a *API) GetShredsRewards(w http.ResponseWriter, r *http.Request) {
 // can't answer: no entry, a read failure, an entry older than
 // shredsRewardsCacheStaleAfter, or a payload that isn't the complete set. Every
 // false falls through to the live query.
-func (a *API) cachedShredsRewardsPage(ctx context.Context, sortField, order string, limit, offset int) (*ShredsRewardsResponse, bool) {
+func (a *API) cachedShredsRewardsPage(ctx context.Context, search, sortField, order string, limit, offset int) (*ShredsRewardsResponse, bool) {
 	readCtx, cancel := context.WithTimeout(ctx, shredsRewardsCacheReadTimeout)
 	defer cancel()
 
@@ -591,7 +583,64 @@ func (a *API) cachedShredsRewardsPage(ctx context.Context, sortField, order stri
 			"age", age.Round(time.Second), "max_age", shredsRewardsCacheStaleAfter)
 		return nil, false
 	}
-	return sliceCachedShredsRewards(data, sortField, order, limit, offset)
+	return sliceCachedShredsRewards(data, search, sortField, order, limit, offset)
+}
+
+// asciiFoldLower lowercases A-Z and leaves every other byte alone, which is
+// exactly what ClickHouse's positionCaseInsensitive does.
+func asciiFoldLower(s string) string {
+	b := []byte(s)
+	for i := range b {
+		if b[i] >= 'A' && b[i] <= 'Z' {
+			b[i] += 'a' - 'A'
+		}
+	}
+	return string(b)
+}
+
+// matchShredsRewardsSearch reports whether a row satisfies a search expression,
+// mirroring buildShredsRewardsSearch clause for clause: comma-separated filters
+// ANDed together, each either field-scoped (name:, vote:, node:) or free text
+// matched across all three, all case-insensitive substring.
+func matchShredsRewardsSearch(row ShredsRewardsRow, search string) bool {
+	name := asciiFoldLower(row.ValidatorName)
+	vote := asciiFoldLower(row.VotePubkey)
+	node := asciiFoldLower(row.NodeID)
+
+	for _, f := range strings.Split(search, ",") {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		if parts := strings.SplitN(f, ":", 2); len(parts) == 2 {
+			field := asciiFoldLower(strings.TrimSpace(parts[0]))
+			val := asciiFoldLower(strings.TrimSpace(parts[1]))
+			switch field {
+			case "name":
+				if !strings.Contains(name, val) {
+					return false
+				}
+				continue
+			case "vote":
+				if !strings.Contains(vote, val) {
+					return false
+				}
+				continue
+			case "node":
+				if !strings.Contains(node, val) {
+					return false
+				}
+				continue
+			}
+		}
+		// Free text, matched against the filter as written — colon and all, the
+		// same string the SQL binds three times.
+		v := asciiFoldLower(f)
+		if !strings.Contains(name, v) && !strings.Contains(vote, v) && !strings.Contains(node, v) {
+			return false
+		}
+	}
+	return true
 }
 
 // sliceCachedShredsRewards returns the requested page of a cached rewards listing,
@@ -606,7 +655,7 @@ func (a *API) cachedShredsRewardsPage(ctx context.Context, sortField, order stri
 // An empty set is also treated as unusable rather than as a trivially complete
 // one: a single refresh that caught the dimension views mid-reload would otherwise
 // pin an empty listing as an authoritative answer for a whole refresh cycle.
-func sliceCachedShredsRewards(data []byte, sortField, order string, limit, offset int) (*ShredsRewardsResponse, bool) {
+func sliceCachedShredsRewards(data []byte, search, sortField, order string, limit, offset int) (*ShredsRewardsResponse, bool) {
 	var cached ShredsRewardsResponse
 	if err := json.Unmarshal(data, &cached); err != nil {
 		return nil, false
@@ -615,14 +664,22 @@ func sliceCachedShredsRewards(data []byte, sortField, order string, limit, offse
 		return nil, false
 	}
 
-	// Safe to reorder in place: cached was decoded for this call alone. The stored
-	// blob is written in the default order, so any other sort is applied here
-	// rather than by keeping a copy per sort.
 	rows := cached.Validators
+
+	total := cached.Total
+	if search != "" {
+		matched := make([]ShredsRewardsRow, 0, len(rows))
+		for _, row := range rows {
+			if matchShredsRewardsSearch(row, search) {
+				matched = append(matched, row)
+			}
+		}
+		rows = matched
+		total = len(matched)
+	}
+
 	sortShredsRewardsRows(rows, sortField, order)
 
-	// Both bounds are clamped to the set, so a page past the end is an empty (but
-	// non-nil, hence still JSON "[]") slice rather than an out-of-range panic.
 	start := min(offset, len(rows))
 	end := min(start+limit, len(rows))
 
@@ -632,11 +689,7 @@ func sliceCachedShredsRewards(data []byte, sortField, order string, limit, offse
 		EpochColumns:         cached.EpochColumns,
 		Validators:           rows[start:end],
 		Clients:              []ShredsClientRewardsRow{},
-		// The whole-set count, independent of the page being served — which is what
-		// the pager reads. Unlike the live path this stays correct for a page past
-		// the end of the set, where the live query's count() OVER () rides on rows
-		// that aren't there; see computeShredsRewards.
-		Total: cached.Total,
+		Total:                total,
 	}, true
 }
 
@@ -888,13 +941,13 @@ type ShredsRewardsEpochDetail struct {
 
 // ShredsRewardsDetailResponse is the response body for the per-validator
 // drilldown endpoint. Epochs is newest first.
+//
+// The list keeps all four; it resolves every validator in one pass and is served
+// from the page cache. The web client reads the validator's name from that cached
+// listing for this page's heading.
 type ShredsRewardsDetailResponse struct {
-	NodeID         string                     `json:"node_id"`
-	VotePubkey     string                     `json:"vote_pubkey"`
-	ValidatorName  string                     `json:"validator_name"`
-	ActivatedStake uint64                     `json:"activated_stake"`
-	DZUserIP       string                     `json:"dz_user_ip"`
-	Epochs         []ShredsRewardsEpochDetail `json:"epochs"`
+	NodeID string                     `json:"node_id"`
+	Epochs []ShredsRewardsEpochDetail `json:"epochs"`
 }
 
 // GetShredsRewardsDetail returns the full per-epoch reward history for a
@@ -911,35 +964,6 @@ func (a *API) GetShredsRewardsDetail(w http.ResponseWriter, r *http.Request) {
 	resp := ShredsRewardsDetailResponse{
 		NodeID: nodeID,
 		Epochs: []ShredsRewardsEpochDetail{},
-	}
-
-	// Header: vote pubkey, validator name, activated stake, DZ user IP.
-	//
-	// It runs the SAME identity joins as the list (shredsRewardsIdentityJoins), so
-	// the two pages cannot describe one validator differently — a node with two
-	// vote accounts would otherwise get whichever the list's argMax picked on one
-	// page and whichever the join happened to emit first on the other. That is also
-	// why the anchor names its column pv_node_id: it is what those joins key on.
-	//
-	// The single-row anchor carries the node_id so the LEFT JOINs have a real join
-	// key; this returns zero values for unknown node_ids instead of erroring.
-	// Joining directly on a bound param (ON v.node_pubkey = ?) leaves no key
-	// relating the two tables, which ClickHouse rejects with "cannot determine join
-	// keys".
-	headerQuery := `
-		SELECT
-			coalesce(v.va_vote_pubkey, ''),
-			coalesce(va.vapp_name, ''),
-			toUInt64(coalesce(v.va_stake, 0)),
-			coalesce(u.client_ip, '')
-		FROM (SELECT ? AS pv_node_id) pv` + shredsRewardsIdentityJoins + `
-		LIMIT 1
-	`
-	if err := a.envDB(ctx).QueryRow(ctx, headerQuery, nodeID).Scan(
-		&resp.VotePubkey, &resp.ValidatorName, &resp.ActivatedStake, &resp.DZUserIP,
-	); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		// Tolerate missing rows; leave fields zero-valued.
-		logError("shreds rewards detail header scan failed", "error", err)
 	}
 
 	// Per-epoch rows. Mirrors the list query's earnings logic but restricted to

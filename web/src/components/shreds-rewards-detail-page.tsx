@@ -34,14 +34,6 @@ function formatTokenTotals(totals: Record<string, number>): string {
   return parts.length > 0 ? parts.join(' · ') : '—'
 }
 
-function formatStake(lamports: number): string {
-  if (!lamports || lamports <= 0) return '—'
-  const sol = lamports / 1e9
-  if (sol >= 1e6) return `${(sol / 1e6).toFixed(2)}M SOL`
-  if (sol >= 1e3) return `${(sol / 1e3).toFixed(0)}K SOL`
-  return `${sol.toLocaleString(undefined, { maximumFractionDigits: 0 })} SOL`
-}
-
 function FactCard({
   label,
   children,
@@ -110,7 +102,7 @@ export function ShredsRewardsDetailPage() {
     )
   }
 
-  const displayName = data?.validator_name?.trim() || truncatePK(nodeId)
+  const displayName = truncatePK(nodeId)
   const epochs = data?.epochs ?? []
 
   return (
@@ -123,15 +115,8 @@ export function ShredsRewardsDetailPage() {
           <ArrowLeft className="h-3.5 w-3.5" />
           Edge Rewards
         </Link>
-        <PageHeader
-          icon={Trophy}
-          title={displayName}
-          subtitle={
-            <span className="text-xs text-muted-foreground font-mono">
-              {truncatePK(nodeId)}
-            </span>
-          }
-        />
+        {}
+        <PageHeader icon={Trophy} title={displayName} />
 
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-8">
           {/* Identity is known from the URL, so it is never a skeleton. */}
@@ -139,29 +124,6 @@ export function ShredsRewardsDetailPage() {
             <CopyableText text={nodeId} className="text-xs">
               <span className="font-mono">{truncatePK(nodeId)}</span>
             </CopyableText>
-          </FactCard>
-          <FactCard label="Vote ID">
-            {!data ? (
-              <SkeletonCell className="w-28" />
-            ) : data.vote_pubkey ? (
-              <CopyableText text={data.vote_pubkey} className="text-xs">
-                <span className="font-mono">{truncatePK(data.vote_pubkey)}</span>
-              </CopyableText>
-            ) : (
-              <span className="text-muted-foreground/60">—</span>
-            )}
-          </FactCard>
-          <FactCard label="Stake">
-            {data ? formatStake(data.activated_stake) : <SkeletonCell className="w-20" />}
-          </FactCard>
-          <FactCard label="DZ IP">
-            {!data ? (
-              <SkeletonCell className="w-24" />
-            ) : data.dz_user_ip ? (
-              <span className="font-mono text-xs">{data.dz_user_ip}</span>
-            ) : (
-              <span className="text-muted-foreground/60">—</span>
-            )}
           </FactCard>
           <FactCard label="All-time Earned">
             {data ? formatTokenTotals(totals.all) : <SkeletonCell className="w-24" />}
