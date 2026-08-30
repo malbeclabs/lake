@@ -138,6 +138,13 @@ var (
 	// transientErrorAfterFailures, matching errFastRefreshDeadline: the entry is
 	// slow, not starved, and the last good blob is still served.
 	errHeavyRefreshDeadline = errors.New("page-cache heavy refresh deadline exceeded")
+
+	// errEntryRefreshDeadline: the entry's own per-refresh deadline (see refresh)
+	// cut the fetch. Recorded in place of the raw context error — which
+	// dberror.IsTransient refuses, since a context error can mean caller cancel —
+	// and phrased as a timeout so a slow entry escalates at
+	// transientErrorAfterFailures like the sentinels above: served-stale, not broken.
+	errEntryRefreshDeadline = errors.New("page-cache entry refresh deadline exceeded")
 )
 
 // cacheEntry defines a single cache key to refresh. every sets a refresh
@@ -822,6 +829,10 @@ func (a *Activities) refresh(parentCtx context.Context, e cacheEntry, shuttingDo
 			if attempt < maxAttempts-1 && hasBudgetFor(parentCtx, retryBudget(queryDuration, timeout)) {
 				a.Log.Warn("cache refresh failed, retrying", "cache", name, "attempt", attempt+1, "error", err)
 				continue
+			}
+			if errors.Is(err, context.DeadlineExceeded) {
+				a.recordFailure(name, key, errEntryRefreshDeadline, "cause", err)
+				return
 			}
 			a.recordFailure(name, key, err)
 			return
