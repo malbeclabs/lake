@@ -27,6 +27,12 @@ var eofRe = regexp.MustCompile(`\beof\b`)
 // longer digit run (e.g. "statuscode: 2001").
 var awsRespErrRe = regexp.MustCompile(`https response error statuscode: (200|500|502|503|504)\b`)
 
+// httpStatus5xxRe matches the "status code NNN" shape non-AWS HTTP clients use
+// (e.g. validators.app's "unexpected status code 503") for the same retryable
+// set as awsRespErrRe. 501/505 are permanent endpoint failures and 4xx are
+// actionable, so all keep paging.
+var httpStatus5xxRe = regexp.MustCompile(`status[ _]?code[:= ]?\s*(500|502|503|504)\b`)
+
 // ErrTransient is a sentinel that explicitly marks an error as transient for
 // IsTransient, independent of its message. Wrap a return with it (e.g. via
 // errors.Join or fmt.Errorf("...: %w", ErrTransient)) when the caller knows a
@@ -114,6 +120,11 @@ func Classify(err error) ErrorType {
 	// AWS SDK v2 transient S3 responses (200-with-embedded-error, retryable
 	// 5xx server errors) — self-healing blips, not actionable.
 	if awsRespErrRe.MatchString(errStr) {
+		return ErrorTypeConnectivity
+	}
+
+	// Retryable 5xx from any other HTTP upstream.
+	if httpStatus5xxRe.MatchString(errStr) {
 		return ErrorTypeConnectivity
 	}
 

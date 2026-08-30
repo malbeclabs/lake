@@ -31,6 +31,12 @@ func TestTemporalLoggerErrorLevel(t *testing.T) {
 			want: slog.LevelError,
 		},
 		{
+			name: "third-party http 503 demoted to warn",
+			msg:  "Activity error.",
+			err:  errors.New("validatorsapp refresh: failed to get validators: unexpected status code 503: <html><body><h1>503 Service Unavailable</h1></body></html>"),
+			want: slog.LevelWarn,
+		},
+		{
 			name: "context cancellation demoted to warn",
 			msg:  "Activity error.",
 			err:  context.Canceled,

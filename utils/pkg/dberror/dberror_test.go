@@ -59,6 +59,15 @@ func TestClassifyAndIsTransient(t *testing.T) {
 		// A non-AWS message mentioning statuscode: 200 without the SDK prefix must not match.
 		{"non-aws statuscode 200", errors.New("handler returned statuscode: 200 but body was empty"), dberror.ErrorTypeUnknown, false},
 
+		// Non-AWS HTTP clients format retryable 5xx as "status code NNN" (the
+		// validators.app shape that paged on 2026-08-30). Same 5xx set as the AWS
+		// shape; 4xx and 501 stay actionable.
+		{"validatorsapp 503", errors.New(`validatorsapp refresh: failed to get validators: unexpected status code 503: <html><body><h1>503 Service Unavailable</h1></body></html>`), dberror.ErrorTypeConnectivity, true},
+		{"generic status code 500", errors.New("unexpected status code 500: internal server error"), dberror.ErrorTypeConnectivity, true},
+		{"generic status_code variant", errors.New("request failed: status_code=502"), dberror.ErrorTypeConnectivity, true},
+		{"generic status code 400 stays actionable", errors.New("unexpected status code 400: bad request"), dberror.ErrorTypeUnknown, false},
+		{"generic status code 501 stays actionable", errors.New("unexpected status code 501: not implemented"), dberror.ErrorTypeUnknown, false},
+
 		// Non-transient: real, actionable failures should still escalate to ERROR.
 		{"syntax error", errors.New("Code: 62. DB::Exception: Syntax error"), dberror.ErrorTypeQuery, false},
 		{"access denied", errors.New("access denied for user"), dberror.ErrorTypeAuth, false},
