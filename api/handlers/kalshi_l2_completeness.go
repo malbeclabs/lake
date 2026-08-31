@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -327,13 +328,15 @@ func (a *API) FetchKalshiL2Completeness(ctx context.Context, days int) (*KalshiL
 	return a.fetchKalshiL2CompletenessDays(ctx, list)
 }
 
-// fetchKalshiL2CompletenessDays scans the named days in order and stops before a day that will
-// not finish inside the caller's deadline.
+// fetchKalshiL2CompletenessDays scans the named days in order and stops before a day the
+// previous day's cost predicts will not fit the caller's deadline — or at the day the deadline
+// actually cut off, since that estimate misses when day sizes are skewed (a thin "today"
+// predicting a full Friday).
 //
-// It stops rather than failing because the caller always merges: a pass that overruns its
-// activity budget writes nothing and throws away the days it did read, where a pass that stops
-// short writes those days and leaves the rest to the next one. The estimate is the previous
-// day's own cost, which is the only measurement that describes this table today.
+// It stops rather than failing because the caller always merges: the days already kept are
+// written and the rest wait for the next pass. A pass holding no days still fails, keeping a
+// genuinely stuck entry visible to the escalator — an empty day completes a query but keeps
+// nothing, so it cannot license writing (and serving) an empty payload.
 func (a *API) fetchKalshiL2CompletenessDays(ctx context.Context, days []string) (*KalshiL2CompletenessResponse, error) {
 	exists, err := a.kalshiL2TableExists(ctx)
 	if err != nil {
@@ -354,6 +357,11 @@ func (a *API) fetchKalshiL2CompletenessDays(ctx context.Context, days []string) 
 		start := time.Now()
 		d, err := a.fetchKalshiL2CompletenessDay(ctx, day)
 		if err != nil {
+			// The estimate missed: keep what was kept, fail with nothing to keep.
+			if len(resp.Days) > 0 && errors.Is(err, context.DeadlineExceeded) {
+				logWarn("kalshi l2 completeness pass truncated", "cut_day", day, "kept_days", len(resp.Days), "error", err)
+				break
+			}
 			return nil, err
 		}
 		last = time.Since(start)

@@ -1,9 +1,14 @@
 package handlers
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"regexp"
 	"testing"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -100,6 +105,128 @@ func TestMergeKalshiL2Days_TrimsToTheWindow(t *testing.T) {
 	got := mergeKalshiL2Days(fresh, cached)
 
 	assert.Len(t, got.Days, kalshiL2CompletenessDays)
+}
+
+// tableExistsRow answers the EXISTS TABLE probe with "present".
+type tableExistsRow struct{}
+
+func (tableExistsRow) Err() error { return nil }
+func (tableExistsRow) Scan(dest ...any) error {
+	*(dest[0].(*uint8)) = 1
+	return nil
+}
+func (tableExistsRow) ScanStruct(any) error { return errors.New("unused") }
+
+// oneDayRows yields a single aggregate row for day, filling scan destinations by
+// type; everything the tests do not assert stays at 1 or empty.
+type oneDayRows struct {
+	panicRows
+	day  time.Time
+	done bool
+}
+
+func (r *oneDayRows) Next() bool {
+	if r.done {
+		return false
+	}
+	r.done = true
+	return true
+}
+
+func (r *oneDayRows) Scan(dest ...any) error {
+	for _, d := range dest {
+		switch v := d.(type) {
+		case *time.Time:
+			*v = r.day
+		case *uint64:
+			*v = 1
+		case *[]string:
+			*v = nil
+		}
+	}
+	return nil
+}
+
+func (r *oneDayRows) Err() error   { return nil }
+func (r *oneDayRows) Close() error { return nil }
+
+var dayLiteralRe = regexp.MustCompile(`toDate\('(\d{4}-\d{2}-\d{2})'\)`)
+
+// completenessConn serves the EXISTS probe and scripted per-day results: a day in
+// dayErr fails with that error, a day in empty completes with no rows, any other
+// day returns one clean row.
+type completenessConn struct {
+	driver.Conn
+	dayErr map[string]error
+	empty  map[string]bool
+}
+
+func (c *completenessConn) QueryRow(ctx context.Context, query string, args ...any) driver.Row {
+	return tableExistsRow{}
+}
+
+func (c *completenessConn) Query(ctx context.Context, query string, args ...any) (driver.Rows, error) {
+	m := dayLiteralRe.FindStringSubmatch(query)
+	if m == nil {
+		return nil, fmt.Errorf("no day literal in query: %s", query)
+	}
+	if err := c.dayErr[m[1]]; err != nil {
+		return nil, err
+	}
+	if c.empty[m[1]] {
+		return &oneDayRows{done: true}, nil
+	}
+	day, err := time.Parse(time.DateOnly, m[1])
+	if err != nil {
+		return nil, err
+	}
+	return &oneDayRows{day: day}, nil
+}
+
+// A day cut off by the refresh deadline forfeits only itself: the finished days are returned
+// (and written, which is what backs the retry off to the hourly cadence) instead of the pass
+// failing whole.
+func TestFetchKalshiL2CompletenessDays_DeadlineKeepsFinishedDays(t *testing.T) {
+	api := &API{FeedsDB: "feeds", DB: &completenessConn{dayErr: map[string]error{
+		"2026-08-29": fmt.Errorf("query day: %w", context.DeadlineExceeded),
+	}}}
+
+	resp, err := api.fetchKalshiL2CompletenessDays(context.Background(), []string{"2026-08-30", "2026-08-29", "2026-08-25"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"2026-08-30"}, dayKeys(resp))
+}
+
+// With nothing read yet there is nothing to keep: the pass fails, so a stuck entry stays
+// visible to the escalator instead of writing a payload that would reset it.
+func TestFetchKalshiL2CompletenessDays_FirstDayDeadlineFails(t *testing.T) {
+	api := &API{FeedsDB: "feeds", DB: &completenessConn{dayErr: map[string]error{
+		"2026-08-30": fmt.Errorf("query day: %w", context.DeadlineExceeded),
+	}}}
+
+	_, err := api.fetchKalshiL2CompletenessDays(context.Background(), []string{"2026-08-30", "2026-08-29"})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+// An empty day is a completed query, not a kept day: a deadline after it must still fail the
+// pass, or a cold cache would write — and serve — an empty payload while resetting the escalator.
+func TestFetchKalshiL2CompletenessDays_DeadlineAfterEmptyDayFails(t *testing.T) {
+	api := &API{FeedsDB: "feeds", DB: &completenessConn{
+		empty:  map[string]bool{"2026-08-30": true},
+		dayErr: map[string]error{"2026-08-29": fmt.Errorf("query day: %w", context.DeadlineExceeded)},
+	}}
+
+	_, err := api.fetchKalshiL2CompletenessDays(context.Background(), []string{"2026-08-30", "2026-08-29"})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+// Only the deadline is worth absorbing; a real query failure fails the pass on any day.
+func TestFetchKalshiL2CompletenessDays_QueryErrorFails(t *testing.T) {
+	api := &API{FeedsDB: "feeds", DB: &completenessConn{dayErr: map[string]error{
+		"2026-08-29": errors.New("Code: 60. DB::Exception: Unknown table"),
+	}}}
+
+	_, err := api.fetchKalshiL2CompletenessDays(context.Background(), []string{"2026-08-30", "2026-08-29"})
+	require.Error(t, err)
 }
 
 // Every pass reads today and yesterday, and one older day of the window on rotation. What the

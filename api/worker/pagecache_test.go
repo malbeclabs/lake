@@ -741,10 +741,39 @@ func TestRefreshRecordsOwnFailureWhenParentHasHeadroom(t *testing.T) {
 	require.True(t, ok)
 	err, ok := got.(error)
 	require.True(t, ok)
-	require.ErrorIs(t, err, context.DeadlineExceeded, "the entry's own deadline is the cause")
+	require.ErrorIs(t, err, errEntryRefreshDeadline, "the entry's own deadline is the cause")
 	require.NotErrorIs(t, err, errHeavyRefreshDeadline,
 		"with headroom the activity deadline has not fired, so this is not starvation")
+	cause, ok := recordAttr(rec, "cause")
+	require.True(t, ok, "the raw context error rides along as the cause")
+	causeErr, ok := cause.(error)
+	require.True(t, ok)
+	require.ErrorIs(t, causeErr, context.DeadlineExceeded)
 	require.Zero(t, countLevel(*recs, slog.LevelError), "a single slow cycle must not page")
+}
+
+// TestRefreshEntryDeadlineEscalatesOnTheTransientCadence is the per-entry analogue
+// of TestInterruptedEscalation: an entry overrunning its own refresh budget is
+// served-stale (last good blob), so below the transient threshold it must not
+// page — the raw context error would escalate strictly at 3, since dberror
+// refuses context errors.
+func TestRefreshEntryDeadlineEscalatesOnTheTransientCadence(t *testing.T) {
+	notStopping := func() bool { return false }
+	stalls := func(ctx context.Context) (any, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+
+	log, recs := capLogger()
+	a := &Activities{Log: log}
+	const n = errorAfterFailures + 1 // 4: above strict, below transient
+	for range n {
+		parent, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		a.refresh(parent, cacheEntry{name: "kalshi l2 completeness", key: "kalshi_l2_completeness:v2", fn: stalls, timeout: 10 * time.Millisecond}, notStopping, errHeavyRefreshDeadline)
+		cancel()
+	}
+	require.Zero(t, countLevel(*recs, slog.LevelError),
+		"an entry overrunning its own budget below the transient threshold must not page")
 }
 
 // TestRefreshDiscardsStraddlingDayAlignedWrite pins the fix for the window-skew
