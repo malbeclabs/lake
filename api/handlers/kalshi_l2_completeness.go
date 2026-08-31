@@ -333,9 +333,10 @@ func (a *API) FetchKalshiL2Completeness(ctx context.Context, days int) (*KalshiL
 // actually cut off, since that estimate misses when day sizes are skewed (a thin "today"
 // predicting a full Friday).
 //
-// It stops rather than failing because the caller always merges: the days already read are
-// written and the rest wait for the next pass. A pass whose first day cannot finish still
-// fails, keeping a genuinely stuck entry visible to the escalator.
+// It stops rather than failing because the caller always merges: the days already kept are
+// written and the rest wait for the next pass. A pass holding no days still fails, keeping a
+// genuinely stuck entry visible to the escalator — an empty day completes a query but keeps
+// nothing, so it cannot license writing (and serving) an empty payload.
 func (a *API) fetchKalshiL2CompletenessDays(ctx context.Context, days []string) (*KalshiL2CompletenessResponse, error) {
 	exists, err := a.kalshiL2TableExists(ctx)
 	if err != nil {
@@ -356,8 +357,9 @@ func (a *API) fetchKalshiL2CompletenessDays(ctx context.Context, days []string) 
 		start := time.Now()
 		d, err := a.fetchKalshiL2CompletenessDay(ctx, day)
 		if err != nil {
-			// The estimate missed: keep the finished days, fail if there are none.
-			if i > 0 && errors.Is(err, context.DeadlineExceeded) {
+			// The estimate missed: keep what was kept, fail with nothing to keep.
+			if len(resp.Days) > 0 && errors.Is(err, context.DeadlineExceeded) {
+				logWarn("kalshi l2 completeness pass truncated", "cut_day", day, "kept_days", len(resp.Days), "error", err)
 				break
 			}
 			return nil, err

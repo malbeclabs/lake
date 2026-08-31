@@ -153,10 +153,12 @@ func (r *oneDayRows) Close() error { return nil }
 var dayLiteralRe = regexp.MustCompile(`toDate\('(\d{4}-\d{2}-\d{2})'\)`)
 
 // completenessConn serves the EXISTS probe and scripted per-day results: a day in
-// dayErr fails with that error, any other day returns one clean row.
+// dayErr fails with that error, a day in empty completes with no rows, any other
+// day returns one clean row.
 type completenessConn struct {
 	driver.Conn
 	dayErr map[string]error
+	empty  map[string]bool
 }
 
 func (c *completenessConn) QueryRow(ctx context.Context, query string, args ...any) driver.Row {
@@ -170,6 +172,9 @@ func (c *completenessConn) Query(ctx context.Context, query string, args ...any)
 	}
 	if err := c.dayErr[m[1]]; err != nil {
 		return nil, err
+	}
+	if c.empty[m[1]] {
+		return &oneDayRows{done: true}, nil
 	}
 	day, err := time.Parse(time.DateOnly, m[1])
 	if err != nil {
@@ -197,6 +202,18 @@ func TestFetchKalshiL2CompletenessDays_FirstDayDeadlineFails(t *testing.T) {
 	api := &API{FeedsDB: "feeds", DB: &completenessConn{dayErr: map[string]error{
 		"2026-08-30": fmt.Errorf("query day: %w", context.DeadlineExceeded),
 	}}}
+
+	_, err := api.fetchKalshiL2CompletenessDays(context.Background(), []string{"2026-08-30", "2026-08-29"})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+// An empty day is a completed query, not a kept day: a deadline after it must still fail the
+// pass, or a cold cache would write — and serve — an empty payload while resetting the escalator.
+func TestFetchKalshiL2CompletenessDays_DeadlineAfterEmptyDayFails(t *testing.T) {
+	api := &API{FeedsDB: "feeds", DB: &completenessConn{
+		empty:  map[string]bool{"2026-08-30": true},
+		dayErr: map[string]error{"2026-08-29": fmt.Errorf("query day: %w", context.DeadlineExceeded)},
+	}}
 
 	_, err := api.fetchKalshiL2CompletenessDays(context.Background(), []string{"2026-08-30", "2026-08-29"})
 	require.ErrorIs(t, err, context.DeadlineExceeded)
