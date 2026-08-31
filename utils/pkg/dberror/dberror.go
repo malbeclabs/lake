@@ -13,25 +13,21 @@ import (
 // eofRe matches "eof" as a standalone word in a lowercased error message.
 var eofRe = regexp.MustCompile(`\beof\b`)
 
-// awsRespErrRe matches the AWS SDK v2 "https response error StatusCode: ..."
-// shape (lowercased by Classify before matching) for a transient S3 status: a
-// 200 (S3's documented "200 OK with an error mid-body" blip, which the SDK
-// surfaces as a response error but does not retry internally — transient per
-// S3's own guidance) or the SDK's DefaultRetryableHTTPStatusCodes set of
-// {500, 502, 503, 504}. 501 NotImplemented and 505 are deliberately not
-// matched: they are permanent endpoint/configuration failures, not blips. The
-// "https response error statuscode:" prefix scopes the match to AWS SDK v2
-// messages, so ClickHouse, Neo4j, and Influx errors never hit it. Actionable
-// 4xx (403 AccessDenied, 404 NoSuchBucket/NoSuchKey) are also excluded so
-// they keep paging. The trailing \b prevents matching a status inside a
-// longer digit run (e.g. "statuscode: 2001").
-var awsRespErrRe = regexp.MustCompile(`https response error statuscode: (200|500|502|503|504)\b`)
+// awsRespErrRe matches the AWS SDK v2 "https response error StatusCode: 200"
+// shape (lowercased by Classify): S3's documented "200 OK with an error
+// mid-body" blip, which the SDK surfaces as a response error but does not
+// retry internally — transient per S3's own guidance. The prefix keeps 200
+// scoped to AWS SDK messages; a bare "status code 200" elsewhere stays
+// non-transient. Retryable 5xx are handled shape-independently by
+// httpStatusRe. The trailing \b prevents matching a longer digit run.
+var awsRespErrRe = regexp.MustCompile(`https response error statuscode: 200\b`)
 
-// httpStatus5xxRe matches the "status code NNN" shape non-AWS HTTP clients use
-// (e.g. validators.app's "unexpected status code 503") for the same retryable
-// set as awsRespErrRe. 501/505 are permanent endpoint failures and 4xx are
-// actionable, so all keep paging.
-var httpStatus5xxRe = regexp.MustCompile(`status[ _]?code[:= ]?\s*(500|502|503|504)\b`)
+// httpStatusRe captures the first "status code NNN" mention in an error
+// string — the failed request's own status, since wrapping prepends; a status
+// quoted later (e.g. in a response body) must not classify. Classify treats
+// the SDK-retryable set {500, 502, 503, 504} as transient; 501/505 are
+// permanent endpoint failures and 4xx are actionable, so all keep paging.
+var httpStatusRe = regexp.MustCompile(`status[ _]?code[:= ]?\s*(\d{3})\b`)
 
 // ErrTransient is a sentinel that explicitly marks an error as transient for
 // IsTransient, independent of its message. Wrap a return with it (e.g. via
@@ -117,15 +113,19 @@ func Classify(err error) ErrorType {
 		return ErrorTypeConnectivity
 	}
 
-	// AWS SDK v2 transient S3 responses (200-with-embedded-error, retryable
-	// 5xx server errors) — self-healing blips, not actionable.
+	// AWS SDK v2 transient 200-with-embedded-error responses — self-healing
+	// blips, not actionable.
 	if awsRespErrRe.MatchString(errStr) {
 		return ErrorTypeConnectivity
 	}
 
-	// Retryable 5xx from any other HTTP upstream.
-	if httpStatus5xxRe.MatchString(errStr) {
-		return ErrorTypeConnectivity
+	// Retryable 5xx from any HTTP upstream; a non-5xx first status falls
+	// through to the remaining patterns.
+	if m := httpStatusRe.FindStringSubmatch(errStr); m != nil {
+		switch m[1] {
+		case "500", "502", "503", "504":
+			return ErrorTypeConnectivity
+		}
 	}
 
 	// Connection/connectivity patterns
