@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"reflect"
 	"regexp"
@@ -328,8 +329,10 @@ type ReadDocsInput struct {
 
 // ReadDocsOutput is the output from the read_docs tool.
 type ReadDocsOutput struct {
-	Page    string `json:"page"`
-	Content string `json:"content"`
+	Page      string `json:"page"`
+	Source    string `json:"source,omitempty"`
+	Truncated bool   `json:"truncated"`
+	Content   string `json:"content"`
 }
 
 func (a *API) registerReadDocsTool(server *mcp.Server) {
@@ -339,16 +342,22 @@ func (a *API) registerReadDocsTool(server *mcp.Server) {
 		Description: "Read DoubleZero documentation to answer questions about concepts, architecture, setup, troubleshooting, or how the network works. Use this when users ask 'what is DZ', 'how do I set up', 'why isn't X working', or similar conceptual/procedural questions. Available pages include: index, architecture, setup, troubleshooting, connect, connect-multicast, contribute, contribute-overview, contribute-operations, users-overview, paying-fees, multicast-admin.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ReadDocsInput) (*mcp.CallToolResult, ReadDocsOutput, error) {
-		// docsfetch validates the slug (path traversal) and truncates at its
-		// 10k page bound.
-		content, _, err := a.docsSource().Read(ctx, strings.TrimSpace(input.Page))
+		// docsfetch validates the slug (path traversal) and bounds the page.
+		page := strings.TrimSpace(input.Page)
+		content, source, truncated, err := a.docsSource().Read(ctx, page)
 		if err != nil {
 			return nil, ReadDocsOutput{}, err
 		}
 
+		if truncated {
+			slog.Warn("docs page truncated", "page", page, "source", source)
+		}
+
 		return nil, ReadDocsOutput{
-			Page:    strings.TrimSpace(input.Page),
-			Content: content,
+			Page:      page,
+			Source:    source,
+			Truncated: truncated,
+			Content:   content,
 		}, nil
 	})
 }

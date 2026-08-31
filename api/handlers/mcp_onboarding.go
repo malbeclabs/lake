@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os/exec"
@@ -74,9 +75,14 @@ var runbookListItem = regexp.MustCompile("(?m)^[\\t ]*[-*][\\t ]+(?:`([a-zA-Z0-9
 var fencedBlock = regexp.MustCompile("(?s)```.*?```")
 
 func (a *API) loadRunbookCatalog(ctx context.Context) ([]runbookRef, error) {
-	content, _, err := a.docsSource().Read(ctx, runbookIndexPage)
+	content, _, truncated, err := a.docsSource().Read(ctx, runbookIndexPage)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load runbook index: %w", err)
+	}
+	// A short catalog would reject real runbooks as unknown, so refuse it outright.
+	if truncated {
+		slog.Warn("runbook index truncated; get_onboarding_runbook is down", "page", runbookIndexPage)
+		return nil, fmt.Errorf("runbook index %q exceeded the page bound; catalog is incomplete", runbookIndexPage)
 	}
 	refs := parseRunbookIndex(content)
 	if len(refs) == 0 {
@@ -173,6 +179,7 @@ type GetOnboardingRunbookOutput struct {
 	Source            string   `json:"source,omitempty"`
 	Mode              string   `json:"mode,omitempty"`
 	AvailableRunbooks []string `json:"available_runbooks"`
+	Truncated         bool     `json:"truncated"`
 	Preamble          string   `json:"preamble"`
 	Runbook           string   `json:"runbook"`
 }
@@ -203,9 +210,12 @@ func (a *API) registerGetOnboardingRunbookTool(server *mcp.Server) {
 			return nil, GetOnboardingRunbookOutput{}, fmt.Errorf("unknown runbook %q (available: %s)", service, strings.Join(available, ", "))
 		}
 
-		content, source, err := a.loadRunbook(ctx, page)
+		content, source, truncated, err := a.docsSource().Read(ctx, page)
 		if err != nil {
 			return nil, GetOnboardingRunbookOutput{}, err
+		}
+		if truncated {
+			slog.Warn("runbook truncated", "page", page, "source", source)
 		}
 
 		return nil, GetOnboardingRunbookOutput{
@@ -214,14 +224,11 @@ func (a *API) registerGetOnboardingRunbookTool(server *mcp.Server) {
 			Source:            source,
 			Mode:              strings.TrimSpace(input.Mode),
 			AvailableRunbooks: available,
+			Truncated:         truncated,
 			Preamble:          onboardingPreamble,
 			Runbook:           content,
 		}, nil
 	})
-}
-
-func (a *API) loadRunbook(ctx context.Context, page string) (content, source string, err error) {
-	return a.docsSource().Read(ctx, page)
 }
 
 // CheckEdgeAccessInput is the input for the check_edge_access tool.

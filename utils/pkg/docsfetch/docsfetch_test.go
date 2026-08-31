@@ -35,16 +35,17 @@ func TestRead_PublicDocs(t *testing.T) {
 		HTTP: public.Client(),
 		Base: public.URL + "/",
 	}
-	content, source, err := c.Read(context.Background(), "edge-runbook")
+	content, source, truncated, err := c.Read(context.Background(), "edge-runbook")
 	require.NoError(t, err)
 	assert.Equal(t, "# from public", content)
 	assert.Contains(t, source, "edge-runbook.md")
+	assert.False(t, truncated)
 }
 
 func TestRead_InvalidPage(t *testing.T) {
 	t.Parallel()
 	c := &Client{}
-	_, _, err := c.Read(context.Background(), "../../../etc/passwd")
+	_, _, _, err := c.Read(context.Background(), "../../../etc/passwd")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid page name")
 }
@@ -58,10 +59,28 @@ func TestRead_TruncatesOversizedPage(t *testing.T) {
 	t.Cleanup(public.Close)
 
 	c := &Client{HTTP: public.Client(), Base: public.URL + "/"}
-	content, _, err := c.Read(context.Background(), "huge-page")
+	content, source, truncated, err := c.Read(context.Background(), "huge-page")
 	require.NoError(t, err)
-	assert.Len(t, content, MaxPageBytes+len(truncationMarker))
-	assert.True(t, strings.HasSuffix(content, truncationMarker))
+	assert.True(t, truncated)
+	assert.Equal(t, big[:MaxPageBytes], strings.TrimSuffix(content, truncationMarker(source)))
+	assert.Contains(t, content, "truncated at 65536 bytes")
+	assert.Contains(t, content, "huge-page.md")
+}
+
+func TestRead_LargestRealPageIsNotTruncated(t *testing.T) {
+	t.Parallel()
+	page := strings.Repeat("a", 34000)
+	public := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(page))
+	}))
+	t.Cleanup(public.Close)
+
+	c := &Client{HTTP: public.Client(), Base: public.URL + "/"}
+	content, _, truncated, err := c.Read(context.Background(), "contribute-provisioning")
+	require.NoError(t, err)
+	assert.False(t, truncated)
+	assert.Equal(t, page, content)
+	assert.NotContains(t, content, "truncated")
 }
 
 func TestRead_NotFound(t *testing.T) {
@@ -72,7 +91,7 @@ func TestRead_NotFound(t *testing.T) {
 	t.Cleanup(public.Close)
 
 	c := &Client{HTTP: public.Client(), Base: public.URL + "/"}
-	_, _, err := c.Read(context.Background(), "missing-page")
+	_, _, _, err := c.Read(context.Background(), "missing-page")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "docs page not found")
 }
