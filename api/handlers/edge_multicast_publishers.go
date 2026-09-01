@@ -443,10 +443,11 @@ const (
 // together are 'unknown' in the sense the word already carries here — nothing measured this
 // publisher on this group — and returning 'healthy' instead is a claim with no evidence under it.
 //
-// Measured on mainnet: edge-kalshi-elections-pol-tob read 2/2 publishing and both lines healthy while
-// its publishers sent that plane nothing at all (`[tob_perps] enabled = false` on both hosts, and
-// only `feed="mbp-sports"` in their metrics); the whole ~18.6 Mbps belonged to the mbp group on the
-// same two tunnels.
+// Measured on mainnet 2026-08-25, before that plane was enabled: edge-kalshi-elections-pol-tob (then
+// edge-kalshi-elections-tob) read 2/2 publishing and both lines healthy while its publishers sent
+// that plane nothing at all (`[tob_perps] enabled = false` on both hosts, and only
+// `feed="mbp-sports"` in their metrics); the whole ~18.6 Mbps belonged to the mbp group on the same
+// two tunnels.
 //
 // Both conditions are load-bearing, and the second one still is now that the Solana groups are out
 // of scope — the reason has changed, not gone. It was the shreds shape: 532 root publishers, all
@@ -458,8 +459,14 @@ const (
 // will ever settle it.
 //
 // A publisher that serves only this group HAS attributable bytes, so its 'healthy' stands even with
-// no subscriber. Today the pair fires on edge-kalshi-elections-pol-tob — the only group in scope with
-// publishers and no subscriber at all.
+// no subscriber.
+//
+// No group in scope trips the pair today. Every edge- group outside the Solana ones has at least one
+// subscriber, and the only group on the ledger with publishers and none is jito-shredstream, which
+// this page does not cover. So the branch is live but unexercised — do not read a lack of grey cells
+// as evidence it works, and re-check with `doublezero multicast group list -em` before assuming it
+// still has nothing to act on. A new feed's group is provisioned and published to before its first
+// recorder subscribes, which is exactly the window that puts a group back in it.
 func edgeMulticastPublisherHealth(line EdgeMulticastPublisher, groupHasSeries bool, groupHasSubscribers bool) string {
 	switch line.Status {
 	case edgeMulticastPubIdle:
