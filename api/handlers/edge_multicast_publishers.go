@@ -443,7 +443,7 @@ const (
 // together are 'unknown' in the sense the word already carries here — nothing measured this
 // publisher on this group — and returning 'healthy' instead is a claim with no evidence under it.
 //
-// Measured on mainnet: edge-kalshi-elections-tob read 2/2 publishing and both lines healthy while
+// Measured on mainnet: edge-kalshi-elections-pol-tob read 2/2 publishing and both lines healthy while
 // its publishers sent that plane nothing at all (`[tob_perps] enabled = false` on both hosts, and
 // only `feed="mbp-sports"` in their metrics); the whole ~18.6 Mbps belonged to the mbp group on the
 // same two tunnels.
@@ -458,7 +458,7 @@ const (
 // will ever settle it.
 //
 // A publisher that serves only this group HAS attributable bytes, so its 'healthy' stands even with
-// no subscriber. Today the pair fires on edge-kalshi-elections-tob — the only group in scope with
+// no subscriber. Today the pair fires on edge-kalshi-elections-pol-tob — the only group in scope with
 // publishers and no subscriber at all.
 func edgeMulticastPublisherHealth(line EdgeMulticastPublisher, groupHasSeries bool, groupHasSubscribers bool) string {
 	switch line.Status {

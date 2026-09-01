@@ -95,10 +95,10 @@ func TestEdgeMulticastAllPathsGapped_SharedRunIsOneEpisode(t *testing.T) {
 // publishers are moving traffic.
 func TestEdgeMulticastFamilyOf(t *testing.T) {
 	// Both planes of one product share a family, which is what puts them in one section.
-	assert.Equal(t, "edge-kalshi-elections",
-		handlers.EdgeMulticastFamilyOfForTest("edge-kalshi-elections-mbp"))
-	assert.Equal(t, "edge-kalshi-elections",
-		handlers.EdgeMulticastFamilyOfForTest("edge-kalshi-elections-tob"))
+	assert.Equal(t, "edge-kalshi-elections-pol",
+		handlers.EdgeMulticastFamilyOfForTest("edge-kalshi-elections-pol-mbp"))
+	assert.Equal(t, "edge-kalshi-elections-pol",
+		handlers.EdgeMulticastFamilyOfForTest("edge-kalshi-elections-pol-tob"))
 	// A trailing segment that is NOT a plane is part of the name, not a suffix to strip: guessing
 	// otherwise would merge unrelated groups into one section.
 	assert.Equal(t, "edge-solana-shreds1",
