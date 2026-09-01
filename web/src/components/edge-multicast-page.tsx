@@ -78,7 +78,7 @@ const SERVICE_LABELS: Record<string, string> = {
   // A group with no feed row but with publishers moving traffic gets its own section, keyed on the
   // GROUP family rather than a feed family — hence the `edge-` prefix these carry and the others do
   // not. The header still says the feed row is missing; only the placement changed.
-  'edge-kalshi-elections-pol': 'Kalshi Elections',
+  'edge-kalshi-elections-pol': 'Kalshi Elections & Politics',
   'edge-unclaimed': 'Edge groups with neither a feed row nor traffic',
 }
 
