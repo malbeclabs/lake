@@ -7,6 +7,9 @@ import {
   gapEpisodeStats,
   mergeGapEpisodes,
   sequenceLoss,
+  sequenceVerdict,
+  SEQUENCE_LOSS_MIN_UPDATES,
+  type SequenceVerdict,
 } from './edge-multicast-gap-episodes'
 import { Tooltip } from '@/components/ui/tooltip'
 import { PageHeader } from './page-header'
@@ -154,25 +157,18 @@ const PUBLISHER_HEALTH_DETAIL: Record<string, string> = {
   unknown: 'no counter row for this publisher: nothing measured it',
 }
 
-// Sequence-counter states. A gap is recorded data loss on the wire protocol — the one thing on
-// this page that is a fault in the FEED itself rather than in one member of it — so it gets the
-// red. 'stalled' is amber: the series stopped advancing, which is either a dead publisher path or
-// a dead recorder, and this column cannot tell those apart.
-const SEQUENCE_BADGE: Record<string, string> = {
-  ok: 'bg-emerald-500/15 text-emerald-500',
-  gapped: 'bg-red-500/15 text-red-500',
-  stalled: 'bg-amber-500/15 text-amber-500',
-  // Top-of-book: the series is advancing and nothing checked it for loss, because that plane
-  // records no gap marker. Outlined rather than filled, so a glance down the column cannot read
-  // it as the same clean bill of health the market-by-price rows carry.
-  advancing: 'border border-emerald-500/40 text-emerald-500',
-}
-
-// What to call an 'ok' whose gap count was never taken. Every instance behind the badge has to be
-// unmeasured for this: a mixed set is still reporting a real zero for the half that was checked.
-function sequenceLabel(status: string, total: number, gapsUnmeasured: number): string {
-  if (status === 'ok' && total > 0 && gapsUnmeasured === total) return 'advancing'
-  return status
+// Sequence badge tones. Recorded data loss is the one thing on this page that is a fault in the
+// FEED itself rather than in one member of it, so it gets the red. 'stalled' is amber: the series
+// stopped advancing, which is either a dead publisher path or a dead recorder, and this column
+// cannot tell those apart.
+const SEQUENCE_TONE: Record<SequenceVerdict['tone'], string> = {
+  good: 'bg-emerald-500/15 text-emerald-500',
+  bad: 'bg-red-500/15 text-red-500',
+  warn: 'bg-amber-500/15 text-amber-500',
+  // The top-of-book plane, where the stored rows cannot be counted for holes. Outlined rather than
+  // filled, so a glance down the column cannot read it as the clean bill of health the
+  // market-by-price rows carry.
+  muted: 'border border-muted-foreground/40 text-muted-foreground',
 }
 
 function formatBps(bps: number): string {
@@ -779,32 +775,51 @@ function LastHeardCell({ group, now }: { group: EdgeMulticastGroup; now: number 
   )
 }
 
-// One channel instance as a tooltip line. Gap counts are BOOKS, never gap-marked messages — see
-// KalshiL2Lane, which documents why the message count is a duration rather than a fault count.
+// One channel instance as a tooltip line.
+//
+// It leads with the two counters the wire protocol carries and every feed handler in this business
+// reports side by side: how many sequence values never arrived, and how many breaks in the
+// numbering that took. They are not interchangeable and neither substitutes for the other — one
+// break can swallow hundreds of updates, and hundreds of breaks can cost one apiece.
+//
+// Books gapped follows, named for what it is: a RECOVERY state, how many books were left
+// un-anchored until a snapshot re-anchored them. It saturates at the channel's instrument count and
+// so can never size a loss, which is why it no longer leads the line.
 function sequenceInstanceLine(i: EdgeMulticastChannelInstance): string {
   const from = i.publisher_source_ip ? `${i.publisher_source_ip} ` : ''
-  const head = `${from}ch${i.channel_id} @${i.node} (${i.capture_source}): ${i.messages.toLocaleString()} msgs`
+  const head = `${from}ch${i.channel_id} @${i.node} (${i.capture_source})`
   // A stall every path at this vantage shares is the capture source going quiet — a market that
   // closed, not a path that died — and the line has to say which of the two it is, because the
   // status word next to it still reads 'stalled'.
   if (i.capture_source_quiet) {
-    return `${head} — quiet, and so is every other path on this source: the venue, not this path`
+    return `${head}: quiet, and so is every other path on this source: the venue, not this path`
   }
-  // Without a gap marker there is no book-level fault count and no snapshot cycle to report, so
-  // the line says what was NOT measured instead of printing zeros that would read as findings.
+  // The stored rows on this plane hold one entry per change to the top of the book, so their
+  // numbering has structural holes that are not loss. Say what was not measured rather than print
+  // zeros that would read as findings.
   if (!i.gaps_measured) {
-    return `${head}, ${i.resets.toLocaleString()} resets — gap counting not available on this plane`
+    return (
+      `${head}: ${i.messages.toLocaleString()} msgs, ${i.resets.toLocaleString()} resets` +
+      ` — sequence loss not countable on this plane`
+    )
   }
-  // The loss RATE, not the gap-message count, and only where there were gaps. gap_books saturates
-  // at the channel's instrument count — thirteen of thirteen and one of thirteen print the same
-  // badge — so this is the only severity the line can carry. gap_messages alone is a duration and
-  // stays out of sight.
-  const rate =
-    i.gap_books > 0 && i.messages > 0 && i.gap_messages
-      ? `, ${((i.gap_messages / i.messages) * 100).toFixed(2)}% of messages arrived un-anchored`
+  const received = i.updates_received ?? 0
+  const missing = i.updates_missing ?? 0
+  const expected = received + missing
+  const loss =
+    expected > 0
+      ? `${missing.toLocaleString()} of ${expected.toLocaleString()} updates lost` +
+        (expected >= SEQUENCE_LOSS_MIN_UPDATES
+          ? ` (${((missing / expected) * 1e6).toFixed(missing === 0 ? 0 : 1)} ppm)`
+          : '')
+      : 'no level updates to count'
+  const breaks =
+    missing > 0
+      ? `, ${(i.seq_gap_events ?? 0).toLocaleString()} break(s), worst ${(i.max_gap_messages ?? 0).toLocaleString()} msg`
       : ''
   return (
-    `${head}, ${i.gap_books.toLocaleString()} book(s) gapped${rate}, ${i.resets.toLocaleString()} resets, ` +
+    `${head}: ${loss}${breaks}` +
+    `\n   ${i.gap_books.toLocaleString()} book(s) left un-anchored, ${i.resets.toLocaleString()} resets, ` +
     `${i.snapshot_cycles.toLocaleString()} snapshot cycles`
   )
 }
@@ -813,13 +828,11 @@ function sequenceInstanceLine(i: EdgeMulticastChannelInstance): string {
 // these are the only tooltips on the page with a list in them, and run together as a paragraph
 // they are unreadable.
 function SequenceBadge({
-  status,
-  count,
+  verdict,
   detail,
   stale,
 }: {
-  status: string
-  count: string
+  verdict: SequenceVerdict
   detail: string
   stale?: boolean
 }) {
@@ -827,13 +840,15 @@ function SequenceBadge({
     <Tooltip content={detail} className="whitespace-pre-line">
       <span className={`inline-flex items-center gap-1.5${stale ? ' opacity-50' : ''}`}>
         <span
-          className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
-            SEQUENCE_BADGE[status] ?? 'bg-muted text-muted-foreground'
+          className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium tabular-nums ${
+            SEQUENCE_TONE[verdict.tone]
           }`}
         >
-          {status}
+          {verdict.label}
         </span>
-        {count && <span className="text-xs text-muted-foreground tabular-nums">{count}</span>}
+        {verdict.detail && (
+          <span className="text-xs text-muted-foreground tabular-nums">{verdict.detail}</span>
+        )}
       </span>
     </Tooltip>
   )
@@ -1052,8 +1067,10 @@ function GapTimeline({
   // un-anchored for seconds, and a burst of them lands inside one episode.
   const lossLines = loss
     ? [
-        `${loss.ppm.toFixed(1)} ppm lost · ${loss.missing.toLocaleString()} of ` +
-          `${(loss.received + loss.missing).toLocaleString()} updates`,
+        `${loss.missing.toLocaleString()} of ${(loss.received + loss.missing).toLocaleString()} updates lost` +
+          (loss.received + loss.missing >= SEQUENCE_LOSS_MIN_UPDATES
+            ? ` · ${loss.ppm.toFixed(1)} ppm`
+            : ''),
         `${loss.perMinute.toFixed(1)} missing/min · ${((loss.events * 3600) / win.secs).toFixed(1)} seq gaps/h`,
         `worst break ${loss.maxGap} msg · p99 ${loss.p99Gap.toFixed(1)} msg`,
       ]
@@ -1120,15 +1137,21 @@ function PublisherSequenceCell({
   }
 
   const total = sequence.instances.length
-  const bad = sequence.gapped + sequence.stalled
   const quiet = sequence.capture_source_quiet ?? 0
+  // The magnitude the badge carries. Computed over the line's own instances, so a publisher whose
+  // thirty leagues lost four updates between them reads as four rather than as "gapped 2/30" —
+  // breadth is a different question and the tooltip below is where it is answered.
+  const verdict = sequenceVerdict(sequence, gapWindow?.secs ?? 0)
   const detail = [
+    sequence.gapped > 0
+      ? `${sequence.gapped} of ${total} series lost data; ${total - sequence.gapped} intact`
+      : '',
     ...sequence.instances.map(sequenceInstanceLine),
     quiet > 0
       ? `${quiet} of ${total} quiet at a capture source that went quiet on every path — not counted against this path`
       : '',
     sequence.gapped > 0 && (sequence.gap_nodes ?? 0) < 2
-      ? 'gaps measured at one recorder: a loss on the branch into it cannot be told from a loss on the path'
+      ? 'measured at one recorder: a loss on the branch into it cannot be told from a loss on the path'
       : '',
     asOfAge === undefined ? '' : computedLine(asOfAge).replace(/^ — /, ''),
   ]
@@ -1137,15 +1160,7 @@ function PublisherSequenceCell({
 
   return (
     <div className="flex flex-col gap-0.5">
-      <SequenceBadge
-        status={sequenceLabel(sequence.status, total, sequence.gaps_unmeasured ?? 0)}
-        // Two numbers with two meanings shared one slot: '6/31' is faults over series, and a bare
-        // '3' was the series count — which reads as three faults. The multiplier is how this page
-        // already says "over N of them" in the Heard column, so a count with no faults takes it.
-        count={bad > 0 ? `${bad}/${total}` : total > 1 ? `×${total}` : ''}
-        detail={detail}
-        stale={payloadStale(asOfAge)}
-      />
+      <SequenceBadge verdict={verdict} detail={detail} stale={payloadStale(asOfAge)} />
       {/* The strip is drawn for a CLEAN series too, not only a gapped one. An empty track beside
           a marked one is the comparison — "this path held while its peer dropped" — and hiding it
           would leave the reader with two badges and no way to tell whether the feed itself lost
@@ -1216,18 +1231,21 @@ function UnattributedSequenceCell({
     if (c.ppm === undefined) {
       return <span className="text-muted-foreground">—</span>
     }
+    // In the same unit as the lines below it: values lost. The rate follows it where there is a
+    // denominator big enough to carry one, and the count stands alone where there is not.
     return (
       <Tooltip
         content={
-          `${c.missing.toLocaleString()} of ${c.expected.toLocaleString()} updates never arrived at any recorder\n` +
-          'Every path of this feed held for the whole window, so nothing was lost that the redundancy did not cover.'
+          `${c.missing.toLocaleString()} of ${c.expected.toLocaleString()} updates never arrived at any recorder` +
+          (c.expected >= SEQUENCE_LOSS_MIN_UPDATES ? ` — ${c.ppm.toFixed(1)} ppm` : '') +
+          '\nEvery path of this feed held for the whole window, so nothing was lost that the redundancy did not cover.'
         }
         className="whitespace-pre-line"
       >
         <span
-          className={`text-xs tabular-nums ${c.ppm > 0 ? 'text-foreground' : 'text-muted-foreground'}`}
+          className={`text-xs tabular-nums ${c.missing > 0 ? 'text-foreground' : 'text-muted-foreground'}`}
         >
-          {c.ppm.toFixed(1)} ppm
+          {c.missing.toLocaleString()} lost
         </span>
       </Tooltip>
     )
@@ -1552,6 +1570,17 @@ function ServiceSection({
   )
 }
 
+// One entry in the legend: the term, then the shortest sentence that says what the column is read
+// at and the single caveat a header cannot carry.
+function LegendNote({ term, children }: { term: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <dt className="text-foreground font-medium">{term}</dt>
+      <dd>{children}</dd>
+    </div>
+  )
+}
+
 export function EdgeMulticastPage() {
   const navigate = useNavigate()
 
@@ -1707,104 +1736,87 @@ export function EdgeMulticastPage() {
           )}
         </div>
 
-        <div className="mt-8 pt-4 border-t border-border max-w-3xl text-xs text-muted-foreground leading-relaxed space-y-1.5">
-          <div className="font-medium text-foreground">How to read this page</div>
-          <p>
-            A row is a group; expanding its Publishers cell adds one line per path. Columns are read at
-            the grain their header gives: <span className="text-foreground">Ingress</span> and{' '}
-            <span className="text-foreground">DZD</span> are per tunnel and appear only on the lines, the
-            counts and <span className="text-foreground">Heard</span> are per group, and{' '}
-            <span className="text-foreground">Msg/s</span>, <span className="text-foreground">Peer</span>,{' '}
-            <span className="text-foreground">Sequence</span> and{' '}
-            <span className="text-foreground">Health</span> are per path on that group.
-          </p>
-          <p>
-            <span className="text-foreground">Ingress</span> is a {data?.rate_grain_minutes ?? 5}-minute
-            counter rollup measured at each member's tunnel, so it lands minutes behind wall clock; the small
-            figure under a rate is the age of the newest bucket behind it. It is read per interface: a
-            publisher that feeds several groups reports the same bytes against each of them, so the figure is
-            exact for the tunnel and says nothing about which group the bytes were for — which is why the
-            group row leaves it blank. What a group received is Msg/s, measured at the recorders.
-          </p>
-          <p>
-            <span className="text-foreground">DZD</span> is the DoubleZero device a path attaches to, with
-            that device's own view of the BGP session — state, uptime and flap count, from telemetry rather
-            than the ledger snapshot, which is why the two can disagree — and the round trip the client agent
-            measures on its own BGP socket and writes onchain. That figure is written on a status change or a
-            ~6-hourly keepalive, so it is a property of the path and not a live signal; its age is in the
-            tooltip.
-          </p>
-          <p>
-            <span className="text-foreground">Health</span> and{' '}
-            <span className="text-foreground">Sequence</span> are per publisher and the group row carries
-            neither: a badge over a feed with one dead path and one live one describes neither of them.
-            Expand a group's Publishers cell to read the verdicts, one line per publisher. A publisher is{' '}
-            <span className="text-emerald-500 font-medium">healthy</span> when it clears{' '}
-            {formatBps(data?.publisher_floor_bps ?? 0)} and nothing was found wrong in what was
-            recorded of it,{' '}
-            <span className="text-amber-500 font-medium">thin</span> below that floor,{' '}
-            <span className="text-red-500 font-medium">silent</span> when its counter read zero, and{' '}
-            <span className="text-muted-foreground font-medium">unknown</span> when nothing measured it — a
-            monitoring gap, never an outage.
-          </p>
-          <p>
-            <span className="text-foreground">Subscribers</span> earns its column for the DoubleZero count
-            beside the total: those boxes are the apparatus every application-plane column here is measured
-            at, and a group with none of them has no application-plane signal at all. It says subscribers and
-            not recorders because a box is matched by owner wallet, which establishes whose box it is and
-            cannot say whether it records.
-          </p>
-          {showObservations && (
-            <p>
-              <span className="text-foreground">Msg/s</span> and{' '}
-              <span className="text-foreground">Peer</span> come from those recorders and are per path: a
-              recorded message rate per group rather than the per-tunnel counter beside it, and each path's
-              delivery against its redundant peer at the recorder that saw both. Anything below 1 in Peer is
-              this path losing something its peer did not.
-            </p>
-          )}
-          {data?.last_heard_available && (
-            <p>
-              <span className="text-foreground">Heard</span> is when a recording node last received a message
-              on the group — seconds rather than minutes old, and only for the groups with a capture behind
-              them. It is receive-side, so a silent recorder looks the same as a silent publisher, and it
-              never sets the silent flag for that reason.
-            </p>
-          )}
-          {showSequence && (
-            <p>
-              <span className="text-foreground">Sequence</span> is the recorded wire protocol's own counters,
-              and the only column here that can say the feed lost data rather than that a member went quiet.
-              A series belongs to one channel instance — (source IP, channel, recording node) — so its
-              verdict sits on the publisher that emitted it, and the group's own cell reports only what no
-              line can: series recorded from an address no publisher of the group carries. Gap counts are
-              books, never gap-marked messages, and the column is folded from background refreshers, so it is
-              minutes older than the rest of the row. The top-of-book plane carries no gap marker, so those
-              series read “advancing” — the counters move and nothing checked them for loss — rather than the
-              market-by-price rows' gap-checked “ok”. The strip under the badge is the same loss on a time
-              axis: every publisher line of a group is drawn on one axis, so a mark on one line and a
-              clear track on the other says the redundant path covered the loss and the feed itself lost
-              nothing. An empty track is a measured clean run; a line with no strip at all was never
-              measured for gaps. Its tooltip carries two measurements that are deliberately not mixed:
-              the episodes are TIME a book spent un-anchored, which is what the strip draws and what
-              gap-free and recovery describe; the loss figures are MESSAGES that never arrived,
-              counted from the per-instrument sequence, which is the only counter here that carries a
-              denominator. Their event counts legitimately differ — one break in the numbering can
-              leave a book un-anchored for seconds, and a burst of them lands inside one episode. A
-              line with one recorder says so instead of drawing nothing: with a single vantage a gap
-              cannot be attributed to the path rather than to that recorder's own branch.
-            </p>
-          )}
-          {showSequence && (
-            <p>
-              On the GROUP row, <span className="text-foreground">all paths lost</span> is the only
-              sequence finding no publisher line can make. A feed travels two redundant paths, so a
-              gap on one is covered by its peer and reports as that path's own; a gap on BOTH at the
-              same second is data the feed did not deliver. It intersects per capture source and per
-              recording node before reporting, so two unrelated losses at two markets — or one
-              recorder that stopped ingesting everything at once — do not read as a shared outage.
-            </p>
-          )}
+        <div className="mt-8 pt-4 border-t border-border text-xs text-muted-foreground leading-relaxed">
+          <div className="font-medium text-foreground mb-2">How to read this page</div>
+          {/* Full width and one short entry per column, not the eight paragraphs this used to be.
+              The prose repeated in sentences what the headers and tooltips already say at the point
+              of use; what a legend is for is the grain each column is read at and the one caveat
+              that cannot fit in a header. */}
+          <dl className="grid gap-x-8 gap-y-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <LegendNote term="Grain">
+              A row is a group; expand Publishers for one line per path.{' '}
+              <span className="text-foreground">Ingress</span> and{' '}
+              <span className="text-foreground">DZD</span> are per tunnel and only on the lines; the counts
+              and <span className="text-foreground">Heard</span> are per group;{' '}
+              <span className="text-foreground">Msg/s</span>, <span className="text-foreground">Peer</span>,{' '}
+              <span className="text-foreground">Sequence</span> and{' '}
+              <span className="text-foreground">Health</span> are per path.
+            </LegendNote>
+            <LegendNote term="Ingress">
+              A {data?.rate_grain_minutes ?? 5}-minute counter rollup at the member's tunnel, minutes behind
+              wall clock, with the newest bucket's age under it. Read per interface, so a publisher feeding
+              several groups reports the same bytes against each — which is why the group row is blank. What
+              a group received is Msg/s.
+            </LegendNote>
+            <LegendNote term="DZD">
+              The device a path attaches to and that device's own view of the BGP session — state, uptime,
+              flaps — beside the ledger's word, which is why the two can disagree. The round trip is written
+              onchain on a change or a ~6-hourly keepalive: a property of the path, not a live signal.
+            </LegendNote>
+            <LegendNote term="Health">
+              Per publisher: <span className="text-emerald-500 font-medium">healthy</span> above{' '}
+              {formatBps(data?.publisher_floor_bps ?? 0)} with nothing found wrong in what was recorded,{' '}
+              <span className="text-amber-500 font-medium">thin</span> below it,{' '}
+              <span className="text-red-500 font-medium">silent</span> at zero,{' '}
+              <span className="text-muted-foreground font-medium">unknown</span> when nothing measured it — a
+              monitoring gap, never an outage.
+            </LegendNote>
+            <LegendNote term="Subscribers">
+              The total, and the DoubleZero count beside it: those boxes are where every application-plane
+              column here is measured, and a group with none has no such signal at all. Subscribers, not
+              recorders — a wallet match says whose box it is, not what it does.
+            </LegendNote>
+            {showObservations && (
+              <LegendNote term="Msg/s · Peer">
+                From those recorders, per path: the recorded rate for this group rather than the per-tunnel
+                counter beside it, and each path against its redundant peer at the recorder that saw both.
+                Below 1 is this path losing what its peer did not.
+              </LegendNote>
+            )}
+            {data?.last_heard_available && (
+              <LegendNote term="Heard">
+                When a recording node last received on the group — seconds rather than minutes old, and only
+                where a capture sits behind the feed. Receive-side, so a silent recorder looks the same as a
+                silent publisher.
+              </LegendNote>
+            )}
+            {showSequence && (
+              <LegendNote term="Sequence">
+                Per path, in the unit the wire protocol carries: sequence values that never arrived. It is
+                the only column that can say the feed lost data rather than that a member went quiet. The
+                rate is withheld under {SEQUENCE_LOSS_MIN_UPDATES.toLocaleString()} updates, where a ratio
+                is noise. Top-of-book reads “not counted” — its stored rows hold one entry per change to the
+                book, so holes in their numbering are structural. Folded from a background refresher, so
+                minutes older than the rest of the row.
+              </LegendNote>
+            )}
+            {showSequence && (
+              <LegendNote term="Loss strip">
+                The same loss on a time axis, one shared axis per group: a mark on one line against clear
+                track on the other says the peer covered it. Empty track is a measured clean run; no strip at
+                all was never measured. Under it, one row per recorder, and “2+” for the seconds several lost
+                together — one recorder alone is its own branch.
+              </LegendNote>
+            )}
+            {showSequence && (
+              <LegendNote term="All paths lost">
+                Group row only, and the one sequence finding no line can make: seconds every path was losing
+                at once, which is data the feed did not deliver. Intersected per capture source and per
+                recording node, so two unrelated losses — or one recorder that stopped ingesting — do not read
+                as a shared outage.
+              </LegendNote>
+            )}
+          </dl>
         </div>
       </div>
     </div>

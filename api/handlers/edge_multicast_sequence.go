@@ -65,6 +65,21 @@ import (
 //
 // A cache miss is the normal state in local dev and while the refresher has never run. It yields
 // no column and is not an error — the same contract as the application-plane last-heard leg.
+//
+// # The third leg: the recorder's own rows
+//
+// edge_multicast_recorder_sequence.go folds a third cached payload, and it is the only one whose
+// magnitude has had the OBSERVER's own loss taken out of it. The other two count what did not reach
+// a decoded table, and a datagram the recorder's capture ring dropped is missing from that table
+// exactly the way one the publisher never sent is. The recorder writes its admitted drop as a
+// number per datagram and its deriver subtracts it, leaving `unexplained_count` — so where that leg
+// has rows for an instance, its number replaces the others' and re-decides the loss half of the
+// verdict. Where it has none it says nothing, and the instance keeps whatever the other two said.
+//
+// It also brings the two things a decoder-derived source structurally cannot: a feed is covered on
+// the day it is first RECORDED rather than on the day a bot learns to fold its book, and the
+// arithmetic is gated by the recorder's declared capture mode, so a fleet running AF_PACKET is told
+// "unverifiable" rather than handed a number that may be its own ring's.
 
 // edgeMulticastSequenceStaleSecs is how long a channel instance may go without a message before
 // the series is called stalled rather than intact.
@@ -103,12 +118,22 @@ type EdgeMulticastChannelInstance struct {
 	// only meaningful against.
 	Messages uint64 `json:"messages"`
 
-	// GapBooks is how many distinct books gapped at all in the window: the fault count to
-	// show. NOT GapMessages, which counts every message that arrived while a book was
-	// un-anchored and therefore scales with traffic rather than with reliability — 22 real
-	// discontinuities produced 158,912 gap-marked messages on perps. See KalshiL2Lane, which
-	// documents that decision at length; this column deliberately carries the same one so the
-	// two pages cannot tell different stories about one feed.
+	// GapBooks is how many distinct books gapped at all in the window. It is a RECOVERY state
+	// and not a loss count — how many books were left un-anchored and could not be trusted until
+	// a snapshot re-anchored them, which is the same thing a venue feed handler reports when it
+	// marks an instrument gapped and stops publishing it. UpdatesMissing is what says how much
+	// was lost.
+	//
+	// It saturates at the channel's instrument count, so it can never size a loss: measured over
+	// six hours of mainnet, perps read 13 books (of 13 instruments) against 3,439 updates lost,
+	// while ncaaf read 1,934 books against 2,693 — 149x the books for 0.78x the loss. It is still
+	// a trigger for the verdict, because a marker written is a loss observed.
+	//
+	// NOT GapMessages, which counts every message that arrived while a book was un-anchored and
+	// therefore scales with traffic rather than with reliability — 22 real discontinuities
+	// produced 158,912 gap-marked messages on perps. See KalshiL2Lane, which documents that
+	// decision at length; this column deliberately carries the same one so the two pages cannot
+	// tell different stories about one feed.
 	GapBooks uint64 `json:"gap_books"`
 
 	// GapMessages is how many messages arrived while a book was un-anchored. It is a DURATION
@@ -403,17 +428,23 @@ func edgeMulticastRecorderLossFold(series []EdgeMulticastRecorderLossSeries) (ma
 	return out, simul
 }
 
-// edgeMulticastSequenceHealth folds the two cached refresher payloads into per-group sequence
-// health: the L2 coverage one for market-by-price, and the top-of-book one.
+// edgeMulticastSequenceHealth folds the three cached refresher payloads into per-group sequence
+// health: the L2 coverage one for market-by-price, the top-of-book one, and the recorder's own
+// sequence-loss rows.
 //
 // Returns (nil, zero time, nil) when there is nothing to fold — no cache entries, entries that do
 // not parse, or nothing that resolves to a group on this page. All of those are "no column",
 // never an error: this signal is additive to the page and must not be able to fail it. One leg
-// missing costs that plane's rows and leaves the other's intact.
+// missing costs that plane's rows and leaves the others' intact.
 //
-// The reported as-of is the OLDER of the two legs. They run on one refresher today, so the two
-// stamps are seconds apart; taking the older one means that if they ever diverge, the column ages
-// against the staler half rather than flattering itself with the fresher.
+// ORDER MATTERS between the third leg and the first two. The recorder's magnitude is the only one
+// with the observer's own loss subtracted out of it, so it runs LAST and overwrites what the other
+// two said about an instance it has rows for — see foldEdgeMulticastRecorderSequence. It cannot run
+// first: it would have nothing to overwrite and the level-grain leg would then land on top of it.
+//
+// The reported as-of is the OLDEST of the legs. They run on one refresher today, so the stamps are
+// seconds apart; taking the oldest means that if they ever diverge, the column ages against the
+// stalest leg rather than flattering itself with the freshest.
 func (a *API) edgeMulticastSequenceHealth(ctx context.Context, captureSources edgeMulticastCaptureSourceMap) (map[string]*EdgeMulticastSequenceHealth, time.Time, int, error) {
 	out := map[string]*EdgeMulticastSequenceHealth{}
 	var asOf time.Time
@@ -429,6 +460,7 @@ func (a *API) edgeMulticastSequenceHealth(ctx context.Context, captureSources ed
 	at, gapWindowSecs := a.foldKalshiL2Coverage(ctx, captureSources, out)
 	note(at)
 	note(a.foldEdgeMulticastTOBSequence(ctx, captureSources, out))
+	note(a.foldEdgeMulticastRecorderSequence(ctx, captureSources, out))
 
 	if len(out) == 0 {
 		return nil, time.Time{}, 0, nil
@@ -497,7 +529,7 @@ func (a *API) foldKalshiL2Coverage(ctx context.Context, captureSources edgeMulti
 			Resets:         lane.Resets,
 			SnapshotCycles: lane.SnapshotCycles,
 			LastSeen:       lane.LastSeen.UTC(),
-			Status:         edgeMulticastSequenceStatus(lane.GapBooks, lane.LastSeen, coverage.GeneratedAt),
+			Status:         edgeMulticastSequenceStatus(lane.GapBooks, lane.UpdatesMissing, lane.LastSeen, coverage.GeneratedAt),
 			GapsMeasured:   true,
 		}
 		if out[groupPK] == nil {
@@ -553,9 +585,9 @@ func (a *API) foldEdgeMulticastTOBSequence(ctx context.Context, captureSources e
 			Messages:          series.Messages,
 			Resets:            series.Resets,
 			LastSeen:          series.LastSeen.UTC(),
-			// Graded on staleness alone. Passing a zero gap count is not a claim that the
-			// count is zero — GapsMeasured is what carries that, and it is false here.
-			Status:       edgeMulticastSequenceStatus(0, series.LastSeen, payload.GeneratedAt),
+			// Graded on staleness alone. Passing zeroes for both loss counters is not a claim
+			// that either is zero — GapsMeasured is what carries that, and it is false here.
+			Status:       edgeMulticastSequenceStatus(0, 0, series.LastSeen, payload.GeneratedAt),
 			GapsMeasured: false,
 		}
 		if out[groupPK] == nil {
@@ -566,14 +598,201 @@ func (a *API) foldEdgeMulticastTOBSequence(ctx context.Context, captureSources e
 	return payload.GeneratedAt.UTC()
 }
 
+// foldEdgeMulticastRecorderSequence applies the recorder's own sequence-loss rows, and returns that
+// payload's own clock.
+//
+// A miss is the normal state wherever the recorder's analysis tier is not loading rows yet, and it
+// costs nothing: this leg has no opinion and the other two stand exactly as they were.
+func (a *API) foldEdgeMulticastRecorderSequence(ctx context.Context, captureSources edgeMulticastCaptureSourceMap, out map[string]*EdgeMulticastSequenceHealth) time.Time {
+	data, err := a.readPageCache(ctx, edgeMulticastRecorderSequenceCacheKey)
+	if err != nil {
+		return time.Time{}
+	}
+
+	var payload EdgeMulticastRecorderSequenceResponse
+	if err := json.Unmarshal(data, &payload); err != nil {
+		slog.Warn("edge multicast sequence health: recorder sequence cache did not parse", "error", err)
+		return time.Time{}
+	}
+
+	applyEdgeMulticastRecorderSequence(payload, captureSources, out)
+	return payload.GeneratedAt.UTC()
+}
+
+// applyEdgeMulticastRecorderSequence is the fold itself, over an already-read payload.
+//
+// # Where this leg has rows for an instance, it wins
+//
+// Its magnitude is `unexplained_count`: what was missing, less what the recorder admits losing
+// itself. Neither other leg can make that subtraction — the level-grain leg counts holes in a
+// decoded table, where a datagram the capture ring dropped is missing exactly the way one the
+// publisher never sent is, and comparing recorders is blind to a loss they share, which is what a
+// load spike on a shared host produces. So where a recorder row exists, its number replaces the
+// other leg's on that instance, and the verdict's loss half is re-decided from it.
+//
+// What it replaces is the MAGNITUDE and nothing else. GapBooks, GapMessages and GapEpisodes stay:
+// they are a recovery state and a time axis measured on another plane, they are not loss counts,
+// and overwriting them with silence would take the gap timeline and the all-paths intersection off
+// a feed that has both. GapsMeasured stays for the same reason — it says whether a gap MARKER was
+// read, and this plane has no marker to read, only a count of values that never arrived.
+//
+// # An instance with no rows here gets no opinion from here
+//
+// The loop is over the payload's series, so an instance the recorder wrote nothing for is never
+// touched and falls through to whatever the other legs said. That is the whole of the rule and it
+// is worth stating: nothing in this system looks more like a healthy feed than a silence nobody
+// claimed, and an absent recorder row is a silence — the recorder may be down, may never have been
+// asked to join that group, may be loading late. FetchEdgeMulticastRecorderSequence already refuses
+// to emit a row for a window with no coverage for the same reason.
+//
+// # A recording node is never folded into another
+//
+// A series is matched to at most ONE existing instance and each existing instance is claimed at
+// most once, so two vantages of one channel instance stay two rows even where a recorder and a
+// capture share a name. Two vantages of one instance are two observations, and merging them hides a
+// recorder that is missing the feed.
+func applyEdgeMulticastRecorderSequence(payload EdgeMulticastRecorderSequenceResponse, captureSources edgeMulticastCaptureSourceMap, out map[string]*EdgeMulticastSequenceHealth) {
+	// Instances already claimed by an earlier series of this same payload, per group. Two series
+	// can legitimately present the same (publisher, channel, node) — one recorder name hosted in
+	// two of the recorder's own environments — and the second must become its own row rather
+	// than overwrite the first's target.
+	claimed := map[string]map[int]bool{}
+
+	for _, s := range payload.Series {
+		// The destination address, which is on the gap row for exactly this purpose. There is no
+		// capture-source fallback here and there must not be: the recorder's `feed` is its own
+		// spec name for a stream, a different namespace from the capture source ids the other
+		// legs resolve by, and matching one against the other would attribute a series to a group
+		// by coincidence of spelling.
+		groupPK := captureSources.resolveMulticastIP(s.MulticastGroup)
+		if groupPK == "" {
+			continue
+		}
+		if out[groupPK] == nil {
+			out[groupPK] = &EdgeMulticastSequenceHealth{}
+		}
+		if claimed[groupPK] == nil {
+			claimed[groupPK] = map[int]bool{}
+		}
+		health := out[groupPK]
+
+		received, missing := edgeMulticastRecorderLossFor(s)
+		withheld := !s.verifiable()
+		if withheld {
+			// At capture-handle scope with a handle that admitted anything at all, the residue
+			// is not attributable to this instance and MUST NOT be reported as the publisher's.
+			// The loss still happened, so the verdict still says so — what is withheld is the
+			// number, not the finding. See EdgeMulticastRecorderSequenceSeries.verifiable.
+			received, missing = 0, 0
+		}
+
+		if i := edgeMulticastRecorderMatch(health.Instances, s, claimed[groupPK]); i >= 0 {
+			claimed[groupPK][i] = true
+			inst := &health.Instances[i]
+			inst.UpdatesReceived = received
+			inst.UpdatesMissing = missing
+			inst.SeqGapEvents = s.Gaps
+			inst.MaxGapMessages = clampUint32(s.MaxRun)
+			inst.P99GapMessages = s.P99Run
+			if withheld {
+				// The other leg's counters go with it. Leaving them would leave a magnitude on
+				// the row that this leg has just established nobody can attribute, which is the
+				// same false publisher finding one level up.
+				inst.SeqGapEvents, inst.MaxGapMessages, inst.P99GapMessages = 0, 0, 0
+			}
+			inst.Status = edgeMulticastRecorderRegrade(inst.Status, inst.GapBooks, missing, withheld)
+			continue
+		}
+
+		inst := EdgeMulticastChannelInstance{
+			PublisherSourceIP: s.PublisherSourceIP,
+			// The recorder's feed name stands in for a capture source id, and it is a different
+			// namespace — see EdgeMulticastRecorderSequenceSeries.Feed. It only ever groups this
+			// leg's own instances with each other, which is what the quiet-capture-source
+			// demotion should do with them: a recorder's silence is not a capture's silence.
+			CaptureSource: s.Feed,
+			ChannelID:     s.ChannelID,
+			Node:          s.Node,
+			LocationCode:  s.LocationCode,
+			// Datagrams archived, which is the closest thing this plane has to a message count
+			// and is the denominator's own source. Never GapMessages' denominator: there are no
+			// gap-marked messages here to be a share of.
+			Messages:        s.Datagrams,
+			UpdatesReceived: received,
+			UpdatesMissing:  missing,
+			SeqGapEvents:    s.Gaps,
+			MaxGapMessages:  clampUint32(s.MaxRun),
+			P99GapMessages:  s.P99Run,
+			LastSeen:        s.LastSeen.UTC(),
+			// False, and not a shortfall to paper over. GapsMeasured says whether GapBooks is a
+			// reading, and on this plane there is no book-level gap marker at all: the recorder
+			// reads datagram headers and never folds a book. The loss reading this leg does carry
+			// travels in UpdatesMissing over UpdatesReceived, which is a different counter with a
+			// different denominator, so a roll-up counting this instance in GapsUnmeasured is
+			// saying the true thing — no marker here — rather than "nothing measured here".
+			//
+			// It also keeps this instance out of the all-paths-gapped intersection, which is
+			// exactly right: that intersection is over SECONDS a book was un-anchored, a gap row
+			// is a run of sequence numbers, and an empty episode list from a plane that has no
+			// episodes must never be read as a path that held.
+			GapsMeasured: false,
+		}
+		inst.Status = edgeMulticastSequenceStatus(0, missing, s.LastSeen, payload.GeneratedAt)
+		if withheld {
+			// Graded above with no magnitude, which would read as a clean window. The loss was
+			// observed; only its owner is unknown.
+			inst.Status = edgeMulticastSeqGapped
+		}
+		health.Instances = append(health.Instances, inst)
+	}
+}
+
+// edgeMulticastRecorderMatch finds the instance a recorder series is another reading of, or -1.
+//
+// Keyed on (publisher source address, Channel ID, recording node) inside one group, which is the
+// channel instance at one vantage with the destination port folded — the grain every leg of this
+// column reports at. The group is already fixed by the caller, so it is not in the key.
+//
+// The node has to be in it. Two recorders of one instance are two observations and the whole page
+// is built on not merging them; a series matching on publisher and channel alone would land on
+// whichever vantage happened to be first in the slice and silently overwrite one recorder's reading
+// with another's.
+func edgeMulticastRecorderMatch(instances []EdgeMulticastChannelInstance, s EdgeMulticastRecorderSequenceSeries, claimed map[int]bool) int {
+	for i, inst := range instances {
+		if claimed[i] {
+			continue
+		}
+		if inst.PublisherSourceIP == s.PublisherSourceIP && inst.ChannelID == s.ChannelID && inst.Node == s.Node {
+			return i
+		}
+	}
+	return -1
+}
+
 // edgeMulticastSequenceStatus grades one series.
+//
+// Two independent pieces of evidence make it 'gapped', and either alone is enough:
+//
+//   - updatesMissing, holes in the per-instrument sequence — messages that never arrived. This is
+//     the one that carries a magnitude, and it is the one the column reports.
+//   - gapBooks, the recorder's own gap marker. It is a RECOVERY state and not a loss count: it says
+//     a book is un-anchored and its state cannot be trusted until a snapshot re-anchors it, which
+//     is the same thing a venue feed handler does when it marks an instrument gapped and stops
+//     publishing it. It saturates at the channel's instrument count, so it can never size a loss —
+//     but a marker written is still a loss observed, so it stays as a trigger.
+//
+// Grading on gapBooks ALONE was a false negative, measured on mainnet over six hours: five channel
+// instances lost updates with no gap marker written at all, the worst of them 958 updates at 1,551
+// ppm on ligue1 ch25, and the column called every one of them 'ok'. The reverse case — a marker
+// with no hole in the numbering — is loss at a reset boundary the partition key already separated,
+// and is equally a finding.
 //
 // Staleness is measured against the coverage payload's OWN clock, not wall clock. The entry is up
 // to a refresher interval old, so reading its timestamps against now() would add the refresher's
 // lag to every instance and mark healthy series stalled for most of every cycle — the same
 // mistake the counter columns on this page document for their own ages.
-func edgeMulticastSequenceStatus(gapBooks uint64, lastSeen, asOf time.Time) string {
-	if gapBooks > 0 {
+func edgeMulticastSequenceStatus(gapBooks, updatesMissing uint64, lastSeen, asOf time.Time) string {
+	if gapBooks > 0 || updatesMissing > 0 {
 		return edgeMulticastSeqGapped
 	}
 	if lastSeen.IsZero() || asOf.Sub(lastSeen) > edgeMulticastSequenceStaleSecs*time.Second {

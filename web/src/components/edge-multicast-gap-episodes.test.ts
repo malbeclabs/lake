@@ -4,8 +4,12 @@ import {
   gapEpisodeStats,
   mergeGapEpisodes,
   sequenceLoss,
+  sequenceVerdict,
 } from './edge-multicast-gap-episodes'
-import type { EdgeMulticastChannelInstance } from '@/lib/api'
+import type {
+  EdgeMulticastChannelInstance,
+  EdgeMulticastSequenceHealth,
+} from '@/lib/api'
 
 function instance(
   over: Partial<EdgeMulticastChannelInstance> = {},
@@ -238,5 +242,109 @@ describe('completeness', () => {
     expect(c.ppm).toBeUndefined()
     expect(c.missing).toBe(0)
     expect(c.unprotectedSeconds).toBe(0)
+  })
+})
+
+describe('sequenceVerdict', () => {
+  const health = (
+    instances: EdgeMulticastChannelInstance[],
+    over: Partial<EdgeMulticastSequenceHealth> = {},
+  ): EdgeMulticastSequenceHealth => ({
+    status: 'ok',
+    gapped: 0,
+    stalled: 0,
+    instances,
+    ...over,
+  })
+
+  it('reports the values lost, not the books they were lost from', () => {
+    // Measured on mainnet over six hours: perps read 13 gapped books — its whole instrument count —
+    // against 3,439 updates lost, while ncaaf read 1,934 books against 2,693. The badge used to
+    // rank those two the wrong way round.
+    const v = sequenceVerdict(
+      health(
+        [
+          instance({
+            gap_books: 13,
+            updates_received: 6851764,
+            updates_missing: 3439,
+            seq_gap_events: 63,
+            status: 'gapped',
+          }),
+        ],
+        { status: 'gapped', gapped: 1 },
+      ),
+      900,
+    )
+    expect(v.label).toBe('3,439 lost')
+    expect(v.tone).toBe('bad')
+    expect(v.detail).toBe('502 ppm')
+  })
+
+  it('calls a measured zero a reading, with its denominator', () => {
+    // Eight of twenty-four quarter-hours on mainnet held no loss at all, so this is the common
+    // state and it has to read as a measurement rather than as a blank.
+    const v = sequenceVerdict(
+      health([instance({ updates_received: 4476494, updates_missing: 0 })]),
+      900,
+    )
+    expect(v.label).toBe('0 lost')
+    expect(v.tone).toBe('good')
+    expect(v.detail).toBe('4.48M upd')
+  })
+
+  it('withholds the rate under the volume floor and still shows the count', () => {
+    // A ppm over a thin channel is noise wearing a percentage: ncaawb ch116 read 7,475 ppm off
+    // 4,647 updates, which is not a worse feed than tennis at 470 ppm over 28M.
+    const v = sequenceVerdict(
+      health([instance({ updates_received: 100, updates_missing: 3, status: 'gapped' })], {
+        status: 'gapped',
+        gapped: 1,
+      }),
+      900,
+    )
+    expect(v.label).toBe('3 lost')
+    expect(v.detail).toBe('of 103')
+    expect(v.detail).not.toContain('ppm')
+  })
+
+  it('says the top-of-book plane was not counted rather than reporting a zero', () => {
+    // Its stored rows hold one entry per change to the top of the book, so the numbering
+    // reconstructed from them has structural holes — 1,292 on perps ch1 at each of three
+    // independent recorders, which is what proves they are not loss.
+    const v = sequenceVerdict(
+      health([
+        instance({ gaps_measured: false, updates_received: undefined }),
+        instance({ gaps_measured: false, updates_received: undefined, channel_id: 101 }),
+      ]),
+      900,
+    )
+    expect(v.label).toBe('not counted')
+    expect(v.tone).toBe('muted')
+    expect(v.detail).toBe('×2')
+  })
+
+  it('reads a stall before it reads the counters', () => {
+    // A series carrying no new values has no count to report, and "0 lost" over a dead window is
+    // the false clean bill of health this column exists to withhold.
+    const v = sequenceVerdict(
+      health([instance({ updates_received: 1000, updates_missing: 0, status: 'stalled' })], {
+        status: 'stalled',
+        stalled: 1,
+      }),
+      900,
+    )
+    expect(v.label).toBe('stalled')
+    expect(v.tone).toBe('warn')
+    expect(v.detail).toBe('1/1')
+  })
+
+  it('keeps a gap marker that had no countable numbering behind it', () => {
+    const v = sequenceVerdict(
+      health([instance({ gap_books: 2, status: 'gapped' })], { status: 'gapped', gapped: 1 }),
+      900,
+    )
+    expect(v.label).toBe('gapped')
+    expect(v.tone).toBe('bad')
   })
 })

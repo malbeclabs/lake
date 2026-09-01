@@ -172,3 +172,95 @@ export function completeness(sequence?: EdgeMulticastSequenceHealth): Completene
     unprotectedSeconds: (sequence?.all_paths_gapped ?? []).reduce((n, e) => n + e.seconds, 0),
   }
 }
+
+/**
+ * Updates a series must have carried in the window before a loss RATE is worth printing.
+ *
+ * A ratio over a thin channel is noise wearing a percentage. Measured over six hours of mainnet,
+ * ncaamb ch15 received 45,189 updates and lost 546 — 11,938 ppm, twenty times the rate of the
+ * fleet-wide events that actually mattered — and ncaawb ch116 read 7,475 ppm off 4,647 updates.
+ * Neither is a worse feed than tennis at 470 ppm over 28M updates; they are small denominators.
+ *
+ * The count is always shown. Only the rate is withheld, which is the same trade
+ * edgeMulticastPathParityMinMessages makes on the parity check, and the reason the monitoring
+ * products in this space report absolute counts and per-second rates rather than ratios.
+ */
+export const SEQUENCE_LOSS_MIN_UPDATES = 500
+
+/** How the Sequence cell should read: a magnitude where there is one, a word where there is not. */
+export type SequenceVerdict = {
+  /** What the badge says. A count of values lost wherever the plane can count them. */
+  label: string
+  tone: 'good' | 'bad' | 'warn' | 'muted'
+  /** The figure beside the badge. Empty when there is nothing worth putting there. */
+  detail: string
+}
+
+/** 1,234 → "1,234"; 45,189 → "45.2k"; 4,476,494 → "4.48M". Beside a badge, three digits is the budget. */
+export function formatUpdateCount(n: number): string {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`
+  if (n >= 1e4) return `${(n / 1e3).toFixed(1)}k`
+  return n.toLocaleString()
+}
+
+/**
+ * Grades one publisher line's Sequence cell in the unit the wire protocol actually carries:
+ * sequence values that never arrived.
+ *
+ * The badge used to name a state and size it by `gap_books`, which is an instrument count and not a
+ * loss count — it saturates at the channel's book count, so measured over six hours of mainnet
+ * perps read 13 books against 3,439 lost updates while ncaaf read 1,934 books against 2,693. The
+ * ranking it produced was not the ranking of loss.
+ *
+ * Values lost is also the only figure here the two redundant paths AGREE on. Over the same window
+ * the paths of one feed differed by up to 15.6x on gap-marked messages — a time measure, driven by
+ * when the next snapshot happened to arrive — and by at most 7% on values lost, 0.06% in the worst
+ * fifteen minutes of the day. Two independent paths cannot lose the same datagrams by chance, so
+ * the number they agree on is the one measuring the feed.
+ *
+ * Three things deliberately keep a word instead of a number:
+ *
+ *   - `stalled`, because a series carrying no new values has no count to report, and "0 lost" over
+ *     nothing is the clean bill of health this column exists to withhold. Time still decides WHEN
+ *     to call a series dead; it just never sizes the loss.
+ *   - `not counted`, for the top-of-book plane. Its wire sequence is dense, but the recorder
+ *     persists one row per change to the top of the book, so the numbering reconstructed from the
+ *     stored rows has structural holes — measured at 1,292 on perps ch1 at each of three
+ *     independent recorders, which is the proof they are not loss.
+ *   - `gapped` with no count, for the case a gap marker was written on a series that carried no
+ *     level updates to count holes in.
+ */
+export function sequenceVerdict(
+  sequence: EdgeMulticastSequenceHealth,
+  windowSecs: number,
+): SequenceVerdict {
+  const total = sequence.instances.length
+  const loss = sequenceLoss(sequence.instances, windowSecs)
+
+  // Read before the loss counters: a series that stopped is not a series that lost nothing, and a
+  // count over a dead window is the false clean this column refuses to print.
+  if (sequence.status === 'stalled') {
+    return { label: 'stalled', tone: 'warn', detail: `${sequence.stalled}/${total}` }
+  }
+
+  if (loss === undefined) {
+    // A marker with no countable numbering behind it. Rare, and still a fault.
+    if (sequence.status === 'gapped') {
+      return { label: 'gapped', tone: 'bad', detail: `${sequence.gapped}/${total}` }
+    }
+    return { label: 'not counted', tone: 'muted', detail: total > 1 ? `×${total}` : '' }
+  }
+
+  const expected = loss.received + loss.missing
+  const rate =
+    expected >= SEQUENCE_LOSS_MIN_UPDATES
+      ? `${loss.ppm.toFixed(loss.ppm >= 100 ? 0 : 1)} ppm`
+      : `of ${formatUpdateCount(expected)}`
+
+  if (loss.missing > 0) {
+    return { label: `${loss.missing.toLocaleString()} lost`, tone: 'bad', detail: rate }
+  }
+  // A measured zero is the common state — eight of twenty-four quarter-hours on mainnet — so it has
+  // to read as a reading rather than as a blank. The denominator is what makes it one.
+  return { label: '0 lost', tone: 'good', detail: `${formatUpdateCount(loss.received)} upd` }
+}
