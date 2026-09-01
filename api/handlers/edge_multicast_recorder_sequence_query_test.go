@@ -131,6 +131,32 @@ func TestFetchEdgeMulticastRecorderSequence_Grain(t *testing.T) {
 	assert.EqualValues(t, 400_040, was.Datagrams)
 }
 
+// A reference only exists on a gap row, so a denominator folded out of the gap rows alone counts
+// the ports that broke and drops every clean port's traffic. One hole on a refdata port carrying a
+// thousand datagrams, beside a clean mktdata port carrying four hundred thousand, then reports the
+// loss as a share of the thousand -- a 5,000 ppm feed that is really 12.
+func TestFetchEdgeMulticastRecorderSequence_CleanPortsStayInTheDenominator(t *testing.T) {
+	api := apitesting.NewTestAPI(t, testChDB)
+
+	// Both ports covered; only the small one gapped.
+	insertRecorderCoverage(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 1, 400_000, 0, "port-role", 30)
+	insertRecorderCoverage(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortRef, 1, 1_000, 0, "port-role", 30)
+	insertRecorderGap(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortRef, 900, 5, 5, 1_000, "port-role", "publisher", 55)
+
+	resp, err := api.FetchEdgeMulticastRecorderSequence(t.Context())
+	require.NoError(t, err)
+	require.Len(t, resp.Series, 1)
+
+	s := resp.Series[0]
+	assert.EqualValues(t, 5, s.Unexplained)
+	assert.EqualValues(t, 401_000, s.ReferenceSeqs,
+		"the gapped port's reference plus the clean port's datagrams, not the gapped port alone")
+
+	// What that denominator is worth downstream: the reader derives received as reference - missing,
+	// so this is 12 ppm against the whole channel rather than 5,000 against the port that broke.
+	assert.Less(t, float64(s.Unexplained)/float64(s.ReferenceSeqs)*1e6, 100.0)
+}
+
 // reference_seqs is a per-window total repeated on every gap row of that window. Summing it within
 // a port multiplies the denominator by however many gaps there were, which divides the loss rate by
 // the same number: the worse the window, the healthier it reads.
