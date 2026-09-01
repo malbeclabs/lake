@@ -293,6 +293,34 @@ describe('sequenceVerdict', () => {
     expect(v.detail).toBe('4.48M upd')
   })
 
+  it('does not paint a surviving gap marker green when the count clears', () => {
+    // edgeMulticastRecorderRegrade clears the missing count when the recorder admits the datagrams
+    // were its own, and deliberately leaves the marker standing: a book was left un-anchored
+    // whoever dropped them. The badge used to fall through to the measured-zero branch and print a
+    // green '0 lost' on a line the backend still calls gapped, hiding the one fault it asserts.
+    const v = sequenceVerdict(
+      health([instance({ updates_received: 500000, updates_missing: 0, status: 'gapped' })], {
+        status: 'gapped',
+        gapped: 1,
+      }),
+      900,
+    )
+    expect(v.tone).not.toBe('good')
+    expect(v.label).toBe('gapped')
+    expect(v.detail).toBe('1/1')
+  })
+
+  it('still calls a measured zero clean when nothing is gapped', () => {
+    // The guard above must not swallow the common state: no marker, no holes, and a denominator
+    // behind it is a reading, and it stays green.
+    const v = sequenceVerdict(
+      health([instance({ updates_received: 500000, updates_missing: 0 })]),
+      900,
+    )
+    expect(v.label).toBe('0 lost')
+    expect(v.tone).toBe('good')
+  })
+
   it('withholds the rate under the volume floor and still shows the count', () => {
     // A ppm over a thin channel is noise wearing a percentage: ncaawb ch116 read 7,475 ppm off
     // 4,647 updates, which is not a worse feed than tennis at 470 ppm over 28M.

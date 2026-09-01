@@ -260,6 +260,14 @@ export function sequenceVerdict(
   if (loss.missing > 0) {
     return { label: `${loss.missing.toLocaleString()} lost`, tone: 'bad', detail: rate }
   }
+  // Zero holes and a marker still standing is not a clean series. edgeMulticastRecorderRegrade
+  // clears the count when the recorder admits the datagrams were its own, and deliberately does not
+  // clear the marker: a book was left un-anchored whoever dropped them. Painting that green would
+  // hide the one fault the backend is still asserting, so the badge keeps the gapped tone and the
+  // count moves into the tooltip, which is where '0 lost, 1 book un-anchored' can be said in full.
+  if (sequence.status === 'gapped') {
+    return { label: 'gapped', tone: 'bad', detail: `${sequence.gapped}/${total}` }
+  }
   // A measured zero is the common state — eight of twenty-four quarter-hours on mainnet — so it has
   // to read as a reading rather than as a blank. The denominator is what makes it one.
   return { label: '0 lost', tone: 'good', detail: `${formatUpdateCount(loss.received)} upd` }

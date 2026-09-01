@@ -276,6 +276,11 @@ func (a *API) edgeMulticastRecorderSequenceTablesExist(ctx context.Context) (boo
 // stage would multiply the denominator by the number of gap rows, which shows up as a loss rate
 // quietly divided by however bad the window was: the worse the feed, the healthier it reads.
 //
+// The denominator is summed over the whole roster, not over the gapped ports, which is why it comes
+// from `ref_inst` rather than from `gap_inst`. A reference only exists where a gap row does, so
+// folding it out of the gap rows alone drops every clean port's traffic and reports the loss as a
+// share of whichever ports happened to break — see that CTE for the arithmetic it produced.
+//
 // # The roster is coverage, not gaps
 //
 // The outer FROM is the coverage table and the gaps LEFT JOIN onto it, which fixes the direction
@@ -322,7 +327,6 @@ func (a *API) FetchEdgeMulticastRecorderSequence(ctx context.Context) (*EdgeMult
 				max(group_addr)     AS group_addr,
 				sum(unexplained)    AS unexplained,
 				sum(missing)        AS missing,
-				sum(reference_seqs) AS reference_seqs,
 				sum(gaps)           AS gaps,
 				max(max_run)        AS max_run,
 				max(p99_run)        AS p99_run
@@ -357,14 +361,50 @@ func (a *API) FetchEdgeMulticastRecorderSequence(ctx context.Context) (*EdgeMult
 			FROM cov_port
 			GROUP BY source_addr, channel_id, site, recorder, env
 		),
+		-- The denominator, built per port over the WHOLE roster and only then summed.
+		--
+		-- reference_seqs lives on a gap row, so summing it over gap_port alone counts only the ports
+		-- that gapped and silently drops every clean port's traffic out of the denominator. One hole
+		-- on a refdata port carrying a few hundred datagrams, beside a clean mktdata port carrying
+		-- millions, then reports the loss as a share of the few hundred -- clearing the 500-update
+		-- floor and printing a feed far worse than it is. The direction is the same one as the
+		-- handle delta above: it manufactures a finding.
+		--
+		-- So the roster is coverage, as it is for the rows themselves, and each port contributes what
+		-- it can attest: its reference where it gapped, its archived datagrams where it did not.
+		ref_inst AS (
+			SELECT
+				c.source_addr AS source_addr, c.channel_id AS channel_id,
+				c.site AS site, c.recorder AS recorder, c.env AS env,
+				sum(if(g.reference_seqs > 0, g.reference_seqs, c.datagrams)) AS reference_seqs
+			FROM cov_port AS c
+			LEFT JOIN gap_port AS g
+				ON c.source_addr = g.source_addr AND c.channel_id = g.channel_id
+				AND c.dst_port = g.dst_port
+				AND c.site = g.site AND c.recorder = g.recorder AND c.env = g.env
+			GROUP BY c.source_addr, c.channel_id, c.site, c.recorder, c.env
+		),
 		-- The handle's own drops, at the handle's own grain and at no finer one. Cumulative
-		-- counters, so only the delta says anything about this window; greatest(..., 0) because
-		-- a host that restarted mid-window restarts the counter, and ClickHouse promotes
-		-- UInt64 - UInt64 to a signed type whose negative would fail the scan.
+		-- counters, so only the delta says anything about this window, and the delta is LAST minus
+		-- FIRST by time -- not max minus min.
+		--
+		-- max - min is wrong in the one direction that matters. A host that restarts mid-window
+		-- restarts the counter at zero, so max is the pre-restart peak and min the post-restart
+		-- floor: a handle sitting at 1,000,000 that restarts and takes 10 more reports 1,000,100
+		-- admitted instead of 110. admitted is SUBTRACTED to attribute loss, so over-reporting it
+		-- hands the publisher's loss to the recorder and prints a clean feed. greatest(..., 0) was
+		-- dead code under max - min, which cannot go negative.
+		--
+		-- Under argMax/argMin the restart shows up as a negative and clamps to 0, which under-states
+		-- what the recorder admitted and so attributes the loss to the publisher instead. That is
+		-- the safe direction: it over-reports a fault rather than hiding one, and a recorder restart
+		-- inside the window is itself worth surfacing.
 		handle AS (
 			SELECT
 				site, recorder, env,
-				toUInt64(greatest(max(capture_drop_total) - min(capture_drop_total), 0)) AS admitted
+				toUInt64(greatest(
+					toInt64(argMax(capture_drop_total, end_ts)) -
+					toInt64(argMin(capture_drop_total, end_ts)), 0)) AS admitted
 			FROM fact_edge_recorder_segment_coverage FINAL
 			WHERE end_ts >= now64(9) - toIntervalMinute(%[1]d)
 			GROUP BY site, recorder, env
@@ -382,7 +422,7 @@ func (a *API) FetchEdgeMulticastRecorderSequence(ctx context.Context) (*EdgeMult
 			c.last_seen,
 			g.unexplained,
 			g.missing,
-			g.reference_seqs,
+			r.reference_seqs,
 			g.gaps,
 			g.max_run,
 			g.p99_run,
@@ -391,6 +431,9 @@ func (a *API) FetchEdgeMulticastRecorderSequence(ctx context.Context) (*EdgeMult
 		LEFT JOIN gap_inst AS g
 			ON c.source_addr = g.source_addr AND c.channel_id = g.channel_id
 			AND c.site = g.site AND c.recorder = g.recorder AND c.env = g.env
+		LEFT JOIN ref_inst AS r
+			ON c.source_addr = r.source_addr AND c.channel_id = r.channel_id
+			AND c.site = r.site AND c.recorder = r.recorder AND c.env = r.env
 		LEFT JOIN handle AS h
 			ON c.site = h.site AND c.recorder = h.recorder AND c.env = h.env
 		SETTINGS max_execution_time = 60, timeout_before_checking_execution_speed = 0`,

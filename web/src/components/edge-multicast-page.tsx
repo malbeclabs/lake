@@ -794,10 +794,13 @@ function sequenceInstanceLine(i: EdgeMulticastChannelInstance): string {
   if (i.capture_source_quiet) {
     return `${head}: quiet, and so is every other path on this source: the venue, not this path`
   }
-  // The stored rows on this plane hold one entry per change to the top of the book, so their
-  // numbering has structural holes that are not loss. Say what was not measured rather than print
-  // zeros that would read as findings.
-  if (!i.gaps_measured) {
+  // gaps_measured says whether GAP BOOKS is a reading, which is not the same question as whether
+  // loss is countable, and reading it as the latter silenced the recorder leg: it sets the flag
+  // false because it never folds a book, while carrying the update counters this line exists to
+  // print. So the bail-out is gated on having neither — a plane whose numbering has structural
+  // holes that are not loss says so, and one that can count says how much.
+  const hasUpdateCounts = i.updates_received !== undefined || i.updates_missing !== undefined
+  if (!i.gaps_measured && !hasUpdateCounts) {
     return (
       `${head}: ${i.messages.toLocaleString()} msgs, ${i.resets.toLocaleString()} resets` +
       ` — sequence loss not countable on this plane`
@@ -817,9 +820,14 @@ function sequenceInstanceLine(i: EdgeMulticastChannelInstance): string {
     missing > 0
       ? `, ${(i.seq_gap_events ?? 0).toLocaleString()} break(s), worst ${(i.max_gap_messages ?? 0).toLocaleString()} msg`
       : ''
+  // Books only where a marker exists. Printing '0 book(s) left un-anchored' for a plane that writes
+  // no markers states a reading it never took, which is the same false-zero this line refuses above.
+  const books = i.gaps_measured
+    ? `${i.gap_books.toLocaleString()} book(s) left un-anchored, `
+    : ''
   return (
     `${head}: ${loss}${breaks}` +
-    `\n   ${i.gap_books.toLocaleString()} book(s) left un-anchored, ${i.resets.toLocaleString()} resets, ` +
+    `\n   ${books}${i.resets.toLocaleString()} resets, ` +
     `${i.snapshot_cycles.toLocaleString()} snapshot cycles`
   )
 }
