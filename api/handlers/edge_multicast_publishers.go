@@ -462,11 +462,12 @@ const (
 // no subscriber.
 //
 // No group in scope trips the pair today. Every edge- group outside the Solana ones has at least one
-// subscriber, and the only group on the ledger with publishers and none is jito-shredstream, which
-// this page does not cover. So the branch is live but unexercised — do not read a lack of grey cells
-// as evidence it works, and re-check with `doublezero multicast group list -em` before assuming it
-// still has nothing to act on. A new feed's group is provisioned and published to before its first
-// recorder subscribes, which is exactly the window that puts a group back in it.
+// subscriber. The only group anywhere on the ledger with publishers but no subscribers at all is
+// jito-shredstream, and this page does not cover it. So the branch is live but unexercised — do not
+// read a lack of grey cells as evidence it works, and re-check with
+// `doublezero multicast group list -em` before assuming it still has nothing to act on. A new feed's
+// group is provisioned and published to before its first recorder subscribes, which is exactly the
+// window that puts a group back in it.
 func edgeMulticastPublisherHealth(line EdgeMulticastPublisher, groupHasSeries bool, groupHasSubscribers bool) string {
 	switch line.Status {
 	case edgeMulticastPubIdle:
