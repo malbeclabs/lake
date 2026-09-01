@@ -145,7 +145,7 @@ func edgeMulticastPlaneSuffixSQL() string {
 const edgeMulticastUnclaimedService = "edge-unclaimed"
 
 // edgeMulticastFamilyOf strips a group code's plane suffix to get the family the two planes of one
-// product share — edge-kalshi-elections-mbp and -tob both give edge-kalshi-elections.
+// product share — edge-kalshi-elections-pol-mbp and -tob both give edge-kalshi-elections-pol.
 //
 // It is how a group with no feed row still gets its own section. The section is keyed on the GROUP
 // code rather than on a feed code, and that difference is deliberate: nothing sells this yet, so

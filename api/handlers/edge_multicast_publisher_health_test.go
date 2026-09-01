@@ -97,7 +97,7 @@ func TestEdgeMulticastPublisherHealth_Unrecorded(t *testing.T) {
 // subscriber has no application plane that ever could. Both together are 'unknown' — nothing
 // measured this publisher here — and not 'healthy'.
 //
-// Measured on mainnet: edge-kalshi-elections-tob read 2/2 publishing and both lines healthy while
+// Measured on mainnet: edge-kalshi-elections-pol-tob read 2/2 publishing and both lines healthy while
 // its publishers sent that plane nothing, the whole ~18.6 Mbps belonging to the mbp group on the
 // same two tunnels.
 func TestEdgeMulticastPublisherHealth_SharedCounterOnAnUnsubscribedGroupIsNotHealthy(t *testing.T) {

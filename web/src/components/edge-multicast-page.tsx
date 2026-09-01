@@ -78,7 +78,7 @@ const SERVICE_LABELS: Record<string, string> = {
   // A group with no feed row but with publishers moving traffic gets its own section, keyed on the
   // GROUP family rather than a feed family — hence the `edge-` prefix these carry and the others do
   // not. The header still says the feed row is missing; only the placement changed.
-  'edge-kalshi-elections': 'Kalshi Elections',
+  'edge-kalshi-elections-pol': 'Kalshi Elections & Politics',
   'edge-unclaimed': 'Edge groups with neither a feed row nor traffic',
 }
 
@@ -273,7 +273,7 @@ function PublisherCell({
     // statement about a tunnel counter, and a publisher that feeds several groups from one tunnel
     // reports the sum against each of them — so on such a group the count is an upper bound, and
     // clearing the floor is not evidence that THIS group is being fed. Measured on mainnet:
-    // edge-kalshi-elections-tob read 2/2 publishing and healthy while its publishers sent it
+    // edge-kalshi-elections-pol-tob read 2/2 publishing and healthy while its publishers sent it
     // nothing at all, the whole ~18.9 Mbps belonging to the mbp group on the same tunnels.
     group.traffic_ambiguous
       ? 'upper bound: at least one publisher feeds several groups from one tunnel, so clearing the floor does not attest to this group'
