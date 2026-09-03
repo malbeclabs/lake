@@ -31,16 +31,11 @@ const shredSlotsPerEpoch = 432000
 // one prices, the other projects.
 const shredEpochsPerMonth = 15
 
-// defaultEconomicsMonths is how many calendar months of revenue the page shows,
-// counting the open one. Months ahead of it are always included on top: the
-// subscription program bills forward, so a month that has not started can
-// already hold invoiced revenue, and hiding it would read as revenue lost.
-const defaultEconomicsMonths = 5
-
-// maxEconomicsMonths bounds the window a caller can ask for. The accrual query
-// spreads every epoch's charge across the days it covers, so the window is the
-// only thing standing between this endpoint and a full-history scan.
-const maxEconomicsMonths = 24
+// economicsAllMonths is the window the page reads by default: every month the
+// program has data for. economicsHistoryStart is the lower bound a full-history window compares
+// against
+const economicsAllMonths = 0
+const economicsHistoryStart = "1970-01-01"
 
 // activeSlotsExpr is the slots a seat was active for in its epoch: the epoch's
 // last slot less the seat's start slot, capped at a whole epoch and floored at
@@ -229,20 +224,16 @@ type ShredsEconomics struct {
 }
 
 // GetShredsEconomics returns the shreds economics page in one payload.
-//
-// months bounds the window to that many calendar months ending with the open
-// one (default defaultEconomicsMonths, capped at maxEconomicsMonths). Months
-// ahead of the window are returned on top of it whenever they carry invoiced
-// revenue.
+// The default window is the whole history.
 func (a *API) GetShredsEconomics(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	months := defaultEconomicsMonths
+	months := economicsAllMonths
 	if raw := r.URL.Query().Get("months"); raw != "" {
 		n, err := strconv.Atoi(raw)
-		if err != nil || n < 1 || n > maxEconomicsMonths {
-			http.Error(w, fmt.Sprintf("months must be a whole number between 1 and %d", maxEconomicsMonths), http.StatusBadRequest)
+		if err != nil || n < 1 {
+			http.Error(w, "months must be a whole number of 1 or more", http.StatusBadRequest)
 			return
 		}
 		months = n
@@ -268,10 +259,11 @@ func (a *API) GetShredsEconomics(w http.ResponseWriter, r *http.Request) {
 func (a *API) FetchShredsEconomicsData(ctx context.Context, asOf time.Time, months int) (*ShredsEconomics, error) {
 	asOf = asOf.UTC()
 	asOfDay := asOf.Format(time.DateOnly)
-	// The window opens on the first of the month months-1 back, so the count
-	// includes the open month.
-	windowStart := time.Date(asOf.Year(), asOf.Month(), 1, 0, 0, 0, 0, time.UTC).
-		AddDate(0, -(months - 1), 0).Format(time.DateOnly)
+	windowStart := economicsHistoryStart
+	if months >= 1 {
+		windowStart = time.Date(asOf.Year(), asOf.Month(), 1, 0, 0, 0, 0, time.UTC).
+			AddDate(0, -(months - 1), 0).Format(time.DateOnly)
+	}
 
 	resp := &ShredsEconomics{
 		AsOf:           asOfDay,
@@ -547,7 +539,20 @@ func (a *API) economicsMonths(ctx context.Context, windowStart string, asOf time
 	slices.SortFunc(out, func(a, b ShredsEconomicsMonth) int {
 		return strings.Compare(a.Month, b.Month)
 	})
-	return out, nil
+	// Open on the first month that earned something - the program's first weeks
+	// ran on unpriced seats. Leading only, so a zero month between two active
+	// ones stays.
+	first := 0
+	for first < len(out) && monthEarnedNothing(out[first]) {
+		first++
+	}
+	return out[first:], nil
+}
+
+// monthEarnedNothing reports whether a month carries neither stream, at the cent
+// economicsMonthlySeatRevenue rounds at.
+func monthEarnedNothing(m ShredsEconomicsMonth) bool {
+	return m.SeatRevenue > -0.005 && m.SeatRevenue < 0.005 && m.Invoiced < 0.005
 }
 
 // economicsMonthlySeatRevenue spreads each epoch's charge across the calendar
@@ -1020,7 +1025,8 @@ func (a *API) economicsEpochDays(ctx context.Context, windowStart string) (float
 		FROM (
 			SELECT
 				epoch_start,
-				dateDiff('hour', lagInFrame(epoch_start) OVER (ORDER BY epoch), epoch_start) AS gap_hours
+				lagInFrame(epoch_start) OVER (ORDER BY epoch) AS prev,
+				dateDiff('hour', prev, epoch_start) AS gap_hours
 			FROM (
 				SELECT epoch, min(event_ts) AS epoch_start
 				FROM fact_dz_shred_escrow_events
@@ -1028,7 +1034,7 @@ func (a *API) economicsEpochDays(ctx context.Context, windowStart string) (float
 				GROUP BY epoch
 			)
 		)
-		WHERE gap_hours > 0 AND epoch_start >= toDate(?)
+		WHERE prev > toDateTime(0) AND gap_hours > 0 AND epoch_start >= toDate(?)
 	`
 
 	start := time.Now()
