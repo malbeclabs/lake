@@ -473,7 +473,7 @@ export function ShredsSubscribePage() {
                         <TransactionProgress status={txStatus} txSignature={txSignature} />
                         <div className="flex items-center gap-3 pt-2">
                           <Link
-                            to="/dz/shreds/subscribers"
+                            to="/dz/shreds/subscribers?system=seats"
                             className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
                           >
                             View your seats <ArrowRight className="h-3.5 w-3.5" />

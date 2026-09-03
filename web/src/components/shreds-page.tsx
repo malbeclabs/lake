@@ -21,12 +21,23 @@ import {
   fetchShredDevices,
   fetchShredFunders,
   fetchShredEscrowEvents,
+  fetchShredSubscriptions,
   fetchShredsOverview,
   type ShredClientSeat,
   type ShredFunder,
+  type ShredSubscriptionUser,
 } from '@/lib/api'
 import { handleRowClick } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
+import {
+  DEFAULT_SUBSCRIPTION_STATUSES,
+  SUBSCRIPTION_STATUSES,
+  connectedUsersTitle,
+  getSubscriptionStatus,
+  subscriptionDate,
+  subscriptionStatusConfig,
+  type SubscriptionStatus,
+} from './shreds-subscription-status'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
 import { PageHeader } from './page-header'
@@ -305,7 +316,150 @@ function ErrorState({ message }: { message: string }) {
   )
 }
 
-// --- Seats Page ---
+// --- Subscribers Page ---
+//
+// A shred subscriber reaches the feed through one of two programs, and the page
+// lists both. The shred subscription program sells a per-epoch seat on a device
+// funded from an escrow; the feed subscription program sells a monthly seat on a
+// feed, billed by invoice. A feed seat has no escrow, epoch or device and a
+// client seat has no feed, so the two get a table each rather than one table of
+// mostly empty cells — only the metro is common to both.
+
+type SubscriberSystem = 'seats' | 'subscriptions'
+
+/**
+ * The status each table opens with, as the API's status param. The two systems
+ * have separate vocabularies — the seats table's `inactive` is this one's
+ * `expired` — so neither string is ever sent to the other endpoint.
+ */
+const SEAT_DEFAULT_STATUSES = 'active,expiring,pending'
+const SUBSCRIPTION_DEFAULT_STATUS_PARAM = DEFAULT_SUBSCRIPTION_STATUSES.join(',')
+
+/**
+ * Reads the active system from the URL and switches it, resetting the table
+ * view. Subscriptions is the default, so it is Seats that names itself in the
+ * URL — a link that means the seats table must say `?system=seats` rather than
+ * relying on the bare path.
+ */
+function useSubscriberSystem(): [SubscriberSystem, (next: SubscriberSystem) => void] {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const system: SubscriberSystem =
+    searchParams.get('system') === 'seats' ? 'seats' : 'subscriptions'
+
+  const select = useCallback(
+    (next: SubscriberSystem) => {
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        if (next === 'subscriptions') {
+          p.delete('system')
+        } else {
+          p.set('system', next)
+        }
+        // The two tables share no sort field, status word or filter prefix, so
+        // carrying a view across would leave the sort arrows and status chips
+        // describing a table that is no longer on screen.
+        for (const key of ['page', 'sort', 'dir', 'status', 'search']) {
+          p.delete(key)
+        }
+        return p
+      })
+    },
+    [setSearchParams],
+  )
+
+  return [system, select]
+}
+
+/**
+ * A tab counts the rows in it. The tab on screen takes the table's own total, so
+ * it moves with the status chips and the filters; the other one is read at its
+ * own defaults.
+ *
+ * It has to be its own defaults and not the status param in the URL: that param
+ * belongs to the tab on screen, and the two vocabularies do not overlap — the
+ * seats table says `inactive` where this one says `expired`, and neither word
+ * means anything to the other query.
+ */
+function useInactiveSystemCount(system: SubscriberSystem): number | undefined {
+  const seats = useQuery({
+    queryKey: ['shred-client-seats-total', SEAT_DEFAULT_STATUSES],
+    queryFn: () => fetchShredClientSeats({ limit: 1, status: SEAT_DEFAULT_STATUSES }),
+    select: (data) => data.total,
+    enabled: system !== 'seats',
+    refetchInterval: 30000,
+  })
+  const subscriptions = useQuery({
+    queryKey: ['shred-subscriptions-total', SUBSCRIPTION_DEFAULT_STATUS_PARAM],
+    queryFn: () =>
+      fetchShredSubscriptions({ limit: 1, status: SUBSCRIPTION_DEFAULT_STATUS_PARAM }),
+    select: (data) => data.total,
+    enabled: system !== 'subscriptions',
+    refetchInterval: 30000,
+  })
+  return system === 'seats' ? subscriptions.data : seats.data
+}
+
+function SubscriberSystemTabs({
+  system,
+  onSelect,
+  activeCount,
+}: {
+  system: SubscriberSystem
+  onSelect: (next: SubscriberSystem) => void
+  /** The active table's total. Undefined on first load, which shows no number. */
+  activeCount?: number
+}) {
+  const inactiveCount = useInactiveSystemCount(system)
+  const countFor = (key: SubscriberSystem) => (key === system ? activeCount : inactiveCount)
+  // Subscriptions leads because it is the tab the page opens on.
+  const tabs: { key: SubscriberSystem; label: string; count?: number; title: string }[] = [
+    {
+      key: 'subscriptions',
+      label: 'Subscriptions',
+      count: countFor('subscriptions'),
+      title: 'Monthly seats on a feed, billed by invoice and held on an access pass',
+    },
+    {
+      key: 'seats',
+      label: 'Seats',
+      count: countFor('seats'),
+      title: 'Per-epoch seats on a device, funded from a USDC escrow',
+    },
+  ]
+
+  return (
+    <div className="flex border-b border-border mb-4">
+      {tabs.map((tab) => (
+        <button
+          key={tab.key}
+          onClick={() => onSelect(tab.key)}
+          title={tab.title}
+          className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px ${
+            system === tab.key
+              ? 'border-primary text-primary'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          {tab.label}
+          {tab.count !== undefined && (
+            <span className="ml-1.5 tabular-nums opacity-70">{tab.count}</span>
+          )}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+export function ShredsSeatsPage() {
+  const [system, selectSystem] = useSubscriberSystem()
+  return system === 'subscriptions' ? (
+    <ShredsSubscriptionsView system={system} onSelectSystem={selectSystem} />
+  ) : (
+    <ShredsSeatsView system={system} onSelectSystem={selectSystem} />
+  )
+}
+
+// --- Seats tab ---
 
 const seatFieldPrefixesWithIP = [
   { prefix: 'seat:', description: 'Filter by seat key' },
@@ -433,7 +587,13 @@ function SeatStatusBadge({ status }: { status: SeatStatus }) {
   )
 }
 
-export function ShredsSeatsPage() {
+function ShredsSeatsView({
+  system,
+  onSelectSystem,
+}: {
+  system: SubscriberSystem
+  onSelectSystem: (next: SubscriberSystem) => void
+}) {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const [showStatusInfo, setShowStatusInfo] = useState(false)
@@ -456,8 +616,8 @@ export function ShredsSeatsPage() {
   const sortBy = searchParams.get('sort') || 'last_activity'
   const sortDir = (searchParams.get('dir') || 'desc') as SortDirection
 
-  // Status filter from URL (comma-separated, default: active,expiring,pending).
-  const statusParam = searchParams.get('status') || 'active,expiring,pending'
+  // Status filter from URL (comma-separated, default: SEAT_DEFAULT_STATUSES).
+  const statusParam = searchParams.get('status') || SEAT_DEFAULT_STATUSES
   const activeStatuses = useMemo(
     () => new Set(statusParam.split(',').filter(Boolean)),
     [statusParam],
@@ -468,7 +628,7 @@ export function ShredsSeatsPage() {
       setSearchParams((prev) => {
         const p = new URLSearchParams(prev)
         const current = new Set(
-          (prev.get('status') || 'active,expiring,pending').split(',').filter(Boolean),
+          (prev.get('status') || SEAT_DEFAULT_STATUSES).split(',').filter(Boolean),
         )
         if (current.has(status)) {
           current.delete(status)
@@ -476,7 +636,7 @@ export function ShredsSeatsPage() {
           current.add(status)
         }
         const val = Array.from(current).join(',')
-        if (val === 'active,expiring,pending') {
+        if (val === SEAT_DEFAULT_STATUSES) {
           p.delete('status')
         } else {
           p.set('status', val)
@@ -583,8 +743,14 @@ export function ShredsSeatsPage() {
     })
   }, [setSearchParams])
 
-  if (isLoading && !data) return <LoadingState />
-  if (error) return <ErrorState message={error?.message || 'Unknown error'} />
+  // A spinner or an error takes the table's place rather than the page's: the
+  // tabs stay on screen, so one tab failing does not strand you on it.
+  const fallback =
+    isLoading && !data ? (
+      <LoadingState />
+    ) : error ? (
+      <ErrorState message={error?.message || 'Unknown error'} />
+    ) : null
 
   return (
     <div className="flex-1 overflow-auto">
@@ -620,286 +786,816 @@ export function ShredsSeatsPage() {
           }
         />
 
-        <div className="flex flex-wrap items-center gap-2 mb-3">
-          {(
-            [
-              {
-                key: 'active',
-                label: 'Active',
-                onClass: 'bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20',
-                dotClass: 'bg-green-500',
-              },
-              {
-                key: 'expiring',
-                label: 'Expiring',
-                onClass: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20',
-                dotClass: 'bg-amber-500',
-              },
-              {
-                key: 'pending',
-                label: 'Pending',
-                onClass: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20',
-                dotClass: 'bg-blue-500',
-              },
-              {
-                key: 'inactive',
-                label: 'Expired',
-                onClass: 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20',
-                dotClass: 'bg-red-500',
-              },
-              {
-                key: 'closed',
-                label: 'Closed',
-                onClass: 'bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/20',
-                dotClass: 'bg-gray-500',
-              },
-            ] as const
-          ).map(({ key, label, onClass, dotClass }) => {
-            const on = activeStatuses.has(key)
-            return (
-              <button
-                key={key}
-                onClick={() => toggleStatus(key)}
-                className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border transition-colors ${
-                  on ? onClass : 'bg-muted text-muted-foreground border-border opacity-50'
-                }`}
-              >
-                <div
-                  className={`h-1.5 w-1.5 rounded-full ${on ? dotClass : 'bg-muted-foreground'}`}
-                />
-                {label}
-              </button>
-            )
-          })}
-          <button
-            onClick={() => setShowStatusInfo(!showStatusInfo)}
-            className={`p-1 rounded-md transition-colors ${showStatusInfo ? 'text-foreground bg-muted' : 'text-muted-foreground hover:text-foreground'}`}
-            title="Status definitions"
-          >
-            <Info className="h-3.5 w-3.5" />
-          </button>
-        </div>
-        {showStatusInfo && (
-          <div className="mb-3 border border-border rounded-lg bg-muted/50 overflow-hidden">
-            <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 px-5 py-4 text-sm">
-              <span className="inline-flex items-center gap-1.5 font-medium text-green-600 dark:text-green-400">
-                <div className="h-1.5 w-1.5 rounded-full bg-green-500" /> Active
-              </span>
-              <span className="text-muted-foreground">
-                Allocated for the current epoch with 1+ epochs of prepaid balance
-              </span>
-              <span className="inline-flex items-center gap-1.5 font-medium text-amber-600 dark:text-amber-400">
-                <div className="h-1.5 w-1.5 rounded-full bg-amber-500" /> Expiring
-              </span>
-              <span className="text-muted-foreground">
-                Active but less than 1 epoch of balance remaining
-              </span>
-              <span className="inline-flex items-center gap-1.5 font-medium text-blue-600 dark:text-blue-400">
-                <div className="h-1.5 w-1.5 rounded-full bg-blue-500" /> Pending
-              </span>
-              <span className="text-muted-foreground">
-                Funded with enough for at least 1 epoch but not yet allocated
-              </span>
-              <span className="inline-flex items-center gap-1.5 font-medium text-red-600 dark:text-red-400">
-                <div className="h-1.5 w-1.5 rounded-full bg-red-500" /> Expired
-              </span>
-              <span className="text-muted-foreground">
-                Not active and insufficient balance to renew
-              </span>
-              <span className="inline-flex items-center gap-1.5 font-medium text-gray-500 dark:text-gray-400">
-                <div className="h-1.5 w-1.5 rounded-full bg-gray-500" /> Closed
-              </span>
-              <span className="text-muted-foreground">No payment escrow attached</span>
-            </div>
-          </div>
-        )}
+        <SubscriberSystemTabs system={system} onSelect={onSelectSystem} activeCount={data?.total} />
 
-        <div className="relative border border-border rounded-lg overflow-hidden bg-card">
-          {isFetching && data && (
-            <div className="absolute inset-x-0 top-0 h-0.5 overflow-hidden z-10">
-              <div className="h-full w-1/3 bg-primary/60 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
-            </div>
-          )}
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="text-sm text-left text-muted-foreground border-b border-border">
-                  <th className="px-4 py-3 font-medium">Seat</th>
-                  <SortHeader
-                    field="device"
-                    label="Device"
-                    currentSort={sortBy}
-                    currentDir={sortDir}
-                    onSort={handleSort}
-                  />
-                  <SortHeader
-                    field="metro"
-                    label="Metro"
-                    currentSort={sortBy}
-                    currentDir={sortDir}
-                    onSort={handleSort}
-                  />
-                  {showClientIP && (
-                    <SortHeader
-                      field="ip"
-                      label="Client IP"
-                      currentSort={sortBy}
-                      currentDir={sortDir}
-                      onSort={handleSort}
+        {fallback ?? (
+          <>
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              {(
+                [
+                  {
+                    key: 'active',
+                    label: 'Active',
+                    onClass: 'bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20',
+                    dotClass: 'bg-green-500',
+                  },
+                  {
+                    key: 'expiring',
+                    label: 'Expiring',
+                    onClass: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20',
+                    dotClass: 'bg-amber-500',
+                  },
+                  {
+                    key: 'pending',
+                    label: 'Pending',
+                    onClass: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20',
+                    dotClass: 'bg-blue-500',
+                  },
+                  {
+                    key: 'inactive',
+                    label: 'Expired',
+                    onClass: 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20',
+                    dotClass: 'bg-red-500',
+                  },
+                  {
+                    key: 'closed',
+                    label: 'Closed',
+                    onClass: 'bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/20',
+                    dotClass: 'bg-gray-500',
+                  },
+                ] as const
+              ).map(({ key, label, onClass, dotClass }) => {
+                const on = activeStatuses.has(key)
+                return (
+                  <button
+                    key={key}
+                    onClick={() => toggleStatus(key)}
+                    className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                      on ? onClass : 'bg-muted text-muted-foreground border-border opacity-50'
+                    }`}
+                  >
+                    <div
+                      className={`h-1.5 w-1.5 rounded-full ${on ? dotClass : 'bg-muted-foreground'}`}
                     />
-                  )}
-                  <th className="px-4 py-3 font-medium">Status</th>
-                  <SortHeader
-                    field="tenure"
-                    label="Tenure"
-                    align="right"
-                    currentSort={sortBy}
-                    currentDir={sortDir}
-                    onSort={handleSort}
-                  />
-                  <SortHeader
-                    field="balance"
-                    label="Balance (USDC)"
-                    align="right"
-                    currentSort={sortBy}
-                    currentDir={sortDir}
-                    onSort={handleSort}
-                  />
-                  <SortHeader
-                    field="prepaid"
-                    label="Prepaid Epochs"
-                    align="right"
-                    currentSort={sortBy}
-                    currentDir={sortDir}
-                    onSort={handleSort}
-                  />
-                  <SortHeader
-                    field="last_activity"
-                    label="Last Activity"
-                    currentSort={sortBy}
-                    currentDir={sortDir}
-                    onSort={handleSort}
-                  />
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((seat) => {
-                  const status = getSeatStatus(seat, currentSolanaEpoch)
-                  return (
-                    <tr
-                      key={seat.pk}
-                      className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
-                      onClick={(e) =>
-                        handleRowClick(e, `/dz/shreds/activity?search=seat:${seat.pk}`, navigate)
-                      }
-                    >
-                      <td className="px-4 py-3 font-mono text-xs group/cell" title={seat.pk}>
-                        <span className="inline-flex items-center gap-1">
-                          {truncatePK(seat.pk)}
-                          <CopyIcon text={seat.pk} />
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-sm whitespace-nowrap group/cell">
-                        <span className="inline-flex items-center gap-1">
-                          <Link
-                            to={`/dz/devices/${seat.device_key}`}
-                            className="text-foreground/85 hover:text-foreground hover:underline font-mono text-xs"
-                            title={seat.device_key}
-                          >
-                            {seat.device_code || truncatePK(seat.device_key)}
-                          </Link>
-                          <CopyIcon text={seat.device_code || seat.device_key} />
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-sm">
-                        {seat.metro_pk ? (
-                          <Link
-                            to={`/dz/metros/${seat.metro_pk}`}
-                            className="text-foreground/85 hover:text-foreground hover:underline font-mono text-xs"
-                            title={seat.metro_pk}
-                          >
-                            {seat.metro_code || truncatePK(seat.metro_pk)}
-                          </Link>
-                        ) : (
-                          <span className="text-muted-foreground">{'\u2014'}</span>
-                        )}
-                      </td>
+                    {label}
+                  </button>
+                )
+              })}
+              <button
+                onClick={() => setShowStatusInfo(!showStatusInfo)}
+                className={`p-1 rounded-md transition-colors ${showStatusInfo ? 'text-foreground bg-muted' : 'text-muted-foreground hover:text-foreground'}`}
+                title="Status definitions"
+              >
+                <Info className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            {showStatusInfo && (
+              <div className="mb-3 border border-border rounded-lg bg-muted/50 overflow-hidden">
+                <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 px-5 py-4 text-sm">
+                  <span className="inline-flex items-center gap-1.5 font-medium text-green-600 dark:text-green-400">
+                    <div className="h-1.5 w-1.5 rounded-full bg-green-500" /> Active
+                  </span>
+                  <span className="text-muted-foreground">
+                    Allocated for the current epoch with 1+ epochs of prepaid balance
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 font-medium text-amber-600 dark:text-amber-400">
+                    <div className="h-1.5 w-1.5 rounded-full bg-amber-500" /> Expiring
+                  </span>
+                  <span className="text-muted-foreground">
+                    Active but less than 1 epoch of balance remaining
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 font-medium text-blue-600 dark:text-blue-400">
+                    <div className="h-1.5 w-1.5 rounded-full bg-blue-500" /> Pending
+                  </span>
+                  <span className="text-muted-foreground">
+                    Funded with enough for at least 1 epoch but not yet allocated
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 font-medium text-red-600 dark:text-red-400">
+                    <div className="h-1.5 w-1.5 rounded-full bg-red-500" /> Expired
+                  </span>
+                  <span className="text-muted-foreground">
+                    Not active and insufficient balance to renew
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 font-medium text-gray-500 dark:text-gray-400">
+                    <div className="h-1.5 w-1.5 rounded-full bg-gray-500" /> Closed
+                  </span>
+                  <span className="text-muted-foreground">No payment escrow attached</span>
+                </div>
+              </div>
+            )}
+
+            <div className="relative border border-border rounded-lg overflow-hidden bg-card">
+              {isFetching && data && (
+                <div className="absolute inset-x-0 top-0 h-0.5 overflow-hidden z-10">
+                  <div className="h-full w-1/3 bg-primary/60 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
+                </div>
+              )}
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="text-sm text-left text-muted-foreground border-b border-border">
+                      <th className="px-4 py-3 font-medium">Seat</th>
+                      <SortHeader
+                        field="device"
+                        label="Device"
+                        currentSort={sortBy}
+                        currentDir={sortDir}
+                        onSort={handleSort}
+                      />
+                      <SortHeader
+                        field="metro"
+                        label="Metro"
+                        currentSort={sortBy}
+                        currentDir={sortDir}
+                        onSort={handleSort}
+                      />
                       {showClientIP && (
-                        <td className="px-4 py-3 text-sm font-mono group/cell">
-                          <span className="inline-flex items-center gap-1">
-                            {seat.user_pk ? (
+                        <SortHeader
+                          field="ip"
+                          label="Client IP"
+                          currentSort={sortBy}
+                          currentDir={sortDir}
+                          onSort={handleSort}
+                        />
+                      )}
+                      <th className="px-4 py-3 font-medium">Status</th>
+                      <SortHeader
+                        field="tenure"
+                        label="Tenure"
+                        align="right"
+                        currentSort={sortBy}
+                        currentDir={sortDir}
+                        onSort={handleSort}
+                      />
+                      <SortHeader
+                        field="balance"
+                        label="Balance (USDC)"
+                        align="right"
+                        currentSort={sortBy}
+                        currentDir={sortDir}
+                        onSort={handleSort}
+                      />
+                      <SortHeader
+                        field="prepaid"
+                        label="Prepaid Epochs"
+                        align="right"
+                        currentSort={sortBy}
+                        currentDir={sortDir}
+                        onSort={handleSort}
+                      />
+                      <SortHeader
+                        field="last_activity"
+                        label="Last Activity"
+                        currentSort={sortBy}
+                        currentDir={sortDir}
+                        onSort={handleSort}
+                      />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map((seat) => {
+                      const status = getSeatStatus(seat, currentSolanaEpoch)
+                      return (
+                        <tr
+                          key={seat.pk}
+                          className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
+                          onClick={(e) =>
+                            handleRowClick(e, `/dz/shreds/activity?search=seat:${seat.pk}`, navigate)
+                          }
+                        >
+                          <td className="px-4 py-3 font-mono text-xs group/cell" title={seat.pk}>
+                            <span className="inline-flex items-center gap-1">
+                              {truncatePK(seat.pk)}
+                              <CopyIcon text={seat.pk} />
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-sm whitespace-nowrap group/cell">
+                            <span className="inline-flex items-center gap-1">
                               <Link
-                                to={`/dz/users/${seat.user_pk}`}
-                                className="text-foreground/85 hover:text-foreground hover:underline"
-                                title={seat.user_pk}
+                                to={`/dz/devices/${seat.device_key}`}
+                                className="text-foreground/85 hover:text-foreground hover:underline font-mono text-xs"
+                                title={seat.device_key}
                               >
-                                {seat.client_ip}
+                                {seat.device_code || truncatePK(seat.device_key)}
+                              </Link>
+                              <CopyIcon text={seat.device_code || seat.device_key} />
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-sm">
+                            {seat.metro_pk ? (
+                              <Link
+                                to={`/dz/metros/${seat.metro_pk}`}
+                                className="text-foreground/85 hover:text-foreground hover:underline font-mono text-xs"
+                                title={seat.metro_pk}
+                              >
+                                {seat.metro_code || truncatePK(seat.metro_pk)}
                               </Link>
                             ) : (
-                              seat.client_ip
+                              <span className="text-muted-foreground">{'\u2014'}</span>
                             )}
-                            <CopyIcon text={seat.client_ip} />
-                          </span>
+                          </td>
+                          {showClientIP && (
+                            <td className="px-4 py-3 text-sm font-mono group/cell">
+                              <span className="inline-flex items-center gap-1">
+                                {seat.user_pk ? (
+                                  <Link
+                                    to={`/dz/users/${seat.user_pk}`}
+                                    className="text-foreground/85 hover:text-foreground hover:underline"
+                                    title={seat.user_pk}
+                                  >
+                                    {seat.client_ip}
+                                  </Link>
+                                ) : (
+                                  seat.client_ip
+                                )}
+                                <CopyIcon text={seat.client_ip} />
+                              </span>
+                            </td>
+                          )}
+                          <td className="px-4 py-3">
+                            <SeatStatusBadge status={status} />
+                          </td>
+                          <td className="px-4 py-3 text-sm tabular-nums text-right">
+                            {seat.tenure_epochs}
+                          </td>
+                          <td className="px-4 py-3 text-sm tabular-nums text-right">
+                            {`$${(seat.spendable_usdc_balance / 1e6).toFixed(2)}`}
+                            {seat.escrow_count > 1 && (
+                              <div
+                                className="text-xs text-muted-foreground"
+                                title="Balances are evaluated per escrow; only the largest single escrow can cover a charge."
+                              >
+                                {seat.escrow_count} escrows · ${(seat.all_escrows_usdc_balance / 1e6).toFixed(2)} total
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-sm tabular-nums text-right">
+                            {prepaidEpochs(seat)}
+                          </td>
+                          <td className="px-4 py-3">
+                            <Link
+                              to={`/dz/shreds/activity?search=seat:${seat.pk}`}
+                              className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap"
+                            >
+                              {seat.last_activity
+                                ? new Date(seat.last_activity).toLocaleString(undefined, {
+                                    month: 'short',
+                                    day: 'numeric',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })
+                                : '\u2014'}
+                              <ChevronRight className="h-3 w-3" />
+                            </Link>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                    {items.length === 0 && (
+                      <tr>
+                        <td colSpan={showClientIP ? 10 : 9} className="px-4 py-8 text-center text-muted-foreground">
+                          No seats found
                         </td>
-                      )}
-                      <td className="px-4 py-3">
-                        <SeatStatusBadge status={status} />
-                      </td>
-                      <td className="px-4 py-3 text-sm tabular-nums text-right">
-                        {seat.tenure_epochs}
-                      </td>
-                      <td className="px-4 py-3 text-sm tabular-nums text-right">
-                        {`$${(seat.spendable_usdc_balance / 1e6).toFixed(2)}`}
-                        {seat.escrow_count > 1 && (
-                          <div
-                            className="text-xs text-muted-foreground"
-                            title="Balances are evaluated per escrow; only the largest single escrow can cover a charge."
-                          >
-                            {seat.escrow_count} escrows · ${(seat.all_escrows_usdc_balance / 1e6).toFixed(2)} total
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-sm tabular-nums text-right">
-                        {prepaidEpochs(seat)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <Link
-                          to={`/dz/shreds/activity?search=seat:${seat.pk}`}
-                          className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap"
-                        >
-                          {seat.last_activity
-                            ? new Date(seat.last_activity).toLocaleString(undefined, {
-                                month: 'short',
-                                day: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })
-                            : '\u2014'}
-                          <ChevronRight className="h-3 w-3" />
-                        </Link>
-                      </td>
-                    </tr>
-                  )
-                })}
-                {items.length === 0 && (
-                  <tr>
-                    <td colSpan={showClientIP ? 10 : 9} className="px-4 py-8 text-center text-muted-foreground">
-                      No subscribers found
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          {total > PAGE_SIZE && (
-            <Pagination
-              total={total}
-              limit={PAGE_SIZE}
-              offset={offset}
-              onOffsetChange={setOffset}
-            />
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              {total > PAGE_SIZE && (
+                <Pagination
+                  total={total}
+                  limit={PAGE_SIZE}
+                  offset={offset}
+                  onOffsetChange={setOffset}
+                />
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// --- Subscriptions tab ---
+
+const subscriptionFieldPrefixes = [
+  { prefix: 'pass:', description: 'Filter by access pass key' },
+  { prefix: 'payer:', description: 'Filter by payer key' },
+  { prefix: 'feed:', description: 'Filter by feed name' },
+  { prefix: 'metro:', description: 'Filter by metro code' },
+  { prefix: 'device:', description: 'Filter by device code' },
+  { prefix: 'user:', description: 'Filter by connected user key' },
+  { prefix: 'users:', description: 'Filter by connected user count (e.g., =0)' },
+]
+
+/**
+ * The User and Device columns, which both come from the same resolved accounts:
+ * a feed seat names neither, so an unconnected seat has nothing to show in
+ * either and renders a dash. A seat may hold several users, so both columns list
+ * the first and count the rest rather than silently showing one of many.
+ *
+ * bgp_status rides on the user, not the device, and only when it is down — the
+ * ledger writes it from a snapshot minutes old, so it is a marker worth seeing
+ * beside the account and not a claim that the user is not connected.
+ */
+function SubscriptionUserCell({
+  users,
+  render,
+}: {
+  users: ShredSubscriptionUser[]
+  render: 'user' | 'device'
+}) {
+  // Metro is a property of the seat — the feed it names sits in exactly one — so
+  // a seat nobody has connected to still has one. A device is chosen at connect
+  // out of the several the metro runs, so until then there is none to name.
+  if (users.length === 0) {
+    return (
+      <span
+        className="text-muted-foreground"
+        title={
+          render === 'device'
+            ? 'No device until someone connects — the metro is fixed by the feed, the device is chosen at connect'
+            : 'Nobody has connected to this feed seat yet'
+        }
+      >
+        —
+      </span>
+    )
+  }
+
+  const [first, ...rest] = users
+  const bgpDown = first.bgp_status === 'down'
+
+  return (
+    <span className="inline-flex items-center gap-1 group/cell">
+      {render === 'user' ? (
+        <>
+          <Link
+            to={`/dz/users/${first.pk}`}
+            className="text-foreground/85 hover:text-foreground hover:underline"
+            title={first.pk}
+          >
+            {truncatePK(first.pk)}
+          </Link>
+          <CopyIcon text={first.pk} />
+          {bgpDown && (
+            <span
+              className="text-red-600 dark:text-red-400"
+              title="The ledger's last BGP snapshot for this user reads down"
+            >
+              BGP down
+            </span>
           )}
-        </div>
+        </>
+      ) : first.device_pk ? (
+        <>
+          <Link
+            to={`/dz/devices/${first.device_pk}`}
+            className="text-foreground/85 hover:text-foreground hover:underline"
+            title={first.device_pk}
+          >
+            {first.device_code || truncatePK(first.device_pk)}
+          </Link>
+          <CopyIcon text={first.device_code || first.device_pk} />
+        </>
+      ) : (
+        <span className="text-muted-foreground">—</span>
+      )}
+      {rest.length > 0 && (
+        <span
+          className="text-muted-foreground"
+          title={rest
+            .map((u) => (render === 'user' ? u.pk : u.device_code || u.device_pk))
+            .join('\n')}
+        >
+          +{rest.length}
+        </span>
+      )}
+    </span>
+  )
+}
+
+/**
+ * The connection count has no column of its own — the User column names who is
+ * connected and this badge says whether anyone is — so the count and the seat's
+ * caps ride here as the title, where a reader asking "why Pending?" will look.
+ */
+function SubscriptionStatusBadge({
+  status,
+  title,
+}: {
+  status: SubscriptionStatus
+  title?: string
+}) {
+  return (
+    <span
+      title={title}
+      className={`inline-flex items-center text-xs px-2 py-0.5 rounded-lg border whitespace-nowrap ${subscriptionStatusConfig[status].className}`}
+    >
+      {subscriptionStatusConfig[status].label}
+    </span>
+  )
+}
+
+function ShredsSubscriptionsView({
+  system,
+  onSelectSystem,
+}: {
+  system: SubscriberSystem
+  onSelectSystem: (next: SubscriberSystem) => void
+}) {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const navigate = useNavigate()
+  const [showStatusInfo, setShowStatusInfo] = useState(false)
+
+  // Statuses are read off the clock, so the badges need a clock that ticks.
+  // A minute is finer than any of the dates they compare against.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60_000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const page = parseInt(searchParams.get('page') || '1')
+  const offset = (page - 1) * PAGE_SIZE
+
+  const sortBy = searchParams.get('sort') || 'started_at'
+  const sortDir = (searchParams.get('dir') || 'desc') as SortDirection
+
+  const defaultStatuses = SUBSCRIPTION_DEFAULT_STATUS_PARAM
+  const statusParam = searchParams.get('status') || defaultStatuses
+  const activeStatuses = useMemo(
+    () => new Set(statusParam.split(',').filter(Boolean)),
+    [statusParam],
+  )
+
+  const toggleStatus = useCallback(
+    (status: string) => {
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        const current = new Set((prev.get('status') || defaultStatuses).split(',').filter(Boolean))
+        if (current.has(status)) {
+          current.delete(status)
+        } else {
+          current.add(status)
+        }
+        const val = SUBSCRIPTION_STATUSES.filter((s) => current.has(s)).join(',')
+        if (val === defaultStatuses) {
+          p.delete('status')
+        } else {
+          p.set('status', val)
+        }
+        p.delete('page')
+        return p
+      })
+    },
+    [defaultStatuses, setSearchParams],
+  )
+
+  const searchParam = searchParams.get('search') || ''
+  const searchFilters = useMemo(() => parseSearchFilters(searchParam), [searchParam])
+  const serverFilters = searchFilters.length > 0 ? searchFilters : undefined
+
+  const {
+    data,
+    isLoading,
+    isFetching: rawFetching,
+    error,
+    refetch,
+  } = useQuery({
+    queryKey: ['shred-subscriptions', offset, sortBy, sortDir, statusParam, searchParam],
+    queryFn: () =>
+      fetchShredSubscriptions({
+        limit: PAGE_SIZE,
+        offset,
+        sortBy,
+        sortDir,
+        status: statusParam,
+        filters: serverFilters,
+      }),
+    placeholderData: keepPreviousData,
+    refetchInterval: 30000,
+  })
+  const isFetching = useDebouncedFetching(rawFetching && !!data)
+  const refresh = useRefreshButton(refetch, rawFetching)
+
+  const items = data?.items ?? []
+  const total = data?.total ?? 0
+
+  const handleSort = useCallback(
+    (field: string) => {
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        if (prev.get('sort') === field) {
+          p.set('dir', prev.get('dir') === 'asc' ? 'desc' : 'asc')
+        } else {
+          p.set('sort', field)
+          p.set('dir', 'desc')
+        }
+        p.delete('page')
+        return p
+      })
+    },
+    [setSearchParams],
+  )
+
+  const setOffset = useCallback(
+    (newOffset: number) => {
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        const newPage = Math.floor(newOffset / PAGE_SIZE) + 1
+        if (newPage <= 1) {
+          p.delete('page')
+        } else {
+          p.set('page', String(newPage))
+        }
+        return p
+      })
+    },
+    [setSearchParams],
+  )
+
+  const removeFilter = useCallback(
+    (filterToRemove: string) => {
+      const newFilters = searchFilters.filter((f) => f !== filterToRemove)
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        if (newFilters.length === 0) {
+          p.delete('search')
+        } else {
+          p.set('search', newFilters.join(','))
+        }
+        p.delete('page')
+        return p
+      })
+    },
+    [searchFilters, setSearchParams],
+  )
+
+  const clearAllFilters = useCallback(() => {
+    setSearchParams((prev) => {
+      const p = new URLSearchParams(prev)
+      p.delete('search')
+      p.delete('page')
+      return p
+    })
+  }, [setSearchParams])
+
+  const fallback =
+    isLoading && !data ? (
+      <LoadingState />
+    ) : error ? (
+      <ErrorState message={error?.message || 'Unknown error'} />
+    ) : null
+
+  return (
+    <div className="flex-1 overflow-auto">
+      <div className="px-4 sm:px-8 py-8">
+        <PageHeader
+          icon={Puzzle}
+          title="Shred Subscribers"
+          count={total}
+          subtitle={
+            <button
+              onClick={refresh.onClick}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              title="Refresh"
+            >
+              {refresh.spinning ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+            </button>
+          }
+          actions={
+            <FilterActions
+              searchFilters={searchFilters}
+              removeFilter={removeFilter}
+              clearAllFilters={clearAllFilters}
+              setLiveFilter={() => {}}
+              fieldPrefixes={subscriptionFieldPrefixes}
+              entity="shred-subscriptions"
+              placeholder="Filter subscriptions..."
+              autocompleteFields={['payer', 'feed', 'metro', 'device']}
+            />
+          }
+        />
+
+        <SubscriberSystemTabs system={system} onSelect={onSelectSystem} activeCount={data?.total} />
+
+        {fallback ?? (
+          <>
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              {SUBSCRIPTION_STATUSES.map((key) => {
+                const on = activeStatuses.has(key)
+                const config = subscriptionStatusConfig[key]
+                return (
+                  <button
+                    key={key}
+                    onClick={() => toggleStatus(key)}
+                    className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                      on ? config.className : 'bg-muted text-muted-foreground border-border opacity-50'
+                    }`}
+                  >
+                    <div
+                      className={`h-1.5 w-1.5 rounded-full ${on ? config.dotClass : 'bg-muted-foreground'}`}
+                    />
+                    {config.label}
+                  </button>
+                )
+              })}
+              <button
+                onClick={() => setShowStatusInfo(!showStatusInfo)}
+                className={`p-1 rounded-md transition-colors ${showStatusInfo ? 'text-foreground bg-muted' : 'text-muted-foreground hover:text-foreground'}`}
+                title="Status definitions"
+              >
+                <Info className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            {showStatusInfo && (
+              <div className="mb-3 border border-border rounded-lg bg-muted/50 overflow-hidden">
+                <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 px-5 py-4 text-sm">
+                  <span className="inline-flex items-center gap-1.5 font-medium text-green-600 dark:text-green-400">
+                    <div className="h-1.5 w-1.5 rounded-full bg-green-500" /> Active
+                  </span>
+                  <span className="text-muted-foreground">
+                    Inside the billed window, with someone connected to the feed
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 font-medium text-blue-600 dark:text-blue-400">
+                    <div className="h-1.5 w-1.5 rounded-full bg-blue-500" /> Pending
+                  </span>
+                  <span className="text-muted-foreground">
+                    Paid and inside the window, but nobody has connected yet
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 font-medium text-red-600 dark:text-red-400">
+                    <div className="h-1.5 w-1.5 rounded-full bg-red-500" /> Expired
+                  </span>
+                  <span className="text-muted-foreground">
+                    Past the term date, whether or not anyone was connected
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <div className="relative border border-border rounded-lg overflow-hidden bg-card">
+              {isFetching && data && (
+                <div className="absolute inset-x-0 top-0 h-0.5 overflow-hidden z-10">
+                  <div className="h-full w-1/3 bg-primary/60 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
+                </div>
+              )}
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="text-sm text-left text-muted-foreground border-b border-border">
+                      <SortHeader
+                        field="pass"
+                        label="Access Pass"
+                        currentSort={sortBy}
+                        currentDir={sortDir}
+                        onSort={handleSort}
+                      />
+                      <SortHeader
+                        field="payer"
+                        label="Payer"
+                        currentSort={sortBy}
+                        currentDir={sortDir}
+                        onSort={handleSort}
+                      />
+                      {/* Not sortable: a seat can hold several users, and there
+                          is no one key to order the column by. Device sorts on
+                          the lowest device code among them. */}
+                      <th className="px-4 py-3 font-medium whitespace-nowrap">User</th>
+                      <SortHeader
+                        field="device"
+                        label="Device"
+                        currentSort={sortBy}
+                        currentDir={sortDir}
+                        onSort={handleSort}
+                      />
+                      <SortHeader
+                        field="metro"
+                        label="Metro"
+                        currentSort={sortBy}
+                        currentDir={sortDir}
+                        onSort={handleSort}
+                      />
+                      <th className="px-4 py-3 font-medium">Status</th>
+                      <SortHeader
+                        field="window_end"
+                        label="Term Ends"
+                        currentSort={sortBy}
+                        currentDir={sortDir}
+                        onSort={handleSort}
+                      />
+                      <SortHeader
+                        field="started_at"
+                        label="Since"
+                        currentSort={sortBy}
+                        currentDir={sortDir}
+                        onSort={handleSort}
+                      />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map((sub) => {
+                      const status = getSubscriptionStatus(sub, now)
+                      // The pass is the row's identity: a feed seat lives inside
+                      // the pass account and has none of its own.
+                      const passHref = `/dz/access-passes/${sub.pass_pk}`
+                      return (
+                        <tr
+                          key={`${sub.pass_pk}-${sub.feed_pk}`}
+                          className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
+                          onClick={(e) => handleRowClick(e, passHref, navigate)}
+                        >
+                          <td className="px-4 py-3 font-mono text-xs group/cell" title={sub.pass_pk}>
+                            <span className="inline-flex items-center gap-1">
+                              <Link
+                                to={passHref}
+                                className="text-foreground/85 hover:text-foreground hover:underline"
+                              >
+                                {truncatePK(sub.pass_pk)}
+                              </Link>
+                              <CopyIcon text={sub.pass_pk} />
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 font-mono text-xs group/cell" title={sub.payer}>
+                            <span className="inline-flex items-center gap-1">
+                              <Link
+                                to={`/dz/users?search=owner:${sub.payer}`}
+                                className="text-foreground/85 hover:text-foreground hover:underline"
+                              >
+                                {truncatePK(sub.payer)}
+                              </Link>
+                              <CopyIcon text={sub.payer} />
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 font-mono text-xs">
+                            <SubscriptionUserCell users={sub.users} render="user" />
+                          </td>
+                          <td className="px-4 py-3 font-mono text-xs">
+                            <SubscriptionUserCell users={sub.users} render="device" />
+                          </td>
+                          {/* The feed has no column: every shreds seat today
+                              carries the same code, and the metro half of its
+                              name is this column. It stays filterable with
+                              feed:, which is what a second SKU would need. */}
+                          <td className="px-4 py-3 text-sm">
+                            {sub.metro_pk ? (
+                              <Link
+                                to={`/dz/metros/${sub.metro_pk}`}
+                                className="text-foreground/85 hover:text-foreground hover:underline font-mono text-xs"
+                                title={sub.metro_pk}
+                              >
+                                {sub.metro_code || truncatePK(sub.metro_pk)}
+                              </Link>
+                            ) : (
+                              <span className="text-muted-foreground">{'—'}</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3">
+                            <SubscriptionStatusBadge status={status} title={connectedUsersTitle(sub)} />
+                          </td>
+                          <td className="px-4 py-3 text-sm whitespace-nowrap">
+                            {subscriptionDate(sub.window_end)}
+                            {sub.terminates_at !== sub.window_end && (
+                              <div
+                                className="text-xs text-muted-foreground"
+                                title="When the program removes the seat from the pass"
+                              >
+                                removed {subscriptionDate(sub.terminates_at)}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-sm whitespace-nowrap text-muted-foreground">
+                            {subscriptionDate(sub.started_at)}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                    {items.length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
+                          No subscriptions found
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              {total > PAGE_SIZE && (
+                <Pagination
+                  total={total}
+                  limit={PAGE_SIZE}
+                  offset={offset}
+                  onOffsetChange={setOffset}
+                />
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   )
@@ -1856,7 +2552,7 @@ export function ShredsEscrowEventsPage() {
                     <td className="px-4 py-3 font-mono text-xs" title={e.client_seat_pk}>
                       <span className="inline-flex items-center gap-1.5 group/cell">
                         <Link
-                          to={`/dz/shreds/subscribers?search=seat:${e.client_seat_pk}&status=active,expiring,pending,inactive,closed`}
+                          to={`/dz/shreds/subscribers?system=seats&search=seat:${e.client_seat_pk}&status=active,expiring,pending,inactive,closed`}
                           className="text-foreground/85 hover:text-foreground hover:underline"
                         >
                           {truncatePK(e.client_seat_pk)}

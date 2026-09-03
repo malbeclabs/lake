@@ -6438,6 +6438,67 @@ export async function fetchShredClientSeats(
   return res.json()
 }
 
+// A Solana Shreds feed seat held on an edge_seat access pass — the other way a
+// subscriber reaches the feed, alongside the per-epoch ShredClientSeat. It has
+// no escrow, no epoch and no device: it is billed monthly by invoice, and the
+// metro is all the two shapes have in common.
+export interface ShredSubscriptionUser {
+  pk: string
+  device_pk: string
+  device_code: string
+  bgp_status: string
+}
+
+export interface ShredSubscription {
+  pass_pk: string
+  pass_status: string
+  owner_pubkey: string
+  payer: string
+  feed_pk: string
+  feed_code: string
+  feed_name: string
+  metro_pk: string
+  metro_code: string
+  max_users: number
+  max_future_users: number
+  current_users: number
+  anniversary_day: number
+  window_end: string
+  terminates_at: string
+  started_at: string
+  users: ShredSubscriptionUser[]
+}
+
+export interface FetchShredSubscriptionsParams {
+  limit?: number
+  offset?: number
+  sortBy?: string
+  sortDir?: 'asc' | 'desc'
+  status?: string
+  filters?: string[]
+}
+
+export async function fetchShredSubscriptions(
+  params: FetchShredSubscriptionsParams = {},
+): Promise<PaginatedResponse<ShredSubscription>> {
+  const q = new URLSearchParams()
+  if (params.limit) q.set('limit', String(params.limit))
+  if (params.offset) q.set('offset', String(params.offset))
+  if (params.sortBy) q.set('sort_by', params.sortBy)
+  if (params.sortDir) q.set('sort_dir', params.sortDir)
+  if (params.status) q.set('status', params.status)
+  if (params.filters) {
+    for (const f of params.filters) {
+      q.append('filters', f)
+    }
+  }
+  const res = await fetchWithRetry(`/api/dz/shreds/subscriptions?${q}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch shred subscriptions')
+  }
+  return res.json()
+}
+
 export interface ShredFunder {
   funding_authority_key: string
   total_seats: number
