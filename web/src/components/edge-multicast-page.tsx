@@ -23,6 +23,7 @@ import {
   type EdgeMulticastPublisher,
   type EdgeMulticastPublisherVerdicts,
   type EdgeMulticastRecorderCoverage,
+  type EdgeMulticastRecorderLoss,
   type EdgeMulticastSequenceHealth,
   type EdgeMulticastService,
 } from '@/lib/api'
@@ -936,14 +937,73 @@ function RecorderLossRow({
   )
 }
 
-// Every recorder of a path on one axis, plus the line that says whether a loss was one recorder's
-// or not.
+// The rule set's five verdicts, worst attribution first: the reader's question, not the order the
+// rules are tested in. `publisher` is the finding; `recorder` is the line that says the number
+// above it is not a publisher finding at all.
+const GAP_VERDICT_ORDER = ['publisher', 'path', 'upstream', 'recorder', 'unverifiable'] as const
+
+function verdictSplit(byVerdict?: Record<string, number>): string {
+  if (!byVerdict) return ''
+  return GAP_VERDICT_ORDER.filter((v) => (byVerdict[v] ?? 0) > 0)
+    .map((v) => `${v} ${byVerdict[v].toLocaleString()}`)
+    .join(' · ')
+}
+
+// One recorder's row on the recorder leg, where the numbers are absolute rather than relative to
+// what the other recorders happened to receive.
+function recorderRowDetail(r: EdgeMulticastRecorderLoss, win: GapWindow, windowEnd: string): string {
+  const rate =
+    r.reference_seqs > 0
+      ? ` · ${((r.missing / r.reference_seqs) * 1e6).toFixed(1)} ppm`
+      : ''
+  const lines = [
+    `${r.node}: ${r.missing.toLocaleString()} of ${r.reference_seqs.toLocaleString()} ` +
+      `sequence numbers the publisher sent${rate}`,
+  ]
+  // The subtraction, shown rather than asserted. This is the thing the peer comparison could only
+  // infer: a loss every recorder shares reads as the publisher's there, and here it is a number
+  // this recorder admitted losing.
+  if ((r.admitted ?? 0) > 0) {
+    lines.push(
+      `${(r.missing_raw ?? r.missing).toLocaleString()} missing less ` +
+        `${(r.admitted ?? 0).toLocaleString()} this recorder admits dropping`,
+    )
+  }
+  const split = verdictSplit(r.missing_by_verdict)
+  if (split) lines.push(split)
+  if (r.missing === 0) {
+    lines.push(
+      r.unverifiable
+        ? 'nothing missing here — but the archive has a hole over this window, so that is unverified'
+        : 'recorded every sequence number the publisher sent',
+    )
+  } else {
+    lines.push(
+      `${(r.runs ?? (r.episodes ?? []).length).toLocaleString()} run(s) of missing sequence ` +
+        `numbers over the ${Math.round(win.secs / 60)}m to ${windowEnd}Z`,
+    )
+  }
+  // A mark places a run; it does not size it. The count above is the quantity, and a run of
+  // seconds would say as much about how busy the feed was as about what was lost.
+  if ((r.episodes ?? []).length > 0) {
+    lines.push('marks place each run, and never its size — the count above is the loss')
+  }
+  return lines.join('\n')
+}
+
+// Every recorder of a path on one axis, plus the line underneath that says whose the loss was.
 //
-// The last row is seconds where TWO OR MORE recorders lost at once. It is not "all of them", and
-// that ceiling is a property of the measurement rather than a choice: the reference is the union of
-// what the nodes recorded, so a message none of them received is in nobody's set and can never be
-// reported missing. Several at once is as close as this plane gets to naming a loss upstream of the
-// recorders, and one node alone is its branch.
+// Two measurements can fill it and the strip says which. On the RECORDER leg the rows come from the
+// recording nodes' own sequence-loss detection: the reference is the publisher's own numbering, the
+// recorder's admitted drops are subtracted rather than inferred, and each run carries a verdict —
+// so the bottom row is the runs charged to the publisher.
+//
+// On the PEER leg the rows are each node measured against the others, and the bottom row is seconds
+// where two or more lost at once. That is not "all of them", and the ceiling is a property of the
+// measurement rather than a choice: the reference is the union of what the nodes recorded, so a
+// message none of them received is in nobody's set and can never be reported. Several at once is as
+// close as that leg gets to naming a loss upstream of the recorders, and one node alone is its
+// branch.
 function RecorderLossTimeline({
   sequence,
   window: win,
@@ -952,6 +1012,7 @@ function RecorderLossTimeline({
   window: GapWindow
 }) {
   const recorders = sequence.recorder_loss ?? []
+  const fromRecorder = sequence.recorder_loss_source === 'recorder'
 
   // Attempted and failed is not the same as never applicable, and rendering both as nothing is how
   // a query dying on every refresh cycle stayed invisible. Say so instead.
@@ -964,12 +1025,16 @@ function RecorderLossTimeline({
     )
   }
 
-  // One recorder is no comparison at all. Saying so is not decoration: an empty row here read as
-  // "the feature is broken" to the first person who looked at a sports group, because three states
-  // — compared, failed, and nothing to compare — had only two renderings between them. It is also
-  // an operational fact worth seeing, and the same one GapNodes bounds: with a single vantage, a
-  // gap on this feed cannot be attributed to the path rather than to that recorder's own branch.
-  if (recorders.length < 2) {
+  // One recorder is no comparison at all — on the PEER leg. Saying so is not decoration: an empty
+  // row here read as "the feature is broken" to the first person who looked at a sports group,
+  // because three states — compared, failed, and nothing to compare — had only two renderings
+  // between them. It is also the same operational fact GapNodes bounds.
+  //
+  // The recorder leg is exempt, and that is the point of it: its reference is the publisher's own
+  // numbering, so ONE vantage still measures loss absolutely. Applying the peer leg's guard to it
+  // would throw away the only measurement that works where a feed is recorded once — which is every
+  // market-by-price group today.
+  if (!fromRecorder && recorders.length < 2) {
     return (
       <div className="flex items-center gap-1.5 border-t border-border/60 pt-0.5">
         <span className="text-[9px] w-8 shrink-0 text-right text-muted-foreground">rec</span>
@@ -979,7 +1044,11 @@ function RecorderLossTimeline({
       </div>
     )
   }
+  if (recorders.length === 0) {
+    return null
+  }
   const simultaneous = sequence.recorder_loss_simultaneous ?? []
+  const publisherRuns = sequence.recorder_loss_publisher ?? []
   const windowEnd = new Date(win.endMs).toISOString().slice(11, 19)
 
   return (
@@ -991,28 +1060,57 @@ function RecorderLossTimeline({
           episodes={r.episodes ?? []}
           window={win}
           detail={
-            `${r.node}: ${r.missing.toLocaleString()} of ${r.reference_seqs.toLocaleString()} ` +
-            `messages its peers recorded\n` +
-            (r.missing === 0
-              ? 'recorded everything the others did'
-              : `${(r.episodes ?? []).length} episode(s) over the ${Math.round(win.secs / 60)}m to ${windowEnd}Z`)
+            fromRecorder
+              ? recorderRowDetail(r, win, windowEnd)
+              : `${r.node}: ${r.missing.toLocaleString()} of ${r.reference_seqs.toLocaleString()} ` +
+                `messages its peers recorded\n` +
+                (r.missing === 0
+                  ? 'recorded everything the others did'
+                  : `${(r.episodes ?? []).length} episode(s) over the ${Math.round(win.secs / 60)}m to ${windowEnd}Z`)
           }
         />
       ))}
       {/* Set apart from the rows above: those are observations, this is what they add up to. */}
       <div className="mt-px border-t border-border/60 pt-px">
-        <RecorderLossRow
-          label="2+"
-          episodes={simultaneous}
-          window={win}
-          emphasis
-          detail={
-            simultaneous.length === 0
-              ? 'no second in which two or more recorders lost at once — every loss above is one recorder\'s own branch'
-              : `${simultaneous.length} episode(s) where two or more recorders lost at the same second: not one branch's fault.\n` +
-                'A loss no recorder saw cannot appear here — the reference is what someone recorded.'
-          }
-        />
+        {fromRecorder ? (
+          <RecorderLossRow
+            label="pub"
+            episodes={publisherRuns}
+            window={win}
+            emphasis
+            detail={
+              publisherRuns.length === 0
+                ? 'no run was charged to the publisher — every loss above was attributed elsewhere, or could not be judged'
+                : `${publisherRuns.length} run(s) absent from every recording site, with no recorder overflow anywhere and coverage intact.\n` +
+                  'This is the finding, not an inference from several recorders losing at once.'
+            }
+          />
+        ) : (
+          <RecorderLossRow
+            label="2+"
+            episodes={simultaneous}
+            window={win}
+            emphasis
+            detail={
+              simultaneous.length === 0
+                ? 'no second in which two or more recorders lost at once — every loss above is one recorder\'s own branch'
+                : `${simultaneous.length} episode(s) where two or more recorders lost at the same second: not one branch's fault.\n` +
+                  'A loss no recorder saw cannot appear here — the reference is what someone recorded.'
+            }
+          />
+        )}
+      </div>
+      {/* Which measurement is on screen, said once. The two references differ, so an empty track
+          means "nobody lost anything the publisher sent" under one and only "nobody lost anything
+          its peers received" under the other. */}
+      <div className="flex items-center gap-1.5">
+        <span className="text-[9px] w-8 shrink-0" />
+        <span className="text-[9px] text-muted-foreground">
+          {fromRecorder ? 'recorder rows' : 'peer comparison'}
+          {sequence.recorder_gaps_unavailable && (
+            <span className="text-amber-600"> · recorder rows unavailable</span>
+          )}
+        </span>
       </div>
     </div>
   )
@@ -1793,6 +1891,23 @@ export function EdgeMulticastPage() {
               leave a book un-anchored for seconds, and a burst of them lands inside one episode. A
               line with one recorder says so instead of drawing nothing: with a single vantage a gap
               cannot be attributed to the path rather than to that recorder's own branch.
+            </p>
+          )}
+          {showSequence && (
+            <p>
+              The per-recorder rows under a line say <span className="text-foreground">which
+              measurement</span> produced them, because the two do not mean the same thing. On{' '}
+              <span className="text-foreground">recorder rows</span> — the recording nodes' own
+              sequence-loss detection — the reference is the publisher's own numbering, each node's
+              admitted drops are subtracted rather than inferred, and the bottom row is the runs
+              charged to the publisher: absent from every site, with no recorder overflow anywhere
+              and coverage intact. On a <span className="text-foreground">peer comparison</span> the
+              reference is the union of what the nodes received, so a datagram nobody received is in
+              nobody's reference and an empty track does not rule that loss out; the bottom row is
+              then seconds where two or more recorders lost at once, which is as close as that
+              measurement gets to naming a loss upstream of them. A mark PLACES a run and never
+              sizes it — the count is in the tooltip, because a run of seconds says as much about
+              how busy the feed was as about what was lost.
             </p>
           )}
           {showSequence && (

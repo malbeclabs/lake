@@ -374,6 +374,35 @@ The fact's **column order is part of the contract**: `WriteBatch` issues a bare 
 column list, so the migration and `dzsvc.userBGPRTTRow` must match position for position. That is
 what `TestLake_Serviceability_UserBGPRTT_RowLandsInItsColumns` exists to catch.
 
+### The loss strip's two sources
+
+The per-recording-node strip under a publisher line's Sequence cell can be filled by either of two
+measurements, and it **says which one on screen** — `recorder rows` or `peer comparison`. They are
+not two grains of one number:
+
+- **Peer comparison** (`fetchEdgeMulticastRecorderLoss`, over `kalshi_bbo_observations`) measures
+  each node against the UNION of what the nodes received. A datagram nobody received is in nobody's
+  reference, so an empty strip does not rule that loss out; the bottom row is `2+`, the seconds two
+  or more recorders lost at once, which is as close as it gets to naming a loss upstream of them.
+  One vantage measures nothing here, and the strip says so rather than drawing an empty track.
+- **Recorder rows** (`edge_multicast_recorder_gaps.go`, over `recorder_sequence_gap` and
+  `recorder_segment_coverage` in the feeds DB) measure against the publisher's own numbering,
+  subtract each recorder's admitted drops instead of inferring them, and carry a verdict per run —
+  so the bottom row is `pub`, the runs charged to the publisher. **One vantage still measures loss
+  absolutely**, which is why the peer leg's "nothing to compare" guard must never be applied to it:
+  market-by-price is recorded at one node on every group today.
+
+The recorder rows win where they exist and the peer fold is then not run at all. Both stay in the
+cached payload because whether those tables exist is a property of the environment — the proxies
+are created out of band, and **no environment has them today**, so every one of them still renders
+the comparison. Two rules the arithmetic rests on: `reference_seqs` is per (instance, site) and
+repeated on each of that instance's gap rows, so it is MAX-ed per instance and never summed; and
+`segment_coverage` is not optional, because a clean node emits no gap row and the clean line is the
+whole comparison.
+
+Contract, and what is deliberately left out of it (the badge, and a line with recorder rows but no
+decoded series): `docs/plans/2026-09-03-edge-multicast-recorder-sequence-design.md`.
+
 ### Row order
 
 Groups read alphabetically by ledger code within their feed section. Publisher lines read by
