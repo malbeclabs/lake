@@ -6617,6 +6617,20 @@ export async function fetchShredSubscriberHistory(limit = 50): Promise<ShredSubs
   return res.json()
 }
 
+// Win Rate vs Competitors — one point per closed UTC day.
+export interface ShredsCompetitorDay {
+  day: string
+  win_typical_pct: number
+  lead_typical_ms: number
+  leader_slots: number
+}
+
+export async function fetchShredsCompetitors(days = 30): Promise<ShredsCompetitorDay[]> {
+  const res = await fetchWithRetry(`/api/dz/shreds/competitors?days=${days}`)
+  if (!res.ok) throw new Error('Failed to fetch shreds competitor win rate')
+  return res.json()
+}
+
 export interface SwapRate {
   sol_price_usd: number
   twoz_price_usd: number

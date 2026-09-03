@@ -12,8 +12,10 @@ import {
   type EdgeScoreboardLeader,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { FEED_COLORS } from '@/lib/feed-colors'
 import { Tooltip } from '@/components/ui/tooltip'
 import { PageHeader } from './page-header'
+import { ShredsCompetitorChart } from './shreds-competitor-chart'
 
 function useAnimatedNumber(target: number | undefined, duration = 500) {
   const [current, setCurrent] = useState<number | undefined>(undefined)
@@ -130,17 +132,6 @@ function WinRateGauge({ feedRates, labelPct }: { feedRates: Record<string, numbe
       </div>
     </div>
   )
-}
-
-const FEED_COLORS: Record<string, string> = {
-  dz_edge: '#34d399',       // emerald-400 — primary DZ
-  dz_root: '#10b981',       // emerald-500 — turbine-root publish (between Leaders and Retransmits)
-  dz: '#34d399',            // emerald-400
-  dz_retransmit: '#059669', // emerald-600 — rolled up regional retransmit feeds
-  jito: '#fbbf24',          // amber-400 — brighter
-  turbine: '#f43f5e',       // rose-500 — more saturated
-  pipe: '#e879f9',
-  other: '#1f2937',
 }
 
 const FEED_LABELS: Record<string, string> = {
@@ -2409,6 +2400,11 @@ export function EdgeScoreboardPage() {
             </div>
           </div>
         )}
+
+        {/* Daily competitor win rate — its own payload and its own cadence (one
+            point per closed UTC day), so it neither waits on nor blocks the
+            live-tailing charts above. */}
+        <ShredsCompetitorChart />
 
         {/* Node detail table */}
         <div className="border border-border rounded-lg overflow-hidden bg-card mb-6">
