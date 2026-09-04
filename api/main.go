@@ -666,6 +666,7 @@ func main() {
 		r.Get("/api/dz/tenants/{pk}", api.GetTenant)
 		r.Get("/api/dz/shreds/overview", api.GetShredsOverview)
 		r.Get("/api/dz/shreds/client-seats", api.GetShredClientSeats)
+		r.Get("/api/dz/shreds/subscriptions", api.GetShredSubscriptions)
 		r.Get("/api/dz/shreds/funders", api.GetShredFunders)
 		r.Get("/api/dz/shreds/escrow-events", api.GetShredEscrowEvents)
 		r.Get("/api/dz/shreds/devices", api.GetShredDevices)

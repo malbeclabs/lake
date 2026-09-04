@@ -229,7 +229,7 @@ function ShredsSubscriptionCard({ seat }: { seat: AccessPassShredsSeat }) {
           <dt className="text-sm text-muted-foreground shrink-0">Seat</dt>
           <dd className="text-sm font-mono min-w-0">
             <Link
-              to={`/dz/shreds/subscribers?search=seat%3A${seat.pk}`}
+              to={`/dz/shreds/subscribers?system=seats&search=seat%3A${seat.pk}`}
               className="text-blue-600 dark:text-blue-400 hover:underline"
             >
               {seat.pk.slice(0, 6)}…{seat.pk.slice(-4)}
