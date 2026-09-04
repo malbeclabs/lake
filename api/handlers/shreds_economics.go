@@ -1021,20 +1021,21 @@ func (a *API) economicsMetrosPriced(ctx context.Context) (int, error) {
 // which is not the 15-epoch month the rate card quotes.
 func (a *API) economicsEpochDays(ctx context.Context, windowStart string) (float64, error) {
 	query := `
-		SELECT avg(gap_hours) / 24 AS epoch_days
+		SELECT avg(gap_hours / epoch_gap) / 24 AS epoch_days
 		FROM (
 			SELECT
 				epoch_start,
-				lagInFrame(epoch_start) OVER (ORDER BY epoch) AS prev,
-				dateDiff('hour', prev, epoch_start) AS gap_hours
+				lagInFrame(epoch_start) OVER (ORDER BY epoch_num) AS prev,
+				dateDiff('hour', prev, epoch_start) AS gap_hours,
+				epoch_num - lagInFrame(epoch_num) OVER (ORDER BY epoch_num) AS epoch_gap
 			FROM (
-				SELECT epoch, min(event_ts) AS epoch_start
+				SELECT assumeNotNull(epoch) AS epoch_num, min(event_ts) AS epoch_start
 				FROM fact_dz_shred_escrow_events
 				WHERE status = 'ok' AND epoch IS NOT NULL
-				GROUP BY epoch
+				GROUP BY epoch_num
 			)
 		)
-		WHERE prev > toDateTime(0) AND gap_hours > 0 AND epoch_start >= toDate(?)
+		WHERE prev > toDateTime(0) AND gap_hours > 0 AND epoch_gap > 0 AND epoch_start >= toDate(?)
 	`
 
 	start := time.Now()

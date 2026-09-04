@@ -582,6 +582,24 @@ func TestShredsEconomics_EpochDaysIgnoresTheFirstEpoch(t *testing.T) {
 	assert.InDelta(t, 2.0, resp.EpochDays, 0.01, "epoch 950 opens 30 July and 951 opens 1 August")
 }
 
+func TestShredsEconomics_EpochDaysSpansSkippedEpochs(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	require.NoError(t, api.DB.Exec(t.Context(), `
+		INSERT INTO fact_dz_shred_escrow_events
+		(event_ts, ingested_at, escrow_pk, client_seat_pk, tx_signature, slot,
+		 event_type, amount_usdc, balance_after_usdc, epoch, status, signer)
+		VALUES
+		('2026-07-30 00:00:00', now(), 'esc-a', 'seat-a', 'tx-950', 410400000, 'batch_allocate', NULL, NULL, 950, 'ok', 'signer-a'),
+		('2026-08-01 00:00:00', now(), 'esc-a', 'seat-a', 'tx-951', 410832000, 'batch_allocate', NULL, NULL, 951, 'ok', 'signer-a'),
+		('2026-08-05 00:00:00', now(), 'esc-a', 'seat-a', 'tx-953', 411696000, 'batch_allocate', NULL, NULL, 953, 'ok', 'signer-a')
+	`))
+
+	resp := fetchEconomics(t, api)
+	assert.InDelta(t, 2.0, resp.EpochDays, 0.01,
+		"952 sold no seat, so its epoch has no escrow event: the 4 days from 951 to 953 cover two epochs, not one")
+}
+
 // An environment with none of the program's data answers 200 with empty lists
 // rather than 500 or null. The page renders its empty state off those, and
 // `null` would break it.
