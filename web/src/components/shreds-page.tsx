@@ -1232,6 +1232,7 @@ function ShredsSubscriptionsView({
 
   const toggleStatus = useCallback(
     (status: string) => {
+      if (activeStatuses.size === 1 && activeStatuses.has(status)) return
       setSearchParams((prev) => {
         const p = new URLSearchParams(prev)
         const current = new Set((prev.get('status') || defaultStatuses).split(',').filter(Boolean))
@@ -1250,7 +1251,7 @@ function ShredsSubscriptionsView({
         return p
       })
     },
-    [defaultStatuses, setSearchParams],
+    [activeStatuses, defaultStatuses, setSearchParams],
   )
 
   const searchParam = searchParams.get('search') || ''

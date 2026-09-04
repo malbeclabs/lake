@@ -9,9 +9,10 @@ export const SUBSCRIPTION_STATUSES: SubscriptionStatus[] = ['active', 'pending',
  * The chips the table opens with. Expired is left out because the page is about
  * who is subscribed now: a seat past its termination is one the program should
  * already have taken off the pass, so it is a loose end to go looking for rather
- * than something to read the live picture through. The tab count above stays the
- * whole program, as the seats tab's does, so the two numbers differ by however
- * many expired seats are lying around.
+ * than something to read the live picture through. The tab count above follows
+ * these chips rather than the whole program — the tab on screen reports the
+ * table's own filtered total and the other one is read at its own defaults — so
+ * an expired seat sits outside both numbers until the chip is turned on.
  */
 export const DEFAULT_SUBSCRIPTION_STATUSES: SubscriptionStatus[] = ['active', 'pending']
 

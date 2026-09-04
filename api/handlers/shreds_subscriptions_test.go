@@ -221,8 +221,8 @@ func TestGetShredSubscriptions_ExcludesOtherProductsAndDeletedPasses(t *testing.
 }
 
 // The three states partition the seats, so the chips add back up to the
-// unfiltered total — which is what lets the tab count, read unfiltered, agree
-// with the subscription count the economics page reports over the same seats.
+// unfiltered total — no seat is counted twice by two chips, and none falls
+// through all three.
 func TestGetShredSubscriptions_StatusFilter(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)

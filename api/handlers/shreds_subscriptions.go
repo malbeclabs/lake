@@ -87,26 +87,38 @@ const shredSubscriptionStartedCTE = `started AS (
 // through them the devices they connected on.
 const shredSubscriptionConnectedCTE = `connected AS (
 		SELECT
-			uf.payer AS payer,
-			uf.feed_pk AS feed_pk,
-			groupArray(uf.user_pk) AS user_pks,
-			groupArray(ifNull(d.pk, '')) AS user_device_pks,
-			groupArray(ifNull(d.code, '')) AS user_device_codes,
-			groupArray(uf.bgp_status) AS user_bgp_statuses,
-			min(ifNull(d.code, '')) AS first_device_code
+			payer,
+			feed_pk,
+			arrayMap(x -> tupleElement(x, 1), users) AS user_pks,
+			arrayMap(x -> tupleElement(x, 2), users) AS user_device_pks,
+			arrayMap(x -> tupleElement(x, 3), users) AS user_device_codes,
+			arrayMap(x -> tupleElement(x, 4), users) AS user_bgp_statuses,
+			first_device_code
 		FROM (
 			SELECT
-				u.owner_pubkey AS payer,
-				u.pk AS user_pk,
-				u.device_pk AS device_pk,
-				u.bgp_status AS bgp_status,
-				fp AS feed_pk
-			FROM dz_users_current AS u
-			ARRAY JOIN JSONExtract(u.feed_pks, 'Array(String)') AS fp
-			WHERE u.status = 'activated'
-		) AS uf
-		LEFT JOIN dz_devices_current AS d ON d.pk = uf.device_pk
-		GROUP BY payer, feed_pk
+				uf.payer AS payer,
+				uf.feed_pk AS feed_pk,
+				groupArray(tuple(
+					uf.user_pk,
+					ifNull(d.pk, ''),
+					ifNull(d.code, ''),
+					uf.bgp_status
+				)) AS users,
+				min(ifNull(d.code, '')) AS first_device_code
+			FROM (
+				SELECT
+					u.owner_pubkey AS payer,
+					u.pk AS user_pk,
+					u.device_pk AS device_pk,
+					u.bgp_status AS bgp_status,
+					fp AS feed_pk
+				FROM dz_users_current AS u
+				ARRAY JOIN JSONExtract(u.feed_pks, 'Array(String)') AS fp
+				WHERE u.status = 'activated'
+			) AS uf
+			LEFT JOIN dz_devices_current AS d ON d.pk = uf.device_pk
+			GROUP BY payer, feed_pk
+		)
 	)`
 
 const shredSubscriptionFrom = `
