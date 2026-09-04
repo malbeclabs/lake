@@ -736,7 +736,7 @@ function AppContent() {
             <Route path="/dz/shreds/publishers" element={<PublisherCheckPage />} />
             <Route path="/dz/publisher-check" element={<Navigate to="/dz/shreds/publishers" replace />} />
             <Route path="/dz/shreds/subscribers" element={<ShredsSeatsPage />} />
-            <Route path="/dz/shreds/seats" element={<Navigate to="/dz/shreds/subscribers" replace />} />
+            <Route path="/dz/shreds/seats" element={<Navigate to="/dz/shreds/subscribers?system=seats" replace />} />
             <Route path="/dz/shreds/funders" element={<ShredsFundersPage />} />
             <Route path="/dz/shreds/devices" element={<ShredsDevicesPage />} />
             <Route path="/dz/shreds/activity" element={<ShredsEscrowEventsPage />} />
