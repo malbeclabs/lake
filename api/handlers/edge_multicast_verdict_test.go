@@ -175,22 +175,45 @@ func TestEdgeMulticastMedian(t *testing.T) {
 	assert.Equal(t, []float64{3, 1, 2}, in)
 }
 
-// Sequence-counter grading. The gap check is unconditional; staleness is measured against the
+// Sequence-counter grading. Both loss checks are unconditional; staleness is measured against the
 // coverage payload's own clock, which is what keeps a ten-minute-old cache from marking every
 // series stalled.
 func TestEdgeMulticastSequenceStatus(t *testing.T) {
 	t.Parallel()
 
 	asOf := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
-	assert.Equal(t, edgeMulticastSeqGapped, edgeMulticastSequenceStatus(1, asOf, asOf))
-	assert.Equal(t, edgeMulticastSeqGapped, edgeMulticastSequenceStatus(1, asOf.Add(-time.Hour), asOf),
+	assert.Equal(t, edgeMulticastSeqGapped, edgeMulticastSequenceStatus(1, 0, asOf, asOf))
+	assert.Equal(t, edgeMulticastSeqGapped, edgeMulticastSequenceStatus(1, 0, asOf.Add(-time.Hour), asOf),
 		"a gap outranks staleness: it is the fault, the other is the symptom")
-	assert.Equal(t, edgeMulticastSeqOK, edgeMulticastSequenceStatus(0, asOf.Add(-30*time.Second), asOf))
-	assert.Equal(t, edgeMulticastSeqOK, edgeMulticastSequenceStatus(0, asOf.Add(-edgeMulticastSequenceStaleSecs*time.Second), asOf),
+	assert.Equal(t, edgeMulticastSeqOK, edgeMulticastSequenceStatus(0, 0, asOf.Add(-30*time.Second), asOf))
+	assert.Equal(t, edgeMulticastSeqOK, edgeMulticastSequenceStatus(0, 0, asOf.Add(-edgeMulticastSequenceStaleSecs*time.Second), asOf),
 		"exactly at the bound is still advancing")
-	assert.Equal(t, edgeMulticastSeqStalled, edgeMulticastSequenceStatus(0, asOf.Add(-5*time.Minute), asOf))
-	assert.Equal(t, edgeMulticastSeqStalled, edgeMulticastSequenceStatus(0, time.Time{}, asOf),
+	assert.Equal(t, edgeMulticastSeqStalled, edgeMulticastSequenceStatus(0, 0, asOf.Add(-5*time.Minute), asOf))
+	assert.Equal(t, edgeMulticastSeqStalled, edgeMulticastSequenceStatus(0, 0, time.Time{}, asOf),
 		"no timestamp at all is not evidence of a healthy series")
+}
+
+// A hole in the per-instrument sequence is a fault whether or not the recorder wrote a gap marker
+// for it. Measured over six hours of mainnet, five channel instances lost updates with gap_books
+// at zero — ligue1 ch25 lost 958 of them, at 1,551 ppm — and grading on the marker alone called
+// every one of them 'ok'.
+func TestEdgeMulticastSequenceStatus_MissingUpdatesWithoutAGapMarker(t *testing.T) {
+	t.Parallel()
+
+	asOf := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	fresh := asOf.Add(-30 * time.Second)
+
+	assert.Equal(t, edgeMulticastSeqGapped, edgeMulticastSequenceStatus(0, 958, fresh, asOf),
+		"updates that never arrived are loss, marker or no marker")
+	assert.Equal(t, edgeMulticastSeqGapped, edgeMulticastSequenceStatus(0, 1, fresh, asOf),
+		"one missing update is still a hole in the numbering")
+	assert.Equal(t, edgeMulticastSeqGapped, edgeMulticastSequenceStatus(0, 2, asOf.Add(-time.Hour), asOf),
+		"loss outranks staleness the same way a marker does")
+
+	// The top-of-book fold passes zero for both counters, and that must stay a statement about
+	// staleness alone rather than a clean bill of health. GapsMeasured is what carries the
+	// difference.
+	assert.Equal(t, edgeMulticastSeqOK, edgeMulticastSequenceStatus(0, 0, fresh, asOf))
 }
 
 // The roll-up is worst-first and the counts are per instance, so the badge can say "1 of 4"
