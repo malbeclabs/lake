@@ -141,9 +141,12 @@ func seedEconomics(t *testing.T, api *handlers.API) {
 	`))
 }
 
+// Read the way the page reads it: the whole history, which is what months = 0
+// asks for. The fixture fits inside any window, so a test that cares about the
+// window says so itself.
 func fetchEconomics(t *testing.T, api *handlers.API) *handlers.ShredsEconomics {
 	t.Helper()
-	resp, err := api.FetchShredsEconomicsData(t.Context(), economicsAsOf, 5)
+	resp, err := api.FetchShredsEconomicsData(t.Context(), economicsAsOf, 0)
 	require.NoError(t, err)
 	return resp
 }
@@ -459,22 +462,142 @@ func TestShredsEconomics_MetrosPricedCountsUnsoldMetros(t *testing.T) {
 
 // months= is validated rather than silently falling back: a caller asking for a
 // window the endpoint will not serve should be told, not handed a different one.
+// There is no upper bound - the default is already the whole history, so a
+// window larger than the data is just the default by another name.
 func TestGetShredsEconomics_RejectsBadMonths(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
-	for _, bad := range []string{"0", "-3", "99", "abc"} {
+	for _, bad := range []string{"0", "-3", "abc"} {
 		req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/economics?months="+bad, nil)
 		rr := httptest.NewRecorder()
 		api.GetShredsEconomics(rr, req)
 		assert.Equal(t, http.StatusBadRequest, rr.Code, "months=%s", bad)
 	}
 
-	// Absent still means the default.
-	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/economics", nil)
-	rr := httptest.NewRecorder()
-	api.GetShredsEconomics(rr, req)
-	assert.Equal(t, http.StatusOK, rr.Code)
+	for _, ok := range []string{"", "?months=99"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/economics"+ok, nil)
+		rr := httptest.NewRecorder()
+		api.GetShredsEconomics(rr, req)
+		assert.Equal(t, http.StatusOK, rr.Code, "query=%q", ok)
+	}
+}
+
+// The page opens on the whole history. It used to open on a five-month window,
+// which cut the program's first months off the chart the moment it had been
+// running longer than that.
+func TestShredsEconomics_DefaultWindowIsFullHistory(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedEconomics(t, api)
+	ctx := t.Context()
+
+	// One seat in an epoch that opened in January, seven months before the as-of
+	// day and well outside the window the page used to read.
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_client_seats_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, device_key, client_ip, tenure_epochs, funded_epoch, active_epoch,
+		 has_price_override, override_usdc_price_dollars, escrow_count, funding_authority_key,
+		 subscription_start_slot, last_usdc_price_dollars)
+		VALUES
+		('seat-a-860', now(), now(), generateUUIDv4(), 0, 10, 'seat-a', 'dev-fra', '10.0.0.1', 1, 859, 860, 0, 0, 1, 'funder-a', 371520000, 100)
+	`))
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO fact_dz_shred_escrow_events
+		(event_ts, ingested_at, escrow_pk, client_seat_pk, tx_signature, slot,
+		 event_type, amount_usdc, balance_after_usdc, epoch, status, signer)
+		VALUES
+		('2026-01-10 00:00:00', now(), 'esc-a', 'seat-a', 'tx-860-a', 371520000, 'batch_allocate', NULL, NULL, 860, 'ok', 'signer-a')
+	`))
+
+	months := func(resp *handlers.ShredsEconomics) []string {
+		keys := make([]string, 0, len(resp.Months))
+		for _, m := range resp.Months {
+			keys = append(keys, m.Month)
+		}
+		return keys
+	}
+
+	full, err := api.FetchShredsEconomicsData(ctx, economicsAsOf, 0)
+	require.NoError(t, err)
+	assert.Contains(t, months(full), "2026-01", "the default window reaches the first month with data")
+
+	narrow, err := api.FetchShredsEconomicsData(ctx, economicsAsOf, 5)
+	require.NoError(t, err)
+	assert.NotContains(t, months(narrow), "2026-01", "months= still narrows the window")
+}
+
+// The series opens on the first month that earned something. The program's
+// first weeks ran on pre-pricing seats charged nothing at all, and those months
+// survive economicsMonthlySeatRevenue's cent floor only as a seat count - a zero
+// bar on the chart claiming the program earned nothing that month rather than
+// that it had not started charging.
+func TestShredsEconomics_LeadingEmptyMonthsAreTrimmed(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedEconomics(t, api)
+	ctx := t.Context()
+
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_shred_client_seats_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, device_key, client_ip, tenure_epochs, funded_epoch, active_epoch,
+		 has_price_override, override_usdc_price_dollars, escrow_count, funding_authority_key,
+		 subscription_start_slot, last_usdc_price_dollars)
+		VALUES
+		('seat-free-930', now(), now(), generateUUIDv4(), 0, 11, 'seat-free', 'dev-unpriced', '10.0.0.9', 1, 929, 930, 0, 0, 1, 'funder-a', 0, 0)
+	`))
+	require.NoError(t, api.DB.Exec(ctx, `
+		INSERT INTO fact_dz_shred_escrow_events
+		(event_ts, ingested_at, escrow_pk, client_seat_pk, tx_signature, slot,
+		 event_type, amount_usdc, balance_after_usdc, epoch, status, signer)
+		VALUES
+		('2026-06-10 00:00:00', now(), 'esc-free', 'seat-free', 'tx-930', 401760000, 'batch_allocate', NULL, NULL, 930, 'ok', 'signer-a')
+	`))
+
+	resp := fetchEconomics(t, api)
+	require.NotEmpty(t, resp.Months)
+
+	keys := make([]string, 0, len(resp.Months))
+	for _, m := range resp.Months {
+		keys = append(keys, m.Month)
+	}
+	assert.NotContains(t, keys, "2026-06", "a leading month that charged nothing is not a month of trading")
+	assert.Equal(t, "2026-07", resp.Months[0].Month, "the series opens on the first month with revenue")
+	assert.Contains(t, keys, "2026-08")
+}
+
+// The mean epoch length is the gap between consecutive epoch starts, and the
+// first epoch has no predecessor: lagInFrame hands it the zero date. The old
+// five-month window cut that row off by accident, so a full-history one has to
+// exclude it outright - otherwise the run-rate projection spreads the live seat
+// rate over a 250-day epoch and reports next to nothing.
+func TestShredsEconomics_EpochDaysIgnoresTheFirstEpoch(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedEconomics(t, api)
+
+	resp := fetchEconomics(t, api)
+	assert.InDelta(t, 2.0, resp.EpochDays, 0.01, "epoch 950 opens 30 July and 951 opens 1 August")
+}
+
+func TestShredsEconomics_EpochDaysSpansSkippedEpochs(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	require.NoError(t, api.DB.Exec(t.Context(), `
+		INSERT INTO fact_dz_shred_escrow_events
+		(event_ts, ingested_at, escrow_pk, client_seat_pk, tx_signature, slot,
+		 event_type, amount_usdc, balance_after_usdc, epoch, status, signer)
+		VALUES
+		('2026-07-30 00:00:00', now(), 'esc-a', 'seat-a', 'tx-950', 410400000, 'batch_allocate', NULL, NULL, 950, 'ok', 'signer-a'),
+		('2026-08-01 00:00:00', now(), 'esc-a', 'seat-a', 'tx-951', 410832000, 'batch_allocate', NULL, NULL, 951, 'ok', 'signer-a'),
+		('2026-08-05 00:00:00', now(), 'esc-a', 'seat-a', 'tx-953', 411696000, 'batch_allocate', NULL, NULL, 953, 'ok', 'signer-a')
+	`))
+
+	resp := fetchEconomics(t, api)
+	assert.InDelta(t, 2.0, resp.EpochDays, 0.01,
+		"952 sold no seat, so its epoch has no escrow event: the 4 days from 951 to 953 cover two epochs, not one")
 }
 
 // An environment with none of the program's data answers 200 with empty lists
