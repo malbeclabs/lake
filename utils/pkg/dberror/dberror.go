@@ -173,7 +173,9 @@ func Classify(err error) ErrorType {
 	// 429 or a gRPC service returning ResourceExhausted, like InfluxDB).
 	// These are transient and self-healing — worth retrying, not worth paging on.
 	rateLimitPatterns := []string{
-		"rate limited",
+		// Broad on purpose: covers "rate limited", "rate limits exceeded" (rpcpool's
+		// 429 body), and "rate limiting" — an error mentioning rate limits is a throttle.
+		"rate limit",
 		"too many requests",
 		"status 429",
 		"request too large",
