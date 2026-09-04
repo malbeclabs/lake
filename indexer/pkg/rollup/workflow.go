@@ -72,6 +72,11 @@ func ComputeRollupWorkflow(ctx temporalworkflow.Context, iteration int) error {
 		// See runIteration for why, and for why the backfill must not.
 		_ = runIteration(ctx, log, esc, window)
 
+		// The competitor rollup is daily, so it is called here rather than from
+		// runIteration: the backfill shares that function at 1-hour chunk grain,
+		// where a daily rollup would recompute the same days on every chunk.
+		_ = runCompetitorRollup(ctx, log, esc, now)
+
 		iteration++
 
 		if iteration < continueAsNewThreshold {
@@ -115,6 +120,26 @@ func runIteration(ctx temporalworkflow.Context, log log.Logger, esc *lakelogger.
 	esc.Observe(log, "device_interface_rollup", "device interface rollup failed", intfErr, "window_start", window.WindowStart, "window_end", window.WindowEnd)
 
 	return errors.Join(linkErr, intfErr)
+}
+
+// runCompetitorRollup executes the daily competitor rollup for the most recently
+// closed UTC days.
+func runCompetitorRollup(ctx temporalworkflow.Context, log log.Logger, esc *lakelogger.Escalator, now time.Time) error {
+	ctx = temporalworkflow.WithActivityOptions(ctx, temporalworkflow.ActivityOptions{
+		StartToCloseTimeout: competitorRollupActivityTimeout,
+		HeartbeatTimeout:    2 * time.Minute,
+		RetryPolicy: &temporal.RetryPolicy{
+			MaximumAttempts: 2,
+		},
+	})
+
+	err := temporalworkflow.ExecuteActivity(ctx, (*Activities).RollupCompetitors,
+		CompetitorDayInput{Day: now}).Get(ctx, nil)
+	if err != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	esc.Observe(log, "competitor_rollup", "competitor rollup failed", err, "now", now)
+	return err
 }
 
 // BackfillRollupWorkflow processes historical data in time chunks.

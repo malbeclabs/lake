@@ -79,3 +79,16 @@ func TestExternalRemoteTablesIncludesFeeds(t *testing.T) {
 		}
 	}
 }
+
+func TestExternalRemoteTablesIncludesCompetitorSource(t *testing.T) {
+	// The competitor rollup's source table. Unlike the feeds tables above, a missing proxy here
+	// does not degrade to an empty state: ComputeCompetitorDay returns the ClickHouse error
+	// verbatim, so every 30s iteration fails and the escalator reaches ERROR. Any environment
+	// that sets CLICKHOUSE_COMPETITOR_DB depends on this entry existing.
+	for _, e := range externalRemoteTables {
+		if e.RemoteDB == "dzf_data" && e.RemoteTable == "competitors_pairwise_feed_race" {
+			return
+		}
+	}
+	t.Error("externalRemoteTables missing dzf_data.competitors_pairwise_feed_race")
+}

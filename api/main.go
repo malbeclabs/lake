@@ -676,6 +676,7 @@ func main() {
 		r.Get("/api/dz/shreds/rewards", api.GetShredsRewards)
 		r.Get("/api/dz/shreds/rewards/{nodeId}", api.GetShredsRewardsDetail)
 		r.Get("/api/dz/shreds/subscriber-history", api.GetShredSubscriberHistory)
+		r.Get("/api/dz/shreds/competitors", api.GetShredsCompetitors)
 		r.Get("/api/dz/field-values", api.GetFieldValues)
 		r.Get("/api/dz/ledger", api.GetDZLedger)
 
