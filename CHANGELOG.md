@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+
+- `/api/dz/swap-rate` no longer proxies the SOL/2Z swap oracle (#823)
+- The unused `fetchSwapRate` helper is gone (#823)
+
 ### Changed
 
 - The page cache's most expensive entries now refresh on a per-entry cadence instead of every cycle: Network Health's historical groups and the metro-pair latency comparison every 30 minutes, the Network Health overview and the two 24h edge-scoreboard aggregates every 5 minutes. Those three groups measured 14.34% of production ClickHouse CPU over a 2.1-hour span while their inputs move on day or 24h-window timescales. Point-in-time views are unchanged; the edge-scoreboard live tail needed a cursor-coverage guard so a cadenced seed cannot skip slots. `cacheEntry.everyN` (a cycle count) becomes `cacheEntry.every`, a wall-clock duration, and `logger.Escalator` gains an opt-in `ErrorAfterDuration` so a degraded Network Health panel still pages on time under a long cadence (#777)
