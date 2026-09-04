@@ -1,27 +1,13 @@
 import { useMemo, useState, useCallback } from 'react'
 import MapGL, { Source, Layer } from 'react-map-gl/maplibre'
 import type { MapLayerMouseEvent } from 'react-map-gl/maplibre'
-import type { StyleSpecification } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { useQuery } from '@tanstack/react-query'
 import { useTheme } from '@/hooks/use-theme'
 import { Loader2, AlertCircle, AlertTriangle, ArrowRight, ExternalLink } from 'lucide-react'
 import { ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts'
 import { fetchGeoConcentration, fetchMetros, type GeoConcentrationResponse } from '@/lib/api'
-
-function createMapStyle(isDark: boolean): StyleSpecification {
-  const tileUrl = isDark
-    ? 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'
-    : 'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'
-  return {
-    version: 8,
-    sources: {
-      carto: { type: 'raster', tiles: [tileUrl], tileSize: 256,
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>' },
-    },
-    layers: [{ id: 'carto-tiles', type: 'raster', source: 'carto', minzoom: 0, maxzoom: 22 }],
-  }
-}
+import { createBasemapStyle } from '@/lib/basemap'
 
 const WARN_TOP_TWO_METROS_PCT = 33
 const WARN_COUNTRY_PCT = 8
@@ -60,7 +46,7 @@ function AnchorPointMap({ data, metroCoords, isLoadingMetros }: {
 }) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
-  const mapStyle = useMemo(() => createMapStyle(isDark), [isDark])
+  const mapStyle = useMemo(() => createBasemapStyle(isDark), [isDark])
   const [hoverInfo, setHoverInfo] = useState<{
     x: number; y: number; code: string; name: string
     stakeSol: number; stakePct: number; validators: number
