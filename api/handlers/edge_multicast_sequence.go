@@ -234,6 +234,26 @@ type EdgeMulticastSequenceHealth struct {
 	// and conflating them is how a query that died on every cycle went unnoticed.
 	RecorderLossUnavailable bool `json:"recorder_loss_unavailable,omitempty"`
 
+	// RecorderLossSource names which measurement produced RecorderLoss: `recorder` for the
+	// recording nodes' own sequence-loss rows, `peers` for each node measured against the others.
+	//
+	// It is on the payload rather than left to the reader's inference because the two measure
+	// against different references. The peer comparison's is the UNION of what the nodes received,
+	// so a datagram nobody received is in nobody's reference and an empty strip does not rule it
+	// out; the recorder's is the publisher's own numbering, where an empty strip does.
+	RecorderLossSource string `json:"recorder_loss_source,omitempty"`
+
+	// RecorderLossPublisher is the runs the rule set attributed to the PUBLISHER — absent from
+	// every site, no recorder overflow anywhere, coverage intact. Recorder leg only, and the
+	// stronger form of what RecorderLossSimultaneous reaches for.
+	RecorderLossPublisher []KalshiL2GapEpisode `json:"recorder_loss_publisher,omitempty"`
+
+	// RecorderGapsUnavailable says the recorder rows exist and the read of them failed, so the
+	// strip above is the peer comparison standing in. Deliberately not folded into
+	// RecorderLossUnavailable: something WAS measured, and "not measured" over a strip carrying
+	// marks is a worse answer than a note beside it.
+	RecorderGapsUnavailable bool `json:"recorder_gaps_unavailable,omitempty"`
+
 	// AllPathsGapped is the seconds every path of this feed lost data at once, set on the GROUP
 	// roll-up only. Non-empty means the redundancy failed and the feed itself lost data — the one
 	// sequence statement no publisher line can make, since a line only ever sees its own loss.
@@ -262,6 +282,44 @@ type EdgeMulticastRecorderLoss struct {
 	ReferenceSeqs uint64 `json:"reference_seqs"`
 
 	Episodes []KalshiL2GapEpisode `json:"episodes,omitempty"`
+
+	// The rest is the recorder leg's and absent on the peer comparison, which cannot produce any
+	// of it. See EdgeMulticastSequenceHealth.RecorderLossSource for which leg a line came from.
+
+	// MissingRaw is Missing before this recorder's own admitted drops came off, and Admitted is
+	// what came off. Carried so a tooltip can show the arithmetic rather than a number a reader
+	// has to trust: the peer comparison can only infer that share, and a load spike reaches every
+	// node at once.
+	MissingRaw uint64 `json:"missing_raw,omitempty"`
+	Admitted   uint64 `json:"admitted,omitempty"`
+
+	// Runs is contiguous runs of missing sequence numbers — the count of episodes, never their
+	// size. The size is Missing.
+	Runs uint64 `json:"runs,omitempty"`
+
+	// MissingByVerdict splits Missing by the rule set's attribution:
+	// recorder | upstream | path | unverifiable | publisher.
+	MissingByVerdict map[string]uint64 `json:"missing_by_verdict,omitempty"`
+
+	// Unverifiable says the archive had a hole over this window, so a clean reading here is an
+	// absence of evidence rather than a clean run — the object that would have carried the loss is
+	// the one we do not hold.
+	Unverifiable bool `json:"unverifiable,omitempty"`
+}
+
+// sortEdgeMulticastRecorderLoss orders a line's nodes worst-first, then by name.
+//
+// Worst first so a reader who looks at one row looks at the one that matters; by name after so the
+// order cannot shuffle between two polls of an unchanged payload. Shared by both legs, because a
+// strip whose row order depended on which measurement produced it would be unreadable across a
+// fallback.
+func sortEdgeMulticastRecorderLoss(lines []EdgeMulticastRecorderLoss) {
+	sort.Slice(lines, func(i, j int) bool {
+		if lines[i].Missing != lines[j].Missing {
+			return lines[i].Missing > lines[j].Missing
+		}
+		return lines[i].Node < lines[j].Node
+	})
 }
 
 // edgeMulticastRecorderLossLineKey identifies one publisher line: its destination group and the
@@ -359,14 +417,7 @@ func edgeMulticastRecorderLossFold(series []EdgeMulticastRecorderLossSeries) (ma
 			node.Episodes = collapseKalshiL2GapSeconds(flat)
 			lines = append(lines, *node)
 		}
-		// Worst first, then by name: a reader who looks at one line looks at the one that
-		// matters, and the order cannot shuffle between polls of an unchanged payload.
-		sort.Slice(lines, func(i, j int) bool {
-			if lines[i].Missing != lines[j].Missing {
-				return lines[i].Missing > lines[j].Missing
-			}
-			return lines[i].Node < lines[j].Node
-		})
+		sortEdgeMulticastRecorderLoss(lines)
 		out[pub] = lines
 	}
 
@@ -829,7 +880,7 @@ func finishEdgeMulticastSequenceHealth(health *EdgeMulticastSequenceHealth) {
 // lines the payload happens to carry cannot change any verdict. A faulted line the cap then hid
 // would take its badge off screen with it, leaving only the roll-up — unreachable today, since the
 // only groups with a recorded series have two publishers each against a cap of twelve.
-func attachEdgeMulticastSequenceHealth(lines []EdgeMulticastPublisher, health *EdgeMulticastSequenceHealth, multicastGroup string, recorderLoss map[string][]EdgeMulticastRecorderLoss, recorderLossSimul map[string][]KalshiL2GapEpisode, recorderLossUnavailable bool) {
+func attachEdgeMulticastSequenceHealth(lines []EdgeMulticastPublisher, health *EdgeMulticastSequenceHealth, multicastGroup string, observations edgeMulticastObservationStatsResult) {
 	if health == nil {
 		return
 	}
@@ -866,9 +917,17 @@ func attachEdgeMulticastSequenceHealth(lines []EdgeMulticastPublisher, health *E
 		// Keyed on the tunnel address, the same join the instances above make. A line with no
 		// entry keeps nil, which is "no peer to be measured against" and not "measured clean".
 		lk := edgeMulticastRecorderLossLineKey(multicastGroup, lines[i].DZIP)
-		h.RecorderLoss = recorderLoss[lk]
-		h.RecorderLossSimultaneous = recorderLossSimul[lk]
-		h.RecorderLossUnavailable = recorderLossUnavailable
+		h.RecorderLoss = observations.recorderLoss[lk]
+		h.RecorderLossSimultaneous = observations.recorderLossSimul[lk]
+		h.RecorderLossPublisher = observations.recorderLossPublisher[lk]
+		h.RecorderLossUnavailable = observations.recorderLossUnavailable
+		h.RecorderGapsUnavailable = observations.recorderGapsUnavailable
+		// Only where there is a strip to name the source of. On a line with no entry the field
+		// would label an absence, and "no peer to compare" is not a property of either
+		// measurement.
+		if len(h.RecorderLoss) > 0 {
+			h.RecorderLossSource = observations.recorderLossSource
+		}
 		lines[i].Sequence = h
 		health.Publishers++
 		switch h.Status {

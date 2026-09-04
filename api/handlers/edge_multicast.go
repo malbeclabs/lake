@@ -718,7 +718,7 @@ func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership
 	// Also before the truncation: each recorded series is reported on the line that emitted it,
 	// and the roll-up counts publishers rather than series.
 	out.Sequence = sequence
-	attachEdgeMulticastSequenceHealth(lines, out.Sequence, g.MulticastIP, observations.recorderLoss, observations.recorderLossSimul, observations.recorderLossUnavailable)
+	attachEdgeMulticastSequenceHealth(lines, out.Sequence, g.MulticastIP, observations)
 
 	// After the attachment, never before: a line's verdict folds the series it owns, and the
 	// series only reaches the line above. Tallied here, over the full list, so the cap below

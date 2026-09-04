@@ -7998,15 +7998,36 @@ export interface EdgeMulticastChannelInstance {
   capture_source_quiet?: boolean
 }
 
-/** One recording node's loss on a publisher line, measured against its peers on the same path. */
+/** One recording node's loss on a publisher line. Which measurement produced it is on the health's
+ *  `recorder_loss_source`: the recording nodes' own sequence-loss rows, or each node measured
+ *  against its peers. */
 export interface EdgeMulticastRecorderLoss {
   node: string
   location_code?: string
-  /** Reference sequences this node did not record, and what it is a share of. The reference is
-   *  the UNION of what the nodes recorded, so a message no node received is not in it. */
+  /** Sequence numbers this node did not record, and what it is a share of.
+   *
+   *  What the reference IS depends on the source, and it is the whole difference between the two.
+   *  On the peer comparison it is the UNION of what the nodes recorded, so a message no node
+   *  received is in nobody's reference and an empty strip does not rule that loss out. On the
+   *  recorder rows it is the publisher's own numbering, where an empty strip does. */
   missing: number
   reference_seqs: number
   episodes?: GapEpisode[]
+
+  /** The rest is the recorder leg's; the peer comparison cannot produce any of it. */
+
+  /** `missing` before this recorder's own admitted drops came off, and what came off. The
+   *  comparison can only infer that share, and a load spike reaches every node at once. */
+  missing_raw?: number
+  admitted?: number
+  /** Contiguous runs of missing sequence numbers: the count of episodes, never their size. */
+  runs?: number
+  /** `missing` split by the rule set's attribution:
+   *  recorder | upstream | path | unverifiable | publisher. */
+  missing_by_verdict?: Record<string, number>
+  /** The archive had a hole over this window, so a clean reading here is an absence of evidence
+   *  rather than a clean run. */
+  unverifiable?: boolean
 }
 
 /** Sequence health over a set of channel instances, worst-first: one publisher's own series on a
@@ -8031,6 +8052,17 @@ export interface EdgeMulticastSequenceHealth {
   /** The comparison was attempted and failed. Distinct from an absent recorder_loss, which means
    *  the path has no peer to be measured against — render "not measured", never nothing. */
   recorder_loss_unavailable?: boolean
+  /** Which measurement filled recorder_loss: `recorder` for the recording nodes' own sequence-loss
+   *  rows, `peers` for each node measured against the others. Named rather than inferred from the
+   *  strip's shape, because an empty strip means different things under each. */
+  recorder_loss_source?: 'recorder' | 'peers'
+  /** Runs the rule set charged to the PUBLISHER — absent from every site, no recorder overflow
+   *  anywhere, coverage intact. Recorder leg only, and the stronger form of what
+   *  recorder_loss_simultaneous reaches for. */
+  recorder_loss_publisher?: GapEpisode[]
+  /** The recorder rows exist and reading them failed, so the strip is the peer comparison standing
+   *  in. Not folded into recorder_loss_unavailable: something WAS measured. */
+  recorder_gaps_unavailable?: boolean
   /** Seconds every path of this feed lost data at once, on the GROUP roll-up only. Non-empty means
    *  the redundancy failed and the feed itself lost data — the one sequence statement no publisher
    *  line can make. */
