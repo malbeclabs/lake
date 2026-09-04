@@ -66,7 +66,10 @@ func (a *API) GetGeoConcentration(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("X-Cache", "MISS")
 
-	resp, err := a.FetchGeoConcentrationData(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	resp, err := a.FetchGeoConcentrationData(ctx)
 	if err != nil {
 		logError("geo concentration query error", "error", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
@@ -79,10 +82,10 @@ func (a *API) GetGeoConcentration(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// FetchGeoConcentrationData serves both GetGeoConcentration and the page-cache
+// worker, so it takes the caller's deadline rather than clamping one of its own:
+// the worker's per-entry budget is larger than the request path's.
 func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationResponse, error) {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-
 	dzdpDB := fmt.Sprintf("`%s`", a.DZDPDB)
 
 	// Fetch enriched validators with lat/lng — nearest-metro assignment is done in Go
@@ -176,21 +179,26 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 		code     string
 		lat, lng float64
 	}
-	var metros_list []metro
+	var metrosList []metro
+	// Not tolerated: without metros every validator gets an empty metro code and
+	// the anchor-point and top-two-metros stats read zero as if measured.
 	metroRows, err := a.DB.Query(ctx, "SELECT code, latitude, longitude FROM dz_metros_current")
 	if err != nil {
-		logError("geo concentration metros query error", "error", err)
-	} else {
-		for metroRows.Next() {
-			var m metro
-			if err := metroRows.Scan(&m.code, &m.lat, &m.lng); err != nil {
-				metroRows.Close()
-				return nil, err
-			}
-			metros_list = append(metros_list, m)
-		}
-		metroRows.Close()
+		return nil, err
 	}
+	for metroRows.Next() {
+		var m metro
+		if err := metroRows.Scan(&m.code, &m.lat, &m.lng); err != nil {
+			metroRows.Close()
+			return nil, err
+		}
+		metrosList = append(metrosList, m)
+	}
+	if err := metroRows.Err(); err != nil {
+		metroRows.Close()
+		return nil, err
+	}
+	metroRows.Close()
 
 	// Assign nearest metro and deduplicate by vote_pubkey in Go.
 	type validatorRow struct {
@@ -208,7 +216,7 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 		// Find nearest metro using Haversine distance.
 		bestCode := ""
 		bestDist := math.MaxFloat64
-		for _, m := range metros_list {
+		for _, m := range metrosList {
 			d := haversine(e.lat, e.lng, m.lat, m.lng)
 			if d < bestDist {
 				bestDist = d
@@ -336,7 +344,7 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 		HeroStats: GeoConcentrationHeroStats{
 			ValidatorsMeasured:   len(validators),
 			StakeTopTwoMetrosPct: stakeTopTwo,
-			AnchorPoints:         len(metros_list),
+			AnchorPoints:         len(metrosList),
 			StakeMaxASNPct:       maxASNPct,
 		},
 		Metros:    metros,
