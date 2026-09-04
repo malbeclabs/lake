@@ -198,20 +198,25 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 		lat, lng float64
 	}
 	var metrosList []metroCoord
+	// Not tolerated: without metros every validator gets an empty metro code, and
+	// the metro breakdown collapses into one nameless bucket.
 	metroRows, err := a.DB.Query(ctx, "SELECT code, latitude, longitude FROM dz_metros_current")
 	if err != nil {
-		logError("geo validators metros query error", "error", err)
-	} else {
-		for metroRows.Next() {
-			var m metroCoord
-			if err := metroRows.Scan(&m.code, &m.lat, &m.lng); err != nil {
-				metroRows.Close()
-				return nil, err
-			}
-			metrosList = append(metrosList, m)
-		}
-		metroRows.Close()
+		return nil, err
 	}
+	for metroRows.Next() {
+		var m metroCoord
+		if err := metroRows.Scan(&m.code, &m.lat, &m.lng); err != nil {
+			metroRows.Close()
+			return nil, err
+		}
+		metrosList = append(metrosList, m)
+	}
+	if err := metroRows.Err(); err != nil {
+		metroRows.Close()
+		return nil, err
+	}
+	metroRows.Close()
 
 	// Assign nearest metro and deduplicate by vote_pubkey in Go.
 	type dedupEntry struct {
