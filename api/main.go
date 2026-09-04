@@ -666,6 +666,7 @@ func main() {
 		r.Get("/api/dz/tenants/{pk}", api.GetTenant)
 		r.Get("/api/dz/shreds/overview", api.GetShredsOverview)
 		r.Get("/api/dz/shreds/client-seats", api.GetShredClientSeats)
+		r.Get("/api/dz/shreds/subscriptions", api.GetShredSubscriptions)
 		r.Get("/api/dz/shreds/funders", api.GetShredFunders)
 		r.Get("/api/dz/shreds/escrow-events", api.GetShredEscrowEvents)
 		r.Get("/api/dz/shreds/devices", api.GetShredDevices)
@@ -676,7 +677,6 @@ func main() {
 		r.Get("/api/dz/shreds/rewards/{nodeId}", api.GetShredsRewardsDetail)
 		r.Get("/api/dz/shreds/subscriber-history", api.GetShredSubscriberHistory)
 		r.Get("/api/dz/shreds/competitors", api.GetShredsCompetitors)
-		r.Get("/api/dz/swap-rate", api.GetSwapRate)
 		r.Get("/api/dz/field-values", api.GetFieldValues)
 		r.Get("/api/dz/ledger", api.GetDZLedger)
 
