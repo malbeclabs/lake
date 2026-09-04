@@ -6678,19 +6678,6 @@ export async function fetchShredSubscriberHistory(limit = 50): Promise<ShredSubs
   return res.json()
 }
 
-export interface SwapRate {
-  sol_price_usd: number
-  twoz_price_usd: number
-  swap_rate: number
-  fetched_at: number
-}
-
-export async function fetchSwapRate(): Promise<SwapRate> {
-  const res = await fetchWithRetry('/api/dz/swap-rate')
-  if (!res.ok) throw new Error('Failed to fetch swap rate')
-  return res.json()
-}
-
 // Publisher Check
 export interface PublisherCheckItem {
   publisher_ip: string
