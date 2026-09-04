@@ -159,7 +159,7 @@ function CountryBarChart({ data }: { data: GeoConcentrationResponse }) {
           <BarChart data={top15} layout="vertical" margin={{ top: 0, right: 40, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
             <XAxis type="number" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} tickFormatter={(v: number) => `${v}%`} />
-            <YAxis dataKey="country_name" type="category" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} width={50} />
+            <YAxis dataKey="country_name" type="category" width={160} interval={0} tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
             <Tooltip cursor={{ fill: 'var(--muted)', opacity: 0.4 }} formatter={(value) => [`${Number(value).toFixed(1)}%`, 'Stake']} />
             <Bar dataKey="stake_pct" radius={[0, 3, 3, 0]}>
               {top15.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
