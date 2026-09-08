@@ -268,9 +268,25 @@ And the build behind a verdict, for the tooltip:
 count by (multicast_group, version) (dz_conformance_build_info{env="mainnet-beta"})
 ```
 
-`feed_kind` is deliberately **not** in any by-clause. Every group on this page is one plane and its
-own address, so `multicast_group` alone is the key, and the page already knows the plane from the
-group code. It stays a scrape label because it costs nothing and reads well in Grafana.
+`feed_kind` is **not** in any by-clause, and an earlier draft of this document justified that with a
+claim that is false: "every group on this page is one plane and its own address". The Hyperliquid
+instances put `tob_mainnet2` and `mbo_mainnet2` on the same address, `233.84.178.15` — two feed kinds
+on one group — so `multicast_group` is not a unique key over the deployed set.
+
+It is a unique key over the set this page RENDERS, which is the narrower claim that actually holds:
+that address's ledger code is `tiredsolid`, it does not match `edge-`, and it has no row here. So the
+merge is invisible today — but it is a merge, not the absence of one: the fold reports `Instances: 2`
+for two different feeds and folds their verdicts into one badge. If an `edge-` group ever carries two
+planes on one address, `feed_kind` has to enter the key and the group row has to say which planes it
+is summarising.
+
+**`hostname` is not in any by-clause either, and that one is deliberate.** Several recorders grade
+the same feed independently, so the counts are DETECTIONS and not events: one violation in a
+publisher's wire format is counted once per vantage that saw it. Neither summing nor taking a maximum
+is the true event count — the recorders may have seen the same violation or different ones, and
+nothing in this plane can tell those apart. Summing is kept because it never under-reports a finding,
+and the payload carries `Nodes` so the tooltip says what the number counts rather than implying it
+counts events.
 
 `channel` is requested before it exists. A by-clause naming an absent label groups every series
 under the empty value rather than erroring, so the queries are forward-compatible with §1's
@@ -337,10 +353,17 @@ Verdicts rank worst-first:
 | --- | --- |
 | `violating` | ≥1 `must` violation in the window, after exemptions |
 | `should` | `should` violations only |
-| `ungraded` | validators are running but almost nothing was graded — `na` + `unverifiable` dominate and `pass` is at or near zero |
+| `ungraded` | validators are running and nothing came back at all — no passes and no findings of any severity |
 | `advisory` | `info` findings only |
 | `conforming` | passes, with measured coverage |
 | *(no cell)* | no validator covers this group |
+
+The test is `Passes == 0 && Info == 0`, and the second half is not redundant.
+`dz_conformance_checks_total` carries `result="violation"`, so a feed whose graded checks all came
+back as info-severity violations has no passes at all — and on `Passes == 0` alone it rendered
+`ungraded`, whose tooltip says nothing reached a verdict, directly above a coverage line reading "0
+of N checks passed" and a list naming the rules that fired. Something that produced a finding was
+graded.
 
 **`ungraded` is the one that earns its place.** On `v0.2.0` a Kalshi recorder read
 `TOB.QUOTE.REFDATA_KNOWN` at 157,504 `na` and zero `pass` for 35 minutes, with a single `info` rule
@@ -369,6 +392,13 @@ New file `api/handlers/edge_multicast_conformance.go`, following `edge_multicast
 - **Its own `conformance_as_of` stamp.** Not `sequence_as_of`, not `observations_as_of`. Those are
   different clocks, and reusing one dims columns over the staleness of a payload they do not come
   from — `TestGetEdgeMulticast_ObservationsCarryTheirOwnAsOf` pins that pair already.
+- A sample carrying no `multicast_group` is dropped rather than guessed at, and the drop is
+  **counted and logged**. Dropping every one of them is a live and expected state — §1's scrape
+  label is a separate deploy — and it produces an empty payload, a false `showConformance` and no
+  column at all, which is pixel-identical to "no metrics store configured" and to "no validator
+  covers anything". One WARN line separates the three.
+- `GeneratedAt` is stamped **after** the four queries, not before them. It is the clock the whole
+  column ages against, and four round trips to a hosted store are not free.
 - An absent or failed payload drops the column, never the page. Note that this is not a rare state:
   `page_cache` survives a pod restart, so a newly added key is empty from deploy until the refresh
   chain first reaches it.

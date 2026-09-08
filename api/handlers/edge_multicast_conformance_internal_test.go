@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeProm answers a query by matching a substring of it, so a test names the metric it is
@@ -57,7 +58,7 @@ func TestEdgeMulticastConformanceVerdict(t *testing.T) {
 	}{
 		{"a must violation outranks everything", EdgeMulticastConformance{Must: 1, Should: 9, Passes: 100, Graded: 100}, edgeMulticastConformanceViolating},
 		{"a should violation is still a finding", EdgeMulticastConformance{Should: 1, Passes: 100, Graded: 100}, edgeMulticastConformanceShould},
-		{"nothing passed outranks an info finding", EdgeMulticastConformance{Info: 5, Passes: 0, Graded: 500, NA: 500}, edgeMulticastConformanceUngraded},
+		{"nothing came back at all", EdgeMulticastConformance{Passes: 0, Graded: 500, NA: 500}, edgeMulticastConformanceUngraded},
 		{"an info finding with passes behind it is advisory", EdgeMulticastConformance{Info: 1, Passes: 100, Graded: 100}, edgeMulticastConformanceAdvisory},
 		{"graded and clean", EdgeMulticastConformance{Passes: 100, Graded: 100}, edgeMulticastConformanceConforming},
 		{"a validator that graded nothing at all", EdgeMulticastConformance{Instances: 1}, edgeMulticastConformanceUngraded},
@@ -94,6 +95,32 @@ func TestEdgeMulticastConformance_NothingGradedIsNotAPass(t *testing.T) {
 	}
 	if e.Passes != 0 || e.NA == 0 {
 		t.Fatalf("passes = %d, na = %d; want zero passes and a non-zero na", e.Passes, e.NA)
+	}
+}
+
+// checks_total carries result="violation", so a feed whose graded checks all came back as
+// info-severity violations has no passes at all. On `Passes == 0` alone that rendered `ungraded`,
+// whose tooltip says nothing reached a verdict — directly above a coverage line reading "0 of N
+// checks passed" and a list naming the rules that fired. Something that produced a finding was
+// graded, so the absence claim is the wrong one.
+func TestEdgeMulticastConformance_AnInfoFindingWithNoPassesIsNotUngraded(t *testing.T) {
+	got := fetchConformance(t, &fakeProm{byMetric: map[string][]PromSample{
+		"dz_conformance_uptime_seconds": oneValidator("233.84.178.3", "cmh1"),
+		"dz_conformance_violations_total": {
+			sample(5, "multicast_group", "233.84.178.3", "stream", "s",
+				"rule_id", "TOB.QUOTE.SOURCE_COUNT", "severity", "info"),
+		},
+		"dz_conformance_checks_total": {
+			sample(5, "multicast_group", "233.84.178.3", "result", "violation"),
+		},
+	}})
+
+	e := got.Groups["233.84.178.3"]
+	if e.Passes != 0 || e.Info == 0 {
+		t.Fatalf("passes = %d, info = %d; want the shape this test is about", e.Passes, e.Info)
+	}
+	if e.Verdict != edgeMulticastConformanceAdvisory {
+		t.Fatalf("verdict = %q, want %q", e.Verdict, edgeMulticastConformanceAdvisory)
 	}
 }
 
@@ -265,6 +292,19 @@ func TestEdgeMulticastConformance_TopRulesAreWorstFirst(t *testing.T) {
 	}
 	if e.TopRules[1].RuleID != "SOME.SHOULD.RULE" {
 		t.Fatalf("second rule = %q, want the should-severity one", e.TopRules[1].RuleID)
+	}
+}
+
+// The clock the whole column ages against is taken after the queries, not before them: four round
+// trips to a hosted store are not free, and stamping up front reported the payload as older than it
+// is on a column whose staleness rule is the point.
+func TestEdgeMulticastConformance_TheClockIsTakenAfterTheQueries(t *testing.T) {
+	before := time.Now().UTC()
+	got := fetchConformance(t, &fakeProm{byMetric: map[string][]PromSample{
+		"dz_conformance_uptime_seconds": oneValidator("233.84.178.3", "cmh1"),
+	}})
+	if got.GeneratedAt.Before(before) {
+		t.Fatalf("generated_at = %v, taken before the queries started at %v", got.GeneratedAt, before)
 	}
 }
 

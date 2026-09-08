@@ -194,6 +194,7 @@ func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticast
 		Window:      edgeMulticastConformanceWindow,
 		Groups:      map[string]*EdgeMulticastConformance{},
 	}
+	// Re-stamped after the queries below; set here so the empty-payload return is not zero-valued.
 	if a.Prom == nil {
 		return out, nil
 	}
@@ -206,6 +207,13 @@ func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticast
 	// has no findings and no checks, and it has to render as "graded nothing" rather than
 	// vanish. Every query below also creates the entry it needs, so the group set is their
 	// union — what this one adds is the groups the other three would never mention.
+	// Samples carrying no multicast_group cannot be attributed to a feed and are dropped rather
+	// than guessed at. Counted, because dropping ALL of them is a live and expected state — the
+	// scrape-target label is a separate deploy — and it produces an empty payload, a false
+	// showConformance and no column at all, which is pixel-identical to "no metrics store
+	// configured" and to "no validator covers anything". One line separates the three.
+	var dropped, seen int
+
 	instances, err := a.Prom.Query(ctx, fmt.Sprintf(
 		`count by (multicast_group, hostname) (dz_conformance_uptime_seconds{env=%q})`, env))
 	if err != nil {
@@ -213,7 +221,9 @@ func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticast
 	}
 	for _, s := range instances {
 		g := s.Label("multicast_group")
+		seen++
 		if g == "" {
+			dropped++
 			continue
 		}
 		e := out.group(g)
@@ -223,6 +233,13 @@ func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticast
 		}
 	}
 
+	// **`hostname` is deliberately out of every by-clause below, and the counts are therefore
+	// DETECTIONS rather than events.** Several recorders grade the same feed independently, so one
+	// violation in a publisher's wire format is counted once per vantage that saw it. Neither
+	// summing nor taking a maximum is the true event count: the recorders may have seen the same
+	// violation or different ones, and nothing in this plane can tell those apart. Summing is kept
+	// because it never under-reports a real finding, and the payload carries Nodes so the UI can
+	// say what the number is a count of rather than implying it is a count of events.
 	violations, err := a.Prom.Query(ctx, fmt.Sprintf(
 		`sum by (multicast_group, stream, rule_id, severity, channel) (increase(dz_conformance_violations_total{env=%q}[%s]))`,
 		env, w))
@@ -232,7 +249,9 @@ func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticast
 	rules := map[string]map[string]*EdgeMulticastConformanceRule{}
 	for _, s := range violations {
 		g := s.Label("multicast_group")
+		seen++
 		if g == "" {
+			dropped++
 			continue
 		}
 		n := promCount(s.Value)
@@ -276,7 +295,9 @@ func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticast
 	}
 	for _, s := range checks {
 		g := s.Label("multicast_group")
+		seen++
 		if g == "" {
+			dropped++
 			continue
 		}
 		n := promCount(s.Value)
@@ -302,7 +323,9 @@ func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticast
 	}
 	for _, s := range builds {
 		g := s.Label("multicast_group")
+		seen++
 		if g == "" {
+			dropped++
 			continue
 		}
 		if v := s.Label("version"); v != "" {
@@ -319,6 +342,16 @@ func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticast
 		sort.Strings(e.Versions)
 		e.Verdict = edgeMulticastConformanceVerdict(e)
 	}
+
+	if dropped > 0 {
+		slog.Warn("edge multicast conformance: samples carry no multicast_group and were dropped",
+			"dropped", dropped, "seen", seen, "groups", len(out.Groups))
+	}
+
+	// Stamped here and not before the queries. It is the clock the whole column ages against, and
+	// four round trips to a hosted store are not free — taking it up front reported the payload as
+	// up to a minute older than it is, on a column whose staleness rule is the point.
+	out.GeneratedAt = time.Now().UTC()
 	return out, nil
 }
 
@@ -341,27 +374,34 @@ func (r *EdgeMulticastConformanceResponse) group(addr string) *EdgeMulticastConf
 //
 //  1. A must-violation is the finding. Nothing outranks it.
 //  2. A should-violation is a finding of lower severity, and still a finding.
-//  3. **Nothing passed.** This is the test that earns its place. A validator can run, scrape
-//     cleanly and grade nothing at all — every rule reporting `na` because the state it needs was
+//  3. **Nothing came back at all.** This is the test that earns its place. A validator can run,
+//     scrape cleanly and grade nothing — every rule reporting `na` because the state it needs was
 //     never reached — and report zero violations while doing it. Measured on a recorder running a
 //     since-superseded build: 157,504 `na` and zero `pass` over 35 minutes, with one info-severity
 //     rule as the only thing being graded on the feed. Not one must-severity check ran, and every
 //     counter an operator watches read healthy. A verdict that cannot separate "clean" from
 //     "nothing was evaluated" renders that green.
-//  4. An info finding with passes behind it is worth surfacing and is not a fault.
+//  4. An info finding is worth surfacing and is not a fault.
 //  5. Otherwise it graded something and found nothing wrong — which is the whole claim.
 //
-// The test at 3 is deliberately `Passes == 0` and not a coverage floor. A floor would fire on the
-// market-by-price snapshot rule, which declines the large majority of its transitions on a healthy
-// feed — roughly a quarter graded — so a coverage threshold anywhere near that would paint a
-// working feed permanently amber over a property of the check rather than of the feed.
+// **The test at 3 is `Passes == 0 && Info == 0`, and the second half is not redundant.**
+// `dz_conformance_checks_total` carries `result="violation"`, so a feed whose graded checks all came
+// back as info-severity violations has no passes at all — and on `Passes == 0` alone it rendered
+// `ungraded`, whose tooltip says nothing reached a verdict, directly above a coverage line reading
+// "0 of N checks passed" and a list naming the rules that fired. The badge asserted an absence over
+// a present finding. Something that produced a finding was graded.
+//
+// It is deliberately not a coverage floor. A floor would fire on the market-by-price snapshot rule,
+// which declines the large majority of its transitions on a healthy feed — roughly a quarter graded
+// — so a threshold anywhere near that would paint a working feed permanently amber over a property
+// of the check rather than of the feed.
 func edgeMulticastConformanceVerdict(e *EdgeMulticastConformance) string {
 	switch {
 	case e.Must > 0:
 		return edgeMulticastConformanceViolating
 	case e.Should > 0:
 		return edgeMulticastConformanceShould
-	case e.Passes == 0:
+	case e.Passes == 0 && e.Info == 0:
 		return edgeMulticastConformanceUngraded
 	case e.Info > 0:
 		return edgeMulticastConformanceAdvisory

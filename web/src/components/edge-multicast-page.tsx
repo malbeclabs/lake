@@ -665,6 +665,14 @@ function conformanceTooltip(c: EdgeMulticastConformance, asOfAge?: number): stri
   const nodes = c.nodes?.length ?? 0
   const where = nodes > 0 ? ` at ${plural(nodes, 'recorder')}` : ''
   lines.push(`Graded by ${plural(c.instances, 'validator')}${where}.`)
+  // Every recorder grades the same feed independently, so the figures above are detections and
+  // not events: one violation in a publisher's wire format is counted once per vantage that saw
+  // it. Said only where there is more than one vantage, because with one they are the same thing.
+  if (nodes > 1) {
+    lines.push(
+      `Counts are detections, not events: each recorder grades the feed independently, so one violation seen at all ${nodes} counts ${nodes}.`,
+    )
+  }
   if (nodes === 1) {
     lines.push(
       'One vantage: a fault seen here cannot be separated from that recorder’s own trouble with the feed.',
