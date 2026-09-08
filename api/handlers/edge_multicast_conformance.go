@@ -370,12 +370,6 @@ func edgeMulticastConformanceVerdict(e *EdgeMulticastConformance) string {
 	}
 }
 
-// EdgeMulticastConformanceFaulted reports whether a verdict is a finding, for the UI's colour.
-// Read rather than re-derived, so the badge and the row cannot disagree about it.
-func EdgeMulticastConformanceFaulted(verdict string) bool {
-	return verdict == edgeMulticastConformanceViolating || verdict == edgeMulticastConformanceShould
-}
-
 // topConformanceRules orders the rules that fired: must before should before the rest, and within
 // a severity the loudest first, with the rule id as the tiebreak so the list is stable between
 // refreshes.

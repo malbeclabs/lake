@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -74,6 +75,11 @@ func NewPromClient(baseURL, user, token string) *PromClient {
 	}
 }
 
+// PromEnvVars are the three variables the client is built from. Named once so the startup log
+// cannot describe a different set from the one the gate below checks — which it did, and that is
+// how an operator ends up one variable short.
+var PromEnvVars = []string{"GRAFANA_PROM_URL", "GRAFANA_PROM_USER", "GRAFANA_PROM_TOKEN"}
+
 // NewPromClientFromEnv builds the client from the environment, or returns nil when it is not
 // configured.
 //
@@ -81,14 +87,37 @@ func NewPromClient(baseURL, user, token string) *PromClient {
 // PR previews all run without it, and the column simply does not render. The alternative — a
 // client that exists and fails every query — would log an error every refresh cycle for an
 // environment that was never meant to have the data.
+//
+// **All three are required, the user included.** The store authenticates with basic auth, so a
+// configuration carrying the URL and the token but no user builds a client that sends an empty
+// username and is refused 401 on every query. What makes that worth a gate rather than a warning
+// is how it looks from outside: the refresh fails, the payload never lands, and the column does
+// not render — which is pixel-identical to the supported "not configured" state. Half a
+// configuration is not a configuration, and it is better to render nothing for a stated reason
+// than to render nothing while retrying forever.
 func NewPromClientFromEnv() *PromClient {
 	base := strings.TrimSpace(os.Getenv("GRAFANA_PROM_URL"))
 	user := strings.TrimSpace(os.Getenv("GRAFANA_PROM_USER"))
 	token := strings.TrimSpace(os.Getenv("GRAFANA_PROM_TOKEN"))
-	if base == "" || token == "" {
+	if base == "" || user == "" || token == "" {
 		return nil
 	}
 	return NewPromClient(base, user, token)
+}
+
+// SafeURL returns the client's endpoint with any embedded credentials removed, for logging.
+//
+// A URL is a deployment value here and worth naming in a log line — an operator reading a dark
+// column wants to know which store was reached for. But the userinfo component can legally carry
+// credentials, and a value logged verbatim is a credential in a log file for as long as the logs
+// are kept. Parse failures fall back to naming nothing rather than to printing the raw string.
+func (c *PromClient) SafeURL() string {
+	u, err := url.Parse(c.baseURL)
+	if err != nil {
+		return "(unparseable)"
+	}
+	u.User = nil
+	return u.String()
 }
 
 // promResponse is the instant-query envelope. Only the fields this client reads are declared.
@@ -113,6 +142,13 @@ type promResponse struct {
 // the length a query string should be trusted with, and every Prometheus-compatible API accepts
 // the form-encoded POST form.
 func (c *PromClient) Query(ctx context.Context, query string) ([]PromSample, error) {
+	// A nil receiver reaches here only through the interface trap described at the construction
+	// site — a nil *PromClient stored in a PromQuerier makes the interface non-nil. That is
+	// fixed where it is built; this turns the remaining path from a panic in a background
+	// goroutine, which ends the process, into an error the refresher logs and retries.
+	if c == nil {
+		return nil, errors.New("promql: client not configured")
+	}
 	form := url.Values{"query": []string{query}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.baseURL+"/api/v1/query", strings.NewReader(form.Encode()))
@@ -120,7 +156,11 @@ func (c *PromClient) Query(ctx context.Context, query string) ([]PromSample, err
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if c.user != "" || c.token != "" {
+	// Both, or neither. Half a credential pair is not a weaker authentication attempt, it is a
+	// malformed one: the store refuses it 401 exactly as it refuses no header at all, while the
+	// header being present suggests to whoever reads the failure that the credential was wrong
+	// rather than absent.
+	if c.user != "" && c.token != "" {
 		req.SetBasicAuth(c.user, c.token)
 	}
 

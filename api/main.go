@@ -383,23 +383,34 @@ func main() {
 		PgPool:        config.PgPool,
 		Neo4jClient:   config.Neo4jClient,
 		Neo4jDatabase: config.Neo4jDatabase,
-		// nil unless GRAFANA_PROM_URL and GRAFANA_PROM_TOKEN are set; the conformance
-		// column is absent without it and nothing else changes.
-		Prom:         handlers.NewPromClientFromEnv(),
-		BuildVersion: version,
-		BuildCommit:  commit,
-		BuildDate:    date,
+		BuildVersion:  version,
+		BuildCommit:   commit,
+		BuildDate:     date,
 	}
 	api.Manager = handlers.NewWorkflowManager(api)
 
 	// Said out loud because the absence is silent otherwise: with no querier the edge multicast
 	// Conformance column simply does not render, and a missing column looks exactly like a
 	// refresher that has not run yet.
-	if api.Prom == nil {
-		slog.Info("conformance: no metrics store configured, the conformance column is off",
-			"want_env", "GRAFANA_PROM_URL, GRAFANA_PROM_TOKEN")
+	// The conformance querier, assigned only when it exists.
+	//
+	// **Assigning the constructor's result straight to the field would be a crash.** api.Prom is
+	// an interface and NewPromClientFromEnv returns a *PromClient; a nil pointer stored in an
+	// interface makes that interface NON-nil, so `a.Prom == nil` reads false in an unconfigured
+	// environment, the fold calls Query on a nil receiver and the refresher goroutine panics —
+	// taking the process with it, on every environment that has no token, which today is all of
+	// them. Query also guards its own nil receiver; this is the half that keeps the guard in the
+	// fold meaningful.
+	if promClient := handlers.NewPromClientFromEnv(); promClient != nil {
+		api.Prom = promClient
+		// SafeURL, never the raw value: the userinfo component can legally carry credentials,
+		// and a URL logged verbatim is a credential in a log file for as long as logs are kept.
+		slog.Info("conformance: metrics store configured", "url", promClient.SafeURL())
 	} else {
-		slog.Info("conformance: metrics store configured", "url", os.Getenv("GRAFANA_PROM_URL"))
+		// Every variable the gate checks, not a subset: naming two of three is how an operator
+		// ends up with a client that 401s each cycle behind a column that looks unconfigured.
+		slog.Info("conformance: no metrics store configured, the conformance column is off",
+			"want_env", strings.Join(handlers.PromEnvVars, ", "))
 	}
 
 	// Start embedded page cache worker (unless --no-worker)

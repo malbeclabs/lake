@@ -1942,10 +1942,10 @@ export function EdgeMulticastPage() {
               badge says nothing was found wrong in what was graded, which is weaker than “this feed
               conforms” — the tooltip carries the coverage actually achieved, and{' '}
               <span className="text-foreground">ungraded</span> is the state where the validator ran and
-              nothing it grades ever reached a verdict, which is neither a pass nor a fault. Two known
-              publisher deviations fire continuously and are excluded from the verdict by name rather than
-              hidden; the tooltip counts them, so a green badge here is not evidence that either has been
-              fixed. A group with no validator behind it shows an em dash, which is the honest reading:
+              nothing it grades ever reached a verdict, which is neither a pass nor a fault. No violation is
+              excluded: every must-severity finding the validator reports reaches the badge, which is the
+              same rule the alert on-call carries follows — this column must never be quieter than that
+              alert. A group with no validator behind it shows an em dash, which is the honest reading:
               nobody checked.
             </p>
           )}

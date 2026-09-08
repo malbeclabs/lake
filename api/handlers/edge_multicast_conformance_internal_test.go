@@ -301,8 +301,12 @@ func TestEdgeMulticastConformance_NoQuerierIsEmptyAndNotAnError(t *testing.T) {
 // refresh interval with nothing logged — the same contract kalshiTableExists keeps.
 func TestEdgeMulticastConformance_AFailedQueryPropagates(t *testing.T) {
 	api := &API{Prom: &fakeProm{err: errors.New("token expired")}}
-	if _, err := api.FetchEdgeMulticastConformance(context.Background()); err == nil {
-		t.Fatal("want an error when the store fails, got nil")
+	_, err := api.FetchEdgeMulticastConformance(context.Background())
+	// The exact string, wrapper included: which of the four queries failed is the whole value of
+	// the message, and an is-error check keeps passing after that is lost. See .cursor/BUGBOT.md.
+	const want = "conformance instances: token expired"
+	if err == nil || err.Error() != want {
+		t.Fatalf("error = %v, want %q", err, want)
 	}
 }
 
