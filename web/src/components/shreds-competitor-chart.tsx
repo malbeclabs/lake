@@ -52,7 +52,7 @@ export function ShredsCompetitorChart() {
   return (
     <div className="border border-border rounded-lg bg-card overflow-hidden mb-6">
       <div className="flex items-baseline justify-between gap-4 flex-wrap px-4 py-3">
-        <h2 className="text-sm font-semibold">Win Rate vs Competitors</h2>
+        <h2 className="text-sm font-semibold">Daily Win Rate vs Commercial Feeds</h2>
         {points.length > 0 && (
           <span className="text-xs text-muted-foreground tabular-nums">
             {formatDay(points[0].day)} – {formatDay(points[points.length - 1].day)}

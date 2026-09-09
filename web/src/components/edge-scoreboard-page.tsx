@@ -15,6 +15,7 @@ import { cn } from '@/lib/utils'
 import { FEED_COLORS } from '@/lib/feed-colors'
 import { Tooltip } from '@/components/ui/tooltip'
 import { PageHeader } from './page-header'
+import { edgeHeadToHead } from './edge-head-to-head'
 import { ShredsCompetitorChart } from './shreds-competitor-chart'
 
 function useAnimatedNumber(target: number | undefined, duration = 500) {
@@ -81,55 +82,25 @@ function AnimatedStat({ value, fmt }: { value: number; fmt: (v: number) => strin
   return <>{fmt(animated)}</>
 }
 
-function WinRateGauge({ feedRates, labelPct }: { feedRates: Record<string, number>; labelPct: number }) {
-  const size = 160
-  const r = 65
-  const cx = size / 2
-  const cy = size / 2
-  const circ = 2 * Math.PI * r
-  const arc = circ * 0.75
-  const gap = circ - arc
-
-  // Build sorted segments, each offset after the previous
-  let cumOffset = 0
-  const segments = Object.keys(feedRates)
-    .sort((a, b) => feedSortPriority(a) - feedSortPriority(b))
-    .map(key => {
-      const rate = feedRates[key] ?? 0
-      const len = arc * (Math.min(100, Math.max(0, rate)) / 100)
-      const off = cumOffset
-      cumOffset += len
-      return { key, color: FEED_COLORS[key] ?? '#6b7280', len, off }
-    })
-    .filter(s => s.len > 0)
-
-  const multi = segments.length > 1
-
+function HeadlineTile({
+  label,
+  swatch,
+  value,
+  detail,
+}: {
+  label: string
+  swatch?: string
+  value: React.ReactNode
+  detail: string
+}) {
   return (
-    <div className="relative flex items-center justify-center shrink-0" style={{ width: size, height: size }}>
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="absolute inset-0">
-        <circle cx={cx} cy={cy} r={r} fill="none" strokeWidth={4} stroke="currentColor" className="text-muted-foreground/25" strokeDasharray={`${arc} ${gap}`} strokeLinecap="round" transform={`rotate(-225, ${cx}, ${cy})`} />
-        {segments.map(({ key, color, len, off }) => (
-          <circle
-            key={key}
-            cx={cx} cy={cy} r={r}
-            fill="none"
-            strokeWidth={4}
-            stroke={color}
-            style={{
-              strokeDasharray: `${len} ${circ - len}`,
-              strokeDashoffset: -off,
-              transition: 'stroke-dasharray 0.5s ease-out, stroke-dashoffset 0.5s ease-out',
-            }}
-            strokeLinecap={multi ? 'butt' : 'round'}
-            transform={`rotate(-225, ${cx}, ${cy})`}
-          />
-        ))}
-      </svg>
-      <div className="flex flex-col items-center z-10">
-        <div className="text-2xl font-semibold tabular-nums">{labelPct.toFixed(1)}%</div>
-        <div className="text-xs text-muted-foreground mt-0.5 text-center">DZ Edge<br/>Win Rate</div>
+    <div className="bg-card px-4 py-4 sm:px-5 sm:py-5 flex flex-col gap-1 min-w-0 transition-colors hover:bg-muted/30">
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+        {swatch && <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: swatch }} />}
+        <span className="truncate">{label}</span>
       </div>
+      <div className="text-2xl sm:text-[27px] font-semibold tabular-nums leading-tight tracking-tight">{value}</div>
+      <div className="text-xs text-muted-foreground truncate">{detail}</div>
     </div>
   )
 }
@@ -1198,6 +1169,7 @@ function RecentSlotsChart({
   const infoDzRootBarRef = useRef<HTMLDivElement>(null)
   const infoDzLeaderBarRef = useRef<HTMLDivElement>(null)
   const infoDzRetransBarRef = useRef<HTMLDivElement>(null)
+  const infoVsTurbineRef = useRef<HTMLSpanElement>(null)
   const defaultInfoRef = useRef<SlotHoverInfo | null>(null)
   const isHoveredRef = useRef(false)
 
@@ -1235,6 +1207,13 @@ function RecentSlotsChart({
     if (infoDzRootBarRef.current) infoDzRootBarRef.current.style.width = `${dzRootPct}%`
     if (infoDzLeaderBarRef.current) infoDzLeaderBarRef.current.style.width = `${dzLeaderPct}%`
     if (infoDzRetransBarRef.current) infoDzRetransBarRef.current.style.width = `${dzRetransPct}%`
+    // Simplified mode has no dz sub-feeds, so fall back to the dz_edge aggregate.
+    if (infoVsTurbineRef.current) {
+      const turbinePct = info.feedData['turbine'] ?? 0
+      const edgePct = dzTotal || (info.feedData['dz_edge'] ?? 0)
+      infoVsTurbineRef.current.textContent =
+        edgePct + turbinePct > 0 ? formatPct((edgePct / (edgePct + turbinePct)) * 100) : '—'
+    }
     // Winner highlighting — group DZ sub-feeds as one unit so the DZ group
     // competes against jito/turbine rather than root vs leaders vs retransmit.
     const grouped: Record<string, number> = {}
@@ -1919,6 +1898,12 @@ function RecentSlotsChart({
             />
             <span ref={infoLeaderRef} className="text-xs text-muted-foreground leading-snug mt-0.5" />
           </div>
+          {feeds.includes('turbine') && (
+            <div className="mt-4 pt-3 border-t border-border flex items-baseline justify-between gap-2">
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60">Win rate vs Turbine</span>
+              <span ref={infoVsTurbineRef} className="text-sm font-medium tabular-nums shrink-0">—</span>
+            </div>
+          )}
         </div>
       </div>{/* end flex container */}
       <div className="flex flex-wrap items-center justify-end gap-1 mt-1">
@@ -2022,124 +2007,10 @@ export function EdgeScoreboardPage() {
     })
   }
 
-// Aggregate global Edge stats across all nodes
-  const globalStats = useMemo(() => {
-    if (!data?.nodes) return null
-
-    let dzShredsWon = 0
-    let dzTotalShreds = 0
-
-    // Per-competitor weighted lead times
-    const competitors = ['jito', 'turbine'] as const
-    const weightedP50: Record<string, number> = {}
-    const weightedP95: Record<string, number> = {}
-    const competitorSlots: Record<string, number> = {}
-    for (const c of competitors) {
-      weightedP50[c] = 0
-      weightedP95[c] = 0
-      competitorSlots[c] = 0
-    }
-
-    // Per-feed win rate average across nodes (for stacked bar).
-    // Aggregate per node first (so merged feeds like dz+dz_edge+retransmit→'dz_edge'
-    // are summed within a node before averaging across nodes), then average.
-    const nodeFeedRates: Record<string, number>[] = []
-
-    for (const node of data.nodes) {
-      dzShredsWon += node.feeds['dz_edge']?.win_rate_pct ?? 0
-      dzTotalShreds++
-
-      const nodeRates: Record<string, number> = {}
-      const hasDzEdge = 'dz_edge' in node.feeds
-      for (const [feedName, stats] of Object.entries(node.feeds)) {
-        // In simplified mode, skip dz/retransmit feeds when dz_edge is present — dz_edge already aggregates them.
-        if (!granular && hasDzEdge && (feedName !== 'dz_edge' && DZ_FEED_KEYS.has(feedName))) continue
-        const key = feedKeyForMode(feedName, granular)
-        if (!key) continue
-        nodeRates[key] = (nodeRates[key] ?? 0) + stats.win_rate_pct
-      }
-      nodeFeedRates.push(nodeRates)
-
-      const dzEdge = node.feeds['dz_edge']
-      const dz = node.feeds['dz']
-      const leadSource = dzEdge?.lead_times?.length ? dzEdge.lead_times : dz?.lead_times
-      if (leadSource) {
-        for (const lt of leadSource) {
-          if (lt.loser_feed in weightedP50) {
-            weightedP50[lt.loser_feed] += lt.p50_ms * node.slots_observed
-            weightedP95[lt.loser_feed] += lt.p95_ms * node.slots_observed
-            competitorSlots[lt.loser_feed] += node.slots_observed
-          }
-        }
-      }
-    }
-
-    const leads: Record<string, { p50: number; p95: number }> = {}
-    for (const c of competitors) {
-      if (competitorSlots[c] > 0) {
-        leads[c] = {
-          p50: weightedP50[c] / competitorSlots[c],
-          p95: weightedP95[c] / competitorSlots[c],
-        }
-      }
-    }
-
-    const nodeCount = nodeFeedRates.length
-    const feedRateAccum: Record<string, number> = {}
-    for (const nodeRates of nodeFeedRates) {
-      for (const [key, rate] of Object.entries(nodeRates)) {
-        feedRateAccum[key] = (feedRateAccum[key] ?? 0) + rate
-      }
-    }
-    const feedRates: Record<string, number> = {}
-    for (const [key, sum] of Object.entries(feedRateAccum)) {
-      feedRates[key] = nodeCount > 0 ? sum / nodeCount : 0
-    }
-    // Normalize so segments sum to 100% (sub-feeds like dz_edge/dz/retransmit
-    // are not mutually exclusive win events, so raw sums can exceed 100%).
-    const feedTotal = Object.values(feedRates).reduce((s, v) => s + v, 0)
-    if (feedTotal > 0) {
-      const scale = 100 / feedTotal
-      for (const key of Object.keys(feedRates)) feedRates[key] *= scale
-    }
-
-    // Always-granular version for the hero bar (ignores the toggle).
-    // Server returns all feed win_rate_pct on a shared per-host denominator, so
-    // dz + dz_retransmit = dz_edge by construction and feed rates are already comparable.
-    const granularAccum: Record<string, number> = {}
-    for (const node of data.nodes) {
-      const nodeRates: Record<string, number> = {}
-      for (const [feedName, stats] of Object.entries(node.feeds)) {
-        const key = feedKeyForMode(feedName, true)
-        if (!key) continue
-        nodeRates[key] = (nodeRates[key] ?? 0) + stats.win_rate_pct
-      }
-      for (const [key, rate] of Object.entries(nodeRates)) {
-        granularAccum[key] = (granularAccum[key] ?? 0) + rate
-      }
-    }
-    const feedRatesGranular: Record<string, number> = {}
-    const feedRatesGranularRaw: Record<string, number> = {}
-    for (const [key, sum] of Object.entries(granularAccum)) {
-      const avg = nodeCount > 0 ? sum / nodeCount : 0
-      feedRatesGranular[key] = avg
-      feedRatesGranularRaw[key] = avg
-    }
-    const granularTotal = Object.values(feedRatesGranular).reduce((s, v) => s + v, 0)
-    if (granularTotal > 0) {
-      const scale = 100 / granularTotal
-      for (const key of Object.keys(feedRatesGranular)) feedRatesGranular[key] *= scale
-    }
-
-    return {
-      winRate: dzTotalShreds > 0 ? dzShredsWon / dzTotalShreds : 0,
-      leads,
-      avgCompleteness: data.completeness_pct,
-      feedRates,
-      feedRatesGranular,
-      feedRatesGranularRaw,
-    }
-  }, [data?.nodes, granular])
+  const globalStats = useMemo(
+    () => (data?.nodes?.length ? edgeHeadToHead(data.nodes) : null),
+    [data?.nodes]
+  )
 
   // Sort nodes by stake weight descending
   const sortedNodes = useMemo(() => {
@@ -2175,7 +2046,8 @@ export function EdgeScoreboardPage() {
 
   const animPublishingCount = useAnimatedNumber(data?.publishing_count)
   const animPublishingStakePct = useAnimatedNumber(data?.publishing_stake_pct)
-  const animWinRate = useAnimatedNumber(globalStats?.winRate)
+  const animVsCommercial = useAnimatedNumber(globalStats?.vsCommercial ?? undefined)
+  const animVsTurbine = useAnimatedNumber(globalStats?.vsTurbine ?? undefined)
 
   if (isLoading && showLoader && !data) return (
     <div className="flex-1 flex items-center justify-center bg-background">
@@ -2252,69 +2124,39 @@ export function EdgeScoreboardPage() {
         </div>
 
 
-        {/* Hero stats */}
         {data && globalStats && (
-          <div className="flex flex-col lg:flex-row gap-0 mb-8 bg-card border border-border rounded-lg">
-            {/* Left: description + publisher stats */}
-            <div className="flex-1 p-4 sm:p-6 flex flex-col justify-between min-w-0">
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                Scoreboard benchmarks shred delivery speed across DoubleZero Edge and other providers, using slot-level data to compare performance in real time.
-              </p>
-              <div className="border-t border-border pt-4 mt-4 flex flex-wrap items-center gap-x-6 gap-y-3">
-                <div className="group relative">
-                  <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                    Publishing Shreds
-                    <Info className="w-3 h-3 opacity-60" />
-                  </div>
-                  <div className="text-xl sm:text-2xl font-semibold tabular-nums">{Math.round(animPublishingCount ?? data.publishing_count).toLocaleString()}</div>
-                  <span className="pointer-events-none absolute top-full left-0 mt-2 z-30 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal opacity-0 group-hover:opacity-100 transition-opacity">
-                    Validators currently publishing shred data to the DoubleZero Edge network ({data.publishing_count.toLocaleString()} of {data.publisher_count.toLocaleString()} total registered publishers).
-                  </span>
-                </div>
-                <div className="group relative sm:border-l sm:border-border sm:pl-6">
-                  <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                    Publisher Stake Weight
-                    <Info className="w-3 h-3 opacity-60" />
-                  </div>
-                  <div className="text-xl sm:text-2xl font-semibold tabular-nums">{formatPct(animPublishingStakePct ?? data.publishing_stake_pct)}</div>
-                  <span className="pointer-events-none absolute top-full left-0 mt-2 z-30 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal opacity-0 group-hover:opacity-100 transition-opacity">
-                    Percentage of total network stake held by validators actively publishing shreds.
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Middle: metrics */}
-            <div className="border-t lg:border-t-0 lg:border-l border-border flex-1 p-4 sm:p-6 flex flex-col justify-center gap-4 min-w-0">
-              <div className="pb-2">
-                <StackedBar
-                  popoverSide="right"
-                  dzTotalPct={globalStats.winRate}
-                  segments={Object.keys(globalStats.feedRatesGranular)
-                    .sort((a, b) => feedSortPriority(a) - feedSortPriority(b))
-                    .map(key => ({ key, pct: globalStats.feedRatesGranular[key] ?? 0, rawPct: globalStats.feedRatesGranularRaw[key] ?? 0, color: FEED_COLORS[key] ?? '#6b7280' }))}
-                >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-sm text-muted-foreground">DZ Edge Win Rate</span>
-                    <span className="text-sm font-medium tabular-nums ml-4 shrink-0">{formatPct(animWinRate ?? globalStats.winRate)}</span>
-                  </div>
-                </StackedBar>
-              </div>
-              {Object.entries(globalStats.leads).map(([competitor, lead]) => (
-                <div key={competitor}>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">DZ Edge vs {FEED_LABELS[competitor] ?? competitor}</span>
-                    <span className="text-sm font-medium tabular-nums ml-4 shrink-0"><span className="text-xs text-muted-foreground font-normal mr-1">p50:</span><AnimatedStat value={lead.p50} fmt={formatMs} /></span>
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-0.5">p95: <AnimatedStat value={lead.p95} fmt={formatMs} /></div>
-                </div>
-              ))}
-            </div>
-
-            {/* Right: gauge */}
-            <div className="border-t lg:border-t-0 lg:border-l border-border px-6 sm:px-8 py-6 lg:py-0 flex items-center justify-center shrink-0">
-              <WinRateGauge feedRates={globalStats.feedRates} labelPct={animWinRate ?? globalStats.winRate} />
-            </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-px mb-8 bg-border border border-border rounded-lg overflow-hidden">
+            <HeadlineTile
+              label="Win rate vs commercial feeds"
+              swatch={FEED_COLORS.jito}
+              value={globalStats.vsCommercial === null ? '—' : formatPct(animVsCommercial ?? globalStats.vsCommercial)}
+              detail={`${windowLabel(activeWindow)} · first arrival`}
+            />
+            <HeadlineTile
+              label="Win rate vs Turbine"
+              swatch={FEED_COLORS.turbine}
+              value={globalStats.vsTurbine === null ? '—' : formatPct(animVsTurbine ?? globalStats.vsTurbine)}
+              detail={`${windowLabel(activeWindow)} · first arrival`}
+            />
+            <HeadlineTile
+              label="Validators publishing shreds"
+              value={
+                <>
+                  {Math.round(animPublishingCount ?? data.publishing_count).toLocaleString()}
+                  <span className="text-base font-medium text-muted-foreground"> / {data.publisher_count.toLocaleString()}</span>
+                </>
+              }
+              detail={
+                data.publisher_count > 0
+                  ? `${formatPct((data.publishing_count / data.publisher_count) * 100)} of registered publishers`
+                  : 'no registered publishers'
+              }
+            />
+            <HeadlineTile
+              label="Stake publishing shreds"
+              value={formatPct(animPublishingStakePct ?? data.publishing_stake_pct)}
+              detail="of network stake"
+            />
           </div>
         )}
 
