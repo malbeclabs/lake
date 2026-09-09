@@ -1,11 +1,10 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
-import { useSearchParams, Link } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import { Trophy, Loader2, ArrowRight } from 'lucide-react'
 
 import {
   fetchEdgeScoreboard,
-  type EdgeScoreboardNode,
 } from '@/lib/api'
 import { FEED_COLORS } from '@/lib/feed-colors'
 import { PageHeader } from './page-header'
@@ -58,12 +57,6 @@ function windowLabel(w: TimeWindow): string {
   return labels[w] ?? w
 }
 
-function formatStake(sol: number): string {
-  if (sol >= 1_000_000) return `${(sol / 1_000_000).toFixed(1)}M SOL`
-  if (sol >= 1_000) return `${(sol / 1_000).toFixed(0)}K SOL`
-  return `${sol.toFixed(0)} SOL`
-}
-
 
 
 
@@ -99,41 +92,6 @@ function HeadlineTile({
 
 
 
-
-function NodePopover({ node }: { node: EdgeScoreboardNode }) {
-  const hasGossip = !!node.gossip_pubkey
-  return (
-    <div className="bg-popover border border-border rounded-lg shadow-xl text-xs whitespace-nowrap text-left text-foreground min-w-[160px] overflow-hidden">
-      {node.metro_name && (
-        <div className="px-3 py-2 font-medium text-foreground border-b border-border bg-muted/40">{node.metro_name}</div>
-      )}
-      <div className="px-3 py-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
-        <span className="text-muted-foreground">Host</span>
-        <span className="font-mono">{node.host}</span>
-        {node.gossip_ip && <>
-          <span className="text-muted-foreground">IP</span>
-          <span className="font-mono">{node.gossip_ip}</span>
-        </>}
-        {node.asn_org && <>
-          <span className="text-muted-foreground">Org</span>
-          <span>{node.asn_org}</span>
-        </>}
-        {node.asn != null && node.asn > 0 && <>
-          <span className="text-muted-foreground">ASN</span>
-          <span>AS{node.asn}</span>
-        </>}
-        {node.city && <>
-          <span className="text-muted-foreground">Location</span>
-          <span>{node.city}{node.country ? `, ${node.country}` : ''}</span>
-        </>}
-        {hasGossip && <>
-          <span className="text-muted-foreground">Pubkey</span>
-          <span className="font-mono">{node.gossip_pubkey!.slice(0, 8)}…{node.gossip_pubkey!.slice(-4)}</span>
-        </>}
-      </div>
-    </div>
-  )
-}
 
 
 
@@ -198,10 +156,10 @@ export function EdgeScoreboardPage() {
   const { data: competitorDays } = useShredsCompetitors()
   const latestDay = competitorDays?.length ? competitorDays[competitorDays.length - 1] : undefined
 
-  // Sort nodes by stake weight descending
-  const sortedNodes = useMemo(() => {
-    if (!data?.nodes) return []
-    return [...data.nodes].sort((a, b) => a.host.localeCompare(b.host))
+  const measurement = useMemo(() => {
+    if (!data?.nodes?.length) return null
+    const metros = [...new Set(data.nodes.map((n) => n.metro_name).filter(Boolean))].sort()
+    return { nodes: data.nodes.length, metros }
   }, [data?.nodes])
 
   useEffect(() => {
@@ -332,97 +290,22 @@ export function EdgeScoreboardPage() {
 
         <ShredsNowLeading slots={stableRecent?.slots ?? []} leaders={stableRecent?.leaders} />
 
-        {/* Recording nodes — where the races are measured. The per-feed win
-            rates and lead times that used to live here are gone with the feeds
-            that fed them: Jito is retired and its column was all em-dashes. */}
-        <div className="border border-border rounded-lg overflow-hidden bg-card mb-6">
-          <div className="flex items-baseline justify-between gap-3 px-4 py-3 flex-wrap">
-            <h2 className="text-sm font-semibold">Recording Nodes</h2>
-            <span className="text-xs text-muted-foreground">where the races are measured</span>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full">
-              <thead>
-                <tr className="text-left text-muted-foreground border-y border-border">
-                  <th className="px-3 sm:px-4 py-2.5 text-[10px] uppercase tracking-wider font-medium whitespace-nowrap">Node</th>
-                  <th className="px-3 sm:px-4 py-2.5 text-[10px] uppercase tracking-wider font-medium whitespace-nowrap">Metro</th>
-                  <th className="px-3 sm:px-4 py-2.5 text-[10px] uppercase tracking-wider font-medium text-right whitespace-nowrap">Validators</th>
-                  <th className="px-3 sm:px-4 py-2.5 text-[10px] uppercase tracking-wider font-medium text-right whitespace-nowrap">Stake</th>
-                  <th className="px-3 sm:px-4 py-2.5 text-[10px] uppercase tracking-wider font-medium text-right whitespace-nowrap">Leader slots observed</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedNodes.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="px-4 py-12 text-center text-muted-foreground">
-                      No data available for the selected time window.
-                    </td>
-                  </tr>
-                ) : (
-                  sortedNodes.map((node) => (
-                    <NodeRow key={node.host} node={node} />
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        {/* What the Recording Nodes table was really for. Its own columns
+            worked against it: "Stake" was the stake of the validators a node
+            observed, which reads as stake belonging to the node. */}
+        {measurement && (
+          <p
+            className="text-xs text-muted-foreground/70 mb-6"
+            title={`Recording in ${measurement.metros.join(', ')}`}
+          >
+            Win rates are measured at {measurement.nodes} geographically distributed recording
+            {measurement.nodes === 1 ? ' node' : ' nodes'} across {measurement.metros.length}{' '}
+            {measurement.metros.length === 1 ? 'metro' : 'metros'}.
+          </p>
+        )}
 
 
       </div>
     </div>
-  )
-}
-
-function NodeRow({ node }: { node: EdgeScoreboardNode }) {
-  const [fixedPos, setFixedPos] = useState<{ top: number; left: number } | null>(null)
-  const cellRef = useRef<HTMLDivElement>(null)
-  const hasGossip = !!node.gossip_pubkey
-  const isQA = /-qa-/.test(node.host)
-
-  return (
-    <tr className="border-b border-border last:border-b-0 hover:bg-muted/40 transition-colors">
-      <td className="px-3 sm:px-4 py-2.5">
-        <div
-          ref={cellRef}
-          className="relative inline-flex items-center gap-2"
-          onMouseEnter={() => {
-            if (cellRef.current) {
-              const r = cellRef.current.getBoundingClientRect()
-              setFixedPos({ top: r.top + r.height / 2, left: r.right + 8 })
-            }
-          }}
-          onMouseLeave={() => setFixedPos(null)}
-        >
-          {hasGossip ? (
-            <Link
-              to={`/solana/gossip-nodes/${node.gossip_pubkey}`}
-              state={{ back: { to: '/dz/shreds/scoreboard', label: 'Shreds Scoreboard' } }}
-              className="font-mono text-xs hover:text-emerald-400 transition-colors"
-            >
-              {node.host}
-            </Link>
-          ) : (
-            <span className="font-mono text-xs">{node.host}</span>
-          )}
-          {isQA && (
-            <span className="text-[9px] uppercase tracking-wider text-muted-foreground border border-border rounded px-1 py-px">
-              qa
-            </span>
-          )}
-          {fixedPos && (
-            <div style={{ position: 'fixed', top: fixedPos.top, left: fixedPos.left, transform: 'translateY(-50%)', zIndex: 50 }}>
-              <NodePopover node={node} />
-            </div>
-          )}
-        </div>
-      </td>
-      <td className="px-3 sm:px-4 py-2.5 text-xs">{node.metro_name || '—'}</td>
-      <td className="px-3 sm:px-4 py-2.5 text-xs text-right tabular-nums">{node.validators.toLocaleString()}</td>
-      <td className="px-3 sm:px-4 py-2.5 text-xs text-right tabular-nums">
-        {node.stake_sol > 0 ? formatStake(node.stake_sol) : '—'}
-      </td>
-      <td className="px-3 sm:px-4 py-2.5 text-xs text-right tabular-nums">{node.slots_observed.toLocaleString()}</td>
-    </tr>
   )
 }
