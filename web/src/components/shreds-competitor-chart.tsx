@@ -50,7 +50,7 @@ export function ShredsCompetitorChart() {
             <span className="tabular-nums">
               {formatDay(points[0].day)} – {formatDay(points[points.length - 1].day)}
             </span>
-            <span className="text-muted-foreground/70"> · median per leader slot</span>
+            <span className="text-muted-foreground/70"> · median per DZ Edge leader slot</span>
           </span>
         )}
       </div>

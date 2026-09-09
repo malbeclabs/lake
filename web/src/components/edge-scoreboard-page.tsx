@@ -253,13 +253,13 @@ export function EdgeScoreboardPage() {
               label="Win rate vs commercial feeds"
               swatch={FEED_COLORS.dz_edge}
               value={latestDay ? formatPct(animVsCommercial ?? latestDay.win_typical_pct) : '—'}
-              detail={latestDay ? `${formatDay(latestDay.day)} · median per leader slot` : 'no completed days yet'}
+              detail={latestDay ? `${formatDay(latestDay.day)} · median per DZ Edge leader slot` : 'no completed days yet'}
             />
             <HeadlineTile
               label="Win rate vs Turbine"
               swatch={FEED_COLORS.turbine}
               value={vsTurbine === null ? '—' : formatPct(animVsTurbine ?? vsTurbine)}
-              detail={`${windowLabel(activeWindow)} · first arrivals in leader slots`}
+              detail={`${windowLabel(activeWindow)} · first arrivals in DZ Edge leader slots`}
             />
             <HeadlineTile
               label="Validators publishing shreds"

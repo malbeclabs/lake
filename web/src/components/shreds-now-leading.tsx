@@ -162,7 +162,7 @@ export function ShredsNowLeading({
             <span className={`relative inline-flex rounded-full h-2 w-2 ${isLive ? 'bg-emerald-500' : 'bg-emerald-500/30'}`} />
           </span>
           Now Leading
-          <span className="font-normal text-muted-foreground">· their leader slots</span>
+          <span className="font-normal text-muted-foreground">· DZ Edge leader slots</span>
         </h2>
         <span className="text-xs text-muted-foreground tabular-nums">
           {held
