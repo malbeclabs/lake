@@ -13,9 +13,19 @@ import (
 type fakeProm struct {
 	byMetric map[string][]PromSample
 	err      error
+
+	// delay slows each query, and lastQueryAt records when the last one ran. Only the clock
+	// test uses them: an ordering assertion needs a reference point INSIDE the call, and it
+	// needs the gap either side of it to be wider than the wall clock's granularity.
+	delay       time.Duration
+	lastQueryAt time.Time
 }
 
 func (f *fakeProm) Query(_ context.Context, query string) ([]PromSample, error) {
+	if f.delay > 0 {
+		time.Sleep(f.delay)
+	}
+	f.lastQueryAt = time.Now().UTC()
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -298,13 +308,26 @@ func TestEdgeMulticastConformance_TopRulesAreWorstFirst(t *testing.T) {
 // The clock the whole column ages against is taken after the queries, not before them: four round
 // trips to a hosted store are not free, and stamping up front reported the payload as older than it
 // is on a column whose staleness rule is the point.
+// The reference point has to be INSIDE the call. An earlier version of this test took the clock
+// before invoking the fetch and asserted GeneratedAt was not older than that — which holds whether
+// the stamp is taken at the top of the function or the bottom, so it could not fail and tested
+// nothing. Reviewed and caught; the fake now records when its last query ran, which is a point the
+// two orderings fall on opposite sides of.
 func TestEdgeMulticastConformance_TheClockIsTakenAfterTheQueries(t *testing.T) {
-	before := time.Now().UTC()
-	got := fetchConformance(t, &fakeProm{byMetric: map[string][]PromSample{
-		"dz_conformance_uptime_seconds": oneValidator("233.84.178.3", "cmh1"),
-	}})
-	if got.GeneratedAt.Before(before) {
-		t.Fatalf("generated_at = %v, taken before the queries started at %v", got.GeneratedAt, before)
+	f := &fakeProm{
+		delay: time.Millisecond,
+		byMetric: map[string][]PromSample{
+			"dz_conformance_uptime_seconds": oneValidator("233.84.178.3", "cmh1"),
+		},
+	}
+	got := fetchConformance(t, f)
+
+	if f.lastQueryAt.IsZero() {
+		t.Fatal("the fake ran no query; this test would assert nothing")
+	}
+	if got.GeneratedAt.Before(f.lastQueryAt) {
+		t.Fatalf("generated_at = %v, taken before the last query at %v — the payload reports "+
+			"itself older than it is", got.GeneratedAt, f.lastQueryAt)
 	}
 }
 
