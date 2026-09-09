@@ -154,10 +154,11 @@ func TestCompetitorTimeouts_BracketTheDayScan(t *testing.T) {
 }
 
 // setupCompetitorSource creates a source table shaped like the real
-// dzf_data.competitors_pairwise_feed_race, Float32 metric columns and all, and
-// returns a connection plus the database holding it. The column widths are the
-// point: a source built with Float64 columns cannot reproduce the scan the real
-// schema produces.
+// dzf_data.competitors_pairwise_feed_race and returns a connection plus the
+// database holding it. Two properties of the real schema are reproduced on
+// purpose, because a convenient stand-in hides the faults that matter: the metric
+// columns are Float32, which is what the scan trips over, and the engine is
+// ReplacingMergeTree, without which FINAL is a no-op and unverified.
 func setupCompetitorSource(t *testing.T) (clickhouse.Conn, string) {
 	t.Helper()
 	info := laketesting.NewClientWithInfo(t, sharedDB)
@@ -167,9 +168,12 @@ func setupCompetitorSource(t *testing.T) (clickhouse.Conn, string) {
 			event_ts    DateTime64(3),
 			slot        UInt64,
 			dz_feed     String,
+			competitor  String,
 			win_rate    Float32,
-			diff_ms_p50 Float32
-		) ENGINE = MergeTree ORDER BY (event_ts, slot)`))
+			diff_ms_p50 Float32,
+			ingested_at DateTime64(3)
+		) ENGINE = ReplacingMergeTree(ingested_at)
+		ORDER BY (event_ts, slot, dz_feed, competitor)`))
 	return conn, info.Database
 }
 
@@ -186,19 +190,19 @@ func TestComputeCompetitorDay_ScansAFloat32Source(t *testing.T) {
 
 	require.NoError(t, conn.Exec(t.Context(), `
 		INSERT INTO competitors_pairwise_feed_race
-			(event_ts, slot, dz_feed, win_rate, diff_ms_p50) VALUES
+			(event_ts, slot, dz_feed, competitor, win_rate, diff_ms_p50, ingested_at) VALUES
 			-- slot 100: three competitors, median win 0.6, median lead 0.3
-			('2026-09-02 01:00:00', 100, 'dz', 0.4, -0.2),
-			('2026-09-02 01:00:00', 100, 'dz', 0.6, -0.3),
-			('2026-09-02 01:00:00', 100, 'dz', 0.8, -0.4),
+			('2026-09-02 01:00:00', 100, 'dz', 'a', 0.4, -0.2, '2026-09-02 01:00:01'),
+			('2026-09-02 01:00:00', 100, 'dz', 'b', 0.6, -0.3, '2026-09-02 01:00:01'),
+			('2026-09-02 01:00:00', 100, 'dz', 'c', 0.8, -0.4, '2026-09-02 01:00:01'),
 			-- slot 200: same shape, so the outer median is unambiguous
-			('2026-09-02 02:00:00', 200, 'dz', 0.4, -0.2),
-			('2026-09-02 02:00:00', 200, 'dz', 0.6, -0.3),
-			('2026-09-02 02:00:00', 200, 'dz', 0.8, -0.4),
+			('2026-09-02 02:00:00', 200, 'dz', 'a', 0.4, -0.2, '2026-09-02 02:00:01'),
+			('2026-09-02 02:00:00', 200, 'dz', 'b', 0.6, -0.3, '2026-09-02 02:00:01'),
+			('2026-09-02 02:00:00', 200, 'dz', 'c', 0.8, -0.4, '2026-09-02 02:00:01'),
 			-- excluded: not DZ's leader slot
-			('2026-09-02 03:00:00', 300, 'other', 0.9, -9.0),
+			('2026-09-02 03:00:00', 300, 'other', 'a', 0.9, -9.0, '2026-09-02 03:00:01'),
 			-- excluded: the next day, which the window must not reach
-			('2026-09-03 01:00:00', 400, 'dz', 0.1, -0.1)`))
+			('2026-09-03 01:00:00', 400, 'dz', 'a', 0.1, -0.1, '2026-09-03 01:00:01')`))
 
 	d, err := a.ComputeCompetitorDay(t.Context(), CompetitorDayInput{Day: day, CompetitorDatabase: db})
 	require.NoError(t, err)
@@ -250,4 +254,45 @@ func TestCompetitorRollupDue_ClosesWhenTheNewestDayIsEmpty(t *testing.T) {
 	due, newest, err := a.competitorRollupDue(t.Context(), now)
 	require.NoError(t, err)
 	assert.False(t, due, "newest stored day is %s, the target day", newest)
+}
+
+// The source is a ReplacingMergeTree fed by a 5-minute append, so a re-observed
+// (slot, competitor) pair exists twice until a merge collapses it. Both copies
+// landing in the quantile is the fault SETTINGS final = 1 prevents, and until this
+// test the suite could not have caught its removal: the fixture was a plain
+// MergeTree, where FINAL is a no-op.
+func TestComputeCompetitorDay_CollapsesReObservations(t *testing.T) {
+	t.Parallel()
+	conn, db := setupCompetitorSource(t)
+	a := &Activities{ClickHouse: conn, Log: laketesting.NewLogger()}
+	day := time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
+
+	// The two copies have to land in different parts, and merges have to stay off.
+	// A ReplacingMergeTree collapses duplicates within a single inserted block, so
+	// writing both copies in one statement dedups them at insert time and the test
+	// passes whether or not the query asks for FINAL — which is exactly how the
+	// first version of this test silently had no teeth.
+	require.NoError(t, conn.Exec(t.Context(), `SYSTEM STOP MERGES competitors_pairwise_feed_race`))
+
+	// Competitor c is observed at 0.9 and corrected to 0.8. Deduped the slot's
+	// values are {0.4, 0.6, 0.8} and the median is 0.6; with the stale copy still
+	// present they are {0.4, 0.6, 0.8, 0.9} and it is not.
+	require.NoError(t, conn.Exec(t.Context(), `
+		INSERT INTO competitors_pairwise_feed_race
+			(event_ts, slot, dz_feed, competitor, win_rate, diff_ms_p50, ingested_at) VALUES
+			('2026-09-02 01:00:00', 100, 'dz', 'a', 0.4, -0.3, '2026-09-02 01:00:01'),
+			('2026-09-02 01:00:00', 100, 'dz', 'b', 0.6, -0.3, '2026-09-02 01:00:01'),
+			('2026-09-02 01:00:00', 100, 'dz', 'c', 0.9, -0.3, '2026-09-02 01:00:01')`))
+	require.NoError(t, conn.Exec(t.Context(), `
+		INSERT INTO competitors_pairwise_feed_race
+			(event_ts, slot, dz_feed, competitor, win_rate, diff_ms_p50, ingested_at) VALUES
+			('2026-09-02 01:00:00', 100, 'dz', 'c', 0.8, -0.3, '2026-09-02 01:00:09')`))
+
+	d, err := a.ComputeCompetitorDay(t.Context(), CompetitorDayInput{Day: day, CompetitorDatabase: db})
+	require.NoError(t, err)
+	require.NotNil(t, d)
+
+	assert.EqualValues(t, 1, d.LeaderSlots)
+	assert.InDelta(t, 0.6, d.WinTypicalP50, 1e-6,
+		"the stale copy of competitor c must not reach the quantile")
 }

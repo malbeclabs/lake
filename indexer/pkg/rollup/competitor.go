@@ -44,6 +44,10 @@ func (a *Activities) ComputeCompetitorDay(ctx context.Context, input CompetitorD
 	// unsupported"). Casting here keeps the contract at the query boundary, where
 	// the rollup table and the API response are both Float64, rather than letting
 	// the source's column width dictate three layers of Go types.
+	// SETTINGS final = 1 is not decoration either. The source is a ReplacingMergeTree
+	// fed by a 5-minute append, so a re-observed (slot, competitor) pair exists twice
+	// until a merge collapses it, and both copies would otherwise land in the
+	// quantiles. TestComputeCompetitorDay_CollapsesReObservations pins it.
 	query := fmt.Sprintf(`
 		WITH leader_slot AS (
 			SELECT
