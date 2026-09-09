@@ -5,11 +5,13 @@ import type { EdgeScoreboardLeader, EdgeScoreboardSlotRace } from '@/lib/api'
 import { FEED_COLORS } from '@/lib/feed-colors'
 import { leaderName, leaderPlace, leaderRuns, type LeaderRun } from './shreds-leader-runs'
 
-// One leader holds four slots at ~400ms each, so a run is about 1.6s of real
-// time. Advancing that fast is unreadable; 2.6s is slow enough to read a name
-// and still keeps the panel visibly moving.
-const RUN_MS = 2600
-const TICK_MS = 65
+// A leader holds four slots at ~400ms each, so a turn is ~1.6s of chain time.
+// The panel advances at that cadence so one card really is one leader's turn:
+// the buffer holds ~80s of slots and the payload refetches every 30s, so
+// playing forward at chain speed arrives at the newest run about when the next
+// refetch lands, and the panel stays level with the chain on its own.
+const RUN_MS = 1600
+const TICK_MS = 50
 
 const TAPE_ROWS = 6
 
@@ -49,34 +51,47 @@ export function ShredsNowLeading({
     [runs]
   )
 
-  const [cursor, setCursor] = useState(0)
+  // The cursor is a SLOT, not an index. Every refetch rebuilds the runs array
+  // with new entries on the end and old ones dropped off the front, so an index
+  // silently points at a different leader afterwards. A slot number survives
+  // that, and when it finally ages out of the buffer the lookup fails and the
+  // panel snaps to live — which is the right answer for a cursor that old.
+  const [cursorSlot, setCursorSlot] = useState<number | null>(null)
   const [held, setHeld] = useState(false)
   const [elapsed, setElapsed] = useState(0)
 
-  // Park at the newest run whenever the buffer changes, so a refetch lands the
-  // panel on live data rather than wherever the cursor had wandered to.
-  useEffect(() => {
-    setCursor(runs.length - 1)
-    setElapsed(0)
-  }, [runs.length])
+  const index = useMemo(() => {
+    if (cursorSlot === null) return runs.length - 1
+    const found = runs.findIndex((r) => r.slots[0].slot === cursorSlot)
+    return found === -1 ? runs.length - 1 : found
+  }, [runs, cursorSlot])
+
+  const runsRef = useRef(runs)
+  runsRef.current = runs
+  const indexRef = useRef(index)
+  indexRef.current = index
+  const heldRef = useRef(held)
+  heldRef.current = held
 
   useEffect(() => {
-    if (runs.length < 2) return
     const id = setInterval(() => {
-      if (held) return
+      if (heldRef.current) return
       setElapsed((e) => {
         if (e + TICK_MS < RUN_MS) return e + TICK_MS
-        // Walk backwards through history, then snap back to live.
-        setCursor((c) => (c <= 0 ? runs.length - 1 : c - 1))
+        // Forward, in chain order. `null` once there is nothing newer to show,
+        // which pins the panel to whatever the next refetch makes newest.
+        const next = runsRef.current[indexRef.current + 1]
+        setCursorSlot(next ? next.slots[0].slot : null)
         return 0
       })
     }, TICK_MS)
     return () => clearInterval(id)
-  }, [runs.length, held])
+  }, [])
 
-  const current: LeaderRun | undefined = runs[cursor] ?? runs[runs.length - 1]
-  const tape = current ? runs.slice(Math.max(0, cursor + 1), cursor + 1 + TAPE_ROWS) : []
-  const isLive = cursor === runs.length - 1
+  const current: LeaderRun | undefined = runs[index]
+  const tape = runs.slice(Math.max(0, index - TAPE_ROWS), index).reverse()
+  const isLive = index >= runs.length - 1
+  const behind = Math.max(0, runs.length - 1 - index)
 
   // Count the win rate up from the previous card's figure on every change.
   const [shown, setShown] = useState<number | null>(null)
@@ -119,8 +134,12 @@ export function ShredsNowLeading({
           </span>
           Now Leading
         </h2>
-        <span className="text-xs text-muted-foreground">
-          {held ? 'held' : isLive ? 'live · hover to hold' : 'recent slots · hover to hold'}
+        <span className="text-xs text-muted-foreground tabular-nums">
+          {held
+            ? 'held — release to resume'
+            : isLive
+              ? 'live · hover to hold'
+              : `${(behind * (RUN_MS / 1000)).toFixed(0)}s behind · catching up`}
         </span>
       </div>
 
