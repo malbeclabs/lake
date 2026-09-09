@@ -432,19 +432,7 @@ table {
   animation: scoreboardEdgeLoad 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
-/* Shreds "Now Leading" — the card swaps every few seconds, so the entrance is
-   what tells you the leader changed rather than the numbers just jumping. */
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
+/* Shreds "Now Leading" motion. */
 @keyframes growUp {
   from {
     transform: scaleY(0.04);
@@ -456,24 +444,27 @@ table {
   }
 }
 
-/* Light passes across the card as the leader changes hands. */
-@keyframes leaderSweep {
-  from {
-    transform: translateX(-115%);
-  }
-  to {
-    transform: translateX(115%);
-  }
-}
-
-@keyframes slideDown {
+/* Each leader enters from the leading edge and settles, so the card reads as a
+   procession moving through rather than a flash in place. */
+@keyframes enterX {
   from {
     opacity: 0;
-    transform: translateY(-9px);
+    transform: translateX(-14px);
   }
   to {
     opacity: 1;
     transform: none;
+  }
+}
+
+/* The tape is a conveyor: the whole list steps down one row as a unit, instead
+   of the top row blinking in over a static list. */
+@keyframes conveyor {
+  from {
+    transform: translateY(calc(var(--tape-row) * -1));
+  }
+  to {
+    transform: translateY(0);
   }
 }
 

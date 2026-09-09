@@ -13,7 +13,9 @@ import { leaderName, leaderPlace, leaderRuns, type LeaderRun } from './shreds-le
 const RUN_MS = 1600
 const TICK_MS = 50
 
-const TAPE_ROWS = 6
+const TAPE_ROWS = 10
+// Fixed so the conveyor can translate by exactly one row.
+const TAPE_ROW_H = 28
 
 // How far back playback restarts from. The buffer holds ~50 runs and the payload
 // refetches every 30s, so replaying the trailing ~20 (about 32s of chain time)
@@ -116,7 +118,7 @@ export function ShredsNowLeading({
   }, [])
 
   const current: LeaderRun | undefined = runs[index]
-  const tape = runs.slice(Math.max(0, index - TAPE_ROWS), index).reverse()
+  const tape = runs.slice(Math.max(0, index - (TAPE_ROWS + 1)), index).reverse()
   const isLive = index >= runs.length - 1
   const behind = Math.max(0, runs.length - 1 - index)
 
@@ -155,12 +157,9 @@ export function ShredsNowLeading({
     <div className="border border-border rounded-lg bg-card overflow-hidden mb-6">
       <div className="flex items-baseline justify-between gap-3 px-4 py-3 flex-wrap">
         <h2 className="text-sm font-semibold flex items-center gap-2">
-          <span className="relative flex items-center">
-            {isLive && !held && (
-              <span className="absolute inline-flex h-2 w-2 rounded-full bg-emerald-400 opacity-75 motion-safe:animate-ping" />
-            )}
-            <span className={`relative inline-flex rounded-full h-2 w-2 ${isLive ? 'bg-emerald-500' : 'bg-emerald-500/30'}`} />
-          </span>
+          <span
+            className={`inline-flex rounded-full h-2 w-2 transition-colors ${isLive ? 'bg-emerald-500' : 'bg-emerald-500/30'}`}
+          />
           Now Leading
           <span className="font-normal text-muted-foreground">· DZ Edge leader slots</span>
         </h2>
@@ -187,12 +186,7 @@ export function ShredsNowLeading({
         onMouseLeave={() => setHeld(false)}
         className="relative overflow-hidden grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-5 items-center px-4 py-5"
       >
-        <span
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 motion-safe:animate-[leaderSweep_1s_cubic-bezier(.33,0,.2,1)] motion-reduce:hidden will-change-transform"
-          style={{ background: 'linear-gradient(100deg, transparent 32%, rgba(16,185,129,.13) 50%, transparent 68%)' }}
-        />
-        <div className="min-w-0 motion-safe:animate-[fadeIn_.55s_cubic-bezier(.16,.84,.28,1)_both]">
+        <div className="min-w-0 motion-safe:animate-[enterX_.5s_cubic-bezier(.16,.84,.28,1)_both]">
           {current.leader?.pubkey ? (
             <Link
               to={`/solana/gossip-nodes/${current.leader.pubkey}`}
@@ -204,10 +198,10 @@ export function ShredsNowLeading({
           ) : (
             <div className="text-lg sm:text-xl font-semibold tracking-tight truncate">{leaderName(current)}</div>
           )}
-          <div className="text-xs text-muted-foreground truncate mt-0.5 motion-safe:animate-[fadeIn_.55s_cubic-bezier(.16,.84,.28,1)_.07s_both]">
+          <div className="text-xs text-muted-foreground truncate mt-0.5 motion-safe:animate-[enterX_.5s_cubic-bezier(.16,.84,.28,1)_.06s_both]">
             {[place || 'location unknown', current.leader?.asn_org].filter(Boolean).join(' · ')}
           </div>
-          <div className="text-[11px] font-mono text-muted-foreground/70 truncate mt-1.5 motion-safe:animate-[fadeIn_.55s_cubic-bezier(.16,.84,.28,1)_.14s_both]">{current.pubkey}</div>
+          <div className="text-[11px] font-mono text-muted-foreground/70 truncate mt-1.5 motion-safe:animate-[enterX_.5s_cubic-bezier(.16,.84,.28,1)_.12s_both]">{current.pubkey}</div>
         </div>
 
         <div className="flex items-end gap-4 shrink-0">
@@ -226,7 +220,7 @@ export function ShredsNowLeading({
               />
             ))}
           </div>
-          <div className="text-right motion-safe:animate-[fadeIn_.55s_cubic-bezier(.16,.84,.28,1)_.1s_both]">
+          <div className="text-right motion-safe:animate-[enterX_.5s_cubic-bezier(.16,.84,.28,1)_.18s_both]">
             <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Win rate vs Turbine</div>
             <div
               ref={winRef}
@@ -248,24 +242,35 @@ export function ShredsNowLeading({
             <span>Previous leaders</span>
             <span>win rate vs Turbine</span>
           </div>
-          {tape.map((run, i) => (
+          {/* Clipped to exactly TAPE_ROWS; the extra row underneath is what the
+              conveyor reveals as the list steps down. */}
+          <div className="overflow-hidden" style={{ height: TAPE_ROWS * TAPE_ROW_H }}>
             <div
-              key={run.key}
-              className={`${i === 0 ? 'motion-safe:animate-[slideDown_.55s_cubic-bezier(.16,.84,.28,1)_both] ' : ''}grid grid-cols-[1fr_auto] sm:grid-cols-[1fr_110px_90px_56px] gap-3 items-center px-4 py-1.5 border-t border-border/50 text-xs hover:bg-muted/30 transition-colors`}
+              key={current.key}
+              className="motion-safe:animate-[conveyor_.5s_cubic-bezier(.16,.84,.28,1)] will-change-transform"
+              style={{ '--tape-row': `${TAPE_ROW_H}px` } as React.CSSProperties}
             >
-              <span className="truncate text-muted-foreground">{leaderName(run)}</span>
-              <span className="hidden sm:block font-mono tabular-nums text-[11px] text-muted-foreground/60">
-                {run.slots[0].slot.toLocaleString()}
-              </span>
-              <span className="hidden sm:block h-1 rounded-full bg-muted-foreground/20 overflow-hidden">
-                <span
-                  className="block h-full rounded-full"
-                  style={{ width: `${Math.max(2, scale(run.winPct) * 100)}%`, backgroundColor: FEED_COLORS.dz_edge, opacity: 0.75 }}
-                />
-              </span>
-              <span className="font-mono tabular-nums text-right">{fmt(run.winPct)}</span>
+              {tape.map((run) => (
+                <div
+                  key={run.key}
+                  style={{ height: TAPE_ROW_H }}
+                  className="grid grid-cols-[1fr_auto] sm:grid-cols-[1fr_110px_90px_56px] gap-3 items-center px-4 border-t border-border/50 text-xs hover:bg-muted/30 transition-colors"
+                >
+                  <span className="truncate text-muted-foreground">{leaderName(run)}</span>
+                  <span className="hidden sm:block font-mono tabular-nums text-[11px] text-muted-foreground/60">
+                    {run.slots[0].slot.toLocaleString()}
+                  </span>
+                  <span className="hidden sm:block h-1 rounded-full bg-muted-foreground/20 overflow-hidden">
+                    <span
+                      className="block h-full rounded-full"
+                      style={{ width: `${Math.max(2, scale(run.winPct) * 100)}%`, backgroundColor: FEED_COLORS.dz_edge, opacity: 0.75 }}
+                    />
+                  </span>
+                  <span className="font-mono tabular-nums text-right">{fmt(run.winPct)}</span>
+                </div>
+              ))}
             </div>
-          ))}
+          </div>
         </>
       )}
     </div>
