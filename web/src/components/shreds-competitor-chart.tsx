@@ -32,13 +32,19 @@ function StatCell({ label, value, accent }: { label: string; value: string; acce
   )
 }
 
-export function ShredsCompetitorChart() {
-  const { data, isLoading, isError } = useQuery({
+// Shared so the headline tile and this chart read one query and can never
+// disagree about the latest day.
+export function useShredsCompetitors() {
+  return useQuery({
     queryKey: ['shreds-competitors', WINDOW_DAYS],
     queryFn: () => fetchShredsCompetitors(WINDOW_DAYS),
     refetchInterval: REFETCH_MS,
     staleTime: REFETCH_MS,
   })
+}
+
+export function ShredsCompetitorChart() {
+  const { data, isLoading, isError } = useShredsCompetitors()
 
   // A numeric time axis, not the default category axis over the `day` string.
   // Category spacing places points by array index, so a day the rollup skipped

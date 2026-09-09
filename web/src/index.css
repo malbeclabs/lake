@@ -432,6 +432,30 @@ table {
   animation: scoreboardEdgeLoad 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
+/* Shreds "Now Leading" — the card swaps every few seconds, so the entrance is
+   what tells you the leader changed rather than the numbers just jumping. */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes growUp {
+  from {
+    transform: scaleY(0.04);
+    opacity: 0.25;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 0.85;
+  }
+}
+
 /* Radix tooltip fade-in (no animate plugin in use) */
 @keyframes tooltipIn {
   from {

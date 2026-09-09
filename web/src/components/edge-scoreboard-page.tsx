@@ -15,8 +15,10 @@ import { cn } from '@/lib/utils'
 import { FEED_COLORS } from '@/lib/feed-colors'
 import { Tooltip } from '@/components/ui/tooltip'
 import { PageHeader } from './page-header'
-import { edgeHeadToHead } from './edge-head-to-head'
-import { ShredsCompetitorChart } from './shreds-competitor-chart'
+import { edgeWinRateVsTurbine } from './edge-head-to-head'
+import { formatDay } from './shreds-competitor-day'
+import { ShredsCompetitorChart, useShredsCompetitors } from './shreds-competitor-chart'
+import { ShredsNowLeading } from './shreds-now-leading'
 
 function useAnimatedNumber(target: number | undefined, duration = 500) {
   const [current, setCurrent] = useState<number | undefined>(undefined)
@@ -95,12 +97,14 @@ function HeadlineTile({
 }) {
   return (
     <div className="bg-card px-4 py-4 sm:px-5 sm:py-5 flex flex-col gap-1 min-w-0 transition-colors hover:bg-muted/30">
-      <div className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-        {swatch && <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: swatch }} />}
-        <span className="truncate">{label}</span>
+      {/* Wraps rather than truncates, and every tile reserves both lines so the
+          figures stay on one baseline across the row. */}
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-start gap-1.5 min-h-[26px]">
+        {swatch && <span className="inline-block w-2 h-2 rounded-sm shrink-0 mt-[3px]" style={{ backgroundColor: swatch }} />}
+        <span>{label}</span>
       </div>
       <div className="text-2xl sm:text-[27px] font-semibold tabular-nums leading-tight tracking-tight">{value}</div>
-      <div className="text-xs text-muted-foreground truncate">{detail}</div>
+      <div className="text-xs text-muted-foreground">{detail}</div>
     </div>
   )
 }
@@ -2007,10 +2011,15 @@ export function EdgeScoreboardPage() {
     })
   }
 
-  const globalStats = useMemo(
-    () => (data?.nodes?.length ? edgeHeadToHead(data.nodes) : null),
+  const vsTurbine = useMemo(
+    () => (data?.nodes?.length ? edgeWinRateVsTurbine(data.nodes) : null),
     [data?.nodes]
   )
+
+  // The commercial-feed matchup exists only in the daily rollup — the live
+  // payload has carried no commercial feed since Jito was retired.
+  const { data: competitorDays } = useShredsCompetitors()
+  const latestDay = competitorDays?.length ? competitorDays[competitorDays.length - 1] : undefined
 
   // Sort nodes by stake weight descending
   const sortedNodes = useMemo(() => {
@@ -2046,8 +2055,8 @@ export function EdgeScoreboardPage() {
 
   const animPublishingCount = useAnimatedNumber(data?.publishing_count)
   const animPublishingStakePct = useAnimatedNumber(data?.publishing_stake_pct)
-  const animVsCommercial = useAnimatedNumber(globalStats?.vsCommercial ?? undefined)
-  const animVsTurbine = useAnimatedNumber(globalStats?.vsTurbine ?? undefined)
+  const animVsCommercial = useAnimatedNumber(latestDay?.win_typical_pct)
+  const animVsTurbine = useAnimatedNumber(vsTurbine ?? undefined)
 
   if (isLoading && showLoader && !data) return (
     <div className="flex-1 flex items-center justify-center bg-background">
@@ -2124,19 +2133,19 @@ export function EdgeScoreboardPage() {
         </div>
 
 
-        {data && globalStats && (
+        {data && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-px mb-8 bg-border border border-border rounded-lg overflow-hidden">
             <HeadlineTile
               label="Win rate vs commercial feeds"
-              swatch={FEED_COLORS.jito}
-              value={globalStats.vsCommercial === null ? '—' : formatPct(animVsCommercial ?? globalStats.vsCommercial)}
-              detail={`${windowLabel(activeWindow)} · first arrival`}
+              swatch={FEED_COLORS.dz_edge}
+              value={latestDay ? formatPct(animVsCommercial ?? latestDay.win_typical_pct) : '—'}
+              detail={latestDay ? `${formatDay(latestDay.day)} · median per leader slot` : 'no completed days yet'}
             />
             <HeadlineTile
               label="Win rate vs Turbine"
               swatch={FEED_COLORS.turbine}
-              value={globalStats.vsTurbine === null ? '—' : formatPct(animVsTurbine ?? globalStats.vsTurbine)}
-              detail={`${windowLabel(activeWindow)} · first arrival`}
+              value={vsTurbine === null ? '—' : formatPct(animVsTurbine ?? vsTurbine)}
+              detail={`${windowLabel(activeWindow)} · share of first arrivals`}
             />
             <HeadlineTile
               label="Validators publishing shreds"
@@ -2247,6 +2256,8 @@ export function EdgeScoreboardPage() {
             point per closed UTC day), so it neither waits on nor blocks the
             live-tailing charts above. */}
         <ShredsCompetitorChart />
+
+        <ShredsNowLeading slots={stableRecent?.slots ?? []} leaders={stableRecent?.leaders} />
 
         {/* Node detail table */}
         <div className="border border-border rounded-lg overflow-hidden bg-card mb-6">

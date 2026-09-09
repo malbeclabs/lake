@@ -4,57 +4,50 @@ import type { EdgeScoreboardNode } from '@/lib/api'
 // per-host denominator, so it is Edge's figure and none of them is an opponent.
 const DZ_FEEDS = new Set(['dz_edge', 'dz_root', 'dz', 'dz_retransmit'])
 
-// The public fallback, which nobody buys — not one of the commercial feeds.
-const PUBLIC_FEED = 'turbine'
-
-export type EdgeHeadToHead = {
-  vsCommercial: number | null
-  vsTurbine: number | null
-}
+const TURBINE = 'turbine'
 
 /**
- * Head-to-head win rate: of the shreds DoubleZero Edge and one opponent
- * contested, the share Edge arrived with first. Deliberately not Edge's share of
- * *all* shreds, which is a win rate against nobody in particular and moves when
- * an unrelated feed appears or goes quiet. Averaged per recording node and
- * unweighted, the way the node table reads them.
+ * Head-to-head win rate against Turbine: of the shreds Edge and Turbine
+ * contested, the share Edge arrived with first. Not Edge's share of *all*
+ * shreds, which moves when an unrelated feed appears or goes quiet. Averaged per
+ * recording node and unweighted, the way the node table reads them.
  *
- * A node only votes on a matchup it measured, and the test is whether the
- * opponent has a row there, NOT whether the denominator is non-zero: a node that
- * never saw Turbine would otherwise divide by Edge's own share and record a
- * perfect 100%, so every recorder missing a feed would inflate the headline that
- * names it. A measured opponent that won nothing is a real shutout and counts.
+ * A node only votes on a matchup it measured, and the test is whether Turbine
+ * has a row there, NOT whether the denominator is non-zero: a node that never
+ * saw Turbine would otherwise divide by Edge's own share and record a perfect
+ * 100%, so every recorder missing the feed would inflate the headline. Turbine
+ * measured and winning nothing is a real shutout and counts.
+ *
+ * There is deliberately no commercial-feed twin of this. The scoreboard payload
+ * has carried no commercial feed since Jito was retired, so the only measurement
+ * of that matchup is the daily rollup behind /api/dz/shreds/competitors — a
+ * different window and grain. A second definition here would quietly disagree
+ * with the tile and the chart that both read the rollup.
  */
-export function edgeHeadToHead(nodes: EdgeScoreboardNode[]): EdgeHeadToHead {
-  let commercialSum = 0
-  let commercialNodes = 0
-  let turbineSum = 0
-  let turbineNodes = 0
+export function edgeWinRateVsTurbine(nodes: EdgeScoreboardNode[]): number | null {
+  let sum = 0
+  let counted = 0
 
   for (const node of nodes) {
     const edge = node.feeds['dz_edge']?.win_rate_pct ?? 0
-    const turbineStats = node.feeds[PUBLIC_FEED]
-
-    let commercial = 0
-    let sawCommercial = false
-    for (const [feed, stats] of Object.entries(node.feeds)) {
-      if (DZ_FEEDS.has(feed) || feed === PUBLIC_FEED) continue
-      sawCommercial = true
-      commercial += stats.win_rate_pct
-    }
-
-    if (sawCommercial && edge + commercial > 0) {
-      commercialSum += (edge / (edge + commercial)) * 100
-      commercialNodes++
-    }
-    if (turbineStats && edge + turbineStats.win_rate_pct > 0) {
-      turbineSum += (edge / (edge + turbineStats.win_rate_pct)) * 100
-      turbineNodes++
-    }
+    const turbine = node.feeds[TURBINE]
+    if (!turbine) continue
+    if (edge + turbine.win_rate_pct <= 0) continue
+    sum += (edge / (edge + turbine.win_rate_pct)) * 100
+    counted++
   }
 
-  return {
-    vsCommercial: commercialNodes > 0 ? commercialSum / commercialNodes : null,
-    vsTurbine: turbineNodes > 0 ? turbineSum / turbineNodes : null,
+  return counted > 0 ? sum / counted : null
+}
+
+/** Feeds that are neither ours nor Turbine, if the payload ever carries any. */
+export function commercialFeedKeys(nodes: EdgeScoreboardNode[]): string[] {
+  const keys = new Set<string>()
+  for (const node of nodes) {
+    for (const feed of Object.keys(node.feeds)) {
+      if (DZ_FEEDS.has(feed) || feed === TURBINE) continue
+      keys.add(feed)
+    }
   }
+  return [...keys].sort()
 }
