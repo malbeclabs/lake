@@ -46,8 +46,11 @@ export function ShredsCompetitorChart() {
       <div className="flex items-baseline justify-between gap-4 flex-wrap px-4 py-3">
         <h2 className="text-sm font-semibold">Daily Win Rate vs Commercial Feeds</h2>
         {points.length > 0 && (
-          <span className="text-xs text-muted-foreground tabular-nums">
-            {formatDay(points[0].day)} – {formatDay(points[points.length - 1].day)}
+          <span className="text-xs text-muted-foreground">
+            <span className="tabular-nums">
+              {formatDay(points[0].day)} – {formatDay(points[points.length - 1].day)}
+            </span>
+            <span className="text-muted-foreground/70"> · median per leader slot</span>
           </span>
         )}
       </div>

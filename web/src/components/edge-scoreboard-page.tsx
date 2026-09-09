@@ -301,7 +301,7 @@ export function EdgeScoreboardPage() {
               label="Win rate vs Turbine"
               swatch={FEED_COLORS.turbine}
               value={vsTurbine === null ? '—' : formatPct(animVsTurbine ?? vsTurbine)}
-              detail={`${windowLabel(activeWindow)} · share of first arrivals`}
+              detail={`${windowLabel(activeWindow)} · first arrivals in leader slots`}
             />
             <HeadlineTile
               label="Validators publishing shreds"
@@ -348,7 +348,7 @@ export function EdgeScoreboardPage() {
                   <th className="px-3 sm:px-4 py-2.5 text-[10px] uppercase tracking-wider font-medium whitespace-nowrap">Metro</th>
                   <th className="px-3 sm:px-4 py-2.5 text-[10px] uppercase tracking-wider font-medium text-right whitespace-nowrap">Validators</th>
                   <th className="px-3 sm:px-4 py-2.5 text-[10px] uppercase tracking-wider font-medium text-right whitespace-nowrap">Stake</th>
-                  <th className="px-3 sm:px-4 py-2.5 text-[10px] uppercase tracking-wider font-medium text-right whitespace-nowrap">Slots observed</th>
+                  <th className="px-3 sm:px-4 py-2.5 text-[10px] uppercase tracking-wider font-medium text-right whitespace-nowrap">Leader slots observed</th>
                 </tr>
               </thead>
               <tbody>

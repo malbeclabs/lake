@@ -63,7 +63,6 @@ export function ShredsNowLeading({
   // panel snaps to live — which is the right answer for a cursor that old.
   const [cursorSlot, setCursorSlot] = useState<number | null>(null)
   const [held, setHeld] = useState(false)
-  const [elapsed, setElapsed] = useState(0)
 
   const index = useMemo(() => {
     if (cursorSlot === null) return runs.length - 1
@@ -78,19 +77,40 @@ export function ShredsNowLeading({
   const heldRef = useRef(held)
   heldRef.current = held
 
+  // The progress bar and the counting figure are written straight to the DOM.
+  // Through React state they re-rendered the whole panel — card, bars and seven
+  // tape rows — twenty times a second, and that render cost is what made the
+  // motion stutter. Driven this way the component renders once per leader.
+  const progressRef = useRef<HTMLDivElement>(null)
+  const winRef = useRef<HTMLDivElement>(null)
+  const elapsedRef = useRef(0)
+
   useEffect(() => {
     const id = setInterval(() => {
       if (heldRef.current) return
-      setElapsed((e) => {
-        if (e + TICK_MS < RUN_MS) return e + TICK_MS
+      elapsedRef.current += TICK_MS
+
+      if (elapsedRef.current >= RUN_MS) {
+        elapsedRef.current = 0
         const rs = runsRef.current
         // Forward in chain order, and back to the top of the trailing window on
         // reaching the newest run. Pinning to the newest instead leaves the card
         // motionless between refetches, which is a live panel that never moves.
         const next = rs[indexRef.current + 1] ?? rs[Math.max(0, rs.length - WINDOW_RUNS)]
         setCursorSlot(next ? next.slots[0].slot : null)
-        return 0
-      })
+      }
+
+      const bar = progressRef.current
+      if (!bar) return
+      if (elapsedRef.current === 0) {
+        // Snap back rather than easing backwards over the rewind.
+        bar.style.transition = 'none'
+        bar.style.transform = 'scaleX(0)'
+        void bar.offsetWidth
+        bar.style.transition = ''
+      } else {
+        bar.style.transform = `scaleX(${elapsedRef.current / RUN_MS})`
+      }
     }, TICK_MS)
     return () => clearInterval(id)
   }, [])
@@ -101,27 +121,29 @@ export function ShredsNowLeading({
   const behind = Math.max(0, runs.length - 1 - index)
 
   // Count the win rate up from the previous card's figure on every change.
-  const [shown, setShown] = useState<number | null>(null)
   const fromRef = useRef<number | null>(null)
+  const targetWin = current?.winPct ?? null
   useEffect(() => {
-    const to = current?.winPct ?? null
-    if (to === null) {
-      setShown(null)
+    const el = winRef.current
+    if (!el) return
+    if (targetWin === null) {
+      el.textContent = '—'
+      fromRef.current = null
       return
     }
-    const from = fromRef.current ?? to
+    const from = fromRef.current ?? targetWin
     const start = performance.now()
     let raf = 0
     const step = (t: number) => {
-      const k = Math.min(1, (t - start) / 420)
+      const k = Math.min(1, (t - start) / 520)
       const eased = 1 - Math.pow(1 - k, 3)
-      setShown(from + (to - from) * eased)
+      el.textContent = fmt(from + (targetWin - from) * eased)
       if (k < 1) raf = requestAnimationFrame(step)
-      else fromRef.current = to
+      else fromRef.current = targetWin
     }
     raf = requestAnimationFrame(step)
     return () => cancelAnimationFrame(raf)
-  }, [current?.key, current?.winPct])
+  }, [current?.key, targetWin])
 
   if (!current) return null
 
@@ -140,6 +162,7 @@ export function ShredsNowLeading({
             <span className={`relative inline-flex rounded-full h-2 w-2 ${isLive ? 'bg-emerald-500' : 'bg-emerald-500/30'}`} />
           </span>
           Now Leading
+          <span className="font-normal text-muted-foreground">· their leader slots</span>
         </h2>
         <span className="text-xs text-muted-foreground tabular-nums">
           {held
@@ -150,10 +173,11 @@ export function ShredsNowLeading({
         </span>
       </div>
 
-      <div className="h-0.5 bg-muted-foreground/15">
+      <div className="h-0.5 bg-muted-foreground/15 overflow-hidden">
         <div
-          className="h-full bg-emerald-500/60"
-          style={{ width: `${(elapsed / RUN_MS) * 100}%` }}
+          ref={progressRef}
+          className="h-full w-full origin-left bg-emerald-500/60 will-change-transform"
+          style={{ transform: 'scaleX(0)', transition: `transform ${TICK_MS}ms linear` }}
         />
       </div>
 
@@ -165,10 +189,10 @@ export function ShredsNowLeading({
       >
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute inset-0 motion-safe:animate-[leaderSweep_.85s_cubic-bezier(.4,0,.2,1)] motion-reduce:hidden"
+          className="pointer-events-none absolute inset-0 motion-safe:animate-[leaderSweep_1s_cubic-bezier(.33,0,.2,1)] motion-reduce:hidden will-change-transform"
           style={{ background: 'linear-gradient(100deg, transparent 32%, rgba(16,185,129,.13) 50%, transparent 68%)' }}
         />
-        <div className="min-w-0 motion-safe:animate-[fadeIn_.42s_cubic-bezier(.2,.8,.2,1)_both]">
+        <div className="min-w-0 motion-safe:animate-[fadeIn_.55s_cubic-bezier(.16,.84,.28,1)_both]">
           {current.leader?.pubkey ? (
             <Link
               to={`/solana/gossip-nodes/${current.leader.pubkey}`}
@@ -180,10 +204,10 @@ export function ShredsNowLeading({
           ) : (
             <div className="text-lg sm:text-xl font-semibold tracking-tight truncate">{leaderName(current)}</div>
           )}
-          <div className="text-xs text-muted-foreground truncate mt-0.5 motion-safe:animate-[fadeIn_.42s_cubic-bezier(.2,.8,.2,1)_.05s_both]">
+          <div className="text-xs text-muted-foreground truncate mt-0.5 motion-safe:animate-[fadeIn_.55s_cubic-bezier(.16,.84,.28,1)_.07s_both]">
             {[place || 'location unknown', current.leader?.asn_org].filter(Boolean).join(' · ')}
           </div>
-          <div className="text-[11px] font-mono text-muted-foreground/70 truncate mt-1.5 motion-safe:animate-[fadeIn_.42s_cubic-bezier(.2,.8,.2,1)_.1s_both]">{current.pubkey}</div>
+          <div className="text-[11px] font-mono text-muted-foreground/70 truncate mt-1.5 motion-safe:animate-[fadeIn_.55s_cubic-bezier(.16,.84,.28,1)_.14s_both]">{current.pubkey}</div>
         </div>
 
         <div className="flex items-end gap-4 shrink-0">
@@ -192,7 +216,7 @@ export function ShredsNowLeading({
               <div
                 key={s.slot}
                 title={`Slot ${s.slot.toLocaleString()} · ${fmt(s.winPct)} vs Turbine`}
-                className="w-3 rounded-t-sm motion-safe:animate-[growUp_.45s_cubic-bezier(.2,.85,.25,1)_both] origin-bottom"
+                className="w-3 rounded-t-sm motion-safe:animate-[growUp_.6s_cubic-bezier(.16,.84,.28,1)_both] origin-bottom will-change-transform"
                 style={{
                   height: `${Math.max(3, scale(s.winPct) * 44)}px`,
                   backgroundColor: FEED_COLORS.dz_edge,
@@ -202,10 +226,14 @@ export function ShredsNowLeading({
               />
             ))}
           </div>
-          <div className="text-right motion-safe:animate-[fadeIn_.42s_cubic-bezier(.2,.8,.2,1)_.08s_both]">
+          <div className="text-right motion-safe:animate-[fadeIn_.55s_cubic-bezier(.16,.84,.28,1)_.1s_both]">
             <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Win rate vs Turbine</div>
-            <div className="text-2xl font-semibold tabular-nums leading-tight" style={{ color: FEED_COLORS.dz_edge }}>
-              {fmt(shown ?? current.winPct)}
+            <div
+              ref={winRef}
+              className="text-2xl font-semibold tabular-nums leading-tight"
+              style={{ color: FEED_COLORS.dz_edge }}
+            >
+              {fmt(current.winPct)}
             </div>
             <div className="text-[10px] font-mono text-muted-foreground tabular-nums">
               {first === last ? `slot ${first.toLocaleString()}` : `slots ${first.toLocaleString()}–${last.toLocaleString()}`}
@@ -223,7 +251,7 @@ export function ShredsNowLeading({
           {tape.map((run, i) => (
             <div
               key={run.key}
-              className={`${i === 0 ? 'motion-safe:animate-[slideDown_.45s_cubic-bezier(.2,.8,.2,1)_both] ' : ''}grid grid-cols-[1fr_auto] sm:grid-cols-[1fr_110px_90px_56px] gap-3 items-center px-4 py-1.5 border-t border-border/50 text-xs hover:bg-muted/30 transition-colors`}
+              className={`${i === 0 ? 'motion-safe:animate-[slideDown_.55s_cubic-bezier(.16,.84,.28,1)_both] ' : ''}grid grid-cols-[1fr_auto] sm:grid-cols-[1fr_110px_90px_56px] gap-3 items-center px-4 py-1.5 border-t border-border/50 text-xs hover:bg-muted/30 transition-colors`}
             >
               <span className="truncate text-muted-foreground">{leaderName(run)}</span>
               <span className="hidden sm:block font-mono tabular-nums text-[11px] text-muted-foreground/60">
