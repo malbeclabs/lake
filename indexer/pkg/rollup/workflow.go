@@ -127,7 +127,7 @@ func runIteration(ctx temporalworkflow.Context, log log.Logger, esc *lakelogger.
 func runCompetitorRollup(ctx temporalworkflow.Context, log log.Logger, esc *lakelogger.Escalator, now time.Time) error {
 	ctx = temporalworkflow.WithActivityOptions(ctx, temporalworkflow.ActivityOptions{
 		StartToCloseTimeout: competitorRollupActivityTimeout,
-		HeartbeatTimeout:    2 * time.Minute,
+		HeartbeatTimeout:    competitorHeartbeatTimeout,
 		RetryPolicy: &temporal.RetryPolicy{
 			MaximumAttempts: 2,
 		},

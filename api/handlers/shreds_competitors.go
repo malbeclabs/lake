@@ -38,6 +38,9 @@ func (a *API) GetShredsCompetitors(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// leader_slots > 0 drops the placeholder rows the rollup writes for days the
+	// source had nothing for. Those exist so the rollup's due gate can advance past
+	// an empty day; serving one would render a real-looking 0% point.
 	query := `
 		SELECT
 			toString(bucket_date),
@@ -47,6 +50,7 @@ func (a *API) GetShredsCompetitors(w http.ResponseWriter, r *http.Request) {
 		FROM shred_competitor_rollup_1d FINAL
 		WHERE bucket_date >= subtractDays(today(), ?)
 		  AND bucket_date < today()
+		  AND leader_slots > 0
 		ORDER BY bucket_date
 	`
 

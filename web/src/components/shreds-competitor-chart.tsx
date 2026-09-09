@@ -12,7 +12,7 @@ import {
 
 import { fetchShredsCompetitors, type ShredsCompetitorDay } from '@/lib/api'
 import { FEED_COLORS } from '@/lib/feed-colors'
-import { formatDay, formatLeadMs } from './shreds-competitor-day'
+import { dayToTs, formatDay, formatLeadMs, tsToDay } from './shreds-competitor-day'
 
 const WINDOW_DAYS = 30
 
@@ -40,16 +40,22 @@ export function ShredsCompetitorChart() {
     staleTime: REFETCH_MS,
   })
 
-  const series = data ?? []
-  const latest: ShredsCompetitorDay | undefined = series[series.length - 1]
+  // A numeric time axis, not the default category axis over the `day` string.
+  // Category spacing places points by array index, so a day the rollup skipped
+  // would draw as an unbroken line between its neighbours rather than as the
+  // wider span it actually is.
+  const points = (data ?? [])
+    .map((d) => ({ ...d, ts: dayToTs(d.day) }))
+    .filter((d) => Number.isFinite(d.ts))
+  const latest: (ShredsCompetitorDay & { ts: number }) | undefined = points[points.length - 1]
 
   return (
     <div className="border border-border rounded-lg bg-card overflow-hidden mb-6">
       <div className="flex items-baseline justify-between gap-4 flex-wrap px-4 py-3">
         <h2 className="text-sm font-semibold">Win Rate vs Competitors</h2>
-        {series.length > 0 && (
+        {points.length > 0 && (
           <span className="text-xs text-muted-foreground tabular-nums">
-            {formatDay(series[0].day)} – {formatDay(series[series.length - 1].day)}
+            {formatDay(points[0].day)} – {formatDay(points[points.length - 1].day)}
           </span>
         )}
       </div>
@@ -62,7 +68,7 @@ export function ShredsCompetitorChart() {
         <div className="h-[248px] flex items-center justify-center text-sm text-muted-foreground">
           Could not load competitor win rate.
         </div>
-      ) : series.length === 0 ? (
+      ) : points.length === 0 ? (
         <div className="h-[248px] flex items-center justify-center text-sm text-muted-foreground">
           No completed days yet.
         </div>
@@ -70,7 +76,7 @@ export function ShredsCompetitorChart() {
         <>
           <div className="px-2 pt-4 pb-1">
             <ResponsiveContainer width="100%" height={224}>
-              <AreaChart data={series} margin={{ top: 8, right: 16, left: 4, bottom: 0 }}>
+              <AreaChart data={points} margin={{ top: 8, right: 16, left: 4, bottom: 0 }}>
                 <defs>
                   <linearGradient id="dzWinFade" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor={DZ_COLOR} stopOpacity={0.22} />
@@ -79,11 +85,14 @@ export function ShredsCompetitorChart() {
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
                 <XAxis
-                  dataKey="day"
+                  dataKey="ts"
+                  type="number"
+                  scale="time"
+                  domain={['dataMin', 'dataMax']}
                   tickLine={false}
                   axisLine={false}
                   tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }}
-                  tickFormatter={formatDay}
+                  tickFormatter={(ts: number) => formatDay(tsToDay(ts))}
                   minTickGap={28}
                   dy={6}
                 />
@@ -144,7 +153,13 @@ export function ShredsCompetitorChart() {
 
           {latest && (
             <div className="grid grid-cols-2 border-t border-border divide-x divide-border">
-              <StatCell label="Yesterday" value={`${latest.win_typical_pct.toFixed(1)}%`} accent />
+              {/* Labelled with the day it actually describes. "Yesterday" was a
+                  guess that a skipped day or a stalled rollup silently falsified. */}
+              <StatCell
+                label={`${formatDay(latest.day)} win rate`}
+                value={`${latest.win_typical_pct.toFixed(1)}%`}
+                accent
+              />
               <StatCell label="DZ lead, p50" value={formatLeadMs(latest.lead_typical_ms)} />
             </div>
           )}

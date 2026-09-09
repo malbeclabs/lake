@@ -11,9 +11,18 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 )
 
-const competitorDayTimeout = 4 * time.Minute
-const competitorDayMaxExecutionSeconds = 240
-const competitorRollupActivityTimeout = competitorRollupHealDays*competitorDayTimeout + 2*time.Minute
+// The per-day budget is far above the measured cost — a day reduces in well under
+// a second through the remote proxy — but it is what two other limits are derived
+// from, and both matter more than the scan does. competitorHeartbeatTimeout must
+// exceed it, or Temporal kills a slow day mid-scan and the day never lands. And a
+// whole pass must finish well inside rollupWindow, because the pass runs inline in
+// the live rollup loop: while it holds the loop, link and device-interface buckets
+// are not being processed, and a stall longer than the window loses them for good.
+const competitorDayTimeout = 60 * time.Second
+const competitorDayMaxExecutionSeconds = 60
+const competitorHeartbeatInterval = 20 * time.Second
+const competitorHeartbeatTimeout = 2 * time.Minute
+const competitorRollupActivityTimeout = competitorRollupHealDays*competitorDayTimeout + time.Minute
 
 // ComputeCompetitorDay reduces one closed UTC day of
 // competitors_pairwise_feed_race into a single CompetitorDay.
@@ -28,6 +37,13 @@ func (a *Activities) ComputeCompetitorDay(ctx context.Context, input CompetitorD
 	day := input.Day.UTC().Truncate(24 * time.Hour)
 	src := tableRef(input.CompetitorDatabase, "competitors_pairwise_feed_race")
 
+	// The toFloat64 casts are load-bearing, not decoration. win_rate and
+	// diff_ms_p50 are Float32 in the source, and both quantile functions return
+	// their input type, so the result columns are Float32 — which clickhouse-go
+	// refuses to scan into a float64 field ("converting Float32 to float64 is
+	// unsupported"). Casting here keeps the contract at the query boundary, where
+	// the rollup table and the API response are both Float64, rather than letting
+	// the source's column width dictate three layers of Go types.
 	query := fmt.Sprintf(`
 		WITH leader_slot AS (
 			SELECT
@@ -41,9 +57,9 @@ func (a *Activities) ComputeCompetitorDay(ctx context.Context, input CompetitorD
 			GROUP BY slot
 		)
 		SELECT
-			count()                                AS leader_slots,
-			quantileTDigest(0.50)(win_typical)     AS win_typical_p50,
-			quantileTDigest(0.50)(lead_typical_ms) AS lead_typical_ms
+			count()                                           AS leader_slots,
+			toFloat64(quantileTDigest(0.50)(win_typical))     AS win_typical_p50,
+			toFloat64(quantileTDigest(0.50)(lead_typical_ms)) AS lead_typical_ms
 		FROM leader_slot
 		SETTINGS final = 1
 	`, src)
@@ -55,21 +71,28 @@ func (a *Activities) ComputeCompetitorDay(ctx context.Context, input CompetitorD
 	}))
 
 	var d CompetitorDay
-	err := a.ClickHouse.QueryRow(queryCtx, query, day, day.AddDate(0, 0, 1)).Scan(
-		&d.LeaderSlots, &d.WinTypicalP50, &d.LeadTypicalMs,
-	)
+	err := heartbeatDuring(ctx, "computing competitor rollup", func() error {
+		return a.ClickHouse.QueryRow(queryCtx, query, day, day.AddDate(0, 0, 1)).Scan(
+			&d.LeaderSlots, &d.WinTypicalP50, &d.LeadTypicalMs,
+		)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("competitor rollup query for %s: %w", day.Format(time.DateOnly), err)
 	}
 
+	d.BucketDate = day
+	d.IngestedAt = time.Now().UTC()
+
+	// A day with no leader slots is recorded, not skipped. The due gate keys on
+	// max(bucket_date), so a legitimately empty newest day would otherwise hold the
+	// gate open and re-run the whole seven-day pass every 30s indefinitely. The
+	// handler filters these rows out so an empty day never renders as a real point,
+	// and the heal window replaces the row if the source fills in later.
 	if d.LeaderSlots == 0 {
 		a.Log.Info("competitor rollup: no leader slots for day",
 			"day", day.Format(time.DateOnly), "duration", time.Since(start))
-		return nil, nil
+		return &d, nil
 	}
-
-	d.BucketDate = day
-	d.IngestedAt = time.Now().UTC()
 
 	a.Log.Info("computed competitor rollup",
 		"day", day.Format(time.DateOnly),
@@ -78,6 +101,32 @@ func (a *Activities) ComputeCompetitorDay(ctx context.Context, input CompetitorD
 		"duration", time.Since(start))
 
 	return &d, nil
+}
+
+// heartbeatDuring keeps the activity's heartbeat alive while fn runs. The scan is
+// one blocking call, so the heartbeat recorded before it is the only sign of life
+// Temporal gets; a day that runs longer than HeartbeatTimeout would be killed
+// mid-query and never land. The interval is well under competitorHeartbeatTimeout.
+func heartbeatDuring(ctx context.Context, detail string, fn func() error) error {
+	done := make(chan struct{})
+	defer close(done)
+
+	go func() {
+		t := time.NewTicker(competitorHeartbeatInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				safeHeartbeat(ctx, detail)
+			}
+		}
+	}()
+
+	return fn()
 }
 
 // WriteCompetitorDay upserts one day of the competitor rollup.

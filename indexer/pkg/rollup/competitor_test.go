@@ -6,7 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/proto"
+	laketesting "github.com/malbeclabs/lake/utils/pkg/testing"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The panel's whole contract is that a point describes a closed UTC day, so a run
@@ -124,4 +128,126 @@ func TestCompetitorRollupActivityTimeout_CoversAWholePass(t *testing.T) {
 		t.Errorf("competitorDayMaxExecutionSeconds = %d, want %d to match competitorDayTimeout",
 			competitorDayMaxExecutionSeconds, want)
 	}
+}
+
+// The two budgets either side of a day's scan have to bracket it: the heartbeat
+// above, or Temporal kills a slow day mid-query; the live loop's window below, or
+// a slow pass stalls the loop it runs inline in for longer than link and
+// device-interface buckets survive.
+func TestCompetitorTimeouts_BracketTheDayScan(t *testing.T) {
+	t.Parallel()
+
+	if competitorHeartbeatTimeout <= competitorDayTimeout {
+		t.Errorf("heartbeat timeout %s does not exceed the per-day budget %s: a day that "+
+			"uses its budget is killed as a heartbeat timeout",
+			competitorHeartbeatTimeout, competitorDayTimeout)
+	}
+	if competitorHeartbeatInterval >= competitorHeartbeatTimeout {
+		t.Errorf("heartbeat interval %s does not fit inside the timeout %s",
+			competitorHeartbeatInterval, competitorHeartbeatTimeout)
+	}
+	if competitorRollupActivityTimeout >= rollupWindow {
+		t.Errorf("a whole pass may take %s, which is not inside rollupWindow %s: the pass "+
+			"runs inline in the live loop and would lose buckets while it holds it",
+			competitorRollupActivityTimeout, rollupWindow)
+	}
+}
+
+// setupCompetitorSource creates a source table shaped like the real
+// dzf_data.competitors_pairwise_feed_race, Float32 metric columns and all, and
+// returns a connection plus the database holding it. The column widths are the
+// point: a source built with Float64 columns cannot reproduce the scan the real
+// schema produces.
+func setupCompetitorSource(t *testing.T) (clickhouse.Conn, string) {
+	t.Helper()
+	info := laketesting.NewClientWithInfo(t, sharedDB)
+	conn := openRawConn(t, sharedDB, info.Database)
+	require.NoError(t, conn.Exec(t.Context(), `
+		CREATE TABLE competitors_pairwise_feed_race (
+			event_ts    DateTime64(3),
+			slot        UInt64,
+			dz_feed     String,
+			win_rate    Float32,
+			diff_ms_p50 Float32
+		) ENGINE = MergeTree ORDER BY (event_ts, slot)`))
+	return conn, info.Database
+}
+
+// The bug this pins shipped: quantileExact and quantileTDigest both return their
+// input type, so over Float32 source columns the result columns are Float32, and
+// clickhouse-go refuses to scan those into the float64 fields of CompetitorDay.
+// Every day errored, the pass never got past its first day, and the rollup table
+// stayed empty with nothing above INFO in the log.
+func TestComputeCompetitorDay_ScansAFloat32Source(t *testing.T) {
+	t.Parallel()
+	conn, db := setupCompetitorSource(t)
+	a := &Activities{ClickHouse: conn, Log: laketesting.NewLogger()}
+	day := time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
+
+	require.NoError(t, conn.Exec(t.Context(), `
+		INSERT INTO competitors_pairwise_feed_race
+			(event_ts, slot, dz_feed, win_rate, diff_ms_p50) VALUES
+			-- slot 100: three competitors, median win 0.6, median lead 0.3
+			('2026-09-02 01:00:00', 100, 'dz', 0.4, -0.2),
+			('2026-09-02 01:00:00', 100, 'dz', 0.6, -0.3),
+			('2026-09-02 01:00:00', 100, 'dz', 0.8, -0.4),
+			-- slot 200: same shape, so the outer median is unambiguous
+			('2026-09-02 02:00:00', 200, 'dz', 0.4, -0.2),
+			('2026-09-02 02:00:00', 200, 'dz', 0.6, -0.3),
+			('2026-09-02 02:00:00', 200, 'dz', 0.8, -0.4),
+			-- excluded: not DZ's leader slot
+			('2026-09-02 03:00:00', 300, 'other', 0.9, -9.0),
+			-- excluded: the next day, which the window must not reach
+			('2026-09-03 01:00:00', 400, 'dz', 0.1, -0.1)`))
+
+	d, err := a.ComputeCompetitorDay(t.Context(), CompetitorDayInput{Day: day, CompetitorDatabase: db})
+	require.NoError(t, err)
+	require.NotNil(t, d)
+
+	assert.EqualValues(t, 2, d.LeaderSlots, "only DZ leader slots inside the day")
+	assert.InDelta(t, 0.6, d.WinTypicalP50, 1e-6)
+	assert.InDelta(t, 0.3, d.LeadTypicalMs, 1e-6, "lead is the negated diff")
+	assert.Equal(t, day, d.BucketDate)
+}
+
+// A day the source has nothing for still has to produce a row. The due gate keys
+// on max(bucket_date), so returning nil here leaves the newest day permanently
+// unwritten and the gate permanently open — seven remote scans every 30s forever.
+func TestComputeCompetitorDay_RecordsADayWithNoRows(t *testing.T) {
+	t.Parallel()
+	conn, db := setupCompetitorSource(t)
+	a := &Activities{ClickHouse: conn, Log: laketesting.NewLogger()}
+	day := time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
+
+	d, err := a.ComputeCompetitorDay(t.Context(), CompetitorDayInput{Day: day, CompetitorDatabase: db})
+	require.NoError(t, err)
+	require.NotNil(t, d, "an empty day must still be recorded, or the due gate never closes")
+	assert.EqualValues(t, 0, d.LeaderSlots)
+	assert.Equal(t, day, d.BucketDate)
+}
+
+// The other half of the same fault, one level up: with the newest day written as
+// an empty row, the gate must close.
+func TestCompetitorRollupDue_ClosesWhenTheNewestDayIsEmpty(t *testing.T) {
+	t.Parallel()
+	conn, _ := setupCompetitorSource(t)
+	a := &Activities{ClickHouse: conn, Log: laketesting.NewLogger()}
+	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+
+	due, _, err := a.competitorRollupDue(t.Context(), now)
+	require.NoError(t, err)
+	require.True(t, due, "nothing stored yet")
+
+	days := competitorRollupDays(now)
+	for i, day := range days {
+		d := &CompetitorDay{BucketDate: day, IngestedAt: time.Now().UTC()}
+		if i < len(days)-1 {
+			d.LeaderSlots, d.WinTypicalP50, d.LeadTypicalMs = 1000, 0.65, 0.2
+		}
+		require.NoError(t, a.WriteCompetitorDay(t.Context(), d))
+	}
+
+	due, newest, err := a.competitorRollupDue(t.Context(), now)
+	require.NoError(t, err)
+	assert.False(t, due, "newest stored day is %s, the target day", newest)
 }
