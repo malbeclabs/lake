@@ -7,13 +7,12 @@ import {
   fetchEdgeScoreboard,
   type EdgeScoreboardNode,
 } from '@/lib/api'
-import { cn } from '@/lib/utils'
 import { FEED_COLORS } from '@/lib/feed-colors'
-import { Tooltip } from '@/components/ui/tooltip'
 import { PageHeader } from './page-header'
 import { edgeWinRateVsTurbine } from './edge-head-to-head'
 import { formatDay } from './shreds-competitor-day'
-import { ShredsCompetitorChart, useShredsCompetitors } from './shreds-competitor-chart'
+import { ShredsCompetitorChart } from './shreds-competitor-chart'
+import { useShredsCompetitors } from './use-shreds-competitors'
 import { ShredsNowLeading } from './shreds-now-leading'
 
 function useAnimatedNumber(target: number | undefined, duration = 500) {
@@ -47,11 +46,6 @@ function formatPct(v: number): string {
   return v >= 100 ? '100%' : `${v.toFixed(1)}%`
 }
 
-function formatMs(v: number): string {
-  if (v < 0.1) return '<0.1ms'
-  if (v >= 1000) return `${(v / 1000).toFixed(1)}s`
-  return `${v.toFixed(1)}ms`
-}
 
 
 function windowLabel(w: TimeWindow): string {
@@ -73,12 +67,6 @@ function formatStake(sol: number): string {
 
 
 
-// AnimatedStat renders an animated numeric value using a format function.
-// Defined as a component (not inline) so it can be used inside loops.
-function AnimatedStat({ value, fmt }: { value: number; fmt: (v: number) => string }) {
-  const animated = useAnimatedNumber(value) ?? value
-  return <>{fmt(animated)}</>
-}
 
 function HeadlineTile({
   label,
@@ -105,116 +93,11 @@ function HeadlineTile({
   )
 }
 
-const FEED_LABELS: Record<string, string> = {
-  dz_edge: 'DZ Edge',
-  dz_root: 'DZ Edge turbine-root',
-  dz: 'DZ Edge Leaders',
-  dz_retransmit: 'DZ Edge Retransmits',
-  jito: 'Jito Shredstream',
-  turbine: 'Turbine',
-  pipe: 'Pipe',
-  other: 'Other',
-}
 
-type FeedSegment = { key: string; pct: number; rawPct: number; color: string }
 
-function StackedBar({ segments, children, popoverSide = 'top', dzTotalPct }: { segments: FeedSegment[]; children?: React.ReactNode; popoverSide?: 'top' | 'bottom' | 'right'; dzTotalPct?: number }) {
-  const [hover, setHover] = useState(false)
-  const popoverClass = popoverSide === 'right'
-    ? 'left-full top-1/2 -translate-y-1/2 ml-2'
-    : popoverSide === 'bottom'
-    ? 'top-full left-0 mt-2'
-    : 'bottom-full left-0 mb-2'
-  return (
-    <div className="relative" onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
-      {children}
-      <div className="h-1 rounded-full bg-muted-foreground/25 overflow-hidden">
-        <div className="flex h-full">
-          {segments.map(({ key, pct, color }) => (
-            <div key={key} className="h-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: color }} />
-          ))}
-        </div>
-      </div>
-      {hover && segments.length > 0 && (() => {
-        const dzSegs = segments.filter(s => DZ_FEED_KEYS.has(s.key))
-        const otherSegs = segments.filter(s => !DZ_FEED_KEYS.has(s.key))
-        const dzBySubKey = new Map(dzSegs.map(s => [s.key, s]))
-        // Granular-DZ mode: we're breaking DZ into Leaders/Root/Retransmits (delivery order).
-        // Always show all three, synthesizing a 0% entry for whichever is missing so the layout
-        // stays stable across rows (e.g. a node with no retransmit feed still shows "Retransmits 0.00%").
-        const hasGranularDz = dzBySubKey.has('dz_root') || dzBySubKey.has('dz') || dzBySubKey.has('dz_retransmit')
-        const groupDz = hasGranularDz || dzSegs.length > 1
-        const dzDisplaySegs: FeedSegment[] = hasGranularDz
-          ? [
-              dzBySubKey.get('dz') ?? { key: 'dz', pct: 0, rawPct: 0, color: FEED_COLORS.dz },
-              dzBySubKey.get('dz_root') ?? { key: 'dz_root', pct: 0, rawPct: 0, color: FEED_COLORS.dz_root },
-              dzBySubKey.get('dz_retransmit') ?? { key: 'dz_retransmit', pct: 0, rawPct: 0, color: FEED_COLORS.dz_retransmit },
-            ]
-          : dzSegs
-        const dzSubLabels: Record<string, string> = { dz_edge: 'Edge', dz_root: 'turbine-root', dz: 'Leaders', dz_retransmit: 'Retransmits' }
-        const flatSegs = groupDz ? otherSegs : segments
-        return (
-          <div className={cn('absolute z-30 bg-popover border border-border rounded-lg shadow-lg px-3 py-2 text-xs whitespace-nowrap', popoverClass)}>
-            {groupDz && (
-              <>
-                <div className="flex items-center gap-2 py-0.5 font-medium">
-                  <span>DZ Edge</span>
-                  <span className="ml-auto pl-4 tabular-nums">{(dzTotalPct ?? dzSegs.reduce((s, seg) => s + seg.rawPct, 0)).toFixed(1)}%</span>
-                </div>
-                {dzDisplaySegs.map(({ key, rawPct, color }) => (
-                  <div key={key} className="flex items-center gap-2 py-0.5 pl-3">
-                    <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
-                    <span className="text-muted-foreground">{dzSubLabels[key] ?? key}</span>
-                    <span className="ml-auto pl-4 tabular-nums">{rawPct.toFixed(key === 'dz_retransmit' ? 2 : 1)}%</span>
-                  </div>
-                ))}
-                {otherSegs.length > 0 && <div className="border-t border-border my-1.5" />}
-              </>
-            )}
-            {flatSegs.map(({ key, rawPct, color }) => (
-              <div key={key} className="flex items-center gap-2 py-0.5">
-                <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
-                <span className="text-muted-foreground">{FEED_LABELS[key] ?? key}</span>
-                <span className="ml-auto pl-4 tabular-nums font-medium">{rawPct.toFixed(1)}%</span>
-              </div>
-            ))}
-          </div>
-        )
-      })()}
-    </div>
-  )
-}
 
-// Feeds considered "DZ" for simplified view grouping.
-const DZ_FEED_KEYS = new Set(['dz_edge', 'dz_root', 'dz', 'dz_retransmit'])
 
-// Map a raw feed name to the key used in the chart/bar data.
-// The API returns 'dz_edge' (server-computed aggregate of dz + retransmit), 'dz' (Leaders),
-// and 'dz_retransmit' (pre-aggregated regional retransmit feeds).
-// Simplified mode: all DZ feeds → 'dz_edge'.
-// Granular mode: skip 'dz_edge' (redundant with components); show 'dz' and 'dz_retransmit'.
-function feedKeyForMode(feed: string, granular: boolean): string | null {
-  if (granular) {
-    if (feed === 'dz_edge') return null  // skip aggregate — components shown instead
-    return feed in FEED_COLORS ? feed : null
-  }
-  if (DZ_FEED_KEYS.has(feed)) return 'dz_edge'
-  if (feed in FEED_COLORS) return 'other'
-  return null
-}
 
-// Priority for feed ordering in chart (lower = rendered first / bottom of stack).
-function feedSortPriority(f: string): number {
-  if (f === 'dz_edge') return 0
-  if (f === 'dz') return 1
-  if (f === 'dz_root') return 1.5
-  if (f === 'dz_retransmit') return 2
-  if (f === 'jito') return 5
-  if (f === 'turbine') return 6
-  if (f === 'pipe') return 7
-  if (f === 'other') return 10
-  return 8
-}
 
 
 function NodePopover({ node }: { node: EdgeScoreboardNode }) {
@@ -252,15 +135,6 @@ function NodePopover({ node }: { node: EdgeScoreboardNode }) {
   )
 }
 
-// nodeDisplayLabel returns a disambiguated label for a node. When multiple nodes
-// share the same metro location (e.g. "ams-mn-bm1" and "ams-mn-bm2" both map to "AMS"),
-// appends the trailing index from the host name so the UI shows "AMS-1" / "AMS-2".
-function nodeDisplayLabel(node: EdgeScoreboardNode, nodes: EdgeScoreboardNode[]): string {
-  const hasDuplicate = nodes.some(n => n.host !== node.host && n.location === node.location)
-  if (!hasDuplicate) return node.location
-  const suffix = node.host.split('-').pop()?.match(/\d+$/)?.[0]
-  return suffix ? `${node.location}-${suffix}` : node.host
-}
 
 
 
@@ -270,15 +144,13 @@ function nodeDisplayLabel(node: EdgeScoreboardNode, nodes: EdgeScoreboardNode[])
 
 
 export function EdgeScoreboardPage() {
-  const [searchParams, setSearchParams] = useSearchParams()
+  const [searchParams] = useSearchParams()
 
   const rawWindow = searchParams.get('window')
   const activeWindow: TimeWindow = isValidWindow(rawWindow) ? rawWindow : '24h'
 
-  const leadersOnly = searchParams.get('leaders_only') !== 'false'
+  const LEADERS_ONLY = true
 
-  // Still read by the node table's per-feed breakdown.
-  const granular = searchParams.get('granular') === '1'
 
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -292,8 +164,8 @@ export function EdgeScoreboardPage() {
   const showTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const { data, isLoading, isFetching, error } = useQuery({
-    queryKey: ['edge-scoreboard', activeWindow, leadersOnly],
-    queryFn: () => fetchEdgeScoreboard(activeWindow, leadersOnly),
+    queryKey: ['edge-scoreboard', activeWindow, LEADERS_ONLY],
+    queryFn: () => fetchEdgeScoreboard(activeWindow, LEADERS_ONLY),
     refetchInterval: 30_000,
     staleTime: 15_000,
     placeholderData: keepPreviousData,
@@ -315,14 +187,6 @@ export function EdgeScoreboardPage() {
     return `${Math.round(ageSec / 60)}m ago`
   }, [data?.generated_at, now])
 
-  const setLeadersOnly = (v: boolean) => {
-    setSearchParams((prev) => {
-      const p = new URLSearchParams(prev)
-      if (!v) p.set('leaders_only', 'false')
-      else p.delete('leaders_only')
-      return p
-    })
-  }
 
   const vsTurbine = useMemo(
     () => (data?.nodes?.length ? edgeWinRateVsTurbine(data.nodes) : null),
@@ -404,27 +268,6 @@ export function EdgeScoreboardPage() {
           }
           actions={
             <div className="flex flex-wrap items-center gap-3 sm:gap-4">
-              <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                {([
-                  [false, 'All Slots', 'Shred arrival rates across all observed slots.'] as const,
-                  [true, 'DZ Edge Leaders', 'Scoped to slots where the scheduled leader is publishing shreds via DZ Edge.'] as const,
-                ]).map(([v, label, tooltip]) => (
-                  <Tooltip key={String(v)} content={tooltip}>
-                    <button
-                      type="button"
-                      onClick={() => setLeadersOnly(v)}
-                      className={cn(
-                        'px-2.5 py-1 rounded-md border transition-colors',
-                        leadersOnly === v
-                          ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-400'
-                          : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
-                      )}
-                    >
-                      {label}
-                    </button>
-                  </Tooltip>
-                ))}
-              </div>
               <a
                 href="https://docs.malbeclabs.com/Edge%20Subscriber%20Connection/"
                 target="_blank"
@@ -489,28 +332,35 @@ export function EdgeScoreboardPage() {
 
         <ShredsNowLeading slots={stableRecent?.slots ?? []} leaders={stableRecent?.leaders} />
 
-        {/* Node detail table */}
+        {/* Recording nodes — where the races are measured. The per-feed win
+            rates and lead times that used to live here are gone with the feeds
+            that fed them: Jito is retired and its column was all em-dashes. */}
         <div className="border border-border rounded-lg overflow-hidden bg-card mb-6">
+          <div className="flex items-baseline justify-between gap-3 px-4 py-3 flex-wrap">
+            <h2 className="text-sm font-semibold">Recording Nodes</h2>
+            <span className="text-xs text-muted-foreground">where the races are measured</span>
+          </div>
           <div className="overflow-x-auto">
             <table className="min-w-full">
               <thead>
-                <tr className="text-sm text-left text-muted-foreground border-b border-border">
-                  <th className="px-3 sm:px-4 py-3 font-medium whitespace-nowrap">Node</th>
-                  <th className="px-3 sm:px-4 py-3 font-medium text-right whitespace-nowrap">DZ Edge Win Rate %</th>
-                  <th className="px-3 sm:px-4 py-3 font-medium text-right whitespace-nowrap">vs Jito Shredstream<span className="block font-normal text-xs">p50 (p95)</span></th>
-                  <th className="px-3 sm:px-4 py-3 font-medium text-right whitespace-nowrap">vs Turbine<span className="block font-normal text-xs">p50 (p95)</span></th>
+                <tr className="text-left text-muted-foreground border-y border-border">
+                  <th className="px-3 sm:px-4 py-2.5 text-[10px] uppercase tracking-wider font-medium whitespace-nowrap">Node</th>
+                  <th className="px-3 sm:px-4 py-2.5 text-[10px] uppercase tracking-wider font-medium whitespace-nowrap">Metro</th>
+                  <th className="px-3 sm:px-4 py-2.5 text-[10px] uppercase tracking-wider font-medium text-right whitespace-nowrap">Validators</th>
+                  <th className="px-3 sm:px-4 py-2.5 text-[10px] uppercase tracking-wider font-medium text-right whitespace-nowrap">Stake</th>
+                  <th className="px-3 sm:px-4 py-2.5 text-[10px] uppercase tracking-wider font-medium text-right whitespace-nowrap">Slots observed</th>
                 </tr>
               </thead>
               <tbody>
                 {sortedNodes.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-12 text-center text-muted-foreground">
+                    <td colSpan={5} className="px-4 py-12 text-center text-muted-foreground">
                       No data available for the selected time window.
                     </td>
                   </tr>
                 ) : (
                   sortedNodes.map((node) => (
-                    <NodeRow key={node.host} node={node} label={nodeDisplayLabel(node, data?.nodes ?? [])} granular={granular} />
+                    <NodeRow key={node.host} node={node} />
                   ))
                 )}
               </tbody>
@@ -524,63 +374,42 @@ export function EdgeScoreboardPage() {
   )
 }
 
-function NodeRow({ node, label, granular }: { node: EdgeScoreboardNode; label: string; granular: boolean }) {
+function NodeRow({ node }: { node: EdgeScoreboardNode }) {
   const [fixedPos, setFixedPos] = useState<{ top: number; left: number } | null>(null)
   const cellRef = useRef<HTMLDivElement>(null)
-  const dz = node.feeds['dz']
-  const dzEdge = node.feeds['dz_edge']
-  const edgeFirstArrival = dzEdge?.win_rate_pct ?? 0
-
-  // Build lead time lookup: loser_feed -> { p50, p95 }.
-  // Prefer dz_edge (dz + retransmit combined, matches the win-rate framing);
-  // fall back to dz-only for older API responses.
-  const dzLeadByFeed: Record<string, { p50: number; p95: number }> = {}
-  const leadSource = dzEdge?.lead_times?.length ? dzEdge.lead_times : dz?.lead_times
-  if (leadSource) {
-    for (const lt of leadSource) {
-      dzLeadByFeed[lt.loser_feed] = { p50: lt.p50_ms, p95: lt.p95_ms }
-    }
-  }
-
-  // Per-feed-key segments for the stacked bar.
-  // `rawPct` = server-provided win_rate_pct on the shared per-host denominator.
-  // `pct` = visual width, normalized so the bar always fills 100%.
-  const feedBarSegments = useMemo(() => {
-    const accumulated: Record<string, number> = {}
-    const hasDzEdge = 'dz_edge' in node.feeds
-    for (const [feedName, stats] of Object.entries(node.feeds)) {
-      if (!granular && hasDzEdge && (feedName !== 'dz_edge' && DZ_FEED_KEYS.has(feedName))) continue
-      const key = feedKeyForMode(feedName, granular)
-      if (!key) continue
-      accumulated[key] = (accumulated[key] ?? 0) + stats.win_rate_pct
-    }
-    const total = Object.values(accumulated).reduce((s, v) => s + v, 0)
-    const scale = total > 0 ? 100 / total : 1
-    return Object.entries(accumulated)
-      .sort(([a], [b]) => feedSortPriority(a) - feedSortPriority(b))
-      .map(([key, pct]) => ({ key, pct: pct * scale, rawPct: pct, color: FEED_COLORS[key] ?? '#6b7280' }))
-  }, [node.feeds, granular])
-
   const hasGossip = !!node.gossip_pubkey
+  const isQA = /-qa-/.test(node.host)
 
   return (
-    <tr className="border-b border-border last:border-b-0 hover:bg-muted/50 transition-colors">
-      <td className="px-3 sm:px-4 py-3">
-        <div ref={cellRef} className="relative" onMouseEnter={() => {
-          if (cellRef.current) {
-            const r = cellRef.current.getBoundingClientRect()
-            setFixedPos({ top: r.top + r.height / 2, left: r.right + 8 })
-          }
-        }} onMouseLeave={() => setFixedPos(null)}>
+    <tr className="border-b border-border last:border-b-0 hover:bg-muted/40 transition-colors">
+      <td className="px-3 sm:px-4 py-2.5">
+        <div
+          ref={cellRef}
+          className="relative inline-flex items-center gap-2"
+          onMouseEnter={() => {
+            if (cellRef.current) {
+              const r = cellRef.current.getBoundingClientRect()
+              setFixedPos({ top: r.top + r.height / 2, left: r.right + 8 })
+            }
+          }}
+          onMouseLeave={() => setFixedPos(null)}
+        >
           {hasGossip ? (
-            <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} state={{ back: { to: '/dz/shreds/scoreboard', label: 'Shreds Scoreboard' } }} className="text-sm font-medium hover:text-[#10b981] transition-colors">
-              {label}
+            <Link
+              to={`/solana/gossip-nodes/${node.gossip_pubkey}`}
+              state={{ back: { to: '/dz/shreds/scoreboard', label: 'Shreds Scoreboard' } }}
+              className="font-mono text-xs hover:text-emerald-400 transition-colors"
+            >
+              {node.host}
             </Link>
           ) : (
-            <div className="text-sm font-medium">{label}</div>
+            <span className="font-mono text-xs">{node.host}</span>
           )}
-          <div className="text-xs text-muted-foreground">{node.metro_name}</div>
-          {node.stake_sol > 0 && <div className="text-xs text-muted-foreground">{formatStake(node.stake_sol)} staked</div>}
+          {isQA && (
+            <span className="text-[9px] uppercase tracking-wider text-muted-foreground border border-border rounded px-1 py-px">
+              qa
+            </span>
+          )}
           {fixedPos && (
             <div style={{ position: 'fixed', top: fixedPos.top, left: fixedPos.left, transform: 'translateY(-50%)', zIndex: 50 }}>
               <NodePopover node={node} />
@@ -588,21 +417,12 @@ function NodeRow({ node, label, granular }: { node: EdgeScoreboardNode; label: s
           )}
         </div>
       </td>
-      <td className="px-3 sm:px-4 py-3 text-right tabular-nums text-sm">
-        {dz ? (
-          <StackedBar segments={feedBarSegments} popoverSide="right" dzTotalPct={edgeFirstArrival}>
-            <div className="mb-1.5">{formatPct(edgeFirstArrival)}</div>
-          </StackedBar>
-        ) : '—'}
+      <td className="px-3 sm:px-4 py-2.5 text-xs">{node.metro_name || '—'}</td>
+      <td className="px-3 sm:px-4 py-2.5 text-xs text-right tabular-nums">{node.validators.toLocaleString()}</td>
+      <td className="px-3 sm:px-4 py-2.5 text-xs text-right tabular-nums">
+        {node.stake_sol > 0 ? formatStake(node.stake_sol) : '—'}
       </td>
-      {['jito', 'turbine'].map(f => {
-        const lt = dzLeadByFeed[f]
-        return (
-          <td key={f} className="px-3 sm:px-4 py-3 text-right tabular-nums text-sm whitespace-nowrap">
-            {lt ? <><AnimatedStat value={lt.p50} fmt={formatMs} /> <span className="text-muted-foreground">(<AnimatedStat value={lt.p95} fmt={formatMs} />)</span></> : '—'}
-          </td>
-        )
-      })}
+      <td className="px-3 sm:px-4 py-2.5 text-xs text-right tabular-nums">{node.slots_observed.toLocaleString()}</td>
     </tr>
   )
 }

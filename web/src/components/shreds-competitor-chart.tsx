@@ -1,4 +1,3 @@
-import { useQuery } from '@tanstack/react-query'
 import {
   Area,
   AreaChart,
@@ -10,15 +9,12 @@ import {
   YAxis,
 } from 'recharts'
 
-import { fetchShredsCompetitors, type ShredsCompetitorDay } from '@/lib/api'
+import { type ShredsCompetitorDay } from '@/lib/api'
 import { FEED_COLORS } from '@/lib/feed-colors'
 import { dayToTs, formatDay, formatLeadMs, tsToDay } from './shreds-competitor-day'
-
-const WINDOW_DAYS = 30
-
+import { useShredsCompetitors } from './use-shreds-competitors'
 
 const DZ_COLOR = FEED_COLORS.dz
-const REFETCH_MS = 10 * 60 * 1000
 const Y_TICKS = [0, 25, 50, 75, 100]
 
 function StatCell({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
@@ -32,16 +28,6 @@ function StatCell({ label, value, accent }: { label: string; value: string; acce
   )
 }
 
-// Shared so the headline tile and this chart read one query and can never
-// disagree about the latest day.
-export function useShredsCompetitors() {
-  return useQuery({
-    queryKey: ['shreds-competitors', WINDOW_DAYS],
-    queryFn: () => fetchShredsCompetitors(WINDOW_DAYS),
-    refetchInterval: REFETCH_MS,
-    staleTime: REFETCH_MS,
-  })
-}
 
 export function ShredsCompetitorChart() {
   const { data, isLoading, isError } = useShredsCompetitors()
@@ -150,8 +136,11 @@ export function ShredsCompetitorChart() {
                   stroke={DZ_COLOR}
                   strokeWidth={2}
                   fill="url(#dzWinFade)"
-                  dot={false}
-                  activeDot={{ r: 4, stroke: 'var(--card)', strokeWidth: 2 }}
+                  dot={{ r: 3, fill: DZ_COLOR, stroke: 'var(--card)', strokeWidth: 2 }}
+                  activeDot={{ r: 4.5, stroke: 'var(--card)', strokeWidth: 2 }}
+                  isAnimationActive
+                  animationDuration={1100}
+                  animationEasing="ease-out"
                 />
               </AreaChart>
             </ResponsiveContainer>
