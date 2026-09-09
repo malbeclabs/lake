@@ -432,7 +432,18 @@ table {
   animation: scoreboardEdgeLoad 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
-/* Shreds "Now Leading" motion. */
+/* Shreds "Now Leading" motion. The sweep crosses the card once per leader turn,
+   so it marks the change AND shows how far through the turn you are — which is
+   what the separate progress line used to do, in the same direction. */
+@keyframes leaderSweep {
+  from {
+    transform: translateX(-120%);
+  }
+  to {
+    transform: translateX(120%);
+  }
+}
+
 @keyframes growUp {
   from {
     transform: scaleY(0.04);

@@ -79,11 +79,9 @@ export function ShredsNowLeading({
   const heldRef = useRef(held)
   heldRef.current = held
 
-  // The progress bar and the counting figure are written straight to the DOM.
-  // Through React state they re-rendered the whole panel — card, bars and seven
-  // tape rows — twenty times a second, and that render cost is what made the
-  // motion stutter. Driven this way the component renders once per leader.
-  const progressRef = useRef<HTMLDivElement>(null)
+  // The counting figure is written straight to the DOM. Through React state it
+  // re-rendered the whole panel — card, bars and ten tape rows — on every frame
+  // of the count, and that render cost is what made the motion stutter.
   const winRef = useRef<HTMLDivElement>(null)
   const elapsedRef = useRef(0)
 
@@ -100,18 +98,6 @@ export function ShredsNowLeading({
         // motionless between refetches, which is a live panel that never moves.
         const next = rs[indexRef.current + 1] ?? rs[Math.max(0, rs.length - WINDOW_RUNS)]
         setCursorSlot(next ? next.slots[0].slot : null)
-      }
-
-      const bar = progressRef.current
-      if (!bar) return
-      if (elapsedRef.current === 0) {
-        // Snap back rather than easing backwards over the rewind.
-        bar.style.transition = 'none'
-        bar.style.transform = 'scaleX(0)'
-        void bar.offsetWidth
-        bar.style.transition = ''
-      } else {
-        bar.style.transform = `scaleX(${elapsedRef.current / RUN_MS})`
       }
     }, TICK_MS)
     return () => clearInterval(id)
@@ -155,7 +141,7 @@ export function ShredsNowLeading({
 
   return (
     <div className="border border-border rounded-lg bg-card overflow-hidden mb-6">
-      <div className="flex items-baseline justify-between gap-3 px-4 py-3 flex-wrap">
+      <div className="flex items-baseline justify-between gap-3 px-4 py-3 flex-wrap border-b border-border">
         <h2 className="text-sm font-semibold flex items-center gap-2">
           <span
             className={`inline-flex rounded-full h-2 w-2 transition-colors ${isLive ? 'bg-emerald-500' : 'bg-emerald-500/30'}`}
@@ -172,20 +158,22 @@ export function ShredsNowLeading({
         </span>
       </div>
 
-      <div className="h-0.5 bg-muted-foreground/15 overflow-hidden">
-        <div
-          ref={progressRef}
-          className="h-full w-full origin-left bg-emerald-500/60 will-change-transform"
-          style={{ transform: 'scaleX(0)', transition: `transform ${TICK_MS}ms linear` }}
-        />
-      </div>
-
       <div
         key={current.key}
         onMouseEnter={() => setHeld(true)}
         onMouseLeave={() => setHeld(false)}
         className="relative overflow-hidden grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-5 items-center px-4 py-5"
       >
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-0 -inset-x-4 motion-reduce:hidden will-change-transform"
+          style={{
+            background:
+              'linear-gradient(100deg, transparent 30%, rgba(16,185,129,.11) 50%, transparent 70%)',
+            animation: `leaderSweep ${RUN_MS}ms linear forwards`,
+            animationPlayState: held ? 'paused' : 'running',
+          }}
+        />
         <div className="min-w-0 motion-safe:animate-[enterX_.5s_cubic-bezier(.16,.84,.28,1)_both]">
           {current.leader?.pubkey ? (
             <Link
