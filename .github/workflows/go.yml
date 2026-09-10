@@ -38,6 +38,10 @@ jobs:
   go-test:
     runs-on: ubuntu-24.04-16c-64gb
     needs: go-build
+    # Raising the per-binary -timeout below removes the runner-speed false
+    # alarm, but it also removes what was accidentally capping a genuine hang.
+    # GitHub's default job timeout is 6 hours; a healthy run is ~8 minutes.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
