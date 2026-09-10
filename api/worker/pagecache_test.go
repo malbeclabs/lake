@@ -352,6 +352,8 @@ func TestEntryCadences(t *testing.T) {
 		"edge_scoreboard":                      edgeScoreboardInterval,
 		"edge_scoreboard:leaders":              edgeScoreboardInterval,
 		handlers.NetworkHealthOverviewCacheKey: networkHealthOverviewInterval,
+		"geo_concentration":                    geoConcentrationInterval,
+		"geo_validators":                       geoConcentrationInterval,
 	} {
 		e, ok := byKey[key]
 		require.True(t, ok, "entry %q must exist", key)

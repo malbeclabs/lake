@@ -216,6 +216,13 @@ const (
 	// further back than the latest payload covers — see GetEdgeScoreboard's coverage
 	// guard, which is what keeps those slots from being skipped.
 	edgeScoreboardInterval = 5 * time.Minute
+
+	// The two DZDP geolocation entries. Both aggregate validator geography —
+	// country, ASN, and nearest DZ metro — which changes only when a validator
+	// moves or DZDP re-hones its anchor point, and weights it by stake, which
+	// shifts at epoch boundaries (~2 days). The page polls every 60s but nothing
+	// on it is a live signal, so ten minutes of staleness is invisible.
+	geoConcentrationInterval = 10 * time.Minute
 )
 
 // cacheAgesEscalationKey keys the gate's own age read, so a gate outage is one
@@ -475,10 +482,10 @@ func (a *Activities) entries() []cacheEntry {
 		{name: "bulk device metrics (issues)", key: "bulk_device_metrics_issues", fn: func(ctx context.Context) (any, error) {
 			return api.FetchBulkDeviceMetricsIssuesData(ctx)
 		}},
-		{name: "geo concentration", key: "geo_concentration", fn: func(ctx context.Context) (any, error) {
+		{name: "geo concentration", key: "geo_concentration", every: geoConcentrationInterval, fn: func(ctx context.Context) (any, error) {
 			return api.FetchGeoConcentrationData(ctx)
 		}},
-		{name: "geo validators", key: "geo_validators", fn: func(ctx context.Context) (any, error) {
+		{name: "geo validators", key: "geo_validators", every: geoConcentrationInterval, fn: func(ctx context.Context) (any, error) {
 			return api.FetchGeoValidatorsData(ctx, "", "")
 		}},
 		// The unfiltered stake-desc validators listing is polled continuously by the
