@@ -498,12 +498,39 @@ reports is single-vantage; the verdict stays `gapped`, because data was lost eit
 narrows is the sentence the tooltip is allowed to say. The real fix is a second market-by-price
 recorder, which is not work this repo can do.
 
-The tooltip also carries `gap_messages / messages` as a **loss rate** where there were gaps. That is
-not the banned display of `gap_messages` as a fault count — a rate is not a count, and it is the
-only severity available, because `gap_books` saturates at the channel's instrument count: on a perps
-channel carrying thirteen books, thirteen gapped and one gapped print the same badge. It stays in
-the tooltip rather than on the badge, which is where changing what the column asserts would need a
-product decision.
+**The badge reports sequence values lost, and `gap_books` no longer sizes anything.** The unit is
+holes in `per_instrument_seq` — `updates_missing` over `updates_received + updates_missing` — which
+is the only counter here that carries a magnitude and a denominator. Three measurements over six
+hours of mainnet settled it:
+
+- `gap_books` is an instrument count, not a loss count. It saturates at the channel's book count, so
+  perps read **13** books (of 13 instruments) against **3,439** updates lost while ncaaf read
+  **1,934** books against **2,693** — 149x the books for 0.78x the loss. The ranking it produced was
+  not the ranking of loss.
+- `gap_messages` is a time measure and swings between the two paths of one feed by up to **15.6x**
+  (perps: 5,262 against 337) while values lost holds within **7%** on every feed and **0.06%** in the
+  worst quarter hour of the day (21,488 against 21,476). Two independent paths cannot lose the same
+  datagrams by chance, so the figure they agree on is the one measuring the feed.
+- Grading on `gap_books` alone was a **false negative**: five instances lost updates with no marker
+  written at all, the worst of them 958 updates at 1,551 ppm on ligue1 ch25, and every one read `ok`.
+
+So `edgeMulticastSequenceStatus` takes both, and either alone is enough to say `gapped`. `gap_books`
+stays as a trigger and moves down the tooltip renamed to what it measures: **books left un-anchored**,
+a recovery state — the same thing a venue feed handler reports when it marks an instrument gapped and
+stops publishing it until a snapshot re-anchors it. A marker written is still a loss observed; it
+just cannot say how much.
+
+The rate is withheld below `SEQUENCE_LOSS_MIN_UPDATES` (500 updates in the window) and the count is
+always shown. A ratio over a thin channel is noise wearing a percentage: ncaamb ch15 read
+**11,938 ppm** off 45,189 updates and ncaawb ch116 **7,475 ppm** off 4,647, neither of which is a
+worse feed than tennis at 470 ppm over 28M. It is the same trade `edgeMulticastPathParityMinMessages`
+makes, and it is why the monitoring products in this space report absolute counts and per-second
+rates rather than ratios.
+
+`stalled` stays a **time** verdict and is read before either counter. A series carrying no new values
+has no count to report, and "0 lost" over a dead window is the clean bill of health this column
+exists to withhold. Time decides *when* to call a series dead; it never sizes the loss — which is
+also how every feed handler in this business works, declaring a gap only once a hold timer expires.
 
 Sequencing keys on the channel instance, `(source IP address, Channel ID, destination port)`.
 `kalshi_mbp_levels` carries the source address as `publisher_source_ip` — the arm axis is a column in
@@ -548,8 +575,8 @@ The **Sequence** column **folds cached refresher payloads and runs no query of i
 TTL-less, and a fifteen-minute question reads most of a day through a `remoteSecure()` proxy
 (~135M rows), which is why that file owns the scan on a ten-minute refresher. Re-running it on a
 page that polls every 30s would be the same scan again and would let the two pages disagree about
-one feed. Gap counts are **books**, never gap-marked messages — the message count is a duration
-that scales with traffic.
+one feed. The badge's unit is **sequence values lost**; `gap_books` is a recovery state and
+`gap_messages` a duration that scales with traffic, and neither sizes the verdict — see above.
 
 **Top-of-book** comes from `edge_multicast_tob_sequence.go`, on the same refresher and the same
 fifteen-minute window (measured: 3.8s over every `tob_` capture source). It reads
@@ -559,15 +586,30 @@ address in `raw_meta` is the primary group key — it is the destination the dat
 the capture source name is a convention that has been renamed once already — with the name as
 fallback.
 
-That leg **cannot count gaps, and must not pretend to**. There is no gap marker on this plane, and
+That leg **cannot count loss, and must not pretend to**. There is no gap marker on this plane, and
 the obvious substitute is wrong by construction: `kalshi_bbo_observations` holds one row per change
 to the top of the book, so a wire message that did not move the BBO legitimately leaves a hole in
-the numbering. Measured on mainnet, one instance carried 23,846 rows across a sequence span of
-24,553 — about 3% "missing" with nothing wrong. A count-versus-span test would paint every healthy
-top-of-book series permanently red. So those instances carry `gaps_measured: false`, the roll-up
-counts them in `gaps_unmeasured`, and the badge reads **`advancing`** rather than `ok`: the counters
-move and nothing checked them for loss. Closing that half needs the producer to emit a gap marker
-for top-of-book the way it does for market-by-price; it is not work this repo can do.
+the numbering. A count-versus-span test would paint every healthy top-of-book series permanently
+red. So those instances carry `gaps_measured: false`, the roll-up counts them in `gaps_unmeasured`,
+and the badge reads **`not counted`** rather than a zero: nothing here can be counted for holes.
+
+**The proof that those holes are structural is that independent observers report the identical
+number.** Measured over one fifteen-minute window on mainnet: perps ch1 read 1,292 / 1,292 / 1,295
+holes at `aws-cmh`, `aws-was` and `aws-dub`; epl read 568 on path A and 568 on path B; elections
+primaries read 460 on both paths at both recorders. Three recorders on three continents and two
+independent paths cannot drop the same datagrams. The magnitudes run 2.8% to 29.15% of the span,
+so reading them as loss is not a small error.
+
+The loss on this plane **is lost at capture, not on the wire** — the wire sequence is dense, and the
+recorder persists only the rows that moved the book. Capture systems in this business count gaps as
+packets arrive and store a counter; they never reconstruct loss from the rows they kept. So closing
+this half needs either a per-interval gap counter emitted by the **recorder** (no producer change),
+or a gap marker from the producer the way market-by-price has one. Neither is work this repo can do.
+
+What that plane *can* answer, and already does, is each recorder against the union of what its peers
+recorded — `recorder_loss`. Over six hours perps ch101 across the three nodes ran 0 to 25 sequences
+behind per quarter hour, zero in 20 of 24 buckets. That is a real reading about one recorder's
+branch, and structurally silent about what no recorder received.
 
 The cost of both legs is staleness, so `sequence_as_of` is in the payload — the **older** of the two
 legs — and the column ages against it. A cache miss costs that plane's rows, never the page.
