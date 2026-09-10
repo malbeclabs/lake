@@ -383,3 +383,85 @@ func TestGetDevice_HandlesNullContributor(t *testing.T) {
 	assert.Equal(t, "", device.ContributorPK)
 	assert.Equal(t, "", device.ContributorCode)
 }
+
+// insertMulticastCountTestData inserts a device whose on-chain multicast
+// subscriber/publisher counts are left at their default of 0 (the stale state
+// seen in production), plus activated multicast users that actually subscribe
+// to and/or publish to groups. The handler must report the live counts derived
+// from these users, not the stale on-chain zeros (#650).
+func insertMulticastCountTestData(t *testing.T, api *handlers.API) {
+	ctx := t.Context()
+
+	err := api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_devices_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, status, device_type, contributor_pk, metro_pk, public_ip, max_users) VALUES
+		('dev-mc', now(), now(), generateUUIDv4(), 0, 1, 'dev-mc', 'MC-DEVICE-01', 'activated', 'switch', '', '', '10.0.9.1', 100)
+	`)
+	require.NoError(t, err)
+
+	// 3 subscriber-only, 2 publisher-only, 1 both-roles, 1 pending (must be excluded).
+	err = api.DB.Exec(ctx, `
+		INSERT INTO dim_dz_users_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, status, device_pk, kind, owner_pubkey, client_ip, dz_ip, tunnel_id, publishers, subscribers) VALUES
+		('mc-s1',   now(), now(), generateUUIDv4(), 0, 1, 'mc-s1',   'activated', 'dev-mc', 'multicast', 'p', '', '', 0, '[]',     '["g1"]'),
+		('mc-s2',   now(), now(), generateUUIDv4(), 0, 2, 'mc-s2',   'activated', 'dev-mc', 'multicast', 'p', '', '', 0, '[]',     '["g1"]'),
+		('mc-s3',   now(), now(), generateUUIDv4(), 0, 3, 'mc-s3',   'activated', 'dev-mc', 'multicast', 'p', '', '', 0, '[]',     '["g2"]'),
+		('mc-p1',   now(), now(), generateUUIDv4(), 0, 4, 'mc-p1',   'activated', 'dev-mc', 'multicast', 'p', '', '', 0, '["g1"]', '[]'),
+		('mc-p2',   now(), now(), generateUUIDv4(), 0, 5, 'mc-p2',   'activated', 'dev-mc', 'multicast', 'p', '', '', 0, '["g1"]', '[]'),
+		('mc-b1',   now(), now(), generateUUIDv4(), 0, 6, 'mc-b1',   'activated', 'dev-mc', 'multicast', 'p', '', '', 0, '["g2"]', '["g2"]'),
+		('mc-pend', now(), now(), generateUUIDv4(), 0, 7, 'mc-pend', 'pending',   'dev-mc', 'multicast', 'p', '', '', 0, '[]',     '["g1"]')
+	`)
+	require.NoError(t, err)
+}
+
+func TestGetDevices_MulticastCountsFromLiveUsers(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+
+	insertMulticastCountTestData(t, api)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices", nil)
+	rr := httptest.NewRecorder()
+	api.GetDevices(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var response handlers.PaginatedResponse[handlers.DeviceListItem]
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&response))
+
+	var dev *handlers.DeviceListItem
+	for i := range response.Items {
+		if response.Items[i].Code == "MC-DEVICE-01" {
+			dev = &response.Items[i]
+			break
+		}
+	}
+	require.NotNil(t, dev)
+	// On-chain counts are 0, but live users give: 6 multicast users,
+	// 4 subscribers (mc-s1, mc-s2, mc-s3, mc-b1), 3 publishers (mc-p1, mc-p2, mc-b1).
+	assert.Equal(t, uint64(6), dev.MulticastUsers)
+	assert.Equal(t, uint16(4), dev.MulticastSubscribersCount)
+	assert.Equal(t, uint16(3), dev.MulticastPublishersCount)
+}
+
+func TestGetDevice_MulticastCountsFromLiveUsers(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+
+	insertMulticastCountTestData(t, api)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices/dev-mc", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("pk", "dev-mc")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rr := httptest.NewRecorder()
+	api.GetDevice(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var device handlers.DeviceDetail
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&device))
+
+	assert.Equal(t, uint64(6), device.MulticastUsers)
+	assert.Equal(t, uint16(4), device.MulticastSubscribersCount)
+	assert.Equal(t, uint16(3), device.MulticastPublishersCount)
+}
