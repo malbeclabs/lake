@@ -55,7 +55,7 @@ func (a *Activities) ComputeCompetitorDay(ctx context.Context, input CompetitorD
 				quantileExact(0.5)(win_rate)     AS win_typical,
 				quantileExact(0.5)(-diff_ms_p50) AS lead_typical_ms
 			FROM %s
-			WHERE dz_feed = 'dz'
+			WHERE dz_ip <> ''
 			  AND event_ts >= ?
 			  AND event_ts <  ?
 			GROUP BY slot

@@ -168,12 +168,13 @@ func setupCompetitorSource(t *testing.T) (clickhouse.Conn, string) {
 			event_ts    DateTime64(3),
 			slot        UInt64,
 			dz_feed     String,
+			dz_ip       String,
 			competitor  String,
 			win_rate    Float32,
 			diff_ms_p50 Float32,
 			ingested_at DateTime64(3)
 		) ENGINE = ReplacingMergeTree(ingested_at)
-		ORDER BY (event_ts, slot, dz_feed, competitor)`))
+		ORDER BY (event_ts, slot, dz_feed, dz_ip, competitor)`))
 	return conn, info.Database
 }
 
@@ -190,25 +191,27 @@ func TestComputeCompetitorDay_ScansAFloat32Source(t *testing.T) {
 
 	require.NoError(t, conn.Exec(t.Context(), `
 		INSERT INTO competitors_pairwise_feed_race
-			(event_ts, slot, dz_feed, competitor, win_rate, diff_ms_p50, ingested_at) VALUES
+			(event_ts, slot, dz_feed, dz_ip, competitor, win_rate, diff_ms_p50, ingested_at) VALUES
 			-- slot 100: three competitors, median win 0.6, median lead 0.3
-			('2026-09-02 01:00:00', 100, 'dz', 'a', 0.4, -0.2, '2026-09-02 01:00:01'),
-			('2026-09-02 01:00:00', 100, 'dz', 'b', 0.6, -0.3, '2026-09-02 01:00:01'),
-			('2026-09-02 01:00:00', 100, 'dz', 'c', 0.8, -0.4, '2026-09-02 01:00:01'),
+			('2026-09-02 01:00:00', 100, 'dz', '10.0.0.1', 'a', 0.4, -0.2, '2026-09-02 01:00:01'),
+			('2026-09-02 01:00:00', 100, 'dz', '10.0.0.1', 'b', 0.6, -0.3, '2026-09-02 01:00:01'),
+			('2026-09-02 01:00:00', 100, 'dz', '10.0.0.1', 'c', 0.8, -0.4, '2026-09-02 01:00:01'),
 			-- slot 200: same shape, so the outer median is unambiguous
-			('2026-09-02 02:00:00', 200, 'dz', 'a', 0.4, -0.2, '2026-09-02 02:00:01'),
-			('2026-09-02 02:00:00', 200, 'dz', 'b', 0.6, -0.3, '2026-09-02 02:00:01'),
-			('2026-09-02 02:00:00', 200, 'dz', 'c', 0.8, -0.4, '2026-09-02 02:00:01'),
-			-- excluded: not DZ's leader slot
-			('2026-09-02 03:00:00', 300, 'other', 'a', 0.9, -9.0, '2026-09-02 03:00:01'),
+			('2026-09-02 02:00:00', 200, 'dz', '10.0.0.1', 'a', 0.4, -0.2, '2026-09-02 02:00:01'),
+			('2026-09-02 02:00:00', 200, 'dz', '10.0.0.1', 'b', 0.6, -0.3, '2026-09-02 02:00:01'),
+			('2026-09-02 02:00:00', 200, 'dz', '10.0.0.1', 'c', 0.8, -0.4, '2026-09-02 02:00:01'),
+			-- excluded: no DZ address on the race, so DZ did not run it. Carries
+			-- dz_feed = 'dz' deliberately, so the row is dropped by dz_ip alone
+			-- and the test would fail if the filter regressed to the feed name.
+			('2026-09-02 03:00:00', 300, 'dz', '', 'a', 0.9, -9.0, '2026-09-02 03:00:01'),
 			-- excluded: the next day, which the window must not reach
-			('2026-09-03 01:00:00', 400, 'dz', 'a', 0.1, -0.1, '2026-09-03 01:00:01')`))
+			('2026-09-03 01:00:00', 400, 'dz', '10.0.0.1', 'a', 0.1, -0.1, '2026-09-03 01:00:01')`))
 
 	d, err := a.ComputeCompetitorDay(t.Context(), CompetitorDayInput{Day: day, CompetitorDatabase: db})
 	require.NoError(t, err)
 	require.NotNil(t, d)
 
-	assert.EqualValues(t, 2, d.LeaderSlots, "only DZ leader slots inside the day")
+	assert.EqualValues(t, 2, d.LeaderSlots, "only slots DZ raced, inside the day")
 	assert.InDelta(t, 0.6, d.WinTypicalP50, 1e-6)
 	assert.InDelta(t, 0.3, d.LeadTypicalMs, 1e-6, "lead is the negated diff")
 	assert.Equal(t, day, d.BucketDate)
@@ -279,14 +282,14 @@ func TestComputeCompetitorDay_CollapsesReObservations(t *testing.T) {
 	// present they are {0.4, 0.6, 0.8, 0.9} and it is not.
 	require.NoError(t, conn.Exec(t.Context(), `
 		INSERT INTO competitors_pairwise_feed_race
-			(event_ts, slot, dz_feed, competitor, win_rate, diff_ms_p50, ingested_at) VALUES
-			('2026-09-02 01:00:00', 100, 'dz', 'a', 0.4, -0.3, '2026-09-02 01:00:01'),
-			('2026-09-02 01:00:00', 100, 'dz', 'b', 0.6, -0.3, '2026-09-02 01:00:01'),
-			('2026-09-02 01:00:00', 100, 'dz', 'c', 0.9, -0.3, '2026-09-02 01:00:01')`))
+			(event_ts, slot, dz_feed, dz_ip, competitor, win_rate, diff_ms_p50, ingested_at) VALUES
+			('2026-09-02 01:00:00', 100, 'dz', '10.0.0.1', 'a', 0.4, -0.3, '2026-09-02 01:00:01'),
+			('2026-09-02 01:00:00', 100, 'dz', '10.0.0.1', 'b', 0.6, -0.3, '2026-09-02 01:00:01'),
+			('2026-09-02 01:00:00', 100, 'dz', '10.0.0.1', 'c', 0.9, -0.3, '2026-09-02 01:00:01')`))
 	require.NoError(t, conn.Exec(t.Context(), `
 		INSERT INTO competitors_pairwise_feed_race
-			(event_ts, slot, dz_feed, competitor, win_rate, diff_ms_p50, ingested_at) VALUES
-			('2026-09-02 01:00:00', 100, 'dz', 'c', 0.8, -0.3, '2026-09-02 01:00:09')`))
+			(event_ts, slot, dz_feed, dz_ip, competitor, win_rate, diff_ms_p50, ingested_at) VALUES
+			('2026-09-02 01:00:00', 100, 'dz', '10.0.0.1', 'c', 0.8, -0.3, '2026-09-02 01:00:09')`))
 
 	d, err := a.ComputeCompetitorDay(t.Context(), CompetitorDayInput{Day: day, CompetitorDatabase: db})
 	require.NoError(t, err)
