@@ -8153,6 +8153,46 @@ export interface EdgeMulticastRecorderCoverage {
   lagging?: EdgeMulticastLaggingRecorder[]
 }
 
+/** One rule that fired, for the tooltip. */
+export interface EdgeMulticastConformanceRule {
+  rule_id: string
+  severity: string
+  count: number
+}
+
+/** What the conformance rule set graded on one group over the window.
+ *
+ *  Per GROUP and never per publisher line, and that is a property of the source rather than of the
+ *  page: the metrics carry no publisher source address, so nothing in this payload can name a
+ *  path. Counts are events in the window, not running totals. */
+export interface EdgeMulticastConformance {
+  /** 'violating' | 'should' | 'ungraded' | 'advisory' | 'conforming', worst first. */
+  verdict: string
+  /** Violations by severity, after the known-deviation exclusions. */
+  must: number
+  should: number
+  info: number
+  /** passes over graded is the coverage actually achieved. Silence is not a pass. */
+  passes: number
+  graded: number
+  na: number
+  unverifiable: number
+  /** The rules that fired, must-severity first. */
+  top_rules?: EdgeMulticastConformanceRule[]
+  /** Known-deviation hits. Excluded from the verdict, never from the payload: a deviation that
+   *  stops firing is a real change, and one that starts firing elsewhere is a finding. */
+  exempted: number
+  /** How many validator processes stand behind the verdict, and at how many recorders. One
+   *  vantage cannot separate that recorder's own trouble from the feed's. */
+  instances: number
+  nodes?: string[]
+  /** Channel IDs graded, when the scrape carries the label. Empty is 'the scrape does not say',
+   *  never 'no channels'. */
+  channels?: string[]
+  /** The validator build behind the verdict. More than one is a legitimate mid-rollout state. */
+  versions?: string[]
+}
+
 export interface EdgeMulticastGroup {
   pk: string
   code: string
@@ -8177,6 +8217,9 @@ export interface EdgeMulticastGroup {
   publishers_publishing: number
   /** Recording nodes of this group that are behind the best-placed one. Absent when none are. */
   recorder_coverage?: EdgeMulticastRecorderCoverage
+  /** What the conformance rule set graded here; absent for a group no validator covers, which is
+   *  most of them, and for any environment with no metrics store configured. */
+  conformance?: EdgeMulticastConformance
   /** Per-node application-plane view; absent for a group no capture covers. */
   capture_nodes?: EdgeMulticastCaptureNode[]
   capture_nodes_lagging?: number
@@ -8225,6 +8268,10 @@ export interface EdgeMulticastResponse {
   /** When the recorded message rate and the parity ratio were computed. A different cache entry
    *  from the sequence legs, with its own clock, so those two columns age against this. */
   observations_as_of?: string
+  /** When the conformance verdicts were computed. A third cache entry with a third clock — its
+   *  payload comes from a metrics store, not from ClickHouse — so the column ages against this
+   *  and not against either of the two above. */
+  conformance_as_of?: string
   /** Width of the window the gap episodes were measured over. With sequence_as_of it is the axis
    *  they are drawn on: (sequence_as_of - this, sequence_as_of]. Absent when nothing folded any,
    *  which is also the signal to draw no timeline. */

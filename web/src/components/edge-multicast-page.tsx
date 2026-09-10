@@ -18,6 +18,8 @@ import {
   type GapEpisode,
   type EdgeMulticastBGPRtt,
   type EdgeMulticastBGPSession,
+  type EdgeMulticastConformance,
+  type EdgeMulticastConformanceRule,
   type EdgeMulticastGroup,
   type EdgeMulticastPathParity,
   type EdgeMulticastPublisher,
@@ -332,6 +334,7 @@ function PublisherLineRow({
   asOf,
   now,
   showLastHeard,
+  showConformance,
   showSequence,
   showObservations,
   sequenceAsOfAge,
@@ -343,6 +346,7 @@ function PublisherLineRow({
   asOf: number
   now: number
   showLastHeard: boolean
+  showConformance: boolean
   showSequence: boolean
   showObservations: boolean
   sequenceAsOfAge?: number
@@ -458,6 +462,11 @@ function PublisherLineRow({
       {/* "Heard" is per group — the recorders' own plane, with nothing to say about one
           publisher — but a sequence series is per publisher, so that column is filled in. */}
       {showLastHeard && <td className="px-3 py-1.5" />}
+      {/* Conformance is per GROUP for the same reason Heard is: the metrics carry no publisher
+          source address, so nothing in that payload can name a path. That is a property of the
+          source and not of the page — when the recorder's own rows land, keyed on the source
+          address, the verdict moves down here. */}
+      {showConformance && <td className="px-3 py-1.5" />}
       {showSequence && (
         <td className="px-3 py-1.5 whitespace-nowrap">
           <PublisherSequenceCell
@@ -587,6 +596,128 @@ function PeerParityCell({ parity, asOfAge }: { parity?: EdgeMulticastPathParity;
 // across the backbone and metro-to-metro over the public internet, neither of which touches the
 // tunnel. It ages on its own clock, written on a status change or a ~6-hourly keepalive, so hours
 // old is normal and the tooltip says so rather than letting a latency figure read as current.
+// Conformance verdict styling.
+//
+// `violating` is the finding and takes the red. `should` is a finding of lower severity, so amber.
+//
+// `ungraded` is deliberately neither: outlined grey, the same "this is an absence, not a reading"
+// treatment `advancing` gives a top-of-book series one column over. It is the state where the
+// validator ran, scraped cleanly and graded nothing — every rule reporting `na` because the state
+// it needs was never reached — while reporting zero violations. Rendering that green is the exact
+// failure the verdict exists to prevent.
+//
+// `advisory` is outlined rather than filled for the same reason: there is a finding on the row,
+// even though nothing is wrong.
+const CONFORMANCE_BADGE: Record<string, string> = {
+  violating: 'bg-red-500/15 text-red-500',
+  should: 'bg-amber-500/15 text-amber-500',
+  ungraded: 'border border-muted-foreground/40 text-muted-foreground',
+  advisory: 'border border-emerald-500/40 text-emerald-500',
+  conforming: 'bg-emerald-500/15 text-emerald-500',
+}
+
+// Everything the badge cannot say, and three of these lines are not optional: what the coverage
+// actually was, which known deviations were excluded, and how many vantages the verdict rests on.
+function conformanceTooltip(c: EdgeMulticastConformance, asOfAge?: number): string {
+  const lines: string[] = []
+  const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`
+
+  switch (c.verdict) {
+    case 'violating':
+      lines.push(`${plural(c.must, 'must-severity violation')} in the window.`)
+      break
+    case 'should':
+      lines.push(`${plural(c.should, 'should-severity violation')}, and no must-severity rule fired.`)
+      break
+    case 'ungraded':
+      lines.push(
+        'The validator is running and nothing it grades reached a verdict. That is not a pass: a rule reporting n/a never ran, so silence here is an absence rather than a clean bill of health.',
+      )
+      break
+    case 'advisory':
+      lines.push(`${plural(c.info, 'info-severity finding')}, and no must or should rule fired.`)
+      break
+    default:
+      lines.push(
+        'Nothing was found wrong in what was graded — which is a weaker claim than “this feed conforms to the spec”.',
+      )
+  }
+
+  if (c.graded > 0) {
+    const parts = [`${c.passes.toLocaleString()} of ${c.graded.toLocaleString()} checks passed`]
+    if (c.unverifiable > 0) parts.push(`${c.unverifiable.toLocaleString()} unverifiable`)
+    if (c.na > 0) parts.push(`${c.na.toLocaleString()} n/a`)
+    lines.push(`Coverage: ${parts.join(', ')}.`)
+  }
+
+  if (c.top_rules?.length) {
+    lines.push(c.top_rules.map((r: EdgeMulticastConformanceRule) => `${r.severity} · ${r.rule_id} ×${r.count.toLocaleString()}`).join('\n'))
+  }
+
+  // Counted, never hidden. A deviation that stops firing is a real change, and one that starts
+  // firing on a feed it was never excused for is a finding.
+  if (c.exempted > 0) {
+    lines.push(
+      `${plural(c.exempted, 'hit')} on known publisher deviations, excluded from this verdict and counted here.`,
+    )
+  }
+
+  const nodes = c.nodes?.length ?? 0
+  const where = nodes > 0 ? ` at ${plural(nodes, 'recorder')}` : ''
+  lines.push(`Graded by ${plural(c.instances, 'validator')}${where}.`)
+  // Every recorder grades the same feed independently, so the figures above are detections and
+  // not events: one violation in a publisher's wire format is counted once per vantage that saw
+  // it. Said only where there is more than one vantage, because with one they are the same thing.
+  if (nodes > 1) {
+    lines.push(
+      `Counts are detections, not events: each recorder grades the feed independently, so one violation seen at all ${nodes} counts ${nodes}.`,
+    )
+  }
+  if (nodes === 1) {
+    lines.push(
+      'One vantage: a fault seen here cannot be separated from that recorder’s own trouble with the feed.',
+    )
+  }
+  if (c.channels?.length) {
+    lines.push(`Channels graded: ${c.channels.join(', ')}.`)
+  }
+  if (c.versions?.length) {
+    lines.push(`Validator ${c.versions.join(', ')}.`)
+  }
+
+  return lines.join('\n\n') + computedLine(asOfAge)
+}
+
+// What the rule set graded on this group.
+//
+// Per GROUP, and the em dash is the honest reading for the rest: no validator covers that feed, so
+// there is nothing to report — not a pass. Today that is most of the groups on this page.
+function ConformanceCell({
+  conformance,
+  asOfAge,
+}: {
+  conformance?: EdgeMulticastConformance
+  asOfAge?: number
+}) {
+  if (!conformance) {
+    return <span className="text-muted-foreground">—</span>
+  }
+  const stale = payloadStale(asOfAge)
+  return (
+    <Tooltip content={conformanceTooltip(conformance, asOfAge)} className="whitespace-pre-line">
+      <span className={`inline-flex items-center gap-1.5${stale ? ' opacity-50' : ''}`}>
+        <span
+          className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
+            CONFORMANCE_BADGE[conformance.verdict] ?? 'bg-muted text-muted-foreground'
+          }`}
+        >
+          {conformance.verdict}
+        </span>
+      </span>
+    </Tooltip>
+  )
+}
+
 function DZDCell({
   deviceCode,
   tunnelId,
@@ -1303,10 +1434,12 @@ function GroupRow({
   asOf,
   now,
   showLastHeard,
+  showConformance,
   showSequence,
   showObservations,
   sequenceAsOfAge,
   observationsAsOfAge,
+  conformanceAsOfAge,
   gapWindow,
   floorBps,
   columns,
@@ -1316,10 +1449,12 @@ function GroupRow({
   asOf: number
   now: number
   showLastHeard: boolean
+  showConformance: boolean
   showSequence: boolean
   showObservations: boolean
   sequenceAsOfAge?: number
   observationsAsOfAge?: number
+  conformanceAsOfAge?: number
   gapWindow?: GapWindow
   floorBps: number
   columns: number
@@ -1374,6 +1509,11 @@ function GroupRow({
           <LastHeardCell group={group} now={now} />
         </td>
       )}
+      {showConformance && (
+        <td className="px-3 py-3 text-sm whitespace-nowrap">
+          <ConformanceCell conformance={group.conformance} asOfAge={conformanceAsOfAge} />
+        </td>
+      )}
       {/* Sequence and Health are per PUBLISHER and the group row carries neither. A series is
           owned by one publisher and a floor is cleared by one publisher, so a badge here is a
           worst-of that names nobody — on a two-publisher feed with one path dead it reads the
@@ -1409,6 +1549,7 @@ function GroupRow({
           now={now}
           floorBps={floorBps}
           showLastHeard={showLastHeard}
+          showConformance={showConformance}
           showSequence={showSequence}
           showObservations={showObservations}
           sequenceAsOfAge={sequenceAsOfAge}
@@ -1434,10 +1575,12 @@ function ServiceSection({
   asOf,
   now,
   showLastHeard,
+  showConformance,
   showSequence,
   showObservations,
   sequenceAsOfAge,
   observationsAsOfAge,
+  conformanceAsOfAge,
   gapWindow,
   floorBps,
   onOpen,
@@ -1446,10 +1589,12 @@ function ServiceSection({
   asOf: number
   now: number
   showLastHeard: boolean
+  showConformance: boolean
   showSequence: boolean
   showObservations: boolean
   sequenceAsOfAge?: number
   observationsAsOfAge?: number
+  conformanceAsOfAge?: number
   gapWindow?: GapWindow
   floorBps: number
   onOpen: (e: React.MouseEvent, pk: string) => void
@@ -1457,7 +1602,12 @@ function ServiceSection({
   // Only the truncation notice spans the table now; the publisher lines carry a cell per column,
   // so the count still has to match the header exactly — a mismatch silently shifts every group
   // column one to the left.
-  const columns = 6 + (showObservations ? 2 : 0) + (showLastHeard ? 1 : 0) + (showSequence ? 1 : 0)
+  const columns =
+    6 +
+    (showObservations ? 2 : 0) +
+    (showLastHeard ? 1 : 0) +
+    (showConformance ? 1 : 0) +
+    (showSequence ? 1 : 0)
   const silent = service.groups.filter((g) => g.silent).length
 
   return (
@@ -1519,6 +1669,12 @@ function ServiceSection({
                 </th>
               )}
               {showLastHeard && <th className="px-3 py-2 font-medium text-right">Heard</th>}
+              {showConformance && (
+                <th className="px-3 py-2 font-medium whitespace-nowrap leading-tight">
+                  <ColumnHeader label="Conformance" asOfAge={conformanceAsOfAge} />
+                  <div className="text-[10px] font-normal text-muted-foreground/70">per group</div>
+                </th>
+              )}
               {showSequence && (
                 <th className="px-3 py-2 font-medium">
                   <ColumnHeader label="Sequence" asOfAge={sequenceAsOfAge} />
@@ -1535,10 +1691,12 @@ function ServiceSection({
                 asOf={asOf}
                 now={now}
                 showLastHeard={showLastHeard}
+                showConformance={showConformance}
                 showSequence={showSequence}
                 showObservations={showObservations}
                 sequenceAsOfAge={sequenceAsOfAge}
                 observationsAsOfAge={observationsAsOfAge}
+                conformanceAsOfAge={conformanceAsOfAge}
                 gapWindow={gapWindow}
                 floorBps={floorBps}
                 columns={columns}
@@ -1585,6 +1743,14 @@ export function EdgeMulticastPage() {
     [data],
   )
 
+  // The conformance column exists only where a validator covers the group, which today is five of
+  // the fifteen — and nowhere at all in an environment with no metrics store configured. Dropped
+  // entirely rather than rendered as a column of dashes, the same rule Heard and Sequence follow.
+  const showConformance = useMemo(
+    () => (data?.services ?? []).some((s) => s.groups.some((g) => g.conformance !== undefined)),
+    [data],
+  )
+
   // Msg/s and Peer come from the observations refresher, and its payload can be absent — a new
   // cache key is empty until the first cycle after a deploy, and a feed with no recorder behind it
   // never gets one at all. Dropped entirely rather than rendered as two columns of dashes, the
@@ -1602,6 +1768,7 @@ export function EdgeMulticastPage() {
   // which keeps ageing whether or not this page refetches.
   const sequenceAsOfAge = ageSecs(data?.sequence_as_of, now)
   const observationsAsOfAge = ageSecs(data?.observations_as_of, now)
+  const conformanceAsOfAge = ageSecs(data?.conformance_as_of, now)
   // The axis for every loss strip on the page, built once. Both halves are required: the as-of is
   // the right edge and the width is the span, and either one alone would put the episodes
   // somewhere arbitrary. Undefined when the payload carries no window, which is the signal to draw
@@ -1691,10 +1858,12 @@ export function EdgeMulticastPage() {
               asOf={asOf}
               now={now}
               showLastHeard={data?.last_heard_available ?? false}
+              showConformance={showConformance}
               showSequence={showSequence}
               showObservations={showObservations}
               sequenceAsOfAge={sequenceAsOfAge}
               observationsAsOfAge={observationsAsOfAge}
+              conformanceAsOfAge={conformanceAsOfAge}
               gapWindow={gapWindow}
               floorBps={data?.publisher_floor_bps ?? 0}
               onOpen={onOpen}
@@ -1769,6 +1938,23 @@ export function EdgeMulticastPage() {
               on the group — seconds rather than minutes old, and only for the groups with a capture behind
               them. It is receive-side, so a silent recorder looks the same as a silent publisher, and it
               never sets the silent flag for that reason.
+            </p>
+          )}
+          {showConformance && (
+            <p>
+              <span className="text-foreground">Conformance</span> is what the spec's rule set graded on the
+              feed — read from the validators running beside the recorders, not from any table in this
+              database, which is why it is the one column here with no ClickHouse behind it. It is per
+              GROUP and blank on the publisher lines: the metrics carry the rule, the severity and the
+              result, and no publisher source address, so nothing in that payload can name a path. A green
+              badge says nothing was found wrong in what was graded, which is weaker than “this feed
+              conforms” — the tooltip carries the coverage actually achieved, and{' '}
+              <span className="text-foreground">ungraded</span> is the state where the validator ran and
+              nothing it grades ever reached a verdict, which is neither a pass nor a fault. No violation is
+              excluded: every must-severity finding the validator reports reaches the badge, which is the
+              same rule the alert on-call carries follows — this column must never be quieter than that
+              alert. A group with no validator behind it shows an em dash, which is the honest reading:
+              nobody checked.
             </p>
           )}
           {showSequence && (

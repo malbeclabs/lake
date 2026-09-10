@@ -937,7 +937,8 @@ func (a *API) FetchKalshiPathLatency(ctx context.Context) (*KalshiPathLatency, e
 // them and the request path never runs a multi-day scan:
 //   - the per-feed path latency,
 //   - the 24h and 7d scoreboards (the 1h scoreboard stays on the ordinary page-cache worker),
-//   - the sports L2 coverage view.
+//   - the sports L2 coverage view,
+//   - the two /dz/edge/multicast folds: the observations plane and the conformance verdicts.
 //
 // Each computation gets its own timeout so a slow one can't starve the others; the path
 // latency is refreshed first so the 24h/7d scoreboards pick up its freshly-cached value.
@@ -1010,8 +1011,29 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 			slog.Warn("edge multicast observations cache write failed", "error", err)
 		}
 	}
+	// The conformance leg of the same page. It reads no ClickHouse at all — the verdicts exist
+	// only in a metrics store — so it costs the chain nothing but its own HTTP round trips, and
+	// it sits second for the same reason the observations leg sits first: no page falls back to
+	// a live query for it, so until it lands its column is simply absent.
+	//
+	// A nil querier makes FetchEdgeMulticastConformance return an empty payload with no error,
+	// which is written and read as "no validator covers anything here". That is the correct
+	// state for an environment with no credentials, and it is not a failure to log.
+	refreshConformance := func() {
+		rctx, cancel := context.WithTimeout(ctx, runTimeout)
+		defer cancel()
+		val, err := a.FetchEdgeMulticastConformance(rctx)
+		if err != nil {
+			slog.Warn("edge multicast conformance refresh failed", "error", err)
+			return
+		}
+		if err := a.WritePageCache(ctx, edgeMulticastConformanceCacheKey, val); err != nil {
+			slog.Warn("edge multicast conformance cache write failed", "error", err)
+		}
+	}
 	refresh := func() {
 		refreshObservations()
+		refreshConformance()
 		refreshLatency()
 		refreshScoreboard("24h")
 		refreshScoreboard("7d")
