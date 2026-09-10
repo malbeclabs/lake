@@ -432,6 +432,53 @@ table {
   animation: scoreboardEdgeLoad 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
+/* Shreds "Now Leading" motion. The sweep crosses the card once per leader turn,
+   so it marks the change AND shows how far through the turn you are — which is
+   what the separate progress line used to do, in the same direction. */
+@keyframes leaderSweep {
+  from {
+    transform: translateX(-120%);
+  }
+  to {
+    transform: translateX(120%);
+  }
+}
+
+@keyframes growUp {
+  from {
+    transform: scaleY(0.04);
+    opacity: 0.25;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 0.85;
+  }
+}
+
+/* Each leader enters from the leading edge and settles, so the card reads as a
+   procession moving through rather than a flash in place. */
+@keyframes enterX {
+  from {
+    opacity: 0;
+    transform: translateX(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The tape is a conveyor: the whole list steps down one row as a unit, instead
+   of the top row blinking in over a static list. */
+@keyframes conveyor {
+  from {
+    transform: translateY(calc(var(--tape-row) * -1));
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
 /* Radix tooltip fade-in (no animate plugin in use) */
 @keyframes tooltipIn {
   from {
