@@ -56,7 +56,17 @@ jobs:
       # their handler deadlines. Fewer packages at once means more CPU per
       # container, and costs nothing in wall time: one package's critical path
       # bounds the suite (390s at -p 6 vs 402s at the default).
-      - run: go test -race -v -p 6 ./...
+      #
+      # -timeout is set explicitly because Go's default is 10m per test binary,
+      # and the two longest packages sit near it on a healthy run — api/handlers
+      # at 342s and indexer/pkg/dz/graph at 311s, 57% and 52% of the budget. A
+      # runner that is merely slow, not broken, then reads as a test failure: on
+      # 16dba8e6 every package took about twice as long (geoip 41s→91s, sol
+      # 48s→98s, mroute 164s→442s) with no assertion failure anywhere, and those
+      # two binaries panicked on the deadline while the tests they were running
+      # had been going 8 seconds. 30m keeps a real hang bounded well inside the
+      # job's own timeout while leaving room for a bad runner.
+      - run: go test -race -v -p 6 -timeout 30m ./...
   evals-short:
     runs-on: ubuntu-latest
     needs: go-build
