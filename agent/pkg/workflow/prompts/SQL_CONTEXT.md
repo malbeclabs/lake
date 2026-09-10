@@ -521,6 +521,38 @@ JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
 WHERE u.status = 'activated' AND u.kind = 'multicast' AND has(JSONExtract(u.publishers, 'Array(String)'), 'group_pk_value')
 ```
 
+### Device multicast capacity ("room for new subscribers/publishers")
+`dz_devices_current` has capacity columns:
+- `max_multicast_subscribers` / `max_multicast_publishers` — the maximum subscriber/publisher slots configured on the device. A value of `0` means the limit is **unknown/unset**, not "zero capacity".
+- `multicast_subscribers_count` / `multicast_publishers_count` — on-chain reported counts. These are frequently **stale or 0 even when users are attached**. Do NOT use them to answer "how many subscribers does this device have" or capacity questions.
+
+**Always derive the current count from live users in `dz_users_current`**, not from the device count columns:
+- current subscribers on a device = activated multicast users on that device with a non-empty `subscribers` array
+- current publishers on a device = activated multicast users on that device with a non-empty `publishers` array
+
+**Available capacity** for new subscribers = `max_multicast_subscribers - current_subscribers`, and is only meaningful when `max_multicast_subscribers > 0`. If `max_multicast_subscribers = 0`, the capacity is unknown — say so rather than reporting a number. A device "has capacity for new subscribers" when `max_multicast_subscribers > 0 AND current_subscribers < max_multicast_subscribers`.
+
+**Canonical "which devices have capacity for new multicast subscribers" query:**
+```sql
+WITH subs AS (
+    SELECT device_pk, countIf(JSONLength(subscribers) > 0) AS current_subscribers
+    FROM dz_users_current
+    WHERE status = 'activated' AND kind = 'multicast'
+    GROUP BY device_pk
+)
+SELECT
+    d.code,
+    d.max_multicast_subscribers AS max_subscribers,
+    COALESCE(s.current_subscribers, 0) AS current_subscribers,
+    toInt64(d.max_multicast_subscribers) - toInt64(COALESCE(s.current_subscribers, 0)) AS available
+FROM dz_devices_current d
+LEFT JOIN subs s ON s.device_pk = d.pk
+WHERE d.max_multicast_subscribers > 0
+  AND COALESCE(s.current_subscribers, 0) < d.max_multicast_subscribers
+ORDER BY available DESC
+```
+Swap `subscribers`→`publishers` and `max_multicast_subscribers`→`max_multicast_publishers` for publisher capacity.
+
 **Traffic gotcha:** On tunnel interfaces, use `in_octets_delta`/`out_octets_delta` for bandwidth. Do NOT use `in_multicast_pkts_delta`/`out_multicast_pkts_delta` — these counters are unreliable on tunnel interfaces.
 
 ### History Tables (CRITICAL)
