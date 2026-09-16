@@ -1010,8 +1010,27 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 			slog.Warn("edge multicast observations cache write failed", "error", err)
 		}
 	}
+	// The recorded-gap leg of the same column, from the feed-race recorder's own grain rather
+	// than from the capture's. It sits beside the observations leg for the same two reasons that
+	// one gives — no page falls back to a live query for it, so until it lands its numbers are
+	// simply absent, and it is cheap — and immediately after it, because the two describe the
+	// same span and a reader comparing them across a cycle boundary would be comparing two
+	// windows.
+	refreshTOBGaps := func() {
+		rctx, cancel := context.WithTimeout(ctx, runTimeout)
+		defer cancel()
+		val, err := a.FetchEdgeMulticastTOBGaps(rctx)
+		if err != nil {
+			slog.Warn("edge multicast tob gaps refresh failed", "error", err)
+			return
+		}
+		if err := a.WritePageCache(ctx, edgeMulticastTOBGapsCacheKey, val); err != nil {
+			slog.Warn("edge multicast tob gaps cache write failed", "error", err)
+		}
+	}
 	refresh := func() {
 		refreshObservations()
+		refreshTOBGaps()
 		refreshLatency()
 		refreshScoreboard("24h")
 		refreshScoreboard("7d")

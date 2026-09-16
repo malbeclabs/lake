@@ -429,6 +429,10 @@ func (a *API) edgeMulticastSequenceHealth(ctx context.Context, captureSources ed
 	at, gapWindowSecs := a.foldKalshiL2Coverage(ctx, captureSources, out)
 	note(at)
 	note(a.foldEdgeMulticastTOBSequence(ctx, captureSources, out))
+	// **After the observations leg, never before it.** This one replaces the series that leg
+	// folded for the same channel instance, so it has to find them already there; run first, it
+	// would append and then be overwritten by the staleness-only reading it exists to replace.
+	note(a.foldEdgeMulticastTOBGaps(ctx, captureSources, out))
 
 	if len(out) == 0 {
 		return nil, time.Time{}, 0, nil

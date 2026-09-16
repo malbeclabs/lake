@@ -118,3 +118,32 @@ func EdgeMulticastAllPathsGappedForTest(instances []EdgeMulticastChannelInstance
 func EdgeMulticastFamilyOfForTest(code string) string {
 	return edgeMulticastFamilyOf(code)
 }
+
+// EdgeMulticastTOBGapsMergeForTest exposes the recorded-gap fold to the external test package.
+// It builds the group catalogue and the existing top-of-book series the observations leg would
+// have folded, then merges the recorder's payload over them and returns the instances by group.
+//
+// The subject is the replacement rule: two legs describe one channel instance, and appending
+// instead of replacing would double every top-of-book row on the page.
+func EdgeMulticastTOBGapsMergeForTest(
+	groups []EdgeMulticastGroupForTest,
+	existing map[string][]EdgeMulticastChannelInstance,
+	series []EdgeMulticastTOBGapSeries,
+	generatedAt time.Time,
+) map[string][]EdgeMulticastChannelInstance {
+	catalog := make([]MulticastDeliveryGroup, 0, len(groups))
+	for _, g := range groups {
+		catalog = append(catalog, MulticastDeliveryGroup{PK: g.PK, Code: g.Code, MulticastIP: g.MulticastIP})
+	}
+	health := map[string]*EdgeMulticastSequenceHealth{}
+	for pk, instances := range existing {
+		health[pk] = &EdgeMulticastSequenceHealth{Instances: instances}
+	}
+	mergeEdgeMulticastTOBGaps(newEdgeMulticastCaptureSourceMap(catalog), series, generatedAt, health)
+
+	out := map[string][]EdgeMulticastChannelInstance{}
+	for pk, h := range health {
+		out[pk] = h.Instances
+	}
+	return out
+}
