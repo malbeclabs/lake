@@ -8060,7 +8060,13 @@ export interface EdgeMulticastChannelInstance {
   max_gap_messages?: number
   p99_gap_messages?: number
   resets: number
-  snapshot_cycles: number
+  /**
+   * Absent where the plane has no `snapshot_end` to count, which is the recorder's
+   * top-of-book grain. Absent and zero are different readings — zero cycles on a gapped
+   * series is a finding — so the tooltip omits the clause rather than printing a zero the
+   * producer never measured.
+   */
+  snapshot_cycles?: number
   last_seen: string
   /** 'ok' | 'gapped' | 'stalled'. */
   status: string

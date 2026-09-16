@@ -151,15 +151,30 @@ type EdgeMulticastChannelInstance struct {
 	// Resets and SnapshotCycles are the recovery side: an `instrument_reset` re-anchors one
 	// book, a `snapshot_end` completes a cycle. A series with gaps and no cycles is not
 	// recovering.
-	Resets         uint64 `json:"resets"`
-	SnapshotCycles uint64 `json:"snapshot_cycles"`
+	//
+	// **SnapshotCycles is a pointer because absent and zero are different readings**, and the
+	// sentence above is why: zero cycles on a gapped series is a finding, so a plane that
+	// cannot count them must not print one. The market-by-price leg always sets it, zero
+	// included; the recorder's top-of-book grain has no `snapshot_end` to count and leaves it
+	// nil, and the tooltip omits the clause rather than rendering `0 snapshot cycles` under a
+	// measured row.
+	Resets         uint64  `json:"resets"`
+	SnapshotCycles *uint64 `json:"snapshot_cycles,omitempty"`
 
-	// GapsMeasured says whether GapBooks is a reading or an absence. True on the
-	// market-by-price plane, where the recorder writes a gap marker this can count. False on
-	// top-of-book, where there is no marker and the row grain (one row per change to the top of
-	// the book) makes a sequence-versus-row-count test structurally wrong — see
-	// edge_multicast_tob_sequence.go. A zero GapBooks with this false is "not checked", and the
-	// UI has to render it as something other than a clean bill of health.
+	// GapsMeasured says whether GapBooks is a reading or an absence. A zero GapBooks with this
+	// false is "not checked", and the UI has to render it as something other than a clean bill
+	// of health.
+	//
+	// True wherever a producer writes a gap marker this can count: the market-by-price plane
+	// from `kalshi_mbp_levels.status_after`, and — since the feed-race recorder began writing
+	// `uncertain_reason` — the top-of-book plane too, from `kalshi_edge_book_top`
+	// (`edge_multicast_tob_gaps.go`).
+	//
+	// It stays false for a top-of-book series the recorder has not covered, which is the
+	// observations leg's own reading: that table carries no marker, and the obvious substitute
+	// is wrong on its grain by construction — a row exists only where the top CHANGED, so
+	// diffing sequence numbers against the row count reports ~3% loss on a healthy feed. The
+	// measurement is in `edge_multicast_observations.go`.
 	GapsMeasured bool `json:"gaps_measured"`
 
 	// CaptureSourceQuiet marks a stalled series whose silence belongs to the capture source
@@ -498,8 +513,9 @@ func (a *API) foldKalshiL2Coverage(ctx context.Context, captureSources edgeMulti
 			MaxGapMessages:  lane.MaxGapMessages,
 			P99GapMessages:  lane.P99GapMessages,
 
-			Resets:         lane.Resets,
-			SnapshotCycles: lane.SnapshotCycles,
+			Resets: lane.Resets,
+			// Always set on this plane, zero included: the count is a reading here.
+			SnapshotCycles: &lane.SnapshotCycles,
 			LastSeen:       lane.LastSeen.UTC(),
 			Status:         edgeMulticastSequenceStatus(lane.GapBooks, lane.LastSeen, coverage.GeneratedAt),
 			GapsMeasured:   true,

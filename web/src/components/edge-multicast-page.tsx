@@ -803,10 +803,13 @@ function sequenceInstanceLine(i: EdgeMulticastChannelInstance): string {
     i.gap_books > 0 && i.messages > 0 && i.gap_messages
       ? `, ${((i.gap_messages / i.messages) * 100).toFixed(2)}% of messages arrived un-anchored`
       : ''
-  return (
-    `${head}, ${i.gap_books.toLocaleString()} book(s) gapped${rate}, ${i.resets.toLocaleString()} resets, ` +
-    `${i.snapshot_cycles.toLocaleString()} snapshot cycles`
-  )
+  // **Omitted where the plane cannot count them, never printed as zero.** The recorder's
+  // top-of-book grain has no `snapshot_end`, and this line already refuses to print zeros that
+  // would read as findings — "a series with gaps and no cycles is not recovering" is exactly
+  // the reading a zero here would invent.
+  const cycles =
+    i.snapshot_cycles === undefined ? '' : `, ${i.snapshot_cycles.toLocaleString()} snapshot cycles`
+  return `${head}, ${i.gap_books.toLocaleString()} book(s) gapped${rate}, ${i.resets.toLocaleString()} resets${cycles}`
 }
 
 // The badge, shared by the group roll-up and the publisher lines. One instance per tooltip line:
