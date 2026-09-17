@@ -104,6 +104,17 @@ type DeviceInterfaceBucket struct {
 	ISISUnreachable bool   `json:"isis_unreachable"` // device is ISIS unreachable
 }
 
+// CompetitorDay is one UTC day of DZ's shred race against the commercial shred
+// feeds, at the leader-slot grain (dz_feed = 'dz').
+type CompetitorDay struct {
+	BucketDate time.Time `json:"bucket_date"`
+	IngestedAt time.Time `json:"ingested_at"`
+
+	LeaderSlots   uint64  `json:"leader_slots"`
+	WinTypicalP50 float64 `json:"win_typical_p50"`
+	LeadTypicalMs float64 `json:"lead_typical_ms"`
+}
+
 // BackfillInput configures a backfill run.
 type BackfillInput struct {
 	StartTime      time.Time
@@ -120,4 +131,10 @@ type BackfillChunkInput struct {
 	// TelemetryDatabase is the database holding the gNMI interface_state table
 	// (e.g. telemetry_mainnet_beta). Used by ComputeDeviceInterfaceRollupFromGNMI.
 	TelemetryDatabase string
+}
+
+// CompetitorDayInput asks for one closed UTC day of the competitor rollup.
+type CompetitorDayInput struct {
+	Day                time.Time
+	CompetitorDatabase string
 }

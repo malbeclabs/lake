@@ -95,11 +95,12 @@ func Start(ctx context.Context, cfg Config) error {
 	// Register rollup workflows
 	ingestionLogWriter := ingestionlog.NewWriter(chConn, log)
 	activities := &Activities{
-		ClickHouse:        chConn,
-		Log:               log.With("component", "rollup"),
-		IngestionLog:      ingestionLogWriter,
-		Network:           cfg.Network,
-		TelemetryDatabase: telemetryDatabaseForNetwork(cfg.Network),
+		ClickHouse:         chConn,
+		Log:                log.With("component", "rollup"),
+		IngestionLog:       ingestionLogWriter,
+		Network:            cfg.Network,
+		TelemetryDatabase:  telemetryDatabaseForNetwork(cfg.Network),
+		CompetitorDatabase: competitorDatabase(),
 	}
 
 	w := worker.New(tc, tq, worker.Options{})
@@ -288,4 +289,9 @@ func telemetryDatabaseForNetwork(network string) string {
 		return ""
 	}
 	return "telemetry_" + strings.ReplaceAll(network, "-", "_")
+}
+
+// competitorDatabase returns the database holding competitors_pairwise_feed_race.
+func competitorDatabase() string {
+	return os.Getenv("CLICKHOUSE_COMPETITOR_DB")
 }

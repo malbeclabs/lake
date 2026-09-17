@@ -21,7 +21,8 @@ type Activities struct {
 	// TelemetryDatabase is the gNMI interface_state DB (e.g. telemetry_mainnet_beta).
 	// When set, the device-interface rollup prefers it per device and falls back to the
 	// InfluxDB fact table for devices not present there. Empty = fact-only (current behavior).
-	TelemetryDatabase string
+	TelemetryDatabase  string
+	CompetitorDatabase string
 }
 
 // tableRef returns a qualified table reference. If sourceDB is non-empty, the
