@@ -398,7 +398,13 @@ func startMinIO(t *testing.T) *minioBackend {
 	t.Helper()
 	ctx := t.Context()
 
-	ctr, err := tcminio.Run(ctx, "minio/minio:RELEASE.2024-01-16T16-07-38Z")
+	// **quay.io, not Docker Hub, and the same pinned release.** `minio/minio` on Docker Hub
+	// serves no tags at all any more — a pull of this one fails with "pull access denied ...
+	// repository does not exist or may require 'docker login'", which reads like a credentials
+	// problem and is not one. quay.io is MinIO's own other registry and still carries this exact
+	// tag, so this is a registry change and not a version bump: nothing about what the test runs
+	// against moves.
+	ctr, err := tcminio.Run(ctx, "quay.io/minio/minio:RELEASE.2024-01-16T16-07-38Z")
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
