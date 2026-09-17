@@ -778,18 +778,24 @@ func edgeMulticastAllPathsGapped(instances []EdgeMulticastChannelInstance) []Kal
 		}
 	}
 
-	// **Intersected ACROSS vantages, not unioned.** The claim this badge makes is that the
-	// FEED lost data, and a second where one recorder lost both its paths while its peers hold
-	// intact copies is not that — it is that recorder's reception, which is what the node in
-	// the key above exists to keep separate and what a union across vantages puts straight
-	// back. Every vantage that can speak to "all paths" has to agree before a second counts.
+	// **Intersected across the NODES that watch one capture source, and unioned across the
+	// capture sources.** The two halves of the vantage key are not the same kind of thing, and folding
+	// them into one intersection asks the wrong question. A second where one recorder lost both
+	// its paths while its peers hold intact copies is that recorder's reception rather than the
+	// feed's loss, so the nodes watching a market have to agree — that is what the node in the
+	// key exists for. But two markets are two feeds' worth of data, and requiring them to lose
+	// in the same second is a condition nothing satisfies: a sports group carries 29 capture
+	// sources, so an intersection over the sources demands all 29 lose at once and the badge
+	// stops being reachable at all. Each capture source answers for itself, and the answers are
+	// unioned.
 	//
 	// **This changes nothing on the market-by-price plane**, which is where the 22-second
 	// measurement above was taken: every mbp_ source is recorded at exactly one vantage
 	// (aws-cmh-mn-recorder1, checked against the live store), and an intersection over one set
-	// is that set. It only bites where a group has several recorders, which is what the
-	// recorded-gap leg just made true for top of book.
-	var shared map[uint32]bool
+	// is that set. It bites where a group has several recorders — which is what the recorded-gap
+	// leg just made true for top of book — and it is where a group has many markets that the
+	// union matters.
+	perSource := map[string]map[uint32]bool{}
 	for v, publishers := range byVantage {
 		// One path at a vantage cannot fail "together" with anything. Recording nothing here is
 		// deliberate: a single-path group has no redundancy to lose, and claiming otherwise would
@@ -825,18 +831,27 @@ func edgeMulticastAllPathsGapped(instances []EdgeMulticastChannelInstance) []Kal
 		}
 
 		// A vantage with one path was skipped above and takes no part here: it cannot
-		// demonstrate that all paths lost, so it neither confirms nor vetoes a second.
-		if shared == nil {
-			shared = first
+		// demonstrate that all paths lost, so it neither confirms nor vetoes a second — and it
+		// vetoes nothing at its neighbours' markets either, because the fold below is per capture
+		// source.
+		prev, ok := perSource[v.source]
+		if !ok {
+			perSource[v.source] = first
 			continue
 		}
 		next := map[uint32]bool{}
-		for sec := range shared {
+		for sec := range prev {
 			if first[sec] {
 				next[sec] = true
 			}
 		}
-		shared = next
+		perSource[v.source] = next
+	}
+	shared := map[uint32]bool{}
+	for _, secs := range perSource {
+		for sec := range secs {
+			shared[sec] = true
+		}
 	}
 	if len(shared) == 0 {
 		return nil

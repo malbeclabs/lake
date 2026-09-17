@@ -120,3 +120,22 @@ func TestEdgeMulticastAllPathsGapped_UnnamedCaptureSourcesDoNotIntersect(t *test
 	})
 	assert.Empty(t, got, "one second of loss at two unnamed series is not the feed losing data")
 }
+
+// The sources are unioned, so one market losing both of its paths is a finding even while every
+// other market in the group holds. Intersecting across the sources as well as the nodes reads as
+// the stricter claim and is in fact an unmeetable one: a sports group carries 29 capture sources,
+// and "all 29 lost in this same second" is a condition nothing produces, so the badge would never
+// fire again.
+func TestEdgeMulticastAllPathsGapped_OneMarketIsNotVetoedByItsNeighbours(t *testing.T) {
+	got := handlers.EdgeMulticastAllPathsGappedForTest([]handlers.EdgeMulticastChannelInstance{
+		inst("148.51.121.69", "mbp_edge_kalshi_sports_nfl", "cmh-rec1", true, 100),
+		inst("148.51.120.6", "mbp_edge_kalshi_sports_nfl", "cmh-rec1", true, 100),
+		inst("148.51.121.69", "mbp_edge_kalshi_sports_nba", "cmh-rec1", true),
+		inst("148.51.120.6", "mbp_edge_kalshi_sports_nba", "cmh-rec1", true),
+		inst("148.51.121.69", "mbp_edge_kalshi_sports_mlb", "cmh-rec1", true),
+		inst("148.51.120.6", "mbp_edge_kalshi_sports_mlb", "cmh-rec1", true),
+	})
+	require.Len(t, got, 1)
+	assert.EqualValues(t, 100, got[0].Start)
+	assert.EqualValues(t, 1, got[0].Seconds)
+}

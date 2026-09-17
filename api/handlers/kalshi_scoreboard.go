@@ -992,7 +992,9 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 		}
 		if err := a.WritePageCache(ctx, kalshiL2CoverageCacheKey, val); err != nil {
 			l2Esc.Fail(slog.Default(), l2EscKey, "kalshi l2 coverage cache write failed", "error", err)
+			return
 		}
+		l2Esc.Reset(l2EscKey)
 	}
 	// The observations-plane leg of /dz/edge/multicast: the top-of-book sequence series and the
 	// path-parity counts. Same cadence and same window as the L2 coverage one so the two halves
@@ -1025,7 +1027,9 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 		if err := a.WritePageCache(ctx, edgeMulticastObservationsCacheKey, val); err != nil {
 			observationsEsc.Fail(slog.Default(), observationsEscKey,
 				"edge multicast observations cache write failed", "error", err)
+			return
 		}
+		observationsEsc.Reset(observationsEscKey)
 	}
 	// The recorded-gap leg of the same column, from the feed-race recorder's own grain rather
 	// than from the capture's. It sits beside the observations leg for the same two reasons that
