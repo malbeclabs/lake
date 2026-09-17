@@ -73,7 +73,7 @@ const (
 func EdgeMulticastSequenceHealthForTest(instances []EdgeMulticastChannelInstance, asOf time.Time) *EdgeMulticastSequenceHealth {
 	health := &EdgeMulticastSequenceHealth{}
 	for _, inst := range instances {
-		inst.Status = edgeMulticastSequenceStatus(inst.GapBooks, inst.LastSeen, asOf)
+		inst.Status = edgeMulticastSequenceStatus(inst.GapBooks, inst.UpdatesMissing, inst.LastSeen, asOf)
 		health.Instances = append(health.Instances, inst)
 	}
 	demoteEdgeMulticastQuietCaptureSources(health)
