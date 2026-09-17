@@ -384,6 +384,12 @@ func (a *API) FetchKalshiScoreboardData(ctx context.Context, window, symbol stri
 		// still meaningful, so attach it rather than dropping the one number that survives.
 		resp := emptyKalshiScoreboard(window, true)
 		a.attachKalshiPathLatency(ctx, resp)
+		// **And the race, for the same reason.** It compares the venue against its own
+		// republication and depends on no competitor at all, so "nobody configured a feed to
+		// race against" is not a reason to drop it. The page renders it outside its
+		// `unconfigured` gate, so returning here without it is how a panel goes missing in
+		// exactly the environment that has a recorder and no competitor.
+		a.attachKalshiRecorderRace(ctx, resp)
 		return resp, nil
 	}
 
@@ -604,8 +610,13 @@ func (a *API) attachKalshiRecorderRace(ctx context.Context, resp *KalshiScoreboa
 	if err != nil || len(raw) == 0 {
 		return
 	}
+	// **Attached even with no sites.** Zero sites means nothing cleared `observations = 2`
+	// in the window, which is what a dead recorder looks like — dropping it here would make
+	// a capture outage render identically to an environment that never had a recorder, and
+	// those have to look different. The absence of the payload is the "not measured here"
+	// signal; an empty one is a measurement that found nothing.
 	var rr KalshiRecorderRace
-	if json.Unmarshal(raw, &rr) == nil && len(rr.Sites) > 0 {
+	if json.Unmarshal(raw, &rr) == nil {
 		resp.RecorderRace = &rr
 	}
 }
@@ -1115,9 +1126,14 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 		}
 	}
 	// The recorder's own race. It aggregates a view and not a summary table, so it is the
-	// slowest step here for the least data — ~40s for fifteen minutes, measured — and it goes
-	// last: everything above it serves a page that falls back to nothing, and a chain that put
-	// this first would delay all of them behind it on every cycle.
+	// slowest step here for the least data — ~40s for fifteen minutes, measured.
+	//
+	// **It runs BEFORE the scoreboard steps even so, because they embed its payload.**
+	// FetchKalshiScoreboardData attaches this cache entry into the blob each window is served
+	// from, so a chain that refreshed it afterwards would serve every 24h and 7d tab a
+	// previous-cycle race under a caption claiming the last fifteen minutes — and none at all
+	// for the first cycle after a deploy. Cost is the wrong axis to order a consumer against
+	// its own input; the path-latency step is ahead of them for the same reason.
 	refreshRecorderRace := func() {
 		rctx, cancel := context.WithTimeout(ctx, runTimeout)
 		defer cancel()
@@ -1135,10 +1151,10 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 		refreshTOBGaps()
 		refreshConformance()
 		refreshLatency()
+		refreshRecorderRace()
 		refreshScoreboard("24h")
 		refreshScoreboard("7d")
 		refreshL2()
-		refreshRecorderRace()
 	}
 	go func() {
 		refresh()

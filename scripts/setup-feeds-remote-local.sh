@@ -31,6 +31,7 @@ TABLES=(
   "hyperliquid_bbo_observations"
   "kalshi_bbo_feed_race_summary"
   "kalshi_bbo_observations"
+  "kalshi_book_race"
   "kalshi_edge_book_top"
   "kalshi_mbp_levels"
 )

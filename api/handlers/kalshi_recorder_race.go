@@ -38,12 +38,16 @@ import (
 // # Which side is which
 //
 // The two observations of one book are told apart by the `venue-` prefix the recorder's
-// inventory gives `venue_observation`, against the `edge-<site>` it gives `wire_observation`.
-// That is a naming convention, and it is the only discriminator the view carries — the
-// alternative would be a column saying which side an observation is, which
-// `kalshi_book_race` does not have. A row matching neither is counted as neither and shows in
-// the pair total, so a convention that changes reads as pairs going missing rather than as the
-// wire silently winning.
+// inventory gives `venue_observation`, against the `edge-` it gives `wire_observation`. That is
+// a naming convention, and it is the only discriminator the view carries — the alternative
+// would be a column saying which side an observation is, which `kalshi_book_race` does not
+// have.
+//
+// **So each side is matched on its OWN prefix and neither is the complement of the other.** A
+// row matching neither counts as neither, stays in `Pairs`, and makes the two win counts sum to
+// less than it — which is the tell. Written as `NOT LIKE 'venue%'` the wire would absorb every
+// unrecognised name, and the day the convention changed the panel would report the multicast
+// beating the venue on 100% of pairs with nothing anywhere to say otherwise.
 const kalshiRecorderRaceCacheKey = "kalshi_recorder_race:v1"
 
 // kalshiRecorderRaceWindowMinutes is what the view can be aggregated over inside a refresher
@@ -59,8 +63,9 @@ type KalshiRecorderRaceSite struct {
 	Pairs   uint64 `json:"pairs"`
 	Symbols uint64 `json:"symbols"`
 
-	// VenueWins and WireWins sum to Pairs less any observation matching neither side's
-	// naming convention.
+	// VenueWins and WireWins are each matched on their own prefix, so they sum to Pairs less
+	// any observation matching neither. That shortfall is the signal that the naming
+	// convention moved; it is not an error and nothing rounds it away.
 	VenueWins uint64 `json:"venue_wins"`
 	WireWins  uint64 `json:"wire_wins"`
 
@@ -109,13 +114,13 @@ func (a *API) FetchKalshiRecorderRace(ctx context.Context) (*KalshiRecorderRace,
 			count() AS pairs,
 			uniqExact(symbol) AS symbols,
 			countIf(first_observation LIKE 'venue%%') AS venue_wins,
-			countIf(first_observation NOT LIKE 'venue%%') AS wire_wins,
+			countIf(first_observation LIKE 'edge-%%') AS wire_wins,
 			-- TDigest and not Exact: the exact quantiles do not return inside the deadline on
 			-- this view, and the market-by-price coverage query already made the same trade.
 			ifNotFinite(toFloat64(quantileTDigestIf(0.50)(lead_ms, first_observation LIKE 'venue%%')), 0) AS venue_p50,
 			ifNotFinite(toFloat64(quantileTDigestIf(0.95)(lead_ms, first_observation LIKE 'venue%%')), 0) AS venue_p95,
-			ifNotFinite(toFloat64(quantileTDigestIf(0.50)(lead_ms, first_observation NOT LIKE 'venue%%')), 0) AS wire_p50,
-			ifNotFinite(toFloat64(quantileTDigestIf(0.95)(lead_ms, first_observation NOT LIKE 'venue%%')), 0) AS wire_p95
+			ifNotFinite(toFloat64(quantileTDigestIf(0.50)(lead_ms, first_observation LIKE 'edge-%%')), 0) AS wire_p50,
+			ifNotFinite(toFloat64(quantileTDigestIf(0.95)(lead_ms, first_observation LIKE 'edge-%%')), 0) AS wire_p95
 		FROM %[1]s.kalshi_book_race
 		WHERE observations = 2
 			AND occurrence = 1

@@ -38,6 +38,7 @@ var externalRemoteTables = []struct {
 	{"feeds", "hyperliquid_bbo_observations"},
 	{"feeds", "kalshi_bbo_feed_race_summary"},
 	{"feeds", "kalshi_bbo_observations"},
+	{"feeds", "kalshi_book_race"},
 	{"feeds", "kalshi_edge_book_top"},
 	{"feeds", "kalshi_mbp_levels"},
 	{"dzf_data", "competitors_pairwise_feed_race"},

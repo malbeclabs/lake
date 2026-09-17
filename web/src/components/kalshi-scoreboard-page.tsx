@@ -18,6 +18,11 @@ const DZ_COLOR = '#34d399' // emerald-400 — DoubleZero
 // itself rather than presenting hours-old latencies as current.
 const PATH_LATENCY_STALE_MS = 30 * 60 * 1000
 
+// Two refresher cycles. The race panel states a fifteen-minute window, so a payload older than
+// this is describing a window that closed before the reader arrived — a tighter bound than the
+// hero's because the claim it makes is narrower.
+const RECORDER_RACE_STALE_MS = 20 * 60 * 1000
+
 function pct(n: number): string {
   return `${n.toFixed(1)}%`
 }
@@ -195,6 +200,19 @@ export function KalshiScoreboardPage() {
     if (Number.isNaN(ms)) return null
     return { text: relAge(ms, now), stale: now - ms > PATH_LATENCY_STALE_MS }
   }, [data?.path_latency?.generated_at, now])
+
+  // **The race panel's own clock.** Its caption asserts a fifteen-minute window, and the
+  // payload is written by a background refresher that only WARNs when it fails — so without
+  // this a dead refresher leaves an arbitrarily old verdict presented as current. Stale sooner
+  // than the path-latency hero because the claim is narrower: a fifteen-minute window two
+  // cycles old is describing a window that has already closed.
+  const recorderRaceAge = useMemo(() => {
+    const ts = data?.recorder_race?.generated_at
+    if (!ts) return null
+    const ms = new Date(ts).getTime()
+    if (Number.isNaN(ms)) return null
+    return { text: relAge(ms, now), stale: now - ms > RECORDER_RACE_STALE_MS }
+  }, [data?.recorder_race?.generated_at, now])
 
   // Global competitor set drives the per-vantage table columns (stable order).
   const competitorCols = data?.competitors ?? []
@@ -374,7 +392,7 @@ export function KalshiScoreboardPage() {
                 question from either — not "which feed is faster" but "does the multicast carry
                 a book state before the venue's own socket does". Rendered only where a recorder
                 writes; absent is not an empty table. */}
-            {data.recorder_race && data.recorder_race.sites.length > 0 && (
+            {data.recorder_race && (
               <div className="mb-6 rounded-lg border border-border bg-card p-4 sm:p-6">
                 <p className="text-sm leading-relaxed text-muted-foreground">
                   The feed-race recorder, per site: the venue's own upstream against the
@@ -383,6 +401,22 @@ export function KalshiScoreboardPage() {
                   and not the one selected above, because this aggregates a view rather than a
                   summary table.
                 </p>
+
+                {recorderRaceAge && (
+                  <p className={`mt-2 text-xs ${recorderRaceAge.stale ? 'text-amber-500' : 'text-muted-foreground/70'}`}>
+                    Measured {recorderRaceAge.text}
+                    {recorderRaceAge.stale &&
+                      ' — the background refresh has not landed in a while, so this window has already closed.'}
+                  </p>
+                )}
+
+                {data.recorder_race.sites.length === 0 && (
+                  <p className="mt-4 text-sm text-amber-500">
+                    No book state was seen by both sides in the window. That is a reading and not
+                    an absence: the recorders are configured here, so either one side stopped or
+                    the two stopped agreeing on a book.
+                  </p>
+                )}
 
                 <div className="mt-5 overflow-x-auto">
                   <table className="min-w-full">
@@ -422,8 +456,15 @@ export function KalshiScoreboardPage() {
                             <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums">
                               {s.pairs > 0 ? pct((winner / s.pairs) * 100) : '—'}
                             </td>
+                            {/* **Whose lead, said on the figure.** On a row reading "too close
+                                to call" the Ahead cell names no side, and an unattributed
+                                "0.32 ms" there is the same unattributed number the two
+                                directions are kept apart to avoid. */}
                             <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums">
                               {(wireAhead ? s.wire_p50_ms : s.venue_p50_ms).toFixed(2)} ms
+                              <span className="ml-1 text-xs text-muted-foreground/70">
+                                {wireAhead ? 'wire' : 'venue'}
+                              </span>
                             </td>
                             <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums">
                               {(wireAhead ? s.wire_p95_ms : s.venue_p95_ms).toFixed(2)} ms
