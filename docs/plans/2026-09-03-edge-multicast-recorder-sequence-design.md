@@ -100,6 +100,19 @@ channel that only heartbeats it is three, so a figure in seconds measures how bu
 much as what was lost. One mark per run at its start second, and the count in the tooltip — which is
 the divergence the upstream spec explicitly left to this consumer to settle.
 
+That rule has to survive the fold, and it nearly did not: the generic second-collapse this page
+uses everywhere else joins adjacent seconds into one episode, which is exactly the duration this
+section forbids — two runs beginning in consecutive seconds drew one two-second mark and the row
+underneath counted them once. The recorder leg places its marks with
+`edgeMulticastRecorderGapMarks` instead, one second wide each. The peer leg keeps the collapse and
+should: its seconds are the seconds loss was OBSERVED in, so a contiguous pair there really is one
+episode two seconds long.
+
+**Second resolution is the floor**, so the mark count is a lower bound on the runs rather than the
+runs: two starting inside one second share a mark and `groupUniqArray` has already dropped the
+duplicate, so there is no reading that separates them. A node's tooltip prints `runs` for that
+reason; the `pub` row has no per-verdict run count to print and says "at least that many" instead.
+
 The timestamp preferred for that placement is `sent_from_ts`, the publisher's own send stamp
 recovered from a site that *did* record the datagram, falling back to `before_ts`. A site has no
 clock reading for something it never received, so its own bracket is the weaker of the two.

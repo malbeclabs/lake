@@ -1130,6 +1130,27 @@ function recorderRowDetail(r: EdgeMulticastRecorderLoss, win: GapWindow, windowE
   return lines.join('\n')
 }
 
+// "The recorder rows exist and the read of them failed", said wherever this strip ends up — including
+// the returns that draw no strip at all.
+//
+// It used to be rendered only in the footer beneath a drawn strip, which on the peer leg needs two
+// or more recorders. So the case where the note matters most was the one case that dropped it:
+// every market-by-price group is recorded at a SINGLE node, so a failing recorder read there
+// rendered `one vantage, nothing to compare` — the peer leg's own limitation, and a permanent
+// property of the group — with nothing anywhere saying that the leg which does measure loss from
+// one vantage had just failed. An operator reading that row would have concluded the feed cannot
+// be measured, when in fact it can and the query died.
+function RecorderRowsUnavailableNote({
+  sequence,
+}: {
+  sequence: EdgeMulticastSequenceHealth
+}) {
+  if (!sequence.recorder_gaps_unavailable) {
+    return null
+  }
+  return <span className="text-amber-600"> · recorder rows unavailable</span>
+}
+
 // Every recorder of a path on one axis, plus the line underneath that says whose the loss was.
 //
 // Two measurements can fill it and the strip says which. On the RECORDER leg the rows come from the
@@ -1143,7 +1164,9 @@ function recorderRowDetail(r: EdgeMulticastRecorderLoss, win: GapWindow, windowE
 // message none of them received is in nobody's set and can never be reported. Several at once is as
 // close as that leg gets to naming a loss upstream of the recorders, and one node alone is its
 // branch.
-function RecorderLossTimeline({
+// Exported for the test that pins the note onto every one of the returns below. Three of them draw
+// no strip, and the note used to be rendered only under one that does.
+export function RecorderLossTimeline({
   sequence,
   window: win,
 }: {
@@ -1159,7 +1182,10 @@ function RecorderLossTimeline({
     return (
       <div className="flex items-center gap-1.5 border-t border-border/60 pt-0.5">
         <span className="text-[9px] w-8 shrink-0 text-right text-muted-foreground">rec</span>
-        <span className="text-[9px] text-amber-600">not measured</span>
+        <span className="text-[9px] text-amber-600">
+          not measured
+          <RecorderRowsUnavailableNote sequence={sequence} />
+        </span>
       </div>
     )
   }
@@ -1179,10 +1205,15 @@ function RecorderLossTimeline({
         <span className="text-[9px] w-8 shrink-0 text-right text-muted-foreground">rec</span>
         <span className="text-[9px] text-muted-foreground">
           {recorders.length === 1 ? 'one vantage, nothing to compare' : 'no peer to compare'}
+          <RecorderRowsUnavailableNote sequence={sequence} />
         </span>
       </div>
     )
   }
+  // Only reachable on the RECORDER leg — the peer leg's guard above has already taken every line
+  // with fewer than two rows — so it is a line the recorder rows carry nothing for, and nothing
+  // failed. The note is deliberately not repeated here: it cannot be set on this leg, because a
+  // failed read leaves the recorder rows empty and the selection falls to the peer comparison.
   if (recorders.length === 0) {
     return null
   }
@@ -1220,7 +1251,12 @@ function RecorderLossTimeline({
             detail={
               publisherRuns.length === 0
                 ? 'no run was charged to the publisher — every loss above was attributed elsewhere, or could not be judged'
-                : `${publisherRuns.length} run(s) absent from every recording site, with no recorder overflow anywhere and coverage intact.\n` +
+                : // A mark is a second in which a charged run BEGAN, so the count is a floor on the
+                  // runs and not the runs themselves: the query unique-s run starts per second, so
+                  // two beginning inside one second are one mark and there is no reading that
+                  // separates them.
+                  `${publisherRuns.length} second(s) in which a run absent from every recording site began, ` +
+                  `with no recorder overflow anywhere and coverage intact — at least that many runs.\n` +
                   'This is the finding, not an inference from several recorders losing at once.'
             }
           />
@@ -1246,9 +1282,7 @@ function RecorderLossTimeline({
         <span className="text-[9px] w-8 shrink-0" />
         <span className="text-[9px] text-muted-foreground">
           {fromRecorder ? 'recorder rows' : 'peer comparison'}
-          {sequence.recorder_gaps_unavailable && (
-            <span className="text-amber-600"> · recorder rows unavailable</span>
-          )}
+          <RecorderRowsUnavailableNote sequence={sequence} />
         </span>
       </div>
     </div>

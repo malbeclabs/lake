@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 
 	"github.com/malbeclabs/lake/api/metrics"
@@ -186,8 +187,8 @@ func (a *API) fetchEdgeMulticastRecorderGaps(ctx context.Context) ([]EdgeMultica
 		// Dense, and there was coverage at all: a node with no coverage row has nothing to be
 		// dense over, and its clean run is unverified rather than verified.
 		s.CoverageComplete = segments > 0 && segments == segmentSpan
-		s.Episodes = collapseKalshiL2GapSeconds(seconds)
-		s.PublisherEpisodes = collapseKalshiL2GapSeconds(secondsPublisher)
+		s.Episodes = edgeMulticastRecorderGapMarks(seconds)
+		s.PublisherEpisodes = edgeMulticastRecorderGapMarks(secondsPublisher)
 		out = append(out, s)
 	}
 	return out, rows.Err()
@@ -308,6 +309,46 @@ func edgeMulticastRecorderGapQuery(feedsDB string) string {
 		edgeMulticastGapVerdictPublisher, edgeMulticastRecorderCoverageTable)
 }
 
+// edgeMulticastRecorderGapMarks places one mark per run-start second, and never joins two of them.
+//
+// The seconds this leg carries are RUN STARTS — groupUniqArray over each gap row's own stamp, one
+// row per contiguous run of missing sequence numbers. So collapsing adjacent ones into a single
+// multi-second episode, which is the whole job of collapseKalshiL2GapSeconds, contradicts the one
+// thing EdgeMulticastRecorderGapSeries.Episodes promises: one mark per run, never a duration. Two
+// runs beginning in consecutive seconds drew one wider mark and counted as one entry — a
+// two-second hole rendered where there were two instantaneous ones, and the row underneath
+// reporting half the runs.
+//
+// The peer leg keeps the collapse and must: its seconds are the seconds loss was OBSERVED in, so
+// there a contiguous pair really is one episode two seconds long.
+//
+// Second resolution is the floor here, not a choice: two runs starting inside the same second share
+// a mark and the query has already unique-d them away. That is why the count a tooltip prints for a
+// node comes from Runs and not from the number of marks.
+func edgeMulticastRecorderGapMarks(secs []uint32) []KalshiL2GapEpisode {
+	if len(secs) == 0 {
+		return nil
+	}
+	uniq := make([]uint32, 0, len(secs))
+	seen := make(map[uint32]bool, len(secs))
+	for _, sec := range secs {
+		if seen[sec] {
+			continue
+		}
+		seen[sec] = true
+		uniq = append(uniq, sec)
+	}
+	// Ascending, so the marks read left to right on the axis and an unchanged payload cannot
+	// shuffle between polls.
+	sort.Slice(uniq, func(i, j int) bool { return uniq[i] < uniq[j] })
+
+	out := make([]KalshiL2GapEpisode, 0, len(uniq))
+	for _, sec := range uniq {
+		out = append(out, KalshiL2GapEpisode{Start: int64(sec), Seconds: 1})
+	}
+	return out
+}
+
 // edgeMulticastGapVerdictMap keeps the five columns' order in one place, so the scan above and the
 // map a tooltip reads cannot drift apart.
 func edgeMulticastGapVerdictMap(counts [5]uint64) map[string]uint64 {
@@ -413,7 +454,7 @@ func edgeMulticastRecorderGapFold(series []EdgeMulticastRecorderGapSeries) (map[
 			for sec := range st.seconds {
 				flat = append(flat, sec)
 			}
-			st.loss.Episodes = collapseKalshiL2GapSeconds(flat)
+			st.loss.Episodes = edgeMulticastRecorderGapMarks(flat)
 			if len(st.verdicts) > 0 {
 				st.loss.MissingByVerdict = st.verdicts
 			}
@@ -431,7 +472,7 @@ func edgeMulticastRecorderGapFold(series []EdgeMulticastRecorderGapSeries) (map[
 		for sec := range secs {
 			flat = append(flat, sec)
 		}
-		pub[lk] = collapseKalshiL2GapSeconds(flat)
+		pub[lk] = edgeMulticastRecorderGapMarks(flat)
 	}
 	return out, pub
 }

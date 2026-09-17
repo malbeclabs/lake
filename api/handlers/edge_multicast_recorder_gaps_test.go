@@ -150,6 +150,58 @@ func TestEdgeMulticastRecorderGaps_PublisherRunsAreUnionedAcrossNodes(t *testing
 	assert.EqualValues(t, 200, eps[1].Start)
 }
 
+// Two runs beginning in consecutive seconds are two marks, never one mark two seconds wide.
+//
+// The seconds this leg carries are run STARTS — the gap table holds one row per contiguous run of
+// missing sequence numbers, and the query groupUniqArrays each row's own stamp. So joining adjacent
+// ones is the single thing Episodes promises it will not do: it draws a duration where the
+// measurement has none, and the count underneath reports half the runs. collapseKalshiL2GapSeconds
+// is right for the peer leg, whose seconds are the seconds loss was OBSERVED in, and wrong here.
+func TestEdgeMulticastRecorderGaps_AdjacentRunsStayTwoMarks(t *testing.T) {
+	s := gapSeries("was-rec1", 1, 20, 1000)
+	s.Runs = 2
+	s.Episodes = []handlers.KalshiL2GapEpisode{{Start: 100, Seconds: 1}, {Start: 101, Seconds: 1}}
+
+	loss, _ := handlers.EdgeMulticastRecorderGapFoldForTest([]handlers.EdgeMulticastRecorderGapSeries{s})
+
+	lines := loss[gapLineKey()]
+	require.Len(t, lines, 1)
+	require.Len(t, lines[0].Episodes, 2, "two runs, two marks")
+	assert.Equal(t, handlers.KalshiL2GapEpisode{Start: 100, Seconds: 1}, lines[0].Episodes[0])
+	assert.Equal(t, handlers.KalshiL2GapEpisode{Start: 101, Seconds: 1}, lines[0].Episodes[1],
+		"a second mark, not a second appended to the first")
+}
+
+// The same rule on the publisher row underneath, where the mark count is what the tooltip prints:
+// collapsed, two consecutive runs charged to the publisher read as one.
+func TestEdgeMulticastRecorderGaps_AdjacentPublisherRunsStayTwoMarks(t *testing.T) {
+	s := gapSeries("was-rec1", 1, 20, 1000)
+	s.PublisherEpisodes = []handlers.KalshiL2GapEpisode{{Start: 100, Seconds: 1}, {Start: 101, Seconds: 1}}
+
+	_, pub := handlers.EdgeMulticastRecorderGapFoldForTest([]handlers.EdgeMulticastRecorderGapSeries{s})
+
+	eps := pub[gapLineKey()]
+	require.Len(t, eps, 2)
+	assert.EqualValues(t, 1, eps[0].Seconds)
+	assert.EqualValues(t, 1, eps[1].Seconds)
+}
+
+// Marks are ascending and de-duplicated whatever order the rows arrive in, so they read left to
+// right on the axis and an unchanged payload cannot shuffle between polls. The duplicate is the
+// ordinary case: a run charged to the publisher is absent everywhere, so every node reports it.
+func TestEdgeMulticastRecorderGaps_MarksAreSortedAndDeduplicated(t *testing.T) {
+	s := gapSeries("was-rec1", 1, 20, 1000)
+	s.Episodes = []handlers.KalshiL2GapEpisode{{Start: 300, Seconds: 1}, {Start: 100, Seconds: 1}, {Start: 300, Seconds: 1}}
+
+	loss, _ := handlers.EdgeMulticastRecorderGapFoldForTest([]handlers.EdgeMulticastRecorderGapSeries{s})
+
+	lines := loss[gapLineKey()]
+	require.Len(t, lines, 1)
+	require.Len(t, lines[0].Episodes, 2)
+	assert.EqualValues(t, 100, lines[0].Episodes[0].Start)
+	assert.EqualValues(t, 300, lines[0].Episodes[1].Start)
+}
+
 // One publisher serves several groups — the two planes of a feed are two addresses on one tunnel —
 // so a line is keyed on (group, publisher) and a group's losses stay on that group's row.
 func TestEdgeMulticastRecorderGaps_LossStaysOnItsOwnGroupsLine(t *testing.T) {
