@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
 // The Kalshi scoreboard is the sibling of the Hyperliquid one (hyperliquid_scoreboard.go) and
@@ -1016,17 +1018,36 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 	// simply absent, and it is cheap — and immediately after it, because the two describe the
 	// same span and a reader comparing them across a cycle boundary would be comparing two
 	// windows.
+	// Escalation-gated, per CLAUDE.md's rule for periodic loops, and the reason is on the leg
+	// immediately above: the observations refresh failed on EVERY ten-minute cycle in production
+	// against a ClickHouse memory limit and "cost the strips silently because this measurement is
+	// additive and its failure is a WARN". This leg is additive the same way and fails the same
+	// way — a failure leaves the staleness-only reading it exists to replace, which on the page
+	// is indistinguishable from a plane nothing measures yet — so nothing about the symptom says
+	// a query is broken.
+	//
+	// One key for the step rather than one per stage: a fetch failure and a write failure are the
+	// same operational condition, "this leg has not landed", and splitting them would let a
+	// failure that alternates between the two never reach the threshold. The interval is a fixed
+	// ten minutes, so the default count of three describes a duration (~30 minutes to ERROR) and
+	// ErrorAfterDuration would only restate it.
+	var tobGapsEsc logger.Escalator
+	const tobGapsEscKey = "edge_multicast_tob_gaps"
 	refreshTOBGaps := func() {
 		rctx, cancel := context.WithTimeout(ctx, runTimeout)
 		defer cancel()
 		val, err := a.FetchEdgeMulticastTOBGaps(rctx)
 		if err != nil {
-			slog.Warn("edge multicast tob gaps refresh failed", "error", err)
+			tobGapsEsc.Fail(slog.Default(), tobGapsEscKey,
+				"edge multicast tob gaps refresh failed", "error", err)
 			return
 		}
 		if err := a.WritePageCache(ctx, edgeMulticastTOBGapsCacheKey, val); err != nil {
-			slog.Warn("edge multicast tob gaps cache write failed", "error", err)
+			tobGapsEsc.Fail(slog.Default(), tobGapsEscKey,
+				"edge multicast tob gaps cache write failed", "error", err)
+			return
 		}
+		tobGapsEsc.Reset(tobGapsEscKey)
 	}
 	refresh := func() {
 		refreshObservations()

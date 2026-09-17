@@ -542,7 +542,7 @@ A publisher with no session cannot be sending the feed it is registered to send.
 not move the group verdict — the ledger snapshot and the rate bucket are minutes apart, so a publisher
 can read `down` while its tunnel still moved bytes, and both are shown.
 
-The **Sequence** column **folds cached refresher payloads and runs no query of its own**, and it has two legs.
+The **Sequence** column **folds cached refresher payloads and runs no query of its own**, and it has three legs.
 
 **Market-by-price** comes from `kalshi_l2_coverage.go`. `kalshi_mbp_levels` is level-grain and
 TTL-less, and a fifteen-minute question reads most of a day through a `remoteSecure()` proxy
@@ -551,8 +551,8 @@ page that polls every 30s would be the same scan again and would let the two pag
 one feed. Gap counts are **books**, never gap-marked messages — the message count is a duration
 that scales with traffic.
 
-**Top-of-book** comes from `edge_multicast_tob_sequence.go`, on the same refresher and the same
-fifteen-minute window (measured: 3.8s over every `tob_` capture source). It reads
+**Top-of-book, from the capture** comes from `edge_multicast_observations.go`, on the same refresher
+and the same fifteen-minute window (measured: 3.8s over every `tob_` capture source). It reads
 `kalshi_bbo_observations`, which carries the wire protocol's `sequence` and `reset_count` on every
 row plus a `raw_meta` JSON object holding `publisher_source_ip`, `multicast_group` and `port`. The
 address in `raw_meta` is the primary group key — it is the destination the datagrams carried, where
@@ -566,15 +566,47 @@ the numbering. Measured on mainnet, one instance carried 23,846 rows across a se
 24,553 — about 3% "missing" with nothing wrong. A count-versus-span test would paint every healthy
 top-of-book series permanently red. So those instances carry `gaps_measured: false`, the roll-up
 counts them in `gaps_unmeasured`, and the badge reads **`advancing`** rather than `ok`: the counters
-move and nothing checked them for loss. Closing that half needs the producer to emit a gap marker
-for top-of-book the way it does for market-by-price; it is not work this repo can do.
+move and nothing checked them for loss.
 
-The cost of both legs is staleness, so `sequence_as_of` is in the payload — the **older** of the two
-legs — and the column ages against it. A cache miss costs that plane's rows, never the page.
+**Top-of-book, from the recorder** is the third leg and what closed that half:
+`edge_multicast_tob_gaps.go`, over `kalshi_edge_book_top`. `dz_kalshi_recorder` now writes a marker
+of its own — `uncertain_reason = 'gap'` on a top lowered by a hole in the publisher's sequence — so
+this counts a marker and never a span, exactly as the market-by-price leg does. Its series
+**replace** the capture leg's for the same channel instance rather than joining them; appending
+would double every top-of-book row and leave half of each pair inflating `gaps_unmeasured`. So a
+top-of-book series reads `gaps_measured: true` wherever this leg covered it and keeps the weaker
+`advancing` reading where it did not.
+
+Three things it needs from its environment, and each was a way to ship nothing:
+
+- **`kalshi_edge_book_top` must be in the proxy lists** (`admin/remotetables/setup.go`,
+  `scripts/setup-feeds-remote-local.sh`). It was in neither at first, so `kalshiTableExists` read
+  false in every environment those build and the leg wrote an empty payload forever, with no error
+  anywhere and a page that looked exactly like a plane nothing measures yet.
+- **Rows predating malbeclabs/kalshi#287** (fleet deployed 2026-09-16) carry `dst_addr = 0.0.0.0`,
+  the type default an `ALTER` gives a table's history. The query excludes them: that address names
+  no group, so folding them would attribute a series to nothing beside the one its own recorder
+  already reports.
+- **The refresh is escalation-gated**, not WARN-only. It is additive and its failure leaves the
+  staleness-only reading it exists to replace, which on the page is indistinguishable from an
+  unmeasured plane — the same shape that let the observations leg fail on every cycle in production
+  against a ClickHouse memory limit without anyone noticing.
+
+A recorder series that matches no capture series keeps an **empty capture source**, and the two
+rollups keyed on that name — the quiet-source demotion and the all-paths intersection — skip it.
+An empty name is not a bucket of its own: every unnamed series falls into the same one, so two
+unrelated markets at one node would read as two paths of a single capture source, which is the
+false shared outage each of those keys exists to prevent.
+
+The cost of every leg is staleness, so `sequence_as_of` is in the payload — the **oldest** of the
+legs that reported one — and the column ages against it. A cache miss costs that plane's rows,
+never the page. `gap_window_seconds`, the axis the episodes are drawn on, comes from whichever
+measured leg reports one and the wider of them if several do: read from the market-by-price cache
+alone, an independent miss there drew no timeline at all for episodes the other legs had measured.
 
 **Msg/s and Peer carry `observations_as_of`, a separate stamp, and it is not an accident.** They are
 folded from the observations cache entry, which has its own clock; `sequence_as_of` reports the
-older of the two *sequence* legs, so reading it there would dim two columns over the
+oldest of the *sequence* legs, so reading it there would dim two columns over the
 market-by-price leg's staleness — a payload they do not come from.
 `TestGetEdgeMulticast_ObservationsCarryTheirOwnAsOf` pins the pair.
 

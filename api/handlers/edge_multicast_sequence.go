@@ -441,13 +441,30 @@ func (a *API) edgeMulticastSequenceHealth(ctx context.Context, captureSources ed
 		}
 	}
 
-	at, gapWindowSecs := a.foldKalshiL2Coverage(ctx, captureSources, out)
+	// The axis width, taken from whichever measured leg reports one — and the WIDER of them if
+	// both do. It is not the market-by-price leg's to supply alone: the page draws no timeline at
+	// all without it, so reading it from one cache made an independent miss there erase every
+	// top-of-book episode this run had measured, on a page whose whole rule is that one leg
+	// missing costs that leg's rows and no more. Wider rather than narrower because the episodes
+	// are placed by absolute start: a span too wide draws them further right than they need to
+	// be, a span too narrow clamps everything older than it into a pile on the left edge.
+	var gapWindowSecs int
+	widen := func(secs int) {
+		if secs > gapWindowSecs {
+			gapWindowSecs = secs
+		}
+	}
+
+	at, coverageWindow := a.foldKalshiL2Coverage(ctx, captureSources, out)
 	note(at)
+	widen(coverageWindow)
 	note(a.foldEdgeMulticastTOBSequence(ctx, captureSources, out))
 	// **After the observations leg, never before it.** This one replaces the series that leg
 	// folded for the same channel instance, so it has to find them already there; run first, it
 	// would append and then be overwritten by the staleness-only reading it exists to replace.
-	note(a.foldEdgeMulticastTOBGaps(ctx, captureSources, out))
+	gapsAt, gapsWindow := a.foldEdgeMulticastTOBGaps(ctx, captureSources, out)
+	note(gapsAt)
+	widen(gapsWindow)
 
 	if len(out) == 0 {
 		return nil, time.Time{}, 0, nil
@@ -644,7 +661,13 @@ func demoteEdgeMulticastQuietCaptureSources(health *EdgeMulticastSequenceHealth)
 	for _, inst := range health.Instances {
 		// No source address is no path: an instance that cannot be attributed to one cannot
 		// be compared against the others, and must not stand in as a peer for them either.
-		if inst.PublisherSourceIP == "" {
+		//
+		// The same rule for the capture source, which is the other half of this key. An unnamed
+		// one is not a bucket of its own — every series that lacks a name lands in the SAME
+		// bucket, so two unrelated markets' series at one node would be read as two paths of one
+		// capture source and one going quiet would excuse the other. The recorded-gap leg can
+		// produce such a series, for a channel instance the capture recorded nothing for.
+		if inst.PublisherSourceIP == "" || inst.CaptureSource == "" {
 			continue
 		}
 		if inst.Status != edgeMulticastSeqStalled {
@@ -718,7 +741,15 @@ func edgeMulticastAllPathsGapped(instances []EdgeMulticastChannelInstance) []Kal
 	for _, inst := range instances {
 		// Only the plane that measures gaps at all. A top-of-book series has no marker, so its
 		// empty episode list is an absence of measurement and must not count as "held".
-		if !inst.GapsMeasured || inst.PublisherSourceIP == "" {
+		//
+		// And only a series whose capture source is NAMED, because this key is what the doc
+		// comment above says it is: without the source in it, "two unrelated losses at two
+		// different markets in the same second read as one shared outage". An unnamed source
+		// does not opt out of the key, it collapses into one bucket with every other unnamed
+		// one — which is that failure exactly. It used to be unreachable, since the only
+		// instances without a source were top-of-book ones excluded on the line above; the
+		// recorded-gap leg measures that plane now, so it is reachable and excluded here.
+		if !inst.GapsMeasured || inst.PublisherSourceIP == "" || inst.CaptureSource == "" {
 			continue
 		}
 		v := vantage{inst.CaptureSource, inst.Node}

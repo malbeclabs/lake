@@ -105,3 +105,18 @@ func TestEdgeMulticastFamilyOf(t *testing.T) {
 		handlers.EdgeMulticastFamilyOfForTest("edge-solana-shreds1"))
 	assert.Equal(t, "mbone", handlers.EdgeMulticastFamilyOfForTest("mbone"))
 }
+
+// The capture source is in this key so that "two unrelated losses at two different markets in the
+// same second" do not read as one shared outage — which is exactly what an EMPTY source produces,
+// because every unnamed series shares the one bucket rather than opting out of the key.
+//
+// It was unreachable until the recorded-gap leg: the only instances with no capture source were
+// top-of-book ones, and GapsMeasured false already excluded them. That leg measures the top-of-book
+// plane, so an unmatched series now arrives measured and unnamed.
+func TestEdgeMulticastAllPathsGapped_UnnamedCaptureSourcesDoNotIntersect(t *testing.T) {
+	got := handlers.EdgeMulticastAllPathsGappedForTest([]handlers.EdgeMulticastChannelInstance{
+		inst("10.0.0.9", "", "cmh-rec1", true, 100),
+		inst("10.0.0.10", "", "cmh-rec1", true, 100),
+	})
+	assert.Empty(t, got, "one second of loss at two unnamed series is not the feed losing data")
+}

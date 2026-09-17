@@ -128,6 +128,42 @@ func TestTOBGapsFromAnotherNodeIsItsOwnRow(t *testing.T) {
 	require.Len(t, got["grp-perps-tob"], 2, "two vantages of one instance are two observations")
 }
 
+// **Which of several candidates is replaced cannot depend on slice order.** The payload comes from
+// a GROUP BY with no ORDER BY, so the observations leg's rows arrive in whatever order the scan
+// produced, and "the first match" moved the recorder's counters between rows across a poll of
+// unchanged data. The lowest capture source name wins, which is a property of the data.
+//
+// The recorder's grain cannot resolve this case at all — it groups by (group, publisher, channel,
+// node) and knows nothing about capture sources — so exactly one row is measured and the others
+// keep GapsMeasured false. That understates the measurement; writing the aggregate onto each would
+// multiply the group's gap books by the number of candidates, which invents one.
+func TestTOBGapsPickTheSameCandidateWhateverOrderTheyArriveIn(t *testing.T) {
+	alpha := stalenessOnlyInstance("148.51.121.69", 1, "aws-cmh-mn-recorder1")
+	alpha.CaptureSource = "tob_edge_kalshi_perps_alpha"
+	omega := stalenessOnlyInstance("148.51.121.69", 1, "aws-cmh-mn-recorder1")
+	omega.CaptureSource = "tob_edge_kalshi_perps_omega"
+	series := []handlers.EdgeMulticastTOBGapSeries{
+		tobGapSeries("148.51.121.69", 1, "aws-cmh-mn-recorder1", 7, 19, []uint32{100}),
+	}
+
+	for _, order := range [][]handlers.EdgeMulticastChannelInstance{{alpha, omega}, {omega, alpha}} {
+		existing := map[string][]handlers.EdgeMulticastChannelInstance{"grp-perps-tob": order}
+		got := handlers.EdgeMulticastTOBGapsMergeForTest(tobGapsGroups(), existing, series, tobGapsAsOf)
+
+		instances := got["grp-perps-tob"]
+		require.Len(t, instances, 2, "the candidates stay two rows; only one is measured")
+		measured := map[string]bool{}
+		for _, inst := range instances {
+			if inst.GapsMeasured {
+				measured[inst.CaptureSource] = true
+				assert.EqualValues(t, 7, inst.GapBooks)
+			}
+		}
+		assert.Equal(t, map[string]bool{"tob_edge_kalshi_perps_alpha": true}, measured,
+			"the lowest capture source name, not the first row")
+	}
+}
+
 // An address no group on this page carries is dropped rather than bucketed — the same rule the
 // capture-source resolver documents. In practice this is what a row written before
 // malbeclabs/kalshi#287 looks like if the query's filter ever stopped excluding it: 0.0.0.0

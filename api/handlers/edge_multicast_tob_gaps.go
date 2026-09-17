@@ -184,26 +184,38 @@ func (a *API) FetchEdgeMulticastTOBGaps(ctx context.Context) (*EdgeMulticastTOBG
 // the quiet-source demotion and for its own sort key, so inventing a new spelling here would
 // take a series out of the group it has always been sorted with.
 //
-// A series with nothing to replace keeps an empty one, and that is deliberate rather than
-// tolerated: the demotion keys on (capture source, node), so the recorder's own series at one
-// node bucket together and are compared against each other — which is the right grouping for
-// them, because they go quiet together exactly when the recorder does. Today the case is rare
-// (the capture records the same feeds at the same nodes, so there is almost always a series to
-// replace); it becomes the normal case if the capture's top-of-book leg is ever retired.
-func (a *API) foldEdgeMulticastTOBGaps(ctx context.Context, captureSources edgeMulticastCaptureSourceMap, out map[string]*EdgeMulticastSequenceHealth) time.Time {
+// A series with nothing to replace keeps an empty one, and the two rollups keyed on the capture
+// source — the quiet-source demotion and the all-paths intersection — skip it for that reason. An
+// empty name is not a bucket of its own: every unnamed series falls into the same one, so two
+// unrelated markets at one node would be read as two paths of one capture source, and each of
+// those rollups says in its own doc comment that this is the failure the source is in its key to
+// prevent. Before this leg the case could not arise, because the only instances without a source
+// were top-of-book ones and `GapsMeasured = false` already excluded them; this leg measures that
+// plane, so the exclusion is now explicit in both places.
+//
+// The series itself is still folded and still rendered — it has counters, a verdict and a badge,
+// and what it lacks is a name to be compared under. Today the case is rare (the capture records
+// the same feeds at the same nodes, so there is almost always a series to replace); it becomes
+// the normal case if the capture's top-of-book leg is ever retired, and at that point the group
+// needs a capture-source key from the recorder's own grain rather than this fallback.
+// The window travels back with the clock for the same reason the market-by-price leg's does: the
+// episodes this leg folds are placed on an axis of (as-of - window, as-of], and the page draws no
+// timeline at all when it has no width for one. Reading the width from the other leg's cache alone
+// made a miss there erase these episodes too.
+func (a *API) foldEdgeMulticastTOBGaps(ctx context.Context, captureSources edgeMulticastCaptureSourceMap, out map[string]*EdgeMulticastSequenceHealth) (time.Time, int) {
 	data, err := a.readPageCache(ctx, edgeMulticastTOBGapsCacheKey)
 	if err != nil {
-		return time.Time{}
+		return time.Time{}, 0
 	}
 
 	var payload EdgeMulticastTOBGapsResponse
 	if err := json.Unmarshal(data, &payload); err != nil {
 		slog.Warn("edge multicast tob gaps: cache did not parse", "error", err)
-		return time.Time{}
+		return time.Time{}, 0
 	}
 
 	mergeEdgeMulticastTOBGaps(captureSources, payload.Series, payload.GeneratedAt, out)
-	return payload.GeneratedAt.UTC()
+	return payload.GeneratedAt.UTC(), payload.WindowMinutes * 60
 }
 
 // mergeEdgeMulticastTOBGaps is the fold itself, without the cache read around it: pure, so the
@@ -238,20 +250,43 @@ func mergeEdgeMulticastTOBGaps(captureSources edgeMulticastCaptureSourceMap, ser
 			GapsMeasured: true,
 		}
 
-		replaced := false
+		// The match is chosen by the LOWEST capture source name among the candidates, not by
+		// position. This payload arrives from a GROUP BY with no ORDER BY, so slice order is not
+		// stable between refreshes, and "the first match" would move the recorder's counters from
+		// one row to another across a poll of unchanged data.
+		//
+		// More than one candidate means the recorder's grain cannot resolve which series the
+		// counters belong to: it groups by (group, publisher, channel, node) and knows nothing
+		// about capture sources, so one row is all it can offer for however many the capture
+		// split that key into. One is replaced and the rest keep GapsMeasured = false, which
+		// understates the measurement and never invents one — writing the same aggregate onto
+		// each would multiply this group's gap books by the number of candidates. It should not
+		// happen (a capture source has its own channel id on the group), so the count is logged
+		// rather than assumed away: that is the only way the assumption is falsifiable from
+		// production.
+		match, candidates := -1, 0
 		for i, existing := range health.Instances {
 			if existing.PublisherSourceIP != inst.PublisherSourceIP ||
 				existing.ChannelID != inst.ChannelID ||
 				existing.Node != inst.Node {
 				continue
 			}
-			inst.CaptureSource = existing.CaptureSource
-			health.Instances[i] = inst
-			replaced = true
-			break
+			candidates++
+			if match < 0 || existing.CaptureSource < health.Instances[match].CaptureSource {
+				match = i
+			}
 		}
-		if !replaced {
-			health.Instances = append(health.Instances, inst)
+		if candidates > 1 {
+			slog.Warn("edge multicast tob gaps: channel instance matches several capture sources",
+				"multicast_group", series.MulticastGroup, "publisher_source_ip", series.PublisherSourceIP,
+				"channel_id", series.ChannelID, "node", series.Node, "candidates", candidates,
+				"measured", health.Instances[match].CaptureSource)
 		}
+		if match >= 0 {
+			inst.CaptureSource = health.Instances[match].CaptureSource
+			health.Instances[match] = inst
+			continue
+		}
+		health.Instances = append(health.Instances, inst)
 	}
 }
