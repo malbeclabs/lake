@@ -51,6 +51,16 @@ import (
 // that is. The filter is what keeps the two from appearing as one feed recorded twice.
 const edgeMulticastTOBGapsCacheKey = "edge_multicast_tob_gaps:v1"
 
+// edgeMulticastTOBGapSecondsCap bounds the seconds array this query builds per channel instance,
+// one entry per whole second of THIS leg's window, so a series losing data in every second of it
+// fills the array exactly and drops nothing.
+//
+// Derived from this leg's own window rather than borrowed from kalshiL2GapSecondsCap, which is the
+// same number today and is derived from the market-by-price leg's: nothing ties the two windows
+// together, and if either moved alone the array would be silently mis-sized — under-sizing loses
+// episodes with no error.
+const edgeMulticastTOBGapSecondsCap = edgeMulticastObservationsWindowMinutes * 60
+
 // EdgeMulticastTOBGapSeries is one channel instance's recorded gap counters over the window.
 type EdgeMulticastTOBGapSeries struct {
 	MulticastGroup    string `json:"multicast_group"`
@@ -137,7 +147,7 @@ func (a *API) FetchEdgeMulticastTOBGaps(ctx context.Context) (*EdgeMulticastTOBG
 			AND dst_addr != toIPv4('0.0.0.0')
 		GROUP BY multicast_group, publisher_source_ip, channel_id, node
 		SETTINGS max_execution_time = 120, timeout_before_checking_execution_speed = 0`,
-		"`"+a.FeedsDB+"`", edgeMulticastObservationsWindowMinutes, kalshiL2GapSecondsCap)
+		"`"+a.FeedsDB+"`", edgeMulticastObservationsWindowMinutes, edgeMulticastTOBGapSecondsCap)
 
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, q)

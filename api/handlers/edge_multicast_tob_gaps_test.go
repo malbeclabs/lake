@@ -214,6 +214,28 @@ func TestTOBGapsEveryVantageLosingTogetherIsAFeedLoss(t *testing.T) {
 	assert.Equal(t, uint32(2), got[0].Seconds)
 }
 
+// **And a vantage that stopped ingesting vetoes nothing.** This is the dual of the test above and
+// the worse failure of the pair, because a suppressed finding leaves nothing on the page to
+// notice: a recorder whose every path is stale reports two series with no gap episodes at all,
+// which intersects to nothing and would silence the badge for the whole group. Stalled is the
+// signal that its silence is about itself.
+func TestTOBGapsAStalledVantageDoesNotSilenceTheBadge(t *testing.T) {
+	lost := []handlers.KalshiL2GapEpisode{{Start: 100, Seconds: 2}}
+	instances := []handlers.EdgeMulticastChannelInstance{
+		measuredInstance("148.51.121.69", 1, "aws-cmh-mn-recorder1", lost),
+		measuredInstance("148.51.120.6", 101, "aws-cmh-mn-recorder1", lost),
+		measuredInstance("148.51.121.69", 1, "aws-was-mn-recorder1", lost),
+		measuredInstance("148.51.120.6", 101, "aws-was-mn-recorder1", lost),
+		stalledInstance("148.51.121.69", 1, "aws-dub-mn-recorder1"),
+		stalledInstance("148.51.120.6", 101, "aws-dub-mn-recorder1"),
+	}
+
+	got := handlers.EdgeMulticastAllPathsGappedForTest(instances)
+	require.Len(t, got, 1, "a stalled recorder is not a witness that the feed delivered")
+	assert.Equal(t, int64(100), got[0].Start)
+	assert.Equal(t, uint32(2), got[0].Seconds)
+}
+
 // A measured series with a capture source, which is what both rollups key on.
 func measuredInstance(pubIP string, channel uint8, node string, episodes []handlers.KalshiL2GapEpisode) handlers.EdgeMulticastChannelInstance {
 	return handlers.EdgeMulticastChannelInstance{
@@ -225,6 +247,13 @@ func measuredInstance(pubIP string, channel uint8, node string, episodes []handl
 		GapsMeasured:      true,
 		Status:            "ok",
 	}
+}
+
+// A measured series at a vantage that stopped ingesting: two paths, no episodes, stalled.
+func stalledInstance(pubIP string, channel uint8, node string) handlers.EdgeMulticastChannelInstance {
+	inst := measuredInstance(pubIP, channel, node, nil)
+	inst.Status = "stalled"
+	return inst
 }
 
 // **The leg refuses a group that is not top of book, and that branch guards a better

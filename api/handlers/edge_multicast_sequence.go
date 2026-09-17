@@ -152,6 +152,14 @@ type EdgeMulticastChannelInstance struct {
 	// book, a `snapshot_end` completes a cycle. A series with gaps and no cycles is not
 	// recovering.
 	//
+	// **The two planes count different things into Resets**, and they share this field and the
+	// tooltip that renders it. Market-by-price counts `instrument_reset` messages, one book
+	// re-anchored each; the recorded-gap leg counts how far `reset_count` advanced, one per era
+	// over a channel that carries every instrument. The reading both legs state — "a series with
+	// gaps and no reset is not re-anchoring" — holds on either, but the magnitudes do not
+	// compare across them: one era advance re-anchoring 20 books prints `1` from the recorder's
+	// leg where market-by-price would print `20` for the same event.
+	//
 	// **Absent and zero are different readings**, and the sentence above is why: zero cycles
 	// on a gapped series is a finding, so a plane that cannot count them must not print one.
 	//
