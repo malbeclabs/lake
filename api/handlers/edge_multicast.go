@@ -266,6 +266,15 @@ type EdgeMulticastGroup struct {
 	// list, so what the payload happens to carry cannot change it.
 	PublisherVerdicts EdgeMulticastPublisherVerdicts `json:"publisher_verdicts"`
 
+	// Conformance is what dz-conformance graded on this group in the window — nil for a group no
+	// validator covers, which is 10 of the 15 today, and for every environment with no metrics
+	// store configured.
+	//
+	// On the GROUP and not on the publisher lines, and that is a property of the source rather
+	// than of the page: the metrics carry no publisher source address, so nothing in this
+	// payload can name a path. See edge_multicast_conformance.go.
+	Conformance *EdgeMulticastConformance `json:"conformance,omitempty"`
+
 	// CaptureNodes is the application plane's per-node view of this group: what each recording
 	// node wrote down in the window, and how that compares with its peers. Empty for a group no
 	// capture covers, which is most of them.
@@ -406,6 +415,12 @@ type EdgeMulticastResponse struct {
 	// the older of the two sequence legs — reusing it would age these columns against a payload
 	// they do not come from.
 	ObservationsAsOf *time.Time `json:"observations_as_of,omitempty"`
+
+	// ConformanceAsOf is the third such clock, for the Conformance column. Its payload comes
+	// from a metrics store rather than from ClickHouse and is written by its own refresher leg,
+	// so it is a third entry with a third clock — the same reason ObservationsAsOf could not
+	// borrow SequenceAsOf.
+	ConformanceAsOf *time.Time `json:"conformance_as_of,omitempty"`
 	// GapWindowSeconds is how wide the window the gap episodes were measured over is, and it
 	// makes SequenceAsOf into an axis: the episodes sit inside (SequenceAsOf - this, SequenceAsOf].
 	// Omitted (omitempty) when nothing folded any, which is also the signal to draw no timeline
@@ -546,6 +561,8 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 	var sequenceAsOf time.Time
 	var observations edgeMulticastObservationStatsResult
 	var observationsAsOf time.Time
+	var conformance map[string]*EdgeMulticastConformance
+	var conformanceAsOf time.Time
 	var gapWindowSecs int
 	if isMainnet(ctx) {
 		var err error
@@ -560,6 +577,10 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 		// top-of-book series do, so they cost no query either, and a miss costs the checks
 		// rather than the page.
 		observations, observationsAsOf = a.edgeMulticastObservationStats(ctx, captureSources)
+
+		// The conformance verdicts, from a third cache entry with a third clock. Same
+		// contract as the two above: a miss costs the column, never the page.
+		conformance, conformanceAsOf = a.edgeMulticastConformanceFold(ctx)
 	}
 
 	// The device-side BGP session. One round trip for the fleet, and an absent telemetry mirror
@@ -595,13 +616,17 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 		at := observationsAsOf
 		resp.ObservationsAsOf = &at
 	}
+	if !conformanceAsOf.IsZero() {
+		at := conformanceAsOf
+		resp.ConformanceAsOf = &at
+	}
 
 	byService := map[string][]EdgeMulticastGroup{}
 	// Which section codes a FEED ROW claims. A code synthesised by edgeMulticastFamilyOf is
 	// deliberately absent: the group is promoted by activity, not reclassified as sold.
 	feedBacked := map[string]bool{}
 	for _, g := range groups {
-		row := buildEdgeMulticastGroup(g, membership[g.PK], rates[g.PK], lastHeard[g.PK], publisherLines[g.PK], sequence[g.PK], observations, bgpSessions, bgpRtt)
+		row := buildEdgeMulticastGroup(g, membership[g.PK], rates[g.PK], lastHeard[g.PK], publisherLines[g.PK], sequence[g.PK], observations, conformance[g.MulticastIP], bgpSessions, bgpRtt)
 		codes := feeds.byGroup[g.PK]
 		if len(codes) > 0 {
 			// A feed row claims this section, which is the only thing Managed may mean.
@@ -675,7 +700,7 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 // the remainder rather than read: a member the view dropped (no health row at all) is exactly
 // as unknown as one it marked 'no_data', and folding both into the remainder keeps the parts
 // summing to Total whatever the view does.
-func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership, r edgeMulticastRates, lh edgeMulticastLastHeard, lines []EdgeMulticastPublisher, sequence *EdgeMulticastSequenceHealth, observations edgeMulticastObservationStatsResult, bgpSessions map[edgeMulticastBGPKey]EdgeMulticastBGPSession, bgpRtt map[string]EdgeMulticastBGPRtt) EdgeMulticastGroup {
+func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership, r edgeMulticastRates, lh edgeMulticastLastHeard, lines []EdgeMulticastPublisher, sequence *EdgeMulticastSequenceHealth, observations edgeMulticastObservationStatsResult, conformance *EdgeMulticastConformance, bgpSessions map[edgeMulticastBGPKey]EdgeMulticastBGPSession, bgpRtt map[string]EdgeMulticastBGPRtt) EdgeMulticastGroup {
 	out := EdgeMulticastGroup{
 		PK:                   g.PK,
 		Code:                 g.Code,
@@ -694,6 +719,10 @@ func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership
 	}
 	out.Publishers.Unknown = max(0, out.Publishers.Total-out.Publishers.Active-out.Publishers.Idle)
 	out.Subscribers.Unknown = max(0, out.Subscribers.Total-out.Subscribers.Active-out.Subscribers.Idle)
+
+	// Keyed on the multicast ADDRESS, which is what the scrape target carries. The ledger code
+	// is deliberately not the join: a code that stops matching its live group fails silently.
+	out.Conformance = conformance
 
 	// The receiver-side statement, on the row that owns it. A node short on every path of a group
 	// is the vantage rather than the feed, and no publisher line can carry that — the same reason

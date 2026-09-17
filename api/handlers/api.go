@@ -65,6 +65,12 @@ type API struct {
 	// Tests inject a client pointed at a local httptest server.
 	DocsSource *docsfetch.Client
 
+	// Prom queries a Prometheus-compatible store (nil = not configured, which is the normal
+	// state in local dev, staging without a token, and PR previews). It reads the edge feed
+	// conformance verdicts, which exist in no database — see promql.go. Nil costs the
+	// Conformance column and nothing else.
+	Prom PromQuerier
+
 	// Build info
 	BuildVersion string
 	BuildCommit  string

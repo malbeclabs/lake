@@ -939,7 +939,8 @@ func (a *API) FetchKalshiPathLatency(ctx context.Context) (*KalshiPathLatency, e
 // them and the request path never runs a multi-day scan:
 //   - the per-feed path latency,
 //   - the 24h and 7d scoreboards (the 1h scoreboard stays on the ordinary page-cache worker),
-//   - the sports L2 coverage view.
+//   - the sports L2 coverage view,
+//   - the two /dz/edge/multicast folds: the observations plane and the conformance verdicts.
 //
 // Each computation gets its own timeout so a slow one can't starve the others; the path
 // latency is refreshed first so the 24h/7d scoreboards pick up its freshly-cached value.
@@ -1017,7 +1018,9 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 	// one gives — no page falls back to a live query for it, so until it lands its numbers are
 	// simply absent, and it is cheap — and immediately after it, because the two describe the
 	// same span and a reader comparing them across a cycle boundary would be comparing two
-	// windows.
+	// windows. That adjacency is why it goes ahead of the conformance leg, whose own reason for
+	// being early is the weaker half of the same one.
+	//
 	// Escalation-gated, per CLAUDE.md's rule for periodic loops, and the reason is on the leg
 	// immediately above: the observations refresh failed on EVERY ten-minute cycle in production
 	// against a ClickHouse memory limit and "cost the strips silently because this measurement is
@@ -1049,9 +1052,30 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 		}
 		tobGapsEsc.Reset(tobGapsEscKey)
 	}
+	// The conformance leg of the same page. It reads no ClickHouse at all — the verdicts exist
+	// only in a metrics store — so it costs the chain nothing but its own HTTP round trips, and
+	// it sits near the front for the same reason the observations leg sits first: no page falls
+	// back to a live query for it, so until it lands its column is simply absent.
+	//
+	// A nil querier makes FetchEdgeMulticastConformance return an empty payload with no error,
+	// which is written and read as "no validator covers anything here". That is the correct
+	// state for an environment with no credentials, and it is not a failure to log.
+	refreshConformance := func() {
+		rctx, cancel := context.WithTimeout(ctx, runTimeout)
+		defer cancel()
+		val, err := a.FetchEdgeMulticastConformance(rctx)
+		if err != nil {
+			slog.Warn("edge multicast conformance refresh failed", "error", err)
+			return
+		}
+		if err := a.WritePageCache(ctx, edgeMulticastConformanceCacheKey, val); err != nil {
+			slog.Warn("edge multicast conformance cache write failed", "error", err)
+		}
+	}
 	refresh := func() {
 		refreshObservations()
 		refreshTOBGaps()
+		refreshConformance()
 		refreshLatency()
 		refreshScoreboard("24h")
 		refreshScoreboard("7d")
