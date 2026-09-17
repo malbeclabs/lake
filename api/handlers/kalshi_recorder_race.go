@@ -9,45 +9,22 @@ import (
 )
 
 // The feed-race recorder's own race: the venue's upstream against the multicast the publishers
-// put on the wire, at each site that records both.
+// put on it, per site that records both. The rest of this page races DoubleZero against a
+// competing feed; this races the venue against its own republication, which that comparison
+// cannot express.
 //
-// # How this differs from the scoreboard it sits on
+// **Fifteen minutes, not the window the page selects.** kalshi_book_race is a plain view over
+// kalshi_book_top_occurrence, so it re-derives the pairing from kalshi_edge_book_top and
+// kalshi_venue_book_top on every call, where the legacy summary is a table fed by a
+// materialised view. Measured against mainnet: ~40s for fifteen minutes with quantileTDigest,
+// and an hour does not return inside a 60s deadline. Serving the page's windows needs a
+// materialised summary for this race, which is a cluster write with its own budget.
 //
-// The rest of this page compares DoubleZero against a competing data feed, out of
-// `kalshi_bbo_feed_race_summary`. This compares the venue against its own republication, out of
-// `kalshi_book_race`, and the difference is the point: it answers whether a subscriber on the
-// multicast hears a book state before or after a subscriber on Kalshi's own socket, which is
-// the product's central claim and the one number the legacy summary cannot express.
-//
-// # Why the window is fifteen minutes and not the page's
-//
-// **Because the race is a view, and the legacy summary is a table.**
-// `kalshi_bbo_feed_race_summary` is a SharedReplacingMergeTree fed by a materialised view, so
-// the scoreboard's 1h/24h/7d windows are cheap reads off pre-aggregated rows.
-// `kalshi_book_race` is a plain view over `kalshi_book_top_occurrence`, which re-derives the
-// pairing from `kalshi_edge_book_top` and `kalshi_venue_book_top` on every query — 133M and 26M
-// rows at the time of writing.
-//
-// Measured against the live store: fifteen minutes costs ~40s even with `quantileTDigest`, and
-// an hour does not return inside a 60s deadline. So this states the window it can actually
-// serve rather than offering the page's and quietly timing out, and it rides the ten-minute
-// refresher rather than a request. Giving it the page's windows needs a materialised summary
-// for this race, the way the legacy one has — a cluster write with its own budget, and not
-// something an API can decide.
-//
-// # Which side is which
-//
-// The two observations of one book are told apart by the `venue-` prefix the recorder's
-// inventory gives `venue_observation`, against the `edge-` it gives `wire_observation`. That is
-// a naming convention, and it is the only discriminator the view carries — the alternative
-// would be a column saying which side an observation is, which `kalshi_book_race` does not
-// have.
-//
-// **So each side is matched on its OWN prefix and neither is the complement of the other.** A
-// row matching neither counts as neither, stays in `Pairs`, and makes the two win counts sum to
-// less than it — which is the tell. Written as `NOT LIKE 'venue%'` the wire would absorb every
-// unrecognised name, and the day the convention changed the panel would report the multicast
-// beating the venue on 100% of pairs with nothing anywhere to say otherwise.
+// Each side is matched on its own prefix — `venue-` and `edge-`, the recorder's inventory
+// names — and never as the complement of the other. A row matching neither counts as neither
+// and stays in Pairs, so a convention that moves reads as pairs going missing rather than as
+// the wire silently winning.
+
 const kalshiRecorderRaceCacheKey = "kalshi_recorder_race:v1"
 
 // kalshiRecorderRaceWindowMinutes is what the view can be aggregated over inside a refresher
