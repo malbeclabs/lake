@@ -114,10 +114,25 @@ var edgeMulticastPlanes = map[string]string{
 // edgeMulticastPlaneFor returns the display label for a code's plane, or "" when the code carries
 // none, which every group outside the plane-split market-data feeds does.
 func edgeMulticastPlaneFor(code string) string {
-	if i := strings.LastIndexByte(code, '-'); i >= 0 {
-		return edgeMulticastPlanes[code[i+1:]]
+	return edgeMulticastPlanes[edgeMulticastPlaneSuffixOf(code)]
+}
+
+// edgeMulticastPlaneSuffixOf returns the plane suffix a group's ledger code ends in — `tob`,
+// `mbp`, `mbo` — or "" for a code carrying none.
+//
+// One parse, three callers: the display label above, the family key below, and the capture
+// source map's plane index. They had drifted into three copies of the same two lines, which is
+// three places to update when a plane is added and two places to forget.
+func edgeMulticastPlaneSuffixOf(code string) string {
+	i := strings.LastIndexByte(code, '-')
+	if i < 0 {
+		return ""
 	}
-	return ""
+	suffix := code[i+1:]
+	if _, ok := edgeMulticastPlanes[suffix]; !ok {
+		return ""
+	}
+	return suffix
 }
 
 // edgeMulticastPlaneSuffixSQL renders the plane suffixes as a regex alternation for the feed
@@ -153,10 +168,8 @@ const edgeMulticastUnclaimedService = "edge-unclaimed"
 // payload that the ledger does not carry. Managed stays false, so the header still says the feed
 // row is missing — the group is promoted by activity, not reclassified as sold.
 func edgeMulticastFamilyOf(code string) string {
-	if i := strings.LastIndexByte(code, '-'); i >= 0 {
-		if _, ok := edgeMulticastPlanes[code[i+1:]]; ok {
-			return code[:i]
-		}
+	if suffix := edgeMulticastPlaneSuffixOf(code); suffix != "" {
+		return code[:len(code)-len(suffix)-1]
 	}
 	return code
 }

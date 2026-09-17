@@ -221,6 +221,7 @@ func (a *API) foldEdgeMulticastTOBGaps(ctx context.Context, captureSources edgeM
 // mergeEdgeMulticastTOBGaps is the fold itself, without the cache read around it: pure, so the
 // replacement rule above can be tested without a database or a page cache standing in the way.
 func mergeEdgeMulticastTOBGaps(captureSources edgeMulticastCaptureSourceMap, series []EdgeMulticastTOBGapSeries, generatedAt time.Time, out map[string]*EdgeMulticastSequenceHealth) {
+	unmatched := 0
 	for _, series := range series {
 		groupPK := captureSources.resolveMulticastIP(series.MulticastGroup)
 		if groupPK == "" {
@@ -310,6 +311,18 @@ func mergeEdgeMulticastTOBGaps(captureSources edgeMulticastCaptureSourceMap, ser
 			health.Instances[match] = inst
 			continue
 		}
+		// **An appended series is a series the capture never saw**, which is legitimate — a
+		// recorder can cover a feed the capture does not — and is also exactly what a drift
+		// between `kalshi_edge_book_top.recorder` and `measurement_node_id` looks like. If
+		// those two names ever stop agreeing, every top-of-book row doubles: the capture's
+		// copy keeps GapsMeasured false and the recorder's lands beside it with no capture
+		// source, and nothing else on the page says so. Counted and logged for the same
+		// reason the several-candidates case above is, and at the same grain.
+		unmatched++
 		health.Instances = append(health.Instances, inst)
+	}
+	if unmatched > 0 {
+		slog.Info("edge multicast tob gaps: series matched no capture series",
+			"unmatched", unmatched, "series", len(series))
 	}
 }

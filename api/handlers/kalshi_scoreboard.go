@@ -977,16 +977,21 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 			slog.Warn("kalshi scoreboard cache write failed", "window", window, "error", err)
 		}
 	}
+	// The market-by-price half of the same column, and the heaviest scan in the chain. Same
+	// escalation for the same reason: its failure leaves the Sequence column with one leg and
+	// nothing on the page says which.
+	var l2Esc logger.Escalator
+	const l2EscKey = "kalshi_l2_coverage"
 	refreshL2 := func() {
 		rctx, cancel := context.WithTimeout(ctx, runTimeout)
 		defer cancel()
 		val, err := a.FetchKalshiL2Coverage(rctx)
 		if err != nil {
-			slog.Warn("kalshi l2 coverage refresh failed", "error", err)
+			l2Esc.Fail(slog.Default(), l2EscKey, "kalshi l2 coverage refresh failed", "error", err)
 			return
 		}
 		if err := a.WritePageCache(ctx, kalshiL2CoverageCacheKey, val); err != nil {
-			slog.Warn("kalshi l2 coverage cache write failed", "error", err)
+			l2Esc.Fail(slog.Default(), l2EscKey, "kalshi l2 coverage cache write failed", "error", err)
 		}
 	}
 	// The observations-plane leg of /dz/edge/multicast: the top-of-book sequence series and the
@@ -1001,16 +1006,25 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 	// the deploy that introduced this one, the columns stayed empty for a whole cycle. Cheapest
 	// step in the chain (2-4s against mainnet) and the only one with nothing to fall back on, so
 	// it goes at the front.
+	// **Escalated too, and this is the leg the rule was written from.** It failed on every
+	// ten-minute cycle in production against a ClickHouse memory limit and cost the strips
+	// silently, which is the precedent the recorded-gap leg below cites for its own escalator.
+	// Citing it while leaving it at WARN would have meant the failure that motivated the rule
+	// still never pages.
+	var observationsEsc logger.Escalator
+	const observationsEscKey = "edge_multicast_observations"
 	refreshObservations := func() {
 		rctx, cancel := context.WithTimeout(ctx, runTimeout)
 		defer cancel()
 		val, err := a.FetchEdgeMulticastObservations(rctx)
 		if err != nil {
-			slog.Warn("edge multicast observations refresh failed", "error", err)
+			observationsEsc.Fail(slog.Default(), observationsEscKey,
+				"edge multicast observations refresh failed", "error", err)
 			return
 		}
 		if err := a.WritePageCache(ctx, edgeMulticastObservationsCacheKey, val); err != nil {
-			slog.Warn("edge multicast observations cache write failed", "error", err)
+			observationsEsc.Fail(slog.Default(), observationsEscKey,
+				"edge multicast observations cache write failed", "error", err)
 		}
 	}
 	// The recorded-gap leg of the same column, from the feed-race recorder's own grain rather

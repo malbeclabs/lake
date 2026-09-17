@@ -85,10 +85,15 @@ func TestFetchEdgeMulticastTOBGapsCountsTheMarkerAndNotTheSpan(t *testing.T) {
 
 	// One path, one recorder: three instruments, two of them lowered by a sequence hole. The
 	// third is clean, so gap_books must read 2 and not the instrument count.
+	//
+	// **Ten seconds apart, because `now64()` is evaluated per statement.** Rows written one
+	// second apart land in the same wall-clock second or in two depending on when the inserts
+	// happen to fall, which made the distinct-second count a coin flip. Spacing them past a
+	// second boundary makes the assertion below about the query rather than about timing.
+	insertEdgeBookTop(t, api, "cmh", "aws-cmh-mn-recorder1", group, "148.51.121.69", 1, 11, 0, gapped, 40)
 	insertEdgeBookTop(t, api, "cmh", "aws-cmh-mn-recorder1", group, "148.51.121.69", 1, 11, 0, gapped, 30)
-	insertEdgeBookTop(t, api, "cmh", "aws-cmh-mn-recorder1", group, "148.51.121.69", 1, 11, 0, gapped, 29)
-	insertEdgeBookTop(t, api, "cmh", "aws-cmh-mn-recorder1", group, "148.51.121.69", 1, 22, 0, gapped, 29)
-	insertEdgeBookTop(t, api, "cmh", "aws-cmh-mn-recorder1", group, "148.51.121.69", 1, 33, 0, clean, 28)
+	insertEdgeBookTop(t, api, "cmh", "aws-cmh-mn-recorder1", group, "148.51.121.69", 1, 22, 0, gapped, 20)
+	insertEdgeBookTop(t, api, "cmh", "aws-cmh-mn-recorder1", group, "148.51.121.69", 1, 33, 0, clean, 10)
 
 	// The redundant path at the same node, clean, and its era advanced once.
 	insertEdgeBookTop(t, api, "cmh", "aws-cmh-mn-recorder1", group, "148.51.120.6", 101, 11, 0, clean, 30)
@@ -114,8 +119,8 @@ func TestFetchEdgeMulticastTOBGapsCountsTheMarkerAndNotTheSpan(t *testing.T) {
 	assert.Equal(t, uint64(2), gappedPath.GapBooks, "two instruments gapped, not the three that were seen")
 	assert.Equal(t, "cmh", gappedPath.LocationCode)
 	assert.False(t, gappedPath.LastSeen.IsZero(), "the stamp converts")
-	// Two whole seconds carried a gap-marked top, and they are adjacent.
-	require.Len(t, gappedPath.GapSeconds, 2)
+	// Three whole seconds carried a gap-marked top, ten apart so the count cannot drift.
+	require.Len(t, gappedPath.GapSeconds, 3)
 
 	cleanPath := byKey[fmt.Sprintf("%s|148.51.120.6|101|aws-cmh-mn-recorder1", group)]
 	assert.Equal(t, uint64(2), cleanPath.Messages)

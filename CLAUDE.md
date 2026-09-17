@@ -493,10 +493,17 @@ HOST and nothing more: the branch into it is upstream of that comparison and dow
 everything else, so a loss on the branch reads exactly like a loss on the path. This is not
 hypothetical — a publisher read 13 books gapped at the only node recording market-by-price, and the
 plane that does have three vantages found the same path intact at a second one, placing the loss on
-the branch. Market-by-price is recorded at **one** node on every group today, so every gap this page
-reports is single-vantage; the verdict stays `gapped`, because data was lost either way, and what
-narrows is the sentence the tooltip is allowed to say. The real fix is a second market-by-price
-recorder, which is not work this repo can do.
+the branch. Market-by-price is recorded at **one** node on every group today, so every market-by-price gap
+this page reports is single-vantage; the verdict stays `gapped`, because data was lost either way,
+and what narrows is the sentence the tooltip is allowed to say. The real fix is a second
+market-by-price recorder, which is not work this repo can do.
+
+**Top of book is no longer single-vantage.** The recorded-gap leg measures three recorders of the
+same feed, which is what makes `GapNodes` mean anything there — and it is why
+`edgeMulticastAllPathsGapped` intersects across vantages rather than unioning: with several
+vantages, one recorder losing both its paths is that recorder's reception and not the feed's
+loss. A vantage whose every path is stalled takes no part in that intersection, or one dead
+recorder would veto a finding its peers agree on.
 
 The tooltip also carries `gap_messages / messages` as a **loss rate** where there were gaps. That is
 not the banned display of `gap_messages` as a fault count — a rate is not a count, and it is the

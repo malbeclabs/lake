@@ -744,6 +744,9 @@ func edgeMulticastAllPathsGapped(instances []EdgeMulticastChannelInstance) []Kal
 	}
 	// Per vantage, per publisher, the seconds that publisher was losing.
 	byVantage := map[vantage]map[string]map[uint32]bool{}
+	// A vantage where every path is stalled is not observing the feed, and an intersection
+	// cannot ask a silent witness whether it saw a loss. See the skip below.
+	delivering := map[vantage]bool{}
 	for _, inst := range instances {
 		// Only the plane that measures gaps at all. A top-of-book series has no marker, so its
 		// empty episode list is an absence of measurement and must not count as "held".
@@ -765,6 +768,9 @@ func edgeMulticastAllPathsGapped(instances []EdgeMulticastChannelInstance) []Kal
 		if byVantage[v][inst.PublisherSourceIP] == nil {
 			byVantage[v][inst.PublisherSourceIP] = map[uint32]bool{}
 		}
+		if inst.Status != edgeMulticastSeqStalled {
+			delivering[v] = true
+		}
 		for _, e := range inst.GapEpisodes {
 			for i := uint32(0); i < e.Seconds; i++ {
 				byVantage[v][inst.PublisherSourceIP][uint32(e.Start)+i] = true
@@ -784,7 +790,7 @@ func edgeMulticastAllPathsGapped(instances []EdgeMulticastChannelInstance) []Kal
 	// is that set. It only bites where a group has several recorders, which is what the
 	// recorded-gap leg just made true for top of book.
 	var shared map[uint32]bool
-	for _, publishers := range byVantage {
+	for v, publishers := range byVantage {
 		// One path at a vantage cannot fail "together" with anything. Recording nothing here is
 		// deliberate: a single-path group has no redundancy to lose, and claiming otherwise would
 		// turn every ordinary gap into a feed outage.
@@ -805,6 +811,19 @@ func edgeMulticastAllPathsGapped(instances []EdgeMulticastChannelInstance) []Kal
 			}
 			first = next
 		}
+		// **A vantage that is not delivering takes no part either**, and this is the trap the
+		// intersection opens: a recorder that stopped ingesting reports two paths with no gap
+		// episodes at all, which intersects to nothing and vetoes every second its peers
+		// agree on. One dead recorder would silence the badge for the whole group — the exact
+		// inverse of the false positive the intersection was added to fix, and a worse
+		// failure, because a suppressed finding leaves nothing on the page to notice.
+		//
+		// Stalled is the signal: it is what the sequence status already means, and a vantage
+		// whose every path is stale is one whose silence is about itself.
+		if !delivering[v] {
+			continue
+		}
+
 		// A vantage with one path was skipped above and takes no part here: it cannot
 		// demonstrate that all paths lost, so it neither confirms nor vetoes a second.
 		if shared == nil {

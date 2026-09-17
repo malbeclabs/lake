@@ -226,3 +226,27 @@ func measuredInstance(pubIP string, channel uint8, node string, episodes []handl
 		Status:            "ok",
 	}
 }
+
+// **The leg refuses a group that is not top of book, and that branch guards a better
+// measurement.** A recorded-gap series landing on a market-by-price group would replace that
+// group's coverage instance on (source IP, Channel ID, node) and discard UpdatesReceived,
+// UpdatesMissing, SeqGapEvents and the percentile pair — the page's only per-instrument loss
+// source, and numbers this grain cannot reproduce. It should be unreachable; it is tested
+// because the cost of it firing unnoticed is losing the better number and keeping something
+// that looks complete.
+func TestTOBGapsRefuseAGroupThatIsNotTopOfBook(t *testing.T) {
+	mbp := []handlers.EdgeMulticastGroupForTest{
+		{PK: "grp-perps-mbp", Code: "edge-kalshi-perps-mbp", MulticastIP: "233.84.178.3"},
+	}
+	existing := map[string][]handlers.EdgeMulticastChannelInstance{
+		"grp-perps-mbp": {stalenessOnlyInstance("148.51.121.69", 1, "aws-cmh-mn-recorder1")},
+	}
+	series := []handlers.EdgeMulticastTOBGapSeries{
+		tobGapSeries("148.51.121.69", 1, "aws-cmh-mn-recorder1", 20, 58, nil),
+	}
+
+	got := handlers.EdgeMulticastTOBGapsMergeForTest(mbp, existing, series, tobGapsAsOf)
+	require.Len(t, got["grp-perps-mbp"], 1, "the coverage instance is still the only one")
+	assert.False(t, got["grp-perps-mbp"][0].GapsMeasured,
+		"and it is untouched: the recorder's counters did not replace it")
+}

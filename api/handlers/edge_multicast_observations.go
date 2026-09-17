@@ -48,9 +48,15 @@ import (
 //
 // So a series from this leg carries GapsMeasured = false, and the UI must not present its 'ok' as
 // a gap-checked verdict. What it does report is real and worth having: the series is advancing,
-// how far behind the recorder's own clock it is, and how many resets it took. Closing the gap
-// half needs the producer to emit a gap marker for top-of-book the way it does for
-// market-by-price, and that is not work this repository can do.
+// how far behind the recorder's own clock it is, and how many resets it took.
+//
+// **The gap half is closed, by a different producer and a different table.** This paragraph used
+// to end by saying it needed "the producer to emit a gap marker for top-of-book the way it does
+// for market-by-price, and that is not work this repository can do". dz_kalshi_recorder emits one
+// — `uncertain_reason` on `kalshi_edge_book_top` — and `edge_multicast_tob_gaps.go` folds it OVER
+// the series this leg produces, replacing them on (source IP, Channel ID, node). What is written
+// above still describes this leg exactly: it has no marker and its grain still cannot support a
+// count-versus-span test. It is no longer the last word on the plane.
 // v2: `recorder_loss` added, each recording node measured against its peers.
 const edgeMulticastObservationsCacheKey = "edge_multicast_observations:v2"
 

@@ -128,10 +128,8 @@ func newEdgeMulticastCaptureSourceMap(groups []MulticastDeliveryGroup) edgeMulti
 		if g.MulticastIP != "" {
 			m.byMulticastIP[g.MulticastIP] = g.PK
 		}
-		if i := strings.LastIndex(g.Code, "-"); i >= 0 {
-			if _, ok := edgeMulticastPlanes[g.Code[i+1:]]; ok {
-				m.planeByPK[g.PK] = g.Code[i+1:]
-			}
+		if suffix := edgeMulticastPlaneSuffixOf(g.Code); suffix != "" {
+			m.planeByPK[g.PK] = suffix
 		}
 		// A capture source may name its group outright.
 		m.exact[g.Code] = g.PK
