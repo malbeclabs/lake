@@ -319,6 +319,12 @@ type KalshiScoreboardResponse struct {
 	// PathLatency is the per-feed venue-to-receive latency (24h) — the headline comparison;
 	// nil until the background refresher computes it (too heavy for the request path).
 	PathLatency *KalshiPathLatency `json:"path_latency,omitempty"`
+	// RecorderRace is the feed-race recorder's own comparison — the venue's upstream against
+	// the multicast, per site. Its own cache entry with its own clock and its own window: it
+	// aggregates a view rather than a summary table, so it can serve fifteen minutes and not
+	// this page's windows. See kalshi_recorder_race.go. nil until the refresher lands one,
+	// and absent entirely where no recorder writes.
+	RecorderRace *KalshiRecorderRace `json:"recorder_race,omitempty"`
 	// Unconfigured reports that no comparison feed is configured in this environment, as
 	// distinct from a configured one that simply had no races in the window. The UI cannot
 	// tell those apart from empty slices, and guessing turns a capture outage into "nothing
@@ -582,8 +588,26 @@ func (a *API) FetchKalshiScoreboardData(ctx context.Context, window, symbol stri
 	}
 
 	a.attachKalshiPathLatency(ctx, resp)
+	a.attachKalshiRecorderRace(ctx, resp)
 
 	return resp, nil
+}
+
+// attachKalshiRecorderRace copies the background-refreshed recorder race onto a response.
+//
+// Best-effort and separately cached, for the same reason the path latency is: it is too slow
+// for a request. Absent until the refresher has populated it, and absent for good in an
+// environment where no recorder writes — the UI reads the absence as "not measured here" and
+// renders nothing, rather than an empty table that reads as a race with no winner.
+func (a *API) attachKalshiRecorderRace(ctx context.Context, resp *KalshiScoreboardResponse) {
+	raw, err := a.readPageCache(ctx, kalshiRecorderRaceCacheKey)
+	if err != nil || len(raw) == 0 {
+		return
+	}
+	var rr KalshiRecorderRace
+	if json.Unmarshal(raw, &rr) == nil && len(rr.Sites) > 0 {
+		resp.RecorderRace = &rr
+	}
 }
 
 // attachKalshiPathLatency copies the background-refreshed 24h path latency onto a response.
@@ -1090,6 +1114,22 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 			slog.Warn("edge multicast conformance cache write failed", "error", err)
 		}
 	}
+	// The recorder's own race. It aggregates a view and not a summary table, so it is the
+	// slowest step here for the least data — ~40s for fifteen minutes, measured — and it goes
+	// last: everything above it serves a page that falls back to nothing, and a chain that put
+	// this first would delay all of them behind it on every cycle.
+	refreshRecorderRace := func() {
+		rctx, cancel := context.WithTimeout(ctx, runTimeout)
+		defer cancel()
+		val, err := a.FetchKalshiRecorderRace(rctx)
+		if err != nil {
+			slog.Warn("kalshi recorder race refresh failed", "error", err)
+			return
+		}
+		if err := a.WritePageCache(ctx, kalshiRecorderRaceCacheKey, val); err != nil {
+			slog.Warn("kalshi recorder race cache write failed", "error", err)
+		}
+	}
 	refresh := func() {
 		refreshObservations()
 		refreshTOBGaps()
@@ -1098,6 +1138,7 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 		refreshScoreboard("24h")
 		refreshScoreboard("7d")
 		refreshL2()
+		refreshRecorderRace()
 	}
 	go func() {
 		refresh()

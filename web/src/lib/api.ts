@@ -7810,7 +7810,39 @@ export interface KalshiScoreboardResponse {
   recent_races: KalshiRace[]
   prices?: Record<string, number>
   path_latency?: KalshiPathLatency
+  /**
+   * The feed-race recorder's own comparison: the venue's upstream against the multicast the
+   * publishers put on it, per recording site. Absent where no recorder writes, and it carries
+   * its OWN window — it aggregates a view rather than a summary table, so it serves fifteen
+   * minutes and not the window selected above.
+   */
+  recorder_race?: KalshiRecorderRace
   unconfigured?: boolean
+}
+
+/** One recording site's venue-against-wire race over the recorder's own window. */
+export interface KalshiRecorderRaceSite {
+  site: string
+  /** Book states both sides saw. Zero means no race here, however much either side recorded. */
+  pairs: number
+  symbols: number
+  venue_wins: number
+  wire_wins: number
+  /**
+   * The lead in each direction, over the races that direction won — two distributions and not
+   * one signed number. Where the margin is smaller than the jitter both sides win regularly,
+   * and a signed median would average them into a figure neither side ever saw.
+   */
+  venue_p50_ms: number
+  venue_p95_ms: number
+  wire_p50_ms: number
+  wire_p95_ms: number
+}
+
+export interface KalshiRecorderRace {
+  generated_at: string
+  window_minutes: number
+  sites: KalshiRecorderRaceSite[]
 }
 
 export async function fetchKalshiScoreboard(

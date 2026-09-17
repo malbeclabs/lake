@@ -369,6 +369,80 @@ export function KalshiScoreboardPage() {
               )}
             </div>
 
+            {/* The recorder's race: the venue against its own republication. Placed under the
+                path-latency hero and above the competitor race because it answers a different
+                question from either — not "which feed is faster" but "does the multicast carry
+                a book state before the venue's own socket does". Rendered only where a recorder
+                writes; absent is not an empty table. */}
+            {data.recorder_race && data.recorder_race.sites.length > 0 && (
+              <div className="mb-6 rounded-lg border border-border bg-card p-4 sm:p-6">
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  The feed-race recorder, per site: the venue's own upstream against the
+                  multicast the publishers put on the wire, paired on a book state both sides
+                  computed. Window: last {data.recorder_race.window_minutes} minutes — its own,
+                  and not the one selected above, because this aggregates a view rather than a
+                  summary table.
+                </p>
+
+                <div className="mt-5 overflow-x-auto">
+                  <table className="min-w-full">
+                    <thead>
+                      <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                        <th className="whitespace-nowrap py-2 pr-4 font-medium">Site</th>
+                        <th className="whitespace-nowrap px-4 py-2 font-medium">Ahead</th>
+                        <th className="whitespace-nowrap px-4 py-2 text-right font-medium">Share</th>
+                        <th className="whitespace-nowrap px-4 py-2 text-right font-medium">p50</th>
+                        <th className="whitespace-nowrap px-4 py-2 text-right font-medium">p95</th>
+                        <th className="whitespace-nowrap px-4 py-2 text-right font-medium">Pairs</th>
+                        <th className="whitespace-nowrap py-2 pl-4 text-right font-medium">Symbols</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.recorder_race.sites.map((s) => {
+                        const wireAhead = s.wire_wins > s.venue_wins
+                        const winner = wireAhead ? s.wire_wins : s.venue_wins
+                        // **A share near half is the reading, not a winner.** Where the margin
+                        // is smaller than the jitter both sides win regularly, and calling one
+                        // of them the winner reports noise as a result.
+                        const tooClose = s.pairs > 0 && winner / s.pairs < 0.6
+                        return (
+                          <tr key={s.site} className="border-b border-border/50 last:border-0">
+                            <td className="whitespace-nowrap py-3 pr-4 text-sm font-medium">{s.site}</td>
+                            <td className="whitespace-nowrap px-4 py-3 text-sm">
+                              {tooClose ? (
+                                <span className="text-amber-500" title="Both sides win regularly: the margin is inside the jitter, so the share is not a verdict.">
+                                  too close to call
+                                </span>
+                              ) : (
+                                <span style={{ color: wireAhead ? DZ_COLOR : undefined }}>
+                                  {wireAhead ? 'the wire' : 'the venue'}
+                                </span>
+                              )}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums">
+                              {s.pairs > 0 ? pct((winner / s.pairs) * 100) : '—'}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums">
+                              {(wireAhead ? s.wire_p50_ms : s.venue_p50_ms).toFixed(2)} ms
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums">
+                              {(wireAhead ? s.wire_p95_ms : s.venue_p95_ms).toFixed(2)} ms
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-muted-foreground">
+                              {s.pairs.toLocaleString()}
+                            </td>
+                            <td className="whitespace-nowrap py-3 pl-4 text-right text-sm tabular-nums text-muted-foreground">
+                              {s.symbols.toLocaleString()}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
             {!unconfigured && (
             <>
             {/* Race win rate — kept, but below the headline and with its caveat attached. */}
