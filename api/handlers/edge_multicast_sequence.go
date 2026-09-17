@@ -152,14 +152,19 @@ type EdgeMulticastChannelInstance struct {
 	// book, a `snapshot_end` completes a cycle. A series with gaps and no cycles is not
 	// recovering.
 	//
-	// **SnapshotCycles is a pointer because absent and zero are different readings**, and the
-	// sentence above is why: zero cycles on a gapped series is a finding, so a plane that
-	// cannot count them must not print one. The market-by-price leg always sets it, zero
-	// included; the recorder's top-of-book grain has no `snapshot_end` to count and leaves it
-	// nil, and the tooltip omits the clause rather than rendering `0 snapshot cycles` under a
-	// measured row.
-	Resets         uint64  `json:"resets"`
-	SnapshotCycles *uint64 `json:"snapshot_cycles,omitempty"`
+	// **Absent and zero are different readings**, and the sentence above is why: zero cycles
+	// on a gapped series is a finding, so a plane that cannot count them must not print one.
+	//
+	// Carried as a plain number with a separate flag rather than as an omitted field, because
+	// a deploy is not atomic: a tab still running the previous bundle dereferences
+	// `snapshot_cycles` unguarded inside its `gaps_measured` branch, and the recorder's series
+	// now reach that branch. Omitting the key would throw inside a render and take the whole
+	// page down for anyone who had not reloaded. So the number is always there — the old
+	// bundle reads 0 and prints what it always printed — and the flag is what the current one
+	// reads to omit the clause.
+	Resets                 uint64 `json:"resets"`
+	SnapshotCycles         uint64 `json:"snapshot_cycles"`
+	SnapshotCyclesMeasured bool   `json:"snapshot_cycles_measured"`
 
 	// GapsMeasured says whether GapBooks is a reading or an absence. A zero GapBooks with this
 	// false is "not checked", and the UI has to render it as something other than a clean bill
@@ -531,11 +536,12 @@ func (a *API) foldKalshiL2Coverage(ctx context.Context, captureSources edgeMulti
 			P99GapMessages:  lane.P99GapMessages,
 
 			Resets: lane.Resets,
-			// Always set on this plane, zero included: the count is a reading here.
-			SnapshotCycles: &lane.SnapshotCycles,
-			LastSeen:       lane.LastSeen.UTC(),
-			Status:         edgeMulticastSequenceStatus(lane.GapBooks, lane.LastSeen, coverage.GeneratedAt),
-			GapsMeasured:   true,
+			// Always a reading on this plane, zero included.
+			SnapshotCycles:         lane.SnapshotCycles,
+			SnapshotCyclesMeasured: true,
+			LastSeen:               lane.LastSeen.UTC(),
+			Status:                 edgeMulticastSequenceStatus(lane.GapBooks, lane.LastSeen, coverage.GeneratedAt),
+			GapsMeasured:           true,
 		}
 		if out[groupPK] == nil {
 			out[groupPK] = &EdgeMulticastSequenceHealth{}
@@ -766,7 +772,18 @@ func edgeMulticastAllPathsGapped(instances []EdgeMulticastChannelInstance) []Kal
 		}
 	}
 
-	shared := map[uint32]bool{}
+	// **Intersected ACROSS vantages, not unioned.** The claim this badge makes is that the
+	// FEED lost data, and a second where one recorder lost both its paths while its peers hold
+	// intact copies is not that — it is that recorder's reception, which is what the node in
+	// the key above exists to keep separate and what a union across vantages puts straight
+	// back. Every vantage that can speak to "all paths" has to agree before a second counts.
+	//
+	// **This changes nothing on the market-by-price plane**, which is where the 22-second
+	// measurement above was taken: every mbp_ source is recorded at exactly one vantage
+	// (aws-cmh-mn-recorder1, checked against the live store), and an intersection over one set
+	// is that set. It only bites where a group has several recorders, which is what the
+	// recorded-gap leg just made true for top of book.
+	var shared map[uint32]bool
 	for _, publishers := range byVantage {
 		// One path at a vantage cannot fail "together" with anything. Recording nothing here is
 		// deliberate: a single-path group has no redundancy to lose, and claiming otherwise would
@@ -788,9 +805,19 @@ func edgeMulticastAllPathsGapped(instances []EdgeMulticastChannelInstance) []Kal
 			}
 			first = next
 		}
-		for sec := range first {
-			shared[sec] = true
+		// A vantage with one path was skipped above and takes no part here: it cannot
+		// demonstrate that all paths lost, so it neither confirms nor vetoes a second.
+		if shared == nil {
+			shared = first
+			continue
 		}
+		next := map[uint32]bool{}
+		for sec := range shared {
+			if first[sec] {
+				next[sec] = true
+			}
+		}
+		shared = next
 	}
 	if len(shared) == 0 {
 		return nil

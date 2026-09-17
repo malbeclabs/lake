@@ -177,3 +177,52 @@ func TestTOBGapsForAnUnknownGroupAreDropped(t *testing.T) {
 	got := handlers.EdgeMulticastTOBGapsMergeForTest(tobGapsGroups(), nil, series, tobGapsAsOf)
 	assert.Empty(t, got, "a series with no group is not a group")
 }
+
+// **One recorder losing both its paths is not the feed losing data.** The group's red badge
+// claims every path lost at once; measuring the top-of-book plane put three vantages behind
+// that claim where the market-by-price plane has one, and a union across them let a single
+// recorder's reception speak for the feed while its peers held intact copies.
+func TestTOBGapsOneVantageLosingBothPathsIsNotAFeedLoss(t *testing.T) {
+	lost := []handlers.KalshiL2GapEpisode{{Start: 100, Seconds: 2}}
+
+	// cmh loses on both paths; was holds both, in the same seconds.
+	instances := []handlers.EdgeMulticastChannelInstance{
+		measuredInstance("148.51.121.69", 1, "aws-cmh-mn-recorder1", lost),
+		measuredInstance("148.51.120.6", 101, "aws-cmh-mn-recorder1", lost),
+		measuredInstance("148.51.121.69", 1, "aws-was-mn-recorder1", nil),
+		measuredInstance("148.51.120.6", 101, "aws-was-mn-recorder1", nil),
+	}
+
+	assert.Empty(t, handlers.EdgeMulticastAllPathsGappedForTest(instances),
+		"a peer held an intact copy, so the feed delivered")
+}
+
+// And the claim still fires when every vantage lost both paths in the same second, which is
+// the case the badge exists for.
+func TestTOBGapsEveryVantageLosingTogetherIsAFeedLoss(t *testing.T) {
+	lost := []handlers.KalshiL2GapEpisode{{Start: 100, Seconds: 2}}
+	instances := []handlers.EdgeMulticastChannelInstance{
+		measuredInstance("148.51.121.69", 1, "aws-cmh-mn-recorder1", lost),
+		measuredInstance("148.51.120.6", 101, "aws-cmh-mn-recorder1", lost),
+		measuredInstance("148.51.121.69", 1, "aws-was-mn-recorder1", lost),
+		measuredInstance("148.51.120.6", 101, "aws-was-mn-recorder1", lost),
+	}
+
+	got := handlers.EdgeMulticastAllPathsGappedForTest(instances)
+	require.Len(t, got, 1)
+	assert.Equal(t, int64(100), got[0].Start)
+	assert.Equal(t, uint32(2), got[0].Seconds)
+}
+
+// A measured series with a capture source, which is what both rollups key on.
+func measuredInstance(pubIP string, channel uint8, node string, episodes []handlers.KalshiL2GapEpisode) handlers.EdgeMulticastChannelInstance {
+	return handlers.EdgeMulticastChannelInstance{
+		PublisherSourceIP: pubIP,
+		CaptureSource:     "tob_edge_kalshi_perps",
+		ChannelID:         channel,
+		Node:              node,
+		GapEpisodes:       episodes,
+		GapsMeasured:      true,
+		Status:            "ok",
+	}
+}

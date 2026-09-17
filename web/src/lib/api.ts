@@ -8061,12 +8061,17 @@ export interface EdgeMulticastChannelInstance {
   p99_gap_messages?: number
   resets: number
   /**
-   * Absent where the plane has no `snapshot_end` to count, which is the recorder's
-   * top-of-book grain. Absent and zero are different readings — zero cycles on a gapped
-   * series is a finding — so the tooltip omits the clause rather than printing a zero the
-   * producer never measured.
+   * Always present, and 0 where the plane has no `snapshot_end` to count — which is the
+   * recorder's top-of-book grain. The field is not omitted because a deploy is not atomic:
+   * a tab on the previous bundle dereferences it unguarded and would throw mid-render.
    */
-  snapshot_cycles?: number
+  snapshot_cycles: number
+  /**
+   * Whether `snapshot_cycles` is a reading. False on a plane that cannot count them, where
+   * the 0 above means "not counted" — zero cycles on a gapped series is a finding, so it
+   * must not be printed by a producer that never measured it.
+   */
+  snapshot_cycles_measured: boolean
   last_seen: string
   /** 'ok' | 'gapped' | 'stalled'. */
   status: string

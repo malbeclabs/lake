@@ -228,6 +228,18 @@ func mergeEdgeMulticastTOBGaps(captureSources edgeMulticastCaptureSourceMap, ser
 			// rule `resolve` documents: a series with no group is not a group.
 			continue
 		}
+		// **Top of book only.** This leg keys on (address, publisher, channel, node) and
+		// nothing in that tuple names a plane, so a recorder row carrying a market-by-price
+		// group's address would replace that group's coverage instance — discarding
+		// UpdatesReceived, UpdatesMissing, SeqGapEvents and the percentile pair, which are the
+		// page's only per-instrument loss source and which this grain cannot reproduce. The
+		// recorder writes only top-of-book feeds today, so this should never fire; it is here
+		// because the cost of being wrong is silently losing a better measurement.
+		if plane := captureSources.planeOf(groupPK); plane != "tob" {
+			slog.Warn("edge multicast tob gaps: series resolved to a non-top-of-book group",
+				"multicast_group", series.MulticastGroup, "group", groupPK, "plane", plane)
+			continue
+		}
 		if out[groupPK] == nil {
 			out[groupPK] = &EdgeMulticastSequenceHealth{}
 		}
@@ -283,7 +295,18 @@ func mergeEdgeMulticastTOBGaps(captureSources edgeMulticastCaptureSourceMap, ser
 				"measured", health.Instances[match].CaptureSource)
 		}
 		if match >= 0 {
-			inst.CaptureSource = health.Instances[match].CaptureSource
+			existing := health.Instances[match]
+			inst.CaptureSource = existing.CaptureSource
+			// **Freshness comes from whichever observer saw the series most recently.**
+			// Replacing the whole instance re-sources staleness onto this table, and the two
+			// write paths are independent: if the book-top one lags past the 120s threshold
+			// every top-of-book instance would read `stalled` while the capture shows the same
+			// series advancing. Whether it gapped only this leg can answer; when it was last
+			// seen either can, and the later answer is the true one.
+			if existing.LastSeen.After(inst.LastSeen) {
+				inst.LastSeen = existing.LastSeen
+				inst.Status = edgeMulticastSequenceStatus(inst.GapBooks, inst.LastSeen, generatedAt)
+			}
 			health.Instances[match] = inst
 			continue
 		}
