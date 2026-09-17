@@ -939,7 +939,7 @@ function sequenceInstanceLine(i: EdgeMulticastChannelInstance): string {
   // would read as findings — "a series with gaps and no cycles is not recovering" is exactly
   // the reading a zero here would invent.
   const cycles =
-    i.snapshot_cycles_measured ? `, ${i.snapshot_cycles.toLocaleString()} snapshot cycles` : ''
+    i.snapshot_cycles_measured === false ? '' : `, ${i.snapshot_cycles.toLocaleString()} snapshot cycles`
   return `${head}, ${i.gap_books.toLocaleString()} book(s) gapped${rate}, ${i.resets.toLocaleString()} resets${cycles}`
 }
 

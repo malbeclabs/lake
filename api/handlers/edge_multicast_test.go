@@ -95,11 +95,18 @@ func TestGetEdgeMulticast_TOBGapWindowSurvivesAnAbsentCoverageCache(t *testing.T
 	api := newEdgeMulticastTestAPI(t)
 	insertMulticastTestData(t, api)
 	insertEdgeMulticastCaptureGroups(t, api)
+	// **A top-of-book group of its own, because the leg refuses any other plane.** This used
+	// to seed against the shared market-by-price fixture, which the plane guard now rejects —
+	// correctly: a recorded-gap series landing on a market-by-price group would replace that
+	// group's coverage instance and discard the per-instrument counters only it carries. The
+	// group comes from the helper the observations tests already use, rather than from the
+	// shared fixture, because several tests assert an exact group count against that one.
+	insertEdgeMulticastTOBGroup(t, api)
 
 	asOf := time.Now().UTC()
 	start := asOf.Add(-4 * time.Minute).Unix()
 	seedEdgeMulticastTOBGaps(t, api, asOf, handlers.EdgeMulticastTOBGapSeries{
-		MulticastGroup: "233.0.0.10", PublisherSourceIP: "10.0.0.9", ChannelID: 1,
+		MulticastGroup: "233.0.0.12", PublisherSourceIP: "10.0.0.9", ChannelID: 1,
 		Node: "cmh-rec1", LocationCode: "cmh", Messages: 44_670, GapMessages: 58, GapBooks: 3,
 		GapSeconds: []uint32{uint32(start)}, LastSeen: asOf.Add(-time.Second),
 	})
@@ -108,7 +115,7 @@ func TestGetEdgeMulticast_TOBGapWindowSurvivesAnAbsentCoverageCache(t *testing.T
 	assert.Equal(t, 900, resp.GapWindowSeconds,
 		"the recorded-gap leg's own fifteen-minute window, with no coverage payload to supply one")
 
-	g := findEdgeMulticastGroup(t, resp, "edge-kalshi-sports-mbp")
+	g := findEdgeMulticastGroup(t, resp, "edge-kalshi-sports-tob")
 	require.NotNil(t, g.Sequence)
 	require.Len(t, g.Sequence.Instances, 1)
 	require.Len(t, g.Sequence.Instances[0].GapEpisodes, 1)

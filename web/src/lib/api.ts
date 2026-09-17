@@ -8070,8 +8070,12 @@ export interface EdgeMulticastChannelInstance {
    * Whether `snapshot_cycles` is a reading. False on a plane that cannot count them, where
    * the 0 above means "not counted" — zero cycles on a gapped series is a finding, so it
    * must not be printed by a producer that never measured it.
+   *
+   * Optional for the other half of the deploy window: a current bundle can be talking to an
+   * API that predates the field, and that API only ever counted them. Absent therefore reads
+   * as measured, not as unmeasured.
    */
-  snapshot_cycles_measured: boolean
+  snapshot_cycles_measured?: boolean
   last_seen: string
   /** 'ok' | 'gapped' | 'stalled'. */
   status: string
