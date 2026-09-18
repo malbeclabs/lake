@@ -410,11 +410,22 @@ export function KalshiScoreboardPage() {
                   </p>
                 )}
 
-                {data.recorder_race.sites.length === 0 && (
+                {/* **Two empties, and they must not read the same.** `measured` is whether
+                    the race view exists in this environment at all. Without that distinction
+                    an environment nobody records gets an amber "one side stopped", which
+                    accuses a recorder that was never asked to run — and restoring the old
+                    `sites > 0` guard would hide the case that IS a fault. */}
+                {data.recorder_race.sites.length === 0 && data.recorder_race.measured && (
                   <p className="mt-4 text-sm text-amber-500">
                     No book state was seen by both sides in the window. That is a reading and not
-                    an absence: the recorders are configured here, so either one side stopped or
-                    the two stopped agreeing on a book.
+                    an absence: the race view exists here, so either one side stopped or the two
+                    stopped agreeing on a book.
+                  </p>
+                )}
+                {data.recorder_race.sites.length === 0 && !data.recorder_race.measured && (
+                  <p className="mt-4 text-sm text-muted-foreground">
+                    Nothing measures this race in this environment: the recorder's race view is
+                    not present, so there is no reading to show rather than a reading of zero.
                   </p>
                 )}
 
@@ -439,6 +450,13 @@ export function KalshiScoreboardPage() {
                         // is smaller than the jitter both sides win regularly, and calling one
                         // of them the winner reports noise as a result.
                         const tooClose = s.pairs > 0 && winner / s.pairs < 0.6
+                        // **The shortfall is the tell that the naming convention moved.**
+                        // Each side is matched on its own prefix and never as the other's
+                        // complement, so a row matching neither stays in `pairs` and the two
+                        // wins no longer sum to it. Rendered rather than left in the JSON: a
+                        // convention change otherwise reads as "too close to call" at 0.00 ms,
+                        // a measured dead heat, which is the one thing it is not.
+                        const unattributed = s.pairs - s.venue_wins - s.wire_wins
                         return (
                           <tr key={s.site} className="border-b border-border/50 last:border-0">
                             <td className="whitespace-nowrap py-3 pr-4 text-sm font-medium">{s.site}</td>
@@ -453,7 +471,10 @@ export function KalshiScoreboardPage() {
                                 </span>
                               )}
                             </td>
-                            <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums">
+                            <td
+                              className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums"
+                              title={`venue ${s.venue_wins.toLocaleString()} / wire ${s.wire_wins.toLocaleString()} of ${s.pairs.toLocaleString()} pairs`}
+                            >
                               {s.pairs > 0 ? pct((winner / s.pairs) * 100) : '—'}
                             </td>
                             {/* **Whose lead, said on the figure.** On a row reading "too close
@@ -471,6 +492,14 @@ export function KalshiScoreboardPage() {
                             </td>
                             <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-muted-foreground">
                               {s.pairs.toLocaleString()}
+                              {unattributed > 0 && (
+                                <span
+                                  className="ml-1 text-xs text-amber-500"
+                                  title="These pairs matched neither the venue nor the wire prefix, so they are counted in neither win column. That is the signal that the recorder's inventory naming moved, not a dead heat."
+                                >
+                                  ({unattributed.toLocaleString()} unattributed)
+                                </span>
+                              )}
                             </td>
                             <td className="whitespace-nowrap py-3 pl-4 text-right text-sm tabular-nums text-muted-foreground">
                               {s.symbols.toLocaleString()}

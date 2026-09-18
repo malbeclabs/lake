@@ -61,6 +61,16 @@ type KalshiRecorderRace struct {
 	GeneratedAt   time.Time                `json:"generated_at"`
 	WindowMinutes int                      `json:"window_minutes"`
 	Sites         []KalshiRecorderRaceSite `json:"sites"`
+
+	// Measured says whether `kalshi_book_race` exists in this environment at all.
+	//
+	// **Without it an empty payload has two meanings and the page can only guess.** No
+	// sites and `Measured` true is a reading — the recorders write here and no book state
+	// was seen by both sides in the window, which is a fault worth an amber diagnosis. No
+	// sites and `Measured` false is the absence of an instrument: nothing measures this
+	// race in this environment, and diagnosing "one side stopped" from it accuses a
+	// recorder that was never asked to run.
+	Measured bool `json:"measured"`
 }
 
 // FetchKalshiRecorderRace aggregates the race view for the window.
@@ -76,8 +86,11 @@ func (a *API) FetchKalshiRecorderRace(ctx context.Context) (*KalshiRecorderRace,
 		return nil, err
 	}
 	if !exists {
+		// `Measured` stays false: the page has to be able to tell this from a window in
+		// which the view existed and paired nothing.
 		return out, nil
 	}
+	out.Measured = true
 
 	// **Both filters, and neither is optional.** `observations = 2` is what separates a race
 	// from a lone sighting: the view emits a group per edge observation whether or not a venue

@@ -7843,6 +7843,12 @@ export interface KalshiRecorderRace {
   generated_at: string
   window_minutes: number
   sites: KalshiRecorderRaceSite[]
+  /**
+   * Whether `kalshi_book_race` exists in this environment. An empty `sites` with this true
+   * is a reading — nothing paired in the window — while an empty `sites` with it false is
+   * the absence of the instrument, and the two must not read the same on the page.
+   */
+  measured: boolean
 }
 
 export async function fetchKalshiScoreboard(
