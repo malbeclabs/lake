@@ -53,8 +53,20 @@ export function recorderRowDetail(r: EdgeMulticastRecorderLoss, win: GapWindow, 
   }
   const split = verdictSplit(r.missing_by_verdict)
   if (split) lines.push(split)
+  // **`missing` is unexplained_count, so zero is "nothing left over" and not "nothing missing".**
+  // The two readings coincide everywhere except on a recorder whose whole shortfall it admits
+  // dropping itself, where the row said both things at once: `3 missing less 3 this recorder
+  // admits dropping`, and then that it had recorded every sequence number the publisher sent.
+  // That is the one case where the subtraction has to be named again rather than summarised, and
+  // it is also the reading an operator most needs — a path delivering everything, into a recorder
+  // that dropped some of it.
+  const nothingMissing = r.missing === 0 && (r.admitted ?? 0) === 0
   if (r.missing === 0) {
-    lines.push('recorded every sequence number the publisher sent')
+    lines.push(
+      nothingMissing
+        ? 'recorded every sequence number the publisher sent'
+        : 'nothing unexplained: every sequence number missing here is one this recorder admits dropping',
+    )
   } else {
     lines.push(
       `${(r.runs ?? (r.episodes ?? []).length).toLocaleString()} run(s) of missing sequence ` +
@@ -68,9 +80,11 @@ export function recorderRowDetail(r: EdgeMulticastRecorderLoss, win: GapWindow, 
   // measurement, and a node with a hole and a loss is the one place the two readings differ.
   if (r.unverifiable) {
     lines.push(
-      r.missing === 0
-        ? 'the archive has a hole over this window, so "nothing missing" here is unverified'
-        : 'the archive has a hole over this window, so this is a floor on the loss, not all of it',
+      r.missing > 0
+        ? 'the archive has a hole over this window, so this is a floor on the loss, not all of it'
+        : nothingMissing
+          ? 'the archive has a hole over this window, so "nothing missing" here is unverified'
+          : 'the archive has a hole over this window, so "nothing unexplained" here is unverified',
     )
   }
   // A mark places a run; it does not size it. The count above is the quantity, and a run of

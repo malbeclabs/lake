@@ -167,6 +167,43 @@ describe('RecorderLossTimeline', () => {
     expect(detail).not.toMatch(/floor on the loss/)
   })
 
+  // **Zero unexplained is not "recorded everything".** `missing` is unexplained_count, so a
+  // recorder that admits dropping its whole shortfall reads zero there — and the row then said
+  // "3 missing less 3 this recorder admits dropping" and, one line down, that it had recorded
+  // every sequence number the publisher sent. The path delivered everything and the recorder
+  // dropped some of it, which is a reading of its own and not a clean run.
+  it('does not call a wholly admitted drop a clean run', () => {
+    const detail = recorderRowDetail(
+      {
+        node: 'was-rec1',
+        location_code: 'was',
+        missing: 0,
+        missing_raw: 3,
+        admitted: 3,
+        reference_seqs: 300_000,
+      },
+      WINDOW,
+      '12:00:00',
+    )
+
+    expect(detail).toMatch(/3 missing less 3 this recorder admits dropping/)
+    expect(detail).toMatch(/nothing unexplained/)
+    expect(detail).not.toMatch(/recorded every sequence number/)
+  })
+
+  // And the row that really did record everything still says so, which is the sentence the case
+  // above must not take away from it.
+  it('still says a recorder with no shortfall at all recorded everything', () => {
+    const detail = recorderRowDetail(
+      { node: 'cmh-rec1', missing: 0, reference_seqs: 300_000 },
+      WINDOW,
+      '12:00:00',
+    )
+
+    expect(detail).toMatch(/recorded every sequence number the publisher sent/)
+    expect(detail).not.toMatch(/admits dropping/)
+  })
+
   // A clean node has no gap row, so it has no reference either — it reaches the strip from the
   // coverage half alone. The row it fills is the whole point of the comparison ("cmh lost 0"
   // beside "was lost 267") and it described itself as `0 of 0 sequence numbers the publisher
