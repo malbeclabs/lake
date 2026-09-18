@@ -1,7 +1,9 @@
 package dzshreds
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log/slog"
