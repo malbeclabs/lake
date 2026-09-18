@@ -31,6 +31,12 @@ func TestFetchKalshiRecorderRaceWithoutTheViewIsEmptyAndNotAnError(t *testing.T)
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Empty(t, got.Sites)
+	// **The half of `Measured` that matters, and the only test that can catch it.** Setting
+	// it unconditionally before the absent-view return would satisfy the query test in this
+	// file and leave an unprovisioned environment diagnosed as a fault on the page — an
+	// amber "one side stopped" for a recorder nobody asked to run. Empty plus false is the
+	// absence of the instrument; empty plus true is a reading.
+	assert.False(t, got.Measured, "no view means nothing measures this race, not a race with no pairs")
 	// Stated even when empty: the consumer renders the window in its own caption, and a zero
 	// there would read as "no window" rather than as "no sites".
 	assert.Equal(t, 15, got.WindowMinutes)
