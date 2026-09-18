@@ -763,7 +763,7 @@ func fetchClientClaimHoldings(
 			binary.LittleEndian.PutUint64(epochBytes[:], epoch)
 			holding, _, err := solana.FindProgramAddress(
 				[][]byte{
-					[]byte("claim_holding"),
+					[]byte("claim"),
 					client.Pubkey.Bytes(),
 					epochBytes[:],
 					clientClaimHoldingMint.Bytes(),
