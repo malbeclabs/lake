@@ -58,19 +58,7 @@ func tokenScaleSQL(col string) string {
 // nested rather than a single coalesce.
 const clientProportionSQL = `if(C.proportion > 0, C.proportion, if(C.default_proportion > 0, C.default_proportion, 3500))`
 
-// validatorShareBpsSQL and clientShareBpsSQL are the two sides of one split.
-//
-// The onchain distribute weights a leaf by `leader_slots * (MAX -
-// client_proportion)` for the publisher branch and `leader_slots *
-// client_proportion` for the client branch, over the same denominator — see
-// try_validator_share_pre_burn in the shred-subscription program. So a
-// validator and the client team it ran are paid complementary shares of the
-// same pool, and swapping these two expressions is the whole difference between
-// the two reward streams.
-var (
-	validatorShareBpsSQL = "toFloat64(10000 - " + clientProportionSQL + ")"
-	clientShareBpsSQL    = "toFloat64(" + clientProportionSQL + ")"
-)
+var validatorShareBpsSQL = "toFloat64(10000 - " + clientProportionSQL + ")"
 
 // earnedWholeAndTokenSQL is the publisher (validator) side of the split.
 func earnedWholeAndTokenSQL(slotsCol, leafMintExpr string) (earnedWhole, tokenSymbol string) {
@@ -115,13 +103,7 @@ type ShredsRewardsRow struct {
 	EpochTokens map[uint64]string `json:"epoch_tokens"`
 }
 
-// ShredsClientRewardsRow is a single row of the client-team rewards list: the
-// same leaves as the validator list, grouped by the client a validator published
-// under rather than by the validator itself.
-//
-// The validator-identity columns (vote pubkey, stake, DZ IP) have no meaning for
-// a team spanning many validators, so this is a sibling type rather than the same
-// row with three fields left blank. Validators is the distinct node count.
+// ShredsClientRewardsRow is a single row of the client-team rewards list.
 type ShredsClientRewardsRow struct {
 	ClientID   uint16 `json:"client_id"`
 	ClientName string `json:"client_name"`
@@ -130,22 +112,7 @@ type ShredsClientRewardsRow struct {
 	// and switches, so a lifetime count would both overstate the current
 	// headcount and count a switcher under every client it ever used.
 	Validators uint64 `json:"validators"`
-	// TotalEarned2Z is the client team's OWN reward, not the earnings of the
-	// validators that ran it. Onchain the two are complementary shares of one
-	// pool: the validator is weighted by slots * (MAX - client_proportion) and the
-	// client team by slots * client_proportion, over the same denominator (see
-	// try_validator_share_pre_burn in the shred-subscription program). At today's
-	// flat 3500 a team receives 35% where its validators receive 65%.
-	//
-	// 2Z-denominated, matching the validator list. That also keeps it exact: for
-	// 2Z one journal plays both the publisher and client roles, while a non-2Z
-	// token can have a separate client journal that lake does not yet distinguish.
-	//
-	// There is deliberately no claimable figure. Claim state is indexed per
-	// (epoch, node, client) as the validator's claim on its own leaf, and nothing
-	// records whether a client team has claimed its share, so any number here
-	// would assert something unknown.
-	TotalEarned2Z float64 `json:"total_earned_2z"`
+	Available2Z float64 `json:"available_2z"`
 }
 
 // ShredsRewardsResponse is the full response for GET /api/dz/shreds/rewards.
@@ -1184,69 +1151,45 @@ func buildShredsClientRewardsSort(field, order string) string {
 	}
 	switch field {
 	case "client_name":
-		return "client_name " + dir + ", total_earned_2z DESC"
+		return "client_name " + dir + ", available_2z DESC"
 	case "validators":
-		return "validators " + dir + ", total_earned_2z DESC"
+		return "validators " + dir + ", available_2z DESC"
 	default:
-		return "total_earned_2z " + dir + ", client_id ASC"
+		return "available_2z " + dir + ", client_id ASC"
 	}
 }
 
-// computeShredsClientRewards returns the rewards list grouped by client team
-// instead of by validator. A validator publishing under several clients has its
-// leaves split across those teams here, where the per-validator list sums them
-// into one row (lake#784); 420 of 528 validators are in that position.
-//
-// Both figures are 2Z-denominated, matching the validator list: a team whose
-// validators picked different reward tokens shows only its 2Z-denominated share,
-// exactly as a single validator does. No per-epoch breakdown is returned because
-// the list page has no per-epoch columns; the validator detail page owns that.
-//
-// There is no search or pagination: the result is one row per client that has
-// ever earned, ten today.
 func (a *API) computeShredsClientRewards(ctx context.Context, sortField, order string) (*ShredsRewardsResponse, error) {
 	epochColumns, currentSolanaEpoch, latestFinalized, err := a.shredsRewardsEpochHeader(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	leafMintExpr := fmt.Sprintf(`if(S.node_id != '' AND S.journal_mint_key != '', S.journal_mint_key, '%s')`, rewardMint2Z)
-	poolMintExpr := fmt.Sprintf(`if(P.reward_mint != '', P.reward_mint, '%s')`, rewardMint2Z)
-	// The client side of the split, not the validator side. This one expression is
-	// the whole difference between "what the validators running this client
-	// earned" and "what this client team earned".
-	earnedWhole, tokenSym := earnedWholeAndTokenForShareSQL("lt.leader_slots", "lt.leaf_mint", clientShareBpsSQL)
-
-	query := shredsRewardsEarningsCTE(leafMintExpr, earnedWhole, poolMintExpr, tokenSym,
-		shredsRewardsRecentEpochSQL(epochColumns)) + fmt.Sprintf(`
-		per_client AS (
-			SELECT
-				client_id AS pc_client_id,
-				-- Nodes publishing under this client in the newest funded epoch,
-				-- not every node that ever did. A validator runs one client at a
-				-- time and switches between them, so a lifetime count reads as a
-				-- current headcount while being several times larger: Jito Labs
-				-- has 432 nodes all-time against 68 in the latest epoch. Counting
-				-- lifetime also double-counts a switcher under every client it
-				-- ever used, so the column would sum to about twice the number of
-				-- validators that exist.
-				uniqExactIf(node_id, subscription_epoch = %[2]d) AS validators,
-				sumIf(coalesce(earned, 0), token_symbol = '2Z') AS total_earned_2z
-			FROM earnings
+	query := fmt.Sprintf(`
+		WITH claimable AS (
+			SELECT client_id, sum(base_unit_balance) / 100000000.0 AS available_2z
+			FROM dim_dz_shred_client_claim_holdings_current
+			WHERE mint = '%[2]s'
+			GROUP BY client_id
+		),
+		current_validators AS (
+			SELECT client_id, uniqExact(node_id) AS validators
+			FROM dim_dz_shred_validator_rewards_leaves_current
+			WHERE subscription_epoch = %[3]d
 			GROUP BY client_id
 		)
 		SELECT
-			toUInt16(pc.pc_client_id) AS client_id,
-			-- A client's leaves can land before its registry row is indexed, so
-			-- fall back to the id rather than rendering a blank team name.
-			if(coalesce(C2.client_name, '') != '', C2.client_name, concat('Client ', toString(pc.pc_client_id))) AS client_name,
-			toUInt64(pc.validators) AS validators,
-			pc.total_earned_2z AS total_earned_2z
-		FROM per_client pc
-		LEFT JOIN %[3]s C2
-			ON C2.client_id = pc.pc_client_id
+			toUInt16(c.client_id) AS client_id,
+			if(coalesce(C2.client_name, '') != '', C2.client_name, concat('Client ', toString(c.client_id))) AS client_name,
+			toUInt64(coalesce(cv.validators, 0)) AS validators,
+			c.available_2z AS available_2z
+		FROM claimable c
+		LEFT JOIN current_validators cv
+			ON cv.client_id = c.client_id
+		LEFT JOIN %[4]s C2
+			ON C2.client_id = c.client_id
 		ORDER BY %[1]s
-	`, buildShredsClientRewardsSort(sortField, order), latestFinalized, shredClientNamesSQL)
+	`, buildShredsClientRewardsSort(sortField, order), rewardMint2Z, latestFinalized, shredClientNamesSQL)
 
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query)
@@ -1263,7 +1206,7 @@ func (a *API) computeShredsClientRewards(ctx context.Context, sortField, order s
 			&row.ClientID,
 			&row.ClientName,
 			&row.Validators,
-			&row.TotalEarned2Z,
+			&row.Available2Z,
 		); err != nil {
 			return nil, fmt.Errorf("shreds client rewards scan: %w", err)
 		}

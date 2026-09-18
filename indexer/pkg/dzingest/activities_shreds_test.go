@@ -36,6 +36,10 @@ func (c *countingRawRPC) GetProgramAccountsWithOpts(context.Context, solana.Publ
 	return solanarpc.GetProgramAccountsResult{}, nil
 }
 
+func (*countingRawRPC) GetTokenAccountsByOwner(context.Context, solana.PublicKey, *solanarpc.GetTokenAccountsConfig, *solanarpc.GetTokenAccountsOpts) (*solanarpc.GetTokenAccountsResult, error) {
+	return &solanarpc.GetTokenAccountsResult{}, nil
+}
+
 // The shreds and feed-subscription reads are of different programs and share
 // nothing, so a shreds outage must not stop feed indexing. The two used to run in
 // sequence with an early return between them, which made the feed read depend on
