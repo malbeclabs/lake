@@ -49,12 +49,12 @@ const SORT_FIELDS: ReadonlySet<string> = new Set<SortField>([
 
 // Client-team mode has its own sortable columns: the validator identity columns
 // it replaces (name, stake) do not exist there.
-type ClientSortField = 'client_name' | 'validators' | 'total_earned_2z'
+type ClientSortField = 'client_name' | 'validators' | 'available_2z'
 
 const CLIENT_SORT_FIELDS: ReadonlySet<string> = new Set<ClientSortField>([
   'client_name',
   'validators',
-  'total_earned_2z',
+  'available_2z',
 ])
 
 function truncatePK(pk: string): string {
@@ -110,11 +110,12 @@ export function ShredsRewardsPage() {
 
   const page = Math.max(1, parseInt(searchParams.get('page') || '1') || 1)
   const offset = (page - 1) * PAGE_SIZE
-  const rawSort = searchParams.get('sort') || 'total_earned_2z'
+  const rawSort = searchParams.get('sort') || (groupByClient ? 'available_2z' : 'total_earned_2z')
   const validSorts = groupByClient ? CLIENT_SORT_FIELDS : SORT_FIELDS
   // A sort carried over from the other mode falls back to the default rather
   // than being sent to an endpoint that does not know that column.
-  const sortField = (validSorts.has(rawSort) ? rawSort : 'total_earned_2z') as
+  const defaultSort = groupByClient ? 'available_2z' : 'total_earned_2z'
+  const sortField = (validSorts.has(rawSort) ? rawSort : defaultSort) as
     | SortField
     | ClientSortField
   const sortDirection: SortDirection =
@@ -125,8 +126,8 @@ export function ShredsRewardsPage() {
 
   const searchFilters = useMemo(() => parseSearchFilters(searchParam), [searchParam])
 
-  // Client mode returns one row per client team (ten today), so it sends no
-  // search, limit or offset — the server ignores them there anyway.
+  // Client mode returns one row per team with 2Z available, so it sends no
+  // search, limit or offset.
   const queryParams: ShredsRewardsParams = useMemo(
     () =>
       groupByClient
@@ -148,8 +149,8 @@ export function ShredsRewardsPage() {
     // keepPreviousData carries the other mode's payload over, and the response
     // holds rows for one grouping and an empty array for the other — while
     // groupByClient flips the instant the URL does. The client table would then
-    // render against the validator payload's empty `clients` and state "No
-    // client teams have earned rewards yet" as a finished answer, at full
+  // render against the validator payload's empty `clients` and state "No
+  // client teams have $2Z available to claim" as a finished answer, at full
     // opacity, until the real response landed. Returning undefined makes the
     // switch a genuine load, which is what it is: a different table with
     // different columns, not a stale version of this one.
@@ -173,14 +174,14 @@ export function ShredsRewardsPage() {
     (field: SortField | ClientSortField) => {
       setSearchParams((prev) => {
         const p = new URLSearchParams(prev)
-        if (p.get('sort') === field || (!p.get('sort') && field === 'total_earned_2z')) {
+        if (p.get('sort') === field || (!p.get('sort') && field === defaultSort)) {
           const nextOrder = (p.get('order') || 'desc') === 'asc' ? 'desc' : 'asc'
           if (nextOrder === 'desc') p.delete('order')
           else p.set('order', nextOrder)
-          if (field === 'total_earned_2z') p.delete('sort')
+          if (field === defaultSort) p.delete('sort')
           else p.set('sort', field)
         } else {
-          if (field === 'total_earned_2z') p.delete('sort')
+          if (field === defaultSort) p.delete('sort')
           else p.set('sort', field)
           p.delete('order')
         }
@@ -188,7 +189,7 @@ export function ShredsRewardsPage() {
         return p
       })
     },
-    [setSearchParams],
+    [defaultSort, setSearchParams],
   )
 
   const setOffset = useCallback(
@@ -379,13 +380,9 @@ export function ShredsRewardsPage() {
         <div className="mb-4 rounded-lg bg-muted/50 px-4 py-3 text-xs xxs:text-sm text-muted-foreground">
           {groupByClient ? (
             <>
-              Each client team's own $2Z rewards. A team and the validators
-              running it are paid complementary shares of the same pool, so these
-              are not the validator figures regrouped — at the current split a
-              team receives 35% where its validators receive 65%. Attribution
-              follows the client a validator was running when the slots were
-              earned. No claimable column: claim state is recorded against a
-              validator's leaf, and nothing records a client team's own claim.
+              Available earnings are the live balance in each client team’s claim-holding
+              accounts. Claimed, expired, swept, and undistributed rewards do not
+              appear here.
             </>
           ) : (
             <>
@@ -556,7 +553,7 @@ export function ShredsRewardsPage() {
 
 // ClientRewardsTable lists one row per client team. It has no row link and no
 // pagination: there is no per-client detail page, and the list is one row per
-// client that has ever earned — ten today.
+// client with a live claim-holding balance.
 function ClientRewardsTable({
   clients,
   sortField,
@@ -606,11 +603,11 @@ function ClientRewardsTable({
           </th>
           <th
             className={thRight}
-            onClick={() => onSort('total_earned_2z')}
-            title="The client team's own share of the reward pool, not the earnings of the validators that ran it. The two are complementary shares of the same pool."
+            onClick={() => onSort('available_2z')}
+            title="The live $2Z balance in the client team's claim-holding accounts."
           >
-            All-time
-            <SortIcon field="total_earned_2z" />
+            Available earnings
+            <SortIcon field="available_2z" />
           </th>
         </tr>
       </thead>
@@ -629,7 +626,7 @@ function ClientRewardsTable({
               colSpan={3}
               className="px-4 py-12 text-center text-muted-foreground"
             >
-              No client teams have earned rewards yet
+              No client teams have earnings available to claim
             </td>
           </tr>
         ) : (
@@ -648,7 +645,7 @@ function ClientRewardsTable({
                 {c.validators.toLocaleString('en-US')}
               </td>
               <td className="px-4 py-3 text-sm tabular-nums text-right">
-                {format2Z(c.total_earned_2z)}
+                {format2Z(c.available_2z)}
               </td>
             </tr>
           ))

@@ -94,6 +94,16 @@ type ValidatorClientRewardsRow struct {
 	ShortDescription string
 }
 
+type ClientClaimHoldingRow struct {
+	PK                      string
+	ClientID                uint16
+	ValidatorClientRewards  string
+	ClaimHolding            string
+	SubscriptionEpoch       uint64
+	Mint                    string
+	BaseUnitBalance         uint64
+}
+
 type ShredDistributionRow struct {
 	PK                                 string
 	SubscriptionEpoch                  uint64
@@ -131,6 +141,7 @@ type ShredsRPC interface {
 // in a single call.
 type ShredsRawRPC interface {
 	GetProgramAccountsWithOpts(ctx context.Context, publicKey solana.PublicKey, opts *rpc.GetProgramAccountsOpts) (rpc.GetProgramAccountsResult, error)
+	GetTokenAccountsByOwner(ctx context.Context, owner solana.PublicKey, conf *rpc.GetTokenAccountsConfig, opts *rpc.GetTokenAccountsOpts) (*rpc.GetTokenAccountsResult, error)
 }
 
 type ViewConfig struct {
@@ -387,6 +398,14 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		return result, fmt.Errorf("failed to replace validator client rewards: %w", err)
 	}
 
+	claimHoldingRows, err := fetchClientClaimHoldings(ctx, v.cfg.ShredsRawRPC, v.cfg.ProgramID, validatorRewards, allAccounts.ShredDistributions)
+	if err != nil {
+		return result, fmt.Errorf("fetch client claim holdings: %w", err)
+	}
+	if err := v.store.ReplaceClientClaimHoldings(ctx, claimHoldingRows); err != nil {
+		return result, fmt.Errorf("failed to replace client claim holdings: %w", err)
+	}
+
 	if len(distributions) > 0 {
 		if err := v.store.ReplaceShredDistributions(ctx, distributions); err != nil {
 			return result, fmt.Errorf("failed to replace shred distributions: %w", err)
@@ -579,7 +598,7 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		}
 	}
 
-	totalRows := len(ecRows) + len(csRows) + len(peRows) + len(mhRows) + len(dhRows) + len(vrRows) + len(distributions) + len(clientProportions) + leafCount + len(statusRows) + len(poolRows)
+	totalRows := len(ecRows) + len(csRows) + len(peRows) + len(mhRows) + len(dhRows) + len(vrRows) + len(claimHoldingRows) + len(distributions) + len(clientProportions) + leafCount + len(statusRows) + len(poolRows)
 	result.RowsAffected = int64(totalRows)
 	fetchedAt := time.Now().UTC()
 	result.SourceMaxEventTS = &fetchedAt
@@ -718,6 +737,86 @@ func convertValidatorClientRewards(rewards []shreds.KeyedValidatorClientRewards)
 		}
 	}
 	return rows
+}
+
+var clientClaimHoldingMint = solana.MustPublicKeyFromBase58(validatorrewards.DoubleZeroMintKey)
+
+func fetchClientClaimHoldings(
+	ctx context.Context,
+	rpcClient ShredsRawRPC,
+	programID solana.PublicKey,
+	clients []shreds.KeyedValidatorClientRewards,
+	distributions []KeyedShredDistribution,
+) ([]ClientClaimHoldingRow, error) {
+	epochs := make(map[uint64]struct{}, len(distributions))
+	for _, distribution := range distributions {
+		epochs[distribution.ShredDistribution.SubscriptionEpoch] = struct{}{}
+	}
+
+	rows := make([]ClientClaimHoldingRow, 0)
+	for _, client := range clients {
+		expected := make(map[string]uint64, len(epochs))
+		for epoch := range epochs {
+			var epochBytes [8]byte
+			binary.LittleEndian.PutUint64(epochBytes[:], epoch)
+			holding, _, err := solana.FindProgramAddress(
+				[][]byte{
+					[]byte("claim_holding"),
+					client.Pubkey.Bytes(),
+					epochBytes[:],
+					clientClaimHoldingMint.Bytes(),
+				},
+				programID,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("derive claim holding for client %d epoch %d: %w", client.ClientID, epoch, err)
+			}
+			expected[holding.String()] = epoch
+		}
+
+		accounts, err := rpcClient.GetTokenAccountsByOwner(
+			ctx,
+			client.Pubkey,
+			&rpc.GetTokenAccountsConfig{Mint: clientClaimHoldingMint.ToPointer()},
+			&rpc.GetTokenAccountsOpts{Commitment: rpc.CommitmentFinalized},
+		)
+		if err != nil {
+			return nil, fmt.Errorf("get 2Z token accounts for client %d: %w", client.ClientID, err)
+		}
+		if accounts == nil {
+			return nil, fmt.Errorf("get 2Z token accounts for client %d: empty response", client.ClientID)
+		}
+
+		for _, account := range accounts.Value {
+			if account == nil || account.Account.Owner != solana.TokenProgramID {
+				continue
+			}
+			epoch, ok := expected[account.Pubkey.String()]
+			if !ok {
+				continue
+			}
+			data := account.Account.Data.GetBinary()
+			if len(data) < 72 ||
+				!bytes.Equal(data[:32], clientClaimHoldingMint.Bytes()) ||
+				!bytes.Equal(data[32:64], client.Pubkey.Bytes()) {
+				continue
+			}
+			balance := binary.LittleEndian.Uint64(data[64:72])
+			if balance == 0 {
+				continue
+			}
+			rows = append(rows, ClientClaimHoldingRow{
+				PK:                     account.Pubkey.String(),
+				ClientID:               client.ClientID,
+				ValidatorClientRewards: client.Pubkey.String(),
+				ClaimHolding:           account.Pubkey.String(),
+				SubscriptionEpoch:      epoch,
+				Mint:                   clientClaimHoldingMint.String(),
+				BaseUnitBalance:        balance,
+			})
+		}
+	}
+	return rows, nil
 }
 
 func convertShredDistribution(d *shreds.ShredDistribution) ShredDistributionRow {

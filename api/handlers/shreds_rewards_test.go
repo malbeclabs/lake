@@ -820,6 +820,15 @@ func insertClientRegistry(t *testing.T, api *handlers.API, rows string) {
 		VALUES `+rows))
 }
 
+func insertClientClaimHoldings(t *testing.T, api *handlers.API, rows string) {
+	t.Helper()
+	require.NoError(t, api.DB.Exec(t.Context(), `
+		INSERT INTO dim_dz_shred_client_claim_holdings_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, client_id, validator_client_rewards, claim_holding, subscription_epoch, mint, base_unit_balance)
+		VALUES `+rows))
+}
+
 // insertMultiClientLeaves seeds one validator splitting its slots across two
 // clients in one epoch: 30 slots on client 1 and 70 on client 2, against a
 // 1e12-base-unit (10000 whole 2Z) pool with a 3500 client proportion. Earnings
@@ -871,6 +880,9 @@ func TestGetShredsRewards_GroupByClient(t *testing.T) {
 	insertClientRegistry(t, api, `
 		('c-1', now(), now(), generateUUIDv4(), 0, 1, 'client-pk-1', 1, 'mgr-1', 'Agave'),
 		('c-2', now(), now(), generateUUIDv4(), 0, 2, 'client-pk-2', 2, 'mgr-2', 'Firedancer')`)
+	insertClientClaimHoldings(t, api, `
+		('h-1', now(), now(), generateUUIDv4(), 0, 1, 'h-1', 1, 'client-pk-1', 'h-1', 200, 'J6pQQ3FAcJQeWPPGppWRb4nM8jU3wLyYbRrLh7feMfvd', 175500000000),
+		('h-2', now(), now(), generateUUIDv4(), 0, 2, 'h-2', 2, 'client-pk-2', 'h-2', 200, 'J6pQQ3FAcJQeWPPGppWRb4nM8jU3wLyYbRrLh7feMfvd', 409500000000)`)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/rewards?group=client", nil)
 	rr := httptest.NewRecorder()
@@ -882,36 +894,30 @@ func TestGetShredsRewards_GroupByClient(t *testing.T) {
 	assert.Empty(t, resp.Validators, "client mode must not also return validator rows")
 	require.Len(t, resp.Clients, 2)
 
-	// Ordered by all-time earnings descending, so client 2 leads on 70 slots.
+	// Ordered by live balance descending, so client 2 leads with 4,095 2Z.
 	fd, agave := resp.Clients[0], resp.Clients[1]
 	assert.Equal(t, uint16(2), fd.ClientID)
 	assert.Equal(t, "Firedancer", fd.ClientName)
-	// 4095 was the validators' 65% share of client 2's leaf; the client team's own
-	// share is the complementary 35%: 4095 * 3500/6500.
-	assert.InDelta(t, 4095.0*3500/6500, fd.TotalEarned2Z, 1e-6)
+	assert.InDelta(t, 4095.0, fd.Available2Z, 1e-6)
 	assert.Equal(t, uint64(1), fd.Validators)
 
 	assert.Equal(t, uint16(1), agave.ClientID)
 	assert.Equal(t, "Agave", agave.ClientName)
-	assert.InDelta(t, 1755.0*3500/6500, agave.TotalEarned2Z, 1e-6)
+	assert.InDelta(t, 1755.0, agave.Available2Z, 1e-6)
 	assert.Equal(t, uint64(1), agave.Validators)
 }
 
-// The two groupings are complementary shares of one pool, not the same number
-// regrouped: onchain a leaf is weighted by slots * (MAX - client_proportion) for
-// the validator and slots * client_proportion for the client team. So their
-// all-time totals must stand in exactly that ratio over the same leaves — at the
-// flat 3500 proportion, 35/65.
-//
-// This replaces an earlier assertion that the two totals were equal, which was
-// only true while the client view was showing the validators' share regrouped.
-func TestGetShredsRewards_GroupByClientIsComplementaryShare(t *testing.T) {
+func TestGetShredsRewards_GroupByClientSumsLiveHoldings(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertMultiClientLeaves(t, api)
 	insertClientRegistry(t, api, `
 		('c-1', now(), now(), generateUUIDv4(), 0, 1, 'client-pk-1', 1, 'mgr-1', 'Agave'),
 		('c-2', now(), now(), generateUUIDv4(), 0, 2, 'client-pk-2', 2, 'mgr-2', 'Firedancer')`)
+	insertClientClaimHoldings(t, api, `
+		('h-1a', now(), now(), generateUUIDv4(), 0, 1, 'h-1a', 1, 'client-pk-1', 'h-1a', 199, 'J6pQQ3FAcJQeWPPGppWRb4nM8jU3wLyYbRrLh7feMfvd', 100000000),
+		('h-1b', now(), now(), generateUUIDv4(), 0, 2, 'h-1b', 1, 'client-pk-1', 'h-1b', 200, 'J6pQQ3FAcJQeWPPGppWRb4nM8jU3wLyYbRrLh7feMfvd', 200000000),
+		('h-2', now(), now(), generateUUIDv4(), 0, 3, 'h-2', 2, 'client-pk-2', 'h-2', 200, 'J6pQQ3FAcJQeWPPGppWRb4nM8jU3wLyYbRrLh7feMfvd', 50000000)`)
 
 	get := func(query string) handlers.ShredsRewardsResponse {
 		req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/rewards"+query, nil)
@@ -921,19 +927,10 @@ func TestGetShredsRewards_GroupByClientIsComplementaryShare(t *testing.T) {
 		return decodeShredsRewards(t, rr.Body.Bytes())
 	}
 
-	var validatorTotal, clientTotal float64
-	for _, v := range get("").Validators {
-		validatorTotal += v.TotalEarned2Z
-	}
-	for _, c := range get("?group=client").Clients {
-		clientTotal += c.TotalEarned2Z
-	}
-
-	require.NotZero(t, validatorTotal, "fixture must produce earnings for the ratio to mean anything")
-	assert.InDelta(t, validatorTotal*3500/6500, clientTotal, 1e-6,
-		"the client teams' share must be the complement of the validators' over the same leaves")
-	assert.Less(t, clientTotal, validatorTotal,
-		"at a 3500 proportion the client teams receive less than their validators")
+	resp := get("?group=client")
+	require.Len(t, resp.Clients, 2)
+	assert.InDelta(t, 3.0, resp.Clients[0].Available2Z, 1e-6)
+	assert.InDelta(t, 0.5, resp.Clients[1].Available2Z, 1e-6)
 }
 
 // A client's leaves can land before its registry row is indexed. Such a team
@@ -945,6 +942,8 @@ func TestGetShredsRewards_GroupByClientUnregisteredFallback(t *testing.T) {
 	// Register client 1 only; client 2 has no registry row.
 	insertClientRegistry(t, api, `
 		('c-1', now(), now(), generateUUIDv4(), 0, 1, 'client-pk-1', 1, 'mgr-1', 'Agave')`)
+	insertClientClaimHoldings(t, api, `
+		('h-2', now(), now(), generateUUIDv4(), 0, 1, 'h-2', 2, 'client-pk-2', 'h-2', 200, 'J6pQQ3FAcJQeWPPGppWRb4nM8jU3wLyYbRrLh7feMfvd', 409500000000)`)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/rewards?group=client", nil)
 	rr := httptest.NewRecorder()
@@ -953,11 +952,11 @@ func TestGetShredsRewards_GroupByClientUnregisteredFallback(t *testing.T) {
 	require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
 	resp := decodeShredsRewards(t, rr.Body.Bytes())
 
-	require.Len(t, resp.Clients, 2, "an unregistered client must still be listed")
+	require.Len(t, resp.Clients, 1, "a client with a live holding must be listed")
 	unregistered := resp.Clients[0]
 	assert.Equal(t, uint16(2), unregistered.ClientID)
 	assert.Equal(t, "Client 2", unregistered.ClientName, "falls back to the id, never a blank label")
-	assert.InDelta(t, 4095.0*3500/6500, unregistered.TotalEarned2Z, 1e-6)
+	assert.InDelta(t, 4095.0, unregistered.Available2Z, 1e-6)
 }
 
 // An empty result must serialise as [], not null.
@@ -1039,6 +1038,9 @@ func TestGetShredsRewards_GroupByClientCountsCurrentValidatorsOnly(t *testing.T)
 	insertClientRegistry(t, api, `
 		('c-1', now(), now(), generateUUIDv4(), 0, 1, 'client-pk-1', 1, 'mgr-1', 'Agave'),
 		('c-2', now(), now(), generateUUIDv4(), 0, 2, 'client-pk-2', 2, 'mgr-2', 'Firedancer')`)
+	insertClientClaimHoldings(t, api, `
+		('h-1', now(), now(), generateUUIDv4(), 0, 1, 'h-1', 1, 'client-pk-1', 'h-1', 301, 'J6pQQ3FAcJQeWPPGppWRb4nM8jU3wLyYbRrLh7feMfvd', 877500000000),
+		('h-2', now(), now(), generateUUIDv4(), 0, 2, 'h-2', 2, 'client-pk-2', 'h-2', 300, 'J6pQQ3FAcJQeWPPGppWRb4nM8jU3wLyYbRrLh7feMfvd', 292500000000)`)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/rewards?group=client", nil)
 	rr := httptest.NewRecorder()
@@ -1055,13 +1057,12 @@ func TestGetShredsRewards_GroupByClientCountsCurrentValidatorsOnly(t *testing.T)
 
 	current := byName["Agave"]
 	assert.Equal(t, uint64(1), current.Validators, "node-stays published in epoch 301")
-	assert.InDelta(t, (2925.0+5850.0)*3500/6500, current.TotalEarned2Z, 1e-6)
+	assert.InDelta(t, 8775.0, current.Available2Z, 1e-6)
 
 	departed := byName["Firedancer"]
 	assert.Equal(t, uint64(0), departed.Validators,
 		"node-gone last published in epoch 300, so it is not a current validator")
-	assert.InDelta(t, 2925.0*3500/6500, departed.TotalEarned2Z, 1e-6,
-		"a client with no current validators still reports what it earned")
+	assert.InDelta(t, 2925.0, departed.Available2Z, 1e-6)
 }
 
 // insertShredsRewardsManyEpochs seeds one validator (node-R) across `epochs`
