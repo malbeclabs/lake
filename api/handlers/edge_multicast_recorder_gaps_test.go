@@ -2,10 +2,12 @@ package handlers_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/malbeclabs/lake/api/handlers"
+	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -218,9 +220,9 @@ func TestEdgeMulticastRecorderGaps_LossStaysOnItsOwnGroupsLine(t *testing.T) {
 	assert.EqualValues(t, 40, loss[other][0].Missing)
 }
 
-// Which leg renders is decided on the payload, and the recorder rows win. Both are carried in the
-// cache entry because whether the recorder tables exist is a property of the environment, so the
-// selection has to be made per payload rather than at build time.
+// On a line both legs have rows for, the recorder rows win and the peer comparison's bottom row
+// does not come with them: `2+` beneath a recorder-fed strip would be the weaker claim sitting
+// under the stronger one.
 func TestEdgeMulticastLossLegs_RecorderRowsWinOverThePeerComparison(t *testing.T) {
 	payload := handlers.EdgeMulticastObservationsResponse{
 		RecorderLoss: []handlers.EdgeMulticastRecorderLossSeries{{
@@ -230,31 +232,72 @@ func TestEdgeMulticastLossLegs_RecorderRowsWinOverThePeerComparison(t *testing.T
 		RecorderGaps: []handlers.EdgeMulticastRecorderGapSeries{gapSeries("was-rec1", 1, 10, 1000)},
 	}
 
-	loss, simul, pub, source, peerUnavailable := handlers.EdgeMulticastObservationLossLegsForTest(payload)
+	loss, simul, pub, source, _ := handlers.EdgeMulticastObservationLossLegsForTest(payload)
 
-	assert.Equal(t, handlers.EdgeMulticastLossSources.Recorder, source)
+	assert.Equal(t, handlers.EdgeMulticastLossSources.Recorder, source[gapLineKey()])
 	require.Len(t, loss[gapLineKey()], 1)
 	assert.EqualValues(t, 10, loss[gapLineKey()][0].Missing, "the recorder rows, not the comparison")
 	assert.Empty(t, simul, "the 2+ row belongs to the peer leg and cannot be mixed in")
 	assert.Empty(t, pub, "no run was charged to the publisher")
-	assert.False(t, peerUnavailable)
 }
 
-// A peer comparison that failed is only a finding while the peer comparison is what renders.
-// Carried onto the recorder leg it would print "not measured" over a strip built from better rows.
+// The choice is per LINE, and this is the case that made it so.
+//
+// The recorder rows arrive feed by feed — the recorder is deployed per capture host — so the first
+// feed it covers cannot be allowed to decide the leg for the rest of the page. Chosen once per
+// payload, every other publisher line switched to a leg with no rows for it: the working peer strip
+// they render today disappeared and the row read `no peer to compare`, which is a claim about a
+// comparison that was never run.
+func TestEdgeMulticastLossLegs_TheLegIsChosenPerLineAndNotPerPayload(t *testing.T) {
+	covered := gapSeries("was-rec1", 1, 10, 1000)
+	uncoveredKey := handlers.EdgeMulticastRecorderLossLineKeyForTest("233.84.178.9", "148.51.120.6")
+	payload := handlers.EdgeMulticastObservationsResponse{
+		RecorderGaps: []handlers.EdgeMulticastRecorderGapSeries{covered},
+		// Another feed entirely, which the recorder does not cover: two nodes, both losing in the
+		// same second, so it has a 2+ row of its own to lose.
+		RecorderLoss: []handlers.EdgeMulticastRecorderLossSeries{
+			{
+				MulticastGroup: "233.84.178.9", PublisherSourceIP: "148.51.120.6",
+				ChannelID: 1, Node: "was-rec1", Missing: 5, ReferenceSeqs: 1000,
+				Episodes: []handlers.KalshiL2GapEpisode{{Start: 100, Seconds: 1}},
+			},
+			{
+				MulticastGroup: "233.84.178.9", PublisherSourceIP: "148.51.120.6",
+				ChannelID: 1, Node: "cmh-rec1", Missing: 2, ReferenceSeqs: 1000,
+				Episodes: []handlers.KalshiL2GapEpisode{{Start: 100, Seconds: 1}},
+			},
+		},
+	}
+
+	loss, simul, pub, source, _ := handlers.EdgeMulticastObservationLossLegsForTest(payload)
+
+	assert.Equal(t, handlers.EdgeMulticastLossSources.Recorder, source[gapLineKey()])
+	require.Len(t, pub, 0, "no run was charged to the publisher on the covered line")
+
+	assert.Equal(t, handlers.EdgeMulticastLossSources.Peers, source[uncoveredKey],
+		"a line the recorder rows do not reach keeps the comparison")
+	require.Len(t, loss[uncoveredKey], 2, "and keeps its rows")
+	require.Len(t, simul[uncoveredKey], 1, "and its 2+ row")
+	assert.Empty(t, simul[gapLineKey()], "which stays off the recorder-fed line")
+}
+
+// A peer comparison that failed is only a finding on the lines the peer comparison renders, and
+// the source map is what says which those are. Carried onto a recorder-fed line it would print
+// "not measured" over a strip built from better rows.
 func TestEdgeMulticastLossLegs_AFailedPeerLegIsNotReportedUnderTheRecorderLeg(t *testing.T) {
 	payload := handlers.EdgeMulticastObservationsResponse{
 		RecorderLossUnavailable: true,
 		RecorderGaps:            []handlers.EdgeMulticastRecorderGapSeries{gapSeries("was-rec1", 1, 10, 1000)},
 	}
 	_, _, _, source, peerUnavailable := handlers.EdgeMulticastObservationLossLegsForTest(payload)
-	assert.Equal(t, handlers.EdgeMulticastLossSources.Recorder, source)
-	assert.False(t, peerUnavailable)
+	assert.Equal(t, handlers.EdgeMulticastLossSources.Recorder, source[gapLineKey()])
+	assert.True(t, peerUnavailable, "the failure is a fact about the payload; the line it may be reported on is not")
 
-	// Without the recorder rows the same flag is exactly the claim it was before.
+	// Without the recorder rows the same flag is exactly the claim it was before, and there is no
+	// source to suppress it.
 	payload.RecorderGaps = nil
 	_, _, _, source, peerUnavailable = handlers.EdgeMulticastObservationLossLegsForTest(payload)
-	assert.Equal(t, handlers.EdgeMulticastLossSources.Peers, source)
+	assert.Empty(t, source[gapLineKey()])
 	assert.True(t, peerUnavailable)
 }
 
@@ -278,7 +321,7 @@ func TestEdgeMulticastLossLegs_NoRecorderRowsLeavesThePeerLegUntouched(t *testin
 
 	loss, simul, pub, source, _ := handlers.EdgeMulticastObservationLossLegsForTest(payload)
 
-	assert.Equal(t, handlers.EdgeMulticastLossSources.Peers, source)
+	assert.Equal(t, handlers.EdgeMulticastLossSources.Peers, source[gapLineKey()])
 	require.Len(t, loss[gapLineKey()], 2)
 	require.Len(t, simul[gapLineKey()], 1, "both nodes lost in second 100")
 	assert.Empty(t, pub, "the publisher row exists only on the recorder leg")
@@ -286,12 +329,17 @@ func TestEdgeMulticastLossLegs_NoRecorderRowsLeavesThePeerLegUntouched(t *testin
 
 // seedObservationsWithRecorderGaps writes an observations payload whose recorder leg is filled,
 // which is what an environment with the recorder proxies would cache.
+//
+// The peer comparison is marked FAILED in it on purpose. That flag renders as "not measured", and
+// on a line the recorder rows fill it must not be reported at all — "not measured" over a strip
+// with marks on it is a worse answer than no label.
 func seedObservationsWithRecorderGaps(t *testing.T, api *handlers.API, generatedAt time.Time, gaps ...handlers.EdgeMulticastRecorderGapSeries) {
 	t.Helper()
 	require.NoError(t, api.WritePageCache(t.Context(), observationsKey, handlers.EdgeMulticastObservationsResponse{
-		GeneratedAt:   generatedAt,
-		WindowMinutes: 15,
-		RecorderGaps:  gaps,
+		GeneratedAt:             generatedAt,
+		WindowMinutes:           15,
+		RecorderGaps:            gaps,
+		RecorderLossUnavailable: true,
 	}))
 	t.Cleanup(func() {
 		_, err := api.PgPool.Exec(context.Background(), `DELETE FROM page_cache WHERE key = $1`, observationsKey)
@@ -349,14 +397,19 @@ func TestGetEdgeMulticast_RecorderRowsFeedTheLossStrip(t *testing.T) {
 	assert.EqualValues(t, 300_000, seq.RecorderLoss[0].ReferenceSeqs)
 	assert.Equal(t, "cmh-rec1", seq.RecorderLoss[1].Node)
 	assert.EqualValues(t, 0, seq.RecorderLoss[1].Missing)
+	assert.EqualValues(t, 299_733, seq.RecorderLoss[1].Datagrams,
+		"the clean row has no reference to be a share of, so what it recorded is the only figure on it")
 
 	require.Len(t, seq.RecorderLossPublisher, 2, "both runs were charged to the publisher")
 	assert.Empty(t, seq.RecorderLossSimultaneous, "the 2+ row is the peer leg's and must stay empty")
 	assert.False(t, seq.RecorderGapsUnavailable)
+	assert.False(t, seq.RecorderLossUnavailable,
+		"the peer leg failed in the payload, and that is not a finding on a recorder-fed line")
 }
 
-// The statement itself, held against the contract. Nothing can execute it — the tables exist in no
-// environment yet — so these are the properties whose absence would be silent and wrong.
+// The statement's TEXT, which is now the lesser half: everything about what it DOES is pinned by
+// executing it, below. What stays here is the contract named in one place, plus the one property
+// no execution can observe — the server-side cap, which only fires on a read that overruns.
 func TestEdgeMulticastRecorderGapQuery_HoldsTheContract(t *testing.T) {
 	q := handlers.EdgeMulticastRecorderGapQueryForTest("feeds")
 
@@ -364,17 +417,189 @@ func TestEdgeMulticastRecorderGapQuery_HoldsTheContract(t *testing.T) {
 	assert.Contains(t, q, "`feeds`.recorder_segment_coverage",
 		"coverage is not optional: a clean node emits no gap row, and the clean line is the comparison")
 
-	// Both networks allocate multicast out of the same /24 and this payload's keys carry no
-	// environment, so without the filter one network's loss renders on the other's row.
-	assert.Contains(t, q, "env IN ('mainnet-beta', 'mainnet')")
-
 	// The reference is per (instance, site), repeated on each of the instance's runs. Summed, the
 	// denominator is multiplied by the number of runs and every rate on the page understates.
-	assert.Contains(t, q, "max(reference_seqs)")
 	assert.NotContains(t, q, "sum(reference_seqs)")
 
-	// unexplained_count is the residue the strip shows; missing_count is carried beside it, never
-	// instead of it.
-	assert.Contains(t, q, "sum(unexplained_count) AS missing")
-	assert.Contains(t, q, "sum(missing_count) AS missing_raw")
+	// Bounded server-side, because this read runs first on the refresher's shared three-minute
+	// deadline and exhausting it costs the whole observations payload — Msg/s, Peer, Heard and
+	// recorder_coverage — rather than the strip it is additive to.
+	assert.Contains(t, q, "max_execution_time = 30")
+}
+
+// createRecorderSequenceTables creates the two proxied recorder tables with the columns lake reads.
+//
+// The upstream tables are wider; what is here is the contract in
+// docs/plans/2026-09-03-edge-multicast-recorder-sequence-design.md, which is the point — the
+// statement is this PR's whole product and until now nothing had executed it. Six of its properties
+// are invisible to a string match: the two legs' UNION ALL types have to agree column for column,
+// the outer aggregates are unaliased because `sum(missing) AS missing` is a cyclic alias ClickHouse
+// refuses outright, and `arrayFirst`/`tupleElement` over `roles_joined` has to pick the right
+// element out of the tuple.
+func createRecorderSequenceTables(t *testing.T, api *handlers.API) {
+	t.Helper()
+	db := "`" + api.FeedsDB + "`"
+	require.NoError(t, api.DB.Exec(t.Context(), fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s.recorder_sequence_gap (
+			env LowCardinality(String),
+			recorder LowCardinality(String),
+			site LowCardinality(String),
+			group_addr IPv4,
+			source_addr IPv4,
+			channel_id UInt8,
+			dst_port UInt16,
+			before_ts DateTime64(9),
+			sent_from_ts Nullable(DateTime64(9)),
+			missing_count UInt64,
+			admitted_recorder UInt64,
+			unexplained_count UInt64,
+			reference_seqs UInt64,
+			verdict LowCardinality(String)
+		) ENGINE = MergeTree
+		PARTITION BY toDate(before_ts)
+		ORDER BY (env, group_addr, source_addr, channel_id, dst_port, recorder, before_ts)
+	`, db)))
+	require.NoError(t, api.DB.Exec(t.Context(), fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s.recorder_segment_coverage (
+			env LowCardinality(String),
+			recorder LowCardinality(String),
+			site LowCardinality(String),
+			source_addr IPv4,
+			channel_id UInt8,
+			dst_port UInt16,
+			segment_seq UInt64,
+			start_ts DateTime64(9),
+			end_ts DateTime64(9),
+			datagram_count UInt64,
+			roles_joined Array(Tuple(LowCardinality(String), IPv4, UInt16))
+		) ENGINE = MergeTree
+		PARTITION BY toDate(start_ts)
+		ORDER BY (env, source_addr, channel_id, dst_port, recorder, segment_seq)
+	`, db)))
+}
+
+// insertRecorderGap writes one gap row: one contiguous run of missing sequence numbers, as the
+// recorder's analysis tier reports it. agoSecs places it, and sentAgoSecs is the publisher's own
+// send stamp where a site that DID record the datagram supplied one (-1 for none).
+func insertRecorderGap(t *testing.T, api *handlers.API, env, node, verdict string, agoSecs, sentAgoSecs int, missing, admitted, unexplained, reference uint64) {
+	t.Helper()
+	sent := "NULL"
+	if sentAgoSecs >= 0 {
+		sent = fmt.Sprintf("now64(9) - toIntervalSecond(%d)", sentAgoSecs)
+	}
+	require.NoError(t, api.DB.Exec(t.Context(), fmt.Sprintf(`
+		INSERT INTO `+"`%s`"+`.recorder_sequence_gap
+		(env, recorder, site, group_addr, source_addr, channel_id, dst_port, before_ts,
+		 sent_from_ts, missing_count, admitted_recorder, unexplained_count, reference_seqs, verdict)
+		VALUES ('%s', '%s', '%s', '233.84.178.3', '148.51.121.69', 1, 20001,
+		        now64(9) - toIntervalSecond(%d), %s, %d, %d, %d, %d, '%s')
+	`, api.FeedsDB, env, node, node[:3], agoSecs, sent, missing, admitted, unexplained, reference, verdict)))
+}
+
+// insertRecorderCoverage writes one coverage segment. groupAddr and port are what roles_joined
+// carries, which is the only place the coverage row names a group at all.
+func insertRecorderCoverage(t *testing.T, api *handlers.API, node string, segmentSeq uint64, startAgoSecs, endAgoSecs int, datagrams uint64, groupAddr string, rolePort uint16) {
+	t.Helper()
+	require.NoError(t, api.DB.Exec(t.Context(), fmt.Sprintf(`
+		INSERT INTO `+"`%s`"+`.recorder_segment_coverage
+		(env, recorder, site, source_addr, channel_id, dst_port, segment_seq, start_ts, end_ts,
+		 datagram_count, roles_joined)
+		VALUES ('mainnet-beta', '%s', '%s', '148.51.121.69', 1, 20001, %d,
+		        now64(9) - toIntervalSecond(%d), now64(9) - toIntervalSecond(%d), %d,
+		        [('tob', '%s', %d)])
+	`, api.FeedsDB, node, node[:3], segmentSeq, startAgoSecs, endAgoSecs, datagrams, groupAddr, rolePort)))
+}
+
+// The statement, executed. Every assertion here is a property no string match can reach.
+//
+// The fixture is one publisher line recorded at two nodes: `was` lost two runs — one charged to the
+// publisher, one it admits dropping itself — and `cmh` lost nothing, so it reaches the strip from
+// the coverage half alone. Beside them sit the two rows that must NOT reach it: the same loss
+// labelled `testnet`, and one outside the fifteen-minute window.
+func TestEdgeMulticastRecorderGaps_TheStatementRunsAndHoldsTheContract(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createRecorderSequenceTables(t, api)
+
+	// Two runs on one instance, each repeating the instance's own reference_seqs. Summing that
+	// column would double the denominator and halve every rate on the page.
+	insertRecorderGap(t, api, "mainnet-beta", "was-rec1", gapVerdicts.Publisher, 120, 121, 200, 0, 200, 300_000)
+	insertRecorderGap(t, api, "mainnet-beta", "was-rec1", gapVerdicts.Recorder, 60, -1, 70, 3, 67, 300_000)
+	// The other network's loss, on an address mainnet also allocates out of.
+	insertRecorderGap(t, api, "testnet", "was-rec1", gapVerdicts.Publisher, 60, -1, 999, 0, 999, 300_000)
+	// Before the window.
+	insertRecorderGap(t, api, "mainnet-beta", "was-rec1", gapVerdicts.Publisher, 3000, -1, 5000, 0, 5000, 300_000)
+
+	insertRecorderCoverage(t, api, "was-rec1", 3, 600, 10, 299_000, "233.84.178.3", 20001)
+	// Two dense segments at the clean node: 7 and 8, so span and count agree and its clean run is
+	// a reading rather than an absence of evidence.
+	insertRecorderCoverage(t, api, "cmh-rec1", 7, 600, 300, 150_000, "233.84.178.3", 20001)
+	insertRecorderCoverage(t, api, "cmh-rec1", 8, 300, 10, 149_733, "233.84.178.3", 20001)
+
+	// Through the production entry point, so the EXISTS TABLE gate over BOTH tables and the
+	// ordering that puts this leg ahead of the capture-table gate are exercised too. The
+	// observations table does not exist here, and the recorder leg must fill anyway.
+	resp, err := api.FetchEdgeMulticastObservations(t.Context())
+	require.NoError(t, err)
+	require.False(t, resp.RecorderGapsUnavailable, "the read succeeded")
+	require.Len(t, resp.RecorderGaps, 2, "two nodes on one instance; the testnet and out-of-window rows are neither")
+
+	byNode := map[string]handlers.EdgeMulticastRecorderGapSeries{}
+	for _, s := range resp.RecorderGaps {
+		byNode[s.Node] = s
+	}
+
+	was := byNode["was-rec1"]
+	assert.Equal(t, "233.84.178.3", was.MulticastGroup, "the gap row's own group_addr, as a dotted quad")
+	assert.Equal(t, "148.51.121.69", was.PublisherSourceIP, "source_addr is the ledger's dz_ip")
+	assert.Equal(t, "was", was.LocationCode)
+	assert.EqualValues(t, 1, was.ChannelID)
+	assert.EqualValues(t, 20001, was.DstPort)
+	assert.EqualValues(t, 267, was.Missing, "unexplained_count, so the admitted 3 is already off")
+	assert.EqualValues(t, 270, was.MissingRaw)
+	assert.EqualValues(t, 3, was.Admitted)
+	assert.EqualValues(t, 300_000, was.ReferenceSeqs,
+		"one instance, one reference — MAXed across its two runs and never summed")
+	assert.EqualValues(t, 2, was.Runs)
+	assert.Equal(t, map[string]uint64{gapVerdicts.Publisher: 200, gapVerdicts.Recorder: 67}, was.MissingByVerdict,
+		"the verdict spellings the SQL matches on are the rule set's own")
+	assert.True(t, was.CoverageComplete)
+	require.Len(t, was.Episodes, 2, "two runs, two marks")
+	assert.EqualValues(t, 1, was.Episodes[0].Seconds, "a mark is a placement, never a duration")
+	// 61s apart, give or take the second boundary the two INSERTs landed on: the first mark is the
+	// publisher's own send stamp 121s ago, the second the local bracket 60s ago, and each is
+	// truncated to a second.
+	assert.InDelta(t, 61, was.Episodes[1].Start-was.Episodes[0].Start, 1,
+		"placed at sent_from_ts where a site supplied one and at before_ts where none did")
+	require.Len(t, was.PublisherEpisodes, 1, "one of the two runs was charged to the publisher")
+	assert.Equal(t, was.Episodes[0], was.PublisherEpisodes[0])
+
+	cmh := byNode["cmh-rec1"]
+	assert.Equal(t, "233.84.178.3", cmh.MulticastGroup,
+		"a clean node has no gap row, so its group comes out of roles_joined by dst_port")
+	assert.EqualValues(t, 0, cmh.Missing)
+	assert.EqualValues(t, 0, cmh.ReferenceSeqs, "nothing to be a share of; datagrams is what this row has")
+	assert.EqualValues(t, 299_733, cmh.Datagrams)
+	assert.True(t, cmh.CoverageComplete, "segment_seq 7 and 8 are dense")
+}
+
+// A coverage row whose roles_joined carries no tuple for its OWN dst_port resolves to 0.0.0.0 and
+// is dropped by the outer WHERE — silently, and the row it drops is a clean node's.
+//
+// That is why the design doc asks for a tuple per port with coverage rather than leaving it
+// implied: the failure is invisible from the page, where the node simply is not there, and the
+// clean line is what the whole strip rests on. Pinned so the requirement has a test behind it.
+func TestEdgeMulticastRecorderGaps_ACoverageRowWithNoRoleForItsPortIsDropped(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createRecorderSequenceTables(t, api)
+
+	insertRecorderGap(t, api, "mainnet-beta", "was-rec1", gapVerdicts.Publisher, 120, -1, 10, 0, 10, 1000)
+	insertRecorderCoverage(t, api, "was-rec1", 3, 600, 10, 299_000, "233.84.178.3", 20001)
+	// Same instance, but roles_joined names another port — so nothing matches and the group is
+	// unresolvable.
+	insertRecorderCoverage(t, api, "ewr-rec1", 4, 600, 10, 299_000, "233.84.178.4", 20002)
+
+	resp, err := api.FetchEdgeMulticastObservations(t.Context())
+	require.NoError(t, err)
+	require.Len(t, resp.RecorderGaps, 1, "the unresolvable coverage row is dropped, not rendered on some other group")
+	assert.Equal(t, "was-rec1", resp.RecorderGaps[0].Node)
 }

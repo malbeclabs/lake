@@ -392,13 +392,21 @@ not two grains of one number:
   absolutely**, which is why the peer leg's "nothing to compare" guard must never be applied to it:
   market-by-price is recorded at one node on every group today.
 
-The recorder rows win where they exist and the peer fold is then not run at all. Both stay in the
-cached payload because whether those tables exist is a property of the environment — the proxies
-are created out of band, and **no environment has them today**, so every one of them still renders
-the comparison. Two rules the arithmetic rests on: `reference_seqs` is per (instance, site) and
-repeated on each of that instance's gap rows, so it is MAX-ed per instance and never summed; and
-`segment_coverage` is not optional, because a clean node emits no gap row and the clean line is the
-whole comparison.
+The recorder rows win where they exist, and the choice is made **per publisher line**, never once
+for the payload. The recorder is deployed per capture host, so the first feed it covers would
+otherwise switch every other line to a leg with no rows for it — losing the peer strip those lines
+render today and printing `no peer to compare`, a statement about a comparison that was never run.
+Within a line the two legs still never mix: they measure against different references, so a strip
+folding both would be neither. The peer leg's own failure flag is payload-wide and is reported only
+on the lines the comparison renders.
+
+Both legs stay in the cached payload because whether those tables exist is a property of the
+environment — the proxies are created out of band, and **no environment has them today**, so every
+one of them still renders the comparison. Two rules the arithmetic rests on: `reference_seqs` is per
+(instance, site) and repeated on each of that instance's gap rows, so it is MAX-ed per instance and
+never summed; and `segment_coverage` is not optional, because a clean node emits no gap row and the
+clean line is the whole comparison — which is also where a clean row's `datagrams` comes from, since
+a node with no gap row has no reference to be a share of either.
 
 Contract, and what is deliberately left out of it (the badge, and a line with recorder rows but no
 decoded series): `docs/plans/2026-09-03-edge-multicast-recorder-sequence-design.md`.

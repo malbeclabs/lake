@@ -9,6 +9,7 @@ import {
   sequenceLoss,
 } from './edge-multicast-gap-episodes'
 import { Tooltip } from '@/components/ui/tooltip'
+import { recorderRowDetail, type GapWindow } from '@/lib/edge-multicast-loss'
 import { PageHeader } from './page-header'
 import { CopyableText } from './copyable-text'
 import { handleRowClick } from '@/lib/utils'
@@ -25,7 +26,6 @@ import {
   type EdgeMulticastPublisher,
   type EdgeMulticastPublisherVerdicts,
   type EdgeMulticastRecorderCoverage,
-  type EdgeMulticastRecorderLoss,
   type EdgeMulticastSequenceHealth,
   type EdgeMulticastService,
 } from '@/lib/api'
@@ -996,9 +996,6 @@ const GAP_MARK_MIN_WIDTH = 2
 // viewport reports nothing at all. The count in the header stays exact.
 const GAP_TOOLTIP_MAX_LINES = 8
 
-/** The axis gap episodes are drawn on: the payload's own clock and how wide its window is. */
-type GapWindow = { endMs: number; secs: number }
-
 // The track and its marks. Shared by every strip on the page so they are all the same axis: a
 // per-recorder line and the publisher's own gap timeline are only comparable if one pixel means
 // the same second in both.
@@ -1076,60 +1073,6 @@ function RecorderLossRow({
   )
 }
 
-// The rule set's five verdicts, worst attribution first: the reader's question, not the order the
-// rules are tested in. `publisher` is the finding; `recorder` is the line that says the number
-// above it is not a publisher finding at all.
-const GAP_VERDICT_ORDER = ['publisher', 'path', 'upstream', 'recorder', 'unverifiable'] as const
-
-function verdictSplit(byVerdict?: Record<string, number>): string {
-  if (!byVerdict) return ''
-  return GAP_VERDICT_ORDER.filter((v) => (byVerdict[v] ?? 0) > 0)
-    .map((v) => `${v} ${byVerdict[v].toLocaleString()}`)
-    .join(' · ')
-}
-
-// One recorder's row on the recorder leg, where the numbers are absolute rather than relative to
-// what the other recorders happened to receive.
-function recorderRowDetail(r: EdgeMulticastRecorderLoss, win: GapWindow, windowEnd: string): string {
-  const rate =
-    r.reference_seqs > 0
-      ? ` · ${((r.missing / r.reference_seqs) * 1e6).toFixed(1)} ppm`
-      : ''
-  const lines = [
-    `${r.node}: ${r.missing.toLocaleString()} of ${r.reference_seqs.toLocaleString()} ` +
-      `sequence numbers the publisher sent${rate}`,
-  ]
-  // The subtraction, shown rather than asserted. This is the thing the peer comparison could only
-  // infer: a loss every recorder shares reads as the publisher's there, and here it is a number
-  // this recorder admitted losing.
-  if ((r.admitted ?? 0) > 0) {
-    lines.push(
-      `${(r.missing_raw ?? r.missing).toLocaleString()} missing less ` +
-        `${(r.admitted ?? 0).toLocaleString()} this recorder admits dropping`,
-    )
-  }
-  const split = verdictSplit(r.missing_by_verdict)
-  if (split) lines.push(split)
-  if (r.missing === 0) {
-    lines.push(
-      r.unverifiable
-        ? 'nothing missing here — but the archive has a hole over this window, so that is unverified'
-        : 'recorded every sequence number the publisher sent',
-    )
-  } else {
-    lines.push(
-      `${(r.runs ?? (r.episodes ?? []).length).toLocaleString()} run(s) of missing sequence ` +
-        `numbers over the ${Math.round(win.secs / 60)}m to ${windowEnd}Z`,
-    )
-  }
-  // A mark places a run; it does not size it. The count above is the quantity, and a run of
-  // seconds would say as much about how busy the feed was as about what was lost.
-  if ((r.episodes ?? []).length > 0) {
-    lines.push('marks place each run, and never its size — the count above is the loss')
-  }
-  return lines.join('\n')
-}
-
 // "The recorder rows exist and the read of them failed", said wherever this strip ends up — including
 // the returns that draw no strip at all.
 //
@@ -1164,8 +1107,8 @@ function RecorderRowsUnavailableNote({
 // message none of them received is in nobody's set and can never be reported. Several at once is as
 // close as that leg gets to naming a loss upstream of the recorders, and one node alone is its
 // branch.
-// Exported for the test that pins the note onto every one of the returns below. Three of them draw
-// no strip, and the note used to be rendered only under one that does.
+// Exported for the tests that pin the note onto both of the returns below that draw no strip — it
+// used to be rendered only under one that does — and the caveats a row is not allowed to drop.
 export function RecorderLossTimeline({
   sequence,
   window: win,
@@ -1210,13 +1153,10 @@ export function RecorderLossTimeline({
       </div>
     )
   }
-  // Only reachable on the RECORDER leg — the peer leg's guard above has already taken every line
-  // with fewer than two rows — so it is a line the recorder rows carry nothing for, and nothing
-  // failed. The note is deliberately not repeated here: it cannot be set on this leg, because a
-  // failed read leaves the recorder rows empty and the selection falls to the peer comparison.
-  if (recorders.length === 0) {
-    return null
-  }
+  // No `recorders.length === 0` case below this point, and there cannot be one: the source is set
+  // only on a line that HAS rows, so `fromRecorder` implies at least one, and every empty line
+  // falls to the guard above. The leg is chosen per line, so a line the recorder rows do not reach
+  // keeps the comparison rather than being handed an empty recorder strip.
   const simultaneous = sequence.recorder_loss_simultaneous ?? []
   const publisherRuns = sequence.recorder_loss_publisher ?? []
   const windowEnd = new Date(win.endMs).toISOString().slice(11, 19)

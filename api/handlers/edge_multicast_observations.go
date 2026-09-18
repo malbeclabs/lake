@@ -932,8 +932,10 @@ type edgeMulticastObservationStatsResult struct {
 	// publisher. Set only on that leg, where recorderLossSimul is not.
 	recorderLossPublisher map[string][]KalshiL2GapEpisode
 
-	// recorderLossSource names which measurement filled recorderLoss.
-	recorderLossSource string
+	// recorderLossSource names which measurement filled recorderLoss, PER LINE and keyed the same
+	// way. Per payload it would blank a working peer strip on every line the recorder rows do not
+	// reach, which is every other feed until the recorder covers them all.
+	recorderLossSource map[string]string
 
 	// recorderLossUnavailable distinguishes a failed measurement from an absent one, and
 	// recorderGapsUnavailable says the better source was there and could not be read.

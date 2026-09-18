@@ -28,6 +28,33 @@ const (
 	edgeMulticastRecorderCoverageTable = "recorder_segment_coverage"
 )
 
+// edgeMulticastRecorderGapSettings bounds the read server-side, and
+// edgeMulticastRecorderGapBudget bounds the whole leg — both table probes and the query — client
+// side.
+//
+// Neither is belt-and-braces. This leg runs FIRST on StartKalshiBackgroundRefresher's serial chain,
+// which gives each of its steps a three-minute deadline off ONE parent context, so a read that
+// exhausts that deadline does not cost the strip it is additive to: FetchEdgeMulticastObservations
+// returns the error, nothing is written, and Msg/s, Peer, Heard and recorder_coverage go absent
+// with it. Both sibling reads on this payload bound themselves for that reason, and the peer leg's
+// comment records what the omission cost it — failure on every ten-minute cycle at 7.20 GiB, silent
+// because the failure is a WARN.
+//
+// The server-side cap is the tighter of the two on purpose: it fires first and returns a
+// ClickHouse error naming the limit, where a client deadline yields a bare context error. The
+// budget is the backstop for the case no statement timeout can reach — a proxied table whose
+// remote end never answers.
+const edgeMulticastRecorderGapSettings = " SETTINGS max_execution_time = 30, timeout_before_checking_execution_speed = 0"
+
+const edgeMulticastRecorderGapBudget = 45 * time.Second
+
+// The two failure modes are escalated apart: a probe that cannot answer and a read that failed are
+// different causes, and a run of one must not be reset by the other succeeding.
+const (
+	edgeMulticastRecorderGapProbeEscKey = "edge_multicast_recorder_gaps:probe"
+	edgeMulticastRecorderGapReadEscKey  = "edge_multicast_recorder_gaps:read"
+)
+
 // The five verdicts, in the upstream spec's own spelling. They are the rule set's, not this
 // page's: a verdict lake invented would be one the recorder cannot produce.
 const (
@@ -156,10 +183,15 @@ func (a *API) edgeMulticastRecorderGapTablesExist(ctx context.Context) (bool, er
 // gap row for an instance coverage does not carry would come back keyed on empty strings. The
 // union has no such edge and aggregates identically.
 //
-// Cheap by construction: both tables are tens of bytes a row, partitioned by day and sorted by the
-// channel instance, so a fifteen-minute question is a partition prune. That is the whole reason the
-// upstream design put these rows under this column — the level-grain table it replaces reads most
-// of a day through a remote proxy.
+// Cheap only if the loader partitions and sorts as the contract asks. Both tables are tens of bytes
+// a row, so the read is small either way, but the `WHERE before_ts >= ...` bound prunes nothing
+// unless the recorder makes that column the partition key and leads its sort order with the channel
+// instance — no such DDL exists yet, which is why it is requirement 5 in the design doc rather than
+// an assumption stated here. Getting it wrong is a full scan of a table with no TTL, and the
+// coverage table on this page is the standing example of a filter column that is not the partition
+// column.
+//
+// It is bounded on both sides regardless: see edgeMulticastRecorderGapSettings.
 func (a *API) fetchEdgeMulticastRecorderGaps(ctx context.Context) ([]EdgeMulticastRecorderGapSeries, error) {
 	q := edgeMulticastRecorderGapQuery(a.FeedsDB)
 
@@ -195,8 +227,15 @@ func (a *API) fetchEdgeMulticastRecorderGaps(ctx context.Context) ([]EdgeMultica
 }
 
 // edgeMulticastRecorderGapQuery builds the read. Separate from the scan so the SQL is a pure
-// function of the database name: the tables it reads exist in no environment yet, so being able to
-// print and parse the statement without one is the only check available to it.
+// function of the database name, which is what lets a test hold the statement's text against the
+// contract; what it DOES is pinned by executing it against tables the test creates
+// (TestEdgeMulticastRecorderGaps_TheStatementRunsAndHoldsTheContract).
+//
+// No FINAL, and that is an assumption rather than an oversight: it sums unexplained_count and
+// counts runs, so a re-delivered row is double-counted, and only the loader can say whether one is
+// possible. It is requirement 6 of the contract for that reason — a FINAL over a plain MergeTree
+// buys a merge nobody needs, and one missing over a replacing engine inflates every loss figure
+// while leaving it plausible. If the recorder lands on ReplacingMergeTree, this gets FINAL.
 func edgeMulticastRecorderGapQuery(feedsDB string) string {
 	db := fmt.Sprintf("`%s`", feedsDB)
 	return fmt.Sprintf(`
@@ -301,12 +340,13 @@ func edgeMulticastRecorderGapQuery(feedsDB string) string {
 			arrayFlatten(groupArray(seconds_publisher))
 		FROM legs
 		WHERE multicast_group NOT IN ('', '0.0.0.0')
-		GROUP BY multicast_group, publisher_source_ip, channel_id, dst_port, node`,
+		GROUP BY multicast_group, publisher_source_ip, channel_id, dst_port, node%[12]s`,
 		db, edgeMulticastRecorderGapTable, edgeMulticastObservationsWindowMinutes,
 		edgeMulticastRecorderLossCap, edgeMulticastRecorderEnvFilter(),
 		edgeMulticastGapVerdictRecorder, edgeMulticastGapVerdictUpstream,
 		edgeMulticastGapVerdictPath, edgeMulticastGapVerdictUnverifiable,
-		edgeMulticastGapVerdictPublisher, edgeMulticastRecorderCoverageTable)
+		edgeMulticastGapVerdictPublisher, edgeMulticastRecorderCoverageTable,
+		edgeMulticastRecorderGapSettings)
 }
 
 // edgeMulticastRecorderGapMarks places one mark per run-start second, and never joins two of them.
@@ -427,6 +467,11 @@ func edgeMulticastRecorderGapFold(series []EdgeMulticastRecorderGapSeries) (map[
 		st.loss.Admitted += s.Admitted
 		st.loss.ReferenceSeqs += s.ReferenceSeqs
 		st.loss.Runs += s.Runs
+		// What coverage says this node recorded, carried onto the row because on a CLEAN node it
+		// is the only figure there is: a node that lost nothing has no gap row, so it has no
+		// reference either, and the tooltip on the line the whole comparison rests on read
+		// "0 of 0 sequence numbers the publisher sent".
+		st.loss.Datagrams += s.Datagrams
 		// One instance short of coverage leaves the whole node's line unverified. The strip has
 		// one row per node, and a row that is clean on one channel and unverified on another
 		// cannot claim the clean reading for both.
@@ -488,46 +533,98 @@ func edgeMulticastRecorderGapFold(series []EdgeMulticastRecorderGapSeries) (map[
 // over on this path, so a blip costs one cycle of the recorder leg with the peer strip intact. The
 // alternative is worse — no environment has these tables yet, so a probe blip would put "recorder
 // rows unavailable" under every publisher line on the page and claim rows exist that do not. The
-// WARN is the tell.
+// log line is the tell.
+//
+// Which is why both failures go through an Escalator rather than a bare slog.Warn. A WARN that can
+// never escalate is exactly the shape that hid the peer leg's memory failure: a proxied table that
+// loses its grant answers 497 on every ten-minute cycle forever, and the strip degrades to the peer
+// comparison with nothing ever paging. Three consecutive cycles is half an hour of a column
+// silently standing in for a better one; a single blip stays at WARN. The keys are separate because
+// the two causes are, and the counts run per cause — a probe that starts answering must not reset a
+// read that is still failing.
+//
+// The whole leg runs inside its own deadline, probes included, so it cannot spend the refresher's
+// shared one. See edgeMulticastRecorderGapBudget.
 func (a *API) appendEdgeMulticastRecorderGaps(ctx context.Context, out *EdgeMulticastObservationsResponse) {
+	ctx, cancel := context.WithTimeout(ctx, edgeMulticastRecorderGapBudget)
+	defer cancel()
+
+	log := slog.Default()
 	exists, err := a.edgeMulticastRecorderGapTablesExist(ctx)
 	if err != nil {
-		slog.Warn("edge multicast recorder gaps: table probe failed", "error", err)
+		a.recorderGapEsc.Fail(log, edgeMulticastRecorderGapProbeEscKey,
+			"edge multicast recorder gaps: table probe failed", "error", err)
 		return
 	}
+	a.recorderGapEsc.Reset(edgeMulticastRecorderGapProbeEscKey)
 	if !exists {
+		// Absent is the steady state of every environment today, not a failure — and it says
+		// nothing about a read that was failing before the tables went away, so the read's own
+		// streak is left where it was.
 		return
 	}
 	gaps, err := a.fetchEdgeMulticastRecorderGaps(ctx)
 	if err != nil {
-		slog.Warn("edge multicast recorder gaps unavailable", "error", err)
+		a.recorderGapEsc.Fail(log, edgeMulticastRecorderGapReadEscKey,
+			"edge multicast recorder gaps unavailable", "error", err)
 		out.RecorderGapsUnavailable = true
 		return
 	}
+	a.recorderGapEsc.Reset(edgeMulticastRecorderGapReadEscKey)
 	out.RecorderGaps = gaps
 }
 
-// edgeMulticastLossLegs picks which leg the loss strip renders from, folds it, and says which one
-// it was.
+// edgeMulticastLossLegs folds both legs and picks which one renders PER PUBLISHER LINE, returning
+// the choice keyed the same way the strips are.
 //
-// The recorder rows win where they exist, and the peer fold is then not run at all: the two measure
-// against different references — the publisher's own numbering against the union of what the nodes
-// received — so folding both and merging them would produce a strip that is neither. Absent rows
-// are the ordinary case, and stay so until the proxies exist in an environment.
+// Per line, and not once for the payload. The recorder rows arrive feed by feed — the recorder is
+// deployed per capture host and the proxies are created per table, not per page — so the first feed
+// it covers would otherwise switch every OTHER line to a leg that has no rows for it. Those lines
+// lose the peer strip they render today and print `no peer to compare`, a statement about a
+// comparison that was never run. Nothing about the choice is global: both folds key on
+// (group, publisher), so making it per key costs one map lookup.
 //
-// The peer leg's own failure flag is returned only while the peer leg is what renders. Carried
-// through on the recorder leg it would put "not measured" over a strip built from better rows.
+// Within a line the legs still never mix. They measure against different references — the
+// publisher's own numbering against the union of what the nodes received — so a strip folding both
+// would be neither, and the recorder rows win wherever they exist.
+//
+// The peer leg's own failure flag comes back as the payload-wide fact it is; which lines it may be
+// reported on is settled by the source map, in attachEdgeMulticastSequenceHealth. Carried onto a
+// recorder-fed line it would put "not measured" over a strip built from better rows.
 func edgeMulticastLossLegs(payload *EdgeMulticastObservationsResponse) (
 	loss map[string][]EdgeMulticastRecorderLoss,
 	simultaneous map[string][]KalshiL2GapEpisode,
 	publisher map[string][]KalshiL2GapEpisode,
-	source string,
+	source map[string]string,
 	peerUnavailable bool,
 ) {
-	if len(payload.RecorderGaps) > 0 {
-		loss, publisher = edgeMulticastRecorderGapFold(payload.RecorderGaps)
-		return loss, nil, publisher, edgeMulticastLossSourceRecorder, false
+	recorderLoss, recorderPub := edgeMulticastRecorderGapFold(payload.RecorderGaps)
+	peerLoss, peerSimul := edgeMulticastRecorderLossFold(payload.RecorderLoss)
+
+	loss = make(map[string][]EdgeMulticastRecorderLoss, len(recorderLoss)+len(peerLoss))
+	source = make(map[string]string, len(recorderLoss)+len(peerLoss))
+	simultaneous = map[string][]KalshiL2GapEpisode{}
+	publisher = map[string][]KalshiL2GapEpisode{}
+
+	for lk, rows := range recorderLoss {
+		loss[lk] = rows
+		source[lk] = edgeMulticastLossSourceRecorder
+		if eps := recorderPub[lk]; len(eps) > 0 {
+			publisher[lk] = eps
+		}
 	}
-	loss, simultaneous = edgeMulticastRecorderLossFold(payload.RecorderLoss)
-	return loss, simultaneous, nil, edgeMulticastLossSourcePeers, payload.RecorderLossUnavailable
+	// The peer comparison fills what the recorder rows do not reach, which today is every line in
+	// every environment. Its bottom row travels with it and only with it: `2+` under a
+	// recorder-fed strip would be the weaker claim sitting beneath the stronger one.
+	for lk, rows := range peerLoss {
+		if _, taken := loss[lk]; taken {
+			continue
+		}
+		loss[lk] = rows
+		source[lk] = edgeMulticastLossSourcePeers
+		if eps := peerSimul[lk]; len(eps) > 0 {
+			simultaneous[lk] = eps
+		}
+	}
+	return loss, simultaneous, publisher, source, payload.RecorderLossUnavailable
 }

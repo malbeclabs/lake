@@ -8154,8 +8154,11 @@ export interface EdgeMulticastRecorderLoss {
    *  recorder | upstream | path | unverifiable | publisher. */
   missing_by_verdict?: Record<string, number>
   /** The archive had a hole over this window, so a clean reading here is an absence of evidence
-   *  rather than a clean run. */
+   *  rather than a clean run — and a non-zero `missing` under it is a floor, not a measurement. */
   unverifiable?: boolean
+  /** Datagrams this node recorded on the line, from coverage. What a CLEAN row has instead of a
+   *  rate: no gap row means no `reference_seqs` either. */
+  datagrams?: number
 }
 
 /** Sequence health over a set of channel instances, worst-first: one publisher's own series on a

@@ -331,8 +331,16 @@ type EdgeMulticastRecorderLoss struct {
 
 	// Unverifiable says the archive had a hole over this window, so a clean reading here is an
 	// absence of evidence rather than a clean run — the object that would have carried the loss is
-	// the one we do not hold.
+	// the one we do not hold. It qualifies a non-zero Missing too, where it makes the figure a
+	// floor rather than a measurement.
 	Unverifiable bool `json:"unverifiable,omitempty"`
+
+	// Datagrams is what this node recorded on the line, from coverage.
+	//
+	// It is what a CLEAN row has instead of a rate: no gap row means no ReferenceSeqs either, so
+	// without it the line the whole comparison rests on — "cmh lost 0" beside "was lost 267" —
+	// described itself as "0 of 0 sequence numbers the publisher sent".
+	Datagrams uint64 `json:"datagrams,omitempty"`
 }
 
 // sortEdgeMulticastRecorderLoss orders a line's nodes worst-first, then by name.
@@ -1040,14 +1048,21 @@ func attachEdgeMulticastSequenceHealth(lines []EdgeMulticastPublisher, health *E
 		h.RecorderLoss = observations.recorderLoss[lk]
 		h.RecorderLossSimultaneous = observations.recorderLossSimul[lk]
 		h.RecorderLossPublisher = observations.recorderLossPublisher[lk]
-		h.RecorderLossUnavailable = observations.recorderLossUnavailable
 		h.RecorderGapsUnavailable = observations.recorderGapsUnavailable
+		// Which leg filled THIS line, which is not a property of the payload: the recorder rows
+		// arrive feed by feed, so one group can be recorder-fed while the next still renders the
+		// peer comparison.
+		src := observations.recorderLossSource[lk]
 		// Only where there is a strip to name the source of. On a line with no entry the field
 		// would label an absence, and "no peer to compare" is not a property of either
 		// measurement.
 		if len(h.RecorderLoss) > 0 {
-			h.RecorderLossSource = observations.recorderLossSource
+			h.RecorderLossSource = src
 		}
+		// A failed peer comparison is a finding only on the lines the peer comparison is what
+		// renders. On a recorder-fed line it would print "not measured" over a strip built from
+		// better rows — and with the leg chosen per line, that is now a per-line question too.
+		h.RecorderLossUnavailable = observations.recorderLossUnavailable && src != edgeMulticastLossSourceRecorder
 		lines[i].Sequence = h
 		health.Publishers++
 		switch h.Status {

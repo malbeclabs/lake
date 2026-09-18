@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import type { EdgeMulticastSequenceHealth } from '@/lib/api'
+
+import { TooltipProvider } from '@/components/ui/tooltip'
+
+import { recorderRowDetail } from '@/lib/edge-multicast-loss'
 
 import { RecorderLossTimeline } from './edge-multicast-page'
 
@@ -88,16 +92,93 @@ describe('RecorderLossTimeline', () => {
     expect(screen.getByText(/recorder rows unavailable/)).toBeInTheDocument()
   })
 
-  // On the RECORDER leg a line the rows carry nothing for renders nothing, and the note cannot
-  // apply: a failed read leaves those rows empty, so the selection falls to the peer comparison
-  // and one of the branches above is what renders.
-  it('draws nothing for a recorder-leg line with no rows', () => {
-    const { container } = render(
-      <RecorderLossTimeline
-        sequence={sequence({ recorder_loss_source: 'recorder' })}
-        window={WINDOW}
-      />,
+  // The leg is named per line, so one group can read `recorder rows` while the next still reads
+  // `peer comparison`. Which bottom row renders follows the line's own source and nothing else:
+  // `pub` is an attribution the comparison cannot make, and `2+` is the inference the recorder
+  // rows replace.
+  it('renders the bottom row the line\'s own leg produces', () => {
+    const recorderFed = render(
+      <TooltipProvider>
+        <RecorderLossTimeline
+        sequence={sequence({
+          recorder_loss_source: 'recorder',
+          recorder_loss: [{ ...recorder('was-rec1'), missing: 267, reference_seqs: 300_000 }],
+          recorder_loss_publisher: [{ start: 1_699_999_000, seconds: 1 }],
+        })}
+          window={WINDOW}
+        />
+      </TooltipProvider>,
     )
-    expect(container.firstChild).toBeNull()
+    const recorderRow = within(recorderFed.container)
+    expect(recorderRow.getByText('pub')).toBeInTheDocument()
+    expect(recorderRow.getByText(/recorder rows/)).toBeInTheDocument()
+    expect(recorderRow.queryByText('2+')).not.toBeInTheDocument()
+
+    const peerFed = render(
+      <TooltipProvider>
+        <RecorderLossTimeline
+        sequence={sequence({
+          recorder_loss_source: 'peers',
+          recorder_loss: [recorder('was-rec1'), recorder('cmh-rec1')],
+        })}
+          window={WINDOW}
+        />
+      </TooltipProvider>,
+    )
+    const peerRow = within(peerFed.container)
+    expect(peerRow.getByText('2+')).toBeInTheDocument()
+    expect(peerRow.getByText(/peer comparison/)).toBeInTheDocument()
+    expect(peerRow.queryByText('pub')).not.toBeInTheDocument()
+  })
+
+  // `unverifiable` is a hole in the archive, and it was consulted only where the loss was ZERO —
+  // the one branch where it is the milder statement. Under a loss that WAS found it makes the
+  // figure a floor: the runs the missing segments would have carried cannot be counted, so the
+  // number is what the segments we hold happened to contain. With no caveat, a floor reads as a
+  // measurement.
+  it('says a loss measured over a hole in the archive is a floor', () => {
+    const detail = recorderRowDetail(
+      {
+        node: 'was-rec1',
+        location_code: 'was',
+        missing: 267,
+        reference_seqs: 300_000,
+        runs: 2,
+        unverifiable: true,
+      },
+      WINDOW,
+      '12:00:00',
+    )
+
+    expect(detail).toMatch(/floor on the loss, not all of it/)
+    expect(detail).toMatch(/267 of 300,000/)
+  })
+
+  // The same flag on a clean row keeps the weaker sentence it always had: there, the hole is why
+  // "nothing missing" is unverified rather than why a number is a floor.
+  it('keeps the unverified wording on a clean row', () => {
+    const detail = recorderRowDetail(
+      { node: 'cmh-rec1', missing: 0, reference_seqs: 1000, unverifiable: true },
+      WINDOW,
+      '12:00:00',
+    )
+
+    expect(detail).toMatch(/"nothing missing" here is unverified/)
+    expect(detail).not.toMatch(/floor on the loss/)
+  })
+
+  // A clean node has no gap row, so it has no reference either — it reaches the strip from the
+  // coverage half alone. The row it fills is the whole point of the comparison ("cmh lost 0"
+  // beside "was lost 267") and it described itself as `0 of 0 sequence numbers the publisher
+  // sent`, which reads as nothing having been measured.
+  it('gives a clean row the figure coverage has for it', () => {
+    const detail = recorderRowDetail(
+      { node: 'cmh-rec1', location_code: 'cmh', missing: 0, reference_seqs: 0, datagrams: 299_733 },
+      WINDOW,
+      '12:00:00',
+    )
+
+    expect(detail).toMatch(/299,733 datagrams recorded/)
+    expect(detail).not.toMatch(/0 of 0/)
   })
 })

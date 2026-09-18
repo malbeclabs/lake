@@ -179,21 +179,23 @@ var EdgeMulticastLossSources = struct{ Recorder, Peers string }{
 // EdgeMulticastObservationLossLegsForTest folds a cached observations payload exactly as the
 // request path does, so which leg wins — and what a failed leg is allowed to claim — is pinned on
 // the payload rather than on a live cache.
+//
+// The source comes back keyed per publisher line, because that is the grain the choice is made at:
+// one payload can carry recorder rows for one feed and nothing but the peer comparison for the
+// next.
 func EdgeMulticastObservationLossLegsForTest(payload EdgeMulticastObservationsResponse) (
 	map[string][]EdgeMulticastRecorderLoss,
 	map[string][]KalshiL2GapEpisode,
 	map[string][]KalshiL2GapEpisode,
-	string,
+	map[string]string,
 	bool,
 ) {
 	return edgeMulticastLossLegs(&payload)
 }
 
-// EdgeMulticastRecorderGapQueryForTest exposes the recorder leg's statement.
-//
-// The two tables it reads exist in no environment yet, so nothing can execute it: what a test can
-// do is hold the statement against the contract — that it filters the environment, that it MAXes
-// the per-instance reference instead of summing it, and that it reads both tables.
+// EdgeMulticastRecorderGapQueryForTest exposes the recorder leg's statement, for the assertions
+// about its TEXT — the ones about its behaviour go through fetchEdgeMulticastRecorderGaps against
+// tables the test creates itself (see TestEdgeMulticastRecorderGaps_TheStatementRunsAndHoldsTheContract).
 func EdgeMulticastRecorderGapQueryForTest(feedsDB string) string {
 	return edgeMulticastRecorderGapQuery(feedsDB)
 }
