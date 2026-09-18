@@ -147,3 +147,55 @@ func EdgeMulticastTOBGapsMergeForTest(
 	}
 	return out
 }
+
+// EdgeMulticastRecorderGapFoldForTest exposes the recorder leg's fold to the external test
+// package.
+//
+// Worth pinning without a database in the way for the same reason the peer fold is, and for one
+// more: the arithmetic it must not get wrong — a per-instance reference summed across the runs it
+// is repeated on — is invisible in the output and would understate every loss rate on the page.
+func EdgeMulticastRecorderGapFoldForTest(series []EdgeMulticastRecorderGapSeries) (map[string][]EdgeMulticastRecorderLoss, map[string][]KalshiL2GapEpisode) {
+	return edgeMulticastRecorderGapFold(series)
+}
+
+// EdgeMulticastRecorderGapVerdicts are the rule set's five verdicts, exported so a test names them
+// from one place rather than restating the spelling the SQL matches on.
+var EdgeMulticastRecorderGapVerdicts = struct {
+	Recorder, Upstream, Path, Unverifiable, Publisher string
+}{
+	Recorder:     edgeMulticastGapVerdictRecorder,
+	Upstream:     edgeMulticastGapVerdictUpstream,
+	Path:         edgeMulticastGapVerdictPath,
+	Unverifiable: edgeMulticastGapVerdictUnverifiable,
+	Publisher:    edgeMulticastGapVerdictPublisher,
+}
+
+// EdgeMulticastLossSources are the two values RecorderLossSource takes.
+var EdgeMulticastLossSources = struct{ Recorder, Peers string }{
+	Recorder: edgeMulticastLossSourceRecorder,
+	Peers:    edgeMulticastLossSourcePeers,
+}
+
+// EdgeMulticastObservationLossLegsForTest folds a cached observations payload exactly as the
+// request path does, so which leg wins — and what a failed leg is allowed to claim — is pinned on
+// the payload rather than on a live cache.
+//
+// The source comes back keyed per publisher line, because that is the grain the choice is made at:
+// one payload can carry recorder rows for one feed and nothing but the peer comparison for the
+// next.
+func EdgeMulticastObservationLossLegsForTest(payload EdgeMulticastObservationsResponse) (
+	map[string][]EdgeMulticastRecorderLoss,
+	map[string][]KalshiL2GapEpisode,
+	map[string][]KalshiL2GapEpisode,
+	map[string]string,
+	bool,
+) {
+	return edgeMulticastLossLegs(&payload)
+}
+
+// EdgeMulticastRecorderGapQueryForTest exposes the recorder leg's statement, for the assertions
+// about its TEXT — the ones about its behaviour go through fetchEdgeMulticastRecorderGaps against
+// tables the test creates itself (see TestEdgeMulticastRecorderGaps_TheStatementRunsAndHoldsTheContract).
+func EdgeMulticastRecorderGapQueryForTest(feedsDB string) string {
+	return edgeMulticastRecorderGapQuery(feedsDB)
+}

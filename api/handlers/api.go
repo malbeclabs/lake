@@ -120,6 +120,14 @@ type API struct {
 	// count does describe how long the failure has lasted. Its zero value is ready to
 	// use, so a directly-constructed API needs no change.
 	recorderRaceEsc logger.Escalator
+
+	// recorderGapEsc escalates the edge multicast recorder-gap leg's two failure
+	// modes (see appendEdgeMulticastRecorderGaps), so a proxied table that keeps
+	// failing on a ten-minute cycle pages rather than warning forever. Default
+	// thresholds, since the cadence is a fixed ticker and the count therefore does
+	// describe how long the failure has lasted. Its zero value is ready to use, so
+	// a directly-constructed API needs no change.
+	recorderGapEsc logger.Escalator
 }
 
 // publisherCheckLiveSem lazily builds the concurrency-bounding semaphore so a
