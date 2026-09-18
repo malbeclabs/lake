@@ -110,7 +110,11 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 			GROUP BY device_pk
 		),
 		multicast_counts AS (
-			SELECT device_pk, count(*) as user_count
+			SELECT
+				device_pk,
+				count(*) as user_count,
+				countIf(JSONLength(subscribers) > 0) as subscriber_count,
+				countIf(JSONLength(publishers) > 0) as publisher_count
 			FROM dz_users_current
 			WHERE status = 'activated' AND kind = 'multicast'
 			GROUP BY device_pk
@@ -158,9 +162,12 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 				COALESCE(d.max_multicast_subscribers, 0) as max_multicast_subscribers,
 				COALESCE(d.max_multicast_publishers, 0) as max_multicast_publishers,
 				COALESCE(d.unicast_users_count, 0) as unicast_users_count,
-				COALESCE(d.multicast_subscribers_count, 0) as multicast_subscribers_count,
+				-- Live subscriber/publisher counts from attached users. The on-chain
+				-- d.multicast_subscribers_count / d.multicast_publishers_count fields are
+				-- frequently stale or 0 even when users are attached (#650).
+				toUInt16(COALESCE(ucm.subscriber_count, 0)) as multicast_subscribers_count,
 				COALESCE(d.reserved_seats, 0) as reserved_seats,
-				COALESCE(d.multicast_publishers_count, 0) as multicast_publishers_count,
+				toUInt16(COALESCE(ucm.publisher_count, 0)) as multicast_publishers_count,
 				COALESCE(tr.in_bps, 0) as in_bps,
 				COALESCE(tr.out_bps, 0) as out_bps,
 				COALESCE(pr.peak_in_bps, 0) as peak_in_bps,
@@ -360,7 +367,11 @@ func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
 			GROUP BY device_pk
 		),
 		multicast_counts AS (
-			SELECT device_pk, count(*) as user_count
+			SELECT
+				device_pk,
+				count(*) as user_count,
+				countIf(JSONLength(subscribers) > 0) as subscriber_count,
+				countIf(JSONLength(publishers) > 0) as publisher_count
 			FROM dz_users_current
 			WHERE status = 'activated' AND kind = 'multicast' AND device_pk = ?
 			GROUP BY device_pk
@@ -408,9 +419,11 @@ func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
 			COALESCE(d.max_multicast_subscribers, 0) as max_multicast_subscribers,
 			COALESCE(d.max_multicast_publishers, 0) as max_multicast_publishers,
 			COALESCE(d.unicast_users_count, 0) as unicast_users_count,
-			COALESCE(d.multicast_subscribers_count, 0) as multicast_subscribers_count,
+			-- Live subscriber/publisher counts from attached users; on-chain
+			-- counts are frequently stale or 0 even with users attached (#650).
+			toUInt16(COALESCE(ucm.subscriber_count, 0)) as multicast_subscribers_count,
 			COALESCE(d.reserved_seats, 0) as reserved_seats,
-			COALESCE(d.multicast_publishers_count, 0) as multicast_publishers_count,
+			toUInt16(COALESCE(ucm.publisher_count, 0)) as multicast_publishers_count,
 			COALESCE(tr.in_bps, 0) as in_bps,
 			COALESCE(tr.out_bps, 0) as out_bps,
 			COALESCE(pr.peak_in_bps, 0) as peak_in_bps,

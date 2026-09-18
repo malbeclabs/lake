@@ -80,20 +80,33 @@ var facilityFilterFields = map[string]FilterFieldConfig{
 // facilitiesEnrichedCTE joins facilities with devices (via location_pk), metros, and users.
 // Requires migration 20260421000002 to add location_pk to dz_devices_current.
 const facilitiesEnrichedCTE = `
-	WITH facility_device_stats AS (
+	WITH device_multicast_live AS (
+		-- Live per-device multicast subscriber/publisher counts from attached users.
+		-- On-chain multicast_subscribers_count / multicast_publishers_count on
+		-- dz_devices_current are frequently stale or 0 even with users attached (#650).
 		SELECT
-			location_pk,
-			toUInt32(countDistinct(pk)) AS device_count,
-			SUM(unicast_users_count)         AS unicast_users_count,
-			SUM(multicast_subscribers_count) AS multicast_subscribers_count,
-			SUM(multicast_publishers_count)  AS multicast_publishers_count,
-			SUM(max_users)                   AS max_users,
-			SUM(max_unicast_users)           AS max_unicast_users,
-			SUM(max_multicast_subscribers)   AS max_multicast_subscribers,
-		SUM(max_multicast_publishers)    AS max_multicast_publishers
-		FROM dz_devices_current
-		WHERE location_pk != ''
-		GROUP BY location_pk
+			device_pk,
+			countIf(JSONLength(subscribers) > 0) AS live_subscribers,
+			countIf(JSONLength(publishers) > 0) AS live_publishers
+		FROM dz_users_current
+		WHERE status = 'activated' AND kind = 'multicast'
+		GROUP BY device_pk
+	),
+	facility_device_stats AS (
+		SELECT
+			d.location_pk AS location_pk,
+			toUInt32(countDistinct(d.pk)) AS device_count,
+			SUM(d.unicast_users_count)               AS unicast_users_count,
+			SUM(COALESCE(dml.live_subscribers, 0))   AS multicast_subscribers_count,
+			SUM(COALESCE(dml.live_publishers, 0))    AS multicast_publishers_count,
+			SUM(d.max_users)                         AS max_users,
+			SUM(d.max_unicast_users)                 AS max_unicast_users,
+			SUM(d.max_multicast_subscribers)         AS max_multicast_subscribers,
+		SUM(d.max_multicast_publishers)    AS max_multicast_publishers
+		FROM dz_devices_current d
+		LEFT JOIN device_multicast_live dml ON dml.device_pk = d.pk
+		WHERE d.location_pk != ''
+		GROUP BY d.location_pk
 	),
 	facility_user_counts AS (
 		SELECT d.location_pk, toUInt32(countDistinct(u.pk)) AS user_count
