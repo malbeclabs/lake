@@ -24,8 +24,20 @@ import (
 // names — and never as the complement of the other. A row matching neither counts as neither
 // and stays in Pairs, so a convention that moves reads as pairs going missing rather than as
 // the wire silently winning.
+//
+// **The prefixes carry their hyphen, and that is the whole guard.** `venue%` also matches
+// `venue_v2`, so a rename on that side would keep scoring as a venue win and the shortfall
+// this file promises would never appear — the failure the paragraph above exists to rule out,
+// surviving on the venue side alone. The names are documents, not conventions: the view's own
+// migration (`malbeclabs/kalshi:.../20260909000003_kalshi_book_race.sql`) records that the
+// deployed documents name the venue side `venue-perps-ws` at every site, and says of a bare
+// `observation LIKE 'venue%'` that it is "a convention no document is held to".
 
 const kalshiRecorderRaceCacheKey = "kalshi_recorder_race:v1"
+
+// kalshiRecorderRaceEscKey prefixes the escalation keys the refresher's two failure paths count
+// under. Low-cardinality and fixed, as logger.Escalator requires.
+const kalshiRecorderRaceEscKey = "kalshi_recorder_race"
 
 // kalshiRecorderRaceWindowMinutes is what the view can be aggregated over inside a refresher
 // cycle. See the file comment: this is a measured ceiling, not a preference.
@@ -103,12 +115,12 @@ func (a *API) FetchKalshiRecorderRace(ctx context.Context) (*KalshiRecorderRace,
 			site,
 			count() AS pairs,
 			uniqExact(symbol) AS symbols,
-			countIf(first_observation LIKE 'venue%%') AS venue_wins,
+			countIf(first_observation LIKE 'venue-%%') AS venue_wins,
 			countIf(first_observation LIKE 'edge-%%') AS wire_wins,
 			-- TDigest and not Exact: the exact quantiles do not return inside the deadline on
 			-- this view, and the market-by-price coverage query already made the same trade.
-			ifNotFinite(toFloat64(quantileTDigestIf(0.50)(lead_ms, first_observation LIKE 'venue%%')), 0) AS venue_p50,
-			ifNotFinite(toFloat64(quantileTDigestIf(0.95)(lead_ms, first_observation LIKE 'venue%%')), 0) AS venue_p95,
+			ifNotFinite(toFloat64(quantileTDigestIf(0.50)(lead_ms, first_observation LIKE 'venue-%%')), 0) AS venue_p50,
+			ifNotFinite(toFloat64(quantileTDigestIf(0.95)(lead_ms, first_observation LIKE 'venue-%%')), 0) AS venue_p95,
 			ifNotFinite(toFloat64(quantileTDigestIf(0.50)(lead_ms, first_observation LIKE 'edge-%%')), 0) AS wire_p50,
 			ifNotFinite(toFloat64(quantileTDigestIf(0.95)(lead_ms, first_observation LIKE 'edge-%%')), 0) AS wire_p95
 		FROM %[1]s.kalshi_book_race

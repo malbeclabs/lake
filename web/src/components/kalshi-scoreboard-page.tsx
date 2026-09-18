@@ -390,8 +390,14 @@ export function KalshiScoreboardPage() {
             {/* The recorder's race: the venue against its own republication. Placed under the
                 path-latency hero and above the competitor race because it answers a different
                 question from either — not "which feed is faster" but "does the multicast carry
-                a book state before the venue's own socket does". Rendered only where a recorder
-                writes; absent is not an empty table. */}
+                a book state before the venue's own socket does".
+
+                **Three states, and the payload's presence is only the first of them.** No
+                payload at all renders nothing — that is a refresher that has not landed yet.
+                A payload with `measured` false says nothing measures this race here; one with
+                `measured` true and no sites is a reading that found nothing, which is a fault.
+                The table itself renders only where there are sites, so neither empty state
+                comes with a header row under it. */}
             {data.recorder_race && (
               <div className="mb-6 rounded-lg border border-border bg-card p-4 sm:p-6">
                 <p className="text-sm leading-relaxed text-muted-foreground">
@@ -429,6 +435,7 @@ export function KalshiScoreboardPage() {
                   </p>
                 )}
 
+                {data.recorder_race.sites.length > 0 && (
                 <div className="mt-5 overflow-x-auto">
                   <table className="min-w-full">
                     <thead>
@@ -510,6 +517,7 @@ export function KalshiScoreboardPage() {
                     </tbody>
                   </table>
                 </div>
+                )}
               </div>
             )}
 

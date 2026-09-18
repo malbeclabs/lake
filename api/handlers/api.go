@@ -13,6 +13,7 @@ import (
 
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 	"github.com/malbeclabs/lake/utils/pkg/docsfetch"
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
 var errNoPgPool = errors.New("postgres not configured")
@@ -111,6 +112,14 @@ type API struct {
 	// Network Health tickets aggregate previously re-paged on every computation
 	// (see cachedOpsUsers). Its zero value is ready to use.
 	opsUsersCache opsUsersCache
+
+	// recorderRaceEsc escalates the recorder-race refresher's two failure paths (see
+	// StartKalshiBackgroundRefresher), so a view that times out on every cycle pages
+	// rather than warning forever behind a panel that keeps serving its last window.
+	// Default thresholds: the cadence is a fixed ten-minute ticker, so the consecutive
+	// count does describe how long the failure has lasted. Its zero value is ready to
+	// use, so a directly-constructed API needs no change.
+	recorderRaceEsc logger.Escalator
 }
 
 // publisherCheckLiveSem lazily builds the concurrency-bounding semaphore so a

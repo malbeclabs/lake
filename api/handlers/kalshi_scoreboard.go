@@ -602,9 +602,14 @@ func (a *API) FetchKalshiScoreboardData(ctx context.Context, window, symbol stri
 // attachKalshiRecorderRace copies the background-refreshed recorder race onto a response.
 //
 // Best-effort and separately cached, for the same reason the path latency is: it is too slow
-// for a request. Absent until the refresher has populated it, and absent for good in an
-// environment where no recorder writes — the UI reads the absence as "not measured here" and
-// renders nothing, rather than an empty table that reads as a race with no winner.
+// for a request. Absent until the refresher has populated it, which is the only state that
+// renders nothing at all.
+//
+// After that first cycle EVERY environment has a payload, including those where the race view
+// does not exist — the refresher writes one with `Measured` false. That is deliberate and is
+// what the flag is for: "nothing measures this race here" and "the recorders write here and
+// nothing paired" are different findings, and an environment with no instrument must not be
+// handed the second one. The UI renders the two apart and draws no table under either.
 func (a *API) attachKalshiRecorderRace(ctx context.Context, resp *KalshiScoreboardResponse) {
 	raw, err := a.readPageCache(ctx, kalshiRecorderRaceCacheKey)
 	if err != nil || len(raw) == 0 {
@@ -1134,17 +1139,30 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 	// previous-cycle race under a caption claiming the last fifteen minutes — and none at all
 	// for the first cycle after a deploy. Cost is the wrong axis to order a consumer against
 	// its own input; the path-latency step is ahead of them for the same reason.
+	//
+	// **Both failures escalate, because neither is visible from the page.** A refresh that
+	// keeps failing leaves the panel serving the last window it managed to compute, and all
+	// the page can say about it is the age beside the caption — which is a tell only for
+	// someone already looking. On a bare WARN a view that times out on every ten-minute cycle
+	// never reaches anyone. Separate keys for the read and the write, the split
+	// api/worker/pagecache.go makes for the same reason: they are different causes, and a read
+	// that starts working must not reset a write that is still failing.
 	refreshRecorderRace := func() {
 		rctx, cancel := context.WithTimeout(ctx, runTimeout)
 		defer cancel()
 		val, err := a.FetchKalshiRecorderRace(rctx)
 		if err != nil {
-			slog.Warn("kalshi recorder race refresh failed", "error", err)
+			a.recorderRaceEsc.Fail(slog.Default(), kalshiRecorderRaceEscKey+":read",
+				"kalshi recorder race refresh failed", "error", err)
 			return
 		}
+		a.recorderRaceEsc.Reset(kalshiRecorderRaceEscKey + ":read")
 		if err := a.WritePageCache(ctx, kalshiRecorderRaceCacheKey, val); err != nil {
-			slog.Warn("kalshi recorder race cache write failed", "error", err)
+			a.recorderRaceEsc.Fail(slog.Default(), kalshiRecorderRaceEscKey+":write",
+				"kalshi recorder race cache write failed", "error", err)
+			return
 		}
+		a.recorderRaceEsc.Reset(kalshiRecorderRaceEscKey + ":write")
 	}
 	refresh := func() {
 		refreshObservations()
