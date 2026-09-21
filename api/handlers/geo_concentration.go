@@ -174,11 +174,9 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 	}
 	rows.Close()
 
-	// Metros carry the anchor points, so a failed or empty read fails the request
-	// rather than reporting an unmeasured geography as measured (see errNoMetros).
 	// Skipped when nothing was geolocated: there is no validator to place, and an
-	// environment with no honed locations yet would otherwise fail on a metros
-	// table it never needed to read.
+	// environment with no honed locations yet would otherwise fail errNoMetros on
+	// a metros table it never needed to read.
 	var metrosList []metroCoord
 	if len(enriched) > 0 {
 		metrosList, err = fetchMetroCoords(ctx, a.DB)
@@ -187,7 +185,6 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 		}
 	}
 
-	// Assign nearest metro and deduplicate by vote_pubkey in Go.
 	type validatorRow struct {
 		votePubkey  string
 		stakeSol    float64

@@ -8,8 +8,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// metroCoord is a DZ metro's anchor-point location, used to assign each
-// geolocated validator to its nearest metro.
+// metroCoord is a DZ metro's anchor point, which validators are assigned to.
 type metroCoord struct {
 	code     string
 	lat, lng float64
@@ -21,9 +20,8 @@ type metroCoord struct {
 // a single nameless bucket holding 100% of stake, and an anchor-point count of 0.
 var errNoMetros = errors.New("dz_metros_current returned no rows")
 
-// fetchMetroCoords reads every DZ metro's anchor point. Shared by the geo
-// concentration and geo validators handlers so their metro assignment cannot
-// drift apart.
+// fetchMetroCoords reads every DZ metro's anchor point. Shared by both geo
+// handlers so their metro assignment cannot drift apart.
 func fetchMetroCoords(ctx context.Context, conn driver.Conn) ([]metroCoord, error) {
 	rows, err := conn.Query(ctx, "SELECT code, latitude, longitude FROM dz_metros_current")
 	if err != nil {

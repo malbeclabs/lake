@@ -724,8 +724,7 @@ func main() {
 			r.Get("/api/dz/geoloc/users", api.GetGeolocUsers)
 			r.Get("/api/dz/geoloc/explorer", api.GetGeolocExplorer)
 
-			// The DZDP views join Solana and GeoIP records and read the DZDP
-			// database, none of which exist outside mainnet.
+			// Nothing these two read exists outside mainnet.
 			r.Group(func(r chi.Router) {
 				r.Use(api.RequireMainnetMiddleware)
 				r.Get("/api/dz/geoloc/concentration", api.GetGeoConcentration)

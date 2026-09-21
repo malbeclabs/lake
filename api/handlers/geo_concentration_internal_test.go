@@ -30,10 +30,9 @@ func (c *deadlineConn) Query(ctx context.Context, _ string, _ ...any) (driver.Ro
 }
 
 // TestFetchGeoConcentrationTakesTheCallersDeadline pins the split that keeps the
-// page-cache worker off the request path's budget. The deadline used to be
-// clamped inside the fetch, which the worker shares, so the lighter
-// concentration query could never use more than a fraction of its 60s entry
-// budget while the heavier geo_validators got all of it.
+// page-cache worker off the request path's budget: the 15s clamp used to sit
+// inside this fetch, which the worker shares, capping the lighter concentration
+// query at a quarter of its 60s entry budget while geo_validators got all of it.
 func TestFetchGeoConcentrationTakesTheCallersDeadline(t *testing.T) {
 	t.Parallel()
 

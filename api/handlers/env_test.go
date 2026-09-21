@@ -157,9 +157,6 @@ func TestRequireMainnetMiddleware(t *testing.T) {
 	})
 	handler := api.RequireMainnetMiddleware(inner)
 
-	// The DZDP geo views read mainnet-only sources and a mainnet-only page cache,
-	// so a non-mainnet request must not reach them and render mainnet numbers
-	// under a testnet label.
 	t.Run("returns 503 for non-mainnet", func(t *testing.T) {
 		t.Parallel()
 		req := httptest.NewRequest("GET", "/test", nil)

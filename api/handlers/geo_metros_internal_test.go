@@ -33,10 +33,7 @@ func (r *metroRows) Err() error   { return nil }
 func (r *metroRows) Close() error { return nil }
 
 // TestFetchMetroCoordsRejectsAnEmptyTable pins the half of the metros read that a
-// successful query hides: with no metros every validator is assigned an empty
-// metro code, and the concentration payload then reports one nameless bucket
-// holding 100% of stake beside an anchor-point count of 0 — an unmeasured
-// geography rendered as a measured one.
+// successful query hides — see errNoMetros for what an empty table renders as.
 func TestFetchMetroCoordsRejectsAnEmptyTable(t *testing.T) {
 	t.Parallel()
 

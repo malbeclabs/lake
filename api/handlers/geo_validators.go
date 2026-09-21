@@ -192,11 +192,9 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 	}
 	rows.Close()
 
-	// Metros carry the breakdown's only grouping key, so a failed or empty read
-	// fails the request rather than collapsing every validator into one nameless
-	// bucket (see errNoMetros). Skipped when nothing was geolocated: there is no
-	// validator to place, and an environment with no honed locations yet would
-	// otherwise fail on a metros table it never needed to read.
+	// Skipped when nothing was geolocated: there is no validator to place, and an
+	// environment with no honed locations yet would otherwise fail errNoMetros on
+	// a metros table it never needed to read.
 	var metrosList []metroCoord
 	if len(enriched) > 0 {
 		metrosList, err = fetchMetroCoords(ctx, a.DB)
@@ -205,7 +203,6 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 		}
 	}
 
-	// Assign nearest metro and deduplicate by vote_pubkey in Go.
 	type dedupEntry struct {
 		idx int // index into enriched
 	}

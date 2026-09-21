@@ -263,8 +263,8 @@ export function DzdpConcentrationView() {
     return map
   }, [metrosData])
 
-  // The endpoint is mainnet-only (RequireMainnetMiddleware), so say so rather than
-  // polling a 503 every 60s behind a generic failure card.
+  // The endpoint is mainnet-only (RequireMainnetMiddleware), so say so rather
+  // than polling a 503 every 60s behind a generic failure card.
   if (!isMainnet) {
     return (
       <div className="flex-1 flex items-center justify-center">
