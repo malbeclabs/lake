@@ -192,31 +192,18 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 	}
 	rows.Close()
 
-	// Fetch metros for nearest-metro assignment.
-	type metroCoord struct {
-		code     string
-		lat, lng float64
-	}
+	// Metros carry the breakdown's only grouping key, so a failed or empty read
+	// fails the request rather than collapsing every validator into one nameless
+	// bucket (see errNoMetros). Skipped when nothing was geolocated: there is no
+	// validator to place, and an environment with no honed locations yet would
+	// otherwise fail on a metros table it never needed to read.
 	var metrosList []metroCoord
-	// Not tolerated: without metros every validator gets an empty metro code, and
-	// the metro breakdown collapses into one nameless bucket.
-	metroRows, err := a.DB.Query(ctx, "SELECT code, latitude, longitude FROM dz_metros_current")
-	if err != nil {
-		return nil, err
-	}
-	for metroRows.Next() {
-		var m metroCoord
-		if err := metroRows.Scan(&m.code, &m.lat, &m.lng); err != nil {
-			metroRows.Close()
+	if len(enriched) > 0 {
+		metrosList, err = fetchMetroCoords(ctx, a.DB)
+		if err != nil {
 			return nil, err
 		}
-		metrosList = append(metrosList, m)
 	}
-	if err := metroRows.Err(); err != nil {
-		metroRows.Close()
-		return nil, err
-	}
-	metroRows.Close()
 
 	// Assign nearest metro and deduplicate by vote_pubkey in Go.
 	type dedupEntry struct {
@@ -232,22 +219,12 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 	allValidators := make([]GeoValidatorItem, 0, len(best))
 	for _, entry := range best {
 		e := enriched[entry.idx]
-		// Find nearest metro.
-		bestCode := ""
-		bestDist := math.MaxFloat64
-		for _, m := range metrosList {
-			d := haversine(e.lat, e.lng, m.lat, m.lng)
-			if d < bestDist {
-				bestDist = d
-				bestCode = m.code
-			}
-		}
 		allValidators = append(allValidators, GeoValidatorItem{
 			VotePubkey:  e.votePubkey,
 			NodePubkey:  e.nodePubkey,
 			StakeSol:    e.stakeSol,
 			Commission:  e.commission,
-			MetroCode:   bestCode,
+			MetroCode:   nearestMetro(e.lat, e.lng, metrosList),
 			ASN:         e.asn,
 			ASNOrg:      e.asnOrg,
 			CountryCode: e.countryCode,
@@ -261,8 +238,10 @@ func (a *API) FetchGeoValidatorsData(ctx context.Context, metro, dzFilter string
 	sort.Slice(allValidators, func(i, j int) bool { return allValidators[i].StakeSol > allValidators[j].StakeSol })
 
 	// Assign tiers globally (before filtering) so a validator's tier reflects
-	// its position among all validators, not just the filtered subset.
-	// Validators are already sorted by stake DESC from the query.
+	// its position among all validators, not just the filtered subset. The walk
+	// below reads cumulative stake in rank order, so it depends on the stake-desc
+	// sort.Slice above — the query carries no ORDER BY of its own since the
+	// dedup moved into Go.
 	var globalStake float64
 	for _, v := range allValidators {
 		globalStake += v.StakeSol

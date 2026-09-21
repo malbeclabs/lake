@@ -174,31 +174,18 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 	}
 	rows.Close()
 
-	// Fetch metros for nearest-metro assignment and anchor point count.
-	type metro struct {
-		code     string
-		lat, lng float64
-	}
-	var metrosList []metro
-	// Not tolerated: without metros every validator gets an empty metro code and
-	// the anchor-point and top-two-metros stats read zero as if measured.
-	metroRows, err := a.DB.Query(ctx, "SELECT code, latitude, longitude FROM dz_metros_current")
-	if err != nil {
-		return nil, err
-	}
-	for metroRows.Next() {
-		var m metro
-		if err := metroRows.Scan(&m.code, &m.lat, &m.lng); err != nil {
-			metroRows.Close()
+	// Metros carry the anchor points, so a failed or empty read fails the request
+	// rather than reporting an unmeasured geography as measured (see errNoMetros).
+	// Skipped when nothing was geolocated: there is no validator to place, and an
+	// environment with no honed locations yet would otherwise fail on a metros
+	// table it never needed to read.
+	var metrosList []metroCoord
+	if len(enriched) > 0 {
+		metrosList, err = fetchMetroCoords(ctx, a.DB)
+		if err != nil {
 			return nil, err
 		}
-		metrosList = append(metrosList, m)
 	}
-	if err := metroRows.Err(); err != nil {
-		metroRows.Close()
-		return nil, err
-	}
-	metroRows.Close()
 
 	// Assign nearest metro and deduplicate by vote_pubkey in Go.
 	type validatorRow struct {
@@ -213,22 +200,11 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 
 	deduped := make(map[string]validatorRow)
 	for _, e := range enriched {
-		// Find nearest metro using Haversine distance.
-		bestCode := ""
-		bestDist := math.MaxFloat64
-		for _, m := range metrosList {
-			d := haversine(e.lat, e.lng, m.lat, m.lng)
-			if d < bestDist {
-				bestDist = d
-				bestCode = m.code
-			}
-		}
-
 		if prev, ok := deduped[e.votePubkey]; !ok || e.stakeSol > prev.stakeSol {
 			deduped[e.votePubkey] = validatorRow{
 				votePubkey:  e.votePubkey,
 				stakeSol:    e.stakeSol,
-				metroCode:   bestCode,
+				metroCode:   nearestMetro(e.lat, e.lng, metrosList),
 				asn:         e.asn,
 				asnOrg:      e.asnOrg,
 				countryCode: e.countryCode,
@@ -353,15 +329,4 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 	}
 
 	return resp, nil
-}
-
-// haversine returns the great-circle distance in meters between two points.
-func haversine(lat1, lng1, lat2, lng2 float64) float64 {
-	const earthRadius = 6_371_000 // meters
-	dLat := (lat2 - lat1) * math.Pi / 180
-	dLng := (lng2 - lng1) * math.Pi / 180
-	lat1r := lat1 * math.Pi / 180
-	lat2r := lat2 * math.Pi / 180
-	a := math.Sin(dLat/2)*math.Sin(dLat/2) + math.Cos(lat1r)*math.Cos(lat2r)*math.Sin(dLng/2)*math.Sin(dLng/2)
-	return earthRadius * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
 }
