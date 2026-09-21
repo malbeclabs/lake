@@ -88,6 +88,23 @@ func (a *API) RequireNeo4jMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// RequireMainnetMiddleware returns 503 for non-mainnet requests on endpoints whose
+// data only exists for mainnet — Solana validator and GeoIP records, and the DZDP
+// geolocation database, which is configured as a single name rather than per-env.
+// Without it the handler serves mainnet numbers under a testnet label,
+// and skips its page cache doing it, since the cache holds mainnet only.
+func (a *API) RequireMainnetMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isMainnet(r.Context()) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":"This feature is only available on mainnet-beta"}`))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // EnvMiddleware extracts the request's target environment and stores it in
 // the context. The canonical channel is the `X-DZ-Env` header; when no valid
 // header is present we fall back to the `env` query parameter so URLs pasted

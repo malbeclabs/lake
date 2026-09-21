@@ -723,8 +723,14 @@ func main() {
 			r.Get("/api/dz/geoloc/probes", api.GetGeolocProbes)
 			r.Get("/api/dz/geoloc/users", api.GetGeolocUsers)
 			r.Get("/api/dz/geoloc/explorer", api.GetGeolocExplorer)
-			r.Get("/api/dz/geoloc/concentration", api.GetGeoConcentration)
-			r.Get("/api/dz/geoloc/validators", api.GetGeoValidators)
+
+			// The DZDP views join Solana and GeoIP records and read the DZDP
+			// database, none of which exist outside mainnet.
+			r.Group(func(r chi.Router) {
+				r.Use(api.RequireMainnetMiddleware)
+				r.Get("/api/dz/geoloc/concentration", api.GetGeoConcentration)
+				r.Get("/api/dz/geoloc/validators", api.GetGeoValidators)
+			})
 		})
 
 		// Solana entity routes
