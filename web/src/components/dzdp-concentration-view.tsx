@@ -7,6 +7,7 @@ import { useTheme } from '@/hooks/use-theme'
 import { Loader2, AlertCircle, AlertTriangle, ArrowRight, ExternalLink } from 'lucide-react'
 import { ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts'
 import { fetchGeoConcentration, fetchMetros, type GeoConcentrationResponse } from '@/lib/api'
+import { useEnv } from '@/contexts/EnvContext'
 import { createBasemapStyle } from '@/lib/basemap'
 
 const WARN_TOP_TWO_METROS_PCT = 33
@@ -162,7 +163,7 @@ function CountryBarChart({ data }: { data: GeoConcentrationResponse }) {
             <YAxis dataKey="country_name" type="category" width={160} interval={0} tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
             <Tooltip cursor={{ fill: 'var(--muted)', opacity: 0.4 }} formatter={(value) => [`${Number(value).toFixed(1)}%`, 'Stake']} />
             <Bar dataKey="stake_pct" radius={[0, 3, 3, 0]}>
-              {top15.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
+              {top15.map((entry) => <Cell key={entry.country_code || entry.country_name} fill={entry.fill} />)}
             </Bar>
           </BarChart>
         </ResponsiveContainer>
@@ -236,15 +237,20 @@ function HowItWorks() {
 }
 
 export function DzdpConcentrationView() {
+  const { env } = useEnv()
+  const isMainnet = env === 'mainnet-beta'
+
   const { data, isLoading, error } = useQuery({
     queryKey: ['geo-concentration'],
     queryFn: fetchGeoConcentration,
     refetchInterval: 60_000,
+    enabled: isMainnet,
   })
 
   const { data: metrosData, isLoading: isLoadingMetros } = useQuery({
     queryKey: ['metros-for-concentration'],
     queryFn: () => fetchMetros(500),
+    enabled: isMainnet,
   })
 
   const metroCoords = useMemo(() => {
@@ -256,6 +262,22 @@ export function DzdpConcentrationView() {
     }
     return map
   }, [metrosData])
+
+  // The endpoint is mainnet-only (RequireMainnetMiddleware), so say so rather than
+  // polling a 503 every 60s behind a generic failure card.
+  if (!isMainnet) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-lg font-medium mb-2">Only available on mainnet-beta</div>
+          <div className="text-sm text-muted-foreground">
+            DZDP concentration is computed from Solana validator and GeoIP records, which exist for
+            mainnet-beta only.
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (isLoading) {
     return (

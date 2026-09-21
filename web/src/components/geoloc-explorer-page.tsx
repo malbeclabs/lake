@@ -77,6 +77,9 @@ export function GeolocExplorerPage() {
   const view: ViewTab = VIEW_TABS.some((t) => t.key === rawView) ? (rawView as ViewTab) : 'explorer'
 
   const setView = useCallback((v: ViewTab) => {
+    // Re-clicking the active tab would otherwise push an identical history entry,
+    // so leaving the page needs one Back press per click.
+    if (v === view) return
     const next = new URLSearchParams(searchParams)
     if (v === 'explorer') {
       next.delete('view')
@@ -84,7 +87,7 @@ export function GeolocExplorerPage() {
       next.set('view', v)
     }
     setSearchParams(next)
-  }, [searchParams, setSearchParams])
+  }, [view, searchParams, setSearchParams])
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
@@ -93,6 +96,8 @@ export function GeolocExplorerPage() {
         {VIEW_TABS.map((tab) => (
           <button
             key={tab.key}
+            type="button"
+            aria-pressed={view === tab.key}
             onClick={() => setView(tab.key)}
             className={`px-4 py-1.5 text-sm rounded transition-colors ${
               view === tab.key
