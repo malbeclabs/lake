@@ -66,8 +66,9 @@ export function Sidebar() {
   })
   const hasTopologies = (topologiesData?.topologies?.length ?? 0) > 0
   const showGeoloc = user?.is_internal_user === true
-  // Internal only (unannounced venue) — gated to allowed-domain Google users.
-  const showHyperliquid = user?.is_internal_user === true
+  // The Hyperliquid scoreboard is public, so the section is too. Its second entry is not:
+  // the internal scoreboard names the feeds it races, and that stays behind the domain gate.
+  const showHyperliquidInternalScoreboard = user?.is_internal_user === true
   const showKalshi = user?.is_internal_user === true
   // Cross-service multicast overview: names subscribers and separates operator-run receivers
   // from paying ones, so it stays with the other internal edge views.
@@ -652,24 +653,22 @@ const { resolvedTheme, setTheme } = useTheme()
                 </Link>
               </>
             )}
-            {showHyperliquid && (
+            <Link to="/dz/hyperliquid/scoreboard" className={isHyperliquidRoute ? navItemExpandedClass : navItemClass(false)}>
+              <Activity className="h-4 w-4" />
+              Hyperliquid
+            </Link>
+            {isHyperliquidRoute && (
               <>
-                <Link to="/dz/hyperliquid/scoreboard" className={isHyperliquidRoute ? navItemExpandedClass : navItemClass(false)}>
-                  <Activity className="h-4 w-4" />
-                  Hyperliquid
+                <Link to="/dz/hyperliquid/scoreboard" className={subNavItemClass(isHyperliquidScoreboardRoute)}>
+                  Scoreboard
                 </Link>
-                {isHyperliquidRoute && (
-                  <>
-                    <Link to="/dz/hyperliquid/scoreboard" className={subNavItemClass(isHyperliquidScoreboardRoute)}>
-                      Scoreboard
-                    </Link>
-                    <Link
-                      to="/dz/hyperliquid/internal-scoreboard"
-                      className={subNavItemClass(isHyperliquidInternalScoreboardRoute)}
-                    >
-                      Internal Scoreboard
-                    </Link>
-                  </>
+                {showHyperliquidInternalScoreboard && (
+                  <Link
+                    to="/dz/hyperliquid/internal-scoreboard"
+                    className={subNavItemClass(isHyperliquidInternalScoreboardRoute)}
+                  >
+                    Internal Scoreboard
+                  </Link>
                 )}
               </>
             )}
