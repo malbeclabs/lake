@@ -13,9 +13,13 @@ import (
 // hyperliquid_internal_scoreboard.go it reads hyperliquid_bbo_observations rather than
 // hyperliquid_bbo_feed_race_summary, so the two do not agree cell for cell: the summary
 // writes a cross-camp row only for an update's overall winner, which makes its per-feed
-// rates conditional on that feed having won. A race here is one (site, symbol, bbo_hash),
-// DoubleZero's arrival is the earliest of its publishers, and margins are signed so a
-// lost race carries a negative value into the percentiles.
+// rates conditional on that feed having won. DoubleZero's arrival is the earliest of its
+// publishers, and margins are signed so a lost race carries a negative value into the
+// percentiles.
+//
+// A race is one venue emission: (site, symbol, source_ts_ms, bbo_hash). Keyed on the book
+// state alone a feed that missed an occurrence borrows a later arrival, making the margin the
+// gap between emissions rather than a latency.
 
 const hyperliquidDZSourcePrefix = "tob_"
 
@@ -28,10 +32,49 @@ var hyperliquidRetiredPublishers = []string{"tob_aws_tyo_mirror1"}
 // The venue's own free endpoint, shown under its own name because it is not a rival product.
 const hyperliquidVenueFeed = "hyperliquid_public_bbo"
 
-var hyperliquidScoreboardSites = []struct{ Code, Label, Display string }{
-	{"tyo", "TYO", "Tokyo"},
-	{"chi", "CHI", "Chicago"},
-	{"nyc", "NYC", "New York"},
+type hyperliquidSite struct {
+	Code    string // location_code in the feeds schema, e.g. "tyo"
+	Short   string // column header, e.g. "TYO"
+	Display string // city name, e.g. "Tokyo"
+}
+
+// A label map, not the set of sites shown: that comes from the data, so a new vantage appears
+// without a deploy here and an unnamed one renders under its uppercased code. Display names
+// are the ledger's, from lake.dz_metros_current.
+var hyperliquidNamedSites = []hyperliquidSite{
+	{Code: "tyo", Short: "TYO", Display: "Tokyo"},
+	{Code: "chi", Short: "CHI", Display: "Chicago"},
+	{Code: "nyc", Short: "NYC", Display: "New York"},
+	{Code: "was", Short: "WAS", Display: "Washington DC"},
+	{Code: "cmh", Short: "CMH", Display: "Columbus"},
+}
+
+func hyperliquidSitesFrom(matrix map[hyperliquidMatrixKey]hyperliquidMatrixCell) []hyperliquidSite {
+	present := map[string]bool{}
+	for k := range matrix {
+		// The per-site CUBE cells: an empty loc is a total, and the feed-keyed cells repeat
+		// the same locations.
+		if k.loc != "" && k.feed == "" {
+			present[k.loc] = true
+		}
+	}
+	out := make([]hyperliquidSite, 0, len(present))
+	for _, s := range hyperliquidNamedSites {
+		if present[s.Code] {
+			out = append(out, s)
+			delete(present, s.Code)
+		}
+	}
+	rest := make([]string, 0, len(present))
+	for code := range present {
+		rest = append(rest, code)
+	}
+	sort.Strings(rest)
+	for _, code := range rest {
+		up := strings.ToUpper(code)
+		out = append(out, hyperliquidSite{Code: code, Short: up, Display: up})
+	}
+	return out
 }
 
 type hyperliquidMarketCategory struct {
@@ -145,7 +188,6 @@ func hyperliquidCompetitorArrivals() (projection, arrayJoin string) {
 func (a *API) FetchHyperliquidScoreboardData(ctx context.Context) (*HyperliquidScoreboardResponse, error) {
 	resp := &HyperliquidScoreboardResponse{
 		WindowLabel: fmt.Sprintf("last %d hours", hyperliquidScoreboardWindowHours),
-		SiteCount:   len(hyperliquidScoreboardSites),
 		FeedCount:   len(hyperliquidCompetitors),
 		Sites:       []HyperliquidScoreboardSite{},
 		Feeds:       []HyperliquidScoreboardFeed{},
@@ -174,10 +216,12 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context) (*HyperliquidS
 		resp.All = total.stat
 		resp.Races = total.races
 	}
-	for _, s := range hyperliquidScoreboardSites {
+	sites := hyperliquidSitesFrom(matrix)
+	resp.SiteCount = len(sites)
+	for _, s := range sites {
 		cell := matrix[hyperliquidMatrixKey{loc: s.Code}]
 		resp.Sites = append(resp.Sites, HyperliquidScoreboardSite{
-			Code: s.Label, Label: s.Display, HyperliquidScoreboardStat: cell.stat,
+			Code: s.Short, Label: s.Display, HyperliquidScoreboardStat: cell.stat,
 		})
 	}
 
@@ -189,10 +233,10 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context) (*HyperliquidS
 	rows := make([]feedRow, 0, len(hyperliquidCompetitors))
 	for _, c := range hyperliquidCompetitors {
 		fr := feedRow{feed: c.Feed, stat: matrix[hyperliquidMatrixKey{feed: c.Feed}].stat}
-		for _, s := range hyperliquidScoreboardSites {
+		for _, s := range sites {
 			cell := matrix[hyperliquidMatrixKey{loc: s.Code, feed: c.Feed}]
 			fr.sites = append(fr.sites, HyperliquidScoreboardSite{
-				Code: s.Label, Label: s.Display, HyperliquidScoreboardStat: cell.stat,
+				Code: s.Short, Label: s.Display, HyperliquidScoreboardStat: cell.stat,
 			})
 		}
 		rows = append(rows, fr)
@@ -252,14 +296,14 @@ func (a *API) fetchHyperliquidScoreboardMatrix(ctx context.Context) (map[hyperli
 	q := fmt.Sprintf(`
 		WITH agg AS (
 		    SELECT
-		        location_code, symbol, bbo_hash,
+		        location_code, symbol, source_ts_ms, bbo_hash,
 		        minIf(recv_ts_ns, %[2]s) AS dz,
 		        countIf(%[2]s)           AS n_dz,
 		        %[3]s
 		    FROM %[1]s.hyperliquid_bbo_observations
 		    WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalHour(%[5]d)))
 		      AND symbol IN (%[4]s)
-		    GROUP BY location_code, symbol, bbo_hash
+		    GROUP BY location_code, symbol, source_ts_ms, bbo_hash
 		),
 		sv AS (
 		    SELECT location_code, c.1 AS feed,
@@ -321,14 +365,14 @@ func (a *API) fetchHyperliquidScoreboardMarkets(ctx context.Context) (map[string
 	q := fmt.Sprintf(`
 		WITH agg AS (
 		    SELECT
-		        location_code, symbol, bbo_hash,
+		        location_code, symbol, source_ts_ms, bbo_hash,
 		        minIf(recv_ts_ns, %[2]s) AS dz,
 		        countIf(%[2]s)           AS n_dz,
 		        %[3]s
 		    FROM %[1]s.hyperliquid_bbo_observations
 		    WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalHour(%[5]d)))
 		      AND symbol IN (%[4]s)
-		    GROUP BY location_code, symbol, bbo_hash
+		    GROUP BY location_code, symbol, source_ts_ms, bbo_hash
 		),
 		sv AS (
 		    SELECT multiIf(%[7]s, '') AS cat,

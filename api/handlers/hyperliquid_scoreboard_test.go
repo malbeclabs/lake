@@ -48,15 +48,26 @@ func createObservationsTable(t *testing.T, api *handlers.API) {
 // milliseconds between statements then dominate the offsets under test.
 func newObserver(t *testing.T, api *handlers.API) func(loc, source, symbol string, hash uint64, recvOffsetMs float64) {
 	t.Helper()
+	at := newObserverAtTS(t, api)
+	return func(loc, source, symbol string, hash uint64, recvOffsetMs float64) {
+		t.Helper()
+		at(loc, source, symbol, 1, hash, recvOffsetMs)
+	}
+}
+
+// newObserver with the emission timestamp under the caller's control: source_ts_ms is part of
+// the race key, so a test needs to say which emission each row belongs to.
+func newObserverAtTS(t *testing.T, api *handlers.API) func(loc, source, symbol string, tsMs, hash uint64, recvOffsetMs float64) {
+	t.Helper()
 	base := time.Now().Add(-time.Hour).UnixNano()
 	db := "`" + api.FeedsDB + "`"
-	return func(loc, source, symbol string, hash uint64, recvOffsetMs float64) {
+	return func(loc, source, symbol string, tsMs, hash uint64, recvOffsetMs float64) {
 		t.Helper()
 		require.NoError(t, api.DB.Exec(t.Context(), fmt.Sprintf(`
 			INSERT INTO %s.hyperliquid_bbo_observations
 			(capture_run_id, measurement_node_id, host, location_code, source, symbol, source_ts_ms, bbo_hash, recv_ts_ns, recv_ts_kind)
-			VALUES ('run1', 'n1', 'n1', '%s', '%s', '%s', 1, %d, %d, 'kernel_udp_software')
-		`, db, loc, source, symbol, hash, base+int64(recvOffsetMs*1e6))))
+			VALUES ('run1', 'n1', 'n1', '%s', '%s', '%s', %d, %d, %d, 'kernel_udp_software')
+		`, db, loc, source, symbol, tsMs, hash, base+int64(recvOffsetMs*1e6))))
 	}
 }
 
@@ -192,4 +203,76 @@ func TestHyperliquidScoreboard_CompetitorsNumberedByMedianAscending(t *testing.T
 	assert.InDelta(t, 20.0, byLabel["Competitor 1"], 0.01)
 	assert.InDelta(t, 40.0, byLabel["Competitor 2"], 0.01)
 	assert.InDelta(t, 60.0, byLabel["Competitor 3"], 0.01)
+}
+
+func TestHyperliquidScoreboard_RecurringStateIsOneRacePerEmission(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createObservationsTable(t, api)
+	obs := newObserverAtTS(t, api)
+
+	// The same book state published twice. Keyed on the state alone these collapse into one
+	// race; keyed on the emission they are two.
+	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "BTC", 1000, 1, 10)
+	obs("tyo", "hydromancer_bbo", "BTC", 1000, 1, 50)
+	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "BTC", 2000, 1, 10)
+	obs("tyo", "hydromancer_bbo", "BTC", 2000, 1, 50)
+
+	resp, err := api.FetchHyperliquidScoreboardData(t.Context())
+	require.NoError(t, err)
+	require.EqualValues(t, 2, resp.Races)
+	assert.InDelta(t, 100.0, resp.All.WinPct, 0.01)
+	assert.InDelta(t, 40.0, resp.All.P50Ms, 0.01)
+}
+
+func TestHyperliquidScoreboard_AMissedEmissionDoesNotBorrowALaterArrival(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createObservationsTable(t, api)
+	obs := newObserverAtTS(t, api)
+
+	// DoubleZero misses the first emission and catches the second. Keyed on the state alone its
+	// second arrival is compared against the competitor's FIRST, turning a 40ms win into a
+	// 990ms loss.
+	obs("tyo", "hydromancer_bbo", "BTC", 1000, 1, 10)
+	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "BTC", 2000, 1, 1000)
+	obs("tyo", "hydromancer_bbo", "BTC", 2000, 1, 1040)
+
+	resp, err := api.FetchHyperliquidScoreboardData(t.Context())
+	require.NoError(t, err)
+	require.EqualValues(t, 1, resp.Races, "the emission DoubleZero missed has no arrival to score")
+	assert.InDelta(t, 100.0, resp.All.WinPct, 0.01)
+	assert.InDelta(t, 40.0, resp.All.P50Ms, 0.01,
+		"the margin is the delivery difference on the emission both feeds saw")
+}
+
+func TestHyperliquidScoreboard_SitesComeFromTheData(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createObservationsTable(t, api)
+	obs := newObserver(t, api)
+
+	// "fra" is unnamed only in that it is absent from hyperliquidNamedSites; naming it means
+	// moving this to another code. Written out of display order on purpose.
+	for _, loc := range []string{"was", "fra", "tyo"} {
+		obs(loc, "tob_gcp_tyo_hl_mainnet1", "BTC", 1, 10)
+		obs(loc, "hydromancer_bbo", "BTC", 1, 50)
+	}
+
+	resp, err := api.FetchHyperliquidScoreboardData(t.Context())
+	require.NoError(t, err)
+
+	require.Len(t, resp.Sites, 3)
+	assert.Equal(t, 3, resp.SiteCount)
+	assert.Equal(t, "TYO", resp.Sites[0].Code)
+	assert.Equal(t, "Tokyo", resp.Sites[0].Label, "named sites come first, in their declared order")
+	assert.Equal(t, "WAS", resp.Sites[1].Code)
+	assert.Equal(t, "Washington DC", resp.Sites[1].Label)
+	assert.Equal(t, "FRA", resp.Sites[2].Code)
+	assert.Equal(t, "FRA", resp.Sites[2].Label, "an unnamed site renders under its uppercased code")
+
+	require.NotEmpty(t, resp.Feeds)
+	for _, f := range resp.Feeds {
+		require.Len(t, f.Sites, 3)
+		assert.Equal(t, "TYO", f.Sites[0].Code)
+		assert.Equal(t, "WAS", f.Sites[1].Code)
+		assert.Equal(t, "FRA", f.Sites[2].Code)
+	}
 }

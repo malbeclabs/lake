@@ -167,9 +167,10 @@ function MatrixCell({
   )
 }
 
-const SITE_COLS = ['Tokyo', 'Chicago', 'New York']
-
 function FeedMatrix({ data }: { data: HyperliquidScoreboardResponse }) {
+  // Whatever the API measured, not a fixed three. data.sites and each feed's sites come from
+  // one server-side list, so the positional index below stays aligned.
+  const siteCols = data.sites.map((s) => s.label)
   const [metric, setMetric] = useState<MetricKey>('p50_ms')
   const [pill, setPill] = useState({ left: 0, width: 0 })
   const tabsRef = useRef<HTMLDivElement>(null)
@@ -224,7 +225,7 @@ function FeedMatrix({ data }: { data: HyperliquidScoreboardResponse }) {
           <thead>
             <tr className="border-b border-border text-left text-sm text-muted-foreground">
               <th className="whitespace-nowrap px-4 py-3 font-medium">Feed</th>
-              {SITE_COLS.map((c) => (
+              {siteCols.map((c) => (
                 <th key={c} className={`whitespace-nowrap px-4 py-3 text-right font-medium ${colCls(c)}`}>
                   {c}
                 </th>
@@ -251,8 +252,8 @@ function FeedMatrix({ data }: { data: HyperliquidScoreboardResponse }) {
                       max={max}
                       metric={metric}
                       who={f.label}
-                      where={SITE_COLS[k]}
-                      highlighted={hoverCol === SITE_COLS[k]}
+                      where={siteCols[k]}
+                      highlighted={hoverCol === siteCols[k]}
                       onHover={setHoverCol}
                     />
                   ))}
@@ -267,8 +268,8 @@ function FeedMatrix({ data }: { data: HyperliquidScoreboardResponse }) {
               {data.sites.map((s, k) => (
                 <td
                   key={s.code}
-                  className={`whitespace-nowrap px-4 py-3 text-right font-mono text-sm font-medium tabular-nums ${colCls(SITE_COLS[k])}`}
-                  onMouseEnter={() => setHoverCol(SITE_COLS[k])}
+                  className={`whitespace-nowrap px-4 py-3 text-right font-mono text-sm font-medium tabular-nums ${colCls(siteCols[k])}`}
+                  onMouseEnter={() => setHoverCol(siteCols[k])}
                 >
                   {showMetric(metric, s[metric])}
                 </td>
