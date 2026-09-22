@@ -66,8 +66,7 @@ export function Sidebar() {
   })
   const hasTopologies = (topologiesData?.topologies?.length ?? 0) > 0
   const showGeoloc = user?.is_internal_user === true
-  // The Hyperliquid scoreboard is public, so the section is too. Its second entry is not:
-  // the internal scoreboard names the feeds it races, and that stays behind the domain gate.
+  // The public scoreboard needs no gate; the internal one names the feeds it races.
   const showHyperliquidInternalScoreboard = user?.is_internal_user === true
   const showKalshi = user?.is_internal_user === true
   // Cross-service multicast overview: names subscribers and separates operator-run receivers

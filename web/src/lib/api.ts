@@ -7750,10 +7750,9 @@ export async function fetchHyperliquidInternalScoreboard(
 }
 
 // ── Hyperliquid scoreboard ──────────────────────────────────────────────
-// Distinct from the internal scoreboard above: measured from raw observations
-// rather than the winner-centric race summary, with signed margins, and with
-// competitor identities replaced by ordinal labels before serialisation. There
-// is no feed name anywhere in this payload and there must not be.
+// Public counterpart of the internal scoreboard above: signed margins measured
+// from raw observations, with competitors as ordinal labels and no feed name
+// anywhere in the payload.
 
 export interface HyperliquidScoreboardStat {
   win_pct: number

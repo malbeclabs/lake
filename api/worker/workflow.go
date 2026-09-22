@@ -186,9 +186,7 @@ const (
 	// previously ran the query ~6,500×/day.
 	validatorsListingInterval = 60 * time.Second
 
-	// The Hyperliquid scoreboard scans hyperliquid_bbo_observations — row per feed per
-	// update — across three recording sites for 24h. It is the most expensive recurring
-	// query on the feeds database, and it describes a 24-hour window, so minutes of
+	// A 24h window over a row-per-feed-per-update table at three sites, so minutes of
 	// staleness cost the reader nothing.
 	hyperliquidScoreboardInterval = 15 * time.Minute
 

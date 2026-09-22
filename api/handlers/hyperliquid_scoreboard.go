@@ -9,51 +9,25 @@ import (
 	"time"
 )
 
-// The Hyperliquid scoreboard. Sibling of the internal one
-// (hyperliquid_internal_scoreboard.go), and deliberately a different measurement —
-// the two will not agree cell for cell and are not meant to:
-//
-//   - It reads hyperliquid_bbo_observations, not hyperliquid_bbo_feed_race_summary.
-//     The summary is winner-centric: it writes a cross-camp row only for the update's
-//     overall winner, so a feed appears as winner only when it WAS the fastest and as
-//     loser only when a competitor beat everyone. Measured over one hour at Tokyo, the
-//     Tokyo mirror read 96.71% on 79,684 rows there against 66.52% on 132,281 rows here.
-//     Per-feed rates from the summary are conditional on that feed having won and are
-//     not comparable across feeds; observations carry one row per feed per update, so
-//     every pairing exists.
-//   - DoubleZero's arrival is the EARLIEST of its publishers on that book state, which
-//     is what a subscriber actually receives, rather than one publisher at a time.
-//   - Margins are signed. A race DoubleZero loses carries a negative value into the
-//     percentiles instead of being dropped, so p50/p95/p99 describe every race rather
-//     than only the wins.
-//   - Competitor identities never reach the payload. Competitors are numbered by median
-//     margin ascending; only the venue's own free endpoint is named, because it is not
-//     a competitor's product.
-//
-// A race is one (recording site, symbol, bbo_hash): the same book state, scored on
-// whenever each feed first delivered it. source_ts_ms is deliberately NOT in the key —
-// a book state that recurs is one race, not several. Measured over 48h at Tokyo that
-// is 1.084 occurrences per state, and the two grains agree to ~0.2pt.
+// The public Hyperliquid scoreboard. Unlike its sibling in
+// hyperliquid_internal_scoreboard.go it reads hyperliquid_bbo_observations rather than
+// hyperliquid_bbo_feed_race_summary, so the two do not agree cell for cell: the summary
+// writes a cross-camp row only for an update's overall winner, which makes its per-feed
+// rates conditional on that feed having won. A race here is one (site, symbol, bbo_hash),
+// DoubleZero's arrival is the earliest of its publishers, and margins are signed so a
+// lost race carries a negative value into the percentiles.
 
-// hyperliquidDZSourcePrefix marks DoubleZero's own top-of-book publishers in the
-// observations table, matching the `tob_` convention used across the feeds schema.
 const hyperliquidDZSourcePrefix = "tob_"
 
-// hyperliquidRetiredPublishers are DoubleZero publishers excluded from every figure on
-// this page. tob_aws_tyo_mirror1 was a Tokyo/NYC mirror that stopped publishing at
-// 2026-09-21 20:00 UTC. It is not merely dropped as a row: it was the fastest DoubleZero
-// publisher on 63.6% of the 4.89M book states it appeared in, so leaving it in would
-// credit the service with a publisher it no longer runs. Excluding it also drops the
-// ~1.0% of states no other DoubleZero publisher observed, which is the honest treatment —
-// there is no arrival to report there.
+// Excluded as a PUBLISHER, not as a row: it was the fastest DoubleZero publisher on 63.6%
+// of the states it appeared in, so DoubleZero's arrival has to fall back to the next
+// publisher rather than keep the mirror's. tob_aws_tyo_mirror1 stopped publishing on
+// 2026-09-21.
 var hyperliquidRetiredPublishers = []string{"tob_aws_tyo_mirror1"}
 
-// hyperliquidVenueFeed is the venue's own free endpoint. It is shown under its own name
-// because it is not a rival product, and it is listed first.
+// The venue's own free endpoint, shown under its own name because it is not a rival product.
 const hyperliquidVenueFeed = "hyperliquid_public_bbo"
 
-// hyperliquidScoreboardSites maps the recording-site codes in the feeds schema to the
-// labels the page shows, in display order.
 var hyperliquidScoreboardSites = []struct{ Code, Label, Display string }{
 	{"tyo", "TYO", "Tokyo"},
 	{"chi", "CHI", "Chicago"},
@@ -70,9 +44,6 @@ type hyperliquidMarketGroup struct {
 	Cats []hyperliquidMarketCategory
 }
 
-// hyperliquidMarketGroups is the contract-type breakdown. It is deliberately coarser than
-// the symbol list: the page names categories, never individual contracts. Commodities and
-// energy are carried and raced, and are counted in the headline, but have no category row.
 var hyperliquidMarketGroups = []hyperliquidMarketGroup{
 	{Name: "Native Perpetuals", Cats: []hyperliquidMarketCategory{
 		{Name: "Major crypto", Symbols: []string{"BTC", "ETH", "SOL"}},
@@ -84,17 +55,13 @@ var hyperliquidMarketGroups = []hyperliquidMarketGroup{
 	}},
 }
 
-// hyperliquidScoreboardWindowHours is the measured window. The observations table is
-// row-per-feed-per-update and this scans three sites of it, so the page is served from
-// the page cache and never runs the query on the request path.
 const hyperliquidScoreboardWindowHours = 24
 
 // HyperliquidScoreboardCacheKey is the page-cache key for the scoreboard.
 const HyperliquidScoreboardCacheKey = "hyperliquid_scoreboard"
 
-// HyperliquidScoreboardStat is one measured cell: how often DoubleZero arrived first and
-// how far ahead it was. Margins are signed, so a cell whose win rate is below 50% will
-// report a negative median.
+// HyperliquidScoreboardStat is one measured cell. Margins are signed, so a cell whose win
+// rate is below 50% reports a negative median.
 type HyperliquidScoreboardStat struct {
 	WinPct float64 `json:"win_pct"`
 	P50Ms  float64 `json:"p50_ms"`
@@ -102,7 +69,6 @@ type HyperliquidScoreboardStat struct {
 	P99Ms  float64 `json:"p99_ms"`
 }
 
-// HyperliquidScoreboardSite is one recording site's numbers.
 type HyperliquidScoreboardSite struct {
 	Code  string `json:"code"`
 	Label string `json:"label"`
@@ -118,20 +84,17 @@ type HyperliquidScoreboardFeed struct {
 	Sites []HyperliquidScoreboardSite `json:"sites"`
 }
 
-// HyperliquidScoreboardCategory is one contract type within a market.
 type HyperliquidScoreboardCategory struct {
 	Name string `json:"name"`
 	HyperliquidScoreboardStat
 }
 
-// HyperliquidScoreboardMarket is a market and the contract types broken out under it.
 type HyperliquidScoreboardMarket struct {
 	Name    string                          `json:"name"`
 	Carried int                             `json:"carried"`
 	Cats    []HyperliquidScoreboardCategory `json:"cats"`
 }
 
-// HyperliquidScoreboardResponse is the API response.
 type HyperliquidScoreboardResponse struct {
 	WindowLabel string                        `json:"window_label"`
 	Races       uint64                        `json:"races"`
@@ -145,8 +108,6 @@ type HyperliquidScoreboardResponse struct {
 	AsOf        time.Time                     `json:"as_of"`
 }
 
-// hyperliquidDZArrivalExpr is the predicate selecting DoubleZero's own publishers,
-// minus the retired ones.
 func hyperliquidDZArrivalExpr() string {
 	pred := fmt.Sprintf("startsWith(source, '%s')", hyperliquidDZSourcePrefix)
 	if len(hyperliquidRetiredPublishers) > 0 {
@@ -159,8 +120,6 @@ func hyperliquidDZArrivalExpr() string {
 	return pred
 }
 
-// hyperliquidScoreboardSymbols is the symbol set the scoreboard measures over — the same
-// liquid set the internal scoreboard uses, so the two describe the same markets.
 func hyperliquidScoreboardSymbols() string {
 	quoted := make([]string, len(hyperliquidLiquidSymbols))
 	for i, s := range hyperliquidLiquidSymbols {
@@ -169,7 +128,7 @@ func hyperliquidScoreboardSymbols() string {
 	return strings.Join(quoted, ", ")
 }
 
-// hyperliquidCompetitorArrivals builds the per-competitor arrival/​presence projections and
+// hyperliquidCompetitorArrivals builds the per-competitor arrival/presence projections and
 // the ARRAY JOIN tuple list that unpivots them into one row per (state, competitor).
 func hyperliquidCompetitorArrivals() (projection, arrayJoin string) {
 	proj := make([]string, 0, len(hyperliquidCompetitors))
@@ -183,8 +142,6 @@ func hyperliquidCompetitorArrivals() (projection, arrayJoin string) {
 	return strings.Join(proj, ",\n            "), strings.Join(tuples, ",\n                        ")
 }
 
-// FetchHyperliquidScoreboardData computes the whole scoreboard. Three scans: the
-// site×competitor matrix, the contract-type breakdown, and the carried-instrument counts.
 func (a *API) FetchHyperliquidScoreboardData(ctx context.Context) (*HyperliquidScoreboardResponse, error) {
 	resp := &HyperliquidScoreboardResponse{
 		WindowLabel: fmt.Sprintf("last %d hours", hyperliquidScoreboardWindowHours),
@@ -195,8 +152,7 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context) (*HyperliquidS
 		Markets:     []HyperliquidScoreboardMarket{},
 		AsOf:        time.Now().UTC(),
 	}
-	// Degrade to an empty-but-valid payload where the proxy table is absent (local dev),
-	// the same way the internal scoreboard does.
+	// An environment without the proxy table renders an empty page rather than an error.
 	if !a.hyperliquidObservationsTableExists(ctx) {
 		return resp, nil
 	}
@@ -214,12 +170,10 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context) (*HyperliquidS
 		return nil, err
 	}
 
-	// Grand total.
 	if total, ok := matrix[hyperliquidMatrixKey{}]; ok {
 		resp.All = total.stat
 		resp.Races = total.races
 	}
-	// Per site.
 	for _, s := range hyperliquidScoreboardSites {
 		cell := matrix[hyperliquidMatrixKey{loc: s.Code}]
 		resp.Sites = append(resp.Sites, HyperliquidScoreboardSite{
@@ -227,9 +181,6 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context) (*HyperliquidS
 		})
 	}
 
-	// Per feed. Competitors are numbered by median margin ascending; the venue endpoint
-	// keeps its name and leads the list. The number is positional only and is recomputed
-	// every refresh, so it is not a stable identifier for anyone reading the page.
 	type feedRow struct {
 		feed  string
 		stat  HyperliquidScoreboardStat
@@ -246,6 +197,8 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context) (*HyperliquidS
 		}
 		rows = append(rows, fr)
 	}
+	// Competitor numbering is positional and recomputed every refresh, so it is not a
+	// stable identifier for anyone reading the page.
 	ranked := make([]feedRow, 0, len(rows))
 	for _, r := range rows {
 		if r.feed != hyperliquidVenueFeed {
@@ -268,7 +221,6 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context) (*HyperliquidS
 		})
 	}
 
-	// Per market.
 	for _, g := range hyperliquidMarketGroups {
 		m := HyperliquidScoreboardMarket{Name: g.Name, Carried: carried[g.Name]}
 		for _, c := range g.Cats {
@@ -292,9 +244,9 @@ type hyperliquidMatrixCell struct {
 }
 
 // fetchHyperliquidScoreboardMatrix returns every cell of the site × feed matrix plus the
-// per-site and grand totals, from one scan. WITH CUBE gives all four groupings; the
-// location and feed sentinels are safe because neither column is ever empty in the rows
-// that reach it.
+// per-site and grand totals from one scan. WITH CUBE gives all four groupings, keyed by
+// empty-string sentinels that are safe because neither column is empty in the rows
+// reaching it.
 func (a *API) fetchHyperliquidScoreboardMatrix(ctx context.Context) (map[hyperliquidMatrixKey]hyperliquidMatrixCell, error) {
 	proj, tuples := hyperliquidCompetitorArrivals()
 	q := fmt.Sprintf(`
@@ -351,7 +303,6 @@ func (a *API) fetchHyperliquidScoreboardMatrix(ctx context.Context) (map[hyperli
 	return out, rows.Err()
 }
 
-// fetchHyperliquidScoreboardMarkets returns one stat per contract type, pooled across sites.
 func (a *API) fetchHyperliquidScoreboardMarkets(ctx context.Context) (map[string]HyperliquidScoreboardStat, error) {
 	proj, tuples := hyperliquidCompetitorArrivals()
 
@@ -418,9 +369,9 @@ func (a *API) fetchHyperliquidScoreboardMarkets(ctx context.Context) (map[string
 	return out, rows.Err()
 }
 
-// fetchHyperliquidCarriedInstruments counts the distinct symbols the live DoubleZero fleet
-// publishes, split by market. This counts everything carried, not only the liquid set the
-// races are measured over — it answers "what does the feed cover", not "what was raced".
+// fetchHyperliquidCarriedInstruments counts everything the live fleet publishes, not only
+// the liquid set the races are measured over: it answers what the feed covers, not what
+// was raced.
 func (a *API) fetchHyperliquidCarriedInstruments(ctx context.Context) (map[string]int, error) {
 	q := fmt.Sprintf(`
 		SELECT startsWith(symbol, 'xyz:') AS hip3, count() AS n
@@ -455,8 +406,6 @@ func (a *API) fetchHyperliquidCarriedInstruments(ctx context.Context) (map[strin
 	return out, rows.Err()
 }
 
-// hyperliquidObservationsTableExists reports whether the proxied observations table is
-// queryable, so an environment without the proxy renders an empty page instead of an error.
 func (a *API) hyperliquidObservationsTableExists(ctx context.Context) bool {
 	var n uint8
 	q := fmt.Sprintf("EXISTS TABLE `%s`.hyperliquid_bbo_observations", a.FeedsDB)
@@ -466,9 +415,6 @@ func (a *API) hyperliquidObservationsTableExists(ctx context.Context) bool {
 	return n == 1
 }
 
-// GetHyperliquidScoreboard serves the Hyperliquid scoreboard. The query scans three sites
-// of a row-per-feed-per-update table, so a cache miss falls through to the live query with
-// a generous deadline rather than being served stale.
 func (a *API) GetHyperliquidScoreboard(w http.ResponseWriter, r *http.Request) {
 	if isMainnet(r.Context()) {
 		if data, err := a.readPageCache(r.Context(), HyperliquidScoreboardCacheKey); err == nil {
@@ -480,6 +426,8 @@ func (a *API) GetHyperliquidScoreboard(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("X-Cache", "MISS")
 
+	// A miss scans three sites of a row-per-feed-per-update table, so it falls through to
+	// the live query with a generous deadline rather than being served stale.
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
 

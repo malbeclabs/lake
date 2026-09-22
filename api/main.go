@@ -678,10 +678,8 @@ func main() {
 		r.Get("/api/dz/access-passes/{pk}/connections", api.GetAccessPassConnections)
 		r.Get("/api/dz/publisher-check", api.GetPublisherCheck)
 		r.Get("/api/dz/edge/scoreboard", api.GetEdgeScoreboard)
-		// Public: the Hyperliquid scoreboard is written to be read outside the company.
-		// Competitor identities are replaced by ordinals before serialisation and no feed
-		// name reaches the payload — TestHyperliquidScoreboard_PayloadCarriesNoFeedNames
-		// pins that, and it is what makes anonymous access safe here.
+		// Public: competitors are ordinals and no feed name reaches the payload, which is
+		// what TestHyperliquidScoreboard_PayloadCarriesNoFeedNames exists to keep true.
 		r.Get("/api/dz/hyperliquid/scoreboard", api.GetHyperliquidScoreboard)
 		// Internal only (names the feeds it races): allowed-domain Google users only.
 		r.With(handlers.RequireInternalDomain).Get("/api/dz/hyperliquid/internal-scoreboard", api.GetHyperliquidInternalScoreboard)

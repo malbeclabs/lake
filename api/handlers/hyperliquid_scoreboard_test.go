@@ -15,8 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// createObservationsTable creates hyperliquid_bbo_observations in the feeds DB. Only the
-// columns the scoreboard reads are populated; the rest carry their defaults.
 func createObservationsTable(t *testing.T, api *handlers.API) {
 	t.Helper()
 	ctx := t.Context()
@@ -44,10 +42,10 @@ func createObservationsTable(t *testing.T, api *handlers.API) {
 	`, db)))
 }
 
-// newObserver returns a recorder of "this feed saw this book state at this site,
-// recvOffsetMs after the window base". The base is captured ONCE per test and written as
-// a literal: calling now64(9) inside each INSERT would stamp every row with its own wall
-// clock, and the milliseconds between statements then dominate the offsets under test.
+// newObserver records "this feed saw this book state at this site, recvOffsetMs after the
+// window base". The base is captured ONCE per test and written as a literal: calling
+// now64(9) inside each INSERT stamps every row with its own wall clock, and the
+// milliseconds between statements then dominate the offsets under test.
 func newObserver(t *testing.T, api *handlers.API) func(loc, source, symbol string, hash uint64, recvOffsetMs float64) {
 	t.Helper()
 	base := time.Now().Add(-time.Hour).UnixNano()
@@ -64,8 +62,6 @@ func newObserver(t *testing.T, api *handlers.API) func(loc, source, symbol strin
 
 func TestGetHyperliquidScoreboard_MissingTable(t *testing.T) {
 	api := apitesting.NewTestAPIBare(t, testChDB)
-	// No observations table -> an empty-but-valid payload, not a 500. Local dev and any
-	// environment without the remote proxy has to render the page, not an error.
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/hyperliquid/scoreboard", nil)
 	rr := httptest.NewRecorder()
 	api.GetHyperliquidScoreboard(rr, req)
@@ -82,9 +78,6 @@ func TestHyperliquidScoreboard_UsesEarliestDoubleZeroPublisher(t *testing.T) {
 	createObservationsTable(t, api)
 	obs := newObserver(t, api)
 
-	// One book state at Tokyo. DoubleZero's arrival must be the EARLIEST of its
-	// publishers (30ms), not the slowest, so the margin against a competitor landing at
-	// 100ms is +70ms and not +10ms.
 	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "BTC", 1, 30)
 	obs("tyo", "tob_aws_tyo_hl_mainnet", "BTC", 1, 90)
 	obs("tyo", "hydromancer_bbo", "BTC", 1, 100)
@@ -93,7 +86,7 @@ func TestHyperliquidScoreboard_UsesEarliestDoubleZeroPublisher(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 1, resp.Races)
 	assert.InDelta(t, 100.0, resp.All.WinPct, 0.01)
-	assert.InDelta(t, 70.0, resp.All.P50Ms, 0.01)
+	assert.InDelta(t, 70.0, resp.All.P50Ms, 0.01, "the earliest publisher sets the arrival, not the slowest")
 }
 
 func TestHyperliquidScoreboard_LossesCountIntoThePercentiles(t *testing.T) {
@@ -101,8 +94,6 @@ func TestHyperliquidScoreboard_LossesCountIntoThePercentiles(t *testing.T) {
 	createObservationsTable(t, api)
 	obs := newObserver(t, api)
 
-	// Every race is lost by 50ms. A winner-conditional percentile has nothing to report
-	// here and would fall back to zero; a signed one reports the deficit.
 	for _, hash := range []uint64{1, 2, 3} {
 		obs("tyo", "tob_gcp_tyo_hl_mainnet1", "BTC", hash, 60)
 		obs("tyo", "hydromancer_bbo", "BTC", hash, 10)
@@ -120,9 +111,9 @@ func TestHyperliquidScoreboard_RetiredPublisherExcluded(t *testing.T) {
 	createObservationsTable(t, api)
 	obs := newObserver(t, api)
 
-	// The retired mirror is the fastest publisher on this state. Excluding it has to move
-	// DoubleZero's arrival to the next publisher, turning a +80ms win into a -10ms loss —
-	// dropping the mirror's ROW while still crediting its arrival would keep the win.
+	// The mirror is the fastest publisher here, so excluding it has to move the arrival to
+	// the next publisher and turn a +80ms win into a -10ms loss. Dropping the mirror's row
+	// alone would keep the win.
 	obs("tyo", "tob_aws_tyo_mirror1", "BTC", 1, 10)
 	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "BTC", 1, 100)
 	obs("tyo", "hydromancer_bbo", "BTC", 1, 90)
@@ -139,14 +130,12 @@ func TestHyperliquidScoreboard_StateWithOnlyRetiredPublisherIsDropped(t *testing
 	createObservationsTable(t, api)
 	obs := newObserver(t, api)
 
-	// No DoubleZero publisher other than the retired one saw this update. There is no
-	// arrival to report, so the race is dropped rather than counted either way.
 	obs("tyo", "tob_aws_tyo_mirror1", "BTC", 1, 10)
 	obs("tyo", "hydromancer_bbo", "BTC", 1, 90)
 
 	resp, err := api.FetchHyperliquidScoreboardData(t.Context())
 	require.NoError(t, err)
-	assert.Zero(t, resp.Races)
+	assert.Zero(t, resp.Races, "no surviving publisher means no arrival to report")
 }
 
 func TestHyperliquidScoreboard_PayloadCarriesNoFeedNames(t *testing.T) {
@@ -164,9 +153,9 @@ func TestHyperliquidScoreboard_PayloadCarriesNoFeedNames(t *testing.T) {
 	api.GetHyperliquidScoreboard(rr, req)
 	require.Equal(t, http.StatusOK, rr.Code)
 
-	// This page is meant to be shown outside the company. A competitor's feed id reaching
-	// the payload deanonymises every "Competitor N" label on it at once, and the browser
-	// gets the whole JSON whatever the UI renders.
+	// This route is public. One competitor's feed id in the payload deanonymises every
+	// "Competitor N" label at once, and the browser gets the whole JSON whatever the UI
+	// renders.
 	body := rr.Body.String()
 	for _, name := range []string{"hydromancer", "dwellir", "quicknode", "hyperpc"} {
 		assert.NotContains(t, strings.ToLower(body), name, "competitor feed name leaked into the payload")
@@ -175,7 +164,6 @@ func TestHyperliquidScoreboard_PayloadCarriesNoFeedNames(t *testing.T) {
 	var resp handlers.HyperliquidScoreboardResponse
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
 	require.Len(t, resp.Feeds, 4)
-	// The venue's own endpoint is named and leads; everyone else is an ordinal.
 	assert.Equal(t, "Public API", resp.Feeds[0].Label)
 	assert.True(t, resp.Feeds[0].Venue)
 	for i, f := range resp.Feeds[1:] {
@@ -189,8 +177,6 @@ func TestHyperliquidScoreboard_CompetitorsNumberedByMedianAscending(t *testing.T
 	createObservationsTable(t, api)
 	obs := newObserver(t, api)
 
-	// DoubleZero at 10ms; the three competitors arrive 20 / 40 / 60ms later. The numbering
-	// is positional and must follow the margin, so the closest rival is Competitor 1.
 	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "BTC", 1, 10)
 	obs("tyo", "quicknode_l2book_bbo", "BTC", 1, 30)
 	obs("tyo", "dwellir_l2book_bbo", "BTC", 1, 50)

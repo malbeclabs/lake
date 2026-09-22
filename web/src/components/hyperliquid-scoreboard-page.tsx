@@ -8,17 +8,12 @@ import {
   type HyperliquidScoreboardResponse,
 } from '@/lib/api'
 
-// The Hyperliquid scoreboard. Its sibling, the internal scoreboard, answers a
-// different question from a different table — see hyperliquid_scoreboard.go for why
-// the two will not agree cell for cell.
-//
-// Margins here are signed: positive means DoubleZero delivered the book first, and a
-// race we lose carries a negative value into the percentiles rather than being dropped.
-// So p50/p95/p99 describe every race, and a cell below 50% win rate reports a negative
-// median. The payload never carries a competitor's feed name.
+// The public Hyperliquid scoreboard. Margins are signed — positive means DoubleZero
+// delivered the book first — so a cell below 50% win rate reports a negative median.
+// See hyperliquid_scoreboard.go for why this does not agree with the internal board.
 
-const DZ_COLOR = '#34d399' // emerald-400 — DoubleZero
-const FIELD_COLOR = '#d99a3c' // the competing feeds, all one colour, named by label
+const DZ_COLOR = '#34d399'
+const FIELD_COLOR = '#d99a3c'
 
 const METRICS = [
   { key: 'win_pct', label: 'Win rate', hint: 'share delivered first' },
@@ -33,8 +28,7 @@ function pct(v: number): string {
   return `${v.toFixed(1)}%`
 }
 
-// Signed margin. Never rendered with a bare "+" when negative — a competitor-first
-// cell has to read as a deficit.
+// Never a bare "+" when negative: a competitor-first cell has to read as a deficit.
 function ms(v: number): string {
   const sign = v < 0 ? '−' : '+'
   const a = Math.abs(v)
@@ -51,7 +45,6 @@ function fmtCount(n: number): string {
   return String(Math.round(n))
 }
 
-// Three-quarter-arc win-rate gauge — the same geometry as the internal scoreboard's.
 function WinGauge({ value }: { value: number }) {
   const r = 65
   const circ = 2 * Math.PI * r
@@ -77,9 +70,8 @@ function WinGauge({ value }: { value: number }) {
   )
 }
 
-// Arrival chart: DoubleZero sits at zero and every other feed is placed by how long
-// after it that feed's copy of the same update landed. One linear scale, so bar length
-// is directly comparable across rows.
+// DoubleZero sits at zero and every other feed is placed by how long after it that feed's
+// copy of the same update landed. One linear scale, so bar lengths compare across rows.
 function ArrivalChart({ data }: { data: HyperliquidScoreboardResponse }) {
   const [grown, setGrown] = useState(false)
   const rows = useMemo(() => {
@@ -150,9 +142,8 @@ function ArrivalChart({ data }: { data: HyperliquidScoreboardResponse }) {
   )
 }
 
-// One cell of the site × feed matrix. The fill is scaled to the widest site in its own
-// row, never across the table: the margin metrics span 12 ms to 36 s, so one shared
-// scale would flatten every row but one.
+// The fill is scaled to the widest site in its own row, never across the table: the margin
+// metrics span 12 ms to 36 s, so one shared scale would flatten every row but one.
 function MatrixCell({
   value, max, metric, who, where, highlighted, onHover,
 }: {
@@ -188,7 +179,6 @@ function FeedMatrix({ data }: { data: HyperliquidScoreboardResponse }) {
     if (on) setPill({ left: on.offsetLeft, width: on.offsetWidth })
   }, [metric])
 
-  // Hovering a cell lights its row and its site column.
   const [hoverCol, setHoverCol] = useState<string | null>(null)
   const colCls = (c: string) => (hoverCol === c ? 'hl-hl' : '')
 
@@ -294,8 +284,8 @@ function FeedMatrix({ data }: { data: HyperliquidScoreboardResponse }) {
   )
 }
 
-// Market range plot. The margin spans tens of ms to seconds, so a linear axis would
-// stack the median and the 95th on the same pixel; the axis is log and labelled.
+// The margin spans tens of ms to seconds, so a linear axis would stack the median and the
+// 95th on the same pixel. The axis is log.
 const RNG_LO = 10
 const RNG_HI = 20000
 const RNG_L = Math.log10(RNG_LO)
@@ -496,7 +486,6 @@ export function HyperliquidScoreboardPage() {
 
         {!error && data && data.races > 0 && (
           <>
-            {/* 1. The answer */}
             <div className="mb-4 rounded-lg border border-border bg-card">
               <div className="flex flex-col lg:flex-row">
                 <div className="flex min-w-0 shrink-0 items-center gap-4 p-4 sm:gap-5 sm:p-5 lg:w-[42%]">
@@ -542,13 +531,10 @@ export function HyperliquidScoreboardPage() {
               </div>
             </div>
 
-            {/* 2. Feeds we race, by recording site */}
             <FeedMatrix data={data} />
 
-            {/* 3. By market */}
             <MarketTable data={data} />
 
-            {/* footnote */}
             <div className="space-y-1 border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground">
               <p>
                 Every feed is scored on the same message: updates are keyed by payload hash, and each feed's

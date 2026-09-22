@@ -497,14 +497,9 @@ table {
   animation: tooltipIn 120ms ease-out;
 }
 
-/* ── Hyperliquid scoreboard ────────────────────────────────────────────
-   The public scoreboard's three bespoke marks. Everything else on that page
-   is Tailwind against the app's own tokens; these need positioned children
-   and transitions that utilities can't express, so they live here beside the
-   other page-specific motion blocks. --hl-dz is set by the page so the marks
-   follow DZ_COLOR rather than hardcoding emerald a second time. */
+/* Hyperliquid scoreboard. --hl-dz and --hl-field are set on the page wrapper. */
 
-/* Arrival chart: how long after DoubleZero each feed landed. */
+/* Arrival chart */
 .hl-arr {
   position: relative;
   height: 20px;
@@ -563,7 +558,7 @@ table {
   box-shadow: 0 0 0 3px color-mix(in oklch, var(--hl-dz) 22%, transparent);
 }
 
-/* Matrix cells: a tinted fill behind each number, redrawn on metric change. */
+/* Matrix cells */
 .hl-cellfill {
   position: absolute;
   right: 0;
@@ -586,7 +581,7 @@ th.hl-hl {
   background: color-mix(in oklch, var(--muted) 55%, transparent);
 }
 
-/* Metric selector: full-width tabs with a sliding underline. */
+/* Metric selector */
 .hl-tabwrap {
   position: relative;
 }
@@ -626,8 +621,7 @@ th.hl-hl {
     width 0.32s cubic-bezier(0.2, 0.75, 0.3, 1);
 }
 
-/* Market range: one bar per contract type on a shared log axis, running from
-   the median out to the widest 1%, fading as it enters the tail. */
+/* Market range: one bar per contract type, on a log axis */
 .hl-rng {
   position: relative;
   height: 38px;
@@ -700,7 +694,6 @@ th.hl-hl {
   translate: 0 0;
 }
 
-/* Live dot. */
 .hl-pulse {
   animation: hlPulse 2.4s ease-out infinite;
 }
