@@ -20,9 +20,16 @@ const METRICS = [
 
 type MetricKey = (typeof METRICS)[number]['key']
 
-// Twice the worker's 15m refresh interval: past it the payload is not late, the refresh is
-// broken, and a live-green pulse beside an hours-old win rate reads as a current measurement.
-const STALE_AFTER_SECS = 30 * 60
+// The worker recomputes once a day, just after 00:00 UTC, so age alone says nothing — a
+// payload is only behind once a midnight has passed without it being rewritten. The grace
+// period is the refresh's own window: without it the page goes amber every night between
+// midnight and whenever the cycle picks the entry up.
+const REFRESH_GRACE_MS = 30 * 60 * 1000
+function isBehind(asOf: number, now: number): boolean {
+  const d = new Date(now)
+  const midnight = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
+  return asOf < midnight && now - midnight > REFRESH_GRACE_MS
+}
 
 function pct(v: number): string {
   return `${v.toFixed(1)}%`
@@ -380,11 +387,12 @@ export function HyperliquidScoreboardPage() {
 
   const freshness = useMemo(() => {
     if (!data?.as_of) return null
-    const age = Math.round((now - new Date(data.as_of).getTime()) / 1000)
-    const stale = age >= STALE_AFTER_SECS
-    if (age < 5) return { text: 'just now', stale }
-    if (age < 60) return { text: `${age}s ago`, stale }
-    return { text: `${Math.round(age / 60)}m ago`, stale }
+    const asOf = new Date(data.as_of).getTime()
+    const age = Math.round((now - asOf) / 1000)
+    const stale = isBehind(asOf, now)
+    if (age < 60) return { text: 'just now', stale }
+    if (age < 3600) return { text: `${Math.round(age / 60)}m ago`, stale }
+    return { text: `${Math.round(age / 3600)}h ago`, stale }
   }, [data?.as_of, now])
 
   return (
@@ -405,7 +413,7 @@ export function HyperliquidScoreboardPage() {
                   />
                   <span className={freshness.stale ? 'text-amber-600 dark:text-amber-400' : undefined}>
                     updated {freshness.text}
-                    {freshness.stale ? ' — refresh is behind' : ''}
+                    {freshness.stale ? ' — no update since midnight UTC' : ''}
                   </span>
                 </>
               )}

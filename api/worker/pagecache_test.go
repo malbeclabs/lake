@@ -287,11 +287,18 @@ func TestDayAlignedEntriesRollWithTheWindow(t *testing.T) {
 		require.True(t, byKey[key].dayAligned,
 			"network health entry %q reads DefaultNetworkHealthWindow, so it must roll with it", key)
 	}
-	// And nothing else should: an entry that does not read that window would just
-	// refresh once more per day for no reason.
+	// The Hyperliquid scoreboard carries it for the other reason: a daily cadence
+	// measured from the last write walks forward through the day after one late run,
+	// and the marker is what pins it to just after 00:00 UTC.
+	require.True(t, byKey[handlers.HyperliquidScoreboardCacheKey].dayAligned)
+	require.Equal(t, 24*time.Hour, byKey[handlers.HyperliquidScoreboardCacheKey].every)
+
+	// Nothing else: without one of those two reasons the marker just buys an entry an
+	// extra refresh a day.
+	dayAligned := append(slices.Clone(networkHealthKeys), handlers.HyperliquidScoreboardCacheKey)
 	for _, e := range append(a.entries(), a.heavyEntries()...) {
-		if !slices.Contains(networkHealthKeys, e.key) {
-			require.False(t, e.dayAligned, "entry %q does not read the day-aligned window", e.key)
+		if !slices.Contains(dayAligned, e.key) {
+			require.False(t, e.dayAligned, "entry %q has no reason to roll with the UTC day", e.key)
 		}
 	}
 }

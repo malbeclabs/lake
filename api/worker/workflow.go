@@ -162,11 +162,14 @@ type cacheEntry struct {
 	name  string
 	key   string
 	every time.Duration
-	// dayAligned entries read handlers.DefaultNetworkHealthWindow and are also due
-	// once their blob predates the current window's end, whatever every says.
-	// Otherwise groups on different cadences describe different windows after
-	// midnight UTC, and the frontend blanks its traffic-weighted availability stat
-	// when two payloads disagree (deriveAvailability, network-health-reporting-page.tsx).
+	// dayAligned entries are also due once their blob predates the current UTC day
+	// boundary, whatever every says. Two reasons to want it. The Network Health groups
+	// read handlers.DefaultNetworkHealthWindow, and groups on different cadences would
+	// describe different windows after midnight — the frontend blanks its
+	// traffic-weighted availability stat when two payloads disagree (deriveAvailability,
+	// network-health-reporting-page.tsx). The Hyperliquid scoreboard wants it to pin a
+	// daily cadence to the boundary: every alone measures from the last write, so one
+	// late run would walk the refresh forward through the day.
 	dayAligned bool
 	fn         func(ctx context.Context) (any, error)
 	// timeout overrides the per-refresh context deadline. Zero means the default
@@ -186,9 +189,10 @@ const (
 	// previously ran the query ~6,500×/day.
 	validatorsListingInterval = 60 * time.Second
 
-	// A 24h window over a row-per-feed-per-update table at three sites, so minutes of
-	// staleness cost the reader nothing.
-	hyperliquidScoreboardInterval = 15 * time.Minute
+	// The board publishes one figure for the last 24h, so it is recomputed once a day.
+	// Paired with dayAligned, which is what pins that to just after 00:00 UTC rather than
+	// 24h after whenever the entry last happened to run.
+	hyperliquidScoreboardInterval = 24 * time.Hour
 
 	// Two full all-pairs path computations over two graphs, keyed off link topology
 	// tags — which change when someone changes them and not otherwise.
@@ -744,7 +748,7 @@ func (a *Activities) heavyEntries() []cacheEntry {
 		// leaves the previous blob serving, so the entry read as merely stale for hours while
 		// never once succeeding — and the page went on asserting a win rate computed by code
 		// that was no longer deployed.
-		{name: "hyperliquid scoreboard", key: handlers.HyperliquidScoreboardCacheKey, every: hyperliquidScoreboardInterval, timeout: nhHeavyRefreshTimeout, fn: func(ctx context.Context) (any, error) {
+		{name: "hyperliquid scoreboard", key: handlers.HyperliquidScoreboardCacheKey, dayAligned: true, every: hyperliquidScoreboardInterval, timeout: nhHeavyRefreshTimeout, fn: func(ctx context.Context) (any, error) {
 			return api.FetchHyperliquidScoreboardData(ctx)
 		}},
 		{name: "network health deferred", key: handlers.NetworkHealthDeferredCacheKey, dayAligned: true, every: networkHealthHistoryInterval, timeout: nhHeavyRefreshTimeout, fn: func(ctx context.Context) (any, error) {
