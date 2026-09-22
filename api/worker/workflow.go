@@ -186,6 +186,12 @@ const (
 	// previously ran the query ~6,500×/day.
 	validatorsListingInterval = 60 * time.Second
 
+	// The Hyperliquid scoreboard scans hyperliquid_bbo_observations — row per feed per
+	// update — across three recording sites for 24h. It is the most expensive recurring
+	// query on the feeds database, and it describes a 24-hour window, so minutes of
+	// staleness cost the reader nothing.
+	hyperliquidScoreboardInterval = 15 * time.Minute
+
 	// Two full all-pairs path computations over two graphs, keyed off link topology
 	// tags — which change when someone changes them and not otherwise.
 	algoDivergenceInterval = 5 * time.Minute
@@ -457,8 +463,11 @@ func (a *Activities) entries() []cacheEntry {
 		{name: "edge scoreboard (leaders)", key: "edge_scoreboard:leaders", every: edgeScoreboardInterval, fn: func(ctx context.Context) (any, error) {
 			return api.FetchEdgeScoreboardData(ctx, "24h", true, 0, 0, 1000)
 		}},
-		{name: "hyperliquid scoreboard", key: "hyperliquid_scoreboard", fn: func(ctx context.Context) (any, error) {
-			return api.FetchHyperliquidScoreboardData(ctx, "1h", "")
+		{name: "hyperliquid internal scoreboard", key: "hyperliquid_internal_scoreboard", fn: func(ctx context.Context) (any, error) {
+			return api.FetchHyperliquidInternalScoreboardData(ctx, "1h", "")
+		}},
+		{name: "hyperliquid scoreboard", key: handlers.HyperliquidScoreboardCacheKey, every: hyperliquidScoreboardInterval, fn: func(ctx context.Context) (any, error) {
+			return api.FetchHyperliquidScoreboardData(ctx)
 		}},
 		{name: "kalshi scoreboard", key: "kalshi_scoreboard", fn: func(ctx context.Context) (any, error) {
 			return api.FetchKalshiScoreboardData(ctx, "1h", "")

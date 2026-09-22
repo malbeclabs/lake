@@ -680,6 +680,7 @@ func main() {
 		r.Get("/api/dz/edge/scoreboard", api.GetEdgeScoreboard)
 		// Internal only (unannounced venue): allowed-domain Google users only.
 		r.With(handlers.RequireInternalDomain).Get("/api/dz/hyperliquid/scoreboard", api.GetHyperliquidScoreboard)
+		r.With(handlers.RequireInternalDomain).Get("/api/dz/hyperliquid/internal-scoreboard", api.GetHyperliquidInternalScoreboard)
 		r.With(handlers.RequireInternalDomain).Get("/api/dz/kalshi/scoreboard", api.GetKalshiScoreboard)
 		r.With(handlers.RequireInternalDomain).Get("/api/dz/kalshi/l2-coverage", api.GetKalshiL2Coverage)
 		r.With(handlers.RequireInternalDomain).Get("/api/dz/kalshi/l2-completeness", api.GetKalshiL2Completeness)

@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/malbeclabs/lake/api/handlers"
 	apitesting "github.com/malbeclabs/lake/api/testing"
@@ -13,194 +15,195 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// createFeedsTable creates the hyperliquid_bbo_feed_race_summary table in the feeds DB.
-func createFeedsTable(t *testing.T, api *handlers.API) {
+// createObservationsTable creates hyperliquid_bbo_observations in the feeds DB. Only the
+// columns the scoreboard reads are populated; the rest carry their defaults.
+func createObservationsTable(t *testing.T, api *handlers.API) {
 	t.Helper()
 	ctx := t.Context()
 	db := "`" + api.FeedsDB + "`"
 	require.NoError(t, api.DB.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", db)))
 	require.NoError(t, api.DB.Exec(ctx, fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS %s.hyperliquid_bbo_feed_race_summary (
-			event_ts DateTime64(9),
-			ingested_at DateTime64(9) DEFAULT now64(9),
+		CREATE TABLE IF NOT EXISTS %s.hyperliquid_bbo_observations (
+			insert_ts DateTime64(9) DEFAULT now64(9),
 			capture_run_id String,
 			measurement_node_id String,
 			host String,
 			location_code LowCardinality(String),
-			feed_type LowCardinality(String) DEFAULT 'bbo',
+			source LowCardinality(String),
 			symbol LowCardinality(String),
 			source_ts_ms UInt64,
+			source_ts_ns UInt64,
 			bbo_hash UInt64,
-			feed LowCardinality(String),
-			loser_feed LowCardinality(String) DEFAULT '',
-			total_events UInt64,
-			events_won UInt64,
-			lead_time_p50_ms Float64 DEFAULT 0,
-			lead_time_p95_ms Float64 DEFAULT 0,
-			send_lead_time_p50_ms Nullable(Float64) DEFAULT NULL,
-			send_lead_time_p95_ms Nullable(Float64) DEFAULT NULL
-		) ENGINE = ReplacingMergeTree(ingested_at)
-		PARTITION BY toDate(event_ts)
-		ORDER BY (measurement_node_id, symbol, source_ts_ms, bbo_hash, feed, loser_feed)
+			recv_ts_ns UInt64,
+			recv_ts_kind LowCardinality(String),
+			bid_px_raw Int64,
+			ask_px_raw Int64,
+			price_exp Int8
+		) ENGINE = MergeTree()
+		ORDER BY (location_code, symbol, bbo_hash, source)
 	`, db)))
 }
 
-// pairwiseRow inserts one pairwise race row (winner feed beat loser_feed by leadMs).
-func insertPairwise(t *testing.T, api *handlers.API, node, loc, symbol string, srcTs, hash uint64, winner, loser string, leadMs float64) {
+// newObserver returns a recorder of "this feed saw this book state at this site,
+// recvOffsetMs after the window base". The base is captured ONCE per test and written as
+// a literal: calling now64(9) inside each INSERT would stamp every row with its own wall
+// clock, and the milliseconds between statements then dominate the offsets under test.
+func newObserver(t *testing.T, api *handlers.API) func(loc, source, symbol string, hash uint64, recvOffsetMs float64) {
 	t.Helper()
-	ctx := t.Context()
+	base := time.Now().Add(-time.Hour).UnixNano()
 	db := "`" + api.FeedsDB + "`"
-	require.NoError(t, api.DB.Exec(ctx, fmt.Sprintf(`
-		INSERT INTO %s.hyperliquid_bbo_feed_race_summary
-		(event_ts, capture_run_id, measurement_node_id, host, location_code, symbol, source_ts_ms, bbo_hash, feed, loser_feed, total_events, events_won, lead_time_p50_ms, lead_time_p95_ms)
-		VALUES (now64(9), 'run1', '%s', '%s', '%s', '%s', %d, %d, '%s', '%s', 1, 1, %f, %f)
-	`, db, node, node, loc, symbol, srcTs, hash, winner, loser, leadMs, leadMs)))
-}
-
-func TestGetHyperliquidScoreboard_Empty(t *testing.T) {
-	api := apitesting.NewTestAPIBare(t, testChDB)
-	createFeedsTable(t, api) // empty table -> empty-but-valid response
-
-	req := httptest.NewRequest(http.MethodGet, "/api/dz/hyperliquid/scoreboard", nil)
-	rr := httptest.NewRecorder()
-	api.GetHyperliquidScoreboard(rr, req)
-
-	require.Equal(t, http.StatusOK, rr.Code)
-	var resp handlers.HyperliquidScoreboardResponse
-	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
-	assert.Equal(t, "1h", resp.Window)
-	assert.Equal(t, "MISS", rr.Header().Get("X-Cache"))
+	return func(loc, source, symbol string, hash uint64, recvOffsetMs float64) {
+		t.Helper()
+		require.NoError(t, api.DB.Exec(t.Context(), fmt.Sprintf(`
+			INSERT INTO %s.hyperliquid_bbo_observations
+			(capture_run_id, measurement_node_id, host, location_code, source, symbol, source_ts_ms, bbo_hash, recv_ts_ns, recv_ts_kind)
+			VALUES ('run1', 'n1', 'n1', '%s', '%s', '%s', 1, %d, %d, 'kernel_udp_software')
+		`, db, loc, source, symbol, hash, base+int64(recvOffsetMs*1e6))))
+	}
 }
 
 func TestGetHyperliquidScoreboard_MissingTable(t *testing.T) {
 	api := apitesting.NewTestAPIBare(t, testChDB)
-	// Do NOT create the table -> handler must degrade to empty 200, not 500.
+	// No observations table -> an empty-but-valid payload, not a 500. Local dev and any
+	// environment without the remote proxy has to render the page, not an error.
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/hyperliquid/scoreboard", nil)
+	rr := httptest.NewRecorder()
+	api.GetHyperliquidScoreboard(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp handlers.HyperliquidScoreboardResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	assert.Zero(t, resp.Races)
+	assert.Empty(t, resp.Feeds)
+}
+
+func TestHyperliquidScoreboard_UsesEarliestDoubleZeroPublisher(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createObservationsTable(t, api)
+	obs := newObserver(t, api)
+
+	// One book state at Tokyo. DoubleZero's arrival must be the EARLIEST of its
+	// publishers (30ms), not the slowest, so the margin against a competitor landing at
+	// 100ms is +70ms and not +10ms.
+	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "BTC", 1, 30)
+	obs("tyo", "tob_aws_tyo_hl_mainnet", "BTC", 1, 90)
+	obs("tyo", "hydromancer_bbo", "BTC", 1, 100)
+
+	resp, err := api.FetchHyperliquidScoreboardData(t.Context())
+	require.NoError(t, err)
+	require.EqualValues(t, 1, resp.Races)
+	assert.InDelta(t, 100.0, resp.All.WinPct, 0.01)
+	assert.InDelta(t, 70.0, resp.All.P50Ms, 0.01)
+}
+
+func TestHyperliquidScoreboard_LossesCountIntoThePercentiles(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createObservationsTable(t, api)
+	obs := newObserver(t, api)
+
+	// Every race is lost by 50ms. A winner-conditional percentile has nothing to report
+	// here and would fall back to zero; a signed one reports the deficit.
+	for _, hash := range []uint64{1, 2, 3} {
+		obs("tyo", "tob_gcp_tyo_hl_mainnet1", "BTC", hash, 60)
+		obs("tyo", "hydromancer_bbo", "BTC", hash, 10)
+	}
+
+	resp, err := api.FetchHyperliquidScoreboardData(t.Context())
+	require.NoError(t, err)
+	require.EqualValues(t, 3, resp.Races)
+	assert.InDelta(t, 0.0, resp.All.WinPct, 0.01)
+	assert.InDelta(t, -50.0, resp.All.P50Ms, 0.01, "a lost race must carry a negative margin")
+}
+
+func TestHyperliquidScoreboard_RetiredPublisherExcluded(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createObservationsTable(t, api)
+	obs := newObserver(t, api)
+
+	// The retired mirror is the fastest publisher on this state. Excluding it has to move
+	// DoubleZero's arrival to the next publisher, turning a +80ms win into a -10ms loss —
+	// dropping the mirror's ROW while still crediting its arrival would keep the win.
+	obs("tyo", "tob_aws_tyo_mirror1", "BTC", 1, 10)
+	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "BTC", 1, 100)
+	obs("tyo", "hydromancer_bbo", "BTC", 1, 90)
+
+	resp, err := api.FetchHyperliquidScoreboardData(t.Context())
+	require.NoError(t, err)
+	require.EqualValues(t, 1, resp.Races)
+	assert.InDelta(t, 0.0, resp.All.WinPct, 0.01, "the surviving publisher lost this race")
+	assert.InDelta(t, -10.0, resp.All.P50Ms, 0.01)
+}
+
+func TestHyperliquidScoreboard_StateWithOnlyRetiredPublisherIsDropped(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createObservationsTable(t, api)
+	obs := newObserver(t, api)
+
+	// No DoubleZero publisher other than the retired one saw this update. There is no
+	// arrival to report, so the race is dropped rather than counted either way.
+	obs("tyo", "tob_aws_tyo_mirror1", "BTC", 1, 10)
+	obs("tyo", "hydromancer_bbo", "BTC", 1, 90)
+
+	resp, err := api.FetchHyperliquidScoreboardData(t.Context())
+	require.NoError(t, err)
+	assert.Zero(t, resp.Races)
+}
+
+func TestHyperliquidScoreboard_PayloadCarriesNoFeedNames(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createObservationsTable(t, api)
+	obs := newObserver(t, api)
+
+	for _, c := range []string{"hydromancer_bbo", "dwellir_l2book_bbo", "quicknode_l2book_bbo", "hyperliquid_public_bbo"} {
+		obs("tyo", "tob_gcp_tyo_hl_mainnet1", "BTC", 1, 10)
+		obs("tyo", c, "BTC", 1, 50)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/hyperliquid/scoreboard", nil)
 	rr := httptest.NewRecorder()
 	api.GetHyperliquidScoreboard(rr, req)
-
 	require.Equal(t, http.StatusOK, rr.Code)
+
+	// This page is meant to be shown outside the company. A competitor's feed id reaching
+	// the payload deanonymises every "Competitor N" label on it at once, and the browser
+	// gets the whole JSON whatever the UI renders.
+	body := rr.Body.String()
+	for _, name := range []string{"hydromancer", "dwellir", "quicknode", "hyperpc"} {
+		assert.NotContains(t, strings.ToLower(body), name, "competitor feed name leaked into the payload")
+	}
+
 	var resp handlers.HyperliquidScoreboardResponse
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
-	assert.Empty(t, resp.Competitors)
-}
-
-func TestFetchHyperliquidScoreboardData_MissingTable(t *testing.T) {
-	api := apitesting.NewTestAPIBare(t, testChDB)
-	// Do NOT create the table -> FetchHyperliquidScoreboardData must return an
-	// empty-but-valid response (nil error, non-nil resp, empty slices).
-
-	resp, err := api.FetchHyperliquidScoreboardData(t.Context(), "24h", "")
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Equal(t, "24h", resp.Window)
-	assert.Empty(t, resp.Competitors)
-	assert.Empty(t, resp.Nodes)
-	assert.Empty(t, resp.RecentRaces)
-}
-
-func TestHyperliquidScoreboard_PerNode(t *testing.T) {
-	api := apitesting.NewTestAPIBare(t, testChDB)
-	createFeedsTable(t, api)
-
-	// tyo: DZ wins both vs QuickNode. nyc: DZ wins 1, loses 1 vs QuickNode.
-	insertPairwise(t, api, "tyo-rec1", "tyo", "ETH", 10, 1, "tob_gcp_tyo_hl_mainnet1", "quicknode_l2book_bbo", 2.0)
-	insertPairwise(t, api, "tyo-rec1", "tyo", "ETH", 20, 2, "tob_gcp_tyo_hl_mainnet1", "quicknode_l2book_bbo", 2.0)
-	insertPairwise(t, api, "nyc-rec1", "nyc", "ETH", 30, 3, "tob_aws_galaxy1", "quicknode_l2book_bbo", 1.0)
-	insertPairwise(t, api, "nyc-rec1", "nyc", "ETH", 40, 4, "quicknode_l2book_bbo", "tob_aws_galaxy1", 1.0)
-
-	resp, err := api.FetchHyperliquidScoreboardData(t.Context(), "24h", "")
-	require.NoError(t, err)
-	require.Len(t, resp.Nodes, 2)
-
-	byNode := map[string]handlers.HyperliquidNode{}
-	for _, n := range resp.Nodes {
-		byNode[n.MeasurementNodeID] = n
+	require.Len(t, resp.Feeds, 4)
+	// The venue's own endpoint is named and leads; everyone else is an ordinal.
+	assert.Equal(t, "Public API", resp.Feeds[0].Label)
+	assert.True(t, resp.Feeds[0].Venue)
+	for i, f := range resp.Feeds[1:] {
+		assert.Equal(t, fmt.Sprintf("Competitor %d", i+1), f.Label)
+		assert.False(t, f.Venue)
 	}
-	assert.InDelta(t, 100.0, byNode["tyo-rec1"].DZWinSharePct, 0.1)
-	assert.InDelta(t, 50.0, byNode["nyc-rec1"].DZWinSharePct, 0.1)
 }
 
-func TestHyperliquidScoreboard_RecentRaces(t *testing.T) {
+func TestHyperliquidScoreboard_CompetitorsNumberedByMedianAscending(t *testing.T) {
 	api := apitesting.NewTestAPIBare(t, testChDB)
-	createFeedsTable(t, api)
+	createObservationsTable(t, api)
+	obs := newObserver(t, api)
 
-	// A DZ-won race (BTC) and a competitor-won race (ETH), both pairwise.
-	insertPairwise(t, api, "tyo-rec1", "tyo", "BTC", 100, 1, "tob_gcp_tyo_hl_mainnet1", "hydromancer_bbo", 1.5)
-	insertPairwise(t, api, "tyo-rec1", "tyo", "ETH", 200, 2, "quicknode_l2book_bbo", "tob_gcp_tyo_hl_mainnet1", 0.7)
+	// DoubleZero at 10ms; the three competitors arrive 20 / 40 / 60ms later. The numbering
+	// is positional and must follow the margin, so the closest rival is Competitor 1.
+	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "BTC", 1, 10)
+	obs("tyo", "quicknode_l2book_bbo", "BTC", 1, 30)
+	obs("tyo", "dwellir_l2book_bbo", "BTC", 1, 50)
+	obs("tyo", "hydromancer_bbo", "BTC", 1, 70)
 
-	races, err := api.FetchHyperliquidScoreboardData(t.Context(), "24h", "")
-	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(races.RecentRaces), 2)
-
-	bySym := map[string]handlers.HyperliquidRace{}
-	for _, r := range races.RecentRaces {
-		bySym[r.Symbol] = r
-	}
-	assert.True(t, bySym["BTC"].IsDZ)
-	assert.Equal(t, "Hydromancer", bySym["BTC"].RunnerUpLabel)
-	assert.InDelta(t, 1.5, bySym["BTC"].LeadMs, 0.001)
-	assert.False(t, bySym["ETH"].IsDZ)
-}
-
-// A cell where DoubleZero won zero races (competitor swept it) makes the lead-time
-// quantile aggregate over an empty predicate set, which ClickHouse returns as NaN. If that
-// NaN reaches the float64 fields, json encoding of the whole response fails — breaking the
-// scoreboard for everyone and poisoning the page cache. The percentiles must coalesce to 0.
-func TestHyperliquidScoreboard_ZeroDZWins_Encodable(t *testing.T) {
-	api := apitesting.NewTestAPIBare(t, testChDB)
-	createFeedsTable(t, api)
-
-	// Only a competitor-won race: DZ has zero wins vs Hydromancer in this window.
-	insertPairwise(t, api, "nyc-rec1", "nyc", "ETH", 10, 1, "hydromancer_bbo", "tob_aws_galaxy1", 3.0)
-
-	resp, err := api.FetchHyperliquidScoreboardData(t.Context(), "24h", "")
+	resp, err := api.FetchHyperliquidScoreboardData(t.Context())
 	require.NoError(t, err)
 
-	// The entire response must be JSON-encodable — a single NaN anywhere fails encoding.
-	_, err = json.Marshal(resp)
-	require.NoError(t, err, "response must not contain NaN percentiles")
-
-	var hydro *handlers.HyperliquidCompetitor
-	for i := range resp.Competitors {
-		if resp.Competitors[i].Feed == "hydromancer_bbo" {
-			hydro = &resp.Competitors[i]
-		}
+	byLabel := map[string]float64{}
+	for _, f := range resp.Feeds {
+		byLabel[f.Label] = f.P50Ms
 	}
-	require.NotNil(t, hydro)
-	assert.InDelta(t, 0.0, hydro.DZWinPct, 0.001)
-	assert.InDelta(t, 0.0, hydro.LeadP50Ms, 0.001)
-	assert.InDelta(t, 0.0, hydro.LeadP95Ms, 0.001)
-}
-
-func TestHyperliquidScoreboard_HeadlineAndCompetitors(t *testing.T) {
-	api := apitesting.NewTestAPIBare(t, testChDB)
-	createFeedsTable(t, api)
-
-	// 4 races at node tyo: DZ (tob_*) beats Hydromancer three times, loses once.
-	insertPairwise(t, api, "tyo-rec1", "tyo", "BTC", 1000, 1, "tob_gcp_tyo_hl_mainnet1", "hydromancer_bbo", 1.0)
-	insertPairwise(t, api, "tyo-rec1", "tyo", "BTC", 2000, 2, "tob_gcp_tyo_hl_mainnet1", "hydromancer_bbo", 2.0)
-	insertPairwise(t, api, "tyo-rec1", "tyo", "BTC", 3000, 3, "tob_gcp_tyo_hl_mainnet1", "hydromancer_bbo", 3.0)
-	insertPairwise(t, api, "tyo-rec1", "tyo", "BTC", 4000, 4, "hydromancer_bbo", "tob_gcp_tyo_hl_mainnet1", 0.5)
-
-	resp, err := api.FetchHyperliquidScoreboardData(t.Context(), "24h", "")
-	require.NoError(t, err)
-
-	// DZ won 3 of 4 comparable races = 75%.
-	assert.InDelta(t, 75.0, resp.DZWinSharePct, 0.1)
-	assert.EqualValues(t, 4, resp.TotalRaces)
-
-	var hydro *handlers.HyperliquidCompetitor
-	for i := range resp.Competitors {
-		if resp.Competitors[i].Feed == "hydromancer_bbo" {
-			hydro = &resp.Competitors[i]
-		}
-	}
-	require.NotNil(t, hydro)
-	assert.Equal(t, "Hydromancer", hydro.Label)
-	assert.InDelta(t, 75.0, hydro.DZWinPct, 0.1)
-	assert.EqualValues(t, 4, hydro.Races)
-	// Lead p50 over the 3 DZ wins (1.0, 2.0, 3.0) = 2.0 (quantileTDigest(0.5), exact at this size).
-	assert.InDelta(t, 2.0, hydro.LeadP50Ms, 0.001)
+	assert.InDelta(t, 20.0, byLabel["Competitor 1"], 0.01)
+	assert.InDelta(t, 40.0, byLabel["Competitor 2"], 0.01)
+	assert.InDelta(t, 60.0, byLabel["Competitor 3"], 0.01)
 }

@@ -135,6 +135,7 @@ const { resolvedTheme, setTheme } = useTheme()
     location.pathname.startsWith('/dz/shreds/rewards/')
   const isShredsRoute = location.pathname.startsWith('/dz/shreds') || isShredsPublishersRoute
   const isHyperliquidScoreboardRoute = location.pathname === '/dz/hyperliquid/scoreboard'
+  const isHyperliquidInternalScoreboardRoute = location.pathname === '/dz/hyperliquid/internal-scoreboard'
   const isPermissionAuditRoute = location.pathname === '/dz/permission-audit'
   const isHyperliquidRoute = location.pathname.startsWith('/dz/hyperliquid')
   const isKalshiScoreboardRoute = location.pathname === '/dz/kalshi/scoreboard'
@@ -661,6 +662,12 @@ const { resolvedTheme, setTheme } = useTheme()
                   <>
                     <Link to="/dz/hyperliquid/scoreboard" className={subNavItemClass(isHyperliquidScoreboardRoute)}>
                       Scoreboard
+                    </Link>
+                    <Link
+                      to="/dz/hyperliquid/internal-scoreboard"
+                      className={subNavItemClass(isHyperliquidInternalScoreboardRoute)}
+                    >
+                      Internal Scoreboard
                     </Link>
                   </>
                 )}

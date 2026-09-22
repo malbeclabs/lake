@@ -1,438 +1,568 @@
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
 import { Trophy } from 'lucide-react'
 import { PageHeader } from './page-header'
 import {
   fetchHyperliquidScoreboard,
+  type HyperliquidScoreboardCategory,
   type HyperliquidScoreboardResponse,
-  type HyperliquidRace,
 } from '@/lib/api'
 
-const WINDOWS = ['1h', '24h', '7d'] as const
+// The Hyperliquid scoreboard. Its sibling, the internal scoreboard, answers a
+// different question from a different table — see hyperliquid_scoreboard.go for why
+// the two will not agree cell for cell.
+//
+// Margins here are signed: positive means DoubleZero delivered the book first, and a
+// race we lose carries a negative value into the percentiles rather than being dropped.
+// So p50/p95/p99 describe every race, and a cell below 50% win rate reports a negative
+// median. The payload never carries a competitor's feed name.
 
 const DZ_COLOR = '#34d399' // emerald-400 — DoubleZero
+const FIELD_COLOR = '#d99a3c' // the competing feeds, all one colour, named by label
 
-function pct(n: number): string {
-  return `${n.toFixed(1)}%`
-}
-
-// DoubleZero's lead over a competitor. Sub-second in ms, larger in seconds.
-function lead(n: number): string {
-  if (n >= 1000) return `${(n / 1000).toFixed(2)} s`
-  return `${n.toFixed(n < 10 ? 1 : 0)} ms`
-}
-
-// Recent-races grid: two sections of top symbols by volume. Only some symbols have competitor
-// feeds (currently BTC/ETH); the rest render as DoubleZero-exclusive coverage.
-const RECENT_SECTIONS = [
-  { title: 'Hyperliquid Perpetual Futures', symbols: ['BTC', 'ETH', 'SOL', 'HYPE'] },
-  { title: 'Hyperliquid HIP-3 DEX Perpetual Futures', symbols: ['xyz:SP500', 'xyz:XYZ100', 'xyz:MU', 'xyz:SKHX'] },
+const METRICS = [
+  { key: 'win_pct', label: 'Win rate', hint: 'share delivered first' },
+  { key: 'p50_ms', label: 'Median', hint: 'typical margin' },
+  { key: 'p95_ms', label: '95th pct', hint: 'best 5% of races' },
+  { key: 'p99_ms', label: '99th pct', hint: 'best 1% of races' },
 ] as const
 
-function symbolDisplay(sym: string): string {
-  return sym.startsWith('xyz:') ? sym.slice(4) : sym
+type MetricKey = (typeof METRICS)[number]['key']
+
+function pct(v: number): string {
+  return `${v.toFixed(1)}%`
 }
 
-// Vantage-point facility metadata (keyed by location_code), plus the row display order.
-const VANTAGE_INFO: Record<string, { facility: string; city: string; order: number }> = {
-  tyo: { facility: 'AWS ap-northeast-1b', city: 'Tokyo, JP', order: 0 },
-  chi: { facility: 'CyrusOne CHI1', city: 'Aurora, IL', order: 1 },
-  nyc: { facility: 'Equinix NY5', city: 'Secaucus, NJ', order: 2 },
-}
-function vantageOrder(locationCode: string): number {
-  return VANTAGE_INFO[locationCode]?.order ?? 99
+// Signed margin. Never rendered with a bare "+" when negative — a competitor-first
+// cell has to read as a deficit.
+function ms(v: number): string {
+  const sign = v < 0 ? '−' : '+'
+  const a = Math.abs(v)
+  return a >= 1000 ? `${sign}${(a / 1000).toFixed(1)} s` : `${sign}${Math.round(a)} ms`
 }
 
-function fmtPrice(p: number): string {
-  if (p >= 1000) return `$${Math.round(p).toLocaleString()}`
-  return `$${p.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+function showMetric(metric: MetricKey, v: number): string {
+  return metric === 'win_pct' ? pct(v) : ms(v)
 }
 
-// Three-quarter-arc win-rate gauge — mirrors the edge scoreboard's WinRateGauge.
+function fmtCount(n: number): string {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(n >= 1e8 ? 0 : 1)}M`
+  if (n >= 1e3) return `${Math.round(n / 1e3)}K`
+  return String(Math.round(n))
+}
+
+// Three-quarter-arc win-rate gauge — the same geometry as the internal scoreboard's.
 function WinGauge({ value }: { value: number }) {
-  const size = 160
   const r = 65
-  const c = size / 2
   const circ = 2 * Math.PI * r
   const arc = circ * 0.75
-  const gap = circ - arc
   const fill = arc * (Math.min(100, Math.max(0, value)) / 100)
   return (
-    <div className="relative flex items-center justify-center shrink-0" style={{ width: size, height: size }}>
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="absolute inset-0">
+    <div className="relative flex shrink-0 items-center justify-center" style={{ width: 132, height: 132 }}>
+      <svg width={132} height={132} viewBox="0 0 160 160" className="absolute inset-0" aria-hidden="true">
         <circle
-          cx={c} cy={c} r={r} fill="none" strokeWidth={4}
-          stroke="currentColor" className="text-muted-foreground/25"
-          strokeDasharray={`${arc} ${gap}`} strokeLinecap="round"
-          transform={`rotate(-225, ${c}, ${c})`}
+          cx={80} cy={80} r={r} fill="none" strokeWidth={7} stroke="var(--muted)"
+          strokeDasharray={`${arc.toFixed(1)} ${(circ - arc).toFixed(1)}`}
+          strokeLinecap="round" transform="rotate(-225, 80, 80)"
         />
         <circle
-          cx={c} cy={c} r={r} fill="none" strokeWidth={4}
-          stroke={DZ_COLOR}
-          strokeDasharray={`${fill} ${circ - fill}`} strokeLinecap="round"
-          transform={`rotate(-225, ${c}, ${c})`}
-          style={{ transition: 'stroke-dasharray 0.5s ease-out' }}
+          cx={80} cy={80} r={r} fill="none" strokeWidth={7} stroke={DZ_COLOR}
+          strokeDasharray={`${fill.toFixed(1)} ${(circ - fill).toFixed(1)}`}
+          strokeLinecap="round" transform="rotate(-225, 80, 80)"
+          style={{ transition: 'stroke-dasharray 1.1s cubic-bezier(.2,.75,.3,1)' }}
         />
       </svg>
-      <div className="z-10 flex flex-col items-center">
-        <div className="text-2xl font-semibold tabular-nums">{value.toFixed(1)}%</div>
-        <div className="mt-0.5 text-center text-xs text-muted-foreground">DoubleZero<br />Win Rate</div>
+      <span className="font-mono text-2xl font-semibold tabular-nums">{pct(value)}</span>
+    </div>
+  )
+}
+
+// Arrival chart: DoubleZero sits at zero and every other feed is placed by how long
+// after it that feed's copy of the same update landed. One linear scale, so bar length
+// is directly comparable across rows.
+function ArrivalChart({ data }: { data: HyperliquidScoreboardResponse }) {
+  const [grown, setGrown] = useState(false)
+  const rows = useMemo(() => {
+    const r = [
+      { label: 'DoubleZero', dz: true, v: 0 },
+      ...data.feeds.map((f) => ({ label: f.label, dz: false, v: f.p50_ms })),
+    ]
+    return r.sort((a, b) => a.v - b.v)
+  }, [data.feeds])
+
+  const top = Math.max(50, Math.ceil(Math.max(...rows.map((r) => r.v)) / 50) * 50)
+  const step = top / 4
+
+  useEffect(() => {
+    setGrown(false)
+    const id = requestAnimationFrame(() => setGrown(true))
+    return () => cancelAnimationFrame(id)
+  }, [rows])
+
+  return (
+    <div className="flex flex-col gap-2">
+      {rows.map((r, i) => (
+        <div key={r.label} className="grid items-center gap-3" style={{ gridTemplateColumns: '104px minmax(0,1fr) 58px' }}>
+          <span className={`flex items-center gap-2 whitespace-nowrap text-xs ${r.dz ? 'font-medium' : 'text-muted-foreground'}`}>
+            <span className="inline-block h-2.5 w-2.5 shrink-0" style={{ background: r.dz ? DZ_COLOR : FIELD_COLOR }} />
+            {r.label}
+          </span>
+          <div className="hl-arr">
+            <div className="hl-arr-axis" />
+            {[0, 1, 2, 3, 4].map((k) => (
+              <span key={k} className="hl-arr-tick" style={{ left: `${k * 25}%` }} />
+            ))}
+            {r.dz ? (
+              <div className="hl-arr-dot" />
+            ) : (
+              <div
+                className="hl-arr-bar"
+                data-grown={grown ? '1' : '0'}
+                style={{ width: `${((r.v / top) * 100).toFixed(1)}%`, transitionDelay: `${i * 70}ms` }}
+              />
+            )}
+          </div>
+          <span
+            className={`text-right font-mono text-xs tabular-nums ${r.dz ? '' : 'text-muted-foreground'}`}
+            style={r.dz ? { color: DZ_COLOR } : undefined}
+          >
+            {r.dz ? 'first' : ms(r.v)}
+          </span>
+        </div>
+      ))}
+      <div className="grid gap-3" style={{ gridTemplateColumns: '104px minmax(0,1fr) 58px' }}>
+        <span />
+        <div className="relative h-4">
+          {[0, 1, 2, 3, 4].map((k) => (
+            <span
+              key={k}
+              className="absolute top-0 whitespace-nowrap font-mono text-[10px] tabular-nums text-muted-foreground"
+              style={{ left: `${k * 25}%`, transform: `translateX(${k === 0 ? '0' : k === 4 ? '-100%' : '-50%'})` }}
+            >
+              {k * step}
+              {k === 4 ? ' ms' : ''}
+            </span>
+          ))}
+        </div>
+        <span />
       </div>
     </div>
   )
 }
 
-function WinBar({ value }: { value: number }) {
+// One cell of the site × feed matrix. The fill is scaled to the widest site in its own
+// row, never across the table: the margin metrics span 12 ms to 36 s, so one shared
+// scale would flatten every row but one.
+function MatrixCell({
+  value, max, metric, who, where, highlighted, onHover,
+}: {
+  value: number; max: number; metric: MetricKey; who: string; where: string
+  highlighted: boolean; onHover: (where: string) => void
+}) {
+  const [w, setW] = useState(0)
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setW(max > 0 ? Math.max(4, (value / max) * 100) : 0))
+    return () => cancelAnimationFrame(id)
+  }, [value, max, metric])
   return (
-    <div className="h-1 overflow-hidden rounded-full bg-muted-foreground/25">
+    <td
+      className={`relative whitespace-nowrap px-4 py-3 text-right ${highlighted ? 'hl-hl' : ''}`}
+      onMouseEnter={() => onHover(where)}
+      title={`${who} at ${where} — DoubleZero ${showMetric(metric, value)}`}
+    >
+      <span className="hl-cellfill" style={{ width: `${w}%` }} />
+      <span className="relative font-mono text-sm tabular-nums">{showMetric(metric, value)}</span>
+    </td>
+  )
+}
+
+const SITE_COLS = ['Tokyo', 'Chicago', 'New York']
+
+function FeedMatrix({ data }: { data: HyperliquidScoreboardResponse }) {
+  const [metric, setMetric] = useState<MetricKey>('p50_ms')
+  const [pill, setPill] = useState({ left: 0, width: 0 })
+  const tabsRef = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    const on = tabsRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')
+    if (on) setPill({ left: on.offsetLeft, width: on.offsetWidth })
+  }, [metric])
+
+  // Hovering a cell lights its row and its site column.
+  const [hoverCol, setHoverCol] = useState<string | null>(null)
+  const colCls = (c: string) => (hoverCol === c ? 'hl-hl' : '')
+
+  return (
+    <div className="mb-4 overflow-hidden rounded-lg border border-border bg-card">
+      <div className="border-b border-border px-4 py-3 text-sm font-medium text-muted-foreground">
+        Feeds we race, by recording site
+      </div>
       <div
-        className="h-full rounded-full transition-all duration-500"
-        style={{ width: `${Math.min(100, Math.max(0, value))}%`, backgroundColor: DZ_COLOR }}
-      />
+        ref={tabsRef}
+        className="hl-tabwrap grid grid-cols-2 border-b border-border sm:grid-cols-4"
+        role="tablist"
+        aria-label="Metric shown in the table"
+      >
+        {METRICS.map((m, i) => (
+          <button
+            key={m.key}
+            type="button"
+            role="tab"
+            aria-selected={m.key === metric}
+            tabIndex={m.key === metric ? 0 : -1}
+            onClick={() => setMetric(m.key)}
+            onKeyDown={(e) => {
+              const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0
+              if (!d) return
+              e.preventDefault()
+              const next = METRICS[(i + d + METRICS.length) % METRICS.length]
+              setMetric(next.key)
+              tabsRef.current?.querySelectorAll<HTMLElement>('[role="tab"]')[
+                (i + d + METRICS.length) % METRICS.length
+              ]?.focus()
+            }}
+            className="hl-tab px-4 py-2.5 text-left transition-colors"
+          >
+            <span className="hl-tab-label block text-sm font-medium">{m.label}</span>
+            <span className="block text-xs text-muted-foreground">{m.hint}</span>
+          </button>
+        ))}
+        <span className="hl-tabpill" aria-hidden="true" style={{ left: pill.left, width: pill.width }} />
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full" onMouseLeave={() => setHoverCol(null)}>
+          <thead>
+            <tr className="border-b border-border text-left text-sm text-muted-foreground">
+              <th className="whitespace-nowrap px-4 py-3 font-medium">Feed</th>
+              {SITE_COLS.map((c) => (
+                <th key={c} className={`whitespace-nowrap px-4 py-3 text-right font-medium ${colCls(c)}`}>
+                  {c}
+                </th>
+              ))}
+              <th className="whitespace-nowrap px-4 py-3 text-right font-medium">All sites</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.feeds.map((f) => {
+              const vals = f.sites.map((s) => s[metric])
+              const max = metric === 'win_pct' ? 100 : Math.max(...vals)
+              return (
+                <tr key={f.label} className="hl-rowhover border-b border-border transition-colors">
+                  <td className="px-4 py-3">
+                    <span className="flex items-center gap-2 whitespace-nowrap text-sm font-medium">
+                      <span className="inline-block h-2.5 w-2.5 shrink-0" style={{ background: FIELD_COLOR }} />
+                      {f.label}
+                    </span>
+                  </td>
+                  {f.sites.map((s, k) => (
+                    <MatrixCell
+                      key={s.code}
+                      value={s[metric]}
+                      max={max}
+                      metric={metric}
+                      who={f.label}
+                      where={SITE_COLS[k]}
+                      highlighted={hoverCol === SITE_COLS[k]}
+                      onHover={setHoverCol}
+                    />
+                  ))}
+                  <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-sm tabular-nums text-muted-foreground">
+                    {showMetric(metric, f[metric])}
+                  </td>
+                </tr>
+              )
+            })}
+            <tr className="hl-grouprow">
+              <td className="px-4 py-3 text-sm font-medium">All feeds</td>
+              {data.sites.map((s, k) => (
+                <td
+                  key={s.code}
+                  className={`whitespace-nowrap px-4 py-3 text-right font-mono text-sm font-medium tabular-nums ${colCls(SITE_COLS[k])}`}
+                  onMouseEnter={() => setHoverCol(SITE_COLS[k])}
+                >
+                  {showMetric(metric, s[metric])}
+                </td>
+              ))}
+              <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-sm font-medium tabular-nums">
+                {showMetric(metric, data.all[metric])}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
 
-// Competitor colors for the win-rate bar — warm hues contrasting with DoubleZero green.
-const COMPETITOR_COLORS = ['#fbbf24', '#fb923c', '#ef4444', '#ec4899', '#a855f7'] // amber, orange, red, pink, purple
-function competitorColor(i: number): string {
-  return COMPETITOR_COLORS[i % COMPETITOR_COLORS.length]
+// Market range plot. The margin spans tens of ms to seconds, so a linear axis would
+// stack the median and the 95th on the same pixel; the axis is log and labelled.
+const RNG_LO = 10
+const RNG_HI = 20000
+const RNG_L = Math.log10(RNG_LO)
+const RNG_SPAN = Math.log10(RNG_HI) - RNG_L
+const RNG_TICKS: [number, string][] = [
+  [10, '10 ms'],
+  [100, '100 ms'],
+  [1000, '1 s'],
+  [10000, '10 s'],
+]
+function lpos(v: number): number {
+  return ((Math.log10(Math.min(RNG_HI, Math.max(RNG_LO, v))) - RNG_L) / RNG_SPAN) * 100
 }
 
-// Win-rate bar: DoubleZero's share in green, the remaining loss split by competitor color.
-function WinRateBar({ dzPct, segments }: { dzPct: number; segments: { label: string; pct: number; color: string }[] }) {
+function MarketRange({ cat, grown }: { cat: HyperliquidScoreboardCategory; grown: boolean }) {
+  const a = lpos(cat.p50_ms)
+  const b = lpos(cat.p95_ms)
+  const e = lpos(cat.p99_ms)
   return (
-    <div className="flex h-1.5 overflow-hidden rounded-full bg-muted-foreground/25">
-      <div
-        className="h-full transition-all duration-500"
-        style={{ width: `${Math.max(0, Math.min(100, dzPct))}%`, backgroundColor: DZ_COLOR }}
-        title={`DoubleZero ${pct(dzPct)}`}
-      />
-      {segments.map((s) => (
-        <div
-          key={s.label}
-          className="h-full transition-all duration-500"
-          style={{ width: `${Math.max(0, s.pct)}%`, backgroundColor: s.color }}
-          title={`${s.label} ${pct(s.pct)}`}
-        />
+    <div className="hl-rng">
+      <div className="hl-axis" />
+      {RNG_TICKS.map(([t]) => (
+        <span key={t} className="hl-grid" style={{ left: `${lpos(t).toFixed(1)}%` }} />
       ))}
+      <span
+        className="hl-seg hl-s95"
+        data-grown={grown ? '1' : '0'}
+        style={{ left: `${a.toFixed(1)}%`, width: `${(b - a).toFixed(1)}%` }}
+      />
+      <span
+        className="hl-seg hl-s99"
+        data-grown={grown ? '1' : '0'}
+        style={{ left: `${b.toFixed(1)}%`, width: `${(e - b).toFixed(1)}%`, transitionDelay: '140ms' }}
+      />
+      <span className="hl-cap" style={{ left: `${b.toFixed(1)}%` }} />
+      <span className="hl-cap" style={{ left: `${e.toFixed(1)}%` }} />
+      <span
+        className="hl-med"
+        style={{ left: `${a.toFixed(1)}%` }}
+        title={`half of all races finish at least ${ms(cat.p50_ms)} ahead`}
+      />
+      <span className="hl-lab hl-l0" style={{ left: `${a.toFixed(1)}%` }}>
+        typically <b>{ms(cat.p50_ms)}</b>
+      </span>
+      <span className="hl-lab" style={{ left: `${b.toFixed(1)}%` }}>
+        95th <b>{ms(cat.p95_ms)}</b>
+      </span>
+      <span className="hl-lab" style={{ left: `${e.toFixed(1)}%` }}>
+        99th <b>{ms(cat.p99_ms)}</b>
+      </span>
     </div>
   )
 }
 
-// relAge returns a short "just now" / "12s ago" / "3m ago" / "2h ago" string for a ms timestamp.
-function relAge(tsMs: number, nowMs: number): string {
-  const age = Math.round((nowMs - tsMs) / 1000)
-  if (age < 5) return 'just now'
-  if (age < 60) return `${age}s ago`
-  if (age < 3600) return `${Math.round(age / 60)}m ago`
-  return `${Math.round(age / 3600)}h ago`
+function MarketTable({ data }: { data: HyperliquidScoreboardResponse }) {
+  const [grown, setGrown] = useState(false)
+  useEffect(() => {
+    setGrown(false)
+    const id = requestAnimationFrame(() => setGrown(true))
+    return () => cancelAnimationFrame(id)
+  }, [data.markets])
+
+  return (
+    <div className="mb-4 overflow-hidden rounded-lg border border-border bg-card">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border px-4 py-3">
+        <span className="text-sm font-medium text-muted-foreground">By market</span>
+        <span className="text-xs text-muted-foreground">
+          Each bar runs from the typical lead out to the widest 1%. Longer is better.
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full">
+          <thead>
+            <tr className="border-b border-border text-left text-sm text-muted-foreground">
+              <th className="whitespace-nowrap px-4 py-3 font-medium">Market / contract type</th>
+              <th className="whitespace-nowrap px-4 py-3 text-right font-medium" style={{ width: 150 }}>
+                DoubleZero first
+              </th>
+              <th className="px-4 py-3 font-medium" style={{ width: '46%' }}>
+                How far ahead DoubleZero finished
+                <div className="relative mt-1 h-4 font-normal">
+                  {RNG_TICKS.map(([t, lab], k) => (
+                    <span
+                      key={t}
+                      className="absolute top-0 whitespace-nowrap font-mono text-[10px] tabular-nums text-muted-foreground"
+                      style={{ left: `${lpos(t).toFixed(1)}%`, transform: `translateX(${k === 0 ? '0' : '-50%'})` }}
+                    >
+                      {lab}
+                    </span>
+                  ))}
+                </div>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.markets.map((m) => (
+              <Fragment key={m.name}>
+                <tr className="hl-grouprow border-b border-border">
+                  <td className="px-4 py-2 text-sm font-medium">{m.name}</td>
+                  <td colSpan={2} className="px-4 py-2 text-right font-mono text-xs tabular-nums text-muted-foreground">
+                    {m.carried} instruments carried
+                  </td>
+                </tr>
+                {m.cats.map((c) => {
+                  const delta = c.win_pct - data.all.win_pct
+                  return (
+                    <tr key={`${m.name}-${c.name}`} className="hl-rowhover border-b border-border transition-colors">
+                      <td className="py-3 pl-9 pr-4">
+                        <div className="text-sm">{c.name}</div>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right" style={{ width: 150 }}>
+                        <div className="font-mono text-sm tabular-nums">{pct(c.win_pct)}</div>
+                        <div
+                          className="font-mono text-[11px] tabular-nums"
+                          style={{ color: delta >= 0 ? DZ_COLOR : 'var(--muted-foreground)' }}
+                        >
+                          {delta >= 0 ? '+' : '−'}
+                          {Math.abs(delta).toFixed(1)} pt
+                        </div>
+                      </td>
+                      <td className="px-4 py-3" style={{ width: '46%' }}>
+                        <MarketRange cat={c} grown={grown} />
+                      </td>
+                    </tr>
+                  )
+                })}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
 }
 
 export function HyperliquidScoreboardPage() {
-  const [timeWindow, setTimeWindow] = useState<(typeof WINDOWS)[number]>('24h')
   const [data, setData] = useState<HyperliquidScoreboardResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
 
   const load = useCallback(async () => {
     try {
-      setData(await fetchHyperliquidScoreboard(timeWindow))
+      setData(await fetchHyperliquidScoreboard())
       setError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load')
     }
-  }, [timeWindow])
+  }, [])
 
   useEffect(() => {
     let active = true
     const run = () => { void load() }
     run()
-    const poll = setInterval(run, 15000)
+    const poll = setInterval(run, 60000)
     const tick = setInterval(() => active && setNow(Date.now()), 5000)
     return () => { active = false; clearInterval(poll); clearInterval(tick) }
   }, [load])
 
   const freshness = useMemo(() => {
-    if (!data?.generated_at) return null
-    const age = Math.round((now - new Date(data.generated_at).getTime()) / 1000)
+    if (!data?.as_of) return null
+    const age = Math.round((now - new Date(data.as_of).getTime()) / 1000)
     if (age < 5) return 'just now'
     if (age < 60) return `${age}s ago`
     return `${Math.round(age / 60)}m ago`
-  }, [data?.generated_at, now])
-
-  // Global competitor set drives the per-vantage table columns (stable order).
-  const competitorCols = data?.competitors ?? []
-
-  // Win-rate bar segments: each competitor's share of all comparisons where it beat DoubleZero
-  // (so the green DZ share + the colored competitor segments fill the bar to ~100%).
-  const lossTotal = data?.total_races ?? 0
-  const lossSegments = (data?.competitors ?? []).map((c, i) => ({
-    label: c.label,
-    pct: lossTotal > 0 ? (c.races * (1 - c.dz_win_pct / 100) / lossTotal) * 100 : 0,
-    color: competitorColor(i),
-  }))
-
-  // Recent races grouped by symbol for the per-symbol grid.
-  const racesBySymbol = useMemo(() => {
-    const m: Record<string, HyperliquidRace[]> = {}
-    for (const r of data?.recent_races ?? []) (m[r.symbol] ??= []).push(r)
-    return m
-  }, [data?.recent_races])
+  }, [data?.as_of, now])
 
   return (
-    <div className="flex-1 overflow-auto">
+    <div className="flex-1 overflow-auto" style={{ ['--hl-dz' as string]: DZ_COLOR, ['--hl-field' as string]: FIELD_COLOR }}>
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-8">
         <PageHeader
           icon={Trophy}
           title="Hyperliquid Scoreboard"
           subtitle={
             <span className="flex items-center gap-2 text-xs text-muted-foreground/50">
-              <span>last {data?.window ?? timeWindow}</span>
-              {freshness && <span>· updated {freshness}</span>}
+              <span>{data?.window_label ?? 'last 24 hours'}</span>
+              {freshness && (
+                <>
+                  <span>·</span>
+                  <span className="hl-pulse inline-block h-1.5 w-1.5 rounded-full" style={{ background: DZ_COLOR }} />
+                  <span>updated {freshness}</span>
+                </>
+              )}
             </span>
-          }
-          actions={
-            <div className="inline-flex overflow-hidden rounded-md border border-border text-sm">
-              {WINDOWS.map((w) => (
-                <button
-                  key={w}
-                  type="button"
-                  onClick={() => setTimeWindow(w)}
-                  className={
-                    w === timeWindow
-                      ? 'bg-emerald-500/10 px-3 py-1.5 font-medium text-emerald-400'
-                      : 'px-3 py-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground'
-                  }
-                >
-                  {w}
-                </button>
-              ))}
-            </div>
           }
         />
 
-        {error && (
-          <div className="rounded-lg border border-border bg-card p-6 text-sm text-red-500">{error}</div>
-        )}
-        {!data && !error && (
+        {error && <div className="rounded-lg border border-border bg-card p-6 text-sm text-red-500">{error}</div>}
+
+        {!error && !data && (
           <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">Loading…</div>
         )}
 
-        {data && (
+        {!error && data && data.races === 0 && (
+          <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
+            No races recorded in this window.
+          </div>
+        )}
+
+        {!error && data && data.races > 0 && (
           <>
-            {/* Hero stats — 3 columns: description+stats | metrics | gauge */}
-            <div className="mb-8 flex flex-col rounded-lg border border-border bg-card lg:flex-row">
-              {/* Left: description + summary stats */}
-              <div className="flex min-w-0 flex-1 flex-col justify-between p-4 sm:p-6">
-                <p className="text-sm leading-relaxed text-muted-foreground">
-                  Scoreboard benchmarks Hyperliquid best-bid/offer delivery speed across DoubleZero and
-                  competing providers, comparing who delivers each order-book update first across {data.nodes.length} vantage points.
-                </p>
-                <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-border pt-4">
-                  <div>
-                    <div className="mb-1 text-xs text-muted-foreground">Head-to-head races</div>
-                    <div className="text-xl font-semibold tabular-nums sm:text-2xl">{data.total_races.toLocaleString()}</div>
-                  </div>
-                  <div className="sm:border-l sm:border-border sm:pl-6">
-                    <div className="mb-1 text-xs text-muted-foreground">Vantage points</div>
-                    <div className="text-xl font-semibold tabular-nums sm:text-2xl">{data.nodes.length}</div>
-                  </div>
-                  {data.composite_latency && (
-                    <div className="w-full">
-                      <div className="mb-1.5 text-xs text-muted-foreground">
-                        Tokyo feed latency{' '}
-                        <span className="text-muted-foreground/60">
-                          (blocktime → receive, first-arrival across DZ Tokyo feeds, {data.composite_latency.window})
-                        </span>
-                      </div>
-                      <div className="flex gap-5">
-                        {([
-                          ['p50', data.composite_latency.p50_ms],
-                          ['p90', data.composite_latency.p90_ms],
-                          ['p99', data.composite_latency.p99_ms],
-                        ] as const).map(([label, v]) => (
-                          <div key={label}>
-                            <div className="text-xl font-semibold tabular-nums sm:text-2xl">
-                              {Math.round(v)}
-                              <span className="ml-1 text-xs font-normal text-muted-foreground">ms</span>
-                            </div>
-                            <div className="text-xs text-muted-foreground">{label}</div>
-                          </div>
-                        ))}
-                      </div>
+            {/* 1. The answer */}
+            <div className="mb-4 rounded-lg border border-border bg-card">
+              <div className="flex flex-col lg:flex-row">
+                <div className="flex min-w-0 shrink-0 items-center gap-4 p-4 sm:gap-5 sm:p-5 lg:w-[42%]">
+                  <WinGauge value={data.all.win_pct} />
+                  <div className="min-w-0">
+                    <div className="text-lg font-medium leading-snug" style={{ textWrap: 'balance' } as CSSProperties}>
+                      DoubleZero delivers the order book first.
                     </div>
-                  )}
+                    <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                      Each update, raced against the venue's public API and every commercial feed we buy.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex min-w-0 flex-1 flex-col justify-center gap-2.5 border-t border-border p-4 sm:p-5 lg:border-l lg:border-t-0">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="text-sm font-medium">One update, every feed racing</span>
+                    <span className="font-mono text-xs text-muted-foreground">median, after DoubleZero</span>
+                  </div>
+                  <ArrivalChart data={data} />
                 </div>
               </div>
 
-              {/* Middle: win rate + per-competitor leads */}
-              <div className="flex min-w-0 flex-1 flex-col justify-center gap-4 border-t border-border p-4 sm:p-6 lg:border-l lg:border-t-0">
-                <div className="pb-2">
-                  <div className="mb-1.5 flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">DoubleZero Win Rate</span>
-                    <span className="ml-4 shrink-0 text-sm font-medium tabular-nums">{pct(data.dz_win_share_pct)}</span>
-                  </div>
-                  <WinRateBar dzPct={data.dz_win_share_pct} segments={lossSegments} />
+              <div
+                className="grid grid-cols-2 gap-px border-t border-border sm:grid-cols-4"
+                style={{ background: 'var(--border)' }}
+              >
+                <div className="bg-card px-4 py-3">
+                  <div className="text-xs text-muted-foreground">Updates raced</div>
+                  <div className="font-mono text-xl font-semibold tabular-nums">{fmtCount(data.races)}</div>
                 </div>
-                {data.competitors.map((c, i) => (
-                  <div key={c.feed}>
-                    <div className="flex items-center justify-between">
-                      <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
-                        <span className="inline-block h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: competitorColor(i) }} />
-                        DoubleZero vs {c.label}
-                      </span>
-                      <span className="ml-4 shrink-0 text-sm font-medium tabular-nums">
-                        <span className="mr-1 text-xs font-normal text-muted-foreground">p50:</span>
-                        +{lead(c.lead_p50_ms)}
-                      </span>
-                    </div>
-                    <div className="mt-0.5 text-xs text-muted-foreground">p95: +{lead(c.lead_p95_ms)}</div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Right: gauge */}
-              <div className="flex shrink-0 items-center justify-center border-t border-border px-6 py-6 sm:px-8 lg:border-l lg:border-t-0 lg:py-0">
-                <WinGauge value={data.dz_win_share_pct} />
+                <div className="bg-card px-4 py-3">
+                  <div className="text-xs text-muted-foreground">Instruments carried</div>
+                  <div className="font-mono text-xl font-semibold tabular-nums">{data.instruments}</div>
+                </div>
+                <div className="bg-card px-4 py-3">
+                  <div className="text-xs text-muted-foreground">Recording sites</div>
+                  <div className="font-mono text-xl font-semibold tabular-nums">{data.site_count}</div>
+                </div>
+                <div className="bg-card px-4 py-3">
+                  <div className="text-xs text-muted-foreground">Feeds raced against</div>
+                  <div className="font-mono text-xl font-semibold tabular-nums">{data.feed_count}</div>
+                </div>
               </div>
             </div>
 
-            {/* Per-vantage table */}
-            <div className="mb-6 overflow-hidden rounded-lg border border-border bg-card">
-              <div className="overflow-x-auto">
-                <table className="min-w-full">
-                  <thead>
-                    <tr className="border-b border-border text-left text-sm text-muted-foreground">
-                      <th className="whitespace-nowrap px-3 py-3 font-medium sm:px-4">Vantage</th>
-                      <th className="whitespace-nowrap px-3 py-3 text-right font-medium sm:px-4">DZ Win Rate %</th>
-                      {competitorCols.map((c) => (
-                        <th key={c.feed} className="whitespace-nowrap px-3 py-3 text-right font-medium sm:px-4">
-                          vs {c.label}
-                          <span className="block text-xs font-normal">p50 (p95)</span>
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.nodes.length === 0 ? (
-                      <tr>
-                        <td colSpan={2 + competitorCols.length} className="px-4 py-12 text-center text-muted-foreground">
-                          No data available for the selected time window.
-                        </td>
-                      </tr>
-                    ) : (
-                      [...data.nodes]
-                        .sort((a, b) => vantageOrder(a.location_code) - vantageOrder(b.location_code))
-                        .map((n) => {
-                        const byFeed = new Map(n.competitors.map((c) => [c.feed, c]))
-                        const info = VANTAGE_INFO[n.location_code]
-                        return (
-                          <tr key={n.measurement_node_id} className="border-b border-border transition-colors last:border-b-0 hover:bg-muted/50">
-                            <td className="px-3 py-3 sm:px-4">
-                              <div
-                                className="cursor-default"
-                                title={[
-                                  info?.facility ?? n.location_code.toUpperCase(),
-                                  info?.city,
-                                  n.measurement_node_id,
-                                  `${n.total_races.toLocaleString()} races`,
-                                ]
-                                  .filter(Boolean)
-                                  .join('\n')}
-                              >
-                                <div className="text-sm font-medium uppercase">{n.location_code}</div>
-                                <div className="text-xs text-muted-foreground">{info?.facility ?? n.measurement_node_id}</div>
-                                <div className="text-xs text-muted-foreground/70">{n.total_races.toLocaleString()} races</div>
-                              </div>
-                            </td>
-                            <td className="px-3 py-3 text-right text-sm tabular-nums sm:px-4">
-                              <div className="mb-1.5">{pct(n.dz_win_share_pct)}</div>
-                              <WinBar value={n.dz_win_share_pct} />
-                            </td>
-                            {competitorCols.map((col) => {
-                              const c = byFeed.get(col.feed)
-                              return (
-                                <td key={col.feed} className="whitespace-nowrap px-3 py-3 text-right text-sm tabular-nums sm:px-4">
-                                  {c ? (
-                                    <>
-                                      <span>+{lead(c.lead_p50_ms)}</span>{' '}
-                                      <span className="text-muted-foreground">(+{lead(c.lead_p95_ms)})</span>
-                                    </>
-                                  ) : (
-                                    '—'
-                                  )}
-                                </td>
-                              )
-                            })}
-                          </tr>
-                        )
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            {/* 2. Feeds we race, by recording site */}
+            <FeedMatrix data={data} />
 
-            {/* Recent races — per-symbol grid, split into native perps and HIP-3 DEX perps */}
-            {RECENT_SECTIONS.map((section) => (
-              <div key={section.title} className="mb-6 overflow-hidden rounded-lg border border-border bg-card">
-                <div className="border-b border-border px-4 py-3 text-sm font-medium text-muted-foreground">
-                  {section.title}
-                </div>
-                <div className="grid grid-cols-2 gap-px bg-border sm:grid-cols-4">
-                  {section.symbols.map((sym) => {
-                    const races = racesBySymbol[sym] ?? []
-                    const price = data.prices?.[sym]
-                    const lastTs = races.length
-                      ? Math.max(...races.map((r) => new Date(r.event_ts).getTime()))
-                      : null
-                    return (
-                      <div key={sym} className="bg-card p-3">
-                        <div className="mb-2 flex items-baseline justify-between gap-1">
-                          <span className="text-sm font-semibold">{symbolDisplay(sym)}</span>
-                          {price != null && (
-                            <span className="text-xs tabular-nums text-muted-foreground">{fmtPrice(price)}</span>
-                          )}
-                        </div>
-                        {lastTs != null && (
-                          <div className="mb-1.5 text-[11px] tabular-nums text-muted-foreground/50">
-                            updated {relAge(lastTs, now)}
-                          </div>
-                        )}
-                        {races.length === 0 ? (
-                          <div className="flex flex-col gap-1">
-                            <span className="inline-flex w-fit items-center rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
-                              Competitor feeds pending
-                            </span>
-                            <span className="text-[11px] text-muted-foreground/60">No head-to-head races yet</span>
-                          </div>
-                        ) : (
-                          <div className="space-y-1">
-                            {races.map((r, i) => {
-                              const won = r.is_dz
-                              const comp = won ? r.runner_up_label : r.winner_label
-                              return (
-                                <div key={i} className="flex items-baseline justify-between gap-1.5 text-xs">
-                                  <span className="flex min-w-0 items-baseline gap-1 truncate">
-                                    <span className={`shrink-0 font-semibold ${won ? 'text-emerald-500' : 'text-rose-400'}`}>
-                                      {won ? '▲ DoubleZero' : `▼ ${comp}`}
-                                    </span>
-                                    <span className="truncate text-muted-foreground/50">vs {won ? comp : 'DZ'}</span>
-                                  </span>
-                                  <span className={`shrink-0 tabular-nums ${won ? 'text-emerald-500' : 'text-rose-400'}`}>
-                                    +{lead(r.lead_ms)}
-                                  </span>
-                                </div>
-                              )
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            ))}
+            {/* 3. By market */}
+            <MarketTable data={data} />
+
+            {/* footnote */}
+            <div className="space-y-1 border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground">
+              <p>
+                Every feed is scored on the same message: updates are keyed by payload hash, and each feed's
+                arrival is the first time that exact book state reached the recording site. Margin is how far
+                ahead DoubleZero finished — bigger is better — and it is signed, so a race we lose counts
+                against the percentiles rather than being dropped from them. Provider names and individual
+                contracts are withheld.
+              </p>
+              <p className="opacity-60">
+                DoubleZero's arrival is the earliest of its publishers at that site. A publisher that has since
+                been retired is excluded from every figure here, along with the updates no other DoubleZero
+                publisher saw.
+              </p>
+            </div>
           </>
         )}
       </div>

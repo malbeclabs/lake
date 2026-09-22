@@ -7713,7 +7713,7 @@ export interface HyperliquidRace {
   lead_ms: number
 }
 
-export interface HyperliquidScoreboardResponse {
+export interface HyperliquidInternalScoreboardResponse {
   window: string
   symbol?: string
   generated_at: string
@@ -7735,14 +7735,69 @@ export interface HyperliquidCompositeLatency {
   generated_at: string
 }
 
-export async function fetchHyperliquidScoreboard(
+export async function fetchHyperliquidInternalScoreboard(
   window: string = '24h',
   symbol?: string,
-): Promise<HyperliquidScoreboardResponse> {
+): Promise<HyperliquidInternalScoreboardResponse> {
   const params = new URLSearchParams()
   params.set('window', window)
   if (symbol && symbol !== 'all') params.set('symbol', symbol)
-  const res = await apiFetch(`/api/dz/hyperliquid/scoreboard?${params}`)
+  const res = await apiFetch(`/api/dz/hyperliquid/internal-scoreboard?${params}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch hyperliquid internal scoreboard')
+  }
+  return res.json()
+}
+
+// ── Hyperliquid scoreboard ──────────────────────────────────────────────
+// Distinct from the internal scoreboard above: measured from raw observations
+// rather than the winner-centric race summary, with signed margins, and with
+// competitor identities replaced by ordinal labels before serialisation. There
+// is no feed name anywhere in this payload and there must not be.
+
+export interface HyperliquidScoreboardStat {
+  win_pct: number
+  p50_ms: number
+  p95_ms: number
+  p99_ms: number
+}
+
+export interface HyperliquidScoreboardSite extends HyperliquidScoreboardStat {
+  code: string
+  label: string
+}
+
+export interface HyperliquidScoreboardFeed extends HyperliquidScoreboardStat {
+  label: string
+  venue: boolean
+  sites: HyperliquidScoreboardSite[]
+}
+
+export interface HyperliquidScoreboardCategory extends HyperliquidScoreboardStat {
+  name: string
+}
+
+export interface HyperliquidScoreboardMarket {
+  name: string
+  carried: number
+  cats: HyperliquidScoreboardCategory[]
+}
+
+export interface HyperliquidScoreboardResponse {
+  window_label: string
+  races: number
+  instruments: number
+  site_count: number
+  feed_count: number
+  all: HyperliquidScoreboardStat
+  sites: HyperliquidScoreboardSite[]
+  feeds: HyperliquidScoreboardFeed[]
+  markets: HyperliquidScoreboardMarket[]
+  as_of: string
+}
+
+export async function fetchHyperliquidScoreboard(): Promise<HyperliquidScoreboardResponse> {
+  const res = await apiFetch('/api/dz/hyperliquid/scoreboard')
   if (!res.ok) {
     throw new Error('Failed to fetch hyperliquid scoreboard')
   }

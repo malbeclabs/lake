@@ -70,6 +70,7 @@ import { ShredsRewardsDetailPage } from '@/components/shreds-rewards-detail-page
 import { PublisherCheckPage } from './components/publisher-check-page'
 import { EdgeScoreboardPage } from './components/edge-scoreboard-page'
 import { HyperliquidScoreboardPage } from './components/hyperliquid-scoreboard-page'
+import { HyperliquidInternalScoreboardPage } from './components/hyperliquid-internal-scoreboard-page'
 import { KalshiScoreboardPage } from './components/kalshi-scoreboard-page'
 import { KalshiL2Page } from './components/kalshi-l2-page'
 import { InternalOnly } from './components/internal-only'
@@ -752,6 +753,7 @@ function AppContent() {
             <Route path="/dz/edge/multicast" element={<InternalOnly><EdgeMulticastPage /></InternalOnly>} />
             <Route path="/dz/hyperliquid" element={<Navigate to="/dz/hyperliquid/scoreboard" replace />} />
             <Route path="/dz/hyperliquid/scoreboard" element={<InternalOnly><HyperliquidScoreboardPage /></InternalOnly>} />
+            <Route path="/dz/hyperliquid/internal-scoreboard" element={<InternalOnly><HyperliquidInternalScoreboardPage /></InternalOnly>} />
             <Route path="/dz/kalshi" element={<Navigate to="/dz/kalshi/scoreboard" replace />} />
             <Route path="/dz/kalshi/scoreboard" element={<InternalOnly><KalshiScoreboardPage /></InternalOnly>} />
             <Route path="/dz/kalshi/l2" element={<InternalOnly><KalshiL2Page /></InternalOnly>} />
