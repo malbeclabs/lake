@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// createFeedsTable creates the hyperliquid_bbo_feed_race_summary table in the feeds DB.
 func createFeedsTable(t *testing.T, api *handlers.API) {
 	t.Helper()
 	ctx := t.Context()
@@ -45,7 +44,7 @@ func createFeedsTable(t *testing.T, api *handlers.API) {
 	`, db)))
 }
 
-// pairwiseRow inserts one pairwise race row (winner feed beat loser_feed by leadMs).
+// winner feed beat loser_feed by leadMs.
 func insertPairwise(t *testing.T, api *handlers.API, node, loc, symbol string, srcTs, hash uint64, winner, loser string, leadMs float64) {
 	t.Helper()
 	ctx := t.Context()
@@ -74,7 +73,7 @@ func TestGetHyperliquidInternalScoreboard_Empty(t *testing.T) {
 
 func TestGetHyperliquidInternalScoreboard_MissingTable(t *testing.T) {
 	api := apitesting.NewTestAPIBare(t, testChDB)
-	// Do NOT create the table -> handler must degrade to empty 200, not 500.
+	// No table: the handler must degrade to an empty 200, not a 500.
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/hyperliquid/scoreboard", nil)
 	rr := httptest.NewRecorder()
@@ -88,8 +87,7 @@ func TestGetHyperliquidInternalScoreboard_MissingTable(t *testing.T) {
 
 func TestFetchHyperliquidInternalScoreboardData_MissingTable(t *testing.T) {
 	api := apitesting.NewTestAPIBare(t, testChDB)
-	// Do NOT create the table -> FetchHyperliquidInternalScoreboardData must return an
-	// empty-but-valid response (nil error, non-nil resp, empty slices).
+	// No table: an empty-but-valid response, not an error.
 
 	resp, err := api.FetchHyperliquidInternalScoreboardData(t.Context(), "24h", "")
 	require.NoError(t, err)
@@ -104,7 +102,6 @@ func TestHyperliquidInternalScoreboard_PerNode(t *testing.T) {
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	createFeedsTable(t, api)
 
-	// tyo: DZ wins both vs QuickNode. nyc: DZ wins 1, loses 1 vs QuickNode.
 	insertPairwise(t, api, "tyo-rec1", "tyo", "ETH", 10, 1, "tob_gcp_tyo_hl_mainnet1", "quicknode_l2book_bbo", 2.0)
 	insertPairwise(t, api, "tyo-rec1", "tyo", "ETH", 20, 2, "tob_gcp_tyo_hl_mainnet1", "quicknode_l2book_bbo", 2.0)
 	insertPairwise(t, api, "nyc-rec1", "nyc", "ETH", 30, 3, "tob_aws_galaxy1", "quicknode_l2book_bbo", 1.0)
@@ -126,7 +123,6 @@ func TestHyperliquidInternalScoreboard_RecentRaces(t *testing.T) {
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	createFeedsTable(t, api)
 
-	// A DZ-won race (BTC) and a competitor-won race (ETH), both pairwise.
 	insertPairwise(t, api, "tyo-rec1", "tyo", "BTC", 100, 1, "tob_gcp_tyo_hl_mainnet1", "hydromancer_bbo", 1.5)
 	insertPairwise(t, api, "tyo-rec1", "tyo", "ETH", 200, 2, "quicknode_l2book_bbo", "tob_gcp_tyo_hl_mainnet1", 0.7)
 
@@ -144,21 +140,18 @@ func TestHyperliquidInternalScoreboard_RecentRaces(t *testing.T) {
 	assert.False(t, bySym["ETH"].IsDZ)
 }
 
-// A cell where DoubleZero won zero races (competitor swept it) makes the lead-time
-// quantile aggregate over an empty predicate set, which ClickHouse returns as NaN. If that
-// NaN reaches the float64 fields, json encoding of the whole response fails — breaking the
-// scoreboard for everyone and poisoning the page cache. The percentiles must coalesce to 0.
+// A cell DoubleZero never won quantiles over an empty set and yields NaN, which fails JSON
+// encoding of the whole response and poisons the page cache. It must coalesce to 0.
 func TestHyperliquidInternalScoreboard_ZeroDZWins_Encodable(t *testing.T) {
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	createFeedsTable(t, api)
 
-	// Only a competitor-won race: DZ has zero wins vs Hydromancer in this window.
 	insertPairwise(t, api, "nyc-rec1", "nyc", "ETH", 10, 1, "hydromancer_bbo", "tob_aws_galaxy1", 3.0)
 
 	resp, err := api.FetchHyperliquidInternalScoreboardData(t.Context(), "24h", "")
 	require.NoError(t, err)
 
-	// The entire response must be JSON-encodable — a single NaN anywhere fails encoding.
+	// A single NaN anywhere fails encoding of the whole response.
 	_, err = json.Marshal(resp)
 	require.NoError(t, err, "response must not contain NaN percentiles")
 
@@ -178,7 +171,6 @@ func TestHyperliquidInternalScoreboard_HeadlineAndCompetitors(t *testing.T) {
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	createFeedsTable(t, api)
 
-	// 4 races at node tyo: DZ (tob_*) beats Hydromancer three times, loses once.
 	insertPairwise(t, api, "tyo-rec1", "tyo", "BTC", 1000, 1, "tob_gcp_tyo_hl_mainnet1", "hydromancer_bbo", 1.0)
 	insertPairwise(t, api, "tyo-rec1", "tyo", "BTC", 2000, 2, "tob_gcp_tyo_hl_mainnet1", "hydromancer_bbo", 2.0)
 	insertPairwise(t, api, "tyo-rec1", "tyo", "BTC", 3000, 3, "tob_gcp_tyo_hl_mainnet1", "hydromancer_bbo", 3.0)
@@ -187,7 +179,6 @@ func TestHyperliquidInternalScoreboard_HeadlineAndCompetitors(t *testing.T) {
 	resp, err := api.FetchHyperliquidInternalScoreboardData(t.Context(), "24h", "")
 	require.NoError(t, err)
 
-	// DZ won 3 of 4 comparable races = 75%.
 	assert.InDelta(t, 75.0, resp.DZWinSharePct, 0.1)
 	assert.EqualValues(t, 4, resp.TotalRaces)
 
@@ -201,6 +192,6 @@ func TestHyperliquidInternalScoreboard_HeadlineAndCompetitors(t *testing.T) {
 	assert.Equal(t, "Hydromancer", hydro.Label)
 	assert.InDelta(t, 75.0, hydro.DZWinPct, 0.1)
 	assert.EqualValues(t, 4, hydro.Races)
-	// Lead p50 over the 3 DZ wins (1.0, 2.0, 3.0) = 2.0 (quantileTDigest(0.5), exact at this size).
+	// quantileTDigest is approximate in general but exact at this cardinality.
 	assert.InDelta(t, 2.0, hydro.LeadP50Ms, 0.001)
 }

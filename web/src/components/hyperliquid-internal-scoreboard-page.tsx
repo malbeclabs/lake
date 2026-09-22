@@ -15,14 +15,12 @@ function pct(n: number): string {
   return `${n.toFixed(1)}%`
 }
 
-// DoubleZero's lead over a competitor. Sub-second in ms, larger in seconds.
 function lead(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(2)} s`
   return `${n.toFixed(n < 10 ? 1 : 0)} ms`
 }
 
-// Recent-races grid: two sections of top symbols by volume. Only some symbols have competitor
-// feeds (currently BTC/ETH); the rest render as DoubleZero-exclusive coverage.
+// Only some symbols have competitor feeds; the rest render as DoubleZero-exclusive coverage.
 const RECENT_SECTIONS = [
   { title: 'Hyperliquid Perpetual Futures', symbols: ['BTC', 'ETH', 'SOL', 'HYPE'] },
   { title: 'Hyperliquid HIP-3 DEX Perpetual Futures', symbols: ['xyz:SP500', 'xyz:XYZ100', 'xyz:MU', 'xyz:SKHX'] },
@@ -32,7 +30,6 @@ function symbolDisplay(sym: string): string {
   return sym.startsWith('xyz:') ? sym.slice(4) : sym
 }
 
-// Vantage-point facility metadata (keyed by location_code), plus the row display order.
 const VANTAGE_INFO: Record<string, { facility: string; city: string; order: number }> = {
   tyo: { facility: 'AWS ap-northeast-1b', city: 'Tokyo, JP', order: 0 },
   chi: { facility: 'CyrusOne CHI1', city: 'Aurora, IL', order: 1 },
@@ -47,7 +44,6 @@ function fmtPrice(p: number): string {
   return `$${p.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
-// Three-quarter-arc win-rate gauge — mirrors the edge scoreboard's WinRateGauge.
 function WinGauge({ value }: { value: number }) {
   const size = 160
   const r = 65
@@ -92,13 +88,11 @@ function WinBar({ value }: { value: number }) {
   )
 }
 
-// Competitor colors for the win-rate bar — warm hues contrasting with DoubleZero green.
 const COMPETITOR_COLORS = ['#fbbf24', '#fb923c', '#ef4444', '#ec4899', '#a855f7'] // amber, orange, red, pink, purple
 function competitorColor(i: number): string {
   return COMPETITOR_COLORS[i % COMPETITOR_COLORS.length]
 }
 
-// Win-rate bar: DoubleZero's share in green, the remaining loss split by competitor color.
 function WinRateBar({ dzPct, segments }: { dzPct: number; segments: { label: string; pct: number; color: string }[] }) {
   return (
     <div className="flex h-1.5 overflow-hidden rounded-full bg-muted-foreground/25">
@@ -119,7 +113,6 @@ function WinRateBar({ dzPct, segments }: { dzPct: number; segments: { label: str
   )
 }
 
-// relAge returns a short "just now" / "12s ago" / "3m ago" / "2h ago" string for a ms timestamp.
 function relAge(tsMs: number, nowMs: number): string {
   const age = Math.round((nowMs - tsMs) / 1000)
   if (age < 5) return 'just now'
@@ -160,11 +153,9 @@ export function HyperliquidInternalScoreboardPage() {
     return `${Math.round(age / 60)}m ago`
   }, [data?.generated_at, now])
 
-  // Global competitor set drives the per-vantage table columns (stable order).
   const competitorCols = data?.competitors ?? []
 
-  // Win-rate bar segments: each competitor's share of all comparisons where it beat DoubleZero
-  // (so the green DZ share + the colored competitor segments fill the bar to ~100%).
+  // Each competitor's share of the comparisons it won, so the segments fill the bar to ~100%.
   const lossTotal = data?.total_races ?? 0
   const lossSegments = (data?.competitors ?? []).map((c, i) => ({
     label: c.label,
@@ -172,7 +163,6 @@ export function HyperliquidInternalScoreboardPage() {
     color: competitorColor(i),
   }))
 
-  // Recent races grouped by symbol for the per-symbol grid.
   const racesBySymbol = useMemo(() => {
     const m: Record<string, HyperliquidRace[]> = {}
     for (const r of data?.recent_races ?? []) (m[r.symbol] ??= []).push(r)
@@ -220,9 +210,7 @@ export function HyperliquidInternalScoreboardPage() {
 
         {data && (
           <>
-            {/* Hero stats — 3 columns: description+stats | metrics | gauge */}
             <div className="mb-8 flex flex-col rounded-lg border border-border bg-card lg:flex-row">
-              {/* Left: description + summary stats */}
               <div className="flex min-w-0 flex-1 flex-col justify-between p-4 sm:p-6">
                 <p className="text-sm leading-relaxed text-muted-foreground">
                   Scoreboard benchmarks Hyperliquid best-bid/offer delivery speed across DoubleZero and
@@ -265,7 +253,6 @@ export function HyperliquidInternalScoreboardPage() {
                 </div>
               </div>
 
-              {/* Middle: win rate + per-competitor leads */}
               <div className="flex min-w-0 flex-1 flex-col justify-center gap-4 border-t border-border p-4 sm:p-6 lg:border-l lg:border-t-0">
                 <div className="pb-2">
                   <div className="mb-1.5 flex items-center justify-between">
@@ -291,13 +278,11 @@ export function HyperliquidInternalScoreboardPage() {
                 ))}
               </div>
 
-              {/* Right: gauge */}
               <div className="flex shrink-0 items-center justify-center border-t border-border px-6 py-6 sm:px-8 lg:border-l lg:border-t-0 lg:py-0">
                 <WinGauge value={data.dz_win_share_pct} />
               </div>
             </div>
 
-            {/* Per-vantage table */}
             <div className="mb-6 overflow-hidden rounded-lg border border-border bg-card">
               <div className="overflow-x-auto">
                 <table className="min-w-full">
@@ -373,7 +358,6 @@ export function HyperliquidInternalScoreboardPage() {
               </div>
             </div>
 
-            {/* Recent races — per-symbol grid, split into native perps and HIP-3 DEX perps */}
             {RECENT_SECTIONS.map((section) => (
               <div key={section.title} className="mb-6 overflow-hidden rounded-lg border border-border bg-card">
                 <div className="border-b border-border px-4 py-3 text-sm font-medium text-muted-foreground">
