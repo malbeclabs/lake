@@ -445,12 +445,18 @@ export function HyperliquidScoreboardPage() {
     return () => { active = false; clearInterval(poll); clearInterval(tick) }
   }, [load])
 
+  // Twice the worker's 15m refresh interval. Past it the payload is not late, something is
+  // wrong with the refresh, and a live-green pulse beside a four-hour-old win rate reads as
+  // a current measurement.
+  const STALE_AFTER_SECS = 30 * 60
+
   const freshness = useMemo(() => {
     if (!data?.as_of) return null
     const age = Math.round((now - new Date(data.as_of).getTime()) / 1000)
-    if (age < 5) return 'just now'
-    if (age < 60) return `${age}s ago`
-    return `${Math.round(age / 60)}m ago`
+    const stale = age >= STALE_AFTER_SECS
+    if (age < 5) return { text: 'just now', stale }
+    if (age < 60) return { text: `${age}s ago`, stale }
+    return { text: `${Math.round(age / 60)}m ago`, stale }
   }, [data?.as_of, now])
 
   return (
@@ -465,8 +471,14 @@ export function HyperliquidScoreboardPage() {
               {freshness && (
                 <>
                   <span>·</span>
-                  <span className="hl-pulse inline-block h-1.5 w-1.5 rounded-full" style={{ background: DZ_COLOR }} />
-                  <span>updated {freshness}</span>
+                  <span
+                    className={`inline-block h-1.5 w-1.5 rounded-full ${freshness.stale ? 'bg-amber-500' : 'hl-pulse'}`}
+                    style={freshness.stale ? undefined : { background: DZ_COLOR }}
+                  />
+                  <span className={freshness.stale ? 'text-amber-600 dark:text-amber-400' : undefined}>
+                    updated {freshness.text}
+                    {freshness.stale ? ' — refresh is behind' : ''}
+                  </span>
                 </>
               )}
             </span>

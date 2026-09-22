@@ -100,8 +100,10 @@ var hyperliquidMarketGroups = []hyperliquidMarketGroup{
 
 const hyperliquidScoreboardWindowHours = 24
 
-// HyperliquidScoreboardCacheKey is the page-cache key for the scoreboard.
-const HyperliquidScoreboardCacheKey = "hyperliquid_scoreboard"
+// Deliberately not "hyperliquid_scoreboard", which the internal board used for its 1h view
+// before this split. Cached bytes are served without unmarshalling, so reusing the name would
+// hand this page the old board's shape until the first refresh overwrote it.
+const HyperliquidScoreboardCacheKey = "hyperliquid_public_scoreboard"
 
 // HyperliquidScoreboardStat is one measured cell. Margins are signed, so a cell whose win
 // rate is below 50% reports a negative median.
