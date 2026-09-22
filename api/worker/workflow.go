@@ -464,9 +464,6 @@ func (a *Activities) entries() []cacheEntry {
 		{name: "hyperliquid internal scoreboard", key: "hyperliquid_internal_scoreboard", fn: func(ctx context.Context) (any, error) {
 			return api.FetchHyperliquidInternalScoreboardData(ctx, "1h", "")
 		}},
-		{name: "hyperliquid scoreboard", key: handlers.HyperliquidScoreboardCacheKey, every: hyperliquidScoreboardInterval, fn: func(ctx context.Context) (any, error) {
-			return api.FetchHyperliquidScoreboardData(ctx)
-		}},
 		{name: "kalshi scoreboard", key: "kalshi_scoreboard", fn: func(ctx context.Context) (any, error) {
 			return api.FetchKalshiScoreboardData(ctx, "1h", "")
 		}},
@@ -740,6 +737,15 @@ func (a *Activities) heavyEntries() []cacheEntry {
 				return nil, err
 			}
 			return resp, nil
+		}},
+		// Here rather than in the slow batch because it cannot finish inside
+		// defaultRefreshTimeout: the handler's own live path budgets 90s for this scan, so the
+		// batch's 60s ceiling cut every refresh short. A failed refresh writes nothing and
+		// leaves the previous blob serving, so the entry read as merely stale for hours while
+		// never once succeeding — and the page went on asserting a win rate computed by code
+		// that was no longer deployed.
+		{name: "hyperliquid scoreboard", key: handlers.HyperliquidScoreboardCacheKey, every: hyperliquidScoreboardInterval, timeout: nhHeavyRefreshTimeout, fn: func(ctx context.Context) (any, error) {
+			return api.FetchHyperliquidScoreboardData(ctx)
 		}},
 		{name: "network health deferred", key: handlers.NetworkHealthDeferredCacheKey, dayAligned: true, every: networkHealthHistoryInterval, timeout: nhHeavyRefreshTimeout, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()

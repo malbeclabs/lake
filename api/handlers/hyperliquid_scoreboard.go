@@ -173,16 +173,19 @@ func hyperliquidScoreboardSymbols() string {
 	return strings.Join(quoted, ", ")
 }
 
-// hyperliquidCompetitorArrivals builds the per-competitor arrival/presence projections and
-// the ARRAY JOIN tuple list that unpivots them into one row per (state, competitor).
+// hyperliquidCompetitorArrivals builds the per-competitor arrival projections and the
+// ARRAY JOIN tuple list that unpivots them into one row per (emission, competitor).
+//
+// Presence is read off the arrival rather than a companion countIf: the window predicate
+// excludes recv_ts_ns below the 24h mark, so a real arrival is never 0 and minIf's 0 means
+// nothing matched. That halves the per-group aggregate state, which is the whole cost here —
+// the grouping is per emission and runs to ~90M groups over the window.
 func hyperliquidCompetitorArrivals() (projection, arrayJoin string) {
 	proj := make([]string, 0, len(hyperliquidCompetitors))
 	tuples := make([]string, 0, len(hyperliquidCompetitors))
 	for i, c := range hyperliquidCompetitors {
-		proj = append(proj, fmt.Sprintf(
-			"minIf(recv_ts_ns, source = '%[1]s') AS t%[2]d, countIf(source = '%[1]s') AS n%[2]d",
-			c.Feed, i))
-		tuples = append(tuples, fmt.Sprintf("('%s', n%d, t%d)", c.Feed, i, i))
+		proj = append(proj, fmt.Sprintf("minIf(recv_ts_ns, source = '%[1]s') AS t%[2]d", c.Feed, i))
+		tuples = append(tuples, fmt.Sprintf("('%s', t%d)", c.Feed, i))
 	}
 	return strings.Join(proj, ",\n            "), strings.Join(tuples, ",\n                        ")
 }
@@ -300,7 +303,6 @@ func (a *API) fetchHyperliquidScoreboardMatrix(ctx context.Context) (map[hyperli
 		    SELECT
 		        location_code, symbol, source_ts_ms, bbo_hash,
 		        minIf(recv_ts_ns, %[2]s) AS dz,
-		        countIf(%[2]s)           AS n_dz,
 		        %[3]s
 		    FROM %[1]s.hyperliquid_bbo_observations
 		    WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalHour(%[5]d)))
@@ -309,10 +311,10 @@ func (a *API) fetchHyperliquidScoreboardMatrix(ctx context.Context) (map[hyperli
 		),
 		sv AS (
 		    SELECT location_code, c.1 AS feed,
-		           (toInt64(c.3) - toInt64(dz)) / 1e6 AS signed_ms
+		           (toInt64(c.2) - toInt64(dz)) / 1e6 AS signed_ms
 		    FROM agg
 		    ARRAY JOIN [%[6]s] AS c
-		    WHERE c.2 > 0 AND n_dz > 0
+		    WHERE c.2 > 0 AND dz > 0
 		)
 		SELECT
 		    location_code, feed,
@@ -369,7 +371,6 @@ func (a *API) fetchHyperliquidScoreboardMarkets(ctx context.Context) (map[string
 		    SELECT
 		        location_code, symbol, source_ts_ms, bbo_hash,
 		        minIf(recv_ts_ns, %[2]s) AS dz,
-		        countIf(%[2]s)           AS n_dz,
 		        %[3]s
 		    FROM %[1]s.hyperliquid_bbo_observations
 		    WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalHour(%[5]d)))
@@ -378,10 +379,10 @@ func (a *API) fetchHyperliquidScoreboardMarkets(ctx context.Context) (map[string
 		),
 		sv AS (
 		    SELECT multiIf(%[7]s, '') AS cat,
-		           (toInt64(c.3) - toInt64(dz)) / 1e6 AS signed_ms
+		           (toInt64(c.2) - toInt64(dz)) / 1e6 AS signed_ms
 		    FROM agg
 		    ARRAY JOIN [%[6]s] AS c
-		    WHERE c.2 > 0 AND n_dz > 0
+		    WHERE c.2 > 0 AND dz > 0
 		)
 		SELECT
 		    cat,

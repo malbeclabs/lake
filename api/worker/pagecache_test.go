@@ -526,6 +526,12 @@ func TestNetworkHealthEntriesRegistered(t *testing.T) {
 // The Kalshi completeness scan is here for a different reason — it reads
 // day-partitions of a level-grain table, so it cannot fit the batch's 60s
 // per-entry ceiling either.
+//
+// The Hyperliquid scoreboard is here for the same reason and arrived by the worse
+// route: it shipped in the slow batch, could not finish in 60s, and so failed every
+// refresh from the day it landed. Because a failed refresh writes nothing and leaves
+// the previous blob serving, nothing looked broken — the entry read as stale while
+// never once succeeding.
 func TestHeavyEntriesRegistered(t *testing.T) {
 	a := &Activities{}
 
@@ -533,10 +539,11 @@ func TestHeavyEntriesRegistered(t *testing.T) {
 	for _, e := range a.heavyEntries() {
 		heavyKeys[e.key] = true
 	}
-	require.Len(t, heavyKeys, 3)
+	require.Len(t, heavyKeys, 4)
 	require.True(t, heavyKeys[handlers.NetworkHealthImpactfulCacheKey])
 	require.True(t, heavyKeys[handlers.NetworkHealthDeferredCacheKey])
 	require.True(t, heavyKeys[handlers.KalshiL2CompletenessCacheKey])
+	require.True(t, heavyKeys[handlers.HyperliquidScoreboardCacheKey])
 
 	for _, e := range a.entries() {
 		require.False(t, heavyKeys[e.key], "heavy entry %q must not also run in the slow batch", e.key)
