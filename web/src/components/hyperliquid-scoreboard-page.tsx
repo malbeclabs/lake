@@ -2,11 +2,7 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, use
 import type { CSSProperties } from 'react'
 import { Trophy } from 'lucide-react'
 import { PageHeader } from './page-header'
-import {
-  fetchHyperliquidScoreboard,
-  type HyperliquidScoreboardCategory,
-  type HyperliquidScoreboardResponse,
-} from '@/lib/api'
+import { fetchHyperliquidScoreboard, type HyperliquidScoreboardResponse } from '@/lib/api'
 
 // The public Hyperliquid scoreboard. Margins are signed — positive means DoubleZero
 // delivered the book first — so a cell below 50% win rate reports a negative median.
@@ -292,77 +288,12 @@ function FeedMatrix({ data }: { data: HyperliquidScoreboardResponse }) {
   )
 }
 
-// The margin spans tens of ms to seconds, so a linear axis would stack the median and the
-// 95th on the same pixel. The axis is log.
-const RNG_LO = 10
-const RNG_HI = 20000
-const RNG_L = Math.log10(RNG_LO)
-const RNG_SPAN = Math.log10(RNG_HI) - RNG_L
-const RNG_TICKS: [number, string][] = [
-  [10, '10 ms'],
-  [100, '100 ms'],
-  [1000, '1 s'],
-  [10000, '10 s'],
-]
-function lpos(v: number): number {
-  return ((Math.log10(Math.min(RNG_HI, Math.max(RNG_LO, v))) - RNG_L) / RNG_SPAN) * 100
-}
-
-function MarketRange({ cat, grown }: { cat: HyperliquidScoreboardCategory; grown: boolean }) {
-  const a = lpos(cat.p50_ms)
-  const b = lpos(cat.p95_ms)
-  const e = lpos(cat.p99_ms)
-  return (
-    <div className="hl-rng">
-      <div className="hl-axis" />
-      {RNG_TICKS.map(([t]) => (
-        <span key={t} className="hl-grid" style={{ left: `${lpos(t).toFixed(1)}%` }} />
-      ))}
-      <span
-        className="hl-seg hl-s95"
-        data-grown={grown ? '1' : '0'}
-        style={{ left: `${a.toFixed(1)}%`, width: `${(b - a).toFixed(1)}%` }}
-      />
-      <span
-        className="hl-seg hl-s99"
-        data-grown={grown ? '1' : '0'}
-        style={{ left: `${b.toFixed(1)}%`, width: `${(e - b).toFixed(1)}%`, transitionDelay: '140ms' }}
-      />
-      <span className="hl-cap" style={{ left: `${b.toFixed(1)}%` }} />
-      <span className="hl-cap" style={{ left: `${e.toFixed(1)}%` }} />
-      <span
-        className="hl-med"
-        style={{ left: `${a.toFixed(1)}%` }}
-        title={`half of all races finish at least ${ms(cat.p50_ms)} ahead`}
-      />
-      <span className="hl-lab hl-l0" style={{ left: `${a.toFixed(1)}%` }}>
-        typically <b>{ms(cat.p50_ms)}</b>
-      </span>
-      <span className="hl-lab" style={{ left: `${b.toFixed(1)}%` }}>
-        95th <b>{ms(cat.p95_ms)}</b>
-      </span>
-      <span className="hl-lab" style={{ left: `${e.toFixed(1)}%` }}>
-        99th <b>{ms(cat.p99_ms)}</b>
-      </span>
-    </div>
-  )
-}
-
 function MarketTable({ data }: { data: HyperliquidScoreboardResponse }) {
-  const [grown, setGrown] = useState(false)
-  useEffect(() => {
-    setGrown(false)
-    const id = requestAnimationFrame(() => setGrown(true))
-    return () => cancelAnimationFrame(id)
-  }, [data.markets])
-
   return (
     <div className="mb-4 overflow-hidden rounded-lg border border-border bg-card">
       <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border px-4 py-3">
         <span className="text-sm font-medium text-muted-foreground">By market</span>
-        <span className="text-xs text-muted-foreground">
-          Each bar runs from the typical lead out to the widest 1%. Longer is better.
-        </span>
+        <span className="text-xs text-muted-foreground">How far ahead DoubleZero finished</span>
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-full">
@@ -372,20 +303,9 @@ function MarketTable({ data }: { data: HyperliquidScoreboardResponse }) {
               <th className="whitespace-nowrap px-4 py-3 text-right font-medium" style={{ width: 150 }}>
                 DoubleZero first
               </th>
-              <th className="px-4 py-3 font-medium" style={{ width: '46%' }}>
-                How far ahead DoubleZero finished
-                <div className="relative mt-1 h-4 font-normal">
-                  {RNG_TICKS.map(([t, lab], k) => (
-                    <span
-                      key={t}
-                      className="absolute top-0 whitespace-nowrap font-mono text-[10px] tabular-nums text-muted-foreground"
-                      style={{ left: `${lpos(t).toFixed(1)}%`, transform: `translateX(${k === 0 ? '0' : '-50%'})` }}
-                    >
-                      {lab}
-                    </span>
-                  ))}
-                </div>
-              </th>
+              <th className="whitespace-nowrap px-4 py-3 text-right font-medium">Median</th>
+              <th className="whitespace-nowrap px-4 py-3 text-right font-medium">95th</th>
+              <th className="whitespace-nowrap px-4 py-3 text-right font-medium">99th</th>
             </tr>
           </thead>
           <tbody>
@@ -393,7 +313,7 @@ function MarketTable({ data }: { data: HyperliquidScoreboardResponse }) {
               <Fragment key={m.name}>
                 <tr className="hl-grouprow border-b border-border">
                   <td className="px-4 py-2 text-sm font-medium">{m.name}</td>
-                  <td colSpan={2} className="px-4 py-2 text-right font-mono text-xs tabular-nums text-muted-foreground">
+                  <td colSpan={4} className="px-4 py-2 text-right font-mono text-xs tabular-nums text-muted-foreground">
                     {m.carried} instruments carried
                   </td>
                 </tr>
@@ -414,8 +334,14 @@ function MarketTable({ data }: { data: HyperliquidScoreboardResponse }) {
                           {Math.abs(delta).toFixed(1)} pt
                         </div>
                       </td>
-                      <td className="px-4 py-3" style={{ width: '46%' }}>
-                        <MarketRange cat={c} grown={grown} />
+                      <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-sm tabular-nums">
+                        {ms(c.p50_ms)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-sm tabular-nums text-muted-foreground">
+                        {ms(c.p95_ms)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-sm tabular-nums text-muted-foreground">
+                        {ms(c.p99_ms)}
                       </td>
                     </tr>
                   )
