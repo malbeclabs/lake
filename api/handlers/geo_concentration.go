@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"net/http"
 	"sort"
@@ -65,7 +66,10 @@ func (a *API) GetGeoConcentration(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("X-Cache", "MISS")
 
-	resp, err := a.FetchGeoConcentrationData(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	resp, err := a.FetchGeoConcentrationData(ctx)
 	if err != nil {
 		logError("geo concentration query error", "error", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
@@ -78,12 +82,14 @@ func (a *API) GetGeoConcentration(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// FetchGeoConcentrationData serves both GetGeoConcentration and the page-cache
+// worker, so it takes the caller's deadline rather than clamping one of its own:
+// the worker's per-entry budget is larger than the request path's.
 func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationResponse, error) {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-
 	dzdpDB := fmt.Sprintf("`%s`", a.DZDPDB)
 
+	// Fetch enriched validators with lat/lng — nearest-metro assignment is done in Go
+	// to avoid a CROSS JOIN + geoDistance + arraySort in ClickHouse.
 	query := fmt.Sprintf(`
 		WITH geolocated AS (
 			SELECT
@@ -108,65 +114,32 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 			) AS ls
 			JOIN solana_gossip_nodes_current gn ON ls.target_ip = gn.gossip_ip
 			WHERE ls.state = 'honed'
-		),
-		enriched AS (
-			SELECT
-				gv.target_ip AS target_ip,
-				gv.dzdp_lat AS dzdp_lat,
-				gv.dzdp_lng AS dzdp_lng,
-				va.vote_pubkey AS vote_pubkey,
-				va.activated_stake_lamports / 1e9 AS stake_sol,
-				coalesce(geo.asn, 0) AS asn,
-				coalesce(geo.asn_org, '') AS asn_org,
-				coalesce(geo.country_code, '') AS country_code,
-				coalesce(geo.country, '') AS country_name
-			FROM geolocated gv
-			JOIN solana_vote_accounts_current va ON gv.node_pubkey = va.node_pubkey
-			LEFT JOIN geoip_records_current geo ON gv.target_ip = geo.ip
-			WHERE va.epoch_vote_account = 'true' AND va.activated_stake_lamports > 0
-		),
-		nearest_metro AS (
-			SELECT
-				e.vote_pubkey AS vote_pubkey,
-				e.stake_sol AS stake_sol,
-				e.asn AS asn,
-				e.asn_org AS asn_org,
-				e.country_code AS country_code,
-				e.country_name AS country_name,
-				arrayElement(
-					arraySort(
-						(x, y) -> y,
-						groupArray(m.code),
-						groupArray(geoDistance(e.dzdp_lng, e.dzdp_lat, m.longitude, m.latitude))
-					), 1
-				) AS metro_code
-			FROM enriched e
-			CROSS JOIN dz_metros_current m
-			GROUP BY vote_pubkey, stake_sol, asn, asn_org, country_code, country_name
-		),
-		deduped AS (
-			SELECT
-				vote_pubkey,
-				max(stake_sol) AS max_stake,
-				argMax(metro_code, stake_sol) AS metro_code,
-				argMax(asn, stake_sol) AS asn,
-				argMax(asn_org, stake_sol) AS asn_org,
-				argMax(country_code, stake_sol) AS country_code,
-				argMax(country_name, stake_sol) AS country_name
-			FROM nearest_metro
-			GROUP BY vote_pubkey
 		)
-		SELECT vote_pubkey, max_stake AS stake_sol, metro_code, asn, asn_org, country_code, country_name
-		FROM deduped
+		SELECT
+			va.vote_pubkey,
+			va.activated_stake_lamports / 1e9 AS stake_sol,
+			gv.dzdp_lat,
+			gv.dzdp_lng,
+			coalesce(geo.asn, 0) AS asn,
+			coalesce(geo.asn_org, '') AS asn_org,
+			coalesce(geo.country_code, '') AS country_code,
+			coalesce(geo.country, '') AS country_name
+		FROM geolocated gv
+		JOIN solana_vote_accounts_current va ON gv.node_pubkey = va.node_pubkey
+		LEFT JOIN geoip_records_current geo ON gv.target_ip = geo.ip
+		WHERE va.epoch_vote_account = 'true' AND va.activated_stake_lamports > 0
 	`, dzdpDB)
 
 	start := time.Now()
 	rows, err := a.DB.Query(ctx, query)
 	metrics.RecordClickHouseQuery("geo_concentration", time.Since(start), err)
 	if err != nil {
-		// Return empty response when DZDP tables aren't available or accessible
+		// Return empty response when DZDP tables aren't available or accessible.
+		// Code 60 = UNKNOWN_TABLE, Code 81 = UNKNOWN_DATABASE, Code 497 = NOT_ENOUGH_PRIVILEGES.
 		var chErr *proto.Exception
-		if errors.As(err, &chErr) && (chErr.Code == 60 || chErr.Code == 497) {
+		if errors.As(err, &chErr) && (chErr.Code == 60 || chErr.Code == 81 || chErr.Code == 497) {
+			slog.Warn("geo concentration: DZDP tables not available, returning empty response",
+				"dzdp_db", dzdpDB, "ch_error_code", chErr.Code, "error", err)
 			return &GeoConcentrationResponse{
 				Metros:    []GeoConcentrationMetro{},
 				Countries: []GeoConcentrationCountry{},
@@ -176,7 +149,42 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 		return nil, err
 	}
 
-	// Collect per-validator rows and aggregate in Go
+	type enrichedRow struct {
+		votePubkey  string
+		stakeSol    float64
+		lat, lng    float64
+		asn         int64
+		asnOrg      string
+		countryCode string
+		countryName string
+	}
+
+	var enriched []enrichedRow
+	for rows.Next() {
+		var r enrichedRow
+		if err := rows.Scan(&r.votePubkey, &r.stakeSol, &r.lat, &r.lng, &r.asn, &r.asnOrg, &r.countryCode, &r.countryName); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		enriched = append(enriched, r)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	// Skipped when nothing was geolocated: there is no validator to place, and an
+	// environment with no honed locations yet would otherwise fail errNoMetros on
+	// a metros table it never needed to read.
+	var metrosList []metroCoord
+	if len(enriched) > 0 {
+		metrosList, err = fetchMetroCoords(ctx, a.DB)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	type validatorRow struct {
 		votePubkey  string
 		stakeSol    float64
@@ -187,20 +195,25 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 		countryName string
 	}
 
-	var validators []validatorRow
-	for rows.Next() {
-		var v validatorRow
-		if err := rows.Scan(&v.votePubkey, &v.stakeSol, &v.metroCode, &v.asn, &v.asnOrg, &v.countryCode, &v.countryName); err != nil {
-			rows.Close()
-			return nil, err
+	deduped := make(map[string]validatorRow)
+	for _, e := range enriched {
+		if prev, ok := deduped[e.votePubkey]; !ok || e.stakeSol > prev.stakeSol {
+			deduped[e.votePubkey] = validatorRow{
+				votePubkey:  e.votePubkey,
+				stakeSol:    e.stakeSol,
+				metroCode:   nearestMetro(e.lat, e.lng, metrosList),
+				asn:         e.asn,
+				asnOrg:      e.asnOrg,
+				countryCode: e.countryCode,
+				countryName: e.countryName,
+			}
 		}
+	}
+
+	validators := make([]validatorRow, 0, len(deduped))
+	for _, v := range deduped {
 		validators = append(validators, v)
 	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, err
-	}
-	rows.Close()
 
 	// Compute total stake
 	var totalStake float64
@@ -281,18 +294,6 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 		stakeTopTwo += metros[i].StakePct
 	}
 
-	// Count anchor points (distinct DZ metros)
-	var anchorPoints uint64
-	anchorRows, err := a.DB.Query(ctx, "SELECT count() FROM dz_metros_current")
-	if err != nil {
-		logError("geo concentration anchor points query error", "error", err)
-	} else {
-		if anchorRows.Next() {
-			_ = anchorRows.Scan(&anchorPoints)
-		}
-		anchorRows.Close()
-	}
-
 	var maxASNPct float64
 	if len(asns) > 0 {
 		maxASNPct = asns[0].StakePct
@@ -316,7 +317,7 @@ func (a *API) FetchGeoConcentrationData(ctx context.Context) (*GeoConcentrationR
 		HeroStats: GeoConcentrationHeroStats{
 			ValidatorsMeasured:   len(validators),
 			StakeTopTwoMetrosPct: stakeTopTwo,
-			AnchorPoints:         int(anchorPoints),
+			AnchorPoints:         len(metrosList),
 			StakeMaxASNPct:       maxASNPct,
 		},
 		Metros:    metros,
