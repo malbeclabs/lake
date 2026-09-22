@@ -24,6 +24,10 @@ const METRICS = [
 
 type MetricKey = (typeof METRICS)[number]['key']
 
+// Twice the worker's 15m refresh interval: past it the payload is not late, the refresh is
+// broken, and a live-green pulse beside an hours-old win rate reads as a current measurement.
+const STALE_AFTER_SECS = 30 * 60
+
 function pct(v: number): string {
   return `${v.toFixed(1)}%`
 }
@@ -142,8 +146,9 @@ function ArrivalChart({ data }: { data: HyperliquidScoreboardResponse }) {
   )
 }
 
-// The fill is scaled to the widest site in its own row, never across the table: the margin
-// metrics span 12 ms to 36 s, so one shared scale would flatten every row but one.
+// The fill is scaled within its own column, so a cell compares against the other feeds at that
+// site. One scale across the whole table would flatten everything but the slowest feed — the
+// margin metrics span 12 ms to 36 s.
 function MatrixCell({
   value, max, metric, who, where, highlighted, onHover,
 }: {
@@ -171,7 +176,7 @@ function FeedMatrix({ data }: { data: HyperliquidScoreboardResponse }) {
   // Whatever the API measured, not a fixed three. data.sites and each feed's sites come from
   // one server-side list, so the positional index below stays aligned.
   const siteCols = data.sites.map((s) => s.label)
-  const [metric, setMetric] = useState<MetricKey>('p50_ms')
+  const [metric, setMetric] = useState<MetricKey>('win_pct')
   const [pill, setPill] = useState({ left: 0, width: 0 })
   const tabsRef = useRef<HTMLDivElement>(null)
 
@@ -182,6 +187,11 @@ function FeedMatrix({ data }: { data: HyperliquidScoreboardResponse }) {
 
   const [hoverCol, setHoverCol] = useState<string | null>(null)
   const colCls = (c: string) => (hoverCol === c ? 'hl-hl' : '')
+
+  const colMax = useMemo(
+    () => data.sites.map((_, k) => Math.max(0, ...data.feeds.map((f) => f.sites[k]?.[metric] ?? 0))),
+    [data.feeds, data.sites, metric],
+  )
 
   return (
     <div className="mb-4 overflow-hidden rounded-lg border border-border bg-card">
@@ -221,10 +231,11 @@ function FeedMatrix({ data }: { data: HyperliquidScoreboardResponse }) {
         <span className="hl-tabpill" aria-hidden="true" style={{ left: pill.left, width: pill.width }} />
       </div>
       <div className="overflow-x-auto">
-        <table className="min-w-full" onMouseLeave={() => setHoverCol(null)}>
+        <table className="w-full min-w-[720px] table-fixed" onMouseLeave={() => setHoverCol(null)}>
           <thead>
             <tr className="border-b border-border text-left text-sm text-muted-foreground">
-              <th className="whitespace-nowrap px-4 py-3 font-medium">Feed</th>
+              {/* Only the label column is sized; table-fixed splits the rest evenly. */}
+              <th className="whitespace-nowrap px-4 py-3 font-medium" style={{ width: '20%' }}>Feed</th>
               {siteCols.map((c) => (
                 <th key={c} className={`whitespace-nowrap px-4 py-3 text-right font-medium ${colCls(c)}`}>
                   {c}
@@ -234,35 +245,31 @@ function FeedMatrix({ data }: { data: HyperliquidScoreboardResponse }) {
             </tr>
           </thead>
           <tbody>
-            {data.feeds.map((f) => {
-              const vals = f.sites.map((s) => s[metric])
-              const max = metric === 'win_pct' ? 100 : Math.max(...vals)
-              return (
-                <tr key={f.label} className="hl-rowhover border-b border-border transition-colors">
-                  <td className="px-4 py-3">
-                    <span className="flex items-center gap-2 whitespace-nowrap text-sm font-medium">
-                      <span className="inline-block h-2.5 w-2.5 shrink-0" style={{ background: FIELD_COLOR }} />
-                      {f.label}
-                    </span>
-                  </td>
-                  {f.sites.map((s, k) => (
-                    <MatrixCell
-                      key={s.code}
-                      value={s[metric]}
-                      max={max}
-                      metric={metric}
-                      who={f.label}
-                      where={siteCols[k]}
-                      highlighted={hoverCol === siteCols[k]}
-                      onHover={setHoverCol}
-                    />
-                  ))}
-                  <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-sm tabular-nums text-muted-foreground">
-                    {showMetric(metric, f[metric])}
-                  </td>
-                </tr>
-              )
-            })}
+            {data.feeds.map((f) => (
+              <tr key={f.label} className="hl-rowhover border-b border-border transition-colors">
+                <td className="px-4 py-3">
+                  <span className="flex items-center gap-2 whitespace-nowrap text-sm font-medium">
+                    <span className="inline-block h-2.5 w-2.5 shrink-0" style={{ background: FIELD_COLOR }} />
+                    {f.label}
+                  </span>
+                </td>
+                {f.sites.map((s, k) => (
+                  <MatrixCell
+                    key={s.code}
+                    value={s[metric]}
+                    max={colMax[k]}
+                    metric={metric}
+                    who={f.label}
+                    where={siteCols[k]}
+                    highlighted={hoverCol === siteCols[k]}
+                    onHover={setHoverCol}
+                  />
+                ))}
+                <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-sm tabular-nums text-muted-foreground">
+                  {showMetric(metric, f[metric])}
+                </td>
+              </tr>
+            ))}
             <tr className="hl-grouprow">
               <td className="px-4 py-3 text-sm font-medium">All feeds</td>
               {data.sites.map((s, k) => (
@@ -445,11 +452,6 @@ export function HyperliquidScoreboardPage() {
     return () => { active = false; clearInterval(poll); clearInterval(tick) }
   }, [load])
 
-  // Twice the worker's 15m refresh interval. Past it the payload is not late, something is
-  // wrong with the refresh, and a live-green pulse beside a four-hour-old win rate reads as
-  // a current measurement.
-  const STALE_AFTER_SECS = 30 * 60
-
   const freshness = useMemo(() => {
     if (!data?.as_of) return null
     const age = Math.round((now - new Date(data.as_of).getTime()) / 1000)
@@ -547,21 +549,6 @@ export function HyperliquidScoreboardPage() {
             <FeedMatrix data={data} />
 
             <MarketTable data={data} />
-
-            <div className="space-y-1 border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground">
-              <p>
-                Every feed is scored on the same message: updates are keyed by payload hash, and each feed's
-                arrival is the first time that exact book state reached the recording site. Margin is how far
-                ahead DoubleZero finished — bigger is better — and it is signed, so a race we lose counts
-                against the percentiles rather than being dropped from them. Provider names and individual
-                contracts are withheld.
-              </p>
-              <p className="opacity-60">
-                DoubleZero's arrival is the earliest of its publishers at that site. A publisher that has since
-                been retired is excluded from every figure here, along with the updates no other DoubleZero
-                publisher saw.
-              </p>
-            </div>
           </>
         )}
       </div>
