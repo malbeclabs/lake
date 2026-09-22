@@ -45,7 +45,7 @@ const (
 	NetworkHealthOverviewCacheKey     = "network_health_overview_30d_v2"
 	NetworkHealthAvailabilityCacheKey = "network_health_availability_30d_v1"
 	NetworkHealthLatencyCacheKey      = "network_health_latency_30d_v1"
-	NetworkHealthCapacityCacheKey     = "network_health_capacity_30d_v1"
+	NetworkHealthCapacityCacheKey     = "network_health_capacity_30d_v2"
 	NetworkHealthOutagesCacheKey      = "network_health_outages_30d_v1"
 	NetworkHealthDrainCacheKey        = "network_health_drain_30d_v2"
 	NetworkHealthTicketsCacheKey      = "network_health_tickets_30d_v2"
@@ -3132,10 +3132,12 @@ func (a *API) fetchLatencyLinks(ctx context.Context, start, end time.Time, contr
 // fetchFullestLinks ranks links by how full they are against their
 // provisioned bandwidth (l.bandwidth_bps > 0 only). A single dedup pass over device_interface_rollup_5m
 // (argMax by ingested_at, per link_pk+bucket_ts+link_side) feeds two views of
-// the same data: `peak` is the legacy combined-directions peak (summed across
-// sides per bucket, then maxed over the window) driving PeakGbps/UtilPct;
-// `util` is the P50/P99-vs-bandwidth pair from the redesign spec (avg/quantile
-// per side over the window, then maxed across sides — the busier direction).
+// the same data: `peak` is the busiest single direction in any bucket, driving
+// PeakGbps/UtilPct; `util` is the P50/P99-vs-bandwidth pair from the redesign
+// spec (avg/quantile per side over the window, then maxed across sides).
+// Both read the busier direction instead of summing the A and Z sides. The two
+// directions of a full-duplex link do not share bandwidth_bps, so summing them
+// reports over 100% while neither direction is full.
 func (a *API) fetchFullestLinks(ctx context.Context, start, end time.Time, contrib string) ([]NHCapacityLink, error) {
 	cf, args := "", []any{start, end}
 	if contrib != "" {
@@ -3151,9 +3153,7 @@ func (a *API) fetchFullestLinks(ctx context.Context, start, end time.Time, contr
 			GROUP BY link_pk, bucket_ts, link_side
 		),
 		peak AS (
-			SELECT link_pk, max(bps) AS peak_bps FROM (
-				SELECT link_pk, bucket_ts, sum(p99bps) AS bps FROM dedup GROUP BY link_pk, bucket_ts
-			) GROUP BY link_pk
+			SELECT link_pk, max(p99bps) AS peak_bps FROM dedup GROUP BY link_pk
 		),
 		util AS (
 			SELECT link_pk, max(p50bps) AS p50bps, max(p99bps) AS p99bps FROM (

@@ -113,7 +113,7 @@ const DEFS = {
     'Minutes from when a drained link came back healthy to when it was actually returned to service. Long times mean healthy capacity sat out of service.',
   drainWithin30m: 'Share of link failures where the link was drained within 30 minutes of failing.',
   capacityLinks:
-    'Links closest to their provisioned bandwidth: typical (P50) and peak (P99) throughput as a share of link capacity, side by side. P99 (not raw 5-minute max) so a single outlier bucket does not overstate utilization. A capacity-planning signal for which links to upgrade first.',
+    'Links closest to their provisioned bandwidth: typical (P50), P99 and peak throughput as a share of link capacity, side by side. Each bar is the busier of the two directions, not the two added together, because a full-duplex link carries its provisioned bandwidth in each direction. P99 (not raw 5-minute max) so a single outlier bucket does not overstate utilization. A capacity-planning signal for which links to upgrade first.',
   durationHist:
     'The distribution of individual failure lengths, from brief flaps to sustained multi-hour events. This includes every episode, even brief flaps under 5 minutes, so it shows more episodes than the headline link-failure count, which counts only sustained failures of 10 minutes or more. Where "Most failure time" totals hours per link or device, this counts failures by how long each one lasted.',
   degraded: 'Links that stayed up but saw more than 1% packet loss at some point in the window.',
@@ -1570,7 +1570,7 @@ function CapacityPanel({ rows }: { rows: NetworkHealthCapacityLink[] }) {
     <section className="rounded-lg border border-border p-4">
       <SectionTitle title="Fullest links (capacity planning)" info={DEFS.capacityLinks} />
       <p className="text-xs text-muted-foreground mb-3">
-        P50 (typical), P99, and peak utilization of provisioned bandwidth. Dashed line = 100%. Port-channel subinterface links are not measured yet.
+        P50 (typical), P99, and peak utilization of provisioned bandwidth, in the busier direction. Dashed line = 100%. Port-channel subinterface links are not measured yet.
       </p>
       <GroupedBarChart
         rows={data}
