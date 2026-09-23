@@ -549,6 +549,12 @@ func TestHeavyEntriesRegistered(t *testing.T) {
 	for _, e := range a.entries() {
 		require.False(t, heavyKeys[e.key], "heavy entry %q must not also run in the slow batch", e.key)
 	}
+
+	// Each heavy entry takes a worker from the slow batch, and nothing else states the cost.
+	// At the default concurrency of 8, four heavy entries leave the batch 4 workers; a fifth
+	// would quietly take another.
+	require.Equal(t, 4, (&Activities{}).batchConcurrency(),
+		"adding a heavy entry narrows the slow batch — say so here and in the entry's comment")
 }
 
 // TestEntryTimeoutsFitTheirActivityBudget is the guard that makes the original

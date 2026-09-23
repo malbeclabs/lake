@@ -742,6 +742,11 @@ func (a *Activities) heavyEntries() []cacheEntry {
 			}
 			return resp, nil
 		}},
+		// 15.8s on the production cluster; it is here for the environments where feeds is a
+		// remoteSecure() proxy, which no budget rescues. Being the fourth heavy entry costs the
+		// slow batch a worker — batchConcurrency() is RefreshConcurrency - len(heavyEntries()),
+		// so 5 becomes 4 — and lets RefreshHeavyCaches hold four scans at once, since it bounds
+		// none of them. TestHeavyEntriesRegistered pins the batch width that results.
 		{name: "hyperliquid scoreboard", key: handlers.HyperliquidScoreboardCacheKey, dayAligned: true, every: hyperliquidScoreboardInterval, timeout: nhHeavyRefreshTimeout, fn: func(ctx context.Context) (any, error) {
 			return api.FetchHyperliquidScoreboardData(ctx)
 		}},
