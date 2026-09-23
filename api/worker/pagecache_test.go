@@ -540,11 +540,11 @@ func TestHeavyEntriesRegistered(t *testing.T) {
 	for _, e := range a.heavyEntries() {
 		heavyKeys[e.key] = true
 	}
-	require.Len(t, heavyKeys, 3)
+	require.Len(t, heavyKeys, 4)
 	require.True(t, heavyKeys[handlers.NetworkHealthImpactfulCacheKey])
 	require.True(t, heavyKeys[handlers.NetworkHealthDeferredCacheKey])
 	require.True(t, heavyKeys[handlers.KalshiL2CompletenessCacheKey])
-	require.False(t, heavyKeys[handlers.HyperliquidScoreboardCacheKey])
+	require.True(t, heavyKeys[handlers.HyperliquidScoreboardCacheKey])
 
 	for _, e := range a.entries() {
 		require.False(t, heavyKeys[e.key], "heavy entry %q must not also run in the slow batch", e.key)

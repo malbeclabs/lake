@@ -468,9 +468,6 @@ func (a *Activities) entries() []cacheEntry {
 		{name: "hyperliquid internal scoreboard", key: "hyperliquid_internal_scoreboard", fn: func(ctx context.Context) (any, error) {
 			return api.FetchHyperliquidInternalScoreboardData(ctx, "1h", "")
 		}},
-		{name: "hyperliquid scoreboard", key: handlers.HyperliquidScoreboardCacheKey, dayAligned: true, every: hyperliquidScoreboardInterval, fn: func(ctx context.Context) (any, error) {
-			return api.FetchHyperliquidScoreboardData(ctx)
-		}},
 		{name: "kalshi scoreboard", key: "kalshi_scoreboard", fn: func(ctx context.Context) (any, error) {
 			return api.FetchKalshiScoreboardData(ctx, "1h", "")
 		}},
@@ -744,6 +741,9 @@ func (a *Activities) heavyEntries() []cacheEntry {
 				return nil, err
 			}
 			return resp, nil
+		}},
+		{name: "hyperliquid scoreboard", key: handlers.HyperliquidScoreboardCacheKey, dayAligned: true, every: hyperliquidScoreboardInterval, timeout: nhHeavyRefreshTimeout, fn: func(ctx context.Context) (any, error) {
+			return api.FetchHyperliquidScoreboardData(ctx)
 		}},
 		{name: "network health deferred", key: handlers.NetworkHealthDeferredCacheKey, dayAligned: true, every: networkHealthHistoryInterval, timeout: nhHeavyRefreshTimeout, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()
