@@ -2,666 +2,508 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
-	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
-
-	"golang.org/x/sync/errgroup"
 )
 
-// hyperliquidCompetitors lists the non-DoubleZero feeds shown on the scoreboard,
-// in display order, mapping each raw feed name to its label.
-var hyperliquidCompetitors = []struct{ Feed, Label string }{
-	{"hyperliquid_public_bbo", "Public API"},
-	{"hydromancer_bbo", "Hydromancer"},
-	{"dwellir_l2book_bbo", "Dwellir"},
-	{"quicknode_l2book_bbo", "QuickNode"},
+const hyperliquidDZSourcePrefix = "tob_"
+
+var hyperliquidRetiredPublishers = []string{"tob_aws_tyo_mirror1"}
+
+const hyperliquidVenueFeed = "hyperliquid_public_bbo"
+
+type hyperliquidSite struct {
+	Code    string // location_code in the feeds schema, e.g. "tyo"
+	Short   string // column header, e.g. "TYO"
+	Display string // city name, e.g. "Tokyo"
 }
 
-// hyperliquidExcludedFeeds are competitor feeds withheld from every scoreboard measurement
-// (per-competitor, per-node, headline totals, and recent races) because their upstream data is
-// currently unreliable. hyperpc_shared_bbo (HypeRPC) arrives a median ~100s stale during
-// recurring multi-hour backlog episodes — vs ~300ms for the other feeds — which would render
-// DoubleZero "winning" by seconds-to-minutes and is a HypeRPC-side feed fault, not a real result.
-// Remove entries here (and re-add to hyperliquidCompetitors) once the feed is fixed.
-var hyperliquidExcludedFeeds = []string{"hyperpc_shared_bbo"}
+var hyperliquidNamedSites = []hyperliquidSite{
+	{Code: "tyo", Short: "TYO", Display: "Tokyo"},
+	{Code: "chi", Short: "CHI", Display: "Chicago"},
+	{Code: "nyc", Short: "NYC", Display: "New York"},
+	{Code: "was", Short: "WAS", Display: "Washington DC"},
+	{Code: "cmh", Short: "CMH", Display: "Columbus"},
+}
 
-// hyperliquidExcludedFeedsClause returns a SQL predicate dropping excluded feeds from either
-// side of a race, or "" if none are excluded.
-func hyperliquidExcludedFeedsClause() string {
-	if len(hyperliquidExcludedFeeds) == 0 {
-		return ""
+func hyperliquidSitesFrom(matrix map[hyperliquidMatrixKey]hyperliquidMatrixCell) []hyperliquidSite {
+	present := map[string]bool{}
+	for k := range matrix {
+		if k.loc != "" && k.feed == "" {
+			present[k.loc] = true
+		}
 	}
-	quoted := make([]string, len(hyperliquidExcludedFeeds))
-	for i, f := range hyperliquidExcludedFeeds {
-		quoted[i] = "'" + f + "'"
+	out := make([]hyperliquidSite, 0, len(present))
+	for _, s := range hyperliquidNamedSites {
+		if present[s.Code] {
+			out = append(out, s)
+			delete(present, s.Code)
+		}
 	}
-	in := strings.Join(quoted, ", ")
-	return fmt.Sprintf("AND feed NOT IN (%[1]s) AND loser_feed NOT IN (%[1]s)", in)
+	rest := make([]string, 0, len(present))
+	for code := range present {
+		rest = append(rest, code)
+	}
+	sort.Strings(rest)
+	for _, code := range rest {
+		up := strings.ToUpper(code)
+		out = append(out, hyperliquidSite{Code: code, Short: up, Display: up})
+	}
+	return out
 }
 
-// hyperliquidWindows maps window params to ClickHouse interval expressions.
-var hyperliquidWindows = map[string]string{
-	"1h":  "1 HOUR",
-	"24h": "24 HOUR",
-	"7d":  "7 DAY",
+type hyperliquidMarketCategory struct {
+	Name    string
+	Symbols []string
 }
 
-// raceKeyTuple is the summary table's ReplacingMergeTree sorting key. The remote
-// materialized view refreshes on overlapping windows, so each logical race appears as
-// several rows that only FINAL (or a uniq over this key) collapses. Counting distinct keys
-// dedups without paying FINAL's merge cost, which dominated query time against the full
-// production table. Win rates are ratios and lead-time percentiles are duplicate-insensitive,
-// so dropping FINAL keeps them correct.
-//
-// The dedup uses uniqCombined (not uniqExact) and lead percentiles use quantileTDigest (not
-// quantileExact): the exact variants buffer per-group state proportional to the number of
-// races in the window (~7.5M matchup rows/hour at current volume, ~750 MiB of aggregation
-// state), which tripped the ClickHouse OvercommitTracker and got the page-cache refresh killed
-// under concurrent load. The approximate variants use bounded (~KB/group) memory; at scoreboard
-// scale their sub-1% error is invisible, and they are exact at the small cardinalities the
-// unit tests assert.
-const raceKeyTuple = "(measurement_node_id, symbol, source_ts_ms, bbo_hash, feed, loser_feed)"
-
-// hyperliquidLiquidSymbols is the curated universe of the most-liquid Hyperliquid markets
-// (highest open interest) the scoreboard races on. Thin symbols add noise and aren't
-// representative, so the aggregations are restricted to this set by default.
-var hyperliquidLiquidSymbols = []string{
-	// xyz: synthetic equity/commodity perps
-	"xyz:SP500", "xyz:XYZ100", "xyz:MU", "xyz:SKHX", "xyz:SPCX", "xyz:CL", "xyz:NVDA", "xyz:BRENTOIL",
-	// native crypto perps
-	"BTC", "ETH", "SOL", "HYPE", "ZEC",
+type hyperliquidMarketGroup struct {
+	Name string
+	Cats []hyperliquidMarketCategory
 }
 
-// hyperliquidLiquidSymbolFilter returns the SQL clause restricting races to the liquid universe.
-func hyperliquidLiquidSymbolFilter() string {
-	return hyperliquidSymbolInClause(hyperliquidLiquidSymbols)
+var hyperliquidMarketGroups = []hyperliquidMarketGroup{
+	{Name: "Native Perpetuals", Cats: []hyperliquidMarketCategory{
+		{Name: "Major crypto", Symbols: []string{"BTC", "ETH", "SOL"}},
+		{Name: "Platform & high-beta", Symbols: []string{"HYPE", "ZEC"}},
+	}},
+	{Name: "HIP-3 Builder DEX Perpetuals", Cats: []hyperliquidMarketCategory{
+		{Name: "Equity index", Symbols: []string{"xyz:SP500", "xyz:XYZ100"}},
+		{Name: "Single-name equity", Symbols: []string{"xyz:MU", "xyz:SKHX", "xyz:SPCX", "xyz:NVDA"}},
+		{Name: "Commodities", Symbols: []string{"xyz:CL", "xyz:BRENTOIL"}},
+	}},
 }
 
-// hyperliquidRecentRaceSymbols are the top-4-by-volume native perps and top-4 HIP-3 (xyz:) DEX
-// perps shown in the recent-races grid. Only a subset (currently BTC/ETH) have competitor feeds;
-// the rest render as DoubleZero-exclusive coverage in the UI.
-var hyperliquidRecentRaceSymbols = []string{
-	"BTC", "ETH", "SOL", "HYPE", // native perps
-	"xyz:SP500", "xyz:XYZ100", "xyz:MU", "xyz:SKHX", // HIP-3 DEX perps
+// Every symbol the board races must have a category, or the by-market table compares each
+// category against a headline population containing symbols the table never shows. The two
+// oil contracts were exactly that gap. TestHyperliquidScoreboard_EveryRacedSymbolHasACategory
+// keeps it closed.
+
+const hyperliquidScoreboardWindowHours = 24
+
+const HyperliquidScoreboardCacheKey = "hyperliquid_public_scoreboard"
+
+type HyperliquidScoreboardStat struct {
+	WinPct float64 `json:"win_pct"`
+	P50Ms  float64 `json:"p50_ms"`
+	P95Ms  float64 `json:"p95_ms"`
+	P99Ms  float64 `json:"p99_ms"`
 }
 
-func hyperliquidRecentRaceSymbolFilter() string {
-	return hyperliquidSymbolInClause(hyperliquidRecentRaceSymbols)
+type HyperliquidScoreboardSite struct {
+	Code  string `json:"code"`
+	Label string `json:"label"`
+	HyperliquidScoreboardStat
 }
 
-func hyperliquidSymbolInClause(symbols []string) string {
-	quoted := make([]string, len(symbols))
-	for i, s := range symbols {
+type HyperliquidScoreboardFeed struct {
+	Label string `json:"label"`
+	Venue bool   `json:"venue"`
+	HyperliquidScoreboardStat
+	Sites []HyperliquidScoreboardSite `json:"sites"`
+}
+
+type HyperliquidScoreboardCategory struct {
+	Name string `json:"name"`
+	HyperliquidScoreboardStat
+}
+
+type HyperliquidScoreboardMarket struct {
+	Name    string                          `json:"name"`
+	Carried int                             `json:"carried"`
+	Cats    []HyperliquidScoreboardCategory `json:"cats"`
+}
+
+type HyperliquidScoreboardResponse struct {
+	WindowLabel string `json:"window_label"`
+	// Races is distinct venue emissions, which is what the page labels "Updates raced".
+	// Comparisons is the (emission, feed) count behind the rates — about 4x larger, because
+	// most emissions are seen by several feeds.
+	Races       uint64 `json:"races"`
+	Comparisons uint64 `json:"comparisons"`
+	// DZAbsent is emissions a competitor delivered and DoubleZero did not. Excluded from every
+	// rate here, so it is reported rather than silently dropped.
+	DZAbsent    uint64                        `json:"dz_absent"`
+	Instruments int                           `json:"instruments"`
+	SiteCount   int                           `json:"site_count"`
+	FeedCount   int                           `json:"feed_count"`
+	All         HyperliquidScoreboardStat     `json:"all"`
+	Sites       []HyperliquidScoreboardSite   `json:"sites"`
+	Feeds       []HyperliquidScoreboardFeed   `json:"feeds"`
+	Markets     []HyperliquidScoreboardMarket `json:"markets"`
+	AsOf        time.Time                     `json:"as_of"`
+}
+
+func hyperliquidDZArrivalExpr() string {
+	pred := fmt.Sprintf("startsWith(source, '%s')", hyperliquidDZSourcePrefix)
+	if len(hyperliquidRetiredPublishers) > 0 {
+		quoted := make([]string, len(hyperliquidRetiredPublishers))
+		for i, s := range hyperliquidRetiredPublishers {
+			quoted[i] = "'" + s + "'"
+		}
+		pred += fmt.Sprintf(" AND source NOT IN (%s)", strings.Join(quoted, ", "))
+	}
+	return pred
+}
+
+func hyperliquidScoreboardSymbols() string {
+	quoted := make([]string, len(hyperliquidLiquidSymbols))
+	for i, s := range hyperliquidLiquidSymbols {
 		quoted[i] = "'" + s + "'"
 	}
-	return "AND symbol IN (" + strings.Join(quoted, ", ") + ")"
+	return strings.Join(quoted, ", ")
 }
 
-var hyperliquidSymbolRe = regexp.MustCompile(`^[A-Za-z0-9:_.-]{1,32}$`)
-
-// sanitizeHyperliquidSymbol returns the symbol if safe to inline, else "".
-func sanitizeHyperliquidSymbol(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" || strings.EqualFold(s, "all") || !hyperliquidSymbolRe.MatchString(s) {
-		return ""
-	}
-	return s
-}
-
-// HyperliquidCompetitor is DoubleZero's head-to-head record vs one competitor feed.
-type HyperliquidCompetitor struct {
-	Feed      string  `json:"feed"`
-	Label     string  `json:"label"`
-	DZWinPct  float64 `json:"dz_win_pct"`
-	LeadP50Ms float64 `json:"lead_p50_ms"`
-	LeadP95Ms float64 `json:"lead_p95_ms"`
-	Races     uint64  `json:"races"`
-}
-
-// HyperliquidNode is the per-vantage breakdown.
-type HyperliquidNode struct {
-	MeasurementNodeID string                  `json:"measurement_node_id"`
-	LocationCode      string                  `json:"location_code"`
-	DZWinSharePct     float64                 `json:"dz_win_share_pct"`
-	TotalRaces        uint64                  `json:"total_races"`
-	Competitors       []HyperliquidCompetitor `json:"competitors"`
-}
-
-// HyperliquidRace is one recent race for the live strip.
-type HyperliquidRace struct {
-	EventTs       time.Time `json:"event_ts"`
-	Symbol        string    `json:"symbol"`
-	LocationCode  string    `json:"location_code"`
-	WinnerFeed    string    `json:"winner_feed"`
-	WinnerLabel   string    `json:"winner_label"`
-	IsDZ          bool      `json:"is_dz"`
-	RunnerUpFeed  string    `json:"runner_up_feed"`
-	RunnerUpLabel string    `json:"runner_up_label"`
-	LeadMs        float64   `json:"lead_ms"`
-}
-
-// HyperliquidScoreboardResponse is the API response.
-type HyperliquidScoreboardResponse struct {
-	Window        string                  `json:"window"`
-	Symbol        string                  `json:"symbol,omitempty"`
-	GeneratedAt   time.Time               `json:"generated_at"`
-	FeedType      string                  `json:"feed_type"`
-	DZWinSharePct float64                 `json:"dz_win_share_pct"`
-	TotalRaces    uint64                  `json:"total_races"`
-	Competitors   []HyperliquidCompetitor `json:"competitors"`
-	Nodes         []HyperliquidNode       `json:"nodes"`
-	RecentRaces   []HyperliquidRace       `json:"recent_races"`
-	// Prices is the latest BBO mid price per recent-race symbol (live, for the grid).
-	Prices map[string]float64 `json:"prices,omitempty"`
-	// CompositeLatency is DoubleZero's Tokyo first-arrival feed latency (24h); nil until the
-	// background refresher computes it (the query is too heavy for the request path).
-	CompositeLatency *HyperliquidCompositeLatency `json:"composite_latency,omitempty"`
-}
-
-// HyperliquidCompositeLatency is DoubleZero's Tokyo first-arrival latency (blocktime -> receive,
-// earliest across the tob_ DZ feeds at the Tokyo vantage point) over a fixed 24h window,
-// p50/p90/p99 in ms.
-type HyperliquidCompositeLatency struct {
-	Window      string    `json:"window"`
-	P50Ms       float64   `json:"p50_ms"`
-	P90Ms       float64   `json:"p90_ms"`
-	P99Ms       float64   `json:"p99_ms"`
-	GeneratedAt time.Time `json:"generated_at"`
-}
-
-const hyperliquidCompositeLatencyCacheKey = "hyperliquid_composite_latency"
-
-// labelForFeed maps a raw competitor feed to its display label (falls back to the raw name).
-func labelForFeed(feed string) string {
+// HyperliquidRacedFeedIDs returns every competitor feed id this package knows about, raced or
+// withheld. Exported for the test that asserts none of them reaches the public payload: that
+// test is the only thing between a competitor's identity and an externally-facing route, and
+// hardcoding the list there meant a fifth feed shipped uncovered.
+func HyperliquidRacedFeedIDs() []string {
+	out := make([]string, 0, len(hyperliquidCompetitors)+len(hyperliquidExcludedFeeds))
 	for _, c := range hyperliquidCompetitors {
-		if c.Feed == feed {
-			return c.Label
+		if c.Feed != hyperliquidVenueFeed {
+			out = append(out, c.Feed)
 		}
 	}
-	return feed
+	out = append(out, hyperliquidExcludedFeeds...)
+	return out
 }
 
-// hyperliquidFeedDisplay returns "DoubleZero" for any tob_ DZ feed, else the competitor label.
-// Used so a competitor-won recent race reads "Hydromancer … vs DoubleZero", not a raw tob_ id.
-func hyperliquidFeedDisplay(feed string) string {
-	if strings.HasPrefix(feed, "tob_") {
-		return "DoubleZero"
+func hyperliquidCompetitorArrivals() (projection, arrayJoin string) {
+	proj := make([]string, 0, len(hyperliquidCompetitors))
+	tuples := make([]string, 0, len(hyperliquidCompetitors))
+	for i, c := range hyperliquidCompetitors {
+		proj = append(proj, fmt.Sprintf("minIf(recv_ts_ns, source = '%[1]s') AS t%[2]d", c.Feed, i))
+		tuples = append(tuples, fmt.Sprintf("('%s', t%d)", c.Feed, i))
 	}
-	return labelForFeed(feed)
+	return strings.Join(proj, ",\n            "), strings.Join(tuples, ",\n                        ")
 }
 
-// FetchHyperliquidScoreboardData computes the aggregated scoreboard for a window and
-// optional symbol. Empty symbol means all symbols.
-func (a *API) FetchHyperliquidScoreboardData(ctx context.Context, window, symbol string) (*HyperliquidScoreboardResponse, error) {
-	interval, ok := hyperliquidWindows[window]
-	if !ok {
-		window = "1h"
-		interval = hyperliquidWindows[window]
+func newHyperliquidScoreboardResponse() *HyperliquidScoreboardResponse {
+	// FeedCount is deliberately absent here: it counts feeds actually measured in the window,
+	// not len(hyperliquidCompetitors), and is filled once the rows are known.
+	//
+	// The window closes when the blob is computed, which on this entry's cadence is 09:00 UTC
+	// — so by late in the day "last 24 hours" names a window that closed hours ago. The label
+	// carries the closing time rather than asking the reader to reconcile it with the
+	// freshness pill.
+	now := time.Now().UTC()
+	return &HyperliquidScoreboardResponse{
+		WindowLabel: fmt.Sprintf("%d hours to %s UTC", hyperliquidScoreboardWindowHours, now.Format("2006-01-02 15:04")),
+		Sites:       []HyperliquidScoreboardSite{},
+		Feeds:       []HyperliquidScoreboardFeed{},
+		Markets:     []HyperliquidScoreboardMarket{},
+		AsOf:        now,
 	}
-	symbol = sanitizeHyperliquidSymbol(symbol)
+}
 
-	// Guard: if the feeds summary table doesn't exist (e.g. local dev without the
-	// proxy/seed), return an empty-but-valid response so the page-cache refresher
-	// caches a clean empty payload instead of logging an error every cycle.
-	if !a.hyperliquidFeedsTableExists(ctx) {
-		return &HyperliquidScoreboardResponse{
-			Window:      window,
-			GeneratedAt: time.Now().UTC(),
-			FeedType:    "bbo",
-			Competitors: []HyperliquidCompetitor{},
-			Nodes:       []HyperliquidNode{},
-			RecentRaces: []HyperliquidRace{},
-		}, nil
+func (a *API) FetchHyperliquidScoreboardData(ctx context.Context) (*HyperliquidScoreboardResponse, error) {
+	resp := newHyperliquidScoreboardResponse()
+	queryable, err := a.hyperliquidObservationsQueryable(ctx)
+	if err != nil {
+		return nil, err
 	}
-
-	symbolFilter := hyperliquidLiquidSymbolFilter()
-	if symbol != "" {
-		symbolFilter = fmt.Sprintf("AND symbol = '%s'", symbol)
-	}
-	// Drop excluded (unreliable) competitor feeds from the per-competitor and per-node
-	// aggregations. Flows into both compQ and nodeQ via the shared symbolFilter slot.
-	symbolFilter = strings.TrimSpace(symbolFilter + " " + hyperliquidExcludedFeedsClause())
-	db := fmt.Sprintf("`%s`", a.FeedsDB)
-
-	resp := &HyperliquidScoreboardResponse{
-		Window:      window,
-		Symbol:      symbol,
-		GeneratedAt: time.Now().UTC(),
-		FeedType:    "bbo",
-		Competitors: []HyperliquidCompetitor{},
-		Nodes:       []HyperliquidNode{},
-		RecentRaces: []HyperliquidRace{},
+	if !queryable {
+		return resp, nil
 	}
 
-	// Single scan grouped per (competitor, node) WITH ROLLUP: the (competitor, node) rows give the
-	// per-vantage breakdown and the rolled-up (competitor) rows give per-competitor totals, so the
-	// per-competitor stats come from the same scan instead of a second full-table scan. A race key
-	// includes measurement_node_id, so races partition cleanly by node — the ROLLUP counts are
-	// exact and the headline is derivable by summing per-node cells. One query (vs two) also
-	// refreshes atomically: on the memory-constrained proxy ClickHouse the refresh succeeds or
-	// retries as a unit, instead of needing two independent scans to both survive the
-	// OvercommitTracker when other page-cache queries have the server near its memory ceiling.
-	q := fmt.Sprintf(`
-		SELECT competitor, measurement_node_id, any(location_code) AS location_code,
-			uniqCombinedIf(rk, dz_won = 1) AS dz_wins,
-			uniqCombinedIf(rk, dz_won = 0) AS dz_losses,
-			-- ifNotFinite guards the empty-set case: when DZ won zero races in a (competitor, node)
-			-- cell, quantileTDigestIf over no rows returns NaN, which fails JSON encoding of the whole
-			-- response (and poisons the page cache). Coalesce to 0 so a swept cell serializes cleanly.
-			ifNotFinite(toFloat64(quantileTDigestIf(0.5)(lead_ms, dz_won = 1)), 0) AS lead_p50,
-			ifNotFinite(toFloat64(quantileTDigestIf(0.95)(lead_ms, dz_won = 1)), 0) AS lead_p95
-		FROM (
-			SELECT measurement_node_id, location_code,
-				%[1]s AS rk,
-				if(startsWith(feed,'tob_'), loser_feed, feed) AS competitor,
-				if(startsWith(feed,'tob_'), 1, 0) AS dz_won,
-				lead_time_p50_ms AS lead_ms
-			FROM %[2]s.hyperliquid_bbo_feed_race_summary
-			WHERE feed != loser_feed AND loser_feed != ''
-			  AND (startsWith(feed,'tob_') != startsWith(loser_feed,'tob_')) %[3]s
-			  AND event_ts >= now() - INTERVAL %[4]s
-		)
-		GROUP BY competitor, measurement_node_id WITH ROLLUP`, raceKeyTuple, db, symbolFilter, interval)
-
-	type stat struct {
-		wins, losses     uint64
-		leadP50, leadP95 float64
+	matrix, markets, err := a.fetchHyperliquidScoreboardCells(ctx)
+	if err != nil {
+		return nil, err
 	}
-	type nodeAgg struct {
-		loc    string
-		byFeed map[string]stat
-	}
-	// byFeed holds per-competitor totals (ROLLUP rows where node == ""); nodeMap holds per-node cells.
-	byFeed := map[string]stat{}
-	nodeMap := map[string]*nodeAgg{}
-	var nodeOrder []string
-	var recent []HyperliquidRace
-	var prices map[string]float64
-
-	// The main ROLLUP scan, the recent-races scan, and the live-price lookup are three independent
-	// ClickHouse reads; run them concurrently so their latencies overlap rather than stack under
-	// the request timeout. gctx cancels the siblings if the main scan or recent-races hard-fails.
-	g, gctx := errgroup.WithContext(ctx)
-	g.Go(func() error {
-		rows, err := a.envDB(gctx).Query(gctx, q)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var competitor, node, loc string
-			var s stat
-			if err := rows.Scan(&competitor, &node, &loc, &s.wins, &s.losses, &s.leadP50, &s.leadP95); err != nil {
-				return err
-			}
-			switch {
-			case competitor == "":
-				// Grand-total ROLLUP row; the headline is derived from per-node cells instead.
-				continue
-			case node == "":
-				byFeed[competitor] = s
-			default:
-				na, ok := nodeMap[node]
-				if !ok {
-					na = &nodeAgg{loc: loc, byFeed: map[string]stat{}}
-					nodeMap[node] = na
-					nodeOrder = append(nodeOrder, node)
-				}
-				na.byFeed[competitor] = s
-			}
-		}
-		return rows.Err()
-	})
-	g.Go(func() error {
-		r, err := a.fetchHyperliquidRecentRaces(gctx, time.Time{}, 10)
-		if err != nil {
-			return err
-		}
-		recent = r
-		return nil
-	})
-	g.Go(func() error {
-		// Best-effort: a live-price lookup failure must not fail the whole scoreboard.
-		if p, err := a.fetchHyperliquidPrices(gctx); err == nil {
-			prices = p
-		}
-		return nil
-	})
-	if err := g.Wait(); err != nil {
+	carried, err := a.fetchHyperliquidCarriedInstruments(ctx)
+	if err != nil {
 		return nil, err
 	}
 
-	// Emit competitors in configured order.
-	for _, c := range hyperliquidCompetitors {
-		s, ok := byFeed[c.Feed]
-		if !ok {
-			continue
-		}
-		races := s.wins + s.losses
-		var winPct float64
-		if races > 0 {
-			winPct = 100.0 * float64(s.wins) / float64(races)
-		}
-		resp.Competitors = append(resp.Competitors, HyperliquidCompetitor{
-			Feed:      c.Feed,
-			Label:     c.Label,
-			DZWinPct:  winPct,
-			LeadP50Ms: s.leadP50,
-			LeadP95Ms: s.leadP95,
-			Races:     races,
+	if total, ok := matrix[hyperliquidMatrixKey{}]; ok {
+		resp.All = total.stat
+		resp.Races = total.emissions
+		resp.Comparisons = total.races
+		resp.DZAbsent = total.emissionsDZAbsent
+	}
+	sites := hyperliquidSitesFrom(matrix)
+	resp.SiteCount = len(sites)
+	for _, s := range sites {
+		cell := matrix[hyperliquidMatrixKey{loc: s.Code}]
+		resp.Sites = append(resp.Sites, HyperliquidScoreboardSite{
+			Code: s.Short, Label: s.Display, HyperliquidScoreboardStat: cell.stat,
 		})
 	}
 
-	var globalWins, globalRaces uint64
-	for _, node := range nodeOrder {
-		na := nodeMap[node]
-		n := HyperliquidNode{
-			MeasurementNodeID: node,
-			LocationCode:      na.loc,
-			Competitors:       []HyperliquidCompetitor{},
+	type feedRow struct {
+		feed  string
+		stat  HyperliquidScoreboardStat
+		sites []HyperliquidScoreboardSite
+	}
+	rows := make([]feedRow, 0, len(hyperliquidCompetitors))
+	for _, c := range hyperliquidCompetitors {
+		cell := matrix[hyperliquidMatrixKey{feed: c.Feed}]
+		// A feed with nothing in the window is not a competitor at 0.0% — it is a feed we have
+		// no measurement of. Rendering it anyway put a phantom row at the TOP of the board,
+		// because ranking is by median margin ascending and its zero sorts ahead of every real
+		// competitor DoubleZero beats.
+		if cell.races == 0 {
+			continue
 		}
-		var wins, races uint64
-		for _, c := range hyperliquidCompetitors {
-			s, ok := na.byFeed[c.Feed]
-			if !ok {
-				continue
-			}
-			r := s.wins + s.losses
-			var winPct float64
-			if r > 0 {
-				winPct = 100.0 * float64(s.wins) / float64(r)
-			}
-			n.Competitors = append(n.Competitors, HyperliquidCompetitor{
-				Feed: c.Feed, Label: c.Label, DZWinPct: winPct,
-				LeadP50Ms: s.leadP50, LeadP95Ms: s.leadP95, Races: r,
+		fr := feedRow{feed: c.Feed, stat: cell.stat}
+		for _, s := range sites {
+			cell := matrix[hyperliquidMatrixKey{loc: s.Code, feed: c.Feed}]
+			fr.sites = append(fr.sites, HyperliquidScoreboardSite{
+				Code: s.Short, Label: s.Display, HyperliquidScoreboardStat: cell.stat,
 			})
-			wins += s.wins
-			races += r
 		}
-		n.TotalRaces = races
-		if races > 0 {
-			n.DZWinSharePct = 100.0 * float64(wins) / float64(races)
-		}
-		resp.Nodes = append(resp.Nodes, n)
-		globalWins += wins
-		globalRaces += races
+		rows = append(rows, fr)
 	}
-
-	// Headline derived from the per-node totals (no extra scan).
-	resp.TotalRaces = globalRaces
-	if globalRaces > 0 {
-		resp.DZWinSharePct = 100.0 * float64(globalWins) / float64(globalRaces)
-	}
-
-	if recent != nil {
-		resp.RecentRaces = recent
-	}
-	if prices != nil {
-		resp.Prices = prices
-	}
-
-	// Attach the background-refreshed 24h composite latency (best-effort; absent until the slow
-	// refresher has populated the cache).
-	if raw, err := a.readPageCache(ctx, hyperliquidCompositeLatencyCacheKey); err == nil && len(raw) > 0 {
-		var cl HyperliquidCompositeLatency
-		if json.Unmarshal(raw, &cl) == nil {
-			resp.CompositeLatency = &cl
+	resp.FeedCount = len(rows)
+	ranked := make([]feedRow, 0, len(rows))
+	for _, r := range rows {
+		if r.feed != hyperliquidVenueFeed {
+			ranked = append(ranked, r)
 		}
 	}
+	sort.Slice(ranked, func(i, j int) bool { return ranked[i].stat.P50Ms < ranked[j].stat.P50Ms })
+	for _, r := range rows {
+		if r.feed == hyperliquidVenueFeed {
+			resp.Feeds = append(resp.Feeds, HyperliquidScoreboardFeed{
+				Label: "Public API", Venue: true,
+				HyperliquidScoreboardStat: r.stat, Sites: r.sites,
+			})
+		}
+	}
+	for i, r := range ranked {
+		resp.Feeds = append(resp.Feeds, HyperliquidScoreboardFeed{
+			Label:                     fmt.Sprintf("Competitor %d", i+1),
+			HyperliquidScoreboardStat: r.stat, Sites: r.sites,
+		})
+	}
 
+	for _, g := range hyperliquidMarketGroups {
+		m := HyperliquidScoreboardMarket{Name: g.Name, Carried: carried[g.Name]}
+		for _, c := range g.Cats {
+			m.Cats = append(m.Cats, HyperliquidScoreboardCategory{
+				Name: c.Name, HyperliquidScoreboardStat: markets[c.Name],
+			})
+		}
+		resp.Markets = append(resp.Markets, m)
+	}
+	for _, n := range carried {
+		resp.Instruments += n
+	}
 	return resp, nil
 }
 
-// fetchHyperliquidRecentRaces returns the most recent races (one row per race,
-// winner + closest competitor + lead). sinceTs zero -> last 5 minutes.
-func (a *API) fetchHyperliquidRecentRaces(ctx context.Context, sinceTs time.Time, perSymbol int) ([]HyperliquidRace, error) {
-	if perSymbol <= 0 || perSymbol > 50 {
-		perSymbol = 10
-	}
-	// 15 min so the covered symbols fill a full column despite the ~50-90s MV lag; LIMIT n BY
-	// symbol then keeps only the newest n per symbol.
-	timeFilter := "AND event_ts >= now() - INTERVAL 15 MINUTE"
-	if !sinceTs.IsZero() {
-		timeFilter = fmt.Sprintf("AND event_ts > toDateTime64(%d, 9)", sinceTs.Unix())
-	}
-	db := fmt.Sprintf("`%s`", a.FeedsDB)
-	q := fmt.Sprintf(`
-		SELECT
-			max(event_ts) AS max_event_ts,
-			symbol,
-			location_code,
-			feed AS winner_feed,
-			startsWith(feed,'tob_') AS is_dz,
-			argMin(loser_feed, lead_time_p50_ms) AS runner_up_feed,
-			min(lead_time_p50_ms) AS lead_ms
-		FROM %s.hyperliquid_bbo_feed_race_summary
-		-- Only DoubleZero-vs-competitor matchups (exactly one side is a tob_* DZ feed) — exclude
-		-- DZ-vs-DZ races (e.g. tob_gcp_tyo vs tob_aws_tyo), which otherwise flood the feed.
-		WHERE loser_feed != '' AND feed != loser_feed
-		  AND (startsWith(feed,'tob_') != startsWith(loser_feed,'tob_')) %s %s
-		GROUP BY capture_run_id, measurement_node_id, symbol, source_ts_ms, bbo_hash, location_code, feed
-		ORDER BY max_event_ts DESC
-		LIMIT %d BY symbol`, db,
-		strings.TrimSpace(hyperliquidRecentRaceSymbolFilter()+" "+hyperliquidExcludedFeedsClause()), timeFilter, perSymbol)
-	rows, err := a.envDB(ctx).Query(ctx, q)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []HyperliquidRace{}
-	for rows.Next() {
-		var r HyperliquidRace
-		var isDZ uint8
-		if err := rows.Scan(&r.EventTs, &r.Symbol, &r.LocationCode, &r.WinnerFeed, &isDZ, &r.RunnerUpFeed, &r.LeadMs); err != nil {
-			return nil, err
+type hyperliquidMatrixKey struct{ loc, feed string }
+
+type hyperliquidMatrixCell struct {
+	// races counts (emission, feed) comparisons, so it is Σ over feeds on any cell that rolls
+	// feeds up. Correct per feed; never the number of book states. Use emissions for that.
+	races uint64
+	// emissions counts distinct venue emissions, so a cell rolled up over four feeds does not
+	// report an update four times. Approximate (uniqCombined, measured 0.18% against
+	// uniqExact) because the exact form cost 3.7 GB more on a query already near its limit.
+	emissions uint64
+	// emissionsDZAbsent counts emissions a competitor delivered and DoubleZero did not. They
+	// are excluded from every rate above — the win rate is conditional on DoubleZero having
+	// delivered — so the payload carries the denominator it is not measuring.
+	emissionsDZAbsent uint64
+	stat              HyperliquidScoreboardStat
+}
+
+const hyperliquidUncategorised = "other"
+
+func (a *API) fetchHyperliquidScoreboardCells(ctx context.Context) (
+	map[hyperliquidMatrixKey]hyperliquidMatrixCell, map[string]HyperliquidScoreboardStat, error,
+) {
+	proj, tuples := hyperliquidCompetitorArrivals()
+
+	var cases []string
+	for _, g := range hyperliquidMarketGroups {
+		for _, c := range g.Cats {
+			quoted := make([]string, len(c.Symbols))
+			for i, sym := range c.Symbols {
+				quoted[i] = "'" + sym + "'"
+			}
+			cases = append(cases, fmt.Sprintf("symbol IN (%s), '%s'", strings.Join(quoted, ", "), c.Name))
 		}
-		r.IsDZ = isDZ == 1
-		r.WinnerLabel = hyperliquidFeedDisplay(r.WinnerFeed)
-		r.RunnerUpLabel = hyperliquidFeedDisplay(r.RunnerUpFeed)
-		out = append(out, r)
 	}
-	return out, rows.Err()
-}
 
-// hyperliquidScoreboardCacheKey returns the cache key for a cacheable request shape, or "".
-// A symbol filter is a non-default view and is never cached. Each supported window has its own
-// cached key: the 1h view is refreshed by the page-cache worker; the heavier 24h/7d views are
-// refreshed on a slow background cadence (StartHyperliquidBackgroundRefresher) so they are served
-// from cache instead of running a multi-day scan on the request path.
-func hyperliquidScoreboardCacheKey(r *http.Request) string {
-	if r.URL.Query().Get("symbol") != "" {
-		return ""
-	}
-	window := strings.TrimSpace(r.URL.Query().Get("window"))
-	if window == "" {
-		window = "1h"
-	}
-	if _, ok := hyperliquidWindows[window]; !ok {
-		return ""
-	}
-	return hyperliquidScoreboardWindowKey(window)
-}
-
-// hyperliquidScoreboardWindowKey is the page-cache key for a given window. The 1h key keeps its
-// original name (populated by the page-cache worker); 24h/7d get suffixed keys populated by the
-// background refresher.
-func hyperliquidScoreboardWindowKey(window string) string {
-	if window == "1h" {
-		return "hyperliquid_scoreboard"
-	}
-	return "hyperliquid_scoreboard:" + window
-}
-
-// hyperliquidFeedsTableExists reports whether the proxied summary table is queryable.
-func (a *API) hyperliquidFeedsTableExists(ctx context.Context) bool {
-	var n uint8
-	q := fmt.Sprintf("EXISTS TABLE `%s`.hyperliquid_bbo_feed_race_summary", a.FeedsDB)
-	if err := a.envDB(ctx).QueryRow(ctx, q).Scan(&n); err != nil {
-		return false
-	}
-	return n == 1
-}
-
-// fetchHyperliquidPrices returns the latest BBO mid price per recent-race symbol — a cheap
-// latest-observation lookup (~0.4s) used to show a live price next to each symbol's races.
-// Price = (bid_px_raw + ask_px_raw)/2 * 10^price_exp.
-func (a *API) fetchHyperliquidPrices(ctx context.Context) (map[string]float64, error) {
-	db := fmt.Sprintf("`%s`", a.FeedsDB)
 	q := fmt.Sprintf(`
-		SELECT symbol, argMax((bid_px_raw + ask_px_raw) / 2 * pow(10, price_exp), recv_ts_ns) AS price
-		FROM %s.hyperliquid_bbo_observations
-		WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(1))) %s
-		GROUP BY symbol`, db, hyperliquidRecentRaceSymbolFilter())
-	rows, err := a.envDB(ctx).Query(ctx, q)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string]float64{}
-	for rows.Next() {
-		var sym string
-		var price float64
-		if err := rows.Scan(&sym, &price); err != nil {
-			return nil, err
-		}
-		out[sym] = price
-	}
-	return out, rows.Err()
-}
-
-// FetchHyperliquidCompositeLatency computes DoubleZero's Tokyo first-arrival feed latency
-// (p50/p90/p99 in ms) over the last 24h across the liquid symbols, from the raw observations
-// table: per (symbol, block) the earliest receive across DZ tob_ feeds at the Tokyo vantage
-// point, restricted to blocks where >=2 DZ feeds delivered. Scoped to Tokyo (DZ's fastest metro,
-// nearest Hyperliquid) so the headline reflects best-case DZ delivery rather than an all-metro
-// average — this matches the Grafana "tob_* (first-arrival, all DZ)" panel. This is a heavy
-// full-day scan over the proxied table (~tens of seconds) — it must run on a slow background
-// cadence, never in the request path or the 60s page-cache loop.
-func (a *API) FetchHyperliquidCompositeLatency(ctx context.Context) (*HyperliquidCompositeLatency, error) {
-	db := fmt.Sprintf("`%s`", a.FeedsDB)
-	// Single GROUP BY over (symbol, block) at Tokyo: min(recv) is associative, so a per-source
-	// pre-aggregation is redundant, and uniqExact(source) >= 2 enforces ">=2 distinct Tokyo DZ
-	// feeds delivered" directly (this >=2 requirement is what keeps p99 realistic; without it a
-	// single laggy feed inflates the tail). Filtering to tob_ feeds and Tokyo in WHERE (not after
-	// grouping) drops other rows before they enter the hash table. This keeps tiny per-group state;
-	// max_bytes_before_external_group_by spills to disk as a safety net so high block cardinality
-	// degrades to a slower query instead of an OOM on the memory-constrained proxy ClickHouse.
-	q := fmt.Sprintf(`
-		WITH c AS (
-			SELECT symbol, source_ts_ms, min(recv_ts_ns) AS r
-			FROM %[1]s.hyperliquid_bbo_observations
-			WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalHour(24)))
-			  AND startsWith(source, 'tob_')
-			  AND location_code = 'tyo' %[2]s
-			GROUP BY symbol, source_ts_ms
-			HAVING uniqExact(source) >= 2
+		WITH agg AS (
+		    SELECT
+		        location_code, symbol, source_ts_ms, bbo_hash,
+		        minIf(recv_ts_ns, %[2]s) AS dz,
+		        %[3]s
+		    FROM %[1]s.hyperliquid_bbo_observations
+		    WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalHour(%[5]d)))
+		      AND symbol IN (%[4]s)
+		    GROUP BY location_code, symbol, source_ts_ms, bbo_hash
+		),
+		sv AS (
+		    SELECT location_code, symbol, source_ts_ms, bbo_hash, dz, c.1 AS feed,
+		           multiIf(%[7]s, '%[8]s') AS cat,
+		           (toInt64(c.2) - toInt64(dz)) / 1e6 AS signed_ms
+		    FROM agg
+		    ARRAY JOIN [%[6]s] AS c
+		    WHERE c.2 > 0
 		)
 		SELECT
-			toFloat64(quantileTDigest(0.5)((toInt64(r) - toInt64(source_ts_ms) * 1000000) / 1e6)),
-			toFloat64(quantileTDigest(0.9)((toInt64(r) - toInt64(source_ts_ms) * 1000000) / 1e6)),
-			toFloat64(quantileTDigest(0.99)((toInt64(r) - toInt64(source_ts_ms) * 1000000) / 1e6))
-		FROM c
-		SETTINGS max_bytes_before_external_group_by = 2000000000`, db, hyperliquidLiquidSymbolFilter())
-	var p50, p90, p99 float64
-	if err := a.envDB(ctx).QueryRow(ctx, q).Scan(&p50, &p90, &p99); err != nil {
-		return nil, err
+		    location_code, feed, cat,
+		    countIf(dz > 0) AS races,
+		    100 * countIf(signed_ms > 0 AND dz > 0) / greatest(countIf(dz > 0), 1)  AS win_pct,
+		    ifNotFinite(toFloat64(quantileTDigestIf(0.50)(signed_ms, dz > 0)), 0)   AS p50,
+		    ifNotFinite(toFloat64(quantileTDigestIf(0.95)(signed_ms, dz > 0)), 0)   AS p95,
+		    ifNotFinite(toFloat64(quantileTDigestIf(0.99)(signed_ms, dz > 0)), 0)   AS p99,
+		    uniqCombinedIf((location_code, symbol, source_ts_ms, bbo_hash), dz > 0) AS emissions,
+		    uniqCombinedIf((location_code, symbol, source_ts_ms, bbo_hash), dz = 0) AS emissions_dz_absent
+		FROM sv
+		GROUP BY location_code, feed, cat WITH CUBE
+		SETTINGS max_bytes_before_external_group_by = 8000000000`,
+		fmt.Sprintf("`%s`", a.FeedsDB), hyperliquidDZArrivalExpr(), proj,
+		hyperliquidScoreboardSymbols(), hyperliquidScoreboardWindowHours, tuples,
+		strings.Join(cases, ", "), hyperliquidUncategorised)
+
+	rows, err := a.envDB(ctx).Query(ctx, q)
+	if err != nil {
+		return nil, nil, fmt.Errorf("hyperliquid scoreboard cells: %w", err)
 	}
-	return &HyperliquidCompositeLatency{
-		Window: "24h", P50Ms: p50, P90Ms: p90, P99Ms: p99, GeneratedAt: time.Now().UTC(),
-	}, nil
+	defer rows.Close()
+
+	matrix := map[hyperliquidMatrixKey]hyperliquidMatrixCell{}
+	markets := map[string]HyperliquidScoreboardStat{}
+	for rows.Next() {
+		var loc, feed, cat string
+		var races, emissions, emissionsDZAbsent uint64
+		var win, p50, p95, p99 float64
+		if err := rows.Scan(&loc, &feed, &cat, &races, &win, &p50, &p95, &p99, &emissions, &emissionsDZAbsent); err != nil {
+			return nil, nil, err
+		}
+		stat := HyperliquidScoreboardStat{WinPct: win, P50Ms: p50, P95Ms: p95, P99Ms: p99}
+		switch {
+		case cat == "":
+			matrix[hyperliquidMatrixKey{loc: loc, feed: feed}] = hyperliquidMatrixCell{
+				races: races, emissions: emissions, emissionsDZAbsent: emissionsDZAbsent, stat: stat,
+			}
+		case cat != hyperliquidUncategorised && loc == "" && feed == "":
+			markets[cat] = stat
+		}
+	}
+	return matrix, markets, rows.Err()
 }
 
-// StartHyperliquidBackgroundRefresher periodically computes the Hyperliquid views that are too
-// heavy for the 60s page-cache worker and writes them to the page cache (Postgres) so all replicas
-// share them and the request path never runs a multi-day scan:
-//   - the composite feed latency, and
-//   - the 24h and 7d scoreboards (the 1h scoreboard stays on the ordinary page-cache worker).
+const hyperliquidCarriedWindowMinutes = 5
+
+func (a *API) fetchHyperliquidCarriedInstruments(ctx context.Context) (map[string]int, error) {
+	q := fmt.Sprintf(`
+		SELECT startsWith(symbol, 'xyz:') AS hip3, count() AS n
+		FROM (
+		    SELECT DISTINCT symbol
+		    FROM %[1]s.hyperliquid_bbo_observations
+		    WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(%[3]d)))
+		      AND %[2]s
+		)
+		GROUP BY hip3`,
+		fmt.Sprintf("`%s`", a.FeedsDB), hyperliquidDZArrivalExpr(), hyperliquidCarriedWindowMinutes)
+
+	rows, err := a.envDB(ctx).Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("hyperliquid carried instruments: %w", err)
+	}
+	defer rows.Close()
+
+	out := map[string]int{}
+	for rows.Next() {
+		var hip3 uint8
+		var n uint64
+		if err := rows.Scan(&hip3, &n); err != nil {
+			return nil, err
+		}
+		if hip3 == 1 {
+			out["HIP-3 Builder DEX Perpetuals"] = int(n)
+		} else {
+			out["Native Perpetuals"] = int(n)
+		}
+	}
+	return out, rows.Err()
+}
+
+// hyperliquidObservationsQueryable answers whether the scan can run against this connection —
+// and, which is the point of the error return, tells a NO apart from a DON'T KNOW.
 //
-// Each computation gets its own timeout so a slow one can't starve the others; the composite
-// latency is refreshed first so the 24h/7d scoreboards pick up its freshly-cached value.
-func (a *API) StartHyperliquidBackgroundRefresher(ctx context.Context) {
-	const interval = 10 * time.Minute
-	const runTimeout = 3 * time.Minute
-	refreshComposite := func() {
-		rctx, cancel := context.WithTimeout(ctx, runTimeout)
-		defer cancel()
-		val, err := a.FetchHyperliquidCompositeLatency(rctx)
-		if err != nil {
-			slog.Warn("hyperliquid composite latency refresh failed", "error", err)
-			return
-		}
-		if err := a.WritePageCache(ctx, hyperliquidCompositeLatencyCacheKey, val); err != nil {
-			slog.Warn("hyperliquid composite latency cache write failed", "error", err)
-		}
+// Two answers are no, and both mean the empty payload rather than a failure. The table may be
+// absent, which is local dev. Or it may be present only as a remoteSecure() proxy into another
+// service: EXISTS TABLE cannot tell that from a real table, and the engine can, because a table
+// created AS remoteSecure(...) reports StorageProxy. That case needs catching because no budget
+// rescues it — the scan aggregates in a CTE, ARRAY JOINs, then aggregates again, so there is no
+// merge to push down and the initiator dies with NETWORK_ERROR after ~7.6 GiB. Answering with
+// the empty payload lets the refresh SUCCEED, and succeeding is what stops it re-running on
+// every cycle with the escalator pinned at ERROR.
+//
+// A probe that could not run is none of those. Reported as false it would let a single
+// connection blip at the 09:00 refresh write the empty blob and advance updated_at — and under
+// dailyAtUTC the entry is then not due again until tomorrow, so the board reads "no races
+// recorded" for 24 hours with nothing logged anywhere. The error goes back to the caller
+// instead: nothing is written, the escalator sees it, and the entry stays due.
+//
+// any() rather than the bare column so the probe always returns exactly one row. An absent
+// table comes back as the empty string, rather than as a no-rows error this would then have to
+// tell apart from a real one — which is the same conflation one level down.
+func (a *API) hyperliquidObservationsQueryable(ctx context.Context) (bool, error) {
+	var engine string
+	q := fmt.Sprintf(
+		"SELECT any(engine) FROM system.tables WHERE database = '%s' AND name = 'hyperliquid_bbo_observations'",
+		a.FeedsDB)
+	if err := a.envDB(ctx).QueryRow(ctx, q).Scan(&engine); err != nil {
+		return false, fmt.Errorf("hyperliquid observations probe: %w", err)
 	}
-	refreshScoreboard := func(window string) {
-		rctx, cancel := context.WithTimeout(ctx, runTimeout)
-		defer cancel()
-		val, err := a.FetchHyperliquidScoreboardData(rctx, window, "")
-		if err != nil {
-			slog.Warn("hyperliquid scoreboard refresh failed", "window", window, "error", err)
-			return
-		}
-		if err := a.WritePageCache(ctx, hyperliquidScoreboardWindowKey(window), val); err != nil {
-			slog.Warn("hyperliquid scoreboard cache write failed", "window", window, "error", err)
-		}
-	}
-	refresh := func() {
-		refreshComposite()
-		refreshScoreboard("24h")
-		refreshScoreboard("7d")
-	}
-	go func() {
-		refresh()
-		t := time.NewTicker(interval)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				refresh()
-			}
-		}
-	}()
+	// Production is SharedMergeTree, local dev is MergeTree, a proxy is StorageProxy. Matched
+	// on the family so a service that replicates differently still reads as local.
+	//
+	// system.tables is filtered by grant, which is what makes this safe under a restricted
+	// user: a row is visible exactly when the caller holds SELECT on that table, so "cannot
+	// read the engine" and "cannot run the scan" are the same condition. Verified against
+	// 25.12 — a user granted SELECT on one table reads its engine and sees no row at all for
+	// its neighbour.
+	return strings.HasSuffix(engine, "MergeTree"), nil
 }
 
-// GetHyperliquidScoreboard serves the Hyperliquid BBO scoreboard.
+// hyperliquidScoreboardRetryAfter is what a miss tells the client to wait. The entry is due
+// the moment its key is unwritten, so the wait is a worker cycle, not the 24h cadence.
+const hyperliquidScoreboardRetryAfter = 30 * time.Second
+
 func (a *API) GetHyperliquidScoreboard(w http.ResponseWriter, r *http.Request) {
-	if isMainnet(r.Context()) {
-		if key := hyperliquidScoreboardCacheKey(r); key != "" {
-			if data, err := a.readPageCache(r.Context(), key); err == nil {
-				w.Header().Set("Content-Type", "application/json")
-				w.Header().Set("X-Cache", "HIT")
-				_, _ = w.Write(data)
-				return
-			}
-		}
+	ctx := r.Context()
+
+	// Read for EVERY environment, not just mainnet. The payload does not vary by one: FeedsDB
+	// is a single config value and envDB falls back to the same connection, so testnet would
+	// have computed the identical board. What gating the read on isMainnet actually did was
+	// leave `X-DZ-Env: testnet` as a way for any caller to skip the cache.
+	if data, err := a.readPageCache(ctx, HyperliquidScoreboardCacheKey); err == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Cache", "HIT")
+		_, _ = w.Write(data)
+		return
 	}
 	w.Header().Set("X-Cache", "MISS")
 
-	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
-	defer cancel()
-
-	window := strings.TrimSpace(r.URL.Query().Get("window"))
-	if _, ok := hyperliquidWindows[window]; !ok {
-		window = "1h"
-	}
-	symbol := r.URL.Query().Get("symbol")
-
-	// FetchHyperliquidScoreboardData already degrades to an empty-but-valid response when the
-	// proxy table is absent (e.g. local dev), so no separate existence check is needed here —
-	// that avoids a redundant EXISTS TABLE round-trip per uncached request.
-	resp, err := a.FetchHyperliquidScoreboardData(ctx, window, symbol)
-	if err != nil {
-		logError("HyperliquidScoreboard error", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	// Nothing to compute from here (local dev, or a proxy): an empty board, not an error. This
+	// is a system.tables lookup, not a scan. A probe that fails falls through to the 503 below
+	// rather than rendering zeros — an empty board asserts a measurement, and we have not made
+	// one.
+	if queryable, err := a.hyperliquidObservationsQueryable(ctx); err == nil && !queryable {
+		writeJSON(w, newHyperliquidScoreboardResponse())
 		return
 	}
-	writeJSON(w, resp)
+
+	// A miss is never computed in the request path. One compute is a ~10 GiB, ~15s scan of
+	// hyperliquid_bbo_observations; this route is reachable by anyone, there is no
+	// singleflight, and the miss path never wrote back — so the next request ran it again.
+	// The rate limiter bounds requests per client, not what one request costs the cluster.
+	// The worker owns the compute; a miss says so and stops.
+	w.Header().Set("Retry-After", strconv.Itoa(int(hyperliquidScoreboardRetryAfter.Seconds())))
+	http.Error(w, "hyperliquid scoreboard is not computed yet", http.StatusServiceUnavailable)
 }
