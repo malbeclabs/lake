@@ -486,13 +486,12 @@ export function HyperliquidScoreboardPage() {
                       DoubleZero delivers the order book first.
                     </div>
                     <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                      Each update, raced against the venue's public API and every commercial feed we buy.
+                      Raced against the venue's public API and other commercial feeds.
                     </p>
                   </div>
                 </div>
                 <div className="flex min-w-0 flex-1 flex-col justify-center gap-2.5 border-t border-border p-4 sm:p-5 lg:border-l lg:border-t-0">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <span className="text-sm font-medium">One update, every feed racing</span>
+                  <div className="flex items-baseline justify-end gap-3">
                     <span className="font-mono text-xs text-muted-foreground">median, after DoubleZero</span>
                   </div>
                   <ArrivalChart data={data} />

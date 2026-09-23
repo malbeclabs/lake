@@ -232,7 +232,7 @@ func TestHyperliquidScoreboard_MarketCategoriesComeFromTheSameScan(t *testing.T)
 	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "xyz:SP500", 2, 60) // Equity index, lost by 40ms
 	obs("tyo", "hydromancer_bbo", "xyz:SP500", 2, 20)
 
-	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "xyz:CL", 3, 10) // raced, but in no category
+	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "xyz:CL", 3, 10) // Commodities, won by 40ms
 	obs("tyo", "hydromancer_bbo", "xyz:CL", 3, 50)
 
 	resp, err := api.FetchHyperliquidScoreboardData(t.Context())
@@ -252,9 +252,39 @@ func TestHyperliquidScoreboard_MarketCategoriesComeFromTheSameScan(t *testing.T)
 	assert.InDelta(t, 0.0, byCat["Equity index"].WinPct, 0.01)
 	assert.InDelta(t, -40.0, byCat["Equity index"].P50Ms, 0.01)
 
-	// A category nothing was recorded for reports nothing rather than inheriting a rollup.
-	assert.Zero(t, byCat["Platform & high-beta"].WinPct)
-	assert.Zero(t, byCat["Single-name equity"].WinPct)
+	assert.InDelta(t, 100.0, byCat["Commodities"].WinPct, 0.01)
+
+	assert.NotContains(t, byCat, "Platform & high-beta")
+	assert.NotContains(t, byCat, "Single-name equity")
+}
+
+// A category no competitor carries has no races at all: sv keeps a row only where a competitor
+// delivered, so the CUBE has no cell for it and markets[name] was Go's zero value. Rendering
+// that printed a 0% win rate — on a public page, a claim that DoubleZero lost every race in the
+// one market it is alone in publishing.
+func TestHyperliquidScoreboard_CategoryNobodyElseCarriesIsNotShownAtZero(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createObservationsTable(t, api)
+	obs := newObserver(t, api)
+
+	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "BTC", 1, 10)
+	obs("tyo", "hydromancer_bbo", "BTC", 1, 50)
+
+	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "xyz:CL", 2, 10)
+	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "xyz:BRENTOIL", 3, 10)
+
+	resp, err := api.FetchHyperliquidScoreboardData(t.Context())
+	require.NoError(t, err)
+
+	shown := map[string]float64{}
+	for _, m := range resp.Markets {
+		for _, c := range m.Cats {
+			shown[c.Name] = c.WinPct
+		}
+	}
+	assert.Contains(t, shown, "Major crypto", "a raced category is still reported")
+	assert.NotContains(t, shown, "Commodities",
+		"nobody raced these, so 0% would assert a loss that never happened")
 }
 
 func TestHyperliquidScoreboard_RecurringStateIsOneRacePerEmission(t *testing.T) {
