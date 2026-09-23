@@ -14,6 +14,7 @@ import {
 
 const DZ_COLOR = '#34d399'
 const FIELD_COLOR = '#d99a3c'
+const LOSS_COLOR = '#f87171'
 
 const METRICS = [
   { key: 'win_pct', label: 'Win rate', hint: 'share delivered first' },
@@ -134,7 +135,7 @@ function ArrivalChart({ data }: { data: HyperliquidScoreboardResponse }) {
                   // A bar left of zero is a feed that beat DoubleZero: grow it toward zero, and
                   // colour it so it cannot read as a win at a glance.
                   transformOrigin: r.v < 0 ? 'right center' : 'left center',
-                  background: r.v < 0 ? 'var(--hl-dz)' : undefined,
+                  background: r.v < 0 ? 'var(--hl-loss)' : undefined,
                   transitionDelay: `${i * 70}ms`,
                 }}
               />
@@ -428,7 +429,14 @@ export function HyperliquidScoreboardPage() {
   }, [data?.as_of, now])
 
   return (
-    <div className="flex-1 overflow-auto" style={{ ['--hl-dz' as string]: DZ_COLOR, ['--hl-field' as string]: FIELD_COLOR }}>
+    <div
+      className="flex-1 overflow-auto"
+      style={{
+        ['--hl-dz' as string]: DZ_COLOR,
+        ['--hl-field' as string]: FIELD_COLOR,
+        ['--hl-loss' as string]: LOSS_COLOR,
+      }}
+    >
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-8">
         <PageHeader
           icon={Trophy}

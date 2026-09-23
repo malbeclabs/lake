@@ -328,6 +328,10 @@ func TestHyperliquidScoreboard_SitesComeFromTheData(t *testing.T) {
 	}
 }
 
+// "Instruments carried" samples the live fleet over hyperliquidCarriedWindowMinutes rather than
+// the 24h window the board races, so an instrument quiet for longer than the sample is not
+// counted. That is the documented trade against a 4.25B-row scan for the same answer, and this
+// pins it so the narrowness stays a decision on the record rather than a surprise.
 func TestHyperliquidScoreboard_CarriedInstrumentsAreCountedFromTheLiveFleet(t *testing.T) {
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	createObservationsTable(t, api)
@@ -344,7 +348,7 @@ func TestHyperliquidScoreboard_CarriedInstrumentsAreCountedFromTheLiveFleet(t *t
 
 	write("BTC", 10*time.Second)       // native, live
 	write("xyz:SP500", 10*time.Second) // HIP-3, live
-	write("xyz:NVDA", 30*time.Minute)  // HIP-3, gone quiet well outside the window
+	write("xyz:NVDA", 30*time.Minute)  // HIP-3, quiet for longer than the sample
 
 	resp, err := api.FetchHyperliquidScoreboardData(t.Context())
 	require.NoError(t, err)
@@ -354,8 +358,44 @@ func TestHyperliquidScoreboard_CarriedInstrumentsAreCountedFromTheLiveFleet(t *t
 		byMarket[m.Name] = m.Carried
 	}
 	assert.Equal(t, 1, byMarket["Native Perpetuals"])
-	assert.Equal(t, 1, byMarket["HIP-3 Builder DEX Perpetuals"], "the quiet instrument is not carried")
+	assert.Equal(t, 1, byMarket["HIP-3 Builder DEX Perpetuals"],
+		"an instrument quiet for longer than the sample is not counted — the known cost of the narrow window")
 	assert.Equal(t, 2, resp.Instruments)
+}
+
+// A CUBE cell with no DoubleZero arrival has nothing to take a quantile over, and an unguarded
+// quantileTDigestIf answers NaN there. json.Marshal refuses NaN, so one such cell fails the
+// WritePageCache of this key — and because the handler never computes in the request path, the
+// page then serves 503 until something else fixes it. The failure is in the marshal, not in the
+// fetch, so that is what this asserts.
+func TestHyperliquidScoreboard_SiteWithNoDoubleZeroArrivalStaysSerialisable(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createObservationsTable(t, api)
+	obs := newObserver(t, api)
+
+	// Tokyo races normally.
+	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "BTC", 1, 10)
+	obs("tyo", "hyperliquid_public_bbo", "BTC", 1, 40)
+	// Frankfurt has a competitor and no DoubleZero publisher at all.
+	obs("fra", "hyperliquid_public_bbo", "BTC", 2, 40)
+
+	resp, err := api.FetchHyperliquidScoreboardData(t.Context())
+	require.NoError(t, err)
+
+	b, err := json.Marshal(resp)
+	require.NoError(t, err, "a site with no DoubleZero arrival must not put NaN in the payload")
+	require.NotContains(t, string(b), "NaN")
+
+	var fra *handlers.HyperliquidScoreboardSite
+	for i, s := range resp.Sites {
+		if s.Code == "FRA" {
+			fra = &resp.Sites[i]
+		}
+	}
+	require.NotNil(t, fra, "the site is still reported, at zero rather than not at all")
+	assert.Zero(t, fra.P50Ms)
+	assert.Zero(t, fra.P95Ms)
+	assert.Zero(t, fra.P99Ms)
 }
 
 // A miss must never compute. One compute is a multi-GB scan of hyperliquid_bbo_observations,

@@ -187,10 +187,10 @@ func newHyperliquidScoreboardResponse() *HyperliquidScoreboardResponse {
 	// FeedCount is deliberately absent here: it counts feeds actually measured in the window,
 	// not len(hyperliquidCompetitors), and is filled once the rows are known.
 	//
-	// The window closes when the blob is computed, which on a daily cadence is just after
-	// 00:00 UTC — so by late in the day "last 24 hours" names a window that closed most of a
-	// day ago. The label carries the closing time rather than asking the reader to reconcile
-	// it with the freshness pill.
+	// The window closes when the blob is computed, which on this entry's cadence is 09:00 UTC
+	// — so by late in the day "last 24 hours" names a window that closed hours ago. The label
+	// carries the closing time rather than asking the reader to reconcile it with the
+	// freshness pill.
 	now := time.Now().UTC()
 	return &HyperliquidScoreboardResponse{
 		WindowLabel: fmt.Sprintf("%d hours to %s UTC", hyperliquidScoreboardWindowHours, now.Format("2006-01-02 15:04")),
@@ -203,7 +203,7 @@ func newHyperliquidScoreboardResponse() *HyperliquidScoreboardResponse {
 
 func (a *API) FetchHyperliquidScoreboardData(ctx context.Context) (*HyperliquidScoreboardResponse, error) {
 	resp := newHyperliquidScoreboardResponse()
-	if !a.hyperliquidObservationsTableExists(ctx) {
+	if !a.hyperliquidObservationsTableExists(ctx) || !a.hyperliquidObservationsAreLocal(ctx) {
 		return resp, nil
 	}
 
@@ -351,9 +351,9 @@ func (a *API) fetchHyperliquidScoreboardCells(ctx context.Context) (
 		    location_code, feed, cat,
 		    countIf(dz > 0) AS races,
 		    100 * countIf(signed_ms > 0 AND dz > 0) / greatest(countIf(dz > 0), 1)  AS win_pct,
-		    toFloat64(quantileTDigestIf(0.50)(signed_ms, dz > 0))                   AS p50,
-		    toFloat64(quantileTDigestIf(0.95)(signed_ms, dz > 0))                   AS p95,
-		    toFloat64(quantileTDigestIf(0.99)(signed_ms, dz > 0))                   AS p99,
+		    ifNotFinite(toFloat64(quantileTDigestIf(0.50)(signed_ms, dz > 0)), 0)   AS p50,
+		    ifNotFinite(toFloat64(quantileTDigestIf(0.95)(signed_ms, dz > 0)), 0)   AS p95,
+		    ifNotFinite(toFloat64(quantileTDigestIf(0.99)(signed_ms, dz > 0)), 0)   AS p99,
 		    uniqCombinedIf((location_code, symbol, source_ts_ms, bbo_hash), dz > 0) AS emissions,
 		    uniqCombinedIf((location_code, symbol, source_ts_ms, bbo_hash), dz = 0) AS emissions_dz_absent
 		FROM sv
@@ -434,6 +434,17 @@ func (a *API) hyperliquidObservationsTableExists(ctx context.Context) bool {
 		return false
 	}
 	return n == 1
+}
+
+func (a *API) hyperliquidObservationsAreLocal(ctx context.Context) bool {
+	var engine string
+	q := fmt.Sprintf(
+		"SELECT engine FROM system.tables WHERE database = '%s' AND name = 'hyperliquid_bbo_observations'",
+		a.FeedsDB)
+	if err := a.envDB(ctx).QueryRow(ctx, q).Scan(&engine); err != nil {
+		return false
+	}
+	return strings.HasSuffix(engine, "MergeTree")
 }
 
 // hyperliquidScoreboardRetryAfter is what a miss tells the client to wait. The entry is due

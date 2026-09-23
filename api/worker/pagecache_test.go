@@ -276,6 +276,24 @@ func TestDayAlignedEntriesRollWithTheWindow(t *testing.T) {
 	unaligned := cacheEntry{every: networkHealthHistoryInterval}
 	require.False(t, dueForRefresh(unaligned, writtenYesterday, now, windowEnd))
 
+	// A dailyAtUTC entry is due once its blob predates TODAY's mark, and not before —
+	// so it waits through the post-midnight cycle the day-aligned entries fire on.
+	daily := cacheEntry{every: 24 * time.Hour, dailyAtUTC: 9 * time.Hour}
+	mark := windowEnd.Add(9 * time.Hour)
+	require.False(t, dueForRefresh(daily, writtenYesterday, now, windowEnd),
+		"00:01 UTC is not this entry's hour, however old the blob is")
+	require.False(t, dueForRefresh(daily, writtenYesterday, mark.Add(-time.Second), windowEnd),
+		"one second before the mark is still not the mark")
+	require.True(t, dueForRefresh(daily, writtenYesterday, mark, windowEnd))
+	require.False(t, dueForRefresh(daily, mark.Add(time.Second), mark.Add(time.Hour), windowEnd),
+		"already run today")
+
+	// And it does not walk forward: a run that landed late yesterday still leaves the
+	// entry due at today's mark rather than 24h after that late run. This is the whole
+	// difference from `every` on its own, which would wait until 11:00.
+	ranLateYesterday := mark.AddDate(0, 0, -1).Add(2 * time.Hour)
+	require.True(t, dueForRefresh(daily, ranLateYesterday, mark, windowEnd))
+
 	// Every Network Health entry must carry the marker, or its group's window
 	// lags the others'.
 	byKey := map[string]cacheEntry{}
@@ -287,17 +305,32 @@ func TestDayAlignedEntriesRollWithTheWindow(t *testing.T) {
 		require.True(t, byKey[key].dayAligned,
 			"network health entry %q reads DefaultNetworkHealthWindow, so it must roll with it", key)
 	}
-	// The Hyperliquid scoreboard carries it for the other reason: a daily cadence
-	// measured from the last write walks forward through the day after one late run,
-	// and the marker is what pins it to just after 00:00 UTC.
-	require.True(t, byKey[handlers.HyperliquidScoreboardCacheKey].dayAligned)
+	// The Hyperliquid scoreboard is daily and deliberately NOT marked. Its window is a
+	// rolling 24 hours ending at the scan, not a UTC day, so there is nothing for the
+	// marker to align the WINDOW to — what it aligned was the start, onto the post-00:00
+	// cycle the two heavy network health entries already come due on. RefreshHeavyCaches
+	// runs everything due concurrently and bounds none of it, so three ~180s scans
+	// contending there can miss the 240s heavyActivityTimeout together, and
+	// TestEntryTimeoutsFitTheirActivityBudget cannot catch that because it checks each
+	// entry against the budget alone. Unmarked, it runs 24h after its last write and walks
+	// forward by at most one cycle a day, which a rolling window does not care about.
+	require.False(t, byKey[handlers.HyperliquidScoreboardCacheKey].dayAligned,
+		"a rolling 24h window has no UTC day to roll with, and the marker only pins it into the midnight pile-up")
 	require.Equal(t, 24*time.Hour, byKey[handlers.HyperliquidScoreboardCacheKey].every)
+	require.Equal(t, 9*time.Hour, byKey[handlers.HyperliquidScoreboardCacheKey].dailyAtUTC,
+		"the daily run is pinned to 09:00 UTC, clear of the post-midnight heavy batch")
 
-	// Nothing else: without one of those two reasons the marker just buys an entry an
-	// extra refresh a day.
-	dayAligned := append(slices.Clone(networkHealthKeys), handlers.HyperliquidScoreboardCacheKey)
+	// The two are alternatives, not layers. Setting both would make an entry due at 00:00 as
+	// well as at its own hour, which is the collision dailyAtUTC exists to step out of.
 	for _, e := range append(a.entries(), a.heavyEntries()...) {
-		if !slices.Contains(dayAligned, e.key) {
+		require.False(t, e.dayAligned && e.dailyAtUTC > 0,
+			"entry %q sets both dayAligned and dailyAtUTC", e.key)
+	}
+
+	// Nothing else: without network health's reason the marker just buys an entry an
+	// extra refresh a day.
+	for _, e := range append(a.entries(), a.heavyEntries()...) {
+		if !slices.Contains(networkHealthKeys, e.key) {
 			require.False(t, e.dayAligned, "entry %q has no reason to roll with the UTC day", e.key)
 		}
 	}

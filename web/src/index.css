@@ -497,7 +497,9 @@ table {
   animation: tooltipIn 120ms ease-out;
 }
 
-/* Hyperliquid scoreboard. --hl-dz and --hl-field are set on the page wrapper. */
+/* Hyperliquid scoreboard. --hl-dz, --hl-field and --hl-loss are set on the page wrapper.
+   --hl-dz means "DoubleZero won" everywhere it appears, so a race DoubleZero lost takes
+   --hl-loss and never this one. */
 
 /* Arrival chart */
 .hl-arr {
