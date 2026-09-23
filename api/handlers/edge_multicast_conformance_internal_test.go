@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,10 @@ import (
 type fakeProm struct {
 	byMetric map[string][]PromSample
 	err      error
+
+	// errByMetric fails ONE leg while the others answer — the shape the catalog contract is
+	// about.
+	errByMetric map[string]error
 
 	// delay slows each query, and lastQueryAt records when the last one ran. Only the clock
 	// test uses them: an ordering assertion needs a reference point INSIDE the call, and it
@@ -28,6 +33,11 @@ func (f *fakeProm) Query(_ context.Context, query string) ([]PromSample, error) 
 	f.lastQueryAt = time.Now().UTC()
 	if f.err != nil {
 		return nil, f.err
+	}
+	for metric, err := range f.errByMetric {
+		if strings.Contains(query, metric) {
+			return nil, err
+		}
 	}
 	for metric, samples := range f.byMetric {
 		if strings.Contains(query, metric) {
@@ -392,5 +402,121 @@ func TestPromCount_ASubUnitIncreaseIsStillAnEvent(t *testing.T) {
 		if got := promCount(tc.in); got != tc.want {
 			t.Fatalf("promCount(%v) = %d, want %d", tc.in, got, tc.want)
 		}
+	}
+}
+
+// A rule id is a finding only to a reader who knows the catalog, so the list carries the
+// validator's own summary and spec link, joined by rule id.
+func TestEdgeMulticastConformance_RulesCarryTheirCatalogEntry(t *testing.T) {
+	got := fetchConformance(t, &fakeProm{byMetric: map[string][]PromSample{
+		"dz_conformance_uptime_seconds": oneValidator("233.84.178.3", "cmh1"),
+		"dz_conformance_violations_total": {
+			sample(33, "multicast_group", "233.84.178.3", "stream", "kalshi_perps_tob",
+				"rule_id", "MSG.WRONG_PORT_PLACEMENT", "severity", "must", "hostname", "cmh1"),
+		},
+		"dz_conformance_rule_info": {
+			sample(1, "rule_id", "MSG.WRONG_PORT_PLACEMENT",
+				"summary", "Messages are published on the port their type belongs to",
+				"spec_url", "https://example.invalid/spec#msg-wrong-port-placement"),
+			sample(1, "rule_id", "SOME.OTHER.RULE", "summary", "not this one", "spec_url", "x"),
+		},
+	}})
+
+	e := got.Groups["233.84.178.3"]
+	if len(e.TopRules) != 1 {
+		t.Fatalf("top rules = %d, want 1", len(e.TopRules))
+	}
+	r := e.TopRules[0]
+	if r.Summary != "Messages are published on the port their type belongs to" {
+		t.Fatalf("summary = %q, want the catalog entry for this rule", r.Summary)
+	}
+	if r.SpecURL != "https://example.invalid/spec#msg-wrong-port-placement" {
+		t.Fatalf("spec_url = %q, want the catalog entry for this rule", r.SpecURL)
+	}
+}
+
+// The catalog decorates a finding; it does not decide one. Losing it costs the description and
+// nothing else.
+func TestEdgeMulticastConformance_ACatalogFailureDoesNotCostTheVerdict(t *testing.T) {
+	api := &API{Prom: &fakeProm{
+		byMetric: map[string][]PromSample{
+			"dz_conformance_uptime_seconds": oneValidator("233.84.178.3", "cmh1"),
+			"dz_conformance_violations_total": {
+				sample(33, "multicast_group", "233.84.178.3", "stream", "kalshi_perps_tob",
+					"rule_id", "MSG.WRONG_PORT_PLACEMENT", "severity", "must", "hostname", "cmh1"),
+			},
+		},
+		errByMetric: map[string]error{"dz_conformance_rule_info": errors.New("token expired")},
+	}}
+	got, err := api.FetchEdgeMulticastConformance(context.Background())
+	if err != nil {
+		t.Fatalf("a failed catalog lookup took the payload with it: %v", err)
+	}
+	e := got.Groups["233.84.178.3"]
+	if e == nil || e.Verdict != edgeMulticastConformanceViolating || e.Must != 33 {
+		t.Fatalf("verdict/counts lost with the catalog: %+v", e)
+	}
+	if len(e.TopRules) != 1 || e.TopRules[0].RuleID != "MSG.WRONG_PORT_PLACEMENT" {
+		t.Fatalf("the rule id must survive with no catalog behind it, got %+v", e.TopRules)
+	}
+	if e.TopRules[0].Summary != "" {
+		t.Fatalf("summary = %q, want empty: nothing described this rule", e.TopRules[0].Summary)
+	}
+}
+
+// Which vantages saw a rule is a different question from how many the verdict rests on, and the
+// group-level node set cannot answer it.
+func TestEdgeMulticastConformance_ARuleNamesTheVantagesThatSawIt(t *testing.T) {
+	got := fetchConformance(t, &fakeProm{byMetric: map[string][]PromSample{
+		"dz_conformance_uptime_seconds": {
+			sample(1, "multicast_group", "233.84.178.21", "hostname", "cmh1"),
+			sample(1, "multicast_group", "233.84.178.21", "hostname", "was1"),
+		},
+		"dz_conformance_violations_total": {
+			sample(4, "multicast_group", "233.84.178.21", "stream", "kalshi_elections_tob_house",
+				"rule_id", "MSG.SEQ.GAP", "severity", "must", "hostname", "was1"),
+			sample(6, "multicast_group", "233.84.178.21", "stream", "kalshi_elections_tob_senate",
+				"rule_id", "MSG.SEQ.GAP", "severity", "must", "hostname", "cmh1"),
+		},
+	}})
+
+	e := got.Groups["233.84.178.21"]
+	r := e.TopRules[0]
+	// Detections, summed across vantages — the vantages beside it are what keep it from being
+	// read as an event count.
+	if r.Count != 10 || e.Must != 10 {
+		t.Fatalf("count = %d, must = %d, want 10 detections", r.Count, e.Must)
+	}
+	if len(r.Nodes) != 2 || r.Nodes[0] != "cmh1" || r.Nodes[1] != "was1" {
+		t.Fatalf("nodes = %v, want [cmh1 was1] sorted", r.Nodes)
+	}
+	// The instance name is the only thing here that narrows a finding below the group.
+	if len(r.Validators) != 2 || r.Validators[0] != "kalshi_elections_tob_house" {
+		t.Fatalf("validators = %v, want both instances sorted", r.Validators)
+	}
+}
+
+// A capped list that does not say what it left out reads as the whole finding.
+func TestEdgeMulticastConformance_ATruncatedRuleListSaysHowManyFired(t *testing.T) {
+	violations := []PromSample{}
+	for i := 0; i < edgeMulticastConformanceTopRuleCap+3; i++ {
+		violations = append(violations, sample(1, "multicast_group", "233.84.178.3",
+			"stream", "kalshi_perps_tob", "rule_id", fmt.Sprintf("RULE.%02d", i),
+			"severity", "should", "hostname", "cmh1"))
+	}
+	got := fetchConformance(t, &fakeProm{byMetric: map[string][]PromSample{
+		"dz_conformance_uptime_seconds":   oneValidator("233.84.178.3", "cmh1"),
+		"dz_conformance_violations_total": violations,
+	}})
+
+	e := got.Groups["233.84.178.3"]
+	if len(e.TopRules) != edgeMulticastConformanceTopRuleCap {
+		t.Fatalf("rendered rules = %d, want the cap %d", len(e.TopRules), edgeMulticastConformanceTopRuleCap)
+	}
+	if e.RulesFired != edgeMulticastConformanceTopRuleCap+3 {
+		t.Fatalf("rules_fired = %d, want every rule that fired, not the rendered ones", e.RulesFired)
+	}
+	if e.Should != uint64(edgeMulticastConformanceTopRuleCap+3) {
+		t.Fatalf("should = %d, want the total over every rule including the truncated ones", e.Should)
 	}
 }

@@ -234,6 +234,9 @@ refresh cycle rather than the pods, but it is still the wrong order.
 
 Window is **15 minutes**, matching the other folds on this page. At a 60s scrape that is 15 samples.
 
+Four of them decide the verdict; a fifth, added by §8, describes the rules that fired and is
+skipped when none did.
+
 Which validators are running, and at how many vantages. **It runs first so a validator with nothing
 to report yet still reaches the payload.** A process that just started has no findings and no checks,
 and it has to render as "graded nothing" rather than vanish. Every query creates the entry it needs,
@@ -397,7 +400,7 @@ New file `api/handlers/edge_multicast_conformance.go`, following `edge_multicast
   label is a separate deploy — and it produces an empty payload, a false `showConformance` and no
   column at all, which is pixel-identical to "no metrics store configured" and to "no validator
   covers anything". One WARN line separates the three.
-- `GeneratedAt` is stamped **after** the four queries, not before them. It is the clock the whole
+- `GeneratedAt` is stamped **after** the queries, not before them. It is the clock the whole
   column ages against, and four round trips to a hosted store are not free.
 - An absent or failed payload drops the column, never the page. Note that this is not a rare state:
   `page_cache` survives a pod restart, so a newly added key is empty from deploy until the refresh
@@ -459,7 +462,8 @@ and `ungraded` and `advisory` are both **outlined rather than filled**, the trea
 already uses one column over, so a glance down the column cannot read either as the same clean bill
 of health a `conforming` row carries.
 
-The tooltip carries what the badge cannot, and three of its lines are not optional:
+The tooltip carries what the badge cannot, and three of its lines are not optional (the rules
+themselves moved out of it in §8):
 
 - **Known deviations are excluded and counted.** Naming them, so a green badge on `perps-tob` is not
   read as the port-placement deviation having been fixed.
@@ -491,3 +495,33 @@ carried this clock.
 
 `stream` appears here only as the name of an Alloy label. In our own prose the traffic is a **feed**
 and a redundant route is a **path**, per `edge-feed-spec:GLOSSARY.md`.
+
+---
+
+## 8. Amendment, 2026-09-23: the violations are rendered, not only badged
+
+The rules that fired shipped as one tooltip line each. A rule id names a finding only to a reader
+who knows the catalog, and a tooltip is not where anyone reads a list, so they are a panel the
+badge opens: one row under the group row and above its publisher lines, a line per rule with
+severity, id, detection count, the catalog's summary, a spec link and the vantages behind it. The
+chevron appears only where something fired, and the panel is closed by default.
+
+- **The descriptions are read, not restated.** A fifth query joins `dz_conformance_rule_info` by
+  rule id. A copy of the catalog here would go stale the first time a rule is reworded; a rule the
+  catalog does not describe renders as its id alone.
+- **That query is skipped when nothing fired, and its failure is not the payload's** — the one
+  exception to §5's propagate rule. It decorates a finding rather than deciding one, so blanking a
+  computed verdict for a refresh interval over a static lookup would cost the column its point. It
+  logs WARN and the rule ids survive.
+- **`hostname` is now in the violations by-clause**, which §3 kept out of it. The reason it was out
+  is unchanged — the counts are detections and are summed across vantages — but a rule can now name
+  the recorders that reported it, which the group-level `Nodes` set cannot. One visible consequence:
+  `promCount` floors a sub-unit extrapolation at one event per series, so a total can move by one or
+  two against the same window unsplit.
+- **Each line names the validator instance** (the Alloy `stream` label). It is the only thing in
+  this payload that narrows a finding below the group — the six elections instances grade one
+  address, one market each — and §1's optional `channel` label supersedes it if it lands.
+- **The cap moved from 6 to 10** and `RulesFired` counts the rules before it, so the panel can say
+  what it left out.
+- **`spec_url` is linked only when it starts with `https://`.** It is a Prometheus label value, and
+  an `href` is the one place where that becomes executable.

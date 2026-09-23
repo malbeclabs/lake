@@ -8241,11 +8241,20 @@ export interface EdgeMulticastRecorderCoverage {
   lagging?: EdgeMulticastLaggingRecorder[]
 }
 
-/** One rule that fired, for the tooltip. */
+/** One rule that fired. The summary and spec link come from the validator's own catalog, joined
+ *  by rule id; absent, the row shows the id alone rather than a description this repo invented. */
 export interface EdgeMulticastConformanceRule {
   rule_id: string
   severity: string
+  /** Detections, summed over vantages: one violation seen at two recorders counts twice, which
+   *  is why the recorders are named beside it. */
   count: number
+  summary?: string
+  spec_url?: string
+  /** Where it fired. The validator instance name is the only thing here that narrows a finding
+   *  below the group: six elections instances grade one address, one market each. */
+  nodes?: string[]
+  validators?: string[]
 }
 
 /** What the conformance rule set graded on one group over the window.
@@ -8265,8 +8274,10 @@ export interface EdgeMulticastConformance {
   graded: number
   na: number
   unverifiable: number
-  /** The rules that fired, must-severity first. */
+  /** The rules that fired, must-severity first, capped. */
   top_rules?: EdgeMulticastConformanceRule[]
+  /** Rules that fired before that cap. The severity totals above are over all of them. */
+  rules_fired?: number
   /** Known-deviation hits. Excluded from the verdict, never from the payload: a deviation that
    *  stops firing is a real change, and one that starts firing elsewhere is a finding. */
   exempted: number
