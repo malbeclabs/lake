@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -435,9 +436,48 @@ func TestEdgeMulticastConformance_RulesCarryTheirCatalogEntry(t *testing.T) {
 	}
 }
 
+// Mid-rollout the same rule is exposed by two builds at once. Picking the first lexicographically
+// is arbitrary, and the point is only that it is the SAME one on every refresh — including where
+// the two builds agree on the wording and differ on where it points, which the summary alone
+// cannot separate.
+func TestEdgeMulticastConformance_ACatalogEntryIsPickedTheSameWayEveryTime(t *testing.T) {
+	const group = "233.84.178.3"
+	catalog := []PromSample{
+		sample(1, "rule_id", "MSG.SEQ.GAP", "summary", "Sequence numbers advance without holes",
+			"spec_url", "https://example.invalid/spec@v2#msg-seq-gap"),
+		sample(1, "rule_id", "MSG.SEQ.GAP", "summary", "Sequence numbers advance without holes",
+			"spec_url", "https://example.invalid/spec@v1#msg-seq-gap"),
+	}
+
+	// Prometheus makes no ordering promise, so the two orders must agree.
+	for _, order := range [][]PromSample{catalog, {catalog[1], catalog[0]}} {
+		got := fetchConformance(t, &fakeProm{byMetric: map[string][]PromSample{
+			"dz_conformance_uptime_seconds": oneValidator(group, "cmh1"),
+			"dz_conformance_violations_total": {
+				sample(4, "multicast_group", group, "stream", "kalshi_perps_tob",
+					"rule_id", "MSG.SEQ.GAP", "severity", "must", "hostname", "cmh1"),
+			},
+			"dz_conformance_rule_info": order,
+		}})
+
+		r := got.Groups[group].TopRules[0]
+		if r.SpecURL != "https://example.invalid/spec@v1#msg-seq-gap" {
+			t.Fatalf("spec_url = %q, want the first of the two lexicographically whatever order they arrive in", r.SpecURL)
+		}
+	}
+}
+
 // The catalog decorates a finding; it does not decide one. Losing it costs the description and
-// nothing else.
+// nothing else — but it is never lost silently: without the WARN, a fleet whose catalog has been
+// unreachable for a week is indistinguishable on the page from one whose rules carry no summary.
+//
+// Not parallel: swaps the global slog default.
 func TestEdgeMulticastConformance_ACatalogFailureDoesNotCostTheVerdict(t *testing.T) {
+	var recs []slog.Record
+	prev := slog.Default()
+	slog.SetDefault(slog.New(levelRecorder{&recs}))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
 	api := &API{Prom: &fakeProm{
 		byMetric: map[string][]PromSample{
 			"dz_conformance_uptime_seconds": oneValidator("233.84.178.3", "cmh1"),
@@ -461,6 +501,19 @@ func TestEdgeMulticastConformance_ACatalogFailureDoesNotCostTheVerdict(t *testin
 	}
 	if e.TopRules[0].Summary != "" {
 		t.Fatalf("summary = %q, want empty: nothing described this rule", e.TopRules[0].Summary)
+	}
+
+	var warned bool
+	for _, r := range recs {
+		if r.Message == "edge multicast conformance: rule catalog unavailable, rules render by id alone" {
+			if r.Level != slog.LevelWarn {
+				t.Fatalf("catalog failure logged at %v, want WARN: it degrades a column, it does not page", r.Level)
+			}
+			warned = true
+		}
+	}
+	if !warned {
+		t.Fatalf("the catalog error was swallowed; logged %d records, none of them the catalog warning", len(recs))
 	}
 }
 

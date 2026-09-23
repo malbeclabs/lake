@@ -382,11 +382,15 @@ func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticast
 			if id == "" {
 				continue
 			}
-			// Two builds mid-rollout can word one rule differently. First lexicographically is
-			// arbitrary but stable, so the text does not flip between refreshes.
-			cur, seen := catalog[id]
+			// Two builds mid-rollout can word one rule differently, and two can carry the same
+			// wording against different spec builds. First lexicographically is arbitrary but
+			// stable, so neither the text nor the link under it flips between refreshes. The
+			// summary alone is not enough of a key for that: where two entries agree on it, the
+			// comparison never fires and whichever link Prometheus happened to return first wins.
+			cur, have := catalog[id]
 			cand := conformanceRuleDoc{summary: sm.Label("summary"), specURL: sm.Label("spec_url")}
-			if !seen || cand.summary < cur.summary {
+			if !have || cand.summary < cur.summary ||
+				(cand.summary == cur.summary && cand.specURL < cur.specURL) {
 				catalog[id] = cand
 			}
 		}

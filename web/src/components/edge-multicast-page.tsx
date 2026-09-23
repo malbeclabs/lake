@@ -700,11 +700,13 @@ export function ConformanceCell({
   asOfAge,
   expanded,
   onToggle,
+  panelId,
 }: {
   conformance?: EdgeMulticastConformance
   asOfAge?: number
   expanded: boolean
   onToggle: () => void
+  panelId: string
 }) {
   if (!conformance) {
     return <span className="text-muted-foreground">—</span>
@@ -738,6 +740,11 @@ export function ConformanceCell({
           e.stopPropagation()
           onToggle()
         }}
+        // The chevron is the only tell that the panel is open, and a screen reader never sees it.
+        // aria-controls points at the row the toggle inserts, which is a sibling of this cell's
+        // row rather than a child of the button.
+        aria-expanded={expanded}
+        aria-controls={panelId}
         className={`inline-flex items-center gap-1.5 hover:text-foreground${stale ? ' opacity-50' : ''}`}
       >
         {expanded ? (
@@ -767,15 +774,17 @@ const CONFORMANCE_RULE_SEVERITY: Record<string, string> = {
 export function ConformanceRulesRow({
   conformance,
   columns,
+  id,
 }: {
   conformance: EdgeMulticastConformance
   columns: number
+  id: string
 }) {
   const rules = conformance.top_rules ?? []
   const hidden = Math.max(0, (conformance.rules_fired ?? rules.length) - rules.length)
 
   return (
-    <tr className="border-b border-border/50 bg-muted/20 text-xs">
+    <tr id={id} className="border-b border-border/50 bg-muted/20 text-xs">
       <td className="pl-8 pr-3 py-2" colSpan={columns}>
         <div className="space-y-1.5">
           {rules.map((r) => {
@@ -1655,6 +1664,9 @@ function GroupRow({
   // Closed by default, unlike the publisher lines: this is where a reader goes after the badge
   // has said there is somewhere to go, and opening every one would bury the rows below.
   const [rulesOpen, setRulesOpen] = useState(false)
+  // Stable across renders and unique per group: the toggle and the row it opens are siblings, so
+  // aria-controls is the only thing tying them together.
+  const rulesPanelId = `conformance-rules-${group.pk}`
 
   return (
     <>
@@ -1706,6 +1718,7 @@ function GroupRow({
             asOfAge={conformanceAsOfAge}
             expanded={rulesOpen}
             onToggle={() => setRulesOpen((v) => !v)}
+            panelId={rulesPanelId}
           />
         </td>
       )}
@@ -1738,7 +1751,7 @@ function GroupRow({
     {/* Above the publisher lines: a group with two dozen of them would otherwise put this out
         of sight of the badge that opened it. */}
     {showConformance && rulesOpen && group.conformance && (
-      <ConformanceRulesRow conformance={group.conformance} columns={columns} />
+      <ConformanceRulesRow conformance={group.conformance} columns={columns} id={rulesPanelId} />
     )}
     {expanded &&
       lines.map((line) => (

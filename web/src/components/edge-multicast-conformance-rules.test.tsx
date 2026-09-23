@@ -29,7 +29,7 @@ function rules(c: EdgeMulticastConformance) {
   return render(
     <table>
       <tbody>
-        <ConformanceRulesRow conformance={c} columns={8} />
+        <ConformanceRulesRow conformance={c} columns={8} id="conformance-rules-test" />
       </tbody>
     </table>,
   )
@@ -101,10 +101,15 @@ describe('ConformanceRulesRow', () => {
 })
 
 describe('ConformanceCell', () => {
-  function cell(c: EdgeMulticastConformance | undefined) {
+  function cell(c: EdgeMulticastConformance | undefined, expanded = false) {
     return render(
       <TooltipProvider>
-        <ConformanceCell conformance={c} expanded={false} onToggle={() => {}} />
+        <ConformanceCell
+          conformance={c}
+          expanded={expanded}
+          onToggle={() => {}}
+          panelId="conformance-rules-test"
+        />
       </TooltipProvider>,
     )
   }
@@ -113,6 +118,20 @@ describe('ConformanceCell', () => {
   it('is a disclosure only when a rule fired', () => {
     cell(conformance({ top_rules: [{ rule_id: 'A.RULE', severity: 'must', count: 1 }] }))
     expect(screen.getByRole('button')).toBeInTheDocument()
+  })
+
+  // The chevron says which way the panel is; a screen reader never sees it, so the state has to
+  // be on the control, and the row it opens is a sibling rather than a child of the button.
+  it('reports whether the panel it controls is open', () => {
+    const c = conformance({ top_rules: [{ rule_id: 'A.RULE', severity: 'must', count: 1 }] })
+    const { unmount } = cell(c)
+    const closed = screen.getByRole('button')
+    expect(closed).toHaveAttribute('aria-expanded', 'false')
+    expect(closed).toHaveAttribute('aria-controls', 'conformance-rules-test')
+    unmount()
+
+    cell(c, true)
+    expect(screen.getByRole('button')).toHaveAttribute('aria-expanded', 'true')
   })
 
   it('offers nothing to open on a group where nothing fired', () => {
