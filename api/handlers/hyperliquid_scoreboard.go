@@ -204,11 +204,7 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context) (*HyperliquidS
 		return resp, nil
 	}
 
-	matrix, err := a.fetchHyperliquidScoreboardMatrix(ctx)
-	if err != nil {
-		return nil, err
-	}
-	markets, err := a.fetchHyperliquidScoreboardMarkets(ctx)
+	matrix, markets, err := a.fetchHyperliquidScoreboardCells(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -292,12 +288,38 @@ type hyperliquidMatrixCell struct {
 	stat  HyperliquidScoreboardStat
 }
 
-// fetchHyperliquidScoreboardMatrix returns every cell of the site × feed matrix plus the
-// per-site and grand totals from one scan. WITH CUBE gives all four groupings, keyed by
-// empty-string sentinels that are safe because neither column is empty in the rows
-// reaching it.
-func (a *API) fetchHyperliquidScoreboardMatrix(ctx context.Context) (map[hyperliquidMatrixKey]hyperliquidMatrixCell, error) {
+// hyperliquidUncategorised is the multiIf fallback for a symbol with no market category.
+// It must not be the empty string: WITH CUBE uses ” as its rollup sentinel, so an empty
+// category would be indistinguishable from the roll-up over all categories, which is the
+// cell the site x feed matrix is read from.
+const hyperliquidUncategorised = "other"
+
+// fetchHyperliquidScoreboardCells returns the site x feed matrix and the per-category
+// figures from ONE scan.
+//
+// They were two queries until the per-emission aggregation was measured: 76.3s for the
+// matrix and 67.4s for the markets, out of 151s total, both spending it on the same ~90M
+// group GROUP BY over the same window. The category is a function of symbol, so it rides
+// the existing scan as a third CUBE dimension instead of paying for a second one.
+//
+// The CUBE's empty-string sentinels are safe for location_code and feed because neither is
+// ever empty in the rows reaching it; cat uses hyperliquidUncategorised for that reason.
+func (a *API) fetchHyperliquidScoreboardCells(ctx context.Context) (
+	map[hyperliquidMatrixKey]hyperliquidMatrixCell, map[string]HyperliquidScoreboardStat, error,
+) {
 	proj, tuples := hyperliquidCompetitorArrivals()
+
+	var cases []string
+	for _, g := range hyperliquidMarketGroups {
+		for _, c := range g.Cats {
+			quoted := make([]string, len(c.Symbols))
+			for i, sym := range c.Symbols {
+				quoted[i] = "'" + sym + "'"
+			}
+			cases = append(cases, fmt.Sprintf("symbol IN (%s), '%s'", strings.Join(quoted, ", "), c.Name))
+		}
+	}
+
 	q := fmt.Sprintf(`
 		WITH agg AS (
 		    SELECT
@@ -311,109 +333,53 @@ func (a *API) fetchHyperliquidScoreboardMatrix(ctx context.Context) (map[hyperli
 		),
 		sv AS (
 		    SELECT location_code, c.1 AS feed,
+		           multiIf(%[7]s, '%[8]s') AS cat,
 		           (toInt64(c.2) - toInt64(dz)) / 1e6 AS signed_ms
 		    FROM agg
 		    ARRAY JOIN [%[6]s] AS c
 		    WHERE c.2 > 0 AND dz > 0
 		)
 		SELECT
-		    location_code, feed,
+		    location_code, feed, cat,
 		    count() AS races,
 		    100 * countIf(signed_ms > 0) / greatest(count(), 1)   AS win_pct,
 		    toFloat64(quantileTDigest(0.50)(signed_ms))           AS p50,
 		    toFloat64(quantileTDigest(0.95)(signed_ms))           AS p95,
 		    toFloat64(quantileTDigest(0.99)(signed_ms))           AS p99
 		FROM sv
-		GROUP BY location_code, feed WITH CUBE
+		GROUP BY location_code, feed, cat WITH CUBE
 		SETTINGS max_bytes_before_external_group_by = 8000000000`,
 		fmt.Sprintf("`%s`", a.FeedsDB), hyperliquidDZArrivalExpr(), proj,
-		hyperliquidScoreboardSymbols(), hyperliquidScoreboardWindowHours, tuples)
+		hyperliquidScoreboardSymbols(), hyperliquidScoreboardWindowHours, tuples,
+		strings.Join(cases, ", "), hyperliquidUncategorised)
 
 	rows, err := a.envDB(ctx).Query(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("hyperliquid scoreboard matrix: %w", err)
+		return nil, nil, fmt.Errorf("hyperliquid scoreboard cells: %w", err)
 	}
 	defer rows.Close()
 
-	out := map[hyperliquidMatrixKey]hyperliquidMatrixCell{}
+	matrix := map[hyperliquidMatrixKey]hyperliquidMatrixCell{}
+	markets := map[string]HyperliquidScoreboardStat{}
 	for rows.Next() {
-		var loc, feed string
+		var loc, feed, cat string
 		var races uint64
 		var win, p50, p95, p99 float64
-		if err := rows.Scan(&loc, &feed, &races, &win, &p50, &p95, &p99); err != nil {
-			return nil, err
+		if err := rows.Scan(&loc, &feed, &cat, &races, &win, &p50, &p95, &p99); err != nil {
+			return nil, nil, err
 		}
-		out[hyperliquidMatrixKey{loc: loc, feed: feed}] = hyperliquidMatrixCell{
-			races: races,
-			stat:  HyperliquidScoreboardStat{WinPct: win, P50Ms: p50, P95Ms: p95, P99Ms: p99},
-		}
-	}
-	return out, rows.Err()
-}
-
-func (a *API) fetchHyperliquidScoreboardMarkets(ctx context.Context) (map[string]HyperliquidScoreboardStat, error) {
-	proj, tuples := hyperliquidCompetitorArrivals()
-
-	var cases []string
-	var symbols []string
-	for _, g := range hyperliquidMarketGroups {
-		for _, c := range g.Cats {
-			quoted := make([]string, len(c.Symbols))
-			for i, s := range c.Symbols {
-				quoted[i] = "'" + s + "'"
-			}
-			cases = append(cases, fmt.Sprintf("symbol IN (%s), '%s'", strings.Join(quoted, ", "), c.Name))
-			symbols = append(symbols, quoted...)
+		stat := HyperliquidScoreboardStat{WinPct: win, P50Ms: p50, P95Ms: p95, P99Ms: p99}
+		switch {
+		case cat == "":
+			// Rolled up over every category, which is every symbol in the window.
+			matrix[hyperliquidMatrixKey{loc: loc, feed: feed}] = hyperliquidMatrixCell{races: races, stat: stat}
+		case cat != hyperliquidUncategorised && loc == "" && feed == "":
+			// A category's own figures span every site and every feed, as they did when
+			// this was its own query with no location or feed in the GROUP BY.
+			markets[cat] = stat
 		}
 	}
-	q := fmt.Sprintf(`
-		WITH agg AS (
-		    SELECT
-		        location_code, symbol, source_ts_ms, bbo_hash,
-		        minIf(recv_ts_ns, %[2]s) AS dz,
-		        %[3]s
-		    FROM %[1]s.hyperliquid_bbo_observations
-		    WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalHour(%[5]d)))
-		      AND symbol IN (%[4]s)
-		    GROUP BY location_code, symbol, source_ts_ms, bbo_hash
-		),
-		sv AS (
-		    SELECT multiIf(%[7]s, '') AS cat,
-		           (toInt64(c.2) - toInt64(dz)) / 1e6 AS signed_ms
-		    FROM agg
-		    ARRAY JOIN [%[6]s] AS c
-		    WHERE c.2 > 0 AND dz > 0
-		)
-		SELECT
-		    cat,
-		    100 * countIf(signed_ms > 0) / greatest(count(), 1) AS win_pct,
-		    toFloat64(quantileTDigest(0.50)(signed_ms))         AS p50,
-		    toFloat64(quantileTDigest(0.95)(signed_ms))         AS p95,
-		    toFloat64(quantileTDigest(0.99)(signed_ms))         AS p99
-		FROM sv
-		WHERE cat != ''
-		GROUP BY cat
-		SETTINGS max_bytes_before_external_group_by = 8000000000`,
-		fmt.Sprintf("`%s`", a.FeedsDB), hyperliquidDZArrivalExpr(), proj,
-		strings.Join(symbols, ", "), hyperliquidScoreboardWindowHours, tuples,
-		strings.Join(cases, ", "))
-
-	rows, err := a.envDB(ctx).Query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("hyperliquid scoreboard markets: %w", err)
-	}
-	defer rows.Close()
-
-	out := map[string]HyperliquidScoreboardStat{}
-	for rows.Next() {
-		var cat string
-		var win, p50, p95, p99 float64
-		if err := rows.Scan(&cat, &win, &p50, &p95, &p99); err != nil {
-			return nil, err
-		}
-		out[cat] = HyperliquidScoreboardStat{WinPct: win, P50Ms: p50, P95Ms: p95, P99Ms: p99}
-	}
-	return out, rows.Err()
+	return matrix, markets, rows.Err()
 }
 
 // fetchHyperliquidCarriedInstruments counts everything the live fleet publishes, not only
