@@ -2,7 +2,11 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, use
 import type { CSSProperties } from 'react'
 import { Trophy } from 'lucide-react'
 import { PageHeader } from './page-header'
-import { fetchHyperliquidScoreboard, type HyperliquidScoreboardResponse } from '@/lib/api'
+import {
+  fetchHyperliquidScoreboard,
+  HyperliquidScoreboardPendingError,
+  type HyperliquidScoreboardResponse,
+} from '@/lib/api'
 
 // The public Hyperliquid scoreboard. Margins are signed — positive means DoubleZero
 // delivered the book first — so a cell below 50% win rate reports a negative median.
@@ -365,13 +369,21 @@ function MarketTable({ data }: { data: HyperliquidScoreboardResponse }) {
 export function HyperliquidScoreboardPage() {
   const [data, setData] = useState<HyperliquidScoreboardResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [pending, setPending] = useState(false)
   const [now, setNow] = useState(() => Date.now())
 
   const load = useCallback(async () => {
     try {
       setData(await fetchHyperliquidScoreboard())
       setError(null)
+      setPending(false)
     } catch (e) {
+      // A cold cache is not a failure: the poll below picks it up once the worker writes.
+      if (e instanceof HyperliquidScoreboardPendingError) {
+        setPending(true)
+        setError(null)
+        return
+      }
       setError(e instanceof Error ? e.message : 'Failed to load')
     }
   }, [])
@@ -424,7 +436,9 @@ export function HyperliquidScoreboardPage() {
         {error && <div className="rounded-lg border border-border bg-card p-6 text-sm text-red-500">{error}</div>}
 
         {!error && !data && (
-          <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">Loading…</div>
+          <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
+            {pending ? 'Scoreboard is being computed. This page updates itself.' : 'Loading…'}
+          </div>
         )}
 
         {!error && data && data.races === 0 && (

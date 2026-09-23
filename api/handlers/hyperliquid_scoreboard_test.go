@@ -159,21 +159,24 @@ func TestHyperliquidScoreboard_PayloadCarriesNoFeedNames(t *testing.T) {
 		obs("tyo", c, "BTC", 1, 50)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/dz/hyperliquid/scoreboard", nil)
-	rr := httptest.NewRecorder()
-	api.GetHyperliquidScoreboard(rr, req)
-	require.Equal(t, http.StatusOK, rr.Code)
+	// Asserted on what the fetch serialises to, not on a handler response: the handler now
+	// writes the worker's cached bytes back verbatim, so these are the bytes that reach the
+	// browser.
+	fetched, err := api.FetchHyperliquidScoreboardData(t.Context())
+	require.NoError(t, err)
+	raw, err := json.Marshal(fetched)
+	require.NoError(t, err)
 
 	// This route is public. One competitor's feed id in the payload deanonymises every
 	// "Competitor N" label at once, and the browser gets the whole JSON whatever the UI
 	// renders.
-	body := rr.Body.String()
+	body := string(raw)
 	for _, name := range []string{"hydromancer", "dwellir", "quicknode", "hyperpc"} {
 		assert.NotContains(t, strings.ToLower(body), name, "competitor feed name leaked into the payload")
 	}
 
 	var resp handlers.HyperliquidScoreboardResponse
-	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	require.NoError(t, json.Unmarshal(raw, &resp))
 	require.Len(t, resp.Feeds, 4)
 	assert.Equal(t, "Public API", resp.Feeds[0].Label)
 	assert.True(t, resp.Feeds[0].Venue)
@@ -313,5 +316,63 @@ func TestHyperliquidScoreboard_SitesComeFromTheData(t *testing.T) {
 		assert.Equal(t, "TYO", f.Sites[0].Code)
 		assert.Equal(t, "WAS", f.Sites[1].Code)
 		assert.Equal(t, "FRA", f.Sites[2].Code)
+	}
+}
+
+func TestHyperliquidScoreboard_CarriedInstrumentsAreCountedFromTheLiveFleet(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createObservationsTable(t, api)
+
+	db := "`" + api.FeedsDB + "`"
+	write := func(symbol string, recvAgo time.Duration) {
+		t.Helper()
+		require.NoError(t, api.DB.Exec(t.Context(), fmt.Sprintf(`
+			INSERT INTO %s.hyperliquid_bbo_observations
+			(capture_run_id, measurement_node_id, host, location_code, source, symbol, source_ts_ms, bbo_hash, recv_ts_ns, recv_ts_kind)
+			VALUES ('run1', 'n1', 'n1', 'tyo', 'tob_gcp_tyo_hl_mainnet1', '%s', 1, 1, %d, 'kernel_udp_software')
+		`, db, symbol, time.Now().Add(-recvAgo).UnixNano())))
+	}
+
+	write("BTC", 10*time.Second)       // native, live
+	write("xyz:SP500", 10*time.Second) // HIP-3, live
+	write("xyz:NVDA", 30*time.Minute)  // HIP-3, gone quiet well outside the window
+
+	resp, err := api.FetchHyperliquidScoreboardData(t.Context())
+	require.NoError(t, err)
+
+	byMarket := map[string]int{}
+	for _, m := range resp.Markets {
+		byMarket[m.Name] = m.Carried
+	}
+	assert.Equal(t, 1, byMarket["Native Perpetuals"])
+	assert.Equal(t, 1, byMarket["HIP-3 Builder DEX Perpetuals"], "the quiet instrument is not carried")
+	assert.Equal(t, 2, resp.Instruments)
+}
+
+// A miss must never compute. One compute is a multi-GB scan of hyperliquid_bbo_observations,
+// the route is reachable by anyone, there is no singleflight and the miss path never wrote
+// back — so gating the cache read on isMainnet left `X-DZ-Env: testnet` as a way for any
+// caller to run it, once per request. Exercised through EnvMiddleware, which is what reads
+// the header.
+func TestGetHyperliquidScoreboard_NeverComputesInTheRequestPath(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createObservationsTable(t, api)
+	obs := newObserver(t, api)
+	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "BTC", 1, 10)
+	obs("tyo", "hydromancer_bbo", "BTC", 1, 50)
+
+	h := handlers.EnvMiddleware(http.HandlerFunc(api.GetHyperliquidScoreboard))
+	for _, env := range []string{"", "mainnet-beta", "testnet", "nonsense"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/dz/hyperliquid/scoreboard", nil)
+		if env != "" {
+			req.Header.Set("X-DZ-Env", env)
+		}
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+
+		require.Equal(t, http.StatusServiceUnavailable, rr.Code, "env %q reached the live compute", env)
+		assert.Equal(t, "30", rr.Header().Get("Retry-After"), "env %q", env)
+		assert.Equal(t, "MISS", rr.Header().Get("X-Cache"), "env %q", env)
+		assert.NotContains(t, rr.Body.String(), "win_pct", "env %q served a computed board", env)
 	}
 }

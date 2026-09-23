@@ -7795,8 +7795,14 @@ export interface HyperliquidScoreboardResponse {
   as_of: string
 }
 
+
+export class HyperliquidScoreboardPendingError extends Error {}
+
 export async function fetchHyperliquidScoreboard(): Promise<HyperliquidScoreboardResponse> {
   const res = await apiFetch('/api/dz/hyperliquid/scoreboard')
+  if (res.status === 503) {
+    throw new HyperliquidScoreboardPendingError('not computed yet')
+  }
   if (!res.ok) {
     throw new Error('Failed to fetch hyperliquid scoreboard')
   }
