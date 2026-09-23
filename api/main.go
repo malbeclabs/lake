@@ -678,11 +678,7 @@ func main() {
 		r.Get("/api/dz/access-passes/{pk}/connections", api.GetAccessPassConnections)
 		r.Get("/api/dz/publisher-check", api.GetPublisherCheck)
 		r.Get("/api/dz/edge/scoreboard", api.GetEdgeScoreboard)
-		// Built to be public — competitors are ordinals and no feed name reaches the payload,
-		// which is what TestHyperliquidScoreboard_PayloadCarriesNoFeedNames keeps true — but
-		// gated until the venue is announced, because the page IS the disclosure. Dropping the
-		// gate is a product call, not a cleanup.
-		r.With(handlers.RequireInternalDomain).Get("/api/dz/hyperliquid/scoreboard", api.GetHyperliquidScoreboard)
+		r.Get("/api/dz/hyperliquid/scoreboard", api.GetHyperliquidScoreboard)
 		// Internal only (names the feeds it races): allowed-domain Google users only.
 		r.With(handlers.RequireInternalDomain).Get("/api/dz/hyperliquid/internal-scoreboard", api.GetHyperliquidInternalScoreboard)
 		r.With(handlers.RequireInternalDomain).Get("/api/dz/kalshi/scoreboard", api.GetKalshiScoreboard)
