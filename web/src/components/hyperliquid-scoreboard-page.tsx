@@ -93,8 +93,15 @@ function ArrivalChart({ data }: { data: HyperliquidScoreboardResponse }) {
     return r.sort((a, b) => a.v - b.v)
   }, [data.feeds])
 
-  const top = Math.max(50, Math.ceil(Math.max(...rows.map((r) => r.v)) / 50) * 50)
-  const step = top / 4
+  // Margins are signed, so the axis has to be able to start left of zero. A feed that beat
+  // DoubleZero used to produce a negative CSS width, which browsers drop — the bar collapsed
+  // onto DoubleZero's zero mark while its label read "-12 ms", drawing a loss as a tie.
+  const lo = Math.min(0, Math.floor(Math.min(...rows.map((r) => r.v)) / 50) * 50)
+  const hi = Math.max(lo + 50, Math.ceil(Math.max(...rows.map((r) => r.v)) / 50) * 50)
+  const span = hi - lo
+  const step = span / 4
+  const pctOf = (v: number) => ((v - lo) / span) * 100
+  const zeroPct = pctOf(0)
 
   useEffect(() => {
     setGrown(false)
@@ -116,12 +123,20 @@ function ArrivalChart({ data }: { data: HyperliquidScoreboardResponse }) {
               <span key={k} className="hl-arr-tick" style={{ left: `${k * 25}%` }} />
             ))}
             {r.dz ? (
-              <div className="hl-arr-dot" />
+              <div className="hl-arr-dot" style={{ left: `${zeroPct}%`, marginLeft: -7 }} />
             ) : (
               <div
                 className="hl-arr-bar"
                 data-grown={grown ? '1' : '0'}
-                style={{ width: `${((r.v / top) * 100).toFixed(1)}%`, transitionDelay: `${i * 70}ms` }}
+                style={{
+                  left: `${Math.min(zeroPct, pctOf(r.v)).toFixed(1)}%`,
+                  width: `${Math.abs(pctOf(r.v) - zeroPct).toFixed(1)}%`,
+                  // A bar left of zero is a feed that beat DoubleZero: grow it toward zero, and
+                  // colour it so it cannot read as a win at a glance.
+                  transformOrigin: r.v < 0 ? 'right center' : 'left center',
+                  background: r.v < 0 ? 'var(--hl-dz)' : undefined,
+                  transitionDelay: `${i * 70}ms`,
+                }}
               />
             )}
           </div>
@@ -142,7 +157,7 @@ function ArrivalChart({ data }: { data: HyperliquidScoreboardResponse }) {
               className="absolute top-0 whitespace-nowrap font-mono text-[10px] tabular-nums text-muted-foreground"
               style={{ left: `${k * 25}%`, transform: `translateX(${k === 0 ? '0' : k === 4 ? '-100%' : '-50%'})` }}
             >
-              {k * step}
+              {lo + k * step}
               {k === 4 ? ' ms' : ''}
             </span>
           ))}
@@ -164,7 +179,12 @@ function MatrixCell({
 }) {
   const [w, setW] = useState(0)
   useEffect(() => {
-    const id = requestAnimationFrame(() => setW(max > 0 ? Math.max(4, (value / max) * 100) : 0))
+    // Clamp before the 4% floor, and give a negative value no fill at all. Math.max(4, …) on a
+    // negative value drew a cell a competitor WON the same 4% as a marginal DoubleZero win.
+    const id = requestAnimationFrame(() => {
+      if (max <= 0 || value <= 0) return setW(0)
+      setW(Math.max(4, Math.min(1, value / max) * 100))
+    })
     return () => cancelAnimationFrame(id)
   }, [value, max, metric])
   return (
@@ -475,7 +495,14 @@ export function HyperliquidScoreboardPage() {
                 className="grid grid-cols-2 gap-px border-t border-border sm:grid-cols-4"
                 style={{ background: 'var(--border)' }}
               >
-                <div className="bg-card px-4 py-3">
+                <div
+                  className="bg-card px-4 py-3"
+                  title={`${fmtCount(data.comparisons)} feed comparisons across these updates.${
+                    data.dz_absent > 0
+                      ? ` ${fmtCount(data.dz_absent)} further updates were delivered by a competitor and not by DoubleZero; those are excluded from every rate here.`
+                      : ''
+                  }`}
+                >
                   <div className="text-xs text-muted-foreground">Updates raced</div>
                   <div className="font-mono text-xl font-semibold tabular-nums">{fmtCount(data.races)}</div>
                 </div>

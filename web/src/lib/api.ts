@@ -7784,7 +7784,12 @@ export interface HyperliquidScoreboardMarket {
 
 export interface HyperliquidScoreboardResponse {
   window_label: string
+  // races is distinct venue emissions; comparisons is the (emission, feed) count the rates are
+  // computed over, which is several times larger. dz_absent is emissions a competitor delivered
+  // and DoubleZero did not — excluded from every rate, so it is reported rather than dropped.
   races: number
+  comparisons: number
+  dz_absent: number
   instruments: number
   site_count: number
   feed_count: number
