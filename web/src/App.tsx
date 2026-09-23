@@ -753,7 +753,7 @@ function AppContent() {
             <Route path="/dz/edge/multicast" element={<InternalOnly><EdgeMulticastPage /></InternalOnly>} />
             <Route path="/dz/hyperliquid" element={<Navigate to="/dz/hyperliquid/scoreboard" replace />} />
             {/* Public — withholds provider names, unlike the internal scoreboard below. */}
-            <Route path="/dz/hyperliquid/scoreboard" element={<HyperliquidScoreboardPage />} />
+            <Route path="/dz/hyperliquid/scoreboard" element={<InternalOnly><HyperliquidScoreboardPage /></InternalOnly>} />
             <Route path="/dz/hyperliquid/internal-scoreboard" element={<InternalOnly><HyperliquidInternalScoreboardPage /></InternalOnly>} />
             <Route path="/dz/kalshi" element={<Navigate to="/dz/kalshi/scoreboard" replace />} />
             <Route path="/dz/kalshi/scoreboard" element={<InternalOnly><KalshiScoreboardPage /></InternalOnly>} />
