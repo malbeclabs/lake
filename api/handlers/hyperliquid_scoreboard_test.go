@@ -1,6 +1,7 @@
 package handlers_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -361,6 +362,22 @@ func TestHyperliquidScoreboard_CarriedInstrumentsAreCountedFromTheLiveFleet(t *t
 	assert.Equal(t, 1, byMarket["HIP-3 Builder DEX Perpetuals"],
 		"an instrument quiet for longer than the sample is not counted — the known cost of the narrow window")
 	assert.Equal(t, 2, resp.Instruments)
+}
+
+// A probe that could not run is not a table that is not there, and the difference is a day of
+// wrong numbers. The worker writes this key once a day, so an empty payload written on a blip
+// advances updated_at and stands until tomorrow's run — with nothing logged, because returning
+// it as a success is what tells the escalator there was nothing to report. A refresh that
+// cannot establish what it is querying has to fail, so nothing is written and it stays due.
+func TestHyperliquidScoreboard_AFailedProbeIsAnErrorNotAnEmptyBoard(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createObservationsTable(t, api)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, err := api.FetchHyperliquidScoreboardData(ctx)
+	require.Error(t, err, "an unreadable probe must not be reported as an absent table")
 }
 
 // A CUBE cell with no DoubleZero arrival has nothing to take a quantile over, and an unguarded

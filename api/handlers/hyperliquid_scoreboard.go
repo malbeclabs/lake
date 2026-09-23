@@ -203,7 +203,11 @@ func newHyperliquidScoreboardResponse() *HyperliquidScoreboardResponse {
 
 func (a *API) FetchHyperliquidScoreboardData(ctx context.Context) (*HyperliquidScoreboardResponse, error) {
 	resp := newHyperliquidScoreboardResponse()
-	if !a.hyperliquidObservationsTableExists(ctx) || !a.hyperliquidObservationsAreLocal(ctx) {
+	queryable, err := a.hyperliquidObservationsQueryable(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !queryable {
 		return resp, nil
 	}
 
@@ -427,24 +431,44 @@ func (a *API) fetchHyperliquidCarriedInstruments(ctx context.Context) (map[strin
 	return out, rows.Err()
 }
 
-func (a *API) hyperliquidObservationsTableExists(ctx context.Context) bool {
-	var n uint8
-	q := fmt.Sprintf("EXISTS TABLE `%s`.hyperliquid_bbo_observations", a.FeedsDB)
-	if err := a.envDB(ctx).QueryRow(ctx, q).Scan(&n); err != nil {
-		return false
-	}
-	return n == 1
-}
-
-func (a *API) hyperliquidObservationsAreLocal(ctx context.Context) bool {
+// hyperliquidObservationsQueryable answers whether the scan can run against this connection —
+// and, which is the point of the error return, tells a NO apart from a DON'T KNOW.
+//
+// Two answers are no, and both mean the empty payload rather than a failure. The table may be
+// absent, which is local dev. Or it may be present only as a remoteSecure() proxy into another
+// service: EXISTS TABLE cannot tell that from a real table, and the engine can, because a table
+// created AS remoteSecure(...) reports StorageProxy. That case needs catching because no budget
+// rescues it — the scan aggregates in a CTE, ARRAY JOINs, then aggregates again, so there is no
+// merge to push down and the initiator dies with NETWORK_ERROR after ~7.6 GiB. Answering with
+// the empty payload lets the refresh SUCCEED, and succeeding is what stops it re-running on
+// every cycle with the escalator pinned at ERROR.
+//
+// A probe that could not run is none of those. Reported as false it would let a single
+// connection blip at the 09:00 refresh write the empty blob and advance updated_at — and under
+// dailyAtUTC the entry is then not due again until tomorrow, so the board reads "no races
+// recorded" for 24 hours with nothing logged anywhere. The error goes back to the caller
+// instead: nothing is written, the escalator sees it, and the entry stays due.
+//
+// any() rather than the bare column so the probe always returns exactly one row. An absent
+// table comes back as the empty string, rather than as a no-rows error this would then have to
+// tell apart from a real one — which is the same conflation one level down.
+func (a *API) hyperliquidObservationsQueryable(ctx context.Context) (bool, error) {
 	var engine string
 	q := fmt.Sprintf(
-		"SELECT engine FROM system.tables WHERE database = '%s' AND name = 'hyperliquid_bbo_observations'",
+		"SELECT any(engine) FROM system.tables WHERE database = '%s' AND name = 'hyperliquid_bbo_observations'",
 		a.FeedsDB)
 	if err := a.envDB(ctx).QueryRow(ctx, q).Scan(&engine); err != nil {
-		return false
+		return false, fmt.Errorf("hyperliquid observations probe: %w", err)
 	}
-	return strings.HasSuffix(engine, "MergeTree")
+	// Production is SharedMergeTree, local dev is MergeTree, a proxy is StorageProxy. Matched
+	// on the family so a service that replicates differently still reads as local.
+	//
+	// system.tables is filtered by grant, which is what makes this safe under a restricted
+	// user: a row is visible exactly when the caller holds SELECT on that table, so "cannot
+	// read the engine" and "cannot run the scan" are the same condition. Verified against
+	// 25.12 — a user granted SELECT on one table reads its engine and sees no row at all for
+	// its neighbour.
+	return strings.HasSuffix(engine, "MergeTree"), nil
 }
 
 // hyperliquidScoreboardRetryAfter is what a miss tells the client to wait. The entry is due
@@ -466,9 +490,11 @@ func (a *API) GetHyperliquidScoreboard(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("X-Cache", "MISS")
 
-	// No capture tables here (local dev): an empty board, not an error. This is an EXISTS,
-	// not a scan.
-	if !a.hyperliquidObservationsTableExists(ctx) {
+	// Nothing to compute from here (local dev, or a proxy): an empty board, not an error. This
+	// is a system.tables lookup, not a scan. A probe that fails falls through to the 503 below
+	// rather than rendering zeros — an empty board asserts a measurement, and we have not made
+	// one.
+	if queryable, err := a.hyperliquidObservationsQueryable(ctx); err == nil && !queryable {
 		writeJSON(w, newHyperliquidScoreboardResponse())
 		return
 	}
