@@ -300,8 +300,7 @@ func (a *API) fetchHyperliquidScoreboardCells(ctx context.Context) (
 		    toFloat64(quantileTDigest(0.99)(signed_ms))           AS p99
 		FROM sv
 		GROUP BY location_code, feed, cat WITH CUBE
-		SETTINGS max_bytes_before_external_group_by = 8000000000,
-		         distributed_group_by_no_merge = 2`,
+		SETTINGS max_bytes_before_external_group_by = 8000000000`,
 		fmt.Sprintf("`%s`", a.FeedsDB), hyperliquidDZArrivalExpr(), proj,
 		hyperliquidScoreboardSymbols(), hyperliquidScoreboardWindowHours, tuples,
 		strings.Join(cases, ", "), hyperliquidUncategorised)
