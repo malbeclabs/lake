@@ -148,6 +148,37 @@ func TestEnvMiddleware(t *testing.T) {
 	}
 }
 
+func TestRequireMainnetMiddleware(t *testing.T) {
+	t.Parallel()
+	api := &handlers.API{}
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := api.RequireMainnetMiddleware(inner)
+
+	t.Run("returns 503 for non-mainnet", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest("GET", "/test", nil)
+		req = req.WithContext(handlers.ContextWithEnv(req.Context(), handlers.EnvTestnet))
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusServiceUnavailable, rr.Code)
+		assert.Contains(t, rr.Body.String(), "only available on mainnet-beta")
+	})
+
+	t.Run("passes through on mainnet", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest("GET", "/test", nil)
+		req = req.WithContext(handlers.ContextWithEnv(req.Context(), handlers.EnvMainnet))
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+	})
+}
+
 func TestRequireNeo4jMiddleware(t *testing.T) {
 	t.Parallel()
 	api := &handlers.API{Neo4jClient: apitesting.SetupNeo4jForTest(t, testNeo4jDB)}
