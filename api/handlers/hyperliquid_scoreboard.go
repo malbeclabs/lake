@@ -74,8 +74,14 @@ var hyperliquidMarketGroups = []hyperliquidMarketGroup{
 	{Name: "HIP-3 Builder DEX Perpetuals", Cats: []hyperliquidMarketCategory{
 		{Name: "Equity index", Symbols: []string{"xyz:SP500", "xyz:XYZ100"}},
 		{Name: "Single-name equity", Symbols: []string{"xyz:MU", "xyz:SKHX", "xyz:SPCX", "xyz:NVDA"}},
+		{Name: "Commodities", Symbols: []string{"xyz:CL", "xyz:BRENTOIL"}},
 	}},
 }
+
+// Every symbol the board races must have a category, or the by-market table compares each
+// category against a headline population containing symbols the table never shows. The two
+// oil contracts were exactly that gap. TestHyperliquidScoreboard_EveryRacedSymbolHasACategory
+// keeps it closed.
 
 const hyperliquidScoreboardWindowHours = 24
 
@@ -113,8 +119,15 @@ type HyperliquidScoreboardMarket struct {
 }
 
 type HyperliquidScoreboardResponse struct {
-	WindowLabel string                        `json:"window_label"`
-	Races       uint64                        `json:"races"`
+	WindowLabel string `json:"window_label"`
+	// Races is distinct venue emissions, which is what the page labels "Updates raced".
+	// Comparisons is the (emission, feed) count behind the rates — about 4x larger, because
+	// most emissions are seen by several feeds.
+	Races       uint64 `json:"races"`
+	Comparisons uint64 `json:"comparisons"`
+	// DZAbsent is emissions a competitor delivered and DoubleZero did not. Excluded from every
+	// rate here, so it is reported rather than silently dropped.
+	DZAbsent    uint64                        `json:"dz_absent"`
 	Instruments int                           `json:"instruments"`
 	SiteCount   int                           `json:"site_count"`
 	FeedCount   int                           `json:"feed_count"`
@@ -145,6 +158,21 @@ func hyperliquidScoreboardSymbols() string {
 	return strings.Join(quoted, ", ")
 }
 
+// HyperliquidRacedFeedIDs returns every competitor feed id this package knows about, raced or
+// withheld. Exported for the test that asserts none of them reaches the public payload: that
+// test is the only thing between a competitor's identity and an externally-facing route, and
+// hardcoding the list there meant a fifth feed shipped uncovered.
+func HyperliquidRacedFeedIDs() []string {
+	out := make([]string, 0, len(hyperliquidCompetitors)+len(hyperliquidExcludedFeeds))
+	for _, c := range hyperliquidCompetitors {
+		if c.Feed != hyperliquidVenueFeed {
+			out = append(out, c.Feed)
+		}
+	}
+	out = append(out, hyperliquidExcludedFeeds...)
+	return out
+}
+
 func hyperliquidCompetitorArrivals() (projection, arrayJoin string) {
 	proj := make([]string, 0, len(hyperliquidCompetitors))
 	tuples := make([]string, 0, len(hyperliquidCompetitors))
@@ -156,13 +184,20 @@ func hyperliquidCompetitorArrivals() (projection, arrayJoin string) {
 }
 
 func newHyperliquidScoreboardResponse() *HyperliquidScoreboardResponse {
+	// FeedCount is deliberately absent here: it counts feeds actually measured in the window,
+	// not len(hyperliquidCompetitors), and is filled once the rows are known.
+	//
+	// The window closes when the blob is computed, which on a daily cadence is just after
+	// 00:00 UTC — so by late in the day "last 24 hours" names a window that closed most of a
+	// day ago. The label carries the closing time rather than asking the reader to reconcile
+	// it with the freshness pill.
+	now := time.Now().UTC()
 	return &HyperliquidScoreboardResponse{
-		WindowLabel: fmt.Sprintf("last %d hours", hyperliquidScoreboardWindowHours),
-		FeedCount:   len(hyperliquidCompetitors),
+		WindowLabel: fmt.Sprintf("%d hours to %s UTC", hyperliquidScoreboardWindowHours, now.Format("2006-01-02 15:04")),
 		Sites:       []HyperliquidScoreboardSite{},
 		Feeds:       []HyperliquidScoreboardFeed{},
 		Markets:     []HyperliquidScoreboardMarket{},
-		AsOf:        time.Now().UTC(),
+		AsOf:        now,
 	}
 }
 
@@ -183,7 +218,9 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context) (*HyperliquidS
 
 	if total, ok := matrix[hyperliquidMatrixKey{}]; ok {
 		resp.All = total.stat
-		resp.Races = total.races
+		resp.Races = total.emissions
+		resp.Comparisons = total.races
+		resp.DZAbsent = total.emissionsDZAbsent
 	}
 	sites := hyperliquidSitesFrom(matrix)
 	resp.SiteCount = len(sites)
@@ -201,7 +238,15 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context) (*HyperliquidS
 	}
 	rows := make([]feedRow, 0, len(hyperliquidCompetitors))
 	for _, c := range hyperliquidCompetitors {
-		fr := feedRow{feed: c.Feed, stat: matrix[hyperliquidMatrixKey{feed: c.Feed}].stat}
+		cell := matrix[hyperliquidMatrixKey{feed: c.Feed}]
+		// A feed with nothing in the window is not a competitor at 0.0% — it is a feed we have
+		// no measurement of. Rendering it anyway put a phantom row at the TOP of the board,
+		// because ranking is by median margin ascending and its zero sorts ahead of every real
+		// competitor DoubleZero beats.
+		if cell.races == 0 {
+			continue
+		}
+		fr := feedRow{feed: c.Feed, stat: cell.stat}
 		for _, s := range sites {
 			cell := matrix[hyperliquidMatrixKey{loc: s.Code, feed: c.Feed}]
 			fr.sites = append(fr.sites, HyperliquidScoreboardSite{
@@ -210,6 +255,7 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context) (*HyperliquidS
 		}
 		rows = append(rows, fr)
 	}
+	resp.FeedCount = len(rows)
 	ranked := make([]feedRow, 0, len(rows))
 	for _, r := range rows {
 		if r.feed != hyperliquidVenueFeed {
@@ -250,8 +296,18 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context) (*HyperliquidS
 type hyperliquidMatrixKey struct{ loc, feed string }
 
 type hyperliquidMatrixCell struct {
+	// races counts (emission, feed) comparisons, so it is Σ over feeds on any cell that rolls
+	// feeds up. Correct per feed; never the number of book states. Use emissions for that.
 	races uint64
-	stat  HyperliquidScoreboardStat
+	// emissions counts distinct venue emissions, so a cell rolled up over four feeds does not
+	// report an update four times. Approximate (uniqCombined, measured 0.18% against
+	// uniqExact) because the exact form cost 3.7 GB more on a query already near its limit.
+	emissions uint64
+	// emissionsDZAbsent counts emissions a competitor delivered and DoubleZero did not. They
+	// are excluded from every rate above — the win rate is conditional on DoubleZero having
+	// delivered — so the payload carries the denominator it is not measuring.
+	emissionsDZAbsent uint64
+	stat              HyperliquidScoreboardStat
 }
 
 const hyperliquidUncategorised = "other"
@@ -284,20 +340,22 @@ func (a *API) fetchHyperliquidScoreboardCells(ctx context.Context) (
 		    GROUP BY location_code, symbol, source_ts_ms, bbo_hash
 		),
 		sv AS (
-		    SELECT location_code, c.1 AS feed,
+		    SELECT location_code, symbol, source_ts_ms, bbo_hash, dz, c.1 AS feed,
 		           multiIf(%[7]s, '%[8]s') AS cat,
 		           (toInt64(c.2) - toInt64(dz)) / 1e6 AS signed_ms
 		    FROM agg
 		    ARRAY JOIN [%[6]s] AS c
-		    WHERE c.2 > 0 AND dz > 0
+		    WHERE c.2 > 0
 		)
 		SELECT
 		    location_code, feed, cat,
-		    count() AS races,
-		    100 * countIf(signed_ms > 0) / greatest(count(), 1)   AS win_pct,
-		    toFloat64(quantileTDigest(0.50)(signed_ms))           AS p50,
-		    toFloat64(quantileTDigest(0.95)(signed_ms))           AS p95,
-		    toFloat64(quantileTDigest(0.99)(signed_ms))           AS p99
+		    countIf(dz > 0) AS races,
+		    100 * countIf(signed_ms > 0 AND dz > 0) / greatest(countIf(dz > 0), 1)  AS win_pct,
+		    toFloat64(quantileTDigestIf(0.50)(signed_ms, dz > 0))                   AS p50,
+		    toFloat64(quantileTDigestIf(0.95)(signed_ms, dz > 0))                   AS p95,
+		    toFloat64(quantileTDigestIf(0.99)(signed_ms, dz > 0))                   AS p99,
+		    uniqCombinedIf((location_code, symbol, source_ts_ms, bbo_hash), dz > 0) AS emissions,
+		    uniqCombinedIf((location_code, symbol, source_ts_ms, bbo_hash), dz = 0) AS emissions_dz_absent
 		FROM sv
 		GROUP BY location_code, feed, cat WITH CUBE
 		SETTINGS max_bytes_before_external_group_by = 8000000000`,
@@ -315,15 +373,17 @@ func (a *API) fetchHyperliquidScoreboardCells(ctx context.Context) (
 	markets := map[string]HyperliquidScoreboardStat{}
 	for rows.Next() {
 		var loc, feed, cat string
-		var races uint64
+		var races, emissions, emissionsDZAbsent uint64
 		var win, p50, p95, p99 float64
-		if err := rows.Scan(&loc, &feed, &cat, &races, &win, &p50, &p95, &p99); err != nil {
+		if err := rows.Scan(&loc, &feed, &cat, &races, &win, &p50, &p95, &p99, &emissions, &emissionsDZAbsent); err != nil {
 			return nil, nil, err
 		}
 		stat := HyperliquidScoreboardStat{WinPct: win, P50Ms: p50, P95Ms: p95, P99Ms: p99}
 		switch {
 		case cat == "":
-			matrix[hyperliquidMatrixKey{loc: loc, feed: feed}] = hyperliquidMatrixCell{races: races, stat: stat}
+			matrix[hyperliquidMatrixKey{loc: loc, feed: feed}] = hyperliquidMatrixCell{
+				races: races, emissions: emissions, emissionsDZAbsent: emissionsDZAbsent, stat: stat,
+			}
 		case cat != hyperliquidUncategorised && loc == "" && feed == "":
 			markets[cat] = stat
 		}

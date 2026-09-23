@@ -571,7 +571,7 @@ func (a *API) GetHyperliquidInternalScoreboard(w http.ResponseWriter, r *http.Re
 
 	resp, err := a.FetchHyperliquidInternalScoreboardData(ctx, window, symbol)
 	if err != nil {
-		logError("HyperliquidScoreboard error", "error", err)
+		logError("HyperliquidInternalScoreboard error", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

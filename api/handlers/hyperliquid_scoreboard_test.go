@@ -170,9 +170,18 @@ func TestHyperliquidScoreboard_PayloadCarriesNoFeedNames(t *testing.T) {
 	// This route is public. One competitor's feed id in the payload deanonymises every
 	// "Competitor N" label at once, and the browser gets the whole JSON whatever the UI
 	// renders.
-	body := string(raw)
-	for _, name := range []string{"hydromancer", "dwellir", "quicknode", "hyperpc"} {
-		assert.NotContains(t, strings.ToLower(body), name, "competitor feed name leaked into the payload")
+	// Derived, not hardcoded: a fifth competitor added to hyperliquidCompetitors or
+	// hyperliquidExcludedFeeds has to be covered by this test the moment it exists, or the
+	// public route ships a feed id with the test still green.
+	feedIDs := handlers.HyperliquidRacedFeedIDs()
+	require.NotEmpty(t, feedIDs)
+	body := strings.ToLower(string(raw))
+	for _, id := range feedIDs {
+		assert.NotContains(t, body, strings.ToLower(id), "competitor feed id leaked into the payload")
+		// Also the bare vendor token, since a label could carry it without the full id.
+		if base, _, ok := strings.Cut(id, "_"); ok && len(base) > 3 {
+			assert.NotContains(t, body, strings.ToLower(base), "competitor name leaked into the payload")
+		}
 	}
 
 	var resp handlers.HyperliquidScoreboardResponse
@@ -375,4 +384,64 @@ func TestGetHyperliquidScoreboard_NeverComputesInTheRequestPath(t *testing.T) {
 		assert.Equal(t, "MISS", rr.Header().Get("X-Cache"), "env %q", env)
 		assert.NotContains(t, rr.Body.String(), "win_pct", "env %q served a computed board", env)
 	}
+}
+
+// races is distinct emissions; comparisons is the (emission, feed) count the rates are computed
+// over. The page labels the headline "Updates raced", so reporting comparisons there overstated
+// it by however many feeds happened to cover each update — measured at 3.9x on production.
+func TestHyperliquidScoreboard_RacesCountsEmissionsNotComparisons(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createObservationsTable(t, api)
+	obs := newObserver(t, api)
+
+	// One book state, seen by DoubleZero and three competitors.
+	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "BTC", 1, 10)
+	obs("tyo", "hydromancer_bbo", "BTC", 1, 50)
+	obs("tyo", "dwellir_l2book_bbo", "BTC", 1, 60)
+	obs("tyo", "quicknode_l2book_bbo", "BTC", 1, 70)
+
+	resp, err := api.FetchHyperliquidScoreboardData(t.Context())
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, resp.Races, "one emission was raced, however many feeds saw it")
+	assert.EqualValues(t, 3, resp.Comparisons, "three feed comparisons stand behind the rates")
+}
+
+// A feed with nothing in the window is not a competitor at 0.0%. Rendering it anyway put it at
+// the TOP of the board: ranking is by median margin ascending, and a zero sorts ahead of every
+// real competitor DoubleZero beats.
+func TestHyperliquidScoreboard_FeedWithNoDataIsNotRankedFirst(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createObservationsTable(t, api)
+	obs := newObserver(t, api)
+
+	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "BTC", 1, 10)
+	obs("tyo", "hydromancer_bbo", "BTC", 1, 50)
+
+	resp, err := api.FetchHyperliquidScoreboardData(t.Context())
+	require.NoError(t, err)
+
+	require.Len(t, resp.Feeds, 1, "only the feed with observations is measured")
+	assert.Equal(t, "Competitor 1", resp.Feeds[0].Label)
+	assert.InDelta(t, 40.0, resp.Feeds[0].P50Ms, 0.01, "the ranked feed is the real one, not a zero")
+	assert.Equal(t, 1, resp.FeedCount, "feed count is what was measured, not the configured list")
+}
+
+// The win rate is conditional on DoubleZero having delivered, so an emission it missed is in no
+// rate on the page. That is defensible, but it has to be stated: without the count, a publisher
+// dropping updates leaves every number on the board unchanged.
+func TestHyperliquidScoreboard_EmissionsDoubleZeroMissedAreReported(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createObservationsTable(t, api)
+	obs := newObserver(t, api)
+
+	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "BTC", 1, 10) // delivered, won by 40ms
+	obs("tyo", "hydromancer_bbo", "BTC", 1, 50)
+	obs("tyo", "hydromancer_bbo", "BTC", 2, 50) // competitor only: DoubleZero never delivered
+
+	resp, err := api.FetchHyperliquidScoreboardData(t.Context())
+	require.NoError(t, err)
+
+	assert.EqualValues(t, 1, resp.Races, "the missed emission is not a race")
+	assert.EqualValues(t, 1, resp.DZAbsent, "but it is reported")
+	assert.InDelta(t, 100.0, resp.All.WinPct, 0.01, "and it does not move the rate")
 }
