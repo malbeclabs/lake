@@ -283,10 +283,14 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context) (*HyperliquidS
 	}
 
 	for _, g := range hyperliquidMarketGroups {
-		m := HyperliquidScoreboardMarket{Name: g.Name, Carried: carried[g.Name]}
+		m := HyperliquidScoreboardMarket{Name: g.Name, Carried: carried[g.Name], Cats: []HyperliquidScoreboardCategory{}}
 		for _, c := range g.Cats {
+			cell, ok := markets[c.Name]
+			if !ok || cell.races == 0 {
+				continue
+			}
 			m.Cats = append(m.Cats, HyperliquidScoreboardCategory{
-				Name: c.Name, HyperliquidScoreboardStat: markets[c.Name],
+				Name: c.Name, HyperliquidScoreboardStat: cell.stat,
 			})
 		}
 		resp.Markets = append(resp.Markets, m)
@@ -317,7 +321,7 @@ type hyperliquidMatrixCell struct {
 const hyperliquidUncategorised = "other"
 
 func (a *API) fetchHyperliquidScoreboardCells(ctx context.Context) (
-	map[hyperliquidMatrixKey]hyperliquidMatrixCell, map[string]HyperliquidScoreboardStat, error,
+	map[hyperliquidMatrixKey]hyperliquidMatrixCell, map[string]hyperliquidMatrixCell, error,
 ) {
 	proj, tuples := hyperliquidCompetitorArrivals()
 
@@ -374,7 +378,7 @@ func (a *API) fetchHyperliquidScoreboardCells(ctx context.Context) (
 	defer rows.Close()
 
 	matrix := map[hyperliquidMatrixKey]hyperliquidMatrixCell{}
-	markets := map[string]HyperliquidScoreboardStat{}
+	markets := map[string]hyperliquidMatrixCell{}
 	for rows.Next() {
 		var loc, feed, cat string
 		var races, emissions, emissionsDZAbsent uint64
@@ -389,7 +393,9 @@ func (a *API) fetchHyperliquidScoreboardCells(ctx context.Context) (
 				races: races, emissions: emissions, emissionsDZAbsent: emissionsDZAbsent, stat: stat,
 			}
 		case cat != hyperliquidUncategorised && loc == "" && feed == "":
-			markets[cat] = stat
+			markets[cat] = hyperliquidMatrixCell{
+				races: races, emissions: emissions, emissionsDZAbsent: emissionsDZAbsent, stat: stat,
+			}
 		}
 	}
 	return matrix, markets, rows.Err()
