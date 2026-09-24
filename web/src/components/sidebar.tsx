@@ -66,8 +66,7 @@ export function Sidebar() {
   })
   const hasTopologies = (topologiesData?.topologies?.length ?? 0) > 0
   const showGeoloc = user?.is_internal_user === true
-  // Internal only (unannounced venue) — gated to allowed-domain Google users.
-  const showHyperliquid = user?.is_internal_user === true
+  const showHyperliquidInternalScoreboard = user?.is_internal_user === true
   const showKalshi = user?.is_internal_user === true
   // Cross-service multicast overview: names subscribers and separates operator-run receivers
   // from paying ones, so it stays with the other internal edge views.
@@ -134,9 +133,11 @@ const { resolvedTheme, setTheme } = useTheme()
     location.pathname === '/dz/shreds/rewards' ||
     location.pathname.startsWith('/dz/shreds/rewards/')
   const isShredsRoute = location.pathname.startsWith('/dz/shreds') || isShredsPublishersRoute
-  const isHyperliquidScoreboardRoute = location.pathname === '/dz/hyperliquid/scoreboard'
-  const isPermissionAuditRoute = location.pathname === '/dz/permission-audit'
+  const isHyperliquidInternalScoreboardRoute = location.pathname === '/dz/hyperliquid/internal-scoreboard'
+  // Both Hyperliquid routes, including the unlinked public board, so reaching either by URL
+  // still opens the Edge section around it.
   const isHyperliquidRoute = location.pathname.startsWith('/dz/hyperliquid')
+  const isPermissionAuditRoute = location.pathname === '/dz/permission-audit'
   const isKalshiScoreboardRoute = location.pathname === '/dz/kalshi/scoreboard'
   const isKalshiL2Route = location.pathname === '/dz/kalshi/l2'
   const isKalshiRoute = location.pathname.startsWith('/dz/kalshi')
@@ -651,20 +652,14 @@ const { resolvedTheme, setTheme } = useTheme()
                 </Link>
               </>
             )}
-            {showHyperliquid && (
-              <>
-                <Link to="/dz/hyperliquid/scoreboard" className={isHyperliquidRoute ? navItemExpandedClass : navItemClass(false)}>
-                  <Activity className="h-4 w-4" />
-                  Hyperliquid
-                </Link>
-                {isHyperliquidRoute && (
-                  <>
-                    <Link to="/dz/hyperliquid/scoreboard" className={subNavItemClass(isHyperliquidScoreboardRoute)}>
-                      Scoreboard
-                    </Link>
-                  </>
-                )}
-              </>
+            {showHyperliquidInternalScoreboard && (
+              <Link
+                to="/dz/hyperliquid/internal-scoreboard"
+                className={navItemClass(isHyperliquidInternalScoreboardRoute)}
+              >
+                <Activity className="h-4 w-4" />
+                Hyperliquid
+              </Link>
             )}
             {showKalshi && (
               <>

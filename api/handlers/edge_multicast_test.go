@@ -33,6 +33,10 @@ func newEdgeMulticastTestAPI(t *testing.T) *handlers.API {
 	// exported: same call the publisher-check tests make for theirs.
 	_, err = api.PgPool.Exec(t.Context(), `DELETE FROM page_cache WHERE key = $1`, kalshiL2CoverageKey)
 	require.NoError(t, err)
+	// And the recorded-gap leg's entry, for the same reason: it too can put a Sequence on a group
+	// this test never seeded one for.
+	_, err = api.PgPool.Exec(t.Context(), `DELETE FROM page_cache WHERE key = $1`, edgeMulticastTOBGapsKey)
+	require.NoError(t, err)
 	return api
 }
 
@@ -54,6 +58,69 @@ func seedL2Coverage(t *testing.T, api *handlers.API, generatedAt time.Time, lane
 		_, err := api.PgPool.Exec(context.Background(), `DELETE FROM page_cache WHERE key = $1`, kalshiL2CoverageKey)
 		require.NoError(t, err)
 	})
+}
+
+// edgeMulticastTOBGapsKey mirrors the unexported page-cache key in edge_multicast_tob_gaps.go.
+// Same caveat as kalshiL2CoverageKey above: bump both together, or the test below stops
+// exercising the fold and starts asserting the absent case, which still passes.
+const edgeMulticastTOBGapsKey = "edge_multicast_tob_gaps:v1"
+
+// seedEdgeMulticastTOBGaps writes a recorded-gap payload for the sequence column to fold, and
+// removes it again afterwards.
+func seedEdgeMulticastTOBGaps(t *testing.T, api *handlers.API, generatedAt time.Time, series ...handlers.EdgeMulticastTOBGapSeries) {
+	t.Helper()
+	require.NoError(t, api.WritePageCache(t.Context(), edgeMulticastTOBGapsKey, handlers.EdgeMulticastTOBGapsResponse{
+		GeneratedAt:   generatedAt,
+		WindowMinutes: 15,
+		Series:        series,
+	}))
+	t.Cleanup(func() {
+		_, err := api.PgPool.Exec(context.Background(), `DELETE FROM page_cache WHERE key = $1`, edgeMulticastTOBGapsKey)
+		require.NoError(t, err)
+	})
+}
+
+// The axis width has to come from whichever leg measured the episodes, not from the
+// market-by-price leg alone.
+//
+// Without it the page draws NO timeline: gap_window_seconds absent is the documented signal to
+// draw none rather than one of a guessed width, and it is read once for the whole page. So an
+// independent miss on the coverage cache — a key never written in a fresh environment, an entry
+// that did not parse — erased every top-of-book episode this leg had measured, on a page whose
+// rule is that one leg missing costs that leg's rows and nothing else.
+//
+// No coverage payload is seeded here on purpose. That is the state a deploy leaves behind for any
+// newly added cache key, which is how the case was reachable in the first place.
+func TestGetEdgeMulticast_TOBGapWindowSurvivesAnAbsentCoverageCache(t *testing.T) {
+	api := newEdgeMulticastTestAPI(t)
+	insertMulticastTestData(t, api)
+	insertEdgeMulticastCaptureGroups(t, api)
+	// **A top-of-book group of its own, because the leg refuses any other plane.** This used
+	// to seed against the shared market-by-price fixture, which the plane guard now rejects —
+	// correctly: a recorded-gap series landing on a market-by-price group would replace that
+	// group's coverage instance and discard the per-instrument counters only it carries. The
+	// group comes from the helper the observations tests already use, rather than from the
+	// shared fixture, because several tests assert an exact group count against that one.
+	insertEdgeMulticastTOBGroup(t, api)
+
+	asOf := time.Now().UTC()
+	start := asOf.Add(-4 * time.Minute).Unix()
+	seedEdgeMulticastTOBGaps(t, api, asOf, handlers.EdgeMulticastTOBGapSeries{
+		MulticastGroup: "233.0.0.12", PublisherSourceIP: "10.0.0.9", ChannelID: 1,
+		Node: "cmh-rec1", LocationCode: "cmh", Messages: 44_670, GapMessages: 58, GapBooks: 3,
+		GapSeconds: []uint32{uint32(start)}, LastSeen: asOf.Add(-time.Second),
+	})
+
+	resp := getEdgeMulticast(t, api)
+	assert.Equal(t, 900, resp.GapWindowSeconds,
+		"the recorded-gap leg's own fifteen-minute window, with no coverage payload to supply one")
+
+	g := findEdgeMulticastGroup(t, resp, "edge-kalshi-sports-tob")
+	require.NotNil(t, g.Sequence)
+	require.Len(t, g.Sequence.Instances, 1)
+	require.Len(t, g.Sequence.Instances[0].GapEpisodes, 1)
+	assert.Equal(t, start, g.Sequence.Instances[0].GapEpisodes[0].Start)
+	assert.True(t, g.Sequence.Instances[0].GapsMeasured)
 }
 
 // assertEdgeMulticastRoleInvariant checks the two decompositions of a role's Total that the API

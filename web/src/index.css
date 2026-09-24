@@ -432,6 +432,53 @@ table {
   animation: scoreboardEdgeLoad 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
+/* Shreds "Now Leading" motion. The sweep crosses the card once per leader turn,
+   so it marks the change AND shows how far through the turn you are — which is
+   what the separate progress line used to do, in the same direction. */
+@keyframes leaderSweep {
+  from {
+    transform: translateX(-120%);
+  }
+  to {
+    transform: translateX(120%);
+  }
+}
+
+@keyframes growUp {
+  from {
+    transform: scaleY(0.04);
+    opacity: 0.25;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 0.85;
+  }
+}
+
+/* Each leader enters from the leading edge and settles, so the card reads as a
+   procession moving through rather than a flash in place. */
+@keyframes enterX {
+  from {
+    opacity: 0;
+    transform: translateX(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The tape is a conveyor: the whole list steps down one row as a unit, instead
+   of the top row blinking in over a static list. */
+@keyframes conveyor {
+  from {
+    transform: translateY(calc(var(--tape-row) * -1));
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
 /* Radix tooltip fade-in (no animate plugin in use) */
 @keyframes tooltipIn {
   from {
@@ -448,4 +495,157 @@ table {
 [data-tooltip-content][data-state='instant-open'] {
   transform-origin: var(--radix-tooltip-content-transform-origin);
   animation: tooltipIn 120ms ease-out;
+}
+
+/* Hyperliquid scoreboard. --hl-dz, --hl-field and --hl-loss are set on the page wrapper.
+   --hl-dz means "DoubleZero won" everywhere it appears, so a race DoubleZero lost takes
+   --hl-loss and never this one. */
+
+/* Arrival chart */
+.hl-arr {
+  position: relative;
+  height: 20px;
+}
+.hl-arr-axis {
+  position: absolute;
+  inset-inline: 0;
+  top: 9px;
+  height: 1px;
+  background: var(--border);
+}
+.hl-arr-tick {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  width: 1px;
+  background: var(--border);
+}
+.hl-arr-bar {
+  position: absolute;
+  left: 0;
+  top: 5px;
+  height: 10px;
+  overflow: hidden;
+  background: linear-gradient(90deg, color-mix(in oklch, var(--hl-field) 42%, transparent), var(--hl-field));
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 0.85s cubic-bezier(0.2, 0.75, 0.3, 1);
+}
+.hl-arr-bar[data-grown='1'] {
+  transform: scaleX(1);
+}
+.hl-arr-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.28), transparent);
+  animation: hlShimmer 3.4s linear infinite;
+}
+@keyframes hlShimmer {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(110%);
+  }
+}
+.hl-arr-dot {
+  position: absolute;
+  left: 0;
+  top: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--hl-dz);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--hl-dz) 22%, transparent);
+}
+
+/* Matrix cells */
+.hl-cellfill {
+  position: absolute;
+  right: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 0;
+  background: linear-gradient(90deg, transparent, color-mix(in oklch, var(--hl-dz) 30%, transparent));
+  transition: width 0.6s cubic-bezier(0.2, 0.75, 0.3, 1);
+}
+.hl-hl {
+  background: color-mix(in oklch, var(--hl-dz) 7%, transparent);
+}
+th.hl-hl {
+  color: var(--foreground);
+}
+.hl-rowhover:hover {
+  background: color-mix(in oklch, var(--muted) 50%, transparent);
+}
+.hl-grouprow {
+  background: color-mix(in oklch, var(--muted) 55%, transparent);
+}
+
+/* Metric selector */
+.hl-tabwrap {
+  position: relative;
+}
+.hl-tab {
+  border-left: 1px solid var(--border);
+}
+.hl-tab:first-child {
+  border-left: 0;
+}
+@media (max-width: 639px) {
+  .hl-tab:nth-child(odd) {
+    border-left: 0;
+  }
+  .hl-tab:nth-child(n + 3) {
+    border-top: 1px solid var(--border);
+  }
+}
+.hl-tab:hover {
+  background: color-mix(in oklch, var(--muted) 55%, transparent);
+}
+.hl-tab[aria-selected='true'] {
+  background: color-mix(in oklch, var(--hl-dz) 9%, transparent);
+}
+.hl-tab[aria-selected='true'] .hl-tab-label {
+  color: var(--hl-dz);
+}
+.hl-tabpill {
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  width: 0;
+  height: 2px;
+  background: var(--hl-dz);
+  z-index: 1;
+  transition:
+    left 0.32s cubic-bezier(0.2, 0.75, 0.3, 1),
+    width 0.32s cubic-bezier(0.2, 0.75, 0.3, 1);
+}
+
+.hl-pulse {
+  animation: hlPulse 2.4s ease-out infinite;
+}
+@keyframes hlPulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--hl-dz) 55%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hl-arr-bar,
+  .hl-cellfill,
+  .hl-tabpill {
+    transition-duration: 0.001ms;
+  }
+  .hl-arr-bar::after,
+  .hl-pulse {
+    animation: none;
+  }
 }

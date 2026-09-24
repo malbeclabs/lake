@@ -48,9 +48,15 @@ import (
 //
 // So a series from this leg carries GapsMeasured = false, and the UI must not present its 'ok' as
 // a gap-checked verdict. What it does report is real and worth having: the series is advancing,
-// how far behind the recorder's own clock it is, and how many resets it took. Closing the gap
-// half needs the producer to emit a gap marker for top-of-book the way it does for
-// market-by-price, and that is not work this repository can do.
+// how far behind the recorder's own clock it is, and how many resets it took.
+//
+// **The gap half is closed, by a different producer and a different table.** This paragraph used
+// to end by saying it needed "the producer to emit a gap marker for top-of-book the way it does
+// for market-by-price, and that is not work this repository can do". dz_kalshi_recorder emits one
+// — `uncertain_reason` on `kalshi_edge_book_top` — and `edge_multicast_tob_gaps.go` folds it OVER
+// the series this leg produces, replacing them on (source IP, Channel ID, node). What is written
+// above still describes this leg exactly: it has no marker and its grain still cannot support a
+// count-versus-span test. It is no longer the last word on the plane.
 // v2: `recorder_loss` added, each recording node measured against its peers.
 const edgeMulticastObservationsCacheKey = "edge_multicast_observations:v2"
 
@@ -345,6 +351,19 @@ type EdgeMulticastObservationsResponse struct {
 	// page owes the reader "not measured" here, the same distinction the Sequence column already
 	// makes between a gap-checked ok and an advancing one.
 	RecorderLossUnavailable bool `json:"recorder_loss_unavailable,omitempty"`
+
+	// RecorderGaps is the recording nodes' OWN sequence-loss detection, read from the recorder
+	// rows. When it is present the strip is folded from it and the peer comparison above is
+	// ignored — see edge_multicast_recorder_gaps.go for why it is the better source.
+	//
+	// Both are kept in the payload rather than one replacing the other, because whether the
+	// recorder rows exist is a property of the environment: the proxies are created out of band
+	// and no environment has them yet, so the comparison is what every one of them still renders.
+	RecorderGaps []EdgeMulticastRecorderGapSeries `json:"recorder_gaps,omitempty"`
+
+	// RecorderGapsUnavailable says the recorder rows exist and reading them failed, which is a
+	// different statement from their absence and cannot be inferred from an empty RecorderGaps.
+	RecorderGapsUnavailable bool `json:"recorder_gaps_unavailable,omitempty"`
 }
 
 // FetchEdgeMulticastObservations aggregates the recorded series over the coverage window.
@@ -362,6 +381,11 @@ func (a *API) FetchEdgeMulticastObservations(ctx context.Context) (*EdgeMulticas
 		WindowMinutes: edgeMulticastObservationsWindowMinutes,
 		Series:        []EdgeMulticastObservationSeries{},
 	}
+
+	// The recorder leg reads its own two tables, so it runs BEFORE the gate below and not inside
+	// it: an environment with the recorder proxies and without the capture ones still gets the
+	// strip, and the strip is the one column that does not need a decoder to exist.
+	a.appendEdgeMulticastRecorderGaps(ctx, out)
 
 	exists, err := a.kalshiObservationsTableExists(ctx)
 	if err != nil {
@@ -877,14 +901,17 @@ func (a *API) edgeMulticastObservationStats(ctx context.Context, captureSources 
 		slog.Warn("edge multicast observation stats: cache did not parse", "error", err)
 		return edgeMulticastObservationStatsResult{}, time.Time{}
 	}
-	loss, simultaneous := edgeMulticastRecorderLossFold(payload.RecorderLoss)
+	loss, simultaneous, publisher, source, peerUnavailable := edgeMulticastLossLegs(&payload)
 	return edgeMulticastObservationStatsResult{
-		recorderLossUnavailable: payload.RecorderLossUnavailable,
+		recorderLossUnavailable: peerUnavailable,
+		recorderGapsUnavailable: payload.RecorderGapsUnavailable,
 		parity:                  edgeMulticastPathParity(payload.Series, captureSources),
 		rates:                   edgeMulticastPathRates(payload.Series, captureSources, payload.WindowMinutes),
 		recorder:                edgeMulticastNodeCoverage(payload.Series, captureSources),
 		recorderLoss:            loss,
 		recorderLossSimul:       simultaneous,
+		recorderLossPublisher:   publisher,
+		recorderLossSource:      source,
 	}, payload.GeneratedAt.UTC()
 }
 
@@ -896,11 +923,22 @@ type edgeMulticastObservationStatsResult struct {
 	rates    map[edgeMulticastPathKey]float64
 	recorder map[string]*EdgeMulticastRecorderCoverage
 
-	// Both keyed on the publisher's tunnel address, the same join the sequence series make
+	// All three keyed on the publisher's tunnel address, the same join the sequence series make
 	// against the ledger's dz_ip.
 	recorderLoss      map[string][]EdgeMulticastRecorderLoss
 	recorderLossSimul map[string][]KalshiL2GapEpisode
 
-	// recorderLossUnavailable distinguishes a failed measurement from an absent one.
+	// recorderLossPublisher is the recorder leg's bottom row: runs the rule set charged to the
+	// publisher. Set only on that leg, where recorderLossSimul is not.
+	recorderLossPublisher map[string][]KalshiL2GapEpisode
+
+	// recorderLossSource names which measurement filled recorderLoss, PER LINE and keyed the same
+	// way. Per payload it would blank a working peer strip on every line the recorder rows do not
+	// reach, which is every other feed until the recorder covers them all.
+	recorderLossSource map[string]string
+
+	// recorderLossUnavailable distinguishes a failed measurement from an absent one, and
+	// recorderGapsUnavailable says the better source was there and could not be read.
 	recorderLossUnavailable bool
+	recorderGapsUnavailable bool
 }

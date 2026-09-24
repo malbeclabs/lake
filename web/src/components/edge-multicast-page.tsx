@@ -12,6 +12,7 @@ import {
   type SequenceVerdict,
 } from './edge-multicast-gap-episodes'
 import { Tooltip } from '@/components/ui/tooltip'
+import { recorderRowDetail, type GapWindow } from '@/lib/edge-multicast-loss'
 import { PageHeader } from './page-header'
 import { CopyableText } from './copyable-text'
 import { handleRowClick } from '@/lib/utils'
@@ -21,6 +22,7 @@ import {
   type GapEpisode,
   type EdgeMulticastBGPRtt,
   type EdgeMulticastBGPSession,
+  type EdgeMulticastConformance,
   type EdgeMulticastGroup,
   type EdgeMulticastPathParity,
   type EdgeMulticastPublisher,
@@ -328,6 +330,7 @@ function PublisherLineRow({
   asOf,
   now,
   showLastHeard,
+  showConformance,
   showSequence,
   showObservations,
   sequenceAsOfAge,
@@ -339,6 +342,7 @@ function PublisherLineRow({
   asOf: number
   now: number
   showLastHeard: boolean
+  showConformance: boolean
   showSequence: boolean
   showObservations: boolean
   sequenceAsOfAge?: number
@@ -454,6 +458,11 @@ function PublisherLineRow({
       {/* "Heard" is per group — the recorders' own plane, with nothing to say about one
           publisher — but a sequence series is per publisher, so that column is filled in. */}
       {showLastHeard && <td className="px-3 py-1.5" />}
+      {/* Conformance is per GROUP for the same reason Heard is: the metrics carry no publisher
+          source address, so nothing in that payload can name a path. That is a property of the
+          source and not of the page — when the recorder's own rows land, keyed on the source
+          address, the verdict moves down here. */}
+      {showConformance && <td className="px-3 py-1.5" />}
       {showSequence && (
         <td className="px-3 py-1.5 whitespace-nowrap">
           <PublisherSequenceCell
@@ -583,6 +592,245 @@ function PeerParityCell({ parity, asOfAge }: { parity?: EdgeMulticastPathParity;
 // across the backbone and metro-to-metro over the public internet, neither of which touches the
 // tunnel. It ages on its own clock, written on a status change or a ~6-hourly keepalive, so hours
 // old is normal and the tooltip says so rather than letting a latency figure read as current.
+// Conformance verdict styling.
+//
+// `violating` is the finding and takes the red. `should` is a finding of lower severity, so amber.
+//
+// `ungraded` is deliberately neither: outlined grey, the same "this is an absence, not a reading"
+// treatment `advancing` gives a top-of-book series one column over. It is the state where the
+// validator ran, scraped cleanly and graded nothing — every rule reporting `na` because the state
+// it needs was never reached — while reporting zero violations. Rendering that green is the exact
+// failure the verdict exists to prevent.
+//
+// `advisory` is outlined rather than filled for the same reason: there is a finding on the row,
+// even though nothing is wrong.
+const CONFORMANCE_BADGE: Record<string, string> = {
+  violating: 'bg-red-500/15 text-red-500',
+  should: 'bg-amber-500/15 text-amber-500',
+  ungraded: 'border border-muted-foreground/40 text-muted-foreground',
+  advisory: 'border border-emerald-500/40 text-emerald-500',
+  conforming: 'bg-emerald-500/15 text-emerald-500',
+}
+
+// Everything the badge cannot say, and three of these lines are not optional: what the coverage
+// actually was, which known deviations were excluded, and how many vantages the verdict rests on.
+function conformanceTooltip(c: EdgeMulticastConformance, asOfAge?: number): string {
+  const lines: string[] = []
+  const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`
+
+  switch (c.verdict) {
+    case 'violating':
+      lines.push(`${plural(c.must, 'must-severity violation')} in the window.`)
+      break
+    case 'should':
+      lines.push(`${plural(c.should, 'should-severity violation')}, and no must-severity rule fired.`)
+      break
+    case 'ungraded':
+      lines.push(
+        'The validator is running and nothing it grades reached a verdict. That is not a pass: a rule reporting n/a never ran, so silence here is an absence rather than a clean bill of health.',
+      )
+      break
+    case 'advisory':
+      lines.push(`${plural(c.info, 'info-severity finding')}, and no must or should rule fired.`)
+      break
+    default:
+      lines.push(
+        'Nothing was found wrong in what was graded — which is a weaker claim than “this feed conforms to the spec”.',
+      )
+  }
+
+  if (c.graded > 0) {
+    const parts = [`${c.passes.toLocaleString()} of ${c.graded.toLocaleString()} checks passed`]
+    if (c.unverifiable > 0) parts.push(`${c.unverifiable.toLocaleString()} unverifiable`)
+    if (c.na > 0) parts.push(`${c.na.toLocaleString()} n/a`)
+    lines.push(`Coverage: ${parts.join(', ')}.`)
+  }
+
+  // The rules are a panel on the page now: a tooltip repeating it would be the same text twice,
+  // and only the panel can carry the rule's summary and its spec link.
+  if (c.top_rules?.length) {
+    const fired = c.rules_fired ?? c.top_rules.length
+    lines.push(`${plural(fired, 'rule')} fired — click to list them.`)
+  }
+
+  // Counted, never hidden. A deviation that stops firing is a real change, and one that starts
+  // firing on a feed it was never excused for is a finding.
+  if (c.exempted > 0) {
+    lines.push(
+      `${plural(c.exempted, 'hit')} on known publisher deviations, excluded from this verdict and counted here.`,
+    )
+  }
+
+  const nodes = c.nodes?.length ?? 0
+  const where = nodes > 0 ? ` at ${plural(nodes, 'recorder')}` : ''
+  lines.push(`Graded by ${plural(c.instances, 'validator')}${where}.`)
+  // Every recorder grades the same feed independently, so the figures above are detections and
+  // not events: one violation in a publisher's wire format is counted once per vantage that saw
+  // it. Said only where there is more than one vantage, because with one they are the same thing.
+  if (nodes > 1) {
+    lines.push(
+      `Counts are detections, not events: each recorder grades the feed independently, so one violation seen at all ${nodes} counts ${nodes}.`,
+    )
+  }
+  if (nodes === 1) {
+    lines.push(
+      'One vantage: a fault seen here cannot be separated from that recorder’s own trouble with the feed.',
+    )
+  }
+  if (c.channels?.length) {
+    lines.push(`Channels graded: ${c.channels.join(', ')}.`)
+  }
+  if (c.versions?.length) {
+    lines.push(`Validator ${c.versions.join(', ')}.`)
+  }
+
+  return lines.join('\n\n') + computedLine(asOfAge)
+}
+
+// What the rule set graded on this group.
+//
+// Per GROUP, and the em dash is the honest reading for the rest: no validator covers that feed, so
+// there is nothing to report — not a pass. Today that is most of the groups on this page.
+export function ConformanceCell({
+  conformance,
+  asOfAge,
+  expanded,
+  onToggle,
+  panelId,
+}: {
+  conformance?: EdgeMulticastConformance
+  asOfAge?: number
+  expanded: boolean
+  onToggle: () => void
+  panelId: string
+}) {
+  if (!conformance) {
+    return <span className="text-muted-foreground">—</span>
+  }
+  const stale = payloadStale(asOfAge)
+  const badge = (
+    <span
+      className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
+        CONFORMANCE_BADGE[conformance.verdict] ?? 'bg-muted text-muted-foreground'
+      }`}
+    >
+      {conformance.verdict}
+    </span>
+  )
+  const rules = conformance.top_rules?.length ?? 0
+
+  // The disclosure appears only where a rule fired, so a chevron here is itself a finding.
+  if (rules === 0) {
+    return (
+      <Tooltip content={conformanceTooltip(conformance, asOfAge)} className="whitespace-pre-line">
+        <span className={`inline-flex items-center gap-1.5${stale ? ' opacity-50' : ''}`}>{badge}</span>
+      </Tooltip>
+    )
+  }
+
+  return (
+    <Tooltip content={conformanceTooltip(conformance, asOfAge)} className="whitespace-pre-line">
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          onToggle()
+        }}
+        // The chevron is the only tell that the panel is open, and a screen reader never sees it.
+        // aria-controls points at the row the toggle inserts, which is a sibling of this cell's
+        // row rather than a child of the button.
+        aria-expanded={expanded}
+        aria-controls={panelId}
+        className={`inline-flex items-center gap-1.5 hover:text-foreground${stale ? ' opacity-50' : ''}`}
+      >
+        {expanded ? (
+          <ChevronDown className="h-3 w-3 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="h-3 w-3 text-muted-foreground" />
+        )}
+        {badge}
+      </button>
+    </Tooltip>
+  )
+}
+
+// The severity of one rule, on the same ranking the verdict uses: a must-violation is the finding,
+// a should-violation is a finding of lower severity, and everything else was noted rather than
+// found wrong.
+const CONFORMANCE_RULE_SEVERITY: Record<string, string> = {
+  must: 'bg-red-500/15 text-red-500',
+  should: 'bg-amber-500/15 text-amber-500',
+}
+
+// What the badge cannot say: which rules fired, what each one is, and where.
+//
+// The summary and spec link come from the validator's catalog, never restated here. The counts are
+// DETECTIONS, so each line names the recorders behind it; the validator instance is named for the
+// opposite reason — it is the only thing that narrows a finding BELOW the group.
+export function ConformanceRulesRow({
+  conformance,
+  columns,
+  id,
+}: {
+  conformance: EdgeMulticastConformance
+  columns: number
+  id: string
+}) {
+  const rules = conformance.top_rules ?? []
+  const hidden = Math.max(0, (conformance.rules_fired ?? rules.length) - rules.length)
+
+  return (
+    <tr id={id} className="border-b border-border/50 bg-muted/20 text-xs">
+      <td className="pl-8 pr-3 py-2" colSpan={columns}>
+        <div className="space-y-1.5">
+          {rules.map((r) => {
+            const where = [
+              r.nodes?.length ? `seen at ${r.nodes.join(', ')}` : '',
+              r.validators?.length ? r.validators.join(', ') : '',
+            ]
+              .filter(Boolean)
+              .join(' · ')
+            return (
+              <div key={r.rule_id} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                <span
+                  className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
+                    CONFORMANCE_RULE_SEVERITY[r.severity] ?? 'border border-muted-foreground/40 text-muted-foreground'
+                  }`}
+                >
+                  {r.severity}
+                </span>
+                <span className="font-mono text-[11px]">{r.rule_id}</span>
+                <span className="tabular-nums text-muted-foreground">×{r.count.toLocaleString()}</span>
+                {r.summary && <span className="text-muted-foreground">{r.summary}</span>}
+                {/* https only: this is a Prometheus label value, and an href is the one place
+                    where such a string becomes executable. */}
+                {r.spec_url?.startsWith('https://') && (
+                  <a
+                    href={r.spec_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="text-muted-foreground hover:text-foreground hover:underline"
+                  >
+                    spec
+                  </a>
+                )}
+                {where && <span className="text-muted-foreground/70">{where}</span>}
+              </div>
+            )
+          })}
+          {hidden > 0 && (
+            /* Worst-first ordering is what makes this safe to truncate. */
+            <div className="text-muted-foreground">
+              +{hidden} more rule{hidden === 1 ? '' : 's'} fired, none more severe than those above
+            </div>
+          )}
+        </div>
+      </td>
+    </tr>
+  )
+}
+
 function DZDCell({
   deviceCode,
   tunnelId,
@@ -787,12 +1035,17 @@ function LastHeardCell({ group, now }: { group: EdgeMulticastGroup; now: number 
 // so can never size a loss, which is why it no longer leads the line.
 function sequenceInstanceLine(i: EdgeMulticastChannelInstance): string {
   const from = i.publisher_source_ip ? `${i.publisher_source_ip} ` : ''
-  const head = `${from}ch${i.channel_id} @${i.node} (${i.capture_source})`
+  // **The capture source can be empty**, and the parentheses go with it rather than rendering
+  // `@node ():`. A recorder series that matched no capture series carries no name for one —
+  // legitimate, since the recorder can cover a feed the capture does not — and both Go rollups
+  // already treat the empty name as its own case rather than as a name.
+  const source = i.capture_source ? ` (${i.capture_source})` : ''
+  const head = `${from}ch${i.channel_id} @${i.node}${source}: ${i.messages.toLocaleString()} msgs`
   // A stall every path at this vantage shares is the capture source going quiet — a market that
   // closed, not a path that died — and the line has to say which of the two it is, because the
   // status word next to it still reads 'stalled'.
   if (i.capture_source_quiet) {
-    return `${head}: quiet, and so is every other path on this source: the venue, not this path`
+    return `${head} — quiet, and so is every other path on this source: the venue, not this path`
   }
   // gaps_measured says whether GAP BOOKS is a reading, which is not the same question as whether
   // loss is countable, and reading it as the latter silenced the recorder leg: it sets the flag
@@ -801,10 +1054,7 @@ function sequenceInstanceLine(i: EdgeMulticastChannelInstance): string {
   // holes that are not loss says so, and one that can count says how much.
   const hasUpdateCounts = i.updates_received !== undefined || i.updates_missing !== undefined
   if (!i.gaps_measured && !hasUpdateCounts) {
-    return (
-      `${head}: ${i.messages.toLocaleString()} msgs, ${i.resets.toLocaleString()} resets` +
-      ` — sequence loss not countable on this plane`
-    )
+    return `${head}, ${i.resets.toLocaleString()} resets — sequence loss not countable on this plane`
   }
   const received = i.updates_received ?? 0
   const missing = i.updates_missing ?? 0
@@ -825,10 +1075,15 @@ function sequenceInstanceLine(i: EdgeMulticastChannelInstance): string {
   const books = i.gaps_measured
     ? `${i.gap_books.toLocaleString()} book(s) left un-anchored, `
     : ''
+  // **Omitted where the plane cannot count them, never printed as zero.** The recorder's
+  // top-of-book grain has no `snapshot_end`, and this line already refuses to print zeros that
+  // would read as findings — "a series with gaps and no cycles is not recovering" is exactly
+  // the reading a zero here would invent.
+  const cycles =
+    i.snapshot_cycles_measured === false ? '' : `, ${i.snapshot_cycles.toLocaleString()} snapshot cycles`
   return (
-    `${head}: ${loss}${breaks}` +
-    `\n   ${books}${i.resets.toLocaleString()} resets, ` +
-    `${i.snapshot_cycles.toLocaleString()} snapshot cycles`
+    `${head}, ${loss}${breaks}` +
+    `\n   ${books}${i.resets.toLocaleString()} resets${cycles}`
   )
 }
 
@@ -878,9 +1133,6 @@ const GAP_MARK_MIN_WIDTH = 2
 // Tooltip lines, not episodes: a busy path can carry dozens and a tooltip that runs off the
 // viewport reports nothing at all. The count in the header stays exact.
 const GAP_TOOLTIP_MAX_LINES = 8
-
-/** The axis gap episodes are drawn on: the payload's own clock and how wide its window is. */
-type GapWindow = { endMs: number; secs: number }
 
 // The track and its marks. Shared by every strip on the page so they are all the same axis: a
 // per-recorder line and the publisher's own gap timeline are only comparable if one pixel means
@@ -959,15 +1211,43 @@ function RecorderLossRow({
   )
 }
 
-// Every recorder of a path on one axis, plus the line that says whether a loss was one recorder's
-// or not.
+// "The recorder rows exist and the read of them failed", said wherever this strip ends up — including
+// the returns that draw no strip at all.
 //
-// The last row is seconds where TWO OR MORE recorders lost at once. It is not "all of them", and
-// that ceiling is a property of the measurement rather than a choice: the reference is the union of
-// what the nodes recorded, so a message none of them received is in nobody's set and can never be
-// reported missing. Several at once is as close as this plane gets to naming a loss upstream of the
-// recorders, and one node alone is its branch.
-function RecorderLossTimeline({
+// It used to be rendered only in the footer beneath a drawn strip, which on the peer leg needs two
+// or more recorders. So the case where the note matters most was the one case that dropped it:
+// every market-by-price group is recorded at a SINGLE node, so a failing recorder read there
+// rendered `one vantage, nothing to compare` — the peer leg's own limitation, and a permanent
+// property of the group — with nothing anywhere saying that the leg which does measure loss from
+// one vantage had just failed. An operator reading that row would have concluded the feed cannot
+// be measured, when in fact it can and the query died.
+function RecorderRowsUnavailableNote({
+  sequence,
+}: {
+  sequence: EdgeMulticastSequenceHealth
+}) {
+  if (!sequence.recorder_gaps_unavailable) {
+    return null
+  }
+  return <span className="text-amber-600"> · recorder rows unavailable</span>
+}
+
+// Every recorder of a path on one axis, plus the line underneath that says whose the loss was.
+//
+// Two measurements can fill it and the strip says which. On the RECORDER leg the rows come from the
+// recording nodes' own sequence-loss detection: the reference is the publisher's own numbering, the
+// recorder's admitted drops are subtracted rather than inferred, and each run carries a verdict —
+// so the bottom row is the runs charged to the publisher.
+//
+// On the PEER leg the rows are each node measured against the others, and the bottom row is seconds
+// where two or more lost at once. That is not "all of them", and the ceiling is a property of the
+// measurement rather than a choice: the reference is the union of what the nodes recorded, so a
+// message none of them received is in nobody's set and can never be reported. Several at once is as
+// close as that leg gets to naming a loss upstream of the recorders, and one node alone is its
+// branch.
+// Exported for the tests that pin the note onto both of the returns below that draw no strip — it
+// used to be rendered only under one that does — and the caveats a row is not allowed to drop.
+export function RecorderLossTimeline({
   sequence,
   window: win,
 }: {
@@ -975,6 +1255,7 @@ function RecorderLossTimeline({
   window: GapWindow
 }) {
   const recorders = sequence.recorder_loss ?? []
+  const fromRecorder = sequence.recorder_loss_source === 'recorder'
 
   // Attempted and failed is not the same as never applicable, and rendering both as nothing is how
   // a query dying on every refresh cycle stayed invisible. Say so instead.
@@ -982,27 +1263,40 @@ function RecorderLossTimeline({
     return (
       <div className="flex items-center gap-1.5 border-t border-border/60 pt-0.5">
         <span className="text-[9px] w-8 shrink-0 text-right text-muted-foreground">rec</span>
-        <span className="text-[9px] text-amber-600">not measured</span>
+        <span className="text-[9px] text-amber-600">
+          not measured
+          <RecorderRowsUnavailableNote sequence={sequence} />
+        </span>
       </div>
     )
   }
 
-  // One recorder is no comparison at all. Saying so is not decoration: an empty row here read as
-  // "the feature is broken" to the first person who looked at a sports group, because three states
-  // — compared, failed, and nothing to compare — had only two renderings between them. It is also
-  // an operational fact worth seeing, and the same one GapNodes bounds: with a single vantage, a
-  // gap on this feed cannot be attributed to the path rather than to that recorder's own branch.
-  if (recorders.length < 2) {
+  // One recorder is no comparison at all — on the PEER leg. Saying so is not decoration: an empty
+  // row here read as "the feature is broken" to the first person who looked at a sports group,
+  // because three states — compared, failed, and nothing to compare — had only two renderings
+  // between them. It is also the same operational fact GapNodes bounds.
+  //
+  // The recorder leg is exempt, and that is the point of it: its reference is the publisher's own
+  // numbering, so ONE vantage still measures loss absolutely. Applying the peer leg's guard to it
+  // would throw away the only measurement that works where a feed is recorded once — which is every
+  // market-by-price group today.
+  if (!fromRecorder && recorders.length < 2) {
     return (
       <div className="flex items-center gap-1.5 border-t border-border/60 pt-0.5">
         <span className="text-[9px] w-8 shrink-0 text-right text-muted-foreground">rec</span>
         <span className="text-[9px] text-muted-foreground">
           {recorders.length === 1 ? 'one vantage, nothing to compare' : 'no peer to compare'}
+          <RecorderRowsUnavailableNote sequence={sequence} />
         </span>
       </div>
     )
   }
+  // No `recorders.length === 0` case below this point, and there cannot be one: the source is set
+  // only on a line that HAS rows, so `fromRecorder` implies at least one, and every empty line
+  // falls to the guard above. The leg is chosen per line, so a line the recorder rows do not reach
+  // keeps the comparison rather than being handed an empty recorder strip.
   const simultaneous = sequence.recorder_loss_simultaneous ?? []
+  const publisherRuns = sequence.recorder_loss_publisher ?? []
   const windowEnd = new Date(win.endMs).toISOString().slice(11, 19)
 
   return (
@@ -1014,28 +1308,60 @@ function RecorderLossTimeline({
           episodes={r.episodes ?? []}
           window={win}
           detail={
-            `${r.node}: ${r.missing.toLocaleString()} of ${r.reference_seqs.toLocaleString()} ` +
-            `messages its peers recorded\n` +
-            (r.missing === 0
-              ? 'recorded everything the others did'
-              : `${(r.episodes ?? []).length} episode(s) over the ${Math.round(win.secs / 60)}m to ${windowEnd}Z`)
+            fromRecorder
+              ? recorderRowDetail(r, win, windowEnd)
+              : `${r.node}: ${r.missing.toLocaleString()} of ${r.reference_seqs.toLocaleString()} ` +
+                `messages its peers recorded\n` +
+                (r.missing === 0
+                  ? 'recorded everything the others did'
+                  : `${(r.episodes ?? []).length} episode(s) over the ${Math.round(win.secs / 60)}m to ${windowEnd}Z`)
           }
         />
       ))}
       {/* Set apart from the rows above: those are observations, this is what they add up to. */}
       <div className="mt-px border-t border-border/60 pt-px">
-        <RecorderLossRow
-          label="2+"
-          episodes={simultaneous}
-          window={win}
-          emphasis
-          detail={
-            simultaneous.length === 0
-              ? 'no second in which two or more recorders lost at once — every loss above is one recorder\'s own branch'
-              : `${simultaneous.length} episode(s) where two or more recorders lost at the same second: not one branch's fault.\n` +
-                'A loss no recorder saw cannot appear here — the reference is what someone recorded.'
-          }
-        />
+        {fromRecorder ? (
+          <RecorderLossRow
+            label="pub"
+            episodes={publisherRuns}
+            window={win}
+            emphasis
+            detail={
+              publisherRuns.length === 0
+                ? 'no run was charged to the publisher — every loss above was attributed elsewhere, or could not be judged'
+                : // A mark is a second in which a charged run BEGAN, so the count is a floor on the
+                  // runs and not the runs themselves: the query unique-s run starts per second, so
+                  // two beginning inside one second are one mark and there is no reading that
+                  // separates them.
+                  `${publisherRuns.length} second(s) in which a run absent from every recording site began, ` +
+                  `with no recorder overflow anywhere and coverage intact — at least that many runs.\n` +
+                  'This is the finding, not an inference from several recorders losing at once.'
+            }
+          />
+        ) : (
+          <RecorderLossRow
+            label="2+"
+            episodes={simultaneous}
+            window={win}
+            emphasis
+            detail={
+              simultaneous.length === 0
+                ? 'no second in which two or more recorders lost at once — every loss above is one recorder\'s own branch'
+                : `${simultaneous.length} episode(s) where two or more recorders lost at the same second: not one branch's fault.\n` +
+                  'A loss no recorder saw cannot appear here — the reference is what someone recorded.'
+            }
+          />
+        )}
+      </div>
+      {/* Which measurement is on screen, said once. The two references differ, so an empty track
+          means "nobody lost anything the publisher sent" under one and only "nobody lost anything
+          its peers received" under the other. */}
+      <div className="flex items-center gap-1.5">
+        <span className="text-[9px] w-8 shrink-0" />
+        <span className="text-[9px] text-muted-foreground">
+          {fromRecorder ? 'recorder rows' : 'peer comparison'}
+          <RecorderRowsUnavailableNote sequence={sequence} />
+        </span>
       </div>
     </div>
   )
@@ -1329,10 +1655,12 @@ function GroupRow({
   asOf,
   now,
   showLastHeard,
+  showConformance,
   showSequence,
   showObservations,
   sequenceAsOfAge,
   observationsAsOfAge,
+  conformanceAsOfAge,
   gapWindow,
   floorBps,
   columns,
@@ -1342,10 +1670,12 @@ function GroupRow({
   asOf: number
   now: number
   showLastHeard: boolean
+  showConformance: boolean
   showSequence: boolean
   showObservations: boolean
   sequenceAsOfAge?: number
   observationsAsOfAge?: number
+  conformanceAsOfAge?: number
   gapWindow?: GapWindow
   floorBps: number
   columns: number
@@ -1356,6 +1686,12 @@ function GroupRow({
   const lines = group.publisher_lines ?? []
   const [expanded, setExpanded] = useState(lines.length > 0 && lines.length < PUBLISHER_LINES_OPEN_BELOW)
   const hidden = group.publisher_lines_total - lines.length
+  // Closed by default, unlike the publisher lines: this is where a reader goes after the badge
+  // has said there is somewhere to go, and opening every one would bury the rows below.
+  const [rulesOpen, setRulesOpen] = useState(false)
+  // Stable across renders and unique per group: the toggle and the row it opens are siblings, so
+  // aria-controls is the only thing tying them together.
+  const rulesPanelId = `conformance-rules-${group.pk}`
 
   return (
     <>
@@ -1400,6 +1736,17 @@ function GroupRow({
           <LastHeardCell group={group} now={now} />
         </td>
       )}
+      {showConformance && (
+        <td className="px-3 py-3 text-sm whitespace-nowrap">
+          <ConformanceCell
+            conformance={group.conformance}
+            asOfAge={conformanceAsOfAge}
+            expanded={rulesOpen}
+            onToggle={() => setRulesOpen((v) => !v)}
+            panelId={rulesPanelId}
+          />
+        </td>
+      )}
       {/* Sequence and Health are per PUBLISHER and the group row carries neither. A series is
           owned by one publisher and a floor is cleared by one publisher, so a badge here is a
           worst-of that names nobody — on a two-publisher feed with one path dead it reads the
@@ -1426,6 +1773,11 @@ function GroupRow({
         </Link>
       </td>
     </tr>
+    {/* Above the publisher lines: a group with two dozen of them would otherwise put this out
+        of sight of the badge that opened it. */}
+    {showConformance && rulesOpen && group.conformance && (
+      <ConformanceRulesRow conformance={group.conformance} columns={columns} id={rulesPanelId} />
+    )}
     {expanded &&
       lines.map((line) => (
         <PublisherLineRow
@@ -1435,6 +1787,7 @@ function GroupRow({
           now={now}
           floorBps={floorBps}
           showLastHeard={showLastHeard}
+          showConformance={showConformance}
           showSequence={showSequence}
           showObservations={showObservations}
           sequenceAsOfAge={sequenceAsOfAge}
@@ -1460,10 +1813,12 @@ function ServiceSection({
   asOf,
   now,
   showLastHeard,
+  showConformance,
   showSequence,
   showObservations,
   sequenceAsOfAge,
   observationsAsOfAge,
+  conformanceAsOfAge,
   gapWindow,
   floorBps,
   onOpen,
@@ -1472,10 +1827,12 @@ function ServiceSection({
   asOf: number
   now: number
   showLastHeard: boolean
+  showConformance: boolean
   showSequence: boolean
   showObservations: boolean
   sequenceAsOfAge?: number
   observationsAsOfAge?: number
+  conformanceAsOfAge?: number
   gapWindow?: GapWindow
   floorBps: number
   onOpen: (e: React.MouseEvent, pk: string) => void
@@ -1483,7 +1840,12 @@ function ServiceSection({
   // Only the truncation notice spans the table now; the publisher lines carry a cell per column,
   // so the count still has to match the header exactly — a mismatch silently shifts every group
   // column one to the left.
-  const columns = 6 + (showObservations ? 2 : 0) + (showLastHeard ? 1 : 0) + (showSequence ? 1 : 0)
+  const columns =
+    6 +
+    (showObservations ? 2 : 0) +
+    (showLastHeard ? 1 : 0) +
+    (showConformance ? 1 : 0) +
+    (showSequence ? 1 : 0)
   const silent = service.groups.filter((g) => g.silent).length
 
   return (
@@ -1545,6 +1907,12 @@ function ServiceSection({
                 </th>
               )}
               {showLastHeard && <th className="px-3 py-2 font-medium text-right">Heard</th>}
+              {showConformance && (
+                <th className="px-3 py-2 font-medium whitespace-nowrap leading-tight">
+                  <ColumnHeader label="Conformance" asOfAge={conformanceAsOfAge} />
+                  <div className="text-[10px] font-normal text-muted-foreground/70">per group</div>
+                </th>
+              )}
               {showSequence && (
                 <th className="px-3 py-2 font-medium">
                   <ColumnHeader label="Sequence" asOfAge={sequenceAsOfAge} />
@@ -1561,10 +1929,12 @@ function ServiceSection({
                 asOf={asOf}
                 now={now}
                 showLastHeard={showLastHeard}
+                showConformance={showConformance}
                 showSequence={showSequence}
                 showObservations={showObservations}
                 sequenceAsOfAge={sequenceAsOfAge}
                 observationsAsOfAge={observationsAsOfAge}
+                conformanceAsOfAge={conformanceAsOfAge}
                 gapWindow={gapWindow}
                 floorBps={floorBps}
                 columns={columns}
@@ -1622,6 +1992,14 @@ export function EdgeMulticastPage() {
     [data],
   )
 
+  // The conformance column exists only where a validator covers the group, which today is five of
+  // the fifteen — and nowhere at all in an environment with no metrics store configured. Dropped
+  // entirely rather than rendered as a column of dashes, the same rule Heard and Sequence follow.
+  const showConformance = useMemo(
+    () => (data?.services ?? []).some((s) => s.groups.some((g) => g.conformance !== undefined)),
+    [data],
+  )
+
   // Msg/s and Peer come from the observations refresher, and its payload can be absent — a new
   // cache key is empty until the first cycle after a deploy, and a feed with no recorder behind it
   // never gets one at all. Dropped entirely rather than rendered as two columns of dashes, the
@@ -1639,6 +2017,7 @@ export function EdgeMulticastPage() {
   // which keeps ageing whether or not this page refetches.
   const sequenceAsOfAge = ageSecs(data?.sequence_as_of, now)
   const observationsAsOfAge = ageSecs(data?.observations_as_of, now)
+  const conformanceAsOfAge = ageSecs(data?.conformance_as_of, now)
   // The axis for every loss strip on the page, built once. Both halves are required: the as-of is
   // the right edge and the width is the span, and either one alone would put the episodes
   // somewhere arbitrary. Undefined when the payload carries no window, which is the signal to draw
@@ -1728,10 +2107,12 @@ export function EdgeMulticastPage() {
               asOf={asOf}
               now={now}
               showLastHeard={data?.last_heard_available ?? false}
+              showConformance={showConformance}
               showSequence={showSequence}
               showObservations={showObservations}
               sequenceAsOfAge={sequenceAsOfAge}
               observationsAsOfAge={observationsAsOfAge}
+              conformanceAsOfAge={conformanceAsOfAge}
               gapWindow={gapWindow}
               floorBps={data?.publisher_floor_bps ?? 0}
               onOpen={onOpen}
@@ -1755,7 +2136,8 @@ export function EdgeMulticastPage() {
               A row is a group; expand Publishers for one line per path.{' '}
               <span className="text-foreground">Ingress</span> and{' '}
               <span className="text-foreground">DZD</span> are per tunnel and only on the lines; the counts
-              and <span className="text-foreground">Heard</span> are per group;{' '}
+              and <span className="text-foreground">Heard</span> and{' '}
+              <span className="text-foreground">Conformance</span> are per group;{' '}
               <span className="text-foreground">Msg/s</span>, <span className="text-foreground">Peer</span>,{' '}
               <span className="text-foreground">Sequence</span> and{' '}
               <span className="text-foreground">Health</span> are per path.
@@ -1803,8 +2185,9 @@ export function EdgeMulticastPage() {
                 Per path, in the unit the wire protocol carries: sequence values that never arrived. It is
                 the only column that can say the feed lost data rather than that a member went quiet. The
                 rate is withheld under {SEQUENCE_LOSS_MIN_UPDATES.toLocaleString()} updates, where a ratio
-                is noise. Top-of-book reads “not counted” — its stored rows hold one entry per change to the
-                book, so holes in their numbering are structural. Folded from a background refresher, so
+                is noise. Top-of-book reads “advancing” where nothing checked it for loss — its
+                stored rows hold one entry per change to the book, so holes in their numbering are
+                structural — and is gap-checked where the recorder's own markers cover it. Folded from a background refresher, so
                 minutes older than the rest of the row.
               </LegendNote>
             )}
@@ -1822,6 +2205,27 @@ export function EdgeMulticastPage() {
                 at once, which is data the feed did not deliver. Intersected per capture source and per
                 recording node, so two unrelated losses — or one recorder that stopped ingesting — do not read
                 as a shared outage.
+              </LegendNote>
+            )}
+            {showConformance && (
+              <LegendNote term="Conformance">
+                What the spec's rule set graded on the feed, read from the validators beside the recorders
+                — the one column here with no ClickHouse behind it. Per group and blank on the lines: the
+                metrics carry no publisher address, so nothing in them can name a path. Green means nothing
+                was found wrong in what was graded, which is weaker than “this feed conforms”;{' '}
+                <span className="text-foreground">ungraded</span> is neither a pass nor a fault. A chevron
+                means rules fired — open it for each one's description, spec link and the recorders that
+                saw it. Those counts are detections, so one violation at three recorders counts three.
+              </LegendNote>
+            )}
+            {showSequence && (
+              <LegendNote term="Which measurement">
+                The per-recorder rows say which one produced them.{' '}
+                <span className="text-foreground">Recorder rows</span> measure against the publisher's own
+                numbering and subtract each node's admitted drops, so the bottom row is the runs charged to
+                the publisher. A <span className="text-foreground">peer comparison</span> measures against
+                the union of what the nodes received, so a datagram nobody received is in nobody's
+                reference and an empty track does not rule that loss out.
               </LegendNote>
             )}
           </dl>

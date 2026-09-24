@@ -38,6 +38,9 @@ jobs:
   go-test:
     runs-on: ubuntu-24.04-16c-64gb
     needs: go-build
+    # Go's 10m default was the only thing capping a hang; GitHub's job default
+    # is 6 hours against an ~8 minute healthy run.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -56,7 +59,11 @@ jobs:
       # their handler deadlines. Fewer packages at once means more CPU per
       # container, and costs nothing in wall time: one package's critical path
       # bounds the suite (390s at -p 6 vs 402s at the default).
-      - run: go test -race -v -p 6 ./...
+      #
+      # -timeout is explicit because Go's default is 10m per test binary and the
+      # longest packages already spend over half of that on a healthy run, so a
+      # slow runner reads as a test failure rather than as slowness.
+      - run: go test -race -v -p 6 -timeout 30m ./...
   evals-short:
     runs-on: ubuntu-latest
     needs: go-build

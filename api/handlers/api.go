@@ -13,6 +13,7 @@ import (
 
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 	"github.com/malbeclabs/lake/utils/pkg/docsfetch"
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
 var errNoPgPool = errors.New("postgres not configured")
@@ -65,6 +66,12 @@ type API struct {
 	// Tests inject a client pointed at a local httptest server.
 	DocsSource *docsfetch.Client
 
+	// Prom queries a Prometheus-compatible store (nil = not configured, which is the normal
+	// state in local dev, staging without a token, and PR previews). It reads the edge feed
+	// conformance verdicts, which exist in no database — see promql.go. Nil costs the
+	// Conformance column and nothing else.
+	Prom PromQuerier
+
 	// Build info
 	BuildVersion string
 	BuildCommit  string
@@ -105,6 +112,22 @@ type API struct {
 	// Network Health tickets aggregate previously re-paged on every computation
 	// (see cachedOpsUsers). Its zero value is ready to use.
 	opsUsersCache opsUsersCache
+
+	// recorderRaceEsc escalates the recorder-race refresher's two failure paths (see
+	// StartKalshiBackgroundRefresher), so a view that times out on every cycle pages
+	// rather than warning forever behind a panel that keeps serving its last window.
+	// Default thresholds: the cadence is a fixed ten-minute ticker, so the consecutive
+	// count does describe how long the failure has lasted. Its zero value is ready to
+	// use, so a directly-constructed API needs no change.
+	recorderRaceEsc logger.Escalator
+
+	// recorderGapEsc escalates the edge multicast recorder-gap leg's two failure
+	// modes (see appendEdgeMulticastRecorderGaps), so a proxied table that keeps
+	// failing on a ten-minute cycle pages rather than warning forever. Default
+	// thresholds, since the cadence is a fixed ticker and the count therefore does
+	// describe how long the failure has lasted. Its zero value is ready to use, so
+	// a directly-constructed API needs no change.
+	recorderGapEsc logger.Escalator
 }
 
 // publisherCheckLiveSem lazily builds the concurrency-bounding semaphore so a

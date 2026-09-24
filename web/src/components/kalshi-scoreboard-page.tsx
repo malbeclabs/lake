@@ -18,6 +18,11 @@ const DZ_COLOR = '#34d399' // emerald-400 — DoubleZero
 // itself rather than presenting hours-old latencies as current.
 const PATH_LATENCY_STALE_MS = 30 * 60 * 1000
 
+// Two refresher cycles. The race panel states a fifteen-minute window, so a payload older than
+// this is describing a window that closed before the reader arrived — a tighter bound than the
+// hero's because the claim it makes is narrower.
+const RECORDER_RACE_STALE_MS = 20 * 60 * 1000
+
 function pct(n: number): string {
   return `${n.toFixed(1)}%`
 }
@@ -196,6 +201,19 @@ export function KalshiScoreboardPage() {
     return { text: relAge(ms, now), stale: now - ms > PATH_LATENCY_STALE_MS }
   }, [data?.path_latency?.generated_at, now])
 
+  // **The race panel's own clock.** Its caption asserts a fifteen-minute window, and the
+  // payload is written by a background refresher that only WARNs when it fails — so without
+  // this a dead refresher leaves an arbitrarily old verdict presented as current. Stale sooner
+  // than the path-latency hero because the claim is narrower: a fifteen-minute window two
+  // cycles old is describing a window that has already closed.
+  const recorderRaceAge = useMemo(() => {
+    const ts = data?.recorder_race?.generated_at
+    if (!ts) return null
+    const ms = new Date(ts).getTime()
+    if (Number.isNaN(ms)) return null
+    return { text: relAge(ms, now), stale: now - ms > RECORDER_RACE_STALE_MS }
+  }, [data?.recorder_race?.generated_at, now])
+
   // Global competitor set drives the per-vantage table columns (stable order).
   const competitorCols = data?.competitors ?? []
 
@@ -368,6 +386,140 @@ export function KalshiScoreboardPage() {
                 </div>
               )}
             </div>
+
+            {/* The recorder's race: the venue against its own republication. Placed under the
+                path-latency hero and above the competitor race because it answers a different
+                question from either — not "which feed is faster" but "does the multicast carry
+                a book state before the venue's own socket does".
+
+                **Three states, and the payload's presence is only the first of them.** No
+                payload at all renders nothing — that is a refresher that has not landed yet.
+                A payload with `measured` false says nothing measures this race here; one with
+                `measured` true and no sites is a reading that found nothing, which is a fault.
+                The table itself renders only where there are sites, so neither empty state
+                comes with a header row under it. */}
+            {data.recorder_race && (
+              <div className="mb-6 rounded-lg border border-border bg-card p-4 sm:p-6">
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  The feed-race recorder, per site: the venue's own upstream against the
+                  multicast the publishers put on the wire, paired on a book state both sides
+                  computed. Window: last {data.recorder_race.window_minutes} minutes — its own,
+                  and not the one selected above, because this aggregates a view rather than a
+                  summary table.
+                </p>
+
+                {recorderRaceAge && (
+                  <p className={`mt-2 text-xs ${recorderRaceAge.stale ? 'text-amber-500' : 'text-muted-foreground/70'}`}>
+                    Measured {recorderRaceAge.text}
+                    {recorderRaceAge.stale &&
+                      ' — the background refresh has not landed in a while, so this window has already closed.'}
+                  </p>
+                )}
+
+                {/* **Two empties, and they must not read the same.** `measured` is whether
+                    the race view exists in this environment at all. Without that distinction
+                    an environment nobody records gets an amber "one side stopped", which
+                    accuses a recorder that was never asked to run — and restoring the old
+                    `sites > 0` guard would hide the case that IS a fault. */}
+                {data.recorder_race.sites.length === 0 && data.recorder_race.measured && (
+                  <p className="mt-4 text-sm text-amber-500">
+                    No book state was seen by both sides in the window. That is a reading and not
+                    an absence: the race view exists here, so either one side stopped or the two
+                    stopped agreeing on a book.
+                  </p>
+                )}
+                {data.recorder_race.sites.length === 0 && !data.recorder_race.measured && (
+                  <p className="mt-4 text-sm text-muted-foreground">
+                    Nothing measures this race in this environment: the recorder's race view is
+                    not present, so there is no reading to show rather than a reading of zero.
+                  </p>
+                )}
+
+                {data.recorder_race.sites.length > 0 && (
+                <div className="mt-5 overflow-x-auto">
+                  <table className="min-w-full">
+                    <thead>
+                      <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                        <th className="whitespace-nowrap py-2 pr-4 font-medium">Site</th>
+                        <th className="whitespace-nowrap px-4 py-2 font-medium">Ahead</th>
+                        <th className="whitespace-nowrap px-4 py-2 text-right font-medium">Share</th>
+                        <th className="whitespace-nowrap px-4 py-2 text-right font-medium">p50</th>
+                        <th className="whitespace-nowrap px-4 py-2 text-right font-medium">p95</th>
+                        <th className="whitespace-nowrap px-4 py-2 text-right font-medium">Pairs</th>
+                        <th className="whitespace-nowrap py-2 pl-4 text-right font-medium">Symbols</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.recorder_race.sites.map((s) => {
+                        const wireAhead = s.wire_wins > s.venue_wins
+                        const winner = wireAhead ? s.wire_wins : s.venue_wins
+                        // **A share near half is the reading, not a winner.** Where the margin
+                        // is smaller than the jitter both sides win regularly, and calling one
+                        // of them the winner reports noise as a result.
+                        const tooClose = s.pairs > 0 && winner / s.pairs < 0.6
+                        // **The shortfall is the tell that the naming convention moved.**
+                        // Each side is matched on its own prefix and never as the other's
+                        // complement, so a row matching neither stays in `pairs` and the two
+                        // wins no longer sum to it. Rendered rather than left in the JSON: a
+                        // convention change otherwise reads as "too close to call" at 0.00 ms,
+                        // a measured dead heat, which is the one thing it is not.
+                        const unattributed = s.pairs - s.venue_wins - s.wire_wins
+                        return (
+                          <tr key={s.site} className="border-b border-border/50 last:border-0">
+                            <td className="whitespace-nowrap py-3 pr-4 text-sm font-medium">{s.site}</td>
+                            <td className="whitespace-nowrap px-4 py-3 text-sm">
+                              {tooClose ? (
+                                <span className="text-amber-500" title="Both sides win regularly: the margin is inside the jitter, so the share is not a verdict.">
+                                  too close to call
+                                </span>
+                              ) : (
+                                <span style={{ color: wireAhead ? DZ_COLOR : undefined }}>
+                                  {wireAhead ? 'the wire' : 'the venue'}
+                                </span>
+                              )}
+                            </td>
+                            <td
+                              className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums"
+                              title={`venue ${s.venue_wins.toLocaleString()} / wire ${s.wire_wins.toLocaleString()} of ${s.pairs.toLocaleString()} pairs`}
+                            >
+                              {s.pairs > 0 ? pct((winner / s.pairs) * 100) : '—'}
+                            </td>
+                            {/* **Whose lead, said on the figure.** On a row reading "too close
+                                to call" the Ahead cell names no side, and an unattributed
+                                "0.32 ms" there is the same unattributed number the two
+                                directions are kept apart to avoid. */}
+                            <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums">
+                              {(wireAhead ? s.wire_p50_ms : s.venue_p50_ms).toFixed(2)} ms
+                              <span className="ml-1 text-xs text-muted-foreground/70">
+                                {wireAhead ? 'wire' : 'venue'}
+                              </span>
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums">
+                              {(wireAhead ? s.wire_p95_ms : s.venue_p95_ms).toFixed(2)} ms
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-muted-foreground">
+                              {s.pairs.toLocaleString()}
+                              {unattributed > 0 && (
+                                <span
+                                  className="ml-1 text-xs text-amber-500"
+                                  title="These pairs matched neither the venue nor the wire prefix, so they are counted in neither win column. That is the signal that the recorder's inventory naming moved, not a dead heat."
+                                >
+                                  ({unattributed.toLocaleString()} unattributed)
+                                </span>
+                              )}
+                            </td>
+                            <td className="whitespace-nowrap py-3 pl-4 text-right text-sm tabular-nums text-muted-foreground">
+                              {s.symbols.toLocaleString()}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                )}
+              </div>
+            )}
 
             {!unconfigured && (
             <>

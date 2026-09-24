@@ -102,6 +102,13 @@ type edgeMulticastCaptureSourceMap struct {
 	// key than any capture source name: it is what the datagrams were addressed to, where the
 	// name is a convention that has been renamed once already.
 	byMulticastIP map[string]string
+
+	// planeByPK is the plane suffix of each group's ledger code — `tob`, `mbp`, `mbo`. A leg
+	// that measures one plane has to be able to say so: the recorded-gap leg keys on
+	// (address, publisher, channel, node) and nothing in that tuple names a plane, so without
+	// this a row carrying a market-by-price group's address would replace that group's
+	// coverage instance and discard the per-instrument counters only it has.
+	planeByPK map[string]string
 }
 
 type edgeMulticastCaptureSourcePrefix struct {
@@ -112,10 +119,17 @@ type edgeMulticastCaptureSourcePrefix struct {
 // newEdgeMulticastCaptureSourceMap registers, for every group, the ways a capture source can
 // name it.
 func newEdgeMulticastCaptureSourceMap(groups []MulticastDeliveryGroup) edgeMulticastCaptureSourceMap {
-	m := edgeMulticastCaptureSourceMap{exact: map[string]string{}, byMulticastIP: map[string]string{}}
+	m := edgeMulticastCaptureSourceMap{
+		exact:         map[string]string{},
+		byMulticastIP: map[string]string{},
+		planeByPK:     map[string]string{},
+	}
 	for _, g := range groups {
 		if g.MulticastIP != "" {
 			m.byMulticastIP[g.MulticastIP] = g.PK
+		}
+		if suffix := edgeMulticastPlaneSuffixOf(g.Code); suffix != "" {
+			m.planeByPK[g.PK] = suffix
 		}
 		// A capture source may name its group outright.
 		m.exact[g.Code] = g.PK
@@ -148,6 +162,11 @@ func newEdgeMulticastCaptureSourceMap(groups []MulticastDeliveryGroup) edgeMulti
 // older recorder payload may not carry the address at all.
 func (m edgeMulticastCaptureSourceMap) resolveMulticastIP(ip string) string {
 	return m.byMulticastIP[ip]
+}
+
+// planeOf returns a group's plane suffix, or "" for a group whose code carries none.
+func (m edgeMulticastCaptureSourceMap) planeOf(pk string) string {
+	return m.planeByPK[pk]
 }
 
 func (m edgeMulticastCaptureSourceMap) resolve(captureSource string) string {

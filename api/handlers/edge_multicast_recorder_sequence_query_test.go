@@ -26,10 +26,10 @@ const (
 	recorderQueryPortRef = 31001
 )
 
-// insertRecorderCoverage writes one archive segment for one channel instance. datagramCount is what
+// insertFactRecorderCoverage writes one archive segment for one channel instance. datagramCount is what
 // the recorder kept and captureDropTotal the CUMULATIVE ring counter as it stood at the end of the
 // segment — never a rate, and only its delta across a window says anything.
-func insertRecorderCoverage(t *testing.T, api *handlers.API, site, recorder, env string, channelID uint8, dstPort int, segmentSeq, datagramCount, captureDropTotal uint64, dropScope string, agoSecs int) {
+func insertFactRecorderCoverage(t *testing.T, api *handlers.API, site, recorder, env string, channelID uint8, dstPort int, segmentSeq, datagramCount, captureDropTotal uint64, dropScope string, agoSecs int) {
 	t.Helper()
 	require.NoError(t, api.DB.Exec(t.Context(), fmt.Sprintf(`
 		INSERT INTO fact_edge_recorder_segment_coverage
@@ -50,9 +50,9 @@ func insertRecorderCoverage(t *testing.T, api *handlers.API, site, recorder, env
 		recorderQueryGroup, recorderQueryPortMkt, recorderQueryPortRef)))
 }
 
-// insertRecorderGap writes one contiguous run of missing sequence numbers, with the residue the
+// insertFactRecorderGap writes one contiguous run of missing sequence numbers, with the residue the
 // deriver left after subtracting what the recorder admits.
-func insertRecorderGap(t *testing.T, api *handlers.API, site, recorder, env string, channelID uint8, dstPort int, missingFrom, missingCount, unexplained, referenceSeqs uint64, admittedScope, verdict string, agoSecs int) {
+func insertFactRecorderGap(t *testing.T, api *handlers.API, site, recorder, env string, channelID uint8, dstPort int, missingFrom, missingCount, unexplained, referenceSeqs uint64, admittedScope, verdict string, agoSecs int) {
 	t.Helper()
 	require.NoError(t, api.DB.Exec(t.Context(), fmt.Sprintf(`
 		INSERT INTO fact_edge_recorder_sequence_gap
@@ -100,13 +100,13 @@ func TestFetchEdgeMulticastRecorderSequence_Grain(t *testing.T) {
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	// One instance at cmh, two port roles, each with its own segment and its own gap.
-	insertRecorderCoverage(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 1, 400_000, 0, "port-role", 30)
-	insertRecorderCoverage(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortRef, 1, 1_000, 0, "port-role", 30)
-	insertRecorderGap(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 500, 40, 30, 400_000, "port-role", "publisher", 60)
-	insertRecorderGap(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortRef, 900, 5, 5, 1_000, "port-role", "publisher", 55)
+	insertFactRecorderCoverage(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 1, 400_000, 0, "port-role", 30)
+	insertFactRecorderCoverage(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortRef, 1, 1_000, 0, "port-role", 30)
+	insertFactRecorderGap(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 500, 40, 30, 400_000, "port-role", "publisher", 60)
+	insertFactRecorderGap(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortRef, 900, 5, 5, 1_000, "port-role", "publisher", 55)
 
 	// The same instance at a second vantage, clean.
-	insertRecorderCoverage(t, api, "was", "aws-was", "mainnet", 1, recorderQueryPortMkt, 1, 400_040, 0, "port-role", 30)
+	insertFactRecorderCoverage(t, api, "was", "aws-was", "mainnet", 1, recorderQueryPortMkt, 1, 400_040, 0, "port-role", 30)
 
 	resp, err := api.FetchEdgeMulticastRecorderSequence(t.Context())
 	require.NoError(t, err)
@@ -139,9 +139,9 @@ func TestFetchEdgeMulticastRecorderSequence_CleanPortsStayInTheDenominator(t *te
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	// Both ports covered; only the small one gapped.
-	insertRecorderCoverage(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 1, 400_000, 0, "port-role", 30)
-	insertRecorderCoverage(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortRef, 1, 1_000, 0, "port-role", 30)
-	insertRecorderGap(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortRef, 900, 5, 5, 1_000, "port-role", "publisher", 55)
+	insertFactRecorderCoverage(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 1, 400_000, 0, "port-role", 30)
+	insertFactRecorderCoverage(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortRef, 1, 1_000, 0, "port-role", 30)
+	insertFactRecorderGap(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortRef, 900, 5, 5, 1_000, "port-role", "publisher", 55)
 
 	resp, err := api.FetchEdgeMulticastRecorderSequence(t.Context())
 	require.NoError(t, err)
@@ -163,9 +163,9 @@ func TestFetchEdgeMulticastRecorderSequence_CleanPortsStayInTheDenominator(t *te
 func TestFetchEdgeMulticastRecorderSequence_ReferenceIsNotSummedWithinAPort(t *testing.T) {
 	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertRecorderCoverage(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 1, 99_900, 0, "port-role", 30)
-	insertRecorderGap(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 500, 40, 40, 100_000, "port-role", "publisher", 60)
-	insertRecorderGap(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 900, 60, 60, 100_000, "port-role", "publisher", 50)
+	insertFactRecorderCoverage(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 1, 99_900, 0, "port-role", 30)
+	insertFactRecorderGap(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 500, 40, 40, 100_000, "port-role", "publisher", 60)
+	insertFactRecorderGap(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 900, 60, 60, 100_000, "port-role", "publisher", 50)
 
 	resp, err := api.FetchEdgeMulticastRecorderSequence(t.Context())
 	require.NoError(t, err)
@@ -181,11 +181,11 @@ func TestFetchEdgeMulticastRecorderSequence_ReferenceIsNotSummedWithinAPort(t *t
 func TestFetchEdgeMulticastRecorderSequence_ReprocessedRowIsNotCountedTwice(t *testing.T) {
 	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertRecorderCoverage(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 1, 99_900, 0, "port-role", 30)
+	insertFactRecorderCoverage(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 1, 99_900, 0, "port-role", 30)
 	// The same gap — same instance, same era, same first missing sequence — derived twice. The
 	// second run subtracted a drop the first had not loaded yet.
-	insertRecorderGap(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 500, 40, 40, 100_000, "port-role", "publisher", 60)
-	insertRecorderGap(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 500, 40, 10, 100_000, "port-role", "recorder", 60)
+	insertFactRecorderGap(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 500, 40, 40, 100_000, "port-role", "publisher", 60)
+	insertFactRecorderGap(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 500, 40, 10, 100_000, "port-role", "recorder", 60)
 
 	resp, err := api.FetchEdgeMulticastRecorderSequence(t.Context())
 	require.NoError(t, err)
@@ -200,7 +200,7 @@ func TestFetchEdgeMulticastRecorderSequence_ReprocessedRowIsNotCountedTwice(t *t
 func TestFetchEdgeMulticastRecorderSequence_NoCoverageMeansNoOpinion(t *testing.T) {
 	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertRecorderGap(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 500, 40, 40, 100_000, "port-role", "publisher", 60)
+	insertFactRecorderGap(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 500, 40, 40, 100_000, "port-role", "publisher", 60)
 
 	resp, err := api.FetchEdgeMulticastRecorderSequence(t.Context())
 	require.NoError(t, err)
@@ -215,10 +215,10 @@ func TestFetchEdgeMulticastRecorderSequence_HandleDropIsHandleWide(t *testing.T)
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	// Channel 1 saw the ring counter move; channel 101 under the same handle saw none of it.
-	insertRecorderCoverage(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 1, 50_000, 1_000, "capture-handle", 300)
-	insertRecorderCoverage(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 2, 50_000, 1_040, "capture-handle", 30)
-	insertRecorderCoverage(t, api, "cmh", "aws-cmh", "mainnet", 101, recorderQueryPortMkt, 1, 50_000, 1_040, "capture-handle", 30)
-	insertRecorderGap(t, api, "cmh", "aws-cmh", "mainnet", 101, recorderQueryPortMkt, 500, 40, 40, 100_000, "capture-handle", "unverifiable", 60)
+	insertFactRecorderCoverage(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 1, 50_000, 1_000, "capture-handle", 300)
+	insertFactRecorderCoverage(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 2, 50_000, 1_040, "capture-handle", 30)
+	insertFactRecorderCoverage(t, api, "cmh", "aws-cmh", "mainnet", 101, recorderQueryPortMkt, 1, 50_000, 1_040, "capture-handle", 30)
+	insertFactRecorderGap(t, api, "cmh", "aws-cmh", "mainnet", 101, recorderQueryPortMkt, 500, 40, 40, 100_000, "capture-handle", "unverifiable", 60)
 
 	resp, err := api.FetchEdgeMulticastRecorderSequence(t.Context())
 	require.NoError(t, err)
@@ -237,9 +237,9 @@ func TestFetchEdgeMulticastRecorderSequence_HandleDropIsHandleWide(t *testing.T)
 func TestFetchEdgeMulticastRecorderSequence_HandleThatAdmittedNothingExoneratesItself(t *testing.T) {
 	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertRecorderCoverage(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 1, 50_000, 7, "capture-handle", 300)
-	insertRecorderCoverage(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 2, 50_000, 7, "capture-handle", 30)
-	insertRecorderGap(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 500, 40, 40, 100_000, "capture-handle", "publisher", 60)
+	insertFactRecorderCoverage(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 1, 50_000, 7, "capture-handle", 300)
+	insertFactRecorderCoverage(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 2, 50_000, 7, "capture-handle", 30)
+	insertFactRecorderGap(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortMkt, 500, 40, 40, 100_000, "capture-handle", "publisher", 60)
 
 	resp, err := api.FetchEdgeMulticastRecorderSequence(t.Context())
 	require.NoError(t, err)
@@ -255,7 +255,7 @@ func TestFetchEdgeMulticastRecorderSequence_HandleThatAdmittedNothingExoneratesI
 func TestFetchEdgeMulticastRecorderSequence_GroupAddressFromTheManifest(t *testing.T) {
 	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertRecorderCoverage(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortRef, 1, 1_234, 0, "port-role", 30)
+	insertFactRecorderCoverage(t, api, "cmh", "aws-cmh", "mainnet", 1, recorderQueryPortRef, 1, 1_234, 0, "port-role", 30)
 
 	resp, err := api.FetchEdgeMulticastRecorderSequence(t.Context())
 	require.NoError(t, err)

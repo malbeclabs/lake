@@ -101,6 +101,12 @@ var entityFieldConfigs = map[string]map[string]fieldConfig{
 		"funder": {table: "dim_dz_shred_client_seats_current", column: "funding_authority_key"},
 		"ip":     {table: "dim_dz_shred_client_seats_current", column: "client_ip"},
 	},
+	"shred-subscriptions": {
+		"payer":  {table: "(SELECT user_payer AS payer FROM dz_access_passes_current WHERE type_tag = 'edge_seat' AND feed_seats NOT IN ('', '[]'))", column: "payer"},
+		"feed":   {table: "(SELECT name AS feed FROM dz_feeds_current WHERE startsWith(code, '" + ShredsFeedCodePrefix + "'))", column: "feed"},
+		"metro":  {table: "(SELECT m.code AS metro FROM dz_feeds_current f JOIN dz_metros_current m ON m.pk = f.metro_pk WHERE startsWith(f.code, '" + ShredsFeedCodePrefix + "'))", column: "metro"},
+		"device": {table: "(SELECT d.code AS device FROM dz_users_current u ARRAY JOIN JSONExtract(u.feed_pks, 'Array(String)') AS fp JOIN dz_devices_current d ON d.pk = u.device_pk JOIN dz_feeds_current f ON f.pk = fp WHERE u.status = 'activated' AND startsWith(f.code, '" + ShredsFeedCodePrefix + "'))", column: "device"},
+	},
 }
 
 // factTableInterval returns the ClickHouse interval to use for fact table time bounds.

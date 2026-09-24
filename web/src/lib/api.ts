@@ -6438,6 +6438,67 @@ export async function fetchShredClientSeats(
   return res.json()
 }
 
+// A Solana Shreds feed seat held on an edge_seat access pass — the other way a
+// subscriber reaches the feed, alongside the per-epoch ShredClientSeat. It has
+// no escrow, no epoch and no device: it is billed monthly by invoice, and the
+// metro is all the two shapes have in common.
+export interface ShredSubscriptionUser {
+  pk: string
+  device_pk: string
+  device_code: string
+  bgp_status: string
+}
+
+export interface ShredSubscription {
+  pass_pk: string
+  pass_status: string
+  owner_pubkey: string
+  payer: string
+  feed_pk: string
+  feed_code: string
+  feed_name: string
+  metro_pk: string
+  metro_code: string
+  max_users: number
+  max_future_users: number
+  current_users: number
+  anniversary_day: number
+  window_end: string
+  terminates_at: string
+  started_at: string
+  users: ShredSubscriptionUser[]
+}
+
+export interface FetchShredSubscriptionsParams {
+  limit?: number
+  offset?: number
+  sortBy?: string
+  sortDir?: 'asc' | 'desc'
+  status?: string
+  filters?: string[]
+}
+
+export async function fetchShredSubscriptions(
+  params: FetchShredSubscriptionsParams = {},
+): Promise<PaginatedResponse<ShredSubscription>> {
+  const q = new URLSearchParams()
+  if (params.limit) q.set('limit', String(params.limit))
+  if (params.offset) q.set('offset', String(params.offset))
+  if (params.sortBy) q.set('sort_by', params.sortBy)
+  if (params.sortDir) q.set('sort_dir', params.sortDir)
+  if (params.status) q.set('status', params.status)
+  if (params.filters) {
+    for (const f of params.filters) {
+      q.append('filters', f)
+    }
+  }
+  const res = await fetchWithRetry(`/api/dz/shreds/subscriptions?${q}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch shred subscriptions')
+  }
+  return res.json()
+}
+
 export interface ShredFunder {
   funding_authority_key: string
   total_seats: number
@@ -6617,16 +6678,17 @@ export async function fetchShredSubscriberHistory(limit = 50): Promise<ShredSubs
   return res.json()
 }
 
-export interface SwapRate {
-  sol_price_usd: number
-  twoz_price_usd: number
-  swap_rate: number
-  fetched_at: number
+// Win Rate vs Competitors — one point per closed UTC day.
+export interface ShredsCompetitorDay {
+  day: string
+  win_typical_pct: number
+  lead_typical_ms: number
+  leader_slots: number
 }
 
-export async function fetchSwapRate(): Promise<SwapRate> {
-  const res = await fetchWithRetry('/api/dz/swap-rate')
-  if (!res.ok) throw new Error('Failed to fetch swap rate')
+export async function fetchShredsCompetitors(days = 30): Promise<ShredsCompetitorDay[]> {
+  const res = await fetchWithRetry(`/api/dz/shreds/competitors?days=${days}`)
+  if (!res.ok) throw new Error('Failed to fetch shreds competitor win rate')
   return res.json()
 }
 
@@ -7651,7 +7713,7 @@ export interface HyperliquidRace {
   lead_ms: number
 }
 
-export interface HyperliquidScoreboardResponse {
+export interface HyperliquidInternalScoreboardResponse {
   window: string
   symbol?: string
   generated_at: string
@@ -7673,14 +7735,79 @@ export interface HyperliquidCompositeLatency {
   generated_at: string
 }
 
-export async function fetchHyperliquidScoreboard(
+export async function fetchHyperliquidInternalScoreboard(
   window: string = '24h',
   symbol?: string,
-): Promise<HyperliquidScoreboardResponse> {
+): Promise<HyperliquidInternalScoreboardResponse> {
   const params = new URLSearchParams()
   params.set('window', window)
   if (symbol && symbol !== 'all') params.set('symbol', symbol)
-  const res = await apiFetch(`/api/dz/hyperliquid/scoreboard?${params}`)
+  const res = await apiFetch(`/api/dz/hyperliquid/internal-scoreboard?${params}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch hyperliquid internal scoreboard')
+  }
+  return res.json()
+}
+
+// ── Hyperliquid scoreboard ──────────────────────────────────────────────
+// Public counterpart of the internal scoreboard above: signed margins measured
+// from raw observations, with competitors as ordinal labels and no feed name
+// anywhere in the payload.
+
+export interface HyperliquidScoreboardStat {
+  win_pct: number
+  p50_ms: number
+  p95_ms: number
+  p99_ms: number
+}
+
+export interface HyperliquidScoreboardSite extends HyperliquidScoreboardStat {
+  code: string
+  label: string
+}
+
+export interface HyperliquidScoreboardFeed extends HyperliquidScoreboardStat {
+  label: string
+  venue: boolean
+  sites: HyperliquidScoreboardSite[]
+}
+
+export interface HyperliquidScoreboardCategory extends HyperliquidScoreboardStat {
+  name: string
+}
+
+export interface HyperliquidScoreboardMarket {
+  name: string
+  carried: number
+  cats: HyperliquidScoreboardCategory[]
+}
+
+export interface HyperliquidScoreboardResponse {
+  window_label: string
+  // races is distinct venue emissions; comparisons is the (emission, feed) count the rates are
+  // computed over, which is several times larger. dz_absent is emissions a competitor delivered
+  // and DoubleZero did not — excluded from every rate, so it is reported rather than dropped.
+  races: number
+  comparisons: number
+  dz_absent: number
+  instruments: number
+  site_count: number
+  feed_count: number
+  all: HyperliquidScoreboardStat
+  sites: HyperliquidScoreboardSite[]
+  feeds: HyperliquidScoreboardFeed[]
+  markets: HyperliquidScoreboardMarket[]
+  as_of: string
+}
+
+
+export class HyperliquidScoreboardPendingError extends Error {}
+
+export async function fetchHyperliquidScoreboard(): Promise<HyperliquidScoreboardResponse> {
+  const res = await apiFetch('/api/dz/hyperliquid/scoreboard')
+  if (res.status === 503) {
+    throw new HyperliquidScoreboardPendingError('not computed yet')
+  }
   if (!res.ok) {
     throw new Error('Failed to fetch hyperliquid scoreboard')
   }
@@ -7748,7 +7875,45 @@ export interface KalshiScoreboardResponse {
   recent_races: KalshiRace[]
   prices?: Record<string, number>
   path_latency?: KalshiPathLatency
+  /**
+   * The feed-race recorder's own comparison: the venue's upstream against the multicast the
+   * publishers put on it, per recording site. Absent where no recorder writes, and it carries
+   * its OWN window — it aggregates a view rather than a summary table, so it serves fifteen
+   * minutes and not the window selected above.
+   */
+  recorder_race?: KalshiRecorderRace
   unconfigured?: boolean
+}
+
+/** One recording site's venue-against-wire race over the recorder's own window. */
+export interface KalshiRecorderRaceSite {
+  site: string
+  /** Book states both sides saw. Zero means no race here, however much either side recorded. */
+  pairs: number
+  symbols: number
+  venue_wins: number
+  wire_wins: number
+  /**
+   * The lead in each direction, over the races that direction won — two distributions and not
+   * one signed number. Where the margin is smaller than the jitter both sides win regularly,
+   * and a signed median would average them into a figure neither side ever saw.
+   */
+  venue_p50_ms: number
+  venue_p95_ms: number
+  wire_p50_ms: number
+  wire_p95_ms: number
+}
+
+export interface KalshiRecorderRace {
+  generated_at: string
+  window_minutes: number
+  sites: KalshiRecorderRaceSite[]
+  /**
+   * Whether `kalshi_book_race` exists in this environment. An empty `sites` with this true
+   * is a reading — nothing paired in the window — while an empty `sites` with it false is
+   * the absence of the instrument, and the two must not read the same on the page.
+   */
+  measured: boolean
 }
 
 export async function fetchKalshiScoreboard(
@@ -7998,7 +8163,22 @@ export interface EdgeMulticastChannelInstance {
   max_gap_messages?: number
   p99_gap_messages?: number
   resets: number
+  /**
+   * Always present, and 0 where the plane has no `snapshot_end` to count — which is the
+   * recorder's top-of-book grain. The field is not omitted because a deploy is not atomic:
+   * a tab on the previous bundle dereferences it unguarded and would throw mid-render.
+   */
   snapshot_cycles: number
+  /**
+   * Whether `snapshot_cycles` is a reading. False on a plane that cannot count them, where
+   * the 0 above means "not counted" — zero cycles on a gapped series is a finding, so it
+   * must not be printed by a producer that never measured it.
+   *
+   * Optional for the other half of the deploy window: a current bundle can be talking to an
+   * API that predates the field, and that API only ever counted them. Absent therefore reads
+   * as measured, not as unmeasured.
+   */
+  snapshot_cycles_measured?: boolean
   last_seen: string
   /** 'ok' | 'gapped' | 'stalled'. */
   status: string
@@ -8011,15 +8191,39 @@ export interface EdgeMulticastChannelInstance {
   capture_source_quiet?: boolean
 }
 
-/** One recording node's loss on a publisher line, measured against its peers on the same path. */
+/** One recording node's loss on a publisher line. Which measurement produced it is on the health's
+ *  `recorder_loss_source`: the recording nodes' own sequence-loss rows, or each node measured
+ *  against its peers. */
 export interface EdgeMulticastRecorderLoss {
   node: string
   location_code?: string
-  /** Reference sequences this node did not record, and what it is a share of. The reference is
-   *  the UNION of what the nodes recorded, so a message no node received is not in it. */
+  /** Sequence numbers this node did not record, and what it is a share of.
+   *
+   *  What the reference IS depends on the source, and it is the whole difference between the two.
+   *  On the peer comparison it is the UNION of what the nodes recorded, so a message no node
+   *  received is in nobody's reference and an empty strip does not rule that loss out. On the
+   *  recorder rows it is the publisher's own numbering, where an empty strip does. */
   missing: number
   reference_seqs: number
   episodes?: GapEpisode[]
+
+  /** The rest is the recorder leg's; the peer comparison cannot produce any of it. */
+
+  /** `missing` before this recorder's own admitted drops came off, and what came off. The
+   *  comparison can only infer that share, and a load spike reaches every node at once. */
+  missing_raw?: number
+  admitted?: number
+  /** Contiguous runs of missing sequence numbers: the count of episodes, never their size. */
+  runs?: number
+  /** `missing` split by the rule set's attribution:
+   *  recorder | upstream | path | unverifiable | publisher. */
+  missing_by_verdict?: Record<string, number>
+  /** The archive had a hole over this window, so a clean reading here is an absence of evidence
+   *  rather than a clean run — and a non-zero `missing` under it is a floor, not a measurement. */
+  unverifiable?: boolean
+  /** Datagrams this node recorded on the line, from coverage. What a CLEAN row has instead of a
+   *  rate: no gap row means no `reference_seqs` either. */
+  datagrams?: number
 }
 
 /** Sequence health over a set of channel instances, worst-first: one publisher's own series on a
@@ -8044,6 +8248,17 @@ export interface EdgeMulticastSequenceHealth {
   /** The comparison was attempted and failed. Distinct from an absent recorder_loss, which means
    *  the path has no peer to be measured against — render "not measured", never nothing. */
   recorder_loss_unavailable?: boolean
+  /** Which measurement filled recorder_loss: `recorder` for the recording nodes' own sequence-loss
+   *  rows, `peers` for each node measured against the others. Named rather than inferred from the
+   *  strip's shape, because an empty strip means different things under each. */
+  recorder_loss_source?: 'recorder' | 'peers'
+  /** Runs the rule set charged to the PUBLISHER — absent from every site, no recorder overflow
+   *  anywhere, coverage intact. Recorder leg only, and the stronger form of what
+   *  recorder_loss_simultaneous reaches for. */
+  recorder_loss_publisher?: GapEpisode[]
+  /** The recorder rows exist and reading them failed, so the strip is the peer comparison standing
+   *  in. Not folded into recorder_loss_unavailable: something WAS measured. */
+  recorder_gaps_unavailable?: boolean
   /** Seconds every path of this feed lost data at once, on the GROUP roll-up only. Non-empty means
    *  the redundancy failed and the feed itself lost data — the one sequence statement no publisher
    *  line can make. */
@@ -8091,6 +8306,57 @@ export interface EdgeMulticastRecorderCoverage {
   lagging?: EdgeMulticastLaggingRecorder[]
 }
 
+/** One rule that fired. The summary and spec link come from the validator's own catalog, joined
+ *  by rule id; absent, the row shows the id alone rather than a description this repo invented. */
+export interface EdgeMulticastConformanceRule {
+  rule_id: string
+  severity: string
+  /** Detections, summed over vantages: one violation seen at two recorders counts twice, which
+   *  is why the recorders are named beside it. */
+  count: number
+  summary?: string
+  spec_url?: string
+  /** Where it fired. The validator instance name is the only thing here that narrows a finding
+   *  below the group: six elections instances grade one address, one market each. */
+  nodes?: string[]
+  validators?: string[]
+}
+
+/** What the conformance rule set graded on one group over the window.
+ *
+ *  Per GROUP and never per publisher line, and that is a property of the source rather than of the
+ *  page: the metrics carry no publisher source address, so nothing in this payload can name a
+ *  path. Counts are events in the window, not running totals. */
+export interface EdgeMulticastConformance {
+  /** 'violating' | 'should' | 'ungraded' | 'advisory' | 'conforming', worst first. */
+  verdict: string
+  /** Violations by severity, after the known-deviation exclusions. */
+  must: number
+  should: number
+  info: number
+  /** passes over graded is the coverage actually achieved. Silence is not a pass. */
+  passes: number
+  graded: number
+  na: number
+  unverifiable: number
+  /** The rules that fired, must-severity first, capped. */
+  top_rules?: EdgeMulticastConformanceRule[]
+  /** Rules that fired before that cap. The severity totals above are over all of them. */
+  rules_fired?: number
+  /** Known-deviation hits. Excluded from the verdict, never from the payload: a deviation that
+   *  stops firing is a real change, and one that starts firing elsewhere is a finding. */
+  exempted: number
+  /** How many validator processes stand behind the verdict, and at how many recorders. One
+   *  vantage cannot separate that recorder's own trouble from the feed's. */
+  instances: number
+  nodes?: string[]
+  /** Channel IDs graded, when the scrape carries the label. Empty is 'the scrape does not say',
+   *  never 'no channels'. */
+  channels?: string[]
+  /** The validator build behind the verdict. More than one is a legitimate mid-rollout state. */
+  versions?: string[]
+}
+
 export interface EdgeMulticastGroup {
   pk: string
   code: string
@@ -8115,6 +8381,9 @@ export interface EdgeMulticastGroup {
   publishers_publishing: number
   /** Recording nodes of this group that are behind the best-placed one. Absent when none are. */
   recorder_coverage?: EdgeMulticastRecorderCoverage
+  /** What the conformance rule set graded here; absent for a group no validator covers, which is
+   *  most of them, and for any environment with no metrics store configured. */
+  conformance?: EdgeMulticastConformance
   /** Per-node application-plane view; absent for a group no capture covers. */
   capture_nodes?: EdgeMulticastCaptureNode[]
   capture_nodes_lagging?: number
@@ -8163,6 +8432,10 @@ export interface EdgeMulticastResponse {
   /** When the recorded message rate and the parity ratio were computed. A different cache entry
    *  from the sequence legs, with its own clock, so those two columns age against this. */
   observations_as_of?: string
+  /** When the conformance verdicts were computed. A third cache entry with a third clock — its
+   *  payload comes from a metrics store, not from ClickHouse — so the column ages against this
+   *  and not against either of the two above. */
+  conformance_as_of?: string
   /** Width of the window the gap episodes were measured over. With sequence_as_of it is the axis
    *  they are drawn on: (sequence_as_of - this, sequence_as_of]. Absent when nothing folded any,
    *  which is also the signal to draw no timeline. */

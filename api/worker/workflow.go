@@ -162,12 +162,27 @@ type cacheEntry struct {
 	name  string
 	key   string
 	every time.Duration
-	// dayAligned entries read handlers.DefaultNetworkHealthWindow and are also due
-	// once their blob predates the current window's end, whatever every says.
-	// Otherwise groups on different cadences describe different windows after
-	// midnight UTC, and the frontend blanks its traffic-weighted availability stat
-	// when two payloads disagree (deriveAvailability, network-health-reporting-page.tsx).
+	// dayAligned entries are also due once their blob predates the current UTC day
+	// boundary, whatever every says. Two reasons to want it. The Network Health groups
+	// read handlers.DefaultNetworkHealthWindow, and groups on different cadences would
+	// describe different windows after midnight — the frontend blanks its
+	// traffic-weighted availability stat when two payloads disagree (deriveAvailability,
+	// network-health-reporting-page.tsx). That is the only reason to set it: a daily entry
+	// that merely wants a predictable hour takes dailyAtUTC below, which pins the cadence
+	// without also claiming the payload describes a UTC day.
 	dayAligned bool
+	// dailyAtUTC pins a daily entry to a fixed time of day, given as an offset past 00:00
+	// UTC. Zero means unset.
+	//
+	// It REPLACES the every check rather than adding to it: the entry is due exactly when its
+	// blob predates today's mark. That is the difference from every on its own, which measures
+	// from the last write and so walks the refresh forward by up to a cycle each run, and
+	// further still after any late one.
+	//
+	// Use it INSTEAD of dayAligned, never with it. dayAligned is for a payload whose window is
+	// a UTC day and needs to roll at the boundary; setting both would make the entry due at
+	// 00:00 as well, which is the thing a fixed hour is usually chosen to avoid.
+	dailyAtUTC time.Duration
 	fn         func(ctx context.Context) (any, error)
 	// timeout overrides the per-refresh context deadline. Zero means the default
 	// (see refresh). Only heavyEntries set it: they run in their own activity,
@@ -185,6 +200,19 @@ const (
 	// Matches the UI's ~60s poll and absorbs the external ~10s poller that
 	// previously ran the query ~6,500×/day.
 	validatorsListingInterval = 60 * time.Second
+
+	// The board publishes one figure for the last 24h, so it is recomputed once a day.
+	// Paired with dailyAtUTC, which is what pins that to a fixed hour rather than 24h after
+	// whenever the entry last happened to run.
+	hyperliquidScoreboardInterval = 24 * time.Hour
+
+	// 09:00 UTC, and deliberately not 00:00. The two heavy Network Health entries are
+	// dayAligned, so they come due together on the post-midnight cycle; RefreshHeavyCaches
+	// runs everything due concurrently and bounds none of it, and three ~180s scans
+	// contending there can miss the 240s heavyActivityTimeout together.
+	// TestEntryTimeoutsFitTheirActivityBudget cannot catch that, because it checks each entry
+	// against the budget alone.
+	hyperliquidScoreboardRefreshHour = 9 * time.Hour
 
 	// Two full all-pairs path computations over two graphs, keyed off link topology
 	// tags — which change when someone changes them and not otherwise.
@@ -216,6 +244,13 @@ const (
 	// further back than the latest payload covers — see GetEdgeScoreboard's coverage
 	// guard, which is what keeps those slots from being skipped.
 	edgeScoreboardInterval = 5 * time.Minute
+
+	// The two DZDP geolocation entries. Both aggregate validator geography —
+	// country, ASN, and nearest DZ metro — which changes only when a validator
+	// moves or DZDP re-hones its anchor point, and weights it by stake, which
+	// shifts at epoch boundaries (~2 days). The page polls every 60s but nothing
+	// on it is a live signal, so ten minutes of staleness is invisible.
+	geoConcentrationInterval = 10 * time.Minute
 )
 
 // cacheAgesEscalationKey keys the gate's own age read, so a gate outage is one
@@ -255,7 +290,23 @@ func dueForRefresh(e cacheEntry, updatedAt, now, windowEnd time.Time) bool {
 	if e.dayAligned && updatedAt.Before(windowEnd) {
 		return true
 	}
+	// A fixed time of day replaces the spacing check: due iff the blob predates today's mark.
+	if e.dailyAtUTC > 0 {
+		return updatedAt.Before(lastDailyMarkUTC(now, e.dailyAtUTC))
+	}
 	return now.Sub(updatedAt) >= e.every
+}
+
+// lastDailyMarkUTC is the most recent occurrence of offset-past-00:00 UTC at or before now.
+// Built from the calendar date rather than by truncating, so it stays the same wall-clock hour
+// across a DST change in whatever zone the pod happens to think it is in.
+func lastDailyMarkUTC(now time.Time, offset time.Duration) time.Time {
+	u := now.UTC()
+	mark := time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC).Add(offset)
+	if mark.After(u) {
+		mark = mark.AddDate(0, 0, -1)
+	}
+	return mark
 }
 
 // dueEntries splits a batch by cadence, from one batched read of
@@ -457,8 +508,8 @@ func (a *Activities) entries() []cacheEntry {
 		{name: "edge scoreboard (leaders)", key: "edge_scoreboard:leaders", every: edgeScoreboardInterval, fn: func(ctx context.Context) (any, error) {
 			return api.FetchEdgeScoreboardData(ctx, "24h", true, 0, 0, 1000)
 		}},
-		{name: "hyperliquid scoreboard", key: "hyperliquid_scoreboard", fn: func(ctx context.Context) (any, error) {
-			return api.FetchHyperliquidScoreboardData(ctx, "1h", "")
+		{name: "hyperliquid internal scoreboard", key: "hyperliquid_internal_scoreboard", fn: func(ctx context.Context) (any, error) {
+			return api.FetchHyperliquidInternalScoreboardData(ctx, "1h", "")
 		}},
 		{name: "kalshi scoreboard", key: "kalshi_scoreboard", fn: func(ctx context.Context) (any, error) {
 			return api.FetchKalshiScoreboardData(ctx, "1h", "")
@@ -475,10 +526,10 @@ func (a *Activities) entries() []cacheEntry {
 		{name: "bulk device metrics (issues)", key: "bulk_device_metrics_issues", fn: func(ctx context.Context) (any, error) {
 			return api.FetchBulkDeviceMetricsIssuesData(ctx)
 		}},
-		{name: "geo concentration", key: "geo_concentration", fn: func(ctx context.Context) (any, error) {
+		{name: "geo concentration", key: "geo_concentration", every: geoConcentrationInterval, fn: func(ctx context.Context) (any, error) {
 			return api.FetchGeoConcentrationData(ctx)
 		}},
-		{name: "geo validators", key: "geo_validators", fn: func(ctx context.Context) (any, error) {
+		{name: "geo validators", key: "geo_validators", every: geoConcentrationInterval, fn: func(ctx context.Context) (any, error) {
 			return api.FetchGeoValidatorsData(ctx, "", "")
 		}},
 		// The unfiltered stake-desc validators listing is polled continuously by the
@@ -733,6 +784,18 @@ func (a *Activities) heavyEntries() []cacheEntry {
 				return nil, err
 			}
 			return resp, nil
+		}},
+		// 54-68s measured end to end on the production cluster, against the 180s budget. Being
+		// the fourth heavy entry costs the slow batch a worker — batchConcurrency() is
+		// RefreshConcurrency - len(heavyEntries()), so 5 becomes 4 — and lets RefreshHeavyCaches
+		// hold four scans at once, since it bounds none of them. TestHeavyEntriesRegistered pins
+		// the batch width that results.
+		//
+		// dailyAtUTC rather than dayAligned: this window is a rolling 24 hours ending at the
+		// scan, not a UTC day, so there is no boundary for it to roll with — and the hour it
+		// would have pinned is the one the two entries either side of it already occupy.
+		{name: "hyperliquid scoreboard", key: handlers.HyperliquidScoreboardCacheKey, every: hyperliquidScoreboardInterval, dailyAtUTC: hyperliquidScoreboardRefreshHour, timeout: nhHeavyRefreshTimeout, fn: func(ctx context.Context) (any, error) {
+			return api.FetchHyperliquidScoreboardData(ctx)
 		}},
 		{name: "network health deferred", key: handlers.NetworkHealthDeferredCacheKey, dayAligned: true, every: networkHealthHistoryInterval, timeout: nhHeavyRefreshTimeout, fn: func(ctx context.Context) (any, error) {
 			start, end := handlers.DefaultNetworkHealthWindow()

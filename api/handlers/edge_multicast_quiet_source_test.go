@@ -190,3 +190,35 @@ func TestEdgeMulticastSequence_GapNodesIgnoresTheUnmeasuredPlane(t *testing.T) {
 	assert.Equal(t, 1, health.GapNodes, "the top-of-book vantage counts no gaps and corroborates none")
 	assert.Equal(t, 1, health.GapsUnmeasured)
 }
+
+// A series whose capture source is unnamed must not stand in as a peer for another one.
+//
+// An empty name is not a bucket of its own: every unnamed series lands in the same one, so two
+// unrelated markets at one node read as two paths of a single capture source, and one going quiet
+// excuses the other's genuine stall. The recorded-gap leg produces such a series for a channel
+// instance the capture recorded nothing for — before it, every instance without a source was
+// top-of-book and carried no gap measurement at all.
+//
+// The same rule this function already applies to a missing source address, for the same reason:
+// what cannot be attributed cannot be compared.
+func TestEdgeMulticastSequence_AnUnnamedCaptureSourceIsNoPeer(t *testing.T) {
+	health := handlers.EdgeMulticastSequenceHealthForTest([]handlers.EdgeMulticastChannelInstance{
+		// Two paths, two DIFFERENT markets, one node — and no name on either to say so. Both
+		// stalled, which under a shared empty bucket is "the capture source went quiet".
+		quietInstance("148.51.121.209", "", 10, "node-a", stale()),
+		quietInstance("148.51.120.152", "", 210, "node-a", stale()),
+		// Each path is delivering elsewhere at this vantage, so the aliveHere guard is satisfied
+		// and the demotion is the only thing that can excuse the stalls above.
+		quietInstance("148.51.121.209", "tob_edge_kalshi_sports_nba", 11, "node-a", fresh()),
+		quietInstance("148.51.120.152", "tob_edge_kalshi_sports_nba", 111, "node-a", fresh()),
+	}, quietAsOf)
+
+	require.NotNil(t, health)
+	for _, inst := range health.Instances {
+		if inst.CaptureSource == "" {
+			assert.False(t, inst.CaptureSourceQuiet,
+				"nothing said these two series are the same market, so neither excuses the other")
+		}
+	}
+	assert.Zero(t, health.CaptureSourceQuiet)
+}

@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
 // The Kalshi scoreboard is the sibling of the Hyperliquid one (hyperliquid_scoreboard.go) and
@@ -317,6 +319,12 @@ type KalshiScoreboardResponse struct {
 	// PathLatency is the per-feed venue-to-receive latency (24h) — the headline comparison;
 	// nil until the background refresher computes it (too heavy for the request path).
 	PathLatency *KalshiPathLatency `json:"path_latency,omitempty"`
+	// RecorderRace is the feed-race recorder's own comparison — the venue's upstream against
+	// the multicast, per site. Its own cache entry with its own clock and its own window: it
+	// aggregates a view rather than a summary table, so it can serve fifteen minutes and not
+	// this page's windows. See kalshi_recorder_race.go. nil until the refresher lands one,
+	// and absent entirely where no recorder writes.
+	RecorderRace *KalshiRecorderRace `json:"recorder_race,omitempty"`
 	// Unconfigured reports that no comparison feed is configured in this environment, as
 	// distinct from a configured one that simply had no races in the window. The UI cannot
 	// tell those apart from empty slices, and guessing turns a capture outage into "nothing
@@ -376,6 +384,12 @@ func (a *API) FetchKalshiScoreboardData(ctx context.Context, window, symbol stri
 		// still meaningful, so attach it rather than dropping the one number that survives.
 		resp := emptyKalshiScoreboard(window, true)
 		a.attachKalshiPathLatency(ctx, resp)
+		// **And the race, for the same reason.** It compares the venue against its own
+		// republication and depends on no competitor at all, so "nobody configured a feed to
+		// race against" is not a reason to drop it. The page renders it outside its
+		// `unconfigured` gate, so returning here without it is how a panel goes missing in
+		// exactly the environment that has a recorder and no competitor.
+		a.attachKalshiRecorderRace(ctx, resp)
 		return resp, nil
 	}
 
@@ -580,8 +594,36 @@ func (a *API) FetchKalshiScoreboardData(ctx context.Context, window, symbol stri
 	}
 
 	a.attachKalshiPathLatency(ctx, resp)
+	a.attachKalshiRecorderRace(ctx, resp)
 
 	return resp, nil
+}
+
+// attachKalshiRecorderRace copies the background-refreshed recorder race onto a response.
+//
+// Best-effort and separately cached, for the same reason the path latency is: it is too slow
+// for a request. Absent until the refresher has populated it, which is the only state that
+// renders nothing at all.
+//
+// After that first cycle EVERY environment has a payload, including those where the race view
+// does not exist — the refresher writes one with `Measured` false. That is deliberate and is
+// what the flag is for: "nothing measures this race here" and "the recorders write here and
+// nothing paired" are different findings, and an environment with no instrument must not be
+// handed the second one. The UI renders the two apart and draws no table under either.
+func (a *API) attachKalshiRecorderRace(ctx context.Context, resp *KalshiScoreboardResponse) {
+	raw, err := a.readPageCache(ctx, kalshiRecorderRaceCacheKey)
+	if err != nil || len(raw) == 0 {
+		return
+	}
+	// **Attached even with no sites.** Zero sites means nothing cleared `observations = 2`
+	// in the window, which is what a dead recorder looks like — dropping it here would make
+	// a capture outage render identically to an environment that never had a recorder, and
+	// those have to look different. The absence of the payload is the "not measured here"
+	// signal; an empty one is a measurement that found nothing.
+	var rr KalshiRecorderRace
+	if json.Unmarshal(raw, &rr) == nil {
+		resp.RecorderRace = &rr
+	}
 }
 
 // attachKalshiPathLatency copies the background-refreshed 24h path latency onto a response.
@@ -938,8 +980,9 @@ func (a *API) FetchKalshiPathLatency(ctx context.Context) (*KalshiPathLatency, e
 //   - the per-feed path latency,
 //   - the 24h and 7d scoreboards (the 1h scoreboard stays on the ordinary page-cache worker),
 //   - the sports L2 coverage view,
-//   - the two /dz/edge/multicast reads with nothing to fall back on: the observations plane and
-//     the edge recorder's own sequence-loss rows.
+//   - the /dz/edge/multicast reads with nothing to fall back on: the observations plane, the
+//     top-of-book gap markers, the conformance verdicts, and the edge recorder's own
+//     sequence-loss rows.
 //
 // Each computation gets its own timeout so a slow one can't starve the others; the path
 // latency is refreshed first so the 24h/7d scoreboards pick up its freshly-cached value.
@@ -976,17 +1019,24 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 			slog.Warn("kalshi scoreboard cache write failed", "window", window, "error", err)
 		}
 	}
+	// The market-by-price half of the same column, and the heaviest scan in the chain. Same
+	// escalation for the same reason: its failure leaves the Sequence column with one leg and
+	// nothing on the page says which.
+	var l2Esc logger.Escalator
+	const l2EscKey = "kalshi_l2_coverage"
 	refreshL2 := func() {
 		rctx, cancel := context.WithTimeout(ctx, runTimeout)
 		defer cancel()
 		val, err := a.FetchKalshiL2Coverage(rctx)
 		if err != nil {
-			slog.Warn("kalshi l2 coverage refresh failed", "error", err)
+			l2Esc.Fail(slog.Default(), l2EscKey, "kalshi l2 coverage refresh failed", "error", err)
 			return
 		}
 		if err := a.WritePageCache(ctx, kalshiL2CoverageCacheKey, val); err != nil {
-			slog.Warn("kalshi l2 coverage cache write failed", "error", err)
+			l2Esc.Fail(slog.Default(), l2EscKey, "kalshi l2 coverage cache write failed", "error", err)
+			return
 		}
+		l2Esc.Reset(l2EscKey)
 	}
 	// The observations-plane leg of /dz/edge/multicast: the top-of-book sequence series and the
 	// path-parity counts. Same cadence and same window as the L2 coverage one so the two halves
@@ -1000,17 +1050,121 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 	// the deploy that introduced this one, the columns stayed empty for a whole cycle. Cheapest
 	// step in the chain (2-4s against mainnet) and the only one with nothing to fall back on, so
 	// it goes at the front.
+	// **Escalated too, and this is the leg the rule was written from.** It failed on every
+	// ten-minute cycle in production against a ClickHouse memory limit and cost the strips
+	// silently, which is the precedent the recorded-gap leg below cites for its own escalator.
+	// Citing it while leaving it at WARN would have meant the failure that motivated the rule
+	// still never pages.
+	var observationsEsc logger.Escalator
+	const observationsEscKey = "edge_multicast_observations"
 	refreshObservations := func() {
 		rctx, cancel := context.WithTimeout(ctx, runTimeout)
 		defer cancel()
 		val, err := a.FetchEdgeMulticastObservations(rctx)
 		if err != nil {
-			slog.Warn("edge multicast observations refresh failed", "error", err)
+			observationsEsc.Fail(slog.Default(), observationsEscKey,
+				"edge multicast observations refresh failed", "error", err)
 			return
 		}
 		if err := a.WritePageCache(ctx, edgeMulticastObservationsCacheKey, val); err != nil {
-			slog.Warn("edge multicast observations cache write failed", "error", err)
+			observationsEsc.Fail(slog.Default(), observationsEscKey,
+				"edge multicast observations cache write failed", "error", err)
+			return
 		}
+		observationsEsc.Reset(observationsEscKey)
+	}
+	// The recorded-gap leg of the same column, from the feed-race recorder's own grain rather
+	// than from the capture's. It sits beside the observations leg for the same two reasons that
+	// one gives — no page falls back to a live query for it, so until it lands its numbers are
+	// simply absent, and it is cheap — and immediately after it, because the two describe the
+	// same span and a reader comparing them across a cycle boundary would be comparing two
+	// windows. That adjacency is why it goes ahead of the conformance leg, whose own reason for
+	// being early is the weaker half of the same one.
+	//
+	// Escalation-gated, per CLAUDE.md's rule for periodic loops, and the reason is on the leg
+	// immediately above: the observations refresh failed on EVERY ten-minute cycle in production
+	// against a ClickHouse memory limit and "cost the strips silently because this measurement is
+	// additive and its failure is a WARN". This leg is additive the same way and fails the same
+	// way — a failure leaves the staleness-only reading it exists to replace, which on the page
+	// is indistinguishable from a plane nothing measures yet — so nothing about the symptom says
+	// a query is broken.
+	//
+	// One key for the step rather than one per stage: a fetch failure and a write failure are the
+	// same operational condition, "this leg has not landed", and splitting them would let a
+	// failure that alternates between the two never reach the threshold. The interval is a fixed
+	// ten minutes, so the default count of three describes a duration (~30 minutes to ERROR) and
+	// ErrorAfterDuration would only restate it.
+	var tobGapsEsc logger.Escalator
+	const tobGapsEscKey = "edge_multicast_tob_gaps"
+	refreshTOBGaps := func() {
+		rctx, cancel := context.WithTimeout(ctx, runTimeout)
+		defer cancel()
+		val, err := a.FetchEdgeMulticastTOBGaps(rctx)
+		if err != nil {
+			tobGapsEsc.Fail(slog.Default(), tobGapsEscKey,
+				"edge multicast tob gaps refresh failed", "error", err)
+			return
+		}
+		if err := a.WritePageCache(ctx, edgeMulticastTOBGapsCacheKey, val); err != nil {
+			tobGapsEsc.Fail(slog.Default(), tobGapsEscKey,
+				"edge multicast tob gaps cache write failed", "error", err)
+			return
+		}
+		tobGapsEsc.Reset(tobGapsEscKey)
+	}
+	// The conformance leg of the same page. It reads no ClickHouse at all — the verdicts exist
+	// only in a metrics store — so it costs the chain nothing but its own HTTP round trips, and
+	// it sits near the front for the same reason the observations leg sits first: no page falls
+	// back to a live query for it, so until it lands its column is simply absent.
+	//
+	// A nil querier makes FetchEdgeMulticastConformance return an empty payload with no error,
+	// which is written and read as "no validator covers anything here". That is the correct
+	// state for an environment with no credentials, and it is not a failure to log.
+	refreshConformance := func() {
+		rctx, cancel := context.WithTimeout(ctx, runTimeout)
+		defer cancel()
+		val, err := a.FetchEdgeMulticastConformance(rctx)
+		if err != nil {
+			slog.Warn("edge multicast conformance refresh failed", "error", err)
+			return
+		}
+		if err := a.WritePageCache(ctx, edgeMulticastConformanceCacheKey, val); err != nil {
+			slog.Warn("edge multicast conformance cache write failed", "error", err)
+		}
+	}
+	// The recorder's own race. It aggregates a view and not a summary table, so it is the
+	// slowest step here for the least data — ~40s for fifteen minutes, measured.
+	//
+	// **It runs BEFORE the scoreboard steps even so, because they embed its payload.**
+	// FetchKalshiScoreboardData attaches this cache entry into the blob each window is served
+	// from, so a chain that refreshed it afterwards would serve every 24h and 7d tab a
+	// previous-cycle race under a caption claiming the last fifteen minutes — and none at all
+	// for the first cycle after a deploy. Cost is the wrong axis to order a consumer against
+	// its own input; the path-latency step is ahead of them for the same reason.
+	//
+	// **Both failures escalate, because neither is visible from the page.** A refresh that
+	// keeps failing leaves the panel serving the last window it managed to compute, and all
+	// the page can say about it is the age beside the caption — which is a tell only for
+	// someone already looking. On a bare WARN a view that times out on every ten-minute cycle
+	// never reaches anyone. Separate keys for the read and the write, the split
+	// api/worker/pagecache.go makes for the same reason: they are different causes, and a read
+	// that starts working must not reset a write that is still failing.
+	refreshRecorderRace := func() {
+		rctx, cancel := context.WithTimeout(ctx, runTimeout)
+		defer cancel()
+		val, err := a.FetchKalshiRecorderRace(rctx)
+		if err != nil {
+			a.recorderRaceEsc.Fail(slog.Default(), kalshiRecorderRaceEscKey+":read",
+				"kalshi recorder race refresh failed", "error", err)
+			return
+		}
+		a.recorderRaceEsc.Reset(kalshiRecorderRaceEscKey + ":read")
+		if err := a.WritePageCache(ctx, kalshiRecorderRaceCacheKey, val); err != nil {
+			a.recorderRaceEsc.Fail(slog.Default(), kalshiRecorderRaceEscKey+":write",
+				"kalshi recorder race cache write failed", "error", err)
+			return
+		}
+		a.recorderRaceEsc.Reset(kalshiRecorderRaceEscKey + ":write")
 	}
 	// The recorder-rows leg of the Sequence column: the edge recorder's own sequence-loss and
 	// coverage rows, aggregated per channel instance per vantage. Same cadence and same window as
@@ -1039,8 +1193,11 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 	}
 	refresh := func() {
 		refreshObservations()
+		refreshTOBGaps()
+		refreshConformance()
 		refreshRecorderSequence()
 		refreshLatency()
+		refreshRecorderRace()
 		refreshScoreboard("24h")
 		refreshScoreboard("7d")
 		refreshL2()

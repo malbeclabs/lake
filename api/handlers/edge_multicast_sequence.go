@@ -176,15 +176,43 @@ type EdgeMulticastChannelInstance struct {
 	// Resets and SnapshotCycles are the recovery side: an `instrument_reset` re-anchors one
 	// book, a `snapshot_end` completes a cycle. A series with gaps and no cycles is not
 	// recovering.
-	Resets         uint64 `json:"resets"`
-	SnapshotCycles uint64 `json:"snapshot_cycles"`
+	//
+	// **The two planes count different things into Resets**, and they share this field and the
+	// tooltip that renders it. Market-by-price counts `instrument_reset` messages, one book
+	// re-anchored each; the recorded-gap leg counts how far `reset_count` advanced, one per era
+	// over a channel that carries every instrument. The reading both legs state — "a series with
+	// gaps and no reset is not re-anchoring" — holds on either, but the magnitudes do not
+	// compare across them: one era advance re-anchoring 20 books prints `1` from the recorder's
+	// leg where market-by-price would print `20` for the same event.
+	//
+	// **Absent and zero are different readings**, and the sentence above is why: zero cycles
+	// on a gapped series is a finding, so a plane that cannot count them must not print one.
+	//
+	// Carried as a plain number with a separate flag rather than as an omitted field, because
+	// a deploy is not atomic: a tab still running the previous bundle dereferences
+	// `snapshot_cycles` unguarded inside its `gaps_measured` branch, and the recorder's series
+	// now reach that branch. Omitting the key would throw inside a render and take the whole
+	// page down for anyone who had not reloaded. So the number is always there — the old
+	// bundle reads 0 and prints what it always printed — and the flag is what the current one
+	// reads to omit the clause.
+	Resets                 uint64 `json:"resets"`
+	SnapshotCycles         uint64 `json:"snapshot_cycles"`
+	SnapshotCyclesMeasured bool   `json:"snapshot_cycles_measured"`
 
-	// GapsMeasured says whether GapBooks is a reading or an absence. True on the
-	// market-by-price plane, where the recorder writes a gap marker this can count. False on
-	// top-of-book, where there is no marker and the row grain (one row per change to the top of
-	// the book) makes a sequence-versus-row-count test structurally wrong — see
-	// edge_multicast_tob_sequence.go. A zero GapBooks with this false is "not checked", and the
-	// UI has to render it as something other than a clean bill of health.
+	// GapsMeasured says whether GapBooks is a reading or an absence. A zero GapBooks with this
+	// false is "not checked", and the UI has to render it as something other than a clean bill
+	// of health.
+	//
+	// True wherever a producer writes a gap marker this can count: the market-by-price plane
+	// from `kalshi_mbp_levels.status_after`, and — since the feed-race recorder began writing
+	// `uncertain_reason` — the top-of-book plane too, from `kalshi_edge_book_top`
+	// (`edge_multicast_tob_gaps.go`).
+	//
+	// It stays false for a top-of-book series the recorder has not covered, which is the
+	// observations leg's own reading: that table carries no marker, and the obvious substitute
+	// is wrong on its grain by construction — a row exists only where the top CHANGED, so
+	// diffing sequence numbers against the row count reports ~3% loss on a healthy feed. The
+	// measurement is in `edge_multicast_observations.go`.
 	GapsMeasured bool `json:"gaps_measured"`
 
 	// CaptureSourceQuiet marks a stalled series whose silence belongs to the capture source
@@ -259,6 +287,26 @@ type EdgeMulticastSequenceHealth struct {
 	// and conflating them is how a query that died on every cycle went unnoticed.
 	RecorderLossUnavailable bool `json:"recorder_loss_unavailable,omitempty"`
 
+	// RecorderLossSource names which measurement produced RecorderLoss: `recorder` for the
+	// recording nodes' own sequence-loss rows, `peers` for each node measured against the others.
+	//
+	// It is on the payload rather than left to the reader's inference because the two measure
+	// against different references. The peer comparison's is the UNION of what the nodes received,
+	// so a datagram nobody received is in nobody's reference and an empty strip does not rule it
+	// out; the recorder's is the publisher's own numbering, where an empty strip does.
+	RecorderLossSource string `json:"recorder_loss_source,omitempty"`
+
+	// RecorderLossPublisher is the runs the rule set attributed to the PUBLISHER — absent from
+	// every site, no recorder overflow anywhere, coverage intact. Recorder leg only, and the
+	// stronger form of what RecorderLossSimultaneous reaches for.
+	RecorderLossPublisher []KalshiL2GapEpisode `json:"recorder_loss_publisher,omitempty"`
+
+	// RecorderGapsUnavailable says the recorder rows exist and the read of them failed, so the
+	// strip above is the peer comparison standing in. Deliberately not folded into
+	// RecorderLossUnavailable: something WAS measured, and "not measured" over a strip carrying
+	// marks is a worse answer than a note beside it.
+	RecorderGapsUnavailable bool `json:"recorder_gaps_unavailable,omitempty"`
+
 	// AllPathsGapped is the seconds every path of this feed lost data at once, set on the GROUP
 	// roll-up only. Non-empty means the redundancy failed and the feed itself lost data — the one
 	// sequence statement no publisher line can make, since a line only ever sees its own loss.
@@ -287,6 +335,52 @@ type EdgeMulticastRecorderLoss struct {
 	ReferenceSeqs uint64 `json:"reference_seqs"`
 
 	Episodes []KalshiL2GapEpisode `json:"episodes,omitempty"`
+
+	// The rest is the recorder leg's and absent on the peer comparison, which cannot produce any
+	// of it. See EdgeMulticastSequenceHealth.RecorderLossSource for which leg a line came from.
+
+	// MissingRaw is Missing before this recorder's own admitted drops came off, and Admitted is
+	// what came off. Carried so a tooltip can show the arithmetic rather than a number a reader
+	// has to trust: the peer comparison can only infer that share, and a load spike reaches every
+	// node at once.
+	MissingRaw uint64 `json:"missing_raw,omitempty"`
+	Admitted   uint64 `json:"admitted,omitempty"`
+
+	// Runs is contiguous runs of missing sequence numbers — the count of episodes, never their
+	// size. The size is Missing.
+	Runs uint64 `json:"runs,omitempty"`
+
+	// MissingByVerdict splits Missing by the rule set's attribution:
+	// recorder | upstream | path | unverifiable | publisher.
+	MissingByVerdict map[string]uint64 `json:"missing_by_verdict,omitempty"`
+
+	// Unverifiable says the archive had a hole over this window, so a clean reading here is an
+	// absence of evidence rather than a clean run — the object that would have carried the loss is
+	// the one we do not hold. It qualifies a non-zero Missing too, where it makes the figure a
+	// floor rather than a measurement.
+	Unverifiable bool `json:"unverifiable,omitempty"`
+
+	// Datagrams is what this node recorded on the line, from coverage.
+	//
+	// It is what a CLEAN row has instead of a rate: no gap row means no ReferenceSeqs either, so
+	// without it the line the whole comparison rests on — "cmh lost 0" beside "was lost 267" —
+	// described itself as "0 of 0 sequence numbers the publisher sent".
+	Datagrams uint64 `json:"datagrams,omitempty"`
+}
+
+// sortEdgeMulticastRecorderLoss orders a line's nodes worst-first, then by name.
+//
+// Worst first so a reader who looks at one row looks at the one that matters; by name after so the
+// order cannot shuffle between two polls of an unchanged payload. Shared by both legs, because a
+// strip whose row order depended on which measurement produced it would be unreadable across a
+// fallback.
+func sortEdgeMulticastRecorderLoss(lines []EdgeMulticastRecorderLoss) {
+	sort.Slice(lines, func(i, j int) bool {
+		if lines[i].Missing != lines[j].Missing {
+			return lines[i].Missing > lines[j].Missing
+		}
+		return lines[i].Node < lines[j].Node
+	})
 }
 
 // edgeMulticastRecorderLossLineKey identifies one publisher line: its destination group and the
@@ -384,14 +478,7 @@ func edgeMulticastRecorderLossFold(series []EdgeMulticastRecorderLossSeries) (ma
 			node.Episodes = collapseKalshiL2GapSeconds(flat)
 			lines = append(lines, *node)
 		}
-		// Worst first, then by name: a reader who looks at one line looks at the one that
-		// matters, and the order cannot shuffle between polls of an unchanged payload.
-		sort.Slice(lines, func(i, j int) bool {
-			if lines[i].Missing != lines[j].Missing {
-				return lines[i].Missing > lines[j].Missing
-			}
-			return lines[i].Node < lines[j].Node
-		})
+		sortEdgeMulticastRecorderLoss(lines)
 		out[pub] = lines
 	}
 
@@ -457,9 +544,34 @@ func (a *API) edgeMulticastSequenceHealth(ctx context.Context, captureSources ed
 		}
 	}
 
-	at, gapWindowSecs := a.foldKalshiL2Coverage(ctx, captureSources, out)
+	// The axis width, taken from whichever measured leg reports one — and the WIDER of them if
+	// both do. It is not the market-by-price leg's to supply alone: the page draws no timeline at
+	// all without it, so reading it from one cache made an independent miss there erase every
+	// top-of-book episode this run had measured, on a page whose whole rule is that one leg
+	// missing costs that leg's rows and no more. Wider rather than narrower because the episodes
+	// are placed by absolute start: a span too wide draws them further right than they need to
+	// be, a span too narrow clamps everything older than it into a pile on the left edge.
+	var gapWindowSecs int
+	widen := func(secs int) {
+		if secs > gapWindowSecs {
+			gapWindowSecs = secs
+		}
+	}
+
+	at, coverageWindow := a.foldKalshiL2Coverage(ctx, captureSources, out)
 	note(at)
+	widen(coverageWindow)
 	note(a.foldEdgeMulticastTOBSequence(ctx, captureSources, out))
+	// **After the observations leg, never before it.** This one replaces the series that leg
+	// folded for the same channel instance, so it has to find them already there; run first, it
+	// would append and then be overwritten by the staleness-only reading it exists to replace.
+	gapsAt, gapsWindow := a.foldEdgeMulticastTOBGaps(ctx, captureSources, out)
+	note(gapsAt)
+	widen(gapsWindow)
+	// **Last of the legs**, because it regrades rather than appends: it measures against the
+	// publisher's own numbering, the only reference here that does not depend on what someone
+	// recorded, so what it finds outranks what the capture planes inferred. Run before either of
+	// them it would regrade rows that are not there yet.
 	note(a.foldEdgeMulticastRecorderSequence(ctx, captureSources, out))
 
 	if len(out) == 0 {
@@ -526,11 +638,13 @@ func (a *API) foldKalshiL2Coverage(ctx context.Context, captureSources edgeMulti
 			MaxGapMessages:  lane.MaxGapMessages,
 			P99GapMessages:  lane.P99GapMessages,
 
-			Resets:         lane.Resets,
-			SnapshotCycles: lane.SnapshotCycles,
-			LastSeen:       lane.LastSeen.UTC(),
-			Status:         edgeMulticastSequenceStatus(lane.GapBooks, lane.UpdatesMissing, lane.LastSeen, coverage.GeneratedAt),
-			GapsMeasured:   true,
+			Resets: lane.Resets,
+			// Always a reading on this plane, zero included.
+			SnapshotCycles:         lane.SnapshotCycles,
+			SnapshotCyclesMeasured: true,
+			LastSeen:               lane.LastSeen.UTC(),
+			Status:                 edgeMulticastSequenceStatus(lane.GapBooks, lane.UpdatesMissing, lane.LastSeen, coverage.GeneratedAt),
+			GapsMeasured:           true,
 		}
 		if out[groupPK] == nil {
 			out[groupPK] = &EdgeMulticastSequenceHealth{}
@@ -843,7 +957,13 @@ func demoteEdgeMulticastQuietCaptureSources(health *EdgeMulticastSequenceHealth)
 	for _, inst := range health.Instances {
 		// No source address is no path: an instance that cannot be attributed to one cannot
 		// be compared against the others, and must not stand in as a peer for them either.
-		if inst.PublisherSourceIP == "" {
+		//
+		// The same rule for the capture source, which is the other half of this key. An unnamed
+		// one is not a bucket of its own — every series that lacks a name lands in the SAME
+		// bucket, so two unrelated markets' series at one node would be read as two paths of one
+		// capture source and one going quiet would excuse the other. The recorded-gap leg can
+		// produce such a series, for a channel instance the capture recorded nothing for.
+		if inst.PublisherSourceIP == "" || inst.CaptureSource == "" {
 			continue
 		}
 		if inst.Status != edgeMulticastSeqStalled {
@@ -914,10 +1034,21 @@ func edgeMulticastAllPathsGapped(instances []EdgeMulticastChannelInstance) []Kal
 	}
 	// Per vantage, per publisher, the seconds that publisher was losing.
 	byVantage := map[vantage]map[string]map[uint32]bool{}
+	// A vantage where every path is stalled is not observing the feed, and an intersection
+	// cannot ask a silent witness whether it saw a loss. See the skip below.
+	delivering := map[vantage]bool{}
 	for _, inst := range instances {
 		// Only the plane that measures gaps at all. A top-of-book series has no marker, so its
 		// empty episode list is an absence of measurement and must not count as "held".
-		if !inst.GapsMeasured || inst.PublisherSourceIP == "" {
+		//
+		// And only a series whose capture source is NAMED, because this key is what the doc
+		// comment above says it is: without the source in it, "two unrelated losses at two
+		// different markets in the same second read as one shared outage". An unnamed source
+		// does not opt out of the key, it collapses into one bucket with every other unnamed
+		// one — which is that failure exactly. It used to be unreachable, since the only
+		// instances without a source were top-of-book ones excluded on the line above; the
+		// recorded-gap leg measures that plane now, so it is reachable and excluded here.
+		if !inst.GapsMeasured || inst.PublisherSourceIP == "" || inst.CaptureSource == "" {
 			continue
 		}
 		v := vantage{inst.CaptureSource, inst.Node}
@@ -927,6 +1058,9 @@ func edgeMulticastAllPathsGapped(instances []EdgeMulticastChannelInstance) []Kal
 		if byVantage[v][inst.PublisherSourceIP] == nil {
 			byVantage[v][inst.PublisherSourceIP] = map[uint32]bool{}
 		}
+		if inst.Status != edgeMulticastSeqStalled {
+			delivering[v] = true
+		}
 		for _, e := range inst.GapEpisodes {
 			for i := uint32(0); i < e.Seconds; i++ {
 				byVantage[v][inst.PublisherSourceIP][uint32(e.Start)+i] = true
@@ -934,8 +1068,25 @@ func edgeMulticastAllPathsGapped(instances []EdgeMulticastChannelInstance) []Kal
 		}
 	}
 
-	shared := map[uint32]bool{}
-	for _, publishers := range byVantage {
+	// **Intersected across the NODES that watch one capture source, and unioned across the
+	// capture sources.** The two halves of the vantage key are not the same kind of thing, and folding
+	// them into one intersection asks the wrong question. A second where one recorder lost both
+	// its paths while its peers hold intact copies is that recorder's reception rather than the
+	// feed's loss, so the nodes watching a market have to agree — that is what the node in the
+	// key exists for. But two markets are two feeds' worth of data, and requiring them to lose
+	// in the same second is a condition nothing satisfies: a sports group carries 29 capture
+	// sources, so an intersection over the sources demands all 29 lose at once and the badge
+	// stops being reachable at all. Each capture source answers for itself, and the answers are
+	// unioned.
+	//
+	// **This changes nothing on the market-by-price plane**, which is where the 22-second
+	// measurement above was taken: every mbp_ source is recorded at exactly one vantage
+	// (aws-cmh-mn-recorder1, checked against the live store), and an intersection over one set
+	// is that set. It bites where a group has several recorders — which is what the recorded-gap
+	// leg just made true for top of book — and it is where a group has many markets that the
+	// union matters.
+	perSource := map[string]map[uint32]bool{}
+	for v, publishers := range byVantage {
 		// One path at a vantage cannot fail "together" with anything. Recording nothing here is
 		// deliberate: a single-path group has no redundancy to lose, and claiming otherwise would
 		// turn every ordinary gap into a feed outage.
@@ -956,7 +1107,39 @@ func edgeMulticastAllPathsGapped(instances []EdgeMulticastChannelInstance) []Kal
 			}
 			first = next
 		}
-		for sec := range first {
+		// **A vantage that is not delivering takes no part either**, and this is the trap the
+		// intersection opens: a recorder that stopped ingesting reports two paths with no gap
+		// episodes at all, which intersects to nothing and vetoes every second its peers
+		// agree on. One dead recorder would silence the badge for the whole group — the exact
+		// inverse of the false positive the intersection was added to fix, and a worse
+		// failure, because a suppressed finding leaves nothing on the page to notice.
+		//
+		// Stalled is the signal: it is what the sequence status already means, and a vantage
+		// whose every path is stale is one whose silence is about itself.
+		if !delivering[v] {
+			continue
+		}
+
+		// A vantage with one path was skipped above and takes no part here: it cannot
+		// demonstrate that all paths lost, so it neither confirms nor vetoes a second — and it
+		// vetoes nothing at its neighbours' markets either, because the fold below is per capture
+		// source.
+		prev, ok := perSource[v.source]
+		if !ok {
+			perSource[v.source] = first
+			continue
+		}
+		next := map[uint32]bool{}
+		for sec := range prev {
+			if first[sec] {
+				next[sec] = true
+			}
+		}
+		perSource[v.source] = next
+	}
+	shared := map[uint32]bool{}
+	for _, secs := range perSource {
+		for sec := range secs {
 			shared[sec] = true
 		}
 	}
@@ -1048,7 +1231,7 @@ func finishEdgeMulticastSequenceHealth(health *EdgeMulticastSequenceHealth) {
 // lines the payload happens to carry cannot change any verdict. A faulted line the cap then hid
 // would take its badge off screen with it, leaving only the roll-up — unreachable today, since the
 // only groups with a recorded series have two publishers each against a cap of twelve.
-func attachEdgeMulticastSequenceHealth(lines []EdgeMulticastPublisher, health *EdgeMulticastSequenceHealth, multicastGroup string, recorderLoss map[string][]EdgeMulticastRecorderLoss, recorderLossSimul map[string][]KalshiL2GapEpisode, recorderLossUnavailable bool) {
+func attachEdgeMulticastSequenceHealth(lines []EdgeMulticastPublisher, health *EdgeMulticastSequenceHealth, multicastGroup string, observations edgeMulticastObservationStatsResult) {
 	if health == nil {
 		return
 	}
@@ -1085,9 +1268,24 @@ func attachEdgeMulticastSequenceHealth(lines []EdgeMulticastPublisher, health *E
 		// Keyed on the tunnel address, the same join the instances above make. A line with no
 		// entry keeps nil, which is "no peer to be measured against" and not "measured clean".
 		lk := edgeMulticastRecorderLossLineKey(multicastGroup, lines[i].DZIP)
-		h.RecorderLoss = recorderLoss[lk]
-		h.RecorderLossSimultaneous = recorderLossSimul[lk]
-		h.RecorderLossUnavailable = recorderLossUnavailable
+		h.RecorderLoss = observations.recorderLoss[lk]
+		h.RecorderLossSimultaneous = observations.recorderLossSimul[lk]
+		h.RecorderLossPublisher = observations.recorderLossPublisher[lk]
+		h.RecorderGapsUnavailable = observations.recorderGapsUnavailable
+		// Which leg filled THIS line, which is not a property of the payload: the recorder rows
+		// arrive feed by feed, so one group can be recorder-fed while the next still renders the
+		// peer comparison.
+		src := observations.recorderLossSource[lk]
+		// Only where there is a strip to name the source of. On a line with no entry the field
+		// would label an absence, and "no peer to compare" is not a property of either
+		// measurement.
+		if len(h.RecorderLoss) > 0 {
+			h.RecorderLossSource = src
+		}
+		// A failed peer comparison is a finding only on the lines the peer comparison is what
+		// renders. On a recorder-fed line it would print "not measured" over a strip built from
+		// better rows — and with the leg chosen per line, that is now a per-line question too.
+		h.RecorderLossUnavailable = observations.recorderLossUnavailable && src != edgeMulticastLossSourceRecorder
 		lines[i].Sequence = h
 		health.Publishers++
 		switch h.Status {

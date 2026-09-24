@@ -590,7 +590,6 @@ function RevenueByMonth({ view, colors }: { view: EconomicsView; colors: { seat:
               <th className="px-4 py-3 text-left font-semibold uppercase tracking-[0.12em]">Month</th>
               <th className="px-4 py-3 text-right font-semibold uppercase tracking-[0.12em]">Days</th>
               <th className="px-4 py-3 text-right font-semibold uppercase tracking-[0.12em]">Seat revenue</th>
-              <th className="px-4 py-3 text-right font-semibold uppercase tracking-[0.12em]">Per day</th>
               <th className="px-4 py-3 text-right font-semibold uppercase tracking-[0.12em]">Invoices</th>
               <th className="px-4 py-3 text-right font-semibold uppercase tracking-[0.12em]">Total revenue</th>
               <th
@@ -634,7 +633,6 @@ function RevenueByMonth({ view, colors }: { view: EconomicsView; colors: { seat:
                   >
                     {m.seat_revenue !== 0 ? money(m.seat_revenue) : <Dash />}
                   </td>
-                  <td className="px-4 py-3 text-right tabular-nums">{m.perDay !== 0 ? money(m.perDay) : <Dash />}</td>
                   <td className="px-4 py-3 text-right tabular-nums" style={{ color: m.invoiced !== 0 ? colors.invoice : undefined }}>
                     {m.invoiced !== 0 ? (
                       <>
@@ -669,9 +667,6 @@ function RevenueByMonth({ view, colors }: { view: EconomicsView; colors: { seat:
               <td className="px-4 py-3.5 text-right tabular-nums align-top" style={{ color: colors.seat }}>
                 {money(view.periodSeat)}
               </td>
-              <td className="px-4 py-3.5 text-right tabular-nums align-top">
-                {view.periodDays > 0 ? money(view.periodSeat / view.periodDays) : <Dash />}
-              </td>
               <td className="px-4 py-3.5 text-right tabular-nums align-top" style={{ color: colors.invoice }}>
                 {money(view.periodInvoiced)}
               </td>
@@ -691,10 +686,9 @@ function RevenueByMonth({ view, colors }: { view: EconomicsView; colors: { seat:
 
 const METRO_HEAD = 8
 
-// Rows the revenue table opens with: the default five recognized months plus the
-// two the subscription program is typically billed ahead into. Only the
-// skeleton's height depends on it, so being a month out costs nothing.
-const SKELETON_MONTH_ROWS = 7
+// Rows the revenue table opens with: every month the program has run, plus the
+// one or two the subscription program is typically billed ahead into.
+const SKELETON_MONTH_ROWS = 9
 
 function Metros({
   data,

@@ -389,6 +389,30 @@ func main() {
 	}
 	api.Manager = handlers.NewWorkflowManager(api)
 
+	// Said out loud because the absence is silent otherwise: with no querier the edge multicast
+	// Conformance column simply does not render, and a missing column looks exactly like a
+	// refresher that has not run yet.
+	// The conformance querier, assigned only when it exists.
+	//
+	// **Assigning the constructor's result straight to the field would be a crash.** api.Prom is
+	// an interface and NewPromClientFromEnv returns a *PromClient; a nil pointer stored in an
+	// interface makes that interface NON-nil, so `a.Prom == nil` reads false in an unconfigured
+	// environment, the fold calls Query on a nil receiver and the refresher goroutine panics —
+	// taking the process with it, on every environment that has no token, which today is all of
+	// them. Query also guards its own nil receiver; this is the half that keeps the guard in the
+	// fold meaningful.
+	if promClient := handlers.NewPromClientFromEnv(); promClient != nil {
+		api.Prom = promClient
+		// SafeURL, never the raw value: the userinfo component can legally carry credentials,
+		// and a URL logged verbatim is a credential in a log file for as long as logs are kept.
+		slog.Info("conformance: metrics store configured", "url", promClient.SafeURL())
+	} else {
+		// Every variable the gate checks, not a subset: naming two of three is how an operator
+		// ends up with a client that 401s each cycle behind a column that looks unconfigured.
+		slog.Info("conformance: no metrics store configured, the conformance column is off",
+			"want_env", strings.Join(handlers.PromEnvVars, ", "))
+	}
+
 	// Start embedded page cache worker (unless --no-worker)
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	if !*noWorkerFlag {
@@ -654,8 +678,9 @@ func main() {
 		r.Get("/api/dz/access-passes/{pk}/connections", api.GetAccessPassConnections)
 		r.Get("/api/dz/publisher-check", api.GetPublisherCheck)
 		r.Get("/api/dz/edge/scoreboard", api.GetEdgeScoreboard)
-		// Internal only (unannounced venue): allowed-domain Google users only.
-		r.With(handlers.RequireInternalDomain).Get("/api/dz/hyperliquid/scoreboard", api.GetHyperliquidScoreboard)
+		r.Get("/api/dz/hyperliquid/scoreboard", api.GetHyperliquidScoreboard)
+		// Internal only (names the feeds it races): allowed-domain Google users only.
+		r.With(handlers.RequireInternalDomain).Get("/api/dz/hyperliquid/internal-scoreboard", api.GetHyperliquidInternalScoreboard)
 		r.With(handlers.RequireInternalDomain).Get("/api/dz/kalshi/scoreboard", api.GetKalshiScoreboard)
 		r.With(handlers.RequireInternalDomain).Get("/api/dz/kalshi/l2-coverage", api.GetKalshiL2Coverage)
 		r.With(handlers.RequireInternalDomain).Get("/api/dz/kalshi/l2-completeness", api.GetKalshiL2Completeness)
@@ -666,6 +691,7 @@ func main() {
 		r.Get("/api/dz/tenants/{pk}", api.GetTenant)
 		r.Get("/api/dz/shreds/overview", api.GetShredsOverview)
 		r.Get("/api/dz/shreds/client-seats", api.GetShredClientSeats)
+		r.Get("/api/dz/shreds/subscriptions", api.GetShredSubscriptions)
 		r.Get("/api/dz/shreds/funders", api.GetShredFunders)
 		r.Get("/api/dz/shreds/escrow-events", api.GetShredEscrowEvents)
 		r.Get("/api/dz/shreds/devices", api.GetShredDevices)
@@ -675,7 +701,7 @@ func main() {
 		r.Get("/api/dz/shreds/rewards", api.GetShredsRewards)
 		r.Get("/api/dz/shreds/rewards/{nodeId}", api.GetShredsRewardsDetail)
 		r.Get("/api/dz/shreds/subscriber-history", api.GetShredSubscriberHistory)
-		r.Get("/api/dz/swap-rate", api.GetSwapRate)
+		r.Get("/api/dz/shreds/competitors", api.GetShredsCompetitors)
 		r.Get("/api/dz/field-values", api.GetFieldValues)
 		r.Get("/api/dz/ledger", api.GetDZLedger)
 
@@ -698,8 +724,13 @@ func main() {
 			r.Get("/api/dz/geoloc/probes", api.GetGeolocProbes)
 			r.Get("/api/dz/geoloc/users", api.GetGeolocUsers)
 			r.Get("/api/dz/geoloc/explorer", api.GetGeolocExplorer)
-			r.Get("/api/dz/geoloc/concentration", api.GetGeoConcentration)
-			r.Get("/api/dz/geoloc/validators", api.GetGeoValidators)
+
+			// Nothing these two read exists outside mainnet.
+			r.Group(func(r chi.Router) {
+				r.Use(api.RequireMainnetMiddleware)
+				r.Get("/api/dz/geoloc/concentration", api.GetGeoConcentration)
+				r.Get("/api/dz/geoloc/validators", api.GetGeoValidators)
+			})
 		})
 
 		// Solana entity routes

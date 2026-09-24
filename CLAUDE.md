@@ -374,6 +374,43 @@ The fact's **column order is part of the contract**: `WriteBatch` issues a bare 
 column list, so the migration and `dzsvc.userBGPRTTRow` must match position for position. That is
 what `TestLake_Serviceability_UserBGPRTT_RowLandsInItsColumns` exists to catch.
 
+### The loss strip's two sources
+
+The per-recording-node strip under a publisher line's Sequence cell can be filled by either of two
+measurements, and it **says which one on screen** — `recorder rows` or `peer comparison`. They are
+not two grains of one number:
+
+- **Peer comparison** (`fetchEdgeMulticastRecorderLoss`, over `kalshi_bbo_observations`) measures
+  each node against the UNION of what the nodes received. A datagram nobody received is in nobody's
+  reference, so an empty strip does not rule that loss out; the bottom row is `2+`, the seconds two
+  or more recorders lost at once, which is as close as it gets to naming a loss upstream of them.
+  One vantage measures nothing here, and the strip says so rather than drawing an empty track.
+- **Recorder rows** (`edge_multicast_recorder_gaps.go`, over `recorder_sequence_gap` and
+  `recorder_segment_coverage` in the feeds DB) measure against the publisher's own numbering,
+  subtract each recorder's admitted drops instead of inferring them, and carry a verdict per run —
+  so the bottom row is `pub`, the runs charged to the publisher. **One vantage still measures loss
+  absolutely**, which is why the peer leg's "nothing to compare" guard must never be applied to it:
+  market-by-price is recorded at one node on every group today.
+
+The recorder rows win where they exist, and the choice is made **per publisher line**, never once
+for the payload. The recorder is deployed per capture host, so the first feed it covers would
+otherwise switch every other line to a leg with no rows for it — losing the peer strip those lines
+render today and printing `no peer to compare`, a statement about a comparison that was never run.
+Within a line the two legs still never mix: they measure against different references, so a strip
+folding both would be neither. The peer leg's own failure flag is payload-wide and is reported only
+on the lines the comparison renders.
+
+Both legs stay in the cached payload because whether those tables exist is a property of the
+environment — the proxies are created out of band, and **no environment has them today**, so every
+one of them still renders the comparison. Two rules the arithmetic rests on: `reference_seqs` is per
+(instance, site) and repeated on each of that instance's gap rows, so it is MAX-ed per instance and
+never summed; and `segment_coverage` is not optional, because a clean node emits no gap row and the
+clean line is the whole comparison — which is also where a clean row's `datagrams` comes from, since
+a node with no gap row has no reference to be a share of either.
+
+Contract, and what is deliberately left out of it (the badge, and a line with recorder rows but no
+decoded series): `docs/plans/2026-09-03-edge-multicast-recorder-sequence-design.md`.
+
 ### Row order
 
 Groups read alphabetically by ledger code within their feed section. Publisher lines read by
@@ -493,10 +530,17 @@ HOST and nothing more: the branch into it is upstream of that comparison and dow
 everything else, so a loss on the branch reads exactly like a loss on the path. This is not
 hypothetical — a publisher read 13 books gapped at the only node recording market-by-price, and the
 plane that does have three vantages found the same path intact at a second one, placing the loss on
-the branch. Market-by-price is recorded at **one** node on every group today, so every gap this page
-reports is single-vantage; the verdict stays `gapped`, because data was lost either way, and what
-narrows is the sentence the tooltip is allowed to say. The real fix is a second market-by-price
-recorder, which is not work this repo can do.
+the branch. Market-by-price is recorded at **one** node on every group today, so every market-by-price gap
+this page reports is single-vantage; the verdict stays `gapped`, because data was lost either way,
+and what narrows is the sentence the tooltip is allowed to say. The real fix is a second
+market-by-price recorder, which is not work this repo can do.
+
+**Top of book is no longer single-vantage.** The recorded-gap leg measures three recorders of the
+same feed, which is what makes `GapNodes` mean anything there — and it is why
+`edgeMulticastAllPathsGapped` intersects across vantages rather than unioning: with several
+vantages, one recorder losing both its paths is that recorder's reception and not the feed's
+loss. A vantage whose every path is stalled takes no part in that intersection, or one dead
+recorder would veto a finding its peers agree on.
 
 **The badge reports sequence values lost, and `gap_books` no longer sizes anything.** The unit is
 holes in `per_instrument_seq` — `updates_missing` over `updates_received + updates_missing` — which
@@ -569,7 +613,7 @@ A publisher with no session cannot be sending the feed it is registered to send.
 not move the group verdict — the ledger snapshot and the rate bucket are minutes apart, so a publisher
 can read `down` while its tunnel still moved bytes, and both are shown.
 
-The **Sequence** column **folds cached refresher payloads and runs no query of its own**, and it has two legs.
+The **Sequence** column **folds cached refresher payloads and runs no query of its own**, and it has three legs.
 
 **Market-by-price** comes from `kalshi_l2_coverage.go`. `kalshi_mbp_levels` is level-grain and
 TTL-less, and a fifteen-minute question reads most of a day through a `remoteSecure()` proxy
@@ -578,8 +622,8 @@ page that polls every 30s would be the same scan again and would let the two pag
 one feed. The badge's unit is **sequence values lost**; `gap_books` is a recovery state and
 `gap_messages` a duration that scales with traffic, and neither sizes the verdict — see above.
 
-**Top-of-book** comes from `edge_multicast_tob_sequence.go`, on the same refresher and the same
-fifteen-minute window (measured: 3.8s over every `tob_` capture source). It reads
+**Top-of-book, from the capture** comes from `edge_multicast_observations.go`, on the same refresher
+and the same fifteen-minute window (measured: 3.8s over every `tob_` capture source). It reads
 `kalshi_bbo_observations`, which carries the wire protocol's `sequence` and `reset_count` on every
 row plus a `raw_meta` JSON object holding `publisher_source_ip`, `multicast_group` and `port`. The
 address in `raw_meta` is the primary group key — it is the destination the datagrams carried, where
@@ -589,9 +633,11 @@ fallback.
 That leg **cannot count loss, and must not pretend to**. There is no gap marker on this plane, and
 the obvious substitute is wrong by construction: `kalshi_bbo_observations` holds one row per change
 to the top of the book, so a wire message that did not move the BBO legitimately leaves a hole in
-the numbering. A count-versus-span test would paint every healthy top-of-book series permanently
-red. So those instances carry `gaps_measured: false`, the roll-up counts them in `gaps_unmeasured`,
-and the badge reads **`not counted`** rather than a zero: nothing here can be counted for holes.
+the numbering. Measured on mainnet, one instance carried 23,846 rows across a sequence span of
+24,553 — about 3% "missing" with nothing wrong. A count-versus-span test would paint every healthy
+top-of-book series permanently red. So those instances carry `gaps_measured: false`, the roll-up
+counts them in `gaps_unmeasured`, and the badge reads **`advancing`** rather than `ok`: the counters
+move and nothing checked them for loss.
 
 **The proof that those holes are structural is that independent observers report the identical
 number.** Measured over one fifteen-minute window on mainnet: perps ch1 read 1,292 / 1,292 / 1,295
@@ -600,23 +646,45 @@ primaries read 460 on both paths at both recorders. Three recorders on three con
 independent paths cannot drop the same datagrams. The magnitudes run 2.8% to 29.15% of the span,
 so reading them as loss is not a small error.
 
-The loss on this plane **is lost at capture, not on the wire** — the wire sequence is dense, and the
-recorder persists only the rows that moved the book. Capture systems in this business count gaps as
-packets arrive and store a counter; they never reconstruct loss from the rows they kept. So closing
-this half needs either a per-interval gap counter emitted by the **recorder** (no producer change),
-or a gap marker from the producer the way market-by-price has one. Neither is work this repo can do.
+**Top-of-book, from the recorder** is the third leg and what closed that half:
+`edge_multicast_tob_gaps.go`, over `kalshi_edge_book_top`. `dz_kalshi_recorder` now writes a marker
+of its own — `uncertain_reason = 'gap'` on a top lowered by a hole in the publisher's sequence — so
+this counts a marker and never a span, exactly as the market-by-price leg does. Its series
+**replace** the capture leg's for the same channel instance rather than joining them; appending
+would double every top-of-book row and leave half of each pair inflating `gaps_unmeasured`. So a
+top-of-book series reads `gaps_measured: true` wherever this leg covered it and keeps the weaker
+`advancing` reading where it did not.
 
-What that plane *can* answer, and already does, is each recorder against the union of what its peers
-recorded — `recorder_loss`. Over six hours perps ch101 across the three nodes ran 0 to 25 sequences
-behind per quarter hour, zero in 20 of 24 buckets. That is a real reading about one recorder's
-branch, and structurally silent about what no recorder received.
+Three things it needs from its environment, and each was a way to ship nothing:
 
-The cost of both legs is staleness, so `sequence_as_of` is in the payload — the **older** of the two
-legs — and the column ages against it. A cache miss costs that plane's rows, never the page.
+- **`kalshi_edge_book_top` must be in the proxy lists** (`admin/remotetables/setup.go`,
+  `scripts/setup-feeds-remote-local.sh`). It was in neither at first, so `kalshiTableExists` read
+  false in every environment those build and the leg wrote an empty payload forever, with no error
+  anywhere and a page that looked exactly like a plane nothing measures yet.
+- **Rows predating malbeclabs/kalshi#287** (fleet deployed 2026-09-16) carry `dst_addr = 0.0.0.0`,
+  the type default an `ALTER` gives a table's history. The query excludes them: that address names
+  no group, so folding them would attribute a series to nothing beside the one its own recorder
+  already reports.
+- **The refresh is escalation-gated**, not WARN-only. It is additive and its failure leaves the
+  staleness-only reading it exists to replace, which on the page is indistinguishable from an
+  unmeasured plane — the same shape that let the observations leg fail on every cycle in production
+  against a ClickHouse memory limit without anyone noticing.
+
+A recorder series that matches no capture series keeps an **empty capture source**, and the two
+rollups keyed on that name — the quiet-source demotion and the all-paths intersection — skip it.
+An empty name is not a bucket of its own: every unnamed series falls into the same one, so two
+unrelated markets at one node would read as two paths of a single capture source, which is the
+false shared outage each of those keys exists to prevent.
+
+The cost of every leg is staleness, so `sequence_as_of` is in the payload — the **oldest** of the
+legs that reported one — and the column ages against it. A cache miss costs that plane's rows,
+never the page. `gap_window_seconds`, the axis the episodes are drawn on, comes from whichever
+measured leg reports one and the wider of them if several do: read from the market-by-price cache
+alone, an independent miss there drew no timeline at all for episodes the other legs had measured.
 
 **Msg/s and Peer carry `observations_as_of`, a separate stamp, and it is not an accident.** They are
 folded from the observations cache entry, which has its own clock; `sequence_as_of` reports the
-older of the two *sequence* legs, so reading it there would dim two columns over the
+oldest of the *sequence* legs, so reading it there would dim two columns over the
 market-by-price leg's staleness — a payload they do not come from.
 `TestGetEdgeMulticast_ObservationsCarryTheirOwnAsOf` pins the pair.
 

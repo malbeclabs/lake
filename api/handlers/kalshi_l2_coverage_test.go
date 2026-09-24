@@ -60,6 +60,16 @@ func insertLevel(t *testing.T, api *handlers.API, source string, channelID, inst
 // one channel goes through this.
 func insertLevelFrom(t *testing.T, api *handlers.API, publisherSourceIP, source string, channelID, instrumentID uint32, msgType string, depth uint32, statusAfter string, agoSecs int) {
 	t.Helper()
+	insertLevelAtVantage(t, api, "cmh-rec1", "cmh", publisherSourceIP, source, channelID, instrumentID, msgType, depth, statusAfter, agoSecs)
+}
+
+// insertLevelAtVantage is insertLevelFrom with the RECORDING node spelled out, which the two
+// helpers above fix at cmh. The node is the other half of the vantage — `measurement_node_id` sits
+// in this query's `GROUP BY` beside `publisher_source_ip`, so two recorders watching one channel
+// instance are two rows and not one sum. Named for the vantage rather than the node because
+// `insertLevelAt` is taken by the completeness test's day-grain helper.
+func insertLevelAtVantage(t *testing.T, api *handlers.API, node, locationCode, publisherSourceIP, source string, channelID, instrumentID uint32, msgType string, depth uint32, statusAfter string, agoSecs int) {
+	t.Helper()
 	ctx := t.Context()
 	db := "`" + api.FeedsDB + "`"
 	require.NoError(t, api.DB.Exec(ctx, fmt.Sprintf(`
@@ -67,10 +77,10 @@ func insertLevelFrom(t *testing.T, api *handlers.API, publisherSourceIP, source 
 		(capture_run_id, measurement_node_id, host, location_code, source, symbol, channel_id,
 		 instrument_id, source_id, msg_type, source_ts_ns, source_ts_kind, recv_ts_ns,
 		 recv_ts_kind, book_levels_after, status_after, publisher_source_ip)
-		VALUES ('run1', 'cmh-rec1', 'cmh-rec1', 'cmh', '%s', 'KXNFLGAME', %d, %d, 3, '%s', 0,
+		VALUES ('run1', '%s', '%s', '%s', '%s', 'KXNFLGAME', %d, %d, 3, '%s', 0,
 		        'venue', toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalSecond(%d))),
 		        'kernel_udp_software', %d, '%s', '%s')
-	`, db, source, channelID, instrumentID, msgType, agoSecs, depth, statusAfter, publisherSourceIP)))
+	`, db, node, node, locationCode, source, channelID, instrumentID, msgType, agoSecs, depth, statusAfter, publisherSourceIP)))
 }
 
 // The timeline comes out of the same scan the counters do, and only gap-marked rows reach it. The
@@ -341,6 +351,46 @@ func TestKalshiL2Coverage_SeparatesChannels(t *testing.T) {
 	// Sorted by channel id within a lane.
 	assert.EqualValues(t, 1, arms[0].ChannelID)
 	assert.EqualValues(t, 101, arms[1].ChannelID)
+}
+
+// **`measurement_node_id` is in the key, and this is what holds it there.** Two recorders watching
+// the same channel instance see the same messages, so a query that dropped the node from its
+// `GROUP BY` would sum them: one lane claiming twice the message rate and twice the loss of the
+// feed that exists, with every derived figure — messages/s, the ppm, the 500-update floor — wrong
+// by the number of vantages rather than by a little.
+//
+// It is the invariant `kalshi_feed_capture_cmh.yml` now relies on in `malbeclabs/infra`, after that
+// file dropped its prohibition on recording one feed at two sites (infra#2574), and it had no test
+// beside [`TestKalshiL2Coverage_SeparatesChannels`] — which pins the channel half of the same key
+// and would stay green through exactly this mistake.
+func TestKalshiL2Coverage_SeparatesVantages(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createKalshiMbpLevelsTable(t, api)
+
+	// One channel instance — one source, one channel, one publishing address — recorded at two
+	// sites with one instrument each. Summed, it reads as two instruments on one lane.
+	insertLevelAtVantage(t, api, "cmh-rec1", "cmh", "148.51.121.69", "mbp_edge_kalshi_perps", 1, 7, "level_update", 5, "ready", 10)
+	insertLevelAtVantage(t, api, "was-rec1", "was", "148.51.121.69", "mbp_edge_kalshi_perps", 1, 7, "level_update", 5, "ready", 10)
+
+	resp, err := api.FetchKalshiL2Coverage(t.Context())
+	require.NoError(t, err)
+	vantages := map[string]handlers.KalshiL2Lane{}
+	for _, l := range resp.Lanes {
+		if l.Source == "mbp_edge_kalshi_perps" && l.Seen {
+			vantages[l.MeasurementNodeID] = l
+		}
+	}
+	require.Len(t, vantages, 2, "one channel instance at two recorders is two rows, not one sum")
+	require.Contains(t, vantages, "cmh-rec1")
+	require.Contains(t, vantages, "was-rec1")
+	for node, l := range vantages {
+		assert.EqualValues(t, 1, l.Instruments, "%s must count its own instrument once", node)
+		assert.EqualValues(t, 1, l.Messages, "%s must count its own message once", node)
+		assert.EqualValues(t, 1, l.ChannelID, "%s is the same channel instance seen twice", node)
+		assert.Equal(t, "148.51.121.69", l.PublisherSourceIP)
+	}
+	assert.Equal(t, "cmh", vantages["cmh-rec1"].LocationCode)
+	assert.Equal(t, "was", vantages["was-rec1"].LocationCode)
 }
 
 // A lane the publisher adds without a matching entry in kalshiL2Lanes must still be reported —
