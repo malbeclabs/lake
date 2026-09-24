@@ -508,9 +508,6 @@ func (a *Activities) entries() []cacheEntry {
 		{name: "edge scoreboard (leaders)", key: "edge_scoreboard:leaders", every: edgeScoreboardInterval, fn: func(ctx context.Context) (any, error) {
 			return api.FetchEdgeScoreboardData(ctx, "24h", true, 0, 0, 1000)
 		}},
-		{name: "hyperliquid internal scoreboard", key: "hyperliquid_internal_scoreboard", fn: func(ctx context.Context) (any, error) {
-			return api.FetchHyperliquidInternalScoreboardData(ctx, "1h", "")
-		}},
 		{name: "kalshi scoreboard", key: "kalshi_scoreboard", fn: func(ctx context.Context) (any, error) {
 			return api.FetchKalshiScoreboardData(ctx, "1h", "")
 		}},

@@ -56,32 +56,24 @@ func hyperliquidSitesFrom(matrix map[hyperliquidMatrixKey]hyperliquidMatrixCell)
 	return out
 }
 
-type hyperliquidMarketCategory struct {
-	Name    string
-	Symbols []string
+// The feeds DoubleZero is raced against. The venue's own public feed is one of them; the rest
+// are competitors, whose ids never reach the payload (see HyperliquidRacedFeedIDs).
+var hyperliquidCompetitors = []struct{ Feed string }{
+	{"hyperliquid_public_bbo"},
+	{"hydromancer_bbo"},
+	{"dwellir_l2book_bbo"},
+	{"quicknode_l2book_bbo"},
 }
 
-type hyperliquidMarketGroup struct {
-	Name string
-	Cats []hyperliquidMarketCategory
-}
+// Withheld from every measurement: HypeRPC arrives a median ~100s stale during recurring
+// backlog episodes, which would show DoubleZero winning by minutes. Re-add to
+// hyperliquidCompetitors once the feed is fixed.
+var hyperliquidExcludedFeeds = []string{"hyperpc_shared_bbo"}
 
-var hyperliquidMarketGroups = []hyperliquidMarketGroup{
-	{Name: "Native Perpetuals", Cats: []hyperliquidMarketCategory{
-		{Name: "Major crypto", Symbols: []string{"BTC", "ETH", "SOL"}},
-		{Name: "Platform & high-beta", Symbols: []string{"HYPE", "ZEC"}},
-	}},
-	{Name: "HIP-3 Builder DEX Perpetuals", Cats: []hyperliquidMarketCategory{
-		{Name: "Equity index", Symbols: []string{"xyz:SP500", "xyz:XYZ100"}},
-		{Name: "Single-name equity", Symbols: []string{"xyz:MU", "xyz:SKHX", "xyz:SPCX", "xyz:NVDA"}},
-		{Name: "Commodities", Symbols: []string{"xyz:CL", "xyz:BRENTOIL"}},
-	}},
+var hyperliquidLiquidSymbols = []string{
+	"xyz:SP500", "xyz:XYZ100", "xyz:MU", "xyz:SKHX", "xyz:SPCX", "xyz:CL", "xyz:NVDA", "xyz:BRENTOIL",
+	"BTC", "ETH", "SOL", "HYPE", "ZEC",
 }
-
-// Every symbol the board races must have a category, or the by-market table compares each
-// category against a headline population containing symbols the table never shows. The two
-// oil contracts were exactly that gap. TestHyperliquidScoreboard_EveryRacedSymbolHasACategory
-// keeps it closed.
 
 const hyperliquidScoreboardWindowHours = 24
 
@@ -107,17 +99,6 @@ type HyperliquidScoreboardFeed struct {
 	Sites []HyperliquidScoreboardSite `json:"sites"`
 }
 
-type HyperliquidScoreboardCategory struct {
-	Name string `json:"name"`
-	HyperliquidScoreboardStat
-}
-
-type HyperliquidScoreboardMarket struct {
-	Name    string                          `json:"name"`
-	Carried int                             `json:"carried"`
-	Cats    []HyperliquidScoreboardCategory `json:"cats"`
-}
-
 type HyperliquidScoreboardResponse struct {
 	WindowLabel string `json:"window_label"`
 	// Races is distinct venue emissions, which is what the page labels "Updates raced".
@@ -127,15 +108,14 @@ type HyperliquidScoreboardResponse struct {
 	Comparisons uint64 `json:"comparisons"`
 	// DZAbsent is emissions a competitor delivered and DoubleZero did not. Excluded from every
 	// rate here, so it is reported rather than silently dropped.
-	DZAbsent    uint64                        `json:"dz_absent"`
-	Instruments int                           `json:"instruments"`
-	SiteCount   int                           `json:"site_count"`
-	FeedCount   int                           `json:"feed_count"`
-	All         HyperliquidScoreboardStat     `json:"all"`
-	Sites       []HyperliquidScoreboardSite   `json:"sites"`
-	Feeds       []HyperliquidScoreboardFeed   `json:"feeds"`
-	Markets     []HyperliquidScoreboardMarket `json:"markets"`
-	AsOf        time.Time                     `json:"as_of"`
+	DZAbsent    uint64                      `json:"dz_absent"`
+	Instruments int                         `json:"instruments"`
+	SiteCount   int                         `json:"site_count"`
+	FeedCount   int                         `json:"feed_count"`
+	All         HyperliquidScoreboardStat   `json:"all"`
+	Sites       []HyperliquidScoreboardSite `json:"sites"`
+	Feeds       []HyperliquidScoreboardFeed `json:"feeds"`
+	AsOf        time.Time                   `json:"as_of"`
 }
 
 func hyperliquidDZArrivalExpr() string {
@@ -196,7 +176,6 @@ func newHyperliquidScoreboardResponse() *HyperliquidScoreboardResponse {
 		WindowLabel: fmt.Sprintf("%d hours to %s UTC", hyperliquidScoreboardWindowHours, now.Format("2006-01-02 15:04")),
 		Sites:       []HyperliquidScoreboardSite{},
 		Feeds:       []HyperliquidScoreboardFeed{},
-		Markets:     []HyperliquidScoreboardMarket{},
 		AsOf:        now,
 	}
 }
@@ -211,11 +190,11 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context) (*HyperliquidS
 		return resp, nil
 	}
 
-	matrix, markets, err := a.fetchHyperliquidScoreboardCells(ctx)
+	matrix, err := a.fetchHyperliquidScoreboardCells(ctx)
 	if err != nil {
 		return nil, err
 	}
-	carried, err := a.fetchHyperliquidCarriedInstruments(ctx)
+	resp.Instruments, err = a.fetchHyperliquidCarriedInstruments(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -282,22 +261,6 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context) (*HyperliquidS
 		})
 	}
 
-	for _, g := range hyperliquidMarketGroups {
-		m := HyperliquidScoreboardMarket{Name: g.Name, Carried: carried[g.Name], Cats: []HyperliquidScoreboardCategory{}}
-		for _, c := range g.Cats {
-			cell, ok := markets[c.Name]
-			if !ok || cell.races == 0 {
-				continue
-			}
-			m.Cats = append(m.Cats, HyperliquidScoreboardCategory{
-				Name: c.Name, HyperliquidScoreboardStat: cell.stat,
-			})
-		}
-		resp.Markets = append(resp.Markets, m)
-	}
-	for _, n := range carried {
-		resp.Instruments += n
-	}
 	return resp, nil
 }
 
@@ -318,23 +281,8 @@ type hyperliquidMatrixCell struct {
 	stat              HyperliquidScoreboardStat
 }
 
-const hyperliquidUncategorised = "other"
-
-func (a *API) fetchHyperliquidScoreboardCells(ctx context.Context) (
-	map[hyperliquidMatrixKey]hyperliquidMatrixCell, map[string]hyperliquidMatrixCell, error,
-) {
+func (a *API) fetchHyperliquidScoreboardCells(ctx context.Context) (map[hyperliquidMatrixKey]hyperliquidMatrixCell, error) {
 	proj, tuples := hyperliquidCompetitorArrivals()
-
-	var cases []string
-	for _, g := range hyperliquidMarketGroups {
-		for _, c := range g.Cats {
-			quoted := make([]string, len(c.Symbols))
-			for i, sym := range c.Symbols {
-				quoted[i] = "'" + sym + "'"
-			}
-			cases = append(cases, fmt.Sprintf("symbol IN (%s), '%s'", strings.Join(quoted, ", "), c.Name))
-		}
-	}
 
 	q := fmt.Sprintf(`
 		WITH agg AS (
@@ -349,14 +297,13 @@ func (a *API) fetchHyperliquidScoreboardCells(ctx context.Context) (
 		),
 		sv AS (
 		    SELECT location_code, symbol, source_ts_ms, bbo_hash, dz, c.1 AS feed,
-		           multiIf(%[7]s, '%[8]s') AS cat,
 		           (toInt64(c.2) - toInt64(dz)) / 1e6 AS signed_ms
 		    FROM agg
 		    ARRAY JOIN [%[6]s] AS c
 		    WHERE c.2 > 0
 		)
 		SELECT
-		    location_code, feed, cat,
+		    location_code, feed,
 		    countIf(dz > 0) AS races,
 		    100 * countIf(signed_ms > 0 AND dz > 0) / greatest(countIf(dz > 0), 1)  AS win_pct,
 		    ifNotFinite(toFloat64(quantileTDigestIf(0.50)(signed_ms, dz > 0)), 0)   AS p50,
@@ -365,76 +312,48 @@ func (a *API) fetchHyperliquidScoreboardCells(ctx context.Context) (
 		    uniqCombinedIf((location_code, symbol, source_ts_ms, bbo_hash), dz > 0) AS emissions,
 		    uniqCombinedIf((location_code, symbol, source_ts_ms, bbo_hash), dz = 0) AS emissions_dz_absent
 		FROM sv
-		GROUP BY location_code, feed, cat WITH CUBE
+		GROUP BY location_code, feed WITH CUBE
 		SETTINGS max_bytes_before_external_group_by = 8000000000`,
 		fmt.Sprintf("`%s`", a.FeedsDB), hyperliquidDZArrivalExpr(), proj,
-		hyperliquidScoreboardSymbols(), hyperliquidScoreboardWindowHours, tuples,
-		strings.Join(cases, ", "), hyperliquidUncategorised)
+		hyperliquidScoreboardSymbols(), hyperliquidScoreboardWindowHours, tuples)
 
 	rows, err := a.envDB(ctx).Query(ctx, q)
 	if err != nil {
-		return nil, nil, fmt.Errorf("hyperliquid scoreboard cells: %w", err)
+		return nil, fmt.Errorf("hyperliquid scoreboard cells: %w", err)
 	}
 	defer rows.Close()
 
 	matrix := map[hyperliquidMatrixKey]hyperliquidMatrixCell{}
-	markets := map[string]hyperliquidMatrixCell{}
 	for rows.Next() {
-		var loc, feed, cat string
+		var loc, feed string
 		var races, emissions, emissionsDZAbsent uint64
 		var win, p50, p95, p99 float64
-		if err := rows.Scan(&loc, &feed, &cat, &races, &win, &p50, &p95, &p99, &emissions, &emissionsDZAbsent); err != nil {
-			return nil, nil, err
+		if err := rows.Scan(&loc, &feed, &races, &win, &p50, &p95, &p99, &emissions, &emissionsDZAbsent); err != nil {
+			return nil, err
 		}
-		stat := HyperliquidScoreboardStat{WinPct: win, P50Ms: p50, P95Ms: p95, P99Ms: p99}
-		switch {
-		case cat == "":
-			matrix[hyperliquidMatrixKey{loc: loc, feed: feed}] = hyperliquidMatrixCell{
-				races: races, emissions: emissions, emissionsDZAbsent: emissionsDZAbsent, stat: stat,
-			}
-		case cat != hyperliquidUncategorised && loc == "" && feed == "":
-			markets[cat] = hyperliquidMatrixCell{
-				races: races, emissions: emissions, emissionsDZAbsent: emissionsDZAbsent, stat: stat,
-			}
+		matrix[hyperliquidMatrixKey{loc: loc, feed: feed}] = hyperliquidMatrixCell{
+			races: races, emissions: emissions, emissionsDZAbsent: emissionsDZAbsent,
+			stat: HyperliquidScoreboardStat{WinPct: win, P50Ms: p50, P95Ms: p95, P99Ms: p99},
 		}
 	}
-	return matrix, markets, rows.Err()
+	return matrix, rows.Err()
 }
 
 const hyperliquidCarriedWindowMinutes = 5
 
-func (a *API) fetchHyperliquidCarriedInstruments(ctx context.Context) (map[string]int, error) {
+func (a *API) fetchHyperliquidCarriedInstruments(ctx context.Context) (int, error) {
 	q := fmt.Sprintf(`
-		SELECT startsWith(symbol, 'xyz:') AS hip3, count() AS n
-		FROM (
-		    SELECT DISTINCT symbol
-		    FROM %[1]s.hyperliquid_bbo_observations
-		    WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(%[3]d)))
-		      AND %[2]s
-		)
-		GROUP BY hip3`,
+		SELECT uniqExact(symbol)
+		FROM %[1]s.hyperliquid_bbo_observations
+		WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(%[3]d)))
+		  AND %[2]s`,
 		fmt.Sprintf("`%s`", a.FeedsDB), hyperliquidDZArrivalExpr(), hyperliquidCarriedWindowMinutes)
 
-	rows, err := a.envDB(ctx).Query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("hyperliquid carried instruments: %w", err)
+	var n uint64
+	if err := a.envDB(ctx).QueryRow(ctx, q).Scan(&n); err != nil {
+		return 0, fmt.Errorf("hyperliquid carried instruments: %w", err)
 	}
-	defer rows.Close()
-
-	out := map[string]int{}
-	for rows.Next() {
-		var hip3 uint8
-		var n uint64
-		if err := rows.Scan(&hip3, &n); err != nil {
-			return nil, err
-		}
-		if hip3 == 1 {
-			out["HIP-3 Builder DEX Perpetuals"] = int(n)
-		} else {
-			out["Native Perpetuals"] = int(n)
-		}
-	}
-	return out, rows.Err()
+	return int(n), nil
 }
 
 // hyperliquidObservationsQueryable answers whether the scan can run against this connection —
