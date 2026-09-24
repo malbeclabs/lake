@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { Trophy } from 'lucide-react'
 import { PageHeader } from './page-header'
@@ -10,7 +10,6 @@ import {
 
 // The public Hyperliquid scoreboard. Margins are signed — positive means DoubleZero
 // delivered the book first — so a cell below 50% win rate reports a negative median.
-// See hyperliquid_scoreboard.go for why this does not agree with the internal board.
 
 const DZ_COLOR = '#34d399'
 const FIELD_COLOR = '#d99a3c'
@@ -25,15 +24,14 @@ const METRICS = [
 
 type MetricKey = (typeof METRICS)[number]['key']
 
-// The worker recomputes once a day, just after 00:00 UTC, so age alone says nothing — a
-// payload is only behind once a midnight has passed without it being rewritten. The grace
-// period is the refresh's own window: without it the page goes amber every night between
-// midnight and whenever the cycle picks the entry up.
+// Stale only once the scheduled refresh (plus a grace period for the worker cycle) has passed.
 const REFRESH_GRACE_MS = 30 * 60 * 1000
-function isBehind(asOf: number, now: number): boolean {
-  const d = new Date(now)
-  const midnight = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
-  return asOf < midnight && now - midnight > REFRESH_GRACE_MS
+function isBehind(nextRefreshAt: number, now: number): boolean {
+  return now - nextRefreshAt > REFRESH_GRACE_MS
+}
+
+function utcTime(ms: number): string {
+  return new Date(ms).toISOString().slice(11, 16)
 }
 
 function pct(v: number): string {
@@ -320,73 +318,6 @@ function FeedMatrix({ data }: { data: HyperliquidScoreboardResponse }) {
   )
 }
 
-function MarketTable({ data }: { data: HyperliquidScoreboardResponse }) {
-  return (
-    <div className="mb-4 overflow-hidden rounded-lg border border-border bg-card">
-      <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border px-4 py-3">
-        <span className="text-sm font-medium text-muted-foreground">By market</span>
-        <span className="text-xs text-muted-foreground">How far ahead DoubleZero finished</span>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="min-w-full">
-          <thead>
-            <tr className="border-b border-border text-left text-sm text-muted-foreground">
-              <th className="whitespace-nowrap px-4 py-3 font-medium">Market / contract type</th>
-              <th className="whitespace-nowrap px-4 py-3 text-right font-medium" style={{ width: 150 }}>
-                DoubleZero first
-              </th>
-              <th className="whitespace-nowrap px-4 py-3 text-right font-medium">Median</th>
-              <th className="whitespace-nowrap px-4 py-3 text-right font-medium">95th</th>
-              <th className="whitespace-nowrap px-4 py-3 text-right font-medium">99th</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.markets.map((m) => (
-              <Fragment key={m.name}>
-                <tr className="hl-grouprow border-b border-border">
-                  <td className="px-4 py-2 text-sm font-medium">{m.name}</td>
-                  <td colSpan={4} className="px-4 py-2 text-right font-mono text-xs tabular-nums text-muted-foreground">
-                    {m.carried} instruments carried
-                  </td>
-                </tr>
-                {m.cats.map((c) => {
-                  const delta = c.win_pct - data.all.win_pct
-                  return (
-                    <tr key={`${m.name}-${c.name}`} className="hl-rowhover border-b border-border transition-colors">
-                      <td className="py-3 pl-9 pr-4">
-                        <div className="text-sm">{c.name}</div>
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-right" style={{ width: 150 }}>
-                        <div className="font-mono text-sm tabular-nums">{pct(c.win_pct)}</div>
-                        <div
-                          className="font-mono text-[11px] tabular-nums"
-                          style={{ color: delta >= 0 ? DZ_COLOR : 'var(--muted-foreground)' }}
-                        >
-                          {delta >= 0 ? '+' : '−'}
-                          {Math.abs(delta).toFixed(1)} pt
-                        </div>
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-sm tabular-nums">
-                        {ms(c.p50_ms)}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-sm tabular-nums text-muted-foreground">
-                        {ms(c.p95_ms)}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-sm tabular-nums text-muted-foreground">
-                        {ms(c.p99_ms)}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </Fragment>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  )
-}
-
 export function HyperliquidScoreboardPage() {
   const [data, setData] = useState<HyperliquidScoreboardResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -422,11 +353,14 @@ export function HyperliquidScoreboardPage() {
     if (!data?.as_of) return null
     const asOf = new Date(data.as_of).getTime()
     const age = Math.round((now - asOf) / 1000)
-    const stale = isBehind(asOf, now)
-    if (age < 60) return { text: 'just now', stale }
-    if (age < 3600) return { text: `${Math.round(age / 60)}m ago`, stale }
-    return { text: `${Math.round(age / 3600)}h ago`, stale }
-  }, [data?.as_of, now])
+    // Older payloads have no schedule; don't flag them.
+    const nextRefresh = data.next_refresh_at ? new Date(data.next_refresh_at).getTime() : null
+    const stale = nextRefresh !== null && isBehind(nextRefresh, now)
+    const missed = nextRefresh !== null ? utcTime(nextRefresh) : ''
+    if (age < 60) return { text: 'just now', stale, missed }
+    if (age < 3600) return { text: `${Math.round(age / 60)}m ago`, stale, missed }
+    return { text: `${Math.round(age / 3600)}h ago`, stale, missed }
+  }, [data?.as_of, data?.next_refresh_at, now])
 
   return (
     <div
@@ -453,7 +387,7 @@ export function HyperliquidScoreboardPage() {
                   />
                   <span className={freshness.stale ? 'text-amber-600 dark:text-amber-400' : undefined}>
                     updated {freshness.text}
-                    {freshness.stale ? ' — no update since midnight UTC' : ''}
+                    {freshness.stale ? ` — missed the ${freshness.missed} UTC refresh` : ''}
                   </span>
                 </>
               )}
@@ -529,8 +463,6 @@ export function HyperliquidScoreboardPage() {
             </div>
 
             <FeedMatrix data={data} />
-
-            <MarketTable data={data} />
           </>
         )}
       </div>

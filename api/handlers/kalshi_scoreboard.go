@@ -26,7 +26,7 @@ import (
 //     columns. Win rate is a count of distinct race keys; p50/p95 are quantiles over rows.
 //  2. Its refreshable MV never emits winner-only rows, so there is no loser_feed = '' case.
 //  3. capture_run_id is part of its sorting key, so the dedup tuple is one column wider than
-//     Hyperliquid's raceKeyTuple.
+//     hyperliquid_bbo_feed_race_summary's sorting key.
 //  4. source_ts_ms is a DIFFERENT clock per transport arm (WS carries the orderbook-delta
 //     timestamp, FIX the header-52 SendingTime), so any venue-to-receive latency must be
 //     scoped to one arm. See the Kalshi capture's 20260721000001_bbo_xtransport_race_mv.sql.
@@ -178,7 +178,7 @@ var kalshiWindows = map[string]string{
 // without paying FINAL's merge cost. Win rates are ratios and lead-time percentiles are
 // duplicate-insensitive, so dropping FINAL keeps them correct.
 //
-// Unlike Hyperliquid's raceKeyTuple this includes capture_run_id, which is in the Kalshi
+// Unlike the Hyperliquid race summary's key this includes capture_run_id, which is in the Kalshi
 // table's ORDER BY: a capture restart mints a new run id for the same (symbol, source_ts_ms,
 // bbo_hash), and those are genuinely distinct races, not duplicates to collapse.
 //

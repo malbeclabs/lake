@@ -66,7 +66,8 @@ export function Sidebar() {
   })
   const hasTopologies = (topologiesData?.topologies?.length ?? 0) > 0
   const showGeoloc = user?.is_internal_user === true
-  const showHyperliquidInternalScoreboard = user?.is_internal_user === true
+  // Only the link is gated; the page is public.
+  const showHyperliquidScoreboard = user?.is_internal_user === true
   const showKalshi = user?.is_internal_user === true
   // Cross-service multicast overview: names subscribers and separates operator-run receivers
   // from paying ones, so it stays with the other internal edge views.
@@ -133,9 +134,7 @@ const { resolvedTheme, setTheme } = useTheme()
     location.pathname === '/dz/shreds/rewards' ||
     location.pathname.startsWith('/dz/shreds/rewards/')
   const isShredsRoute = location.pathname.startsWith('/dz/shreds') || isShredsPublishersRoute
-  const isHyperliquidInternalScoreboardRoute = location.pathname === '/dz/hyperliquid/internal-scoreboard'
-  // Both Hyperliquid routes, including the unlinked public board, so reaching either by URL
-  // still opens the Edge section around it.
+  const isHyperliquidScoreboardRoute = location.pathname === '/dz/hyperliquid/scoreboard'
   const isHyperliquidRoute = location.pathname.startsWith('/dz/hyperliquid')
   const isPermissionAuditRoute = location.pathname === '/dz/permission-audit'
   const isKalshiScoreboardRoute = location.pathname === '/dz/kalshi/scoreboard'
@@ -652,10 +651,10 @@ const { resolvedTheme, setTheme } = useTheme()
                 </Link>
               </>
             )}
-            {showHyperliquidInternalScoreboard && (
+            {showHyperliquidScoreboard && (
               <Link
-                to="/dz/hyperliquid/internal-scoreboard"
-                className={navItemClass(isHyperliquidInternalScoreboardRoute)}
+                to="/dz/hyperliquid/scoreboard"
+                className={navItemClass(isHyperliquidScoreboardRoute)}
               >
                 <Activity className="h-4 w-4" />
                 Hyperliquid

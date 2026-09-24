@@ -7684,75 +7684,7 @@ export async function fetchShredsRewardsDetail(nodeId: string): Promise<ShredsRe
   return res.json()
 }
 
-export interface HyperliquidCompetitor {
-  feed: string
-  label: string
-  dz_win_pct: number
-  lead_p50_ms: number
-  lead_p95_ms: number
-  races: number
-}
-
-export interface HyperliquidNode {
-  measurement_node_id: string
-  location_code: string
-  dz_win_share_pct: number
-  total_races: number
-  competitors: HyperliquidCompetitor[]
-}
-
-export interface HyperliquidRace {
-  event_ts: string
-  symbol: string
-  location_code: string
-  winner_feed: string
-  winner_label: string
-  is_dz: boolean
-  runner_up_feed: string
-  runner_up_label: string
-  lead_ms: number
-}
-
-export interface HyperliquidInternalScoreboardResponse {
-  window: string
-  symbol?: string
-  generated_at: string
-  feed_type: string
-  dz_win_share_pct: number
-  total_races: number
-  competitors: HyperliquidCompetitor[]
-  nodes: HyperliquidNode[]
-  recent_races: HyperliquidRace[]
-  prices?: Record<string, number>
-  composite_latency?: HyperliquidCompositeLatency
-}
-
-export interface HyperliquidCompositeLatency {
-  window: string
-  p50_ms: number
-  p90_ms: number
-  p99_ms: number
-  generated_at: string
-}
-
-export async function fetchHyperliquidInternalScoreboard(
-  window: string = '24h',
-  symbol?: string,
-): Promise<HyperliquidInternalScoreboardResponse> {
-  const params = new URLSearchParams()
-  params.set('window', window)
-  if (symbol && symbol !== 'all') params.set('symbol', symbol)
-  const res = await apiFetch(`/api/dz/hyperliquid/internal-scoreboard?${params}`)
-  if (!res.ok) {
-    throw new Error('Failed to fetch hyperliquid internal scoreboard')
-  }
-  return res.json()
-}
-
 // ── Hyperliquid scoreboard ──────────────────────────────────────────────
-// Public counterpart of the internal scoreboard above: signed margins measured
-// from raw observations, with competitors as ordinal labels and no feed name
-// anywhere in the payload.
 
 export interface HyperliquidScoreboardStat {
   win_pct: number
@@ -7772,16 +7704,6 @@ export interface HyperliquidScoreboardFeed extends HyperliquidScoreboardStat {
   sites: HyperliquidScoreboardSite[]
 }
 
-export interface HyperliquidScoreboardCategory extends HyperliquidScoreboardStat {
-  name: string
-}
-
-export interface HyperliquidScoreboardMarket {
-  name: string
-  carried: number
-  cats: HyperliquidScoreboardCategory[]
-}
-
 export interface HyperliquidScoreboardResponse {
   window_label: string
   // races is distinct venue emissions; comparisons is the (emission, feed) count the rates are
@@ -7796,8 +7718,9 @@ export interface HyperliquidScoreboardResponse {
   all: HyperliquidScoreboardStat
   sites: HyperliquidScoreboardSite[]
   feeds: HyperliquidScoreboardFeed[]
-  markets: HyperliquidScoreboardMarket[]
   as_of: string
+  // Absent on older payloads.
+  next_refresh_at?: string
 }
 
 

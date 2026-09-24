@@ -61,7 +61,6 @@ func TestExternalRemoteTablesIncludesFeeds(t *testing.T) {
 	// Every feeds table an API handler reads must be proxied here, or the handler degrades to
 	// its empty state in every environment that relies on this setup.
 	want := []string{
-		"hyperliquid_bbo_feed_race_summary",
 		"hyperliquid_bbo_observations",
 		"kalshi_bbo_feed_race_summary",
 		"kalshi_bbo_observations",

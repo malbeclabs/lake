@@ -424,9 +424,6 @@ func main() {
 				slog.Error("page cache worker failed", "error", err)
 			}
 		}()
-		// The composite feed latency and the 24h/7d scoreboards are too heavy for the 60s
-		// page-cache loop; refresh them on a slow cadence here (writes to the shared page cache).
-		api.StartHyperliquidBackgroundRefresher(workerCtx)
 		api.StartKalshiBackgroundRefresher(workerCtx)
 	}
 
@@ -679,8 +676,6 @@ func main() {
 		r.Get("/api/dz/publisher-check", api.GetPublisherCheck)
 		r.Get("/api/dz/edge/scoreboard", api.GetEdgeScoreboard)
 		r.Get("/api/dz/hyperliquid/scoreboard", api.GetHyperliquidScoreboard)
-		// Internal only (names the feeds it races): allowed-domain Google users only.
-		r.With(handlers.RequireInternalDomain).Get("/api/dz/hyperliquid/internal-scoreboard", api.GetHyperliquidInternalScoreboard)
 		r.With(handlers.RequireInternalDomain).Get("/api/dz/kalshi/scoreboard", api.GetKalshiScoreboard)
 		r.With(handlers.RequireInternalDomain).Get("/api/dz/kalshi/l2-coverage", api.GetKalshiL2Coverage)
 		r.With(handlers.RequireInternalDomain).Get("/api/dz/kalshi/l2-completeness", api.GetKalshiL2Completeness)
