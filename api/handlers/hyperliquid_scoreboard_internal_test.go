@@ -7,9 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The page ages the board against next_refresh_at, so this is the schedule it believes. It has
-// to be the worker's own hour: a page that assumed midnight while the worker ran at 09:00 read
-// "no update" every night between the two.
+// next_refresh_at must follow the worker's hour, not midnight.
 func TestHyperliquidScoreboardNextRefresh(t *testing.T) {
 	day := func(h, m int) time.Time { return time.Date(2026, 9, 24, h, m, 0, 0, time.UTC) }
 	for _, tc := range []struct {

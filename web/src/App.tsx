@@ -745,9 +745,7 @@ function AppContent() {
             <Route path="/dz/shreds/rewards/:nodeId" element={<ShredsRewardsDetailPage />} />
             {/* Subscribe page hidden for now — see shreds-subscribe-page.tsx */}
             <Route path="/dz/edge/scoreboard" element={<Navigate to="/dz/shreds/scoreboard" replace />} />
-            {/* Public: it withholds provider names. Its sidebar entry is shown to internal users
-                only, but the page itself is deliberately not wrapped in InternalOnly — anyone
-                with the URL can read it. The old internal board's URL redirects here. */}
+            {/* Public on purpose; only its sidebar entry is internal. */}
             <Route path="/dz/hyperliquid" element={<Navigate to="/dz/hyperliquid/scoreboard" replace />} />
             <Route path="/dz/hyperliquid/scoreboard" element={<HyperliquidScoreboardPage />} />
             <Route path="/dz/hyperliquid/internal-scoreboard" element={<Navigate to="/dz/hyperliquid/scoreboard" replace />} />

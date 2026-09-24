@@ -24,12 +24,7 @@ const METRICS = [
 
 type MetricKey = (typeof METRICS)[number]['key']
 
-// The worker recomputes once a day at a fixed hour, so age alone says nothing — a payload is
-// only behind once its scheduled refresh has passed without it being rewritten. The payload
-// reports that time itself (next_refresh_at), so the page cannot assume a schedule the worker
-// does not run: it once checked against midnight while the worker ran at 09:00, and read
-// "no update" every night in between. The grace period is the refresh's own window: without
-// it the page goes amber at the scheduled time, before the cycle has picked the entry up.
+// Stale only once the scheduled refresh (plus a grace period for the worker cycle) has passed.
 const REFRESH_GRACE_MS = 30 * 60 * 1000
 function isBehind(nextRefreshAt: number, now: number): boolean {
   return now - nextRefreshAt > REFRESH_GRACE_MS
@@ -358,7 +353,7 @@ export function HyperliquidScoreboardPage() {
     if (!data?.as_of) return null
     const asOf = new Date(data.as_of).getTime()
     const age = Math.round((now - asOf) / 1000)
-    // An absent schedule is a payload from before the API reported one, not a missed refresh.
+    // Older payloads have no schedule; don't flag them.
     const nextRefresh = data.next_refresh_at ? new Date(data.next_refresh_at).getTime() : null
     const stale = nextRefresh !== null && isBehind(nextRefresh, now)
     const missed = nextRefresh !== null ? utcTime(nextRefresh) : ''

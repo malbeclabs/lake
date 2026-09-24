@@ -56,8 +56,7 @@ func hyperliquidSitesFrom(matrix map[hyperliquidMatrixKey]hyperliquidMatrixCell)
 	return out
 }
 
-// The feeds DoubleZero is raced against. The venue's own public feed is one of them; the rest
-// are competitors, whose ids never reach the payload (see HyperliquidRacedFeedIDs).
+// Feeds raced against DoubleZero. Competitor ids never reach the payload.
 var hyperliquidCompetitors = []struct{ Feed string }{
 	{"hyperliquid_public_bbo"},
 	{"hydromancer_bbo"},
@@ -65,9 +64,7 @@ var hyperliquidCompetitors = []struct{ Feed string }{
 	{"quicknode_l2book_bbo"},
 }
 
-// Withheld from every measurement: HypeRPC arrives a median ~100s stale during recurring
-// backlog episodes, which would show DoubleZero winning by minutes. Re-add to
-// hyperliquidCompetitors once the feed is fixed.
+// HypeRPC runs ~100s stale during backlogs. Re-add to hyperliquidCompetitors once fixed.
 var hyperliquidExcludedFeeds = []string{"hyperpc_shared_bbo"}
 
 var hyperliquidLiquidSymbols = []string{
@@ -79,12 +76,10 @@ const hyperliquidScoreboardWindowHours = 24
 
 const HyperliquidScoreboardCacheKey = "hyperliquid_public_scoreboard"
 
-// HyperliquidScoreboardRefreshHourUTC is the time of day, past 00:00 UTC, at which the worker
-// recomputes the board. The worker schedules on it and the payload reports the next one, so
-// the page's staleness check reads the same schedule rather than assuming one of its own.
+// Daily refresh time (UTC). Shared by the worker schedule and the payload's next_refresh_at.
 const HyperliquidScoreboardRefreshHourUTC = 9 * time.Hour
 
-// hyperliquidScoreboardNextRefresh is the first scheduled refresh strictly after now.
+// First scheduled refresh strictly after now.
 func hyperliquidScoreboardNextRefresh(now time.Time) time.Time {
 	u := now.UTC()
 	mark := time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC).Add(HyperliquidScoreboardRefreshHourUTC)
@@ -131,8 +126,7 @@ type HyperliquidScoreboardResponse struct {
 	Sites       []HyperliquidScoreboardSite `json:"sites"`
 	Feeds       []HyperliquidScoreboardFeed `json:"feeds"`
 	AsOf        time.Time                   `json:"as_of"`
-	// NextRefreshAt is when the worker is next scheduled to replace this payload. The page
-	// reads it as behind only once that time has passed without a newer one.
+	// The page reads the board as stale only after this passes.
 	NextRefreshAt time.Time `json:"next_refresh_at"`
 }
 

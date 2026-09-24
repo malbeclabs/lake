@@ -7685,8 +7685,6 @@ export async function fetchShredsRewardsDetail(nodeId: string): Promise<ShredsRe
 }
 
 // ── Hyperliquid scoreboard ──────────────────────────────────────────────
-// Signed margins measured from raw observations, with competitors as ordinal
-// labels and no feed name anywhere in the payload.
 
 export interface HyperliquidScoreboardStat {
   win_pct: number
@@ -7721,8 +7719,7 @@ export interface HyperliquidScoreboardResponse {
   sites: HyperliquidScoreboardSite[]
   feeds: HyperliquidScoreboardFeed[]
   as_of: string
-  // When the worker is next scheduled to replace this payload. Absent on payloads written
-  // before the API reported it.
+  // Absent on older payloads.
   next_refresh_at?: string
 }
 

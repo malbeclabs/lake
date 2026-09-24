@@ -178,7 +178,7 @@ var kalshiWindows = map[string]string{
 // without paying FINAL's merge cost. Win rates are ratios and lead-time percentiles are
 // duplicate-insensitive, so dropping FINAL keeps them correct.
 //
-// Unlike hyperliquid_bbo_feed_race_summary's sorting key this includes capture_run_id, which is in the Kalshi
+// Unlike the Hyperliquid race summary's key this includes capture_run_id, which is in the Kalshi
 // table's ORDER BY: a capture restart mints a new run id for the same (symbol, source_ts_ms,
 // bbo_hash), and those are genuinely distinct races, not duplicates to collapse.
 //
