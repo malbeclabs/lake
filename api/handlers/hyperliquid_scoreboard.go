@@ -57,14 +57,15 @@ func hyperliquidSitesFrom(matrix map[hyperliquidMatrixKey]hyperliquidMatrixCell)
 }
 
 // Feeds raced against DoubleZero. Competitor ids never reach the payload.
-var hyperliquidCompetitors = []struct{ Feed string }{
-	{"hyperliquid_public_bbo"},
-	{"hydromancer_bbo"},
-	{"dwellir_l2book_bbo"},
-	{"quicknode_l2book_bbo"},
+var hyperliquidCompetitors = []string{
+	"hyperliquid_public_bbo",
+	"hydromancer_bbo",
+	"dwellir_l2book_bbo",
+	"quicknode_l2book_bbo",
 }
 
-// HypeRPC runs ~100s stale during backlogs. Re-add to hyperliquidCompetitors once fixed.
+// Not raced: HypeRPC runs ~100s stale during backlogs, so it is left out of
+// hyperliquidCompetitors. Listed so the payload leak test covers it too. Move it back once fixed.
 var hyperliquidExcludedFeeds = []string{"hyperpc_shared_bbo"}
 
 var hyperliquidLiquidSymbols = []string{
@@ -79,10 +80,11 @@ const HyperliquidScoreboardCacheKey = "hyperliquid_public_scoreboard"
 // Daily refresh time (UTC). Shared by the worker schedule and the payload's next_refresh_at.
 const HyperliquidScoreboardRefreshHourUTC = 9 * time.Hour
 
-// First scheduled refresh strictly after now.
-func hyperliquidScoreboardNextRefresh(now time.Time) time.Time {
+// NextDailyMarkUTC is the first occurrence of offset-past-00:00 UTC strictly after now. The
+// worker schedules daily entries from it too, so the page and the worker share one boundary.
+func NextDailyMarkUTC(now time.Time, offset time.Duration) time.Time {
 	u := now.UTC()
-	mark := time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC).Add(HyperliquidScoreboardRefreshHourUTC)
+	mark := time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC).Add(offset)
 	if !mark.After(u) {
 		mark = mark.AddDate(0, 0, 1)
 	}
@@ -128,6 +130,9 @@ type HyperliquidScoreboardResponse struct {
 	AsOf        time.Time                   `json:"as_of"`
 	// The page reads the board as stale only after this passes.
 	NextRefreshAt time.Time `json:"next_refresh_at"`
+	// Always empty. Pages loaded before the By Market removal still call markets.map and
+	// crash without it. Remove one release after it ships.
+	LegacyMarkets []struct{} `json:"markets"`
 }
 
 func hyperliquidDZArrivalExpr() string {
@@ -156,9 +161,9 @@ func hyperliquidScoreboardSymbols() string {
 // hardcoding the list there meant a fifth feed shipped uncovered.
 func HyperliquidRacedFeedIDs() []string {
 	out := make([]string, 0, len(hyperliquidCompetitors)+len(hyperliquidExcludedFeeds))
-	for _, c := range hyperliquidCompetitors {
-		if c.Feed != hyperliquidVenueFeed {
-			out = append(out, c.Feed)
+	for _, feed := range hyperliquidCompetitors {
+		if feed != hyperliquidVenueFeed {
+			out = append(out, feed)
 		}
 	}
 	out = append(out, hyperliquidExcludedFeeds...)
@@ -168,9 +173,9 @@ func HyperliquidRacedFeedIDs() []string {
 func hyperliquidCompetitorArrivals() (projection, arrayJoin string) {
 	proj := make([]string, 0, len(hyperliquidCompetitors))
 	tuples := make([]string, 0, len(hyperliquidCompetitors))
-	for i, c := range hyperliquidCompetitors {
-		proj = append(proj, fmt.Sprintf("minIf(recv_ts_ns, source = '%[1]s') AS t%[2]d", c.Feed, i))
-		tuples = append(tuples, fmt.Sprintf("('%s', t%d)", c.Feed, i))
+	for i, feed := range hyperliquidCompetitors {
+		proj = append(proj, fmt.Sprintf("minIf(recv_ts_ns, source = '%[1]s') AS t%[2]d", feed, i))
+		tuples = append(tuples, fmt.Sprintf("('%s', t%d)", feed, i))
 	}
 	return strings.Join(proj, ",\n            "), strings.Join(tuples, ",\n                        ")
 }
@@ -189,7 +194,8 @@ func newHyperliquidScoreboardResponse() *HyperliquidScoreboardResponse {
 		Sites:         []HyperliquidScoreboardSite{},
 		Feeds:         []HyperliquidScoreboardFeed{},
 		AsOf:          now,
-		NextRefreshAt: hyperliquidScoreboardNextRefresh(now),
+		NextRefreshAt: NextDailyMarkUTC(now, HyperliquidScoreboardRefreshHourUTC),
+		LegacyMarkets: []struct{}{},
 	}
 }
 
@@ -233,8 +239,8 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context) (*HyperliquidS
 		sites []HyperliquidScoreboardSite
 	}
 	rows := make([]feedRow, 0, len(hyperliquidCompetitors))
-	for _, c := range hyperliquidCompetitors {
-		cell := matrix[hyperliquidMatrixKey{feed: c.Feed}]
+	for _, feed := range hyperliquidCompetitors {
+		cell := matrix[hyperliquidMatrixKey{feed: feed}]
 		// A feed with nothing in the window is not a competitor at 0.0% — it is a feed we have
 		// no measurement of. Rendering it anyway put a phantom row at the TOP of the board,
 		// because ranking is by median margin ascending and its zero sorts ahead of every real
@@ -242,9 +248,9 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context) (*HyperliquidS
 		if cell.races == 0 {
 			continue
 		}
-		fr := feedRow{feed: c.Feed, stat: cell.stat}
+		fr := feedRow{feed: feed, stat: cell.stat}
 		for _, s := range sites {
-			cell := matrix[hyperliquidMatrixKey{loc: s.Code, feed: c.Feed}]
+			cell := matrix[hyperliquidMatrixKey{loc: s.Code, feed: feed}]
 			fr.sites = append(fr.sites, HyperliquidScoreboardSite{
 				Code: s.Short, Label: s.Display, HyperliquidScoreboardStat: cell.stat,
 			})

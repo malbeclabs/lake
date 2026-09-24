@@ -196,6 +196,36 @@ func TestHyperliquidScoreboard_PayloadCarriesNoFeedNames(t *testing.T) {
 	}
 }
 
+// Asserted on the serialised bytes, which is what the cache stores and the browser gets.
+// Without next_refresh_at the page never shows the stale warning; without markets, a page
+// loaded before By Market was removed crashes on markets.map.
+func TestHyperliquidScoreboard_PayloadCarriesScheduleAndEmptyMarkets(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createObservationsTable(t, api)
+	obs := newObserver(t, api)
+	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "BTC", 1, 10)
+	obs("tyo", "hydromancer_bbo", "BTC", 1, 50)
+
+	fetched, err := api.FetchHyperliquidScoreboardData(t.Context())
+	require.NoError(t, err)
+	raw, err := json.Marshal(fetched)
+	require.NoError(t, err)
+
+	var body struct {
+		AsOf          time.Time         `json:"as_of"`
+		NextRefreshAt *time.Time        `json:"next_refresh_at"`
+		Markets       []json.RawMessage `json:"markets"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &body))
+
+	require.NotNil(t, body.NextRefreshAt)
+	assert.True(t, body.NextRefreshAt.After(body.AsOf))
+	assert.Equal(t, handlers.HyperliquidScoreboardRefreshHourUTC,
+		time.Duration(body.NextRefreshAt.Hour())*time.Hour)
+	assert.Contains(t, string(raw), `"markets":[]`, "must be an empty array, not null or absent")
+	assert.Empty(t, body.Markets)
+}
+
 func TestHyperliquidScoreboard_CompetitorsNumberedByMedianAscending(t *testing.T) {
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	createObservationsTable(t, api)

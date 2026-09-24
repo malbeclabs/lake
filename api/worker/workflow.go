@@ -301,13 +301,10 @@ func dueForRefresh(e cacheEntry, updatedAt, now, windowEnd time.Time) bool {
 // lastDailyMarkUTC is the most recent occurrence of offset-past-00:00 UTC at or before now.
 // Built from the calendar date rather than by truncating, so it stays the same wall-clock hour
 // across a DST change in whatever zone the pod happens to think it is in.
+// Derived from handlers.NextDailyMarkUTC so a payload's next_refresh_at always names the
+// boundary this schedules on.
 func lastDailyMarkUTC(now time.Time, offset time.Duration) time.Time {
-	u := now.UTC()
-	mark := time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC).Add(offset)
-	if mark.After(u) {
-		mark = mark.AddDate(0, 0, -1)
-	}
-	return mark
+	return handlers.NextDailyMarkUTC(now, offset).AddDate(0, 0, -1)
 }
 
 // dueEntries splits a batch by cadence, from one batched read of
