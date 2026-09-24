@@ -110,7 +110,14 @@ export function sequenceLoss(
   instances: EdgeMulticastChannelInstance[],
   windowSecs: number,
 ): SequenceLoss | undefined {
-  const measured = instances.filter((i) => (i.updates_received ?? 0) > 0)
+  // **Never across grains.** Two legs fill updates_received/updates_missing in different units —
+  // holes in per-instrument sequence, and datagram-header sequence values — and one break in a
+  // header can swallow many level updates, so a sum over both is neither. Where a line carries
+  // both, the datagram grain wins: it measures against the publisher's own numbering rather than
+  // against what a decoder could fold, so it is the reading that does not depend on the recorder.
+  const withCounts = instances.filter((i) => (i.updates_received ?? 0) > 0)
+  const datagrams = withCounts.filter((i) => i.loss_grain === 'datagrams')
+  const measured = datagrams.length > 0 ? datagrams : withCounts.filter((i) => i.loss_grain !== 'datagrams')
   if (measured.length === 0) {
     return undefined
   }

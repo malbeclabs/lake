@@ -96,7 +96,77 @@ func levelGrainInstance(missing uint64, gapBooks uint64, status string) EdgeMult
 		LastSeen:          recorderFoldFresh,
 		Status:            status,
 		GapsMeasured:      true,
+		LossGrain:         edgeMulticastLossGrainLevels,
 	}
+}
+
+// A zero from this leg is a statement about ITS window, and the windows are not the same one:
+// every leg takes `now - 15 min` at its own execution instant and the refresher is serial, so a
+// loss in the trailing skew arrives here as missing == 0. Downgrading on that printed a green
+// `0 lost` over a loss the level-grain leg had measured.
+func TestEdgeMulticastRecorderFold_AZeroDoesNotClearAnotherLegsLoss(t *testing.T) {
+	got := foldRecorder(t,
+		[]EdgeMulticastChannelInstance{levelGrainInstance(200, 3, edgeMulticastSeqGapped)},
+		recorderSeries(func(s *EdgeMulticastRecorderSequenceSeries) { s.Missing = 0 }),
+	)
+
+	require.Len(t, got, 1, "the series is another reading of the instance, not a second row")
+	assert.Equal(t, edgeMulticastSeqGapped, got[0].Status,
+		"this leg found nothing in its own window; that is not a finding that the other leg's loss did not happen")
+}
+
+// Withholding is a MARKING, not an erasure. Zeroing the row denied counters the level-grain leg
+// had legitimately taken, and with `omitempty` the page then printed "no level updates to count"
+// over a series that had counted half a million.
+func TestEdgeMulticastRecorderFold_WithheldMarksRatherThanErases(t *testing.T) {
+	got := foldRecorder(t,
+		[]EdgeMulticastChannelInstance{levelGrainInstance(200, 3, edgeMulticastSeqGapped)},
+		recorderSeries(func(s *EdgeMulticastRecorderSequenceSeries) {
+			s.Missing = 40
+			s.DropScope = edgeMulticastDropScopeCaptureHandle
+			s.HandleAdmitted = 40 // the recorder's own ring covers it: not the publisher's
+		}),
+	)
+
+	require.Len(t, got, 1)
+	assert.True(t, got[0].AttributionWithheld, "the row has to say why it carries no magnitude of its own")
+	assert.Equal(t, uint64(500_000), got[0].UpdatesReceived, "the other leg's reading is not this leg's to erase")
+	assert.Equal(t, uint64(200), got[0].UpdatesMissing)
+	assert.Equal(t, edgeMulticastLossGrainLevels, got[0].LossGrain, "the surviving counters are still the level grain")
+	assert.Equal(t, edgeMulticastSeqGapped, got[0].Status, "a loss was observed; only its owner is unknown")
+}
+
+// An appended instance must be claimed as soon as it exists, or a later series of the same payload
+// matches it and overwrites it — two series differing only in site or env collapsing into one row.
+func TestEdgeMulticastRecorderFold_AnAppendedInstanceIsClaimed(t *testing.T) {
+	got := foldRecorder(t, nil,
+		recorderSeries(func(s *EdgeMulticastRecorderSequenceSeries) { s.Env = "mainnet"; s.Missing = 5 }),
+		recorderSeries(func(s *EdgeMulticastRecorderSequenceSeries) { s.Env = "mainnet-beta"; s.Missing = 9 }),
+	)
+
+	require.Len(t, got, 2, "two series are two observations and must not collapse, last write wins")
+	assert.ElementsMatch(t, []uint64{5, 9}, []uint64{got[0].UpdatesMissing, got[1].UpdatesMissing})
+}
+
+// GapsUnmeasured drives a tooltip that reads "loss was never checked". This leg sets GapsMeasured
+// false because there is no book marker here, while carrying a loss count in UpdatesMissing — so
+// counting it put "never checked" on the row beside the measured figure.
+func TestEdgeMulticastRecorderFold_ACountedLossIsNotAnUnmeasuredOne(t *testing.T) {
+	out := map[string]*EdgeMulticastSequenceHealth{}
+	applyEdgeMulticastRecorderSequence(EdgeMulticastRecorderSequenceResponse{
+		GeneratedAt:   recorderFoldAsOf,
+		WindowMinutes: edgeMulticastRecorderSequenceWindowMinutes,
+		Series:        []EdgeMulticastRecorderSequenceSeries{recorderSeries(func(s *EdgeMulticastRecorderSequenceSeries) { s.Missing = 7 })},
+	}, recorderFoldSources(), out)
+	health := out[recorderFoldGroupPK]
+	require.NotNil(t, health)
+	require.Len(t, health.Instances, 1)
+	require.False(t, health.Instances[0].GapsMeasured, "there is no book marker on this plane")
+	require.Equal(t, edgeMulticastLossGrainDatagrams, health.Instances[0].LossGrain)
+
+	finishEdgeMulticastSequenceHealth(health)
+
+	assert.Zero(t, health.GapsUnmeasured, "the loss WAS counted, in a different counter than GapBooks")
 }
 
 // The whole reason this leg is worth having: the number it reports is what was missing LESS what

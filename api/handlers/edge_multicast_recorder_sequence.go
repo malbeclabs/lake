@@ -514,13 +514,20 @@ func edgeMulticastRecorderRegrade(prev string, gapBooks, missing uint64, attribu
 	if missing > 0 || attributionWithheld || gapBooks > 0 {
 		return edgeMulticastSeqGapped
 	}
-	// No unexplained loss and no marker. A 'gapped' that came from a loss count this fold has now
-	// replaced does not survive; a 'stalled' does, and so does an 'ok'.
-	if prev == edgeMulticastSeqGapped {
-		return edgeMulticastSeqOK
-	}
+	// **A zero here never clears another leg's finding.** It would be a statement about THIS
+	// leg's window, and the windows are not the same one: every leg computes `now64(9) - 15 min`
+	// at its own execution instant and the refresher is serial, so a loss living in the trailing
+	// skew between them reaches this fold as `missing == 0`. Downgrading on that printed a green
+	// `0 lost` over a loss the level-grain leg had measured. What this leg can do is find loss
+	// the others missed, which the branch above already does.
 	return prev
 }
+
+// The two units UpdatesReceived/UpdatesMissing are filled in. See EdgeMulticastChannelInstance.
+const (
+	edgeMulticastLossGrainLevels    = "levels"
+	edgeMulticastLossGrainDatagrams = "datagrams"
+)
 
 // clampUint32 saturates a sequence-value run into the uint32 the instance carries it in.
 //

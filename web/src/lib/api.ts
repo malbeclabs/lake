@@ -8185,6 +8185,13 @@ export interface EdgeMulticastChannelInstance {
   /** Whether gap_books is a reading or an absence. False on the top-of-book plane, which has no
    *  gap marker to count — an 'ok' there means "advancing", not "lost nothing". */
   gaps_measured: boolean
+  /** The unit updates_received/updates_missing are in: 'levels' (market-by-price per-instrument
+   *  sequence) or 'datagrams' (the recorder's datagram headers). Never sum across the two — one
+   *  break in a header can swallow many level updates. Absent means the counters are unset. */
+  loss_grain?: 'levels' | 'datagrams'
+  /** A loss was observed and its size cannot be charged to the publisher. A marking, not an
+   *  erasure: any counters on this row belong to whichever leg took them. */
+  attribution_withheld?: boolean
   /** Stalled, but every other path recording this capture source at this node went quiet with it,
    *  so the silence is the source's and not this path's. The status stays 'stalled'; this is what
    *  keeps it out of the tally. */

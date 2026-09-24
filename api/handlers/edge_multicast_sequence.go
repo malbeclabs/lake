@@ -215,6 +215,20 @@ type EdgeMulticastChannelInstance struct {
 	// measurement is in `edge_multicast_observations.go`.
 	GapsMeasured bool `json:"gaps_measured"`
 
+	// LossGrain names the counter UpdatesReceived/UpdatesMissing are expressed in, because two
+	// legs fill those fields in different units and nothing else on the row distinguishes them.
+	// `levels` is the market-by-price leg's holes in `per_instrument_seq`; `datagrams` is the
+	// recorder leg's datagram-header sequence values. Summing across the two is meaningless —
+	// one break in the header can swallow many level updates — so a consumer that aggregates a
+	// line's instances must group on this first. Empty means the fields are unset.
+	LossGrain string `json:"loss_grain,omitempty"`
+
+	// AttributionWithheld says a loss WAS observed on this instance and its size cannot be
+	// charged to the publisher — capture-handle scope with a handle that admitted drops. It is a
+	// marking and not an erasure: the counters beside it belong to whichever leg took them, and
+	// a reader must not be shown "no updates to count" over a series that counted half a million.
+	AttributionWithheld bool `json:"attribution_withheld,omitempty"`
+
 	// CaptureSourceQuiet marks a stalled series whose silence belongs to the capture source
 	// rather than to this path: every other path recording that source at the same node went
 	// quiet with it. Set by demoteEdgeMulticastQuietCaptureSources, which documents the rule.
@@ -634,9 +648,11 @@ func (a *API) foldKalshiL2Coverage(ctx context.Context, captureSources edgeMulti
 
 			UpdatesReceived: lane.UpdatesReceived,
 			UpdatesMissing:  lane.UpdatesMissing,
-			SeqGapEvents:    lane.SeqGapEvents,
-			MaxGapMessages:  lane.MaxGapMessages,
-			P99GapMessages:  lane.P99GapMessages,
+			// Holes in `per_instrument_seq`: level updates, not datagrams. See LossGrain.
+			LossGrain:      edgeMulticastLossGrainLevels,
+			SeqGapEvents:   lane.SeqGapEvents,
+			MaxGapMessages: lane.MaxGapMessages,
+			P99GapMessages: lane.P99GapMessages,
 
 			Resets: lane.Resets,
 			// Always a reading on this plane, zero included.
@@ -792,27 +808,25 @@ func applyEdgeMulticastRecorderSequence(payload EdgeMulticastRecorderSequenceRes
 
 		received, missing := edgeMulticastRecorderLossFor(s)
 		withheld := !s.verifiable()
-		if withheld {
-			// At capture-handle scope with a handle that admitted anything at all, the residue
-			// is not attributable to this instance and MUST NOT be reported as the publisher's.
-			// The loss still happened, so the verdict still says so — what is withheld is the
-			// number, not the finding. See EdgeMulticastRecorderSequenceSeries.verifiable.
-			received, missing = 0, 0
-		}
 
 		if i := edgeMulticastRecorderMatch(health.Instances, s, claimed[groupPK]); i >= 0 {
 			claimed[groupPK][i] = true
 			inst := &health.Instances[i]
-			inst.UpdatesReceived = received
-			inst.UpdatesMissing = missing
-			inst.SeqGapEvents = s.Gaps
-			inst.MaxGapMessages = clampUint32(s.MaxRun)
-			inst.P99GapMessages = s.P99Run
 			if withheld {
-				// The other leg's counters go with it. Leaving them would leave a magnitude on
-				// the row that this leg has just established nobody can attribute, which is the
-				// same false publisher finding one level up.
-				inst.SeqGapEvents, inst.MaxGapMessages, inst.P99GapMessages = 0, 0, 0
+				// At capture-handle scope with a handle that admitted drops, the residue cannot
+				// be charged to this instance and MUST NOT be reported as the publisher's. What
+				// is withheld is THIS leg's number, not the finding and not the other leg's
+				// reading: overwriting with zeroes denied counters the level-grain leg had
+				// legitimately taken, and `omitempty` then rendered half a million counted
+				// updates as "no level updates to count". Mark it and leave the row alone.
+				inst.AttributionWithheld = true
+			} else {
+				inst.UpdatesReceived = received
+				inst.UpdatesMissing = missing
+				inst.LossGrain = edgeMulticastLossGrainDatagrams
+				inst.SeqGapEvents = s.Gaps
+				inst.MaxGapMessages = clampUint32(s.MaxRun)
+				inst.P99GapMessages = s.P99Run
 			}
 			inst.Status = edgeMulticastRecorderRegrade(inst.Status, inst.GapBooks, missing, withheld)
 			continue
@@ -834,10 +848,12 @@ func applyEdgeMulticastRecorderSequence(payload EdgeMulticastRecorderSequenceRes
 			Messages:        s.Datagrams,
 			UpdatesReceived: received,
 			UpdatesMissing:  missing,
-			SeqGapEvents:    s.Gaps,
-			MaxGapMessages:  clampUint32(s.MaxRun),
-			P99GapMessages:  s.P99Run,
-			LastSeen:        s.LastSeen.UTC(),
+			// Datagram-header sequence values, never level updates. See LossGrain.
+			LossGrain:      edgeMulticastLossGrainDatagrams,
+			SeqGapEvents:   s.Gaps,
+			MaxGapMessages: clampUint32(s.MaxRun),
+			P99GapMessages: s.P99Run,
+			LastSeen:       s.LastSeen.UTC(),
 			// False, and not a shortfall to paper over. GapsMeasured says whether GapBooks is a
 			// reading, and on this plane there is no book-level gap marker at all: the recorder
 			// reads datagram headers and never folds a book. The loss reading this leg does carry
@@ -851,6 +867,14 @@ func applyEdgeMulticastRecorderSequence(payload EdgeMulticastRecorderSequenceRes
 			// episodes must never be read as a path that held.
 			GapsMeasured: false,
 		}
+		if withheld {
+			// The residue is not this instance's to report, so the counters do not travel — but
+			// the row says why, rather than presenting an unexplained pair of zeroes.
+			inst.UpdatesReceived, inst.UpdatesMissing = 0, 0
+			inst.SeqGapEvents, inst.MaxGapMessages, inst.P99GapMessages = 0, 0, 0
+			inst.LossGrain = ""
+			inst.AttributionWithheld = true
+		}
 		inst.Status = edgeMulticastSequenceStatus(0, missing, s.LastSeen, payload.GeneratedAt)
 		if withheld {
 			// Graded above with no magnitude, which would read as a clean window. The loss was
@@ -858,6 +882,11 @@ func applyEdgeMulticastRecorderSequence(payload EdgeMulticastRecorderSequenceRes
 			inst.Status = edgeMulticastSeqGapped
 		}
 		health.Instances = append(health.Instances, inst)
+		// **Claimed as soon as it exists.** Without this a later series of the same payload can
+		// match the row just appended and overwrite it, so two series differing only in `site` or
+		// `env` collapse into one, last write wins — the merge edgeMulticastRecorderMatch exists
+		// to prevent.
+		claimed[groupPK][len(health.Instances)-1] = true
 	}
 }
 
@@ -1167,9 +1196,14 @@ func finishEdgeMulticastSequenceHealth(health *EdgeMulticastSequenceHealth) {
 	}
 	gapNodes := map[string]struct{}{}
 	for _, inst := range health.Instances {
-		if !inst.GapsMeasured {
+		// GapsUnmeasured drives a tooltip that reads "loss was never checked", so an instance
+		// carrying a loss count does not belong in it even though GapsMeasured is false. The two
+		// say different things: GapsMeasured is about GapBooks having been read, and the recorder
+		// leg legitimately sets it false while counting loss in UpdatesMissing. Counting it here
+		// put "never checked" on the row beside the measured figure.
+		if !inst.GapsMeasured && inst.LossGrain == "" {
 			health.GapsUnmeasured++
-		} else {
+		} else if inst.GapsMeasured {
 			gapNodes[inst.Node] = struct{}{}
 		}
 		switch inst.Status {

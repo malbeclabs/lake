@@ -1052,6 +1052,15 @@ function sequenceInstanceLine(i: EdgeMulticastChannelInstance): string {
   // false because it never folds a book, while carrying the update counters this line exists to
   // print. So the bail-out is gated on having neither — a plane whose numbering has structural
   // holes that are not loss says so, and one that can count says how much.
+  // **A loss was seen and cannot be charged to the publisher.** Said before the bail-out below,
+  // because the row reaches it with zeroed counters and would otherwise print "no level updates
+  // to count" — a denial of the reading — over a series something did measure.
+  if (i.attribution_withheld) {
+    return (
+      `${head}, ${i.resets.toLocaleString()} resets` +
+      ` — loss seen, size withheld: this recorder's own drops cover it, so none of it is the publisher's`
+    )
+  }
   const hasUpdateCounts = i.updates_received !== undefined || i.updates_missing !== undefined
   if (!i.gaps_measured && !hasUpdateCounts) {
     return `${head}, ${i.resets.toLocaleString()} resets — sequence loss not countable on this plane`

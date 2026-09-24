@@ -154,6 +154,28 @@ describe('gapEpisodeStats', () => {
 })
 
 describe('sequenceLoss', () => {
+  // Two legs fill updates_received/updates_missing in different units — holes in per-instrument
+  // sequence, and datagram-header sequence values. One break in a header can swallow many level
+  // updates, so a sum over both is neither reading.
+  it('never sums a level-grain instance with a datagram-grain one', () => {
+    const s = sequenceLoss(
+      [
+        instance({ updates_received: 500_000, updates_missing: 200, loss_grain: 'levels' }),
+        instance({ updates_received: 100_000, updates_missing: 7, loss_grain: 'datagrams' }),
+      ],
+      900,
+    )
+    // The datagram grain wins: it measures against the publisher's own numbering rather than
+    // against what a decoder could fold.
+    expect(s?.received).toBe(100_000)
+    expect(s?.missing).toBe(7)
+  })
+
+  it('still reads a line that only the level grain measured', () => {
+    const s = sequenceLoss([instance({ updates_received: 500_000, updates_missing: 200, loss_grain: 'levels' })], 900)
+    expect(s?.missing).toBe(200)
+  })
+
   it('sums a line across its instances and derives the rates', () => {
     const s = sequenceLoss(
       [
