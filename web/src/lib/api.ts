@@ -7713,7 +7713,7 @@ export interface HyperliquidRace {
   lead_ms: number
 }
 
-export interface HyperliquidScoreboardResponse {
+export interface HyperliquidInternalScoreboardResponse {
   window: string
   symbol?: string
   generated_at: string
@@ -7735,14 +7735,79 @@ export interface HyperliquidCompositeLatency {
   generated_at: string
 }
 
-export async function fetchHyperliquidScoreboard(
+export async function fetchHyperliquidInternalScoreboard(
   window: string = '24h',
   symbol?: string,
-): Promise<HyperliquidScoreboardResponse> {
+): Promise<HyperliquidInternalScoreboardResponse> {
   const params = new URLSearchParams()
   params.set('window', window)
   if (symbol && symbol !== 'all') params.set('symbol', symbol)
-  const res = await apiFetch(`/api/dz/hyperliquid/scoreboard?${params}`)
+  const res = await apiFetch(`/api/dz/hyperliquid/internal-scoreboard?${params}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch hyperliquid internal scoreboard')
+  }
+  return res.json()
+}
+
+// ── Hyperliquid scoreboard ──────────────────────────────────────────────
+// Public counterpart of the internal scoreboard above: signed margins measured
+// from raw observations, with competitors as ordinal labels and no feed name
+// anywhere in the payload.
+
+export interface HyperliquidScoreboardStat {
+  win_pct: number
+  p50_ms: number
+  p95_ms: number
+  p99_ms: number
+}
+
+export interface HyperliquidScoreboardSite extends HyperliquidScoreboardStat {
+  code: string
+  label: string
+}
+
+export interface HyperliquidScoreboardFeed extends HyperliquidScoreboardStat {
+  label: string
+  venue: boolean
+  sites: HyperliquidScoreboardSite[]
+}
+
+export interface HyperliquidScoreboardCategory extends HyperliquidScoreboardStat {
+  name: string
+}
+
+export interface HyperliquidScoreboardMarket {
+  name: string
+  carried: number
+  cats: HyperliquidScoreboardCategory[]
+}
+
+export interface HyperliquidScoreboardResponse {
+  window_label: string
+  // races is distinct venue emissions; comparisons is the (emission, feed) count the rates are
+  // computed over, which is several times larger. dz_absent is emissions a competitor delivered
+  // and DoubleZero did not — excluded from every rate, so it is reported rather than dropped.
+  races: number
+  comparisons: number
+  dz_absent: number
+  instruments: number
+  site_count: number
+  feed_count: number
+  all: HyperliquidScoreboardStat
+  sites: HyperliquidScoreboardSite[]
+  feeds: HyperliquidScoreboardFeed[]
+  markets: HyperliquidScoreboardMarket[]
+  as_of: string
+}
+
+
+export class HyperliquidScoreboardPendingError extends Error {}
+
+export async function fetchHyperliquidScoreboard(): Promise<HyperliquidScoreboardResponse> {
+  const res = await apiFetch('/api/dz/hyperliquid/scoreboard')
+  if (res.status === 503) {
+    throw new HyperliquidScoreboardPendingError('not computed yet')
+  }
   if (!res.ok) {
     throw new Error('Failed to fetch hyperliquid scoreboard')
   }

@@ -70,6 +70,7 @@ import { ShredsRewardsDetailPage } from '@/components/shreds-rewards-detail-page
 import { PublisherCheckPage } from './components/publisher-check-page'
 import { EdgeScoreboardPage } from './components/edge-scoreboard-page'
 import { HyperliquidScoreboardPage } from './components/hyperliquid-scoreboard-page'
+import { HyperliquidInternalScoreboardPage } from './components/hyperliquid-internal-scoreboard-page'
 import { KalshiScoreboardPage } from './components/kalshi-scoreboard-page'
 import { KalshiL2Page } from './components/kalshi-l2-page'
 import { InternalOnly } from './components/internal-only'
@@ -745,13 +746,17 @@ function AppContent() {
             <Route path="/dz/shreds/rewards/:nodeId" element={<ShredsRewardsDetailPage />} />
             {/* Subscribe page hidden for now — see shreds-subscribe-page.tsx */}
             <Route path="/dz/edge/scoreboard" element={<Navigate to="/dz/shreds/scoreboard" replace />} />
+            {/* Public. It withholds provider names, unlike the internal scoreboard below, and it
+                has no sidebar entry — the nav here is the internal app's, and the one Hyperliquid
+                entry on it is the internal board. Reached by URL. */}
+            <Route path="/dz/hyperliquid" element={<Navigate to="/dz/hyperliquid/scoreboard" replace />} />
+            <Route path="/dz/hyperliquid/scoreboard" element={<HyperliquidScoreboardPage />} />
             {/* Internal-only pages. The sidebar hides these behind `user?.is_internal_user`
                 and that only ever hid the nav entry — the URL still rendered the page, and on
                 an unannounced venue the page is the disclosure. A new page whose sidebar entry
                 is gated goes in InternalOnly here too, or the two disagree again. */}
             <Route path="/dz/edge/multicast" element={<InternalOnly><EdgeMulticastPage /></InternalOnly>} />
-            <Route path="/dz/hyperliquid" element={<Navigate to="/dz/hyperliquid/scoreboard" replace />} />
-            <Route path="/dz/hyperliquid/scoreboard" element={<InternalOnly><HyperliquidScoreboardPage /></InternalOnly>} />
+            <Route path="/dz/hyperliquid/internal-scoreboard" element={<InternalOnly><HyperliquidInternalScoreboardPage /></InternalOnly>} />
             <Route path="/dz/kalshi" element={<Navigate to="/dz/kalshi/scoreboard" replace />} />
             <Route path="/dz/kalshi/scoreboard" element={<InternalOnly><KalshiScoreboardPage /></InternalOnly>} />
             <Route path="/dz/kalshi/l2" element={<InternalOnly><KalshiL2Page /></InternalOnly>} />
