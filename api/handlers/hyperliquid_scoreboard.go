@@ -269,6 +269,9 @@ func (a *API) FetchHyperliquidScoreboardData(ctx context.Context) (*HyperliquidS
 		})
 	}
 
+	// Stamped again after the scan: the worker judges this entry by when it is written, so a
+	// scan that starts before the refresh hour and finishes after it must name tomorrow's.
+	resp.NextRefreshAt = NextDailyMarkUTC(time.Now(), HyperliquidScoreboardRefreshHourUTC)
 	return resp, nil
 }
 
