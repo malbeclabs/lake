@@ -24,15 +24,19 @@ const METRICS = [
 
 type MetricKey = (typeof METRICS)[number]['key']
 
-// The worker recomputes once a day, just after 00:00 UTC, so age alone says nothing — a
-// payload is only behind once a midnight has passed without it being rewritten. The grace
-// period is the refresh's own window: without it the page goes amber every night between
-// midnight and whenever the cycle picks the entry up.
+// The worker recomputes once a day at a fixed hour, so age alone says nothing — a payload is
+// only behind once its scheduled refresh has passed without it being rewritten. The payload
+// reports that time itself (next_refresh_at), so the page cannot assume a schedule the worker
+// does not run: it once checked against midnight while the worker ran at 09:00, and read
+// "no update" every night in between. The grace period is the refresh's own window: without
+// it the page goes amber at the scheduled time, before the cycle has picked the entry up.
 const REFRESH_GRACE_MS = 30 * 60 * 1000
-function isBehind(asOf: number, now: number): boolean {
-  const d = new Date(now)
-  const midnight = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
-  return asOf < midnight && now - midnight > REFRESH_GRACE_MS
+function isBehind(nextRefreshAt: number, now: number): boolean {
+  return now - nextRefreshAt > REFRESH_GRACE_MS
+}
+
+function utcTime(ms: number): string {
+  return new Date(ms).toISOString().slice(11, 16)
 }
 
 function pct(v: number): string {
@@ -354,11 +358,14 @@ export function HyperliquidScoreboardPage() {
     if (!data?.as_of) return null
     const asOf = new Date(data.as_of).getTime()
     const age = Math.round((now - asOf) / 1000)
-    const stale = isBehind(asOf, now)
-    if (age < 60) return { text: 'just now', stale }
-    if (age < 3600) return { text: `${Math.round(age / 60)}m ago`, stale }
-    return { text: `${Math.round(age / 3600)}h ago`, stale }
-  }, [data?.as_of, now])
+    // An absent schedule is a payload from before the API reported one, not a missed refresh.
+    const nextRefresh = data.next_refresh_at ? new Date(data.next_refresh_at).getTime() : null
+    const stale = nextRefresh !== null && isBehind(nextRefresh, now)
+    const missed = nextRefresh !== null ? utcTime(nextRefresh) : ''
+    if (age < 60) return { text: 'just now', stale, missed }
+    if (age < 3600) return { text: `${Math.round(age / 60)}m ago`, stale, missed }
+    return { text: `${Math.round(age / 3600)}h ago`, stale, missed }
+  }, [data?.as_of, data?.next_refresh_at, now])
 
   return (
     <div
@@ -385,7 +392,7 @@ export function HyperliquidScoreboardPage() {
                   />
                   <span className={freshness.stale ? 'text-amber-600 dark:text-amber-400' : undefined}>
                     updated {freshness.text}
-                    {freshness.stale ? ' — no update since midnight UTC' : ''}
+                    {freshness.stale ? ` — missed the ${freshness.missed} UTC refresh` : ''}
                   </span>
                 </>
               )}

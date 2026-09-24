@@ -79,6 +79,21 @@ const hyperliquidScoreboardWindowHours = 24
 
 const HyperliquidScoreboardCacheKey = "hyperliquid_public_scoreboard"
 
+// HyperliquidScoreboardRefreshHourUTC is the time of day, past 00:00 UTC, at which the worker
+// recomputes the board. The worker schedules on it and the payload reports the next one, so
+// the page's staleness check reads the same schedule rather than assuming one of its own.
+const HyperliquidScoreboardRefreshHourUTC = 9 * time.Hour
+
+// hyperliquidScoreboardNextRefresh is the first scheduled refresh strictly after now.
+func hyperliquidScoreboardNextRefresh(now time.Time) time.Time {
+	u := now.UTC()
+	mark := time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC).Add(HyperliquidScoreboardRefreshHourUTC)
+	if !mark.After(u) {
+		mark = mark.AddDate(0, 0, 1)
+	}
+	return mark
+}
+
 type HyperliquidScoreboardStat struct {
 	WinPct float64 `json:"win_pct"`
 	P50Ms  float64 `json:"p50_ms"`
@@ -116,6 +131,9 @@ type HyperliquidScoreboardResponse struct {
 	Sites       []HyperliquidScoreboardSite `json:"sites"`
 	Feeds       []HyperliquidScoreboardFeed `json:"feeds"`
 	AsOf        time.Time                   `json:"as_of"`
+	// NextRefreshAt is when the worker is next scheduled to replace this payload. The page
+	// reads it as behind only once that time has passed without a newer one.
+	NextRefreshAt time.Time `json:"next_refresh_at"`
 }
 
 func hyperliquidDZArrivalExpr() string {
@@ -173,10 +191,11 @@ func newHyperliquidScoreboardResponse() *HyperliquidScoreboardResponse {
 	// freshness pill.
 	now := time.Now().UTC()
 	return &HyperliquidScoreboardResponse{
-		WindowLabel: fmt.Sprintf("%d hours to %s UTC", hyperliquidScoreboardWindowHours, now.Format("2006-01-02 15:04")),
-		Sites:       []HyperliquidScoreboardSite{},
-		Feeds:       []HyperliquidScoreboardFeed{},
-		AsOf:        now,
+		WindowLabel:   fmt.Sprintf("%d hours to %s UTC", hyperliquidScoreboardWindowHours, now.Format("2006-01-02 15:04")),
+		Sites:         []HyperliquidScoreboardSite{},
+		Feeds:         []HyperliquidScoreboardFeed{},
+		AsOf:          now,
+		NextRefreshAt: hyperliquidScoreboardNextRefresh(now),
 	}
 }
 

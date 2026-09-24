@@ -212,7 +212,9 @@ const (
 	// contending there can miss the 240s heavyActivityTimeout together.
 	// TestEntryTimeoutsFitTheirActivityBudget cannot catch that, because it checks each entry
 	// against the budget alone.
-	hyperliquidScoreboardRefreshHour = 9 * time.Hour
+	// It lives in handlers because the payload reports its next refresh from it, which is what
+	// the page ages against.
+	hyperliquidScoreboardRefreshHour = handlers.HyperliquidScoreboardRefreshHourUTC
 
 	// Two full all-pairs path computations over two graphs, keyed off link topology
 	// tags — which change when someone changes them and not otherwise.
