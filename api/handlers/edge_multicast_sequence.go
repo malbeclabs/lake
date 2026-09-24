@@ -814,11 +814,18 @@ func applyEdgeMulticastRecorderSequence(payload EdgeMulticastRecorderSequenceRes
 			inst := &health.Instances[i]
 			if withheld {
 				// At capture-handle scope with a handle that admitted drops, the residue cannot
-				// be charged to this instance and MUST NOT be reported as the publisher's. What
-				// is withheld is THIS leg's number, not the finding and not the other leg's
-				// reading: overwriting with zeroes denied counters the level-grain leg had
-				// legitimately taken, and `omitempty` then rendered half a million counted
-				// updates as "no level updates to count". Mark it and leave the row alone.
+				// be charged to this instance and MUST NOT be reported as the publisher's — so
+				// the magnitude goes, the other leg's counters going with it rather than being
+				// left to read as the publisher's loss.
+				//
+				// **The zeroes alone were the bug, and the flag is the fix.** With `omitempty`
+				// the page reached `expected === 0` and printed "no level updates to count" over
+				// a series that had counted half a million — a denial of the reading instead of
+				// a statement about attribution. AttributionWithheld is what makes the zero
+				// legible, and sequenceInstanceLine reads it before that bail-out.
+				inst.UpdatesReceived, inst.UpdatesMissing = 0, 0
+				inst.SeqGapEvents, inst.MaxGapMessages, inst.P99GapMessages = 0, 0, 0
+				inst.LossGrain = ""
 				inst.AttributionWithheld = true
 			} else {
 				inst.UpdatesReceived = received
@@ -828,7 +835,9 @@ func applyEdgeMulticastRecorderSequence(payload EdgeMulticastRecorderSequenceRes
 				inst.MaxGapMessages = clampUint32(s.MaxRun)
 				inst.P99GapMessages = s.P99Run
 			}
-			inst.Status = edgeMulticastRecorderRegrade(inst.Status, inst.GapBooks, missing, withheld)
+			// s.Missing > 0 is "this recorder saw gaps here": the difference between a leg that
+			// explained a loss away and one that has nothing to say about it.
+			inst.Status = edgeMulticastRecorderRegrade(inst.Status, inst.GapBooks, missing, withheld, s.Missing > 0)
 			continue
 		}
 

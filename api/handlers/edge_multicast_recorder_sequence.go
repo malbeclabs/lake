@@ -507,19 +507,26 @@ func edgeMulticastRecorderLossFor(s EdgeMulticastRecorderSequenceSeries) (receiv
 // clock and that payload's last-seen would mix two refresher runs' lag into one verdict, which is
 // the exact mistake that comment exists to prevent. So 'stalled' survives a clean recorder reading:
 // a series that stopped is not a series that lost nothing.
-func edgeMulticastRecorderRegrade(prev string, gapBooks, missing uint64, attributionWithheld bool) string {
+func edgeMulticastRecorderRegrade(prev string, gapBooks, missing uint64, attributionWithheld, accounted bool) string {
 	// Loss outranks staleness, the same order edgeMulticastSequenceStatus puts them in. Withheld
 	// attribution counts as loss and not as silence: the datagrams did not arrive, and all the
 	// scope decides is whether the page may name a culprit.
 	if missing > 0 || attributionWithheld || gapBooks > 0 {
 		return edgeMulticastSeqGapped
 	}
-	// **A zero here never clears another leg's finding.** It would be a statement about THIS
-	// leg's window, and the windows are not the same one: every leg computes `now64(9) - 15 min`
-	// at its own execution instant and the refresher is serial, so a loss living in the trailing
-	// skew between them reaches this fold as `missing == 0`. Downgrading on that printed a green
-	// `0 lost` over a loss the level-grain leg had measured. What this leg can do is find loss
-	// the others missed, which the branch above already does.
+	// **Only a leg that ACCOUNTED for the loss may clear another's finding**, which is what
+	// `accounted` carries: this recorder saw gaps of its own over this instance and subtracted
+	// them to nothing. That is the case this leg exists for — nobody else can tell the
+	// recorder's own drops from the publisher's — and it still clears the 'gapped'.
+	//
+	// A recorder that saw NOTHING is the other case and must not clear anything. Its zero is a
+	// statement about THIS leg's window, and the windows are not the same one: every leg computes
+	// `now64(9) - 15 min` at its own execution instant and the refresher is serial, so a loss
+	// living in the trailing skew between them arrives here as `missing == 0` with nothing
+	// observed. Downgrading on that printed a green `0 lost` over a loss another leg had measured.
+	if accounted && prev == edgeMulticastSeqGapped {
+		return edgeMulticastSeqOK
+	}
 	return prev
 }
 

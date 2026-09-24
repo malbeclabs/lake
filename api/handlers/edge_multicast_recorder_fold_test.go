@@ -105,9 +105,11 @@ func levelGrainInstance(missing uint64, gapBooks uint64, status string) EdgeMult
 // loss in the trailing skew arrives here as missing == 0. Downgrading on that printed a green
 // `0 lost` over a loss the level-grain leg had measured.
 func TestEdgeMulticastRecorderFold_AZeroDoesNotClearAnotherLegsLoss(t *testing.T) {
+	// No marker: without the rule under test the regrade would clear this to 'ok', so the case
+	// actually exercises it. A gapBooks > 0 here would hold the verdict on its own.
 	got := foldRecorder(t,
-		[]EdgeMulticastChannelInstance{levelGrainInstance(200, 3, edgeMulticastSeqGapped)},
-		recorderSeries(func(s *EdgeMulticastRecorderSequenceSeries) { s.Missing = 0 }),
+		[]EdgeMulticastChannelInstance{levelGrainInstance(200, 0, edgeMulticastSeqGapped)},
+		recorderSeries(func(s *EdgeMulticastRecorderSequenceSeries) { s.Missing, s.Unexplained = 0, 0 }),
 	)
 
 	require.Len(t, got, 1, "the series is another reading of the instance, not a second row")
@@ -129,10 +131,10 @@ func TestEdgeMulticastRecorderFold_WithheldMarksRatherThanErases(t *testing.T) {
 	)
 
 	require.Len(t, got, 1)
-	assert.True(t, got[0].AttributionWithheld, "the row has to say why it carries no magnitude of its own")
-	assert.Equal(t, uint64(500_000), got[0].UpdatesReceived, "the other leg's reading is not this leg's to erase")
-	assert.Equal(t, uint64(200), got[0].UpdatesMissing)
-	assert.Equal(t, edgeMulticastLossGrainLevels, got[0].LossGrain, "the surviving counters are still the level grain")
+	assert.True(t, got[0].AttributionWithheld,
+		"the zeroes below are only legible as a withholding if the row says so — without this the page printed 'no level updates to count'")
+	assert.EqualValues(t, 0, got[0].UpdatesMissing, "a withheld magnitude must not be reported as the publisher's")
+	assert.EqualValues(t, 0, got[0].UpdatesReceived, "nor a denominator under it")
 	assert.Equal(t, edgeMulticastSeqGapped, got[0].Status, "a loss was observed; only its owner is unknown")
 }
 
@@ -140,8 +142,8 @@ func TestEdgeMulticastRecorderFold_WithheldMarksRatherThanErases(t *testing.T) {
 // matches it and overwrites it — two series differing only in site or env collapsing into one row.
 func TestEdgeMulticastRecorderFold_AnAppendedInstanceIsClaimed(t *testing.T) {
 	got := foldRecorder(t, nil,
-		recorderSeries(func(s *EdgeMulticastRecorderSequenceSeries) { s.Env = "mainnet"; s.Missing = 5 }),
-		recorderSeries(func(s *EdgeMulticastRecorderSequenceSeries) { s.Env = "mainnet-beta"; s.Missing = 9 }),
+		recorderSeries(func(s *EdgeMulticastRecorderSequenceSeries) { s.Env = "mainnet"; s.Missing, s.Unexplained = 5, 5 }),
+		recorderSeries(func(s *EdgeMulticastRecorderSequenceSeries) { s.Env = "mainnet-beta"; s.Missing, s.Unexplained = 9, 9 }),
 	)
 
 	require.Len(t, got, 2, "two series are two observations and must not collapse, last write wins")
@@ -156,7 +158,9 @@ func TestEdgeMulticastRecorderFold_ACountedLossIsNotAnUnmeasuredOne(t *testing.T
 	applyEdgeMulticastRecorderSequence(EdgeMulticastRecorderSequenceResponse{
 		GeneratedAt:   recorderFoldAsOf,
 		WindowMinutes: edgeMulticastRecorderSequenceWindowMinutes,
-		Series:        []EdgeMulticastRecorderSequenceSeries{recorderSeries(func(s *EdgeMulticastRecorderSequenceSeries) { s.Missing = 7 })},
+		Series: []EdgeMulticastRecorderSequenceSeries{
+			recorderSeries(func(s *EdgeMulticastRecorderSequenceSeries) { s.Missing, s.Unexplained = 7, 7 }),
+		},
 	}, recorderFoldSources(), out)
 	health := out[recorderFoldGroupPK]
 	require.NotNil(t, health)
@@ -457,22 +461,27 @@ func TestEdgeMulticastRecorderRegrade_LeavesTheTimeHalfAlone(t *testing.T) {
 	t.Parallel()
 
 	assert.Equal(t, edgeMulticastSeqStalled,
-		edgeMulticastRecorderRegrade(edgeMulticastSeqStalled, 0, 0, false),
+		edgeMulticastRecorderRegrade(edgeMulticastSeqStalled, 0, 0, false, true),
 		"a clean recorder reading does not revive a series that stopped advancing")
 	assert.Equal(t, edgeMulticastSeqGapped,
-		edgeMulticastRecorderRegrade(edgeMulticastSeqStalled, 0, 5, false),
+		edgeMulticastRecorderRegrade(edgeMulticastSeqStalled, 0, 5, false, true),
 		"loss outranks staleness, the same order edgeMulticastSequenceStatus puts them in")
 	assert.Equal(t, edgeMulticastSeqOK,
-		edgeMulticastRecorderRegrade(edgeMulticastSeqGapped, 0, 0, false),
-		"a 'gapped' that came from a count this leg has replaced does not survive")
+		edgeMulticastRecorderRegrade(edgeMulticastSeqGapped, 0, 0, false, true),
+		"a 'gapped' that came from a count this leg has ACCOUNTED for does not survive")
 	assert.Equal(t, edgeMulticastSeqGapped,
-		edgeMulticastRecorderRegrade(edgeMulticastSeqGapped, 13, 0, false),
+		edgeMulticastRecorderRegrade(edgeMulticastSeqGapped, 13, 0, false, true),
 		"but one that came from a marker does")
+	// The half this leg had no right to decide: it saw nothing here, so its zero says nothing
+	// about a window it may not even overlap.
 	assert.Equal(t, edgeMulticastSeqGapped,
-		edgeMulticastRecorderRegrade(edgeMulticastSeqOK, 0, 0, true),
+		edgeMulticastRecorderRegrade(edgeMulticastSeqGapped, 0, 0, false, false),
+		"a recorder that observed no gaps at all does not clear another leg's loss")
+	assert.Equal(t, edgeMulticastSeqGapped,
+		edgeMulticastRecorderRegrade(edgeMulticastSeqOK, 0, 0, true, true),
 		"withheld attribution is loss observed, not silence")
 	assert.Equal(t, edgeMulticastSeqOK,
-		edgeMulticastRecorderRegrade(edgeMulticastSeqOK, 0, 0, false))
+		edgeMulticastRecorderRegrade(edgeMulticastSeqOK, 0, 0, false, true))
 }
 
 // A reference that does not exceed the loss is not a denominator. Using it would report a zero
