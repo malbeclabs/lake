@@ -14,9 +14,9 @@ func TestNextDailyMarkUTC(t *testing.T) {
 		now  time.Time
 		want time.Time
 	}{
-		{"just after midnight is still today's refresh", day(0, 30), day(9, 0)},
-		{"a payload computed at the refresh hour is replaced tomorrow", day(9, 0), day(9, 0).AddDate(0, 0, 1)},
-		{"a payload computed after the refresh hour is replaced tomorrow", day(9, 7), day(9, 0).AddDate(0, 0, 1)},
+		{"before the mark is today's mark", day(0, 30), day(9, 0)},
+		{"exactly at the mark is tomorrow's mark", day(9, 0), day(9, 0).AddDate(0, 0, 1)},
+		{"after the mark is tomorrow's mark", day(9, 7), day(9, 0).AddDate(0, 0, 1)},
 		{"a non-UTC clock is read in UTC", day(12, 0).In(time.FixedZone("UTC-10", -10*3600)), day(9, 0).AddDate(0, 0, 1)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

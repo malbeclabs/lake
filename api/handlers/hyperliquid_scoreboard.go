@@ -120,7 +120,7 @@ type HyperliquidScoreboardResponse struct {
 	// The page reads the board as stale only after this passes.
 	NextRefreshAt time.Time `json:"next_refresh_at"`
 	// Always empty. Pages loaded before the By Market removal still call markets.map and
-	// crash without it. Remove one release after it ships (tracked in PR #843's follow-ups).
+	// crash without it. Remove one release after it ships (#844).
 	LegacyMarkets []struct{} `json:"markets"`
 }
 
