@@ -316,7 +316,7 @@ func TestEdgeMulticastConformance_TopRulesAreWorstFirst(t *testing.T) {
 	}
 }
 
-// The clock the whole column ages against is taken after the queries, not before them: four round
+// The clock the whole column ages against is taken after the queries, not before them: five round
 // trips to a hosted store are not free, and stamping up front reported the payload as older than it
 // is on a column whose staleness rule is the point.
 // The reference point has to be INSIDE the call. An earlier version of this test took the clock
@@ -376,7 +376,7 @@ func TestEdgeMulticastConformance_NoQuerierIsEmptyAndNotAnError(t *testing.T) {
 func TestEdgeMulticastConformance_AFailedQueryPropagates(t *testing.T) {
 	api := &API{Prom: &fakeProm{err: errors.New("token expired")}}
 	_, err := api.FetchEdgeMulticastConformance(context.Background())
-	// The exact string, wrapper included: which of the four queries failed is the whole value of
+	// The exact string, wrapper included: which of the five queries failed is the whole value of
 	// the message, and an is-error check keeps passing after that is lost. See .cursor/BUGBOT.md.
 	const want = "conformance instances: token expired"
 	if err == nil || err.Error() != want {
@@ -463,6 +463,37 @@ func TestEdgeMulticastConformance_ACatalogEntryIsPickedTheSameWayEveryTime(t *te
 		r := got.Groups[group].TopRules[0]
 		if r.SpecURL != "https://example.invalid/spec@v1#msg-seq-gap" {
 			t.Fatalf("spec_url = %q, want the first of the two lexicographically whatever order they arrive in", r.SpecURL)
+		}
+	}
+}
+
+// An undescribed entry must never win. Lexicographic order alone prefers the empty string, so a
+// build exposing rule_info with no summary would blank a description a current build published --
+// and keep it blank for as long as that instance lives, which is the whole mid-rollout window the
+// tie-break exists for.
+func TestEdgeMulticastConformance_ADescribedCatalogEntryBeatsABareOne(t *testing.T) {
+	const group = "233.84.178.3"
+	described := sample(1, "rule_id", "MSG.SEQ.GAP", "summary", "Sequence numbers advance without holes",
+		"spec_url", "https://example.invalid/spec#msg-seq-gap")
+	// The older build: the series exists, the labels it would describe the rule with do not.
+	bare := sample(1, "rule_id", "MSG.SEQ.GAP")
+
+	for _, order := range [][]PromSample{{described, bare}, {bare, described}} {
+		got := fetchConformance(t, &fakeProm{byMetric: map[string][]PromSample{
+			"dz_conformance_uptime_seconds": oneValidator(group, "cmh1"),
+			"dz_conformance_violations_total": {
+				sample(4, "multicast_group", group, "stream", "kalshi_perps_tob",
+					"rule_id", "MSG.SEQ.GAP", "severity", "must", "hostname", "cmh1"),
+			},
+			"dz_conformance_rule_info": order,
+		}})
+
+		r := got.Groups[group].TopRules[0]
+		if r.Summary != "Sequence numbers advance without holes" {
+			t.Fatalf("summary = %q, want the described entry to win whatever order they arrive in", r.Summary)
+		}
+		if r.SpecURL != "https://example.invalid/spec#msg-seq-gap" {
+			t.Fatalf("spec_url = %q, want the described entry's link", r.SpecURL)
 		}
 	}
 }

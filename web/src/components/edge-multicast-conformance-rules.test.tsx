@@ -5,6 +5,7 @@ import type { EdgeMulticastConformance } from '@/lib/api'
 import { TooltipProvider } from '@/components/ui/tooltip'
 
 import { ConformanceCell, ConformanceRulesRow } from './edge-multicast-page'
+import { hasConformanceRules } from '@/lib/edge-multicast-conformance'
 
 // The rules that fired were one line of a tooltip each. A rule id names a finding only to a
 // reader who knows the catalog, so they are a panel now, with the catalog's own description.
@@ -138,6 +139,21 @@ describe('ConformanceCell', () => {
     cell(conformance({ verdict: 'conforming', must: 0, passes: 33 }))
     expect(screen.queryByRole('button')).toBeNull()
     expect(screen.getByText('conforming')).toBeInTheDocument()
+  })
+
+  // The row and the chevron read one predicate. They drifted once: a rule aging out of the
+  // 15-minute window left the panel rendering an empty band with no control left to close it.
+  it('gates the panel on the same rules the chevron is gated on', () => {
+    expect(hasConformanceRules(conformance({ top_rules: [] }))).toBe(false)
+    expect(hasConformanceRules(conformance({}))).toBe(false)
+    expect(hasConformanceRules(undefined)).toBe(false)
+    expect(
+      hasConformanceRules(conformance({ top_rules: [{ rule_id: 'A.RULE', severity: 'must', count: 1 }] })),
+    ).toBe(true)
+
+    // The chevron half of the same statement: no rules, no control.
+    cell(conformance({ top_rules: [] }))
+    expect(screen.queryByRole('button')).toBeNull()
   })
 
   // Nobody checked is a different statement from a clean one.

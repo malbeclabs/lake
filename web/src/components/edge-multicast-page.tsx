@@ -10,6 +10,7 @@ import {
 } from './edge-multicast-gap-episodes'
 import { Tooltip } from '@/components/ui/tooltip'
 import { recorderRowDetail, type GapWindow } from '@/lib/edge-multicast-loss'
+import { hasConformanceRules } from '@/lib/edge-multicast-conformance'
 import { PageHeader } from './page-header'
 import { CopyableText } from './copyable-text'
 import { handleRowClick } from '@/lib/utils'
@@ -721,10 +722,8 @@ export function ConformanceCell({
       {conformance.verdict}
     </span>
   )
-  const rules = conformance.top_rules?.length ?? 0
-
   // The disclosure appears only where a rule fired, so a chevron here is itself a finding.
-  if (rules === 0) {
+  if (!hasConformanceRules(conformance)) {
     return (
       <Tooltip content={conformanceTooltip(conformance, asOfAge)} className="whitespace-pre-line">
         <span className={`inline-flex items-center gap-1.5${stale ? ' opacity-50' : ''}`}>{badge}</span>
@@ -1639,6 +1638,7 @@ function GroupRow({
   gapWindow,
   floorBps,
   columns,
+  serviceCode,
   onOpen,
 }: {
   group: EdgeMulticastGroup
@@ -1654,6 +1654,7 @@ function GroupRow({
   gapWindow?: GapWindow
   floorBps: number
   columns: number
+  serviceCode: string
   onOpen: (e: React.MouseEvent, pk: string) => void
 }) {
   const age = ageSecs(group.observed_at, asOf)
@@ -1664,9 +1665,11 @@ function GroupRow({
   // Closed by default, unlike the publisher lines: this is where a reader goes after the badge
   // has said there is somewhere to go, and opening every one would bury the rows below.
   const [rulesOpen, setRulesOpen] = useState(false)
-  // Stable across renders and unique per group: the toggle and the row it opens are siblings, so
-  // aria-controls is the only thing tying them together.
-  const rulesPanelId = `conformance-rules-${group.pk}`
+  // The toggle and the row it opens are siblings, so aria-controls is the only thing tying them
+  // together — which makes a duplicate id a badge pointing at another section's rows. The group
+  // pk alone is not unique on this page: a group claimed by several feeds is listed under each of
+  // them, which is why the row key one level up is keyed on the service too. Same key here.
+  const rulesPanelId = `conformance-rules-${serviceCode}-${group.pk}`
 
   return (
     <>
@@ -1749,8 +1752,12 @@ function GroupRow({
       </td>
     </tr>
     {/* Above the publisher lines: a group with two dozen of them would otherwise put this out
-        of sight of the badge that opened it. */}
-    {showConformance && rulesOpen && group.conformance && (
+        of sight of the badge that opened it.
+
+        Gated on `hasConformanceRules`, the same predicate the chevron uses, so the panel and the
+        control that closes it cannot appear apart. `rulesOpen` is deliberately not reset when the
+        rules go away — a reader who opened this group gets them back if any fire again. */}
+    {showConformance && rulesOpen && group.conformance && hasConformanceRules(group.conformance) && (
       <ConformanceRulesRow conformance={group.conformance} columns={columns} id={rulesPanelId} />
     )}
     {expanded &&
@@ -1900,6 +1907,7 @@ function ServiceSection({
             {service.groups.map((g) => (
               <GroupRow
                 key={`${service.code}-${g.pk}`}
+                serviceCode={service.code}
                 group={g}
                 asOf={asOf}
                 now={now}

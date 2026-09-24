@@ -401,7 +401,7 @@ New file `api/handlers/edge_multicast_conformance.go`, following `edge_multicast
   column at all, which is pixel-identical to "no metrics store configured" and to "no validator
   covers anything". One WARN line separates the three.
 - `GeneratedAt` is stamped **after** the queries, not before them. It is the clock the whole
-  column ages against, and four round trips to a hosted store are not free.
+  column ages against, and five round trips to a hosted store are not free.
 - An absent or failed payload drops the column, never the page. Note that this is not a rare state:
   `page_cache` survives a pod restart, so a newly added key is empty from deploy until the refresh
   chain first reaches it.
@@ -516,8 +516,13 @@ chevron appears only where something fired, and the panel is closed by default.
 - **`hostname` is now in the violations by-clause**, which §3 kept out of it. The reason it was out
   is unchanged — the counts are detections and are summed across vantages — but a rule can now name
   the recorders that reported it, which the group-level `Nodes` set cannot. One visible consequence:
-  `promCount` floors a sub-unit extrapolation at one event per series, so a total can move by one or
-  two against the same window unsplit.
+  `promCount` floors a sub-unit extrapolation at one event per series, and the by-clause already
+  splits on `stream` and `channel`, so adding `hostname` multiplies the number of floored series by
+  the recorder count. The over-count per rule runs to `(hostnames - 1) x (stream x channel combos)`
+  — about a dozen on the elections group, not one or two. It cannot flip a verdict, since the floor
+  only ever adds, but `Must`/`Should`/`Info` are rendered verbatim in the tooltip as a count of
+  violations, so a reader reconciling them against the deployed alert is reconciling against a
+  larger number.
 - **Each line names the validator instance** (the Alloy `stream` label). It is the only thing in
   this payload that narrows a finding below the group — the six elections instances grade one
   address, one market each — and §1's optional `channel` label supersedes it if it lands.

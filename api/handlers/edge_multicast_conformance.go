@@ -124,6 +124,31 @@ type conformanceRuleDoc struct {
 	specURL string
 }
 
+// beats reports whether d should replace other as the catalog entry for a rule.
+//
+// **Described beats undescribed, and only then does order decide.** Lexicographic order alone
+// prefers the empty string, which inverts the point of the whole comparison: a build exposing
+// rule_info with no summary — half a mid-rollout fleet — would win against a build that published
+// one, and the panel would render the rule id bare for as long as the stale instance lives. The
+// same one level down for the link.
+//
+// Past that, first lexicographically is arbitrary and only has to be STABLE, so that neither the
+// text nor the link under it flips between refreshes. The summary alone is not enough of a key
+// for that: where two entries agree on it the comparison never fires, and whichever link
+// Prometheus happened to return first wins.
+func (d conformanceRuleDoc) beats(other conformanceRuleDoc) bool {
+	if has, had := d.summary != "", other.summary != ""; has != had {
+		return has
+	}
+	if d.summary != other.summary {
+		return d.summary < other.summary
+	}
+	if has, had := d.specURL != "", other.specURL != ""; has != had {
+		return has
+	}
+	return d.specURL < other.specURL
+}
+
 // EdgeMulticastConformanceRule is one rule that fired, with what the page needs to say what it
 // was. `MSG.WRONG_PORT_PLACEMENT ×33` names something only to a reader who knows the catalog.
 type EdgeMulticastConformanceRule struct {
@@ -209,7 +234,10 @@ const edgeMulticastConformanceTopRuleCap = 10
 
 // FetchEdgeMulticastConformance reads the conformance verdicts for every validated group.
 //
-// Four instant queries, folded into one entry per group. A nil querier returns an empty payload
+// Five instant queries, folded into one entry per group: four that decide the verdict, and a
+// fifth — skipped when nothing fired, and non-fatal — that describes the rules behind it.
+//
+// A nil querier returns an empty payload
 // and no error: an environment with no Grafana credentials has no conformance data, which is a
 // configuration state and not a failure.
 func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticastConformanceResponse, error) {
@@ -263,8 +291,14 @@ func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticast
 	// violation from two. Summing never under-reports, and the vantages travel with the number.
 	// The group-level Nodes set cannot answer this: it says what the VERDICT rests on.
 	//
-	// Splitting by vantage can move a total by one or two, since promCount floors a sub-unit
-	// extrapolation at one event per SERIES — the reading "detections" already implies.
+	// Splitting by vantage inflates a total, and by more than a rounding error. promCount floors a
+	// sub-unit extrapolation at one event per SERIES, and the by-clause already splits on `stream`
+	// and `channel`, so adding `hostname` multiplies the number of floored series by the recorder
+	// count: the over-count per rule runs to (hostnames-1) x (stream x channel combos) — about a
+	// dozen on the elections group, not one or two. It cannot flip a verdict, since the floor only
+	// ever adds, but Must/Should/Info are rendered verbatim in the tooltip as a count of
+	// violations, so a reader reconciling them against the deployed alert is reconciling against a
+	// larger number.
 	violations, err := a.Prom.Query(ctx, fmt.Sprintf(
 		`sum by (multicast_group, stream, rule_id, severity, channel, hostname) (increase(dz_conformance_violations_total{env=%q}[%s]))`,
 		env, w))
@@ -382,15 +416,12 @@ func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticast
 			if id == "" {
 				continue
 			}
-			// Two builds mid-rollout can word one rule differently, and two can carry the same
-			// wording against different spec builds. First lexicographically is arbitrary but
-			// stable, so neither the text nor the link under it flips between refreshes. The
-			// summary alone is not enough of a key for that: where two entries agree on it, the
-			// comparison never fires and whichever link Prometheus happened to return first wins.
+			// Two builds mid-rollout can word one rule differently, carry the same wording
+			// against different spec builds, or expose the rule with no wording at all. `beats`
+			// orders them, as a method so the rule has one statement and a test of its own.
 			cur, have := catalog[id]
 			cand := conformanceRuleDoc{summary: sm.Label("summary"), specURL: sm.Label("spec_url")}
-			if !have || cand.summary < cur.summary ||
-				(cand.summary == cur.summary && cand.specURL < cur.specURL) {
+			if !have || cand.beats(cur) {
 				catalog[id] = cand
 			}
 		}
@@ -418,7 +449,7 @@ func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticast
 	}
 
 	// Stamped here and not before the queries. It is the clock the whole column ages against, and
-	// four round trips to a hosted store are not free — taking it up front reported the payload as
+	// five round trips to a hosted store are not free — taking it up front reported the payload as
 	// up to a minute older than it is, on a column whose staleness rule is the point.
 	out.GeneratedAt = time.Now().UTC()
 	return out, nil
