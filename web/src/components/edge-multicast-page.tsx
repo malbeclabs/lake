@@ -20,7 +20,6 @@ import {
   type EdgeMulticastBGPRtt,
   type EdgeMulticastBGPSession,
   type EdgeMulticastConformance,
-  type EdgeMulticastConformanceRule,
   type EdgeMulticastGroup,
   type EdgeMulticastPathParity,
   type EdgeMulticastPublisher,
@@ -651,8 +650,11 @@ function conformanceTooltip(c: EdgeMulticastConformance, asOfAge?: number): stri
     lines.push(`Coverage: ${parts.join(', ')}.`)
   }
 
+  // The rules are a panel on the page now: a tooltip repeating it would be the same text twice,
+  // and only the panel can carry the rule's summary and its spec link.
   if (c.top_rules?.length) {
-    lines.push(c.top_rules.map((r: EdgeMulticastConformanceRule) => `${r.severity} · ${r.rule_id} ×${r.count.toLocaleString()}`).join('\n'))
+    const fired = c.rules_fired ?? c.top_rules.length
+    lines.push(`${plural(fired, 'rule')} fired — click to list them.`)
   }
 
   // Counted, never hidden. A deviation that stops firing is a real change, and one that starts
@@ -693,29 +695,143 @@ function conformanceTooltip(c: EdgeMulticastConformance, asOfAge?: number): stri
 //
 // Per GROUP, and the em dash is the honest reading for the rest: no validator covers that feed, so
 // there is nothing to report — not a pass. Today that is most of the groups on this page.
-function ConformanceCell({
+export function ConformanceCell({
   conformance,
   asOfAge,
+  expanded,
+  onToggle,
+  panelId,
 }: {
   conformance?: EdgeMulticastConformance
   asOfAge?: number
+  expanded: boolean
+  onToggle: () => void
+  panelId: string
 }) {
   if (!conformance) {
     return <span className="text-muted-foreground">—</span>
   }
   const stale = payloadStale(asOfAge)
+  const badge = (
+    <span
+      className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
+        CONFORMANCE_BADGE[conformance.verdict] ?? 'bg-muted text-muted-foreground'
+      }`}
+    >
+      {conformance.verdict}
+    </span>
+  )
+  const rules = conformance.top_rules?.length ?? 0
+
+  // The disclosure appears only where a rule fired, so a chevron here is itself a finding.
+  if (rules === 0) {
+    return (
+      <Tooltip content={conformanceTooltip(conformance, asOfAge)} className="whitespace-pre-line">
+        <span className={`inline-flex items-center gap-1.5${stale ? ' opacity-50' : ''}`}>{badge}</span>
+      </Tooltip>
+    )
+  }
+
   return (
     <Tooltip content={conformanceTooltip(conformance, asOfAge)} className="whitespace-pre-line">
-      <span className={`inline-flex items-center gap-1.5${stale ? ' opacity-50' : ''}`}>
-        <span
-          className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
-            CONFORMANCE_BADGE[conformance.verdict] ?? 'bg-muted text-muted-foreground'
-          }`}
-        >
-          {conformance.verdict}
-        </span>
-      </span>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          onToggle()
+        }}
+        // The chevron is the only tell that the panel is open, and a screen reader never sees it.
+        // aria-controls points at the row the toggle inserts, which is a sibling of this cell's
+        // row rather than a child of the button.
+        aria-expanded={expanded}
+        aria-controls={panelId}
+        className={`inline-flex items-center gap-1.5 hover:text-foreground${stale ? ' opacity-50' : ''}`}
+      >
+        {expanded ? (
+          <ChevronDown className="h-3 w-3 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="h-3 w-3 text-muted-foreground" />
+        )}
+        {badge}
+      </button>
     </Tooltip>
+  )
+}
+
+// The severity of one rule, on the same ranking the verdict uses: a must-violation is the finding,
+// a should-violation is a finding of lower severity, and everything else was noted rather than
+// found wrong.
+const CONFORMANCE_RULE_SEVERITY: Record<string, string> = {
+  must: 'bg-red-500/15 text-red-500',
+  should: 'bg-amber-500/15 text-amber-500',
+}
+
+// What the badge cannot say: which rules fired, what each one is, and where.
+//
+// The summary and spec link come from the validator's catalog, never restated here. The counts are
+// DETECTIONS, so each line names the recorders behind it; the validator instance is named for the
+// opposite reason — it is the only thing that narrows a finding BELOW the group.
+export function ConformanceRulesRow({
+  conformance,
+  columns,
+  id,
+}: {
+  conformance: EdgeMulticastConformance
+  columns: number
+  id: string
+}) {
+  const rules = conformance.top_rules ?? []
+  const hidden = Math.max(0, (conformance.rules_fired ?? rules.length) - rules.length)
+
+  return (
+    <tr id={id} className="border-b border-border/50 bg-muted/20 text-xs">
+      <td className="pl-8 pr-3 py-2" colSpan={columns}>
+        <div className="space-y-1.5">
+          {rules.map((r) => {
+            const where = [
+              r.nodes?.length ? `seen at ${r.nodes.join(', ')}` : '',
+              r.validators?.length ? r.validators.join(', ') : '',
+            ]
+              .filter(Boolean)
+              .join(' · ')
+            return (
+              <div key={r.rule_id} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                <span
+                  className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
+                    CONFORMANCE_RULE_SEVERITY[r.severity] ?? 'border border-muted-foreground/40 text-muted-foreground'
+                  }`}
+                >
+                  {r.severity}
+                </span>
+                <span className="font-mono text-[11px]">{r.rule_id}</span>
+                <span className="tabular-nums text-muted-foreground">×{r.count.toLocaleString()}</span>
+                {r.summary && <span className="text-muted-foreground">{r.summary}</span>}
+                {/* https only: this is a Prometheus label value, and an href is the one place
+                    where such a string becomes executable. */}
+                {r.spec_url?.startsWith('https://') && (
+                  <a
+                    href={r.spec_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="text-muted-foreground hover:text-foreground hover:underline"
+                  >
+                    spec
+                  </a>
+                )}
+                {where && <span className="text-muted-foreground/70">{where}</span>}
+              </div>
+            )
+          })}
+          {hidden > 0 && (
+            /* Worst-first ordering is what makes this safe to truncate. */
+            <div className="text-muted-foreground">
+              +{hidden} more rule{hidden === 1 ? '' : 's'} fired, none more severe than those above
+            </div>
+          )}
+        </div>
+      </td>
+    </tr>
   )
 }
 
@@ -1545,6 +1661,12 @@ function GroupRow({
   const lines = group.publisher_lines ?? []
   const [expanded, setExpanded] = useState(lines.length > 0 && lines.length < PUBLISHER_LINES_OPEN_BELOW)
   const hidden = group.publisher_lines_total - lines.length
+  // Closed by default, unlike the publisher lines: this is where a reader goes after the badge
+  // has said there is somewhere to go, and opening every one would bury the rows below.
+  const [rulesOpen, setRulesOpen] = useState(false)
+  // Stable across renders and unique per group: the toggle and the row it opens are siblings, so
+  // aria-controls is the only thing tying them together.
+  const rulesPanelId = `conformance-rules-${group.pk}`
 
   return (
     <>
@@ -1591,7 +1713,13 @@ function GroupRow({
       )}
       {showConformance && (
         <td className="px-3 py-3 text-sm whitespace-nowrap">
-          <ConformanceCell conformance={group.conformance} asOfAge={conformanceAsOfAge} />
+          <ConformanceCell
+            conformance={group.conformance}
+            asOfAge={conformanceAsOfAge}
+            expanded={rulesOpen}
+            onToggle={() => setRulesOpen((v) => !v)}
+            panelId={rulesPanelId}
+          />
         </td>
       )}
       {/* Sequence and Health are per PUBLISHER and the group row carries neither. A series is
@@ -1620,6 +1748,11 @@ function GroupRow({
         </Link>
       </td>
     </tr>
+    {/* Above the publisher lines: a group with two dozen of them would otherwise put this out
+        of sight of the badge that opened it. */}
+    {showConformance && rulesOpen && group.conformance && (
+      <ConformanceRulesRow conformance={group.conformance} columns={columns} id={rulesPanelId} />
+    )}
     {expanded &&
       lines.map((line) => (
         <PublisherLineRow
@@ -2033,8 +2166,11 @@ export function EdgeMulticastPage() {
               nothing it grades ever reached a verdict, which is neither a pass nor a fault. No violation is
               excluded: every must-severity finding the validator reports reaches the badge, which is the
               same rule the alert on-call carries follows — this column must never be quieter than that
-              alert. A group with no validator behind it shows an em dash, which is the honest reading:
-              nobody checked.
+              alert. A badge with a chevron has rules behind it: opening it lists what fired, each with
+              the catalog's own description of the rule, a link to the spec section it was written
+              against, and the recorders that saw it — those counts are detections and not events, so a
+              violation seen at three recorders counts three. A group with no validator behind it shows
+              an em dash, which is the honest reading: nobody checked.
             </p>
           )}
           {showSequence && (

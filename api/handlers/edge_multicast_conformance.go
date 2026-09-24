@@ -118,11 +118,29 @@ func edgeMulticastConformanceExempt(stream, ruleID string) bool {
 	return false
 }
 
-// EdgeMulticastConformanceRule is one rule that fired, for the tooltip.
+// conformanceRuleDoc is the catalog's description of a rule, from dz_conformance_rule_info.
+type conformanceRuleDoc struct {
+	summary string
+	specURL string
+}
+
+// EdgeMulticastConformanceRule is one rule that fired, with what the page needs to say what it
+// was. `MSG.WRONG_PORT_PLACEMENT ×33` names something only to a reader who knows the catalog.
 type EdgeMulticastConformanceRule struct {
 	RuleID   string `json:"rule_id"`
 	Severity string `json:"severity"`
 	Count    uint64 `json:"count"`
+
+	// From the validator's own catalog, joined by rule id. Read rather than restated here: a
+	// copy goes stale the first time a rule is reworded. Empty renders as the id alone.
+	Summary string `json:"summary,omitempty"`
+	SpecURL string `json:"spec_url,omitempty"`
+
+	// Where it fired. Validators is the Alloy `stream` label, the dz-conformance instance name —
+	// the only thing here that narrows a finding below the group, since the six elections
+	// instances grade ONE address, one market each. Superseded by a `channel` label if it lands.
+	Nodes      []string `json:"nodes,omitempty"`
+	Validators []string `json:"validators,omitempty"`
 }
 
 // EdgeMulticastConformance is what the rule set graded on one group over the window.
@@ -145,8 +163,12 @@ type EdgeMulticastConformance struct {
 	NA           uint64 `json:"na"`
 	Unverifiable uint64 `json:"unverifiable"`
 
-	// TopRules are the rules that fired, worst and loudest first, capped for the tooltip.
+	// TopRules are the rules that fired, worst and loudest first, capped.
 	TopRules []EdgeMulticastConformanceRule `json:"top_rules,omitempty"`
+
+	// RulesFired counts the rules before the cap. Without it a capped list reads as the whole
+	// finding and the severity totals above would not reconcile with the rules under them.
+	RulesFired int `json:"rules_fired,omitempty"`
 
 	// Exempted counts known-deviation hits. Excluded from the verdict, never from the payload.
 	Exempted uint64 `json:"exempted"`
@@ -179,9 +201,11 @@ type EdgeMulticastConformanceResponse struct {
 	Groups map[string]*EdgeMulticastConformance `json:"groups"`
 }
 
-// edgeMulticastConformanceTopRuleCap bounds the tooltip's rule list. A feed violating dozens of
-// rules at once has one story and it is not told better by naming all of them.
-const edgeMulticastConformanceTopRuleCap = 6
+// edgeMulticastConformanceTopRuleCap bounds the rendered rule list. A feed violating dozens of
+// rules at once has one story and naming all of them does not tell it better. Ten rather than the
+// six it held as a tooltip line: it now cuts where a reader stops reading, and RulesFired says
+// what was cut.
+const edgeMulticastConformanceTopRuleCap = 10
 
 // FetchEdgeMulticastConformance reads the conformance verdicts for every validated group.
 //
@@ -233,15 +257,16 @@ func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticast
 		}
 	}
 
-	// **`hostname` is deliberately out of every by-clause below, and the counts are therefore
-	// DETECTIONS rather than events.** Several recorders grade the same feed independently, so one
-	// violation in a publisher's wire format is counted once per vantage that saw it. Neither
-	// summing nor taking a maximum is the true event count: the recorders may have seen the same
-	// violation or different ones, and nothing in this plane can tell those apart. Summing is kept
-	// because it never under-reports a real finding, and the payload carries Nodes so the UI can
-	// say what the number is a count of rather than implying it is a count of events.
+	// **The counts are DETECTIONS, not events**, and `hostname` is in the by-clause so a rule can
+	// say at which vantages. Recorders grade the feed independently, so one violation in a wire
+	// format is counted once per recorder that saw it; nothing in this plane can tell a shared
+	// violation from two. Summing never under-reports, and the vantages travel with the number.
+	// The group-level Nodes set cannot answer this: it says what the VERDICT rests on.
+	//
+	// Splitting by vantage can move a total by one or two, since promCount floors a sub-unit
+	// extrapolation at one event per SERIES — the reading "detections" already implies.
 	violations, err := a.Prom.Query(ctx, fmt.Sprintf(
-		`sum by (multicast_group, stream, rule_id, severity, channel) (increase(dz_conformance_violations_total{env=%q}[%s]))`,
+		`sum by (multicast_group, stream, rule_id, severity, channel, hostname) (increase(dz_conformance_violations_total{env=%q}[%s]))`,
 		env, w))
 	if err != nil {
 		return nil, fmt.Errorf("conformance violations: %w", err)
@@ -278,12 +303,19 @@ func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticast
 			rules[g] = map[string]*EdgeMulticastConformanceRule{}
 		}
 		id := s.Label("rule_id")
-		if r, ok := rules[g][id]; ok {
-			r.Count += n
-		} else {
-			rules[g][id] = &EdgeMulticastConformanceRule{
-				RuleID: id, Severity: strings.ToLower(s.Label("severity")), Count: n,
+		r, ok := rules[g][id]
+		if !ok {
+			r = &EdgeMulticastConformanceRule{
+				RuleID: id, Severity: strings.ToLower(s.Label("severity")),
 			}
+			rules[g][id] = r
+		}
+		r.Count += n
+		if h := s.Label("hostname"); h != "" {
+			r.Nodes = appendUnique(r.Nodes, h)
+		}
+		if v := s.Label("stream"); v != "" {
+			r.Validators = appendUnique(r.Validators, v)
 		}
 	}
 
@@ -333,8 +365,45 @@ func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticast
 		}
 	}
 
+	// The catalog behind the rules that fired. **Skipped when nothing fired** — a clean fleet has
+	// nothing to describe and this is a fifth round trip — and **non-fatal**, unlike the four
+	// above: it decorates a finding rather than deciding one, so blanking a computed verdict for
+	// a refresh interval because a static lookup failed would cost the column its whole point.
+	catalog := map[string]conformanceRuleDoc{}
+	if len(rules) > 0 {
+		info, err := a.Prom.Query(ctx, fmt.Sprintf(
+			`count by (rule_id, summary, spec_url) (dz_conformance_rule_info{env=%q})`, env))
+		if err != nil {
+			slog.Warn("edge multicast conformance: rule catalog unavailable, rules render by id alone",
+				"error", err)
+		}
+		for _, sm := range info {
+			id := sm.Label("rule_id")
+			if id == "" {
+				continue
+			}
+			// Two builds mid-rollout can word one rule differently, and two can carry the same
+			// wording against different spec builds. First lexicographically is arbitrary but
+			// stable, so neither the text nor the link under it flips between refreshes. The
+			// summary alone is not enough of a key for that: where two entries agree on it, the
+			// comparison never fires and whichever link Prometheus happened to return first wins.
+			cur, have := catalog[id]
+			cand := conformanceRuleDoc{summary: sm.Label("summary"), specURL: sm.Label("spec_url")}
+			if !have || cand.summary < cur.summary ||
+				(cand.summary == cur.summary && cand.specURL < cur.specURL) {
+				catalog[id] = cand
+			}
+		}
+	}
+
 	for g, e := range out.Groups {
 		if rs := rules[g]; len(rs) > 0 {
+			for id, r := range rs {
+				if c, ok := catalog[id]; ok {
+					r.Summary, r.SpecURL = c.summary, c.specURL
+				}
+			}
+			e.RulesFired = len(rs)
 			e.TopRules = topConformanceRules(rs)
 		}
 		sort.Strings(e.Nodes)
@@ -416,6 +485,9 @@ func edgeMulticastConformanceVerdict(e *EdgeMulticastConformance) string {
 func topConformanceRules(rs map[string]*EdgeMulticastConformanceRule) []EdgeMulticastConformanceRule {
 	out := make([]EdgeMulticastConformanceRule, 0, len(rs))
 	for _, r := range rs {
+		// Out of a map: unsorted, these reshuffle on every refresh while saying nothing new.
+		sort.Strings(r.Nodes)
+		sort.Strings(r.Validators)
 		out = append(out, *r)
 	}
 	sort.Slice(out, func(i, j int) bool {
