@@ -80,17 +80,6 @@ const HyperliquidScoreboardCacheKey = "hyperliquid_public_scoreboard"
 // Daily refresh time (UTC). Shared by the worker schedule and the payload's next_refresh_at.
 const HyperliquidScoreboardRefreshHourUTC = 9 * time.Hour
 
-// NextDailyMarkUTC is the first occurrence of offset-past-00:00 UTC strictly after now. The
-// worker schedules daily entries from it too, so the page and the worker share one boundary.
-func NextDailyMarkUTC(now time.Time, offset time.Duration) time.Time {
-	u := now.UTC()
-	mark := time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC).Add(offset)
-	if !mark.After(u) {
-		mark = mark.AddDate(0, 0, 1)
-	}
-	return mark
-}
-
 type HyperliquidScoreboardStat struct {
 	WinPct float64 `json:"win_pct"`
 	P50Ms  float64 `json:"p50_ms"`
@@ -131,7 +120,7 @@ type HyperliquidScoreboardResponse struct {
 	// The page reads the board as stale only after this passes.
 	NextRefreshAt time.Time `json:"next_refresh_at"`
 	// Always empty. Pages loaded before the By Market removal still call markets.map and
-	// crash without it. Remove one release after it ships.
+	// crash without it. Remove one release after it ships (tracked in PR #843's follow-ups).
 	LegacyMarkets []struct{} `json:"markets"`
 }
 

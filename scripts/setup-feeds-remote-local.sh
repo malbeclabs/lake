@@ -22,7 +22,8 @@ LOCAL_HOST="${CLICKHOUSE_ADDR_TCP:-localhost:9100}"
 LOCAL_ADDR="${LOCAL_HOST%%:*}"
 LOCAL_PORT="${LOCAL_HOST##*:}"
 
-# observations feed the Hyperliquid scoreboard.
+# The Hyperliquid scoreboard never reads observations through a proxy (it treats one as no
+# data), so that proxy is kept only to mirror admin/remotetables.
 # Kalshi's capture writes into the same `feeds` database, so its tables proxy the same way:
 # the race summary feeds the Kalshi scoreboard, observations feed its prices and edge latency,
 # and mbp_levels feeds the sports L2 coverage page.
