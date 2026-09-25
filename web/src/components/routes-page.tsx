@@ -426,8 +426,10 @@ export function cellFor(
   const figures = routeFigures(latency)
   const measured = latency.measuredLatencyMs ?? 0
   const dzMs = measured > 0 ? measured : null
-  if (!figures.internetMeasured) return { kind: 'not-measured', dzMs }
-  const internetMs = latency.internetLatencyMs
+  const internetMs = figures.internetMeasured ? latency.internetLatencyMs : null
+  // Ahead of not-measured: that kind's `dzMs` is shown as a measurement.
+  if (latency.partiallyCommitted === true) return { kind: 'withheld', dzMs, internetMs }
+  if (internetMs === null) return { kind: 'not-measured', dzMs }
   if (figures.improvementPct === null) return { kind: 'withheld', dzMs, internetMs }
   return {
     kind: 'improvement',
@@ -474,10 +476,14 @@ export type MatrixSummary = {
   avgPct: number | null
   best: { label: string; pct: number; savedMs: number | null } | null
   /**
-   * Over pairs with a measured DoubleZero RTT. The internet mean covers only the
-   * `internetPairs` of them the internet was also measured on.
+   * `dzMs` is over every pair with a measured DoubleZero RTT; `both` compares the
+   * two networks over only the pairs measured on both sides.
    */
-  avgRtt: { dzMs: number; internetMs: number | null; pairs: number; internetPairs: number } | null
+  avgRtt: {
+    dzMs: number
+    pairs: number
+    both: { dzMs: number; internetMs: number; pairs: number } | null
+  } | null
   lowestRtt: { label: string; dzMs: number; internetMs: number | null } | null
 }
 
@@ -514,8 +520,10 @@ export function summariseMatrix(entries: { label: string; cell: MatrixCell }[]):
         ]
       : [],
   )
-  const rttInternet = rtt.map((e) => e.internetMs).filter((ms): ms is number => ms !== null)
+  const both = rtt.flatMap((e) => (e.internetMs !== null ? [{ ...e, internetMs: e.internetMs }] : []))
   const avgDzMs = mean(rtt.map((e) => e.dzMs))
+  const bothDzMs = mean(both.map((e) => e.dzMs))
+  const bothInternetMs = mean(both.map((e) => e.internetMs))
 
   return {
     pairs: entries.length,
@@ -533,9 +541,11 @@ export function summariseMatrix(entries: { label: string; cell: MatrixCell }[]):
         ? null
         : {
             dzMs: avgDzMs,
-            internetMs: mean(rttInternet),
             pairs: rtt.length,
-            internetPairs: rttInternet.length,
+            both:
+              bothDzMs === null || bothInternetMs === null
+                ? null
+                : { dzMs: bothDzMs, internetMs: bothInternetMs, pairs: both.length },
           },
     lowestRtt: rtt.reduce<MatrixSummary['lowestRtt']>(
       (low, e) => (low === null || e.dzMs < low.dzMs ? e : low),
@@ -1285,17 +1295,18 @@ function SummaryCards({
           {
             label: 'Average RTT',
             value: unknown || !avgRtt ? '—' : fmtMs(avgRtt.dzMs, 1),
-            lines: [
-              unknown ??
-                (!avgRtt
-                  ? 'nothing to average'
-                  : avgRtt.internetMs === null
-                    ? 'internet not measured'
-                    : `internet ${fmtMs(avgRtt.internetMs, 1)}` +
-                      (avgRtt.internetPairs < avgRtt.pairs
-                        ? ` over ${avgRtt.internetPairs} of ${avgRtt.pairs} pairs`
-                        : '')),
-            ],
+            lines: unknown
+              ? [unknown]
+              : !avgRtt
+                ? ['nothing to average']
+                : !avgRtt.both
+                  ? ['internet not measured']
+                  : avgRtt.both.pairs === avgRtt.pairs
+                    ? [`internet ${fmtMs(avgRtt.both.internetMs, 1)}`]
+                    : [
+                        `${fmtMs(avgRtt.both.dzMs, 1)} vs ${fmtMs(avgRtt.both.internetMs, 1)} internet`,
+                        `on the ${avgRtt.both.pairs} of ${avgRtt.pairs} pairs measured on both`,
+                      ],
           },
           {
             label: 'Lowest RTT',

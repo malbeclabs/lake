@@ -304,6 +304,13 @@ describe('cellFor', () => {
     })
   })
 
+  // Checked ahead of not-measured, whose RTT the RTT view prints as a measurement.
+  it('marks a contracted route withheld even with no public-internet samples', () => {
+    expect(
+      cellFor(route, latency({ partiallyCommitted: true, internetLatencyMs: 0 }), false, false),
+    ).toEqual({ kind: 'withheld', dzMs: 210.5, internetMs: null })
+  })
+
   it('carries no RTT where DoubleZero reports none', () => {
     expect(
       cellFor(route, latency({ internetLatencyMs: 0, measuredLatencyMs: 0 }), false, false),
@@ -440,11 +447,11 @@ describe('summariseMatrix RTT', () => {
       { label: 'CHI↔TYO', cell: { kind: 'error' } },
       { label: 'CHI↔CMH', cell: { kind: 'loading' } },
     ])
+    // The comparison is paired: a DoubleZero-only pair must not pull the DoubleZero side down.
     expect(s.avgRtt).toEqual({
       dzMs: (137.67 + 20) / 2,
-      internetMs: 164.36,
       pairs: 2,
-      internetPairs: 1,
+      both: { dzMs: 137.67, internetMs: 164.36, pairs: 1 },
     })
     expect(s.lowestRtt).toEqual({ label: 'CHI↔NYC', dzMs: 20, internetMs: null })
   })
