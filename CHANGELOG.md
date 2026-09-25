@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- The Route Latency page (`/performance/routes`) gains a Round-trip time view (`?view=rtt`) that puts DoubleZero's mean RTT in each cell with the public internet's beneath it, for prospects benchmarking DoubleZero against another provider rather than the internet. Its cards show the average and lowest RTT. The Improvement view stays the default, and its cells now read "26.7 ms saved" rather than a bare "26.7 ms", which a customer took for DoubleZero's RTT
+- The Route Latency page (`/performance/routes`) gains a Round-trip time view (`?view=rtt`) that puts DoubleZero's mean RTT in each cell with the public internet's beneath it, for prospects benchmarking DoubleZero against another provider rather than the internet. Its cards show the average and lowest RTT. The Improvement view stays the default, and its cells now read "26.7 ms saved" rather than a bare "26.7 ms", which a customer took for DoubleZero's RTT (#846)
 
 ### Removed
 
