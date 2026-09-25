@@ -103,12 +103,22 @@ type EdgeMulticastChannelInstance struct {
 	// only meaningful against.
 	Messages uint64 `json:"messages"`
 
-	// GapBooks is how many distinct books gapped at all in the window: the fault count to
-	// show. NOT GapMessages, which counts every message that arrived while a book was
-	// un-anchored and therefore scales with traffic rather than with reliability — 22 real
-	// discontinuities produced 158,912 gap-marked messages on perps. See KalshiL2Lane, which
-	// documents that decision at length; this column deliberately carries the same one so the
-	// two pages cannot tell different stories about one feed.
+	// GapBooks is how many distinct books gapped at all in the window. It is a RECOVERY state
+	// and not a loss count — how many books were left un-anchored and could not be trusted until
+	// a snapshot re-anchored them, which is the same thing a venue feed handler reports when it
+	// marks an instrument gapped and stops publishing it. UpdatesMissing is what says how much
+	// was lost.
+	//
+	// It saturates at the channel's instrument count, so it can never size a loss: measured over
+	// six hours of mainnet, perps read 13 books (of 13 instruments) against 3,439 updates lost,
+	// while ncaaf read 1,934 books against 2,693 — 149x the books for 0.78x the loss. It is still
+	// a trigger for the verdict, because a marker written is a loss observed.
+	//
+	// NOT GapMessages, which counts every message that arrived while a book was un-anchored and
+	// therefore scales with traffic rather than with reliability — 22 real discontinuities
+	// produced 158,912 gap-marked messages on perps. See KalshiL2Lane, which documents that
+	// decision at length; this column deliberately carries the same one so the two pages cannot
+	// tell different stories about one feed.
 	GapBooks uint64 `json:"gap_books"`
 
 	// GapMessages is how many messages arrived while a book was un-anchored. It is a DURATION
@@ -189,6 +199,18 @@ type EdgeMulticastChannelInstance struct {
 	// diffing sequence numbers against the row count reports ~3% loss on a healthy feed. The
 	// measurement is in `edge_multicast_observations.go`.
 	GapsMeasured bool `json:"gaps_measured"`
+
+	// LossUnavailable says the counters above are zero because the per-instrument loss query
+	// failed, not because nothing was lost. Only the level-grain leg can set it, and it sets it
+	// on every instance of a payload whose loss query failed.
+	//
+	// Without it that failure is invisible and reads as the best possible news: the lanes keep
+	// their gap markers, so the verdict falls back to the marker alone and the badge prints a
+	// green zero — the marker-only false negative this column's unit change exists to end,
+	// reappearing on the one path where nothing was measured at all. The loss query is a WARN
+	// and the coverage payload is still written without it, so nothing else on the page can
+	// tell.
+	LossUnavailable bool `json:"loss_unavailable,omitempty"`
 
 	// CaptureSourceQuiet marks a stalled series whose silence belongs to the capture source
 	// rather than to this path: every other path recording that source at the same node went
@@ -607,8 +629,11 @@ func (a *API) foldKalshiL2Coverage(ctx context.Context, captureSources edgeMulti
 			SnapshotCycles:         lane.SnapshotCycles,
 			SnapshotCyclesMeasured: true,
 			LastSeen:               lane.LastSeen.UTC(),
-			Status:                 edgeMulticastSequenceStatus(lane.GapBooks, lane.LastSeen, coverage.GeneratedAt),
+			Status:                 edgeMulticastSequenceStatus(lane.GapBooks, lane.UpdatesMissing, lane.LastSeen, coverage.GeneratedAt),
 			GapsMeasured:           true,
+			// The verdict above is graded on the marker alone whenever this is set, because the
+			// other counter was never read. It is the reading the badge has to withhold.
+			LossUnavailable: coverage.SequenceLossUnavailable,
 		}
 		if out[groupPK] == nil {
 			out[groupPK] = &EdgeMulticastSequenceHealth{}
@@ -663,9 +688,9 @@ func (a *API) foldEdgeMulticastTOBSequence(ctx context.Context, captureSources e
 			Messages:          series.Messages,
 			Resets:            series.Resets,
 			LastSeen:          series.LastSeen.UTC(),
-			// Graded on staleness alone. Passing a zero gap count is not a claim that the
-			// count is zero — GapsMeasured is what carries that, and it is false here.
-			Status:       edgeMulticastSequenceStatus(0, series.LastSeen, payload.GeneratedAt),
+			// Graded on staleness alone. Passing zeroes for both loss counters is not a claim
+			// that either is zero — GapsMeasured is what carries that, and it is false here.
+			Status:       edgeMulticastSequenceStatus(0, 0, series.LastSeen, payload.GeneratedAt),
 			GapsMeasured: false,
 		}
 		if out[groupPK] == nil {
@@ -678,12 +703,28 @@ func (a *API) foldEdgeMulticastTOBSequence(ctx context.Context, captureSources e
 
 // edgeMulticastSequenceStatus grades one series.
 //
+// Two independent pieces of evidence make it 'gapped', and either alone is enough:
+//
+//   - updatesMissing, holes in the per-instrument sequence — messages that never arrived. This is
+//     the one that carries a magnitude, and it is the one the column reports.
+//   - gapBooks, the recorder's own gap marker. It is a RECOVERY state and not a loss count: it says
+//     a book is un-anchored and its state cannot be trusted until a snapshot re-anchors it, which
+//     is the same thing a venue feed handler does when it marks an instrument gapped and stops
+//     publishing it. It saturates at the channel's instrument count, so it can never size a loss —
+//     but a marker written is still a loss observed, so it stays as a trigger.
+//
+// Grading on gapBooks ALONE was a false negative, measured on mainnet over six hours: five channel
+// instances lost updates with no gap marker written at all, the worst of them 958 updates at 1,551
+// ppm on ligue1 ch25, and the column called every one of them 'ok'. The reverse case — a marker
+// with no hole in the numbering — is loss at a reset boundary the partition key already separated,
+// and is equally a finding.
+//
 // Staleness is measured against the coverage payload's OWN clock, not wall clock. The entry is up
 // to a refresher interval old, so reading its timestamps against now() would add the refresher's
 // lag to every instance and mark healthy series stalled for most of every cycle — the same
 // mistake the counter columns on this page document for their own ages.
-func edgeMulticastSequenceStatus(gapBooks uint64, lastSeen, asOf time.Time) string {
-	if gapBooks > 0 {
+func edgeMulticastSequenceStatus(gapBooks, updatesMissing uint64, lastSeen, asOf time.Time) string {
+	if gapBooks > 0 || updatesMissing > 0 {
 		return edgeMulticastSeqGapped
 	}
 	if lastSeen.IsZero() || asOf.Sub(lastSeen) > edgeMulticastSequenceStaleSecs*time.Second {

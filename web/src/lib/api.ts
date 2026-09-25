@@ -8108,6 +8108,10 @@ export interface EdgeMulticastChannelInstance {
   /** Whether gap_books is a reading or an absence. False on the top-of-book plane, which has no
    *  gap marker to count — an 'ok' there means "advancing", not "lost nothing". */
   gaps_measured: boolean
+  /** The update counters are zero because the per-instrument loss query failed, not because
+   *  nothing was lost. The verdict on this instance is graded on its gap marker alone, so a
+   *  clean-looking row here is a measurement that did not happen. */
+  loss_unavailable?: boolean
   /** Stalled, but every other path recording this capture source at this node went quiet with it,
    *  so the silence is the source's and not this path's. The status stays 'stalled'; this is what
    *  keeps it out of the tally. */

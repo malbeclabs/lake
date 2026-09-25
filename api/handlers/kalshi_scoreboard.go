@@ -980,7 +980,8 @@ func (a *API) FetchKalshiPathLatency(ctx context.Context) (*KalshiPathLatency, e
 //   - the per-feed path latency,
 //   - the 24h and 7d scoreboards (the 1h scoreboard stays on the ordinary page-cache worker),
 //   - the sports L2 coverage view,
-//   - the two /dz/edge/multicast folds: the observations plane and the conformance verdicts.
+//   - the /dz/edge/multicast reads with nothing to fall back on: the observations plane, the
+//     top-of-book gap markers, and the conformance verdicts.
 //
 // Each computation gets its own timeout so a slow one can't starve the others; the path
 // latency is refreshed first so the 24h/7d scoreboards pick up its freshly-cached value.

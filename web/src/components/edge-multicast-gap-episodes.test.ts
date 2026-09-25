@@ -4,8 +4,12 @@ import {
   gapEpisodeStats,
   mergeGapEpisodes,
   sequenceLoss,
+  sequenceVerdict,
 } from './edge-multicast-gap-episodes'
-import type { EdgeMulticastChannelInstance } from '@/lib/api'
+import type {
+  EdgeMulticastChannelInstance,
+  EdgeMulticastSequenceHealth,
+} from '@/lib/api'
 
 function instance(
   over: Partial<EdgeMulticastChannelInstance> = {},
@@ -238,5 +242,205 @@ describe('completeness', () => {
     expect(c.ppm).toBeUndefined()
     expect(c.missing).toBe(0)
     expect(c.unprotectedSeconds).toBe(0)
+  })
+})
+
+describe('sequenceVerdict', () => {
+  const health = (
+    instances: EdgeMulticastChannelInstance[],
+    over: Partial<EdgeMulticastSequenceHealth> = {},
+  ): EdgeMulticastSequenceHealth => ({
+    status: 'ok',
+    gapped: 0,
+    stalled: 0,
+    instances,
+    ...over,
+  })
+
+  it('reports the values lost, not the books they were lost from', () => {
+    // Measured on mainnet over six hours: perps read 13 gapped books — its whole instrument count —
+    // against 3,439 updates lost, while ncaaf read 1,934 books against 2,693. The badge used to
+    // rank those two the wrong way round.
+    const v = sequenceVerdict(
+      health(
+        [
+          instance({
+            gap_books: 13,
+            updates_received: 6851764,
+            updates_missing: 3439,
+            seq_gap_events: 63,
+            status: 'gapped',
+          }),
+        ],
+        { status: 'gapped', gapped: 1 },
+      ),
+      900,
+    )
+    expect(v.label).toBe('3,439 lost')
+    expect(v.tone).toBe('bad')
+    expect(v.detail).toBe('502 ppm')
+  })
+
+  it('calls a measured zero a reading, with its denominator', () => {
+    // Eight of twenty-four quarter-hours on mainnet held no loss at all, so this is the common
+    // state and it has to read as a measurement rather than as a blank.
+    const v = sequenceVerdict(
+      health([instance({ updates_received: 4476494, updates_missing: 0 })]),
+      900,
+    )
+    expect(v.label).toBe('0 lost')
+    expect(v.tone).toBe('good')
+    expect(v.detail).toBe('4.48M upd')
+  })
+
+  it('does not paint a surviving gap marker green when the count clears', () => {
+    // A marker can stand on a series whose numbering shows no hole — loss at a reset boundary the
+    // sequence partition already separated. The badge used to fall through to the measured-zero
+    // branch and print a green '0 lost' on a line the backend still calls gapped, hiding the one
+    // fault it asserts.
+    const v = sequenceVerdict(
+      health([instance({ updates_received: 500000, updates_missing: 0, status: 'gapped' })], {
+        status: 'gapped',
+        gapped: 1,
+      }),
+      900,
+    )
+    expect(v.tone).not.toBe('good')
+    expect(v.label).toBe('gapped')
+    expect(v.detail).toBe('1/1')
+  })
+
+  it('still calls a measured zero clean when nothing is gapped', () => {
+    // The guard above must not swallow the common state: no marker, no holes, and a denominator
+    // behind it is a reading, and it stays green.
+    const v = sequenceVerdict(
+      health([instance({ updates_received: 500000, updates_missing: 0 })]),
+      900,
+    )
+    expect(v.label).toBe('0 lost')
+    expect(v.tone).toBe('good')
+  })
+
+  it('withholds the rate under the volume floor and still shows the count', () => {
+    // A ppm over a thin channel is noise wearing a percentage: ncaawb ch116 read 7,475 ppm off
+    // 4,647 updates, which is not a worse feed than tennis at 470 ppm over 28M.
+    const v = sequenceVerdict(
+      health([instance({ updates_received: 100, updates_missing: 3, status: 'gapped' })], {
+        status: 'gapped',
+        gapped: 1,
+      }),
+      900,
+    )
+    expect(v.label).toBe('3 lost')
+    expect(v.detail).toBe('of 103')
+    expect(v.detail).not.toContain('ppm')
+  })
+
+  it('says advancing on a plane nothing checked, rather than reporting a zero', () => {
+    // Its stored rows hold one entry per change to the top of the book, so the numbering
+    // reconstructed from them has structural holes — 1,292 on perps ch1 at each of three
+    // independent recorders, which is what proves they are not loss.
+    const v = sequenceVerdict(
+      health(
+        [
+          instance({ gaps_measured: false, updates_received: undefined }),
+          instance({ gaps_measured: false, updates_received: undefined, channel_id: 101 }),
+        ],
+        { gaps_unmeasured: 2 },
+      ),
+      900,
+    )
+    expect(v.label).toBe('advancing')
+    expect(v.tone).toBe('muted')
+    expect(v.detail).toBe('×2')
+  })
+
+  it('says ok on a gap-checked line that has no magnitude to report', () => {
+    // The recorder's own markers cover these series, so mergeEdgeMulticastTOBGaps sets
+    // gaps_measured and finds nothing — checked and clean. There is no per-instrument numbering
+    // on that plane to turn into a count, which is not the same as nothing having been checked:
+    // reading the missing counters as "unmeasured" painted every recorder-covered line muted and
+    // took away the word the legend and the Health tooltip both promise for the unchecked ones.
+    const v = sequenceVerdict(
+      health([
+        instance({ gaps_measured: true, updates_received: undefined }),
+        instance({ gaps_measured: true, updates_received: undefined, channel_id: 101 }),
+      ]),
+      900,
+    )
+    expect(v.label).toBe('ok')
+    expect(v.tone).toBe('good')
+    expect(v.detail).toBe('×2')
+  })
+
+  it('does not call a mixed set advancing', () => {
+    // One instance checked and one not is still a real zero for the half that was, which is the
+    // rule the badge carried before it reported magnitudes and carries again.
+    const v = sequenceVerdict(
+      health(
+        [
+          instance({ gaps_measured: true, updates_received: undefined }),
+          instance({ gaps_measured: false, updates_received: undefined, channel_id: 101 }),
+        ],
+        { gaps_unmeasured: 1 },
+      ),
+      900,
+    )
+    expect(v.label).toBe('ok')
+    expect(v.tone).toBe('good')
+  })
+
+  it('says the count is missing rather than painting a failed query green', () => {
+    // fetchKalshiL2SequenceLoss only WARNs, and the coverage payload is written without it, so
+    // every market-by-price lane arrives at 0/0 with its gap markers intact. Grading on what is
+    // present then falls back to the marker alone and prints the greenest badge on the page over
+    // the one state where nothing was measured.
+    const v = sequenceVerdict(
+      health([
+        instance({ gaps_measured: true, updates_received: 0, updates_missing: 0, loss_unavailable: true }),
+        instance({ gaps_measured: true, updates_received: 0, updates_missing: 0, loss_unavailable: true, channel_id: 2 }),
+      ]),
+      900,
+    )
+    expect(v.label).toBe('not counted')
+    expect(v.tone).toBe('muted')
+    expect(v.detail).toBe('×2')
+  })
+
+  it('does not call a failed query advancing either', () => {
+    // 'advancing' is a statement about a plane that never checks for loss. This plane checks and
+    // this time did not, which is a different sentence and a state that should be fixed.
+    const v = sequenceVerdict(
+      health(
+        [instance({ gaps_measured: false, updates_received: undefined, loss_unavailable: true })],
+        { gaps_unmeasured: 1 },
+      ),
+      900,
+    )
+    expect(v.label).toBe('not counted')
+  })
+
+  it('reads a stall before it reads the counters', () => {
+    // A series carrying no new values has no count to report, and "0 lost" over a dead window is
+    // the false clean bill of health this column exists to withhold.
+    const v = sequenceVerdict(
+      health([instance({ updates_received: 1000, updates_missing: 0, status: 'stalled' })], {
+        status: 'stalled',
+        stalled: 1,
+      }),
+      900,
+    )
+    expect(v.label).toBe('stalled')
+    expect(v.tone).toBe('warn')
+    expect(v.detail).toBe('1/1')
+  })
+
+  it('keeps a gap marker that had no countable numbering behind it', () => {
+    const v = sequenceVerdict(
+      health([instance({ gap_books: 2, status: 'gapped' })], { status: 'gapped', gapped: 1 }),
+      900,
+    )
+    expect(v.label).toBe('gapped')
+    expect(v.tone).toBe('bad')
   })
 })
