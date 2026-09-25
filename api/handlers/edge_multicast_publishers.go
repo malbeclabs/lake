@@ -144,6 +144,14 @@ type EdgeMulticastPublisher struct {
 	// feeds that capture-node parity structurally cannot.
 	PathParity *EdgeMulticastPathParity `json:"path_parity,omitempty"`
 
+	// Conformance is what dz-conformance found in THIS publisher's own datagrams over the
+	// window, nil when no finding named it — which is every line until the validators carry the
+	// source address, and every line on a group no validator covers.
+	//
+	// It holds only the rules whose subject is one channel instance. The rest are decided over
+	// state both paths fill and stay on the group row; see edge_multicast_conformance.go.
+	Conformance *EdgeMulticastConformance `json:"conformance,omitempty"`
+
 	// Health is this publisher's own verdict, and the reason the group row no longer carries one:
 	// a feed with one dead publisher and one live one rolls up to a single badge that describes
 	// neither. Worst-of over the signals that belong to THIS member — see

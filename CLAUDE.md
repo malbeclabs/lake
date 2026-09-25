@@ -784,6 +784,52 @@ row, and the publisher lines it expands into.
 - **Per group** — the ledger code and multicast address, the publisher and subscriber counts,
   `Heard`, unattributed series, `recorder_coverage`.
 - **Per path on that group** — `Msg/s`, `Peer`, `Sequence`, `Health`.
+- **At both** — `Conformance`, and it is the only column here that is. See below.
+
+### Conformance reads at two grains, and the validator decides which
+
+`dz-conformance` grades a feed against the edge-feed-spec rule catalog and reports only to
+Prometheus; lake reads it over PromQL on the background refresher (`edge_multicast_conformance.go`).
+Every finding carries a **`source_addr`** label, and that label alone decides where the verdict
+renders:
+
+- **Set** — the rule's subject is one channel instance, "one path's view of one channel". The
+  verdict sits on that **publisher line**.
+- **Empty** — the rule was decided over state every path of the channel fills: the book, the
+  snapshot groups, the reference data set. It sits on the **group row**.
+
+The split is made upstream, from the rule catalog's own `RuleMeta.State`
+(`core.StateKind.InstanceScoped` in `edge-feed-spec`): `StateNone` judges the datagram in front of
+it and `StateCounters` is the sequence series and Reset Count the GLOSSARY names as things an
+instance owns; the four book/refdata kinds are not. **It is decided by the catalog and not by where
+the finding was emitted**, and those differ — `REFDATA.NEVER_REACHES_READY` fires from inside
+per-datagram classification, but its verdict is settled over a set both paths contributed to, so
+the path that happened to deliver the settling datagram did not cause it.
+
+**An empty `source_addr` is a statement, not a missing value.** A validator subscribes to a GROUP
+and so receives every path merged; resolving the blank by picking whichever publisher was nearby
+would charge one path for what its peer did as much of. For the same reason a blank cell on a line
+is never a pass — it means either that no validator grades the feed or that no finding named that
+path, and both are absences.
+
+**A group row with no verdict of its own is an em dash, not `ungraded`.** Once every finding on a
+group names a publisher, the group entry's own counters are zero — that is the split working, not a
+validator that graded nothing, and `ungraded` over it read "nothing reached a verdict" directly
+above lines reading `conforming`. The verdict is suppressed when the group graded nothing itself
+**and** a publisher of it did; where no publisher graded anything either, the absence is real and
+`ungraded` stands.
+
+Three things stay on the group row whatever the label says. **Channels graded** describe the
+group's coverage, not one path's. **Exemptions** are keyed on `(stream, rule)` and are a waiver for
+the feed, so counting them per line would make one waiver read differently on each path. And
+**`unattributed`** counts verdicts naming an address no line carries — counted rather than dropped,
+exactly as an unattributed recorded series is. What the lines DO inherit is who graded them
+(`instances`, `nodes`, `versions`): those queries carry no source address and never will.
+
+**Lake reads the label before the fleet writes it, on purpose.** An unlabelled validator reports an
+empty `source_addr` on every series, so every finding lands on the group row and the page renders
+as it did before. That is why the cache key is not bumped: a payload from the previous build has no
+publisher entries and degrades to the old rendering rather than to a dark column.
 
 A publisher serves every plane of its feed from ONE tunnel, so the per-tunnel columns read twice on
 a two-plane feed: the same DZD cell and the same rate, once per group. **That repetition is
