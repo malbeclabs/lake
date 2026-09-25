@@ -199,3 +199,14 @@ func EdgeMulticastObservationLossLegsForTest(payload EdgeMulticastObservationsRe
 func EdgeMulticastRecorderGapQueryForTest(feedsDB string) string {
 	return edgeMulticastRecorderGapQuery(feedsDB)
 }
+
+// The page-cache keys the Sequence column folds from, exported so the external tests cannot drift
+// from the constants themselves.
+//
+// They used to be mirrored as string literals in edge_multicast_test.go under a comment saying to
+// bump both together. One bump landed without the other and every sequence test in the package
+// started asserting the absent case — which is the failure this exists to make impossible, since a
+// key that does not match is indistinguishable from a cache miss and a miss is a legitimate state
+// here.
+func KalshiL2CoverageCacheKeyForTest() string     { return kalshiL2CoverageCacheKey }
+func EdgeMulticastTOBGapsCacheKeyForTest() string { return edgeMulticastTOBGapsCacheKey }

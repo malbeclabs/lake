@@ -40,10 +40,11 @@ func newEdgeMulticastTestAPI(t *testing.T) *handlers.API {
 	return api
 }
 
-// kalshiL2CoverageKey mirrors the unexported page-cache key in kalshi_l2_coverage.go. If that
-// constant's version is bumped without this one, the sequence tests stop exercising the fold and
-// start asserting the absent case, which still passes — so bump both.
-const kalshiL2CoverageKey = "kalshi_l2_coverage:v5"
+// kalshiL2CoverageKey is the constant itself, not a copy of its value. It was a mirrored string
+// literal under a comment saying to bump both together, and the bump to v6 landed without it: the
+// seeded payload then sat under a key nothing reads, so every sequence test in this package
+// asserted the absent case instead of the fold.
+var kalshiL2CoverageKey = handlers.KalshiL2CoverageCacheKeyForTest()
 
 // seedL2Coverage writes a coverage payload for the sequence column to fold, and removes it again
 // afterwards.
@@ -60,10 +61,8 @@ func seedL2Coverage(t *testing.T, api *handlers.API, generatedAt time.Time, lane
 	})
 }
 
-// edgeMulticastTOBGapsKey mirrors the unexported page-cache key in edge_multicast_tob_gaps.go.
-// Same caveat as kalshiL2CoverageKey above: bump both together, or the test below stops
-// exercising the fold and starts asserting the absent case, which still passes.
-const edgeMulticastTOBGapsKey = "edge_multicast_tob_gaps:v1"
+// edgeMulticastTOBGapsKey, likewise read from the constant rather than copied from it.
+var edgeMulticastTOBGapsKey = handlers.EdgeMulticastTOBGapsCacheKeyForTest()
 
 // seedEdgeMulticastTOBGaps writes a recorded-gap payload for the sequence column to fold, and
 // removes it again afterwards.
