@@ -981,8 +981,7 @@ func (a *API) FetchKalshiPathLatency(ctx context.Context) (*KalshiPathLatency, e
 //   - the 24h and 7d scoreboards (the 1h scoreboard stays on the ordinary page-cache worker),
 //   - the sports L2 coverage view,
 //   - the /dz/edge/multicast reads with nothing to fall back on: the observations plane, the
-//     top-of-book gap markers, the conformance verdicts, and the edge recorder's own
-//     sequence-loss rows.
+//     top-of-book gap markers, and the conformance verdicts.
 //
 // Each computation gets its own timeout so a slow one can't starve the others; the path
 // latency is refreshed first so the 24h/7d scoreboards pick up its freshly-cached value.
@@ -1166,36 +1165,10 @@ func (a *API) StartKalshiBackgroundRefresher(ctx context.Context) {
 		}
 		a.recorderRaceEsc.Reset(kalshiRecorderRaceEscKey + ":write")
 	}
-	// The recorder-rows leg of the Sequence column: the edge recorder's own sequence-loss and
-	// coverage rows, aggregated per channel instance per vantage. Same cadence and same window as
-	// the other two legs so all three describe the same span, and next to them rather than on the
-	// request path for the reason edge_multicast_sequence.go documents at length — that page polls
-	// every 30 seconds, and a column folded from a shared cache entry is a column that cannot
-	// disagree with another page about one feed.
-	//
-	// Second in the chain, behind the observations for the same reason those are first: nothing
-	// falls back to a live query for either, so until the entry lands its rows are simply absent,
-	// and the page_cache row survives a restart in a way that hides that for every key that already
-	// exists and exposes it for a newly added one. This read is cheaper still than the observations
-	// — derived rows, tens of bytes each, scanned along the channel-instance prefix of their own
-	// sort key inside a monthly partition — so it costs the ones behind it almost nothing.
-	refreshRecorderSequence := func() {
-		rctx, cancel := context.WithTimeout(ctx, runTimeout)
-		defer cancel()
-		val, err := a.FetchEdgeMulticastRecorderSequence(rctx)
-		if err != nil {
-			slog.Warn("edge multicast recorder sequence refresh failed", "error", err)
-			return
-		}
-		if err := a.WritePageCache(ctx, edgeMulticastRecorderSequenceCacheKey, val); err != nil {
-			slog.Warn("edge multicast recorder sequence cache write failed", "error", err)
-		}
-	}
 	refresh := func() {
 		refreshObservations()
 		refreshTOBGaps()
 		refreshConformance()
-		refreshRecorderSequence()
 		refreshLatency()
 		refreshRecorderRace()
 		refreshScoreboard("24h")

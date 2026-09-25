@@ -1047,22 +1047,10 @@ function sequenceInstanceLine(i: EdgeMulticastChannelInstance): string {
   if (i.capture_source_quiet) {
     return `${head} — quiet, and so is every other path on this source: the venue, not this path`
   }
-  // gaps_measured says whether GAP BOOKS is a reading, which is not the same question as whether
-  // loss is countable, and reading it as the latter silenced the recorder leg: it sets the flag
-  // false because it never folds a book, while carrying the update counters this line exists to
-  // print. So the bail-out is gated on having neither — a plane whose numbering has structural
-  // holes that are not loss says so, and one that can count says how much.
-  // **A loss was seen and cannot be charged to the publisher.** Said before the bail-out below,
-  // because the row reaches it with zeroed counters and would otherwise print "no level updates
-  // to count" — a denial of the reading — over a series something did measure.
-  if (i.attribution_withheld) {
-    return (
-      `${head}, ${i.resets.toLocaleString()} resets` +
-      ` — loss seen, size withheld: this recorder's own drops cover it, so none of it is the publisher's`
-    )
-  }
-  const hasUpdateCounts = i.updates_received !== undefined || i.updates_missing !== undefined
-  if (!i.gaps_measured && !hasUpdateCounts) {
+  // Without a gap marker there is no book-level fault count and no per-instrument numbering to
+  // count holes in, so the line says what was NOT measured instead of printing zeros that would
+  // read as findings.
+  if (!i.gaps_measured) {
     return `${head}, ${i.resets.toLocaleString()} resets — sequence loss not countable on this plane`
   }
   const received = i.updates_received ?? 0

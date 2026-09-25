@@ -154,28 +154,6 @@ describe('gapEpisodeStats', () => {
 })
 
 describe('sequenceLoss', () => {
-  // Two legs fill updates_received/updates_missing in different units — holes in per-instrument
-  // sequence, and datagram-header sequence values. One break in a header can swallow many level
-  // updates, so a sum over both is neither reading.
-  it('never sums a level-grain instance with a datagram-grain one', () => {
-    const s = sequenceLoss(
-      [
-        instance({ updates_received: 500_000, updates_missing: 200, loss_grain: 'levels' }),
-        instance({ updates_received: 100_000, updates_missing: 7, loss_grain: 'datagrams' }),
-      ],
-      900,
-    )
-    // The datagram grain wins: it measures against the publisher's own numbering rather than
-    // against what a decoder could fold.
-    expect(s?.received).toBe(100_000)
-    expect(s?.missing).toBe(7)
-  })
-
-  it('still reads a line that only the level grain measured', () => {
-    const s = sequenceLoss([instance({ updates_received: 500_000, updates_missing: 200, loss_grain: 'levels' })], 900)
-    expect(s?.missing).toBe(200)
-  })
-
   it('sums a line across its instances and derives the rates', () => {
     const s = sequenceLoss(
       [
@@ -316,10 +294,10 @@ describe('sequenceVerdict', () => {
   })
 
   it('does not paint a surviving gap marker green when the count clears', () => {
-    // edgeMulticastRecorderRegrade clears the missing count when the recorder admits the datagrams
-    // were its own, and deliberately leaves the marker standing: a book was left un-anchored
-    // whoever dropped them. The badge used to fall through to the measured-zero branch and print a
-    // green '0 lost' on a line the backend still calls gapped, hiding the one fault it asserts.
+    // A marker can stand on a series whose numbering shows no hole — loss at a reset boundary the
+    // sequence partition already separated. The badge used to fall through to the measured-zero
+    // branch and print a green '0 lost' on a line the backend still calls gapped, hiding the one
+    // fault it asserts.
     const v = sequenceVerdict(
       health([instance({ updates_received: 500000, updates_missing: 0, status: 'gapped' })], {
         status: 'gapped',

@@ -269,8 +269,8 @@ func mergeEdgeMulticastTOBGaps(captureSources edgeMulticastCaptureSourceMap, ser
 			LastSeen:          series.LastSeen.UTC(),
 			// The reading this leg exists to make. Graded on the gap count as well as on
 			// staleness, which is what the observations leg could not do.
-			// No update counters on this plane: the marker is per book, and the datagram-header
-			// counts the recorder leg carries are a different grain that must not be borrowed here.
+			// No update counters on this plane: the marker is per book, and there is no
+			// per-instrument numbering here to count holes in.
 			Status:       edgeMulticastSequenceStatus(series.GapBooks, 0, series.LastSeen, generatedAt),
 			GapsMeasured: true,
 		}

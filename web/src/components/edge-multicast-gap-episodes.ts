@@ -110,14 +110,7 @@ export function sequenceLoss(
   instances: EdgeMulticastChannelInstance[],
   windowSecs: number,
 ): SequenceLoss | undefined {
-  // **Never across grains.** Two legs fill updates_received/updates_missing in different units —
-  // holes in per-instrument sequence, and datagram-header sequence values — and one break in a
-  // header can swallow many level updates, so a sum over both is neither. Where a line carries
-  // both, the datagram grain wins: it measures against the publisher's own numbering rather than
-  // against what a decoder could fold, so it is the reading that does not depend on the recorder.
-  const withCounts = instances.filter((i) => (i.updates_received ?? 0) > 0)
-  const datagrams = withCounts.filter((i) => i.loss_grain === 'datagrams')
-  const measured = datagrams.length > 0 ? datagrams : withCounts.filter((i) => i.loss_grain !== 'datagrams')
+  const measured = instances.filter((i) => (i.updates_received ?? 0) > 0)
   if (measured.length === 0) {
     return undefined
   }
@@ -267,11 +260,11 @@ export function sequenceVerdict(
   if (loss.missing > 0) {
     return { label: `${loss.missing.toLocaleString()} lost`, tone: 'bad', detail: rate }
   }
-  // Zero holes and a marker still standing is not a clean series. edgeMulticastRecorderRegrade
-  // clears the count when the recorder admits the datagrams were its own, and deliberately does not
-  // clear the marker: a book was left un-anchored whoever dropped them. Painting that green would
-  // hide the one fault the backend is still asserting, so the badge keeps the gapped tone and the
-  // count moves into the tooltip, which is where '0 lost, 1 book un-anchored' can be said in full.
+  // Zero holes and a marker still standing is not a clean series: a gap marker can be written at a
+  // reset boundary the sequence partition already separated, so the numbering shows no hole while a
+  // book was still left un-anchored. Painting that green would hide the one fault the backend is
+  // still asserting, so the badge keeps the gapped tone and the count moves into the tooltip, which
+  // is where '0 lost, 1 book un-anchored' can be said in full.
   if (sequence.status === 'gapped') {
     return { label: 'gapped', tone: 'bad', detail: `${sequence.gapped}/${total}` }
   }
