@@ -1410,7 +1410,12 @@ function GapTimeline({
   const lines =
     episodes.length === 0
       ? [
-          `no loss recorded over ${windowLabel}`,
+          // What is empty here is the TIME axis, not the loss. The badge above counts values that
+          // never arrived and the episodes below count seconds a book spent un-anchored; a line
+          // can have the first with none of the second — loss at a reset boundary, or a break the
+          // next message closed inside the same second. Saying "no loss recorded" over a tooltip
+          // that goes on to print 958 lost was this strip claiming the badge's measurement.
+          `no un-anchored time over ${windowLabel}`,
           `gap-free ${(stats.gapFree * 100).toFixed(1)}%`,
           ...lossLines,
         ]
@@ -1567,9 +1572,14 @@ function UnattributedSequenceCell({
     return (
       <Tooltip
         content={
-          `${c.missing.toLocaleString()} of ${c.expected.toLocaleString()} updates never arrived at any recorder` +
+          // **Summed over the paths, so it is each path's own loss and not the feed's.** An
+          // update lost on one path and delivered on the other did arrive; what the feed itself
+          // failed to deliver is the all-paths intersection above, and this branch is the case
+          // where that is empty. The sentence used to say "never arrived at any recorder", which
+          // is the one thing these numbers cannot establish.
+          `${c.missing.toLocaleString()} of ${c.expected.toLocaleString()} updates lost on one path or another` +
           (c.expected >= SEQUENCE_LOSS_MIN_UPDATES ? ` — ${c.ppm.toFixed(1)} ppm` : '') +
-          '\nEvery path of this feed held for the whole window, so nothing was lost that the redundancy did not cover.'
+          '\nNo second in which every path was losing at once, so the redundancy covered it and the feed delivered.'
         }
         className="whitespace-pre-line"
       >
@@ -2190,10 +2200,12 @@ export function EdgeMulticastPage() {
             )}
             {showSequence && (
               <LegendNote term="Loss strip">
-                The same loss on a time axis, one shared axis per group: a mark on one line against clear
-                track on the other says the peer covered it. Empty track is a measured clean run; no strip at
-                all was never measured. Under it, one row per recorder, and “2+” for the seconds several lost
-                together — one recorder alone is its own branch.
+                Not the badge's count: the time a book spent un-anchored, on one shared axis per group. A
+                mark on one line against clear track on the other says the peer covered it. Empty track is a
+                clean run of THAT measurement, and a line can carry it beside a badge reporting values lost.
+                Under it, one row per recorder — those subtract each recorder's admitted drops where the
+                recorder rows exist — and “2+” for the seconds several lost together; one recorder alone is
+                its own branch.
               </LegendNote>
             )}
             {showSequence && (

@@ -336,20 +336,58 @@ describe('sequenceVerdict', () => {
     expect(v.detail).not.toContain('ppm')
   })
 
-  it('says the top-of-book plane was not counted rather than reporting a zero', () => {
+  it('says advancing on a plane nothing checked, rather than reporting a zero', () => {
     // Its stored rows hold one entry per change to the top of the book, so the numbering
     // reconstructed from them has structural holes — 1,292 on perps ch1 at each of three
     // independent recorders, which is what proves they are not loss.
     const v = sequenceVerdict(
+      health(
+        [
+          instance({ gaps_measured: false, updates_received: undefined }),
+          instance({ gaps_measured: false, updates_received: undefined, channel_id: 101 }),
+        ],
+        { gaps_unmeasured: 2 },
+      ),
+      900,
+    )
+    expect(v.label).toBe('advancing')
+    expect(v.tone).toBe('muted')
+    expect(v.detail).toBe('×2')
+  })
+
+  it('says ok on a gap-checked line that has no magnitude to report', () => {
+    // The recorder's own markers cover these series, so mergeEdgeMulticastTOBGaps sets
+    // gaps_measured and finds nothing — checked and clean. There is no per-instrument numbering
+    // on that plane to turn into a count, which is not the same as nothing having been checked:
+    // reading the missing counters as "unmeasured" painted every recorder-covered line muted and
+    // took away the word the legend and the Health tooltip both promise for the unchecked ones.
+    const v = sequenceVerdict(
       health([
-        instance({ gaps_measured: false, updates_received: undefined }),
-        instance({ gaps_measured: false, updates_received: undefined, channel_id: 101 }),
+        instance({ gaps_measured: true, updates_received: undefined }),
+        instance({ gaps_measured: true, updates_received: undefined, channel_id: 101 }),
       ]),
       900,
     )
-    expect(v.label).toBe('not counted')
-    expect(v.tone).toBe('muted')
+    expect(v.label).toBe('ok')
+    expect(v.tone).toBe('good')
     expect(v.detail).toBe('×2')
+  })
+
+  it('does not call a mixed set advancing', () => {
+    // One instance checked and one not is still a real zero for the half that was, which is the
+    // rule the badge carried before it reported magnitudes and carries again.
+    const v = sequenceVerdict(
+      health(
+        [
+          instance({ gaps_measured: true, updates_received: undefined }),
+          instance({ gaps_measured: false, updates_received: undefined, channel_id: 101 }),
+        ],
+        { gaps_unmeasured: 1 },
+      ),
+      900,
+    )
+    expect(v.label).toBe('ok')
+    expect(v.tone).toBe('good')
   })
 
   it('reads a stall before it reads the counters', () => {

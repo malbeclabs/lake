@@ -552,9 +552,16 @@ hours of mainnet settled it:
   **1,934** books against **2,693** — 149x the books for 0.78x the loss. The ranking it produced was
   not the ranking of loss.
 - `gap_messages` is a time measure and swings between the two paths of one feed by up to **15.6x**
-  (perps: 5,262 against 337) while values lost holds within **7%** on every feed and **0.06%** in the
-  worst quarter hour of the day (21,488 against 21,476). Two independent paths cannot lose the same
-  datagrams by chance, so the figure they agree on is the one measuring the feed.
+  (perps: 5,262 against 337) while their values-lost totals sit within **7%** per feed, and **0.06%**
+  in the worst quarter hour of the day (21,488 against 21,476). A duration that swings by an order
+  of magnitude between two paths carrying one feed is describing the vantage; a magnitude that
+  holds is describing what the feed cost. That is a statement about the SIZE of each path's own
+  loss and **not** about the two losing the same thing — `kalshi_l2_coverage.go` records that the
+  per-instrument holes DIFFER wherever there is loss (perps 36 against 9 in one window), which is
+  what independent per-path loss looks like and the test `frame_sequence` failed by reporting
+  identical holes on both paths. Identical counts across independent observers are the signature of
+  a numbering artifact — that is the top-of-book argument below — while close-but-different totals
+  over hours are two paths losing independently at similar rates.
 - Grading on `gap_books` alone was a **false negative**: five instances lost updates with no marker
   written at all, the worst of them 958 updates at 1,551 ppm on ligue1 ch25, and every one read `ok`.
 
@@ -565,11 +572,25 @@ stops publishing it until a snapshot re-anchors it. A marker written is still a 
 just cannot say how much.
 
 The rate is withheld below `SEQUENCE_LOSS_MIN_UPDATES` (500 updates in the window) and the count is
-always shown. A ratio over a thin channel is noise wearing a percentage: ncaamb ch15 read
-**11,938 ppm** off 45,189 updates and ncaawb ch116 **7,475 ppm** off 4,647, neither of which is a
-worse feed than tennis at 470 ppm over 28M. It is the same trade `edgeMulticastPathParityMinMessages`
-makes, and it is why the monitoring products in this space report absolute counts and per-second
-rates rather than ratios.
+always shown. The floor is where a ratio stops being a reading at all: under 500 updates one hole is
+2,000 ppm or more, so the figure is set by the denominator and moves in steps nobody can interpret.
+It is the same trade `edgeMulticastPathParityMinMessages` makes.
+
+What the floor does **not** do is stop a thin channel outranking a busy one, and no floor worth
+having could: ncaamb ch15 read **11,938 ppm** off 45,189 updates and ncaawb ch116 **7,475 ppm** off
+4,647, both far above it, and neither is a worse feed than tennis at 470 ppm over 28M. That is why
+the **count** is the badge's headline and the rate only the detail beside it, which is also how the
+monitoring products in this space report loss.
+
+**The verdict has no floor under it, and that is a decision rather than an oversight.** One missing
+update grades the instance `gapped`, so the publisher line reads `gapped` too, and that outranks
+`behind` in the ranking above. Both were already true of one gap marker before the badge reported
+magnitudes, so the delta over the marker-only rule is exactly the instances that lost updates with
+**no marker written** — the five above. Everything carrying a marker was already red. A floor would
+buy silence about precisely those, so putting one on the verdict is a product decision and not a
+quiet default, the same call this file records for the shreds `thin` share threshold; the magnitude
+belongs to the badge, which is why the badge stopped naming a state and started saying how much.
+`TestEdgeMulticastPublisherHealth_AnyRecordedLossIsAFault` pins both halves.
 
 `stalled` stays a **time** verdict and is read before either counter. A series carrying no new values
 has no count to report, and "0 lost" over a dead window is the clean bill of health this column

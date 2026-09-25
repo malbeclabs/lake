@@ -77,6 +77,40 @@ func TestEdgeMulticastPublisherHealth_OneFailingPairIsNotBehind(t *testing.T) {
 		"and a feed with one comparison still fires on it")
 }
 
+// **Any recorded loss is a fault here, with no floor under it, and it masks 'behind'.** Both
+// halves are deliberate and this is where they are pinned.
+//
+// The verdict has always been binary on recorded loss: before the badge reported magnitudes, one
+// gap marker on one instance produced exactly this 'gapped'. What changed is that a hole in the
+// per-instrument numbering now does too, so the delta over the old rule is precisely the instances
+// that lost updates with NO marker written — five over six hours of mainnet, the worst of them 958
+// updates at 1,551 ppm on ligue1 ch25, every one of which the column called 'ok'. Everything with
+// a marker was already red.
+//
+// A floor on the verdict would buy silence about exactly those, so it is a product decision rather
+// than a quiet default — the same call CLAUDE.md already records for the shreds 'thin' share
+// threshold. The magnitude is not the verdict's job: it is on the badge, which is why the badge
+// stopped saying 'gapped' and started saying how much was lost.
+func TestEdgeMulticastPublisherHealth_AnyRecordedLossIsAFault(t *testing.T) {
+	// One instance, one update missing, no marker anywhere: edgeMulticastSequenceStatus grades it
+	// 'gapped' and the line inherits that.
+	assert.Equal(t, "gapped", handlers.EdgeMulticastPublisherHealthForTest(
+		pubLine(handlers.EdgeMulticastPubPublishingForTest, seqHealth("gapped", 1, 0, 1), nil), true))
+
+	// And it outranks a path-parity finding on the same line. The ranking is worst-first and loss
+	// is worse than a deficit: a gap is data that did not arrive, 'behind' is less of a feed than
+	// its peer carried. The parity ratio is still on the row beside the verdict.
+	assert.Equal(t, "gapped", handlers.EdgeMulticastPublisherHealthForTest(
+		pubLine(handlers.EdgeMulticastPubPublishingForTest, seqHealth("gapped", 1, 0, 1),
+			&handlers.EdgeMulticastPathParity{Compared: 29, Behind: 12, WorstRatio: 0.96}), true),
+		"loss outranks a deficit, and the parity figures stay on the row")
+
+	// The floor's absence cuts both ways and the clean case must stay clean: no marker, no hole,
+	// no fault.
+	assert.Equal(t, "healthy", handlers.EdgeMulticastPublisherHealthForTest(
+		pubLine(handlers.EdgeMulticastPubPublishingForTest, seqHealth("ok", 0, 0, 1), nil), true))
+}
+
 // A path with no peer has no parity verdict. Zero of zero compared must not read as passing.
 func TestEdgeMulticastPublisherHealth_ParityNeedsAPeer(t *testing.T) {
 	assert.Equal(t, "healthy", handlers.EdgeMulticastPublisherHealthForTest(
