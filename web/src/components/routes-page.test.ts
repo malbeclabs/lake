@@ -13,7 +13,9 @@ import {
   pairKeyOf,
   parseCells,
   parseCities,
+  parseView,
   resolveRoute,
+  routeParams,
   routeFigures,
   shadeFor,
   summariseMatrix,
@@ -256,11 +258,13 @@ describe('meshPairs', () => {
 describe('cellFor', () => {
   const route = resolveRoute({ from: 'tyo', to: 'lon' })
 
-  it('states the improvement and the saving on a measured pair', () => {
+  it('states the improvement, the saving and both RTTs on a measured pair', () => {
     expect(cellFor(route, latency(), false, false)).toEqual({
       kind: 'improvement',
       pct: 19,
       savedMs: 259.76 - 210.5,
+      dzMs: 210.5,
+      internetMs: 259.76,
     })
   })
 
@@ -276,9 +280,11 @@ describe('cellFor', () => {
     expect(cellFor(route, latency(), false, true).kind).toBe('improvement')
   })
 
-  it('marks a pair with no public-internet samples as unmeasured', () => {
+  // The RTT view still has DoubleZero's own figure to show here.
+  it('marks a pair with no public-internet samples as unmeasured, keeping its RTT', () => {
     expect(cellFor(route, latency({ internetLatencyMs: 0 }), false, false)).toEqual({
       kind: 'not-measured',
+      dzMs: 210.5,
     })
   })
 
@@ -293,7 +299,15 @@ describe('cellFor', () => {
   it('withholds rather than fabricating on a partiallyCommitted route', () => {
     expect(cellFor(route, latency({ partiallyCommitted: true }), false, false)).toEqual({
       kind: 'withheld',
+      dzMs: 210.5,
+      internetMs: 259.76,
     })
+  })
+
+  it('carries no RTT where DoubleZero reports none', () => {
+    expect(
+      cellFor(route, latency({ internetLatencyMs: 0, measuredLatencyMs: 0 }), false, false),
+    ).toEqual({ kind: 'not-measured', dzMs: null })
   })
 
   it('reports Zurich as unavailable with its note, at every column', () => {
@@ -303,12 +317,14 @@ describe('cellFor', () => {
   })
 })
 
+const improvement = (
+  pct: number,
+  savedMs: number | null,
+  dzMs: number | null = null,
+  internetMs: number | null = null,
+): MatrixCell => ({ kind: 'improvement', pct, savedMs, dzMs, internetMs })
+
 describe('summariseMatrix', () => {
-  const improvement = (pct: number, savedMs: number | null): MatrixCell => ({
-    kind: 'improvement',
-    pct,
-    savedMs,
-  })
 
   it('counts pairs, averages the measured ones, and names the best', () => {
     const s = summariseMatrix([
@@ -320,7 +336,14 @@ describe('summariseMatrix', () => {
     expect(s.withPath).toBe(2)
     expect(s.avgPct).toBe(32)
     expect(s.avgSavedMs).toBe(75)
-    expect(s.best).toEqual({ label: 'LON↔TYO', kind: 'improvement', pct: 44, savedMs: 115 })
+    expect(s.best).toEqual({
+      label: 'LON↔TYO',
+      kind: 'improvement',
+      pct: 44,
+      savedMs: 115,
+      dzMs: null,
+      internetMs: null,
+    })
   })
 
   // The point of the whole suppression chain: a contracted route is carried by
@@ -328,8 +351,8 @@ describe('summariseMatrix', () => {
   it('lets a withheld route count as carried but not move any average', () => {
     const s = summariseMatrix([
       { label: 'LON↔TYO', cell: improvement(20, 40) },
-      { label: 'FRA↔OHIO', cell: { kind: 'withheld' } },
-      { label: 'DUB↔FRA', cell: { kind: 'not-measured' } },
+      { label: 'FRA↔OHIO', cell: { kind: 'withheld', dzMs: 90, internetMs: 100 } },
+      { label: 'DUB↔FRA', cell: { kind: 'not-measured', dzMs: null } },
     ])
     expect(s.withPath).toBe(3)
     expect(s.avgPct).toBe(20)
@@ -346,6 +369,8 @@ describe('summariseMatrix', () => {
     expect(s.avgPct).toBeNull()
     expect(s.avgSavedMs).toBeNull()
     expect(s.best).toBeNull()
+    expect(s.avgRtt).toBeNull()
+    expect(s.lowestRtt).toBeNull()
   })
 
   it('reports a slower route honestly rather than hiding it', () => {
@@ -385,7 +410,7 @@ describe('summariseMatrix pending and failed', () => {
   // to gate on even when some pairs did resolve.
   it('reports the unknowns alongside the pairs that did resolve', () => {
     const s = summariseMatrix([
-      { label: 'LON↔TYO', cell: { kind: 'improvement', pct: 20, savedMs: 40 } },
+      { label: 'LON↔TYO', cell: improvement(20, 40) },
       { label: 'DUB↔FRA', cell: { kind: 'error' } },
       { label: 'DUB↔LON', cell: { kind: 'loading' } },
     ])
@@ -397,11 +422,31 @@ describe('summariseMatrix pending and failed', () => {
 
   it('reports no unknowns on a fully resolved grid', () => {
     const s = summariseMatrix([
-      { label: 'LON↔TYO', cell: { kind: 'improvement', pct: 20, savedMs: 40 } },
+      { label: 'LON↔TYO', cell: improvement(20, 40) },
       { label: 'DUB↔ZRH', cell: { kind: 'unavailable', note: null } },
     ])
     expect(s.pending).toBe(0)
     expect(s.failed).toBe(0)
+  })
+})
+
+describe('summariseMatrix RTT', () => {
+  // Averaging a contracted figure in would state a commitment as a measurement.
+  it('averages measured DoubleZero RTT, including unmeasured-internet pairs but not withheld ones', () => {
+    const s = summariseMatrix([
+      { label: 'NYC↔TYO', cell: improvement(16, 26.7, 137.67, 164.36) },
+      { label: 'CHI↔NYC', cell: { kind: 'not-measured', dzMs: 20 } },
+      { label: 'CMH↔TYO', cell: { kind: 'withheld', dzMs: 5, internetMs: 150 } },
+      { label: 'CHI↔TYO', cell: { kind: 'error' } },
+      { label: 'CHI↔CMH', cell: { kind: 'loading' } },
+    ])
+    expect(s.avgRtt).toEqual({
+      dzMs: (137.67 + 20) / 2,
+      internetMs: 164.36,
+      pairs: 2,
+      internetPairs: 1,
+    })
+    expect(s.lowestRtt).toEqual({ label: 'CHI↔NYC', dzMs: 20, internetMs: null })
   })
 })
 
@@ -564,17 +609,46 @@ describe('toggleCell', () => {
 
 describe('isComparable', () => {
   it('opens a cell that carries figures', () => {
-    expect(isComparable({ kind: 'improvement', pct: 20, savedMs: 40 })).toBe(true)
-    expect(isComparable({ kind: 'withheld' })).toBe(true)
+    for (const view of ['savings', 'rtt'] as const) {
+      expect(isComparable(improvement(20, 40), view)).toBe(true)
+      expect(isComparable({ kind: 'withheld', dzMs: 90, internetMs: 100 }, view)).toBe(true)
+    }
+  })
+
+  it('opens an unmeasured-internet cell only in the RTT view, and only with an RTT', () => {
+    expect(isComparable({ kind: 'not-measured', dzMs: 20 }, 'rtt')).toBe(true)
+    expect(isComparable({ kind: 'not-measured', dzMs: 20 }, 'savings')).toBe(false)
+    expect(isComparable({ kind: 'not-measured', dzMs: null }, 'rtt')).toBe(false)
   })
 
   it('refuses a cell with nothing to compare, and one whose state is not known yet', () => {
-    expect(isComparable({ kind: 'unavailable', note: null })).toBe(false)
-    expect(isComparable({ kind: 'no-path' })).toBe(false)
-    expect(isComparable({ kind: 'not-measured' })).toBe(false)
-    expect(isComparable({ kind: 'loading' })).toBe(false)
-    expect(isComparable({ kind: 'error' })).toBe(false)
-    expect(isComparable({ kind: 'diagonal' })).toBe(false)
+    for (const view of ['savings', 'rtt'] as const) {
+      expect(isComparable({ kind: 'unavailable', note: null }, view)).toBe(false)
+      expect(isComparable({ kind: 'no-path' }, view)).toBe(false)
+      expect(isComparable({ kind: 'loading' }, view)).toBe(false)
+      expect(isComparable({ kind: 'error' }, view)).toBe(false)
+      expect(isComparable({ kind: 'diagonal' }, view)).toBe(false)
+    }
+  })
+})
+
+describe('view in the URL', () => {
+  it('defaults to savings, so links shared before the RTT view keep their meaning', () => {
+    expect(parseView(null)).toBe('savings')
+    expect(parseView('bogus')).toBe('savings')
+    expect(parseView('rtt')).toBe('rtt')
+  })
+
+  // setUrl replaces the whole query, so a cell click must not drop the view.
+  it('keeps the view alongside cities and cells, and omits the default', () => {
+    const cities = [{ id: 'nyc' }, { id: 'tyo' }]
+    const cells = [{ from: 'nyc', to: 'tyo' }]
+    expect(routeParams(cities, cells, 'rtt')).toEqual({
+      cities: 'nyc,tyo',
+      cell: 'nyc-tyo',
+      view: 'rtt',
+    })
+    expect(routeParams(cities, [], 'savings')).toEqual({ cities: 'nyc,tyo' })
   })
 })
 
