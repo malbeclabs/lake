@@ -196,6 +196,36 @@ func TestHyperliquidScoreboard_PayloadCarriesNoFeedNames(t *testing.T) {
 	}
 }
 
+// Asserted on the serialised bytes, which is what the cache stores and the browser gets.
+// Without next_refresh_at the page never shows the stale warning; without markets, a page
+// loaded before By Market was removed crashes on markets.map.
+func TestHyperliquidScoreboard_PayloadCarriesScheduleAndEmptyMarkets(t *testing.T) {
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	createObservationsTable(t, api)
+	obs := newObserver(t, api)
+	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "BTC", 1, 10)
+	obs("tyo", "hydromancer_bbo", "BTC", 1, 50)
+
+	fetched, err := api.FetchHyperliquidScoreboardData(t.Context())
+	require.NoError(t, err)
+	raw, err := json.Marshal(fetched)
+	require.NoError(t, err)
+
+	var body struct {
+		AsOf          time.Time         `json:"as_of"`
+		NextRefreshAt *time.Time        `json:"next_refresh_at"`
+		Markets       []json.RawMessage `json:"markets"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &body))
+
+	require.NotNil(t, body.NextRefreshAt)
+	assert.True(t, body.NextRefreshAt.After(body.AsOf))
+	assert.Equal(t, handlers.HyperliquidScoreboardRefreshHourUTC,
+		time.Duration(body.NextRefreshAt.Hour())*time.Hour)
+	assert.Contains(t, string(raw), `"markets":[]`, "must be an empty array, not null or absent")
+	assert.Empty(t, body.Markets)
+}
+
 func TestHyperliquidScoreboard_CompetitorsNumberedByMedianAscending(t *testing.T) {
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	createObservationsTable(t, api)
@@ -216,75 +246,6 @@ func TestHyperliquidScoreboard_CompetitorsNumberedByMedianAscending(t *testing.T
 	assert.InDelta(t, 20.0, byLabel["Competitor 1"], 0.01)
 	assert.InDelta(t, 40.0, byLabel["Competitor 2"], 0.01)
 	assert.InDelta(t, 60.0, byLabel["Competitor 3"], 0.01)
-}
-
-// The market categories and the site x feed matrix come from one scan, keyed apart by the
-// CUBE's category dimension. This pins that the fold kept them separable: a symbol with no
-// category counts in the matrix and produces no category row of its own.
-func TestHyperliquidScoreboard_MarketCategoriesComeFromTheSameScan(t *testing.T) {
-	api := apitesting.NewTestAPIBare(t, testChDB)
-	createObservationsTable(t, api)
-	obs := newObserver(t, api)
-
-	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "BTC", 1, 10) // Major crypto, won by 40ms
-	obs("tyo", "hydromancer_bbo", "BTC", 1, 50)
-
-	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "xyz:SP500", 2, 60) // Equity index, lost by 40ms
-	obs("tyo", "hydromancer_bbo", "xyz:SP500", 2, 20)
-
-	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "xyz:CL", 3, 10) // Commodities, won by 40ms
-	obs("tyo", "hydromancer_bbo", "xyz:CL", 3, 50)
-
-	resp, err := api.FetchHyperliquidScoreboardData(t.Context())
-	require.NoError(t, err)
-
-	require.EqualValues(t, 3, resp.Races, "the uncategorised symbol still races")
-	assert.InDelta(t, 66.67, resp.All.WinPct, 0.01)
-
-	byCat := map[string]handlers.HyperliquidScoreboardStat{}
-	for _, m := range resp.Markets {
-		for _, c := range m.Cats {
-			byCat[c.Name] = c.HyperliquidScoreboardStat
-		}
-	}
-	assert.InDelta(t, 100.0, byCat["Major crypto"].WinPct, 0.01)
-	assert.InDelta(t, 40.0, byCat["Major crypto"].P50Ms, 0.01)
-	assert.InDelta(t, 0.0, byCat["Equity index"].WinPct, 0.01)
-	assert.InDelta(t, -40.0, byCat["Equity index"].P50Ms, 0.01)
-
-	assert.InDelta(t, 100.0, byCat["Commodities"].WinPct, 0.01)
-
-	assert.NotContains(t, byCat, "Platform & high-beta")
-	assert.NotContains(t, byCat, "Single-name equity")
-}
-
-// A category no competitor carries has no races at all: sv keeps a row only where a competitor
-// delivered, so the CUBE has no cell for it and markets[name] was Go's zero value. Rendering
-// that printed a 0% win rate — on a public page, a claim that DoubleZero lost every race in the
-// one market it is alone in publishing.
-func TestHyperliquidScoreboard_CategoryNobodyElseCarriesIsNotShownAtZero(t *testing.T) {
-	api := apitesting.NewTestAPIBare(t, testChDB)
-	createObservationsTable(t, api)
-	obs := newObserver(t, api)
-
-	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "BTC", 1, 10)
-	obs("tyo", "hydromancer_bbo", "BTC", 1, 50)
-
-	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "xyz:CL", 2, 10)
-	obs("tyo", "tob_gcp_tyo_hl_mainnet1", "xyz:BRENTOIL", 3, 10)
-
-	resp, err := api.FetchHyperliquidScoreboardData(t.Context())
-	require.NoError(t, err)
-
-	shown := map[string]float64{}
-	for _, m := range resp.Markets {
-		for _, c := range m.Cats {
-			shown[c.Name] = c.WinPct
-		}
-	}
-	assert.Contains(t, shown, "Major crypto", "a raced category is still reported")
-	assert.NotContains(t, shown, "Commodities",
-		"nobody raced these, so 0% would assert a loss that never happened")
 }
 
 func TestHyperliquidScoreboard_RecurringStateIsOneRacePerEmission(t *testing.T) {
@@ -377,21 +338,15 @@ func TestHyperliquidScoreboard_CarriedInstrumentsAreCountedFromTheLiveFleet(t *t
 		`, db, symbol, time.Now().Add(-recvAgo).UnixNano())))
 	}
 
-	write("BTC", 10*time.Second)       // native, live
-	write("xyz:SP500", 10*time.Second) // HIP-3, live
-	write("xyz:NVDA", 30*time.Minute)  // HIP-3, quiet for longer than the sample
+	write("BTC", 10*time.Second)       // live
+	write("xyz:SP500", 10*time.Second) // live
+	write("xyz:NVDA", 30*time.Minute)  // quiet for longer than the sample
 
 	resp, err := api.FetchHyperliquidScoreboardData(t.Context())
 	require.NoError(t, err)
 
-	byMarket := map[string]int{}
-	for _, m := range resp.Markets {
-		byMarket[m.Name] = m.Carried
-	}
-	assert.Equal(t, 1, byMarket["Native Perpetuals"])
-	assert.Equal(t, 1, byMarket["HIP-3 Builder DEX Perpetuals"],
+	assert.Equal(t, 2, resp.Instruments,
 		"an instrument quiet for longer than the sample is not counted — the known cost of the narrow window")
-	assert.Equal(t, 2, resp.Instruments)
 }
 
 // A probe that could not run is not a table that is not there, and the difference is a day of
