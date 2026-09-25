@@ -36,7 +36,8 @@ import (
 // v3: `publisher_source_ip` added, and the lane grain is the channel instance with it.
 // v4: `gap_episodes` added, the per-instance loss timeline.
 // v5: the per-instrument sequence loss counters added.
-const kalshiL2CoverageCacheKey = "kalshi_l2_coverage:v5"
+// v6: `sequence_loss_unavailable` added, so a failed loss query is legible rather than a zero.
+const kalshiL2CoverageCacheKey = "kalshi_l2_coverage:v6"
 
 // kalshiL2WindowMinutes is the interval the rates are averaged over. Rates are derived from
 // it, so changing it changes nothing about correctness.
@@ -307,6 +308,18 @@ type KalshiL2CoverageResponse struct {
 	GeneratedAt   time.Time      `json:"generated_at"`
 	WindowMinutes int            `json:"window_minutes"`
 	Lanes         []KalshiL2Lane `json:"lanes"`
+
+	// SequenceLossUnavailable says the per-instrument loss query failed for this payload, so
+	// every lane's UpdatesReceived/UpdatesMissing are zero because nothing was read — not
+	// because nothing was lost.
+	//
+	// It exists because those two states are indistinguishable in the counters themselves, and
+	// reading the second one is the exact false negative this counter was added to end: the
+	// lanes still carry their gap markers, so a consumer grading on what is present reports a
+	// clean series for every lane the markers happened to miss. The failure is a WARN and the
+	// payload is still written, deliberately — the loss counters are additive to a view whose
+	// subject is coverage — which is what makes the flag the only way out of the page.
+	SequenceLossUnavailable bool `json:"sequence_loss_unavailable,omitempty"`
 }
 
 func emptyKalshiL2Coverage() *KalshiL2CoverageResponse {
@@ -500,9 +513,10 @@ func (a *API) FetchKalshiL2Coverage(ctx context.Context) (*KalshiL2CoverageRespo
 	// counters and not the page: they are additive to a view whose subject is coverage, and a lane
 	// with a zero denominator reports no rate rather than a rate of zero.
 	sequenceLoss, err := a.fetchKalshiL2SequenceLoss(ctx)
+	lossUnavailable := false
 	if err != nil {
 		slog.Warn("kalshi l2 coverage: sequence loss unavailable", "error", err)
-		sequenceLoss = nil
+		sequenceLoss, lossUnavailable = nil, true
 	}
 
 	rows, err := a.envDB(ctx).Query(ctx, q)
@@ -513,6 +527,7 @@ func (a *API) FetchKalshiL2Coverage(ctx context.Context) (*KalshiL2CoverageRespo
 
 	windowSecs := float64(kalshiL2WindowMinutes * 60)
 	resp := emptyKalshiL2Coverage()
+	resp.SequenceLossUnavailable = lossUnavailable
 	type ordered struct {
 		lane  KalshiL2Lane
 		order int

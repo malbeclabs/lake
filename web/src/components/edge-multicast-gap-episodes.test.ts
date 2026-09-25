@@ -390,6 +390,36 @@ describe('sequenceVerdict', () => {
     expect(v.tone).toBe('good')
   })
 
+  it('says the count is missing rather than painting a failed query green', () => {
+    // fetchKalshiL2SequenceLoss only WARNs, and the coverage payload is written without it, so
+    // every market-by-price lane arrives at 0/0 with its gap markers intact. Grading on what is
+    // present then falls back to the marker alone and prints the greenest badge on the page over
+    // the one state where nothing was measured.
+    const v = sequenceVerdict(
+      health([
+        instance({ gaps_measured: true, updates_received: 0, updates_missing: 0, loss_unavailable: true }),
+        instance({ gaps_measured: true, updates_received: 0, updates_missing: 0, loss_unavailable: true, channel_id: 2 }),
+      ]),
+      900,
+    )
+    expect(v.label).toBe('not counted')
+    expect(v.tone).toBe('muted')
+    expect(v.detail).toBe('×2')
+  })
+
+  it('does not call a failed query advancing either', () => {
+    // 'advancing' is a statement about a plane that never checks for loss. This plane checks and
+    // this time did not, which is a different sentence and a state that should be fixed.
+    const v = sequenceVerdict(
+      health(
+        [instance({ gaps_measured: false, updates_received: undefined, loss_unavailable: true })],
+        { gaps_unmeasured: 1 },
+      ),
+      900,
+    )
+    expect(v.label).toBe('not counted')
+  })
+
   it('reads a stall before it reads the counters', () => {
     // A series carrying no new values has no count to report, and "0 lost" over a dead window is
     // the false clean bill of health this column exists to withhold.

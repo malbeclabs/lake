@@ -265,6 +265,15 @@ export function sequenceVerdict(
       return { label: 'gapped', tone: 'bad', detail: `${sequence.gapped}/${total}` }
     }
     const detail = total > 1 ? `×${total}` : ''
+    // **The count was supposed to exist and does not.** A failed per-instrument loss query
+    // leaves every market-by-price lane at 0/0 with its gap markers intact, so the verdict falls
+    // back to the marker alone and this branch would otherwise print the greenest thing on the
+    // page over the one state where nothing was measured — the marker-only false negative the
+    // unit change exists to end. It outranks both words below: those describe what a plane can
+    // measure, this is a plane that can and this time did not.
+    if (sequence.instances.some((i) => i.loss_unavailable)) {
+      return { label: 'not counted', tone: 'muted', detail }
+    }
     // **No magnitude is not the same as no reading**, and collapsing the two was a regression:
     // every top-of-book line read muted, including the ones the recorder's own gap markers had
     // checked and found clean. Those instances carry gaps_measured: true and no update counters,

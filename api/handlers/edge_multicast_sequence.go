@@ -200,6 +200,18 @@ type EdgeMulticastChannelInstance struct {
 	// measurement is in `edge_multicast_observations.go`.
 	GapsMeasured bool `json:"gaps_measured"`
 
+	// LossUnavailable says the counters above are zero because the per-instrument loss query
+	// failed, not because nothing was lost. Only the level-grain leg can set it, and it sets it
+	// on every instance of a payload whose loss query failed.
+	//
+	// Without it that failure is invisible and reads as the best possible news: the lanes keep
+	// their gap markers, so the verdict falls back to the marker alone and the badge prints a
+	// green zero — the marker-only false negative this column's unit change exists to end,
+	// reappearing on the one path where nothing was measured at all. The loss query is a WARN
+	// and the coverage payload is still written without it, so nothing else on the page can
+	// tell.
+	LossUnavailable bool `json:"loss_unavailable,omitempty"`
+
 	// CaptureSourceQuiet marks a stalled series whose silence belongs to the capture source
 	// rather than to this path: every other path recording that source at the same node went
 	// quiet with it. Set by demoteEdgeMulticastQuietCaptureSources, which documents the rule.
@@ -619,6 +631,9 @@ func (a *API) foldKalshiL2Coverage(ctx context.Context, captureSources edgeMulti
 			LastSeen:               lane.LastSeen.UTC(),
 			Status:                 edgeMulticastSequenceStatus(lane.GapBooks, lane.UpdatesMissing, lane.LastSeen, coverage.GeneratedAt),
 			GapsMeasured:           true,
+			// The verdict above is graded on the marker alone whenever this is set, because the
+			// other counter was never read. It is the reading the badge has to withhold.
+			LossUnavailable: coverage.SequenceLossUnavailable,
 		}
 		if out[groupPK] == nil {
 			out[groupPK] = &EdgeMulticastSequenceHealth{}

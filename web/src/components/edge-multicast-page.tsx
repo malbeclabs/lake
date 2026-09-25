@@ -167,9 +167,9 @@ const SEQUENCE_TONE: Record<SequenceVerdict['tone'], string> = {
   good: 'bg-emerald-500/15 text-emerald-500',
   bad: 'bg-red-500/15 text-red-500',
   warn: 'bg-amber-500/15 text-amber-500',
-  // The top-of-book plane, where the stored rows cannot be counted for holes. Outlined rather than
-  // filled, so a glance down the column cannot read it as the clean bill of health the
-  // market-by-price rows carry.
+  // No magnitude behind the badge: the top-of-book plane, whose stored rows cannot be counted for
+  // holes, and a refresh whose loss query failed. Outlined rather than filled, so a glance down the
+  // column cannot read either as the clean bill of health the market-by-price rows carry.
   muted: 'border border-muted-foreground/40 text-muted-foreground',
 }
 
@@ -1047,6 +1047,14 @@ function sequenceInstanceLine(i: EdgeMulticastChannelInstance): string {
   if (i.capture_source_quiet) {
     return `${head} — quiet, and so is every other path on this source: the venue, not this path`
   }
+  // Said before anything that reads a counter: these are zero because the query that fills them
+  // failed, and every sentence below would report that zero as a reading.
+  if (i.loss_unavailable) {
+    return (
+      `${head}, ${i.resets.toLocaleString()} resets` +
+      ` — sequence loss not counted this refresh: the per-instrument query failed, so the verdict is graded on the gap marker alone`
+    )
+  }
   // Without a gap marker there is no book-level fault count and no per-instrument numbering to
   // count holes in, so the line says what was NOT measured instead of printing zeros that would
   // read as findings.
@@ -1579,7 +1587,11 @@ function UnattributedSequenceCell({
           // is the one thing these numbers cannot establish.
           `${c.missing.toLocaleString()} of ${c.expected.toLocaleString()} updates lost on one path or another` +
           (c.expected >= SEQUENCE_LOSS_MIN_UPDATES ? ` — ${c.ppm.toFixed(1)} ppm` : '') +
-          '\nNo second in which every path was losing at once, so the redundancy covered it and the feed delivered.'
+          // **What was checked, not what follows from it.** The all-paths intersection is built
+          // from gap-marker SECONDS, so updates lost on both paths with no marker written — the
+          // case this column now grades on — never reach it. "The feed delivered" is a stronger
+          // claim than the measurement behind it supports.
+          '\nNo second in which every path was un-anchored, which is what the all-paths check measures. It is built from gap markers, so loss on both paths without one does not reach it.'
         }
         className="whitespace-pre-line"
       >

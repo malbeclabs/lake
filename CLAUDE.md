@@ -592,6 +592,15 @@ quiet default, the same call this file records for the shreds `thin` share thres
 belongs to the badge, which is why the badge stopped naming a state and started saying how much.
 `TestEdgeMulticastPublisherHealth_AnyRecordedLossIsAFault` pins both halves.
 
+**A failed loss query is a state of its own, not a zero.** `fetchKalshiL2SequenceLoss` is additive
+to a view whose subject is coverage, so its failure is a WARN and `kalshi_l2_coverage` is written
+without it — leaving every lane at 0/0 with its gap markers intact. Graded on what is present that
+is the marker-only rule again, and the badge would print its greenest reading over the one refresh
+where nothing was measured. So the payload carries `sequence_loss_unavailable`, the instances carry
+`loss_unavailable`, and the badge reads `not counted` over them. It is deliberately a different word
+from `advancing`: that one is a plane that never checks for loss, this is a plane that checks and
+this time did not.
+
 `stalled` stays a **time** verdict and is read before either counter. A series carrying no new values
 has no count to report, and "0 lost" over a dead window is the clean bill of health this column
 exists to withhold. Time decides *when* to call a series dead; it never sizes the loss — which is
