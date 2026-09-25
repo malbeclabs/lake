@@ -235,4 +235,25 @@ describe('ConformanceCell with no verdict of its own', () => {
     cell(conformance({ verdict: 'ungraded', must: 0, passes: 0, graded: 1000 }))
     expect(screen.getByText('ungraded')).toBeInTheDocument()
   })
+
+  // The suppressed verdict must not take the group's own counts down with it. `exempted` and
+  // `unattributed` belong to the group and to no line, and this cell is the only place on the
+  // page that reports either — so a bare dash here hides them completely.
+  it('keeps the group-only counts reachable when the verdict is suppressed', () => {
+    const { container } = cell(
+      conformance({ verdict: '', must: 0, passes: 0, graded: 0, exempted: 7, unattributed: 2 }),
+    )
+    const dash = screen.getByText('—')
+    expect(dash).toBeInTheDocument()
+    // Radix marks a tooltip trigger with data-state; a bare dash carries none.
+    expect(dash).toHaveAttribute('data-state')
+    expect(container.querySelector('[data-state]')).not.toBeNull()
+  })
+
+  // A group no validator covers is a different absence and stays a plain dash: there is no entry
+  // behind it and nothing to say about one.
+  it('leaves a group with no validator as a bare dash', () => {
+    cell(undefined)
+    expect(screen.getByText('—')).not.toHaveAttribute('data-state')
+  })
 })

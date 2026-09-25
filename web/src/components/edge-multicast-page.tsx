@@ -640,6 +640,14 @@ function conformanceTooltip(c: EdgeMulticastConformance, asOfAge?: number): stri
   const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`
 
   switch (c.verdict) {
+    case '':
+      // The group graded nothing of its own because every finding named a path. Said plainly,
+      // because the alternative reading of a blank cell — "this feed is fine" — is the one thing
+      // it must never mean. It is also not `ungraded`: something WAS graded, on the lines below.
+      lines.push(
+        'This group has no verdict of its own: every finding named the publisher that caused it, so the verdicts are on the publisher lines below. Expand Publishers to read them. That is not a pass.',
+      )
+      break
     case 'violating':
       lines.push(`${plural(c.must, 'must-severity violation')} in the window.`)
       break
@@ -734,13 +742,34 @@ export function ConformanceCell({
   onToggle: () => void
   panelId: string
 }) {
-  // No entry at all, or an entry carrying no verdict of its own. The second is the group row of
-  // a group whose every finding named a publisher: the lines below hold the verdicts and the row
-  // has nothing to add at its own grain. Both render as an absence, which is what they are —
-  // never as a pass.
-  if (!conformance || !conformance.verdict) {
+  // Nothing here at all: no validator covers this feed. A bare dash, with nothing to say about it.
+  if (!conformance) {
     return <span className="text-muted-foreground">—</span>
   }
+
+  // An entry carrying no verdict of its own — the group row of a group whose every finding named
+  // a publisher. Also a dash, because the row has nothing to assert at its own grain, but NOT a
+  // bare one: the entry still carries the counts that belong to the group and to no line, and
+  // `exempted` and `unattributed` are reported nowhere else on the page. Returning early here
+  // made the line this tooltip gained for `unattributed` unreachable in the one state that
+  // produces it.
+  //
+  // The dotted underline is what says there is something to hover; without it the two dashes are
+  // pixel-identical and the counts are as hidden as they were before.
+  if (!conformance.verdict) {
+    return (
+      <Tooltip content={conformanceTooltip(conformance, asOfAge)} className="whitespace-pre-line">
+        <span
+          className={`text-muted-foreground underline decoration-dotted decoration-muted-foreground/40 underline-offset-4${
+            payloadStale(asOfAge) ? ' opacity-50' : ''
+          }`}
+        >
+          —
+        </span>
+      </Tooltip>
+    )
+  }
+
   const stale = payloadStale(asOfAge)
   const badge = (
     <span

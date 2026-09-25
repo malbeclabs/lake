@@ -819,6 +819,11 @@ above lines reading `conforming`. The verdict is suppressed when the group grade
 **and** a publisher of it did; where no publisher graded anything either, the absence is real and
 `ungraded` stands.
 
+That dash is **not** the same as the one a group no validator covers gets. It still carries the
+counts that belong to the group and to no line — `exempted` and `unattributed`, which are reported
+nowhere else on the page — so it keeps its tooltip and is underlined to say so. Returning early on
+an empty verdict hid both in the one state that produces them.
+
 Three things stay on the group row whatever the label says. **Channels graded** describe the
 group's coverage, not one path's. **Exemptions** are keyed on `(stream, rule)` and are a waiver for
 the feed, so counting them per line would make one waiver read differently on each path. And

@@ -494,6 +494,10 @@ is not `ungraded`. Grading it anyway put "nothing reached a verdict" directly ab
 its own **and** a publisher of it did. Where no publisher graded anything either, the absence is
 real and `ungraded` stands.
 
+The two dashes are not interchangeable. The one above keeps its tooltip and an underline to say
+so, because the entry behind it still carries `exempted` and `unattributed` — counts that belong
+to the group and to no line, and that nothing else on the page reports.
+
 The badge colours follow the ranking. `violating` red, `should` amber, `conforming` filled green —
 and `ungraded` and `advisory` are both **outlined rather than filled**, the treatment `advancing`
 already uses one column over, so a glance down the column cannot read either as the same clean bill
