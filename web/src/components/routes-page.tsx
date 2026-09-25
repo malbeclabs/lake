@@ -318,6 +318,26 @@ export function formatCells(cells: SelectedCell[]): string {
   return cells.map((c) => formatRouteToken(c.from, c.to)).join(',')
 }
 
+/** What a cell leads with: the saving against the internet (default) or DoubleZero's own RTT. */
+export type MatrixView = 'savings' | 'rtt'
+
+export function parseView(raw: string | null): MatrixView {
+  return raw === 'rtt' ? 'rtt' : 'savings'
+}
+
+/** The whole query string for a view, so a shared link reproduces it exactly. */
+export function routeParams(
+  cities: SelectedCity[],
+  cells: SelectedCell[],
+  view: MatrixView,
+): Record<string, string> {
+  const params: Record<string, string> = {}
+  if (cities.length) params.cities = formatCities(cities)
+  if (cells.length) params.cell = formatCells(cells)
+  if (view !== 'savings') params.view = view
+  return params
+}
+
 /**
  * Adds or removes one cell. Removal matches on the pair, so clicking the mirror
  * of a selected cell takes that route out rather than adding a second card for
@@ -360,6 +380,8 @@ export function meshPairs<T>(items: T[]): [T, T][] {
  *
  * `loading` and `error` are separate again: a failed request must never render
  * as DoubleZero having no route.
+ *
+ * `dzMs` is the DoubleZero mean RTT; on `withheld` it is the contracted figure.
  */
 export type MatrixCell =
   | { kind: 'diagonal' }
@@ -367,9 +389,15 @@ export type MatrixCell =
   | { kind: 'loading' }
   | { kind: 'error' }
   | { kind: 'no-path' }
-  | { kind: 'not-measured' }
-  | { kind: 'withheld' }
-  | { kind: 'improvement'; pct: number; savedMs: number | null }
+  | { kind: 'not-measured'; dzMs: number | null }
+  | { kind: 'withheld'; dzMs: number | null; internetMs: number | null }
+  | {
+      kind: 'improvement'
+      pct: number
+      savedMs: number | null
+      dzMs: number | null
+      internetMs: number | null
+    }
 
 /**
  * Classifies one cell. Every suppression decision is read off `routeFigures` —
@@ -396,17 +424,30 @@ export function cellFor(
   if (latency.measuredImprovementPct === undefined) return { kind: 'loading' }
 
   const figures = routeFigures(latency)
-  if (!figures.internetMeasured) return { kind: 'not-measured' }
-  if (figures.improvementPct === null) return { kind: 'withheld' }
-  return { kind: 'improvement', pct: figures.improvementPct, savedMs: figures.savedMs }
+  const measured = latency.measuredLatencyMs ?? 0
+  const dzMs = measured > 0 ? measured : null
+  const internetMs = figures.internetMeasured ? latency.internetLatencyMs : null
+  // Ahead of not-measured: that kind's `dzMs` is shown as a measurement.
+  if (latency.partiallyCommitted === true) return { kind: 'withheld', dzMs, internetMs }
+  if (internetMs === null) return { kind: 'not-measured', dzMs }
+  if (figures.improvementPct === null) return { kind: 'withheld', dzMs, internetMs }
+  return {
+    kind: 'improvement',
+    pct: figures.improvementPct,
+    savedMs: figures.savedMs,
+    dzMs,
+    internetMs,
+  }
 }
 
 /**
- * Whether a cell can be opened as a card. N/A, no path and not measured have
- * nothing to compare; loading and error are not yet known to have anything, and
- * while either is on screen the grid holds no figures to pick between anyway.
+ * Whether a cell can be opened as a card. N/A and no path have nothing to show;
+ * not measured has nothing to compare, but in the RTT view it has DoubleZero's
+ * figure. Loading and error are not yet known to have anything, and while either
+ * is on screen the grid holds no figures to pick between anyway.
  */
-export function isComparable(cell: MatrixCell): boolean {
+export function isComparable(cell: MatrixCell, view: MatrixView): boolean {
+  if (cell.kind === 'not-measured') return view === 'rtt' && cell.dzMs !== null
   return cell.kind === 'improvement' || cell.kind === 'withheld'
 }
 
@@ -434,12 +475,23 @@ export type MatrixSummary = {
   avgSavedMs: number | null
   avgPct: number | null
   best: { label: string; pct: number; savedMs: number | null } | null
+  /**
+   * `dzMs` is over every pair with a measured DoubleZero RTT; `both` compares the
+   * two networks over only the pairs measured on both sides.
+   */
+  avgRtt: {
+    dzMs: number
+    pairs: number
+    both: { dzMs: number; internetMs: number; pairs: number } | null
+  } | null
+  lowestRtt: { label: string; dzMs: number; internetMs: number | null } | null
 }
 
 /**
  * Totals for the KPI cards. Only `improvement` cells carry a percentage, so a
  * withheld or unmeasured pair moves no average and can never be the best route —
  * it is counted as carried by DoubleZero, which is a fact, and nothing more.
+ * The RTT totals likewise leave out a withheld pair, whose figure is contracted.
  *
  * `pending` and `failed` are counted separately and never folded into
  * `withPath`, because the same collapse that would misreport one cell misreports
@@ -457,6 +509,22 @@ export function summariseMatrix(entries: { label: string; cell: MatrixCell }[]):
   const count = (...kinds: MatrixCell['kind'][]) =>
     entries.filter((e) => kinds.includes(e.cell.kind)).length
 
+  const rtt = entries.flatMap((e) =>
+    (e.cell.kind === 'improvement' || e.cell.kind === 'not-measured') && e.cell.dzMs !== null
+      ? [
+          {
+            label: e.label,
+            dzMs: e.cell.dzMs,
+            internetMs: e.cell.kind === 'improvement' ? e.cell.internetMs : null,
+          },
+        ]
+      : [],
+  )
+  const both = rtt.flatMap((e) => (e.internetMs !== null ? [{ ...e, internetMs: e.internetMs }] : []))
+  const avgDzMs = mean(rtt.map((e) => e.dzMs))
+  const bothDzMs = mean(both.map((e) => e.dzMs))
+  const bothInternetMs = mean(both.map((e) => e.internetMs))
+
   return {
     pairs: entries.length,
     withPath: count('improvement', 'withheld', 'not-measured'),
@@ -466,6 +534,21 @@ export function summariseMatrix(entries: { label: string; cell: MatrixCell }[]):
     avgPct: mean(improved.map((e) => e.pct)),
     best: improved.reduce<MatrixSummary['best']>(
       (best, e) => (best === null || e.pct > best.pct ? e : best),
+      null,
+    ),
+    avgRtt:
+      avgDzMs === null
+        ? null
+        : {
+            dzMs: avgDzMs,
+            pairs: rtt.length,
+            both:
+              bothDzMs === null || bothInternetMs === null
+                ? null
+                : { dzMs: bothDzMs, internetMs: bothInternetMs, pairs: both.length },
+          },
+    lowestRtt: rtt.reduce<MatrixSummary['lowestRtt']>(
+      (low, e) => (low === null || e.dzMs < low.dzMs ? e : low),
       null,
     ),
   }
@@ -757,17 +840,15 @@ export function RoutesPage() {
     [searchParams, cities],
   )
 
+  const view = parseView(searchParams.get('view'))
+
   const setUrl = useCallback(
-    (nextCities: SelectedCity[], cells: SelectedCell[]) => {
-      const params: Record<string, string> = {}
-      if (nextCities.length) params.cities = formatCities(nextCities)
-      if (cells.length) params.cell = formatCells(cells)
-      // Replace the whole query so a shared link reproduces the view exactly, and
-      // replace the history entry so Back leaves the page rather than walking
+    (nextCities: SelectedCity[], cells: SelectedCell[], nextView: MatrixView = view) => {
+      // Replace the history entry so Back leaves the page rather than walking
       // back through every intermediate selection.
-      setSearchParams(params, { replace: true })
+      setSearchParams(routeParams(nextCities, cells, nextView), { replace: true })
     },
-    [setSearchParams],
+    [setSearchParams, view],
   )
 
   // --- Data ----------------------------------------------------------------
@@ -1070,13 +1151,37 @@ export function RoutesPage() {
           </div>
         ) : (
           <>
-            <SummaryCards summary={summary} locations={axis.length} />
+            <div className="mt-4 flex items-center gap-1 bg-muted rounded-md p-1 w-fit">
+              {(
+                [
+                  ['savings', 'Improvement'],
+                  ['rtt', 'Round-trip time'],
+                ] as const
+              ).map(([v, label]) => (
+                <button
+                  key={v}
+                  onClick={() => setUrl(cities, selectedCells, v)}
+                  aria-pressed={view === v}
+                  className={cn(
+                    'px-3 py-1 text-xs rounded transition-colors',
+                    view === v
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <SummaryCards summary={summary} locations={axis.length} view={view} />
 
             <LatencyMatrix
               axis={axis}
               grid={grid}
               comparedKeys={comparedKeys}
               onPick={pickCell}
+              view={view}
             />
 
             {/* Ctrl-click is a right-click on macOS — Chrome and Safari raise a
@@ -1094,7 +1199,7 @@ export function RoutesPage() {
                 ` ${cellsRequested} routes asked for; showing ${selectedCells.length}.`}
             </p>
 
-            <Legend />
+            <Legend view={view} />
 
             <OffNetNotes axis={axis} />
 
@@ -1140,12 +1245,25 @@ function shortLabel(id: string): string {
   return (OFF_NET_ENDPOINTS.find((e) => e.id === id)?.short ?? id).toUpperCase()
 }
 
+/** Negative is DoubleZero being slower: "2.0 ms added", never "-2.0 ms saved". */
+function savedPhrase(ms: number): string {
+  return `${Math.abs(ms).toFixed(1)} ms ${ms < 0 ? 'added' : 'saved'}`
+}
+
 /** `-4.0` reads "4.0% slower", never "-4.0% faster". */
 function fasterPhrase(pct: number): string {
   return `${Math.abs(pct).toFixed(1)}% ${pct < 0 ? 'slower' : 'faster'}`
 }
 
-function SummaryCards({ summary, locations }: { summary: MatrixSummary; locations: number }) {
+function SummaryCards({
+  summary,
+  locations,
+  view,
+}: {
+  summary: MatrixSummary
+  locations: number
+  view: MatrixView
+}) {
   // Three of the four cards are claims about measurements. While any pair's
   // state is unknown they state the unknown instead, because a request that
   // failed would otherwise total to a confident "0 pairs on DoubleZero".
@@ -1157,6 +1275,7 @@ function SummaryCards({ summary, locations }: { summary: MatrixSummary; location
         : null
   const avgSlower = (summary.avgPct ?? 0) < 0
   const bestSaved = summary.best?.savedMs ?? null
+  const { avgRtt, lowestRtt } = summary
 
   const cards: { label: string; value: string; lines: string[] }[] = [
     {
@@ -1171,29 +1290,61 @@ function SummaryCards({ summary, locations }: { summary: MatrixSummary; location
       value: unknown ? '—' : `${summary.withPath} pairs`,
       lines: [unknown ?? 'where DoubleZero has a path'],
     },
-    {
-      label: avgSlower ? 'Average slower' : 'Average faster',
-      value: unknown || summary.avgSavedMs === null ? '—' : `${Math.abs(summary.avgSavedMs).toFixed(1)} ms`,
-      lines: [
-        unknown ??
-          (summary.avgPct !== null
-            ? `${Math.abs(summary.avgPct).toFixed(1)}% mean ${avgSlower ? 'increase' : 'reduction'}`
-            : 'nothing to average'),
-      ],
-    },
-    {
-      label: 'Best route',
-      value: unknown || !summary.best ? '—' : fasterPhrase(summary.best.pct),
-      lines:
-        unknown || !summary.best
-          ? [unknown ?? 'no measured comparison']
-          : [
-              summary.best.label,
-              bestSaved !== null
-                ? `${Math.abs(bestSaved).toFixed(1)} ms ${bestSaved < 0 ? 'added' : 'saved'}`
-                : '',
-            ].filter(Boolean),
-    },
+    ...(view === 'rtt'
+      ? [
+          {
+            label: 'Average RTT',
+            value: unknown || !avgRtt ? '—' : fmtMs(avgRtt.dzMs, 1),
+            lines: unknown
+              ? [unknown]
+              : !avgRtt
+                ? ['nothing to average']
+                : !avgRtt.both
+                  ? ['internet not measured']
+                  : avgRtt.both.pairs === avgRtt.pairs
+                    ? [`internet ${fmtMs(avgRtt.both.internetMs, 1)}`]
+                    : [
+                        `${fmtMs(avgRtt.both.dzMs, 1)} vs ${fmtMs(avgRtt.both.internetMs, 1)} internet`,
+                        `on the ${avgRtt.both.pairs} of ${avgRtt.pairs} pairs measured on both`,
+                      ],
+          },
+          {
+            label: 'Lowest RTT',
+            value: unknown || !lowestRtt ? '—' : fmtMs(lowestRtt.dzMs, 1),
+            lines:
+              unknown || !lowestRtt
+                ? [unknown ?? 'no measured route']
+                : [
+                    lowestRtt.label,
+                    `internet ${lowestRtt.internetMs !== null ? fmtMs(lowestRtt.internetMs, 1) : 'not measured'}`,
+                  ],
+          },
+        ]
+      : [
+          {
+            label: avgSlower ? 'Average slower' : 'Average faster',
+            value:
+              unknown || summary.avgSavedMs === null
+                ? '—'
+                : `${Math.abs(summary.avgSavedMs).toFixed(1)} ms`,
+            lines: [
+              unknown ??
+                (summary.avgPct !== null
+                  ? `${Math.abs(summary.avgPct).toFixed(1)}% mean ${avgSlower ? 'increase' : 'reduction'}`
+                  : 'nothing to average'),
+            ],
+          },
+          {
+            label: 'Best route',
+            value: unknown || !summary.best ? '—' : fasterPhrase(summary.best.pct),
+            lines:
+              unknown || !summary.best
+                ? [unknown ?? 'no measured comparison']
+                : [summary.best.label, bestSaved !== null ? savedPhrase(bestSaved) : ''].filter(
+                    Boolean,
+                  ),
+          },
+        ]),
   ]
 
   return (
@@ -1241,16 +1392,36 @@ const CELL_FACTS: Record<Exclude<MatrixCell['kind'], 'improvement'>, { short: st
 /** The states the legend explains, in the order a reader meets them. */
 const LEGEND_FACTS = ['no-path', 'not-measured', 'withheld', 'unavailable'] as const
 
-function CellBody({ cell }: { cell: MatrixCell }) {
+function CellFigure({ value, sub }: { value: string; sub: string }) {
+  return (
+    <>
+      <span className="text-sm font-semibold tabular-nums">{value}</span>
+      <span className="text-[10px] text-muted-foreground tabular-nums">{sub}</span>
+    </>
+  )
+}
+
+const internetSub = (ms: number | null) => `internet ${ms !== null ? ms.toFixed(1) : '—'}`
+
+function CellBody({ cell, view }: { cell: MatrixCell; view: MatrixView }) {
+  if (view === 'rtt' && 'dzMs' in cell && cell.dzMs !== null) {
+    // The asterisk and "contracted" keep a commitment from reading as a measurement.
+    return cell.kind === 'withheld' ? (
+      <CellFigure value={`${fmtMs(cell.dzMs, 1)}*`} sub="contracted" />
+    ) : (
+      <CellFigure
+        value={fmtMs(cell.dzMs, 1)}
+        sub={internetSub(cell.kind === 'improvement' ? cell.internetMs : null)}
+      />
+    )
+  }
   switch (cell.kind) {
     case 'improvement':
       return (
-        <>
-          <span className="text-sm font-semibold tabular-nums">{cell.pct.toFixed(1)}%</span>
-          <span className="text-[10px] text-muted-foreground tabular-nums">
-            {cell.savedMs !== null ? `${cell.savedMs.toFixed(1)} ms` : '—'}
-          </span>
-        </>
+        <CellFigure
+          value={`${cell.pct.toFixed(1)}%`}
+          sub={cell.savedMs !== null ? savedPhrase(cell.savedMs) : '—'}
+        />
       )
     case 'loading':
       return <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
@@ -1267,6 +1438,17 @@ function CellBody({ cell }: { cell: MatrixCell }) {
   }
 }
 
+function rttNote(
+  cell: Extract<MatrixCell, { kind: 'improvement' | 'withheld' | 'not-measured' }>,
+  dzMs: number,
+): string {
+  const dz = `${dzMs.toFixed(2)} ms`
+  if (cell.kind === 'withheld') return `${dz} RTT on DoubleZero, contracted — ${CELL_FACTS.withheld.long}`
+  if (cell.kind === 'not-measured') return `${dz} RTT on DoubleZero — ${CELL_FACTS['not-measured'].long}`
+  const internet = cell.internetMs !== null ? `${cell.internetMs.toFixed(2)} ms` : '—'
+  return `${dz} RTT on DoubleZero, ${internet} on the public internet`
+}
+
 const CELL_BOX = 'w-24 h-14 flex flex-col items-center justify-center gap-0.5 border border-border/40'
 
 /**
@@ -1281,20 +1463,23 @@ function LatencyMatrix({
   grid,
   comparedKeys,
   onPick,
+  view,
 }: {
   axis: SelectedCity[]
   grid: { resolved: ResolvedRoute | null; cell: MatrixCell }[][]
   /** Pair keys currently compared — by pair, so both triangles of a route light up. */
   comparedKeys: Set<string>
   onPick: (cell: SelectedCell, toggle: boolean) => void
+  view: MatrixView
 }) {
   return (
     // The grid scrolls inside this box; the page body never scrolls sideways.
     <div className="mt-4 max-w-full overflow-x-auto">
       <table className="border-separate border-spacing-0">
         <caption className="caption-top text-left text-[11px] text-muted-foreground pb-2">
-          Latency on DoubleZero against the public internet, row to column: the percentage and the
-          milliseconds it saves. Negative where DoubleZero is the slower of the two.
+          {view === 'rtt'
+            ? 'Mean round-trip time on DoubleZero, row to column, with the public internet beneath it. Shading still shows how much faster DoubleZero is.'
+            : 'Latency on DoubleZero against the public internet, row to column: the percentage and the milliseconds it saves. Negative where DoubleZero is the slower of the two.'}
         </caption>
         <thead>
           <tr>
@@ -1325,7 +1510,7 @@ function LatencyMatrix({
                   return (
                     <td key={col.id} className="p-0">
                       <div className={cn(CELL_BOX, 'bg-muted/30')}>
-                        <CellBody cell={cell} />
+                        <CellBody cell={cell} view={view} />
                       </div>
                     </td>
                   )
@@ -1333,7 +1518,9 @@ function LatencyMatrix({
                 const isCompared = Boolean(resolved?.pairKey && comparedKeys.has(resolved.pairKey))
                 const picked = { from: row.id, to: col.id }
                 const note =
-                  cell.kind === 'improvement'
+                  view === 'rtt' && 'dzMs' in cell && cell.dzMs !== null
+                    ? rttNote(cell, cell.dzMs)
+                    : cell.kind === 'improvement'
                     ? `${fasterPhrase(cell.pct)} on DoubleZero`
                     : cell.kind === 'unavailable'
                       ? (cell.note ?? CELL_FACTS.unavailable.long)
@@ -1343,7 +1530,7 @@ function LatencyMatrix({
                 // pointer events, which would put this cell's title — the only
                 // place its particular reason is written, including the off-net
                 // notes — out of reach of exactly the readers who need it.
-                const inert = !isComparable(cell)
+                const inert = !isComparable(cell, view)
                 return (
                   <td key={col.id} className="p-0">
                     <button
@@ -1372,7 +1559,7 @@ function LatencyMatrix({
                         isCompared && 'outline-2 -outline-offset-2 outline-foreground',
                       )}
                     >
-                      <CellBody cell={cell} />
+                      <CellBody cell={cell} view={view} />
                     </button>
                   </td>
                 )
@@ -1418,7 +1605,7 @@ function OffNetNotes({ axis }: { axis: SelectedCity[] }) {
 }
 
 /** Swatches come from shadeFor, so the key cannot drift from the cells. */
-function Legend() {
+function Legend({ view }: { view: MatrixView }) {
   return (
     <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2 text-[11px] text-muted-foreground">
       <span className="flex items-center gap-1">
@@ -1428,11 +1615,19 @@ function Legend() {
         ))}
         40%+ faster on DoubleZero
       </span>
-      {LEGEND_FACTS.map((kind) => (
-        <span key={kind}>
-          {CELL_FACTS[kind].short} — {CELL_FACTS[kind].long}
-        </span>
-      ))}
+      {view === 'rtt' && (
+        <>
+          <span>&ldquo;internet —&rdquo; — {CELL_FACTS['not-measured'].long}</span>
+          <span>* contracted — a hop had no recent samples, so this is its contracted latency</span>
+        </>
+      )}
+      {LEGEND_FACTS.filter((kind) => view === 'savings' || (kind !== 'not-measured' && kind !== 'withheld')).map(
+        (kind) => (
+          <span key={kind}>
+            {CELL_FACTS[kind].short} — {CELL_FACTS[kind].long}
+          </span>
+        ),
+      )}
     </div>
   )
 }
