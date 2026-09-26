@@ -573,3 +573,353 @@ func TestEdgeMulticastConformance_ATruncatedRuleListSaysHowManyFired(t *testing.
 		t.Fatalf("should = %d, want the total over every rule including the truncated ones", e.Should)
 	}
 }
+
+// --- The two grains ---------------------------------------------------------
+//
+// A finding lands on the publisher line when the metric named a publisher and on the group row
+// when it did not. These pin both directions, plus the rollout state in which nothing is named.
+
+// TestEdgeMulticastConformance_AnAttributedViolationLandsOnThePublisher is the case the whole
+// change exists for: two publishers on one group, one of them violating, and the verdict naming
+// only that one.
+func TestEdgeMulticastConformance_AnAttributedViolationLandsOnThePublisher(t *testing.T) {
+	got := fetchConformance(t, &fakeProm{byMetric: map[string][]PromSample{
+		"uptime_seconds": oneValidator("233.84.178.3", "cmh"),
+		"violations_total": {
+			sample(4, "multicast_group", "233.84.178.3", "rule_id", "FRAME.SEQ_RESET_GAP",
+				"severity", "must", "source_addr", "148.51.120.6"),
+		},
+		"checks_total": {
+			sample(4, "multicast_group", "233.84.178.3", "result", "violation",
+				"source_addr", "148.51.120.6"),
+			sample(900, "multicast_group", "233.84.178.3", "result", "pass",
+				"source_addr", "148.51.120.6"),
+			sample(900, "multicast_group", "233.84.178.3", "result", "pass",
+				"source_addr", "148.51.120.152"),
+		},
+	}})
+
+	pubs := got.Publishers["233.84.178.3"]
+	if len(pubs) != 2 {
+		t.Fatalf("publisher entries: want 2, got %d", len(pubs))
+	}
+
+	bad := pubs["148.51.120.6"]
+	if bad == nil {
+		t.Fatal("no entry for the violating publisher")
+	}
+	if bad.Verdict != edgeMulticastConformanceViolating {
+		t.Errorf("violating publisher: verdict %q, want %q", bad.Verdict, edgeMulticastConformanceViolating)
+	}
+	if bad.Must != 4 {
+		t.Errorf("violating publisher: must %d, want 4", bad.Must)
+	}
+
+	// The peer did nothing wrong and must not inherit the fault. This is the reading the group
+	// row could never give: one badge over two paths describes neither.
+	good := pubs["148.51.120.152"]
+	if good == nil {
+		t.Fatal("no entry for the clean publisher")
+	}
+	if good.Verdict != edgeMulticastConformanceConforming {
+		t.Errorf("clean publisher: verdict %q, want %q", good.Verdict, edgeMulticastConformanceConforming)
+	}
+	if good.Must != 0 {
+		t.Errorf("clean publisher: must %d, want 0 — its peer's violation reached it", good.Must)
+	}
+
+	// And the group itself carries none of it: every finding here named a path.
+	g := got.Groups["233.84.178.3"]
+	if g == nil {
+		t.Fatal("the group entry is missing, so the lines have no row above them")
+	}
+	if g.Must != 0 {
+		t.Errorf("group: must %d, want 0 — an attributed finding was also charged to the group", g.Must)
+	}
+	// It must say NOTHING, not `ungraded`. Its own counters are zero because the split worked,
+	// and `ungraded` means "the validator graded nothing" — which would render "nothing reached
+	// a verdict" directly above a line reading conforming over 900 passed checks.
+	if g.Verdict != "" {
+		t.Errorf("group verdict %q, want none: every finding named a path, so the row has nothing to say at its own grain",
+			g.Verdict)
+	}
+}
+
+// TestEdgeMulticastConformance_AChannelScopedViolationStaysOnTheGroup is the other direction. A
+// rule decided over state every path fills carries no address, and putting it on a line would name
+// a publisher for something its peer did as much of.
+func TestEdgeMulticastConformance_AChannelScopedViolationStaysOnTheGroup(t *testing.T) {
+	got := fetchConformance(t, &fakeProm{byMetric: map[string][]PromSample{
+		"uptime_seconds": oneValidator("233.84.178.4", "cmh"),
+		"violations_total": {
+			sample(2, "multicast_group", "233.84.178.4", "rule_id", "REFDATA.NEVER_REACHES_READY",
+				"severity", "must", "source_addr", ""),
+		},
+		"checks_total": {
+			sample(2, "multicast_group", "233.84.178.4", "result", "violation", "source_addr", ""),
+			sample(10, "multicast_group", "233.84.178.4", "result", "pass", "source_addr", ""),
+		},
+	}})
+
+	if n := len(got.Publishers["233.84.178.4"]); n != 0 {
+		t.Errorf("publisher entries: want 0, got %d — a channel-scoped finding was attributed", n)
+	}
+	g := got.Groups["233.84.178.4"]
+	if g == nil {
+		t.Fatal("no group entry")
+	}
+	if g.Must != 2 {
+		t.Errorf("group: must %d, want 2", g.Must)
+	}
+	if g.Verdict != edgeMulticastConformanceViolating {
+		t.Errorf("group: verdict %q, want %q", g.Verdict, edgeMulticastConformanceViolating)
+	}
+}
+
+// TestEdgeMulticastConformance_AnUnlabelledFleetRendersAsItDidBefore pins the rollout state.
+// Until the validators carry source_addr every series reports it empty, so every finding lands on
+// the group row and the payload is the one this page has always rendered. Lake ships first.
+func TestEdgeMulticastConformance_AnUnlabelledFleetRendersAsItDidBefore(t *testing.T) {
+	got := fetchConformance(t, &fakeProm{byMetric: map[string][]PromSample{
+		"uptime_seconds": oneValidator("233.84.178.21", "cmh"),
+		"violations_total": {
+			// No source_addr label at all, which is what an old build scrapes as.
+			sample(3, "multicast_group", "233.84.178.21", "rule_id", "MSG.WRONG_PORT_PLACEMENT",
+				"severity", "must"),
+		},
+		"checks_total": {
+			sample(3, "multicast_group", "233.84.178.21", "result", "violation"),
+			sample(50, "multicast_group", "233.84.178.21", "result", "pass"),
+		},
+	}})
+
+	if got.Publishers != nil && len(got.Publishers["233.84.178.21"]) != 0 {
+		t.Errorf("publisher entries: want none on an unlabelled fleet, got %d",
+			len(got.Publishers["233.84.178.21"]))
+	}
+	g := got.Groups["233.84.178.21"]
+	if g == nil {
+		t.Fatal("no group entry")
+	}
+	if g.Must != 3 || g.Passes != 50 {
+		t.Errorf("group: must=%d passes=%d, want 3 and 50", g.Must, g.Passes)
+	}
+	if g.Verdict != edgeMulticastConformanceViolating {
+		t.Errorf("group: verdict %q, want %q", g.Verdict, edgeMulticastConformanceViolating)
+	}
+}
+
+// TestEdgeMulticastConformance_APublisherEntryAlwaysHasItsGroup: the group row carries the context
+// every line's tooltip reads — which validators ran, at how many vantages, on what build — so a
+// publisher entry with no group behind it would render a verdict from nowhere.
+func TestEdgeMulticastConformance_APublisherEntryAlwaysHasItsGroup(t *testing.T) {
+	got := fetchConformance(t, &fakeProm{byMetric: map[string][]PromSample{
+		// Deliberately no uptime sample for this group: the violation alone creates it.
+		"violations_total": {
+			sample(1, "multicast_group", "233.84.178.20", "rule_id", "FRAME.SEQ_RESET_GAP",
+				"severity", "must", "source_addr", "148.51.120.6"),
+		},
+	}})
+
+	if got.Groups["233.84.178.20"] == nil {
+		t.Fatal("a publisher entry was created with no group entry behind it")
+	}
+	if got.Publishers["233.84.178.20"]["148.51.120.6"] == nil {
+		t.Fatal("the publisher entry is missing")
+	}
+}
+
+// TestEdgeMulticastConformance_AnExemptionIsChargedToTheGroup: an exemption is keyed on
+// (stream, rule) and is a statement about a known deviation of the FEED. Counting it per line would
+// make one waiver read differently on each path.
+func TestEdgeMulticastConformance_AnExemptionIsChargedToTheGroup(t *testing.T) {
+	restore := edgeMulticastConformanceExemptions
+	edgeMulticastConformanceExemptions = []edgeMulticastConformanceExemption{
+		{stream: "kalshi_perps_tob", ruleID: "MSG.WRONG_PORT_PLACEMENT", why: "test"},
+	}
+	t.Cleanup(func() { edgeMulticastConformanceExemptions = restore })
+
+	got := fetchConformance(t, &fakeProm{byMetric: map[string][]PromSample{
+		"uptime_seconds": oneValidator("233.84.178.3", "cmh"),
+		"violations_total": {
+			sample(7, "multicast_group", "233.84.178.3", "stream", "kalshi_perps_tob",
+				"rule_id", "MSG.WRONG_PORT_PLACEMENT", "severity", "must",
+				"source_addr", "148.51.120.6"),
+		},
+	}})
+
+	g := got.Groups["233.84.178.3"]
+	if g == nil {
+		t.Fatal("no group entry")
+	}
+	if g.Exempted != 7 {
+		t.Errorf("group exempted: %d, want 7", g.Exempted)
+	}
+	if g.Must != 0 {
+		t.Errorf("group must: %d, want 0 — an exempted violation still graded", g.Must)
+	}
+	// No entry at all, not an empty one. An entry with nothing in it grades `ungraded`, which
+	// would put "nothing reached a verdict" on a line whose only finding was a deliberate waiver.
+	if pub := got.Publishers["233.84.178.3"]["148.51.120.6"]; pub != nil {
+		t.Errorf("an exempted violation minted a publisher entry (verdict %q, must %d); it should mint none",
+			pub.Verdict, pub.Must)
+	}
+}
+
+// TestEdgeMulticastConformance_ChannelsStayOnTheGroup: the channels a run covered describe the
+// group's coverage, not one path's, and the group row is where the tooltip names them.
+func TestEdgeMulticastConformance_ChannelsStayOnTheGroup(t *testing.T) {
+	got := fetchConformance(t, &fakeProm{byMetric: map[string][]PromSample{
+		"uptime_seconds": oneValidator("233.84.178.3", "cmh"),
+		"checks_total": {
+			sample(10, "multicast_group", "233.84.178.3", "result", "pass",
+				"channel", "1", "source_addr", "148.51.120.6"),
+			sample(10, "multicast_group", "233.84.178.3", "result", "pass",
+				"channel", "101", "source_addr", "148.51.120.152"),
+		},
+	}})
+
+	g := got.Groups["233.84.178.3"]
+	if g == nil {
+		t.Fatal("no group entry")
+	}
+	if len(g.Channels) != 2 {
+		t.Errorf("group channels: %v, want both", g.Channels)
+	}
+	for ip, pub := range got.Publishers["233.84.178.3"] {
+		if len(pub.Channels) != 0 {
+			t.Errorf("publisher %s carries channels %v, want none", ip, pub.Channels)
+		}
+	}
+}
+
+// TestEdgeMulticastConformance_AGroupThatGradedNothingAtAllIsStillUngraded is the other half of
+// the suppression above, and the reason it is conditional. A validator that runs and grades
+// nothing is the state `ungraded` exists to catch, and it must survive the split: here there are
+// no publisher entries to have taken the findings, so the absence is real.
+func TestEdgeMulticastConformance_AGroupThatGradedNothingAtAllIsStillUngraded(t *testing.T) {
+	got := fetchConformance(t, &fakeProm{byMetric: map[string][]PromSample{
+		"uptime_seconds": oneValidator("233.84.178.22", "cmh"),
+		"checks_total": {
+			sample(1000, "multicast_group", "233.84.178.22", "result", "na"),
+		},
+	}})
+
+	g := got.Groups["233.84.178.22"]
+	if g == nil {
+		t.Fatal("no group entry")
+	}
+	if g.Verdict != edgeMulticastConformanceUngraded {
+		t.Errorf("group verdict %q, want %q: nothing graded this group and no line took the findings",
+			g.Verdict, edgeMulticastConformanceUngraded)
+	}
+}
+
+// TestEdgeMulticastConformance_AFlatCounterMintsNoPublisherEntry: with source_addr in the
+// by-clause, a checks_total series flat across the window is a path the validator saw no
+// datagrams from. Minting an entry for it grades `ungraded` and puts a badge on a line over
+// nothing at all.
+func TestEdgeMulticastConformance_AFlatCounterMintsNoPublisherEntry(t *testing.T) {
+	got := fetchConformance(t, &fakeProm{byMetric: map[string][]PromSample{
+		"uptime_seconds": oneValidator("233.84.178.3", "cmh"),
+		"checks_total": {
+			sample(900, "multicast_group", "233.84.178.3", "result", "pass",
+				"source_addr", "148.51.120.6"),
+			// Flat: increase() over the window is zero.
+			sample(0, "multicast_group", "233.84.178.3", "result", "pass",
+				"source_addr", "148.51.120.152"),
+		},
+	}})
+
+	pubs := got.Publishers["233.84.178.3"]
+	if _, ok := pubs["148.51.120.152"]; ok {
+		t.Errorf("a flat series minted a publisher entry (verdict %q)", pubs["148.51.120.152"].Verdict)
+	}
+	if pubs["148.51.120.6"] == nil {
+		t.Fatal("the publisher that did grade something has no entry")
+	}
+}
+
+// TestCountUnattributedConformance pins what the group counts when a verdict names an address no
+// line carries: counted rather than dropped, and a line with no tunnel address is not a wildcard
+// that absorbs every unmatched verdict.
+func TestCountUnattributedConformance(t *testing.T) {
+	lines := []EdgeMulticastPublisher{
+		{UserPK: "a", DZIP: "148.51.120.6"},
+		{UserPK: "b", DZIP: ""}, // ledger has no tunnel address for this one
+	}
+	byPub := map[string]*EdgeMulticastConformance{
+		"148.51.120.6":   {},
+		"148.51.120.152": {}, // no line carries this
+	}
+	if got := countUnattributedConformance(lines, byPub); got != 1 {
+		t.Errorf("unattributed: %d, want 1", got)
+	}
+	if got := countUnattributedConformance(lines, nil); got != 0 {
+		t.Errorf("unattributed with no publisher entries: %d, want 0", got)
+	}
+}
+
+// TestEdgeMulticastConformance_AGroupWithNothingConclusiveIsAlsoSilent is the second shape of the
+// suppression, and the one an earlier `Graded == 0` test missed.
+//
+// `ungraded` is reached on `Passes == 0 && Info == 0`, which is NOT the same as having graded
+// nothing: a group whose channel-scoped checks all come back `na` or `unverifiable` has
+// `Graded > 0` and still asserts "nothing reached a verdict" — directly above lines that did reach
+// one. This is the expected steady state after the split, not a corner case: the rules left on the
+// group row are the book and reference-data ones, which decline most of their opportunities on a
+// healthy feed.
+func TestEdgeMulticastConformance_AGroupWithNothingConclusiveIsAlsoSilent(t *testing.T) {
+	got := fetchConformance(t, &fakeProm{byMetric: map[string][]PromSample{
+		"uptime_seconds": oneValidator("233.84.178.4", "cmh"),
+		"checks_total": {
+			// The group's own rules ran and concluded nothing.
+			sample(4000, "multicast_group", "233.84.178.4", "result", "na"),
+			sample(120, "multicast_group", "233.84.178.4", "result", "unverifiable"),
+			// A publisher of it did reach a verdict.
+			sample(900, "multicast_group", "233.84.178.4", "result", "pass",
+				"source_addr", "148.51.120.6"),
+		},
+	}})
+
+	g := got.Groups["233.84.178.4"]
+	if g == nil {
+		t.Fatal("no group entry")
+	}
+	if g.Graded == 0 {
+		t.Fatal("the group graded nothing, so this is not the shape under test")
+	}
+	if g.Verdict != "" {
+		t.Errorf("group verdict %q, want none: its own checks concluded nothing while a publisher reached a verdict, so %q would sit above a line reading %q",
+			g.Verdict, edgeMulticastConformanceUngraded, edgeMulticastConformanceConforming)
+	}
+	if pub := got.Publishers["233.84.178.4"]["148.51.120.6"]; pub == nil {
+		t.Fatal("the publisher entry is missing")
+	} else if pub.Verdict != edgeMulticastConformanceConforming {
+		t.Errorf("publisher verdict %q, want %q", pub.Verdict, edgeMulticastConformanceConforming)
+	}
+}
+
+// TestEdgeMulticastConformance_NothingConclusiveAnywhereStaysUngraded is the guard on the guard.
+// Where no publisher reached a verdict either, nothing was concluded anywhere and the absence is
+// real — which is the signal `ungraded` exists for and must survive the suppression.
+func TestEdgeMulticastConformance_NothingConclusiveAnywhereStaysUngraded(t *testing.T) {
+	got := fetchConformance(t, &fakeProm{byMetric: map[string][]PromSample{
+		"uptime_seconds": oneValidator("233.84.178.4", "cmh"),
+		"checks_total": {
+			sample(4000, "multicast_group", "233.84.178.4", "result", "na"),
+			// A publisher series that also concluded nothing must not rescue the group.
+			sample(500, "multicast_group", "233.84.178.4", "result", "na",
+				"source_addr", "148.51.120.6"),
+		},
+	}})
+
+	g := got.Groups["233.84.178.4"]
+	if g == nil {
+		t.Fatal("no group entry")
+	}
+	if g.Verdict != edgeMulticastConformanceUngraded {
+		t.Errorf("group verdict %q, want %q: nothing reached a verdict anywhere on this group",
+			g.Verdict, edgeMulticastConformanceUngraded)
+	}
+}

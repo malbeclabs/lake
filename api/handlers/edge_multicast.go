@@ -575,6 +575,7 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 	var observations edgeMulticastObservationStatsResult
 	var observationsAsOf time.Time
 	var conformance map[string]*EdgeMulticastConformance
+	var conformancePubs map[string]map[string]*EdgeMulticastConformance
 	var conformanceAsOf time.Time
 	var gapWindowSecs int
 	if isMainnet(ctx) {
@@ -593,7 +594,7 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 
 		// The conformance verdicts, from a third cache entry with a third clock. Same
 		// contract as the two above: a miss costs the column, never the page.
-		conformance, conformanceAsOf = a.edgeMulticastConformanceFold(ctx)
+		conformance, conformancePubs, conformanceAsOf = a.edgeMulticastConformanceFold(ctx)
 	}
 
 	// The device-side BGP session. One round trip for the fleet, and an absent telemetry mirror
@@ -639,7 +640,7 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 	// deliberately absent: the group is promoted by activity, not reclassified as sold.
 	feedBacked := map[string]bool{}
 	for _, g := range groups {
-		row := buildEdgeMulticastGroup(g, membership[g.PK], rates[g.PK], lastHeard[g.PK], publisherLines[g.PK], sequence[g.PK], observations, conformance[g.MulticastIP], bgpSessions, bgpRtt)
+		row := buildEdgeMulticastGroup(g, membership[g.PK], rates[g.PK], lastHeard[g.PK], publisherLines[g.PK], sequence[g.PK], observations, conformance[g.MulticastIP], conformancePubs[g.MulticastIP], bgpSessions, bgpRtt)
 		codes := feeds.byGroup[g.PK]
 		if len(codes) > 0 {
 			// A feed row claims this section, which is the only thing Managed may mean.
@@ -713,7 +714,7 @@ func (a *API) FetchEdgeMulticastData(ctx context.Context) (*EdgeMulticastRespons
 // the remainder rather than read: a member the view dropped (no health row at all) is exactly
 // as unknown as one it marked 'no_data', and folding both into the remainder keeps the parts
 // summing to Total whatever the view does.
-func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership, r edgeMulticastRates, lh edgeMulticastLastHeard, lines []EdgeMulticastPublisher, sequence *EdgeMulticastSequenceHealth, observations edgeMulticastObservationStatsResult, conformance *EdgeMulticastConformance, bgpSessions map[edgeMulticastBGPKey]EdgeMulticastBGPSession, bgpRtt map[string]EdgeMulticastBGPRtt) EdgeMulticastGroup {
+func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership, r edgeMulticastRates, lh edgeMulticastLastHeard, lines []EdgeMulticastPublisher, sequence *EdgeMulticastSequenceHealth, observations edgeMulticastObservationStatsResult, conformance *EdgeMulticastConformance, conformanceByPub map[string]*EdgeMulticastConformance, bgpSessions map[edgeMulticastBGPKey]EdgeMulticastBGPSession, bgpRtt map[string]EdgeMulticastBGPRtt) EdgeMulticastGroup {
 	out := EdgeMulticastGroup{
 		PK:                   g.PK,
 		Code:                 g.Code,
@@ -735,7 +736,16 @@ func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership
 
 	// Keyed on the multicast ADDRESS, which is what the scrape target carries. The ledger code
 	// is deliberately not the join: a code that stops matching its live group fails silently.
-	out.Conformance = conformance
+	//
+	// **Copied, not aliased.** The fold hands out one entry per address and this row goes on to
+	// count Unattributed into it. Two ledger groups on one address would otherwise share the
+	// struct and each add the other's tally — which is not hypothetical on this page, where the
+	// two networks allocate out of the same 233.84.178.0/24. The slices are shared and neither
+	// row writes to them.
+	if conformance != nil {
+		c := *conformance
+		out.Conformance = &c
+	}
 
 	// The receiver-side statement, on the row that owns it. A node short on every path of a group
 	// is the vantage rather than the feed, and no publisher line can carry that — the same reason
@@ -762,6 +772,13 @@ func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership
 	out.Sequence = sequence
 	attachEdgeMulticastSequenceHealth(lines, out.Sequence, g.MulticastIP, observations)
 
+	// A verdict naming an address no line carries is counted on the group rather than dropped;
+	// see EdgeMulticastConformance.Unattributed. Counted over the full line list, before the cap
+	// below, so what the payload happens to carry cannot change it.
+	if out.Conformance != nil {
+		out.Conformance.Unattributed = countUnattributedConformance(lines, conformanceByPub)
+	}
+
 	// After the attachment, never before: a line's verdict folds the series it owns, and the
 	// series only reaches the line above. Tallied here, over the full list, so the cap below
 	// cannot change what a collapsed group reports about itself.
@@ -782,6 +799,11 @@ func buildEdgeMulticastGroup(g MulticastDeliveryGroup, m edgeMulticastMembership
 			lines[i].BGPSession = &session
 		}
 		if lines[i].DZIP != "" {
+			// The conformance verdict for this path. Keyed on the tunnel address for the
+			// same reason the series are: it is the source address the datagrams carried,
+			// and it is what the validator put in the metric.
+			lines[i].Conformance = conformanceByPub[lines[i].DZIP]
+
 			key := edgeMulticastPathKey{groupPK: g.PK, ip: lines[i].DZIP}
 			lines[i].PathParity = observations.parity[key]
 			if rate, ok := observations.rates[key]; ok {
