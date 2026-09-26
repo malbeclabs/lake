@@ -900,7 +900,10 @@ function confinedRecorders(sequence?: EdgeMulticastSequenceHealth): string[] {
   for (const inst of sequence?.instances ?? []) {
     if (inst.location_code) codes.set(inst.node, inst.location_code)
   }
-  return nodes.map((node) => codes.get(node) ?? node)
+  // Deduplicated after labelling, not before: two recorders at one site share a location code, so
+  // mapping them through it would otherwise print `at cmh and cmh` — and the `N more` count below
+  // has to count what is not shown rather than nodes that are.
+  return [...new Set(nodes.map((node) => codes.get(node) ?? node))]
 }
 
 function confinedPhrase(labels: string[]): string {

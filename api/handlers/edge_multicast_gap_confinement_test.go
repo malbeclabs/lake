@@ -114,6 +114,64 @@ func TestEdgeMulticastGapConfined_TheOtherPathIsNotAWitness(t *testing.T) {
 	assert.Nil(t, got)
 }
 
+// The channel id is not what separates the two paths — collapsing the arms onto a single id is a
+// settled upstream change — so the publisher is in the key too. On the group roll-up, where every
+// publisher's instances share one slice, the peer path's clean recording must not exonerate this
+// one's loss: that pair is the finding the per-line verdict exists to show.
+func TestEdgeMulticastGapConfined_ThePeerPathIsNotAWitnessOnOneChannelID(t *testing.T) {
+	peer := seqInst("aws-dub-mn-recorder1", "tob_edge_kalshi_perps", 1, "ok", true)
+	peer.PublisherSourceIP = "148.51.121.70"
+	got := handlers.EdgeMulticastGapConfinedNodesForTest([]handlers.EdgeMulticastChannelInstance{
+		seqInst("aws-cmh-mn-recorder1", "tob_edge_kalshi_perps", 1, "gapped", true),
+		peer,
+	})
+	assert.Nil(t, got)
+}
+
+// A clean reading is not yet a witness. `ok` asks only for a fresh LastSeen, so a recorder that
+// joined the group near the end of the window carries no marker for the part it missed — and would
+// otherwise exonerate the path over exactly the minutes it never saw.
+func TestEdgeMulticastGapConfined_AWitnessMustHaveCoveredTheWindow(t *testing.T) {
+	gapped := seqInst("aws-cmh-mn-recorder1", "tob_edge_kalshi_perps", 1, "gapped", true)
+	gapped.Messages = 56_800
+	latecomer := seqInst("aws-dub-mn-recorder1", "tob_edge_kalshi_perps", 1, "ok", true)
+	latecomer.Messages = 900
+
+	assert.Nil(t, handlers.EdgeMulticastGapConfinedNodesForTest(
+		[]handlers.EdgeMulticastChannelInstance{gapped, latecomer}))
+
+	// The same vantage once it has the window behind it. A witness normally records MORE than the
+	// recorder that lost data, so the floor is loose enough never to fire on that pair.
+	latecomer.Messages = 56_871
+	assert.Equal(t, []string{"aws-cmh-mn-recorder1"}, handlers.EdgeMulticastGapConfinedNodesForTest(
+		[]handlers.EdgeMulticastChannelInstance{gapped, latecomer}))
+}
+
+// The floor is coverage of the window and not volume, so it must not fire on the difference between
+// two healthy recorders of one feed — measured on mainnet at well under a percent.
+func TestEdgeMulticastGapConfined_TheFloorDoesNotFireOnHealthySpread(t *testing.T) {
+	gapped := seqInst("aws-cmh-mn-recorder1", "tob_edge_kalshi_perps", 1, "gapped", true)
+	gapped.Messages = 56_806
+	peer := seqInst("aws-was-mn-recorder1", "tob_edge_kalshi_perps", 1, "ok", true)
+	peer.Messages = 54_754
+
+	assert.Equal(t, []string{"aws-cmh-mn-recorder1"}, handlers.EdgeMulticastGapConfinedNodesForTest(
+		[]handlers.EdgeMulticastChannelInstance{gapped, peer}))
+}
+
+// One witness that covered the window is enough, and a second thinner one does not take that away.
+func TestEdgeMulticastGapConfined_TheBusiestWitnessIsTheOneThatCounts(t *testing.T) {
+	gapped := seqInst("aws-cmh-mn-recorder1", "tob_edge_kalshi_perps", 1, "gapped", true)
+	gapped.Messages = 56_800
+	thin := seqInst("aws-nrt-mn-recorder1", "tob_edge_kalshi_perps", 1, "ok", true)
+	thin.Messages = 120
+	full := seqInst("aws-dub-mn-recorder1", "tob_edge_kalshi_perps", 1, "ok", true)
+	full.Messages = 56_871
+
+	assert.Equal(t, []string{"aws-cmh-mn-recorder1"}, handlers.EdgeMulticastGapConfinedNodesForTest(
+		[]handlers.EdgeMulticastChannelInstance{gapped, thin, full}))
+}
+
 // An unnamed series is not a bucket of its own: every one of them lands in the same bucket, so two
 // unrelated markets at one node would stand in as each other's witness. The recorded-gap leg
 // produces such a series for a channel instance the capture recorded nothing for.
