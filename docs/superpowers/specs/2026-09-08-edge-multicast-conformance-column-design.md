@@ -340,15 +340,42 @@ over fifteen minutes on 2026-09-08 it produced **90 must-severity violations** a
 
 ## 4. Grain and vocabulary
 
-**The column renders on the group row and nowhere else, and this is forced rather than chosen.**
-Neither the Prometheus labels nor `core.Finding` (`finding.go:149`) carry the publisher source
-address — `Finding` has `ChannelID` but no source IP, even though the engine has it
-(`Engine.Process(src netip.Addr, …)`, and `instanceTrack(src, port, ch)` keys per channel instance).
-So nothing in this payload can name a path, and a per-publisher-line verdict is not available on
-this route at any effort. Recorded here so the next reader does not try to derive one.
+**Superseded 2026-09-25: the column now renders at two grains.** What follows is the original
+constraint, kept because it explains the shape of the payload; the resolution is below it.
 
-Getting it onto the lines means adding `SourceIP` to `Finding` and threading it through — a small
-change in `edge-feed-spec`, and the natural companion to the ClickHouse sink.
+> **The column renders on the group row and nowhere else, and this is forced rather than chosen.**
+> Neither the Prometheus labels nor `core.Finding` (`finding.go:149`) carry the publisher source
+> address — `Finding` has `ChannelID` but no source IP, even though the engine has it
+> (`Engine.Process(src netip.Addr, …)`, and `instanceTrack(src, port, ch)` keys per channel
+> instance). So nothing in this payload can name a path, and a per-publisher-line verdict is not
+> available on this route at any effort. Recorded here so the next reader does not try to derive
+> one.
+>
+> Getting it onto the lines means adding `SourceIP` to `Finding` and threading it through — a small
+> change in `edge-feed-spec`, and the natural companion to the ClickHouse sink.
+
+That change was made, and it is the route rather than the recorder rows: `core.Finding` carries
+`SourceAddr`, and `source_addr` is a label on `violations_total`, `checks_total` and
+`unverifiable_total`. The engine sets it from the tracker whose datagram is being classified, so no
+`Emit` call site changed.
+
+**What did not survive the attempt is the assumption that every finding has a publisher.** It does
+not, and threading the address through unconditionally would have been wrong. A validator
+subscribes to a GROUP and receives every path merged; only the rules whose subject is one channel
+instance can name one. The split is read from the catalog's own `RuleMeta.State` via
+`core.StateKind.InstanceScoped` — `StateNone` and `StateCounters` yes, the four book/refdata kinds
+no — and **not** from where the finding was emitted, because the two differ:
+`REFDATA.NEVER_REACHES_READY` fires mid-datagram but is settled over a set both paths contributed
+to.
+
+So a finding with `source_addr` set renders on the publisher line and one without it on the group
+row, and the empty label is a statement rather than a missing value. Exemptions, channels graded
+and `unattributed` stay on the group row; `instances`, `nodes` and `versions` are copied down to
+the lines, since those queries carry no address and never will.
+
+**Lake reads the label before the fleet writes it.** An unlabelled validator reports it empty on
+every series, so every finding lands on the group row and the page renders exactly as this document
+originally specified. The cache key is deliberately not bumped for the same reason.
 
 Verdicts rank worst-first:
 
@@ -449,13 +476,31 @@ both.
 
 ## 6. Web
 
-`Conformance` between `Heard` and `Sequence` on the group row, blank on the publisher lines — the
-same treatment `Heard` already gets, for the same reason. The header carries a `per group` subtitle,
-said once for the column rather than once per cell, which is what the `Ingress` header already does
-for `per tunnel`.
+`Conformance` between `Heard` and `Sequence`. Originally blank on the publisher lines; since
+2026-09-25 a line carries its own verdict where a finding named it (see §4). The rest of this
+paragraph describes the group row — the
+same treatment `Heard` already gets, for the same reason. The header carries a subtitle said once
+for the column rather than once per cell, which is what the `Ingress` header already does for
+`per tunnel` — **`group & path`** since 2026-09-25, because a subtitle naming one grain would
+assert something the cells beneath it contradict.
 
 A group no validator covers renders an **em dash**, not a badge and not a blank: nobody checked, and
 that is a different statement from a clean one. Today that is 10 of the 15 groups.
+
+**A group row renders an em dash for a second reason**, added with the publisher grain: its every
+finding named a publisher, so its own counters are zero and the lines below hold the verdicts. That
+is not `ungraded`. Grading it anyway put "nothing reached a verdict" directly above lines reading
+`conforming` over 900 passed checks — so the verdict is suppressed when the group graded nothing of
+its own **and** a publisher of it reached one. The condition reads the group's verdict rather than
+re-deriving it: `ungraded` is reached on `Passes == 0 && Info == 0`, so a `Graded == 0` test —
+the first attempt — let a group whose checks all came back `na` or `unverifiable` through while
+it still rendered the bad reading. The guard likewise asks whether a publisher reached a
+*verdict* and not whether it graded, since `Graded` counts `na` too. Where nothing was concluded
+anywhere the absence is real and `ungraded` stands.
+
+The two dashes are not interchangeable. The one above keeps its tooltip and an underline to say
+so, because the entry behind it still carries `exempted` and `unattributed` — counts that belong
+to the group and to no line, and that nothing else on the page reports.
 
 The badge colours follow the ranking. `violating` red, `should` amber, `conforming` filled green —
 and `ungraded` and `advisory` are both **outlined rather than filled**, the treatment `advancing`

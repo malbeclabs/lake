@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
 import { AlertCircle, ChevronDown, ChevronRight, Loader2, Radio } from 'lucide-react'
@@ -337,6 +337,10 @@ function PublisherLineRow({
   observationsAsOfAge,
   gapWindow,
   floorBps,
+  conformanceAsOfAge,
+  rulesOpen,
+  onToggleRules,
+  rulesPanelId,
 }: {
   line: EdgeMulticastPublisher
   asOf: number
@@ -349,6 +353,10 @@ function PublisherLineRow({
   observationsAsOfAge?: number
   gapWindow?: GapWindow
   floorBps: number
+  conformanceAsOfAge?: number
+  rulesOpen: boolean
+  onToggleRules: () => void
+  rulesPanelId: string
 }) {
   // Aged against the payload clock, not the wall clock: this number was computed when the payload
   // was.
@@ -458,11 +466,24 @@ function PublisherLineRow({
       {/* "Heard" is per group — the recorders' own plane, with nothing to say about one
           publisher — but a sequence series is per publisher, so that column is filled in. */}
       {showLastHeard && <td className="px-3 py-1.5" />}
-      {/* Conformance is per GROUP for the same reason Heard is: the metrics carry no publisher
-          source address, so nothing in that payload can name a path. That is a property of the
-          source and not of the page — when the recorder's own rows land, keyed on the source
-          address, the verdict moves down here. */}
-      {showConformance && <td className="px-3 py-1.5" />}
+      {/* What the rule set found in THIS publisher's datagrams. A verdict is here whenever the
+          validator could name the path that caused it; the rules decided over state both paths
+          fill — the book, the snapshot groups, the reference data — stay on the group row, since
+          naming one publisher for those would charge it for what its peer did as much of.
+
+          An em dash is the honest reading of the rest, and it covers two states that look alike:
+          no validator grades this feed, and no finding named this path. Neither is a pass. */}
+      {showConformance && (
+        <td className="px-3 py-1.5 whitespace-nowrap">
+          <ConformanceCell
+            conformance={line.conformance}
+            asOfAge={conformanceAsOfAge}
+            expanded={rulesOpen}
+            onToggle={onToggleRules}
+            panelId={rulesPanelId}
+          />
+        </td>
+      )}
       {showSequence && (
         <td className="px-3 py-1.5 whitespace-nowrap">
           <PublisherSequenceCell
@@ -619,6 +640,14 @@ function conformanceTooltip(c: EdgeMulticastConformance, asOfAge?: number): stri
   const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`
 
   switch (c.verdict) {
+    case '':
+      // The group graded nothing of its own because every finding named a path. Said plainly,
+      // because the alternative reading of a blank cell — "this feed is fine" — is the one thing
+      // it must never mean. It is also not `ungraded`: something WAS graded, on the lines below.
+      lines.push(
+        'This group has no verdict of its own: every finding named the publisher that caused it, so the verdicts are on the publisher lines below. Expand Publishers to read them. That is not a pass.',
+      )
+      break
     case 'violating':
       lines.push(`${plural(c.must, 'must-severity violation')} in the window.`)
       break
@@ -651,6 +680,15 @@ function conformanceTooltip(c: EdgeMulticastConformance, asOfAge?: number): stri
   if (c.top_rules?.length) {
     const fired = c.rules_fired ?? c.top_rules.length
     lines.push(`${plural(fired, 'rule')} fired — click to list them.`)
+  }
+
+  // Counted and now said. A verdict naming an address no publisher line carries has no row to
+  // sit on, and counting it into a payload nothing renders would be the silent drop the counter
+  // exists to prevent.
+  if (c.unattributed) {
+    lines.push(
+      `${plural(c.unattributed, 'publisher verdict')} named an address no line on this group carries — a path the ledger has no tunnel for, or one torn down inside the window.`,
+    )
   }
 
   // Counted, never hidden. A deviation that stops firing is a real change, and one that starts
@@ -704,9 +742,34 @@ export function ConformanceCell({
   onToggle: () => void
   panelId: string
 }) {
+  // Nothing here at all: no validator covers this feed. A bare dash, with nothing to say about it.
   if (!conformance) {
     return <span className="text-muted-foreground">—</span>
   }
+
+  // An entry carrying no verdict of its own — the group row of a group whose every finding named
+  // a publisher. Also a dash, because the row has nothing to assert at its own grain, but NOT a
+  // bare one: the entry still carries the counts that belong to the group and to no line, and
+  // `exempted` and `unattributed` are reported nowhere else on the page. Returning early here
+  // made the line this tooltip gained for `unattributed` unreachable in the one state that
+  // produces it.
+  //
+  // The dotted underline is what says there is something to hover; without it the two dashes are
+  // pixel-identical and the counts are as hidden as they were before.
+  if (!conformance.verdict) {
+    return (
+      <Tooltip content={conformanceTooltip(conformance, asOfAge)} className="whitespace-pre-line">
+        <span
+          className={`text-muted-foreground underline decoration-dotted decoration-muted-foreground/40 underline-offset-4${
+            payloadStale(asOfAge) ? ' opacity-50' : ''
+          }`}
+        >
+          —
+        </span>
+      </Tooltip>
+    )
+  }
+
   const stale = payloadStale(asOfAge)
   const badge = (
     <span
@@ -1711,6 +1774,9 @@ function GroupRow({
   // Stable across renders and unique per group: the toggle and the row it opens are siblings, so
   // aria-controls is the only thing tying them together.
   const rulesPanelId = `conformance-rules-${group.pk}`
+  // One open line at a time. Several open panels push the rest of the group out of view, and the
+  // question a reader has here — which rules did THIS path break — is asked of one path at a time.
+  const [openRuleLine, setOpenRuleLine] = useState<string | null>(null)
 
   return (
     <>
@@ -1798,22 +1864,40 @@ function GroupRow({
       <ConformanceRulesRow conformance={group.conformance} columns={columns} id={rulesPanelId} />
     )}
     {expanded &&
-      lines.map((line) => (
-        <PublisherLineRow
-          key={`${group.pk}-${line.user_pk}`}
-          line={line}
-          asOf={asOf}
-          now={now}
-          floorBps={floorBps}
-          showLastHeard={showLastHeard}
-          showConformance={showConformance}
-          showSequence={showSequence}
-          showObservations={showObservations}
-          sequenceAsOfAge={sequenceAsOfAge}
-          observationsAsOfAge={observationsAsOfAge}
-          gapWindow={gapWindow}
-        />
-      ))}
+      lines.map((line) => {
+        const linePanelId = `conformance-rules-${group.pk}-${line.user_pk}`
+        const lineRulesOpen = openRuleLine === line.user_pk
+        return (
+          <Fragment key={`${group.pk}-${line.user_pk}`}>
+            <PublisherLineRow
+              line={line}
+              asOf={asOf}
+              now={now}
+              floorBps={floorBps}
+              showLastHeard={showLastHeard}
+              showConformance={showConformance}
+              showSequence={showSequence}
+              showObservations={showObservations}
+              sequenceAsOfAge={sequenceAsOfAge}
+              observationsAsOfAge={observationsAsOfAge}
+              conformanceAsOfAge={conformanceAsOfAge}
+              gapWindow={gapWindow}
+              rulesOpen={lineRulesOpen}
+              onToggleRules={() => setOpenRuleLine(lineRulesOpen ? null : line.user_pk)}
+              rulesPanelId={linePanelId}
+            />
+            {/* Directly under the line it belongs to, unlike the group's panel, which sits above
+                its lines: here the badge and the rows it explains are already adjacent. */}
+            {showConformance && lineRulesOpen && line.conformance && (
+              <ConformanceRulesRow
+                conformance={line.conformance}
+                columns={columns}
+                id={linePanelId}
+              />
+            )}
+          </Fragment>
+        )
+      })}
     {expanded && hidden > 0 && (
       <tr className="border-b border-border/50 bg-muted/20 text-xs">
         {/* Worst-first ordering is what makes this safe to truncate: everything failing the
@@ -1929,7 +2013,11 @@ function ServiceSection({
               {showConformance && (
                 <th className="px-3 py-2 font-medium whitespace-nowrap leading-tight">
                   <ColumnHeader label="Conformance" asOfAge={conformanceAsOfAge} />
-                  <div className="text-[10px] font-normal text-muted-foreground/70">per group</div>
+                  {/* The one column here that reads at two grains, so the subtitle says which
+                      rather than naming one. `per group` was true when nothing in the payload
+                      could name a path; left as it was it would assert a grain the cells below
+                      it contradict. */}
+                  <div className="text-[10px] font-normal text-muted-foreground/70">group &amp; path</div>
                 </th>
               )}
               {showSequence && (
@@ -2014,8 +2102,19 @@ export function EdgeMulticastPage() {
   // The conformance column exists only where a validator covers the group, which today is five of
   // the fifteen — and nowhere at all in an environment with no metrics store configured. Dropped
   // entirely rather than rendered as a column of dashes, the same rule Heard and Sequence follow.
+  //
+  // The lines are checked as well as the groups. A group whose every finding named a publisher
+  // carries no verdict of its own, and keying the column on the group row alone would drop it
+  // with the lines' verdicts still in the payload.
   const showConformance = useMemo(
-    () => (data?.services ?? []).some((s) => s.groups.some((g) => g.conformance !== undefined)),
+    () =>
+      (data?.services ?? []).some((s) =>
+        s.groups.some(
+          (g) =>
+            g.conformance !== undefined ||
+            (g.publisher_lines ?? []).some((l) => l.conformance !== undefined),
+        ),
+      ),
     [data],
   )
 
@@ -2155,11 +2254,12 @@ export function EdgeMulticastPage() {
               A row is a group; expand Publishers for one line per path.{' '}
               <span className="text-foreground">Ingress</span> and{' '}
               <span className="text-foreground">DZD</span> are per tunnel and only on the lines; the counts
-              and <span className="text-foreground">Heard</span> and{' '}
-              <span className="text-foreground">Conformance</span> are per group;{' '}
+              and <span className="text-foreground">Heard</span> are per group;{' '}
               <span className="text-foreground">Msg/s</span>, <span className="text-foreground">Peer</span>,{' '}
               <span className="text-foreground">Sequence</span> and{' '}
-              <span className="text-foreground">Health</span> are per path.
+              <span className="text-foreground">Health</span> are per path.{' '}
+              <span className="text-foreground">Conformance</span> reads at both: a rule that names the
+              path it judges sits on the line, and one decided over the whole channel sits on the group.
             </LegendNote>
             <LegendNote term="Ingress">
               A {data?.rate_grain_minutes ?? 5}-minute counter rollup at the member's tunnel, minutes behind
@@ -2231,8 +2331,12 @@ export function EdgeMulticastPage() {
             {showConformance && (
               <LegendNote term="Conformance">
                 What the spec's rule set graded on the feed, read from the validators beside the recorders
-                — the one column here with no ClickHouse behind it. Per group and blank on the lines: the
-                metrics carry no publisher address, so nothing in them can name a path. Green means nothing
+                — the one column here with no ClickHouse behind it. It reads at two grains, and the
+                validator decides which: a rule whose subject is one path's view of the channel sits on
+                that publisher's line, and one settled over state both paths fill — the book, the snapshot
+                groups, the reference data — sits on the group, because naming one publisher for those
+                would charge it for what its peer did as much of. A blank line is not a pass: either no
+                validator grades the feed, or no finding named that path. Green means nothing
                 was found wrong in what was graded, which is weaker than “this feed conforms”;{' '}
                 <span className="text-foreground">ungraded</span> is neither a pass nor a fault. A chevron
                 means rules fired — open it for each one's description, spec link and the recorders that

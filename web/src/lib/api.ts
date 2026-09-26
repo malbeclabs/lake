@@ -8013,6 +8013,10 @@ export interface EdgeMulticastPublisher {
   dz_ip?: string
   device_code?: string
   tunnel_id: number
+  /** What the rule set found in THIS publisher's own datagrams. Absent when no finding named it:
+   *  every line on a group no validator covers, and every line until the validators carry the
+   *  source address. Holds only the rules whose subject is one channel instance. */
+  conformance?: EdgeMulticastConformance
   /** 'recorder' | 'internal_probe' | 'doublezero' | 'customer' — same tiers as the subscriber split. */
   class: string
   /** Measured send rate; null when nothing measured it. Upper bound when multi_group. */
@@ -8249,11 +8253,15 @@ export interface EdgeMulticastConformanceRule {
   validators?: string[]
 }
 
-/** What the conformance rule set graded on one group over the window.
+/** What the conformance rule set graded, over the window.
  *
- *  Per GROUP and never per publisher line, and that is a property of the source rather than of the
- *  page: the metrics carry no publisher source address, so nothing in this payload can name a
- *  path. Counts are events in the window, not running totals. */
+ *  It renders at TWO grains, and the same shape serves both: on a publisher line for the rules
+ *  whose subject is one path's view of the channel, and on the group row for the rules decided
+ *  over state every path fills — the book, the snapshot groups, the reference data set. The
+ *  `source_addr` the validator reports is what sorts them, and an absent one is a statement
+ *  ("this verdict is about the channel") rather than a missing value.
+ *
+ *  Counts are events in the window, not running totals. */
 export interface EdgeMulticastConformance {
   /** 'violating' | 'should' | 'ungraded' | 'advisory' | 'conforming', worst first. */
   verdict: string
@@ -8278,8 +8286,12 @@ export interface EdgeMulticastConformance {
   instances: number
   nodes?: string[]
   /** Channel IDs graded, when the scrape carries the label. Empty is 'the scrape does not say',
-   *  never 'no channels'. */
+   *  never 'no channels'. Group row only: the channels a run covered describe the group's
+   *  coverage, not one path's. */
   channels?: string[]
+  /** Verdicts naming an address no line on this group carries, so they have no row to sit on.
+   *  Counted rather than dropped, as an unattributed recorded series is. Group row only. */
+  unattributed?: number
   /** The validator build behind the verdict. More than one is a legitimate mid-rollout state. */
   versions?: string[]
 }
@@ -8309,7 +8321,10 @@ export interface EdgeMulticastGroup {
   /** Recording nodes of this group that are behind the best-placed one. Absent when none are. */
   recorder_coverage?: EdgeMulticastRecorderCoverage
   /** What the conformance rule set graded here; absent for a group no validator covers, which is
-   *  most of them, and for any environment with no metrics store configured. */
+   *  most of them, and for any environment with no metrics store configured.
+   *
+   *  On the group row this is the CHANNEL-SCOPED half — the findings no publisher owns. What a
+   *  publisher did is on its own line. */
   conformance?: EdgeMulticastConformance
   /** Per-node application-plane view; absent for a group no capture covers. */
   capture_nodes?: EdgeMulticastCaptureNode[]

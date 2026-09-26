@@ -19,18 +19,30 @@ import (
 // database sink. Alloy scrapes the metrics and remote-writes them to Grafana Cloud, so the only
 // way to read a verdict today is PromQL. Nothing about conformance exists in ClickHouse.
 //
-// # The grain, which is forced rather than chosen
+// # The grain: two of them, and the metric says which
 //
-// This column renders on the GROUP ROW and never on the publisher lines, because nothing in this
-// payload can name a path. The Prometheus label set carries the rule, the severity, the result and
-// the scrape target's identity; it does not carry the publisher's source address. Neither does
-// core.Finding upstream — it has ChannelID and no source IP — even though the engine holds the
-// address and keys its own frame state on the full channel instance.
+// A finding sits on the PUBLISHER LINE when it names a publisher and on the GROUP ROW when it does
+// not, and the `source_addr` label is what decides. dz-conformance sets it for a rule whose subject
+// is one channel instance — "one path's view of one channel" — and leaves it empty for a rule
+// decided over state every path of the channel fills: the book, the snapshot groups, the reference
+// data set. See core.StateKind.InstanceScoped in edge-feed-spec.
 //
-// That is a property of THIS SOURCE and not of the page. recorder.conformance_finding in
-// malbeclabs/edge-multicast-ref keys on (source_addr, channel_id, dst_port), so when those rows
-// land the same struct hangs off EdgeMulticastPublisher with source_addr as the join and the
-// column moves to the lines with no change to the vocabulary below. See
+// **An empty source_addr is a statement, not a missing value**, and it must never be resolved by
+// picking whichever publisher was nearby. A validator subscribes to a GROUP, so it receives every
+// path merged; a REFDATA.NEVER_REACHES_READY verdict is settled by a set both paths contributed to,
+// and charging it to the path that happened to deliver the settling datagram would name a publisher
+// for something its peer did as much of.
+//
+// # This code predates the label reaching production, on purpose
+//
+// Until the validators carry the new label every series reports an empty `source_addr`, every
+// finding lands on the group row, and the page renders exactly as it did before. That is the
+// designed rollout: lake can ship first, and lines light up as the fleet rolls. It is also why the
+// cache key is NOT bumped — a payload written by the previous build has no publisher entries, which
+// degrades to the old rendering rather than to a dark column.
+//
+// The successor is still recorder.conformance_finding in malbeclabs/edge-multicast-ref, whose rows
+// key on (source_addr, channel_id, dst_port) and would reach the same two grains from a table. See
 // docs/superpowers/specs/2026-09-08-edge-multicast-conformance-column-design.md.
 //
 // # What the column must never claim
@@ -173,6 +185,15 @@ type EdgeMulticastConformance struct {
 	// Exempted counts known-deviation hits. Excluded from the verdict, never from the payload.
 	Exempted uint64 `json:"exempted"`
 
+	// Unattributed is how many publisher verdicts named an address no line on this group
+	// carries, so they have no row to sit on. Counted rather than dropped, the same as a
+	// recorded series whose address matches no publisher: a finding from an address the ledger
+	// does not know about is a finding about something, and silently discarding it would make
+	// the page quieter than the feed.
+	//
+	// Group entry only — a publisher entry is by definition attributed.
+	Unattributed int `json:"unattributed,omitempty"`
+
 	// Instances is how many validator processes stand behind this verdict and Nodes is at how
 	// many recorders they run. One vantage is the normal state on some groups, and a verdict
 	// from one recorder cannot separate that recorder's own trouble from the feed's.
@@ -198,7 +219,14 @@ type EdgeMulticastConformanceResponse struct {
 	// Groups is keyed on the multicast group ADDRESS, which is what the scrape target carries
 	// and what the page joins on. Not the ledger code: a code that stops matching its live group
 	// fails silently, and this one has been renamed once already.
+	//
+	// What it holds is the channel-scoped half: the findings no publisher owns, plus the context
+	// that is per group either way — which validators ran, at how many vantages, on what build.
 	Groups map[string]*EdgeMulticastConformance `json:"groups"`
+
+	// Publishers is the attributed half, group address to publisher source address. Absent for a
+	// group whose validators predate the label, which is the rollout state described above.
+	Publishers map[string]map[string]*EdgeMulticastConformance `json:"publishers,omitempty"`
 }
 
 // edgeMulticastConformanceTopRuleCap bounds the rendered rule list. A feed violating dozens of
@@ -266,12 +294,14 @@ func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticast
 	// Splitting by vantage can move a total by one or two, since promCount floors a sub-unit
 	// extrapolation at one event per SERIES — the reading "detections" already implies.
 	violations, err := a.Prom.Query(ctx, fmt.Sprintf(
-		`sum by (multicast_group, stream, rule_id, severity, channel, hostname) (increase(dz_conformance_violations_total{env=%q}[%s]))`,
+		`sum by (multicast_group, stream, rule_id, severity, channel, hostname, source_addr) (increase(dz_conformance_violations_total{env=%q}[%s]))`,
 		env, w))
 	if err != nil {
 		return nil, fmt.Errorf("conformance violations: %w", err)
 	}
-	rules := map[string]map[string]*EdgeMulticastConformanceRule{}
+	// Rules are collected per ENTRY rather than per group, since an entry is now either a group
+	// or one of its publishers and each renders its own list.
+	rules := map[*EdgeMulticastConformance]map[string]*EdgeMulticastConformanceRule{}
 	for _, s := range violations {
 		g := s.Label("multicast_group")
 		seen++
@@ -283,11 +313,17 @@ func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticast
 		if n == 0 {
 			continue
 		}
-		e := out.group(g)
+		// The exemption is decided BEFORE the entry is minted, and the order is load-bearing.
+		// An exemption is keyed on (stream, rule) and is charged to the group either way — it
+		// is a statement about a known deviation of the feed, and counting it per line would
+		// make one waiver read differently on each path. Minting the publisher entry first left
+		// an empty one behind, which grades `ungraded` and put "nothing reached a verdict" on a
+		// line whose only finding was a deliberate waiver.
 		if edgeMulticastConformanceExempt(s.Label("stream"), s.Label("rule_id")) {
-			e.Exempted += n
+			out.group(g).Exempted += n
 			continue
 		}
+		e := out.entry(g, s.Label("source_addr"))
 		switch strings.ToLower(s.Label("severity")) {
 		case "must":
 			e.Must += n
@@ -299,16 +335,16 @@ func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticast
 			// was noted", and the rule id in the tooltip is where the detail belongs.
 			e.Info += n
 		}
-		if rules[g] == nil {
-			rules[g] = map[string]*EdgeMulticastConformanceRule{}
+		if rules[e] == nil {
+			rules[e] = map[string]*EdgeMulticastConformanceRule{}
 		}
 		id := s.Label("rule_id")
-		r, ok := rules[g][id]
+		r, ok := rules[e][id]
 		if !ok {
 			r = &EdgeMulticastConformanceRule{
 				RuleID: id, Severity: strings.ToLower(s.Label("severity")),
 			}
-			rules[g][id] = r
+			rules[e][id] = r
 		}
 		r.Count += n
 		if h := s.Label("hostname"); h != "" {
@@ -319,8 +355,11 @@ func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticast
 		}
 	}
 
+	// The denominator, split the same way the violations are: a publisher's coverage is the
+	// checks that judged ITS series, and mixing in the channel-scoped ones would report a line as
+	// having graded work it had no part in.
 	checks, err := a.Prom.Query(ctx, fmt.Sprintf(
-		`sum by (multicast_group, result, channel) (increase(dz_conformance_checks_total{env=%q}[%s]))`,
+		`sum by (multicast_group, result, channel, source_addr) (increase(dz_conformance_checks_total{env=%q}[%s]))`,
 		env, w))
 	if err != nil {
 		return nil, fmt.Errorf("conformance checks: %w", err)
@@ -333,7 +372,21 @@ func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticast
 			continue
 		}
 		n := promCount(s.Value)
-		e := out.group(g)
+		// Channels are a property of the group's coverage, not of one path, and the group row is
+		// where the tooltip names them. Collected even from a flat series: the channel was
+		// covered at some point, which is what this set reports.
+		if ch := s.Label("channel"); ch != "" {
+			out.group(g).Channels = appendUnique(out.group(g).Channels, ch)
+		}
+		// A series flat across the window graded nothing in it, and must not mint an entry: with
+		// source_addr in the by-clause that is a path the validator saw no datagrams from, and an
+		// entry with no checks behind it grades `ungraded` — a badge on a line over nothing at
+		// all. Adding zero to an entry that already exists was always harmless; creating one is
+		// not. The violations loop above skips a zero for the same reason.
+		if n == 0 {
+			continue
+		}
+		e := out.entry(g, s.Label("source_addr"))
 		e.Graded += n
 		switch strings.ToLower(s.Label("result")) {
 		case "pass":
@@ -342,9 +395,6 @@ func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticast
 			e.NA += n
 		case "unverifiable":
 			e.Unverifiable += n
-		}
-		if ch := s.Label("channel"); ch != "" {
-			e.Channels = appendUnique(e.Channels, ch)
 		}
 	}
 
@@ -396,8 +446,11 @@ func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticast
 		}
 	}
 
-	for g, e := range out.Groups {
-		if rs := rules[g]; len(rs) > 0 {
+	// Both grains are graded by the same function over the same struct, which is the point of
+	// keeping one type: a publisher line and a group row cannot disagree about what `violating`
+	// means, and neither can drift when the ranking changes.
+	finish := func(e *EdgeMulticastConformance) {
+		if rs := rules[e]; len(rs) > 0 {
 			for id, r := range rs {
 				if c, ok := catalog[id]; ok {
 					r.Summary, r.SpecURL = c.summary, c.specURL
@@ -411,6 +464,55 @@ func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticast
 		sort.Strings(e.Versions)
 		e.Verdict = edgeMulticastConformanceVerdict(e)
 	}
+	for g, byPub := range out.Publishers {
+		grp := out.Groups[g]
+		for _, e := range byPub {
+			// Who graded, carried down to the line. A publisher's verdict rests on exactly the
+			// validators and vantages the group's does — these queries carry no source address
+			// and never will, since a validator subscribes to the group. Copied rather than
+			// read across at render time so the entry says what stands behind it.
+			//
+			// Channels are NOT copied: they describe the group's coverage, and a path graded on
+			// one channel would read as having covered every channel the group did.
+			if grp != nil {
+				e.Instances = grp.Instances
+				e.Nodes = append([]string(nil), grp.Nodes...)
+				e.Versions = append([]string(nil), grp.Versions...)
+			}
+			finish(e)
+		}
+	}
+	for g, e := range out.Groups {
+		finish(e)
+		// **A group with nothing conclusive of its own must not say `ungraded` over lines that
+		// did reach a verdict.** That word means "the validator ran and nothing it grades
+		// reached a verdict", and after the split it is what the group entry looks like on a
+		// healthy feed: the rules left on it are the book and reference-data ones, which
+		// decline most of their opportunities, so the row read "nothing reached a verdict"
+		// directly above lines reading `conforming` over 900 passed checks.
+		//
+		// **The condition reads the verdict rather than re-deriving it**, and that is the whole
+		// correctness argument. An earlier version tested `Graded == 0`, which is NOT the
+		// condition `ungraded` is reached on — that one is `Passes == 0 && Info == 0`, so a
+		// group whose channel-scoped checks all came back `na` or `unverifiable` has
+		// `Graded > 0` and escaped the guard while still rendering the bad reading. Two
+		// predicates for one question drift; one cannot.
+		//
+		// The guard keeps the signal `ungraded` exists for. A validator that runs and concludes
+		// nothing is worth surfacing — but if a publisher of this group reached a verdict then
+		// the validator is plainly grading, and the group's own silence is the split working
+		// rather than an absence. With no publisher verdict either, nothing was concluded
+		// anywhere and `ungraded` stands.
+		//
+		// It asks whether a publisher REACHED A VERDICT, not whether one graded: `Graded`
+		// counts `na` and `unverifiable` too, so a line that concluded nothing would otherwise
+		// rescue a group that concluded nothing — turning the whole group silent in exactly the
+		// state the word is for. This is why the publisher entries are graded above and not
+		// below: the group reads their verdicts.
+		if e.Verdict == edgeMulticastConformanceUngraded && anyPublisherReachedAVerdict(out.Publishers[g]) {
+			e.Verdict = ""
+		}
+	}
 
 	if dropped > 0 {
 		slog.Warn("edge multicast conformance: samples carry no multicast_group and were dropped",
@@ -422,6 +524,82 @@ func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticast
 	// up to a minute older than it is, on a column whose staleness rule is the point.
 	out.GeneratedAt = time.Now().UTC()
 	return out, nil
+}
+
+// entry returns the entry a finding belongs to: the publisher's when the metric named one, and
+// the group's when it did not.
+//
+// The address is taken verbatim from the label and is NOT validated against the group's publisher
+// set here. A finding from an address no publisher of the group carries is still a finding — the
+// page counts it as unattributed rather than dropping it, exactly as the Sequence column does with
+// a series whose address matches no line.
+func (r *EdgeMulticastConformanceResponse) entry(addr, src string) *EdgeMulticastConformance {
+	if src == "" {
+		return r.group(addr)
+	}
+	if r.Publishers == nil {
+		r.Publishers = map[string]map[string]*EdgeMulticastConformance{}
+	}
+	if r.Publishers[addr] == nil {
+		r.Publishers[addr] = map[string]*EdgeMulticastConformance{}
+	}
+	if e, ok := r.Publishers[addr][src]; ok {
+		return e
+	}
+	e := &EdgeMulticastConformance{}
+	r.Publishers[addr][src] = e
+	// The group must exist whenever one of its publishers does: the group row carries the
+	// context every line's tooltip reads (which validators, at how many vantages, on what build),
+	// and a publisher entry with no group behind it would render a verdict from nowhere.
+	r.group(addr)
+	return e
+}
+
+// anyPublisherReachedAVerdict reports whether any publisher of the group concluded something —
+// read from the verdict each line already carries rather than re-derived from its counters, so
+// the two can never disagree about what "concluded something" means.
+//
+// `ungraded` is the one verdict that is not a conclusion: it says the rules ran and none of them
+// reached an answer. A line in that state cannot vouch for the group's silence, because it is the
+// same silence one level down.
+func anyPublisherReachedAVerdict(byPub map[string]*EdgeMulticastConformance) bool {
+	for _, e := range byPub {
+		if e.Verdict != "" && e.Verdict != edgeMulticastConformanceUngraded {
+			return true
+		}
+	}
+	return false
+}
+
+// countUnattributedConformance counts publisher verdicts naming an address no line on the group
+// carries.
+//
+// A finding from an address the ledger does not know about is still a finding — a publisher torn
+// down mid-window, or one whose tunnel address changed since the snapshot — so it is counted
+// rather than dropped, exactly as a recorded series with no line is. Dropping it would make the
+// page quieter than the feed.
+//
+// A line with no DZIP cannot match anything: it is a publisher the ledger has no tunnel address
+// for, and it is not a wildcard that absorbs every unmatched verdict.
+func countUnattributedConformance(
+	lines []EdgeMulticastPublisher, byPub map[string]*EdgeMulticastConformance,
+) int {
+	if len(byPub) == 0 {
+		return 0
+	}
+	onLine := make(map[string]struct{}, len(lines))
+	for _, l := range lines {
+		if l.DZIP != "" {
+			onLine[l.DZIP] = struct{}{}
+		}
+	}
+	n := 0
+	for ip := range byPub {
+		if _, ok := onLine[ip]; !ok {
+			n++
+		}
+	}
+	return n
 }
 
 // group returns the entry for a multicast address, creating it on first use.
@@ -537,22 +715,29 @@ func appendUnique(xs []string, v string) []string {
 //
 // Its own clock, never SequenceAsOf or ObservationsAsOf. Those are different entries written by
 // different legs, and borrowing one would age this column against a payload it does not come from.
-func (a *API) edgeMulticastConformanceFold(ctx context.Context) (map[string]*EdgeMulticastConformance, time.Time) {
+func (a *API) edgeMulticastConformanceFold(ctx context.Context) (
+	map[string]*EdgeMulticastConformance, map[string]map[string]*EdgeMulticastConformance, time.Time,
+) {
 	data, err := a.readPageCache(ctx, edgeMulticastConformanceCacheKey)
 	if err != nil {
-		return nil, time.Time{}
+		return nil, nil, time.Time{}
 	}
 	var payload EdgeMulticastConformanceResponse
 	if err := json.Unmarshal(data, &payload); err != nil {
 		slog.Warn("edge multicast conformance: cache did not parse", "error", err)
-		return nil, time.Time{}
+		return nil, nil, time.Time{}
 	}
 	if len(payload.Groups) == 0 {
 		// An empty payload is a real answer — no validator covers anything in this
 		// environment — but it carries no per-group facts, so there is nothing to age and the
 		// column has nothing to dim. Returning a zero clock keeps the header from claiming a
 		// freshness for cells that do not exist.
-		return nil, time.Time{}
+		//
+		// Groups alone decides this. Every publisher entry creates its group, so there is no
+		// payload carrying lines and no rows above them.
+		return nil, nil, time.Time{}
 	}
-	return payload.Groups, payload.GeneratedAt.UTC()
+	// A nil Publishers map is the normal state on a fleet that has not rolled the label yet, and
+	// every lookup below reads nil as "this publisher has no verdict of its own".
+	return payload.Groups, payload.Publishers, payload.GeneratedAt.UTC()
 }
