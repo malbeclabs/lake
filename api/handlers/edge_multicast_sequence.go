@@ -1031,7 +1031,7 @@ const edgeMulticastGapWitnessMinShare = 0.5
 // another market says nothing about this one — a sports node records dozens of them and they fail
 // independently. The Channel ID is in it because the two paths of a feed publish under different
 // ids today, so leaving it out would fold a path's series in with its peer's. And the PUBLISHER is
-// in it because the channel id is not the path — the arms collapsing onto a single channel id is a
+// in it because the channel id is not the path — the two paths collapsing onto a single channel id is a
 // settled upstream change, and on the group roll-up, where instances from every publisher are in
 // one slice, the channel alone would then let one path's clean recording exonerate the other's
 // loss. That is the opposite of what the page needs: a path losing while its peer holds is

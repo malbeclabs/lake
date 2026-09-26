@@ -114,7 +114,7 @@ func TestEdgeMulticastGapConfined_TheOtherPathIsNotAWitness(t *testing.T) {
 	assert.Nil(t, got)
 }
 
-// The channel id is not what separates the two paths — collapsing the arms onto a single id is a
+// The channel id is not what separates the two paths — collapsing them onto a single id is a
 // settled upstream change — so the publisher is in the key too. On the group roll-up, where every
 // publisher's instances share one slice, the peer path's clean recording must not exonerate this
 // one's loss: that pair is the finding the per-line verdict exists to show.
