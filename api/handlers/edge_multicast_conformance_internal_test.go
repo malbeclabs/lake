@@ -859,3 +859,67 @@ func TestCountUnattributedConformance(t *testing.T) {
 		t.Errorf("unattributed with no publisher entries: %d, want 0", got)
 	}
 }
+
+// TestEdgeMulticastConformance_AGroupWithNothingConclusiveIsAlsoSilent is the second shape of the
+// suppression, and the one an earlier `Graded == 0` test missed.
+//
+// `ungraded` is reached on `Passes == 0 && Info == 0`, which is NOT the same as having graded
+// nothing: a group whose channel-scoped checks all come back `na` or `unverifiable` has
+// `Graded > 0` and still asserts "nothing reached a verdict" — directly above lines that did reach
+// one. This is the expected steady state after the split, not a corner case: the rules left on the
+// group row are the book and reference-data ones, which decline most of their opportunities on a
+// healthy feed.
+func TestEdgeMulticastConformance_AGroupWithNothingConclusiveIsAlsoSilent(t *testing.T) {
+	got := fetchConformance(t, &fakeProm{byMetric: map[string][]PromSample{
+		"uptime_seconds": oneValidator("233.84.178.4", "cmh"),
+		"checks_total": {
+			// The group's own rules ran and concluded nothing.
+			sample(4000, "multicast_group", "233.84.178.4", "result", "na"),
+			sample(120, "multicast_group", "233.84.178.4", "result", "unverifiable"),
+			// A publisher of it did reach a verdict.
+			sample(900, "multicast_group", "233.84.178.4", "result", "pass",
+				"source_addr", "148.51.120.6"),
+		},
+	}})
+
+	g := got.Groups["233.84.178.4"]
+	if g == nil {
+		t.Fatal("no group entry")
+	}
+	if g.Graded == 0 {
+		t.Fatal("the group graded nothing, so this is not the shape under test")
+	}
+	if g.Verdict != "" {
+		t.Errorf("group verdict %q, want none: its own checks concluded nothing while a publisher reached a verdict, so %q would sit above a line reading %q",
+			g.Verdict, edgeMulticastConformanceUngraded, edgeMulticastConformanceConforming)
+	}
+	if pub := got.Publishers["233.84.178.4"]["148.51.120.6"]; pub == nil {
+		t.Fatal("the publisher entry is missing")
+	} else if pub.Verdict != edgeMulticastConformanceConforming {
+		t.Errorf("publisher verdict %q, want %q", pub.Verdict, edgeMulticastConformanceConforming)
+	}
+}
+
+// TestEdgeMulticastConformance_NothingConclusiveAnywhereStaysUngraded is the guard on the guard.
+// Where no publisher reached a verdict either, nothing was concluded anywhere and the absence is
+// real — which is the signal `ungraded` exists for and must survive the suppression.
+func TestEdgeMulticastConformance_NothingConclusiveAnywhereStaysUngraded(t *testing.T) {
+	got := fetchConformance(t, &fakeProm{byMetric: map[string][]PromSample{
+		"uptime_seconds": oneValidator("233.84.178.4", "cmh"),
+		"checks_total": {
+			sample(4000, "multicast_group", "233.84.178.4", "result", "na"),
+			// A publisher series that also concluded nothing must not rescue the group.
+			sample(500, "multicast_group", "233.84.178.4", "result", "na",
+				"source_addr", "148.51.120.6"),
+		},
+	}})
+
+	g := got.Groups["233.84.178.4"]
+	if g == nil {
+		t.Fatal("no group entry")
+	}
+	if g.Verdict != edgeMulticastConformanceUngraded {
+		t.Errorf("group verdict %q, want %q: nothing reached a verdict anywhere on this group",
+			g.Verdict, edgeMulticastConformanceUngraded)
+	}
+}

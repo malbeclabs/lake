@@ -812,12 +812,22 @@ would charge one path for what its peer did as much of. For the same reason a bl
 is never a pass — it means either that no validator grades the feed or that no finding named that
 path, and both are absences.
 
-**A group row with no verdict of its own is an em dash, not `ungraded`.** Once every finding on a
-group names a publisher, the group entry's own counters are zero — that is the split working, not a
-validator that graded nothing, and `ungraded` over it read "nothing reached a verdict" directly
-above lines reading `conforming`. The verdict is suppressed when the group graded nothing itself
-**and** a publisher of it did; where no publisher graded anything either, the absence is real and
-`ungraded` stands.
+**A group row with nothing conclusive of its own is an em dash, not `ungraded`.** After the split
+the rules left on the group row are the book and reference-data ones, which decline most of their
+opportunities on a healthy feed — so `ungraded` over it read "nothing reached a verdict" directly
+above lines reading `conforming`.
+
+The suppression **reads the group's verdict rather than re-deriving it**: it fires when that
+verdict is `ungraded` and a publisher of the group reached one. Testing `Graded == 0` instead is
+wrong and was the first attempt — `ungraded` is reached on `Passes == 0 && Info == 0`, so a group
+whose channel-scoped checks all came back `na` or `unverifiable` has `Graded > 0`, escapes that
+test and still renders the bad reading. Two predicates for one question drift; one cannot.
+
+The guard asks whether a publisher **reached a verdict**, not whether one graded — `Graded` counts
+`na` and `unverifiable`, so a line that concluded nothing would otherwise vouch for a group that
+concluded nothing. That is why publisher entries are graded before group entries: the group reads
+their verdicts. Where nothing was concluded anywhere the absence is real and `ungraded` stands,
+which is the signal it exists for.
 
 That dash is **not** the same as the one a group no validator covers gets. It still carries the
 counts that belong to the group and to no line — `exempted` and `unattributed`, which are reported

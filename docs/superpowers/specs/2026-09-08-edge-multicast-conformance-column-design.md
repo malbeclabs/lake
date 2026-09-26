@@ -491,8 +491,12 @@ that is a different statement from a clean one. Today that is 10 of the 15 group
 finding named a publisher, so its own counters are zero and the lines below hold the verdicts. That
 is not `ungraded`. Grading it anyway put "nothing reached a verdict" directly above lines reading
 `conforming` over 900 passed checks — so the verdict is suppressed when the group graded nothing of
-its own **and** a publisher of it did. Where no publisher graded anything either, the absence is
-real and `ungraded` stands.
+its own **and** a publisher of it reached one. The condition reads the group's verdict rather than
+re-deriving it: `ungraded` is reached on `Passes == 0 && Info == 0`, so a `Graded == 0` test —
+the first attempt — let a group whose checks all came back `na` or `unverifiable` through while
+it still rendered the bad reading. The guard likewise asks whether a publisher reached a
+*verdict* and not whether it graded, since `Graded` counts `na` too. Where nothing was concluded
+anywhere the absence is real and `ungraded` stands.
 
 The two dashes are not interchangeable. The one above keeps its tooltip and an underline to say
 so, because the entry behind it still carries `exempted` and `unattributed` — counts that belong

@@ -464,24 +464,6 @@ func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticast
 		sort.Strings(e.Versions)
 		e.Verdict = edgeMulticastConformanceVerdict(e)
 	}
-	for g, e := range out.Groups {
-		finish(e)
-		// **A group whose every finding named a publisher has nothing to say at its own grain,
-		// and must not say `ungraded`.** That verdict means "the validator ran and graded
-		// nothing", and once the fleet carries the label it is exactly what a clean split looks
-		// like from the group entry: every violation and every check routed to a line, leaving
-		// the group's own counters at zero. The row then read "nothing reached a verdict"
-		// directly above lines reading `conforming` with 900 of 900 checks passed.
-		//
-		// The test `ungraded` is really asking is about the whole group, so it is answered over
-		// the whole group. Nothing of its own AND publishers that did grade something is not an
-		// absence — it is the split working — and the cell renders as having no statement at
-		// this grain. Nothing of its own and no publishers either is still `ungraded`, which is
-		// the reading that catches a validator grading nothing at all.
-		if e.Graded == 0 && e.Must == 0 && e.Should == 0 && e.Info == 0 && anyGraded(out.Publishers[g]) {
-			e.Verdict = ""
-		}
-	}
 	for g, byPub := range out.Publishers {
 		grp := out.Groups[g]
 		for _, e := range byPub {
@@ -498,6 +480,37 @@ func (a *API) FetchEdgeMulticastConformance(ctx context.Context) (*EdgeMulticast
 				e.Versions = append([]string(nil), grp.Versions...)
 			}
 			finish(e)
+		}
+	}
+	for g, e := range out.Groups {
+		finish(e)
+		// **A group with nothing conclusive of its own must not say `ungraded` over lines that
+		// did reach a verdict.** That word means "the validator ran and nothing it grades
+		// reached a verdict", and after the split it is what the group entry looks like on a
+		// healthy feed: the rules left on it are the book and reference-data ones, which
+		// decline most of their opportunities, so the row read "nothing reached a verdict"
+		// directly above lines reading `conforming` over 900 passed checks.
+		//
+		// **The condition reads the verdict rather than re-deriving it**, and that is the whole
+		// correctness argument. An earlier version tested `Graded == 0`, which is NOT the
+		// condition `ungraded` is reached on — that one is `Passes == 0 && Info == 0`, so a
+		// group whose channel-scoped checks all came back `na` or `unverifiable` has
+		// `Graded > 0` and escaped the guard while still rendering the bad reading. Two
+		// predicates for one question drift; one cannot.
+		//
+		// The guard keeps the signal `ungraded` exists for. A validator that runs and concludes
+		// nothing is worth surfacing — but if a publisher of this group reached a verdict then
+		// the validator is plainly grading, and the group's own silence is the split working
+		// rather than an absence. With no publisher verdict either, nothing was concluded
+		// anywhere and `ungraded` stands.
+		//
+		// It asks whether a publisher REACHED A VERDICT, not whether one graded: `Graded`
+		// counts `na` and `unverifiable` too, so a line that concluded nothing would otherwise
+		// rescue a group that concluded nothing — turning the whole group silent in exactly the
+		// state the word is for. This is why the publisher entries are graded above and not
+		// below: the group reads their verdicts.
+		if e.Verdict == edgeMulticastConformanceUngraded && anyPublisherReachedAVerdict(out.Publishers[g]) {
+			e.Verdict = ""
 		}
 	}
 
@@ -542,12 +555,16 @@ func (r *EdgeMulticastConformanceResponse) entry(addr, src string) *EdgeMulticas
 	return e
 }
 
-// anyGraded reports whether any publisher of the group reached a verdict of its own — a finding
-// of any severity, or a check that ran. It is what separates "this group's findings all belong to
-// its lines" from "nothing graded this group at all".
-func anyGraded(byPub map[string]*EdgeMulticastConformance) bool {
+// anyPublisherReachedAVerdict reports whether any publisher of the group concluded something —
+// read from the verdict each line already carries rather than re-derived from its counters, so
+// the two can never disagree about what "concluded something" means.
+//
+// `ungraded` is the one verdict that is not a conclusion: it says the rules ran and none of them
+// reached an answer. A line in that state cannot vouch for the group's silence, because it is the
+// same silence one level down.
+func anyPublisherReachedAVerdict(byPub map[string]*EdgeMulticastConformance) bool {
 	for _, e := range byPub {
-		if e.Graded > 0 || e.Must > 0 || e.Should > 0 || e.Info > 0 {
+		if e.Verdict != "" && e.Verdict != edgeMulticastConformanceUngraded {
 			return true
 		}
 	}
