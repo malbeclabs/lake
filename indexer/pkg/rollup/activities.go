@@ -713,19 +713,24 @@ func (a *Activities) ComputeDeviceInterfaceRollupFromGNMI(ctx context.Context, i
 				toStartOfFiveMinutes(timestamp) as bucket,
 				-- Per-sample deltas; NULL for the first sample of each partition (no baseline).
 				-- Cast to Int64 so counter resets produce negatives (dropped downstream).
-				if(rn > 1, toInt64(in_errors) - toInt64(prev_in_errors), NULL) as in_errors_delta,
-				if(rn > 1, toInt64(out_errors) - toInt64(prev_out_errors), NULL) as out_errors_delta,
-				if(rn > 1, toInt64(in_fcs_errors) - toInt64(prev_in_fcs_errors), NULL) as in_fcs_errors_delta,
-				if(rn > 1, toInt64(in_discards) - toInt64(prev_in_discards), NULL) as in_discards_delta,
-				if(rn > 1, toInt64(out_discards) - toInt64(prev_out_discards), NULL) as out_discards_delta,
-				if(rn > 1, toInt64(carrier_transitions) - toInt64(prev_carrier_transitions), NULL) as carrier_transitions_delta,
-				if(rn > 1, toInt64(in_octets) - toInt64(prev_in_octets), NULL) as in_octets_delta,
-				if(rn > 1, toInt64(out_octets) - toInt64(prev_out_octets), NULL) as out_octets_delta,
-				if(rn > 1, toInt64(in_pkts) - toInt64(prev_in_pkts), NULL) as in_pkts_delta,
-				if(rn > 1, toInt64(out_pkts) - toInt64(prev_out_pkts), NULL) as out_pkts_delta,
-				if(rn > 1, toInt64(in_multicast_pkts) - toInt64(prev_in_multicast_pkts), NULL) as in_multicast_pkts_delta,
-				if(rn > 1, toInt64(out_multicast_pkts) - toInt64(prev_out_multicast_pkts), NULL) as out_multicast_pkts_delta,
-				if(rn > 1, (toUnixTimestamp64Milli(timestamp) - toUnixTimestamp64Milli(prev_ts)) / 1000.0, NULL) as delta_duration
+				-- A sample reporting every cumulative counter as zero is a non-reading, not an
+				-- idle interface: gNMI emits these for NOT_PRESENT/UNKNOWN/LOWER_LAYER_DOWN and
+				-- sometimes DOWN. Diffing the next real sample against one yields the whole
+				-- lifetime counter as a single delta, so that pair gets no baseline.
+				rn > 1 AND NOT (prev_no_counters AND NOT no_counters) as has_baseline,
+				if(has_baseline, toInt64(in_errors) - toInt64(prev_in_errors), NULL) as in_errors_delta,
+				if(has_baseline, toInt64(out_errors) - toInt64(prev_out_errors), NULL) as out_errors_delta,
+				if(has_baseline, toInt64(in_fcs_errors) - toInt64(prev_in_fcs_errors), NULL) as in_fcs_errors_delta,
+				if(has_baseline, toInt64(in_discards) - toInt64(prev_in_discards), NULL) as in_discards_delta,
+				if(has_baseline, toInt64(out_discards) - toInt64(prev_out_discards), NULL) as out_discards_delta,
+				if(has_baseline, toInt64(carrier_transitions) - toInt64(prev_carrier_transitions), NULL) as carrier_transitions_delta,
+				if(has_baseline, toInt64(in_octets) - toInt64(prev_in_octets), NULL) as in_octets_delta,
+				if(has_baseline, toInt64(out_octets) - toInt64(prev_out_octets), NULL) as out_octets_delta,
+				if(has_baseline, toInt64(in_pkts) - toInt64(prev_in_pkts), NULL) as in_pkts_delta,
+				if(has_baseline, toInt64(out_pkts) - toInt64(prev_out_pkts), NULL) as out_pkts_delta,
+				if(has_baseline, toInt64(in_multicast_pkts) - toInt64(prev_in_multicast_pkts), NULL) as in_multicast_pkts_delta,
+				if(has_baseline, toInt64(out_multicast_pkts) - toInt64(prev_out_multicast_pkts), NULL) as out_multicast_pkts_delta,
+				if(has_baseline, (toUnixTimestamp64Milli(timestamp) - toUnixTimestamp64Milli(prev_ts)) / 1000.0, NULL) as delta_duration
 			FROM (
 				SELECT
 					device_pubkey, interface_name, timestamp,
@@ -744,7 +749,9 @@ func (a *Activities) ComputeDeviceInterfaceRollupFromGNMI(ctx context.Context, i
 					lagInFrame(in_pkts) OVER w as prev_in_pkts,
 					lagInFrame(out_pkts) OVER w as prev_out_pkts,
 					lagInFrame(in_multicast_pkts) OVER w as prev_in_multicast_pkts,
-					lagInFrame(out_multicast_pkts) OVER w as prev_out_multicast_pkts
+					lagInFrame(out_multicast_pkts) OVER w as prev_out_multicast_pkts,
+					(in_octets = 0 AND out_octets = 0 AND in_pkts = 0 AND out_pkts = 0) as no_counters,
+					lagInFrame(in_octets = 0 AND out_octets = 0 AND in_pkts = 0 AND out_pkts = 0) OVER w as prev_no_counters
 				FROM ` + interfaceState + `
 				WHERE timestamp >= $1 AND timestamp < $3
 				WINDOW w AS (PARTITION BY device_pubkey, interface_name ORDER BY timestamp ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)

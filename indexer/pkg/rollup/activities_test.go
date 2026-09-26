@@ -725,6 +725,62 @@ func TestComputeDeviceInterfaceRollupFromGNMI_BaselineLookbackIncludesFirstInWin
 	assert.Equal(t, uint64(30), buckets[0].InErrors, "first in-window delta (vs pre-window baseline) must be included")
 }
 
+// TestComputeDeviceInterfaceRollupFromGNMI_ZeroCounterSampleIsNotABaseline pins the
+// non-reading guard. gNMI reports an absent interface with every cumulative counter at
+// zero; when the interface reports again, the raw diff is its whole lifetime counter over
+// one sample gap, which reads as a physically impossible rate. The zero sample must not
+// serve as a baseline, while two consecutive real samples still produce their delta.
+func TestComputeDeviceInterfaceRollupFromGNMI_ZeroCounterSampleIsNotABaseline(t *testing.T) {
+	t.Parallel()
+	conn := setupTestDB(t)
+	ctx := context.Background()
+	createInterfaceStateTable(t, ctx, conn)
+
+	windowStart := time.Now().Truncate(5 * time.Minute)
+	windowEnd := windowStart.Add(5 * time.Minute)
+
+	// Lifetime counters observed on a port that had been reporting NOT_PRESENT for days.
+	const lifetimeOctets = uint64(614947804308831)
+	const lifetimePkts = uint64(692221497968)
+
+	samples := []struct {
+		offset time.Duration
+		status string
+		octets uint64
+		pkts   uint64
+	}{
+		{0, "NOT_PRESENT", 0, 0},
+		{30 * time.Second, "NOT_PRESENT", 0, 0},
+		// First real reading. Diffed against the zero above it would be ~114 Tbps.
+		{60 * time.Second, "UP", lifetimeOctets, lifetimePkts},
+		// Second real reading: a genuine 125000-octet delta over 30s must survive.
+		{90 * time.Second, "UP", lifetimeOctets + 125000, lifetimePkts + 100},
+	}
+	for _, smp := range samples {
+		require.NoError(t, conn.Exec(ctx, insertInterfaceStateSQL,
+			windowStart.Add(smp.offset), "device-zero", "Ethernet25/1", "UP", smp.status,
+			uint32(1), uint16(9000), int64(0),
+			uint64(0), smp.octets, smp.octets, smp.pkts, smp.pkts,
+			uint64(0), uint64(0), uint64(0), uint64(0),
+			uint64(0), uint64(0), uint64(0), uint64(0), uint64(0), uint64(0), uint64(0)))
+	}
+
+	a := &Activities{ClickHouse: conn, Log: laketesting.NewLogger()}
+	buckets, err := a.ComputeDeviceInterfaceRollupFromGNMI(ctx, BackfillChunkInput{
+		WindowStart: windowStart,
+		WindowEnd:   windowEnd,
+	})
+	require.NoError(t, err)
+	require.Len(t, buckets, 1)
+
+	b := buckets[0]
+	// 125000 octets * 8 / 30s. Without the guard this read 1.14e14.
+	assert.InDelta(t, 33333.33, b.OutBps.Max, 1)
+	assert.InDelta(t, 33333.33, b.InBps.Max, 1)
+	// 100 packets / 30s.
+	assert.InDelta(t, 3.33, b.OutPps.Max, 0.1)
+}
+
 // TestCoalesceDeviceInterfaceBuckets_PrefersGNMI verifies the per-device merge: a device
 // present in the gNMI buckets wins (its fact-table buckets are dropped), and a device with
 // no gNMI data falls back to its fact-table buckets.
