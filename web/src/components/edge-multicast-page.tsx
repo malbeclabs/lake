@@ -953,6 +953,27 @@ function DZDCell({
   )
 }
 
+// The recorders a line's loss is confined to, labelled the way the per-recorder loss strip labels
+// its rows: the location code where the payload carries one, the node id otherwise. Two names is
+// the budget beside a badge, and past that the count is the information rather than the names.
+function confinedRecorders(sequence?: EdgeMulticastSequenceHealth): string[] {
+  const nodes = sequence?.gap_confined_nodes ?? []
+  if (nodes.length === 0) return []
+  const codes = new Map<string, string>()
+  for (const inst of sequence?.instances ?? []) {
+    if (inst.location_code) codes.set(inst.node, inst.location_code)
+  }
+  // Deduplicated after labelling, not before: two recorders at one site share a location code, so
+  // mapping them through it would otherwise print `at cmh and cmh` — and the `N more` count below
+  // has to count what is not shown rather than nodes that are.
+  return [...new Set(nodes.map((node) => codes.get(node) ?? node))]
+}
+
+function confinedPhrase(labels: string[]): string {
+  if (labels.length <= 2) return labels.join(' and ')
+  return `${labels.slice(0, 2).join(', ')} and ${labels.length - 2} more`
+}
+
 // The verdict for ONE publisher, which is where it belongs: a group badge over a feed with one
 // dead publisher and one live one describes neither of them.
 //
@@ -997,6 +1018,16 @@ function PublisherHealthBadge({
   if (health === 'gapped' && sequence && (sequence.gap_nodes ?? 0) < 2) {
     detail +=
       ' — measured at one recorder, so a loss on the branch into it reads the same as a loss on the path'
+  } else if (health === 'gapped' && sequence && (sequence.gap_confined_nodes?.length ?? 0) > 0) {
+    // The other half of the same bound. Several vantages measured this path and they disagree,
+    // which is the one arrangement that CAN tell the two apart: a peer recorded every gapped
+    // series of this line intact over the same window, so the loss is downstream of the split.
+    // The verdict stands — data was lost and the recording is incomplete — and what changes is
+    // that the page no longer lets a recorder's branch read as a fault in the path.
+    // Phrased as "confined to X, not to the path" rather than making the recorders the subject of
+    // a verb: the labels are site codes, and one of them is `was`, so "this is cmh and was losing
+    // it" reads as a tense before it reads as a second recorder.
+    detail += ` — every gapped series was recorded intact at another vantage, so the loss is confined to ${confinedPhrase(confinedRecorders(sequence))}, not to the path`
   }
   if (health === 'healthy' && sequence && (sequence.capture_source_quiet ?? 0) > 0) {
     detail += `; ${sequence.capture_source_quiet} of its series are quiet at a capture source that went quiet on every path`
@@ -1161,10 +1192,15 @@ function sequenceInstanceLine(i: EdgeMulticastChannelInstance): string {
 function SequenceBadge({
   verdict,
   detail,
+  note,
   stale,
 }: {
   verdict: SequenceVerdict
   detail: string
+  /** Who the loss belongs to, when the payload can say. Rendered beside the magnitude rather than
+   *  inside the badge: the badge grades the series and this attributes it, and folding the two
+   *  would make a fault look smaller because it was somebody else's. */
+  note?: string
   stale?: boolean
 }) {
   return (
@@ -1180,6 +1216,7 @@ function SequenceBadge({
         {verdict.detail && (
           <span className="text-xs text-muted-foreground tabular-nums">{verdict.detail}</span>
         )}
+        {note && <span className="text-xs text-muted-foreground">{note}</span>}
       </span>
     </Tooltip>
   )
@@ -1528,7 +1565,7 @@ function GapTimeline({
 // it emitted, and the only thing on this page that can say "this path lost data" as opposed to
 // "this member is quiet". A series is owned by one path — two paths carrying one channel cannot
 // share a counter — so this, not the group cell, is where the verdict belongs.
-function PublisherSequenceCell({
+export function PublisherSequenceCell({
   sequence,
   asOfAge,
   gapWindow,
@@ -1549,6 +1586,10 @@ function PublisherSequenceCell({
   // thirty leagues lost four updates between them reads as four rather than as "gapped 2/30" —
   // breadth is a different question and the tooltip below is where it is answered.
   const verdict = sequenceVerdict(sequence, gapWindow?.secs ?? 0)
+  // Which recorders the loss is confined to, when every gapped series on this line was recorded
+  // intact somewhere else. Empty on a single vantage and on a path that lost data everywhere,
+  // which are the two cases where nothing narrower than the verdict can be said.
+  const confined = confinedRecorders(sequence)
   const detail = [
     sequence.gapped > 0
       ? `${sequence.gapped} of ${total} series lost data; ${total - sequence.gapped} intact`
@@ -1560,6 +1601,12 @@ function PublisherSequenceCell({
     sequence.gapped > 0 && (sequence.gap_nodes ?? 0) < 2
       ? 'measured at one recorder: a loss on the branch into it cannot be told from a loss on the path'
       : '',
+    // Said in full here, where there is room for the reasoning the badge's two words stand for.
+    // It is the one statement on this line that is about a RECORDER, so it names what was compared
+    // rather than only the conclusion.
+    confined.length > 0
+      ? `every gapped series here was recorded intact by another vantage of the same channel, so the loss is confined to ${confinedPhrase(confined)}, not to this path — the recording is still incomplete`
+      : '',
     asOfAge === undefined ? '' : computedLine(asOfAge).replace(/^ — /, ''),
   ]
     .filter(Boolean)
@@ -1567,7 +1614,15 @@ function PublisherSequenceCell({
 
   return (
     <div className="flex flex-col gap-0.5">
-      <SequenceBadge verdict={verdict} detail={detail} stale={payloadStale(asOfAge)} />
+      {/* `at cmh` beside the count is the whole point of the change: without it a line losing 1%
+          at one recorder and a line losing it at every recorder print the same badge, and the
+          reader has to open a tooltip to learn which one they are looking at. */}
+      <SequenceBadge
+        verdict={verdict}
+        detail={detail}
+        note={confined.length > 0 ? `at ${confinedPhrase(confined)}` : undefined}
+        stale={payloadStale(asOfAge)}
+      />
       {/* The strip is drawn for a CLEAN series too, not only a gapped one. An empty track beside
           a marked one is the comparison — "this path held while its peer dropped" — and hiding it
           would leave the reader with two badges and no way to tell whether the feed itself lost

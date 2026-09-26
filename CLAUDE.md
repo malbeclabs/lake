@@ -535,6 +535,36 @@ this page reports is single-vantage; the verdict stays `gapped`, because data wa
 and what narrows is the sentence the tooltip is allowed to say. The real fix is a second
 market-by-price recorder, which is not work this repo can do.
 
+**Where there ARE several vantages and they disagree, the line names the recorders.**
+`GapConfinedNodes` is set when every gapped series on a publisher line was recorded intact by
+another vantage of the same channel instance over the same window, and the badge then prints
+`at cmh and was` beside the count. Until it existed the page had no words for that case: a line
+losing 1% at one recorder and a line losing it at every recorder printed the same badge, and on
+mainnet 2026-09-26 both Kalshi perps paths read `gapped` at `aws-cmh` (23,131 ppm) and `aws-was`
+(2,428 ppm) while `aws-dub` recorded the same two channel instances with no marker at all for
+hours. Both paths gapping together at one recorder while a third records them clean is a statement
+about that recorder.
+
+The verdict is deliberately unchanged — data was lost, the recording is incomplete, and a floor
+under `gapped` is the product decision this file declines to take elsewhere. What changes is the
+sentence beside it, which is the same bound `GapNodes` sets from the other end.
+
+Four rules make the claim safe, and each is a way to charge a recorder for something it did not do.
+The witness must have **measured** the series and found it clean: a stalled peer recorded nothing
+and corroborates nothing, and a peer whose loss query failed counted nothing. It must also have
+**covered the window** — `edgeMulticastGapWitnessMinShare`, half of what the recorder it exonerates
+saw. `ok` asks only for a fresh `LastSeen`, so a vantage that started recording near the end of the
+window carries no marker for the part it missed and would otherwise exonerate the path over exactly
+the minutes it never saw; the bound is relative and not a message count, because the capture sources
+here span 28M messages to a few hundred. The key is **(publisher, capture source, Channel ID)** —
+the capture source because a clean reading on another market says nothing about this one, and the
+publisher because one path's clean recording must never exonerate the other's loss, which is the
+opposite of what the per-line verdict is for. The channel id is in it as well but is not what
+separates the paths: they publish under different ids today, and collapsing them onto one is a
+settled upstream change. And **one unwitnessed gap withdraws the claim for the whole line**, since
+the claim is about all of its loss; a series with no capture source name is never witnessed and
+never a witness, the rule every rollup keyed on that name follows.
+
 **Top of book is no longer single-vantage.** The recorded-gap leg measures three recorders of the
 same feed, which is what makes `GapNodes` mean anything there — and it is why
 `edgeMulticastAllPathsGapped` intersects across vantages rather than unioning: with several

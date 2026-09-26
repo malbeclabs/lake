@@ -113,6 +113,13 @@ func EdgeMulticastAllPathsGappedForTest(instances []EdgeMulticastChannelInstance
 	return edgeMulticastAllPathsGapped(instances)
 }
 
+// EdgeMulticastGapConfinedNodesForTest exposes the "which recorders is this loss confined to"
+// comparison. It decides what the page may say beside a gapped verdict, so its witness rules are
+// worth pinning without a database in the way.
+func EdgeMulticastGapConfinedNodesForTest(instances []EdgeMulticastChannelInstance) []string {
+	return edgeMulticastGapConfinedNodes(instances)
+}
+
 // EdgeMulticastFamilyOfForTest exposes the group-code family used to key a section for a group no
 // feed row claims.
 func EdgeMulticastFamilyOfForTest(code string) string {

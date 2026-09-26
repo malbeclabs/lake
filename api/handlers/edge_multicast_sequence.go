@@ -267,6 +267,35 @@ type EdgeMulticastSequenceHealth struct {
 	// this bounds is whose loss the page may call it.
 	GapNodes int `json:"gap_nodes,omitempty"`
 
+	// GapConfinedNodes names the recording nodes that gapped, and is set only when EVERY gapped
+	// series on this line was recorded intact by another vantage of the same channel instance
+	// over the same window. When it is set, the loss is downstream of the point the paths split:
+	// the recorder's own branch or host, and not the path end to end.
+	//
+	// It is the other half of what GapNodes bounds. That field says when there is only one
+	// vantage and the claim therefore cannot be narrowed at all; this one says when there are
+	// several and they disagree, which is the case the page had no words for — it rendered a
+	// line losing 1% at one recorder exactly like a line losing it everywhere. Measured on
+	// mainnet 2026-09-26, both Kalshi perps paths read `gapped` at aws-cmh and aws-was while
+	// aws-dub recorded the same two channel instances with no marker at all for hours, and both
+	// paths gapping together at one recorder while a third records them clean is a statement
+	// about that recorder.
+	//
+	// **The verdict is deliberately unchanged.** Data was lost, the recording is incomplete, and
+	// a floor under `gapped` is the product decision this file already declines to take
+	// elsewhere. What this narrows is the sentence the page is allowed to say beside it.
+	//
+	// The comparison is per (publisher, capture source, Channel ID) and the peer must have
+	// MEASURED the series, found it clean, and covered the window: a stalled peer recorded
+	// nothing and so corroborates nothing, a peer whose loss query failed counted nothing, and a
+	// peer that recorded a sliver of the window vouches for a sliver of it. A series with no
+	// capture source name can neither be confined nor exonerate anything — every unnamed series
+	// falls into one bucket, so two unrelated markets at one node would stand in as each other's
+	// witness, the same trap demoteEdgeMulticastQuietCaptureSources documents. One gapped series
+	// without a clean witness leaves the whole line unconfined, because the claim is about all of
+	// its loss.
+	GapConfinedNodes []string `json:"gap_confined_nodes,omitempty"`
+
 	// RecorderLoss is each recording node measured against its peers on the same path, and
 	// RecorderLossSimultaneous the seconds two or more of them lost at once. Set on a publisher
 	// line only, and only where the path has more than one recorder — market-by-price runs a
@@ -971,6 +1000,111 @@ func edgeMulticastAllPathsGapped(instances []EdgeMulticastChannelInstance) []Kal
 	return collapseKalshiL2GapSeconds(flat)
 }
 
+// edgeMulticastGapWitnessMinShare is how much of the gapped series' own volume a clean vantage must
+// have recorded before it may exonerate the path.
+//
+// Without it the witness test is only "this series is ok", and `ok` asks nothing about the window:
+// it needs a fresh LastSeen and nothing else. A recorder that joined the group a minute before a
+// fifteen-minute window closes records a few hundred messages, writes no gap marker, and vouches
+// for the whole of it — so a real loss on the path ten minutes earlier prints as one recorder's
+// fault, which is the exact misattribution this comparison exists to prevent, running backwards.
+//
+// Relative rather than an absolute message count, because the question is coverage of the window
+// and not volume. The capture sources on this page span 28M messages to a few hundred, so an
+// absolute floor would refuse to confine anything on the quiet ones while still admitting a late
+// joiner on the busy ones. Half is the same bound as edgeMulticastNodeParityFloor and is chosen the
+// same way: recording nodes on one group receive the same feed, so a vantage that saw less than
+// half of what the recorder it is exonerating saw is not describing the same window. It is
+// deliberately loose — a witness normally records MORE than the node that lost data, so this fires
+// on coverage and not on the difference between two healthy recorders, which runs under a percent.
+const edgeMulticastGapWitnessMinShare = 0.5
+
+// edgeMulticastGapConfinedNodes names the recording nodes a line's loss is confined to, or nil
+// when it is not confined to any.
+//
+// The question it answers is the one a gapped badge cannot: did this path lose data, or did one
+// recorder fail to receive it? Both read identically on a single vantage, which is what GapNodes
+// exists to say. With several vantages they separate, and the separator is a peer that recorded
+// the SAME channel instance over the same window and found it clean.
+//
+// Three parts to the key, all load-bearing. The capture source is in it because a clean reading on
+// another market says nothing about this one — a sports node records dozens of them and they fail
+// independently. The Channel ID is in it because the two paths of a feed publish under different
+// ids today, so leaving it out would fold a path's series in with its peer's. And the PUBLISHER is
+// in it because the channel id is not the path — the arms collapsing onto a single channel id is a
+// settled upstream change, and on the group roll-up, where instances from every publisher are in
+// one slice, the channel alone would then let one path's clean recording exonerate the other's
+// loss. That is the opposite of what the page needs: a path losing while its peer holds is
+// precisely the finding the per-line verdict exists to show. It is a no-op at the publisher grain,
+// where every instance already carries the one address, which is the grain the page reads.
+//
+// A series with no capture source name takes no part on either side, the rule every rollup keyed on
+// that name follows: an empty name is not a bucket of its own, so two unrelated markets at one node
+// would stand in as each other's witness. Such a series is still gapped, and a gapped series that
+// cannot be compared leaves the line unconfined — the claim is about ALL of the line's loss, so one
+// unwitnessed gap withdraws it.
+//
+// A clean reading is not yet a witness: it also has to have covered the window, which
+// edgeMulticastGapWitnessMinShare is what tests. `ok` asks only for a fresh LastSeen, so a vantage
+// that started recording near the end of the window carries no marker for the part it missed and
+// would otherwise exonerate the path over exactly the minutes it never saw.
+func edgeMulticastGapConfinedNodes(instances []EdgeMulticastChannelInstance) []string {
+	type key struct {
+		publisher string
+		source    string
+		channel   uint8
+	}
+	// Vantages that MEASURED this channel instance and found it clean, and how much each one
+	// recorded. A stalled peer recorded nothing over the window and corroborates nothing; a peer
+	// whose per-instrument loss query failed counted nothing, and its zero is an absence rather
+	// than a reading.
+	//
+	// The volume kept is the BUSIEST clean vantage's, because one witness that covered the window
+	// is enough and a second, thinner one does not take that away.
+	clean := map[key]uint64{}
+	for _, inst := range instances {
+		if inst.CaptureSource == "" || !inst.GapsMeasured || inst.LossUnavailable {
+			continue
+		}
+		if inst.Status != edgeMulticastSeqOK {
+			continue
+		}
+		k := key{inst.PublisherSourceIP, inst.CaptureSource, inst.ChannelID}
+		if best, seen := clean[k]; !seen || inst.Messages > best {
+			clean[k] = inst.Messages
+		}
+	}
+
+	nodes := map[string]struct{}{}
+	for _, inst := range instances {
+		if inst.Status != edgeMulticastSeqGapped {
+			continue
+		}
+		if inst.CaptureSource == "" {
+			// Nothing this series can be compared against. See the rule above.
+			return nil
+		}
+		best, witnessed := clean[key{inst.PublisherSourceIP, inst.CaptureSource, inst.ChannelID}]
+		// A witness that covered a sliver of the window vouches for a sliver of it, and the claim
+		// this builds is about the whole of it.
+		if !witnessed || float64(best) < edgeMulticastGapWitnessMinShare*float64(inst.Messages) {
+			// Loss no other vantage can speak to. The line keeps its verdict and loses the
+			// narrower claim.
+			return nil
+		}
+		nodes[inst.Node] = struct{}{}
+	}
+	if len(nodes) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(nodes))
+	for node := range nodes {
+		out = append(out, node)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // finishEdgeMulticastSequenceHealth tallies the instance states and rolls them up worst-first.
 func finishEdgeMulticastSequenceHealth(health *EdgeMulticastSequenceHealth) {
 	// Computed over every instance the roll-up holds, before any per-publisher split. On a
@@ -1002,6 +1136,11 @@ func finishEdgeMulticastSequenceHealth(health *EdgeMulticastSequenceHealth) {
 		}
 	}
 	health.GapNodes = len(gapNodes)
+	// Computed at both grains for the same reason AllPathsGapped is: the key carries the publisher,
+	// so a group roll-up compares each path only against itself and the answer it produces is the
+	// conjunction over the group's lines. The page reads it on the lines, where the loss it
+	// attributes has a single path to be attributed to.
+	health.GapConfinedNodes = edgeMulticastGapConfinedNodes(health.Instances)
 	sort.SliceStable(health.Instances, func(i, j int) bool {
 		a, b := health.Instances[i], health.Instances[j]
 		if rank[a.Status] != rank[b.Status] {
