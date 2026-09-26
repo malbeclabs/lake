@@ -961,7 +961,10 @@ function PublisherHealthBadge({
     // series of this line intact over the same window, so the loss is downstream of the split.
     // The verdict stands — data was lost and the recording is incomplete — and what changes is
     // that the page no longer lets a recorder's branch read as a fault in the path.
-    detail += ` — every gapped series was recorded intact at another vantage, so this is ${confinedPhrase(confinedRecorders(sequence))} losing it and not the path`
+    // Phrased as "confined to X, not to the path" rather than making the recorders the subject of
+    // a verb: the labels are site codes, and one of them is `was`, so "this is cmh and was losing
+    // it" reads as a tense before it reads as a second recorder.
+    detail += ` — every gapped series was recorded intact at another vantage, so the loss is confined to ${confinedPhrase(confinedRecorders(sequence))}, not to the path`
   }
   if (health === 'healthy' && sequence && (sequence.capture_source_quiet ?? 0) > 0) {
     detail += `; ${sequence.capture_source_quiet} of its series are quiet at a capture source that went quiet on every path`
@@ -1539,7 +1542,7 @@ export function PublisherSequenceCell({
     // It is the one statement on this line that is about a RECORDER, so it names what was compared
     // rather than only the conclusion.
     confined.length > 0
-      ? `every gapped series here was recorded intact by another vantage of the same channel, so the loss is ${confinedPhrase(confined)}'s and not this path's — the recording is still incomplete`
+      ? `every gapped series here was recorded intact by another vantage of the same channel, so the loss is confined to ${confinedPhrase(confined)}, not to this path — the recording is still incomplete`
       : '',
     asOfAge === undefined ? '' : computedLine(asOfAge).replace(/^ — /, ''),
   ]
