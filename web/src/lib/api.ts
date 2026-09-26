@@ -8195,6 +8195,11 @@ export interface EdgeMulticastSequenceHealth {
   /** Distinct recording nodes behind the gap-measured instances. One means a single vantage: a
    *  loss on the branch into that recorder cannot be told apart from a loss on the path. */
   gap_nodes?: number
+  /** The recording nodes that gapped, set only when EVERY gapped series on this line was recorded
+   *  intact by another vantage of the same channel instance. The loss is then downstream of the
+   *  point the paths split — the recorder's own branch — and not the path end to end. The verdict
+   *  is unchanged; this is what the page may say beside it. */
+  gap_confined_nodes?: string[]
   /** Instances stalled only because their capture source stopped producing on every path at once.
    *  Counted apart from stalled: it is a statement about the feed's upstream, not about a path. */
   capture_source_quiet?: number
