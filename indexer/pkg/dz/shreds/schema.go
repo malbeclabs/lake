@@ -244,6 +244,41 @@ func (s *ValidatorClientRewardsSchema) GetPrimaryKey(v ValidatorClientRewardsRow
 	return v.PK
 }
 
+type ClientClaimHoldingSchema struct{}
+
+func (s *ClientClaimHoldingSchema) Name() string { return "dz_shred_client_claim_holdings" }
+
+func (s *ClientClaimHoldingSchema) PrimaryKeyColumns() []string {
+	return []string{"pk:VARCHAR"}
+}
+
+func (s *ClientClaimHoldingSchema) PayloadColumns() []string {
+	return []string{
+		"client_id:INTEGER",
+		"validator_client_rewards:VARCHAR",
+		"claim_holding:VARCHAR",
+		"subscription_epoch:BIGINT",
+		"mint:VARCHAR",
+		"base_unit_balance:BIGINT",
+	}
+}
+
+func (s *ClientClaimHoldingSchema) ToRow(c ClientClaimHoldingRow) []any {
+	return []any{
+		c.PK,
+		c.ClientID,
+		c.ValidatorClientRewards,
+		c.ClaimHolding,
+		c.SubscriptionEpoch,
+		c.Mint,
+		c.BaseUnitBalance,
+	}
+}
+
+func (s *ClientClaimHoldingSchema) GetPrimaryKey(c ClientClaimHoldingRow) string {
+	return c.PK
+}
+
 // ShredDistributionSchema defines the schema for shred distributions.
 type ShredDistributionSchema struct{}
 
@@ -335,6 +370,7 @@ var (
 	metroHistorySchema                 = &MetroHistorySchema{}
 	deviceHistorySchema                = &DeviceHistorySchema{}
 	validatorClientRewardsSchema       = &ValidatorClientRewardsSchema{}
+	clientClaimHoldingSchema           = &ClientClaimHoldingSchema{}
 	shredDistributionSchema            = &ShredDistributionSchema{}
 	distributionClientProportionSchema = &DistributionClientProportionSchema{}
 )
@@ -361,6 +397,10 @@ func NewDeviceHistoryDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, 
 
 func NewValidatorClientRewardsDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
 	return dataset.NewDimensionType2Dataset(log, validatorClientRewardsSchema)
+}
+
+func NewClientClaimHoldingDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
+	return dataset.NewDimensionType2Dataset(log, clientClaimHoldingSchema)
 }
 
 func NewShredDistributionDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {

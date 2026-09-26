@@ -151,7 +151,7 @@ describe('Edge Rewards list loading state', () => {
     clients.resolve({
       ...listPayload(),
       validators: [],
-      clients: [{ client_id: 1, client_name: 'Jito Labs', validators: 68, total_earned_2z: 1234 }],
+      clients: [{ client_id: 1, client_name: 'Jito Labs', validators: 68, available_2z: 1234 }],
       total: 1,
     })
     expect(await screen.findByText('Jito Labs')).toBeInTheDocument()

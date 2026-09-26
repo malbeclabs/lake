@@ -7593,18 +7593,11 @@ export interface ShredsRewardsRow {
   epoch_tokens: Record<string, string>
 }
 
-// One client team's own rewards, over the same leaves as the validator list.
-//
-// total_earned_2z is the client team's share, not its validators' earnings: the
-// two are complementary sides of one pool, weighted by client_proportion and its
-// complement. There is no claimable figure, because nothing records whether a
-// client team has claimed — the indexed claim state belongs to the validator's
-// leaf.
 export interface ShredsClientRewardsRow {
   client_id: number
   client_name: string
   validators: number
-  total_earned_2z: number
+  available_2z: number
 }
 
 export interface ShredsRewardsResponse {
@@ -7628,6 +7621,7 @@ export interface ShredsRewardsParams {
     | 'immediately_claimable_2z'
     | 'client_name'
     | 'validators'
+    | 'available_2z'
   order?: 'asc' | 'desc'
   limit?: number
   offset?: number
