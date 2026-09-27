@@ -7887,6 +7887,10 @@ export interface KalshiL2Lane {
   gap_books: number
   /** The same loss on a time axis. Absent on a clean lane and on an unseen one. */
   gap_episodes?: GapEpisode[]
+  /** Every whole minute this series recorded a message in, as unix seconds at the minute boundary.
+   *  Presence, not fault: it is what lets a clean vantage stand as a witness for another's loss,
+   *  and the API is the only consumer. */
+  present_minutes?: number[]
   /** Per-instrument sequence loss: delta updates that never arrived. updates_received is the
    *  denominator — expected is received + missing — and a lane with no updates has no rate rather
    *  than a rate of zero. */

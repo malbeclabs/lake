@@ -551,12 +551,18 @@ sentence beside it, which is the same bound `GapNodes` sets from the other end.
 
 Four rules make the claim safe, and each is a way to charge a recorder for something it did not do.
 The witness must have **measured** the series and found it clean: a stalled peer recorded nothing
-and corroborates nothing, and a peer whose loss query failed counted nothing. It must also have
-**covered the window** — `edgeMulticastGapWitnessMinShare`, half of what the recorder it exonerates
-saw. `ok` asks only for a fresh `LastSeen`, so a vantage that started recording near the end of the
-window carries no marker for the part it missed and would otherwise exonerate the path over exactly
-the minutes it never saw; the bound is relative and not a message count, because the capture sources
-here span 28M messages to a few hundred. The key is **(publisher, capture source, Channel ID)** —
+and corroborates nothing, and a peer whose loss query failed counted nothing. It must also have been
+**recording when the loss happened** — `edgeMulticastGapWitnessCovers`, over the `PresentMinutes`
+both gap-counting legs now carry. `ok` asks only for a fresh `LastSeen`, and both legs aggregate one
+row per series over the whole window, so a volume figure has no time structure in it: a peer that
+joined at minute 6 of 15, or bounced for three of them, holds most of the messages and none of the
+minutes that matter. It must cover every minute the gapped series has a gap episode in, or — where
+the loss was counted from per-instrument holes with no marker written, so nothing names when — every
+minute that series was itself recording. Minute grain, not second: fifteen entries per series
+against nine hundred, and the residual sub-minute hole is worth the three orders of magnitude. On
+the top-of-book plane this is what catches a peer whose book-top writer stopped, which
+`mergeEdgeMulticastTOBGaps` otherwise leaves reading `ok` off the capture leg's fresher `LastSeen`
+with a zero gap count it earned by writing nothing. The key is **(publisher, capture source, Channel ID)** —
 the capture source because a clean reading on another market says nothing about this one, and the
 publisher because one path's clean recording must never exonerate the other's loss, which is the
 opposite of what the per-line verdict is for. The channel id is in it as well but is not what

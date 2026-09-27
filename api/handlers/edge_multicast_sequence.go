@@ -143,6 +143,20 @@ type EdgeMulticastChannelInstance struct {
 	// struct already refuses to give.
 	GapEpisodes []KalshiL2GapEpisode `json:"gap_episodes,omitempty"`
 
+	// PresentMinutes is every whole minute this series recorded a message in, as unix seconds at
+	// the minute boundary, sorted. It is PRESENCE and not fault, and it exists for one job:
+	// deciding whether a clean vantage may stand as a witness for another vantage's loss.
+	//
+	// Both gap-counting legs aggregate one row per series over the whole window, so a volume
+	// figure has no time structure in it — a peer that joined at minute 6 of 15, or bounced for
+	// three of them, carries most of the messages and none of the minutes that matter. The
+	// counters cannot express that and this array can.
+	//
+	// Empty on the observations leg, which measures no gaps and therefore witnesses nothing, and
+	// empty in a payload written before this field existed. Both are absences and both cost a
+	// confinement claim rather than granting one.
+	PresentMinutes []uint32 `json:"present_minutes,omitempty"`
+
 	// The per-instrument sequence loss counters, folded from the same payload. This is the only
 	// signal on the page that counts MESSAGES lost rather than time spent un-anchored, and it is
 	// the one a loss rate can be built from — see KalshiL2Lane, which records the two counters
@@ -286,9 +300,10 @@ type EdgeMulticastSequenceHealth struct {
 	// elsewhere. What this narrows is the sentence the page is allowed to say beside it.
 	//
 	// The comparison is per (publisher, capture source, Channel ID) and the peer must have
-	// MEASURED the series, found it clean, and covered the window: a stalled peer recorded
-	// nothing and so corroborates nothing, a peer whose loss query failed counted nothing, and a
-	// peer that recorded a sliver of the window vouches for a sliver of it. A series with no
+	// MEASURED the series, found it clean, and been RECORDING IN THE MINUTES IT LOST DATA IN: a
+	// stalled peer recorded nothing and so corroborates nothing, a peer whose loss query failed
+	// counted nothing, and a peer that was not watching when the loss happened saw nothing to
+	// vouch for, however much it recorded either side of it. A series with no
 	// capture source name can neither be confined nor exonerate anything — every unnamed series
 	// falls into one bucket, so two unrelated markets at one node would stand in as each other's
 	// witness, the same trap demoteEdgeMulticastQuietCaptureSources documents. One gapped series
@@ -638,14 +653,15 @@ func (a *API) foldKalshiL2Coverage(ctx context.Context, captureSources edgeMulti
 		inst := EdgeMulticastChannelInstance{
 			PublisherSourceIP: lane.PublisherSourceIP,
 
-			CaptureSource: lane.Source,
-			ChannelID:     lane.ChannelID,
-			Node:          lane.MeasurementNodeID,
-			LocationCode:  lane.LocationCode,
-			Messages:      lane.Messages,
-			GapBooks:      lane.GapBooks,
-			GapMessages:   lane.GapMessages,
-			GapEpisodes:   lane.GapEpisodes,
+			CaptureSource:  lane.Source,
+			ChannelID:      lane.ChannelID,
+			Node:           lane.MeasurementNodeID,
+			LocationCode:   lane.LocationCode,
+			Messages:       lane.Messages,
+			GapBooks:       lane.GapBooks,
+			GapMessages:    lane.GapMessages,
+			GapEpisodes:    lane.GapEpisodes,
+			PresentMinutes: lane.PresentMinutes,
 
 			UpdatesReceived: lane.UpdatesReceived,
 			UpdatesMissing:  lane.UpdatesMissing,
@@ -1000,24 +1016,60 @@ func edgeMulticastAllPathsGapped(instances []EdgeMulticastChannelInstance) []Kal
 	return collapseKalshiL2GapSeconds(flat)
 }
 
-// edgeMulticastGapWitnessMinShare is how much of the gapped series' own volume a clean vantage must
-// have recorded before it may exonerate the path.
+// edgeMulticastGapWitnessMinutes is the minutes a clean vantage must have been recording in before
+// it may exonerate a path for a loss.
 //
-// Without it the witness test is only "this series is ok", and `ok` asks nothing about the window:
-// it needs a fresh LastSeen and nothing else. A recorder that joined the group a minute before a
-// fifteen-minute window closes records a few hundred messages, writes no gap marker, and vouches
-// for the whole of it — so a real loss on the path ten minutes earlier prints as one recorder's
-// fault, which is the exact misattribution this comparison exists to prevent, running backwards.
+// The test this replaces asked how MUCH a witness recorded, not WHEN. Both gap-counting legs
+// aggregate one row per series over the whole window, so a volume figure carries no time structure:
+// a peer that joined at minute 6 of 15, or bounced for three of them, holds well over half the
+// messages, writes no gap marker, reads `ok`, and vouches for a loss in the minutes it never saw.
+// That is the misattribution this whole comparison exists to prevent, running backwards.
 //
-// Relative rather than an absolute message count, because the question is coverage of the window
-// and not volume. The capture sources on this page span 28M messages to a few hundred, so an
-// absolute floor would refuse to confine anything on the quiet ones while still admitting a late
-// joiner on the busy ones. Half is the same bound as edgeMulticastNodeParityFloor and is chosen the
-// same way: recording nodes on one group receive the same feed, so a vantage that saw less than
-// half of what the recorder it is exonerating saw is not describing the same window. It is
-// deliberately loose — a witness normally records MORE than the node that lost data, so this fires
-// on coverage and not on the difference between two healthy recorders, which runs under a percent.
-const edgeMulticastGapWitnessMinShare = 0.5
+// `mergeEdgeMulticastTOBGaps` makes it worse on the top-of-book plane, and deliberately: an
+// instance takes the LATER LastSeen of the recorder leg and the capture leg, so that a lagging
+// book-top writer does not read `stalled` while the capture shows the same series advancing. The
+// cost is that a peer whose book-top writer STOPPED still reads `ok`, on the capture's freshness,
+// with a zero gap count it earned by writing nothing at all.
+//
+// So the bound is presence at the time of the loss. The witness must have recorded in every minute
+// the gapped series lost data in — which the gap episodes name — and where the loss has no episodes
+// to name (counted from per-instrument holes with no marker written), in every minute the gapped
+// series itself was recording, since the loss is somewhere inside those and nothing says where.
+//
+// Minute grain, not second: fifteen entries per series against nine hundred, over rows both legs
+// already scan. The residual hole is sub-minute — a witness present at 10:05:01 and gone by
+// 10:05:59 counts as covering 10:05 — and it is worth the three orders of magnitude.
+func edgeMulticastGapWitnessCovers(witness, gapped EdgeMulticastChannelInstance) bool {
+	required := gapped.PresentMinutes
+	if len(gapped.GapEpisodes) > 0 {
+		required = make([]uint32, 0, len(gapped.GapEpisodes))
+		for _, ep := range gapped.GapEpisodes {
+			// Every minute the run touches, walked a minute at a time rather than a second at
+			// a time: an episode can be the whole window, and the answer is the same fifteen
+			// minutes either way.
+			start := uint32(ep.Start)
+			last := start + ep.Seconds - 1 // Seconds is never zero; a one-second run is {Start, 1}.
+			for m := start - start%60; m <= last-last%60; m += 60 {
+				required = append(required, m)
+			}
+		}
+	}
+	if len(required) == 0 {
+		// Nothing says when the loss happened, or even when this series was recording. There is
+		// no minute to check a witness against, so there is no witness.
+		return false
+	}
+	present := make(map[uint32]struct{}, len(witness.PresentMinutes))
+	for _, m := range witness.PresentMinutes {
+		present[m] = struct{}{}
+	}
+	for _, m := range required {
+		if _, ok := present[m]; !ok {
+			return false
+		}
+	}
+	return true
+}
 
 // edgeMulticastGapConfinedNodes names the recording nodes a line's loss is confined to, or nil
 // when it is not confined to any.
@@ -1044,24 +1096,25 @@ const edgeMulticastGapWitnessMinShare = 0.5
 // cannot be compared leaves the line unconfined — the claim is about ALL of the line's loss, so one
 // unwitnessed gap withdraws it.
 //
-// A clean reading is not yet a witness: it also has to have covered the window, which
-// edgeMulticastGapWitnessMinShare is what tests. `ok` asks only for a fresh LastSeen, so a vantage
-// that started recording near the end of the window carries no marker for the part it missed and
-// would otherwise exonerate the path over exactly the minutes it never saw.
+// A clean reading is not yet a witness: it also has to have been recording when the loss happened,
+// which edgeMulticastGapWitnessCovers is what tests. `ok` asks only for a fresh LastSeen, so a
+// vantage that started recording near the end of the window — or bounced in the middle of it —
+// carries no marker for the part it missed and would otherwise exonerate the path over exactly the
+// minutes it never saw.
 func edgeMulticastGapConfinedNodes(instances []EdgeMulticastChannelInstance) []string {
 	type key struct {
 		publisher string
 		source    string
 		channel   uint8
 	}
-	// Vantages that MEASURED this channel instance and found it clean, and how much each one
-	// recorded. A stalled peer recorded nothing over the window and corroborates nothing; a peer
-	// whose per-instrument loss query failed counted nothing, and its zero is an absence rather
-	// than a reading.
+	// Vantages that MEASURED this channel instance and found it clean. A stalled peer recorded
+	// nothing over the window and corroborates nothing; a peer whose per-instrument loss query
+	// failed counted nothing, and its zero is an absence rather than a reading.
 	//
-	// The volume kept is the BUSIEST clean vantage's, because one witness that covered the window
-	// is enough and a second, thinner one does not take that away.
-	clean := map[key]uint64{}
+	// Every one of them is kept rather than the best by some measure, because which one can
+	// witness depends on the series being witnessed FOR — on when that one lost data — and that
+	// is not known here. One qualifying witness is enough; the rest do not take that away.
+	clean := map[key][]EdgeMulticastChannelInstance{}
 	for _, inst := range instances {
 		if inst.CaptureSource == "" || !inst.GapsMeasured || inst.LossUnavailable {
 			continue
@@ -1070,9 +1123,7 @@ func edgeMulticastGapConfinedNodes(instances []EdgeMulticastChannelInstance) []s
 			continue
 		}
 		k := key{inst.PublisherSourceIP, inst.CaptureSource, inst.ChannelID}
-		if best, seen := clean[k]; !seen || inst.Messages > best {
-			clean[k] = inst.Messages
-		}
+		clean[k] = append(clean[k], inst)
 	}
 
 	nodes := map[string]struct{}{}
@@ -1084,10 +1135,16 @@ func edgeMulticastGapConfinedNodes(instances []EdgeMulticastChannelInstance) []s
 			// Nothing this series can be compared against. See the rule above.
 			return nil
 		}
-		best, witnessed := clean[key{inst.PublisherSourceIP, inst.CaptureSource, inst.ChannelID}]
-		// A witness that covered a sliver of the window vouches for a sliver of it, and the claim
-		// this builds is about the whole of it.
-		if !witnessed || float64(best) < edgeMulticastGapWitnessMinShare*float64(inst.Messages) {
+		// A witness has to have been WATCHING when this series lost data. Volume cannot say that;
+		// see edgeMulticastGapWitnessCovers.
+		witnessed := false
+		for _, peer := range clean[key{inst.PublisherSourceIP, inst.CaptureSource, inst.ChannelID}] {
+			if edgeMulticastGapWitnessCovers(peer, inst) {
+				witnessed = true
+				break
+			}
+		}
+		if !witnessed {
 			// Loss no other vantage can speak to. The line keeps its verdict and loses the
 			// narrower claim.
 			return nil

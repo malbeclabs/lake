@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 
 	"github.com/malbeclabs/lake/api/metrics"
@@ -86,6 +87,11 @@ type EdgeMulticastTOBGapSeries struct {
 	// gap-marked top. Sparse, because loss is rare.
 	GapSeconds []uint32 `json:"gap_seconds,omitempty"`
 
+	// PresentMinutes is every whole minute this series recorded a top in, as unix seconds at the
+	// minute boundary. Presence, not fault — it is what lets a clean reading here stand as a
+	// witness for another vantage's loss. See edgeMulticastGapConfinedNodes.
+	PresentMinutes []uint32 `json:"present_minutes,omitempty"`
+
 	// Resets is how far the era advanced across the window, which is the recovery side: a
 	// series with gaps and no reset is not re-anchoring.
 	Resets   uint64    `json:"resets"`
@@ -134,6 +140,11 @@ func (a *API) FetchEdgeMulticastTOBGaps(ctx context.Context) (*EdgeMulticastTOBG
 			-- One entry per whole second that carried a gap-marked top. One more aggregate over
 			-- rows this query already scans, so it adds no scan and no round trip.
 			groupUniqArrayIf(%[3]d)(toUInt32(toUnixTimestamp(recv_ts)), uncertain_reason = 'gap') AS gap_seconds,
+			-- The minutes this series was recording AT ALL. Unconditional where gap_seconds is
+			-- filtered, because the question it answers is presence and not fault: a vantage can
+			-- only witness for another's loss over the minutes it was itself watching. Same unit
+			-- as gap_seconds — unix seconds at the minute boundary — so the two compare directly.
+			groupUniqArray(%[4]d)(toUInt32(toUnixTimestamp(toStartOfMinute(recv_ts)))) AS present_minutes,
 			-- Cast the DIFFERENCE, not the operands: ClickHouse promotes UInt8 - UInt8 to a
 			-- signed type so the result can go negative, and the scan into a uint64 then fails
 			-- and takes the whole refresh with it. max >= min here by construction.
@@ -147,7 +158,8 @@ func (a *API) FetchEdgeMulticastTOBGaps(ctx context.Context) (*EdgeMulticastTOBG
 			AND dst_addr != toIPv4('0.0.0.0')
 		GROUP BY multicast_group, publisher_source_ip, channel_id, node
 		SETTINGS max_execution_time = 120, timeout_before_checking_execution_speed = 0`,
-		"`"+a.FeedsDB+"`", edgeMulticastObservationsWindowMinutes, edgeMulticastTOBGapSecondsCap)
+		"`"+a.FeedsDB+"`", edgeMulticastObservationsWindowMinutes, edgeMulticastTOBGapSecondsCap,
+		edgeMulticastObservationsWindowMinutes)
 
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, q)
@@ -162,9 +174,10 @@ func (a *API) FetchEdgeMulticastTOBGaps(ctx context.Context) (*EdgeMulticastTOBG
 		var lastRecvNs uint64
 		if err := rows.Scan(&s.MulticastGroup, &s.PublisherSourceIP, &s.ChannelID, &s.Node,
 			&s.LocationCode, &s.Messages, &s.GapMessages, &s.GapBooks, &s.GapSeconds,
-			&s.Resets, &lastRecvNs); err != nil {
+			&s.PresentMinutes, &s.Resets, &lastRecvNs); err != nil {
 			return nil, err
 		}
+		sort.Slice(s.PresentMinutes, func(i, j int) bool { return s.PresentMinutes[i] < s.PresentMinutes[j] })
 		if lastRecvNs > 0 {
 			s.LastSeen = time.Unix(0, int64(lastRecvNs)).UTC()
 		}
@@ -265,6 +278,7 @@ func mergeEdgeMulticastTOBGaps(captureSources edgeMulticastCaptureSourceMap, ser
 			GapMessages:       series.GapMessages,
 			GapBooks:          series.GapBooks,
 			GapEpisodes:       collapseKalshiL2GapSeconds(series.GapSeconds),
+			PresentMinutes:    series.PresentMinutes,
 			Resets:            series.Resets,
 			LastSeen:          series.LastSeen.UTC(),
 			// The reading this leg exists to make. Graded on the gap count as well as on

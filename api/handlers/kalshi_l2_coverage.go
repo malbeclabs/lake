@@ -256,6 +256,12 @@ type KalshiL2Lane struct {
 	// unseen one — see KalshiL2GapEpisode for why the counters above cannot be drawn instead.
 	GapEpisodes []KalshiL2GapEpisode `json:"gap_episodes,omitempty"`
 
+	// PresentMinutes is every whole minute this instance recorded a message in, as unix seconds
+	// at the minute boundary. It is presence and not fault: the array says when this vantage was
+	// watching, which is the only thing that lets its clean reading stand as a witness for
+	// another vantage's loss. See edgeMulticastGapConfinedNodes.
+	PresentMinutes []uint32 `json:"present_minutes,omitempty"`
+
 	// The per-instrument sequence loss counters: how many delta updates never arrived, measured
 	// on the ONLY counter in this schema that can answer it.
 	//
@@ -501,13 +507,18 @@ func (a *API) FetchKalshiL2Coverage(ctx context.Context) (*KalshiL2CoverageRespo
 			-- against 3.8s for the top-of-book leg that runs beside it. Sparse because loss is
 			-- rare: the worst instance on the fleet held 89 of 900 seconds.
 			groupUniqArrayIf(%[3]d)(toUInt32(intDiv(recv_ts_ns, 1000000000)), status_after = 'gap') AS gap_seconds,
+			-- The minutes this instance was recording AT ALL, which is what lets it stand as a
+			-- witness for another instance's loss. Unconditional where gap_seconds is filtered:
+			-- the question is presence, not fault. One entry per whole minute, in the same unit
+			-- as gap_seconds (unix seconds at the minute boundary) so the two compare directly.
+			groupUniqArray(%[4]d)(toUInt32(intDiv(recv_ts_ns, 60000000000) * 60)) AS present_minutes,
 			countIf(msg_type = 'instrument_reset') AS resets,
 			countIf(msg_type = 'book_clear') AS clears,
 			countIf(msg_type = 'snapshot_end') AS snapshot_cycles,
 			max(recv_ts_ns) AS last_recv_ts_ns
 		FROM %[1]s.kalshi_mbp_levels
 		WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(%[2]d)))
-		GROUP BY source, channel_id, publisher_source_ip, measurement_node_id`, db, kalshiL2WindowMinutes, kalshiL2GapSecondsCap)
+		GROUP BY source, channel_id, publisher_source_ip, measurement_node_id`, db, kalshiL2WindowMinutes, kalshiL2GapSecondsCap, kalshiL2WindowMinutes)
 
 	// Before the scan, so a lane can be filled in as it is read. A failure here costs the loss
 	// counters and not the page: they are additive to a view whose subject is coverage, and a lane
@@ -538,16 +549,20 @@ func (a *API) FetchKalshiL2Coverage(ctx context.Context) (*KalshiL2CoverageRespo
 		var levelUpdates uint64
 		var lastRecvNs uint64
 		var gapSeconds []uint32
+		var presentMinutes []uint32
 		if err := rows.Scan(
 			&l.Source, &l.ChannelID, &l.PublisherSourceIP, &l.MeasurementNodeID, &l.LocationCode,
 			&l.Messages, &levelUpdates, &l.Instruments,
 			&l.DepthP50, &l.DepthP95, &l.DepthMax,
-			&l.GapMessages, &l.GapBooks, &gapSeconds, &l.Resets, &l.Clears, &l.SnapshotCycles,
+			&l.GapMessages, &l.GapBooks, &gapSeconds, &presentMinutes,
+			&l.Resets, &l.Clears, &l.SnapshotCycles,
 			&lastRecvNs,
 		); err != nil {
 			return nil, err
 		}
 		l.GapEpisodes = collapseKalshiL2GapSeconds(gapSeconds)
+		sort.Slice(presentMinutes, func(i, j int) bool { return presentMinutes[i] < presentMinutes[j] })
+		l.PresentMinutes = presentMinutes
 		l.MessagesPerSec = float64(l.Messages) / windowSecs
 		l.LevelUpdatesPerSec = float64(levelUpdates) / windowSecs
 		l.LastSeen = time.Unix(0, int64(lastRecvNs)).UTC()

@@ -18,6 +18,22 @@ import (
 // instances with no marker at all for hours. The page rendered that identically to a path losing
 // data end to end.
 
+// The window these tests are written against: a fifteen-minute frame starting at windowStart.
+const windowStart = 1_790_000_000 - 1_790_000_000%60
+
+// minuteAt is the unix second at the start of minute n of the window.
+func minuteAt(n int) int64 { return int64(windowStart + n*60) }
+
+// minutes is the minute-boundary unix seconds for [from, to) of the window, which is the shape
+// PresentMinutes carries.
+func minutes(from, to int) []uint32 {
+	out := make([]uint32, 0, to-from)
+	for n := from; n < to; n++ {
+		out = append(out, uint32(windowStart+n*60))
+	}
+	return out
+}
+
 func seqInst(node, source string, channel uint8, status string, measured bool) handlers.EdgeMulticastChannelInstance {
 	return handlers.EdgeMulticastChannelInstance{
 		PublisherSourceIP: "148.51.121.69",
@@ -26,6 +42,10 @@ func seqInst(node, source string, channel uint8, status string, measured bool) h
 		Node:              node,
 		GapsMeasured:      measured,
 		Status:            status,
+		// Present for the whole window unless a test says otherwise, which is the ordinary
+		// state: every rule other than the coverage one is about something else, and a series
+		// with no minutes would fail the coverage rule before reaching it.
+		PresentMinutes: minutes(0, 15),
 	}
 }
 
@@ -128,48 +148,111 @@ func TestEdgeMulticastGapConfined_ThePeerPathIsNotAWitnessOnOneChannelID(t *test
 	assert.Nil(t, got)
 }
 
-// A clean reading is not yet a witness. `ok` asks only for a fresh LastSeen, so a recorder that
-// joined the group near the end of the window carries no marker for the part it missed — and would
-// otherwise exonerate the path over exactly the minutes it never saw.
-func TestEdgeMulticastGapConfined_AWitnessMustHaveCoveredTheWindow(t *testing.T) {
+// A clean reading is not yet a witness: it has to have been RECORDING when the loss happened. Both
+// gap-counting legs aggregate one row per series over the whole window, so volume carries no time
+// structure — a peer that joined at minute 6 of 15 holds most of the messages and none of the
+// minutes that matter, and would exonerate the path over exactly the part it never saw.
+func TestEdgeMulticastGapConfined_AWitnessMustHaveBeenWatching(t *testing.T) {
 	gapped := seqInst("aws-cmh-mn-recorder1", "tob_edge_kalshi_perps", 1, "gapped", true)
 	gapped.Messages = 56_800
+	gapped.PresentMinutes = minutes(0, 15)
+	gapped.GapEpisodes = []handlers.KalshiL2GapEpisode{{Start: minuteAt(3) + 12, Seconds: 4}}
+
 	latecomer := seqInst("aws-dub-mn-recorder1", "tob_edge_kalshi_perps", 1, "ok", true)
-	latecomer.Messages = 900
+	latecomer.Messages = 40_000 // plenty of volume, none of it in minute 3
+	latecomer.PresentMinutes = minutes(6, 15)
 
 	assert.Nil(t, handlers.EdgeMulticastGapConfinedNodesForTest(
 		[]handlers.EdgeMulticastChannelInstance{gapped, latecomer}))
 
-	// The same vantage once it has the window behind it. A witness normally records MORE than the
-	// recorder that lost data, so the floor is loose enough never to fire on that pair.
-	latecomer.Messages = 56_871
+	// The same vantage, present for the minute the loss is in.
+	latecomer.PresentMinutes = minutes(0, 15)
 	assert.Equal(t, []string{"aws-cmh-mn-recorder1"}, handlers.EdgeMulticastGapConfinedNodesForTest(
 		[]handlers.EdgeMulticastChannelInstance{gapped, latecomer}))
 }
 
-// The floor is coverage of the window and not volume, so it must not fire on the difference between
-// two healthy recorders of one feed — measured on mainnet at well under a percent.
-func TestEdgeMulticastGapConfined_TheFloorDoesNotFireOnHealthySpread(t *testing.T) {
+// A recorder that bounced mid-window is the same failure with the hole in the middle, and it is the
+// one a volume bound cannot see at all: this peer carries 14 of 15 minutes.
+func TestEdgeMulticastGapConfined_AWitnessThatBouncedOverTheLossIsNotOne(t *testing.T) {
 	gapped := seqInst("aws-cmh-mn-recorder1", "tob_edge_kalshi_perps", 1, "gapped", true)
-	gapped.Messages = 56_806
-	peer := seqInst("aws-was-mn-recorder1", "tob_edge_kalshi_perps", 1, "ok", true)
-	peer.Messages = 54_754
+	gapped.PresentMinutes = minutes(0, 15)
+	gapped.GapEpisodes = []handlers.KalshiL2GapEpisode{{Start: minuteAt(8) + 30, Seconds: 2}}
 
+	bounced := seqInst("aws-dub-mn-recorder1", "tob_edge_kalshi_perps", 1, "ok", true)
+	bounced.PresentMinutes = append(minutes(0, 8), minutes(9, 15)...)
+
+	assert.Nil(t, handlers.EdgeMulticastGapConfinedNodesForTest(
+		[]handlers.EdgeMulticastChannelInstance{gapped, bounced}))
+}
+
+// An episode that straddles a minute boundary needs the witness in BOTH minutes. Off by one here
+// exonerates a path over half of the loss.
+func TestEdgeMulticastGapConfined_AnEpisodeSpanningTwoMinutesNeedsBoth(t *testing.T) {
+	gapped := seqInst("aws-cmh-mn-recorder1", "tob_edge_kalshi_perps", 1, "gapped", true)
+	gapped.PresentMinutes = minutes(0, 15)
+	gapped.GapEpisodes = []handlers.KalshiL2GapEpisode{{Start: minuteAt(4) + 58, Seconds: 5}}
+
+	peer := seqInst("aws-dub-mn-recorder1", "tob_edge_kalshi_perps", 1, "ok", true)
+	peer.PresentMinutes = append(minutes(0, 5), minutes(6, 15)...) // everything but minute 5
+
+	assert.Nil(t, handlers.EdgeMulticastGapConfinedNodesForTest(
+		[]handlers.EdgeMulticastChannelInstance{gapped, peer}))
+
+	peer.PresentMinutes = minutes(0, 15)
 	assert.Equal(t, []string{"aws-cmh-mn-recorder1"}, handlers.EdgeMulticastGapConfinedNodesForTest(
 		[]handlers.EdgeMulticastChannelInstance{gapped, peer}))
 }
 
-// One witness that covered the window is enough, and a second thinner one does not take that away.
-func TestEdgeMulticastGapConfined_TheBusiestWitnessIsTheOneThatCounts(t *testing.T) {
+// Loss counted from per-instrument holes with no marker written — the false negative this column's
+// unit change exists to end — names no minute. The witness then has to cover every minute the
+// gapped series was itself recording, because the loss is somewhere inside those.
+func TestEdgeMulticastGapConfined_LossWithNoEpisodeNeedsTheWholeSeriesCovered(t *testing.T) {
+	gapped := seqInst("aws-cmh-mn-recorder1", "mbp_edge_kalshi_perps", 101, "gapped", true)
+	gapped.UpdatesMissing = 958
+	gapped.PresentMinutes = minutes(0, 15)
+
+	peer := seqInst("aws-dub-mn-recorder1", "mbp_edge_kalshi_perps", 101, "ok", true)
+	peer.PresentMinutes = minutes(1, 15)
+
+	assert.Nil(t, handlers.EdgeMulticastGapConfinedNodesForTest(
+		[]handlers.EdgeMulticastChannelInstance{gapped, peer}))
+
+	peer.PresentMinutes = minutes(0, 15)
+	assert.Equal(t, []string{"aws-cmh-mn-recorder1"}, handlers.EdgeMulticastGapConfinedNodesForTest(
+		[]handlers.EdgeMulticastChannelInstance{gapped, peer}))
+}
+
+// A payload written before PresentMinutes existed carries none, and an absence must cost the claim
+// rather than grant it. This is the state every environment is in until the refresher next runs.
+func TestEdgeMulticastGapConfined_APayloadWithNoMinutesConfinesNothing(t *testing.T) {
 	gapped := seqInst("aws-cmh-mn-recorder1", "tob_edge_kalshi_perps", 1, "gapped", true)
-	gapped.Messages = 56_800
-	thin := seqInst("aws-nrt-mn-recorder1", "tob_edge_kalshi_perps", 1, "ok", true)
-	thin.Messages = 120
-	full := seqInst("aws-dub-mn-recorder1", "tob_edge_kalshi_perps", 1, "ok", true)
-	full.Messages = 56_871
+	gapped.GapEpisodes = []handlers.KalshiL2GapEpisode{{Start: minuteAt(3), Seconds: 1}}
+	gapped.PresentMinutes = nil
+	peer := seqInst("aws-dub-mn-recorder1", "tob_edge_kalshi_perps", 1, "ok", true)
+	peer.PresentMinutes = nil
+
+	assert.Nil(t, handlers.EdgeMulticastGapConfinedNodesForTest(
+		[]handlers.EdgeMulticastChannelInstance{gapped, peer}))
+}
+
+// One qualifying witness is enough, and which vantage qualifies depends on the series being
+// witnessed for — so every clean peer is considered, not the best by some measure.
+func TestEdgeMulticastGapConfined_OneQualifyingWitnessIsEnough(t *testing.T) {
+	gapped := seqInst("aws-cmh-mn-recorder1", "tob_edge_kalshi_perps", 1, "gapped", true)
+	gapped.PresentMinutes = minutes(0, 15)
+	gapped.GapEpisodes = []handlers.KalshiL2GapEpisode{{Start: minuteAt(2), Seconds: 1}}
+
+	// The busier of the two peers is the one that was not there for minute 2.
+	busyButAbsent := seqInst("aws-nrt-mn-recorder1", "tob_edge_kalshi_perps", 1, "ok", true)
+	busyButAbsent.Messages = 56_871
+	busyButAbsent.PresentMinutes = minutes(3, 15)
+
+	thinButPresent := seqInst("aws-dub-mn-recorder1", "tob_edge_kalshi_perps", 1, "ok", true)
+	thinButPresent.Messages = 4_000
+	thinButPresent.PresentMinutes = minutes(0, 4)
 
 	assert.Equal(t, []string{"aws-cmh-mn-recorder1"}, handlers.EdgeMulticastGapConfinedNodesForTest(
-		[]handlers.EdgeMulticastChannelInstance{gapped, thin, full}))
+		[]handlers.EdgeMulticastChannelInstance{gapped, busyButAbsent, thinButPresent}))
 }
 
 // An unnamed series is not a bucket of its own: every one of them lands in the same bucket, so two
