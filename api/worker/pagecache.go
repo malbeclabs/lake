@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	enumspb "go.temporal.io/api/enums/v1"
 	temporalclient "go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 
 	"github.com/malbeclabs/lake/api/handlers"
@@ -69,14 +71,7 @@ func Start(ctx context.Context, cfg Config) error {
 		return err
 	}
 
-	// Watch the workflow in the background so failures surface in logs.
-	// Suppress "terminated" errors — a new deploy terminates the previous
-	// workflow before the old process's context is cancelled.
-	go func() {
-		if err := run.Get(ctx, nil); err != nil && ctx.Err() == nil && !isWorkflowTerminated(err) {
-			log.Error("page-cache: workflow failed", "id", WorkflowID, "error", err)
-		}
-	}()
+	go watchPageCacheWorkflow(ctx, tc, run, log, watchReattachBackoff)
 
 	log.Info("page-cache: starting worker", "task_queue", TaskQueue)
 
@@ -115,6 +110,41 @@ func startPageCacheWorkflow(ctx context.Context, tc temporalclient.Client, log *
 	}
 	log.Info("page-cache: workflow started", "id", WorkflowID, "run_id", run.GetRunID())
 	return run, nil
+}
+
+// workflowGetter is the part of temporalclient.Client the watcher needs.
+type workflowGetter interface {
+	GetWorkflow(ctx context.Context, workflowID, runID string) temporalclient.WorkflowRun
+}
+
+const watchReattachBackoff = 5 * time.Second
+
+// watchPageCacheWorkflow blocks until the workflow closes, logging a failure at
+// ERROR. Terminated runs are suppressed: a new deploy terminates the previous run
+// before the old process's context is cancelled. Get also returns bare RPC errors
+// (its long-poll has its own deadline) that say nothing about the workflow; the SDK
+// wraps every real outcome in WorkflowExecutionError, so anything else re-attaches.
+func watchPageCacheWorkflow(ctx context.Context, tc workflowGetter, run temporalclient.WorkflowRun, log *slog.Logger, backoff time.Duration) {
+	for {
+		err := run.Get(ctx, nil)
+		if err == nil || ctx.Err() != nil {
+			return
+		}
+		var wfErr *temporal.WorkflowExecutionError
+		if errors.As(err, &wfErr) {
+			if !isWorkflowTerminated(err) {
+				log.Error("page-cache: workflow failed", "id", WorkflowID, "error", err)
+			}
+			return
+		}
+		log.Warn("page-cache: workflow watch interrupted; re-attaching", "id", WorkflowID, "error", err)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		run = tc.GetWorkflow(ctx, WorkflowID, "")
+	}
 }
 
 // newActivities builds the activity struct with the escalation policy the page
