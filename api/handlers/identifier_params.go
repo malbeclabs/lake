@@ -7,18 +7,14 @@ import (
 	"strings"
 )
 
-// identifierPattern is the character set every code or key this API filters on
-// is drawn from: metro/device/contributor/link codes, link types, statuses,
-// user kinds, interface names (which carry "/"), and base58 pubkeys.
+// "/" is allowed because interface names carry it (Ethernet1/1).
 var identifierPattern = regexp.MustCompile(`^[A-Za-z0-9_.:/-]+$`)
 
 // maxIdentifierLen bounds one value. The longest real code today is a link
 // code at 32 characters; pubkeys are 44.
 const maxIdentifierLen = 128
 
-// identifierQueryParams are the query parameters that carry comma-separated
-// codes or keys on the routes wrapped by RequireIdentifierParams. Free-text
-// parameters (search) are deliberately absent.
+// Free-text parameters (search) are deliberately absent.
 var identifierQueryParams = []string{
 	"metro", "device", "device_a", "device_z", "contributor", "link_type",
 	"code", "status", "user_kind", "cyoa_type", "interface_type", "intf",

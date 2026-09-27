@@ -13,11 +13,9 @@ import (
 // forwardedLogFormatter is chi's default access-log line with any
 // X-Forwarded-For / X-Real-IP header appended to the "from" address.
 //
-// It deliberately does not use middleware.RealIP: lake-api sits behind a
-// layer-4 NLB, so RemoteAddr is the NLB hop, and whether anything in front of
-// it sets these headers (rather than passing through what the client sent) is
-// not established. Logging both keeps the client address recoverable without
-// letting a client-supplied header replace the one address the server knows.
+// Not middleware.RealIP: RemoteAddr is the NLB hop, and nothing establishes
+// that the headers are set upstream rather than passed through from the client,
+// so they are logged beside RemoteAddr instead of replacing it.
 type forwardedLogFormatter struct {
 	middleware.DefaultLogFormatter
 }
