@@ -62,6 +62,16 @@ const edgeMulticastTOBGapsCacheKey = "edge_multicast_tob_gaps:v1"
 // episodes with no error.
 const edgeMulticastTOBGapSecondsCap = edgeMulticastObservationsWindowMinutes * 60
 
+// edgeMulticastTOBPresentMinutesCap bounds the presence array, and it is the window's minutes PLUS
+// ONE on purpose: the window is a duration back from now64(9), not a minute-aligned frame, so
+// fifteen minutes that start at 09:52:30 touch sixteen whole minutes — 09:52 through 10:07.
+//
+// Capped at fifteen, groupUniqArray keeps an arbitrary fifteen of them and drops one. The entry it
+// drops is not the oldest or the newest but whichever it happened to fill with, so a recorder that
+// was present the whole time can lose a confinement claim it earned, and can flip on it between two
+// refreshes of the same unchanged feed.
+const edgeMulticastTOBPresentMinutesCap = edgeMulticastObservationsWindowMinutes + 1
+
 // EdgeMulticastTOBGapSeries is one channel instance's recorded gap counters over the window.
 type EdgeMulticastTOBGapSeries struct {
 	MulticastGroup    string `json:"multicast_group"`
@@ -159,7 +169,7 @@ func (a *API) FetchEdgeMulticastTOBGaps(ctx context.Context) (*EdgeMulticastTOBG
 		GROUP BY multicast_group, publisher_source_ip, channel_id, node
 		SETTINGS max_execution_time = 120, timeout_before_checking_execution_speed = 0`,
 		"`"+a.FeedsDB+"`", edgeMulticastObservationsWindowMinutes, edgeMulticastTOBGapSecondsCap,
-		edgeMulticastObservationsWindowMinutes)
+		edgeMulticastTOBPresentMinutesCap)
 
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, q)

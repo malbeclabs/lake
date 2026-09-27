@@ -222,6 +222,43 @@ func TestEdgeMulticastGapConfined_LossWithNoEpisodeNeedsTheWholeSeriesCovered(t 
 		[]handlers.EdgeMulticastChannelInstance{gapped, peer}))
 }
 
+// A series can lose data BOTH ways at once: markers on some minutes, and UpdatesMissing holes the
+// producer never marked. The markers then describe only part of the loss, so narrowing the witness
+// test to the marked minutes leaves the unmarked half unwitnessed — and that half is the one
+// nothing else on this page can localise.
+func TestEdgeMulticastGapConfined_MarkedAndUnmarkedLossNeedsTheWholeSeriesCovered(t *testing.T) {
+	gapped := seqInst("aws-cmh-mn-recorder1", "mbp_edge_kalshi_perps", 101, "gapped", true)
+	gapped.GapEpisodes = []handlers.KalshiL2GapEpisode{{Start: minuteAt(12), Seconds: 2}}
+	gapped.UpdatesMissing = 958 // holes with no marker, somewhere else in the window
+	gapped.PresentMinutes = minutes(0, 15)
+
+	// Present for the marked minute and absent for most of the rest.
+	peer := seqInst("aws-dub-mn-recorder1", "mbp_edge_kalshi_perps", 101, "ok", true)
+	peer.PresentMinutes = minutes(11, 15)
+
+	assert.Nil(t, handlers.EdgeMulticastGapConfinedNodesForTest(
+		[]handlers.EdgeMulticastChannelInstance{gapped, peer}))
+
+	peer.PresentMinutes = minutes(0, 15)
+	assert.Equal(t, []string{"aws-cmh-mn-recorder1"}, handlers.EdgeMulticastGapConfinedNodesForTest(
+		[]handlers.EdgeMulticastChannelInstance{gapped, peer}))
+}
+
+// The counterpart: markers and no unmarked loss, so they do account for all of it and the witness
+// is checked against those minutes alone. Without this the narrow case is untested in both
+// directions and the rule above reads as "always require everything".
+func TestEdgeMulticastGapConfined_MarkedLossAloneChecksOnlyItsMinutes(t *testing.T) {
+	gapped := seqInst("aws-cmh-mn-recorder1", "tob_edge_kalshi_perps", 1, "gapped", true)
+	gapped.GapEpisodes = []handlers.KalshiL2GapEpisode{{Start: minuteAt(12), Seconds: 2}}
+	gapped.PresentMinutes = minutes(0, 15)
+
+	peer := seqInst("aws-dub-mn-recorder1", "tob_edge_kalshi_perps", 1, "ok", true)
+	peer.PresentMinutes = minutes(11, 15)
+
+	assert.Equal(t, []string{"aws-cmh-mn-recorder1"}, handlers.EdgeMulticastGapConfinedNodesForTest(
+		[]handlers.EdgeMulticastChannelInstance{gapped, peer}))
+}
+
 // A payload written before PresentMinutes existed carries none, and an absence must cost the claim
 // rather than grant it. This is the state every environment is in until the refresher next runs.
 func TestEdgeMulticastGapConfined_APayloadWithNoMinutesConfinesNothing(t *testing.T) {

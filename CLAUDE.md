@@ -557,8 +557,14 @@ both gap-counting legs now carry. `ok` asks only for a fresh `LastSeen`, and bot
 row per series over the whole window, so a volume figure has no time structure in it: a peer that
 joined at minute 6 of 15, or bounced for three of them, holds most of the messages and none of the
 minutes that matter. It must cover every minute the gapped series has a gap episode in, or — where
-the loss was counted from per-instrument holes with no marker written, so nothing names when — every
-minute that series was itself recording. Minute grain, not second: fifteen entries per series
+nothing names those minutes — every minute that series was itself recording. The second case covers
+two shapes: loss counted from per-instrument holes with no marker written, and a series carrying
+BOTH, where the markers account for only part of the loss. Episodes narrow the claim only when
+`UpdatesMissing` is zero, so the unmarked half is never left unwitnessed. The array is capped at
+window minutes **+ 1**, because the window is a duration back from now rather than a minute-aligned
+frame and so touches one more whole minute than it lasts; capped one short, `groupUniqArray` drops
+an arbitrary minute and a recorder present throughout can lose the claim, or flip on it between
+refreshes. Minute grain, not second: fifteen entries per series
 against nine hundred, and the residual sub-minute hole is worth the three orders of magnitude. On
 the top-of-book plane this is what catches a peer whose book-top writer stopped, which
 `mergeEdgeMulticastTOBGaps` otherwise leaves reading `ok` off the capture leg's fresher `LastSeen`

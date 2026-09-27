@@ -61,6 +61,12 @@ const kalshiL2WindowMinutes = 15
 // every second of the window fills it exactly and drops nothing.
 const kalshiL2GapSecondsCap = kalshiL2WindowMinutes * 60
 
+// kalshiL2PresentMinutesCap bounds the presence array at the window's minutes PLUS ONE, for the
+// reason edgeMulticastTOBPresentMinutesCap gives at length: the window is a duration back from now
+// and not a minute-aligned frame, so it touches one more whole minute than it lasts, and a cap one
+// short makes groupUniqArray drop an arbitrary one of them.
+const kalshiL2PresentMinutesCap = kalshiL2WindowMinutes + 1
+
 // KalshiL2GapEpisode is one contiguous run of seconds in which a channel instance recorded
 // gap-marked messages: when the loss started and how long it went on.
 //
@@ -518,7 +524,7 @@ func (a *API) FetchKalshiL2Coverage(ctx context.Context) (*KalshiL2CoverageRespo
 			max(recv_ts_ns) AS last_recv_ts_ns
 		FROM %[1]s.kalshi_mbp_levels
 		WHERE recv_ts_ns >= toUInt64(toUnixTimestamp64Nano(now64(9) - toIntervalMinute(%[2]d)))
-		GROUP BY source, channel_id, publisher_source_ip, measurement_node_id`, db, kalshiL2WindowMinutes, kalshiL2GapSecondsCap, kalshiL2WindowMinutes)
+		GROUP BY source, channel_id, publisher_source_ip, measurement_node_id`, db, kalshiL2WindowMinutes, kalshiL2GapSecondsCap, kalshiL2PresentMinutesCap)
 
 	// Before the scan, so a lane can be filled in as it is read. A failure here costs the loss
 	// counters and not the page: they are additive to a view whose subject is coverage, and a lane

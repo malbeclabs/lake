@@ -1032,16 +1032,23 @@ func edgeMulticastAllPathsGapped(instances []EdgeMulticastChannelInstance) []Kal
 // with a zero gap count it earned by writing nothing at all.
 //
 // So the bound is presence at the time of the loss. The witness must have recorded in every minute
-// the gapped series lost data in — which the gap episodes name — and where the loss has no episodes
-// to name (counted from per-instrument holes with no marker written), in every minute the gapped
-// series itself was recording, since the loss is somewhere inside those and nothing says where.
+// the gapped series lost data in — which the gap episodes name — and where nothing names them, in
+// every minute the gapped series itself was recording, since the loss is somewhere inside those and
+// nothing says where. That second case is both a series whose loss was counted from per-instrument
+// holes with no marker written, and a series carrying BOTH: markers narrow the claim only when they
+// account for all of the loss, which UpdatesMissing == 0 is what says.
 //
 // Minute grain, not second: fifteen entries per series against nine hundred, over rows both legs
 // already scan. The residual hole is sub-minute — a witness present at 10:05:01 and gone by
 // 10:05:59 counts as covering 10:05 — and it is worth the three orders of magnitude.
 func edgeMulticastGapWitnessCovers(witness, gapped EdgeMulticastChannelInstance) bool {
 	required := gapped.PresentMinutes
-	if len(gapped.GapEpisodes) > 0 {
+	// Episodes narrow the claim only when they describe ALL of this series' loss. A series can
+	// carry both: markers on some minutes, and UpdatesMissing holes the producer never marked —
+	// which is the whole reason this column stopped grading on markers alone. Checking a witness
+	// against the marked minutes then leaves the unmarked loss unwitnessed, and it is exactly the
+	// loss nothing else on the page can localise.
+	if len(gapped.GapEpisodes) > 0 && gapped.UpdatesMissing == 0 {
 		required = make([]uint32, 0, len(gapped.GapEpisodes))
 		for _, ep := range gapped.GapEpisodes {
 			// Every minute the run touches, walked a minute at a time rather than a second at
