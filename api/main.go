@@ -450,7 +450,7 @@ func main() {
 
 	r := chi.NewRouter()
 
-	r.Use(middleware.Logger)
+	r.Use(newAccessLogger())
 
 	// Sentry middleware for error and performance monitoring (before Recoverer to capture panics)
 	if sentryDSN != "" {
@@ -697,7 +697,7 @@ func main() {
 		r.Get("/api/dz/shreds/rewards/{nodeId}", api.GetShredsRewardsDetail)
 		r.Get("/api/dz/shreds/subscriber-history", api.GetShredSubscriberHistory)
 		r.Get("/api/dz/shreds/competitors", api.GetShredsCompetitors)
-		r.Get("/api/dz/field-values", api.GetFieldValues)
+		r.With(handlers.RequireIdentifierParams).Get("/api/dz/field-values", api.GetFieldValues)
 		r.Get("/api/dz/ledger", api.GetDZLedger)
 
 		// Network Health Reporting (public, windowed network-performance report).
@@ -745,19 +745,19 @@ func main() {
 		r.Get("/api/stake/validators", api.GetStakeValidators)
 
 		// Traffic analytics routes
-		r.Get("/api/traffic/data", api.GetTrafficData)
-		r.Get("/api/traffic/discards", api.GetDiscardsData)
+		r.With(handlers.RequireIdentifierParams).Get("/api/traffic/data", api.GetTrafficData)
+		r.With(handlers.RequireIdentifierParams).Get("/api/traffic/discards", api.GetDiscardsData)
 
 		// Traffic dashboard routes
-		r.Get("/api/traffic/dashboard/stress", api.GetTrafficDashboardStress)
-		r.Get("/api/traffic/dashboard/top", api.GetTrafficDashboardTop)
-		r.Get("/api/traffic/dashboard/drilldown", api.GetTrafficDashboardDrilldown)
-		r.Get("/api/traffic/dashboard/burstiness", api.GetTrafficDashboardBurstiness)
-		r.Get("/api/traffic/dashboard/health", api.GetTrafficDashboardHealth)
+		r.With(handlers.RequireIdentifierParams).Get("/api/traffic/dashboard/stress", api.GetTrafficDashboardStress)
+		r.With(handlers.RequireIdentifierParams).Get("/api/traffic/dashboard/top", api.GetTrafficDashboardTop)
+		r.With(handlers.RequireIdentifierParams).Get("/api/traffic/dashboard/drilldown", api.GetTrafficDashboardDrilldown)
+		r.With(handlers.RequireIdentifierParams).Get("/api/traffic/dashboard/burstiness", api.GetTrafficDashboardBurstiness)
+		r.With(handlers.RequireIdentifierParams).Get("/api/traffic/dashboard/health", api.GetTrafficDashboardHealth)
 
 		// Performance analytics routes
-		r.Get("/api/performance/link-latency", api.GetLinkLatencyData)
-		r.Get("/api/performance/link-latency/history", api.GetMultiLinkLatencyHistory)
+		r.With(handlers.RequireIdentifierParams).Get("/api/performance/link-latency", api.GetLinkLatencyData)
+		r.With(handlers.RequireIdentifierParams).Get("/api/performance/link-latency/history", api.GetMultiLinkLatencyHistory)
 
 		// Topology endpoints (ClickHouse only)
 		r.Get("/api/topologies", api.GetTopologies)

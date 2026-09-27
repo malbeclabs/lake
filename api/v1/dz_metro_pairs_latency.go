@@ -108,6 +108,13 @@ func registerDZMetroPairsLatency(humaAPI huma.API, api *handlers.API) {
 		Description: "Returns per-bucket DZ and internet RTT/jitter percentiles and sample counts for each metro pair with samples in the window. Direction is normalized (one row per pair, sorted lexicographically so metro_a_code < metro_b_code; A/B are labels, not directions). Use the filter query params to narrow to specific metros or internet data providers — within a filter values are OR'd; across filters AND'd. The metro filter matches either side of the pair; data_provider only affects the internet side.",
 		Tags:        []string{"DZ/Metro Pairs"},
 	}, func(ctx context.Context, input *DZMetroPairLatencyInput) (*DZMetroPairLatencyOutput, error) {
+		if err := handlers.ValidateIdentifiers("metro_code", input.MetroCode); err != nil {
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+		if err := handlers.ValidateIdentifiers("data_provider", input.DataProvider); err != nil {
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+
 		opts := handlers.MetroPairLatencyOptions{
 			TimeRange: input.Range,
 			Bucket:    input.Bucket,

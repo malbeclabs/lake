@@ -406,8 +406,12 @@ func buildIntfTypeFilter(intfType string) (string, bool) {
 	}
 }
 
+// escapeSingleQuote escapes s for use inside a single-quoted ClickHouse string
+// literal. Backslash must be escaped first: ClickHouse treats it as an escape
+// character, so an unescaped trailing backslash would swallow the closing quote.
 func escapeSingleQuote(s string) string {
-	return strings.ReplaceAll(s, "'", "\\'")
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	return strings.ReplaceAll(s, "'", `\'`)
 }
 
 // --- Query builders (exported for testing) ---

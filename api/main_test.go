@@ -1,6 +1,8 @@
 package main
 
 import (
+	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -119,5 +121,32 @@ func TestIsDocumentRequest(t *testing.T) {
 		if got := isDocumentRequest(tt.path); got != tt.want {
 			t.Errorf("isDocumentRequest(%q) = %v, want %v", tt.path, got, tt.want)
 		}
+	}
+}
+
+func TestForwardedFrom(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.RemoteAddr = "10.0.0.1:1234"
+	if got := forwardedFrom(r); got != "10.0.0.1:1234" {
+		t.Fatalf("no headers: got %q", got)
+	}
+
+	r.Header.Set("X-Forwarded-For", "203.0.113.7, 10.0.0.2")
+	r.Header.Set("X-Real-IP", "203.0.113.7")
+	want := `10.0.0.1:1234 x-forwarded-for="203.0.113.7, 10.0.0.2" x-real-ip="203.0.113.7"`
+	if got := forwardedFrom(r); got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestForwardedLogFormatterLeavesRequestUntouched(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.RemoteAddr = "10.0.0.1:1234"
+	r.Header.Set("X-Forwarded-For", "203.0.113.7")
+	f := &forwardedLogFormatter{}
+	f.Logger = log.New(io.Discard, "", 0)
+	f.NewLogEntry(r)
+	if r.RemoteAddr != "10.0.0.1:1234" {
+		t.Fatalf("RemoteAddr rewritten to %q", r.RemoteAddr)
 	}
 }
