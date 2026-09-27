@@ -83,7 +83,7 @@ const (
 // renders on the other's row. `mainnet` is tolerated beside lake's own name because the recorder's
 // env label is free-form configuration and both spellings are in use.
 func edgeMulticastRecorderEnvFilter() string {
-	return quoteSQLStrings([]string{string(EnvMainnet), "mainnet"})
+	return "'" + string(EnvMainnet) + "', 'mainnet'"
 }
 
 // EdgeMulticastRecorderGapSeries is one recording node's view of one channel instance's numbering,

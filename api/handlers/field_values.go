@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -118,53 +119,41 @@ func factTableInterval(r *http.Request) string {
 	return "1 DAY"
 }
 
-// quoteCSV splits a comma-separated string and returns SQL-safe quoted values.
-func quoteCSV(csv string) string {
-	vals := strings.Split(csv, ",")
-	quoted := make([]string, len(vals))
-	for i, v := range vals {
-		quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
-	}
-	return strings.Join(quoted, ",")
-}
-
 // buildMulticastMembersFieldQuery builds a group-scoped field values query
 // for multicast-members. Returns empty string for other entities.
-func buildMulticastMembersFieldQuery(entity, field string, cfg fieldConfig, r *http.Request) string {
+func buildMulticastMembersFieldQuery(entity, field string, cfg fieldConfig, r *http.Request) (string, []any) {
 	if entity != "multicast-members" {
-		return ""
+		return "", nil
 	}
 	groupPK := r.URL.Query().Get("group")
 	if groupPK == "" {
-		return ""
+		return "", nil
 	}
 
-	safeGroupPK := escapeSingleQuote(groupPK)
-	groupFilter := fmt.Sprintf(
-		"u.kind = 'multicast' AND u.status = 'activated' AND (has(JSONExtract(u.publishers, 'Array(String)'), '%s') OR has(JSONExtract(u.subscribers, 'Array(String)'), '%s'))",
-		safeGroupPK, safeGroupPK,
-	)
+	groupFilter := "u.kind = 'multicast' AND u.status = 'activated' AND (has(JSONExtract(u.publishers, 'Array(String)'), @group) OR has(JSONExtract(u.subscribers, 'Array(String)'), @group))"
 
-	return fmt.Sprintf(
+	query := fmt.Sprintf(
 		"SELECT DISTINCT %s AS val FROM %s WHERE %s AND %s IS NOT NULL AND %s != '' ORDER BY val LIMIT 100",
 		cfg.column, cfg.table, groupFilter, cfg.column, cfg.column,
 	)
+	return query, []any{clickhouse.Named("group", groupPK)}
 }
 
 // BuildScopedFieldValuesQuery builds a scoped query for dashboard-relevant
 // entity+field combos when filter params are present. Returns empty string
 // when no scoping is needed (caller should use the generic query).
-func BuildScopedFieldValuesQuery(entity, field string, cfg fieldConfig, r *http.Request) string {
+func BuildScopedFieldValuesQuery(entity, field string, cfg fieldConfig, r *http.Request) (string, []any) {
 	metro := r.URL.Query().Get("metro")
 	device := r.URL.Query().Get("device")
 	contributor := r.URL.Query().Get("contributor")
 	linkType := r.URL.Query().Get("link_type")
 
 	if metro == "" && device == "" && contributor == "" && linkType == "" {
-		return ""
+		return "", nil
 	}
 
 	key := entity + "/" + field
+	var args []any
 
 	switch key {
 	case "interfaces/intf":
@@ -173,18 +162,22 @@ func BuildScopedFieldValuesQuery(entity, field string, cfg fieldConfig, r *http.
 		joins = append(joins, "JOIN dz_devices_current d ON f.device_pk = d.pk")
 		if metro != "" {
 			joins = append(joins, "JOIN dz_metros_current m ON d.metro_pk = m.pk")
-			wheres = append(wheres, fmt.Sprintf("m.code IN (%s)", quoteCSV(metro)))
+			wheres = append(wheres, "m.code IN (@metro)")
+			args = append(args, csvParam("metro", metro))
 		}
 		if device != "" {
-			wheres = append(wheres, fmt.Sprintf("d.code IN (%s)", quoteCSV(device)))
+			wheres = append(wheres, "d.code IN (@device)")
+			args = append(args, csvParam("device", device))
 		}
 		if contributor != "" {
 			joins = append(joins, "JOIN dz_contributors_current co ON d.contributor_pk = co.pk")
-			wheres = append(wheres, fmt.Sprintf("co.code IN (%s)", quoteCSV(contributor)))
+			wheres = append(wheres, "co.code IN (@contributor)")
+			args = append(args, csvParam("contributor", contributor))
 		}
 		if linkType != "" {
 			joins = append(joins, "JOIN dz_links_current l ON f.link_pk = l.pk")
-			wheres = append(wheres, fmt.Sprintf("l.link_type IN (%s)", quoteCSV(linkType)))
+			wheres = append(wheres, "l.link_type IN (@link_type)")
+			args = append(args, csvParam("link_type", linkType))
 		}
 		interval := factTableInterval(r)
 		whereClause := fmt.Sprintf("f.bucket_ts >= now() - INTERVAL %s AND f.intf IS NOT NULL AND f.intf != ''", interval)
@@ -192,7 +185,7 @@ func BuildScopedFieldValuesQuery(entity, field string, cfg fieldConfig, r *http.
 			whereClause += " AND " + strings.Join(wheres, " AND ")
 		}
 		return fmt.Sprintf("SELECT DISTINCT f.intf AS val FROM device_interface_rollup_5m f %s WHERE %s ORDER BY val LIMIT 100",
-			strings.Join(joins, " "), whereClause)
+			strings.Join(joins, " "), whereClause), args
 
 	case "devices/metro":
 		// Scope metro values by contributor/device
@@ -200,17 +193,19 @@ func BuildScopedFieldValuesQuery(entity, field string, cfg fieldConfig, r *http.
 		extraJoins := ""
 		if contributor != "" {
 			extraJoins += " JOIN dz_contributors_current co ON d.contributor_pk = co.pk"
-			wheres = append(wheres, fmt.Sprintf("co.code IN (%s)", quoteCSV(contributor)))
+			wheres = append(wheres, "co.code IN (@contributor)")
+			args = append(args, csvParam("contributor", contributor))
 		}
 		if device != "" {
-			wheres = append(wheres, fmt.Sprintf("d.code IN (%s)", quoteCSV(device)))
+			wheres = append(wheres, "d.code IN (@device)")
+			args = append(args, csvParam("device", device))
 		}
 		whereClause := "m.code IS NOT NULL AND m.code != ''"
 		if len(wheres) > 0 {
 			whereClause += " AND " + strings.Join(wheres, " AND ")
 		}
 		return fmt.Sprintf("SELECT DISTINCT m.code AS val FROM %s%s WHERE %s ORDER BY val LIMIT 100",
-			cfg.table, extraJoins, whereClause)
+			cfg.table, extraJoins, whereClause), args
 
 	case "devices/contributor":
 		// Scope contributor values by metro/device
@@ -218,17 +213,19 @@ func BuildScopedFieldValuesQuery(entity, field string, cfg fieldConfig, r *http.
 		extraJoins := ""
 		if metro != "" {
 			extraJoins += " JOIN dz_metros_current m ON d.metro_pk = m.pk"
-			wheres = append(wheres, fmt.Sprintf("m.code IN (%s)", quoteCSV(metro)))
+			wheres = append(wheres, "m.code IN (@metro)")
+			args = append(args, csvParam("metro", metro))
 		}
 		if device != "" {
-			wheres = append(wheres, fmt.Sprintf("d.code IN (%s)", quoteCSV(device)))
+			wheres = append(wheres, "d.code IN (@device)")
+			args = append(args, csvParam("device", device))
 		}
 		whereClause := "c.code IS NOT NULL AND c.code != ''"
 		if len(wheres) > 0 {
 			whereClause += " AND " + strings.Join(wheres, " AND ")
 		}
 		return fmt.Sprintf("SELECT DISTINCT c.code AS val FROM %s%s WHERE %s ORDER BY val LIMIT 100",
-			cfg.table, extraJoins, whereClause)
+			cfg.table, extraJoins, whereClause), args
 
 	case "links/type":
 		// Scope link types by metro/contributor
@@ -236,13 +233,15 @@ func BuildScopedFieldValuesQuery(entity, field string, cfg fieldConfig, r *http.
 		extraJoins := ""
 		if metro != "" {
 			extraJoins += " JOIN dz_devices_current d ON l.side_a_pk = d.pk JOIN dz_metros_current m ON d.metro_pk = m.pk"
-			wheres = append(wheres, fmt.Sprintf("m.code IN (%s)", quoteCSV(metro)))
+			wheres = append(wheres, "m.code IN (@metro)")
+			args = append(args, csvParam("metro", metro))
 		}
 		if contributor != "" {
 			if !strings.Contains(cfg.table, "dz_contributors_current") {
 				extraJoins += " JOIN dz_contributors_current co ON l.contributor_pk = co.pk"
 			}
-			wheres = append(wheres, fmt.Sprintf("co.code IN (%s)", quoteCSV(contributor)))
+			wheres = append(wheres, "co.code IN (@contributor)")
+			args = append(args, csvParam("contributor", contributor))
 		}
 		whereClause := "l.link_type IS NOT NULL AND l.link_type != ''"
 		if len(wheres) > 0 {
@@ -251,10 +250,10 @@ func BuildScopedFieldValuesQuery(entity, field string, cfg fieldConfig, r *http.
 		// Use alias l for links table
 		table := "dz_links_current l"
 		return fmt.Sprintf("SELECT DISTINCT l.link_type AS val FROM %s%s WHERE %s ORDER BY val LIMIT 100",
-			table, extraJoins, whereClause)
+			table, extraJoins, whereClause), args
 	}
 
-	return ""
+	return "", nil
 }
 
 // GetFieldValues returns distinct values for a given entity field
@@ -308,9 +307,9 @@ func (a *API) GetFieldValues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Try scoped query first (dashboard filter-aware), fall back to generic
-	query := buildMulticastMembersFieldQuery(entity, field, fieldCfg, r)
+	query, args := buildMulticastMembersFieldQuery(entity, field, fieldCfg, r)
 	if query == "" {
-		query = BuildScopedFieldValuesQuery(entity, field, fieldCfg, r)
+		query, args = BuildScopedFieldValuesQuery(entity, field, fieldCfg, r)
 	}
 	if query == "" {
 		timeFilter := ""
@@ -323,7 +322,7 @@ func (a *API) GetFieldValues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
-	rows, err := a.envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, query, args...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery("field_values", duration, err)
 
