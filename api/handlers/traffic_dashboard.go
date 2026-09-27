@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -282,59 +284,40 @@ func bandwidthExpr(needsInterfaceJoin bool) string {
 //   - intfTypeSQL: clause for interface type filtering with leading AND (must go in CTE)
 //   - userKindSQL: clause for user kind filtering with leading AND (requires user join)
 //   - join flags indicating which dimension joins are needed
-func buildDimensionFilters(r *http.Request) (filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL string, needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin, needsInterfaceJoin bool) {
+//   - args: the named parameters the clauses reference, to pass to the query
+func buildDimensionFilters(r *http.Request) (filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL string, needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin, needsInterfaceJoin bool, args []any) {
 	var clauses []string
 
 	if metros := r.URL.Query().Get("metro"); metros != "" {
 		needsDeviceJoin = true
 		needsMetroJoin = true
-		vals := strings.Split(metros, ",")
-		quoted := make([]string, len(vals))
-		for i, v := range vals {
-			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
-		}
-		clauses = append(clauses, fmt.Sprintf("m.code IN (%s)", strings.Join(quoted, ",")))
+		clauses = append(clauses, "m.code IN (@metro)")
+		args = append(args, csvParam("metro", metros))
 	}
 
 	if devices := r.URL.Query().Get("device"); devices != "" {
 		needsDeviceJoin = true
-		vals := strings.Split(devices, ",")
-		quoted := make([]string, len(vals))
-		for i, v := range vals {
-			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
-		}
-		clauses = append(clauses, fmt.Sprintf("d.code IN (%s)", strings.Join(quoted, ",")))
+		clauses = append(clauses, "d.code IN (@device)")
+		args = append(args, csvParam("device", devices))
 	}
 
 	if linkTypes := r.URL.Query().Get("link_type"); linkTypes != "" {
 		needsLinkJoin = true
-		vals := strings.Split(linkTypes, ",")
-		quoted := make([]string, len(vals))
-		for i, v := range vals {
-			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
-		}
-		clauses = append(clauses, fmt.Sprintf("l.link_type IN (%s)", strings.Join(quoted, ",")))
+		clauses = append(clauses, "l.link_type IN (@link_type)")
+		args = append(args, csvParam("link_type", linkTypes))
 	}
 
 	if contributors := r.URL.Query().Get("contributor"); contributors != "" {
 		needsDeviceJoin = true
 		needsContributorJoin = true
-		vals := strings.Split(contributors, ",")
-		quoted := make([]string, len(vals))
-		for i, v := range vals {
-			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
-		}
-		clauses = append(clauses, fmt.Sprintf("co.code IN (%s)", strings.Join(quoted, ",")))
+		clauses = append(clauses, "co.code IN (@contributor)")
+		args = append(args, csvParam("contributor", contributors))
 	}
 
 	if userKinds := r.URL.Query().Get("user_kind"); userKinds != "" {
 		needsUserJoin = true
-		vals := strings.Split(userKinds, ",")
-		quoted := make([]string, len(vals))
-		for i, v := range vals {
-			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
-		}
-		userKindSQL = fmt.Sprintf(" AND u.kind IN (%s)", strings.Join(quoted, ","))
+		userKindSQL = " AND u.kind IN (@user_kind)"
+		args = append(args, csvParam("user_kind", userKinds))
 	}
 
 	// di.* filters must go into intfTypeSQL (CTE-scoped) not filterSQL (outer query),
@@ -343,31 +326,19 @@ func buildDimensionFilters(r *http.Request) (filterSQL, intfFilterSQL, intfTypeS
 
 	if cyoaTypes := r.URL.Query().Get("cyoa_type"); cyoaTypes != "" {
 		needsInterfaceJoin = true
-		vals := strings.Split(cyoaTypes, ",")
-		quoted := make([]string, len(vals))
-		for i, v := range vals {
-			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
-		}
-		diClauses = append(diClauses, fmt.Sprintf("di.cyoa_type IN (%s)", strings.Join(quoted, ",")))
+		diClauses = append(diClauses, "di.cyoa_type IN (@cyoa_type)")
+		args = append(args, csvParam("cyoa_type", cyoaTypes))
 	}
 
 	if interfaceTypes := r.URL.Query().Get("interface_type"); interfaceTypes != "" {
 		needsInterfaceJoin = true
-		vals := strings.Split(interfaceTypes, ",")
-		quoted := make([]string, len(vals))
-		for i, v := range vals {
-			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
-		}
-		diClauses = append(diClauses, fmt.Sprintf("di.interface_type IN (%s)", strings.Join(quoted, ",")))
+		diClauses = append(diClauses, "di.interface_type IN (@interface_type)")
+		args = append(args, csvParam("interface_type", interfaceTypes))
 	}
 
 	if intfs := r.URL.Query().Get("intf"); intfs != "" {
-		vals := strings.Split(intfs, ",")
-		quoted := make([]string, len(vals))
-		for i, v := range vals {
-			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
-		}
-		intfFilterSQL = fmt.Sprintf(" AND f.intf IN (%s)", strings.Join(quoted, ","))
+		intfFilterSQL = " AND f.intf IN (@intf)"
+		args = append(args, csvParam("intf", intfs))
 	}
 
 	var intfTypeNeedsJoin bool
@@ -387,6 +358,11 @@ func buildDimensionFilters(r *http.Request) (filterSQL, intfFilterSQL, intfTypeS
 	return
 }
 
+// csvParam binds a comma-separated request value as one array parameter, for use in `IN (@name)`.
+func csvParam(name, csv string) driver.NamedValue {
+	return clickhouse.Named(name, strings.Split(csv, ","))
+}
+
 // buildIntfTypeFilter returns a SQL clause for filtering by interface type and
 // whether the device interfaces dimension join is needed.
 // Values: "all" (no filter), "link", "tunnel", "cyoa", "dia", "other".
@@ -404,10 +380,6 @@ func buildIntfTypeFilter(intfType string) (string, bool) {
 		// "all" or empty: no filter
 		return "", false
 	}
-}
-
-func escapeSingleQuote(s string) string {
-	return strings.ReplaceAll(s, "'", "\\'")
 }
 
 // --- Query builders (exported for testing) ---
@@ -712,12 +684,12 @@ func BuildStressQueryRaw(timeFilter, bucketInterval, metric, groupBy, filterSQL,
 
 // BuildDrilldownQueryRaw builds the drilldown query using raw fact_dz_device_interface_counters
 // for sub-5m bucket granularity. Same interface as BuildDrilldownQuery.
-func BuildDrilldownQueryRaw(timeFilter, bucketInterval, devicePk, intfFilter string, needsInterfaceJoin bool) string {
+func BuildDrilldownQueryRaw(timeFilter, bucketInterval, devicePk, intfFilter string, needsInterfaceJoin bool) (string, []any) {
 	var diJoin string
 	if needsInterfaceJoin {
 		diJoin = "\n\t\tLEFT JOIN dz_device_interfaces_current di ON f.device_pk = di.device_pk AND f.intf = di.intf"
 	}
-	return fmt.Sprintf(`
+	query := fmt.Sprintf(`
 		SELECT
 			formatDateTime(toStartOfInterval(f.event_ts, INTERVAL %s), '%%Y-%%m-%%dT%%H:%%i:%%sZ') AS time,
 			f.intf,
@@ -729,14 +701,15 @@ func BuildDrilldownQueryRaw(timeFilter, bucketInterval, devicePk, intfFilter str
 			max(COALESCE(f.out_pkts_delta, 0) / f.delta_duration) AS out_pps
 		FROM fact_dz_device_interface_counters f%s
 		WHERE %s
-			AND f.device_pk = '%s'
+			AND f.device_pk = @device_pk
 			%s
 			AND f.delta_duration > 0
 			AND f.in_octets_delta >= 0
 			AND f.out_octets_delta >= 0
 		GROUP BY time, f.intf
 		ORDER BY time, f.intf`,
-		bucketInterval, diJoin, timeFilter, escapeSingleQuote(devicePk), intfFilter)
+		bucketInterval, diJoin, timeFilter, intfFilter)
+	return query, []any{clickhouse.Named("device_pk", devicePk)}
 }
 
 // BuildTopQuery builds the ClickHouse query for the top endpoint.
@@ -894,12 +867,12 @@ func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilte
 
 // BuildDrilldownQuery builds the main ClickHouse query for the drilldown endpoint.
 // Reads from device_interface_rollup_5m and re-aggregates into the requested bucket.
-func BuildDrilldownQuery(timeFilter, bucketInterval, devicePk, intfFilter string, needsInterfaceJoin bool) string {
+func BuildDrilldownQuery(timeFilter, bucketInterval, devicePk, intfFilter string, needsInterfaceJoin bool) (string, []any) {
 	var diJoin string
 	if needsInterfaceJoin {
 		diJoin = "\n\t\tLEFT JOIN dz_device_interfaces_current di ON f.device_pk = di.device_pk AND f.intf = di.intf"
 	}
-	return fmt.Sprintf(`
+	query := fmt.Sprintf(`
 		SELECT
 			formatDateTime(toStartOfInterval(f.bucket_ts, INTERVAL %s), '%%Y-%%m-%%dT%%H:%%i:%%sZ') AS time,
 			f.intf,
@@ -911,11 +884,12 @@ func BuildDrilldownQuery(timeFilter, bucketInterval, devicePk, intfFilter string
 			max(f.max_out_pps) AS out_pps
 		FROM device_interface_rollup_5m f%s
 		WHERE f.%s
-			AND f.device_pk = '%s'
+			AND f.device_pk = @device_pk
 			%s
 		GROUP BY time, f.intf
 		ORDER BY time, f.intf`,
-		bucketInterval, diJoin, timeFilter, escapeSingleQuote(devicePk), intfFilter)
+		bucketInterval, diJoin, timeFilter, intfFilter)
+	return query, []any{clickhouse.Named("device_pk", devicePk)}
 }
 
 // BuildBurstinessQuery builds the ClickHouse query for the burstiness endpoint.
@@ -1140,12 +1114,12 @@ func (a *API) GetTrafficDashboardHealth(w http.ResponseWriter, r *http.Request) 
 	}
 	sortDir := strings.ToUpper(r.URL.Query().Get("dir"))
 
-	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, _, _, _, needsUserJoin, needsInterfaceJoin := buildDimensionFilters(r)
+	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, _, _, _, needsUserJoin, needsInterfaceJoin, dimArgs := buildDimensionFilters(r)
 
 	query := BuildHealthQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, needsUserJoin, needsInterfaceJoin, limit)
 
 	start := time.Now()
-	rows, err := a.envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, query, dimArgs...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery("traffic_dashboard", duration, err)
 
@@ -1224,7 +1198,7 @@ func (a *API) GetTrafficDashboardStress(w http.ResponseWriter, r *http.Request) 
 		metric = "utilization"
 	}
 
-	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin, needsInterfaceJoin := buildDimensionFilters(r)
+	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin, needsInterfaceJoin, dimArgs := buildDimensionFilters(r)
 
 	var query string
 	var grouped bool
@@ -1237,7 +1211,7 @@ func (a *API) GetTrafficDashboardStress(w http.ResponseWriter, r *http.Request) 
 	}
 
 	start := time.Now()
-	rows, err := a.envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, query, dimArgs...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery("traffic_dashboard", duration, err)
 
@@ -1428,12 +1402,12 @@ func (a *API) GetTrafficDashboardTop(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, _, _, _, needsUserJoin, needsInterfaceJoin := buildDimensionFilters(r)
+	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, _, _, _, needsUserJoin, needsInterfaceJoin, dimArgs := buildDimensionFilters(r)
 
 	query := BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, needsUserJoin, needsInterfaceJoin, limit)
 
 	start := time.Now()
-	rows, err := a.envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, query, dimArgs...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery("traffic_dashboard", duration, err)
 
@@ -1509,20 +1483,24 @@ func (a *API) GetTrafficDashboardDrilldown(w http.ResponseWriter, r *http.Reques
 	var intfFilter string
 	var needsDiJoin bool
 	if intf != "" {
-		intfFilter = fmt.Sprintf("AND f.intf = '%s'", escapeSingleQuote(intf))
+		intfFilter = "AND f.intf = @intf"
 	} else {
 		intfFilter, needsDiJoin = buildIntfTypeFilter(intfType)
 	}
 
 	var query string
+	var args []any
 	if useRaw {
-		query = BuildDrilldownQueryRaw(timeFilter, bucketInterval, devicePk, intfFilter, needsDiJoin)
+		query, args = BuildDrilldownQueryRaw(timeFilter, bucketInterval, devicePk, intfFilter, needsDiJoin)
 	} else {
-		query = BuildDrilldownQuery(timeFilter, bucketInterval, devicePk, intfFilter, needsDiJoin)
+		query, args = BuildDrilldownQuery(timeFilter, bucketInterval, devicePk, intfFilter, needsDiJoin)
+	}
+	if intf != "" {
+		args = append(args, clickhouse.Named("intf", intf))
 	}
 
 	start := time.Now()
-	rows, err := a.envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, query, args...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery("traffic_dashboard", duration, err)
 
@@ -1560,11 +1538,6 @@ func (a *API) GetTrafficDashboardDrilldown(w http.ResponseWriter, r *http.Reques
 
 	series := []DrilldownSeries{}
 	if len(intfNames) > 0 {
-		quoted := make([]string, len(intfNames))
-		for i, v := range intfNames {
-			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
-		}
-
 		metaTable := "device_interface_rollup_5m"
 		if useRaw {
 			metaTable = "fact_dz_device_interface_counters"
@@ -1577,17 +1550,17 @@ func (a *API) GetTrafficDashboardDrilldown(w http.ResponseWriter, r *http.Reques
 			FROM (
 				SELECT DISTINCT intf, link_pk
 				FROM %s
-				WHERE device_pk = '%s'
-					AND intf IN (%s)
+				WHERE device_pk = @device_pk
+					AND intf IN (@intfs)
 					AND %s
 			) f
 			LEFT JOIN dz_links_current l ON f.link_pk = l.pk`,
 			metaTable,
-			escapeSingleQuote(devicePk),
-			strings.Join(quoted, ","),
 			timeFilter)
 
-		metaRows, err := a.envDB(ctx).Query(ctx, metaQuery)
+		metaRows, err := a.envDB(ctx).Query(ctx, metaQuery,
+			clickhouse.Named("device_pk", devicePk),
+			clickhouse.Named("intfs", intfNames))
 		if err == nil {
 			defer metaRows.Close()
 			for metaRows.Next() {
@@ -1679,12 +1652,12 @@ func (a *API) GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Reque
 	}
 	sortDir := strings.ToUpper(r.URL.Query().Get("dir"))
 
-	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, _, needsMetroJoin, needsContributorJoin, needsUserJoin, needsInterfaceJoin := buildDimensionFilters(r)
+	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, _, needsMetroJoin, needsContributorJoin, needsUserJoin, needsInterfaceJoin, dimArgs := buildDimensionFilters(r)
 
 	query := BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, needsUserJoin, needsInterfaceJoin, needsMetroJoin, needsContributorJoin, threshold, minBps, minPeakBps, limit, offset)
 
 	start := time.Now()
-	rows, err := a.envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, query, dimArgs...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery("traffic_dashboard", duration, err)
 

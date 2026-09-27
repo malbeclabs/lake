@@ -374,36 +374,7 @@ func queryMetroPairLatency(ctx context.Context, db driver.Conn, params bucketPar
 
 	args := []any{startTime, endTime}
 
-	metroFilterSQL := ""
-	if len(filter.MetroCodes) > 0 {
-		quoted := make([]string, 0, len(filter.MetroCodes))
-		for _, code := range filter.MetroCodes {
-			c := strings.TrimSpace(code)
-			if c == "" {
-				continue
-			}
-			quoted = append(quoted, fmt.Sprintf("'%s'", strings.ToLower(escapeSingleQuote(c))))
-		}
-		if len(quoted) > 0 {
-			inList := strings.Join(quoted, ",")
-			metroFilterSQL = fmt.Sprintf(" AND (lower(ma.code) IN (%s) OR lower(mz.code) IN (%s))", inList, inList)
-		}
-	}
-
-	inetProviderSQL := ""
-	if len(filter.DataProviders) > 0 {
-		quoted := make([]string, 0, len(filter.DataProviders))
-		for _, p := range filter.DataProviders {
-			c := strings.TrimSpace(p)
-			if c == "" {
-				continue
-			}
-			quoted = append(quoted, fmt.Sprintf("'%s'", strings.ToLower(escapeSingleQuote(c))))
-		}
-		if len(quoted) > 0 {
-			inetProviderSQL = fmt.Sprintf(" AND lower(f.data_provider) IN (%s)", strings.Join(quoted, ","))
-		}
-	}
+	metroFilterSQL, inetProviderSQL, args := metroPairLatencyFilterSQL(filter, args)
 
 	var dzCTE string
 	if params.UseRaw {
@@ -602,4 +573,28 @@ func queryMetroPairLatency(ctx context.Context, db driver.Conn, params bucketPar
 
 	rows, err := db.Query(ctx, query, args...)
 	return rows, query, args, err
+}
+
+// metroPairLatencyFilterSQL builds the metro and data provider clauses, numbering their parameters after args.
+func metroPairLatencyFilterSQL(filter MetroPairLatencyFilter, args []any) (metroSQL, providerSQL string, _ []any) {
+	if codes := trimmedLower(filter.MetroCodes); len(codes) > 0 {
+		args = append(args, codes)
+		metroSQL = fmt.Sprintf(" AND (lower(ma.code) IN ($%d) OR lower(mz.code) IN ($%d))", len(args), len(args))
+	}
+	if providers := trimmedLower(filter.DataProviders); len(providers) > 0 {
+		args = append(args, providers)
+		providerSQL = fmt.Sprintf(" AND lower(f.data_provider) IN ($%d)", len(args))
+	}
+	return metroSQL, providerSQL, args
+}
+
+// trimmedLower trims and lowercases each value, dropping empties.
+func trimmedLower(vals []string) []string {
+	var out []string
+	for _, v := range vals {
+		if c := strings.TrimSpace(v); c != "" {
+			out = append(out, strings.ToLower(c))
+		}
+	}
+	return out
 }

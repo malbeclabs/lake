@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -164,18 +165,16 @@ const edgeMulticastRecorderLossCap = edgeMulticastObservationsWindowMinutes * 60
 // networkHealthQuerySettings, which exists for the same reason.
 const edgeMulticastRecorderLossSettings = " SETTINGS max_memory_usage = 2000000000, max_bytes_before_external_group_by = 1000000000"
 
-// quoteSQLStrings renders a string slice as a SQL literal list.
-//
-// The values here come from the database's own `source` column, not from a request, so this is
-// about correctness rather than injection: a capture source has been renamed once already
-// (the `*_lashay_*` era) and nothing stops the next convention from carrying a quote. Doubling
-// them keeps a rename from turning into a syntax error at the worst possible moment.
-func quoteSQLStrings(vals []string) string {
-	quoted := make([]string, 0, len(vals))
-	for _, v := range vals {
-		quoted = append(quoted, "'"+strings.ReplaceAll(v, "'", "''")+"'")
+// namedParamList binds each value as its own named parameter and returns the placeholders for `IN (...)`.
+func namedParamList(prefix string, vals []string) (string, []any) {
+	placeholders := make([]string, len(vals))
+	args := make([]any, len(vals))
+	for i, v := range vals {
+		name := fmt.Sprintf("%s%d", prefix, i)
+		placeholders[i] = "@" + name
+		args[i] = clickhouse.Named(name, v)
 	}
-	return strings.Join(quoted, ", ")
+	return strings.Join(placeholders, ", "), args
 }
 
 // edgeMulticastRecorderLossSources returns the capture sources recorded at MORE THAN ONE node in
@@ -252,6 +251,8 @@ func (a *API) fetchEdgeMulticastRecorderLoss(ctx context.Context, sources []stri
 	if len(sources) == 0 {
 		return nil, nil
 	}
+	// One parameter per source, so the bound query still carries an explicit literal list.
+	sourceList, args := namedParamList("source", sources)
 	db := fmt.Sprintf("`%s`", a.FeedsDB)
 	q := fmt.Sprintf(`
 		WITH per_seq AS (
@@ -311,9 +312,9 @@ func (a *API) fetchEdgeMulticastRecorderLoss(ctx context.Context, sources []stri
 		INNER JOIN node_loc AS nl ON node = nl.loc_node
 		WHERE length(u.all_nodes) > 1
 		GROUP BY p.multicast_group, p.publisher_source_ip, p.channel_id, node`+edgeMulticastRecorderLossSettings,
-		db, edgeMulticastObservationsWindowMinutes, quoteSQLStrings(sources), edgeMulticastRecorderLossCap)
+		db, edgeMulticastObservationsWindowMinutes, sourceList, edgeMulticastRecorderLossCap)
 
-	rows, err := a.envDB(ctx).Query(ctx, q)
+	rows, err := a.envDB(ctx).Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

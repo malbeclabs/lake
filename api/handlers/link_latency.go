@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -116,100 +117,65 @@ func linkLatencyRawAgg(r *http.Request) (plain, ifForm string) {
 }
 
 // linkLatencyFilterSQL builds WHERE clauses for metro, device, contributor, and link_type filters.
-// Returns the SQL fragment (including leading " AND ") and join flags.
-func linkLatencyFilterSQL(r *http.Request) (filterSQL string, needsContributorJoin, needsMetroJoin bool) {
+// Returns the SQL fragment (including leading " AND "), join flags, and the named parameters the fragment references.
+func linkLatencyFilterSQL(r *http.Request) (filterSQL string, needsContributorJoin, needsMetroJoin bool, args []any) {
 	var filterClauses []string
 
 	if metros := r.URL.Query().Get("metro"); metros != "" {
-		vals := strings.Split(metros, ",")
-		quoted := make([]string, len(vals))
-		for i, v := range vals {
-			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
-		}
-		inList := strings.Join(quoted, ",")
-		filterClauses = append(filterClauses, fmt.Sprintf("(ma.code IN (%s) OR mz.code IN (%s))", inList, inList))
+		filterClauses = append(filterClauses, "(ma.code IN (@metro) OR mz.code IN (@metro))")
+		args = append(args, csvParam("metro", metros))
 		needsMetroJoin = true
 	}
 
 	if devices := r.URL.Query().Get("device"); devices != "" {
-		vals := strings.Split(devices, ",")
-		quoted := make([]string, len(vals))
-		for i, v := range vals {
-			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
-		}
-		inList := strings.Join(quoted, ",")
-		filterClauses = append(filterClauses, fmt.Sprintf("(da.code IN (%s) OR dz.code IN (%s))", inList, inList))
+		filterClauses = append(filterClauses, "(da.code IN (@device) OR dz.code IN (@device))")
+		args = append(args, csvParam("device", devices))
 	}
 
 	if deviceA := r.URL.Query().Get("device_a"); deviceA != "" {
-		vals := strings.Split(deviceA, ",")
-		quoted := make([]string, len(vals))
-		for i, v := range vals {
-			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
-		}
-		filterClauses = append(filterClauses, fmt.Sprintf("da.code IN (%s)", strings.Join(quoted, ",")))
+		filterClauses = append(filterClauses, "da.code IN (@device_a)")
+		args = append(args, csvParam("device_a", deviceA))
 	}
 
 	if deviceZ := r.URL.Query().Get("device_z"); deviceZ != "" {
-		vals := strings.Split(deviceZ, ",")
-		quoted := make([]string, len(vals))
-		for i, v := range vals {
-			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
-		}
-		filterClauses = append(filterClauses, fmt.Sprintf("dz.code IN (%s)", strings.Join(quoted, ",")))
+		filterClauses = append(filterClauses, "dz.code IN (@device_z)")
+		args = append(args, csvParam("device_z", deviceZ))
 	}
 
 	if contributors := r.URL.Query().Get("contributor"); contributors != "" {
-		vals := strings.Split(contributors, ",")
-		quoted := make([]string, len(vals))
-		for i, v := range vals {
-			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
-		}
-		filterClauses = append(filterClauses, fmt.Sprintf("co.code IN (%s)", strings.Join(quoted, ",")))
+		filterClauses = append(filterClauses, "co.code IN (@contributor)")
+		args = append(args, csvParam("contributor", contributors))
 		needsContributorJoin = true
 	}
 
 	if linkTypes := r.URL.Query().Get("link_type"); linkTypes != "" {
-		vals := strings.Split(linkTypes, ",")
-		quoted := make([]string, len(vals))
-		for i, v := range vals {
-			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
-		}
-		filterClauses = append(filterClauses, fmt.Sprintf("l.link_type IN (%s)", strings.Join(quoted, ",")))
+		filterClauses = append(filterClauses, "l.link_type IN (@link_type)")
+		args = append(args, csvParam("link_type", linkTypes))
 	}
 
 	if codes := r.URL.Query().Get("code"); codes != "" {
-		vals := strings.Split(codes, ",")
-		quoted := make([]string, len(vals))
-		for i, v := range vals {
-			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
-		}
-		filterClauses = append(filterClauses, fmt.Sprintf("l.code IN (%s)", strings.Join(quoted, ",")))
+		filterClauses = append(filterClauses, "l.code IN (@code)")
+		args = append(args, csvParam("code", codes))
 	}
 
 	if statuses := r.URL.Query().Get("status"); statuses != "" {
-		vals := strings.Split(statuses, ",")
-		quoted := make([]string, len(vals))
-		for i, v := range vals {
-			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
-		}
-		filterClauses = append(filterClauses, fmt.Sprintf("l.status IN (%s)", strings.Join(quoted, ",")))
+		filterClauses = append(filterClauses, "l.status IN (@status)")
+		args = append(args, csvParam("status", statuses))
 	}
 
 	if search := r.URL.Query().Get("search"); search != "" {
-		needle := escapeSingleQuote(search)
-		filterClauses = append(filterClauses, fmt.Sprintf(
-			"(l.code ILIKE '%%%s%%' OR l.link_type ILIKE '%%%s%%' OR da.code ILIKE '%%%s%%' OR dz.code ILIKE '%%%s%%')",
-			needle, needle, needle, needle))
+		filterClauses = append(filterClauses,
+			"(l.code ILIKE concat('%', @search, '%') OR l.link_type ILIKE concat('%', @search, '%') OR da.code ILIKE concat('%', @search, '%') OR dz.code ILIKE concat('%', @search, '%'))")
+		args = append(args, clickhouse.Named("search", search))
 	}
 
 	if pksParam := r.URL.Query().Get("pks"); pksParam != "" {
 		pks := strings.Split(pksParam, ",")
-		quoted := make([]string, len(pks))
 		for i, pk := range pks {
-			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(strings.TrimSpace(pk)))
+			pks[i] = strings.TrimSpace(pk)
 		}
-		filterClauses = append(filterClauses, fmt.Sprintf("l.pk IN (%s)", strings.Join(quoted, ",")))
+		filterClauses = append(filterClauses, "l.pk IN (@pks)")
+		args = append(args, clickhouse.Named("pks", pks))
 	}
 
 	if len(filterClauses) > 0 {
@@ -226,7 +192,7 @@ func (a *API) GetLinkLatencyData(w http.ResponseWriter, r *http.Request) {
 
 	aggPrefix, rollupAggFunc := linkLatencyAgg(r)
 	timeFilter, _ := rollupTimeFilter(r)
-	filterSQL, _, needsMetroJoin := linkLatencyFilterSQL(r)
+	filterSQL, _, needsMetroJoin, filterArgs := linkLatencyFilterSQL(r)
 
 	metroJoin := ""
 	if needsMetroJoin {
@@ -288,7 +254,7 @@ func (a *API) GetLinkLatencyData(w http.ResponseWriter, r *http.Request) {
 		filterSQL,
 		statusFilter)
 
-	rows, err := a.envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, query, filterArgs...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery("link_latency", duration, err)
 
@@ -373,11 +339,13 @@ func (a *API) GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request)
 
 	start := time.Now()
 	var query string
+	var filterArgs []any
 	var scanPerLink bool
 
 	if mode == "aggregate" {
 		// Aggregate mode: multiple percentile series (avg, p95, p99, max) across all matching links
-		filterSQL, needsContributorJoin, needsMetroJoin := linkLatencyFilterSQL(r)
+		filterSQL, needsContributorJoin, needsMetroJoin, args := linkLatencyFilterSQL(r)
+		filterArgs = args
 
 		extraJoins := ""
 		if needsContributorJoin {
@@ -444,7 +412,7 @@ func (a *API) GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request)
 				filterSQL)
 		}
 
-		rows, err := a.envDB(ctx).Query(ctx, query)
+		rows, err := a.envDB(ctx).Query(ctx, query, filterArgs...)
 		duration := time.Since(start)
 		metrics.RecordClickHouseQuery("link_latency", duration, err)
 
@@ -511,7 +479,8 @@ func (a *API) GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request)
 	} else {
 		// Per-link mode: one series per link
 		// Supports both explicit PKs (for pinned selections) and filter params — all via linkLatencyFilterSQL
-		filterSQL, needsContributorJoin, _ := linkLatencyFilterSQL(r)
+		filterSQL, needsContributorJoin, _, args := linkLatencyFilterSQL(r)
+		filterArgs = args
 		extraJoins := ""
 		if needsContributorJoin {
 			extraJoins += " LEFT JOIN dz_contributors_current co ON l.contributor_pk = co.pk"
@@ -576,7 +545,7 @@ func (a *API) GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request)
 		scanPerLink = true
 	}
 
-	rows, err := a.envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, query, filterArgs...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery("link_latency", duration, err)
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -310,6 +311,7 @@ func TestTrafficDashboardTop_WithIntfFilter(t *testing.T) {
 		{"intf_filter_no_match", "?time_range=1h&entity=interface&intf=NonExistent99", 0},
 		{"intf_and_metro_filter", "?time_range=1h&entity=interface&intf=Port-Channel1000&metro=FRA", 1},
 		{"intf_and_wrong_metro", "?time_range=1h&entity=interface&intf=Port-Channel1000&metro=AMS", 0},
+		{"intf_and_metro_with_quotes", "?time_range=1h&entity=interface&intf=Port-Channel1000&metro=" + url.QueryEscape(`FRA,O'Brien,C:\edge,it\'s`), 1},
 	}
 
 	for _, tt := range tests {
@@ -1015,6 +1017,11 @@ func TestFieldValues_ScopedByDashboardFilters(t *testing.T) {
 		{
 			name:     "intf_scoped_by_link_type",
 			query:    "?entity=interfaces&field=intf&link_type=PNI",
+			wantVals: []string{"Ethernet1/1"},
+		},
+		{
+			name:     "intf_scoped_by_metro_with_quotes",
+			query:    "?entity=interfaces&field=intf&metro=" + url.QueryEscape(`AMS,O'Brien,C:\edge,it\'s`),
 			wantVals: []string{"Ethernet1/1"},
 		},
 		{

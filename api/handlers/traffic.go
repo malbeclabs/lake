@@ -137,7 +137,7 @@ func (a *API) GetTrafficData(w http.ResponseWriter, r *http.Request) {
 
 	// Build dimension filters.
 	// Always join device interfaces so series metadata includes cyoa_type.
-	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin, _ := buildDimensionFilters(r)
+	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin, _, dimArgs := buildDimensionFilters(r)
 	needsInterfaceJoin := true
 	intfTypeFilter := trafficIntfTypeFilter(r, intfTypeSQL)
 	dimJoins := trafficDimensionJoins(needsLinkJoin, needsMetroJoin, needsContributorJoin, needsInterfaceJoin)
@@ -359,7 +359,7 @@ func (a *API) GetTrafficData(w http.ResponseWriter, r *http.Request) {
 			intfFilterSQL, intfTypeFilter, filterSQL, userKindFilter)
 	}
 
-	rows, err := a.envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, query, dimArgs...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery("traffic", duration, err)
 
@@ -373,7 +373,7 @@ func (a *API) GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	meanRows, err := a.envDB(ctx).Query(ctx, meanQuery)
+	meanRows, err := a.envDB(ctx).Query(ctx, meanQuery, dimArgs...)
 	meanDuration := time.Since(start) - duration
 	metrics.RecordClickHouseQuery("traffic", meanDuration, err)
 	if err != nil {
@@ -515,7 +515,7 @@ func (a *API) GetDiscardsData(w http.ResponseWriter, r *http.Request) {
 	timeFilter, bucketInterval, useRaw := trafficTimeFilter(r)
 
 	// Build dimension filters
-	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin, needsInterfaceJoin := buildDimensionFilters(r)
+	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin, needsInterfaceJoin, dimArgs := buildDimensionFilters(r)
 	intfTypeFilter := trafficIntfTypeFilter(r, intfTypeSQL)
 	dimJoins := trafficDimensionJoins(needsLinkJoin, needsMetroJoin, needsContributorJoin, needsInterfaceJoin)
 
@@ -604,7 +604,7 @@ func (a *API) GetDiscardsData(w http.ResponseWriter, r *http.Request) {
 	`, bucketInterval, dimJoins, userJoinSQL, timeFilter, intfFilterSQL, intfTypeFilter, filterSQL, userKindFilter)
 	}
 
-	rows, err := a.envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, query, dimArgs...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery("traffic", duration, err)
 
