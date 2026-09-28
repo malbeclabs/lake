@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -103,4 +104,9 @@ func TestWatchWorkflowReattachesOnFailure(t *testing.T) {
 	tc.AssertNumberOfCalls(t, "GetWorkflow", 1)
 	_, ok := recs.Find("rollup: workflow interrupted, reattaching")
 	require.True(t, ok, "an unexpected failure must stay visible")
+}
+
+// A pooled connection older than ClickHouse Cloud's ~5m idle close is dead on reuse.
+func TestClickhouseOptionsCapsConnMaxLifetime(t *testing.T) {
+	require.Equal(t, 3*time.Minute, clickhouseOptions(Config{}).ConnMaxLifetime)
 }

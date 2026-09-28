@@ -12,6 +12,9 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
+// Stay below ClickHouse Cloud's ~5m server-side idle close.
+const clickhouseConnMaxLifetime = 3 * time.Minute
+
 // DB is the global ClickHouse connection pool (mainnet-beta)
 var DB driver.Conn
 
@@ -200,7 +203,7 @@ func Load() error {
 		DialTimeout:     5 * time.Second,
 		MaxOpenConns:    100,
 		MaxIdleConns:    100,
-		ConnMaxLifetime: 10 * time.Minute,
+		ConnMaxLifetime: clickhouseConnMaxLifetime,
 	}
 
 	// Enable TLS for ClickHouse Cloud (port 9440)
@@ -236,7 +239,7 @@ func Load() error {
 		DialTimeout:     5 * time.Second,
 		MaxOpenConns:    2,
 		MaxIdleConns:    1,
-		ConnMaxLifetime: 10 * time.Minute,
+		ConnMaxLifetime: clickhouseConnMaxLifetime,
 	}
 	if secure {
 		healthOpts.TLS = &tls.Config{}
@@ -269,7 +272,7 @@ func Load() error {
 			DialTimeout:     5 * time.Second,
 			MaxOpenConns:    10,
 			MaxIdleConns:    5,
-			ConnMaxLifetime: 10 * time.Minute,
+			ConnMaxLifetime: clickhouseConnMaxLifetime,
 		}
 		if secure {
 			envOpts.TLS = &tls.Config{}
@@ -309,7 +312,7 @@ func Load() error {
 			DialTimeout:     5 * time.Second,
 			MaxOpenConns:    50,
 			MaxIdleConns:    50,
-			ConnMaxLifetime: 10 * time.Minute,
+			ConnMaxLifetime: clickhouseConnMaxLifetime,
 		}
 		if secure {
 			publicOpts.TLS = &tls.Config{}

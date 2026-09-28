@@ -52,25 +52,7 @@ type connection struct {
 
 // NewClient creates a new ClickHouse client
 func NewClient(ctx context.Context, log *slog.Logger, addr string, database string, username string, password string, secure bool) (Client, error) {
-	options := &clickhouse.Options{
-		Addr: []string{addr},
-		Auth: clickhouse.Auth{
-			Database: database,
-			Username: username,
-			Password: password,
-		},
-		Settings: clickhouse.Settings{
-			"max_execution_time": 60,
-		},
-		DialTimeout: 15 * time.Second,
-	}
-
-	// Enable TLS for ClickHouse Cloud (port 9440)
-	if secure {
-		options.TLS = &tls.Config{}
-	}
-
-	conn, err := clickhouse.Open(options)
+	conn, err := clickhouse.Open(newOptions(addr, database, username, password, secure))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open ClickHouse connection: %w", err)
 	}
@@ -86,6 +68,29 @@ func NewClient(ctx context.Context, log *slog.Logger, addr string, database stri
 		conn: conn,
 		log:  log,
 	}, nil
+}
+
+func newOptions(addr string, database string, username string, password string, secure bool) *clickhouse.Options {
+	options := &clickhouse.Options{
+		Addr: []string{addr},
+		Auth: clickhouse.Auth{
+			Database: database,
+			Username: username,
+			Password: password,
+		},
+		Settings: clickhouse.Settings{
+			"max_execution_time": 60,
+		},
+		DialTimeout: 15 * time.Second,
+		// Stay below ClickHouse Cloud's ~5m server-side idle close.
+		ConnMaxLifetime: 3 * time.Minute,
+	}
+
+	// Enable TLS for ClickHouse Cloud (port 9440)
+	if secure {
+		options.TLS = &tls.Config{}
+	}
+	return options
 }
 
 func (c *client) Conn(ctx context.Context) (Connection, error) {

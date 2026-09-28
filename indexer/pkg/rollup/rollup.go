@@ -48,23 +48,7 @@ func Start(ctx context.Context, cfg Config) error {
 	}
 
 	// Open a dedicated ClickHouse connection for the rollup worker.
-	chOpts := &clickhouse.Options{
-		Addr: []string{cfg.ClickHouseAddr},
-		Auth: clickhouse.Auth{
-			Database: cfg.ClickHouseDatabase,
-			Username: cfg.ClickHouseUsername,
-			Password: cfg.ClickHousePassword,
-		},
-		Settings: clickhouse.Settings{
-			"max_execution_time": 120,
-		},
-		DialTimeout: 5 * time.Second,
-	}
-	if cfg.ClickHouseSecure {
-		chOpts.TLS = &tls.Config{}
-	}
-
-	chConn, err := clickhouse.Open(chOpts)
+	chConn, err := clickhouse.Open(clickhouseOptions(cfg))
 	if err != nil {
 		return fmt.Errorf("rollup: clickhouse open: %w", err)
 	}
@@ -127,6 +111,27 @@ func Start(ctx context.Context, cfg Config) error {
 	case err := <-errCh:
 		return err
 	}
+}
+
+func clickhouseOptions(cfg Config) *clickhouse.Options {
+	chOpts := &clickhouse.Options{
+		Addr: []string{cfg.ClickHouseAddr},
+		Auth: clickhouse.Auth{
+			Database: cfg.ClickHouseDatabase,
+			Username: cfg.ClickHouseUsername,
+			Password: cfg.ClickHousePassword,
+		},
+		Settings: clickhouse.Settings{
+			"max_execution_time": 120,
+		},
+		DialTimeout: 5 * time.Second,
+		// Stay below ClickHouse Cloud's ~5m server-side idle close.
+		ConnMaxLifetime: 3 * time.Minute,
+	}
+	if cfg.ClickHouseSecure {
+		chOpts.TLS = &tls.Config{}
+	}
+	return chOpts
 }
 
 // computeRollupStartOptions returns the start options for the compute-rollup
