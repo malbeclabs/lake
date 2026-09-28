@@ -69,7 +69,6 @@ export function Sidebar() {
   const showGeoloc = user?.is_internal_user === true
   // Only the link is gated; the page is public.
   const showHyperliquidScoreboard = user?.is_internal_user === true
-  const showPhoenixScoreboard = user?.is_internal_user === true
   const showKalshi = user?.is_internal_user === true
   // Cross-service multicast overview: names subscribers and separates operator-run receivers
   // from paying ones, so it stays with the other internal edge views.
@@ -664,15 +663,10 @@ const { resolvedTheme, setTheme } = useTheme()
                 Hyperliquid
               </Link>
             )}
-            {showPhoenixScoreboard && (
-              <Link
-                to="/dz/phoenix/scoreboard"
-                className={navItemClass(isPhoenixScoreboardRoute)}
-              >
-                <Flame className="h-4 w-4" />
-                Phoenix
-              </Link>
-            )}
+            <Link to="/dz/phoenix/scoreboard" className={navItemClass(isPhoenixScoreboardRoute)}>
+              <Flame className="h-4 w-4" />
+              Phoenix
+            </Link>
             {showKalshi && (
               <>
                 <Link to="/dz/kalshi/scoreboard" className={isKalshiRoute ? navItemExpandedClass : navItemClass(false)}>
