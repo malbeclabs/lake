@@ -77,6 +77,10 @@ func ComputeRollupWorkflow(ctx temporalworkflow.Context, iteration int) error {
 		// where a daily rollup would recompute the same days on every chunk.
 		_ = runCompetitorRollup(ctx, log, esc, now)
 
+		// Hourly, gated inside the activity; called every cycle so a failed hour is retried
+		// on the next one rather than an hour later.
+		_ = runPhoenixRaceRollup(ctx, log, esc, now)
+
 		iteration++
 
 		if iteration < continueAsNewThreshold {
@@ -139,6 +143,25 @@ func runCompetitorRollup(ctx temporalworkflow.Context, log log.Logger, esc *lake
 		return ctx.Err()
 	}
 	esc.Observe(log, "competitor_rollup", "competitor rollup failed", err, "now", now)
+	return err
+}
+
+// runPhoenixRaceRollup executes the hourly Phoenix race rollup.
+func runPhoenixRaceRollup(ctx temporalworkflow.Context, log log.Logger, esc *lakelogger.Escalator, now time.Time) error {
+	ctx = temporalworkflow.WithActivityOptions(ctx, temporalworkflow.ActivityOptions{
+		StartToCloseTimeout: phoenixRollupActivityTimeout,
+		HeartbeatTimeout:    phoenixHeartbeatTimeout,
+		RetryPolicy: &temporal.RetryPolicy{
+			MaximumAttempts: 1,
+		},
+	})
+
+	err := temporalworkflow.ExecuteActivity(ctx, (*Activities).RollupPhoenixRace,
+		PhoenixRaceInput{Now: now}).Get(ctx, nil)
+	if err != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	esc.Observe(log, "phoenix_race_rollup", "phoenix race rollup failed", err, "now", now)
 	return err
 }
 

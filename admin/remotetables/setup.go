@@ -41,6 +41,7 @@ var externalRemoteTables = []struct {
 	{"feeds", "kalshi_edge_book_top"},
 	{"feeds", "kalshi_mbp_levels"},
 	{"dzf_data", "competitors_pairwise_feed_race"},
+	{"recorder", "feed_race"},
 }
 
 // externalRemoteDatabases lists remote databases to mirror in full, discovering

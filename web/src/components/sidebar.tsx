@@ -10,6 +10,7 @@ import {
   MessageSquare,
   Globe,
   Activity,
+  Flame,
   ArrowUpCircle,
   Server,
   Link2,
@@ -68,6 +69,7 @@ export function Sidebar() {
   const showGeoloc = user?.is_internal_user === true
   // Only the link is gated; the page is public.
   const showHyperliquidScoreboard = user?.is_internal_user === true
+  const showPhoenixScoreboard = user?.is_internal_user === true
   const showKalshi = user?.is_internal_user === true
   // Cross-service multicast overview: names subscribers and separates operator-run receivers
   // from paying ones, so it stays with the other internal edge views.
@@ -136,12 +138,14 @@ const { resolvedTheme, setTheme } = useTheme()
   const isShredsRoute = location.pathname.startsWith('/dz/shreds') || isShredsPublishersRoute
   const isHyperliquidScoreboardRoute = location.pathname === '/dz/hyperliquid/scoreboard'
   const isHyperliquidRoute = location.pathname.startsWith('/dz/hyperliquid')
+  const isPhoenixScoreboardRoute = location.pathname === '/dz/phoenix/scoreboard'
+  const isPhoenixRoute = location.pathname.startsWith('/dz/phoenix')
   const isPermissionAuditRoute = location.pathname === '/dz/permission-audit'
   const isKalshiScoreboardRoute = location.pathname === '/dz/kalshi/scoreboard'
   const isKalshiL2Route = location.pathname === '/dz/kalshi/l2'
   const isKalshiRoute = location.pathname.startsWith('/dz/kalshi')
   const isEdgeMulticastRoute = location.pathname === '/dz/edge/multicast'
-  const isEdgeRoute = isShredsRoute || isHyperliquidRoute || isKalshiRoute || isEdgeMulticastRoute
+  const isEdgeRoute = isShredsRoute || isHyperliquidRoute || isPhoenixRoute || isKalshiRoute || isEdgeMulticastRoute
   const isGeolocRoute = location.pathname.startsWith('/dz/geoloc/')
   const isGeolocProbesRoute = location.pathname.startsWith('/dz/geoloc/probes')
   const isGeolocUsersRoute = location.pathname.startsWith('/dz/geoloc/users')
@@ -658,6 +662,15 @@ const { resolvedTheme, setTheme } = useTheme()
               >
                 <Activity className="h-4 w-4" />
                 Hyperliquid
+              </Link>
+            )}
+            {showPhoenixScoreboard && (
+              <Link
+                to="/dz/phoenix/scoreboard"
+                className={navItemClass(isPhoenixScoreboardRoute)}
+              >
+                <Flame className="h-4 w-4" />
+                Phoenix
               </Link>
             )}
             {showKalshi && (

@@ -23,6 +23,8 @@ type Activities struct {
 	// InfluxDB fact table for devices not present there. Empty = fact-only (current behavior).
 	TelemetryDatabase  string
 	CompetitorDatabase string
+	RecorderDatabase   string
+	phoenixFailure     phoenixFailure
 }
 
 // tableRef returns a qualified table reference. If sourceDB is non-empty, the

@@ -70,6 +70,7 @@ import { ShredsRewardsDetailPage } from '@/components/shreds-rewards-detail-page
 import { PublisherCheckPage } from './components/publisher-check-page'
 import { EdgeScoreboardPage } from './components/edge-scoreboard-page'
 import { HyperliquidScoreboardPage } from './components/hyperliquid-scoreboard-page'
+import { PhoenixScoreboardPage } from './components/phoenix-scoreboard-page'
 import { KalshiScoreboardPage } from './components/kalshi-scoreboard-page'
 import { KalshiL2Page } from './components/kalshi-l2-page'
 import { InternalOnly } from './components/internal-only'
@@ -748,6 +749,8 @@ function AppContent() {
             {/* Public on purpose; only its sidebar entry is internal. */}
             <Route path="/dz/hyperliquid" element={<Navigate to="/dz/hyperliquid/scoreboard" replace />} />
             <Route path="/dz/hyperliquid/scoreboard" element={<HyperliquidScoreboardPage />} />
+            <Route path="/dz/phoenix" element={<Navigate to="/dz/phoenix/scoreboard" replace />} />
+            <Route path="/dz/phoenix/scoreboard" element={<PhoenixScoreboardPage />} />
             <Route path="/dz/hyperliquid/internal-scoreboard" element={<Navigate to="/dz/hyperliquid/scoreboard" replace />} />
             {/* Internal-only pages. The sidebar hides these behind `user?.is_internal_user`
                 and that only ever hid the nav entry — the URL still rendered the page, and on

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/malbeclabs/doublezero/config"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 	"github.com/malbeclabs/lake/utils/pkg/dberror"
 	enumspb "go.temporal.io/api/enums/v1"
@@ -85,6 +86,7 @@ func Start(ctx context.Context, cfg Config) error {
 		Network:            cfg.Network,
 		TelemetryDatabase:  telemetryDatabaseForNetwork(cfg.Network),
 		CompetitorDatabase: competitorDatabase(),
+		RecorderDatabase:   recorderDatabaseForNetwork(cfg.Network),
 	}
 
 	w := worker.New(tc, tq, worker.Options{})
@@ -299,4 +301,14 @@ func telemetryDatabaseForNetwork(network string) string {
 // competitorDatabase returns the database holding competitors_pairwise_feed_race.
 func competitorDatabase() string {
 	return os.Getenv("CLICKHOUSE_COMPETITOR_DB")
+}
+
+// recorderDatabaseForNetwork returns the database holding feed_race, which the Phoenix race
+// rollup reads, or "" to turn that rollup off. It runs for mainnet only: the race is a venue feed,
+// not a DoubleZero network, and the API reads it from the mainnet database.
+func recorderDatabaseForNetwork(network string) string {
+	if network != "" && network != config.EnvMainnetBeta {
+		return ""
+	}
+	return os.Getenv("CLICKHOUSE_RECORDER_DB")
 }

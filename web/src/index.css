@@ -649,3 +649,97 @@ th.hl-hl {
     animation: none;
   }
 }
+
+/* Phoenix scoreboard. Built on the Hyperliquid classes above; these add its animations. */
+.phx-sonar::before,
+.phx-sonar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid var(--hl-dz);
+  animation: phxSonar 2.4s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
+}
+.phx-sonar::after {
+  animation-delay: 1.2s;
+}
+@keyframes phxSonar {
+  from {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  to {
+    transform: scale(3.2);
+    opacity: 0;
+  }
+}
+.phx-breathe {
+  animation: phxBreathe 3.2s ease-in-out 1.2s infinite;
+}
+@keyframes phxBreathe {
+  50% {
+    filter: drop-shadow(0 0 6px color-mix(in oklch, var(--hl-dz) 70%, transparent));
+  }
+}
+.phx-rise {
+  animation: phxRise 0.6s cubic-bezier(0.2, 0.75, 0.3, 1) both;
+}
+@keyframes phxRise {
+  from {
+    transform: translateY(10px);
+    opacity: 0.01;
+  }
+}
+.phx-pop {
+  display: inline-block;
+  animation: phxPop 0.5s cubic-bezier(0.3, 1.6, 0.5, 1);
+}
+@keyframes phxPop {
+  40% {
+    transform: scale(1.06);
+  }
+}
+.phx-draw {
+  stroke-dasharray: var(--phx-len);
+  stroke-dashoffset: var(--phx-len);
+  animation: phxDraw 0.9s cubic-bezier(0.2, 0.75, 0.3, 1) forwards;
+}
+@keyframes phxDraw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.phx-fade {
+  opacity: 0;
+  animation: phxFade 0.7s ease-out 0.15s forwards;
+}
+@keyframes phxFade {
+  to {
+    opacity: 1;
+  }
+}
+/* In-chart labels sit over the fill and the line, so they carry a halo in the card colour. */
+.phx-inlabel {
+  paint-order: stroke;
+  stroke: var(--card);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .phx-sonar::before,
+  .phx-sonar::after,
+  .phx-breathe,
+  .phx-rise,
+  .phx-pop,
+  .phx-draw,
+  .phx-fade {
+    animation: none;
+  }
+  .phx-draw {
+    stroke-dashoffset: 0;
+  }
+  .phx-fade {
+    opacity: 1;
+  }
+}

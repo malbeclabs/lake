@@ -7737,6 +7737,43 @@ export async function fetchHyperliquidScoreboard(): Promise<HyperliquidScoreboar
   return res.json()
 }
 
+// ── Phoenix scoreboard ──────────────────────────────────────────────────
+
+export interface PhoenixScoreboardStat {
+  win_pct: number
+  p50_ms: number
+  p95_ms: number
+  p99_ms: number
+}
+
+export interface PhoenixScoreboardBucket extends PhoenixScoreboardStat {
+  start: string
+  races: number
+  dz_wins: number
+  venue_wins: number
+}
+
+export interface PhoenixScoreboardResponse {
+  window_start: string
+  window_end: string
+  races: number
+  dz_wins: number
+  venue_wins: number
+  all: PhoenixScoreboardStat
+  buckets: PhoenixScoreboardBucket[]
+  site_label: string
+  as_of?: string
+  next_refresh_at?: string
+}
+
+export async function fetchPhoenixScoreboard(): Promise<PhoenixScoreboardResponse> {
+  const res = await apiFetch('/api/dz/phoenix/scoreboard')
+  if (!res.ok) {
+    throw new Error('Failed to fetch phoenix scoreboard')
+  }
+  return res.json()
+}
+
 export interface KalshiCompetitor {
   feed: string
   label: string

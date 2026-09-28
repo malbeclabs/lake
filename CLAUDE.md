@@ -185,6 +185,55 @@ their feed ids into the payload). Both prefixes are DoubleZero's — an MBP publ
 shared BBO observation on every derived top-of-book change, so it races the venue's public feed
 exactly as the top-of-book feed does.
 
+## Phoenix Scoreboard
+
+The Phoenix board (`/dz/phoenix/scoreboard`) reads one table, `phoenix_race_rollup_15m`: a row per
+15-minute window of DoubleZero's top-of-book feed raced against Phoenix's own, recorded on one
+Columbus host. The indexer's rollup worker writes it hourly from `recorder.feed_race`
+(`indexer/pkg/rollup/phoenix.go`), so the API reads a few hundred rows and needs no page cache.
+
+It is off unless `CLICKHOUSE_RECORDER_DB` is set on the indexer, and it runs for mainnet only — the
+race is a venue feed, not a DoubleZero network, and the API reads it from the mainnet database.
+Turning it on needs `SELECT` on `recorder` for `lake_indexer` first — a privilege error is not
+transient and escalates to ERROR. Local dev and preview reach the table through the
+`recorder.feed_race` proxy in `admin/remotetables`, as `lake_dev_reader`.
+
+A race is a row whose `observed_by` holds exactly the two Columbus recorders (`observations = 2`
+and `hasAll(observed_by, [dz, venue])`). Filtering on `first_observation` alone is not enough: a
+race between the DoubleZero recorder and a third recorder on the same feed would count as a win
+over Phoenix. A tie (`lead_ms = 0`) is a race won by neither side: it counts in `paired` and in
+neither win column, and there is no tie count. `recorder.feed_race` is a view, so the scan needs no
+`FINAL`. `lead_ms` is `Nullable` in
+`recorder.feed_race`, and the state column refuses a `Nullable` argument, which is why the signed
+lead is wrapped in `assumeNotNull` — the `lead_ms <=` filter has already dropped the nulls.
+
+Two things the rollup relies on. Each run recomputes the three hours behind the newest stored window,
+and the table is a `ReplacingMergeTree` on `bucket_ts`, so a late race updates its window instead
+of adding a second row. And an idle window is still written, with `paired = 0`: the hourly gate
+keys on `max(ingested_at)`, so skipping it would leave the gate open and re-run the scan on every
+30s cycle. The API drops those rows from the counts and the chart, but not from `as_of`: an idle
+window is still a refresh, and counting only raced rows made a quiet feed read as a missed one.
+The chart's window is the 24 hours ending at the newest stored window, raced or not, so a quiet
+tail renders as a gap instead of the chart quietly ending early.
+
+A failed scan writes nothing, which leaves the hourly gate open, so the activity waits
+`phoenixRetryAfter` (10 minutes) before scanning again. The wait is what stops a slow
+`recorder.feed_race` from re-running the scan inline in the live rollup loop on every 30s cycle.
+The activity owns its escalation: it logs each real failure through its own `logger.Escalator`
+(which reaches ERROR after `phoenixErrorAfter`, 30 minutes of failing) and returns success to the
+workflow, waiting included. Returning the error instead would page on a single blip — the
+workflow's escalator counts every 30s cycle of the wait as another failure, and Temporal logs a
+non-transient activity error at ERROR on its own. For the same reason the activity has no Temporal
+retry (`MaximumAttempts: 1`): a retry carries the same `Now` and would only hit the wait.
+
+`ingested_at` is the pass's `Now`, not the time the write landed. The hourly gate compares it with
+`Now`, so stamping the wall clock let a pass that started at 10:59:50 and landed at 11:00:05 close
+the 11:00 hour with windows up to 10:30.
+
+The 24-hour percentiles merge the stored `signed_lead_ms_state` t-digests. Never average the
+per-window `signed_lead_p*_ms` columns into a longer span: that weights a quiet 15 minutes the same
+as a busy one, and is not a percentile of anything.
+
 ## Multicast Member Classification
 
 Which multicast subscribers are DoubleZero's own recorders is settled in **four tiers**, and only
