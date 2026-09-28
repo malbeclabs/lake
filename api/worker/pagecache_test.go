@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/api/serviceerror"
 	temporalclient "go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/mocks"
 	"go.temporal.io/sdk/temporal"
@@ -1187,6 +1188,7 @@ func TestWatchPageCacheWorkflowReattachesOnTransientError(t *testing.T) {
 
 	first := &mocks.WorkflowRun{}
 	first.On("Get", mock.Anything, nil).Return(context.DeadlineExceeded).Once()
+	first.On("GetRunID").Return("run-1")
 
 	reattached := make(chan struct{})
 	second := &mocks.WorkflowRun{}
@@ -1196,12 +1198,13 @@ func TestWatchPageCacheWorkflowReattachesOnTransientError(t *testing.T) {
 	}).Return(context.Canceled).Once()
 
 	tc := &mocks.Client{}
-	tc.On("GetWorkflow", mock.Anything, WorkflowID, "").Return(second).Once()
+	// Pinned to this pod's run: "" would adopt the other replica's.
+	tc.On("GetWorkflow", mock.Anything, WorkflowID, "run-1").Return(second).Once()
 
 	log, recs := capLogger()
 	done := make(chan struct{})
 	go func() {
-		watchPageCacheWorkflow(ctx, tc, first, log, time.Millisecond)
+		watchPageCacheWorkflow(ctx, tc, first, log, time.Millisecond, time.Hour)
 		close(done)
 	}()
 
@@ -1224,13 +1227,46 @@ func TestWatchPageCacheWorkflowLogsGenuineFailureOnce(t *testing.T) {
 	tc := &mocks.Client{}
 
 	log, recs := capLogger()
-	watchPageCacheWorkflow(context.Background(), tc, run, log, time.Millisecond)
+	watchPageCacheWorkflow(context.Background(), tc, run, log, time.Millisecond, time.Hour)
 
 	require.Equal(t, 1, countLevel(*recs, slog.LevelError))
 	rec, ok := findRecord(*recs, "page-cache: workflow failed")
 	require.True(t, ok)
 	require.Equal(t, slog.LevelError, rec.Level)
 	tc.AssertNotCalled(t, "GetWorkflow", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// TestWatchPageCacheWorkflowEscalatesPersistentError: a Get that fails straight
+// away every time (e.g. NotFound) must page, or the watcher is blind while it WARNs.
+func TestWatchPageCacheWorkflowEscalatesPersistentError(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		healthyAfter time.Duration
+		wantErrors   int
+	}{
+		{"fast failures escalate", time.Hour, 2},
+		{"failures after a healthy watch stay WARN", 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const failures = logger.DefaultErrorAfter + 1
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			run := &mocks.WorkflowRun{}
+			run.On("Get", mock.Anything, nil).Return(serviceerror.NewNotFound("gone")).Times(failures)
+			run.On("Get", mock.Anything, nil).Run(func(mock.Arguments) { cancel() }).Return(context.Canceled).Once()
+			run.On("GetRunID").Return("run-1")
+			client := &mocks.Client{}
+			client.On("GetWorkflow", mock.Anything, WorkflowID, "run-1").Return(run)
+
+			log, recs := capLogger()
+			watchPageCacheWorkflow(ctx, client, run, log, time.Millisecond, tc.healthyAfter)
+
+			require.Equal(t, tc.wantErrors, countLevel(*recs, slog.LevelError))
+			require.Equal(t, failures-tc.wantErrors, countLevel(*recs, slog.LevelWarn))
+			run.AssertExpectations(t)
+		})
+	}
 }
 
 // TestNewActivitiesPinsDegradedEscalation pins the escalation policy the worker

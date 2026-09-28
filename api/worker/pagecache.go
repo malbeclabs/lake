@@ -71,7 +71,7 @@ func Start(ctx context.Context, cfg Config) error {
 		return err
 	}
 
-	go watchPageCacheWorkflow(ctx, tc, run, log, watchReattachBackoff)
+	go watchPageCacheWorkflow(ctx, tc, run, log, watchReattachBackoff, watchHealthyAfter)
 
 	log.Info("page-cache: starting worker", "task_queue", TaskQueue)
 
@@ -117,15 +117,22 @@ type workflowGetter interface {
 	GetWorkflow(ctx context.Context, workflowID, runID string) temporalclient.WorkflowRun
 }
 
-const watchReattachBackoff = 5 * time.Second
+const (
+	watchReattachBackoff = 5 * time.Second
+	// Longer than the SDK's 65s history long-poll deadline, so a Get that lasted
+	// this long had at least one poll succeed: the watch was healthy until it failed.
+	watchHealthyAfter = 2 * time.Minute
+)
 
 // watchPageCacheWorkflow blocks until the workflow closes, logging a failure at
 // ERROR. Terminated runs are suppressed: a new deploy terminates the previous run
 // before the old process's context is cancelled. Get also returns bare RPC errors
 // (its long-poll has its own deadline) that say nothing about the workflow; the SDK
 // wraps every real outcome in WorkflowExecutionError, so anything else re-attaches.
-func watchPageCacheWorkflow(ctx context.Context, tc workflowGetter, run temporalclient.WorkflowRun, log *slog.Logger, backoff time.Duration) {
+func watchPageCacheWorkflow(ctx context.Context, tc workflowGetter, run temporalclient.WorkflowRun, log *slog.Logger, backoff, healthyAfter time.Duration) {
+	esc := logger.Escalator{TransientErrorAfter: logger.DefaultErrorAfter}
 	for {
+		began := time.Now()
 		err := run.Get(ctx, nil)
 		if err == nil || ctx.Err() != nil {
 			return
@@ -137,13 +144,18 @@ func watchPageCacheWorkflow(ctx context.Context, tc workflowGetter, run temporal
 			}
 			return
 		}
-		log.Warn("page-cache: workflow watch interrupted; re-attaching", "id", WorkflowID, "error", err)
+		if time.Since(began) >= healthyAfter {
+			esc.Reset(WorkflowID)
+		}
+		esc.Fail(log, WorkflowID, "page-cache: workflow watch interrupted; re-attaching", "id", WorkflowID, "error", err)
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(backoff):
 		}
-		run = tc.GetWorkflow(ctx, WorkflowID, "")
+		// This pod's own run (GetRunID follows continue-as-new), not the newest:
+		// adopting the other replica's run would page twice for one failure.
+		run = tc.GetWorkflow(ctx, WorkflowID, run.GetRunID())
 	}
 }
 
