@@ -192,13 +192,14 @@ The Phoenix board (`/dz/phoenix/scoreboard`) reads one table, `phoenix_race_roll
 recorded on one host at that site. The indexer's rollup worker writes it hourly from the recorder's
 base tables, `recorder.venue_book_top` (Phoenix) and `recorder.book_top` (DoubleZero)
 (`indexer/pkg/rollup/phoenix.go`), so the API reads a few hundred rows and needs no page cache. The API serves one site at a time (`?site=`, default `cmh`) and lists the sites
-that have rows; the page pins `cmh` for now, with its site picker commented out in
+that have rows; the page shows the default site for now, with its site picker behind `SHOW_SITE_PICKER` in
 `phoenix-scoreboard-page.tsx` until the other sites record reliably.
 
 **Adding a site**: add its recorder pair to `phoenixSites` in `phoenix.go`, and its display name
 to `phoenixSiteLabels` in `api/handlers/phoenix_scoreboard.go`. CMH, FRA and TYO are listed. The next pass
 backfills that site's last 24 hours on its own. Raise `phoenixMaxSites` if the list outgrows it;
-the activity timeout is sized from it.
+the activity timeout is sized from it, and `TestPhoenixTimeouts_BracketTheScan` checks that one live
+cycle's worst case — links, device interfaces, competitor and Phoenix — still fits in `rollupWindow`.
 
 It is off unless `CLICKHOUSE_RECORDER_DB` is set on the indexer, and it runs for mainnet only — the
 race is a venue feed, not a DoubleZero network, and the API reads it from the mainnet database.
@@ -255,7 +256,9 @@ not, so a quiet tail renders as a gap.
 and the wall clock let a pass that started at 10:59:50 and landed at 11:00:05 close the 11:00 hour
 with windows up to 10:30.
 
-A failed scan writes nothing, so that site waits `phoenixRetryAfter` (10 minutes) before scanning
+The due check that reads those stored rows is backed off the same way, under its own key: it
+runs before any site, so without that a failing due check re-ran on every 30s cycle and paged
+within two minutes, once per site. A failed scan writes nothing, so that site waits `phoenixRetryAfter` (10 minutes) before scanning
 again — without that, a slow recorder scan would re-run the scan inline in the live rollup
 loop on every 30s cycle. The activity owns its escalation and returns success to the workflow,
 waiting included: returning the error would page on a single blip, because the workflow's escalator

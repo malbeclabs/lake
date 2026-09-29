@@ -24,6 +24,11 @@ const (
 	// more redundant work.
 	rollupWindow = 30 * time.Minute
 
+	// liveActivityTimeout and liveActivityAttempts bound each of the link and device interface
+	// passes in the live loop.
+	liveActivityTimeout  = 2 * time.Minute
+	liveActivityAttempts = 3
+
 	// continueAsNewThreshold is the number of iterations before the workflow
 	// uses continue-as-new to reset history and avoid unbounded growth.
 	continueAsNewThreshold = 60
@@ -54,9 +59,9 @@ func ComputeRollupWorkflow(ctx temporalworkflow.Context, iteration int) error {
 	esc := &lakelogger.Escalator{TransientErrorAfter: lakelogger.DefaultErrorAfter}
 
 	actOpts := temporalworkflow.ActivityOptions{
-		StartToCloseTimeout: 2 * time.Minute,
+		StartToCloseTimeout: liveActivityTimeout,
 		RetryPolicy: &temporal.RetryPolicy{
-			MaximumAttempts: 3,
+			MaximumAttempts: liveActivityAttempts,
 		},
 	}
 	ctx = temporalworkflow.WithActivityOptions(ctx, actOpts)

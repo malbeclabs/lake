@@ -69,6 +69,10 @@ func TestPhoenixTimeouts_BracketTheScan(t *testing.T) {
 	if phoenixRollupActivityTimeout >= rollupWindow {
 		t.Errorf("a pass may take %s, which is not inside rollupWindow %s", phoenixRollupActivityTimeout, rollupWindow)
 	}
+	cycle := 2*liveActivityAttempts*liveActivityTimeout + competitorRollupActivityTimeout + phoenixRollupActivityTimeout
+	if cycle >= rollupWindow {
+		t.Errorf("one live cycle may take %s, which is not inside rollupWindow %s", cycle, rollupWindow)
+	}
 }
 
 // Off unless configured, and off means no query at all: a nil connection would panic.
@@ -393,6 +397,50 @@ func TestRollupPhoenixRace_KeepsSitesApart(t *testing.T) {
 	assert.EqualValues(t, 2, gotTYO.paired)
 	assert.EqualValues(t, 1, gotTYO.dz)
 	assert.EqualValues(t, 1, gotTYO.venue)
+}
+
+func TestRollupPhoenixRace_AFailedDueCheckWaitsAndPagesAfterErrorAfter(t *testing.T) {
+	t.Parallel()
+	conn, _ := setupPhoenixBookTops(t)
+	require.NoError(t, conn.Exec(t.Context(), `DROP TABLE phoenix_race_rollup_15m`))
+	require.NoError(t, conn.Exec(t.Context(), `
+		CREATE VIEW phoenix_race_rollup_15m AS
+		SELECT 'cmh' AS site, now64(3) AS ingested_at, now() AS bucket_ts
+		FROM numbers(1)
+		WHERE throwIf(number = 0, 'due check failed') = 0`))
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	a := &Activities{ClickHouse: conn, Log: log, RecorderDatabase: "recorder"}
+
+	start := time.Now().UTC()
+	for at := time.Duration(0); at < phoenixErrorAfter; at += rollupInterval {
+		n, err := a.RollupPhoenixRace(t.Context(), PhoenixRaceInput{Now: start.Add(at)})
+		require.NoError(t, err)
+		assert.Zero(t, n)
+	}
+	assert.Equal(t, int(phoenixErrorAfter/phoenixRetryAfter), strings.Count(buf.String(), "phoenix race rollup failed"),
+		"one due check per %s, not one per cycle", phoenixRetryAfter)
+	assert.NotContains(t, buf.String(), "level=ERROR")
+
+	_, err := a.RollupPhoenixRace(t.Context(), PhoenixRaceInput{Now: start.Add(phoenixErrorAfter)})
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(buf.String(), "level=ERROR"), "one page, not one per site")
+}
+
+func TestPhoenixFailures_EscalateOnTheirOwnClock(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	var f phoenixFailures
+	err := errors.New("code: 497, message: Not enough privileges")
+
+	start := time.Now()
+	f.observe(log, cmh.Code, start, err)
+	f.observe(log, cmh.Code, start.Add(phoenixErrorAfter/2), err)
+	assert.NotContains(t, buf.String(), "level=ERROR")
+
+	f.observe(log, cmh.Code, start.Add(phoenixErrorAfter), err)
+	assert.Equal(t, 1, strings.Count(buf.String(), "level=ERROR"), "three failures, under the count, but %s apart on the pass clock", phoenixErrorAfter)
 }
 
 func TestPhoenixFailures_EscalateOnlyAfterErrorAfter(t *testing.T) {

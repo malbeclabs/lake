@@ -303,8 +303,8 @@ func competitorDatabase() string {
 	return os.Getenv("CLICKHOUSE_COMPETITOR_DB")
 }
 
-// recorderDatabaseForNetwork returns the database holding feed_race, which the Phoenix race
-// rollup reads, or "" to turn that rollup off. It runs for mainnet only: the race is a venue feed,
+// recorderDatabaseForNetwork returns the database holding book_top and venue_book_top, which the
+// Phoenix race rollup reads, or "" to turn that rollup off. It runs for mainnet only: the race is a venue feed,
 // not a DoubleZero network, and the API reads it from the mainnet database.
 func recorderDatabaseForNetwork(network string) string {
 	if network != "" && network != config.EnvMainnetBeta {

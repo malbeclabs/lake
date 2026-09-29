@@ -30,7 +30,7 @@ var phoenixSites = []phoenixSite{
 	{Code: "tyo", DZRecorder: "tyo/aws-tyo-mn-recorder1", VenueRecorder: "venue-aws-tyo-mn-recorder1"},
 }
 
-const phoenixMaxSites = 4
+const phoenixMaxSites = 3
 
 const (
 	phoenixBucket   = 15 * time.Minute
@@ -43,7 +43,7 @@ const (
 	phoenixErrorAfter = 30 * time.Minute
 )
 
-const phoenixScanTimeout = 90 * time.Second
+const phoenixScanTimeout = 60 * time.Second
 const phoenixScanMaxExecutionSeconds = int(phoenixScanTimeout / time.Second)
 const phoenixHeartbeatTimeout = 2 * time.Minute
 const phoenixRollupActivityTimeout = phoenixMaxSites*phoenixScanTimeout + time.Minute
@@ -57,33 +57,41 @@ type phoenixFailures struct {
 	mu    sync.Mutex
 	sites map[string]phoenixFailure
 	esc   *lakelogger.Escalator
+	clock time.Time
 }
+
+const phoenixDueCheck = "due_check"
 
 type phoenixFailure struct {
 	at  time.Time
 	err error
 }
 
-func (f *phoenixFailures) waiting(site string, now time.Time) bool {
+func (f *phoenixFailures) waiting(key string, now time.Time) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	last, ok := f.sites[site]
+	last, ok := f.sites[key]
 	return ok && last.err != nil && now.Before(last.at.Add(phoenixRetryAfter))
 }
 
-func (f *phoenixFailures) observe(log lakelogger.Logger, site string, now time.Time, err error, args ...any) {
+func (f *phoenixFailures) observe(log lakelogger.Logger, key string, now time.Time, err error, args ...any) {
 	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.sites == nil {
 		f.sites = map[string]phoenixFailure{}
 	}
-	f.sites[site] = phoenixFailure{at: now, err: err}
+	f.sites[key] = phoenixFailure{at: now, err: err}
 	if f.esc == nil {
 		n := int(phoenixErrorAfter/phoenixRetryAfter) + 1
-		f.esc = &lakelogger.Escalator{ErrorAfter: n, TransientErrorAfter: n, ErrorAfterDuration: phoenixErrorAfter}
+		f.esc = &lakelogger.Escalator{
+			ErrorAfter:          n,
+			TransientErrorAfter: n,
+			ErrorAfterDuration:  phoenixErrorAfter,
+			Now:                 func() time.Time { return f.clock },
+		}
 	}
-	esc := f.esc
-	f.mu.Unlock()
-	esc.Observe(log, "phoenix_race_rollup:"+site, "phoenix race rollup failed", err, append([]any{"site", site}, args...)...)
+	f.clock = now
+	f.esc.Observe(log, "phoenix_race_rollup:"+key, "phoenix race rollup failed", err, args...)
 }
 
 func (a *Activities) phoenixSiteList() []phoenixSite {
@@ -115,11 +123,12 @@ func (a *Activities) RollupPhoenixRace(ctx context.Context, input PhoenixRaceInp
 	}
 	sites := a.phoenixSiteList()
 
+	if a.phoenixFailures.waiting(phoenixDueCheck, input.Now) {
+		return 0, nil
+	}
 	stored, err := a.phoenixRaceStored(ctx)
+	a.phoenixFailures.observe(a.Log, phoenixDueCheck, input.Now, err, "step", phoenixDueCheck)
 	if err != nil {
-		for _, site := range sites {
-			a.phoenixFailures.observe(a.Log, site.Code, input.Now, err)
-		}
 		return 0, nil
 	}
 
@@ -146,7 +155,7 @@ func (a *Activities) RollupPhoenixRace(ctx context.Context, input PhoenixRaceInp
 			result.RowsAffected = int64(n)
 			return result, err
 		})
-		a.phoenixFailures.observe(a.Log, site.Code, input.Now, err,
+		a.phoenixFailures.observe(a.Log, site.Code, input.Now, err, "site", site.Code,
 			"window", fmt.Sprintf("[%s, %s)", start.Format(time.RFC3339), end.Format(time.RFC3339)))
 		if err == nil {
 			written += n
@@ -225,12 +234,12 @@ func (a *Activities) writePhoenixRaceWindows(ctx context.Context, site phoenixSi
 						FROM (
 							SELECT observation, upper(trimBoth(symbol)) AS symbol_key, book_key, recv_ts, price_exp, qty_exp
 							FROM %[1]s
-							WHERE feed = ? AND observation = ? AND recv_ts < toDateTime(?, 'UTC')
+							WHERE feed = ? AND observation = ? AND recv_ts < fromUnixTimestamp64Milli(?, 'UTC')
 							UNION ALL
 							SELECT observation, upper(trimBoth(symbol)) AS symbol_key, book_key, recv_ts, price_exp, qty_exp
 							FROM %[2]s
 							WHERE feed = ? AND observation = ? AND from_anchor = 0 AND book_key != 0
-							  AND recv_ts < toDateTime(?, 'UTC')
+							  AND recv_ts < fromUnixTimestamp64Milli(?, 'UTC')
 						)
 						GROUP BY observation, symbol_key, book_key
 						HAVING first_seen_ts >= toDateTime(?, 'UTC')
@@ -268,13 +277,14 @@ func (a *Activities) writePhoenixRaceWindows(ctx context.Context, site phoenixSi
 		"max_execution_time": phoenixScanMaxExecutionSeconds,
 	}))
 
+	cutoff := end.UnixMilli() + phoenixMaxLeadMs
 	began := time.Now()
 	err := heartbeatDuring(ctx, "computing phoenix race rollup", func() error {
 		return a.ClickHouse.Exec(queryCtx, query,
 			start.Unix(), n,
 			site.DZRecorder, site.VenueRecorder, site.DZRecorder,
-			phoenixFeed, site.VenueRecorder, end.Unix()+phoenixMaxLeadMs/1000,
-			phoenixFeed, site.DZRecorder, end.Unix()+phoenixMaxLeadMs/1000,
+			phoenixFeed, site.VenueRecorder, cutoff,
+			phoenixFeed, site.DZRecorder, cutoff,
 			start.Unix(),
 			phoenixMaxLeadMs,
 			start.Unix(), end.Unix(),
