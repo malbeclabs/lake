@@ -228,23 +228,6 @@ export function ShredsRewardsPage() {
     })
   }, [setSearchParams])
 
-  const setGroup = useCallback(
-    (next: 'validator' | 'client') => {
-      setSearchParams((prev) => {
-        const p = new URLSearchParams(prev)
-        if (next === 'client') p.set('group', 'client')
-        else p.delete('group')
-        // Sort, search and page all belong to the mode being left behind.
-        p.delete('sort')
-        p.delete('order')
-        p.delete('search')
-        p.delete('page')
-        return p
-      })
-    },
-    [setSearchParams],
-  )
-
   const SortIcon = ({ field }: { field: SortField | ClientSortField }) => {
     if (sortField !== field) return null
     return sortDirection === 'asc' ? (
@@ -270,10 +253,10 @@ export function ShredsRewardsPage() {
   const thStatic = 'px-4 py-3 font-medium whitespace-nowrap'
   const thRight = `${thClass} text-right`
 
-  // No early return for the first load: the header, the grouping toggle and the
-  // table's own column headers are all known before the data is, so rendering
-  // them immediately and filling only the rows with skeletons tells the reader
-  // what is arriving. A bare centred spinner told them nothing but "wait".
+  // No early return for the first load: the header and the table's own column
+  // headers are all known before the data is, so rendering them immediately and
+  // filling only the rows with skeletons tells the reader what is arriving. A
+  // bare centred spinner told them nothing but "wait".
   if (error && !data) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -346,35 +329,6 @@ export function ShredsRewardsPage() {
             )
           }
         />
-
-        <div className="mb-4 inline-flex rounded-md border border-border overflow-hidden text-sm">
-          <button
-            type="button"
-            onClick={() => setGroup('validator')}
-            aria-pressed={!groupByClient}
-            className={cn(
-              'px-3 py-1.5 transition-colors',
-              !groupByClient
-                ? 'bg-accent text-accent-foreground'
-                : 'hover:bg-muted text-muted-foreground',
-            )}
-          >
-            Validators
-          </button>
-          <button
-            type="button"
-            onClick={() => setGroup('client')}
-            aria-pressed={groupByClient}
-            className={cn(
-              'px-3 py-1.5 border-l border-border transition-colors',
-              groupByClient
-                ? 'bg-accent text-accent-foreground'
-                : 'hover:bg-muted text-muted-foreground',
-            )}
-          >
-            Client teams
-          </button>
-        </div>
 
         <div className="mb-4 rounded-lg bg-muted/50 px-4 py-3 text-xs xxs:text-sm text-muted-foreground">
           {groupByClient ? (
