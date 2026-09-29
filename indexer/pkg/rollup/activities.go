@@ -24,7 +24,8 @@ type Activities struct {
 	TelemetryDatabase  string
 	CompetitorDatabase string
 	RecorderDatabase   string
-	phoenixFailure     phoenixFailure
+	phoenixSites       []phoenixSite
+	phoenixFailures    phoenixFailures
 }
 
 // tableRef returns a qualified table reference. If sourceDB is non-empty, the

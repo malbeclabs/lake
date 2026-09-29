@@ -12,13 +12,23 @@ import (
 )
 
 // The Phoenix race: DoubleZero's top-of-book feed against Phoenix's own, recorded side by side
-// on one Columbus host.
+// on one host per site.
 const (
-	phoenixFeed          = "tob_edge_phoenix"
-	phoenixDZRecorder    = "cmh/aws-cmh-mn-recorder1"
-	phoenixVenueRecorder = "venue-aws-cmh-mn-recorder1"
-	phoenixMaxLeadMs     = 5000
+	phoenixFeed      = "tob_edge_phoenix"
+	phoenixMaxLeadMs = 5000
 )
+
+type phoenixSite struct {
+	Code          string
+	DZRecorder    string
+	VenueRecorder string
+}
+
+var phoenixSites = []phoenixSite{
+	{Code: "cmh", DZRecorder: "cmh/aws-cmh-mn-recorder1", VenueRecorder: "venue-aws-cmh-mn-recorder1"},
+}
+
+const phoenixMaxSites = 4
 
 const (
 	phoenixBucket   = 15 * time.Minute
@@ -34,35 +44,51 @@ const (
 const phoenixScanTimeout = 90 * time.Second
 const phoenixScanMaxExecutionSeconds = int(phoenixScanTimeout / time.Second)
 const phoenixHeartbeatTimeout = 2 * time.Minute
-const phoenixRollupActivityTimeout = phoenixScanTimeout + time.Minute
+const phoenixRollupActivityTimeout = phoenixMaxSites*phoenixScanTimeout + time.Minute
 
 // PhoenixRaceInput asks for one hourly pass of the Phoenix race rollup.
 type PhoenixRaceInput struct {
 	Now time.Time
 }
 
+type phoenixFailures struct {
+	mu    sync.Mutex
+	sites map[string]phoenixFailure
+	esc   *lakelogger.Escalator
+}
+
 type phoenixFailure struct {
-	mu  sync.Mutex
 	at  time.Time
 	err error
-	esc *lakelogger.Escalator
 }
 
-func (f *phoenixFailure) waiting(now time.Time) bool {
+func (f *phoenixFailures) waiting(site string, now time.Time) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.err != nil && now.Before(f.at.Add(phoenixRetryAfter))
+	last, ok := f.sites[site]
+	return ok && last.err != nil && now.Before(last.at.Add(phoenixRetryAfter))
 }
 
-func (f *phoenixFailure) observe(log lakelogger.Logger, now time.Time, err error, args ...any) {
+func (f *phoenixFailures) observe(log lakelogger.Logger, site string, now time.Time, err error, args ...any) {
 	f.mu.Lock()
-	f.at, f.err = now, err
+	if f.sites == nil {
+		f.sites = map[string]phoenixFailure{}
+	}
+	f.sites[site] = phoenixFailure{at: now, err: err}
 	if f.esc == nil {
-		f.esc = &lakelogger.Escalator{ErrorAfterDuration: phoenixErrorAfter}
+		n := int(phoenixErrorAfter/phoenixRetryAfter) + 1
+		f.esc = &lakelogger.Escalator{ErrorAfter: n, TransientErrorAfter: n, ErrorAfterDuration: phoenixErrorAfter}
 	}
 	esc := f.esc
 	f.mu.Unlock()
-	esc.Observe(log, "phoenix_race_rollup", "phoenix race rollup failed", err, args...)
+	esc.Observe(log, "phoenix_race_rollup:"+site, "phoenix race rollup failed", err, append([]any{"site", site}, args...)...)
+}
+
+func (a *Activities) phoenixSiteList() []phoenixSite {
+	if a.phoenixSites != nil {
+		return a.phoenixSites
+	}
+	return phoenixSites
 }
 
 // phoenixRaceWindow returns the windows a pass at now recomputes, as [start, end) aligned to
@@ -78,79 +104,96 @@ func phoenixRaceWindow(now, newest time.Time) (start, end time.Time, ok bool) {
 	return start, end, start.Before(end)
 }
 
-// RollupPhoenixRace writes the Phoenix race windows that closed since the last pass. It runs at
-// most once per clock hour.
+// RollupPhoenixRace writes, for each site, the Phoenix race windows that closed since that site's
+// last pass. Each site runs at most once per clock hour, and a failed site waits
+// phoenixRetryAfter without holding the others back.
 func (a *Activities) RollupPhoenixRace(ctx context.Context, input PhoenixRaceInput) (int, error) {
 	if a.RecorderDatabase == "" {
 		return 0, nil
 	}
-	if a.phoenixFailure.waiting(input.Now) {
-		return 0, nil
-	}
+	sites := a.phoenixSiteList()
 
-	due, newest, err := a.phoenixRaceDue(ctx, input.Now)
+	stored, err := a.phoenixRaceStored(ctx)
 	if err != nil {
-		a.phoenixFailure.observe(a.Log, input.Now, err)
-		return 0, nil
-	}
-	if !due {
-		return 0, nil
-	}
-
-	start, end, ok := phoenixRaceWindow(input.Now, newest)
-	if !ok {
-		return 0, nil
-	}
-
-	var written int
-	err = a.IngestionLog.Wrap(ctx, "rollup", "RollupPhoenixRace", a.Network, func() (ingestionlog.RefreshResult, error) {
-		var result ingestionlog.RefreshResult
-		n, err := a.writePhoenixRaceWindows(ctx, a.RecorderDatabase, start, end, input.Now)
-		if err != nil {
-			return result, err
+		for _, site := range sites {
+			a.phoenixFailures.observe(a.Log, site.Code, input.Now, err)
 		}
-		written = n
-		result.RowsAffected = int64(n)
-		return result, nil
-	})
-	a.phoenixFailure.observe(a.Log, input.Now, err,
-		"window", fmt.Sprintf("[%s, %s)", start.Format(time.RFC3339), end.Format(time.RFC3339)))
-	if err != nil {
 		return 0, nil
+	}
+
+	hour := input.Now.UTC().Truncate(phoenixCadence)
+	var written int
+	for _, site := range sites {
+		if a.phoenixFailures.waiting(site.Code, input.Now) {
+			continue
+		}
+		last, ok := stored[site.Code]
+		if ok && !last.lastWrite.Before(hour) {
+			continue
+		}
+		start, end, ok := phoenixRaceWindow(input.Now, last.newest)
+		if !ok {
+			continue
+		}
+
+		var n int
+		err := a.IngestionLog.Wrap(ctx, "rollup", "RollupPhoenixRace", a.Network, func() (ingestionlog.RefreshResult, error) {
+			var result ingestionlog.RefreshResult
+			var err error
+			n, err = a.writePhoenixRaceWindows(ctx, site, start, end, input.Now)
+			result.RowsAffected = int64(n)
+			return result, err
+		})
+		a.phoenixFailures.observe(a.Log, site.Code, input.Now, err,
+			"window", fmt.Sprintf("[%s, %s)", start.Format(time.RFC3339), end.Format(time.RFC3339)))
+		if err == nil {
+			written += n
+		}
 	}
 	return written, nil
 }
 
-// phoenixRaceDue reports whether this clock hour has not been written yet, and the start of the
-// newest stored window.
-func (a *Activities) phoenixRaceDue(ctx context.Context, now time.Time) (bool, time.Time, error) {
-	var lastWrite, newest time.Time
-	var rows uint64
-	err := a.ClickHouse.QueryRow(ctx,
-		`SELECT count(), max(ingested_at), max(bucket_ts) FROM phoenix_race_rollup_15m`,
-	).Scan(&rows, &lastWrite, &newest)
+type phoenixStored struct {
+	lastWrite, newest time.Time
+}
+
+// phoenixRaceStored returns, per site, the newest write and the start of the newest stored
+// window. A site with nothing stored is absent.
+func (a *Activities) phoenixRaceStored(ctx context.Context) (map[string]phoenixStored, error) {
+	out := map[string]phoenixStored{}
+	rows, err := a.ClickHouse.Query(ctx,
+		`SELECT site, max(ingested_at), max(bucket_ts) FROM phoenix_race_rollup_15m GROUP BY site`)
 	if err != nil {
 		if isUnknownTable(err) {
 			a.Log.Info("phoenix race rollup: table not present yet, treating as due")
-			return true, time.Time{}, nil
+			return out, nil
 		}
-		return false, time.Time{}, fmt.Errorf("phoenix race rollup due check: %w", err)
+		return nil, fmt.Errorf("phoenix race rollup due check: %w", err)
 	}
-	if rows == 0 {
-		return true, time.Time{}, nil
+	defer rows.Close()
+	for rows.Next() {
+		var site string
+		var s phoenixStored
+		if err := rows.Scan(&site, &s.lastWrite, &s.newest); err != nil {
+			return nil, fmt.Errorf("phoenix race rollup due check: %w", err)
+		}
+		out[site] = s
 	}
-	return lastWrite.Before(now.UTC().Truncate(phoenixCadence)), newest, nil
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("phoenix race rollup due check: %w", err)
+	}
+	return out, nil
 }
 
-// writePhoenixRaceWindows recomputes every window in [start, end) in one INSERT ... SELECT, so
-// no race row crosses into the indexer.
-func (a *Activities) writePhoenixRaceWindows(ctx context.Context, recorderDB string, start, end, ingestedAt time.Time) (int, error) {
+// writePhoenixRaceWindows recomputes every window in [start, end) for one site in one
+// INSERT ... SELECT, so no race row crosses into the indexer.
+func (a *Activities) writePhoenixRaceWindows(ctx context.Context, site phoenixSite, start, end, ingestedAt time.Time) (int, error) {
 	n := int(end.Sub(start) / phoenixBucket)
-	src := tableRef(recorderDB, "feed_race")
+	src := tableRef(a.RecorderDatabase, "feed_race")
 
 	query := fmt.Sprintf(`
 		INSERT INTO phoenix_race_rollup_15m (
-			bucket_ts, ingested_at, paired, dz_wins, venue_wins,
+			bucket_ts, site, ingested_at, paired, dz_wins, venue_wins,
 			signed_lead_p50_ms, signed_lead_p95_ms, signed_lead_p99_ms, signed_lead_ms_state
 		)
 		WITH
@@ -180,6 +223,7 @@ func (a *Activities) writePhoenixRaceWindows(ctx context.Context, recorderDB str
 			)
 		SELECT
 			b.bucket_ts,
+			?,
 			toDateTime64(?, 3, 'UTC'),
 			r.paired,
 			r.dz_wins,
@@ -203,17 +247,18 @@ func (a *Activities) writePhoenixRaceWindows(ctx context.Context, recorderDB str
 	err := heartbeatDuring(ctx, "computing phoenix race rollup", func() error {
 		return a.ClickHouse.Exec(queryCtx, query,
 			start.Unix(), n,
-			phoenixDZRecorder, phoenixVenueRecorder, phoenixDZRecorder,
-			phoenixFeed, phoenixDZRecorder, phoenixVenueRecorder, phoenixMaxLeadMs, start.Unix(), end.Unix(),
-			ingestedAt.UTC().Format("2006-01-02 15:04:05.000"),
+			site.DZRecorder, site.VenueRecorder, site.DZRecorder,
+			phoenixFeed, site.DZRecorder, site.VenueRecorder, phoenixMaxLeadMs, start.Unix(), end.Unix(),
+			site.Code, ingestedAt.UTC().Format("2006-01-02 15:04:05.000"),
 		)
 	})
 	if err != nil {
-		return 0, fmt.Errorf("phoenix race rollup [%s, %s): %w",
-			start.Format(time.RFC3339), end.Format(time.RFC3339), err)
+		return 0, fmt.Errorf("phoenix race rollup %s [%s, %s): %w",
+			site.Code, start.Format(time.RFC3339), end.Format(time.RFC3339), err)
 	}
 
 	a.Log.Info("wrote phoenix race rollup",
+		"site", site.Code,
 		"windows", n,
 		"window", fmt.Sprintf("[%s, %s)", start.Format(time.RFC3339), end.Format(time.RFC3339)),
 		"duration", time.Since(began))

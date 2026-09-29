@@ -188,47 +188,59 @@ exactly as the top-of-book feed does.
 ## Phoenix Scoreboard
 
 The Phoenix board (`/dz/phoenix/scoreboard`) reads one table, `phoenix_race_rollup_15m`: a row per
-15-minute window of DoubleZero's top-of-book feed raced against Phoenix's own, recorded on one
-Columbus host. The indexer's rollup worker writes it hourly from `recorder.feed_race`
-(`indexer/pkg/rollup/phoenix.go`), so the API reads a few hundred rows and needs no page cache.
+(site, 15-minute window) of DoubleZero's top-of-book feed raced against Phoenix's own, both
+recorded on one host at that site. The indexer's rollup worker writes it hourly from
+`recorder.feed_race` (`indexer/pkg/rollup/phoenix.go`), so the API reads a few hundred rows and
+needs no page cache. The API serves one site at a time (`?site=`, default `cmh`) and lists the sites
+that have rows; the page shows a site picker once there is more than one.
+
+**Adding a site** (TYO, FRA): add its recorder pair to `phoenixSites` in `phoenix.go`, and its
+display name to `phoenixSiteLabels` in `api/handlers/phoenix_scoreboard.go`. The next pass
+backfills that site's last 24 hours on its own. Raise `phoenixMaxSites` if the list outgrows it;
+the activity timeout is sized from it.
 
 It is off unless `CLICKHOUSE_RECORDER_DB` is set on the indexer, and it runs for mainnet only — the
 race is a venue feed, not a DoubleZero network, and the API reads it from the mainnet database.
-Turning it on needs `SELECT` on `recorder` for `lake_indexer` first — a privilege error is not
-transient and escalates to ERROR. Local dev and preview reach the table through the
-`recorder.feed_race` proxy in `admin/remotetables`, as `lake_dev_reader`.
+Turning it on needs `SELECT` on `recorder` for `lake_indexer` first. Local dev and preview reach the
+table through the `recorder.feed_race` proxy in `admin/remotetables`, as `lake_dev_reader`.
 
-A race is a row whose `observed_by` holds exactly the two Columbus recorders (`observations = 2`
-and `hasAll(observed_by, [dz, venue])`). Filtering on `first_observation` alone is not enough: a
-race between the DoubleZero recorder and a third recorder on the same feed would count as a win
-over Phoenix. A tie (`lead_ms = 0`) is a race won by neither side: it counts in `paired` and in
-neither win column, and there is no tie count. `recorder.feed_race` is a view, so the scan needs no
-`FINAL`. `lead_ms` is `Nullable` in
-`recorder.feed_race`, and the state column refuses a `Nullable` argument, which is why the signed
-lead is wrapped in `assumeNotNull` — the `lead_ms <=` filter has already dropped the nulls.
+**What counts as a race**, which is what `paired` and the page's "Updates raced" mean:
 
-Two things the rollup relies on. Each run recomputes the three hours behind the newest stored window,
-and the table is a `ReplacingMergeTree` on `bucket_ts`, so a late race updates its window instead
-of adding a second row. And an idle window is still written, with `paired = 0`: the hourly gate
-keys on `max(ingested_at)`, so skipping it would leave the gate open and re-run the scan on every
-30s cycle. The API drops those rows from the counts and the chart, but not from `as_of`: an idle
-window is still a refresh, and counting only raced rows made a quiet feed read as a missed one.
-The chart's window is the 24 hours ending at the newest stored window, raced or not, so a quiet
-tail renders as a gap instead of the chart quietly ending early.
+- `feed = 'tob_edge_phoenix'`, the first `occurrence` of the update, and `exponents_agree = 1`.
+- `observations = 2` and `hasAll(observed_by, [dz, venue])`: exactly that site's two recorders.
+  Filtering on `first_observation` alone would count a race between the DoubleZero recorder and a
+  third recorder as a win over Phoenix.
+- `lead_ms <= 5000`. A pairing that far apart is more likely two unrelated book states than one
+  update seen twice, so it is dropped rather than clamped, and it leaves `paired` as well as the win
+  columns.
+- A tie (`lead_ms = 0`) is a race won by neither side: it counts in `paired` and in neither win
+  column, and there is no tie count.
 
-A failed scan writes nothing, which leaves the hourly gate open, so the activity waits
-`phoenixRetryAfter` (10 minutes) before scanning again. The wait is what stops a slow
-`recorder.feed_race` from re-running the scan inline in the live rollup loop on every 30s cycle.
-The activity owns its escalation: it logs each real failure through its own `logger.Escalator`
-(which reaches ERROR after `phoenixErrorAfter`, 30 minutes of failing) and returns success to the
-workflow, waiting included. Returning the error instead would page on a single blip — the
-workflow's escalator counts every 30s cycle of the wait as another failure, and Temporal logs a
-non-transient activity error at ERROR on its own. For the same reason the activity has no Temporal
-retry (`MaximumAttempts: 1`): a retry carries the same `Now` and would only hit the wait.
+`recorder.feed_race` is a view, so the scan needs no `FINAL`. `lead_ms` is `Nullable(Float64)`, and
+the state column refuses a `Nullable` argument, which is why the signed lead is wrapped in
+`assumeNotNull` — the `lead_ms <=` filter has already dropped the nulls.
 
-`ingested_at` is the pass's `Now`, not the time the write landed. The hourly gate compares it with
-`Now`, so stamping the wall clock let a pass that started at 10:59:50 and landed at 11:00:05 close
-the 11:00 hour with windows up to 10:30.
+Each site is gated, healed and backed off on its own. A pass recomputes the three hours behind that
+site's newest window, and the table is a `ReplacingMergeTree` on `(site, bucket_ts)`, so a late
+race updates its window instead of adding a row. An idle window is still written, with `paired = 0`:
+the hourly gate keys on the site's `max(ingested_at)`, so skipping it would leave the gate open and
+re-run the scan on every 30s cycle. The API drops those rows from the counts and the chart, but not
+from `as_of`, and the chart's window is the 24 hours ending at the site's newest window, raced or
+not, so a quiet tail renders as a gap.
+
+`ingested_at` is the pass's `Now`, not the time the write landed: the gate compares it with `Now`,
+and the wall clock let a pass that started at 10:59:50 and landed at 11:00:05 close the 11:00 hour
+with windows up to 10:30.
+
+A failed scan writes nothing, so that site waits `phoenixRetryAfter` (10 minutes) before scanning
+again — without that, a slow `recorder.feed_race` would re-run the scan inline in the live rollup
+loop on every 30s cycle. The activity owns its escalation and returns success to the workflow,
+waiting included: returning the error would page on a single blip, because the workflow's escalator
+counts every cycle of the wait, and Temporal logs a non-transient activity error at ERROR on its
+own. For the same reason there is no Temporal retry (`MaximumAttempts: 1`). The escalator pages
+after `phoenixErrorAfter` (30 minutes); its count thresholds are set to
+`phoenixErrorAfter/phoenixRetryAfter + 1` so they cannot fire first — at the default of 3, the third
+failure ten minutes apart paged at 20 minutes.
 
 The 24-hour percentiles merge the stored `signed_lead_ms_state` t-digests. Never average the
 per-window `signed_lead_p*_ms` columns into a longer span: that weights a quiet 15 minutes the same

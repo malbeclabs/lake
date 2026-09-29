@@ -1,7 +1,11 @@
 package rollup
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,6 +62,9 @@ func TestPhoenixTimeouts_BracketTheScan(t *testing.T) {
 		t.Errorf("heartbeat timeout %s does not exceed the heartbeat interval %s",
 			phoenixHeartbeatTimeout, competitorHeartbeatInterval)
 	}
+	if len(phoenixSites) > phoenixMaxSites {
+		t.Errorf("%d sites, but the activity timeout covers %d scans", len(phoenixSites), phoenixMaxSites)
+	}
 	if phoenixRollupActivityTimeout >= rollupWindow {
 		t.Errorf("a pass may take %s, which is not inside rollupWindow %s", phoenixRollupActivityTimeout, rollupWindow)
 	}
@@ -93,6 +100,16 @@ func setupPhoenixFeedRace(t *testing.T) (clickhouse.Conn, string) {
 	return conn, info.Database
 }
 
+var cmh = phoenixSites[0]
+
+func cmhDue(t *testing.T, a *Activities, now time.Time) bool {
+	t.Helper()
+	stored, err := a.phoenixRaceStored(t.Context())
+	require.NoError(t, err)
+	last, ok := stored[cmh.Code]
+	return !ok || last.lastWrite.Before(now.UTC().Truncate(phoenixCadence))
+}
+
 type phoenixRow struct {
 	feed, first string
 	at          time.Time
@@ -109,7 +126,7 @@ func insertPhoenixRows(t *testing.T, conn clickhouse.Conn, rows []phoenixRow) {
 	for _, r := range rows {
 		by := r.by
 		if by == nil {
-			by = []string{phoenixDZRecorder, phoenixVenueRecorder}
+			by = []string{cmh.DZRecorder, cmh.VenueRecorder}
 		}
 		require.NoError(t, batch.Append(r.feed, r.first, r.at, r.lead, r.occ, r.obs, r.expo, by))
 	}
@@ -120,22 +137,22 @@ func race(first string, at time.Time, lead float64) phoenixRow {
 	return phoenixRow{feed: phoenixFeed, first: first, at: at, lead: lead, occ: 1, obs: 2, expo: 1}
 }
 
-type phoenixStored struct {
+type phoenixWindowRow struct {
 	paired, dz, venue uint64
 	p50, p95, p99     float64
 }
 
-func readPhoenixRollup(t *testing.T, conn clickhouse.Conn) map[time.Time]phoenixStored {
+func readPhoenixRollup(t *testing.T, conn clickhouse.Conn, site string) map[time.Time]phoenixWindowRow {
 	t.Helper()
 	rows, err := conn.Query(t.Context(), `
 		SELECT bucket_ts, paired, dz_wins, venue_wins, signed_lead_p50_ms, signed_lead_p95_ms, signed_lead_p99_ms
-		FROM phoenix_race_rollup_15m FINAL`)
+		FROM phoenix_race_rollup_15m FINAL WHERE site = ?`, site)
 	require.NoError(t, err)
 	defer rows.Close()
-	out := map[time.Time]phoenixStored{}
+	out := map[time.Time]phoenixWindowRow{}
 	for rows.Next() {
 		var ts time.Time
-		var s phoenixStored
+		var s phoenixWindowRow
 		require.NoError(t, rows.Scan(&ts, &s.paired, &s.dz, &s.venue, &s.p50, &s.p95, &s.p99))
 		out[ts.UTC()] = s
 	}
@@ -154,34 +171,34 @@ func TestRollupPhoenixRace_WritesEveryWindowAndOnlyRaces(t *testing.T) {
 	in := bucket.Add(time.Minute)
 
 	insertPhoenixRows(t, conn, []phoenixRow{
-		race(phoenixDZRecorder, in, 100),
-		race(phoenixDZRecorder, in, 200),
-		race(phoenixDZRecorder, in, 300),
-		race(phoenixVenueRecorder, in, 50),
-		race(phoenixDZRecorder, in, 0),
+		race(cmh.DZRecorder, in, 100),
+		race(cmh.DZRecorder, in, 200),
+		race(cmh.DZRecorder, in, 300),
+		race(cmh.VenueRecorder, in, 50),
+		race(cmh.DZRecorder, in, 0),
 		// Each of these breaks exactly one clause of the race predicate.
-		{feed: "tob_edge_other", first: phoenixDZRecorder, at: in, lead: 100, occ: 1, obs: 2, expo: 1},
+		{feed: "tob_edge_other", first: cmh.DZRecorder, at: in, lead: 100, occ: 1, obs: 2, expo: 1},
 		{feed: phoenixFeed, first: "chi/aws-chi-mn-recorder1", at: in, lead: 100, occ: 1, obs: 2, expo: 1,
-			by: []string{"chi/aws-chi-mn-recorder1", phoenixVenueRecorder}},
-		{feed: phoenixFeed, first: phoenixDZRecorder, at: in, lead: 100, occ: 1, obs: 2, expo: 1,
-			by: []string{phoenixDZRecorder, "chi/aws-chi-mn-recorder1"}},
-		{feed: phoenixFeed, first: phoenixDZRecorder, at: in, lead: 100, occ: 2, obs: 2, expo: 1},
-		{feed: phoenixFeed, first: phoenixDZRecorder, at: in, lead: 100, occ: 1, obs: 3, expo: 1},
-		{feed: phoenixFeed, first: phoenixDZRecorder, at: in, lead: 100, occ: 1, obs: 2, expo: 0},
-		race(phoenixDZRecorder, in, phoenixMaxLeadMs+1),
+			by: []string{"chi/aws-chi-mn-recorder1", cmh.VenueRecorder}},
+		{feed: phoenixFeed, first: cmh.DZRecorder, at: in, lead: 100, occ: 1, obs: 2, expo: 1,
+			by: []string{cmh.DZRecorder, "chi/aws-chi-mn-recorder1"}},
+		{feed: phoenixFeed, first: cmh.DZRecorder, at: in, lead: 100, occ: 2, obs: 2, expo: 1},
+		{feed: phoenixFeed, first: cmh.DZRecorder, at: in, lead: 100, occ: 1, obs: 3, expo: 1},
+		{feed: phoenixFeed, first: cmh.DZRecorder, at: in, lead: 100, occ: 1, obs: 2, expo: 0},
+		race(cmh.DZRecorder, in, phoenixMaxLeadMs+1),
 		// Not settled yet: the window it falls in closes inside the settle period.
-		race(phoenixDZRecorder, end.Add(time.Minute), 100),
+		race(cmh.DZRecorder, end.Add(time.Minute), 100),
 	})
 
 	require.NoError(t, conn.Exec(t.Context(), fmt.Sprintf(`
 		INSERT INTO feed_race VALUES ('%s', '%s', toDateTime64(%d, 9, 'UTC'), NULL, 1, 2, 1, ['%s', '%s'])`,
-		phoenixFeed, phoenixDZRecorder, in.Unix(), phoenixDZRecorder, phoenixVenueRecorder)))
+		phoenixFeed, cmh.DZRecorder, in.Unix(), cmh.DZRecorder, cmh.VenueRecorder)))
 
 	n, err := a.RollupPhoenixRace(t.Context(), PhoenixRaceInput{Now: now})
 	require.NoError(t, err)
 	assert.Equal(t, int(phoenixLookback/phoenixBucket), n)
 
-	stored := readPhoenixRollup(t, conn)
+	stored := readPhoenixRollup(t, conn, cmh.Code)
 	require.Len(t, stored, n, "every window is written, raced or not")
 
 	got := stored[bucket]
@@ -216,9 +233,7 @@ func TestRollupPhoenixRace_RunsOncePerHourEvenWhenIdle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, n, "second pass in the same hour")
 
-	due, _, err := a.phoenixRaceDue(t.Context(), now.Add(phoenixCadence))
-	require.NoError(t, err)
-	assert.True(t, due, "due again in the next hour")
+	assert.True(t, cmhDue(t, a, now.Add(phoenixCadence)), "due again in the next hour")
 }
 
 // A later pass recomputes the heal window. The table is a ReplacingMergeTree on bucket_ts, so
@@ -231,13 +246,13 @@ func TestRollupPhoenixRace_HealReplacesAWindow(t *testing.T) {
 	now := time.Now().UTC()
 	start, end, _ := phoenixRaceWindow(now, time.Time{})
 	bucket := end.Add(-phoenixBucket)
-	insertPhoenixRows(t, conn, []phoenixRow{race(phoenixDZRecorder, bucket.Add(time.Minute), 100)})
-	_, err := a.writePhoenixRaceWindows(t.Context(), db, start, end, now)
+	insertPhoenixRows(t, conn, []phoenixRow{race(cmh.DZRecorder, bucket.Add(time.Minute), 100)})
+	_, err := a.writePhoenixRaceWindows(t.Context(), cmh, start, end, now)
 	require.NoError(t, err)
 
-	insertPhoenixRows(t, conn, []phoenixRow{race(phoenixVenueRecorder, bucket.Add(2*time.Minute), 40)})
+	insertPhoenixRows(t, conn, []phoenixRow{race(cmh.VenueRecorder, bucket.Add(2*time.Minute), 40)})
 	healStart, _, _ := phoenixRaceWindow(now, bucket)
-	_, err = a.writePhoenixRaceWindows(t.Context(), db, healStart, end, now.Add(time.Second))
+	_, err = a.writePhoenixRaceWindows(t.Context(), cmh, healStart, end, now.Add(time.Second))
 	require.NoError(t, err)
 
 	var copies uint64
@@ -246,7 +261,7 @@ func TestRollupPhoenixRace_HealReplacesAWindow(t *testing.T) {
 	).Scan(&copies))
 	assert.EqualValues(t, 1, copies)
 
-	got := readPhoenixRollup(t, conn)[bucket]
+	got := readPhoenixRollup(t, conn, cmh.Code)[bucket]
 	assert.EqualValues(t, 2, got.paired)
 	assert.EqualValues(t, 1, got.venue)
 }
@@ -277,7 +292,7 @@ func TestRollupPhoenixRace_BacksOffAfterAFailedScan(t *testing.T) {
 	n, err = a.RollupPhoenixRace(t.Context(), PhoenixRaceInput{Now: now.Add(time.Minute)})
 	require.NoError(t, err)
 	assert.Zero(t, n, "no rescan inside the backoff")
-	assert.Empty(t, readPhoenixRollup(t, conn))
+	assert.Empty(t, readPhoenixRollup(t, conn, cmh.Code))
 
 	n, err = a.RollupPhoenixRace(t.Context(), PhoenixRaceInput{Now: now.Add(phoenixRetryAfter + time.Minute)})
 	require.NoError(t, err)
@@ -297,7 +312,56 @@ func TestRollupPhoenixRace_StampsTheWriteWithThePassClock(t *testing.T) {
 	require.NoError(t, conn.QueryRow(t.Context(), `SELECT max(ingested_at) FROM phoenix_race_rollup_15m`).Scan(&lastWrite))
 	assert.Equal(t, now.Truncate(time.Millisecond), lastWrite.UTC())
 
-	due, _, err := a.phoenixRaceDue(t.Context(), now.Add(20*time.Second))
+	assert.True(t, cmhDue(t, a, now.Add(20*time.Second)), "the next hour is still due")
+}
+
+func TestRollupPhoenixRace_KeepsSitesApart(t *testing.T) {
+	t.Parallel()
+	conn, db := setupPhoenixFeedRace(t)
+	tyo := phoenixSite{Code: "tyo", DZRecorder: "tyo/test-recorder1", VenueRecorder: "venue-test-tyo-recorder1"}
+	a := &Activities{ClickHouse: conn, Log: laketesting.NewLogger(), RecorderDatabase: db, phoenixSites: []phoenixSite{cmh, tyo}}
+
+	now := time.Now().UTC()
+	_, end, _ := phoenixRaceWindow(now, time.Time{})
+	in := end.Add(-phoenixBucket).Add(time.Minute)
+	insertPhoenixRows(t, conn, []phoenixRow{
+		race(cmh.DZRecorder, in, 100),
+		{feed: phoenixFeed, first: tyo.DZRecorder, at: in, lead: 100, occ: 1, obs: 2, expo: 1,
+			by: []string{tyo.DZRecorder, tyo.VenueRecorder}},
+		{feed: phoenixFeed, first: tyo.VenueRecorder, at: in, lead: 50, occ: 1, obs: 2, expo: 1,
+			by: []string{tyo.DZRecorder, tyo.VenueRecorder}},
+		{feed: phoenixFeed, first: cmh.DZRecorder, at: in, lead: 100, occ: 1, obs: 2, expo: 1,
+			by: []string{cmh.DZRecorder, tyo.VenueRecorder}},
+	})
+
+	n, err := a.RollupPhoenixRace(t.Context(), PhoenixRaceInput{Now: now})
 	require.NoError(t, err)
-	assert.True(t, due, "the next hour is still due")
+	assert.Equal(t, 2*int(phoenixLookback/phoenixBucket), n, "every window, for each site")
+
+	bucket := end.Add(-phoenixBucket)
+	gotCMH := readPhoenixRollup(t, conn, cmh.Code)[bucket]
+	gotTYO := readPhoenixRollup(t, conn, tyo.Code)[bucket]
+	assert.EqualValues(t, 1, gotCMH.paired, "a race across two sites belongs to neither")
+	assert.EqualValues(t, 1, gotCMH.dz)
+	assert.EqualValues(t, 2, gotTYO.paired)
+	assert.EqualValues(t, 1, gotTYO.dz)
+	assert.EqualValues(t, 1, gotTYO.venue)
+}
+
+func TestPhoenixFailures_EscalateOnlyAfterErrorAfter(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	var f phoenixFailures
+	err := errors.New("code: 497, message: Not enough privileges")
+
+	start := time.Now()
+	passes := int(phoenixErrorAfter / phoenixRetryAfter)
+	for i := 0; i < passes; i++ {
+		f.observe(log, cmh.Code, start.Add(time.Duration(i)*phoenixRetryAfter), err)
+	}
+	assert.NotContains(t, buf.String(), "level=ERROR", "%d failures %s apart are under %s", passes, phoenixRetryAfter, phoenixErrorAfter)
+
+	f.observe(log, cmh.Code, start.Add(phoenixErrorAfter), err)
+	assert.Equal(t, 1, strings.Count(buf.String(), "level=ERROR"))
 }

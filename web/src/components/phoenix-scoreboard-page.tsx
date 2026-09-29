@@ -82,32 +82,37 @@ function show(metric: MetricKey, v: number): string {
 }
 
 // Counts from `from` to `to` over `duration`, restarting whenever `to` changes.
-function useCountUp(to: number, { from = 0, duration = 1200, delay = 0 } = {}): { value: number; done: boolean } {
-  const [state, setState] = useState({ value: prefersCalm() ? to : from, done: prefersCalm() })
+function useCountUp(to: number, { duration = 1200, delay = 0 } = {}): { value: number; settled: boolean } {
+  const shown = useRef<number | null>(null)
+  const [state, setState] = useState({ value: prefersCalm() ? to : 0, settled: prefersCalm() })
   useEffect(() => {
-    if (prefersCalm()) {
-      setState({ value: to, done: true })
+    const from = shown.current ?? 0
+    const wait = shown.current === null ? delay : 0
+    if (prefersCalm() || from === to) {
+      shown.current = to
+      setState({ value: to, settled: true })
       return
     }
     let raf = 0
-    const t0 = performance.now() + delay
+    const t0 = performance.now() + wait
     const step = (now: number) => {
       const t = Math.min(1, Math.max(0, (now - t0) / duration))
-      const eased = 1 - Math.pow(1 - t, 3)
-      setState({ value: from + (to - from) * eased, done: t >= 1 })
+      const value = from + (to - from) * (1 - Math.pow(1 - t, 3))
+      shown.current = value
+      setState((prev) => ({ value, settled: prev.settled || t >= 1 }))
       if (t < 1) raf = requestAnimationFrame(step)
     }
     raf = requestAnimationFrame(step)
     return () => cancelAnimationFrame(raf)
-  }, [to, from, duration, delay])
+  }, [to, duration, delay])
   return state
 }
 
-function CountUp({ to, format, from, delay, pop }: {
-  to: number; format: (v: number) => string; from?: number; delay?: number; pop?: boolean
+function CountUp({ to, format, delay, pop }: {
+  to: number; format: (v: number) => string; delay?: number; pop?: boolean
 }) {
-  const { value, done } = useCountUp(to, { from, delay })
-  return <span className={pop && done && !prefersCalm() ? 'phx-pop' : undefined}>{format(done ? to : value)}</span>
+  const { value, settled } = useCountUp(to, { delay })
+  return <span className={pop && settled && !prefersCalm() ? 'phx-pop' : undefined}>{format(value)}</span>
 }
 
 function WinGauge({ value }: { value: number }) {
@@ -137,7 +142,7 @@ function WinGauge({ value }: { value: number }) {
         />
       </svg>
       <span className="font-mono text-2xl font-semibold tabular-nums">
-        <CountUp to={value} from={90} format={pct} />
+        <CountUp to={value} format={pct} />
       </span>
     </div>
   )
@@ -557,7 +562,7 @@ function TrendCard({ data }: { data: PhoenixScoreboardResponse }) {
           <span>
             <span className="text-xs text-muted-foreground">24h </span>
             <span className="font-mono text-xl font-semibold tabular-nums">
-              <CountUp key={metric} to={data.all[metric]} from={metric === 'win_pct' ? 95 : 0} format={(v) => show(metric, v)} />
+              <CountUp key={metric} to={data.all[metric]} format={(v) => show(metric, v)} />
             </span>
           </span>
         </div>
@@ -579,9 +584,9 @@ function TrendCard({ data }: { data: PhoenixScoreboardResponse }) {
   )
 }
 
-function Stat({ label, children, delay }: { label: string; children: ReactNode; delay: number }) {
+function Stat({ label, children, delay, title }: { label: string; children: ReactNode; delay: number; title?: string }) {
   return (
-    <div className="phx-rise bg-card px-4 py-3" style={{ animationDelay: `${delay}ms` }}>
+    <div className="phx-rise bg-card px-4 py-3" style={{ animationDelay: `${delay}ms` }} title={title}>
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="font-mono text-xl font-semibold tabular-nums">{children}</div>
     </div>
@@ -616,15 +621,16 @@ function Freshness({ asOf, nextRefreshAt }: { asOf: string; nextRefreshAt: strin
 export function PhoenixScoreboardPage() {
   const [data, setData] = useState<PhoenixScoreboardResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [site, setSite] = useState<string | undefined>(undefined)
 
   const load = useCallback(async () => {
     try {
-      setData(await fetchPhoenixScoreboard())
+      setData(await fetchPhoenixScoreboard(site))
       setError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load')
     }
-  }, [])
+  }, [site])
 
   useEffect(() => {
     void load()
@@ -659,6 +665,25 @@ export function PhoenixScoreboardPage() {
               )}
             </span>
           }
+          actions={
+            data && data.sites.length > 1 ? (
+              <div className="flex overflow-hidden rounded-md border border-border text-xs" role="group" aria-label="Recording site">
+                {data.sites.map((x) => (
+                  <button
+                    key={x.code}
+                    type="button"
+                    aria-pressed={x.code === data.site}
+                    onClick={() => setSite(x.code)}
+                    className={`border-l border-border px-3 py-1.5 first:border-l-0 transition-colors ${
+                      x.code === data.site ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:bg-muted/50'
+                    }`}
+                  >
+                    {x.label}
+                  </button>
+                ))}
+              </div>
+            ) : undefined
+          }
         />
 
         {error && !data && <div className="rounded-lg border border-border bg-card p-6 text-sm text-red-500">{error}</div>}
@@ -683,7 +708,7 @@ export function PhoenixScoreboardPage() {
                     <div className="text-xl font-semibold leading-snug" style={{ textWrap: 'balance' } as CSSProperties}>
                       DoubleZero is first on{' '}
                       <span style={{ color: DZ_COLOR }}>
-                        <CountUp to={data.all.win_pct} from={90} format={pct} />
+                        <CountUp to={data.all.win_pct} format={pct} />
                       </span>{' '}
                       of updates.
                     </div>
@@ -708,7 +733,11 @@ export function PhoenixScoreboardPage() {
               </div>
 
               <div className="grid grid-cols-2 gap-px border-t border-border sm:grid-cols-4" style={{ background: 'var(--border)' }}>
-                <Stat label="Updates raced" delay={60}>
+                <Stat
+                  label="Updates raced"
+                  delay={60}
+                  title="Updates both recorders saw, where the later copy arrived within 5 seconds"
+                >
                   <CountUp to={data.races} format={count} delay={250} pop />
                 </Stat>
                 <Stat label="DoubleZero first" delay={120}>
@@ -721,7 +750,7 @@ export function PhoenixScoreboardPage() {
                   <span className="text-xs font-normal text-muted-foreground">{pct2((100 * data.venue_wins) / data.races)}</span>
                 </Stat>
                 <Stat label="Recording site" delay={240}>
-                  {data.site_label} <span className="text-xs font-normal text-muted-foreground">AWS</span>
+                  {data.site_label}
                 </Stat>
               </div>
             </div>

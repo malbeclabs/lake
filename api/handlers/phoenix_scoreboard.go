@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/malbeclabs/lake/api/metrics"
@@ -11,6 +12,21 @@ import (
 
 const phoenixScoreboardWindow = 24 * time.Hour
 const phoenixScoreboardRefresh = time.Hour
+const phoenixDefaultSite = "cmh"
+
+var phoenixSiteLabels = map[string]string{"cmh": "Columbus", "tyo": "Tokyo", "fra": "Frankfurt"}
+
+func phoenixSiteLabel(code string) string {
+	if label, ok := phoenixSiteLabels[code]; ok {
+		return label
+	}
+	return strings.ToUpper(code)
+}
+
+type PhoenixScoreboardSite struct {
+	Code  string `json:"code"`
+	Label string `json:"label"`
+}
 
 type PhoenixScoreboardStat struct {
 	WinPct float64 `json:"win_pct"`
@@ -35,13 +51,20 @@ type PhoenixScoreboardResponse struct {
 	VenueWins     uint64                    `json:"venue_wins"`
 	All           PhoenixScoreboardStat     `json:"all"`
 	Buckets       []PhoenixScoreboardBucket `json:"buckets"`
+	Site          string                    `json:"site"`
 	SiteLabel     string                    `json:"site_label"`
+	Sites         []PhoenixScoreboardSite   `json:"sites"`
 	AsOf          *time.Time                `json:"as_of,omitempty"`
 	NextRefreshAt *time.Time                `json:"next_refresh_at,omitempty"`
 }
 
-func newPhoenixScoreboardResponse() *PhoenixScoreboardResponse {
-	return &PhoenixScoreboardResponse{Buckets: []PhoenixScoreboardBucket{}, SiteLabel: "Columbus"}
+func newPhoenixScoreboardResponse(site string) *PhoenixScoreboardResponse {
+	return &PhoenixScoreboardResponse{
+		Buckets:   []PhoenixScoreboardBucket{},
+		Site:      site,
+		SiteLabel: phoenixSiteLabel(site),
+		Sites:     []PhoenixScoreboardSite{},
+	}
 }
 
 func winPct(wins, races uint64) float64 {
@@ -52,20 +75,36 @@ func winPct(wins, races uint64) float64 {
 }
 
 // FetchPhoenixScoreboardData reads the board from the rollup table.
-func (a *API) FetchPhoenixScoreboardData(ctx context.Context) (*PhoenixScoreboardResponse, error) {
-	resp := newPhoenixScoreboardResponse()
+func (a *API) FetchPhoenixScoreboardData(ctx context.Context, site string) (*PhoenixScoreboardResponse, error) {
+	resp := newPhoenixScoreboardResponse(site)
 
 	start := time.Now()
-	var stored uint64
-	var newest, lastWrite time.Time
-	err := a.DB.QueryRow(ctx,
-		`SELECT count(), max(bucket_ts), max(ingested_at) FROM phoenix_race_rollup_15m`,
-	).Scan(&stored, &newest, &lastWrite)
-	metrics.RecordClickHouseQuery("phoenix_scoreboard_newest", time.Since(start), err)
+	siteRows, err := a.DB.Query(ctx,
+		`SELECT site, max(bucket_ts), max(ingested_at) FROM phoenix_race_rollup_15m GROUP BY site ORDER BY site`)
+	metrics.RecordClickHouseQuery("phoenix_scoreboard_sites", time.Since(start), err)
 	if err != nil {
 		return nil, err
 	}
-	if stored == 0 {
+	var found bool
+	var newest, lastWrite time.Time
+	for siteRows.Next() {
+		var code string
+		var n, w time.Time
+		if err := siteRows.Scan(&code, &n, &w); err != nil {
+			siteRows.Close()
+			return nil, err
+		}
+		resp.Sites = append(resp.Sites, PhoenixScoreboardSite{Code: code, Label: phoenixSiteLabel(code)})
+		if code == site {
+			found, newest, lastWrite = true, n, w
+		}
+	}
+	err = siteRows.Err()
+	siteRows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if !found {
 		return resp, nil
 	}
 	asOf := lastWrite.UTC()
@@ -86,12 +125,13 @@ func (a *API) FetchPhoenixScoreboardData(ctx context.Context) (*PhoenixScoreboar
 			arrayMap(x -> ifNotFinite(toFloat64(x), 0),
 				quantilesTDigestMerge(0.5, 0.95, 0.99)(signed_lead_ms_state))
 		FROM phoenix_race_rollup_15m FINAL
-		WHERE bucket_ts >= toDateTime(?, 'UTC')
+		WHERE site = ?
+		  AND bucket_ts >= toDateTime(?, 'UTC')
 		  AND bucket_ts < toDateTime(?, 'UTC')
 		  AND paired > 0
 		GROUP BY bucket_ts WITH TOTALS
 		ORDER BY bucket_ts`,
-		resp.WindowStart.Unix(), resp.WindowEnd.Unix())
+		site, resp.WindowStart.Unix(), resp.WindowEnd.Unix())
 	metrics.RecordClickHouseQuery("phoenix_scoreboard_window", time.Since(start), err)
 	if err != nil {
 		return nil, err
@@ -127,11 +167,16 @@ func (a *API) GetPhoenixScoreboard(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	data, err := a.FetchPhoenixScoreboardData(ctx)
+	site := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("site")))
+	if site == "" {
+		site = phoenixDefaultSite
+	}
+
+	data, err := a.FetchPhoenixScoreboardData(ctx, site)
 	if err != nil {
 		if isMissingTable(err) {
 			logWarn("phoenix race rollup table not available", "error", err)
-			writeJSON(w, newPhoenixScoreboardResponse())
+			writeJSON(w, newPhoenixScoreboardResponse(site))
 			return
 		}
 		logError("phoenix scoreboard query failed", "error", err)

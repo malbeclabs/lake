@@ -7753,6 +7753,11 @@ export interface PhoenixScoreboardBucket extends PhoenixScoreboardStat {
   venue_wins: number
 }
 
+export interface PhoenixScoreboardSite {
+  code: string
+  label: string
+}
+
 export interface PhoenixScoreboardResponse {
   window_start: string
   window_end: string
@@ -7761,13 +7766,16 @@ export interface PhoenixScoreboardResponse {
   venue_wins: number
   all: PhoenixScoreboardStat
   buckets: PhoenixScoreboardBucket[]
+  site: string
   site_label: string
+  sites: PhoenixScoreboardSite[]
   as_of?: string
   next_refresh_at?: string
 }
 
-export async function fetchPhoenixScoreboard(): Promise<PhoenixScoreboardResponse> {
-  const res = await apiFetch('/api/dz/phoenix/scoreboard')
+export async function fetchPhoenixScoreboard(site?: string): Promise<PhoenixScoreboardResponse> {
+  const query = site ? `?site=${encodeURIComponent(site)}` : ''
+  const res = await apiFetch(`/api/dz/phoenix/scoreboard${query}`)
   if (!res.ok) {
     throw new Error('Failed to fetch phoenix scoreboard')
   }

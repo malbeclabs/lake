@@ -19,6 +19,11 @@ import (
 // built from the given signed leads.
 func insertPhoenixWindow(t *testing.T, api *handlers.API, start time.Time, dz, venue uint64, leads []float64) {
 	t.Helper()
+	insertPhoenixSiteWindow(t, api, "cmh", start, dz, venue, leads)
+}
+
+func insertPhoenixSiteWindow(t *testing.T, api *handlers.API, site string, start time.Time, dz, venue uint64, leads []float64) {
+	t.Helper()
 	arr := "["
 	for i, l := range leads {
 		if i > 0 {
@@ -28,22 +33,34 @@ func insertPhoenixWindow(t *testing.T, api *handlers.API, start time.Time, dz, v
 	}
 	arr += "]"
 	err := api.DB.Exec(context.Background(), fmt.Sprintf(`
-		INSERT INTO phoenix_race_rollup_15m
+		INSERT INTO phoenix_race_rollup_15m (
+			site, bucket_ts, ingested_at, paired, dz_wins, venue_wins,
+			signed_lead_p50_ms, signed_lead_p95_ms, signed_lead_p99_ms, signed_lead_ms_state
+		)
 		SELECT
-			toDateTime(%[1]d, 'UTC'), now64(3), %[2]d, %[3]d, %[4]d,
+			'%[6]s', toDateTime(%[1]d, 'UTC'), now64(3), %[2]d, %[3]d, %[4]d,
 			ifNotFinite(q[1], 0), ifNotFinite(q[2], 0), ifNotFinite(q[3], 0), s
 		FROM (
 			SELECT
 				quantilesTDigestState(0.5, 0.95, 0.99)(x) AS s,
 				finalizeAggregation(s) AS q
 			FROM (SELECT arrayJoin(CAST(%[5]s AS Array(Float64))) AS x)
-		)`, start.Unix(), len(leads), dz, venue, arr))
+		)`, start.Unix(), len(leads), dz, venue, arr, site))
 	require.NoError(t, err)
 }
 
 func getPhoenixScoreboard(t *testing.T, api *handlers.API) handlers.PhoenixScoreboardResponse {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "/api/dz/phoenix/scoreboard", nil)
+	return getPhoenixSiteScoreboard(t, api, "")
+}
+
+func getPhoenixSiteScoreboard(t *testing.T, api *handlers.API, site string) handlers.PhoenixScoreboardResponse {
+	t.Helper()
+	target := "/api/dz/phoenix/scoreboard"
+	if site != "" {
+		target += "?site=" + site
+	}
+	req := httptest.NewRequest(http.MethodGet, target, nil)
 	rr := httptest.NewRecorder()
 	api.GetPhoenixScoreboard(rr, req)
 	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
@@ -155,4 +172,31 @@ func TestGetPhoenixScoreboard_AQuietTailStaysInTheWindow(t *testing.T) {
 	require.Len(t, resp.Buckets, 1)
 	assert.Equal(t, newest.Add(15*time.Minute), resp.WindowEnd, "the chart runs to the newest window, raced or not")
 	assert.Equal(t, newest.Add(15*time.Minute-24*time.Hour), resp.WindowStart)
+}
+
+func TestGetPhoenixScoreboard_ReadsOneSite(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+
+	newest := time.Date(2026, 9, 28, 19, 45, 0, 0, time.UTC)
+	insertPhoenixSiteWindow(t, api, "cmh", newest, 3, 0, []float64{100, 200, 300})
+	insertPhoenixSiteWindow(t, api, "tyo", newest.Add(-time.Hour), 1, 1, []float64{50, -20})
+
+	cmh := getPhoenixScoreboard(t, api)
+	assert.Equal(t, "cmh", cmh.Site, "Columbus is the default")
+	assert.Equal(t, "Columbus", cmh.SiteLabel)
+	assert.EqualValues(t, 3, cmh.Races)
+	assert.Equal(t, []handlers.PhoenixScoreboardSite{{Code: "cmh", Label: "Columbus"}, {Code: "tyo", Label: "Tokyo"}}, cmh.Sites)
+
+	tyo := getPhoenixSiteScoreboard(t, api, "TYO")
+	assert.Equal(t, "tyo", tyo.Site)
+	assert.Equal(t, "Tokyo", tyo.SiteLabel)
+	assert.EqualValues(t, 2, tyo.Races)
+	assert.EqualValues(t, 1, tyo.VenueWins)
+	assert.Equal(t, newest.Add(-45*time.Minute), tyo.WindowEnd, "each site's window ends at its own newest window")
+
+	none := getPhoenixSiteScoreboard(t, api, "fra")
+	assert.Zero(t, none.Races)
+	assert.Nil(t, none.AsOf)
+	assert.Len(t, none.Sites, 2)
 }
