@@ -10,6 +10,7 @@ import {
   MessageSquare,
   Globe,
   Activity,
+  Flame,
   ArrowUpCircle,
   Server,
   Link2,
@@ -136,12 +137,14 @@ const { resolvedTheme, setTheme } = useTheme()
   const isShredsRoute = location.pathname.startsWith('/dz/shreds') || isShredsPublishersRoute
   const isHyperliquidScoreboardRoute = location.pathname === '/dz/hyperliquid/scoreboard'
   const isHyperliquidRoute = location.pathname.startsWith('/dz/hyperliquid')
+  const isPhoenixScoreboardRoute = location.pathname === '/dz/phoenix/scoreboard'
+  const isPhoenixRoute = location.pathname.startsWith('/dz/phoenix')
   const isPermissionAuditRoute = location.pathname === '/dz/permission-audit'
   const isKalshiScoreboardRoute = location.pathname === '/dz/kalshi/scoreboard'
   const isKalshiL2Route = location.pathname === '/dz/kalshi/l2'
   const isKalshiRoute = location.pathname.startsWith('/dz/kalshi')
   const isEdgeMulticastRoute = location.pathname === '/dz/edge/multicast'
-  const isEdgeRoute = isShredsRoute || isHyperliquidRoute || isKalshiRoute || isEdgeMulticastRoute
+  const isEdgeRoute = isShredsRoute || isHyperliquidRoute || isPhoenixRoute || isKalshiRoute || isEdgeMulticastRoute
   const isGeolocRoute = location.pathname.startsWith('/dz/geoloc/')
   const isGeolocProbesRoute = location.pathname.startsWith('/dz/geoloc/probes')
   const isGeolocUsersRoute = location.pathname.startsWith('/dz/geoloc/users')
@@ -660,6 +663,10 @@ const { resolvedTheme, setTheme } = useTheme()
                 Hyperliquid
               </Link>
             )}
+            <Link to="/dz/phoenix/scoreboard" className={navItemClass(isPhoenixScoreboardRoute)}>
+              <Flame className="h-4 w-4" />
+              Phoenix
+            </Link>
             {showKalshi && (
               <>
                 <Link to="/dz/kalshi/scoreboard" className={isKalshiRoute ? navItemExpandedClass : navItemClass(false)}>

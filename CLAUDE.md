@@ -185,6 +185,101 @@ their feed ids into the payload). Both prefixes are DoubleZero's — an MBP publ
 shared BBO observation on every derived top-of-book change, so it races the venue's public feed
 exactly as the top-of-book feed does.
 
+## Phoenix Scoreboard
+
+The Phoenix board (`/dz/phoenix/scoreboard`) reads one table, `phoenix_race_rollup_15m`: a row per
+(site, 15-minute window) of DoubleZero's top-of-book feed raced against Phoenix's own, both
+recorded on one host at that site. The indexer's rollup worker writes it hourly from the recorder's
+base tables, `recorder.venue_book_top` (Phoenix) and `recorder.book_top` (DoubleZero)
+(`indexer/pkg/rollup/phoenix.go`), so the API reads a few hundred rows and needs no page cache. The API serves one site at a time (`?site=`, default `cmh`) and lists the sites
+that have rows; the page shows the default site for now, with its site picker behind `SHOW_SITE_PICKER` in
+`phoenix-scoreboard-page.tsx` until the other sites record reliably.
+
+**Adding a site**: add its recorder pair to `phoenixSites` in `phoenix.go`, and its display name
+to `phoenixSiteLabels` in `api/handlers/phoenix_scoreboard.go`. CMH, FRA and TYO are listed. The next pass
+backfills that site's last 24 hours on its own. Raise `phoenixMaxSites` if the list outgrows it;
+the activity timeout is sized from it, and `TestPhoenixTimeouts_BracketTheScan` checks that one live
+cycle's worst case — links, device interfaces, competitor and Phoenix — still fits in `rollupWindow`.
+
+It is off unless `CLICKHOUSE_RECORDER_DB` is set on the indexer, and it runs for mainnet only — the
+race is a venue feed, not a DoubleZero network, and the API reads it from the mainnet database.
+Turning it on needs `SELECT` on `recorder` for `lake_indexer` first. Local dev and preview reach
+those tables through the `recorder.book_top` and `recorder.venue_book_top` proxies in
+`admin/remotetables`, as `lake_dev_reader`.
+
+**Do not read races from `recorder.feed_race` or its `*_occurrence` views.** That view groups every recorder's copy of an update
+into one race, with no notion of site: once FRA and TYO recorded the feed, a Columbus update came
+back with up to six observers, `lead_ms` measured from the first recorder anywhere to the last, and
+the Columbus board read zero races from 00:15 UTC on 2026-09-29. It rewrites the past as well —
+`occurrence = 1` is the first time each recorder ever saw a book state, so a state TYO first saw at
+01:00 joins the Columbus race for that state from 21:00. The rollup builds each site's race from
+the base tables instead, keeping only that site's two recorders **before** grouping, which is
+`feed_race`'s own definition applied per site. Checked on mainnet: it reproduces the pre-FRA/TYO
+Columbus numbers window for window (826,015 races, 825,385 and 630, over 94 windows), and after
+FRA/TYO it matches the same definition read through `feed_race_occurrence` exactly (Columbus, 24h
+to 2026-09-29 03:00: 841,097 races, 840,402 and 695).
+
+The views are also what made it expensive. `occurrence` is a `row_number()` over each recorder's
+whole history, so a scan of any window sorted all of it: ~25s per site on 2026-09-29, growing
+daily. "First occurrence" is the same thing as the first `recv_ts` of each (recorder, symbol,
+`book_key`), so the rollup takes `min(recv_ts)` per state over the base tables instead: the same
+numbers in under a second. It still reads each recorder's full history, but that history is capped
+by the tables' 30-day TTL: about 100M rows per site on 2026-09-29, the heal pass as much as the
+first. What that costs is memory, not time: one group per book state each recorder ever saw — 6.3M
+for Columbus's DoubleZero recorder, 4.8M for its venue recorder — and grouped on the symbol string
+with two `argMin` states that peaked between 4 and 8 GB. So each state is keyed on
+`cityHash64(symbol_key, book_key)` and carries one `min((recv_ts, price_exp, qty_exp))`, and the
+scan is capped at 2 GB and spills its aggregation past 1 GB, the limits the API's heavy queries use.
+It gives the same numbers in 2-7s per site, and a runaway scan fails into the backoff instead of
+pressing on the cluster. Do not judge its memory by the `X-ClickHouse-Summary` header, which read
+80 MiB for the same query: measure against `max_memory_usage` instead. It reads them without `FINAL`: a `ReplacingMergeTree` duplicate is the
+same row again, which changes no `min` or `argMin`, and `FINAL` does not reach through the local
+`remoteSecure` proxies.
+
+Because a state races only the first time its recorder ever saw it, a site that has recorded longer
+counts fewer races per hour — one Columbus hour counts 64,375 looking back an hour and 39,334 over
+its full history. Win rate and lead barely move. Compare race counts across sites with that in mind.
+
+**What counts as a race**, which is what `paired` and the page's "Updates raced" mean:
+
+- `feed = 'tob_edge_phoenix'`, the first time each recorder saw the book state (upper-cased,
+  trimmed symbol and `book_key`; on `book_top`, `from_anchor = 0` and `book_key != 0`, as its view
+  has), and matching `price_exp` and `qty_exp` across the two first sightings.
+- Seen by both of that site's recorders, after every other recorder has been filtered out.
+- `lead_ms <= 5000`. A pairing that far apart is more likely two unrelated book states than one
+  update seen twice, so it is dropped rather than clamped, and it leaves `paired` as well as the win
+  columns.
+- A tie (`lead_ms = 0`) is a race won by neither side: it counts in `paired` and in neither win
+  column, and there is no tie count.
+
+Each site is gated, healed and backed off on its own. A pass recomputes the three hours behind that
+site's newest window, and the table is a `ReplacingMergeTree` on `(site, bucket_ts)`, so a late
+race updates its window instead of adding a row. An idle window is still written, with `paired = 0`:
+the hourly gate keys on the site's `max(ingested_at)`, so skipping it would leave the gate open and
+re-run the scan on every 30s cycle. The API drops those rows from the counts and the chart, but not
+from `as_of`, and the chart's window is the 24 hours ending at the site's newest window, raced or
+not, so a quiet tail renders as a gap.
+
+`ingested_at` is the pass's `Now`, not the time the write landed: the gate compares it with `Now`,
+and the wall clock let a pass that started at 10:59:50 and landed at 11:00:05 close the 11:00 hour
+with windows up to 10:30.
+
+The due check that reads those stored rows is backed off the same way, under its own key: it
+runs before any site, so without that a failing due check re-ran on every 30s cycle and paged
+within two minutes, once per site. A failed scan writes nothing, so that site waits `phoenixRetryAfter` (10 minutes) before scanning
+again — without that, a slow recorder scan would re-run the scan inline in the live rollup
+loop on every 30s cycle. The activity owns its escalation and returns success to the workflow,
+waiting included: returning the error would page on a single blip, because the workflow's escalator
+counts every cycle of the wait, and Temporal logs a non-transient activity error at ERROR on its
+own. For the same reason there is no Temporal retry (`MaximumAttempts: 1`). The escalator pages
+after `phoenixErrorAfter` (30 minutes); its count thresholds are set to
+`phoenixErrorAfter/phoenixRetryAfter + 1` so they cannot fire first — at the default of 3, the third
+failure ten minutes apart paged at 20 minutes.
+
+The 24-hour percentiles merge the stored `signed_lead_ms_state` t-digests. Never average the
+per-window `signed_lead_p*_ms` columns into a longer span: that weights a quiet 15 minutes the same
+as a busy one, and is not a percentile of anything.
+
 ## Multicast Member Classification
 
 Which multicast subscribers are DoubleZero's own recorders is settled in **four tiers**, and only

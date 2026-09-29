@@ -93,3 +93,17 @@ func TestExternalRemoteTablesIncludesCompetitorSource(t *testing.T) {
 	}
 	t.Error("externalRemoteTables missing dzf_data.competitors_pairwise_feed_race")
 }
+
+func TestExternalRemoteTablesIncludesPhoenixBookTops(t *testing.T) {
+	want := map[string]bool{"book_top": false, "venue_book_top": false}
+	for _, e := range externalRemoteTables {
+		if _, ok := want[e.RemoteTable]; ok && e.RemoteDB == "recorder" {
+			want[e.RemoteTable] = true
+		}
+	}
+	for table, found := range want {
+		if !found {
+			t.Errorf("externalRemoteTables missing recorder.%s", table)
+		}
+	}
+}

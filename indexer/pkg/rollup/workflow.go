@@ -24,6 +24,11 @@ const (
 	// more redundant work.
 	rollupWindow = 30 * time.Minute
 
+	// liveActivityTimeout and liveActivityAttempts bound each of the link and device interface
+	// passes in the live loop.
+	liveActivityTimeout  = 2 * time.Minute
+	liveActivityAttempts = 3
+
 	// continueAsNewThreshold is the number of iterations before the workflow
 	// uses continue-as-new to reset history and avoid unbounded growth.
 	continueAsNewThreshold = 60
@@ -54,9 +59,9 @@ func ComputeRollupWorkflow(ctx temporalworkflow.Context, iteration int) error {
 	esc := &lakelogger.Escalator{TransientErrorAfter: lakelogger.DefaultErrorAfter}
 
 	actOpts := temporalworkflow.ActivityOptions{
-		StartToCloseTimeout: 2 * time.Minute,
+		StartToCloseTimeout: liveActivityTimeout,
 		RetryPolicy: &temporal.RetryPolicy{
-			MaximumAttempts: 3,
+			MaximumAttempts: liveActivityAttempts,
 		},
 	}
 	ctx = temporalworkflow.WithActivityOptions(ctx, actOpts)
@@ -76,6 +81,10 @@ func ComputeRollupWorkflow(ctx temporalworkflow.Context, iteration int) error {
 		// runIteration: the backfill shares that function at 1-hour chunk grain,
 		// where a daily rollup would recompute the same days on every chunk.
 		_ = runCompetitorRollup(ctx, log, esc, now)
+
+		// Hourly, gated inside the activity; called every cycle so a failed hour is retried
+		// on the next one rather than an hour later.
+		_ = runPhoenixRaceRollup(ctx, log, esc, now)
 
 		iteration++
 
@@ -139,6 +148,25 @@ func runCompetitorRollup(ctx temporalworkflow.Context, log log.Logger, esc *lake
 		return ctx.Err()
 	}
 	esc.Observe(log, "competitor_rollup", "competitor rollup failed", err, "now", now)
+	return err
+}
+
+// runPhoenixRaceRollup executes the hourly Phoenix race rollup.
+func runPhoenixRaceRollup(ctx temporalworkflow.Context, log log.Logger, esc *lakelogger.Escalator, now time.Time) error {
+	ctx = temporalworkflow.WithActivityOptions(ctx, temporalworkflow.ActivityOptions{
+		StartToCloseTimeout: phoenixRollupActivityTimeout,
+		HeartbeatTimeout:    phoenixHeartbeatTimeout,
+		RetryPolicy: &temporal.RetryPolicy{
+			MaximumAttempts: 1,
+		},
+	})
+
+	err := temporalworkflow.ExecuteActivity(ctx, (*Activities).RollupPhoenixRace,
+		PhoenixRaceInput{Now: now}).Get(ctx, nil)
+	if err != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	esc.Observe(log, "phoenix_race_rollup", "phoenix race rollup failed", err, "now", now)
 	return err
 }
 
