@@ -26,6 +26,8 @@ type phoenixSite struct {
 
 var phoenixSites = []phoenixSite{
 	{Code: "cmh", DZRecorder: "cmh/aws-cmh-mn-recorder1", VenueRecorder: "venue-aws-cmh-mn-recorder1"},
+	{Code: "fra", DZRecorder: "fra/aws-fra-mn-recorder1", VenueRecorder: "venue-aws-fra-mn-recorder1"},
+	{Code: "tyo", DZRecorder: "tyo/aws-tyo-mn-recorder1", VenueRecorder: "venue-aws-tyo-mn-recorder1"},
 }
 
 const phoenixMaxSites = 4
@@ -189,7 +191,6 @@ func (a *Activities) phoenixRaceStored(ctx context.Context) (map[string]phoenixS
 // INSERT ... SELECT, so no race row crosses into the indexer.
 func (a *Activities) writePhoenixRaceWindows(ctx context.Context, site phoenixSite, start, end, ingestedAt time.Time) (int, error) {
 	n := int(end.Sub(start) / phoenixBucket)
-	src := tableRef(a.RecorderDatabase, "feed_race")
 
 	query := fmt.Sprintf(`
 		INSERT INTO phoenix_race_rollup_15m (
@@ -198,7 +199,7 @@ func (a *Activities) writePhoenixRaceWindows(ctx context.Context, site phoenixSi
 		)
 		WITH
 			buckets AS (
-				SELECT toDateTime(?, 'UTC') + toIntervalSecond(number * %[2]d) AS bucket_ts
+				SELECT toDateTime(?, 'UTC') + toIntervalSecond(number * %[3]d) AS bucket_ts
 				FROM numbers(?)
 			),
 			races AS (
@@ -207,17 +208,40 @@ func (a *Activities) writePhoenixRaceWindows(ctx context.Context, site phoenixSi
 					count() AS paired,
 					countIf(first_observation = ? AND lead_ms > 0) AS dz_wins,
 					countIf(first_observation = ? AND lead_ms > 0) AS venue_wins,
-					quantilesTDigestState(0.5, 0.95, 0.99)(
-						assumeNotNull(if(first_observation = ?, 1, -1) * toFloat64(lead_ms))
-					) AS state
-				FROM %[1]s
-				WHERE feed = ?
-				  AND hasAll(observed_by, [?, ?])
-				  AND occurrence = 1
-				  AND observations = 2
-				  AND exponents_agree = 1
-				  AND lead_ms <= ?
-				  AND first_recv_ts >= toDateTime(?, 'UTC')
+					quantilesTDigestState(0.5, 0.95, 0.99)(if(first_observation = ?, 1, -1) * lead_ms) AS state
+				FROM (
+					SELECT
+						argMin(observation, first_seen_ts) AS first_observation,
+						min(first_seen_ts) AS first_recv_ts,
+						(toUnixTimestamp64Nano(max(first_seen_ts)) - toUnixTimestamp64Nano(min(first_seen_ts))) / 1e6 AS lead_ms
+					FROM (
+						SELECT
+							observation,
+							symbol_key,
+							book_key,
+							min(recv_ts) AS first_seen_ts,
+							argMin(price_exp, recv_ts) AS first_price_exp,
+							argMin(qty_exp, recv_ts) AS first_qty_exp
+						FROM (
+							SELECT observation, upper(trimBoth(symbol)) AS symbol_key, book_key, recv_ts, price_exp, qty_exp
+							FROM %[1]s
+							WHERE feed = ? AND observation = ? AND recv_ts < toDateTime(?, 'UTC')
+							UNION ALL
+							SELECT observation, upper(trimBoth(symbol)) AS symbol_key, book_key, recv_ts, price_exp, qty_exp
+							FROM %[2]s
+							WHERE feed = ? AND observation = ? AND from_anchor = 0 AND book_key != 0
+							  AND recv_ts < toDateTime(?, 'UTC')
+						)
+						GROUP BY observation, symbol_key, book_key
+						HAVING first_seen_ts >= toDateTime(?, 'UTC')
+					)
+					GROUP BY symbol_key, book_key
+					HAVING count() = 2
+					   AND uniqExact(first_price_exp) = 1
+					   AND uniqExact(first_qty_exp) = 1
+					   AND lead_ms <= ?
+				)
+				WHERE first_recv_ts >= toDateTime(?, 'UTC')
 				  AND first_recv_ts <  toDateTime(?, 'UTC')
 				GROUP BY bucket_ts
 			)
@@ -235,7 +259,8 @@ func (a *Activities) writePhoenixRaceWindows(ctx context.Context, site phoenixSi
 		FROM buckets AS b
 		LEFT JOIN races AS r ON r.bucket_ts = b.bucket_ts
 		SETTINGS join_use_nulls = 0`,
-		src, int(phoenixBucket.Seconds()))
+		tableRef(a.RecorderDatabase, "venue_book_top"), tableRef(a.RecorderDatabase, "book_top"),
+		int(phoenixBucket.Seconds()))
 
 	queryCtx, cancel := context.WithTimeout(ctx, phoenixScanTimeout)
 	defer cancel()
@@ -248,7 +273,11 @@ func (a *Activities) writePhoenixRaceWindows(ctx context.Context, site phoenixSi
 		return a.ClickHouse.Exec(queryCtx, query,
 			start.Unix(), n,
 			site.DZRecorder, site.VenueRecorder, site.DZRecorder,
-			phoenixFeed, site.DZRecorder, site.VenueRecorder, phoenixMaxLeadMs, start.Unix(), end.Unix(),
+			phoenixFeed, site.VenueRecorder, end.Unix()+phoenixMaxLeadMs/1000,
+			phoenixFeed, site.DZRecorder, end.Unix()+phoenixMaxLeadMs/1000,
+			start.Unix(),
+			phoenixMaxLeadMs,
+			start.Unix(), end.Unix(),
 			site.Code, ingestedAt.UTC().Format("2006-01-02 15:04:05.000"),
 		)
 	})

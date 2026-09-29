@@ -621,7 +621,7 @@ function Freshness({ asOf, nextRefreshAt }: { asOf: string; nextRefreshAt: strin
 export function PhoenixScoreboardPage() {
   const [data, setData] = useState<PhoenixScoreboardResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [site, setSite] = useState<string | undefined>(undefined)
+  const [site] = useState<string | undefined>('cmh')
 
   const load = useCallback(async () => {
     try {
@@ -665,6 +665,7 @@ export function PhoenixScoreboardPage() {
               )}
             </span>
           }
+          /* Site picker, hidden until more sites record reliably. Restore with `const [site, setSite]` above.
           actions={
             data && data.sites.length > 1 ? (
               <div className="flex overflow-hidden rounded-md border border-border text-xs" role="group" aria-label="Recording site">
@@ -684,6 +685,7 @@ export function PhoenixScoreboardPage() {
               </div>
             ) : undefined
           }
+          */
         />
 
         {error && !data && <div className="rounded-lg border border-border bg-card p-6 text-sm text-red-500">{error}</div>}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -79,24 +80,35 @@ func TestRollupPhoenixRace_OffWithoutARecorderDatabase(t *testing.T) {
 	assert.Zero(t, n)
 }
 
-// setupPhoenixFeedRace creates a table shaped like recorder.feed_race, restricted to the columns
-// the rollup reads, with the real types: lead_ms is Nullable(Float64), which the state column
-// refuses unless the lead is marked not-null.
-func setupPhoenixFeedRace(t *testing.T) (clickhouse.Conn, string) {
+// setupPhoenixBookTops creates tables shaped like recorder.venue_book_top and recorder.book_top,
+// restricted to the columns the rollup reads.
+func setupPhoenixBookTops(t *testing.T) (clickhouse.Conn, string) {
 	t.Helper()
 	info := laketesting.NewClientWithInfo(t, sharedDB)
 	conn := openRawConn(t, sharedDB, info.Database)
-	require.NoError(t, conn.Exec(t.Context(), `
-		CREATE TABLE feed_race (
-			feed              String,
-			first_observation String,
-			first_recv_ts     DateTime64(9, 'UTC'),
-			lead_ms           Nullable(Float64),
-			occurrence        UInt64,
-			observations      UInt64,
-			exponents_agree   UInt8,
-			observed_by       Array(String)
-		) ENGINE = MergeTree ORDER BY (feed, first_recv_ts)`))
+	for _, ddl := range []string{`
+		CREATE TABLE venue_book_top (
+			observation LowCardinality(String),
+			feed        LowCardinality(String),
+			symbol      LowCardinality(String),
+			book_key    UInt64,
+			recv_ts     DateTime64(9, 'UTC'),
+			price_exp   Int8,
+			qty_exp     Int8
+		) ENGINE = MergeTree ORDER BY (observation, feed, symbol, recv_ts)`, `
+		CREATE TABLE book_top (
+			observation LowCardinality(String),
+			feed        LowCardinality(String),
+			symbol      LowCardinality(String),
+			book_key    UInt64,
+			recv_ts     DateTime64(9, 'UTC'),
+			price_exp   Int8,
+			qty_exp     Int8,
+			from_anchor UInt8
+		) ENGINE = MergeTree ORDER BY (recv_ts, observation)`,
+	} {
+		require.NoError(t, conn.Exec(t.Context(), ddl))
+	}
 	return conn, info.Database
 }
 
@@ -110,31 +122,54 @@ func cmhDue(t *testing.T, a *Activities, now time.Time) bool {
 	return !ok || last.lastWrite.Before(now.UTC().Truncate(phoenixCadence))
 }
 
-type phoenixRow struct {
-	feed, first string
-	at          time.Time
-	lead        float64
-	occ, obs    uint64
-	expo        uint8
-	by          []string
+type phoenixObs struct {
+	obs, feed, symbol string
+	book              uint64
+	at                time.Time
+	priceExp          int8
+	fromAnchor        uint8
 }
 
-func insertPhoenixRows(t *testing.T, conn clickhouse.Conn, rows []phoenixRow) {
+var phoenixBooks atomic.Uint64
+
+func book() uint64 { return phoenixBooks.Add(1) }
+
+func seen(b uint64, obs string, at time.Time) phoenixObs {
+	return phoenixObs{obs: obs, feed: phoenixFeed, symbol: "SOL-PERP", book: b, at: at, priceExp: -2}
+}
+
+func raceOf(b uint64, first, second string, at time.Time, leadMs float64) []phoenixObs {
+	return []phoenixObs{seen(b, first, at), seen(b, second, at.Add(time.Duration(leadMs*float64(time.Millisecond))))}
+}
+
+func race(first, second string, at time.Time, leadMs float64) []phoenixObs {
+	return raceOf(book(), first, second, at, leadMs)
+}
+
+func insertPhoenixObs(t *testing.T, conn clickhouse.Conn, groups ...[]phoenixObs) {
 	t.Helper()
-	batch, err := conn.PrepareBatch(t.Context(), `INSERT INTO feed_race`)
+	venue, err := conn.PrepareBatch(t.Context(), `INSERT INTO venue_book_top`)
 	require.NoError(t, err)
-	for _, r := range rows {
-		by := r.by
-		if by == nil {
-			by = []string{cmh.DZRecorder, cmh.VenueRecorder}
+	dz, err := conn.PrepareBatch(t.Context(), `INSERT INTO book_top`)
+	require.NoError(t, err)
+	for _, g := range groups {
+		for _, r := range g {
+			if strings.HasPrefix(r.obs, "venue-") {
+				require.NoError(t, venue.Append(r.obs, r.feed, r.symbol, r.book, r.at, r.priceExp, int8(-3)))
+			} else {
+				require.NoError(t, dz.Append(r.obs, r.feed, r.symbol, r.book, r.at, r.priceExp, int8(-3), r.fromAnchor))
+			}
 		}
-		require.NoError(t, batch.Append(r.feed, r.first, r.at, r.lead, r.occ, r.obs, r.expo, by))
 	}
-	require.NoError(t, batch.Send())
+	require.NoError(t, venue.Send())
+	require.NoError(t, dz.Send())
 }
 
-func race(first string, at time.Time, lead float64) phoenixRow {
-	return phoenixRow{feed: phoenixFeed, first: first, at: at, lead: lead, occ: 1, obs: 2, expo: 1}
+func withFeed(g []phoenixObs, feed string) []phoenixObs {
+	for i := range g {
+		g[i].feed = feed
+	}
+	return g
 }
 
 type phoenixWindowRow struct {
@@ -162,37 +197,42 @@ func readPhoenixRollup(t *testing.T, conn clickhouse.Conn, site string) map[time
 
 func TestRollupPhoenixRace_WritesEveryWindowAndOnlyRaces(t *testing.T) {
 	t.Parallel()
-	conn, db := setupPhoenixFeedRace(t)
-	a := &Activities{ClickHouse: conn, Log: laketesting.NewLogger(), RecorderDatabase: db}
+	conn, db := setupPhoenixBookTops(t)
+	a := &Activities{ClickHouse: conn, Log: laketesting.NewLogger(), RecorderDatabase: db, phoenixSites: []phoenixSite{cmh}}
 
 	now := time.Now().UTC()
 	_, end, _ := phoenixRaceWindow(now, time.Time{})
 	bucket := end.Add(-2 * phoenixBucket)
 	in := bucket.Add(time.Minute)
 
-	insertPhoenixRows(t, conn, []phoenixRow{
-		race(cmh.DZRecorder, in, 100),
-		race(cmh.DZRecorder, in, 200),
-		race(cmh.DZRecorder, in, 300),
-		race(cmh.VenueRecorder, in, 50),
-		race(cmh.DZRecorder, in, 0),
-		// Each of these breaks exactly one clause of the race predicate.
-		{feed: "tob_edge_other", first: cmh.DZRecorder, at: in, lead: 100, occ: 1, obs: 2, expo: 1},
-		{feed: phoenixFeed, first: "chi/aws-chi-mn-recorder1", at: in, lead: 100, occ: 1, obs: 2, expo: 1,
-			by: []string{"chi/aws-chi-mn-recorder1", cmh.VenueRecorder}},
-		{feed: phoenixFeed, first: cmh.DZRecorder, at: in, lead: 100, occ: 1, obs: 2, expo: 1,
-			by: []string{cmh.DZRecorder, "chi/aws-chi-mn-recorder1"}},
-		{feed: phoenixFeed, first: cmh.DZRecorder, at: in, lead: 100, occ: 2, obs: 2, expo: 1},
-		{feed: phoenixFeed, first: cmh.DZRecorder, at: in, lead: 100, occ: 1, obs: 3, expo: 1},
-		{feed: phoenixFeed, first: cmh.DZRecorder, at: in, lead: 100, occ: 1, obs: 2, expo: 0},
-		race(cmh.DZRecorder, in, phoenixMaxLeadMs+1),
-		// Not settled yet: the window it falls in closes inside the settle period.
-		race(cmh.DZRecorder, end.Add(time.Minute), 100),
-	})
-
-	require.NoError(t, conn.Exec(t.Context(), fmt.Sprintf(`
-		INSERT INTO feed_race VALUES ('%s', '%s', toDateTime64(%d, 9, 'UTC'), NULL, 1, 2, 1, ['%s', '%s'])`,
-		phoenixFeed, cmh.DZRecorder, in.Unix(), cmh.DZRecorder, cmh.VenueRecorder)))
+	disagree := race(cmh.DZRecorder, cmh.VenueRecorder, in, 100)
+	disagree[1].priceExp = -4
+	padded := race(cmh.DZRecorder, cmh.VenueRecorder, in, 100)
+	padded[1].symbol = " sol-perp "
+	anchored := race(cmh.DZRecorder, cmh.VenueRecorder, in, 100)
+	anchored[0].fromAnchor = 1
+	keyless := raceOf(0, cmh.DZRecorder, cmh.VenueRecorder, in, 100)
+	unseen := book()
+	again := book()
+	insertPhoenixObs(t, conn,
+		race(cmh.DZRecorder, cmh.VenueRecorder, in, 100),
+		race(cmh.DZRecorder, cmh.VenueRecorder, in, 200),
+		race(cmh.DZRecorder, cmh.VenueRecorder, in, 300),
+		race(cmh.VenueRecorder, cmh.DZRecorder, in, 50),
+		race(cmh.DZRecorder, cmh.VenueRecorder, in, 0),
+		padded,
+		withFeed(race(cmh.DZRecorder, cmh.VenueRecorder, in, 100), "tob_edge_other"),
+		race("chi/aws-chi-mn-recorder1", cmh.VenueRecorder, in, 100),
+		race(cmh.DZRecorder, "chi/aws-chi-mn-recorder1", in, 100),
+		[]phoenixObs{seen(unseen, cmh.DZRecorder, in)},
+		raceOf(again, cmh.DZRecorder, cmh.VenueRecorder, in.Add(-3*24*time.Hour), 100),
+		raceOf(again, cmh.DZRecorder, cmh.VenueRecorder, in, 100),
+		anchored,
+		keyless,
+		disagree,
+		race(cmh.DZRecorder, cmh.VenueRecorder, in, phoenixMaxLeadMs+1),
+		race(cmh.DZRecorder, cmh.VenueRecorder, end.Add(time.Minute), 100),
+	)
 
 	n, err := a.RollupPhoenixRace(t.Context(), PhoenixRaceInput{Now: now})
 	require.NoError(t, err)
@@ -202,8 +242,8 @@ func TestRollupPhoenixRace_WritesEveryWindowAndOnlyRaces(t *testing.T) {
 	require.Len(t, stored, n, "every window is written, raced or not")
 
 	got := stored[bucket]
-	assert.EqualValues(t, 5, got.paired, "a tie is a race")
-	assert.EqualValues(t, 3, got.dz, "a tie is a win for neither side")
+	assert.EqualValues(t, 6, got.paired, "a tie is a race")
+	assert.EqualValues(t, 4, got.dz, "a tie is a win for neither side")
 	assert.EqualValues(t, 1, got.venue)
 	// Signed: the venue's win is a negative lead, so the median sits between 100 and 200.
 	assert.Greater(t, got.p50, 50.0)
@@ -221,7 +261,7 @@ func TestRollupPhoenixRace_WritesEveryWindowAndOnlyRaces(t *testing.T) {
 // idle feed re-runs the 24h scan on every 30s cycle.
 func TestRollupPhoenixRace_RunsOncePerHourEvenWhenIdle(t *testing.T) {
 	t.Parallel()
-	conn, db := setupPhoenixFeedRace(t)
+	conn, db := setupPhoenixBookTops(t)
 	a := &Activities{ClickHouse: conn, Log: laketesting.NewLogger(), RecorderDatabase: db}
 	now := time.Now().UTC()
 
@@ -240,17 +280,17 @@ func TestRollupPhoenixRace_RunsOncePerHourEvenWhenIdle(t *testing.T) {
 // a straggler updates its window instead of adding a second row for it.
 func TestRollupPhoenixRace_HealReplacesAWindow(t *testing.T) {
 	t.Parallel()
-	conn, db := setupPhoenixFeedRace(t)
+	conn, db := setupPhoenixBookTops(t)
 	a := &Activities{ClickHouse: conn, Log: laketesting.NewLogger(), RecorderDatabase: db}
 
 	now := time.Now().UTC()
 	start, end, _ := phoenixRaceWindow(now, time.Time{})
 	bucket := end.Add(-phoenixBucket)
-	insertPhoenixRows(t, conn, []phoenixRow{race(cmh.DZRecorder, bucket.Add(time.Minute), 100)})
+	insertPhoenixObs(t, conn, race(cmh.DZRecorder, cmh.VenueRecorder, bucket.Add(time.Minute), 100))
 	_, err := a.writePhoenixRaceWindows(t.Context(), cmh, start, end, now)
 	require.NoError(t, err)
 
-	insertPhoenixRows(t, conn, []phoenixRow{race(cmh.VenueRecorder, bucket.Add(2*time.Minute), 40)})
+	insertPhoenixObs(t, conn, race(cmh.VenueRecorder, cmh.DZRecorder, bucket.Add(2*time.Minute), 40))
 	healStart, _, _ := phoenixRaceWindow(now, bucket)
 	_, err = a.writePhoenixRaceWindows(t.Context(), cmh, healStart, end, now.Add(time.Second))
 	require.NoError(t, err)
@@ -280,7 +320,7 @@ func TestRecorderDatabaseForNetwork_MainnetOnly(t *testing.T) {
 
 func TestRollupPhoenixRace_BacksOffAfterAFailedScan(t *testing.T) {
 	t.Parallel()
-	conn, db := setupPhoenixFeedRace(t)
+	conn, db := setupPhoenixBookTops(t)
 	a := &Activities{ClickHouse: conn, Log: laketesting.NewLogger(), RecorderDatabase: "no_such_database"}
 	now := time.Now().UTC()
 
@@ -301,7 +341,7 @@ func TestRollupPhoenixRace_BacksOffAfterAFailedScan(t *testing.T) {
 
 func TestRollupPhoenixRace_StampsTheWriteWithThePassClock(t *testing.T) {
 	t.Parallel()
-	conn, db := setupPhoenixFeedRace(t)
+	conn, db := setupPhoenixBookTops(t)
 	a := &Activities{ClickHouse: conn, Log: laketesting.NewLogger(), RecorderDatabase: db}
 	now := time.Now().UTC().Truncate(time.Hour).Add(-10 * time.Second)
 
@@ -317,22 +357,26 @@ func TestRollupPhoenixRace_StampsTheWriteWithThePassClock(t *testing.T) {
 
 func TestRollupPhoenixRace_KeepsSitesApart(t *testing.T) {
 	t.Parallel()
-	conn, db := setupPhoenixFeedRace(t)
+	conn, db := setupPhoenixBookTops(t)
 	tyo := phoenixSite{Code: "tyo", DZRecorder: "tyo/test-recorder1", VenueRecorder: "venue-test-tyo-recorder1"}
 	a := &Activities{ClickHouse: conn, Log: laketesting.NewLogger(), RecorderDatabase: db, phoenixSites: []phoenixSite{cmh, tyo}}
 
 	now := time.Now().UTC()
 	_, end, _ := phoenixRaceWindow(now, time.Time{})
 	in := end.Add(-phoenixBucket).Add(time.Minute)
-	insertPhoenixRows(t, conn, []phoenixRow{
-		race(cmh.DZRecorder, in, 100),
-		{feed: phoenixFeed, first: tyo.DZRecorder, at: in, lead: 100, occ: 1, obs: 2, expo: 1,
-			by: []string{tyo.DZRecorder, tyo.VenueRecorder}},
-		{feed: phoenixFeed, first: tyo.VenueRecorder, at: in, lead: 50, occ: 1, obs: 2, expo: 1,
-			by: []string{tyo.DZRecorder, tyo.VenueRecorder}},
-		{feed: phoenixFeed, first: cmh.DZRecorder, at: in, lead: 100, occ: 1, obs: 2, expo: 1,
-			by: []string{cmh.DZRecorder, tyo.VenueRecorder}},
-	})
+
+	everywhere := book()
+	insertPhoenixObs(t, conn,
+		race(tyo.VenueRecorder, tyo.DZRecorder, in, 50),
+		[]phoenixObs{
+			seen(everywhere, tyo.DZRecorder, in),
+			seen(everywhere, cmh.DZRecorder, in.Add(30*time.Millisecond)),
+			seen(everywhere, cmh.VenueRecorder, in.Add(130*time.Millisecond)),
+			seen(everywhere, tyo.VenueRecorder, in.Add(900*time.Millisecond)),
+			seen(everywhere, "fra/aws-fra-mn-recorder1", in.Add(2*time.Second)),
+		},
+		race(cmh.DZRecorder, tyo.VenueRecorder, in, 100),
+	)
 
 	n, err := a.RollupPhoenixRace(t.Context(), PhoenixRaceInput{Now: now})
 	require.NoError(t, err)
@@ -341,8 +385,11 @@ func TestRollupPhoenixRace_KeepsSitesApart(t *testing.T) {
 	bucket := end.Add(-phoenixBucket)
 	gotCMH := readPhoenixRollup(t, conn, cmh.Code)[bucket]
 	gotTYO := readPhoenixRollup(t, conn, tyo.Code)[bucket]
-	assert.EqualValues(t, 1, gotCMH.paired, "a race across two sites belongs to neither")
+
+	assert.EqualValues(t, 1, gotCMH.paired, "an update every site saw is a race at each site, and a cross-site pair is a race at none")
 	assert.EqualValues(t, 1, gotCMH.dz)
+	assert.InDelta(t, 100, gotCMH.p50, 1, "the lead is between this site's two recorders, not the first and last anywhere")
+
 	assert.EqualValues(t, 2, gotTYO.paired)
 	assert.EqualValues(t, 1, gotTYO.dz)
 	assert.EqualValues(t, 1, gotTYO.venue)

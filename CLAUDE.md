@@ -189,36 +189,59 @@ exactly as the top-of-book feed does.
 
 The Phoenix board (`/dz/phoenix/scoreboard`) reads one table, `phoenix_race_rollup_15m`: a row per
 (site, 15-minute window) of DoubleZero's top-of-book feed raced against Phoenix's own, both
-recorded on one host at that site. The indexer's rollup worker writes it hourly from
-`recorder.feed_race` (`indexer/pkg/rollup/phoenix.go`), so the API reads a few hundred rows and
-needs no page cache. The API serves one site at a time (`?site=`, default `cmh`) and lists the sites
-that have rows; the page shows a site picker once there is more than one.
+recorded on one host at that site. The indexer's rollup worker writes it hourly from the recorder's
+base tables, `recorder.venue_book_top` (Phoenix) and `recorder.book_top` (DoubleZero)
+(`indexer/pkg/rollup/phoenix.go`), so the API reads a few hundred rows and needs no page cache. The API serves one site at a time (`?site=`, default `cmh`) and lists the sites
+that have rows; the page pins `cmh` for now, with its site picker commented out in
+`phoenix-scoreboard-page.tsx` until the other sites record reliably.
 
-**Adding a site** (TYO, FRA): add its recorder pair to `phoenixSites` in `phoenix.go`, and its
-display name to `phoenixSiteLabels` in `api/handlers/phoenix_scoreboard.go`. The next pass
+**Adding a site**: add its recorder pair to `phoenixSites` in `phoenix.go`, and its display name
+to `phoenixSiteLabels` in `api/handlers/phoenix_scoreboard.go`. CMH, FRA and TYO are listed. The next pass
 backfills that site's last 24 hours on its own. Raise `phoenixMaxSites` if the list outgrows it;
 the activity timeout is sized from it.
 
 It is off unless `CLICKHOUSE_RECORDER_DB` is set on the indexer, and it runs for mainnet only — the
 race is a venue feed, not a DoubleZero network, and the API reads it from the mainnet database.
-Turning it on needs `SELECT` on `recorder` for `lake_indexer` first. Local dev and preview reach the
-table through the `recorder.feed_race` proxy in `admin/remotetables`, as `lake_dev_reader`.
+Turning it on needs `SELECT` on `recorder` for `lake_indexer` first. Local dev and preview reach
+those tables through the `recorder.book_top` and `recorder.venue_book_top` proxies in
+`admin/remotetables`, as `lake_dev_reader`.
+
+**Do not read races from `recorder.feed_race` or its `*_occurrence` views.** That view groups every recorder's copy of an update
+into one race, with no notion of site: once FRA and TYO recorded the feed, a Columbus update came
+back with up to six observers, `lead_ms` measured from the first recorder anywhere to the last, and
+the Columbus board read zero races from 00:15 UTC on 2026-09-29. It rewrites the past as well —
+`occurrence = 1` is the first time each recorder ever saw a book state, so a state TYO first saw at
+01:00 joins the Columbus race for that state from 21:00. The rollup builds each site's race from
+the base tables instead, keeping only that site's two recorders **before** grouping, which is
+`feed_race`'s own definition applied per site. Checked on mainnet: it reproduces the pre-FRA/TYO
+Columbus numbers window for window (826,015 races, 825,385 and 630, over 94 windows), and after
+FRA/TYO it matches the same definition read through `feed_race_occurrence` exactly (Columbus, 24h
+to 2026-09-29 03:00: 841,097 races, 840,402 and 695).
+
+The views are also what made it expensive. `occurrence` is a `row_number()` over each recorder's
+whole history, so a scan of any window sorted all of it: ~25s per site on 2026-09-29, growing
+daily. "First occurrence" is the same thing as the first `recv_ts` of each (recorder, symbol,
+`book_key`), so the rollup takes `min(recv_ts)` per state over the base tables instead: the same
+numbers in under a second. It still reads each recorder's full history, but that history is capped
+by the tables' 30-day TTL. It reads them without `FINAL`: a `ReplacingMergeTree` duplicate is the
+same row again, which changes no `min` or `argMin`, and `FINAL` does not reach through the local
+`remoteSecure` proxies.
+
+Because a state races only the first time its recorder ever saw it, a site that has recorded longer
+counts fewer races per hour — one Columbus hour counts 64,375 looking back an hour and 39,334 over
+its full history. Win rate and lead barely move. Compare race counts across sites with that in mind.
 
 **What counts as a race**, which is what `paired` and the page's "Updates raced" mean:
 
-- `feed = 'tob_edge_phoenix'`, the first `occurrence` of the update, and `exponents_agree = 1`.
-- `observations = 2` and `hasAll(observed_by, [dz, venue])`: exactly that site's two recorders.
-  Filtering on `first_observation` alone would count a race between the DoubleZero recorder and a
-  third recorder as a win over Phoenix.
+- `feed = 'tob_edge_phoenix'`, the first time each recorder saw the book state (upper-cased,
+  trimmed symbol and `book_key`; on `book_top`, `from_anchor = 0` and `book_key != 0`, as its view
+  has), and matching `price_exp` and `qty_exp` across the two first sightings.
+- Seen by both of that site's recorders, after every other recorder has been filtered out.
 - `lead_ms <= 5000`. A pairing that far apart is more likely two unrelated book states than one
   update seen twice, so it is dropped rather than clamped, and it leaves `paired` as well as the win
   columns.
 - A tie (`lead_ms = 0`) is a race won by neither side: it counts in `paired` and in neither win
   column, and there is no tie count.
-
-`recorder.feed_race` is a view, so the scan needs no `FINAL`. `lead_ms` is `Nullable(Float64)`, and
-the state column refuses a `Nullable` argument, which is why the signed lead is wrapped in
-`assumeNotNull` — the `lead_ms <=` filter has already dropped the nulls.
 
 Each site is gated, healed and backed off on its own. A pass recomputes the three hours behind that
 site's newest window, and the table is a `ReplacingMergeTree` on `(site, bucket_ts)`, so a late
@@ -233,7 +256,7 @@ and the wall clock let a pass that started at 10:59:50 and landed at 11:00:05 cl
 with windows up to 10:30.
 
 A failed scan writes nothing, so that site waits `phoenixRetryAfter` (10 minutes) before scanning
-again — without that, a slow `recorder.feed_race` would re-run the scan inline in the live rollup
+again — without that, a slow recorder scan would re-run the scan inline in the live rollup
 loop on every 30s cycle. The activity owns its escalation and returns success to the workflow,
 waiting included: returning the error would page on a single blip, because the workflow's escalator
 counts every cycle of the wait, and Temporal logs a non-transient activity error at ERROR on its
