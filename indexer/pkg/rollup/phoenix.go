@@ -46,6 +46,8 @@ const (
 const phoenixScanTimeout = 60 * time.Second
 const phoenixScanMaxExecutionSeconds = int(phoenixScanTimeout / time.Second)
 const phoenixHeartbeatTimeout = 2 * time.Minute
+const phoenixScanMaxMemoryBytes = 2_000_000_000
+const phoenixScanSpillBytes = 1_000_000_000
 const phoenixRollupActivityTimeout = phoenixMaxSites*phoenixScanTimeout + time.Minute
 
 // PhoenixRaceInput asks for one hourly pass of the Phoenix race rollup.
@@ -220,34 +222,28 @@ func (a *Activities) writePhoenixRaceWindows(ctx context.Context, site phoenixSi
 					quantilesTDigestState(0.5, 0.95, 0.99)(if(first_observation = ?, 1, -1) * lead_ms) AS state
 				FROM (
 					SELECT
-						argMin(observation, first_seen_ts) AS first_observation,
-						min(first_seen_ts) AS first_recv_ts,
-						(toUnixTimestamp64Nano(max(first_seen_ts)) - toUnixTimestamp64Nano(min(first_seen_ts))) / 1e6 AS lead_ms
+						argMin(observation, first_seen.1) AS first_observation,
+						min(first_seen.1) AS first_recv_ts,
+						(toUnixTimestamp64Nano(max(first_seen.1)) - toUnixTimestamp64Nano(min(first_seen.1))) / 1e6 AS lead_ms
 					FROM (
-						SELECT
-							observation,
-							symbol_key,
-							book_key,
-							min(recv_ts) AS first_seen_ts,
-							argMin(price_exp, recv_ts) AS first_price_exp,
-							argMin(qty_exp, recv_ts) AS first_qty_exp
+						SELECT observation, book_state, min((recv_ts, price_exp, qty_exp)) AS first_seen
 						FROM (
-							SELECT observation, upper(trimBoth(symbol)) AS symbol_key, book_key, recv_ts, price_exp, qty_exp
+							SELECT observation, cityHash64(upper(trimBoth(symbol)), book_key) AS book_state, recv_ts, price_exp, qty_exp
 							FROM %[1]s
 							WHERE feed = ? AND observation = ? AND recv_ts < fromUnixTimestamp64Milli(?, 'UTC')
 							UNION ALL
-							SELECT observation, upper(trimBoth(symbol)) AS symbol_key, book_key, recv_ts, price_exp, qty_exp
+							SELECT observation, cityHash64(upper(trimBoth(symbol)), book_key) AS book_state, recv_ts, price_exp, qty_exp
 							FROM %[2]s
 							WHERE feed = ? AND observation = ? AND from_anchor = 0 AND book_key != 0
 							  AND recv_ts < fromUnixTimestamp64Milli(?, 'UTC')
 						)
-						GROUP BY observation, symbol_key, book_key
-						HAVING first_seen_ts >= toDateTime(?, 'UTC')
+						GROUP BY observation, book_state
+						HAVING first_seen.1 >= toDateTime(?, 'UTC')
 					)
-					GROUP BY symbol_key, book_key
+					GROUP BY book_state
 					HAVING count() = 2
-					   AND uniqExact(first_price_exp) = 1
-					   AND uniqExact(first_qty_exp) = 1
+					   AND uniqExact(first_seen.2) = 1
+					   AND uniqExact(first_seen.3) = 1
 					   AND lead_ms <= ?
 				)
 				WHERE first_recv_ts >= toDateTime(?, 'UTC')
@@ -274,7 +270,9 @@ func (a *Activities) writePhoenixRaceWindows(ctx context.Context, site phoenixSi
 	queryCtx, cancel := context.WithTimeout(ctx, phoenixScanTimeout)
 	defer cancel()
 	queryCtx = clickhouse.Context(queryCtx, clickhouse.WithSettings(clickhouse.Settings{
-		"max_execution_time": phoenixScanMaxExecutionSeconds,
+		"max_execution_time":                 phoenixScanMaxExecutionSeconds,
+		"max_memory_usage":                   phoenixScanMaxMemoryBytes,
+		"max_bytes_before_external_group_by": phoenixScanSpillBytes,
 	}))
 
 	cutoff := end.UnixMilli() + phoenixMaxLeadMs

@@ -69,6 +69,9 @@ func TestPhoenixTimeouts_BracketTheScan(t *testing.T) {
 	if phoenixRollupActivityTimeout >= rollupWindow {
 		t.Errorf("a pass may take %s, which is not inside rollupWindow %s", phoenixRollupActivityTimeout, rollupWindow)
 	}
+	if phoenixScanSpillBytes >= phoenixScanMaxMemoryBytes {
+		t.Errorf("the scan spills at %d bytes, which is not under its %d-byte cap", phoenixScanSpillBytes, phoenixScanMaxMemoryBytes)
+	}
 	cycle := 2*liveActivityAttempts*liveActivityTimeout + competitorRollupActivityTimeout + phoenixRollupActivityTimeout
 	if cycle >= rollupWindow {
 		t.Errorf("one live cycle may take %s, which is not inside rollupWindow %s", cycle, rollupWindow)

@@ -224,7 +224,15 @@ whole history, so a scan of any window sorted all of it: ~25s per site on 2026-0
 daily. "First occurrence" is the same thing as the first `recv_ts` of each (recorder, symbol,
 `book_key`), so the rollup takes `min(recv_ts)` per state over the base tables instead: the same
 numbers in under a second. It still reads each recorder's full history, but that history is capped
-by the tables' 30-day TTL. It reads them without `FINAL`: a `ReplacingMergeTree` duplicate is the
+by the tables' 30-day TTL: about 100M rows per site on 2026-09-29, the heal pass as much as the
+first. What that costs is memory, not time: one group per book state each recorder ever saw — 6.3M
+for Columbus's DoubleZero recorder, 4.8M for its venue recorder — and grouped on the symbol string
+with two `argMin` states that peaked between 4 and 8 GB. So each state is keyed on
+`cityHash64(symbol_key, book_key)` and carries one `min((recv_ts, price_exp, qty_exp))`, and the
+scan is capped at 2 GB and spills its aggregation past 1 GB, the limits the API's heavy queries use.
+It gives the same numbers in 2-7s per site, and a runaway scan fails into the backoff instead of
+pressing on the cluster. Do not judge its memory by the `X-ClickHouse-Summary` header, which read
+80 MiB for the same query: measure against `max_memory_usage` instead. It reads them without `FINAL`: a `ReplacingMergeTree` duplicate is the
 same row again, which changes no `min` or `argMin`, and `FINAL` does not reach through the local
 `remoteSecure` proxies.
 
