@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ShredsRewardsDetail, ShredsRewardsResponse } from '@/lib/api'
 
@@ -125,12 +125,18 @@ describe('Edge Rewards list loading state', () => {
   // grouping switch. Its `clients` is an empty array, and groupByClient flips
   // the instant the URL does, so the client table rendered "No client teams
   // have earned rewards yet" as a finished answer — at full opacity, because
-  // the placeholder dimming is delayed — until the real response arrived.
+  // the placeholder dimming is delayed — until the real response arrived. The
+  // sidebar's "Edge Rewards" link still reaches this same guard from the other
+  // direction, so the transition is driven here by a URL change.
   it('does not answer "no client teams" while the grouping switch is in flight', async () => {
     const list = deferred<ShredsRewardsResponse>()
     fetchShredsRewards.mockReturnValueOnce(list.promise)
 
-    const { container } = renderWithProviders(<ShredsRewardsPage />, '/dz/shreds/rewards')
+    function Nav() {
+      const navigate = useNavigate()
+      return <button data-testid="go-client" onClick={() => navigate('/dz/shreds/rewards?group=client')} />
+    }
+    const { container } = renderWithProviders(<><Nav /><ShredsRewardsPage /></>, '/dz/shreds/rewards')
     list.resolve(listPayload())
     expect(await screen.findByText('Alpha Validator')).toBeInTheDocument()
 
@@ -138,7 +144,7 @@ describe('Edge Rewards list loading state', () => {
     const clients = deferred<ShredsRewardsResponse>()
     fetchShredsRewards.mockReturnValueOnce(clients.promise)
     await act(async () => {
-      screen.getByRole('button', { name: 'Client teams' }).click()
+      screen.getByTestId('go-client').click()
     })
 
     expect(screen.queryByText(/No client teams have earned rewards yet/)).not.toBeInTheDocument()
