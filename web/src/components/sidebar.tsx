@@ -67,8 +67,6 @@ export function Sidebar() {
   })
   const hasTopologies = (topologiesData?.topologies?.length ?? 0) > 0
   const showGeoloc = user?.is_internal_user === true
-  // Only the link is gated; the page is public.
-  const showHyperliquidScoreboard = user?.is_internal_user === true
   const showKalshi = user?.is_internal_user === true
   // Cross-service multicast overview: names subscribers and separates operator-run receivers
   // from paying ones, so it stays with the other internal edge views.
@@ -654,15 +652,10 @@ const { resolvedTheme, setTheme } = useTheme()
                 </Link>
               </>
             )}
-            {showHyperliquidScoreboard && (
-              <Link
-                to="/dz/hyperliquid/scoreboard"
-                className={navItemClass(isHyperliquidScoreboardRoute)}
-              >
-                <Activity className="h-4 w-4" />
-                Hyperliquid
-              </Link>
-            )}
+            <Link to="/dz/hyperliquid/scoreboard" className={navItemClass(isHyperliquidScoreboardRoute)}>
+              <Activity className="h-4 w-4" />
+              Hyperliquid
+            </Link>
             <Link to="/dz/phoenix/scoreboard" className={navItemClass(isPhoenixScoreboardRoute)}>
               <Flame className="h-4 w-4" />
               Phoenix
